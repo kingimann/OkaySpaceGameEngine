@@ -5,6 +5,7 @@
 #include "engine_bridge.hpp"
 
 #include "UwpPlatform.hpp"
+#include "XboxAppGlue.hpp"
 #include "XboxGameRuntime.hpp"
 #include "XboxLog.hpp"
 #include "XboxOverlay.hpp"
@@ -28,30 +29,41 @@ namespace okay_xbox_bridge {
 namespace xb = okay::xbox;
 
 namespace {
+struct BridgeHost;
+// One pad, found again by its stable key each time (the list in Windows.Gaming.Input shifts when a pad is removed).
 struct BridgePad : xb::PadDevice {
-    const ShellCallbacks* cb = nullptr; int index = 0;
-    bool Read(xb::PadReading& o) override {
-        PadReadingPod p;
-        if (!cb || !cb->padRead || !cb->padRead(cb->user, index, &p)) return false;
-        o.buttons = p.buttons; o.leftTrigger = p.leftTrigger; o.rightTrigger = p.rightTrigger;
-        o.leftX = p.leftX; o.leftY = p.leftY; o.rightX = p.rightX; o.rightY = p.rightY;
-        return true;
-    }
-    void SendVibration(const xb::Vibration& v) override { if (cb && cb->padVibrate) cb->padVibrate(cb->user, index, v.leftMotor, v.rightMotor, v.leftTrigger, v.rightTrigger); }
+    BridgeHost* host = nullptr; std::string key;
+    bool Read(xb::PadReading& o) override;
+    void SendVibration(const xb::Vibration& v) override;
 };
 
 struct BridgeHost : xb::UwpHost {
     ShellCallbacks cb;
-    std::vector<std::unique_ptr<BridgePad>> pads;
+    std::vector<std::unique_ptr<BridgePad>> pads;   // one per key ever seen (a returning pad reuses its object)
     std::unique_ptr<xb::WasapiHost> audio;
+    std::string KeyOf(int i) const {
+        wchar_t id[256] = {0};
+        const int n = cb.padKey ? cb.padKey(cb.user, i, id, 255) : 0;
+        if (n <= 0) return std::string();
+        std::string k; for (int j = 0; j < n; ++j) k += id[j] < 128 ? (char)id[j] : '?';   // ids are ASCII GUID-like text; anything else only needs to stay stable
+        return k;
+    }
+    int IndexOf(const std::string& key) const { const int n = cb.padCount ? cb.padCount(cb.user) : 0; for (int i = 0; i < n; ++i) if (KeyOf(i) == key) return i; return -1; }
+    std::vector<xb::PadListing> Listing() {
+        std::vector<xb::PadListing> out;
+        const int n = cb.padCount ? cb.padCount(cb.user) : 0;
+        for (int i = 0; i < n; ++i) {
+            const std::string k = KeyOf(i); if (k.empty()) continue;
+            BridgePad* p = nullptr; for (auto& q : pads) if (q->key == k) p = q.get();
+            if (!p) { pads.push_back(std::make_unique<BridgePad>()); p = pads.back().get(); p->host = this; p->key = k; }
+            out.push_back({k, p});
+        }
+        return out;
+    }
     void* CoreWindowHandle() override { return cb.coreWindow ? cb.coreWindow(cb.user) : nullptr; }
     void PumpEvents() override { if (cb.pump) cb.pump(cb.user, false); }
-    int PadCount() override {
-        const int n = cb.padCount ? cb.padCount(cb.user) : 0;
-        if ((int)pads.size() != n) { pads.clear(); for (int i = 0; i < n; ++i) { auto p = std::make_unique<BridgePad>(); p->cb = &cb; p->index = i; pads.push_back(std::move(p)); } }
-        return n;
-    }
-    xb::PadDevice* Pad(int i) override { return i >= 0 && i < (int)pads.size() ? pads[(std::size_t)i].get() : nullptr; }
+    int PadCount() override { return cb.padCount ? cb.padCount(cb.user) : 0; }
+    xb::PadDevice* Pad(int) override { return nullptr; }   // pads reach the backend through its hub (AppGlue::SyncPads), not by index
     xb::AudioHost* Audio() override {
         if (!audio && cb.audioDeviceId) {
             wchar_t id[512] = {0};
@@ -61,6 +73,14 @@ struct BridgeHost : xb::UwpHost {
         return audio.get();
     }
 };
+bool BridgePad::Read(xb::PadReading& o) {
+    PadReadingPod p; const int i = host->IndexOf(key);
+    if (i < 0 || !host->cb.padRead || !host->cb.padRead(host->cb.user, i, &p)) return false;
+    o.buttons = p.buttons; o.leftTrigger = p.leftTrigger; o.rightTrigger = p.rightTrigger;
+    o.leftX = p.leftX; o.leftY = p.leftY; o.rightX = p.rightX; o.rightY = p.rightY;
+    return true;
+}
+void BridgePad::SendVibration(const xb::Vibration& v) { const int i = host->IndexOf(key); if (i >= 0 && host->cb.padVibrate) host->cb.padVibrate(host->cb.user, i, v.leftMotor, v.rightMotor, v.leftTrigger, v.rightTrigger); }
 } // namespace
 
 struct Engine {
@@ -68,6 +88,7 @@ struct Engine {
     xb::PathRoots roots;
     okay::Paths::Env env;
     std::unique_ptr<xb::UwpBackend> backend;
+    std::unique_ptr<xb::AppGlue> glue;   // XboxAppGlue.hpp: every decision about the events below
     okay::D3D11Renderer renderer;
     xb::SwapChainPresenter presenter;
     xb::XboxGameRuntime runtime;
@@ -97,6 +118,8 @@ Engine* Create(const ShellCallbacks& cb, const std::string& installDir, const st
         e->backend->Log("OkaySpace Xbox app (EXPERIMENTAL, UNVERIFIED) starting. Install folder: " + e->roots.install + "  Local folder: " + e->roots.local);
         e->backend->Log(e->log.IsOpen() ? "Log file: " + e->log.Path() : "No log file (" + (lp.ok ? e->log.Error() : lp.error) + ")");
     }
+    e->glue.reset(new xb::AppGlue(e->backend.get()));
+    e->backend->EnableHub();
     xb::InstallBackend(e->backend.get());
     e->backend->Init(okay::platform::InitFlags());
     return e.release();
@@ -106,28 +129,30 @@ void Log(Engine* e, const std::string& line) { if (e) e->backend->Log(line); }
 
 void Destroy(Engine* e) { if (!e) return; xb::InstallBackend(nullptr); okay::Paths::SetEnvOverride(nullptr); delete e; }
 
-void Resized(Engine* e, float w, float h, float dpi) { if (e) e->backend->Life().Resized(w, h, dpi); }
-void Visibility(Engine* e, bool v) { if (e) e->backend->Life().VisibilityChanged(v); }
-void Activated(Engine* e, bool a) { if (e) e->backend->Life().Activated(a); }
-void Closed(Engine* e) { if (e) e->backend->Life().WindowClosed(); }
-void BackRequested(Engine* e) { if (e) e->backend->Life().BackRequested(); }
+void Resized(Engine* e, float w, float h, float dpi) { if (e) e->glue->OnResized(w, h, dpi); }
+void Visibility(Engine* e, bool v) { if (e) e->glue->OnVisibility(v); }
+void Activated(Engine* e, bool a) { if (e) e->glue->OnActivated(a); }
+void Closed(Engine* e) { if (e) e->glue->OnClosed(); }
+void BackRequested(Engine* e) { if (e) e->glue->OnBackRequested(); }
 void Key(Engine* e, int vk, bool down, bool repeat) { if (e) e->backend->PushKey(vk, down, repeat); }
-void Text(Engine* e, const std::string& s) { if (e) e->backend->PushText(s); }
-void PointerMove(Engine* e, int x, int y) { if (e) e->backend->PushPointerMove(x, y); }
-void PointerButton(Engine* e, int b, bool down, int x, int y) { if (e) e->backend->PushPointerButton(b, down, x, y); }
-void Wheel(Engine* e, float n) { if (e) e->backend->PushWheel(n); }
+void Character(Engine* e, std::uint32_t unit) { if (e) e->glue->OnCharacter(unit); }
+void Pointer(Engine* e, const PointerPod& p) {
+    if (!e) return;
+    xb::PointerInput in; in.id = p.id; in.kind = (xb::PointerKind)p.kind; in.action = (xb::PointerAction)p.action; in.dipX = p.dipX; in.dipY = p.dipY;
+    in.left = p.left; in.middle = p.middle; in.right = p.right; in.wheelDelta = p.wheelDelta;
+    e->glue->OnPointer(in);
+}
 
 void Suspending(Engine* e, std::uint64_t deadlineMs) {
     if (!e) return;
-    e->backend->Life().Suspending(e->backend->TicksMs(), deadlineMs);
-    e->backend->ServiceLifecycle();   // runs onSuspend (the save) and marks the save done
+    e->glue->OnSuspending(deadlineMs);   // fingers end, the lifecycle starts, onSuspend (the save) runs and marks the save done
     e->presenter.Release();           // the swap chain goes with the trim; Resuming rebuilds it
     if (void* dev = e->renderer.DeviceForPresent()) {
         IDXGIDevice3* d = nullptr;
         if (SUCCEEDED(static_cast<::IUnknown*>(dev)->QueryInterface(__uuidof(IDXGIDevice3), reinterpret_cast<void**>(&d))) && d) { d->Trim(); d->Release(); }
     }
 }
-void Resuming(Engine* e) { if (e) e->backend->Life().Resuming(); }
+void Resuming(Engine* e) { if (e) e->glue->OnResuming(); }
 
 namespace {
 bool SceneHasUi(okay::Scene& sc) {
@@ -160,6 +185,7 @@ bool Run(Engine* e, std::string& err) {
     auto last = std::chrono::steady_clock::now();
     bool quit = false, lostReported = false;
     while (!quit) {
+        e->glue->SyncPads(e->host.Listing());   // pads that came or went since the last frame (the hub keeps a lost pad's slot for its grace time)
         okay::platform::Event ev;
         while (e->backend->PollEvent(ev)) {
             if (ev.type == okay::platform::EventType::Quit) quit = true;

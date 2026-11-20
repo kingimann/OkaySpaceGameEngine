@@ -9,6 +9,7 @@
 #include "engine_bridge.hpp"
 #include "package_dir.hpp"
 
+#include <winrt/Windows.Devices.Input.h>
 #include <winrt/Windows.Graphics.Display.h>
 #include <winrt/Windows.Media.Devices.h>
 #include <winrt/Windows.Storage.h>
@@ -47,6 +48,15 @@ struct GameApp : winrt::implements<GameApp, wac::IFrameworkViewSource, wac::IFra
             static_cast<GameApp*>(u)->m_window.Dispatcher().ProcessEvents(wait ? wui::CoreProcessEventsOption::ProcessOneAndAllPending : wui::CoreProcessEventsOption::ProcessAllIfPresent);
         };
         cb.padCount = [](void*) -> int { return static_cast<int>(wgi::Gamepad::Gamepads().Size()); };
+        cb.padKey = [](void*, int i, wchar_t* buf, int cap) -> int {
+            auto pads = wgi::Gamepad::Gamepads();
+            if (i < 0 || static_cast<uint32_t>(i) >= pads.Size()) return 0;
+            const winrt::hstring id = pads.GetAt(static_cast<uint32_t>(i)).NonRoamableId();
+            const int n = static_cast<int>(id.size());
+            if (n <= 0 || n >= cap) return 0;
+            std::memcpy(buf, id.c_str(), static_cast<std::size_t>(n) * sizeof(wchar_t)); buf[n] = L'\0';
+            return n;
+        };
         cb.padRead = [](void*, int i, bridge::PadReadingPod* o) -> bool {
             auto pads = wgi::Gamepad::Gamepads();
             if (i < 0 || static_cast<uint32_t>(i) >= pads.Size()) return false;
@@ -84,15 +94,24 @@ struct GameApp : winrt::implements<GameApp, wac::IFrameworkViewSource, wac::IFra
         w.Closed([this](auto&&, auto&&) { bridge::Closed(m_engine); });
         w.KeyDown([this](auto&&, wui::KeyEventArgs const& a) { bridge::Key(m_engine, static_cast<int>(a.VirtualKey()), true, a.KeyStatus().WasKeyDown); });
         w.KeyUp([this](auto&&, wui::KeyEventArgs const& a) { bridge::Key(m_engine, static_cast<int>(a.VirtualKey()), false, false); });
-        w.CharacterReceived([this](auto&&, wui::CharacterReceivedEventArgs const& a) {
-            const std::uint32_t c = a.KeyCode(); wchar_t wc[2] = {static_cast<wchar_t>(c), 0};
-            if (c >= 32 && c < 0xD800) bridge::Text(m_engine, winrt::to_string(winrt::hstring(wc)));
-        });
-        auto scale = [](float v) { return static_cast<int>(v * wgd::DisplayInformation::GetForCurrentView().LogicalDpi() / 96.0f + 0.5f); };
-        w.PointerMoved([this, scale](auto&&, wui::PointerEventArgs const& a) { auto p = a.CurrentPoint().Position(); bridge::PointerMove(m_engine, scale(p.X), scale(p.Y)); });
-        w.PointerPressed([this, scale](auto&&, wui::PointerEventArgs const& a) { auto p = a.CurrentPoint().Position(); bridge::PointerButton(m_engine, 1, true, scale(p.X), scale(p.Y)); });
-        w.PointerReleased([this, scale](auto&&, wui::PointerEventArgs const& a) { auto p = a.CurrentPoint().Position(); bridge::PointerButton(m_engine, 1, false, scale(p.X), scale(p.Y)); });
-        w.PointerWheelChanged([this](auto&&, wui::PointerEventArgs const& a) { bridge::Wheel(m_engine, a.CurrentPoint().Properties().MouseWheelDelta() / 120.0f); });
+        w.CharacterReceived([this](auto&&, wui::CharacterReceivedEventArgs const& a) { bridge::Character(m_engine, a.KeyCode()); });
+        // Pointer events: mouse, touch and pen all go through bridge::Pointer; XboxAppGlue.hpp decides what each one means.
+        auto pointer = [this](wui::PointerEventArgs const& a, int action) {
+            auto pt = a.CurrentPoint(); auto pos = pt.Position(); auto props = pt.Properties();
+            bridge::PointerPod p;
+            p.id = static_cast<long long>(pt.PointerId());
+            const auto dev = pt.PointerDevice().PointerDeviceType();
+            p.kind = dev == winrt::Windows::Devices::Input::PointerDeviceType::Touch ? 1 : dev == winrt::Windows::Devices::Input::PointerDeviceType::Pen ? 2 : 0;
+            p.action = action; p.dipX = pos.X; p.dipY = pos.Y;
+            p.left = props.IsLeftButtonPressed(); p.middle = props.IsMiddleButtonPressed(); p.right = props.IsRightButtonPressed();
+            p.wheelDelta = action == 4 ? props.MouseWheelDelta() : 0;
+            bridge::Pointer(m_engine, p);
+        };
+        w.PointerMoved([this, pointer](auto&&, wui::PointerEventArgs const& a) { pointer(a, 1); });
+        w.PointerPressed([this, pointer](auto&&, wui::PointerEventArgs const& a) { pointer(a, 0); });
+        w.PointerReleased([this, pointer](auto&&, wui::PointerEventArgs const& a) { pointer(a, 2); });
+        w.PointerCaptureLost([this, pointer](auto&&, wui::PointerEventArgs const& a) { pointer(a, 3); });
+        w.PointerWheelChanged([this, pointer](auto&&, wui::PointerEventArgs const& a) { pointer(a, 4); });
         // B on the pad: the system's back request. Handled here (so the system does not close the app abruptly); the loop leaves cleanly.
         wui::SystemNavigationManager::GetForCurrentView().BackRequested([this](auto&&, wui::BackRequestedEventArgs const& a) { a.Handled(true); bridge::BackRequested(m_engine); });
     }

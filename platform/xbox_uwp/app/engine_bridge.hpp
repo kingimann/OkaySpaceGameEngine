@@ -1,7 +1,7 @@
 // The boundary between the C++/WinRT shell (compiled as C++20) and the engine (compiled as C++17): plain C++ only, no Windows, WinRT or engine
 // header crosses it, so the two can use different language standards (the engine headers use u8string(), which changed in C++20; C++/WinRT wants
 // C++20 coroutines). The shell fills ShellCallbacks and forwards CoreWindow events; engine_bridge.cpp (engine side) runs the game loop.
-// EXPERIMENTAL, UNCOMPILED, UNVERIFIED.
+// EXPERIMENTAL, UNCOMPILED, UNVERIFIED. 2026-11-20: pointers, characters, pads and life-cycle events now go through XboxAppGlue.hpp (Linux-tested); this forwarding edit was never through a Windows compiler.
 #pragma once
 #include <cstdint>
 #include <string>
@@ -11,6 +11,10 @@ namespace okay_xbox_bridge {
 struct PadReadingPod { std::uint32_t buttons = 0; double leftTrigger = 0, rightTrigger = 0, leftX = 0, leftY = 0, rightX = 0, rightY = 0; };
 
 /// What the engine side asks of the shell (Windows.Gaming.Input, the dispatcher, the audio device id). All called on the UI thread.
+/// One CoreWindow pointer event, copied out of PointerEventArgs. kind: 0 mouse, 1 touch, 2 pen. action: 0 pressed, 1 moved, 2 released, 3 canceled, 4 wheel.
+/// Position in DIPs; left / middle / right = the buttons held now; wheelDelta = MouseWheelDelta (120 per notch). The decisions are in XboxAppGlue.hpp.
+struct PointerPod { long long id = 0; int kind = 0, action = 1; float dipX = 0, dipY = 0; bool left = false, middle = false, right = false; int wheelDelta = 0; };
+
 struct ShellCallbacks {
     void* user = nullptr;
     void* (*coreWindow)(void* user) = nullptr;                          // the CoreWindow as an ::IUnknown*
@@ -18,6 +22,7 @@ struct ShellCallbacks {
     int (*padCount)(void* user) = nullptr;
     bool (*padRead)(void* user, int index, PadReadingPod* out) = nullptr;
     void (*padVibrate)(void* user, int index, double left, double right, double leftTrigger, double rightTrigger) = nullptr;
+    int (*padKey)(void* user, int index, wchar_t* buffer, int capacity) = nullptr;   // writes Gamepad.NonRoamableId of pad `index`, returns its length (0 = none)
     int (*audioDeviceId)(void* user, wchar_t* buffer, int capacity) = nullptr;   // writes the default render device id, returns its length (0 = none)
 };
 
@@ -36,10 +41,8 @@ void Activated(Engine* e, bool active);
 void Closed(Engine* e);
 void BackRequested(Engine* e);
 void Key(Engine* e, int virtualKey, bool down, bool repeat);
-void Text(Engine* e, const std::string& utf8);
-void PointerMove(Engine* e, int x, int y);
-void PointerButton(Engine* e, int button, bool down, int x, int y);
-void Wheel(Engine* e, float notches);
+void Character(Engine* e, std::uint32_t utf16Unit);   // CharacterReceived: one UTF-16 code unit
+void Pointer(Engine* e, const PointerPod& p);          // pressed / moved / released / canceled / wheel, mouse or touch or pen
 /// Suspend: saves (runs the game's hook), trims the GPU. Synchronous; the shell completes its deferral right after. Resume re-checks the device.
 void Suspending(Engine* e, std::uint64_t deadlineMs);
 void Resuming(Engine* e);

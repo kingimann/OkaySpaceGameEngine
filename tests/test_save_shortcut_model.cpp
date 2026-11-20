@@ -22,6 +22,11 @@ int main() {
     { State s; s.playing = true; CHECK(Decide(s, CtrlS()).act == Act::StopPlayFirst); }
     { Keys k = CtrlS(); k.shift = true; CHECK(Decide(State{}, k).act == Act::SaveAs); }
     { Keys k = CtrlS(); k.alt = true; State s; s.playing = true; CHECK(Decide(s, k).act == Act::SaveAll); }
+    { State s; CHECK(Decide(s, CtrlS()).act == Act::SaveScene); }                          // clean scene is still rewritten
+    { State s; s.focus = Context::Other; s.otherDirty = true; CHECK(Decide(s, CtrlS()).act == Act::SaveAll); }
+    { State s; s.focus = Context::Prefab; s.prefabDirty = true; CHECK(Decide(s, CtrlS()).act == Act::SavePrefab); }
+    { Keys k = CtrlS(); k.shift = true; State s; s.focus = Context::ScriptText; s.focusHasDoc = true; CHECK(Decide(s, k).act == Act::SaveAs); }   // scene Save As, documented
+    { State s; s.playing = true; CHECK(Decide(s, CtrlS()).message.find("Stop Play") == 0); }
     CHECK(Saved(FileName("a/b\\Level1.okayscene")) == "Saved Level1.okayscene");
     CHECK(Failed("read-only folder") == "Could not save: read-only folder");
     TEST_MAIN_RESULT();

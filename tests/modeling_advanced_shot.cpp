@@ -9,13 +9,14 @@
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
 #include <SDL.h>
+#include "okay/Platform/BmpWriter.hpp"
 #include <string>
 namespace mt = oked::modeltools;
 
 static void Save(SDL_Renderer* r, int w, int h, const std::string& path) {
     SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
     SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch);
-    SDL_SaveBMP(s, path.c_str()); SDL_FreeSurface(s);
+    okay::platform::WriteBmp32(path.c_str(), s->pixels, w, h, s->pitch); SDL_FreeSurface(s);
 }
 static void Draw(int page, const std::string& query, const std::string& hint, bool folded = false) {
     mt::SidebarState sb; sb.folded = folded;

@@ -11,6 +11,7 @@
 //
 // Written for this repository (the drawing of menus is Dear ImGui's own public API; no other project's code).
 #include <SDL.h>
+#include "okay/Platform/BmpWriter.hpp"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include "imgui_impl_sdlrenderer2.h"
@@ -73,7 +74,7 @@ static void Capture(const std::string& file, const std::string& caption, const s
         if (f >= 6 && found && ++hold > 4) break;
     }
     const std::string bmp = g_outDir + "/" + file + ".bmp";
-    SDL_SaveBMP(g_surface, bmp.c_str());
+    okay::platform::WriteBmp32(bmp.c_str(), g_surface->pixels, g_surface->w, g_surface->h, g_surface->pitch);
     std::printf("wrote %s\n", bmp.c_str());
 }
 

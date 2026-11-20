@@ -651,7 +651,12 @@ public:
             break;
         }
         case WM_SETFOCUS: e.type = EventType::WindowFocusGained; b->m_pending.push_back(e); return 0;
-        case WM_KILLFOCUS: e.type = EventType::WindowFocusLost; b->m_pending.push_back(e); return 0;
+        case WM_KILLFOCUS:
+            for (const win32ime::Editing& ed : win->m_ime.FocusLost()) {
+                Event t = e; t.type = EventType::TextEditing; t.text = ed.text; t.x = ed.cursor;
+                b->m_pending.push_back(t);
+            }
+            e.type = EventType::WindowFocusLost; b->m_pending.push_back(e); return 0;
         case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h, &ps); EndPaint(h, &ps); e.type = EventType::WindowExposed; b->m_pending.push_back(e); return 0; }
         case WM_KEYDOWN: case WM_SYSKEYDOWN: case WM_KEYUP: case WM_SYSKEYUP: {
             e.type = (m == WM_KEYDOWN || m == WM_SYSKEYDOWN) ? EventType::KeyDown : EventType::KeyUp;

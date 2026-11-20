@@ -86,5 +86,15 @@ InvResult ToGrid(Inventory* src, int si, GridInventory* dst, int x, int y, bool 
 /// when that slot is empty or holds the same item (merges up to the stack size). Never swaps.
 InvResult FromGrid(GridInventory* src, int index, Inventory* dst, int di, int amount = 0, int dstSlots = 0);
 
+/// Wear slot `i` down by `amount` (finite, >= 0). Only a single item that tracks durability
+/// (data.durability >= 0) wears. When it reaches 0 the item breaks and the slot is emptied.
+/// Returns Done(1) when it broke, Done(0) when it only lost durability. Rejected, nothing changed,
+/// for a bad slot, an empty slot, a stack of more than one, an untracked item, or a bad amount.
+InvResult Wear(Inventory* inv, int i, float amount);
+/// Repair slot `i` by `amount` (finite, > 0), up to the item definition's custom field
+/// "maxDurability". Done(1) when it changed, Partial(1) when the cap cut the repair short.
+/// Rejected for the same reasons as Wear, a definition with no maxDurability, or an item already full.
+InvResult Repair(Inventory* inv, int i, float amount);
+
 } // namespace InventoryOps
 } // namespace okay

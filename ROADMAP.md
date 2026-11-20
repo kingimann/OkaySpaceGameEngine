@@ -10,6 +10,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.894.0 | Vehicles: open-world driving model (gears, drift, ABS, traction control, RWD/FWD/AWD), 9 presets, about 85 settings, keyboard and gamepad, Driving World template; Visual Script: drag the empty background to pan; Ctrl+S saves the focused thing or everything that changed, with a status message; Modeling side bar follows the UI scale |
 | 2.893.0 | Camera: virtual-camera rigs (follow, orbit, look-at, groups), collision and see-through, blends, shake, hit flash, 2D rooms, camera script functions, example scenes (look-at cameras now really face their target; the brain lets a playing cutscene take over); In-game UI quality setting (Fast, Good, Best, Old look): exact edges, kerned and pixel-aligned text, smooth shadows, filtered pictures |
 | 2.892.0 | Physics: Physics Material assets (Ice, Rubber, Wood and more), surface types, physics toys (conveyor, force field, gravity zone, turntable, moving platform, explosion, breakable) and steadier stacking; Lighting: stable cascade shadows, soft edges, presets, panel lights, real-world units, light probes (GPU paths unrun); Water: waves, depth colour, foam and boat wake for realistic water |
 | 2.891.0 | Wind (WindZone, drag, sway, ambience, particles feel it); Build Settings window rebuilt (search, profiles, summary with fixes, many settings the game honours); OkayUI launcher code (not shipped yet); project upgrade fixes (launcher cards refresh after an upgrade, Project Upgrade window picks the right project, safer save) |

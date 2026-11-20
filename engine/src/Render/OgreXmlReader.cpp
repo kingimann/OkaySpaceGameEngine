@@ -360,6 +360,18 @@ bool ReadAssignments(const detail::xml::FlatDoc& d, int ba, std::int64_t count, 
     return true;
 }
 
+// The binary form's assignments (vertex u32, bone u16, weight f32 per record) as read, checked against the skeleton here
+struct RawAsg { std::uint32_t v; std::uint16_t bone; float w; };
+bool FilterAssignments(const std::vector<RawAsg>& raw, std::int64_t count, Skin& skin, std::vector<Asg>& out) {
+    for (const RawAsg& r : raw) {
+        const auto it = skin.sk->byId.find((long)r.bone);
+        if ((std::int64_t)r.v >= count || it == skin.sk->byId.end() || !(r.w > 0)) { ++skin.bad; continue; }
+        out.push_back(Asg{r.v, it->second, r.w});
+    }
+    std::stable_sort(out.begin(), out.end(), [](const Asg& a, const Asg& b) { return a.v < b.v; });
+    return true;
+}
+
 // Skin `part` (made from soup positions `src`, soup position -> geometry vertex `orig`) from the assignments `asg`.
 void SkinPart(Skin& skin, ImportedPart& part, const std::vector<std::uint32_t>& src, const std::vector<std::uint32_t>& orig, const std::vector<Asg>& asg) {
     const Skel& sk = *skin.sk;
@@ -681,6 +693,7 @@ struct Sub {
     std::string material;
     bool shared = false, ownGeom = false, boneAssign = false;
     std::uint16_t op = 4;   // triangle list unless an operation chunk says otherwise
+    std::vector<RawAsg> asg;   // 0x4100 bone assignments
     std::vector<std::uint32_t> idx;
     Geom geom;
 };
@@ -704,7 +717,13 @@ bool ReadSubmesh(Reader& R, Sub& s, Build& b) {
     }
     while (R.Peek(id, len)) {
         if (id == kSubOp) { R.Header(); s.op = R.r.U16(); }
-        else if (id == kSubBone) { R.Header(); R.r.Skip(10); s.boneAssign = true; }   // vertex (32), bone (16), weight (float)
+        else if (id == kSubBone) {   // vertex (32), bone (16), weight (float)
+            R.Header();
+            if (s.asg.size() >= kMaxAssign) return R.Bad("too many bone assignments");
+            RawAsg a; a.v = R.r.U32(); a.bone = R.r.U16(); a.w = R.r.F32();
+            if (R.r.bad) return R.Bad("a bone assignment is cut off");
+            s.asg.push_back(a); s.boneAssign = true;
+        }
         else if (id == kSubAlias) { R.Header(); std::string a, t; if (!R.Line(a) || !R.Line(t)) return false; }
         else break;
         if (R.r.bad) return R.Bad("a submesh chunk is cut off");
@@ -853,7 +872,8 @@ static bool ReadOgreImpl(std::string text, const std::string& baseDir, ImportedM
     return true;
 }
 
-static bool ReadOgreBinImpl(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* scripts) {
+static bool ReadOgreBinImpl(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* scripts,
+                            const std::string* skeletonXml = nullptr, bool findSkeleton = false) {
     using namespace ogre;
     if (bytes.size() > kMaxFileBytes) return Fail(err, "the file is larger than " + std::to_string(kMaxFileBytes >> 20) + " MB");
     if (bytes.size() >= 2 && (unsigned char)bytes[0] == 0x10 && (unsigned char)bytes[1] == 0x00) return Fail(err, "a big-endian binary mesh (not read)");
@@ -873,6 +893,7 @@ static bool ReadOgreBinImpl(const std::string& bytes, const std::string& baseDir
     if (scripts) for (const std::string& s : *scripts) ParseScript(s, b.mats);
     Geom shared;
     bool haveShared = false, meshBone = false, poses = false, lod = false, cutShort = false;
+    std::vector<RawAsg> sharedRaw;
     std::string skeleton;
     bool haveSkeleton = false;
     std::vector<bm::Sub> subs;
@@ -892,7 +913,11 @@ static bool ReadOgreBinImpl(const std::string& bytes, const std::string& baseDir
             if (!R.Line(skeleton)) return Fail(err, R.err);
             haveSkeleton = true;
         } else if (id == bm::kMeshBone) {
-            R.Header(); R.r.Skip(10); meshBone = true;
+            R.Header();
+            if (sharedRaw.size() >= kMaxAssign) return Fail(err, "too many bone assignments");
+            RawAsg a; a.v = R.r.U32(); a.bone = R.r.U16(); a.w = R.r.F32();
+            if (R.r.bad) return Fail(err, "a bone assignment is cut off");
+            sharedRaw.push_back(a); meshBone = true;
         } else if (id == bm::kBounds) {
             R.Header(); R.r.Skip(28);   // box and radius: worked out from the vertices instead
         } else if (id == bm::kNameTable) {
@@ -918,6 +943,24 @@ static bool ReadOgreBinImpl(const std::string& bytes, const std::string& baseDir
     ImportedNode root;
     root.name = "OGRE";
     out.nodes.push_back(root);
+    // the skeleton the mesh links to: given, or (file reads) the .skeleton.xml next to the mesh
+    Skel skelObj;
+    Skin skin;
+    {
+        std::string skText;
+        const std::string* skSrc = skeletonXml;
+        if (!skSrc && findSkeleton && haveSkeleton) {
+            std::string path, e2;
+            if (detail::ResolveInsideDir(baseDir, skeleton + ".xml", path, e2) && detail::txt::ReadFileCapped(path, kMaxFileBytes, skText, &e2)) skSrc = &skText;
+        }
+        std::string why2;
+        if (skSrc) {
+            if (ParseSkeleton(*skSrc, skelObj, &why2)) { skin.sk = &skelObj; AddSkeletonToModel(skelObj, out); }
+            else out.notes.push_back("OGRE: the skeleton could not be read (" + why2 + "): the mesh is imported rigid");
+        }
+    }
+    std::vector<Asg> sharedAsg;
+    bool sharedAsgRead = false;
     for (std::size_t i = 0; i < subs.size(); ++i) {
         bm::Sub& s = subs[i];
         const int myIdx = (int)i;
@@ -930,12 +973,28 @@ static bool ReadOgreBinImpl(const std::string& bytes, const std::string& baseDir
         std::vector<std::uint32_t> faceIdx;
         if (s.op == 4) { faceIdx = std::move(s.idx); faceIdx.resize(faceIdx.size() / 3 * 3); }
         else ExpandSequence(s.idx, s.op == 5, faceIdx);
-        if (!AddSubmesh(b, *g, faceIdx, myIdx, s.material, s.boneAssign, err)) return false;
+        std::vector<Asg> ownAsg;
+        const std::vector<Asg>* asgUse = nullptr;
+        if (skin.sk) {
+            if (s.shared) {
+                if (!sharedAsgRead) { sharedAsgRead = true; FilterAssignments(sharedRaw, shared.count, skin, sharedAsg); }
+                asgUse = &sharedAsg;
+            } else {
+                FilterAssignments(s.asg, g->count, skin, ownAsg);
+                asgUse = &ownAsg;
+            }
+        }
+        if (!AddSubmesh(b, *g, faceIdx, myIdx, s.material, s.boneAssign, err, skin.sk ? &skin : nullptr, asgUse)) return false;
         s.geom = Geom{};   // freed as soon as its part is built
     }
     if (out.parts.empty()) return Fail(err, "no submesh has both vertices and triangles");
     out.backend = "own";
-    AddNotes(b, haveSkeleton ? &skeleton : nullptr, meshBone, poses, lod, !scripts || scripts->empty());
+    AddNotes(b, haveSkeleton ? &skeleton : nullptr, meshBone, poses, lod, !scripts || scripts->empty(), skin.sk != nullptr);
+    if (skin.sk) {
+        if (skin.bad) out.notes.push_back("OGRE: " + std::to_string(skin.bad) + " bone assignment(s) skipped (a vertex or bone that does not exist, or a weight that is not positive)");
+        if (skin.dropped) out.notes.push_back("OGRE: " + std::to_string(skin.dropped) + " vertex(es) had more than 4 bone weights; the 4 strongest were kept");
+        if (skin.singular) out.notes.push_back("OGRE: " + std::to_string(skin.singular) + " bone(s) with a flat scale have no inverse bind pose (the identity is used)");
+    }
     if (cutShort) out.notes.push_back("OGRE: a chunk after the submeshes has a length past the end of the file: the rest of the file was not read");
     if (version != "[MeshSerializer_v1.8]" && version != "[MeshSerializer_v1.10]" && version != "[MeshSerializer_v1.100]")
         out.notes.push_back("OGRE: binary mesh version '" + version.substr(0, 40) + "' was not checked against a real file (1.8 was)");
@@ -976,9 +1035,10 @@ bool ReadOgreXmlFile(const std::string& path, ImportedModel& out, std::string* e
     return ok;
 }
 
-bool ReadOgreBinaryBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* materialScripts) {
+bool ReadOgreBinaryBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* materialScripts,
+                          const std::string* skeletonXml) {
     out = ImportedModel{};
-    const bool ok = ReadOgreBinImpl(bytes, baseDir, out, err, materialScripts);
+    const bool ok = ReadOgreBinImpl(bytes, baseDir, out, err, materialScripts, skeletonXml);
     if (!ok) out = ImportedModel{};
     return ok;
 }
@@ -989,7 +1049,7 @@ bool ReadOgreBinaryFile(const std::string& path, ImportedModel& out, std::string
     if (!detail::txt::ReadFileCapped(path, ogre::kMaxFileBytes, bytes, err)) return false;
     std::string dir;
     std::vector<std::string> scripts = ogre::ScriptsNextTo(path, 5, dir);   // ".mesh"
-    const bool ok = ReadOgreBinImpl(bytes, dir, out, err, &scripts);
+    const bool ok = ReadOgreBinImpl(bytes, dir, out, err, &scripts, nullptr, true);
     if (!ok) out = ImportedModel{};
     return ok;
 }

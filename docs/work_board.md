@@ -3,7 +3,7 @@
 **Live version (rewritten every 10 minutes from GitHub, open PRs and CI state, branches, the #422 thread):** [WORK_BOARD.md on the work-board branch](https://github.com/kingimann/OkaySpaceGameEngine/blob/work-board/WORK_BOARD.md) (written by `scripts/work_board.py` and the workflow `.github/workflows/work-board.yml`). This page is the hand-written part: agents, owner decisions.
 
 A snapshot of what the main session and its agents are doing. It does not update by itself: the main session rewrites
-it as work moves. Snapshot time: **2026-11-19, about 20:40 UTC**. Anything here can be out of date by the time you read
+it as work moves. Snapshot time: **2026-11-20, about 02:40 UTC**. Anything here can be out of date by the time you read
 it; the pull request list is the source of truth.
 
 Rules that govern it (`CLAUDE.md`): always be working on something real (rule 2); a PR merges only when every CI job is
@@ -24,40 +24,39 @@ is the default until the owner approves it (rule 17). Rule 24c (PR #1035) record
 
 | Version | What | Checked |
 |---|---|---|
-| 2.889.0 | Settings > Experimental switches, texture tools, Xbox export fixes, own platform layer event loops | tag, 10 assets, checksums, Supabase |
-| 2.890.0 | Boat and water, Visual Script blocks that explain themselves, Xbox editor freeze fix | same |
+| 2.890.0 | Boat and water, Visual Script blocks that explain themselves, Xbox editor freeze fix | tag, 10 assets, checksums, Supabase |
 | 2.891.0 | Wind, Build Settings rebuilt, launcher and Project Upgrade fixes | same |
-| 2.892.0 | Physics materials and toys, lighting, realistic water | version bump is PR #1036; dispatch `release.yml` once after it merges, then verify |
+| 2.892.0 | Physics materials and toys, lighting, realistic water | same |
+| 2.893.0 | Cameras (virtual-camera rigs, collision, blends, shake, 2D rooms), in-game UI quality setting | version bump is PR #1038; dispatch `release.yml` once after it merges, then verify |
 
 ## Open pull requests (merge only when every job is green)
 
 | PR | What | Next |
 |---|---|---|
-| #1036 | Release 2.892.0 version bump | Merge when green, dispatch the release once, verify |
-| #1023 | Camera: rigs, collision, blends, shake, 2D rooms | Ubuntu job re-run after a flaky-test race (see #1034) |
-| #1031 | Vehicles: open-world driving model, 9 presets, gamepad, Driving World | MinGW fix pushed (`far` is a Windows macro); waiting for CI |
-| #1032 | In-game UI quality setting (sharper edges, text, shadows, pictures) | Waiting for CI |
-| #1033 | Remove editor runtime files committed by mistake | Waiting for CI |
-| #1034 | Fix a flaky anti-cheat integrity test (shared temp folder) | Waiting for CI |
-| #1035 | CLAUDE.md rule 24c: C# through .NET, Lua by us | Docs-only checks |
+| #1038 | Release 2.893.0 version bump | Merge when green, dispatch the release once, verify |
+| #1031 | Vehicles: open-world driving model, presets, gamepad, Driving World | Real failure: `templates_work` Driving World save-reload-save differs (wheelBase/trackWidth); agent fixing |
+| #1039 | Visual Script: drag the empty background to pan | Waiting for CI; never seen in a window |
+| #1040 | Ctrl+S saves the focused thing or everything that changed, with a message | Waiting for CI; never seen in a window |
+| #1041 | Modeling side bar follows the UI scale, clearer empty and greyed states | Waiting for CI; never seen in a window |
 
 ## Finished branches waiting for a PR (all pushed)
 
 | Branch | What | Note |
 |---|---|---|
-| `claude/camera-3` | Camera zones and six presets | After #1023 |
-| `claude/core-perf-1`, `claude/core-assets-1`, `claude/core-jobs-1` | Work-stealing jobs, allocators, trace capture; asset budget; jobs in the Profiler, parallel hashing and LOD (unbuilt) | Open as one PR so one CI run decides all |
-| `claude/particles-2`, `-3` | Particle rewrite, presets, true additive glow, 2D collision, start curves | Merge main first (wind is in) |
-| `claude/time-1`, `claude/ecs-1` | Time upgrade (exact clock, day-night, Time settings); safe handles, run order, Scene Stats | Both touch Scene.hpp/.cpp; delete their new guide pages (rule 5) |
+| `claude/add-component-menu-2` | Add Component menu: 10 categories, rules-based, search with plain words, suggestions, recent and favourites | Editor not run |
+| `claude/camera-3` | Camera zones and six presets | Mergeable now that #1023 is in |
+| `claude/colliders-1` | Real collider shapes (cylinder, cone, hull, compound, plane, heightfield, 2D composite) and fixes for rotated capsules and solid 2D polygons | Editor not run |
+| `claude/vs-easy-1` | Visual Script for beginners: explain this graph, "Why isn't it working?", goal cards | Editor not run |
+| `claude/core-perf-1`, `claude/core-assets-1`, `claude/core-jobs-1` | Work-stealing jobs, allocators, trace capture; asset budget; jobs in the Profiler, parallel hashing and LOD | One PR; core-jobs-1 never built |
+| `claude/particles-2`, `-3` | Particle rewrite, presets, true additive glow, 2D collision, start curves | Merge main first |
+| `claude/time-1`, `claude/ecs-1` | Time upgrade; safe handles, run order, Scene Stats | Both touch Scene.hpp/.cpp; delete their new guide pages (rule 5) |
 | `claude/project-upgrade-save-2` | Safer Save As, recovery restore, newer-scene warning | |
-| `claude/ui-designer-1` to `-5` | UI designer: model, rulers, guides, layers, styles, constraints, find and replace | Built on each other; editor never run |
-| `claude/inspector-collapse-1` | Component folds stay as you left them, saved across restarts | Editor not run |
-| `claude/script-profiler-1` | Per-script profiling table (any language) | Unbuilt |
-| `claude/scripting-migration-1`, `claude/csharp-host-1` | Our own Lua 5.4, migration plan; hosted C# (off by default) | Lua first; C# builds on it; unbuilt |
-| `claude/vs-easy-1` | Visual Script for beginners: start cards, explain this graph, checklist | In progress |
-| `claude/colliders-1` | Real collider shapes (sphere, capsule, hull, mesh and more) | In progress |
-| `claude/okay-build-2`, `claude/own-third-party-1`, `claude/own-platform-6` | Build tool (generated sources, configure_file, MD5), OGRE skeleton reader, no-SDL launcher and editor | Replacements stay off by default |
-| `claude/okayms-3-r23b` | Our own MSVC-style compiler (compile-only: Wine broke in the container) | Do not merge until the full tests run under Wine |
+| `claude/ui-designer-1` to `-5` | UI designer: rulers, guides, layers, styles, constraints, find and replace | Built on each other; one PR; editor never run |
+| `claude/inspector-collapse-1` | Component folds stay as you left them | Editor not run |
+| `claude/script-profiler-1` | Per-script profiling table | Unbuilt |
+| `claude/scripting-migration-1`, `claude/csharp-host-1` | Our own Lua 5.4 and migration plan; hosted C# (off by default, rule 24c) | Lua first; C# builds on it; never run with a real .NET |
+| `claude/okay-build-2`, `claude/own-third-party-1`, `claude/own-platform-6` | Build tool, OGRE skeleton reader, no-SDL launcher and editor | Replacements stay off by default |
+| `claude/okayms-3-r23b` | Our own MSVC-style compiler (compile-only: Wine broke) | Do not merge until the full tests run under Wine |
 
 ## Own replacements: how far
 
@@ -76,7 +75,7 @@ All are off by default. These are estimates, not measurements, except where a co
 ## Waiting on the owner
 
 - Branch protection: the required-checks list for `main` is empty, so GitHub still allows red merges.
-- Windows tests: update to the latest release (2.891.0, then 2.892.0); the Xbox triangle and engine-mode build from the
+- Windows tests: update to the latest release (2.892.0, soon 2.893.0); the Xbox triangle and engine-mode build from the
   `claude/xbox-uwp-3` zip.
 - Whether the OkayUI programs should ship in the release zip.
 - A Windows machine with the .NET SDK to try C# (nothing C# has run).

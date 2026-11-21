@@ -590,6 +590,7 @@ FlacStream::FlacStream() = default;
 FlacStream::~FlacStream() = default;
 
 bool FlacStream::Open(std::shared_ptr<AudioByteSource> source, std::string* error) {
+    if (!source) { m.reset(); if (error) *error = "no audio data"; return false; }   // Engine binds *source in its constructor
     m.reset(new Impl(std::move(source)));
     if (!m->engine.Open(error)) { m.reset(); return false; }
     return true;

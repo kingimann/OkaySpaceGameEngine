@@ -231,7 +231,7 @@ int main() {
         CHECK(idx.ok && idx.schema == 1 && idx.error.empty() && !idx.fallback);
         CHECK(idx.latest == "2.856.0" && idx.lts == "2.850.1");
         CHECK(idx.versions.size() == 3 && idx.versions[0].version == "2.856.0" && idx.versions[1].version == "2.855.0" && idx.versions[2].version == "2.850.1");   // sorted, newest first
-        CHECK(idx.archive == kArchive && idx.bucketPath == "v{version}/{file}");
+        CHECK(idx.bucketPath == "v{version}/{file}");   // (the index's GitHub "archive" field is ignored: nothing is ever downloaded from GitHub)
         const Entry* e = idx.Find("v2.850.1");
         CHECK(e && e->channel == "lts" && e->inBucket && e->date == "2026-11-10" && e->files.size() == 3);
         CHECK(e && e->files.at("OkayEngine.exe").size == EditorOf("2.850.1").size() && e->files.at("OkayEngine.exe").sha256 == Sha(EditorOf("2.850.1")));
@@ -288,11 +288,7 @@ int main() {
         auto withTemplates = [&](const std::string& archive, const std::string& bucketPath) {
             return ParseIndex("{\"schema\": 1, \"archive\": \"" + archive + "\", \"bucketPath\": \"" + bucketPath + "\", \"versions\": []}");
         };
-        CHECK(withTemplates("http://evil.example/{file}", "v{version}/{file}").archive.empty());
-        CHECK(withTemplates("https://x.example/v{version}", "v{version}/{file}").archive.empty());                  // no {file}
-        CHECK(withTemplates("https://x.example/a b/{file}", "v{version}/{file}").archive.empty());
-        CHECK(withTemplates("https://x.example/{file}?x=\\\"", "v{version}/{file}").archive.empty());
-        CHECK(withTemplates("https://x.example/{file}", "v{version}/{file}").archive == "https://x.example/{file}");
+        CHECK(withTemplates("https://x.example/{file}", "v{version}/{file}").ok);   // an archive pattern is read past (and never used)
         for (const char* bp : {"../{file}", "v{version}/../../{file}", "/abs/{file}", "https://evil.example/{file}", "v{version}/nofile", "v{version}/{file} x"})
             CHECK(withTemplates("https://x.example/{file}", bp).bucketPath == "v{version}/{file}");                   // falls back to the default
         CHECK(withTemplates("https://x.example/{file}", "bucket/{version}/{file}").bucketPath == "bucket/{version}/{file}");
@@ -319,13 +315,12 @@ int main() {
         const std::string longText(100, '1');
         for (const char* bad : {"", "\n", "dev", "garbage", "2", "v2.856.0", "2.856.0-rc1", "2.856.0 extra", "<html>", "2..3", ".5", longText.c_str(), "1.2.x"})
             CHECK(ParseVersionTxt(bad).empty());
-        const Index f = FallbackIndex("2.856.0\n", "2.850.1\n", kArchive, true);
+        const Index f = FallbackIndex("2.856.0\n", "2.850.1\n", true);
         CHECK(f.ok && f.fallback && f.latest == "2.856.0" && f.lts == "2.850.1" && f.versions.size() == 2 && f.versions[0].version == "2.856.0");
-        CHECK(f.versions[0].files.empty() && f.versions[0].inBucket && f.versions[0].channel == "latest" && f.versions[1].channel == "lts" && f.archive == kArchive);
-        CHECK(FallbackIndex("2.856.0\n", "", "", true).versions.size() == 1 && FallbackIndex("2.856.0\n", "2.856.0", "", true).versions.size() == 1);
-        CHECK(!FallbackIndex("", "", kArchive, true).ok && !FallbackIndex("garbage", "<html>", kArchive, true).ok && !FallbackIndex("garbage", "", kArchive, true).error.empty());
-        CHECK(FallbackIndex("2.856.0", "", "http://evil.example/{file}", true).archive.empty());
-        CHECK(!FallbackIndex("2.856.0", "", kArchive, false).versions[0].inBucket);                 // no bucket to use
+        CHECK(f.versions[0].files.empty() && f.versions[0].inBucket && f.versions[0].channel == "latest" && f.versions[1].channel == "lts");
+        CHECK(FallbackIndex("2.856.0\n", "", true).versions.size() == 1 && FallbackIndex("2.856.0\n", "2.856.0", true).versions.size() == 1);
+        CHECK(!FallbackIndex("", "", true).ok && !FallbackIndex("garbage", "<html>", true).ok && !FallbackIndex("garbage", "", true).error.empty());
+        CHECK(!FallbackIndex("2.856.0", "", false).versions[0].inBucket);                 // no bucket to use
 
         // PickHighlight: what `--versions <ver>` selects.
         const Index idx = ParseIndex(IndexJson({EntryJson("2.856.0", "latest", true), EntryJson("2.850.1", "lts", true), EntryJson("2.850.0", "latest", false)}, "2.856.0", "2.850.1"));
@@ -343,8 +338,6 @@ int main() {
         FetchTextFn fetch = [&](const std::string& url, std::string& out) { asked.push_back(url); const auto it = web.find(url); if (it == web.end()) return false; out = it->second; return true; };
         Sources src;
         src.bucketBase = "https://example.test/storage/v1/object/public/releases";      // no trailing slash: added
-        src.archiveTemplate = kArchive;
-        src.versionTxtUrls = {"https://github.example/o/r/releases/latest/download/VERSION.txt"};
         const std::string B = "https://example.test/storage/v1/object/public/releases/";
 
         // A good index, in step with the text files: used as it is.
@@ -364,10 +357,8 @@ int main() {
         web.erase(B + "LTS.txt");
         idx = LoadIndex(src, fetch);
         CHECK(idx.ok && idx.latest == "2.856.0" && idx.lts == "2.850.1" && idx.versions.size() == 2);
-        // The index has no archive pattern: the launcher's own is used.
-        web[B + "versions.json"] = "{\"schema\": 1, \"latest\": \"2.856.0\", \"versions\": []}";
-        idx = LoadIndex(src, fetch);
-        CHECK(idx.ok && idx.archive == kArchive);
+        // Only the bucket is ever asked: never a GitHub address (owner decision 2026-11-20).
+        for (const std::string& u : asked) CHECK(u.rfind(B, 0) == 0 && !IsGitHubUrl(u));
         // No usable index: garbage, a newer schema, a 404 page, nothing at all.
         for (const char* bad : {"garbage", "{\"schema\": 2, \"versions\": []}", "<html>Not Found</html>", ""}) {
             web[B + "versions.json"] = bad;
@@ -379,21 +370,15 @@ int main() {
             CHECK(Has(idx.note, "can't be checked automatically") && Has(idx.note, "Only the newest"));
             if (std::string(bad) == "{\"schema\": 2, \"versions\": []}") CHECK(Has(idx.note, "format 2"));
         }
-        // GitHub has a newer VERSION.txt than the bucket (the updater takes the newest of the two): so does the fallback.
-        web[B + "VERSION.txt"] = "2.856.0\n";
-        web["https://github.example/o/r/releases/latest/download/VERSION.txt"] = "2.857.0\n";
-        idx = LoadIndex(src, fetch);
-        CHECK(idx.ok && idx.fallback && idx.latest == "2.857.0" && idx.Find("2.857.0")->inBucket);
-        // No bucket at all (no account server): GitHub only; the entries are not in a bucket.
+        // No bucket at all (no update server built in): a clear error, nothing fetched from anywhere (never a silent "nothing to install").
         Sources noBucket = src;
         noBucket.bucketBase.clear();
         asked.clear();
         idx = LoadIndex(noBucket, fetch);
-        CHECK(idx.ok && idx.fallback && idx.latest == "2.857.0" && !idx.versions[0].inBucket && idx.lts.empty() && asked.size() == 1 && Has(idx.note, "not available"));
+        CHECK(!idx.ok && idx.error == kNoUpdateServer && idx.versions.empty() && asked.empty());
         noBucket.bucketBase = "http://evil.example/";                                       // a bucket that is not https is not used
-        asked.clear();
         idx = LoadIndex(noBucket, fetch);
-        CHECK(idx.fallback && !idx.versions[0].inBucket && asked.size() == 1);
+        CHECK(!idx.ok && idx.error == kNoUpdateServer && asked.empty());
         // Nothing reachable: not ok, with the words to show.
         web.clear();
         idx = LoadIndex(src, fetch);
@@ -405,9 +390,45 @@ int main() {
         // Text files that are no versions are ignored.
         web.clear();
         web[B + "VERSION.txt"] = "<html>oops</html>";
-        web["https://github.example/o/r/releases/latest/download/VERSION.txt"] = "2.856.0";
         idx = LoadIndex(src, fetch);
-        CHECK(idx.ok && idx.latest == "2.856.0" && idx.versions.size() == 1);
+        CHECK(!idx.ok && Has(idx.error, "Couldn't reach"));
+    }
+
+    // ---- the one place updates come from: the releases bucket, never GitHub (owner decision 2026-11-20) --------------------------
+    {
+        const std::string B = "https://abc123.supabase.co/storage/v1/object/public/releases/";
+        CHECK(ReleasesBucketBase("", "https://abc123.supabase.co") == B && ReleasesBucketBase("", "https://abc123.supabase.co///") == B);
+        CHECK(ReleasesBucketBase("https://other.supabase.co", "https://abc123.supabase.co") == "https://other.supabase.co/storage/v1/object/public/releases/");   // the override wins
+        CHECK(ReleasesBucketBase("http://127.0.0.1:9000", "").rfind("http://127.0.0.1:9000/", 0) == 0);                   // the local test server
+        CHECK(ReleasesBucketBase("", "").empty() && ReleasesBucketBase("", "http://abc.supabase.co").empty() && ReleasesBucketBase("", "junk").empty());
+        CHECK(ReleasesBucketBase("", "https://github.com/o/r").empty() && ReleasesBucketBase("https://api.github.com", "").empty() &&
+              ReleasesBucketBase("", "https://raw.githubusercontent.com/o/r").empty());                                   // never GitHub, even by mistake
+        CHECK(IsGitHubUrl("https://github.com/o/r/releases/latest/download/VERSION.txt") && IsGitHubUrl("https://API.GitHub.com/repos/x") &&
+              IsGitHubUrl("https://raw.githubusercontent.com/x") && IsGitHubUrl("https://objects.githubusercontent.com/x") && IsGitHubUrl("github.com/x") &&
+              IsGitHubUrl("https://user@github.com:443/x") && IsGitHubUrl("https://o.github.io/x"));
+        CHECK(!IsGitHubUrl(B) && !IsGitHubUrl("https://github.example/x") && !IsGitHubUrl("https://notgithub.com/x") && !IsGitHubUrl("https://x.com/?u=github.com"));
+
+        std::map<std::string, std::string> web;
+        std::vector<std::string> asked;
+        FetchTextFn fetch = [&](const std::string& url, std::string& out) { asked.push_back(url); const auto it = web.find(url); if (it == web.end()) return false; out = it->second; return true; };
+        // No bucket built in: a clear error, never a silent "up to date", and nothing is fetched (from GitHub or anywhere).
+        LatestRelease r = ResolveLatestRelease("", fetch);
+        CHECK(r.version.empty() && r.base.empty() && r.error == kNoUpdateServer && asked.empty());
+        CHECK(ResolveLatestRelease("https://github.com/o/r/releases/latest/download/", fetch).error == kNoUpdateServer && asked.empty());
+        // Unreachable: "offline?", not "no server".
+        r = ResolveLatestRelease(B, fetch);
+        CHECK(r.version.empty() && Has(r.error, "offline") && asked.size() == 1 && asked[0] == B + "VERSION.txt");
+        // The bucket answers: its version, its folder, nothing else asked.
+        web[B + "VERSION.txt"] = "2.894.0\n";
+        asked.clear();
+        r = ResolveLatestRelease("https://abc123.supabase.co/storage/v1/object/public/releases", fetch);   // (no trailing slash: added)
+        CHECK(r.version == "2.894.0" && r.base == B + "v2.894.0/" && r.error.empty() && asked.size() == 1 && !IsGitHubUrl(asked[0]));
+        // A test build (four numbers) or garbage in VERSION.txt is never "the newest release".
+        web[B + "VERSION.txt"] = "2.894.0.12\n";
+        CHECK(ResolveLatestRelease(B, fetch).version.empty() && !ResolveLatestRelease(B, fetch).error.empty());
+        web[B + "VERSION.txt"] = "<html>Not Found</html>";
+        CHECK(ResolveLatestRelease(B, fetch).version.empty());
+        CHECK(ResolveLatestRelease(B, FetchTextFn{}).version.empty());
     }
 
     // ---- where a download comes from ------------------------------------------------------------------------------------------
@@ -419,23 +440,19 @@ int main() {
         InstallPlan p = PlanFor(idx, "2.850.1", launcher);
         CHECK(p.ok && p.version == "2.850.1" && p.files.size() == 3);
         CHECK(p.files[0].asset == Asset::Editor && p.files[0].indexName == "OkayEngine.exe" && p.files[0].diskName == okayver::EditorExeName());
-        CHECK(p.files[0].urls.size() == 2 && p.files[0].urls[0] == std::string(kBucket) + "v2.850.1/OkayEngine.exe" &&
-              p.files[0].urls[1] == "https://github.example/o/r/releases/download/v2.850.1/OkayEngine.exe");   // the bucket first, GitHub after it
+        CHECK(p.files[0].urls.size() == 1 && p.files[0].urls[0] == std::string(kBucket) + "v2.850.1/OkayEngine.exe");   // the bucket only (the index's GitHub pattern is ignored)
         CHECK(p.files[0].verified && p.files[0].sha256 == Sha(EditorOf("2.850.1")) && p.files[0].size == EditorOf("2.850.1").size());
         CHECK(p.files[2].asset == Asset::Sdl && p.files[2].localCopy == launcher / "Tools" / "SDL2.dll" && p.files[2].verified && p.files[2].urls.empty());   // not in the index: the launcher's own copy
         CHECK(p.totalBytes() == EditorOf("2.850.1").size() + Body("2.850.1", "OkaySpacePlayer.exe").size() + Body("sdl", "SDL2.dll").size());
 
-        const InstallPlan old = PlanFor(idx, "2.800.0", launcher);                                    // left the bucket: GitHub only
-        CHECK(old.ok && old.files[0].urls.size() == 1 && old.files[0].urls[0] == "https://github.example/o/r/releases/download/v2.800.0/OkayEngine.exe");
-        const InstallPlan nobucket = PlanFor(idx, "2.850.1", launcher, false);                        // no bucket at all (no account server): GitHub
-        CHECK(nobucket.ok && nobucket.files[0].urls.size() == 1 && nobucket.files[0].urls[0].rfind("https://github.example/", 0) == 0);
+        const InstallPlan old = PlanFor(idx, "2.800.0", launcher);                                    // not in the bucket: it can't be downloaded (GitHub is never used)
+        CHECK(!old.ok && old.files.empty() && Has(old.error, "not on the OkaySpace download server") && Has(old.error, "can't be downloaded"));
+        const InstallPlan nobucket = PlanFor(idx, "2.850.1", launcher, false);                        // no bucket at all (no update server built in)
+        CHECK(!nobucket.ok && Has(nobucket.error, "no update server"));
         const InstallPlan slash = PlanInstall(idx, "2.850.1", "https://example.test/releases", launcher / "Tools" / "SDL2.dll", true);   // base without its slash
         CHECK(slash.ok && slash.files[0].urls[0] == "https://example.test/releases/v2.850.1/OkayEngine.exe");
 
-        Index noArchive = idx;
-        noArchive.archive.clear();
-        CHECK(!PlanInstall(noArchive, "2.800.0", kBucket, {}, false).ok && Has(PlanInstall(noArchive, "2.800.0", kBucket, {}, false).error, "nowhere"));   // pruned and no GitHub address
-        CHECK(PlanInstall(noArchive, "2.850.1", kBucket, {}, false).ok);
+        for (const PlanFile& f : p.files) for (const std::string& u : f.urls) CHECK(!IsGitHubUrl(u));
 
         CHECK(!PlanFor(idx, "9.9.9", launcher).ok && Has(PlanFor(idx, "9.9.9", launcher).error, "not in the version list"));
         CHECK(!PlanFor(idx, "junk", launcher).ok && !PlanFor(idx, "", launcher).ok && !PlanFor(idx, "../2.850.1", launcher).ok && !PlanFor(Index{}, "2.850.1", launcher).ok);
@@ -451,7 +468,7 @@ int main() {
         CHECK(!PlanFor(lag, "2.858.0", launcher).ok);
 
         // The fallback index (no versions.json) has no checksums either: refused, with the reason named.
-        const Index fb = FallbackIndex("2.856.0", "2.850.1", kArchive, true);
+        const Index fb = FallbackIndex("2.856.0", "2.850.1", true);
         const InstallPlan fp = PlanFor(fb, "2.850.1", launcher);
         CHECK(!fp.ok && Has(fp.error, "no checksum") && Has(fp.error, "versions.json could not be read"));
         // A listed file whose checksum is missing or not 64 hex digits is refused too.
@@ -527,12 +544,13 @@ int main() {
         const Index idx = ParseIndex(IndexJson({EntryJson("2.850.1", "lts", true)}, "2.856.0", "2.850.1"));
         const std::string bucketEditor = std::string(kBucket) + "v2.850.1/OkayEngine.exe", gitEditor = "https://github.example/o/r/releases/download/v2.850.1/OkayEngine.exe";
 
-        // The bucket serves a damaged editor, GitHub has the right one: the bad file is never kept, GitHub's is used.
+        // The bucket serves a damaged editor; GitHub has the right one but is never asked (owner decision 2026-11-20): refused.
         Server srv;
         srv.AddRelease("2.850.1", true, true);
         srv.files[bucketEditor] = EditorOf("2.850.1").substr(0, 100) + "TAMPERED" + EditorOf("2.850.1").substr(108);   // same size, different bytes
         const Result r = Install(launcher, PlanFor(idx, "2.850.1", launcher), {}, MakeIO(srv));
-        CHECK(r.ok() && Complete(launcher, "2.850.1") && std::find(srv.requested.begin(), srv.requested.end(), gitEditor) != srv.requested.end());
+        CHECK(!r.ok() && std::find(srv.requested.begin(), srv.requested.end(), gitEditor) == srv.requested.end());
+        for (const std::string& u : srv.requested) CHECK(!IsGitHubUrl(u) && u.find("github") == std::string::npos);
 
         // Both sources damaged: refused, with the words the Versions page shows, and nothing is left behind.
         TempDir t2;
@@ -607,10 +625,10 @@ int main() {
     {
         TempDir t;
         const fs::path launcher = MakeLauncher(t.path, "2.856.0");
-        const Index idx = ParseIndex(IndexJson({EntryJson("2.850.1", "lts", false), EntryJson("2.850.0", "latest", false)}, "2.856.0", "2.850.1"));   // GitHub only: one address per file
+        const Index idx = ParseIndex(IndexJson({EntryJson("2.850.1", "lts", true), EntryJson("2.850.0", "latest", true)}, "2.856.0", "2.850.1"));   // the bucket: one address per file
         Server srv;
-        srv.AddRelease("2.850.1", false, true);
-        srv.AddRelease("2.850.0", false, true);
+        srv.AddRelease("2.850.1", true, false);
+        srv.AddRelease("2.850.0", true, false);
         CHECK(Install(launcher, PlanFor(idx, "2.850.0", launcher), {}, MakeIO(srv)).ok());
         const auto others = Snapshot(okayver::VersionsDir(launcher) / "2.850.0");
         auto Untouched = [&]() {
@@ -682,7 +700,7 @@ int main() {
     {
         TempDir t;
         const fs::path launcher = MakeLauncher(t.path, "2.856.0");
-        const Index fb = FallbackIndex("2.856.0", "2.850.1", kArchive, true);                       // no versions.json
+        const Index fb = FallbackIndex("2.856.0", "2.850.1", true);                       // no versions.json
         Server srv;
         srv.AddRelease("2.850.1", true, true);
         CHECK(!PlanFor(fb, "2.850.1", launcher).ok);
@@ -1295,7 +1313,7 @@ int main() {
         const Index good_idx = ParseIndex("{\"schema\":1,\"latest\":\"2.9.0\",\"versions\":[{\"version\":\"2.9.0\",\"files\":{\"OkayEngine.exe\":{\"size\":300,\"sha256\":\"" + Sha(newBody) + "\"}}}]}");
         CHECK(good_idx.ok && okayupdater::IndexProblem(good_idx, good_idx.Find("2.9.0"), "2.9.0").empty());
         CHECK(Has(okayupdater::IndexProblem(good_idx, good_idx.Find("9.9.9"), "9.9.9"), "does not list v9.9.9"));
-        const Index fb = FallbackIndex("2.9.0\n", "", "", false);                   // built from VERSION.txt: no checksums
+        const Index fb = FallbackIndex("2.9.0\n", "", false);                   // built from VERSION.txt: no checksums
         const Entry* fe = fb.Find("2.9.0");
         CHECK(!fb.ok || !fe || !okayupdater::RequireChecksum("OkayEngine.exe", fe->files.count("OkayEngine.exe") ? &fe->files.at("OkayEngine.exe") : nullptr).empty());
     }

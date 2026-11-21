@@ -639,7 +639,7 @@ public:
                     const LONG bytes = ImmGetCompositionStringW(imc, GCS_COMPCLAUSE, nullptr, 0);
                     if (bytes > 0 && bytes < (1 << 16)) {
                         clauseUnits.resize((size_t)bytes / sizeof(DWORD));
-                        ImmGetCompositionStringW(imc, GCS_COMPCLAUSE, clauseUnits.data(), (DWORD)bytes);
+                        ImmGetCompositionStringW(imc, GCS_COMPCLAUSE, clauseUnits.data(), (DWORD)(clauseUnits.size() * sizeof(DWORD)));   // the vector's real size: an odd byte count must not write past it
                     }
                 }
                 if (lp & GCS_CURSORPOS) cursor = (int)(ImmGetCompositionStringW(imc, GCS_CURSORPOS, nullptr, 0) & 0xFFFF);

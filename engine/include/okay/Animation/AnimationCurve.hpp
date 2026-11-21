@@ -43,6 +43,7 @@ public:
         m_keys.insert(it, {time, value});
     }
     void Clear() { m_keys.clear(); }
+    void Reserve(std::size_t n) { m_keys.reserve(n); }
     bool Empty() const { return m_keys.empty(); }
     const std::vector<Keyframe>& Keys() const { return m_keys; }
     std::size_t Count() const { return m_keys.size(); }
@@ -144,12 +145,18 @@ public:
         while (a + 1 < m_keys.size()) {
             // Extend the segment a -> b as far as every key in between stays on the line.
             std::size_t b = a + 1;
+            // While every key from a to c holds exactly a's value, the line is that value and every check below passes
+            // (0 * u is 0, or NaN for a non-finite u, and a NaN difference never exceeds the tolerance), so the loop is
+            // skipped: same result, but a long constant track (baked imports have many) no longer costs n^2 checks.
+            bool flat = m_keys[a + 1].value == m_keys[a].value;
             while (b + 1 < m_keys.size()) {
                 std::size_t c = b + 1;
                 const Keyframe& ka = m_keys[a];
                 const Keyframe& kc = m_keys[c];
                 float span = kc.time - ka.time;
                 bool fits = span > 0.0f;
+                flat = flat && kc.value == ka.value;
+                if (flat && fits) { b = c; continue; }
                 for (std::size_t i = a + 1; i < c && fits; ++i) {
                     float u = (m_keys[i].time - ka.time) / span;
                     float v = ka.value + (kc.value - ka.value) * u;

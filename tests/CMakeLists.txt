@@ -4661,3 +4661,9 @@ add_test(NAME camera_robust COMMAND test_camera_robust)
 add_executable(test_controller_tuning test_controller_tuning.cpp)
 target_link_libraries(test_controller_tuning PRIVATE okay::engine)
 add_test(NAME controller_tuning COMMAND test_controller_tuning)
+
+# #888 Grok findings 145, 146, 153, 155 (claude2/grok-145-146-153-155): particle replay, terrain resample, lights under
+# inactive parents, reverse one-shot animation end.
+add_executable(test_grok_145_146_153_155 test_grok_145_146_153_155.cpp)
+target_link_libraries(test_grok_145_146_153_155 PRIVATE okay::engine)
+add_test(NAME grok_145_146_153_155 COMMAND test_grok_145_146_153_155)

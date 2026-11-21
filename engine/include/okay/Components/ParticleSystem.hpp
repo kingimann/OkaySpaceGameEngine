@@ -264,8 +264,14 @@ public:
     /// A pooled effect that is reused starts again: no particle of the last use is left and it plays if it did at the start.
     void OnPoolReuse() override { if (!m_awake) return; Restart(); m_hasLast = false; playing = m_playOnReuse; }
 
-    /// Begin/stop emitting (existing particles keep living when stopped).
-    void Play()  { playing = true; }
+    /// Begin/stop emitting (existing particles keep living when stopped). Play() on a
+    /// stopped effect, or on a one-shot whose cycle has ended, starts a new cycle (its
+    /// burst fires again); on an effect that is already running it changes nothing.
+    void Play()  {
+        const bool finished = !loop && duration > 0.0f && m_age >= duration;
+        if (!playing || finished) { m_age = 0.0f; m_burstFired = false; m_accum = 0.0f; }
+        playing = true;
+    }
     void Stop()  { playing = false; }
     /// Clear all particles and restart the cycle from zero.
     void Restart() { for (Particle& p : m_particles) p.alive = false; m_age = 0.0f; m_burstFired = false; m_accum = 0.0f; }
@@ -436,6 +442,8 @@ public:
             m_age += dt;
             if (duration > 0.0f) {
                 if (m_age >= duration) {
+                    // A burst due by the end of the cycle (burstTime == duration) fires before the clock wraps.
+                    if (burstCount > 0 && !m_burstFired && burstTime <= duration) { Emit(burstCount); m_burstFired = true; }
                     if (loop) { m_age = std::fmod(m_age, duration); m_burstFired = false; }
                     else      { emitting = false; }
                 }

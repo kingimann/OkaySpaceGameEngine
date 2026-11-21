@@ -22,7 +22,8 @@ int main() {
     RUN_SUITE("collider_hardening");
     Log::console = false;
 
-    {   // Convex hull: NaN, infinite and absurdly huge points are ignored; the rest still makes the right solid.
+    {   // Convex hull from text: words that are not numbers ("nan", "inf" do not parse) and absurdly huge points are
+        // ignored; the rest still makes the right solid. (Real NaN / infinity values are fed through SetPoints below.)
         Scene s("hull_bad");
         GameObject* g = Obj(s, "H", {0, 0, 0});
         auto* h = g->AddComponent<ConvexHullCollider3D>();
@@ -60,13 +61,23 @@ int main() {
         Vec3 a, b; h->WorldAABB(a, b);
         CHECK_NEAR(b.x - a.x, 2.0f, 0.01f); CHECK_NEAR(b.y - a.y, 0.0f, 0.01f);
     }
-    {   // A hull never keeps an unbounded number of points (memory).
-        std::ostringstream o; for (int i = 0; i < 50000; ++i) o << (i ? "; " : "") << std::cos(i * 0.01f) << ' ' << std::sin(i * 0.013f) << ' ' << std::cos(i * 0.007f);
+    {   // A hull never keeps an unbounded number of points (memory), and the kept points still span the cloud: the
+        // bounds stay within a small distance of the cloud's own extent (thinning keeps the far-out points).
+        std::ostringstream o;
+        Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+        for (int i = 0; i < 50000; ++i) {
+            Vec3 v{std::cos(i * 0.01f), std::sin(i * 0.013f), std::cos(i * 0.007f)};
+            o << (i ? "; " : "") << v.x << ' ' << v.y << ' ' << v.z;
+            lo = Vec3::Min(lo, v); hi = Vec3::Max(hi, v);
+        }
         Scene s("hull_big");
         auto* h = Obj(s, "H", {0, 0, 0})->AddComponent<ConvexHullCollider3D>(); h->points = o.str();
         CHECK(h->PointCount() <= 4096);
         CHECK(h->PointCount() >= 4);
         s.Start(); CHECK(BoundsOk(h));
+        Vec3 a, b; h->WorldAABB(a, b);
+        CHECK_NEAR(a.x, lo.x, 0.02f); CHECK_NEAR(a.y, lo.y, 0.02f); CHECK_NEAR(a.z, lo.z, 0.02f);
+        CHECK_NEAR(b.x, hi.x, 0.02f); CHECK_NEAR(b.y, hi.y, 0.02f); CHECK_NEAR(b.z, hi.z, 0.02f);
     }
     {   // Non-convex input (a flat star with a dent): the hull is the convex wrap, so the dent is filled.
         Scene s("hull_nonconvex");
@@ -78,7 +89,8 @@ int main() {
         CHECK(r.hit); CHECK_NEAR(r.point.z, 1.6f, 0.02f);
     }
 
-    {   // Compound with zero children, junk children, or a child that names another compound: collides with nothing.
+    {   // Compound with zero children, junk text children ("nan" / "inf" do not parse as numbers), or a child that names
+        // another compound: collides with nothing. (Regression guard: these already held before the hardening.)
         const char* sets[] = {"", ";;;", "compound 0 0 0 0 0 0 1 1 1 1", "box 0 0", "sphere nan 0 0 0 0 0 1", "sphere 0 0 0 0 0 0 inf"};
         for (const char* t : sets) {
             Scene s("cmp0");
@@ -97,7 +109,8 @@ int main() {
         CHECK(c->PartCount() == 0);
         CHECK(!s.physics3D().Raycast(s, {0, 5, 0}, {0, -1, 0}, 10).hit);
     }
-    {   // A compound cannot hold a compound: that part is dropped. The part count is capped (memory).
+    {   // A compound cannot hold a compound: that part is dropped (this already held before the hardening; kept as a
+        // guard). The part count is capped (memory).
         Scene s("cmp_deep");
         auto* c = Obj(s, "C", {0, 0, 0})->AddComponent<CompoundCollider3D>();
         c->parts = "compound 0 0 0 0 0 0 1 1 1 1; box 0 0 0 0 0 0 1 1 1 1";
@@ -108,7 +121,7 @@ int main() {
         CHECK(c->PartCount() >= 1);
     }
 
-    {   // Heightfield with bad settings: zero / negative / NaN cells, NaN heights, silly grid sizes. Finite, no crash.
+    {   // Heightfield with bad settings: zero / negative / NaN cells, junk height text, silly grid sizes. Finite, no crash.
         struct Case { int c, r; float cx, cz; const char* h; };
         Case cases[] = {{2, 2, 0.0f, 0.0f, "0 0 0 0"}, {2, 2, -1.0f, 1.0f, "0 0 0 0"}, {2, 2, NaN, 1.0f, "0 0 0 0"},
                         {2, 2, 1.0f, 1.0f, "nan 1 inf 2"}, {0, -5, 1.0f, 1.0f, ""}, {100000, 100000, 1.0f, 1.0f, "1 2 3"}, {3, 5, 1.0f, 1.0f, "1 2 3"}};
@@ -214,7 +227,47 @@ int main() {
         (void)s.physics3D().Raycast(s, {0, 5, 0}, {0, -1, 0}, 10);
     }
 
-    {   // Older scene files: only the older shapes, no skin record. They load and the new fields keep their defaults.
+    {   // A scene file in the record format written before the new collider shapes (#1083): fixed text, written out
+        // field by field from that release's serializer. Box, Sphere, Capsule and Cylinder colliders, a physics material
+        // by index (index 2 = the sphere, in that release's count) and a trigger filter. They load with these values.
+        const char* oldText =
+            "okayscene 3\n"
+            "gameobject 0 \"Old\"\n"
+            "  active 1\n"
+            "  parent -1\n"
+            "  transform 1 2 3 0 0 0 1 1 1 1\n"
+            "  cylindercollider3d 0.7 1.5 2 0 0.25 0 0 3 0\n"
+            "  boxcollider3d 2 1 4 0.5 0 0 1 2 0\n"
+            "  spherecollider3d 0.35 0 1 0 0 0 1\n"
+            "  capsulecollider3d 0.4 1.8 1 0 0.9 0 0 0 0\n"
+            "  trigfilter3d \"Player\" 5\n"
+            "  physmat3d 0.3 0.1 2 1 2\n"
+            "end\n";
+        Scene t("old_fixed"); std::string err;
+        CHECK(SceneSerializer::Deserialize(t, oldText, &err, nullptr));
+        GameObject* g = t.Find("Old");
+        CHECK(g != nullptr);
+        if (g) {
+            CHECK_NEAR(g->transform->localPosition.y, 2.0f, 1e-6f);
+            auto* cy = g->GetComponent<CylinderCollider3D>();
+            CHECK(cy && cy->radius == 0.7f && cy->height == 1.5f && cy->axis == 2 && cy->offset.y == 0.25f && cy->layer == 3 && !cy->isTrigger);
+            BoxCollider3D* bx = nullptr;
+            for (auto* b : g->GetComponents<BoxCollider3D>()) if (b->shape() == Collider3D::Shape::Box) bx = b;
+            CHECK(bx && bx->size.x == 2.0f && bx->size.z == 4.0f && bx->offset.x == 0.5f && bx->isTrigger && bx->layer == 2);
+            auto* sp = g->GetComponent<SphereCollider3D>();
+            CHECK(sp && sp->radius == 0.35f && sp->offset.x == 0.0f && sp->offset.y == 1.0f && sp->layer == 0 && sp->autoFit);
+            CapsuleCollider3D* cp = nullptr;
+            for (auto* c : g->GetComponents<CapsuleCollider3D>()) if (c->shape() == Collider3D::Shape::Capsule) cp = c;
+            CHECK(cp && cp->radius == 0.4f && cp->height == 1.8f && cp->axis == 1 && cp->offset.y == 0.9f);
+            CHECK(sp && sp->friction == 0.3f && sp->bounciness == 0.1f && (int)sp->frictionCombine == 2 && (int)sp->bounceCombine == 1);
+            CHECK(cy && cy->friction < 0.0f && cp && cp->friction < 0.0f);         // the material went to the sphere only
+            CHECK(cy && cy->triggerTag == "Player" && cy->triggerLayers == 5u && sp && sp->triggerTag == "Player");
+            CHECK(cy && cy->contactOffset == 0.0f);                                 // a field newer than the file: default
+            t.Start();
+            CHECK(BoundsOk(cy)); CHECK(BoundsOk(sp));
+        }
+    }
+    {   // Saving with today's serializer writes no skin record for colliders without one, and reloads.
         Scene s("old");
         GameObject* g = Obj(s, "A", {0, 0, 0});
         g->AddComponent<BoxCollider3D>(); g->AddComponent<CylinderCollider3D>()->radius = 0.7f;
@@ -259,5 +312,93 @@ int main() {
         CHECK(p[0] > 0.3f && p[0] < 0.8f);
     }
 
+    {   // Real NaN and infinity values (not text) given through the API: SetPoints drops them.
+        Scene s("hull_nan_api");
+        auto* h = Obj(s, "H", {0, 0, 0})->AddComponent<ConvexHullCollider3D>();
+        const float Inf = std::numeric_limits<float>::infinity();
+        h->SetPoints({{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {NaN, 0, 0}, {Inf, 1, 1}, {0, -Inf, 0}, {3e38f, 0, 0}});
+        CHECK(h->PointCount() == 6);
+        s.Start(); CHECK(BoundsOk(h));
+        Vec3 a, b; h->WorldAABB(a, b); CHECK_NEAR(b.x - a.x, 2.0f, 0.01f);
+    }
+    {   // SetHeights with NaN / infinity: those samples read as 0 and the samples after them are kept.
+        Scene s("hf_nan_api");
+        auto* hf = Obj(s, "G", {0, 0, 0})->AddComponent<HeightfieldCollider3D>();
+        const float Inf = std::numeric_limits<float>::infinity();
+        hf->SetHeights(3, 2, {1, NaN, 3, -Inf, 5, 6});
+        CHECK_NEAR(hf->HeightAt(0, 0), 1.0f, 1e-6f);
+        CHECK_NEAR(hf->HeightAt(1, 0), 0.0f, 1e-6f);
+        CHECK_NEAR(hf->HeightAt(2, 0), 3.0f, 1e-6f);
+        CHECK_NEAR(hf->HeightAt(0, 1), 0.0f, 1e-6f);
+        CHECK_NEAR(hf->HeightAt(2, 1), 6.0f, 1e-6f);
+        s.Start(); CHECK(BoundsOk(hf));
+    }
+    {   // heightScale NaN / infinity / huge, and huge finite heights: bounds and depth stay finite everywhere.
+        const float Inf = std::numeric_limits<float>::infinity();
+        const float scales[] = {NaN, Inf, -Inf, 3e38f, -3e38f};
+        for (float k : scales) {
+            Scene s("hf_scale");
+            auto* hf = Obj(s, "G", {0, 0, 0})->AddComponent<HeightfieldCollider3D>();
+            hf->SetHeights(2, 2, {0, 1, 2, 3});
+            hf->heightScale = k;
+            CHECK(BoundsOk(hf));
+            CHECK(std::isfinite(hf->Depth()));
+            CHECK(std::isfinite(hf->HeightAt(1, 1)));
+        }
+        Scene s("hf_huge");
+        auto* hf = Obj(s, "G", {0, 0, 0})->AddComponent<HeightfieldCollider3D>();
+        hf->SetHeights(2, 2, {-1e38f, 1e38f, 0, 0});
+        hf->heightScale = 10.0f;
+        CHECK(BoundsOk(hf));
+        CHECK(std::isfinite(hf->Depth()));
+        CHECK(hf->HeightAt(1, 0) <= 1.0e6f);                                         // clamped to the coordinate limit
+        Vec3 a, b; hf->WorldAABB(a, b); CHECK(b.y <= 1.0e6f && a.y >= -1.0e7f);
+    }
+    {   // A dynamic Mesh collider on a mesh with thousands of corners builds a hull of at most 4,096 points (the same
+        // thinning as the Convex Hull collider, so a big mesh cannot stall the wrap), and the hull still spans the mesh.
+        Scene s("mesh_hull_big");
+        GameObject* g = Obj(s, "M", {0, 0, 0});
+        g->AddComponent<MeshRenderer>()->mesh = Mesh::Sphere(1.0f, 72, 72);
+        auto* mc = g->AddComponent<MeshCollider3D>();
+        g->AddComponent<Rigidbody3D>();
+        CHECK(g->GetComponent<MeshRenderer>()->mesh.vertices.size() > 4096u);
+        CHECK(mc->UsesConvexHull());
+        CHECK(mc->HullVertexCount() <= 4096);
+        CHECK(mc->HullVertexCount() >= 4);
+        Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+        for (const Vec3& v : mc->Hull().vertices) { lo = Vec3::Min(lo, v); hi = Vec3::Max(hi, v); }
+        CHECK_NEAR(lo.y, -1.0f, 0.02f); CHECK_NEAR(hi.y, 1.0f, 0.02f);
+        CHECK_NEAR(hi.x - lo.x, 2.0f, 0.05f); CHECK_NEAR(hi.z - lo.z, 2.0f, 0.05f);
+    }
+    {   // A resolution-2048 Terrain (2049 x 2049 samples) copies into a Heightfield with every row in place.
+        Terrain tr;
+        tr.resolution = 2048; tr.size = 2048.0f;
+        const int D = tr.Dim();
+        tr.heights.assign((std::size_t)D * (std::size_t)D, 0.0f);
+        tr.heights[(std::size_t)D - 1] = 3.0f;                                       // col 2048, row 0
+        tr.heights[(std::size_t)(D - 1) * (std::size_t)D] = 5.0f;                    // col 0, row 2048
+        tr.heights[(std::size_t)D * (std::size_t)D - 1] = 7.0f;                      // the far corner
+        tr.heights[(std::size_t)1000 * (std::size_t)D + 1500] = 9.0f;                // somewhere in the middle
+        HeightfieldCollider3D hf;
+        CHECK(hf.SetFromTerrain(tr));
+        CHECK(hf.Cols() == D); CHECK(hf.Rows() == D);
+        CHECK_NEAR(hf.HeightAt(D - 1, 0), 3.0f, 1e-6f);
+        CHECK_NEAR(hf.HeightAt(0, D - 1), 5.0f, 1e-6f);
+        CHECK_NEAR(hf.HeightAt(D - 1, D - 1), 7.0f, 1e-6f);
+        CHECK_NEAR(hf.HeightAt(1500, 1000), 9.0f, 1e-6f);
+        float y = 0;
+        CHECK(hf.LocalHeight(1024.0f, 1024.0f, y)); CHECK_NEAR(y, 7.0f, 1e-4f);    // the far corner in local metres
+    }
+
+    {   // (Last, so a hang here still shows every other result.) A ray that reaches a fine heightfield far from its own start returns (it used to loop forever: at a large
+        // distance, adding one small step no longer changed the float position).
+        Scene s("hf_far_ray");
+        auto* hf = Obj(s, "G", {0, 0, 0})->AddComponent<HeightfieldCollider3D>();
+        hf->SetHeights(5, 5, std::vector<float>(25, 0.0f)); hf->cellX = 0.01f; hf->cellZ = 0.01f;   // a 4 cm grid
+        s.Start();
+        Vec3 n; float tHit = 0;
+        // 500 km away a float position moves in steps of 3 cm, more than the 5 mm march step: passes 1 m above, a miss.
+        CHECK(!hf->RayShape({-500000.0f, 1.0f, 0.0f}, {1, 0, 0}, 1.0e6f, tHit, n));
+    }
     TEST_MAIN_RESULT();
 }

@@ -2614,7 +2614,12 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 for (const char* q = key ? key : r.label; *q; ++q) treeKey = (treeKey ^ (unsigned char)*q) * 16777619u;
             }
             UI::PushID((int)k);
-            const float frameW = RowFrameW(r, itemW, w, UI::GetCursorScreenPos().x - regionX);
+            float frameW = RowFrameW(r, itemW, w, UI::GetCursorScreenPos().x - regionX);
+            // a field of the usual width put on a line after something else ends where the value column ends, as Dear ImGui's relative
+            // item width does (stage 9: Builder Mode's Grid after "Snap to grid" ran across the label column)
+            if (r.sameLine && r.width == 0.0f && r.kind != InspRowCheck && r.kind != InspRowSmallButton && r.kind != InspRowButton &&
+                r.kind != InspRowLabel && r.kind != InspRowNote && r.kind != InspRowTree && r.kind != InspRowSwatch)
+                frameW = std::max(1.0f, itemW0 - (UI::GetCursorScreenPos().x - regionX));
             bool hoverTip = true;   // the row's tooltip on hover (an asset field and an image show their own)
             UI::Rect whole{};       // a row made of several items (cells, a colour field, a file field): all of it
             switch (r.kind) {

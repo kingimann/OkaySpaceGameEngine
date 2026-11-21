@@ -2624,3 +2624,23 @@ note made its body one line taller and the shift is 18 or 19). Pictures in `<scr
 Windows; other UI scales; the Modifiers' Boolean cutter list and Array Along Curve in the real editor (headless only); the held item's
 grip rows (shown only with the preview open or an item held); Play mode for all three; the add list after the last width change (headless
 only).
+
+## 22. The Inspector, stage 9: 62 simple bodies, the stage 8 gaps (design note)
+
+- **Bodies.** 62 more component bodies in `editor/main.cpp` are field rows (behind `OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`). They were
+  drafted from their Dear ImGui bodies by a converter script of our own (one Dear ImGui call per row kind; it refuses a body with anything
+  else, or a condition that calls a helper that draws), then read and fixed by hand. Counts: field rows 122, generic card 8, still Dear
+  ImGui about 101. The generic card was not used for them: the registry's labels, steps and fields differ from the hand-written bodies,
+  which also carry notes and a Remove button, so it cannot look the same.
+- **Stage 8 gaps.** A fold-out row can carry a menu (right-click), a row can stay shown under a closed fold-out (`keepClosed`: the
+  modifier's cost line), and a combo's list rows can have tooltips (`itemTips`: the First Person Hands presets).
+- **OkayUI fixes.** A tooltip is drawn at the end of the frame, on top of everything; drawn in place inside an open list it switched the
+  overlay off and the list's later rows vanished. A field after something on its line ends where the value column ends, as Dear ImGui's
+  relative item width does. The field rows may draw up to 2 pixels short of the Inspector padding's end on the right.
+- **Editor fixes.** While an OkayUI field has the keyboard, key presses are not queued into Dear ImGui and the shortcuts stay out: at a
+  low frame rate Dear ImGui handed a typed "h" out after a click, which hid the selected object. The stage 9 bodies' grey notes wrap in
+  both versions (they ran past the edge in both).
+- **Numbers.** Comparison fixtures for Stat: Health, Collectible, Day / Night Cycle and Top Down Shooter Controller: 23 to 37% fewer
+  instructions per frame, 0.44% to 1.82% of pixels clearly different (the highest of all bodies is still Terrain at 3.75%). Compared side
+  by side in the real editor under Xvfb only; not on Windows.
+

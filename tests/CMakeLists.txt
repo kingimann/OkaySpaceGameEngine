@@ -3358,6 +3358,11 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     add_test(NAME platform_xdnd COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_xdnd>)
     set_tests_properties(platform_xdnd PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 
+    # Tray-icon callback protocol model (header only, hand-computed Win32 message values).
+    add_executable(test_platform_tray test_platform_tray.cpp)
+    target_include_directories(test_platform_tray PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_tray COMMAND test_platform_tray)
+
     # The event queue (push, poll, pump, native pointer, unmapped events, render resets, CharForKey): no display needed.
     add_executable(test_platform_events test_platform_events.cpp)
     target_link_libraries(test_platform_events PRIVATE okay::platform)

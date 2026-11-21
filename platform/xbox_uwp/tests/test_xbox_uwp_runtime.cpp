@@ -567,6 +567,22 @@ static void BackendTests() {
     Drain(b);   // the destroyed pad is not polled any more (would crash otherwise)
     CHECK(b.OpenGamepad(5) == nullptr);
     b.PushPadAdded(0); b.PushPadRemoved(1); { auto ev = Drain(b); CHECK(ev.size() == 2 && ev[0].type == EventType::GamepadAdded && ev[1].deviceId == 1); }
+    // hub: slots, GamepadAdded(slot), grace-time reconnect keeps the instance id, GamepadRemoved(instance id) only after the grace time
+    { FakePad pa, pb; std::uint64_t t = 0; b.clockOverride = [&] { return t; }; b.EnableHub(2, 1000);
+      CHECK(b.GamepadDeviceCount() == 2 && !b.IsGamepad(0) && b.OpenGamepad(0) == nullptr);
+      CHECK(b.PadConnected("A", &pa) == 0 && b.PadConnected("B", &pb) == 1 && b.PadConnected("C", &pa) == -1);
+      { auto ev = Drain(b); int adds = 0; for (auto& e : ev) if (e.type == EventType::GamepadAdded) { CHECK(e.deviceId == adds); ++adds; } CHECK(adds == 2); }
+      CHECK(b.IsGamepad(0) && b.IsGamepad(1));
+      auto g = b.OpenGamepad(0); const int id = g->InstanceId(); CHECK(g && id == b.Hub()->InstanceId(0));
+      auto g1 = b.OpenGamepad(1); CHECK(g1->InstanceId() != id);
+      pa.r.buttons = kPadA; Drain(b); CHECK(g->Button(GamepadButton::A) && !g1->Button(GamepadButton::A));
+      t = 100; b.PadDisconnected("A"); t = 200; { auto ev = Drain(b); CHECK(ev.empty()); }                 // lost, slot held, no event yet
+      CHECK(!b.IsGamepad(0) && !g->Button(GamepadButton::A));                                                // reads as disconnected
+      t = 500; b.PadConnected("A", &pa); { auto ev = Drain(b); CHECK(ev.size() == 1 && ev[0].type == EventType::GamepadAdded && ev[0].deviceId == 0); }
+      CHECK(g->InstanceId() == id && g->Button(GamepadButton::A) && b.IsGamepad(0));                         // same player, same pad object, live again
+      t = 600; b.PadDisconnected("B"); t = 1599; CHECK(Drain(b).empty()); t = 1600; { auto ev = Drain(b); CHECK(ev.size() == 1 && ev[0].type == EventType::GamepadRemoved && ev[0].deviceId == g1->InstanceId()); }
+      CHECK(!b.IsGamepad(1) && !g1->Button(GamepadButton::A) && b.PadConnected("C", &pb) == 1);
+      g.reset(); g1.reset(); Drain(b); b.clockOverride = nullptr; }
     // audio: through the host, capture refused, no host audio refused
     { AudioSpec want; want.freq = 48000; want.channels = 2; AudioSpec got; auto a = b.OpenAudio(want, false, nullptr, &got); CHECK(a && host.audio.started && got.freq == 48000 && b.AudioDeviceCount(false) == 1); }
     CHECK(b.OpenAudio(AudioSpec(), true, nullptr, nullptr) == nullptr && b.LastError().find("capture") != std::string::npos);

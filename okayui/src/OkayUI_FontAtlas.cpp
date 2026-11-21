@@ -85,6 +85,7 @@ void Build() {
                 g.x0 = b.xoff; g.y0 = b.yoff; g.x1 = b.xoff + (float)(b.x1 - b.x0); g.y1 = b.yoff + (float)(b.y1 - b.y0);
                 g.u0 = (float)b.x0 / W; g.v0 = (float)b.y0 / H; g.u1 = (float)b.x1 / W; g.v1 = (float)b.y1 / H;
                 g.advance = b.xadvance;
+                if (g.cp < 128) sz.ascii[g.cp] = (short)(k + 1);
             }
         }
         a.rgba = (unsigned char*)std::malloc((size_t)W * H * 4);
@@ -100,6 +101,7 @@ void Build() {
 } // namespace
 
 const Glyph* Size::Find(unsigned cp) const {   // code points are baked in ascending order
+    if (cp < 128) return ascii[cp] > 0 ? &glyphs[ascii[cp] - 1] : nullptr;
     int lo = 0, hi = count - 1;
     while (lo <= hi) {
         const int mid = (lo + hi) / 2;
@@ -122,6 +124,9 @@ const Atlas& Get() {
 okay::TtfFont* FallbackFont(const char* s) {
     const Atlas& a = Get();
     if (!a.ok || !s) return nullptr;
+    const char* q = s;   // plain ASCII (nearly every string) is always in the atlas: no decoding needed
+    while (*q && (unsigned char)*q < 0x80) ++q;
+    if (!*q) return nullptr;
     const Size& z = a.Pick(16.0f);
     bool lacks = false;
     for (const char* p = s; *p && !lacks;) {

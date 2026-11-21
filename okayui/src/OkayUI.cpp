@@ -5547,7 +5547,7 @@ const char* GetClipboardText() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Public draw list, cursor and measurement, item state, disabled blocks (docs/own_ui_toolkit.md, section 4)
+// Public draw list, cursor and measurement, item state, disabled blocks (docs/ui/own_ui_toolkit.md, section 4)
 // ---------------------------------------------------------------------------------------------
 namespace {
 

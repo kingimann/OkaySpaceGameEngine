@@ -1,6 +1,6 @@
 // The game-step part of the editor frame (editor/EditorFrameTick.hpp), headless with a fake editor state: what StepSimulation and FinishFrame do in Play,
 // while paused, while editing, with hooks missing, and in what order. The block moved out of editor/main.cpp as is, so these are the rules main.cpp had.
-// Step 4 of the window-mode plan (docs/own_ui_toolkit.md 6.24).
+// Step 4 of the window-mode plan (docs/ui/own_ui_toolkit.md 6.24).
 #include "test_framework.hpp"
 #include "EditorFrameTick.hpp"
 

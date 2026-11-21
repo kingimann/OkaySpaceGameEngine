@@ -1,5 +1,5 @@
 // Display settings: window modes, resolutions, vsync and the quality preset, as plain data
-// that needs no window (docs/display_settings.md).
+// that needs no window (docs/engine/display_settings.md).
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Core/DisplaySettings.hpp"

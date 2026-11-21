@@ -17,7 +17,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Code:** `Render/Renderer`, `editor/main.cpp`, `player/main.cpp`
 - **API:** `IRenderer`, `GLRenderer::RenderToPixels`, `D3D11Renderer::RenderToPixels`, `RenderMeshesSS`, Build Game "GPU renderer" and "Prefer Direct3D 12" options
 - **Editor:** View > Rendering & Performance (a read-only "Renderer: <backend>" line and 3D Anti-aliasing 2x); Build Game > quality preset, GPU renderer and Prefer Direct3D 12
-- **Docs:** `docs/rendering.md`, `docs/lighting.md` (which renderers do what)
+- **Docs:** `docs/rendering/rendering.md`, `docs/rendering/lighting.md` (which renderers do what)
 - **Tests:** `software_renderer`
 - **Status:** Works - read both selection chains; but the backends cannot be unit tested headless (no GL or D3D context), so only the software path and the planning maths have tests
 - **Open:** no shared backend interface, so every feature is copied three times; no Vulkan or Metal backend; the editor retries the GPU after 5 seconds but the player gives up for the session after three failures; the editor never offers Direct3D 12
@@ -38,10 +38,10 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Code:** `Render/GLRenderer`
 - **API:** `GLRenderer`, `GLRenderer::LoadGL`, `GLRenderer::RenderToPixels`, `GLRenderer::SupportsGpuSkinning`
 - **Editor:** the Scene, Game and Camera Preview views when OpenGL is the backend; Lighting panel effects (2.4, 2.5)
-- **Docs:** `docs/rendering.md`, `docs/lighting.md`
+- **Docs:** `docs/rendering/rendering.md`, `docs/rendering/lighting.md`
 - **Tests:** `light_shadows`, `shadows` (the shadow plan, not a GL run)
 - **Status:** Works - read the header and the shader and uniform lists in `GLRenderer.cpp` (2.5k lines); no test creates a GL context
-- **Open:** every frame is read back to the CPU (no direct present); needs a 3.2 compatibility context; possible doc mismatch: `docs/rendering.md` says OpenGL also runs in the web player, but `player/main.cpp` skips every GPU backend under Emscripten (see 38.7)
+- **Open:** every frame is read back to the CPU (no direct present); needs a 3.2 compatibility context; possible doc mismatch: `docs/rendering/rendering.md` says OpenGL also runs in the web player, but `player/main.cpp` skips every GPU backend under Emscripten (see 38.7)
 - **Related:** 38.1, 38.8, 38.9, 2.3, 2.5
 - **Words:** GLRenderer, OpenGL, GL, MSAA, FBO, GLSL, shadow atlas, SSAO, bloom, depth of field, GPU skinning, hidden GL window
 - **Seen as:** shadows or bloom missing on Linux; black view with an old driver; the editor stutters on a big scene
@@ -59,7 +59,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Code:** `Render/D3D11Renderer`
 - **API:** `D3D11Renderer::Init`, `D3D11Renderer::InitShared`, `D3D11Renderer::RenderToTexture`, `D3D11Renderer::SetReadbackStream`, `D3D11Renderer::ReleaseCom`
 - **Editor:** Scene and Game views on Windows; Build Game "GPU renderer" option
-- **Docs:** `docs/rendering.md`, `docs/lighting.md`
+- **Docs:** `docs/rendering/rendering.md`, `docs/rendering/lighting.md`
 - **Tests:** -
 - **Status:** Works - read the header, the effect counts in `D3D11Renderer.cpp` (2k lines) and the editor and player call sites; compiled only on Windows (guarded by `_WIN32`) and never run by a ctest
 - **Open:** the new SSAO and depth of field passes have never run on a GPU (only the shared maths is unit tested, `ssao_math`, `dof_math`); no automated runtime test; the editor's direct path falls back to read-back after 5 failures
@@ -79,7 +79,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Code:** `Render/D3D12Renderer`
 - **API:** `D3D12Renderer::Init`, `D3D12Renderer::RenderToPixels`, Build Game "Prefer Direct3D 12"
 - **Editor:** Build Game > GPU renderer > Prefer Direct3D 12 (Windows only)
-- **Docs:** `docs/lighting.md` (limitations)
+- **Docs:** `docs/rendering/lighting.md` (limitations)
 - **Tests:** -
 - **Status:** Partial - opt-in and incomplete; the source says it is compile and link verified through MinGW and "intended to be runtime-tested on Windows"
 - **Open:** (the header and code now agree: up to 4x MSAA is applied); labelled "preview" in Build Settings; no post effects, cascades or skinning; no runtime test
@@ -100,7 +100,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Code:** `Render/SoftwareRenderer`
 - **API:** `Raster`, `RenderMeshes`, `RenderMeshesSS`, `Shadows()`, `ShadowsEnabled()`, `PerPixelLighting()`, `SceneOcclusionDepth`
 - **Editor:** the fallback for the Scene and Game views; Lighting panel > Rendering section switches
-- **Docs:** `docs/rendering.md`, `docs/lighting.md`
+- **Docs:** `docs/rendering/rendering.md`, `docs/rendering/lighting.md`
 - **Tests:** `software_renderer`, `shadows`, `light_shadows`, `software_local_shadows`, `software_default_shadows`, `software_scene_post`, `ssao_math`, `shaders`, `lighting`, `frustum_culling`
 - **Status:** Works - read the header (1.9k lines, header-only) and tests such as the depth-test one
 - **Open:** slow on big imported models (the editor drops the render scale by triangle load); per-pixel lighting (without shadows), SSAO and bloom are off by default; no procedural sky, clouds or DoF; the scene's SSAO switch is not read
@@ -136,10 +136,10 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Code:** `scripts/build-web.sh`, `player/main.cpp`
 - **API:** `scripts/build-web.sh <scene>`, Build Game Platform "Web (WebGL / WASM)"
 - **Editor:** Build Game > Platform > Web (WebGL / WASM)
-- **Docs:** `docs/web_mobile.md`
+- **Docs:** `docs/platform/web_mobile.md`
 - **Tests:** -
 - **Status:** Basic - the build and the software path exist (read `build-web.sh` and the `__EMSCRIPTEN__` guards); 3D in the browser is the CPU rasterizer
-- **Open:** no WebGL or WebGPU backend, so GPU-only effects (SSAO, depth of field, procedural sky and clouds) are missing in the browser; possible doc mismatch in `docs/rendering.md` ("OpenGL in the editor and the Linux / web player"); software speed limits web scenes
+- **Open:** no WebGL or WebGPU backend, so GPU-only effects (SSAO, depth of field, procedural sky and clouds) are missing in the browser; possible doc mismatch in `docs/rendering/rendering.md` ("OpenGL in the editor and the Linux / web player"); software speed limits web scenes
 - **Related:** 18.2, 38.1, 38.5, 2.5
 - **Words:** WebGL, WASM, Emscripten, web player, browser, HTML5 build, okay-player.html
 - **Seen as:** web export looks flatter or runs slowly than desktop; no clouds or bloom in the browser
@@ -157,7 +157,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Code:** `Render/ShadowSetup`, `Render/Atmosphere`, `Render/Lighting`, `Render/GLRenderer`, `Render/D3D11Renderer`
 - **API:** `MeshRenderer::Shader`, `PlanShadows`, `FogFactor`, `LightAttenuation`
 - **Editor:** Mesh Renderer shader dropdown; Lighting panel; no shader editor
-- **Docs:** `docs/lighting.md` ("How it works")
+- **Docs:** `docs/rendering/lighting.md` ("How it works")
 - **Tests:** `shaders`, `light_shadows`, `post_sky`, `lighting`
 - **Status:** Works - read the shader sources and uniform lists; the `shaders` test covers only the Material side
 - **Open:** every lighting or fog change must be repeated in GLSL, HLSL (twice) and the software renderer; custom shaders, a shader graph and a PBR model are area 26; no shader compile-error surface beyond the log
@@ -216,7 +216,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Code:** `Core/Profiler`, `Render/Culling`, `Debug/GpuTimer`, `Debug/RenderStats`, `Debug/DrawCallRecorder`
 - **API:** `Prof().Gpu`, `LastCullCounters`, `GpuTimer`, `GpuScope`, `DrawCallRecorder`
 - **Editor:** Stats and Profiler windows (editor/main.cpp)
-- **Docs:** `docs/debug_tools.md`
+- **Docs:** `docs/engine/debug_tools.md`
 - **Tests:** `profiler`, `debug_gpu_stats`, `debug_draw_calls`
 - **Status:** Partial - the data layers are on main (#574, tests above) but no backend calls them ("No renderer calls the hooks yet", per docs; grep finds no `GpuScope` outside `Debug/`); the live "GPU" number is still the synchronous render-time proxy
 - **Open:** wiring real GPU timers into each backend; a frame debugger window (area 23)

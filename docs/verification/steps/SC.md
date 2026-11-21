@@ -29,7 +29,7 @@
   3. Right-click it again and choose **Create Variant**, then **Validate Prefab**.
 - **See:** a second copy appears in the scene; a variant file is created; Validate reports no problems or lists them.
 - **Partial:** map area 21 is marked planned in parts: expect gaps (nested prefab overrides, for example).
-- **Link:** [prefabs.md](../../prefabs.md)
+- **Link:** [prefabs.md](../../engine/prefabs.md#prefabs-and-overrides)
 
 ### V-SC-004 Merge another scene into this one
 - **Map:** 1, 20
@@ -58,8 +58,8 @@
   2. Make a player (**GameObject > Player > Player Controller (first / third person)**) and a floor, and put the volume where the player will walk.
   3. Press Play and walk into the volume.
 - **See:** a Kill volume sends the body back to its last checkpoint; a Checkpoint volume sets the respawn point. Volumes are drawn as coloured translucent shapes in the Scene view (toggle with **View > Scene Overlays > Volumes**).
-- **Partial:** see docs/volumes.md for kinds that need other components (Ambience needs an Audio Source with a clip and Loop).
-- **Link:** [volumes.md](../../volumes.md)
+- **Partial:** see docs/engine/volumes.md for kinds that need other components (Ambience needs an Audio Source with a clip and Loop).
+- **Link:** [volumes.md](../../engine/volumes.md)
 
 ### V-SC-007 Place nature, props and structures
 - **Map:** 44, 2

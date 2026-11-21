@@ -20,7 +20,7 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
   2. Open **Help > About OkaySpace**.
 - **See:** `readers=own(fbx,dae,3ds,...)` in the stack line instead of `ufbx+assimp`.
 - **Partial:** `OKAY_OWN_STACK=1` does not select the own platform layer on Windows (on purpose) and does not include `OKAY_OWN_WAV`.
-- **Link:** [../../own_stack_rollout.md](../../own_stack_rollout.md)
+- **Link:** [../../own_stack_rollout.md](../../status/own_stack_rollout.md)
 
 ### V-OC-003 One own reader: OKAY_OWN_OFF
 - **Map:** 3
@@ -32,7 +32,7 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
   3. Close the editor, start it again with no variable and import the same file.
 - **See:** a white unit cube both times; only the About line shows which reader ran.
 - **Partial:** no Console line says which reader read the file. A variable set to `0` wins over `OKAY_OWN_STACK=1`.
-- **Link:** [../../own_off_reader.md](../../own_off_reader.md)
+- **Link:** [../../own_off_reader.md](../../content/model_readers.md#our-own-off-reader-off)
 
 ### V-OC-004 Other own readers
 - **Map:** 3
@@ -42,8 +42,8 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
   1. Set one of `OKAY_OWN_FBX`, `OKAY_OWN_COLLADA`, `OKAY_OWN_3DS`, `OKAY_OWN_BVH` to 1 and start the editor.
   2. Import a model of that format (`examples/own_readers/cube.3ds`, `examples/own_readers/skinned_strip.dae`).
 - **See:** the model imports; the About line lists the format under `own(...)`.
-- **Partial:** the newer readers (AC3D, Ogre, XGL, NFF, IQM, COB and others) have `OKAY_OWN_<NAME>` variables listed in docs/own_readers_remaining.md that the startup line does not show.
-- **Link:** [../../own_readers_remaining.md](../../own_readers_remaining.md)
+- **Partial:** the newer readers (AC3D, Ogre, XGL, NFF, IQM, COB and others) have `OKAY_OWN_<NAME>` variables listed in docs/content/own_readers_remaining.md that the startup line does not show.
+- **Link:** [../../own_readers_remaining.md](../../content/own_readers_remaining.md)
 
 ### V-OC-005 Own WAV decoder
 - **Map:** 7
@@ -54,7 +54,7 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
   2. Close it, run `set OKAY_OWN_WAV=1`, start the editor, open the same scene and press Play.
 - **See:** the old decoder gives a distorted, buzzy note; the own decoder gives a clean steady tone (about 440 Hz, A). Neither was heard by us.
 - **Partial:** not part of `OKAY_OWN_STACK=1`; no startup-line entry; streamed large files still use the old parser. The release may not ship the example (PR #887).
-- **Link:** [../../own_wav_decoder.md](../../own_wav_decoder.md)
+- **Link:** [../../own_wav_decoder.md](../../audio/own_wav_decoder.md)
 
 ### V-OC-006 Own HTTP client
 - **Map:** 17.2, 41
@@ -63,7 +63,7 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
   1. Nothing to try: Windows uses WinHTTP, `OKAY_OWN_HTTP=1` does nothing there. Check that the stack line says `http=winhttp`.
 - **See:** `http=winhttp` in the About popup.
 - **Partial:** the own client exists for Linux builds only and is tested on Linux.
-- **Link:** [../../own_http_client.md](../../own_http_client.md)
+- **Link:** [../../own_http_client.md](../../platform/own_http.md#our-own-http-client-okayownhttp)
 
 ### V-OC-007 Own platform layer
 - **Map:** 37
@@ -73,7 +73,7 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
   2. Read the stack line (`platform=own` if it took effect).
 - **See:** `platform=own` if the build has it, otherwise `platform=sdl2`. Unverified, not ready; never ship with it.
 - **Partial:** the Win32 version has only run under wine, never on real Windows.
-- **Link:** [../../own_stack_rollout.md](../../own_stack_rollout.md)
+- **Link:** [../../own_stack_rollout.md](../../status/own_stack_rollout.md)
 
 ### V-OC-008 OkayUI backend switch
 - **Map:** 40
@@ -83,7 +83,7 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
   2. Open **Help > About OkaySpace** (`ui=okayui` if it took effect) and open the Console panel.
 - **See:** the Console, Crash Log and Audio Mixer screens are drawn by OkayUI; everything else is still Dear ImGui.
 - **Partial:** only five screens are ported, never run in a real window; whether the release has OkayUI compiled in is unverified (the line stays `ui=imgui` if not).
-- **Link:** [../../own_ui_toolkit.md](../../own_ui_toolkit.md)
+- **Link:** [../../own_ui_toolkit.md](../../ui/own_ui_toolkit.md)
 
 ### V-OC-009 Own crypto is not switchable
 - **Map:** 39
@@ -93,7 +93,7 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
   2. Read the stack line.
 - **See:** `crypto=libsodium` still. Own crypto cannot be switched on (CLAUDE.md rule 18).
 - **Partial:** nothing to try beyond this; it must stay libsodium in every release.
-- **Link:** [../../crypto.md](../../crypto.md)
+- **Link:** [../../crypto.md](../../platform/crypto.md)
 
 ### V-OC-010 Own script editor (OkayUI CodeEdit)
 - **Map:** 40, 13

@@ -2,7 +2,7 @@
 // Host side of the mapping layer (okayui/include/okay/UI/OkayUIMap.hpp): the Dear ImGui flag and colour names a ported panel uses,
 // paired with OkayUI's. Written from the meaning of the names only. Needs imgui.h before it, so only editor / launcher code that
 // already has ImGui includes this. Not built by the headless OkayUI tests (they do not have ImGui): checked by the compiler against
-// the project's ImGui and exercised by a one-off program, see docs/own_ui_toolkit.md section 6.7.
+// the project's ImGui and exercised by a one-off program, see docs/ui/own_ui_toolkit.md section 6.7.
 #include "okay/UI/OkayUIMap.hpp"
 
 namespace okayui_map {

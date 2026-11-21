@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Publish a TEST BUILD (the "dev channel") to the dev/ folder of the Supabase release bucket, so the owner can try a branch in the launcher
-# without a pull request, a GitHub Release or a normal release. Docs: docs/release_channels.md ("Test builds"). Run it after the Windows
+# without a pull request, a GitHub Release or a normal release. Docs: docs/release/release_channels.md ("Test builds"). Run it after the Windows
 # distribution is built; the workflow .github/workflows/dev-build.yml does that.
 #
 #   SUPABASE_SERVICE_KEY=eyJ...  DEV_BRANCH=claude/walk-vs-run  DEV_SHA=<commit>  scripts/publish-supabase-dev.sh

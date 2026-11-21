@@ -1,7 +1,7 @@
 // Our own BVH (Biovision hierarchy, motion capture) reader: the joint hierarchy as
 // nodes and the motion as one animation clip. Written from the public description of
 // the text format. Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp
-// and docs/own_bvh_reader.md.
+// and docs/content/model_readers.md.
 #include "FileOpen.hpp"
 #include "NumParse.hpp"
 #include "okay/Render/ModelData.hpp"

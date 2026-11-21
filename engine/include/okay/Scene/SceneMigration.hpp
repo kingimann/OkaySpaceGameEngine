@@ -2,7 +2,7 @@
 // Upgrading old scene (and prefab) files: a registry of versioned steps, each taking
 // `okayscene N` text to `okayscene N+1`, and MigrateToCurrent which runs the chain and
 // returns the new text plus a log of what changed. A file from a newer build than this
-// one is refused, never rewritten. See docs/scene_diff_merge.md.
+// one is refused, never rewritten. See docs/engine/scene_diff_merge.md.
 //
 // Two of today's three formats differ only in what the loader does when it opens the
 // file (a Character body gets its Animator, an old first/third person player gets both

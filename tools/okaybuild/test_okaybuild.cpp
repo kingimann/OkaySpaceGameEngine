@@ -585,7 +585,7 @@ static void testAuditHelp() {
     fresh("audit"); write("a.cpp", "int main(){return 0;}\n");
     write("build.okay", "target a exe\n sources = a.cpp\nend\n");
     string o = sh("--help");
-    check(o.find("audit: docs/own_build_plan.md") != string::npos, "help points at the audit", o);
+    check(o.find("audit: docs/platform/own_build_plan.md") != string::npos, "help points at the audit", o);
     check(o.find("modules") != string::npos && o.find("compdb") != string::npos && o.find("import") != string::npos, "help lists the commands the audit calls present", o);
 }
 

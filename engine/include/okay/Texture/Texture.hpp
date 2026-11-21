@@ -1,6 +1,6 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// okay::tex - our own texture-processing library (docs/own_texture_library.md).
+// okay::tex - our own texture-processing library (docs/rendering/own_texture_library.md).
 //
 // Common pieces: a float RGBA surface, the sRGB transfer functions, the pixel formats and byte sizes.
 // Written from the sRGB standard's piecewise curve (IEC 61966-2-1) and plain arithmetic. No third-party code.

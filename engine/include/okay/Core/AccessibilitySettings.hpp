@@ -1,6 +1,6 @@
 #pragma once
 // Accessibility options a player sets once and every part of the game honours
-// (docs/accessibility.md): text size, high contrast, reduced motion and flashing, colour
+// (docs/engine/accessibility.md): text size, high contrast, reduced motion and flashing, colour
 // vision correction, subtitle and caption settings, hold versus toggle, aim assist and
 // screen-reader hints.
 //

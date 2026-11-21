@@ -19,10 +19,10 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Code:** `Scripting/OkayScriptVM`, `Scripting/ScriptVM`
 - **API:** `okay::OkayScriptVM`, `CreateScriptVM("okayscript")`, `IScriptVM::Load/Validate/ValidateAll/CallStart/CallUpdate/CallEvent/HasEvent/GetGlobal/SetGlobal`, `OkayScriptVM::AddBuiltin`
 - **Editor:** Script Editor (13.5); Inspector header "Script (name)" with the script's public fields; Console shows runtime errors
-- **Docs:** `docs/scripting.md`, `docs/scripting_reference.md` (the old `SCRIPTING.md` named in the earlier map no longer exists)
+- **Docs:** `docs/scripting/scripting.md`, `docs/scripting/scripting.md` (the old `SCRIPTING.md` named in the earlier map no longer exists)
 - **Tests:** `scripting`, `scriptapi`, `script_semantics`, `script_lang2`, `script_lang3`, `script_events`, `script_arrays`, `script_maps`, `script_debug`, `script_paths`, `okayscript_csharp`, `csharp_style_script`
 - **Status:** Works - default language, used by every sample and by editor plugins; broad test coverage across syntax and builtins
-- **Open:** possible doc conflict: `docs/scripting.md` line ~144 says own classes are not supported, while the "Classes and new" section documents them; one 10.5k-line file (splitting is listed in 19.4); the earlier map named a "scripting bug list 1-15": ask before assuming any of it is still open
+- **Open:** possible doc conflict: `docs/scripting/scripting.md` line ~144 says own classes are not supported, while the "Classes and new" section documents them; one 10.5k-line file (splitting is listed in 19.4); the earlier map named a "scripting bug list 1-15": ask before assuming any of it is still open
 - **Related:** 13.2, 13.4, 13.5, 13.7, 19.4
 - **Words:** OkayScript, okayscript, script language, start update, function, variable, coroutine, yield, lambda, LINQ, C# style, event handler, lifecycle, VM, Lua-like
 - **Seen as:** a script does nothing or errors at runtime; "unknown function"; a field does not show in the Inspector; Start or Update never runs; a pasted C# script is accepted but has no effect; a coroutine stops early
@@ -40,7 +40,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Code:** `Scripting/NextScriptVM`, `engine/src/Script/NextScriptVM.cpp`, `engine/src/Script/Lexer.cpp`, `engine/src/Script/Parser.cpp`, `engine/src/Script/Checker.cpp`, `engine/src/Script/Interpreter.cpp`, `engine/src/Script/ScriptInternal.hpp`
 - **API:** `NextScriptVM::kLanguage` (`okayscript-next`), `NextScriptVM::ForgetSceneStatics`, `LastError`, `ErrorCount`; script syntax `class Name : Behaviour { public float speed; void Update() {...} }`
 - **Editor:** the Script Editor runs this checker for scripts whose language is `okayscript-next` (inline errors and warnings with columns)
-- **Docs:** `docs/scripting.md` (partly describes both languages), `docs/engine_api.md`
+- **Docs:** `docs/scripting/scripting.md` (partly describes both languages), `docs/engine_api.md`
 - **Tests:** `okayscript_next`, `okayscript_next_csharp`
 - **Status:** Partial - on main: classes, enums, switch, arrays, foreach, statics, interpolation, `??` and `?.`, List and Dictionary, lambdas; not on main: try/catch, coroutines, events, inheritance and interfaces
 - **Open:** in flight (branches, no PR, 2026-10-26): claude/csharp-p1-events, -inheritance, -try, -coroutines, -getcomponent, claude/next-event-args; `AvailableScriptLanguages()` lacks `okayscript-next` so New Script cannot pick it (possible gap); replacing the old VM is not done
@@ -56,7 +56,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Code:** `Scripting/ScriptVM`, `Components/ScriptComponent`
 - **API:** `CreateScriptVM(lang)` (returns null for the removed names), `RemovedScriptLanguageMessage()`, `AvailableScriptLanguages()`
 - **Editor:** `.lua` and `.cs` files still show as scripts in the Project Browser; opening one loads it with the "no longer supported" message
-- **Docs:** `docs/scripting.md`
+- **Docs:** `docs/scripting/scripting.md`
 - **Tests:** `script_removed_langs`
 - **Status:** Works
 - **Open:** a future Lua-style, JS-style and Python-style text language on our own VM (see UNFINISHED.md) is planned; nothing converts old Lua or C# scripts
@@ -76,7 +76,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Code:** `Scripting/ScriptVM`, `Components/ScriptComponent`, `Scripting/StarterScripts`, `Scripting/ScriptUI`, `shared/OkayScriptUIBridge.hpp`
 - **API:** `ScriptComponent::LoadSource/LoadFile/Reload/Source/fields`, `SetScriptUI`, `ScriptUIBridge`, `StarterScriptSource(lang)`
 - **Editor:** Add Component > Scripts (every `.okay` file in the project, New Script...); Inspector header "Script (name)"; Script Editor
-- **Docs:** `docs/scripting.md`, `docs/editor.md`
+- **Docs:** `docs/scripting/scripting.md`, `docs/editor/editor.md`
 - **Tests:** `script_components`, `script_ui`, `starter_script`, `scripting`
 - **Status:** Works - used by every script; starter script test loads it in the real engine
 - **Open:** `Scripting/ScriptUI` bridge has only an OkayUI implementation (in `shared/`), so a build without OkayUI draws nothing for `ui_*` calls
@@ -101,7 +101,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Code:** `editor/main.cpp`, `editor/ScriptText.hpp`, `editor/vendor/TextEditor.*` (vendored, out of scope)
 - **API:** menu File / Edit / View / Go / Insert / Help inside the Script Editor; shortcuts Ctrl+F, Ctrl+Shift+F, Ctrl+/, Ctrl+D, Alt+Up/Down
 - **Editor:** View > Editors & Tools > Script Editor; Help > Scripting Reference; Layout preset "Scripting"
-- **Docs:** `docs/editor.md` (Script Editor), `docs/scripting.md`
+- **Docs:** `docs/editor/editor.md` (Script Editor), `docs/scripting/scripting.md`
 - **Tests:** `editor` (selftest covers ScriptText outline, identifier search and the lint), `starter_script`
 - **Status:** Works - features are present as menu items and code per the editor source; no separate unit tests except the selftest
 - **Open:** earlier map: "meaningful syntax only; classes and templates for New Script" (open); no step debugger for text scripts (only the visual-script debugger, 14.5); the 2.7k-line window lives in `main.cpp` (15.10). Script compile errors and missing script files are also rows in the project Problems panel (15.11.8), separate from this window's own Problems list
@@ -129,7 +129,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Ask me like:** "work on 13.6.1, add Camera shake to the typed API"; "regenerate engine_api.md"
 
 ### 13.7 Built-in function library
-- **What:** The several hundred built-in functions of the old VM, grouped as in `docs/scripting_reference.md`: movement one-liners, transforms, rigidbody, input, objects and scene, UI, tweens, saves, scene manager, networking, character animation, Steam, collections, JSON, timers, spawning and physics queries.
+- **What:** The several hundred built-in functions of the old VM, grouped as in `docs/scripting/scripting.md`: movement one-liners, transforms, rigidbody, input, objects and scene, UI, tweens, saves, scene manager, networking, character animation, Steam, collections, JSON, timers, spawning and physics queries.
 - **Parts:**
   - 13.7.1 Movement, transform and rigidbody - `Scripting/OkayScriptVM` - dt-scaled one-liners (walk, spin, follow, patrol, orbit, platformer, smooth_follow)
   - 13.7.2 Input, objects, scene and spawning - `Scripting/OkayScriptVM` - key and axis, find and spawn objects, hierarchy queries, Stats and survival access
@@ -141,9 +141,9 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
   - 13.7.8 Multiplayer, Steam and accounts - `Scripting/OkayScriptVM` - net_* messaging, steam_* achievements and stats, account_* sign-in
   - 13.7.9 Character animation - `Scripting/OkayScriptVM`, `Script/AnimIkTools` - play and query clips on a Character or Model Animator (Grok area)
 - **Code:** `Scripting/OkayScriptVM`, `Script/AnimIkTools`
-- **API:** `BuiltinNames()` lists every function; reference tables in `docs/scripting_reference.md`
+- **API:** `BuiltinNames()` lists every function; reference tables in `docs/scripting/scripting.md`
 - **Editor:** Help > Scripting Reference; Script Editor autocomplete; Insert > API Command
-- **Docs:** `docs/scripting_reference.md`, `docs/scripting.md`
+- **Docs:** `docs/scripting/scripting.md`, `docs/scripting/scripting.md`
 - **Tests:** `script_spawn`, `script_physics`, `script_events`, `script_util`, `script_lib`, `script_camera`, `script_fx`, `script_objects`, `script_tilemap`, `script_net`, `script_anim`, `script_batch1`, `script_nav`, `script_paths`, `steam_script`, `account_script`, `anim_script_control`, `inventory_script`
 - **Status:** Works - large and tested by area; each test file maps to one slice of the table
 - **Open:** the same calls are re-implemented for the typed language in `EngineApi.cpp`: the two tables can drift (possible duplicated system, see 13.2)

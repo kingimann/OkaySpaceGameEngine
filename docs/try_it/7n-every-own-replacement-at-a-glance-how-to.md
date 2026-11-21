@@ -1,11 +1,11 @@
 ---
 id: 7n
 group: switches
-row: | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
+row: | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/status/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 ---
 ### 7n. Every own replacement at a glance: how to try each, and what is missing
 
-This is the one table for everything that is built and switched off. It is the same table as section 5 of `docs/own_flip_proposal.md`,
+This is the one table for everything that is built and switched off. It is the same table as section 5 of `docs/status/own_flip_proposal.md`,
 which also says how ready each item is, in what order they could become the default, and what blocks deleting the library each one replaces
 (CLAUDE.md rules 4a and 17). Set a switch the way the section "Switches that are off by default" says: an environment variable in the
 Command Prompt, then start the program from that window. The sure way to see which parts are ours is **Help > About OkaySpace** in the editor.

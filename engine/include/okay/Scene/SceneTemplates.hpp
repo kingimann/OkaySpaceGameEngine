@@ -1889,7 +1889,7 @@ inline void VoxelSandbox(Scene& scene, int gridX, int gridY, int gridZ,
 /// (W/S throttle, A/D steer, Space brake, camera behind it). It has a cabin, a windscreen and an engine as plain
 /// look-only blocks. The nose points along +Z of the object. `pos` is where the waterline of the hull goes (the
 /// hull sits half under it). If the scene has no Water, a lake is made under it so the boat floats at once.
-/// Written from our own design (docs/water_boat.md); not taken from any other engine.
+/// Written from our own design (docs/rendering/terrain_water.md); not taken from any other engine.
 inline GameObject* AddBoat(Scene& scene, const Vec3& pos = {0, 0, 0}, float yawDegrees = 0.0f) {
     if (scene.FindObjectsOfType<Water>().empty()) {
         GameObject* lake = scene.CreateGameObject("Lake");

@@ -1,5 +1,5 @@
 #pragma once
-// Takes the personal parts out of a crash report before it leaves the machine (docs/crash_reports.md, "What is scrubbed").
+// Takes the personal parts out of a crash report before it leaves the machine (docs/online/crash_reports.md, "What is scrubbed").
 // Header only, no I/O except reading a few environment variables in LocalContext(); the tests give it hostile text.
 //
 // What goes, in this order:

@@ -2,7 +2,7 @@
 // the parts of COLLADA 1.4 / 1.5 that models use: geometry (triangles, polylist,
 // polygons), materials and textures, the node hierarchy, skins and matrix animations.
 // Anything it does not read is listed in ImportedModel::notes. See
-// okay/Render/ModelData.hpp and docs/model_import.md.
+// okay/Render/ModelData.hpp and docs/content/model_import.md.
 #include "FileOpen.hpp"
 #include "NumParse.hpp"
 #include "okay/Render/ModelData.hpp"

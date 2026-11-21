@@ -91,7 +91,7 @@ done
 [ -f build-win-dist/CHANGELOG.txt ] || cp dist/CHANGELOG.txt build-win-dist/CHANGELOG.txt
 
 # Authenticode-sign our programs before they are zipped, installed or checksummed (skipped with a warning when
-# WINDOWS_SIGN_PFX_BASE64 is not set; see docs/packaging.md "Code signing").
+# WINDOWS_SIGN_PFX_BASE64 is not set; see docs/release/packaging.md "Code signing").
 scripts/sign-windows.sh build-win-dist/OkaySpace.exe build-win-dist/Tools/OkayEngine.exe build-win-dist/Tools/OkaySpacePlayer.exe
 
 OUT="$PWD/release-out"; rm -rf "$OUT"; mkdir -p "$OUT"

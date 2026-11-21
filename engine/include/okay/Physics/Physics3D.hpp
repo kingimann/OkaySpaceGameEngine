@@ -70,7 +70,7 @@ struct RaycastHit3D {
 ///
 /// A body may sit under a parent. The step moves it in world space, so a moving or
 /// turning parent carries it and gravity stays world-down. Un-parenting keeps the
-/// speed that parent was giving it (see docs/physics.md).
+/// speed that parent was giving it (see docs/physics/physics.md).
 class Physics3D {
 public:
     static constexpr std::uint32_t kAllLayers = 0xFFFFFFFFu;
@@ -83,7 +83,7 @@ public:
     Vec3 gravity{0.0f, -9.81f, 0.0f};
 
     /// Classic (the original single-pass step, what old scenes use) or Improved (iterated contacts, stacks that stand, bodies
-    /// that sleep together, swept fast bodies, rolling resistance; see PhysicsQuality.hpp and docs/physics.md).
+    /// that sleep together, swept fast bodies, rolling resistance; see PhysicsQuality.hpp and docs/physics/physics.md).
     /// Saved in the scene file as `physicsquality`; a scene without the record is Classic.
     PhysicsQuality quality = PhysicsQuality::Classic;
     /// Improved: how many times the contact solver repeats per step (more = stiffer stacks, slower). 4 to 30.

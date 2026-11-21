@@ -4,7 +4,7 @@
 //
 // FindObjectsOfType visits every object and runs a dynamic_cast on every component of it. The physics steps ask for the
 // rigidbodies, colliders, terrains and joints several times each, every step: for a scene of 2,000 objects that was a fifth of
-// the frame (docs/perf_log.md). The answer only changes when a component is added or removed or an object is created,
+// the frame (docs/engine/perf_log.md). The answer only changes when a component is added or removed or an object is created,
 // destroyed, reordered or moved between scenes, and the scene counts exactly those events (Scene::ComponentVersion and
 // Scene::StructureVersion), so the list is kept until one of the two counts or the scene changes. Component order within an
 // object (GameObject::MoveComponent / ReorderComponents) bumps the structure count too, so the order is never stale.

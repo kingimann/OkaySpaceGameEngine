@@ -4,7 +4,7 @@
 //
 // These are the behaviour tests of the first okay::imui core, ported to the OkayUI widgets that have an
 // equivalent. Behaviour OkayUI lacked was fixed with the test written first; what is still missing is
-// listed in docs/own_ui_toolkit.md.
+// listed in docs/ui/own_ui_toolkit.md.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 

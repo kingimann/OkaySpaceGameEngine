@@ -2322,6 +2322,129 @@ static bool LayerMaskField(const char* label, std::uint32_t& mask, const char* t
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
     return changed;
 }
+// ---- Collider shapes: one wireframe routine for every 3D collider (Scene view and physics debug draw) ----
+// Draws the real shape (an oriented box, rings for round shapes, hull edges, the parts of a compound, a grid for a plane),
+// never the bounding box. `line(a, b)` draws one world-space segment.
+template <class LineFn>
+static void DrawShapeWire(okay::Collider3D* col, LineFn line) {
+    using namespace okay;
+    using Shape = Collider3D::Shape;
+    auto basis = [](const Vec3& n, Vec3& u, Vec3& v) {
+        Vec3 t = std::fabs(n.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+        u = Vec3::Cross(n, t).Normalized(); v = Vec3::Cross(n, u);
+    };
+    auto drawLocal = [&](const shape3d::Frame& f, const LocalShape3D& ls) {
+        using K = LocalShape3D::Kind;
+        auto W = [&](const Vec3& p) { return shape3d::ToWorldPoint(f, p); };
+        auto ringL = [&](const Vec3& c, const Vec3& u, const Vec3& v, float r) {
+            Vec3 prev = W(c + u * r);
+            for (int k = 1; k <= 24; ++k) {
+                float a = (float)k / 24.0f * 6.2831853f;
+                Vec3 cur = W(c + u * (r * std::cos(a)) + v * (r * std::sin(a)));
+                line(prev, cur); prev = cur;
+            }
+        };
+        if (ls.kind == K::Box) {
+            Vec3 cr[8];
+            for (int i = 0; i < 8; ++i) cr[i] = W({(i & 1) ? ls.half.x : -ls.half.x, (i & 2) ? ls.half.y : -ls.half.y, (i & 4) ? ls.half.z : -ls.half.z});
+            static const int e[12][2] = {{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};
+            for (auto& ed2 : e) line(cr[ed2[0]], cr[ed2[1]]);
+        } else if (ls.kind == K::Sphere) {
+            ringL({0, 0, 0}, {1, 0, 0}, {0, 1, 0}, ls.radius); ringL({0, 0, 0}, {1, 0, 0}, {0, 0, 1}, ls.radius); ringL({0, 0, 0}, {0, 1, 0}, {0, 0, 1}, ls.radius);
+        } else if (ls.kind == K::Hull) {
+            for (std::size_t i = 0; i + 2 < ls.tris.size(); i += 3) {
+                Vec3 a = W(ls.pts[(std::size_t)ls.tris[i]]), b = W(ls.pts[(std::size_t)ls.tris[i + 1]]), c = W(ls.pts[(std::size_t)ls.tris[i + 2]]);
+                line(a, b); line(b, c); line(c, a);
+            }
+            if (ls.tris.empty()) for (std::size_t i = 0; i + 1 < ls.pts.size(); ++i) line(W(ls.pts[i]), W(ls.pts[i + 1]));
+        } else {   // Capsule, Cylinder, Cone: rings along the long axis
+            Vec3 u = ls.Axis(), p, q; basis(u, p, q);
+            float hh = ls.height * 0.5f, r = ls.radius;
+            float cap = ls.kind == K::Capsule ? Mathf::Max(0.0f, hh - r) : hh;
+            ringL(u * -cap, p, q, r);
+            if (ls.kind == K::Cone) {
+                Vec3 tip = W(u * hh);
+                for (const Vec3& d : {p, p * -1.0f, q, q * -1.0f}) line(W(u * -hh + d * r), tip);
+            } else {
+                ringL(u * cap, p, q, r);
+                for (const Vec3& d : {p, p * -1.0f, q, q * -1.0f}) line(W(u * -cap + d * r), W(u * cap + d * r));
+                if (ls.kind == K::Capsule) { ringL(u * -cap, p, u, r); ringL(u * cap, p, u, r); }
+            }
+        }
+    };
+    switch (col->shape()) {
+    case Shape::Box: case Shape::Mesh: {
+        auto* bx = static_cast<BoxCollider3D*>(col);
+        LocalShape3D ls; ls.kind = LocalShape3D::Kind::Box;
+        Vec3 h = bx->HalfExtents(); ls.half = h;
+        Vec3 ax, ay, az; bx->WorldAxes(ax, ay, az);
+        Vec3 c = bx->WorldCenter(), cr[8];
+        for (int i = 0; i < 8; ++i) cr[i] = c + ax * ((i & 1) ? h.x : -h.x) + ay * ((i & 2) ? h.y : -h.y) + az * ((i & 4) ? h.z : -h.z);
+        static const int e[12][2] = {{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};
+        for (auto& ed2 : e) line(cr[ed2[0]], cr[ed2[1]]);
+        break;
+    }
+    case Shape::Sphere: {
+        auto* sp = static_cast<SphereCollider3D*>(col);
+        Vec3 c = sp->WorldCenter(); float r = sp->WorldRadius();
+        LocalShape3D ls; ls.kind = LocalShape3D::Kind::Sphere; ls.radius = r;
+        shape3d::Frame f; f.c = c; f.r = Quat::Identity; f.s = Vec3::One;
+        drawLocal(f, ls);
+        break;
+    }
+    case Shape::Capsule: {   // (the capsule's axis turns with the object)
+        auto* cap = static_cast<CapsuleCollider3D*>(col);
+        Vec3 a, b; cap->Segment(a, b); float r = cap->WorldRadius();
+        Vec3 axis = (b - a).SqrMagnitude() > 1e-10f ? (b - a).Normalized() : cap->WorldAxisDir(), u, v;
+        basis(axis, u, v);
+        auto ring = [&](const Vec3& c, const Vec3& uu, const Vec3& vv) {
+            Vec3 prev = c + uu * r;
+            for (int k = 1; k <= 24; ++k) { float t = (float)k / 24.0f * 6.2831853f; Vec3 cur = c + uu * (r * std::cos(t)) + vv * (r * std::sin(t)); line(prev, cur); prev = cur; }
+        };
+        ring(a, u, v); ring(b, u, v); ring(a, u, axis); ring(b, u, axis);
+        line(a + u * r, b + u * r); line(a - u * r, b - u * r); line(a + v * r, b + v * r); line(a - v * r, b - v * r);
+        break;
+    }
+    case Shape::Cylinder: drawLocal(shape3d::FrameOf(*col), shape3d::CylinderShape(*static_cast<CylinderCollider3D*>(col))); break;
+    case Shape::Cone: case Shape::ConvexHull: drawLocal(shape3d::FrameOf(*col), static_cast<ShapeCollider3D*>(col)->Local()); break;
+    case Shape::Compound: {
+        auto* cc = static_cast<CompoundCollider3D*>(col);
+        for (int i = 0; i < cc->PartCount(); ++i) drawLocal(cc->PartFrame(i), cc->Parts()[(std::size_t)i].shape);
+        break;
+    }
+    case Shape::Plane: {
+        auto* pl = static_cast<PlaneCollider3D*>(col);
+        Vec3 c = pl->WorldCenter(), n = pl->WorldNormal(), u, v; basis(n, u, v);
+        for (int k = -10; k <= 10; ++k) { line(c + u * (float)k + v * -10.0f, c + u * (float)k + v * 10.0f); line(c + v * (float)k + u * -10.0f, c + v * (float)k + u * 10.0f); }
+        line(c, c + n * 1.0f);
+        break;
+    }
+    case Shape::Heightfield: {
+        auto* hf = static_cast<HeightfieldCollider3D*>(col);
+        shape3d::Frame f = shape3d::FrameOf(*col);
+        const int C = std::max(hf->columns, 2), R = std::max(hf->rows, 2);
+        const int si = std::max(1, C / 64), sj = std::max(1, R / 64);
+        auto P = [&](int i, int j) { return shape3d::ToWorldPoint(f, {(i - (C - 1) * 0.5f) * hf->cellX, hf->HeightAt(i, j), (j - (R - 1) * 0.5f) * hf->cellZ}); };
+        for (int j = 0; j < R; j += sj) for (int i = 0; i + 1 < C; ++i) line(P(i, j), P(i + 1, j));
+        for (int i = 0; i < C; i += si) for (int j = 0; j + 1 < R; ++j) line(P(i, j), P(i, j + 1));
+        break;
+    }
+    }
+}
+// Shapes the Scene view can edit with drag handles ("Edit Collider").
+static bool ColliderHandlesFor(okay::GameObject* g) {
+    return g && (g->GetComponent<okay::BoxCollider3D>() || g->GetComponent<okay::SphereCollider3D>() ||
+                 g->GetComponent<okay::CapsuleCollider3D>() || g->GetComponent<okay::ConeCollider3D>());
+}
+// The first handle-editable collider of an object that is not a box (sphere, capsule, cylinder, cone).
+static okay::Collider3D* RoundShapeFor(okay::GameObject* g) {
+    if (!g || g->GetComponent<okay::BoxCollider3D>()) return nullptr;
+    if (auto* c = g->GetComponent<okay::SphereCollider3D>()) return c;
+    if (auto* c = g->GetComponent<okay::CapsuleCollider3D>()) return c;
+    if (auto* c = g->GetComponent<okay::ConeCollider3D>()) return c;
+    return nullptr;
+}
+
 // Per-collider physics material (2D or 3D): this collider's own friction and bounciness (or the Rigidbody's), and how each
 // mixes with what it touches. Returns true when something changed.
 template <class Col>
@@ -2403,6 +2526,9 @@ static bool PhysicsMaterialFields(Col* c, const char* id) {
         if (ImGui::Combo(("Bounce Mix##pm" + sid).c_str(), &bm, modes, 5)) { c->bounceCombine = (okay::CombineMode)bm; changed = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("How this bounciness mixes with the one it touches. Default is the larger of the two.");
     }
+    ImGui::Separator();
+    if (ImGui::DragFloat(("Contact offset (skin)##pm" + sid).c_str(), &c->contactOffset, 0.005f, 0.0f, 1.0f, "%.3f")) { if (c->contactOffset < 0.0f) c->contactOffset = 0.0f; changed = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Makes the collider count as this much thicker when it touches something. 0 is the exact shape. A little (0.01) stops thin or fast things catching on seams.");
     ImGui::TreePop();
     return changed;
 }
@@ -35385,7 +35511,8 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cap = dynamic_cast<CapsuleCollider3D*>(curComp)) {
-        if (CompHeader("Capsule Collider 3D", cap, &toRemove)) {
+        if (CompHeader(cap->shape() == Collider3D::Shape::Cylinder ? "Cylinder Collider 3D" : "Capsule Collider 3D", cap, &toRemove)) {
+            if (cap->shape() == Collider3D::Shape::Cylinder) ImGui::TextDisabled("Flat ends and sharp rims: it stands on its end and rolls on its side.");
             ImGui::DragFloat("Radius##cap3", &cap->radius, 0.05f, 0.0f, 1000.0f);
             ImGui::DragFloat("Height##cap3", &cap->height, 0.05f, 0.0f, 1000.0f);
             const char* axes[] = {"X", "Y", "Z"};
@@ -35405,6 +35532,110 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Auto Fit##cap3");
             if (cap->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##cap3")) toRemove = cap;
+        }
+    }
+    // Shared fields of the newer 3D colliders: offset, trigger, layer, physics material, trigger filter.
+    auto colliderCommon3D = [&](Collider3D* c, const char* id) {
+        float off[3] = {c->offset.x, c->offset.y, c->offset.z};
+        if (DragVec3Axis((std::string("Offset##") + id).c_str(), off, 0.05f)) { c->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
+        ImGui::Checkbox((std::string("Trigger##") + id).c_str(), &c->isTrigger);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80); ImGui::DragInt((std::string("Layer##") + id).c_str(), &c->layer, 0.1f, 0, 31);
+        if (PhysicsMaterialFields(c, id)) ed.dirty = true;
+        if (TriggerFilterFields(c, id)) ed.dirty = true;
+    };
+    auto colliderEditButton = [&](const char* id, const char* tip) {
+        if (AccentToggleButton((std::string("Edit Collider##") + id).c_str(), g_colliderEdit)) {
+            g_colliderEdit = !g_colliderEdit;
+            if (!g_colliderEdit) g_colliderDragAxis = -1;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+    };
+    if (auto* co = dynamic_cast<ConeCollider3D*>(curComp)) {
+        if (CompHeader("Cone Collider 3D", co, &toRemove)) {
+            ImGui::TextDisabled("A round base and a point: party hats, traffic cones, spikes.");
+            ImGui::DragFloat("Radius##cone3", &co->radius, 0.05f, 0.0f, 1000.0f);
+            ImGui::DragFloat("Height##cone3", &co->height, 0.05f, 0.0f, 1000.0f);
+            const char* axes[] = {"X", "Y", "Z"};
+            ImGui::Combo("Tip points along##cone3", &co->axis, axes, 3);
+            colliderCommon3D(co, "cone3");
+            if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##cone3")) { FitColliders(go); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Auto Fit##cone3", &co->autoFit)) { if (co->autoFit) FitColliders(go); ed.dirty = true; }
+            if (co->autoFit) FitColliders(go, true);
+            colliderEditButton("cone3", "Drag the dots in the Scene view: the tip and base change the height, the rim changes the width.");
+            if (ImGui::SmallButton("Remove##cone3")) toRemove = co;
+        }
+    }
+    if (auto* hc = dynamic_cast<ConvexHullCollider3D*>(curComp)) {
+        if (CompHeader("Convex Hull Collider 3D", hc, &toRemove)) {
+            ImGui::TextDisabled("Shrink-wrap around a cloud of points. Solid inside, so it can move and stack.");
+            ImGui::Text("Points: %d", hc->PointCount());
+            colliderCommon3D(hc, "hull3");
+            if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Wrap around mesh##hull3")) { FitColliders(go); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fill the points from the model, keeping only the outer corners.");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset to a box##hull3")) { hc->points.clear(); ed.dirty = true; }
+            char pb[4096]; std::snprintf(pb, sizeof(pb), "%s", hc->points.c_str());
+            if (ImGui::InputTextMultiline("Points (x y z; x y z; ...)##hull3", pb, sizeof(pb), ImVec2(0, 60))) { hc->points = pb; ed.dirty = true; }
+            if (ImGui::SmallButton("Remove##hull3")) toRemove = hc;
+        }
+    }
+    if (auto* cp = dynamic_cast<CompoundCollider3D*>(curComp)) {
+        if (CompHeader("Compound Collider 3D", cp, &toRemove)) {
+            ImGui::TextDisabled("Several simple shapes glued into one collider. Parts: %d", cp->PartCount());
+            colliderCommon3D(cp, "comp3");
+            if (ImGui::SmallButton("+ Box##comp3")) { cp->AddBox({0, 0, 0}, {1, 1, 1}); ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("+ Ball##comp3")) { cp->AddSphere({0, 0, 0}, 0.5f); ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("+ Capsule##comp3")) { cp->AddCapsule({0, 0, 0}, 0.4f, 1.6f); ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("+ Cylinder##comp3")) { cp->AddCylinder({0, 0, 0}, 0.5f, 1.0f); ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("+ Cone##comp3")) { cp->AddCone({0, 0, 0}, 0.5f, 1.0f); ed.dirty = true; }
+            char pb[4096]; std::snprintf(pb, sizeof(pb), "%s", cp->parts.c_str());
+            if (ImGui::InputTextMultiline("Parts##comp3", pb, sizeof(pb), ImVec2(0, 90))) { cp->parts = pb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One part per ';':  kind px py pz rx ry rz a b c axis\nbox: a b c = size. sphere: a = radius. capsule / cylinder / cone: a = radius, b = height, axis 0 X / 1 Y / 2 Z.\nPosition in local units, rotation in degrees.");
+            if (ImGui::SmallButton("Remove##comp3")) toRemove = cp;
+        }
+    }
+    if (auto* pl = dynamic_cast<PlaneCollider3D*>(curComp)) {
+        if (CompHeader("Plane Collider 3D", pl, &toRemove)) {
+            ImGui::TextDisabled("Endless flat ground. Everything below the plane is solid. Turn the object to tilt it.");
+            colliderCommon3D(pl, "plane3");
+            if (ImGui::SmallButton("Remove##plane3")) toRemove = pl;
+        }
+    }
+    if (auto* hf = dynamic_cast<HeightfieldCollider3D*>(curComp)) {
+        if (CompHeader("Heightfield Collider 3D", hf, &toRemove)) {
+            ImGui::TextDisabled("Hilly ground from a grid of heights. Solid below the surface.");
+            bool gridChanged = false;
+            gridChanged |= ImGui::DragInt("Columns##hf3", &hf->columns, 0.2f, 2, 2048);
+            gridChanged |= ImGui::DragInt("Rows##hf3", &hf->rows, 0.2f, 2, 2048);
+            ImGui::DragFloat("Cell width (X)##hf3", &hf->cellX, 0.05f, 0.01f, 1000.0f);
+            ImGui::DragFloat("Cell depth (Z)##hf3", &hf->cellZ, 0.05f, 0.01f, 1000.0f);
+            ImGui::DragFloat("Height scale##hf3", &hf->heightScale, 0.05f);
+            if (gridChanged) { hf->columns = std::max(hf->columns, 2); hf->rows = std::max(hf->rows, 2); ed.dirty = true; }
+            colliderCommon3D(hf, "hf3");
+            if (go->GetComponent<Terrain>() && ImGui::SmallButton("Copy from Terrain##hf3")) { FitColliders(go); ed.dirty = true; }
+            if (ImGui::SmallButton("Make flat##hf3")) { hf->SetHeights(hf->columns, hf->rows, std::vector<float>((std::size_t)hf->columns * (std::size_t)hf->rows, 0.0f)); ed.dirty = true; }
+            if (ImGui::SmallButton("Remove##hf3")) toRemove = hf;
+        }
+    }
+    if (auto* cmp2 = dynamic_cast<CompositeCollider2D*>(curComp)) {
+        if (CompHeader("Composite Collider 2D", cmp2, &toRemove)) {
+            ImGui::TextDisabled("Several simple shapes glued into one collider.");
+            float off[2] = {cmp2->offset.x, cmp2->offset.y};
+            if (ImGui::DragFloat2("Offset##cmp2", off, 0.05f)) { cmp2->offset = {off[0], off[1]}; ed.dirty = true; }
+            ImGui::Checkbox("Trigger##cmp2", &cmp2->isTrigger);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cmp2", &cmp2->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(cmp2, "cmp2")) ed.dirty = true;
+            if (TriggerFilterFields(cmp2, "cmp2")) ed.dirty = true;
+            if (ImGui::SmallButton("+ Circle##cmp2")) { cmp2->AddCircle({0, 0}, 0.5f); ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("+ Box##cmp2")) { cmp2->AddBox({0, 0}, {1, 1}); ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("+ Capsule##cmp2")) { cmp2->AddCapsule({0, 0}, 0.3f, 1.0f); ed.dirty = true; }
+            char pb[4096]; std::snprintf(pb, sizeof(pb), "%s", cmp2->parts.c_str());
+            if (ImGui::InputTextMultiline("Parts##cmp2", pb, sizeof(pb), ImVec2(0, 90))) { cmp2->parts = pb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One part per ';':\ncircle x y radius\nbox x y width height angle\ncapsule x y radius length angle\npolygon x y x y x y ...");
+            if (ImGui::SmallButton("Remove##cmp2")) toRemove = cmp2;
         }
     }
     // A GameObject may carry several scripts.
@@ -42892,7 +43123,10 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<CircleCollider2D>(), "Circle Collider 2D")) { go->AddComponent<CircleCollider2D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider2D>(), "Capsule Collider 2D")) { go->AddComponent<CapsuleCollider2D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<EdgeCollider2D>(), "Edge Collider 2D (polyline/one-way)")) { go->AddComponent<EdgeCollider2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<PolygonCollider2D>(), "Polygon Collider 2D")) { go->AddComponent<PolygonCollider2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<PolygonCollider2D>(), "Polygon Collider 2D (any solid outline: ramps, hills, odd shapes)")) { go->AddComponent<PolygonCollider2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CompositeCollider2D>(), "Composite Collider 2D (several shapes in one: a plus sign, a dumbbell)")) {
+                auto* cc = go->AddComponent<CompositeCollider2D>(); cc->AddBox({0, 0}, {2, 0.5f}); cc->AddBox({0, 0}, {0.5f, 2}); ed.dirty = true;
+            }
             if (item(go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>(), "Tilemap Collider 2D")) { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
           } EndCat(o); }
 
@@ -42904,7 +43138,16 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }
-            if (item(!go->GetComponent<CylinderCollider3D>(), "Cylinder Collider 3D")) { go->AddComponent<CylinderCollider3D>(); FitColliders(go); ed.dirty = true; }
+            if (item(!go->GetComponent<CylinderCollider3D>(), "Cylinder Collider 3D (flat ends: barrels, pillars, coins)")) { go->AddComponent<CylinderCollider3D>(); FitColliders(go); ed.dirty = true; }
+            if (item(!go->GetComponent<ConeCollider3D>(), "Cone Collider 3D (a point on top: party hats, traffic cones)")) { go->AddComponent<ConeCollider3D>(); FitColliders(go); ed.dirty = true; }
+            if (item(!go->GetComponent<ConvexHullCollider3D>(), "Convex Hull Collider 3D (shrink-wrap around a model, filled in)")) { auto* h = go->AddComponent<ConvexHullCollider3D>(); if (go->GetComponent<MeshRenderer>()) FitColliders(go); (void)h; ed.dirty = true; }
+            if (item(!go->GetComponent<CompoundCollider3D>(), "Compound Collider 3D (several shapes in one: a table, a dumbbell)")) {
+                auto* cc = go->AddComponent<CompoundCollider3D>(); cc->AddBox({0, 0.5f, 0}, {2, 0.2f, 2}); cc->AddBox({0, -0.1f, 0}, {0.3f, 1.2f, 0.3f}); ed.dirty = true;
+            }
+            if (item(!go->GetComponent<PlaneCollider3D>(), "Plane Collider 3D (endless flat ground, solid below)")) { go->AddComponent<PlaneCollider3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<HeightfieldCollider3D>(), "Heightfield Collider 3D (hilly ground from a grid of heights)")) {
+                auto* hf = go->AddComponent<HeightfieldCollider3D>(); if (go->GetComponent<Terrain>()) FitColliders(go); ed.dirty = true; (void)hf;
+            }
             if (item(!go->GetComponent<MeshCollider3D>(), "Mesh Collider 3D")) { auto* m = go->AddComponent<MeshCollider3D>(); m->autoFit = true; FitColliders(go); ed.dirty = true; }
           } EndCat(o); }
 
@@ -46134,24 +46377,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             // 3D collider wireframes.
             if (g_showColliders) {
                 const Vec3 X{1, 0, 0}, Y{0, 1, 0}, Z{0, 0, 1};
-                if (auto* bc = up->GetComponent<BoxCollider3D>())
-                    box(bc->WorldCenter(), bc->HalfExtents(), kColliderCol);
-                if (auto* sp = up->GetComponent<SphereCollider3D>()) {
-                    Vec3 c = sp->WorldCenter(); float r = sp->WorldRadius();
-                    ring(c, X, Y, r, kColliderCol);
-                    ring(c, X, Z, r, kColliderCol);
-                    ring(c, Y, Z, r, kColliderCol);
-                }
-                if (auto* cap = up->GetComponent<CapsuleCollider3D>()) {
-                    Vec3 a, b; cap->Segment(a, b); float r = cap->WorldRadius();
-                    Vec3 u = cap->axis == 0 ? Y : X;
-                    Vec3 v = cap->axis == 2 ? Y : Z;
-                    ring(a, u, v, r, kColliderCol);
-                    ring(b, u, v, r, kColliderCol);
-                    line(a + u * r, b + u * r, kColliderCol, 1.0f);
-                    line(a - u * r, b - u * r, kColliderCol, 1.0f);
-                    line(a + v * r, b + v * r, kColliderCol, 1.0f);
-                    line(a - v * r, b - v * r, kColliderCol, 1.0f);
+                (void)X; (void)Y; (void)Z;
+                for (Collider3D* wcol : up->GetComponents<Collider3D>()) {     // every collider, drawn as the shape it really is
+                    if (!wcol->enabled) continue;
+                    DrawShapeWire(wcol, [&](const Vec3& a, const Vec3& b) { line(a, b, kColliderCol, 1.0f); });
                 }
             }
             if (auto* seat = up->GetComponent<Seat>()) {
@@ -46554,7 +46783,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 // The transform gizmo's handles, worked out as the gizmo draws them further down: the name must not
                 // cover an arm (or a ring for Rotate), or a click on the name would land on the handle's grab zone.
                 const bool gizmoDrawn = g_showGizmos && !(g_meshEdit && g_meshEditObj == sel && sel->GetComponent<MeshRenderer>()) &&
-                                        !(g_colliderEdit && sel->GetComponent<BoxCollider3D>()) && !SplinePointPicked(ed);
+                                        !(g_colliderEdit && ColliderHandlesFor(sel)) && !SplinePointPicked(ed);
                 if (gizmoDrawn) {
                     Transform* t = sel->transform;
                     const bool noScale = sel->GetComponent<Camera>() != nullptr;
@@ -46780,25 +47009,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         a = w.MultiplyPoint(a); b = w.MultiplyPoint(b); c = w.MultiplyPoint(c);
                         line(a, b, cc, 1.0f); line(b, c, cc, 1.0f); line(c, a, cc, 1.0f);
                     }
-                } else if (auto* bx = dynamic_cast<BoxCollider3D*>(col)) {   // oriented box (mesh without triangles = its bounds)
-                    Vec3 c = bx->WorldCenter(), h = bx->HalfExtents(), ax, ay, az;
-                    bx->WorldAxes(ax, ay, az);
-                    Vec3 cr[8];
-                    for (int i = 0; i < 8; ++i)
-                        cr[i] = c + ax * ((i & 1) ? h.x : -h.x) + ay * ((i & 2) ? h.y : -h.y) + az * ((i & 4) ? h.z : -h.z);
-                    static const int e[12][2] = {{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};
-                    for (auto& ed2 : e) line(cr[ed2[0]], cr[ed2[1]], cc, 1.25f);
-                } else if (auto* sp = dynamic_cast<SphereCollider3D*>(col)) {
-                    Vec3 c = sp->WorldCenter(); float r = sp->WorldRadius();
-                    ring(c, {1, 0, 0}, {0, 1, 0}, r, cc); ring(c, {1, 0, 0}, {0, 0, 1}, r, cc); ring(c, {0, 1, 0}, {0, 0, 1}, r, cc);
-                } else if (auto* cap = dynamic_cast<CapsuleCollider3D*>(col)) {   // capsule / cylinder
-                    Vec3 a, b; cap->Segment(a, b); float r = cap->WorldRadius();
-                    Vec3 axis = (b - a).SqrMagnitude() > 1e-10f ? (b - a).Normalized() : Vec3{0, 1, 0}, u, v;
-                    basis(axis, u, v);
-                    ring(a, u, v, r, cc); ring(b, u, v, r, cc);
-                    ring(a, u, axis, r, cc); ring(b, u, axis, r, cc);
-                    line(a + u * r, b + u * r, cc); line(a - u * r, b - u * r, cc);
-                    line(a + v * r, b + v * r, cc); line(a - v * r, b - v * r, cc);
+                } else {   // every other shape, drawn as the shape it really is (an oriented box, rings, hull edges, a grid ...)
+                    DrawShapeWire(col, [&](const Vec3& a, const Vec3& b) { line(a, b, cc, 1.25f); });
                 }
             }
         }
@@ -48069,20 +48281,27 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // ---- Collider edit: drag the 6 face handles of the selected Box collider to
     //      hand-fit it to the model ("Edit Collider"). Suppresses the
     //      transform gizmo while active, like mesh-edit mode. ----
-    bool colliderEditActive = !gameView && g_colliderEdit && ed.selected()
-                              && ed.selected()->GetComponent<BoxCollider3D>();
-    if (colliderEditActive) {
+    bool colliderEditActive = !gameView && g_colliderEdit && ColliderHandlesFor(ed.selected());
+    // Moving a collider's centre by a world-space step: Classic keeps the offset in world units, Improved in the object's own.
+    auto shiftColliderOffset = [&](Collider3D* col, const Vec3& worldMove) {
+        Transform* tr = col->transform;
+        if (tr && ed.scene().physics3D().quality == PhysicsQuality::Improved) {
+            Vec3 loc = tr->Rotation().Inverse() * worldMove; Vec3 ls = tr->LossyScale();
+            col->offset = col->offset + Vec3{loc.x / (Mathf::Abs(ls.x) > 1e-4f ? ls.x : 1.0f), loc.y / (Mathf::Abs(ls.y) > 1e-4f ? ls.y : 1.0f), loc.z / (Mathf::Abs(ls.z) > 1e-4f ? ls.z : 1.0f)};
+        } else col->offset = col->offset + worldMove;
+    };
+    if (colliderEditActive && ed.selected()->GetComponent<BoxCollider3D>()) {
         auto* bc = ed.selected()->GetComponent<BoxCollider3D>();
         Vec3 c = bc->WorldCenter();
         Vec3 h = bc->HalfExtents();
         Vec3 lossy = ed.selected()->transform ? ed.selected()->transform->LossyScale() : Vec3::One;
-        const Vec3 ax[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+        Vec3 ax[3]; bc->WorldAxes(ax[0], ax[1], ax[2]);   // the box's own axes: the handles turn with the object
         ImU32 axc[3] = {IM_COL32(230, 90, 90, 255), IM_COL32(100, 220, 110, 255), IM_COL32(100, 160, 240, 255)};
         // Box wireframe (visible even without Show Colliders).
         {
             Vec3 cr[8];
             for (int i = 0; i < 8; ++i)
-                cr[i] = {c.x + ((i & 1) ? h.x : -h.x), c.y + ((i & 2) ? h.y : -h.y), c.z + ((i & 4) ? h.z : -h.z)};
+                cr[i] = c + ax[0] * ((i & 1) ? h.x : -h.x) + ax[1] * ((i & 2) ? h.y : -h.y) + ax[2] * ((i & 4) ? h.z : -h.z);
             static const int e[12][2] = {{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};
             for (auto& ed2 : e) {
                 ImVec2 pa, pb;
@@ -48121,9 +48340,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     if (Mathf::Abs(scv) < 1e-4f) scv = 1.0f;
                     // Move the grabbed face by dw; the opposite face stays put:
                     //   center += dw/2 on the axis;  size += sign*dw/|scale| on the axis.
-                    float* off = (a == 0 ? &bc->offset.x : a == 1 ? &bc->offset.y : &bc->offset.z);
                     float* siz = (a == 0 ? &bc->size.x   : a == 1 ? &bc->size.y   : &bc->size.z);
-                    *off += dw * 0.5f;
+                    shiftColliderOffset(bc, ax[a] * (dw * 0.5f));
                     *siz += s * dw / Mathf::Abs(scv);
                     if (*siz < 0.001f) *siz = 0.001f;
                     ed.dirty = true;
@@ -48137,6 +48355,81 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             bool cur = (g_colliderDragAxis == fh[i].axis && g_colliderDragSign == fh[i].sign);
             dl->AddCircleFilled(fh[i].sp, cur ? 7.0f : 5.0f, axc[fh[i].axis]);
             dl->AddCircle(fh[i].sp, cur ? 7.0f : 5.0f, IM_COL32(255, 255, 255, 210), 12, 1.5f);
+        }
+    } else if (colliderEditActive) {
+        // Sphere, Capsule, Cylinder, Cone: drag a dot to change the radius or pull an end to change the height.
+        Collider3D* rc = RoundShapeFor(ed.selected());
+        struct RH { Vec3 pos, dir; bool isRadius; ImVec2 sp; bool ok; };
+        std::vector<RH> hs;
+        Quat rq = rc && rc->transform ? rc->transform->Rotation() : Quat::Identity;
+        Vec3 lossyR = rc && rc->transform ? rc->transform->LossyScale() : Vec3::One;
+        float* radiusP = nullptr; float* heightP = nullptr; float radiusScale = 1.0f, alongScale = 1.0f; Vec3 axisDir{0, 1, 0};
+        if (auto* sph = dynamic_cast<SphereCollider3D*>(rc)) {
+            radiusP = &sph->radius; radiusScale = sph->radius > 1e-6f ? sph->WorldRadius() / sph->radius : 1.0f;
+            const Vec3 d6[6] = {rq * Vec3{1, 0, 0}, rq * Vec3{-1, 0, 0}, rq * Vec3{0, 1, 0}, rq * Vec3{0, -1, 0}, rq * Vec3{0, 0, 1}, rq * Vec3{0, 0, -1}};
+            for (const Vec3& d : d6) hs.push_back({sph->WorldCenter() + d * sph->WorldRadius(), d, true, {}, false});
+        } else if (auto* cap = dynamic_cast<CapsuleCollider3D*>(rc)) {   // capsule and cylinder
+            radiusP = &cap->radius; heightP = &cap->height; radiusScale = cap->radius > 1e-6f ? cap->WorldRadius() / cap->radius : 1.0f;
+            axisDir = cap->WorldAxisDir();
+            alongScale = cap->axis == 0 ? Mathf::Abs(lossyR.x) : cap->axis == 2 ? Mathf::Abs(lossyR.z) : Mathf::Abs(lossyR.y);
+            Vec3 pu, pv; { Vec3 t = Mathf::Abs(axisDir.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0}; pu = Vec3::Cross(axisDir, t).Normalized(); pv = Vec3::Cross(axisDir, pu); }
+            Vec3 c = cap->WorldCenter(); float halfLen = cap->height * alongScale * 0.5f;
+            hs.push_back({c + axisDir * halfLen, axisDir, false, {}, false});
+            hs.push_back({c - axisDir * halfLen, axisDir * -1.0f, false, {}, false});
+            for (const Vec3& d : {pu, pu * -1.0f, pv, pv * -1.0f}) hs.push_back({c + d * cap->WorldRadius(), d, true, {}, false});
+        } else if (auto* cone = dynamic_cast<ConeCollider3D*>(rc)) {
+            radiusP = &cone->radius; heightP = &cone->height;
+            axisDir = rq * (cone->axis == 0 ? Vec3{1, 0, 0} : cone->axis == 2 ? Vec3{0, 0, 1} : Vec3{0, 1, 0});
+            alongScale = cone->axis == 0 ? Mathf::Abs(lossyR.x) : cone->axis == 2 ? Mathf::Abs(lossyR.z) : Mathf::Abs(lossyR.y);
+            float perpScale = cone->axis == 1 ? Mathf::Max(Mathf::Abs(lossyR.x), Mathf::Abs(lossyR.z)) : cone->axis == 0 ? Mathf::Max(Mathf::Abs(lossyR.y), Mathf::Abs(lossyR.z)) : Mathf::Max(Mathf::Abs(lossyR.x), Mathf::Abs(lossyR.y));
+            radiusScale = perpScale;
+            Vec3 pu, pv; { Vec3 t = Mathf::Abs(axisDir.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0}; pu = Vec3::Cross(axisDir, t).Normalized(); pv = Vec3::Cross(axisDir, pu); }
+            Vec3 c = cone->WorldCenter(); float halfLen = cone->height * alongScale * 0.5f;
+            hs.push_back({c + axisDir * halfLen, axisDir, false, {}, false});            // the tip
+            hs.push_back({c - axisDir * halfLen, axisDir * -1.0f, false, {}, false});    // the base
+            for (const Vec3& d : {pu, pu * -1.0f, pv, pv * -1.0f}) hs.push_back({c - axisDir * halfLen + d * (cone->radius * perpScale), d, true, {}, false});
+        }
+        if (rc && radiusP) {
+            for (RH& h : hs) h.ok = toScreen(vp * Vec4{h.pos, 1}, h.sp);
+            DrawShapeWire(rc, [&](const Vec3& a, const Vec3& b) {
+                ImVec2 pa, pb; if (toScreen(vp * Vec4{a, 1}, pa) && toScreen(vp * Vec4{b, 1}, pb)) dl->AddLine(pa, pb, IM_COL32(90, 230, 120, 220), 1.5f);
+            });
+            if (g_colliderDragAxis < 0) {
+                if (hovered && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    float best = 11.0f * 11.0f; int bi = -1;
+                    for (int i = 0; i < (int)hs.size(); ++i) {
+                        if (!hs[(std::size_t)i].ok) continue;
+                        float dx = io.MousePos.x - hs[(std::size_t)i].sp.x, dy = io.MousePos.y - hs[(std::size_t)i].sp.y;
+                        if (dx * dx + dy * dy < best) { best = dx * dx + dy * dy; bi = i; }
+                    }
+                    if (bi >= 0) { ed.PushUndo(); g_colliderDragAxis = bi; g_uiHandled = true; }
+                }
+            } else if (g_colliderDragAxis < (int)hs.size()) {
+                const RH& h = hs[(std::size_t)g_colliderDragAxis];
+                ImVec2 s2; bool ok2 = toScreen(vp * Vec4{h.pos + h.dir, 1}, s2);
+                if (h.ok && ok2) {
+                    float sdx = s2.x - h.sp.x, sdy = s2.y - h.sp.y, sl = std::sqrt(sdx * sdx + sdy * sdy);
+                    if (sl > 1e-3f) {
+                        float dw = ((io.MouseDelta.x * sdx + io.MouseDelta.y * sdy) / sl) / sl;   // world units outward along the handle
+                        if (h.isRadius) {
+                            *radiusP = Mathf::Max(0.001f, *radiusP + dw / (radiusScale > 1e-4f ? radiusScale : 1.0f));
+                        } else if (heightP) {
+                            *heightP = Mathf::Max(0.001f, *heightP + dw / (alongScale > 1e-4f ? alongScale : 1.0f));
+                            shiftColliderOffset(rc, h.dir * (dw * 0.5f));   // the other end stays where it was
+                        }
+                        ed.dirty = true;
+                    }
+                }
+                g_uiHandled = true;
+                if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) g_colliderDragAxis = -1;
+            } else g_colliderDragAxis = -1;
+            for (int i = 0; i < (int)hs.size(); ++i) {
+                const RH& h = hs[(std::size_t)i];
+                if (!h.ok) continue;
+                bool cur = g_colliderDragAxis == i;
+                dl->AddCircleFilled(h.sp, cur ? 7.0f : 5.0f, h.isRadius ? IM_COL32(100, 160, 240, 255) : IM_COL32(100, 220, 110, 255));
+                dl->AddCircle(h.sp, cur ? 7.0f : 5.0f, IM_COL32(255, 255, 255, 210), 12, 1.5f);
+            }
         }
     } else if (g_colliderDragAxis >= 0) {
         g_colliderDragAxis = -1;   // selection changed mid-drag
@@ -52698,7 +52991,7 @@ int main(int argc, char** argv) {
             // selected object, after which the Inspector would dereference its freed
             // components (e.g. editing a Text component in Play crashed). Drop it.
             if (ed.selected() && !alive(ed.selected())) ed.Select(nullptr);
-            if (g_colliderEdit && ed.selected() && !ed.selected()->GetComponent<BoxCollider3D>())
+            if (g_colliderEdit && ed.selected() && !ColliderHandlesFor(ed.selected()))
                 g_colliderDragAxis = -1;
         }
 

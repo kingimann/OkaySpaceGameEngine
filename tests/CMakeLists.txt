@@ -4602,6 +4602,11 @@ foreach(_t IN ITEMS mip atlas convert bc dds_stream)
     set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()
 
+# Colliders behave as the shapes they are (not boxes): Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield, 2D polygon / capsule / composite.
+add_executable(test_collider_shapes test_collider_shapes.cpp)
+target_link_libraries(test_collider_shapes PRIVATE okay::engine)
+add_test(NAME collider_shapes COMMAND test_collider_shapes)
+
 # Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S decisions (editor/SaveShortcutModel.hpp, no ImGui, header-only).
 add_executable(test_save_shortcut_model test_save_shortcut_model.cpp)
 target_include_directories(test_save_shortcut_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)

@@ -22,6 +22,8 @@
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/ColliderShapes3D.hpp"
+#include "okay/Physics/ColliderShapes2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 
@@ -382,6 +384,7 @@ void Collider2DCommon(PropertyBuilder<C>& b, bool withAutoFit = true) {
      .AddBool("isTrigger", &Collider2D::isTrigger).Tooltip("Detects overlaps without pushing objects apart")
      .AddInt("layer", &Collider2D::layer).Range(0, 31).Tooltip("Collision layer");
     if (withAutoFit) b.AddBool("autoFit", &Collider2D::autoFit).Tooltip("Keep the collider matched to the sprite bounds");
+    b.AddFloat("contactOffset", &Collider2D::contactOffset).Range(0, 1, 0.005).Tooltip("A skin of this many units: the collider counts as that much thicker when it touches something (0 = the exact shape)");
     b.Section("Physics material")
      .AddFloat("friction", &Collider2D::friction).Range(-1, 10, 0.01).Tooltip("-1 = use the Rigidbody's friction; 0 is ice")
      .AddFloat("bounciness", &Collider2D::bounciness).Range(-1, 1, 0.01).Tooltip("-1 = use the Rigidbody's bounciness; 1 is a super ball")
@@ -401,6 +404,7 @@ void Collider3DCommon(PropertyBuilder<C>& b) {
      .AddBool("isTrigger", &Collider3D::isTrigger).Tooltip("Detects overlaps without pushing objects apart")
      .AddInt("layer", &Collider3D::layer).Range(0, 31).Tooltip("Collision layer")
      .AddBool("autoFit", &Collider3D::autoFit).Tooltip("Keep the collider matched to the mesh bounds")
+     .AddFloat("contactOffset", &Collider3D::contactOffset).Range(0, 1, 0.005).Tooltip("A skin of this many metres: the collider counts as that much thicker when it touches something (0 = the exact shape)")
      .Section("Physics material")
      .AddFloat("friction", &Collider3D::friction).Range(-1, 10, 0.01).Tooltip("-1 = use the Rigidbody's friction; 0 is ice")
      .AddFloat("bounciness", &Collider3D::bounciness).Range(-1, 1, 0.01).Tooltip("-1 = use the Rigidbody's bounciness; 1 is a super ball")
@@ -446,6 +450,12 @@ void RegisterColliders2D() {
         Collider2DCommon(b, false);
         b.Commit();
     }
+    {
+        PropertyBuilder<CompositeCollider2D> b("CompositeCollider2D", "compositecollider2d", "Physics 2D");
+        b.AddString("parts", &CompositeCollider2D::parts).Tooltip("The shapes it is made of, one per ';': circle x y radius; box x y width height angle; capsule x y radius length angle; polygon x y x y x y ...");
+        Collider2DCommon(b, false);
+        b.Commit();
+    }
 }
 
 void RegisterColliders3D() {
@@ -474,6 +484,42 @@ void RegisterColliders3D() {
         b.AddFloat("radius", &CylinderCollider3D::radius).Range(0, kBig, 0.05)
          .AddFloat("height", &CylinderCollider3D::height).Range(0, kBig, 0.1)
          .AddEnum("axis", &CylinderCollider3D::axis, {"X", "Y", "Z"}).Tooltip("The long axis");
+        Collider3DCommon(b);
+        b.Commit();
+    }
+    {
+        PropertyBuilder<ConeCollider3D> b("ConeCollider3D", "conecollider3d", "Physics 3D");
+        b.AddFloat("radius", &ConeCollider3D::radius).Range(0, kBig, 0.05).Tooltip("How wide the round base is")
+         .AddFloat("height", &ConeCollider3D::height).Range(0, kBig, 0.1).Tooltip("Base to tip")
+         .AddEnum("axis", &ConeCollider3D::axis, {"X", "Y", "Z"}).Tooltip("Which way the tip points (the positive side of this axis)");
+        Collider3DCommon(b);
+        b.Commit();
+    }
+    {
+        PropertyBuilder<ConvexHullCollider3D> b("ConvexHullCollider3D", "convexhullcollider3d", "Physics 3D");
+        b.AddString("points", &ConvexHullCollider3D::points).Tooltip("The corner points as text: x y z; x y z; ... The collider is the shrink-wrap around them. Use Wrap Around Mesh to fill it in");
+        Collider3DCommon(b);
+        b.Commit();
+    }
+    {
+        PropertyBuilder<PlaneCollider3D> b("PlaneCollider3D", "planecollider3d", "Physics 3D");
+        Collider3DCommon(b);
+        b.Commit();
+    }
+    {
+        PropertyBuilder<CompoundCollider3D> b("CompoundCollider3D", "compoundcollider3d", "Physics 3D");
+        b.AddString("parts", &CompoundCollider3D::parts).Tooltip("The shapes it is made of, one per ';': kind px py pz rx ry rz a b c axis. Kinds: box (a b c = size), sphere (a = radius), capsule / cylinder / cone (a = radius, b = height, axis 0/1/2)");
+        Collider3DCommon(b);
+        b.Commit();
+    }
+    {
+        PropertyBuilder<HeightfieldCollider3D> b("HeightfieldCollider3D", "heightfieldcollider3d", "Physics 3D");
+        b.AddInt("columns", &HeightfieldCollider3D::columns).Range(2, 2048, 1).Tooltip("Height samples along X")
+         .AddInt("rows", &HeightfieldCollider3D::rows).Range(2, 2048, 1).Tooltip("Height samples along Z")
+         .AddFloat("cellX", &HeightfieldCollider3D::cellX).Range(0.01, kBig, 0.1).Tooltip("Metres between samples along X")
+         .AddFloat("cellZ", &HeightfieldCollider3D::cellZ).Range(0.01, kBig, 0.1).Tooltip("Metres between samples along Z")
+         .AddFloat("heightScale", &HeightfieldCollider3D::heightScale).Range(-kBig, kBig, 0.05).Tooltip("Multiplies every height")
+         .AddString("heights", &HeightfieldCollider3D::heights).Tooltip("columns x rows heights, row after row");
         Collider3DCommon(b);
         b.Commit();
     }

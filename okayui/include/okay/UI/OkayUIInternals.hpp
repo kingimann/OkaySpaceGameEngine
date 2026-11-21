@@ -51,7 +51,7 @@ inline CurrentWindow GetCurrentWindowRead() { return GetCurrentWindow(); }
 ///   Context::CurrentWindow the window between Begin and End, else null.
 ///   Context::FrameCount / Time  GetFrameCount() / GetTime().
 ///
-/// Round 7 (docs/own_ui_toolkit.md 6.20 to 6.23): the snapshots are now ENTRIES OF ONE WINDOW TABLE that lives as long as the program. An entry
+/// Round 7 (docs/ui/own_ui_toolkit.md 6.20 to 6.23): the snapshots are now ENTRIES OF ONE WINDOW TABLE that lives as long as the program. An entry
 /// keeps its address for the same window name (a pointer from `FindWindowByName("Inspector")` is the one `g.Windows` holds and the one a dock
 /// node lists), and its fields are refreshed in place whenever the frame number or the dock layout changes (and by RefreshContext). Entries
 /// for windows that are in the dock layout but have not been drawn exist too (Active false). The table holds 256 windows; more are not listed.

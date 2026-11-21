@@ -7,7 +7,7 @@
 //     cmake -DOKAY_WITH_PHOTON=ON -DOKAY_PHOTON_SDK_DIR=/path/to/photon-sdk ...
 //
 // which defines OKAY_WITH_PHOTON and puts the SDK's headers/libs on the path
-// (see docs/photon.md for the full walkthrough). Without the flag the Photon
+// (see docs/online/photon.md for the full walkthrough). Without the flag the Photon
 // provider stays a safe stub and the engine remains self-contained.
 //
 // This adapter targets the Photon Realtime C++ SDK v5.x "LoadBalancing" API.

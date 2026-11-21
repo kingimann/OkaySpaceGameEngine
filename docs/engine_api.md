@@ -654,7 +654,7 @@ Whole-game saves in named slots: every object, the player, inventories, script v
 
 ## Localization
 
-Text in the player's language from the project's string table (docs/localization.md). A script hears a change of language in OnLanguageChanged().
+Text in the player's language from the project's string table (docs/engine/localization.md). A script hears a change of language in OnLanguageChanged().
 
 | In a script | Node | Kind | Inputs | Gives | What it does |
 |---|---|---|---|---|---|

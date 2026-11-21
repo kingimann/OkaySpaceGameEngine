@@ -1,0 +1,1457 @@
+<!-- (world-space UI is documented in docs/ui/in_game_ui.md) -->
+# Custom character animations (keyframe clips)
+
+> **What this is:** Custom character animations: keyframe clips, how they are made, played and blended.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
+Besides the built-in animations (idle / walk / run / wave / jump / crouch /
+gestures / emotions), you can make **your own** animations for a `Character`
+without writing C++ — just describe a few poses over time in a small text file
+and play the clip by name. The engine interpolates between your keyframes each
+frame.
+
+## The format
+
+A `.okayanim` file holds one or more `clip` blocks:
+
+```
+# arms.okayanim
+clip wave loop            # name, then "loop" (default) or "once"
+key 0.0                   # a keyframe at t = 0 seconds
+  r_uparm 0 0 -150        # <bone> <x> <y> <z>   (Euler degrees, local)
+key 0.35
+  r_uparm 0 0 -150
+  r_fore  0 0 -30
+key 0.7
+  r_uparm 0 0 -150
+
+clip bow once
+key 0.0
+key 0.6
+  torso 40 0 0            # bend forward at the waist
+  head  -20 0 0           # ...keep looking ahead
+```
+
+- A keyframe only lists the bones it moves; everything else stays at rest.
+- Times are seconds; author keyframes in increasing time order. The clip's length
+  is its last keyframe.
+- `loop` repeats; `once` holds the final pose.
+- Optional header words: `linear` (default), `smooth` or `step` easing, and
+  `override` (movement can't interrupt the clip, see below).
+- `speed 1.5` plays the clip faster; `length 1.2` sets a loop's length past its
+  last key, so the last key eases back into the first (a seamless loop).
+- A `key` line may end with an easing word for the span out of that key:
+  `key 0.4 step` holds that pose until the next key, `easein` / `easeout` ease
+  that one move, and `smooth` / `linear` override the clip's easing for it. A
+  key without a word keeps the clip's easing, so older files play as before.
+- Each bone turns along the short arc between keys (the rotations are slerped),
+  so -150° to 150° swings 60° rather than spinning the long way round.
+- `root x y z` inside a key moves the whole body (in the rig's units, before the
+  height slider scales it): a walk's hip bob, or a crouch's `root 0 -0.17 0` drop.
+  A clip with no `root` lines leaves the body where the animation puts it.
+
+### Bone names
+
+`hips`, `torso`, `head`, `l_uparm`, `l_fore`, `l_hand`, `r_uparm`, `r_fore`,
+`r_hand`, `l_thigh`, `l_shin`, `l_foot`, `r_thigh`, `r_shin`, `r_foot`
+(case-insensitive). `+x` pitches a limb forward, `+z` spreads it out to the side.
+
+## Playing a clip
+
+No code — set two fields on the Character:
+
+- **clipsFile** → `arms.okayanim`
+- **autoPlayClip** → `wave`
+
+It loads and plays on Start. A looping clip played this way (or with `PlayClip`)
+gives way to movement: it stops as soon as the character walks, runs or jumps,
+and a `once` clip stops after it finishes if the character is moving. A clip
+marked `override` keeps playing until you stop it.
+
+Clips saved with the scene win over the file: on Start the file only adds clips
+the scene doesn't have. Tick **Linked to file** (`clipsLinked`) to make the file
+the source instead; Play then loads it over same-named clips, and the editor's
+Apply re-saves it. A relative `clipsFile` is relative to the project folder (the
+editor saves it that way); paths with spaces are fine.
+
+### Use your clip for idle, walk, run, jump, fall or crouch
+
+Set **clipIdle**, **clipWalk**, **clipRun**, **clipJump**, **clipFall** or
+**clipCrouch** to a clip's name and the character plays it in that movement state
+instead of the built-in animation. In the editor's Animation tab, **Use this clip
+for** does the same with one click. Leave a state unbound to keep the built-in.
+
+### The Animation tab
+
+Select a Character (or one of its rig parts) and the Animation tab becomes its
+clip editor, laid out in three columns under a toolbar:
+
+- **Left: the clip list.** Every clip on the character, with its length, key
+  count and the states it is bound to (Idle / Walk / ... chips, and *Start*
+  for the start clip). Click one to edit it, double-click to rename. **New**,
+  **Duplicate**, **Rename** and **Delete** manage the list; **Import...**
+  adds the clips of a `.okayanim` file (a name already in use gets a number),
+  **Export...** writes all of them to one, and **Bake** starts from a copy of
+  a built-in animation (Idle, Walk, Run, Jump) sampled into keys you can
+  tweak. The clip being edited is a *draft*: the list marks it *edited* or
+  *not applied* until **Apply to Character** (toolbar, lit while it differs)
+  stores it on the character, saved with the scene.
+- **Centre: the dope sheet.** A ruler (scrub it; it snaps to frames unless
+  you hold Alt), an events lane, then one row per bone under an *All keys*
+  row and the *Root* track. A key holds the whole pose, so it shows on every
+  row; a bone whose value is the same on the keys either side draws a
+  **hollow** diamond (it holds still there), a bone the key moves draws a
+  filled one. Click a diamond to select the key and load its pose, Shift+click
+  to add, drag a box across rows to select, drag a selected key to move the
+  selection (snapped to frames), double-click a row to key that bone (or the
+  pose, or the root) at that time. The wheel zooms the time axis about the
+  cursor, middle-drag pans, Shift+wheel scrolls the rows, **F** fits the clip.
+  Clicking a row's name picks that bone for the right column; double-clicking
+  a bone row selects its part in the Scene view, where the rotate gizmo poses
+  it.
+- **Right: values and settings.** The selected keys (time, easing, Delete,
+  **Adjust...** to retime about the playhead, amplify or offset, and
+  **Clear bone**, which makes the picked bone hold still through those keys),
+  the picked **bone**'s angles (drag them and the rig follows), **Key bone**,
+  **Reset bone**, **Key Pose**, **Reset pose**, **Mirror pose**, Copy / Paste /
+  Paste mirrored (the second half of a walk cycle from the first), the
+  **root** offset (keying it turns on the clip's root track: a walk's hip
+  bob, a crouch's drop), and the clip's name, loop, easing, length, speed,
+  play-on-start, state bindings, **Mirror clip** and Insert / Remove time.
+  The events list is here too.
+
+The **toolbar** holds Record, the transport (go to start, previous key, play,
+next key, go to end, loop), the playhead time and frame, the frame rate (24 /
+30 / 60) and the **Snap** toggle, the key and event buttons, the curve editor
+and onion skin toggles, Fit, the preview pane toggle, and **Built-in...** to
+watch a built-in animation live in the Scene view.
+
+**Record** (the red button, or the REC mark in the dope sheet) keys every
+change automatically: drag a bone's angles, turn a selected rig part with the
+rotate gizmo in the Scene view, reset a bone, or edit the root offset, and that
+bone gets a key at the playhead (a new key keeps the other bones as the clip
+already has them there). With Record off, changes stay in the authored pose
+until you press **K** or **Key Pose**.
+
+The **curve editor** (the toolbar's curve button) replaces the rows with the
+picked bone's x, y and z angles over time (the root track's offsets when Root
+is picked), colour-coded, sampled through the clip itself so the lines match
+playback exactly, easing, cubic curves and the loop's wrap included. Drag a
+point up or down to change that channel's value on its key, sideways to move
+the key in time (Shift keeps the time); the channel checkboxes hide curves.
+
+**Onion skin** (the toolbar's ghost button, with the number of keys per side)
+draws the rig at the keys before the playhead in orange and after it in blue
+as thin lines in the Scene view, fading with distance, so an in-between pose
+can be judged against its neighbours.
+
+Keys: **Space** plays, **Home** / **End** and **[** / **]** move the playhead,
+**K** keys the pose, **E** adds an event, **F** fits the view, **Del** deletes
+the selected keys, the **arrows** nudge them a frame (Shift: ten), **Ctrl+A**
+selects all, **Ctrl+C** / **Ctrl+V** copy the pose and paste it as a key.
+Every edit undoes with Ctrl+Z.
+
+From C++ / a script-driven flow:
+
+```cpp
+auto* ch = obj->AddComponent<Character>();
+ch->LoadClipsFromFile("arms.okayanim");   // or LoadClips(textString)
+ch->PlayClip("wave");                      // play by name (resets its clock)
+// ch->IsPlayingClip(); ch->PlayingClip();
+ch->StopClip();                            // back to the built-in `anim`
+```
+
+You can also build a clip in code (`AnimClip` + `AddClip`) if you'd rather
+generate it. A playing clip drives the whole body and overrides the built-in
+`anim`; `animSpeed` scales clip playback too.
+
+# Imported model animations (FBX / GLB)
+
+Importing an animated model (drag-drop, double-click in Project, or the
+Import dialog) brings in its skeleton as objects, a `SkinnedMesh` that
+deforms with the bones, and a **Model Animator** on the import root holding
+every animation in the file as a named clip.
+
+## In the editor
+
+Select the model with the **Animation tab** open:
+
+- **Clip picker + transport** — play, pause, and scrub any clip in EDIT mode
+  (the scene pose isn't modified; press the toolbar Play to run it for real).
+- **Rename / Duplicate / Delete / Copy / Paste** — manage the clip library.
+  Paste targets another model with the same bone names (Mixamo-style rigs).
+- **Split…** — carve a time range into a new named clip, so a single-take
+  file becomes separate idle / walk / attack clips.
+- **Events** — named markers on the timeline (footsteps, hit windows).
+- **Dope Sheet** — per-node keys, event markers, click to seek.
+
+The Inspector's **Model Animator** section holds playback settings:
+
+- **Blend** — crossfade seconds when switching clips (0 = snap).
+- **Root Motion** — move the OBJECT by the clip's root-bone ground
+  translation instead of letting the bone slide inside the model; pick the
+  root bone or leave it on auto. Tick **+ Vertical** to also apply the
+  root's Y motion to the object — for authored jumps, climbs and vaults
+  where the clip itself carries the rise (leave it off for ordinary
+  locomotion so the capsule/physics keeps owning height).
+- **Locomotion** — auto-switch idle/walk/run clips from how fast the object
+  moves (switches crossfade with the Blend time).
+
+## From a script
+
+The Character clip builtins also work on an object with a Model Animator on
+itself, a child (a player whose model sits under it) or a parent. The Play Clip
+visual-script node does the same. A played clip holds: Drive By Movement and a
+Humanoid Retarget leave it alone until `stop_clip()`. With an Animation State
+Machine on the model, the state machine picks the clips and Drive By Movement
+waits.
+
+```
+play_clip("wave")          # switch clips (crossfades over Blend seconds) and hold it
+stop_clip()                # let movement drive again
+play_clip_once("attack")   # play once, then return to the previous clip
+name = playing_clip()      # current clip name
+ev = anim_event()          # next fired event name ("" if none)
+if clip_finished() { ... } # a one-shot / non-looping clip reached its end
+d = clip_duration("walk")  # clip length in seconds
+```
+
+## Animation state machine
+
+For anything beyond locomotion, add an **Animator** component next to the
+Model Animator, or onto a built-in Character (Add Component > Animation). On a
+Character it plays the Character's own clips (the Animation tab's) and the
+default humanoid clips, and while it has states its pose replaces the built-in
+animation. Each **state** names a
+clip (with speed/loop overrides); **transitions** move between states when
+their condition passes — a clip finishing, a float parameter compared to a
+value, a bool, or a one-frame trigger — each with its own crossfade time.
+
+Build it visually in the **Animator window** (View > Animator, or the
+"Open Animator Graph" button on the component): states are draggable
+nodes on a canvas (positions save with the scene), right-click a node to
+**Add transition from here** (then click the target state), set the entry
+state, rename, duplicate or delete; click an arrow to edit its conditions,
+exit time and blend in the side panel; double-click empty canvas to add a
+state. In Play mode the **running state lights up** with a progress bar and
+the arrows that fire flash, so you can watch the machine run. The window is
+described in full under [The Animator window](#the-animator-window).
+
+Gameplay sets the parameters:
+
+```
+anim_set_float("speed", velocity)   # feeds Float > / Float < conditions
+anim_set_bool("armed", 1)           # feeds Bool true / Bool false
+anim_trigger("attack")              # fires Trigger transitions (consumed once)
+s = anim_state()                    # current state name
+anim_goto("Dead")                   # force a state directly
+```
+
+A typical setup: `Idle -> Run` (speed > 2), `Run -> Idle` (speed < 1),
+`Idle/Run -> Attack` (trigger "attack", loop off), `Attack -> Idle`
+(On Clip End). The machine drives the Model Animator (or the Character), so
+blending, root motion and events all keep working.
+
+## IK on imported rigs
+
+The whole IK suite works on imported skeletons, and every solve runs AFTER
+animation (state machine, blending, crossfades), correcting the final pose:
+
+- **Look-At IK** — head tracking. **Auto-Detect Chain** maps spine → neck →
+  head (and the eye bones) from the bone names; set a target object (the
+  player, the camera). Each bone takes a share of the turn, a **Clamp** keeps
+  the look from going round the back, and **Max Distance** stops it watching
+  targets far away (see `docs/gameplay/ik.md`).
+- **Aim IK** — point one bone at a target (weapon, turret, head). **Auto:
+  Head** finds the head bone.
+- **Limb IK** — arm reach/grab. **Auto: L Arm / R Arm** map
+  shoulder → forearm → hand (fingers excluded). The bones turn to reach, so
+  they keep their length and the mesh bends with them. A **Weight** below 1
+  bends the limb part of the way.
+  - **Pole Mode** sets where the elbow or knee points when there's no Pole
+    object. **Auto** keeps the animation's own bend; **Character** turns
+    with the character; **World** is a fixed direction.
+  - **Softness** eases the last stretch to full reach, so the limb doesn't
+    snap straight.
+  - **Match Target Rotation** without a target object uses **Target
+    Rotation**.
+  - A broken target (NaN) leaves the animated pose alone.
+- **Chain IK** — long chains (tails, tentacles), FABRIK/CCD.
+- **Foot IK** — see below.
+
+## Foot IK on imported rigs
+
+Add a **Foot IK** component to the import root (Add Component > Animation)
+and press **Auto-Detect Bones** — it maps the usual leg-bone names (Mixamo
+"LeftUpLeg / LeftLeg / LeftFoot", thigh/shin/calf variants, `_l`/`_r`
+suffixes) automatically. In Play mode each foot raycasts the ground and a
+two-bone solve plants it on slopes and steps; turn on **Adjust Pelvis** so
+the body lowers to reach lower ground, and **Align To Slope** to tilt the
+sole. The solve runs after all animation (including the state machine and
+locomotion blending), so it corrects the final pose.
+
+Corrections are **smoothed**: each frame moves the foot a fraction of the
+way to its planted target (the **Smoothing** field, per second — 0 =
+instant), so stepping over a ledge or stair edge eases the foot down
+instead of popping it. The pelvis shift is smoothed the same way. The
+**Foot IK** on a Player Controller player (add it from Add Component) ships with the full plant setup on:
+pelvis adjust, plant-down, slope align and smoothing.
+
+On the built-in blocky Character, Foot IK **wires itself**: drop the
+component next to a Character and the leg bones and pelvis hook up
+automatically (and re-hook after save/load).
+
+## Built-in locomotion: how the blocky character moves
+
+The built-in walk, run and crouch-walk are not fixed loops — every frame the
+legs are solved with two-bone IK from a stride laid out for **how fast the
+body really moves over the ground**:
+
+- **Feet stay planted.** A planted foot travels back under the hips at
+  exactly the body's speed, so it holds its spot on the floor instead of
+  skating. Faster means quicker *and* longer steps; above a jog the stance
+  shortens and both feet leave the ground (a real run with a flight phase).
+- **Hips ride the stride.** They drop a little while a planted foot is far
+  ahead or behind (so the legs reach the ground instead of the feet
+  floating) and arc up through a running flight. Knees always bend forward.
+- **Heel-to-toe.** Walkers land on the heel and roll off the toe; runners
+  land on the forefoot and kick the heel up behind before the knee drives
+  through. Arms swing against the legs, wider and with more elbow bend the
+  faster you go; the chest leans into speed and the head stays level.
+- **A walk is a walk and a run is a run.** The legs follow how fast the body
+  really moves, the way a person's do: a walk of about 80 steps a minute at a
+  stroll up to about 130 at 2 m/s (a foot always on the ground, the ankle
+  rolling over the planted foot), a jog blending in between 2.4 and 3.4 m/s,
+  and a run of 160 steps a minute at 2.5 m/s rising to about 190 at 6, with
+  both feet leaving the ground. What the legs show does not depend on the
+  controller's settings: a controller whose "walk" is 4.5 m/s shows the jog
+  it really is. The First Person, Third Person and Third Person Shooter
+  controllers start at walk 2.0 and run 5.5 m/s (shooter 5.0). The Inspector's
+  **Use natural walk and run speeds** button moves an older project to them.
+  The measured before and after, the targets and the way back
+  (`OKAY_OLD_GAIT=1`) are in [walk_vs_run.md](walk_vs_run.md).
+- **Strafing and backpedalling.** The hips and legs turn toward the travel
+  direction (up to 75°, the chest keeps facing forward) and side-step the
+  rest; travelling backwards steps backwards.
+- **Air and stances.** Jump (lead knee up, trailing leg, arms driving),
+  **Fall** (legs reaching for the ground, arms out for balance), a landing
+  absorb, **Crouch** (hips back and down, knees over the toes, hands in
+  front), **Crouch Walk**, **Prone** with a **crawl** (elbows pull in turn,
+  the opposite knee drags up) and **Hang** (arms up, legs loose).
+
+The First-Person, Third-Person, Top-Down Shooter and 2.5D controllers report
+the speed and direction automatically and pick the state from what the body
+is actually doing: pressed against a wall it stands instead of running in
+place, it idles the moment it stops, and the fall pose only shows after a
+real drop (a step down keeps the stride). Standing still, the character
+**fidgets**: a slow weight shift and an occasional glance to one side.
+
+### The Animator that plays it
+
+Every new Character (the player templates, GameObject > 3D > Character, Add
+Component > Character, rigging a model) comes with an **Animator** holding the
+default graph, and a scene saved before it existed gets one when it loads. Its
+states — Idle, Walk, Run, Crouch, CrouchWalk, Prone, Crawl, GetUp, Drop, Jump,
+Fall, Land, Hang and the gestures (Wave, Point, Clap, ThumbsUp, Salute, WaveBoth, Cheer, Sad,
+Angry, Think) — play the **default humanoid clips**, baked from the motion
+above: the walk, run and crouch-walk at several speeds in eight directions,
+each a 2D blend tree on `gaitX`/`gaitZ` that keeps pace with the ground
+(`matchSpeed`: a tree whose motions sit at their speeds of travel plays as
+fast as its speed parameter over the blended motions' speed). Every Character can play these clips by name; they aren't
+copied into the scene, and a clip of your own with the same name wins. A clip
+bound with clipIdle / clipWalk / ... plays in that state instead.
+
+Stance changes follow the Animator's **Stance changes** times: standing and
+crouching crossfade over the stand <-> crouch time, crouching and prone over
+the crouch <-> prone time. Standing still, going prone drops down through a
+kneel (**Drop**) and standing up gets up through hands-and-knees and a kneel
+(**GetUp**, over the prone -> stand time); on the move the stride blends
+straight into the crawl and back. **Crawl** goes forward, backward and to
+either side as the body moves. Foot IK is off while lying down. Any change of
+mind blends from wherever the body is. Editing the times retimes the default
+graph's blends.
+
+A movement controller feeds the graph's parameters every frame: `speed`
+(m/s), `run`, `crouch`, `prone`, `stance` (0 stand .. 1 crouch .. 2 prone,
+easing through each stance change over the Animator's **Stance changes**
+times), `airTime` (seconds off the ground) and `verticalSpeed`; the body itself sets `gaitX`, `gaitZ` (direction of travel,
+x = right, z = forward) and `gaitSpeed`. Crossfades: 0.2 s between ground
+states, 0.1 s into the air, 0.08 s back onto the ground, where a standing
+landing plays **Land** and a moving one gives at the knees mid-stride. A blend
+tree entered from another one (walk → run → crouch-walk) keeps the stride's
+phase, so the feet stay in step.
+
+`anim` keeps working: it reads the state playing (Walk = 2, Land = 1), and
+writing it (a script's `set_anim`, the network, a controller that sets it
+itself) moves the Animator to that state and keeps it there until a movement
+controller reports again. `anim` 0 hands the body back to its own pose; a
+script's held gesture (`play_clip("Wave")`) holds the state until released.
+Disable the Animator and the built-in animation plays the body as before.
+
+## Actions
+
+Built-in actions (death, dive, sitting, hits, roll / dodge / slide, vault and ledge, swim, and emotes) are clips baked
+by `HumanoidActions` and states on the default Animator. They are not new
+`Character::anim` numbers. A scene saved with the default graph (it has Idle,
+Walk, Run and Jump) gains each action once. A state you renamed or deleted stays
+gone: the machine remembers `animsmactions`, and a later action does not put an
+older one back. **Add built-in actions** on the Animator fills in anything missing
+without overwriting a state you edited.
+
+On a listen server the owner's death, roll, sit and swim, and the head's look
+yaw and pitch, travel on the existing animation sync message. The message
+keeps its old fields and adds an action sequence, an action id, and the look
+angles. A peer that only knows the older message stops reading there and
+still gets the gait. A remote copy plays the action and stays in it; it does
+not keep walking through a death.
+
+Death clips: `Death_F`, `Death_B`, `Death_L`, `Death_R`, and the looping holds
+`DeadHold_F`, `DeadHold_B`, `DeadHold_L`, `DeadHold_R`. `Death_F` falls forward,
+`Death_B` onto the back, and the side clips are mirrors. The last 0.15s of each
+fall is still, with a `death_settled` event, and `action_end` at the end. The
+state `Death` is a 1D tree on `deathDir` (0 forward, 1 back, 2 left, 3 right).
+It is not interruptible and turns IK off, so jump and fall cannot cut it short.
+The Any-State `die` transition uses interruption None so the blend into Death
+cannot be cancelled by the state being left. `dead` false (revive) goes to GetUp,
+then Idle. `DeadHold` is the settled pose.
+
+`Health` plays this when **Play Death Anim** is on (the default). The body stays
+active until the pose settles, then its capsule (or box) shrinks to about crouch
+height. A respawn restores that height and gets up. Movement controllers skip
+their input while `Health` says the body is dead. `Damage` does not know where a
+hit came from; `Damage(amount, fromWorld)` and `die(x, y, z)` do, and the body
+falls away from that point. With no direction, it falls forward.
+
+Hit clips: `Hit_F`, `Hit_B`, `Hit_L`, `Hit_R` (about 0.35s, upper body) and
+`Hit_Heavy_F`, `Hit_Heavy_B` (about 0.8s, full body), plus `Hit_Crouch` and
+`Hit_Prone`. Light hits play on a torso layer (`maskBone` Torso) so the legs
+keep walking. That layer rests on `Off` at weight 0; the enter callback that
+raises the weight is not saved, and it is put back whenever the built-in
+actions are merged. Heavy, crouch and prone hits play on the base layer and
+return to Idle, Crouch or Prone. They are interruptible, so death can cut
+them. The Any-State `hit` blend uses interruption None and may re-enter itself
+(`canInterruptSelf`), but `hit_react` refuses a second hit within 0.1s and
+does not leave the trigger set. `hitDir` is 0 forward, 1 back, 2 left, 3
+right — where the hit came from, the opposite of the death fall. A heavy side
+uses the front or back stumble (only those two heavy clips exist). While a
+heavy, crouch or prone hit is playing, movement speed is multiplied by the
+Animator float `staggerScale`, which is 1 until a game sets it lower.
+
+`Health` plays a light flinch only when **Play Hit Anim** is on (off by
+default, so existing games do not change) and `Damage` was given a source.
+A killing blow plays death instead.
+
+Script: `hit_react("forward"|"back"|"left"|"right" [, heavy])`,
+`hit_react(x, y, z [, heavy])`. Visual script: Hit React (Heavy pin).
+
+Roll and dodge clips: `Roll_F`, `Dodge_L`, `Dodge_R`, `Dodge_B`. `roll(dir)` only
+plays the clip (`dir` 0 is the forward roll, anything else is that dodge).
+`dodge(dir)` plays it and, on a first- or third-person controller, bursts that
+way. The burst spends stamina when a Stamina stat is on the body, then waits
+out a cooldown. **Can Dodge** and the dodge key are off, so holding a key does
+nothing until a game turns them on. **I-Frames** are off: Health still applies
+damage during a dodge unless that box is on. The existing slide burst (sprint,
+then crouch) is unchanged. While that slide is on, the Animator bool `slide`
+plays `Slide` (feet first, looping) and leaves through `SlideEnd` into Crouch,
+or into Run when still sprinting and not crouched.
+
+Script: `roll(["forward"|"back"|"left"|"right"])`, `dodge(...)`. Visual
+scripts: Roll, Dodge.
+
+Vault, mantle and ledge clips: `Vault`, `Mantle_Low`, `Mantle_High`, `LedgeGrab`
+(into the existing Hang pose), `Hang_Shimmy_L`, `Hang_Shimmy_R`, `ClimbUp`, `LetGo`.
+States `Vault`, `MantleLow`, `MantleHigh`, `LedgeGrab`, `ClimbUp` and `LetGo` play
+once and are not interruptible, so Fall cannot cut the blend; each still has its
+own `die` edge. `HangShimmy` is a 1D tree on `shimmy` (-1 left, +1 right) and
+returns to Hang when the float is near 0. Hang keeps the transitions it already
+had and gains `hanging` false → Fall. IK weight is 0. Hands-on-ledge Limb IK is
+not wired. The move itself is a short curve: the body's colliders turn off and
+gravity is 0 until it ends. A ledge leaves the body hanging (gravity stays 0)
+and remembers the lip for `climb_up()`. `let_go()` drops without teleporting.
+`canVault`, `canMantle` and `canLedgeGrab` on the Player Controller's
+first- and third-person settings default off, so walking into a wall does nothing until a game opts
+in. `vault()` and `mantle()` still probe. The 2.5D platformer keeps its own
+ledge motion and only sets the `hanging` bool. These flags are trailing ints on
+the first- and third-person feel records (`pcfirstfeel` and `pcthirdfeel`, once
+`fpfeel` and `tpfeel`); a build from before this change will not load a scene
+that saved them.
+
+Script: `play_action("Death" [, blend])` (0 if that state is missing),
+`is_in_action()`, `action_time()`, `die(["forward"|"back"|"left"|"right"])`,
+`die(x, y, z)`, `revive()`, `is_dead()`. `on_action_end` is the anim event
+`action_end`. `animator.Play("Death_F")` and `CrossFade` go through
+`play_action`, which also falls back to `play_clip` (and logs once) when the
+name is not a state or a blend-tree motion. Visual scripts: Play Action, Is In
+Action, Die, Revive.
+
+Dolphin dive (`Dive`, about 0.7s, then `DiveLand` if still in the air) is the
+second built-in action. Sprint, then press prone (first person, third person,
+and the third-person shooter; **Dive on prone while sprinting**, default on).
+That is separate from crouch-to-slide, which is unchanged. The launch is the
+current speed × 1.15, capped, plus a 0.25 m hop, with air steering off. The
+body eases down to the prone capsule while it flies and glides into prone on
+landing. A wall close in front keeps the crouch height and does not launch.
+`die` is the only thing that interrupts it. Script: `dive()`, `can_dive()`.
+Visual script: Dive. Animators also get a `dived` trigger. A Character can
+bind `clipDive` the same way as `clipJump`; a model with no Animator clip of
+that name still gets the movement.
+
+Sitting clips: `SitDown_Chair` → `Sit_Chair` (a breathing loop) → `StandUp_Chair`,
+and `SitDown_Ground` → `Sit_Ground` or `Sit_Ground_Knees` → `StandUp_Ground`.
+`sitType` is 0 chair, 1 ground, 2 knees. A bench Seat uses the chair clips.
+The chair pose is baked for a 0.45 m seat; a Seat moves the body onto
+`sitPoint` (the clip's hip height is only the visual). Hands stay on full-body
+IK so they can still hold something. The states are interruptible, so death
+and jump can cut them. The Any-State `sit` blend uses interruption None, so
+Walk cannot cancel it. `sitting` false leaves through Stand Up, which ends on
+Idle. Entering Sit fires `sit`; entering Stand Up fires `stand` (On Sit / On
+Stand). `action_end` is at the end of the sit-down and stand-up clips.
+
+A **Seat** (seat height, sit point, facing, type, exit point, use radius,
+prompt) claims the nearest locally controlled character on E. There is no
+shared interact key; first-person lean-right is also E, so a press in range
+sits and can start a lean. Gravity is zero while seated and comes back on
+standing or on death. Death does not teleport to the exit point. With no Seat,
+`sit()` sits on the ground when the floor normal is steeper than 0.75. Move or
+jump on a first-person, third-person, or shooter controller stands up and
+stays locked until the stand-up clip finishes. Look still works.
+
+Script: `sit()`, `sit("Chair")`, `sit("ground"|"knees"|"chair")`, `sit(0|1|2)`,
+`stand_up()`, `is_sitting()`, `interact()`, `seat_prompt()`. Visual scripts:
+Sit, Stand Up, Is Sitting, Interact, Seat Prompt.
+
+Swim clips: looping `Swim_Tread` and `Swim_Fwd`, both on the prone pose so the
+body stays low in the water. Tread sculls the arms out and back in. The forward
+stroke reaches further and pulls, with a small visual root pulse that returns
+to zero at the loop so the mesh does not drift. `Swim` is a 1D tree on
+`swimSpeed` (0 tread, about 1.5 the stroke). Foot and full-body IK are off.
+The state is not interruptible, so jump and fall cannot cut a stroke; its own
+`die` edge still reaches Death. Any State enters Swim when `swimming` is true
+(that edge is first, so it wins over jump and fall) with interruption None, so
+the state being left cannot cancel the blend. `swimming` false goes to Idle.
+`anim_set_bool("swimming", 1)` and `play_action("Swim")` both enter it. There
+is no water volume in this set: movement stays on the controllers.
+
+Emote clips: one-shot `Emote_Nod`, `Emote_Shake` and `Emote_Shrug`, each starting
+and ending on the idle pose. These are not the looping Wave / Cheer gestures,
+which hold until the body moves. An emote plays out and goes to Idle. Speed
+above a walk leaves it for Walk or Run. Jump, fall and death can still cut it.
+Any State enters one when `emote` fires and `emoteId` is 0 (nod), 1 (shake) or
+2 (shrug). `play_action("Emote_Nod")` goes there directly.
+
+In the Inspector the Animator lists its states, what each plays (a clip, or a
+blend tree's clip count) and its transitions (folded; click to open). On a
+Character each state also has **Preview** (plays that clip live in the Scene
+view, in edit mode and in Play) and **Edit clip** (opens a copy in the
+Animation tab: Apply there saves it on this Character, where it replaces the
+default clip of the same name). While a preview is running, a transport under
+the row pauses, scrubs, sets a preview speed (it starts at the state's speed
+and is not written back) and loops. A blend tree previews one motion from a
+dropdown, starting at the middle, straight-ahead clip. The same Preview sits
+on the selected state in the Animator graph, on each clip in the Character's
+clip list, and on a Model Animator's clip. Closing the Animation window does
+not stop it. It stops when you press Stop, start another preview, delete the
+target or change scene, select something that isn't the target, its children
+or its parents, or toggle Play/Stop. **Open Animator Graph** edits the graph;
+**Reset to default** puts the default graph back (Undo restores yours).
+
+### Driving it yourself
+
+Driving a Character yourself (an NPC, a cutscene): set `anim` and, for the
+locomotion states, `moveSpeed` (m/s) and `moveAngle` (degrees, + = to the
+body's right) every frame — or call `DriveLocomotion` with the body's
+velocity and facing. Without a reported speed the cycle plays at a natural
+pace on the spot. `DriveLocomotion` measures how far the body really moved;
+set `ignoreAxis` to leave out motion that isn't walking (the 2.5D controller
+ignores Z, so hopping between depth layers doesn't play the run cycle).
+
+**Look-At IK** and **Aim IK** also have a **Smoothing** field now: the
+head/bone swings smoothly onto a new target instead of snapping the frame
+it changes (Look-At defaults to a natural head-turn speed; Aim defaults to
+instant for turrets — raise it for organic tracking).
+
+## Rig any model in the editor (auto-rig)
+
+A model with NO rig and NO animations can be rigged right in the editor:
+right-click it in the Hierarchy and choose **Rig Model (Humanoid)**. Its
+meshes are merged and every vertex is bound to the engine's humanoid
+skeleton automatically (nearest-bone weights) — and from that moment the
+model plays **everything the built-in character can**: idle/walk/run
+cycles, crouch, jump, the emotions and gestures, your authored keyframe
+clips, movement states from any controller, and live preview in the
+**Animation window**. The model should stand upright, facing +Z, in a
+T/A/rest pose; texture and UVs are kept, and the bind saves with the
+scene. **Unrig** on the Character component restores the blocky body.
+
+For models that ALREADY have a skeleton + clips (Mixamo, Meshy GLB/FBX),
+you don't need this — import keeps their real rig and animations; drop
+them on a player (below) or drive them with the Model Animator.
+
+## One-click animation preview
+
+Select a player and press **Preview** on a state in the Animator inspector
+(or on the selected state in the Animator graph). It plays in the Scene
+view with the Animation window closed, and it also plays during Play —
+while the preview is on it overrides the running Animator, including while
+the game is paused. Scrub the time (that pauses playback), change the
+speed, or turn looping off to hold the last frame. A blend tree has a
+motion dropdown instead of mixing several clips; the running machine does
+that mix. Stopping, selecting something else, or pressing Play/Stop puts
+the pose back exactly, and does not mark the scene dirty.
+
+The Animation window's built-in grid still previews **Idle, Walk, Run,
+Jump, Crouch, Prone, Wave, Point, Clap, Thumbs Up, Salute, Wave Both,
+Cheer, Sad, Angry, Think, Crouch Walk, Fall, Hang** live in the Scene
+view. That grid keeps playing if you close the window; selecting a
+different object stops it. A **Speed** slider and **Stop Preview** sit
+under the grid, and **Set as start animation** makes the previewed state
+the one the character starts with in Play mode.
+
+It works on the blocky character, a separated part rig, an auto-rigged
+model, and a retargeted imported model. A Model Animator with no Character
+has its own **Preview** on the selected clip.
+
+When a character also has imported clips (a swapped model), the Animation
+window shows **two tabs — Character and Imported Clips** — so both the
+built-in system and the file's own takes are always reachable.
+
+## Previewing & editing imported clips
+
+Select any imported model (or any of its bones) with the **Animation
+window** open: pick a clip, press **Play** or scrub the timeline, and the
+model animates in the inset preview. Tick **Preview in Scene view** to see
+it animate on the model in the Scene view itself while you scrub — the
+original pose is restored when you untick it or close the window.
+
+Clip tools: **Rename**, **Duplicate**, **Delete**, **Copy/Paste** (moves a
+clip to another model with the same bone names), **Split...** (cut a long
+take into idle/walk/attack pieces), **Reverse** (play backwards) and
+**Scale Time** (bake slow-motion / speed-up — keys and event markers are
+re-timed) and **Bake In-Place** (permanently strip the root bone's ground
+travel out of the clip — turns a downloaded travelling walk into an
+in-place one for controller-driven characters; the non-destructive
+alternative is the **Animate in place** toggle on the Model Animator).
+**Events** adds named markers that fire during play (footsteps,
+hit windows) — read them in scripts with `anim_event()`.
+
+## Air states for imported characters (jump / fall / land)
+
+Locomotion on the Model Animator also handles the air: map **Jump**,
+**Fall** and **Land** clips (auto-mapped by name when you set a character
+model) and the machine watches the capsule's VERTICAL motion — launching
+plays Jump, past the apex Fall loops, and touchdown plays Land once before
+idle/walk/run resumes. It works with every controller, no wiring. In
+in-place mode the jump clip's own root rise is stripped too, so the
+controller's jump arc isn't doubled. An empty Jump slot does not block
+Fall: once the body is heading down, a filled Fall clip plays even when the
+rise never played a jump clip.
+
+## Crouch and prone for imported characters
+
+The Model Animator also follows the player's crouch and prone. It has a slot
+for each stance clip under **Crouch / prone clips**: **Crouch** and **Crouch
+walk**, **Prone** and **Crawl**, and **Get up** (played once when the player
+rises from prone). When you set a character model, clips are mapped by name:
+- *Crouch Idle* fills Crouch;
+- *Crouched Walking* or *Sneak* fills Crouch walk;
+- *Prone Idle* fills Prone;
+- *Crawling* fills Crawl;
+- *Getting Up* or *Stand Up* fills Get up.
+
+Clips that move between stances, like *Standing To Crouched*, aren't
+mapped as idle or walk. Locomotion switches to the stance's clips (still and
+moving, blended by speed), crossfaded over the stance change times. A
+stance with no clips of its own keeps the standing clips.
+
+## Strafe and backward clips
+
+The same Model Animator has four more slots, under **Strafe / back clips**
+and on the Animator's **Build it** panel: **Strafe left**, **Strafe right**,
+**Walk back** and **Run back**. Names like *Strafe Left*, *Walk Back* and
+*Run Backward* fill the empty slots. *Back Flip* does not — a trick is not
+a walk.
+
+- With any of those clips, **Build it** turns Locomotion into a 2D blend on
+  `moveX` / `moveZ`. Forward is negative `moveZ` (the body faces local -Z)
+  and strafing right is positive `moveX`. States you already had (Death,
+  Sit, a gesture) stay, including their transitions, speed and IK weight.
+  Only the Locomotion blend is rewritten.
+- With none of them, locomotion stays the forward speed blend. While you
+  strafe, the hips yaw toward the travel (around world up, so a tilted
+  armature does not tip the pelvis) and the spine twists back so the chest
+  keeps facing the aim. The yaw eases and replaces itself each frame, so a
+  bone the clip does not key does not spin.
+- Strafe clips and no back clip: holding back plays the forward walk in
+  reverse, on the Model Animator and on the Locomotion state Build it
+  wrote. A real Walk Back / Run Back clip plays forward instead.
+
+Assign the slots on the model, in the Inspector under **Model Animator >
+Locomotion**. Idle, walk, run, jump, fall, land, strafe and back are in
+that list (crouch and prone stay in their own group). You do not have to
+open the Animator and press Build it again:
+
+- Changing a slot rewrites the **Locomotion** state only. Death, sit, and
+  any transition, speed or IK weight you set on other states stay.
+- **Fill empty slots from names** uses the clip names and does not replace
+  a slot you already chose. **Use** next to "Looks like …" fills just that
+  one empty slot.
+- **Preview** plays that clip on the model with the same preview as the
+  clip list above the slots.
+- An empty slot, or a name that is not on the model, keeps the fallback
+  in the tooltip (forward walk, reversed walk, built-in pose, or a skipped
+  air pose). A name that is not on the model is still saved. A clip with
+  no keys is skipped. A trick name (a flip, a dodge) warns and still plays
+  if you leave it.
+
+The Animator's **Locomotion setup** shows the same mapping, marks a missing
+name, and **Build it** still creates the graph the first time.
+
+Mixamo (`mixamorig:Hips`), VRoid (`J_Bip_C_Hips`), Character Creator
+(`CC_Base_Hip`) and a Daz waist/abdomen are the hips and spine that yaw.
+
+## Built-in animations on imported rigs (retargeting)
+
+A model you drop on a player often ships with few or NO usable clips — a
+Mixamo download with a single dance take, a store model with just a
+T-pose. When that happens the engine now **retargets its built-in
+animation system onto the imported skeleton** automatically: the model
+walks, runs, jumps, lands, crouches, plays the gestures/emotions and your
+authored `.okayanim` clips — everything the blocky character can do —
+with its bones matched by name (Mixamo and common humanoid naming) and
+its rest stance aligned, so a T-pose rig stands and moves naturally.
+
+**Limits of the rest-pose alignment (read before trusting a rig).** The alignment is
+**swing only** (`Components/HumanoidRetarget.hpp`): for each bone it computes one
+`FromToRotation` from the direction of the rig's child bone to the direction of the
+engine bone's child. That fixes where a limb points. It does **not** correct roll or twist
+about the bone's own axis, so a rig whose bones are rolled differently from the engine's
+can bend wrongly at elbows, knees and wrists. Twist bones are ignored. Leaf bones (hands,
+feet, head) have no child to measure and inherit their parent's alignment. The rig sweep
+test (`tests/test_rig_sweep.cpp`) puts every sample rig through idle, walk, run, jump,
+crouch and turn and checks only that the skeleton stays finite, does not spike from one
+frame to the next, stands on the ground and swings the legs. It does not check that the
+pose looks right. The ROADMAP humanoid items are still open: item 6 (rest-pose
+normalisation and retargeting by avatar slot) and item 8 (one-click humanoid import on any
+rig).
+
+- Works out of the box on **Set Character Model** / drag-drop for any
+  humanoid skeleton the bone names map (8 or more of the 15 engine bones):
+  every locomotion slot the file has no clip for plays the built-in
+  animation. The import log says which ("walking='Walking', built-in
+  animations retargeted (15/15 bones)").
+- A state that is not a locomotion slot (Death, Wave, sit, roll, emotes)
+  uses that built-in pose when the state's clip, fallback, and blend
+  motions are not on this model, even if Idle or Walk is filled. Idle,
+  Walk, Run, Jump, Fall, Land, Crouch, Crouch Walk, Prone, Crawl, Get Up,
+  and a Locomotion blend that has any of idle, walk, or run, keep the
+  file's clip.
+- The **Humanoid Retarget** component (on the player, next to the
+  Character) has a **Weight** slider (blend against the model's bind
+  pose), a **Body lean** amount and a **Re-Detect Bones** button after a
+  model change. Add it manually (Add Component > Animation) to prefer
+  built-ins even when the model has its own clips.
+- The model's own imported clips stay in the Model Animator's library —
+  play one as a one-shot from a script (`play_clip_once("dance")`) and
+  the retarget yields until it finishes.
+- A file that carries a full set of clips (idle, walk, run, jump...) plays
+  its own clips in every slot; the built-in animation only covers the slots
+  that stay empty (see "Mixed animation" below).
+
+## Which components do I edit?
+
+A player with an imported model shows several components. Only the first
+two rows are yours; the rest are set up for you and start folded, with a
+header tooltip and a one-line note saying what they do.
+
+| Component | Edit it? | What it does |
+|---|---|---|
+| **Character Model** panel (top of the Inspector) | Yes | Which clip fills each slot (Idle, Walk, Run, Jump, Fall, Land, Crouch...), imported or built-in, Stride Match, clip speeds, Body lean, **Fix animations** |
+| The Player Controller (or another controller) | Yes | How the player moves: speeds, jump, camera, **Set Character Model...** |
+| Model Animator (on the model) | Rarely | Holds the model's clips and switches them by how fast the player moves. The panel above edits its slots |
+| Humanoid Retarget | Rarely | Copies the built-in animation onto the model's bones for every empty slot. Weight and Re-Detect Bones live here |
+| Foot IK | Rarely | Plants the feet on slopes and steps |
+| Character (disabled or hidden) | No | The blocky body is off because your model replaced it; when on, it only computes the built-in pose for the retarget |
+| Animator / Animation State Machine | Only for custom graphs | Replaces the automatic locomotion with your own graph |
+
+## Mixed animation: stride matching and the built-in fallback
+
+Mixamo downloads one animation per file, so a character often arrives
+with a Walking clip and nothing else, or Walking and Running with no
+idle. Every locomotion slot is filled on its own:
+
+- **Slots.** Idle, Walk, Run, Jump, Fall, Land, Crouch, Crouch Walk, Prone,
+  Crawl and Get Up. Clips are matched by name (Add animation files from the
+  Character Model panel puts each Mixamo file in its slot). A slot with no
+  clip plays the engine's built-in animation on the same skeleton: a
+  walk-only file still gets an idle with breathing and a weight shift, a
+  run, a jump, a landing and crouching. Clear a slot (**Built-in**) to use
+  the built-in animation even when the file has a clip.
+- **Stride matching** (Model Animator > Stride Match, on by default).
+  A walk clip is made for about 1.4 m/s and a run clip for about 4 m/s.
+  The clip's playback rate is the body's real speed over that speed,
+  limited to 0.6x..1.6x, so feet don't slide and the walk never speeds
+  up into a jog: when the body is faster than the walk clip can follow,
+  the run takes over. A clip that travels (root bone ground motion) is
+  measured; an in-place clip uses the nominal speed in **Clip speeds**,
+  per slot (walk 1.4, run 4.0, crouch walk 0.9, crawl 0.5). The Walk and
+  Run Thresholds still work: they cap where idle turns into walk and walk
+  into run.
+- **Move speeds follow the clips.** The controllers used to start at a 4.5 m/s
+  "walk", a jog, which a 1.4 m/s walk clip can't show; they now start at 2.0
+  and 5.5 m/s (walk and run). When a model with its own Walk (and Run) clip
+  is attached, a Walk Speed or Run Speed still at the default (or at one of
+  the old defaults 4.5, 8.0 and 7.5 that a scene saved earlier spells out) is
+  set to what the clip can show (about 2.0 and 5.0 m/s), so W plays the walk
+  and Shift the run. This covers the Third Person, Third
+  Person Shooter, First Person, Click To Move, Top Down, Top Down Shooter
+  and Platformer 2.5D controllers (each against its own defaults). A speed
+  you changed yourself is kept, and the fitted values are remembered while
+  the scene is loaded: attaching another model refits a speed still at the
+  fitted value, and a speed you set back to the default afterwards is left
+  alone. A speed deliberately set to exactly the default *before* the first
+  model is attached can't be told from an untouched one, and is fitted.
+- **Blends.** Between walk and run both clips are sampled at one shared
+  normalized phase, so the feet stay in step through the blend; stepping
+  off from a stand starts the walk on the same foot each time. Switching
+  between a clip and the built-in animation eases over the Model
+  Animator's Blend time (the hips return to their rest height too).
+- **Lean.** The built-in pose leans a few degrees into a start (forward),
+  a stop (back) and a turn (toward the inside), eased over about a tenth
+  of a second (**Body lean** in the panel, 0 = upright). Imported clips
+  carry their own lean and are left alone.
+- **Fix animations** re-runs the name matching, clears slots that name
+  clips the model no longer has, and lets the built-in animation fill
+  every slot still empty.
+- Saved scenes: the new settings are written only when changed from their
+  defaults (`modelanimstride`, an extra value on `humretarget`), so scenes
+  from older versions load unchanged.
+
+## Custom character models (drag & drop)
+
+Any imported model can BE your playable character — no rigging setup:
+
+- **Drop a model asset** (.glb/.gltf/.fbx/.obj...) from the Project panel
+  **onto a player in the Hierarchy** (any object with a controller or a
+  Character), or press **Set Character Model...** on the Character /
+  Player Controller in the Inspector.
+- The model imports as a child of the player, auto-sized to the
+  character's height and feet grounded on the capsule's origin.
+- **Facing is read from the skeleton** (its left/right thighs, arms and
+  feet), so a model exported facing +Z, -Z or sideways all end up facing
+  the way the controller walks. Next to the button: **Fix Facing**
+  re-detects it, **Turn 180** / **90** turn it by hand (models with no
+  recognisable left/right bones).
+- **The collider follows the model**: the player's Box / Capsule Collider
+  is refitted around the model you see (a capsule + Rigidbody 3D are added
+  when the player had none). **Fit Collider** redoes it after you rescale.
+  Adding a Player Controller (or another controller) from *Add Component*
+  also gives the object a fitted collider + rigidbody straight away.
+- Its animation clips are wired to locomotion automatically: clips named
+  *idle/stand*, *walk*, and *run/sprint/jog* map to the auto
+  idle/walk/run switching (smooth 1D blend), driven by how fast the
+  player actually moves.
+- The default blocky body is hidden (the Character component is disabled
+  — re-enable it in the Inspector to get it back). All of it saves with
+  the scene.
+- **Foot IK is wired automatically** when the model's leg bones are
+  recognizable (Mixamo and common naming): full plant setup — pelvis
+  adjust, plant-down, slope align, smoothing — with zero clicks.
+- Jump/Fall/Land clips are mapped by name into the air states (above).
+- Crouch / prone / crawl / get-up clips are mapped by name too (above).
+
+Controllers also carry a **Fall Reset Y** safety net (default -100): fall
+off the map or through a floor with no collider and the player teleports
+back to its spawn point instead of falling forever — and a console
+warning explains the usual cause (the floor is missing a collider —
+select it and Add Component > Mesh Collider 3D).
+
+## Tips
+
+- **Meshy / Mixamo FBX**: animations import through the built-in FBX reader (ufbx; our own reader when `OKAY_OWN_FBX=1`). For the richest
+  results (full skins + all takes) prefer the **GLB** export when available.
+- **Materials import too**: albedo, normal, specular/gloss and AO maps
+  (external files or FBX-embedded), plus diffuse/emissive colors and
+  shininess/metallic/roughness factors, land on each mesh's renderer
+  automatically — a downloaded model lights the way it did in the store
+  preview.
+- Multi-take files import one clip per take; single-take files can be cut
+  apart with **Split…**.
+
+## State machines: blend trees, exit time, Any State
+
+The **Animator** window (select an object with an `AnimStateMachine`) edits states
+and transitions. Beyond single conditions:
+
+- **Blend tree states** — switch a state's Motion to *Blend tree*, pick a float
+  parameter (e.g. `speed`) and add motions with thresholds (idle at 0, walk at 2,
+  run at 6). The two neighbouring clips play in phase, weighted by the parameter.
+  In Play mode each motion shows a live weight bar.
+- **Several conditions** — `+ Condition` adds more tests to a transition; all must pass.
+- **Exit time** — a transition can wait until the state is a fraction through its
+  clip (0.9 = 90%). With the *Always* condition it fires purely on time: an attack
+  returning to locomotion when it's nearly done.
+- **Any State** — transitions checked from every state first (hit reactions, death).
+- **Layers** — a layer plays on a bone and the bones under it (the mask), over the
+  base pose. **+ Mask bone** adds more subtrees (arms and the head, not the
+  whole spine). **Additive** adds the clip on top of the base pose instead of
+  replacing those bones, for a recoil or aim offset while the body keeps walking.
+- **If missing** — when the state's clip is not in this Animator's library, play
+  the fallback clip instead. A name that exists only on a child model's imported
+  clips plays there (Humanoid Retarget yields until the state changes).
+  **Import into clip** / **Import as fallback** load a file into that slot
+  (`.okayanim` on a character, FBX / glTF / BVH on an imported model). The Clip
+  list also includes the built-in library and those imported takes.
+- **Mirror** — the state plays with left and right swapped, so one authored side
+  covers the other. It applies to a single clip, a blend tree, and a layer
+  (the layer mirrors only its own overlay). **Root motion** per state is Inherit
+  (the Model Animator's toggle), Off, or On. A layer does not change root motion.
+- **IK weight curve** — under a state's IK weight, **Add curve** shapes foot planting
+  over the clip (click to add a key, drag to move it, right-click to remove it).
+  The curve is multiplied by the IK weight slider. Full Body IK can have its own
+  curve when it does not follow the foot weight. Look-At and Aim use the
+  state's look weight (1 by default, so a state with no foot IK keeps the head;
+  below 0 follows the foot weight).
+  Limb IK and Chain IK follow the Full Body weight. The solvers themselves
+  are unchanged. `SampleIkCurve` evaluates a curve the same way.
+
+Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
+`anim_prev_state()`, `anim_state_time()`, `anim_normalized_time()`.
+
+## IK
+
+The full guide (solve order, poles, joint limits, target blending, Foot IK and
+Full Body IK settings, troubleshooting) is in [ik.md](ik.md).
+
+| Component | Use |
+| --- | --- |
+| Full Body IK | Hands, feet and head reach goals on any humanoid rig; bones auto-map. Out-of-reach goals pull the hips and bend the spine; soft reach stops limbs snapping straight. |
+| Limb IK | One arm or leg reaching a target with a pole and bend limits. |
+| Chain IK | Long chains (tails, tentacles, spider legs) with FABRIK or CCD, a pole to set the curl direction and per-joint bend limits. |
+| Foot IK | Plant both feet on uneven ground and adjust the pelvis. |
+| Look-At IK / Aim IK | Head/spine tracking; point a bone (gun, torch) at a target. |
+
+Every IK component has **IK Active** and **Fade** so switching IK on or off blends
+instead of popping. The Animator's per-state IK weight (and its curve over the
+clip) is what those components read as their state weight. Scripts: `ik_enable(on)`, `ik_set_weight(w)`,
+`ik_set_target(x, y, z)`, `ik_set_pole(x, y, z)`, and for Full Body IK
+`ik_hand("left", x, y, z [, weight])`, `ik_foot(...)`, `ik_look(x, y, z)`,
+`ik_release()`.
+
+## Animating any object (the Animation tab)
+
+Select an object with an **Animator** (or press *Add Animator*) and open
+**Animation**. The tab docks under the Scene view and grows to a usable height
+the first time it opens.
+
+- **Presets (star button).** One click gives a starting animation built around
+  the object's current pose: Bob, Hover, Spin, Spin (2D), Pulse, Shake, Sway,
+  Bounce, Pop In, Slide In. Set an amount and a length, then press *Apply
+  preset*. A preset only replaces the tracks it animates; your other keys stay.
+- **Record (red dot).** Move, rotate or scale the object with the Scene gizmos or
+  the fields beside each row, and a key lands at the playhead.
+- **Rows.** Position, Rotation and Scale each get a row. The arrow expands a
+  row into one row per axis, each with its own keys and its value at the
+  playhead. Double-click a row to key it at that time.
+- **Selecting keys.** Click a key to select it, Shift+click to add to the
+  selection, or drag across empty space to box-select. Drag any selected key to
+  move them all. **Del** deletes, **Ctrl+C / Ctrl+V** copy and paste at the
+  playhead, **Ctrl+A** selects everything, and **Ctrl+Z** undoes.
+- **Curves (wave button).** Draws each track as a graph. Drag a point to change
+  its time and value; hold Shift to change only the value. Click a row name to
+  show just that group's curves.
+- **Length.** The field next to *Loop* sets the clip length. Tracks hold their
+  first and last values instead of repeating, so a key at 2 s doesn't make a 1 s
+  track loop twice.
+- **More (⋯).** Playback speed, frame snapping (24, 30 or 60 fps, or off; hold
+  Alt while dragging for free time), smooth or linear interpolation per group,
+  *Make loop seamless*, Reverse, Twice as fast, Half speed, and Trim to the
+  playhead.
+- **Navigation.** The mouse wheel zooms the timeline. Shift+wheel, or the wheel
+  over the row names, scrolls the rows. Middle-drag pans, **F** fits the view,
+  **Space** plays, **K** keys everything, and **[ ]** jump between keys.
+
+### Animation events
+
+The **Events** lane under the ruler holds named moments in the clip. Add one
+with the flag button, **E**, or a double-click on the lane. Drag a flag to move
+it, double-click it to rename it, or right-click it for more options. Events
+are saved with the scene.
+
+When playback passes an event, every component on the object gets
+`OnAnimationEvent(name)`:
+
+- **OkayScript:** the global `anim_event` holds the name. Then a function with
+  the event's name runs (e.g. `footstep()`), followed by
+  `on_anim_event()`.
+- **Visual scripts:** an **On Anim Event** node runs. Give it a name to react to
+  only that event, or leave it blank to react to all of them. **Anim Event
+  Name** outputs the event that fired.
+- **C++:** set `Animator::onEvent`, or override `OnAnimationEvent` in a
+  component.
+
+```
+footstep() {
+    play_sound("step.wav")
+}
+on_anim_event() {
+    log("event: " + anim_event)
+}
+```
+
+## Imported characters: skeleton, skinning, import report
+
+**What import keeps.** glTF, FBX and the Assimp formats come in with their full
+node hierarchy, so bones are connected exactly as in the source. Skins keep their
+joints, inverse bind matrices and weights. Animations become clips on a **Model
+Animator** on the model root.
+
+- **glTF details:**
+  - Up to 8 influences per vertex are read; the strongest 4 are kept and
+    renormalized.
+  - Quantized (normalized integer) UVs, weights and rotations are read correctly.
+  - Nodes stored as a 4x4 `matrix` are decomposed, so Z-up exports stand up.
+  - Multi-material skinned characters keep every material.
+  - STEP and LINEAR keys play back exactly as authored.
+- **Bone names:** duplicate node names are made unique, so clips and skins always
+  bind to the right bone.
+- **Import report:** after an import the Console prints:
+  - meshes, vertices and bones, and the skeleton's root bone;
+  - weights per vertex and the clips;
+  - warnings for anything that will look wrong: missing bones, vertices with no
+    weights, or a skeleton split into separate trees.
+
+**Skeleton overlay.** Rigged models show their bones in the Scene view, connected
+parent to child (View > Scene Overlays > Skeletons: Selected model / All / Off).
+Hovering a bone names it; clicking it selects it.
+
+**Skinned Mesh inspector:**
+- **Skinning:** *Linear* (fastest, skinned on the GPU) or *Dual quaternion*, which
+  keeps volume at twisting joints (wrists, forearms, shoulders) and runs on the
+  CPU.
+- Bone and weight statistics, and **Normalize weights**, which makes weights sum
+  to 1 and drops tiny ones.
+- A bone tree with how many vertices each bone moves.
+
+Skinned meshes also deform in edit mode, so posing bones in the Scene view bends
+the mesh.
+
+**Sparse accessors.** glTF accessors stored sparse (common for morph targets) are
+read: the dense base, or zeros, with the listed values written over it.
+
+## Blend shapes (morph targets)
+
+Facial expressions, lip-sync visemes and corrective shapes come in with the
+model as a **Blend Shapes** component on each mesh that has them:
+
+- **glTF:** every primitive's `targets` (positions and normals), names from
+  `extras.targetNames`, default weights from `mesh.weights`, and `weights`
+  animation channels.
+- **FBX:** blend shape channels and their animated `DeformPercent`.
+- Clips drive them with `weights.<n>` tracks on the mesh's node. They play in the
+  Animation tab preview, through crossfades and blend trees, and in Play.
+- The inspector has one slider per shape, a filter box for faces with dozens of
+  shapes, and **Reset all**.
+- Scripts: `blend_shape("Smile", 0.8)` sets a shape on every mesh under the
+  object; `blend_shape_get("Smile")` reads it back.
+- The morph is applied before skinning, so a morphed face still follows the
+  skeleton. Shapes are stored sparse (only the vertices they move) and saved with
+  the scene; the mesh is only rebuilt when a weight changes.
+
+## Root motion
+
+Turn on **Root Motion** in the Model Animator. The root bone's travel moves the
+character, and the bone stays over it.
+
+- Travel is measured through the bone's parent, so centimetre (0.01) and rotated
+  (Blender) armatures move the right distance in the right direction.
+- **+ Vertical** also lifts the object; **+ Turning** also rotates it (turn-in-place
+  and curved walks).
+- **Moves: Parent** applies it to the player object the model sits under. A
+  `Rigidbody3D` there gets it as velocity, so walls still stop the character.
+- Works through crossfades and blend trees. The inspector shows the live root
+  speed in Play mode.
+- Scripts can take over with `ModelAnimator::onRootMotion`.
+
+## State machine: layers, 2D blend trees, ints
+
+- **Locomotion setup** (Animator toolbar) builds a full setup from the model's
+  clips:
+  - idle / walk / run blended by `speed`;
+  - Jump (Any State on the `jump` trigger), Fall and Land, using `grounded` and
+    `verticalSpeed`.
+
+  These are the parameters the player controllers already send.
+- **2D blend trees:** pick *2D (strafe)* on a blend tree. Motions sit on a map;
+  drag them, and watch live weights in Play. The controllers send `moveX` / `moveZ`
+  (velocity in the body's frame) for strafing sets. The body faces local -Z, so
+  forward is negative `moveZ` and strafing right is positive `moveX`.
+  **Locomotion setup** on an imported model builds that 2D blend when the file
+  has a strafe or a back clip. Names map by word: a left strafe or sidestep
+  walk (`left` plus `strafe` / `walk`), a right one, `Walk Back`, and `Run Back`.
+  Tricks such as Back Flip are not back-walks. With none of those clips,
+  locomotion stays the forward speed blend, exactly as before. Set
+  `legsFollowTravel` (off by default) and the hips ease
+  toward travel (up to 80 degrees, about 0.1 s), around world up in the hips'
+  parent space, with the spine twisting back by the same yaw so the chest stays
+  near the facing. A tilted armature does not tip the pelvis. With that option
+  on, or when strafe clips exist, backward movement with no back clip plays the
+  forward walk in reverse (with hysteresis around 100 degrees).
+- **Layers:** the **+** tab adds a layer, its own states playing over the base
+  layer on part of the skeleton. Pick a **Mask bone** (e.g. the spine for
+  upper-body actions) and a **Weight**. Layers share the base layer's parameters,
+  so `anim_trigger("attack")` drives both.
+- **Int parameters** with `Int ==` / `Int !=` conditions, and a per-state **speed
+  multiplier** parameter.
+- Parameters can be edited live while playing, and the running state shows a
+  progress bar.
+
+**Per state and per transition:**
+- **On enter / On exit events:** an animation event fired when the machine enters
+  or leaves the state. It reaches `anim_event()` in scripts and the visual
+  scripts' animation event handlers, like clip events. Use it for jump and land
+  sounds or to open a hit window.
+- **IK weight:** how much Foot IK, Full Body IK, Limb IK, Chain IK, Look-At
+  and Aim apply in that state, eased over the transition. Look-At and Aim
+  use the state's own look weight instead (1 by default). Set the IK weight to
+  0 for jumps, rolls and falls so the feet aren't pulled to the ground
+  mid-air; set the look weight to 0 for death, sit and emotes so the head
+  plays the action instead of staying on a look target. The built-in death,
+  sit, gesture and emote states do.
+- **Start at** on a transition starts the target part-way into its clip, to line
+  up the feet between walk and run cycles.
+
+Clip events from imported models now also reach visual scripts.
+
+### The Animator window
+
+Select an object with an Animator (or one of its parts) and open View >
+Animator. Tabs across the top pick the layer (**Base**, then each layer by
+name; **+** adds one). The toolbar adds states (**+ State**: an empty one, one
+per clip, several from the Clips tab, or a blend tree), **Auto Layout**s the
+graph in columns by distance from the entry, **Frame**s it, toggles the arrow
+**Labels** and the **Minimap**, builds a **Locomotion setup** on an imported
+model, and finds a state by name (matches light up; Enter selects and
+centres the first).
+
+**The canvas.** Drag a node to move it (a selection moves together), drag
+empty canvas to box-select, Shift / Ctrl-click to add to or toggle the
+selection. Pan with the middle or right button, or Space + drag; zoom with
+the wheel around the cursor (Ctrl+0 resets, F frames everything). The
+minimap in the corner shows the whole graph and the view; click or drag it to
+move. Double-click a node to rename it in place, double-click empty canvas
+to add a state, drop a clip from the Clips tab to make a state that plays it.
+Keys: Delete removes the selected states or the selected transition, Ctrl+C /
+Ctrl+V / Ctrl+D copy, paste and duplicate (transitions between copied
+states follow the copies), Ctrl+A selects all, Escape cancels a pending
+transition or clears the selection, the arrow keys nudge (Shift: a grid step).
+
+**Nodes** carry a green play badge on the entry state, the clip or blend
+tree (its parameter and motion count) under the name, "mirrored", "once"
+and the IK weight when they apply, a pink dot for enter / exit events, a
+"+" on an additive layer, and a warning glyph (hover it) when something is
+wrong: no clip, a clip that is not in the library, nothing leading to the
+state. The title strip is tinted by layer. The **Any State** node sits left of
+the graph (drag it anywhere): double-click it, or use its right-click menu,
+to add an Any State transition.
+
+**Arrows** run one per pair of states, with the head at the target and a
+chevron half way; a two-way pair bends so both directions show, a self
+transition loops above the node, and a pair with several transitions shows
+"x3" (clicking again cycles through them). The label reads the first
+transition's conditions, exit time and blend (`speed > 2 · exit 0.9 ·
+0.25s`); muted transitions draw dimmed. Hover highlights an arrow, click
+selects it. In Play the running state is orange with a progress bar through
+its clip, its outgoing arrows brighten, the arrow that just fired flashes
+green, and a dot travels along it while the blend runs.
+
+**The side panel** has five tabs:
+
+- **State / Transition / Any State / Animator** (whatever is selected). A
+  state: its name, the **Entry state** tick, then sections for *Motion* (a
+  single clip picked from every clip the machine can play, with a **Preview**
+  that plays it on the character in the Scene view, the **If missing**
+  fallback, and clip import; or a blend tree), *Playback* (speed and its
+  parameter multiplier, loop, mirror, root motion, whether Any State may
+  interrupt), *IK* (weight and curves), *Events* and *Transitions* (in test
+  order, with arrows to reorder, a right-click menu to mute or delete, and
+  the incoming transitions below). A transition: source and target buttons,
+  a target picker, its conditions (all must pass), exit time, blend, **Keep
+  phase** or **Start at**, interruption, mute, its priority among the source's
+  transitions, and **Preview blend**: the source clip plays and the target
+  fades in over the blend time on the character in the Scene view, with a
+  timeline to scrub. With nothing selected the tab shows the machine: entry
+  state, Any State transitions, and in Play the current state, the blend in
+  progress and the last state changes.
+- **Parameters**: one table for every layer (layers share the base layer's
+  parameters): type, name (rename it and every condition, blend tree and
+  speed multiplier follows), the **default** the machine starts with, and in
+  Play the live value (a slider, a tick box, or **Fire** for a trigger) to
+  drive the machine by hand. Drag the handle at the left of a row to reorder;
+  a filter box narrows the list; **Used** says whether anything reads the
+  parameter.
+- **Layer**: the layer's name, weight and **Additive** toggle, and its mask as
+  the rig's bone tree: tick a bone to drive it and everything under it (the
+  bones in the mask show in the layer's colour). The base layer lists the
+  layers over it.
+- **Issues**: everything the window flags, for this layer: a state with no
+  clip or a missing clip, a state nothing leads to, a transition with no
+  target, no parameter, or one that fires at once because it has neither a
+  condition nor an exit time, a transition that is never tested because an
+  earlier one always fires first, and parameters that are not declared.
+  Click one to select what it is about; the count shows on the tab. A state
+  nothing leads to is listed as a note, since a script can still `anim_goto` it.
+- **Clips**: every clip the machine can play (its own, the built-in library on
+  a character, imported takes on a model). Drag one onto the canvas or
+  double-click it to make a state, or tick several and **Create states** for
+  them all at once.
+
+**Blend trees** in the Motion section: a 1D tree shows a bar with each
+motion's influence, its clip name, and a draggable threshold marker (the
+live parameter is the orange line in Play; right-click a marker to remove
+the motion); a 2D tree shows the map with draggable points, the live point,
+and a right-click or double-click to add a motion where you click. Motions
+pick their clips from the same list as states. **Match speed** plays the
+tree as fast as the body moves.
+
+Every change is one undo step (a drag or a typing session counts as one),
+and the graph's layout, the Any State node's spot, parameter defaults and
+layer names save with the scene.
+
+## IK: feet, hands, posing
+
+- **Set up humanoid IK** (Model Animator inspector) adds, from the bone names:
+  - **Foot IK:** legs bend to put the feet on the ground, feet tilt to slopes, the
+    pelvis drops for lower ground, and feet are locked while planted so they don't
+    slide.
+  - **Full Body IK**, with *LeftHand / RightHand IK Target* objects. Move them, or
+    parent them to a weapon or a door handle, and enable the hand effectors.
+- **Foot locking** (`footLock`) pins a planted foot where it landed until the
+  animation lifts it.
+- All IK components now run after animation, crossfades and layers, so nothing
+  overwrites their correction.
+- **IK posing:** with the **IK** toggle in the Scene toolbar, moving a hand, foot
+  or any bone turns the two bones above it to reach, keeping bone lengths. Undo
+  works as usual.
+
+## Performance
+
+- Transforms cache their world matrix, so world positions and rotations are no
+  longer rebuilt up the whole parent chain on every call.
+- The Model Animator samples clips straight into cached bone bindings: no per-bone
+  components, no clip copies when switching, and no name lookups per frame.
+- Skinned meshes only re-skin when a bone actually moved.
+
+- Skinning sums the weighted bone matrices once per vertex (3x4 affine) and runs
+  after IK, once per frame.
+- Imported clips get keyframe reduction: keys that lie on the line between
+  their neighbours (within a tiny tolerance) are dropped, so baked 30 fps FBX
+  takes sample far fewer keys.
+- Auto-fitted colliders skip meshes that deform every frame, and `GetComponent`
+  takes an exact-type fast path.
+
+A 60-bone mocap clip costs about 0.015 ms per frame to pose. The Khronos Fox
+(24 bones, 1,728 vertices) animates and CPU-skins in about 0.06 ms per frame. A
+stress scene with 20 animated Foxes and 60 physics cubes went from 1.66 ms to
+about 0.65 ms per frame.
+
+### GPU skinning and frustum culling
+
+- Skinned meshes deform on the GPU in the OpenGL editor viewport and in the
+  player (OpenGL and Direct3D 11). The bone limit comes from the GPU's uniform
+  space (up to 256 bones per mesh); bigger rigs fall back to CPU skinning. The
+  Stats panel shows `skinning: GPU` or `CPU`.
+- Every renderer skips objects outside the camera (and outside the shadow
+  light's view for shadows) before any draw call. Skinned meshes are tested
+  around their bones, so animated characters don't pop at the screen edges. The
+  Stats panel shows **Drawn** / **Culled** counts and a **Frustum culling**
+  checkbox for debugging.
+- In a 400-object test scene with the camera looking at a quarter of it, about
+  74% of objects were culled and the frame time dropped by about a third.
+
+## IK: smoothing and limits
+
+- **Full Body IK** blends effectors in and out instead of snapping: *Blend Speed*
+  (default 8 per second; 0 = instant), *Goal Smoothing* (follows a moving target
+  without jitter), and look-at *Smoothing*. The inspector shows each effector's
+  live weight and whether it **reached** its target (`ik_reached("left")` in
+  scripts).
+- **Joint limits:** *Elbow / Knee Min Bend* keep arms and legs from locking
+  straight or folding backwards.
+- Reach is spread over the lower spine and chest, so leaning for a far target
+  looks natural.
+- A partial weight blends the *goal* rather than the final pose, so limbs keep
+  their length at any weight.
+- **Set up humanoid IK** also creates a *Look IK Target*.
+- State machine states have an **IK Weight**, so IK can fade out during a roll or
+  a climb and back in afterwards.
+
+## Holding objects (Procedural Object Holding)
+
+A character holds things with its hands: the hands go to the object's grips, the
+elbows bend down and out, and the object moves with the body.
+
+- Add **Procedural Object Holding** (Add Component > Animation) to the character
+  and **Holdable Object** to anything it may pick up. Without a Holdable Object
+  an object can still be picked up from a script; it gets automatic settings.
+- **Primary Hand** (Left / Right / Both) is the hand a one-handed object goes in.
+  *Both* adds the support hand on pistols and swords and carries a small item
+  with both hands.
+- **Holding Style**: *Automatic* uses each object's own style; *Custom* always
+  uses the object's grip points.
+- The object's **Style**:
+  - *Pistol*: one hand on the handle, aimed forward. With **Support Hand** on, the
+    other hand wraps around the first.
+  - *Rifle*: stock at the shoulder, one hand on the grip, the other under the barrel.
+  - *Box*: both hands on its sides, as low as the arms reach.
+  - *Flashlight*: one hand, beam forward.
+  - *Sword*: one hand on the hilt, blade up and forward. *Support Hand* makes it
+    two-handed.
+  - *Cup*: one hand on the handle.
+  - *Heavy*: both hands under its bottom edges, hanging low.
+  - *Custom*: the hands go on the **Left / Right Grip** points (object-local
+    position and rotation; rotation 0 = palm down, the hand along -Z), and the
+    object sits at **Hold Offset / Hold Rotation** from the chest. A one-hand
+    object authored for the right hand is mirrored when the primary hand is the
+    left.
+  - *Automatic* picks a style from the object's tag or name ("pistol", "rifle",
+    "crate", "sword", "mug", "torch"...), then from its shape and weight: long
+    and weighty is a rifle, long and light a sword, short and long a flashlight,
+    over 15 kg heavy, wide or over 5 kg a box. Anything else small is held in
+    one hand from underneath. The inspector shows what it picked.
+- Named styles read the object's long side as the barrel, blade or beam. Guns
+  and lights point along local -Z, a sword's blade along +Y, a cup's handle
+  along +X. For a model built another way, **Hold Rotation** turns it
+  (0, 180, 0 for a gun facing backwards).
+- Hands are the single block the rig had before the finger mesh: one 12×12×17 cm
+  box on the hand bone, and no finger bones. Holding aims that hand at the grip.
+  Finger joints are not posed, including on a rig that happens to have them. A run
+  (sprint, or fast enough to use the run
+  style) keeps those hands out of the first-person view unless **Show While Running**
+  is on. The held object stays on its grip.
+- First person draws no hand until the player is holding an item. **First Person
+  Hands** (on the player) is the panel for that view and for what everyone else
+  sees. **Show When Empty** draws the hands with nothing in them. **Hold mode**
+  is one hand on the right, one hand on the left, or both. A two-handed item
+  (its **Two Handed** flag, both grip points, or a rifle, box, or heavy style,
+  or a pistol or sword with the support hand) uses both hands anyway, at that
+  item's grip points. Each hand has its own position, rotation, scale, size,
+  colour, and an optional sleeve. Bob, sway, punch, the hand field of view, and
+  the held item's offset, rotation, and scale are shared. **Others View** moves
+  the real held object (side / up / forward, plus a lift and a reach) so the
+  arms on the full body follow, and edits the item's grip points. **Reset**
+  clears one section. **Apply** copies Play-mode edits back when Stop reloads
+  the scene. **Open Preview** shows the owner's camera and a front view of the
+  same character, in Edit mode and in Play, and can switch between a one-handed
+  block, a two-handed crate, and empty hands.
+- While a hand is up, it is a copy of the character's own hand brick on the
+  owner's camera only, in the lower corner, fully on screen. The sleeve is off
+  unless that hand turns it on. The brick is angled so the top and the inner
+  end both show, and it stays past the near plane. It does not cast a shadow.
+  The pose is in the camera, so looking down keeps it in that corner instead
+  of pushing it into the lens. Walking bobs and sways it. A mouse turn lags it
+  slightly. A punch swings it toward the middle. A one-handed hold puts a copy
+  of the item in the palm (or on that hand's grip, when the grip is enabled).
+  A two-handed hold puts the item in front and a hand on each grip. Everyone
+  else still sees the real hands on the body. A run eases the copy off the
+  corner and a stop eases it back. The real arm bones stay on the animation,
+  so another camera and another player see the blocky hands on the idle, the
+  walk, the run, a crouch and a prone, including while this player looks down.
+  That look does not pitch the shared bones. None of the first-person pose is
+  in the network message. A remote copy of the player does not keep the view
+  toggle, so a key press on this machine cannot hide someone else's body. The
+  run bob moves the eye up and down only; it does not sway sideways or roll
+  the horizon.
+- The owner's first-person camera does not draw the head or the neck. The
+  head is not scaled away and not deleted from the mesh: it stays active, so
+  it still casts a shadow and any other camera still sees it. The neck is
+  skipped with the head. The shirt's lid stays on the body. The eye sits just
+  in front of the face (further forward and up as you look down) so the neck
+  is behind the lens. The body is drawn from the outside only, so
+  looking down shows the shirt from the outside, the hips, the legs, or the
+  ground, not the inside of the cloth and not a crate through it. The eye sits
+  in front of the chest and steps further forward and up as you look down, and
+  the shirt's lid stays on the body so that view is a solid surface. One
+  plain hand stays in the lower right while standing, walking, and looking
+  down: one cube, not the full arm. A run eases both arms
+  off the owner's camera.   Switching view (V, on the first-person template and the third-person one)
+  eases the camera between the orbit and the eyes over **Switch Blend Time**
+  (0.30 seconds) with **Easing** (Smooth by default; also Linear, Ease In,
+  Ease Out). **Snap** jumps in one frame. The slide stops at a wall. The head
+  and the neck stay until the lens is near the eyes, and they come back as
+  soon as it pulls away, including when V is reversed halfway. The body does
+  not vanish and does not drop into a bind pose for that frame. Walk, run,
+  crouch, prone, lean and the current action keep their phase. A held item
+  moves from the grip to the first-person placement over the same blend, and
+  the hands ease in and out with it. A look that third person cannot hold
+  eases back to the orbit pitch you started with, so a look down does not
+  come back as a top-down camera. The near plane comes back with the head.
+  Another camera still sees the whole character. The first-person
+  controller does not put the hide back, and the editor Game view does not
+  invent one while the game is playing. The First Person and Third Person
+  starters put one **Player Controller** on the player with **View** set to
+  **Both**, so the view you switch to is the one that moves the body: first
+  person is the eye movement, third person the orbit. A scene saved by an
+  older starter, whose player had only one of the two, gets the other when it
+  loads, with its camera mounted on the player, so its V runs the same way.
+  See [The Player Controller](making_a_game.md#the-player-controller).
+- **Socket**: hold it at a named object inside the character (a holster, a back
+  slot) instead of in front of the chest.
+- The hands never stretch: when a grip is out of reach the object comes closer
+  to the body. Picking up eases the object into the hands over *Transition*;
+  dropping hands it back to physics with the character's velocity.
+- Works on the built-in Character (it switches on the part rig so the arms have
+  bones) and on imported humanoids (bones found by name, through the Full Body IK
+  the character already has or one it adds). Looking around with a controller's
+  *IK Look* turns the chest before the hands are placed, so they stay on the grips.
+- **Body Adjustment** (on by default): a heavy or big load (from 3 kg up to
+  30 kg, more for big loads and the *Heavy* style) leans the torso back. The
+  lean is an additive layer on the character's animation, so walking and
+  running keep their motion under it, and it eases in and out. The load also
+  slows the character down (down to 0.55x at the heaviest; `SpeedMultiplier()`).
+  The first-person, third-person, shooter, top-down and click-to-move
+  controllers apply it through `MoveSpeedScale()`, the one shared movement-speed
+  hook, so the server and a predicting client agree. The object is also pushed
+  out in front instead of sinking into the chest or belly.
+- **Carry Animations**: *Automatic* is the built-in lean. *Custom* leaves the
+  posture to your Animator: it gets the parameters `holding` (bool),
+  `carryStyle` (int: 0 small item, 1 custom, 2 pistol, 3 rifle, 4 box,
+  5 flashlight, 6 sword, 7 cup, 8 heavy) and `carryWeight` (kg) for its own
+  carry states or layer. The hands still go on the grips either way.
+- Scripts: `hold_nearest(range)` and `hold_pickup("Crate")` return 1 when the
+  object is in the hands, `hold_drop()` lets go, `hold_object()` is the name of
+  what's held ("" when nothing).
+
+## State machine: events, mute, history
+
+- States have **Enter / Exit events** (sent like clip events, so `OnAnimEvent`
+  nodes and script handlers receive them).
+- Transitions have an **Offset** (start the next clip part-way through), a
+  **Keep phase** checkbox (start the next state where the current one is in its
+  cycle, so walk ↔ run between two looping states keeps the feet in step) and a
+  **Mute** checkbox (muted transitions are dimmed and never fire). Outgoing
+  transitions are listed in priority order with up/down buttons.
+- In Play mode the graph flashes the transition that just fired and lists the
+  **recent state changes** with times.
+- **Thresholds from clip speed** sets a 1D blend tree's thresholds from how fast
+  each clip's root actually moves.
+
+## What a remote player sees
+
+The animation sync message stays compatible. It is still `anim`, punch count,
+then optional ground speed and facing-relative angle. After that, optional:
+action sequence, action id, look yaw, look pitch, and one action parameter.
+
+- Action id 1 death, 2 roll, 3 sit, 4 swim. The parameter is the fall or dodge
+  direction (0 forward, 1 back, 2 left, 3 right), the sit type (add 10 while
+  standing up), or the swim speed. A message without it still plays the action
+  forward / treading.
+- Dive, hit, vault and emotes are not in this message. Jump, crouch and the
+  other built-in poses still travel in the original `anim` field.
+- First-person pitch, the raised arm and hiding the local camera are not sent.
+- A proxy writes `moveX` / `moveZ` from the speed and angle already in the
+  message, so a strafe blend faces the same way. It does not add a field.
+- Look is the owner's head target. The proxy eases its own head toward it, and
+  does not also aim at the local camera.

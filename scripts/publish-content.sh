@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publish a game's downloadable content (docs/content_delivery.md) to Supabase Storage with the plain storage REST API (curl), the same way
+# Publish a game's downloadable content (docs/release/content_delivery.md) to Supabase Storage with the plain storage REST API (curl), the same way
 # scripts/publish-supabase.sh publishes the program. The folder is the content: models, textures, animations, scenes, audio, dialogue, scripts
 # and data ONLY (okay-content refuses programs and libraries). Nothing here talks to anything but your Supabase project.
 #
@@ -71,7 +71,7 @@ SUPABASE_URL="${SUPABASE_URL:-${OKAY_DEFAULT_ACCOUNT_URL:-$(okay_public_account 
 SUPABASE_URL="${SUPABASE_URL%/}"
 BUCKET="${BUCKET:-game-content}"
 MAX_MB="${MAX_MB:-100}"; MAX_BYTES=$((MAX_MB * 1024 * 1024))
-[ -n "$SUPABASE_URL" ] || die "no SUPABASE_URL (or OKAY_DEFAULT_ACCOUNT_URL) is set and config/public-account.json has no url (docs/accounts.md)"
+[ -n "$SUPABASE_URL" ] || die "no SUPABASE_URL (or OKAY_DEFAULT_ACCOUNT_URL) is set and config/public-account.json has no url (docs/online/accounts.md)"
 REF="$(printf '%s' "$SUPABASE_URL" | sed -E 's#https://([a-z0-9]+)\.supabase\.co#\1#')"
 PUBLIC="$SUPABASE_URL/storage/v1/object/public/$BUCKET/$GAME"
 

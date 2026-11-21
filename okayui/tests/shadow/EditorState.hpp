@@ -2,7 +2,7 @@
 // A minimal stand-in for editor/EditorState.hpp, used ONLY by the okayui port tests that run editor panels headless (put first on the include path).
 // The real class owns the Scene, the Play loop, the undo stack and more of the engine; a panel test that only needs the project folder, the open file
 // path and a few file operations uses this one. It implements just what the panel under test calls, with in-memory behaviour a test can inspect.
-// See docs/own_ui_toolkit.md 6.17.
+// See docs/ui/own_ui_toolkit.md 6.17.
 #include <Okay.hpp>   // what the real header pulls in (components, scene, game), so the panel code that includes it compiles
 #include "okay/Core/Game.hpp"
 #include <string>

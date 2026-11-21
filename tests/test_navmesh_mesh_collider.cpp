@@ -133,7 +133,7 @@ int main() {
     }
 
     {   // A flipped, open floor (a single sheet wound downward) is still a floor: physics treats a mesh collider as
-        // two-sided, so an agent can stand on it. (Open meshes are two-sided for the bake; see docs/navigation.md.)
+        // two-sided, so an agent can stand on it. (Open meshes are two-sided for the bake; see docs/gameplay/navigation.md.)
         Scene s("flipped floor"); s.physicsEnabled = false;
         Mesh down; AddQuad(down, -4, -4, 4, 4, 0.0f, true);
         MeshObject(s, "Down", down);

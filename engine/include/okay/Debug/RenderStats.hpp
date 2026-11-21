@@ -3,7 +3,7 @@
 // switches and a texture memory estimate. Renderers feed a RenderStatsCollector
 // through a handful of one-line calls; the debug overlay and the editor read the
 // result. No renderer is modified by this file: add the calls where noted in
-// docs/debug_tools.md.
+// docs/engine/debug_tools.md.
 //
 //     RenderStatsCollector& rs = RenderStatsCollector::Global();
 //     rs.BeginFrame();

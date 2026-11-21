@@ -1,4 +1,4 @@
-// Software renderer speed-ups must not change a pixel (docs/perf_log.md). RenderMeshes is run on a set of scenes with
+// Software renderer speed-ups must not change a pixel (docs/engine/perf_log.md). RenderMeshes is run on a set of scenes with
 //   - the plain loop of the shadow depth pass (TriangleSpanDisabled), no band skipping and no light culling  ("legacy"), and
 //   - every shortcut on ("fast"), and each shortcut alone,
 // and the colour and depth buffers are compared bit for bit (memcmp).

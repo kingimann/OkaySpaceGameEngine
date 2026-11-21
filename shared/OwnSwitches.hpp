@@ -1,6 +1,6 @@
 #pragma once
 // "Experimental: try our own code": one table of the own replacements that can be switched on at RUN time, and the pure logic
-// around it (docs/try_it/<id>-own-switch.md, docs/own_code_roadmap.md). Standard library only, so the launcher, the editor and
+// around it (docs/try_it/<id>-own-switch.md, docs/status/own_code_roadmap.md). Standard library only, so the launcher, the editor and
 // the tests share it; it does not include any engine header.
 //
 // How it works, in plain words:

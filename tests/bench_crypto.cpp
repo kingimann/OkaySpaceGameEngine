@@ -1,6 +1,6 @@
 // Benchmark for okay::crypto (not a test; run by hand: build/tests/bench_crypto [seconds-per-case]).
 // Prints microseconds per operation for our code and, when libsodium is installed
-// (OKAY_BENCH_SODIUM), for libsodium next to it. UNREVIEWED code; see docs/crypto.md.
+// (OKAY_BENCH_SODIUM), for libsodium next to it. UNREVIEWED code; see docs/platform/crypto.md.
 #include <okay/Crypto/Crypto.hpp>
 #include <chrono>
 #include <cstdio>

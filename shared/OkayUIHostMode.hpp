@@ -1,6 +1,6 @@
 #pragma once
 // Window mode: the editor with OkayUI owning the window and the frame (no Dear ImGui). Off by default, a dev switch, step 1 and 2 of the plan in
-// docs/own_ui_toolkit.md 6.23. Switch: OKAY_DEV=1 and OKAY_UI_BACKEND=okayui and OKAY_UI_HOST=okayui. Without all three nothing changes.
+// docs/ui/own_ui_toolkit.md 6.23. Switch: OKAY_DEV=1 and OKAY_UI_BACKEND=okayui and OKAY_UI_HOST=okayui. Without all three nothing changes.
 #include "OkayUIBackend.hpp"
 #include "OkayUIHostState.hpp"
 

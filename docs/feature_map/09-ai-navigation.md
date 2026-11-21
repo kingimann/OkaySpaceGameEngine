@@ -2,7 +2,7 @@
 
 Baked navigation meshes with agents and obstacles, the older probe grid and 2D grid A*, behavior trees with a blackboard, and
 the NPC Controller with built-in perception. Code is `engine/include/okay/AI/*` (7 headers), `engine/src/AI/*` (about 4.5k lines),
-seven navigation components and two editor windows. Docs: `docs/navigation.md`, `docs/behavior_trees.md`, `docs/npcs_and_crafting.md`.
+seven navigation components and two editor windows. Docs: `docs/gameplay/navigation.md`, `docs/gameplay/behavior_trees.md`, `docs/gameplay/npcs_and_crafting.md`.
 The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/OkayScriptVM` (area 13).
 
 ## 9. AI & navigation
@@ -18,7 +18,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Code:** `AI/NavMesh`, `AI/NavMeshBake`, `AI/Navigation`, `AI/NavGrid3D`, `Components/NavMeshSurface`, `engine/src/AI/NavMeshSurface.cpp`, `editor/NavigationWindow.*`
 - **API:** `NavMeshSurface`, `NavMesh`, `NavMeshBuildSettings`, `Navigation::FindPath`, `Navigation::SamplePosition`, `Navigation::Raycast`, `Navigation::RandomPoint`, `NavGrid3D::FindPath`, script `nav_path_exists`, `nav_path_length`, `nav_point_walkable`, `nav_nearest_point`
 - **Editor:** View > Editors & Tools > Navigation (Add Nav Mesh Surface, Bake, Clear); Scene view mesh overlay; Add Component > Gameplay > Nav Mesh Surface
-- **Docs:** `docs/navigation.md`
+- **Docs:** `docs/gameplay/navigation.md`
 - **Tests:** `navmesh`, `navmesh_carving`, `script_nav`, `navmesh_mesh_collider`
 - **Status:** Works - NavMesh.cpp, NavMeshSurface.cpp, Navigation.cpp and the facade header read; bake and path behaviour (walls, doorways, ramps, islands) covered by `navmesh` and `script_nav`; a `.okaynav` with a non-finite vertex is refused and the lookup grid is capped at 2048 cells a side (`navmesh`)
 - **Open:** per docs: polygons are axis-aligned rectangles (angled walls get a one-cell staircase); one agent radius per bake; obstacle carving is 9.2.5 (area types and off-mesh links are 9.6); Navigation uses only the first enabled surface in a scene; with no mesh `FindPath` always returns a path (a straight line when the grid finds none), so the grid cannot report an unreachable goal
@@ -38,7 +38,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Code:** `Components/NavMeshAgent`, `engine/src/AI/NavMeshAgent.cpp`, `Components/NavMeshObstacle`, `engine/src/AI/NavMeshCarve.cpp`, `editor/NavigationWindow.*`
 - **API:** `NavMeshAgent`, `NavMeshObstacle`, `Carve`, `Carving`, `NavMesh::Carve`, `Navigation::CarveGeneration`, `SetDestination`, `Arrived`, `RemainingDistance`, `HasPath`, script `nav_move_to`, `nav_arrived`, `nav_stop`, visual-script Nav Move To, Nav Stop, Nav Arrived
 - **Editor:** Add Component > Gameplay > Nav Mesh Agent and Nav Mesh Obstacle (box or capsule, Carve fields, red carve footprint in the Scene view); Navigation window Send Selected Agent To Click; paths drawn as cyan lines in the Scene view
-- **Docs:** `docs/navigation.md`
+- **Docs:** `docs/gameplay/navigation.md`
 - **Tests:** `navmesh`, `navmesh_carving`, `script_nav`
 - **Status:** Works - NavMeshAgent.hpp and the function layout of NavMeshAgent.cpp read (Replan, Avoid, Move, Face, Animate, Update); behaviour covered by `navmesh` per its agent cases
 - **Open:** agents only avoid each other and obstacles locally; there is no crowd-wide planner; carving is run time only (the editor previews the footprint), is a hole in the shared mesh for every agent and rebuilds the carved copy whole; area costs and links are 9.6
@@ -56,7 +56,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Code:** `AI/Pathfinding`, `AI/GridPath2D.cpp`, `Components/GridPathAgent2D`, `Components/GridCostLayer`, `Components/GridObstacle2D`
 - **API:** `Pathfinding::AStar`, `Pathfinding::OnTilemap`, `Pathfinding::LineClear`, `Pathfinding::Smooth`, `Pathfinding::Cell`, `GridPathAgent2D`, `GridCostLayer`, `GridObstacle2D`, script `grid_move_to`, `grid_move_cell`, `grid_stop`, `grid_arrived`, `grid_set_tile_cost`, `grid_set_cell_cost`, `grid_block`, `grid_clear`, visual-script Walk the Grid, Stop Grid Walk, Grid Arrived
 - **Editor:** Add Component > Gameplay > Grid Path Agent (2D), Grid Movement Costs, Grid Obstacle (2D). Inspector labels: Which tilemap, Walk speed, Stop this close, Allow diagonal steps, Smooth the path, Pay for mud and roads, Plan again every (seconds), Road tile number, Road cost, Mud tile number, Mud cost, How many cells across, How many cells down, Block the path
-- **Docs:** `docs/navigation.md`
+- **Docs:** `docs/gameplay/navigation.md`
 - **Tests:** `pathfinding`
 - **Status:** Works - covered by `pathfinding` (detours, no path, diagonals that do not cut a corner, tilemap, a cheap road preferred over mud, a smoothed path shorter than the staircase and clear of walls, an obstacle on the path replans that agent and leaves another agent's path alone)
 - **Open:** 2D grid only; a start or goal on a wall returns no path; a grid over `Pathfinding::kMaxCells` (4096 x 4096) returns no path; smoothing does not re-price the route (it only refuses walls); not used by the 3D agents, which go through `Navigation` (9.1.4)
@@ -77,7 +77,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Code:** `AI/BehaviorTree`, `engine/src/AI/BehaviorTreeRunner.cpp`, `Components/BehaviorTreeRunner`, `editor/BehaviorTreeWindow.*`
 - **API:** `BehaviorTree`, `BehaviorTreeRunner`, `Blackboard`, `BtValue`, `BtStatus`, `BtNodeType`, script `bt_set`, `bt_get`, `bt_run`, `bt_stop`, `on_bt_event`, C# `BehaviorTree.Set`, visual-script Set Blackboard, Get Blackboard, Run Tree
 - **Editor:** View > Editors & Tools > Behavior Tree; Add Component > Gameplay > Behavior Tree Runner; double-click a `.okaybt` in the Project panel
-- **Docs:** `docs/behavior_trees.md`
+- **Docs:** `docs/gameplay/behavior_trees.md`
 - **Tests:** `behavior_tree`
 - **Status:** Works - BehaviorTreeRunner.hpp and the tick structure in BehaviorTreeRunner.cpp read; node behaviour covered by the 826-line `behavior_tree` test
 - **Open:** no step-over or step-into (a breakpoint pauses Play, and the toolbar step runs one frame); Start Dialogue is the only task that links to story (10.2); perception is still a separate copy of the NPC controller's sight (9.5)
@@ -98,7 +98,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Code:** `AI/Perception`, `Components/NPCController`, `Components/FollowTarget2D`, `editor/main.cpp` (NPC Controller inspector)
 - **API:** `NPCController`, `NPCController::Behavior`, `CommandGoTo`, `SetExternalBrain`, `Damage`, script `npc_goto`, Action List messages `npc_alert`, `npc_lost`, `npc_died`
 - **Editor:** Add Component > Gameplay > NPC Controller; Inspector groups for movement, perception, aggression, combat
-- **Docs:** `docs/npcs_and_crafting.md`
+- **Docs:** `docs/gameplay/npcs_and_crafting.md`
 - **Tests:** `npc_ai`, `npc_crafting`, `perception`
 - **Status:** Works - NPCController.hpp read in full (states, perception, external-brain hooks); behaviours covered by `npc_ai` (sight cone, search, patrol, flee, leash) and `perception` (the controller, the tree service and the tree's line-of-sight test agree)
 - **Open:** health is a built-in `health` field here, separate from HealthStat and Stats (11.4, 11.8); no group tactics beyond separation radius. Visual-script Can See, In Cone and Has Line of Sight stay a separate full-3D check (no hearing, no eye height)
@@ -118,7 +118,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Code:** `Components/NavMeshModifier`, `Components/NavMeshLink`, `AI/NavMesh`, `AI/NavMeshBake`, `AI/Navigation`, `engine/src/AI/NavMeshAgent.cpp`, `editor/NavigationWindow.*`
 - **API:** `NavMeshModifier`, `NavMeshLink`, `NavArea`, `NavQueryFilter`, `NavMeshAgent::areaMask`, `NavMeshAgent::onLinkStart`, `NavMeshAgent::onLinkEnd`, `NavMeshAgent::IsTraversingLink`, `Navigation::FindPathForAgent`, `NavMeshSurface::areaCost`
 - **Editor:** Add Component > Gameplay > Nav Mesh Modifier and Nav Mesh Link; Nav Mesh Agent > Area Mask; Navigation window > Areas, Show Links; Scene view colours the mesh by area and draws links
-- **Docs:** `docs/navigation.md`
+- **Docs:** `docs/gameplay/navigation.md`
 - **Tests:** `navmesh_areas`, `navmesh`
 - **Status:** Works - covered by `navmesh_areas` (cheaper road over shorter swamp, blocked area never entered, per-agent mask, link used / ignored when disabled, masked or too costly, one-way and two-way, crossing ends on the end point with events in order, scene round trip)
 - **Open:** area costs and masks apply to the baked mesh only (not the grid fallback, NPC or click-to-move controllers); crossings are not checked against geometry; link ends must be within 1.5 m of the mesh

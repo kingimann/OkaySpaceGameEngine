@@ -1,7 +1,7 @@
 #pragma once
 // The frame loop of an OkayUI window that OkayUI owns outright ("window mode", OKAY_UI_HOST=okayui): events come from an okay::platform::Backend,
 // the frame goes out through an okay::platform::Painter, and no Dear ImGui is involved. Own code, off by default, written from what a frame has to
-// do (docs/own_ui_toolkit.md 6.23, step 1). Needs OKAYUI_HOST_PLATFORM like the host it builds on. No <mutex>/<thread> (Windows build rule).
+// do (docs/ui/own_ui_toolkit.md 6.23, step 1). Needs OKAYUI_HOST_PLATFORM like the host it builds on. No <mutex>/<thread> (Windows build rule).
 //
 //     okayuihost::platform::FrameLoop loop(*backend, *painter);
 //     while (loop.Frame([&] { ...OkayUI calls... })) {}

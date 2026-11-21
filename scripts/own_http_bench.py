@@ -12,7 +12,7 @@ SHA-256, which is what a caller of curl has to do). The shipped default (hash, f
 with --noproxy '*' -s -o FILE. Every output is checked to be the same bytes. Nothing leaves the machine.
 Standard library only.
 
-The criterion printed at the end (docs/own_http_readiness.md): "met" when our client's median wall time is at most
+The criterion printed at the end (docs/platform/own_http.md): "met" when our client's median wall time is at most
 110 % of curl's, its median CPU time at most 125 % of curl's and its peak memory at most curl's plus 8 MB.
 """
 import hashlib, os, shutil, statistics, subprocess, sys, tempfile, time

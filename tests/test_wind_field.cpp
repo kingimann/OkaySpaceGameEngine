@@ -5,7 +5,7 @@
 
 using namespace okay;
 
-// Wind field maths (docs/wind.md): deterministic noise, gust period, zone blending, curve, no NaN at the edges.
+// Wind field maths (docs/gameplay/wind.md): deterministic noise, gust period, zone blending, curve, no NaN at the edges.
 
 namespace {
 WindSource Global(Vec3 dir, float strength) {

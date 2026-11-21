@@ -5,7 +5,7 @@ row: | content-delivery | Downloadable game content: signed models, textures, sc
 ## content-delivery. Downloadable game content (off by default, Windows first)
 
 An exported game can download updated **data and scripts** (models, textures, animations, scenes, audio, dialogue, Visual Script
-and OkayScript files) from a folder or a server. Never code or programs. Full description: `docs/content_delivery.md`.
+and OkayScript files) from a folder or a server. Never code or programs. Full description: `docs/release/content_delivery.md`.
 Nothing changes in a game unless a content URL is set. Not tested on Windows or an Xbox yet.
 
 You need a Windows PC with the release folder (the `Tools` folder holds `okay-content.exe`), Git Bash or WSL for the

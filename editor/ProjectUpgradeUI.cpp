@@ -1,6 +1,6 @@
 // The editor's windows for "upgrade project": the version question, the progress and the result, File > Project Upgrade...
 // (re-run and restore from a backup). The decisions are okayup::ProjectGate's and the work okayup::UpgradeJob's
-// (ProjectUpgrade.hpp, no ImGui); this file only draws them and wires them into the editor. See docs/project_upgrade.md.
+// (ProjectUpgrade.hpp, no ImGui); this file only draws them and wires them into the editor. See docs/editor/project_upgrade.md.
 #include "ProjectUpgradeUI.hpp"
 #include "EditorCommon.hpp"
 #include "EditorWidgets.hpp"

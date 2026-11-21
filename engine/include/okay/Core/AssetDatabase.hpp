@@ -8,7 +8,7 @@
 //     FindMissing, BuildClosure.
 //   * Per-asset import settings (okay/Core/ImportSettings.hpp) with a Reimport signal.
 //   * A search / filter / sort / page query for an asset browser.
-// Not thread-safe: use one database from one thread. See docs/asset_database.md.
+// Not thread-safe: use one database from one thread. See docs/engine/asset_database.md.
 #include "okay/Core/ImportSettings.hpp"
 #include <cstddef>
 #include <cstdint>

@@ -1,5 +1,5 @@
 #pragma once
-// The picture of a scene, without any UI: the part of the Scene and Game views that is not Dear ImGui (docs/own_ui_toolkit.md 6.24 step 6).
+// The picture of a scene, without any UI: the part of the Scene and Game views that is not Dear ImGui (docs/ui/own_ui_toolkit.md 6.24 step 6).
 // Written from what main.cpp's DrawScene3D / Render3DTexture do for the camera and the software renderer call (okay::RenderMeshesSS), as plain functions
 // over plain values so the window-mode panels (OkayUIHostPanels.cpp) and tests can use them. It does not replace the Dear ImGui editor's own path:
 // that one also draws the grid, gizmos and labels, picks the GPU renderer and handles ortho and axis views, which this does not do yet.

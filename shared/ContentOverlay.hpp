@@ -1,6 +1,6 @@
 #pragma once
 // Layered file lookup: find a game file in the downloaded content first, then in the installed game files. Docs:
-// docs/content_delivery.md "Overlay". A plain function on top of the existing path rules (okay/Core/PathSafety.hpp); it does not
+// docs/release/content_delivery.md "Overlay". A plain function on top of the existing path rules (okay/Core/PathSafety.hpp); it does not
 // replace Paths, SaveData or any loader: code that wants the overlay calls Overlay::Resolve for the name it was about to open.
 //
 //   * Only names from the VERIFIED, committed manifest are served (the tree folder holds nothing else, and the lookup goes through the

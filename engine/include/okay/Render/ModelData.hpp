@@ -12,7 +12,7 @@
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
-// See docs/model_import.md.
+// See docs/content/model_import.md.
 // ---------------------------------------------------------------------------
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/Color.hpp"
@@ -299,7 +299,7 @@ bool ReadIqmBuffer(const std::string& bytes, const std::string& baseDir, Importe
 bool ReadCobBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 /// NDO (Nendo, Izware's modeler, binary): SEAM ONLY. The header ("nendo 1.x") is recognised; the body is not read, because no
 /// public description of it exists that our rules let us follow and no real file was available. Always returns false, with a message
-/// that says which it is (not a Nendo file / Nendo file not read). See docs/own_ndo_reader.md.
+/// that says which it is (not a Nendo file / Nendo file not read). See docs/content/model_readers.md.
 bool ReadNdoBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 /// Terragen terrain (.ter, binary): one mesh part, a regular grid of the file's XPTS by YPTS points (SIZE + 1 on a side when
 /// those are missing), in metres (SCAL, 30 m per terrain unit by default), heights BaseHeight + Elevation * HeightScale / 65536
@@ -393,14 +393,14 @@ bool ReadLwsFile(const std::string& path, ImportedModel& out, std::string* err =
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {
-    Default,   ///< the format's default (see docs/model_import.md)
+    Default,   ///< the format's default (see docs/content/model_import.md)
     Own,       ///< our reader; the formats listed at the top of this file have one (HasOwnReader tells)
     Assimp     ///< Assimp; only when AssimpAvailable()
 };
 
 /// True when `ext` (".stl", any case) has one of our own readers.
 /// Collada (.dae), 3DS (.3ds), BVH (.bvh) and Blender (.blend) are the odd ones out: their readers are off by default
-/// (docs/model_import.md); each runs when SetImportBackend(ext, Own), the environment variable
+/// (docs/content/model_import.md); each runs when SetImportBackend(ext, Own), the environment variable
 /// OKAY_OWN_COLLADA=1 / OKAY_OWN_3DS=1 / OKAY_OWN_BVH=1 / OKAY_OWN_BLEND=1 or the matching CMake option says so
 /// (run-time choice beats the variable, which beats CMake; =0 forces it off).
 bool HasOwnReader(const std::string& ext);

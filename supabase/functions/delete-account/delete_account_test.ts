@@ -108,7 +108,7 @@ test("STEPS covers every user-owned table in docs/sql (guards against drift)", a
     for (const m of t.matchAll(/create table if not exists public\.(\w+)\s*\(([\s\S]*?)\n\);/g))
       if (/references auth\.users/.test(m[2])) tables.add(m[1]);
   }
-  const doc = fs.readFileSync(path.resolve(dir, "../supabase-backend.md"), "utf8");
+  const doc = fs.readFileSync(path.resolve(dir, "../online/supabase-backend.md"), "utf8");
   for (const m of doc.matchAll(/create table if not exists public\.(\w+)\s*\(([\s\S]*?)\n\);/g))
     if (/references auth\.users/.test(m[2])) tables.add(m[1]);
   const covered = new Set(STEPS.map((s) => s.table));

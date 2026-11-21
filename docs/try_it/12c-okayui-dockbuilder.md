@@ -21,4 +21,4 @@ ones (for 1280 x 720: left 255.2, right 427.1, bottom 157.5 px). `okayui_interna
 window by title, the drag-and-drop payload, and the state store.
 
 **Not verified:** nothing here was run in the Windows editor or launcher, and the preset call sequence was copied by hand from the
-editor source, not run through it. See `docs/own_ui_toolkit.md` section 6.9.
+editor source, not run through it. See `docs/ui/own_ui_toolkit.md` section 6.9.

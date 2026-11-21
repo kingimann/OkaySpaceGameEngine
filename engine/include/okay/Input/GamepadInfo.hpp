@@ -6,7 +6,7 @@
 // extras (touchpad, gyro, lightbar, trigger rumble ...) that family has.
 //
 // The table is our own, written from public USB vendor / product id facts and
-// the way each maker names its pads (see docs/input.md, "Controllers"). Anything
+// the way each maker names its pads (see docs/engine/input.md, "Controllers"). Anything
 // it does not recognise comes back as a generic controller, never as "ignore".
 #include "okay/Input/Input.hpp"
 #include <cstdint>

@@ -4613,7 +4613,7 @@ add_executable(test_wind test_wind.cpp)
 target_link_libraries(test_wind PRIVATE okay::engine)
 add_test(NAME wind COMMAND test_wind)
 # okay::tex, our own texture library (docs/rendering/own_texture_library.md). Pure CPU, deterministic.
-foreach(_t IN ITEMS mip atlas convert bc dds_stream)
+foreach(_t IN ITEMS mip atlas convert bc dds_stream dds_load)
     add_executable(test_tex_${_t} test_tex_${_t}.cpp)
     target_link_libraries(test_tex_${_t} PRIVATE okay::engine)
     add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

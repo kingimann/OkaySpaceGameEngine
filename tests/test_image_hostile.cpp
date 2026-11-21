@@ -290,6 +290,15 @@ int main() {
             for (int f = 0; f < 3000; ++f) { const Bytes fr = {0x21, 0xF9, 4, 0, 1, 0, 0, 0, 0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 0x01, 0}; t.insert(t.end(), fr.begin(), fr.end()); }
             t.push_back(0x3B); Try(gif(4000, 4000, 0x80, t)); Try(gif(1, 1, 0x80, t));
         }
+        {   // a few one-pixel frames on a huge canvas, padded with comments so the header passes the size check: the frames
+            // vector must not grow past the budget (old + new buffer while it grows), and ~52 KB must not become 600+ MiB.
+            for (int side : {4000, 4608, 4700}) {
+                Bytes t(6, 0x20);
+                for (int i = 0; i < 200; ++i) { t.push_back(0x21); t.push_back(0xFE); t.push_back(255); t.insert(t.end(), 255, 'x'); t.push_back(0); }
+                for (int f = 0; f < 10; ++f) { const Bytes fr = {0x21, 0xF9, 4, 0, 1, 0, 0, 0, 0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 0x01, 0}; t.insert(t.end(), fr.begin(), fr.end()); }
+                t.push_back(0x3B); Try(gif(side, side, 0x80, t));
+            }
+        }
         { Try(gif(4, 4, 0, Bytes(70000, 0x21))); Bytes b2; for (int i = 0; i < 20000; ++i) { b2.push_back(0x21); b2.push_back(0xFE); b2.push_back(0); } Try(gif(4, 4, 0, b2)); }
         { Bytes body = {0x2C, 0, 0, 0, 0, 4, 0, 4, 0, 0, 8}; for (int i = 0; i < 4000; ++i) { body.push_back(255); body.insert(body.end(), 255, 0xFF); } body.push_back(0); body.push_back(0x3B); Try(gif(4, 4, 0, body)); }   // LZW data far larger than the image
     }

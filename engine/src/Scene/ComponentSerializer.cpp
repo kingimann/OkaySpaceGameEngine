@@ -55,6 +55,14 @@ namespace detail {
 std::uint64_t ComponentSerializerGeneration() { return g_serializerGeneration.load(std::memory_order_relaxed); }
 } // namespace detail
 
+// ---- The generic path (stub: the test for it comes first) -------------------------------------
+bool ComponentSerializerRegistry::RegisterFromProperties(const std::string&, std::string* error) {
+    if (error) *error = "not written yet";
+    return false;
+}
+void ComponentSerializerRegistry::WritePropertyFields(const Component&, const ComponentTypeInfo&, std::ostream&) {}
+int ComponentSerializerRegistry::ReadPropertyFields(Component&, const ComponentTypeInfo&, std::istream&, std::vector<std::string>*) { return 0; }
+
 std::string ComponentSerializerRegistry::TypeKey(const Component& c) {
     const std::string raw = typeid(c).name();
     // Itanium names carry length-prefixed identifiers ("N4okay14SpriteRendererE"):

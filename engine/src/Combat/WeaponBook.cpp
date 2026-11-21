@@ -300,16 +300,7 @@ const WeaponDefinition* WeaponForHolder(GameObject* go) {
 
 bool ApplyCombatDamage(GameObject* target, float amount, const Vec3& from, const Vec3& impulse) {
     if (!target || !(amount > 0.0f)) return false;
-    bool hurt = false;
-    if (auto* hp = target->GetComponent<HealthStat>()) {
-        if (!hp->IsDead()) { hp->Damage(amount, from); hurt = true; }
-    } else if (auto* surv = target->GetComponent<SurvivalStats>()) {
-        if (!surv->dead) { surv->Damage(amount); hurt = true; }
-    } else if (auto* stats = target->GetComponent<Stats>()) {
-        if (!stats->IsDead()) { stats->TakeDamage(amount); hurt = true; }
-    } else if (auto* npc = target->GetComponent<NPCController>()) {
-        if (!npc->IsDead()) { npc->Damage(amount); hurt = true; }
-    }
+    const bool hurt = DealDamage(target, DamageEvent::From(amount, from, DamageType::Physical));
     if (hurt && (impulse.x != 0.0f || impulse.y != 0.0f || impulse.z != 0.0f))
         if (auto* body = target->GetComponent<Rigidbody3D>()) body->AddImpulse(impulse);
     return hurt;

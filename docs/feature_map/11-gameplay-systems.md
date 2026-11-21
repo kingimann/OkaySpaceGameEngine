@@ -81,13 +81,14 @@ No open PR touches this area.
   - 11.4.5 Zones - `Components/SurvivalZone` - trigger volumes that drive radiation, water, cold, fire and similar inputs
   - 11.4.6 Consumables - `Components/Consumables` - maps item names to Eat, Drink, Heal and similar; works from `Use(item)` or by dropping a world item on the player
   - 11.4.7 Death lock and speed scale - `Components/DeathLock`, `Components/MoveSpeed` - a dead body does not read move input; one multiplier for load, holding and overweight that controllers apply to their speed
+  - 11.4.8 One damage path - `Components/Damage` - `DamageEvent` (amount, type, source, target, hit point), 13 damage types, per-type resistances and a death choice on `HealthStat`, damaged / healed / death listeners, and `DealDamage`, `HealObject`, `KillObject`, `HealthOf` that reach a Health Stat, Survival Stats, RPG Stats or NPC Controller; melee, guns, projectiles, afflictions, survival drains, Visual Script and `hurt()` all use it (`test_damage`)
 - **Code:** `Components/SurvivalStats`, `Components/SurvivalComponents`, `Components/SurvivalAfflictions`, `Components/SurvivalSystems`, `Components/SurvivalZone`, `Components/Consumables`, `Components/DeathLock`, `Components/MoveSpeed`, `editor/main.cpp` (Stat inspectors and Add Component rows)
 - **API:** `SurvivalStats`, `HealthStat`, `HungerStat`, `StaminaStat`, `StatusEffectStat`, `CarryWeightStat`, `SurvivalSave`, `SurvivalZone`, `Consumables`, `MoveSpeedScale`, `DeathLocksInput`, messages `died`, `starving`, `dehydrated`, script `Stats` and `SurvivalStats` access
 - **Editor:** Add Component > Gameplay > Survival Stats and Stat rows; UI buttons can call Eat, Drink and Heal through On Click (native UI actions)
 - **Docs:** `docs/gameplay/survival_kit.md`
 - **Tests:** `survival`, `death_lock`
 - **Status:** Works - SurvivalComponents.hpp (HealthStat read in detail), SurvivalSystems.hpp and the docs read; drain, damage, armor, death and save round trip covered by the 728-line `survival` test
-- **Open:** three separate health models exist: HealthStat, SurvivalStats' own health and the older RPG `Stats` (11.9) plus `NPCController`'s own `health` (9.5) (possible duplication, not unified)
+- **Open:** four health holders still exist (HealthStat, SurvivalStats' own health, the older RPG `Stats` (11.9) and `NPCController`'s own `health` (9.5)); they now share one damage path and one set of listeners (11.4.8) but are not merged into one component, and only HealthStat has per-type resistances and the death choice; the editor Inspector for HealthStat does not show the new resistances or death choice yet (not built or seen in a window)
 - **Related:** 11.1, 11.7, 9.5, 6.6, 12.2, 5.8
 - **Words:** survival, health, HealthStat, hunger, thirst, stamina, oxygen, temperature, sanity, radiation, bleeding, poison, wetness, status effect, buff, debuff, damage over time, respawn, lives, consumable
 - **Seen as:** the player never gets hungry or never dies; health does not regenerate; the stamina bar stays full; a dead player can still move; eating an item does nothing; the bar does not update
@@ -178,7 +179,7 @@ No open PR touches this area.
 - **Docs:** -
 - **Tests:** `rpg`
 - **Status:** Works - Stats.hpp read in full; covered by `rpg` (damage, heal, XP levelling)
-- **Open:** a fourth health model next to HealthStat, SurvivalStats and NPCController (possible duplication, see 11.4); no skill tree, buff stacking or save wiring
+- **Open:** a fourth health holder next to HealthStat, SurvivalStats and NPCController (they share one damage path, see 11.4.8, but are not merged); no skill tree, buff stacking or save wiring
 - **Related:** 11.4, 11.6, 9.5
 - **Words:** RPG, stats, health, mana, level up, XP, experience, attributes, strength, defense, Stats component
 - **Seen as:** damage ignores armor; the character never levels; on_level_up never fires

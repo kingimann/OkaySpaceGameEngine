@@ -2953,6 +2953,26 @@ against the same steps done by hand), `blend_reader`, `blend_hostile`, `blend_fi
 names and option values are from memory of Blender's file format (a `.blend` file names its fields but does not say
 what the option numbers mean) and no real file with these options was available.
 
+## exit1. The editor no longer crashes when it quits from its screenshot hook on our own window layer
+
+With "Our own window layer" switched on (Settings > Experimental, or `OKAY_PLATFORM_BACKEND=own`; Linux only), the editor
+crashed (exit code 139, a segfault) every time it ended through the screenshot hook `OKAY_UI_SHOT` + `OKAY_UI_QUIT`, right after
+the PNG was written. The hook ends with `std::exit`, which skips the editor's normal shut-down; the editor's hidden OpenGL window
+(a global) was then destroyed after our window layer and called X11 on a display that was already closed. Now the hook runs the
+same shut-down as a normal quit first (safe to run twice), and our own windows make no OS call once their backend is gone.
+The SDL default was not affected.
+
+Steps (Linux; this switch is not on Windows), in a terminal in the install folder:
+
+1. `OKAY_DEV=1 OKAY_PLATFORM_BACKEND=own OKAY_UI_SHOT=/tmp/okay_shot.png OKAY_UI_QUIT=1 ./OkayEngine; echo $?`
+   (`OKAY_DEV=1` lets the editor start without the launcher). Expect the editor to open, close by itself after about 160
+   frames, `/tmp/okay_shot.png` to exist and `0` to be printed (it was `139` before).
+2. The same without `OKAY_PLATFORM_BACKEND=own` (the SDL default): `0`, as before.
+
+Test: `platform_exit_own` / `platform_exit_sdl2` (globals own a hidden GL window and a shown window, then `std::exit(0)`:
+must end with 0; own ended with 139 before the fix). Verified on Linux under Xvfb. Not verified: Windows (the switch is Linux
+only there; the Win32 window got the same guard, unrun).
+
 ## 7s. Sandbox fps: read where the time goes (F3) and the dig-time fix
 
 The Sandbox got slow from the first click on because the player and the editor ran a hidden software render of the whole scene, with shadows, every

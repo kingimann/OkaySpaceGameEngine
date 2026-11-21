@@ -10,6 +10,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.897.0 | FLAC sound files: fixed a crash on a damaged file; OkayUI number boxes follow their display format and slider options (own UI, off by default); tray-icon message handling as a tested model (launcher unchanged) |
 | 2.896.0 | Xbox (experimental, off by default): content download can time out, be cancelled and report progress; new rules for Windows SDK tools and keeping GitHub private to the owner |
 | 2.895.0 | Fixed a launcher memory bug on the Community tab (read freed memory; also fixed in our own OkayUI vector); Game view size/FPS text moves off the game's own UI; launcher sidebar compact layout and scrolling on short windows; Windows test job in CI (runs after merges and nightly) |
 | 2.894.0 | Vehicles: open-world driving model (gears, drift, ABS, traction control, RWD/FWD/AWD), 9 presets, about 85 settings, keyboard and gamepad, Driving World template; Visual Script: drag the empty background to pan; Ctrl+S saves the focused thing or everything that changed, with a status message; Modeling side bar follows the UI scale |

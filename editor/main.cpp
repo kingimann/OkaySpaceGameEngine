@@ -57895,6 +57895,43 @@ int main(int argc, char** argv) {
     // an update is available, the Update window pops up on its own.
     g_updateCheck = std::async(std::launch::async, updater::CheckLatest);
 
+    // The one shut-down of ImGui's two sides, the views' GL window and renderer, controllers, audio, the main window's renderer and
+    // window, and the platform backend, in the safe order. The end of main() runs it, and so does every early exit before std::exit
+    // (the OKAY_UI_QUIT screenshot hook): std::exit skips the end of main() and destroys the globals in reverse order instead, and
+    // okay::platform's backends (function-local statics, made after the globals) go first; a window still owned by a global
+    // (g_glWin) would then call a backend that is gone. Safe to call twice: the second call does nothing.
+    bool shutDownDone = false;
+    auto shutDown = [&]() {
+        if (shutDownDone) return;
+        shutDownDone = true;
+        if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
+        if (g_imguiOwnFeed) g_imguiFeed.Shutdown(ImGui::GetIO()); else ImGui_ImplSDL2_Shutdown();
+        ImGui::DestroyContext();
+        // Tear down the optional GPU renderer: free its GL objects with its own context
+        // current, then drop the context + hidden window.
+        if (g_glRenderer || g_glCtx) {
+            okay::platform::Backend* glb = okay::platform::Default();
+            const okay::platform::GLCurrent prevGL = glb->CurrentGL();
+            if (g_glWin && g_glCtx) g_glWin->MakeCurrent();
+            if (g_glRenderer) { g_glRenderer->Destroy(); delete g_glRenderer; g_glRenderer = nullptr; }
+            glb->RestoreGL(prevGL);
+            if (g_glCtx) { g_glWin->DestroyGLContext(); g_glCtx = false; }
+            g_glWin.reset();   // destroys the hidden window too
+            g_glWindow = nullptr;
+            g_glReady = false;
+        }
+        g_glWin.reset();   // also when its GL context could not be made: the hidden window goes while its backend is alive
+        g_glWindow = nullptr;
+#if defined(_WIN32)
+        if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
+#endif
+        g_pads.CloseAll();
+        audioDev.reset();
+        okay::pb::DestroyRenderer(renderer);   // its painter owns it
+        winSeam.reset();   // destroys the main window (after its renderer)
+        sdlSeam->Shutdown();
+    };
+
     bool running = true;
     std::string lastTitle;
     Uint64 last = okay::platform::PerfCounter();
@@ -59527,7 +59564,11 @@ int main(int argc, char** argv) {
                         std::fflush(stdout);
                     }
                 }
-                if (std::getenv("OKAY_UI_QUIT")) std::exit(0);
+                if (std::getenv("OKAY_UI_QUIT")) {
+                    shutDown();   // std::exit skips the end of main(): close everything while the platform backend is alive
+                    std::fflush(nullptr);
+                    std::exit(0);
+                }
             }
         }
         if (const std::string shot = TakePendingEditorShot(); !shot.empty()) {
@@ -59598,30 +59639,7 @@ int main(int argc, char** argv) {
     SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window
     ProjectUpgradeAtExit();       // the editor of the project's own version ("Keep"), or this one again after a restore, starts once this process is gone
 
-    if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
-    if (g_imguiOwnFeed) g_imguiFeed.Shutdown(ImGui::GetIO()); else ImGui_ImplSDL2_Shutdown();
-    ImGui::DestroyContext();
-    // Tear down the optional GPU renderer: free its GL objects with its own context
-    // current, then drop the context + hidden window.
-    if (g_glRenderer || g_glCtx) {
-        okay::platform::Backend* glb = okay::platform::Default();
-        const okay::platform::GLCurrent prevGL = glb->CurrentGL();
-        if (g_glWin && g_glCtx) g_glWin->MakeCurrent();
-        if (g_glRenderer) { g_glRenderer->Destroy(); delete g_glRenderer; g_glRenderer = nullptr; }
-        glb->RestoreGL(prevGL);
-        if (g_glCtx) { g_glWin->DestroyGLContext(); g_glCtx = false; }
-        g_glWin.reset();   // destroys the hidden window too
-        g_glWindow = nullptr;
-        g_glReady = false;
-    }
-#if defined(_WIN32)
-    if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
-#endif
-    g_pads.CloseAll();
-    audioDev.reset();
-    okay::pb::DestroyRenderer(renderer);   // its painter owns it
-    winSeam.reset();   // destroys the main window (after its renderer)
-    sdlSeam->Shutdown();
+    shutDown();
 #ifdef OKAY_ENABLE_TEST_HOOKS
     return testExitCode;   // 0 unless the test script said `exit N`
 #endif

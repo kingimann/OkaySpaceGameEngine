@@ -888,6 +888,7 @@ public:
 #define XF m_sys->m_x
 
 X11Win::~X11Win() {
+    if (BackendsShutDown()) return;   // static destruction after the backend (and its X display) went: m_sys is gone, call nothing
     DestroyGLContext();
     if (m_ic) XF.XDestroyIC(m_ic);
     if (m_gc) XF.XFreeGC(XD, m_gc);

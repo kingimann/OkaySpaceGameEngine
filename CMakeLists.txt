@@ -124,7 +124,9 @@ if(OKAY_OWN_STACK)
 endif()
 
 if(MSVC)
-    add_compile_options(/W4 /permissive-)
+    add_compile_options(/W4 /permissive- /bigobj)
+    # Windows headers must not define min/max macros (Tween.hpp uses std::numeric_limits<T>::max()).
+    add_compile_definitions(NOMINMAX)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
     # No fused multiply-add contraction: on a compiler or CPU target with FMA, GCC fuses a*b+c differently in the scalar and

@@ -259,10 +259,12 @@ bool ReadOgreXmlBuffer(const std::string& text, const std::string& baseDir, Impo
 bool ReadOgreSkeletonXml(const std::string& text, ImportedModel& out, std::string* err = nullptr);
 /// OGRE binary mesh (.mesh, little endian, serializer v1.8 and later): the same parts, materials and notes as the XML reader
 /// gives for the XML form of the same mesh (position, normal and the first texture coordinate set of 32-bit float vertex
-/// elements; triangle lists, strips and fans). Skeleton, bone assignments, levels of detail, edge lists, poses and animations
-/// are skipped (reported in `out.notes`); big-endian files are refused.
+/// elements; triangle lists, strips and fans). Levels of detail, edge lists, poses and animations are skipped (reported in
+/// `out.notes`); big-endian files are refused. With `skeletonXml` (the text of the .skeleton.xml the mesh links to;
+/// ReadOgreBinaryFile loads `<link name>.xml` next to the mesh) the 0x4100 / 0x7000 bone assignments skin the parts exactly as
+/// ReadOgreXmlBuffer does. The binary .skeleton is not read: without the XML skeleton the mesh stays rigid, with a note.
 bool ReadOgreBinaryBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
-                          const std::vector<std::string>* materialScripts = nullptr);
+                          const std::vector<std::string>* materialScripts = nullptr, const std::string* skeletonXml = nullptr);
 /// XGL (.xgl, XML) and ZGL (.zgl, the same text as one zlib stream; told apart by the zlib header): one part per (mesh,
 /// material) on a node for each <OBJECT> that places it (<TRANSFORM> forward / up / position / scale), the <MAT> colours,
 /// shininess and alpha, normals and texture coordinates per face corner. Lines, patches, lights and textures are not read.

@@ -741,8 +741,9 @@ Not verified: real audio hardware (only SDL's dummy driver and ALSA's `null` dev
 
 ## SDL_SaveBMP gap closed (own BMP writer)
 
-`engine/include/okay/Platform/BmpWriter.hpp` (`EncodeBmp32`, `WriteBmp32`) writes a 32-bit bottom-up BMP, written from the
-BMP file format description. The four dev picture tools (`tools/input_shots.cpp`, `tools/project_menu_shots.cpp`,
-`tests/modeling_easy_shot.cpp`, `tests/modeling_advanced_shot.cpp`) now read pixels from their SDL surface and call it
-instead of `SDL_SaveBMP`. Test: `platform_bmp_writer` (hand-computed header and pixel bytes). The four tools were not
+`engine/include/okay/Platform/BmpWriter.hpp` writes a 32-bit bottom-up BMP (plain BI_RGB), written from the BMP file format
+description: `EncodeBmp32`/`WriteBmp32` take RGBA rows, `EncodeBmp32Bgra`/`WriteBmp32Bgra` take SDL ARGB8888 surface rows with
+a pitch. The four dev picture tools (`tools/input_shots.cpp`, `tools/project_menu_shots.cpp`, `tests/modeling_easy_shot.cpp`,
+`tests/modeling_advanced_shot.cpp`) now call `WriteBmp32Bgra` instead of `SDL_SaveBMP`. Unlike `SDL_SaveBMP` (a V4 header
+with an alpha mask), the file has no alpha mask, so viewers show it opaque; renderer screenshots have alpha 255 anyway. Test: `platform_bmp_writer` (hand-computed header and pixel bytes). The four tools were not
 compiled here (no real Dear ImGui tree in this checkout): unverified.

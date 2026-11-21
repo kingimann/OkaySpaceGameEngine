@@ -4,6 +4,7 @@
 // (ReadObjFile, used by the import seam) and Mesh::LoadOBJ (the merged-mesh import), which before this change still kept
 // absolute and "../" paths as written.
 #include "test_framework.hpp"
+#include "okay/Core/Log.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "okay/Render/TexturePath.hpp"
@@ -13,6 +14,7 @@
 #include <fstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 using namespace okay;
 namespace fs = std::filesystem;
@@ -116,6 +118,22 @@ int main() {
         CHECK(ResolveModelTexturePath("tex/\xc3(.png", modelDir).empty());
         { std::string why; CHECK(texture_path_detail::Screen("a\xe2\x82.png", &why) == texture_path_detail::Kind::Refused && why.find("UTF-8") != std::string::npos); }
         CHECK(texture_path_detail::Screen("caf\xc3\xa9.png", nullptr) != texture_path_detail::Kind::Refused);   // real UTF-8 still passes
+        // A refused name is not dropped silently: one warning names the file (bytes that are not UTF-8 written as \xNN),
+        // the model's folder and the reason, so a user with an old Latin-1 .mtl sees why the texture is missing.
+        {
+            std::vector<std::string> warnings;
+            Log::Sink before = Log::sink;
+            Log::sink = [&](Log::Level l, const std::string& m) { if (l == Log::Level::Warning) warnings.push_back(m); };
+            CHECK(ResolveModelTexturePath("tex/caf\xe9.png", modelDir).empty());
+            Log::sink = before;
+            CHECK(warnings.size() == 1);
+            const std::string w = warnings.empty() ? std::string() : warnings[0];
+            if (warnings.size() != 1) std::printf("  warnings: %zu\n", warnings.size());
+            CHECK(w.find("tex/caf\\xE9.png") != std::string::npos);   // the file, with the bad byte shown
+            CHECK(w.find("not valid UTF-8") != std::string::npos);     // why
+            CHECK(w.find(modelDir) != std::string::npos);               // which model folder named it
+            CHECK(texture_path_detail::Printable("a\x01\xff.png") == "a\\x01\\xFF.png" && texture_path_detail::Printable("caf\xc3\xa9.png") == "caf\xc3\xa9.png");
+        }
         // The screen itself: these are refused on the text, so no file-system call ever sees them (a network path
         // would otherwise reach the root check only after being canonicalised, which opens it on Windows).
         namespace tp = texture_path_detail;

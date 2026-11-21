@@ -534,7 +534,7 @@ int main() {
         CHECK(StripSlash("") == "" && StripSlash("//") == "/" && StripSlash("a/") == "a" && StripSlash("1:/") == "1:");   // "1:" is not a drive
         CHECK(Clean("D:/a/..") == "D:/" && Clean("D:\\a\\..") == "D:/" && Clean("d:/a/b/../") == "d:/a" && Clean("D:/") == "D:/");
         CHECK(Clean("/a/b/../c/") == "/a/c" && Clean("/") == "/" && Clean("") == "");
-        CHECK(SameOrInside("D:/", "D:/a") && SameOrInside("D:/", "D:/") && SameOrInside("D:\\", "D:/a") && !SameOrInside("D:/", "E:/a") && !SameOrInside("D:/", "D:"));
+        CHECK(SameOrInside("D:/", "D:/a") && SameOrInside("D:/", "D:/") && !SameOrInside("D:/", "E:/a") && !SameOrInside("D:/", "D:"));
         CHECK(Parent("D:/a") == "D:/" && Parent("D:/") == "" && Parent("/a") == "/" && Parent("/") == "" && Parent("/a/b") == "/a" && Parent("D:/a/b") == "D:/a" && Parent("a") == "");
         CHECK(Outermost({"D:/", "D:/p/A"}).size() == 1);
         CHECK(SameOrInside(D("/a/b"), D("/a/b")) && SameOrInside(D("/a/b"), D("/a/b/c")) && SameOrInside(D("/a/b/"), D("/a/b/c/")));

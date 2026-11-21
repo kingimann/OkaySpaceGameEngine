@@ -33,7 +33,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **What:** The ways animation data is authored and stored: text `.okayanim` clips of per-bone Euler keys for the blocky Character, track-per-property clips for any object and for imported nodes, one-click presets, named events, the Animation tab with dope sheet, curves and onion skin, and recording a live pose to a clip.
 - **Parts:**
   - 5.2.1 Character clips (`.okayanim`) - `Components/AnimClip` - clip/key/bone text format, root track, loop, once, override, easing words, LoadClips, PlayClip, clipIdle/clipWalk bindings
-  - 5.2.2 Track clips and curves - `Animation/AnimationClip`, `Animation/AnimationCurve` - one curve per property, smooth or linear, keyframe reduction, Reverse, cubic tangents
+  - 5.2.2 Track clips and curves - `Animation/AnimationClip`, `Animation/AnimationCurve` - one curve per property, smooth or linear, keyframe reduction, Reverse, cubic tangents; linear quaternion rotation keys play back as shortest-path slerp (glTF LINEAR) and reduce by angle (`anim_quat_slerp`); smooth rotation keys still use per-component cubic + renormalise (uneven angular speed on big turns, sign flips between keys not fixed)
   - 5.2.3 Object Animator component - `Components/Animator` - plays an AnimationClip on a Transform (position, rotation, scale tracks), events
   - 5.2.4 One-click presets - `Animation/ClipPresets` - Bob, Hover, Spin, Spin 2D, Pulse, Shake, Sway, Bounce, Pop In, Slide In
   - 5.2.5 Animation events - `Components/AnimClip`, `Components/ModelAnimator` - named markers; reach OnAnimationEvent, `anim_event()`, visual-script On Anim Event

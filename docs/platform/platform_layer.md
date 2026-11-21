@@ -87,10 +87,8 @@ that is mostly types (renderer) reads larger than the number of calls. "Before" 
 | clipboard | 0 | 0 | 0 | 0 | 0 | 0 | 0 | HAVE; the apps use ImGui's clipboard, nothing calls ours yet |
 | cursors (system cursor shapes) | 0 | 0 | 0 | 0 | 0 | 0 | 0 | HAVE (round 10: `CursorShape` / `Backend::SetCursorShape` on the SDL2, own X11 and own Win32 backends; tables in `Platform/CursorMap.hpp`, tested in `platform_xdnd`; Win32 part unrun on Windows) |
 | message box | 2 | 0 | 4 -> 0 | 0 | 0 | 0 | 0 | Added `ShowErrorBox`: sdl2 and Win32 real; own Linux returns false and logs (no toolkit to draw one with) |
-| display / DPI | 5 | 4 | 4 -> 0 | 0 | 0 | 0 | 0 | Added `SetPerMonitorDpiAware` (sdl2 hint, Win32 API; nothing elsewhere) and `Window::RefreshRateHz` (sdl2 only). First-run DPI moved (round 6). GAP: display bounds / usable area queries (launcher) |
-| misc runtime (init, log, paths, locales, hints, `SDL_free`, syswm) | 48 | 17 | 37 -> 3 | 2 | 0 | 25 | 5 | Added `BasePath`, `PrefPath`, `PreferredLocales`, `Log`. GAP: `SDL_GetWindowWMInfo` + `SDL_SetWindowsMessageHook` (launcher tray icon), hints other than DPI |
 | display / DPI | 5 | 4 | 4 -> 0 | 0 | 0 | 0 | 0 | Added `SetPerMonitorDpiAware` (sdl2 hint, Win32 API; nothing elsewhere) and `Window::RefreshRateHz` (sdl2 only). First-run DPI moved (round 6). HAVE since: `Backend::DisplayAt` (bounds, work area) on SDL2 and own Win32, pure maths in `Platform/Win32Display.hpp`, used by the launcher and `OkayUIHostRun`. |
-| misc runtime (init, log, paths, locales, hints, `SDL_free`, syswm) | 48 | 17 | 37 -> 3 | 2 | 0 | 25 | 5 | Added `BasePath`, `PrefPath`, `PreferredLocales`, `Log`. GAP: hints other than DPI. `SDL_SaveBMP`: own `okay::platform::WriteBmp32` (`engine/include/okay/Platform/BmpWriter.hpp`, test `ctest -R bmp_writer`, written from the BMP file format) now writes the editor's `--vs-shot` pictures; the dev tools `tools/*_shots.cpp` and `tests/modeling_*_shot.cpp` still call `SDL_SaveBMP` on an SDL surface (not moved) |
+| misc runtime (init, log, paths, locales, hints, `SDL_free`, syswm) | 48 | 17 | 37 -> 3 | 2 | 0 | 25 | 5 | Added `BasePath`, `PrefPath`, `PreferredLocales`, `Log`. GAP: hints other than DPI. `SDL_SaveBMP`: own `okay::platform::WriteBmp32` (`engine/include/okay/Platform/BmpWriter.hpp`, test `ctest -R bmp_writer`, written from the BMP file format) now writes the editor's `--vs-shot` pictures and, through `EncodeBmp32Bgra/WriteBmp32Bgra` (SDL surface rows with a pitch, test `ctest -R platform_bmp_writer`), the dev tools `tools/input_shots.cpp`, `tools/project_menu_shots.cpp`, `tests/modeling_easy_shot.cpp` and `tests/modeling_advanced_shot.cpp` |
 | threads, mutexes, atomics | 0 | 705 | 0 | 0 | 0 | 0 | 0 | Not a platform-layer feature. Not `std::thread` either: MinGW's win32 thread model cannot compile `<thread>` or `<mutex>` (rule 21a), so it needs our own wrapper, separately (launcher only) |
 | `SDL_Renderer`, textures, surfaces, colours, rects | 250 | 96 | 283 -> 280 | 48 | 92 | 107 | 101 | **Not behind the seam, and the main blocker.** A rendering library, not a platform one; needs an `SDL_Window*`. Needs our own 2D painter (see below) |
 | Dear ImGui SDL backends (`imgui_impl_sdl2`, `imgui_impl_sdlrenderer2`) | 2 files | 1 file | 0 | 0 | 0 | 0 | 0 | GAP: third-party code reading `SDL_Event` / `SDL_Window*` directly (editor: 2 files, launcher: 1 file) |
@@ -459,6 +457,18 @@ Xvfb with a second X connection acting as the drag source); `OwnWin32.cpp` with 
 `SdlBackend.cpp` with `g++ -fsyntax-only`. **Not run:** anything on Windows (the Win32 drop, cursor, global mouse and message hook, and
 the sdl2 Windows hook trampoline, which no compiler here has the SDL headers for), a real file manager drag on Linux (the test source is
 written from the protocol text, so a real source may differ in detail), a window manager, Wayland, the launcher and editor with a window.
+
+### Tray-icon callback protocol model (Round 11, partial)
+
+* `engine/src/Platform/TrayProtocol.hpp` (header only, no Win32 includes): decodes the tray callback message (`lParam` low word = event,
+  version 4 adds icon id and `wParam` position), names the events (left click, double click, right click, context menu, select, key
+  select, balloon shown/hidden/timeout/clicked, popup open/close), `NeedsReAdd` for the registered "TaskbarCreated" message, and
+  `ActionFor` (the launcher's rule: left/double click open, right click/context menu raise the menu). Written from the public
+  Shell_NotifyIcon / WinUser.h documentation; the constants are listed in the header's top comment.
+* Test: `platform_tray` (`tests/test_platform_tray.cpp`), 54 checks with hand-written message values. Runs on Linux.
+* The launcher's `OkayMsgHook` (launcher/main.cpp) is NOT switched to the model yet: it is Windows-only code that no build here compiles,
+  so identical behaviour could only be argued from the test, not verified. The tray-hook gap (the Windows `Shell_NotifyIcon` call itself
+  and the hook trampoline) stays as before; only the decoding is now modelled and tested.
 
 ### The biggest block left: `SDL_Renderer` drawing (plan)
 

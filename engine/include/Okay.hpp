@@ -111,6 +111,8 @@
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/ColliderShapes3D.hpp"
+#include "okay/Physics/ColliderShapes2D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/DebrisPool.hpp"
 #include "okay/Components/DebrisEmitter.hpp"
@@ -238,6 +240,7 @@
 #include "okay/Components/CinemachineBrain.hpp"
 #include "okay/Components/CameraMath.hpp"
 #include "okay/Components/CameraRoom.hpp"
+#include "okay/Components/CameraZone.hpp"
 #include "okay/Components/CameraCollision.hpp"
 
 // AI
@@ -263,6 +266,7 @@
 #include "okay/Components/PlayerDebug.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/PlayerController.hpp"
+#include "okay/Components/ControllerTuning.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/VehicleSeat.hpp"
@@ -295,6 +299,7 @@
 #include "okay/Inventory/LootTable.hpp"
 #include "okay/Inventory/InventoryInput.hpp"
 #include "okay/Inventory/ItemPresentation.hpp"
+#include "okay/Inventory/TextFit.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
 #include "okay/Components/NetInventory.hpp"
 #include "okay/Inventory/Recipe.hpp"

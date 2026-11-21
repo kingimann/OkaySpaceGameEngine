@@ -3,7 +3,9 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Components/CinemachineBrain.hpp"
 #include "okay/Math/Vec3.hpp"
+#include <algorithm>
 #include <cmath>
 #include <string>
 
@@ -20,18 +22,30 @@ public:
 
     void LateUpdate(float dt) override {
         if (!transform || targetName.empty() || !gameObject || !gameObject->scene()) return;
+        if (!std::isfinite(dt)) return;
+        // One owner for the camera: a camera brain with a live shot on the same object already places it every
+        // frame, so this follow steps aside (and starts fresh when the brain lets go).
+        if (auto* b = gameObject->GetComponent<CinemachineBrain>(); b && b->enabled && b->LiveCamera()) { m_started = false; return; }
         GameObject* target = gameObject->scene()->Find(targetName);
         if (!target || !target->transform) return;
+        const Vec3 tp = target->transform->Position();
+        if (!std::isfinite(tp.x) || !std::isfinite(tp.y) || !std::isfinite(tp.z)) return;   // a broken target never drags the camera
 
-        Vec3 desired = target->transform->Position() + offset;
-        if (smoothing <= 0.0f) {
-            transform->localPosition = desired;
-        } else {
+        const Vec3 desired = tp + offset;
+        const Vec3 now = transform->Position();   // world space: a camera under a parent works too
+        Vec3 next = desired;
+        // First frame (or a scene that has not moved us yet): start on the target, do not fly in from the origin.
+        if (m_started && smoothing > 0.0f && std::isfinite(smoothing)) {
             // Frame-rate independent exponential smoothing toward the target.
-            float t = 1.0f - std::exp(-smoothing * dt);
-            transform->localPosition = Vec3::Lerp(transform->Position(), desired, t);
+            const float t = 1.0f - std::exp(-smoothing * std::max(0.0f, dt));
+            next = Vec3::Lerp(now, desired, t);
         }
+        m_started = true;
+        transform->SetPosition(next);
     }
+
+private:
+    bool m_started = false;
 };
 
 } // namespace okay

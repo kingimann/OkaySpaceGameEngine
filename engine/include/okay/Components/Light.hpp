@@ -127,7 +127,7 @@ inline void ApplySceneLight(const Scene& scene) {
     {
         float brightest = 0.0f; bool anyReal = false;
         for (const auto& go : scene.Objects()) {
-            if (!go->active) continue;
+            if (!go->ActiveInHierarchy()) continue;   // an inactive parent switches its lamps off too
             auto* l = go->GetComponent<Light>();
             if (!l || !l->enabled || l->unit != Light::Unit::RealWorld) continue;
             anyReal = true;
@@ -138,7 +138,7 @@ inline void ApplySceneLight(const Scene& scene) {
         if (anyReal && scene.renderSettings.autoBrightness) referenceLux = AutoReferenceLux(brightest);
     }
     for (const auto& go : scene.Objects()) {
-        if (!go->active) continue;
+        if (!go->ActiveInHierarchy()) continue;   // #888 finding 153: not only the lamp's own flag
         auto* l = go->GetComponent<Light>();
         if (!l || !l->enabled) continue;   // a disabled Light component gives no light
         any = true;
@@ -191,7 +191,7 @@ inline void ApplySceneLight(const Scene& scene) {
     // Glow lights: glowing objects that ask to light their surroundings become small lamps of their own colour (no shadows).
     // They come after the real lights so the GPU renderers' 16-light limit takes real lights first.
     for (const auto& go : scene.Objects()) {
-        if (!go->active) continue;
+        if (!go->ActiveInHierarchy()) continue;
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || !mr->enabled || mr->glowLightRange <= 0.0f) continue;
         const Color e = mr->emissive;

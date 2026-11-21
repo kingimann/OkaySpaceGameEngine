@@ -973,6 +973,12 @@ target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/ed
 target_link_libraries(test_inspector_model PRIVATE okay::engine)
 add_test(NAME inspector_model COMMAND test_inspector_model)
 
+# Inspector audit: prints, per registered component, how many shown settings have no plain explanation / unit / plain name (worst 25), and checks the cleaned-up components.
+add_executable(test_inspector_audit test_inspector_audit.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_inspector_audit PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_inspector_audit PRIVATE okay::engine)
+add_test(NAME inspector_audit COMMAND test_inspector_audit)
+
 # The editor's undo (EditorState + SceneUndo.hpp on okay::UndoStack): every kind of edit does / undoes / redoes to the same scene text, merging, delete restores GUIDs, limits, new scene / Play, saved tracking.
 add_executable(test_editor_undo test_editor_undo.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor)

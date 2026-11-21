@@ -4618,3 +4618,8 @@ add_executable(test_vehicle_editor_model test_vehicle_editor_model.cpp)
 target_include_directories(test_vehicle_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_vehicle_editor_model PRIVATE okay::engine)
 add_test(NAME vehicle_editor_model COMMAND test_vehicle_editor_model)
+
+# Controller audit, Simple view model and frame-rate check (claude/controller-1)
+add_executable(test_controller_tuning test_controller_tuning.cpp)
+target_link_libraries(test_controller_tuning PRIVATE okay::engine)
+add_test(NAME controller_tuning COMMAND test_controller_tuning)

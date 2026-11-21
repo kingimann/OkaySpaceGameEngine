@@ -262,6 +262,20 @@ bool ComponentHasDiag(const GameObject* go, const char* label) {
     return false;
 }
 
+// The same facts as values, for a panel that draws its own marker (the OkayUI Inspector's component bars): 0 none, 1 warnings, 2 errors,
+// and the marker's hover text.
+int ComponentDiagLevel(const GameObject* go, const char* label, std::string* tip) {
+    if (!go || !label) return 0;
+    std::vector<Diagnostic> rows;
+    for (const Diagnostic& d : EditorDiagnostics().ForObject(go->Guid()))
+        if (ComponentMatches(d, label)) rows.push_back(d);
+    if (rows.empty()) return 0;
+    bool error = false;
+    for (const Diagnostic& d : rows) if (d.severity == DiagSeverity::Error) error = true;
+    if (tip) *tip = TipFor(rows);
+    return error ? 2 : 1;
+}
+
 void DrawObjectDiagMarker(const GameObject* go, ImVec2 rowMin, ImVec2 rowMax) {
     if (!go) return;
     const std::vector<Diagnostic> rows = EditorDiagnostics().ForObject(go->Guid());

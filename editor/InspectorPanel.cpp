@@ -452,6 +452,7 @@ void DrawFallbackInspector(okay::editor::EditorState& ed, okay::GameObject* go, 
     if (shown.empty()) return;
     if (std::getenv("OKAY_DBG_FALLBACK")) { static std::unordered_set<std::string> seen; if (seen.insert(info->name).second) std::fprintf(stderr, "FALLBACK %s\n", info->name.c_str()); }
     if (!header(PrettyName(info->name).c_str(), comp, &toRemove, true)) return;
+    if (!info->description.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.7f, 0.75f, 1.0f)); ImGui::TextWrapped("%s", info->description.c_str()); ImGui::PopStyleColor(); }
     std::vector<GameObject*> targets;
     const int idx = ComponentIndexOf(*go, *comp);
     for (GameObject* g : ed.MultiSelection()) if (g) targets.push_back(g);

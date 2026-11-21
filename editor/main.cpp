@@ -19,6 +19,7 @@
 #include "SaveShortcutModel.hpp"  // what Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S do
 #include "HierarchyContextModel.hpp"
 #include "SceneAddMenu.hpp"
+#include "ControllerInspectorUi.hpp"   // the one Inspector of the character controllers
 #include "VehicleEditorUi.hpp"      // GameObject > Vehicles and the Vehicle Controller Inspector tabs
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
@@ -28226,6 +28227,9 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
 // A Player Controller's first-person, third-person and toggle sections: parts
 // of the one panel. They draw only while that panel is open, and have no
 // Remove of their own. A bare controller (no Player Controller) keeps its header.
+// The old every-field panels of the First / Third Person parts. Off: the Player Controller (or a bare controller) shows
+// the one plain Inspector from ControllerInspectorUi.hpp instead. The old code below stays until it is deleted.
+static constexpr bool kOldControllerPanels = false;
 static bool sPlayerControllerOpen = false;
 static okay::PlayerController* sPendingViewModeCtrl = nullptr;
 static int sPendingViewMode = 0;
@@ -28233,7 +28237,7 @@ static bool PlayerPartHeader(GameObject* go, const char* label, okay::Component*
                              bool* owned) {
     *owned = okay::PlayerController::Of(go) != nullptr;
     if (!*owned) return CompHeader(label, part, toRemove);
-    if (!sPlayerControllerOpen) return false;
+    if (!sPlayerControllerOpen || !kOldControllerPanels) return false;   // the parts sit behind the one Player Controller entry
     ImGui::PushID(part);
     ImGui::SetNextItemOpen(true, ImGuiCond_Once);
     const bool open = ImGui::CollapsingHeader(label);
@@ -37913,7 +37917,19 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##spwn")) toRemove = c;
         }
     }
-    if (auto* fp = dynamic_cast<FirstPersonController*>(curComp)) {
+    if (auto* fp = dynamic_cast<FirstPersonController*>(curComp); fp && !PlayerController::Of(go)) {
+        if (CompHeader("First-person settings", fp, &toRemove)) {
+            CharacterModelTools(ed, go, "fp");
+            oked::ctrlui::DrawSimple(ed, *fp, (ThirdPersonController*)nullptr, "fps");
+        }
+    }
+    if (auto* tp = dynamic_cast<ThirdPersonController*>(curComp); tp && !PlayerController::Of(go)) {
+        if (CompHeader("Third-person settings", tp, &toRemove)) {
+            CharacterModelTools(ed, go, "tp");
+            oked::ctrlui::DrawSimple(ed, *tp, (FirstPersonController*)nullptr, "tps");
+        }
+    }
+    if (auto* fp = kOldControllerPanels ? dynamic_cast<FirstPersonController*>(curComp) : nullptr) {
         bool owned = false;
         if (PlayerPartHeader(go, "First-person settings", fp, &toRemove, &owned)) {
             if (!owned) CharacterModelTools(ed, go, "fp");
@@ -38163,7 +38179,7 @@ void DrawInspector(EditorState& ed) {
             if (!owned && ImGui::SmallButton("Remove##fp")) toRemove = fp;
         }
     }
-    if (auto* tp = dynamic_cast<ThirdPersonController*>(curComp)) {
+    if (auto* tp = kOldControllerPanels ? dynamic_cast<ThirdPersonController*>(curComp) : nullptr) {
         bool owned = false;
         if (PlayerPartHeader(go, "Third-person settings", tp, &toRemove, &owned)) {
             if (!owned) CharacterModelTools(ed, go, "tp");
@@ -38477,6 +38493,9 @@ void DrawInspector(EditorState& ed) {
         sPlayerControllerOpen = CompHeader("Player Controller", pc, &toRemove);
         pc->SyncEnabled();
         if (sPlayerControllerOpen) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.7f, 0.75f, 1.0f));
+            ImGui::TextWrapped("Moves and turns the player with keyboard, mouse or gamepad. Choose a first person view, a third person view, or both with a key to switch.");
+            ImGui::PopStyleColor();
             int mode = (int)pc->viewMode();
             const char* modes[] = {"First Person only", "Third Person only", "Both"};
             if (ImGui::Combo("View##pc", &mode, modes, 3) && mode != (int)pc->viewMode()) {
@@ -38494,6 +38513,8 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             CharacterModelTools(ed, go, "pc");
+            if (pc->third()) oked::ctrlui::DrawSimple(ed, *pc->third(), pc->first(), "pcs");
+            else if (pc->first()) oked::ctrlui::DrawSimple(ed, *pc->first(), (ThirdPersonController*)nullptr, "pcs");
             if (pc->viewMode() != PlayerController::ViewMode::Both)
                 ImGui::TextDisabled("%s only. Pick Both to let the player switch.",
                                     pc->viewMode() == PlayerController::ViewMode::First ? "First person" : "Third person");

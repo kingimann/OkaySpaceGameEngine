@@ -399,10 +399,10 @@ static void TestRegistryBasics() {
     SubLight* sl = go->AddComponent<SubLight>();
     CHECK(PropertyRegistry::FindFor(*sl) == nullptr);
 
-    {   // bobSway is a real, editable setting now
+    {   // bobSway is still a registered property (saved, scriptable); the Inspector no longer shows it (automatic)
         auto fpc = PropertyRegistry::FindByName("FirstPersonController");
-        CHECK(fpc && fpc->Find("bobSway") && !fpc->Find("bobSway")->IsHidden());
-        CHECK(fpc && fpc->Find("bobAmount") && !fpc->Find("bobAmount")->IsHidden());
+        CHECK(fpc && fpc->Find("bobSway") && fpc->Find("bobSway")->IsHidden());
+        CHECK(fpc && fpc->Find("bobAmount") && !fpc->Find("bobAmount")->IsHidden());   // shown under the Head bob box
     }
     CHECK(light->Find("intensity") != nullptr);
     CHECK(light->Find("Intensity") == light->Find("intensity"));

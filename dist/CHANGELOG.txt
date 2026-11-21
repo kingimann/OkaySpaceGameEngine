@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.897.0
+  Small fixes
+  - Fixed: a damaged FLAC sound file could crash the engine. It is now
+    refused safely.
+  - Behind the scenes (no visible change yet): number boxes in our own UI
+    toolkit follow their display format and slider options, and the
+    launcher's tray-icon handling has its own tests.
+
 v2.896.0
   Behind-the-scenes Xbox work
   - Experimental Xbox export (still off by default): game content downloads

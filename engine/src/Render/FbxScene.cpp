@@ -1268,6 +1268,11 @@ struct Builder {
                 const Mat g2n = Mul(Translate(xp[modelNode].gt[0], xp[modelNode].gt[1], xp[modelNode].gt[2]),
                                     Mul(Euler(xp[modelNode].gr, 0), ScaleM(xp[modelNode].gs[0], xp[modelNode].gs[1], xp[modelNode].gs[2])));
                 std::uint32_t ci = 0;
+                // Each cluster's Indexes / Weights, read after all clusters are known: the influences of every control
+                // point are counted first, so each control point's list is allocated once at its final size (growing
+                // them one push at a time was about a tenth of a skinned file's import). Same order as before.
+                struct ClusterArrays { const Array* ix; const Array* wt; std::uint32_t ci; };
+                std::vector<ClusterArrays> weightArrays;
                 for (const Conn* cc : ChildrenOf(ToId(d->e->props[0].Num()))) {
                     const Obj* cl = Get(cc->child);
                     if (!cl || cl->cls != "Deformer" || cl->sub != "Cluster" || cc->propLink) continue;
@@ -1283,12 +1288,24 @@ struct Builder {
                     cluster.geometryToBone = conv.Scaled(Mul(transform, g2n));
                     const Array* ix = ArrayOf(*cl->e, "Indexes");
                     const Array* wt = ArrayOf(*cl->e, "Weights");
-                    if (ix && wt) for (std::size_t k = 0; k < std::min(ix->size(), wt->size()); ++k) {
-                        const double v = (*ix)[k];
-                        if (v >= 0 && v < (double)ncp && std::isfinite((*wt)[k])) m.skinWeights[(std::size_t)v].push_back({ci, (float)(*wt)[k]});
-                    }
+                    if (ix && wt) weightArrays.push_back({ix, wt, ci});
                     m.clusters.push_back(std::move(cluster));
                     ++ci;
+                }
+                {
+                    std::vector<std::uint32_t> count(ncp, 0);
+                    for (int pass = 0; pass < 2; ++pass) {
+                        if (pass == 1) for (std::size_t v = 0; v < ncp; ++v) if (count[v]) m.skinWeights[v].reserve(count[v]);
+                        for (const ClusterArrays& ca : weightArrays) {
+                            const Array& ix = *ca.ix; const Array& wt = *ca.wt;
+                            for (std::size_t k = 0; k < std::min(ix.size(), wt.size()); ++k) {
+                                const double v = ix[k];
+                                if (!(v >= 0 && v < (double)ncp && std::isfinite(wt[k]))) continue;
+                                if (pass == 0) ++count[(std::size_t)v];
+                                else m.skinWeights[(std::size_t)v].push_back({ca.ci, (float)wt[k]});
+                            }
+                        }
+                    }
                 }
                 for (auto& w : m.skinWeights) std::stable_sort(w.begin(), w.end(), [](const Influence& a, const Influence& b) { return a.weight > b.weight; });
                 if (m.clusters.empty()) m.skinWeights.clear();

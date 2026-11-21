@@ -6,6 +6,7 @@
 // the user already set.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Math/Vec3.hpp"
 #include <string>
 
 namespace okay {
@@ -33,5 +34,13 @@ PlayerAnimStatus InspectPlayerAnimation(Scene& scene, GameObject* player);
 /// weights, chains and a custom graph alone.
 /// The returned line is for the console.
 std::string WirePlayerAnimation(Scene& scene, GameObject* player);
+
+/// The one-step player: movement + animator (Player Controller, Character, humanoid animator),
+/// the eye/orbit camera, interaction (tag "Player" so pickups, chests and seats find it), an
+/// Inventory with Consumables, and the vehicle-driver ability (a local player controller is what a
+/// VehicleSeat boards). Order and input ownership are in okay/Player/PlayerContract.hpp.
+/// Parts the player already has are left alone, so calling it on an existing player adds only what is missing.
+GameObject* CreatePlayerSystem(Scene& scene, const Vec3& pos);
+void WirePlayerSystem(Scene& scene, GameObject* player);
 
 } // namespace okay

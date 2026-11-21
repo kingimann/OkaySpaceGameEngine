@@ -4599,3 +4599,8 @@ add_executable(test_vehicle_editor_model test_vehicle_editor_model.cpp)
 target_include_directories(test_vehicle_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_vehicle_editor_model PRIVATE okay::engine)
 add_test(NAME vehicle_editor_model COMMAND test_vehicle_editor_model)
+
+add_executable(test_integration_player test_integration_player.cpp)
+target_link_libraries(test_integration_player PRIVATE okay::engine)
+target_compile_definitions(test_integration_player PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME integration_player COMMAND test_integration_player)

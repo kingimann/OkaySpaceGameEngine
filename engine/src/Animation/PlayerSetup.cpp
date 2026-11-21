@@ -7,6 +7,10 @@
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/SceneTemplates.hpp"
+#include "okay/Components/Inventory.hpp"
+#include "okay/Components/Consumables.hpp"
+#include "okay/Player/PlayerContract.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec3.hpp"
 
@@ -126,6 +130,20 @@ std::string WirePlayerAnimation(Scene& scene, GameObject* player) {
     if (!st.legs) msg += " No two-legged chain, so Foot IK was not added.";
     if (!st.head) msg += " No head bone, so Look-At was not added.";
     return msg;
+}
+
+void WirePlayerSystem(Scene& scene, GameObject* player) {
+    if (!player) return;
+    if (player->tag.empty()) player->tag = "Player";
+    if (!player->GetComponent<Inventory>()) player->AddComponent<Inventory>();
+    if (!player->GetComponent<Consumables>()) player->AddComponent<Consumables>();
+    (void)scene;
+}
+
+GameObject* CreatePlayerSystem(Scene& scene, const Vec3& pos) {
+    GameObject* player = Templates::AddThirdPersonPlayer(scene, pos);
+    WirePlayerSystem(scene, player);
+    return player;
 }
 
 } // namespace okay

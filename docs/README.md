@@ -49,7 +49,7 @@ Each folder has a `README.md` that lists its pages with one line each.
 | Folder | What is in it |
 |---|---|
 | [status/](status/README.md) | What is going on and what is left: the work board, the unfinished lists, the plan to replace outside libraries, where code came from. |
-| [process/](process/README.md) | How the work is done: the two Claudes, agent briefs, reviews, testing, QA. |
+| [process/](process/README.md) | How the work is done: the two Claudes, agent briefs, reviews, testing, QA, and [okay_run](process/okay_run.md) (run a scene and check what happened). |
 | [engine/](engine/README.md) | The core: runtime, time, maths, scenes, prefabs, assets, saving, input, languages, settings, debug and speed tools. |
 | [gameplay/](gameplay/README.md) | Game pieces: animation, cameras, AI and paths, dialogue, cutscenes, vehicles, weapons, survival, wind, your first game. |
 | [rendering/](rendering/README.md) | How things look: the renderers and their status, lighting, terrain and water, particles, textures. |

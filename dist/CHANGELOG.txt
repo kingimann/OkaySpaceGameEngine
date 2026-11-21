@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.899.0
+  Editor and model fixes
+  - Code editor: new line commands (toggle comment, duplicate line, move
+    lines up and down).
+  - OGRE binary model files (.mesh) now animate with their skeleton.
+  - Behind the scenes: more tests for Ctrl+S saving, Xbox export fixes
+    (still experimental and off by default), and our own picture writer.
+
 v2.898.0
   No more GitHub in the apps
   - The launcher and editor now get updates, the version list, "What's New"

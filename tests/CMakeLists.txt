@@ -4582,3 +4582,14 @@ add_test(NAME save_shortcut_model COMMAND test_save_shortcut_model)
 add_executable(test_vs_pan_model test_vs_pan_model.cpp)
 target_include_directories(test_vs_pan_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME vs_pan_model COMMAND test_vs_pan_model)
+
+# okay_run: plays a scene headless with scripted input and writes a per-frame trace, the log and pictures
+# (scripts/okay_run.py drives it; docs/process/okay_run.md). A tool, not a test; tests/scripts/test_okay_run.py checks it.
+add_executable(okay_run okay_run.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp ${PROJECT_SOURCE_DIR}/editor/ExampleScenes.cpp)
+target_include_directories(okay_run PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(okay_run PRIVATE okay::engine)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME okay_run_selftest COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_okay_run.py $<TARGET_FILE:okay_run>)
+    set_tests_properties(okay_run_selftest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+endif()

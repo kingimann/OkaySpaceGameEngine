@@ -7,7 +7,7 @@
   (17763 or newer) with the UWP headers and libraries, and SignTool.exe. MakeAppx.exe is reported but optional:
   our own packer (okay-appx) makes the package.
   Written without a Windows PC: this script has never been run. If it says something is missing that is
-  installed, tell us the folder names (docs/xbox_uwp.md, "What to paste back").
+  installed, tell us the folder names (docs/platform/xbox_uwp.md, "What to paste back").
 .PARAMETER Json
   Print the result as JSON instead of text.
 .OUTPUTS

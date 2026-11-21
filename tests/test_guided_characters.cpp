@@ -11,7 +11,7 @@ using namespace okay;
 using namespace okay::modeling;
 using namespace okay::modeling::guided;
 
-// Guided modeling, characters: human, robot and creature (docs/guided_modeling_design.md).
+// Guided modeling, characters: human, robot and creature (docs/editor/guided_modeling.md).
 namespace {
 
 double SignedVolume(const PolyMesh& m) {

@@ -19,7 +19,7 @@ mentions.
 - **Code:** `Animation/FootIK`, `editor/AnimatorWindow.*`
 - **API:** classes, components, script builtins, menu items an author would type
 - **Editor:** window, menu or inspector, or "none"
-- **Docs:** `docs/animation.md`, or "-"
+- **Docs:** `docs/gameplay/animation.md`, or "-"
 - **Tests:** ctest names (the part after `test_`)
 - **Status:** Works | Partial | Basic | Planned | In flight - then one line why
 - **Open:** semicolon-separated: missing, known bugs, in-flight PRs

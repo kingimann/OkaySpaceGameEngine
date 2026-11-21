@@ -1,4 +1,4 @@
-// OkayUI::CodeEdit: see include/okay/UI/OkayUICodeEdit.hpp and docs/own_ui_code_editor.md.
+// OkayUI::CodeEdit: see include/okay/UI/OkayUICodeEdit.hpp and docs/ui/own_ui_code_editor.md.
 #include "okay/UI/OkayUICodeEdit.hpp"
 
 #include <algorithm>

@@ -5,7 +5,7 @@
 //     Advanced tab with every setting grouped and tooltipped (the table in VehicleTuning.hpp),
 //   * Save as preset / Load preset (.okayvehicle text files).
 // Written from scratch for this engine on top of Dear ImGui calls. Compiled on Linux (okay-editor target) but never
-// run in a window: see docs/vehicle_controls.md "Unverified". The pure decisions live in VehicleEditorModel.hpp (tested).
+// run in a window: see docs/gameplay/vehicles.md "Unverified". The pure decisions live in VehicleEditorModel.hpp (tested).
 #include "EditorState.hpp"
 #include "ConsolePanel.hpp"
 #include "VehicleEditorModel.hpp"

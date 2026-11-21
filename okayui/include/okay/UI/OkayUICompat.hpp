@@ -21,7 +21,7 @@ struct Viewport {
     Vec2 GetWorkPos() const { return pos; }
     Vec2 GetWorkSize() const { return size; }
     const Viewport* operator->() const { return this; }   // so `GetMainViewport()->GetCenter()` compiles as it does with Dear ImGui's pointer
-    // What a host reads and writes on a viewport (docs/own_ui_toolkit.md 6.22): the id, two handles the host keeps for itself (OkayUI never touches
+    // What a host reads and writes on a viewport (docs/ui/own_ui_toolkit.md 6.22): the id, two handles the host keeps for itself (OkayUI never touches
     // them) and the frame's draw data (what GetDrawData() converts to). These three persist in the one main-viewport object that the pointer
     // conversion below hands out.
     unsigned ID = 0x4F4B5650u;                 // fixed ("OKVP"): OkayUI has one viewport
@@ -99,7 +99,7 @@ void EndTooltip();
 
 /// The style as the fields ported code reads (Dear ImGui names), filled from OkayUI's own settings at each call, so it follows
 /// PushStyleVar and Style(). READ ONLY: a write to the returned struct is lost at the next call (use Style(), PushStyleVar and
-/// PushStyleColor to change things). Approximations are listed in docs/own_ui_toolkit.md section 6.7: FramePadding, ItemInnerSpacing
+/// PushStyleColor to change things). Approximations are listed in docs/ui/own_ui_toolkit.md section 6.7: FramePadding, ItemInnerSpacing
 /// and CellPadding are the values the layout uses, not separate settings; Alpha is always 1.
 struct StyleInfo {
     float Alpha = 1.0f;

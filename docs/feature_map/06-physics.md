@@ -2,7 +2,7 @@
 
 Rigid bodies, colliders, joints, scene queries and the debug view in 2D and 3D, plus destructibles and projectiles. Code is
 `engine/include/okay/Physics/*` (11 headers, about 2.7k lines in `engine/src/Physics`) and two joint headers in `Components/`.
-No dedicated physics doc exists (only the layer matrix in `docs/layers_tags_cameras.md`). Ragdolls are 5.8, controllers are area 4.
+No dedicated physics doc exists (only the layer matrix in `docs/gameplay/cameras.md`). Ragdolls are 5.8, controllers are area 4.
 Since #575 (scene hierarchy) both step functions skip bodies under an inactive parent (`ActiveInHierarchy`, 1.17).
 
 ## 6. Physics
@@ -36,13 +36,13 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
   - 6.2.6 Improved solver - `Physics/Physics3DImproved.inl`, `Physics/ContactSolver`, `Physics/BoxManifold`, `Physics/PhysicsQuality` - the scene's Physics quality (Classic = the old single-pass step, Improved = iterated contacts with warm starting, box face contacts, group sleeping, swept fast bodies, rolling resistance, real inertia, compound bodies); saved as `physicsquality`; 3D only (the 2D step has no Improved solver yet)
   - 6.2.7 Physics materials - `Physics/PhysicsMaterial`, `Physics/Collider3D`, `Physics/Collider2D` - per-collider friction and bounciness (-1 = use the Rigidbody's) with a combine rule (Default, Average, Minimum, Multiply, Maximum); saved as `physmat3d` / `physmat2d`
   - 6.2.8 Debris - `Physics/DebrisPool`, `Components/DebrisEmitter` - capped, pooled, self-expiring small rigid chunks for digging and breaking games; `DebrisEmitter` is the Add Component version that throws bursts
-  - 6.2.9 Physics Material asset - `Physics/PhysicsMaterialAsset`, `Components/PhysicsSurface` - a named material (still and sliding grip, bounciness, combine modes, density, rolling, damping, slope grip, sound and effect names, surface name): 14 built-in presets, `.okayphysmat` text files, a Physics Surface component that applies it to the colliders on an object (and children), mass from density, change at run time, the material pair on every contact (`Collision3D::surface`); see `docs/physics_materials.md`
-  - 6.2.10 Physics toys - `Components/PhysicsToys`, `Components/PhysicsToyPresets`, `Physics/PhysicsToys.cpp` - Conveyor Belt, Force Field (attract, repel, well, whirlpool), Gravity Zone, Turntable, Moving Platform, Explosion, Breakable and code presets (pendulum, rope, wrecking ball, dominoes, door, surface patches); GameObject > 3D Object > Physics Toys; see `docs/physics_toys.md`
+  - 6.2.9 Physics Material asset - `Physics/PhysicsMaterialAsset`, `Components/PhysicsSurface` - a named material (still and sliding grip, bounciness, combine modes, density, rolling, damping, slope grip, sound and effect names, surface name): 14 built-in presets, `.okayphysmat` text files, a Physics Surface component that applies it to the colliders on an object (and children), mass from density, change at run time, the material pair on every contact (`Collision3D::surface`); see `docs/physics/physics.md`
+  - 6.2.10 Physics toys - `Components/PhysicsToys`, `Components/PhysicsToyPresets`, `Physics/PhysicsToys.cpp` - Conveyor Belt, Force Field (attract, repel, well, whirlpool), Gravity Zone, Turntable, Moving Platform, Explosion, Breakable and code presets (pendulum, rope, wrecking ball, dominoes, door, surface patches); GameObject > 3D Object > Physics Toys; see `docs/physics/physics.md`
   - 6.2.4 Fit to object - `Physics/ColliderFit` - `FitColliders` sizes colliders to the SpriteRenderer or MeshRenderer bounds; `autoFit` refits each frame
 - **Code:** `Physics/Physics3D`, `Physics/Physics3DImproved.inl`, `Physics/ContactSolver`, `Physics/BoxManifold`, `Physics/PhysicsMaterial`, `Physics/PhysicsQuality`, `Physics/DebrisPool`, `Components/DebrisEmitter`, `Physics/Rigidbody3D`, `Physics/Collider3D`, `Physics/MeshCollider3D`, `Physics/TriMesh`, `Physics/ConvexContact`, `Physics/ColliderFit`, `editor/main.cpp` (Add Component and Inspector sections)
 - **API:** `Rigidbody3D`, `BoxCollider3D`, `SphereCollider3D`, `CapsuleCollider3D`, `CylinderCollider3D`, `MeshCollider3D`, `FitColliders`, `scene.physics3D()`, `OnCollisionEnter3D`, `OnTriggerEnter3D`, `Collision3D`
 - **Editor:** Add Component > Physics 3D rows (and DebrisEmitter), Project Settings > Physics > Physics quality (Classic / Improved, solver iterations, catch fast bodies), a Physics Material section on every collider, Rolling Resistance and Use Child Colliders on the Rigidbody 3D, collider inspectors with a Fit to Object button, Mesh Collider inspector (triangle and BVH counts, convex-hull line when the body is dynamic, Rebuild), Scene view collider gizmos (the mesh collider draws its triangle edges, or the hull while the body is dynamic)
-- **Docs:** `docs/physics.md`, `docs/physics_plan.md`, `docs/physics_upgrade.md`, `docs/physics_materials.md`, `docs/physics_toys.md`, `docs/try_it.md` (7u, pu1, pm1, pt1)
+- **Docs:** `docs/physics/physics.md`, `docs/physics/physics.md`, `docs/physics/physics.md`, `docs/physics/physics.md`, `docs/physics/physics.md`, `docs/try_it.md` (7u, pu1, pm1, pt1)
 - **Tests:** `physics3d`, `meshcollider3d`, `angular3d`, `collider_fit`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`, `physics_deep_manifold`, `physics_deep_solver`, `physics_deep_bugs`, `physics_deep_improved`, `physics_deep_save`, `physics_deep_more`, `physics_upgrade`, `physics_materials`, `physics_toys`, `physics_examples`
 - **Status:** Works - Physics3D::Step, Rigidbody3D and the collider headers read; sleeping, terrain follow and spin covered by the tests above
 - **Open:** the header says bodies must be top-level (un-parented) Transforms; the navmesh bake still treats a MeshCollider3D as its bounds box; Improved is 3D only and off for old scenes; a dense sleeping pile still costs the contact test each step
@@ -62,7 +62,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Code:** `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit`, `Physics/Physics2D`, `Physics/Physics3D` (the joint pass in Step), `editor/main.cpp` (Joint inspectors)
 - **API:** `Joint2D`, `Joint3D`, `Joint2D::Mode`, `connectedBody`, `anchor`, `spring`, `damper`, `breakable`, `useMotor`, `motorSpeed`, `useLimits`, `minAngle`, `maxAngle`
 - **Editor:** Add Component > "Joint 2D (distance/spring/pin)" and "Joint 3D (distance/spring/pin/hinge/slider)"; inspectors for all five 3D modes, with Use Limits / Min Angle / Max Angle on a hinge
-- **Docs:** `docs/physics.md`
+- **Docs:** `docs/physics/physics.md`
 - **Tests:** `physics_joints`, `2d_expand`, `hinge2d`, `hinge3d`, `physics_deep_more`
 - **Status:** Works - joint solver pass in Physics3D::Step and the two headers read; distance, spring, pin and hinge covered by the tests above
 - **Open:** Joint2D's header still says "no angular/hinge yet" and its Add Component row still says "(distance/spring/pin)" although a Hinge mode exists; joints connect by body name, not by object reference
@@ -79,7 +79,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Code:** `Physics/PoseHistory`, `Physics/BodyPose`, `Scene/Scene` (StepPhysics)
 - **API:** `Scene::fixedTimeStep`, `Scene::UseFixedStepPhysics`, `Scene::SetPhysicsStepsPerSecond`, `Scene::SetSmoothPhysics`, `Scene::SetProjectPhysicsRate`, `Scene::interpolatePhysics`, `Scene::PhysicsAlpha`, `Scene::kDefaultFixedStep`; script `physics_steps`, `set_physics_steps`, `physics_smooth`, `set_physics_smooth`; `Time.physicsSteps`, `Time.smoothPhysics`
 - **Editor:** Project Settings > Physics: Steps per second, Smooth the motion. The Rigidbody 3D inspector says when a body is parented. Play and a build use the project rate (50 and smooth on when the project never set one)
-- **Docs:** `docs/physics.md`
+- **Docs:** `docs/physics/physics.md`
 - **Tests:** `fixed_step`, `rigidbody_step_parent`, `turn_interpolation`, `controller_interpolation`
 - **Status:** Works - the step rate is a project setting (default 50, the old rate) that scripts can read and set; interpolation draws between steps at any frame rate; a body whose rotation game code sets every frame (a turning character) is still drawn at an even speed, covered by `turn_interpolation` (bare body) and `controller_interpolation` (the real third-person controller with a rigged character: before the fix the drawn root jittered 14 to 26 mm per frame and lost most of its speed while turning; with it, 1.3 mm at 30 fps and under 0.1 mm at 60 and 144 fps, the same as walking straight); covered by `fixed_step` and `rigidbody_step_parent`
 - **Open:** a body moved by game code jumps with no blending (by design, per the header)
@@ -98,7 +98,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Code:** `Physics/PhysicsDebug`, `Physics/Physics2D`, `Physics/Physics3D`, `editor/main.cpp` (Physics Debug menu and overlay)
 - **API:** `Physics3D::Raycast`, `RaycastAll`, `Linecast`, `SphereCast`, `BoxCast`, `CapsuleCast`, `OverlapSphere`, `Physics2D::Raycast`, `OverlapCircle`, `Physics2D::BoxCast`, `Physics2D::CapsuleCast`, `Physics2D::OverlapCapsule`, `RaycastHit3D`, `RaycastHit2D`, `PhysicsDebug::Collect`, script builtins `raycast_hit`, `box_cast`, `capsule_cast` and `overlap` (registered in area 13)
 - **Editor:** View > Scene Overlays > Physics Debug > Show physics, Rays cast from scripts
-- **Docs:** `docs/scripting.md`; demo `examples/physics2d/casts_and_blast.okayscene`
+- **Docs:** `docs/scripting/scripting.md`; demo `examples/physics2d/casts_and_blast.okayscene`
 - **Tests:** `queries`, `physics_queries_ext`, `physics2d_casts`, `script_physics`, `phys_math`, `physics_nan`
 - **Status:** Works - query signatures and the debug record structs read; extended queries and debug recording covered by `physics_queries_ext`; 2D box and capsule casts, overlaps and their script and visual-script nodes covered by `physics2d_casts`; shape casts always end (a NaN or infinite reach is a miss, and a cast far from the origin stops after a fixed number of samples; `physics_nan`)
 - **Open:** no physics doc, so the query list is only in the headers and `docs/engine_api.md`; 3D shape casts skip triggers by default while rays include them (by design, per the header)
@@ -134,7 +134,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Code:** `Physics/Physics2D`, `Physics/Physics3D`, `Physics/Collider2D`, `Physics/Collider3D`, `Scene/Layers`
 - **API:** `scene.SetLayerCollision`, `scene.LayerCollisionMask`, `scene.ResetLayerCollisions`, `Collider3D::layer`, `triggerTag`, `triggerLayers`
 - **Editor:** collider inspectors (layer, trigger tag); layer matrix editing is in the scene settings (area 1.3)
-- **Docs:** `docs/layers_tags_cameras.md`
+- **Docs:** `docs/gameplay/cameras.md`
 - **Tests:** `layers`, `physics_queries_ext`
 - **Status:** Works - matrix code in both Step functions and the collider fields read; covered by `layers` and the trigger tag tests in `physics_queries_ext`
 - **Open:** the matrix itself, its presets and its scene-file record are owned by area 1.3 (#570, #586); this page only covers how the solvers use it

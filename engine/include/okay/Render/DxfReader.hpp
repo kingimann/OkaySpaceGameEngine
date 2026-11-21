@@ -1,5 +1,5 @@
 #pragma once
-// Our own DXF (.dxf, ASCII) reader. See docs/own_dxf_reader.md.
+// Our own DXF (.dxf, ASCII) reader. See docs/content/model_readers.md.
 //
 // Reads the surface entities of an ASCII DXF: 3DFACE (triangles and quads), POLYLINE polyface meshes and M x N polygon
 // meshes (with their VERTEX records), and MESH (AC1021 and later); blocks (BLOCKS section) placed by INSERT with a

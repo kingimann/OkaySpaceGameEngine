@@ -1,6 +1,6 @@
 #pragma once
 // Game-side wiring of content delivery: read the optional configuration, run one sync at start-up, load the overlay. Docs:
-// docs/content_delivery.md "In the game". OFF unless a content URL is configured: with no URL nothing here does anything (no folder is
+// docs/release/content_delivery.md "In the game". OFF unless a content URL is configured: with no URL nothing here does anything (no folder is
 // made, no request is sent, the overlay stays empty), so a game that does not use it behaves exactly as before.
 //
 // Configuration (all optional; the environment wins over the file, except keys: see below):

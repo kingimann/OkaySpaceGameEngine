@@ -1,4 +1,4 @@
-// Content delivery (shared/ContentManifest.hpp, ContentTransport.hpp, ContentSync.hpp, ContentOverlay.hpp). Docs: docs/content_delivery.md.
+// Content delivery (shared/ContentManifest.hpp, ContentTransport.hpp, ContentSync.hpp, ContentOverlay.hpp). Docs: docs/release/content_delivery.md.
 // Everything runs against a FAKE server (a map of names to bytes behind the Transport interface) and temp folders: no network, no real
 // time (the retry wait is a recorded number), throw-away keys made here. Deterministic.
 #include "test_framework.hpp"

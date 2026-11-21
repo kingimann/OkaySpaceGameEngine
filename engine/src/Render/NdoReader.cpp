@@ -2,7 +2,7 @@
 // text "nendo 1.x"; that is all this file knows. No public description of the body of the format was found (the only
 // descriptions that exist are other projects' importer source code, which our rule 19a forbids following), and no real .ndo file
 // is available, so the body is NOT guessed. The reader recognises the header, says which version it saw and refuses the file
-// with a message that says so. Bounds-checked; nothing is allocated from the file. See docs/own_ndo_reader.md.
+// with a message that says so. Bounds-checked; nothing is allocated from the file. See docs/content/model_readers.md.
 #include "TextReaderUtil.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <cstring>
@@ -26,7 +26,7 @@ bool ReadNdoBuffer(const std::string& bytes, const std::string& baseDir, Importe
         const char c = bytes[i];
         if ((c >= '0' && c <= '9') || c == '.' || (c >= 'a' && c <= 'z')) ver += c; else break;
     }
-    if (err) *err = "NDO: Nendo file, version \"" + ver + "\", recognised but not read: our own NDO reader has no geometry code yet because no public description of the file body exists that we may follow (docs/own_ndo_reader.md)";
+    if (err) *err = "NDO: Nendo file, version \"" + ver + "\", recognised but not read: our own NDO reader has no geometry code yet because no public description of the file body exists that we may follow (docs/content/model_readers.md)";
     return false;
 }
 

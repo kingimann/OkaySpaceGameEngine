@@ -5,7 +5,7 @@ row: | vsclarity | Visual Script nodes explain themselves (plain line, What is t
 ## vsclarity. Visual Script nodes explain themselves
 
 What changed: when you drop a node you now see what it does, what to plug in, and what to do next. Nothing about saved
-graphs or how scripts run changed. Notes and the full gap table: `docs/visual_script_clarity.md`.
+graphs or how scripts run changed. Notes and the full gap table: `docs/scripting/visual_script_clarity.md`.
 
 Try it on Windows (this is all in the normal editor, nothing to switch on):
 1. Start `Tools\OkayEngine.exe`, open a project, select an object and open View > Editors & Tools > Visual Script.

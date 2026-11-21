@@ -1,6 +1,6 @@
 #pragma once
 // The decision logic of a program (launcher or editor) replacing ITSELF, kept free of windows, threads and the network so test
-// binaries can link it (tests/test_self_update.cpp, tests/test_app_restart.cpp). Docs: docs/updater.md.
+// binaries can link it (tests/test_self_update.cpp, tests/test_app_restart.cpp). Docs: docs/release/updater.md.
 //
 // What can go wrong when a program swaps its own file: the rename fails (antivirus lock, read-only folder), the swapped-in file does not
 // start, or it starts but is not the version that was published. The pieces here:
@@ -190,7 +190,7 @@ inline Startup EvaluateStartup(const State& st, const std::string& running) {
     Startup r;
     if (st.phase == Phase::None) return r;
     // An update normally goes UP, so "reached" means the running version is the target or newer. The one deliberate downgrade (going back from a test
-    // build to the release it was made on, docs/release_channels.md "Test builds") has a target OLDER than where it started: there only the exact target,
+    // build to the release it was made on, docs/release/release_channels.md "Test builds") has a target OLDER than where it started: there only the exact target,
     // or something newer than where it started, counts, or the test build coming up again would be called "confirmed".
     const bool downgrade = !st.from.empty() && okayver::CompareVersions(st.to, st.from) < 0;
     const bool reached = downgrade ? (okayver::CompareVersions(running, st.to) == 0 || okayver::CompareVersions(running, st.from) > 0)

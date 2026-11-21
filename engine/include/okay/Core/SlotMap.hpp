@@ -1,6 +1,6 @@
 #pragma once
 // Generational handles and a slot map built on them. Header-only.
-// See docs/core_runtime.md.
+// See docs/engine/core_runtime.md.
 #include <cstddef>
 #include <cstdint>
 #include <functional>

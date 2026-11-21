@@ -1,5 +1,5 @@
 // Prints what Assimp reads from a model file in the same TSV shape as `test_model_corpus --list`, so the two can
-// be compared with scripts/compare_model_corpus.py. Developer tool for docs/model_corpus.md: not part of any build.
+// be compared with scripts/compare_model_corpus.py. Developer tool for docs/content/model_corpus.md: not part of any build.
 //
 //   g++ -O1 -std=c++17 scripts/assimp_corpus_dump.cpp -I<assimp>/include -I<assimp build>/include \
 //       <assimp build>/lib/libassimp.a <assimp build>/contrib/zlib/libzlibstatic.a -o assimp_corpus_dump

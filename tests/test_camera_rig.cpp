@@ -1,4 +1,4 @@
-// The camera rig layer over simulated frames (docs/camera_upgrade.md): spring follow, dead and soft zones,
+// The camera rig layer over simulated frames (docs/gameplay/cameras.md): spring follow, dead and soft zones,
 // look ahead, target groups, collision, fading blockers, blends and priority, effects, 2D, saving.
 // Every case runs at 30, 60 and 144 frames a second where time matters. No window, no GPU.
 #include "test_framework.hpp"

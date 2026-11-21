@@ -1,7 +1,7 @@
 // okay-appx: our own APPX packer and checker (EXPERIMENTAL, UNVERIFIED on Windows). No MakeAppx.
 //   okay-appx pack <folder> <out.appx>    writes an UNSIGNED package from every file in <folder>
 //   okay-appx verify <file.appx>          reads it back and checks the container, content types and every block hash
-// Signing is not done here (docs/xbox_uwp.md, "Signing"): use SignTool on the result.
+// Signing is not done here (docs/platform/xbox_uwp.md, "Signing"): use SignTool on the result.
 #include "XboxAppx.hpp"
 #include <cstdio>
 #include <fstream>

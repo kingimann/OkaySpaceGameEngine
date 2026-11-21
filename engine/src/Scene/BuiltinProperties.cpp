@@ -1,6 +1,6 @@
 // The property registrations of the built-in components. They are described here,
 // from outside, through each component's public fields, so the component headers
-// and the scene serializer stay as they are. See docs/properties.md for what is
+// and the scene serializer stay as they are. See docs/engine/properties.md for what is
 // covered and what is not.
 #include "BuiltinPropertiesShared.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -148,7 +148,7 @@ void RegisterCamera() {
     b.Commit();
 }
 
-// ---- Camera rigs (docs/camera_upgrade.md) ---------------------------------------------------------
+// ---- Camera rigs (docs/gameplay/cameras.md) ---------------------------------------------------------
 
 void RegisterCameraRigs() {
     {

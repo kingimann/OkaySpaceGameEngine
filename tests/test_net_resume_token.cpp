@@ -13,7 +13,7 @@
 
 using namespace okay;
 
-// What the resume token guarantees (docs/multiplayer_audit.md, "Resume token"):
+// What the resume token guarantees (docs/online/multiplayer.md, "Resume token"):
 //   * it is a bearer secret, single use, 64 random bits: an off-path sender (no sight of the
 //     Welcome) cannot guess one, and a token already used or never issued gives a fresh peer
 //     with none of the old state;

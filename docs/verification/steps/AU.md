@@ -19,7 +19,7 @@
   3. Try **Duck music under voice**.
 - **See:** the looping sound gets quieter or silent as you move the sliders; with ducking, music dips when voice plays.
 - **Partial:** none known.
-- **Link:** [audio.md](../../audio.md)
+- **Link:** [audio.md](../../audio/audio.md)
 
 ### V-AU-003 Spatial sound example
 - **Map:** 7

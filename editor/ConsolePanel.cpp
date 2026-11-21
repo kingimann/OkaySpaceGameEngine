@@ -6,7 +6,7 @@
 #include "MainShared.hpp"
 #include "ProblemsPanel.hpp"
 #include "ConsoleScriptLink.hpp"   // shared/: which script and line an entry points to (also used by the OkayUI port)
-#include "CrashContext.hpp"        // shared/: the last 200 lines are kept for the crash report (docs/crash_reports.md)
+#include "CrashContext.hpp"        // shared/: the last 200 lines are kept for the crash report (docs/online/crash_reports.md)
 
 #include <cstdlib>
 #include <ctime>

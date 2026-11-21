@@ -1,4 +1,4 @@
-# Anti-cheat: validate -DOKAY_AC_TRUSTED_KEYS (docs/anticheat.md). Each key must be
+# Anti-cheat: validate -DOKAY_AC_TRUSTED_KEYS (docs/online/anticheat.md). Each key must be
 # exactly 64 hex digits (an ed25519 public key), comma-separated, nothing else:
 # a malformed list must stop the configure, never quietly build a player that
 # trusts nothing (or, worse, falls back to an environment key).

@@ -3,7 +3,7 @@
 // to and from text exactly) and PropertyDesc (how one named property of a
 // component is read, validated and written). The registry that holds the
 // descriptions, the change hook and the snapshot/diff utilities are in
-// PropertyRegistry.hpp. See docs/properties.md.
+// PropertyRegistry.hpp. See docs/engine/properties.md.
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Vec4.hpp"

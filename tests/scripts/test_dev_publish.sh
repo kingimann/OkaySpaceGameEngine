@@ -3,7 +3,7 @@
 # the real release publisher's refusals of what it must never publish. Nothing here touches the network or a real key: the key below is a made-up
 # string, and the signing key is made fresh by scripts/sign_index.py genkey.
 #
-# What it proves (the rules of docs/release_channels.md "Test builds"):
+# What it proves (the rules of docs/release/release_channels.md "Test builds"):
 #   * a test build writes ONLY under dev/ (every request is in the fake's log), never VERSION.txt, NOTES.txt, LTS.txt, versions.json or anything else at
 #     the bucket root, never touches the bucket itself; the real release files are byte for byte what they were;
 #   * the list goes up before DEV.txt, DEV.txt is last, an unsigned list is a warning and a signed one verifies;

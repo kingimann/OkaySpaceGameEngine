@@ -143,7 +143,7 @@ void Op(const char* name, int rounds, const std::function<const char*()>& body) 
     }
     ++okaytest::g_checks;
     // Known gaps: these operators still leave a stale optional list behind (the renderers ignore a list whose size
-    // does not match, so the attribute is lost, not corrupted). Listed in docs/UNFINISHED.md; they are printed, not failed.
+    // does not match, so the attribute is lost, not corrupted). Listed in docs/status/UNFINISHED.md; they are printed, not failed.
     static const std::set<std::string> kKnownGaps = {};   // empty: every operator must keep its lists in step
 
     if (bad && kKnownGaps.count(name)) { std::cout << "  GAP: " << name << ": " << bad << " of " << rounds << " runs leave a list out of step (" << first << ")\n"; return; }

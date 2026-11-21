@@ -12,6 +12,7 @@
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Components/VehicleTuning.hpp"
+#include "okay/Components/VehicleControlScheme.hpp"
 #include "okay/Core/DrivingSettings.hpp"
 #include "okay/Components/ActionList.hpp"
 #include <cmath>
@@ -83,6 +84,24 @@ public:
     // shared WASD/arrow axis. The handbrake key is remappable.
     char handbrakeKey = ' ';
 
+    /// ---- Control scheme (VehicleControlScheme.hpp) ----
+    /// A new vehicle drives with the Street scheme (gas and brake on separate analog axes, speed-sensitive steering, look
+    /// around with the mouse or right stick, camera that recentres behind the car). A vehicle loaded from a scene saved before
+    /// schemes existed has useScheme = false and keeps reading its own key fields, so old games feel the same.
+    drivectl::ControlScheme scheme = drivectl::StreetScheme();
+    bool useScheme = true;
+    float CameraYawOffset() const { return useScheme ? m_recentre.offset : (m_lookBack ? 180.0f : 0.0f); }  ///< degrees from straight behind the car
+    bool  LookingBack() const { return m_lookBack; }
+    /// True while the scheme's input for `action` is held (a key, button, axis or trigger past half way).
+    bool  ActionHeld(int action) const { return useScheme && action >= 0 && action < drivectl::ActionCount && HeldAction(action); }
+    /// The enter / exit key as the car's seats see it (updated once a frame by the car, so every seat reads the same thing):
+    /// EnterPressed is true on the frame the key went down; EnterResult is Driver on a tap (given when the key is released)
+    /// or Passenger once the key has been held scheme.enterHoldTime. Each is true or set for one frame only.
+    bool  EnterPressed() const { return m_enterPressed; }
+    drivectl::EnterHold::Result EnterResult() const { return m_enterRes; }
+    /// A seat that used the press to get someone out calls this so the release of the same press is not read as a tap.
+    void  SwallowEnterUntilRelease() { m_enterSwallow = true; }
+
     /// ---- Driver seat (see VehicleSeat.hpp) ----
     /// A vehicle with a driver VehicleSeat only reads the keyboard while someone sits in it.
     /// With nobody at the wheel it brakes to a stop (brakeForce) and does not chase a camera.
@@ -114,6 +133,13 @@ public:
 
     void Update(float dt) override {
         if (!transform || dt <= 0.0f) return;
+        if (useScheme) {   // the enter key (see EnterPressed / EnterResult)
+            const bool held = HeldAction(drivectl::EnterExit);
+            m_enterPressed = held && !m_enterPrev;
+            m_enterRes = m_enter.Update(held, dt, scheme.enterHoldTime);
+            if (m_enterSwallow) { m_enterRes = drivectl::EnterHold::Nothing; if (!held) m_enterSwallow = false; }
+            m_enterPrev = held;
+        } else { m_enterPressed = false; m_enterRes = drivectl::EnterHold::Nothing; }
         if (!IsLocallyControlled(gameObject)) { ProxyWheels(dt); return; }   // remote proxy: NetworkSync drives it
 
         // ---- Read input: WASD/arrow axis (y = throttle, x = steer) ----
@@ -307,6 +333,64 @@ private:
         }
         return m_surfaceCache;
     }
+    // ---- Control-scheme input (the Street, Classic, Arcade and Realistic schemes) ----
+    float RawBinding(const drivectl::Binding& b) const {
+        using B = drivectl::Binding;
+        switch (b.type) {
+            case B::Key: return Input::GetKey((char)b.code) ? 1.0f : 0.0f;
+            case B::Mouse: return Input::GetMouseButton(b.code) ? 1.0f : 0.0f;
+            case B::PadButton: return Input::GetGamepadButton(b.code) ? 1.0f : 0.0f;
+            case B::PadAxis: { const Vec2 a = b.code < 2 ? Input::GamepadAxis(0) : Input::GamepadRightAxis(0);
+                               float v = (b.code % 2 == 0) ? a.x : a.y; if (b.negative) v = -v; return std::max(0.0f, v); }
+            case B::PadTrigger: return Input::GamepadTrigger(b.code);
+            default: return 0.0f;
+        }
+    }
+    float RawAction(int a) const {
+        const drivectl::ActionConfig& c = scheme.act[a];
+        float v = std::max(RawBinding(c.primary), RawBinding(c.pad));
+        if (c.primary.type == drivectl::Binding::Key) {   // the arrow keys still work next to W S A D
+            const char arrow = (a == drivectl::Throttle && c.primary.code == 'w') ? Input::KeyUp : (a == drivectl::Brake && c.primary.code == 's') ? Input::KeyDown
+                             : (a == drivectl::SteerLeft && c.primary.code == 'a') ? Input::KeyLeft : (a == drivectl::SteerRight && c.primary.code == 'd') ? Input::KeyRight : (char)0;
+            if (arrow && Input::GetKey(arrow)) v = 1.0f;
+        }
+        return v;
+    }
+    bool HeldAction(int a) const { return RawAction(a) > 0.5f; }
+    DriveInput ReadScheme() {
+        DriveInput in;
+        in.throttle = drivectl::Shape(RawAction(drivectl::Throttle), scheme.act[drivectl::Throttle]);
+        in.brake = drivectl::Shape(RawAction(drivectl::Brake), scheme.act[drivectl::Brake]);
+        in.steer = drivectl::SteerValue(RawAction(drivectl::SteerLeft), RawAction(drivectl::SteerRight), scheme.act[drivectl::SteerLeft], scheme.act[drivectl::SteerRight])
+                 * drivectl::SteerLimit(m_speed, maxSpeed, scheme.steerAssist);
+        in.handbrake = HeldAction(drivectl::Handbrake); in.boost = HeldAction(drivectl::Boost);
+        in.reverse = reverseMode == 1 ? Input::GetKey(keyReverse) : false;
+        return in;
+    }
+    // Buttons and camera of the scheme: edges for lights / camera / recover / gears, held for horn and look-behind.
+    void SchemeButtons(float dt) {
+        bool now[drivectl::ActionCount];
+        for (int a = 0; a < drivectl::ActionCount; ++a) now[a] = HeldAction(a);
+        auto pressed = [&](int a) { return now[a] && !m_prevHeld[a]; };
+        if (pressed(drivectl::Recover)) Recover();
+        if (pressed(drivectl::Headlights)) SetLights(!m_lights);
+        m_horn = now[drivectl::Horn];
+        if (pressed(drivectl::CycleCamera)) { m_view = drivectl::NextCamera(m_view); m_recentre.offset = 0.0f; }
+        m_lookBack = now[drivectl::LookBack];
+        if (gearbox != 0 || !scheme.autoGear) {
+            if (pressed(drivectl::GearUp)) ShiftGear(+1);
+            if (pressed(drivectl::GearDown)) ShiftGear(-1);
+        }
+        for (int a = 0; a < drivectl::ActionCount; ++a) m_prevHeld[a] = now[a];
+        // Look around: keys and the right stick turn the camera 120 degrees a second; the mouse turns it by its movement.
+        const float look = drivectl::Shape(RawAction(drivectl::LookRight), scheme.act[drivectl::LookRight]) - drivectl::Shape(RawAction(drivectl::LookLeft), scheme.act[drivectl::LookLeft]);
+        if (look != 0.0f) m_recentre.Look(look * 120.0f * dt);
+        if (scheme.mouseLook && scheme.mouseLookSensitivity > 0.0f) {
+            const float mx = Input::MouseDelta().x;
+            if (mx != 0.0f) m_recentre.Look(mx * scheme.mouseLookSensitivity);
+        }
+        m_recentre.Update(dt, m_lookBack, scheme.recentreDelay, scheme.recentreRate);
+    }
     float Dead(float v) const {
         const float a = std::fabs(v);
         if (a <= deadZone) return 0.0f;
@@ -320,6 +404,7 @@ private:
     DriveInput ReadInput(float dt) {
         DriveInput in;
         if (m_scripted) return m_in;
+        if (useScheme) return ReadScheme();
         // Driving keys read the "Vehicle" actions (Throttle, Brake, SteerLeft, SteerRight, Handbrake, Boost): these keys
         // until the player rebinds them, then the new bindings.
         in.throttle = KeyHeld("Throttle", keyThrottle, keyThrottle == 'w' ? Input::KeyUp : 0) ? 1.0f : 0.0f;
@@ -376,7 +461,8 @@ private:
         in.throttle = m_thrS; in.brake = m_brkS;
 
         // Buttons pressed once (not scripted: scripts call the functions).
-        if (!m_scripted && !unmanned) {
+        if (!m_scripted && !unmanned && useScheme) SchemeButtons(dt);
+        else if (!m_scripted && !unmanned) {
             if (Input::GetKeyDown(keyRecover) || Input::GetGamepadButtonDown(padRecover)) Recover();
             if (InputActions::ControlKeyDown("Headlights", keyLights) || Input::GetGamepadButtonDown(padLights)) SetLights(!m_lights);
             m_horn = InputActions::ControlKey("Horn", keyHorn) || Input::GetGamepadButton(padHorn);
@@ -619,6 +705,11 @@ private:
 public:
     /// Move `cam` like the open-world chase camera (VehicleSeat calls this for a seated player, so the camera
     /// glides from the on-foot view to the car view). Only while openWorld.
+    /// `v` (flat) turned about up by `deg` degrees (0 = unchanged, 180 = reversed).
+    static Vec3 YawVec(const Vec3& v, float deg) {
+        const float r = deg / 57.2957795f, c = std::cos(r), s = std::sin(r);
+        return Vec3{v.x * c + v.z * s, v.y, -v.x * s + v.z * c};
+    }
     void DriveCamera(Camera* cam, float dt) {
         Scene* s = gameObject ? gameObject->scene() : nullptr;
         if (!s || !cam || !cam->gameObject) return;
@@ -632,7 +723,7 @@ public:
         Vec3 want, lookAt;
         if (m_view >= 2) {            // hood / bonnet: sit on the car
             const float up = m_view == 2 ? 1.25f : 0.95f, ahead = m_view == 2 ? 0.2f : 1.3f;
-            const Vec3 dirv = m_lookBack ? fwd * -1.0f : fwd;
+            const Vec3 dirv = YawVec(fwd, CameraYawOffset());
             want = carPos + Vec3{0, up, 0} + dirv * ahead;
             lookAt = want + dirv * 20.0f + right * (m_wheelAngle / std::max(1.0f, maxSteerAngle)) * -3.0f * camLookAhead;
         } else {
@@ -644,11 +735,12 @@ public:
                 Vec3 vv{m_vx, 0.0f, m_vz}; const float m = std::sqrt(vv.x * vv.x + vv.z * vv.z);
                 if (m > 1.0f) { vv = vv * (1.0f / m); dirv = fwd * (1.0f - sw) + vv * sw; const float dm = std::sqrt(dirv.x*dirv.x + dirv.z*dirv.z); if (dm > 1e-4f) dirv = dirv * (1.0f / dm); }
             }
-            if (m_lookBack) dirv = dirv * -1.0f;
-            const float dist = (camDistance + camSpeedDistance * sp) * zoomK;
-            want = carPos - dirv * dist + Vec3{0, camHeight * zoomK, 0};
-            lookAt = carPos + Vec3{0, camHeight * 0.45f, 0} + dirv * (camDistance * 0.35f)
-                   + right * (m_wheelAngle / std::max(1.0f, maxSteerAngle)) * -camLookAhead * 4.0f * (m_lookBack ? -1.0f : 1.0f);
+            dirv = YawVec(dirv, CameraYawOffset());
+            const float dist = useScheme ? scheme.camDistance[m_view] + camSpeedDistance * sp : (camDistance + camSpeedDistance * sp) * zoomK;
+            const float high = useScheme ? scheme.camHeight[m_view] : camHeight * zoomK;
+            want = carPos - dirv * dist + Vec3{0, high, 0};
+            lookAt = carPos + Vec3{0, (useScheme ? scheme.camHeight[m_view] : camHeight) * 0.45f, 0} + dirv * ((useScheme ? scheme.camDistance[m_view] : camDistance) * 0.35f)
+                   + right * (m_wheelAngle / std::max(1.0f, maxSteerAngle)) * -camLookAhead * 4.0f * (std::fabs(CameraYawOffset()) > 90.0f ? -1.0f : 1.0f);
             // collision: pull the camera in if something is between the car and it
             const Vec3 from = carPos + Vec3{0, 1.0f, 0}; Vec3 d = want - from; const float len = std::sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
             if (len > 0.1f) {
@@ -666,13 +758,15 @@ public:
             const Quat want = Quat::LookRotation(look * -1.0f);
             ct->SetRotation(m_view >= 2 ? want : Quat::Slerp(ct->Rotation(), want, camLerp > 0.0f ? 1.0f - std::exp(-camLerp * 1.5f * dt) : 1.0f));
         }
-        const float fov = camFov + camSpeedFov * sp;
+        const float fov = (useScheme ? scheme.camFov[m_view] : camFov) + camSpeedFov * sp;
         cam->fieldOfView += (fov - cam->fieldOfView) * (1.0f - std::exp(-5.0f * dt));
     }
 private:
 
     void Hold() { if (!m_scripted || m_holdT >= 0.0f) m_holdT = 0.5f; m_scripted = true; }
     DriveInput m_in; float m_holdT = -1.0f; float m_steerMul = 1.0f; bool m_invert = false, m_assistsOff = false; DrivingSettings m_drv; bool m_scripted = false, m_unmanned = false, m_haveCmd = false; float m_cmdX = 0, m_cmdZ = 0;
+    drivectl::EnterHold m_enter; drivectl::EnterHold::Result m_enterRes = drivectl::EnterHold::Nothing; bool m_enterPressed = false, m_enterPrev = false, m_enterSwallow = false;
+    drivectl::CameraRecentre m_recentre; bool m_prevHeld[drivectl::ActionCount] = {};
     bool  m_init = false, m_horn = false, m_lights = false, m_lookBack = false, m_reversing = false, m_drifting = false, m_flipped = false;
     float m_vx = 0, m_vz = 0, m_rpm = 900, m_shiftT = 0, m_boostLeft = 1, m_wheelAngle = 0, m_slip = 0, m_yawRate = 0, m_aLong = 0;
     float m_thrS = 0, m_brkS = 0, m_steerS = 0, m_flipT = 0, m_airPitch = 0, m_airRoll = 0, m_shake = 0, m_shakeT = 0;

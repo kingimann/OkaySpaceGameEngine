@@ -45,6 +45,8 @@
 #include "okay/Net/PlayerInput.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Components/VehicleSeatFit.hpp"
+#include "okay/Components/MeshRenderer.hpp"
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <unordered_set>
@@ -60,6 +62,16 @@ public:
     float useRadius = 2.0f;              ///< how close the player must be to get in (metres, flat)
     std::string prompt = "Drive";        ///< shown while a player is in range
     char  enterKey = 'e';                ///< get in and get out (follows the "Interact" action once the player rebinds it; pad Y always works)
+    // ---- Fit (VehicleSeatFit.hpp) ----
+    float seatYaw = 180.0f;              ///< degrees the sitter is turned from the car's heading (180: the body faces -Z, so it looks forward)
+    bool  fitToSeat = true;              ///< sit the hips on the cushion for any body height, and scale a tall body down to fit the roof
+    float seatCushion = 0.45f;           ///< seat surface above sitPoint (m)
+    float roofHeight = 0.0f;             ///< roof above sitPoint (m); 0 = open top, no scaling
+    float minFitScale = 0.8f;            ///< a body is never scaled below this
+    bool  smoothEnter = true;            ///< glide to the seat instead of jumping
+    bool  useClip = false;               ///< hide the sitter's parts whose centre is inside the clip box (a hat through the roof)
+    Vec3  clipCentre{0.0f, 1.3f, 0.0f};  ///< clip box centre, local to the seat's object
+    Vec3  clipHalf{0.5f, 0.15f, 0.6f};   ///< clip box half sizes
     bool  occupied = false;              ///< runtime only
     bool  playerInRange = false;         ///< runtime only
 
@@ -122,7 +134,8 @@ public:
         if (driver && v) v->SetDriver(who);
         m_posed = HumanoidActions::BeginVehicleSit(who);
         TakeCamera(who);
-        Carry();
+        BeginFit(who);
+        Carry(0.0f);
         return true;
     }
 
@@ -164,15 +177,21 @@ public:
     void Start() override { Sync(); }
     void OnEnable() override { Sync(); }
 
-    void Update(float /*dt*/) override {
+    void Update(float dt) override {
+        (void)dt;
         Sync();
         if (m_who && (m_who->IsDestroyed() || !m_who->transform)) Forget();
         if (m_who && HumanoidActions::IsDead(m_who)) Exit();   // a dead body is not at the wheel
-        const bool down = InputActions::ControlKeyDown("Interact", enterKey) || Input::GetGamepadButtonDown(Input::PadY);   // E (the "Interact" action once rebound) or the pad's Y
+        // With a control scheme on the car, the scheme's enter key is used: a tap gets into a driver seat, a short hold into a
+        // passenger seat, and a press gets out. Otherwise the seat's own key (E or the pad's Y) as before.
+        VehicleController* sv = Vehicle();
+        const bool scheme = sv && sv->useScheme;
+        const bool down = scheme ? sv->EnterPressed() : (InputActions::ControlKeyDown("Interact", enterKey) || Input::GetGamepadButtonDown(Input::PadY));
+        const bool enterNow = scheme ? (driver ? sv->EnterResult() == drivectl::EnterHold::Driver : sv->EnterResult() == drivectl::EnterHold::Passenger) : down;
         if (!down) s_justExited() = nullptr;
         playerInRange = false;
         if (m_who) {
-            if (down && IsLocallyControlled(m_who)) { s_justExited() = m_who; Exit(); }
+            if (down && IsLocallyControlled(m_who)) { s_justExited() = m_who; if (scheme) sv->SwallowEnterUntilRelease(); Exit(); }
             return;
         }
         if (!gameObject || !gameObject->scene() || !transform) return;
@@ -193,11 +212,11 @@ public:
         if (driver && v && v->Driver()) return;          // taken: no prompt, no entry
         playerInRange = true;
         // Another seat of this car may have let the same person out on this very key press.
-        if (down && who != s_justExited()) Enter(who);
+        if (enterNow && who != s_justExited()) Enter(who);
     }
 
     void LateUpdate(float dt) override {
-        if (m_who && !m_who->IsDestroyed() && m_who->transform) { Carry(); RideCamera(dt); }
+        if (m_who && !m_who->IsDestroyed() && m_who->transform) { Carry(dt); RideCamera(dt); }
     }
 
     void OnDisable() override { Exit(); Unregister(); }
@@ -235,11 +254,62 @@ private:
         return false;
     }
 
-    void Carry() {
+    // ---- Fit: body height, scale, enter blend, clip box ----
+    // The body's standing height from its colliders (before they are switched off); 1.8 m when there are none.
+    static float BodyHeight(GameObject* who) {
+        float lo = 1e9f, hi = -1e9f;
+        for (Collider3D* c : who->GetComponentsInChildren<Collider3D>(true)) {
+            Vec3 mn, mx; c->WorldAABB(mn, mx);
+            if (mx.y - mn.y > 0.2f) { lo = std::min(lo, mn.y); hi = std::max(hi, mx.y); }
+        }
+        return hi > lo ? hi - lo : 1.8f;
+    }
+    void BeginFit(GameObject* who) {
+        m_scale = 1.0f; m_dy = 0.0f; m_scaleOwned = false;
+        if (fitToSeat) {
+            const float hs = who->transform->localScale.y != 0.0f ? std::fabs(who->transform->localScale.y) : 1.0f;
+            const float h = BodyHeight(who);
+            seatfit::SeatAnchor a; a.cushionHeight = seatCushion; a.roofHeight = roofHeight; a.minScale = minFitScale; a.scaleToFit = true;
+            const seatfit::SeatedFit f = seatfit::FitToSeat(a, h);
+            m_scale = f.scale;
+            // sitPoint is where the feet root of a 1.8 m body goes: move up or down by the difference in seated hip height
+            m_dy = seatfit::kHipSeated * (1.8f - h * f.scale);
+            if (m_scale < 0.9999f) { m_origScale = who->transform->localScale; who->transform->localScale = m_origScale * m_scale; m_scaleOwned = true; }
+            (void)hs;
+        }
+        m_blend.active = false;
+        if (smoothEnter && who->transform) m_blend.Begin({who->transform->Position().x, who->transform->Position().y, who->transform->Position().z},
+                                                          SeatTarget());
+    }
+    seatfit::V3 SeatTarget() const { const Vec3 s = SitWorld() + (transform ? transform->Up() : Vec3{0, 1, 0}) * m_dy; return {s.x, s.y, s.z}; }
+    void EndFit(GameObject* who, bool alive) {
+        if (alive && m_scaleOwned) who->transform->localScale = m_origScale;
+        m_scaleOwned = false; m_scale = 1.0f; m_dy = 0.0f; m_blend.active = false;
+        if (alive) for (MeshRenderer* r : m_clipped) if (r) r->enabled = true;
+        m_clipped.clear();
+    }
+    void ApplyClip() {
+        if (!useClip || !m_who || !transform) return;
+        const seatfit::ClipBox box{{clipCentre.x, clipCentre.y, clipCentre.z}, {clipHalf.x, clipHalf.y, clipHalf.z}};
+        for (MeshRenderer* r : m_who->GetComponentsInChildren<MeshRenderer>(true)) {
+            if (!r->gameObject || !r->gameObject->transform) continue;
+            const Vec3 l = transform->InverseTransformPoint(r->gameObject->transform->Position());
+            const bool inside = seatfit::InsideClip(box, {l.x, l.y, l.z});
+            const bool ours = std::find(m_clipped.begin(), m_clipped.end(), r) != m_clipped.end();
+            if (inside && !ours && r->enabled) { r->enabled = false; m_clipped.push_back(r); }
+            else if (!inside && ours) { r->enabled = true; m_clipped.erase(std::find(m_clipped.begin(), m_clipped.end(), r)); }
+        }
+    }
+
+    void Carry(float dt) {
         if (!m_who || !m_who->transform || !transform) return;
-        m_who->transform->SetPosition(SitWorld());
-        m_who->transform->SetRotation((transform->Rotation() * Quat::Euler(0.0f, 180.0f, 0.0f)).Normalized());   // body faces -Z
+        const seatfit::V3 target = SeatTarget();
+        Vec3 pos{target.x, target.y, target.z};
+        if (m_blend.active) { const seatfit::V3 p = m_blend.Step(dt); pos = Vec3{p.x, p.y, p.z}; }
+        m_who->transform->SetPosition(pos);
+        m_who->transform->SetRotation((transform->Rotation() * Quat::Euler(0.0f, seatYaw, 0.0f)).Normalized());   // body faces -Z at the default 180
         if (auto* rb = m_who->GetComponent<Rigidbody3D>()) rb->velocity = Vec3{0, 0, 0};
+        ApplyClip();
     }
 
     // ---- Ride camera ----
@@ -369,6 +439,7 @@ private:
 
     // Give the body back (controllers, colliders, gravity) and free the seat.
     void ReleaseState(GameObject* who, bool alive) {
+        EndFit(who, alive);
         if (alive) ApplyState(who, false);
         Forget();
     }
@@ -384,6 +455,7 @@ private:
         else ReleaseCameraFlag();
         m_cam = nullptr;
         m_posed = false;
+        m_clipped.clear(); m_scaleOwned = false; m_blend.active = false;
         m_who = nullptr;
         occupied = false;
         m_suspended = false;
@@ -391,6 +463,8 @@ private:
         m_gravityOwned = false;
     }
 
+    float m_scale = 1.0f, m_dy = 0.0f; bool m_scaleOwned = false; Vec3 m_origScale{1, 1, 1};
+    seatfit::EnterBlend m_blend; std::vector<MeshRenderer*> m_clipped;
     GameObject* m_who = nullptr;
     // A remembered car: the pointer is only used while VehicleController::IsLive says it is still that controller.
     struct CarRef {

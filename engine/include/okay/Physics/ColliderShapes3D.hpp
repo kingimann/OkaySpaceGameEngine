@@ -127,13 +127,15 @@ public:
     float heightScale = 1.0f;
     std::string heights = "0 0 0 0";
     Shape shape() const override { return Shape::Heightfield; }
-    // The settings as the collision uses them: grid 2..2048 per side, cells never zero, negative or not a number.
-    int Cols() const { return columns < 2 ? 2 : columns > 2048 ? 2048 : columns; }
-    int Rows() const { return rows < 2 ? 2 : rows > 2048 ? 2048 : rows; }
+    // The settings as the collision uses them: grid 2..2049 per side (a resolution-2048 Terrain has 2049 samples per
+    // side), cells never zero, negative or not a number.
+    int Cols() const { return columns < 2 ? 2 : columns > 2049 ? 2049 : columns; }
+    int Rows() const { return rows < 2 ? 2 : rows > 2049 ? 2049 : rows; }
     float CX() const { return (cellX >= 1e-4f && cellX <= 1e6f) ? cellX : (cellX > 1e6f ? 1e6f : 1e-4f); }
     float CZ() const { return (cellZ >= 1e-4f && cellZ <= 1e6f) ? cellZ : (cellZ > 1e6f ? 1e6f : 1e-4f); }
 
-    /// Number of numbers actually present (it may be fewer than columns * rows: missing ones read as 0).
+    /// Height of one sample times heightScale (missing samples read as 0; a heightScale that is not a number reads
+    /// as 0; the result is kept within +-1,000,000 m).
     float HeightAt(int col, int row) const;
     void  SetHeights(int cols, int rws, const std::vector<float>& h);
     /// Copy a Terrain's heights and size. Returns false when the terrain has no heights.
@@ -152,6 +154,11 @@ private:
     mutable float m_lo = 0.0f, m_hi = 0.0f;
     void Refresh() const;
 };
+
+/// The most points a hull keeps. ThinHullPoints keeps at most `maxPoints` spread-out points of a cloud (farthest-point
+/// sampling) so a huge cloud cannot stall the hull wrap; the Convex Hull and the dynamic Mesh collider both use it.
+constexpr int kMaxHullPoints = 4096;
+std::vector<Vec3> ThinHullPoints(const std::vector<Vec3>& p, int maxPoints = kMaxHullPoints);
 
 /// True for the collider types in this file and the Cylinder (the shapes the generic narrow phase handles).
 bool IsGenericShape(const Collider3D* c);

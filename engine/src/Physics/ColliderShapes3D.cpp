@@ -14,18 +14,23 @@ namespace okay {
 
 namespace {
 // Limits that keep a typed-in or damaged list from eating memory or time.
-constexpr int kMaxHullPoints = 4096;
 constexpr int kMaxCompoundParts = 1024;
-constexpr std::size_t kMaxHeights = 4u * 1024u * 1024u;   // 2048 x 2048 samples
-constexpr int kMaxGrid = 2048;
+constexpr std::size_t kMaxHeights = 2049u * 2049u;        // 2049 x 2049 samples (a resolution-2048 Terrain)
 constexpr std::size_t kMaxHeightfieldTriangles = 500000;
 constexpr float kMaxCoord = 1.0e6f;                       // a point further than this is a typo, not a shape
 
 bool UsableNumber(float v) { return std::isfinite(v) && std::abs(v) <= kMaxCoord; }
 bool UsablePoint(const Vec3& v) { return UsableNumber(v.x) && UsableNumber(v.y) && UsableNumber(v.z); }
+// The heightfield's scale as every query uses it: not a number reads as 0, and it is kept within the coordinate limit.
+float SafeScale(float k) { return std::isfinite(k) ? std::clamp(k, -kMaxCoord, kMaxCoord) : 0.0f; }
+// A stored height (already within +-kMaxCoord) times the scale, kept within the coordinate limit.
+float ScaledHeight(float h, float scale) { return std::clamp(h * SafeScale(scale), -kMaxCoord, kMaxCoord); }
+}  // namespace
 
 // Keep at most `maxPoints` of the points that spread the cloud out the most (farthest-point sampling).
-std::vector<Vec3> ThinPoints(const std::vector<Vec3>& p, int maxPoints) {
+std::vector<Vec3> ThinHullPoints(const std::vector<Vec3>& p, int maxPoints) {
+    if (maxPoints < 1) maxPoints = 1;
+    if (p.empty()) return p;
     if ((int)p.size() <= maxPoints) return p;
     std::vector<Vec3> keep; keep.push_back(p[0]);
     std::vector<float> dist(p.size(), 1e30f);
@@ -40,7 +45,6 @@ std::vector<Vec3> ThinPoints(const std::vector<Vec3>& p, int maxPoints) {
     }
     return keep;
 }
-}  // namespace
 
 namespace shape3d {
 
@@ -153,7 +157,7 @@ void ConvexHullCollider3D::Refresh() const {
     m_key = points;
     m_pts = PointsFromText(points);
     if ((int)m_pts.size() > kMaxHullPoints) {                    // too many typed in: wrap them, then keep the spread-out corners
-        m_pts = ThinPoints(m_pts, kMaxHullPoints);               // (thin first: the wrap itself is slow on huge clouds)
+        m_pts = ThinHullPoints(m_pts, kMaxHullPoints);           // (thin first: the wrap itself is slow on huge clouds)
     }
     if (m_pts.empty()) {
         for (int i = 0; i < 8; ++i) m_pts.push_back({i & 1 ? 0.5f : -0.5f, i & 2 ? 0.5f : -0.5f, i & 4 ? 0.5f : -0.5f});
@@ -170,18 +174,18 @@ LocalShape3D ConvexHullCollider3D::Local() const { Refresh(); return m_shape; }
 void ConvexHullCollider3D::SetPoints(const std::vector<Vec3>& in, int maxPoints) {
     std::vector<Vec3> p;
     for (const Vec3& v : in) if (UsablePoint(v)) p.push_back(v);
-    p = ThinPoints(p, kMaxHullPoints);                          // (thin first: the wrap itself is slow on huge clouds)
+    p = ThinHullPoints(p, kMaxHullPoints);                      // (thin first: the wrap itself is slow on huge clouds)
     Mesh h = Mesh::ConvexHull(p);
     if (h.vertices.size() >= 4) p = h.vertices;                 // only the corners matter
     maxPoints = std::min(std::max(maxPoints, 4), kMaxHullPoints);
-    p = ThinPoints(p, maxPoints);
+    p = ThinHullPoints(p, maxPoints);
     points = PointsToText(p);
     m_key.clear();
 }
 bool ConvexHullCollider3D::SetFromMesh(const Mesh& m, int maxPoints) {
     std::vector<Vec3> good;
     for (const Vec3& v : m.vertices) if (UsablePoint(v)) good.push_back(v);
-    good = ThinPoints(good, kMaxHullPoints);
+    good = ThinHullPoints(good, kMaxHullPoints);
     Mesh h = Mesh::ConvexHull(good);
     if (h.vertices.size() < 4) return false;
     SetPoints(h.vertices, maxPoints);
@@ -330,7 +334,7 @@ void HeightfieldCollider3D::Refresh() const {
     m_h.clear();
     std::istringstream in(heights);
     float v;
-    while (m_h.size() < kMaxHeights && in >> v) m_h.push_back(std::isfinite(v) ? v : 0.0f);
+    while (m_h.size() < kMaxHeights && in >> v) m_h.push_back(std::isfinite(v) ? std::clamp(v, -kMaxCoord, kMaxCoord) : 0.0f);
     m_lo = 0.0f; m_hi = 0.0f;
     if (!m_h.empty()) { m_lo = *std::min_element(m_h.begin(), m_h.end()); m_hi = *std::max_element(m_h.begin(), m_h.end()); }
 }
@@ -339,13 +343,13 @@ float HeightfieldCollider3D::HeightAt(int c, int r) const {
     const int C = Cols(), R = Rows();
     c = std::clamp(c, 0, C - 1); r = std::clamp(r, 0, R - 1);
     std::size_t i = (std::size_t)r * (std::size_t)C + (std::size_t)c;
-    float k = std::isfinite(heightScale) ? heightScale : 0.0f;
-    return i < m_h.size() ? m_h[i] * k : 0.0f;
+    return i < m_h.size() ? ScaledHeight(m_h[i], heightScale) : 0.0f;
 }
 void HeightfieldCollider3D::SetHeights(int cols, int rws, const std::vector<float>& h) {
     columns = std::max(cols, 2); rows = std::max(rws, 2);
     std::ostringstream o; o << std::setprecision(9);
-    for (std::size_t i = 0; i < h.size(); ++i) o << (i ? " " : "") << h[i];
+    // A NaN or infinity is written as 0: as text ("nan", "inf") it would not read back and would cut off every later height.
+    for (std::size_t i = 0; i < h.size(); ++i) o << (i ? " " : "") << (std::isfinite(h[i]) ? h[i] : 0.0f);
     heights = o.str(); m_key.clear();
 }
 bool HeightfieldCollider3D::SetFromTerrain(const Terrain& t) {
@@ -357,7 +361,8 @@ bool HeightfieldCollider3D::SetFromTerrain(const Terrain& t) {
 }
 float HeightfieldCollider3D::Depth() const {
     Refresh();
-    return Mathf::Max(2.0f, (m_hi - m_lo) * Mathf::Abs(heightScale) + 2.0f * Mathf::Max(CX(), CZ()));
+    const float span = Mathf::Abs(ScaledHeight(m_hi, heightScale) - ScaledHeight(m_lo, heightScale));
+    return Mathf::Max(2.0f, span + 2.0f * Mathf::Max(CX(), CZ()));
 }
 bool HeightfieldCollider3D::LocalHeight(float x, float z, float& y) const {
     const int C = Cols(), R = Rows();
@@ -393,8 +398,8 @@ void HeightfieldCollider3D::WorldAABB(Vec3& mn, Vec3& mx) const {
     const Frame f = FrameOf(*this);
     const int C = Cols(), R = Rows();
     float x1 = (C - 1) * 0.5f * CX(), z1 = (R - 1) * 0.5f * CZ();
-    float y0 = std::min(m_lo, m_hi) * heightScale, y1 = std::max(m_lo, m_hi) * heightScale;
-    if (heightScale < 0) std::swap(y0, y1);
+    const float a = ScaledHeight(m_lo, heightScale), b = ScaledHeight(m_hi, heightScale);
+    float y0 = std::min(a, b), y1 = std::max(a, b);
     y0 -= Depth();
     mn = {1e30f, 1e30f, 1e30f}; mx = {-1e30f, -1e30f, -1e30f};
     for (int k = 0; k < 8; ++k) {
@@ -424,9 +429,13 @@ bool HeightfieldCollider3D::RayShape(const Vec3& o, const Vec3& d, float maxT, f
     float lenXZ = std::sqrt(dl.x * dl.x + dl.z * dl.z);
     float step = lenXZ > 1e-9f ? 0.5f * std::min(CX(), CZ()) / lenXZ : (t1 - t0);
     step = std::max(step, (t1 - t0) / 20000.0f);
+    // A counted walk: far from the ray's start, adding one small step to a float position can leave it unchanged, so
+    // "s += step until s >= t1" could run forever. Step k is placed at t0 + k * step instead, and the last at t1.
+    const float ratio = (t1 - t0) / step;
+    const int nSteps = (std::isfinite(ratio) && ratio > 1.0f) ? (int)std::min(20001.0f, std::ceil(ratio)) : 1;
     float prev = t0;
-    for (float s = t0 + step;; s += step) {
-        bool last = s >= t1; if (last) s = t1;
+    for (int k = 1; k <= nSteps; ++k) {
+        const float s = (k == nSteps) ? t1 : std::min(t0 + (float)k * step, t1);
         if (!above(s)) {
             float a = prev, b = s;
             for (int it = 0; it < 24; ++it) { float m = 0.5f * (a + b); if (above(m)) a = m; else b = m; }
@@ -443,7 +452,6 @@ bool HeightfieldCollider3D::RayShape(const Vec3& o, const Vec3& d, float maxT, f
             n = ToWorldNormal(f, nl);
             return t <= maxT;
         }
-        if (last) break;
         prev = s;
     }
     return false;

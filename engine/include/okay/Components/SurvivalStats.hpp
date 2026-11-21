@@ -145,11 +145,21 @@ public:
         if (health <= 0.0f) { health = 0.0f; dead = true; OnDeath(); NotifyDeath(ev); }
         return true;
     }
+    /// Kill outright (ignores armor, resistance, god mode and i-frames). No effect if already dead.
+    void Kill(GameObject* source = nullptr) {
+        if (dead) return;
+        DamageEvent ev = DamageEvent::Make(health > 0.0f ? health : 0.0f, DamageType::Generic, source);
+        ev.target = gameObject; ev.dealt = ev.amount; ev.killed = true;
+        health = 0.0f; dead = true;
+        NotifyDamaged(ev);
+        OnDeath();
+        NotifyDeath(ev);
+    }
     void SetGodMode(bool on) { godMode = on; }
     bool IsInvincible() const { return godMode || m_iframes > 0.0f; }
+    /// As before: no effect when dead, and a negative amount takes health away. NaN is ignored.
     void Heal(float a) {
-        a = SaneHeal(a);
-        if (dead || a <= 0.0f) return;
+        if (dead || std::isnan(a)) return;
         const float before = health;
         health = Mathf::Min(maxHealth, health + a);
         if (health > before) NotifyHealed(gameObject, health - before);

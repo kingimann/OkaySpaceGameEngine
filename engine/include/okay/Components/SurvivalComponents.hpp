@@ -195,8 +195,7 @@ public:
             if (playDeathAnim) HumanoidActions::PlayDeath(gameObject, hasLastHit ? &lastHitFrom : nullptr);
             return;
         }
-        m_lastEvent = DamageEvent::Make(health > 0.0f ? health : 0.0f);
-        m_lastEvent.target = gameObject; m_lastEvent.killed = true;
+        m_lastEvent = FreshDeathEvent(health);
         OnDeath();
     }
     /// What happens when health reaches zero, in one plain choice.
@@ -242,11 +241,11 @@ public:
         if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return false;
         if (HumanoidActions::DodgeIFrames(gameObject)) return false;
         const float typeRes = ResistanceTo(ev.type);
+        if (typeRes >= 1.0f) return false;   // immune to this kind: no i-frames, regen delay, listeners or flinch
         float dmg = Mathf::Max(0.0f, amount - (armor + equipArmor));
         dmg *= (1.0f - Mathf::Clamp01(resistance));
         dmg *= (1.0f - typeRes);
         if (dmg < minDamage) dmg = Mathf::Min(minDamage, amount);   // mitigation never fully nullifies a hit
-        if (typeRes >= 1.0f) dmg = 0.0f;                            // immune to this kind
         const float before = health;
         health -= dmg;
         m_timer = regenDelay;
@@ -276,8 +275,9 @@ public:
     /// the rest were applied on the server, which validated the hit).
     void SetHealthFromServer(float h) {
         if (dead || !std::isfinite(h)) return;
+        const float before = health;
         health = Mathf::Min(maxHealth + Mathf::Max(0.0f, overhealMax), h);
-        if (health <= 0.0f) { OnDeath(); m_awaitServerRespawn = true; }
+        if (health <= 0.0f) { m_lastEvent = FreshDeathEvent(before); OnDeath(); m_awaitServerRespawn = true; }
         Publish();
     }
     /// Multiplayer: the server respawned this object with `h` health (where it now stands is
@@ -295,13 +295,24 @@ public:
     void DieFromServer(bool hasFrom, const Vec3& from) {
         if (dead) return;
         if (hasFrom) { lastHitFrom = from; hasLastHit = true; } else hasLastHit = false;
+        m_lastEvent = FreshDeathEvent(health);
         OnDeath();
         m_awaitServerRespawn = true;
         Publish();
     }
     void SetGodMode(bool on) { godMode = on; }
+    /// A destroyed object is never handed to listeners as the killer (LastEvent stays safe to read).
+    void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
+        if (m_lastEvent.source && dying.count(m_lastEvent.source)) m_lastEvent.source = nullptr;
+    }
 
 private:
+    /// A death with no hit behind it (the server's word, a script die()): no source, no stale killer.
+    DamageEvent FreshDeathEvent(float healthLeft) const {
+        DamageEvent e = DamageEvent::Make(healthLeft > 0.0f ? healthLeft : 0.0f);
+        e.target = gameObject; e.dealt = e.amount; e.killed = true;
+        return e;
+    }
     void OnDeath() {
         health = 0.0f; dead = true;
         NetNoteDeath(gameObject, hasLastHit, lastHitFrom);
@@ -339,6 +350,7 @@ private:
     }
     void Respawn(bool moveToStart = true) {
         dead = false; health = maxHealth; m_timer = 0.0f; m_iframes = 0.0f; m_respawnTimer = 0.0f;
+        m_lastEvent = DamageEvent{};   // a new life: the last killer is forgotten
         m_awaitServerRespawn = false;
         m_deathPlayed = false; m_settled = false; m_waitDeath = false; m_deathAge = 0.0f;
         HumanoidActions::RestoreDeadBody(gameObject, m_deathShape);

@@ -6554,10 +6554,18 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                     in >> std::ws;   // optional: "Nothing" on death, then one resistance per damage kind
                     if (std::isdigit(in.peek())) {
-                        int ka = 0, n = 0; in >> ka >> n; c->keepActiveOnDeath = (ka != 0);
-                        for (int i = 0; i < n; ++i) {
-                            float r = 0.0f; in >> r;
-                            if (i < kDamageTypeCount && std::isfinite(r)) c->typeResistance[i] = Mathf::Clamp(r, -1.0f, 1.0f);
+                        // Read only the rest of this record's line, so a wrong or hostile count can neither
+                        // loop for long nor eat the next record. At most 64 kinds; stop at the first bad value.
+                        std::string rest; std::getline(in, rest);
+                        std::istringstream ls(rest);
+                        int ka = 0, n = 0;
+                        if (ls >> ka) c->keepActiveOnDeath = (ka != 0);
+                        if ((ls >> n) && n > 0 && n <= 64) {
+                            for (int i = 0; i < n; ++i) {
+                                float r = 0.0f;
+                                if (!(ls >> r)) break;
+                                if (i < kDamageTypeCount && std::isfinite(r)) c->typeResistance[i] = Mathf::Clamp(r, -1.0f, 1.0f);
+                            }
                         }
                     }
                 } else if (field == "seat") {

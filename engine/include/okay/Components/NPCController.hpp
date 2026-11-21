@@ -147,19 +147,30 @@ public:
         ev.dealt = before - Mathf::Max(0.0f, health); ev.killed = health <= 0.0f;
         NotifyDamaged(ev);
         if (provokable) { m_provoked = true; m_sightLost = 0.0f; if (GameObject* t = Target()) m_lastKnown = TP(t); }
-        if (health <= 0.0f) {
-            health = 0.0f; m_dead = true;
-            Broadcast("npc_died");
-            NotifyDeath(ev);
-            if (gameObject) {
-                if (auto* au = gameObject->GetComponent<AudioSource>()) au->Play();
-                if (gameObject->scene()) gameObject->scene()->Destroy(gameObject);
-                else gameObject->active = false;
-            }
-        }
+        if (health <= 0.0f) Die(ev);
         return true;
     }
+    /// Kill outright (ignores `invulnerable`): the same death as a lethal hit. No effect if already dead.
+    void Kill(GameObject* source = nullptr) {
+        if (m_dead) return;
+        DamageEvent ev = DamageEvent::Make(health > 0.0f ? health : 0.0f, DamageType::Generic, source);
+        ev.target = gameObject; ev.dealt = ev.amount; ev.killed = true;
+        NotifyDamaged(ev);
+        Die(ev);
+    }
 
+private:
+    void Die(const DamageEvent& ev) {
+        health = 0.0f; m_dead = true;
+        Broadcast("npc_died");
+        NotifyDeath(ev);
+        if (gameObject) {
+            if (auto* au = gameObject->GetComponent<AudioSource>()) au->Play();
+            if (gameObject->scene()) gameObject->scene()->Destroy(gameObject);
+            else gameObject->active = false;
+        }
+    }
+public:
     /// Crouch and prone from scripts (SetStance): a smaller, slower body that
     /// eases between stances (sneaking guards, a wounded NPC down on the ground).
     StanceControl stanceControl{0, 0, true};

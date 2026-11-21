@@ -4,6 +4,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Math/Mathf.hpp"
+#include <cmath>
 
 namespace okay {
 
@@ -29,23 +30,36 @@ public:
     /// the moment health reaches 0.
     void TakeDamage(float amount) { TakeDamage(DamageEvent::Make(amount)); }
     /// Same hit as a Health Stat takes; listeners are told (this holder has no per-type resistances).
+    /// The old rule is kept: every hit deals at least 1, even 0 or a negative amount. NaN counts as 0.
     bool TakeDamage(DamageEvent ev) {
-        const float amount = SaneDamage(ev.amount);
-        if (IsDead() || amount <= 0.0f) return false;
+        if (IsDead()) return false;
+        float amount = std::isnan(ev.amount) ? 0.0f : ev.amount;
+        if (std::isinf(amount) && amount > 0.0f) amount = 3.0e38f;
         float dmg = Mathf::Max(1.0f, amount - (float)(defense + equipDefense));
         const float before = health;
         health = Mathf::Max(0.0f, health - dmg);
-        ev.target = gameObject; ev.amount = amount; ev.dealt = before - health; ev.killed = health <= 0.0f;
+        ev.target = gameObject; ev.amount = Mathf::Max(0.0f, amount); ev.dealt = before - health; ev.killed = health <= 0.0f;
         NotifyDamaged(ev);
         if (health <= 0.0f) { Event("on_death"); NotifyDeath(ev); }
         return true;
     }
+    /// As always: healing a dead character brings it back, and a negative amount takes health away
+    /// (without firing on_death). NaN is ignored.
     void Heal(float amount) {
-        amount = SaneHeal(amount);
-        if (amount <= 0.0f || IsDead()) return;
+        if (std::isnan(amount)) return;
         const float before = health;
         health = Mathf::Clamp(health + amount, 0.0f, maxHealth);
         if (health > before) NotifyHealed(gameObject, health - before);
+    }
+    /// Kill outright (defense does not matter). Tells the listeners and fires on_death. No effect if dead.
+    void Kill(GameObject* source = nullptr) {
+        if (IsDead()) return;
+        DamageEvent ev = DamageEvent::Make(health, DamageType::Generic, source);
+        ev.target = gameObject; ev.dealt = health; ev.killed = true;
+        health = 0.0f;
+        NotifyDamaged(ev);
+        Event("on_death");
+        NotifyDeath(ev);
     }
     void UseMana(float amount)   { mana = Mathf::Max(0.0f, mana - amount); }
     void RestoreMana(float amt)  { mana = Mathf::Clamp(mana + amt, 0.0f, maxMana); }

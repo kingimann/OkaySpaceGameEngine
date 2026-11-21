@@ -403,7 +403,7 @@ private:
         if (fireMode == (int)FireMode::Hitscan) {
             RaycastHit3D hit = sc.physics3D().Raycast(sc, muzzle, d, range, gameObject);
             if (hit.hit) {
-                DamageGameObject(hit.gameObject, damage);
+                DamageGameObject(hit.gameObject, damage, gameObject);
                 if (hit.gameObject)
                     if (auto* rb = hit.gameObject->GetComponent<Rigidbody3D>()) rb->AddImpulse(d * impactForce);
             }

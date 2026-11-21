@@ -83,9 +83,20 @@ inline void AddDamagedListener(std::function<void(const DamageEvent&)> f) { List
 inline void AddHealedListener(std::function<void(GameObject*, float)> f)   { Listeners().healed.push_back(std::move(f)); }
 inline void AddDeathListener(std::function<void(const DamageEvent&)> f)   { Listeners().death.push_back(std::move(f)); }
 inline void ClearDamageListeners() { Listeners().damaged.clear(); Listeners().healed.clear(); Listeners().death.clear(); }
-inline void NotifyDamaged(const DamageEvent& e) { for (auto& f : Listeners().damaged) if (f) f(e); }
-inline void NotifyHealed(GameObject* who, float amount) { for (auto& f : Listeners().healed) if (f) f(who, amount); }
-inline void NotifyDeath(const DamageEvent& e) { for (auto& f : Listeners().death) if (f) f(e); }
+// Each walk goes over a copy of the list, so a listener may add (or clear) listeners while it is told;
+// the new ones hear the next event.
+inline void NotifyDamaged(const DamageEvent& e) {
+    if (Listeners().damaged.empty()) return;
+    auto list = Listeners().damaged; for (auto& f : list) if (f) f(e);
+}
+inline void NotifyHealed(GameObject* who, float amount) {
+    if (Listeners().healed.empty()) return;
+    auto list = Listeners().healed; for (auto& f : list) if (f) f(who, amount);
+}
+inline void NotifyDeath(const DamageEvent& e) {
+    if (Listeners().death.empty()) return;
+    auto list = Listeners().death; for (auto& f : list) if (f) f(e);
+}
 
 /// The one way to hurt something. Finds the object's health holder (Health Stat first, then
 /// Survival Stats, RPG Stats, NPC Controller), applies the hit and tells the listeners.
@@ -95,7 +106,8 @@ bool DealDamage(GameObject* target, DamageEvent ev);
 bool DealDamage(GameObject* target, float amount, DamageType type = DamageType::Generic, GameObject* source = nullptr);
 /// Heal the object's health holder. Returns the health really gained.
 float HealObject(GameObject* target, float amount);
-/// Kill the object's health holder outright. True if something died.
+/// Kill every health holder on the object outright: god mode, i-frames, armor, resistance and an NPC's
+/// `invulnerable` do not stop it. True only if this call killed something and the object is dead now.
 bool KillObject(GameObject* target, GameObject* source = nullptr);
 /// Current / max health of whichever holder the object has (false if none).
 bool HealthOf(GameObject* target, float& health, float& maxHealth);

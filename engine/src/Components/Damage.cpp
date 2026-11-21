@@ -45,15 +45,12 @@ float HealObject(GameObject* target, float amount) {
 
 bool KillObject(GameObject* target, GameObject* source) {
     if (!target) return false;
-    if (auto* hp = target->GetComponent<HealthStat>()) {
-        if (hp->IsDead()) return false;
-        hp->Kill(source); return true;
-    }
-    float h = 0.0f, m = 0.0f;
-    if (!HealthOf(target, h, m) || IsObjectDead(target)) return false;
-    // The others have no outright kill: hit them with far more than they have (armor cannot stop this).
-    DamageEvent ev = DamageEvent::Make(3.0e38f, DamageType::Generic, source);
-    return DealDamage(target, ev);
+    bool killed = false;
+    if (auto* hp = target->GetComponent<HealthStat>())       if (!hp->IsDead())  { hp->Kill(source);  killed = true; }
+    if (auto* sv = target->GetComponent<SurvivalStats>())    if (!sv->dead)      { sv->Kill(source);  killed = true; }
+    if (auto* st = target->GetComponent<Stats>())            if (!st->IsDead())  { st->Kill(source);  killed = true; }
+    if (auto* npc = target->GetComponent<NPCController>())   if (!npc->IsDead()) { npc->Kill(source); killed = true; }
+    return killed && IsObjectDead(target);
 }
 
 bool HealthOf(GameObject* target, float& health, float& maxHealth) {

@@ -26,7 +26,7 @@ struct TouchEvent {
     long long id = 0;            // the pointer id
     int x = 0, y = 0;            // pixels now
     int startX = 0, startY = 0;  // pixels where it went down
-    bool primary = false;        // the oldest finger that is down (it also drives the mouse)
+    bool primary = false;        // the oldest finger that is down. Passes to the next oldest when it lifts; the backend's mouse does NOT follow that handover (UwpBackend::PushTouch)
 };
 
 class TouchTracker {

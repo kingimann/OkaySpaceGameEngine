@@ -13,6 +13,7 @@
 #include "XboxTouch.hpp"
 #include "okay/Platform/Platform.hpp"
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <deque>
 #include <filesystem>
@@ -85,10 +86,19 @@ public:
         if (down) mouse_ |= platform::MouseMask(button); else mouse_ &= ~platform::MouseMask(button);
         platform::Event e = Base(down ? platform::EventType::MouseButtonDown : platform::EventType::MouseButtonUp); e.button = button; e.x = x; e.y = y; e.clicks = 1; q_.push_back(e);
     }
-    /// Touch / pen pointer from PointerPressed / Moved / Released / Canceled. Raw points become FingerDown / FingerMotion / FingerUp
-    /// (fx, fy are 0..1 of the window). The primary finger also drives the mouse (left button), so mouse-driven UI works with a touch;
-    /// recognised taps and drags are available through TakeGestures. UNVERIFIED with a real touch screen.
-    void PushTouch(long long id, PointerPhase ph, int x, int y) { Route(touch_.Feed(id, ph, x, y, TicksMs())); }
+    /// Touch / pen pointer from PointerPressed / Moved / Released / Canceled. `dipX`, `dipY` are in DIPs (device-independent pixels,
+    /// 96 per inch), the unit of CoreWindow's PointerPoint.Position; they are turned into physical pixels with the window's DPI
+    /// (Life().Dpi(), from Resized), the same pixels as the window size. Raw points become FingerDown / FingerMotion / FingerUp
+    /// (x, y in pixels; fx, fy are pixel / window pixels, 0..1 inside the window, outside it while a pointer is captured).
+    /// Mouse rule: the finger that goes down while no other finger is down "owns" the mouse: it moves it and presses the left button,
+    /// and its up or cancel releases it. No other finger touches the mouse, not even one that becomes the tracker's primary after the
+    /// owner lifts; the next finger that goes down after every finger has lifted owns it again. So every MouseButtonDown has exactly
+    /// one MouseButtonUp, and the mouse never moves under a finger with no button held. Recognised taps and drags are available
+    /// through TakeGestures. UNVERIFIED with a real touch screen.
+    void PushTouch(long long id, PointerPhase ph, float dipX, float dipY) {
+        const float dpi = life_.Dpi();
+        Route(touch_.Feed(id, ph, DipPosToPixels(dipX, dpi), DipPosToPixels(dipY, dpi), TicksMs()));
+    }
     /// The window lost focus or the app suspends: every finger ends as a cancel (the mouse button is released too).
     void CancelTouches() { Route(touch_.CancelAll()); }
     std::vector<TouchEvent> TakeGestures() { std::vector<TouchEvent> v; v.swap(gestures_); return v; }
@@ -234,11 +244,27 @@ private:
             if (!down && !move && g.kind != TouchEvent::RawUp && g.kind != TouchEvent::RawCancel) { gestures_.push_back(g); if (gestures_.size() > 256) gestures_.erase(gestures_.begin()); continue; }
             platform::Event e = Base(down ? platform::EventType::FingerDown : move ? platform::EventType::FingerMotion : platform::EventType::FingerUp);
             e.fingerId = g.id; e.fx = (float)g.x / w; e.fy = (float)g.y / h; e.x = g.x; e.y = g.y; q_.push_back(e);
-            if (!g.primary) continue;
-            if (move) PushPointerMove(g.x, g.y);
-            else if (down) { PushPointerMove(g.x, g.y); PushPointerButton(platform::MouseLeft, true, g.x, g.y); }
-            else PushPointerButton(platform::MouseLeft, false, g.x, g.y);
+            // The mouse rule (see PushTouch): only the finger that pressed the mouse moves and releases it.
+            if (down) {
+                if (mouseFinger_ >= 0 || !g.primary) continue;
+                mouseFinger_ = g.id; PushPointerMove(g.x, g.y); PushPointerButton(platform::MouseLeft, true, g.x, g.y);
+            } else if (g.id != mouseFinger_) {
+                continue;
+            } else if (move) {
+                PushPointerMove(g.x, g.y);
+            } else {
+                mouseFinger_ = -1; PushPointerButton(platform::MouseLeft, false, g.x, g.y);
+            }
         }
+    }
+    /// A pointer position in DIPs to pixels, rounded to the nearest pixel. Unlike DipsToPixels (sizes) it keeps 0 and negative values.
+    static int DipPosToPixels(float dips, float dpi) {
+        if (!(dpi > 0.0f)) dpi = 96.0f;
+        if (!(dips == dips)) return 0;   // NaN
+        double px = std::floor(double(dips) * double(dpi) / 96.0 + 0.5);
+        if (px > 1e6) px = 1e6;
+        if (px < -1e6) px = -1e6;
+        return int(px);
     }
     std::uint64_t Now() { return clockOverride ? clockOverride() : TicksMs(); }
     platform::Event Base(platform::EventType t) { platform::Event e; e.type = t; e.timestampMs = (std::uint32_t)TicksMs(); e.windowId = 1; return e; }
@@ -259,6 +285,10 @@ private:
         for (BackendPad* p : pads_) p->Poll(now);
         const LifecyclePending p = life_.Take();
         if (p.saveState) {
+            // A suspended app gets no PointerReleased or composition end: cancel every finger (releases the mouse button) and clear
+            // the composition now, so nothing is stuck after resume.
+            CancelTouches();
+            if (comp_.Cancel() && textInput_) q_.push_back(Base(platform::EventType::TextEditing));
             q_.push_back(Base(platform::EventType::WindowFocusLost));
             if (onSuspend) onSuspend();
             life_.SaveDone();
@@ -272,7 +302,7 @@ private:
     Lifecycle life_; std::deque<platform::Event> q_; std::set<int> keys_; std::vector<BackendPad*> pads_; int nextPadId_ = 1; std::unique_ptr<PadHub> hub_; std::vector<SlotProxy> proxies_;
     std::deque<std::string> log_; std::string clip_, err_;
     int mx_ = 0, my_ = 0, relDx_ = 0, relDy_ = 0; std::uint32_t mouse_ = 0;
-    TouchTracker touch_; std::vector<TouchEvent> gestures_; TextComposition comp_; int imeRect_[4] = {0, 0, 0, 0};
+    TouchTracker touch_; std::vector<TouchEvent> gestures_; long long mouseFinger_ = -1; TextComposition comp_; int imeRect_[4] = {0, 0, 0, 0};
     bool inited_ = false, textInput_ = false, rel_ = false, cursor_ = true, quitSent_ = false;
 };
 

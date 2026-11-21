@@ -292,7 +292,7 @@ int main() {
             CHECK(std::string(c.st.filter) == "slow" && c.res.rowsShown == 1);
             c.sim.Type("zzz"); c.Frame(); c.Frame();
             CHECK(c.res.rowsShown == 0);
-            for (int i = 0; i < 7; ++i) c.sim.Tap(Key_Backspace, [&] { c.Frame(); });
+            for (int i = 0; i < 7; ++i) { c.sim.Press(Key_Backspace); c.Frame(); }   // one frame each (Tap with c.Frame nested a frame in a frame)
             c.Frames(2);
             CHECK(c.res.rowsShown == 4 && c.st.filter[0] == 0);
         }

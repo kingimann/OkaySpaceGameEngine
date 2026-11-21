@@ -5,6 +5,9 @@
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Render/FbxReader.hpp"
 #include "okay/Render/ModelImport.hpp"
+#include "ufbx.h"
+#include <set>
+#include <tuple>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -31,6 +34,25 @@ static std::vector<std::uint8_t> Hex(const char* h) {
 }
 static bool Near(double a, double b, double eps = 1e-5) { return std::fabs(a - b) <= eps; }
 
+// A baked track played at time t as the engine plays it: linear between the two keys around t (a key at t exactly is
+// returned as it is); for rotations the second key's sign is matched to the first and the blend normalised. The clips
+// of our reader have keys at the file's own key times plus the ones it adds (docs/content/model_readers.md (FBX part), "Animation keys"),
+// so a check at a time needs this rather than a sample index.
+template <class K> static K KeyAt(const std::vector<K>& keys, double t) {
+    std::size_t i = 0;
+    while (i + 1 < keys.size() && keys[i + 1].time <= t) ++i;
+    if (keys[i].time == t || i + 1 >= keys.size() || t <= keys[i].time) return keys[i];
+    const K& a = keys[i]; const K& b = keys[i + 1];
+    const double u = (t - a.time) / (b.time - a.time);
+    const int n = (int)(sizeof(a.v) / sizeof(a.v[0]));
+    double sg = 1;
+    if (n == 4) { double d = 0; for (int k = 0; k < 4; ++k) d += a.v[k] * b.v[k]; if (d < 0) sg = -1; }
+    K r; r.time = t; double l = 0;
+    for (int k = 0; k < n; ++k) { r.v[k] = a.v[k] + (sg * b.v[k] - a.v[k]) * u; l += r.v[k] * r.v[k]; }
+    if (n == 4 && l > 0) for (int k = 0; k < 4; ++k) r.v[k] /= std::sqrt(l);
+    return r;
+}
+
 static double TriArea(const fbx::Corner* a) {
     const double ux = a[1].p[0] - a[0].p[0], uy = a[1].p[1] - a[0].p[1], uz = a[1].p[2] - a[0].p[2];
     const double vx = a[2].p[0] - a[0].p[0], vy = a[2].p[1] - a[0].p[1], vz = a[2].p[2] - a[0].p[2];
@@ -39,8 +61,13 @@ static double TriArea(const fbx::Corner* a) {
 }
 static double MeshArea(const fbx::Mesh& m) {
     double s = 0;
-    for (const fbx::Part& p : m.parts) for (std::size_t i = 0; i + 2 < p.corners.size(); i += 3) s += TriArea(&p.corners[i]);
+    for (const fbx::Part& p : m.parts) { const std::vector<fbx::Corner> cs = p.ExpandCorners(); for (std::size_t i = 0; i + 2 < cs.size(); i += 3) s += TriArea(&cs[i]); }
     return s;
+}
+/// The reader, then the import steps: the triangulation of the meshes' polygons (fbx::BuildParts) and the clips' keys
+/// (fbx::BuildClips), which the checks on parts and keys need.
+static bool LoadBuilt(const std::string& path, fbx::Scene& s, std::string* err, const fbx::BuildOptions& o = fbx::BuildOptions()) {
+    return fbx::LoadFile(path, s, err, o) && fbx::BuildParts(s, err) && fbx::BuildClips(s, err);
 }
 static const fbx::SceneNode* FindNode(const fbx::Scene& s, const char* n) {
     for (const auto& x : s.nodes) if (x.name == n) return &x;
@@ -81,8 +108,8 @@ static void DirectTests() {
     RUN_SUITE("fbx scene: cube (Z up, cm), binary vs ascii");
     fbx::Scene b, a;
     std::string err;
-    CHECK(fbx::LoadFile(Fx("cube_zup_cm_bin.fbx"), b, &err));
-    CHECK(fbx::LoadFile(Fx("cube_zup_cm_ascii.fbx"), a, &err));
+    CHECK(LoadBuilt(Fx("cube_zup_cm_bin.fbx"), b, &err));
+    CHECK(LoadBuilt(Fx("cube_zup_cm_ascii.fbx"), a, &err));
     CHECK(b.nodes.size() == 1 && a.nodes.size() == 1);
     if (b.nodes.size() == 1 && a.nodes.size() == 1) {
         const fbx::SceneNode& n = b.nodes[0];
@@ -95,7 +122,7 @@ static void DirectTests() {
         CHECK(m.triangleCount() == 12 && a.meshes[0].triangleCount() == 12);
         CHECK(m.hasUV && m.hasNormals && m.parts.size() == 1);
         float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
-        for (const fbx::Corner& c : m.parts[0].corners) for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], c.p[k]); hi[k] = std::max(hi[k], c.p[k]); }
+        for (const fbx::Corner& c : m.parts[0].ExpandCorners()) for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], c.p[k]); hi[k] = std::max(hi[k], c.p[k]); }
         for (int k = 0; k < 3; ++k) { CHECK(Near(lo[k], -0.01, 1e-6)); CHECK(Near(hi[k], 0.01, 1e-6)); }
         CHECK(Near(MeshArea(m), 6 * 0.02 * 0.02, 1e-7));
         // Like ufbx: geometry and normals keep the file's axes, the root node carries the Y-up rotation.
@@ -106,10 +133,10 @@ static void DirectTests() {
         CHECK(Near(g2w.m[4] * in[0] + g2w.m[5] * in[1] + g2w.m[6] * in[2] + g2w.m[7], 0.30866025, 1e-6));
         CHECK(Near(g2w.m[8] * in[0] + g2w.m[9] * in[1] + g2w.m[10] * in[2] + g2w.m[11], -0.2, 1e-6));
         bool rawNormal = false;
-        for (const fbx::Corner& c : m.parts[0].corners) if (Near(c.n[2], 1.0, 1e-4)) rawNormal = true;
+        for (const fbx::Corner& c : m.parts[0].ExpandCorners()) if (Near(c.n[2], 1.0, 1e-4)) rawNormal = true;
         CHECK(rawNormal);
         // ascii and binary agree corner by corner
-        const auto& ca = a.meshes[0].parts[0].corners; const auto& cb = m.parts[0].corners;
+        const auto ca = a.meshes[0].parts[0].ExpandCorners(); const auto cb = m.parts[0].ExpandCorners();
         CHECK(ca.size() == cb.size());
         for (std::size_t i = 0; i < std::min(ca.size(), cb.size()); ++i) { CHECK(Near(ca[i].p[0], cb[i].p[0], 1e-7) && Near(ca[i].uv[1], cb[i].uv[1], 1e-7) && Near(ca[i].n[2], cb[i].n[2], 1e-6)); }
         // material, texture reference and embedded bytes
@@ -134,7 +161,7 @@ static void DirectTests() {
 
     RUN_SUITE("fbx scene: n-gons, ear clipping, per-polygon materials");
     fbx::Scene g;
-    CHECK(fbx::LoadFile(Fx("ngon_bin.fbx"), g, &err));
+    CHECK(LoadBuilt(Fx("ngon_bin.fbx"), g, &err));
     if (!g.meshes.empty()) {
         const fbx::Mesh& m = g.meshes[0];
         // L hexagon (area 3) + pentagon + triangle (0.5)
@@ -143,10 +170,10 @@ static void DirectTests() {
         CHECK(Near(MeshArea(m), (3.0 + pent + 0.5) * 1e-4, 1e-9));   // file is in cm
         CHECK(m.triangleCount() == 4 + 3 + 1);
         CHECK(m.parts.size() == 2 && m.parts[0].slot == 0 && m.parts[1].slot == 1);
-        if (m.parts.size() == 2) CHECK(m.parts[0].corners.size() / 3 == 4 && m.parts[1].corners.size() / 3 == 4);
+        if (m.parts.size() == 2) CHECK(m.parts[0].cornerCount() / 3 == 4 && m.parts[1].cornerCount() / 3 == 4);
         bool allUp = true;   // concave polygon: every triangle must keep the +Z winding
-        for (const fbx::Part& p : m.parts) for (std::size_t i = 0; i + 2 < p.corners.size(); i += 3) {
-            const fbx::Corner* c = &p.corners[i];
+        for (const fbx::Part& p : m.parts) for (std::size_t i = 0; i + 2 < p.cornerCount(); i += 3) {
+            const fbx::Corner c[3] = {p.corner(i), p.corner(i + 1), p.corner(i + 2)};
             const double z = (c[1].p[0] - c[0].p[0]) * (c[2].p[1] - c[0].p[1]) - (c[1].p[1] - c[0].p[1]) * (c[2].p[0] - c[0].p[0]);
             if (z <= 0) allUp = false;
         }
@@ -157,7 +184,7 @@ static void DirectTests() {
 
     RUN_SUITE("fbx scene: generated normals, hierarchy, bad polygons");
     fbx::Scene pl;
-    CHECK(fbx::LoadFile(Fx("plain_bin.fbx"), pl, &err));
+    CHECK(LoadBuilt(Fx("plain_bin.fbx"), pl, &err));
     CHECK(pl.nodes.size() == 2 && pl.roots.size() == 1);
     if (pl.nodes.size() == 2) {
         CHECK(pl.nodes[0].name == "Parent" && pl.nodes[1].name == "Pyr" && pl.nodes[1].parent == 0);
@@ -165,7 +192,7 @@ static void DirectTests() {
         CHECK(Near(pl.nodes[1].scale[0], 2.0, 1e-6));
         CHECK(pl.nodes[1].mesh == 0 && pl.meshes[0].triangleCount() == 3);   // the 2-corner polygon was skipped
         bool unit = true;
-        for (const fbx::Corner& c : pl.meshes[0].parts[0].corners) { const double l = std::sqrt(c.n[0] * c.n[0] + c.n[1] * c.n[1] + c.n[2] * c.n[2]); if (!Near(l, 1.0, 1e-4)) unit = false; }
+        for (const fbx::Corner& c : pl.meshes[0].parts[0].ExpandCorners()) { const double l = std::sqrt(c.n[0] * c.n[0] + c.n[1] * c.n[1] + c.n[2] * c.n[2]); if (!Near(l, 1.0, 1e-4)) unit = false; }
         CHECK(unit);
         CHECK(!pl.meshes[0].hasUV);
     }
@@ -173,7 +200,7 @@ static void DirectTests() {
     RUN_SUITE("fbx scene: rig (skin, blend shape, animation)");
     for (const char* name : {"rig_bin75.fbx", "rig_ascii.fbx"}) {
         fbx::Scene r;
-        CHECK(fbx::LoadFile(Fx(name), r, &err));
+        CHECK(LoadBuilt(Fx(name), r, &err));
         CHECK(r.nodes.size() == 4);
         const fbx::SceneNode* tube = FindNode(r, "Tube");
         CHECK(tube && tube->mesh == 0);
@@ -195,23 +222,33 @@ static void DirectTests() {
         CHECK(c.name == "Take 001" && Near(c.duration, 2.0));
         CHECK(c.nodes.size() == 3 && c.blends.size() == 1);
         for (const fbx::NodeAnim& na : c.nodes) {
-            CHECK(na.translation.size() == 61 && na.rotation.size() == 61 && na.scale.size() == 61);
+            // keys at the file's key times (0, 0.5, 1, 1.5, 2 s at most here) plus the added ones: far fewer than the
+            // 61 samples of the 30 Hz bake, the same count on every channel, from 0 to the end of the take
+            CHECK(!na.translation.empty() && na.translation.size() == na.rotation.size() && na.translation.size() == na.scale.size());
+            // (Bone1's cubic bends more than 30 samples a second can follow within 0.05 degrees: it gets more keys)
+            if (r.nodes[(std::size_t)na.node].name != "Bone1") CHECK(na.translation.size() < 61);
+            if (na.translation.empty()) continue;
+            CHECK(na.translation.front().time == 0.0 && Near(na.translation.back().time, 2.0, 1e-12));
             const std::string& nm = r.nodes[(std::size_t)na.node].name;
             if (nm == "Bone1") {   // PreRotation 10 deg + animated Z rotation 45 deg at t = 0.5 -> 55 deg about Z
-                const fbx::Key4& k = na.rotation[15];
-                CHECK(Near(k.time, 0.5, 1e-9));
+                bool keyed = false; for (const fbx::Key4& k : na.rotation) keyed |= k.time == 0.5;   // a file key time
+                CHECK(keyed);
+                const fbx::Key4 k = KeyAt(na.rotation, 0.5);
                 CHECK(Near(std::fabs(k.v[2]), std::sin(27.5 * 3.14159265358979 / 180.0), 1e-6) && Near(std::fabs(k.v[3]), std::cos(27.5 * 3.14159265358979 / 180.0), 1e-6));
                 const fbx::Key4& k0 = na.rotation[0];   // t = 0: pre-rotation only
                 CHECK(Near(std::fabs(k0.v[2]), std::sin(5.0 * 3.14159265358979 / 180.0), 1e-6));
-            } else if (nm == "Bone2") {   // linear 1.0 -> 1.5 over 2 s
-                CHECK(Near(na.translation[30].v[1], 0.0125, 1e-8) && Near(na.translation[60].v[1], 0.015, 1e-8));
-            } else if (nm == "Bone0") {   // constant steps: 1,1,2
-                CHECK(Near(na.scale[20].v[0], 1.0, 1e-9) && Near(na.scale[60].v[0], 2.0, 1e-9));
+            } else if (nm == "Bone2") {   // linear 1.0 -> 1.5 over 2 s: two keys, played linearly
+                CHECK(na.translation.size() == 2);
+                CHECK(Near(KeyAt(na.translation, 1.0).v[1], 0.0125, 1e-8) && Near(KeyAt(na.translation, 2.0).v[1], 0.015, 1e-8));
+            } else if (nm == "Bone0") {   // constant steps: 1,1,2 (the jump at 2 s gets a key just before it)
+                CHECK(Near(KeyAt(na.scale, 20.0 / 30.0).v[0], 1.0, 1e-9) && Near(KeyAt(na.scale, 2.0).v[0], 2.0, 1e-9));
+                CHECK(na.scale.size() >= 3 && Near(na.scale[na.scale.size() - 2].v[0], 1.0, 1e-9) && na.scale[na.scale.size() - 2].time > 1.999 && na.scale[na.scale.size() - 2].time < 2.0 - 1e-4);
             }
         }
-        if (c.blends.size() == 1) {
+        if (c.blends.size() == 1) {   // linear 0 -> 100 over 2 s: its two keys
             CHECK(c.blends[0].mesh == 0 && c.blends[0].channel == 0);
-            CHECK(Near(c.blends[0].percent[30].v[0], 50.0, 1e-5) && Near(c.blends[0].percent[60].v[0], 100.0, 1e-5));
+            CHECK(c.blends[0].percent.size() == 2);
+            CHECK(Near(KeyAt(c.blends[0].percent, 1.0).v[0], 50.0, 1e-5) && Near(KeyAt(c.blends[0].percent, 2.0).v[0], 100.0, 1e-5));
         }
     }
 
@@ -252,14 +289,14 @@ static void DirectTests() {
     RUN_SUITE("fbx scene: bridge polygon, takes with their own time span, byte-array property");
     {
         fbx::Scene br;
-        CHECK(fbx::LoadFile(Fx("bridge_bin.fbx"), br, &err));
+        CHECK(LoadBuilt(Fx("bridge_bin.fbx"), br, &err));
         if (!br.meshes.empty()) CHECK(Near(MeshArea(br.meshes[0]), 12.0 * 0.0001, 1e-9));   // centimetres to metres: x 0.01 on both axes
     }
     {
         // three takes over one set of curves (x: 0 at t=0, 10 at t=1, 0 at t=2): "first" plays [0, 1],
         // "second" [1, 2], "whole" has no span of its own. The header holds a 'c' (byte array) thumbnail.
         fbx::Scene tk;
-        CHECK(fbx::LoadFile(Fx("takes_bin.fbx"), tk, &err));
+        CHECK(LoadBuilt(Fx("takes_bin.fbx"), tk, &err));
         CHECK(tk.clips.size() == 3);
         if (tk.clips.size() == 3) {
             const double want[3] = {1.0, 1.0, 2.0};
@@ -361,16 +398,26 @@ static void HermiteTests() {
     const double hand[2][4] = {{0.9, 2.5, 4.9, 8.1}, {5.1, 7.5, 9.1, 9.9}};
     for (int ci = 0; ci < 3; ++ci) {
         { std::ofstream f(file, std::ios::binary); const std::string t = HermiteFbx(cases[ci].a, cases[ci].b); f.write(t.data(), (std::streamsize)t.size()); }
-        fbx::Scene r; std::string err;
-        CHECK(fbx::LoadFile(file.string(), r, &err));
+        // mode 0 checks the curve evaluation itself: the 30 Hz bake samples at exactly these times. Mode 2 is the clip
+        // our reader makes by default (keys at the file's times plus added ones), played between its keys.
+        fbx::Scene r, rk; std::string err;
+        fbx::BuildOptions bake30; bake30.fileKeys = false;
+        CHECK(LoadBuilt(file.string(), r, &err, bake30));
         CHECK(r.clips.size() == 1 && r.clips[0].nodes.size() == 1);
-        for (int mode = 0; mode < 2; ++mode) {   // 0 = our reader (baked at 30 Hz), 1 = ufbx through the importer
+        CHECK(LoadBuilt(file.string(), rk, &err));
+        CHECK(rk.clips.size() == 1 && rk.clips[0].nodes.size() == 1);
+        for (int mode = 0; mode < 3; ++mode) {   // 0 = our reader (baked at 30 Hz), 1 = ufbx through the importer, 2 = our reader's file keys
             std::vector<double> got;
             if (mode == 0) {
                 if (r.clips.size() != 1 || r.clips[0].nodes.size() != 1) continue;
                 const auto& tr = r.clips[0].nodes[0].translation;
                 CHECK(tr.size() == 31);
                 for (double u : us) got.push_back(tr[(std::size_t)std::lround(u * 30)].v[0] * 100.0);
+            } else if (mode == 2) {
+                if (rk.clips.size() != 1 || rk.clips[0].nodes.size() != 1) continue;
+                const auto& tr = rk.clips[0].nodes[0].translation;
+                CHECK(tr.size() >= 2);   // (a steep cubic: more keys than 30 a second where the 30 Hz bake missed the tolerance)
+                for (double u : us) got.push_back(KeyAt(tr, u).v[0] * 100.0);
             } else {
                 fbx::SetOwnReaderEnabled(false);
                 Scene sc("hermite"); bool ok = false;
@@ -383,8 +430,10 @@ static void HermiteTests() {
             }
             for (std::size_t i = 0; i < 4; ++i) {
                 const double ref = HermiteRef(0, 10, cases[ci].a, cases[ci].b, 1.0, us[i]);
-                const double tol = mode ? 0.05 : 2e-4;   // ufbx bakes on its own sample grid, so its 30 Hz keys are a piecewise-linear cut of the same curve
-                if (!Near(got[i], ref, tol)) std::cerr << "  (" << (mode ? "ufbx" : "own") << " a=" << cases[ci].a << " b=" << cases[ci].b << " u=" << us[i] << ") got " << got[i] << " expected " << ref << "\n";
+                // ufbx bakes on its own sample grid, so its 30 Hz keys are a piecewise-linear cut of the same curve; our
+                // file keys are within the reader's stated tolerance (1e-5 m + 1e-4 x 0.1 m = 2e-3 cm here)
+                const double tol = mode == 1 ? 0.05 : mode == 2 ? 2e-3 : 2e-4;
+                if (!Near(got[i], ref, tol)) std::cerr << "  (" << (mode == 1 ? "ufbx" : mode == 2 ? "own keys" : "own") << " a=" << cases[ci].a << " b=" << cases[ci].b << " u=" << us[i] << ") got " << got[i] << " expected " << ref << "\n";
                 CHECK(Near(got[i], ref, tol));
                 if (ci < 2) CHECK(Near(ref, hand[ci][i], 1e-9));   // the reference itself against the hand-computed values
             }
@@ -456,6 +505,57 @@ static std::vector<MatSnap> CollectMaterials(Scene& sc, GameObject* root) {
     return out;
 }
 
+// UV sets against ufbx, used as the oracle: for every mesh with UVs, the set names in order, and the distinct
+// (control point, value in every set) combinations over all polygons of 3 or more corners. Our parts hold exactly the
+// distinct corners, so both sides give the same list when every set is read and corners are merged only when all
+// sets agree. Values are compared as floats (ours are stored as float; ufbx keeps doubles).
+static void CompareUvSetsWithUfbx(const std::string& path, const std::string& what) {
+    fbx::Scene s; std::string err;
+    if (!LoadBuilt(path, s, &err)) return;   // (whether a file reads is checked elsewhere)
+    ufbx_load_opts uo{}; ufbx_error ue{};
+    ufbx_scene* us = ufbx_load_file(path.c_str(), &uo, &ue);
+    if (!us) return;
+    std::vector<const fbx::Mesh*> ours; std::vector<const ufbx_mesh*> theirs;
+    for (const fbx::Mesh& m : s.meshes) if (m.hasUV) ours.push_back(&m);
+    for (std::size_t i = 0; i < us->meshes.count; ++i) if (us->meshes.data[i]->uv_sets.count) theirs.push_back(us->meshes.data[i]);
+    const bool sameCount = ours.size() == theirs.size();
+    CHECK(sameCount);
+    if (!sameCount) std::cout << "  " << what << ": meshes with UVs, ours " << ours.size() << ", ufbx " << theirs.size() << "\n";
+    for (std::size_t k = 0; sameCount && k < ours.size(); ++k) {
+        const fbx::Mesh& m = *ours[k]; const ufbx_mesh& u = *theirs[k];
+        bool names = m.uvSetNames.size() == u.uv_sets.count;
+        for (std::size_t j = 0; names && j < u.uv_sets.count; ++j) names = m.uvSetNames[j] == std::string(u.uv_sets.data[j].name.data, u.uv_sets.data[j].name.length);
+        CHECK(names);
+        if (!names) { std::cout << "  " << what << " mesh " << k << ": UV set names differ (ours " << m.uvSetNames.size() << ", ufbx " << u.uv_sets.count << ")\n"; continue; }
+        const std::size_t ns = u.uv_sets.count;
+        std::set<std::vector<float>> a, b;   // cp, then u, v of each set
+        for (const fbx::Part& p : m.parts)
+            for (std::size_t v = 0; v < p.vertices.size(); ++v) {
+                std::vector<float> key{(float)p.vertices[v].cp, p.vertices[v].uv[0], p.vertices[v].uv[1]};
+                for (const auto& x : p.extraUVs) { key.push_back(x[v * 2]); key.push_back(x[v * 2 + 1]); }
+                a.insert(key);
+            }
+        for (std::size_t f = 0; f < u.faces.count; ++f) {
+            const ufbx_face fc = u.faces.data[f];
+            if (fc.num_indices < 3) continue;
+            for (std::uint32_t c = 0; c < fc.num_indices; ++c) {
+                const std::size_t ix = fc.index_begin + c;
+                std::vector<float> key{(float)u.vertex_indices.data[ix]};
+                for (std::size_t j = 0; j < ns; ++j) {
+                    const ufbx_vertex_vec2& uv = u.uv_sets.data[j].vertex_uv;
+                    const ufbx_vec2 val = uv.exists && ix < uv.indices.count && uv.indices.data[ix] < uv.values.count ? uv.values.data[uv.indices.data[ix]] : ufbx_vec2{0, 0};
+                    key.push_back((float)val.x); key.push_back((float)val.y);
+                }
+                b.insert(key);
+            }
+        }
+        const bool same = a == b;
+        CHECK(same);
+        if (!same) std::cout << "  " << what << " mesh " << k << ": distinct corners over " << ns << " UV sets, ours " << a.size() << ", ufbx " << b.size() << "\n";
+    }
+    ufbx_free_scene(us);
+}
+
 static void CompareWithUfbx() {
     RUN_SUITE("fbx: every fixture through ufbx and through our reader");
     int files = 0;
@@ -481,6 +581,7 @@ static void CompareWithUfbx() {
         const bool isReal = pi >= fixtureCount;
         ++files;
         const std::string what = fs::path(path).filename().string();
+        CompareUvSetsWithUfbx(path, what);
         // ufbx keeps a clip for a take whose curves animate only custom properties (a constant pose); ours drops it
         const bool clipsMayDiffer = what == "box_orphant_embedded_texture.fbx" || what == "box_embedded_texture_fragmented.fbx";
         fbx::Scene direct; std::string err;
@@ -649,12 +750,61 @@ static void PbrTests() {
     if (ph2) CHECK(Near(ph2->diffuse[0], 0.9) && Near(ph2->diffuse[1], 0.8) && ph2->hasRoughness && Near(ph2->roughness, 1.0 - std::sqrt(25.0) * 0.1));
 }
 
+static void UvSetTests() {
+    RUN_SUITE("fbx scene: every UV set with its name (uv2_bin / uv2_ascii)");
+    // Two quads sharing the edge between control points 1 and 4. Set 0 "UVMap" is per control point (x / 2, y); set 1
+    // "Lightmap" gives each quad its own island, so the shared corners differ in set 1 only. The file writes set 1
+    // before set 0. Expected values worked out from scripts/gen_fbx_fixtures.py (uv2_scene).
+    const float uv0[6][2] = {{0, 0}, {0.5f, 0}, {1, 0}, {0, 1}, {0.5f, 1}, {1, 1}};
+    struct Want { unsigned cp; float u, v; };
+    const Want want[8] = {{0, 0, 0}, {1, 0.4f, 0}, {4, 0.4f, 0.4f}, {3, 0, 0.4f},
+                          {1, 0.6f, 0}, {2, 1, 0}, {5, 1, 0.4f}, {4, 0.6f, 0.4f}};
+    for (const char* f : {"uv2_bin.fbx", "uv2_ascii.fbx"}) {
+        fbx::Scene s; std::string err;
+        CHECK(LoadBuilt(Fx(f), s, &err));
+        CHECK(s.meshes.size() == 1);
+        if (s.meshes.size() != 1) continue;
+        const fbx::Mesh& m = s.meshes[0];
+        CHECK(m.hasUV);
+        CHECK(m.uvSetNames.size() == 2);
+        if (m.uvSetNames.size() == 2) { CHECK(m.uvSetNames[0] == "UVMap"); CHECK(m.uvSetNames[1] == "Lightmap"); }
+        CHECK(m.parts.size() == 1);
+        if (m.parts.size() != 1) continue;
+        const fbx::Part& p = m.parts[0];
+        CHECK(p.indices.size() == 12);
+        CHECK(p.vertices.size() == 8);   // 6 control points, the 2 shared ones split by set 1
+        CHECK(p.extraUVs.size() == 1);
+        if (p.extraUVs.size() != 1 || p.extraUVs[0].size() != p.vertices.size() * 2) { CHECK(false); continue; }
+        bool set0 = true, found[8] = {};
+        for (std::size_t v = 0; v < p.vertices.size(); ++v) {
+            const fbx::Corner& c = p.vertices[v];
+            if (c.cp >= 6 || !Near(c.uv[0], uv0[c.cp][0], 1e-6) || !Near(c.uv[1], uv0[c.cp][1], 1e-6)) set0 = false;
+            for (int w = 0; w < 8; ++w)
+                if (want[w].cp == c.cp && Near(p.extraUVs[0][v * 2], want[w].u, 1e-6) && Near(p.extraUVs[0][v * 2 + 1], want[w].v, 1e-6)) found[w] = true;
+        }
+        CHECK(set0);
+        for (int w = 0; w < 8; ++w) CHECK(found[w]);
+    }
+    {   // a mesh with one UV set: its name, and no extra sets
+        fbx::Scene s; std::string err;
+        CHECK(LoadBuilt(Fx("cube_zup_cm_bin.fbx"), s, &err));
+        if (s.meshes.size() == 1) {
+            CHECK(s.meshes[0].uvSetNames.size() == 1 && s.meshes[0].uvSetNames[0] == "UVMap");
+            for (const fbx::Part& p : s.meshes[0].parts) CHECK(p.extraUVs.empty());
+        }
+        fbx::Scene n;
+        CHECK(LoadBuilt(Fx("plain_bin.fbx"), n, &err));   // no UVs: no names
+        for (const fbx::Mesh& m : n.meshes) CHECK(m.uvSetNames.empty());
+    }
+}
+
 int main() {
     InflateTests();
     DirectTests();
     HermiteTests();
     PbrTests();
     OrphanVideoTest();
+    UvSetTests();
     CompareWithUfbx();
     TEST_MAIN_RESULT();
 }

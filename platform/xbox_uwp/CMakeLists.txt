@@ -48,6 +48,11 @@ if(OKAY_BUILD_TESTS)
     add_executable(test_xbox_uwp_runtime tests/test_xbox_uwp_runtime.cpp UwpPlatform.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/Paths.cpp)
     target_include_directories(test_xbox_uwp_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/engine/include)
     add_test(NAME xbox_uwp_runtime COMMAND test_xbox_uwp_runtime)
+    # Xbox content transport: driver timeout / cancel / progress / resume, the okaycontent::Transport adapter and the factory hook, over a fake client.
+    add_executable(test_xbox_uwp_content tests/test_xbox_uwp_content.cpp)
+    target_include_directories(test_xbox_uwp_content PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+    target_compile_definitions(test_xbox_uwp_content PRIVATE OKAY_XBOX_UWP=1)
+    add_test(NAME xbox_uwp_content COMMAND test_xbox_uwp_content)
     # The log file the owner reads from the Device Portal (XboxLog.hpp). Header-only, no engine.
     add_executable(test_xbox_uwp_next tests/test_xbox_uwp_next.cpp)
     target_include_directories(test_xbox_uwp_next PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

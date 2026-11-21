@@ -2093,6 +2093,11 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             if (std::fabs(v->wheelBase - 2.4f) > 1e-4f) tl << "wheelBase=" << v->wheelBase << " ";
             if (std::fabs(v->trackWidth - 1.6f) > 1e-4f) tl << "trackWidth=" << v->trackWidth << " ";
             if (!tl.str().empty()) out << "  vehicletune " << tl.str() << "\n";
+        }
+        if (v->useScheme) {   // the control scheme, one line ('|' stands for a line break); a scene without this line keeps the old key fields
+            std::string st = okay::drivectl::ToText(v->scheme);
+            for (char& ch : st) if (ch == '\n') ch = '|';
+            out << "  vehiclecontrols " << st << "\n";
         }   // the open-world settings that differ from the defaults
         if (v->suspension)
             out << "  vehiclesusp 1 " << v->rideHeight << " " << v->springStrength << " "
@@ -6037,6 +6042,14 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int fc = 0; in >> fc; v->followCamera = (fc != 0);
                     in >> v->camDistance >> v->camHeight >> v->camLerp;
                     int hk = 32; in >> hk; v->handbrakeKey = (char)hk;
+                    v->useScheme = false;   // an older scene: keep reading the vehicle's own key fields unless a vehiclecontrols line follows
+                } else if (field == "vehiclecontrols") {
+                    auto* v = LastOf(go->GetComponents<VehicleController>());
+                    std::string rest; std::getline(in, rest);
+                    if (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);
+                    for (char& ch : rest) if (ch == '|') ch = '\n';
+                    okay::drivectl::ControlScheme sc;
+                    if (v && okay::drivectl::FromText(rest, sc)) { v->scheme = sc; v->useScheme = true; }
                 } else if (field == "vehicletune") {
                     auto* v = LastOf(go->GetComponents<VehicleController>());
                     std::string rest; std::getline(in, rest);

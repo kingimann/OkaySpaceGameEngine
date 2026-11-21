@@ -35663,7 +35663,7 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Vehicle Controller (Car)", v, &toRemove)) {
             if (oked::vehicleui::DrawInspector(v)) ed.dirty = true;
             ImGui::Separator();
-            ImGui::TextDisabled("Older model and suspension settings:");
+            if (ImGui::TreeNode("Older model and suspension settings (hidden by default)##veh")) {
             if (ImGui::DragFloat("Max Speed##veh", &v->maxSpeed, 0.5f, 0.0f, 300.0f)) ed.dirty = true;
             oked::FieldTip("Max Speed##veh");
             if (ImGui::DragFloat("Reverse Speed##veh", &v->reverseSpeed, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
@@ -35715,9 +35715,10 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Tilt Smoothing##veh", &v->tiltSmooth, 0.2f, 0.0f, 30.0f)) ed.dirty = true;
                 oked::FieldTip("Tilt Smoothing##veh");
             }
+            ImGui::TreePop(); }
             ImGui::Separator();
-            ImGui::TextDisabled("Drive: W/S or arrows = gas/reverse, A/D = steer,");
-            ImGui::TextDisabled("Space = handbrake. Needs a Rigidbody3D + collider.");
+            ImGui::TextDisabled("Keys and buttons: see the Controls tab above.");
+            ImGui::TextDisabled("Needs a Rigidbody3D + collider.");
             if (ImGui::SmallButton("Remove##veh")) toRemove = v;
         }
     }

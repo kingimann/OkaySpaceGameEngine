@@ -1,4 +1,4 @@
-// The Improved 2D step (see Physics3DImproved.inl and docs/physics_plan.md). Included by Physics2D.cpp.
+// The Improved 2D step (see Physics3DImproved.inl and docs/physics/physics.md). Included by Physics2D.cpp.
 
 struct Physics2D::Solver {
     int placeholder = 0;

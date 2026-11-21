@@ -8,7 +8,7 @@
 using namespace okay;
 
 // Follow-up to real-life digging: a terrain that is moved, turned and scaled, the world-edge catch, the dug material's dust
-// colour and sound (docs/terrain_water.md, "Real-life digging").
+// colour and sound (docs/rendering/terrain_water.md, "Real-life digging").
 namespace {
 bool AllFiniteField(const VoxelTerrain& v) { for (float f : v.density) if (!std::isfinite(f)) return false; return true; }
 struct World {

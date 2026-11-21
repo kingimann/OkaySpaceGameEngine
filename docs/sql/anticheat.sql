@@ -1,4 +1,4 @@
--- OkaySpace anti-cheat backend (opt-in; docs/anticheat.md): player reports,
+-- OkaySpace anti-cheat backend (opt-in; docs/online/anticheat.md): player reports,
 -- anti-cheat bans and ban appeals. Run once in the SQL editor AFTER admin.sql
 -- (it uses public.is_admin and public.admin_log_write). Idempotent: safe to re-run.
 --

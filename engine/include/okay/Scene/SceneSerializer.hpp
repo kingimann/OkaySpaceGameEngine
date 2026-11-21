@@ -125,7 +125,7 @@ public:
                                            std::string* error = nullptr,
                                            std::vector<std::string>* warnings = nullptr);
 
-    /// Prefab overrides (data only; see docs/prefabs.md). Compare the instance with
+    /// Prefab overrides (data only; see docs/engine/prefabs.md). Compare the instance with
     /// its source prefab file and store every record that differs in
     /// `instanceRoot.prefabOverrides`. Call it while the prefab file still matches
     /// what the instance was made from (a later prefab edit would otherwise read as

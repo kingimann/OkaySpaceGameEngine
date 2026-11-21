@@ -15,4 +15,4 @@ second
 
 and import it in the editor. Expect two parts (`first`, `second`) and a log line "... more than one group of triangles, which
 Assimp 5.4.3's RAW importer cannot read safely; reading it with our own RAW reader". A `.raw` file with one group still goes to
-Assimp. Not tried on Windows (checked on Linux in a build with Assimp). Details: `docs/own_raw_reader.md`.
+Assimp. Not tried on Windows (checked on Linux in a build with Assimp). Details: `docs/content/model_readers.md`.

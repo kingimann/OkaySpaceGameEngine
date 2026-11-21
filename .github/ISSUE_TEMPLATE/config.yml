@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/kingimann/OkaySpaceGameEngine/blob/main/docs/README.md
     about: Guides for every part of the engine. Start here.
   - name: What is not finished
-    url: https://github.com/kingimann/OkaySpaceGameEngine/blob/main/docs/UNFINISHED.md
+    url: https://github.com/kingimann/OkaySpaceGameEngine/blob/main/docs/status/UNFINISHED.md
     about: Known gaps. Check here before filing.

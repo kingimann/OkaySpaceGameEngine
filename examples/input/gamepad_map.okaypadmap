@@ -1,4 +1,4 @@
-# OkaySpace pad map file (own format, see docs/platform_layer.md "Standard layout for raw pads").
+# OkaySpace pad map file (own format, see docs/platform/platform_layer.md "Standard layout for raw pads").
 # Only for game controllers that are NOT Xbox-type (those use XInput) and only with the own Windows backend
 # (OKAY_PLATFORM=own). Copy this file next to the program as gamepad_map.okaypadmap (or point the environment variable
 # OKAY_GAMEPAD_MAP at it), put YOUR pad's ids in vid and pid (the startup line "[platform] raw pad VVVV:PPPP ..." on stderr

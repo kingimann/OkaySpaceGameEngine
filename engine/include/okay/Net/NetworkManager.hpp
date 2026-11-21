@@ -296,7 +296,7 @@ public:
     /// on an unencrypted session anyone who can read the datagrams (same network, a router on the
     /// path) sees it and can take the player's place, and no keyed proof can fix that because
     /// there is no key. With this on, such a client gets no token and a rejoin is a new peer.
-    /// Off by default (LAN and tests without encryption keep resuming). See docs/multiplayer_audit.md.
+    /// Off by default (LAN and tests without encryption keep resuming). See docs/online/multiplayer.md.
     bool resumeRequiresEncryption = false;
     /// What a reconnecting client reports to its handler.
     enum class ReconnectEvent { Lost, Attempt, Restored, GaveUp };
@@ -696,7 +696,7 @@ public:
 
     /// Build mode over the network: client placements, removals, moves, links and undo are requests the
     /// server checks; what players built reaches late joiners. Rules and counters live here. On by default
-    /// and idle while the scene has no BuildMode. See okay/Net/NetBuildSync.hpp and docs/build_mode.md.
+    /// and idle while the scene has no BuildMode. See okay/Net/NetBuildSync.hpp and docs/gameplay/build_mode.md.
     net::BuildSync& Build() { return *m_buildSync; }
     /// Quest log and story variables over the network (server authoritative). See okay/Net/NetQuestSync.hpp.
     net::QuestSync& Quests() { return *m_questSync; }

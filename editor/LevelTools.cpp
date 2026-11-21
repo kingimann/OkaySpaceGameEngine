@@ -1,5 +1,5 @@
 // Level-design tools in the editor: foliage brush, terrain texture layers, decal projector, cable, the
-// measuring tool and the orthographic views. See LevelTools.hpp and docs/level_tools.md.
+// measuring tool and the orthographic views. See LevelTools.hpp and docs/editor/level_tools.md.
 #include "LevelTools.hpp"
 #include "ConsolePanel.hpp"     // ConsoleLog
 #include "InspectorPanel.hpp"   // AssetPathPicker, HighlightAssetDrop

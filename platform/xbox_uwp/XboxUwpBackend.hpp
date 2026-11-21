@@ -2,7 +2,7 @@
 // The UWP platform backend: `okay::platform::Backend` for the Xbox UWP app, in platform/xbox_uwp (not in the desktop backends). It is
 // pure C++ over a small `UwpHost` interface, so the whole thing is tested on Linux with a fake host; the real host (CoreWindow,
 // CoreDispatcher, Windows.Gaming.Input, WASAPI) is the Windows-only glue in app/ and XboxWasapi.hpp, UNCOMPILED and NEVER RUN.
-// It reports Kind() == Own (it is our own code, not SDL). Written from docs/platform_layer.md and Platform.hpp, and Microsoft's
+// It reports Kind() == Own (it is our own code, not SDL). Written from docs/platform/platform_layer.md and Platform.hpp, and Microsoft's
 // documentation of CoreWindow events (SizeChanged, VisibilityChanged, Activated, KeyDown/KeyUp, PointerMoved/Pressed/Released,
 // PointerWheelChanged, CharacterReceived, Closed). No <thread>, no <mutex>.
 #include "XboxAudio.hpp"

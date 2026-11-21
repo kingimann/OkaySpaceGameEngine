@@ -725,7 +725,7 @@ static void Classes() {
         CHECK_NEAR(w.F("speed"), 4.0f, 1e-6f);        // this.speed is the field, not the parameter
         CHECK_NEAR(w.F("bagCount"), 2.0f, 1e-6f);
     }
-    {   // the example in docs/scripting.md
+    {   // the example in docs/scripting/scripting.md
         CHECK(Clean(
             "class Item {\n"
             "    public string name;\n"

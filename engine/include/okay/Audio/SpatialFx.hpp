@@ -2,7 +2,7 @@
 // Distance, motion and room effects for the mixer. The math is plain functions so
 // tests can check a pitch ratio, a muffling curve and an occlusion level without
 // a scene. The reverberator is a feedback delay network of our own design (see
-// RoomReverb below and docs/audio.md): written from the published papers on delay
+// RoomReverb below and docs/audio/audio.md): written from the published papers on delay
 // networks, with delay lengths, gains and the settings mapping chosen and checked
 // here. Nothing here is on unless a caller asks.
 #include "okay/Math/Vec3.hpp"
@@ -37,7 +37,7 @@ const char* ReverbPresetName(ReverbPreset preset);
 /// wanted decay time and putting a low-pass in each loop for frequency-dependent
 /// decay. Two all-pass diffusers (Schroeder, "Natural Sounding Artificial
 /// Reverberation", JAES 1962) thicken the input first. All lengths, gains and the
-/// settings mapping are our own choices, listed in SpatialFx.cpp and docs/audio.md.
+/// settings mapping are our own choices, listed in SpatialFx.cpp and docs/audio/audio.md.
 ///
 /// `Process` takes one mono sample and writes a stereo tail. The dry signal is not
 /// mixed in: the caller keeps it and adds this. `Silent` is true when the last

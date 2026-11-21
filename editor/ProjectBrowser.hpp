@@ -10,7 +10,7 @@
 //     moved file (or at a file inside a moved folder) is rewritten, the .okaymeta (GUID) moves with the file,
 //   * "what uses this asset" for the delete confirmation and Find References,
 //   * the copy / cut / paste clipboard.
-// It sits on okay::AssetDatabase (GUIDs, dependency graph). See docs/project_panel.md.
+// It sits on okay::AssetDatabase (GUIDs, dependency graph). See docs/editor/project_panel.md.
 // Failure injection: SetFailureHook makes any file step fail, so tests can check nothing is lost.
 #include "ProjectContextModel.hpp"
 #include "okay/Core/AssetDatabase.hpp"

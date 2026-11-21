@@ -4,7 +4,7 @@
 // report, each after a "========== crash @ <when> (v<version>) ==========" line).
 // Header-only so the launcher's Crash reports page and the tests share one parser.
 //
-// The layout (shared/CrashContext.hpp writes it, docs/crash_reports.md describes it): "Key: value" lines, then
+// The layout (shared/CrashContext.hpp writes it, docs/online/crash_reports.md describes it): "Key: value" lines, then
 // "Backtrace:" and one line per frame, then sections that start with "--- Name ---" (Breadcrumbs, Console). A report
 // written by an older editor has no sections and fewer keys; everything here accepts both.
 #include <algorithm>

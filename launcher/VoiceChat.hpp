@@ -1,7 +1,7 @@
 // Voice chat for the launcher: Discord-style calls and server voice rooms.
 //
 // Audio goes peer -> OkaySpace relay -> peers over UDP (the same TURN-style
-// relay games use; see docs/relay.md), so nobody needs an open port. Everyone
+// relay games use; see docs/online/relay.md), so nobody needs an open port. Everyone
 // in a room registers with the relay under the room code; whoever holds the
 // relay's host slot is the room's hub and fans each frame out to the others
 // (if it leaves, the next hello makes someone else the hub).
@@ -365,7 +365,7 @@ private:
     // Relay protocol v4 (engine/include/okay/Net/RelayHello.hpp, the same builder the
     // game's NetworkManager uses): the hub role (first one in is the hub, the next takes
     // over when it leaves), the relay's cookie for our address and a random nonce its
-    // welcome must echo, so a relay can refuse legacy hellos (docs/relay.md). A relay
+    // welcome must echo, so a relay can refuse legacy hellos (docs/online/relay.md). A relay
     // older than v3 ignores the hub role and never answers a v3+ hello, so only after
     // kLegacyAfter unanswered hellos do we fall back to the legacy v1 hello (and then
     // accept its un-echoed welcome); a current relay always answers the first one.

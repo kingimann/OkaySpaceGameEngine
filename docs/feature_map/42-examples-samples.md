@@ -34,7 +34,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Code:** `examples/netdemo/main.cpp`, `examples/CMakeLists.txt`
 - **API:** `./build/bin/netdemo server`, `./build/bin/netdemo client 127.0.0.1`, `NetworkManager::StartServer`, `StartClient`
 - **Editor:** none
-- **Docs:** `docs/launcher-multiplayer.md`
+- **Docs:** `docs/online/multiplayer.md`
 - **Tests:** none (the networking tests of area 16 cover the same calls)
 - **Status:** Works - source read; same API the `net` test drives
 - **Open:** uses the avatar API rather than NetworkSync or authoritative movement, so it doesn't show prediction or lag compensation (16.2)
@@ -70,7 +70,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Code:** `examples/account-server/server.py`
 - **API:** `OKAY_ACCOUNT_SERVER`, `OKAY_ACCOUNT_HOST`, `OKAY_ACCOUNT_PORT`, endpoints above
 - **Editor:** none
-- **Docs:** `docs/accounts.md` (Your own server, Try it locally), `docs/supabase-backend.md`
+- **Docs:** `docs/online/accounts.md` (Your own server, Try it locally), `docs/online/supabase-backend.md`
 - **Tests:** none (the remote path of `account` needs a live server)
 - **Status:** Basic - reference implementation read; the docs say it is not production-ready
 - **Open:** possible issues: no request-size cap or rate limit, tokens are lost on restart; a compiled `__pycache__/server.cpython-311.pyc` is committed (19.6); no test runs the server against the engine's client
@@ -84,11 +84,11 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Parts:**
   - 42.5.1 Align Tools - `examples/editor-plugins/AlignTools.okay` - a window (`@window`, `on_gui`) with X, Y, Z align to the first selected object, distribute along X with a gap slider, drop to y 0; each action sets an undo point
   - 42.5.2 Clean Up Names - `examples/editor-plugins/CleanupNames.okay` - no window, an `on_menu` command in the Plugins menu
-  - 42.5.3 Where to put them - `docs/editor-plugins.md` - copy into `<project>/EditorPlugins/` or `<editor>/plugins/`
+  - 42.5.3 Where to put them - `docs/editor/editor-plugins.md` - copy into `<project>/EditorPlugins/` or `<editor>/plugins/`
 - **Code:** `examples/editor-plugins/AlignTools.okay`, `examples/editor-plugins/CleanupNames.okay`
 - **API:** `// @name`, `// @window`, `on_gui()`, `on_menu()`, `editor_selection_count`, `editor_set_pos`, `editor_undo_point`, `editor_rename`
 - **Editor:** Plugins menu, Plugins > Plugin Manager...
-- **Docs:** `docs/editor-plugins.md`
+- **Docs:** `docs/editor/editor-plugins.md`
 - **Tests:** `editor_plugins` (runs both shipped examples against a tiny scene, per its source)
 - **Status:** Works - exercised by `editor_plugins`
 - **Open:** only two examples; no sample of a plugin that reacts to selection
@@ -112,7 +112,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Code:** `player/main.cpp`, `player/CMakeLists.txt`
 - **API:** `okay-player [scene.okayscene] [--join LINK | --connect HOST:PORT] | --server [options]`, `game.okayconfig`, `OKAY_ANTICHEAT`, F1, Alt+Enter, F11, Shift+Tab
 - **Editor:** File > Build Settings builds the folder that contains it (18.6); Play in the editor is a different code path
-- **Docs:** `docs/packaging.md`, `docs/web_mobile.md`, `docs/dedicated-server.md`
+- **Docs:** `docs/release/packaging.md`, `docs/platform/web_mobile.md`, `docs/online/dedicated-server.md`
 - **Tests:** `dedicated_server` covers the `--server` argument parsing it uses; nothing else tests `main.cpp`; the CI "Build player runtime" step compiles it and the export check (18.6) runs it
 - **Status:** Works - the shipping runtime; compiled by CI on every PR and run by the export check
 - **Open:** 2,674 lines in one file, with UI drawing, matchmaking windows and server startup mixed in (19.4); behaviour differs slightly from Play in the editor (separate code paths); no automated test of its command line
@@ -129,7 +129,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Code:** `assets/textures`, `assets/fonts`, `tools/gen_textures.cpp`
 - **API:** texture and font path properties on MeshRenderer, Text, Button
 - **Editor:** Project panel (Assets/Textures, Assets/Fonts after install)
-- **Docs:** `docs/packaging.md`
+- **Docs:** `docs/release/packaging.md`
 - **Tests:** none
 - **Status:** Basic - four textures and one font
 - **Open:** no sample project, sample scenes or sample audio ship in the repo; the starter templates are in code (1.6)
@@ -146,7 +146,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Code:** `examples/`, `editor/ExampleScenes.cpp`, `editor/VsPlayground.hpp`, `editor/NodePlayground.hpp`, `scripts/build-windows-dist.sh`
 - **API:** `oked::BuildUIGalleryExample`, `okay::editor::NodePlaygroundScenes`, `okay::editor::vsed::VsPlaygroundDemos`
 - **Editor:** File > Examples, File > Open
-- **Docs:** `docs/templates_check.md`, `docs/try_it.md`
+- **Docs:** `docs/process/templates_check.md`, `docs/try_it.md`
 - **Tests:** `examples_work`, `example_scenes`, `vs_playground`, `play_start_bench`
 - **Status:** Works - every scene loads, plays headless and has something in view (tested on Linux, headless; the first run found 42 scenes whose camera looked away from their content, two with a bad `gravity` line, one with no camera, and a Windows release that left out the Node Playground folder; all fixed)
 - **Open:** where the editor finds `examples/` on Windows when it is started from another folder is unverified; nothing was run in a real window

@@ -1,5 +1,5 @@
 // Prefab tools, wave 2: nested prefabs, variants, unpack, per-record / per-field apply
-// and revert, queries and the asset validator. See docs/prefab_system.md.
+// and revert, queries and the asset validator. See docs/engine/prefabs.md.
 //
 // How it works, in one paragraph: a prefab FILE is read into a RawDoc (the lines as
 // written, so a file can be edited and written back without losing anything). Resolving

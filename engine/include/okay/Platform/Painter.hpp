@@ -12,7 +12,7 @@
 // the output size, clear, the draw blend mode, texture creation and upload, present and vsync.
 //
 // OWN CODE, NOT READY: the software implementation is opt-in (OKAY_PLATFORM_BACKEND=own at run time),
-// off by default, and has no user-visible setting. See docs/platform_layer.md.
+// off by default, and has no user-visible setting. See docs/platform/platform_layer.md.
 #include "okay/Platform/Platform.hpp"
 #include "okay/UI/UIPainter.hpp"
 

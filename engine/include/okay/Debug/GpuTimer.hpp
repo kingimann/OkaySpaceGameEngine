@@ -4,7 +4,7 @@
 // later (real GPU timestamp queries resolve asynchronously). This file ships the
 // interface, a CPU-fence fallback that works on every renderer, and a null timer.
 // No renderer is modified: the hook points are listed below and in
-// docs/debug_tools.md for whoever wires them.
+// docs/engine/debug_tools.md for whoever wires them.
 //
 //     // renderer, once per frame
 //     if (GpuTimer* t = ActiveGpuTimer()) t->BeginFrame();

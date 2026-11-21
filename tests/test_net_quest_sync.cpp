@@ -12,7 +12,7 @@
 
 using namespace okay;
 
-// Quest state and story variables over the network (docs/multiplayer_audit.md round 4, item 2): the
+// Quest state and story variables over the network (docs/online/multiplayer.md round 4, item 2): the
 // server is the truth, shared and per-player scope, late joiners get everything, a client's writes are
 // requests the server judges, hostile input changes nothing.
 

@@ -11,6 +11,7 @@
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Core/LoopConsole.hpp"
 #include "okay/Core/Profiler.hpp"
+#include "okay/Core/Prefs.hpp"
 #include "okay/Core/Time.hpp"
 
 #include <cstdio>
@@ -123,7 +124,7 @@ int main() {
                                                "--cvar", "game.speed2", "--console"};
         CHECK(cl.Parse(args));
         CHECK(cl.GetBool("console"));
-        const std::vector<std::string> warn = consolehost::ApplyCvarArgs(cl);
+        const std::vector<std::string> warn = consolehost::ApplyCvarArgs(cl, true);
         CHECK(warn.size() == 2);
         CHECK(warn.size() == 2 && Has(warn[0], "nope.x") && Has(warn[0], "unknown"));
         CHECK(warn.size() == 2 && Has(warn[1], "game.speed2"));
@@ -139,6 +140,49 @@ int main() {
         CHECK(v && v->AsBool());
         CHECK(Cvars::Find("game.speed") && Cvars::Find("game.speed")->AsFloat() == 2.0f);
         DisplaySettings::SetVSync(true);
+    }
+
+    // ---- a shipped game without the console ignores --cvar (one warning), so game.speed cannot be changed ----
+    {
+        Fresh();
+        consolehost::RegisterStandard();
+        CommandLine cl;
+        consolehost::DeclareOptions(cl);
+        CHECK(cl.Parse(std::vector<std::string>{"--cvar", "game.speed=0.25", "--cvar", "debug.show_fps=1"}));
+        const std::vector<std::string> warn = consolehost::ApplyCvarArgs(cl, false);
+        CHECK(warn.size() == 1);
+        CHECK(warn.size() == 1 && Has(warn[0], "ignored") && Has(warn[0], "--console"));
+        CHECK(Time::TimeScale() == 1.0f);
+        CHECK(Cvars::Find("game.speed") && Cvars::Find("game.speed")->AsFloat() == 1.0f);
+        CHECK(Cvars::Find("debug.show_fps") && !Cvars::Find("debug.show_fps")->AsBool());
+        CommandLine none;
+        consolehost::DeclareOptions(none);
+        CHECK(none.Parse(std::vector<std::string>{}));
+        CHECK(consolehost::ApplyCvarArgs(none, false).empty());   // nothing given: nothing to warn about
+        CHECK(consolehost::ApplyCvarArgs(cl, true).empty());       // allowed: both apply
+        CHECK(Time::TimeScale() == 0.25f);
+    }
+
+    // ---- r.vsync is for this run only: the saved display settings keep the player's own choice ----------
+    {
+        Fresh();
+        Prefs::SetInt("video.vsync", 1);
+        DisplaySettings::Load();
+        CHECK(DisplaySettings::VSync());
+        consolehost::RegisterStandard();
+        CHECK(consolehost::ApplyCvarArgs(std::vector<std::string>{"r.vsync=0"}).empty());
+        CHECK(!DisplaySettings::VSync());
+        CHECK(Prefs::GetInt("video.vsync", -1) == 1);
+        DisplaySettings::SetQuality(1);                    // another setting saved: vsync still saved as the player chose
+        CHECK(!DisplaySettings::VSync());
+        CHECK(Prefs::GetInt("video.vsync", -1) == 1);
+        CHECK(Console::Execute("r.vsync 1").ok);           // typed in the console: also this run only
+        CHECK(DisplaySettings::VSync() && Prefs::GetInt("video.vsync", -1) == 1);
+        CHECK(Console::Execute("r.vsync 0").ok);
+        DisplaySettings::SetVSync(false);                  // the player picks it in Settings: that one is saved
+        CHECK(!DisplaySettings::VSync() && Prefs::GetInt("video.vsync", -1) == 0);
+        DisplaySettings::SetVSync(true);
+        CHECK(Prefs::GetInt("video.vsync", -1) == 1);
     }
 
     // ---- who may open the player console ----------------------------------------------------------------

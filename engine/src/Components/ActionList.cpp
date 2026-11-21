@@ -791,6 +791,8 @@ void ActionList::Update(float dt) {
         const std::string& op = it.op;
         ++m_ip;
 
+        // MSVC allows only ~128 nested blocks and each else-if nests one, so the chain is cut into chunks of 40.
+        bool opMatched = true;
         if (op == "wait") { m_wait = Num(it, 0); if (m_wait > 0.0f) return; }
         // wait_until <var> <cmp> <value>: hold ON this instruction, re-testing every
         // frame, until the comparison passes — then flow continues past it.
@@ -1109,7 +1111,9 @@ void ActionList::Update(float dt) {
         // ---- Text (string) variables ----
         else if (op == "str_set")    { StrVars()[Str(it, 0)] = Rest(it, 1); }               // literal text
         else if (op == "str_copy")   { StrVars()[Str(it, 0)] = StrVars()[Str(it, 1)]; }
-        else if (op == "str_append") { StrVars()[Str(it, 0)] += Rest(it, 1); }
+        else { opMatched = false; }
+        if (!opMatched) { opMatched = true;
+        if (op == "str_append") { StrVars()[Str(it, 0)] += Rest(it, 1); }
         else if (op == "str_concat") { StrVars()[Str(it, 0)] = StrVars()[Str(it, 1)] + StrVars()[Str(it, 2)]; }
         else if (op == "str_from_num"){                                                     // number -> text
             float v = GetVar(Str(it, 1));
@@ -1305,7 +1309,9 @@ void ActionList::Update(float dt) {
             else if (!it.args.empty()) dir = HumanoidActions::DirFromName(Str(it, 0));
             HumanoidActions::RequestDeath(gameObject, dir, hit);
         }
-        else if (op == "revive") HumanoidActions::RequestRevive(gameObject);
+        else { opMatched = false; }
+        } if (!opMatched) { opMatched = true;
+        if (op == "revive") HumanoidActions::RequestRevive(gameObject);
         else if (op == "dive") HumanoidActions::RequestDive(gameObject);
         else if (op == "sit") {
             GameObject* seat = nullptr;
@@ -1494,7 +1500,9 @@ void ActionList::Update(float dt) {
             if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>())
                 n->Spawn(Str(it, 0), {Num(it, 1), Num(it, 2), Num(it, 3)});
         }
-        else if (op == "net_ready") {
+        else { opMatched = false; }
+        } if (!opMatched) { opMatched = true;
+        if (op == "net_ready") {
             if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>())
                 n->SetReady(it.args.empty() ? true : Num(it, 0) != 0.0f);
         }
@@ -1601,7 +1609,9 @@ void ActionList::Update(float dt) {
             if (DisplaySettings::ParseMode(Str(it, 0), mode)) DisplaySettings::SetMode(mode);
         }
         else if (op == "set_display_resolution") DisplaySettings::SetResolution((int)Num(it, 0), (int)Num(it, 1));
-        else if (op == "set_refresh_rate") DisplaySettings::SetRefreshHz((int)Num(it, 0));
+        else { opMatched = false; }
+        } if (!opMatched) { opMatched = true;
+        if (op == "set_refresh_rate") DisplaySettings::SetRefreshHz((int)Num(it, 0));
         else if (op == "set_monitor") {
             const std::string name = Str(it, 0);
             bool digits = !name.empty();
@@ -1705,7 +1715,9 @@ void ActionList::Update(float dt) {
         else if (op == "clamp01_var"){ float& v = Vars()[Str(it, 0)]; v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
         else if (op == "round_to_var") { float s = Num(it, 1); if (s > 0.0f) Vars()[Str(it, 0)] = std::round(GetVar(Str(it, 0)) / s) * s; }
         else if (op == "percent_var"){ float b = Num(it, 2); Vars()[Str(it, 0)] = (b != 0.0f) ? Num(it, 1) / b * 100.0f : 0.0f; }
-        else if (op == "approach_var") {   // linear step toward a target (unlike lerp's ease)
+        else { opMatched = false; }
+        } if (!opMatched) { opMatched = true;
+        if (op == "approach_var") {   // linear step toward a target (unlike lerp's ease)
             float& v = Vars()[Str(it, 0)]; float tgt = Num(it, 1), st = std::fabs(Num(it, 2));
             if (std::fabs(tgt - v) <= st) v = tgt; else v += (tgt > v ? st : -st);
         }
@@ -1810,6 +1822,7 @@ void ActionList::Update(float dt) {
                     g->transform->localPosition = {c.x + Mathf::Cos(ang) * radius, c.y + Mathf::Sin(ang) * radius, c.z};
                 }
             }
+        }
         }
         // unknown ops are ignored, so files stay forward-compatible
     }

@@ -2040,6 +2040,8 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     auto arg = [&](const char* d){ return n->arg.empty() ? std::string(d) : n->arg; };
     auto q   = [&](const std::string& s){ return VsStrLit(s); };
 
+    // MSVC allows ~128 nested blocks and each else-if nests one: cut the chain into chunks of 40.
+    bool nodeMatched = true;
     if      (t=="SetVar")      out += ind + VsIdent(arg("x")) + " = " + in(0) + "\n";
     else if (t=="AddVar")      out += ind + VsIdent(arg("x")) + " += " + in(0) + "\n";
     else if (t=="Print")       out += ind + "Debug.Log(" + (VsInputLinkedOrSet(g,nodeId,0) && VsInputLinkedOrSet(g,nodeId,1)
@@ -2097,7 +2099,9 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="SetWeather")  out += ind + "weather_set(" + q(arg("rain")) + ", " + in(0, "1") + ")\n";
     else if (t=="SetFog")      out += ind + "fog_set(" + in(0, "true") + ", " + in(1, "20") + ", " + in(2, "90") + ")\n";
     else if (t=="SetPostEffect") out += ind + "post_set(" + q(arg("bloom")) + ", " + in(0, "1") + ")\n";
-    else if (t=="NavMoveTo")   out += ind + "nav_move_to(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "))\n";
+    else { nodeMatched = false; }
+    if (!nodeMatched) { nodeMatched = true;
+    if (t=="NavMoveTo")   out += ind + "nav_move_to(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "))\n";
     else if (t=="NavStop")     out += ind + "nav_stop()\n";
     else if (t=="GridMoveTo")  out += ind + "grid_move_to(" + in(0, "0") + ", " + in(1, "0") + ")\n";
     else if (t=="GridStop")    out += ind + "grid_stop()\n";
@@ -2194,7 +2198,9 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="SetRotation3")  out += ind + "set_rot3(" + in(0)+", "+in(1)+", "+in(2)+")\n";
     else if (t=="SetColor")      out += ind + "set_color(" + in(0,"1")+", "+in(1,"1")+", "+in(2,"1")+", "+in(3,"1")+")\n";
     else if (t=="PlayClip")      out += ind + "play_clip(" + q(arg("")) + ")\n";
-    else if (t=="PlayAction")    out += ind + "play_action(" + q(arg("Death")) + ", " + in(0, "0.2") + ")\n";
+    else { nodeMatched = false; }
+    } if (!nodeMatched) { nodeMatched = true;
+    if (t=="PlayAction")    out += ind + "play_action(" + q(arg("Death")) + ", " + in(0, "0.2") + ")\n";
     else if (t=="Die")           out += ind + "die(" + q(arg("forward")) + ")\n";
     else if (t=="Revive")        out += ind + "revive()\n";
     else if (t=="Dive")          out += ind + "dive()\n";
@@ -2242,7 +2248,9 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="SetObjectVar")  out += ind + "set_object_var(" + in(0, "\"self\"") + ", " + q(arg("hp")) + ", " + in(1, "0") + ")\n";
     else if (t=="SaveValue")     out += ind + "save(" + q(arg("score")) + ", " + in(0, "0") + ")\n";
     else if (t=="EnterBuildMode") out += ind + "build_enter()\n";
-    else if (t=="ExitBuildMode")  out += ind + "build_exit()\n";
+    else { nodeMatched = false; }
+    } if (!nodeMatched) { nodeMatched = true;
+    if (t=="ExitBuildMode")  out += ind + "build_exit()\n";
     else if (t=="SaveCreation")   out += ind + "build_save(" + q(arg("creation")) + ")\n";
     else if (t=="LoadCreation")   out += ind + "build_load(" + q(arg("creation")) + ")\n";
     else if (t=="AddItem")        out += ind + "inv_add(" + q(arg("item")) + ", " + in(0, "1") + ")\n";
@@ -2330,6 +2338,7 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
         out += ind + "}\n";
     }
     else                 VsExportFail(nodeId, t);
+    }
 }
 inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
                         const std::string& ind, std::set<int>& visited) {

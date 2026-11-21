@@ -1,5 +1,11 @@
 #include "okay/Scene/ComponentSerializer.hpp"
 #include "okay/Scene/Component.hpp"
+#include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"
+#include "SceneTextDetail.hpp"
+#include <ostream>
+#include <typeindex>
+#include <unordered_map>
 #include <atomic>
 #include <cctype>
 #include <mutex>
@@ -14,6 +20,7 @@ struct Table {
     std::mutex mutex;
     std::vector<std::shared_ptr<const ComponentSerializerRegistry::Entry>> entries;
     std::once_flag builtinsOnce;
+    std::unordered_map<std::string, std::type_index> genericTypes;   // record -> type, for the entries RegisterFromProperties made
 };
 Table& GetTable() { static Table t; return t; }
 
@@ -30,7 +37,7 @@ void EnsureBuiltins(Table& t) {
 } // namespace
 
 void ComponentSerializerRegistry::Register(Entry entry) {
-    if (entry.name.empty() || !entry.write || !entry.read) return;
+    if (entry.name.empty() || !entry.write || (!entry.read && !entry.readWithNotes)) return;
     AddEntry(GetTable(), std::move(entry));
 }
 
@@ -55,13 +62,55 @@ namespace detail {
 std::uint64_t ComponentSerializerGeneration() { return g_serializerGeneration.load(std::memory_order_relaxed); }
 } // namespace detail
 
-// ---- The generic path (stub: the test for it comes first) -------------------------------------
-bool ComponentSerializerRegistry::RegisterFromProperties(const std::string&, std::string* error) {
-    if (error) *error = "not written yet";
-    return false;
+// ---- The generic path ---------------------------------------------------------------------------------------
+// The fields themselves are written and read in SceneSerializer.cpp (WritePropertyFields / ReadPropertyFields), next
+// to the quoting rules of the rest of the file.
+bool ComponentSerializerRegistry::RegisterFromProperties(const std::string& typeName, std::string* error) {
+    auto fail = [&](const std::string& why) { if (error) *error = why; return false; };
+    if (error) error->clear();
+    std::shared_ptr<const ComponentTypeInfo> info = PropertyRegistry::FindByName(typeName);
+    if (!info) return fail("no PropertyRegistry entry named '" + typeName + "'");
+    if (info->objectLevel || !info->add) return fail("'" + info->name + "' is not a component that can be added");
+    const std::string& rec = info->recordName;
+    if (rec.empty()) return fail("'" + info->name + "' has no record name");
+    for (char ch : rec)
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_'))
+            return fail("record name '" + rec + "' is not lower-case letters, digits and '_'");
+    // A record the built-in chain reads is never taken over: the chain would read it first, and old files keep it.
+    if (scenetext::IsBuiltinObjectRecord(rec)) return fail("record '" + rec + "' belongs to the built-in serializer");
+    Table& t = GetTable();
+    {
+        std::lock_guard<std::mutex> lock(t.mutex);
+        for (const auto& e : t.entries)
+            if (e->name == rec) {
+                auto own = t.genericTypes.find(rec);
+                if (own == t.genericTypes.end() || own->second != info->type)
+                    return fail("record '" + rec + "' is already used by another serializer");
+            }
+        t.genericTypes.insert_or_assign(rec, info->type);
+    }
+    Entry e;
+    e.name = rec;
+    e.write = [info](const GameObject& go, std::ostream& out) {
+        for (const auto& c : go.Components()) {
+            if (!c || std::type_index(typeid(*c)) != info->type) continue;
+            out << "  " << info->recordName;
+            WritePropertyFields(*c, *info, out);
+            out << "\n";
+        }
+    };
+    auto readNoted = [info](GameObject& go, std::istream& in, std::vector<std::string>& notes) {
+        Component* c = info->add(go);
+        if (!c) { notes.push_back("could not add a " + info->name + " for record '" + info->recordName + "'"); return; }
+        std::vector<std::string> mine;
+        ReadPropertyFields(*c, *info, in, &mine);
+        for (auto& n : mine) notes.push_back(info->recordName + ": " + n);
+    };
+    e.readWithNotes = readNoted;
+    e.read = [readNoted](GameObject& go, std::istream& in) { std::vector<std::string> ignored; readNoted(go, in, ignored); };
+    AddEntry(t, std::move(e));
+    return true;
 }
-void ComponentSerializerRegistry::WritePropertyFields(const Component&, const ComponentTypeInfo&, std::ostream&) {}
-int ComponentSerializerRegistry::ReadPropertyFields(Component&, const ComponentTypeInfo&, std::istream&, std::vector<std::string>*) { return 0; }
 
 std::string ComponentSerializerRegistry::TypeKey(const Component& c) {
     const std::string raw = typeid(c).name();

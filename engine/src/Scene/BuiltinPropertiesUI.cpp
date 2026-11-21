@@ -37,6 +37,10 @@
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/UIInventoryBind.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
+#include "okay/Components/EventSystem.hpp"
+#include "okay/Components/UIDocument.hpp"
+#include "okay/Components/UIMask.hpp"
+#include "okay/Components/UISafeArea.hpp"
 
 namespace okay {
 namespace detail {
@@ -1047,8 +1051,42 @@ void RegisterTouchButton() {
     b.Commit();
 }
 
+// EventSystem (`eventsystem`): routes the pointer to UI widgets. No fields of its own.
+void RegisterEventSystem() {
+    PropertyBuilder<EventSystem> b("EventSystem", "eventsystem", "UI");
+    b.Commit();
+}
+
+// UIMask (`uimask`): clips its children to this widget.
+void RegisterUIMask() {
+    PropertyBuilder<UIMask> b("UIMask", "uimask", "UI");
+    b.AddBool("showGraphic", &UIMask::showGraphic).Tooltip("Draw the masking widget itself. Off = an invisible clip area");
+    b.Commit();
+}
+
+// UISafeArea (`uisafearea`): keeps a widget inside the screen's safe area, per edge.
+void RegisterUISafeArea() {
+    PropertyBuilder<UISafeArea> b("UISafeArea", "uisafearea", "UI");
+    b.AddBool("left", &UISafeArea::left).Tooltip("Keep clear of the left edge")
+     .AddBool("top", &UISafeArea::top).Tooltip("Keep clear of the top edge")
+     .AddBool("right", &UISafeArea::right).Tooltip("Keep clear of the right edge")
+     .AddBool("bottom", &UISafeArea::bottom).Tooltip("Keep clear of the bottom edge");
+    b.Commit();
+}
+
+// UIDocument (`uidocument`): widgets built from markup text.
+void RegisterUIDocument() {
+    PropertyBuilder<UIDocument> b("UIDocument", "uidocument", "UI");
+    b.AddString("markup", &UIDocument::markup).Multiline().Tooltip("The widget markup, one widget per line");
+    b.Commit();
+}
+
 void RegisterUIProperties() {
     RegisterUIButton();
+    RegisterEventSystem();
+    RegisterUIMask();
+    RegisterUISafeArea();
+    RegisterUIDocument();
     RegisterVirtualJoystick();
     RegisterTouchDPad();
     RegisterTouchButton();

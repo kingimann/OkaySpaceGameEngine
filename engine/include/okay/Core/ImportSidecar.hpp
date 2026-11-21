@@ -7,7 +7,8 @@
 //   * model `scale`: multiplies the size of a model added to a scene from the editor.
 //   * model `normals` / `smoothingAngle` / `importAnimations`: applied when a model is brought into a scene
 //     (see ModelImport.cpp, which reads them through ReadModelImportOptions below).
-// compress and sRGB are stored but no importer reads them, and the editor does not offer them.
+// * texture `compress` (with `sRGB`, `mipmaps`, `maxSize`): the GPU renderers upload a block-compressed copy kept in the
+//   import cache (okay/Render/GpuTexture.hpp, gputex::Source). Editor: Import Settings > "Compress on the GPU".
 // Audio `loadMode` and `forceMono` are read by the audio loader (quality is kept for old files and not applied).
 #include "okay/Graphics/Image.hpp"
 

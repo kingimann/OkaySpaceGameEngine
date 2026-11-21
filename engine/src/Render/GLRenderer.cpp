@@ -14,6 +14,16 @@
 #include <utility>
 #include "okay/Core/Log.hpp"
 
+#if defined(_WIN32)
+// The Windows SDK's GL/gl.h (MSVC) needs WINGDIAPI/APIENTRY from windows.h first; MinGW's does not.
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#endif
 #include <GL/gl.h>          // GL 1.1 types + enums only
 #include <cmath>
 #include <cstring>

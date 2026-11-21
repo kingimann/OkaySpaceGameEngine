@@ -65,7 +65,7 @@ struct Entry {
     std::string version;                 ///< normalized ("2.850.1")
     std::string channel;                 ///< "latest", "lts" or ""
     std::string date;
-    bool inBucket = false;               ///< downloadable from the releases bucket (otherwise only from GitHub)
+    bool inBucket = false;               ///< downloadable from the releases bucket (otherwise it cannot be downloaded: GitHub is never used)
     std::map<std::string, FileInfo> files;   ///< by index name
     // Test builds only (dev/versions.json, never in a real list): where the build came from. Cleaned text, only ever drawn, never used in a path or command.
     std::string branch, sha, note;       ///< the branch, its commit (7 to 40 hex digits) and the one-line note of whoever started the build ("" = not given)
@@ -79,7 +79,6 @@ struct Index {
     std::string note;                    ///< a plain sentence about how complete the list is ("" = nothing to say)
     int schema = 0;
     std::string latest, lts;             ///< the two channel heads, normalized ("" = none)
-    std::string archive;                 ///< "https://.../download/v{version}/{file}" ("" = none)
     std::string bucketPath = "v{version}/{file}";
     std::vector<Entry> versions;         ///< newest first
     const Entry* Find(const std::string& version) const;
@@ -97,8 +96,8 @@ Index ParseIndex(std::string_view text, IndexKind kind);
 /// The real list (IndexKind::Stable).
 inline Index ParseIndex(std::string_view text) { return ParseIndex(text, IndexKind::Stable); }
 /// An index made from the two small text files when versions.json is not available: the heads only, no checksums.
-/// `archiveTemplate` is the GitHub address pattern ("" = none); `bucketAvailable` says whether the bucket can be used.
-Index FallbackIndex(const std::string& latestTxt, const std::string& ltsTxt, const std::string& archiveTemplate, bool bucketAvailable);
+/// `bucketAvailable` says whether the bucket can be used. (Nothing is ever downloaded from GitHub: owner decision 2026-11-20.)
+Index FallbackIndex(const std::string& latestTxt, const std::string& ltsTxt, bool bucketAvailable);
 /// The version on the first line of VERSION.txt / LTS.txt (digits and dots only), normalized; "" when it is not one.
 std::string ParseVersionTxt(std::string_view text);
 /// "v{version}/{file}" with the two names replaced.
@@ -111,8 +110,6 @@ bool IsSafeFileName(const std::string& name);
 using FetchTextFn = std::function<bool(const std::string& url, std::string& out)>;   ///< the body of a small text file; false = unreachable
 struct Sources {
     std::string bucketBase;                       ///< "https://.../releases/" ("" = no releases bucket is configured)
-    std::string archiveTemplate;                  ///< GitHub address pattern ("https://.../download/v{version}/{file}"), "" = none
-    std::vector<std::string> versionTxtUrls;      ///< other places a VERSION.txt lives (GitHub); the bucket's own is added
     /// ed25519 public keys (hex, comma-separated) that must have signed versions.json (shared/UpdateSignature.hpp). Defaults to the keys
     /// built into this program (-DOKAY_UPDATE_TRUSTED_KEYS); "" = none, unsigned indexes are accepted (the transition).
     std::string trustedKeys = okayupdate::BuiltInTrustedKeys();
@@ -122,26 +119,46 @@ struct Sources {
 };
 /// Find out which versions exist: <bucket>/versions.json; its channel heads are then checked against <bucket>/VERSION.txt and
 /// LTS.txt (the index is written last and can lag: a newer head there is added, without checksums). When there is no usable
-/// index the heads of VERSION.txt (every place) and LTS.txt make a FallbackIndex, with `note` saying why. `ok` is false only when
+/// index the heads of the bucket's VERSION.txt and LTS.txt make a FallbackIndex, with `note` saying why. `ok` is false only when
 /// nothing at all could be read.
 Index LoadIndex(const Sources& sources, const FetchTextFn& fetch);
 /// The test builds that exist: <bucket>/dev/versions.json (and its signature, checked exactly like the real list's). It reads nothing outside
 /// <bucket>/dev/ and never falls back to anything: no usable list, no test build (a test build without a checksum cannot be installed). `versions`
 /// holds the well-formed test builds, newest first; `latest` is the newest one that can really be installed (in the bucket, with a size and
-/// SHA-256 for the editor, the player and the launcher), "" when there is none; `lts` and `archive` are always empty (a test build has no GitHub
-/// release). Install one with PlanInstall(index, version, <bucket>/dev/, ...): its files are dev/v<version>/<file>.
+/// SHA-256 for the editor, the player and the launcher), "" when there is none; `lts` is always empty. Install one with PlanInstall(index, version, <bucket>/dev/, ...): its files are dev/v<version>/<file>.
 Index LoadDevIndex(const Sources& sources, const FetchTextFn& fetch);
 
 /// The version a launch with `--versions <requested>` should highlight: the exact version when the index lists it, else the
 /// newest listed version of the same line (the LTS head when that is of the line), else "".
 std::string PickHighlight(const Index& index, const std::string& requested);
 
+// ---- the one place updates come from ---------------------------------------------------------------------------------------
+// Owner decision 2026-11-20: the shipped programs never need GitHub at run time. Updates, the version list, old versions and
+// "what's new" come only from the public Supabase "releases" bucket.
+
+/// The plain message shown when a build has no update server built in (it is a build mistake, never a silent "up to date").
+inline constexpr const char* kNoUpdateServer =
+    "This build has no update server built in, so it can't check for updates. Download the newest OkaySpace again.";
+/// The releases bucket ("https://<project>/storage/v1/object/public/releases/") from the OKAY_UPDATE_SERVER override (wins
+/// when set) or the URL built in with OKAY_DEFAULT_ACCOUNT_URL. "" when neither is an https URL (http only for 127.0.0.1).
+std::string ReleasesBucketBase(std::string_view envOverride, std::string_view builtIn);
+/// True when `url` points at GitHub (github.com, api.github.com, *.githubusercontent.com). Nothing the updater fetches may.
+bool IsGitHubUrl(std::string_view url);
+struct LatestRelease {
+    std::string version;                 ///< the newest release ("" = none)
+    std::string base;                    ///< the folder its files download from: <bucket>v<version>/
+    std::string error;                   ///< why `version` is empty (plain words)
+};
+/// The newest release, read only from <bucket>VERSION.txt. No bucket = kNoUpdateServer; unreachable = an "offline?" message.
+/// A test-build version (four numbers) in VERSION.txt is never taken as the newest release.
+LatestRelease ResolveLatestRelease(const std::string& bucketBase, const FetchTextFn& fetch);
+
 // ---- where to download from, and what to check ---------------------------------------------------------------------------
 
 struct PlanFile {
     Asset asset = Asset::Editor;
     std::string indexName, diskName;
-    std::vector<std::string> urls;       ///< tried in order (the bucket first, then GitHub)
+    std::vector<std::string> urls;       ///< tried in order (the releases bucket only)
     std::uint64_t size = 0;              ///< expected size from the index (a file without one is never planned)
     std::string sha256;                  ///< expected checksum from the index (always 64 hex digits for a downloaded file)
     bool verified = false;               ///< the checksum is known (or the file is the launcher's own SDL2.dll); Install refuses a downloaded file where this is false

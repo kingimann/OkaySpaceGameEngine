@@ -85,10 +85,10 @@ int main() {
     CHECK(Enabled(true, nullptr) && Enabled(true, "1") && !Enabled(false, nullptr) && !Enabled(true, "0") && !Enabled(false, "1"));   // the variable can only turn it off
     CHECK(StatusLine(true, nullptr).find("On:") == 0 && StatusLine(false, nullptr).find("turned it off") != std::string::npos && StatusLine(true, "0").find("OKAY_CRASH_UPLOAD") != std::string::npos);
     CHECK(std::string(DisclosureLine()).find("last 200 Console lines") != std::string::npos);
-    CHECK(StatusLine(true, nullptr).find("public GitHub issues") != std::string::npos && StatusLine(true, nullptr).find("from while it was off") != std::string::npos);
+    CHECK(StatusLine(true, nullptr).find("public bug reports") != std::string::npos && StatusLine(true, nullptr).find("from while it was off") != std::string::npos);
     {   // the words the person reads next to the switch (and in the one-time notice): what is sent, that it becomes PUBLIC, what the server sees
         const std::string d = DisclosureLine();
-        CHECK(d.find("PUBLIC issue on GitHub") != std::string::npos && d.find("anyone can read it") != std::string::npos);
+        CHECK(d.find("PUBLIC bug report") != std::string::npos && d.find("anyone can read it") != std::string::npos);
         CHECK(d.find("scene's file name") != std::string::npos && d.find("Windows version") != std::string::npos && d.find("graphics card") != std::string::npos);
         CHECK(d.find("name, folders, email, computer name and IP address are removed") != std::string::npos);
         CHECK(d.find("still sees the network address your connection comes from") != std::string::npos);   // the server sees the connection address
@@ -411,7 +411,7 @@ int main() {
         CHECK(Ledger::Parse(Ledger().Serialize()).Paused() == false && Ledger::Parse("# comment\n").Paused() == false);
     }
 
-    // ---- Report it yourself on GitHub: the prefilled address -------------------------------------------------------------------------------
+    // ---- The issue draft (the server side turns uploads into issues) -------------------------------------------------------------------------------
     {
         Report r = MakeReport(7, "2026-11-15 10:00:00", 60);
         const IssueDraft d = MakeIssueDraft(r, Alice());
@@ -421,14 +421,6 @@ int main() {
         CHECK(d.body.find("### Backtrace\n```text\n#00 OkayEngine.exe + 0x1A2B3C  DrawThing7 +0x40") != std::string::npos);
         CHECK(d.body.find("### How to reproduce") != std::string::npos && d.body.find("alice") == std::string::npos && d.body.find("%USERPROFILE%") != std::string::npos);
         CHECK(d.body.find("Console (last 30 lines)") != std::string::npos && d.trimmed);   // 60 lines logged, 30 kept by default
-        const std::string url = IssueUrl("owner/repo", r, Alice(), 7000);
-        CHECK(url.size() <= 7000 && url.find("https://github.com/owner/repo/issues/new?labels=crash&title=Crash%3A%20Access%20violation") == 0);
-        CHECK(url.find("&body=") != std::string::npos && url.find(' ') == std::string::npos && url.find('\n') == std::string::npos && url.find('<') == std::string::npos);
-        bool trimmed = false;
-        const std::string tiny = IssueUrl("owner/repo", r, Alice(), 1500, &trimmed);   // even a tight limit gives a valid address
-        CHECK(tiny.size() <= 1500 && trimmed && tiny.find("issues/new?labels=crash&title=") != std::string::npos);
-        const std::string roomy = IssueUrl("owner/repo", MakeReport(7, "2026-11-15 10:00:00", 3), Alice(), 20000, &trimmed);
-        CHECK(roomy.find("Console") != std::string::npos && !trimmed);
         // Hostile: mentions, issue links, markdown and long text in the fields cannot become live in the title or leave a code block.
         Report h = MakeReport(8);
         const std::size_t endAt = h.text.find("--- End of report ---");

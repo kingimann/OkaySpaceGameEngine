@@ -120,10 +120,7 @@ WhatsNewResult DrawWhatsNew(const WhatsNewModel& m, float x, float y, float w, f
                 }
             }
         }
-        UI::Spacing(4.0f);
-        if (UI::Button("View all releases on GitHub")) res.openReleasesPage = true;
-        res.releasesButton = UI::GetItemRect();
-        UI::EndChild();
+        UI::EndChild();   // (no "all releases on GitHub" link: the programs never open GitHub, owner decision 2026-11-20)
     }
     UI::End();
     return res;

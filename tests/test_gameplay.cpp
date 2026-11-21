@@ -60,7 +60,9 @@ int main() {
         CHECK_NEAR(cam->transform->localPosition.x, 10.0f, 0.001f);
         CHECK_NEAR(cam->transform->localPosition.y, 5.0f, 0.001f);
 
-        // With smoothing it should approach but (after one small step) not arrive.
+        // With smoothing: the first frame starts on the target (no fly-in from wherever the camera was
+        // placed; behaviour change in the camera-3 work), then it eases after the target moves and, after
+        // one small step, has not yet arrived.
         GameObject* cam2 = scene.CreateGameObject("Cam2");
         auto* cf2 = cam2->AddComponent<CameraFollow>();
         cf2->targetName = "Player";
@@ -68,8 +70,11 @@ int main() {
         cf2->offset = {0, 0, 0};
         cam2->transform->localPosition = {0, 0, 0};
         cf2->LateUpdate(0.05f);
-        CHECK(cam2->transform->localPosition.x > 0.0f);
-        CHECK(cam2->transform->localPosition.x < 10.0f);
+        CHECK_NEAR(cam2->transform->localPosition.x, 10.0f, 0.001f);
+        target->transform->localPosition = {20, 5, 0};
+        cf2->LateUpdate(0.05f);
+        CHECK(cam2->transform->localPosition.x > 10.0f);
+        CHECK(cam2->transform->localPosition.x < 20.0f);
     }
 
     // --- All round-trip through serialization ---

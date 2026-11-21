@@ -240,6 +240,7 @@
 #include "okay/Components/CinemachineBrain.hpp"
 #include "okay/Components/CameraMath.hpp"
 #include "okay/Components/CameraRoom.hpp"
+#include "okay/Components/CameraZone.hpp"
 #include "okay/Components/CameraCollision.hpp"
 
 // AI

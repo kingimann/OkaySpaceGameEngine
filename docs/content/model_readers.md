@@ -782,7 +782,7 @@ Not verified on real files: `MESH` (no real file has one; synthetic only), polyg
 
 *Was `docs/own_fbx_reader.md` until 2026-11-20.*
 
-Status: **side by side, off by default.** ufbx (`engine/third_party/ufbx`) is still the default FBX reader and is still compiled in. Nothing has been removed. This follows stage 2 of `docs/status/own_code_roadmap.md`: our own backend behind the existing seam, selectable, and promoted only after it has earned it.
+Status: **the default FBX reader since 2026-11-18 (#982), with ufbx as the fallback.** ufbx (`engine/third_party/ufbx`) is still compiled in and reads any file ours refuses; `OKAY_OWN_FBX=0` or `OKAY_THIRD_PARTY=1` sends every file to ufbx. Nothing has been removed. (This page said "off by default" until 2026-11-21; the CMake option has been `ON` since #982.) This follows stage 2 of `docs/status/own_code_roadmap.md`: our own backend behind the existing seam, selectable, and promoted only after it has earned it.
 
 ### What it is
 
@@ -800,7 +800,7 @@ The reader files use the standard library and one header-only file of our own, `
 
 ### Turning it on
 
-- CMake: `-DOKAY_OWN_FBX=ON` makes it the default reader for that build (default `OFF`).
+- CMake: `-DOKAY_OWN_FBX=ON` makes it the default reader for that build (default `ON` since #982; `OFF` makes ufbx the default).
 - Run time: environment variable `OKAY_OWN_FBX=1` (or `0`) overrides the build default; `okay::fbx::SetOwnReaderEnabled(true)` does the same from code and is what the tests use.
 - When our reader is selected and cannot read a file, the importer falls back to ufbx for that file.
 
@@ -808,7 +808,7 @@ The reader files use the standard library and one header-only file of our own, `
 
 - Binary FBX 7.1 to 7.7 (32-bit offsets below 7500, 64-bit from 7500) and ASCII FBX 7.x. All array property types (`f d l i b` and the byte array `c`), raw and zlib-compressed. The zlib arrays are inflated by the engine's ONE inflate (`engine/include/okay/Core/Inflate.hpp`: stored, fixed and dynamic Huffman blocks); `okay::fbx::Inflate` is a thin wrapper that keeps the forgiving behaviour this reader always had (the Adler-32 and bytes after the stream are not checked). The FBX reader no longer has a decoder of its own.
 - Embedded textures (`Video` / `Content`, raw bytes in binary, base64 in ASCII) and texture file names.
-- Geometry (`Mesh`): positions, polygon vertex indices with the negative end marker, normals, UVs, vertex colors, per-polygon material ids. Mapping modes `ByPolygonVertex`, `ByVertice`, `ByPolygon`, `AllSame` and `ByEdge`; reference modes `Direct` and `IndexToDirect`. Missing normals are generated flat, one per polygon (ufbx does the same without smoothing data; smoothing groups are not used). Polygons with fewer than 3 corners or out-of-range indices are skipped.
+- Geometry (`Mesh`): positions, polygon vertex indices with the negative end marker, normals, every UV set with its name (section "UV sets" below), vertex colors, per-polygon material ids. Mapping modes `ByPolygonVertex`, `ByVertice`, `ByPolygon`, `AllSame` and `ByEdge`; reference modes `Direct` and `IndexToDirect`. Missing normals are generated flat, one per polygon (ufbx does the same without smoothing data; smoothing groups are not used). Polygons with fewer than 3 corners or out-of-range indices are skipped.
 - Triangulation: triangles directly, quads and n-gons by ear clipping on the polygon's dominant plane (concave polygons keep their winding), fan fallback for degenerate input and for polygons over 256 corners.
 - Meshes split per material slot, in ascending slot order.
 - Materials: diffuse color, emissive color and factor, shininess mapped to roughness (`1 - sqrt(shininess) * 0.1`, the mapping ufbx uses), diffuse and normal-map texture connections. PBR property sets written by 3ds Max (Physical Material, PBR metal/rough, PBR spec/gloss, the glTF material, OpenPBR), recognised by the class id in the material the way ufbx does (a material that says lambert or phong keeps the classic reading): base colour, roughness (glossiness inverted when `useGlossiness` is about 1), metalness, emission colour and factor, and the colour, normal and ambient-occlusion texture slots, which 3ds Max connects as `<name>_map`. A texture whose own Video has no picture takes it from another Video with the same file name.
@@ -816,7 +816,7 @@ The reader files use the standard library and one header-only file of our own, `
 - Axis and unit settings from `GlobalSettings` (up, front, coord axes and signs, unit scale) are converted to right-handed Y-up, meters, the same way ufbx's "modify geometry" mode does it: the unit scale multiplies every translation, vertex, inverse bind and blend offset, and only the root nodes get the axis rotation, so every node below keeps the local axes the file was authored in (important for retargeting). Checked against ufbx on the fixtures (Z-up/cm and Y-up/m).
 - Skins: first skin deformer, clusters, per-control-point weights sorted strongest first, the cluster's `Transform` (mesh node relative to the bone, as Blender writes it and as ufbx reads it) times the geometric transform as the inverse bind (`geometryToBone`), bone node per cluster. `TransformLink` is not used.
 - Blend shapes: blend deformers, channels, `DeformPercent`, the channel's last target shape with position and normal offsets.
-- Animation: stacks, layers, curve nodes, curves (`KeyTime`, `KeyValueFloat`, `KeyAttrFlags`, `KeyAttrDataFloat`, `KeyAttrRefCount`). Constant, linear and cubic interpolation (Hermite from the slopes the file stores, or neighbour-derived for auto keys when it stores none). Translation, rotation and scaling of nodes plus blend `DeformPercent` are baked at 30 Hz (capped at 20000 samples), start trimmed to 0, one clip per stack.
+- Animation: stacks, layers, curve nodes, curves (`KeyTime`, `KeyValueFloat`, `KeyAttrFlags`, `KeyAttrDataFloat`, `KeyAttrRefCount`). Constant, linear and cubic interpolation (Hermite from the slopes the file stores, or neighbour-derived for auto keys when it stores none). Translation, rotation and scaling of nodes plus blend `DeformPercent` become clip keys at the file's own key times plus the keys a tolerance needs (section "Animation keys"; `OKAY_FBX_BAKE30=1` brings back the old 30 Hz bake), start trimmed to 0, one clip per stack.
 - Limits against hostile files (`okay::fbx::Limits`). Going past one fails the load with an error string (never a crash); parent cycles among models are broken instead of failing. The ufbx path in `ModelImport` enforces the same node and animation numbers (see `docs/content/model_import.md`).
 
   | Limit | Default | What it bounds |
@@ -828,6 +828,7 @@ The reader files use the standard library and one header-only file of our own, `
   | `maxCorners` | 8 Mi | triangle corners built, whole scene |
   | `maxNodes` | 1 Mi | scene nodes (models) |
   | `maxNodeDepth` | 2048 | scene hierarchy depth (the walk is iterative, so depth is never call depth) |
+  | `maxUVSets` | 8 | UV sets read per mesh; the ones after are skipped |
   | `maxBakedSamples` | 20000 | baked samples per clip |
   | `maxAnimStacks` | 128 | `AnimationStack` objects |
   | `maxAnimLayers` | 1024 | `AnimationLayer` objects |
@@ -843,14 +844,153 @@ Say plainly what a user might trip over:
 - FBX 6.x and older (no `Objects` section / different layout) and binary versions below 7100. `Properties60` is not read.
 - `InheritType` other than the default (`RrSs`, `Rrs` scale inheritance) is treated as the default. ufbx can compensate for these.
 - Only `Mesh` geometry. NURBS, patches, lines, cameras, lights, skeleton node attributes, `Pose`/`BindPose` objects, templates in `Definitions` and visibility are ignored (clusters carry the bind matrices we use).
-- Mesh data: only the first UV set; vertex colors are read but the engine does not use them; tangent, binormal and smoothing-group layers are ignored; `ByEdge` mapping is approximate (a corner takes the edge that starts at it).
-- Materials: no `Bump`, specular, opacity, transmission, coat, sheen or subsurface values, no Maya / Arnold / OSL standard-surface or ShaderFX / Stingray graph materials (they sit in separate `Shader` objects the reader does not follow), no textures for emission, metalness, roughness or opacity (the importer takes the colour and normal-map files), UV set names are not read (first UV set only, as in the ufbx path). Material values agree with ufbx on the 42 real files and the 12 fixtures except where the picture file of a textured colour or glossiness slot is missing (`docs/content/model_corpus.md`).
+- Mesh data: every UV set is read, but the engine's `Mesh` has one UV channel, so the import uses set 0 only (the other sets and the names stay in `okay::fbx` data); vertex colors are read but the engine does not use them; tangent, binormal and smoothing-group layers are ignored; `ByEdge` mapping is approximate (a corner takes the edge that starts at it).
+- Materials: no `Bump`, specular, opacity, transmission, coat, sheen or subsurface values, no Maya / Arnold / OSL standard-surface or ShaderFX / Stingray graph materials (they sit in separate `Shader` objects the reader does not follow), no textures for emission, metalness, roughness or opacity (the importer takes the colour and normal-map files); a texture's own UV set choice (`UVSet` on the texture) is not followed, set 0 is used. Material values agree with ufbx on the 42 real files and the 12 fixtures except where the picture file of a textured colour or glossiness slot is missing (`docs/content/model_corpus.md`).
 - Skinning: only the first skin deformer; dual-quaternion skinning type and additive cluster link modes are ignored; for a geometry shared by several nodes the first node's geometric transform is used for the inverse binds.
 - Blend shapes: in-between shapes (`FullWeights` with several targets) are not interpolated, only the last target is used.
-- Animation: constant (step) curves are baked at 30 Hz, so a jump becomes a one-frame ramp (ufbx emits a key pair at the jump); we emit every channel of an animated node at every sample (ufbx emits only animated channels with fewer keys); custom tangent weights and velocities are ignored; TCB tangents are treated like auto; auto-clamp is approximated; layer blending is simplified (first layer overrides, later layers add or lerp by weight, rotations are blended as Euler angles); only translation, rotation, scaling and `DeformPercent` are animated (not pivots, pre/post rotation or other properties); a take plays the span its `LocalStart` / `LocalStop` give (several takes can share one set of curves), else the range of its keys; ufbx keeps keys beyond the span in its clip, ours cuts there; a take whose curves animate only custom properties gives no clip (ufbx gives a constant one); no key reduction (ufbx reduces keys; the engine's `OptimizeClips` runs afterwards on both paths).
+- Animation: we emit every channel of an animated node at every key (ufbx emits only animated channels); custom tangent weights and velocities are ignored; TCB tangents are treated like auto; auto-clamp is approximated; layer blending is simplified (first layer overrides, later layers add or lerp by weight, rotations are blended as Euler angles); only translation, rotation, scaling and `DeformPercent` are animated (not pivots, pre/post rotation or other properties); a take plays the span its `LocalStart` / `LocalStop` give (several takes can share one set of curves), else the range of its keys; ufbx keeps keys beyond the span in its clip, ours cuts there; a take whose curves animate only custom properties gives no clip (ufbx gives a constant one); no key reduction (ufbx reduces keys; the engine's `OptimizeClips` runs afterwards on both paths).
 - Left-handed source axis systems: the root node gets the (mirroring) axis matrix and nothing else is done about winding; untested against ufbx. `Transform` is assumed to be bone-relative as above; an exporter that writes the mesh's world matrix there instead would skin wrongly (ufbx makes the same assumption, but this has only been checked on our own fixtures).
 - No repair of damaged files. ufbx recovers from many malformed files; ours rejects them. Big-endian files, zlib checksums (Adler-32 is not verified), encrypted FBX and streaming are not supported.
-- Not benchmarked. Nothing has been measured against ufbx for speed or memory.
+- Speed and memory: measured on Linux only (section "Speed and memory"), not on Windows.
+
+### UV sets
+
+Since 2026-11-21 the reader reads every `LayerElementUV` of a mesh, not only the first.
+
+- Order: by the element's index (its first property), file order for equal indices. Set 0 is the one with the lowest index, as before, and stays in `Corner::uv` bit for bit.
+- Names: `Mesh::uvSetNames` holds every set's `Name` in that order (`[0]` is set 0; empty strings are kept, two corpus files have unnamed sets). Empty when the mesh has no UVs.
+- Values: `Part::extraUVs[k]` is set `k + 1`, two floats per part vertex (u, v as stored, v bottom-up). A set that does not cover a corner gives (0, 0), as for set 0. Two corners share a vertex only when every set agrees too.
+- A set whose mapping or values cannot be read is skipped; at most `Limits::maxUVSets` (8) sets per mesh.
+- The engine's `Mesh` has one UV channel (`uvs`), so the importer (`BuildOwnPart`) still uses set 0 only and the imported scene is unchanged. The other readers are untouched: `ImportedModel` has no extra channels.
+- Checked: fixtures `uv2_bin.fbx` and `uv2_ascii.fbx` (two quads sharing an edge, sets "UVMap" and "Lightmap", set 1 written before set 0; 8 vertices, not 6); and on every fixture and corpus file `fbx_reader` compares the set names and every distinct (control point, all sets) corner with ufbx's `uv_sets`. Four corpus files have two sets (`cube_with_2UVs.fbx` ASCII and binary, unnamed; `box_orphant_embedded_texture.fbx` and `box_embedded_texture_fragmented.fbx`, "UVChannel_1" and "UVChannel_3"); all agree with ufbx.
+
+### Speed and memory
+
+Measured 2026-11-21 on Linux, GCC 13, Release (`-O3`, no `-march`), on a shared 4-core cloud machine with a load of 8 to 13 from other work, so single numbers move by 10 to 40 % between runs (ufbx's as much as ours). Times are medians; where a single file mattered, `callgrind` instruction counts (steady, unlike wall time) were compared too. **Not measured on Windows.** Files: the 42 readable FBX files of the corpus (`docs/content/model_corpus.md`; the 43rd is the damaged file both reject) and the 14 fixtures.
+
+**How it was measured.** `tests/bench_fbx_reader.cpp` (built, not run by ctest): for every file, the median of at least 9 runs (more for small files, until 50 ms have passed) and the peak heap of each call. The heap is counted by replacing `malloc` / `free` in the bench, so ufbx's C allocations and our `new` count the same way. Columns:
+
+- **load**: the reader alone on bytes already in memory, into its own structures (`okay::fbx::LoadMemory` against `ufbx_load_memory` with the engine's ufbx options).
+- **import**: `ImportModelScene` through the seam with our reader on and off. This reads the file, runs the reader, triangulates, builds the GameObjects, meshes, skins and clips: the work an editor import does, the same work on both sides.
+
+Run it: `OKAY_MODEL_CORPUS=<assimp v5.4.3 checkout>/test bench_fbx_reader --runs 9 --quiet` (with no file argument it reads the corpus and `tests/assets/fbx`). `--digest`, `--parts-digest` and `--import-digest` print one hash per file of everything our reader (or the import) produced, to show that a speed change changed nothing; `--uv-sets` lists meshes with more than one UV set; `--only WHAT --time` times one call per file for a profiler.
+
+**Through the seam, now** (the average of two full runs; peaks from the second run):
+
+| File | KB | load own ms | load ufbx ms | load own/ufbx | load peak own / ufbx MB | import own ms | import ufbx ms | import own/ufbx | import peak own / ufbx MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2013_ASCII/COLLADA.fbx | 711 | 1.698 | 2.021 | 0.84x | 0.92 / 1.57 | 3.119 | 3.704 | 0.84x | 1.62 / 4.12 |
+| 2013_ASCII/Cinema4D.fbx | 81 | 0.197 | 0.204 | 0.97x | 0.17 / 0.39 | 0.384 | 0.425 | 0.90x | 0.26 / 0.64 |
+| 2013_ASCII/ConcavePolygon.fbx | 12 | 0.023 | 0.066 | 0.35x | 0.06 / 0.18 | 0.080 | 0.097 | 0.83x | 0.08 / 0.20 |
+| 2013_ASCII/Granate.fbx | 68 | 0.124 | 0.197 | 0.63x | 0.16 / 0.29 | 0.232 | 0.335 | 0.69x | 0.23 / 0.31 |
+| 2013_ASCII/cube_with_2UVs.fbx | 14 | 0.032 | 0.072 | 0.43x | 0.10 / 0.18 | 0.045 | 0.086 | 0.52x | 0.12 / 0.20 |
+| 2013_ASCII/duck.fbx | 288 | 0.575 | 0.657 | 0.88x | 0.37 / 0.73 | 1.331 | 1.442 | 0.92x | 0.73 / 3.20 |
+| 2013_ASCII/jeep1.fbx | 336 | 0.430 | 0.639 | 0.67x | 0.30 / 0.69 | 0.888 | 1.119 | 0.79x | 0.63 / 1.25 |
+| 2013_ASCII/kwxport_test_vcolors.fbx | 18 | 0.034 | 0.090 | 0.37x | 0.10 / 0.21 | 0.074 | 0.151 | 0.49x | 0.13 / 0.23 |
+| 2013_ASCII/mar_rifle.fbx | 123 | 0.167 | 0.294 | 0.57x | 0.16 / 0.35 | 0.343 | 0.434 | 0.79x | 0.29 / 0.60 |
+| 2013_ASCII/mp5_sil.fbx | 87 | 0.136 | 0.218 | 0.62x | 0.14 / 0.29 | 0.231 | 0.349 | 0.66x | 0.24 / 0.32 |
+| 2013_ASCII/pyramob.fbx | 3798 | 7.543 | 7.817 | 0.96x | 2.63 / 3.84 | 16.700 | 17.450 | 0.96x | 6.35 / 24.13 |
+| 2013_BINARY/COLLADA.fbx | 189 | 0.973 | 1.035 | 0.94x | 0.78 / 1.08 | 2.484 | 2.716 | 0.91x | 1.42 / 4.12 |
+| 2013_BINARY/Cinema4D.fbx | 37 | 0.158 | 0.221 | 0.71x | 0.13 / 0.38 | 0.396 | 0.467 | 0.85x | 0.23 / 0.64 |
+| 2013_BINARY/ConcavePolygon.fbx | 16 | 0.016 | 0.047 | 0.34x | 0.04 / 0.18 | 0.079 | 0.081 | 0.97x | 0.07 / 0.20 |
+| 2013_BINARY/Granate.fbx | 41 | 0.122 | 0.191 | 0.64x | 0.12 / 0.28 | 0.252 | 0.316 | 0.80x | 0.17 / 0.30 |
+| 2013_BINARY/anims_with_full_rotations_between_keys.fbx | 359 | 0.477 | 0.573 | 0.83x | 1.08 / 1.66 | 2.370 | 2.141 | 1.11x | 1.44 / 1.68 |
+| 2013_BINARY/cube_with_2UVs.fbx | 19 | 0.014 | 0.038 | 0.36x | 0.05 / 0.18 | 0.030 | 0.056 | 0.53x | 0.08 / 0.20 |
+| 2013_BINARY/duck.fbx | 938 | 0.995 | 1.002 | 0.99x | 1.06 / 2.42 | 2.127 | 2.096 | 1.02x | 1.99 / 4.96 |
+| 2013_BINARY/jeep1.fbx | 152 | 0.520 | 0.565 | 0.92x | 0.32 / 0.68 | 1.069 | 1.198 | 0.89x | 0.48 / 1.25 |
+| 2013_BINARY/kwxport_test_vcolors.fbx | 603 | 0.037 | 0.074 | 0.51x | 0.63 / 0.87 | 0.179 | 0.239 | 0.75x | 1.23 / 1.06 |
+| 2013_BINARY/mar_rifle.fbx | 241 | 0.168 | 0.226 | 0.74x | 0.31 / 0.70 | 0.397 | 0.382 | 1.04x | 0.56 / 0.91 |
+| 2013_BINARY/mp5_sil.fbx | 232 | 0.107 | 0.166 | 0.64x | 0.29 / 0.70 | 0.245 | 0.317 | 0.77x | 0.53 / 0.90 |
+| 2013_BINARY/multiple_animations_test.fbx | 33 | 0.026 | 0.054 | 0.49x | 0.09 / 0.19 | 0.115 | 0.239 | 0.48x | 0.14 / 0.21 |
+| 2013_BINARY/pyramob.fbx | 826 | 4.817 | 4.665 | 1.03x | 2.10 / 3.21 | 11.200 | 14.900 | 0.75x | 3.66 / 24.13 |
+| FBX/animation_with_skeleton.fbx | 190 | 1.133 | 1.180 | 0.96x | 0.72 / 1.15 | 1.794 | 1.740 | 1.03x | 0.94 / 2.37 |
+| FBX/box.fbx | 16 | 0.010 | 0.030 | 0.35x | 0.04 / 0.17 | 0.021 | 0.045 | 0.47x | 0.07 / 0.19 |
+| FBX/boxWithCompressedCTypeArray.FBX | 13 | 0.010 | 0.030 | 0.33x | 0.04 / 0.14 | 0.021 | 0.042 | 0.51x | 0.06 / 0.16 |
+| FBX/boxWithUncompressedCTypeArray.FBX | 25 | 0.009 | 0.028 | 0.35x | 0.03 / 0.14 | 0.020 | 0.040 | 0.50x | 0.06 / 0.16 |
+| FBX/box_orphant_embedded_texture.fbx | 35 | 0.056 | 0.126 | 0.44x | 0.11 / 0.25 | 0.083 | 0.179 | 0.46x | 0.16 / 0.27 |
+| FBX/close_to_identity_transforms.fbx | 86 | 0.204 | 0.235 | 0.87x | 0.20 / 0.40 | 0.282 | 0.343 | 0.82x | 0.30 / 0.45 |
+| FBX/cubes_nonames.fbx | 85 | 0.166 | 0.249 | 0.67x | 0.20 / 0.40 | 0.303 | 0.369 | 0.82x | 0.30 / 0.45 |
+| FBX/cubes_with_mirroring_and_pivot.fbx | 86 | 0.203 | 0.265 | 0.77x | 0.20 / 0.40 | 0.362 | 0.411 | 0.88x | 0.30 / 0.45 |
+| FBX/cubes_with_names.fbx | 86 | 0.184 | 0.240 | 0.77x | 0.20 / 0.40 | 0.294 | 0.351 | 0.84x | 0.30 / 0.45 |
+| FBX/cubes_with_outofrange_float.fbx | 86 | 0.186 | 0.242 | 0.77x | 0.20 / 0.40 | 0.292 | 0.352 | 0.83x | 0.30 / 0.45 |
+| embedded_ascii/box.FBX | 588 | 0.261 | 0.581 | 0.45x | 0.47 / 1.65 | 0.550 | 0.627 | 0.88x | 1.06 / 2.16 |
+| embedded_ascii/box_embedded_texture_fragmented.fbx | 1283 | 0.377 | 0.954 | 0.39x | 0.57 / 2.91 | 0.603 | 1.169 | 0.52x | 1.84 / 3.19 |
+| FBX/global_settings.fbx | 56 | 0.196 | 0.252 | 0.78x | 0.19 / 0.42 | 0.433 | 0.524 | 0.83x | 0.27 / 1.01 |
+| FBX/huesitos.fbx | 108 | 0.194 | 0.361 | 0.54x | 0.33 / 0.48 | 0.663 | 0.723 | 0.92x | 0.45 / 0.50 |
+| FBX/maxPbrMaterial_metalRough.fbx | 19 | 0.058 | 0.126 | 0.46x | 0.10 / 0.19 | 0.079 | 0.157 | 0.50x | 0.13 / 0.21 |
+| FBX/maxPbrMaterial_specGloss.fbx | 19 | 0.046 | 0.107 | 0.43x | 0.10 / 0.19 | 0.079 | 0.165 | 0.48x | 0.13 / 0.21 |
+| FBX/phong_cube.fbx | 16 | 0.013 | 0.042 | 0.33x | 0.04 / 0.17 | 0.026 | 0.058 | 0.45x | 0.07 / 0.19 |
+| FBX/spider.fbx | 120 | 0.873 | 1.054 | 0.83x | 0.41 / 0.74 | 1.778 | 1.962 | 0.91x | 0.53 / 0.76 |
+| FBX/transparentTest.fbx | 380 | not read by both | | | | | | | |
+| fbx/bridge_bin.fbx | 2 | 0.004 | 0.011 | 0.36x | 0.01 / 0.10 | 0.021 | 0.022 | 0.95x | 0.02 / 0.12 |
+| fbx/cube_yup_m_bin75.fbx | 4 | 0.008 | 0.022 | 0.36x | 0.01 / 0.13 | 0.028 | 0.048 | 0.57x | 0.03 / 0.15 |
+| fbx/cube_zup_cm_ascii.fbx | 2 | 0.010 | 0.026 | 0.41x | 0.02 / 0.13 | 0.033 | 0.046 | 0.71x | 0.03 / 0.15 |
+| fbx/cube_zup_cm_bin.fbx | 3 | 0.009 | 0.021 | 0.42x | 0.01 / 0.13 | 0.030 | 0.046 | 0.65x | 0.03 / 0.15 |
+| fbx/ngon_bin.fbx | 3 | 0.005 | 0.014 | 0.34x | 0.01 / 0.13 | 0.017 | 0.031 | 0.55x | 0.02 / 0.15 |
+| fbx/orphan_video_bin.fbx | 3 | 0.007 | 0.018 | 0.42x | 0.01 / 0.13 | 0.024 | 0.038 | 0.62x | 0.02 / 0.15 |
+| fbx/pbr_bin.fbx | 13 | 0.033 | 0.054 | 0.61x | 0.05 / 0.23 | 0.159 | 0.213 | 0.74x | 0.08 / 0.25 |
+| fbx/pivot_bin.fbx | 2 | 0.007 | 0.024 | 0.31x | 0.01 / 0.10 | 0.018 | 0.029 | 0.64x | 0.02 / 0.12 |
+| fbx/plain_bin.fbx | 2 | 0.005 | 0.037 | 0.15x | 0.01 / 0.11 | 0.015 | 0.026 | 0.59x | 0.02 / 0.13 |
+| fbx/rig_ascii.fbx | 6 | 0.033 | 0.057 | 0.57x | 0.04 / 0.21 | 0.128 | 0.116 | 1.10x | 0.05 / 0.23 |
+| fbx/rig_bin75.fbx | 11 | 0.021 | 0.041 | 0.52x | 0.04 / 0.21 | 0.104 | 0.101 | 1.04x | 0.06 / 0.23 |
+| fbx/takes_bin.fbx | 5 | 0.011 | 0.024 | 0.46x | 0.02 / 0.14 | 0.035 | 0.049 | 0.71x | 0.04 / 0.16 |
+| fbx/uv2_ascii.fbx | 1 | 0.008 | 0.018 | 0.44x | 0.01 / 0.10 | 0.019 | 0.028 | 0.68x | 0.02 / 0.12 |
+| fbx/uv2_bin.fbx | 2 | 0.006 | 0.016 | 0.38x | 0.01 / 0.10 | 0.016 | 0.025 | 0.64x | 0.02 / 0.12 |
+
+Totals over the 56 files: **load 0.86x ufbx's time** (23.7 against 27.6 ms; 0.85x and 0.86x in the two runs) and **import 0.87x** (52.7 against 60.8 ms; 0.84x and 0.89x). **Peak heap is lower than ufbx's on every file** for the load, and for the import on every file but one: `2013_BINARY/kwxport_test_vcolors.fbx`, 1.23 against 1.06 MB. The largest import peak is 6.35 MB against ufbx's 24.13 MB (`2013_ASCII/pyramob.fbx`).
+
+Files where our import was slower in wall time: `anims_with_full_rotations_between_keys.fbx` (1.11x), `rig_ascii.fbx` (1.10x, a 6 KB fixture), `mar_rifle.fbx` binary, `rig_bin75.fbx` and `animation_with_skeleton.fbx` (1.03x to 1.04x). Counted in instructions (callgrind, start-up of the program subtracted), ours does less work than ufbx on both real files: `anims_with_full_rotations_between_keys.fbx` 20.5 M against 21.5 M, `animation_with_skeleton.fbx` 13.6 M against 14.0 M (14.5 M before this change, below). The rest is within the machine's noise.
+
+**Before and after the speed work** (the reader alone with file read included: our `LoadFile` and the import steps it does, triangulation and clip keys, against `ufbx_load_file`; both readers built from their tree's sources with the engine's flags, `main` at `4b4b8d4f` against this branch, three alternating runs, the median of each). ufbx's column here does less than ours: it does not triangulate or make clip keys (in the engine those happen in the import, which the table above compares). Files of 100 KB or more:
+
+| File | KB | main ms | branch ms | ufbx ms | main / ufbx | branch / ufbx | main MB | branch MB | ufbx MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2013_ASCII/COLLADA.fbx | 711 | 12.109 | 3.074 | 1.954 | 6.20x | 1.57x | 4.89 | 1.62 | 1.59 |
+| 2013_ASCII/duck.fbx | 288 | 3.793 | 1.268 | 0.616 | 6.16x | 2.06x | 2.49 | 0.73 | 0.75 |
+| 2013_ASCII/jeep1.fbx | 336 | 3.960 | 0.788 | 0.734 | 5.39x | 1.07x | 1.60 | 0.63 | 0.71 |
+| 2013_ASCII/mar_rifle.fbx | 123 | 1.555 | 0.363 | 0.325 | 4.78x | 1.11x | 0.62 | 0.29 | 0.37 |
+| 2013_ASCII/pyramob.fbx | 3798 | 64.546 | 18.839 | 10.040 | 6.43x | 1.88x | 18.46 | 6.35 | 3.86 |
+| 2013_BINARY/COLLADA.fbx | 189 | 3.071 | 1.991 | 1.091 | 2.82x | 1.83x | 4.08 | 1.42 | 1.10 |
+| 2013_BINARY/anims_with_full_rotations_between_keys.fbx | 359 | 16.487 | 1.305 | 0.647 | 25.47x | 2.02x | 6.27 | 1.44 | 1.68 |
+| 2013_BINARY/duck.fbx | 938 | 4.097 | 2.284 | 1.142 | 3.59x | 2.00x | 4.43 | 1.99 | 3.18 |
+| 2013_BINARY/jeep1.fbx | 152 | 1.526 | 0.842 | 0.589 | 2.59x | 1.43x | 1.41 | 0.49 | 0.74 |
+| 2013_BINARY/kwxport_test_vcolors.fbx | 603 | 1.217 | 0.095 | 0.127 | 9.59x | 0.75x | 2.33 | 1.23 | 1.06 |
+| 2013_BINARY/mar_rifle.fbx | 241 | 0.957 | 0.270 | 0.244 | 3.93x | 1.11x | 1.08 | 0.56 | 0.90 |
+| 2013_BINARY/mp5_sil.fbx | 232 | 0.838 | 0.198 | 0.198 | 4.23x | 1.00x | 1.04 | 0.53 | 0.90 |
+| 2013_BINARY/pyramob.fbx | 826 | 29.108 | 13.695 | 4.877 | 5.97x | 2.81x | 15.17 | 3.54 | 3.23 |
+| FBX/animation_with_skeleton.fbx | 190 | 3.001 | 1.454 | 1.026 | 2.92x | 1.42x | 2.20 | 0.92 | 1.17 |
+| embedded_ascii/box.FBX | 588 | 2.260 | 0.349 | 0.533 | 4.24x | 0.65x | 2.65 | 1.06 | 2.16 |
+| embedded_ascii/box_embedded_texture_fragmented.fbx | 1283 | 4.049 | 0.569 | 1.070 | 3.78x | 0.53x | 4.92 | 1.84 | 3.19 |
+| FBX/huesitos.fbx | 108 | 1.296 | 0.460 | 0.358 | 3.62x | 1.28x | 1.05 | 0.45 | 0.50 |
+| FBX/spider.fbx | 120 | 1.966 | 1.017 | 1.085 | 1.81x | 0.94x | 1.22 | 0.53 | 0.76 |
+| FBX/transparentTest.fbx | 380 | not read by both | | | | | | | |
+
+All 56 files: main 170.7 ms, branch 52.9 ms, ufbx 30.7 ms; main/ufbx 5.55x, branch/ufbx 1.72x; largest peak main 18.46 MB, branch 6.35 MB, ufbx 3.86 MB. The 25x on `anims_with_full_rotations_between_keys.fbx` was the 30 Hz bake (23,040 keys where the file has 1,216).
+
+**What made it faster.** The speed rounds of 2026-11-16 (36 commits, merged into this branch on 2026-11-21 from `claude2/own-fbx-faster-4`; each kept both digests unchanged except where noted):
+
+1. The element tree points into the file instead of copying names, strings and raw arrays; typed arrays; a property is 24 bytes.
+2. The triangulation and the clip keys moved from the reader into the import steps `fbx::BuildParts` and `fbx::BuildClips` (as ufbx leaves them to the import); mesh arrays are handed to the scene instead of copied; triangles are indexed per material, equal corners shared through an open-addressing table, built in batches.
+3. Ear clipping without an allocation per polygon; flat id tables and connection lists; one pass for node transforms.
+4. Inflate (the engine's one decoder): table entries carry the length and distance base and extra bits, refills without tests, short overlapping copies 8 or 16 bytes at a time.
+5. ASCII numbers: digit runs counted with count-trailing-zeros, an exact decimal-to-double conversion (section "Exact ASCII numbers"), arrays not zero-filled.
+6. Animation: curve keys allocated once, pooled curves, read directly; **keys at the file's own key times instead of a 30 Hz bake** (the owner's decision of 2026-11-16, section "Animation keys"; this one changes the clips, within the tolerances listed there).
+7. The file is read without zero-filling the buffer first; Base64 textures decoded faster; Euler rotations evaluated in place.
+8. (2026-11-21) Skin weights: each control point's influence list is allocated once at its final size instead of growing one push at a time (about a tenth of a skinned file's import; `animation_with_skeleton.fbx` 14.5 M to 13.6 M instructions). Digests unchanged.
+
+Where ours is still behind: the reader-plus-import-steps column above is 1.4x to 2.8x ufbx's `ufbx_load_file` on the binary files with zlib arrays and on the big ASCII file, because it also triangulates and keys the clips; in the import, where both sides do that work, ours is faster in total. The binary `pyramob.fbx` load alone is level with ufbx (fastest runs 5.3 against 5.2 ms; almost all of it is inflating the zlib arrays; callgrind 33 M against 45 M instructions).
+
+### Animation keys
+
+**The owner's decision, 2026-11-16 (in chat):** our FBX import keeps the file's own animation key times and adds keys only where they are needed for accuracy, instead of resampling every animation at 30 Hz. The owner accepted that imported animations change slightly, within a set tolerance. This is the default of our reader (`BuildOptions::fileKeys`); the ufbx path is unchanged. **`OKAY_FBX_BAKE30=1`** brings back the 30 Hz bake for comparison.
+
+What the clip gets (`engine/src/Render/FbxScene.cpp`, `BakeNodeFileKeys`; written for this engine from cubic interpolation and quaternion algebra, no outside code): a key at every key time of the node's curves inside the take, and at the take's start and end; a step (constant) key or two keys at the same time make a jump (a key 0.2 ms before it with the old value, and one at it; before, a jump became a one-frame ramp); between two neighbouring keys the poses at 1/3 and 2/3 are compared with what the engine plays there, and a segment outside the tolerances is cut into equal parts. Tolerances (`fbx::KeyTolerance`): translation 1e-5 m + 1e-4 of the node's largest translation, rotation 0.05 degrees, scale 1e-4 of max(1, largest scale), blend weight 0.01 (of 100), at most 45 degrees of any Euler angle between keys, and no added key closer than 1/60 s to a neighbour (between file keys 1/30 s apart or closer nothing is added; there playback is linear between the file's keys, as the 30 Hz bake was).
+
+Accuracy (`fbx_file_keys`, 2026-11-21, fixtures and real files: 15 animated files, 119 animated nodes, 217,033 samples at 240 Hz against the curves): 1,878 keys where the 30 Hz bake had 27,294; worst error 0.56 of the tolerance; worst rotation error 0.028 degrees (the 30 Hz clip's: 1.18 degrees, on the 25 Hz file `huesitos.fbx`).
+
+### Exact ASCII numbers
+
+ASCII FBX numbers are converted to the correctly rounded double (what `strtod` gives) by `engine/src/Render/DecimalToDouble.hpp`, written for this engine from Clinger's fast path (PLDI 1990) and the method described in Lemire, "Number Parsing at a Gigabyte per Second" (2021), with its own error analysis; the 5^q table (`Pow5Table.inc`) is generated by `scripts/gen_pow5_table.py` from exact integers. When the method cannot decide, it falls back to `strtod`. `decimal_to_double` checks it against `strtod` bit for bit and re-derives every table entry with its own big-integer arithmetic; `fbx_exact` checks the reader's fast paths against the plain code they replaced.
 
 ### Tests
 
@@ -861,7 +1001,10 @@ Say plainly what a user might trip over:
 - `fbx_reader` also reads every real file of the outside corpus when `OKAY_MODEL_CORPUS` is set (`docs/content/model_corpus.md`), with slightly looser tolerances for vertex count (0.5 %), surface area (0.2 %) and clip samples (0.015) than for our fixtures, and `model_corpus` records the counts of each real file in `tests/data/model_corpus_manifest.tsv`.
 - Fixtures `pbr_bin.fbx` and `orphan_video_bin.fbx` came from the pre-flip verification. Fixtures `takes_bin.fbx` (three takes with their own spans, a `c` thumbnail) and `bridge_bin.fbx` (a polygon with a bridged hole) were added for the bugs the real files showed.
 - The hostile test was re-run with `-fsanitize=address,undefined,float-cast-overflow` (standalone build, 30,000 mutations per fixture): clean after the integer-conversion fix; the engine-linked tests were then run too (see above).
-- Regenerate fixtures with `python3 scripts/gen_fbx_fixtures.py`. They are 2 to 12 KB each.
+- `fbx_reader` also checks the UV sets (`uv2_bin.fbx`, `uv2_ascii.fbx` by hand, every file against ufbx; section "UV sets").
+- `fbx_file_keys` (standalone): the clip keys against the curves at 240 Hz, the tolerances, jumps and the 30 Hz clip; `fbx_exact` (standalone): the fast paths bit for bit against the plain code; `decimal_to_double` (standalone): the ASCII number conversion against `strtod`.
+- Sanitizers, 2026-11-21 (after the UV-set and skin changes): `fbx_hostile` (20,000 mutations per fixture), `fbx_file_keys` and a driver that loads, triangulates and keys every corpus file and fixture, all built standalone with `-fsanitize=address,undefined,float-cast-overflow`: clean. The engine-linked `fbx_reader` was not rebuilt under sanitizers this time.
+- Regenerate fixtures with `python3 scripts/gen_fbx_fixtures.py`. They are 1 to 12 KB each.
 
 ## Our own HMP reader (`.hmp`, version HMP7)
 

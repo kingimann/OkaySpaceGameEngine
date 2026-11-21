@@ -939,6 +939,12 @@ add_executable(test_fix_140_141_142_131 test_fix_140_141_142_131.cpp ${PROJECT_S
 target_include_directories(test_fix_140_141_142_131 PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_fix_140_141_142_131 PRIVATE okay::engine)
 add_test(NAME fix_140_141_142_131 COMMAND test_fix_140_141_142_131)
+# Issue #888 finding 154 (switching a parent off and on keeps a child that was off, off; editor/InspectorModel SetObjectActive)
+# and OkayScript particles_on() going through ParticleSystem::Play() / Stop() so a finished one-shot plays again.
+add_executable(test_grok_154 test_grok_154.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_grok_154 PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_grok_154 PRIVATE okay::engine)
+add_test(NAME grok_154_particles_on COMMAND test_grok_154)
 add_executable(test_play_start_bench test_play_start_bench.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)   # times what Play does on the click frame and the first ticks
 target_include_directories(test_play_start_bench PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_compile_definitions(test_play_start_bench PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")
@@ -1666,6 +1672,65 @@ else()
     FetchContent_MakeAvailable(imgui)
     set(OKAY_VS_IMGUI_INCLUDE ${imgui_SOURCE_DIR})
 endif()
+# The editor's Problems, Stats and History panels: the Dear ImGui bodies (editor/EditorPanelViews.cpp) against their OkayUI ports,
+# headless, through one software rasteriser: same input gives the same intent, speed and pixel difference (docs/own_ui_toolkit.md
+# section 9). Needs OkayUI (SDL2 present) and the Dear ImGui sources (the editor's, or the copy fetched just above).
+if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
+    add_executable(test_okayui_editor_panels_imgui test_okayui_editor_panels_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/EditorPanelViews.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_okayui_editor_panels_imgui PRIVATE okay_imgui)
+    else()
+        target_sources(test_okayui_editor_panels_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_okayui_editor_panels_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_link_libraries(test_okayui_editor_panels_imgui PRIVATE okay_ui_render)
+    target_include_directories(test_okayui_editor_panels_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME okayui_editor_panels_imgui COMMAND test_okayui_editor_panels_imgui)
+    set_tests_properties(okayui_editor_panels_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    # The Hierarchy panel the same way (docs/own_ui_toolkit.md section 12): the village and 3,000 and 20,000 objects.
+    add_executable(test_okayui_hierarchy_imgui test_okayui_hierarchy_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/EditorPanelViews.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_okayui_hierarchy_imgui PRIVATE okay_imgui)
+    else()
+        target_sources(test_okayui_hierarchy_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_okayui_hierarchy_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_link_libraries(test_okayui_hierarchy_imgui PRIVATE okay_ui_render)
+    target_include_directories(test_okayui_hierarchy_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME okayui_hierarchy_imgui COMMAND test_okayui_hierarchy_imgui)
+    set_tests_properties(okayui_hierarchy_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    # The Inspector, stage 1, the same way (docs/own_ui_toolkit.md section 14): the header card, Transform, the Mesh Renderer, the bars.
+    add_executable(test_okayui_inspector_imgui test_okayui_inspector_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/EditorPanelViews.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_okayui_inspector_imgui PRIVATE okay_imgui)
+    else()
+        target_sources(test_okayui_inspector_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_okayui_inspector_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_link_libraries(test_okayui_inspector_imgui PRIVATE okay_ui_render)
+    target_include_directories(test_okayui_inspector_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME okayui_inspector_imgui COMMAND test_okayui_inspector_imgui)
+    set_tests_properties(okayui_inspector_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    # Hosted OkayUI bodies give way to Dear ImGui windows drawn in front of them (shared/OkayUIHostImGui.hpp): the History window
+    # behind Project Settings once painted its Undo/Redo row over it. Dear ImGui only, headless.
+    add_executable(test_okayui_host_layering test_okayui_host_layering.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_okayui_host_layering PRIVATE okay_imgui)
+    else()
+        target_sources(test_okayui_host_layering PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_okayui_host_layering SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_include_directories(test_okayui_host_layering PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
+    add_test(NAME okayui_host_layering COMMAND test_okayui_host_layering)
+endif()
+
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
 target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
@@ -3725,6 +3790,7 @@ endif()
 add_executable(test_fbx_reader test_fbx_reader.cpp)
 target_link_libraries(test_fbx_reader PRIVATE okay::engine)
 target_compile_definitions(test_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_include_directories(test_fbx_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/third_party/ufbx)   # ufbx is the oracle for UV sets
 add_test(NAME fbx_reader COMMAND test_fbx_reader)
 
 # Hostile FBX files through the importer (ufbx default path and our reader): deep node chains, animation counts, the whole-file bake budget.
@@ -3740,6 +3806,32 @@ add_executable(test_fbx_hostile test_fbx_hostile.cpp
 target_include_directories(test_fbx_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_fbx_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
+# The animation keys our FBX reader makes at the file's own key times, against the curves (a 240 Hz bake), the old 30 Hz
+# clip and the file's key times; fixtures, plus the real files when OKAY_MODEL_CORPUS is set. Standalone, for sanitizers.
+# docs/content/model_readers.md (FBX part), "Animation keys".
+add_executable(test_fbx_file_keys test_fbx_file_keys.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxScene.cpp)
+target_include_directories(test_fbx_file_keys PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_fbx_file_keys PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME fbx_file_keys COMMAND test_fbx_file_keys)
+# The output-preserving fast paths of our FBX reader against the plain code they replaced, bit for bit, on random
+# inputs (white-box: compiles FbxScene.cpp and FbxReader.cpp itself, no engine library). docs/content/model_readers.md (FBX part).
+add_executable(test_fbx_exact test_fbx_exact.cpp test_fbx_exact_numbers.cpp)
+target_include_directories(test_fbx_exact PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Render)
+add_test(NAME fbx_exact COMMAND test_fbx_exact)
+# The exact decimal-to-double conversion used for ASCII numbers (engine/src/Render/DecimalToDouble.hpp) against strtod,
+# bit for bit, and its 5^q table re-derived with big integers. Standalone (header only). OKAY_DECIMAL_ITERS=100000000 for
+# the full run (docs/content/model_readers.md (FBX part), "Exact ASCII numbers").
+add_executable(test_decimal_to_double test_decimal_to_double.cpp)
+add_test(NAME decimal_to_double COMMAND test_decimal_to_double)
+set_tests_properties(decimal_to_double PROPERTIES TIMEOUT 300)
+# Not a test: speed and peak heap of our FBX reader against ufbx (docs/content/model_readers.md (FBX part), "Speed and memory").
+# Built, never run by ctest. Synthetic large inputs: python3 scripts/gen_fbx_bench.py <dir>.
+add_executable(bench_fbx_reader bench_fbx_reader.cpp)
+target_link_libraries(bench_fbx_reader PRIVATE okay::engine)
+target_include_directories(bench_fbx_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/third_party/ufbx)
+target_compile_definitions(bench_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 # The editor's layout maths (editor/EditorLayoutMath.hpp, UI-library free): overlay anchoring, label placement and crowd fading, Inspector density, toolbar planning, maximize bookkeeping, view preferences.
 add_executable(test_editor_layout test_editor_layout.cpp)
@@ -4408,6 +4500,11 @@ add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
 target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME hierarchy_context_model COMMAND test_hierarchy_context_model)
+# The Hierarchy panel's flat row list and visible range (editor/HierarchyRowModel.hpp, Finding 99).
+add_executable(test_hierarchy_row_model test_hierarchy_row_model.cpp)
+target_include_directories(test_hierarchy_row_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
+target_link_libraries(test_hierarchy_row_model PRIVATE okay::engine)
+add_test(NAME hierarchy_row_model COMMAND test_hierarchy_row_model)
 
 # The Scene view's right-click "add here" menu as data (editor/SceneAddMenu.hpp): click versus drag, where the new object goes
 # (surface, ground, in front of the camera, 2D, snapping), the menu groups and the search box.

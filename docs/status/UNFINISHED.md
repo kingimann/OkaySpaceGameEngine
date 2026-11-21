@@ -355,6 +355,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 ### 40. OkayUI standalone library
 
 | [40.3](../feature_map/40-okayui-library.md#403-backends-and-frame-loop) | Backends and frame loop | Partial | no test of the D3D11 path found; skipped in the web build (per `CMakeLists.txt` and `scripts/build-web.sh` comments) |
+| [40.10](../feature_map/40-okayui-library.md#4010-the-inspector-on-okayui-preview-off-by-default) | The Inspector on OkayUI (preview) | Partial | off by default (`OKAY_DEV=1` + `OKAY_UI_BACKEND=okayui`, or Settings > Experimental "OkayUI screens" + "OkayUI Inspector"); tested headless and under Xvfb on Linux, never on Windows. Stale against main and left Dear ImGui: Camera, Light, Mesh Renderer, Particle System, Water, Modifiers, Cinemachine Brain, First-person, Third-person and View toggle settings. The Hierarchy, Problems, Stats, History, Profiler, Tags and Layers, Import, Post-processing and Project Settings ports are tested headless but not wired into the editor |
 
 ### 43. 2D tools
 

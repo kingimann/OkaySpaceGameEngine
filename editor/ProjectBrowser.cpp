@@ -45,8 +45,8 @@ std::string FileNameOf(const std::string& path) {
 
 std::string ParentOf(const std::string& path) {
     const std::string s = StripSlash(Slash(path));
-    const auto sl = s.find_last_of('/');
-    return sl == std::string::npos ? std::string() : (sl == 0 ? std::string("/") : s.substr(0, sl));
+    if (!s.empty() && paths::RootLength(s) == s.size()) return s;   // the parent of a root is itself ("/", "D:/"), as before
+    return paths::Parent(s);                                        // "D:/a" -> "D:/", "/a" -> "/"
 }
 
 // ".png" (as written) of a file name; "" when none.
@@ -294,7 +294,14 @@ namespace {
 std::string MapPath(const std::string& abs, const PathMap& map) {
     for (const auto& kv : map) {
         const std::string from = StripSlash(kv.first);
-        if (UnderOrEqual(from, abs)) return StripSlash(kv.second) + abs.substr(from.size());
+        if (UnderOrEqual(from, abs)) {
+            // a root keeps its slash ("/", "D:/"), so the rest may start without one: join with exactly one '/'
+            const std::string to = StripSlash(kv.second);
+            std::string rest = abs.substr(from.size());
+            if (!rest.empty() && rest[0] != '/') rest.insert(rest.begin(), '/');
+            if (!to.empty() && to.back() == '/' && !rest.empty()) rest.erase(0, 1);
+            return to + rest;
+        }
     }
     return {};
 }

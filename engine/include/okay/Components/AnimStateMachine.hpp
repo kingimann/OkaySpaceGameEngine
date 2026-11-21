@@ -843,7 +843,11 @@ private:
                 // A blend tree "ends" after one full cycle; a clip when it finishes.
                 // An imported stand-in finishes on the child model, not the body.
                 if (m_importHold) return m_importHold->ClipFinished();
-                return ((cur && cur->blendTree) || layer > 0) ? m_normTime >= 1.0f : ma->ClipFinished();
+                if ((cur && cur->blendTree) || layer > 0) return m_normTime >= 1.0f;
+                // Played backwards, a one-shot runs from its end to its start and never reaches
+                // its end, so count the time played, as Exit Time does (#888 finding 155).
+                if (cur && !cur->loop && StateSpeed(*cur) < 0.0f) return m_normTime >= 1.0f;
+                return ma->ClipFinished();
             case Cond::FloatGreater: return GetFloat(param) > value;
             case Cond::FloatLess:    return GetFloat(param) < value;
             case Cond::BoolTrue:     return GetBool(param);
@@ -1048,6 +1052,9 @@ private:
                     if (!play.empty()) { NoteMissingClip(st); ma->SetSpeed(0.0f); }
                 } else if (offset > 0.0f && ma->ActiveClip() >= 0) {
                     ma->SetTime(offset * ma->ClipLength(ma->ActiveClip()));
+                } else if (!st.loop && StateSpeed(st) < 0.0f && ma->ActiveClip() >= 0) {
+                    // A one-shot played backwards starts at its last frame.
+                    ma->SetTime(ma->ClipLength(ma->ActiveClip()));
                 }
             } else if (!HoldImported(st, blend)) {
                 if (!play.empty()) { NoteMissingClip(st); ma->SetSpeed(0.0f); }

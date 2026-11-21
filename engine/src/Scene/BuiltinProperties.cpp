@@ -9,6 +9,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/CameraRoom.hpp"
+#include "okay/Components/CameraZone.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
 #include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/Canvas.hpp"
@@ -205,6 +206,18 @@ void RegisterCameraRigs() {
         b.AddFloat("blendTime", &CinemachineBrain::blendTime).Range(0, 60, 0.05).Tooltip("Seconds to blend when the live shot changes (0 = cut)")
          .AddEnum("blendStyle", &CinemachineBrain::blendStyle, {"Cut", "Linear", "EaseInOut", "EaseIn", "EaseOut", "Custom"})
          .AddBool("yieldToCutscene", &CinemachineBrain::yieldToCutscene).Tooltip("Let a playing cutscene have the camera, then blend back");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<CameraZone> b("CameraZone", "camzone", "Rendering");
+        b.AddVec3("size", &CameraZone::size).Tooltip("The size of the region, in local units")
+         .AddVec3("offset", &CameraZone::offset).Tooltip("Where its middle is, relative to this object")
+         .AddFloat("blend", &CameraZone::blend).Range(0, 1, 0.01).Tooltip("How far in from the edge the effect takes to reach full strength")
+         .AddInt("priority", &CameraZone::priority).Range(-100, 100).Tooltip("A higher number is applied over a lower one")
+         .AddString("shot", &CameraZone::shot).Tooltip("Only this shot (a camera rig's object name). Blank = every shot")
+         .AddFloat("fieldOfView", &CameraZone::fieldOfView).Range(0, 179, 0.5).Tooltip("The field of view inside, in degrees. 0 = leave it alone")
+         .AddVec3("followOffset", &CameraZone::followOffset).Tooltip("Added to where the camera stands, while inside")
+         .AddFloat("positionDamping", &CameraZone::positionDamping).Range(-1, 100, 0.1).Tooltip("How snappy the camera is inside. -1 = leave it alone");
         b.Commit();
     }
     {

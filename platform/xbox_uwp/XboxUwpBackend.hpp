@@ -8,6 +8,7 @@
 #include "XboxAudio.hpp"
 #include "XboxInput.hpp"
 #include "XboxLifecycle.hpp"
+#include "XboxPadHub.hpp"
 #include "XboxPaths.hpp"
 #include "okay/Platform/Platform.hpp"
 #include <algorithm>
@@ -85,6 +86,20 @@ public:
     void PushWheel(float notchesY) { platform::Event e = Base(platform::EventType::MouseWheel); e.wheelY = notchesY; q_.push_back(e); }
     void PushPadAdded(int index) { platform::Event e = Base(platform::EventType::GamepadAdded); e.deviceId = index; q_.push_back(e); }
     void PushPadRemoved(int instanceId) { platform::Event e = Base(platform::EventType::GamepadRemoved); e.deviceId = instanceId; q_.push_back(e); }
+    /// Hot-plug and player slots (XboxPadHub.hpp). The glue calls PadConnected from Gamepad.GamepadAdded (key = NonRoamableId) and PadDisconnected
+    /// from GamepadRemoved. Once EnableHub or PadConnected ran, the slot number is the device index, GamepadAdded carries the slot and
+    /// GamepadRemoved the pad's instance id (sent only after the grace time). A returning pad keeps its slot and instance id. UNVERIFIED with real pads.
+    void EnableHub(int maxSlots = 8, std::uint64_t graceMs = 10000) { hub_.reset(new PadHub(maxSlots, graceMs)); proxies_.clear(); proxies_.resize((size_t)hub_->SlotCount()); }
+    int PadConnected(const std::string& key, PadDevice* dev) {
+        if (!hub_) EnableHub();
+        const int slot = hub_->OnAdded(key, Now());
+        if (slot >= 0) proxies_[(size_t)slot].target = dev;
+        Translate(); return slot;
+    }
+    void PadDisconnected(const std::string& key) { if (!hub_) return; const int slot = hub_->SlotOf(key); hub_->OnRemoved(key, Now()); if (slot >= 0) proxies_[(size_t)slot].target = nullptr; Translate(); }
+    PadHub* Hub() { return hub_.get(); }
+    /// Replace the clock the hub uses (tests); empty = the backend's own TicksMs.
+    std::function<std::uint64_t()> clockOverride;
     /// Called (once per suspend) from PollEvent when the app is suspending, BEFORE SaveDone: write the game's state here.
     std::function<void()> onSuspend;
     std::function<void()> onResume;
@@ -154,9 +169,15 @@ public:
     int AudioDeviceCount(bool capture) override { return capture ? 0 : (host_->Audio() ? 1 : 0); }
     std::string AudioDeviceName(int index, bool capture) override { return (!capture && index == 0 && host_->Audio()) ? "Default audio output" : ""; }
 
-    int GamepadDeviceCount() override { return host_->PadCount(); }
-    bool IsGamepad(int i) override { return i >= 0 && i < host_->PadCount(); }
+    int GamepadDeviceCount() override { return hub_ ? hub_->SlotCount() : host_->PadCount(); }
+    bool IsGamepad(int i) override { return hub_ ? hub_->Present(i) : (i >= 0 && i < host_->PadCount()); }
     std::unique_ptr<platform::Gamepad> OpenGamepad(int i) override {
+        if (hub_) {
+            if (!hub_->Present(i)) return nullptr;
+            std::unique_ptr<BackendPad> p(new BackendPad(this, hub_->InstanceId(i), &proxies_[(size_t)i]));
+            pads_.push_back(p.get());
+            return std::unique_ptr<platform::Gamepad>(p.release());
+        }
         if (!IsGamepad(i)) return nullptr;
         PadDevice* d = host_->Pad(i); if (!d) return nullptr;
         std::unique_ptr<BackendPad> p(new BackendPad(this, nextPadId_++, d));
@@ -173,6 +194,15 @@ private:
         ~BackendPad() override { auto& v = b_->pads_; v.erase(std::remove(v.begin(), v.end(), this), v.end()); }
         UwpBackend* b_;
     };
+    // Forwards to whichever real pad is in the slot now; a slot with no pad reads as disconnected.
+    struct SlotProxy : PadDevice {
+        PadDevice* target = nullptr;
+        bool Read(PadReading& o) override { return target && target->Read(o); }
+        void SendVibration(const Vibration& v) override { if (target) target->SendVibration(v); }
+        const char* Name() const override { return target ? target->Name() : "Xbox controller"; }
+        bool HasTriggerMotors() const override { return target ? target->HasTriggerMotors() : true; }
+    };
+    std::uint64_t Now() { return clockOverride ? clockOverride() : TicksMs(); }
     platform::Event Base(platform::EventType t) { platform::Event e; e.type = t; e.timestampMs = (std::uint32_t)TicksMs(); e.windowId = 1; return e; }
 public:
     /// Turn lifecycle changes into engine events (and run onSuspend / onResume) and poll the pads. PollEvent does this when its queue is
@@ -181,6 +211,13 @@ public:
 private:
     void Translate() {
         const std::uint64_t now = TicksMs();
+        if (hub_) {
+            hub_->Tick(Now());
+            for (const PadHubEvent& e : hub_->TakeEvents()) {
+                if (e.kind == PadHubEvent::Added || e.kind == PadHubEvent::Reconnected) { platform::Event ev = Base(platform::EventType::GamepadAdded); ev.deviceId = e.slot; q_.push_back(ev); }
+                else if (e.kind == PadHubEvent::Removed) { platform::Event ev = Base(platform::EventType::GamepadRemoved); ev.deviceId = e.instanceId; q_.push_back(ev); proxies_[(size_t)e.slot].target = nullptr; }
+            }
+        }
         for (BackendPad* p : pads_) p->Poll(now);
         const LifecyclePending p = life_.Take();
         if (p.saveState) {
@@ -194,7 +231,7 @@ private:
     }
     friend class UwpWindow;
     UwpHost* host_; PathRoots roots_; std::chrono::steady_clock::time_point t0_;
-    Lifecycle life_; std::deque<platform::Event> q_; std::set<int> keys_; std::vector<BackendPad*> pads_; int nextPadId_ = 1;
+    Lifecycle life_; std::deque<platform::Event> q_; std::set<int> keys_; std::vector<BackendPad*> pads_; int nextPadId_ = 1; std::unique_ptr<PadHub> hub_; std::vector<SlotProxy> proxies_;
     std::deque<std::string> log_; std::string clip_, err_;
     int mx_ = 0, my_ = 0, relDx_ = 0, relDy_ = 0; std::uint32_t mouse_ = 0;
     bool inited_ = false, textInput_ = false, rel_ = false, cursor_ = true, quitSent_ = false;

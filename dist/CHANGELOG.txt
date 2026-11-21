@@ -1,5 +1,51 @@
 OkaySpace Game Engine — Changelog
 
+v2.901.0
+  Cameras and smoother animation
+  - Camera zones: areas where the camera smoothly changes its view angle,
+    offset and smoothing as the player walks in.
+  - Six one-click camera presets: platformer, top-down, third person, first
+    person, racing and cinematic.
+  - The follow camera starts right on its target, and can no longer break on
+    bad numbers.
+  - Animations turn at an even speed between keyframes (no more uneven or
+    "rubbery" turns, and no wrong-way spins).
+
+v2.900.0
+  Movement, animation and menus
+  - The character controller now stops the same way at any frame rate, and
+    has Simple and Advanced tuning settings.
+  - Fixed: the knee snapped at every step in the walk and run animation.
+  - Inventory items can wear out and be repaired.
+  - GameObject > UI menu is tidier: 12 common items on top, the rest under
+    "More".
+  - New collider shapes: cylinder, cone, convex hull, compound, plane and
+    heightfield in 3D; rotating capsules, polygons and composite in 2D.
+  - Vehicles: street-style controls you can remap, better seat fit, settings
+    in plain words with reset buttons.
+  - Inventory: tools wear out when used; item names fit their slot.
+
+v2.899.0
+  Editor and model fixes
+  - Code editor: new line commands (toggle comment, duplicate line, move
+    lines up and down).
+  - OGRE binary model files (.mesh) now animate with their skeleton.
+  - Behind the scenes: more tests for Ctrl+S saving, Xbox export fixes
+    (still experimental and off by default), and our own picture writer.
+
+v2.898.0
+  No more GitHub in the apps
+  - The launcher and editor now get updates, the version list, "What's New"
+    and downloads only from our own update server.
+  - Help, report and GitHub links were removed. "Report a Bug" opens the
+    Crash Log window.
+  - Forgot your password? The launcher now emails you a code and lets you
+    set a new password right there.
+  - Versions older than 2.892.0 can no longer be downloaded from the
+    Versions page.
+  - OGRE model files (.mesh.xml) now load with their skeleton, animations
+    and skinning.
+
 v2.897.0
   Small fixes
   - Fixed: a damaged FLAC sound file could crash the engine. It is now

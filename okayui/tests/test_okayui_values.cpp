@@ -89,6 +89,23 @@ void IntAndRangeTests() {
     CHECK(lo == 4.0f && hi == 9.0f);
 }
 
+void IntRangeTests() {
+    Rig r; int lo = 2, hi = 4; UI::Rect rr;
+    r.body = [&] {
+        UI::PushID(6); UI::SetNextItemWidth(200); UI::DragIntRange2("", &lo, &hi, 1.0f, 0, 10); rr = UI::GetItemRect(); UI::PopID();
+    };
+    r.Frames(2);
+    r.Scrub(CellX(rr.x, rr.w, 2, 0), CenterY(rr), 8);               // the low cell stops at the high one
+    CHECK(lo == 4 && hi == 4);
+    r.Scrub(CellX(rr.x, rr.w, 2, 1), CenterY(rr), -9);              // the high cell stops at the low one
+    CHECK(lo == 4 && hi == 4);
+    r.Scrub(CellX(rr.x, rr.w, 2, 1), CenterY(rr), 50);              // clamps at 10
+    CHECK(lo == 4 && hi == 10);
+    r.Scrub(CellX(rr.x, rr.w, 2, 0), CenterY(rr), -50);             // clamps at 0
+    CHECK(lo == 0 && hi == 10);
+    CHECK(!UI::DragIntRange2("n", nullptr, &hi) && !UI::DragIntRange2("n", &lo, nullptr));
+}
+
 void HostileTests() {
     Rig r; float v[3] = {0, 1, 2}; const float nan = std::numeric_limits<float>::quiet_NaN(), inf = std::numeric_limits<float>::infinity();
     UI::Rect rc;
@@ -1080,6 +1097,7 @@ int main() {
     VectorTests();
     ClampAndCountTests();
     IntAndRangeTests();
+    IntRangeTests();
     HostileTests();
     SliderAndInputTests();
     InputFloatHostileTests();

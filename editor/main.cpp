@@ -6685,7 +6685,7 @@ void UIStyleBar(EditorState& ed, Component* c) {
     ImGui::Spacing();
 }
 
-// GameObject > UI (and the UI view's "+ Add" button). The menu itself is DATA: editor/UIMenuModel.hpp lists the eight groups, every item with
+// GameObject > UI (and the UI view's "+ Add" button). The menu itself is DATA: editor/UIMenuModel.hpp lists nine essentials and the folders Game HUD, Menus & Screens and More, every item with
 // a one-sentence tip, and a last entry "Browse All UI..." that opens the UI Gallery. The ready-made screens come from the screen registry
 // (okay/Scene/UIScreens.hpp), one submenu per section. This function draws that list and RunUIMenuItem runs the ids.
 // A widget goes inside the selected panel, else under the scene's Canvas, which is made (with an Event System) the first time it is needed,
@@ -7803,6 +7803,12 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A camera that circles its target. Hold the right mouse button and drag to turn it.");
         if (ImGui::MenuItem("Camera Rig: Look At")) { AddCameraRigObject(ed, 2); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A camera that stands still and turns to watch its target (a security camera, a boss arena).");
+        if (ImGui::MenuItem("Camera Zone")) {
+            GameObject* g = ed.CreateEmpty("Camera Zone");
+            g->AddComponent<CameraZone>();
+            ed.Select(g); ConsoleLog("Created Camera Zone: set the field of view or offset it should give inside"); created = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A box that changes the camera's field of view, distance or snappiness while the player is inside, easing across the edge.");
         if (ImGui::MenuItem("Camera Room (2D)")) {
             GameObject* g = ed.CreateEmpty("Camera Room");
             g->AddComponent<CameraRoom>();
@@ -40145,6 +40151,14 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Look At##vcrig")) { vc->ApplyStyle(2); ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stands still and turns to watch the target.");
+                {
+                    ImGui::TextDisabled("Or a preset for a kind of game:");
+                    for (int pi = 0; pi < VirtualCamera::kPresetCount; ++pi) {
+                        if (pi % 3) ImGui::SameLine();
+                        if (ImGui::SmallButton((std::string(VirtualCamera::PresetName(pi)) + "##vcpre").c_str())) { vc->ApplyPreset(pi); ed.dirty = true; }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets the framing, smoothing and field of view for a %s camera. Your Follow and Look At names stay.", VirtualCamera::PresetName(pi));
+                    }
+                }
                 if (ImGui::Checkbox("Aim at what it follows##vcrig", &vc->aimAtFollow)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("With no Look At object, point the camera at the Follow object.\nTurn this off to copy the Follow object's own facing instead.");
                 int dm = (int)vc->dampingMode;
@@ -40286,6 +40300,31 @@ void DrawInspector(EditorState& ed) {
             else
                 ImGui::TextDisabled("Drives this Camera from virtual cameras.");
             if (ImGui::SmallButton("Remove##cb")) toRemove = cb;
+        }
+    }
+    if (auto* cz = dynamic_cast<CameraZone*>(curComp)) {
+        if (CompHeader("Camera Zone", cz, &toRemove)) {
+            float sz[3] = {cz->size.x, cz->size.y, cz->size.z};
+            if (DragVec3Axis("Size##cz", sz, 0.1f)) { cz->size = {sz[0], sz[1], sz[2]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How big the zone is. A camera rig following something inside it changes how it frames.");
+            float of[3] = {cz->offset.x, cz->offset.y, cz->offset.z};
+            if (DragVec3Axis("Centre offset##cz", of, 0.1f)) { cz->offset = {of[0], of[1], of[2]}; ed.dirty = true; }
+            if (ImGui::SliderFloat("Edge blend##cz", &cz->blend, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far in from the edge the effect takes to reach full strength. 0 = at once.");
+            if (ImGui::DragFloat("Field of view##cz", &cz->fieldOfView, 0.5f, 0.0f, 170.0f, cz->fieldOfView <= 0.0f ? "leave alone" : "%.0f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The view's width inside the zone. 0 = leave it alone.");
+            float fo[3] = {cz->followOffset.x, cz->followOffset.y, cz->followOffset.z};
+            if (DragVec3Axis("Move camera by##cz", fo, 0.05f)) { cz->followOffset = {fo[0], fo[1], fo[2]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Added to where the camera stands, while inside (pull in or back, up or down).");
+            if (ImGui::DragFloat("Snappiness##cz", &cz->positionDamping, 0.1f, -1.0f, 100.0f, cz->positionDamping < 0.0f ? "leave alone" : "%.1f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly the camera follows inside. Higher is snappier. -1 = leave it alone.");
+            if (ImGui::DragInt("Priority##cz", &cz->priority, 0.2f, -100, 100)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Where two zones overlap, the higher number is applied over the lower.");
+            char zb[96]; std::snprintf(zb, sizeof(zb), "%s", cz->shot.c_str());
+            if (ImGui::InputText("Only this shot##cz", zb, sizeof(zb))) { cz->shot = zb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Type a camera rig's object name to affect only that shot. Blank = every shot.");
+            ImGui::TextDisabled("Shown as a cyan box in the Scene view.");
+            if (ImGui::SmallButton("Remove##cz")) toRemove = cz;
         }
     }
     if (auto* rm = dynamic_cast<CameraRoom*>(curComp)) {
@@ -43187,6 +43226,7 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             if (item(!go->GetComponent<CameraRoom>(), "Camera Room")) { go->AddComponent<CameraRoom>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CameraZone>(), "Camera Zone")) { go->AddComponent<CameraZone>(); ed.dirty = true; }
             if (item(!go->GetComponent<CinemachineBrain>(), "Cinemachine Brain")) { go->AddComponent<CinemachineBrain>(); ed.dirty = true; }
             if (item(!go->GetComponent<DollyPath>(), "Dolly Path")) { go->AddComponent<DollyPath>(); ed.dirty = true; }
             if (item(!go->GetComponent<DollyCart>(), "Dolly Cart")) { go->AddComponent<DollyCart>(); ed.dirty = true; }
@@ -43928,6 +43968,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
                 const auto& it = inv->slots[idx];
                 DrawItemIconIm(dl, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2), ui->iconFolder, it.item);
+                if (ItemThumb(okay::ItemIconPath(ui->iconFolder, it.item)) == nullptr) {   // no picture: name along the bottom, cut to the slot width
+                    const okay::ItemDefinition* nd = okay::ItemDatabase::Get().Find(it.item);
+                    const std::string full = nd ? nd->DisplayName() : it.item;
+                    const std::string fit = okay::InventoryText::FitWidth(full, (p1.x - p0.x) - 2 * b - 4.0f,
+                        [](const std::string& s) { return ImGui::CalcTextSize(s.c_str()).x; });
+                    if (!fit.empty())
+                        dl->AddText(ImVec2(p0.x + b + 2, p1.y - b - ImGui::GetTextLineHeight() - 1), col(ui->countColor), fit.c_str());
+                }
                 if (ui->showCounts && shown > 1) {
                     std::string cs = std::to_string(shown);
                     ImVec2 ts = ImGui::CalcTextSize(cs.c_str());
@@ -46319,6 +46367,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 }
                 ImVec2 spv;
                 if (project(ip, spv)) { cameraIcon(spv, col, selv); if (!selv) iconLabel(spv, up->name.c_str(), col); }
+            }
+            if (auto* czg = up->GetComponent<CameraZone>()) {
+                const ImU32 zc = (up.get() == ed.selected()) ? IM_COL32(90, 230, 255, 255) : IM_COL32(70, 170, 200, 150);
+                const Vec3 c0 = czg->Geometry().WorldCenter(*t);
+                const Vec3 hx = t->Right() * (czg->size.x * 0.5f), hy = t->Up() * (czg->size.y * 0.5f), hz = t->Forward() * (czg->size.z * 0.5f);
+                Vec3 cr[8];
+                for (int i = 0; i < 8; ++i) cr[i] = c0 + hx * ((i & 1) ? 1.0f : -1.0f) + hy * ((i & 2) ? 1.0f : -1.0f) + hz * ((i & 4) ? 1.0f : -1.0f);
+                for (int i = 0; i < 8; ++i) for (int b = 1; b < 8; b <<= 1) if (!(i & b)) line(cr[i], cr[i | b], zc, 1.5f);
             }
             if (auto* room = up->GetComponent<CameraRoom>()) {
                 const okay::cam::Box2 b = room->Bounds();
@@ -52187,6 +52243,43 @@ int main(int argc, char** argv) {
     // an update is available, the Update window pops up on its own.
     g_updateCheck = std::async(std::launch::async, updater::CheckLatest);
 
+    // The one shut-down of ImGui's two sides, the views' GL window and renderer, controllers, audio, the main window's renderer and
+    // window, and the platform backend, in the safe order. The end of main() runs it, and so does every early exit before std::exit
+    // (the OKAY_UI_QUIT screenshot hook): std::exit skips the end of main() and destroys the globals in reverse order instead, and
+    // okay::platform's backends (function-local statics, made after the globals) go first; a window still owned by a global
+    // (g_glWin) would then call a backend that is gone. Safe to call twice: the second call does nothing.
+    bool shutDownDone = false;
+    auto shutDown = [&]() {
+        if (shutDownDone) return;
+        shutDownDone = true;
+        if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
+        if (g_imguiOwnFeed) g_imguiFeed.Shutdown(ImGui::GetIO()); else ImGui_ImplSDL2_Shutdown();
+        ImGui::DestroyContext();
+        // Tear down the optional GPU renderer: free its GL objects with its own context
+        // current, then drop the context + hidden window.
+        if (g_glRenderer || g_glCtx) {
+            okay::platform::Backend* glb = okay::platform::Default();
+            const okay::platform::GLCurrent prevGL = glb->CurrentGL();
+            if (g_glWin && g_glCtx) g_glWin->MakeCurrent();
+            if (g_glRenderer) { g_glRenderer->Destroy(); delete g_glRenderer; g_glRenderer = nullptr; }
+            glb->RestoreGL(prevGL);
+            if (g_glCtx) { g_glWin->DestroyGLContext(); g_glCtx = false; }
+            g_glWin.reset();   // destroys the hidden window too
+            g_glWindow = nullptr;
+            g_glReady = false;
+        }
+        g_glWin.reset();   // also when its GL context could not be made: the hidden window goes while its backend is alive
+        g_glWindow = nullptr;
+#if defined(_WIN32)
+        if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
+#endif
+        g_pads.CloseAll();
+        audioDev.reset();
+        okay::pb::DestroyRenderer(renderer);   // its painter owns it
+        winSeam.reset();   // destroys the main window (after its renderer)
+        sdlSeam->Shutdown();
+    };
+
     bool running = true;
     std::string lastTitle;
     Uint64 last = okay::platform::PerfCounter();
@@ -53784,7 +53877,11 @@ int main(int argc, char** argv) {
                         std::fflush(stdout);
                     }
                 }
-                if (std::getenv("OKAY_UI_QUIT")) std::exit(0);
+                if (std::getenv("OKAY_UI_QUIT")) {
+                    shutDown();   // std::exit skips the end of main(): close everything while the platform backend is alive
+                    std::fflush(nullptr);
+                    std::exit(0);
+                }
             }
         }
         if (const std::string shot = TakePendingEditorShot(); !shot.empty()) {
@@ -53855,30 +53952,7 @@ int main(int argc, char** argv) {
     SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window
     ProjectUpgradeAtExit();       // the editor of the project's own version ("Keep"), or this one again after a restore, starts once this process is gone
 
-    if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
-    if (g_imguiOwnFeed) g_imguiFeed.Shutdown(ImGui::GetIO()); else ImGui_ImplSDL2_Shutdown();
-    ImGui::DestroyContext();
-    // Tear down the optional GPU renderer: free its GL objects with its own context
-    // current, then drop the context + hidden window.
-    if (g_glRenderer || g_glCtx) {
-        okay::platform::Backend* glb = okay::platform::Default();
-        const okay::platform::GLCurrent prevGL = glb->CurrentGL();
-        if (g_glWin && g_glCtx) g_glWin->MakeCurrent();
-        if (g_glRenderer) { g_glRenderer->Destroy(); delete g_glRenderer; g_glRenderer = nullptr; }
-        glb->RestoreGL(prevGL);
-        if (g_glCtx) { g_glWin->DestroyGLContext(); g_glCtx = false; }
-        g_glWin.reset();   // destroys the hidden window too
-        g_glWindow = nullptr;
-        g_glReady = false;
-    }
-#if defined(_WIN32)
-    if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
-#endif
-    g_pads.CloseAll();
-    audioDev.reset();
-    okay::pb::DestroyRenderer(renderer);   // its painter owns it
-    winSeam.reset();   // destroys the main window (after its renderer)
-    sdlSeam->Shutdown();
+    shutDown();
 #ifdef OKAY_ENABLE_TEST_HOOKS
     return testExitCode;   // 0 unless the test script said `exit N`
 #endif

@@ -541,6 +541,116 @@ bool CodeEdit::Tab(bool outdent) {
     return true;
 }
 
+void CodeEdit::lineRange(int& l0, int& l1) const {
+    const CodePos a = SelectionStart(), b = SelectionEnd();
+    l0 = a.line; l1 = b.line;
+    if (l1 > l0 && b.col == 0) --l1;
+}
+
+bool CodeEdit::ToggleLineComment(const std::string& prefix) {
+    if (readOnly_) return false;
+    std::string pre = prefix;
+    if (pre.empty()) pre = (haveLanguage_ && !language_.lineComments.empty()) ? language_.lineComments.front() : std::string("//");
+    int l0, l1;
+    lineRange(l0, l1);
+    const int n = (int)pre.size();
+    auto first = [&](int l) { const std::string& s = lines_[(size_t)l]; size_t f = s.find_first_not_of(" \t"); return f == std::string::npos ? -1 : (int)f; };
+    bool any = false, all = true;
+    for (int l = l0; l <= l1; ++l) {
+        const int f = first(l);
+        if (f < 0) continue;
+        any = true;
+        if (lines_[(size_t)l].compare((size_t)f, (size_t)n, pre) != 0) all = false;
+    }
+    if (!any) return false;
+    std::vector<int> delta((size_t)(l1 - l0 + 1), 0), at((size_t)(l1 - l0 + 1), 0);
+    beginCompound();
+    for (int l = l1; l >= l0; --l) {
+        const int f = first(l);
+        if (f < 0) continue;
+        at[(size_t)(l - l0)] = f;
+        if (all) {
+            const bool sp = f + n < (int)lines_[(size_t)l].size() && lines_[(size_t)l][(size_t)(f + n)] == ' ';
+            const int r = n + (sp ? 1 : 0);
+            edit(Kind_Other, CodePos{l, f}, CodePos{l, f + r}, "");
+            delta[(size_t)(l - l0)] = -r;
+        } else {
+            edit(Kind_Other, CodePos{l, f}, CodePos{l, f}, pre + " ");
+            delta[(size_t)(l - l0)] = n + 1;
+        }
+    }
+    endCompound();
+    auto adj = [&](CodePos p) {
+        if (p.line < l0 || p.line > l1) return p;
+        const int d = delta[(size_t)(p.line - l0)], f = at[(size_t)(p.line - l0)];
+        if (d > 0 && p.col >= f) p.col += d; else if (d < 0 && p.col > f) p.col = std::max(f, p.col + d);
+        return p;
+    };
+    caret_ = Clamp(adj(caret_)); anchor_ = Clamp(adj(anchor_)); reveal_ = true; desiredCol_ = -1;
+    CE_FINISH();
+    return true;
+}
+
+bool CodeEdit::DuplicateLines() {
+    if (readOnly_) return false;
+    int l0, l1;
+    lineRange(l0, l1);
+    std::string block;
+    for (int l = l0; l <= l1; ++l) { block += '\n'; block += lines_[(size_t)l]; }
+    const int count = l1 - l0 + 1;
+    beginCompound();
+    edit(Kind_Other, CodePos{l1, (int)lines_[(size_t)l1].size()}, CodePos{l1, (int)lines_[(size_t)l1].size()}, block);
+    endCompound();
+    caret_.line += count; anchor_.line += count;
+    caret_ = Clamp(caret_); anchor_ = Clamp(anchor_); reveal_ = true; desiredCol_ = -1;
+    CE_FINISH();
+    return true;
+}
+
+bool CodeEdit::DeleteLines() {
+    if (readOnly_) return false;
+    int l0, l1;
+    lineRange(l0, l1);
+    if (l0 == 0 && l1 == (int)lines_.size() - 1 && lines_[0].empty() && l1 == 0) return false;
+    CodePos from{l0, 0}, to{l1 + 1, 0};
+    if (l1 + 1 >= (int)lines_.size()) {
+        to = CodePos{l1, (int)lines_[(size_t)l1].size()};
+        if (l0 > 0) from = CodePos{l0 - 1, (int)lines_[(size_t)l0 - 1].size()};
+    }
+    beginCompound();
+    edit(Kind_Other, from, to, "");
+    endCompound();
+    const int line = std::min(l0, (int)lines_.size() - 1);
+    caret_ = anchor_ = CodePos{line, 0}; reveal_ = true; desiredCol_ = -1;
+    CE_FINISH();
+    return true;
+}
+
+bool CodeEdit::MoveLines(bool up) {
+    if (readOnly_) return false;
+    int l0, l1;
+    lineRange(l0, l1);
+    const int last = (int)lines_.size() - 1;
+    if (up ? l0 == 0 : l1 == last) return false;
+    beginCompound();
+    if (up) {
+        const std::string s = lines_[(size_t)l0 - 1];
+        edit(Kind_Other, CodePos{l0 - 1, 0}, CodePos{l0, 0}, "");
+        const int e = l1 - 1;
+        edit(Kind_Other, CodePos{e, (int)lines_[(size_t)e].size()}, CodePos{e, (int)lines_[(size_t)e].size()}, "\n" + s);
+    } else {
+        const std::string s = lines_[(size_t)l1 + 1];
+        edit(Kind_Other, CodePos{l1, (int)lines_[(size_t)l1].size()}, CodePos{l1 + 1, (int)s.size()}, "");
+        edit(Kind_Other, CodePos{l0, 0}, CodePos{l0, 0}, s + "\n");
+    }
+    endCompound();
+    const int d = up ? -1 : 1;
+    caret_.line += d; anchor_.line += d;
+    caret_ = Clamp(caret_); anchor_ = Clamp(anchor_); reveal_ = true; desiredCol_ = -1;
+    CE_FINISH();
+    return true;
+}
+
 bool CodeEdit::Copy() const {
     if (!HasSelection()) return false;
     SetClipboardText(SelectedText().c_str());

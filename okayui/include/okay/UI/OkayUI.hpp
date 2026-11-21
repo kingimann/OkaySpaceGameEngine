@@ -560,6 +560,9 @@ bool DragInt4(const char* label, int v[4], float speed = 0.25f, int minV = 0, in
 /// A low and a high value in one row: the low cell never goes above the high one and the high never below the low.
 bool DragFloatRange2(const char* label, float* lo, float* hi, float speed = 0.1f, float minV = 0.0f, float maxV = 0.0f);
 
+/// The integer version of DragFloatRange2.
+bool DragIntRange2(const char* label, int* lo, int* hi, float speed = 0.25f, int minV = 0, int maxV = 0);
+
 /// Two, three or four sliders in one row sharing one label; every cell runs over [minV, maxV]. True on any change.
 bool SliderFloat2(const char* label, float v[2], float minV, float maxV);
 bool SliderFloat3(const char* label, float v[3], float minV, float maxV);

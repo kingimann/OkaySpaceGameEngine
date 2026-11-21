@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <map>
@@ -207,49 +208,24 @@ bool ReadScale(const detail::xml::FlatDoc& d, int e, Vec3& v) {
     return ReadVec(d, e, f, v);
 }
 
-bool ParseSkeleton(std::string text, Skel& sk, std::string* err) {
-    bool converted = false;
-    std::string why;
-    if (!detail::txt::NormalizeEncoding(text, converted, why, kMaxFileBytes)) return Fail(err, why);
-    detail::xml::FlatDoc doc;
-    std::string xerr;
-    if (!detail::xml::ParseFlat(text, doc, xerr)) return Fail(err, xerr);
-    if (doc.Name(0) != "skeleton") return Fail(err, "not an OGRE skeleton (the root element is <" + std::string(doc.Name(0)) + ">, not <skeleton>)");
-    const int bs = doc.First(0, "bones");
-    if (bs < 0) return Fail(err, "the skeleton has no <bones>");
-
+// A skeleton as either form gives it, before ordering: the bones in file order, each one's parent (a file index, -1 for none),
+// and the clips with their keys still relative to the bind pose. FinishSkeleton turns it into a Skel.
+struct RawKey { double time; Vec3 t; Quat r; Vec3 s; };
+struct RawTrack { int bone; std::vector<RawKey> keys; };   // bone: index into RawSkel::file
+struct RawClip { std::string name; std::vector<RawTrack> tracks; };
+struct RawSkel {
     std::vector<SkBone> file;
-    std::map<std::string, int> byName;
-    std::map<long, int> idSeen;
-    for (int b = doc.Kid(bs); b >= 0; b = doc.Next(b)) {
-        if (doc.Name(b) != "bone") continue;
-        if (file.size() >= kMaxBones) return Fail(err, "too many bones");
-        SkBone k;
-        double id;
-        if (!NumOr(doc, b, "id", (double)file.size(), id) || id < 0 || id > 1e9 || id != std::floor(id)) return Fail(err, "bad bone id '" + doc.AttrOr(b, "id", "") + "'");
-        k.id = (long)id;
-        k.name = doc.AttrOr(b, "name", "");
-        if (k.name.empty()) return Fail(err, "a bone has no name");
-        if (!byName.emplace(k.name, (int)file.size()).second) return Fail(err, "two bones are named '" + k.name + "'");
-        if (!idSeen.emplace(k.id, (int)file.size()).second) return Fail(err, "two bones have the id " + std::to_string(k.id));
-        const int pe = doc.First(b, "position"), re = doc.First(b, "rotation"), se = doc.First(b, "scale");
-        if (pe >= 0 && !ReadVec(doc, pe, 0, k.pos)) return Fail(err, "bad <position> of bone '" + k.name + "'");
-        if (re >= 0 && !ReadRot(doc, re, k.rot)) return Fail(err, "bad <rotation> of bone '" + k.name + "'");
-        if (se >= 0 && !ReadScale(doc, se, k.scl)) return Fail(err, "bad <scale> of bone '" + k.name + "'");
-        file.push_back(std::move(k));
-    }
+    std::vector<int> par;
+    std::vector<RawClip> clips;
+    std::vector<std::string> notes;
+};
+
+// parent first (depth-first from the roots, children in file order, no recursion), world bind poses, and the keys made
+// absolute: position = bind + translate, rotation = bind * rotate, scale = bind * scale
+bool FinishSkeleton(RawSkel& raw, Skel& sk, std::string* err) {
+    const std::vector<SkBone>& file = raw.file;
+    const std::vector<int>& par = raw.par;
     if (file.empty()) return Fail(err, "the skeleton has no bones");
-    std::vector<int> par(file.size(), -1);
-    const int bh = doc.First(0, "bonehierarchy");
-    if (bh >= 0) for (int e = doc.Kid(bh); e >= 0; e = doc.Next(e)) {
-        if (doc.Name(e) != "boneparent") continue;
-        const std::string cn = doc.AttrOr(e, "bone", ""), pn = doc.AttrOr(e, "parent", "");
-        const auto c = byName.find(cn), p = byName.find(pn);
-        if (c == byName.end() || p == byName.end()) return Fail(err, "<boneparent> names a bone the skeleton does not have ('" + cn + "' under '" + pn + "')");
-        if (par[(std::size_t)c->second] >= 0) return Fail(err, "bone '" + cn + "' has two parents");
-        par[(std::size_t)c->second] = p->second;
-    }
-    // parent first: depth-first from the roots, children in file order (no recursion)
     std::vector<std::vector<int>> kids(file.size());
     std::vector<int> roots;
     for (std::size_t i = 0; i < file.size(); ++i) { if (par[i] < 0) roots.push_back((int)i); else kids[(std::size_t)par[i]].push_back((int)i); }
@@ -274,14 +250,81 @@ bool ParseSkeleton(std::string text, Skel& sk, std::string* err) {
     }
     for (const SkBone& b : sk.bones) for (int k = 0; k < 16; ++k) if (!std::isfinite(b.world.m[k]) || std::fabs(b.world.m[k]) > 1e30f) return Fail(err, "the bone transforms multiply out to values that are too large");
 
+    for (RawClip& rc : raw.clips) {
+        ImportedClip clip;
+        clip.name = rc.name;
+        for (RawTrack& t : rc.tracks) {
+            if (t.keys.empty()) continue;
+            const SkBone& bind = file[(std::size_t)t.bone];
+            ImportedChannel ch;
+            ch.node = bind.name;
+            std::stable_sort(t.keys.begin(), t.keys.end(), [](const RawKey& x, const RawKey& y) { return x.time < y.time; });
+            for (const RawKey& k : t.keys) {
+                ch.position.push_back({(float)k.time, Vec3{bind.pos.x + k.t.x, bind.pos.y + k.t.y, bind.pos.z + k.t.z}});
+                ch.rotation.push_back({(float)k.time, (bind.rot * k.r).Normalized()});
+                ch.scale.push_back({(float)k.time, Vec3{bind.scl.x * k.s.x, bind.scl.y * k.s.y, bind.scl.z * k.s.z}});
+            }
+            clip.channels.push_back(std::move(ch));
+        }
+        sk.clips.push_back(std::move(clip));
+    }
+    raw.clips.clear();
+    for (std::string& n : raw.notes) sk.notes.push_back(std::move(n));
+    return true;
+}
+
+bool ParseSkeletonXml(std::string text, Skel& sk, std::string* err) {
+    bool converted = false;
+    std::string why;
+    if (!detail::txt::NormalizeEncoding(text, converted, why, kMaxFileBytes)) return Fail(err, why);
+    detail::xml::FlatDoc doc;
+    std::string xerr;
+    if (!detail::xml::ParseFlat(text, doc, xerr)) return Fail(err, xerr);
+    if (doc.Name(0) != "skeleton") return Fail(err, "not an OGRE skeleton (the root element is <" + std::string(doc.Name(0)) + ">, not <skeleton>)");
+    const int bs = doc.First(0, "bones");
+    if (bs < 0) return Fail(err, "the skeleton has no <bones>");
+
+    RawSkel raw;
+    std::vector<SkBone>& file = raw.file;
+    std::map<std::string, int> byName;
+    std::map<long, int> idSeen;
+    for (int b = doc.Kid(bs); b >= 0; b = doc.Next(b)) {
+        if (doc.Name(b) != "bone") continue;
+        if (file.size() >= kMaxBones) return Fail(err, "too many bones");
+        SkBone k;
+        double id;
+        if (!NumOr(doc, b, "id", (double)file.size(), id) || id < 0 || id > 1e9 || id != std::floor(id)) return Fail(err, "bad bone id '" + doc.AttrOr(b, "id", "") + "'");
+        k.id = (long)id;
+        k.name = doc.AttrOr(b, "name", "");
+        if (k.name.empty()) return Fail(err, "a bone has no name");
+        if (!byName.emplace(k.name, (int)file.size()).second) return Fail(err, "two bones are named '" + k.name + "'");
+        if (!idSeen.emplace(k.id, (int)file.size()).second) return Fail(err, "two bones have the id " + std::to_string(k.id));
+        const int pe = doc.First(b, "position"), re = doc.First(b, "rotation"), se = doc.First(b, "scale");
+        if (pe >= 0 && !ReadVec(doc, pe, 0, k.pos)) return Fail(err, "bad <position> of bone '" + k.name + "'");
+        if (re >= 0 && !ReadRot(doc, re, k.rot)) return Fail(err, "bad <rotation> of bone '" + k.name + "'");
+        if (se >= 0 && !ReadScale(doc, se, k.scl)) return Fail(err, "bad <scale> of bone '" + k.name + "'");
+        file.push_back(std::move(k));
+    }
+    if (file.empty()) return Fail(err, "the skeleton has no bones");
+    raw.par.assign(file.size(), -1);
+    const int bh = doc.First(0, "bonehierarchy");
+    if (bh >= 0) for (int e = doc.Kid(bh); e >= 0; e = doc.Next(e)) {
+        if (doc.Name(e) != "boneparent") continue;
+        const std::string cn = doc.AttrOr(e, "bone", ""), pn = doc.AttrOr(e, "parent", "");
+        const auto c = byName.find(cn), p = byName.find(pn);
+        if (c == byName.end() || p == byName.end()) return Fail(err, "<boneparent> names a bone the skeleton does not have ('" + cn + "' under '" + pn + "')");
+        if (raw.par[(std::size_t)c->second] >= 0) return Fail(err, "bone '" + cn + "' has two parents");
+        raw.par[(std::size_t)c->second] = p->second;
+    }
+
     // animations
     std::size_t keys = 0;
     int shown = 0;
     const int an = doc.First(0, "animations");
     if (an >= 0) for (int a = doc.Kid(an); a >= 0; a = doc.Next(a)) {
         if (doc.Name(a) != "animation") continue;
-        if (sk.clips.size() >= kMaxClips) return Fail(err, "too many animations");
-        ImportedClip clip;
+        if (raw.clips.size() >= kMaxClips) return Fail(err, "too many animations");
+        RawClip clip;
         clip.name = doc.AttrOr(a, "name", "");
         const int tr = doc.First(a, "tracks");
         if (tr >= 0) for (int t = doc.Kid(tr); t >= 0; t = doc.Next(t)) {
@@ -289,40 +332,29 @@ bool ParseSkeleton(std::string text, Skel& sk, std::string* err) {
             const std::string bn = doc.AttrOr(t, "bone", "");
             const auto bi = byName.find(bn);
             if (bi == byName.end()) {
-                if (shown++ < 8) sk.notes.push_back("OGRE: animation '" + clip.name + "' has a track for bone '" + bn + "', which the skeleton does not have (skipped)");
+                if (shown++ < 8) raw.notes.push_back("OGRE: animation '" + clip.name + "' has a track for bone '" + bn + "', which the skeleton does not have (skipped)");
                 continue;
             }
-            const SkBone& bind = file[(std::size_t)bi->second];
-            ImportedChannel ch;
-            ch.node = bn;
-            struct K { double time; Vec3 p; Quat r; Vec3 s; };
-            std::vector<K> ks;
+            RawTrack track;
+            track.bone = bi->second;
             const int kf = doc.First(t, "keyframes");
             if (kf >= 0) for (int e = doc.Kid(kf); e >= 0; e = doc.Next(e)) {
                 if (doc.Name(e) != "keyframe") continue;
                 if (++keys > kMaxKeys) return Fail(err, "too many keyframes");
                 double tm;
                 if (!NumOr(doc, e, "time", 0, tm) || tm < 0) return Fail(err, "bad keyframe time '" + doc.AttrOr(e, "time", "") + "' in animation '" + clip.name + "'");
-                Vec3 tv{0, 0, 0}, sv{1, 1, 1};
-                Quat q{0, 0, 0, 1};
+                RawKey k{tm, Vec3{0, 0, 0}, Quat{0, 0, 0, 1}, Vec3{1, 1, 1}};
                 const int te = doc.First(e, "translate"), re = doc.First(e, "rotate"), se = doc.First(e, "scale");
-                if (te >= 0 && !ReadVec(doc, te, 0, tv)) return Fail(err, "bad <translate> in animation '" + clip.name + "'");
-                if (re >= 0 && !ReadRot(doc, re, q)) return Fail(err, "bad <rotate> in animation '" + clip.name + "'");
-                if (se >= 0 && !ReadScale(doc, se, sv)) return Fail(err, "bad <scale> in animation '" + clip.name + "'");
-                ks.push_back(K{tm, Vec3{bind.pos.x + tv.x, bind.pos.y + tv.y, bind.pos.z + tv.z}, (bind.rot * q).Normalized(),
-                               Vec3{bind.scl.x * sv.x, bind.scl.y * sv.y, bind.scl.z * sv.z}});
+                if (te >= 0 && !ReadVec(doc, te, 0, k.t)) return Fail(err, "bad <translate> in animation '" + clip.name + "'");
+                if (re >= 0 && !ReadRot(doc, re, k.r)) return Fail(err, "bad <rotate> in animation '" + clip.name + "'");
+                if (se >= 0 && !ReadScale(doc, se, k.s)) return Fail(err, "bad <scale> in animation '" + clip.name + "'");
+                track.keys.push_back(k);
             }
-            std::stable_sort(ks.begin(), ks.end(), [](const K& x, const K& y) { return x.time < y.time; });
-            for (const K& k : ks) {
-                ch.position.push_back({(float)k.time, k.p});
-                ch.rotation.push_back({(float)k.time, k.r});
-                ch.scale.push_back({(float)k.time, k.s});
-            }
-            if (!ks.empty()) clip.channels.push_back(std::move(ch));
+            clip.tracks.push_back(std::move(track));
         }
-        sk.clips.push_back(std::move(clip));
+        raw.clips.push_back(std::move(clip));
     }
-    return true;
+    return FinishSkeleton(raw, sk, err);
 }
 
 // the bones as nodes under the root (node 0, already in `out`), then the clips and notes
@@ -355,6 +387,18 @@ bool ReadAssignments(const detail::xml::FlatDoc& d, int ba, std::int64_t count, 
         const auto it = skin.sk->byId.find((long)std::min(bi, 2e9));
         if (v >= (double)count || it == skin.sk->byId.end() || !(w > 0)) { ++skin.bad; continue; }
         out.push_back(Asg{(std::uint32_t)v, it->second, (float)w});
+    }
+    std::stable_sort(out.begin(), out.end(), [](const Asg& a, const Asg& b) { return a.v < b.v; });
+    return true;
+}
+
+// The binary form's assignments (vertex u32, bone u16, weight f32 per record) as read, checked against the skeleton here
+struct RawAsg { std::uint32_t v; std::uint16_t bone; float w; };
+bool FilterAssignments(const std::vector<RawAsg>& raw, std::int64_t count, Skin& skin, std::vector<Asg>& out) {
+    for (const RawAsg& r : raw) {
+        const auto it = skin.sk->byId.find((long)r.bone);
+        if ((std::int64_t)r.v >= count || it == skin.sk->byId.end() || !(r.w > 0)) { ++skin.bad; continue; }
+        out.push_back(Asg{r.v, it->second, r.w});
     }
     std::stable_sort(out.begin(), out.end(), [](const Asg& a, const Asg& b) { return a.v < b.v; });
     return true;
@@ -681,6 +725,7 @@ struct Sub {
     std::string material;
     bool shared = false, ownGeom = false, boneAssign = false;
     std::uint16_t op = 4;   // triangle list unless an operation chunk says otherwise
+    std::vector<RawAsg> asg;   // 0x4100 bone assignments
     std::vector<std::uint32_t> idx;
     Geom geom;
 };
@@ -704,7 +749,13 @@ bool ReadSubmesh(Reader& R, Sub& s, Build& b) {
     }
     while (R.Peek(id, len)) {
         if (id == kSubOp) { R.Header(); s.op = R.r.U16(); }
-        else if (id == kSubBone) { R.Header(); R.r.Skip(10); s.boneAssign = true; }   // vertex (32), bone (16), weight (float)
+        else if (id == kSubBone) {   // vertex (32), bone (16), weight (float)
+            R.Header();
+            if (s.asg.size() >= kMaxAssign) return R.Bad("too many bone assignments");
+            RawAsg a; a.v = R.r.U32(); a.bone = R.r.U16(); a.w = R.r.F32();
+            if (R.r.bad) return R.Bad("a bone assignment is cut off");
+            s.asg.push_back(a); s.boneAssign = true;
+        }
         else if (id == kSubAlias) { R.Header(); std::string a, t; if (!R.Line(a) || !R.Line(t)) return false; }
         else break;
         if (R.r.bad) return R.Bad("a submesh chunk is cut off");
@@ -713,6 +764,178 @@ bool ReadSubmesh(Reader& R, Sub& s, Build& b) {
 }
 
 } // namespace bm
+
+// ---- the binary skeleton (.skeleton) ----
+// Written from the public description of the OGRE binary skeleton file (the chunk list of the skeleton serializer's file-format
+// notes): no code from OGRE or any importer. The same framing as the binary mesh: a 16-bit header id (0x1000) and a version line
+// ("[Serializer_v1.10]", or "[Serializer_v1.80]" which adds the blend mode chunk), then chunks of a 16-bit id and a 32-bit length
+// that counts the 6-byte header. Strings end at a line feed. Chunks:
+//   0x1010 blend mode: u16 (0 average, 1 cumulative; how a game mixes clips, not part of the import)
+//   0x2000 bone: name, u16 handle, position (3 floats), orientation (x, y, z, w), and a scale (3 floats) only when the chunk's
+//          length leaves room for it
+//   0x3000 bone parent: u16 child handle, u16 parent handle
+//   0x4000 animation: name, f32 length; followed by an optional 0x4010 base info (name, f32 time: the base pose of an additive
+//          clip) and the 0x4100 tracks: u16 bone handle, followed by its 0x4110 keyframes: f32 time, rotation (x, y, z, w),
+//          translation (3 floats), and a scale when the chunk's length leaves room for it
+//   0x5000 animation link: name, f32 scale (another skeleton whose clips this one may share)
+// The handles are the ids the mesh's bone assignments use, and the keyframes are relative to the bind pose, as in the XML form.
+namespace sb {
+enum : std::uint16_t { kHeader = 0x1000, kBlendMode = 0x1010, kBone = 0x2000, kParent = 0x3000, kAnim = 0x4000, kAnimBase = 0x4010,
+                       kTrack = 0x4100, kKey = 0x4110, kLink = 0x5000 };
+constexpr std::uint32_t kBoneNoScale = 6 + 2 + 12 + 16;   // header, handle, position, orientation (plus the name)
+constexpr std::uint32_t kKeyNoScale = 6 + 4 + 16 + 12;    // header, time, rotation, translation
+
+bool Vec(bm::Reader& R, Vec3& v) { v.x = R.r.F32(); v.y = R.r.F32(); v.z = R.r.F32(); return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+bool Rot(bm::Reader& R, Quat& q) {
+    const float x = R.r.F32(), y = R.r.F32(), z = R.r.F32(), w = R.r.F32();
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(w)) return false;
+    q = Quat{x, y, z, w}.Normalized();   // a zero quaternion becomes no turn
+    return true;
+}
+} // namespace sb
+
+bool ParseSkeletonBin(const std::string& bytes, Skel& sk, std::string* err) {
+    if (bytes.size() > kMaxFileBytes) return Fail(err, "the file is larger than " + std::to_string(kMaxFileBytes >> 20) + " MB");
+    if (bytes.size() >= 2 && (unsigned char)bytes[0] == 0x10 && (unsigned char)bytes[1] == 0x00) return Fail(err, "a big-endian binary skeleton (not read)");
+    bm::Reader R(bytes);
+    std::string version;
+    if (R.r.U16() != sb::kHeader || !R.Line(version)) return Fail(err, "not an OGRE binary skeleton (no header)");
+    if (version.rfind("[Serializer_v", 0) != 0) return Fail(err, "not an OGRE binary skeleton (version '" + version.substr(0, 40) + "')");
+
+    RawSkel raw;
+    std::map<long, int> byHandle;
+    std::map<std::string, int> byName;
+    struct Link { std::uint16_t child, parent; };
+    std::vector<Link> links;
+    struct PendingTrack { std::size_t clip; std::uint16_t handle; std::vector<RawKey> keys; };
+    std::vector<PendingTrack> tracks;
+    std::size_t keys = 0;
+    bool cumulative = false, additive = false;
+    std::vector<std::string> linked;
+    std::uint16_t id; std::uint32_t len;
+    while (R.Peek(id, len)) {
+        if (id == sb::kBlendMode) {
+            R.Header();
+            cumulative = R.r.U16() == 1;
+        } else if (id == sb::kBone) {
+            R.Header();
+            if (raw.file.size() >= kMaxBones) return Fail(err, "too many bones");
+            SkBone k;
+            if (!R.Line(k.name)) return Fail(err, R.err);
+            if (k.name.empty()) return Fail(err, "a bone has no name");
+            k.id = (long)R.r.U16();
+            if (!sb::Vec(R, k.pos) || !sb::Rot(R, k.rot)) return Fail(err, R.r.bad ? "a bone is cut off" : "bone '" + k.name + "' has a number that is not finite");
+            if ((std::uint64_t)len >= (std::uint64_t)sb::kBoneNoScale + k.name.size() + 1 + 12 && !sb::Vec(R, k.scl))
+                return Fail(err, R.r.bad ? "a bone is cut off" : "bone '" + k.name + "' has a scale that is not finite");
+            if (R.r.bad) return Fail(err, "a bone is cut off");
+            if (!byName.emplace(k.name, (int)raw.file.size()).second) return Fail(err, "two bones are named '" + k.name + "'");
+            if (!byHandle.emplace(k.id, (int)raw.file.size()).second) return Fail(err, "two bones have the handle " + std::to_string(k.id));
+            raw.file.push_back(std::move(k));
+        } else if (id == sb::kParent) {
+            R.Header();
+            Link l; l.child = R.r.U16(); l.parent = R.r.U16();
+            if (links.size() >= kMaxBones * 2) return Fail(err, "too many bone parents");
+            links.push_back(l);
+        } else if (id == sb::kAnim) {
+            R.Header();
+            if (raw.clips.size() >= kMaxClips) return Fail(err, "too many animations");
+            RawClip clip;
+            if (!R.Line(clip.name)) return Fail(err, R.err);
+            R.r.F32();   // the length: the keys give the clip's span
+            const std::size_t ci = raw.clips.size();
+            raw.clips.push_back(std::move(clip));
+            while (R.Peek(id, len) && (id == sb::kAnimBase || id == sb::kTrack)) {
+                R.Header();
+                if (id == sb::kAnimBase) {
+                    std::string base;
+                    if (!R.Line(base)) return Fail(err, R.err);
+                    R.r.F32();
+                    additive = true;
+                    continue;
+                }
+                PendingTrack t;
+                t.clip = ci;
+                t.handle = R.r.U16();
+                while (R.Peek(id, len) && id == sb::kKey) {
+                    R.Header();
+                    if (++keys > kMaxKeys) return Fail(err, "too many keyframes");
+                    RawKey k{0, Vec3{0, 0, 0}, Quat{0, 0, 0, 1}, Vec3{1, 1, 1}};
+                    const float tm = R.r.F32();
+                    const bool fin = sb::Rot(R, k.r) && sb::Vec(R, k.t) && (len < sb::kKeyNoScale + 12 || sb::Vec(R, k.s));
+                    if (R.r.bad) return Fail(err, "a keyframe is cut off");
+                    if (!fin || !std::isfinite(tm) || tm < 0) return Fail(err, "a keyframe of animation '" + raw.clips[ci].name + "' has a bad number");
+                    k.time = tm;
+                    t.keys.push_back(k);
+                }
+                if (R.r.bad) return Fail(err, "a track is cut off");
+                tracks.push_back(std::move(t));
+            }
+        } else if (id == sb::kLink) {
+            R.Header();
+            std::string name;
+            if (!R.Line(name)) return Fail(err, R.err);
+            R.r.F32();
+            if (linked.size() < 8) linked.push_back(name);
+        } else {
+            if (!R.SkipChunk(len)) return Fail(err, R.err);   // a chunk this reader does not know, skipped by its length
+        }
+        if (R.r.bad) return Fail(err, "a chunk is cut off");
+    }
+    if (R.r.Left() != 0) return Fail(err, "the file ends in the middle of a chunk header");
+    if (raw.file.empty()) return Fail(err, "the skeleton has no bones");
+
+    raw.par.assign(raw.file.size(), -1);
+    for (const Link& l : links) {
+        const auto c = byHandle.find(l.child), p = byHandle.find(l.parent);
+        if (c == byHandle.end() || p == byHandle.end())
+            return Fail(err, "a bone parent names a handle the skeleton does not have (" + std::to_string(l.child) + " under " + std::to_string(l.parent) + ")");
+        if (raw.par[(std::size_t)c->second] >= 0) return Fail(err, "bone '" + raw.file[(std::size_t)c->second].name + "' has two parents");
+        raw.par[(std::size_t)c->second] = p->second;
+    }
+    int shown = 0;
+    for (PendingTrack& t : tracks) {
+        const auto b = byHandle.find(t.handle);
+        if (b == byHandle.end()) {
+            if (shown++ < 8) raw.notes.push_back("OGRE: animation '" + raw.clips[t.clip].name + "' has a track for bone handle " + std::to_string(t.handle) + ", which the skeleton does not have (skipped)");
+            continue;
+        }
+        raw.clips[t.clip].tracks.push_back(RawTrack{b->second, std::move(t.keys)});
+    }
+    if (cumulative) raw.notes.push_back("OGRE: the skeleton asks for cumulative clip blending; the clips are imported as they are, the blend mode is not kept");
+    if (additive) raw.notes.push_back("OGRE: an animation names a base pose (an additive clip); it is imported relative to the bind pose, the base is not applied");
+    for (const std::string& l : linked) raw.notes.push_back("OGRE: the clips of the linked skeleton '" + l + "' are not read");
+    if (version != "[Serializer_v1.10]" && version != "[Serializer_v1.80]")
+        raw.notes.push_back("OGRE: binary skeleton version '" + version.substr(0, 40) + "' was not checked against a real file");
+    return FinishSkeleton(raw, sk, err);
+}
+
+// A skeleton in either form: the binary one starts with its 16-bit header id (either byte order), the XML one with text.
+bool ParseSkeleton(const std::string& src, Skel& sk, std::string* err) {
+    if (src.size() >= 2 && (((unsigned char)src[0] == 0x00 && (unsigned char)src[1] == 0x10) || ((unsigned char)src[0] == 0x10 && (unsigned char)src[1] == 0x00)))
+        return ParseSkeletonBin(src, sk, err);
+    return ParseSkeletonXml(src, sk, err);
+}
+
+// OKAY_OWN_OGRE_SKELBIN=1 (or true / on / yes): the file readers also look for the binary skeleton a mesh links to. Off by default.
+bool SkelBinSwitchOn() {
+    const char* v = std::getenv("OKAY_OWN_OGRE_SKELBIN");
+    if (!v) return false;
+    const std::string s = detail::txt::Lower(v);
+    return s == "1" || s == "true" || s == "on" || s == "yes";
+}
+
+// The skeleton a mesh file links to, next to the mesh: `<link>.xml` first (the form the XML tools write), then, with the switch
+// on, the binary `<link>` itself. False when neither is there.
+bool LoadLinkedSkeleton(const std::string& baseDir, const std::string& link, std::string& text) {
+    std::string path, e2;
+    if (detail::ResolveInsideDir(baseDir, link + ".xml", path, e2) && detail::txt::ReadFileCapped(path, kMaxFileBytes, text, &e2)) return true;
+    text.clear();
+    if (!SkelBinSwitchOn()) return false;
+    path.clear(); e2.clear();
+    if (detail::ResolveInsideDir(baseDir, link, path, e2) && detail::txt::ReadFileCapped(path, kMaxFileBytes, text, &e2)) return true;
+    text.clear();
+    return false;
+}
 
 } // namespace ogre
 } // namespace
@@ -746,7 +969,7 @@ static bool ReadOgreImpl(std::string text, const std::string& baseDir, ImportedM
     root.name = "OGRE";
     out.nodes.push_back(root);
 
-    // the skeleton the mesh links to: given, or (file reads) the .skeleton.xml next to the mesh
+    // the skeleton the mesh links to: given (XML or binary), or (file reads) the one next to the mesh (LoadLinkedSkeleton)
     Skel skelObj;
     Skin skin;
     {
@@ -754,10 +977,7 @@ static bool ReadOgreImpl(std::string text, const std::string& baseDir, ImportedM
         const std::string* skSrc = skeletonXml;
         const int link = doc.First(0, "skeletonlink");
         std::string why2;
-        if (!skSrc && findSkeleton && link >= 0) {
-            std::string path, e2;
-            if (detail::ResolveInsideDir(baseDir, doc.AttrOr(link, "name", "") + ".xml", path, e2) && detail::txt::ReadFileCapped(path, kMaxFileBytes, skText, &e2)) skSrc = &skText;
-        }
+        if (!skSrc && findSkeleton && link >= 0 && LoadLinkedSkeleton(baseDir, doc.AttrOr(link, "name", ""), skText)) skSrc = &skText;
         if (skSrc) {
             if (ParseSkeleton(*skSrc, skelObj, &why2)) { skin.sk = &skelObj; AddSkeletonToModel(skelObj, out); }
             else out.notes.push_back("OGRE: the skeleton could not be read (" + why2 + "): the mesh is imported rigid");
@@ -853,7 +1073,8 @@ static bool ReadOgreImpl(std::string text, const std::string& baseDir, ImportedM
     return true;
 }
 
-static bool ReadOgreBinImpl(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* scripts) {
+static bool ReadOgreBinImpl(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* scripts,
+                            const std::string* skeletonXml = nullptr, bool findSkeleton = false) {
     using namespace ogre;
     if (bytes.size() > kMaxFileBytes) return Fail(err, "the file is larger than " + std::to_string(kMaxFileBytes >> 20) + " MB");
     if (bytes.size() >= 2 && (unsigned char)bytes[0] == 0x10 && (unsigned char)bytes[1] == 0x00) return Fail(err, "a big-endian binary mesh (not read)");
@@ -873,6 +1094,7 @@ static bool ReadOgreBinImpl(const std::string& bytes, const std::string& baseDir
     if (scripts) for (const std::string& s : *scripts) ParseScript(s, b.mats);
     Geom shared;
     bool haveShared = false, meshBone = false, poses = false, lod = false, cutShort = false;
+    std::vector<RawAsg> sharedRaw;
     std::string skeleton;
     bool haveSkeleton = false;
     std::vector<bm::Sub> subs;
@@ -892,7 +1114,11 @@ static bool ReadOgreBinImpl(const std::string& bytes, const std::string& baseDir
             if (!R.Line(skeleton)) return Fail(err, R.err);
             haveSkeleton = true;
         } else if (id == bm::kMeshBone) {
-            R.Header(); R.r.Skip(10); meshBone = true;
+            R.Header();
+            if (sharedRaw.size() >= kMaxAssign) return Fail(err, "too many bone assignments");
+            RawAsg a; a.v = R.r.U32(); a.bone = R.r.U16(); a.w = R.r.F32();
+            if (R.r.bad) return Fail(err, "a bone assignment is cut off");
+            sharedRaw.push_back(a); meshBone = true;
         } else if (id == bm::kBounds) {
             R.Header(); R.r.Skip(28);   // box and radius: worked out from the vertices instead
         } else if (id == bm::kNameTable) {
@@ -918,6 +1144,21 @@ static bool ReadOgreBinImpl(const std::string& bytes, const std::string& baseDir
     ImportedNode root;
     root.name = "OGRE";
     out.nodes.push_back(root);
+    // the skeleton the mesh links to: given (XML or binary), or (file reads) the one next to the mesh (LoadLinkedSkeleton)
+    Skel skelObj;
+    Skin skin;
+    {
+        std::string skText;
+        const std::string* skSrc = skeletonXml;
+        if (!skSrc && findSkeleton && haveSkeleton && LoadLinkedSkeleton(baseDir, skeleton, skText)) skSrc = &skText;
+        std::string why2;
+        if (skSrc) {
+            if (ParseSkeleton(*skSrc, skelObj, &why2)) { skin.sk = &skelObj; AddSkeletonToModel(skelObj, out); }
+            else out.notes.push_back("OGRE: the skeleton could not be read (" + why2 + "): the mesh is imported rigid");
+        }
+    }
+    std::vector<Asg> sharedAsg;
+    bool sharedAsgRead = false;
     for (std::size_t i = 0; i < subs.size(); ++i) {
         bm::Sub& s = subs[i];
         const int myIdx = (int)i;
@@ -930,12 +1171,28 @@ static bool ReadOgreBinImpl(const std::string& bytes, const std::string& baseDir
         std::vector<std::uint32_t> faceIdx;
         if (s.op == 4) { faceIdx = std::move(s.idx); faceIdx.resize(faceIdx.size() / 3 * 3); }
         else ExpandSequence(s.idx, s.op == 5, faceIdx);
-        if (!AddSubmesh(b, *g, faceIdx, myIdx, s.material, s.boneAssign, err)) return false;
+        std::vector<Asg> ownAsg;
+        const std::vector<Asg>* asgUse = nullptr;
+        if (skin.sk) {
+            if (s.shared) {
+                if (!sharedAsgRead) { sharedAsgRead = true; FilterAssignments(sharedRaw, shared.count, skin, sharedAsg); }
+                asgUse = &sharedAsg;
+            } else {
+                FilterAssignments(s.asg, g->count, skin, ownAsg);
+                asgUse = &ownAsg;
+            }
+        }
+        if (!AddSubmesh(b, *g, faceIdx, myIdx, s.material, s.boneAssign, err, skin.sk ? &skin : nullptr, asgUse)) return false;
         s.geom = Geom{};   // freed as soon as its part is built
     }
     if (out.parts.empty()) return Fail(err, "no submesh has both vertices and triangles");
     out.backend = "own";
-    AddNotes(b, haveSkeleton ? &skeleton : nullptr, meshBone, poses, lod, !scripts || scripts->empty());
+    AddNotes(b, haveSkeleton ? &skeleton : nullptr, meshBone, poses, lod, !scripts || scripts->empty(), skin.sk != nullptr);
+    if (skin.sk) {
+        if (skin.bad) out.notes.push_back("OGRE: " + std::to_string(skin.bad) + " bone assignment(s) skipped (a vertex or bone that does not exist, or a weight that is not positive)");
+        if (skin.dropped) out.notes.push_back("OGRE: " + std::to_string(skin.dropped) + " vertex(es) had more than 4 bone weights; the 4 strongest were kept");
+        if (skin.singular) out.notes.push_back("OGRE: " + std::to_string(skin.singular) + " bone(s) with a flat scale have no inverse bind pose (the identity is used)");
+    }
     if (cutShort) out.notes.push_back("OGRE: a chunk after the submeshes has a length past the end of the file: the rest of the file was not read");
     if (version != "[MeshSerializer_v1.8]" && version != "[MeshSerializer_v1.10]" && version != "[MeshSerializer_v1.100]")
         out.notes.push_back("OGRE: binary mesh version '" + version.substr(0, 40) + "' was not checked against a real file (1.8 was)");
@@ -946,7 +1203,19 @@ bool ReadOgreSkeletonXml(const std::string& text, ImportedModel& out, std::strin
     out = ImportedModel{};
     if (text.size() > ogre::kMaxFileBytes) { ogre::Fail(err, "the file is larger than " + std::to_string(ogre::kMaxFileBytes >> 20) + " MB"); return false; }
     ogre::Skel sk;
-    if (!ogre::ParseSkeleton(text, sk, err)) return false;
+    if (!ogre::ParseSkeletonXml(text, sk, err)) return false;
+    ImportedNode root;
+    root.name = "OGRE";
+    out.nodes.push_back(root);
+    ogre::AddSkeletonToModel(sk, out);
+    out.backend = "own";
+    return true;
+}
+
+bool ReadOgreSkeletonBinary(const std::string& bytes, ImportedModel& out, std::string* err) {
+    out = ImportedModel{};
+    ogre::Skel sk;
+    if (!ogre::ParseSkeletonBin(bytes, sk, err)) return false;
     ImportedNode root;
     root.name = "OGRE";
     out.nodes.push_back(root);
@@ -976,9 +1245,10 @@ bool ReadOgreXmlFile(const std::string& path, ImportedModel& out, std::string* e
     return ok;
 }
 
-bool ReadOgreBinaryBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* materialScripts) {
+bool ReadOgreBinaryBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* materialScripts,
+                          const std::string* skeletonXml) {
     out = ImportedModel{};
-    const bool ok = ReadOgreBinImpl(bytes, baseDir, out, err, materialScripts);
+    const bool ok = ReadOgreBinImpl(bytes, baseDir, out, err, materialScripts, skeletonXml);
     if (!ok) out = ImportedModel{};
     return ok;
 }
@@ -989,7 +1259,7 @@ bool ReadOgreBinaryFile(const std::string& path, ImportedModel& out, std::string
     if (!detail::txt::ReadFileCapped(path, ogre::kMaxFileBytes, bytes, err)) return false;
     std::string dir;
     std::vector<std::string> scripts = ogre::ScriptsNextTo(path, 5, dir);   // ".mesh"
-    const bool ok = ReadOgreBinImpl(bytes, dir, out, err, &scripts);
+    const bool ok = ReadOgreBinImpl(bytes, dir, out, err, &scripts, nullptr, true);
     if (!ok) out = ImportedModel{};
     return ok;
 }

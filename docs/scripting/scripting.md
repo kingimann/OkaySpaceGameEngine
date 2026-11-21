@@ -572,7 +572,7 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `set_tab_badge(i, n)` / `set_tab_enabled(i, b)` | badge a tab (0 none, -1 dot, N number) / enable or disable it |
 | `tile_resize(w,h)` `set_tile(x,y,id)` `get_tile(x,y)` `tile_w()` `tile_h()` | edit a sibling Tilemap |
 | `emit(n)` | burst n particles from this object's ParticleSystem (explosions, dust) |
-| `particles_on(bool)` / `particles_alive()` | start/stop continuous emission / read live count |
+| `particles_on(bool)` / `particles_alive()` | start/stop emission (turning a finished one-shot on plays it again) / read live count |
 | `play_anim()` / `stop_anim()` | restart / pause this object's SpriteAnimator |
 | `play_sound()` | play this object's AudioSource |
 | `print(...)` | log values to the console |

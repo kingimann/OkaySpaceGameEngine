@@ -21334,7 +21334,7 @@ static void HierRowAction(EditorState& ed, GameObject* node, const std::string& 
     else if (id == "h.active") {
         ed.PushUndo();
         const bool on = !node->active;
-        for (GameObject* g : HierTargets(ed, node)) oked::SetObjectActive(g, on);   // the whole subtree (and the whole selection) goes with it
+        for (GameObject* g : HierTargets(ed, node)) oked::SetObjectActive(g, on);   // the whole selection; children follow their parent
         ed.dirty = true;
     }
     else if (id == "h.lock") {
@@ -21595,9 +21595,9 @@ void DrawHierarchy(EditorState& ed) {
             if (node == g_hierOpenNode && childCount > 0)
                 ImGui::SetNextItemOpen(g_hierOpenVal == 1);
             if (g_hierDropOpen.Is(node) && childCount > 0) { ImGui::SetNextItemOpen(true); g_hierDropOpenSeen = true; }
-            // Dim inactive objects; grey the whole row (and its subtree label).
+            // Dim objects that are off, themselves or through a parent; "(off)" marks the object's own flag.
             // Isolation dims everything outside the isolated subtree the same way.
-            bool dim = !node->active || (g_isolate && !node->IsSelfOrDescendantOf(g_isolate));
+            bool dim = !node->ActiveInHierarchy() || (g_isolate && !node->IsSelfOrDescendantOf(g_isolate));
             const bool prefabRoot = !dim && !node->prefabSource.empty();   // prefab instances read blue
             if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
             else if (prefabRoot) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.76f, 1.0f, 1.0f));
@@ -21658,7 +21658,7 @@ void DrawHierarchy(EditorState& ed) {
             bool inLock = mx >= rowMax.x - kHierEyeW * 2.0f && mx < rowMax.x - kHierEyeW;
             if (ImGui::IsItemHovered() && inEye)
                 ImGui::SetTooltip(node->active ? "Hide (deactivate) this object and its children"
-                                               : "Show (activate) this object and its children");
+                                               : "Show (activate) this object (its children keep their own setting)");
             if (ImGui::IsItemHovered() && inLock)
                 ImGui::SetTooltip(node->editorLocked
                     ? "Unlock: allow selecting this object in the Scene view again"
@@ -30947,8 +30947,8 @@ void DrawInspector(EditorState& ed) {
                       ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
 
     // Row 1: active toggle · type chip · editable name (fills the rest).
-    // Toggling an object takes its whole subtree with it,
-    // so disabling a parent disables its children and re-enabling brings them back.
+    // Toggling an object switches only its own flag. Its children follow it (ActiveInHierarchy) and keep
+    // their own setting, so a child that was off stays off when the parent comes back on (#888 finding 154).
     bool act = go->active;
     if (ImGui::Checkbox("##active", &act)) {
         const auto& sel = ed.MultiSelection();
@@ -30956,7 +30956,7 @@ void DrawInspector(EditorState& ed) {
         else oked::SetObjectActive(go, act);
         ed.dirty = true;
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Active in scene (also toggles children + the whole selection)");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Active in scene (applies to the whole selection; children follow it and keep their own setting)");
     ImGui::SameLine();
     {   // Drawn type icon — the same glyph set the Hierarchy rows use, so the
         // header reads consistently (replaces the old "[Cam]" text chip).

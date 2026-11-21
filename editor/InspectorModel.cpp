@@ -153,11 +153,10 @@ bool HierFilter::Matches(const GameObject& go, const std::unordered_set<const Ga
 // ---- Drag and drop ----------------------------------------------------------------------------
 
 void SetObjectActive(GameObject* go, bool on) {
-    if (!go) return;
-    go->active = on;
-    if (go->transform)
-        for (Transform* c : go->transform->Children())
-            if (c) SetObjectActive(c->gameObject, on);
+    // Only this object's own flag. Its children follow it through ActiveInHierarchy(), and each child keeps
+    // its own flag, so a child that was switched off on purpose stays off when the parent comes back on
+    // (#888 finding 154: this used to write `on` into the whole subtree).
+    if (go) go->active = on;
 }
 
 std::vector<GameObject*> HierarchyOrder(Scene& scene) {

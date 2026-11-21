@@ -4110,6 +4110,14 @@ static bool DragFloatRange2_raw(const char* label, float* lo, float* hi, float s
     return changed;
 }
 
+static bool DragIntRange2_raw(const char* label, int* lo, int* hi, float speed, int minV, int maxV) {
+    if (!lo || !hi) return false;
+    int pair[2] = {*lo, *hi};
+    const bool changed = dragCells(label, nullptr, pair, 2, speed, (float)minV, (float)maxV, true);
+    if (changed) { *lo = pair[0]; *hi = pair[1]; }
+    return changed;
+}
+
 static bool InputTextWithHint_raw(const char* label, const char* hint, char* buf, int cap, unsigned flags) {
     g_hintText = hint;
     const bool ch = InputText_raw(label, buf, cap, flags);
@@ -6426,6 +6434,7 @@ bool DragFloat4(const char* label, float v[4], float speed, float minV, float ma
 bool DragInt2(const char* label, int v[2], float speed, int minV, int maxV) { return noteEdit(DragInt2_raw(label, v, speed, minV, maxV)); }
 bool DragInt3(const char* label, int v[3], float speed, int minV, int maxV) { return noteEdit(DragInt3_raw(label, v, speed, minV, maxV)); }
 bool DragInt4(const char* label, int v[4], float speed, int minV, int maxV) { return noteEdit(DragInt4_raw(label, v, speed, minV, maxV)); }
+bool DragIntRange2(const char* label, int* lo, int* hi, float speed, int minV, int maxV) { return noteEdit(DragIntRange2_raw(label, lo, hi, speed, minV, maxV)); }
 bool DragFloatRange2(const char* label, float* lo, float* hi, float speed, float minV, float maxV) { return noteEdit(DragFloatRange2_raw(label, lo, hi, speed, minV, maxV)); }
 bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags) { return noteEdit(InputTextWithHint_raw(label, hint, buf, cap, flags)); }
 bool SliderFloat2(const char* label, float v[2], float minV, float maxV) { return noteEdit(SliderFloat2_raw(label, v, minV, maxV)); }

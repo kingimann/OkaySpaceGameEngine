@@ -190,6 +190,9 @@ inline PackResult Pack(std::vector<PackItem> items) {
         if (it.name == "AppxManifest.xml") haveManifest = true;
     }
     if (!haveManifest) { r.error = "AppxManifest.xml is missing"; return r; }
+    // A plain ZIP counts its entries in 16 bits (65535); the block map and [Content_Types].xml take two of them.
+    // Without this check the directory would silently hold the wrong count and Windows would reject the package.
+    if (items.size() > 65533) { r.error = "too many files for a plain ZIP package (65533 at most, got " + std::to_string(items.size()) + ")"; return r; }
     std::stable_sort(items.begin(), items.end(), [](const PackItem& a, const PackItem& b) {
         const bool am = a.name == "AppxManifest.xml", bm = b.name == "AppxManifest.xml";
         if (am != bm) return am;

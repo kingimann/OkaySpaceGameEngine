@@ -126,6 +126,15 @@ public:
     bool NewLine();
     /// Tab: indent (insert spaces to the next tab stop, or the lines of a multi-line selection); `outdent` (Shift+Tab) removes one level.
     bool Tab(bool outdent = false);
+    /// Line commands (each one undo step; the lines are the selection's, a selection that ends at column 0 leaves that line out).
+    /// ToggleLineComment: put `prefix` and a space before the first non-blank of every non-blank line, or take it away when every
+    /// such line has it ("" prefix: the language's first line comment, else "//"). DuplicateLines copies the lines below themselves
+    /// and moves the selection onto the copy. DeleteLines removes them with their newline. MoveLines swaps them with the line
+    /// above (up) or below; false at the document ends. Breakpoints follow the text.
+    bool ToggleLineComment(const std::string& prefix = "");
+    bool DuplicateLines();
+    bool DeleteLines();
+    bool MoveLines(bool up);
     bool Cut();          // copies to the clipboard, then deletes
     bool Copy() const;   // the selection to OkayUI::SetClipboardText
     bool Paste();
@@ -237,6 +246,7 @@ private:
     CodePos edit(int kind, CodePos from, CodePos to, const std::string& ins);
     void beginCompound();
     void endCompound();
+    void lineRange(int& l0, int& l1) const;
     bool replaceSelection(const std::string& ins, int kind);
     bool deleteSelectionIfAny();
     std::string textIn(CodePos a, CodePos b) const;

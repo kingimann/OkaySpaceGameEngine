@@ -365,6 +365,12 @@ static void AppxTests() {
     CHECK(!one("[Content_Types].xml")); CHECK(!one("data/x:y")); CHECK(!one("trail.")); CHECK(!one("")); CHECK(!one("Data/EMPTY.TXT"));   // same as Data/empty.txt ignoring case
     CHECK(!one("a//b"));
     { auto it = Items(); it.erase(it.begin()); CHECK(!Pack(it).ok); }   // no manifest
+    {   // a plain ZIP counts its entries in 16 bits: payload + block map + content types must fit in 65535
+        auto many = [](int n) { std::vector<PackItem> v; PackItem m; m.name = "AppxManifest.xml"; m.data = "<Package/>"; v.push_back(m);
+            for (int i = 1; i < n; ++i) { PackItem p; p.name = "d/f" + std::to_string(i) + ".bin"; p.data = "x"; v.push_back(p); } return v; };
+        PackResult big = Pack(many(65533)); CHECK(big.ok); if (big.ok) { VerifyResult vr = Verify(big.bytes); CHECK(vr.ok); CHECK(vr.files == 65533); }
+        PackResult over = Pack(many(65534)); CHECK(!over.ok); CHECK(over.error.find("65533") != std::string::npos);   // refused, not a silently wrong directory
+    }
     // a ZIP read by anyone else: write it out for tools/ci_appx_crosscheck (python zipfile) when asked
     if (const char* d = std::getenv("OKAY_APPX_TEST_OUT")) { std::ofstream(std::string(d), std::ios::binary) << r.bytes; }
     // the folder form

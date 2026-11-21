@@ -1132,6 +1132,68 @@ void PerfTests() {
     CHECK(tUndo < 3000 * slack);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Line commands the script editor does itself today (Ctrl+/, Ctrl+D, Ctrl+Shift+K, Alt+Up and Alt+Down).
+void LineCommandTests() {
+    {   // toggle comment: comment, then uncomment; blank lines left alone; indent kept
+        CodeEdit e; e.SetText("a\n  b\n\nc");
+        e.SetSelection(P(0, 0), P(3, 1));
+        CHECK(e.ToggleLineComment() && e.GetText() == "// a\n  // b\n\n// c");
+        CHECK(e.ToggleLineComment() && e.GetText() == "a\n  b\n\nc");
+        CHECK(e.Undo() && e.GetText() == "// a\n  // b\n\n// c");
+        CHECK(e.Undo() && e.GetText() == "a\n  b\n\nc");
+        // mixed: any uncommented line makes it comment all
+        e.SetText("// a\nb"); e.SetSelection(P(0, 0), P(1, 1));
+        CHECK(e.ToggleLineComment() && e.GetText() == "// // a\n// b");
+        // a selection ending at column 0 leaves that line out
+        e.SetText("a\nb\nc"); e.SetSelection(P(0, 0), P(2, 0));
+        CHECK(e.ToggleLineComment() && e.GetText() == "// a\n// b\nc");
+        // caret moves with the text; another prefix; "//" with no space removes two
+        e.SetText("x"); e.SetCaret(P(0, 1));
+        CHECK(e.ToggleLineComment("#") && e.GetText() == "# x" && At(e, 0, 3));
+        e.SetText("//x"); CHECK(e.ToggleLineComment() && e.GetText() == "x");
+        // all blank: nothing; read only: nothing
+        e.SetText("\n"); CHECK(!e.ToggleLineComment());
+        e.SetText("a"); e.SetReadOnly(true); CHECK(!e.ToggleLineComment() && e.GetText() == "a");
+        // the language's own line comment is the default
+        CodeEdit f; f.SetLanguage(UI::OkayScriptLanguage()); f.SetText("a");
+        CHECK(f.ToggleLineComment() && f.GetText().find("a") != std::string::npos && f.Line(0) != "a");
+    }
+    {   // duplicate
+        CodeEdit e; e.SetText("a\nb\nc"); e.SetCaret(P(1, 1));
+        CHECK(e.DuplicateLines() && e.GetText() == "a\nb\nb\nc" && At(e, 2, 1));
+        e.SetText("a\nb\nc"); e.SetSelection(P(0, 0), P(1, 1));
+        CHECK(e.DuplicateLines() && e.GetText() == "a\nb\na\nb\nc" && e.SelectionStart() == P(2, 0) && e.SelectionEnd() == P(3, 1));
+        e.SetText("a"); CHECK(e.DuplicateLines() && e.GetText() == "a\na");
+        CHECK(e.Undo() && e.GetText() == "a");
+    }
+    {   // delete lines
+        CodeEdit e; e.SetText("a\nb\nc"); e.SetCaret(P(1, 1));
+        CHECK(e.DeleteLines() && e.GetText() == "a\nc" && At(e, 1, 0));
+        CHECK(e.DeleteLines() && e.GetText() == "a" && At(e, 0, 0));   // last line: the newline before it goes
+        CHECK(e.DeleteLines() && e.GetText().empty() && e.LineCount() == 1);
+        CHECK(!e.DeleteLines() || e.GetText().empty());
+        e.SetText("a\nb\nc\nd"); e.SetSelection(P(1, 0), P(2, 1));
+        CHECK(e.DeleteLines() && e.GetText() == "a\nd");
+        CHECK(e.Undo() && e.GetText() == "a\nb\nc\nd");
+        e.SetReadOnly(true); CHECK(!e.DeleteLines());
+    }
+    {   // move lines
+        CodeEdit e; e.SetText("a\nb\nc"); e.SetCaret(P(1, 1));
+        CHECK(e.MoveLines(true) && e.GetText() == "b\na\nc" && At(e, 0, 1));
+        CHECK(!e.MoveLines(true) && e.GetText() == "b\na\nc");
+        CHECK(e.MoveLines(false) && e.MoveLines(false) && e.GetText() == "a\nc\nb" && At(e, 2, 1));
+        CHECK(!e.MoveLines(false));
+        CHECK(e.Undo() && e.Undo() && e.Undo() && e.GetText() == "a\nb\nc");
+        e.SetSelection(P(0, 1), P(1, 1));
+        CHECK(e.MoveLines(false) && e.GetText() == "c\na\nb" && e.Anchor() == P(1, 1) && e.Caret() == P(2, 1));
+        // breakpoints follow the text
+        e.SetText("a\nb\nc"); e.SetBreakpoints({2}); e.SetCaret(P(2, 0));
+        CHECK(e.MoveLines(true) && e.GetText() == "a\nc\nb");
+        e.SetReadOnly(true); CHECK(!e.MoveLines(true));
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1151,6 +1213,7 @@ int main() {
     MarkerTests();
     WidgetTests();
     ExtraTests();
+    LineCommandTests();
     DrawTests();
     PerfTests();
     TEST_MAIN_RESULT();

@@ -1,0 +1,95 @@
+; FBX 7.4.0 project file
+; ------------------
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+	Creator: "okay gen_fbx_fixtures.py"
+}
+
+GlobalSettings:  {
+	Version: 1000
+	Properties70:  {
+		P: "UpAxis", "int", "Integer", "", 1.0
+		P: "UpAxisSign", "int", "Integer", "", 1.0
+		P: "FrontAxis", "int", "Integer", "", 2.0
+		P: "FrontAxisSign", "int", "Integer", "", 1.0
+		P: "CoordAxis", "int", "Integer", "", 0.0
+		P: "CoordAxisSign", "int", "Integer", "", 1.0
+		P: "UnitScaleFactor", "double", "Number", "", 1.0
+	}
+}
+
+Definitions:  {
+	Version: 100
+	Count: 2
+}
+
+Objects:  {
+	Geometry: 1001, "Geometry::TwoQuads", "Mesh" {
+		Vertices: *18 {
+			a: 0,0,0,1,0,0,2,0,0,0,1,0,1,1,0,2,1,0
+		}
+		PolygonVertexIndex: *8 {
+			a: 0,1,4,-4,1,2,5,-5
+		}
+		GeometryVersion: 124
+		LayerElementNormal: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Normals: *24 {
+				a: 0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1
+			}
+		}
+		LayerElementUV: 1 {
+			Version: 101
+			Name: "Lightmap"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			UV: *16 {
+				a: 0,0,0.4,0,0.4,0.4,0,0.4,0.6,0,1,0,1,0.4,0.6,0.4
+			}
+		}
+		LayerElementUV: 0 {
+			Version: 101
+			Name: "UVMap"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "IndexToDirect"
+			UV: *12 {
+				a: 0.0,0,0.5,0,1.0,0,0.0,1,0.5,1,1.0,1
+			}
+			UVIndex: *8 {
+				a: 0,1,4,3,1,2,5,4
+			}
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementNormal"
+				TypedIndex: 0
+			}
+		}
+		Layer: 1 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementUV"
+				TypedIndex: 1
+			}
+		}
+	}
+	Model: 1002, "Model::TwoQuads", "Mesh" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A", 0.0, 0.0, 0.0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A", 0.0, 0.0, 0.0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A", 1.0, 1.0, 1.0
+		}
+	}
+}
+
+Connections:  {
+	C: "OO", 1002, 0
+	C: "OO", 1001, 1002
+}

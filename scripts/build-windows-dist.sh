@@ -127,7 +127,7 @@ cmake --build "$BUILD_DIR" -j "$JOBS"
 #     OkaySpacePlayer.exe    (standalone game runtime)
 #     okayspace-relay.exe    (multiplayer NAT relay, if built)
 #     SDL2.dll               (copy — each exe needs the DLL beside it on Windows)
-#     VERSION.txt / accounts.md
+#     VERSION.txt
 #
 # Note: Windows resolves load-time DLLs from the exe's own directory, so SDL2.dll
 # is intentionally duplicated next to the Tools/ exes — that's required, not waste.
@@ -165,7 +165,7 @@ OKAY_VER="$(grep -m1 -oE 'VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.
 : "${OKAY_VER:=0.0.0}"
 printf '%s\n' "$OKAY_VER" > "$OUT_DIR/VERSION.txt"
 printf '%s\n' "$OKAY_VER" > "$OUT_DIR/Tools/VERSION.txt"
-[ -f docs/online/accounts.md ] && cp docs/online/accounts.md "$OUT_DIR/Tools/"
+# (docs/online/accounts.md is no longer copied in: docs are internal, and it names the GitHub repository settings.)
 
 # Starter texture pack (grass/dirt/stone/grid). Drop these into a project's Assets/
 # folder, or point a MeshRenderer's Texture at them directly.

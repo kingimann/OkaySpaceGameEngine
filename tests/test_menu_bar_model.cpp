@@ -284,7 +284,7 @@ int main() {
 
     {   // Help: docs, shortcuts, updates, bug report, about.
         CHECK((Ids(HelpMenu(State{})) == std::vector<std::string>{
-            "help.scripting", "help.docs", "help.shortcuts", "---", "help.updates", "help.bug", "---", "help.about"}));
+            "help.scripting", "help.shortcuts", "---", "help.updates", "help.bug", "---", "help.about"}));
     }
 
     {   // The checker really finds the old problems: the pre-2026-11-15 File menu listed "Examples" three times and the old View

@@ -102,6 +102,11 @@ add_executable(test_flac_import test_flac_import.cpp)
 target_link_libraries(test_flac_import PRIVATE okay::engine)
 target_compile_definitions(test_flac_import PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME flac_import COMMAND test_flac_import)
+# Hostile FLAC files: every truncation, bit flips (checksums repaired), lying headers, garbage; whole vs streamed decode.
+add_executable(test_flac_hostile test_flac_hostile.cpp)
+target_link_libraries(test_flac_hostile PRIVATE okay::engine)
+target_compile_definitions(test_flac_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME flac_hostile COMMAND test_flac_hostile)
 
 # Stereo clips and placement (balance for 2D, mono-then-pan for 3D).
 add_executable(test_audio_stereo test_audio_stereo.cpp)
@@ -222,6 +227,11 @@ add_test(NAME inventory_wiring COMMAND test_inventory_wiring)
 add_executable(test_inventory_ops test_inventory_ops.cpp)
 target_link_libraries(test_inventory_ops PRIVATE okay::engine)
 add_test(NAME inventory_ops COMMAND test_inventory_ops)
+
+# Item names cut to a measured width (pure text-fit logic)
+add_executable(test_inventory_textfit test_inventory_textfit.cpp)
+target_link_libraries(test_inventory_textfit PRIVATE okay::engine)
+add_test(NAME inventory_textfit COMMAND test_inventory_textfit)
 
 # Moving items between bags: hostile inputs, stack/weight limits, slot<->grid moves, old saves
 add_executable(test_inventory_moves test_inventory_moves.cpp)
@@ -3358,6 +3368,11 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     add_test(NAME platform_xdnd COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_xdnd>)
     set_tests_properties(platform_xdnd PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 
+    # Tray-icon callback protocol model (header only, hand-computed Win32 message values).
+    add_executable(test_platform_tray test_platform_tray.cpp)
+    target_include_directories(test_platform_tray PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_tray COMMAND test_platform_tray)
+
     # The event queue (push, poll, pump, native pointer, unmapped events, render resets, CharForKey): no display needed.
     add_executable(test_platform_events test_platform_events.cpp)
     target_link_libraries(test_platform_events PRIVATE okay::platform)
@@ -3949,6 +3964,8 @@ function(okay_batchd_reader_test fmt src)
 endfunction()
 okay_batchd_reader_test(ac3d Ac3dReader.cpp)
 okay_batchd_reader_test(ogre OgreXmlReader.cpp)
+# OGRE skeletons (.skeleton.xml) and skinned .mesh.xml: hand-computed fixtures, reader source only
+okay_batchd_reader_test(ogre_skeleton OgreXmlReader.cpp)
 # the XGL reader unpacks ZGL with the engine's own inflate
 okay_batchd_reader_test(xgl XglReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 okay_batchd_reader_test(irr IrrSceneReader.cpp)
@@ -4576,3 +4593,9 @@ add_test(NAME save_shortcut_model COMMAND test_save_shortcut_model)
 add_executable(test_vs_pan_model test_vs_pan_model.cpp)
 target_include_directories(test_vs_pan_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME vs_pan_model COMMAND test_vs_pan_model)
+
+# The Vehicle Controller Inspector pure decisions (editor/VehicleEditorModel.hpp, UI-library free).
+add_executable(test_vehicle_editor_model test_vehicle_editor_model.cpp)
+target_include_directories(test_vehicle_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_vehicle_editor_model PRIVATE okay::engine)
+add_test(NAME vehicle_editor_model COMMAND test_vehicle_editor_model)

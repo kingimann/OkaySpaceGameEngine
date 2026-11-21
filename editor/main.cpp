@@ -1840,15 +1840,15 @@ static GameObject* CreateShapeSprite(EditorState& ed, int shape) {
 }
 
 // ---- Self-updater + runtime fetcher -----------------------------------
-// The editor can pull newer published builds from GitHub and, when exporting a
+// The editor can pull newer published builds from the releases bucket and, when exporting a
 // game, fetch the player runtime if it isn't sitting beside the editor — so a
 // fresh editor "generates everything it needs" without a manual file shuffle.
 namespace updater {
 namespace fs = std::filesystem;
 
-// Published builds live as the assets of the latest GitHub Release (what the
-// release workflow uploads). RawUrl() below builds the per-file URL; the old
-// raw main/dist/ URLs were removed — they served stale binaries.
+// Published builds live only in the public Supabase "releases" bucket. The editor
+// never needs GitHub at run time (owner decision 2026-11-20). RawUrl() below
+// builds the per-file URL.
 
 bool pendingQuit = false; // set true after a successful self-update relaunch
 
@@ -1873,7 +1873,7 @@ std::string SelfPath() {
 #endif
 }
 
-// Append a unique cache-busting query parameter. raw.githubusercontent.com is
+// Append a unique cache-busting query parameter. The download server is
 // fronted by a CDN that caches files for minutes, so a plain request can hand
 // back a stale VERSION.txt or an old .exe right after a release — the cause of
 // "it didn't update". Varying the URL per request forces a fresh fetch.
@@ -1887,7 +1887,7 @@ std::string BustCache(const std::string& url) {
 // Download a URL to a file using whatever HTTP client is on the system. Tries
 // curl first (ships on Win10+/macOS/Linux), then a platform fallback. -f makes
 // curl fail (non-zero) on a 404 so we don't cache an error page as a binary.
-// No-cache headers + a unique query string defeat the GitHub raw CDN cache.
+// No-cache headers + a unique query string defeat the CDN cache.
 bool Download(const std::string& url, const fs::path& outPath) {
     std::error_code ec; fs::remove(outPath, ec);
     std::string u = BustCache(url);
@@ -1925,33 +1925,37 @@ bool Download(const std::string& url, const fs::path& outPath) {
 #endif
 }
 
-// The SHA of the latest commit on main, or "main" if the API can't be reached.
-// Downloading from a commit-pinned raw URL is IMMUTABLE — it can never be served
-// stale by the CDN, which is the real reason "update" sometimes kept the old
-// version (the branch URL handed back a cached old binary).
-// (LatestRef removed — downloads use the releases/latest asset URL directly.)
-
-// Builds are published to two places: the project's Supabase Storage (public
-// "releases" bucket: VERSION.txt + v<ver>/<files>, see scripts/publish-supabase.sh)
-// and GitHub Releases. The check uses whichever has the newer version; GitHub
-// stays the fallback. OKAY_UPDATE_SERVER overrides the Supabase URL (testing).
+// The releases bucket: the only place updates come from. OKAY_UPDATE_SERVER overrides the
+// Supabase URL (testing); shipped builds get it from OKAY_DEFAULT_ACCOUNT_URL.
 std::string SupabaseReleasesBase() {
-    std::string s;
-    if (const char* e = std::getenv("OKAY_UPDATE_SERVER"); e && *e) s = e;
+    const char* e = std::getenv("OKAY_UPDATE_SERVER");
 #ifdef OKAY_DEFAULT_ACCOUNT_URL
-    if (s.empty()) s = OKAY_DEFAULT_ACCOUNT_URL;
+    const char* builtIn = OKAY_DEFAULT_ACCOUNT_URL;
+#else
+    const char* builtIn = "";
 #endif
-    if (s.rfind("https://", 0) != 0 && s.rfind("http://127.0.0.1", 0) != 0) return {};
-    while (!s.empty() && s.back() == '/') s.pop_back();
-    return s + "/storage/v1/object/public/releases/";
+    return okayversions::ReleasesBucketBase(e ? e : "", builtIn);
 }
 
-// URL of a published file. ref "sb:<ver>" = that version's folder in the
-// Supabase bucket; anything else = the latest GitHub Release's asset
-// ("releases/latest/download/<name>" always redirects to the newest release).
+// The newest release in the bucket (its VERSION.txt), with the folder its files are in.
+okayversions::LatestRelease LatestRelease() {
+    static unsigned n = 0;
+    return okayversions::ResolveLatestRelease(SupabaseReleasesBase(), [](const std::string& url, std::string& out) {
+        std::error_code ec;
+        const fs::path tmp = fs::temp_directory_path(ec) / ("okayspace_ver_" + std::to_string(okay::restart::CurrentPid()) + "_" + std::to_string(n++) + ".txt");
+        const bool got = Download(url, tmp);
+        if (got) { std::ifstream f(tmp, std::ios::binary); std::stringstream ss; ss << f.rdbuf(); out = ss.str(); }
+        fs::remove(tmp, ec);
+        return got;
+    });
+}
+
+// URL of a published file. ref "sb:<ver>" = that version's folder in the bucket; anything else = the
+// newest release's folder there ("" when the bucket can't be reached or none is built in).
 std::string RawUrl(const std::string& ref, const std::string& name) {
-    if (ref.rfind("sb:", 0) == 0) return SupabaseReleasesBase() + "v" + ref.substr(3) + "/" + name;
-    return "https://github.com/kingimann/OkaySpaceGameEngine/releases/latest/download/" + name;
+    if (ref.rfind("sb:", 0) == 0) { const std::string b = SupabaseReleasesBase(); return b.empty() ? std::string() : b + "v" + ref.substr(3) + "/" + name; }
+    const okayversions::LatestRelease r = LatestRelease();
+    return r.base.empty() ? std::string() : r.base + name;
 }
 
 // Compare dotted versions ("1.4.0"); returns -1 / 0 / 1 for a<b / a==b / a>b (shared/ProjectVersion.hpp, which the launcher uses too).
@@ -1966,7 +1970,7 @@ struct UpdateInfo {
     std::string ref = "main";   // commit the check resolved to (install uses the same)
 };
 
-// Query GitHub for the published version + release notes. No files are swapped;
+// Ask the releases bucket for the published version + release notes. No files are swapped;
 // this only reports what's available (the install step is explicit).
 UpdateInfo CheckLatest() {
     UpdateInfo info;
@@ -1974,26 +1978,11 @@ UpdateInfo CheckLatest() {
     info.checked = true;
     std::error_code ec;
     fs::path tmp = fs::temp_directory_path(ec);
-    // The published version at one place ("" if unreachable or not a version).
-    auto fetchVer = [&](const std::string& url, const char* tmpName) {
-        fs::path vf = tmp / tmpName;
-        std::string v;
-        if (Download(url, vf.string())) {
-            std::ifstream f(vf); std::getline(f, v);
-            while (!v.empty() && (v.back() == '\r' || v.back() == '\n' || v.back() == ' ')) v.pop_back();
-        }
-        fs::remove(vf, ec);
-        const bool ok = !v.empty() && v.size() < 24 && v.find('.') != std::string::npos &&
-                        v.find_first_not_of("0123456789.") == std::string::npos;
-        return ok ? v : std::string();
-    };
-    const std::string sb = SupabaseReleasesBase();
-    const std::string vs = sb.empty() ? std::string() : fetchVer(sb + "VERSION.txt", "okayspace_version_sb.txt");
-    const std::string vg = fetchVer(RawUrl("latest", "VERSION.txt"), "okayspace_version.txt");
-    if (!vs.empty() && (vg.empty() || CompareVersions(vg, vs) <= 0)) { info.latest = vs; info.ref = "sb:" + vs; }
-    else { info.latest = vg; info.ref = "latest"; }   // the latest GitHub Release
+    const okayversions::LatestRelease r = LatestRelease();
+    info.latest = r.version;
+    info.ref = "sb:" + r.version;
     if (info.latest.empty()) {
-        info.error = "Couldn't reach the update server (no internet, or curl/PowerShell missing).";
+        info.error = r.error;
         return info;
     }
 
@@ -2025,7 +2014,6 @@ void Relaunch(const std::string& path) {
 bool FetchVerified(const std::string& version, const std::string& asset, const fs::path& dest, std::string& reason) {
     okayversions::Sources src;
     src.bucketBase = SupabaseReleasesBase();
-    src.archiveTemplate = "https://github.com/kingimann/OkaySpaceGameEngine/releases/download/v{version}/{file}";
     {   // an old signed list replayed is refused (shared/UpdateGuard.hpp); the floor sits beside this program
         const fs::path self = okay::restart::CurrentExecutable();
         if (!self.empty()) src.floorFile = self.parent_path() / okayupdate::kFloorName;
@@ -4293,7 +4281,7 @@ std::string FindPlayer() {
 }
 
 // Ensure the player runtime is available, downloading it next to the editor
-// from GitHub if it isn't found locally. Returns its path, or "" on failure.
+// from the releases bucket if it isn't found locally. Returns its path, or "" on failure.
 // This is what lets a freshly-downloaded editor build a runnable game with no
 // manual setup ("when building, generate everything it needs").
 std::string EnsurePlayer(std::string* note) {
@@ -4747,7 +4735,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
     }
 
     // 3) Copy the player runtime, renamed to <Game>.exe. If it isn't beside the
-    // editor, fetch it from GitHub so the build is self-contained.
+    // editor, fetch it from the releases bucket so the build is self-contained.
     std::string fetchNote;
     std::string player = EnsurePlayer(&fetchNote);
     const std::string exeName = plan.exeName;
@@ -4938,7 +4926,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         msg += ".  [" + human(rp.total) + " total";
         if (!plan.dataDir.empty() && !(plan.makeZip && !plan.keepFolder)) msg += ", game data in " + plan.dataDir + "/";
         msg += "]";
-        if (!fetchNote.empty() && fetchNote.rfind("Downloaded", 0) == 0) msg += "  (runtime fetched from GitHub)";
+        if (!fetchNote.empty() && fetchNote.rfind("Downloaded", 0) == 0) msg += "  (runtime fetched from the download server)";
         if (sceneCount > 1) msg += "  (" + std::to_string(sceneCount) + " scenes)";
         if (copied) msg += "  (" + std::to_string(copied) + " asset(s), " + human(assetBytes) + ")";
         if (streaming) msg += "  (" + std::to_string(streaming) + " StreamingAssets file(s))";
@@ -5171,7 +5159,8 @@ std::string BuildServer(EditorState& ed, const std::string& outDir, const std::s
         for (const char* lib : {"SDL2.dll", "libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libSDL2-2.0.so.0"})
             fs::remove(dir / lib, ec);
         auto fetch = [&](const char* asset, const fs::path& dest, std::size_t minBytes) {
-            if (!updater::Download(updater::RawUrl("latest", asset), dest.string())) return false;
+            const std::string url = updater::RawUrl("latest", asset);   // the newest release in the releases bucket (never GitHub)
+            if (url.empty() || !updater::Download(url, dest.string())) return false;
             std::error_code fe;
             if (!fs::exists(dest, fe) || fs::file_size(dest, fe) < minBytes) { fs::remove(dest, fe); return false; }
             return true;
@@ -5358,7 +5347,6 @@ std::string BuildServer(EditorState& ed, const std::string& outDir, const std::s
         r += "     \"Find a server\" window within a minute.\n\n";
         r += "PLAYERS CAN ALSO JOIN BY ADDRESS\n";
         r += "  Connect to server... (launcher) or Address (in game):  your-server:" + portS + "\n\n";
-        r += "More: https://github.com/kingimann/OkaySpaceGameEngine/blob/main/docs/online/dedicated-server.md\n";
         WriteFileExact(dir / "README.txt", r);
     }
 
@@ -7858,7 +7846,6 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
     // Help
     else if (id == "help.scripting") g_showScriptDocs = true;
     else if (id == "help.shortcuts") g_showShortcuts = true;
-    else if (id == "help.docs") extide::RevealInFiles("https://github.com/kingimann/OkaySpaceGameEngine/tree/main/docs");
     else if (id == "help.updates") {
         g_update = updater::CheckLatest();
         g_openUpdatePopup = true;
@@ -7869,8 +7856,8 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
     }
     else if (id == "help.bug") {
         ImGui::SetClipboardText((std::string("OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION)).c_str());   // so the report can say which version (and that it is a test build)
-        extide::RevealInFiles("https://github.com/kingimann/OkaySpaceGameEngine/issues/new");
-        ConsoleLog(std::string("Opened the bug report page in your browser. The version line (OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION) + ") is on the clipboard: paste it into the report.");
+        g_showCrashLog = true;   // the in-app crash path (no web page: the editor never opens GitHub, owner decision 2026-11-20)
+        ConsoleLog(std::string("Opened the Crash Log. The version line (OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION) + ") is on the clipboard: paste it into the report.");
     }
     else if (id == "help.about") g_openAbout = true;
 }
@@ -20425,9 +20412,6 @@ void DrawAboutPopup() {
         }
         ImGui::Spacing();
         if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
-        ImGui::SameLine();
-        if (ImGui::Button("GitHub", ImVec2(110, 0)))
-            extide::RevealInFiles("https://github.com/kingimann/OkaySpaceGameEngine");
         ImGui::SameLine();
         if (ImGui::Button("Copy version info", ImVec2(150, 0))) {
             char vb[128];

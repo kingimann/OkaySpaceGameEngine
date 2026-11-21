@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include "okay/Components/Seat.hpp"
 #include <cmath>
 #include <limits>
 #include <string>
@@ -264,6 +265,211 @@ int main() {
         ClearDamageListeners();
     }
 
+    // ===== PR #1091 review: existing games must not change =====================
+
+    // 1. Knockback still lands during god mode, i-frames or a dodge (the old rule: any live target).
+    {
+        Scene s("knock");
+        GameObject* g = s.CreateGameObject("G");
+        auto* h = g->AddComponent<HealthStat>(); h->godMode = true;
+        auto* rb = g->AddComponent<Rigidbody3D>(); rb->gravityScale = 0.0f;
+        s.Start();
+        CHECK(ApplyCombatDamage(g, 10.0f, Vec3{0, 0, -3}, Vec3{0, 0, 5}));   // old: true for a live target
+        CHECK_NEAR(h->health, 100.0f, 1e-6f);                                 // god mode: no damage
+        CHECK(rb->velocity.z > 0.0f);                                         // but the push lands
+        h->godMode = false; h->invincibleTime = 1.0f; rb->velocity = Vec3{0, 0, 0};
+        CHECK(ApplyCombatDamage(g, 10.0f, Vec3{0, 0, -3}, Vec3{0, 0, 0}));
+        CHECK(ApplyCombatDamage(g, 10.0f, Vec3{0, 0, -3}, Vec3{0, 0, 5}));   // inside the i-frames
+        CHECK_NEAR(h->health, 90.0f, 1e-3f);
+        CHECK(rb->velocity.z > 0.0f);
+        h->Kill(); rb->velocity = Vec3{0, 0, 0};
+        CHECK(!ApplyCombatDamage(g, 10.0f, Vec3{0, 0, -3}, Vec3{0, 0, 5}));  // dead: nothing, no push
+        CHECK_NEAR(rb->velocity.z, 0.0f, 1e-6f);
+    }
+
+    // 2. Script hurt / heal / get_hp / get_max_hp / is_dead keep the old order: Stats, then Survival Stats.
+    {
+        Scene s("scriptorder");
+        GameObject* hero = s.CreateGameObject("Hero");
+        GameObject* both = s.CreateGameObject("Both");
+        auto* st = both->AddComponent<Stats>(); st->defense = 0; st->maxHealth = 80.0f; st->health = 80.0f;
+        auto* sv = both->AddComponent<SurvivalStats>(); sv->armor = 0.0f;
+        GameObject* hs = s.CreateGameObject("HsOnly"); auto* hso = hs->AddComponent<HealthStat>();
+        auto* sc = hero->AddComponent<ScriptComponent>(); std::string err;
+        const bool ok = sc->LoadSource(
+            "var a = 0\nvar b = 0\nvar m = 0\nvar d = 1\nvar c = 0\n"
+            "func start() {\n"
+            "  hurt(\"Both\", 30)\n a = get_hp(\"Both\")\n m = get_max_hp(\"Both\")\n"
+            "  heal(\"Both\", 10)\n b = get_hp(\"Both\")\n d = is_dead(\"Both\")\n"
+            "  hurt(\"HsOnly\", 25)\n c = get_hp(\"HsOnly\")\n}\n", &err);
+        CHECK(ok);
+        s.Start(); s.Update(1.0f / 60.0f);
+        if (ok && sc->VM()) {
+            CHECK_NEAR(sc->VM()->GetGlobal("a").AsFloat(), 50.0f, 0.01f);    // Stats took it
+            CHECK_NEAR(sc->VM()->GetGlobal("m").AsFloat(), 80.0f, 0.01f);
+            CHECK_NEAR(sc->VM()->GetGlobal("b").AsFloat(), 60.0f, 0.01f);
+            CHECK_NEAR(sc->VM()->GetGlobal("d").AsFloat(), 0.0f, 0.01f);
+            CHECK_NEAR(sc->VM()->GetGlobal("c").AsFloat(), 75.0f, 0.01f);    // new holders still reached last
+        }
+        CHECK_NEAR(st->health, 60.0f, 1e-3f);
+        CHECK_NEAR(sv->health, sv->maxHealth, 1e-3f);                        // Survival Stats untouched
+        CHECK_NEAR(hso->health, 75.0f, 1e-3f);
+    }
+
+    // 3. RPG Stats: heal revives, a negative heal hurts, and a zero hit still deals the minimum 1.
+    {
+        Scene s("rpgold");
+        GameObject* g = s.CreateGameObject("G");
+        auto* st = g->AddComponent<Stats>(); st->defense = 5;
+        s.Start();
+        st->TakeDamage(0.0f);
+        CHECK_NEAR(st->health, 99.0f, 1e-3f);
+        st->TakeDamage(-4.0f);
+        CHECK_NEAR(st->health, 98.0f, 1e-3f);
+        st->Heal(-18.0f);
+        CHECK_NEAR(st->health, 80.0f, 1e-3f);
+        st->TakeDamage(1000.0f);
+        CHECK(st->IsDead());
+        st->Heal(50.0f);                                                       // revive by heal, as before
+        CHECK(!st->IsDead());
+        CHECK_NEAR(st->health, 50.0f, 1e-3f);
+        st->Heal(std::nanf(""));                                               // NaN still ignored
+        CHECK_NEAR(st->health, 50.0f, 1e-3f);
+    }
+
+    // 4. An immune hit returns false and touches nothing: no i-frames, no regen delay, no listener.
+    {
+        ClearDamageListeners();
+        int heard = 0;
+        AddDamagedListener([&](const DamageEvent&) { ++heard; });
+        Scene s("immune");
+        GameObject* g = s.CreateGameObject("G");
+        auto* h = g->AddComponent<HealthStat>();
+        h->SetResistance(DamageType::Fire, 1.0f);
+        h->invincibleTime = 0.5f; h->minDamage = 2.0f; h->regenPerSecond = 10.0f; h->regenDelay = 5.0f;
+        s.Start();
+        h->health = 50.0f;
+        CHECK(!h->Damage(DamageEvent::Make(40.0f, DamageType::Fire)));
+        CHECK(!DealDamage(g, 40.0f, DamageType::Fire));
+        CHECK_NEAR(h->health, 50.0f, 1e-6f);
+        CHECK(heard == 0);
+        CHECK(!h->IsInvincible());                                             // no i-frames started
+        Run(s, 0.5f, 60);                                                      // regen not delayed
+        CHECK(h->health > 52.0f);
+        const float before = h->health;
+        CHECK(h->Damage(DamageEvent::Make(10.0f, DamageType::Physical)));      // a real hit right after
+        CHECK_NEAR(h->health, before - 10.0f, 1e-3f);
+        CHECK(heard == 1);
+        ClearDamageListeners();
+    }
+
+    // 5. KillObject really kills every holder, and is true only when the target is dead afterwards.
+    {
+        Scene s("realkill");
+        GameObject* a = s.CreateGameObject("Hs");  auto* ha = a->AddComponent<HealthStat>();
+        ha->resistance = 1.0f; ha->godMode = true; ha->invincibleTime = 5.0f; ha->SetResistance(DamageType::Generic, 1.0f);
+        GameObject* b = s.CreateGameObject("Sv");  auto* sv = b->AddComponent<SurvivalStats>();
+        sv->godMode = true; sv->resistance = 1.0f;
+        GameObject* c = s.CreateGameObject("Rpg"); c->AddComponent<Stats>()->defense = 100000;
+        GameObject* d = s.CreateGameObject("Npc"); auto* npc = d->AddComponent<NPCController>(); npc->invulnerable = true;
+        s.Start();
+        CHECK(KillObject(a) && ha->IsDead());
+        CHECK(KillObject(b) && sv->dead && IsObjectDead(b));
+        CHECK(KillObject(c) && IsObjectDead(c));
+        CHECK(KillObject(d) && npc->IsDead());
+        CHECK(!KillObject(a) && !KillObject(b) && !KillObject(c));             // already dead
+        CHECK(!KillObject(s.CreateGameObject("Bare")));
+    }
+
+    // 6. The killer is never stale: server deaths and respawns start fresh, and a destroyed source is dropped.
+    {
+        ClearDamageListeners();
+        GameObject* deathSource = reinterpret_cast<GameObject*>(1);
+        AddDeathListener([&](const DamageEvent& e) { deathSource = e.source; });
+        Scene s("stale");
+        GameObject* src = s.CreateGameObject("Src");
+        GameObject* g = s.CreateGameObject("G");
+        auto* h = g->AddComponent<HealthStat>(); h->playDeathAnim = false; h->SetDeathAction(HealthStat::DeathAction::Nothing);
+        s.Start();
+        h->Damage(DamageEvent::Make(10.0f, DamageType::Fire, src));
+        CHECK(h->LastEvent().source == src);
+        h->SetHealthFromServer(0.0f);                                          // died by the server's word
+        CHECK(h->IsDead());
+        CHECK(deathSource == nullptr);
+        h->RespawnFromServer(100.0f);
+        CHECK(!h->IsDead());
+        CHECK(h->LastEvent().source == nullptr && h->LastEvent().amount == 0.0f && !h->LastEvent().killed);
+        h->Damage(DamageEvent::Make(10.0f, DamageType::Fire, src));
+        deathSource = reinterpret_cast<GameObject*>(1);
+        h->DieFromServer(false, Vec3{0, 0, 0});
+        CHECK(deathSource == nullptr);
+        h->Revive();
+        CHECK(h->LastEvent().source == nullptr);
+        h->Damage(DamageEvent::Make(10.0f, DamageType::Fire, src));
+        CHECK(h->LastEvent().source == src);
+        s.Destroy(src);
+        s.Update(1.0f / 60.0f);                                                // destroys land at the end of the frame
+        CHECK(s.Find("Src") == nullptr);
+        CHECK(h->LastEvent().source == nullptr);                               // no dangling killer
+        ClearDamageListeners();
+    }
+
+    // 9a. A listener that adds a listener while being told is safe.
+    {
+        ClearDamageListeners();
+        int outer = 0, inner = 0;
+        AddDamagedListener([&](const DamageEvent&) {
+            ++outer;
+            for (int i = 0; i < 64; ++i) AddDamagedListener([&](const DamageEvent&) { ++inner; });
+        });
+        Scene s("relisten");
+        GameObject* g = s.CreateGameObject("G"); g->AddComponent<HealthStat>();
+        s.Start();
+        CHECK(DealDamage(g, 1.0f));
+        CHECK(outer == 1 && inner == 0);                                       // new ones wait for the next hit
+        ClearDamageListeners();
+    }
+
+    // 9b. Afflictions carry their own kind: poison immunity does not block bleeding or radiation.
+    {
+        ClearDamageListeners();
+        std::vector<DamageType> types;
+        AddDamagedListener([&](const DamageEvent& e) { types.push_back(e.type); });
+        Scene s("afflict");
+        GameObject* g = s.CreateGameObject("G");
+        auto* h = g->AddComponent<HealthStat>(); h->SetResistance(DamageType::Poison, 1.0f);
+        auto* bl = g->AddComponent<BleedingStat>();
+        GameObject* g2 = s.CreateGameObject("G2");
+        auto* h2 = g2->AddComponent<HealthStat>(); h2->SetResistance(DamageType::Poison, 1.0f);
+        auto* po = g2->AddComponent<PoisonStat>();
+        s.Start();
+        bl->bleed = bl->maxBleed;
+        po->Poison(po->maxPoison);
+        Run(s, 0.5f, 60);
+        CHECK(h->health < 100.0f);                                             // bleeding still hurts
+        bool anyPoison = false; for (auto t : types) anyPoison |= (t == DamageType::Poison);
+        CHECK(!types.empty() && !anyPoison);
+        CHECK_NEAR(h2->health, 100.0f, 1e-3f);                                 // a poison affliction is still Poison: immune
+        ClearDamageListeners();
+    }
+
+    // DamageHealthOn / HealOn keep their old holders and order: Survival Stats first, then Health Stat only.
+    {
+        Scene s("afforder");
+        GameObject* g = s.CreateGameObject("G");
+        auto* h = g->AddComponent<HealthStat>();
+        auto* sv = g->AddComponent<SurvivalStats>(); sv->armor = 0.0f;
+        GameObject* r = s.CreateGameObject("R"); auto* st = r->AddComponent<Stats>();
+        s.Start();
+        DamageHealthOn(g, 10.0f);
+        CHECK_NEAR(sv->health, sv->maxHealth - 10.0f, 1e-3f);
+        CHECK_NEAR(h->health, 100.0f, 1e-3f);
+        HealOn(g, 5.0f);
+        CHECK_NEAR(sv->health, sv->maxHealth - 5.0f, 1e-3f);
+        DamageHealthOn(r, 10.0f);                                              // RPG Stats were never hurt by this
+        CHECK_NEAR(st->health, st->maxHealth, 1e-3f);
+    }
+
     // --- save and load round trip; an old saved line still loads ---------------
     {
         Scene s("ser");
@@ -301,6 +507,34 @@ int main() {
                 CHECK_NEAR(h3->armor, 2.0f, 1e-3f);
                 CHECK_NEAR(h3->ResistanceTo(DamageType::Fire), 0.0f, 1e-6f);   // no resistances in the old file
                 CHECK(!h3->keepActiveOnDeath);
+            }
+        }
+        // 7. A hostile or too-large resistance count neither hangs loading nor eats the next record.
+        {
+            GameObject* sp = s.CreateGameObject("SeatP");
+            sp->AddComponent<HealthStat>();
+            auto* seat = sp->AddComponent<Seat>(); seat->seatHeight = 0.77f;
+            const std::string base = SceneSerializer::SerializeObject(*sp);
+            const size_t la = base.find("  stat_health ");
+            const size_t lb = la == std::string::npos ? la : base.find('\n', la);
+            CHECK(lb != std::string::npos && base.compare(lb + 1, 7, "  seat ") == 0);   // the seat record follows
+            for (const char* tail : {" 0 2147483647 0.5 0.5", " 0 20 0 0 0.5 0 0 0 0 0 0 0 0 0 0", " 0 -5 0.5"}) {
+                if (lb == std::string::npos) break;
+                std::string line = base.substr(la, lb - la);
+                // Cut the written "keep active, count, resistances" tail and put the hostile one in its place.
+                size_t cut = line.size();
+                for (int k = 0; k < kDamageTypeCount + 2; ++k) cut = line.rfind(' ', cut - 1);
+                std::string doc = base.substr(0, la) + line.substr(0, cut) + tail + base.substr(lb);
+                Scene sh("hostile");
+                GameObject* o = SceneSerializer::InstantiateFromText(sh, doc);
+                CHECK(o != nullptr);
+                auto* st2 = o ? o->GetComponent<Seat>() : nullptr;
+                CHECK(st2 != nullptr);
+                if (st2) CHECK_NEAR(st2->seatHeight, 0.77f, 1e-4f);
+                auto* hh = o ? o->GetComponent<HealthStat>() : nullptr;
+                CHECK(hh != nullptr);
+                if (hh && std::string(tail).find(" 20 ") != std::string::npos)
+                    CHECK_NEAR(hh->ResistanceTo(DamageType::Fire), 0.5f, 1e-6f);   // the values that are there still load
             }
         }
         // Survival Stats, RPG Stats and NPC Controller still round-trip with their old fields

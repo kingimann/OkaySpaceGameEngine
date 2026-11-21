@@ -1138,7 +1138,7 @@ struct Builder {
     Document* steal = nullptr;   // LoadMemory / LoadFile: the Document's decoded buffers may be handed to the scene
     /// The buffers one mesh keeps, in one allocation (shared by its KeptArrays; freed with the last of them).
     struct MeshStore {
-        ByteBuffer bytes[12]; NumberBuffer nums[12]; int nb = 0, nn = 0;   // (a mesh keeps at most 11 arrays)
+        ByteBuffer bytes[12]; NumberBuffer nums[12]; int nb = 0, nn = 0;   // (a mesh usually keeps at most 11 arrays; extra UV sets can add more, and those are copied by the fallback below)
     };
     std::shared_ptr<MeshStore> store;   // the mesh being built
     struct KeptBuf { const void* from; const std::uint8_t* data; };

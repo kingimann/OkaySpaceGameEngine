@@ -91,6 +91,7 @@ The feature map currently has **125** rows that are Partial or Planned.
 | Inventory screen | Shows the bag, drags and splits stacks, moves between chest, hotbar, backpack and grid bags | Networked and scripted slot-to-grid moves, durability wear and repair; own-code arbiter for wheel and use key (only lean and bag-key clashes are handled), item names cut by measured width and icon file re-check are not ported; see [inventory.md](../gameplay/inventory.md) |
 | Mixamo Soldier and Xbot samples | Removed | |
 | LedgeGrab hands-on-ledge IK | Honest tooltip: not wired | Animation and IK team |
+| Quaternion rotation keys (`AnimationClip`) | Linear keys slerp along the shortest arc and `Reduce` measures angle (`anim_quat_slerp`) | Smooth (cubic) rotation keys still interpolate each component and renormalise: angular speed is uneven on big turns, and a sign flip between two smooth keys still swings the long way. No squad. Not run on Windows |
 | App icon | Placeholder OkaySpace logo | Branding decision |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
 | Software renderer: scene Ambient Occlusion and Depth of field | Not read / not drawn | The scene's Post-processing SSAO switch and depth of field do nothing in software (bloom, FXAA, exposure, tonemap, grading, vignette are read now). See [render_status.md](../rendering/rendering.md#render-status-our-own-renderers-honestly) |

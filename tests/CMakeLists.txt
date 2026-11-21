@@ -4582,3 +4582,7 @@ add_test(NAME save_shortcut_model COMMAND test_save_shortcut_model)
 add_executable(test_vs_pan_model test_vs_pan_model.cpp)
 target_include_directories(test_vs_pan_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME vs_pan_model COMMAND test_vs_pan_model)
+
+add_executable(test_anim_quat_slerp test_anim_quat_slerp.cpp)
+target_link_libraries(test_anim_quat_slerp PRIVATE okay::engine)
+add_test(NAME anim_quat_slerp COMMAND test_anim_quat_slerp)

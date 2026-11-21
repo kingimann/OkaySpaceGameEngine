@@ -1,6 +1,10 @@
 #include "ScriptEditorCodeEdit.hpp"
+#include "okay/UI/OkayUICompat.hpp"   // AddFontTtf
+#include "OkfDecode.hpp"
+#include "JetBrainsMonoFontOwn.h"
 
 #include <algorithm>
+#include <cstdint>
 
 namespace scripteditor {
 
@@ -97,7 +101,28 @@ void ScriptEditorCodeEdit::SetBreakpoints(const std::unordered_set<int>& lines) 
 
 OkayUI::Vec2 ScriptEditorCodeEdit::ContentOrigin() const {
     const OkayUI::Vec2 p = ed_.PosToScreen(OkayUI::CodePos{0, 0});
-    return OkayUI::Vec2{p.x - ed_.GutterWidth(), p.y};
+    return OkayUI::Vec2{p.x - ed_.GutterWidth() + offX_, p.y + offY_};
+}
+
+const OkayUI::Font* ScriptEditorCodeEdit::CodeFont() {
+    // Decoded once: the bytes must outlive the font (AddFontTtf keys its glyph cache on them). 16 px is the size the Dear ImGui
+    // script editor shows at 100%; UseCodeFont scales it to the size asked for.
+    static std::vector<std::uint8_t> bytes;
+    static const OkayUI::Font* font = nullptr;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        if (okf::DecodeLines(okf_data::kJetBrainsMonoOkf, okf_data::kJetBrainsMonoOkfLines, bytes) && bytes.size() == okf_data::kJetBrainsMonoOkfRawBytes)
+            font = OkayUI::AddFontTtf(bytes.data(), bytes.size(), 16.0f, "JetBrains Mono");
+    }
+    return font;
+}
+
+bool ScriptEditorCodeEdit::UseCodeFont(float px) {
+    const OkayUI::Font* f = CodeFont();
+    if (!f) return false;
+    ed_.SetFont(f, px);
+    return true;
 }
 
 } // namespace scripteditor

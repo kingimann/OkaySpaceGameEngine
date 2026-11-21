@@ -189,6 +189,7 @@ public:
         case SDLK_LCTRL: case SDLK_RCTRL: return KeyId_Ctrl;
         case SDLK_LSHIFT: case SDLK_RSHIFT: return KeyId_Shift;
         case SDLK_LALT: case SDLK_RALT: return KeyId_Alt;
+        case SDLK_SLASH: return KeyId_Slash;     // the code editor's Ctrl+/ (comment lines)
         default: return KeyId_None;
         }
     }
@@ -201,6 +202,7 @@ public:
         if (layoutChar >= 'a' && layoutChar <= 'z') return KeyId_A + (layoutChar - 'a');
         if (layoutChar >= '0' && layoutChar <= '9') return KeyId_0 + (layoutChar - '0');
         if (layoutChar == ' ') return KeyId_Space;
+        if (layoutChar == '/') return KeyId_Slash;   // the code editor's Ctrl+/ (comment lines), wherever the layout puts '/'
         const int v = (int)k;
         if (v >= (int)K::F1 && v <= (int)K::F12) return KeyId_F1 + (v - (int)K::F1);
         switch (k) {
@@ -213,6 +215,7 @@ public:
         case K::LCtrl: case K::RCtrl: return KeyId_Ctrl;
         case K::LShift: case K::RShift: return KeyId_Shift;
         case K::LAlt: case K::RAlt: return KeyId_Alt;
+        case K::Slash: return KeyId_Slash;
         default: return KeyId_None;
         }
     }

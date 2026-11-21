@@ -414,6 +414,18 @@ jobs:
           gh release edit "v$VER" --repo "$GITHUB_REPOSITORY" --latest
           echo "v$VER is now the latest release, with checksums published." >> "$GITHUB_STEP_SUMMARY"
 
+      # The public downloads (installer, zip, Linux game server) go to the releases bucket too, so nobody needs GitHub to get them
+      # (owner decision 2026-11-20): releases/v<ver>/<file>, and releases/latest/<file> when this is the newest release. After the
+      # checksums are published and okay-server-linux-x64 is downloaded (the two steps above), so latest/ never points at a hidden release.
+      - name: Publish the public downloads to Supabase
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
+          VER: ${{ steps.pkg.outputs.ver }}
+          CHANNEL: ${{ inputs.channel || 'latest' }}
+        if: env.SUPABASE_PUBLISH == 'true'
+        run: scripts/publish-supabase-downloads.sh
+
   # The Linux game server: the player runtime built for Linux, which runs games
   # headless with --server. The editor's "Dedicated Server" export downloads it
   # (releases/latest/download/okay-server-linux-x64) to make a Linux server

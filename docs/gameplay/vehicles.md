@@ -150,7 +150,9 @@ camera blend when getting out, door animation, a camera-rig layer from `claude/c
 extended instead), physics-material surfaces from `claude/physics-3` (surfaces are read from the ground object's tag),
 `Vehicle.*` for OkayScript properties beyond the list above, a driving panel in the visual script palette categories.
 
-Unverified: the editor pieces were not built here (the editor is a Windows program; `VehicleEditorUi.hpp` is unbuilt); nothing
+Unverified: the editor pieces (`VehicleEditorUi.hpp`) now compile in the Linux `okay-editor` target with no errors, and their
+pure decisions (`VehicleEditorModel.hpp`: combo lists, Advanced groups, key labels, preset round trip) are tested by
+`vehicle_editor_model`; the window was never opened and nothing
 ran on Windows or with a GPU; nobody has driven it by hand, so the feel (the Handling slider's ends, how long a drift lasts) is
 a first guess from numbers; the gamepad path is not run; the camera is checked by numbers only.
 

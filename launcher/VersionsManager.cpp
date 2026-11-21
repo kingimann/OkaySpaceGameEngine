@@ -192,6 +192,42 @@ std::string ParseVersionTxt(std::string_view text) {
     return okay::testbuild::IsReleaseShaped(v) ? v : std::string();   // VERSION.txt and LTS.txt name releases: never a test build (four numbers)
 }
 
+std::string ReleasesBucketBase(std::string_view envOverride, std::string_view builtIn) {
+    std::string s(!envOverride.empty() ? envOverride : builtIn);
+    if (s.rfind("https://", 0) != 0 && s.rfind("http://127.0.0.1", 0) != 0) return {};
+    while (!s.empty() && s.back() == '/') s.pop_back();
+    if (IsGitHubUrl(s)) return {};                                  // never GitHub, even by mistake
+    const std::string base = s + "/storage/v1/object/public/releases/";
+    return IsAcceptableUrl(base + "x") ? base : std::string();
+}
+
+bool IsGitHubUrl(std::string_view url) {
+    std::string u;
+    for (char c : url) u += (char)std::tolower((unsigned char)c);
+    std::size_t p = u.find("://");
+    std::string host = u.substr(p == std::string::npos ? 0 : p + 3);
+    host = host.substr(0, host.find_first_of("/:?#"));
+    if (const std::size_t at = host.rfind('@'); at != std::string::npos) host.erase(0, at + 1);
+    auto endsWith = [&](const char* d) {
+        const std::size_t n = std::strlen(d);
+        return host == d + 1 || (host.size() >= n && host.compare(host.size() - n, n, d) == 0);
+    };
+    return endsWith(".github.com") || endsWith(".githubusercontent.com") || endsWith(".github.io");   // github-ok: the detector that refuses GitHub addresses
+}
+
+LatestRelease ResolveLatestRelease(const std::string& bucketBase, const FetchTextFn& fetch) {
+    LatestRelease r;
+    std::string base = bucketBase;
+    if (!base.empty() && base.back() != '/') base += '/';
+    if (base.empty() || !IsAcceptableUrl(base + "x") || IsGitHubUrl(base)) { r.error = kNoUpdateServer; return r; }
+    std::string body;
+    if (!fetch || !fetch(base + "VERSION.txt", body)) { r.error = "Couldn't reach the update server (offline?)."; return r; }
+    r.version = ParseVersionTxt(body);
+    if (r.version.empty()) { r.error = "The update server did not say which version is the newest."; return r; }
+    r.base = base + "v" + r.version + "/";
+    return r;
+}
+
 Index ParseIndex(std::string_view text, IndexKind kind) {
     Index idx;
     auto bad = [&](const std::string& why) {
@@ -228,10 +264,8 @@ Index ParseIndex(std::string_view text, IndexKind kind) {
     idx.latest = head("latest");
     idx.lts = head("lts");
 
-    if (const Value* a = root.get("archive"); a && a->kind == Value::String && a->str.size() <= 512 &&
-                                              a->str.compare(0, 8, "https://") == 0 && Contains(a->str, "{file}") &&
-                                              IsAcceptableUrl(ExpandTemplate(a->str, "2.0.0", "OkayEngine.exe")))
-        idx.archive = a->str;
+    // An "archive" field (a GitHub download pattern written by older publish scripts) is ignored on purpose: the programs never
+    // download from GitHub (owner decision 2026-11-20). Only the bucket is used.
     if (const Value* b = root.get("bucketPath"); b && b->kind == Value::String && PlainText(b->str, 128) && Contains(b->str, "{file}") &&
                                                  !Contains(b->str, "..") && !Contains(b->str, "://") && b->str[0] != '/')
         idx.bucketPath = b->str;
@@ -285,15 +319,12 @@ Index ParseIndex(std::string_view text, IndexKind kind) {
     return idx;
 }
 
-Index FallbackIndex(const std::string& latestTxt, const std::string& ltsTxt, const std::string& archiveTemplate, bool bucketAvailable) {
+Index FallbackIndex(const std::string& latestTxt, const std::string& ltsTxt, bool bucketAvailable) {
     Index idx;
     idx.fallback = true;
     idx.schema = 0;
     idx.latest = ParseVersionTxt(latestTxt);
     idx.lts = ParseVersionTxt(ltsTxt);
-    if (!archiveTemplate.empty() && archiveTemplate.compare(0, 8, "https://") == 0 && Contains(archiveTemplate, "{file}") &&
-        IsAcceptableUrl(ExpandTemplate(archiveTemplate, "2.0.0", "OkayEngine.exe")))
-        idx.archive = archiveTemplate;
     auto add = [&](const std::string& v, const char* channel) {
         if (v.empty() || idx.Find(v)) return;
         Entry e;
@@ -362,7 +393,6 @@ Index LoadIndex(const Sources& src, const FetchTextFn& fetch) {
                 if (floor.empty() || okayver::CompareVersions(idx.latest, floor) > 0) okayupdate::WriteFloor(src.floorFile, idx.latest);
             }
             if (idx.ok) {
-                if (idx.archive.empty()) idx.archive = src.archiveTemplate.compare(0, 8, "https://") == 0 ? src.archiveTemplate : std::string();
                 const std::string v = ParseVersionTxt(Fetch(fetch, base + "VERSION.txt")), l = ParseVersionTxt(Fetch(fetch, base + "LTS.txt"));
                 if (!v.empty() && okayver::CompareVersions(v, idx.latest) > 0) { idx.latest = v; AddHead(idx, v, "latest", true); }
                 if (!l.empty() && (idx.lts.empty() || okayver::CompareVersions(l, idx.lts) > 0)) { idx.lts = l; AddHead(idx, l, "lts", true); }
@@ -371,17 +401,13 @@ Index LoadIndex(const Sources& src, const FetchTextFn& fetch) {
             why = idx.error;
         }
     }
-    std::string latestTxt, ltsTxt;
-    std::vector<std::string> urls;
-    if (haveBucket) urls.push_back(base + "VERSION.txt");
-    for (const std::string& u : src.versionTxtUrls) urls.push_back(u);
-    for (const std::string& u : urls) {                              // the newest of every place that answers
-        const std::string t = Fetch(fetch, u);
-        if (ParseVersionTxt(t).empty()) continue;
-        if (ParseVersionTxt(latestTxt).empty() || okayver::CompareVersions(ParseVersionTxt(t), ParseVersionTxt(latestTxt)) > 0) latestTxt = t;
+    if (!haveBucket) {                                               // a build mistake: said plainly, never shown as "nothing to install"
+        Index none;
+        none.error = kNoUpdateServer;
+        return none;
     }
-    if (haveBucket) ltsTxt = Fetch(fetch, base + "LTS.txt");
-    Index idx = FallbackIndex(latestTxt, ltsTxt, src.archiveTemplate, haveBucket);
+    const std::string latestTxt = Fetch(fetch, base + "VERSION.txt"), ltsTxt = Fetch(fetch, base + "LTS.txt");
+    Index idx = FallbackIndex(latestTxt, ltsTxt, haveBucket);
     if (!idx.ok) {
         idx.error = "Couldn't reach the version list. Check your internet connection and try again.";
         return idx;
@@ -421,7 +447,6 @@ Index LoadDevIndex(const Sources& src, const FetchTextFn& fetch) {
     Index idx = ParseIndex(body, IndexKind::TestBuilds);
     idx.signedByPublisher = sig.kind == okayupdate::Kind::Valid;
     if (!idx.ok) return idx;
-    idx.archive.clear();                                                 // a test build is only ever downloaded from the bucket's dev/ folder
     idx.lts.clear();
     idx.latest.clear();
     for (const Entry& e : idx.versions)                                  // newest first
@@ -491,8 +516,9 @@ InstallPlan PlanInstall(const Index& index, const std::string& versionIn, const 
             if (IsAcceptableUrl(url) && std::find(f.urls.begin(), f.urls.end(), url) == f.urls.end()) f.urls.push_back(url);
         };
         if (e->inBucket && !base.empty()) add(base + ExpandTemplate(index.bucketPath, p.version, f.indexName));
-        if (!index.archive.empty()) add(ExpandTemplate(index.archive, p.version, f.indexName));
-        if (f.urls.empty()) return fail("There is nowhere to download v" + p.version + " from.");
+        if (f.urls.empty())
+            return fail(e->inBucket ? "There is nowhere to download v" + p.version + " from (no update server is built into this program)."
+                                    : "v" + p.version + " is not on the OkaySpace download server (it is older than the server), so it can't be downloaded any more.");
         if (!f.verified)   // REQUIRED: a download with no SHA-256 in the index is refused here, before anything is fetched
             return fail(f.indexName + " has no checksum in the version list" + (index.fallback ? " (versions.json could not be read from the release server)" : e == &synth ? " (v" + p.version + " is not in versions.json yet)" : "") +
                         ", so v" + p.version + " cannot be checked and was not installed. Updates are never installed without a checksum.");

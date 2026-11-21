@@ -235,6 +235,12 @@ add_test(NAME inventory_moves COMMAND test_inventory_moves)
 add_executable(test_inventory_durability test_inventory_durability.cpp)
 target_link_libraries(test_inventory_durability PRIVATE okay::engine)
 add_test(NAME inventory_durability COMMAND test_inventory_durability)
+add_executable(test_inventory_use test_inventory_use.cpp)
+target_link_libraries(test_inventory_use PRIVATE okay::engine)
+add_test(NAME inventory_use COMMAND test_inventory_use)
+add_executable(test_inventory_arbiter test_inventory_arbiter.cpp)
+target_link_libraries(test_inventory_arbiter PRIVATE okay::engine)
+add_test(NAME inventory_arbiter COMMAND test_inventory_arbiter)
 
 # Item definitions: .okayitems database, legacy names, per-instance data, def-driven stack/icon/rarity/use
 add_executable(test_item_database test_item_database.cpp)

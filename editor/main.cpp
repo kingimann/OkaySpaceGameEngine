@@ -38786,8 +38786,20 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##ma")) toRemove = ma;
         }
     }
+    // A player has two animator machines on purpose: the walk / jump graph (layer 0) and a small upper-body layer that
+    // plays a flinch when the player is hit. The second one gets a one-line explanation instead of a full panel.
+    if (auto* hl = dynamic_cast<AnimStateMachine*>(curComp); hl && hl->layer > 0 && hl->maskBone == "Torso" && go->GetComponent<Character>()) {
+        if (CompHeader("Hit reaction (upper body)", hl, &toRemove)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.7f, 0.75f, 1.0f));
+            ImGui::TextWrapped("Plays a short flinch on the upper body when the player is hit. It is not a second walk animation: the Animator above does the walking, running and jumping.");
+            ImGui::PopStyleColor();
+        }
+    } else
     if (auto* sm = dynamic_cast<AnimStateMachine*>(curComp)) {
         if (CompHeader("Animator", sm, &toRemove) && !(UseOkayUIInspector() && DrawAnimStateMachineWithOkayUI(ed, go, sm))) {   // OkayUI's with the preview switch (section 18)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.7f, 0.75f, 1.0f));
+            ImGui::TextWrapped("Picks the walk, run, jump and crouch animation from how the player moves.");
+            ImGui::PopStyleColor();
             if (ImGui::Button("Open Animator Graph##asm")) g_showAnimatorGraph = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Visual node editor: drag states around, draw transitions,\nwatch the active state light up in Play mode.");
             auto* ma = go->GetComponent<ModelAnimator>();

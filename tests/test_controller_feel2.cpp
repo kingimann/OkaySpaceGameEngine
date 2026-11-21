@@ -74,8 +74,28 @@ int main() {
         PlayerController::Add(p3, Mode::Both); c.Start();
         for (int i = 0; i < 30; ++i) c.Update(1.0f / 60.0f);
         const int n1 = CountAnim(p1, "first-person template"), n2 = CountAnim(p2, "third-person template"), n3 = CountAnim(p3, "Player Controller");
-        CHECK(n1 == 1); CHECK(n2 == 1); CHECK(n3 == 1);
-        CHECK(p3->GetComponents<AnimStateMachine>().size() == 1);
+        // Two machines exist on purpose, and they are different things: the walk graph (layer 0, exactly one) and an
+        // upper-body "hit reaction" layer (Torso mask, weight 0 until a hit). Not two walk animators.
+        for (GameObject* p : {p1, p2, p3}) {
+            int base = 0, hit = 0, other = 0;
+            for (AnimStateMachine* sm : p->GetComponents<AnimStateMachine>()) {
+                if (sm->layer == 0) ++base; else if (sm->maskBone == "Torso") ++hit; else ++other;
+            }
+            CHECK(base == 1); CHECK(hit <= 1); CHECK(other == 0);
+            CHECK(p->GetComponents<ModelAnimator>().empty());
+        }
+        CHECK(n1 <= 2); CHECK(n2 <= 2); CHECK(n3 <= 2);
+        // An old scene saved with both machines, and one saved with two base machines by mistake, loads without a crash
+        // and keeps what it had.
+        const std::string txt = SceneSerializer::Serialize(c);
+        Scene back("back"); CHECK(SceneSerializer::Deserialize(back, txt));
+        int loaded = 0; for (const auto& g : back.Objects()) if (g) loaded += (int)g->GetComponents<AnimStateMachine>().size();
+        CHECK(loaded == (int)p3->GetComponents<AnimStateMachine>().size());
+        p3->AddComponent<AnimStateMachine>();   // a second base machine
+        Scene back2("back2"); CHECK(SceneSerializer::Deserialize(back2, SceneSerializer::Serialize(c)));
+        int loaded2 = 0; for (const auto& g : back2.Objects()) if (g) loaded2 += (int)g->GetComponents<AnimStateMachine>().size();
+        CHECK(loaded2 >= 2);
+        for (int i = 0; i < 5; ++i) back2.Update(1.0f / 60.0f);
     }
 
     // ---- diagonal: W+D is no faster than W (both controllers, walk and sprint) ----

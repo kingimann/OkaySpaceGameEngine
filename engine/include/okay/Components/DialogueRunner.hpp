@@ -10,6 +10,8 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Math/Quat.hpp"
+#include "okay/Math/Vec3.hpp"
 #include <functional>
 #include <string>
 #include <vector>
@@ -124,7 +126,7 @@ private:
     void Ended();
     void StartShot();                  ///< the current line's camera shot, if it has one
     void EndShot();                    ///< back to the shot from before the conversation
-    CinemachineBrain* MainBrain() const;
+    CinemachineBrain* MainBrain();       ///< the main camera's brain; adds one for the talk when it has none
     void HandleInput();
     void DrawUI();
     void SetPrompt(const std::string& text);
@@ -142,6 +144,13 @@ private:
     std::string m_promptShown;
     bool m_shotOn = false;              ///< a line's shot is forced on the brain
     VirtualCamera* m_shotBefore = nullptr;   ///< what the brain had forced before (checked before use)
+    // A camera that had no brain: the runner adds one for the talk and takes it away again at the end, putting the
+    // camera back as it was (its own pose and lens), so whatever drove it before (a controller, a script) has it again.
+    CinemachineBrain* m_ownBrain = nullptr;  ///< the brain this runner added (compared by address, never read)
+    GameObject* m_ownBrainOn = nullptr;      ///< the camera object it was added to (checked before use)
+    Vec3  m_camPos{};
+    Quat  m_camRot = Quat::Identity;
+    float m_camFov = 60.0f, m_camOrtho = 5.0f;
 };
 
 /// True while a built-in story overlay on `go` owns the pointer (a running dialogue

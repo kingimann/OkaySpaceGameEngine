@@ -238,12 +238,18 @@ void DialogueRunner::Present() {
     StartShot();
 }
 
-CinemachineBrain* DialogueRunner::MainBrain() const {
+CinemachineBrain* DialogueRunner::MainBrain() {
     Scene* s = gameObject ? gameObject->scene() : nullptr;
     if (!s || !s->mainCamera || !s->mainCamera->gameObject) return nullptr;
     GameObject* cg = s->mainCamera->gameObject;
-    auto* br = cg->GetComponent<CinemachineBrain>();
-    return br ? br : cg->AddComponent<CinemachineBrain>();
+    if (auto* br = cg->GetComponent<CinemachineBrain>()) return br;
+    // No brain: add one for the talk. Remember the camera as it is now; EndShot removes the brain and puts this back.
+    if (cg->transform) { m_camPos = cg->transform->localPosition; m_camRot = cg->transform->localRotation; }
+    m_camFov = s->mainCamera->fieldOfView;
+    m_camOrtho = s->mainCamera->orthographicSize;
+    m_ownBrainOn = cg;
+    m_ownBrain = cg->AddComponent<CinemachineBrain>();
+    return m_ownBrain;
 }
 
 void DialogueRunner::StartShot() {
@@ -266,6 +272,22 @@ void DialogueRunner::EndShot() {
     VirtualCamera* before = m_shotBefore;
     m_shotBefore = nullptr;
     Scene* s = gameObject ? gameObject->scene() : nullptr;
+    if (m_ownBrain) {
+        // The camera had no brain before the talk: take ours away (else its LateUpdate keeps choosing a virtual camera
+        // for good) and put the camera back as it was, a cut. Its own driver (a controller, a script) moves it from there.
+        GameObject* cg = m_ownBrainOn;
+        CinemachineBrain* mine = m_ownBrain;
+        m_ownBrain = nullptr;
+        m_ownBrainOn = nullptr;
+        bool alive = false;   // the camera object may have been destroyed during the talk (its brain went with it)
+        if (s && cg) for (const auto& o : s->Objects()) if (o.get() == cg) { alive = true; break; }
+        if (!alive || cg->IsDestroyed()) return;
+        for (const auto& c : cg->Components())
+            if (c.get() == mine) { cg->RemoveComponent(mine); break; }
+        if (cg->transform) { cg->transform->localPosition = m_camPos; cg->transform->localRotation = m_camRot; }
+        if (Camera* cam = cg->GetComponent<Camera>()) { cam->fieldOfView = m_camFov; cam->orthographicSize = m_camOrtho; }
+        return;
+    }
     auto* br = (s && s->mainCamera && s->mainCamera->gameObject) ? s->mainCamera->gameObject->GetComponent<CinemachineBrain>() : nullptr;
     if (!br) return;
     bool alive = false;   // the shot a script had forced before the talk, if it is still in the scene

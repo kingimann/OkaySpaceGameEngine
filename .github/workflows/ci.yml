@@ -399,10 +399,15 @@ jobs:
       - name: Build
         run: |
           cmake --build build-assimp -j --target test_model_readers test_model_readers_fuzz test_collada_reader \
-            test_model_import_rig test_gltf_import test_fbx_reader test_glb_container
+            test_model_import_rig test_gltf_import test_fbx_reader test_glb_container test_model_corpus
 
       - name: Test
         run: ctest --test-dir build-assimp --output-on-failure -R '^(model_readers|model_readers_fuzz|collada_reader|model_import_rig|gltf_import|fbx_reader|glb_container)$'
+
+      # The real-file corpus (docs/content/model_corpus.md): every row of tests/data/model_corpus_manifest.tsv re-read from
+      # the test folder of the Assimp checkout above, so a reader change that alters a real file's counts fails here.
+      - name: Test the real-file corpus
+        run: OKAY_MODEL_CORPUS="$HOME/assimp-src/test" ctest --test-dir build-assimp --output-on-failure -R '^model_corpus$'
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
       # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").

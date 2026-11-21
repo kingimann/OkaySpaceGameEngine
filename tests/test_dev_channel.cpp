@@ -121,7 +121,6 @@ std::string StableIndex(const std::vector<std::string>& entries, const std::stri
 okayversions::Sources Src(const std::string& keys = "") {
     okayversions::Sources s;
     s.bucketBase = kBucket;
-    s.archiveTemplate = "https://github.example/o/r/releases/download/v{version}/{file}";
     s.trustedKeys = keys;
     return s;
 }
@@ -287,9 +286,9 @@ int main() {
         CHECK(idx.latest == "2.876.0");                                             // the head that named a test version is not believed: the newest release entry is
         CHECK(okayversions::ParseVersionTxt("2.876.0.17\n").empty() && okayversions::ParseVersionTxt("2.876.0\n") == "2.876.0");
         CHECK(okayversions::ParseVersionTxt("2.876.0.0\n").empty() && okayversions::ParseVersionTxt("1.2.3.4.5").empty());
-        const okayversions::Index fb = okayversions::FallbackIndex("2.876.0.17\n", "2.876.0.18\n", "", true);
+        const okayversions::Index fb = okayversions::FallbackIndex("2.876.0.17\n", "2.876.0.18\n", true);
         CHECK(!fb.ok && fb.versions.empty());                                       // nothing else to go on: refused, never a test build as the head
-        const okayversions::Index fb2 = okayversions::FallbackIndex("2.876.0.17\n", "2.850.1\n", "", true);
+        const okayversions::Index fb2 = okayversions::FallbackIndex("2.876.0.17\n", "2.850.1\n", true);
         CHECK(fb2.ok && fb2.latest.empty() && fb2.lts == "2.850.1" && fb2.versions.size() == 1);
 
         // The whole loader, with a server whose real files carry test versions and whose dev/ folder is full: the loader must not even ask for dev/.
@@ -350,7 +349,7 @@ int main() {
         s.files[kDev + "versions.json"] = body;
         okayversions::Index idx = okayversions::LoadDevIndex(Src(), s.Fn());
         CHECK(idx.ok && !idx.fallback && !idx.signatureRefused && idx.versions.size() == 3);
-        CHECK(idx.latest == "2.876.0.18" && idx.lts.empty() && idx.archive.empty());
+        CHECK(idx.latest == "2.876.0.18" && idx.lts.empty());
         CHECK(s.AskedOnlyUnderDev() && s.asked.front() == kDev + "versions.json");   // only the dev area, and the list first
         const okayversions::Entry* e = idx.Find("2.876.0.18");
         CHECK(e && e->inBucket && e->channel.empty() && e->branch == "claude/walk-vs-run" && e->sha == "0123456789abcdef0123456789abcdef01234567" &&
@@ -393,7 +392,7 @@ int main() {
             t.files[kDev + "versions.json"] = j;
             return okayversions::LoadDevIndex(Src(), t.Fn());
         }();
-        CHECK(idx.ok && idx.archive.empty() && idx.latest == "2.876.0.17");
+        CHECK(idx.ok && idx.latest == "2.876.0.17");
         // Garbage and absence.
         for (const char* bad : {"", "garbage", "[]", "{\"schema\": 2, \"versions\": []}", "<html>404</html>", "{\"versions\": []}"}) {
             Server t;

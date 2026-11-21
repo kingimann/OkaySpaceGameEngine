@@ -362,9 +362,9 @@ template <class... A> inline void TextColored(Vec4 color, const char* fmt, A... 
 
 // ---- Step 6.13: the argument shapes and flag families the panel probes found --------------------------------------------------------
 
-/// Slider and drag flags. Slider_AlwaysClamp: accepted (a slider here always clamps); Slider_Logarithmic: accepted, the scale stays
-/// linear (not done); the others are not offered. The `fmt` text in the overloads below is accepted and NOT used: values are shown with
-/// OkayUI's own number format.
+/// Slider and drag flags. Slider_AlwaysClamp: accepted (a slider here always clamps); Slider_Logarithmic: honoured by SliderFloat when the range
+/// keeps one sign and excludes 0 (otherwise, and for drag fields and vectors, the scale stays linear: known gap); Slider_NoInput and Slider_NoRoundToFormat
+/// are honoured. The `fmt` text is honoured by Drag*, SliderFloat/Int and InputFloat (see OkayUI::FormatNumber); a refused format shows the default; SliderFloat2/3/4 ignore it.
 enum SliderFlags : int { Slider_None = 0, Slider_AlwaysClamp = 16, Slider_Logarithmic = 32, Slider_NoRoundToFormat = 64, Slider_NoInput = 128 };
 bool SliderFloat(const char* label, float* value, float minV, float maxV, const char* fmt, int flags = 0);
 bool SliderInt(const char* label, int* value, int minV, int maxV, const char* fmt, int flags = 0);
@@ -477,7 +477,7 @@ void TreeNodeExFormatted(bool* out, const char* label, unsigned flags, const cha
 /// TreeNode with an id and a printf-style label: `TreeNode("##id", "Incoming (%d)", n)`.
 template <class A0, class... A> inline bool TreeNode(const char* id, const char* fmt, A0 a0, A... a) { bool r = false; TreeNodeExFormatted(&r, id, 0u, fmt, a0, a...); return r; }
 // ---- Step 6.18: argument shapes found by probing editor/main.cpp (the Hierarchy panel and the rest of the editor) ----------------------
-/// `fmt` (a printf format for the shown number) and `flags` are accepted and not used: OkayUI shows its own number format. Same for the vector forms.
+/// `fmt` (a printf format for the shown number) is honoured by DragFloat2/3/4 and DragFloatRange2 (`fmtMax` for the second cell); `flags` NoInput and NoRoundToFormat too. SliderFloat2/3/4 ignore `fmt`.
 bool DragFloat2(const char* label, float v[2], float speed, float minV, float maxV, const char* fmt, int flags = 0);
 bool DragFloat3(const char* label, float v[3], float speed, float minV, float maxV, const char* fmt, int flags = 0);
 bool DragFloat4(const char* label, float v[4], float speed, float minV, float maxV, const char* fmt, int flags = 0);

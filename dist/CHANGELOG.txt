@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.901.0
+  Cameras and smoother animation
+  - Camera zones: areas where the camera smoothly changes its view angle,
+    offset and smoothing as the player walks in.
+  - Six one-click camera presets: platformer, top-down, third person, first
+    person, racing and cinematic.
+  - The follow camera starts right on its target, and can no longer break on
+    bad numbers.
+  - Animations turn at an even speed between keyframes (no more uneven or
+    "rubbery" turns, and no wrong-way spins).
+
 v2.900.0
   Movement, animation and menus
   - The character controller now stops the same way at any frame rate, and
@@ -8,6 +19,11 @@ v2.900.0
   - Inventory items can wear out and be repaired.
   - GameObject > UI menu is tidier: 12 common items on top, the rest under
     "More".
+  - New collider shapes: cylinder, cone, convex hull, compound, plane and
+    heightfield in 3D; rotating capsules, polygons and composite in 2D.
+  - Vehicles: street-style controls you can remap, better seat fit, settings
+    in plain words with reset buttons.
+  - Inventory: tools wear out when used; item names fit their slot.
 
 v2.899.0
   Editor and model fixes

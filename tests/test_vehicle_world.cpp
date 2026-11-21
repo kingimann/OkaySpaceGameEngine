@@ -7,7 +7,7 @@
 using namespace okay;
 
 // examples/driving/driving_world.okayscene is Templates::DrivingWorld saved to a file. Run with the environment variable
-// OKAY_WRITE_DRIVING=<path> to rewrite it. Normally this test loads the shipped file and plays it: walk to a car, press E,
+// OKAY_WRITE_DRIVING=<path> to rewrite it. Normally this test loads the shipped file and plays it: walk to a car, press F (Street scheme),
 // drive, press E to get out.
 int main() {
     RUN_SUITE("vehicle_world");
@@ -61,7 +61,7 @@ int main() {
             const Vec3 near = car->transform->TransformPoint({-2.0f, -0.3f, 0});
             player->transform->SetPosition({near.x, 1.0f, near.z});
             run({}, 30);
-            press('e');
+            press('f');
             CHECK(seat->Occupant() == player);
             run({}, 30);
             const Vec3 p0 = car->transform->Position(); const Vec3 fwd0 = car->transform->Forward();
@@ -75,7 +75,7 @@ int main() {
             run({'s'}, 240);                                                   // brake, then reverse is allowed
             CHECK(v->Speed() < 3.0f);
             run({}, 120);
-            press('e');
+            press('f');
             CHECK(seat->Occupant() == nullptr);
             CHECK(std::fabs(v->Speed()) < 6.0f);
             run({}, 60);

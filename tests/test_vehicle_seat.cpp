@@ -9,6 +9,8 @@ using namespace okay;
 // Time step is 1/60 s. Car: maxSpeed 20, acceleration 60, brakeForce 36, no gravity.
 
 namespace {
+// These cases test the seat with the older E key and key fields; the scheme path (F key, tap and hold) has its own cases below.
+static VehicleController* LegacyVC(GameObject* g) { auto* v = g->AddComponent<VehicleController>(); v->useScheme = false; return v; }
 const float DT = 1.0f / 60.0f;
 
 struct World {
@@ -30,9 +32,10 @@ struct World {
     World(bool start = true) {
         car = s.CreateGameObject("Car");
         car->AddComponent<Rigidbody3D>()->gravityScale = 0.0f;
-        v = car->AddComponent<VehicleController>();
+        v = LegacyVC(car);
         v->maxSpeed = 20.0f; v->acceleration = 60.0f; v->brakeForce = 36.0f;
         seat = car->AddComponent<VehicleSeat>();     // sit (0,0.6,0), exit (-1.8,0,0), radius 2
+        seat->smoothEnter = false;                   // these cases look at the seat position at once; the glide has its own case
         p = MakePlayer("P1", {-1.0f, 0.0f, 0.0f});   // flat distance to sit point = 1 < 2
         prb = p->AddComponent<Rigidbody3D>();        // gravity 1
         col = p->AddComponent<CapsuleCollider3D>();
@@ -76,7 +79,7 @@ int main() {
         CHECK(!w.col->enabled);                       // body collider off
         CHECK_NEAR(w.prb->gravityScale, 0.0f, 1e-6f); // does not fall out of the seat
         Vec3 pp = w.p->transform->Position();
-        CHECK_NEAR(pp.x, 0.0f, 1e-3f); CHECK_NEAR(pp.y, 0.6f, 1e-3f); CHECK_NEAR(pp.z, 0.0f, 1e-3f);
+        CHECK_NEAR(pp.x, 0.0f, 1e-3f); CHECK_NEAR(pp.y, 0.6f - 0.57f / 1.8f * 0.2f, 1e-3f);   // the seated hip height follows the 2.0 m body (sitPoint is for 1.8 m) CHECK_NEAR(pp.z, 0.0f, 1e-3f);
     }
 
     // --- Seated: keys drive the car and the driver rides along; E gets out; empty car brakes
@@ -296,7 +299,7 @@ int main() {
         CHECK(!w.seat->Enter(w.car));                 // the seat's own object
         GameObject* kid = w.s.CreateGameObject("KidCar");
         kid->transform->SetParent(w.p->transform, false);
-        kid->AddComponent<VehicleController>();
+        LegacyVC(kid);
         auto* kseat = kid->AddComponent<VehicleSeat>();
         CHECK(!kseat->Enter(w.p));                    // the car's parent cannot sit in it
         GameObject* hit = w.s.CreateGameObject("Hitbox");
@@ -332,7 +335,7 @@ int main() {
         Scene s("plain");
         GameObject* car = s.CreateGameObject("Car");
         car->AddComponent<Rigidbody3D>()->gravityScale = 0.0f;
-        auto* v = car->AddComponent<VehicleController>();
+        auto* v = LegacyVC(car);
         v->maxSpeed = 20.0f; v->acceleration = 60.0f;
         s.Start();
         Input::FeedKeys({'w'});
@@ -450,7 +453,7 @@ int main() {
                 GameObject* c = s.CreateGameObject(name);
                 c->transform->SetPosition(pos);
                 c->AddComponent<Rigidbody3D>()->gravityScale = 0.0f;
-                auto* v = c->AddComponent<VehicleController>();
+                auto* v = LegacyVC(c);
                 v->maxSpeed = 20.0f; v->acceleration = 60.0f;
                 return c;
             }
@@ -532,7 +535,7 @@ int main() {
             GameObject* c = s.CreateGameObject(n);
             c->transform->SetPosition(pos);
             c->AddComponent<Rigidbody3D>()->gravityScale = 0.0f;
-            c->AddComponent<VehicleController>()->followCamera = true;
+            LegacyVC(c)->followCamera = true;
             return c;
         };
         GameObject* a = mkCar("A", {0, 0, 0}); GameObject* b = mkCar("B", {100, 0, 0});
@@ -559,7 +562,7 @@ int main() {
         Scene s("rmvc");
         GameObject* car = s.CreateGameObject("Car");
         car->AddComponent<Rigidbody3D>()->gravityScale = 0.0f;
-        auto* v = car->AddComponent<VehicleController>();
+        auto* v = LegacyVC(car);
         auto* seat = car->AddComponent<VehicleSeat>();
         GameObject* p = s.CreateGameObject("P");
         p->transform->SetPosition({-1.0f, 0.0f, 0.0f});
@@ -572,7 +575,7 @@ int main() {
         CHECK(seat->Occupant() == p);
         CHECK(car->RemoveComponent(v));
         run({}, 3);
-        auto* v2 = car->AddComponent<VehicleController>();   // may reuse the freed address
+        auto* v2 = LegacyVC(car);   // may reuse the freed address
         run({}, 3);
         CHECK(v2->HasDriverSeat());                          // the seat counts on the NEW controller, not the dead one
         CHECK(v2->Driver() == nullptr || v2->Driver() == p);
@@ -580,7 +583,7 @@ int main() {
         CHECK(!seat->occupied);
         CHECK(v2->Driver() == nullptr);
         // and a seat that is only registered (nobody seated)
-        auto* v3 = car->AddComponent<VehicleController>();
+        auto* v3 = LegacyVC(car);
         run({}, 3);
         CHECK(car->RemoveComponent(v3));
         run({}, 3);
@@ -591,7 +594,7 @@ int main() {
         Scene s("late");
         GameObject* car = s.CreateGameObject("Car");
         car->AddComponent<Rigidbody3D>()->gravityScale = 0.0f;
-        auto* v = car->AddComponent<VehicleController>();
+        auto* v = LegacyVC(car);
         v->maxSpeed = 2.0f; v->acceleration = 100.0f;
         s.Start();
         for (int i = 0; i < 5; ++i) { Input::FeedKeys({'w'}); s.Update(DT); }
@@ -628,7 +631,7 @@ int main() {
         Hum() {
             car = s.CreateGameObject("Car");
             car->AddComponent<Rigidbody3D>()->gravityScale = 0.0f;
-            v = car->AddComponent<VehicleController>();
+            v = LegacyVC(car);
             seat = car->AddComponent<VehicleSeat>();
             p = Templates::AddThirdPersonPlayer(s, {-1.0f, 0.0f, 0.0f});
             s.Start();
@@ -702,7 +705,7 @@ int main() {
         Scene s("nowheel");
         GameObject* car = s.CreateGameObject("Car");
         car->AddComponent<Rigidbody3D>()->gravityScale = 0.0f;
-        auto* v = car->AddComponent<VehicleController>();
+        auto* v = LegacyVC(car);
         v->maxSpeed = 2.0f; v->acceleration = 100.0f;
         GameObject* fake = s.CreateGameObject("Rewheel");             // contains "wheel" but does not start with "Wheel"
         fake->transform->SetParent(car->transform, false);
@@ -726,7 +729,7 @@ int main() {
         Scene s2("bare");                                              // a car with no wheel objects at all
         GameObject* c2 = s2.CreateGameObject("Car");
         c2->AddComponent<Rigidbody3D>()->gravityScale = 0.0f;
-        auto* v2 = c2->AddComponent<VehicleController>();
+        auto* v2 = LegacyVC(c2);
         v2->maxSpeed = 2.0f; v2->acceleration = 100.0f;
         s2.Start();
         for (int i = 0; i < 30; ++i) { Input::FeedKeys({'w'}); s2.Update(DT); }
@@ -853,5 +856,76 @@ int main() {
         }
     }
 
+    // --- Control scheme on the car: F taps in as driver, a short hold goes in as passenger, a press gets out --------------------
+    {
+        World w(false);
+        GameObject* pg = w.s.CreateGameObject("PassSeat");
+        pg->transform->SetParent(w.car->transform, false);
+        auto* pass = pg->AddComponent<VehicleSeat>(); pass->driver = false; pass->sitPoint = {0.6f, 0.6f, 0.0f}; pass->smoothEnter = false;
+        w.seat->smoothEnter = false;
+        w.v->useScheme = true;
+        w.s.Start();
+        w.Run({}, 5);
+        w.Run({'e'}, 3); w.Run({}, 5);                          // E is not the key of the Street scheme
+        CHECK(!w.seat->occupied && !pass->occupied);
+        w.Run({'f'}, 4); w.Run({}, 5);                          // a tap (4 frames = 0.07 s): driver
+        CHECK(w.seat->occupied && w.seat->Occupant() == w.p); CHECK(!pass->occupied); CHECK(w.v->Driver() == w.p);
+        w.Run({}, 10);
+        w.Run({'f'}, 4); w.Run({}, 8);                          // a press gets out ...
+        CHECK(!w.seat->occupied); CHECK(w.v->Driver() == nullptr);
+        w.Run({}, 10);
+        CHECK(!w.seat->occupied && !pass->occupied);            // ... and its release is not read as a tap
+        w.p->transform->SetPosition({-1.0f, 0.0f, 0.0f}); w.Run({}, 5);
+        w.Run({'f'}, 40);                                       // held 0.67 s: passenger seat, not the driver's
+        CHECK(pass->occupied && pass->Occupant() == w.p); CHECK(!w.seat->occupied); CHECK(w.v->Driver() == nullptr);
+        w.Run({}, 8);
+        CHECK(pass->occupied);                                  // the release of a hold does nothing
+        w.Run({'f'}, 4); w.Run({}, 8);
+        CHECK(!pass->occupied);                                 // a press gets out of the passenger seat
+        Vec3 out = w.p->transform->Position();
+        CHECK(std::isfinite(out.x) && std::isfinite(out.y) && std::isfinite(out.z));
+    }
+
+    // --- Fit: glide to the seat, hips on the cushion for the body's height, scale under a low roof, restore on exit --------------
+    {
+        World w(false); w.seat->smoothEnter = true; w.seat->roofHeight = 1.2f;
+        w.v->useScheme = true; w.s.Start(); w.Run({}, 5);
+        CHECK(w.seat->Enter(w.p));
+        const Vec3 p0 = w.p->transform->Position();
+        CHECK_NEAR(p0.x, -1.0f, 1e-3f);                         // first frame: still where it was
+        w.Run({}, 3);
+        const Vec3 p1 = w.p->transform->Position();
+        CHECK(p1.x > -1.0f && p1.x < 0.0f);                     // gliding
+        w.Run({}, 60);
+        const Vec3 p2 = w.p->transform->Position();
+        // body 2.0 m tall (default capsule): roof 1.2 -> room 1.2 - 0.05 - 0.45 = 0.70; wants 0.7292, floor 0.8 -> scale 0.8
+        // hip height seated = 0.57/1.8 * 1.6 = 0.5067; feet = 0.6 + 0.45 - ... equals sitPoint.y + 0.31667*(1.8 - 2.0*0.8) = 0.6 + 0.0633
+        CHECK_NEAR(p2.x, 0.0f, 1e-3f); CHECK_NEAR(p2.y, 0.6f + 0.57f / 1.8f * (1.8f - 1.6f), 2e-3f); CHECK_NEAR(p2.z, 0.0f, 1e-3f);
+        CHECK_NEAR(w.p->transform->localScale.y, 0.8f, 1e-4f);
+        w.seat->Exit();
+        CHECK_NEAR(w.p->transform->localScale.y, 1.0f, 1e-5f);  // size given back
+    }
+    {   // no roof: the body keeps its size, only the hip height follows the body (2.0 m: 0.3167 * (1.8 - 2.0) = -0.0633)
+        World w(false); w.seat->smoothEnter = false; w.v->useScheme = true; w.s.Start(); w.Run({}, 5);
+        CHECK(w.seat->Enter(w.p)); w.Run({}, 3);
+        CHECK_NEAR(w.p->transform->Position().y, 0.6f - 0.57f / 1.8f * 0.2f, 2e-3f); CHECK_NEAR(w.p->transform->localScale.y, 1.0f, 1e-6f);
+        w.seat->Exit();
+    }
+    // --- Seat yaw and clip box ---------------------------------------------------------------------------------------------------------------
+    {
+        World w(false); w.seat->smoothEnter = false; w.seat->seatYaw = 90.0f; w.seat->useClip = true;
+        w.seat->clipCentre = {0.0f, 1.6f, 0.0f}; w.seat->clipHalf = {0.3f, 0.3f, 0.3f};
+        GameObject* hat = w.s.CreateGameObject("Hat"); hat->transform->SetParent(w.p->transform, false); hat->transform->localPosition = {0.0f, 1.0f, 0.0f};
+        auto* hr = hat->AddComponent<MeshRenderer>();
+        GameObject* shoe = w.s.CreateGameObject("Shoe"); shoe->transform->SetParent(w.p->transform, false);
+        auto* sr = shoe->AddComponent<MeshRenderer>();
+        w.s.Start(); w.Run({}, 5);
+        CHECK(w.seat->Enter(w.p)); w.Run({}, 3);
+        CHECK(!hr->enabled); CHECK(sr->enabled);                // the part at head height is hidden, the one at the feet is not
+        const Vec3 f = w.p->transform->Forward();
+        CHECK_NEAR(std::fabs(f.x), 1.0f, 1e-3f);               // turned 90 degrees about up: faces along X
+        w.seat->Exit();
+        CHECK(hr->enabled);                                     // shown again
+    }
     TEST_MAIN_RESULT();
 }

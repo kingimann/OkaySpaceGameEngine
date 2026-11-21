@@ -886,9 +886,9 @@ inline void Vehicle3D(Scene& scene) {
 }
 
 /// "Vehicle Test": a third-person player standing in the road next to a small car (about 4.1 m long,
-/// 1.8 m wide) that has a driver seat and a passenger seat. Walk to the car's driver door (the -X side), press E to get in: you sit
+/// 1.8 m wide) that has a driver seat and a passenger seat. Walk to the car's driver door (the -X side), press F to get in (the Street scheme; older saved scenes keep E): you sit
 /// (the chair sit clip), the camera swings behind the car, drive with WASD / arrows (Space = handbrake),
-/// press E to get out. The car only drives while someone sits in the driver seat.
+/// press F to get out. The car only drives while someone sits in the driver seat.
 /// The car faces +Z. Its wheels roll with the speed and the front two turn (VehicleController reads
 /// the objects named "Wheel ..." with a child "Tire"). A road with lane lines and a slalom of cones
 /// and crates lies ahead. examples/vehicle/vehicle_test.okayscene is this scene saved to a file
@@ -1061,7 +1061,7 @@ inline void VehicleSeats3D(Scene& scene) {
 }
 
 /// "Driving World": a flat city-like grid of roads with ramps, a mud patch and an ice patch, a drift circle of cones, a
-/// row of parked vehicles of every type, and a walking player. Walk to a vehicle (WASD), press E to get in, drive with
+/// row of parked vehicles of every type, and a walking player. Walk to a vehicle (WASD), press F to get in, drive with
 /// WASD / Space (handbrake) / Shift (boost), C changes the camera, E again to get out.
 /// examples/driving/driving_world.okayscene is this scene saved to a file (see tests/test_vehicle_drive_scene.cpp).
 inline void DrivingWorld(Scene& scene) {

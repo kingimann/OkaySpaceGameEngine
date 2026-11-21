@@ -31056,8 +31056,8 @@ static bool DrawInspectorHeaderWithOkayUI(EditorState& ed, GameObject* go) {
     if (in.toggleActive) {
         const bool act = !go->active;
         const auto& sel = ed.MultiSelection();
-        if (sel.size() > 1) for (GameObject* g : sel) SetActiveRecursive(g, act);   // whole multi-selection
-        else SetActiveRecursive(go, act);
+        if (sel.size() > 1) for (GameObject* g : sel) oked::SetObjectActive(g, act);   // whole multi-selection
+        else oked::SetObjectActive(go, act);
         ed.dirty = true;
     }
     if (in.nameChanged) { go->name = nameBuf; ed.dirty = true; }

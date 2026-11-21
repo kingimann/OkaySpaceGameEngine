@@ -295,6 +295,7 @@
 #include "okay/Inventory/LootTable.hpp"
 #include "okay/Inventory/InventoryInput.hpp"
 #include "okay/Inventory/ItemPresentation.hpp"
+#include "okay/Inventory/TextFit.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
 #include "okay/Components/NetInventory.hpp"
 #include "okay/Inventory/Recipe.hpp"

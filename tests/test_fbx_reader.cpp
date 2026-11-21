@@ -695,12 +695,61 @@ static void PbrTests() {
     if (ph2) CHECK(Near(ph2->diffuse[0], 0.9) && Near(ph2->diffuse[1], 0.8) && ph2->hasRoughness && Near(ph2->roughness, 1.0 - std::sqrt(25.0) * 0.1));
 }
 
+static void UvSetTests() {
+    RUN_SUITE("fbx scene: every UV set with its name (uv2_bin / uv2_ascii)");
+    // Two quads sharing the edge between control points 1 and 4. Set 0 "UVMap" is per control point (x / 2, y); set 1
+    // "Lightmap" gives each quad its own island, so the shared corners differ in set 1 only. The file writes set 1
+    // before set 0. Expected values worked out from scripts/gen_fbx_fixtures.py (uv2_scene).
+    const float uv0[6][2] = {{0, 0}, {0.5f, 0}, {1, 0}, {0, 1}, {0.5f, 1}, {1, 1}};
+    struct Want { unsigned cp; float u, v; };
+    const Want want[8] = {{0, 0, 0}, {1, 0.4f, 0}, {4, 0.4f, 0.4f}, {3, 0, 0.4f},
+                          {1, 0.6f, 0}, {2, 1, 0}, {5, 1, 0.4f}, {4, 0.6f, 0.4f}};
+    for (const char* f : {"uv2_bin.fbx", "uv2_ascii.fbx"}) {
+        fbx::Scene s; std::string err;
+        CHECK(LoadBuilt(Fx(f), s, &err));
+        CHECK(s.meshes.size() == 1);
+        if (s.meshes.size() != 1) continue;
+        const fbx::Mesh& m = s.meshes[0];
+        CHECK(m.hasUV);
+        CHECK(m.uvSetNames.size() == 2);
+        if (m.uvSetNames.size() == 2) { CHECK(m.uvSetNames[0] == "UVMap"); CHECK(m.uvSetNames[1] == "Lightmap"); }
+        CHECK(m.parts.size() == 1);
+        if (m.parts.size() != 1) continue;
+        const fbx::Part& p = m.parts[0];
+        CHECK(p.indices.size() == 12);
+        CHECK(p.vertices.size() == 8);   // 6 control points, the 2 shared ones split by set 1
+        CHECK(p.extraUVs.size() == 1);
+        if (p.extraUVs.size() != 1 || p.extraUVs[0].size() != p.vertices.size() * 2) { CHECK(false); continue; }
+        bool set0 = true, found[8] = {};
+        for (std::size_t v = 0; v < p.vertices.size(); ++v) {
+            const fbx::Corner& c = p.vertices[v];
+            if (c.cp >= 6 || !Near(c.uv[0], uv0[c.cp][0], 1e-6) || !Near(c.uv[1], uv0[c.cp][1], 1e-6)) set0 = false;
+            for (int w = 0; w < 8; ++w)
+                if (want[w].cp == c.cp && Near(p.extraUVs[0][v * 2], want[w].u, 1e-6) && Near(p.extraUVs[0][v * 2 + 1], want[w].v, 1e-6)) found[w] = true;
+        }
+        CHECK(set0);
+        for (int w = 0; w < 8; ++w) CHECK(found[w]);
+    }
+    {   // a mesh with one UV set: its name, and no extra sets
+        fbx::Scene s; std::string err;
+        CHECK(LoadBuilt(Fx("cube_zup_cm_bin.fbx"), s, &err));
+        if (s.meshes.size() == 1) {
+            CHECK(s.meshes[0].uvSetNames.size() == 1 && s.meshes[0].uvSetNames[0] == "UVMap");
+            for (const fbx::Part& p : s.meshes[0].parts) CHECK(p.extraUVs.empty());
+        }
+        fbx::Scene n;
+        CHECK(LoadBuilt(Fx("plain_bin.fbx"), n, &err));   // no UVs: no names
+        for (const fbx::Mesh& m : n.meshes) CHECK(m.uvSetNames.empty());
+    }
+}
+
 int main() {
     InflateTests();
     DirectTests();
     HermiteTests();
     PbrTests();
     OrphanVideoTest();
+    UvSetTests();
     CompareWithUfbx();
     TEST_MAIN_RESULT();
 }

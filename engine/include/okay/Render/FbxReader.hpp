@@ -255,6 +255,8 @@ struct Polygons {
     KeptArray polygonVertexIndex;  ///< the file's PolygonVertexIndex: a control point per corner, a polygon's last as ~index
     KeptArray edges;               ///< the file's Edges, kept only when a layer is mapped ByEdge
     MeshLayer normals, uvs, colors, materials;
+    /// The UV sets after the first (`uvs` is set 0), in the order of their LayerElementUV index; names in Mesh::uvSetNames.
+    std::vector<MeshLayer> extraUVs;
     std::uint64_t corners = 0;     ///< triangle corners BuildParts makes (counted by the reader for Limits::maxCorners)
     bool empty() const { return !positions.present || !polygonVertexIndex.present; }
 };
@@ -266,6 +268,10 @@ struct Part {
     int slot = 0;                  ///< material slot (index into Mesh::materials)
     std::vector<Corner> vertices;  ///< distinct corners, in order of first use
     std::vector<std::uint32_t> indices;   ///< 3 per triangle, into `vertices`
+    /// The mesh's UV sets after the first (Corner::uv is set 0): extraUVs[k] holds set k + 1, two floats (u, v as stored,
+    /// v bottom-up) per entry of `vertices`. Empty when the mesh has one UV set or none. Two corners share a vertex only
+    /// when these agree too.
+    std::vector<std::vector<float>> extraUVs;
     std::size_t cornerCount() const { return indices.size(); }
     const Corner& corner(std::size_t i) const { return vertices[indices[i]]; }
     /// The unindexed list (3 corners per triangle), for tests and tools.
@@ -295,6 +301,9 @@ struct Mesh {
     std::string name;
     std::uint32_t controlPoints = 0;
     bool hasNormals = false, hasUV = false, hasColors = false;
+    /// The name of every UV set the mesh has (its LayerElementUV "Name"), in index order: [0] is Corner::uv, [k] is
+    /// Part::extraUVs[k - 1]. Empty when the mesh has no UVs.
+    std::vector<std::string> uvSetNames;
     Polygons polygons;             ///< the file's polygons (what the reader produces)
     std::vector<Part> parts;       ///< non-empty parts, ascending slot: empty until BuildParts(mesh)
     std::vector<int> materials;    ///< slot -> index into Scene::materials (-1 unknown)

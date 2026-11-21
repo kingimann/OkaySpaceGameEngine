@@ -527,6 +527,34 @@ def orphan_video_scene(content):
     return sc.top()
 
 
+def uv2_scene(ascii_names):
+    """Two quads sharing an edge, with two named UV sets. The second set ("Lightmap", LayerElementUV 1) is written
+    BEFORE the first ("UVMap", LayerElementUV 0) to check that sets are ordered by their index, not by file order.
+    "UVMap" is per control point (the shared corners agree); "Lightmap" gives each quad its own island, so the two
+    shared corners differ in the second set only: 8 distinct corners, not 6."""
+    sc = Scene(ascii_names)
+    verts = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (0, 1, 0), (1, 1, 0), (2, 1, 0)]
+    corners = [0, 1, 4, 3, 1, 2, 5, 4]
+    polys = quad_polys([(0, 1, 4, 3), (1, 2, 5, 4)])
+    normals = [(0, 0, 1)] * 8
+    uv0 = [(x / 2.0, y) for (x, y, _) in verts]
+    uv1 = [(0, 0), (0.4, 0), (0.4, 0.4), (0, 0.4), (0.6, 0), (1, 0), (1, 0.4), (0.6, 0.4)]
+    ch = geo_children(verts, polys, normals, 'ByPolygonVertex')
+    def uvlayer(index, name, kids):
+        return N('LayerElementUV', [I(index)], [N('Version', [I(101)]), N('Name', [S(name)]),
+                 N('MappingInformationType', [S('ByPolygonVertex')])] + kids)
+    lm = uvlayer(1, 'Lightmap', [N('ReferenceInformationType', [S('Direct')]), N('UV', [AD([c for u in uv1 for c in u])])])
+    um = uvlayer(0, 'UVMap', [N('ReferenceInformationType', [S('IndexToDirect')]), N('UV', [AD([c for u in uv0 for c in u])]),
+                              N('UVIndex', [AI(corners)])])
+    at = next(i for i, n in enumerate(ch) if n.name == 'Layer')
+    ch[at:at] = [lm, um]
+    ch.append(N('Layer', [I(1)], [N('Version', [I(100)]), N('LayerElement', [], [N('Type', [S('LayerElementUV')]), N('TypedIndex', [I(1)])])]))
+    g = sc.geometry('TwoQuads', ch)
+    m = sc.model('TwoQuads', 0)
+    sc.connect(g, m)
+    return sc.top()
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), '..', 'tests', 'assets', 'fbx')
     os.makedirs(out, exist_ok=True)
@@ -548,6 +576,8 @@ def main():
     write_binary(os.path.join(out, 'bridge_bin.fbx'), bridge_scene(), 7400, compress=False)
     write_binary(os.path.join(out, 'orphan_video_bin.fbx'), orphan_video_scene(png), 7400, compress=False)
     write_binary(os.path.join(out, 'pbr_bin.fbx'), pbr_scene(), 7400, compress=False)
+    write_binary(os.path.join(out, 'uv2_bin.fbx'), uv2_scene(False), 7400)
+    write_ascii(os.path.join(out, 'uv2_ascii.fbx'), uv2_scene(True), 7400)
     for f in sorted(os.listdir(out)):
         print(f, os.path.getsize(os.path.join(out, f)))
 

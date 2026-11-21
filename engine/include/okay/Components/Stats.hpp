@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Components/Damage.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -26,13 +27,26 @@ public:
 
     /// Apply incoming damage mitigated by defense (always at least 1). Fires on_death
     /// the moment health reaches 0.
-    void TakeDamage(float amount) {
-        if (IsDead()) return;
+    void TakeDamage(float amount) { TakeDamage(DamageEvent::Make(amount)); }
+    /// Same hit as a Health Stat takes; listeners are told (this holder has no per-type resistances).
+    bool TakeDamage(DamageEvent ev) {
+        const float amount = SaneDamage(ev.amount);
+        if (IsDead() || amount <= 0.0f) return false;
         float dmg = Mathf::Max(1.0f, amount - (float)(defense + equipDefense));
+        const float before = health;
         health = Mathf::Max(0.0f, health - dmg);
-        if (health <= 0.0f) Event("on_death");
+        ev.target = gameObject; ev.amount = amount; ev.dealt = before - health; ev.killed = health <= 0.0f;
+        NotifyDamaged(ev);
+        if (health <= 0.0f) { Event("on_death"); NotifyDeath(ev); }
+        return true;
     }
-    void Heal(float amount)      { health = Mathf::Clamp(health + amount, 0.0f, maxHealth); }
+    void Heal(float amount) {
+        amount = SaneHeal(amount);
+        if (amount <= 0.0f || IsDead()) return;
+        const float before = health;
+        health = Mathf::Clamp(health + amount, 0.0f, maxHealth);
+        if (health > before) NotifyHealed(gameObject, health - before);
+    }
     void UseMana(float amount)   { mana = Mathf::Max(0.0f, mana - amount); }
     void RestoreMana(float amt)  { mana = Mathf::Clamp(mana + amt, 0.0f, maxMana); }
     bool HasMana(float amount) const { return mana >= amount; }

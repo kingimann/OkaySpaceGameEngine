@@ -8,8 +8,7 @@ namespace okay {
 /// otherwise a standalone HealthStat. Used by afflictions to hurt the player.
 inline void DamageHealthOn(GameObject* go, float amount) {
     if (!go || amount <= 0.0f) return;
-    if (auto* s = go->GetComponent<SurvivalStats>()) { s->Damage(amount); return; }
-    if (auto* h = go->GetComponent<HealthStat>())     { h->Damage(amount); return; }
+    DealDamage(go, DamageEvent::Make(amount, DamageType::Poison));
 }
 /// Reduce the object's warmth source (SurvivalStats or TemperatureStat) — used by
 /// Wetness to chill the player. Safe no-op if neither is present.
@@ -23,8 +22,7 @@ inline void ChillWarmthOn(GameObject* go, float amount) {
 /// Heal the object's health source (SurvivalStats or HealthStat). For buffs/regen.
 inline void HealOn(GameObject* go, float amount) {
     if (!go || amount <= 0.0f) return;
-    if (auto* s = go->GetComponent<SurvivalStats>()) { s->Heal(amount); return; }
-    if (auto* h = go->GetComponent<HealthStat>())     { h->Heal(amount); return; }
+    HealObject(go, amount);
 }
 /// Drain the object's stamina source (SurvivalStats or StaminaStat) — used by
 /// encumbrance. Safe no-op if neither is present.

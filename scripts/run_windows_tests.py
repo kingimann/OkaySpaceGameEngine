@@ -53,7 +53,7 @@ def plan(tests_json, build_root, bin_dir, source_dir):
 
 
 def map_baked_paths(build_root, bin_dir, source_dir):
-    """Make the Linux paths compiled into the tests resolve on Windows.
+    r"""Make the Linux paths compiled into the tests resolve on Windows.
 
     The tests are built on Ubuntu, so OKAY_SOURCE_DIR, OKAYUI_GOLDEN_DIR and similar macros hold paths such as
     /home/runner/work/R/R/tests/data. On Windows a path that starts with "/" is read from the root of the current
@@ -64,9 +64,16 @@ def map_baked_paths(build_root, bin_dir, source_dir):
         return []
     made = []
     src_baked = os.path.dirname(build_root.rstrip("/"))
-    drive = os.path.splitdrive(os.path.abspath(source_dir))[0]
-    pairs = [(drive + src_baked.replace("/", "\\"), os.path.abspath(source_dir)),
-             (os.path.join(os.path.abspath(source_dir), os.path.basename(build_root.rstrip("/"))), os.path.abspath(bin_dir))]
+    # A test that changes its working folder (the Sandbox helper moves into the temp folder, which is on C: on the
+    # runner while the checkout is on D:) reads "/home/..." from the root of the NEW current drive, so the junction
+    # is needed on every drive a test can stand on: the checkout's, the temp folder's and the system drive.
+    drives = []
+    for d in (os.path.splitdrive(os.path.abspath(source_dir))[0], os.path.splitdrive(os.path.abspath(tempfile.gettempdir()))[0],
+              os.environ.get("SystemDrive", "C:")):
+        if d and d.upper() not in [x.upper() for x in drives]:
+            drives.append(d)
+    pairs = [(d + src_baked.replace("/", "\\"), os.path.abspath(source_dir)) for d in drives]
+    pairs.append((os.path.join(os.path.abspath(source_dir), os.path.basename(build_root.rstrip("/"))), os.path.abspath(bin_dir)))
     for link, target in pairs:
         if os.path.normcase(os.path.abspath(link)) == os.path.normcase(target) or os.path.exists(link):
             continue

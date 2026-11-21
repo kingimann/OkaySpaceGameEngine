@@ -1,7 +1,7 @@
 // Run, not just compile: the editor's Scene Manager panel (editor/SceneManagerPanel.cpp) compiled against OkayUI through the probe stand-in imgui.h,
 // with a stand-in EditorState (okayui/tests/shadow/EditorState.hpp: project folder, open path, Load / Save / NewScene recorded in memory) and a
 // temporary project folder with three scene files. The functions main.cpp provides are stubbed. Drawn headless; the panel's buttons are pressed
-// with synthetic clicks. See docs/own_ui_toolkit.md 6.17.
+// with synthetic clicks. See docs/ui/own_ui_toolkit.md 6.17.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "SceneManagerPanel.hpp"

@@ -593,7 +593,7 @@ void DrawAvailable(const Host& h) {
             const std::uint64_t listed = ListedSize(e);
             if (listed) sub += (sub.empty() ? "" : "  \xC2\xB7  ") + std::string("about ") + HumanSize(listed);
             const bool checkable = !e.files.empty() && e.files.count("OkayEngine.exe") && !e.files.at("OkayEngine.exe").sha256.empty();
-            sub += std::string(sub.empty() ? "" : "  \xC2\xB7  ") + (e.inBucket ? "from the OkaySpace download server" : "from GitHub");
+            sub += std::string(sub.empty() ? "" : "  \xC2\xB7  ") + (e.inBucket ? "from the OkaySpace download server" : "older than the download server: can't be downloaded any more");
             if (!checkable) sub += "  \xC2\xB7  no checksum: can't be installed here";
             if (lts) sub += "  \xC2\xB7  only gets fixes";
             if (mine) {
@@ -620,7 +620,7 @@ void DrawAvailable(const Host& h) {
                 ImGui::EndDisabled();
             } else {
                 ImGui::SetCursorScreenPos(ImVec2(r.p0.x + r.width - 120.0f, r.p0.y + 14));
-                ImGui::BeginDisabled(st.job != nullptr);
+                ImGui::BeginDisabled(st.job != nullptr || !e.inBucket);   // (a version that is not in the bucket has nowhere to come from: GitHub is never used)
                 if (AccentButton(h, "Install", ImVec2(120, 30))) BeginInstall(h, e.version);
                 ImGui::EndDisabled();
             }

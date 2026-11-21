@@ -8,7 +8,7 @@ Why: "the character walking is basically running". The player used to move at 4.
 Shift, which is a sprint, so both looked like running (the legs stepped about 270 times a minute for W and 250 for Shift). Now W is a
 real walk (2 m/s, about 125 steps a minute, one foot always on the ground, arms hanging and swinging a little) and Shift is a real run
 (5.5 m/s, about 185 steps a minute, both feet leave the ground, elbows bent, chest leaning forward). The full numbers, the targets and
-the pictures are in [walk_vs_run.md](walk_vs_run.md).
+the pictures are in [walk_vs_run.md](gameplay/walk_vs_run.md).
 
 **A new project.**
 1. Open the launcher (`OkaySpace.exe`) > **Create** > **New Project**. On the first step pick **Third Person** (under **All templates** if the starter

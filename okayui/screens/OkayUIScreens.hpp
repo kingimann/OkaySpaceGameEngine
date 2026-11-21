@@ -1,6 +1,6 @@
 #pragma once
 // Real screens drawn with OkayUI, ported from the Dear ImGui ones so the launcher and the editor can offer them as the
-// opt-in "OkayUI (preview)" UI backend (docs/own_ui_toolkit.md, section 5). A screen is a plain function: it takes the
+// opt-in "OkayUI (preview)" UI backend (docs/ui/own_ui_toolkit.md, section 5). A screen is a plain function: it takes the
 // data to show and a rectangle, draws with OkayUI, and either returns what the person asked for (WhatsNew) or does it
 // through callbacks the host supplies (Console). No SDL, no Dear ImGui, no globals of its own besides OkayUI's context,
 // so the headless harness drives them exactly as the apps do.
@@ -48,9 +48,7 @@ struct WhatsNewResult {
     bool checkForUpdates = false;        // "Check for updates" pressed
     bool installNow = false;             // "Install now" pressed
     bool restartNow = false;             // "Restart now" pressed
-    bool openReleasesPage = false;       // "View all releases on GitHub" pressed
     OkayUI::Rect updateButton;           // whichever of the three update buttons is showing
-    OkayUI::Rect releasesButton;
     OkayUI::Rect firstEarlierHeader;     // the first "Earlier releases" header, zero when there are none
     bool updateButtonEnabled = true;     // false while a check or download runs
 };
@@ -58,7 +56,6 @@ struct WhatsNewResult {
 /// The page's title line, shown above the content. Kept as text so the host and the tests agree on it.
 inline const char* WhatsNewTitle() { return "What's New"; }
 inline const char* WhatsNewSubtitle() { return "Release notes for OkaySpace, newest first."; }
-inline const char* WhatsNewReleasesUrl() { return "https://github.com/kingimann/OkaySpaceGameEngine/releases"; }
 
 /// Draw the page inside (x, y, w, h). Call between OkayUI::BeginFrame and EndFrame.
 WhatsNewResult DrawWhatsNew(const WhatsNewModel& model, float x, float y, float w, float h);

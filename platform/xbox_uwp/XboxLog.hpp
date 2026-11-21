@@ -4,7 +4,7 @@
 // %LOCALAPPDATA%\Packages\<package family name>\LocalState\logs. Pure C++17: no Windows headers, no <mutex> / <thread> (rule 21a: an atomic flag guards
 // the one writer). Every line is flushed at once, so the file is complete even when the system ends the app. When the file passes `maxBytes` it
 // is renamed to <name>.1.log (the older .1.log is dropped), so the folder never holds more than about twice `maxBytes`.
-// Written from our own design (docs/xbox_uwp.md, "Logs"); nothing copied. UNVERIFIED on Windows or an Xbox; tested on Linux.
+// Written from our own design (docs/platform/xbox_uwp.md, "Logs"); nothing copied. UNVERIFIED on Windows or an Xbox; tested on Linux.
 #include <atomic>
 #include <chrono>
 #include <cstdint>

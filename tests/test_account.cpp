@@ -202,6 +202,11 @@ int main() {
         CHECK(svc.Login("alice", "newpass1").ok);   // new password works
         // Password reset is a Supabase-only feature.
         CHECK(!svc.RequestPasswordReset("a@b.com").ok);
+        CHECK(!svc.ResetPasswordWithCode("a@b.com", "123456", "secret1").ok);   // not the online server: refused before any request
+        CHECK(acct::AccountService::LooksLikeRecoveryCode("123456") && acct::AccountService::LooksLikeRecoveryCode("1234567890"));
+        CHECK(!acct::AccountService::LooksLikeRecoveryCode("12345") && !acct::AccountService::LooksLikeRecoveryCode("12345a") &&
+              !acct::AccountService::LooksLikeRecoveryCode("12345678901") && !acct::AccountService::LooksLikeRecoveryCode(""));
+        CHECK(acct::AccountService::RecoveryVerifyBody("a\"b@c.d", "123456") == "{\"type\":\"recovery\",\"email\":\"a\\\"b@c.d\",\"token\":\"123456\"}");
         // Reset email: the recover URL carries the (percent-encoded) landing page.
         CHECK(acct::AccountService::RecoverUrl("https://x.supabase.co/", "") ==
               "https://x.supabase.co/auth/v1/recover");

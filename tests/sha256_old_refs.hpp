@@ -2,7 +2,7 @@
 // The OLD SHA-256 copies, kept verbatim as REFERENCE implementations for the differential tests
 // (tests/test_sha256_unify.cpp, tests/sha256_compare.cpp). Nothing in the engine includes this file.
 // They are the code that shipped before the three copies were merged into okay/Crypto/Sha256.hpp
-// (docs/sha256_comparison.md): copy 2 (AccountService.hpp), its PBKDF2 and the HMAC from AntiCheatChecks.hpp,
+// (docs/platform/sha256_comparison.md): copy 2 (AccountService.hpp), its PBKDF2 and the HMAC from AntiCheatChecks.hpp,
 // and copy 3 (launcher/VoiceChat.hpp). Only the namespaces were renamed (okay_old::...).
 #include <algorithm>
 #include <array>

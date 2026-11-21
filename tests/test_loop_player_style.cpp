@@ -1,7 +1,7 @@
 // 1.1 The safety net for moving the windowed player (and the editor's Play loop) onto GameLoop.
 //
 // player/main.cpp ran this every frame until the third pass, when it moved onto GameLoop exactly as the
-// "adopting" sketch in docs/loop_and_time.md says (the editor's Play loop is still on it). The lines below
+// "adopting" sketch in docs/engine/loop_and_time.md says (the editor's Play loop is still on it). The lines below
 // are the old per-frame code, kept here as the reference the new one is compared with, with the SDL timer
 // replaced by made-up frame times:
 //
@@ -120,7 +120,7 @@ std::vector<Trace> RunPlayer(const Seq& seq, const Cfg& cfg, bool pollute = true
     return out;
 }
 
-// ---- the same frames through GameLoop, configured as the adoption sketch in docs/loop_and_time.md says ---------------------------------------------------
+// ---- the same frames through GameLoop, configured as the adoption sketch in docs/engine/loop_and_time.md says ---------------------------------------------------
 struct LoopRun {
     std::vector<Trace> trace;
     int rawUpdates = 0;       // OnUpdate calls, gated or not

@@ -8,7 +8,7 @@
 //
 // Written from FIPS 180-4 (SHA-256), RFC 2104 / RFC 4231 (HMAC) and RFC 8018 section 5.2 (PBKDF2). The round
 // constants are the first 32 bits of the fractional parts of the cube roots of the first 64 primes, the initial
-// hash value those of the square roots of the first 8 (FIPS 180-4 4.2.2, 5.3.3). See docs/sha256_comparison.md for
+// hash value those of the square roots of the first 8 (FIPS 180-4 4.2.2, 5.3.3). See docs/platform/sha256_comparison.md for
 // how this one was chosen over two older copies and how it was checked.
 //
 // UNREVIEWED like the rest of okay::crypto (see Crypto.hpp), but SHA-256, HMAC and PBKDF2 here are NOT behind the

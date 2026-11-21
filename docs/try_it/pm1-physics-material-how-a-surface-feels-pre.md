@@ -6,7 +6,7 @@ row: | pm1 | Physics Material: how a surface feels (14 presets, .okayphysmat fil
 
 **What it is.** A named material says how a surface feels: grip when still, grip when sliding, bounciness, how two surfaces mix, density, rolling friction, damping
 (mud, sand), grip on slopes, and the sound, effect and surface names a hit should use. Fourteen are always there (Default, Ice, Rubber, Bouncy Ball, Metal, Wood, Stone,
-Glass, Mud, Sand, Sticky, Slippery, Trampoline, Cloth). Plain words and the file format: [physics_materials.md](../physics_materials.md).
+Glass, Mud, Sand, Sticky, Slippery, Trampoline, Cloth). Plain words and the file format: [physics_materials.md](../physics/physics.md#physics-material-how-a-surface-feels).
 
 **Steps.**
 1. **File > Open Scene**, pick `examples\physics_materials\physics_materials.okayscene`, press **Play**.

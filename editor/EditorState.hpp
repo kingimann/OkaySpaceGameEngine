@@ -106,6 +106,7 @@ public:
     void NewPlatformer25D();
     void NewVehicle3D();
     void NewVehicleSeats3D();
+    void NewDrivingWorld();
     void NewVehicle2D();
     void NewCoinCollector();
     void NewMainMenu();
@@ -290,7 +291,7 @@ public:
     /// Why the last Undo / Redo failed ("" when it did not).
     const std::string& UndoError() const { return m_stack->LastError(); }
 
-    // ---- Prefab mode (see docs/prefab_mode.md) ---------------------------------------------------
+    // ---- Prefab mode (see docs/engine/prefabs.md) ---------------------------------------------------
     // Open a .okayprefab in isolation: its contents become the scene being edited, the scene you were in
     // is put aside (text, selection, camera, undo history, unsaved mark) and comes back, as it was, on
     // ClosePrefab. Opening a prefab while one is open (a nested instance, or any other prefab) stacks

@@ -1,6 +1,6 @@
 // Window mode with the editor's real panels (editor/OkayUIHostPanels.cpp: ConsolePanel.cpp, EditorWidgets.cpp, SceneManagerPanel.cpp and the dialogs of
 // ProjectPanelUI.cpp compiled against OkayUI; the Project window over the real okaypb::Browser), run headless through the real frame loop with a fake backend,
-// a software painter and the stand-in editor state (docs/own_ui_toolkit.md 6.17). Step 5 of the window-mode plan, 6.24.
+// a software painter and the stand-in editor state (docs/ui/own_ui_toolkit.md 6.17). Step 5 of the window-mode plan, 6.24.
 #define OKAY_HAVE_OKAYUI 1
 #define OKAYUI_HOST_PLATFORM 1
 #include "test_framework.hpp"

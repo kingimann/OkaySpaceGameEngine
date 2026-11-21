@@ -7,7 +7,7 @@ using namespace okay;
 // Matchmaking rides the authenticated account REST layer. With no account server
 // configured / nobody signed in, every call must no-op gracefully (so a game that
 // uses it offline simply finds no sessions instead of crashing). The live request
-// shapes are covered by docs/supabase-backend.md + a manual check against the
+// shapes are covered by docs/online/supabase-backend.md + a manual check against the
 // project; here we lock the offline contract and that the header compiles/links.
 int main() {
     RUN_SUITE("matchmaking");

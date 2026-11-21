@@ -5,7 +5,7 @@
 //   ProjectGate      the decision before a project is opened: Same / DevBuild open silently; Older, Unknown and Newer
 //                    ask. Nothing in the project folder is read for writing, let alone written, until it is answered.
 //   UpgradeJob       backup, check and rewrite, stamp: stepped a little each frame so the window stays alive, and all
-//                    or nothing (see docs/project_upgrade.md)
+//                    or nothing (see docs/editor/project_upgrade.md)
 //   ListBackups / RestoreBackup   the sibling "<Name> (backup v...)" folders, and putting the upgraded files back
 //
 // Nothing here prints or throws: failures come back as text for the UI to show. Main thread only: the check loads

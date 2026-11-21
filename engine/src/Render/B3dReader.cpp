@@ -2,7 +2,7 @@
 // texture coordinates, brushes (materials) and textures, bone weights and keyframe animation. Written from the public
 // description of the format (the Blitz3D file format notes by Mark Sibly, "b3dfile_specs.txt"). Bounds-checked, capped,
 // the chunk tree is walked with an explicit stack (no recursion). See okay/Render/ModelData.hpp and
-// docs/own_b3d_reader.md.
+// docs/content/model_readers.md.
 //
 // Blitz3D is left-handed. The model is turned into the engine's right-handed space by mirroring Z (positions, normals,
 // translations, rotations; the winding of each triangle is reversed). A rotation (w, x, y, z) in the file becomes

@@ -13,7 +13,7 @@
 using namespace okay;
 
 // Respawn replication, and dive / hit / vault / emote animations on other
-// players (docs/multiplayer_audit.md, docs/unfinished_engine.md section 11).
+// players (docs/online/multiplayer.md, docs/status/unfinished_engine.md section 11).
 
 namespace {
 struct World {

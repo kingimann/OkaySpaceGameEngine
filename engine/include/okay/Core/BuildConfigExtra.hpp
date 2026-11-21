@@ -1,6 +1,6 @@
 #pragma once
 // The extra game settings the Build Settings window writes into the built game's game.okayconfig, and the
-// reader the player uses for them (docs/build_settings_upgrade.md). Header-only, no engine state, so the editor,
+// reader the player uses for them (docs/editor/build_settings_upgrade.md). Header-only, no engine state, so the editor,
 // the player and the tests share exactly one definition. Written from our own design; standard library only.
 //
 // A setting at its default writes NO line, so a project that never touched them builds a game.okayconfig that is

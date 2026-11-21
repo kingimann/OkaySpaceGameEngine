@@ -19,7 +19,7 @@ static void vs_pan_click_vs_drag() {
 }
 
 static void vs_pan_which_gesture_pans() {
-    CHECK(VsLeftDragMode(false, false) == VsLeftDrag::Box);
+    CHECK(VsLeftDragMode(false, false) == VsLeftDrag::Box);   // old two-argument rule; the canvas uses VsLeftDragModeEmpty
     CHECK(VsLeftDragMode(true, false) == VsLeftDrag::Pan);
     CHECK(VsLeftDragMode(false, true) == VsLeftDrag::Pan);
     CHECK(VsMiddleDragPans());

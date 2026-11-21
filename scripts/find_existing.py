@@ -4,8 +4,8 @@
   python3 scripts/find_existing.py vehicle seat
   python3 scripts/find_existing.py "tween position" sha256 --offline
 
-Searches, for the keywords: the feature map (docs/FEATURE_MAP.md and docs/feature_map/*.md), docs/UNFINISHED.md and
-docs/unfinished_engine.md, the titles of docs/*.md, class/component/node/function names under engine/ editor/ launcher/
+Searches, for the keywords: the feature map (docs/FEATURE_MAP.md and docs/feature_map/*.md), docs/status/UNFINISHED.md and
+docs/status/unfinished_engine.md, the titles of docs/**/*.md, class/component/node/function names under engine/ editor/ launcher/
 shared/ okayui/ tests/ (git grep), example scenes, test names, and the open claude/* and claude2/* branches (names and
 the files they change against origin/main), plus open PR titles and Claim comments on issue #422 when GitHub answers.
 It prints a ranked "Existing:" report. Paste the short "Existing:" block at the end into your Claim comment.
@@ -95,7 +95,7 @@ def feature_map(root, toks):
 
 def unfinished(root, toks):
     res = []
-    for f in ("docs/UNFINISHED.md", "docs/unfinished_engine.md"):
+    for f in ("docs/status/UNFINISHED.md", "docs/status/unfinished_engine.md"):
         p = os.path.join(root, f)
         if not os.path.exists(p): continue
         for i, line in enumerate(open(p, encoding="utf-8", errors="replace"), 1):
@@ -106,7 +106,10 @@ def unfinished(root, toks):
 
 def doc_titles(root, toks):
     res = []
-    for p in sorted(glob.glob(os.path.join(root, "docs", "*.md"))):
+    for p in sorted(glob.glob(os.path.join(root, "docs", "**", "*.md"), recursive=True)):
+        rel = os.path.relpath(p, os.path.join(root, "docs")).replace(os.sep, "/")
+        if rel.startswith(("feature_map/", "try_it/", "verification/")):
+            continue  # searched as the feature map above, or generated / old per-entry files
         name = os.path.basename(p)
         title = ""
         with open(p, encoding="utf-8", errors="replace") as fh:
@@ -114,7 +117,7 @@ def doc_titles(root, toks):
                 if line.startswith("#"):
                     title = line.lstrip("# ").strip(); break
         if all_in(name.replace("_", " ") + " " + title, toks) or (len(toks) > 1 and n_in(name.replace("_", " "), toks) >= 1 and all_in(title, toks)):
-            res.append({"file": "docs/" + name, "title": title})
+            res.append({"file": "docs/" + rel, "title": title})
     return res[:12]
 
 
@@ -243,7 +246,7 @@ def render(r):
             if f["code"]: o.append(f"  - Code: {f['code'][:200]}")
             if f["tests"]: o.append(f"  - Tests: {f['tests'][:200]}")
     else: o.append("- nothing in the map")
-    o += ["", "## Open notes (docs/UNFINISHED.md, docs/unfinished_engine.md)"]
+    o += ["", "## Open notes (docs/status/UNFINISHED.md, docs/status/unfinished_engine.md)"]
     o += [f"- {u['file']}:{u['line']}: {u['text']}" for u in r["unfinished"]] or ["- none"]
     o += ["", "## Docs with this in the name or title"]
     o += [f"- {d['file']}: {d['title']}" for d in r["docs"]] or ["- none"]

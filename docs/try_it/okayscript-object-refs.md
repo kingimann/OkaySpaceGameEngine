@@ -23,7 +23,7 @@ Issue #888, Findings 108 to 111. Before: a bullet that hit the third "Enemy" des
 What changed for scripts: `other`, `gameObject`, `GameObject.Find(..)`, `FindWithTag(..)`,
 `FindGameObjectsWithTag(..)` and what `Instantiate` / `spawn` return now carry the object's unique id. They still
 print and compare as the name, and a quoted name (`Destroy("Enemy")`) still means the first object with that name.
-Details: [scripting.md](scripting.md#object-references).
+Details: [scripting.md](scripting/scripting.md#object-references).
 
 **Status.** Engine tests run on Linux (see the PR). The editor and the Windows build were not run here, so steps 4
 to 6 are unverified on Windows; the same scene file is loaded and played headless by `test_okayscript_object_refs`.

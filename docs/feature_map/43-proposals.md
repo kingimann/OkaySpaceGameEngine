@@ -16,7 +16,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Components/Tilemap`, `Components/TilemapCollider2D`, `Scripting/OkayScriptVM`, `player/main.cpp`, `editor/main.cpp`
 - **API:** `Tilemap::Resize`, `SetTile`, `GetTile`, `CellToWorld`, `WorldToCell`; script `set_tile(x, y, id)`
 - **Editor:** GameObject > 2D Object > Tilemap (a 12-tile ground row), Add Component > Tilemap Collider 2D; no tile painting window or Inspector section (searched `editor/main.cpp`)
-- **Docs:** `docs/scripting.md` (tile built-ins)
+- **Docs:** `docs/scripting/scripting.md` (tile built-ins)
 - **Tests:** `tilemap_collision`, `script_tilemap`, `particles_tilemap`
 - **Status:** Basic - ids, collision and script editing work; tiles cannot be textured or painted in the editor.
 - **Exists today:** All of Parts. Levels are built by script or by code.
@@ -37,7 +37,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Components/SpriteRenderer`, `Components/SpriteAnimator`, `editor/main.cpp`
 - **API:** `SpriteRenderer::uvMin`, `uvMax`, `SpriteAnimator::atlasColumns`
 - **Editor:** View > Editors & Tools > Sprite Editor; GameObject > 2D Character (Sprite Sheet)...
-- **Docs:** `docs/scripting.md` (`play_anim`)
+- **Docs:** `docs/scripting/scripting.md` (`play_anim`)
 - **Tests:** `spriteanim`, `2d_expand`
 - **Status:** Basic - regular grids only; no irregular slicing, no packing, no pivot or trim data.
 - **Exists today:** Everything in Parts. A sprite is one texture file or one cell of an equal grid.
@@ -57,7 +57,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Components/SpriteAnimator`, `Scripting/OkayScriptVM`
 - **API:** `SpriteAnimator::Play`, `frames`, `fps`, `clips`
 - **Editor:** SpriteAnimator Inspector section
-- **Docs:** `docs/scripting.md`
+- **Docs:** `docs/scripting/scripting.md`
 - **Tests:** `spriteanim`
 - **Status:** Partial - playing clips works; there is no sprite animation editor, no events and no blending to a state machine for sprites.
 - **Exists today:** The component and its clips list. The Animator state machine (5.1) drives 3D characters and was not checked for sprites.
@@ -76,7 +76,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Components/Light`, `Components/SpriteRenderer`
 - **API:** none for 2D
 - **Editor:** none
-- **Docs:** `docs/lighting.md` (3D)
+- **Docs:** `docs/rendering/lighting.md` (3D)
 - **Tests:** `lighting`
 - **Status:** Planned - nothing lights sprites.
 - **Exists today:** 3D lighting and shadows only.
@@ -99,7 +99,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Render/Mesh`, `editor/main.cpp`, `Modeling/PolyOps`, `Components/BlockBuilder`, `Components/StructureBuilder`, `Components/BuilderMode`
 - **API:** `Mesh::FromName`, `g_snap` (editor), `BlockBuilder`
 - **Editor:** GameObject menu, toolbar Snap, 3D Modeling window
-- **Docs:** `docs/modeling.md`, `docs/build_mode.md`
+- **Docs:** `docs/editor/modeling.md`, `docs/gameplay/build_mode.md`
 - **Tests:** `mesh3d`, `poly_ops`, `builder_mode`, `block_builder`
 - **Status:** Basic - shapes and move snapping exist; no blockout kit and no rotation or surface snapping.
 - **Exists today:** All of Parts. There is no dedicated greybox kit with a fixed unit size, no "snap to ground" and no rotation or scale snapping (not found in `editor/main.cpp`).
@@ -120,7 +120,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `editor/main.cpp`, `editor/LevelTools.*`, `Components/Foliage`, `Components/SplineMesh`
 - **API:** `SplineInstancer`, `Foliage`
 - **Editor:** Project panel drag and drop, Terrain scatter, Foliage Inspector brush, Plugins > New Plugin
-- **Docs:** `docs/splines.md`, `docs/editor-plugins.md`, `docs/level_tools.md`
+- **Docs:** `docs/engine/splines.md`, `docs/editor/editor-plugins.md`, `docs/editor/level_tools.md`
 - **Tests:** `splines`, `foliage`
 - **Status:** Works for one plant kind per layer - the foliage brush paints a prefab, mesh file or built-in prop over a terrain or any surface with density, slope and height limits.
 - **Exists today:** The four pieces above. A layer holds one kind; a mix needs several layers.
@@ -140,7 +140,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `editor/main.cpp`, `editor/LevelTools.*`, `Components/PlayerController`
 - **API:** `RaycastSurfaces`
 - **Editor:** Scene view > View options > Measure tool
-- **Docs:** `docs/level_tools.md`
+- **Docs:** `docs/editor/level_tools.md`
 - **Tests:** `foliage` (the surface ray cast it uses)
 - **Status:** Basic - the measure tool works in the real editor; no scale reference figure and no metrics overlay.
 - **Exists today:** The measure tool, counts and the world axes toggle (`g_showWorldAxes`).
@@ -161,7 +161,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Physics/Collider3D`, `Physics/Collider2D`, `Components/SurvivalZone`, `Components/Spawner`, `Components/LogicLinks`, `Components/Volume`
 - **API:** `Collider3D::isTrigger`, `OnTriggerEnter3D`, `SurvivalZone`, `Volume`
 - **Editor:** Collider Inspector "Trigger" box; GameObject > Effects > Volume (11.12.5)
-- **Docs:** `docs/survival_kit.md`, `docs/volumes.md`
+- **Docs:** `docs/gameplay/survival_kit.md`, `docs/engine/volumes.md`
 - **Tests:** `physics_callback_removal`, `survival`, `volumes`
 - **Status:** Partial - 11.12 covers checkpoint, kill, force, fog and sound zones; the rest below is not built.
 - **Exists today:** Trigger colliders, the Survival Zone, spawners and the Volume component (11.12).
@@ -183,7 +183,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Components/WorldStreamer`, `Scene/SceneSerializer`
 - **API:** `WorldStreamer` (`cellSize`, `loadRadius`, `unloadRadius`, `folder`, `prefix`), `SyncNow`, `LoadedCells`
 - **Editor:** WorldStreamer Inspector section
-- **Docs:** `docs/scene_management.md`
+- **Docs:** `docs/engine/scene_management.md`
 - **Tests:** `worldstreamer`
 - **Status:** Partial - runtime streaming works; authoring is manual.
 - **Exists today:** The streamer, as above. It assumes each cell prefab already holds objects at final world positions.
@@ -202,7 +202,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Math/Vec3`, `Scene/Transform`
 - **API:** none
 - **Editor:** none
-- **Docs:** `docs/core_audit_notes.md` (lists double-precision variants for large worlds as a recommendation; header search only)
+- **Docs:** `docs/engine/core_runtime.md` (lists double-precision variants for large worlds as a recommendation; header search only)
 - **Tests:** none
 - **Status:** Planned - no floating origin or large-world mode found.
 - **Exists today:** Float positions everywhere in Math. Searched the engine, editor and docs for "floating origin" and found nothing.
@@ -222,7 +222,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `AI/NavMeshSurface`, `Core/SaveGame`, `Components/NavMeshAgent`
 - **API:** none
 - **Editor:** none
-- **Docs:** `docs/navigation.md`
+- **Docs:** `docs/gameplay/navigation.md`
 - **Tests:** `navmesh`
 - **Status:** Planned - the systems assume everything is loaded.
 - **Exists today:** Nothing cell-aware (checked the headers for streaming mentions).
@@ -241,7 +241,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Render/Atmosphere`, `Optimize/LodGroup`
 - **API:** `LodGroup`, `MergeStaticMeshes`
 - **Editor:** none
-- **Docs:** `docs/optimization_tools.md`
+- **Docs:** `docs/engine/optimization_tools.md`
 - **Tests:** `optimize_simplify`
 - **Status:** Planned - no impostor or horizon system.
 - **Exists today:** Fog only; the LOD data layer (#574) exists but nothing in the renderers uses it.
@@ -265,7 +265,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Net/PlayerInput`, `Net/NetworkManager`, `Core/Rng`, `Testing/PlayTest`, `Core/FrameRecord`
 - **API:** `PlayerInput`, `NetworkManager::SetInputSource`, `PlayTest`, `FrameRecorder`, `FramePlayer`, `GameLoop::AttachRecorder`
 - **Editor:** none
-- **Docs:** `docs/dedicated-server.md`; `docs/automated_testing.md`
+- **Docs:** `docs/online/dedicated-server.md`; `docs/process/automated_testing.md`
 - **Tests:** `net_auth_move`, `net_predict`; `playtest`, `frame_record`
 - **Status:** Planned - the building blocks exist (play-test harness and, since #581, the frame-time half of a recorder and player on main); no input recorder.
 - **Exists today:** Authoritative-movement code already separates input from simulation for networked controllers; whether a whole scene replays identically across machines was not verified.
@@ -284,7 +284,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Net/NetDelta`, `ECS/NetWorldSync`, `Net/NetworkManager`
 - **API:** `NetDelta`, `NetworkManager::RewindRaycast`
 - **Editor:** none
-- **Docs:** `docs/dedicated-server.md`
+- **Docs:** `docs/online/dedicated-server.md`
 - **Tests:** `net_sync`, `net_lagcomp`
 - **Status:** Planned - snapshots exist for netcode only.
 - **Exists today:** Snapshots and a short server-side pose history, used for networking.
@@ -325,7 +325,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Inventory/ItemDatabase`, `Core/DataAsset`, `Core/Paths`, `Core/DataPack`, `shared/AntiCheatIntegrity.hpp`
 - **API:** `ItemDatabase::Load`, `DataAsset::Load`, `Paths::SetAssetBaseDir`
 - **Editor:** none
-- **Docs:** `docs/packaging.md`, `docs/anticheat.md`
+- **Docs:** `docs/release/packaging.md`, `docs/online/anticheat.md`
 - **Tests:** `dataasset`, `datapack`, `item_database`
 - **Status:** Planned - content is text and could be overlaid; no mod discovery or load order exists.
 - **Exists today:** The data formats above. The player loads `items.okayitems` and scenes from one base folder.
@@ -342,11 +342,11 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 47.2.1 Script languages - `Scripting/OkayScriptVM` - scripts have builtins for files and networking
   - 47.2.2 No permission model - `-` - the script hosts have no capability list
 - **Code:** `Scripting/OkayScriptVM`
-- **API:** script built-ins (`docs/scripting_reference.md`)
+- **API:** script built-ins (`docs/scripting/scripting.md`)
 - **Editor:** none
-- **Docs:** `docs/scripting_reference.md`
+- **Docs:** `docs/scripting/scripting.md`
 - **Tests:** `scripting`, `script_semantics`
-- **Status:** Planned - scripts run with the full builtin set (`docs/editor-plugins.md` lists files among the builtins).
+- **Status:** Planned - scripts run with the full builtin set (`docs/editor/editor-plugins.md` lists files among the builtins).
 - **Exists today:** Full-access scripts.
 - **Suggested priority:** Low - a prerequisite for 47.1 on public games.
 - **Open:** first step: a capability flag per script host (files, network, process) defaulting to off for mod scripts.
@@ -363,7 +363,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Platform/Workshop`, `launcher/main.cpp`
 - **API:** `WorkshopItem`
 - **Editor:** Asset Manager window (imports downloads)
-- **Docs:** `docs/supabase-backend.md`
+- **Docs:** `docs/online/supabase-backend.md`
 - **Tests:** none
 - **Status:** Planned - sharing exists, a "mod" kind and installer do not.
 - **Exists today:** Publish and download of whole games, scenes and templates.
@@ -387,12 +387,12 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `editor/main.cpp`, `shared/CrashHandler.hpp`, `shared/CrashContext.hpp`, `shared/CrashReports.hpp`, `shared/CrashScrub.hpp`, `shared/CrashUpload.hpp`, `launcher/main.cpp`, `scripts/crash_to_issue.py`, `player/main.cpp`
 - **API:** `OKAY_BREADCRUMB("step")`, `okaycrash::handler::Install`, `okaycrash::ParseLog`, `okaycrash::Load`, `okaycrash::ExceptionName`, `okaycrash::Signature`, `okaycrash::Scrub`, `okaycrash::upload::Run`
 - **Editor:** View > Crash Log
-- **Docs:** `docs/crash_reports.md`, `docs/editor.md`, `docs/launcher-multiplayer.md`
+- **Docs:** `docs/online/crash_reports.md`, `docs/editor/editor.md`, `docs/online/multiplayer.md`
 - **Tests:** `crash_reports`; `crash_context`; `crash_handler`; `crash_scrub`; `crash_upload`
 - **Status:** Partial - the editor records detailed crashes and the launcher can send them (default on, scrubbed, after a one-time notice) and make GitHub issues from them once the owner has run the table SQL and set the repository variable; the shipped player records nothing.
-- **Exists today:** All Parts except the player handler. The server half needs the two one-time steps in docs/crash_reports.md; none of it has run on real Windows or against the real project. An independent security review (2026-11-15) was answered in code and tests.
+- **Exists today:** All Parts except the player handler. The server half needs the two one-time steps in docs/online/crash_reports.md; none of it has run on real Windows or against the real project. An independent security review (2026-11-15) was answered in code and tests.
 - **Suggested priority:** High - a player-side report is the cheapest way to learn what breaks on real machines.
-- **Open:** first step: reuse `okaycrash::handler::Install` in the player (report next to the game, plus last Console lines) and let the launcher send those too; file and line numbers for a stripped release need the release's `OkayEngine.debug` keyed by build id (proposal in docs/crash_reports.md); a real Windows crash is unverified.
+- **Open:** first step: reuse `okaycrash::handler::Install` in the player (report next to the game, plus last Console lines) and let the launcher send those too; file and line numbers for a stripped release need the release's `OkayEngine.debug` keyed by build id (proposal in docs/online/crash_reports.md); a real Windows crash is unverified.
 - **Related:** 22.3, 17.1, 18.4, 23.4
 - **Words:** crash report, crash handler, okay_crash.txt, backtrace, minidump, bug report, crash log, last step, OKAY_BREADCRUMB, OKAY_TEST_CRASH_LATE, OKAY_CRASH_UPLOAD, send crash reports
 - **Seen as:** a player says "it crashed" and I have nothing; the launcher shows editor crashes only
@@ -407,7 +407,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `launcher/main.cpp`, `Platform/Account/AccountService`, `Platform/NativeHttp`
 - **API:** none yet
 - **Editor:** none
-- **Docs:** `docs/supabase-backend.md`
+- **Docs:** `docs/online/supabase-backend.md`
 - **Tests:** none
 - **Status:** Planned - no analytics exist, which also means nothing is collected.
 - **Exists today:** Only the transport pieces.
@@ -427,7 +427,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Core/Prefs`, `Components/SettingsScreen`, `launcher/main.cpp`, `shared/CrashUpload.hpp`
 - **API:** `Prefs::SetBool`
 - **Editor:** none
-- **Docs:** `docs/game_ui.md`
+- **Docs:** `docs/ui/in_game_ui.md`
 - **Tests:** `prefs`, `pausemenu`
 - **Status:** Partial - the launcher has a consent switch for crash reports (on by default, with a disclosure, a one-time notice before the first send and a preview); there is no general consent dialog component and no switch for analytics events.
 - **Exists today:** A settings screen and typed Prefs, and the crash report switch.
@@ -447,7 +447,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `docs/sql/social.sql`, `docs/sql/matches.sql`, `docs/sql/crash_reports.sql`
 - **API:** none
 - **Editor:** none
-- **Docs:** `docs/supabase-backend.md`, `docs/crash_reports.md`
+- **Docs:** `docs/online/supabase-backend.md`, `docs/online/crash_reports.md`
 - **Tests:** `publish_supabase_checks`; `tests/scripts/test_crash_reports_sql.sh` (CI `sql-tests`: includes 30 senders at once and the upgrade of the first version)
 - **Status:** Partial - a `crash_reports` table with row-level security is written and tested against a local PostgreSQL; it is not on the real project until the owner runs it. No events table, no dashboard.
 - **Exists today:** A Supabase backend for other features, and the crash table's SQL.
@@ -470,7 +470,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Platform/Steam/SteamService`, `Platform/PlayFab/PlayFab`, `Core/SaveFrameworkSync`, `Scripting/OkayScriptVM`
 - **API:** `Steam::Get().CloudWrite`, `PlayFab::Get().SetUserData`, `ISaveSync`
 - **Editor:** none
-- **Docs:** `docs/scripting_reference.md` (Steam), `docs/steam_release.md`; `docs/save_framework.md`
+- **Docs:** `docs/scripting/scripting.md` (Steam), `docs/release/steam_release.md`; `docs/engine/save_games.md`
 - **Tests:** `steam`, `steam_script`; `save_framework`
 - **Status:** Partial - the service calls exist and are scriptable; nothing syncs a save slot to them.
 - **Exists today:** Raw per-service calls. A game must write its own copy logic.
@@ -490,7 +490,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Platform/Steam/SteamService`, `Platform/PlayFab/PlayFab`, `Net/MatchResults`
 - **API:** `PlayFab::GetLeaderboard`, `MatchResults`
 - **Editor:** none (visual-script playfab and steam instructions)
-- **Docs:** `docs/scripting_reference.md`, `docs/launcher-multiplayer.md`
+- **Docs:** `docs/scripting/scripting.md`, `docs/online/multiplayer.md`
 - **Tests:** `steam`, `match_results`
 - **Status:** Partial - three separate implementations; no single API a game uses regardless of platform.
 - **Exists today:** All Parts, each with its own calls.
@@ -510,7 +510,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Platform/Achievements`, `Platform/Steam/SteamService`
 - **API:** `Achievements`, `Steam::Get().UnlockAchievement`
 - **Editor:** none
-- **Docs:** `docs/scripting_reference.md`
+- **Docs:** `docs/scripting/scripting.md`
 - **Tests:** `steam`
 - **Status:** Partial - local and Steam achievements work; they are not linked and not synced.
 - **Exists today:** Both stores, separately.
@@ -529,7 +529,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Core/Cvar`
 - **API:** `Cvars::Int`, `Cvars::Load`
 - **Editor:** none
-- **Docs:** `docs/core_tools.md`
+- **Docs:** `docs/engine/core_tools.md`
 - **Tests:** `core_console`
 - **Status:** Planned - cvars exist locally; nothing fetches settings from a server.
 - **Exists today:** Local cvars only.
@@ -573,7 +573,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Components/FreeRoamController`, `Render/Atmosphere`, `Core/Game`, `Input/Cursor`
 - **API:** `FreeRoamController`, script `post_set`, `fog_set`
 - **Editor:** none
-- **Docs:** `docs/rendering.md`
+- **Docs:** `docs/rendering/rendering.md`
 - **Tests:** `post_sky`
 - **Status:** Planned - all ingredients exist; nothing combines them.
 - **Exists today:** The three pieces above.
@@ -592,7 +592,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Core/GameLoop`
 - **API:** `GameLoop::SetCapture`, `ClearCapture`, `SetFrameBudget`
 - **Editor:** none
-- **Docs:** `docs/loop_and_time.md`
+- **Docs:** `docs/engine/loop_and_time.md`
 - **Tests:** `capture_mode`
 - **Status:** Planned - no recorder or encoder exists; only the exact-frame-time half is on main (#581).
 - **Exists today:** Single-frame PNG saving; the capture clock exists in `GameLoop` (no PNG writer is attached to it).
@@ -610,7 +610,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Audio/AudioClip`, `Audio/AudioMixer`
 - **API:** none for video
 - **Editor:** none
-- **Docs:** `docs/audio.md`
+- **Docs:** `docs/audio/audio.md`
 - **Tests:** `audio_formats`
 - **Status:** Planned - no video playback code or decoder library exists (searched the engine, editor and player).
 - **Exists today:** Audio only; cutscenes are in-engine sequences (area 10).
@@ -633,7 +633,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `launcher/main.cpp`, `examples/netdemo/main.cpp`, `examples/physicsdemo/main.cpp`, `examples/editor-plugins/AlignTools.okay`
 - **API:** launcher Create page
 - **Editor:** File > New with the template list
-- **Docs:** `docs/making_a_game.md`, `docs/editor.md`
+- **Docs:** `docs/gameplay/making_a_game.md`, `docs/editor/editor.md`
 - **Tests:** `templates`
 - **Status:** Partial - a template gallery exists; templates are not annotated and there is no "how this was made" guide.
 - **Exists today:** The Parts above. The launcher card list is also the starting point for 25.1.
@@ -647,13 +647,13 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ### 51.2 Guided tutorials in the editor
 - **What:** Step-by-step lessons inside the editor that highlight the thing to click and check that it was done.
 - **Parts:**
-  - 51.2.1 Written guide - `docs/making_a_game.md` - first game from an empty editor to a shipped one
+  - 51.2.1 Written guide - `docs/gameplay/making_a_game.md` - first game from an empty editor to a shipped one
   - 51.2.2 Language tutorial - `editor/main.cpp` - the Scripting Reference window has a "Learn the basics" section teaching OkayScript from scratch
   - 51.2.3 Interactive lessons - `-` - not built (no step highlighting or task checking found)
 - **Code:** `editor/main.cpp`
 - **API:** Help > Scripting Reference
 - **Editor:** Help > Scripting Reference, Keyboard Shortcuts
-- **Docs:** `docs/making_a_game.md`
+- **Docs:** `docs/gameplay/making_a_game.md`
 - **Tests:** none
 - **Status:** Basic - reading material exists; nothing guides clicks.
 - **Exists today:** One document and one reference window with a tutorial section.
@@ -673,7 +673,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `editor/main.cpp`, `launcher/main.cpp`
 - **API:** none
 - **Editor:** startup splash
-- **Docs:** `docs/editor.md`
+- **Docs:** `docs/editor/editor.md`
 - **Tests:** none
 - **Status:** Basic - the launcher serves as the start page; the editor shows no first-run help.
 - **Exists today:** As above.
@@ -715,7 +715,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Components/Ragdoll`, `Components/Joint3D`
 - **API:** none for cloth
 - **Editor:** none
-- **Docs:** `docs/ragdolls.md`
+- **Docs:** `docs/physics/physics.md`
 - **Tests:** `ragdoll`, `physics_joints`
 - **Status:** Planned - no cloth, rope or hair code exists; only the ragdoll's particle chain.
 - **Exists today:** A particle chain solver inside the ragdoll; no mesh cloth.
@@ -753,7 +753,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Components/Water`, `Components/ParticleSystem`
 - **API:** `Water`, `fluidDensity`
 - **Editor:** Water Inspector section
-- **Docs:** `docs/rendering.md`
+- **Docs:** `docs/rendering/rendering.md`
 - **Tests:** `terrain` (also covers Water), `survival`
 - **Status:** Basic - a convincing surface and buoyancy; no flowing fluid.
 - **Exists today:** Parts 52.3.1 and 52.3.2.
@@ -772,7 +772,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Components/Destructible`, `Physics/Physics3D`
 - **API:** `Destructible::BreakBlock`, `BreakAt`, `CollapseUnsupported`
 - **Editor:** Destructible Inspector section
-- **Docs:** `docs/build_mode.md`
+- **Docs:** `docs/gameplay/build_mode.md`
 - **Tests:** `destructible`, `physics_explode`
 - **Status:** Partial - works for the block grid used by builders; arbitrary meshes do not fracture.
 - **Exists today:** Cube fracture with debris lifetime and collapse.
@@ -791,7 +791,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Components/NavMeshAgent`, `Components/NavMeshObstacle`, `AI/NavMesh`
 - **API:** `NavMeshAgent::radius`, `avoidancePriority`, `avoidanceRange`
 - **Editor:** NavMeshAgent Inspector section
-- **Docs:** `docs/navigation.md`
+- **Docs:** `docs/gameplay/navigation.md`
 - **Tests:** `navmesh`
 - **Status:** Basic - local avoidance per agent; the cost with hundreds of agents is not measured.
 - **Exists today:** Agents steer around each other; each agent scans neighbours itself.
@@ -813,7 +813,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Components/DayNightCycle`, `Scripting/OkayScriptVM`
 - **API:** `DayNightCycle::Hour`, `IsNight`, `SetTime`; script `time_of_day`
 - **Editor:** DayNightCycle Inspector section
-- **Docs:** `docs/day_night_cycle.md`
+- **Docs:** `docs/rendering/lighting.md`
 - **Tests:** `daynight`
 - **Status:** Partial - the clock and visuals work; gameplay cannot subscribe to it.
 - **Exists today:** Parts 53.1.1 and 53.1.2.
@@ -833,7 +833,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Environment/Weather`, `Environment/Wind`, `Components/SurvivalZone`
 - **API:** `RenderSettings::weather`, script `weather_set("rain", intensity)`
 - **Editor:** Scene settings weather section
-- **Docs:** `docs/rendering.md`, `docs/survival_kit.md`
+- **Docs:** `docs/rendering/rendering.md`, `docs/gameplay/survival_kit.md`
 - **Tests:** `post_sky` (weather), `survival`
 - **Status:** Partial - visuals and sound; no effect on gameplay.
 - **Exists today:** Parts above; checked that survival code does not read the weather settings.
@@ -852,7 +852,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `editor/main.cpp`, `Environment/Weather`
 - **API:** none
 - **Editor:** Scene settings
-- **Docs:** `docs/day_night_cycle.md`
+- **Docs:** `docs/rendering/lighting.md`
 - **Tests:** none
 - **Status:** Basic - weather previews in edit mode; no time scrubber.
 - **Exists today:** Weather preview in edit mode; no time slider found.
@@ -874,7 +874,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Physics/PhysicsDebug`, `Core/DebugOverlay`
 - **API:** `PhysicsDebug::Collect`, `DebugOverlay::BuildLines`
 - **Editor:** physics debug toggles in the Scene view
-- **Docs:** `docs/core_tools.md`
+- **Docs:** `docs/engine/core_tools.md`
 - **Tests:** `core_console`
 - **Status:** Basic - only physics queries are visualised.
 - **Exists today:** Parts 54.1.1 and 54.1.2. Script `debug_log` writes text only.
@@ -894,7 +894,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `editor/main.cpp`
 - **API:** none
 - **Editor:** Scene view
-- **Docs:** `docs/editor.md`
+- **Docs:** `docs/editor/editor.md`
 - **Tests:** none
 - **Status:** Basic - gizmos exist but only for components the editor knows by name.
 - **Exists today:** Parts 54.2.1 and 54.2.2. A new component gets no gizmo without editing `editor/main.cpp`.
@@ -914,7 +914,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Core/Console`, `Core/Cvar`, `Core/CommandLine`, `player/main.cpp`
 - **API:** `Console::Register`, `Console::Execute`, `Cvars::Int`, `Cvars::Bool`
 - **Editor:** none
-- **Docs:** `docs/core_tools.md`
+- **Docs:** `docs/engine/core_tools.md`
 - **Tests:** `core_console`, `core_cli`
 - **Status:** Partial - the model is merged and tested; no window and no cvars are registered by the engine.
 - **Exists today:** The registry and parser only.
@@ -934,7 +934,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Core/Cvar`, `Net/AntiCheat`
 - **API:** `Console::Register`
 - **Editor:** none
-- **Docs:** `docs/core_tools.md`, `docs/anticheat.md`
+- **Docs:** `docs/engine/core_tools.md`, `docs/online/anticheat.md`
 - **Tests:** `core_console`, `net_anticheat`
 - **Status:** Planned - no player-side cheat commands exist.
 - **Exists today:** Nothing implements player-side cheat commands (`grep` for "cheat" found only anti-cheat code).
@@ -956,7 +956,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Components/ActionList`, `VisualScript/VsDebug`, `editor/GameFiber.hpp`, `Scripting/OkayScriptVM`, `Scripting/NextScriptVM`
 - **API:** `ActionList::Breakpoints()`
 - **Editor:** Visual Script editor debug bar; Script editor bookmarks
-- **Docs:** `docs/visual_scripting.md`
+- **Docs:** `docs/scripting/visual_scripting.md`
 - **Tests:** `vs_debug`, `game_fiber`
 - **Status:** Partial - graphs can be debugged; text scripts cannot.
 - **Exists today:** Parts 55.1.1 and 55.1.2. The game fiber is reusable for text scripts.
@@ -975,7 +975,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `editor/main.cpp`
 - **API:** none
 - **Editor:** Variables window
-- **Docs:** `docs/editor.md`
+- **Docs:** `docs/editor/editor.md`
 - **Tests:** none
 - **Status:** Partial - variables show live; no call stack or expression watch.
 - **Exists today:** Variable display; no stack or expression watch.
@@ -994,7 +994,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Scene/Scene`, `Core/Profiler`
 - **API:** `OKAY_PROFILE`
 - **Editor:** Profiler window shows the Scripts category
-- **Docs:** `docs/core_logging_profiling.md`
+- **Docs:** `docs/engine/core_logging_profiling.md`
 - **Tests:** `profiler`
 - **Status:** Basic - the profiler shows one number for all scripts.
 - **Exists today:** One number for all scripts.
@@ -1013,11 +1013,11 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 56.1.1 Windows - `scripts/build-windows-dist.sh`, `scripts/okayspace-installer.nsi`, `scripts/build-windows-exe.sh` - cross-compiled with MinGW from Linux, NSIS installer, release workflow `windows-exe`
   - 56.1.2 Linux - `scripts/build.sh`, `.github/workflows/release.yml` - `linux-server` job builds the dedicated server; desktop builds from source
   - 56.1.3 Build Game - `editor/main.cpp` - exports data, config and the player beside it for Windows or Linux
-  - 56.1.4 Steam - `steam/upload.sh`, `docs/steam_release.md` - depot and app build files
+  - 56.1.4 Steam - `steam/upload.sh`, `docs/release/steam_release.md` - depot and app build files
 - **Code:** `scripts/build-windows-dist.sh`, `scripts/okayspace-installer.nsi`, `scripts/build-windows-exe.sh`, `scripts/build.sh`, `steam/upload.sh`, `editor/main.cpp`
 - **API:** Build Settings dialog
 - **Editor:** File > Build Settings
-- **Docs:** `docs/packaging.md`, `docs/releasing.md`, `docs/steam_release.md`
+- **Docs:** `docs/release/packaging.md`, `docs/release/releasing.md`, `docs/release/steam_release.md`
 - **Tests:** `publish_supabase_checks`; CI jobs `windows-cross`, `windows-export`
 - **Status:** Partial - Windows and Steam are covered; no macOS bundle and no Linux installer or AppImage.
 - **Exists today:** Parts above. `README.md` mentions `launch.sh` for Linux and macOS from source.
@@ -1031,13 +1031,13 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ### 56.2 Mobile packaging
 - **What:** Build, sign and ship Android and iOS apps with touch controls and store assets.
 - **Parts:**
-  - 56.2.1 Android export - `editor/main.cpp`, `docs/web_mobile.md` - Build Settings writes game data into an assets folder plus a guide; the APK is built by the author in Android Studio
-  - 56.2.2 iOS - `docs/web_mobile.md` - a guide only
+  - 56.2.1 Android export - `editor/main.cpp`, `docs/platform/web_mobile.md` - Build Settings writes game data into an assets folder plus a guide; the APK is built by the author in Android Studio
+  - 56.2.2 iOS - `docs/platform/web_mobile.md` - a guide only
   - 56.2.3 Mobile UI - `Components/UISafeArea`, `Components/UITouchScroll` - safe areas and touch scrolling (area 12.9)
 - **Code:** `editor/main.cpp`, `Components/UISafeArea`, `Components/UITouchScroll`
 - **API:** Build Settings target
 - **Editor:** Build Settings (Android option), phone and tablet emulation in the Game view
-- **Docs:** `docs/web_mobile.md`
+- **Docs:** `docs/platform/web_mobile.md`
 - **Tests:** `ui_nav_touch`
 - **Status:** Basic - data export and a guide; no build, signing or store packaging.
 - **Exists today:** Export plus guide; the editor can emulate phone screens in the Game view.
@@ -1056,9 +1056,9 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `scripts/build-web.sh`, `editor/main.cpp`
 - **API:** Build Settings target Web
 - **Editor:** Build Settings
-- **Docs:** `docs/web_mobile.md`
+- **Docs:** `docs/platform/web_mobile.md`
 - **Tests:** CI `web-build`
-- **Status:** Partial - builds in CI; networking (UDP) does not work in the browser (per `docs/web_mobile.md`).
+- **Status:** Partial - builds in CI; networking (UDP) does not work in the browser (per `docs/platform/web_mobile.md`).
 - **Exists today:** Parts above.
 - **Suggested priority:** Low.
 - **Open:** first step: package the web build as a zip ready for itch.io from the editor when emscripten is installed.
@@ -1111,12 +1111,12 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Reference pages for C++ and script APIs that are always in step with the code.
 - **Parts:**
   - 57.2.1 Engine API from the binding table - `Script/EngineApi`, `docs/engine_api.md` - one entry per script property and method
-  - 57.2.2 Script builtins - `docs/scripting_reference.md` - written by hand, area by area; the editor also lists builtins
+  - 57.2.2 Script builtins - `docs/scripting/scripting.md` - written by hand, area by area; the editor also lists builtins
   - 57.2.3 C++ headers - `-` - not generated (no Doxygen or similar)
 - **Code:** `Script/EngineApi`
 - **API:** `OKAY_WRITE_API_DOCS=1 ./tests/test_vs_types`
 - **Editor:** Scripting Reference window
-- **Docs:** `docs/engine_api.md`, `docs/scripting_reference.md`
+- **Docs:** `docs/engine_api.md`, `docs/scripting/scripting.md`
 - **Tests:** `vs_types`
 - **Status:** Partial - one generated page and one hand-written list.
 - **Exists today:** Generated Engine API page; hand-written builtin list; editor docs window.
@@ -1135,7 +1135,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `editor/main.cpp`
 - **API:** Help > Scripting Reference
 - **Editor:** Help menu
-- **Docs:** `docs/scripting_reference.md`
+- **Docs:** `docs/scripting/scripting.md`
 - **Tests:** none
 - **Status:** Basic - only scripts have an in-editor reference.
 - **Exists today:** Scripts only.
@@ -1157,7 +1157,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Optimize/SceneOptimizationReport`, `Core/Profiler`
 - **API:** `AnalyzeScene`, `OptSettings`
 - **Editor:** none
-- **Docs:** `docs/optimization_tools.md`
+- **Docs:** `docs/engine/optimization_tools.md`
 - **Tests:** `optimize_report`
 - **Status:** Planned - building blocks only.
 - **Exists today:** Data layers for measuring; no budget definitions.
@@ -1174,12 +1174,12 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 58.2.1 UI render benchmark - `tests/test_ui_render_bench.cpp` - 500 widgets in a 10k-object scene must use under 1 ms CPU, under 20 draw calls and no allocations after warm-up (timing only in optimized builds)
   - 58.2.2 Perf dump hook - `editor/main.cpp` - `OKAY_PERF_DUMP` prints an average frame breakdown every two seconds
   - 58.2.3 Play-test harness (#572) - `Testing/PlayTest` - headless fixed-step runs, a base for scene benchmarks
-  - 58.2.5 Frame benchmark - `tests/bench_frame.cpp` - six fixed scenes (2,000 static cubes, 500 falling bodies, 100 skinned characters, 64 lights, 500 UI widgets, a mixed level) run as whole frames (scene update, physics, animation, software render, UI) and printed by phase, plus a hash of the last picture and of every object's position to show a speed-up changed nothing; opt-in, not a test; `docs/perf_log.md` is the log of what it found and fixed
+  - 58.2.5 Frame benchmark - `tests/bench_frame.cpp` - six fixed scenes (2,000 static cubes, 500 falling bodies, 100 skinned characters, 64 lights, 500 UI widgets, a mixed level) run as whole frames (scene update, physics, animation, software render, UI) and printed by phase, plus a hash of the last picture and of every object's position to show a speed-up changed nothing; opt-in, not a test; `docs/engine/perf_log.md` is the log of what it found and fixed
   - 58.2.4 Frame statistics (#581, #585) - `Core/FrameStats` - average fps, 1% low, 0.1% low, worst frame and hitch count over a 240-frame window, a text or JSON summary of a recorded session, a CSV export (`ToCsv`, `SaveCsv`) and the console commands `time.stats` and `time.stats_csv` (`Core/LoopConsole`); can sync into `Debug/FrameHistory`
 - **Code:** `tests/test_ui_render_bench.cpp`, `tests/bench_frame.cpp`, `editor/main.cpp`, `Testing/PlayTest`, `Core/FrameStats`, `Core/LoopConsole`, `scripts/bench_ab.py`, `Physics/Broadphase`, `Render/TriangleSpan`, `Render/LightSubset`, `Scene/ComponentCache`
 - **API:** `OKAY_PERF_DUMP` environment variable; `bench_frame` (`--scene`, `--frames`, `--shadows`, `--scene-file`, `--legacy-sw`, `--legacy-physics`)
 - **Editor:** View > Panels > Profiler shows the same sections while playing (`Physics.3D`, `Render.*` for the software renderer)
-- **Docs:** `docs/qa_workflow.md`, `docs/perf_log.md`
+- **Docs:** `docs/process/qa_workflow.md`, `docs/engine/perf_log.md`
 - **Tests:** `ui_render_bench`, `bench_frame_smoke`, `broadphase`, `triangle_span`, `software_perf_paths`, `component_cache`
 - **Status:** Partial - the UI acceptance benchmark and the opt-in frame benchmark `bench_frame` exist; CI does not run or compare the frame benchmark yet.
 - **Exists today:** Parts above.
@@ -1198,7 +1198,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `.github/workflows/ci.yml`
 - **API:** none
 - **Editor:** none
-- **Docs:** `docs/qa_workflow.md`
+- **Docs:** `docs/process/qa_workflow.md`
 - **Tests:** `ui_render_bench`
 - **Status:** Planned - CI records no timings.
 - **Exists today:** Test jobs only; timing checks in tests run only in optimized, non-sanitized builds.
@@ -1217,7 +1217,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `editor/main.cpp`
 - **API:** none
 - **Editor:** Build result popup
-- **Docs:** `docs/editor.md`
+- **Docs:** `docs/editor/editor.md`
 - **Tests:** none
 - **Status:** Partial - size is reported; time is not.
 - **Exists today:** Per-file breakdown after a build.

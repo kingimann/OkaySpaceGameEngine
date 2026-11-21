@@ -41,11 +41,12 @@ inline void Flash(SDL_Window* w, okay::platform::FlashMode m) { if (auto s = oka
 #include "ImGuiPlatformFeed.hpp"   // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
+#include "NavSidebarLayout.hpp"   // which sidebar layout fits a short window (pure maths, tested)
 #include "LauncherDemo.hpp"   // okay::IsLauncherDemoMode(): the one list of demo / screenshot env variables
-#include "StartupUpdate.hpp"  // the start-up "Checking for updates" screen: when it runs, what it says (docs/updater.md)
+#include "StartupUpdate.hpp"  // the start-up "Checking for updates" screen: when it runs, what it says (docs/release/updater.md)
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
 #include "CrashReports.hpp"   // editor crash reports (Settings > Crash reports)
-#include "CrashUpload.hpp"    // scrub + send crash reports, and the prefilled GitHub issue address (docs/crash_reports.md)
+#include "CrashUpload.hpp"    // scrub + send crash reports (docs/online/crash_reports.md)
 #include "OfficialGame.hpp"   // the official game: manifest, diff and the safe update swap (Play page)
 #include "AntiCheatIntegrity.hpp"   // opt-in anti-cheat: check a game against its Data/manifest.json before it starts
 #include "AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals (Admin > Anti-cheat, the ban banner)
@@ -88,7 +89,7 @@ inline void Flash(SDL_Window* w, okay::platform::FlashMode m) { if (auto s = oka
 // launcher: it doesn't link the engine) for cover art, avatars, chat images and emoji.
 #include "okay/Core/ImageDecode.hpp"
 
-// The opt-in OkayUI backend (docs/own_ui_toolkit.md, section 5): the setting and, when OkayUI is compiled in, the host.
+// The opt-in OkayUI backend (docs/ui/own_ui_toolkit.md, section 5): the setting and, when OkayUI is compiled in, the host.
 #include "OkayUIBackend.hpp"
 #include "LauncherTips.hpp"
 #ifdef OKAY_HAVE_OKAYUI
@@ -138,8 +139,8 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait until this process exits, then relaunch once
 #include "UpdaterCore.hpp"   // updater rules: checksum required, stage then swap, reasons (tests/test_launcher_versions.cpp)
-#include "VersionsManager.hpp"   // the Versions page: installed editors, Latest / LTS, keeping the previous editor (docs/launcher_versions.md)
-#include "TestBuild.hpp"   // test builds: four-number versions, the "Get test builds" setting, the way back (docs/release_channels.md "Test builds")
+#include "VersionsManager.hpp"   // the Versions page: installed editors, Latest / LTS, keeping the previous editor (docs/release/launcher_versions.md)
+#include "TestBuild.hpp"   // test builds: four-number versions, the "Get test builds" setting, the way back (docs/release/release_channels.md "Test builds")
 #include "VersionsNet.hpp"
 #include "VersionsUI.hpp"
 #include "MemberModeration.hpp"   // kick / ban / unban / admin role for servers and group chats
@@ -207,12 +208,8 @@ std::string FindExe(std::initializer_list<const char*> names);
 #define EDITOR_EXE_NAMES {"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"}
 #endif
 
-// Where published builds live: the assets of the latest GitHub Release (this is
-// what the release workflow uploads). "releases/latest/download/<name>" always
-// redirects to the newest release's asset, so this never serves a stale binary
-// the way the old raw dist/ URL did.
-const char* kRawBase =
-    "https://github.com/kingimann/OkaySpaceGameEngine/releases/latest/download/";
+// Where published builds live: only the public Supabase "releases" bucket (SupabaseReleasesBase below). The launcher never
+// needs GitHub at run time (owner decision 2026-11-20).
 
 // ---- Auto-updater ----------------------------------------------------------
 // On startup the launcher checks the published version and, if newer (or a
@@ -368,7 +365,7 @@ bool ShellSafeUrl(const std::string& url) {
     return true;
 }
 
-// Defeat the GitHub raw CDN cache (which can serve a stale VERSION.txt or .exe
+// Defeat the download server CDN cache (which can serve a stale VERSION.txt or .exe
 // for minutes after a release) with a unique query string per request.
 std::string BustCache(const std::string& url) {
     static unsigned counter = 0;
@@ -938,80 +935,22 @@ bool CommitFile(const std::string& name, const fs::path& dest, bool inUse) {
     return o.ok;
 }
 
-// Fetch the latest GitHub release's notes and stash the first few bullet
-// lines for the Create tab's What's-new card. Best-effort: any failure just
-// leaves the built-in list showing. Runs on the update worker thread.
-void FetchReleaseNews() {
-    std::error_code ec;
-    fs::path tmp = fs::temp_directory_path(ec);
-    if (ec) return;
-    fs::path jf = tmp / "okayspace_release.json";
-    if (!Download("https://api.github.com/repos/kingimann/OkaySpaceGameEngine/releases/latest",
-                  jf.string())) return;
-    std::ifstream f(jf, std::ios::binary);
-    if (!f) return;
-    std::string json((std::istreambuf_iterator<char>(f)), {});
-    f.close(); fs::remove(jf, ec);
-    // Pull a top-level string field out of the (flat enough) release JSON.
-    auto field = [&](const char* name) -> std::string {
-        std::string key = std::string("\"") + name + "\":\"";
-        auto p = json.find(key);
-        if (p == std::string::npos) return {};
-        p += key.size();
-        std::string out;
-        while (p < json.size() && json[p] != '"') {
-            char c2 = json[p++];
-            if (c2 == '\\' && p < json.size()) {          // unescape \n \" \\ \r \t
-                char e = json[p++];
-                if (e == 'n') out += '\n';
-                else if (e == 'r') { /* skip */ }
-                else if (e == 't') out += ' ';
-                else if (e == 'u') { p += 4; out += '?'; }
-                else out += e;
-            } else out += c2;
-        }
-        return out;
-    };
-    std::string tag  = field("tag_name");
-    std::string body = field("body");
-    if (body.empty()) return;
-    // Keep the first handful of bullet lines ("- ..." / "* ..."), stripped.
-    std::string lines; int kept = 0;
-    std::size_t start = 0;
-    while (start < body.size() && kept < 6) {
-        std::size_t end = body.find('\n', start);
-        if (end == std::string::npos) end = body.size();
-        std::string ln = body.substr(start, end - start);
-        start = end + 1;
-        std::size_t a = ln.find_first_not_of(" \t");
-        if (a == std::string::npos) continue;
-        if (ln[a] != '-' && ln[a] != '*') continue;
-        std::size_t b = ln.find_first_not_of(" \t", a + 1);
-        if (b == std::string::npos) continue;
-        lines += ln.substr(b) + "\n";
-        ++kept;
-    }
-    if (kept > 0) SetNews(tag, lines);
-}
-
 // ---- Supabase update mirror ---------------------------------------------------
 // Builds can be published straight to the project's Supabase Storage (public
 // "releases" bucket, see scripts/publish-supabase.sh) with no GitHub workflow:
 //   releases/VERSION.txt      newest version (uploaded last, after its files)
 //   releases/NOTES.txt        "what's new" bullet lines for that version
 //   releases/v<ver>/<exe>     each version's files, in their own folder
-// The updater uses whichever of Supabase and GitHub Releases has the newer
-// version, so either one can ship an update and GitHub stays the fallback.
-// OKAY_UPDATE_SERVER overrides the Supabase project URL (testing).
+// This is the only place updates come from: GitHub is never used (owner decision 2026-11-20).
+// OKAY_UPDATE_SERVER overrides the Supabase project URL (testing); shipped builds get it from OKAY_DEFAULT_ACCOUNT_URL.
 static std::string SupabaseReleasesBase() {
-    std::string s;
-    if (const char* e = std::getenv("OKAY_UPDATE_SERVER"); e && *e) s = e;
+    const char* e = std::getenv("OKAY_UPDATE_SERVER");
 #ifdef OKAY_DEFAULT_ACCOUNT_URL
-    if (s.empty()) s = OKAY_DEFAULT_ACCOUNT_URL;
+    const char* builtIn = OKAY_DEFAULT_ACCOUNT_URL;
+#else
+    const char* builtIn = "";
 #endif
-    if (s.rfind("https://", 0) != 0 && s.rfind("http://127.0.0.1", 0) != 0) return {};
-    while (!s.empty() && s.back() == '/') s.pop_back();
-    return s + "/storage/v1/object/public/releases/";
+    return okayversions::ReleasesBucketBase(e ? e : "", builtIn);
 }
 static bool LooksLikeVersion(const std::string& v) {
     if (v.empty() || v.size() > 24 || v.find('.') == std::string::npos) return false;
@@ -1030,15 +969,14 @@ static std::string FetchVersionAt(const std::string& url, const char* tmpName) {
     fs::remove(vf, ec);
     return LooksLikeVersion(v) ? v : std::string();
 }
-// The newest published version and the folder its files download from.
-static std::string ResolveLatest(std::string& base, bool& fromSupabase) {
-    const std::string sb = SupabaseReleasesBase();
-    const std::string vs = sb.empty() ? std::string() : FetchVersionAt(sb + "VERSION.txt", "okayspace_ver_sb.txt");
-    const std::string vg = FetchVersionAt(std::string(kRawBase) + "VERSION.txt", "okayspace_ver_gh.txt");
-    if (!vs.empty() && (vg.empty() || CompareVersions(vg, vs) <= 0)) {
-        base = sb + "v" + vs + "/"; fromSupabase = true; return vs;
-    }
-    base = kRawBase; fromSupabase = false; return vg;
+static bool FetchTextFile(const std::string& url, std::string& out);
+// The newest published version and the folder its files download from (the releases bucket only). `why` says why it is "".
+static std::string ResolveLatest(std::string& base, bool& fromSupabase, std::string* why = nullptr) {
+    const okayversions::LatestRelease r = okayversions::ResolveLatestRelease(SupabaseReleasesBase(),
+        [](const std::string& url, std::string& out) { return FetchTextFile(url, out); });
+    if (why) *why = r.error;
+    base = r.base; fromSupabase = !r.version.empty();
+    return r.version;
 }
 // The body of a small text file at `url` (a version list, LTS.txt); false when it can't be fetched.
 static bool FetchTextFile(const std::string& url, std::string& out) {
@@ -1054,12 +992,10 @@ static bool FetchTextFile(const std::string& url, std::string& out) {
     fs::remove(tmp, ec);
     return true;
 }
-// Where the Versions page and the updater look for the list of versions: the releases bucket, then GitHub.
+// Where the Versions page and the updater look for the list of versions: the releases bucket only.
 static okayversions::Sources VersionSources() {
     okayversions::Sources s;
     s.bucketBase = SupabaseReleasesBase();
-    s.archiveTemplate = "https://github.com/kingimann/OkaySpaceGameEngine/releases/download/v{version}/{file}";
-    s.versionTxtUrls = {std::string(kRawBase) + "VERSION.txt"};
     if (!g_exeDir.empty()) s.floorFile = fs::path(g_exeDir) / okayupdate::kFloorName;   // an old signed list replayed is refused (shared/UpdateGuard.hpp)
     return s;
 }
@@ -1074,7 +1010,7 @@ struct UpdateTarget {
     okayversions::Index devIndex;    // when `test`: the checksum list of the test builds (the normal list does not have them)
     std::string title;               // when `test`: "Test build of walk-vs-run (abc1234)"
 };
-// Test builds (docs/release_channels.md "Test builds"): reached only when the person switched "Get test builds" on or asked to go back. With both off
+// Test builds (docs/release/release_channels.md "Test builds"): reached only when the person switched "Get test builds" on or asked to go back. With both off
 // ResolveTarget never calls this, so nothing under dev/ is fetched and the answer is exactly what it always was. The newer of "the newest normal
 // release" and "the newest test build" wins (okay::testbuild::ChooseTarget); a test build is downloaded from <bucket>/dev/v<version>/ and its checksums
 // come from the signed dev/versions.json, with the same rules as any update.
@@ -1108,8 +1044,10 @@ static void ApplyTestBuilds(const okayversions::Settings& st, bool goBack, Updat
 static UpdateTarget ResolveTarget(const okayversions::Settings& st, std::string& base, bool& fromSupabase, bool goBack = false) {
     UpdateTarget t;
     if (goBack || st.channel != okayversions::Channel::Lts) {
-        t.version = ResolveLatest(base, fromSupabase);
+        std::string why;
+        t.version = ResolveLatest(base, fromSupabase, &why);
         if (st.testBuilds || goBack) ApplyTestBuilds(st, goBack, t, base, fromSupabase);
+        if (t.version.empty() && t.message.empty() && why == okayversions::kNoUpdateServer) { t.message = why; t.failed = true; }   // a build mistake, said plainly (never "up to date")
         return t;
     }
     const std::string sb = SupabaseReleasesBase();
@@ -1159,7 +1097,6 @@ int RunUpdateCheck(void*) {
     SetUpStep("Contacting the update server", 0, 1);
     SetState(Up_Checking);
     SetUpMsg("Checking for updates...");
-    FetchReleaseNews();   // refresh the What's-new card while we're online anyway
     g_upFailReason.clear();
     std::string base; bool fromSupabase = false;
     const UpdateTarget target = ResolveTarget(g_upSettings, base, fromSupabase, g_upGoBackNow);   // by channel (Latest unless the person chose LTS); test builds only when asked
@@ -1171,7 +1108,8 @@ int RunUpdateCheck(void*) {
     if (latest.empty()) {
         if (!target.message.empty()) {   // the LTS channel with nothing to do in place (or no LTS information): said in its own words
             SetUpMsg(target.message);
-            SetUpStep(target.failed ? "Couldn't find the long-term-support version" : "Nothing to update", target.failed ? 0 : 1, 1);
+            SetUpStep(target.message == okayversions::kNoUpdateServer ? "No update server in this build"
+                      : target.failed ? "Couldn't find the long-term-support version" : "Nothing to update", target.failed ? 0 : 1, 1);
             SetState(target.failed ? Up_Failed : Up_UpToDate);
             return 0;
         }
@@ -1517,7 +1455,7 @@ static void StartUpdatePoll() {
 std::string FindExe(std::initializer_list<const char*> names) {
     std::error_code ec;
     // Look next to the launcher and in the "Tools" subfolder (the canonical
-    // organized layout — see docs/packaging.md); "Engine"/"runtime"/"bin" are
+    // organized layout — see docs/release/packaging.md); "Engine"/"runtime"/"bin" are
     // also accepted for older / alternative layouts.
     const char* dirs[] = {"", "Tools", "Engine", "runtime", "bin"};
     for (const char* d : dirs)
@@ -1680,7 +1618,7 @@ static std::string GameTitleFromPath(const std::string& path) {
     return stem.empty() ? std::string("Game") : stem;
 }
 
-// ---- Anti-cheat (opt-in; docs/anticheat.md) -----------------------------------
+// ---- Anti-cheat (opt-in; docs/online/anticheat.md) -----------------------------------
 // Settings > Behavior > Anti-cheat. Off (the default) checks nothing. Otherwise a
 // built game's files are checked against its Data/manifest.json before it
 // starts: report flags a mismatch and starts it anyway, enforce refuses.
@@ -1821,7 +1759,7 @@ void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
     RunCmd(cmd, false);
 }
 
-// Open `scene` with an installed editor of another version, the way the editor expects (docs/project_upgrade.md):
+// Open `scene` with an installed editor of another version, the way the editor expects (docs/editor/project_upgrade.md):
 // --launcher <pid> --open <scene> --keep-version. False when that version's editor is not there.
 bool LaunchEditorVersion(const std::string& version, const std::string& scene) {
     const fs::path exe = okayver::InstalledEditorPath(LauncherDirPath(), version);
@@ -2367,7 +2305,6 @@ std::vector<okaycrash::Report> g_crashes;   // newest first
 bool g_crashUpload = true;   // send crash reports automatically (Settings > Crash reports; ON unless the person turns it off; OKAY_CRASH_UPLOAD=0 overrides it)
 bool g_crashNoticeSeen = false;   // the one-time notice (what is sent, that it becomes a public GitHub issue, how to turn it off) has been shown and answered; saved as crash_notice=1
 static bool g_crashNoticeReq = false;   // the pump asks the main loop to show that notice; nothing is sent before it has been answered
-static const char* const kCrashRepo = "kingimann/OkaySpaceGameEngine";   // where "Report on GitHub" opens a new issue
 static bool CrashUploadOn() { return okaycrash::upload::Enabled(g_crashUpload, std::getenv("OKAY_CRASH_UPLOAD")); }
 static fs::path CrashDir() {
     std::string ed = FindExe(EDITOR_EXE_NAMES);
@@ -4696,7 +4633,7 @@ static void SyncNewsHistory() {
 }
 
 #ifdef OKAY_HAVE_OKAYUI
-// ---- The OkayUI backend host (docs/own_ui_toolkit.md, section 5) ----
+// ---- The OkayUI backend host (docs/ui/own_ui_toolkit.md, section 5) ----
 // With Settings > Appearance > UI backend on "OkayUI (preview)" (or OKAY_UI_BACKEND=okayui), the pages that have an OkayUI
 // port (What's New) are drawn by OkayUI into a rectangle the ImGui page reserves; everything else stays Dear ImGui. OkayUI
 // shares ImGui's SDL_Renderer and is flushed after ImGui's draw data, so it needs no window or renderer of its own.
@@ -5960,7 +5897,7 @@ static void PumpPrivacy(okay::account::AccountService& account) {
     if (okay::thr::Thread* t = okay::thr::CreateThread(PrivacyWorker, "okay-privacy", job)) okay::thr::DetachThread(t);
     else { g_privBusy = false; g_privDirty = true; delete job; }
 }
-// ---- Sending crash reports (docs/crash_reports.md, shared/CrashUpload.hpp) ----
+// ---- Sending crash reports (docs/online/crash_reports.md, shared/CrashUpload.hpp) ----
 // A new report in okay_crashlog.txt is scrubbed and sent as one row of the Supabase table crash_reports by a worker thread. The rules (the
 // Settings switch and OKAY_CRASH_UPLOAD=0, at most 5 a day, never twice, retry after a pause, 64 KB, the notice before the first send, the anon key may only insert) are
 // shared/CrashUpload.hpp's and are tested there; this part only runs them. The sent / refused ids are kept in okay_crash_sent.txt next to
@@ -8789,7 +8726,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             add(4,"ok that was really bugging me",780,true);
             add(5,"wanna test group chats later tonight?",500,false);
             add(6,"sure, ping me when you're free",460,true,true);
-            add(7,"@you the release notes are up: https://github.com/kingimann/OkaySpaceGameEngine/releases",120,false);
+            add(7,"@you the release notes are up: open What's New in the launcher",120,false);
             add(8, okay::Messages::FileMessageBody("Level_Design_v3.pdf", 2516582ULL,
                    "https://example.com/storage/v1/object/public/chat/demo/Level_Design_v3.pdf").c_str(), 60, true);
             if (std::getenv("OKAY_CHAT_DEMO_VOICE")) {   // voice notes with a synthetic, speech-like clip
@@ -12911,7 +12848,7 @@ static okay::thr::Mutex* g_acMutex = nullptr;
 // AccountService from the saved session, like the chat pollers. Export reads only
 // rows the signed-in user may read; delete calls the delete-account Edge Function,
 // which identifies the user from the bearer token. Logic + messages live in
-// okay/Platform/Account/AccountData.hpp (unit-tested); docs/account_data.md.
+// okay/Platform/Account/AccountData.hpp (unit-tested); docs/online/account_data.md.
 struct AcctDataJob {
     int  kind = 0;                 // 1 export, 2 delete
     bool running = false, ready = false, ok = false, signOut = false, signOutDone = false, notDeployed = false;
@@ -13185,7 +13122,6 @@ static const SocialPlatform kSocials[] = {
     {"x",         "X",         "https://x.com/",          IM_COL32(230, 233, 240, 255)},
     {"youtube",   "YouTube",   "https://youtube.com/@",   IM_COL32(255, 72, 72, 255)},
     {"twitch",    "Twitch",    "https://twitch.tv/",      IM_COL32(160, 110, 255, 255)},
-    {"github",    "GitHub",    "https://github.com/",     IM_COL32(210, 215, 225, 255)},
     {"tiktok",    "TikTok",    "https://tiktok.com/@",    IM_COL32(60, 220, 230, 255)},
     {"instagram", "Instagram", "https://instagram.com/",  IM_COL32(240, 90, 160, 255)},
     {"discord",   "Discord",   "",                        IM_COL32(110, 130, 245, 255)},
@@ -13649,7 +13585,7 @@ static AdminData DemoAdminData() {
     return d;
 }
 
-// ---- Anti-cheat backend (docs/sql/anticheat.sql, docs/anticheat.md) ----------
+// ---- Anti-cheat backend (docs/sql/anticheat.sql, docs/online/anticheat.md) ----------
 // Admin > Anti-cheat (admins): review reports, ban / unban accounts and
 // machines, decide appeals. Players: a banner for their own anti-cheat ban with
 // an "Appeal" flow, and "Report cheating" in a chat's menu. Requests are built
@@ -15204,7 +15140,7 @@ static okay::ProfileBundle DemoProfileBundle(const PfOpenReq& r, const std::stri
         p.showcaseGames = {41, 57, 62, 33};
         b.friends = 23; b.isMe = true;
         b.extrasSupported = true; p.verified = true;
-        p.socials = {{"youtube", "neondriftdev"}, {"twitch", "kingimann"}, {"x", "okayspace"}, {"github", "kingimann"}, {"website", "https://okayspace.dev"}};
+        p.socials = {{"youtube", "neondriftdev"}, {"twitch", "kingimann"}, {"x", "okayspace"}, {"website", "https://okayspace.dev"}};
         b.badges = {"developer", "beta"};
         auto pt = [&](const char* k, const char* t, long h, long ago) { okay::PlaytimeEntry e; e.key = k; e.title = t; e.seconds = h * 3600 + 1200; e.lastPlayed = t0 - ago; b.playtime.push_back(e); };
         pt("editor", "OkaySpace Editor", 214, 3600); pt("game:Neon Drift", "Neon Drift", 86, 2 * 3600);
@@ -18192,7 +18128,7 @@ int main(int argc, char** argv) {
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
     okay::ownswitches::Startup();   // Settings > Experimental: set the chosen own-code variables BEFORE anything reads them (the editor started from here inherits them)
-    okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
+    okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
     SDL_SetMainReady();
     {
         std::error_code ec;
@@ -18200,7 +18136,7 @@ int main(int argc, char** argv) {
         if (self.empty() && argc > 0) self = fs::absolute(argv[0], ec);
         if (!self.empty()) { g_exeDir = self.parent_path().string(); g_selfPath = self.string(); }
     }
-    {   // Is the update signature check on? Said at every start (docs/security.md "Updater signing"): OFF is never silent.
+    {   // Is the update signature check on? Said at every start (docs/online/security.md "Updater signing"): OFF is never silent.
         const okayupdate::SigStatus sig = okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys());
         std::fprintf(stderr, "[updater] %s\n", sig.line.c_str());
         okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", sig.line);
@@ -18395,7 +18331,7 @@ int main(int argc, char** argv) {
     if (serverUrl.empty())
         std::fprintf(stderr, "[account] No account server is set in this build, so online features (sign-in, friends, marketplace, updates) are off. "
                              "Put the server address in account_server.txt next to the launcher or set OKAY_ACCOUNT_SERVER (and OKAY_ACCOUNT_API_KEY).\n");
-    // Where the emailed reset link should land (docs/password-reset.md). Empty = none set up.
+    // Where the emailed reset link should land (docs/online/password-reset.md). Empty = none set up.
     std::string resetUrl = fromEnvOrFile("OKAY_PASSWORD_RESET_URL", "password_reset_url.txt");
 #ifdef OKAY_DEFAULT_PASSWORD_RESET_URL
     if (resetUrl.rfind("http", 0) != 0) resetUrl = OKAY_DEFAULT_PASSWORD_RESET_URL;
@@ -19455,7 +19391,14 @@ int main(int argc, char** argv) {
         const ImU32 navAccent = ImGui::GetColorU32(kAccent);
 
         // One sidebar row: icon + label (+ count pill). Returns true on click.
+        // The rows between the header and the pinned footer get shorter, and lose their group labels, on a window too short
+        // for all of them (navItemH / navCompact, decided below from the last frame's counts); the footer rows keep navRowH.
+        float navItemH = navRowH;
+        bool navCompact = false;
+        int navRowsDrawn = 0, navSectionsDrawn = 0;
         auto navRow = [&](const char* id, const char* label, int icon, bool sel, int badge, ImU32 badgeCol) -> bool {
+            const float navRowH = navItemH;   // (this row's height)
+            ++navRowsDrawn;
             ImVec2 mn = ImGui::GetCursorScreenPos();
             float w = ImGui::GetContentRegionAvail().x;
             ImVec2 mx(mn.x + w, mn.y + navRowH);
@@ -19493,7 +19436,8 @@ int main(int argc, char** argv) {
         };
         // Group label (expanded) or a short hairline (collapsed).
         auto navSection = [&](const char* title) {
-            if (g_navCollapsed) {
+            ++navSectionsDrawn;
+            if (g_navCollapsed || navCompact) {   // a short hairline instead of the label
                 ImGui::Dummy(ImVec2(0, 6));
                 ImVec2 p = ImGui::GetCursorScreenPos();
                 float w = ImGui::GetContentRegionAvail().x;
@@ -19585,7 +19529,18 @@ int main(int argc, char** argv) {
         const float upH = upNote ? (g_navCollapsed ? navRowH + 2.0f : ((g_upRelaunchNeeded && st == Up_Updated) || upAvail ? 50.0f + upBtnH + 18.0f : 58.0f)) : 0.0f;
         const float voiceH = g_call.kind ? (g_navCollapsed ? navRowH + 2.0f : VoicePanelHeight(true) + 4.0f) : 0.0f;
         const float footH = upH + voiceH + (navRowH + 2.0f) * 2 + 15.0f + profH;
-        ImGui::BeginChild("navitems", ImVec2(0, ImGui::GetContentRegionAvail().y - footH), false, ImGuiWindowFlags_NoScrollbar);
+        // Rows that do not fit used to be cut off at the bottom of this area, right above Notifications (a window about 750
+        // high cut "What's New" in half). Now, from the last frame's counts: when the full layout does not fit, the group
+        // labels become hairlines and the rows 4 px shorter; when even that does not fit, the area shows its scrollbar.
+        const float itemsH = ImGui::GetContentRegionAvail().y - footH;
+        static int s_navRows = 0, s_navSections = 0;
+        const okay::launchernav::NavFit navFit =
+            okay::launchernav::FitNavRows(s_navRows, s_navSections, itemsH, navRowH, ImGui::GetTextLineHeight(), g_navCollapsed);
+        navCompact = navFit.compact;
+        navItemH = navFit.rowH;
+        const bool navScroll = navFit.scroll;
+        ImGui::BeginChild("navitems", ImVec2(0, itemsH), false, navScroll ? 0 : ImGuiWindowFlags_NoScrollbar);
+        navRowsDrawn = 0; navSectionsDrawn = 0;   // count only the rows in this area
         const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers", "Forums", "Downloads"};
         auto tabRow = [&](int i, int badge = 0, ImU32 badgeCol = 0) {
             char id[16]; std::snprintf(id, sizeof(id), "##nav%d", i);
@@ -19619,6 +19574,8 @@ int main(int argc, char** argv) {
             if (navRow("##navadmin", "Admin", kIcoShield, tab == 11 && !g_pfOpen, 0, 0)) { tab = 11; ClosePublicProfile(); }
         }
         ImGui::EndChild();   // end scrollable nav items
+        s_navRows = navRowsDrawn; s_navSections = navSectionsDrawn;
+        navItemH = navRowH; navCompact = false;   // the footer rows below are full height
 
         {   // ---- Update card (only while checking/downloading, or with news) ----
             const char* head = (st == Up_Downloading) ? "Updating\xE2\x80\xA6"
@@ -19902,7 +19859,7 @@ int main(int argc, char** argv) {
             } else { s_watchUntil = 0; s_highlight.clear(); }
 
             // Open `pr` with the editor of `version` ("" = this launcher's). One editor runs at a time, so when the open one is another
-            // version it is asked to save and close first (docs/project_upgrade.md, "One editor at a time").
+            // version it is asked to save and close first (docs/editor/project_upgrade.md, "One editor at a time").
             auto openProjectWith = [&](const CrProj& pr, const std::string& version) {
                 if (!pr.ready || (version.empty() && editor.empty())) return;
                 if (okayversions::MustCloseEditorFirst(EditorRunning(), g_editorStartedVersion, LocalVersion(), version)) {
@@ -20079,7 +20036,7 @@ int main(int argc, char** argv) {
                 ImGui::SameLine(0, 6);
                 ImGui::BeginDisabled(!GitAvailable() || g_gitBusy);
                 if (RoundIconButton("##projclone", kIcoGlobe, iconD, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 32), crText,
-                                    g_gitBusy ? "Git is working" : "Clone from GitHub"))
+                                    g_gitBusy ? "Git is working" : "Clone with Git"))
                     ImGui::OpenPopup("##clonegh");
                 ImGui::EndDisabled();
             }
@@ -20088,7 +20045,7 @@ int main(int argc, char** argv) {
                 if (ImGui::BeginPopup("##clonegh")) {
                     ImGui::TextDisabled("Clone a project repo into your projects folder.");
                     ImGui::SetNextItemWidth(380);
-                    bool go = ImGui::InputTextWithHint("##ghurl", "https://github.com/user/repo.git",
+                    bool go = ImGui::InputTextWithHint("##ghurl", "https://example.com/user/repo.git",
                                                        ghUrl, sizeof(ghUrl), ImGuiInputTextFlags_EnterReturnsTrue);
                     ImGui::SameLine();
                     if ((ImGui::Button("Clone") || go) && ghUrl[0]) {
@@ -20101,7 +20058,7 @@ int main(int argc, char** argv) {
                         std::error_code cec; fs::create_directories(fs::path(npLoc), cec);
                         GitJob* j = new GitJob();
                         j->cmds   = { GitC(npLoc) + "clone " + GitQ(url) + " " + GitQ(nm) };
-                        j->okMsg  = "Cloned " + nm + " from GitHub";
+                        j->okMsg  = "Cloned " + nm + " with Git";
                         j->failMsg= "Clone failed — check the URL and your Git sign-in";
                         j->rescan = true;
                         StartGit(j);
@@ -20265,7 +20222,7 @@ int main(int argc, char** argv) {
                                 if (ImGui::MenuItem("Git: Commit & Push", nullptr, false, !g_gitBusy)) {
                                     gitCommitRoot = root; gitCommitName = pr.name; gitOpenCommit = true;
                                 }
-                            } else if (ImGui::MenuItem("Publish to GitHub...", nullptr, false, !g_gitBusy)) {
+                            } else if (ImGui::MenuItem("Publish with Git...", nullptr, false, !g_gitBusy)) {
                                 gitPublishRoot = root; gitPublishName = pr.name; gitOpenPublish = true;
                             }
                         }
@@ -20585,7 +20542,7 @@ int main(int argc, char** argv) {
             // ---- Git commit-message + publish-URL popups ----
             if (gitOpenCommit) { ImGui::OpenPopup("Commit & Push"); gitOpenCommit = false; }
             if (ImGui::BeginPopupModal("Commit & Push", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                ImGui::TextDisabled("Commit all changes in \"%s\" and push to GitHub.", gitCommitName.c_str());
+                ImGui::TextDisabled("Commit all changes in \"%s\" and push to its Git server.", gitCommitName.c_str());
                 ImGui::SetNextItemWidth(360);
                 ImGui::InputTextWithHint("##cmsg", "Commit message", gitCommitMsg, sizeof(gitCommitMsg));
                 if (ImGui::Button("Commit & Push", ImVec2(150, 0)) && gitCommitMsg[0]) {
@@ -20593,8 +20550,8 @@ int main(int argc, char** argv) {
                     j->cmds = { GitC(gitCommitRoot) + "add -A",
                                 GitC(gitCommitRoot) + "commit -m " + GitQ(gitCommitMsg),
                                 GitC(gitCommitRoot) + "push" };
-                    j->okMsg = "Pushed " + gitCommitName + " to GitHub";
-                    j->failMsg = "Push failed — is a GitHub remote set up?";
+                    j->okMsg = "Pushed " + gitCommitName + " to its Git server";
+                    j->failMsg = "Push failed — is a Git remote set up?";
                     StartGit(j);
                     Toast("Pushing " + gitCommitName + "\xE2\x80\xA6");
                     ImGui::CloseCurrentPopup();
@@ -20603,12 +20560,12 @@ int main(int argc, char** argv) {
                 if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
-            if (gitOpenPublish) { ImGui::OpenPopup("Publish to GitHub"); gitOpenPublish = false; }
-            if (ImGui::BeginPopupModal("Publish to GitHub", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                ImGui::TextWrapped("Create an empty repository on GitHub first, then paste its URL here.");
+            if (gitOpenPublish) { ImGui::OpenPopup("Publish with Git"); gitOpenPublish = false; }
+            if (ImGui::BeginPopupModal("Publish with Git", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextWrapped("Create an empty repository on your Git server first, then paste its URL here.");
                 ImGui::TextDisabled("Publishes \"%s\" to that repository (initial commit on main).", gitPublishName.c_str());
                 ImGui::SetNextItemWidth(380);
-                ImGui::InputTextWithHint("##purl", "https://github.com/you/your-repo.git", gitPublishUrl, sizeof(gitPublishUrl));
+                ImGui::InputTextWithHint("##purl", "https://example.com/you/your-repo.git", gitPublishUrl, sizeof(gitPublishUrl));
                 if (ImGui::Button("Publish", ImVec2(130, 0)) && gitPublishUrl[0]) {
                     GitJob* j = new GitJob();
                     j->cmds = { GitC(gitPublishRoot) + "init",
@@ -20617,7 +20574,7 @@ int main(int argc, char** argv) {
                                 GitC(gitPublishRoot) + "branch -M main",
                                 GitC(gitPublishRoot) + "remote add origin " + GitQ(gitPublishUrl),
                                 GitC(gitPublishRoot) + "push -u origin main" };
-                    j->okMsg = "Published " + gitPublishName + " to GitHub";
+                    j->okMsg = "Published " + gitPublishName + " to its Git server";
                     j->failMsg = "Publish failed — check the URL and your Git sign-in";
                     StartGit(j);
                     Toast("Publishing " + gitPublishName + "\xE2\x80\xA6");
@@ -20636,7 +20593,7 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
             // Same data and same actions as the Dear ImGui page below: your version, the update status with its button,
             // the newest notes, the earlier releases, the link to all releases. Differences are listed in
-            // docs/own_ui_toolkit.md section 5.
+            // docs/ui/own_ui_toolkit.md section 5.
             if (!g_newsHistory.empty() && g_newsSeen != g_newsHistory[0].ver) { g_newsSeen = g_newsHistory[0].ver; SavePrefs(); }
             const UpState us = GetState();
             const bool busy = us == Up_Checking || us == Up_Downloading;
@@ -20665,7 +20622,7 @@ int main(int argc, char** argv) {
             // (it neither drags the window nor scrolls the page) and says whether another window covers it.
             const ImVec2 rp = ImGui::GetCursorScreenPos();
             ImVec2 ra = ImGui::GetContentRegionAvail();
-            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer (version, Docs, GitHub) stays below, pinned by ImGui
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer (the version line) stays below, pinned by ImGui
             ImGui::InvisibleButton("##okayui_whatsnew", ra);
             ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);   // the wheel scrolls the OkayUI page, not the ImGui window under it
             g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
@@ -20673,7 +20630,6 @@ int main(int argc, char** argv) {
             if (wr.installNow) StartUpdateCheck(true);
             if (wr.restartNow) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
             if (wr.checkForUpdates) StartUpdateCheck();
-            if (wr.openReleasesPage) OpenExternal(okayuiscreens::WhatsNewReleasesUrl());
 #endif
         } else if (tab == 12) {                           // ---- What's New ----
             sectionHeader("What's New", "Release notes for OkaySpace, newest first.");
@@ -20759,14 +20715,11 @@ int main(int argc, char** argv) {
             } else {
                 ImGui::TextWrapped("Release notes are not loaded yet. They appear here once the launcher has checked for updates (you may be offline).");
             }
-            ImGui::Dummy(ImVec2(0, 10));
-            if (ImGui::Button("View all releases on GitHub"))
-                OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine/releases");
         } else if (tab == 13 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
                                                                           ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Tips, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same tips (shared/LauncherTips.hpp), tip of the day, category pills and search as the Dear ImGui page below; the
-            // differences are listed in docs/own_ui_toolkit.md section 6.
+            // differences are listed in docs/ui/own_ui_toolkit.md section 6.
             static okayuiscreens::TipsModel tm;
             static okayuiscreens::TipsState ts;
             if (tm.tips.empty()) {
@@ -21366,7 +21319,10 @@ int main(int argc, char** argv) {
                 ImVector<ImVec2> pts = dl->_Path;
                 dl->PathClear();
                 if (pts.Size < 2) return;
-                pts.push_back(pts[0]);
+                // Copy the first point out before push_back: ImVector grows by freeing its old storage first, so
+                // push_back(pts[0]) read freed memory (pts is always exactly full right after the copy above).
+                const ImVec2 first = pts[0];
+                pts.push_back(first);
                 bool on = true; float left = dash;
                 for (int i = 0; i + 1 < pts.Size; ++i) {
                     ImVec2 p = pts[i], q = pts[i + 1];
@@ -22070,7 +22026,7 @@ int main(int argc, char** argv) {
                             ImGui::InputTextWithHint("##dn", myUser.c_str(), acctChgDisplay, sizeof(acctChgDisplay));
                         });
                         acDivider();
-                        acRow("Avatar", "A public link to a square PNG or JPG (imgur, GitHub, Discord CDN\xE2\x80\xA6).", fw, ImGui::GetFrameHeight(), [&](float w) {
+                        acRow("Avatar", "A public link to a square PNG or JPG (imgur, Discord CDN\xE2\x80\xA6).", fw, ImGui::GetFrameHeight(), [&](float w) {
                             ImGui::SetNextItemWidth(w);
                             ImGui::InputTextWithHint("##av", "https://\xE2\x80\xA6/me.png", acctAvatar, sizeof(acctAvatar));
                         });
@@ -22528,22 +22484,36 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndDisabled();
 
-                // Forgot password (online/Supabase): emails a reset link.
+                // Forgot password (online/Supabase): emails a reset CODE, typed in here with the new password. No web page is
+                // needed (the old landing page was on GitHub Pages; the programs never need GitHub, owner decision 2026-11-20).
+                static bool resetCodeOpen = false;
+                static char resetCode[16] = "", resetPass[128] = "";
                 if (account.UsesEmail() && !acctRegisterMode) {
                     if (ImGui::SmallButton("Forgot password?")) {
                         acct::Result r = account.RequestPasswordReset(acctUser);
                         acctMessageError = !r.ok;
                         if (!r.ok) acctMessage = r.error;
-                        else if (account.HasResetRedirect())
-                            acctMessage = "Password reset email sent. Open the link in it to choose a new password.";
                         else {
-                            // Truth: with no landing page the link opens the server's default Site URL.
-                            acctMessage = "Reset email sent, but no reset page is set up for this build, so its link "
-                                          "opens the server's default web address instead of a password form. "
-                                          "The owner must host the page and set OKAY_PASSWORD_RESET_URL "
-                                          "(docs/password-reset.md).";
-                            acctMessageError = true;
+                            acctMessage = account.HasResetRedirect()
+                                ? "Password reset email sent. Open the link in it, or type the code from it below."
+                                : "Password reset email sent. Type the code from it below and choose a new password.";
+                            resetCodeOpen = true;
                         }
+                    }
+                    if (resetCodeOpen) {
+                        ImGui::SetNextItemWidth(160);
+                        ImGui::InputTextWithHint("##resetcode", "Code from the email", resetCode, sizeof(resetCode), ImGuiInputTextFlags_CharsDecimal);
+                        ImGui::SetNextItemWidth(220);
+                        ImGui::InputTextWithHint("##resetpass", "New password", resetPass, sizeof(resetPass), ImGuiInputTextFlags_Password);
+                        if (ImGui::Button("Set new password")) {
+                            acct::Result r = account.ResetPasswordWithCode(acctUser, resetCode, resetPass);
+                            acctMessageError = !r.ok;
+                            acctMessage = r.ok ? "Your password is changed. Sign in with the new one." : r.error;
+                            if (r.ok) { resetCodeOpen = false; resetCode[0] = 0; }
+                            std::memset(resetPass, 0, sizeof(resetPass));
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Cancel##reset")) { resetCodeOpen = false; resetCode[0] = 0; std::memset(resetPass, 0, sizeof(resetPass)); }
                     }
                 }
 
@@ -23037,7 +23007,7 @@ int main(int argc, char** argv) {
 
                     cardBegin("##sc_voice", "VOICE SERVER");
                     settingRow("Custom voice server", g_siteVoiceRelay.empty()
-                                   ? "The relay calls go through (host or host:port). Run okayspace-relay on any server \xE2\x80\x94 see docs/voice-server.md."
+                                   ? "The relay calls go through (host or host:port). Run okayspace-relay on any server \xE2\x80\x94 see docs/audio/voice-server.md."
                                    : "Leave empty to use the OkaySpace voice server. Only set this to use your own relay.",
                                260.0f, ImGui::GetFrameHeight(), [&](float w) {
                         static char vbuf[128] = ""; static bool vinit = false;
@@ -23161,7 +23131,7 @@ int main(int argc, char** argv) {
                         okayversionsui::DrawChannelCombo(VersionsHost(), std::min(w, 260.0f));
                     });
                     rowDivider();
-                    // Test builds (docs/release_channels.md "Test builds"): off by default. While it is off the launcher never looks at the test builds' folder.
+                    // Test builds (docs/release/release_channels.md "Test builds"): off by default. While it is off the launcher never looks at the test builds' folder.
                     settingRow("Get test builds", "Also get builds made for testing, before they are released. They can be broken. Switch this off to stop getting them; "
                                                   "the Latest channel only (the long-term-support channel never gets test builds).", 40.0f, 22.0f, [&](float) {
                         okayversions::Settings& vs = okayversions::GlobalSettings();
@@ -23440,16 +23410,6 @@ int main(int argc, char** argv) {
                             ImGui::AlignTextToFramePadding();
                             ImGui::TextDisabled("%d stack frame%s", r.frames, r.frames == 1 ? "" : "s");
                         }
-                        // The fallback with no server: a new GitHub issue with the (scrubbed) report filled in, for the person to read and submit.
-                        if (ImGui::Button("Report on GitHub", ImVec2(150, 28))) {
-                            const okaycrash::ScrubContext sc = okaycrash::LocalContext();
-                            ImGui::SetClipboardText(okaycrash::Scrub(r.text, sc).c_str());   // the whole scrubbed report: a web address cannot carry it all
-                            bool cut = false;
-                            OpenExternal(okaycrash::upload::IssueUrl(kCrashRepo, r, sc, 3900, &cut));   // (OpenExternal refuses an address over 4096 bytes)
-                            Toast(cut ? "GitHub opened. The full report is on your clipboard: paste it into the issue."
-                                      : "GitHub opened with the report filled in. The full text is on your clipboard too.", 1);
-                        }
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Opens a new GitHub issue with the report filled in (personal details removed). You read it and press Submit yourself.");
                         if (open) {
                             ImGui::Dummy(ImVec2(0, 4));
                             static std::string shown;   // InputTextMultiline needs a mutable buffer
@@ -23579,7 +23539,7 @@ int main(int argc, char** argv) {
                         }
                         ImGui::SetCursorScreenPos(ImVec2(p.x, narrow ? bp.y + 34 : p.y + S + 4));
                         ImGui::Dummy(ImVec2(0, 0));
-                        {   // the update signature check: ON, or OFF with the reason (never silent; docs/security.md "Updater signing")
+                        {   // the update signature check: ON, or OFF with the reason (never silent; docs/online/security.md "Updater signing")
                             static const okayupdate::SigStatus sigStatus = okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys());
                             const ImU32 sigCol = sigStatus.state == okayupdate::SigState::On ? IM_COL32(110, 205, 140, 255) : IM_COL32(236, 190, 90, 255);
                             ImGui::PushStyleColor(ImGuiCol_Text, sigCol);
@@ -23590,16 +23550,6 @@ int main(int argc, char** argv) {
                     cardEnd();
 
                     cardBegin("##sc_links", "RESOURCES");
-                    settingRow("Documentation", "Guides for the editor, scripting and accounts.", 96.0f, 30.0f, [&](float) {
-                        if (ImGui::Button("Open", ImVec2(96, 30)))
-                            OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine/blob/main/README.md");
-                    });
-                    rowDivider();
-                    settingRow("GitHub repository", "Source code, issues and release notes.", 96.0f, 30.0f, [&](float) {
-                        if (ImGui::Button("Open", ImVec2(96, 30)))
-                            OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine");
-                    });
-                    rowDivider();
                     settingRow("Version info", "Copy the version for bug reports.", 96.0f, 30.0f, [&](float) {
                         if (ImGui::Button("Copy", ImVec2(96, 30))) {
                             ImGui::SetClipboardText((std::string("OkaySpace v" OKAY_ENGINE_VERSION) + okay::testbuild::Suffix(OKAY_ENGINE_VERSION)).c_str());
@@ -27214,17 +27164,10 @@ int main(int argc, char** argv) {
 
         // ---- Footer (pinned to the bottom of the content panel) ----
         {
-            const char* kRepo = "https://github.com/kingimann/OkaySpaceGameEngine";
             float fy = ImGui::GetWindowHeight() - 38.0f;
             if (fy > ImGui::GetCursorPosY()) ImGui::SetCursorPosY(fy);
             ImGui::Separator();
             ImGui::TextDisabled("OkaySpace v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());
-            ImGui::SameLine();
-            ImGui::TextDisabled("  -  ");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Docs")) OpenExternal(std::string(kRepo) + "/blob/main/docs/accounts.md");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("GitHub")) OpenExternal(kRepo);
         }
 
         ImGui::EndChild();

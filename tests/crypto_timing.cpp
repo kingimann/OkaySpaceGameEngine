@@ -4,7 +4,7 @@
 // timing distributions, raw, cropped at several percentiles (to ignore interrupts) and as centred
 // squares (second order), says whether the timing depends on the class. |t| < 4.5 over hundreds of thousands to millions of
 // measurements is "no leak detected", |t| > 10 is "leak"; in between is inconclusive. A test like this can
-// only ever FAIL to find a leak; it proves nothing. See docs/crypto_review_package.md section 4.
+// only ever FAIL to find a leak; it proves nothing. See docs/platform/crypto_review_package.md section 4.
 //
 // Positive controls: a comparison that exits at the first difference and a multiply that is skipped for a
 // zero operand run through the same code and MUST be flagged, or the harness is not sensitive enough on

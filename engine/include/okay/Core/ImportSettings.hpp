@@ -2,7 +2,7 @@
 // Asset types (decided by file extension) and the typed per-asset import settings that
 // live in an asset's `.okaymeta` file. Settings are versioned: a file written by an older
 // layout is migrated on load, and a file written by a newer one is read best-effort and
-// never rewritten. See docs/asset_database.md.
+// never rewritten. See docs/engine/asset_database.md.
 #include <map>
 #include <string>
 #include <utility>

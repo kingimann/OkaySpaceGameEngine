@@ -14,7 +14,7 @@ class Component;
 /// if/else chain. The chain still handles every component that predates the
 /// registry; a registered name is looked up only when the chain does not know a
 /// field, and registered components are written after the chain's, so the text
-/// format is unchanged. See docs/scene_serializer.md.
+/// format is unchanged. See docs/engine/scene_serializer.md.
 class ComponentSerializerRegistry {
 public:
     struct Entry {

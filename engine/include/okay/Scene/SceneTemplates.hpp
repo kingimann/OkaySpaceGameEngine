@@ -10,6 +10,7 @@
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/UITextBind.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -36,6 +37,7 @@
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/VehicleSeat.hpp"
+#include "okay/Scene/VehicleBuilder.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
@@ -1058,6 +1060,72 @@ inline void VehicleSeats3D(Scene& scene) {
     block("Pillar Right Rear", ct, {0.83f, 1.07f, -1.32f}, {0.07f, 1.0f, 0.07f}, trim);
 }
 
+/// "Driving World": a flat city-like grid of roads with ramps, a mud patch and an ice patch, a drift circle of cones, a
+/// row of parked vehicles of every type, and a walking player. Walk to a vehicle (WASD), press E to get in, drive with
+/// WASD / Space (handbrake) / Shift (boost), C changes the camera, E again to get out.
+/// examples/driving/driving_world.okayscene is this scene saved to a file (see tests/test_vehicle_drive_scene.cpp).
+inline void DrivingWorld(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Driving World");
+    auto rgb = [](int r, int g, int b, int a = 255) { return Color::FromBytes(r, g, b, a); };
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    auto slab = [&](const char* name, Vec3 pos, Vec3 size, Color col, bool solid, const char* tag = "", Vec3 rot = {0, 0, 0}) {
+        GameObject* o = scene.CreateGameObject(name);
+        o->transform->localPosition = pos; o->transform->localScale = size;
+        o->transform->localRotation = Quat::Euler(rot);
+        auto* mr = o->AddComponent<MeshRenderer>(); mr->mesh = Mesh::Cube(); mr->color = col;
+        if (solid) { o->AddComponent<BoxCollider3D>()->size = {1, 1, 1}; o->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static; }
+        if (tag[0]) o->SetTag(tag);
+        return o;
+    };
+    slab("Ground", {0, -0.5f, 0}, {300, 1, 300}, rgb(84, 128, 70), true);
+    // Roads: a 3 x 3 grid, 12 m wide, look-only slabs on the ground.
+    for (int i = -1; i <= 1; ++i) {
+        slab("Road (across)", {0, 0.01f, i * 70.0f}, {300, 0.04f, 12}, rgb(58, 60, 66), false);
+        slab("Road (along)", {i * 70.0f, 0.01f, 0}, {12, 0.04f, 300}, rgb(58, 60, 66), false);
+    }
+    for (int i = -4; i <= 4; ++i) slab("Lane Dash", {i * 16.0f, 0.04f, 0}, {5, 0.02f, 0.2f}, rgb(235, 215, 90), false);
+    // City blocks between the roads.
+    const float bx[4] = {-35, 35, -35, 35}, bz[4] = {-35, -35, 35, 35};
+    for (int i = 0; i < 4; ++i) {
+        const float h = 8.0f + 5.0f * (float)i;
+        slab("Building", {bx[i], h * 0.5f, bz[i]}, {40, h, 40}, rgb(150 + i * 20, 140, 130), true);
+    }
+    // Ramps (a tilted slab), a mud patch and an ice patch (surfaces change the grip).
+    slab("Ramp", {0, 0.9f, 120}, {8, 0.3f, 10}, rgb(190, 150, 70), true, "", {-14, 0, 0});
+    slab("Ramp", {-70, 0.9f, 120}, {8, 0.3f, 10}, rgb(190, 150, 70), true, "", {-14, 0, 0});
+    slab("Mud Patch", {100, 0.02f, 40}, {30, 0.04f, 20}, rgb(96, 70, 44), true, "Mud");
+    slab("Ice Patch", {100, 0.02f, -30}, {30, 0.04f, 30}, rgb(190, 225, 245), true, "Ice");
+    // A drift circle of cones.
+    for (int i = 0; i < 20; ++i) {
+        const float a = (float)i / 20.0f * 6.2831853f;
+        GameObject* o = scene.CreateGameObject("Cone");
+        o->transform->localPosition = {-110.0f + 24.0f * std::cos(a), 0.35f, -60.0f + 24.0f * std::sin(a)};
+        o->transform->localScale = {0.4f, 0.7f, 0.4f};
+        auto* mr = o->AddComponent<MeshRenderer>(); mr->mesh = Mesh::Cone(); mr->color = rgb(238, 120, 30);
+        o->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        o->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+    }
+    // Parked vehicles, one of each kind, side by side along the east-west road, facing +X; the Sedan is at the east end with the road clear ahead.
+    const char* kinds[] = {"Sedan", "Sports Car", "Muscle Car", "Pickup", "Buggy", "Bus", "Heavy Truck", "Rally Car", "Drift Car"};
+    const Color paints[] = {rgb(205, 60, 55), rgb(240, 200, 40), rgb(40, 90, 200), rgb(90, 140, 90), rgb(230, 130, 40), rgb(230, 230, 235), rgb(120, 60, 150), rgb(40, 170, 180), rgb(30, 30, 34)};
+    for (int i = 0; i < 9; ++i) VehicleBuilder::Make(scene, kinds[i], {40.0f - 11.0f * (float)i, 0.0f, -3.5f}, 90.0f, paints[i], true, false);
+    AddThirdPersonPlayer(scene, {40.0f, 1.0f, -0.8f});    // standing at the first car's driver door
+    // A speedometer in the corner: the UI kit's Text Bind reads the numbers the driven vehicle publishes.
+    GameObject* hud = scene.CreateGameObject("Speedometer");
+    auto* htr = hud->AddComponent<TextRenderer>();
+    htr->screenSpace = true; htr->screenPos = {16, kHudTop}; htr->pixelSize = 3.0f; htr->vcenter = false;
+    htr->text = "0 km/h  Gear N";
+    hud->AddComponent<UITextBind>()->format = "{vehicle_speed|0} {vehicle_unit|km/h}   Gear {vehicle_gear|N}";
+    GameObject* help = scene.CreateGameObject("Help");
+    auto* htx = help->AddComponent<TextRenderer>();
+    htx->screenSpace = true; htx->screenPos = {16, kHudTop + 34.0f}; htx->pixelSize = 2.0f; htx->vcenter = false;
+    htx->text = "WASD walk / drive   E get in or out   Space handbrake   Shift boost   C camera   R recover   H horn   L lights";
+}
+
 /// A 2D top-down driving starter: a car you steer with WASD/arrows (throttle + turn,
 /// with grip so it corners and drifts), an orthographic camera following it, and a
 /// few cones to weave around. Space is the handbrake.
@@ -1821,7 +1889,7 @@ inline void VoxelSandbox(Scene& scene, int gridX, int gridY, int gridZ,
 /// (W/S throttle, A/D steer, Space brake, camera behind it). It has a cabin, a windscreen and an engine as plain
 /// look-only blocks. The nose points along +Z of the object. `pos` is where the waterline of the hull goes (the
 /// hull sits half under it). If the scene has no Water, a lake is made under it so the boat floats at once.
-/// Written from our own design (docs/water_boat.md); not taken from any other engine.
+/// Written from our own design (docs/rendering/terrain_water.md); not taken from any other engine.
 inline GameObject* AddBoat(Scene& scene, const Vec3& pos = {0, 0, 0}, float yawDegrees = 0.0f) {
     if (scene.FindObjectsOfType<Water>().empty()) {
         GameObject* lake = scene.CreateGameObject("Lake");

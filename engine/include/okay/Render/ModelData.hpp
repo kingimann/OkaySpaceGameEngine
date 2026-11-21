@@ -12,7 +12,7 @@
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
-// See docs/model_import.md.
+// See docs/content/model_import.md.
 // ---------------------------------------------------------------------------
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/Color.hpp"
@@ -245,10 +245,18 @@ bool ReadAc3dBuffer(const std::string& text, const std::string& baseDir, Importe
 /// OGRE XML mesh (.mesh.xml): one part per submesh (shared or own vertex buffers; position, normal and the first texture
 /// coordinate set; triangle lists, strips and fans as written), the submesh's material name, and from `materialScripts`
 /// (the text of .material files; ReadOgreXmlFile reads the ones next to the mesh) the first pass's diffuse, emissive and
-/// shininess and the first texture unit's texture. Skeletons, bone assignments, poses and morph animation, level of
+/// shininess and the first texture unit's texture. Poses and morph animation, level of
 /// detail and vertex colours are not read (reported in `out.notes`). Coordinates, winding and texture coordinates as written.
+/// With `skeletonXml` (the text of the .skeleton.xml the mesh links to; ReadOgreXmlFile loads the one next to the mesh) the
+/// bones become nodes under the root, each part is skinned (four strongest <vertexboneassignment> weights, renormalised) and the
+/// skeleton's animations become clips; a skeleton that cannot be read leaves the mesh rigid and says why in `out.notes`.
 bool ReadOgreXmlBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
-                       const std::vector<std::string>* materialScripts = nullptr);
+                       const std::vector<std::string>* materialScripts = nullptr, const std::string* skeletonXml = nullptr);
+/// OGRE skeleton (.skeleton.xml): the root node "OGRE" and the bones under it as nodes (parent first, local bind pose from
+/// <position>, <rotation angle axis> in radians and <scale>), and each <animation> as a clip with one channel per track. A
+/// keyframe's translate, rotate and scale are relative to the bone's bind pose (position = bind + translate, rotation = bind *
+/// rotate, scale = bind * scale). No parts. Duplicate bone ids or names, an unknown parent and parent loops are refused.
+bool ReadOgreSkeletonXml(const std::string& text, ImportedModel& out, std::string* err = nullptr);
 /// OGRE binary mesh (.mesh, little endian, serializer v1.8 and later): the same parts, materials and notes as the XML reader
 /// gives for the XML form of the same mesh (position, normal and the first texture coordinate set of 32-bit float vertex
 /// elements; triangle lists, strips and fans). Skeleton, bone assignments, levels of detail, edge lists, poses and animations
@@ -289,7 +297,7 @@ bool ReadIqmBuffer(const std::string& bytes, const std::string& baseDir, Importe
 bool ReadCobBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 /// NDO (Nendo, Izware's modeler, binary): SEAM ONLY. The header ("nendo 1.x") is recognised; the body is not read, because no
 /// public description of it exists that our rules let us follow and no real file was available. Always returns false, with a message
-/// that says which it is (not a Nendo file / Nendo file not read). See docs/own_ndo_reader.md.
+/// that says which it is (not a Nendo file / Nendo file not read). See docs/content/model_readers.md.
 bool ReadNdoBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 /// Terragen terrain (.ter, binary): one mesh part, a regular grid of the file's XPTS by YPTS points (SIZE + 1 on a side when
 /// those are missing), in metres (SCAL, 30 m per terrain unit by default), heights BaseHeight + Elevation * HeightScale / 65536
@@ -383,14 +391,14 @@ bool ReadLwsFile(const std::string& path, ImportedModel& out, std::string* err =
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {
-    Default,   ///< the format's default (see docs/model_import.md)
+    Default,   ///< the format's default (see docs/content/model_import.md)
     Own,       ///< our reader; the formats listed at the top of this file have one (HasOwnReader tells)
     Assimp     ///< Assimp; only when AssimpAvailable()
 };
 
 /// True when `ext` (".stl", any case) has one of our own readers.
 /// Collada (.dae), 3DS (.3ds), BVH (.bvh) and Blender (.blend) are the odd ones out: their readers are off by default
-/// (docs/model_import.md); each runs when SetImportBackend(ext, Own), the environment variable
+/// (docs/content/model_import.md); each runs when SetImportBackend(ext, Own), the environment variable
 /// OKAY_OWN_COLLADA=1 / OKAY_OWN_3DS=1 / OKAY_OWN_BVH=1 / OKAY_OWN_BLEND=1 or the matching CMake option says so
 /// (run-time choice beats the variable, which beats CMake; =0 forces it off).
 bool HasOwnReader(const std::string& ext);

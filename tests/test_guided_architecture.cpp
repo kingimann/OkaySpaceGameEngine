@@ -11,7 +11,7 @@ using namespace okay;
 using namespace okay::modeling;
 using namespace okay::modeling::guided;
 
-// Guided modeling, architecture: wall, stairs, door, window, roof and building (docs/guided_modeling_design.md).
+// Guided modeling, architecture: wall, stairs, door, window, roof and building (docs/editor/guided_modeling.md).
 namespace {
 
 double SignedVolume(const PolyMesh& m) {

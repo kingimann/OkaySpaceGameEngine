@@ -16,7 +16,7 @@
 // with the PUBLIC key only (`ticketKey` in .okayac); they never need a
 // Supabase key.
 //
-// Secrets (set by the project owner, never committed; see docs/anticheat.md):
+// Secrets (set by the project owner, never committed; see docs/online/anticheat.md):
 //   OKAY_TICKET_SEED        base64url 32-byte ed25519 seed (the private key)
 //   OKAY_TICKET_PUBLIC_KEY  base64url 32-byte ed25519 public key (= ticketKey)
 //   OKAY_TICKET_TTL         optional, seconds (default 600, at most 3600)

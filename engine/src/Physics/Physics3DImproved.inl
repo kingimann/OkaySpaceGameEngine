@@ -1,7 +1,7 @@
 // The Improved 3D step: iterated contacts, box faces with up to four points, real inertia, bodies that sleep and wake as
 // a group, swept fast bodies. Included by Physics3D.cpp (it uses the contact helpers in that file's anonymous namespace).
 // The maths that does not need the scene lives in Physics/ContactSolver.hpp and Physics/BoxManifold.hpp so it can be tested
-// without a scene. See docs/physics_plan.md for what each piece was written from.
+// without a scene. See docs/physics/physics.md for what each piece was written from.
 //
 // How a step runs in Improved quality (the Classic step is untouched):
 //   1. speeds are updated (gravity, forces, drag, spin from torque) but nothing moves yet;

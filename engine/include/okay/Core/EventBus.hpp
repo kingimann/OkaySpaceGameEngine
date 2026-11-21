@@ -77,7 +77,7 @@ private:
 /// Publish (the exception reaches the caller) but leaves the bus fully usable.
 /// Not thread safe: use it from one thread (or guard it yourself). To hand an event from
 /// a worker thread to the bus, post it to the main thread with
-/// `JobSystem::Global().RunOnMainThread([&bus, e] { bus.Publish(e); })` (see docs/core_runtime.md).
+/// `JobSystem::Global().RunOnMainThread([&bus, e] { bus.Publish(e); })` (see docs/engine/core_runtime.md).
 class EventBus {
 public:
     template <typename E>

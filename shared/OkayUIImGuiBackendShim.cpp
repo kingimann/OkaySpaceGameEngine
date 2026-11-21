@@ -1,7 +1,7 @@
 // The Dear ImGui backend entry points the launcher and the editor call, defined over OkayUI, for the executables built from the SAME sources against
 // OkayUI's Dear ImGui compatibility layer (CMake options OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, macro OKAY_ON_OKAYUI). The input side is
 // shared/ImGuiPlatformFeed.hpp (okay::platform events into the IO events OkayUI merges at NewFrame), so the SDL event functions do nothing here;
-// the draw side hands OkayUI's frame to the SDL renderer. docs/own_ui_toolkit.md, "Running the real launcher and editor on OkayUI".
+// the draw side hands OkayUI's frame to the SDL renderer. docs/ui/own_ui_toolkit.md, "Running the real launcher and editor on OkayUI".
 #include "okay/UI/OkayUI.hpp"
 #include "imgui.h"                        // okayui/probe/imgui.h: the compatibility header
 #include "backends/imgui_impl_sdl2.h"      // the declarations (okayui/probe/backends)

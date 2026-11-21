@@ -6,7 +6,7 @@ row: | 7e | Every template and example scene is tested; the templates that were 
 
 The two tests `templates_work` and `examples_work` run every New Project template and every example scene the way a person
 does (keys, mouse, Play, Stop, save, reopen) and fail when one is broken. What each one checks, how to add a template or an
-example, and the one known failure are in [templates_check.md](templates_check.md).
+example, and the one known failure are in [templates_check.md](process/templates_check.md).
 
 **Commands** (a Linux checkout):
 
@@ -38,5 +38,5 @@ the checks are headless, so every "you should see" line is unverified until you 
 6. **Card text.** The launcher's cards for Vehicle (3D), Vehicle (2D) and Sandbox now say what the templates do.
 
 Status: tested on Linux (headless, about 6 seconds). Not run: a real window, the launcher, Windows. Before and after pictures of six
-of the changed example scenes are in [templates_check.md](templates_check.md#pictures-the-cameras-that-looked-away-before-and-after);
+of the changed example scenes are in [templates_check.md](process/templates_check.md#pictures-the-cameras-that-looked-away-before-and-after);
 they are headless software renders (meshes only, no on-screen text), not window screenshots.

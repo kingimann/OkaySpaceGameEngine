@@ -4,7 +4,7 @@ id: okay-build
 ## okay-build: our own replacement for CMake (not part of the Windows release; Linux checkout only, off by default)
 
 CMake stays the default build. okay-build is a second way to build the engine that does not need CMake or Ninja. Nothing in the release
-uses it. Plan and numbers: [own_build_plan.md](own_build_plan.md), section "Round 11".
+uses it. Plan and numbers: [own_build_plan.md](platform/own_build_plan.md), section "Round 11".
 
 Needs g++, the SDL2 development headers and about 2 GB of disk. Run from a checkout of the repository.
 

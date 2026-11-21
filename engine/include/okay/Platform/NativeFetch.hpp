@@ -10,7 +10,7 @@
 // Only exists where the own client does: POSIX built with -DOKAY_OWN_HTTP=ON (OKAY_OWN_HTTP_ACTIVE), and it is
 // used only when NativeAvailable() (environment variable OKAY_OWN_HTTP=1). Windows (WinHTTP) and macOS never
 // see these functions; callers wrap their use in `#if defined(OKAY_OWN_HTTP_ACTIVE)`.
-// docs/own_http_readiness.md lists which call sites use what.
+// docs/platform/own_http.md lists which call sites use what.
 // ---------------------------------------------------------------------------
 #include "okay/Platform/NativeHttp.hpp"
 

@@ -191,7 +191,7 @@ inline std::string GenerateManifest(const ManifestOptions& o) {
     const std::string v = NormalizeVersion(o.version);
     std::string x;
     x += "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
-    x += "<!-- EXPERIMENTAL, UNVERIFIED: written by OkaySpace for an Xbox One Developer Mode test package (docs/xbox_uwp.md).\n"
+    x += "<!-- EXPERIMENTAL, UNVERIFIED: written by OkaySpace for an Xbox One Developer Mode test package (docs/platform/xbox_uwp.md).\n"
          "     No package built from this file has been installed or run. -->\n";
     x += "<Package xmlns=\"http://schemas.microsoft.com/appx/manifest/foundation/windows10\"\n"
          "         xmlns:uap=\"http://schemas.microsoft.com/appx/manifest/uap/windows10\"\n"

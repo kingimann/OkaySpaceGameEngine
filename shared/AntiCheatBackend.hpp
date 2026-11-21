@@ -1,5 +1,5 @@
 #pragma once
-// Anti-cheat backend calls (docs/sql/anticheat.sql, docs/anticheat.md): players
+// Anti-cheat backend calls (docs/sql/anticheat.sql, docs/online/anticheat.md): players
 // file reports, see their own anti-cheat bans and appeal them; admins review
 // reports, ban / unban and decide appeals (launcher: Admin > Anti-cheat).
 //

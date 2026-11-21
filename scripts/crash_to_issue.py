@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn new rows of the Supabase table `crash_reports` into GitHub issues (docs/crash_reports.md).
+"""Turn new rows of the Supabase table `crash_reports` into GitHub issues (docs/online/crash_reports.md).
 
 Run by .github/workflows/crash-issues.yml every 30 minutes (only when the repository variable CRASH_ISSUES_ENABLED is "true"; a person can
 also start it by hand, and then it defaults to a dry run). It needs two secrets that only the workflow has:
@@ -868,7 +868,7 @@ def main(argv=None, env=None):
     key = env.get("SUPABASE_SERVICE_KEY", "")
     if not key:
         print("::notice title=Crash reports::SUPABASE_SERVICE_KEY is not set in this repository's secrets, so there is nothing to read. "
-              "Nothing was done. (docs/crash_reports.md says how to add it.)")
+              "Nothing was done. (docs/online/crash_reports.md says how to add it.)")
         return 0
     _SECRETS.extend([key, env.get("GITHUB_TOKEN", "")])
     url = env.get("SUPABASE_URL") or default_supabase_url(root, env)
@@ -891,7 +891,7 @@ def main(argv=None, env=None):
     except RuntimeError as e:
         if isinstance(e, HttpError) and e.status == 404 or "PGRST205" in str(e):
             print("::error::the crash_reports table does not exist yet. Run docs/sql/crash_reports.sql once in the Supabase SQL editor "
-                  "(docs/crash_reports.md, 'One-time setup'), then run this again.")
+                  "(docs/online/crash_reports.md, 'One-time setup'), then run this again.")
         else:
             print("::error::could not read the crash_reports table: %s" % log_safe(one_line(mask(str(e)))))
         return 1

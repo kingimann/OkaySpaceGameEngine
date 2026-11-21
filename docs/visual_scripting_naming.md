@@ -103,7 +103,7 @@ here now, so "where does my script start?" has one answer. The test checks it.
 |  | Particles & Trails | Particles, lines and trails. |  |
 | **Movement & Physics** | Position | Where an object is, putting it somewhere else, and keeping it in bounds. | Read a Position, Stay in Bounds |
 |  | Rotation & Scale | Turn an object, face or look at something, and change its size. | Facing & Looking, Scale |
-|  | Move & Follow | Walk toward something, follow, chase, patrol, orbit, bob, spin, motion patterns and script functions. | Motion Patterns, Script Movement Functions |
+|  | Move & Follow | Walk toward something, follow, chase, patrol, orbit, bob, spin, motion patterns, vehicles and script functions. | Motion Patterns, Vehicles, Script Movement Functions |
 |  | Tweens | Smoothly change a position, size, color or number over time. | Start a Tween, Control Tweens, Tween Options, Tween Events, Tween Sequences |
 |  | Paths & Splines | Curves and paths an object can follow. |  |
 |  | Forces & Velocity | Push things, set their speed, jump, and set up their physics body. | Speed & Jumping, Body Settings |
@@ -305,7 +305,7 @@ checks the result (the object moved, the door opened, the score went up).
 
 ## Docs
 
-The palette index in `docs/visual_scripting.md` uses the title people see, with
+The palette index in `docs/scripting/visual_scripting.md` uses the title people see, with
 the file token in backticks. Update that group when you rename it.
 
 `docs/visual_scripting_nodes.md` (generated on the node-docs branch) must use

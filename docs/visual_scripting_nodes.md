@@ -2157,7 +2157,7 @@ Turns the scene's fog On or off, fading from Start to End world units from the c
 
 `SetPostEffect`
 
-Sets one post-processing value by name (bloom, exposure, saturation, vignette, fxaa, ...; see docs/rendering.md). 0 / 1 for switches.
+Sets one post-processing value by name (bloom, exposure, saturation, vignette, fxaa, ...; see docs/rendering/rendering.md). 0 / 1 for switches.
 
 **Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
 

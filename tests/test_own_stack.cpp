@@ -1,4 +1,4 @@
-// The own-stack dogfood switch and the startup line (shared/OwnStack.hpp, docs/own_stack_rollout.md).
+// The own-stack dogfood switch and the startup line (shared/OwnStack.hpp, docs/status/own_stack_rollout.md).
 //
 // Two modes, two ctest entries, because the okay::platform default and the FBX choice are decided on first use and then kept:
 //   test_own_stack          what this BUILD does with nothing set in the environment: the old line in a default build

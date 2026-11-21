@@ -1,5 +1,5 @@
 #pragma once
-// The Hierarchy and Inspector in window mode (docs/own_ui_toolkit.md 6.24 step 9). The Dear ImGui editor's Hierarchy (DrawHierarchy, ~580 lines) and Inspector
+// The Hierarchy and Inspector in window mode (docs/ui/own_ui_toolkit.md 6.24 step 9). The Dear ImGui editor's Hierarchy (DrawHierarchy, ~580 lines) and Inspector
 // (DrawInspector, ~12,000 lines of per-component drawers) live inside main.cpp and use its statics throughout, so they are not moved. These two windows are
 // written here over the parts that are already separate: the Hierarchy over EditorState, the Hierarchy search model (InspectorModel.hpp: HierFilter) and the
 // scene; the Inspector over the property registry through the editor's own generic field code (InspectorPanel.cpp, compiled a second time against OkayUI under

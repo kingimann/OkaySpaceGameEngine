@@ -1,5 +1,5 @@
 // SHA-256 comparison tool (not a test): runs the OLD copies (tests/sha256_old_refs.hpp) and the one new
-// implementation (okay/Crypto/Sha256.hpp) side by side. See docs/sha256_comparison.md.
+// implementation (okay/Crypto/Sha256.hpp) side by side. See docs/platform/sha256_comparison.md.
 //   sha256_compare check <cases.bin>   verify every implementation against Python hashlib/hmac answers
 //                                      (cases made by scripts/sha256_python_diff.py)
 //   sha256_compare bench               speed (MB/s), PBKDF2 rate, allocation

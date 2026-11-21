@@ -7,7 +7,7 @@
 // Get(key) falls back to the default language, then to the key itself (each
 // miss reported once), Localize(key, args...) fills `{0}` / `{name}` and plural
 // forms, and every language or table change bumps Version() so text that shows
-// a key refreshes. See docs/localization.md.
+// a key refreshes. See docs/engine/localization.md.
 #include <cstdint>
 #include <functional>
 #include <map>

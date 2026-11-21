@@ -10,7 +10,7 @@ using namespace okay;
 
 // Terrain::Apply and Water's per-frame rebuild welded every vertex through a std::map just to find out that no two share
 // a position. The grid normals are now added up without it (okay/Render/MeshNormals.hpp): the very same numbers, much faster.
-// docs/terrain_audit.md has the timings.
+// docs/rendering/terrain_water.md has the timings.
 namespace {
 
 bool SameNormals(const Mesh& a, const Mesh& b) {

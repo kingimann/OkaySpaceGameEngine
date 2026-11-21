@@ -18,7 +18,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `Components/PlayerController`, `Components/PlayerView`, `Components/FirstPersonController`, `Components/ThirdPersonController`, `Components/ControllerFeel`, `Components/MoveSpeed`, `Components/DeathLock`, `editor/main.cpp`
 - **API:** `PlayerController`, `PlayerView`, `FirstPersonController`, `ThirdPersonController`, `MoveSpeedScale`; scripts `set_view(0|1)`, `get_view()`, `SetViewMode(0|1|2)`; Add Component > Gameplay > Player Controller
 - **Editor:** Player Controller panel in the Inspector (View selector, Both section, movement, jump, sprint, crouch, prone, lean, slide, dodge, vault, foot IK, eye, orbit, Set Character Model...)
-- **Docs:** `docs/making_a_game.md` (The Player Controller, Controller movement extras)
+- **Docs:** `docs/gameplay/making_a_game.md` (The Player Controller, Controller movement extras)
 - **Tests:** `player_controller`, `view_upgrade`, `player`, `player_fixes`, `view_ground`, `run_feel`, `mp_controllers`, `net_player_spawn`, `net_auth_move`, `net_predict`, `death_lock`
 - **Status:** Works - player_controller, view_upgrade and player tests cover the View modes, toggle and old-scene loading; I read PlayerController and PlayerView headers, not the full controllers
 - **Open:** #554 landed on 2026-11-10: the controller panel's animation setup status, and the head and walk jitter work, are on main (tests `test_anim_jitter`, `test_head_stability`; IK follows the state's weight); the turning-character stutter (render interpolation cancelled by `RestorePose` when game code changes `localRotation`) is fixed and covered by `turn_interpolation` (a bare Scene with a turning body) and by `controller_interpolation` (the real ThirdPersonController with a rigged character, walking in circles under 50 Hz physics with smoothing on, drawn at 30, 60 and 144 fps: the drawn root moved evenly to within 2 mm per frame and the camera to within 1 mm of the straight walk; one rig, one turn rate, headless, no screen); a scene saved with the Player Controller records cannot be opened by a build from before that change (per docs)
@@ -37,11 +37,11 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.2.5 Vault, mantle, ledge grab - `Components/Traversal` - TraverseKind, TraverseProbe, TraverseJob; canVault, canMantle, canLedgeGrab default off; vault() and mantle() still probe
   - 4.2.6 Swimming - `Components/FirstPersonController`, `Components/ThirdPersonController` - waist-deep water (read from a Water probe) switches to swim speeds
   - 4.2.7 Collision for transform-only players - `Physics/PlayerCollision` - a sphere pushed out of solid geometry when there is no Rigidbody3D
-  - 4.2.8 Ground sense, slope hold, wall slide, stair snap, platform speed on a jump, player numbers (F3) - `Components/PlayerPerf`, `Components/PlayerDebug`, `Components/StepUp`, the two controllers - ground read from the contact normal (not the other object's pivot), the slope limit on box, mesh and heightmap ground, held still on a slope it may stand on, slide along walls, stay on the treads going down, a jump off a moving platform keeps its speed, a floor that vanishes under a sleeping player, remote avatars run no wall or camera code; `OKAY_OLD_PLAYER=1` brings the old path back; Slope Limit and Step Offset saved and in the Inspector; `docs/player_audit.md`
+  - 4.2.8 Ground sense, slope hold, wall slide, stair snap, platform speed on a jump, player numbers (F3) - `Components/PlayerPerf`, `Components/PlayerDebug`, `Components/StepUp`, the two controllers - ground read from the contact normal (not the other object's pivot), the slope limit on box, mesh and heightmap ground, held still on a slope it may stand on, slide along walls, stay on the treads going down, a jump off a moving platform keeps its speed, a floor that vanishes under a sleeping player, remote avatars run no wall or camera code; `OKAY_OLD_PLAYER=1` brings the old path back; Slope Limit and Step Offset saved and in the Inspector; `docs/status/player_audit.md`
 - **Code:** `Components/Stance`, `Components/StanceControl`, `Components/StepUp`, `Components/ControllerFeel`, `Components/Traversal`, `Components/DodgeAction`, `Components/DiveAction`, `Physics/PlayerCollision`
 - **API:** `StanceControl`, `StanceTimes`, `GroundLatch`, `TraverseKind`; scripts `crouch()`, `prone()`, `stand()`, `set_stance(0|1|2)`, `SetStance`, `dodge(dir)`, `dive()`, `vault()`, `mantle()`
 - **Editor:** Player Controller panel sections (Crouch / prone, Slide, Dodge, Vault and mantle, Stance changes on the Animator)
-- **Docs:** `docs/making_a_game.md` (Crouch and prone), `docs/animation.md` (Actions: dive, roll, vault)
+- **Docs:** `docs/gameplay/making_a_game.md` (Crouch and prone), `docs/gameplay/animation.md` (Actions: dive, roll, vault)
 - **Tests:** `stance`, `stance_save`, `jump`, `stop_settle`, `run_feel`, `view_ground`, `player_fixes`, `player_deep`, `player_course`
 - **Status:** Works - stance, stance_save, jump and stop_settle exist; vault, dodge and dive default off by design
 - **Open:** old map: verify prone on first and third person; hands-on-ledge IK is the LedgeHandsIK component (code only, no editor entry or saved-scene support); dive, hit, vault and emote actions are not sent to remote players (per docs, see 5.12)
@@ -60,7 +60,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `Components/CharacterController2D`, `Components/TopDownController2D`, `Components/Platformer25DController`
 - **API:** `CharacterController2D::Mode`, `TopDownController2D`, `Platformer25DController`; script events `on_jump`, `on_land`, `on_layer`, `on_grab`, `on_release`, `on_climb`
 - **Editor:** Inspector panels per controller; GameObject > Player > Top Down (2D), 2.5D Platformer (LittleBigPlanet)
-- **Docs:** `docs/shooter_and_25d_controllers.md`
+- **Docs:** `docs/gameplay/shooter_and_25d_controllers.md`
 - **Tests:** `charctrl`, `shooter25d`, `spriteanim`
 - **Status:** Works - charctrl covers 2D top-down, platformer, 3D and rotating platforms; shooter25d covers the 2.5D controller (layers, jump, grab, saves)
 - **Open:** old map: improve the 2.5D controller (no specifics recorded); the 2.5D controller keeps its own ledge motion and only sets the `hanging` animation bool
@@ -82,7 +82,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `Components/ThirdPersonShooterController`, `Components/TopDownShooterController`, `Components/TopDownController`, `Components/ClickToMoveController`, `Components/FreeRoamController`, `Components/CharacterController3D`, `Components/Crosshair`
 - **API:** `TopDownShooterController`, `ClickToMoveController::MoveTo`, `FreeRoamController`; script events `on_fire`, `on_reload`, `on_reloaded`, `on_empty`, `on_dash`
 - **Editor:** Inspector panels per controller; GameObject > Player > Third Person Shooter, Top Down (3D), Top Down Shooter (3D), Click To Move
-- **Docs:** `docs/shooter_and_25d_controllers.md`, `docs/making_a_game.md`
+- **Docs:** `docs/gameplay/shooter_and_25d_controllers.md`, `docs/gameplay/making_a_game.md`
 - **Tests:** `shooter25d`, `clicktomove`, `player`, `mp_controllers`, `charctrl`
 - **Status:** Works - shooter25d, clicktomove and player tests exist; Projectile 3D is in 6.6
 - **Open:** none recorded; the fall-back for animation is the shared Character locomotion (5.3, 4.9)
@@ -103,7 +103,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `Components/VehicleController`, `Components/VehicleController2D`, `Components/VehicleSeat`, `Components/BoatController`, `Components/Buoyancy`
 - **API:** `VehicleController`, `VehicleController2D`, `VehicleSeat`, `Speed()`, `IsGrounded()`, `Driver()`, `Enter()`, `Exit()`
 - **Editor:** Add Component > Gameplay > Vehicle Controller (Car) / Vehicle Controller 2D / Vehicle Seat / Boat Controller; GameObject > Vehicles > Boat; File > Open examples/vehicle/vehicle_test.okayscene or examples/boat/boat_lake.okayscene
-- **Docs:** `docs/vehicle_controller.md`, `docs/water_boat.md`
+- **Docs:** `docs/gameplay/vehicles.md`, `docs/rendering/terrain_water.md`
 - **Tests:** `vehicle`, `vehicle_seat`, `boat`
 - **Status:** Works - vehicle test covers throttle, steering, grip and serialization; suspension is opt-in; the seat test covers get in and out, sitting pose set and cleared, ride camera, rolling and steering wheels, one driver, exit fallback, destroy and save
 - **Open:** a person cannot press E to board a boat yet (the seat only knows VehicleController); no script or visual-script access to seats; seat state is not replicated over the network; no sit animation; torque-based body dynamics are a roadmap item in the doc
@@ -122,7 +122,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `Components/PlayerCamera`, `Components/CameraFollow`, `Components/ControllerFeel`, `Components/ThirdPersonController`
 - **API:** `OrbitPose`, `PlaceThirdPersonOrbit`, `SpringArm`, `FollowPivot`, `CameraFollow::targetName`
 - **Editor:** Player Controller panel > Third person (orbit, aim, spring arm); Inspector for Camera Follow
-- **Docs:** `docs/making_a_game.md`
+- **Docs:** `docs/gameplay/making_a_game.md`
 - **Tests:** `player`, `view_ground`, `run_feel`
 - **Status:** Works - player test checks the wall pull-in; view_ground checks the lens stays above ground through hitches; CameraFollow has no dedicated test I found
 - **Open:** #554 landed on 2026-11-10 with the head and walk jitter work (tests `test_anim_jitter`, `test_head_stability`); the turning-character stutter (render interpolation cancelled by `RestorePose` when game code changes `localRotation`) is fixed and covered by `turn_interpolation` (a bare Scene with a turning body) and by `controller_interpolation` (the real ThirdPersonController with a rigged character, walking in circles under 50 Hz physics with smoothing on, drawn at 30, 60 and 144 fps: the drawn root moved evenly to within 2 mm per frame and the camera to within 1 mm of the straight walk; one rig, one turn rate, headless, no screen); no other open item recorded
@@ -142,7 +142,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `Components/FirstPersonHand`, `Components/FirstPersonHands`, `Components/FpHandsPreview`, `Components/FirstPersonController`, `Components/Crosshair`, `editor/FpHandsWindow.*`
 - **API:** `FirstPersonHands`, `FpHandsSnap`, `Character::ApplyOwnerVisibility`, `Character::SetViewmodelBlend`, `Character::SetHeldHiddenFromOwner`
 - **Editor:** First Person Hands component panel (Open Preview), "First Person Hands" window
-- **Docs:** `docs/animation.md` (Holding objects: first-person hands and view switch), `docs/making_a_game.md`
+- **Docs:** `docs/gameplay/animation.md` (Holding objects: first-person hands and view switch), `docs/gameplay/making_a_game.md`
 - **Tests:** `fp_hand`, `fp_hand_normal`, `fp_punch`, `view_ground`, `run_feel`, `reduce_motion_bob`
 - **Status:** Works - fp_hand is the largest test in the area (about 1,000 lines); view switch and hands described in docs
 - **Open:** old map: Blocky Character arms in first person; the hand is one block with no finger bones, finger joints are never posed (per docs); none of the first-person pose is sent over the network (per docs)
@@ -165,10 +165,10 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `Components/VirtualCamera`, `Components/CinemachineBrain`, `Components/CameraMath`, `Components/CameraCollision`, `Components/CameraRoom`, `Components/DollyPath`, `Components/Camera`, `Scene/EnsureCamera`
 - **API:** `VirtualCamera::priority`, `BindingMode`, `AddImpulse`, `CinemachineBrain::blendTime`, `LiveCamera()`, `DollyPath`, `DollyCart`, `Scene::CameraStack()`, `Camera::ClearPlan`, `VirtualCamera::ApplyStyle`, `DampingMode`, `groupTargets`, `CameraRoom`, `cam::BlendStyle`, `CinemachineBrain::ForceLive`; scripts `Camera.BlendTo`, `Camera.SetTarget`, `Camera.AddToGroup`, `Camera.RemoveFromGroup`
 - **Editor:** Inspector panels for Virtual Camera (Camera Rig, Framing, Group, 2D camera, Walls sections), Cinemachine Brain (blend style and curve), Camera Room, Dolly Path, Dolly Cart; Add Component "Camera Rig" and "Camera Room"; GameObject > Camera > Camera Rig: Follow / Orbit / Look At and Camera Room; Scene view gizmo (frustum, dead and soft zone, wall probe, group circle, room boxes); Camera Preview for a selected rig
-- **Docs:** `docs/camera_upgrade.md`, `docs/layers_tags_cameras.md` (Cameras), `docs/splines.md`, `docs/cutscenes.md`
+- **Docs:** `docs/gameplay/cameras.md`, `docs/gameplay/cameras.md` (Cameras), `docs/engine/splines.md`, `docs/gameplay/cutscenes.md`
 - **Tests:** `cinemachine`, `layers_tags_cameras`, `scene_cameras`, `camera_cine`, `camera_math`, `camera_rig`
 - **Status:** Works - cinemachine, scene_cameras and layers_tags_cameras tests exist; the depth rule for the main camera landed in #570
-- **Open:** the shot now really faces its Look At target (before the camera upgrade it aimed the opposite way: the vcam rotated +Z to the target but a camera looks down -Z); no dialogue hook exists, scripts call `Camera.BlendTo` from a dialogue event; the camera upgrade was checked headless only (`docs/camera_upgrade.md`); the player and editor still draw only the main camera; looping their render path over `CameraStack()` with ClearPlan, viewport rect and culling mask is not done (per docs/layers_tags_cameras.md)
+- **Open:** the shot now really faces its Look At target (before the camera upgrade it aimed the opposite way: the vcam rotated +Z to the target but a camera looks down -Z); no dialogue hook exists, scripts call `Camera.BlendTo` from a dialogue event; the camera upgrade was checked headless only (`docs/gameplay/cameras.md`); the player and editor still draw only the main camera; looping their render path over `CameraStack()` with ClearPlan, viewport rect and culling mask is not done (per docs/gameplay/cameras.md)
 - **Related:** 4.10, 10.1, 2.7, 1.3
 - **Words:** virtual camera, vcam, Cinemachine, brain, priority, dolly, track, rail, Follow, LookAt, confiner, Dutch, camera stack, depth, main camera, shot
 - **Seen as:** camera cuts instead of blending; the wrong camera is live; two cameras fight for main; a scene has no camera and renders black; the camera leaves the level
@@ -186,7 +186,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `Components/Character`, `Components/Sockets`, `editor/main.cpp`
 - **API:** `Character` (`height`, `skin`, `hairStyle`, `hatStyle`, `BuildParts()`, `RemoveParts()`, `BindCustomMesh`, `separateParts`, `driveExternal`); GameObject > 3D > Character
 - **Editor:** Character inspector, "Separate Into Parts (editable rig)", Unrig, Animation tab
-- **Docs:** `docs/animation.md`
+- **Docs:** `docs/gameplay/animation.md`
 - **Tests:** `character_parts`, `char_editor_parts`, `character_feel`, `player_fixes`
 - **Status:** Works - parts and feel tests exist; customization is a fixed list of styles and colours
 - **Open:** old map: more customization options; no cloth, morph or secondary-motion for the blocky body (searched for cloth, jiggle, spring bone); creator UI is planned in 30.1
@@ -206,7 +206,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `Components/Camera`
 - **API:** `Camera`, `Camera::Shake`, `ShakePreset`, `AddShake`, `SetHandheld`, `KickFov`, `SetFovOffset`, `HitPulse`, `cam::CameraShaker`, `ZoomTo`, `WorldToScreen`, `ScreenPointToRay`, `ViewMatrix`, `ProjectionMatrix`; scripts such as `look_at`, camera builtins, `Camera.Shake("impact", 1)`, `Camera.FovKick`, `Camera.SetFovOffset`, `Camera.HitPulse`, `Camera.SetHandheld`; visual-script Camera Shake node and a node for every one of those builtins
 - **Editor:** Camera inspector (with Camera Effects buttons for Play); GameObject > Camera > Camera
-- **Docs:** `docs/camera_upgrade.md`, `docs/layers_tags_cameras.md`
+- **Docs:** `docs/gameplay/cameras.md`, `docs/gameplay/cameras.md`
 - **Tests:** `camera_cine`, `script_camera`, `scene_cameras`, `camera_math`, `camera_rig`
 - **Status:** Works - camera_cine checks projection and visibility maths; script_camera covers script control
 - **Open:** none recorded; GPU culling uses the camera frustum (2.8)
@@ -223,7 +223,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `Components/Seat`, `Animation/HumanoidActions`
 - **API:** `Seat`, scripts `sit()`, `sit("Chair")`, `stand_up()`, `is_sitting()`, `interact()`, `seat_prompt()`; visual scripts Sit, Stand Up, Is Sitting, Interact, Seat Prompt
 - **Editor:** Seat inspector panel
-- **Docs:** `docs/animation.md` (Actions: sitting)
+- **Docs:** `docs/gameplay/animation.md` (Actions: sitting)
 - **Tests:** `ik_state_weight`
 - **Status:** Works - per docs and the action framework test in ik_state_weight (sit then stand); I read Seat.hpp
 - **Open:** there is no shared interact key (first-person lean-right is also E); death does not teleport to the exit point
@@ -239,7 +239,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `editor/main.cpp`, `Components/PlayerController`
 - **API:** `PlayerController::Add`, `AttachCharacterModel`
 - **Editor:** GameObject > Player submenu
-- **Docs:** `docs/making_a_game.md`, `docs/shooter_and_25d_controllers.md`
+- **Docs:** `docs/gameplay/making_a_game.md`, `docs/gameplay/shooter_and_25d_controllers.md`
 - **Tests:** `player`, `make_playable`, `scene_cameras`
 - **Status:** Works - player test checks that the shortcuts build fully wired players; the Mixamo items depend on the network
 - **Open:** the two Mixamo samples rely on a third-party URL and an external curl process (possible fragility)

@@ -2222,7 +2222,7 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         VsNodeDoc d;
         d.type = "SetPostEffect";
         d.title = "Set Post Effect";
-        d.description = "Sets one post-processing value by name (bloom, exposure, saturation, vignette, fxaa, ...; see docs/rendering.md). 0 / 1 for switches.";
+        d.description = "Sets one post-processing value by name (bloom, exposure, saturation, vignette, fxaa, ...; see docs/rendering/rendering.md). 0 / 1 for switches.";
         d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
         d.component = "";
         d.example = "Put Set Post Effect after an event such as On Start or On Update, and wire a value into Value.";

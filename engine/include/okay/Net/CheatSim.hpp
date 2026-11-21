@@ -15,7 +15,7 @@
 //
 // Run it from the dedicated server: `OkaySpacePlayer.exe --server --cheat-sim`
 // (docs/try_it.md has the steps). The tests (tests/test_anticheat_hard.cpp) run it
-// too. Written from docs/anticheat.md; no outside code.
+// too. Written from docs/online/anticheat.md; no outside code.
 // ---------------------------------------------------------------------------
 #include <cstdio>
 #include <string>
@@ -24,7 +24,7 @@
 namespace okay {
 
 struct CheatSimOptions {
-    /// .okayac rules text for the servers ("" = the built-in rules, listed in docs/anticheat.md).
+    /// .okayac rules text for the servers ("" = the built-in rules, listed in docs/online/anticheat.md).
     std::string rules;
     /// Which cheats to run, comma separated ("" = all): speed, teleport, garbage, servervar, flood,
     /// hitclaim, macro, ban. (Aliases: OKAY_CHEAT_SIM in the environment fills this in the dedicated server.)

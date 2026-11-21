@@ -1,6 +1,6 @@
 // Materials per voxel, volume-exact digging and building, slumping, loose pieces and stroke undo for VoxelTerrain.
 // Written for this engine from general ideas (a signed-distance field's solid fraction, flood fill, angle of repose);
-// no outside code was used. See docs/terrain_water.md.
+// no outside code was used. See docs/rendering/terrain_water.md.
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 

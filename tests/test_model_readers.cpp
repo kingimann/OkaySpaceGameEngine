@@ -395,7 +395,7 @@ int main() {
         std::remove("mr_big.stl");
     }
 
-    // ---------------- Found by the real-file corpus (docs/model_corpus.md) ----------------
+    // ---------------- Found by the real-file corpus (docs/content/model_corpus.md) ----------------
     {
         // An L-shaped (concave) hexagon in the XY plane, area 3, wound counter-clockwise: a fan from the first corner covers
         // the notch (area 3.5 or more) or flips triangles; ear clipping gives area 3 with every triangle facing +Z.

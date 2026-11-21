@@ -1,7 +1,7 @@
 #pragma once
 // Volumes: one shared region shape (box, sphere or cylinder) and the zone behaviours that use it.
 // The shape math (VolumeGeometry) is plain data + functions so the editor draws, resizes and tests
-// the very same region the game runs. See docs/volumes.md.
+// the very same region the game runs. See docs/engine/volumes.md.
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"

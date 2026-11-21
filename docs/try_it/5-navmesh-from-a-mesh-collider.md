@@ -16,6 +16,6 @@ ramp, a floor with a hole or a concave room bakes as it is.
    would give a plain rectangle).
 
 **Limits.** Meshes over 2,000,000 triangles are cut off with a warning in the Console (`Navigation: the bake may be
-missing geometry`). One crack anywhere in a mesh makes the whole collider two-sided (`docs/navigation.md`).
+missing geometry`). One crack anywhere in a mesh makes the whole collider two-sided (`docs/gameplay/navigation.md`).
 
 **Status.** Tested on main: the headless test `navmesh_mesh_collider`. Unverified: the editor windows and menu names.

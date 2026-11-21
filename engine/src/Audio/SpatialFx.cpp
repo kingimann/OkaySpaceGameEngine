@@ -7,7 +7,7 @@ namespace okay {
 
 namespace {
 
-// ---- RoomReverb tuning: our own numbers (docs/audio.md, "Reverb zones") -----------------------------------------
+// ---- RoomReverb tuning: our own numbers (docs/audio/audio.md, "Reverb zones") -----------------------------------------
 // Eight delay lines whose lengths spread geometrically from 22 ms to 41 ms, each rounded up to a prime number of samples
 // at the output rate, so no two lines share a period and their echoes do not pile up on the same samples. 22 ms keeps
 // the first reflection clear of the direct sound; 41 ms keeps the echo density high enough to sound smooth.

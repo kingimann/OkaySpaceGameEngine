@@ -1,4 +1,4 @@
-// Headless cost of the real-life digging options (docs/terrain_water.md): the whole Scene::Update per frame while a player
+// Headless cost of the real-life digging options (docs/rendering/terrain_water.md): the whole Scene::Update per frame while a player
 // holds the mouse, with the old digger, with the Realistic preset (store + debris + slump + collapse), with the debris cap
 // raised so many bodies are alive, and the slump / loose-piece passes on their own. CPU only (no renderer, no GPU).
 // Run: bench_voxel_real [frames]   Not part of ctest (it prints numbers).

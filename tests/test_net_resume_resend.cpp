@@ -9,7 +9,7 @@
 
 using namespace okay;
 
-// Reliable messages in flight when a session drops (docs/multiplayer_audit.md):
+// Reliable messages in flight when a session drops (docs/online/multiplayer.md):
 //   * a message the peer never acked is kept and sent again once the rejoin is a RESUME,
 //     in both directions, reliable and ordered, each arriving (and in order);
 //   * what is kept is bounded (count and bytes) and the rest is counted, not hidden;

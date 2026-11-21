@@ -5,7 +5,7 @@
 //
 // No SDL, ImGui or network code lives here: downloads go through an injected function, so the tests run on a temp
 // folder with local files (tests/test_launcher_versions.cpp). The window is launcher/VersionsUI.cpp; the real download
-// and the hand-off file are launcher/VersionsNet.cpp. See docs/launcher_versions.md.
+// and the hand-off file are launcher/VersionsNet.cpp. See docs/release/launcher_versions.md.
 //
 //   <launcher dir>/Versions/<version>/Tools/OkayEngine.exe, OkaySpacePlayer.exe, SDL2.dll     a complete copy of one release
 //   <launcher dir>/Versions/<version>/install.txt                                              how it got there (kept / installed)
@@ -85,7 +85,7 @@ struct Index {
     const Entry* Find(const std::string& version) const;
 };
 
-/// Which list a versions.json is: the real one (releases), or the test builds' (dev/versions.json, docs/release_channels.md "Test builds").
+/// Which list a versions.json is: the real one (releases), or the test builds' (dev/versions.json, docs/release/release_channels.md "Test builds").
 /// Each reader sees only its own kind: a version with more than three numbers (a test build, shared/TestBuild.hpp) is skipped in a real list, and
 /// only versions with exactly four numbers are kept in the test builds' list, so neither list can name the other's versions.
 enum class IndexKind { Stable, TestBuilds };

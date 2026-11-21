@@ -63,7 +63,7 @@
 #endif
 #include "DevLog.hpp"             // development-build log file (used with or without OkayUI)
 #include "okay/Core/BuildInfo.hpp"
-#include "GameContent.hpp"         // optional downloaded game content (off unless a content URL is configured; docs/content_delivery.md)
+#include "GameContent.hpp"         // optional downloaded game content (off unless a content URL is configured; docs/release/content_delivery.md)
 #include "GameContentValidators.hpp"  // graph / script checks for downloaded scripts
 
 #ifdef __EMSCRIPTEN__
@@ -1136,9 +1136,9 @@ static std::string ResolveGameBaseDir(const char* argv0) {
 }
 
 int main(int argc, char** argv) {
-    okay::ownstack::Startup("none");   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
+    okay::ownstack::Startup("none");   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
     // The window, events, input and GL context go through okay::platform (SDL2 is the default
-    // backend; see docs/platform_layer.md). The 2D drawing below still needs an SDL window.
+    // backend; see docs/platform/platform_layer.md). The 2D drawing below still needs an SDL window.
     okay::platform::Backend* pb = okay::platform::Default();
     if (!pb) { std::fprintf(stderr, "no okay::platform backend is compiled in\n"); return 1; }
     // Windows 11 / high-DPI: per-monitor-DPI-aware so the game renders at native
@@ -1347,11 +1347,11 @@ int main(int argc, char** argv) {
         bool  bootAccentOn = false;
         float bootAccent[3] = {0.235f, 0.475f, 0.800f};
         bool  bootBar = true;
-        std::string antiCheat;     // "" / off, report, enforce (docs/anticheat.md)
+        std::string antiCheat;     // "" / off, report, enforce (docs/online/anticheat.md)
         float physicsHz = 50.0f;     // project setting; 50 matches the old fixed step
         bool smoothPhysics = true;
         bool sawPhysics = false;
-        okay::buildpipe::ExtraConfig extra;   // Build Settings > Game (docs/build_settings_upgrade.md)
+        okay::buildpipe::ExtraConfig extra;   // Build Settings > Game (docs/editor/build_settings_upgrade.md)
     } cfg;
     {
         // Read the whole config and transparently decode it if it was obfuscated at
@@ -1455,7 +1455,7 @@ int main(int argc, char** argv) {
     if (!cfg.extra.logFile.empty()) okay::Log::OpenFile(saveDir + cfg.extra.logFile);
     if (!cfg.extra.description.empty()) pb->Log("game: " + cfg.title + " - " + cfg.extra.description);
 
-    // Optional downloaded content (docs/content_delivery.md): OFF unless a content URL is set (content.okayconfig beside the game, or the
+    // Optional downloaded content (docs/release/content_delivery.md): OFF unless a content URL is set (content.okayconfig beside the game, or the
     // environment variable OKAY_CONTENT_URL). With no URL nothing below does anything and the game is exactly as before. With one, the game
     // brings its content folder up to date from the signed manifest (data and scripts only, never code), then looks for each file there first
     // and in the installed game files second. A failed or offline update keeps serving the last good content.
@@ -1604,7 +1604,7 @@ int main(int argc, char** argv) {
             if (nm->AuthToken().empty() && okay::Account::IsLoggedIn()) nm->SetAuthToken(okay::Account::Token());
     if (okay::Account::IsLoggedIn())   // also for networks scripts create later
         okay::NetworkManager::SetDefaultIdentity(okay::Account::Token(), okay::Account::Username());
-    {   // Session tickets (docs/anticheat.md "Joining a server that needs a ticket"): with okay_tickets.cfg next to the game, every join
+    {   // Session tickets (docs/online/anticheat.md "Joining a server that needs a ticket"): with okay_tickets.cfg next to the game, every join
         // (the launcher's --join, a reconnect, a script's net_join) first gets a ticket from the ticket service and never goes out without
         // one when the file says `mode required`. No file = no gate: joins behave as before.
         okayac::ticket::Config tcfg = okayac::ticket::LoadConfig((std::filesystem::u8path(baseDir) / okayac::ticket::kConfigName).u8string());
@@ -1671,7 +1671,7 @@ int main(int argc, char** argv) {
     // The 2D drawing goes through okay::platform::Painter: SDL_Renderer on an sdl2 window (as always),
     // or on the own backend the software painter, which draws into a frame buffer on the CPU and hands it to the
     // window. The software painter is own code and NOT READY: it is only reachable by choosing the own backend
-    // through OKAY_PLATFORM_BACKEND=own in the environment (docs/platform_layer.md).
+    // through OKAY_PLATFORM_BACKEND=own in the environment (docs/platform/platform_layer.md).
     std::unique_ptr<okay::platform::Painter> painterOwner;
     if (window) {
         okay::platform::PainterDesc pd;
@@ -1843,7 +1843,7 @@ int main(int argc, char** argv) {
     // One frame driver for the run (okay/Core/GameLoop.hpp). It does what this loop used to do by hand,
     // in the same order: clamp the frame time to 0.1 s (a window drag or an alt-tab is not a giant
     // step), even it out when smoothDt (and snap to the display's refresh periods with vsync),
-    // Time::Step, the scene's Update, and the quit check. docs/loop_and_time.md ("Adopting GameLoop in
+    // Time::Step, the scene's Update, and the quit check. docs/engine/loop_and_time.md ("Adopting GameLoop in
     // the player and the editor") and test_loop_player_style pin that the Time values are identical.
     // On top of that it ticks the Clock channels ("ui", "game", "cinematic"), keeps frame statistics
     // (loop.Stats()) and runs OnFixedUpdate steps for anything that registers one.

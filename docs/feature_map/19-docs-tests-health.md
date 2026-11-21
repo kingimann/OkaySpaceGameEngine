@@ -3,7 +3,7 @@
 The written docs (`docs/`, `README.md`, `ROADMAP.md`), the test suite (`tests/`: 407 test files and 415 `add_test` lines in one
 `tests/CMakeLists.txt`), the developer and QA working loop, and the housekeeping that keeps the repository healthy (file sizes,
 stray files, warnings, sanitizers). 19.1 holds the index of every docs file; 19.2 explains how the tests are organised and how to
-run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs pages: #571 (core wave 4), #572 (undo, recovery, play-tests, save framework), #574, #575 and #578, the loop and time passes #579, #581 and #585 (`docs/loop_and_time.md`), the scene graph wave #586 and the timers and tweens wave #587 are all merged. Nothing else is moving here.
+run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs pages: #571 (core wave 4), #572 (undo, recovery, play-tests, save framework), #574, #575 and #578, the loop and time passes #579, #581 and #585 (`docs/engine/loop_and_time.md`), the scene graph wave #586 and the timers and tweens wave #587 are all merged. Nothing else is moving here.
 
 ## 19. Docs, tests & code health
 
@@ -14,7 +14,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
   - 19.1.2 Docs index - `docs/README.md` - links grouped by goal (get started, scripting, characters, gameplay, look and sound, game UI, multiplayer, engine work)
   - 19.1.3 Generated API page - `docs/engine_api.md` - generated from the engine binding table; `test_vs_types` fails if it is stale (`OKAY_WRITE_API_DOCS=1 ./tests/test_vs_types` rewrites it)
   - 19.1.4 SQL schema files - `docs/sql/*.sql` - the Supabase schema, run once in the SQL editor in the order given in each file header (mapped in 41.6)
-  - 19.1.5 Screenshots - a picture folder (pictures are no longer stored in the repository) - 21 images used by `docs/anticheat.md` (taken from the launcher's built-in demo data)
+  - 19.1.5 Screenshots - a picture folder (pictures are no longer stored in the repository) - 21 images used by `docs/online/anticheat.md` (taken from the launcher's built-in demo data)
 - **Code:** `README.md`, `docs/README.md`, `docs/engine_api.md`
 - **API:** `OKAY_WRITE_API_DOCS=1`
 - **Editor:** none
@@ -32,77 +32,77 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 | File | What it covers | Area |
 |---|---|---|
 | `docs/README.md` | the index of the docs, grouped by goal | 19.1 |
-| `docs/accessibility.md` | accessibility settings, captions, colour vision, focus graph, remap model (engine side) | 32 |
-| `docs/accounts.md` | player accounts: local, custom server, Supabase; cloud saves, leaderboards, script use | 17.2 |
-| `docs/animation.md` | custom keyframe clips, imported animation, the Animator, built-in animations | 5 |
-| `docs/anticheat.md` | server rules, encryption, session tickets, client integrity, bans, keys, limits | 39 |
-| `docs/asset_database.md` | AssetDatabase data layer: GUIDs, dependencies, import settings, thumbnails, search | 20 |
-| `docs/asset_manager.md` | AssetManager: typed handles, refcounts, async load, hot reload | 20 |
-| `docs/audio.md` | AudioSource, mixer groups, music, volume settings, scripting | 7 |
-| `docs/automated_testing.md` | play-test runner, scene validator, golden files, scene digest and golden images | 33 |
-| `docs/behavior_trees.md` | NPC behavior trees, blackboard, runner | 9.4 |
-| `docs/build_mode.md` | player build mode and logic links, saving creations | 11.5 |
-| `docs/core_audit_notes.md` | bug-hunt notes for area 1 (ECS, math, camera, layers, DataAsset, input) | 1 |
-| `docs/core_tools.md` | core helpers: quit handling, CommandLine, Paths, EventBus extras, Cvars and Console, Stopwatch, StateMachine | 1 |
-| `docs/core_logging_profiling.md` | Log categories and file sink, frame profiler, trace and CSV export | 1.10 |
-| `docs/core_runtime.md` | job system, arenas and pools, slot map handles, string ids, frame pacing | 1.18 |
-| `docs/cutscenes.md` | sequences (`.okayseq`) and the Timeline window | 10.1 |
-| `docs/day_night_cycle.md` | the DayNightCycle component | 2.3 |
-| `docs/debug_tools.md` | profiling and debugging data layers: frame history, GPU timer, memory tracker, draw call recorder, console model | 23 |
-| `docs/dedicated-server.md` | running and exporting dedicated servers, server.cfg, flags | 16.5 |
-| `docs/dialogue_quests.md` | dialogue graphs, story state, quests | 10.2 |
-| `docs/ecs.md` | ECS iteration under mutation, command buffer, delta snapshots in NetWorld | 1.9 |
-| `docs/editor-plugins.md` | editor plugins written in OkayScript | 15.8 |
-| `docs/editor.md` | the editor, its panels and Build Game | 15 |
-| `docs/editor_undo.md` | the editor's scene undo on `UndoStack`, audit of which edits are covered | 15.9, 22.1 |
+| `docs/engine/accessibility.md` | accessibility settings, captions, colour vision, focus graph, remap model (engine side) | 32 |
+| `docs/online/accounts.md` | player accounts: local, custom server, Supabase; cloud saves, leaderboards, script use | 17.2 |
+| `docs/gameplay/animation.md` | custom keyframe clips, imported animation, the Animator, built-in animations | 5 |
+| `docs/online/anticheat.md` | server rules, encryption, session tickets, client integrity, bans, keys, limits | 39 |
+| `docs/engine/asset_database.md` | AssetDatabase data layer: GUIDs, dependencies, import settings, thumbnails, search | 20 |
+| `docs/engine/asset_manager.md` | AssetManager: typed handles, refcounts, async load, hot reload | 20 |
+| `docs/audio/audio.md` | AudioSource, mixer groups, music, volume settings, scripting | 7 |
+| `docs/process/automated_testing.md` | play-test runner, scene validator, golden files, scene digest and golden images | 33 |
+| `docs/gameplay/behavior_trees.md` | NPC behavior trees, blackboard, runner | 9.4 |
+| `docs/gameplay/build_mode.md` | player build mode and logic links, saving creations | 11.5 |
+| `docs/engine/core_runtime.md` | bug-hunt notes for area 1 (ECS, math, camera, layers, DataAsset, input) | 1 |
+| `docs/engine/core_tools.md` | core helpers: quit handling, CommandLine, Paths, EventBus extras, Cvars and Console, Stopwatch, StateMachine | 1 |
+| `docs/engine/core_logging_profiling.md` | Log categories and file sink, frame profiler, trace and CSV export | 1.10 |
+| `docs/engine/core_runtime.md` | job system, arenas and pools, slot map handles, string ids, frame pacing | 1.18 |
+| `docs/gameplay/cutscenes.md` | sequences (`.okayseq`) and the Timeline window | 10.1 |
+| `docs/rendering/lighting.md` | the DayNightCycle component | 2.3 |
+| `docs/engine/debug_tools.md` | profiling and debugging data layers: frame history, GPU timer, memory tracker, draw call recorder, console model | 23 |
+| `docs/online/dedicated-server.md` | running and exporting dedicated servers, server.cfg, flags | 16.5 |
+| `docs/gameplay/dialogue_quests.md` | dialogue graphs, story state, quests | 10.2 |
+| `docs/engine/ecs.md` | ECS iteration under mutation, command buffer, delta snapshots in NetWorld | 1.9 |
+| `docs/editor/editor-plugins.md` | editor plugins written in OkayScript | 15.8 |
+| `docs/editor/editor.md` | the editor, its panels and Build Game | 15 |
+| `docs/editor/editor_undo.md` | the editor's scene undo on `UndoStack`, audit of which edits are covered | 15.9, 22.1 |
 | `docs/engine_api.md` | generated engine API reference (do not edit by hand) | 13.6 |
-| `docs/game_ui.md` | game UI drawn in the launcher's look | 12.7 |
-| `docs/ik.md` | inverse kinematics: feet, hands, look-at, full body | 5.6 |
-| `docs/input.md` | input actions, keys, contexts, controllers (dead zones and curves), rebinding | 8.3 |
-| `docs/launcher-multiplayer.md` | multiplayer from the launcher: join, invites, browser, matchmaking, tick, authority | 16, 17.15 |
-| `docs/layers_tags_cameras.md` | layer collision matrix and presets, tags, project tag list and layer names (`ProjectLists`, the editor hook), camera stack | 1.3 |
-| `docs/lighting.md` | lights, shadows, lightmaps | 2.3 |
-| `docs/localization.md` | string tables, translators, fonts | 1.8 |
-| `docs/localization_prefs_time.md` | plural rules, number formats, typed Prefs, fixed timestep | 1.8 |
-| `docs/localization_tools.md` | translation table model, checker, key scanner, previews | 31 |
-| `docs/loop_and_time.md` | GameLoop, clocks, hit stop, pause and quit reasons, random extras, frame stepping, recording, capture, frame statistics, Countdown and Cooldown, time snapshot, loop console, adopting GameLoop in the editor (three passes) | 1.1 |
-| `docs/math_geometry.md` | math additions: Mat3, bounds and shape tests, noise, curves, colour spaces, Rng | 1 |
-| `docs/making_a_game.md` | first game from an empty editor to a shipped one | 15 |
-| `docs/modeling.md` | the Modeling window (mesh editor) | 3 |
-| `docs/navigation.md` | navigation meshes and agents | 9.1 |
-| `docs/npcs_and_crafting.md` | NPC Controller and crafting components | 9.5 |
-| `docs/optimization_tools.md` | mesh simplifier, LOD selection, occlusion buffer, portal cells, batch planner, streaming grid, optimization report | 27 |
-| `docs/packaging.md` | distribution layout of the Windows build | 18.1 |
-| `docs/photon.md` | the opt-in Photon Realtime transport | 16.10 |
-| `docs/prefab_system.md` | nested prefabs, variants, per-field apply and revert, unpack (`PrefabTools`) | 21 |
-| `docs/prefabs.md` | prefab instances, overrides, persistent object ids | 1.6 |
-| `docs/properties.md` | the property registry: values, paths, change hook, snapshots, builder | 1.19 |
-| `docs/qa_workflow.md` | developer and QA sessions working together | 19.3 |
-| `docs/ragdolls.md` | ragdoll death and hit reactions | 5.8 |
-| `docs/relay.md` | the relay, NAT traversal, what it enforces | 16.14 |
-| `docs/releasing.md` | publishing updates (Supabase, GitHub) and the official game | 18.4 |
-| `docs/rendering.md` | post-processing, sky, fog, weather | 2.4 |
-| `docs/save_framework.md` | saveable objects, checkpoints, slot headers, migrations, sync hooks | 35 |
-| `docs/save_games.md` | save slots, durable saves, what a save keeps | 1.7 |
-| `docs/scene_diff_merge.md` | scene canonical form, diff, three-way merge and migration libraries | 1.5, 28 |
-| `docs/scene_hierarchy_search.md` | hierarchy-aware active, FindByPath, validation, FixedUpdate, load errors; the scene graph audit (deep hierarchies, Transform and spawn API, Mover, Spinner, Lifetime) | 1.17, 1.3 |
-| `docs/scene_management.md` | loading scenes, spawning and destroying, pooling, RequireComponent | 1.4 |
-| `docs/scene_serializer.md` | what a scene round trip keeps (transient objects, NaN, layers, optional trailing fields), why component order is not saved, the component serializer registry | 1.5 |
-| `docs/scripting.md` | the OkayScript language guide | 13.1 |
-| `docs/scripting_reference.md` | built-in functions area by area | 13.6 |
-| `docs/shooter_and_25d_controllers.md` | top-down shooter and 2.5D platformer controllers | 4.3 |
-| `docs/splines.md` | splines, followers, lines, trails | 2.7 |
-| `docs/steam_release.md` | releasing on Steam, the Steam service | 17.10 |
-| `docs/supabase-backend.md` | the Supabase tables and calls behind accounts, cloud saves, leaderboards, matchmaking | 17 |
-| `docs/survival_kit.md` | health, hunger, thirst, stamina, oxygen, temperature components | 11.4 |
-| `docs/timers_and_tweens.md` | Scheduler and TweenManager: clock channels, task owners, ease curves, tweening any property, springs, debug view | 1.2 |
-| `docs/ui_html.md` | menus and HUDs in an HTML and CSS subset | 12.5 |
-| `docs/ui_world_space.md` | in-world (3D) UI canvases and labels | 12.6 |
-| `docs/undo_recovery.md` | command undo stack, autosave and crash recovery, backups (engine side) | 22 |
-| `docs/vehicle_controller.md` | the arcade vehicle controller | 4.5 |
-| `docs/visual_scripting.md` | the OkayVS text format and Action Lists | 14 |
-| `docs/voice-server.md` | running the voice server (the relay) | 16.7 |
-| `docs/web_mobile.md` | web (WASM) and mobile builds | 18.2 |
+| `docs/ui/in_game_ui.md` | game UI drawn in the launcher's look | 12.7 |
+| `docs/gameplay/ik.md` | inverse kinematics: feet, hands, look-at, full body | 5.6 |
+| `docs/engine/input.md` | input actions, keys, contexts, controllers (dead zones and curves), rebinding | 8.3 |
+| `docs/online/multiplayer.md` | multiplayer from the launcher: join, invites, browser, matchmaking, tick, authority | 16, 17.15 |
+| `docs/gameplay/cameras.md` | layer collision matrix and presets, tags, project tag list and layer names (`ProjectLists`, the editor hook), camera stack | 1.3 |
+| `docs/rendering/lighting.md` | lights, shadows, lightmaps | 2.3 |
+| `docs/engine/localization.md` | string tables, translators, fonts | 1.8 |
+| `docs/engine/localization.md` | plural rules, number formats, typed Prefs, fixed timestep | 1.8 |
+| `docs/engine/localization.md` | translation table model, checker, key scanner, previews | 31 |
+| `docs/engine/loop_and_time.md` | GameLoop, clocks, hit stop, pause and quit reasons, random extras, frame stepping, recording, capture, frame statistics, Countdown and Cooldown, time snapshot, loop console, adopting GameLoop in the editor (three passes) | 1.1 |
+| `docs/engine/math_geometry.md` | math additions: Mat3, bounds and shape tests, noise, curves, colour spaces, Rng | 1 |
+| `docs/gameplay/making_a_game.md` | first game from an empty editor to a shipped one | 15 |
+| `docs/editor/modeling.md` | the Modeling window (mesh editor) | 3 |
+| `docs/gameplay/navigation.md` | navigation meshes and agents | 9.1 |
+| `docs/gameplay/npcs_and_crafting.md` | NPC Controller and crafting components | 9.5 |
+| `docs/engine/optimization_tools.md` | mesh simplifier, LOD selection, occlusion buffer, portal cells, batch planner, streaming grid, optimization report | 27 |
+| `docs/release/packaging.md` | distribution layout of the Windows build | 18.1 |
+| `docs/online/photon.md` | the opt-in Photon Realtime transport | 16.10 |
+| `docs/engine/prefabs.md` | nested prefabs, variants, per-field apply and revert, unpack (`PrefabTools`) | 21 |
+| `docs/engine/prefabs.md` | prefab instances, overrides, persistent object ids | 1.6 |
+| `docs/engine/properties.md` | the property registry: values, paths, change hook, snapshots, builder | 1.19 |
+| `docs/process/qa_workflow.md` | developer and QA sessions working together | 19.3 |
+| `docs/physics/physics.md` | ragdoll death and hit reactions | 5.8 |
+| `docs/online/relay.md` | the relay, NAT traversal, what it enforces | 16.14 |
+| `docs/release/releasing.md` | publishing updates (Supabase, GitHub) and the official game | 18.4 |
+| `docs/rendering/rendering.md` | post-processing, sky, fog, weather | 2.4 |
+| `docs/engine/save_games.md` | saveable objects, checkpoints, slot headers, migrations, sync hooks | 35 |
+| `docs/engine/save_games.md` | save slots, durable saves, what a save keeps | 1.7 |
+| `docs/engine/scene_diff_merge.md` | scene canonical form, diff, three-way merge and migration libraries | 1.5, 28 |
+| `docs/engine/scene_hierarchy_search.md` | hierarchy-aware active, FindByPath, validation, FixedUpdate, load errors; the scene graph audit (deep hierarchies, Transform and spawn API, Mover, Spinner, Lifetime) | 1.17, 1.3 |
+| `docs/engine/scene_management.md` | loading scenes, spawning and destroying, pooling, RequireComponent | 1.4 |
+| `docs/engine/scene_serializer.md` | what a scene round trip keeps (transient objects, NaN, layers, optional trailing fields), why component order is not saved, the component serializer registry | 1.5 |
+| `docs/scripting/scripting.md` | the OkayScript language guide | 13.1 |
+| `docs/scripting/scripting.md` | built-in functions area by area | 13.6 |
+| `docs/gameplay/shooter_and_25d_controllers.md` | top-down shooter and 2.5D platformer controllers | 4.3 |
+| `docs/engine/splines.md` | splines, followers, lines, trails | 2.7 |
+| `docs/release/steam_release.md` | releasing on Steam, the Steam service | 17.10 |
+| `docs/online/supabase-backend.md` | the Supabase tables and calls behind accounts, cloud saves, leaderboards, matchmaking | 17 |
+| `docs/gameplay/survival_kit.md` | health, hunger, thirst, stamina, oxygen, temperature components | 11.4 |
+| `docs/engine/timers_and_tweens.md` | Scheduler and TweenManager: clock channels, task owners, ease curves, tweening any property, springs, debug view | 1.2 |
+| `docs/ui/in_game_ui.md` | menus and HUDs in an HTML and CSS subset | 12.5 |
+| `docs/ui/in_game_ui.md` | in-world (3D) UI canvases and labels | 12.6 |
+| `docs/editor/undo_recovery.md` | command undo stack, autosave and crash recovery, backups (engine side) | 22 |
+| `docs/gameplay/vehicles.md` | the arcade vehicle controller | 4.5 |
+| `docs/scripting/visual_scripting.md` | the OkayVS text format and Action Lists | 14 |
+| `docs/audio/voice-server.md` | running the voice server (the relay) | 16.7 |
+| `docs/platform/web_mobile.md` | web (WASM) and mobile builds | 18.2 |
 | `docs/sql/admin.sql` | site roles, site bans, audit log | 17.9 |
 | `docs/sql/anticheat.sql` | anti-cheat reports, bans, appeals, hardware-hash matching | 39.6 |
 | `docs/sql/app_config.sql` | site-wide settings the launcher reads (default voice server) | 16.7 |
@@ -119,7 +119,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 | `docs/sql/profile_extras.sql` | playtime, social links, verified tag, staff badges | 17.7 |
 | `docs/sql/profile_showcase.sql` | profile showcase picks and mirrored achievements | 17.7 |
 | `docs/sql/social.sql` | profiles, friendships, messages, reactions, forums, workshop, community servers | 17 |
-| a picture folder (pictures are no longer stored in the repository) | 21 screenshots for `docs/anticheat.md` (admin pages, launcher settings, player ban and appeal) | 39 |
+| a picture folder (pictures are no longer stored in the repository) | 21 screenshots for `docs/online/anticheat.md` (admin pages, launcher settings, player ban and appeal) | 39 |
 
 ### 19.2 Test suite
 - **What:** About 418 tests (414 `add_test` lines; one sits in a loop that registers five) in one `tests/CMakeLists.txt`, almost all of them a small program that prints `FAIL` lines and returns non-zero. Plus a few shell, SQL and CMake checks. This sub-area is how it is organised; each test belongs to the area it tests.
@@ -135,7 +135,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 - **Code:** `tests/CMakeLists.txt`, `tests/test_framework.hpp`, `tests/rig_harness.hpp`, `tests/ui_golden_scenes.hpp`, `tests/anticheat_keys_check.cmake`, `tests/scripts/test_anticheat_sql.sh`, `tests/scripts/test_reports_sql.sh`, `tests/scripts/test_blocks_sql.sh`, `tests/scripts/test_publish_official_cleanup.sh`, `tests/scripts/test_publish_supabase_checks.sh`, `tests/sql/test_anticheat.sql`, `tests/sql/test_reports.sql`, `tests/sql/supabase_stub.sql`
 - **API:** `ctest --test-dir build -R <name> --output-on-failure`, `ctest -j4`, `RUN_SUITE`, `CHECK`, `OKAY_SANITIZE`, `OKAY_BUILD_TESTS`, `OKAY_SQL_TEST_PGHOST`
 - **Editor:** none (`OkayEngine --selftest` is the headless editor check, 18.3)
-- **Docs:** `docs/qa_workflow.md`
+- **Docs:** `docs/process/qa_workflow.md`
 - **Tests:** `anticheat_keys_ok`, `anticheat_keys_two_ok`, `anticheat_sql`, `reports_sql`, `blocks_sql`, `publish_official_cleanup`, `publish_supabase_checks`, `ui_renderer_golden`, `rig_sweep`, `qa_pr250`
 - **Status:** Works - the suite runs in CI on every PR (ctest on Ubuntu plus the sanitizer subset)
 - **Open:** possible gaps: nothing is grouped or labelled (`ctest -L` has no labels), no TSan job for `net_races`, tests that need SDL2 or a pty silently disappear when the dependency is missing, six tests run on Windows; the "about 330 tests" figure in the old map is now about 418; #572 added a play-mode, scene-validation and regression test runner (`okay-playtest`, area 33) that runs as ctests `playtest_runner` and `playtest_runner_list`
@@ -164,16 +164,16 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 ### 19.3 QA workflow, rig sweep test
 - **What:** How a developer session and a QA session work on the same repository (PR comments as the channel, a bug and a verdict format), and the rig sweep test that runs every test rig through the same motions.
 - **Parts:**
-  - 19.3.1 The loop - `docs/qa_workflow.md` - developer opens a draft PR and messages QA; QA builds, tests for real (scripted probes, editor under Xvfb), posts one comment per bug and one verdict; merge only after a PASS on the latest commit and green CI
-  - 19.3.2 Bug and verdict formats - `docs/qa_workflow.md` - what each comment must contain; QA never pushes to the developer's branch, merges, releases or touches keys
-  - 19.3.3 Headless editor driving - `docs/qa_workflow.md` - Xvfb, `OKAY_DEV=1`, `xdotool`, `import -window root` screenshots, quick engine probes linked against `libokay_engine.a`
+  - 19.3.1 The loop - `docs/process/qa_workflow.md` - developer opens a draft PR and messages QA; QA builds, tests for real (scripted probes, editor under Xvfb), posts one comment per bug and one verdict; merge only after a PASS on the latest commit and green CI
+  - 19.3.2 Bug and verdict formats - `docs/process/qa_workflow.md` - what each comment must contain; QA never pushes to the developer's branch, merges, releases or touches keys
+  - 19.3.3 Headless editor driving - `docs/process/qa_workflow.md` - Xvfb, `OKAY_DEV=1`, `xdotool`, `import -window root` screenshots, quick engine probes linked against `libokay_engine.a`
   - 19.3.4 Rig sweep - `tests/test_rig_sweep.cpp`, `tests/rig_harness.hpp` - every rig in `tests/assets/rigs/` idles, walks, runs, jumps, crouches and turns; skeletons must stay finite and not spike
   - 19.3.5 QA regression tests - `tests/test_qa_pr250.cpp` - one block per bug QA found on PR #250 (QA writes them on its own branch in a separate PR)
   - 19.3.6 Test rig generator - `tools/make_test_rigs.py` - deterministic pure-Python glTF rigs (one 25-joint humanoid under many naming and axis conventions, plus a non-humanoid quadruped)
 - **Code:** `tests/rig_harness.hpp`, `tools/make_test_rigs.py`
 - **API:** `python3 tools/make_test_rigs.py [out_dir]`, `OKAY_DEV=1`, `OkayEngine --selftest`
 - **Editor:** none
-- **Docs:** `docs/qa_workflow.md`
+- **Docs:** `docs/process/qa_workflow.md`
 - **Tests:** `rig_sweep`, `qa_pr250`
 - **Status:** Works - the doc is current for the process; the sweep test is one of the 418
 - **Open:** the workflow needs two cloud sessions and a scheduled message each way (cloud sessions cannot message each other)
@@ -213,7 +213,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 - **Docs:** `ROADMAP.md`
 - **Tests:** -
 - **Status:** Partial - kept current by the coordinating session, but parts are stale
-- **Open:** the anti-cheat hardening list is now ticked from the code (`docs/anticheat_hardening_status.md`); the "Now" table is dated 2026-10-26; rows up to 2.851.0 are in (each merged with its release PR); 2.852.0 (draft PR #588) will add its own
+- **Open:** the anti-cheat hardening list is now ticked from the code (`docs/online/anticheat.md`); the "Now" table is dated 2026-10-26; rows up to 2.851.0 are in (each merged with its release PR); 2.852.0 (draft PR #588) will add its own
 - **Related:** 18.4, 19.1
 - **Words:** roadmap, ROADMAP.md, plan, release notes, pull request template, what is next
 - **Seen as:** the roadmap disagrees with what is merged
@@ -247,7 +247,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 - **Code:** `CMakeLists.txt`, `.github/workflows/ci.yml`
 - **API:** `OKAY_SANITIZE`, `ASAN_OPTIONS`, `UBSAN_OPTIONS`
 - **Editor:** none
-- **Docs:** `docs/qa_workflow.md`
+- **Docs:** `docs/process/qa_workflow.md`
 - **Tests:** `net_races`, `loaders_robust`, `physics_nan`
 - **Status:** Works - used by CI on every PR
 - **Open:** no ThreadSanitizer job even though `net_races` is written for it; only a subset of tests run under sanitizers

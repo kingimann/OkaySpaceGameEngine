@@ -3,7 +3,7 @@
 // no code from any other importer. One part per (object, material, shading) group; polygons are triangulated; triangle
 // strips (surface type 4, written by the "acc" files of newer AC3D versions) are unrolled; per-vertex normals are read when
 // a vertex line carries them, otherwise smooth normals are made from the surfaces flagged "shaded". Bounds-checked, capped,
-// no recursion. See okay/Render/ModelData.hpp and docs/own_ac3d_reader.md.
+// no recursion. See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"

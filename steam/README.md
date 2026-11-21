@@ -12,7 +12,7 @@ set it live, and every player's Steam client patches itself on next launch.
 The depot content is the Windows distribution in `../build-win-dist/`
 (`OkaySpace.exe` + `SDL2.dll` + `Tools/`), produced by
 [`scripts/build-windows-dist.sh`](../scripts/build-windows-dist.sh) — see the
-layout in [../docs/packaging.md](../docs/packaging.md). `upload.sh` builds it if
+layout in [../docs/release/packaging.md](../docs/release/packaging.md). `upload.sh` builds it if
 it's missing.
 
 ## One-time setup

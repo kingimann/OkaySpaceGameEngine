@@ -58,7 +58,7 @@ inline const char* VsNodeHelpRaw(const char* type) {
         if (std::strcmp(type, "Fn.set_clipboard_text") == 0)
             return "Puts the text wired into First onto the clipboard. Control characters are removed, and text past the limit is cut short.";
         const std::string t = type;
-        // Vehicles (docs/vehicle_controls.md). First is the vehicle (its object name); leave it empty for the object this graph is on.
+        // Vehicles (docs/gameplay/vehicles.md). First is the vehicle (its object name); leave it empty for the object this graph is on.
         if (t == "Fn.Vehicle.SetSetting") return "Changes one setting of a vehicle while the game runs. First is the vehicle, Second is the setting's name (like maxSpeed or grip), Third is the new number. Gives 1 when it worked, 0 for an unknown name.";
         if (t == "Fn.Vehicle.GetSetting") return "Reads one setting of a vehicle. First is the vehicle, Second is the setting's name.";
         if (t == "Fn.Vehicle.ApplyPreset") return "Turns a vehicle into a kind of vehicle: Sedan, Sports Car, Muscle Car, Pickup, Heavy Truck, Bus, Buggy, Rally Car or Drift Car. First is the vehicle, Second is the name.";
@@ -76,7 +76,7 @@ inline const char* VsNodeHelpRaw(const char* type) {
         if (t == "Fn.Vehicle.Speed") return "How fast the vehicle goes, in metres per second. Negative when it reverses.";
         if (t == "Fn.Vehicle.Gear") return "The gear: 1 and up going forward, -1 in reverse.";
         if (t == "Fn.Vehicle.Rpm") return "How fast the engine is turning (revolutions per minute).";
-        // Camera rigs and effects (docs/camera_upgrade.md).
+        // Camera rigs and effects (docs/gameplay/cameras.md).
         if (t == "Fn.Camera.Shake") return "Shakes the main camera. First is a word (impact, explosion, footstep or handheld), Second is how strong, 0 to 1. A number alone is the old shake.";
         if (t == "Fn.Camera.BlendTo") return "Cuts or blends to a camera shot and keeps it. First is the shot's object name, Second is the seconds to blend. An empty name goes back to the shot with the highest priority.";
         if (t == "Fn.Camera.SetTarget") return "Makes the camera shot that is showing follow and look at the object named in First.";
@@ -444,7 +444,7 @@ inline const char* VsNodeHelpRaw(const char* type) {
         {"IkHand",         "Makes the character's left or right hand reach for a point (Weight 0 lets go)."},
         {"SetWeather",     "Switches the scene's weather to none / rain / snow / storm at an Intensity 0..1 (it fades over the scene's weather fade time)."},
         {"SetFog",         "Turns the scene's fog On or off, fading from Start to End world units from the camera."},
-        {"SetPostEffect",  "Sets one post-processing value by name (bloom, exposure, saturation, vignette, fxaa, ...; see docs/rendering.md). 0 / 1 for switches."},
+        {"SetPostEffect",  "Sets one post-processing value by name (bloom, exposure, saturation, vignette, fxaa, ...; see docs/rendering/rendering.md). 0 / 1 for switches."},
         {"NavMoveTo",      "Sends this object's Nav Mesh Agent walking to a point over the navmesh."},
         {"NavStop",        "Stops this object's Nav Mesh Agent where it is."},
         {"NavArrived",     "True once the Nav Mesh Agent reached its last Nav Move To point."},

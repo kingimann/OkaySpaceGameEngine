@@ -41,7 +41,7 @@ public:
     Color       tint{1, 1, 1, 1};
     bool        castShadows = false; ///< copies throw shadows (costs a lot with thousands of copies; off by default)
     int         variants = 4;       ///< built-in props: how many distinct shapes are cycled through (1..8)
-    float       windSway = 0.0f;    ///< metres the top of a 4 m plant moves in a strong wind (12 m/s); smaller plants move less. 0 = the plants stand still (docs/wind.md)
+    float       windSway = 0.0f;    ///< metres the top of a 4 m plant moves in a strong wind (12 m/s); smaller plants move less. 0 = the plants stand still (docs/gameplay/wind.md)
 
     // ---- the brush (saved with the layer so a scene keeps its settings) ----
     float radius = 6.0f;            ///< brush radius, world units

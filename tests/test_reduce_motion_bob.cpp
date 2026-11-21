@@ -1,6 +1,6 @@
 // Reduce Motion (Accessibility) and the first-person camera: the walking head bob and sway and the landing dip are
 // turned off, footstep events still fire, and turning the setting on or off mid-walk eases the bob instead of snapping
-// the view. Written from the engine's own FirstPersonController behaviour (the docs/accessibility.md promise that
+// the view. Written from the engine's own FirstPersonController behaviour (the docs/engine/accessibility.md promise that
 // reduce motion removes camera sway); no other project's code was used.
 #include "test_framework.hpp"
 #include <Okay.hpp>

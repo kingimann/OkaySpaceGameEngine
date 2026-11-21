@@ -24,6 +24,25 @@ int main() {
         CHECK(PageAreaWidth(f, w) == w - kSidebarStripW);
     }
     CHECK(SidebarWidth(SidebarState{}, 900) == kSidebarOpenW && SidebarWidth(SidebarState{}, 560) == 140);
+    // UI scale: every size grows with it, the page area keeps its (scaled) minimum, folding thresholds scale too.
+    for (float sc : {1.0f, 1.25f, 1.5f, 2.0f}) {
+        SidebarState o; CHECK(SidebarWidth(o, 3000, sc) == kSidebarOpenW * sc);
+        CHECK(SidebarWidth(SidebarState{true, true}, 3000, sc) == kSidebarStripW * sc);
+        for (float w : {500.0f, 900.0f, 1400.0f}) { const float sw = SidebarWidth(o, w, sc); CHECK(sw >= kSidebarStripW * sc && sw <= kSidebarOpenW * sc); }
+        SidebarState a; SidebarAuto(a, kFoldBelowW * sc - 1, sc); CHECK(a.folded);
+        SidebarAuto(a, kUnfoldAboveW * sc + 1, sc); CHECK(!a.folded);
+        CHECK(RowHeight(sc, 15.0f * sc) >= 2 * 15.0f * sc);
+        CHECK(StripRowHeight(sc, 15.0f * sc) >= 15.0f * sc);
+    }
+    // Text is cut with "..." so it never runs out of its row.
+    const auto mw = [](const std::string& t) { return (float)t.size() * 7.0f; };
+    CHECK(FitText("Easy", 100, mw) == "Easy");
+    { const std::string f = FitText("Fences, buildings, cars", 100, mw); CHECK(f.size() * 7 <= 100 && f.size() > 3 && f.substr(f.size() - 3) == "..."); }
+    CHECK(FitText("Hello", 10, mw).empty());
+    for (float w : {30.0f, 60.0f, 90.0f, 140.0f}) CHECK(mw(FitText("Make something big", w, mw)) <= w);
+    // Greyed pages say why; usable ones say nothing.
+    CHECK(std::string(PageDisabledReason(false, false)).empty() && std::string(PageDisabledReason(true, true)).empty());
+    CHECK(std::string(PageDisabledReason(true, false)).find("model") != std::string::npos);
     // Toggle is a manual choice, both ways.
     SidebarToggle(s); CHECK(s.folded && s.manual); SidebarToggle(s); CHECK(!s.folded && s.manual);
     // Automatic rule with hysteresis: fold below 760, unfold above 840, nothing in between.

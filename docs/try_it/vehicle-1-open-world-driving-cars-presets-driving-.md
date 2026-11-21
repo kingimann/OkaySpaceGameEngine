@@ -7,7 +7,7 @@ row: | vehicle-1 | Open-world driving: cars, presets, Driving World | New Projec
 **What it is.** The vehicle controller now has an "open-world driving" model: hold the brake to reverse, gears and engine
 revs, steering that gets lighter at speed, a handbrake that starts a drift, ABS, boost, flip recovery, nine vehicle presets
 (Sedan, Sports Car, Muscle Car, Pickup, Heavy Truck, Bus, Buggy, Rally Car, Drift Car) and a chase camera that swings out in
-drifts. Details: `docs/vehicle_controls.md`.
+drifts. Details: `docs/gameplay/vehicles.md`.
 
 **Steps (the example world).**
 1. Open the editor (`Tools\OkayEngine.exe`). **File > New Project**, pick the template **Driving World (open-world cars)**.

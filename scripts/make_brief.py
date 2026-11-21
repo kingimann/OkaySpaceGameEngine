@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds an agent brief from docs/agent_brief_template.md with the CURRENT rules pasted in full.
+"""Builds an agent brief from docs/process/agent_brief_template.md with the CURRENT rules pasted in full.
 
   python3 scripts/make_brief.py --goal "..." --lane claude2 --branch claude2/x --files "engine/src/UI/**" \
       [--keywords "tween position"] [--read docs/a.md ...] [--test-first name] [--with-branch origin/claude/owner-rule2]
@@ -56,14 +56,14 @@ def main():
     rules = rules_text(root, a.base, a.with_branch)
     if a.rules_only:
         print(rules); return 0
-    tpl = open(os.path.join(root, "docs", "agent_brief_template.md"), encoding="utf-8").read()
+    tpl = open(os.path.join(root, "docs", "process", "agent_brief_template.md"), encoding="utf-8").read()
     tpl = tpl.split("<!-- BRIEF START: everything from here down is sent to the agent -->", 1)[-1].lstrip("\n")
     other = "coordinator" if a.lane == "claude2" else "claude2"
     who = "Claude 2 (branches `claude2/*`, issue #422)" if a.lane == "claude2" else "an agent of the coordinator (branches `claude/*`)"
     lanes = L.load_lanes(root)
     own = [g for r in lanes["rules"] if r["owner"] == other for g in r["globs"]][:14]
     vals = {"GOAL": a.goal, "WHO": who, "BRANCH": a.branch, "KEYWORDS": a.keywords or a.goal, "FILES": a.files, "TESTFIRST": a.test_first,
-            "READ": "\n".join(f"- `{p}`" for p in a.read + ["CLAUDE.md", "docs/collaboration.md", "docs/lanes.json", "docs/review_log.md", "docs/FEATURE_MAP.md"]),
+            "READ": "\n".join(f"- `{p}`" for p in a.read + ["CLAUDE.md", "docs/process/collaboration.md", "docs/lanes.json", "docs/process/review_log.md", "docs/FEATURE_MAP.md"]),
             "OFFLIMITS": a.offlimits or ", ".join(f"`{g}`" for g in own) + " ...",
             "DATE": datetime.date.today().isoformat(), "RULES": rules}
     for k, v in vals.items():

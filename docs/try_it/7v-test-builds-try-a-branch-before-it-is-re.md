@@ -7,7 +7,7 @@ row: | 7v | Test builds: try a branch in the launcher in about 30 minutes, befor
 **What it is.** Today a change waits about an hour for the pull-request checks, is merged, and then a release builds for 15 to 30 minutes before you
 can see it. A **test build** skips all of that: the coordinator builds one branch for you, it is published to its own folder on the update server,
 and your launcher offers it **only if you switched "Get test builds" on**. It never touches the normal "latest" update, and a normal player never
-sees it. It may be broken: that is what a test is. Rules and files: [release_channels.md](release_channels.md#test-builds-for-the-owner-to-try-a-branch-not-a-channel-for-players).
+sees it. It may be broken: that is what a test is. Rules and files: [release_channels.md](release/release_channels.md#test-builds-for-the-owner-to-try-a-branch-not-a-channel-for-players).
 
 **How to try it.**
 

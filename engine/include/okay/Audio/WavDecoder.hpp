@@ -12,7 +12,7 @@
 // What it reads: PCM 8/16/24/32 bit (also in WAVE_FORMAT_EXTENSIBLE), IEEE float 32 and 64 bit,
 // A-law, mu-law, Microsoft ADPCM (tag 0x0002) and IMA ADPCM (tag 0x0011), any channel count up to
 // Limits::maxChannels. It is an OPT-IN replacement for SDL_LoadWAV and the older, narrower
-// AudioClip::LoadWAV path: see OwnWavEnabled() and docs/own_wav_decoder.md.
+// AudioClip::LoadWAV path: see OwnWavEnabled() and docs/audio/own_wav_decoder.md.
 #include <cstddef>
 #include <cstdint>
 #include <string>

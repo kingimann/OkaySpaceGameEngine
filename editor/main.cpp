@@ -6571,7 +6571,7 @@ void UIStyleBar(EditorState& ed, Component* c) {
     ImGui::Spacing();
 }
 
-// GameObject > UI (and the UI view's "+ Add" button). The menu itself is DATA: editor/UIMenuModel.hpp lists the eight groups, every item with
+// GameObject > UI (and the UI view's "+ Add" button). The menu itself is DATA: editor/UIMenuModel.hpp lists nine essentials and the folders Game HUD, Menus & Screens and More, every item with
 // a one-sentence tip, and a last entry "Browse All UI..." that opens the UI Gallery. The ready-made screens come from the screen registry
 // (okay/Scene/UIScreens.hpp), one submenu per section. This function draws that list and RunUIMenuItem runs the ids.
 // A widget goes inside the selected panel, else under the scene's Canvas, which is made (with an Event System) the first time it is needed,

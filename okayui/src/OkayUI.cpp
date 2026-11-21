@@ -5751,17 +5751,26 @@ void tblEnterCell() {
 
 // Size the columns of a flag-style table from its TableSetupColumn calls: fixed columns take their pixel width, the rest share what is left by weight.
 inline bool tblHidden(int i) { return i >= 0 && i < 16 && ((g_tbl.hidden >> i) & 1u) != 0; }
+// A column mask kept in a float state slot. It is only a mask when it is a whole number from 0 to 0xFFFF (16 columns at most);
+// anything else (never set, NaN, or a slot another widget wrote to) counts as unset, so it is never cast to unsigned out of range.
+inline bool tblStoredMask(float v, unsigned& out) {
+    if (!(v >= 0.0f && v <= 65535.0f)) return false;   // also false for NaN
+    const unsigned m = (unsigned)v;
+    if ((float)m != v) return false;
+    out = m;
+    return true;
+}
 void tblFinishSetup() {
     if (g_tbl.setupDone) return;
     g_tbl.setupDone = true;
     {   // which columns are hidden: remembered per table; the first time, the Col_DefaultHide ones. The last visible column cannot be hidden.
         g_tbl.pHidden = floatState(g_tbl.id ^ 0x7a00, -1.0f);
-        if (*g_tbl.pHidden < 0.0f) {
-            unsigned m = 0;
-            for (int i = 0; i < g_tbl.nSetup && i < 16; ++i) if ((g_tbl.sFlags[i] & Col_DefaultHide) && !(g_tbl.sFlags[i] & Col_NoHide)) m |= 1u << i;
-            *g_tbl.pHidden = (float)m;
+        unsigned stored = 0;
+        if (!tblStoredMask(*g_tbl.pHidden, stored)) {
+            for (int i = 0; i < g_tbl.nSetup && i < 16; ++i) if ((g_tbl.sFlags[i] & Col_DefaultHide) && !(g_tbl.sFlags[i] & Col_NoHide)) stored |= 1u << i;
+            *g_tbl.pHidden = (float)stored;
         }
-        unsigned m = (unsigned)*g_tbl.pHidden & ((1u << g_tbl.count) - 1u);
+        unsigned m = stored & ((1u << g_tbl.count) - 1u);
         for (int i = 0; i < g_tbl.nSetup && i < 16; ++i) if (g_tbl.sFlags[i] & Col_NoHide) m &= ~(1u << i);
         if (m == ((1u << g_tbl.count) - 1u)) m &= ~1u;
         g_tbl.hidden = m; *g_tbl.pHidden = (float)m;
@@ -5786,7 +5795,8 @@ void tblFinishSetup() {
     }
     {   // columns shown again this frame: they come back at the width they had, the others give that back (so hide and show is exact)
         float* prevM = floatState(g_tbl.id ^ 0x7a02, -1.0f);
-        const unsigned prev = *prevM < 0.0f ? g_tbl.hidden : ((unsigned)*prevM & ((1u << g_tbl.count) - 1u));
+        unsigned prevStored = 0;
+        const unsigned prev = tblStoredMask(*prevM, prevStored) ? (prevStored & ((1u << g_tbl.count) - 1u)) : g_tbl.hidden;
         const unsigned newly = prev & ~g_tbl.hidden;
         *prevM = (float)g_tbl.hidden;
         if (newly && !g_tbl.scrollX) {
@@ -6047,7 +6057,9 @@ bool TableSetColumnEnabled(int column, bool enabled) {
     tblFinishSetup();
     if (!g_tbl.pHidden) return false;
     if (column < g_tbl.nSetup && (g_tbl.sFlags[column] & Col_NoHide) && !enabled) return false;
-    unsigned m = (unsigned)*g_tbl.pHidden & ((1u << g_tbl.count) - 1u);   // the pending set (a change made earlier this frame counts)
+    unsigned m = g_tbl.hidden;
+    if (tblStoredMask(*g_tbl.pHidden, m)) m &= (1u << g_tbl.count) - 1u;   // the pending set (a change made earlier this frame counts)
+    else m = g_tbl.hidden;
     if (enabled) m &= ~(1u << column); else m |= 1u << column;
     if (m == ((1u << g_tbl.count) - 1u)) return false;   // never hide them all
     *g_tbl.pHidden = (float)m;                           // takes effect next frame (this frame's widths are set)

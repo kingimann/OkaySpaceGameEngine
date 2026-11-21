@@ -33,8 +33,10 @@ void Report(const std::string& panel, const Bitmap& imPic, const Bitmap& okPic, 
     Save(panel.c_str(), "okayui", okPic);
     g_rows.push_back(Row{panel, t, d});
 }
-int Frames() { const char* s = std::getenv("OKAY_UI_COMPARE_FRAMES"); const int n = s ? std::atoi(s) : 0; return n >= 50 ? n : 150; }
 bool Strict() { const char* s = std::getenv("OKAY_UI_COMPARE_STRICT"); return s && s[0] == '1'; }
+// Timed frames per case and side. The speed is only checked in a strict run, which keeps 150; a normal run (CI) prints the table from
+// 75 (three alternating blocks of 25), since 58 cases x 2 sides x 150 rendered frames is most of this test's time.
+int Frames() { const char* s = std::getenv("OKAY_UI_COMPARE_FRAMES"); const int n = s ? std::atoi(s) : 0; return n >= 50 ? n : (Strict() ? 150 : 75); }
 
 // The Dear ImGui Inspector: the editor's DrawInspector with the Comfortable density, the parts drawn from the model one after the other.
 void ImGuiInspector(Scene& s, const oked::PanelViewHooks& hooks) {

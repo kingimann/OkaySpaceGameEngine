@@ -186,7 +186,7 @@ OkayUI can now be run and tested with no window, no GPU and no display. The piec
 | File | What |
 |---|---|
 | `okayui/include/okay/UI/OkayUI.hpp` | `GetDrawData()` returns `DrawVertex` and `DrawCmd` lists: the index buffer split into ranges that share a clip rectangle and a texture (the data `EndFrame(SDL_Renderer*)` already walked internally, now public), plus the launcher look's atlas pixels |
-| `okayui/soft/OkayUI_Soft.*` | `OkayUI::soft::Render(DrawData, Bitmap&)`: triangle rasteriser with the top-left fill rule (shared edges never draw twice), per-command scissor, source-over blending, flat colour and atlas sampling (nearest; the SDL backend filters linearly), hostile data skipped |
+| `okayui/soft/OkayUI_Soft.*` | `OkayUI::soft::Render(DrawData, Bitmap&)`: triangle rasteriser with the top-left fill rule (shared edges never draw twice), per-command scissor, source-over blending, flat colour and atlas sampling (nearest; the SDL backend filters linearly), hostile data skipped. Fast paths that give the same bytes: each row visits only the columns that can be inside, a triangle of one colour (flat, untextured or sampling one uniform texel area such as Dear ImGui's white pixel) fills each row's inside run directly, and `Bitmap::Clear` copies its first row |
 | `okayui/tests/OkayUITestKit.hpp` | `Sim` frame driver (a persistent mouse, one-shot text, key edges and wheel, all fed to `OkayUI::BeginFrame` as a plain `OkayUI::Input`), `Reset()`, PNG reader with our own inflate, golden comparison |
 | `okayui/tests/test_okayui_soft.cpp` | rasteriser: exact pixels, fill rule, scissor, atlas, hostile draw data, text lit-pixel counts, a clipped child |
 | `okayui/tests/test_okayui_behaviour.cpp` | 137 checks over button, checkbox and radio, sliders and drag, input text, combo, tree node and selectable, scrolling child, layout, windows (move, collapse, close, pin, resize), popups |
@@ -3009,6 +3009,14 @@ meanwhile written several of the same toolkit pieces its own way. Bringing the s
 - **Panels not wired.** The Hierarchy, Problems, Stats, History, Profiler, Tags and Layers, Import, Post-processing and Project Settings
   ports (sections 9 to 13) keep their models, views and tests, but the editor draws main's Dear ImGui panels: main changed most of them,
   and the stack had replaced their Dear ImGui code with re-written bodies, which would have changed the default editor.
+- **Fixes for CI (PR #1094).** A table's hidden-column masks live in float state slots; a slot holding NaN or another widget's value was
+  cast to `unsigned` (undefined behaviour, caught by UBSan in `okayui_fuzz`). `tblStoredMask` accepts only a whole number 0..65535 and
+  treats anything else as unset, at all three places (the hidden mask, the previous mask, `TableSetColumnEnabled`). `okayui_inspector_imgui`
+  took about 9 minutes (CI stops a test at 5): almost all of it was the software rasteriser drawing 58 cases x 2 sides x 150 timed frames,
+  with Dear ImGui's full-panel background sampled through the font atlas pixel by pixel. The rasteriser's fast paths (row runs, one-colour
+  triangles, a row-copy clear) give byte-identical pictures (all 114 compared) and the test now times 75 frames per case in a normal run
+  (150 with `OKAY_UI_COMPARE_STRICT=1`, where the speed is checked; `OKAY_UI_COMPARE_FRAMES` still overrides): about 9 minutes to under
+  half a minute in a Release build.
 - **Not taken:** the navigation fallback probe index and crowd example (an unrelated engine change in the stack's base), the Hierarchy's
   flat row list in the editor, pictures under `docs/images/` (removed on main; the section texts above still name them), `docs/try_it`
   entries.

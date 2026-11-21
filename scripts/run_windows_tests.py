@@ -115,6 +115,11 @@ def main(argv=None):
         for r in ex.map(lambda i: run_one(i, a.timeout, a.dll_dir or a.bin), runnable):
             results.append(r); print("%-50s %s (%.1fs)" % (r[0], r[1], r[2]), flush=True)
     failed = [r for r in results if r[1] != "passed"]
+    for n, st, _, t in sorted(failed):  # show why in the job log itself (artifacts are not always reachable)
+        print("##### FAILED %s: %s" % (n, st))
+        for line in t.splitlines()[-25:]:
+            print("  | " + line[:300])
+    sys.stdout.flush()
     os.makedirs(os.path.dirname(os.path.abspath(a.log)), exist_ok=True)
     with open(a.log, "w", encoding="utf-8") as f:
         for n, s, d, t in sorted(results):

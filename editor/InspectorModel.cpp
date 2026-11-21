@@ -152,6 +152,14 @@ bool HierFilter::Matches(const GameObject& go, const std::unordered_set<const Ga
 
 // ---- Drag and drop ----------------------------------------------------------------------------
 
+void SetObjectActive(GameObject* go, bool on) {
+    if (!go) return;
+    go->active = on;
+    if (go->transform)
+        for (Transform* c : go->transform->Children())
+            if (c) SetObjectActive(c->gameObject, on);
+}
+
 std::vector<GameObject*> HierarchyOrder(Scene& scene) {
     std::vector<GameObject*> out;
     std::function<void(GameObject*)> walk = [&](GameObject* g) {

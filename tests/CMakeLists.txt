@@ -939,6 +939,12 @@ add_executable(test_fix_140_141_142_131 test_fix_140_141_142_131.cpp ${PROJECT_S
 target_include_directories(test_fix_140_141_142_131 PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_fix_140_141_142_131 PRIVATE okay::engine)
 add_test(NAME fix_140_141_142_131 COMMAND test_fix_140_141_142_131)
+# Issue #888 finding 154 (switching a parent off and on keeps a child that was off, off; editor/InspectorModel SetObjectActive)
+# and OkayScript particles_on() going through ParticleSystem::Play() / Stop() so a finished one-shot plays again.
+add_executable(test_grok_154 test_grok_154.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_grok_154 PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_grok_154 PRIVATE okay::engine)
+add_test(NAME grok_154_particles_on COMMAND test_grok_154)
 add_executable(test_play_start_bench test_play_start_bench.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)   # times what Play does on the click frame and the first ticks
 target_include_directories(test_play_start_bench PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_compile_definitions(test_play_start_bench PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")

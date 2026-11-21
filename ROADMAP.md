@@ -10,6 +10,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.901.0 | Camera zones (blend view angle, offset and smoothing by area) and six one-click camera presets; camera follow starts on its target and guards against bad numbers; smoother, even rotations between animation keyframes (glTF-correct slerp) |
 | 2.900.0 | Character controller stops the same at any frame rate, with Simple and Advanced tuning; walk and run animation knee snap fixed; inventory item wear and repair; GameObject > UI menu: 12 plain entries plus More; okay_run headless scene runner for checks |
 | 2.899.0 | Save shortcut tests; code editor line commands (toggle comment, duplicate, move lines); Xbox packer limit and gamepad hot-plug (experimental, off by default); two-ended number slider in our own UI; own BMP writer; OGRE binary meshes skinned to their XML skeleton |
 | 2.898.0 | Launcher, editor and player no longer use GitHub: updates, version list, news and downloads only from our own server; password reset with an emailed code inside the launcher; own OGRE reader loads skeletons, animations and skinning; MSVC CI job (not required) |

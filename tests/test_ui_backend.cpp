@@ -92,6 +92,14 @@ int main() {
         CHECK(!SettingRowVisible(DevMode(nullptr), true) && !SettingRowVisible(DevMode("0"), true));
         CHECK(SettingRowVisible(DevMode("1"), true) && !SettingRowVisible(DevMode("1"), false));
     }
+    {   // the OkayUI Inspector: only with the OkayUI backend and OKAY_DEV or OKAY_UI_INSPECTOR on top; off by default
+        CHECK(!InspectorOn(Backend::ImGui, nullptr, nullptr));
+        CHECK(!InspectorOn(Backend::ImGui, "1", "1"));                  // Dear ImGui draws everything: no OkayUI Inspector
+        CHECK(!InspectorOn(Backend::OkayUI, nullptr, nullptr));         // the backend alone ("OkayUI screens") is not enough
+        CHECK(!InspectorOn(Backend::OkayUI, "0", "0") && !InspectorOn(Backend::OkayUI, "", ""));
+        CHECK(InspectorOn(Backend::OkayUI, "1", nullptr));              // OKAY_DEV=1 OKAY_UI_BACKEND=okayui
+        CHECK(InspectorOn(Backend::OkayUI, nullptr, "1"));              // Settings > Experimental > OkayUI Inspector
+    }
     {   // a build without OkayUI always answers Dear ImGui, whatever is asked
         CHECK(Resolve("okayui", "okayui", true, false) == Backend::ImGui);
     }

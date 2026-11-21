@@ -3,6 +3,9 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Components/Seat.hpp"
+#include "okay/Components/BuildMode.hpp"
+#include "okay/Components/Character.hpp"
+#include "okay/Net/NetOwnership.hpp"
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/ChestInventory.hpp"
@@ -45,7 +48,8 @@ bool PointerOnUI(const Scene* scene) {
 }
 
 // One reading of the Interact action's bindings: 0 held, 1 pressed this frame, 2 released this frame.
-bool InteractRead(int what) {
+// `pads` false skips the controller bindings.
+bool InteractRead(int what, bool pads = true) {
     const InputActions::Action* a = InputActions::Find("Interact");
     if (!a) return false;
     for (const InputBinding& b : a->bindings) {
@@ -60,6 +64,7 @@ bool InteractRead(int what) {
                 return true;
             break;
         case InputBinding::Kind::PadButton:
+            if (!pads) break;
             if (what == 0 ? Input::GetGamepadButton(b.code, b.player) : what == 1 ? Input::GetGamepadButtonDown(b.code, b.player)
                                                                        : Input::GetGamepadButtonUp(b.code, b.player))
                 return true;
@@ -85,9 +90,9 @@ bool IsInteractKey(char key) {
     return false;
 }
 
-bool UseKeyDown(char componentKey) {
+bool UseKeyDown(char componentKey, bool pads) {
     if (!componentKey) return false;
-    if (componentKey == kInteractDefaultKey) return InteractPressed();
+    if (componentKey == kInteractDefaultKey) return InteractRead(1, pads);
     return Input::GetKeyDown(componentKey);
 }
 
@@ -149,12 +154,31 @@ bool InteractClaimsKey(const Scene* scene, char key) {
 }
 
 bool LeanKeyTaken(const Scene* scene, char key, const GameObject* who) {
-    (void)who;
     if (!scene || !key) return false;
     if (InteractClaimsKey(scene, key)) return true;
-    if (IsInteractKey(key))   // a seat in reach (or the one the player sits on) takes the Interact key
-        for (const Seat* s : scene->FindObjectsOfType<Seat>())
-            if (s && s->enabled && (s->playerInRange || s->Occupant())) return true;
+    // Build mode's own keys (X deletes, R turns, ...) are not leans while it is on.
+    for (const BuildMode* bm : scene->FindObjectsOfType<BuildMode>()) {
+        if (!bm || !bm->Active()) continue;
+        const BuildBindings& b = bm->bindings;
+        for (char k : {b.toggle, b.removeKey, b.rotate, b.move, b.duplicate, b.link, b.undo, b.redo, b.nextItem, b.prevItem})
+            if (k && k == key) return true;
+    }
+    if (IsInteractKey(key))   // a seat in this player's reach, or the one this player sits on, takes the Interact key
+        for (const Seat* s : scene->FindObjectsOfType<Seat>()) {
+            if (!s || !s->enabled) continue;
+            const GameObject* on = s->Occupant();
+            if (who) {
+                if (on == who) return true;
+                if (s->playerInRange && who->transform && s->transform) {
+                    Vec3 d = who->transform->Position() - s->SitWorld();
+                    d.y = 0.0f;
+                    if (d.Magnitude() < s->useRadius) return true;
+                }
+            } else {
+                if (s->playerInRange) return true;
+                if (on && on->GetComponent<Character>() && IsLocallyControlled(on)) return true;
+            }
+        }
     if (!Input::GetKeyDown(key)) return false;
     for (const InventoryUI* ui : scene->FindObjectsOfType<InventoryUI>())
         if (ui && ui->enabled && ui->toggleKey == key) return true;

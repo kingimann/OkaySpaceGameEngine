@@ -58,8 +58,9 @@ bool InteractReleased();
 /// `key` is one of the Interact action's keyboard bindings.
 bool IsInteractKey(char key);
 /// A component's use key pressed this frame: E follows the Interact action, any other key is read
-/// as it is, 0 is off.
-bool UseKeyDown(char componentKey);
+/// as it is, 0 is off. `pads` false leaves out the action's controller bindings (a Button in build
+/// mode, where the pad's X turns pieces).
+bool UseKeyDown(char componentKey, bool pads = true);
 /// The component key `componentKey` answers to the physical key `key` (for "who owns this press").
 bool UseKeyIs(char componentKey, char key);
 /// What to show a player for a component's use key ("E", or the key Interact is rebound to).
@@ -67,7 +68,9 @@ std::string UseKeyName(char componentKey);
 
 /// A lean key (Q by default; lean-right was E and moved off it) should be ignored this frame: a chest, bench or
 /// pickup or seat in range wants it as its use key, or it is also a bag key and was just
-/// pressed to open or close the bag. One press, one owner.
+/// pressed to open or close the bag, or build mode is on and the key is one of its keys (X deletes there,
+/// and X is the lean-right default). One press, one owner. `who` is the leaning player: a seat counts only
+/// when it is in that player's reach or that player sits on it (no `who`: any locally controlled player).
 bool LeanKeyTaken(const Scene* scene, char key, const GameObject* who = nullptr);
 
 } // namespace okay

@@ -12,6 +12,7 @@ struct InvResult {
     Status status = Status::Rejected;
     int moved = 0;
     std::string reason;   ///< why it was rejected or partial (empty on Ok)
+    bool broke = false;   ///< Use: the item wore out and was removed
 
     bool Ok() const { return status != Status::Rejected; }
     static InvResult Done(int n) { InvResult r; r.status = Status::Ok; r.moved = n; return r; }
@@ -61,7 +62,9 @@ InvResult Drop(Inventory* inv, int i, int n = 1);
 /// Use the item in slot `i` as `user` (who carries the inventory): eat/drink/heal it
 /// through a Consumables on the user (its recipe, else the item definition's use
 /// action), pick the matching piece in the user's BuildMode palette, or equip it
-/// through the user's Equipment when its definition has an equip slot.
+/// through the user's Equipment when its definition has an equip slot. A tool (definition
+/// custom field "wearPerUse" > 0, single item tracking durability) wears by that much and
+/// breaks at zero (result.broke).
 InvResult Use(Inventory* inv, int i, GameObject* user);
 
 /// Atomically remove `take` and add `give` (crafting).

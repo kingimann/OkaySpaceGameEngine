@@ -262,6 +262,17 @@ static InvResult UseItem(Inventory* inv, int i, GameObject* user) {
             }
     if (def && def->equip != EquipSlot::None)   // wearable / weapon: put it on (main hand for a weapon)
         if (Equipment* eq = Equipment::Of(user)) return eq->EquipFrom(*inv, i);
+    if (def) {   // a tool: using it wears it down
+        const std::string w = def->Custom("wearPerUse");
+        const float per = w.empty() ? 0.0f : (float)std::atof(w.c_str());
+        if (per > 0.0f && std::isfinite(per)) {
+            const InvResult wr = Wear(inv, i, per);
+            if (!wr.Ok()) return wr;
+            InvResult r = InvResult::Done(1);
+            r.broke = wr.moved == 1;
+            return r;
+        }
+    }
     return InvResult::No("nothing uses it");
 }
 

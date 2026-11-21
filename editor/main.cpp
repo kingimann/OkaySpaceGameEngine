@@ -43920,6 +43920,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
                 const auto& it = inv->slots[idx];
                 DrawItemIconIm(dl, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2), ui->iconFolder, it.item);
+                if (ItemThumb(okay::ItemIconPath(ui->iconFolder, it.item)) == nullptr) {   // no picture: name along the bottom, cut to the slot width
+                    const okay::ItemDefinition* nd = okay::ItemDatabase::Get().Find(it.item);
+                    const std::string full = nd ? nd->DisplayName() : it.item;
+                    const std::string fit = okay::InventoryText::FitWidth(full, (p1.x - p0.x) - 2 * b - 4.0f,
+                        [](const std::string& s) { return ImGui::CalcTextSize(s.c_str()).x; });
+                    if (!fit.empty())
+                        dl->AddText(ImVec2(p0.x + b + 2, p1.y - b - ImGui::GetTextLineHeight() - 1), col(ui->countColor), fit.c_str());
+                }
                 if (ui->showCounts && shown > 1) {
                     std::string cs = std::to_string(shown);
                     ImVec2 ts = ImGui::CalcTextSize(cs.c_str());

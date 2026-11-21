@@ -39,6 +39,10 @@ Backend* Default();
 /// the whole process. Creating it does not touch the OS; call Backend::Init.
 Backend* Get(BackendKind k);
 BackendKind DefaultKind();
+/// True once a backend instance has been destroyed, which happens only at the very end of the process (static destruction after
+/// main() returns, or inside std::exit). From then on no backend and none of its windows may be called: objects destroyed late
+/// (a global that owns windows, the ImGui glue) check this and let their windows go without touching the OS.
+bool BackendsShutDown();
 /// The automatic fallback (owner decision 2026-11-17: our own backend is the default, SDL the way back): a program whose own
 /// backend could not start calls this with BackendKind::Sdl2, and from then on Default() / DefaultKind() answer that backend.
 /// False (and nothing changes) when `k` is not compiled in.

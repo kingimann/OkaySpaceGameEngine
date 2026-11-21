@@ -2570,6 +2570,25 @@ Steps (Windows, from the release, once this is in one):
 Verified: headless tests (`editor_tabs`, `okayui_screens`, `okayui_codeedit_imgui`, `editor_viewports_own` / `_own_2mon` /
 `_sdl2`) and screenshots of the editor under Xvfb on Linux at 1280x800 and 1920x1200, both paths. Not verified: Windows.
 
+## 11l. The editor quits cleanly from its screenshot hook (branch `claude2/own-switch-on-exit`)
+
+With our own platform and renderer (the default on PR #988), the editor crashed (exit code 139, a segfault) every time it ended
+through the screenshot hook `OKAY_UI_SHOT` + `OKAY_UI_QUIT`, right after the PNG was written. That hook ends the program with
+`std::exit`, which skips the editor's normal shut-down; the editor's platform side was then destroyed after okay::platform's backend
+and called into it. Now the hook runs the same shut-down function as a normal quit first (`EditorShutdown` in `editor/main.cpp`,
+safe to run twice), and the platform side, the drawing side and the shared ImGui glue no longer touch ImGui or a backend that is
+already gone, so even an exit that skips the shut-down ends with 0.
+
+Steps (Windows, from the release, once this is in one; a Command Prompt in the install folder):
+
+1. `set OKAY_DEV=1` (lets the editor start without the launcher), `set OKAY_UI_SHOT=%TEMP%\okay_shot.png` and `set OKAY_UI_QUIT=1`, then `Tools\OkayEngine.exe`, then `echo %ERRORLEVEL%`.
+   Expect the editor to open, close by itself after about 160 frames, `%TEMP%\okay_shot.png` to exist and `0` to be printed.
+2. Again after `set OKAY_THIRD_PARTY=1` (the old SDL code): the same, `0`.
+
+Verified on Linux under Xvfb (see the PR). Test: `editor_platform_exit_own` (ends through `std::exit` with the platform side, its
+windows, a panel window and ImGui still alive: exit 0; it crashed with 139 before the fix) and `editor_platform_exit_own_nocontext`
+(the glue destroyed after the ImGui context). Not verified: Windows.
+
 ## Checks run for this page
 
 Run on Linux, on the branch `claude/try-it`:

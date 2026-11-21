@@ -55,7 +55,21 @@ BackendKind ComputeDefaultKind() {
     if (ParseBackendName(std::getenv("OKAY_PLATFORM_BACKEND"), fromEnv)) k = fromEnv;
     return k;
 }
+
+// Set when a backend instance is destroyed: that happens only during static destruction, at the end of the process (after main()
+// returns, or inside std::exit). Plain atomic with a trivial destructor, so it can still be read by objects destroyed later.
+std::atomic<bool> g_backendsGone{false};
+
+// Holds one backend instance for the process. Its destructor raises the flag first, so a window or ImGui glue destroyed later (or
+// destroyed by the backend's own teardown) can see the backend is going and must not call it.
+struct BackendHolder {
+    std::unique_ptr<Backend> p;
+    explicit BackendHolder(std::unique_ptr<Backend> b) : p(std::move(b)) {}
+    ~BackendHolder() { g_backendsGone.store(true); p.reset(); }
+};
 }
+
+bool BackendsShutDown() { return g_backendsGone.load(); }
 
 void ReconsiderDefault() { g_defaultKind.store(-1); }
 
@@ -81,15 +95,15 @@ BackendKind DefaultKind() {
 Backend* Get(BackendKind k) {
     if (k == BackendKind::Sdl2) {
 #ifdef OKAY_PLATFORM_HAVE_SDL2
-        static std::unique_ptr<Backend> inst = CreateSdl2Backend();
-        return inst.get();
+        static BackendHolder inst(CreateSdl2Backend());
+        return inst.p.get();
 #else
         return nullptr;
 #endif
     }
 #ifdef OKAY_PLATFORM_HAVE_OWN
-    static std::unique_ptr<Backend> inst = CreateOwnBackend();
-    return inst.get();
+    static BackendHolder inst(CreateOwnBackend());
+    return inst.p.get();
 #else
     return nullptr;
 #endif

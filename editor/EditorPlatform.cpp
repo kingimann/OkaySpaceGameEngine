@@ -57,7 +57,15 @@ class OwnEditorPlatform final : public EditorPlatform {
 public:
     explicit OwnEditorPlatform(plat::Backend* sdl) : m_sdl(sdl) {}
     ~OwnEditorPlatform() override {
-        ShutdownImGui();
+        ShutdownImGui();   // the glue checks for itself whether ImGui and the backend are still there
+        if (plat::BackendsShutDown()) {
+            // Static destruction (std::exit, or the editor's g_edPlat outliving main()): the backend that made these windows is
+            // already destroyed, so their destructors must not run. The process is ending; the OS takes the windows back.
+            (void)m_glWin.release();
+            (void)m_win.release();
+            m_glBackend = nullptr;
+            return;
+        }
         DestroyViewportGL();
         DestroyMainWindow();
     }

@@ -42,6 +42,13 @@ class OwnEditorGfx final : public EditorGfx {
 public:
     OwnEditorGfx(plat::Window& w, std::unique_ptr<plat::Painter> p) : m_win(w), m_p(std::move(p)) {}
     ~OwnEditorGfx() override {
+        if (plat::BackendsShutDown()) {
+            // Static destruction (std::exit without the editor's shut-down): the backend that made the window and its GL context is
+            // already destroyed, so no GL or window call may run. Let the renderer and the painter go; the OS takes them back.
+            (void)m_renderer.release();
+            (void)m_p.release();
+            return;
+        }
         ShutdownImGui();
         m_p.reset();   // destroys the GL context (the window stays: the platform seam owns it)
     }

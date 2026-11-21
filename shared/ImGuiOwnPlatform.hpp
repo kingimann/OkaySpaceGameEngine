@@ -80,6 +80,7 @@ public:
 private:
     okay::platform::Backend& m_b;
     okay::platform::Window& m_w;
+    ImGuiContext* m_ctx = nullptr;   // the ImGui context it registered with; the destructor touches ImGui only while it is current
     std::uint64_t m_lastTicks = 0;
     bool m_textOn = false;
     bool m_textAlways = false;

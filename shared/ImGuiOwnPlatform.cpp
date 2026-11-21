@@ -103,7 +103,7 @@ int ImGuiKeyFor(plat::Key key) {
     }
 }
 
-ImGuiPlatformGlue::ImGuiPlatformGlue(plat::Backend& b, plat::Window& w) : m_b(b), m_w(w) {
+ImGuiPlatformGlue::ImGuiPlatformGlue(plat::Backend& b, plat::Window& w) : m_b(b), m_w(w), m_ctx(ImGui::GetCurrentContext()) {
     ImGuiIO& io = ImGui::GetIO();
     io.BackendPlatformName = "okay_platform";
     io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors;
@@ -118,10 +118,28 @@ ImGuiPlatformGlue::ImGuiPlatformGlue(plat::Backend& b, plat::Window& w) : m_b(b)
 }
 
 ImGuiPlatformGlue::~ImGuiPlatformGlue() {
-    if (m_viewports) {
-        // Every panel window goes (ImGui calls VpDestroy for each viewport, the main one included), then the hooks.
-        ImGui::DestroyPlatformWindows();
+    // Safe at any point of shut-down, including static destruction inside std::exit:
+    //  * the ImGui context it was made on may already be destroyed (or another one current): then ImGui is not touched at all (a
+    //    destroyed context already closed its panel windows through VpDestroy);
+    //  * the okay::platform backend may already be destroyed (okay::platform::BackendsShutDown): then the backend and the panel
+    //    windows are not called; each panel's window object is let go without closing it (the process is ending, the OS cleans up).
+    const bool imgui = m_ctx && ImGui::GetCurrentContext() == m_ctx;
+    const bool backend = !plat::BackendsShutDown();
+    if (m_viewports && imgui) {
         ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+        if (backend) {
+            // Every panel window goes (ImGui calls VpDestroy for each viewport, the main one included), then the hooks.
+            ImGui::DestroyPlatformWindows();
+        } else {
+            for (ImGuiViewport* vp : pio.Viewports) {
+                if (VpWin* d = DataOf(vp)) {
+                    (void)d->own.release();   // its backend is gone: do not run the window's destructor
+                    delete d;
+                    vp->PlatformUserData = nullptr;
+                    vp->PlatformHandle = nullptr;
+                }
+            }
+        }
         pio.Platform_CreateWindow = nullptr; pio.Platform_DestroyWindow = nullptr; pio.Platform_ShowWindow = nullptr;
         pio.Platform_SetWindowPos = nullptr; pio.Platform_GetWindowPos = nullptr; pio.Platform_SetWindowSize = nullptr;
         pio.Platform_GetWindowSize = nullptr; pio.Platform_GetWindowFramebufferScale = nullptr; pio.Platform_SetWindowFocus = nullptr;
@@ -131,18 +149,21 @@ ImGuiPlatformGlue::~ImGuiPlatformGlue() {
         ImGuiIO& io = ImGui::GetIO();
         io.BackendFlags &= ~ImGuiBackendFlags_PlatformHasViewports;
         io.BackendPlatformUserData = nullptr;
-        m_viewports = false;
     }
-    if (m_textOn) m_b.StopTextInput();
-    m_b.SetSystemCursor(plat::SystemCursor::Arrow);
-    m_b.ShowCursor(true);
+    m_viewports = false;
+    if (backend) {
+        if (m_textOn) m_b.StopTextInput();
+        m_b.SetSystemCursor(plat::SystemCursor::Arrow);
+        m_b.ShowCursor(true);
+    }
+    g_appliedCursor = -2;
+    if (!imgui) return;
     ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
     pio.Platform_GetClipboardTextFn = nullptr;
     pio.Platform_SetClipboardTextFn = nullptr;
     pio.Platform_ClipboardUserData = nullptr;
     pio.Platform_SetImeDataFn = nullptr;
     pio.Platform_ImeUserData = nullptr;
-    g_appliedCursor = -2;
     ImGuiIO& io = ImGui::GetIO();
     io.BackendPlatformName = nullptr;
     io.BackendFlags &= ~ImGuiBackendFlags_HasMouseCursors;

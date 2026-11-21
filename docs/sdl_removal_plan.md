@@ -592,6 +592,12 @@ line says `...; panel windows on)`.
   position change, layered-window opacity: MinGW syntax check only). A real X11 desktop with a window manager (placement, focus on
   showing, opacity with a compositor) is unrun: Xvfb has none. `NoFocusOnClick` (a panel that should not take the focus when
   clicked) is not done. The default stays `sdl` until the owner approves (rule 17).
+* **Ending through `std::exit`** (branch `claude2/own-switch-on-exit`). okay::platform's backends are function-local statics, made
+  after the editor's globals, so `std::exit` destroys them first; the editor's `g_edPlat` (and our glue inside it) then called a
+  backend that was gone (segfault after every `OKAY_UI_QUIT` screenshot). Fixed three ways: the editor's one shut-down function
+  (`EditorShutdown`, run by a normal quit and by the `OKAY_UI_QUIT` hook, safe twice); `okay::platform::BackendsShutDown()` (true once
+  a backend was destroyed) so `OwnEditorPlatform`, `OwnEditorGfx` and `ImGuiPlatformGlue` let their windows and GL context go without calling the backend; and the
+  glue touches ImGui only while the context it was made on is current. Tests: `editor_platform_exit_own`, `_nocontext`.
 
 ## Player, display modes and a build with no SDL (branch `claude2/sdl-player-no-sdl`, on top of E3)
 

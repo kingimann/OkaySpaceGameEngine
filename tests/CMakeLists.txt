@@ -3295,6 +3295,17 @@ if(_okay_ep_imgui AND TARGET okay::platform AND TARGET SDL2::SDL2 AND NOT WIN32 
     set_tests_properties(editor_platform editor_platform_own PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     set_tests_properties(editor_platform PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=sdl2")
     set_tests_properties(editor_platform_own PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=own")
+    # Ending through std::exit with our own editor platform, its windows, a panel window and ImGui's glue still alive (the editor's
+    # OKAY_UI_QUIT screenshot hook crashed there), and the glue destroyed after the ImGui context: both must end with 0.
+    add_executable(test_editor_platform_exit test_editor_platform_exit.cpp ${PROJECT_SOURCE_DIR}/editor/EditorPlatform.cpp
+        ${PROJECT_SOURCE_DIR}/editor/EditorPlatformSdl.cpp ${PROJECT_SOURCE_DIR}/shared/ImGuiOwnPlatform.cpp)
+    target_include_directories(test_editor_platform_exit PRIVATE ${PROJECT_SOURCE_DIR}/editor ${PROJECT_SOURCE_DIR}/shared)
+    target_link_libraries(test_editor_platform_exit PRIVATE ${_okay_ep_imgui} okay::platform SDL2::SDL2)
+    add_test(NAME editor_platform_exit_own
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_editor_platform_exit> exit)
+    add_test(NAME editor_platform_exit_own_nocontext
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_editor_platform_exit> nocontext)
+    set_tests_properties(editor_platform_exit_own editor_platform_exit_own_nocontext PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 endif()
 
 # The editor's drawing seam (editor/EditorGfx.*, OKAY_EDITOR_RENDERER=own, docs/sdl_removal_plan.md stage E2) without the editor:

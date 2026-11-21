@@ -50081,6 +50081,52 @@ static void EditorOkayUIEndFrame() {
 }
 #endif
 
+// The editor's audio device: here (not a local of main()) so EditorShutdown can close it from an early exit too.
+static std::unique_ptr<okay::platform::AudioDevice> g_edAudio;
+
+// The one shut-down of the editor's window, ImGui, renderers, controllers and audio, in the safe order (ImGui's two sides, the
+// context, the views' GL, the drawing seam, then the platform side and its window, then SDL). main() calls it when the editor
+// quits, and every early exit calls it before std::exit (the OKAY_UI_QUIT screenshot hook): std::exit skips main()'s ending and
+// destroys the globals in reverse order instead, so g_edPlat would otherwise be destroyed after okay::platform's backends (they
+// are function-local statics made later) and its windows would call a backend that is gone. Safe to call twice and before
+// start-up finished: each step checks what is still there.
+static void EditorShutdown() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+#if defined(OKAY_HAVE_OKAYUI) && defined(OKAY_EDITOR_HAVE_OKAYUI_RENDER)
+    if (g_gfx) EditorOkayUIRenderRelease();   // OkayUI's textures on the painter go before it
+#endif
+    if (ImGui::GetCurrentContext()) {
+        if (g_gfx) g_gfx->ShutdownImGui();
+        if (g_edPlat) g_edPlat->ShutdownImGui();
+        ImGui::DestroyContext();
+    }
+    // Tear down the optional GPU renderer: free its GL objects with its own context
+    // current, then drop the context + hidden window.
+    if (g_glRenderer || (g_edPlat && g_edPlat->HasViewportGL())) {
+        const bool cur = g_edPlat && g_edPlat->HasViewportGL() && g_edPlat->BeginViewportGL();
+        if (g_glRenderer && cur) g_glRenderer->Destroy();
+        delete g_glRenderer; g_glRenderer = nullptr;
+        if (g_edPlat && g_edPlat->HasViewportGL()) g_edPlat->EndViewportGL();
+        if (g_edPlat) g_edPlat->DestroyViewportGL();
+        g_glReady = false;
+    }
+#if defined(_WIN32)
+    if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
+#endif
+    g_pads.CloseAll();
+    g_edAudio.reset();
+    g_editorSplashLogo = nullptr;
+    g_sdlRenderer = nullptr;
+    g_gfx.reset();   // the renderer (sdl) or the GL painter and its context (own), with every texture it made
+    if (g_edPlat) g_edPlat->DestroyMainWindow();
+    g_edPlat.reset();
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+    if (!g_noSdl) SDL_Quit();
+#endif
+}
+
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
@@ -50204,7 +50250,7 @@ int main(int argc, char** argv) {
     okay::platform::AudioSpec want, have;
     want.freq = 44100; want.format = okay::platform::SampleFormat::F32; want.channels = 2; want.frames = 1024;
     want.allowChange = true;
-    std::unique_ptr<okay::platform::AudioDevice> audioDev;
+    std::unique_ptr<okay::platform::AudioDevice>& audioDev = g_edAudio;   // closed by EditorShutdown
     if (okay::platform::Backend* pb = okay::platform::Default()) audioDev = pb->OpenAudio(want, false, nullptr, &have);
     if (audioDev) { AudioMixer::sampleRate = have.freq; audioDev->Pause(false); }
 
@@ -52382,7 +52428,11 @@ int main(int argc, char** argv) {
                     ConsoleLog(std::string("Saved screenshot ") + shot);
                     std::fflush(stdout);
                 }
-                if (std::getenv("OKAY_UI_QUIT")) std::exit(0);
+                if (std::getenv("OKAY_UI_QUIT")) {
+                    EditorShutdown();   // std::exit skips main()'s shut-down: close the windows while their backend is alive
+                    std::fflush(nullptr);
+                    std::exit(0);
+                }
             }
         }
         if (const std::string shot = TakePendingEditorShot(); !shot.empty()) {
@@ -52443,35 +52493,7 @@ int main(int argc, char** argv) {
     SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window
     ProjectUpgradeAtExit();       // the editor of the project's own version ("Keep"), or this one again after a restore, starts once this process is gone
 
-#if defined(OKAY_HAVE_OKAYUI) && defined(OKAY_EDITOR_HAVE_OKAYUI_RENDER)
-    EditorOkayUIRenderRelease();   // OkayUI's textures on the painter go before it
-#endif
-    g_gfx->ShutdownImGui();
-    g_edPlat->ShutdownImGui();
-    ImGui::DestroyContext();
-    // Tear down the optional GPU renderer: free its GL objects with its own context
-    // current, then drop the context + hidden window.
-    if (g_glRenderer || g_edPlat->HasViewportGL()) {
-        const bool cur = g_edPlat->HasViewportGL() && g_edPlat->BeginViewportGL();
-        if (g_glRenderer && cur) g_glRenderer->Destroy();
-        delete g_glRenderer; g_glRenderer = nullptr;
-        if (g_edPlat->HasViewportGL()) g_edPlat->EndViewportGL();
-        g_edPlat->DestroyViewportGL();
-        g_glReady = false;
-    }
-#if defined(_WIN32)
-    if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
-#endif
-    g_pads.CloseAll();
-    audioDev.reset();
-    g_editorSplashLogo = nullptr;
-    g_sdlRenderer = nullptr;
-    g_gfx.reset();   // the renderer (sdl) or the GL painter and its context (own), with every texture it made
-    g_edPlat->DestroyMainWindow();
-    g_edPlat.reset();
-#ifdef OKAY_PLATFORM_HAVE_SDL2
-    if (!g_noSdl) SDL_Quit();
-#endif
+    EditorShutdown();
     return 0;
 }
 #endif // OKAY_EDITOR_HEADLESS

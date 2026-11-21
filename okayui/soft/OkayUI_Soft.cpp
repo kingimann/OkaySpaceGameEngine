@@ -4,12 +4,20 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace OkayUI {
 namespace soft {
 
 void Bitmap::Clear(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) {
-    for (std::size_t i = 0; i + 3 < rgba.size(); i += 4) { rgba[i] = r; rgba[i + 1] = g; rgba[i + 2] = b; rgba[i + 3] = a; }
+    // the first row pixel by pixel, then the others copied from it (the same bytes, much faster on large bitmaps)
+    const std::size_t row = (std::size_t)w * 4;
+    if (row == 0 || rgba.size() < row || rgba.size() % row != 0) {
+        for (std::size_t i = 0; i + 3 < rgba.size(); i += 4) { rgba[i] = r; rgba[i + 1] = g; rgba[i + 2] = b; rgba[i + 3] = a; }
+        return;
+    }
+    for (std::size_t i = 0; i < row; i += 4) { rgba[i] = r; rgba[i + 1] = g; rgba[i + 2] = b; rgba[i + 3] = a; }
+    for (std::size_t o = row; o < rgba.size(); o += row) std::memcpy(&rgba[o], &rgba[0], row);
 }
 
 void Render(const DrawData& data, Bitmap& bm) {

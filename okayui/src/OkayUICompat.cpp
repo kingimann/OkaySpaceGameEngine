@@ -286,9 +286,18 @@ Color32 GetColorU32(Vec4 color) { return ColorConvertFloat4ToU32(color); }
 
 // The `fmt` text and the NoInput / NoRoundToFormat flags go to the widget through SetNextNumberFormat (Slider_Logarithmic works on sliders whose range keeps one sign and excludes 0; a drag field stays linear).
 static void nextNum(const char* fmt, int flags, const char* fmtMax = nullptr) { SetNextNumberFormat(fmt, (flags & Slider_NoInput) != 0, (flags & Slider_NoRoundToFormat) != 0, fmtMax, (flags & Slider_Logarithmic) != 0); }
-bool SliderFloat(const char* label, float* value, float minV, float maxV, const char* fmt, int flags) { nextNum(fmt, flags); return SliderFloat(label, value, minV, maxV); }
-bool SliderInt(const char* label, int* value, int minV, int maxV, const char* fmt, int flags) { nextNum(fmt, flags); return SliderInt(label, value, minV, maxV); }
-bool DragFloat(const char* label, float* v, float speed, float minV, float maxV, const char* fmt, int flags) { nextNum(fmt, flags); return DragFloat(label, v, speed, minV, maxV); }
+bool SliderFloat(const char* label, float* value, float minV, float maxV, const char* fmt, int flags) {
+    if (FramedNumbersOn()) return FramedSliderFloat(label, value, minV, maxV, fmt, (flags & Slider_Logarithmic) != 0);   // Dear ImGui's framed look (StyleVar_FramedWidgets)
+    nextNum(fmt, flags); return SliderFloat(label, value, minV, maxV);
+}
+bool SliderInt(const char* label, int* value, int minV, int maxV, const char* fmt, int flags) {
+    if (FramedNumbersOn()) return FramedSliderInt(label, value, minV, maxV, fmt);
+    nextNum(fmt, flags); return SliderInt(label, value, minV, maxV);
+}
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV, const char* fmt, int flags) {
+    if (FramedNumbersOn()) return FramedDragFloatN(label, v, 1, speed, minV, maxV, fmt, (flags & Slider_Logarithmic) != 0);
+    nextNum(fmt, flags); return DragFloat(label, v, speed, minV, maxV);
+}
 bool DragInt(const char* label, int* v, float speed, int minV, int maxV, const char* fmt, int flags) { nextNum(fmt, flags); return DragInt(label, v, speed, minV, maxV); }
 Vec2 CalcTextSize(const char* text, const char* textEnd, bool hideAfterHash, float) {
     if (!text) return Vec2{0, 0};
@@ -335,12 +344,12 @@ bool DockContextQueueUndockWindow(Context*, const WindowRef* window) {
 }
 bool BeginDragDropTargetCustom(const ImRect& bb, unsigned id) { return BeginDragDropTargetCustom(Rect{bb.Min.x, bb.Min.y, bb.Max.x - bb.Min.x, bb.Max.y - bb.Min.y}, id); }
 bool InputInt(const char* label, int* value, int step, int, int) { return InputInt(label, value, step > 0 ? step : 1); }
-bool DragFloat2(const char* l, float v[2], float sp, float mn, float mx, const char* fmt, int flags) { nextNum(fmt, flags); return DragFloat2(l, v, sp, mn, mx); }
-bool DragFloat3(const char* l, float v[3], float sp, float mn, float mx, const char* fmt, int flags) { nextNum(fmt, flags); return DragFloat3(l, v, sp, mn, mx); }
+bool DragFloat2(const char* l, float v[2], float sp, float mn, float mx, const char* fmt, int flags) { if (FramedNumbersOn()) return FramedDragFloatN(l, v, 2, sp, mn, mx, fmt, false); nextNum(fmt, flags); return DragFloat2(l, v, sp, mn, mx); }
+bool DragFloat3(const char* l, float v[3], float sp, float mn, float mx, const char* fmt, int flags) { if (FramedNumbersOn()) return FramedDragFloatN(l, v, 3, sp, mn, mx, fmt, false); nextNum(fmt, flags); return DragFloat3(l, v, sp, mn, mx); }
 bool DragFloat4(const char* l, float v[4], float sp, float mn, float mx, const char* fmt, int flags) { nextNum(fmt, flags); return DragFloat4(l, v, sp, mn, mx); }
 bool DragFloatRange2(const char* l, float* lo, float* hi, float sp, float mn, float mx, const char* fmt, const char* fmtMax, int flags) { nextNum(fmt, flags, fmtMax ? fmtMax : fmt); return DragFloatRange2(l, lo, hi, sp, mn, mx); }
-bool SliderFloat2(const char* l, float v[2], float mn, float mx, const char*, int) { return SliderFloat2(l, v, mn, mx); }
-bool SliderFloat3(const char* l, float v[3], float mn, float mx, const char*, int) { return SliderFloat3(l, v, mn, mx); }
+bool SliderFloat2(const char* l, float v[2], float mn, float mx, const char* fmt, int) { if (FramedNumbersOn()) return FramedSliderFloatN(l, v, 2, mn, mx, fmt); return SliderFloat2(l, v, mn, mx); }
+bool SliderFloat3(const char* l, float v[3], float mn, float mx, const char* fmt, int) { if (FramedNumbersOn()) return FramedSliderFloatN(l, v, 3, mn, mx, fmt); return SliderFloat3(l, v, mn, mx); }
 bool SliderFloat4(const char* l, float v[4], float mn, float mx, const char*, int) { return SliderFloat4(l, v, mn, mx); }
 bool InputFloat(const char* l, float* v, float step, float, const char* fmt, int) { SetNextNumberFormat(fmt); return InputFloat(l, v, step > 0.0f ? step : 0.1f); }
 void SetNextItemOpen(bool open, Cond) { SetNextItemOpen(open); }
@@ -378,7 +387,6 @@ bool InputText(const char* l, char* b, int c, unsigned f, InputTextCallback, voi
 bool IsWindowDocked() { const CurrentWindow w = GetCurrentWindow(); return w.valid && IsWindowDocked(w.title); }
 WindowInfo::operator WindowRef*() const { return found ? FindWindowRefByName(Name) : nullptr; }
 bool InvisibleButton(const char* id, Vec2 size, int) { return InvisibleButton(id, size.x, size.y); }
-bool BeginTabBar(const char* id, int) { return BeginTabBar(id); }
 bool BeginCombo(const char* label, const char* preview, int) { return BeginCombo(label, preview); }
 bool Combo(const char* label, int* current, const char* const* items, int count) { return Combo(label, items, count, current); }
 void OpenPopup(const char* id, int) { OpenPopup(id); }

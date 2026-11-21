@@ -102,6 +102,11 @@ add_executable(test_flac_import test_flac_import.cpp)
 target_link_libraries(test_flac_import PRIVATE okay::engine)
 target_compile_definitions(test_flac_import PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME flac_import COMMAND test_flac_import)
+# Hostile FLAC files: every truncation, bit flips (checksums repaired), lying headers, garbage; whole vs streamed decode.
+add_executable(test_flac_hostile test_flac_hostile.cpp)
+target_link_libraries(test_flac_hostile PRIVATE okay::engine)
+target_compile_definitions(test_flac_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME flac_hostile COMMAND test_flac_hostile)
 
 # Stereo clips and placement (balance for 2D, mono-then-pan for 3D).
 add_executable(test_audio_stereo test_audio_stereo.cpp)
@@ -3357,6 +3362,11 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     endif()
     add_test(NAME platform_xdnd COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_xdnd>)
     set_tests_properties(platform_xdnd PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+    # Tray-icon callback protocol model (header only, hand-computed Win32 message values).
+    add_executable(test_platform_tray test_platform_tray.cpp)
+    target_include_directories(test_platform_tray PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_tray COMMAND test_platform_tray)
 
     # The event queue (push, poll, pump, native pointer, unmapped events, render resets, CharForKey): no display needed.
     add_executable(test_platform_events test_platform_events.cpp)

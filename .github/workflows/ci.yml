@@ -4,6 +4,8 @@ on:
   push:
     branches: [ main ]
   pull_request:
+  # Manual run on a branch: lets the MSVC job (skipped on pull requests) be run on demand to read real MSVC errors.
+  workflow_dispatch:
 
 # A new push to a pull request cancels that PR's older run, so stale runs don't
 # hold the runners. Each push to main keeps its own run.
@@ -32,6 +34,14 @@ jobs:
       CCACHE_MAXSIZE: 2G
     steps:
       - uses: actions/checkout@v6
+
+      # The runner disk filled up while linking the ~800 tests ("final link failed: No space left on device", 2026-11-20).
+      # Remove big preinstalled SDKs this job never uses (about 25 GB) before building.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift || true
+          df -h /
 
       - name: Install toolchain
         run: |
@@ -235,6 +245,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The runner disk filled up while linking the ~800 tests ("final link failed: No space left on device", 2026-11-20).
+      # Remove big preinstalled SDKs this job never uses (about 25 GB) before building.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift || true
+          df -h /
+
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
@@ -256,10 +274,12 @@ jobs:
         run: sudo sysctl -w vm.mmap_rnd_bits=28
 
       # -g1: line tables are enough for file:line in sanitizer stack traces and
-      # keep the Debug objects a fraction of the size of full -g.
+      # keep the Debug objects a fraction of the size of full -g. -gz and the linker flag compress that debug
+      # data: without them this job ran out of disk even after "Free disk space" (2026-11-20, #1067).
       - name: Configure
         run: |
-          cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS_DEBUG=-g1 \
+          cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug "-DCMAKE_CXX_FLAGS_DEBUG=-g1 -gz" \
+            "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--compress-debug-sections=zlib" \
             -DOKAY_SANITIZE=address,undefined,float-cast-overflow -DOKAY_BUILD_TESTS=ON \
             -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
@@ -716,6 +736,36 @@ jobs:
         # app_restart also drives the verified restart with real processes: self-check, rollback to the previous launcher file, state file.
         # --timeout: a hang in a real-process case fails in 150 s with its output instead of using the whole 30 minutes; -V prints each case as it runs.
         run: ctest --test-dir build -C Release -R "^(app_restart|self_update|anticheat_golden|anticheat_integrity_fallback)$" --output-on-failure --timeout 150 -V
+
+  # MSVC build-and-test (rule 24d, step 1). NOT required. Builds the core engine library and pure-logic tests with
+  # the real MSVC compiler (the release stays the MinGW cross-compile). Nothing from the SDK is shipped.
+  msvc-build:
+    name: MSVC build and test (not required)
+    # Not on pull requests yet: CLAUDE.md rule 6 needs every PR job green, and this job is new. It runs on pushes to
+    # main so its results are visible without blocking merges; the owner decides later whether it becomes required.
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure (MSVC, Ninja, Release)
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && cmake -S . -B build-msvc -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_BUILD_EDITOR=OFF -DOKAY_BUILD_PLAYER=OFF -DOKAY_USE_SODIUM=OFF -DOKAY_BUILD_OKAYUI_TESTS=OFF"
+          if ($LASTEXITCODE -ne 0) { throw "configure failed" }
+
+      - name: Build the engine and pure-logic tests
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && cmake --build build-msvc --target test_math test_scene test_serialize test_material test_actionlist test_prefs test_physics3d test_core_features test_charctrl test_transform_input"
+          if ($LASTEXITCODE -ne 0) { throw "build failed" }
+
+      - name: Run the tests
+        shell: pwsh
+        run: ctest --test-dir build-msvc -R "^(math|scene|serialize|material|actionlist|prefs|physics3d|core_features|charctrl|transform_input)$" --output-on-failure --timeout 150
 
   web-build:
     name: WebGL build (Emscripten)

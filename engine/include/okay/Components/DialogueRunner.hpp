@@ -16,6 +16,9 @@
 
 namespace okay {
 
+class CinemachineBrain;
+class VirtualCamera;
+
 class DialogueRunner final : public Behaviour {
 public:
     std::string graphFile;              ///< the .okaydialog (project-relative)
@@ -31,6 +34,17 @@ public:
     bool  canCancel = true;             ///< Escape ends the conversation
     int   startNode = -1;               ///< the node to start at (-1 = the graph's start)
     std::string playerName;             ///< who talks (empty = the player: tag "Player" or the camera's subject)
+
+    /// A camera shot for one line: when the line with this node id starts, the main camera's brain
+    /// blends to the virtual camera with this object name; when the conversation ends it goes back
+    /// to what it showed before. Lines without a shot keep the shot that is on. Saved in the scene record.
+    struct CameraShotEntry { int node = -1; std::string camera; };
+    std::vector<CameraShotEntry> cameraShots;
+    float shotBlend = -1.0f;            ///< blend seconds into a line's shot (< 0 = the shot's own time)
+    /// Set (or clear, with "") the shot of line `nodeId`.
+    void SetCameraShot(int nodeId, const std::string& camera);
+    /// The shot of line `nodeId`, "" when it has none.
+    std::string CameraShot(int nodeId) const;
 
     /// What the box shows: the speaker, the whole line and the part typed so far,
     /// the portrait path, and the visible choices at a choice node.
@@ -108,6 +122,9 @@ private:
 
     void Present();
     void Ended();
+    void StartShot();                  ///< the current line's camera shot, if it has one
+    void EndShot();                    ///< back to the shot from before the conversation
+    CinemachineBrain* MainBrain() const;
     void HandleInput();
     void DrawUI();
     void SetPrompt(const std::string& text);
@@ -123,6 +140,8 @@ private:
     int   m_lineId = -1;
     bool  m_wasActive = false;
     std::string m_promptShown;
+    bool m_shotOn = false;              ///< a line's shot is forced on the brain
+    VirtualCamera* m_shotBefore = nullptr;   ///< what the brain had forced before (checked before use)
 };
 
 /// True while a built-in story overlay on `go` owns the pointer (a running dialogue

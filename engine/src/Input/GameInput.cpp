@@ -1,6 +1,8 @@
 #include "okay/Input/GameInput.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
+#include "okay/Components/Seat.hpp"
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/ChestInventory.hpp"
@@ -42,7 +44,66 @@ bool PointerOnUI(const Scene* scene) {
     return UIRaycast(const_cast<Scene&>(*scene), Input::MousePosition()) != nullptr;
 }
 
+// One reading of the Interact action's bindings: 0 held, 1 pressed this frame, 2 released this frame.
+bool InteractRead(int what) {
+    const InputActions::Action* a = InputActions::Find("Interact");
+    if (!a) return false;
+    for (const InputBinding& b : a->bindings) {
+        switch (b.kind) {
+        case InputBinding::Kind::Key: {
+            const char k = (char)b.code;
+            if (what == 0 ? Input::GetKeyGame(k) : what == 1 ? Input::GetKeyDownGame(k) : Input::GetKeyUp(k)) return true;
+            break;
+        }
+        case InputBinding::Kind::Mouse:
+            if (what == 0 ? Input::GetMouseButton(b.code) : what == 1 ? Input::GetMouseButtonDown(b.code) : Input::GetMouseButtonUp(b.code))
+                return true;
+            break;
+        case InputBinding::Kind::PadButton:
+            if (what == 0 ? Input::GetGamepadButton(b.code, b.player) : what == 1 ? Input::GetGamepadButtonDown(b.code, b.player)
+                                                                       : Input::GetGamepadButtonUp(b.code, b.player))
+                return true;
+            break;
+        default: break;   // directions and chords are not a use key
+        }
+    }
+    return false;
+}
+
 } // namespace
+
+bool InteractPressed() { return InteractRead(1); }
+bool InteractHeld() { return InteractRead(0); }
+bool InteractReleased() { return InteractRead(2); }
+
+bool IsInteractKey(char key) {
+    if (!key) return false;
+    const InputActions::Action* a = InputActions::Find("Interact");
+    if (!a) return false;
+    for (const InputBinding& b : a->bindings)
+        if (b.kind == InputBinding::Kind::Key && (char)b.code == key) return true;
+    return false;
+}
+
+bool UseKeyDown(char componentKey) {
+    if (!componentKey) return false;
+    if (componentKey == kInteractDefaultKey) return InteractPressed();
+    return Input::GetKeyDown(componentKey);
+}
+
+bool UseKeyIs(char componentKey, char key) {
+    if (!componentKey || !key) return false;
+    if (componentKey == kInteractDefaultKey) return IsInteractKey(key);
+    return componentKey == key;
+}
+
+std::string UseKeyName(char componentKey) {
+    if (componentKey == kInteractDefaultKey)
+        if (const InputActions::Action* a = InputActions::Find("Interact"))
+            for (const InputBinding& b : a->bindings)
+                if (b.kind == InputBinding::Kind::Key || b.kind == InputBinding::Kind::Mouse) return b.Label();
+    return Input::KeyName(componentKey);
+}
 
 const char* GameInputBlockReason(const Scene* scene, unsigned mask) {
     if ((mask & (unsigned)GameInputMask::Pause) && Game::Paused()) return "pause";
@@ -75,11 +136,11 @@ bool InteractClaimsKey(const Scene* scene, char key) {
         if (!h || !h->enabled || !h->gameObject) continue;
         const auto* hold = h->gameObject->GetComponent<ProceduralObjectHolding>();
         if (!hold || !hold->IsHolding()) continue;
-        if (h->dropKey == key || (h->altDropKey && h->altDropKey == key)) return true;
+        if (UseKeyIs(h->dropKey, key) || (h->altDropKey && h->altDropKey == key)) return true;
     }
     if (!havePlayer) return false;
     for (const ItemPickup* pk : scene->FindObjectsOfType<ItemPickup>()) {
-        if (!pk || !pk->enabled || pk->interactKey != key || pk->Held()) continue;
+        if (!pk || !pk->enabled || !UseKeyIs(pk->interactKey, key) || pk->Held()) continue;
         const GameObject* go = pk->gameObject;
         if (!go || !go->active || !go->transform) continue;
         if ((go->transform->Position() - at).Magnitude() <= pk->interactRange) return true;
@@ -90,6 +151,9 @@ bool InteractClaimsKey(const Scene* scene, char key) {
 bool LeanKeyTaken(const Scene* scene, char key) {
     if (!scene || !key) return false;
     if (InteractClaimsKey(scene, key)) return true;
+    if (IsInteractKey(key))   // a seat in reach (or the one the player sits on) takes the Interact key
+        for (const Seat* s : scene->FindObjectsOfType<Seat>())
+            if (s && s->enabled && (s->playerInRange || s->Occupant())) return true;
     if (!Input::GetKeyDown(key)) return false;
     for (const InventoryUI* ui : scene->FindObjectsOfType<InventoryUI>())
         if (ui && ui->enabled && ui->toggleKey == key) return true;

@@ -134,7 +134,7 @@ public:
 
     // ---- Lean (peek around corners) ----
     char  leanLeftKey  = 'q';           // 0 = disabled
-    char  leanRightKey = 'e';           // 0 = disabled
+    char  leanRightKey = 'x';           // 0 = disabled. Was E; E is the shared Interact key now (scenes that saved E keep it)
     float leanAngle  = 14.0f;           // camera roll while leaning (degrees)
     float leanOffset = 0.35f;           // sideways camera shift while leaning (units)
     float leanSpeed  = 10.0f;           // how fast the lean eases in/out

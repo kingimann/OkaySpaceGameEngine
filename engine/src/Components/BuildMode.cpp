@@ -5,6 +5,7 @@
 #include "okay/Components/Buildable.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/Canvas.hpp"
@@ -375,7 +376,7 @@ void LogicSource::Update(float dt) {
         case Kind::Relay: break;
         case Kind::Button: {
             Scene* s = GetScene();
-            const bool key = pressKey && Input::GetKeyDown(pressKey);
+            const bool key = UseKeyDown(pressKey);   // E follows the shared Interact action
             // The pad's X also turns pieces in build mode, so it only presses outside it.
             const bool pad = pressPadButton >= 0 && Input::GetGamepadButtonDown(pressPadButton) &&
                              !(s && AnyBuildModeActive(*s));

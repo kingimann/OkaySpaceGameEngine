@@ -13,6 +13,10 @@
 #include "okay/Components/UIAnchor.hpp"        // UICanvas
 #include "okay/Core/Localization.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Components/Camera.hpp"
+#include "okay/Components/CinemachineBrain.hpp"
+#include "okay/Components/VirtualCamera.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Core/Utf8.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
@@ -194,6 +198,21 @@ DialogueRunner* DialogueRunner::FindByName(Scene* scene, const std::string& name
     return nullptr;
 }
 
+void DialogueRunner::SetCameraShot(int nodeId, const std::string& camera) {
+    for (std::size_t i = 0; i < cameraShots.size(); ++i)
+        if (cameraShots[i].node == nodeId) {
+            if (camera.empty()) cameraShots.erase(cameraShots.begin() + (std::ptrdiff_t)i);
+            else cameraShots[i].camera = camera;
+            return;
+        }
+    if (!camera.empty()) cameraShots.push_back({nodeId, camera});
+}
+
+std::string DialogueRunner::CameraShot(int nodeId) const {
+    for (const CameraShotEntry& e : cameraShots) if (e.node == nodeId) return e.camera;
+    return {};
+}
+
 bool DialogueRunner::StartDialogue(int nodeId) {
     m_host.r = this;
     if (!m_loaded && !graphFile.empty()) {
@@ -216,6 +235,43 @@ void DialogueRunner::Present() {
     m_lineId = n ? n->id : -1;
     m_shown = typewriterSpeed <= 0.0f ? 1e9f : 0.0f;
     m_lineTime = 0.0f;
+    StartShot();
+}
+
+CinemachineBrain* DialogueRunner::MainBrain() const {
+    Scene* s = gameObject ? gameObject->scene() : nullptr;
+    if (!s || !s->mainCamera || !s->mainCamera->gameObject) return nullptr;
+    GameObject* cg = s->mainCamera->gameObject;
+    auto* br = cg->GetComponent<CinemachineBrain>();
+    return br ? br : cg->AddComponent<CinemachineBrain>();
+}
+
+void DialogueRunner::StartShot() {
+    if (cameraShots.empty()) return;
+    const std::string name = CameraShot(m_lineId);
+    Scene* s = gameObject ? gameObject->scene() : nullptr;
+    if (name.empty() || !s) return;
+    GameObject* g = s->Find(name);
+    VirtualCamera* v = g ? g->GetComponent<VirtualCamera>() : nullptr;
+    if (!v) { Log::Warning("[dialogue] camera shot \"", name, "\" is not a virtual camera in this scene"); return; }
+    CinemachineBrain* br = MainBrain();
+    if (!br) return;
+    if (!m_shotOn) { m_shotOn = true; m_shotBefore = br->Forced(); }
+    br->ForceLive(v, shotBlend);
+}
+
+void DialogueRunner::EndShot() {
+    if (!m_shotOn) return;
+    m_shotOn = false;
+    VirtualCamera* before = m_shotBefore;
+    m_shotBefore = nullptr;
+    Scene* s = gameObject ? gameObject->scene() : nullptr;
+    auto* br = (s && s->mainCamera && s->mainCamera->gameObject) ? s->mainCamera->gameObject->GetComponent<CinemachineBrain>() : nullptr;
+    if (!br) return;
+    bool alive = false;   // the shot a script had forced before the talk, if it is still in the scene
+    if (before) for (VirtualCamera* v : s->FindObjectsOfType<VirtualCamera>()) if (v == before) { alive = true; break; }
+    if (alive) br->ForceLive(before);
+    else br->ReleaseForced();
 }
 
 void DialogueRunner::Advance() {
@@ -243,6 +299,7 @@ void DialogueRunner::Ended() {
     if (!m_wasActive) return;
     m_wasActive = false;
     m_lineId = -1;
+    EndShot();
     Scene* s = gameObject ? gameObject->scene() : nullptr;
     if (QuestLog* q = QuestLog::Get(s, false)) q->NotifyDialogueEnd(gameObject ? gameObject->name : std::string(), GraphName());
     const std::vector<vs::VsValue> args{vs::VsValue(GraphName())};
@@ -326,8 +383,8 @@ void DialogueRunner::Update(float dt) {
     // Not talking: the prompt and the interact key.
     const bool near = startMode == 0 && interactKey && enabled && InRange();
     if (near) {
-        SetPrompt(promptText.empty() ? UiText("dialogue.talk", Input::KeyName(interactKey)) : promptText);
-        if (Input::GetKeyDown(interactKey) && !Input::UICaptured()) {
+        SetPrompt(promptText.empty() ? UiText("dialogue.talk", UseKeyName(interactKey)) : promptText);
+        if (UseKeyDown(interactKey) && !Input::UICaptured()) {
             ItemPickup::BlockInteract();
             StartDialogue();
             if (IsActive() && drawUI) DrawUI();
@@ -344,7 +401,7 @@ void DialogueRunner::HandleInput() {
             if (Input::GetKeyDown((char)('1' + i))) { Choose(i); return; }
         return;
     }
-    const bool confirm = (interactKey && Input::GetKeyDown(interactKey)) || Input::GetKeyDown('\r') ||
+    const bool confirm = UseKeyDown(interactKey) || Input::GetKeyDown('\r') ||
                          Input::GetKeyDown(' ') || Input::GetMouseButtonDown(0);
     if (confirm) Advance();
 }
@@ -372,7 +429,7 @@ void DialogueRunner::DrawUI() {
             if (ui->PrimaryButton(label.c_str())) { Choose((int)i); break; }
         }
     } else {
-        const std::string hint = l.complete ? UiText("dialogue.continue", Input::KeyName(interactKey ? interactKey : '\r')) : "...";
+        const std::string hint = l.complete ? UiText("dialogue.continue", interactKey ? UseKeyName(interactKey) : Input::KeyName('\r')) : "...";
         ui->TextDim(hint.c_str());
     }
     ui->End();

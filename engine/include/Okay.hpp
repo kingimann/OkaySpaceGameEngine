@@ -263,6 +263,7 @@
 #include "okay/Components/PlayerDebug.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/PlayerController.hpp"
+#include "okay/Components/ControllerTuning.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/VehicleSeat.hpp"

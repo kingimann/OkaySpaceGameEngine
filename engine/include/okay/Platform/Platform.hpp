@@ -115,6 +115,9 @@ struct Event {
     int width = 0, height = 0;
     int deviceId = 0;
     std::string text;
+    /// TextEditing only: clause boundaries of `text` in code points (first 0, last = length), from the input method. Empty when
+    /// the IME gave none (and always on the sdl2 backend, whose SDL_TEXTEDITING has no clauses).
+    std::vector<int> clauses;
     /// The backend's own record of this event (sdl2: a `const SDL_Event*`), for the one consumer that still needs it (Dear
     /// ImGui's imgui_impl_sdl2 while it is the default). Null on the own backends. Valid only until the next PollEvent
     /// or PumpEvents call on the same backend; copy nothing out of it later. A DropFile's string has already been taken

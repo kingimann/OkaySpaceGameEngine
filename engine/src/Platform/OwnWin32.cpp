@@ -626,6 +626,7 @@ public:
         case WM_IME_COMPOSITION: {
             std::u16string comp;
             int cursor = 0;
+            std::vector<uint32_t> clauseUnits;
             if (HIMC imc = ImmGetContext(h)) {
                 if (lp & GCS_COMPSTR) {
                     const LONG bytes = ImmGetCompositionStringW(imc, GCS_COMPSTR, nullptr, 0);
@@ -634,24 +635,36 @@ public:
                         ImmGetCompositionStringW(imc, GCS_COMPSTR, &comp[0], (DWORD)bytes);
                     }
                 }
+                if (lp & GCS_COMPCLAUSE) {
+                    const LONG bytes = ImmGetCompositionStringW(imc, GCS_COMPCLAUSE, nullptr, 0);
+                    if (bytes > 0 && bytes < (1 << 16)) {
+                        clauseUnits.resize((size_t)bytes / sizeof(DWORD));
+                        ImmGetCompositionStringW(imc, GCS_COMPCLAUSE, clauseUnits.data(), (DWORD)bytes);
+                    }
+                }
                 if (lp & GCS_CURSORPOS) cursor = (int)(ImmGetCompositionStringW(imc, GCS_CURSORPOS, nullptr, 0) & 0xFFFF);
                 ImmReleaseContext(h, imc);
             }
-            for (const win32ime::Editing& ed : win->m_ime.Composition((uint32_t)lp, comp, cursor)) {
-                Event t = e; t.type = EventType::TextEditing; t.text = ed.text; t.x = ed.cursor;
+            for (const win32ime::Editing& ed : win->m_ime.Composition((uint32_t)lp, comp, cursor, clauseUnits)) {
+                Event t = e; t.type = EventType::TextEditing; t.text = ed.text; t.x = ed.cursor; t.clauses = ed.clauses;
                 b->m_pending.push_back(t);
             }
             break;   // the finished text comes back through DefWindowProc as WM_CHAR, which becomes TextInput
         }
         case WM_IME_ENDCOMPOSITION: {
             for (const win32ime::Editing& ed : win->m_ime.End()) {
-                Event t = e; t.type = EventType::TextEditing; t.text = ed.text; t.x = ed.cursor;
+                Event t = e; t.type = EventType::TextEditing; t.text = ed.text; t.x = ed.cursor; t.clauses = ed.clauses;
                 b->m_pending.push_back(t);
             }
             break;
         }
         case WM_SETFOCUS: e.type = EventType::WindowFocusGained; b->m_pending.push_back(e); return 0;
-        case WM_KILLFOCUS: e.type = EventType::WindowFocusLost; b->m_pending.push_back(e); return 0;
+        case WM_KILLFOCUS:
+            for (const win32ime::Editing& ed : win->m_ime.FocusLost()) {
+                Event t = e; t.type = EventType::TextEditing; t.text = ed.text; t.x = ed.cursor; t.clauses = ed.clauses;
+                b->m_pending.push_back(t);
+            }
+            e.type = EventType::WindowFocusLost; b->m_pending.push_back(e); return 0;
         case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h, &ps); EndPaint(h, &ps); e.type = EventType::WindowExposed; b->m_pending.push_back(e); return 0; }
         case WM_KEYDOWN: case WM_SYSKEYDOWN: case WM_KEYUP: case WM_SYSKEYUP: {
             e.type = (m == WM_KEYDOWN || m == WM_SYSKEYDOWN) ? EventType::KeyDown : EventType::KeyUp;

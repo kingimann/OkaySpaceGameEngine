@@ -2,10 +2,11 @@
 // Vault, mantle and ledge-grab motion. The clips live in HumanoidActions.
 // canVault / canMantle / canLedgeGrab on the controllers default off, so
 // walking into a wall does nothing until a game opts in. vault() still probes.
-// Hands on the ledge: LedgeHandsIK (reads the lip kept in TraverseJobs / HangPoints).
+// Hands on the ledge: LedgeHandsIK (reads the edge kept in TraverseJobs / HangEdges).
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
+#include <cmath>
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -20,6 +21,8 @@ struct TraverseProbe {
     TraverseKind kind = TraverseKind::None;
     Vec3 from{}, to{};
     Vec3 lip{};          ///< stand-on-top point, kept when `to` is a hang
+    Vec3 edge{};         ///< a Ledge: the grabbed top edge (the wall hit, at the top's height)
+    Vec3 edgeNormal{};   ///< a Ledge: horizontal, from the wall toward the body
     float height = 0.0f;
     float duration = 0.5f;
 };
@@ -34,6 +37,8 @@ struct TraverseJob {
     std::vector<bool> wasEnabled;
     bool rememberLip = false;
     Vec3 lip{};
+    bool haveEdge = false;   ///< `edge` / `edgeNormal` came from the probe
+    Vec3 edge{}, edgeNormal{};
 };
 
 inline std::unordered_map<GameObject*, TraverseJob>& TraverseJobs() {
@@ -46,6 +51,14 @@ inline std::unordered_map<GameObject*, Vec3>& HangPoints() {
     return pts;
 }
 inline std::unordered_map<GameObject*, float>& HangGravity();
+
+/// The top edge a hanging body holds (LedgeHandsIK puts the hands on it). Set with HangPoints
+/// when a ledge grab ends; a hang without one (HangPoints set by hand) has no entry.
+struct HangEdge { Vec3 point{}, normal{}; };
+inline std::unordered_map<GameObject*, HangEdge>& HangEdges() {
+    static std::unordered_map<GameObject*, HangEdge> e;
+    return e;
+}
 
 /// These maps are keyed by object address. A scene that ends (or an object destroyed) in the middle of a
 /// move leaves its entries behind, and the next object to be given that address would look busy or hanging.
@@ -62,6 +75,7 @@ inline void TraverseValidate(GameObject* go) {
     if (it != owners.end()) {   // a different object lived here: forget everything kept for it
         TraverseJobs().erase(go);
         HangPoints().erase(go);
+        HangEdges().erase(go);
         HangGravity().erase(go);
     }
     owners[go] = go->InstanceId();
@@ -120,6 +134,12 @@ inline TraverseProbe ProbeTraverse(GameObject* go, const Vec3& fwd, bool airborn
     else if (airborne) {
         p.kind = TraverseKind::Ledge; p.duration = 0.4f;
         p.to = down.point - f * 0.25f + Vec3{0, -1.05f, 0};
+        // The edge: where the wall face meets the top. The wall ray found the face, the
+        // down ray the top's height; the body hangs at the face (`to` above).
+        p.edge = Vec3{wall.point.x, down.point.y, wall.point.z};
+        Vec3 n{wall.normal.x, 0.0f, wall.normal.z};
+        const float nl = n.Magnitude();
+        p.edgeNormal = nl > 0.5f && std::isfinite(nl) ? n * (1.0f / nl) : f * -1.0f;
     }
     else { p.kind = TraverseKind::MantleHigh; p.duration = 0.8f; }
     return p;
@@ -163,6 +183,8 @@ inline void TickTraverse(GameObject* go, float dt) {
     if (go->transform) go->transform->SetPosition(j.to);
     if (j.rememberLip) {
         HangPoints()[go] = j.lip;
+        if (j.haveEdge) HangEdges()[go] = HangEdge{j.edge, j.edgeNormal};
+        else HangEdges().erase(go);
         if (j.hadGravity) HangGravity()[go] = j.gravity;   // stay weightless on the lip
     } else if (auto* rb = go->GetComponent<Rigidbody3D>()) {
         if (j.hadGravity) rb->gravityScale = j.gravity;

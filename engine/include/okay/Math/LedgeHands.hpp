@@ -3,8 +3,9 @@
 // LedgeHands - pure maths for "hands on the ledge" while a body hangs.
 // Written from the problem itself (two hands on the top edge of a wall, spread
 // along the edge, kept inside the arm's reach); no other project's code.
-//   LedgeFromLip  : the grab edge point and the wall normal, from the lip the
-//                   traverse probe keeps (a stand-on-top point behind the edge).
+//   LedgeFromEdge : the grip from the edge point and wall normal the grab probe found.
+//   LedgeFromLip  : a fallback when only the lip (a stand-on-top point behind the
+//                   edge) is known: the edge is taken `setback` in front of the body.
 //   LedgeHandTargets : left / right hand points on the edge.
 //   ClampToReach  : pull a target toward its shoulder so a straight arm can reach.
 // Blending in and out is IKFade (LimbIK.fadeTime); nothing here has state.
@@ -19,6 +20,19 @@ struct LedgeGrip {
     Vec3 edge{};      ///< point on the top edge, straight in front of the body
     Vec3 normal{};    ///< horizontal, points from the wall toward the body
 };
+
+/// `edge` is on the top edge, `normal` points from the wall toward the body (only its
+/// horizontal part is used).
+inline LedgeGrip LedgeFromEdge(const Vec3& edge, const Vec3& normal) {
+    LedgeGrip g;
+    const float len = std::sqrt(normal.x * normal.x + normal.z * normal.z);
+    if (!(len > 1e-4f) || !std::isfinite(len) || !std::isfinite(edge.x) || !std::isfinite(edge.y) || !std::isfinite(edge.z))
+        return g;
+    g.edge = edge;
+    g.normal = Vec3{normal.x / len, 0.0f, normal.z / len};
+    g.valid = true;
+    return g;
+}
 
 /// `body` is where the hanging body stands, `lip` the stand-on-top point beyond the
 /// edge. The body hangs `setback` metres out from the edge; the edge keeps the lip's height.

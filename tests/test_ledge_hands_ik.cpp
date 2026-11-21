@@ -96,6 +96,12 @@ int main() {
         const Vec3 out = ClampToReach({0, 1, 0}, {0, 4, 0}, 0.6f);
         CHECK_NEAR(out.y, 1.6f, 1e-5); CHECK_NEAR(out.x, 0.0f, 1e-6);
         CHECK_NEAR(ClampToReach({1, 1, 1}, {1, 1, 1}, 0.5f).x, 1.0f, 1e-6);
+        // From the probe's edge: the point is kept, the normal is flattened and normalised.
+        const LedgeGrip ge = LedgeFromEdge({1, 2, -0.4f}, {0, 0.5f, 2.0f});
+        CHECK(ge.valid);
+        CHECK_NEAR(ge.edge.z, -0.4f, 1e-6); CHECK_NEAR(ge.normal.z, 1.0f, 1e-5); CHECK_NEAR(ge.normal.y, 0.0f, 1e-6);
+        CHECK(!LedgeFromEdge({0, 2, 0}, {0, 1, 0}).valid);      // no horizontal direction
+        CHECK(!LedgeFromEdge({0, NAN, 0}, {0, 0, 1}).valid);
     }
 
     // ---- component: two arms, hands go onto the ledge while a lip is held, then fade off

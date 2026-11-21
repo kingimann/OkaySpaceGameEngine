@@ -397,14 +397,9 @@ const Prop* ArrayPropOf(const Elem& e, const char* name) {
     return (c && !c->props.empty() && c->props[0].type == 'a') ? &c->props[0] : nullptr;
 }
 const Array* ArrayOf(const Elem& e, const char* name) { const Prop* p = ArrayPropOf(e, name); return p ? &p->arr : nullptr; }
-Layer LoadLayer(const Elem& geo, const char* layerName, const char* valName, const char* idxName, int dim) {
+/// The layer an element describes (`best`: one LayerElementNormal / UV / Color / Material child of the geometry).
+Layer LayerOfElem(const Elem* best, const char* valName, const char* idxName, int dim) {
     Layer L; L.dim = dim;
-    const Elem* best = nullptr; double bestIdx = 1e30;
-    for (const Elem& c : geo.children) {
-        if (c.name != layerName) continue;
-        const double k = (!c.props.empty() && c.props[0].IsNumber()) ? c.props[0].Num() : 0;
-        if (!best || k < bestIdx) { best = &c; bestIdx = k; }
-    }
     if (!best) return L;
     std::string_view mp, ref;
     if (const Elem* m = best->Find("MappingInformationType")) if (!m->props.empty()) mp = m->props[0].s();
@@ -420,6 +415,34 @@ Layer LoadLayer(const Elem& geo, const char* layerName, const char* valName, con
     if (L.indexed) { L.idxProp = ArrayPropOf(*best, idxName); L.idx = L.idxProp ? &L.idxProp->arr : nullptr; if (!L.idx) L.indexed = false; }
     if (L.indexed && !L.vals && std::string(valName) != idxName) { L.vals = nullptr; L.valsProp = nullptr; }
     return L;
+}
+/// Every `layerName` child of the geometry, ordered by its index (the element's first property; a missing one counts
+/// as 0), elements with equal indices in file order. A geometry has one such element per layer (FBX "layers": set 0,
+/// set 1, ...), so for UVs this is the list of UV sets.
+std::vector<const Elem*> LayerElems(const Elem& geo, const char* layerName) {
+    std::vector<std::pair<double, const Elem*>> found;
+    for (const Elem& c : geo.children)
+        if (c.name == layerName) found.push_back({(!c.props.empty() && c.props[0].IsNumber()) ? c.props[0].Num() : 0, &c});
+    std::stable_sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::vector<const Elem*> out; out.reserve(found.size());
+    for (const auto& f : found) out.push_back(f.second);
+    return out;
+}
+/// The first layer of a kind: the element with the lowest index (the first in the file among equal ones).
+Layer LoadLayer(const Elem& geo, const char* layerName, const char* valName, const char* idxName, int dim) {
+    const Elem* best = nullptr; double bestIdx = 1e30;
+    for (const Elem& c : geo.children) {
+        if (c.name != layerName) continue;
+        const double k = (!c.props.empty() && c.props[0].IsNumber()) ? c.props[0].Num() : 0;
+        if (!best || k < bestIdx) { best = &c; bestIdx = k; }
+    }
+    return LayerOfElem(best, valName, idxName, dim);
+}
+/// A layer element's "Name" (a UV set's name), "" when it has none.
+std::string LayerName(const Elem* e) {
+    if (!e) return std::string();
+    const Elem* n = e->Find("Name");
+    return (n && !n->props.empty()) ? std::string(n->props[0].s()) : std::string();
 }
 /// Fetches value `out[0..dim)` for a corner. Returns false when the data does not cover it.
 inline bool Fetch(const Layer& L, std::size_t pv, std::size_t face, std::size_t cp, const std::vector<int>& edgeOfCorner, double* out) {
@@ -554,7 +577,7 @@ std::uint64_t PolygonCorners(const Array& pvi, std::size_t ncp) {
 // ---------------------------------------------------------------------------
 // animation keys at the file's own key times (BuildOptions::fileKeys)
 // ---------------------------------------------------------------------------
-// Written for this engine from first principles (cubic interpolation, quaternion algebra); docs/own_fbx_reader.md,
+// Written for this engine from first principles (cubic interpolation, quaternion algebra); docs/content/model_readers.md (FBX part),
 // "Animation keys".
 
 /// The smallest and largest value on [0, 1] of the cubic through (0, y0), (1/3, y1), (2/3, y2), (1, y3). Newton's
@@ -1194,7 +1217,22 @@ struct Builder {
         if (total > opt.limits.maxCorners - std::min(cornersBuilt, opt.limits.maxCorners)) return Fail("mesh too large");
         cornersBuilt += (std::size_t)total;
         const Layer ln = LoadLayer(g, "LayerElementNormal", "Normals", "NormalsIndex", 3);
-        const Layer lu = LoadLayer(g, "LayerElementUV", "UV", "UVIndex", 2);
+        // UV sets: set 0 is the element with the lowest index (Corner::uv); the others, in index order, are extra sets
+        // (Part::extraUVs). A set whose mapping or values cannot be read is skipped; at most Limits::maxUVSets.
+        const std::vector<const Elem*> uvElems = LayerElems(g, "LayerElementUV");
+        const Layer lu = LayerOfElem(uvElems.empty() ? nullptr : uvElems[0], "UV", "UVIndex", 2);
+        std::vector<Layer> lx;
+        if (lu.Ok()) {
+            m.uvSetNames.push_back(LayerName(uvElems[0]));
+            for (std::size_t k = 1; k < uvElems.size() && m.uvSetNames.size() < opt.limits.maxUVSets; ++k) {
+                const Layer L = LayerOfElem(uvElems[k], "UV", "UVIndex", 2);
+                if (!L.Ok()) continue;
+                lx.push_back(L);
+                m.uvSetNames.push_back(LayerName(uvElems[k]));
+            }
+        }
+        bool anyByEdge = false;
+        for (const Layer& L : lx) if (L.map == kByEdge) anyByEdge = true;
         const Layer lc = LoadLayer(g, "LayerElementColor", "Colors", "ColorIndex", 4);
         Layer lm = LoadLayer(g, "LayerElementMaterial", "Materials", "Materials", 1);
         if (lm.Ok()) lm.indexed = false;          // material ids are the values themselves
@@ -1205,8 +1243,9 @@ struct Builder {
         P.positionScale = conv.s;
         P.positions = Keep(ArrayPropOf(g, "Vertices"));
         P.polygonVertexIndex = Keep(ArrayPropOf(g, "PolygonVertexIndex"));
-        if (ln.map == kByEdge || lu.map == kByEdge || lc.map == kByEdge || lm.map == kByEdge) P.edges = Keep(ArrayPropOf(g, "Edges"));
+        if (ln.map == kByEdge || lu.map == kByEdge || lc.map == kByEdge || lm.map == kByEdge || anyByEdge) P.edges = Keep(ArrayPropOf(g, "Edges"));
         P.normals = KeepLayer(ln); P.uvs = KeepLayer(lu); P.colors = KeepLayer(lc); P.materials = KeepLayer(lm);
+        for (const Layer& L : lx) P.extraUVs.push_back(KeepLayer(L));
         if (lm.Ok()) P.materials.indexed = false;
         // material slots: materials connected to the model, in connection order
         {
@@ -1352,7 +1391,7 @@ struct Animator : ClipSource {
     /// last evaluation (two, so the probes between keys do not move the one the keys use).
     struct NodeCN { int layer; int which; const CurveNode* cn; std::size_t hint[3]; std::size_t hintP[3]; };   // which: 0 T, 1 R, 2 S
 
-    // ---- keys at the file's own key times ---------------------------------------------------------------------
+    // ---- keys at the file's own key times ---------------------------------------------------------------------   // lint-allow: secret
     std::size_t fileKeyEvals = 0;   // evaluations so far (each counted once per curve node it reads), whole file
 
     /// One channel (0 T, 1 R, 2 S) at absolute file time `at`, the layers combined as the fixed-rate bake does.
@@ -1989,8 +2028,15 @@ bool PartsOf(Mesh& m, const Limits& lim, std::string& err) {
     };
     auto cpOf = [&](std::size_t i) { bool e; return cornerAt(i, e); };
     const Layer ln = LayerOf(P.normals), lu = LayerOf(P.uvs), lc = LayerOf(P.colors), lm = LayerOf(P.materials);
+    // Extra UV sets: `xw` floats per corner (2 per set), kept next to the corners; with none the code below is the
+    // one-set code it was before.
+    std::vector<Layer> lx;
+    for (const MeshLayer& ml : P.extraUVs) lx.push_back(LayerOf(ml));
+    const std::size_t xw = lx.size() * 2;
+    bool anyByEdge = false;
+    for (const Layer& L : lx) if (L.map == kByEdge) anyByEdge = true;
     std::vector<int> edgeOfCorner;   // only a ByEdge layer reads it
-    if (ln.map == kByEdge || lu.map == kByEdge || lc.map == kByEdge || lm.map == kByEdge)
+    if (ln.map == kByEdge || lu.map == kByEdge || lc.map == kByEdge || lm.map == kByEdge || anyByEdge)
         if (P.edges.present) {
             const Array* ed = &P.edges.a;
             edgeOfCorner.assign(npv, -1);
@@ -2017,7 +2063,7 @@ bool PartsOf(Mesh& m, const Limits& lim, std::string& err) {
     // Each part keeps its distinct corners and an index list. Equal corners (byte for byte) are found with an
     // open-addressing table of vertex numbers (power-of-two size, at most two thirds full, linear probing; the size
     // changes only the work, never which vertex a corner finds).
-    struct PartBuild { Part part; std::vector<std::uint32_t> table; std::uint32_t no = 0xFFFFFFFFu; };   // no: index in partList
+    struct PartBuild { Part part; std::vector<std::uint32_t> table; std::uint32_t no = 0xFFFFFFFFu; std::vector<float> xs; };   // no: index in partList; xs: xw floats per vertex
     const std::uint32_t kEmpty = 0xFFFFFFFFu;
     std::map<int, PartBuild> parts;
     for (const auto& kv : cornersOfSlot) {
@@ -2026,6 +2072,7 @@ bool PartsOf(Mesh& m, const Limits& lim, std::string& err) {
         pb.part.indices.reserve(kv.second);
         const std::size_t guess = std::min(kv.second, ncp + 16);   // distinct corners: usually about the vertex count
         pb.part.vertices.reserve(guess);
+        if (xw) pb.xs.reserve(guess * xw);
         std::size_t cap = 64;
         while (cap * 2 < guess * 3) cap <<= 1;
         pb.table.assign(cap, kEmpty);
@@ -2039,23 +2086,37 @@ bool PartsOf(Mesh& m, const Limits& lim, std::string& err) {
         h ^= h >> 32; h *= 0xD6E8FEB86659FD93ull; h ^= h >> 29;
         return h;
     };
-    auto addCorner = [&](PartBuild& pb, const Corner& c) {
+    // A corner's hash with its extra UV values (x: xw floats) mixed in; without extra sets it is hashCorner alone.
+    auto hashFull = [&](const Corner& c, const float* x) {
+        std::uint64_t h = hashCorner(c);
+        for (std::size_t k = 0; k < xw; ++k) {
+            std::uint32_t b; std::memcpy(&b, x + k, 4);
+            h = (h ^ b) * 0x9E3779B97F4A7C15ull; h ^= h >> 31;
+        }
+        return h;
+    };
+    auto addCorner = [&](PartBuild& pb, const Corner& c, const float* x) {
         std::vector<Corner>& vs = pb.part.vertices;
         if ((vs.size() + 1) * 3 > pb.table.size() * 2) {   // keep the table at most 2/3 full: double it and re-insert
             pb.table.assign(pb.table.size() * 2, kEmpty);
             const std::size_t mask = pb.table.size() - 1;
             for (std::size_t v = 0; v < vs.size(); ++v) {
-                std::size_t at = (std::size_t)hashCorner(vs[v]) & mask;
+                std::size_t at = (std::size_t)(xw ? hashFull(vs[v], pb.xs.data() + v * xw) : hashCorner(vs[v])) & mask;
                 while (pb.table[at] != kEmpty) at = (at + 1) & mask;
                 pb.table[at] = (std::uint32_t)v;
             }
         }
         const std::size_t mask = pb.table.size() - 1;
-        std::size_t at = (std::size_t)hashCorner(c) & mask;
+        std::size_t at = (std::size_t)(xw ? hashFull(c, x) : hashCorner(c)) & mask;
         for (;;) {
             const std::uint32_t u = pb.table[at];
-            if (u == kEmpty) { pb.table[at] = (std::uint32_t)vs.size(); pb.part.indices.push_back((std::uint32_t)vs.size()); vs.push_back(c); return; }
-            if (std::memcmp(&vs[u], &c, sizeof(Corner)) == 0) { pb.part.indices.push_back(u); return; }
+            if (u == kEmpty) {
+                pb.table[at] = (std::uint32_t)vs.size(); pb.part.indices.push_back((std::uint32_t)vs.size()); vs.push_back(c);
+                if (xw) pb.xs.insert(pb.xs.end(), x, x + xw);
+                return;
+            }
+            if (std::memcmp(&vs[u], &c, sizeof(Corner)) == 0 &&
+                (!xw || std::memcmp(pb.xs.data() + (std::size_t)u * xw, x, xw * sizeof(float)) == 0)) { pb.part.indices.push_back(u); return; }
             at = (at + 1) & mask;
         }
     };
@@ -2066,8 +2127,14 @@ bool PartsOf(Mesh& m, const Limits& lim, std::string& err) {
     const std::size_t kBatch = 2048;
     struct Pending { Corner c; std::uint32_t part; };   // 56 bytes (a pointer next to the corner would make it 64)
     std::vector<Pending> pending;
+    std::vector<float> pendingX;        // xw floats per entry of `pending` (extra UV sets only)
     std::vector<PartBuild*> partList;   // `part` above indexes this
     pending.reserve(std::min(total, kBatch));   // flushed as soon as it reaches kBatch
+    if (xw) pendingX.reserve(std::min(total, kBatch) * xw);
+    auto flush = [&]() {
+        for (std::size_t i = 0; i < pending.size(); ++i) addCorner(*partList[pending[i].part], pending[i].c, xw ? pendingX.data() + i * xw : nullptr);
+        pending.clear(); pendingX.clear();
+    };
     forEachPolygon([&](std::size_t fi, std::size_t start, std::size_t count, bool good) {
         if (count < 3 || !good) return true;
         const int slot = slotOfPolygon(fi, start);
@@ -2105,12 +2172,30 @@ bool PartsOf(Mesh& m, const Limits& lim, std::string& err) {
             double col[4];
             if (lc.Ok() && Fetch(lc, pv, fi, cp, edgeOfCorner, col)) for (int a = 0; a < 4; ++a) c.color[a] = (float)col[a];
             pending.push_back({c, partNo});
-            if (pending.size() >= kBatch) { for (auto& pc : pending) addCorner(*partList[pc.part], pc.c); pending.clear(); }
+            for (const Layer& L : lx) {   // extra UV sets: (0, 0) where a set does not cover the corner, as for set 0
+                double xu[2];
+                if (Fetch(L, pv, fi, cp, edgeOfCorner, xu)) { pendingX.push_back((float)xu[0]); pendingX.push_back((float)xu[1]); }
+                else { pendingX.push_back(0.0f); pendingX.push_back(0.0f); }
+            }
+            if (pending.size() >= kBatch) flush();
         }
         return true;
     });
-    for (auto& pc : pending) addCorner(*partList[pc.part], pc.c);   // (in the order they were made: the numbering is the same)
-    for (auto& kv : parts) if (!kv.second.part.indices.empty()) m.parts.push_back(std::move(kv.second.part));
+    flush();   // (in the order they were made: the numbering is the same)
+    for (auto& kv : parts) {
+        PartBuild& pb = kv.second;
+        if (pb.part.indices.empty()) continue;
+        if (xw) {   // split the interleaved values into one array per set
+            const std::size_t nv = pb.part.vertices.size();
+            pb.part.extraUVs.assign(lx.size(), std::vector<float>());
+            for (std::size_t k = 0; k < lx.size(); ++k) {
+                std::vector<float>& a = pb.part.extraUVs[k];
+                a.resize(nv * 2);
+                for (std::size_t v = 0; v < nv; ++v) { a[v * 2] = pb.xs[v * xw + k * 2]; a[v * 2 + 1] = pb.xs[v * xw + k * 2 + 1]; }
+            }
+        }
+        m.parts.push_back(std::move(pb.part));
+    }
     return true;
 }
 

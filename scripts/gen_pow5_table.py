@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Writes engine/src/Render/Pow5Table.inc: 128-bit approximations of 5^q for the exact decimal-to-double conversion in
-engine/src/Render/DecimalToDouble.hpp (docs/own_fbx_reader.md, "Exact ASCII numbers").
+engine/src/Render/DecimalToDouble.hpp (docs/content/model_readers.md (FBX part), "Exact ASCII numbers").
 
 Written for this engine from the definition, with Python's exact integers; no table from elsewhere was copied.
 

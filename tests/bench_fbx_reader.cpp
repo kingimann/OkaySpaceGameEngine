@@ -1,6 +1,6 @@
 // Speed and memory of our own FBX reader (okay::fbx) against ufbx, on the same files.
 //
-// Run:  bench_fbx_reader [--runs N] [--quiet] [--digest | --import-digest] [--only WHAT [--time]] <file.fbx | directory> ...
+// Run:  bench_fbx_reader [--runs N] [--quiet] [--digest | --parts-digest | --import-digest | --uv-sets] [--only WHAT [--time]] <file.fbx | directory> ...
 //       (a directory is searched recursively for .fbx files; with no argument it reads $OKAY_MODEL_CORPUS and the
 //        fixtures in tests/assets/fbx)
 //
@@ -19,7 +19,7 @@
 // way. On other C libraries the memory columns print "-".
 //
 // Not part of ctest: it prints numbers, it does not check them. Correctness is checked by fbx_reader and
-// model_corpus (docs/model_corpus.md). `--digest` prints, per file, a hash of every field our reader produced (bit for
+// model_corpus (docs/content/model_corpus.md). `--digest` prints, per file, a hash of every field our reader produced (bit for
 // bit, the meshes' polygon arrays included), to show that a speed change did not change the output; `--parts-digest`
 // hashes the scene after BuildParts without the polygon arrays (the triangulated parts: what `--digest` hashed before
 // the reader left the triangulation to the import, 2026-11-16); `--import-digest` does the same for the whole imported
@@ -225,7 +225,12 @@ std::uint64_t Digest(const fbx::Scene& s, bool polygons) {
             // same whatever the vertex sharing
             h.Pod(p.slot); h.Pod(p.cornerCount());
             for (std::size_t i = 0; i < p.cornerCount(); ++i) { const fbx::Corner& c = p.corner(i); h.Pod(c.p); h.Pod(c.n); h.Pod(c.uv); h.Pod(c.color); h.Pod(c.cp); }
+            // extra UV sets (2026-11-21), per corner like the rest; a mesh with one set hashes as before
+            for (const std::vector<float>& x : p.extraUVs)
+                for (std::size_t i = 0; i < p.cornerCount(); ++i) { const std::size_t v = p.indices[i]; if (v * 2 + 1 < x.size()) { h.Pod(x[v * 2]); h.Pod(x[v * 2 + 1]); } }
         }
+        if (m.uvSetNames.size() > 1) for (const std::string& n : m.uvSetNames) h.Str(n);
+        if (polygons) for (const fbx::MeshLayer& l : m.polygons.extraUVs) HashLayer(h, l);
         h.Vec(m.materials);
         h.Pod(m.clusters.size());
         for (const fbx::Cluster& c : m.clusters) { h.Pod(c.boneNode); h.M(c.geometryToBone); }
@@ -266,7 +271,7 @@ std::uint64_t Digest(const fbx::Scene& s, bool polygons) {
 
 int main(int argc, char** argv) {
     int runs = 5;
-    bool quiet = false, digest = false, partsDigest = false, importDigest = false, timeOnly = false;
+    bool quiet = false, digest = false, partsDigest = false, importDigest = false, timeOnly = false, uvSets = false;
     std::string only;   // --only own-tree|own-load|ufbx-load|import-own|import-ufbx: run that once per file (for a profiler)
     std::vector<std::string> files;
     for (int i = 1; i < argc; ++i) {
@@ -275,6 +280,7 @@ int main(int argc, char** argv) {
         else if (a == "--quiet") quiet = true;
         else if (a == "--digest") digest = true;
         else if (a == "--parts-digest") partsDigest = true;
+        else if (a == "--uv-sets") uvSets = true;
         else if (a == "--import-digest") importDigest = true;
         else if (a == "--only" && i + 1 < argc) only = argv[++i];
         else if (a == "--time") timeOnly = true;   // with --only: run it --runs times and print the minimum and the median
@@ -290,6 +296,20 @@ int main(int argc, char** argv) {
     std::sort(files.begin(), files.end());
     files.erase(std::unique(files.begin(), files.end()), files.end());
     if (files.empty()) { std::fprintf(stderr, "no .fbx files given\n"); return 1; }
+    if (uvSets) {   // the UV sets of every mesh that has more than one: name and size of each
+        for (const std::string& path : files) {
+            fbx::Scene sc; std::string e;
+            if (!fbx::LoadFile(path, sc, &e) || !fbx::BuildParts(sc, &e)) { std::printf("%s error: %s\n", path.c_str(), e.c_str()); continue; }
+            for (const fbx::Mesh& m : sc.meshes) {
+                if (m.uvSetNames.size() < 2) continue;
+                std::size_t verts = 0; for (const fbx::Part& p : m.parts) verts += p.vertices.size();
+                std::printf("%s mesh '%s' %zu vertices, sets:", fs::path(path).filename().string().c_str(), m.name.c_str(), verts);
+                for (const std::string& n : m.uvSetNames) std::printf(" '%s'", n.c_str());
+                std::printf("\n");
+            }
+        }
+        return 0;
+    }
     if (digest || partsDigest) {   // one line per file: name, then the hash of our reader's whole result (or the error)
         for (const std::string& path : files) {
             fbx::Scene sc; std::string e;

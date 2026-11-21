@@ -1,7 +1,7 @@
 // The animation keys our FBX reader makes at the file's own key times (okay::fbx::BuildOptions::fileKeys, the default;
-// docs/own_fbx_reader.md, "Animation keys"), checked against the curves themselves. Standalone (no engine library), so
+// docs/content/model_readers.md (FBX part), "Animation keys"), checked against the curves themselves. Standalone (no engine library), so
 // it can run under sanitizers. For every animated node and blend shape weight of every fixture in tests/assets/fbx, of
-// every real file under $OKAY_MODEL_CORPUS when it is set (docs/model_corpus.md), and of any file or directory given on
+// every real file under $OKAY_MODEL_CORPUS when it is set (docs/content/model_corpus.md), and of any file or directory given on
 // the command line:
 //   - the truth is the same reader's fixed-rate bake at 240 Hz (every sample is the curves evaluated at that time, with
 //     the same code), the old clip is the fixed-rate bake at 30 Hz (the behaviour before 2026-11-16);

@@ -52,7 +52,7 @@ int main() {
         CHECK(before == 122 && c.KeyCount() == 4);
     }
 
-    // ---- Reduce skips its recheck on runs of equal values (a speed change for baked imports, docs/own_fbx_reader.md):
+    // ---- Reduce skips its recheck on runs of equal values (a speed change for baked imports, docs/content/model_readers.md (FBX part)):
     // the kept keys must be exactly the ones the plain rule keeps (every key between two kept keys checked against the
     // straight line), on curves with long flat runs, steps, ramps, repeated times and non-finite values.
     {

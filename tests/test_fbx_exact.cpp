@@ -1,5 +1,5 @@
 // The output-preserving fast paths of our FBX reader (okay::fbx), checked bit for bit against the plain code they
-// replaced, on random inputs that include -0, infinities, NaN and huge values (docs/own_fbx_reader.md, "Speed and
+// replaced, on random inputs that include -0, infinities, NaN and huge values (docs/content/model_readers.md (FBX part), "Speed and
 // memory"). White-box: this file compiles FbxScene.cpp itself (and test_fbx_exact_numbers.cpp compiles FbxReader.cpp),
 // so the internal functions can be called. Standalone: no engine library.
 //   - matrix products that drop the terms that are exactly zero (Mul, MulTranslate, MulScale, the one-axis rotations

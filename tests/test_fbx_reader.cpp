@@ -5,6 +5,9 @@
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Render/FbxReader.hpp"
 #include "okay/Render/ModelImport.hpp"
+#include "ufbx.h"
+#include <set>
+#include <tuple>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -33,7 +36,7 @@ static bool Near(double a, double b, double eps = 1e-5) { return std::fabs(a - b
 
 // A baked track played at time t as the engine plays it: linear between the two keys around t (a key at t exactly is
 // returned as it is); for rotations the second key's sign is matched to the first and the blend normalised. The clips
-// of our reader have keys at the file's own key times plus the ones it adds (docs/own_fbx_reader.md, "Animation keys"),
+// of our reader have keys at the file's own key times plus the ones it adds (docs/content/model_readers.md (FBX part), "Animation keys"),
 // so a check at a time needs this rather than a sample index.
 template <class K> static K KeyAt(const std::vector<K>& keys, double t) {
     std::size_t i = 0;
@@ -502,6 +505,57 @@ static std::vector<MatSnap> CollectMaterials(Scene& sc, GameObject* root) {
     return out;
 }
 
+// UV sets against ufbx, used as the oracle: for every mesh with UVs, the set names in order, and the distinct
+// (control point, value in every set) combinations over all polygons of 3 or more corners. Our parts hold exactly the
+// distinct corners, so both sides give the same list when every set is read and corners are merged only when all
+// sets agree. Values are compared as floats (ours are stored as float; ufbx keeps doubles).
+static void CompareUvSetsWithUfbx(const std::string& path, const std::string& what) {
+    fbx::Scene s; std::string err;
+    if (!LoadBuilt(path, s, &err)) return;   // (whether a file reads is checked elsewhere)
+    ufbx_load_opts uo{}; ufbx_error ue{};
+    ufbx_scene* us = ufbx_load_file(path.c_str(), &uo, &ue);
+    if (!us) return;
+    std::vector<const fbx::Mesh*> ours; std::vector<const ufbx_mesh*> theirs;
+    for (const fbx::Mesh& m : s.meshes) if (m.hasUV) ours.push_back(&m);
+    for (std::size_t i = 0; i < us->meshes.count; ++i) if (us->meshes.data[i]->uv_sets.count) theirs.push_back(us->meshes.data[i]);
+    const bool sameCount = ours.size() == theirs.size();
+    CHECK(sameCount);
+    if (!sameCount) std::cout << "  " << what << ": meshes with UVs, ours " << ours.size() << ", ufbx " << theirs.size() << "\n";
+    for (std::size_t k = 0; sameCount && k < ours.size(); ++k) {
+        const fbx::Mesh& m = *ours[k]; const ufbx_mesh& u = *theirs[k];
+        bool names = m.uvSetNames.size() == u.uv_sets.count;
+        for (std::size_t j = 0; names && j < u.uv_sets.count; ++j) names = m.uvSetNames[j] == std::string(u.uv_sets.data[j].name.data, u.uv_sets.data[j].name.length);
+        CHECK(names);
+        if (!names) { std::cout << "  " << what << " mesh " << k << ": UV set names differ (ours " << m.uvSetNames.size() << ", ufbx " << u.uv_sets.count << ")\n"; continue; }
+        const std::size_t ns = u.uv_sets.count;
+        std::set<std::vector<float>> a, b;   // cp, then u, v of each set
+        for (const fbx::Part& p : m.parts)
+            for (std::size_t v = 0; v < p.vertices.size(); ++v) {
+                std::vector<float> key{(float)p.vertices[v].cp, p.vertices[v].uv[0], p.vertices[v].uv[1]};
+                for (const auto& x : p.extraUVs) { key.push_back(x[v * 2]); key.push_back(x[v * 2 + 1]); }
+                a.insert(key);
+            }
+        for (std::size_t f = 0; f < u.faces.count; ++f) {
+            const ufbx_face fc = u.faces.data[f];
+            if (fc.num_indices < 3) continue;
+            for (std::uint32_t c = 0; c < fc.num_indices; ++c) {
+                const std::size_t ix = fc.index_begin + c;
+                std::vector<float> key{(float)u.vertex_indices.data[ix]};
+                for (std::size_t j = 0; j < ns; ++j) {
+                    const ufbx_vertex_vec2& uv = u.uv_sets.data[j].vertex_uv;
+                    const ufbx_vec2 val = uv.exists && ix < uv.indices.count && uv.indices.data[ix] < uv.values.count ? uv.values.data[uv.indices.data[ix]] : ufbx_vec2{0, 0};
+                    key.push_back((float)val.x); key.push_back((float)val.y);
+                }
+                b.insert(key);
+            }
+        }
+        const bool same = a == b;
+        CHECK(same);
+        if (!same) std::cout << "  " << what << " mesh " << k << ": distinct corners over " << ns << " UV sets, ours " << a.size() << ", ufbx " << b.size() << "\n";
+    }
+    ufbx_free_scene(us);
+}
+
 static void CompareWithUfbx() {
     RUN_SUITE("fbx: every fixture through ufbx and through our reader");
     int files = 0;
@@ -527,6 +581,7 @@ static void CompareWithUfbx() {
         const bool isReal = pi >= fixtureCount;
         ++files;
         const std::string what = fs::path(path).filename().string();
+        CompareUvSetsWithUfbx(path, what);
         // ufbx keeps a clip for a take whose curves animate only custom properties (a constant pose); ours drops it
         const bool clipsMayDiffer = what == "box_orphant_embedded_texture.fbx" || what == "box_embedded_texture_fragmented.fbx";
         fbx::Scene direct; std::string err;

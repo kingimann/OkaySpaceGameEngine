@@ -45,6 +45,7 @@ struct Limits {
     std::size_t maxCorners      = 8u * 1024 * 1024;   ///< triangle corners built, whole scene
     std::size_t maxNodes        = 1u * 1024 * 1024;   ///< scene nodes (models)
     std::size_t maxNodeDepth    = 2048;               ///< scene hierarchy depth
+    std::size_t maxUVSets       = 8;                  ///< UV sets read per mesh (LayerElementUV); the ones after are skipped
     // Animation. A small file can claim many stacks/curves/keys, or point many stacks at the same curves,
     // so besides the per-clip cap above there is a budget for the whole file.
     std::size_t maxAnimStacks   = 128;                ///< AnimationStack objects (takes)
@@ -372,7 +373,7 @@ struct Scene {
 };
 
 /// How close the clip's linear playback must stay to the file's curves when animation keys are made from the file's
-/// own key times (BuildOptions::fileKeys; docs/own_fbx_reader.md, "Animation keys"). Between two keys the engine plays
+/// own key times (BuildOptions::fileKeys; docs/content/model_readers.md (FBX part), "Animation keys"). Between two keys the engine plays
 /// translation and scale linearly and rotation as a normalised linear blend of quaternions; keys are added until that
 /// playback is within these of the curves.
 struct KeyTolerance {

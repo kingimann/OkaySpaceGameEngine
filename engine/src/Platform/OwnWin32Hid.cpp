@@ -6,7 +6,7 @@
 // GetRawInputDeviceList, GetRawInputDeviceInfo (RIDI_PREPARSEDDATA, RIDI_DEVICEINFO), GetRawInputData (RAWHID),
 // WM_INPUT_DEVICE_CHANGE, HidP_GetCaps / HidP_GetButtonCaps / HidP_GetValueCaps / HidP_GetUsages / HidP_GetUsageValue.
 //
-// Standard layout: PadMap.hpp (our own text map file, see docs/platform_layer.md). A pad found in the map file has
+// Standard layout: PadMap.hpp (our own text map file, see docs/platform/platform_layer.md). A pad found in the map file has
 // HasBuiltinMapping() true; otherwise Axis()/Button() use a guess from the axis, button and hat counts and
 // HasBuiltinMapping() is false. RawAxis / RawButton / RawHat always work. The name comes from HidD_GetProductString.
 //

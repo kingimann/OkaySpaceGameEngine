@@ -14,7 +14,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     3. Open the output folder and start the `.exe`.
   - **You should see (expected, not yet seen on Windows):** a standalone game folder with an exe; the exe opens your scene and plays it.
   - **Known partial:** the player (`Tools\OkaySpacePlayer.exe`) must be next to the editor; the build never downloads one.
-  - **More:** [build_mode.md](../../build_mode.md)
+  - **More:** [build_mode.md](../../gameplay/build_mode.md)
 
 - [ ] **V-BX-002** Build & Run and zip
   - **Map:** 18. **Where:** editor, Build Settings
@@ -39,7 +39,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     2. Check the exit code (`echo %errorlevel%`).
   - **You should see (expected, not yet seen on Windows):** exit code 0 and a built game in `OutDir`.
   - **Known partial:** the exit code is 0 only when the game was built; nothing is downloaded. A GUI exe may not print to the console.
-  - **More:** [../../editor.md](../../editor.md)
+  - **More:** [../../editor.md](../../editor/editor.md)
 
 - [ ] **V-BX-005** Editor update check
   - **Map:** 18.5, 17.1.2. **Where:** editor, Engine menu
@@ -47,8 +47,8 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     1. Choose **Engine > Check for Updates...**.
     2. Read the popup and the Console line ("Up to date" or "Update available").
   - **You should see (expected, not yet seen on Windows):** a message with the current and the latest version.
-  - **Known partial:** the editor's own installer uses the same checksum rules as the launcher (docs/updater.md); not run on Windows by us.
-  - **More:** [updater.md](../../updater.md)
+  - **Known partial:** the editor's own installer uses the same checksum rules as the launcher (docs/release/updater.md); not run on Windows by us.
+  - **More:** [updater.md](../../release/updater.md)
 
 - [ ] **V-BX-006** Installer and zip layout (steps unverified)
   - **Map:** 18.1. **Where:** Windows
@@ -58,7 +58,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     3. Start `OkaySpace.exe`.
   - **You should see (expected, not yet seen on Windows):** the launcher starts; the Tools folder holds the editor and player.
   - **Known partial:** the installer path is `%LOCALAPPDATA%\OkaySpace`; code signing is not done yet (the owner's step, CLAUDE.md rule 14), so Windows SmartScreen may warn.
-  - **More:** [packaging.md](../../packaging.md)
+  - **More:** [packaging.md](../../release/packaging.md)
 
 - [ ] **V-BX-007** Release files have checksums (owner check) (steps unverified)
   - **Map:** 18.5. **Where:** a browser
@@ -68,18 +68,21 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
   - **Known partial:** a release without checksums must not become "latest" (CLAUDE.md rule 13).
 
 - [ ] **V-BX-S18** Area 18: Build, export & release (smoke test, steps unverified)
-  - **Map:** [18](../feature_map/18-build-export-release.md), 8 sub-areas, 8 built.
+  - **Map:** [18](../feature_map/18-build-export-release.md), 11 sub-areas, 11 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 18.1 Windows build and installer [Works].
     - 18.2 Web and mobile export [Partial]. Where: File > Build Settings > Platform: Web (WebGL / WASM), Android (project)
     - 18.3 CI jobs [Works].
     - 18.4 Release workflow [Works].
-    - 18.5 Update feed [Works]. Where: Engine > Check for Updates... (editor updater dialog with the changelog)
-    - 18.6 Desktop game export (Build Game) and the export check [Works]. Where: File > Build Settings or Engine > Build Settings (Ctrl+B): scenes in build, window, platform, Output page...
+    - 18.5 Update feed [Works]. Where: Help > Check for Updates... (editor updater dialog with the changelog)
+    - 18.6 Desktop game export (Build Game) and the export check [Works]. Where: File > Build Settings (Ctrl+B): scenes in build, window, platform, Output page (layout, build number...
     - 18.7 Dedicated server export and Linux server build [Works]. Where: File > Build Settings > Platform: Server
     - 18.8 Steam release (SteamPipe) [Basic].
+    - 18.9 Test builds (the dev channel) [Basic]. Where: Help > About and the window title say "(test build)"; the launcher has Settings > Behavior > Startup &...
+    - 18.10 Xbox One export (experimental, Developer Mode, UWP) [Basic]. Where: File > Build Settings > Xbox (exp.)
+    - 18.11 Downloadable game content (content delivery) [Basic].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known gaps:** see [docs/feature_map/18-build-export-release.md](../feature_map/18-build-export-release.md) (area 18, sections 18.1, 18.2, 18.3, 18.4, 18.5, 18.6, 18.7, 18.8): the Open line of each section. Not copied here so it cannot go stale.
+  - **Known gaps:** see [docs/feature_map/18-build-export-release.md](../feature_map/18-build-export-release.md) (area 18, sections 18.1, 18.2, 18.3, 18.4, 18.5, 18.6, 18.7, 18.8, 18.9, 18.10, 18.11): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "build the Windows folder locally", "why does the installer skip the folder question?"
 
 - [ ] **V-BX-S19** Area 19: Docs, tests & code health (smoke test, steps unverified)
@@ -118,7 +121,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
   - **Ask me like:** "write a play-test that checks the door opens"; "add a Test Runner window"
 
 - [ ] **V-BX-S41** Area 41: Build, tools & infrastructure (smoke test, steps unverified)
-  - **Map:** [41](../feature_map/41-build-tools-infra.md), 11 sub-areas, 11 built.
+  - **Map:** [41](../feature_map/41-build-tools-infra.md), 12 sub-areas, 12 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 41.1 CMake project layout and options [Works].
     - 41.2 CMake modules, Windows resources and toolchain [Works].
@@ -128,11 +131,12 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     - 41.6 Supabase functions and SQL schema [Works].
     - 41.7 Steam upload kit [Basic].
     - 41.8 GitHub workflows and templates [Works].
-    - 41.9 Versioning and release prep [Works]. Where: Engine > Check for Updates...
+    - 41.9 Versioning and release prep [Works]. Where: Help > Check for Updates...
     - 41.10 Dependencies and pinned versions [Works].
-    - 41.11 Own-stack dogfood switch and startup line [Works]. Where: Help > About OkaySpace (the stack line)
+    - 41.11 Own-stack dogfood switch and startup line [Works]. Where: Help > About OkaySpace (the stack line); View > Rendering & Performance > Experimental: try our own code...
+    - 41.12 Collaboration tooling (lanes, claims, find-existing... [Works].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known gaps:** see [docs/feature_map/41-build-tools-infra.md](../feature_map/41-build-tools-infra.md) (area 41, sections 41.1, 41.2, 41.3, 41.4, 41.5, 41.6, 41.7, 41.8, 41.9, 41.10, 41.11): the Open line of each section. Not copied here so it cannot go stale.
+  - **Known gaps:** see [docs/feature_map/41-build-tools-infra.md](../feature_map/41-build-tools-infra.md) (area 41, sections 41.1, 41.2, 41.3, 41.4, 41.5, 41.6, 41.7, 41.8, 41.9, 41.10, 41.11, 41.12): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "which CMake flag builds the editor?", "add my new source file to the engine build"
 
 - [ ] **V-BX-S56** Area 56: Platform targets and store packaging (smoke test, steps unverified)
@@ -159,7 +163,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
 - [ ] **V-BX-S58** Area 58: Performance budgets and CI perf tests (smoke test, steps unverified)
   - **Map:** [58](../feature_map/43-proposals.md), 4 sub-areas, 2 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
-    - 58.2 Benchmark scenes [Basic].
+    - 58.2 Benchmark scenes [Partial]. Where: View > Panels > Profiler shows the same sections while playing ('Physics.3D', 'Render.*' for the software...
     - 58.4 Build size and load-time report [Partial]. Where: Build result popup
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
   - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 58, sections 58.2, 58.4): the Open line of each section. Not copied here so it cannot go stale.

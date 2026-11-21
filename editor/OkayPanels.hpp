@@ -1,5 +1,5 @@
 #pragma once
-// Editor windows hosted by OkayUI (the opt-in "OkayUI (preview)" UI backend, docs/own_ui_toolkit.md section 6): the Crash Log and the
+// Editor windows hosted by OkayUI (the opt-in "OkayUI (preview)" UI backend, docs/ui/own_ui_toolkit.md section 6): the Crash Log and the
 // Audio Mixer. Each keeps its Dear ImGui window (the dock tab, title and close box) and hands the free area to the OkayUI screen in
 // okayui/screens/OkayUIPanels. Only compiled into the editor when OkayUI is (OKAY_HAVE_OKAYUI).
 #include <cstdint>

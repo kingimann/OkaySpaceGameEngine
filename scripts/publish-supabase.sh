@@ -18,7 +18,7 @@
 #                            VERSION.txt goes out, so nobody is offered a version they cannot install)
 #   versions.json.sig        ed25519 signature of versions.json (scripts/sign_index.py), made with the seed in $OKAY_UPDATE_SIGNING_SEED
 #                            when that is set; launchers built with OKAY_UPDATE_TRUSTED_KEYS refuse an unsigned or wrongly signed index
-#                            (docs/updater.md "Signed releases"). The seed comes from the environment only: never written to a file or logged
+#                            (docs/release/updater.md "Signed releases"). The seed comes from the environment only: never written to a file or logged
 #   VERSION.txt              uploaded LAST, so nobody sees a version before its files and its checksums
 # Older version folders beyond the newest $KEEP are deleted, except the LTS line.
 #
@@ -29,7 +29,7 @@
 #            a branch cut at 2.850.0): writes LTS.txt and NOTES-LTS.txt, never touches
 #            VERSION.txt or NOTES.txt, never prunes. The first publish of a new line
 #            promotes that line to LTS; within a line the patch must not go backwards.
-#   Versions in the LTS line are never pruned. See docs/release_channels.md.
+#   Versions in the LTS line are never pruned. See docs/release/release_channels.md.
 #
 # Options (environment):
 #   CHANNEL      latest (default) or lts
@@ -58,7 +58,7 @@ MAX_MB="${MAX_MB:-100}"   # per-file limit; the Supabase project and bucket limi
 MAX_BYTES=$((MAX_MB * 1024 * 1024))
 
 die() { echo "publish-supabase: $*" >&2; exit 1; }
-[ -n "$SUPABASE_URL" ] || die "no SUPABASE_URL (or OKAY_DEFAULT_ACCOUNT_URL) is set and config/public-account.json has no url (docs/accounts.md)"
+[ -n "$SUPABASE_URL" ] || die "no SUPABASE_URL (or OKAY_DEFAULT_ACCOUNT_URL) is set and config/public-account.json has no url (docs/online/accounts.md)"
 
 # The signing seed is read from the environment by scripts/sign_index.py only. Never trace commands while it can be in scope.
 # (-v tests that it is set without expanding the value, so even this check leaves nothing in a trace.)

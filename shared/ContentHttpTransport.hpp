@@ -1,5 +1,5 @@
 #pragma once
-// Real transports for the content downloader. Docs: docs/content_delivery.md "Transports".
+// Real transports for the content downloader. Docs: docs/release/content_delivery.md "Transports".
 //   * HttpTransport: GET over the engine's own HTTP layer (okay/Platform/NativeHttp.hpp): WinHTTP on Windows, our own HTTP/1.1 client on
 //     Linux when built with OKAY_OWN_HTTP and run with OKAY_OWN_HTTP=1. No curl, no third-party SDK. Each GET is written to a scratch file
 //     (so a big file never sits in memory) and handed to the sync engine in pieces. The Range header is sent as an ordinary header.
@@ -87,6 +87,13 @@ public:
     const char* Describe() const override { return "uwp-stub"; }
 };
 
+/// The Xbox / UWP build plugs its real transport in here (platform/xbox_uwp/XboxContentTransport.hpp over a Windows.Web.Http client): set once at start-up,
+/// before the first MakeTransport. While it is empty the stub above is used. Plain function, no threads.
+inline std::function<std::unique_ptr<Transport>(const std::string& url)>& UwpTransportFactory() {
+    static std::function<std::unique_ptr<Transport>(const std::string&)> f;
+    return f;
+}
+
 /// "" url -> nullptr. file://folder -> FileTransport. http(s):// -> HttpTransport, or the UWP stub when OKAY_XBOX_UWP is defined.
 inline std::unique_ptr<Transport> MakeTransport(const std::string& url, const std::string& scratchDir) {
     if (url.empty()) return nullptr;
@@ -95,6 +102,7 @@ inline std::unique_ptr<Transport> MakeTransport(const std::string& url, const st
     if (url.compare(0, 8, "https://") == 0 || url.compare(0, 7, "http://") == 0) {
 #if defined(OKAY_XBOX_UWP)
         (void)scratchDir;
+        if (UwpTransportFactory()) { if (auto t = UwpTransportFactory()(url)) return t; }
         return std::make_unique<UwpTransportStub>();
 #else
         return std::make_unique<HttpTransport>(url, scratchDir);

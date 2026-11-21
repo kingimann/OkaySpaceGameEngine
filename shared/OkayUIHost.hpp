@@ -12,7 +12,7 @@
 //               into the rectangle
 //     end:      OkayUI::EndFrame(renderer)              after ImGui's draw data, so OkayUI is on top
 // OkayUI draws on top of every ImGui window, so a hosted region must not be one that other ImGui windows or menus are
-// meant to cover (documented in docs/own_ui_toolkit.md, section 5).
+// meant to cover (documented in docs/ui/own_ui_toolkit.md, section 5).
 #include "okay/UI/OkayUI.hpp"
 #include "okay/Platform/Platform.hpp"
 
@@ -266,7 +266,7 @@ inline bool WantsKeyboard() { return OkayUI::WantsTextInput(); }
 // ---- The host half without SDL and without Dear ImGui's backends: okay::platform events in, okay::platform::Painter out ------------------
 // Define OKAYUI_HOST_PLATFORM before including this header to get it (it needs okay/Platform and okayui/soft on the include path, the
 // okay_ui_soft library). This is what replaces, for a window that runs OkayUI alone, the Dear ImGui backend calls of the editor and launcher
-// (listed in docs/own_ui_toolkit.md 6.18):
+// (listed in docs/ui/own_ui_toolkit.md 6.18):
 //   ImGui_ImplSDL2_ProcessEvent(&e)      ->  host.Feed(event)                    events from okay::platform::Backend::PollEvent
 //   ImGui_ImplSDL2_NewFrame()            ->  host.BeginFrame()                   window size from the painter, input of the frame, OkayUI::BeginFrame
 //   ImGui_ImplSDLRenderer2_NewFrame()    ->  (nothing: the glyph atlas is uploaded by the FrameDrawer when it changes)

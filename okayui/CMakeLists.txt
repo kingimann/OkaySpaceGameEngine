@@ -53,7 +53,7 @@ if(WIN32)
 endif()
 
 # Backend check tools: write the render-test scenes as draw data plus the software reference picture, and (Windows, or Wine) draw
-# them with the Direct3D 11 backend and compare. See docs/own_ui_toolkit.md, the render interface section.
+# them with the Direct3D 11 backend and compare. See docs/ui/own_ui_toolkit.md, the render interface section.
 if(WIN32)
     add_executable(okayui_render_d3d11_check tools/okayui_render_d3d11_check.cpp)
     target_link_libraries(okayui_render_d3d11_check PRIVATE okay_ui_render d3d11)
@@ -62,7 +62,7 @@ endif()
 # ---- Headless harness: software backend, tests, demo ---------------------------------------
 # OkayUI's draw list (OkayUI::GetDrawData) rasterised on the CPU into an RGBA bitmap, so the toolkit
 # is tested with no window, GPU or display: behaviour tests (synthetic mouse, keys and text fed to
-# OkayUI::BeginFrame), golden images, a fuzz test. See docs/own_ui_toolkit.md.
+# OkayUI::BeginFrame), golden images, a fuzz test. See docs/ui/own_ui_toolkit.md.
 # The software side is always built (it is small): the draw-list rasteriser the tests use and the software
 # okay::platform::Painter the player draws with on the own platform backend (own code, not ready, off by default).
 add_library(okay_ui_soft STATIC soft/OkayUI_Soft.cpp soft/OkayUI_SoftPainter.cpp)
@@ -80,7 +80,7 @@ target_link_libraries(okay_ui_render PUBLIC okay_ui_soft)
 if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
 
     # What the tests need: the shared test framework header and the committed golden images.
-    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_bench okayui_screens okayui_host okayui_compat okayui_scopes okayui_internals okayui_dockbuilder okayui_panels okayui_itemedit okayui_calls okayui_names okayui_host_platform okayui_docknodes okayui_channels okayui_host_shapes okayui_fonts okayui_frameloop okayui_dockaware)
+    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_bench okayui_screens okayui_host okayui_compat okayui_scopes okayui_internals okayui_dockbuilder okayui_panels okayui_itemedit okayui_calls okayui_names okayui_host_platform okayui_docknodes okayui_channels okayui_host_shapes okayui_fonts okayui_frameloop okayui_dockaware okayui_imvector)
         add_executable(test_${t} tests/test_${t}.cpp)
         target_link_libraries(test_${t} PRIVATE okay_ui_render)
         target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
@@ -93,7 +93,7 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     target_link_libraries(test_okayui_render_gl PRIVATE ${CMAKE_DL_LIBS})
     target_link_libraries(test_okayui_render_bench PRIVATE ${CMAKE_DL_LIBS})
     # Port probe, run: editor panels written for Dear ImGui, compiled against OkayUI through the stand-in imgui.h in probe/ and drawn headless
-    # (docs/own_ui_toolkit.md 6.14). The probe directory comes FIRST so no real imgui.h is used. Fake engine state, stubs for what main.cpp gives.
+    # (docs/ui/own_ui_toolkit.md 6.14). The probe directory comes FIRST so no real imgui.h is used. Fake engine state, stubs for what main.cpp gives.
     function(okayui_port_test name)
         add_executable(test_${name} tests/test_${name}.cpp ${ARGN})
         target_include_directories(test_${name} BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/probe)

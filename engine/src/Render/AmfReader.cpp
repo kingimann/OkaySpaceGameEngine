@@ -1,5 +1,5 @@
 // Our own AMF reader. Written from the public ASTM ISO/ASTM 52915 description of the format, no code from any other
-// importer. See docs/own_amf_reader.md.
+// importer. See docs/content/model_readers.md.
 #include "FileOpen.hpp"
 #include "ReaderCommon.hpp"
 #include "XmlLite.hpp"

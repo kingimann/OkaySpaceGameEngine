@@ -6,7 +6,7 @@
 // and resolved by a policy. The merged text always loads: if the result would not
 // validate (parents, unique ids, structure) the merge falls back to `ours` and says
 // so. Works on text, objects are paired by guid (name path in files without ids).
-// See docs/scene_diff_merge.md.
+// See docs/engine/scene_diff_merge.md.
 //
 // Header note: keep this header free of <mutex>, <thread> and <condition_variable>.
 #include <functional>

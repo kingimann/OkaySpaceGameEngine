@@ -1,5 +1,5 @@
 #pragma once
-// Anti-cheat, runtime checks (opt-in; docs/anticheat.md): debugger detection, a
+// Anti-cheat, runtime checks (opt-in; docs/online/anticheat.md): debugger detection, a
 // loaded-module allowlist and a clock-drift heartbeat with challenge-response.
 //
 // The probes (IsDebuggerPresent, the module list, the two clocks) are Windows-

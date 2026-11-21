@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build and run the encryption-related tests under BOTH crypto backends: libsodium (the default)
-# and our own okay::crypto (-DOKAY_OWN_CRYPTO=ON, UNREVIEWED; see docs/crypto.md).
+# and our own okay::crypto (-DOKAY_OWN_CRYPTO=ON, UNREVIEWED; see docs/platform/crypto.md).
 #   scripts/test_crypto_backends.sh [build-root] [jobs]
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"

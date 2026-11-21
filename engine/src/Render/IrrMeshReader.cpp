@@ -1,7 +1,7 @@
 // Our own Irrlicht mesh (.irrmesh, XML) reader: one part per <buffer>, with its material (diffuse and emissive colour,
 // shininess, first texture, normal map). Written from the public description of the format (the Irrlicht engine's
 // documentation and the files its tools write). Uses the strict XML reader of the batch-B readers; UTF-16 files are
-// converted first. Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/own_irrmesh_reader.md.
+// converted first. Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"
 #include "XmlLite.hpp"

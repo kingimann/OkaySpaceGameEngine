@@ -80,7 +80,7 @@ InvResult Split(GridInventory* inv, int index, int n);
 /// a matching stack there, never swaps. Rejected, with nothing changed, for a bad slot, a
 /// negative amount, a spot that is out of bounds or taken, or an enforced weight limit.
 /// Partial when only some fit (stack size or weight). Unique (uid) items only move whole.
-/// Not sent to a networked host: it is a local operation (see docs/inventory.md).
+/// Not sent to a networked host: it is a local operation (see docs/gameplay/inventory.md).
 InvResult ToGrid(Inventory* src, int si, GridInventory* dst, int x, int y, bool rotated = false, int amount = 0);
 /// Grid bag -> slot bag: move `amount` (0 = all) of grid item `index` to slot `di` of `dst`
 /// when that slot is empty or holds the same item (merges up to the stack size). Never swaps.

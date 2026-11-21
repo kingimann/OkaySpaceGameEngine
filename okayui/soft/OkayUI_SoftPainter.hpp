@@ -4,7 +4,7 @@
 // finished frame to the window (Window::PresentPixels). No GPU, no SDL.
 //
 // OWN CODE, NOT READY: used only when the player runs on the own platform backend
-// (OKAY_PLATFORM_BACKEND=own at run time), which is off by default. See docs/platform_layer.md.
+// (OKAY_PLATFORM_BACKEND=own at run time), which is off by default. See docs/platform/platform_layer.md.
 //
 // What differs from the sdl2 painter, on purpose or because it is not built:
 //  * Everything is nearest-neighbour or bilinear on the CPU. There is no GPU anti-aliasing of triangle edges

@@ -12,8 +12,8 @@ then this file gets updated. Keep this file short and true.
    bug fixes and third party and you work on unfinished features", and "no duplicate features". This replaces the
    earlier split of the same day, which was the other way round.)
    - **Claude 2 (`claude2/*`, issue #422)** works on bug fixes and on building our own replacements for third-party
-     libraries (`docs/own_code_roadmap.md`: SDL2, Dear ImGui, the text editor, Assimp, ufbx, curl, libsodium).
-   - **The coordinator session and its agents (`claude/*`)** work on unfinished features (`docs/UNFINISHED.md` and its
+     libraries (`docs/status/own_code_roadmap.md`: SDL2, Dear ImGui, the text editor, Assimp, ufbx, curl, libsodium).
+   - **The coordinator session and its agents (`claude/*`)** work on unfinished features (`docs/status/UNFINISHED.md` and its
      audits) and on coordinating: reviews, merges, releases, CI, and checking on Claude 2 (reading its reports,
      answering it). The coordinator also finishes the feature branches Claude 2 left parked.
    - **No duplicate features, in either lane.** Before building anything, search the feature map and the code
@@ -43,7 +43,7 @@ then this file gets updated. Keep this file short and true.
 5. **Docs are for our own use only.** (Owner rule, 2026-11-17: "No more guides, tutorials or anything, documents are for
    our use only".) Do not write guides, tutorials, how-tos, quick starts or player/user-facing pages, and do not add new
    ones. Keep only the internal records, short and in the same change as the code: the feature map
-   (`python3 scripts/gen_feature_map.py`, then `--check`), the roadmap, `docs/UNFINISHED.md` rows, and design or audit
+   (`python3 scripts/gen_feature_map.py`, then `--check`), the roadmap, `docs/status/UNFINISHED.md` rows, and design or audit
    notes when a decision needs one. Existing guides stay until the owner says to delete them; do not extend them.
 
 ## Pull requests and CI
@@ -64,11 +64,11 @@ then this file gets updated. Keep this file short and true.
 10. Agents push only their own branch (plain push, never force) and do not open PRs unless told. The main session
     opens and merges PRs.
 26. **Two Claudes, one set of lanes.** Claude 2 (`claude2/*`) and the coordinator (`claude/*`) follow
-    `docs/collaboration.md` and its table `docs/lanes.json`: run `python3 scripts/find_existing.py <keywords>` before
+    `docs/process/collaboration.md` and its table `docs/lanes.json`: run `python3 scripts/find_existing.py <keywords>` before
     you start anything; claim it with one comment `Claim: <branch>` on issue #422 (`Existing:`, `Gap:`, `Files:`,
     `Test-first:`, `Try-it:`; `Release: <branch>` when done; a claim expires after 24 hours with no push); never
     touch files another open claim or the other lane owns without an `Agree:` reply; meet the readiness checklist
-    before asking for a review. Every agent brief starts from `docs/agent_brief_template.md` with the current
+    before asking for a review. Every agent brief starts from `docs/process/agent_brief_template.md` with the current
     rules pasted in, so no agent works from stale rules. The checks are automatic: `scripts/collision_check.py`
     (in the live work board), `branch-lint` on every push, and the PR "How to try it" check.
 
@@ -113,7 +113,7 @@ then this file gets updated. Keep this file short and true.
 
 ## Third-party code and "build everything ourselves"
 
-17. **The goal is to write every part ourselves, even if it takes time.** Follow `docs/own_code_roadmap.md`: a
+17. **The goal is to write every part ourselves, even if it takes time.** Follow `docs/status/own_code_roadmap.md`: a
     seam, then our own backend OFF by default, then the criteria, then flip the default only with the owner's
     approval, then delete the old code one release later. Do not drop a format or feature just because it is
     hard: write the replacement.
@@ -130,7 +130,7 @@ then this file gets updated. Keep this file short and true.
       copied or ported by mistake, rewrite it from scratch.
     - **Fonts, images, sounds, models and data** (we cannot recreate these): use them only with permission, meaning a
       licence that allows our use (for example OFL, CC0, MIT, Apache). Record the source and the licence in
-      `docs/THIRD_PARTY.md`, keep the licence file next to the asset, and ship the required notices with releases.
+      `docs/status/THIRD_PARTY.md`, keep the licence file next to the asset, and ship the required notices with releases.
       Never use an asset whose licence is unknown or that forbids our use, and never scrape or download assets without
       recording where they came from.
     - **No third-party SDKs or libraries.** Do not add or link any (for example Steamworks, Photon, PlayFab or Supabase
@@ -140,8 +140,15 @@ then this file gets updated. Keep this file short and true.
     - Do not spend time on licence texts, notice files or licence audits for third-party libraries that we are replacing
       (SDL2, Dear ImGui, Assimp, ufbx, libsodium, curl and similar). Spend that time on the replacement. Licence and
       notice work is only for assets that stay (fonts, images and data).
-    - Third-party code that is already here (listed in `docs/THIRD_PARTY.md` and `docs/provenance_audit.md`) stays only
+    - Third-party code that is already here (listed in `docs/status/THIRD_PARTY.md` and `docs/status/provenance_audit.md`) stays only
       until our own replacement is ready; nothing new may be added.
+
+19b. **GitHub is only for the owner and Claude.** (Owner rule, 2026-11-20: "I don't want any one to depend on GitHub. GitHub
+    should be only for me and you.") Nothing public may need GitHub: not the launcher, editor, player or server, not their
+    updates, downloads, version lists, news, help or report links, not the installer or server downloads, and not web pages
+    such as the password-reset page. Those come from our own Supabase project. GitHub stays our workspace: code, CI, pull
+    requests, issues and the internal record of releases. The repository may become private at any time, so never add a
+    public-facing link to github.com, and a repo check fails if one appears in shipped code or shipped files.
 
 ## Machine and agents
 
@@ -164,9 +171,9 @@ then this file gets updated. Keep this file short and true.
     Cryptography findings follow rule 18 as well.
 24a. **Exception: Grok may write our own build tool and our own compiler (owner 2026-11-17: "Yes please", then "start
     building our own MSVC and Clang too ... we are not replacing them any time soon, its so i have something to do").**
-    Only in `tools/okaybuild/` (build tool, `docs/own_build_plan.md`), `tools/okaycc/` (our own Clang-style compiler,
-    `docs/own_compiler_plan.md`) and `tools/okayms/` (our own MSVC-style compiler, linker and Windows toolchain,
-    `docs/own_msvc_plan.md`), on `grok/*` branches it pushes itself, never on main. Everything else in rule 24 still
+    Only in `tools/okaybuild/` (build tool, `docs/platform/own_build_plan.md`), `tools/okaycc/` (our own Clang-style compiler,
+    `docs/platform/own_compiler_plan.md`) and `tools/okayms/` (our own MSVC-style compiler, linker and Windows toolchain,
+    `docs/platform/own_msvc_plan.md`), on `grok/*` branches it pushes itself, never on main. Everything else in rule 24 still
     holds for the rest of the repository, and rule 18 still holds (no cryptography). The code must be its own, written
     from language standards, object-file and CPU manuals and general compiler ideas, with no code taken from CMake,
     Ninja, GCC, Clang/LLVM, MSVC, tcc or any other project (rule 19a). Both stay OFF: not in CMake, CI or releases, and
@@ -185,10 +192,20 @@ then this file gets updated. Keep this file short and true.
     Nothing from the runtime, the SDK or NuGet is copied or linked into the repository; our hosting code and our managed API
     assembly (`OkayScripting.dll`) are written by us. It is opt-in per project behind a CMake option that is OFF by default;
     a game with no C# scripts ships no runtime. Exported C# games ship the runtime files with their MIT notice in
-    `docs/THIRD_PARTY.md`. Windows only (rule 14). Say "unverified" for anything not built and run on Windows. This allows no
+    `docs/status/THIRD_PARTY.md`. Windows only (rule 14). Say "unverified" for anything not built and run on Windows. This allows no
     other SDK or library, and rule 19a still holds for everything else. Lua is written by us from the Lua manual (no Lua
     code). Our own OkayScript is deleted only after the replacements work and the owner confirms (plan:
     `docs/scripting_migration.md`).
+24d. **Exception: Microsoft's public Windows SDK and Visual Studio build tools for Windows work (owner 2026-11-20: "Yes",
+    after "I'm gonna have other guy start working on windows sdk"; widens rule 24b beyond Xbox).** They may be used as build,
+    test and debugging tools on Windows machines and CI runners: building and testing Windows programs (including an MSVC
+    build job), the Direct3D debug layer, PIX and other SDK debugging tools, and SignTool for code signing (the certificate
+    goes in GitHub secrets, never in chat or the repo, rule 15). Nothing from the SDK or Visual Studio is copied into the
+    repository or shipped, apart from files Microsoft marks as redistributable and only with the owner's approval. The
+    release build stays the MinGW cross-compile until the owner approves a switch. A feature that only works with the SDK
+    sits behind a CMake option that is OFF by default, and code must keep compiling with the MinGW release compiler (rule
+    21a). Only the public SDK: no GDK, GDKX or other restricted or separately licensed Microsoft SDKs without asking. Say
+    "unverified" for anything not built and run on Windows. Rule 19a still holds for everything else.
 25. **Claude 2 reports its usage.** With each result Claude 2 posts `Usage: about N% left` on issue #422, and
     `HANDOFF SOON` at about 20% and `HANDOFF NOW` at about 5%, naming its branches and what is unfinished, so the
     coordinator can take its branches over. Claude 2 pushes only `claude2/*` branches, opens no PRs, and starts a

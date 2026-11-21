@@ -290,7 +290,7 @@ int main() {
         size_t a = full.find("  stat_health ");
         size_t b = a == std::string::npos ? a : full.find('\n', a);
         if (a != std::string::npos && b != std::string::npos) {
-            std::string line = "  stat_health 80 2 1 3 20 1 1 1 0.1 0 0 0 0 0 0 0 0 3 0 1 0";
+            std::string line = "  stat_health 80 2 1 3 20 1 1 1 0.1 0 0 0 0 0 0 0 3 3 1 0";
             full.replace(a, b - a, line);
             Scene s3("ser3");
             GameObject* o = SceneSerializer::InstantiateFromText(s3, full);

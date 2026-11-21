@@ -52,6 +52,39 @@ def plan(tests_json, build_root, bin_dir, source_dir):
     return out
 
 
+def map_baked_paths(build_root, bin_dir, source_dir):
+    r"""Make the Linux paths compiled into the tests resolve on Windows.
+
+    The tests are built on Ubuntu, so OKAY_SOURCE_DIR, OKAYUI_GOLDEN_DIR and similar macros hold paths such as
+    /home/runner/work/R/R/tests/data. On Windows a path that starts with "/" is read from the root of the current
+    drive, so a directory junction at <drive>:\home\runner\work\R\R pointing at this checkout makes every one of
+    those paths work, and a junction for the build folder inside it (<checkout>/build-wt) points at the copied
+    executables. Returns a list of (link, target) made. Windows only; does nothing elsewhere."""
+    if os.name != "nt":
+        return []
+    made = []
+    src_baked = os.path.dirname(build_root.rstrip("/"))
+    # A test that changes its working folder (the Sandbox helper moves into the temp folder, which is on C: on the
+    # runner while the checkout is on D:) reads "/home/..." from the root of the NEW current drive, so the junction
+    # is needed on every drive a test can stand on: the checkout's, the temp folder's and the system drive.
+    drives = []
+    for d in (os.path.splitdrive(os.path.abspath(source_dir))[0], os.path.splitdrive(os.path.abspath(tempfile.gettempdir()))[0],
+              os.environ.get("SystemDrive", "C:")):
+        if d and d.upper() not in [x.upper() for x in drives]:
+            drives.append(d)
+    pairs = [(d + src_baked.replace("/", "\\"), os.path.abspath(source_dir)) for d in drives]
+    pairs.append((os.path.join(os.path.abspath(source_dir), os.path.basename(build_root.rstrip("/"))), os.path.abspath(bin_dir)))
+    for link, target in pairs:
+        if os.path.normcase(os.path.abspath(link)) == os.path.normcase(target) or os.path.exists(link):
+            continue
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        r = subprocess.run(["cmd", "/c", "mklink", "/J", link, target], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        print("map %s -> %s: %s" % (link, target, "ok" if r.returncode == 0 else r.stdout.decode("utf-8", "replace").strip()))
+        if r.returncode == 0:
+            made.append((link, target))
+    return made
+
+
 def run_one(item, default_timeout, dll_dir):
     name, argv, cwd, env, to, _, will_fail = item
     e = dict(os.environ); e.update(env)
@@ -82,12 +115,18 @@ def main(argv=None):
     with open(a.tests, encoding="utf-8") as f:
         items = plan(json.load(f), a.build_root, a.bin, a.source)
     runnable = [i for i in items if i[1]]
+    map_baked_paths(a.build_root, a.bin, a.source)
     notrun = [(i[0], i[5]) for i in items if not i[1]]
     results = []
     with cf.ThreadPoolExecutor(max_workers=max(1, a.j)) as ex:
         for r in ex.map(lambda i: run_one(i, a.timeout, a.dll_dir or a.bin), runnable):
             results.append(r); print("%-50s %s (%.1fs)" % (r[0], r[1], r[2]), flush=True)
     failed = [r for r in results if r[1] != "passed"]
+    for n, st, _, t in sorted(failed):  # show why in the job log itself (artifacts are not always reachable)
+        print("##### FAILED %s: %s" % (n, st))
+        for line in t.splitlines()[-25:]:
+            print("  | " + line[:300])
+    sys.stdout.flush()
     os.makedirs(os.path.dirname(os.path.abspath(a.log)), exist_ok=True)
     with open(a.log, "w", encoding="utf-8") as f:
         for n, s, d, t in sorted(results):

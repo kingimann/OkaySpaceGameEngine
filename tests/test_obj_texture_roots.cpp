@@ -110,6 +110,12 @@ int main() {
             CHECK(ResolveModelTexturePath(bad, modelDir).empty());
         }
         CHECK(ResolveModelTexturePath(std::string("tex/a\0b.png", 11), modelDir).empty());
+        // A name that is not UTF-8 (a hostile or damaged file) is refused on the text: on Windows std::filesystem::u8path
+        // throws on it, which crashed the IQM, LWS, COB and batch-D readers' fuzz tests there.
+        CHECK(ResolveModelTexturePath("tex/\xff\xfe.png", modelDir).empty());
+        CHECK(ResolveModelTexturePath("tex/\xc3(.png", modelDir).empty());
+        { std::string why; CHECK(texture_path_detail::Screen("a\xe2\x82.png", &why) == texture_path_detail::Kind::Refused && why.find("UTF-8") != std::string::npos); }
+        CHECK(texture_path_detail::Screen("caf\xc3\xa9.png", nullptr) != texture_path_detail::Kind::Refused);   // real UTF-8 still passes
         // The screen itself: these are refused on the text, so no file-system call ever sees them (a network path
         // would otherwise reach the root check only after being canonicalised, which opens it on Windows).
         namespace tp = texture_path_detail;

@@ -22,6 +22,7 @@
 //
 // Written for this engine from the path rules of the file systems (POSIX path resolution, the Windows path formats);
 // no other project's code was used.
+#include "okay/Core/Utf8.hpp"
 #include <atomic>
 #include <cctype>
 #include <cstdlib>
@@ -108,6 +109,8 @@ inline Kind Screen(const std::string& p, std::string* why) {
     auto refuse = [&](const char* w) { if (why) *why = w; return Kind::Refused; };
     if (p.empty()) return refuse("an empty file name");
     if (p.find('\0') != std::string::npos) return refuse("a file name with a NUL character");
+    // Not UTF-8: on Windows std::filesystem::u8path throws on such text, and no real file has that name.
+    if (!utf8::IsValid(p)) return refuse("a file name that is not valid UTF-8");
     if (p.find_first_of("?*\"<>|") != std::string::npos) return refuse("a file name with a wildcard or device character");
     if (p.size() >= 2 && p[0] == '/' && p[1] == '/') return refuse("a network or device path (\\\\host\\share, \\\\?\\) is not allowed");
     {

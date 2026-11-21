@@ -130,6 +130,11 @@ bool LoadCompressedCopy(const std::string& imagePath, tex::DdsImage* out, std::s
     return true;
 }
 
+bool ShipCompressedCopy(const std::string& sourceImage, const std::string& shippedImage, std::string* error) {
+    (void)sourceImage; (void)shippedImage; (void)error;
+    return false;
+}
+
 bool Source(const std::string& name, tex::DdsImage* out, std::string* error) {
     if (name.empty() || name[0] == '@' || name.rfind("proc:", 0) == 0 || !out) return false;
     if (tex::IsDdsPath(name)) return tex::ReadDdsFile(name, out, error);

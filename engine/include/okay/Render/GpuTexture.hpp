@@ -65,6 +65,12 @@ std::string CompressedCachePath(const std::string& imagePath);
 /// only skips the write). `rebuilt` says which happened.
 bool LoadCompressedCopy(const std::string& imagePath, tex::DdsImage* out, std::string* error = nullptr, bool* rebuilt = nullptr);
 
+/// For a game build: when the picture `sourceImage` asks for `compress`, write its compressed copy into the import
+/// cache next to `shippedImage` (its copy in the build, already copied together with its .okaymeta), so the game loads
+/// it instead of encoding at run time. True when a copy was written. False when the picture does not ask for one
+/// (`error` left empty) or it could not be built or written (`error` says why).
+bool ShipCompressedCopy(const std::string& sourceImage, const std::string& shippedImage, std::string* error = nullptr);
+
 /// The DDS data a GPU renderer should upload for a texture name: the .dds file itself, or the compressed copy when the
 /// picture's import settings say `compress`. False (and `out` untouched) for everything else, and for registered
 /// ("@...") or procedural ("proc:...") pictures; `error` says why when a file was tried and failed.

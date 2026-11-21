@@ -440,9 +440,48 @@ void TestImportCache() {
     im.Data()[3] = 10;
     CHECK(im.SavePNG(png));
     CHECK(LoadCompressedCopy(png, &d2, &err, &rebuilt) && rebuilt && d2.format == DdsFormat::BC3);
+    // a picture replaced by a different one whose file time is OLDER than the cache (copied from a backup, unpacked
+    // from an archive) is still noticed: the cache remembers what it was made from, not just when
+    {
+        okay::Image opaque(32, 16);
+        for (int y = 0; y < 16; ++y) for (int x = 0; x < 32; ++x) { std::uint8_t* p = opaque.Data() + (y * 32 + x) * 4; p[0] = 200; p[1] = std::uint8_t(x * 4); p[2] = 10; p[3] = 255; }
+        CHECK(opaque.SavePNG(png));
+        std::error_code tec;
+        const auto cacheTime = fs::last_write_time(CompressedCachePath(png), tec);
+        CHECK(!tec);
+        fs::last_write_time(png, cacheTime - std::chrono::hours(24), tec);
+        CHECK(!tec);
+        fs::last_write_time(png + ".okaymeta", cacheTime - std::chrono::hours(24), tec);
+        CHECK(LoadCompressedCopy(png, &d2, &err, &rebuilt) && rebuilt && d2.format == DdsFormat::BC1);   // opaque now: BC1
+        CHECK(LoadCompressedCopy(png, &d2, &err, &rebuilt) && !rebuilt);                                 // and then cached again
+        CHECK(im.SavePNG(png));                                                                          // back to the picture with alpha
+    }
     // a broken cache file is rebuilt, not trusted
     { std::ofstream junk(CompressedCachePath(png), std::ios::binary | std::ios::trunc); junk << "not a dds"; }
     CHECK(LoadCompressedCopy(png, &d2, &err, &rebuilt) && rebuilt && d2.format == DdsFormat::BC3);
+    // a built game gets the compressed copy from the build: it never encodes at run time and never writes into its
+    // install folder. The copy is made from what was shipped, so other file times after copying (an installer, a zip)
+    // do not make the game rebuild it.
+    {
+        const std::string out = "tex_dds_load_assets/build/Assets/brick.png";
+        fs::create_directories("tex_dds_load_assets/build/Assets");
+        fs::copy_file(png, out, fs::copy_options::overwrite_existing);
+        fs::copy_file(png + ".okaymeta", out + ".okaymeta", fs::copy_options::overwrite_existing);
+        err.clear();
+        CHECK(ShipCompressedCopy(png, out, &err) && err.empty());
+        CHECK(fs::exists(CompressedCachePath(out)));
+        std::error_code tec;
+        fs::last_write_time(out, fs::file_time_type::clock::now() + std::chrono::hours(1), tec);   // unpacked later
+        DdsImage shipped;
+        CHECK(LoadCompressedCopy(out, &shipped, &err, &rebuilt) && !rebuilt && shipped.format == DdsFormat::BC3);
+        // a picture without `compress` ships nothing extra, and that is not an error
+        const std::string plain = "tex_dds_load_assets/build/Assets/plain.png";
+        CHECK(im.SavePNG("tex_dds_load_assets/plain.png"));
+        fs::copy_file("tex_dds_load_assets/plain.png", plain, fs::copy_options::overwrite_existing);
+        err.clear();
+        CHECK(!ShipCompressedCopy("tex_dds_load_assets/plain.png", plain, &err) && err.empty());
+        CHECK(!fs::exists(CompressedCachePath(plain)));
+    }
     // a missing picture fails with a message
     err.clear();
     CHECK(!LoadCompressedCopy("tex_dds_load_assets/none.png", &d2, &err) && !err.empty());

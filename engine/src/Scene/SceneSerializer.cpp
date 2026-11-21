@@ -97,6 +97,7 @@
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/ColliderShapes3D.hpp"
 #include "okay/Components/Mover.hpp"
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
@@ -545,6 +546,32 @@ void WritePhysicsMaterials(std::ostream& out, const char* rec, const std::vector
         out << "  " << rec << " " << c->friction << " " << c->bounciness << " " << (int)c->frictionCombine
             << " " << (int)c->bounceCombine << " " << i << "\n";
     }
+}
+
+// The colliders a file from before the newer shapes knows about: the Cone, Convex Hull, Plane, Compound and Heightfield
+// colliders save every setting (physics material, trigger filter, contact offset) in their own record, so the older
+// "by index" records count only the rest and an index means the same thing before and after those shapes exist.
+std::vector<Collider3D*> LegacyColliders3D(const GameObject& go) {
+    std::vector<Collider3D*> out;
+    for (Collider3D* c : go.GetComponents<Collider3D>()) {
+        switch (c->shape()) {
+        case Collider3D::Shape::Cone: case Collider3D::Shape::ConvexHull: case Collider3D::Shape::Compound:
+        case Collider3D::Shape::Heightfield: case Collider3D::Shape::Plane: break;
+        default: out.push_back(c);
+        }
+    }
+    return out;
+}
+std::vector<Collider2D*> LegacyColliders2D(const GameObject& go) {
+    std::vector<Collider2D*> out;
+    for (Collider2D* c : go.GetComponents<Collider2D>()) if (c->shape() != Collider2D::Shape::Composite) out.push_back(c);
+    return out;
+}
+// The contact offset (a skin on the collider): one line per collider that has one, so a scene without any writes nothing.
+template <class T>
+void WriteContactOffsets(std::ostream& out, const char* rec, const std::vector<T*>& cols) {
+    for (int i = 0; i < (int)cols.size(); ++i)
+        if (cols[(std::size_t)i]->contactOffset > 0.0f) out << "  " << rec << " " << cols[(std::size_t)i]->contactOffset << " " << i << "\n";
 }
 
 // The crouch / prone options of a movement controller (StanceControl) and the
@@ -1743,8 +1770,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // Trigger tag / layer filter. One record when every collider shares it (older scenes
     // read that as applying to all). Differing filters are one indexed record each.
-    WriteTriggerFilters(out, "trigfilter2d", go->GetComponents<Collider2D>());
-    WritePhysicsMaterials(out, "physmat2d", go->GetComponents<Collider2D>());
+    WriteTriggerFilters(out, "trigfilter2d", LegacyColliders2D(*go));
+    WritePhysicsMaterials(out, "physmat2d", LegacyColliders2D(*go));
+    WriteContactOffsets(out, "colskin2d", LegacyColliders2D(*go));
     for (auto* rb : go->GetComponents<Rigidbody3D>()) {
         out << "  rigidbody3d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness << " "
@@ -2040,8 +2068,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
     // See the 2D filter: one shared record, or one indexed record per collider when they differ.
-    WriteTriggerFilters(out, "trigfilter3d", go->GetComponents<Collider3D>());
-    WritePhysicsMaterials(out, "physmat3d", go->GetComponents<Collider3D>());
+    WriteTriggerFilters(out, "trigfilter3d", LegacyColliders3D(*go));
+    WritePhysicsMaterials(out, "physmat3d", LegacyColliders3D(*go));
+    WriteContactOffsets(out, "colskin3d", LegacyColliders3D(*go));
     // Each script is one self-contained line (lang, source, then optional path
     // and field overrides) so a GameObject can carry several scripts.
     for (auto* sc : go->GetComponents<ScriptComponent>()) {
@@ -5486,14 +5515,26 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
                     auto clampMode = [](int m) { return (CombineMode)(m < 0 || m > 4 ? 0 : m); };
                     if (field == "physmat2d") {
-                        auto all = go->GetComponents<Collider2D>();
+                        auto all = LegacyColliders2D(*go);
                         for (int i = 0; i < (int)all.size(); ++i)
                             if (index < 0 || i == index) { all[(std::size_t)i]->friction = fr; all[(std::size_t)i]->bounciness = bn; all[(std::size_t)i]->frictionCombine = clampMode(fm); all[(std::size_t)i]->bounceCombine = clampMode(bm); }
                     } else {
-                        auto all = go->GetComponents<Collider3D>();
+                        auto all = LegacyColliders3D(*go);
                         for (int i = 0; i < (int)all.size(); ++i)
                             if (index < 0 || i == index) { all[(std::size_t)i]->friction = fr; all[(std::size_t)i]->bounciness = bn; all[(std::size_t)i]->frictionCombine = clampMode(fm); all[(std::size_t)i]->bounceCombine = clampMode(bm); }
                     }
+                } else if (field == "colskin2d") {
+                    float off = 0.0f; int index = -1;
+                    in >> off;
+                    in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
+                    auto all = LegacyColliders2D(*go);
+                    if (index >= 0 && index < (int)all.size() && std::isfinite(off) && off >= 0.0f) all[(std::size_t)index]->contactOffset = off;
+                } else if (field == "colskin3d") {
+                    float off = 0.0f; int index = -1;
+                    in >> off;
+                    in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
+                    auto all = LegacyColliders3D(*go);
+                    if (index >= 0 && index < (int)all.size() && std::isfinite(off) && off >= 0.0f) all[(std::size_t)index]->contactOffset = off;
                 } else { fieldDone = false; }
                 }
                 if (!fieldDone) { fieldDone = true;
@@ -5505,11 +5546,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int index = -1;   // no index: the one record applies to every collider, as older files did
                     if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
                     if (field == "trigfilter2d") {
-                        auto all = go->GetComponents<Collider2D>();
+                        auto all = LegacyColliders2D(*go);
                         if (index < 0) { for (Collider2D* c : all) { c->triggerTag = tag; c->triggerLayers = layers; } }
                         else if (index < (int)all.size()) { all[(std::size_t)index]->triggerTag = tag; all[(std::size_t)index]->triggerLayers = layers; }
                     } else {
-                        auto all = go->GetComponents<Collider3D>();
+                        auto all = LegacyColliders3D(*go);
                         if (index < 0) { for (Collider3D* c : all) { c->triggerTag = tag; c->triggerLayers = layers; } }
                         else if (index < (int)all.size()) { all[(std::size_t)index]->triggerTag = tag; all[(std::size_t)index]->triggerLayers = layers; }
                     }
@@ -9868,6 +9909,8 @@ bool SceneSerializer::MergeFromFile(Scene& scene, const std::string& path, const
 namespace detail {
 void RegisterBuiltinComponentSerializers() {
     RegisterPhysicsToySerializers();
+    RegisterColliderShape2DSerializers(); // Composite 2D collider
+    RegisterColliderShapeSerializers();   // Cone, Convex Hull, Plane, Compound, Heightfield colliders
     ComponentSerializerRegistry::Entry trail;
     trail.name = "trailrenderer";
     trail.write = [](const GameObject& go, std::ostream& out) {

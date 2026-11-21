@@ -55,5 +55,24 @@ int main() {
     CHECK(w.LoadPresetText(txt));
     CHECK(w.maxSpeed == 31.5f);
     CHECK(!w.LoadPresetText("not a vehicle preset"));
+    // Audit: every setting has a plain name and unit, every visible one has a tooltip, the default view is small.
+    CHECK(vm::Infos().size() == VehicleTuning::Table().size());
+    size_t simpleN = 0, hidden = 0;
+    for (const auto& d : VehicleTuning::Table()) {
+        const vm::Info* i = vm::InfoFor(d.name);
+        CHECK(i != nullptr); if (!i) continue;
+        CHECK(i->label && *i->label); CHECK(i->unit && *i->unit);
+        if (i->level != vm::Level::Hidden) CHECK(d.tip && *d.tip);
+        if (i->level == vm::Level::Simple) ++simpleN; if (i->level == vm::Level::Hidden) ++hidden;
+        if (std::string(d.name).rfind("key", 0) == 0 || std::string(d.name).rfind("pad", 0) == 0) CHECK(i->level == vm::Level::Hidden);
+    }
+    CHECK(simpleN <= 8); CHECK(simpleN == vm::DefaultRows().size()); CHECK(hidden >= 20);
+    CHECK(vm::DefaultRows().size() + vm::AdvancedRows().size() + hidden == VehicleTuning::Table().size());
+    // Per-setting reset to the preset's value or the default.
+    { VehicleTuning t; t.ApplyPreset("Sedan"); const float sedan = t.maxSpeed; t.maxSpeed = 99;
+      CHECK(vm::IsChanged(t, "maxSpeed", "Sedan")); CHECK(!vm::IsChanged(t, "grip", "Sedan"));
+      CHECK(vm::ResetSetting(t, "maxSpeed", "Sedan")); CHECK(t.maxSpeed == sedan); CHECK(!vm::IsChanged(t, "maxSpeed", "Sedan"));
+      t.maxSpeed = 5; CHECK(vm::ResetSetting(t, "maxSpeed", "")); CHECK(t.maxSpeed == VehicleTuning().maxSpeed);
+      CHECK(!vm::ResetSetting(t, "nonsense", "Sedan")); CHECK(!vm::IsChanged(t, "nonsense", "")); }
     TEST_MAIN_RESULT();
 }

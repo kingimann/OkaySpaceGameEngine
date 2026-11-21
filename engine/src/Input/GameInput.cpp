@@ -148,7 +148,8 @@ bool InteractClaimsKey(const Scene* scene, char key) {
     return false;
 }
 
-bool LeanKeyTaken(const Scene* scene, char key) {
+bool LeanKeyTaken(const Scene* scene, char key, const GameObject* who) {
+    (void)who;
     if (!scene || !key) return false;
     if (InteractClaimsKey(scene, key)) return true;
     if (IsInteractKey(key))   // a seat in reach (or the one the player sits on) takes the Interact key

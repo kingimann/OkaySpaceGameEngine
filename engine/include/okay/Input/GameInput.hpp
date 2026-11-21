@@ -68,6 +68,6 @@ std::string UseKeyName(char componentKey);
 /// A lean key (Q by default; lean-right was E and moved off it) should be ignored this frame: a chest, bench or
 /// pickup or seat in range wants it as its use key, or it is also a bag key and was just
 /// pressed to open or close the bag. One press, one owner.
-bool LeanKeyTaken(const Scene* scene, char key);
+bool LeanKeyTaken(const Scene* scene, char key, const GameObject* who = nullptr);
 
 } // namespace okay

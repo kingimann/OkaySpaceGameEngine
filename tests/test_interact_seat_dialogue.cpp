@@ -232,5 +232,142 @@ int main() {
         CHECK(dr2 && dr2->shotBlend < 0.0f);
     }
 
+    // ---- A scene with no CinemachineBrain: after the talk the main camera is the player's again ----
+    // The runner adds a brain to show the shot. When the talk ends it must take it away again and put the
+    // camera back where it was, or the brain keeps driving the camera to the shot for good.
+    {
+        Scene s("nobrain"); s.physicsEnabled = false;
+        GameObject* camGo = s.CreateGameObject("Main Camera");
+        camGo->transform->SetPosition({0.0f, 1.6f, 5.0f});
+        auto* cam = camGo->AddComponent<Camera>();
+        cam->fieldOfView = 60.0f;
+        s.mainCamera = cam;
+        GameObject* shotGo = s.CreateGameObject("Shot");
+        shotGo->transform->SetPosition({3.0f, 2.0f, 0.0f});
+        auto* vc = shotGo->AddComponent<VirtualCamera>();
+        vc->fieldOfView = 35.0f;
+        GameObject* npc = s.CreateGameObject("Npc");
+        auto* dr = npc->AddComponent<DialogueRunner>();
+        dr->drawUI = false; dr->startMode = 1; dr->typewriterSpeed = 0.0f;
+        dr->shotBlend = 0.0f;   // a cut, so the shot is reached in one frame
+        DialogueGraph g;
+        auto& l0 = g.Add(DialogueNode::Kind::Line, 0, 0);
+        l0.speaker = "Npc"; l0.text = "Over here."; l0.next = 1;
+        g.Add(DialogueNode::Kind::End, 100, 0);
+        g.start = 0;
+        dr->SetGraph(g);
+        dr->SetCameraShot(0, "Shot");
+        s.Start();
+        s.Update(0.016f);
+        CHECK(camGo->GetComponent<CinemachineBrain>() == nullptr);
+        CHECK(dr->StartDialogue());
+        for (int i = 0; i < 3; ++i) s.Update(0.016f);
+        CHECK(camGo->GetComponent<CinemachineBrain>() != nullptr);
+        CHECK(Vec3::Distance(camGo->transform->Position(), {3.0f, 2.0f, 0.0f}) < 1e-3f);   // the shot is live
+        dr->Advance();
+        CHECK(!dr->IsActive());
+        for (int i = 0; i < 3; ++i) s.Update(0.016f);
+        auto* br = camGo->GetComponent<CinemachineBrain>();
+        CHECK(br == nullptr || !br->enabled);                                               // the runner's brain is gone
+        CHECK(Vec3::Distance(camGo->transform->Position(), {0.0f, 1.6f, 5.0f}) < 1e-3f);   // back where it was
+        CHECK_NEAR(cam->fieldOfView, 60.0f, 1e-3f);
+        // Whatever drives the camera now (here: the test) is not overridden by a leftover brain.
+        camGo->transform->SetPosition({7.0f, 0.0f, 0.0f});
+        for (int i = 0; i < 3; ++i) s.Update(0.016f);
+        CHECK(Vec3::Distance(camGo->transform->Position(), {7.0f, 0.0f, 0.0f}) < 1e-3f);
+        // A second talk works the same way (the brain comes back for the shot and goes again).
+        CHECK(dr->StartDialogue());
+        for (int i = 0; i < 2; ++i) s.Update(0.016f);
+        CHECK(Vec3::Distance(camGo->transform->Position(), {3.0f, 2.0f, 0.0f}) < 1e-3f);
+        dr->Stop();
+        for (int i = 0; i < 2; ++i) s.Update(0.016f);
+        CHECK(Vec3::Distance(camGo->transform->Position(), {7.0f, 0.0f, 0.0f}) < 1e-3f);
+    }
+
+    // ---- The seated body is destroyed (not killed): the seat lets go of it at once ----
+    {
+        SeatWorld w;
+        w.Press('e');
+        CHECK(w.seat->occupied && w.seat->Occupant() == w.player);
+        for (int i = 0; i < 40; ++i) w.s.Update(0.016f);
+        w.s.Destroy(w.player);
+        w.s.Update(0.016f);                 // the object goes at the end of this frame
+        CHECK(w.seat->Occupant() == nullptr);   // no pointer to the freed body is kept
+        CHECK(!w.seat->occupied);
+        w.s.Update(0.016f);
+        w.s.Update(0.016f);
+        CHECK(!w.seat->occupied && w.seat->Occupant() == nullptr);
+    }
+
+    // ---- Logic Button: the controller's X turns pieces in build mode, so it does not press there ----
+    {
+        Scene s("button"); s.physicsEnabled = false;
+        GameObject* camGo = s.CreateGameObject("Main Camera");   // at the origin, looking down -Z
+        s.mainCamera = camGo->AddComponent<Camera>();
+        GameObject* btn = s.CreateGameObject("Button");
+        btn->transform->SetPosition({0.0f, 0.0f, -2.0f});
+        btn->AddComponent<BoxCollider3D>();
+        auto* ls = btn->AddComponent<LogicSource>();
+        ls->kind = LogicSource::Kind::Button;
+        ls->toggle = true;
+        auto* bm = s.CreateGameObject("Builder")->AddComponent<BuildMode>();
+        s.Start();
+        Input::FeedKeys({}); Input::FeedGamepad({0, 0}, 0); s.Update(0.016f);
+        auto padX = [&]() {
+            Input::FeedGamepad({0, 0}, 1u << 2); s.Update(0.016f);
+            Input::FeedGamepad({0, 0}, 0); s.Update(0.016f);
+        };
+        auto keyE = [&]() {
+            Input::FeedKeys({'e'}); s.Update(0.016f);
+            Input::FeedKeys({}); s.Update(0.016f);
+        };
+        padX();
+        CHECK(ls->Output());                // outside build mode the pad's X presses it
+        keyE();
+        CHECK(!ls->Output());               // and so does E
+        bm->SetActive(true);
+        s.Update(0.016f);
+        CHECK(bm->Active());
+        padX();
+        CHECK(!ls->Output());               // in build mode the pad's X does not (it turns pieces)
+        keyE();
+        CHECK(ls->Output());                // E still presses it there, as before the shared action
+        bm->SetActive(false);
+        Input::FeedGamepad({0, 0}, 0);
+    }
+
+    // ---- Lean only steps aside for a seat that is about this player ----
+    {
+        Scene s("lean-seat"); s.physicsEnabled = false;
+        GameObject* player = s.CreateGameObject("Player");
+        player->AddComponent<Character>();
+        GameObject* npc = s.CreateGameObject("Npc");
+        npc->transform->SetPosition({40.0f, 0.0f, 0.0f});
+        GameObject* chair = s.CreateGameObject("FarChair");
+        chair->transform->SetPosition({40.0f, 0.0f, 0.0f});
+        auto* seat = chair->AddComponent<Seat>();
+        s.Start();
+        Input::FeedKeys({}); s.Update(0.016f);
+        seat->Claim(npc);                   // an NPC sits far away
+        CHECK(seat->occupied && !seat->playerInRange);
+        CHECK(!LeanKeyTaken(&s, 'e', player));   // not this player's seat: leaning on E still works
+        seat->Release();
+        seat->Claim(player);
+        CHECK(LeanKeyTaken(&s, 'e', player));    // the player's own seat takes E
+        seat->Release();
+        // Build mode's delete key (X) is also the new lean-right default: in build mode it deletes, not leans.
+        auto* bm = s.CreateGameObject("Builder")->AddComponent<BuildMode>();
+        s.Update(0.016f);
+        CHECK(!LeanKeyTaken(&s, bm->bindings.removeKey, player));
+        bm->SetActive(true);
+        s.Update(0.016f);
+        CHECK(LeanKeyTaken(&s, bm->bindings.removeKey, player));
+        FirstPersonController fp;
+        CHECK(LeanKeyTaken(&s, fp.leanRightKey, player));
+        bm->SetActive(false);
+        s.Update(0.016f);
+        CHECK(!LeanKeyTaken(&s, fp.leanRightKey, player));
+    }
+
     TEST_MAIN_RESULT();
 }

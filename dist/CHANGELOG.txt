@@ -1,5 +1,14 @@
 OkaySpace Game Engine — Changelog
 
+v2.900.0
+  Movement, animation and menus
+  - The character controller now stops the same way at any frame rate, and
+    has Simple and Advanced tuning settings.
+  - Fixed: the knee snapped at every step in the walk and run animation.
+  - Inventory items can wear out and be repaired.
+  - GameObject > UI menu is tidier: 12 common items on top, the rest under
+    "More".
+
 v2.899.0
   Editor and model fixes
   - Code editor: new line commands (toggle comment, duplicate line, move

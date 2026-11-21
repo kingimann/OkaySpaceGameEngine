@@ -68,22 +68,58 @@ static void BackendTouchTests() {
     Drain(b);
     CHECK(b.TouchDeviceCount() == 0); host.touch = 2; CHECK(b.TouchDeviceCount() == 2);
     // a tap: finger events with 0..1 coordinates, the mouse follows the primary finger, one Tap gesture
-    b.PushTouch(5, PointerPhase::Down, 960, 270); b.PushTouch(5, PointerPhase::Up, 960, 270);
+    // PushTouch takes DIPs (CoreWindow PointerPoint.Position); the window is at 192 DPI (2x), so 480 x 135 DIPs is pixel 960 x 270
+    b.PushTouch(5, PointerPhase::Down, 480.0f, 135.0f); b.PushTouch(5, PointerPhase::Up, 480.0f, 135.0f);
     { auto ev = Drain(b); CHECK(CountT(ev, EventType::FingerDown) == 1 && CountT(ev, EventType::FingerUp) == 1 && CountT(ev, EventType::MouseButtonDown) == 1 && CountT(ev, EventType::MouseButtonUp) == 1);
       for (auto& e : ev) if (e.type == EventType::FingerDown) CHECK(e.fingerId == 5 && e.fx == 0.5f && e.fy == 0.25f);
       for (auto& e : ev) if (e.type == EventType::MouseButtonDown) CHECK(e.button == MouseLeft && e.x == 960 && e.y == 270);
       auto g = b.TakeGestures(); CHECK(g.size() == 1 && g[0].kind == K::Tap && b.TakeGestures().empty()); }
     // a drag: motion events, the mouse moves, the left button is held until the finger lifts
-    b.PushTouch(1, PointerPhase::Down, 100, 100); b.PushTouch(1, PointerPhase::Move, 140, 100);
+    b.PushTouch(1, PointerPhase::Down, 50.0f, 50.0f); b.PushTouch(1, PointerPhase::Move, 70.0f, 50.0f);
     { std::uint32_t m = b.MouseState(nullptr, nullptr); CHECK(m & MouseMask(MouseLeft)); auto ev = Drain(b); CHECK(CountT(ev, EventType::FingerMotion) == 1 && CountT(ev, EventType::MouseMove) >= 1); }
-    b.PushTouch(1, PointerPhase::Up, 140, 100); Drain(b); CHECK(!(b.MouseState(nullptr, nullptr) & MouseMask(MouseLeft)));
+    b.PushTouch(1, PointerPhase::Up, 70.0f, 50.0f); Drain(b); CHECK(!(b.MouseState(nullptr, nullptr) & MouseMask(MouseLeft)));
     { auto g = b.TakeGestures(); CHECK(g.size() == 2 && g[0].kind == K::DragStart && g[1].kind == K::DragEnd); }
     // a second finger does not touch the mouse button
-    b.PushTouch(1, PointerPhase::Down, 10, 10); b.PushTouch(2, PointerPhase::Down, 500, 500); Drain(b);
-    b.PushTouch(2, PointerPhase::Up, 500, 500); { auto ev = Drain(b); CHECK(CountT(ev, EventType::FingerUp) == 1 && CountT(ev, EventType::MouseButtonUp) == 0); }
+    b.PushTouch(1, PointerPhase::Down, 5.0f, 5.0f); b.PushTouch(2, PointerPhase::Down, 250.0f, 250.0f); Drain(b);
+    b.PushTouch(2, PointerPhase::Up, 250.0f, 250.0f); { auto ev = Drain(b); CHECK(CountT(ev, EventType::FingerUp) == 1 && CountT(ev, EventType::MouseButtonUp) == 0); }
     // losing focus cancels the held finger and releases the button
     b.CancelTouches(); { auto ev = Drain(b); CHECK(CountT(ev, EventType::FingerUp) == 1 && CountT(ev, EventType::MouseButtonUp) == 1); } CHECK(b.Touch().ActiveCount() == 0);
     b.TakeGestures();
+
+    // DIPs to pixels at 2x, including a fractional DIP and a point outside the window (pointer capture): the mouse and the finger
+    // get pixels, fx / fy are pixel / window pixels
+    b.PushTouch(8, PointerPhase::Down, 100.25f, 33.5f);
+    { auto ev = Drain(b); for (auto& e : ev) { if (e.type == EventType::FingerDown) CHECK(e.x == 201 && e.y == 67 && e.fx == 201.0f / 1920.0f && e.fy == 67.0f / 1080.0f);
+                                               if (e.type == EventType::MouseButtonDown) CHECK(e.x == 201 && e.y == 67); } }
+    b.PushTouch(8, PointerPhase::Move, -10.0f, 600.0f); { auto ev = Drain(b); for (auto& e : ev) if (e.type == EventType::FingerMotion) CHECK(e.x == -20 && e.y == 1200); }
+    b.PushTouch(8, PointerPhase::Up, -10.0f, 600.0f); Drain(b); b.TakeGestures();
+
+    // the main finger changes: 1 down (presses the mouse), 2 down, 1 up (releases it; 2 becomes the tracker's primary), 2 moves, 2 up.
+    // Mouse downs and ups must pair, no up without a held button, and the mouse must not move with no button held.
+    b.PushTouch(1, PointerPhase::Down, 10.0f, 10.0f); b.PushTouch(2, PointerPhase::Down, 200.0f, 200.0f); b.PushTouch(1, PointerPhase::Up, 10.0f, 10.0f);
+    b.PushTouch(2, PointerPhase::Move, 260.0f, 260.0f); b.PushTouch(2, PointerPhase::Up, 260.0f, 260.0f);
+    { auto ev = Drain(b); int held = 0, downs = 0, ups = 0, strayUps = 0, freeMoves = 0;
+      for (auto& e : ev) {
+          if (e.type == EventType::MouseButtonDown) { ++downs; ++held; }
+          else if (e.type == EventType::MouseButtonUp) { ++ups; if (held == 0) ++strayUps; else --held; }
+          else if (e.type == EventType::MouseMove && held == 0 && downs > 0) ++freeMoves;
+      }
+      CHECK(downs == 1 && ups == 1 && strayUps == 0 && freeMoves == 0 && CountT(ev, EventType::FingerUp) == 2); }
+    CHECK(!(b.MouseState(nullptr, nullptr) & MouseMask(MouseLeft)));
+    // after every finger lifted, the next finger takes the mouse again
+    b.PushTouch(3, PointerPhase::Down, 20.0f, 20.0f); b.PushTouch(3, PointerPhase::Up, 20.0f, 20.0f);
+    { auto ev = Drain(b); CHECK(CountT(ev, EventType::MouseButtonDown) == 1 && CountT(ev, EventType::MouseButtonUp) == 1); }
+    b.TakeGestures();
+
+    // suspend with a finger down and a composition active: the finger is cancelled (button released), the composition is cleared
+    b.StartTextInput(); b.PushComposition("ab", 2); b.PushTouch(4, PointerPhase::Down, 30.0f, 30.0f); Drain(b);
+    CHECK(b.MouseState(nullptr, nullptr) & MouseMask(MouseLeft));
+    b.Life().Suspending(1000, 5000); b.ServiceLifecycle();
+    { auto ev = Drain(b); CHECK(CountT(ev, EventType::FingerUp) == 1 && CountT(ev, EventType::MouseButtonUp) == 1 && CountT(ev, EventType::WindowFocusLost) == 1);
+      int cleared = 0; for (auto& e : ev) if (e.type == EventType::TextEditing && e.text.empty()) ++cleared; CHECK(cleared == 1); }
+    CHECK(!(b.MouseState(nullptr, nullptr) & MouseMask(MouseLeft)) && b.Touch().ActiveCount() == 0);
+    b.PushCompositionCommit(); CHECK(Drain(b).empty());   // nothing left to commit after resume
+    b.Life().Resuming(); b.ServiceLifecycle(); Drain(b); b.StopTextInput(); Drain(b); b.TakeGestures();
 
     // text composition: nothing unless text input is on; TextEditing while composing; commit gives TextInput
     b.PushComposition("ni", 2); CHECK(Drain(b).empty());

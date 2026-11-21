@@ -86,18 +86,84 @@ std::string CompressedCachePath(const std::string& imagePath) {
     return dir + ".okaycache/" + file + ".dds";
 }
 
+namespace {
+
+// FNV-1a, 64 bit (offset basis 14695981039346656037, prime 1099511628211), over a file's bytes.
+bool HashFile(const std::string& path, std::uint64_t* hash, std::uint64_t* size) {
+    std::ifstream f(fs::u8path(path), std::ios::binary);
+    if (!f) return false;
+    std::uint64_t h = 14695981039346656037ull, n = 0;
+    char buf[1 << 15];
+    while (f) {
+        f.read(buf, sizeof buf);
+        const std::streamsize got = f.gcount();
+        for (std::streamsize i = 0; i < got; ++i) { h ^= std::uint8_t(buf[i]); h *= 1099511628211ull; }
+        n += std::uint64_t(got);
+    }
+    if (f.bad()) return false;
+    *hash = h;
+    *size = n;
+    return true;
+}
+
+// What a cached copy is made from: the picture and its .okaymeta (size and hash). "" when the picture cannot be read.
+std::string SourceRecord(const std::string& imagePath) {
+    std::uint64_t h = 0, n = 0;
+    if (!HashFile(imagePath, &h, &n)) return std::string();
+    std::string r = "okaycache 1 picture " + std::to_string(n) + " " + std::to_string(h);
+    if (HashFile(imagePath + ".okaymeta", &h, &n)) r += " meta " + std::to_string(n) + " " + std::to_string(h);
+    else r += " meta none";
+    return r + "\n";
+}
+
+std::string RecordPath(const std::string& cache) { return cache + ".src"; }
+
+std::string ReadSmallFile(const std::string& path) {
+    std::ifstream f(fs::u8path(path), std::ios::binary);
+    if (!f) return std::string();
+    std::string s(512, '\0');
+    f.read(&s[0], std::streamsize(s.size()));
+    s.resize(std::size_t(f.gcount()));
+    return s;
+}
+
+// Write through a temporary file and a rename, so a reader never sees half a file.
+bool WriteWhole(const std::string& path, const char* data, std::size_t size) {
+    std::error_code ec;
+    const std::string tmp = path + ".tmp";
+    bool ok = false;
+    {
+        std::ofstream f(fs::u8path(tmp), std::ios::binary | std::ios::trunc);
+        if (f) { f.write(data, std::streamsize(size)); ok = bool(f); }
+    }
+    if (ok) { fs::rename(fs::u8path(tmp), fs::u8path(path), ec); ok = !ec; }
+    if (!ok) fs::remove(fs::u8path(tmp), ec);
+    return ok;
+}
+
+// Keep `img` as the cached copy at `cache`, recorded as made from `record`. The record goes first out and last in,
+// so a copy that was not finished never matches.
+bool WriteCachedCopy(const std::string& cache, const tex::DdsImage& img, const std::string& record) {
+    const std::vector<std::uint8_t> bytes = tex::WriteDds(img);
+    if (bytes.empty() || record.empty()) return false;
+    std::error_code ec;
+    fs::create_directories(fs::u8path(cache).parent_path(), ec);
+    fs::remove(fs::u8path(RecordPath(cache)), ec);
+    if (!WriteWhole(cache, reinterpret_cast<const char*>(bytes.data()), bytes.size())) return false;
+    return WriteWhole(RecordPath(cache), record.data(), record.size());
+}
+
+} // namespace
+
 bool LoadCompressedCopy(const std::string& imagePath, tex::DdsImage* out, std::string* error, bool* rebuilt) {
     auto fail = [&](const std::string& m) { if (error) *error = m; return false; };
     if (!out) return fail("no output");
     if (rebuilt) *rebuilt = false;
-    std::error_code ec;
-    fs::file_time_type newest = fs::last_write_time(imagePath, ec);
-    if (ec) return fail("cannot read " + imagePath);
-    const fs::file_time_type metaTime = fs::last_write_time(imagePath + ".okaymeta", ec);
-    if (!ec && metaTime > newest) newest = metaTime;
+    // The record, not the file times: a picture replaced by an older file (a backup, an unpacked archive) still differs.
+    const std::string record = SourceRecord(imagePath);
+    if (record.empty()) return fail("cannot read " + imagePath);
     const std::string cache = CompressedCachePath(imagePath);
-    const fs::file_time_type cacheTime = fs::last_write_time(cache, ec);
-    if (!ec && cacheTime >= newest) {
+    if (ReadSmallFile(RecordPath(cache)) == record) {
         tex::DdsImage cached;
         if (tex::ReadDdsFile(cache, &cached) && cached.format != tex::DdsFormat::RGBA8) { *out = std::move(cached); return true; }
     }
@@ -113,26 +179,23 @@ bool LoadCompressedCopy(const std::string& imagePath, tex::DdsImage* out, std::s
     bo.mip.srgb = !(srgb == "0" || srgb == "false" || srgb == "off");
     tex::DdsImage built;
     if (!tex::BuildDds(img.Data(), img.Width(), img.Height(), bo, &built, &why)) return fail(why);
-    const std::vector<std::uint8_t> bytes = tex::WriteDds(built);
-    if (!bytes.empty()) {   // keep it for next time; a folder we may not write to only costs the rebuild
-        fs::create_directories(fs::path(cache).parent_path(), ec);
-        const std::string tmp = cache + ".tmp";
-        bool ok = false;
-        {
-            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-            if (f) { f.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size())); ok = bool(f); }
-        }
-        if (ok) { fs::rename(tmp, cache, ec); if (ec) fs::remove(tmp, ec); }
-        else fs::remove(tmp, ec);
-    }
+    WriteCachedCopy(cache, built, record);   // keep it for next time; a folder we may not write to only costs the rebuild
     *out = std::move(built);
     if (rebuilt) *rebuilt = true;
     return true;
 }
 
 bool ShipCompressedCopy(const std::string& sourceImage, const std::string& shippedImage, std::string* error) {
-    (void)sourceImage; (void)shippedImage; (void)error;
-    return false;
+    if (error) error->clear();
+    if (!ImportFlagOn(ReadImportSetting(sourceImage, "texture", "compress"))) return false;
+    tex::DdsImage img;
+    if (!LoadCompressedCopy(sourceImage, &img, error)) return false;   // the project's own cache, built if needed
+    // Recorded as made from the shipped files, so the game finds it current whatever times the copies get.
+    const std::string record = SourceRecord(shippedImage);
+    if (record.empty()) { if (error) *error = "cannot read " + shippedImage; return false; }
+    const std::string cache = CompressedCachePath(shippedImage);
+    if (!WriteCachedCopy(cache, img, record)) { if (error) *error = "cannot write " + cache; return false; }
+    return true;
 }
 
 bool Source(const std::string& name, tex::DdsImage* out, std::string* error) {

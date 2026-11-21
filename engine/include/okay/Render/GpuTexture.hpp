@@ -5,8 +5,10 @@
 //
 //   * Where the data comes from (GpuTextureSource): a texture path ending in .dds is read as it is; a picture whose
 //     import settings say `compress` gets a compressed copy, built once by our own encoder (okay::tex) and kept in the
-//     import cache `<folder>/.okaycache/<file name>.dds` (rebuilt when the picture or its .okaymeta is newer). Any
-//     other picture returns false and goes the ordinary RGBA8 way, as before.
+//     import cache `<folder>/.okaycache/<file name>.dds`. Beside it, `<file name>.dds.src` records what it was made
+//     from (the size and an FNV-1a 64 hash of the picture and of its .okaymeta); any change rebuilds it, whatever the
+//     file times say. A game build writes the copy next to the shipped picture (ShipCompressedCopy), so a built game
+//     does not encode at run time. Any other picture returns false and goes the ordinary RGBA8 way, as before.
 //   * Whether the GPU takes it compressed (PlanGpuTexture): BC1/BC2/BC3 need S3TC (GL_EXT_texture_compression_s3tc),
 //     BC4/BC5 need RGTC (core since OpenGL 3.0, or GL_ARB/EXT_texture_compression_rgtc). The top level must be a
 //     multiple of 4 on both sides (older drivers refuse other sizes). Otherwise every level is decoded on the CPU
@@ -60,7 +62,7 @@ bool PlanUpload(tex::DdsImage img, const Caps& caps, Plan* out);
 /// The import cache copy of a picture: `<folder>/.okaycache/<file name>.dds`.
 std::string CompressedCachePath(const std::string& imagePath);
 
-/// The compressed copy of a picture, from the cache when it is newer than the picture and its .okaymeta, else built
+/// The compressed copy of a picture, from the cache when its record matches the picture and its .okaymeta, else built
 /// (honouring the picture's maxSize, sRGB and mipmaps import settings) and written to the cache (a read-only folder
 /// only skips the write). `rebuilt` says which happened.
 bool LoadCompressedCopy(const std::string& imagePath, tex::DdsImage* out, std::string* error = nullptr, bool* rebuilt = nullptr);

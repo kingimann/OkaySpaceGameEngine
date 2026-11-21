@@ -125,7 +125,7 @@ owner's approval and a Windows run, which none has. When this list was counted n
 | `.3mf`, `.amf`, `.x3d`, `.dxf` | 1 (+1 at the test root), 11, 4, 5 | `OKAY_OWN_3MF`, `_AMF`, `_X3D`, `_DXF` |
 | `.lwo` | 54 | `OKAY_OWN_LWO` |
 | **`.lxo`** (new) | 2 | Modo, read by the LWO reader (`OKAY_OWN_LXO`, `docs/content/model_readers.md`, section LXO): 0.70x the time, 0.44x the largest peak (one file 1.12x the peak: it keeps the file's per-corner normals) |
-| **`.mesh.xml`** (moved up) | 4 | OGRE XML (`OKAY_OWN_OGRE`): 0.42x the time, 0.54x the largest peak since 2026-11-16 (was 1.03x / 1.04x); skeletons not read in either OGRE form |
+| **`.mesh.xml`** (moved up) | 4 | OGRE XML (`OKAY_OWN_OGRE`): 0.42x the time, 0.54x the largest peak since 2026-11-16 (was 1.03x / 1.04x); `.skeleton.xml` skeletons read since 2026-11-20, binary `.skeleton` not |
 | `.blend` | 28 | `OKAY_OWN_BLEND` |
 | `.md2`, `.md3`, `.irrmesh`, `.b3d`, `.x` | 5, 3, 5, 3, 12 | `OKAY_OWN_MD2`, `_MD3`, `_IRRMESH`, `_B3D`, `_X` |
 | `.ac`, `.acc`, `.ac3d` | 9, 2, 0 | `OKAY_OWN_AC3D` |
@@ -174,7 +174,7 @@ extension list above, not from Assimp's code; for the ones without a corpus file
 | `.scn` | 0 | trueSpace scene, claimed by the COB importer | no file to check |
 | `.x3db` | 0 | binary X3D | needs the X3D binary encoding; no file to check |
 | `.vrm` | 0 | VRM avatars (glTF 2.0 binary with extensions) | our glTF reader could read the geometry; not routed, no file to check |
-| `.skeleton`, `.skeleton.xml` | 2, 2 (not model files on their own) | OGRE skeletons, read by Assimp together with the mesh | a skinned OGRE mesh imports rigid with ours |
+| `.skeleton`, `.skeleton.xml` | 2, 2 (not model files on their own) | OGRE skeletons, read by Assimp together with the mesh | `.skeleton.xml` is read by our reader since 2026-11-20 (bones, bind pose, clips, skin weights; hand-computed fixtures only, not yet compared with Assimp on fish and ninja); the binary `.skeleton` is not, so a skinned binary OGRE mesh still imports rigid |
 
 The gap batch of 2026-11-16 took the three gap formats with the most corpus files (`.xml` 9, `.mesh` 3, `.zae` 3) and that users
 are most likely to have: OGRE game assets ship as binary `.mesh` far more often than as XML, ZAE is COLLADA's packaged form (one

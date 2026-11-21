@@ -3,6 +3,8 @@
 #include "okay/Physics/Broadphase.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
+#include "okay/Physics/ColliderShapes2D.hpp"
+#include "okay/Physics/ConvexContact2D.hpp"
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/ComponentCache.hpp"
@@ -27,6 +29,49 @@ struct Contact {
     Vec2  point{0, 0};    // approximate world contact point (for angular response)
 };
 
+// Turning inertia about Z for a body of mass 1, from the collider's real shape (rounded convex pieces weighted by area).
+// 0 when it cannot be worked out (an edge line has no area).
+float PieceInertia(Collider2D* col) {
+    std::vector<shape2d::Piece> ps; shape2d::PiecesOf(col, ps, false);
+    const float kPi = 3.14159265f;
+    double areaSum = 0, cx = 0, cy = 0;
+    struct One { double area, cx, cy, iC; };       // area, centroid, inertia about the centroid for unit mass
+    std::vector<One> ones;
+    for (const auto& p : ps) {
+        One o{0, 0, 0, 0};
+        if (p.v.size() == 1 && p.r > 0) { o.area = kPi * p.r * p.r; o.cx = p.v[0].x; o.cy = p.v[0].y; o.iC = 0.5 * p.r * p.r; }
+        else if (p.v.size() == 2 && p.r > 0) {
+            double L = (p.v[1] - p.v[0]).Magnitude(), r = p.r;
+            double ar = 2 * r * L, ac = kPi * r * r;
+            o.area = ar + ac; o.cx = 0.5 * (p.v[0].x + p.v[1].x); o.cy = 0.5 * (p.v[0].y + p.v[1].y);
+            double iRect = (4 * r * r + L * L) / 12.0, iDisc = 0.5 * r * r + 0.25 * L * L;   // the two half discs, parallel-axis approx
+            o.iC = (ar * iRect + ac * iDisc) / o.area;
+        } else if (p.v.size() >= 3) {
+            double a2 = 0, sx = 0, sy = 0, num = 0, den = 0;
+            for (std::size_t i = 0; i < p.v.size(); ++i) {
+                const Vec2& a = p.v[i]; const Vec2& b = p.v[(i + 1) % p.v.size()];
+                double c = (double)a.x * b.y - (double)b.x * a.y;
+                a2 += c; sx += (a.x + b.x) * c; sy += (a.y + b.y) * c;
+                num += c * ((double)a.x * a.x + a.y * a.y + (double)a.x * b.x + (double)a.y * b.y + (double)b.x * b.x + (double)b.y * b.y);
+                den += c;
+            }
+            if (std::abs(a2) < 1e-12) continue;
+            o.area = std::abs(a2) * 0.5; o.cx = sx / (3 * a2); o.cy = sy / (3 * a2);
+            double iOrigin = num / (6.0 * den);
+            o.iC = std::max(iOrigin - (o.cx * o.cx + o.cy * o.cy), 1e-9);
+        } else continue;
+        ones.push_back(o); areaSum += o.area; cx += o.area * o.cx; cy += o.area * o.cy;
+    }
+    if (areaSum < 1e-9 || ones.empty()) return 0.0f;
+    cx /= areaSum; cy /= areaSum;
+    double I = 0;
+    for (const auto& o : ones) {
+        double dx = o.cx - cx, dy = o.cy - cy;
+        I += (o.area / areaSum) * (o.iC + dx * dx + dy * dy);
+    }
+    return (float)I;
+}
+
 // Inverse moment of inertia about Z for a body+collider. 0 when rotation is
 // locked, mass is infinite, or there's no collider to size the inertia from.
 float InvInertia(Rigidbody2D* rb, Collider2D* col) {
@@ -41,6 +86,8 @@ float InvInertia(Rigidbody2D* rb, Collider2D* col) {
     } else if (col->shape() == Collider2D::Shape::Circle) {
         float r = static_cast<CircleCollider2D*>(col)->WorldRadius();
         I = mass * r * r * 0.5f;
+    } else if (float ui = PieceInertia(col); ui > 0.0f) {      // capsule, polygon, composite: from the real shape
+        I = mass * ui;
     } else {
         Vec2 mn, mx; col->WorldAABB(mn, mx);
         float w = mx.x - mn.x, h = mx.y - mn.y;
@@ -167,7 +214,9 @@ bool OneWayPassThrough(Collider2D* a, Collider2D* b) {
         if (!e->oneWay) continue;
         Vec2 oc = other->WorldCenter();
         Vec2 cp = ClosestOnPoly(e->WorldPoints(), false, oc);
-        Vec2 n = e->oneWayNormal.Normalized();
+        Vec2 n0 = e->oneWayNormal.Normalized();
+        float ang = e->WorldRotation(), ca = Mathf::Cos(ang), sa = Mathf::Sin(ang);
+        Vec2 n{n0.x * ca - n0.y * sa, n0.x * sa + n0.y * ca};      // the pass-through side turns with the edge
         if (Vec2::Dot(oc - cp, n) < 0.0f) return true;   // body is below the platform
     }
     return false;
@@ -225,9 +274,32 @@ Contact TestOBBCircle(const OBB2& box, const Vec2& cc, float r) {
     return c;
 }
 
+// Pair test through the convex pieces of both colliders (Polygon, Edge, Composite and the capsule-against-box pairs).
+// Normal points A toward B.
+Contact TestPieces(Collider2D* a, Collider2D* b) {
+    std::vector<shape2d::Piece> pa, pb;
+    shape2d::PiecesOf(a, pa); shape2d::PiecesOf(b, pb);
+    Contact best;
+    for (const auto& x : pa) {
+        for (const auto& y : pb) {
+            if (x.mx.x < y.mn.x || x.mn.x > y.mx.x || x.mx.y < y.mn.y || x.mn.y > y.mx.y) continue;
+            ConvexHit2 h = ConvexContact2D([&](const Vec2& d) { return shape2d::Support(x, d); },
+                                            [&](const Vec2& d) { return shape2d::Support(y, d); });
+            if (!h.hit || !std::isfinite(h.penetration)) continue;
+            if (!best.hit || h.penetration > best.penetration) {
+                best.hit = true; best.normal = h.normal; best.penetration = h.penetration; best.point = h.point;
+            }
+        }
+    }
+    return best;
+}
+
 Contact TestColliders(Collider2D* a, Collider2D* b) {
     using S = Collider2D::Shape;
     S sa = a->shape(), sb = b->shape();
+    if (shape2d::IsGeneric(a) || shape2d::IsGeneric(b) || a->contactOffset > 0.0f || b->contactOffset > 0.0f ||
+        (sa == S::Capsule && sb == S::Box) || (sa == S::Box && sb == S::Capsule))
+        return TestPieces(a, b);
 
     // Capsule vs capsule: closest points between the two segments.
     if (sa == S::Capsule && sb == S::Capsule) {
@@ -787,8 +859,7 @@ bool Passes(Collider2D* c, GameObject* ignore, std::uint32_t mask, bool queryTri
     return ((mask >> (c->layer & 31)) & 1u) != 0;
 }
 
-// Ray test against one collider: exact for circles and (oriented) boxes,
-// the AABB for capsules / edges / polygons.
+// Ray test against one collider: exact for every shape.
 bool RayCollider(Collider2D* c, const Vec2& o, const Vec2& d, float maxT, float& t, Vec2& n) {
     if (c->shape() == Collider2D::Shape::Circle) {
         auto* cc = static_cast<CircleCollider2D*>(c);
@@ -796,8 +867,14 @@ bool RayCollider(Collider2D* c, const Vec2& o, const Vec2& d, float maxT, float&
     }
     if (c->shape() == Collider2D::Shape::Box)   // exact oriented-box ray test
         return RayOBB2(o, d, static_cast<BoxCollider2D*>(c), maxT, t, n);
-    Vec2 mn, mx; c->WorldAABB(mn, mx);
-    return RayAABB(o, d, mn, mx, maxT, t, n);
+    // Capsule, Polygon, Edge, Composite: the exact shape, piece by piece (never the bounding box).
+    std::vector<shape2d::Piece> ps; shape2d::PiecesOf(c, ps, false);
+    bool hit = false; float best = maxT;
+    for (const auto& p : ps) {
+        float tt; Vec2 nn;
+        if (shape2d::RayPiece(p, o, d, best, tt, nn) && tt <= best) { hit = true; best = tt; t = tt; n = nn; }
+    }
+    return hit;
 }
 } // namespace
 
@@ -861,10 +938,38 @@ Collider2D* Physics2D::OverlapPoint(Scene& scene, const Vec2& p, std::uint32_t l
             auto* cap = static_cast<CapsuleCollider2D*>(c);
             Vec2 a, b; cap->Segment(a, b);
             if ((p - ClosestOnSegment(p, a, b)).Magnitude() <= cap->WorldRadius()) return c;
+        } else if (shape2d::IsGeneric(c)) {                      // Polygon (solid), Edge, Composite
+            std::vector<shape2d::Piece> ps; shape2d::PiecesOf(c, ps);
+            shape2d::Piece pt; pt.v = {p};
+            for (const auto& pc : ps) {
+                if (p.x < pc.mn.x || p.x > pc.mx.x || p.y < pc.mn.y || p.y > pc.mx.y) continue;
+                ConvexHit2 h = ConvexContact2D([&](const Vec2& d) { return shape2d::Support(pc, d); }, [&](const Vec2&) { return p; });
+                if (h.hit) return c;
+            }
         }
     }
     return nullptr;
 }
+
+namespace {
+// Does generic collider `col` touch the convex piece `qp`? n points from the collider toward the piece; point is on the collider.
+bool PieceTouch(Collider2D* col, const shape2d::Piece& qp, Vec2& n, Vec2& point) {
+    std::vector<shape2d::Piece> ps; shape2d::PiecesOf(col, ps);
+    shape2d::Piece q = qp; q.Bounds();
+    bool hit = false; float best = -1.0f;
+    for (const auto& pc : ps) {
+        if (pc.mx.x < q.mn.x || pc.mn.x > q.mx.x || pc.mx.y < q.mn.y || pc.mn.y > q.mx.y) continue;
+        ConvexHit2 h = ConvexContact2D([&](const Vec2& d) { return shape2d::Support(pc, d); },
+                                        [&](const Vec2& d) { return shape2d::Support(q, d); });
+        if (h.hit && std::isfinite(h.penetration) && h.penetration > best) { hit = true; best = h.penetration; n = h.normal; point = h.point; }
+    }
+    return hit;
+}
+bool CircleTouchPieces(Collider2D* col, const Vec2& c, float r, Vec2& n, Vec2& point) {
+    shape2d::Piece q; q.v = {c}; q.r = r;
+    return PieceTouch(col, q, n, point);
+}
+} // namespace
 
 std::vector<Collider2D*> Physics2D::OverlapCircle(Scene& scene, const Vec2& center, float radius,
                                                   std::uint32_t layerMask, bool queryTriggers) {
@@ -881,6 +986,9 @@ std::vector<Collider2D*> Physics2D::OverlapCircle(Scene& scene, const Vec2& cent
             Vec2 l{d.x * ca + d.y * sa, -d.x * sa + d.y * ca};
             Vec2 cl{Mathf::Clamp(l.x, -h.x, h.x), Mathf::Clamp(l.y, -h.y, h.y)};
             hit = (l - cl).Magnitude() <= radius;
+        } else if (shape2d::IsGeneric(c)) {
+            Vec2 n, pt;
+            hit = CircleTouchPieces(c, center, radius, n, pt);
         } else { // circle or capsule, reduced to a circle near the query center
             Vec2 cc; float r; AsCircle(c, center, cc, r);
             hit = (cc - center).Magnitude() <= radius + r;
@@ -943,6 +1051,14 @@ Vec2 ClosestOnOBB2(const OBB2& o, const Vec2& p) {
 // query; `point` lies on the struck surface.
 bool QueryTouch(Collider2D* col, const Query2& q, Vec2& n, Vec2& point) {
     using S = Collider2D::Shape;
+    if (shape2d::IsGeneric(col)) {                           // Polygon, Edge, Composite: the real shape against the query
+        shape2d::Piece qp;
+        if (q.kind == Query2::Box) {
+            for (const Vec2& k : {Vec2{-q.box.h.x, -q.box.h.y}, Vec2{q.box.h.x, -q.box.h.y}, Vec2{q.box.h.x, q.box.h.y}, Vec2{-q.box.h.x, q.box.h.y}})
+                qp.v.push_back(q.box.c + q.box.ax * k.x + q.box.ay * k.y);
+        } else { qp.v = {q.a, q.b}; qp.r = q.r; }
+        return PieceTouch(col, qp, n, point);
+    }
     if (q.kind == Query2::Box) {
         if (col->shape() == S::Box) {
             Contact c = TestOBBOBB(MakeOBB(static_cast<BoxCollider2D*>(col)), q.box);
@@ -1103,10 +1219,9 @@ std::vector<Collider2D*> Physics2D::OverlapBox(Scene& scene, const Vec2& center,
         if (c->shape() == Collider2D::Shape::Box) {
             Vec2 mn, mx; c->WorldAABB(mn, mx);
             hit = mn.x <= qmx.x && mx.x >= qmn.x && mn.y <= qmx.y && mx.y >= qmn.y;
-        } else { // circle or capsule
-            Vec2 cc; float r; AsCircle(c, center, cc, r);
-            Vec2 cl = ClosestOnBox(cc, qmn, qmx);
-            hit = (cl - cc).Magnitude() <= r;
+        } else { // circle, capsule, polygon, edge, composite: the real shape against the box
+            Vec2 n, pt;
+            hit = QueryTouch(c, BoxQuery(center, half, 0.0f), n, pt);
         }
         if (hit) out.push_back(c);
     }
@@ -1117,6 +1232,7 @@ namespace {
 // Does a circle (centre c, radius r) touch collider `col`? If so fill `n` (unit
 // normal from the surface toward c) and `point` (the struck surface point).
 bool CircleTouch(Collider2D* col, const Vec2& c, float r, Vec2& n, Vec2& point) {
+    if (shape2d::IsGeneric(col)) return CircleTouchPieces(col, c, r, n, point);
     if (col->shape() == Collider2D::Shape::Box) {
         auto* box = static_cast<BoxCollider2D*>(col);
         Vec2 bc = box->WorldCenter(), h = box->HalfExtents();

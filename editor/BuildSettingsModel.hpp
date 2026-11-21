@@ -1,6 +1,6 @@
 #pragma once
 // The Build Settings window's logic, with no ImGui and no editor globals, so the tests run it as it is
-// (docs/build_settings_upgrade.md). Written from our own design.
+// (docs/editor/build_settings_upgrade.md). Written from our own design.
 //
 //   pages        the plain-word pages in the left list, and which are shown for which platform
 //   registry     every setting: its page, its plain label, search words, "changed from default?" and "reset"

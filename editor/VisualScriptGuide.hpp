@@ -10,7 +10,7 @@
 //   VsHelpCardFor    the "What is this?" card: does, plug-ins, tiny example, common mistakes, next step
 //   VsIntentFor      the "what do you want to do?" heading a node sits under in the Add Node list
 //   kVsPlainRenames  the plain titles given to the most confusing nodes; the old name stays a search word
-// Written for this project from docs/visual_script_clarity.md. Included by VisualScriptEditor.hpp after the
+// Written for this project from docs/scripting/visual_script_clarity.md. Included by VisualScriptEditor.hpp after the
 // graph model (VsEditGraph, VsDef) it reads. The graph file format and the runtime are not touched.
 #include "VisualScriptClarity.hpp"
 #include "VisualScriptGlossary.hpp"

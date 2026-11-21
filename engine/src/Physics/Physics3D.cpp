@@ -7,6 +7,7 @@
 #include "okay/Components/PhysicsSurface.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/ColliderShapes3D.hpp"
 #include "okay/Physics/ConvexContact.hpp"
 #include "okay/Physics/TriMesh.hpp"
 #include "okay/Core/Log.hpp"
@@ -135,11 +136,10 @@ void AsSphere(Collider3D* col, const Vec3& ref, Vec3& center, float& radius) {
     }
 }
 
-// Cylinder reuses the capsule's segment+radius collision; Mesh reuses the box AABB.
-// So new shapes plug into the existing resolvers via inheritance (CylinderCollider3D
-// is-a CapsuleCollider3D, MeshCollider3D is-a BoxCollider3D).
+// A Mesh with no triangles reuses the box; the Cylinder, Cone, Convex Hull, Compound, Plane and Heightfield have their
+// own exact tests (IsGenericShape, TestGeneric below).
 inline bool IsCapsuleLike(Collider3D::Shape s) {
-    return s == Collider3D::Shape::Capsule || s == Collider3D::Shape::Cylinder;
+    return s == Collider3D::Shape::Capsule;   // (a Cylinder is its own flat-ended shape, see IsGenericShape)
 }
 inline bool IsBoxLike(Collider3D::Shape s) {
     return s == Collider3D::Shape::Box || s == Collider3D::Shape::Mesh;
@@ -165,15 +165,17 @@ inline bool ExactMesh(Collider3D* col) {
 inline const TriMesh& ActiveTris(MeshCollider3D* mc) {
     return mc->UsesConvexHull() ? mc->HullTris() : mc->Tris();
 }
+trimesh::Contact TrisVsGeneric(MeshCollider3D* mc, Collider3D* other);   // below, with the other generic-shape tests
 // Mesh collider contacts, from the mesh surface toward the shape.
 trimesh::Contact MeshVsShape(MeshCollider3D* mc, Collider3D* other) {
+    if (IsGenericShape(other)) return TrisVsGeneric(mc, other);
     trimesh::WorldView v(mc->Tris(), mc->WorldMatrix());
     switch (other->shape()) {
     case Collider3D::Shape::Sphere: {
         auto* s = static_cast<SphereCollider3D*>(other);
         return v.Sphere(s->WorldCenter(), s->WorldRadius());
     }
-    case Collider3D::Shape::Capsule: case Collider3D::Shape::Cylinder: {
+    case Collider3D::Shape::Capsule: {
         auto* c = static_cast<CapsuleCollider3D*>(other);
         Vec3 a, b; c->Segment(a, b);
         return v.Capsule(a, b, c->WorldRadius());
@@ -189,6 +191,7 @@ trimesh::Contact MeshVsShape(MeshCollider3D* mc, Collider3D* other) {
         Vec3 ax, ay, az; b->WorldAxes(ax, ay, az);
         return v.Box(b->WorldCenter(), b->HalfExtents(), ax, ay, az);
     }
+    default: break;
     }
     return {};
 }
@@ -256,7 +259,8 @@ Vec3 OBB3Support(const OBB3& o, const Vec3& dir) {
                + o.az * (Vec3::Dot(dir, o.az) >= 0 ? o.h.z : -o.h.z);
 }
 // World-space support of a primitive or a convex-hull mesh. `dir` need not be unit.
-Vec3 SupportOf(Collider3D* col, const Vec3& dir) {
+Vec3 SupportBase(Collider3D* col, const Vec3& dir) {
+    if (col->HasConvexSupport()) return col->ConvexSupport(dir);          // Cylinder, Cone, Convex Hull
     if (UsesHull(col)) return static_cast<MeshCollider3D*>(col)->SupportWorld(dir);
     Vec3 d = dir.SqrMagnitude() > 1e-12f ? dir.Normalized() : Vec3{0, 1, 0};
     if (col->shape() == Collider3D::Shape::Sphere) {
@@ -271,6 +275,15 @@ Vec3 SupportOf(Collider3D* col, const Vec3& dir) {
     }
     return OBB3Support(MakeOBB3(static_cast<BoxCollider3D*>(col)), dir);
 }
+// The same, grown by the collider's contact offset (a skin).
+Vec3 SupportOf(Collider3D* col, const Vec3& dir) {
+    Vec3 p = SupportBase(col, dir);
+    if (col->contactOffset > 0.0f) {
+        float m = dir.Magnitude();
+        p = p + (m > 1e-12f ? dir * (col->contactOffset / m) : Vec3{0, 1, 0} * col->contactOffset);
+    }
+    return p;
+}
 Contact ConvexPair(Collider3D* a, Collider3D* b) {
     ConvexHit h = ConvexContact([&](const Vec3& d) { return SupportOf(a, d); },
                                 [&](const Vec3& d) { return SupportOf(b, d); });
@@ -278,6 +291,160 @@ Contact ConvexPair(Collider3D* a, Collider3D* b) {
     if (!h.hit) return c;
     c.hit = true; c.normal = h.normal; c.penetration = h.penetration; c.point = h.point;
     return c;
+}
+
+// ---- The shapes with their own exact tests: Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield ----
+using SupFn = std::function<Vec3(const Vec3&)>;
+struct Piece { SupFn sup; Vec3 mn, mx; };
+// A collider as convex pieces (a Compound gives one per part; Plane and Heightfield are not convex and are handled apart).
+void PiecesOf(Collider3D* c, std::vector<Piece>& out) {
+    if (c->shape() == Collider3D::Shape::Compound) {
+        auto* cc = static_cast<CompoundCollider3D*>(c);
+        const float off = c->contactOffset;
+        for (int i = 0; i < cc->PartCount(); ++i) {
+            Piece p;
+            p.sup = [cc, i, off](const Vec3& d) {
+                Vec3 q = cc->PartSupport(i, d);
+                float m = d.Magnitude();
+                return off > 0.0f && m > 1e-12f ? q + d * (off / m) : q;
+            };
+            cc->PartBounds(i, p.mn, p.mx);
+            out.push_back(std::move(p));
+        }
+        return;
+    }
+    Piece p;
+    p.sup = [c](const Vec3& d) { return SupportOf(c, d); };
+    c->WorldAABB(p.mn, p.mx);
+    out.push_back(std::move(p));
+}
+inline bool IsFieldShape(const Collider3D* c) {
+    return c->shape() == Collider3D::Shape::Plane || c->shape() == Collider3D::Shape::Heightfield;
+}
+void KeepDeepest(Contact& best, const ConvexHit& h) {
+    if (!h.hit || !std::isfinite(h.penetration)) return;
+    if (!best.hit || h.penetration > best.penetration) {
+        best.hit = true; best.normal = h.normal; best.penetration = h.penetration; best.point = h.point;
+    }
+}
+// The deepest contact of generic collider `col` against the convex solid whose support function is supB (bounds bmn..bmx).
+// The normal points from `col` toward that solid.
+Contact GenericVs(Collider3D* col, const SupFn& supB, const Vec3& bmn, const Vec3& bmx) {
+    Contact best;
+    const float off = Mathf::Max(col->contactOffset, 0.0f);
+    switch (col->shape()) {
+    case Collider3D::Shape::Plane: {
+        auto* pl = static_cast<PlaneCollider3D*>(col);
+        Vec3 n = pl->WorldNormal();
+        Vec3 p = supB(n * -1.0f);                            // the solid's lowest point
+        float sd = Vec3::Dot(p - pl->WorldCenter(), n);      // negative: below the plane
+        if (sd < off) { best.hit = true; best.normal = n; best.penetration = off - sd; best.point = p - n * (sd * 0.5f); }
+        break;
+    }
+    case Collider3D::Shape::Heightfield: {
+        auto* hf = static_cast<HeightfieldCollider3D*>(col);
+        std::vector<std::array<Vec3, 3>> tris;
+        Vec3 pad{off + 0.01f, off + 0.01f, off + 0.01f};
+        hf->CollectTriangles(bmn - pad, bmx + pad, tris);
+        const Vec3 down = (hf->transform ? hf->transform->Rotation() * Vec3{0, -1, 0} : Vec3{0, -1, 0}) * hf->Depth();
+        for (const auto& t : tris) {
+            Vec3 tn = Vec3::Cross(t[1] - t[0], t[2] - t[0]);
+            float tl = tn.Magnitude();
+            if (tl < 1e-12f) continue;
+            tn = tn * (1.0f / tl);
+            if (tn.y < 0.0f) tn = tn * -1.0f;                // the upward face normal
+            const Vec3 v[6] = {t[0], t[1], t[2], t[0] + down, t[1] + down, t[2] + down};
+            auto prism = [&](const Vec3& d) {
+                int bi = 0; float bd = Vec3::Dot(v[0], d);
+                for (int i = 1; i < 6; ++i) { float x = Vec3::Dot(v[i], d); if (x > bd) { bd = x; bi = i; } }
+                Vec3 q = v[bi];
+                float m = d.Magnitude();
+                return off > 0.0f && m > 1e-12f ? q + d * (off / m) : q;
+            };
+            ConvexHit h = ConvexContact(prism, supB);
+            if (h.hit && Vec3::Dot(h.normal, tn) < 0.5f) continue;   // a prism side or an edge ghost, not the ground face
+            KeepDeepest(best, h);
+        }
+        break;
+    }
+    case Collider3D::Shape::Compound: {
+        std::vector<Piece> ps; PiecesOf(col, ps);
+        for (const Piece& p : ps) {
+            Vec3 amn = p.mn - Vec3{off, off, off}, amx = p.mx + Vec3{off, off, off};
+            if (amx.x < bmn.x || amn.x > bmx.x || amx.y < bmn.y || amn.y > bmx.y || amx.z < bmn.z || amn.z > bmx.z) continue;
+            KeepDeepest(best, ConvexContact(p.sup, supB));
+        }
+        break;
+    }
+    default: {
+        SupFn sa = [col](const Vec3& d) { return SupportOf(col, d); };
+        KeepDeepest(best, ConvexContact(sa, supB));
+        break;
+    }
+    }
+    return best;
+}
+// Pair test when at least one collider is a generic shape. Normal points A toward B.
+Contact TestGeneric(Collider3D* a, Collider3D* b) {
+    if (IsFieldShape(a) && IsFieldShape(b)) return {};
+    bool flip = false;
+    if (IsFieldShape(b)) { std::swap(a, b); flip = true; }
+    std::vector<Piece> pb; PiecesOf(b, pb);
+    Contact best;
+    for (const Piece& p : pb) {
+        Contact c = GenericVs(a, p.sup, p.mn, p.mx);
+        if (c.hit && (!best.hit || c.penetration > best.penetration)) best = c;
+    }
+    if (flip && best.hit) best.normal = best.normal * -1.0f;
+    return best;
+}
+// Deepest contact of a static triangle mesh against one generic shape. The normal points from the mesh toward the shape.
+trimesh::Contact TrisVsGeneric(MeshCollider3D* mesh, Collider3D* other) {
+    trimesh::Contact best;
+    if (IsFieldShape(other) || !mesh->HasTriangles()) return best;
+    std::vector<Piece> ps; PiecesOf(other, ps);
+    Mat4 l2w = mesh->WorldMatrix(), w2l = l2w.Inverse();
+    for (const Piece& p : ps) {
+        Vec3 lmn{1e30f, 1e30f, 1e30f}, lmx{-1e30f, -1e30f, -1e30f};
+        for (int i = 0; i < 8; ++i) {
+            Vec3 q = w2l.MultiplyPoint({i & 1 ? p.mx.x : p.mn.x, i & 2 ? p.mx.y : p.mn.y, i & 4 ? p.mx.z : p.mn.z});
+            lmn = Vec3::Min(lmn, q); lmx = Vec3::Max(lmx, q);
+        }
+        Vec3 pad = (lmx - lmn) * 1e-4f + Vec3(1e-4f, 1e-4f, 1e-4f);
+        lmn = lmn - pad; lmx = lmx + pad;
+        mesh->Tris().QueryAABB(lmn, lmx, [&](int ti) {
+            Vec3 la, lb, lc;
+            mesh->Tris().Triangle(ti, la, lb, lc);
+            Vec3 a = l2w.MultiplyPoint(la), b = l2w.MultiplyPoint(lb), c = l2w.MultiplyPoint(lc);
+            auto triSup = [&](const Vec3& d) {
+                Vec3 bv = a; float bd = Vec3::Dot(a, d);
+                float db = Vec3::Dot(b, d); if (db > bd) { bd = db; bv = b; }
+                float dc = Vec3::Dot(c, d); if (dc > bd) bv = c;
+                return bv;
+            };
+            ConvexHit h = ConvexContact(triSup, p.sup);
+            if (!h.hit || !std::isfinite(h.penetration)) return;
+            if (!best.hit || h.penetration > best.penetration) {
+                best.hit = true; best.normal = h.normal; best.point = h.point; best.penetration = h.penetration;
+            }
+        });
+    }
+    return best;
+}
+// The point of segment a-b nearest to a box, found by alternating nearest points (a box and a segment are both convex, so
+// this settles on the true closest pair). Used for capsule-versus-box so a capsule lying across a corner touches at the
+// corner, not at the point nearest the box's middle.
+Vec3 SegmentNearBox(const OBB3& o, const Vec3& a, const Vec3& b) {
+    auto onBox = [&](const Vec3& p) {
+        Vec3 d = p - o.c;
+        float x = Mathf::Clamp(Vec3::Dot(d, o.ax), -o.h.x, o.h.x);
+        float y = Mathf::Clamp(Vec3::Dot(d, o.ay), -o.h.y, o.h.y);
+        float z = Mathf::Clamp(Vec3::Dot(d, o.az), -o.h.z, o.h.z);
+        return o.c + o.ax * x + o.ay * y + o.az * z;
+    };
+    Vec3 p = ClosestOnSegment(o.c, a, b);
+    for (int it = 0; it < 4; ++it) p = ClosestOnSegment(onBox(p), a, b);
+    return p;
 }
 // Separating-axis test between two oriented boxes (15 axes: 3+3 faces, 9 edge
 // cross-products). Normal points A -> B.
@@ -350,8 +517,12 @@ Contact TestColliders(Collider3D* a, Collider3D* b) {
         out.normal = ma ? mc.normal : mc.normal * -1.0f;   // A -> B
         return out;
     }
+    // The shapes with their own exact tests (Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield).
+    if (IsGenericShape(a) || IsGenericShape(b)) return TestGeneric(a, b);
     // Dynamic mesh bodies: convex hull against any other convex shape (hull, box, sphere, capsule).
     if (UsesHull(a) || UsesHull(b)) return ConvexPair(a, b);
+    // A contact offset (a skin) grows the shape: the exact convex test handles it for every convex pair.
+    if ((a->contactOffset > 0.0f || b->contactOffset > 0.0f) && !(MeshHasTris(a) || MeshHasTris(b))) return ConvexPair(a, b);
     // A dynamic mesh that has triangles but no hull is refused (see IsDynamicConflict).
     if ((a->shape() == S::Mesh && static_cast<MeshCollider3D*>(a)->IsDynamicConflict()) ||
         (b->shape() == S::Mesh && static_cast<MeshCollider3D*>(b)->IsDynamicConflict())) {
@@ -375,11 +546,13 @@ Contact TestColliders(Collider3D* a, Collider3D* b) {
     if (aBox) { // A box, B sphere/capsule
         auto* box = static_cast<BoxCollider3D*>(a);
         Vec3 sc; float sr; AsSphere(b, box->WorldCenter(), sc, sr);
+        if (IsCapsuleLike(sb)) { Vec3 s0, s1; static_cast<CapsuleCollider3D*>(b)->Segment(s0, s1); sc = SegmentNearBox(MakeOBB3(box), s0, s1); }
         return TestOBB3Sphere(MakeOBB3(box), sc, sr);
     }
     if (bBox) { // A sphere/capsule, B box
         auto* box = static_cast<BoxCollider3D*>(b);
         Vec3 sc; float sr; AsSphere(a, box->WorldCenter(), sc, sr);
+        if (IsCapsuleLike(sa)) { Vec3 s0, s1; static_cast<CapsuleCollider3D*>(a)->Segment(s0, s1); sc = SegmentNearBox(MakeOBB3(box), s0, s1); }
         Contact c = TestOBB3Sphere(MakeOBB3(box), sc, sr);
         c.normal = -c.normal; // flip to point from A toward B
         return c;
@@ -398,7 +571,10 @@ float InvInertia(Rigidbody3D* rb, Collider3D* col) {
     if (!rb || rb->freezeRotation || !col) return 0.0f;
     if (rb->InvMass() <= 0.0f) return 0.0f;
     float mass = rb->mass, I;
-    if (col->shape() == Collider3D::Shape::Sphere) {
+    Vec3 mcom, mui; float mvol;
+    if (col->MassShape(mcom, mvol, mui)) {                 // an exact solid: its own inertia (averaged: this solver turns as one number)
+        I = mass * (mui.x + mui.y + mui.z) / 3.0f;
+    } else if (col->shape() == Collider3D::Shape::Sphere) {
         float r = static_cast<SphereCollider3D*>(col)->WorldRadius();
         I = 0.4f * mass * r * r;
     } else {
@@ -471,7 +647,7 @@ bool TerrainPasses(Terrain* terr, GameObject* ignore, std::uint32_t mask);
 
 /// Downward rays for CatchTunneledFloor. That catch casts one vertical ray for every falling body, and Physics3D::Raycast
 /// measures every collider's world box for every ray: 500 falling bodies meant 250,000 box measurements in one step (38 percent
-/// of the frame in tests/bench_frame.cpp's bodies500 scene, docs/perf_log.md). The boxes do not move while the catch loop runs
+/// of the frame in tests/bench_frame.cpp's bodies500 scene, docs/engine/perf_log.md). The boxes do not move while the catch loop runs
 /// (except when it lifts a body, which drops the index), so they are measured once and put in a grid over the ground plane; a vertical
 /// ray then only looks at the colliders whose box covers its column. Cast() returns exactly what Raycast returns for the same downward
 /// ray: the same filters, the same box test arithmetic, the same shape tests, colliders tried in the same order (a tie goes to the later
@@ -1260,6 +1436,10 @@ void Physics3D::StepSlice(Scene& scene, float dt) {
                         if (self && UsesHull(self)) {
                             center = self->WorldCenter();
                             k = HullAgainstMesh(static_cast<MeshCollider3D*>(self), mr.mc);
+                        } else if (self && IsGenericShape(self)) {   // Cylinder, Cone, Convex Hull, Compound
+                            center = self->WorldCenter();
+                            k = TrisVsGeneric(mr.mc, self);
+                            k.normal = k.normal;               // (already mesh -> body)
                         } else if (self && self->shape() == Collider3D::Shape::Sphere) {
                             auto* sp = static_cast<SphereCollider3D*>(self);
                             center = sp->WorldCenter();
@@ -1357,7 +1537,7 @@ void Physics3D::StepSlice(Scene& scene, float dt) {
     // near its length. A spring is a force and is applied once; a motor's limit is shared out over the passes.)
     // A long chain needs about two passes per link for a push to cross it both ways; every other pass runs the joints in
     // reverse order so the weight at one end reaches the hook at the other end (a 50 kg ball on 1 kg links held 13 m long
-    // for a rope of 8 m with a fixed order; see docs/physics_upgrade.md).
+    // for a rope of 8 m with a fixed order; see docs/physics/physics.md).
     // (The extra passes are capped so that passes x joints stays under 6000: a scene with hundreds of joints does not pay for them.)
     const int basePasses = std::max(4, solverIterations);
     const int jointPasses = (improved && allJoints.size() > 0)
@@ -1729,6 +1909,7 @@ bool Passes(Collider3D* c, GameObject* ignore, std::uint32_t mask, bool queryTri
 
 // Exact ray test against one collider's shape.
 bool RayCollider(Collider3D* c, const Vec3& o, const Vec3& d, float maxT, float& t, Vec3& n) {
+    if (IsGenericShape(c)) return c->RayShape(o, d, maxT, t, n);   // exact for each of the shapes
     if (c->shape() == Collider3D::Shape::Sphere) {
         auto* s = static_cast<SphereCollider3D*>(c);
         return RaySphere(o, d, s->WorldCenter(), s->WorldRadius(), maxT, t, n);
@@ -1888,6 +2069,13 @@ namespace {
 // Does a sphere (centre c, radius r) touch collider `col`? If so, fill `n` (unit
 // normal from the surface toward c) and `point` (the struck surface point).
 bool SphereTouch(Collider3D* col, const Vec3& c, float r, Vec3& n, Vec3& point) {
+    if (IsGenericShape(col)) {
+        SupFn sup = [c, r](const Vec3& d) { float m = d.Magnitude(); return m > 1e-12f ? c + d * (r / m) : c; };
+        Contact k = GenericVs(col, sup, c - Vec3{r, r, r}, c + Vec3{r, r, r});
+        if (!k.hit) return false;
+        n = k.normal; point = k.point;
+        return true;
+    }
     if (IsBoxLike(col->shape())) {
         auto* box = static_cast<BoxCollider3D*>(col);
         Vec3 bc = box->WorldCenter(), h = box->HalfExtents();
@@ -1970,6 +2158,27 @@ bool ShapeTouch(Collider3D* col, const QueryShape& q, Vec3& n, Vec3& point) {
         else                                    c = v.Box(q.box.c, q.box.h, q.box.ax, q.box.ay, q.box.az);
         if (!c.hit) return false;
         n = c.normal; point = c.point;
+        return true;
+    }
+    if (IsGenericShape(col)) {
+        SupFn sup;
+        if (q.kind == QueryShape::Sphere) {
+            Vec3 c = q.c; float r = q.r;
+            sup = [c, r](const Vec3& d) { float m = d.Magnitude(); return m > 1e-12f ? c + d * (r / m) : c; };
+        } else if (q.kind == QueryShape::Capsule) {
+            Vec3 a = q.a, b = q.b; float r = q.r;
+            sup = [a, b, r](const Vec3& d) {
+                Vec3 e = Vec3::Dot(d, b - a) >= 0.0f ? b : a; float m = d.Magnitude();
+                return m > 1e-12f ? e + d * (r / m) : e;
+            };
+        } else {
+            OBB3 bx = q.box;
+            sup = [bx](const Vec3& d) { return OBB3Support(bx, d); };
+        }
+        Vec3 ext = q.Extent(), cen = q.Center();
+        Contact k = GenericVs(col, sup, cen - ext, cen + ext);
+        if (!k.hit) return false;
+        n = k.normal; point = k.point;
         return true;
     }
     switch (q.kind) {
@@ -2287,7 +2496,25 @@ Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore,
                 }
                 continue;
             }
-            // Capsule / cylinder (via its world AABB): push out of the box surface.
+            if (IsGenericShape(col) || col->shape() == Collider3D::Shape::Capsule) {
+                // Capsule, Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield: the exact shape, not its bounds.
+                Vec3 sn, sp;
+                if (!SphereTouch(col, c, r, sn, sp)) continue;
+                SupFn sup = [c, r](const Vec3& d) { float m = d.Magnitude(); return m > 1e-12f ? c + d * (r / m) : c; };
+                float depth;
+                if (IsGenericShape(col)) {
+                    Contact k = GenericVs(col, sup, c - Vec3{r, r, r}, c + Vec3{r, r, r});
+                    if (!k.hit) continue;
+                    depth = k.penetration; sn = k.normal;
+                } else {
+                    Vec3 sc; float sr; AsSphere(col, c, sc, sr);
+                    Vec3 dv = c - sc; float dl = dv.Magnitude();
+                    depth = r + sr - dl; sn = dl > 1e-6f ? dv * (1.0f / dl) : Vec3{0, 1, 0};
+                }
+                if (depth > 1e-5f) { c = c + sn * depth; moved = true; }
+                continue;
+            }
+            // Anything else (no exact shape): push out of the box surface.
             Vec3 mn, mx; col->WorldAABB(mn, mx);
             Vec3 cp = ClampVec(c, mn, mx);
             Vec3 d = c - cp; float dl = d.Magnitude();

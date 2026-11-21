@@ -1,5 +1,5 @@
 #pragma once
-// The menu bar in window mode (docs/own_ui_toolkit.md 6.24, round 12): the editor's real MenuBarModel (editor/MenuBarModel.hpp: the entries, their shortcuts,
+// The menu bar in window mode (docs/ui/own_ui_toolkit.md 6.24, round 12): the editor's real MenuBarModel (editor/MenuBarModel.hpp: the entries, their shortcuts,
 // greying and reasons) drawn by the editor's own MenuEntriesUI.hpp compiled against OkayUI, with the actions the window-mode editor can do on its own:
 // File (New 2D / 3D, Save, Save As, Exit), Edit (Undo, Redo, Cut, Copy, Paste, Duplicate, Delete, Select All, Deselect), GameObject (Create Empty / Child / Parent
 // and the primitives), View (the panels' show/hide flags, Frame Selected) and Help > Keyboard Shortcuts; every other entry is shown and tells the Console it is

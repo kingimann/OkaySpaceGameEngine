@@ -3,7 +3,7 @@
 // properties, path access ("Light.intensity", "Transform.position.x"), the change
 // hook, and snapshot / diff / copy utilities. Values and descriptors are in
 // Properties.hpp; PropertyBuilder.hpp is the short way to describe a component.
-// See docs/properties.md.
+// See docs/engine/properties.md.
 #include "okay/Scene/Properties.hpp"
 #include <functional>
 #include <memory>
@@ -165,7 +165,7 @@ public:
 
 /// Register every built-in component's properties (GameObject, Transform, Camera,
 /// Light, SpriteRenderer, MeshRenderer, Rigidbody2D/3D, the 2D and 3D colliders,
-/// AudioSource, ParticleSystem; see docs/properties.md). Idempotent and safe to call
+/// AudioSource, ParticleSystem; see docs/engine/properties.md). Idempotent and safe to call
 /// from several threads: the work runs once. Lookups call it themselves the first
 /// time, so calling it at startup is optional but makes the cost predictable.
 void RegisterBuiltinProperties();

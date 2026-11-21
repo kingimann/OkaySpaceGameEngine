@@ -1,7 +1,7 @@
 #pragma once
 // The decisions of the launcher's START-UP update screen ("Checking for updates", like Steam), kept free of windows, threads and the
 // network so a test can link it (tests/test_startup_update.cpp). The check and the install themselves are the launcher's existing
-// updater (RunUpdateCheck, shared/SelfUpdate.hpp); nothing here downloads or verifies anything. Docs: docs/updater.md.
+// updater (RunUpdateCheck, shared/SelfUpdate.hpp); nothing here downloads or verifies anything. Docs: docs/release/updater.md.
 #include <string>
 
 namespace okay::startupupdate {

@@ -58,12 +58,65 @@ Terrain::Terrain() {
     Resize(resolution);
 }
 
+// The grid is resampled, not cleared (#888 finding 146): every new vertex reads the old grid
+// bilinearly at the same place on the terrain (0..1 across it), so sculpting survives a resolution
+// change. Painted layer weights are resampled the same way and kept summing to 255.
 void Terrain::Resize(int res) {
     if (res < 1) res = 1;
+    const int oldRes = resolution;
+    const std::size_t oldDim = (std::size_t)oldRes + 1, oldN = oldDim * oldDim;
+    const bool keepHeights = oldRes >= 1 && heights.size() == oldN;
+    const std::size_t L = layers.size();
+    const bool keepSplat = keepHeights && L > 0 && splat.size() == oldN * L;
+    std::vector<float> oldH; oldH.swap(heights);
+    std::vector<std::uint8_t> oldS; if (keepSplat) oldS.swap(splat);
     resolution = res;
-    heights.assign((std::size_t)Dim() * Dim(), 0.0f);
+    const std::size_t dim = (std::size_t)Dim(), n = dim * dim;
+    heights.assign(n, 0.0f);
+    if (keepHeights) {
+        // Where new index i lands on the old grid: cell c0, next cell c1, fraction f.
+        std::vector<int> c0(dim), c1(dim); std::vector<float> f(dim);
+        for (std::size_t i = 0; i < dim; ++i) {
+            const double p = (double)i * oldRes / res;
+            int a = (int)std::floor(p);
+            if (a < 0) a = 0;
+            if (a > oldRes) a = oldRes;
+            c0[i] = a; c1[i] = a < oldRes ? a + 1 : a;
+            f[i] = (float)(p - a);
+            if (f[i] < 0.0f) f[i] = 0.0f;
+            if (f[i] > 1.0f) f[i] = 1.0f;
+        }
+        auto at = [&](const auto& v, std::size_t base, int x, int z) { return (float)v[base + (std::size_t)z * oldDim + (std::size_t)x]; };
+        auto bilerp = [&](const auto& v, std::size_t base, std::size_t x, std::size_t z) {
+            const float top = at(v, base, c0[x], c0[z]) + (at(v, base, c1[x], c0[z]) - at(v, base, c0[x], c0[z])) * f[x];
+            const float bot = at(v, base, c0[x], c1[z]) + (at(v, base, c1[x], c1[z]) - at(v, base, c0[x], c1[z])) * f[x];
+            return top + (bot - top) * f[z];
+        };
+        for (std::size_t z = 0; z < dim; ++z)
+            for (std::size_t x = 0; x < dim; ++x) heights[z * dim + x] = bilerp(oldH, 0, x, z);
+        if (keepSplat) {
+            splat.assign(n * L, 0);
+            std::vector<int> w(L);
+            for (std::size_t z = 0; z < dim; ++z)
+                for (std::size_t x = 0; x < dim; ++x) {
+                    int sum = 0; std::size_t big = 0;
+                    for (std::size_t k = 0; k < L; ++k) {
+                        w[k] = (int)std::lround(bilerp(oldS, k * oldN, x, z));
+                        if (w[k] < 0) w[k] = 0;
+                        if (w[k] > 255) w[k] = 255;
+                        sum += w[k];
+                        if (w[k] > w[big]) big = k;
+                    }
+                    if (sum <= 0) { w.assign(L, 0); w[0] = 255; }
+                    else w[big] += 255 - sum;   // rounding left over goes to the strongest layer
+                    if (w[big] < 0) w[big] = 0;
+                    for (std::size_t k = 0; k < L; ++k) splat[k * n + z * dim + x] = (std::uint8_t)w[k];
+                }
+            splatSized_ = 0;
+        }
+    }
     ForgetFloor();
-    ResetSplat();
+    if (!keepSplat) ResetSplat();
 }
 
 float Terrain::GetHeight(int x, int z) const {

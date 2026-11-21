@@ -2,7 +2,7 @@
 // Small allocators for the runtime: a per-frame linear arena and a typed object
 // pool, with a shared stats struct. Header-only and header-light. None of it
 // throws on failure (a refused allocation returns nullptr and is counted) and
-// none of it is thread safe: give each thread its own. See docs/core_runtime.md.
+// none of it is thread safe: give each thread its own. See docs/engine/core_runtime.md.
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>

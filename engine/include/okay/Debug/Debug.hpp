@@ -1,5 +1,5 @@
 #pragma once
-// Umbrella include for the profiling and debugging data layers (docs/debug_tools.md).
+// Umbrella include for the profiling and debugging data layers (docs/engine/debug_tools.md).
 // MemoryHooks.hpp is left out on purpose: it is opt-in and replaces the global
 // operator new/delete when its macro is defined, so include it explicitly.
 #include "okay/Debug/FrameHistory.hpp"

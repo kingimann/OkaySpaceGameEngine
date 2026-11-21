@@ -4,10 +4,11 @@
 //   * the Vehicle Controller Inspector: a Simple tab (preset, Handling slider, top speed, acceleration, grip, drift) and an
 //     Advanced tab with every setting grouped and tooltipped (the table in VehicleTuning.hpp),
 //   * Save as preset / Load preset (.okayvehicle text files).
-// Written from scratch for this engine on top of Dear ImGui calls. Not built in the Linux test build (the editor is a
-// Windows program here): see docs/vehicle_controls.md "Unverified".
+// Written from scratch for this engine on top of Dear ImGui calls. Compiled on Linux (okay-editor target) but never
+// run in a window: see docs/gameplay/vehicles.md "Unverified". The pure decisions live in VehicleEditorModel.hpp (tested).
 #include "EditorState.hpp"
 #include "ConsolePanel.hpp"
+#include "VehicleEditorModel.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Scene/VehicleBuilder.hpp"
 #include "imgui.h"
@@ -57,7 +58,7 @@ inline bool DrawInspector(okay::VehicleController* v) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick a kind of vehicle. This sets every number below; you can change them afterwards.");
             if (ImGui::SliderFloat("Handling (Realistic - Arcade)##vt", &v->handling, 0.0f, 1.0f)) changed = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Left: realistic, slidey, you must be careful.\nRight: arcade, forgiving, grips well and is easy to drift.");
-            for (const char* n : {"maxSpeed", "acceleration", "grip", "driftAmount"}) {
+            for (const char* n : oked::vehiclemodel::SimpleRows()) {
                 const VehicleTuning::Desc* d = VehicleTuning::Find(n);
                 if (d && ImGui::DragFloat((std::string(d->name) + "##vts").c_str(), &(v->*(d->f)), (float)d->step, (float)d->lo, (float)d->hi)) changed = true;
                 if (d && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", d->tip);
@@ -81,8 +82,8 @@ inline bool DrawInspector(okay::VehicleController* v) {
                     case VehicleTuning::KFloat: if (ImGui::DragFloat(id.c_str(), &(v->*(d.f)), (float)d.step, (float)d.lo, (float)d.hi)) changed = true; break;
                     case VehicleTuning::KInt: case VehicleTuning::KEnum: {
                         if (d.kind == VehicleTuning::KEnum) {
-                            std::string items; for (const char* c = d.options; *c; ++c) items += (*c == '|') ? '\0' : *c; items += '\0';
-                            if (ImGui::Combo(id.c_str(), &(v->*(d.i)), items.c_str())) changed = true;
+                            const std::string items = oked::vehiclemodel::ComboItems(d.options);
+                            if (ImGui::Combo(id.c_str(), &(v->*(d.i)), items.data())) changed = true;
                         } else if (ImGui::DragInt(id.c_str(), &(v->*(d.i)), 1.0f, (int)d.lo, (int)d.hi)) changed = true;
                         break; }
                     case VehicleTuning::KBool: if (ImGui::Checkbox(id.c_str(), &(v->*(d.b)))) changed = true; break;

@@ -7,7 +7,7 @@ row: | 7f | Crash reports: a detailed report, sent for you, turned into a GitHub
 **What it is.** When the editor crashes it now writes a much fuller report (version and build, Windows version, CPU, memory, graphics card, the
 scene's name, the last 64 steps, the last 200 Console lines, a backtrace). The launcher shows it, lets you read exactly what would be sent
 (names, folders, emails and addresses removed), tells you once that a sent report becomes a **public GitHub issue**, sends it for you (switch **on by
-default**), and a GitHub job turns it into an issue. Full story: [crash_reports.md](crash_reports.md).
+default**), and a GitHub job turns it into an issue. Full story: [crash_reports.md](online/crash_reports.md).
 
 > **The server half (steps 9 and 10) cannot work until the owner has done two one-time steps, in the browser, in this order:**
 > - **Owner step A:** run `docs/sql/crash_reports.sql` once in the Supabase SQL editor (open the project, **SQL editor**, paste the whole file,

@@ -60,7 +60,7 @@
 #include "okay/Script/AnimIkTools.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/FirstPersonController.hpp"
-#include "okay/Components/WindZone.hpp"   // Wind (docs/wind.md)
+#include "okay/Components/WindZone.hpp"   // Wind (docs/gameplay/wind.md)
 #include <cmath>
 #include <set>
 
@@ -1620,7 +1620,7 @@ EngineApi Build() {
     // ---- Localization ----
     {
         ApiType lo; lo.name = "Localization"; lo.isStatic = true;
-        lo.doc = "Text in the player's language from the project's string table (docs/localization.md). "
+        lo.doc = "Text in the player's language from the project's string table (docs/engine/localization.md). "
                  "A script hears a change of language in OnLanguageChanged().";
         auto args = [](const std::vector<Value>& a) {
             std::vector<LocArg> out;
@@ -1694,7 +1694,7 @@ EngineApi Build() {
             "The event being delivered: read it in OnSequenceEvent()."));
         api.types.push_back(std::move(sq));
     }
-    // ---- PostProcess / Fog / Weather: the scene's look (docs/rendering.md) ----
+    // ---- PostProcess / Fog / Weather: the scene's look (docs/rendering/rendering.md) ----
     {
         auto look = [](CallContext& c) -> Scene::RenderSettings& {
             Scene* s = c.self ? c.self->scene() : nullptr;
@@ -1753,7 +1753,7 @@ EngineApi Build() {
             "The current preset's name."));
         api.types.push_back(std::move(we));
     }
-    // ---- Wind (docs/wind.md) ----
+    // ---- Wind (docs/gameplay/wind.md) ----
     {
         auto sceneOf = [](CallContext& c) -> Scene* {
             Scene* s = c.self ? c.self->scene() : nullptr;

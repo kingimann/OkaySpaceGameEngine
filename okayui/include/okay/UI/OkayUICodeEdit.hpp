@@ -2,7 +2,7 @@
 // OkayUI::CodeEdit: a multi-line code editor widget (own code; replaces the vendored ImGuiColorTextEdit).
 // Line-number gutter with breakpoint marks, caret and selection (mouse and keyboard), typing, auto-indent, clipboard,
 // undo/redo with grouping, find, bracket matching, scrolling, a pluggable syntax highlighter (plus a built-in C-like and
-// OkayScript one), read-only mode and error markers. See docs/own_ui_code_editor.md.
+// OkayScript one), read-only mode and error markers. See docs/ui/own_ui_code_editor.md.
 //
 // A CodeEdit is a plain object that owns its text and state (one per open script). Call Draw() once per frame inside an
 // OkayUI window; it reads the frame's input, edits, and draws the visible lines only. The editing operations are also

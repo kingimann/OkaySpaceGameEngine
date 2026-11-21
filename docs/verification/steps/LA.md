@@ -41,7 +41,7 @@ Format: see the top of `scripts/gen_verify_checklist.py`. Bold names must exist 
   3. Open the link in the email.
 - **See:** "Password reset email sent. Open the link in it to choose a new password." and a page where you pick a new password.
 - **Partial:** the hosted reset page (`OKAY_PASSWORD_RESET_URL`) must be set up by the owner; without it the launcher says no reset page is set up.
-- **Link:** [password-reset.md](../../password-reset.md)
+- **Link:** [password-reset.md](../../online/password-reset.md)
 
 ### V-LA-005 Check for updates by hand
 - **Map:** 17.1.2
@@ -52,7 +52,7 @@ Format: see the top of `scripts/gen_verify_checklist.py`. Bold names must exist 
   3. Wait for the button to stop saying "Checking".
 - **See:** a toast "You're up to date" when you are on the newest release, or "Update available" with an **Install now** button when not.
 - **Partial:** the update index (`versions.json`) is not signed yet (map 17.1, 17.11).
-- **Link:** [updater.md](../../updater.md)
+- **Link:** [updater.md](../../release/updater.md)
 
 ### V-LA-006 Update check when the launcher starts
 - **Map:** 17.1.2, 17.1.3
@@ -73,8 +73,8 @@ Format: see the top of `scripts/gen_verify_checklist.py`. Bold names must exist 
   2. Watch the progress; the launcher closes and starts again by itself.
   3. Open **Settings** and read the version.
 - **See:** the version is the new one, the launcher started on its own, and `Tools\OkayEngine.exe` and `Tools\OkaySpacePlayer.exe` are updated too. A refusal (no checksum, antivirus lock) shows the reason in words and leaves your version unchanged; the reason is also in `okay_update.log` next to the exe.
-- **Partial:** the Windows restart helper has only run in CI, never by us on real Windows (docs/updater.md audit). Never re-run a release to fix this (CLAUDE.md rule 12).
-- **Link:** [updater.md](../../updater.md)
+- **Partial:** the Windows restart helper has only run in CI, never by us on real Windows (docs/release/updater.md audit). Never re-run a release to fix this (CLAUDE.md rule 12).
+- **Link:** [updater.md](../../release/updater.md)
 
 ### V-LA-008 Update channel and other editor versions
 - **Map:** 17.1.2, 18.5
@@ -85,7 +85,7 @@ Format: see the top of `scripts/gen_verify_checklist.py`. Bold names must exist 
   3. On the **Versions** page install or open one other editor version.
 - **See:** the combo offers the channels, and the Versions page lists installable editor versions; a version without a checksum is refused.
 - **Partial:** the launcher itself is never downgraded by the channel choice (the setting text says so).
-- **Link:** [launcher_versions.md](../../launcher_versions.md)
+- **Link:** [launcher_versions.md](../../release/launcher_versions.md)
 
 ### V-LA-009 Settings are remembered
 - **Map:** 17.1.5
@@ -134,8 +134,8 @@ Format: see the top of `scripts/gen_verify_checklist.py`. Bold names must exist 
   2. Press the download button and wait for the progress to finish.
   3. Open the `exports` folder next to the launcher.
 - **See:** one JSON file with your data, and a list of any sections that failed or are "not set up".
-- **Partial:** the server function and tables are not set up everywhere; the owner steps are in `docs/account_data.md`.
-- **Link:** [account_data.md](../../account_data.md)
+- **Partial:** the server function and tables are not set up everywhere; the owner steps are in `docs/online/account_data.md`.
+- **Link:** [account_data.md](../../online/account_data.md)
 
 ### V-LA-014 Delete my account (use a throwaway account only)
 - **Map:** 17.2.8
@@ -145,7 +145,7 @@ Format: see the top of `scripts/gen_verify_checklist.py`. Bold names must exist 
   2. Type the username and the password and confirm.
 - **See:** the launcher shows each server step, then signs you out; or it says the function is not deployed. Do not run this on an account you want to keep.
 - **Partial:** the Edge Function is not deployed or run against a live project yet (map 17.2). Expect "function not deployed".
-- **Link:** [account_data.md](../../account_data.md)
+- **Link:** [account_data.md](../../online/account_data.md)
 
 ### V-LA-015 Crash reports page
 - **Map:** 17.1.5, 48

@@ -33,7 +33,7 @@ void Pose(int state, float t, const Inputs& in, std::vector<Vec3>& out);
 /// The hips' height offset for the same (rig units, before the height scale):
 /// the stride's bob, the crouch and prone drops, the landing dip.
 float HipY(int state, const Inputs& in);
-/// The way back to the gait and walk/run look from before the natural walk and run (docs/walk_vs_run.md).
+/// The way back to the gait and walk/run look from before the natural walk and run (docs/gameplay/walk_vs_run.md).
 /// True when the environment variable OKAY_OLD_GAIT is set to anything but 0 (read once, at the first call),
 /// or after SetOldGait(1). While it is on, the stride laws in this file, the walk-to-run style blend in
 /// Character::DriveLocomotion, the controllers' default walk and run speeds (4.5 / 8.0) and the imported

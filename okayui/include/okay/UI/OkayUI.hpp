@@ -317,7 +317,7 @@ enum Cond : int { Cond_Always = 1, Cond_Once = 2, Cond_FirstUseEver = 4, Cond_Ap
 ///  NoFocusOnAppearing: a window that appears (is drawn after a frame without it) does not take focus or come to the front.
 ///  NoBringToFront: clicking never raises the window and it sits below every other window (docked content uses it).
 /// Windows overlap in z-order: a click on a window raises it (and focuses it) and is not seen by widgets of windows behind
-/// it, nor by docked content under it. See docs/own_ui_toolkit.md section 4.32.
+/// it, nor by docked content under it. See docs/ui/own_ui_toolkit.md section 4.32.
 enum WindowFlags : int {
     Window_None = 0, Window_NoResize = 1, Window_NoMove = 2, Window_NoTitleBar = 4,
     Window_NoScrollbar = 8, Window_NoBackground = 16, Window_NoCollapse = 32, Window_AlwaysAutoResize = 64,
@@ -437,6 +437,22 @@ bool RadioButton(const char* label, int* value, int option);
 bool SliderFloat(const char* label, float* value, float minV, float maxV);
 /// An integer slider over [minV, maxV]. Edits *value in place; true on change.
 bool SliderInt(const char* label, int* value, int minV, int maxV);
+/// How a number is shown (the printf-style `fmt` of Dear ImGui's drag, slider and float input widgets). `fmt` holds literal text and at most
+/// ONE conversion: %d %i %u %x %X (whole numbers), %f %F %e %E %g %G (decimals), with the printf flags `-+ 0#`, a width, a precision and the
+/// length marks h l ll z j t q L (skipped); `%%` is a percent sign. A float shown with a whole-number conversion is rounded first, a whole
+/// number shown with a decimal conversion is converted. Anything else (%s, %n, a second conversion, a lone % at the end) is refused: the
+/// text becomes the default ("%d" or "%.3f") and false is returned, so a bad format cannot reach printf. `*decimals` (optional) gets the number of
+/// decimals the text shows (%f: its precision, 6 by default; whole-number conversions: 0), or -1 when that is not known (%g, %e, no conversion).
+bool FormatNumber(char* out, int cap, const char* fmt, double value, bool isInt, int* decimals = nullptr);
+/// Set the format and flags of the NEXT Drag*, SliderFloat/SliderInt or InputFloat widget (used up by that widget; a null `fmt` keeps the widget's
+/// own default). `fmtMax` is the second cell's format of DragFloatRange2. `noTypedInput` turns Ctrl+click typing off for that widget (Dear ImGui's
+/// NoInput); `noRoundToFormat` false rounds a slider's or typed value to the decimals of `fmt`. A slider shows its value (centred) only when
+/// a format was set; without one it stays as before. `logarithmic` (sliders only) spaces the values by a factor instead of by a step; it works when the
+/// range keeps one sign and does not touch 0 (the handle position is then log(value); for other ranges the slider stays linear).
+void SetNextNumberFormat(const char* fmt, bool noTypedInput = false, bool noRoundToFormat = true, const char* fmtMax = nullptr, bool logarithmic = false);
+/// The text the last number widget showed in its cell `cell` (0 for single widgets, 0..3 for vector cells, -1 for the last cell drawn); "" when
+/// nothing was shown. For tests and for hosts that read a value back.
+const char* GetLastNumberText(int cell = -1);
 /// A vertical slider `w`*`h` tall — drag the handle up/down over [minV, maxV].
 /// Edits *value in place; returns true on change. Great for mixers/levels.
 bool VSliderFloat(const char* label, float w, float h, float* value, float minV, float maxV);
@@ -1005,7 +1021,13 @@ template <typename T> struct ImVector {
         std::free(Data); Data = d; Capacity = n;
     }
     void resize(int n) { reserve(n); if (n > Size) std::memset(static_cast<void*>(Data + Size), 0, sizeof(T) * (size_t)(n - Size)); Size = Capacity >= n ? n : Size; }
-    void push_back(const T& v) { if (Size == Capacity) reserve(Capacity ? Capacity * 2 : 8); if (Size < Capacity) Data[Size++] = v; }
+    // `v` may point into Data (v.push_back(v[0])): growing frees the old block, so copy it out first.
+    void push_back(const T& v) {
+        if (Size < Capacity) { Data[Size++] = v; return; }
+        const T keep = v;
+        reserve(Capacity ? Capacity * 2 : 8);
+        if (Size < Capacity) Data[Size++] = keep;
+    }
     void push_front(const T& v) {
         if (Size == 0) { push_back(v); return; }
         const T keep = v;
@@ -1029,7 +1051,7 @@ template <typename T> struct ImVector {
 // ---- Dear ImGui's draw-data shapes (what a custom renderer written for Dear ImGui reads) ---------------------------------------------------------
 // OkayUI's own draw data is DrawData / DrawCmd above. These are the same facts in the field names and layout a Dear ImGui renderer expects, built
 // from DrawData on request (`ImDrawData* dd = GetDrawData();` converts, see DrawData::operator ImDrawData*) so such a renderer can run unchanged
-// while the host is moved over to OkayUI's own FrameDrawer. Docs: docs/own_ui_toolkit.md 6.22.
+// while the host is moved over to OkayUI's own FrameDrawer. Docs: docs/ui/own_ui_toolkit.md 6.22.
 typedef SDL_Texture* ImTextureID;                    // what AddImage and Image take
 typedef unsigned int ImDrawIdx;                       // 32-bit: OkayUI batches hold more than 65,535 vertices
 struct ImDrawVert { Vec2 pos; Vec2 uv; unsigned col = 0; };   // col is 0xAABBGGRR
@@ -1316,7 +1338,7 @@ struct IO {
     Vec2 DisplayFramebufferScale{1.0f, 1.0f};
     int ConfigFlags = 0, BackendFlags = 0;
     const char* IniFilename = nullptr; const char* LogFilename = nullptr;
-    // Host-side fields of Dear ImGui's IO, see docs/own_ui_toolkit.md 6.22.
+    // Host-side fields of Dear ImGui's IO, see docs/ui/own_ui_toolkit.md 6.22.
     int MouseClickedCount[3] = {0, 0, 0};        // clicks in a row at this frame's press (1, 2 = double click), 0 when the button did not go down this frame (left button only)
     bool KeySuper = false;                       // the Windows / Command key: OkayUI has no such key; always false unless the host sets it
     float FontGlobalScale = 1.0f;                // accepted; the text scale is Style().textScale
@@ -1374,7 +1396,7 @@ Theme& Style();
 // ---- Scoped style overrides (ImGui-style) --------------------------------------
 // The theme colours a PushStyleColor / SetStyleColor / GetStyleColorVec4 call names. The first eight are the original theme
 // fields; the rest are the full Dear ImGui colour set. A colour that was never set follows the base theme (Style().bg, ...);
-// a set one overrides it. Which widget draws with which colour is listed in docs/own_ui_toolkit.md section 4.33; a few
+// a set one overrides it. Which widget draws with which colour is listed in docs/ui/own_ui_toolkit.md section 4.33; a few
 // (the navigation highlights, BorderShadow, the unfocused tab colours, the hovered / active separator)
 // are accepted and stored but nothing draws with them yet.
 enum Col : int {

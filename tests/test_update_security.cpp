@@ -3,7 +3,7 @@
 // real LoadIndex, PlanInstall, Install and Stage run against it. Throwaway keys, temp folders, no network.
 // Checked: tampered file, truncated file, tampered list, truncated and foreign signatures, mix-and-match (a file or a signature
 // from another version), a replayed older signed list (downgrade), the "signature check ON/OFF" status line, and that an unsigned
-// or forged list never raises the replay floor. Docs: docs/security.md "Updater signing".
+// or forged list never raises the replay floor. Docs: docs/online/security.md "Updater signing".
 #include "test_framework.hpp"
 #include "VersionsManager.hpp"
 #include "UpdaterCore.hpp"

@@ -13,7 +13,7 @@ namespace okay {
 /// broad-phase tests; subclasses describe the actual shape.
 class Collider2D : public Component {
 public:
-    enum class Shape { Box, Circle, Capsule, Edge, Polygon };
+    enum class Shape { Box, Circle, Capsule, Edge, Polygon, Composite };
 
     /// Trigger colliders detect overlap but don't push objects apart.
     bool isTrigger = false;
@@ -41,8 +41,17 @@ public:
     CombineMode frictionCombine = CombineMode::Default;
     /// How this collider's bounciness is combined with the one it touches (default: the larger).
     CombineMode bounceCombine = CombineMode::Default;
+    /// Contact offset: the collider counts as this much thicker when it touches something (a skin, in units). 0 (the
+    /// default) is the exact shape.
+    float contactOffset = 0.0f;
 
     virtual Shape shape() const = 0;
+
+    /// The object's turn about Z in radians (2D colliders turn with their object).
+    float WorldRotation() const {
+        Quat q = transform ? transform->Rotation() : Quat::Identity;
+        return q.ToEuler().z * Mathf::Deg2Rad;
+    }
 
     /// World-space center of the collider. With the Improved physics quality the offset turns and scales with the object
     /// (as a child at that local position would); Classic adds it to the position unturned and unscaled, as it always did.
@@ -119,18 +128,16 @@ public:
             ? Mathf::Abs(size.x * s.x) * 0.5f
             : Mathf::Abs(size.y * s.y) * 0.5f;
     }
-    /// The capsule's inner segment endpoints in world space.
+    /// The capsule's inner segment endpoints in world space (the object's turn about Z carries the capsule with it).
     void Segment(Vec2& a, Vec2& b) const {
         Vec3 s = transform ? transform->LossyScale() : Vec3::One;
         Vec2 c = WorldCenter();
         float r = WorldRadius();
-        if (direction == Direction::Vertical) {
-            float half = Mathf::Max(0.0f, Mathf::Abs(size.y * s.y) * 0.5f - r);
-            a = {c.x, c.y - half}; b = {c.x, c.y + half};
-        } else {
-            float half = Mathf::Max(0.0f, Mathf::Abs(size.x * s.x) * 0.5f - r);
-            a = {c.x - half, c.y}; b = {c.x + half, c.y};
-        }
+        float half = direction == Direction::Vertical ? Mathf::Max(0.0f, Mathf::Abs(size.y * s.y) * 0.5f - r)
+                                                      : Mathf::Max(0.0f, Mathf::Abs(size.x * s.x) * 0.5f - r);
+        float ang = WorldRotation(), ca = Mathf::Cos(ang), sa = Mathf::Sin(ang);
+        Vec2 dir = direction == Direction::Vertical ? Vec2{-sa, ca} : Vec2{ca, sa};
+        a = c - dir * half; b = c + dir * half;
     }
     void WorldAABB(Vec2& outMin, Vec2& outMax) const override {
         Vec2 a, b; Segment(a, b);
@@ -141,27 +148,30 @@ public:
 };
 
 /// Shared base for vertex-list colliders (edges and polygons). Vertices are in
-/// local space, scaled and positioned by the Transform. The solver reduces these
-/// to the closest point on their segment chain, so they collide with box, circle
-/// and capsule colliders without any new shape-vs-shape math.
+/// local space, scaled, turned and positioned by the Transform. Edges are a line of
+/// segments; Polygons are solid. Both collide with every other 2D shape through the
+/// convex narrow phase (ConvexContact2D.hpp).
 class PolyShapeCollider2D : public Collider2D {
 public:
     std::vector<Vec2> points;          ///< local-space vertices
 
     /// Vertices transformed into world space.
     std::vector<Vec2> WorldPoints() const {
-        Vec3 p = transform ? transform->Position() : Vec3::Zero;
         Vec3 s = transform ? transform->LossyScale() : Vec3::One;
+        Vec2 c = WorldCenter();
+        float ang = WorldRotation(), ca = Mathf::Cos(ang), sa = Mathf::Sin(ang);
         std::vector<Vec2> out; out.reserve(points.size());
-        for (const Vec2& v : points)
-            out.push_back({p.x + offset.x + v.x * s.x, p.y + offset.y + v.y * s.y});
+        for (const Vec2& v : points) {              // scale, turn with the object, then place
+            float x = v.x * s.x, y = v.y * s.y;
+            out.push_back({c.x + x * ca - y * sa, c.y + x * sa + y * ca});
+        }
         return out;
     }
     /// True for polygons (the last vertex connects back to the first).
     virtual bool closedLoop() const = 0;
 
     void WorldAABB(Vec2& outMin, Vec2& outMax) const override {
-        std::vector<Vec2> wp = WorldPoints();
+        std::vector<Vec2> wp = WorldPoints();   // (the offset and turn are inside WorldPoints)
         if (wp.empty()) { outMin = outMax = WorldCenter(); return; }
         outMin = outMax = wp[0];
         for (const Vec2& v : wp) { outMin = Vec2::Min(outMin, v); outMax = Vec2::Max(outMax, v); }
@@ -181,13 +191,31 @@ public:
     bool  closedLoop() const override { return false; }
 };
 
-/// Polygon collider: a closed loop of vertices (convex works best). Bodies bounce
-/// off its boundary. Use it for ramps, platforms and arbitrary static shapes.
+/// Polygon collider: a closed loop of vertices, solid inside (a concave outline is split into convex pieces). Bodies are
+/// pushed out of the whole shape, not just its outline. Use it for ramps, platforms and arbitrary shapes.
 class PolygonCollider2D : public PolyShapeCollider2D {
 public:
     PolygonCollider2D() { points = {{-0.5f, -0.5f}, {0.5f, -0.5f}, {0.0f, 0.5f}}; }
     Shape shape() const override { return Shape::Polygon; }
     bool  closedLoop() const override { return true; }
+};
+
+/// Composite collider: several simple shapes glued into one rigid collider (a plus sign, a dumbbell, a table). `parts` holds
+/// them as text, one per ";":
+///   circle   x y radius
+///   box      x y width height angleDeg
+///   capsule  x y radius length angleDeg      (length = distance between the two round ends' centres)
+///   polygon  x y  x y  x y ...               (three or more corners; a concave one is split into convex pieces)
+/// Positions are in local units, angle in degrees.
+class CompositeCollider2D : public Collider2D {
+public:
+    std::string parts;       ///< the text above (blank = it collides with nothing)
+    Shape shape() const override { return Shape::Composite; }
+    void AddCircle(const Vec2& pos, float radius);
+    void AddBox(const Vec2& pos, const Vec2& size, float angleDeg = 0.0f);
+    void AddCapsule(const Vec2& pos, float radius, float length, float angleDeg = 0.0f);
+    void AddPolygon(const std::vector<Vec2>& pts);
+    void WorldAABB(Vec2& outMin, Vec2& outMax) const override;
 };
 
 } // namespace okay

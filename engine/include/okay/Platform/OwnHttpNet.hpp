@@ -14,7 +14,7 @@
 //    A proxy URL we cannot honour (https:// proxy, credentials) is an error, never
 //    a silent direct connection.
 //  - macOS: this header compiles there (TCP, proxy) but TLS reports "not available";
-//    see docs/own_http_client.md.
+//    see docs/platform/own_http.md.
 // The pure HTTP logic is in OwnHttp.hpp.
 // ---------------------------------------------------------------------------
 #include "okay/Platform/OwnHttp.hpp"
@@ -377,7 +377,7 @@ struct TlsApi {
 
     static std::vector<std::string> DefaultNames() {
 #if defined(__APPLE__)
-        return {};   // not wired on macOS (docs/own_http_client.md)
+        return {};   // not wired on macOS (docs/platform/own_http.md)
 #else
         return {"libssl.so.3", "libssl.so.1.1", "libssl.so"};
 #endif

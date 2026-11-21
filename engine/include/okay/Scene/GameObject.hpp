@@ -100,7 +100,7 @@ public:
     /// instance when the prefab file changes. Only the instance ROOT carries it.
     std::string prefabSource;
     /// One field of a prefab instance that differs from its source prefab (see
-    /// docs/prefabs.md). `object` is the depth-first index of the object inside the
+    /// docs/engine/prefabs.md). `object` is the depth-first index of the object inside the
     /// prefab (0 = the instance root); `line` is the whole serialized record, e.g.
     /// `sprite 64 1 1 1 1 1 1`. Re-applying the prefab keeps these. Data only.
     struct PrefabOverride {

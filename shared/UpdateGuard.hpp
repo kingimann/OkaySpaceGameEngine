@@ -1,6 +1,6 @@
 #pragma once
-// Two small guards around the signed release list (SEC1 item 3). Docs: docs/security.md "Updater signing" and
-// docs/updater.md "Signed releases". Header only, no threads, free of engine / SDL / ImGui code.
+// Two small guards around the signed release list (SEC1 item 3). Docs: docs/online/security.md "Updater signing" and
+// docs/release/updater.md "Signed releases". Header only, no threads, free of engine / SDL / ImGui code.
 //
 //  1. SignatureStatus(): the one-line answer to "is the update signature check on?", for the start-up log line and the
 //     Settings page of the launcher and the editor. With no public key built in the check is OFF and the line says so

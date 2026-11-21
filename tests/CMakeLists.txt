@@ -30,9 +30,9 @@ add_test(NAME structure_version COMMAND test_structure_version)
 find_program(OKAY_PYTHON NAMES python3 python)
 if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
-    # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release_channels.md "Test builds").
+    # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release/release_channels.md "Test builds").
     add_test(NAME dev_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/dev_index.py --self-test)
-    # The collaboration scripts (docs/collaboration.md): throw-away git repos only, no GitHub, no feature map.
+    # The collaboration scripts (docs/process/collaboration.md): throw-away git repos only, no GitHub, no feature map.
     find_program(OKAY_GIT NAMES git)
     if(OKAY_GIT)
         add_test(NAME collab_scripts COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_collab.py)
@@ -102,6 +102,11 @@ add_executable(test_flac_import test_flac_import.cpp)
 target_link_libraries(test_flac_import PRIVATE okay::engine)
 target_compile_definitions(test_flac_import PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME flac_import COMMAND test_flac_import)
+# Hostile FLAC files: every truncation, bit flips (checksums repaired), lying headers, garbage; whole vs streamed decode.
+add_executable(test_flac_hostile test_flac_hostile.cpp)
+target_link_libraries(test_flac_hostile PRIVATE okay::engine)
+target_compile_definitions(test_flac_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME flac_hostile COMMAND test_flac_hostile)
 
 # Stereo clips and placement (balance for 2D, mono-then-pan for 3D).
 add_executable(test_audio_stereo test_audio_stereo.cpp)
@@ -223,10 +228,24 @@ add_executable(test_inventory_ops test_inventory_ops.cpp)
 target_link_libraries(test_inventory_ops PRIVATE okay::engine)
 add_test(NAME inventory_ops COMMAND test_inventory_ops)
 
+# Item names cut to a measured width (pure text-fit logic)
+add_executable(test_inventory_textfit test_inventory_textfit.cpp)
+target_link_libraries(test_inventory_textfit PRIVATE okay::engine)
+add_test(NAME inventory_textfit COMMAND test_inventory_textfit)
+
 # Moving items between bags: hostile inputs, stack/weight limits, slot<->grid moves, old saves
 add_executable(test_inventory_moves test_inventory_moves.cpp)
 target_link_libraries(test_inventory_moves PRIVATE okay::engine)
 add_test(NAME inventory_moves COMMAND test_inventory_moves)
+add_executable(test_inventory_durability test_inventory_durability.cpp)
+target_link_libraries(test_inventory_durability PRIVATE okay::engine)
+add_test(NAME inventory_durability COMMAND test_inventory_durability)
+add_executable(test_inventory_use test_inventory_use.cpp)
+target_link_libraries(test_inventory_use PRIVATE okay::engine)
+add_test(NAME inventory_use COMMAND test_inventory_use)
+add_executable(test_inventory_arbiter test_inventory_arbiter.cpp)
+target_link_libraries(test_inventory_arbiter PRIVATE okay::engine)
+add_test(NAME inventory_arbiter COMMAND test_inventory_arbiter)
 
 # Item definitions: .okayitems database, legacy names, per-instance data, def-driven stack/icon/rarity/use
 add_executable(test_item_database test_item_database.cpp)
@@ -864,7 +883,7 @@ target_compile_definitions(test_example_scenes PRIVATE OKAY_TEST_OUTPUT_DIR="${C
 target_link_libraries(test_example_scenes PRIVATE okay::engine)
 add_test(NAME example_scenes COMMAND test_example_scenes)
 
-# Every project template is proven to work (docs/templates_check.md): the launcher's flow (CreateProject into a temp folder,
+# Every project template is proven to work (docs/process/templates_check.md): the launcher's flow (CreateProject into a temp folder,
 # the version gate, reopen), one Main Camera, a stable save, the Problems model, 120 Play frames, and the family's own
 # interaction with simulated keys and mouse. Links the ImGui-free EditorState and the version gate, like test_example_scenes.
 add_executable(test_templates_work test_templates_work.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
@@ -927,7 +946,7 @@ target_link_libraries(test_play_start_bench PRIVATE okay::engine)
 add_test(NAME play_start_bench COMMAND test_play_start_bench)
 
 # Frame-time benchmark: whole frames (scene update, physics, animation, software render, UI) split by phase, with output
-# hashes to prove a speed-up changed nothing. NOT a test: run `bench_frame` by hand (docs/perf_log.md, docs/try_it.md).
+# hashes to prove a speed-up changed nothing. NOT a test: run `bench_frame` by hand (docs/engine/perf_log.md, docs/try_it.md).
 # The ctest below only checks that it still builds and runs, on a tiny scale.
 add_executable(bench_frame bench_frame.cpp)
 target_link_libraries(bench_frame PRIVATE okay::engine)
@@ -938,13 +957,13 @@ endif()
 add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --warmup 1)
 
 # Physics broad phase: the sort-and-sweep pair finder gives the brute force pair list in the same order, and whole 2D and 3D
-# physics scenes move bit-for-bit the same with either one (docs/perf_log.md)
+# physics scenes move bit-for-bit the same with either one (docs/engine/perf_log.md)
 add_executable(test_broadphase test_broadphase.cpp)
 target_link_libraries(test_broadphase PRIVATE okay::engine)
 add_test(NAME broadphase COMMAND test_broadphase)
 
 # Software renderer speed-ups change no pixel: row spans and four texel loop for the sun's shadow maps (TriangleSpan.hpp),
-# band skipping and per-mesh light culling in RenderMeshes (docs/perf_log.md)
+# band skipping and per-mesh light culling in RenderMeshes (docs/engine/perf_log.md)
 add_executable(test_triangle_span test_triangle_span.cpp)
 target_link_libraries(test_triangle_span PRIVATE okay::engine)
 add_test(NAME triangle_span COMMAND test_triangle_span)
@@ -952,7 +971,7 @@ add_executable(test_software_perf_paths test_software_perf_paths.cpp)
 target_link_libraries(test_software_perf_paths PRIVATE okay::engine)
 add_test(NAME software_perf_paths COMMAND test_software_perf_paths)
 
-# CachedComponents: the cached scene-wide component lists always equal a fresh walk (docs/perf_log.md)
+# CachedComponents: the cached scene-wide component lists always equal a fresh walk (docs/engine/perf_log.md)
 add_executable(test_component_cache test_component_cache.cpp)
 target_link_libraries(test_component_cache PRIVATE okay::engine)
 add_test(NAME component_cache COMMAND test_component_cache)
@@ -1131,7 +1150,7 @@ target_include_directories(test_account PRIVATE ${CMAKE_SOURCE_DIR}/engine/inclu
 add_test(NAME account COMMAND test_account)
 
 # The ONE SHA-256 (engine/include/okay/Crypto/Sha256.hpp) against the three old copies kept as references, RFC 4231 HMAC and
-# RFC 7914 PBKDF2 vectors, and password records written by the old code (docs/sha256_comparison.md). Header-only: no link needed.
+# RFC 7914 PBKDF2 vectors, and password records written by the old code (docs/platform/sha256_comparison.md). Header-only: no link needed.
 add_executable(test_sha256_unify test_sha256_unify.cpp)
 target_compile_features(test_sha256_unify PRIVATE cxx_std_17)
 target_include_directories(test_sha256_unify PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
@@ -1166,7 +1185,7 @@ add_executable(test_vehicle_world test_vehicle_world.cpp)
 target_link_libraries(test_vehicle_world PRIVATE okay::engine)
 target_compile_definitions(test_vehicle_world PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vehicle_world COMMAND test_vehicle_world)
-# Water surface (Gerstner-style waves), buoyancy, the boat and the Boat Lake example (docs/water_boat.md).
+# Water surface (Gerstner-style waves), buoyancy, the boat and the Boat Lake example (docs/rendering/terrain_water.md).
 add_executable(test_boat test_boat.cpp)
 target_link_libraries(test_boat PRIVATE okay::engine)
 target_compile_definitions(test_boat PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -1176,6 +1195,12 @@ add_executable(test_vehicle_seat test_vehicle_seat.cpp)
 target_link_libraries(test_vehicle_seat PRIVATE okay::engine)
 target_compile_definitions(test_vehicle_seat PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vehicle_seat COMMAND test_vehicle_seat)
+add_executable(test_vehicle_controls test_vehicle_controls.cpp)
+target_link_libraries(test_vehicle_controls PRIVATE okay::engine)
+add_test(NAME vehicle_controls COMMAND test_vehicle_controls)
+add_executable(test_vehicle_seat_fit test_vehicle_seat_fit.cpp)
+target_link_libraries(test_vehicle_seat_fit PRIVATE okay::engine)
+add_test(NAME vehicle_seat_fit COMMAND test_vehicle_seat_fit)
 
 add_executable(test_survival test_survival.cpp)
 target_link_libraries(test_survival PRIVATE okay::engine)
@@ -1291,7 +1316,7 @@ add_executable(test_voxel_dig test_voxel_dig.cpp)
 target_link_libraries(test_voxel_dig PRIVATE okay::engine)
 add_test(NAME voxel_dig COMMAND test_voxel_dig)
 
-# Voxel terrain edit path (docs/voxel_edit_perf.md): the surface after any edit equals a full rebuild, the faster marching-cubes
+# Voxel terrain edit path (docs/rendering/terrain_water.md): the surface after any edit equals a full rebuild, the faster marching-cubes
 # loop equals the original bit for bit, the running game draws the terrain in chunk objects that look like one big mesh, the
 # brushes and the local floater cleanup do what they always did, and bad brush numbers no longer write NaN into the field.
 add_executable(test_voxel_edit test_voxel_edit.cpp)
@@ -1325,7 +1350,7 @@ add_test(NAME voxel_chunks COMMAND test_voxel_chunks)
 add_executable(test_mesh_hash test_mesh_hash.cpp)
 target_link_libraries(test_mesh_hash PRIVATE okay::engine)
 add_test(NAME mesh_hash COMMAND test_mesh_hash)
-# Terrain and Water rebuilt every vertex normal through a std::map weld (docs/terrain_audit.md): same normals, far faster.
+# Terrain and Water rebuilt every vertex normal through a std::map weld (docs/rendering/terrain_water.md): same normals, far faster.
 add_executable(test_terrain_water_speed test_terrain_water_speed.cpp)
 target_link_libraries(test_terrain_water_speed PRIVATE okay::engine)
 add_test(NAME terrain_water_speed COMMAND test_terrain_water_speed)
@@ -1334,12 +1359,12 @@ add_executable(test_voxel_examples test_voxel_examples.cpp)
 target_link_libraries(test_voxel_examples PRIVATE okay::engine)
 target_compile_definitions(test_voxel_examples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME voxel_examples COMMAND test_voxel_examples)
-# Bugs the terrain audit proved (docs/terrain_audit.md): the heightmap digger ignored open bags and the main camera, and a
+# Bugs the terrain audit proved (docs/rendering/terrain_water.md): the heightmap digger ignored open bags and the main camera, and a
 # World Streamer threw away a dug voxel cell when it unloaded it.
 add_executable(test_terrain_audit test_terrain_audit.cpp)
 target_link_libraries(test_terrain_audit PRIVATE okay::engine)
 add_test(NAME terrain_audit COMMAND test_terrain_audit)
-# Not a test: prints per-frame numbers for digging in a voxel terrain (docs/voxel_edit_perf.md). Built, never run by ctest.
+# Not a test: prints per-frame numbers for digging in a voxel terrain (docs/rendering/terrain_water.md). Built, never run by ctest.
 add_executable(bench_voxel_edit bench_voxel_edit.cpp)
 target_link_libraries(bench_voxel_edit PRIVATE okay::engine)
 add_executable(bench_voxel_real bench_voxel_real.cpp)
@@ -1380,7 +1405,7 @@ add_executable(test_player_fixes test_player_fixes.cpp)
 target_link_libraries(test_player_fixes PRIVATE okay::engine)
 add_test(NAME player_fixes COMMAND test_player_fixes)
 
-# The player deep audit (docs/player_audit.md): one check per proven bug, each failing with OKAY_OLD_PLAYER=1.
+# The player deep audit (docs/status/player_audit.md): one check per proven bug, each failing with OKAY_OLD_PLAYER=1.
 add_executable(test_player_deep test_player_deep.cpp)
 target_link_libraries(test_player_deep PRIVATE okay::engine)
 add_test(NAME player_deep COMMAND test_player_deep)
@@ -1448,7 +1473,7 @@ add_executable(test_physics_joints test_physics_joints.cpp)
 target_link_libraries(test_physics_joints PRIVATE okay::engine)
 add_test(NAME physics_joints COMMAND test_physics_joints)
 
-# Physics audit (docs/physics_plan.md): box contact points, the iterated solver on its own, the bugs the audit found
+# Physics audit (docs/physics/physics.md): box contact points, the iterated solver on its own, the bugs the audit found
 # (both physics qualities), the Improved quality, and how its settings are saved.
 add_executable(test_physics_deep_manifold test_physics_deep_manifold.cpp)
 target_link_libraries(test_physics_deep_manifold PRIVATE okay::engine)
@@ -1527,6 +1552,9 @@ add_test(NAME humanoid_template COMMAND test_humanoid_template)
 add_executable(test_controllers_ik test_controllers_ik.cpp)
 target_link_libraries(test_controllers_ik PRIVATE okay::engine)
 add_test(NAME controllers_ik COMMAND test_controllers_ik)
+add_executable(test_camera_after_ik test_camera_after_ik.cpp)
+target_link_libraries(test_camera_after_ik PRIVATE okay::engine)
+add_test(NAME camera_after_ik COMMAND test_camera_after_ik)
 
 add_executable(test_ecs test_ecs.cpp)
 target_link_libraries(test_ecs PRIVATE okay::engine)
@@ -2105,7 +2133,7 @@ add_executable(test_crash_reports test_crash_reports.cpp)
 target_include_directories(test_crash_reports PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME crash_reports COMMAND test_crash_reports)
 
-# Crash reports in detail (docs/crash_reports.md): the context the handler keeps and the text it writes, the handler itself (a child
+# Crash reports in detail (docs/online/crash_reports.md): the context the handler keeps and the text it writes, the handler itself (a child
 # process really faults: POSIX only; the Windows half is compiled by the Windows build but cannot run here), and the scrubber.
 add_executable(test_crash_context test_crash_context.cpp)
 target_include_directories(test_crash_context PRIVATE ${CMAKE_SOURCE_DIR}/shared)
@@ -2166,7 +2194,7 @@ target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/
 target_link_libraries(test_launcher_versions PRIVATE Threads::Threads okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (signed versions.json)
 add_test(NAME launcher_versions COMMAND test_launcher_versions)
 
-# The same download through our own HTTP client (docs/own_http_readiness.md): only with -DOKAY_OWN_HTTP=ON, loopback server, no network.
+# The same download through our own HTTP client (docs/platform/own_http.md): only with -DOKAY_OWN_HTTP=ON, loopback server, no network.
 if(OKAY_OWN_HTTP AND UNIX AND NOT APPLE)
     add_executable(test_launcher_download_own test_launcher_download_own.cpp
         ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsNet.cpp)
@@ -2214,7 +2242,7 @@ target_include_directories(test_update_signature PRIVATE ${PROJECT_SOURCE_DIR}/l
 target_compile_definitions(test_update_signature PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME update_signature COMMAND test_update_signature)
 
-# Content delivery (docs/content_delivery.md): manifest format and limits, signature, the download state machine (resume, retry, corrupt files,
+# Content delivery (docs/release/content_delivery.md): manifest format and limits, signature, the download state machine (resume, retry, corrupt files,
 # budget, replay floor, rollback), the overlay lookup and the start-up wiring. A fake server behind the Transport interface; throwaway keys; no network.
 add_executable(test_content_delivery test_content_delivery.cpp)
 target_compile_features(test_content_delivery PRIVATE cxx_std_17)
@@ -2529,7 +2557,7 @@ add_executable(test_guided_environment test_guided_environment.cpp)
 target_link_libraries(test_guided_environment PRIVATE okay::engine)
 add_test(NAME guided_environment COMMAND test_guided_environment)
 
-# Modeling "more": per-face material slots, dissolve fixes (docs/modeling_audit.md)
+# Modeling "more": per-face material slots, dissolve fixes (docs/editor/modeling.md)
 add_executable(test_modeling_more test_modeling_more.cpp)
 target_link_libraries(test_modeling_more PRIVATE okay::engine)
 add_test(NAME modeling_more COMMAND test_modeling_more)
@@ -2736,7 +2764,7 @@ add_test(NAME input_keys_gamepad COMMAND test_input_keys_gamepad)
 
 # Input audit, end to end and headless: the bugs found (fast taps, typing moving the player, layouts without Latin letters,
 # rebinding Move), chords, wheel bindings, response curves, buffering, per-player actions, glyph families, recording and replay,
-# the debugger model, and the fast evaluation path against the old one (docs/input_audit.md)
+# the debugger model, and the fast evaluation path against the old one (docs/engine/input.md)
 add_executable(test_input_deep test_input_deep.cpp)
 target_link_libraries(test_input_deep PRIVATE okay::engine)
 add_test(NAME input_deep COMMAND test_input_deep)
@@ -2947,7 +2975,7 @@ add_test(NAME core_console COMMAND test_core_console)
 add_executable(test_core_utils_audit test_core_utils_audit.cpp)
 target_link_libraries(test_core_utils_audit PRIVATE okay::engine)
 add_test(NAME core_utils_audit COMMAND test_core_utils_audit)
-# Localization formatting + plural rules, typed Prefs, FixedTimestep (docs/localization_prefs_time.md)
+# Localization formatting + plural rules, typed Prefs, FixedTimestep (docs/engine/localization.md)
 add_executable(test_loc_prefs_time test_loc_prefs_time.cpp)
 target_link_libraries(test_loc_prefs_time PRIVATE okay::engine)
 add_test(NAME loc_prefs_time COMMAND test_loc_prefs_time)
@@ -3136,7 +3164,7 @@ add_test(NAME playtest_runner COMMAND okay-playtest --junit ${CMAKE_CURRENT_BINA
 add_test(NAME playtest_runner_list COMMAND okay-playtest --list)
 set_tests_properties(playtest_runner_list PROPERTIES PASS_REGULAR_EXPRESSION "selftest\\.script_moves_object")
 
-# 1.1 Loop and time (docs/loop_and_time.md): GameLoop, Time effects + clocks, Game pause reasons /
+# 1.1 Loop and time (docs/engine/loop_and_time.md): GameLoop, Time effects + clocks, Game pause reasons /
 # quit guard, Random extras, Application on the shared loop. Deterministic: fake frame times,
 # fixed seeds, no sleeping except the Application config checks (a few tens of milliseconds).
 add_executable(test_game_loop test_game_loop.cpp)
@@ -3159,7 +3187,7 @@ add_executable(test_random_extras test_random_extras.cpp)
 target_link_libraries(test_random_extras PRIVATE okay::engine)
 add_test(NAME random_extras COMMAND test_random_extras)
 
-# 1.1 fourth pass (docs/loop_and_time.md): Random / RandomExtras audit, SampleIndices, PoissonDisk2D, saving a bag or table
+# 1.1 fourth pass (docs/engine/loop_and_time.md): Random / RandomExtras audit, SampleIndices, PoissonDisk2D, saving a bag or table
 add_executable(test_random_wave4 test_random_wave4.cpp)
 target_link_libraries(test_random_wave4 PRIVATE okay::engine)
 add_test(NAME random_wave4 COMMAND test_random_wave4)
@@ -3172,7 +3200,7 @@ add_test(NAME random_threads COMMAND test_random_threads)
 add_executable(test_application_loop test_application_loop.cpp)
 target_link_libraries(test_application_loop PRIVATE okay::engine)
 add_test(NAME application_loop COMMAND test_application_loop)
-# ---- Prefab system wave 2 (docs/prefab_system.md): nested prefabs, variants, per-field apply / revert
+# ---- Prefab system wave 2 (docs/engine/prefabs.md): nested prefabs, variants, per-field apply / revert
 add_executable(test_prefab_nested test_prefab_nested.cpp)
 target_link_libraries(test_prefab_nested PRIVATE okay::engine)
 add_test(NAME prefab_nested COMMAND test_prefab_nested)
@@ -3188,7 +3216,7 @@ add_test(NAME prefab_apply_revert COMMAND test_prefab_apply_revert)
 add_executable(test_property_registry test_property_registry.cpp)
 target_link_libraries(test_property_registry PRIVATE okay::engine)
 add_test(NAME property_registry COMMAND test_property_registry)
-# ---- Core runtime foundations (docs/core_runtime.md) ----
+# ---- Core runtime foundations (docs/engine/core_runtime.md) ----
 # Job system: pool, task graph, ParallelFor / ParallelReduce, cancellation, shutdown, main-thread queue.
 # Takes an optional repeat count: `test_jobs 20` runs the threaded suites 20 times to shake out races.
 add_executable(test_jobs test_jobs.cpp)
@@ -3206,7 +3234,7 @@ add_executable(test_frame_pacing test_frame_pacing.cpp)
 target_link_libraries(test_frame_pacing PRIVATE okay::engine)
 add_test(NAME frame_pacing COMMAND test_frame_pacing)
 
-# ---- Scene text tools for version control (docs/scene_diff_merge.md) ----------------
+# ---- Scene text tools for version control (docs/engine/scene_diff_merge.md) ----------------
 # Canonical form, structured diff, three-way merge and format migration. They share
 # scene_text_testkit.hpp (seeded random scene generator, messy-layout perturbation, edit
 # helpers). Property tests read OKAY_TEST_SEEDS to run over more random seeds.
@@ -3258,7 +3286,7 @@ add_executable(test_loop_player_style test_loop_player_style.cpp)
 target_link_libraries(test_loop_player_style PRIVATE okay::engine)
 add_test(NAME loop_player_style COMMAND test_loop_player_style)
 
-# 1.1 third pass (docs/loop_and_time.md): GameLoop / Game / Application edge cases, timers and clock
+# 1.1 third pass (docs/engine/loop_and_time.md): GameLoop / Game / Application edge cases, timers and clock
 # ramps, the loop's save snapshot, frame-stat export and console commands.
 add_executable(test_loop_audit3 test_loop_audit3.cpp)
 target_link_libraries(test_loop_audit3 PRIVATE okay::engine)
@@ -3358,6 +3386,11 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     add_test(NAME platform_xdnd COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_xdnd>)
     set_tests_properties(platform_xdnd PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 
+    # Tray-icon callback protocol model (header only, hand-computed Win32 message values).
+    add_executable(test_platform_tray test_platform_tray.cpp)
+    target_include_directories(test_platform_tray PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_tray COMMAND test_platform_tray)
+
     # The event queue (push, poll, pump, native pointer, unmapped events, render resets, CharForKey): no display needed.
     add_executable(test_platform_events test_platform_events.cpp)
     target_link_libraries(test_platform_events PRIVATE okay::platform)
@@ -3383,6 +3416,16 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
         add_test(NAME platform_window_${_okay_pb}
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_window> ${_okay_pb})
         set_tests_properties(platform_window_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endforeach()
+
+    # Ending through std::exit while globals still own windows (the editor's g_glWin): the backends are destroyed first, the
+    # windows must then let go without calling them. Must end with 0 (the editor crashed with 139 on OKAY_UI_QUIT runs).
+    add_executable(test_platform_exit test_platform_exit.cpp)
+    target_link_libraries(test_platform_exit PRIVATE okay::platform)
+    foreach(_okay_pb sdl2 own)
+        add_test(NAME platform_exit_${_okay_pb}
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_exit> ${_okay_pb})
+        set_tests_properties(platform_exit_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     endforeach()
 endif()
 
@@ -3469,7 +3512,7 @@ add_test(NAME loading_screen_layout COMMAND test_loading_screen_layout)
 add_executable(test_death_lock test_death_lock.cpp)
 target_link_libraries(test_death_lock PRIVATE okay::engine)
 add_test(NAME death_lock COMMAND test_death_lock)
-# okay::crypto (our own, UNREVIEWED crypto primitives; docs/crypto.md): RFC known-answer vectors,
+# okay::crypto (our own, UNREVIEWED crypto primitives; docs/platform/crypto.md): RFC known-answer vectors,
 # tamper tests, edge cases. tests/crypto_rfc_vectors.hpp is extracted from the RFC text.
 add_executable(test_crypto test_crypto.cpp)
 target_link_libraries(test_crypto PRIVATE okay::crypto)
@@ -3506,7 +3549,7 @@ endif()
 add_test(NAME crypto_fe16 COMMAND test_crypto_fe16)
 
 # Constant-time audit 1 of 2: valgrind marks every secret undefined and reports any branch or address that
-# depends on one (docs/crypto_review_package.md section 4). Built only when the valgrind headers exist; the
+# depends on one (docs/platform/crypto_review_package.md section 4). Built only when the valgrind headers exist; the
 # ctest runs it under valgrind and is skipped when valgrind itself is missing.
 find_path(OKAY_VALGRIND_INCLUDE valgrind/memcheck.h)
 find_program(OKAY_VALGRIND valgrind)
@@ -3585,7 +3628,7 @@ if(_okay_xc_sodium)
     target_include_directories(test_crypto_sodium_xcheck SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
     add_test(NAME crypto_sodium_xcheck COMMAND test_crypto_sodium_xcheck)
     # The large differential test (against libsodium; structured edge-case inputs). The ctest is a smoke run;
-    # `OKAY_DIFF_N=1000000 build/tests/crypto_difftest` is the ten-minute run (see docs/crypto_review_package.md).
+    # `OKAY_DIFF_N=1000000 build/tests/crypto_difftest` is the ten-minute run (see docs/platform/crypto_review_package.md).
     add_executable(crypto_difftest crypto_difftest.cpp)
     target_link_libraries(crypto_difftest PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
     target_include_directories(crypto_difftest SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
@@ -3622,7 +3665,7 @@ endif()
 
 # Constant-time audit 2 of 2: a fixed-versus-random statistical timing test. NOT run by ctest at full length (it needs
 # a quiet machine and millions of measurements); the ctest is a short smoke run that only checks that the
-# harness runs. See the header of crypto_timing.cpp and docs/crypto_review_package.md section 4.
+# harness runs. See the header of crypto_timing.cpp and docs/platform/crypto_review_package.md section 4.
 add_executable(crypto_timing crypto_timing.cpp)
 target_link_libraries(crypto_timing PRIVATE okay::crypto)
 add_test(NAME crypto_timing_smoke COMMAND crypto_timing 300 X25519Base)
@@ -3706,6 +3749,9 @@ add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
 add_executable(test_editor_layout test_editor_layout.cpp)
 target_include_directories(test_editor_layout PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME editor_layout COMMAND test_editor_layout)
+add_executable(test_launcher_nav_layout test_launcher_nav_layout.cpp)
+target_include_directories(test_launcher_nav_layout PRIVATE ${CMAKE_SOURCE_DIR}/launcher)
+add_test(NAME launcher_nav_layout COMMAND test_launcher_nav_layout)
 
 # The editor's frame-time maths (editor/EditorPerf.hpp, UI-library free): section breakdown, history numbers, idle throttle, viewport scale, performance mode.
 add_executable(test_editor_perf test_editor_perf.cpp)
@@ -3849,7 +3895,7 @@ target_include_directories(test_ase_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine
 target_compile_definitions(test_ase_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME ase_hostile COMMAND test_ase_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(ase_hostile PROPERTIES TIMEOUT 300)
-# Our own Blender (.blend) reader (docs/own_blend_reader.md): synthetic fixtures from scripts/gen_blend_fixtures.py, checked by
+# Our own Blender (.blend) reader (docs/content/model_readers.md): synthetic fixtures from scripts/gen_blend_fixtures.py, checked by
 # hand-computed values and through the import seam; the hostile test is standalone (reader + the in-tree inflate) so it can also be
 # built by hand under -fsanitize=address,undefined,float-cast-overflow; OKAY_BLEND_FUZZ_ITERS raises the sweep.
 add_executable(test_blend_reader test_blend_reader.cpp)
@@ -3950,6 +3996,12 @@ function(okay_batchd_reader_test fmt src)
 endfunction()
 okay_batchd_reader_test(ac3d Ac3dReader.cpp)
 okay_batchd_reader_test(ogre OgreXmlReader.cpp)
+# OGRE skeletons (.skeleton.xml) and skinned .mesh.xml: hand-computed fixtures, reader source only
+okay_batchd_reader_test(ogre_skeleton OgreXmlReader.cpp)
+# Binary .mesh skinned with the XML skeleton (0x4100 / 0x7000 bone assignments): hand-built binary fixtures, reader source only
+okay_batchd_reader_test(ogre_skinbin OgreXmlReader.cpp)
+# Binary OGRE skeletons (.skeleton): hand-built binary fixtures compared with the XML form; real files with OKAY_MODEL_CORPUS
+okay_batchd_reader_test(ogre_skelbin OgreXmlReader.cpp)
 # the XGL reader unpacks ZGL with the engine's own inflate
 okay_batchd_reader_test(xgl XglReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 okay_batchd_reader_test(irr IrrSceneReader.cpp)
@@ -4143,13 +4195,13 @@ endif()
 add_test(NAME own_dispatch_gap COMMAND test_own_dispatch_gap WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
-# real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
+# real exporter files, not in this repo; docs/content/model_corpus.md); without it the test prints "skipped" and passes.
 add_executable(test_model_corpus test_model_corpus.cpp)
 target_link_libraries(test_model_corpus PRIVATE okay::engine)
 target_compile_definitions(test_model_corpus PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME model_corpus COMMAND test_model_corpus WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(model_corpus PROPERTIES TIMEOUT 600)
-# Not a test: speed and peak heap of our own model readers against Assimp, per corpus file (docs/own_readers_speed.md).
+# Not a test: speed and peak heap of our own model readers against Assimp, per corpus file (docs/content/own_readers_speed.md).
 # Built, never run by ctest. Configure with -DOKAY_USE_ASSIMP=ON for the Assimp side; OKAY_MODEL_CORPUS names the files.
 add_executable(bench_model_readers bench_model_readers.cpp)
 target_link_libraries(bench_model_readers PRIVATE okay::engine)
@@ -4161,7 +4213,7 @@ target_include_directories(test_clipboard PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_clipboard PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME clipboard COMMAND test_clipboard)
 
-# Our own HTTP/1.1 client (docs/own_http_client.md). The pure layer (parser, builder, redirects) is tested and
+# Our own HTTP/1.1 client (docs/platform/own_http.md). The pure layer (parser, builder, redirects) is tested and
 # fuzzed over in-memory streams; the transports (TCP, CONNECT proxy, OpenSSL loaded with dlopen) are tested against
 # local servers, `openssl s_server` and throw-away certificates from tests/scripts/gen_http_test_certs.sh.
 # Header-only: neither links the engine. The TLS cases skip (and say so) when libssl or the openssl program is missing.
@@ -4226,7 +4278,7 @@ add_executable(test_post_quality_math test_post_quality_math.cpp)
 target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)
 
-# The start-up update screen's decisions (shared/StartupUpdate.hpp): when the check runs, and what the panel shows. Docs: docs/updater.md.
+# The start-up update screen's decisions (shared/StartupUpdate.hpp): when the check runs, and what the panel shows. Docs: docs/release/updater.md.
 add_executable(test_startup_update test_startup_update.cpp)
 target_compile_features(test_startup_update PRIVATE cxx_std_17)
 target_include_directories(test_startup_update PRIVATE ${PROJECT_SOURCE_DIR}/shared)
@@ -4244,7 +4296,7 @@ add_executable(test_turn_interpolation test_turn_interpolation.cpp)
 target_link_libraries(test_turn_interpolation PRIVATE okay::engine)
 add_test(NAME turn_interpolation COMMAND test_turn_interpolation)
 
-# Our own Terragen (.ter) reader (docs/own_terragen_reader.md): synthetic files built in memory, values worked out by hand
+# Our own Terragen (.ter) reader (docs/content/model_readers.md): synthetic files built in memory, values worked out by hand
 # from the specification, the import seam; and the hostile-input test, which builds without the engine library.
 add_executable(test_terragen_reader test_terragen_reader.cpp)
 target_link_libraries(test_terragen_reader PRIVATE okay::engine)
@@ -4267,7 +4319,7 @@ add_executable(test_obj_texture_roots test_obj_texture_roots.cpp)
 target_link_libraries(test_obj_texture_roots PRIVATE okay::engine)
 add_test(NAME obj_texture_roots COMMAND test_obj_texture_roots WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-# Batch E own readers (Q3D, RAW; SIB is not written yet, see docs/own_sib_reader.md): one test per reader on SYNTHETIC hand-built fixtures
+# Batch E own readers (Q3D, RAW; SIB is not written yet, see docs/content/model_readers.md): one test per reader on SYNTHETIC hand-built fixtures
 # (tests/batche2_fixtures.hpp), a hostile-input / bit-flip test, a budget + memory test (counting operator new), and the dispatch test.
 # The reader tests build on their own from the reader sources (no engine library).
 foreach(_e_t IN ITEMS q3d_reader:Q3dReader.cpp raw_reader:RawReader.cpp)
@@ -4367,12 +4419,15 @@ add_executable(test_scene_add_menu test_scene_add_menu.cpp)
 target_include_directories(test_scene_add_menu PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME scene_add_menu COMMAND test_scene_add_menu)
 
-# Walking must look like walking and running like running (docs/walk_vs_run.md). The second entry runs the same program with
+# Walking must look like walking and running like running (docs/gameplay/walk_vs_run.md). The second entry runs the same program with
 # OKAY_OLD_GAIT=1 and shows the old gait's walk was NOT clearly different from its run; the strips program draws the pictures.
 add_executable(test_walk_vs_run test_walk_vs_run.cpp)
 target_link_libraries(test_walk_vs_run PRIVATE okay::engine)
 add_test(NAME walk_vs_run COMMAND test_walk_vs_run)
 add_test(NAME walk_vs_run_old COMMAND ${CMAKE_COMMAND} -E env OKAY_OLD_GAIT=1 $<TARGET_FILE:test_walk_vs_run> --old)
+add_executable(test_walk_dynamics test_walk_dynamics.cpp)
+target_link_libraries(test_walk_dynamics PRIVATE okay::engine)
+add_test(NAME walk_dynamics COMMAND test_walk_dynamics)
 add_executable(walk_vs_run_strips walk_vs_run_strips.cpp)
 target_link_libraries(walk_vs_run_strips PRIVATE okay::engine)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/walk_vs_run_pictures)
@@ -4389,7 +4444,7 @@ add_test(NAME controller_mapping COMMAND test_controller_mapping)
 # Tests that time a real operation against a tight limit (a 6 ms physics step, a 500 ms loop, sleeps that must land in a window,
 # a 2 s network cancel). CI runs ctest with -j4, and a test sharing the machine with three others could miss such a limit for
 # reasons that have nothing to do with the code. RUN_SERIAL makes ctest run each of these with nothing else running, so they
-# see the same quiet machine as before; the other tests still run four at a time. Nothing is skipped or loosened (docs/automated_testing.md "CI speed").
+# see the same quiet machine as before; the other tests still run four at a time. Nothing is skipped or loosened (docs/process/automated_testing.md "CI speed").
 foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_pacing platform own_http_net
                      launcher_download_own launcher_versions native_fetch playfab_own)
     if(TEST ${_serial_test})
@@ -4519,18 +4574,18 @@ foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happe
     endif()
 endforeach()
 
-# Camera upgrade (docs/camera_upgrade.md): the pure camera maths over simulated frames at 30, 60 and 144 fps.
+# Camera upgrade (docs/gameplay/cameras.md): the pure camera maths over simulated frames at 30, 60 and 144 fps.
 add_executable(test_camera_math test_camera_math.cpp)
 target_link_libraries(test_camera_math PRIVATE okay::engine)
 add_test(NAME camera_math COMMAND test_camera_math)
 
-# Camera rigs over simulated frames (docs/camera_upgrade.md): follow, zones, look ahead, groups, collision, blends, effects, 2D, saves.
+# Camera rigs over simulated frames (docs/gameplay/cameras.md): follow, zones, look ahead, groups, collision, blends, effects, 2D, saves.
 add_executable(test_camera_rig test_camera_rig.cpp)
 target_link_libraries(test_camera_rig PRIVATE okay::engine)
 target_compile_definitions(test_camera_rig PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME camera_rig COMMAND test_camera_rig)
 
-# Water visuals: shading maths, ring grid, depth colour, foam, ripples, splashes, underwater, presets, pictures (docs/water_visuals.md).
+# Water visuals: shading maths, ring grid, depth colour, foam, ripples, splashes, underwater, presets, pictures (docs/rendering/terrain_water.md).
 add_executable(test_water_visuals test_water_visuals.cpp)
 target_link_libraries(test_water_visuals PRIVATE okay::engine)
 target_include_directories(test_water_visuals PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -4541,7 +4596,7 @@ add_executable(water_shot water_shot.cpp)
 target_link_libraries(water_shot PRIVATE okay::engine)
 target_include_directories(water_shot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Headless pictures of the lighting test scenes (a tool, not a test). docs/lighting_upgrade.md
+# Headless pictures of the lighting test scenes (a tool, not a test). docs/rendering/lighting.md
 add_executable(lighting_shot lighting_shot.cpp)
 target_link_libraries(lighting_shot PRIVATE okay::engine)
 
@@ -4552,22 +4607,27 @@ add_test(NAME lighting_upgrade COMMAND test_lighting_upgrade)
 add_executable(test_d3d11_layout test_d3d11_layout.cpp)
 target_link_libraries(test_d3d11_layout PRIVATE okay::engine)
 add_test(NAME d3d11_layout COMMAND test_d3d11_layout)
-# Wind field maths: noise, gusts, zones, blending, curve (docs/wind.md)
+# Wind field maths: noise, gusts, zones, blending, curve (docs/gameplay/wind.md)
 add_executable(test_wind_field test_wind_field.cpp)
 target_link_libraries(test_wind_field PRIVATE okay::engine)
 add_test(NAME wind_field COMMAND test_wind_field)
 
-# Wind components in a scene: zones, particles, drag, sway, foliage, cable, sound, save/load (docs/wind.md)
+# Wind components in a scene: zones, particles, drag, sway, foliage, cable, sound, save/load (docs/gameplay/wind.md)
 add_executable(test_wind test_wind.cpp)
 target_link_libraries(test_wind PRIVATE okay::engine)
 add_test(NAME wind COMMAND test_wind)
-# okay::tex, our own texture library (docs/own_texture_library.md). Pure CPU, deterministic.
+# okay::tex, our own texture library (docs/rendering/own_texture_library.md). Pure CPU, deterministic.
 foreach(_t IN ITEMS mip atlas convert bc dds_stream)
     add_executable(test_tex_${_t} test_tex_${_t}.cpp)
     target_link_libraries(test_tex_${_t} PRIVATE okay::engine)
     add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()
+
+# Colliders behave as the shapes they are (not boxes): Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield, 2D polygon / capsule / composite.
+add_executable(test_collider_shapes test_collider_shapes.cpp)
+target_link_libraries(test_collider_shapes PRIVATE okay::engine)
+add_test(NAME collider_shapes COMMAND test_collider_shapes)
 
 # Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S decisions (editor/SaveShortcutModel.hpp, no ImGui, header-only).
 add_executable(test_save_shortcut_model test_save_shortcut_model.cpp)
@@ -4577,3 +4637,37 @@ add_test(NAME save_shortcut_model COMMAND test_save_shortcut_model)
 add_executable(test_vs_pan_model test_vs_pan_model.cpp)
 target_include_directories(test_vs_pan_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME vs_pan_model COMMAND test_vs_pan_model)
+
+add_executable(test_anim_quat_slerp test_anim_quat_slerp.cpp)
+target_link_libraries(test_anim_quat_slerp PRIVATE okay::engine)
+add_test(NAME anim_quat_slerp COMMAND test_anim_quat_slerp)
+# okay_run: plays a scene headless with scripted input and writes a per-frame trace, the log and pictures
+# (scripts/okay_run.py drives it; docs/process/okay_run.md). A tool, not a test; tests/scripts/test_okay_run.py checks it.
+add_executable(okay_run okay_run.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp ${PROJECT_SOURCE_DIR}/editor/ExampleScenes.cpp)
+target_include_directories(okay_run PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(okay_run PRIVATE okay::engine)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME okay_run_selftest COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_okay_run.py $<TARGET_FILE:okay_run>)
+    set_tests_properties(okay_run_selftest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+endif()
+
+# The Vehicle Controller Inspector pure decisions (editor/VehicleEditorModel.hpp, UI-library free).
+add_executable(test_vehicle_editor_model test_vehicle_editor_model.cpp)
+target_include_directories(test_vehicle_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_vehicle_editor_model PRIVATE okay::engine)
+add_test(NAME vehicle_editor_model COMMAND test_vehicle_editor_model)
+add_executable(test_camera_robust test_camera_robust.cpp)
+target_link_libraries(test_camera_robust PRIVATE okay::engine)
+add_test(NAME camera_robust COMMAND test_camera_robust)
+
+# Controller audit, Simple view model and frame-rate check (claude/controller-1)
+add_executable(test_controller_tuning test_controller_tuning.cpp)
+target_link_libraries(test_controller_tuning PRIVATE okay::engine)
+add_test(NAME controller_tuning COMMAND test_controller_tuning)
+
+# #888 Grok findings 145, 146, 153, 155 (claude2/grok-145-146-153-155): particle replay, terrain resample, lights under
+# inactive parents, reverse one-shot animation end.
+add_executable(test_grok_145_146_153_155 test_grok_145_146_153_155.cpp)
+target_link_libraries(test_grok_145_146_153_155 PRIVATE okay::engine)
+add_test(NAME grok_145_146_153_155 COMMAND test_grok_145_146_153_155)

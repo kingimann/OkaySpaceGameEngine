@@ -12,7 +12,7 @@
 //           bench_frame --scene cubes2000 --frames 300 --size 960x540
 //           bench_frame --scene skinned100 --frames 20 --warmup 3     (short runs are what valgrind/callgrind wants)
 // Output:   a table per scene (median, 95th percentile and max, in ms), then "BENCH" lines that are easy to paste into
-//           docs/perf_log.md, then two hashes. The hashes are the identical-output check: a change that is only meant
+//           docs/engine/perf_log.md, then two hashes. The hashes are the identical-output check: a change that is only meant
 //           to be faster must print the same `frame_hash` (the last picture) and `state_hash` (where every object is
 //           after the run) as before it.
 // Honest limits: CPU numbers from the software renderer on whatever machine runs it. No GPU, no window, no audio. Take the

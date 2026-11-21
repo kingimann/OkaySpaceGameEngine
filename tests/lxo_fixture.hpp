@@ -1,7 +1,7 @@
 #pragma once
 // A SYNTHETIC Modo object (.lxo, an IFF FORM of type LXOB) built in memory, for the LXO side of our LWO reader
 // (engine/src/Render/LwoReader.cpp). Every byte is written here from the public description of the LXO format and its
-// LWO2-style geometry chunks (docs/own_lwo_reader.md, section "LXO"); no file of any other project is copied.
+// LWO2-style geometry chunks (docs/content/model_readers.md, section "LXO"); no file of any other project is copied.
 //
 // The object: a unit cube (8 points, 6 quads) in one layer whose LAYR flags have bit 0 set (Modo writes that on visible
 // layers) and a parent of -1. Polygons 0-2 carry the material tag "Shell", 3-5 "Glass" (PTAG MATR), and every polygon also

@@ -1,5 +1,6 @@
 // Backend registry and the timer fallbacks of okay::platform.
 #include "okay/Platform/Platform.hpp"
+#include <atomic>
 #include "Internal.hpp"
 #include <chrono>
 #include <cstring>
@@ -62,18 +63,34 @@ BackendKind DefaultKind() {
     return kind;
 }
 
+namespace {
+// Set when a backend instance is destroyed. That happens only during static destruction, at the very end of the process (after
+// main() returns, or inside std::exit). A plain atomic with a trivial destructor, so it can still be read by objects destroyed later.
+std::atomic<bool> g_backendsGone{false};
+
+// Holds one backend instance for the process. Its destructor raises the flag first, so a window destroyed later (a global that
+// still owns one, for example) can see that its backend is gone and must not call it.
+struct BackendHolder {
+    std::unique_ptr<Backend> p;
+    explicit BackendHolder(std::unique_ptr<Backend> b) : p(std::move(b)) {}
+    ~BackendHolder() { g_backendsGone.store(true); p.reset(); }
+};
+} // namespace
+
+bool BackendsShutDown() { return g_backendsGone.load(); }
+
 Backend* Get(BackendKind k) {
     if (k == BackendKind::Sdl2) {
 #ifdef OKAY_PLATFORM_HAVE_SDL2
-        static std::unique_ptr<Backend> inst = CreateSdl2Backend();
-        return inst.get();
+        static BackendHolder inst(CreateSdl2Backend());
+        return inst.p.get();
 #else
         return nullptr;
 #endif
     }
 #ifdef OKAY_PLATFORM_HAVE_OWN
-    static std::unique_ptr<Backend> inst = CreateOwnBackend();
-    return inst.get();
+    static BackendHolder inst(CreateOwnBackend());
+    return inst.p.get();
 #else
     return nullptr;
 #endif

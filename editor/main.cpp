@@ -13,9 +13,9 @@
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
 #include "OwnSwitches.hpp"   // the table of own replacements that can be switched on (View > Rendering & Performance)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
-#include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/crash_reports.md)
+#include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/online/crash_reports.md)
 #include "ActionExport.hpp"
-#include "MenuBarModel.hpp"          // the main menu bar and the Hierarchy menus as data (docs/editor_menus.md)
+#include "MenuBarModel.hpp"          // the main menu bar and the Hierarchy menus as data (docs/editor/editor_menus.md)
 #include "SaveShortcutModel.hpp"  // what Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S do
 #include "HierarchyContextModel.hpp"
 #include "SceneAddMenu.hpp"
@@ -41,7 +41,7 @@
 #include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/BuildPipeline.hpp"   // the build pipeline: layout, dependency walk, manifest, report, zip
-#if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/xbox_uwp.md
+#if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/platform/xbox_uwp.md
 #include "XboxExport.hpp"
 #include "XboxSdkProbe.hpp"
 #include "XboxBuildHost.hpp"   // one-click build: plan, runner, host (pure)
@@ -119,7 +119,7 @@
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #include "OkayUIHostMode.hpp"           // window mode (OKAY_UI_HOST=okayui): OkayUI owns the window, no Dear ImGui
 #include "OkayUIFrame.hpp"              // OkayUI end-of-frame on an SDL renderer or an own-backend painter
-#include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/own_ui_toolkit.md, section 5)
+#include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/ui/own_ui_toolkit.md, section 5)
 #endif
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
@@ -973,8 +973,8 @@ static void RunEditorPlayKeyTest(int& failures) {
 #  include <sys/file.h>   // flock() for the single-instance lock
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait, swap, relaunch once
-#include "UpdaterCore.hpp"   // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/updater.md)
-#include "TestBuild.hpp"   // a test build says so in its version label (docs/release_channels.md "Test builds")
+#include "UpdaterCore.hpp"   // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/release/updater.md)
+#include "TestBuild.hpp"   // a test build says so in its version label (docs/release/release_channels.md "Test builds")
 #include "ProjectUpgradeUI.hpp"   // the project version question and File > Project Upgrade...
 #include "ProjectUpgrade.hpp"      // okayup::ProjectRootForScene (and okayver:: through it)
 #include "okay/Core/ThumbnailCache.hpp"   // Project panel thumbnails
@@ -1039,7 +1039,7 @@ ImU32 ToColor(const Color& c) {
 // report shows the trail, not only the last step. It is near-free (a bounded copy). The crash handlers (Windows exception filter,
 // std::terminate and abort hooks, Linux/macOS signal handlers) are shared/CrashHandler.hpp: they write okay_crash.txt and
 // okay_crashlog.txt beside the editor with the OS, CPU, RAM, GPU, scene, Console lines and a backtrace, and the launcher sends it
-// (docs/crash_reports.md). The UI-editing crash that only shows on some real Windows GPUs (Direct3D) is why the breadcrumbs exist.
+// (docs/online/crash_reports.md). The UI-editing crash that only shows on some real Windows GPUs (Direct3D) is why the breadcrumbs exist.
 // In a release build ImGui's IM_ASSERT is a no-op, so a UI bug surfaces as a real access violation, which the filter catches.
 inline void OkayTrace(const char* s) { okaycrash::ctx::Breadcrumb(s); }
 #define OKAY_BREADCRUMB(s) OkayTrace(s)
@@ -1840,15 +1840,15 @@ static GameObject* CreateShapeSprite(EditorState& ed, int shape) {
 }
 
 // ---- Self-updater + runtime fetcher -----------------------------------
-// The editor can pull newer published builds from GitHub and, when exporting a
+// The editor can pull newer published builds from the releases bucket and, when exporting a
 // game, fetch the player runtime if it isn't sitting beside the editor — so a
 // fresh editor "generates everything it needs" without a manual file shuffle.
 namespace updater {
 namespace fs = std::filesystem;
 
-// Published builds live as the assets of the latest GitHub Release (what the
-// release workflow uploads). RawUrl() below builds the per-file URL; the old
-// raw main/dist/ URLs were removed — they served stale binaries.
+// Published builds live only in the public Supabase "releases" bucket. The editor
+// never needs GitHub at run time (owner decision 2026-11-20). RawUrl() below
+// builds the per-file URL.
 
 bool pendingQuit = false; // set true after a successful self-update relaunch
 
@@ -1873,7 +1873,7 @@ std::string SelfPath() {
 #endif
 }
 
-// Append a unique cache-busting query parameter. raw.githubusercontent.com is
+// Append a unique cache-busting query parameter. The download server is
 // fronted by a CDN that caches files for minutes, so a plain request can hand
 // back a stale VERSION.txt or an old .exe right after a release — the cause of
 // "it didn't update". Varying the URL per request forces a fresh fetch.
@@ -1887,7 +1887,7 @@ std::string BustCache(const std::string& url) {
 // Download a URL to a file using whatever HTTP client is on the system. Tries
 // curl first (ships on Win10+/macOS/Linux), then a platform fallback. -f makes
 // curl fail (non-zero) on a 404 so we don't cache an error page as a binary.
-// No-cache headers + a unique query string defeat the GitHub raw CDN cache.
+// No-cache headers + a unique query string defeat the CDN cache.
 bool Download(const std::string& url, const fs::path& outPath) {
     std::error_code ec; fs::remove(outPath, ec);
     std::string u = BustCache(url);
@@ -1925,33 +1925,37 @@ bool Download(const std::string& url, const fs::path& outPath) {
 #endif
 }
 
-// The SHA of the latest commit on main, or "main" if the API can't be reached.
-// Downloading from a commit-pinned raw URL is IMMUTABLE — it can never be served
-// stale by the CDN, which is the real reason "update" sometimes kept the old
-// version (the branch URL handed back a cached old binary).
-// (LatestRef removed — downloads use the releases/latest asset URL directly.)
-
-// Builds are published to two places: the project's Supabase Storage (public
-// "releases" bucket: VERSION.txt + v<ver>/<files>, see scripts/publish-supabase.sh)
-// and GitHub Releases. The check uses whichever has the newer version; GitHub
-// stays the fallback. OKAY_UPDATE_SERVER overrides the Supabase URL (testing).
+// The releases bucket: the only place updates come from. OKAY_UPDATE_SERVER overrides the
+// Supabase URL (testing); shipped builds get it from OKAY_DEFAULT_ACCOUNT_URL.
 std::string SupabaseReleasesBase() {
-    std::string s;
-    if (const char* e = std::getenv("OKAY_UPDATE_SERVER"); e && *e) s = e;
+    const char* e = std::getenv("OKAY_UPDATE_SERVER");
 #ifdef OKAY_DEFAULT_ACCOUNT_URL
-    if (s.empty()) s = OKAY_DEFAULT_ACCOUNT_URL;
+    const char* builtIn = OKAY_DEFAULT_ACCOUNT_URL;
+#else
+    const char* builtIn = "";
 #endif
-    if (s.rfind("https://", 0) != 0 && s.rfind("http://127.0.0.1", 0) != 0) return {};
-    while (!s.empty() && s.back() == '/') s.pop_back();
-    return s + "/storage/v1/object/public/releases/";
+    return okayversions::ReleasesBucketBase(e ? e : "", builtIn);
 }
 
-// URL of a published file. ref "sb:<ver>" = that version's folder in the
-// Supabase bucket; anything else = the latest GitHub Release's asset
-// ("releases/latest/download/<name>" always redirects to the newest release).
+// The newest release in the bucket (its VERSION.txt), with the folder its files are in.
+okayversions::LatestRelease LatestRelease() {
+    static unsigned n = 0;
+    return okayversions::ResolveLatestRelease(SupabaseReleasesBase(), [](const std::string& url, std::string& out) {
+        std::error_code ec;
+        const fs::path tmp = fs::temp_directory_path(ec) / ("okayspace_ver_" + std::to_string(okay::restart::CurrentPid()) + "_" + std::to_string(n++) + ".txt");
+        const bool got = Download(url, tmp);
+        if (got) { std::ifstream f(tmp, std::ios::binary); std::stringstream ss; ss << f.rdbuf(); out = ss.str(); }
+        fs::remove(tmp, ec);
+        return got;
+    });
+}
+
+// URL of a published file. ref "sb:<ver>" = that version's folder in the bucket; anything else = the
+// newest release's folder there ("" when the bucket can't be reached or none is built in).
 std::string RawUrl(const std::string& ref, const std::string& name) {
-    if (ref.rfind("sb:", 0) == 0) return SupabaseReleasesBase() + "v" + ref.substr(3) + "/" + name;
-    return "https://github.com/kingimann/OkaySpaceGameEngine/releases/latest/download/" + name;
+    if (ref.rfind("sb:", 0) == 0) { const std::string b = SupabaseReleasesBase(); return b.empty() ? std::string() : b + "v" + ref.substr(3) + "/" + name; }
+    const okayversions::LatestRelease r = LatestRelease();
+    return r.base.empty() ? std::string() : r.base + name;
 }
 
 // Compare dotted versions ("1.4.0"); returns -1 / 0 / 1 for a<b / a==b / a>b (shared/ProjectVersion.hpp, which the launcher uses too).
@@ -1966,7 +1970,7 @@ struct UpdateInfo {
     std::string ref = "main";   // commit the check resolved to (install uses the same)
 };
 
-// Query GitHub for the published version + release notes. No files are swapped;
+// Ask the releases bucket for the published version + release notes. No files are swapped;
 // this only reports what's available (the install step is explicit).
 UpdateInfo CheckLatest() {
     UpdateInfo info;
@@ -1974,26 +1978,11 @@ UpdateInfo CheckLatest() {
     info.checked = true;
     std::error_code ec;
     fs::path tmp = fs::temp_directory_path(ec);
-    // The published version at one place ("" if unreachable or not a version).
-    auto fetchVer = [&](const std::string& url, const char* tmpName) {
-        fs::path vf = tmp / tmpName;
-        std::string v;
-        if (Download(url, vf.string())) {
-            std::ifstream f(vf); std::getline(f, v);
-            while (!v.empty() && (v.back() == '\r' || v.back() == '\n' || v.back() == ' ')) v.pop_back();
-        }
-        fs::remove(vf, ec);
-        const bool ok = !v.empty() && v.size() < 24 && v.find('.') != std::string::npos &&
-                        v.find_first_not_of("0123456789.") == std::string::npos;
-        return ok ? v : std::string();
-    };
-    const std::string sb = SupabaseReleasesBase();
-    const std::string vs = sb.empty() ? std::string() : fetchVer(sb + "VERSION.txt", "okayspace_version_sb.txt");
-    const std::string vg = fetchVer(RawUrl("latest", "VERSION.txt"), "okayspace_version.txt");
-    if (!vs.empty() && (vg.empty() || CompareVersions(vg, vs) <= 0)) { info.latest = vs; info.ref = "sb:" + vs; }
-    else { info.latest = vg; info.ref = "latest"; }   // the latest GitHub Release
+    const okayversions::LatestRelease r = LatestRelease();
+    info.latest = r.version;
+    info.ref = "sb:" + r.version;
     if (info.latest.empty()) {
-        info.error = "Couldn't reach the update server (no internet, or curl/PowerShell missing).";
+        info.error = r.error;
         return info;
     }
 
@@ -2025,7 +2014,6 @@ void Relaunch(const std::string& path) {
 bool FetchVerified(const std::string& version, const std::string& asset, const fs::path& dest, std::string& reason) {
     okayversions::Sources src;
     src.bucketBase = SupabaseReleasesBase();
-    src.archiveTemplate = "https://github.com/kingimann/OkaySpaceGameEngine/releases/download/v{version}/{file}";
     {   // an old signed list replayed is refused (shared/UpdateGuard.hpp); the floor sits beside this program
         const fs::path self = okay::restart::CurrentExecutable();
         if (!self.empty()) src.floorFile = self.parent_path() / okayupdate::kFloorName;
@@ -2334,6 +2322,129 @@ static bool LayerMaskField(const char* label, std::uint32_t& mask, const char* t
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
     return changed;
 }
+// ---- Collider shapes: one wireframe routine for every 3D collider (Scene view and physics debug draw) ----
+// Draws the real shape (an oriented box, rings for round shapes, hull edges, the parts of a compound, a grid for a plane),
+// never the bounding box. `line(a, b)` draws one world-space segment.
+template <class LineFn>
+static void DrawShapeWire(okay::Collider3D* col, LineFn line) {
+    using namespace okay;
+    using Shape = Collider3D::Shape;
+    auto basis = [](const Vec3& n, Vec3& u, Vec3& v) {
+        Vec3 t = std::fabs(n.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+        u = Vec3::Cross(n, t).Normalized(); v = Vec3::Cross(n, u);
+    };
+    auto drawLocal = [&](const shape3d::Frame& f, const LocalShape3D& ls) {
+        using K = LocalShape3D::Kind;
+        auto W = [&](const Vec3& p) { return shape3d::ToWorldPoint(f, p); };
+        auto ringL = [&](const Vec3& c, const Vec3& u, const Vec3& v, float r) {
+            Vec3 prev = W(c + u * r);
+            for (int k = 1; k <= 24; ++k) {
+                float a = (float)k / 24.0f * 6.2831853f;
+                Vec3 cur = W(c + u * (r * std::cos(a)) + v * (r * std::sin(a)));
+                line(prev, cur); prev = cur;
+            }
+        };
+        if (ls.kind == K::Box) {
+            Vec3 cr[8];
+            for (int i = 0; i < 8; ++i) cr[i] = W({(i & 1) ? ls.half.x : -ls.half.x, (i & 2) ? ls.half.y : -ls.half.y, (i & 4) ? ls.half.z : -ls.half.z});
+            static const int e[12][2] = {{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};
+            for (auto& ed2 : e) line(cr[ed2[0]], cr[ed2[1]]);
+        } else if (ls.kind == K::Sphere) {
+            ringL({0, 0, 0}, {1, 0, 0}, {0, 1, 0}, ls.radius); ringL({0, 0, 0}, {1, 0, 0}, {0, 0, 1}, ls.radius); ringL({0, 0, 0}, {0, 1, 0}, {0, 0, 1}, ls.radius);
+        } else if (ls.kind == K::Hull) {
+            for (std::size_t i = 0; i + 2 < ls.tris.size(); i += 3) {
+                Vec3 a = W(ls.pts[(std::size_t)ls.tris[i]]), b = W(ls.pts[(std::size_t)ls.tris[i + 1]]), c = W(ls.pts[(std::size_t)ls.tris[i + 2]]);
+                line(a, b); line(b, c); line(c, a);
+            }
+            if (ls.tris.empty()) for (std::size_t i = 0; i + 1 < ls.pts.size(); ++i) line(W(ls.pts[i]), W(ls.pts[i + 1]));
+        } else {   // Capsule, Cylinder, Cone: rings along the long axis
+            Vec3 u = ls.Axis(), p, q; basis(u, p, q);
+            float hh = ls.height * 0.5f, r = ls.radius;
+            float cap = ls.kind == K::Capsule ? Mathf::Max(0.0f, hh - r) : hh;
+            ringL(u * -cap, p, q, r);
+            if (ls.kind == K::Cone) {
+                Vec3 tip = W(u * hh);
+                for (const Vec3& d : {p, p * -1.0f, q, q * -1.0f}) line(W(u * -hh + d * r), tip);
+            } else {
+                ringL(u * cap, p, q, r);
+                for (const Vec3& d : {p, p * -1.0f, q, q * -1.0f}) line(W(u * -cap + d * r), W(u * cap + d * r));
+                if (ls.kind == K::Capsule) { ringL(u * -cap, p, u, r); ringL(u * cap, p, u, r); }
+            }
+        }
+    };
+    switch (col->shape()) {
+    case Shape::Box: case Shape::Mesh: {
+        auto* bx = static_cast<BoxCollider3D*>(col);
+        LocalShape3D ls; ls.kind = LocalShape3D::Kind::Box;
+        Vec3 h = bx->HalfExtents(); ls.half = h;
+        Vec3 ax, ay, az; bx->WorldAxes(ax, ay, az);
+        Vec3 c = bx->WorldCenter(), cr[8];
+        for (int i = 0; i < 8; ++i) cr[i] = c + ax * ((i & 1) ? h.x : -h.x) + ay * ((i & 2) ? h.y : -h.y) + az * ((i & 4) ? h.z : -h.z);
+        static const int e[12][2] = {{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};
+        for (auto& ed2 : e) line(cr[ed2[0]], cr[ed2[1]]);
+        break;
+    }
+    case Shape::Sphere: {
+        auto* sp = static_cast<SphereCollider3D*>(col);
+        Vec3 c = sp->WorldCenter(); float r = sp->WorldRadius();
+        LocalShape3D ls; ls.kind = LocalShape3D::Kind::Sphere; ls.radius = r;
+        shape3d::Frame f; f.c = c; f.r = Quat::Identity; f.s = Vec3::One;
+        drawLocal(f, ls);
+        break;
+    }
+    case Shape::Capsule: {   // (the capsule's axis turns with the object)
+        auto* cap = static_cast<CapsuleCollider3D*>(col);
+        Vec3 a, b; cap->Segment(a, b); float r = cap->WorldRadius();
+        Vec3 axis = (b - a).SqrMagnitude() > 1e-10f ? (b - a).Normalized() : cap->WorldAxisDir(), u, v;
+        basis(axis, u, v);
+        auto ring = [&](const Vec3& c, const Vec3& uu, const Vec3& vv) {
+            Vec3 prev = c + uu * r;
+            for (int k = 1; k <= 24; ++k) { float t = (float)k / 24.0f * 6.2831853f; Vec3 cur = c + uu * (r * std::cos(t)) + vv * (r * std::sin(t)); line(prev, cur); prev = cur; }
+        };
+        ring(a, u, v); ring(b, u, v); ring(a, u, axis); ring(b, u, axis);
+        line(a + u * r, b + u * r); line(a - u * r, b - u * r); line(a + v * r, b + v * r); line(a - v * r, b - v * r);
+        break;
+    }
+    case Shape::Cylinder: drawLocal(shape3d::FrameOf(*col), shape3d::CylinderShape(*static_cast<CylinderCollider3D*>(col))); break;
+    case Shape::Cone: case Shape::ConvexHull: drawLocal(shape3d::FrameOf(*col), static_cast<ShapeCollider3D*>(col)->Local()); break;
+    case Shape::Compound: {
+        auto* cc = static_cast<CompoundCollider3D*>(col);
+        for (int i = 0; i < cc->PartCount(); ++i) drawLocal(cc->PartFrame(i), cc->Parts()[(std::size_t)i].shape);
+        break;
+    }
+    case Shape::Plane: {
+        auto* pl = static_cast<PlaneCollider3D*>(col);
+        Vec3 c = pl->WorldCenter(), n = pl->WorldNormal(), u, v; basis(n, u, v);
+        for (int k = -10; k <= 10; ++k) { line(c + u * (float)k + v * -10.0f, c + u * (float)k + v * 10.0f); line(c + v * (float)k + u * -10.0f, c + v * (float)k + u * 10.0f); }
+        line(c, c + n * 1.0f);
+        break;
+    }
+    case Shape::Heightfield: {
+        auto* hf = static_cast<HeightfieldCollider3D*>(col);
+        shape3d::Frame f = shape3d::FrameOf(*col);
+        const int C = std::max(hf->columns, 2), R = std::max(hf->rows, 2);
+        const int si = std::max(1, C / 64), sj = std::max(1, R / 64);
+        auto P = [&](int i, int j) { return shape3d::ToWorldPoint(f, {(i - (C - 1) * 0.5f) * hf->cellX, hf->HeightAt(i, j), (j - (R - 1) * 0.5f) * hf->cellZ}); };
+        for (int j = 0; j < R; j += sj) for (int i = 0; i + 1 < C; ++i) line(P(i, j), P(i + 1, j));
+        for (int i = 0; i < C; i += si) for (int j = 0; j + 1 < R; ++j) line(P(i, j), P(i, j + 1));
+        break;
+    }
+    }
+}
+// Shapes the Scene view can edit with drag handles ("Edit Collider").
+static bool ColliderHandlesFor(okay::GameObject* g) {
+    return g && (g->GetComponent<okay::BoxCollider3D>() || g->GetComponent<okay::SphereCollider3D>() ||
+                 g->GetComponent<okay::CapsuleCollider3D>() || g->GetComponent<okay::ConeCollider3D>());
+}
+// The first handle-editable collider of an object that is not a box (sphere, capsule, cylinder, cone).
+static okay::Collider3D* RoundShapeFor(okay::GameObject* g) {
+    if (!g || g->GetComponent<okay::BoxCollider3D>()) return nullptr;
+    if (auto* c = g->GetComponent<okay::SphereCollider3D>()) return c;
+    if (auto* c = g->GetComponent<okay::CapsuleCollider3D>()) return c;
+    if (auto* c = g->GetComponent<okay::ConeCollider3D>()) return c;
+    return nullptr;
+}
+
 // Per-collider physics material (2D or 3D): this collider's own friction and bounciness (or the Rigidbody's), and how each
 // mixes with what it touches. Returns true when something changed.
 template <class Col>
@@ -2415,6 +2526,9 @@ static bool PhysicsMaterialFields(Col* c, const char* id) {
         if (ImGui::Combo(("Bounce Mix##pm" + sid).c_str(), &bm, modes, 5)) { c->bounceCombine = (okay::CombineMode)bm; changed = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("How this bounciness mixes with the one it touches. Default is the larger of the two.");
     }
+    ImGui::Separator();
+    if (ImGui::DragFloat(("Contact offset (skin)##pm" + sid).c_str(), &c->contactOffset, 0.005f, 0.0f, 1.0f, "%.3f")) { if (c->contactOffset < 0.0f) c->contactOffset = 0.0f; changed = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Makes the collider count as this much thicker when it touches something. 0 is the exact shape. A little (0.01) stops thin or fast things catching on seams.");
     ImGui::TreePop();
     return changed;
 }
@@ -2839,7 +2953,7 @@ static bool SaveSceneTo(EditorState& ed, std::string p);              // save un
 // Run `action` now, or once the person has answered "Save changes to <scene> before <doing>?" (Save / Don't Save /
 // Cancel) when the open scene has unsaved changes. Every way of replacing the open scene goes through this.
 void RunAfterSavePrompt(EditorState& ed, const std::string& doing, std::function<void()> action, std::function<void()> onCancel = {});
-// Prefab mode (docs/prefab_mode.md): open a prefab on its own, the bar above the Scene view, Save / Revert / Back.
+// Prefab mode (docs/engine/prefabs.md): open a prefab on its own, the bar above the Scene view, Save / Revert / Back.
 static void OpenPrefabMode(EditorState& ed, const std::string& path);
 static void OpenPrefabModeOf(EditorState& ed, GameObject* go);
 static void RequestLeavePrefab(EditorState& ed, int depth);
@@ -4293,7 +4407,7 @@ std::string FindPlayer() {
 }
 
 // Ensure the player runtime is available, downloading it next to the editor
-// from GitHub if it isn't found locally. Returns its path, or "" on failure.
+// from the releases bucket if it isn't found locally. Returns its path, or "" on failure.
 // This is what lets a freshly-downloaded editor build a runnable game with no
 // manual setup ("when building, generate everything it needs").
 std::string EnsurePlayer(std::string* note) {
@@ -4434,7 +4548,7 @@ inline std::string HumanBytes(std::uintmax_t b) {
     std::snprintf(s, sizeof(s), "%.1f %s", v, u); return std::string(s);
 }
 
-// Build the game into outDir (docs/build_pipeline.md). Returns a human-readable status string; if `report`
+// Build the game into outDir (docs/release/build_pipeline.md). Returns a human-readable status string; if `report`
 // is non-null it is filled with the full build report (files by size and type, what was left out and why,
 // warnings, time). With opt.dryRun nothing is written to outDir: the build runs in a scratch folder that is
 // deleted again, so the report is exact without leaving files behind.
@@ -4747,7 +4861,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
     }
 
     // 3) Copy the player runtime, renamed to <Game>.exe. If it isn't beside the
-    // editor, fetch it from GitHub so the build is self-contained.
+    // editor, fetch it from the releases bucket so the build is self-contained.
     std::string fetchNote;
     std::string player = EnsurePlayer(&fetchNote);
     const std::string exeName = plan.exeName;
@@ -4938,7 +5052,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         msg += ".  [" + human(rp.total) + " total";
         if (!plan.dataDir.empty() && !(plan.makeZip && !plan.keepFolder)) msg += ", game data in " + plan.dataDir + "/";
         msg += "]";
-        if (!fetchNote.empty() && fetchNote.rfind("Downloaded", 0) == 0) msg += "  (runtime fetched from GitHub)";
+        if (!fetchNote.empty() && fetchNote.rfind("Downloaded", 0) == 0) msg += "  (runtime fetched from the download server)";
         if (sceneCount > 1) msg += "  (" + std::to_string(sceneCount) + " scenes)";
         if (copied) msg += "  (" + std::to_string(copied) + " asset(s), " + human(assetBytes) + ")";
         if (streaming) msg += "  (" + std::to_string(streaming) + " StreamingAssets file(s))";
@@ -5171,7 +5285,8 @@ std::string BuildServer(EditorState& ed, const std::string& outDir, const std::s
         for (const char* lib : {"SDL2.dll", "libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libSDL2-2.0.so.0"})
             fs::remove(dir / lib, ec);
         auto fetch = [&](const char* asset, const fs::path& dest, std::size_t minBytes) {
-            if (!updater::Download(updater::RawUrl("latest", asset), dest.string())) return false;
+            const std::string url = updater::RawUrl("latest", asset);   // the newest release in the releases bucket (never GitHub)
+            if (url.empty() || !updater::Download(url, dest.string())) return false;
             std::error_code fe;
             if (!fs::exists(dest, fe) || fs::file_size(dest, fe) < minBytes) { fs::remove(dest, fe); return false; }
             return true;
@@ -5358,7 +5473,6 @@ std::string BuildServer(EditorState& ed, const std::string& outDir, const std::s
         r += "     \"Find a server\" window within a minute.\n\n";
         r += "PLAYERS CAN ALSO JOIN BY ADDRESS\n";
         r += "  Connect to server... (launcher) or Address (in game):  your-server:" + portS + "\n\n";
-        r += "More: https://github.com/kingimann/OkaySpaceGameEngine/blob/main/docs/dedicated-server.md\n";
         WriteFileExact(dir / "README.txt", r);
     }
 
@@ -6571,7 +6685,7 @@ void UIStyleBar(EditorState& ed, Component* c) {
     ImGui::Spacing();
 }
 
-// GameObject > UI (and the UI view's "+ Add" button). The menu itself is DATA: editor/UIMenuModel.hpp lists the eight groups, every item with
+// GameObject > UI (and the UI view's "+ Add" button). The menu itself is DATA: editor/UIMenuModel.hpp lists nine essentials and the folders Game HUD, Menus & Screens and More, every item with
 // a one-sentence tip, and a last entry "Browse All UI..." that opens the UI Gallery. The ready-made screens come from the screen registry
 // (okay/Scene/UIScreens.hpp), one submenu per section. This function draws that list and RunUIMenuItem runs the ids.
 // A widget goes inside the selected panel, else under the scene's Canvas, which is made (with an Event System) the first time it is needed,
@@ -7037,7 +7151,7 @@ static void DrawPlaybackSpeedControls(EditorState& ed, float tb) {
 
 // ============================================================================================================================
 // The main menu bar. Its structure (which menus, in what order, with which shortcuts, when an item is greyed out and why) is data in
-// MenuBarModel.hpp, tested by tests/test_menu_bar_model.cpp and mapped item by item in docs/editor_menus.md. The code below draws the parts
+// MenuBarModel.hpp, tested by tests/test_menu_bar_model.cpp and mapped item by item in docs/editor/editor_menus.md. The code below draws the parts
 // the model leaves to the editor (lists that depend on live data, and the object creators) and runs the item ids.
 // ============================================================================================================================
 static void HierSelectMany(EditorState& ed, const std::vector<GameObject*>& objs);   // (the Hierarchy section, below)
@@ -7370,7 +7484,7 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     // Multi-window panels are always on now (drag a tab to a second monitor) — no toggle.
     if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
-    // Editor frame rate: see the numbers, then pick what helps (docs/editor_performance.md; okay::editor::perf).
+    // Editor frame rate: see the numbers, then pick what helps (docs/editor/editor_performance.md; okay::editor::perf).
     ImGui::Separator();
     if (ImGui::MenuItem("Frame-time overlay", nullptr, &g_showPerfOverlay)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small window with FPS, frame time, a graph of the last frames and where the frame goes\n(3D view, panels, ImGui, present). Its Copy report button puts the numbers on the clipboard.");
@@ -7497,7 +7611,7 @@ static GameObject* AddTilemapObject(EditorState& ed) {
     ConsoleLog("Created Tilemap");
     return go;
 }
-// Camera Rig (docs/camera_upgrade.md): one shot with a ready-made style (0 Follow, 1 Orbit, 2 Look At) and the brain on the
+// Camera Rig (docs/gameplay/cameras.md): one shot with a ready-made style (0 Follow, 1 Orbit, 2 Look At) and the brain on the
 // main camera so the shot shows. The selected object (if it is not a camera) becomes what the rig follows or looks at.
 static GameObject* AddCameraRigObject(EditorState& ed, int style) {
     static const char* kNames[3] = {"Camera Rig (Follow)", "Camera Rig (Orbit)", "Camera Rig (Look At)"};
@@ -7689,6 +7803,12 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A camera that circles its target. Hold the right mouse button and drag to turn it.");
         if (ImGui::MenuItem("Camera Rig: Look At")) { AddCameraRigObject(ed, 2); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A camera that stands still and turns to watch its target (a security camera, a boss arena).");
+        if (ImGui::MenuItem("Camera Zone")) {
+            GameObject* g = ed.CreateEmpty("Camera Zone");
+            g->AddComponent<CameraZone>();
+            ed.Select(g); ConsoleLog("Created Camera Zone: set the field of view or offset it should give inside"); created = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A box that changes the camera's field of view, distance or snappiness while the player is inside, easing across the edge.");
         if (ImGui::MenuItem("Camera Room (2D)")) {
             GameObject* g = ed.CreateEmpty("Camera Room");
             g->AddComponent<CameraRoom>();
@@ -7858,7 +7978,6 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
     // Help
     else if (id == "help.scripting") g_showScriptDocs = true;
     else if (id == "help.shortcuts") g_showShortcuts = true;
-    else if (id == "help.docs") extide::RevealInFiles("https://github.com/kingimann/OkaySpaceGameEngine/tree/main/docs");
     else if (id == "help.updates") {
         g_update = updater::CheckLatest();
         g_openUpdatePopup = true;
@@ -7869,8 +7988,8 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
     }
     else if (id == "help.bug") {
         ImGui::SetClipboardText((std::string("OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION)).c_str());   // so the report can say which version (and that it is a test build)
-        extide::RevealInFiles("https://github.com/kingimann/OkaySpaceGameEngine/issues/new");
-        ConsoleLog(std::string("Opened the bug report page in your browser. The version line (OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION) + ") is on the clipboard: paste it into the report.");
+        g_showCrashLog = true;   // the in-app crash path (no web page: the editor never opens GitHub, owner decision 2026-11-20)
+        ConsoleLog(std::string("Opened the Crash Log. The version line (OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION) + ") is on the clipboard: paste it into the report.");
     }
     else if (id == "help.about") g_openAbout = true;
 }
@@ -8402,7 +8521,7 @@ void DrawCrashLog() {
     static bool loaded = false;
     static std::uint64_t revision = 0;   // raised whenever `text` changes (the OkayUI port re-reads it then)
     fs::path dir      = OkayExeDir();
-    if (const char* dev = std::getenv("OKAY_CRASH_DIR"); dev && *dev) { std::error_code de; if (fs::is_directory(dev, de)) dir = dev; }   // (dev/test: where the handler writes, see docs/crash_reports.md)
+    if (const char* dev = std::getenv("OKAY_CRASH_DIR"); dev && *dev) { std::error_code de; if (fs::is_directory(dev, de)) dir = dev; }   // (dev/test: where the handler writes, see docs/online/crash_reports.md)
     fs::path histPath = dir / "okay_crashlog.txt";   // rolling history (all reports)
     fs::path lastPath = dir / "okay_crash.txt";       // most recent report
     auto readAll = [](const fs::path& p, std::string& out) -> bool {
@@ -8765,7 +8884,7 @@ static EditorState* g_projEd = nullptr;
 static std::vector<std::string> g_dragMulti;   // all dragged items when a multi-selection is dragged (the payload carries one)
 static void ProjectApplyMoves(const okaypb::Result& r);
 // ---- Project panel right-click menus. The item lists come from editor/ProjectContextModel.hpp (pure, tested in
-// project_context_model); DrawProject draws them (oked::projectpanel::DrawContextMenu) and runs the chosen id (docs/project_panel.md).
+// project_context_model); DrawProject draws them (oked::projectpanel::DrawContextMenu) and runs the chosen id (docs/editor/project_panel.md).
 static std::vector<std::string> g_projClip;   // the copy / cut clipboard (paths); DrawProject's s_assetClip is this
 static bool g_projClipCut = false;
 // A menu drawn before DrawProject's own state exists (a folder in the tree, a starred item) asks for its action here;
@@ -10424,7 +10543,7 @@ static void DrawPluginManager(EditorState& ed) {
     }
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("Plugins are OkayScript files in EditorPlugins/ (this project) or the editor's plugins/ folder "
-                       "(all projects). Saving a plugin reloads it. See docs/editor-plugins.md.");
+                       "(all projects). Saving a plugin reloads it. See docs/editor/editor-plugins.md.");
     ImGui::PopStyleColor();
     ImGui::Separator();
     if (g_plugins.empty()) ImGui::TextDisabled("No plugins found. Click + New Plugin to start one.");
@@ -13834,7 +13953,7 @@ void DrawScriptDocs() {
             "kind, and function parameter and return types convert too. const and readonly can't "
             "change; static is shared by every object running the script; public fields show in "
             "the Inspector. Pasted C# with `using`, a class wrapper or a base type still runs; the "
-            "editor marks those lines because they do nothing. See docs/scripting.md.");
+            "editor marks those lines because they do nothing. See docs/scripting/scripting.md.");
     }
 
     if (sec("Movement & Transform (2D)")) {
@@ -14048,7 +14167,7 @@ void DrawScriptDocs() {
         fapi("seq_interval(s, t) / seq_callback(s, \"fn\") / seq_insert(s, t, id)", "pauses, calls, timing");
         fapi("seq_prepend(s, id) / seq_join_callback(s, \"fn\")", "play before everything / call when the last tween starts");
         fapi("save_game([slot], [label]) / load_game([slot])", "save / load the whole game");
-        fapi("game_save(slot[, label]) / game_load(slot) / game_continue()", "save slots for Saveable objects (docs/save_framework.md); load happens next frame");
+        fapi("game_save(slot[, label]) / game_load(slot) / game_continue()", "save slots for Saveable objects (docs/engine/save_games.md); load happens next frame");
         fapi("game_delete_slot(slot) / game_slot_exists(slot) / game_can_continue()", "manage and ask about save slots");
         fapi("game_slot_text(slot) / game_slot_age(slot) / game_slot_label(slot) / game_autosave()", "when a slot was saved (UTC text, seconds ago), its label, autosave ring");
         fapi("save_exists([slot]) / delete_save([slot])", "manage save slots");
@@ -14295,7 +14414,7 @@ void DrawScriptDocs() {
     }
 
     ImGui::Spacing();
-    ImGui::TextDisabled("Complete reference — mirrors docs/scripting_reference.md. Hover a name in the Script Editor for its doc.");
+    ImGui::TextDisabled("Complete reference — mirrors docs/scripting/scripting.md. Hover a name in the Script Editor for its doc.");
     if (ImGui::Button("Close")) g_showScriptDocs = false;
     ImGui::End();
 }
@@ -14324,7 +14443,7 @@ static bool g_acDismiss = false;
 
 
 // Words the editor offers for autocomplete: keywords, types, and common builtins
-// (a curated subset of the OkayScript API — see docs/scripting.md).
+// (a curated subset of the OkayScript API — see docs/scripting/scripting.md).
 static const std::vector<std::string>& ScriptCompletions() {
     static const std::vector<std::string> w = {
         // keywords
@@ -20416,8 +20535,8 @@ void DrawAboutPopup() {
         ImGui::TextDisabled("SDL %d.%d.%d  ·  Dear ImGui %s  ·  Assimp %s",
                             SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL, IMGUI_VERSION,
                             okay::AssimpAvailable() ? "on" : "off");
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f); ImGui::TextDisabled("%s", okay::ownstack::Describe(okayuibackend::Name(g_uiBackend)).c_str()); ImGui::PopTextWrapPos();   // which parts are ours (docs/own_stack_rollout.md)
-        {   // the update signature check: ON, or OFF with the reason (docs/security.md "Updater signing")
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f); ImGui::TextDisabled("%s", okay::ownstack::Describe(okayuibackend::Name(g_uiBackend)).c_str()); ImGui::PopTextWrapPos();   // which parts are ours (docs/status/own_stack_rollout.md)
+        {   // the update signature check: ON, or OFF with the reason (docs/online/security.md "Updater signing")
             static const okayupdate::SigStatus sigStatus = okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys());
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
             ImGui::TextColored(sigStatus.state == okayupdate::SigState::On ? ImVec4(0.45f, 0.80f, 0.55f, 1.0f) : ImVec4(0.93f, 0.74f, 0.35f, 1.0f), "%s", sigStatus.line.c_str());
@@ -20425,9 +20544,6 @@ void DrawAboutPopup() {
         }
         ImGui::Spacing();
         if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
-        ImGui::SameLine();
-        if (ImGui::Button("GitHub", ImVec2(110, 0)))
-            extide::RevealInFiles("https://github.com/kingimann/OkaySpaceGameEngine");
         ImGui::SameLine();
         if (ImGui::Button("Copy version info", ImVec2(150, 0))) {
             char vb[128];
@@ -21024,7 +21140,7 @@ static std::string EllipsizeToWidth(const std::string& text, float maxW) {
 
 // ---- The Hierarchy menus. The lists (what is in them, in what order, when an item is greyed out and why) are data in
 // HierarchyContextModel.hpp, tested by tests/test_hierarchy_context_model.cpp; this runs the ids. Creators are shared with
-// GameObject > <category> (DrawCreateSlot). docs/editor_menus.md has the map. ----
+// GameObject > <category> (DrawCreateSlot). docs/editor/editor_menus.md has the map. ----
 
 // A short name for what kind of object a row is, in the order the row icon decides (HierKindIcon): what "Select Same Type" compares.
 static const char* HierKindName(GameObject* go) {
@@ -28242,7 +28358,7 @@ static bool PlayerPartHeader(GameObject* go, const char* label, okay::Component*
 }
 
 // The hint under Walk Speed (shown when the walk is really a jog) and the "Use natural walk and run speeds" button
-// (docs/walk_vs_run.md). Older projects keep the speeds they saved; this is how a person opts in, with Ctrl+Z to undo.
+// (docs/gameplay/walk_vs_run.md). Older projects keep the speeds they saved; this is how a person opts in, with Ctrl+Z to undo.
 static void WalkSpeedHintLine(float walkSpeed) {
     const std::string hint = okay::NaturalGait::WalkSpeedHint(walkSpeed);
     if (hint.empty()) return;
@@ -28953,9 +29069,9 @@ void DrawModeling(EditorState& ed) {
     const auto sbToggle = [&] { oked::modeltools::SidebarToggle(s_sb); g_view.modelingSidebar = oked::modeltools::SidebarToPref(s_sb); SaveSettings(); };
     // Ctrl+\ folds / opens the page list while this window is focused (Ctrl+B is taken: Build Game, and Bevel in edit mode).
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Backslash, false)) sbToggle();
-    oked::modeltools::SidebarAuto(s_sb, ImGui::GetWindowSize().x);
-    ImGui::BeginChild("##mdlnav", ImVec2(oked::modeltools::SidebarWidth(s_sb, ImGui::GetWindowSize().x), 0), ImGuiChildFlags_Borders);
-    if (ImGui::Button(s_sb.folded ? ">##mdlfold" : "<##mdlfold", ImVec2(32, 32))) sbToggle();
+    oked::modeltools::SidebarAuto(s_sb, ImGui::GetWindowSize().x, g_uiScale);
+    ImGui::BeginChild("##mdlnav", ImVec2(oked::modeltools::SidebarWidth(s_sb, ImGui::GetWindowSize().x, g_uiScale), 0), ImGuiChildFlags_Borders);
+    if (ImGui::Button(s_sb.folded ? ">##mdlfold" : "<##mdlfold", ImVec2(oked::modeltools::kFoldBtn * g_uiScale, oked::modeltools::kFoldBtn * g_uiScale))) sbToggle();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s  (Ctrl+\\)", s_sb.folded ? "Show the page list" : "Hide the page list");
     const char* lastJob = "";
     for (const oked::modeltools::Page& pi : oked::modeltools::Pages()) {   // pages grouped by job (ModelingToolIndex.hpp)
@@ -28964,9 +29080,9 @@ void DrawModeling(EditorState& ed) {
         const bool usable = !pg.needsMesh || haveMesh;
         if (s_sb.folded) {   // the thin strip: two letters per page, the name in the tooltip
             ImGui::PushID(i); ImGui::BeginDisabled(!usable);
-            if (ImGui::Selectable(pi.abbr, s_mdlPage == i, 0, ImVec2(0, 34))) s_mdlPage = i;
+            if (ImGui::Selectable(pi.abbr, s_mdlPage == i, 0, ImVec2(0, oked::modeltools::StripRowHeight(g_uiScale, ImGui::GetTextLineHeight())))) s_mdlPage = i;
             ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", pi.name, usable ? pi.desc : "Select a mesh object first.");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", pi.name, usable ? pi.desc : oked::modeltools::PageDisabledReason(pg.needsMesh, haveMesh));
             ImGui::PopID();
             continue;
         }
@@ -28974,17 +29090,20 @@ void DrawModeling(EditorState& ed) {
         ImGui::PushID(i);
         ImGui::BeginDisabled(!usable);
         const ImVec2 r0 = ImGui::GetCursorScreenPos();
-        if (ImGui::Selectable("##pg", s_mdlPage == i, 0, ImVec2(0, 44))) s_mdlPage = i;
+        if (ImGui::Selectable("##pg", s_mdlPage == i, 0, ImVec2(0, oked::modeltools::RowHeight(g_uiScale, ImGui::GetTextLineHeight())))) s_mdlPage = i;
         ImGui::EndDisabled();
-        if (!usable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Select a mesh object first.");
+        if (!usable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", oked::modeltools::PageDisabledReason(pg.needsMesh, haveMesh));
         ImDrawList* ndl = ImGui::GetWindowDrawList();
         const ImU32 tc = usable ? ImGui::GetColorU32(ImGuiCol_Text) : ImGui::GetColorU32(ImGuiCol_TextDisabled);
-        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5), tc, pi.name);
-        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5 + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled), pi.desc);
+        const float padX = oked::modeltools::kRowPadX * g_uiScale, maxTextW = ImGui::GetItemRectSize().x - padX * 2;   // cut with "..." instead of running out of the row
+        const auto measure = [](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; };
+        ndl->AddText(ImVec2(r0.x + padX, r0.y + 5 * g_uiScale), tc, oked::modeltools::FitText(pi.name, maxTextW, measure).c_str());
+        ndl->AddText(ImVec2(r0.x + padX, r0.y + 5 * g_uiScale + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled), oked::modeltools::FitText(pi.desc, maxTextW, measure).c_str());
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && usable && maxTextW < ImGui::CalcTextSize(pi.desc).x) ImGui::SetTooltip("%s\n%s", pi.name, pi.desc);   // the full words when the row is narrow
         ImGui::PopID();
     }
     ImGui::EndChild();
-    if (kPages[s_mdlPage].needsMesh && !haveMesh) s_mdlPage = 8;
+    if (kPages[s_mdlPage].needsMesh && !haveMesh) { s_mdlPage = 8; }
     ImGui::SameLine();
     ImGui::BeginChild("##mdlpage", ImVec2(0, 0), ImGuiChildFlags_Borders);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 10));
@@ -28992,7 +29111,7 @@ void DrawModeling(EditorState& ed) {
     g_mdlCurPage = s_mdlPage;
     {   // Find a tool: type "bevel" or "round"; matches are listed with their page and outlined on that page.
         static char s_find[40] = "";
-        ImGui::SetNextItemWidth(-90);
+        ImGui::SetNextItemWidth(-90.0f * g_uiScale);
         if (ImGui::InputTextWithHint("##mdlfind", "Find a tool (try: bevel, round, mirror, uv)...", s_find, sizeof(s_find))) g_mdlFind = s_find;
         ImGui::SameLine();
         if (ImGui::Button("Clear##mdlfind")) { s_find[0] = 0; g_mdlFind.clear(); }
@@ -29009,6 +29128,11 @@ void DrawModeling(EditorState& ed) {
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", h.tool->hint, usable ? "Click to open that page. The button is outlined." : "Select a mesh object first.");
             }
         }
+    }
+    if (!haveMesh) {   // nothing to edit yet: say so in plain words and offer the way to start
+        ImGui::Separator();
+        ImGui::TextWrapped("Select a model to edit it. No model yet? Start with some shapes.");
+        if (s_mdlPage != 0 && ImGui::Button("Add shapes##mdlstart")) s_mdlPage = 0;
     }
     ImGui::Separator();
     ImGui::TextUnformatted(kPages[s_mdlPage].name);
@@ -33203,7 +33327,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("The most round trip a shot is allowed for: lag compensation looks back at most 0.2 s plus this, and the target's slack is its speed x this. A player whose pings are slower still gets this much.");
                 ImGui::TreePop();
             }
-            if (ImGui::TreeNode("Detection engine##acd")) {   // detect.* (docs/anticheat.md "Detection engine"); logic: okay/Net/DetectInspector.hpp
+            if (ImGui::TreeNode("Detection engine##acd")) {   // detect.* (docs/online/anticheat.md "Detection engine"); logic: okay/Net/DetectInspector.hpp
                 using namespace okay::detectui;
                 DetectSettings& d = s.detect;
                 static std::map<const void*, ObserveMemory> observeMem;   // what observe mode replaced, per component
@@ -33238,7 +33362,7 @@ void DrawInspector(EditorState& ed) {
                     std::snprintf(text, sizeof(text), "%s", ToText(d).c_str());
                 }
                 ImGui::InputTextMultiline("##acdtext", text, sizeof(text), ImVec2(-1, 110));
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("One \"detect.<key> <value>\" per line (docs/anticheat.md, Config keys), including detect.weapon, detect.ability, detect.economy and detect.weight.<detector>. Keys left out go back to their defaults.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("One \"detect.<key> <value>\" per line (docs/online/anticheat.md, Config keys), including detect.weapon, detect.ability, detect.economy and detect.weight.<detector>. Keys left out go back to their defaults.");
                 if (ImGui::SmallButton("Apply text##acd")) {
                     std::string err;
                     if (FromText(d, text, &err)) { textErr.clear(); ed.dirty = true; textOwner = nullptr; }
@@ -35393,7 +35517,8 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cap = dynamic_cast<CapsuleCollider3D*>(curComp)) {
-        if (CompHeader("Capsule Collider 3D", cap, &toRemove)) {
+        if (CompHeader(cap->shape() == Collider3D::Shape::Cylinder ? "Cylinder Collider 3D" : "Capsule Collider 3D", cap, &toRemove)) {
+            if (cap->shape() == Collider3D::Shape::Cylinder) ImGui::TextDisabled("Flat ends and sharp rims: it stands on its end and rolls on its side.");
             ImGui::DragFloat("Radius##cap3", &cap->radius, 0.05f, 0.0f, 1000.0f);
             ImGui::DragFloat("Height##cap3", &cap->height, 0.05f, 0.0f, 1000.0f);
             const char* axes[] = {"X", "Y", "Z"};
@@ -35413,6 +35538,110 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Auto Fit##cap3");
             if (cap->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##cap3")) toRemove = cap;
+        }
+    }
+    // Shared fields of the newer 3D colliders: offset, trigger, layer, physics material, trigger filter.
+    auto colliderCommon3D = [&](Collider3D* c, const char* id) {
+        float off[3] = {c->offset.x, c->offset.y, c->offset.z};
+        if (DragVec3Axis((std::string("Offset##") + id).c_str(), off, 0.05f)) { c->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
+        ImGui::Checkbox((std::string("Trigger##") + id).c_str(), &c->isTrigger);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80); ImGui::DragInt((std::string("Layer##") + id).c_str(), &c->layer, 0.1f, 0, 31);
+        if (PhysicsMaterialFields(c, id)) ed.dirty = true;
+        if (TriggerFilterFields(c, id)) ed.dirty = true;
+    };
+    auto colliderEditButton = [&](const char* id, const char* tip) {
+        if (AccentToggleButton((std::string("Edit Collider##") + id).c_str(), g_colliderEdit)) {
+            g_colliderEdit = !g_colliderEdit;
+            if (!g_colliderEdit) g_colliderDragAxis = -1;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+    };
+    if (auto* co = dynamic_cast<ConeCollider3D*>(curComp)) {
+        if (CompHeader("Cone Collider 3D", co, &toRemove)) {
+            ImGui::TextDisabled("A round base and a point: party hats, traffic cones, spikes.");
+            ImGui::DragFloat("Radius##cone3", &co->radius, 0.05f, 0.0f, 1000.0f);
+            ImGui::DragFloat("Height##cone3", &co->height, 0.05f, 0.0f, 1000.0f);
+            const char* axes[] = {"X", "Y", "Z"};
+            ImGui::Combo("Tip points along##cone3", &co->axis, axes, 3);
+            colliderCommon3D(co, "cone3");
+            if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##cone3")) { FitColliders(go); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Auto Fit##cone3", &co->autoFit)) { if (co->autoFit) FitColliders(go); ed.dirty = true; }
+            if (co->autoFit) FitColliders(go, true);
+            colliderEditButton("cone3", "Drag the dots in the Scene view: the tip and base change the height, the rim changes the width.");
+            if (ImGui::SmallButton("Remove##cone3")) toRemove = co;
+        }
+    }
+    if (auto* hc = dynamic_cast<ConvexHullCollider3D*>(curComp)) {
+        if (CompHeader("Convex Hull Collider 3D", hc, &toRemove)) {
+            ImGui::TextDisabled("Shrink-wrap around a cloud of points. Solid inside, so it can move and stack.");
+            ImGui::Text("Points: %d", hc->PointCount());
+            colliderCommon3D(hc, "hull3");
+            if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Wrap around mesh##hull3")) { FitColliders(go); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fill the points from the model, keeping only the outer corners.");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset to a box##hull3")) { hc->points.clear(); ed.dirty = true; }
+            char pb[4096]; std::snprintf(pb, sizeof(pb), "%s", hc->points.c_str());
+            if (ImGui::InputTextMultiline("Points (x y z; x y z; ...)##hull3", pb, sizeof(pb), ImVec2(0, 60))) { hc->points = pb; ed.dirty = true; }
+            if (ImGui::SmallButton("Remove##hull3")) toRemove = hc;
+        }
+    }
+    if (auto* cp = dynamic_cast<CompoundCollider3D*>(curComp)) {
+        if (CompHeader("Compound Collider 3D", cp, &toRemove)) {
+            ImGui::TextDisabled("Several simple shapes glued into one collider. Parts: %d", cp->PartCount());
+            colliderCommon3D(cp, "comp3");
+            if (ImGui::SmallButton("+ Box##comp3")) { cp->AddBox({0, 0, 0}, {1, 1, 1}); ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("+ Ball##comp3")) { cp->AddSphere({0, 0, 0}, 0.5f); ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("+ Capsule##comp3")) { cp->AddCapsule({0, 0, 0}, 0.4f, 1.6f); ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("+ Cylinder##comp3")) { cp->AddCylinder({0, 0, 0}, 0.5f, 1.0f); ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("+ Cone##comp3")) { cp->AddCone({0, 0, 0}, 0.5f, 1.0f); ed.dirty = true; }
+            char pb[4096]; std::snprintf(pb, sizeof(pb), "%s", cp->parts.c_str());
+            if (ImGui::InputTextMultiline("Parts##comp3", pb, sizeof(pb), ImVec2(0, 90))) { cp->parts = pb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One part per ';':  kind px py pz rx ry rz a b c axis\nbox: a b c = size. sphere: a = radius. capsule / cylinder / cone: a = radius, b = height, axis 0 X / 1 Y / 2 Z.\nPosition in local units, rotation in degrees.");
+            if (ImGui::SmallButton("Remove##comp3")) toRemove = cp;
+        }
+    }
+    if (auto* pl = dynamic_cast<PlaneCollider3D*>(curComp)) {
+        if (CompHeader("Plane Collider 3D", pl, &toRemove)) {
+            ImGui::TextDisabled("Endless flat ground. Everything below the plane is solid. Turn the object to tilt it.");
+            colliderCommon3D(pl, "plane3");
+            if (ImGui::SmallButton("Remove##plane3")) toRemove = pl;
+        }
+    }
+    if (auto* hf = dynamic_cast<HeightfieldCollider3D*>(curComp)) {
+        if (CompHeader("Heightfield Collider 3D", hf, &toRemove)) {
+            ImGui::TextDisabled("Hilly ground from a grid of heights. Solid below the surface.");
+            bool gridChanged = false;
+            gridChanged |= ImGui::DragInt("Columns##hf3", &hf->columns, 0.2f, 2, 2048);
+            gridChanged |= ImGui::DragInt("Rows##hf3", &hf->rows, 0.2f, 2, 2048);
+            ImGui::DragFloat("Cell width (X)##hf3", &hf->cellX, 0.05f, 0.01f, 1000.0f);
+            ImGui::DragFloat("Cell depth (Z)##hf3", &hf->cellZ, 0.05f, 0.01f, 1000.0f);
+            ImGui::DragFloat("Height scale##hf3", &hf->heightScale, 0.05f);
+            if (gridChanged) { hf->columns = std::max(hf->columns, 2); hf->rows = std::max(hf->rows, 2); ed.dirty = true; }
+            colliderCommon3D(hf, "hf3");
+            if (go->GetComponent<Terrain>() && ImGui::SmallButton("Copy from Terrain##hf3")) { FitColliders(go); ed.dirty = true; }
+            if (ImGui::SmallButton("Make flat##hf3")) { hf->SetHeights(hf->columns, hf->rows, std::vector<float>((std::size_t)hf->columns * (std::size_t)hf->rows, 0.0f)); ed.dirty = true; }
+            if (ImGui::SmallButton("Remove##hf3")) toRemove = hf;
+        }
+    }
+    if (auto* cmp2 = dynamic_cast<CompositeCollider2D*>(curComp)) {
+        if (CompHeader("Composite Collider 2D", cmp2, &toRemove)) {
+            ImGui::TextDisabled("Several simple shapes glued into one collider.");
+            float off[2] = {cmp2->offset.x, cmp2->offset.y};
+            if (ImGui::DragFloat2("Offset##cmp2", off, 0.05f)) { cmp2->offset = {off[0], off[1]}; ed.dirty = true; }
+            ImGui::Checkbox("Trigger##cmp2", &cmp2->isTrigger);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cmp2", &cmp2->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(cmp2, "cmp2")) ed.dirty = true;
+            if (TriggerFilterFields(cmp2, "cmp2")) ed.dirty = true;
+            if (ImGui::SmallButton("+ Circle##cmp2")) { cmp2->AddCircle({0, 0}, 0.5f); ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("+ Box##cmp2")) { cmp2->AddBox({0, 0}, {1, 1}); ed.dirty = true; }
+            ImGui::SameLine(); if (ImGui::SmallButton("+ Capsule##cmp2")) { cmp2->AddCapsule({0, 0}, 0.3f, 1.0f); ed.dirty = true; }
+            char pb[4096]; std::snprintf(pb, sizeof(pb), "%s", cmp2->parts.c_str());
+            if (ImGui::InputTextMultiline("Parts##cmp2", pb, sizeof(pb), ImVec2(0, 90))) { cmp2->parts = pb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One part per ';':\ncircle x y radius\nbox x y width height angle\ncapsule x y radius length angle\npolygon x y x y x y ...");
+            if (ImGui::SmallButton("Remove##cmp2")) toRemove = cmp2;
         }
     }
     // A GameObject may carry several scripts.
@@ -39914,6 +40143,14 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Look At##vcrig")) { vc->ApplyStyle(2); ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stands still and turns to watch the target.");
+                {
+                    ImGui::TextDisabled("Or a preset for a kind of game:");
+                    for (int pi = 0; pi < VirtualCamera::kPresetCount; ++pi) {
+                        if (pi % 3) ImGui::SameLine();
+                        if (ImGui::SmallButton((std::string(VirtualCamera::PresetName(pi)) + "##vcpre").c_str())) { vc->ApplyPreset(pi); ed.dirty = true; }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets the framing, smoothing and field of view for a %s camera. Your Follow and Look At names stay.", VirtualCamera::PresetName(pi));
+                    }
+                }
                 if (ImGui::Checkbox("Aim at what it follows##vcrig", &vc->aimAtFollow)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("With no Look At object, point the camera at the Follow object.\nTurn this off to copy the Follow object's own facing instead.");
                 int dm = (int)vc->dampingMode;
@@ -40055,6 +40292,31 @@ void DrawInspector(EditorState& ed) {
             else
                 ImGui::TextDisabled("Drives this Camera from virtual cameras.");
             if (ImGui::SmallButton("Remove##cb")) toRemove = cb;
+        }
+    }
+    if (auto* cz = dynamic_cast<CameraZone*>(curComp)) {
+        if (CompHeader("Camera Zone", cz, &toRemove)) {
+            float sz[3] = {cz->size.x, cz->size.y, cz->size.z};
+            if (DragVec3Axis("Size##cz", sz, 0.1f)) { cz->size = {sz[0], sz[1], sz[2]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How big the zone is. A camera rig following something inside it changes how it frames.");
+            float of[3] = {cz->offset.x, cz->offset.y, cz->offset.z};
+            if (DragVec3Axis("Centre offset##cz", of, 0.1f)) { cz->offset = {of[0], of[1], of[2]}; ed.dirty = true; }
+            if (ImGui::SliderFloat("Edge blend##cz", &cz->blend, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far in from the edge the effect takes to reach full strength. 0 = at once.");
+            if (ImGui::DragFloat("Field of view##cz", &cz->fieldOfView, 0.5f, 0.0f, 170.0f, cz->fieldOfView <= 0.0f ? "leave alone" : "%.0f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The view's width inside the zone. 0 = leave it alone.");
+            float fo[3] = {cz->followOffset.x, cz->followOffset.y, cz->followOffset.z};
+            if (DragVec3Axis("Move camera by##cz", fo, 0.05f)) { cz->followOffset = {fo[0], fo[1], fo[2]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Added to where the camera stands, while inside (pull in or back, up or down).");
+            if (ImGui::DragFloat("Snappiness##cz", &cz->positionDamping, 0.1f, -1.0f, 100.0f, cz->positionDamping < 0.0f ? "leave alone" : "%.1f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly the camera follows inside. Higher is snappier. -1 = leave it alone.");
+            if (ImGui::DragInt("Priority##cz", &cz->priority, 0.2f, -100, 100)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Where two zones overlap, the higher number is applied over the lower.");
+            char zb[96]; std::snprintf(zb, sizeof(zb), "%s", cz->shot.c_str());
+            if (ImGui::InputText("Only this shot##cz", zb, sizeof(zb))) { cz->shot = zb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Type a camera rig's object name to affect only that shot. Blank = every shot.");
+            ImGui::TextDisabled("Shown as a cyan box in the Scene view.");
+            if (ImGui::SmallButton("Remove##cz")) toRemove = cz;
         }
     }
     if (auto* rm = dynamic_cast<CameraRoom*>(curComp)) {
@@ -42900,7 +43162,10 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<CircleCollider2D>(), "Circle Collider 2D")) { go->AddComponent<CircleCollider2D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider2D>(), "Capsule Collider 2D")) { go->AddComponent<CapsuleCollider2D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<EdgeCollider2D>(), "Edge Collider 2D (polyline/one-way)")) { go->AddComponent<EdgeCollider2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<PolygonCollider2D>(), "Polygon Collider 2D")) { go->AddComponent<PolygonCollider2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<PolygonCollider2D>(), "Polygon Collider 2D (any solid outline: ramps, hills, odd shapes)")) { go->AddComponent<PolygonCollider2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CompositeCollider2D>(), "Composite Collider 2D (several shapes in one: a plus sign, a dumbbell)")) {
+                auto* cc = go->AddComponent<CompositeCollider2D>(); cc->AddBox({0, 0}, {2, 0.5f}); cc->AddBox({0, 0}, {0.5f, 2}); ed.dirty = true;
+            }
             if (item(go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>(), "Tilemap Collider 2D")) { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
           } EndCat(o); }
 
@@ -42912,7 +43177,16 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }
-            if (item(!go->GetComponent<CylinderCollider3D>(), "Cylinder Collider 3D")) { go->AddComponent<CylinderCollider3D>(); FitColliders(go); ed.dirty = true; }
+            if (item(!go->GetComponent<CylinderCollider3D>(), "Cylinder Collider 3D (flat ends: barrels, pillars, coins)")) { go->AddComponent<CylinderCollider3D>(); FitColliders(go); ed.dirty = true; }
+            if (item(!go->GetComponent<ConeCollider3D>(), "Cone Collider 3D (a point on top: party hats, traffic cones)")) { go->AddComponent<ConeCollider3D>(); FitColliders(go); ed.dirty = true; }
+            if (item(!go->GetComponent<ConvexHullCollider3D>(), "Convex Hull Collider 3D (shrink-wrap around a model, filled in)")) { auto* h = go->AddComponent<ConvexHullCollider3D>(); if (go->GetComponent<MeshRenderer>()) FitColliders(go); (void)h; ed.dirty = true; }
+            if (item(!go->GetComponent<CompoundCollider3D>(), "Compound Collider 3D (several shapes in one: a table, a dumbbell)")) {
+                auto* cc = go->AddComponent<CompoundCollider3D>(); cc->AddBox({0, 0.5f, 0}, {2, 0.2f, 2}); cc->AddBox({0, -0.1f, 0}, {0.3f, 1.2f, 0.3f}); ed.dirty = true;
+            }
+            if (item(!go->GetComponent<PlaneCollider3D>(), "Plane Collider 3D (endless flat ground, solid below)")) { go->AddComponent<PlaneCollider3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<HeightfieldCollider3D>(), "Heightfield Collider 3D (hilly ground from a grid of heights)")) {
+                auto* hf = go->AddComponent<HeightfieldCollider3D>(); if (go->GetComponent<Terrain>()) FitColliders(go); ed.dirty = true; (void)hf;
+            }
             if (item(!go->GetComponent<MeshCollider3D>(), "Mesh Collider 3D")) { auto* m = go->AddComponent<MeshCollider3D>(); m->autoFit = true; FitColliders(go); ed.dirty = true; }
           } EndCat(o); }
 
@@ -42944,6 +43218,7 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             if (item(!go->GetComponent<CameraRoom>(), "Camera Room")) { go->AddComponent<CameraRoom>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CameraZone>(), "Camera Zone")) { go->AddComponent<CameraZone>(); ed.dirty = true; }
             if (item(!go->GetComponent<CinemachineBrain>(), "Cinemachine Brain")) { go->AddComponent<CinemachineBrain>(); ed.dirty = true; }
             if (item(!go->GetComponent<DollyPath>(), "Dolly Path")) { go->AddComponent<DollyPath>(); ed.dirty = true; }
             if (item(!go->GetComponent<DollyCart>(), "Dolly Cart")) { go->AddComponent<DollyCart>(); ed.dirty = true; }
@@ -43527,10 +43802,12 @@ static void DrawLoadingScreenCmds(ImDrawList* dl, const okay::LoadingScreen& ls,
 // `canvas` (its position before the authoring zoom) on frame `frame`.
 struct SceneUIRects { ImVec2 canvas{-1e9f, -1e9f}; int frame = -10; std::vector<okay::edlayout::Rc> rects; };
 SceneUIRects g_sceneUIRects;
+SceneUIRects g_gameUIRects;   // the same for the Game view, so its top-left labels keep off the game's own UI text too
 void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                    ImVec2 canvasSize, bool gameView) {
     const auto& objs = ed.scene().Objects();
-    if (!gameView) { g_sceneUIRects.canvas = canvasPos; g_sceneUIRects.frame = ImGui::GetFrameCount(); g_sceneUIRects.rects.clear(); }
+    SceneUIRects& uiRects = gameView ? g_gameUIRects : g_sceneUIRects;
+    uiRects.canvas = canvasPos; uiRects.frame = ImGui::GetFrameCount(); uiRects.rects.clear();
     // Clip ALL UI geometry to the visible panel rect (captured before the authoring
     // zoom rescales the working copies below). A widget with a bad anchor / stretch /
     // scale can resolve to an enormous off-screen rect; feeding those extreme vertex
@@ -43569,13 +43846,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         opt.worldLabelsViaUIWorld = true;
         okay::ui2d::RenderSceneUI(ed.scene(), painter, (int)canvasSize.x, (int)canvasSize.y, opt);
     }
-    if (!gameView) {
-        for (const auto& up : objs) {
-            if (!up || !up->ActiveInHierarchy()) continue;
-            Vec2 o, sz;
-            if (!GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz) || sz.x <= 0.0f || sz.y <= 0.0f) continue;
-            g_sceneUIRects.rects.push_back(okay::edlayout::MakeRc(canvasPos.x + o.x, canvasPos.y + o.y, sz.x, sz.y));
-        }
+    for (const auto& up : objs) {
+        if (!up || !up->ActiveInHierarchy()) continue;
+        Vec2 o, sz;
+        if (!GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz) || sz.x <= 0.0f || sz.y <= 0.0f) continue;
+        uiRects.rects.push_back(okay::edlayout::MakeRc(canvasPos.x + o.x, canvasPos.y + o.y, sz.x, sz.y));
     }
 
     // Multi-selection: outline every selected widget (the primary gets the full
@@ -43685,6 +43960,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
                 const auto& it = inv->slots[idx];
                 DrawItemIconIm(dl, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2), ui->iconFolder, it.item);
+                if (ItemThumb(okay::ItemIconPath(ui->iconFolder, it.item)) == nullptr) {   // no picture: name along the bottom, cut to the slot width
+                    const okay::ItemDefinition* nd = okay::ItemDatabase::Get().Find(it.item);
+                    const std::string full = nd ? nd->DisplayName() : it.item;
+                    const std::string fit = okay::InventoryText::FitWidth(full, (p1.x - p0.x) - 2 * b - 4.0f,
+                        [](const std::string& s) { return ImGui::CalcTextSize(s.c_str()).x; });
+                    if (!fit.empty())
+                        dl->AddText(ImVec2(p0.x + b + 2, p1.y - b - ImGui::GetTextLineHeight() - 1), col(ui->countColor), fit.c_str());
+                }
                 if (ui->showCounts && shown > 1) {
                     std::string cs = std::to_string(shown);
                     ImVec2 ts = ImGui::CalcTextSize(cs.c_str());
@@ -44774,7 +45057,7 @@ static void SceneObjectDragChip(okay::GameObject* go, ImVec2 screen) {
 // A right-click (a click, not a drag: dragging still orbits / looks / pans, and fly mode with the button held is untouched) on the Scene
 // view opens a menu at the cursor. Its create entries are the Hierarchy create slots (DrawCreateSlot) and the shared Add*Object
 // creators above, so there is one copy of the creation code. The clicked spot comes from oked::sceneadd (tested headless in
-// tests/test_scene_add_menu.cpp); this glue only gathers the ray / world position and runs the ids. docs/scene_right_click_add.md.
+// tests/test_scene_add_menu.cpp); this glue only gathers the ray / world position and runs the ids. docs/editor/scene_right_click_add.md.
 struct SceneAddView {
     bool is3D = true;
     ImVec2 canvasPos{0, 0}, canvasSize{0, 0};
@@ -46013,7 +46296,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (project(p, sp)) { cameraIcon(sp, col, up.get() == ed.selected()); if (up.get() != ed.selected()) iconLabel(sp, up->name.c_str(), col); }   // the selected one has its name chip
             }
 
-            // Camera Rig gizmo (docs/camera_upgrade.md): the shot's frustum, and for the selected rig its dead zone (green) and
+            // Camera Rig gizmo (docs/gameplay/cameras.md): the shot's frustum, and for the selected rig its dead zone (green) and
             // soft zone (orange) on the picture, the wall probe from the target to the camera (green line, red where a wall
             // pulls it in), the circle round a group of targets, and the confine box. A Camera Room is a yellow box.
             if (auto* vcg = up->GetComponent<VirtualCamera>()) {
@@ -46076,6 +46359,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 }
                 ImVec2 spv;
                 if (project(ip, spv)) { cameraIcon(spv, col, selv); if (!selv) iconLabel(spv, up->name.c_str(), col); }
+            }
+            if (auto* czg = up->GetComponent<CameraZone>()) {
+                const ImU32 zc = (up.get() == ed.selected()) ? IM_COL32(90, 230, 255, 255) : IM_COL32(70, 170, 200, 150);
+                const Vec3 c0 = czg->Geometry().WorldCenter(*t);
+                const Vec3 hx = t->Right() * (czg->size.x * 0.5f), hy = t->Up() * (czg->size.y * 0.5f), hz = t->Forward() * (czg->size.z * 0.5f);
+                Vec3 cr[8];
+                for (int i = 0; i < 8; ++i) cr[i] = c0 + hx * ((i & 1) ? 1.0f : -1.0f) + hy * ((i & 2) ? 1.0f : -1.0f) + hz * ((i & 4) ? 1.0f : -1.0f);
+                for (int i = 0; i < 8; ++i) for (int b = 1; b < 8; b <<= 1) if (!(i & b)) line(cr[i], cr[i | b], zc, 1.5f);
             }
             if (auto* room = up->GetComponent<CameraRoom>()) {
                 const okay::cam::Box2 b = room->Bounds();
@@ -46142,24 +46433,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             // 3D collider wireframes.
             if (g_showColliders) {
                 const Vec3 X{1, 0, 0}, Y{0, 1, 0}, Z{0, 0, 1};
-                if (auto* bc = up->GetComponent<BoxCollider3D>())
-                    box(bc->WorldCenter(), bc->HalfExtents(), kColliderCol);
-                if (auto* sp = up->GetComponent<SphereCollider3D>()) {
-                    Vec3 c = sp->WorldCenter(); float r = sp->WorldRadius();
-                    ring(c, X, Y, r, kColliderCol);
-                    ring(c, X, Z, r, kColliderCol);
-                    ring(c, Y, Z, r, kColliderCol);
-                }
-                if (auto* cap = up->GetComponent<CapsuleCollider3D>()) {
-                    Vec3 a, b; cap->Segment(a, b); float r = cap->WorldRadius();
-                    Vec3 u = cap->axis == 0 ? Y : X;
-                    Vec3 v = cap->axis == 2 ? Y : Z;
-                    ring(a, u, v, r, kColliderCol);
-                    ring(b, u, v, r, kColliderCol);
-                    line(a + u * r, b + u * r, kColliderCol, 1.0f);
-                    line(a - u * r, b - u * r, kColliderCol, 1.0f);
-                    line(a + v * r, b + v * r, kColliderCol, 1.0f);
-                    line(a - v * r, b - v * r, kColliderCol, 1.0f);
+                (void)X; (void)Y; (void)Z;
+                for (Collider3D* wcol : up->GetComponents<Collider3D>()) {     // every collider, drawn as the shape it really is
+                    if (!wcol->enabled) continue;
+                    DrawShapeWire(wcol, [&](const Vec3& a, const Vec3& b) { line(a, b, kColliderCol, 1.0f); });
                 }
             }
             if (auto* seat = up->GetComponent<Seat>()) {
@@ -46562,7 +46839,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 // The transform gizmo's handles, worked out as the gizmo draws them further down: the name must not
                 // cover an arm (or a ring for Rotate), or a click on the name would land on the handle's grab zone.
                 const bool gizmoDrawn = g_showGizmos && !(g_meshEdit && g_meshEditObj == sel && sel->GetComponent<MeshRenderer>()) &&
-                                        !(g_colliderEdit && sel->GetComponent<BoxCollider3D>()) && !SplinePointPicked(ed);
+                                        !(g_colliderEdit && ColliderHandlesFor(sel)) && !SplinePointPicked(ed);
                 if (gizmoDrawn) {
                     Transform* t = sel->transform;
                     const bool noScale = sel->GetComponent<Camera>() != nullptr;
@@ -46788,25 +47065,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         a = w.MultiplyPoint(a); b = w.MultiplyPoint(b); c = w.MultiplyPoint(c);
                         line(a, b, cc, 1.0f); line(b, c, cc, 1.0f); line(c, a, cc, 1.0f);
                     }
-                } else if (auto* bx = dynamic_cast<BoxCollider3D*>(col)) {   // oriented box (mesh without triangles = its bounds)
-                    Vec3 c = bx->WorldCenter(), h = bx->HalfExtents(), ax, ay, az;
-                    bx->WorldAxes(ax, ay, az);
-                    Vec3 cr[8];
-                    for (int i = 0; i < 8; ++i)
-                        cr[i] = c + ax * ((i & 1) ? h.x : -h.x) + ay * ((i & 2) ? h.y : -h.y) + az * ((i & 4) ? h.z : -h.z);
-                    static const int e[12][2] = {{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};
-                    for (auto& ed2 : e) line(cr[ed2[0]], cr[ed2[1]], cc, 1.25f);
-                } else if (auto* sp = dynamic_cast<SphereCollider3D*>(col)) {
-                    Vec3 c = sp->WorldCenter(); float r = sp->WorldRadius();
-                    ring(c, {1, 0, 0}, {0, 1, 0}, r, cc); ring(c, {1, 0, 0}, {0, 0, 1}, r, cc); ring(c, {0, 1, 0}, {0, 0, 1}, r, cc);
-                } else if (auto* cap = dynamic_cast<CapsuleCollider3D*>(col)) {   // capsule / cylinder
-                    Vec3 a, b; cap->Segment(a, b); float r = cap->WorldRadius();
-                    Vec3 axis = (b - a).SqrMagnitude() > 1e-10f ? (b - a).Normalized() : Vec3{0, 1, 0}, u, v;
-                    basis(axis, u, v);
-                    ring(a, u, v, r, cc); ring(b, u, v, r, cc);
-                    ring(a, u, axis, r, cc); ring(b, u, axis, r, cc);
-                    line(a + u * r, b + u * r, cc); line(a - u * r, b - u * r, cc);
-                    line(a + v * r, b + v * r, cc); line(a - v * r, b - v * r, cc);
+                } else {   // every other shape, drawn as the shape it really is (an oriented box, rings, hull edges, a grid ...)
+                    DrawShapeWire(col, [&](const Vec3& a, const Vec3& b) { line(a, b, cc, 1.25f); });
                 }
             }
         }
@@ -48077,20 +48337,27 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // ---- Collider edit: drag the 6 face handles of the selected Box collider to
     //      hand-fit it to the model ("Edit Collider"). Suppresses the
     //      transform gizmo while active, like mesh-edit mode. ----
-    bool colliderEditActive = !gameView && g_colliderEdit && ed.selected()
-                              && ed.selected()->GetComponent<BoxCollider3D>();
-    if (colliderEditActive) {
+    bool colliderEditActive = !gameView && g_colliderEdit && ColliderHandlesFor(ed.selected());
+    // Moving a collider's centre by a world-space step: Classic keeps the offset in world units, Improved in the object's own.
+    auto shiftColliderOffset = [&](Collider3D* col, const Vec3& worldMove) {
+        Transform* tr = col->transform;
+        if (tr && ed.scene().physics3D().quality == PhysicsQuality::Improved) {
+            Vec3 loc = tr->Rotation().Inverse() * worldMove; Vec3 ls = tr->LossyScale();
+            col->offset = col->offset + Vec3{loc.x / (Mathf::Abs(ls.x) > 1e-4f ? ls.x : 1.0f), loc.y / (Mathf::Abs(ls.y) > 1e-4f ? ls.y : 1.0f), loc.z / (Mathf::Abs(ls.z) > 1e-4f ? ls.z : 1.0f)};
+        } else col->offset = col->offset + worldMove;
+    };
+    if (colliderEditActive && ed.selected()->GetComponent<BoxCollider3D>()) {
         auto* bc = ed.selected()->GetComponent<BoxCollider3D>();
         Vec3 c = bc->WorldCenter();
         Vec3 h = bc->HalfExtents();
         Vec3 lossy = ed.selected()->transform ? ed.selected()->transform->LossyScale() : Vec3::One;
-        const Vec3 ax[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+        Vec3 ax[3]; bc->WorldAxes(ax[0], ax[1], ax[2]);   // the box's own axes: the handles turn with the object
         ImU32 axc[3] = {IM_COL32(230, 90, 90, 255), IM_COL32(100, 220, 110, 255), IM_COL32(100, 160, 240, 255)};
         // Box wireframe (visible even without Show Colliders).
         {
             Vec3 cr[8];
             for (int i = 0; i < 8; ++i)
-                cr[i] = {c.x + ((i & 1) ? h.x : -h.x), c.y + ((i & 2) ? h.y : -h.y), c.z + ((i & 4) ? h.z : -h.z)};
+                cr[i] = c + ax[0] * ((i & 1) ? h.x : -h.x) + ax[1] * ((i & 2) ? h.y : -h.y) + ax[2] * ((i & 4) ? h.z : -h.z);
             static const int e[12][2] = {{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};
             for (auto& ed2 : e) {
                 ImVec2 pa, pb;
@@ -48129,9 +48396,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     if (Mathf::Abs(scv) < 1e-4f) scv = 1.0f;
                     // Move the grabbed face by dw; the opposite face stays put:
                     //   center += dw/2 on the axis;  size += sign*dw/|scale| on the axis.
-                    float* off = (a == 0 ? &bc->offset.x : a == 1 ? &bc->offset.y : &bc->offset.z);
                     float* siz = (a == 0 ? &bc->size.x   : a == 1 ? &bc->size.y   : &bc->size.z);
-                    *off += dw * 0.5f;
+                    shiftColliderOffset(bc, ax[a] * (dw * 0.5f));
                     *siz += s * dw / Mathf::Abs(scv);
                     if (*siz < 0.001f) *siz = 0.001f;
                     ed.dirty = true;
@@ -48145,6 +48411,81 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             bool cur = (g_colliderDragAxis == fh[i].axis && g_colliderDragSign == fh[i].sign);
             dl->AddCircleFilled(fh[i].sp, cur ? 7.0f : 5.0f, axc[fh[i].axis]);
             dl->AddCircle(fh[i].sp, cur ? 7.0f : 5.0f, IM_COL32(255, 255, 255, 210), 12, 1.5f);
+        }
+    } else if (colliderEditActive) {
+        // Sphere, Capsule, Cylinder, Cone: drag a dot to change the radius or pull an end to change the height.
+        Collider3D* rc = RoundShapeFor(ed.selected());
+        struct RH { Vec3 pos, dir; bool isRadius; ImVec2 sp; bool ok; };
+        std::vector<RH> hs;
+        Quat rq = rc && rc->transform ? rc->transform->Rotation() : Quat::Identity;
+        Vec3 lossyR = rc && rc->transform ? rc->transform->LossyScale() : Vec3::One;
+        float* radiusP = nullptr; float* heightP = nullptr; float radiusScale = 1.0f, alongScale = 1.0f; Vec3 axisDir{0, 1, 0};
+        if (auto* sph = dynamic_cast<SphereCollider3D*>(rc)) {
+            radiusP = &sph->radius; radiusScale = sph->radius > 1e-6f ? sph->WorldRadius() / sph->radius : 1.0f;
+            const Vec3 d6[6] = {rq * Vec3{1, 0, 0}, rq * Vec3{-1, 0, 0}, rq * Vec3{0, 1, 0}, rq * Vec3{0, -1, 0}, rq * Vec3{0, 0, 1}, rq * Vec3{0, 0, -1}};
+            for (const Vec3& d : d6) hs.push_back({sph->WorldCenter() + d * sph->WorldRadius(), d, true, {}, false});
+        } else if (auto* cap = dynamic_cast<CapsuleCollider3D*>(rc)) {   // capsule and cylinder
+            radiusP = &cap->radius; heightP = &cap->height; radiusScale = cap->radius > 1e-6f ? cap->WorldRadius() / cap->radius : 1.0f;
+            axisDir = cap->WorldAxisDir();
+            alongScale = cap->axis == 0 ? Mathf::Abs(lossyR.x) : cap->axis == 2 ? Mathf::Abs(lossyR.z) : Mathf::Abs(lossyR.y);
+            Vec3 pu, pv; { Vec3 t = Mathf::Abs(axisDir.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0}; pu = Vec3::Cross(axisDir, t).Normalized(); pv = Vec3::Cross(axisDir, pu); }
+            Vec3 c = cap->WorldCenter(); float halfLen = cap->height * alongScale * 0.5f;
+            hs.push_back({c + axisDir * halfLen, axisDir, false, {}, false});
+            hs.push_back({c - axisDir * halfLen, axisDir * -1.0f, false, {}, false});
+            for (const Vec3& d : {pu, pu * -1.0f, pv, pv * -1.0f}) hs.push_back({c + d * cap->WorldRadius(), d, true, {}, false});
+        } else if (auto* cone = dynamic_cast<ConeCollider3D*>(rc)) {
+            radiusP = &cone->radius; heightP = &cone->height;
+            axisDir = rq * (cone->axis == 0 ? Vec3{1, 0, 0} : cone->axis == 2 ? Vec3{0, 0, 1} : Vec3{0, 1, 0});
+            alongScale = cone->axis == 0 ? Mathf::Abs(lossyR.x) : cone->axis == 2 ? Mathf::Abs(lossyR.z) : Mathf::Abs(lossyR.y);
+            float perpScale = cone->axis == 1 ? Mathf::Max(Mathf::Abs(lossyR.x), Mathf::Abs(lossyR.z)) : cone->axis == 0 ? Mathf::Max(Mathf::Abs(lossyR.y), Mathf::Abs(lossyR.z)) : Mathf::Max(Mathf::Abs(lossyR.x), Mathf::Abs(lossyR.y));
+            radiusScale = perpScale;
+            Vec3 pu, pv; { Vec3 t = Mathf::Abs(axisDir.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0}; pu = Vec3::Cross(axisDir, t).Normalized(); pv = Vec3::Cross(axisDir, pu); }
+            Vec3 c = cone->WorldCenter(); float halfLen = cone->height * alongScale * 0.5f;
+            hs.push_back({c + axisDir * halfLen, axisDir, false, {}, false});            // the tip
+            hs.push_back({c - axisDir * halfLen, axisDir * -1.0f, false, {}, false});    // the base
+            for (const Vec3& d : {pu, pu * -1.0f, pv, pv * -1.0f}) hs.push_back({c - axisDir * halfLen + d * (cone->radius * perpScale), d, true, {}, false});
+        }
+        if (rc && radiusP) {
+            for (RH& h : hs) h.ok = toScreen(vp * Vec4{h.pos, 1}, h.sp);
+            DrawShapeWire(rc, [&](const Vec3& a, const Vec3& b) {
+                ImVec2 pa, pb; if (toScreen(vp * Vec4{a, 1}, pa) && toScreen(vp * Vec4{b, 1}, pb)) dl->AddLine(pa, pb, IM_COL32(90, 230, 120, 220), 1.5f);
+            });
+            if (g_colliderDragAxis < 0) {
+                if (hovered && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    float best = 11.0f * 11.0f; int bi = -1;
+                    for (int i = 0; i < (int)hs.size(); ++i) {
+                        if (!hs[(std::size_t)i].ok) continue;
+                        float dx = io.MousePos.x - hs[(std::size_t)i].sp.x, dy = io.MousePos.y - hs[(std::size_t)i].sp.y;
+                        if (dx * dx + dy * dy < best) { best = dx * dx + dy * dy; bi = i; }
+                    }
+                    if (bi >= 0) { ed.PushUndo(); g_colliderDragAxis = bi; g_uiHandled = true; }
+                }
+            } else if (g_colliderDragAxis < (int)hs.size()) {
+                const RH& h = hs[(std::size_t)g_colliderDragAxis];
+                ImVec2 s2; bool ok2 = toScreen(vp * Vec4{h.pos + h.dir, 1}, s2);
+                if (h.ok && ok2) {
+                    float sdx = s2.x - h.sp.x, sdy = s2.y - h.sp.y, sl = std::sqrt(sdx * sdx + sdy * sdy);
+                    if (sl > 1e-3f) {
+                        float dw = ((io.MouseDelta.x * sdx + io.MouseDelta.y * sdy) / sl) / sl;   // world units outward along the handle
+                        if (h.isRadius) {
+                            *radiusP = Mathf::Max(0.001f, *radiusP + dw / (radiusScale > 1e-4f ? radiusScale : 1.0f));
+                        } else if (heightP) {
+                            *heightP = Mathf::Max(0.001f, *heightP + dw / (alongScale > 1e-4f ? alongScale : 1.0f));
+                            shiftColliderOffset(rc, h.dir * (dw * 0.5f));   // the other end stays where it was
+                        }
+                        ed.dirty = true;
+                    }
+                }
+                g_uiHandled = true;
+                if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) g_colliderDragAxis = -1;
+            } else g_colliderDragAxis = -1;
+            for (int i = 0; i < (int)hs.size(); ++i) {
+                const RH& h = hs[(std::size_t)i];
+                if (!h.ok) continue;
+                bool cur = g_colliderDragAxis == i;
+                dl->AddCircleFilled(h.sp, cur ? 7.0f : 5.0f, h.isRadius ? IM_COL32(100, 160, 240, 255) : IM_COL32(100, 220, 110, 255));
+                dl->AddCircle(h.sp, cur ? 7.0f : 5.0f, IM_COL32(255, 255, 255, 210), 12, 1.5f);
+            }
         }
     } else if (g_colliderDragAxis >= 0) {
         g_colliderDragAxis = -1;   // selection changed mid-drag
@@ -50184,6 +50525,23 @@ void DrawGameView(EditorState& ed) {
     // the idle hint) is remembered here, so the Stats and Timers boxes at the top-right move below it instead of
     // drawing over it when the view is narrow.
     std::vector<std::pair<ImVec2, ImVec2>> topLeftRects;
+    // The resolution readout and the line under it (the idle hint, or the PLAYING pill and the FPS label) move as one
+    // block: at the top left, or at the bottom left when the game's own UI text is drawn at the top left (the
+    // readout used to be drawn straight over an example's instructions). Same rule as the Scene view's stats line
+    // (okay::edlayout::PlaceStatsLine), fed with where this frame's DrawUIOverlay drew the game's UI.
+    float labelShift = 0.0f;
+    {
+        const float lh = ImGui::GetTextLineHeight();
+        float w = ImGui::CalcTextSize("Edit mode - press Play to run").x + 6.0f;
+        w = std::max(w, ImGui::CalcTextSize(kFixedRes ? "0000 x 0000  (100%)" : "0000 x 0000 px").x + 6.0f);
+        if (ed.isPlaying()) w = std::max(w, ImGui::CalcTextSize("PLAYING").x + lh + ImGui::CalcTextSize(ed.FpsLabel().c_str()).x + 30.0f);
+        const float h = ed.isPlaying() ? 2.0f * lh + 15.0f : 2.0f * lh + 8.0f;
+        const okay::edlayout::Rc canvasRc{canvasPos.x, canvasPos.y, canvasEnd.x, canvasEnd.y};
+        const bool fresh = g_gameUIRects.canvas.x == canvasPos.x && g_gameUIRects.canvas.y == canvasPos.y &&
+                           ImGui::GetFrameCount() - g_gameUIRects.frame <= 1;
+        if (fresh) labelShift = okay::edlayout::GameViewLabelShift(canvasRc, okay::edlayout::Pt{w, h}, labelIn, labelDrop, lh,
+                                                                   g_gameUIRects.rects);
+    }
     // Resolution readout (top-left of the canvas, over the scene): the target pixel
     // size for a fixed preset with the on-screen scale, or the live canvas pixels.
     {
@@ -50194,7 +50552,7 @@ void DrawGameView(EditorState& ed) {
         } else {
             std::snprintf(resLbl, sizeof(resLbl), "%d x %d px", (int)canvasSize.x, (int)canvasSize.y);
         }
-        ImVec2 tp(canvasPos.x + 6 + labelIn, canvasPos.y + 4 + labelDrop);
+        ImVec2 tp(canvasPos.x + 6 + labelIn, canvasPos.y + 4 + labelDrop + labelShift);
         dl->AddRectFilled(ImVec2(tp.x - 3, tp.y - 2),
                           ImVec2(tp.x + ImGui::CalcTextSize(resLbl).x + 3, tp.y + ImGui::GetTextLineHeight() + 2),
                           IM_COL32(0, 0, 0, 120), 3.0f);
@@ -50213,7 +50571,7 @@ void DrawGameView(EditorState& ed) {
         float pr = ImGui::GetTextLineHeight() * 0.26f;   // drawn dot (● is tofu here)
         float dotW = pr * 2.0f + 6.0f;
         // Below the resolution readout (it used to be drawn on top of it: the readout's trailing "x" showed through).
-        ImVec2 p0(canvasPos.x + 8 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + 4 + labelDrop);
+        ImVec2 p0(canvasPos.x + 8 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + 4 + labelDrop + labelShift);
         dl->AddRectFilled(ImVec2(p0.x - 4, p0.y - 3), ImVec2(p0.x + dotW + ts.x + 6, p0.y + ts.y + 3),
                           IM_COL32(0, 0, 0, 150), 4.0f);
         dl->AddCircleFilled(ImVec2(p0.x + pr, p0.y + ts.y * 0.55f), pr, pc);
@@ -50250,7 +50608,7 @@ void DrawGameView(EditorState& ed) {
     } else {
         // Below the resolution label (they used to print on top of each other).
         const char* idle = "Edit mode - press Play to run";
-        ImVec2 ip(canvasPos.x + 6 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + labelDrop);
+        ImVec2 ip(canvasPos.x + 6 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + labelDrop + labelShift);
         dl->AddRectFilled(ImVec2(ip.x - 3, ip.y - 2), ImVec2(ip.x + ImGui::CalcTextSize(idle).x + 3, ip.y + ImGui::GetTextLineHeight() + 2),
                           IM_COL32(0, 0, 0, 120), 3.0f);
         dl->AddText(ip, IM_COL32(200, 202, 212, 230), idle);
@@ -51350,8 +51708,8 @@ int main(int argc, char** argv) {
     okay::restart::RememberArguments(argc, argv);
     okay::editor::ExamplesExeDir() = OkayExeDir();   // File > Examples finds the shipped "examples" folder beside the program
     okay::ownswitches::Startup();   // View > Rendering & Performance > Experimental (same file as the launcher's Settings page): set the variables before anything reads them
-    okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
-    std::fprintf(stderr, "[updater] %s\n", okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys()).line.c_str());   // OFF is never silent (docs/security.md "Updater signing")
+    okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
+    std::fprintf(stderr, "[updater] %s\n", okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys()).line.c_str());   // OFF is never silent (docs/online/security.md "Updater signing")
     okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
     {   // the own-code line goes into every crash report (what is ours and what is third party in THIS run), with the OKAY_* switches that are on
         std::string line = okay::ownstack::Describe();
@@ -51366,10 +51724,10 @@ int main(int argc, char** argv) {
     }
 #ifdef OKAY_HAVE_OKAYUI
     // Window mode (dev switch, off by default): OKAY_DEV=1 OKAY_UI_BACKEND=okayui OKAY_UI_HOST=okayui. OkayUI owns the window and the frame and Dear ImGui is never
-    // started; only the Audio Mixer is ported to it so far (docs/own_ui_toolkit.md 6.23). Without all three switches this line does nothing.
+    // started; only the Audio Mixer is ported to it so far (docs/ui/own_ui_toolkit.md 6.23). Without all three switches this line does nothing.
     if (oked::HostModeRequested(std::getenv("OKAY_DEV"), std::getenv("OKAY_UI_BACKEND"), std::getenv("OKAY_UI_HOST"))) return oked::RunOkayUIHostMode(argc, argv);
 #endif
-    // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end (docs/try_it.md, docs/crash_reports.md).
+    // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end (docs/try_it.md, docs/online/crash_reports.md).
     //   OKAY_TEST_CRASH=<step>       crash right now, before the window opens (the report has the OS, CPU and RAM but no scene or GPU yet)
     //   OKAY_TEST_CRASH_LATE=<step>  crash on the 120th frame of the running editor (the report has the GPU, the scene, the Console and the steps)
     if (const char* c = std::getenv("OKAY_TEST_CRASH"); c && *c) {
@@ -51876,6 +52234,43 @@ int main(int argc, char** argv) {
     // never blocks the editor. The result is picked up in the main loop and, if
     // an update is available, the Update window pops up on its own.
     g_updateCheck = std::async(std::launch::async, updater::CheckLatest);
+
+    // The one shut-down of ImGui's two sides, the views' GL window and renderer, controllers, audio, the main window's renderer and
+    // window, and the platform backend, in the safe order. The end of main() runs it, and so does every early exit before std::exit
+    // (the OKAY_UI_QUIT screenshot hook): std::exit skips the end of main() and destroys the globals in reverse order instead, and
+    // okay::platform's backends (function-local statics, made after the globals) go first; a window still owned by a global
+    // (g_glWin) would then call a backend that is gone. Safe to call twice: the second call does nothing.
+    bool shutDownDone = false;
+    auto shutDown = [&]() {
+        if (shutDownDone) return;
+        shutDownDone = true;
+        if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
+        if (g_imguiOwnFeed) g_imguiFeed.Shutdown(ImGui::GetIO()); else ImGui_ImplSDL2_Shutdown();
+        ImGui::DestroyContext();
+        // Tear down the optional GPU renderer: free its GL objects with its own context
+        // current, then drop the context + hidden window.
+        if (g_glRenderer || g_glCtx) {
+            okay::platform::Backend* glb = okay::platform::Default();
+            const okay::platform::GLCurrent prevGL = glb->CurrentGL();
+            if (g_glWin && g_glCtx) g_glWin->MakeCurrent();
+            if (g_glRenderer) { g_glRenderer->Destroy(); delete g_glRenderer; g_glRenderer = nullptr; }
+            glb->RestoreGL(prevGL);
+            if (g_glCtx) { g_glWin->DestroyGLContext(); g_glCtx = false; }
+            g_glWin.reset();   // destroys the hidden window too
+            g_glWindow = nullptr;
+            g_glReady = false;
+        }
+        g_glWin.reset();   // also when its GL context could not be made: the hidden window goes while its backend is alive
+        g_glWindow = nullptr;
+#if defined(_WIN32)
+        if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
+#endif
+        g_pads.CloseAll();
+        audioDev.reset();
+        okay::pb::DestroyRenderer(renderer);   // its painter owns it
+        winSeam.reset();   // destroys the main window (after its renderer)
+        sdlSeam->Shutdown();
+    };
 
     bool running = true;
     std::string lastTitle;
@@ -52501,7 +52896,7 @@ int main(int argc, char** argv) {
                     s_refreshHz = (float)winSeam->RefreshRateHz();   // 0 when unknown
                     s_refreshAge = 120;
                 }
-                // The step itself (Play loop or one editing tick) lives in EditorFrameTick.hpp, shared with window mode (docs/own_ui_toolkit.md 6.24 step 4).
+                // The step itself (Play loop or one editing tick) lives in EditorFrameTick.hpp, shared with window mode (docs/ui/own_ui_toolkit.md 6.24 step 4).
                 // Play: the loop's update is TickGame (debugger fiber aware); "Run N frames" ending sets the Pause button; resume lets a node breakpoint go.
                 // The loop steps Time (DeltaTime, ElapsedTime, time scale, hit stops, Clock channels), then ticks the scene by the scaled delta: 0 while paused.
                 oked::StepSimulation(ed, oked::SimStep{dt, g_paused, g_smoothFrameTime, g_vsync ? s_refreshHz : 0.0f}, EditorSimHooks());
@@ -52689,7 +53084,7 @@ int main(int argc, char** argv) {
             // selected object, after which the Inspector would dereference its freed
             // components (e.g. editing a Text component in Play crashed). Drop it.
             if (ed.selected() && !alive(ed.selected())) ed.Select(nullptr);
-            if (g_colliderEdit && ed.selected() && !ed.selected()->GetComponent<BoxCollider3D>())
+            if (g_colliderEdit && ed.selected() && !ColliderHandlesFor(ed.selected()))
                 g_colliderDragAxis = -1;
         }
 
@@ -53474,7 +53869,11 @@ int main(int argc, char** argv) {
                         std::fflush(stdout);
                     }
                 }
-                if (std::getenv("OKAY_UI_QUIT")) std::exit(0);
+                if (std::getenv("OKAY_UI_QUIT")) {
+                    shutDown();   // std::exit skips the end of main(): close everything while the platform backend is alive
+                    std::fflush(nullptr);
+                    std::exit(0);
+                }
             }
         }
         if (const std::string shot = TakePendingEditorShot(); !shot.empty()) {
@@ -53545,30 +53944,7 @@ int main(int argc, char** argv) {
     SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window
     ProjectUpgradeAtExit();       // the editor of the project's own version ("Keep"), or this one again after a restore, starts once this process is gone
 
-    if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
-    if (g_imguiOwnFeed) g_imguiFeed.Shutdown(ImGui::GetIO()); else ImGui_ImplSDL2_Shutdown();
-    ImGui::DestroyContext();
-    // Tear down the optional GPU renderer: free its GL objects with its own context
-    // current, then drop the context + hidden window.
-    if (g_glRenderer || g_glCtx) {
-        okay::platform::Backend* glb = okay::platform::Default();
-        const okay::platform::GLCurrent prevGL = glb->CurrentGL();
-        if (g_glWin && g_glCtx) g_glWin->MakeCurrent();
-        if (g_glRenderer) { g_glRenderer->Destroy(); delete g_glRenderer; g_glRenderer = nullptr; }
-        glb->RestoreGL(prevGL);
-        if (g_glCtx) { g_glWin->DestroyGLContext(); g_glCtx = false; }
-        g_glWin.reset();   // destroys the hidden window too
-        g_glWindow = nullptr;
-        g_glReady = false;
-    }
-#if defined(_WIN32)
-    if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
-#endif
-    g_pads.CloseAll();
-    audioDev.reset();
-    okay::pb::DestroyRenderer(renderer);   // its painter owns it
-    winSeam.reset();   // destroys the main window (after its renderer)
-    sdlSeam->Shutdown();
+    shutDown();
 #ifdef OKAY_ENABLE_TEST_HOOKS
     return testExitCode;   // 0 unless the test script said `exit N`
 #endif

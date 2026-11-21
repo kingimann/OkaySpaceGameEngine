@@ -4,7 +4,7 @@
 //   Authorization: Bearer <the player's Supabase access token>
 //   body: {"confirm_username": "...", "password": "..."}
 //
-// See delete_account.ts for the contract and docs/account_data.md for what is
+// See delete_account.ts for the contract and docs/online/account_data.md for what is
 // deleted vs anonymised and the owner deploy steps. SUPABASE_URL,
 // SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY come from the Edge runtime;
 // the service key is used only in this file and never leaves the function.

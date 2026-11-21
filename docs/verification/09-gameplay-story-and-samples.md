@@ -12,8 +12,8 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     1. Open **View > Editors & Tools > Dialogue & Quests**.
     2. Make a short dialogue (a line and two choices) and save it.
   - **You should see (expected, not yet seen on Windows):** a graph editor for dialogue and a quest list.
-  - **Known partial:** steps beyond opening the window are unverified; see docs/dialogue_quests.md.
-  - **More:** [dialogue_quests.md](../../dialogue_quests.md)
+  - **Known partial:** steps beyond opening the window are unverified; see docs/gameplay/dialogue_quests.md.
+  - **More:** [dialogue_quests.md](../../gameplay/dialogue_quests.md)
 
 - [ ] **V-GP-002** Cutscene timeline example
   - **Map:** 10. **Where:** editor
@@ -23,7 +23,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     3. Press Play on the scene.
   - **You should see (expected, not yet seen on Windows):** the camera sequence of the intro plays; the Timeline window shows its tracks.
   - **Known partial:** the release may not ship `examples` yet (PR #887).
-  - **More:** [cutscenes.md](../../cutscenes.md)
+  - **More:** [cutscenes.md](../../gameplay/cutscenes.md)
 
 - [ ] **V-GP-003** Behavior tree example
   - **Map:** 9, 11. **Where:** editor
@@ -32,7 +32,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     2. Open **View > Editors & Tools > Behavior Tree** and press Play.
   - **You should see (expected, not yet seen on Windows):** the tree runs and the window shows which node is active.
   - **Known partial:** the release may not ship `examples` yet (PR #887).
-  - **More:** [behavior_trees.md](../../behavior_trees.md)
+  - **More:** [behavior_trees.md](../../gameplay/behavior_trees.md)
 
 - [ ] **V-GP-004** Weapons window and arena
   - **Map:** 11. **Where:** editor
@@ -51,7 +51,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     2. Open **View > Editors & Tools > Items, Loot & Recipes**.
   - **You should see (expected, not yet seen on Windows):** item, loot and recipe files are created and listed in the window.
   - **Known partial:** none known.
-  - **More:** [inventory.md](../../inventory.md)
+  - **More:** [inventory.md](../../gameplay/inventory.md)
 
 - [ ] **V-GP-006** Save Manager (steps unverified)
   - **Map:** 35. **Where:** editor, View menu
@@ -83,8 +83,8 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
   - **Map:** [11](../feature_map/11-gameplay-systems.md), 12 sub-areas, 12 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 11.1 Inventory: bag, grid, chests, equipment [Works]. Where: Add Component > RPG / Turn-Based (Inventory, Equipment, Chest / Container); Inventory UI and Grid Inventory...
-    - 11.2 Items and loot [Works]. Where: Window > Items, Loot & Recipes; View > Editors & Tools > Items, Loot & Recipes; Add Component > RPG /...
-    - 11.3 Crafting and recipes [Works]. Where: Window > Items, Loot & Recipes (Recipes tab) edits '.okayrecipes' (inputs, outputs, crafting time, bench...
+    - 11.2 Items and loot [Works]. Where: View > Editors & Tools > Items, Loot & Recipes; Add Component > RPG / Turn-Based > Item Pickup, Loot Source...
+    - 11.3 Crafting and recipes [Works]. Where: View > Editors & Tools > Items, Loot & Recipes (Recipes tab) edits '.okayrecipes' (inputs, outputs, crafting...
     - 11.4 Survival: stats, afflictions, zones [Works]. Where: Add Component > Gameplay > Survival Stats and Stat rows; UI buttons can call Eat, Drink and Heal through On...
     - 11.5 Building: build mode, structure builder, snapping [Works]. Where: Add Component > Gameplay rows "Build Mode (players build + wire)", "Buildable (players may edit)", Logic...
     - 11.6 Spawners, turn manager, minimap [Works]. Where: Add Component > Gameplay > Spawner; RPG / Turn-Based > Turn Manager; UI > Minimap and Minimap Blip
@@ -93,7 +93,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     - 11.9 RPG stats and XP [Works]. Where: Add Component > RPG / Turn-Based > Stats
     - 11.10 No-code behaviours: move, spin, lifetime [Works]. Where: Add Component > Gameplay > Mover, Spinner, Lifetime
     - 11.11 World drag and drop [Works]. Where: Add Component rows "Draggable (item)" and "Drop Zone (item)"
-    - 11.12 Volumes and zones [Works]. Where: GameObject > Volume; Scene Overlays > Volumes; Add Component > Gameplay > Volume rows; Inspector "Volume...
+    - 11.12 Volumes and zones [Works]. Where: GameObject > Effects > Volume; Scene Overlays > Volumes; Add Component > Gameplay > Volume rows; Inspector...
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
   - **Known gaps:** see [docs/feature_map/11-gameplay-systems.md](../feature_map/11-gameplay-systems.md) (area 11, sections 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8, 11.9, 11.10, 11.11, 11.12): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add a backpack with a grid inventory"; "make a chest the player can loot"
@@ -110,7 +110,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
   - **Ask me like:** "make the Save Slots screen show a screenshot"; "sync saves to Steam Cloud"
 
 - [ ] **V-GP-S42** Area 42: Examples, samples & sandbox (smoke test, steps unverified)
-  - **Map:** [42](../feature_map/42-examples-samples.md), 7 sub-areas, 7 built.
+  - **Map:** [42](../feature_map/42-examples-samples.md), 8 sub-areas, 8 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 42.1 Sandbox demo (solar system) [Works].
     - 42.2 Network demo [Works].
@@ -119,8 +119,9 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     - 42.5 Editor plugin examples [Works]. Where: Plugins menu, Plugins > Plugin Manager...
     - 42.6 Standalone player runtime [Works]. Where: File > Build Settings builds the folder that contains it (18.6); Play in the editor is a different code path
     - 42.7 Starter assets [Basic]. Where: Project panel (Assets/Textures, Assets/Fonts after install)
+    - 42.8 Example scenes and their check [Works]. Where: File > Examples, File > Open
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known gaps:** see [docs/feature_map/42-examples-samples.md](../feature_map/42-examples-samples.md) (area 42, sections 42.1, 42.2, 42.3, 42.4, 42.5, 42.6, 42.7): the Open line of each section. Not copied here so it cannot go stale.
+  - **Known gaps:** see [docs/feature_map/42-examples-samples.md](../feature_map/42-examples-samples.md) (area 42, sections 42.1, 42.2, 42.3, 42.4, 42.5, 42.6, 42.7, 42.8): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "run the sandbox for 300 frames", "make the sandbox ship fire"
 
 - [ ] **V-GP-S46** Area 46: Replay system (smoke test, steps unverified)

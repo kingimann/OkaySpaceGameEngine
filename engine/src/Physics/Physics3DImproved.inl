@@ -1,7 +1,7 @@
 // The Improved 3D step: iterated contacts, box faces with up to four points, real inertia, bodies that sleep and wake as
 // a group, swept fast bodies. Included by Physics3D.cpp (it uses the contact helpers in that file's anonymous namespace).
 // The maths that does not need the scene lives in Physics/ContactSolver.hpp and Physics/BoxManifold.hpp so it can be tested
-// without a scene. See docs/physics_plan.md for what each piece was written from.
+// without a scene. See docs/physics/physics.md for what each piece was written from.
 //
 // How a step runs in Improved quality (the Classic step is untouched):
 //   1. speeds are updated (gravity, forces, drag, spin from torque) but nothing moves yet;
@@ -51,6 +51,11 @@ bool PartOfCollider(Collider3D* c, Part& p) {
     using S = Collider3D::Shape;
     Quat q = c->transform ? c->transform->Rotation() : Quat::Identity;
     p.c = c->WorldCenter();
+    {   // The exact solids (Cylinder, Cone, Convex Hull, Compound) know their own volume, centre of mass and inertia.
+        Vec3 com, in; float vol;
+        if (c->MassShape(com, vol, in)) { p.c = com; p.vol = vol; p.iu = DiagInWorld(in, q); return true; }
+        if (IsGenericShape(c)) return false;                    // Plane / Heightfield: endless or hollow, no mass
+    }
     const float kPi = 3.14159265f;
     switch (c->shape()) {
     case S::Sphere: {
@@ -61,7 +66,7 @@ bool PartOfCollider(Collider3D* c, Part& p) {
         p.iu = DiagInWorld({i, i, i}, q);
         return true;
     }
-    case S::Capsule: case S::Cylinder: {
+    case S::Capsule: {
         auto* cap = static_cast<CapsuleCollider3D*>(c);
         float r = cap->WorldRadius();
         Vec3 a, b; cap->Segment(a, b);
@@ -69,12 +74,7 @@ bool PartOfCollider(Collider3D* c, Part& p) {
         if (!(r > 0.0f)) return false;
         Vec3 d;
         float iAxis, iTrans;
-        if (c->shape() == S::Cylinder) {
-            float H = L + 0.1f * r;                              // a cylinder's flat caps (the segment is a little short)
-            p.vol = kPi * r * r * H;
-            iAxis = 0.5f * r * r;
-            iTrans = (3.0f * r * r + H * H) / 12.0f;
-        } else {
+        {
             float vc = kPi * r * r * L, vh = 4.0f / 3.0f * kPi * r * r * r;   // tube and the two end caps together
             p.vol = vc + vh;
             float fc = vc / p.vol, fh = vh / p.vol;
@@ -246,7 +246,8 @@ Contact ImprovedContact(Collider3D* a, Collider3D* b, float skin, ImpManifold& m
     using S = Collider3D::Shape;
     Contact out;
     const S sa = a->shape(), sb = b->shape();
-    const bool special = ExactMesh(a) || ExactMesh(b) || UsesHull(a) || UsesHull(b) ||
+    const bool special = ExactMesh(a) || ExactMesh(b) || UsesHull(a) || UsesHull(b) || IsGenericShape(a) || IsGenericShape(b) ||
+                         a->contactOffset > 0.0f || b->contactOffset > 0.0f ||
                          (sa == S::Mesh && static_cast<MeshCollider3D*>(a)->IsDynamicConflict()) ||
                          (sb == S::Mesh && static_cast<MeshCollider3D*>(b)->IsDynamicConflict());
     if (special) {

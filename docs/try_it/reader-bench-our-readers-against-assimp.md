@@ -12,4 +12,4 @@ Not in the Windows release: it needs a build with `-DOKAY_USE_ASSIMP=ON` and Ass
 3. `--digest` prints a hash of our output per file (it must not change when only speed work was done); `--compare` lists
    where our reader and Assimp disagree on counts and bounds.
 
-What to expect and the latest numbers: `docs/own_readers_speed.md`.
+What to expect and the latest numbers: `docs/content/own_readers_speed.md`.

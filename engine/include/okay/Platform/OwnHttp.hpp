@@ -9,7 +9,7 @@
 // an abstract `Stream` and an abstract `Connector`, so it is unit tested and
 // fuzzed with in-memory streams (tests/test_own_http.cpp). The real transports
 // (TCP, CONNECT proxy, TLS through the system OpenSSL) are in OwnHttpNet.hpp.
-// See docs/own_http_client.md for the threat model and the list of gaps.
+// See docs/platform/own_http.md for the threat model and the list of gaps.
 //
 // Deliberately strict: bare LF or CR in a head, obsolete line folding, duplicate
 // or conflicting Content-Length, Content-Length together with Transfer-Encoding,

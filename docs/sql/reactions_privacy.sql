@@ -2,7 +2,7 @@
 -- Reactions privacy (SEC1 item 4).  Run in the Supabase dashboard: SQL Editor > New query > paste this
 -- whole file > Run.  Safe to run again (idempotent).  Run it AFTER social.sql, group_chats.sql, admin.sql and
 -- blocks.sql (it uses their tables and the okay_private block helper; parts whose prerequisite is missing are
--- skipped with a NOTICE, run the file again once the prerequisite is in).  Docs: docs/security.md "Reactions privacy".
+-- skipped with a NOTICE, run the file again once the prerequisite is in).  Docs: docs/online/security.md "Reactions privacy".
 --
 -- What it fixes (found by reading social.sql; each has a check in tests/sql/test_reactions_privacy.sql):
 --  1. The visibility check (can_see_reaction_target) could be called by anyone, including signed-out visitors.

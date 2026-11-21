@@ -1,4 +1,4 @@
-// The camera rig layer over simulated frames (docs/camera_upgrade.md): spring follow, dead and soft zones,
+// The camera rig layer over simulated frames (docs/gameplay/cameras.md): spring follow, dead and soft zones,
 // look ahead, target groups, collision, fading blockers, blends and priority, effects, 2D, saving.
 // Every case runs at 30, 60 and 144 frames a second where time matters. No window, no GPU.
 #include "test_framework.hpp"
@@ -770,6 +770,89 @@ int main() {
         w.vc->collision = true; w.vc->fadeOccluders = true; w.vc->followOffset = {0, 3, -9};
         for (int i = 0; i < 60; ++i) { w.Step(1.0f / 60.0f); CHECK(Finite3(w.CamPos())); }
         CHECK((w.CamPos() - Vec3{0, 0, 0}).Magnitude() > 5.0f);
+    }
+
+    // ---- 16. Camera zones: the field of view, offset and damping blend in across the edge, at every frame rate ----
+    {
+        for (int r = 0; r < 3; ++r) {
+            Rig w;
+            w.vc->collision = false; w.vc->positionDamping = 0.0f; w.vc->fieldOfView = 60.0f; w.vc->followOffset = {0, 2, -8};
+            GameObject* zg = w.s.CreateGameObject("Corridor");
+            zg->transform->localPosition = {20, 0, 0};
+            auto* z = zg->AddComponent<CameraZone>();
+            z->size = {10, 10, 10}; z->blend = 0.5f; z->fieldOfView = 90.0f; z->followOffset = {0, 0, 4}; z->positionDamping = 3.0f;
+            const float dt = 1.0f / kRates[r];
+            for (int i = 0; i < 5; ++i) w.Step(dt);
+            CHECK_NEAR(w.vc->SolvedFov(), 60.0f, 1e-3f);               // outside: untouched
+            CHECK_NEAR(w.cam->fieldOfView, 60.0f, 0.01f);
+            CHECK_NEAR(z->WeightAt({30, 0, 0}), 0.0f, 0.0f);          // on the outer face: nothing
+            CHECK_NEAR(z->WeightAt({20, 0, 0}), 1.0f, 1e-5f);         // in the middle: full
+            CHECK(z->WeightAt({24.5f, 0, 0}) > 0.0f && z->WeightAt({24.5f, 0, 0}) < 1.0f);
+            float prevFov = 60.0f, maxJump = 0.0f; bool monotonic = true;
+            for (int i = 0; i < (int)(kRates[r] * 4.0f); ++i) {          // walk in, 5 units a second
+                w.player->transform->localPosition = {i * dt * 5.0f, 0, 0};
+                w.Step(dt);
+                const float f = w.cam->fieldOfView;
+                maxJump = std::max(maxJump, std::fabs(f - prevFov));
+                if (f < prevFov - 1e-4f) monotonic = false;
+                prevFov = f;
+                CHECK(Finite3(w.CamPos()));
+            }
+            CHECK(monotonic);
+            CHECK(maxJump < 3.5f);                                       // eased over the edge (about 2 degrees a frame at 30 fps), no jump
+            for (int i = 0; i < (int)(kRates[r] * 3.0f); ++i) w.Step(dt);   // let the damping settle
+            CHECK_NEAR(w.cam->fieldOfView, 90.0f, 0.5f);                  // inside: the zone's field of view
+            CHECK_NEAR(w.CamPos().z, -4.0f, 0.05f);                       // offset -8 + 4
+            // A zone for another shot does nothing; a disabled one does nothing.
+            z->shot = "Other"; w.Step(dt);
+            CHECK_NEAR(w.vc->SolvedFov(), 60.0f, 1e-3f);
+            z->shot = ""; z->enabled = false; w.Step(dt);
+            CHECK_NEAR(w.vc->SolvedFov(), 60.0f, 1e-3f);
+        }
+        {   // higher priority wins where two overlap; save and load keeps every field
+            Scene a("zsave");
+            GameObject* g = a.CreateGameObject("Z");
+            auto* z = g->AddComponent<CameraZone>();
+            z->size = {3, 4, 5}; z->offset = {1, 2, 3}; z->blend = 0.2f; z->priority = 7; z->fieldOfView = 44.0f;
+            z->followOffset = {0, 1, 2}; z->positionDamping = 2.5f; z->shot = "Shot A";
+            const std::string text = SceneSerializer::Serialize(a);
+            Scene b("zload"); std::string err;
+            CHECK(SceneSerializer::Deserialize(b, text, &err, nullptr));
+            auto* z2 = b.Find("Z") ? b.Find("Z")->GetComponent<CameraZone>() : nullptr;
+            CHECK(z2 != nullptr);
+            if (z2) {
+                CHECK_NEAR(z2->size.z, 5.0f, 1e-6f); CHECK_NEAR(z2->offset.y, 2.0f, 1e-6f); CHECK_NEAR(z2->blend, 0.2f, 1e-6f);
+                CHECK(z2->priority == 7 && z2->shot == "Shot A"); CHECK_NEAR(z2->fieldOfView, 44.0f, 1e-6f);
+                CHECK_NEAR(z2->followOffset.z, 2.0f, 1e-6f); CHECK_NEAR(z2->positionDamping, 2.5f, 1e-6f);
+            }
+            CHECK(SceneSerializer::Serialize(b) == text);
+        }
+        {   // priority
+            Rig w;
+            w.vc->collision = false; w.vc->positionDamping = 0.0f;
+            GameObject* g1 = w.s.CreateGameObject("Low"); auto* z1 = g1->AddComponent<CameraZone>(); z1->blend = 0.0f; z1->fieldOfView = 40.0f; z1->priority = 0;
+            GameObject* g2 = w.s.CreateGameObject("High"); auto* z2 = g2->AddComponent<CameraZone>(); z2->blend = 0.0f; z2->fieldOfView = 100.0f; z2->priority = 5;
+            for (int i = 0; i < 3; ++i) w.Step(1.0f / 60.0f);
+            CHECK_NEAR(w.vc->SolvedFov(), 100.0f, 1e-3f);
+        }
+    }
+
+    // ---- 17. Camera presets: each one gives a working shot with the target in view ----
+    for (int p = 0; p < VirtualCamera::kPresetCount; ++p) {
+        Rig w;
+        w.vc->ApplyPreset(p);
+        if (p == 0) { w.cam->projection = Camera::Projection::Orthographic; w.cam->orthographicSize = 6.0f; }
+        w.vc->orbitInput = false;
+        const float dt = 1.0f / 60.0f;
+        for (int i = 0; i < 240; ++i) { w.player->transform->localPosition = {std::sin(i * 0.02f) * 3.0f, 0.0f, i * 0.02f}; w.Step(dt); CHECK(Finite3(w.CamPos())); }
+        CHECK(w.cam->IsPointVisible(w.player->transform->Position(), 1280, 720));
+        CHECK(std::string(VirtualCamera::PresetName(p)).size() > 3);
+    }
+    {
+        Rig a, b;
+        a.vc->ApplyPreset(3); b.vc->ApplyPreset(5);
+        CHECK(a.vc->fieldOfView > b.vc->fieldOfView);                    // first person is wide, cinematic is long-lens
+        CHECK(a.vc->positionDamping == 0.0f && b.vc->positionDamping > 1.0f);
     }
 
     TEST_MAIN_RESULT();

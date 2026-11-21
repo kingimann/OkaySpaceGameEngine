@@ -39,6 +39,10 @@ Backend* Default();
 /// the whole process. Creating it does not touch the OS; call Backend::Init.
 Backend* Get(BackendKind k);
 BackendKind DefaultKind();
+/// True once a backend instance has been destroyed, which happens only at the very end of the process (static destruction after
+/// main() returns, or inside std::exit). From then on no backend and none of its windows may be called: a window destroyed that
+/// late (owned by a global) lets its OS window go without any call; the OS takes it back when the process ends.
+bool BackendsShutDown();
 
 // ---- Keys ------------------------------------------------------------------
 // Physical keys, numbered with the USB HID usage ids (the same numbers as SDL

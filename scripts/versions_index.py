@@ -5,8 +5,9 @@ publish-supabase.sh calls this after every publish. The index tells the launcher
 which versions exist, which one is the newest ("latest") and which one is the
 long-term-support line ("lts"), with the size and SHA-256 of every file so a
 download can be checked before it is run. Versions stay in the index after they
-are removed from the bucket (inBucket: false); the launcher then falls back to
-the GitHub release listed in "archive".
+are removed from the bucket (inBucket: false); the launcher then says they can no
+longer be downloaded (the programs never use GitHub, owner decision 2026-11-20, so
+no "archive" address is written any more; --repo is accepted and ignored).
 
   versions_index.py merge --existing OLD.json --version 2.856.0 --channel latest \
       --file OkayEngine.exe=path/to/OkayEngine.exe --file OkaySpacePlayer.exe=... \
@@ -16,7 +17,6 @@ the GitHub release listed in "archive".
 
 Schema (version 1):
   { "schema": 1, "latest": "2.856.0", "lts": "2.850.1",
-    "archive": "https://github.com/owner/name/releases/download/v{version}/{file}",
     "bucketPath": "v{version}/{file}",
     "versions": [ { "version": "2.856.0", "channel": "latest", "date": "2026-11-09",
                     "inBucket": true,
@@ -159,7 +159,6 @@ def merge(existing, version, channel, files, date, bucket_versions, latest, lts,
         out["latest"] = lat
     if lt:
         out["lts"] = lt
-    out["archive"] = "https://github.com/%s/releases/download/v{version}/{file}" % repo
     out["bucketPath"] = BUCKET_PATH
     out["versions"] = [entries[v] for v in sorted(entries, key=parse_version, reverse=True)]
     return out
@@ -242,7 +241,7 @@ def _self_test():
     f1 = {n: {"size": 10, "sha256": sha} for n in REQUIRED_FILES}
     idx = merge(None, "2.855.0", "latest", f1, "2026-11-09", ["2.855.0"], "2.855.0", None, "o/n")
     check(idx["schema"] == 1 and idx["latest"] == "2.855.0" and "lts" not in idx, "first index")
-    check(idx["archive"] == "https://github.com/o/n/releases/download/v{version}/{file}", "archive template")
+    check("archive" not in idx, "no GitHub archive address")
     check([v["version"] for v in idx["versions"]] == ["2.855.0"], "one version")
 
     idx2 = merge(idx, "2.856.0", "latest", f1, "2026-11-10", ["2.856.0", "2.855.0"], "2.856.0", None, "o/n")

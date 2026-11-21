@@ -31,11 +31,11 @@ using namespace okay;
 #define OKAY_SAVE_COMPONENTS(X) \
     X(ActionList) X(AimIK) X(AimOffset) X(AnimStateMachine) X(Animator) X(AntiCheatConfig) X(AudioSource) \
     X(AutoSave) X(BehaviorTreeRunner) X(BleedingStat) X(BlendShapes) X(BlockBuilder) X(BoatController) X(Buoyancy) X(BoxCollider2D) \
-    X(BoxCollider3D) X(BuildMode) X(BuildPiece) X(Buildable) X(BuilderMode) X(Cable) X(Camera) X(CameraFollow) X(CameraRoom) X(Canvas) \
+    X(BoxCollider3D) X(BuildMode) X(BuildPiece) X(Buildable) X(BuilderMode) X(Cable) X(Camera) X(CameraFollow) X(CameraRoom) X(CameraZone) X(Canvas) \
     X(CapsuleCollider2D) X(CapsuleCollider3D) X(CarryWeightStat) X(ChainIK) X(Character) X(CharacterController2D) \
     X(CharacterController3D) X(CheckpointTrigger) X(ChestInventory) X(CinemachineBrain) X(CircleCollider2D) \
     X(ClickToMoveController) X(Collectible) X(Consumables) X(Crafting) X(CraftingMenu) X(CraftingStation) \
-    X(Crosshair) X(CylinderCollider3D) X(DamageOnTouch) X(DayNightCycle) X(Decal) X(Destructible) X(DialogueRunner) \
+    X(Crosshair) X(CylinderCollider3D) X(ConeCollider3D) X(ConvexHullCollider3D) X(PlaneCollider3D) X(CompoundCollider3D) X(HeightfieldCollider3D) X(CompositeCollider2D) X(DamageOnTouch) X(DayNightCycle) X(Decal) X(Destructible) X(DialogueRunner) \
     X(DollyCart) X(DollyPath) X(Draggable) X(DropZone) X(EdgeCollider2D) X(Equipment) X(testing::EventProbe) \
     X(EventSystem) X(FirstPersonController) X(FirstPersonHand) X(FirstPersonHands) X(Flashlight) \
     X(FollowTarget2D) X(Foliage) X(FootIK) X(FreeRoamController) X(FullBodyIK) X(GridCostLayer) X(GridInventory) X(GridInventoryUI) \
@@ -138,9 +138,9 @@ int main() {
     //   NetworkAvatarMotion    the motion driver NetworkPlayerSpawner puts on each avatar it spawns
     //   testing::EventProbe    a test helper (okay/Testing/PlayTest.hpp)
     //   SettingsScreen         rebuilt on its own: SettingsScreen::Ensure binds the "Settings" panel when Play starts
-    //   SteamManager           added by game code at startup (docs/steam_release.md), not a scene object
-    //   CheckpointTrigger      the Save Framework's: added by game code, saved by the framework (docs/save_framework.md)
-    //   (Saveable and SaveConfig are saved in the scene file: the no-code save route, docs/save_framework.md)
+    //   SteamManager           added by game code at startup (docs/release/steam_release.md), not a scene object
+    //   CheckpointTrigger      the Save Framework's: added by game code, saved by the framework (docs/engine/save_games.md)
+    //   (Saveable and SaveConfig are saved in the scene file: the no-code save route, docs/engine/save_games.md)
     const std::set<std::string> kRuntimeOnly = {"StatComponent", "TimedDestroy", "UIToastItem", "WeatherRig", "NetworkAvatarMotion",
                                                 "testing::EventProbe", "SettingsScreen", "SteamManager", "CheckpointTrigger"};
     for (const auto& n : dropped) CHECK(kRuntimeOnly.count(n) != 0);

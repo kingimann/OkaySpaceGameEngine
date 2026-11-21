@@ -2,7 +2,7 @@
 // The launcher's Versions page (nav: "Versions"): the running version, the Latest / LTS channel, the versions installed next to it
 // (size, Remove, default editor), the versions available to install (progress, Cancel), "Keep previous versions: N" and "Open
 // install folder". All the rules live in VersionsManager.cpp; this file only draws them and runs the two background jobs (reading
-// the version list, and one install). See docs/launcher_versions.md.
+// the version list, and one install). See docs/release/launcher_versions.md.
 //
 // main.cpp calls Tick() once per frame, DrawPage() while the page is showing, and Shutdown() before it closes; it hands over what the
 // page needs through Host (the launcher's own toast, folder opener, HTTP helpers and colours), so nothing here reaches into main.cpp.
@@ -21,7 +21,7 @@ struct Host {
     std::filesystem::path launcherDir;           ///< <launcher dir>/Versions is where everything goes
     std::string currentVersion;                  ///< the editor in Tools/ (what a plain Open starts)
     std::string launcherVersion;                 ///< this launcher, as built
-    okayversions::Sources sources;               ///< the releases bucket, GitHub, ...
+    okayversions::Sources sources;               ///< the releases bucket (never GitHub)
     std::string runningEditorVersion;            ///< version of the editor that is open ("" = unknown)
     bool editorRunning = false;
     ImVec4 accent{0.26f, 0.59f, 0.98f, 1.0f}, accentDim{0.19f, 0.43f, 0.72f, 1.0f}, cardBg{0.15f, 0.163f, 0.2f, 1.0f};

@@ -38,7 +38,7 @@ the old scene-wide searches (see the numbers below).
 **Checks run here (Linux, headless):** `tests/test_player_feel.cpp` (127 checks: presets, saved, hotkeys, stick ramp, camera
 steadiness at 30/60/144/240 fps, eye bob range, foot sliding of the real controller for all presets walking and running, system
 rows), `tests/test_player_feel_lab.cpp` (the shipped scene is what the code writes; 1-5 switch the preset), and the player,
-controller, net prediction, character and locomotion tests. Frame numbers of the busy scene: `docs/player_audit.md` (section
+controller, net prediction, character and locomotion tests. Frame numbers of the busy scene: `docs/status/player_audit.md` (section
 "Busy scene").
 **Not seen:** Windows, a window, the Inspector drop-down, the F3 systems page on a screen, the lab scene on a screen, gamepad
 feel with a real pad, whether the preset numbers feel right (they were chosen by measurement and by reasoning, not by playing).

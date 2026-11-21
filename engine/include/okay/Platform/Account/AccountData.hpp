@@ -1,7 +1,7 @@
 #pragma once
 // "Download my data" and "Delete my account" for the launcher (Supabase accounts).
 // Pure logic, no UI, no threads: the launcher runs these on a worker thread.
-// What is exported / deleted / anonymised is documented in docs/account_data.md;
+// What is exported / deleted / anonymised is documented in docs/online/account_data.md;
 // the server half of deletion is supabase/functions/delete-account.
 #include "AccountService.hpp"
 
@@ -205,7 +205,7 @@ inline DeleteOutcome MapDeleteResponse(const ApiResponse& r) {
         case 404:
             o.notDeployed = true;
             o.message = "Account deletion is not set up on this server yet: the delete-account function is not deployed. "
-                        "Nothing was deleted. Ask the server owner to deploy it (docs/account_data.md).";
+                        "Nothing was deleted. Ask the server owner to deploy it (docs/online/account_data.md).";
             return o;
         case 401: o.message = "Your session expired. Sign in again, then retry. Nothing was deleted."; return o;
         case 403: o.message = err.empty() ? "Not allowed. Nothing was deleted." : (err[0] >= 'a' && err[0] <= 'z' ? std::string(1, (char)(err[0] - 32)) + err.substr(1) : err) + ". Nothing was deleted."; return o;

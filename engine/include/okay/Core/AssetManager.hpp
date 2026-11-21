@@ -1,7 +1,7 @@
 #pragma once
 // Central, opt-in asset registry: typed handles, one cache entry per canonical file
 // path, reference counting, per-type loaders, background loading finished on the
-// main thread, hot reload and a usage report. See docs/asset_manager.md.
+// main thread, hot reload and a usage report. See docs/engine/asset_manager.md.
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>

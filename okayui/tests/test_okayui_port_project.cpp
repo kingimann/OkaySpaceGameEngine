@@ -1,7 +1,7 @@
 // Run, not just compile: the Project panel's Dear ImGui pieces (editor/ProjectPanelUI.cpp: name prompt, delete confirmation; editor/ProjectMenuDraw.cpp:
 // property rows, context menu) compiled against OkayUI through the probe stand-in imgui.h and drawn headless. Fake state: a name request with an
 // accept callback, a list of property rows and a context-menu item tree. The name prompt is driven with synthetic typing and clicks. See
-// docs/own_ui_toolkit.md 6.14.
+// docs/ui/own_ui_toolkit.md 6.14.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "ProjectPanelUI.hpp"

@@ -16,7 +16,7 @@
 //     DockBuilderDockWindow("Hierarchy", left); DockBuilderDockWindow("Scene", center); DockBuilderDockWindow("Game", center); ...
 //     DockBuilderFinish(space);                           // the plan becomes the live layout
 //
-// Differences from the Dear ImGui calls of the same names (all on purpose, listed in docs/own_ui_toolkit.md 6.9):
+// Differences from the Dear ImGui calls of the same names (all on purpose, listed in docs/ui/own_ui_toolkit.md 6.9):
 //  * One dock tree. Finish replaces the layout (windows the plan does not mention stay, floating). A second AddNode root is a second
 //    plan; the last one finished wins.
 //  * An empty node cannot exist in a DockLayout, so a plan node that holds no window when Finish runs is dropped and its sibling takes

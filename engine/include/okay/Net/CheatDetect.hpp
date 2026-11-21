@@ -1,6 +1,6 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// CheatDetect — the server-side detection engine (opt-in; see docs/anticheat.md).
+// CheatDetect — the server-side detection engine (opt-in; see docs/online/anticheat.md).
 //
 // Client-side checks can always be patched out. What a server can do is look at
 // what clients CLAIM (positions, aim, shots, counters, packets) and compare it

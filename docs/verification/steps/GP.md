@@ -7,8 +7,8 @@
   1. Open **View > Editors & Tools > Dialogue & Quests**.
   2. Make a short dialogue (a line and two choices) and save it.
 - **See:** a graph editor for dialogue and a quest list.
-- **Partial:** steps beyond opening the window are unverified; see docs/dialogue_quests.md.
-- **Link:** [dialogue_quests.md](../../dialogue_quests.md)
+- **Partial:** steps beyond opening the window are unverified; see docs/gameplay/dialogue_quests.md.
+- **Link:** [dialogue_quests.md](../../gameplay/dialogue_quests.md)
 - **Grounded:** no
 
 ### V-GP-002 Cutscene timeline example
@@ -20,7 +20,7 @@
   3. Press Play on the scene.
 - **See:** the camera sequence of the intro plays; the Timeline window shows its tracks.
 - **Partial:** the release may not ship `examples` yet (PR #887).
-- **Link:** [cutscenes.md](../../cutscenes.md)
+- **Link:** [cutscenes.md](../../gameplay/cutscenes.md)
 
 ### V-GP-003 Behavior tree example
 - **Map:** 9, 11
@@ -30,7 +30,7 @@
   2. Open **View > Editors & Tools > Behavior Tree** and press Play.
 - **See:** the tree runs and the window shows which node is active.
 - **Partial:** the release may not ship `examples` yet (PR #887).
-- **Link:** [behavior_trees.md](../../behavior_trees.md)
+- **Link:** [behavior_trees.md](../../gameplay/behavior_trees.md)
 
 ### V-GP-004 Weapons window and arena
 - **Map:** 11
@@ -51,7 +51,7 @@
   2. Open **View > Editors & Tools > Items, Loot & Recipes**.
 - **See:** item, loot and recipe files are created and listed in the window.
 - **Partial:** none known.
-- **Link:** [inventory.md](../../inventory.md)
+- **Link:** [inventory.md](../../gameplay/inventory.md)
 
 ### V-GP-006 Save Manager
 - **Map:** 35

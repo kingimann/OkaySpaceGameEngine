@@ -7,7 +7,7 @@ namespace okay {
 /// One problem found in a scene by SceneSerializer::Validate / Scene::Validate: the validator that reads the scene
 /// text (is the file intact). The one that looks at a loaded scene (does it make sense: cameras, scripts, names,
 /// transforms) is Testing/SceneValidator.hpp, and its ValidateFile also reports duplicate guids and broken parent
-/// links; docs/scene_hierarchy_search.md ("Which validator?") says when to use which.
+/// links; docs/engine/scene_hierarchy_search.md ("Which validator?") says when to use which.
 struct SceneIssue {
     enum class Kind {
         MissingComponentType,   // an object has a component record this build does not know

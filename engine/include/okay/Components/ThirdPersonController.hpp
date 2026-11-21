@@ -57,7 +57,7 @@ public:
     int ExecutionOrder() const override { return -10; }
     bool IgnoresBuoyancy() const override { return true; }
     // ---- Movement ----
-    // A real walk and a real run (docs/walk_vs_run.md): 2.0 and 5.5 m/s. OKAY_OLD_GAIT=1 brings back 4.5 and 8.0.
+    // A real walk and a real run (docs/gameplay/walk_vs_run.md): 2.0 and 5.5 m/s. OKAY_OLD_GAIT=1 brings back 4.5 and 8.0.
     float walkSpeed = NaturalGait::WalkSpeed();
     float runSpeed  = NaturalGait::RunSpeed();
     float jumpForce = 6.0f;

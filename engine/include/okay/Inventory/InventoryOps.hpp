@@ -12,6 +12,7 @@ struct InvResult {
     Status status = Status::Rejected;
     int moved = 0;
     std::string reason;   ///< why it was rejected or partial (empty on Ok)
+    bool broke = false;   ///< Use: the item wore out and was removed
 
     bool Ok() const { return status != Status::Rejected; }
     static InvResult Done(int n) { InvResult r; r.status = Status::Ok; r.moved = n; return r; }
@@ -61,7 +62,9 @@ InvResult Drop(Inventory* inv, int i, int n = 1);
 /// Use the item in slot `i` as `user` (who carries the inventory): eat/drink/heal it
 /// through a Consumables on the user (its recipe, else the item definition's use
 /// action), pick the matching piece in the user's BuildMode palette, or equip it
-/// through the user's Equipment when its definition has an equip slot.
+/// through the user's Equipment when its definition has an equip slot. A tool (definition
+/// custom field "wearPerUse" > 0, single item tracking durability) wears by that much and
+/// breaks at zero (result.broke).
 InvResult Use(Inventory* inv, int i, GameObject* user);
 
 /// Atomically remove `take` and add `give` (crafting).
@@ -80,11 +83,21 @@ InvResult Split(GridInventory* inv, int index, int n);
 /// a matching stack there, never swaps. Rejected, with nothing changed, for a bad slot, a
 /// negative amount, a spot that is out of bounds or taken, or an enforced weight limit.
 /// Partial when only some fit (stack size or weight). Unique (uid) items only move whole.
-/// Not sent to a networked host: it is a local operation (see docs/inventory.md).
+/// Not sent to a networked host: it is a local operation (see docs/gameplay/inventory.md).
 InvResult ToGrid(Inventory* src, int si, GridInventory* dst, int x, int y, bool rotated = false, int amount = 0);
 /// Grid bag -> slot bag: move `amount` (0 = all) of grid item `index` to slot `di` of `dst`
 /// when that slot is empty or holds the same item (merges up to the stack size). Never swaps.
 InvResult FromGrid(GridInventory* src, int index, Inventory* dst, int di, int amount = 0, int dstSlots = 0);
+
+/// Wear slot `i` down by `amount` (finite, >= 0). Only a single item that tracks durability
+/// (data.durability >= 0) wears. When it reaches 0 the item breaks and the slot is emptied.
+/// Returns Done(1) when it broke, Done(0) when it only lost durability. Rejected, nothing changed,
+/// for a bad slot, an empty slot, a stack of more than one, an untracked item, or a bad amount.
+InvResult Wear(Inventory* inv, int i, float amount);
+/// Repair slot `i` by `amount` (finite, > 0), up to the item definition's custom field
+/// "maxDurability". Done(1) when it changed, Partial(1) when the cap cut the repair short.
+/// Rejected for the same reasons as Wear, a definition with no maxDurability, or an item already full.
+InvResult Repair(Inventory* inv, int i, float amount);
 
 } // namespace InventoryOps
 } // namespace okay

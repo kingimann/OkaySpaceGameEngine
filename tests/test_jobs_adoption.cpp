@@ -179,10 +179,10 @@ std::vector<unsigned char> RunSkin(JobSystem& js, int count, int verts, int fram
     return out;
 }
 
-std::uint64_t JobsRun(const JobSystem& js) {
-    const JobStats st = js.Stats();
-    return st.ranOnWorkers + st.ranHelping + st.ranInline;
-}
+// Work handed to the pool. (ParallelFor's helper jobs can all be cancelled unrun when the
+// calling thread claims every chunk first, so "ran on a worker" is not guaranteed for a short
+// loop; being submitted is.)
+std::uint64_t JobsRun(const JobSystem& js) { return js.Stats().submitted; }
 
 // ---- Asset manager and navmesh -------------------------------------------------------
 
@@ -299,6 +299,7 @@ int main(int argc, char** argv) {
         }
         std::printf("skinning 200 x 2000 verts, 30 frames (build included): 0 workers %.1f ms, 4 workers %.1f ms\n",
                     TimeSkin(serial, 200, 2000, 30), TimeSkin(pool, 200, 2000, 30));
+        std::printf("4-worker pool: %s\n", FormatJobStats(pool.Stats()).c_str());
         return 0;
     }
 

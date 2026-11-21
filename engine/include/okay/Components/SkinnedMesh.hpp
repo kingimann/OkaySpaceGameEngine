@@ -22,11 +22,14 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Core/Jobs.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "okay/Math/Quat.hpp"
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -232,9 +235,53 @@ public:
     /// deform when nothing moved since the last call (byte-exact hash of the mesh
     /// node's and every joint's world matrix) — idle rigs then cost ~nothing.
     void Skin() {
-        if (!gameObject || !Ready()) return;
+        Mesh* out = nullptr;
+        bool hasN = false;
+        if (PrepareSkin(out, hasN)) DeformSkin(*out, hasN);
+    }
+
+    /// Below this many vertices in all the meshes of a batch the deform stays on the calling
+    /// thread (the job hand-off would cost more than it saves; see test_jobs_adoption bench).
+    static constexpr std::size_t kParallelSkinMinVertices = 4096;
+
+    /// Skin several meshes, as Skin() on each in turn would, with the same bits: the pose
+    /// checks and skin matrices on the calling thread, then the per-vertex deform spread
+    /// over `jobs`, one mesh per task (each writes only its own renderer's mesh). Meshes
+    /// that share a MeshRenderer make the whole batch run in order on the calling thread.
+    /// The scene's LateUpdate calls this for each run of SkinnedMesh components.
+    static void SkinBatch(SkinnedMesh* const* list, std::size_t count, JobSystem& jobs) {
+        if (count == 0) return;
+        if (count == 1 || jobs.WorkerCount() == 0) { for (std::size_t i = 0; i < count; ++i) if (list[i]) list[i]->Skin(); return; }
+        std::vector<const MeshRenderer*> owners;
+        owners.reserve(count);
+        for (std::size_t i = 0; i < count; ++i)
+            if (list[i] && list[i]->gameObject) owners.push_back(list[i]->gameObject->GetComponent<MeshRenderer>());
+        std::sort(owners.begin(), owners.end());
+        for (std::size_t i = 1; i < owners.size(); ++i)
+            if (owners[i] && owners[i] == owners[i - 1]) { for (std::size_t k = 0; k < count; ++k) if (list[k]) list[k]->Skin(); return; }
+        struct Work { SkinnedMesh* sm; Mesh* out; bool hasN; };
+        std::vector<Work> work;
+        work.reserve(count);
+        std::size_t verts = 0;
+        for (std::size_t i = 0; i < count; ++i) {
+            Mesh* out = nullptr;
+            bool hasN = false;
+            if (list[i] && list[i]->PrepareSkin(out, hasN)) { work.push_back(Work{list[i], out, hasN}); verts += list[i]->bind.vertices.size(); }
+        }
+        if (work.size() >= 2 && verts >= kParallelSkinMinVertices) {
+            jobs.ParallelFor(0, work.size(), 1, [&work](std::size_t i) { work[i].sm->DeformSkin(*work[i].out, work[i].hasN); });
+        } else {
+            for (Work& w : work) w.sm->DeformSkin(*w.out, w.hasN);
+        }
+    }
+
+private:
+    /// Everything in Skin() before the per-vertex loop (reads transforms, which may rebuild
+    /// their world caches, so it runs on the calling thread). True when `out` needs DeformSkin.
+    bool PrepareSkin(Mesh*& outMesh, bool& outHasN) {
+        if (!gameObject || !Ready()) return false;
         auto* mr = gameObject->GetComponent<MeshRenderer>();
-        if (!mr) return;
+        if (!mr) return false;
 
         // skinMatrixⱼ = meshNode⁻¹ · jointWorldⱼ · inverseBindⱼ
         // "Did anything move?" from the transforms' world versions (they change
@@ -247,7 +294,7 @@ public:
         const bool gpu = UsesGpuSkinning();
         // Skip when nothing moved — unless we're switching between CPU and GPU
         // skinning (the mesh must go back to / leave the bind pose).
-        if (m_haveHash && h == m_lastHash && gpu == m_lastGpu && !mr->mesh.vertices.empty()) return;
+        if (m_haveHash && h == m_lastHash && gpu == m_lastGpu && !mr->mesh.vertices.empty()) return false;
         m_lastHash = h; m_haveHash = true;
         ++version;
 
@@ -267,7 +314,7 @@ public:
             m_bindDirty = false;
             m_lastGpu = true;
             mr->deformed = false;
-            return;
+            return false;
         }
         m_lastGpu = false;
 
@@ -279,9 +326,18 @@ public:
         if (out.vertices.size() != bind.vertices.size() || out.triangles.size() != bind.triangles.size() ||
             out.normals.size() != bind.normals.size() || out.uvs.size() != bind.uvs.size())
             out = bind;   // first deform (or the bind mesh changed): take the topology once
-        const bool hasN = bind.normals.size() == bind.vertices.size();
         mr->deformed = true;
+        outMesh = &out;
+        outHasN = bind.normals.size() == bind.vertices.size();
+        return true;
+    }
+
+    /// The per-vertex deform into `out` (the renderer's mesh, topology already set by
+    /// PrepareSkin). Touches only this component's members and `out`, so separate meshes
+    /// can deform on separate threads.
+    void DeformSkin(Mesh& out, bool hasN) {
         if (method == (int)Method::DualQuaternion) { SkinDualQuat(out, hasN); return; }
+        const std::vector<Mat4>& sk = palette;
         // Skin matrices as 3x4 affine rows (no perspective row, no divide). Per
         // vertex the weighted matrices are summed first, then applied once to the
         // position and normal — 12 multiply-adds per influence instead of a full

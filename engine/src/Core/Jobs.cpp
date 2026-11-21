@@ -343,8 +343,9 @@ struct JobSystem::Impl {
 
     // Run queued jobs on this thread until pred() (evaluated with the lock held) is true.
     // False on timeout (timeoutSec >= 0) or when nothing could ever run (see `stalled`).
+    // With `help` false it only sleeps until pred() is true (see ParallelForImpl).
     template <class Pred>
-    bool HelpUntil(Pred pred, double timeoutSec, bool forceMain, bool* stalled) {
+    bool HelpUntil(Pred pred, double timeoutSec, bool forceMain, bool* stalled, bool help = true) {
         const bool useMain = forceMain || IsMain();
         const bool timed = timeoutSec >= 0.0;
         const auto deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(
@@ -354,16 +355,18 @@ struct JobSystem::Impl {
         ++waiters;
         for (;;) {
             if (pred()) { ok = true; break; }
-            if (StatePtr j = PopReadyLocked(useMain)) {
-                UnlockFlush();
-                Outcome o = Execute(j);
-                mu.Lock();
-                FinishLocked(j, o, Kind::Helper);
-                continue;
-            }
-            if (liveWorkers == 0 && useMain && running <= SelfDepth()) {
-                if (stalled) *stalled = true;
-                break;
+            if (help) {
+                if (StatePtr j = PopReadyLocked(useMain)) {
+                    UnlockFlush();
+                    Outcome o = Execute(j);
+                    mu.Lock();
+                    FinishLocked(j, o, Kind::Helper);
+                    continue;
+                }
+                if (liveWorkers == 0 && useMain && running <= SelfDepth()) {
+                    if (stalled) *stalled = true;
+                    break;
+                }
             }
             if (timed) {
                 const double left = std::chrono::duration<double>(deadline - Clock::now()).count();
@@ -796,8 +799,11 @@ void JobSystem::ParallelForImpl(std::size_t begin, std::size_t end, std::size_t 
         catch (...) { break; }   // could not queue a helper: the caller just does more itself
     }
     runChunks();   // the calling thread works too
+    // Every chunk is claimed now; the ones still running finish on the threads that claimed
+    // them. So wait without picking up other queued jobs: a long one (an asset decode, a
+    // navmesh bake) would otherwise hold up the caller, e.g. a physics step, for its whole length.
     I.HelpUntil([&st, chunks] { return st->completed.load(std::memory_order_acquire) >= chunks; },
-                -1.0, false, nullptr);
+                -1.0, false, nullptr, /*help=*/false);
     for (const JobHandle& h : handles) Cancel(h);   // helpers that never got a turn
     if (st->failed.load(std::memory_order_acquire)) {
         // Take the exception out of the shared state first: a helper may still hold `st` and

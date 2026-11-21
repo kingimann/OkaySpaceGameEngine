@@ -10,6 +10,7 @@
 #include "okay/Physics/ColliderShapes3D.hpp"
 #include "okay/Physics/ConvexContact.hpp"
 #include "okay/Physics/TriMesh.hpp"
+#include "okay/Core/Jobs.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Components/Joint3D.hpp"
 #include "okay/Math/JointLimit.hpp"
@@ -27,6 +28,7 @@
 #include <cmath>
 #include <functional>
 #include <iterator>
+#include <typeinfo>
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
@@ -819,6 +821,23 @@ void Physics3D::BeginDebugFrame() {
     MeshCollider3D::AdvanceEpoch();   // mesh colliders re-check their mesh data this frame
 }
 
+namespace {
+// The per-collider bounding-box pass runs on EngineJobs() once a scene has this many
+// colliders; below it the job hand-off costs more than it saves (measured with
+// `test_jobs_adoption bench`). Each chunk is kBoundsGrain colliders.
+constexpr std::size_t kParallelBoundsMin = 256;
+constexpr std::size_t kBoundsGrain = 64;
+
+// Collider types whose WorldAABB only reads (their transform chain, their own fields and
+// the scene's quality). Mesh, convex hull, compound and heightfield colliders keep parsed
+// or built data in mutable caches, so they are done on the calling thread.
+bool BoundsAreReadOnly(const Collider3D& c) {
+    const std::type_info& t = typeid(c);
+    return t == typeid(BoxCollider3D) || t == typeid(SphereCollider3D) || t == typeid(CapsuleCollider3D) ||
+           t == typeid(CylinderCollider3D) || t == typeid(ConeCollider3D) || t == typeid(PlaneCollider3D);
+}
+} // namespace
+
 void Physics3D::Step(Scene& scene, float dt) {
     if (dt <= 0.0f) return;
     if (quality == PhysicsQuality::Improved && dt > kMaxSolveSlice * 1.001f) {
@@ -923,13 +942,34 @@ void Physics3D::StepSlice(Scene& scene, float dt) {
     std::unordered_set<Collider3D*> aliveSet;
     aliveSet.reserve(nc * 2 + 1);
     auto fin3 = [](const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); };
-    for (std::size_t i = 0; i < nc; ++i) {
+    auto bounds = [&](std::size_t i) {   // writes only slot i
         colliders[i]->WorldAABB(aabbMin[i], aabbMax[i]);
-        aliveSet.insert(colliders[i]);
         const Rigidbody3D* r = colliders[i]->gameObject->GetComponent<Rigidbody3D>();
         finite[i] = fin3(aabbMin[i]) && fin3(aabbMax[i]) &&
                     (!r || (fin3(r->velocity) && fin3(r->angularVelocity)));
+    };
+    JobSystem& jobs = EngineJobs();
+    if (nc >= kParallelBoundsMin && jobs.WorkerCount() > 0) {
+        // On the calling thread first: the colliders with caches of their own, and every world-matrix
+        // cache brought up to date (reading a stale one rebuilds it, and parents are shared). After
+        // that the read-only colliders only read, so they can run on any thread; each writes its
+        // own slots, so the result is the same bits whatever the worker count.
+        std::vector<char> onWorkers(nc, 0);
+        for (std::size_t i = 0; i < nc; ++i) {
+            if (BoundsAreReadOnly(*colliders[i])) {
+                onWorkers[i] = 1;
+                if (colliders[i]->transform) colliders[i]->transform->WorldVersion();
+            } else {
+                bounds(i);
+            }
+        }
+        jobs.ParallelFor(0, nc, kBoundsGrain, [&](std::size_t b, std::size_t e) {
+            for (std::size_t i = b; i < e; ++i) if (onWorkers[i]) bounds(i);
+        });
+    } else {
+        for (std::size_t i = 0; i < nc; ++i) bounds(i);
     }
+    for (std::size_t i = 0; i < nc; ++i) aliveSet.insert(colliders[i]);
 
     // Broad phase: the pairs whose precomputed AABBs overlap (a NaN body, left out by `finite`, touches nothing), in
     // the order the old all-pairs loop visited them: the solver applies impulses in pair order. The sweep (see

@@ -13,6 +13,7 @@
 #include <cstddef>  // offsetof
 #include <cstdarg>
 #include <cstring>
+#include <string>
 #include <cstdio>   // snprintf for numeric widgets (C library, not STL)
 
 // All rendering goes through SDL_RenderGeometry (SDL >= 2.0.18), which is exactly
@@ -3236,23 +3237,133 @@ int numberEdit(int id, float x, float y, float w, float h, bool inside, double c
 }
 } // namespace
 
-static bool SliderFloat_raw(const char* label, float* value, float minV, float maxV) {
+namespace {
+struct NextNumber { bool has = false; char fmt[64] = {0}; bool has2 = false; char fmt2[64] = {0}; bool noInput = false; bool noRound = true; bool logarithmic = false; };
+NextNumber g_nextNum;
+char g_numText[4][64] = {{0}, {0}, {0}, {0}};
+int g_numLast = 0;
+// Take (and clear) the pending format for one widget.
+NextNumber takeNextNumber() { NextNumber n = g_nextNum; g_nextNum = NextNumber(); return n; }
+void noteNumberText(int cell, const char* t) {
+    if (cell < 0 || cell > 3) return;
+    std::snprintf(g_numText[cell], sizeof g_numText[cell], "%s", t ? t : "");
+    g_numLast = cell;
+}
+double roundDecimals(double v, int d) {
+    if (d < 0 || d > 9 || !std::isfinite(v)) return v;
+    double sc = 1.0; for (int i = 0; i < d; ++i) sc *= 10.0;
+    return std::floor(v * sc + 0.5) / sc;
+}
+}
+
+bool FormatNumber(char* out, int cap, const char* fmt, double value, bool isInt, int* decimals) {
+    if (decimals) *decimals = -1;
+    if (!out || cap <= 0) return false;
+    out[0] = 0;
+    std::string res;
+    bool ok = fmt != nullptr, seen = false;
+    int dec = -1;
+    for (const char* p = fmt; ok && *p;) {
+        if (*p != '%') { res += *p++; continue; }
+        ++p;
+        if (*p == '%') { res += '%'; ++p; continue; }
+        if (seen) { ok = false; break; }
+        std::string flags, width, prec; bool hasPrec = false;
+        while (*p && std::strchr("-+ 0#", *p) && flags.size() < 5) flags += *p++;
+        while (*p >= '0' && *p <= '9' && width.size() < 2) width += *p++;
+        if (*p == '.') { hasPrec = true; ++p; while (*p >= '0' && *p <= '9' && prec.size() < 2) prec += *p++; }
+        for (int k = 0; k < 2 && *p && std::strchr("hlLzjtq", *p); ++k) ++p;
+        const char c = *p;
+        if (!c || !std::strchr("diuxXfFeEgG", c)) { ok = false; break; }
+        ++p; seen = true;
+        std::string spec = "%" + flags + width + (hasPrec ? "." + prec : std::string());
+        char piece[160];
+        if (std::strchr("diuxX", c)) {
+            const double r = std::isfinite(value) ? std::floor(value + 0.5) : 0.0;
+            const long long iv = r > 9e18 ? (long long)9e18 : (r < -9e18 ? (long long)-9e18 : (long long)r);
+            spec += "ll"; spec += c;
+            if (c == 'd' || c == 'i') std::snprintf(piece, sizeof piece, spec.c_str(), iv);
+            else std::snprintf(piece, sizeof piece, spec.c_str(), (unsigned long long)iv);
+            dec = 0;
+        } else {
+            spec += c;
+            std::snprintf(piece, sizeof piece, spec.c_str(), value);
+            if (c == 'f' || c == 'F') dec = hasPrec ? (prec.empty() ? 0 : std::atoi(prec.c_str())) : 6;
+        }
+        res += piece;
+    }
+    if (!ok) { if (isInt) std::snprintf(out, (size_t)cap, "%d", std::isfinite(value) ? (int)std::floor(value + 0.5) : 0); else std::snprintf(out, (size_t)cap, "%.3f", value); if (decimals) *decimals = isInt ? 0 : 3; return false; }
+    std::snprintf(out, (size_t)cap, "%s", res.c_str());
+    if (decimals) *decimals = dec;
+    return true;
+}
+
+void SetNextNumberFormat(const char* fmt, bool noTypedInput, bool noRoundToFormat, const char* fmtMax, bool logarithmic) {
+    g_nextNum = NextNumber();
+    g_nextNum.logarithmic = logarithmic;
+    if (fmt) { g_nextNum.has = true; std::snprintf(g_nextNum.fmt, sizeof g_nextNum.fmt, "%s", fmt); }
+    if (fmtMax) { g_nextNum.has2 = true; std::snprintf(g_nextNum.fmt2, sizeof g_nextNum.fmt2, "%s", fmtMax); }
+    g_nextNum.noInput = noTypedInput; g_nextNum.noRound = noRoundToFormat;
+}
+
+const char* GetLastNumberText(int cell) {
+    if (cell < 0) cell = g_numLast;
+    if (cell < 0 || cell > 3) return "";
+    return g_numText[cell];
+}
+
+static bool SliderFloat_raw(const char* label, float* value, float minV, float maxV, bool isInt = false) {
     if (!g_lay.active || !value) return false;
+    const NextNumber nn = takeNextNumber();
+    noteNumberText(0, "");
     const float h = rowH();
     const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 24.0f) ctrlW = 24.0f;
-    {   // Ctrl+click: type a number
+    int decs = -1;
+    if (nn.has) { char probe[8]; FormatNumber(probe, sizeof probe, nn.fmt, 0.0, isInt, &decs); }
+    if (!nn.noInput) {   // Ctrl+click: type a number
         double typed = 0.0;
         const int e = numberEdit(hashLabel(label), x, y, ctrlW, h, hit(x, y, ctrlW, h), (double)*value, false, (double)minV, (double)maxV, &typed);
         if (e != 0) {
             if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, g_theme.text);
+            if (e == 2 && !nn.noRound) typed = roundDecimals(typed, decs);
             if (e == 2 && (float)typed != *value) { *value = (float)typed; return true; }
             return false;
         }
     }
-    const bool ch = Slider(hashLabel(label), x, y, ctrlW, h, value, minV, maxV);
+    const float before = *value;
+    bool ch;
+    if (nn.logarithmic && minV * maxV > 0.0f && std::isfinite(minV) && std::isfinite(maxV) && *value * minV > 0.0f) {
+        // Equal steps of the handle multiply the value by the same factor (the range must keep one sign and not touch 0).
+        const double sgn = minV < 0.0f ? -1.0 : 1.0;   // work on the sizes, keep the sign
+        const double lo = std::log(std::fabs((double)minV)), hi = std::log(std::fabs((double)maxV));
+        const double lv = std::log(std::fabs((double)*value));
+        float t = (float)((lv - lo) / (hi - lo));
+        const float t0 = t;
+        const bool moved = Slider(hashLabel(label), x, y, ctrlW, h, &t, 0.0f, 1.0f);
+        ch = moved && t != t0;
+        if (ch) {
+            double nv = sgn * std::exp(lo + (double)t * (hi - lo));
+            if (nv < std::fmin(minV, maxV)) nv = std::fmin(minV, maxV);
+            if (nv > std::fmax(minV, maxV)) nv = std::fmax(minV, maxV);
+            *value = (float)nv;
+        }
+    } else ch = Slider(hashLabel(label), x, y, ctrlW, h, value, minV, maxV);
+    if (ch && !nn.noRound && nn.has) {   // the value follows the decimals the format shows
+        double r = roundDecimals((double)*value, decs);
+        if (r < minV) r = minV;
+        if (r > maxV) r = maxV;
+        *value = (float)r;
+        ch = *value != before;
+    }
+    if (nn.has && nn.fmt[0]) {   // the value, centred on the slider
+        char vb[64]; FormatNumber(vb, sizeof vb, nn.fmt, (double)*value, isInt);
+        noteNumberText(0, vb);
+        const float tw = labelW(vb);
+        drawText(x + (ctrlW - tw) * 0.5f, y + (h - textH()) * 0.5f, vb, g_theme.textScale, g_theme.text);
+    }
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, g_theme.text);
     return ch;
 }
@@ -3261,7 +3372,7 @@ static bool SliderInt_raw(const char* label, int* value, int minV, int maxV) {
     if (!g_lay.active || !value) return false;
     float f = (float)*value;
     // Reuse the float slider, then snap to the nearest integer.
-    bool ch = SliderFloat_raw(label, &f, (float)minV, (float)maxV);
+    bool ch = SliderFloat_raw(label, &f, (float)minV, (float)maxV, true);
     int iv = (int)(f + (f >= 0.0f ? 0.5f : -0.5f));
     if (iv < minV) iv = minV;
     if (iv > maxV) iv = maxV;
@@ -3844,6 +3955,9 @@ bool dragBox(int id, float x, float y, float w, float h, bool inside, float& out
 
 static bool DragFloat_raw(const char* label, float* v, float speed, float minV, float maxV) {
     if (!g_lay.active || !v) return false;
+    const NextNumber nn = takeNextNumber();
+    int decs = -1;
+    if (nn.has) { char probe[8]; FormatNumber(probe, sizeof probe, nn.fmt, 0.0, false, &decs); }
     const int id = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale;
     const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
@@ -3851,11 +3965,12 @@ static bool DragFloat_raw(const char* label, float* v, float speed, float minV, 
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
     const bool inside = hit(x, y, ctrlW, h);
-    {   // Ctrl+click: type a number
+    if (!nn.noInput) {   // Ctrl+click: type a number
         double typed = 0.0;
         const int e = numberEdit(id, x, y, ctrlW, h, inside, (double)*v, false, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed);
         if (e != 0) {
             if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
+            if (e == 2 && !nn.noRound) typed = roundDecimals(typed, decs);
             if (e == 2 && (float)typed != *v) { *v = (float)typed; return true; }
             return false;
         }
@@ -3867,7 +3982,8 @@ static bool DragFloat_raw(const char* label, float* v, float speed, float minV, 
         if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
         if (nv != *v) { *v = nv; changed = true; }
     }
-    char buf[32]; std::snprintf(buf, sizeof(buf), "%.3f", *v);
+    char buf[64]; FormatNumber(buf, sizeof(buf), nn.has ? nn.fmt : "%.3f", (double)*v, false);
+    noteNumberText(0, buf);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
     return changed;
@@ -3875,6 +3991,7 @@ static bool DragFloat_raw(const char* label, float* v, float speed, float minV, 
 
 static bool DragInt_raw(const char* label, int* v, float speed, int minV, int maxV) {
     if (!g_lay.active || !v) return false;
+    const NextNumber nn = takeNextNumber();
     const int id = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale;
     const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
@@ -3882,7 +3999,7 @@ static bool DragInt_raw(const char* label, int* v, float speed, int minV, int ma
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
     const bool inside = hit(x, y, ctrlW, h);
-    {   // Ctrl+click: type a number
+    if (!nn.noInput) {   // Ctrl+click: type a number
         double typed = 0.0;
         const int e = numberEdit(id, x, y, ctrlW, h, inside, (double)*v, true, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed);
         if (e != 0) {
@@ -3903,7 +4020,8 @@ static bool DragInt_raw(const char* label, int* v, float speed, int minV, int ma
             if (nv != *v) { *v = nv; changed = true; }
         }
     }
-    char buf[32]; std::snprintf(buf, sizeof(buf), "%d", *v);
+    char buf[64]; FormatNumber(buf, sizeof(buf), nn.has ? nn.fmt : "%d", (double)*v, true);
+    noteNumberText(0, buf);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
     return changed;
@@ -3915,6 +4033,7 @@ namespace {
 // DragFloat / DragInt, and the label is drawn once to the right of the last cell. `range` keeps cell 0 <= cell 1.
 bool dragCells(const char* label, float* fv, int* iv, int n, float speed, float minV, float maxV, bool range) {
     if (!g_lay.active || (!fv && !iv) || n < 1 || n > 4) return false;
+    const NextNumber nn = takeNextNumber();
     const int base = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale;
     const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
@@ -3928,7 +4047,8 @@ bool dragCells(const char* label, float* fv, int* iv, int n, float speed, float 
         const float cx = x + (float)i * (cw + gap);
         const int id = base + (i + 1) * 7919;
         const bool inside = hit(cx, y, cw, h);
-        {   // Ctrl+click: type a number into this cell
+        const char* cellFmt = (i == 1 && nn.has2) ? nn.fmt2 : (nn.has ? nn.fmt : nullptr);
+        if (!nn.noInput) {   // Ctrl+click: type a number into this cell
             double typed = 0.0;
             const int e = numberEdit(id, cx, y, cw, h, inside, fv ? (double)fv[i] : (double)iv[i], fv == nullptr, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed);
             if (e == 2) {
@@ -3964,9 +4084,11 @@ bool dragCells(const char* label, float* fv, int* iv, int n, float speed, float 
                 }
             }
         }
-        char buf[32];
-        if (fv) std::snprintf(buf, sizeof(buf), cw < 64.0f ? "%.1f" : "%.3f", (double)fv[i]);
+        char buf[64];
+        if (cellFmt) FormatNumber(buf, sizeof(buf), cellFmt, fv ? (double)fv[i] : (double)iv[i], fv == nullptr);
+        else if (fv) std::snprintf(buf, sizeof(buf), cw < 64.0f ? "%.1f" : "%.3f", (double)fv[i]);
         else std::snprintf(buf, sizeof(buf), "%d", iv[i]);
+        noteNumberText(i, buf);
         drawText(cx + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
     }
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
@@ -4038,6 +4160,7 @@ static bool SliderFloat4_raw(const char* label, float v[4], float minV, float ma
 
 static bool InputFloat_raw(const char* label, float* value, float step) {
     if (!g_lay.active || !value) return false;
+    const NextNumber nn = takeNextNumber();
     const int id = hashLabel(label);
     const float h = rowH();
     const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
@@ -4051,7 +4174,7 @@ static bool InputFloat_raw(const char* label, float* value, float step) {
     double typed = 0.0;
     const int ed = numberEdit(id ^ 0x1e, x, y, fieldW, h, hit(x, y, fieldW, h), (double)*value, false, 0.0, 0.0, &typed, false);
     if (ed == 2 && std::isfinite((float)typed) && (float)typed != *value) { *value = (float)typed; ch = true; }
-    if (ed == 0) { char buf[48]; std::snprintf(buf, sizeof(buf), "%.3f", (double)*value); drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, g_theme.textScale, g_theme.text); }
+    if (ed == 0) { char buf[64]; FormatNumber(buf, sizeof(buf), nn.has ? nn.fmt : "%.3f", (double)*value, false); noteNumberText(0, buf); drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, g_theme.textScale, g_theme.text); }
     const float bx = x + fieldW + 4.0f;
     const bool okStep = std::isfinite(step);
     if (Button(id ^ 0x2d, bx, y, btnW, h, "-") && okStep && std::isfinite(*value - step))              { *value -= step; ch = true; }
@@ -6256,6 +6379,7 @@ void EndDisabled() {
 bool IsDisabled() { return g_disCount > 0; }
 
 void ResetState() {
+    g_nextNum = NextNumber(); for (auto& t : g_numText) t[0] = 0; g_numLast = 0;
     g_dockAware = false; g_dockRouted = false;
     g_split = SplitState(); g_windowList._Splitter._Count = 1; g_windowList._Splitter._Current = 0;
     UseLauncherLook(false);

@@ -21,7 +21,7 @@ struct Host {
     std::filesystem::path launcherDir;           ///< <launcher dir>/Versions is where everything goes
     std::string currentVersion;                  ///< the editor in Tools/ (what a plain Open starts)
     std::string launcherVersion;                 ///< this launcher, as built
-    okayversions::Sources sources;               ///< the releases bucket, GitHub, ...
+    okayversions::Sources sources;               ///< the releases bucket (never GitHub)
     std::string runningEditorVersion;            ///< version of the editor that is open ("" = unknown)
     bool editorRunning = false;
     ImVec4 accent{0.26f, 0.59f, 0.98f, 1.0f}, accentDim{0.19f, 0.43f, 0.72f, 1.0f}, cardBg{0.15f, 0.163f, 0.2f, 1.0f};

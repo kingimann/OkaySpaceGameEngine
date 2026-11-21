@@ -51,6 +51,30 @@ public:
 
     float Duration() const { return m_keys.empty() ? 0.0f : m_keys.back().time; }
 
+    /// Wrap `t` like Evaluate and find its segment: keys i and i+1, with u in
+    /// [0,1] the fraction between them. False with fewer than two keys.
+    /// Rotation tracks use this to slerp all four quaternion curves together.
+    bool Locate(float t, std::size_t& i, float& u) const {
+        if (m_keys.size() < 2) return false;
+        float start = m_keys.front().time, end = m_keys.back().time;
+        float span = end - start;
+        if (span > Mathf::Epsilon) {
+            switch (wrap) {
+                case Wrap::Clamp:    t = Mathf::Clamp(t, start, end); break;
+                case Wrap::Loop:     t = start + Mathf::Repeat(t - start, span); break;
+                case Wrap::PingPong: t = start + Mathf::PingPong(t - start, span); break;
+            }
+        }
+        auto it = std::lower_bound(m_keys.begin() + 1, m_keys.end(), t,
+                                   [](const Keyframe& k, float tv) { return k.time < tv; });
+        if (it == m_keys.end()) { i = m_keys.size() - 2; u = 1.0f; return true; }
+        i = (std::size_t)(it - m_keys.begin()) - 1;
+        float seg = it->time - m_keys[i].time;
+        u = seg > Mathf::Epsilon ? (t - m_keys[i].time) / seg : 0.0f;
+        u = Mathf::Clamp01(u);
+        return true;
+    }
+
     float Evaluate(float t) const {
         if (m_keys.empty()) return 0.0f;
         if (m_keys.size() == 1) return m_keys.front().value;

@@ -184,7 +184,7 @@ struct CameraRecentre {
     }
 };
 
-// ---- enter / exit key --------------------------------------------------------------------------------------------------
+// ---- enter / exit key ------------------------------------------------------------------------------------------------ lint-allow: secret
 /// One key to get in and out: released before `holdTime` = driver (a tap); still held at `holdTime` = passenger. Each result
 /// is given once.
 struct EnterHold {

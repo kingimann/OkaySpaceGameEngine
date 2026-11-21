@@ -567,7 +567,8 @@ void TestRowClipper() {
             if (!same && std::getenv("CLIPDBG")) { int n = 0, x0 = 9999, y0 = 9999, x1 = -1, y1 = -1; for (int y = 0; y < a.h; ++y) for (int x = 0; x < a.w; ++x) if (PixelAt(a, x, y) != PixelAt(b, x, y)) { ++n; x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x); y1 = std::max(y1, y); }
                 std::fprintf(stderr, "  %d px differ in [%d,%d]-[%d,%d]\n", n, x0, y0, x1, y1); }
             CHECK(same);
-            CHECK(vOn < vOff);                       // and it really emitted less
+            CHECK(vOn <= vOff);                      // and it emitted no more (since every shape wholly outside the clip is skipped, section 10, the
+                                                     // rows the clipper skips would not have been emitted either; the clipper still saves their layout)
             CHECK(visOn > 0 && visOn < c.rows);
             CHECK(visOff == c.rows);                 // with the clipper off every row reports visible
         }
@@ -587,12 +588,13 @@ void TestRowClipper() {
         }
         UI::UseLauncherLook(false);
     }
-    {   // the same table without the clipper overflows: this is what the clipper fixes (kept as the regression's reason)
+    {   // the same table without the clipper used to overflow the vertex batch (the clipper's reason); now the shapes outside the clip are
+        // skipped where they are drawn (docs/own_ui_toolkit.md section 10), so nothing is dropped either way
         UI::SetTableRowClipping(false);
         ClipRig big; big.rows = 5000; big.r.Frames(3);
         const int dropped = UI::GetDrawData().dropped;
         UI::SetTableRowClipping(true);
-        CHECK(dropped > 0);
+        CHECK(dropped == 0);
         std::fprintf(stderr, "  5000 rows, clipper off: %d shapes dropped\n", dropped);
     }
     // 3. the scrolled-to row is the right one: after scrolling the first visible row is near the scroll offset / row height

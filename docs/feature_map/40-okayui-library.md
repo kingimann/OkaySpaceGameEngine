@@ -195,3 +195,25 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Words:** SetNextWindowBgAlpha, SetNextWindowCollapsed, PushMultiItemsWidths, StyleColorsLight, AddNgon, AddImageRounded, ChildFlags, HoveredFlags, MouseButton, context, replace Dear ImGui
 - **Seen as:** a ported panel does not compile because of a missing call name; a child window with a content-sized height is the wrong size; a light theme call has no effect
 - **Ask me like:** "work on 40.9.4, add Child_AutoResizeX"
+
+
+### 40.10 The Inspector on OkayUI (preview, off by default)
+- **What:** the editor's Inspector drawn by our own toolkit instead of Dear ImGui: the object header card, the component bars and about a hundred component bodies, described once as "field rows" and drawn by OkayUI, with a Dear ImGui drawing of the same rows for side-by-side tests. Off by default; Dear ImGui stays the default and every body without an up-to-date OkayUI version stays Dear ImGui's.
+- **Parts:**
+  - 40.10.1 Field rows - `shared/InspectorFieldsModel.hpp`, `shared/InspectorPanelModel.hpp` - one row list per body (drag, slider, check box, combo, colour, asset slot, gradient, curve, mask, list, note, button), no toolkit or engine types
+  - 40.10.2 OkayUI views - `okayui/screens/OkayUIEditorPanels.cpp` - header card, component bar with its menu, rows, tooltips drawn last, sub-menu lists inside popups
+  - 40.10.3 Dear ImGui views for the comparison tests - `editor/EditorPanelViews.cpp` - the same rows drawn by Dear ImGui (not used by the default editor)
+  - 40.10.4 Editor hosting - `editor/main.cpp` (`UseOkayUIInspector`, the "Inspector's OkayUI parts" block before `DrawInspector`), `editor/OkayPanels.cpp`, `editor/InspectorPanel.cpp` (generic card), `editor/NavigationWindow.cpp`, `editor/BehaviorTreeWindow.cpp`, `editor/FpHandsWindow.cpp`, `editor/LevelTools.cpp`
+  - 40.10.5 The switch - `shared/OkayUIBackend.hpp` (`InspectorOn`), `shared/OwnSwitches.hpp` (Settings > Experimental item "OkayUI Inspector", `OKAY_UI_INSPECTOR=1`)
+  - 40.10.6 Toolkit pieces it needs - `okayui/src/OkayUI.cpp` - framed widgets (`StyleVar_FramedWidgets`, framed number fields through `FramedNumbersOn`), text rows (`StyleVar_TextRowHeight`), popup padding and width, combo list placement, 32 popup slots, Dear ImGui wrapping, `SearchField`, middle button, reorderable tabs, hideable table columns, `BeginChild(id, size, flags)` with padding and outline
+- **Code:** `shared/InspectorFieldsModel.hpp`, `shared/InspectorPanelModel.hpp`, `okayui/screens/OkayUIEditorPanels.cpp`, `editor/EditorPanelViews.cpp`, `editor/OkayPanels.cpp`, `editor/main.cpp`, `shared/OkayUIBackend.hpp`, `shared/OwnSwitches.hpp`
+- **API:** `okaypanels::InspFieldList`, `oked::DrawCompHeaderOkayUI`, `UseOkayUIInspector`, `okayuibackend::InspectorOn`
+- **Editor:** off by default. On with `OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`, or Settings > Experimental: "OkayUI screens" and "OkayUI Inspector" both on (restart)
+- **Docs:** `docs/ui/own_ui_toolkit.md` (sections 14 to 23)
+- **Tests:** `okayui_inspector`, `okayui_inspector_imgui`, `okayui_editor_panels`, `okayui_hierarchy`, `okayui_imcompat`, `ui_backend`, `own_switches`
+- **Status:** Partial - built and tested headless; run under Xvfb on Linux only, never on Windows. Bodies whose Dear ImGui version changed on main after the port (Camera, Light, Mesh Renderer, Particle System, Water, Modifiers, Cinemachine Brain, First-person, Third-person and View toggle settings) stay Dear ImGui until their rows are brought up to date
+- **Open:** bring the stale bodies above up to date; the Hierarchy, Problems, Stats, History, Profiler, Tags and Layers, Import, Post-processing and Project Settings ports are in the library and its tests but not wired into the editor (their Dear ImGui panels changed on main); no Windows run
+- **Related:** 40.4, 40.9, 15
+- **Words:** Inspector, OkayUI Inspector, field rows, component body, replace Dear ImGui, preview, Experimental, OKAY_UI_INSPECTOR
+- **Seen as:** the Inspector looks the same with OkayUI on; a component body is still Dear ImGui with OkayUI on; typing in an OkayUI field triggers an editor shortcut
+- **Ask me like:** "work on 40.10, bring the Light body's OkayUI rows up to date"

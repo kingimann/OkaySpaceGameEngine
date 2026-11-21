@@ -990,16 +990,18 @@ bool LocKeyInput(EditorState& ed, const char* label, std::string& key) {
     return changed;
 }
 
+void LocalizedTextSwitch(EditorState& ed, LocalizedText& loc, std::string& literal, GameObject* go, bool on) {
+    ed.PushUndo();
+    if (on) loc.key = KeyForText(ed, literal, "ui." + Localization::KeyPart(go ? go->name : std::string("text")));
+    else loc.key.clear();
+    if (go) LocalizeObject(*go);
+    ed.dirty = true;
+}
+
 bool LocalizedTextField(EditorState& ed, const char* id, LocalizedText& loc, std::string& literal, GameObject* go) {
     ImGui::PushID(id);
     bool on = !loc.key.empty();
-    if (ImGui::Checkbox("Localized", &on)) {
-        ed.PushUndo();
-        if (on) loc.key = KeyForText(ed, literal, "ui." + Localization::KeyPart(go ? go->name : std::string("text")));
-        else loc.key.clear();
-        if (go) LocalizeObject(*go);
-        ed.dirty = true;
-    }
+    if (ImGui::Checkbox("Localized", &on)) LocalizedTextSwitch(ed, loc, literal, go, on);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Show a string-table key's text in the player's language instead of this literal text.\n"
                           "Turning it on uses the key whose text this is, or adds one (View > Editors & Tools > Localization).");
@@ -1008,10 +1010,9 @@ bool LocalizedTextField(EditorState& ed, const char* id, LocalizedText& loc, std
     return on;
 }
 
-bool LocalizedSwitch(EditorState& ed, Component* c) {
+void LocalizedSwitchApply(EditorState& ed, Component* c, bool on) {
     if (auto* pm = dynamic_cast<PauseMenu*>(c)) {
-        bool on = pm->localized;
-        if (ImGui::Checkbox("Localized##pm", &on)) {
+        {
             ed.PushUndo();
             pm->localized = on;
             if (on) {
@@ -1024,22 +1025,32 @@ bool LocalizedSwitch(EditorState& ed, Component* c) {
             LocalizeScene(ed.scene(), true);
             ed.dirty = true;
         }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("The menu's title, buttons, slider labels and hint show the pause.* keys of the string table\n"
-                              "in the player's language. Turning it on adds those keys with the menu's current words.");
+        return;
+    }
+    if (auto* hp = dynamic_cast<HoldPrompt*>(c)) {
+        ed.PushUndo();
+        hp->localized = on;
+        if (on) AddMissing(ed, HoldPrompt::LocKeys());
+        ed.dirty = true;
+    }
+}
+
+const char* const kPauseLocalizedTip = "The menu's title, buttons, slider labels and hint show the pause.* keys of the string table\n"
+                                       "in the player's language. Turning it on adds those keys with the menu's current words.";
+const char* const kHoldLocalizedTip = "The prompts come from the hold.pickup, hold.drop and hold.either keys ({0} is the key name).\n"
+                                      "Turning it on adds them with the English lines.";
+
+bool LocalizedSwitch(EditorState& ed, Component* c) {
+    if (auto* pm = dynamic_cast<PauseMenu*>(c)) {
+        bool on = pm->localized;
+        if (ImGui::Checkbox("Localized##pm", &on)) LocalizedSwitchApply(ed, pm, on);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPauseLocalizedTip);
         return pm->localized;
     }
     if (auto* hp = dynamic_cast<HoldPrompt*>(c)) {
         bool on = hp->localized;
-        if (ImGui::Checkbox("Localized##hp", &on)) {
-            ed.PushUndo();
-            hp->localized = on;
-            if (on) AddMissing(ed, HoldPrompt::LocKeys());
-            ed.dirty = true;
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("The prompts come from the hold.pickup, hold.drop and hold.either keys ({0} is the key name).\n"
-                              "Turning it on adds them with the English lines.");
+        if (ImGui::Checkbox("Localized##hp", &on)) LocalizedSwitchApply(ed, hp, on);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kHoldLocalizedTip);
         return hp->localized;
     }
     if (auto* ls = dynamic_cast<LoadingScreen*>(c)) {

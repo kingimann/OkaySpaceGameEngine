@@ -99,6 +99,7 @@ Mat4 Camera::ViewMatrix() const {
 
 void Camera::Shake(float strength) {
     if (Accessibility::MotionScale() <= 0.0f) return;   // the player turned off screen shake
+    if (!std::isfinite(strength)) return;                // a NaN would stick in the trauma for good
     m_trauma = Mathf::Clamp(m_trauma + strength, 0.0f, 1.0f);
 }
 
@@ -106,7 +107,9 @@ void Camera::SetCutsceneShake(const Vec3& pos, const Vec3& rotDeg) { m_cutPos = 
 void Camera::ClearCutsceneShake() { m_cutPos = {0, 0, 0}; m_cutRot = {0, 0, 0}; }
 
 void Camera::ZoomTo(float target, float seconds) {
+    if (!std::isfinite(target)) return;
     target = target > 0.01f ? target : 0.01f;
+    if (!std::isfinite(seconds)) seconds = 0.0f;
     if (seconds <= 0.0f) { zoom = target; m_zoomDur = 0.0f; return; }
     m_zoomFrom = zoom; m_zoomTarget = target; m_zoomTime = 0.0f; m_zoomDur = seconds;
 }
@@ -153,6 +156,7 @@ void Camera::HitPulse(float strength) {
 }
 
 void Camera::LateUpdate(float dt) {
+    if (!(dt >= 0.0f) || !std::isfinite(dt)) return;   // a NaN or negative step must not poison zoom, shake or fov
     if (m_zoomDur > 0.0f) {   // smooth zoom (ease in-out)
         m_zoomTime += dt;
         float t = Mathf::Clamp(m_zoomTime / m_zoomDur, 0.0f, 1.0f);
@@ -243,4 +247,16 @@ Mat4 Camera::ProjectionMatrix(float aspect) const {
     return p;
 }
 
+} // namespace okay
+
+// ---- VirtualCamera without a brain (needs CinemachineBrain's full type, so it lives here) ----
+#include "okay/Components/CinemachineBrain.hpp"
+namespace okay {
+void VirtualCamera::LateUpdate(float dt) {
+    Scene* s = GetScene();
+    if (!s) return;
+    for (CinemachineBrain* b : s->FindObjectsOfType<CinemachineBrain>())
+        if (b->enabled && b->gameObject && b->gameObject->active) return;   // the brain solves us
+    Solve(dt, true);
+}
 } // namespace okay

@@ -245,16 +245,33 @@ bool ReadAc3dBuffer(const std::string& text, const std::string& baseDir, Importe
 /// OGRE XML mesh (.mesh.xml): one part per submesh (shared or own vertex buffers; position, normal and the first texture
 /// coordinate set; triangle lists, strips and fans as written), the submesh's material name, and from `materialScripts`
 /// (the text of .material files; ReadOgreXmlFile reads the ones next to the mesh) the first pass's diffuse, emissive and
-/// shininess and the first texture unit's texture. Skeletons, bone assignments, poses and morph animation, level of
+/// shininess and the first texture unit's texture. Poses and morph animation, level of
 /// detail and vertex colours are not read (reported in `out.notes`). Coordinates, winding and texture coordinates as written.
+/// With `skeletonXml` (the text of the .skeleton.xml the mesh links to; ReadOgreXmlFile loads the one next to the mesh) the
+/// bones become nodes under the root, each part is skinned (four strongest <vertexboneassignment> weights, renormalised) and the
+/// skeleton's animations become clips; a skeleton that cannot be read leaves the mesh rigid and says why in `out.notes`.
 bool ReadOgreXmlBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
-                       const std::vector<std::string>* materialScripts = nullptr);
+                       const std::vector<std::string>* materialScripts = nullptr, const std::string* skeletonXml = nullptr);
+/// OGRE skeleton (.skeleton.xml): the root node "OGRE" and the bones under it as nodes (parent first, local bind pose from
+/// <position>, <rotation angle axis> in radians and <scale>), and each <animation> as a clip with one channel per track. A
+/// keyframe's translate, rotate and scale are relative to the bone's bind pose (position = bind + translate, rotation = bind *
+/// rotate, scale = bind * scale). No parts. Duplicate bone ids or names, an unknown parent and parent loops are refused.
+bool ReadOgreSkeletonXml(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+/// OGRE binary skeleton (.skeleton, little endian, serializer v1.10 and v1.80): the same nodes, bind pose and clips as
+/// ReadOgreSkeletonXml gives for the XML form of the same skeleton (bones by handle, parents, animations of tracks of keyframes,
+/// each relative to the bind pose; a bone's or keyframe's scale where the chunk holds one). Blend mode, additive base poses and
+/// linked skeletons are reported in `out.notes`, not applied. Big-endian files are refused.
+bool ReadOgreSkeletonBinary(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
 /// OGRE binary mesh (.mesh, little endian, serializer v1.8 and later): the same parts, materials and notes as the XML reader
 /// gives for the XML form of the same mesh (position, normal and the first texture coordinate set of 32-bit float vertex
-/// elements; triangle lists, strips and fans). Skeleton, bone assignments, levels of detail, edge lists, poses and animations
-/// are skipped (reported in `out.notes`); big-endian files are refused.
+/// elements; triangle lists, strips and fans). Levels of detail, edge lists, poses and animations are skipped (reported in
+/// `out.notes`); big-endian files are refused. With `skeletonXml` (the text of the .skeleton.xml the mesh links to;
+/// ReadOgreBinaryFile loads `<link name>.xml` next to the mesh) the 0x4100 / 0x7000 bone assignments skin the parts exactly as
+/// ReadOgreXmlBuffer does. `skeletonXml` may also hold a binary .skeleton (told apart by its first bytes). The file readers find
+/// the binary `<link name>` next to the mesh only with OKAY_OWN_OGRE_SKELBIN=1 (off by default) and when there is no
+/// `<link name>.xml`; without a skeleton the mesh stays rigid, with a note.
 bool ReadOgreBinaryBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
-                          const std::vector<std::string>* materialScripts = nullptr);
+                          const std::vector<std::string>* materialScripts = nullptr, const std::string* skeletonXml = nullptr);
 /// XGL (.xgl, XML) and ZGL (.zgl, the same text as one zlib stream; told apart by the zlib header): one part per (mesh,
 /// material) on a node for each <OBJECT> that places it (<TRANSFORM> forward / up / position / scale), the <MAT> colours,
 /// shininess and alpha, normals and texture coordinates per face corner. Lines, patches, lights and textures are not read.

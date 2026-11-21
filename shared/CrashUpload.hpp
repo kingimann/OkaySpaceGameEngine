@@ -64,13 +64,13 @@ inline bool Enabled(bool settingOn, const char* envValue) { return settingOn && 
 inline std::string StatusLine(bool settingOn, const char* envValue) {
     if (EnvDisabled(envValue)) return "Off: the environment variable OKAY_CRASH_UPLOAD is 0.";
     if (!settingOn) return "Off: you turned it off. Reports stay on this computer.";
-    return "On: new crash reports are sent soon after they happen and become public GitHub issues. Reports from before it was switched on, or from while it was off, stay on this computer.";
+    return "On: new crash reports are sent soon after they happen and become public bug reports that anyone can read. Reports from before it was switched on, or from while it was off, stay on this computer.";
 }
 // What is sent and where it ends up, in plain words: shown next to the switch in Settings and again in the one-time notice.
 inline const char* DisclosureLine() {
     return "Sends a cleaned copy of the crash report: the editor version, your Windows version, CPU, memory and graphics card, the scene's file name "
-           "and whether it was playing, the last 200 Console lines, the steps it took and the crash location. It is published as a PUBLIC issue on "
-           "GitHub, so anyone can read it. Your name, folders, email, computer name and IP address are removed from the report first; the server "
+           "and whether it was playing, the last 200 Console lines, the steps it took and the crash location. It is published as a PUBLIC bug report "
+           "on the project's issue tracker, so anyone can read it. Your name, folders, email, computer name and IP address are removed from the report first; the server "
            "that receives it still sees the network address your connection comes from, as any website does.";
 }
 inline const char* NoticeTitle() { return "Crash reports are sent automatically"; }
@@ -502,7 +502,7 @@ inline Result Run(const std::vector<Report>& reports, Ledger& ledger, const Tran
     return res;
 }
 
-// ---- Fallback: report it yourself on GitHub --------------------------------------------------------------------------------------
+// ---- An issue draft (made into an issue on the server side) -------------------------------------------------------------------------------------
 inline std::string PercentEncode(const std::string& s) {
     static const char* hex = "0123456789ABCDEF";
     std::string o;
@@ -576,24 +576,8 @@ inline IssueDraft MakeIssueDraft(const Report& original, const ScrubContext& ctx
     return d;
 }
 
-// https://github.com/<owner>/<repo>/issues/new?title=...&body=...&labels=crash, no longer than `maxUrl` (GitHub refuses about 8 KB).
-// Console lines are dropped first; then the report is cut. `repo` is "owner/name".
-inline std::string IssueUrl(const std::string& repo, const Report& original, const ScrubContext& ctx, std::size_t maxUrl = 7000, bool* trimmed = nullptr) {
-    const std::string base = "https://github.com/" + repo + "/issues/new?labels=crash&title=";
-    std::size_t keep = 30;
-    for (;;) {
-        const IssueDraft d = MakeIssueDraft(original, ctx, keep);
-        const std::string url = base + PercentEncode(d.title) + "&body=" + PercentEncode(d.body);
-        if (url.size() <= maxUrl) { if (trimmed) *trimmed = d.trimmed; return url; }
-        if (keep > 0) { keep = keep > 5 ? keep - 5 : 0; continue; }
-        // No Console left and still too long: cut the body (the whole text is on the clipboard, the page says so).
-        std::string body = d.body;
-        const std::string tail = "\n\n(The report was cut to fit a web address. Paste the full text from your clipboard here.)";
-        while (!body.empty() && (base + PercentEncode(d.title) + "&body=" + PercentEncode(body + tail)).size() > maxUrl) body.resize(body.size() * 9 / 10);
-        if (trimmed) *trimmed = true;
-        return base + PercentEncode(d.title) + "&body=" + PercentEncode(body + tail);
-    }
-}
+// (The "report it yourself on GitHub" web address was removed: the programs never open GitHub (owner decision 2026-11-20).
+// The draft above stays for the automatic upload path; crash-issues.yml makes issues on the server side.)
 
 } // namespace upload
 } // namespace okaycrash

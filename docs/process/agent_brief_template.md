@@ -67,6 +67,7 @@ default for a decision that is the owner's, say what you picked, and carry on.
 - [ ] The failing test was shown failing first (paste the output), then passing. Option-ON cases are tested too.
 - [ ] Rule 4a material: a way to try it in the Windows release (menu, template, shipped example scene, setting), exact
       steps and what to expect in `docs/try_it.md`; screenshots for visual work (headless renders are fine, say so).
+- [ ] Behaviour you changed was RUN, not guessed: `python3 scripts/okay_run.py SCENE --input ... --check ...` (docs/process/okay_run.md); paste its PASS/FAIL lines.
 - [ ] Docs updated in the same change; generated files regenerated (`python3 scripts/gen_feature_map.py --check`).
 - [ ] No forbidden includes; `python3 scripts/branch_lint.py all` and `python3 scripts/bug_patterns.py` are clean or each
       finding is explained.

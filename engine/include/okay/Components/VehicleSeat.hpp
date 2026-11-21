@@ -6,7 +6,7 @@
 //
 // Rules:
 //   - One driver per vehicle: a second Enter on a driver seat is refused. One seat per person.
-//   - Exit tries exitPoint, then its mirror images, then the roof. The first spot with no
+//   - Exit tries exitPoint, then its mirror images, then spots further out and along the car, the other side, behind and ahead (seatfit::ExitCandidates), then the roof. The first spot with no
 //     solid collider is used. If all are blocked the roof is used anyway.
 //   - The driver leaving makes the vehicle brake to a stop (VehicleController::brakeForce).
 //   - Destroying the driver, the seat or the vehicle never leaves a stale pointer.
@@ -43,6 +43,7 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Net/PlayerInput.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Components/VehicleSeatFit.hpp"
 #include <cmath>
 #include <string>
 #include <unordered_set>
@@ -323,12 +324,17 @@ private:
     }
 
     Vec3 PickExit(GameObject* who) const {
+        // First the four spots the seat always tried (exitPoint and its mirrors), so a car that exits fine keeps doing so.
         const Vec3 e = exitPoint;
         const Vec3 tries[4] = {e, Vec3{-e.x, e.y, e.z}, Vec3{e.x, e.y, -e.z}, Vec3{-e.x, e.y, -e.z}};
         for (const Vec3& t : tries) {
             Vec3 w = transform->TransformPoint(t);
             if (!Blocked(who, w)) return w;
         }
+        // Then further out and along the car, then behind and ahead (VehicleSeatFit.hpp): never inside geometry.
+        const auto c = seatfit::ExitCandidates(std::max(0.3f, std::fabs(e.x) - 0.4f), 2.2f, e.z, e.x < 0.0f, 0.3f, e.y);
+        const int i = seatfit::FirstFree(c, [&](const seatfit::V3& p) { return Blocked(who, transform->TransformPoint(Vec3{p.x, p.y, p.z})); });
+        if (i >= 0) return transform->TransformPoint(Vec3{c[(size_t)i].x, c[(size_t)i].y, c[(size_t)i].z});
         return SitWorld() + Vec3{0.0f, 2.5f, 0.0f};          // all blocked: roof
     }
 

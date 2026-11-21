@@ -16,7 +16,7 @@ namespace okay {
 /// 3D collider family). Pair with a Rigidbody3D to be moved by Physics3D.
 class Collider3D : public Component {
 public:
-    enum class Shape { Box, Sphere, Capsule, Cylinder, Mesh };
+    enum class Shape { Box, Sphere, Capsule, Cylinder, Mesh, Cone, ConvexHull, Compound, Heightfield, Plane };
 
     /// Trigger colliders detect overlap but don't push objects apart.
     bool isTrigger = false;
@@ -44,8 +44,24 @@ public:
     CombineMode frictionCombine = CombineMode::Default;
     /// How this collider's bounciness is combined with the one it touches. Default = the larger of the two.
     CombineMode bounceCombine = CombineMode::Default;
+    /// Contact offset: the collider counts as this much thicker when it touches something (a skin, in metres). 0 (the
+    /// default) is the exact shape. Handy to keep a thin or fast object from catching on seams.
+    float contactOffset = 0.0f;
 
     virtual Shape shape() const = 0;
+
+    // ---- Convex shapes built on the shape kernel (ShapeKernel3D.hpp): Cylinder, Cone, Convex Hull ----
+    /// True when the collider is one convex solid whose ConvexSupport() is valid (Cylinder, Cone, Convex Hull).
+    virtual bool HasConvexSupport() const { return false; }
+    /// World-space point of the solid furthest along `dirWorld`.
+    virtual Vec3 ConvexSupport(const Vec3& dirWorld) const { (void)dirWorld; return WorldCenter(); }
+    /// Mass shape: the centre of mass (world), the volume, and the turning inertia for a body of mass 1 as the diagonal
+    /// terms in the object's own axes. False when the collider has no such description (the older shapes).
+    virtual bool MassShape(Vec3& comWorld, float& volume, Vec3& unitInertia) const { (void)comWorld; (void)volume; (void)unitInertia; return false; }
+    /// Exact ray test in world space for the shapes above (and Plane / Compound / Heightfield). False when not handled here.
+    virtual bool RayShape(const Vec3& origin, const Vec3& dir, float maxT, float& t, Vec3& n) const {
+        (void)origin; (void)dir; (void)maxT; (void)t; (void)n; return false;
+    }
 
     /// World-space center of the collider. With the Improved physics quality the offset turns and scales with the object
     /// (as a child at that local position would); Classic adds it to the position unturned and unscaled, as it always did.
@@ -122,6 +138,11 @@ public:
         float b = axis == 2 ? Mathf::Abs(s.y) : Mathf::Abs(s.z);
         return radius * Mathf::Max(a, b);
     }
+    /// The long axis in world space: the object's rotation turns it (a capsule rolled onto its side lies on its side).
+    Vec3 WorldAxisDir() const {
+        Vec3 d = axis == 0 ? Vec3{1, 0, 0} : axis == 2 ? Vec3{0, 0, 1} : Vec3{0, 1, 0};
+        return transform ? transform->Rotation() * d : d;
+    }
     /// Half the distance between the two cap centers (segment half-length).
     virtual float SegmentHalf() const {
         Vec3 s = transform ? transform->LossyScale() : Vec3::One;
@@ -132,7 +153,7 @@ public:
     /// The capsule's inner segment endpoints in world space.
     virtual void Segment(Vec3& a, Vec3& b) const {
         Vec3 c = WorldCenter();
-        Vec3 dir = axis == 0 ? Vec3{1, 0, 0} : axis == 2 ? Vec3{0, 0, 1} : Vec3{0, 1, 0};
+        Vec3 dir = WorldAxisDir();
         float h = SegmentHalf();
         a = c - dir * h;
         b = c + dir * h;
@@ -145,25 +166,20 @@ public:
     }
 };
 
-/// Cylinder collider: a flat-capped tube. It reuses the capsule's segment + radius
-/// for collision (so it behaves like a capsule with slightly rounded ends), which
-/// is plenty for gameplay — barrels, pillars, tree trunks, coins on edge.
+/// Cylinder collider: a flat-capped tube with its own exact shape (flat ends, sharp rims), so it stands on its end, rolls
+/// on its side and rays hit the flat cap. It derives from the capsule only to share the radius / height / axis fields
+/// (and the saved record); every collision test uses the cylinder's own support function, never the capsule's rounded ends.
 class CylinderCollider3D : public CapsuleCollider3D {
 public:
     Shape shape() const override { return Shape::Cylinder; }
-    /// A cylinder's straight section spans nearly the full height (no spherical
-    /// caps eating into it), so use a longer inner segment than a capsule.
-    float SegmentHalf() const {
-        Vec3 s = transform ? transform->LossyScale() : Vec3::One;
-        float along = axis == 0 ? Mathf::Abs(s.x) : axis == 2 ? Mathf::Abs(s.z) : Mathf::Abs(s.y);
-        return Mathf::Max(0.0f, (height * along) * 0.5f - WorldRadius() * 0.05f);
-    }
-    void Segment(Vec3& a, Vec3& b) const {
-        Vec3 c = WorldCenter();
-        Vec3 dir = axis == 0 ? Vec3{1, 0, 0} : axis == 2 ? Vec3{0, 0, 1} : Vec3{0, 1, 0};
-        float h = SegmentHalf();
-        a = c - dir * h; b = c + dir * h;
-    }
+    bool HasConvexSupport() const override { return true; }
+    Vec3 ConvexSupport(const Vec3& dirWorld) const override;
+    bool MassShape(Vec3& comWorld, float& volume, Vec3& unitInertia) const override;
+    bool RayShape(const Vec3& origin, const Vec3& dir, float maxT, float& t, Vec3& n) const override;
+    void WorldAABB(Vec3& mn, Vec3& mx) const override;
+    /// The cylinder's inner segment (cap centre to cap centre), for code that still wants an axis line.
+    float SegmentHalf() const override;
+    void Segment(Vec3& a, Vec3& b) const override;
 };
 
 /// Mesh collider: collides against the exact triangles of the object's MeshRenderer

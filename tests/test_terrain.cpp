@@ -1,3 +1,4 @@
+#include <filesystem>
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include <cstdio>
@@ -284,7 +285,8 @@ int main() {
         Terrain t; t.Resize(24); t.size = 24.0f;
         t.Generate(1, 12.0f, 3.0f, 4, 9u);
         float lo, hi; t.HeightRange(lo, hi);
-        const char* png = "/tmp/okay_terrain_heightmap.png";
+        const std::string pngPath = (std::filesystem::temp_directory_path() / "okay_terrain_heightmap.png").string();
+        const char* png = pngPath.c_str();
         CHECK(t.ExportHeightmap(png));
 
         Terrain t2; t2.Resize(24); t2.size = 24.0f;     // same resolution

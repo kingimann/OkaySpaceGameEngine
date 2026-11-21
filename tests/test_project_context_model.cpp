@@ -514,25 +514,39 @@ int main() {
 
     // ---- path text: Normalize, SameOrInside, Outermost, NearestFolder ----
     {
+        // On Windows "/a/b" has no drive, so Normalize makes it "D:/a/b" (the current drive): spell the paths with it.
+        const auto D = [](const char* s) {
+#ifdef _WIN32
+            return std::filesystem::current_path().root_name().generic_u8string() + s;
+#else
+            return std::string(s);
+#endif
+        };
         using namespace okaypb::paths;
-        CHECK(Normalize("") == "" && Normalize("/a/b/../c/./d/") == "/a/c/d" && Normalize("/a//b") == "/a/b" && Normalize("/a\\b\\c") == "/a/b/c");
-        CHECK(Normalize("/") == "/" && StripSlash("/a/b///") == "/a/b" && StripSlash("/") == "/");
-        CHECK(SameOrInside("/a/b", "/a/b") && SameOrInside("/a/b", "/a/b/c") && SameOrInside("/a/b/", "/a/b/c/") && SameOrInside("/", "/a"));
-        CHECK(!SameOrInside("/a/b", "/a/bc") && !SameOrInside("/a/b", "/a") && !SameOrInside("/a/b/c", "/a/b"));
+        CHECK(Normalize("") == "" && Normalize(D("/a/b/../c/./d/")) == D("/a/c/d") && Normalize(D("/a//b")) == D("/a/b") && Normalize(D("/a\\b\\c")) == D("/a/b/c"));
+        CHECK(StripSlash("/a/b///") == "/a/b" && StripSlash("/") == "/");
+#ifndef _WIN32   // (on Windows the root of a drive is "D:/", which these root checks do not spell)
+        CHECK(Normalize("/") == "/" && SameOrInside("/", "/a"));
+#endif
+        CHECK(SameOrInside(D("/a/b"), D("/a/b")) && SameOrInside(D("/a/b"), D("/a/b/c")) && SameOrInside(D("/a/b/"), D("/a/b/c/")));
+        CHECK(!SameOrInside(D("/a/b"), D("/a/bc")) && !SameOrInside(D("/a/b"), D("/a")) && !SameOrInside(D("/a/b/c"), D("/a/b")));
         // Outermost: a folder and something inside it give the folder
         auto out = [](std::vector<std::string> v) { return Outermost(v); };
-        CHECK(out({"/p/A", "/p/A/x"}) == (std::vector<std::string>{"/p/A"}));
-        CHECK(out({"/p/A/x", "/p/A"}) == (std::vector<std::string>{"/p/A"}));                    // the order of the selection does not matter
-        CHECK(out({"/p/A", "/p/A/x", "/p/A/x/y.png", "/p/B/z.png"}) == (std::vector<std::string>{"/p/A", "/p/B/z.png"}));
-        CHECK(out({"/p/A", "/p/A b", "/p/A/x"}) == (std::vector<std::string>{"/p/A", "/p/A b"}));   // "A b" sorts between "A" and "A/x" in plain text: not inside A
-        CHECK(out({"/p/A", "/p/A-1", "/p/A.png", "/p/A/x"}) == (std::vector<std::string>{"/p/A", "/p/A-1", "/p/A.png"}));
-        CHECK(out({"/p/A", "/p/A"}) == (std::vector<std::string>{"/p/A"}));                      // twice the same path
-        CHECK(out({"/p/A/", "/p/A"}) == (std::vector<std::string>{"/p/A"}));                     // two spellings
-        CHECK(out({"/p/A/../A/x", "/p/A"}) == (std::vector<std::string>{"/p/A"}));
-        CHECK(out({"/p/b.png", "/p/a.png"}) == (std::vector<std::string>{"/p/a.png", "/p/b.png"}));   // sorted
-        CHECK(out({}).empty() && out({"/"}) == (std::vector<std::string>{"/"}));
+        CHECK(out({D("/p/A"), D("/p/A/x")}) == (std::vector<std::string>{D("/p/A")}));
+        CHECK(out({D("/p/A/x"), D("/p/A")}) == (std::vector<std::string>{D("/p/A")}));                    // the order of the selection does not matter
+        CHECK(out({D("/p/A"), D("/p/A/x"), D("/p/A/x/y.png"), D("/p/B/z.png")}) == (std::vector<std::string>{D("/p/A"), D("/p/B/z.png")}));
+        CHECK(out({D("/p/A"), D("/p/A b"), D("/p/A/x")}) == (std::vector<std::string>{D("/p/A"), D("/p/A b")}));   // "A b" sorts between "A" and "A/x" in plain text: not inside A
+        CHECK(out({D("/p/A"), D("/p/A-1"), D("/p/A.png"), D("/p/A/x")}) == (std::vector<std::string>{D("/p/A"), D("/p/A-1"), D("/p/A.png")}));
+        CHECK(out({D("/p/A"), D("/p/A")}) == (std::vector<std::string>{D("/p/A")}));                      // twice the same path
+        CHECK(out({D("/p/A/"), D("/p/A")}) == (std::vector<std::string>{D("/p/A")}));                     // two spellings
+        CHECK(out({D("/p/A/../A/x"), D("/p/A")}) == (std::vector<std::string>{D("/p/A")}));
+        CHECK(out({D("/p/b.png"), D("/p/a.png")}) == (std::vector<std::string>{D("/p/a.png"), D("/p/b.png")}));   // sorted
+        CHECK(out({}).empty());
+#ifndef _WIN32
+        CHECK(out({"/"}) == (std::vector<std::string>{"/"}));
         CHECK(out({"/", "/p/A"}) == (std::vector<std::string>{"/"}));                             // everything is inside the root
-        CHECK(out({"/p/AB", "/p/A", "/p/A/B"}) == (std::vector<std::string>{"/p/A", "/p/AB"}));
+#endif
+        CHECK(out({D("/p/AB"), D("/p/A"), D("/p/A/B")}) == (std::vector<std::string>{D("/p/A"), D("/p/AB")}));
         // against the slow way (every item against every other) on a few thousand random paths
         std::mt19937 rng(12345);
         const char* parts[] = {"A", "A b", "A-1", "a", "B", "B.c", "x", "y z", "_"};
@@ -565,9 +579,9 @@ int main() {
         }
         // a big selection is quick (this is only a loop count, the real guard is that it finishes)
         std::vector<std::string> big;
-        for (int i = 0; i < 20000; ++i) big.push_back("/p/Folder/file" + std::to_string(i) + ".png");
-        big.push_back("/p/Folder");
-        CHECK(Outermost(big) == (std::vector<std::string>{"/p/Folder"}));
+        for (int i = 0; i < 20000; ++i) big.push_back(D("/p/Folder/file") + std::to_string(i) + ".png");
+        big.push_back(D("/p/Folder"));
+        CHECK(Outermost(big) == (std::vector<std::string>{D("/p/Folder")}));
 
         // NearestFolder: the shown folder, or the nearest parent that is still there
         TempDir td;

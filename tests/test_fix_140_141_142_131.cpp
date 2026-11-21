@@ -133,7 +133,7 @@ int main() {
 
         // A scene that is not open is renamed the same way and nothing follows it.
         const fs::path other = dir / "Assets" / "other.okayscene";
-        { std::ofstream f(other); f << "other scene\n"; }
+        { std::ofstream f(other, std::ios::binary); f << "other scene\n"; }   // binary: Windows text mode writes "\r\n"
         int follows = 0;
         oked::SceneRenameHooks h2;
         h2.followOpenScene = [&](const std::string&) { ++follows; };

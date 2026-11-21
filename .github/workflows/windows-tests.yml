@@ -142,6 +142,11 @@ jobs:
       SDL_VIDEODRIVER: dummy
       SDL_AUDIODRIVER: dummy
     steps:
+      # The runner's git turns LF into CRLF on checkout; the tests compare files byte for byte with what the code
+      # writes (docs/engine_api.md, scenes, fixtures), so check out exactly the bytes the Linux build saw.
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref }}

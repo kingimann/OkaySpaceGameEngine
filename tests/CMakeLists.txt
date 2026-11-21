@@ -1537,6 +1537,9 @@ add_test(NAME humanoid_template COMMAND test_humanoid_template)
 add_executable(test_controllers_ik test_controllers_ik.cpp)
 target_link_libraries(test_controllers_ik PRIVATE okay::engine)
 add_test(NAME controllers_ik COMMAND test_controllers_ik)
+add_executable(test_camera_after_ik test_camera_after_ik.cpp)
+target_link_libraries(test_camera_after_ik PRIVATE okay::engine)
+add_test(NAME camera_after_ik COMMAND test_camera_after_ik)
 
 add_executable(test_ecs test_ecs.cpp)
 target_link_libraries(test_ecs PRIVATE okay::engine)
@@ -3966,6 +3969,8 @@ okay_batchd_reader_test(ac3d Ac3dReader.cpp)
 okay_batchd_reader_test(ogre OgreXmlReader.cpp)
 # OGRE skeletons (.skeleton.xml) and skinned .mesh.xml: hand-computed fixtures, reader source only
 okay_batchd_reader_test(ogre_skeleton OgreXmlReader.cpp)
+# Binary .mesh skinned with the XML skeleton (0x4100 / 0x7000 bone assignments): hand-built binary fixtures, reader source only
+okay_batchd_reader_test(ogre_skinbin OgreXmlReader.cpp)
 # the XGL reader unpacks ZGL with the engine's own inflate
 okay_batchd_reader_test(xgl XglReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 okay_batchd_reader_test(irr IrrSceneReader.cpp)

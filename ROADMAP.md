@@ -10,6 +10,8 @@ _Last updated: 2026-11-13 17:55 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.899.0 | Save shortcut tests; code editor line commands (toggle comment, duplicate, move lines); Xbox packer limit and gamepad hot-plug (experimental, off by default); two-ended number slider in our own UI; own BMP writer; OGRE binary meshes skinned to their XML skeleton |
+| 2.898.0 | Launcher, editor and player no longer use GitHub: updates, version list, news and downloads only from our own server; password reset with an emailed code inside the launcher; own OGRE reader loads skeletons, animations and skinning; MSVC CI job (not required) |
 | 2.897.0 | FLAC sound files: fixed a crash on a damaged file; OkayUI number boxes follow their display format and slider options (own UI, off by default); tray-icon message handling as a tested model (launcher unchanged) |
 | 2.896.0 | Xbox (experimental, off by default): content download can time out, be cancelled and report progress; new rules for Windows SDK tools and keeping GitHub private to the owner |
 | 2.895.0 | Fixed a launcher memory bug on the Community tab (read freed memory; also fixed in our own OkayUI vector); Game view size/FPS text moves off the game's own UI; launcher sidebar compact layout and scrolling on short windows; Windows test job in CI (runs after merges and nightly) |

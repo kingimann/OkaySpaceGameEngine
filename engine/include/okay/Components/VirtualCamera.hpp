@@ -536,6 +536,10 @@ public:
         m_fade.Clear();
     }
     /// Disabled or removed: put things back. Only renderers that still exist are touched.
+    /// With no camera brain in the scene a rig still tracks on its own: it solves itself once a frame
+    /// (as the live shot), so a lone rig never sits frozen with stale or broken angles. When a brain is
+    /// present the brain solves every rig exactly once, so this does nothing. Defined in Camera.cpp.
+    void LateUpdate(float dt) override;
     void OnDisable() override { RestoreStillAlive(); }
     void OnDestroy() override { RestoreStillAlive(); }
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {

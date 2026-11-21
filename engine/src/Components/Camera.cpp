@@ -248,3 +248,15 @@ Mat4 Camera::ProjectionMatrix(float aspect) const {
 }
 
 } // namespace okay
+
+// ---- VirtualCamera without a brain (needs CinemachineBrain's full type, so it lives here) ----
+#include "okay/Components/CinemachineBrain.hpp"
+namespace okay {
+void VirtualCamera::LateUpdate(float dt) {
+    Scene* s = GetScene();
+    if (!s) return;
+    for (CinemachineBrain* b : s->FindObjectsOfType<CinemachineBrain>())
+        if (b->enabled && b->gameObject && b->gameObject->active) return;   // the brain solves us
+    Solve(dt, true);
+}
+} // namespace okay

@@ -3386,6 +3386,8 @@ int   g_loopCuts = 1;                          // loop cut: number of cuts (mous
 okay::modeling::EdgeList g_slideLoop;          // edge slide: the loop being slid...
 std::vector<Vec3> g_slideFrom;                 // ...from these positions
 okay::modeling::PolyMesh g_slidePoly;          // its topology
+std::vector<int> g_slideTriFace;               // ...the polygon each triangle of the mesh belongs to
+std::vector<Vec2> g_slideUVFrom, g_slideCornerUVFrom;   // ...and the UVs before the slide (per vertex, per corner)
 bool  g_slideAfterCut = false;                 // the slide finishing a loop cut (one undo step for both)
 ImVec2 g_ptoolMouse0;                          // the mouse when the tool started
 Mesh  g_bevelStart;                            // bevel: the mesh before it, re-beveled live
@@ -3683,11 +3685,15 @@ static void EndPolyTool(bool keep) {
         mr->mesh = g_bevelStart;
         g_meshSelVerts = g_bevelSelVerts; g_meshSelFaces = g_bevelSelFaces; g_meshSelEdges = g_bevelSelEdges;
     }
-    if (g_ptool == PolyTool::Slide && mr && !keep && g_slideFrom.size() == mr->mesh.vertices.size()) mr->mesh.vertices = g_slideFrom;
+    if (g_ptool == PolyTool::Slide && mr && !keep && g_slideFrom.size() == mr->mesh.vertices.size()) {
+        mr->mesh.vertices = g_slideFrom;
+        mr->mesh.uvs = g_slideUVFrom;
+        mr->mesh.cornerUVs = g_slideCornerUVFrom;
+    }
     g_ptool = PolyTool::None;
     g_ptoolTyped.Clear();
     g_knifePts.clear(); g_knifePos.clear();
-    g_slideLoop.clear(); g_slideFrom.clear();
+    g_slideLoop.clear(); g_slideFrom.clear(); g_slideTriFace.clear(); g_slideUVFrom.clear(); g_slideCornerUVFrom.clear();
     g_slideAfterCut = false;
 }
 
@@ -30295,15 +30301,26 @@ void DrawModeling(EditorState& ed) {
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Split the face the two selected vertices share with a new edge between them.");
                 ImGui::SameLine();
-                if (ToolButton("Bridge Edge Loops##me", haveEdges, "Select two open edge loops (the rims of two holes or tube ends).")) {
-                    const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+                if (ToolButton("Bridge Edge Loops##me", haveEdges, "Select two open edge loops (the rims of two holes or tube ends), or two groups of faces (Face mode).")) {
                     std::string err;
                     int n = 0;
-                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n = pmo::BridgeEdgeLoops(p, edges, &err); return n > 0; }))
-                        ConsoleLog("Bridged with " + std::to_string(n) + " face(s)");
-                    else ConsoleLog("Bridge: " + err, 1);
+                    if (g_meshSelMode == 1 && !g_meshSelFaces.empty()) {
+                        // Face mode: the selected triangles name polygons; delete the two groups and bridge the holes.
+                        std::vector<int> triFace;
+                        pmo::PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}, &triFace);   // the same polygons ApplyPoly builds
+                        std::vector<int> faces;
+                        for (int t : g_meshSelFaces) if (t >= 0 && t < (int)triFace.size()) faces.push_back(triFace[(std::size_t)t]);
+                        if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n = pmo::BridgeFaces(p, faces, &err); return n > 0; }))
+                            ConsoleLog("Bridged the two face groups with " + std::to_string(n) + " face(s)");
+                        else ConsoleLog("Bridge: " + err, 1);
+                    } else {
+                        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+                        if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n = pmo::BridgeEdgeLoops(p, edges, &err); return n > 0; }))
+                            ConsoleLog("Bridged with " + std::to_string(n) + " face(s)");
+                        else ConsoleLog("Bridge: " + err, 1);
+                    }
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Join two open edge loops (the same number of edges each) with a band of faces.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Join two open edge loops (the same number of edges each) with a band of faces.\nIn Face mode: select two groups of faces (for example two facing faces); they are removed and the holes are joined.");
 
                 // ---- Spin and Extrude Along Path -----------------------------------------------------
                 {
@@ -47403,11 +47420,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     Vec3 dirW = (eye - vWorld(bv)).Normalized();    // toward camera
                     Vec3 dirL = Minv.MultiplyVector(dirW);
                     Vec3 c = mesh.vertices[bv];                     // before the brush moves it
-                    mesh.SculptBrush(c, dirL, g_sculptRadius, g_sculptStrength, g_sculptMode);
-                    // Live X symmetry: repeat the stroke mirrored across the YZ plane.
-                    if (g_meshSymX)
-                        mesh.SculptBrush(Vec3{-c.x, c.y, c.z}, Vec3{-dirL.x, dirL.y, dirL.z},
-                                         g_sculptRadius, g_sculptStrength, g_sculptMode);
+                    // Live X symmetry: the stroke is mirrored across the YZ plane in the same pass.
+                    mesh.SculptBrush(c, dirL, g_sculptRadius, g_sculptStrength, g_sculptMode, g_meshSymX);
                     ed.dirty = true;
                 }
                 g_uiHandled = true;     // consume so the object isn't orbited/moved
@@ -47504,7 +47518,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (loop.empty()) { ConsoleLog("Edge slide: select an edge loop first", 1); return; }
                 g_slideLoop = loop;
                 g_slideFrom = mesh.vertices;
-                g_slidePoly = okay::modeling::PolyMesh::FromMesh(mesh, {false, true, 1.0f});
+                g_slidePoly = okay::modeling::PolyMesh::FromMesh(mesh, {false, true, 1.0f}, &g_slideTriFace);
+                g_slideUVFrom = mesh.uvs;
+                g_slideCornerUVFrom = mesh.cornerUVs;
                 g_slideAfterCut = afterCut;
                 g_ptoolMouse0 = io.MousePos;
                 g_ptoolTyped.Clear();
@@ -47619,6 +47635,25 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 pm.verts = g_slideFrom;
                 okay::modeling::EdgeSlide(pm, g_slideLoop, amount, &g_slideFrom);
                 for (std::size_t i = 0; i < pm.verts.size() && i < mesh.vertices.size(); ++i) mesh.vertices[i] = pm.verts[i];
+                // The UVs slide with the vertices (each face keeps its own mapping, seams stay split).
+                if ((int)g_slideTriFace.size() == mesh.TriangleCount()) {
+                    const bool perCorner = g_slideCornerUVFrom.size() == mesh.triangles.size() && !g_slideCornerUVFrom.empty();
+                    const bool perVertex = g_slideUVFrom.size() == mesh.vertices.size() && !g_slideUVFrom.empty();
+                    for (int t = 0; t < mesh.TriangleCount() && (perCorner || perVertex); ++t) {
+                        const int f = g_slideTriFace[(std::size_t)t];
+                        if (f < 0 || f >= (int)pm.faces.size() || pm.faces[(std::size_t)f].uvs.size() != pm.faces[(std::size_t)f].verts.size()) continue;
+                        const okay::modeling::PolyFace& F = pm.faces[(std::size_t)f];
+                        for (int k = 0; k < 3; ++k) {
+                            const int v = mesh.triangles[(std::size_t)t * 3 + k];
+                            for (int c = 0; c < F.Size(); ++c)
+                                if (F.verts[(std::size_t)c] == v) {
+                                    if (perCorner) mesh.cornerUVs[(std::size_t)t * 3 + k] = F.uvs[(std::size_t)c];
+                                    else if (v >= 0 && v < (int)mesh.uvs.size()) mesh.uvs[(std::size_t)v] = F.uvs[(std::size_t)c];
+                                    break;
+                                }
+                        }
+                    }
+                }
                 mesh.normals.clear();
                 ed.dirty = true;
                 char buf[160];
@@ -47628,9 +47663,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 else if (confirmKey || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
                     if (!g_slideAfterCut) {   // its own undo step (after a loop cut, the cut's step covers both)
                         const std::vector<Vec3> result = mesh.vertices;
+                        const std::vector<Vec2> resultUV = mesh.uvs, resultCornerUV = mesh.cornerUVs;
                         mesh.vertices = g_slideFrom;
+                        mesh.uvs = g_slideUVFrom;
+                        mesh.cornerUVs = g_slideCornerUVFrom;
                         EditUndoPoint(ed, emr);
                         mesh.vertices = result;
+                        mesh.uvs = resultUV;
+                        mesh.cornerUVs = resultCornerUV;
                     }
                     EndPolyTool(true);
                 }

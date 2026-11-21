@@ -109,16 +109,17 @@ int main() {
         Mesh sp = Flat();
         const int c = FindVert(sp, {0, 0, 0});
         sp.vertices[c].y = 1.0f;
-        sp.SculptBrush({0, 0, 0}, {0, 1, 0}, 0.6f, 0.5f, 2);
+        sp.SculptBrush({0, 1, 0}, {0, 1, 0}, 1.2f, 0.5f, 2);   // the brush on the spike's tip
         // The centre's neighbours all sit at y = 0: y goes 1 -> 1 + (0 - 1) * 0.5 * s(1) = 0.5.
         CHECK_NEAR(sp.vertices[c].y, 0.5f, 1e-5);
-        // Neighbours rise a little (one of their six neighbours was the spike), never past it.
-        const int e = FindVert(sp, {0.5f, 0, 0});
-        CHECK(sp.vertices[e].y > 0.0f && sp.vertices[e].y < 0.05f);
+        // An axis neighbour is d = 1.1180 from the tip: k = 0.5 * s(1 - 1.1180 / 1.2) = 0.5 * 0.013357,
+        // and one of its six neighbours was the spike, so it rises to (1 / 6) * 0.0066785 = 0.00111.
+        const int e = FindVert(Flat(), {0.5f, 0, 0});        // looked up where it started
+        CHECK_NEAR(sp.vertices[e].y, 0.00111f, 2e-5);
         // Strength above 1 never throws a vertex past the average (no overshoot).
         Mesh big = Flat();
         big.vertices[c].y = 1.0f;
-        big.SculptBrush({0, 0, 0}, {0, 1, 0}, 0.6f, 5.0f, 2);
+        big.SculptBrush({0, 1, 0}, {0, 1, 0}, 0.6f, 5.0f, 2);
         CHECK(big.vertices[c].y >= -1e-5f && big.vertices[c].y <= 1.0f);
     }
 
@@ -127,13 +128,13 @@ int main() {
         Mesh m = Flat();
         const int c = FindVert(m, {0, 0, 0});
         m.vertices[c].y = 0.3f;
-        m.SculptBrush({0, 0, 0}, {0, 1, 0}, 0.6f, 1.0f, 3);
-        // Five vertices lie inside r = 0.6 (the centre and its four axis neighbours), so the
-        // plane is y = 0.3 / 5 = 0.06 and the centre (k = 1) lands on it.
+        m.SculptBrush({0, 0.3f, 0}, {0, 1, 0}, 0.7f, 1.0f, 3);   // the brush on the bump's tip
+        // Five vertices lie inside r = 0.7 (the tip and its four axis neighbours, d = 0.5831;
+        // the diagonal ones are d = 0.7681), so the plane is y = 0.3 / 5 = 0.06 and the tip (k = 1) lands on it.
         CHECK_NEAR(m.vertices[c].y, 0.06f, 2e-3);
-        // An axis neighbour: d = 0.5, k = s(1/6) = 0.074074: y = 0.06 * 0.074074 = 0.00444.
-        CHECK_NEAR(m.vertices[FindVert(m, {0.5f, 0, 0})].y, 0.00444f, 1e-3);
-        CHECK_NEAR(m.vertices[FindVert(m, {1.0f, 0, 0})].y, 0.0f, 1e-6);
+        // An axis neighbour: k = s(1 - 0.5831 / 0.7) = s(0.16700) = 0.074360: y = 0.06 * 0.074360 = 0.00446.
+        CHECK_NEAR(m.vertices[FindVert(Flat(), {0.5f, 0, 0})].y, 0.00446f, 1e-3);
+        CHECK_NEAR(m.vertices[FindVert(Flat(), {1.0f, 0, 0})].y, 0.0f, 1e-6);
     }
 
     // ---- PINCH (mode 4): toward the brush centre ----

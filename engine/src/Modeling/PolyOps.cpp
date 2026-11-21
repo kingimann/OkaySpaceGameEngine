@@ -401,7 +401,51 @@ int EdgeSlide(PolyMesh& pm, const EdgeList& loop, float amount, const std::vecto
             if (rail >= 0 && !onLoop.count(rail)) moves.push_back({v, rail});
         }
     }
-    for (const Move& mv : moves) pm.verts[mv.v] = Lerp3(start[mv.v], start[mv.rail], t);
+    std::vector<Vec3> target = pm.verts;
+    std::vector<char> moved(pm.verts.size(), 0);
+    for (const Move& mv : moves) { target[mv.v] = Lerp3(start[mv.v], start[mv.rail], t); moved[mv.v] = 1; }
+    // UVs. Inside one face the texture is (close to) an affine map of the surface, so a
+    // corner that moves by d changes its UV by d read through that map. The map is taken
+    // from the corner and two other corners of the same face (its two neighbours when they
+    // make a proper triangle, which includes the rail, so a slide toward the rail moves the
+    // UV exactly that fraction toward the rail's UV). Faces on the far side of the loop get
+    // the same displacement through their own map. Every face uses only its own corner UVs,
+    // so a seam stays split. Read against the current positions, so calling again from the
+    // same start (interactive use) replaces the last slide instead of adding to it.
+    for (PolyFace& f : pm.faces) {
+        if (!HasUV(f)) continue;
+        const int n = f.Size();
+        std::vector<Vec2> nuv = f.uvs;
+        for (int i = 0; i < n; ++i) {
+            const int v = f.verts[i];
+            if (v < 0 || v >= (int)moved.size() || !moved[v]) continue;
+            const Vec3 d = target[v] - pm.verts[v];
+            if (d.SqrMagnitude() <= 0.0f) continue;
+            const Vec3 p0 = pm.verts[v];
+            // Solve d = a*e1 + b*e2 (least squares in the triangle's plane) for corners j, k.
+            auto solve = [&](int j, int k, Vec2& out) {
+                const Vec3 e1 = pm.verts[f.verts[j]] - p0, e2 = pm.verts[f.verts[k]] - p0;
+                const float a11 = Vec3::Dot(e1, e1), a12 = Vec3::Dot(e1, e2), a22 = Vec3::Dot(e2, e2);
+                const float det = a11 * a22 - a12 * a12;
+                if (!(det > 1e-6f * a11 * a22) || !std::isfinite(det)) return false;   // (nearly) a straight line
+                const float b1 = Vec3::Dot(d, e1), b2 = Vec3::Dot(d, e2);
+                const float a = (b1 * a22 - b2 * a12) / det, b = (a11 * b2 - a12 * b1) / det;
+                const Vec2 u0 = f.uvs[i], u1 = f.uvs[j], u2 = f.uvs[k];
+                out = Vec2{u0.x + a * (u1.x - u0.x) + b * (u2.x - u0.x), u0.y + a * (u1.y - u0.y) + b * (u2.y - u0.y)};
+                return std::isfinite(out.x) && std::isfinite(out.y);
+            };
+            Vec2 uv;
+            bool ok = solve((i + 1) % n, (i + n - 1) % n, uv);
+            // A straight corner (an n-gon with a vertex in the middle of a side): use the
+            // best-shaped triangle with any two other corners.
+            for (int j = 0; j < n && !ok; ++j)
+                for (int k = j + 1; k < n && !ok; ++k)
+                    if (j != i && k != i) ok = solve(j, k, uv);
+            if (ok) nuv[i] = uv;
+        }
+        f.uvs = std::move(nuv);
+    }
+    for (const Move& mv : moves) pm.verts[mv.v] = target[mv.v];
     return (int)moves.size();
 }
 
@@ -572,6 +616,62 @@ int BridgeEdgeLoops(PolyMesh& pm, const EdgeList& edges, std::string* error) {
         pm.faces.push_back(f);
     }
     return faces;
+}
+
+// ---------------------------------------------------------------------------
+int BridgeFaces(PolyMesh& pm, const std::vector<int>& faces, std::string* error) {
+    auto fail = [&](const char* why) { if (error) *error = why; return 0; };
+    std::set<int> sel;
+    for (int f : faces) {
+        if (f < 0 || f >= (int)pm.faces.size()) return fail("A selected face does not exist (select the faces again).");
+        sel.insert(f);
+    }
+    if (sel.size() < 2) return fail("Select two groups of faces to bridge, one on each side (for example two facing faces).");
+    // Group the selected faces by shared edges (a small union-find).
+    const std::vector<int> list(sel.begin(), sel.end());
+    std::map<int, int> slot;
+    for (int i = 0; i < (int)list.size(); ++i) slot[list[i]] = i;
+    std::vector<int> parent(list.size());
+    for (int i = 0; i < (int)parent.size(); ++i) parent[i] = i;
+    auto root = [&](int i) { while (parent[i] != i) i = parent[i] = parent[parent[i]]; return i; };
+    std::map<std::pair<int, int>, std::vector<int>> edgeFaces;   // selected faces on each edge
+    for (int f : list) {
+        const PolyFace& F = pm.faces[f];
+        for (int i = 0; i < F.Size(); ++i) edgeFaces[Key(F.verts[i], F.verts[(i + 1) % F.Size()])].push_back(f);
+    }
+    for (const auto& ef : edgeFaces)
+        for (std::size_t k = 1; k < ef.second.size(); ++k) parent[root(slot[ef.second[k]])] = root(slot[ef.second[0]]);
+    std::map<int, int> groupOf;   // root -> 0 / 1
+    for (int i = 0; i < (int)list.size(); ++i) {
+        const int r = root(i);
+        if (!groupOf.count(r)) groupOf.emplace(r, (int)groupOf.size());
+    }
+    if (groupOf.size() != 2) return fail("Select exactly two separate groups of faces (the two groups must not share an edge).");
+    // Each group's outline: its edges used by just one of its faces, in the direction its face runs them.
+    EdgeList rims;
+    for (int g = 0; g < 2; ++g) {
+        EdgeList rim;
+        for (int f : list) {
+            if (groupOf[root(slot[f])] != g) continue;
+            const PolyFace& F = pm.faces[f];
+            for (int i = 0; i < F.Size(); ++i) {
+                const int u = F.verts[i], v = F.verts[(i + 1) % F.Size()];
+                int inGroup = 0;
+                for (int h : edgeFaces[Key(u, v)]) if (groupOf[root(slot[h])] == g) ++inGroup;
+                if (inGroup == 1) rim.push_back({u, v});
+            }
+        }
+        const std::vector<EdgeChain> chains = OrderChains(rim);
+        if (chains.size() != 1 || !chains[0].closed)
+            return fail("Each group of faces needs one outline (a group with a hole in it, or faces joined only at a corner, can't be bridged).");
+        rims.insert(rims.end(), rim.begin(), rim.end());
+    }
+    // Delete the faces, then bridge the two holes they leave. Any refusal puts everything back.
+    const PolyMesh keep = pm;
+    for (auto it = sel.rbegin(); it != sel.rend(); ++it) pm.faces.erase(pm.faces.begin() + *it);
+    const int made = BridgeEdgeLoops(pm, rims, error);
+    if (made <= 0) { pm = keep; return 0; }
+    return made;
 }
 
 // ---------------------------------------------------------------------------

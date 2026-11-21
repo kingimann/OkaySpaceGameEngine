@@ -56,6 +56,9 @@ EdgeList LoopCut(PolyMesh& pm, int a, int b, int cuts = 1, float position = 0.5f
 /// neighbour on the left of the loop's direction, -1 = to the right).
 /// `from`, if given, holds the positions to slide from (for interactive use);
 /// otherwise the current positions are used. Returns how many vertices moved.
+/// UVs follow: each face that uses a moved vertex keeps its own texture mapping,
+/// so the corner's UV moves along the rail edge's UVs by the same fraction, and a
+/// seam (different UVs on either side of a corner) stays split.
 int EdgeSlide(PolyMesh& pm, const EdgeList& loop, float amount, const std::vector<Vec3>* from = nullptr);
 
 /// Dissolve edges: merge the two faces on each edge into one (border edges are
@@ -69,6 +72,12 @@ int DissolveVerts(PolyMesh& pm, const std::vector<int>& verts);
 /// tubes) with a band of quads. The loops need the same number of edges.
 /// Returns the number of faces made, or 0 with the reason in `error`.
 int BridgeEdgeLoops(PolyMesh& pm, const EdgeList& edges, std::string* error = nullptr);
+/// Bridge two groups of faces (for example the facing sides of two boxes): the
+/// faces are deleted, then the two outlines they leave are bridged as above. Each
+/// group must be connected, the groups must not touch, each outline must be one
+/// loop and both need the same number of edges. Returns the number of faces made,
+/// or 0 with the reason in `error` (the mesh is then left as it was).
+int BridgeFaces(PolyMesh& pm, const std::vector<int>& faces, std::string* error = nullptr);
 
 /// Bevel edges to the given width: each edge becomes a strip of `segments`
 /// faces (1 = a flat chamfer). `profile` shapes a multi-segment bevel: 0.5 is

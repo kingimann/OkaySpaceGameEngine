@@ -22,7 +22,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Docs:** `docs/editor/modeling.md`
 - **Tests:** `edit_transform`, `meshedit`, `polymesh`, `modeling`
 - **Status:** Works - four test suites cover the maths and mesh ops; I read the headers but not the editor key handling in main.cpp
-- **Open:** tools that rebuild triangles outside the polygon core (the classic Extrude) fall back to one UV per vertex where they touch (per docs); possible doc gap: docs/editor/modeling.md says seams and edge split are "not here yet" but UV seams exist (3.4)
+- **Open:** tools that rebuild triangles outside the polygon core (the classic Extrude) fall back to one UV per vertex where they touch (per docs); no per-edge Mark Sharp or Edge Split tool (UV seams exist, 3.4; Auto Smooth covers shading by angle)
 - **Related:** 3.2, 3.4, 3.8, 15.9
 - **Words:** edit mode (Tab, G/R/S, axis lock, snapping, mirror), Edit Mesh, Tab, G R S, grab, rotate, scale, extrude, inset, poke, soft select, proportional editing, symmetry X, recalc normals, merge by distance, separate, duplicate faces
 - **Seen as:** pressing Tab over the 3D view does nothing; a tool is greyed out; faces look dark or inside out after a weld or mirror; Esc does not put the vertices back; a typed distance goes the wrong way
@@ -32,18 +32,18 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **What:** Edge-loop modeling on the polygon mesh: select loops and rings, cut new loops, slide, bevel, knife, dissolve, bridge, fill. Each tool keeps the numbering of existing vertices so a selection survives it.
 - **Parts:**
   - 3.2.1 Loop and ring selection - `Modeling/PolyOps` - EdgeLoop, EdgeRing, OrderChains, PolyTopology; Alt-click loop, Ctrl+Alt-click ring, Select Loop/Ring buttons
-  - 3.2.2 Loop cut and edge slide - `Modeling/PolyOps` - LoopCut (Ctrl+R preview, scroll for more cuts), EdgeSlide (G then G)
+  - 3.2.2 Loop cut and edge slide - `Modeling/PolyOps` - LoopCut (Ctrl+R preview, scroll for more cuts), EdgeSlide (G then G; per-corner UVs follow, seams stay split)
   - 3.2.3 Bevel - `Modeling/PolyOps` - BevelEdges (Ctrl+B), segments and profile; where three or more bevels meet the corner is closed with one face
   - 3.2.4 Knife, split edge, connect - `Modeling/PolyOps` - KnifeCut (K), SplitEdge, SplitFace (Connect Verts)
-  - 3.2.5 Dissolve, merge, bridge and fill - `Modeling/PolyOps` - DissolveEdges, DissolveVerts, MergeVerts, BridgeEdgeLoops, FillFaces, GridFill, CompactVerts
+  - 3.2.5 Dissolve, merge, bridge and fill - `Modeling/PolyOps` - DissolveEdges, DissolveVerts, MergeVerts, BridgeEdgeLoops, BridgeFaces (two face groups: delete, then bridge; Face mode in the editor), FillFaces, GridFill, CompactVerts
   - 3.2.6 Catmull-Clark subdivision - `Modeling/PolyOps` - CatmullClark(pm, levels) on real polygons (used by the Subdivision modifier)
 - **Code:** `Modeling/PolyOps`, `Modeling/PolyMesh`, `editor/main.cpp`
-- **API:** `EdgeLoop`, `EdgeRing`, `LoopCut`, `EdgeSlide`, `BevelEdges`, `KnifeCut`, `DissolveEdges`, `BridgeEdgeLoops`, `GridFill`, `CatmullClark`; keys Ctrl+R, Ctrl+B, K
+- **API:** `EdgeLoop`, `EdgeRing`, `LoopCut`, `EdgeSlide`, `BevelEdges`, `KnifeCut`, `DissolveEdges`, `BridgeEdgeLoops`, `BridgeFaces`, `GridFill`, `CatmullClark`; keys Ctrl+R, Ctrl+B, K
 - **Editor:** Modeling window > Edit Mesh > Edge loops group; Ctrl+R / Ctrl+B / K in the 3D view
 - **Docs:** `docs/editor/modeling.md`
 - **Tests:** `poly_ops`
 - **Status:** Works - poly_ops checks counts, closed shells and winding on real geometry; limits listed in Open
-- **Open:** Bevel needs edges with a face on both sides; Bridge works on open borders only and does not remove faces first; Edge slide does not adjust UVs so a textured surface stretches; Grid Fill needs an even number of rim edges (all per docs)
+- **Open:** Bevel needs edges with a face on both sides; Bridge face groups must each be one patch without holes, not touching, with outlines of the same edge count; Grid Fill needs an even number of rim edges (all per docs); edge slide UVs and Bridge in Face mode are tested in poly_ops but not tried in a running editor
 - **Related:** 3.1, 3.3, 3.4
 - **Words:** loop cut, edge loop, edge ring, edge slide, bevel, chamfer, knife, dissolve, bridge, fill, grid fill, merge at center, Catmull-Clark, subdivision surface
 - **Seen as:** a loop cut previews but does not apply; a bevel leaves a hole at a corner; a bridge says the loops need the same edge count; a slid loop stretches the texture
@@ -195,15 +195,15 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 ### 3.8 Sculpt and paint brushes
 - **What:** Viewport brushes on an edited mesh: sculpt (Grab, Inflate, Smooth, Flatten, Pinch) and per-face colour painting that multiplies with the material colour.
 - **Parts:**
-  - 3.8.1 Sculpt brush - `Render/Mesh` - SculptBrush with radius, strength, Symmetry X; subdivide first for detail
-  - 3.8.2 Paint brush and fill - `Render/Mesh` - EnsureFaceColors, PaintFaces, FillFacesColor, MottleFaceColors, Clear Paint; saved with the scene
+  - 3.8.1 Sculpt brush - `Render/Mesh` - SculptBrush (Grab, Inflate, Smooth = Laplacian over edge neighbours, Flatten, Pinch) with radius, strength, BrushFalloff (smoothstep), symmetryX in one pass; seam and pole copies move together; subdivide first for detail
+  - 3.8.2 Paint brush and fill - `Render/Mesh` - EnsureFaceColors, PaintFaces (a quad or n-gon paints as one face), FillFacesColor, MottleFaceColors, Clear Paint; saved with the scene
 - **Code:** `Render/Mesh`, `editor/main.cpp`
-- **API:** `Mesh::SculptBrush`, `Mesh::PaintFaces`, `FillFacesColor`
+- **API:** `Mesh::SculptBrush`, `Mesh::BrushFalloff`, `Mesh::PaintFaces`, `FillFacesColor`
 - **Editor:** Modeling > Edit Mesh > Sculpt Brush and Paint Brush ticks
 - **Docs:** `docs/editor/modeling.md`
-- **Tests:** `meshedit`, `mesh3d`
-- **Status:** Basic - brush maths are in the Mesh header and docs describe them; I found no test that names sculpt or paint specifically
-- **Open:** no per-vertex weight or texture painting; paint colours are per face only
+- **Tests:** `sculpt_paint`, `meshedit`, `mesh3d`
+- **Status:** Works - `sculpt_paint` checks every brush, the falloff, X symmetry and face paint against hand-worked numbers; the editor strokes themselves are not tried in a running editor
+- **Open:** no per-vertex weight or texture painting (vertex colours are separate, see docs); no Draw/Clay/Crease brush
 - **Related:** 3.1, 2.2
 - **Words:** sculpt, brush, inflate, grab, pinch, flatten, paint, vertex colour, face colour
 - **Seen as:** brush does nothing on a coarse mesh; paint colour is muddy because it multiplies with the material

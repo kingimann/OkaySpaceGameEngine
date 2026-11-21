@@ -2587,6 +2587,10 @@ add_executable(test_poly_ops test_poly_ops.cpp)
 target_link_libraries(test_poly_ops PRIVATE okay::engine)
 add_test(NAME poly_ops COMMAND test_poly_ops)
 
+add_executable(test_sculpt_paint test_sculpt_paint.cpp)
+target_link_libraries(test_sculpt_paint PRIVATE okay::engine)
+add_test(NAME sculpt_paint COMMAND test_sculpt_paint)
+
 add_executable(test_locomotion test_locomotion.cpp)
 target_link_libraries(test_locomotion PRIVATE okay::engine)
 add_test(NAME locomotion COMMAND test_locomotion)

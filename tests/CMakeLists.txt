@@ -2831,6 +2831,11 @@ add_test(NAME navmesh_carving COMMAND test_navmesh_carving)
 add_executable(test_dialogue test_dialogue.cpp)
 target_link_libraries(test_dialogue PRIVATE okay::engine)
 add_test(NAME dialogue COMMAND test_dialogue)
+# Shared Interact action (seat, dialogue, pickups; lean-right off E), death on a seat goes to the exit point,
+# per-line dialogue camera shots (blend in on the line, back at the end, scene record)
+add_executable(test_interact_seat_dialogue test_interact_seat_dialogue.cpp)
+target_link_libraries(test_interact_seat_dialogue PRIVATE okay::engine)
+add_test(NAME interact_seat_dialogue COMMAND test_interact_seat_dialogue)
 
 # Quests: objectives from every source, prerequisites, rewards once, scene + save-game round trips
 add_executable(test_quests test_quests.cpp)

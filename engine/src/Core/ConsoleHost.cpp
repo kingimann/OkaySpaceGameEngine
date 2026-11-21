@@ -96,7 +96,13 @@ std::vector<std::string> ApplyCvarArgs(const std::vector<std::string>& assignmen
     return warnings;
 }
 
-std::vector<std::string> ApplyCvarArgs(const CommandLine& cl) { return ApplyCvarArgs(cl.GetAll("cvar")); }
+std::vector<std::string> ApplyCvarArgs(const CommandLine& cl, bool allowed) {
+    const std::vector<std::string> given = cl.GetAll("cvar");
+    if (allowed) return ApplyCvarArgs(given);
+    if (given.empty()) return {};
+    return {std::to_string(given.size()) + " --cvar value(s) ignored: console variables need a development build, --console or "
+            "OKAY_CONSOLE=1"};
+}
 
 namespace {
 
@@ -116,7 +122,7 @@ void RegisterStandard() {
     }
     if (!Cvars::Find("r.vsync")) {
         Cvar& c = Cvars::Bool("r.vsync", DisplaySettings::VSync(), "wait for the display's refresh before showing a frame");
-        c.OnChange([](const Cvar& v) { DisplaySettings::SetVSync(v.AsBool()); });
+        c.OnChange([](const Cvar& v) { DisplaySettings::SetVSyncForThisRun(v.AsBool()); });   // not saved
     }
     Cvars::Bool("debug.show_fps", false, "show the frames-per-second label in the corner");
     Cvars::Bool("debug.profile", false, "record profiler sections every frame (see prof.save, prof.sections)");

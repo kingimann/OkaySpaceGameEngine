@@ -8,14 +8,15 @@
 //     consolehost::DeclareOptions(cl);                 // --cvar NAME=VALUE (repeatable), --console
 //     cl.Parse(argc, argv);
 //     consolehost::RegisterStandard();                 // game.speed, r.vsync, debug.show_fps, debug.profile, prof.*
-//     for (const std::string& w : consolehost::ApplyCvarArgs(cl)) Log::Warn(w);
+//     for (const std::string& w : consolehost::ApplyCvarArgs(cl, consoleAllowed)) Log::Warn(w);
 //
 //     ConsoleInput line;                               // per frame, while the console is open:
 //     line.Type(typedText); line.Backspace(); line.HistoryPrev(); line.Complete(); line.Submit();
 //
 // Standard cvars (registered by RegisterStandard; a host reads the ones that only it can apply):
 //   game.speed      float 0..100   the gameplay time scale (Time::SetTimeScale), like Build Settings > Game speed
-//   r.vsync         bool           wait for the display's refresh (DisplaySettings::SetVSync)
+//   r.vsync         bool           wait for the display's refresh, for this run only (DisplaySettings::SetVSyncForThisRun:
+//                                  the saved display settings keep the player's own choice)
 //   debug.show_fps  bool           the small FPS label in the corner (the host draws it)
 //   debug.profile   bool           record profiler sections every frame, not only while a profiler view is open
 // Standard commands:
@@ -59,9 +60,11 @@ namespace consolehost {
 
 /// Declare `--cvar NAME=VALUE` (repeatable) and the `--console` flag.
 void DeclareOptions(CommandLine& cl);
-/// Apply every `--cvar` given, in order. Returns one warning per value that was not applied
-/// ("--cvar nope=1: unknown variable 'nope'"). Register the cvars first.
-std::vector<std::string> ApplyCvarArgs(const CommandLine& cl);
+/// Apply every `--cvar` given, in order, when `allowed` (use PlayerConsoleAllowed's answer in a player; the editor
+/// passes true). Returns one warning per value that was not applied ("--cvar nope=1: unknown variable 'nope'").
+/// Not allowed: nothing is applied and one warning says they were ignored (none when no --cvar was given), so a
+/// shipped game's speed cannot be changed from a shortcut. Register the cvars first.
+std::vector<std::string> ApplyCvarArgs(const CommandLine& cl, bool allowed);
 std::vector<std::string> ApplyCvarArgs(const std::vector<std::string>& assignments);
 
 /// Register the standard cvars and commands listed at the top (safe to call again). game.speed and r.vsync start

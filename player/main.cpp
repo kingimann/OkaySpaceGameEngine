@@ -1869,8 +1869,8 @@ int main(int argc, char** argv) {
     okay::Cvar& showFpsVar = okay::Cvars::Bool("debug.show_fps", false);
     if (cfg.showFps) showFpsVar.SetBool(true);
     okay::LoopConsole loopCmds(loop);
-    for (const std::string& w : okay::consolehost::ApplyCvarArgs(pcl)) std::fprintf(stderr, "warning: %s\n", w.c_str());
     const bool consoleAllowed = okay::consolehost::PlayerConsoleAllowed(devPanels, pcl.GetBool("console"), std::getenv("OKAY_CONSOLE"));
+    for (const std::string& w : okay::consolehost::ApplyCvarArgs(pcl, consoleAllowed)) std::fprintf(stderr, "warning: %s\n", w.c_str());   // shipped games: ignored
     bool consoleOpen = false;
     okay::ConsoleInput consoleLine;
     scene.Start();
@@ -2967,7 +2967,7 @@ int main(int argc, char** argv) {
             const int rows = std::max(2, (int)(chh * 0.4f / lineH));
             const std::size_t maxChars = (std::size_t)std::max(8.0f, (cw - 16) / (8.0f * px));
             SDL_Rect bg{0, 0, cw, (int)(rows * lineH + 12)};
-            renderer->SetDrawColor(0, 0, 0, 200);
+            renderer->SetDrawColor(8, 10, 14, 255);   // opaque: nothing underneath shows through the console text
             renderer->FillRect((const ui2d::Rect*)&bg);
             std::vector<std::string> lines = okay::consolehost::TailLines((std::size_t)rows - 1);
             lines.push_back("] " + consoleLine.text + "_");

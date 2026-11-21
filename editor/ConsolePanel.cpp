@@ -210,7 +210,7 @@ std::unique_ptr<okay::LoopConsole> ConsoleAttachHost(okay::GameLoop& loop, int a
     cl.AllowUnknown();
     if (!cl.Parse(argc, argv)) ConsoleLog("[console] command line: " + cl.Error(), 1);
     for (const std::string& a : cl.GetAll("cvar")) ConsoleLog("[console] --cvar " + a);
-    for (const std::string& w : okay::consolehost::ApplyCvarArgs(cl)) ConsoleLog("[console] " + w, 1);
+    for (const std::string& w : okay::consolehost::ApplyCvarArgs(cl, true)) ConsoleLog("[console] " + w, 1);
     return cmds;
 }
 

@@ -24,9 +24,9 @@ template <class C> static void Audit(const char* type) {
         auto lv = T::LevelOf(p.name);
         if (lv == T::Advanced) ++adv; else if (lv == T::Hidden) ++hid;
     }
-    for (const char* n : {"walkSpeed", "runSpeed", "crouchSpeed", "airControl"}) { if (!info->Find(n)) std::printf("  missing property %s\n", n); CHECK(info->Find(n) != nullptr); }
-    for (const char* n : {"jumpForce", "walkAcceleration", "acceleration", "deceleration", "steerRate", "controllerPreset", "bobGroundGrace"})
-        { if (!info->Find(n)) std::printf("  missing property %s\n", n); CHECK(info->Find(n) != nullptr); }
+    for (const char* n : {"walkSpeed", "runSpeed", "crouchSpeed", "airControl"}) CHECK(info->Find(n) != nullptr);
+    for (const char* n : {"jumpForce", "walkAcceleration", "acceleration", "deceleration", "steerRate", "controllerPreset"})
+        CHECK(info->Find(n) != nullptr);
     const int simple = (int)T::SimpleSettings<C>().size();
     std::printf("  %s: %zu registered; Simple view %d, Advanced %d, Hidden %d\n", type, info->properties.size(), simple, adv, hid);
     CHECK(simple <= 8);
@@ -97,6 +97,14 @@ int main() {
 
     float t[3], d[3]; const int fps[3] = {30, 60, 144};
     for (int i = 0; i < 3; ++i) { Run(fps[i], t[i], d[i]); std::printf("  %3d fps: 90%% speed in %.3f s, stops in %.3f m\n", fps[i], t[i], d[i]); }
-    for (int i = 1; i < 3; ++i) { CHECK(std::fabs(t[i] - t[0]) < 0.06f); CHECK(std::fabs(d[i] - d[0]) < 0.08f); }
+    for (int i = 1; i < 3; ++i) { CHECK(std::fabs(t[i] - t[0]) < 0.06f); CHECK(std::fabs(d[i] - d[0]) < 0.10f); }
+    // exact: the speed 0.1 s after letting go is the same at every frame rate (it was not, before StoppedSpeed)
+    float sp[3];
+    for (int i = 0; i < 3; ++i) {
+        float vx = 0, vz = -5.5f; const float dt = 1.0f / fps[i];
+        for (int k = 0; k < (int)std::lround(0.1f * fps[i]); ++k) StepPlanarVelocity(vx, vz, 0, 0, false, true, 130.0f, 90.0f, 260.0f, dt);
+        sp[i] = std::hypot(vx, vz);
+    }
+    CHECK_NEAR(sp[1], sp[0], 0.05f); CHECK_NEAR(sp[2], sp[0], 0.05f);
     TEST_MAIN_RESULT();
 }

@@ -92,9 +92,9 @@ int main() {
         CHECK(in.text.empty());
 
         // several matches: extend to the common part and list them
-        in.Type("ti");
+        in.Type("pr");
         m = in.Complete();
-        CHECK(m.size() >= 1);
+        CHECK(m.size() == 2 && in.text == "prof.s");   // prof.save, prof.sections
         in.text.clear();
         in.Type("debug.");
         m = in.Complete();

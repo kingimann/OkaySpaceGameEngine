@@ -97,6 +97,7 @@
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/ColliderShapes3D.hpp"
 #include "okay/Components/Mover.hpp"
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
@@ -112,6 +113,7 @@
 #include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
 #include "okay/Components/CameraRoom.hpp"
+#include "okay/Components/CameraZone.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/Animator.hpp"
@@ -545,6 +547,32 @@ void WritePhysicsMaterials(std::ostream& out, const char* rec, const std::vector
         out << "  " << rec << " " << c->friction << " " << c->bounciness << " " << (int)c->frictionCombine
             << " " << (int)c->bounceCombine << " " << i << "\n";
     }
+}
+
+// The colliders a file from before the newer shapes knows about: the Cone, Convex Hull, Plane, Compound and Heightfield
+// colliders save every setting (physics material, trigger filter, contact offset) in their own record, so the older
+// "by index" records count only the rest and an index means the same thing before and after those shapes exist.
+std::vector<Collider3D*> LegacyColliders3D(const GameObject& go) {
+    std::vector<Collider3D*> out;
+    for (Collider3D* c : go.GetComponents<Collider3D>()) {
+        switch (c->shape()) {
+        case Collider3D::Shape::Cone: case Collider3D::Shape::ConvexHull: case Collider3D::Shape::Compound:
+        case Collider3D::Shape::Heightfield: case Collider3D::Shape::Plane: break;
+        default: out.push_back(c);
+        }
+    }
+    return out;
+}
+std::vector<Collider2D*> LegacyColliders2D(const GameObject& go) {
+    std::vector<Collider2D*> out;
+    for (Collider2D* c : go.GetComponents<Collider2D>()) if (c->shape() != Collider2D::Shape::Composite) out.push_back(c);
+    return out;
+}
+// The contact offset (a skin on the collider): one line per collider that has one, so a scene without any writes nothing.
+template <class T>
+void WriteContactOffsets(std::ostream& out, const char* rec, const std::vector<T*>& cols) {
+    for (int i = 0; i < (int)cols.size(); ++i)
+        if (cols[(std::size_t)i]->contactOffset > 0.0f) out << "  " << rec << " " << cols[(std::size_t)i]->contactOffset << " " << i << "\n";
 }
 
 // The crouch / prone options of a movement controller (StanceControl) and the
@@ -1743,8 +1771,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // Trigger tag / layer filter. One record when every collider shares it (older scenes
     // read that as applying to all). Differing filters are one indexed record each.
-    WriteTriggerFilters(out, "trigfilter2d", go->GetComponents<Collider2D>());
-    WritePhysicsMaterials(out, "physmat2d", go->GetComponents<Collider2D>());
+    WriteTriggerFilters(out, "trigfilter2d", LegacyColliders2D(*go));
+    WritePhysicsMaterials(out, "physmat2d", LegacyColliders2D(*go));
+    WriteContactOffsets(out, "colskin2d", LegacyColliders2D(*go));
     for (auto* rb : go->GetComponents<Rigidbody3D>()) {
         out << "  rigidbody3d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness << " "
@@ -2040,8 +2069,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
     // See the 2D filter: one shared record, or one indexed record per collider when they differ.
-    WriteTriggerFilters(out, "trigfilter3d", go->GetComponents<Collider3D>());
-    WritePhysicsMaterials(out, "physmat3d", go->GetComponents<Collider3D>());
+    WriteTriggerFilters(out, "trigfilter3d", LegacyColliders3D(*go));
+    WritePhysicsMaterials(out, "physmat3d", LegacyColliders3D(*go));
+    WriteContactOffsets(out, "colskin3d", LegacyColliders3D(*go));
     // Each script is one self-contained line (lang, source, then optional path
     // and field overrides) so a GameObject can carry several scripts.
     for (auto* sc : go->GetComponents<ScriptComponent>()) {
@@ -3010,6 +3040,14 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
              .b("cutscene", cb->yieldToCutscene);
             out << "\n";
         }
+    }
+    for (auto* cz : go->GetComponents<CameraZone>()) {
+        out << "  camzone";
+        KvOut k{out};
+        k("shape", (int)cz->shape)("sx", cz->size.x)("sy", cz->size.y)("sz", cz->size.z)("ox", cz->offset.x)("oy", cz->offset.y)("oz", cz->offset.z)
+         ("blend", cz->blend)("prio", cz->priority)("fov", cz->fieldOfView)("fx", cz->followOffset.x)("fy", cz->followOffset.y)("fz", cz->followOffset.z)
+         ("damp", cz->positionDamping).str("shot", cz->shot);
+        out << "\n";
     }
     for (auto* rm : go->GetComponents<CameraRoom>()) {
         out << "  camroom";
@@ -4574,6 +4612,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             int nIkAim = 0, nIkLook = 0, nIkLimb = 0, nIkChain = 0;
             while (in >> field) {
                 if (field == "end") { sawEnd = true; break; }
+                bool fieldDone = true;   // the chain is split in chunks: MSVC allows ~128 nested blocks (C1061)
                 if (field == "active") { int a = 1; in >> a; go->active = (a != 0); }
                 else if (field == "tag") { go->tag = ReadQuoted(in); }
                 else if (field == "static") { int s = 0; in >> s; go->isStatic = (s != 0); }
@@ -5159,7 +5198,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                     long na = 0; in >> na;
                     for (long k = 0; k < na && in; ++k) { int m = 0; in >> m; if (k < (long)sm2->anyState.size()) sm2->anyState[k].syncPhase = m != 0; }
-                } else if (field == "animsmstance") {
+                } else { fieldDone = false; }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "animsmstance") {
                     StanceTimes& t = smFor()->stanceTimes;
                     in >> t.standCrouch >> t.crouchProne >> t.proneStand;
                 } else if (field == "animsmxfade") {
@@ -5483,15 +5524,30 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
                     auto clampMode = [](int m) { return (CombineMode)(m < 0 || m > 4 ? 0 : m); };
                     if (field == "physmat2d") {
-                        auto all = go->GetComponents<Collider2D>();
+                        auto all = LegacyColliders2D(*go);
                         for (int i = 0; i < (int)all.size(); ++i)
                             if (index < 0 || i == index) { all[(std::size_t)i]->friction = fr; all[(std::size_t)i]->bounciness = bn; all[(std::size_t)i]->frictionCombine = clampMode(fm); all[(std::size_t)i]->bounceCombine = clampMode(bm); }
                     } else {
-                        auto all = go->GetComponents<Collider3D>();
+                        auto all = LegacyColliders3D(*go);
                         for (int i = 0; i < (int)all.size(); ++i)
                             if (index < 0 || i == index) { all[(std::size_t)i]->friction = fr; all[(std::size_t)i]->bounciness = bn; all[(std::size_t)i]->frictionCombine = clampMode(fm); all[(std::size_t)i]->bounceCombine = clampMode(bm); }
                     }
-                } else if (field == "trigfilter2d" || field == "trigfilter3d") {
+                } else if (field == "colskin2d") {
+                    float off = 0.0f; int index = -1;
+                    in >> off;
+                    in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
+                    auto all = LegacyColliders2D(*go);
+                    if (index >= 0 && index < (int)all.size() && std::isfinite(off) && off >= 0.0f) all[(std::size_t)index]->contactOffset = off;
+                } else if (field == "colskin3d") {
+                    float off = 0.0f; int index = -1;
+                    in >> off;
+                    in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
+                    auto all = LegacyColliders3D(*go);
+                    if (index >= 0 && index < (int)all.size() && std::isfinite(off) && off >= 0.0f) all[(std::size_t)index]->contactOffset = off;
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "trigfilter2d" || field == "trigfilter3d") {
                     std::string tag = ReadQuoted(in);
                     std::uint32_t layers = 0xFFFFFFFFu;
                     in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> layers;
@@ -5499,11 +5555,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int index = -1;   // no index: the one record applies to every collider, as older files did
                     if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
                     if (field == "trigfilter2d") {
-                        auto all = go->GetComponents<Collider2D>();
+                        auto all = LegacyColliders2D(*go);
                         if (index < 0) { for (Collider2D* c : all) { c->triggerTag = tag; c->triggerLayers = layers; } }
                         else if (index < (int)all.size()) { all[(std::size_t)index]->triggerTag = tag; all[(std::size_t)index]->triggerLayers = layers; }
                     } else {
-                        auto all = go->GetComponents<Collider3D>();
+                        auto all = LegacyColliders3D(*go);
                         if (index < 0) { for (Collider3D* c : all) { c->triggerTag = tag; c->triggerLayers = layers; } }
                         else if (index < (int)all.size()) { all[(std::size_t)index]->triggerTag = tag; all[(std::size_t)index]->triggerLayers = layers; }
                     }
@@ -6029,7 +6085,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                            >> cc->airControl >> da >> fik;
                         cc->sprintKey = (char)sk; cc->driveAnimation = (da != 0); cc->footIK = (fik != 0);
                     }
-                } else if (field == "vehicle") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "vehicle") {
                     auto* v = go->AddComponent<VehicleController>();
                     in >> v->acceleration >> v->maxSpeed >> v->reverseSpeed >> v->brakeForce
                        >> v->drag >> v->turnSpeed >> v->grip >> v->handbrakeGrip
@@ -6617,7 +6676,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     c->paused = (ps != 0); c->controlSun = (cs != 0); c->rotateSun = (rs != 0); c->controlSky = (ck != 0);
                     auto col = [&](Color& k) { in >> k.r >> k.g >> k.b; k.a = 1.0f; };
                     col(c->dayLight); col(c->nightLight); col(c->skyDay); col(c->skyHorizon); col(c->skyNight);
-                } else if (field == "npc") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "npc") {
                     auto* c = go->AddComponent<NPCController>();
                     int fm = 1;
                     in >> c->behavior >> c->moveSpeed >> c->sightRange >> c->wanderRadius
@@ -7226,7 +7288,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> jp->force >> uo >> jp->forwardBoost >> jp->cooldown;
                     jp->useObjectUp = (uo != 0);
                     jp->triggerTag = ReadQuoted(in);
-                } else if (field == "triggerzone") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "triggerzone") {
                     auto* tz = go->AddComponent<TriggerZone>();
                     int once = 1; in >> tz->action;
                     tz->varName = ReadQuoted(in);
@@ -7392,6 +7457,15 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         k.f("c0", cb->customCurve[0]); k.f("c1", cb->customCurve[1]); k.f("c2", cb->customCurve[2]); k.f("c3", cb->customCurve[3]);
                         k.b("cutscene", cb->yieldToCutscene);
                     }
+                } else if (field == "camzone") {
+                    KvIn k(in);
+                    auto* cz = go->AddComponent<CameraZone>();
+                    int sh = (int)cz->shape; k.i("shape", sh); cz->shape = (VolumeShape)std::clamp(sh, 0, kVolumeShapeCount - 1);
+                    k.f("sx", cz->size.x); k.f("sy", cz->size.y); k.f("sz", cz->size.z);
+                    k.f("ox", cz->offset.x); k.f("oy", cz->offset.y); k.f("oz", cz->offset.z);
+                    k.f("blend", cz->blend); k.i("prio", cz->priority); k.f("fov", cz->fieldOfView);
+                    k.f("fx", cz->followOffset.x); k.f("fy", cz->followOffset.y); k.f("fz", cz->followOffset.z);
+                    k.f("damp", cz->positionDamping); k.str("shot", cz->shot);
                 } else if (field == "camroom") {
                     KvIn k(in);
                     auto* rm = go->AddComponent<CameraRoom>();
@@ -7880,7 +7954,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     as->saveOnStart = sos != 0;
                     as->slot = ReadQuoted(in);
                     as->label = ReadQuoted(in);
-                } else if (field == "flashlight") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "flashlight") {
                     auto* fl = go->AddComponent<Flashlight>();
                     int tk = 'f', onv = 1;
                     in >> tk >> onv >> fl->range >> fl->angle >> fl->intensity
@@ -8439,7 +8516,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         int rich = 0; in >> rich >> tt->offset.x >> tt->offset.y;
                         tt->richText = (rich != 0);
                     }
-                } else if (field == "uilayout") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "uilayout") {
                     auto* lg = go->AddComponent<UILayoutGroup>();
                     std::string rest; std::getline(in, rest);   // whole line: newer files carry extra fields
                     std::istringstream rs(rest);
@@ -9172,7 +9252,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         }
                         ql->records.push_back(r);
                     }
-                } else if (field == "questlogdef") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "questlogdef") {
                     // One inline quest of the Quest Log read just before it.
                     KvIn k(in);
                     auto* ql = LastOf(go->GetComponents<QuestLog>());
@@ -9331,6 +9414,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     const std::string rest = ReadRecordLine(in);
                     if (go->unknownRecords.size() < kMaxUnknownRecords && field.size() + rest.size() <= kMaxUnknownRecordSize)
                         go->unknownRecords.push_back(field + rest);
+                }
                 }
             }
             // A read that ran off the end (or choked) leaves the stream failed, so
@@ -9843,6 +9927,8 @@ bool SceneSerializer::MergeFromFile(Scene& scene, const std::string& path, const
 namespace detail {
 void RegisterBuiltinComponentSerializers() {
     RegisterPhysicsToySerializers();
+    RegisterColliderShape2DSerializers(); // Composite 2D collider
+    RegisterColliderShapeSerializers();   // Cone, Convex Hull, Plane, Compound, Heightfield colliders
     ComponentSerializerRegistry::Entry trail;
     trail.name = "trailrenderer";
     trail.write = [](const GameObject& go, std::ostream& out) {

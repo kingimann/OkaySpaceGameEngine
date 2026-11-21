@@ -555,6 +555,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - camera shake (10.1)
 - camera shot (10.1)
 - camera stack (2.10, 2.10.5, 4.8, 4.8.4)
+- Camera zones and presets (4.8.9)
 - Camera, effects, tilemap, navmesh, music, particles (13.7.7)
 - Camera, transform, animation and audio tracks (10.1.3)
 - CameraFollow (4.6)

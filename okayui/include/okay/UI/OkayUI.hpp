@@ -437,6 +437,22 @@ bool RadioButton(const char* label, int* value, int option);
 bool SliderFloat(const char* label, float* value, float minV, float maxV);
 /// An integer slider over [minV, maxV]. Edits *value in place; true on change.
 bool SliderInt(const char* label, int* value, int minV, int maxV);
+/// How a number is shown (the printf-style `fmt` of Dear ImGui's drag, slider and float input widgets). `fmt` holds literal text and at most
+/// ONE conversion: %d %i %u %x %X (whole numbers), %f %F %e %E %g %G (decimals), with the printf flags `-+ 0#`, a width, a precision and the
+/// length marks h l ll z j t q L (skipped); `%%` is a percent sign. A float shown with a whole-number conversion is rounded first, a whole
+/// number shown with a decimal conversion is converted. Anything else (%s, %n, a second conversion, a lone % at the end) is refused: the
+/// text becomes the default ("%d" or "%.3f") and false is returned, so a bad format cannot reach printf. `*decimals` (optional) gets the number of
+/// decimals the text shows (%f: its precision, 6 by default; whole-number conversions: 0), or -1 when that is not known (%g, %e, no conversion).
+bool FormatNumber(char* out, int cap, const char* fmt, double value, bool isInt, int* decimals = nullptr);
+/// Set the format and flags of the NEXT Drag*, SliderFloat/SliderInt or InputFloat widget (used up by that widget; a null `fmt` keeps the widget's
+/// own default). `fmtMax` is the second cell's format of DragFloatRange2. `noTypedInput` turns Ctrl+click typing off for that widget (Dear ImGui's
+/// NoInput); `noRoundToFormat` false rounds a slider's or typed value to the decimals of `fmt`. A slider shows its value (centred) only when
+/// a format was set; without one it stays as before. `logarithmic` (sliders only) spaces the values by a factor instead of by a step; it works when the
+/// range keeps one sign and does not touch 0 (the handle position is then log(value); for other ranges the slider stays linear).
+void SetNextNumberFormat(const char* fmt, bool noTypedInput = false, bool noRoundToFormat = true, const char* fmtMax = nullptr, bool logarithmic = false);
+/// The text the last number widget showed in its cell `cell` (0 for single widgets, 0..3 for vector cells, -1 for the last cell drawn); "" when
+/// nothing was shown. For tests and for hosts that read a value back.
+const char* GetLastNumberText(int cell = -1);
 /// A vertical slider `w`*`h` tall — drag the handle up/down over [minV, maxV].
 /// Edits *value in place; returns true on change. Great for mixers/levels.
 bool VSliderFloat(const char* label, float w, float h, float* value, float minV, float maxV);

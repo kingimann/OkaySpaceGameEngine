@@ -418,10 +418,17 @@ static void CompareClips(Scene& su, GameObject* ru, Scene& so, GameObject* ro, c
                     if (!f1 || !f2) continue;
                     worst = std::max(worst, (double)std::fabs(a - b)); ++compared;
                 }
+                // Compare the rotation each clip really plays (SampleTRS: slerp of the bracketing keys), not the raw
+                // per-component curves. Import reduction keeps a rotation within an angle of the original keys, so on a
+                // steady turn it drops most keys; lerping the components between those far-apart keys gives a quaternion
+                // that is no longer unit length, and its dot product reads as a difference that is not there.
                 bool q1 = false, q2 = false;
-                const float ux = nu.clip.Evaluate("rotation.qx", t, q1), uy = nu.clip.Evaluate("rotation.qy", t, q1), uz = nu.clip.Evaluate("rotation.qz", t, q1), uw = nu.clip.Evaluate("rotation.qw", t, q1);
-                const float ox = no->clip.Evaluate("rotation.qx", t, q2), oy = no->clip.Evaluate("rotation.qy", t, q2), oz = no->clip.Evaluate("rotation.qz", t, q2), ow = no->clip.Evaluate("rotation.qw", t, q2);
-                if (q1 && q2) { worst = std::max(worst, 1.0 - std::fabs((double)ux * ox + (double)uy * oy + (double)uz * oz + (double)uw * ow)); ++compared; }
+                (void)nu.clip.Evaluate("rotation.qw", t, q1); (void)no->clip.Evaluate("rotation.qw", t, q2);
+                if (q1 && q2) {
+                    Vec3 pu, su3, po, so3; Quat qu, qo;
+                    nu.clip.SampleTRS(t, pu, qu, su3, AnimationClip::kRot); no->clip.SampleTRS(t, po, qo, so3, AnimationClip::kRot);
+                    worst = std::max(worst, 1.0 - std::fabs((double)qu.x * qo.x + (double)qu.y * qo.y + (double)qu.z * qo.z + (double)qu.w * qo.w)); ++compared;
+                }
             }
         }
         if (worst > tol) std::cerr << "  (" << what << ") clip " << cu.name << " worst difference " << worst << "\n";

@@ -4,6 +4,8 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/ColliderShapes3D.hpp"
+#include "okay/Components/Terrain.hpp"
 #include "okay/Math/Mathf.hpp"
 
 namespace okay {
@@ -62,11 +64,27 @@ inline void FitColliders(GameObject* go, bool onlyAuto = false) {
             c->offset = offs;
             if (auto* b = dynamic_cast<BoxCollider3D*>(c)) b->size = size;
             else if (auto* sp = dynamic_cast<SphereCollider3D*>(c)) sp->radius = maxXYZ * 0.5f;
-            else if (auto* cap = dynamic_cast<CapsuleCollider3D*>(c)) {
+            else if (auto* cap = dynamic_cast<CapsuleCollider3D*>(c)) {   // Capsule and Cylinder
                 cap->radius = maxXZ * 0.5f;
                 cap->height = size.y;
             }
+            else if (auto* cone = dynamic_cast<ConeCollider3D*>(c)) {
+                cone->axis = 1;                                   // the tip points up, the base is the bottom of the mesh
+                cone->radius = maxXZ * 0.5f;
+                cone->height = size.y;
+            }
+            else if (auto* hull = dynamic_cast<ConvexHullCollider3D*>(c)) {
+                if (!onlyAuto) {                                  // (a wrap is rebuilt on request, not every frame)
+                    hull->SetFromMesh(mr->DisplayMesh());         // its points are in the object's own space: no offset
+                    hull->offset = Vec3::Zero;
+                }
+            }
         }
+    }
+    // A Heightfield collider copies the object's Terrain (when asked, not every frame).
+    if (!onlyAuto) {
+        if (auto* terr = go->GetComponent<Terrain>())
+            for (auto* hf : go->GetComponents<HeightfieldCollider3D>()) { hf->SetFromTerrain(*terr); hf->offset = Vec3::Zero; }
     }
 }
 

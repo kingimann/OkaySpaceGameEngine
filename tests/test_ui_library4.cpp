@@ -370,9 +370,10 @@ int main() {
         };
         walk(menu);
         for (const UIScreens::Def& d : UIScreens::Screens()) CHECK(seen["ui.scr." + d.id] == 1);
-        for (const auto& l : oked::uimenu::LegacyItems()) CHECK(seen[l.id] == 1);   // every item of the old menu has a home
+        std::set<std::string> removed; for (const char* r : oked::uimenu::RemovedFromMenu()) removed.insert(r);
+        for (const auto& l : oked::uimenu::LegacyItems()) CHECK(seen[l.id] + (int)removed.count(l.id) == 1);   // every item of the old menu has a home (in the menu, or still run by the Gallery)
         // every component that says it has a menu id points at a real menu item
-        for (const G::Entry& e : G::Index()) if (e.kind == G::kComponent && !e.menu.empty()) { CHECK(seen[e.menu] == 1); if (seen[e.menu] != 1) std::printf("  component %s -> %s is not in the menu\n", e.name.c_str(), e.menu.c_str()); }
+        for (const G::Entry& e : G::Index()) if (e.kind == G::kComponent && !e.menu.empty()) { CHECK(seen[e.menu] + (int)removed.count(e.menu) == 1); if (seen[e.menu] + (int)removed.count(e.menu) != 1) std::printf("  component %s -> %s is not in the menu\n", e.name.c_str(), e.menu.c_str()); }
         // each section of the registry has screens, and the section names are plain words
         CHECK(groups.size() == UIScreens::Sections().size());
     }

@@ -204,7 +204,10 @@ FootState FootAt(float p, const Gait& g) {
         // it well ahead before it comes back to land: the legs scissor in the air.
         f.sweep += k * (-0.14f * std::sin(kPi * clampf(u / 0.4f, 0.0f, 1.0f))
                         + 0.16f * std::sin(kPi * clampf((u - 0.4f) / 0.6f, 0.0f, 1.0f)));
-        f.lift = g.lift * std::sin(kPi * std::pow(u, 0.75f - 0.2f * k));
+        // u^0.75 rises with an infinite slope at lift-off, and at the end of a run's push-off the leg is straight, where
+        // a two-bone leg's knee changes with the square root of the distance: the knee snapped 3 to 7 degrees in a
+        // fraction of a frame. Easing the first tenth of the swing in removes the kink (the rest is unchanged).
+        f.lift = g.lift * std::sin(kPi * std::pow(u, 0.75f - 0.2f * k) * smooth01(u / 0.1f));
         f.pitch = off * (1.0f - u) * (1.0f - u) + land * u * u;
         f.lift += AnkleLiftForPitch(f.pitch);   // same rule as stance: no seam at lift-off / touch-down
     }
@@ -224,13 +227,19 @@ float GaitHipYFor(const Gait& g, float ph) {
         float n = kHipToAnkle - std::sqrt(std::fmax(0.0f, maxLeg * maxLeg - f.fwd * f.fwd)) - f.lift;
         return f.planted ? n + g.sag * std::sin(kPi * f.u) : n;
     };
-    float drop = -1.0f;
+    // The largest need over both feet at cycle phase p (the hips follow it while a foot is down).
+    auto support = [&](float p, bool& planted) {
+        float d = -1.0f;
+        planted = false;
+        for (int leg = 0; leg < 2; ++leg) {
+            FootState f = FootAt(p + 0.5f * leg, g);
+            planted = planted || f.planted;
+            d = std::fmax(d, need(f));
+        }
+        return d;
+    };
     bool anyPlanted = false;
-    for (int leg = 0; leg < 2; ++leg) {
-        FootState f = FootAt(ph + 0.5f * leg, g);
-        anyPlanted = anyPlanted || f.planted;
-        drop = std::fmax(drop, need(f));
-    }
+    float drop = support(ph, anyPlanted);
     if (!anyPlanted) {
         // Both feet off the ground (running): a short ballistic arc that leaves
         // exactly where the last foot pushed off and lands exactly where the next
@@ -238,9 +247,11 @@ float GaitHipYFor(const Gait& g, float ph) {
         float s = frac(ph) - g.beta; if (s >= 0.5f) s -= 0.5f;     // cycles into this flight
         float flightCycles = 0.5f - g.beta;
         float w = clampf(s / flightCycles, 0.0f, 1.0f);
-        FootState off = FootAt(g.beta - 1e-4f, g);
-        FootState on  = FootAt(1e-4f, g);
-        float a = need(off), b = need(on);
+        // The arc starts at what the hips do the instant before the last foot leaves (the largest need of BOTH feet,
+        // the same value the stance has, not just the leaving foot's: they differ, and the hips jumped there) and
+        // ends at what they do the instant after the next foot lands.
+        bool pl;
+        float a = support(g.beta - 1e-4f, pl), b = support(0.5f + 1e-4f, pl);
         float flight = flightCycles / g.freq;                        // seconds
         float rise = 0.5f * 9.81f * (0.25f * flight * flight) * 4.0f * w * (1.0f - w);
         drop = a + (b - a) * w - rise;

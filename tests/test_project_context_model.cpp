@@ -525,9 +525,18 @@ int main() {
         using namespace okaypb::paths;
         CHECK(Normalize("") == "" && Normalize(D("/a/b/../c/./d/")) == D("/a/c/d") && Normalize(D("/a//b")) == D("/a/b") && Normalize(D("/a\\b\\c")) == D("/a/b/c"));
         CHECK(StripSlash("/a/b///") == "/a/b" && StripSlash("/") == "/");
-#ifndef _WIN32   // (on Windows the root of a drive is "D:/", which these root checks do not spell)
-        CHECK(Normalize("/") == "/" && SameOrInside("/", "/a"));
-#endif
+        // the root keeps its slash: "/" here, "D:/" on Windows (D("/")); "D:" alone would mean the current folder on drive D
+        CHECK(Normalize(D("/")) == D("/") && SameOrInside(D("/"), D("/a")) && Normalize(D("/a/..")) == D("/"));
+        CHECK(Normalize(D("//")) == D("/") && Normalize(D("/a/../..")) == D("/"));
+        // the text part is the same on every system, so the drive spellings are checked here on Linux too
+        CHECK(StripSlash("D:/") == "D:/" && StripSlash("d:/") == "d:/" && StripSlash("D://") == "D:/" && StripSlash("D:\\") == "D:\\");
+        CHECK(StripSlash("D:/a/") == "D:/a" && StripSlash("D:") == "D:");   // "D:" (drive-relative) is left as written: no slash is added
+        CHECK(StripSlash("") == "" && StripSlash("//") == "/" && StripSlash("a/") == "a" && StripSlash("1:/") == "1:");   // "1:" is not a drive
+        CHECK(Clean("D:/a/..") == "D:/" && Clean("D:\\a\\..") == "D:/" && Clean("d:/a/b/../") == "d:/a" && Clean("D:/") == "D:/");
+        CHECK(Clean("/a/b/../c/") == "/a/c" && Clean("/") == "/" && Clean("") == "");
+        CHECK(SameOrInside("D:/", "D:/a") && SameOrInside("D:/", "D:/") && SameOrInside("D:\\", "D:/a") && !SameOrInside("D:/", "E:/a") && !SameOrInside("D:/", "D:"));
+        CHECK(Parent("D:/a") == "D:/" && Parent("D:/") == "" && Parent("/a") == "/" && Parent("/") == "" && Parent("/a/b") == "/a" && Parent("D:/a/b") == "D:/a" && Parent("a") == "");
+        CHECK(Outermost({"D:/", "D:/p/A"}).size() == 1);
         CHECK(SameOrInside(D("/a/b"), D("/a/b")) && SameOrInside(D("/a/b"), D("/a/b/c")) && SameOrInside(D("/a/b/"), D("/a/b/c/")));
         CHECK(!SameOrInside(D("/a/b"), D("/a/bc")) && !SameOrInside(D("/a/b"), D("/a")) && !SameOrInside(D("/a/b/c"), D("/a/b")));
         // Outermost: a folder and something inside it give the folder
@@ -542,10 +551,8 @@ int main() {
         CHECK(out({D("/p/A/../A/x"), D("/p/A")}) == (std::vector<std::string>{D("/p/A")}));
         CHECK(out({D("/p/b.png"), D("/p/a.png")}) == (std::vector<std::string>{D("/p/a.png"), D("/p/b.png")}));   // sorted
         CHECK(out({}).empty());
-#ifndef _WIN32
-        CHECK(out({"/"}) == (std::vector<std::string>{"/"}));
-        CHECK(out({"/", "/p/A"}) == (std::vector<std::string>{"/"}));                             // everything is inside the root
-#endif
+        CHECK(out({D("/")}) == (std::vector<std::string>{D("/")}));
+        CHECK(out({D("/"), D("/p/A")}) == (std::vector<std::string>{D("/")}));                     // everything is inside the root
         CHECK(out({D("/p/AB"), D("/p/A"), D("/p/A/B")}) == (std::vector<std::string>{D("/p/A"), D("/p/AB")}));
         // against the slow way (every item against every other) on a few thousand random paths
         std::mt19937 rng(12345);

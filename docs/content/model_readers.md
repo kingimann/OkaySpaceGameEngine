@@ -1703,7 +1703,7 @@ The binary mesh without an XML skeleton (it is imported rigid, at its bind pose,
 
 - **The editor does not recognise `.mesh.xml` by itself.** Its project panel and drag-and-drop look at the last extension (`.xml`), so only the Import Model dialog (whose file filter lists `*.mesh.xml`) and `ImportModelData` / `ImportModel` take the file. Teaching the editor's `IsModelExt` the two-part extension is not done.
 - **Binary `.mesh`: done** (2026-11-16, above). Not read in it: vertex elements that are not 32-bit floats (16-bit texture coordinates, packed normals), big-endian files.
-- **Binary `.skeleton`**: not started: its chunk layout is not recorded in this document, so it is not citable here. A binary `.mesh` is skinned only with the XML skeleton (`name.skeleton.xml`, as the OGRE XML converter writes it); with only a binary `.skeleton` it stays rigid with a note.
+- **Binary `.skeleton`: written** (2026-11-21, below). The file readers look for it next to a mesh only with `OKAY_OWN_OGRE_SKELBIN=1` (off by default); without the switch a mesh with only a binary `.skeleton` stays rigid with a note, as before.
 
 ### Limits
 
@@ -1764,7 +1764,64 @@ Tested by `ogre_skeleton_reader` (`tests/test_ogre_skeleton_reader.cpp`, 1,462 c
 
 `ReadOgreBinaryBuffer` takes an optional skeleton text (`ReadOgreBinaryFile` loads `<link name>.xml` next to the mesh, kept inside that folder; the link is the `0x6000` chunk). The `0x4100` (submesh) and `0x7000` (mesh, for submeshes on shared vertices) records, each vertex u32, bone u16, weight f32 (the 10 bytes after the chunk header that the reader already stepped over), go through the same skinning as the XML form: the bone id maps to a bone of the skeleton, the four strongest weights per vertex are kept and renormalised, a vertex with no usable weight follows the root through the bone `OGRE`, bad records are counted in the notes. Written from the public chunk description recorded above; the skeleton and skin code is the XML reader's own (shared, not copied from anywhere). A record cut off by the end of the file refuses the file; weights that are NaN, zero or negative count as bad.
 
-Tested by `ogre_skinbin` (`tests/test_ogre_skinbin_reader.cpp`, 389 checks, off by default like the rest): hand-built binary meshes with the same skeleton, vertices and assignments as the XML skeleton test (same hand-computed weights 0.4, 0.3, 0.2, 0.06 over 0.96, inverse binds, root fallback, two bad records), assignments on the submesh and on the mesh for shared vertices giving the same skin, no skeleton (rigid, old note), an unreadable skeleton, a mesh with no link, every truncation, and the file reader with and without the `.skeleton.xml` next to the mesh. **Not verified:** a real binary `.mesh` with assignments (the three real binary meshes in Assimp's folder are not in this repository, so the skin was not compared with the XML twins or with Assimp), the 16-byte record layout beyond what the stepped-over size implies, bone ids above what the skeleton lists, no Windows run. Binary `.skeleton` is still not read.
+Tested by `ogre_skinbin` (`tests/test_ogre_skinbin_reader.cpp`, 389 checks, off by default like the rest): hand-built binary meshes with the same skeleton, vertices and assignments as the XML skeleton test (same hand-computed weights 0.4, 0.3, 0.2, 0.06 over 0.96, inverse binds, root fallback, two bad records), assignments on the submesh and on the mesh for shared vertices giving the same skin, no skeleton (rigid, old note), an unreadable skeleton, a mesh with no link, every truncation, and the file reader with and without the `.skeleton.xml` next to the mesh. **Not verified:** a real binary `.mesh` with assignments (the three real binary meshes in Assimp's folder are not in this repository, so the skin was not compared with the XML twins or with Assimp), the 16-byte record layout beyond what the stepped-over size implies, bone ids above what the skeleton lists, no Windows run. Binary `.skeleton`: read since 2026-11-21 (next section).
+
+#### Binary `.skeleton` (2026-11-21)
+
+Written from the public description of the OGRE binary skeleton file (the chunk list of the skeleton serializer's file-format
+notes); no code from OGRE or any importer. The layout, recorded here so it can be cited:
+
+- The file starts with the 16-bit id `0x1000` and a version line ending in a line feed: `[Serializer_v1.10]`, or
+  `[Serializer_v1.80]`, which adds the blend mode chunk. Then chunks: a 16-bit id and a 32-bit length that counts the
+  6-byte chunk header. Strings end at a line feed. Little endian (a big-endian file is refused).
+- `0x1010` blend mode: u16 (0 average, 1 cumulative).
+- `0x2000` bone: name, u16 handle, position (3 floats), orientation (x, y, z, w), then a scale (3 floats) only when the
+  chunk's length leaves room for it.
+- `0x3000` bone parent: u16 child handle, u16 parent handle.
+- `0x4000` animation: name, f32 length, then an optional `0x4010` base info (name, f32 time: the base pose of an additive
+  clip), then the `0x4100` tracks: u16 bone handle, each followed by its `0x4110` keyframes: f32 time, rotation (x, y, z, w),
+  translation (3 floats), and a scale when the chunk's length leaves room for it.
+- `0x5000` animation link: name, f32 scale (another skeleton whose clips this one may share).
+
+The handles are the bone ids the mesh's bone assignments use, and keyframes are relative to the bind pose, exactly as in the
+XML form, so both forms go through the same code after reading (`FinishSkeleton`: parent-first order, world bind poses,
+absolute keys). `ReadOgreSkeletonBinary` (`ModelData.hpp`) reads one alone. `ReadOgreBinaryBuffer` and `ReadOgreXmlBuffer`
+take a binary skeleton in their skeleton argument (told apart from XML by its first two bytes). The file readers try
+`<link>.xml` next to the mesh first, as before, and then, **only with `OKAY_OWN_OGRE_SKELBIN=1`** (also `true`, `on`, `yes`),
+the binary `<link>` itself, kept inside the mesh's folder. Refused: no bones, two bones with one handle or one name, a parent
+handle that does not exist, a bone with two parents, a parent loop (a bone that is its own parent included), numbers that are
+not finite, a negative key time, a chunk cut off by the end of the file. Reported in the notes, not applied: the cumulative
+blend mode, an additive clip's base pose, linked skeletons, tracks for a handle the skeleton does not have, versions other
+than 1.10 and 1.80.
+
+Tested by `ogre_skelbin_reader` (`tests/test_ogre_skelbin_reader.cpp`, 2,480 checks; 2,492 with the real files): the
+five-bone skeleton of the XML skeleton test written byte by byte in binary form (one bone and two keys with a written scale,
+the rest without) gives **the same nodes, bind pose and clip as its XML form**, with the hand-worked key values checked again
+(position (2,3,0), a 180 degree turn, scale (2,1,1)); version 1.10 without the blend mode chunk, a base info and a link; the
+refusals above; every truncation; every byte set to 0x00, 0xFF, 0x7F and 0x80 (no crash, nothing left behind on a refusal);
+both mesh readers skinned with the binary skeleton give the same skin as with the XML one; the file readers with the switch
+unset, `0` and `1`, and the `.skeleton.xml` winning when both files are there. Also run under
+`-fsanitize=address,undefined,float-cast-overflow`, clean.
+
+**Real files:** with `OKAY_MODEL_CORPUS` set (Assimp 5.4.3's test folder, `docs/content/model_corpus.md`), the real
+`fish.skeleton` (5 bones, 1 clip) and `ninja.skeleton` (28 bones, 20 clips) read and **equal their `.skeleton.xml` twins**
+node by node and key by key (within 0.002, the rounding of the XML text), and the real binary `fish.mesh` and `ninja.mesh`
+skinned with the binary skeleton give the same joints, weights and inverse binds as with the XML one. Both real files are
+version 1.10 with no bone or key scale written, so the scale branches and the 1.80 blend mode chunk are checked on
+hand-built fixtures only. Speed against Assimp: see the next paragraph.
+
+**Speed and agreement with Assimp (2026-11-21, one Linux machine, Release `-O2`, median of 200 runs, file reads included):**
+a folder with only the binary `fish` and `ninja` `.mesh` and `.skeleton` files (so ours cannot take the XML), ours with
+`OKAY_OWN_OGRE_SKELBIN=1` against Assimp 5.4.3 built from source with only its OGRE importer (`ReadFile`, no post-processing).
+fish: ours 0.51 ms, Assimp 2.95 ms (**0.17x**); ninja: ours 1.40 ms, Assimp 3.37 ms (**0.42x**, 0.34x in a 50-run pass). The
+skeleton alone (bytes in memory): fish 0.004 ms, ninja 0.59 ms. Both give the same clip count and the same number of rotation
+keys (fish 1 clip, 9 keys; ninja 20 clips, 1,796 keys). The bone lists differ by design: Assimp keeps only the bones that weight
+a mesh (fish 4, ninja 20 on its most-boned mesh), ours keeps every skeleton bone on each skinned part (fish 5, ninja 28). The
+bench program was local and is not in the repository; memory was not measured.
+
+**Not verified:** a real file of version 1.80, a real file with scales, additive clips or links, a real file from an exporter
+other than the OGRE SDK tools; no Windows run. The switch is not in the launcher's Experimental list (`shared/OwnSwitches.hpp`
+is the coordinator's) and is not in the import seam's backend table: it is read by the OGRE reader itself.
 
 ## Our own PMX reader (`.pmx`)
 

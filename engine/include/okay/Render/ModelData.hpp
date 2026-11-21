@@ -257,12 +257,19 @@ bool ReadOgreXmlBuffer(const std::string& text, const std::string& baseDir, Impo
 /// keyframe's translate, rotate and scale are relative to the bone's bind pose (position = bind + translate, rotation = bind *
 /// rotate, scale = bind * scale). No parts. Duplicate bone ids or names, an unknown parent and parent loops are refused.
 bool ReadOgreSkeletonXml(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+/// OGRE binary skeleton (.skeleton, little endian, serializer v1.10 and v1.80): the same nodes, bind pose and clips as
+/// ReadOgreSkeletonXml gives for the XML form of the same skeleton (bones by handle, parents, animations of tracks of keyframes,
+/// each relative to the bind pose; a bone's or keyframe's scale where the chunk holds one). Blend mode, additive base poses and
+/// linked skeletons are reported in `out.notes`, not applied. Big-endian files are refused.
+bool ReadOgreSkeletonBinary(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
 /// OGRE binary mesh (.mesh, little endian, serializer v1.8 and later): the same parts, materials and notes as the XML reader
 /// gives for the XML form of the same mesh (position, normal and the first texture coordinate set of 32-bit float vertex
 /// elements; triangle lists, strips and fans). Levels of detail, edge lists, poses and animations are skipped (reported in
 /// `out.notes`); big-endian files are refused. With `skeletonXml` (the text of the .skeleton.xml the mesh links to;
 /// ReadOgreBinaryFile loads `<link name>.xml` next to the mesh) the 0x4100 / 0x7000 bone assignments skin the parts exactly as
-/// ReadOgreXmlBuffer does. The binary .skeleton is not read: without the XML skeleton the mesh stays rigid, with a note.
+/// ReadOgreXmlBuffer does. `skeletonXml` may also hold a binary .skeleton (told apart by its first bytes). The file readers find
+/// the binary `<link name>` next to the mesh only with OKAY_OWN_OGRE_SKELBIN=1 (off by default) and when there is no
+/// `<link name>.xml`; without a skeleton the mesh stays rigid, with a note.
 bool ReadOgreBinaryBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
                           const std::vector<std::string>* materialScripts = nullptr, const std::string* skeletonXml = nullptr);
 /// XGL (.xgl, XML) and ZGL (.zgl, the same text as one zlib stream; told apart by the zlib header): one part per (mesh,

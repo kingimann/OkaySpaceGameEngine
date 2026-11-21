@@ -3986,6 +3986,8 @@ okay_batchd_reader_test(ogre OgreXmlReader.cpp)
 okay_batchd_reader_test(ogre_skeleton OgreXmlReader.cpp)
 # Binary .mesh skinned with the XML skeleton (0x4100 / 0x7000 bone assignments): hand-built binary fixtures, reader source only
 okay_batchd_reader_test(ogre_skinbin OgreXmlReader.cpp)
+# Binary OGRE skeletons (.skeleton): hand-built binary fixtures compared with the XML form; real files with OKAY_MODEL_CORPUS
+okay_batchd_reader_test(ogre_skelbin OgreXmlReader.cpp)
 # the XGL reader unpacks ZGL with the engine's own inflate
 okay_batchd_reader_test(xgl XglReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 okay_batchd_reader_test(irr IrrSceneReader.cpp)

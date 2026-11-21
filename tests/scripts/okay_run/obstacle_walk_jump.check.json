@@ -1,0 +1,13 @@
+{
+  "checks": [
+    {"expect": "ran"},
+    {"expect": "no_errors"},
+    {"expect": "moved", "object": "Player", "field": "pos", "from": 0, "to": 160, "min": 2.0},
+    {"expect": "ever", "object": "Player", "field": "grounded", "op": "==", "value": false, "from": 156, "to": 200},
+    {"expect": "ever", "object": "Player", "field": "pos.y", "op": ">", "value": 0.4, "from": 156, "to": 220},
+    {"expect": "value", "object": "Player", "field": "grounded", "at": "end", "op": "==", "value": true},
+    {"expect": "moved", "object": "camera", "field": "pos", "from": 0, "to": 160, "min": 2.0},
+    {"expect": "max_step", "object": "camera", "field": "pos", "max": 0.5},
+    {"expect": "camera_never_inside"}
+  ]
+}

@@ -290,7 +290,9 @@ has `enabled`.
 | Rigidbody3D | 15 / 19 | runtime: velocity, angularVelocity, sleeping, groundedOnTerrain |
 | BoxCollider2D, CircleCollider2D, CapsuleCollider2D | 8, 8, 9 | |
 | EdgeCollider2D, PolygonCollider2D | 8, 6 | |
-| BoxCollider3D, SphereCollider3D, CapsuleCollider3D, CylinderCollider3D, MeshCollider3D | 8, 8, 10, 10, 8 | |
+| CompositeCollider2D | (own record) | the shapes are one `parts` text; saved in `compositecollider2d` |
+| BoxCollider3D, SphereCollider3D, CapsuleCollider3D, CylinderCollider3D, MeshCollider3D | 8, 8, 10, 10, 8 | all also have `contactOffset` (saved in `colskin3d` / `colskin2d` only when set) |
+| ConeCollider3D, ConvexHullCollider3D, PlaneCollider3D, CompoundCollider3D, HeightfieldCollider3D | (own records) | every setting is written from the Inspector rows, so each round-trips |
 | AudioSource | 13 | |
 | ParticleSystem | 52 | everything except the gradient and curves |
 | Mover, Spinner, Lifetime, CameraFollow | 3, 3, 2, 4 | Mover and Spinner have a `space` (Local, World or Self) |

@@ -109,7 +109,8 @@ public:
     int   Dim() const { return resolution + 1; }
     float CellSize() const { return resolution > 0 ? size / resolution : size; }
 
-    /// Resize the grid to (res+1)^2, preserving nothing (all flat at 0).
+    /// Resize the grid to (res+1)^2. The heights and the painted layer weights are
+    /// resampled (bilinear) onto the new grid, so sculpting and painting are kept.
     void  Resize(int res);
     float GetHeight(int x, int z) const;
     void  SetHeight(int x, int z, float h);

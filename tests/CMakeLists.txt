@@ -228,10 +228,24 @@ add_executable(test_inventory_ops test_inventory_ops.cpp)
 target_link_libraries(test_inventory_ops PRIVATE okay::engine)
 add_test(NAME inventory_ops COMMAND test_inventory_ops)
 
+# Item names cut to a measured width (pure text-fit logic)
+add_executable(test_inventory_textfit test_inventory_textfit.cpp)
+target_link_libraries(test_inventory_textfit PRIVATE okay::engine)
+add_test(NAME inventory_textfit COMMAND test_inventory_textfit)
+
 # Moving items between bags: hostile inputs, stack/weight limits, slot<->grid moves, old saves
 add_executable(test_inventory_moves test_inventory_moves.cpp)
 target_link_libraries(test_inventory_moves PRIVATE okay::engine)
 add_test(NAME inventory_moves COMMAND test_inventory_moves)
+add_executable(test_inventory_durability test_inventory_durability.cpp)
+target_link_libraries(test_inventory_durability PRIVATE okay::engine)
+add_test(NAME inventory_durability COMMAND test_inventory_durability)
+add_executable(test_inventory_use test_inventory_use.cpp)
+target_link_libraries(test_inventory_use PRIVATE okay::engine)
+add_test(NAME inventory_use COMMAND test_inventory_use)
+add_executable(test_inventory_arbiter test_inventory_arbiter.cpp)
+target_link_libraries(test_inventory_arbiter PRIVATE okay::engine)
+add_test(NAME inventory_arbiter COMMAND test_inventory_arbiter)
 
 # Item definitions: .okayitems database, legacy names, per-instance data, def-driven stack/icon/rarity/use
 add_executable(test_item_database test_item_database.cpp)
@@ -1181,6 +1195,12 @@ add_executable(test_vehicle_seat test_vehicle_seat.cpp)
 target_link_libraries(test_vehicle_seat PRIVATE okay::engine)
 target_compile_definitions(test_vehicle_seat PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vehicle_seat COMMAND test_vehicle_seat)
+add_executable(test_vehicle_controls test_vehicle_controls.cpp)
+target_link_libraries(test_vehicle_controls PRIVATE okay::engine)
+add_test(NAME vehicle_controls COMMAND test_vehicle_controls)
+add_executable(test_vehicle_seat_fit test_vehicle_seat_fit.cpp)
+target_link_libraries(test_vehicle_seat_fit PRIVATE okay::engine)
+add_test(NAME vehicle_seat_fit COMMAND test_vehicle_seat_fit)
 
 add_executable(test_survival test_survival.cpp)
 target_link_libraries(test_survival PRIVATE okay::engine)
@@ -1532,6 +1552,9 @@ add_test(NAME humanoid_template COMMAND test_humanoid_template)
 add_executable(test_controllers_ik test_controllers_ik.cpp)
 target_link_libraries(test_controllers_ik PRIVATE okay::engine)
 add_test(NAME controllers_ik COMMAND test_controllers_ik)
+add_executable(test_camera_after_ik test_camera_after_ik.cpp)
+target_link_libraries(test_camera_after_ik PRIVATE okay::engine)
+add_test(NAME camera_after_ik COMMAND test_camera_after_ik)
 
 add_executable(test_ecs test_ecs.cpp)
 target_link_libraries(test_ecs PRIVATE okay::engine)
@@ -3377,6 +3400,12 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     add_test(NAME platform_events COMMAND test_platform_events)
     set_tests_properties(platform_events PROPERTIES TIMEOUT 60)
 
+    # Own BMP writer (replaces SDL_SaveBMP in the screenshot tools): header only, no display needed.
+    add_executable(test_bmp_writer test_bmp_writer.cpp)
+    target_include_directories(test_bmp_writer PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+    add_test(NAME bmp_writer COMMAND test_bmp_writer)
+    set_tests_properties(bmp_writer PROPERTIES TIMEOUT 60)
+
     add_executable(test_platform_window test_platform_window.cpp)
     target_link_libraries(test_platform_window PRIVATE okay::platform)
     if(TARGET SDL2::SDL2)
@@ -3387,6 +3416,16 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
         add_test(NAME platform_window_${_okay_pb}
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_window> ${_okay_pb})
         set_tests_properties(platform_window_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endforeach()
+
+    # Ending through std::exit while globals still own windows (the editor's g_glWin): the backends are destroyed first, the
+    # windows must then let go without calling them. Must end with 0 (the editor crashed with 139 on OKAY_UI_QUIT runs).
+    add_executable(test_platform_exit test_platform_exit.cpp)
+    target_link_libraries(test_platform_exit PRIVATE okay::platform)
+    foreach(_okay_pb sdl2 own)
+        add_test(NAME platform_exit_${_okay_pb}
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_exit> ${_okay_pb})
+        set_tests_properties(platform_exit_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     endforeach()
 endif()
 
@@ -3955,6 +3994,10 @@ okay_batchd_reader_test(ac3d Ac3dReader.cpp)
 okay_batchd_reader_test(ogre OgreXmlReader.cpp)
 # OGRE skeletons (.skeleton.xml) and skinned .mesh.xml: hand-computed fixtures, reader source only
 okay_batchd_reader_test(ogre_skeleton OgreXmlReader.cpp)
+# Binary .mesh skinned with the XML skeleton (0x4100 / 0x7000 bone assignments): hand-built binary fixtures, reader source only
+okay_batchd_reader_test(ogre_skinbin OgreXmlReader.cpp)
+# Binary OGRE skeletons (.skeleton): hand-built binary fixtures compared with the XML form; real files with OKAY_MODEL_CORPUS
+okay_batchd_reader_test(ogre_skelbin OgreXmlReader.cpp)
 # the XGL reader unpacks ZGL with the engine's own inflate
 okay_batchd_reader_test(xgl XglReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 okay_batchd_reader_test(irr IrrSceneReader.cpp)
@@ -4378,6 +4421,9 @@ add_executable(test_walk_vs_run test_walk_vs_run.cpp)
 target_link_libraries(test_walk_vs_run PRIVATE okay::engine)
 add_test(NAME walk_vs_run COMMAND test_walk_vs_run)
 add_test(NAME walk_vs_run_old COMMAND ${CMAKE_COMMAND} -E env OKAY_OLD_GAIT=1 $<TARGET_FILE:test_walk_vs_run> --old)
+add_executable(test_walk_dynamics test_walk_dynamics.cpp)
+target_link_libraries(test_walk_dynamics PRIVATE okay::engine)
+add_test(NAME walk_dynamics COMMAND test_walk_dynamics)
 add_executable(walk_vs_run_strips walk_vs_run_strips.cpp)
 target_link_libraries(walk_vs_run_strips PRIVATE okay::engine)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/walk_vs_run_pictures)
@@ -4574,6 +4620,11 @@ foreach(_t IN ITEMS mip atlas convert bc dds_stream)
     set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()
 
+# Colliders behave as the shapes they are (not boxes): Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield, 2D polygon / capsule / composite.
+add_executable(test_collider_shapes test_collider_shapes.cpp)
+target_link_libraries(test_collider_shapes PRIVATE okay::engine)
+add_test(NAME collider_shapes COMMAND test_collider_shapes)
+
 # Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S decisions (editor/SaveShortcutModel.hpp, no ImGui, header-only).
 add_executable(test_save_shortcut_model test_save_shortcut_model.cpp)
 target_include_directories(test_save_shortcut_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
@@ -4586,3 +4637,36 @@ add_test(NAME vs_pan_model COMMAND test_vs_pan_model)
 add_executable(test_damage test_damage.cpp)
 target_link_libraries(test_damage PRIVATE okay::engine)
 add_test(NAME damage COMMAND test_damage)
+add_executable(test_anim_quat_slerp test_anim_quat_slerp.cpp)
+target_link_libraries(test_anim_quat_slerp PRIVATE okay::engine)
+add_test(NAME anim_quat_slerp COMMAND test_anim_quat_slerp)
+# okay_run: plays a scene headless with scripted input and writes a per-frame trace, the log and pictures
+# (scripts/okay_run.py drives it; docs/process/okay_run.md). A tool, not a test; tests/scripts/test_okay_run.py checks it.
+add_executable(okay_run okay_run.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp ${PROJECT_SOURCE_DIR}/editor/ExampleScenes.cpp)
+target_include_directories(okay_run PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(okay_run PRIVATE okay::engine)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME okay_run_selftest COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_okay_run.py $<TARGET_FILE:okay_run>)
+    set_tests_properties(okay_run_selftest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+endif()
+
+# The Vehicle Controller Inspector pure decisions (editor/VehicleEditorModel.hpp, UI-library free).
+add_executable(test_vehicle_editor_model test_vehicle_editor_model.cpp)
+target_include_directories(test_vehicle_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_vehicle_editor_model PRIVATE okay::engine)
+add_test(NAME vehicle_editor_model COMMAND test_vehicle_editor_model)
+add_executable(test_camera_robust test_camera_robust.cpp)
+target_link_libraries(test_camera_robust PRIVATE okay::engine)
+add_test(NAME camera_robust COMMAND test_camera_robust)
+
+# Controller audit, Simple view model and frame-rate check (claude/controller-1)
+add_executable(test_controller_tuning test_controller_tuning.cpp)
+target_link_libraries(test_controller_tuning PRIVATE okay::engine)
+add_test(NAME controller_tuning COMMAND test_controller_tuning)
+
+# #888 Grok findings 145, 146, 153, 155 (claude2/grok-145-146-153-155): particle replay, terrain resample, lights under
+# inactive parents, reverse one-shot animation end.
+add_executable(test_grok_145_146_153_155 test_grok_145_146_153_155.cpp)
+target_link_libraries(test_grok_145_146_153_155 PRIVATE okay::engine)
+add_test(NAME grok_145_146_153_155 COMMAND test_grok_145_146_153_155)

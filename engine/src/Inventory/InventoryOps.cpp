@@ -5,6 +5,8 @@
 #include "okay/Components/Equipment.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
 #include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <utility>
 
 namespace okay {
@@ -260,6 +262,17 @@ static InvResult UseItem(Inventory* inv, int i, GameObject* user) {
             }
     if (def && def->equip != EquipSlot::None)   // wearable / weapon: put it on (main hand for a weapon)
         if (Equipment* eq = Equipment::Of(user)) return eq->EquipFrom(*inv, i);
+    if (def) {   // a tool: using it wears it down
+        const std::string w = def->Custom("wearPerUse");
+        const float per = w.empty() ? 0.0f : (float)std::atof(w.c_str());
+        if (per > 0.0f && std::isfinite(per)) {
+            const InvResult wr = Wear(inv, i, per);
+            if (!wr.Ok()) return wr;
+            InvResult r = InvResult::Done(1);
+            r.broke = wr.moved == 1;
+            return r;
+        }
+    }
     return InvResult::No("nothing uses it");
 }
 
@@ -354,6 +367,39 @@ InvResult FromGrid(GridInventory* src, int index, Inventory* dst, int di, int am
     src->items[index].count -= r.moved;
     if (src->items[index].count <= 0) src->RemoveAt(index);
     return r;
+}
+
+InvResult Wear(Inventory* inv, int i, float amount) {
+    if (!ValidSlot(inv, i)) return InvResult::No("bad slot");
+    Inventory::Slot& s = inv->slots[i];
+    if (Inventory::Empty(s)) return InvResult::No("empty slot");
+    if (!std::isfinite(amount) || amount < 0.0f) return InvResult::No("bad amount");
+    if (s.data.durability < 0.0f) return InvResult::No("item does not wear");
+    if (s.count != 1) return InvResult::No("only a single item wears");
+    s.data.durability -= amount;
+    const bool broke = s.data.durability <= 0.0f;
+    if (broke) s = Inventory::Slot{};
+    inv->NotifyChanged();
+    return InvResult::Done(broke ? 1 : 0);
+}
+
+InvResult Repair(Inventory* inv, int i, float amount) {
+    if (!ValidSlot(inv, i)) return InvResult::No("bad slot");
+    Inventory::Slot& s = inv->slots[i];
+    if (Inventory::Empty(s)) return InvResult::No("empty slot");
+    if (!std::isfinite(amount) || amount <= 0.0f) return InvResult::No("bad amount");
+    if (s.data.durability < 0.0f) return InvResult::No("item does not wear");
+    if (s.count != 1) return InvResult::No("only a single item wears");
+    const ItemDefinition* def = ItemDatabase::Get().Find(s.item);
+    const std::string mx = def ? def->Custom("maxDurability") : std::string();
+    const float cap = mx.empty() ? 0.0f : (float)std::atof(mx.c_str());
+    if (!(cap > 0.0f)) return InvResult::No("no maximum durability");
+    if (s.data.durability >= cap) return InvResult::No("already full");
+    const float want = s.data.durability + amount;
+    const bool clipped = want > cap;
+    s.data.durability = clipped ? cap : want;
+    inv->NotifyChanged();
+    return clipped ? InvResult::Part(1, "capped at the maximum") : InvResult::Done(1);
 }
 
 } // namespace InventoryOps

@@ -239,6 +239,29 @@ inline float ClampLookPitch(float pitch) {
     return pitch;
 }
 
+/// Speed left after `dt` seconds with no input. Same curve as StopSettleRate (a steady `decel` above 2.2 m/s, then
+/// the rate eases down with the speed, so it settles instead of snapping), but solved exactly over dt, so the stop
+/// takes the same time and distance at 30, 60 or 144 frames a second. (Stepping the rate once per frame made a
+/// 30 fps stop 3 times shorter than a 144 fps one.)
+inline float StoppedSpeed(float speed, float decel, bool groundedStop, float dt) {
+    if (speed < 1e-4f || decel <= 0.0f) return speed < 1e-4f ? 0.0f : speed;
+    float rem = dt;
+    if (!groundedStop) { const float v = speed - decel * dt; return v > 0.0f ? v : 0.0f; }
+    if (speed >= 2.2f) {                                   // steady braking down to the settle band
+        const float t = (speed - 2.2f) / decel;
+        if (rem <= t) return speed - decel * rem;
+        speed = 2.2f; rem -= t;
+    }
+    constexpr float kTau = 0.10f, kFloor = 0.12f;
+    if (speed >= kFloor && speed < kTau * decel) {         // exponential settle (rate = speed / tau)
+        const float t = kTau * std::log(speed / kFloor);
+        if (rem <= t) return speed * std::exp(-rem / kTau);
+        speed = kFloor; rem -= t;
+    }
+    const float v = speed - decel * rem;                    // last bit: steady braking, ends at 0
+    return v > 0.0f ? v : 0.0f;
+}
+
 /// One horizontal step toward `wish`. `accel` changes speed along the wish,
 /// `steer` removes the part of the velocity that isn't the wish, so a turn
 /// does not keep the old heading. Stopping uses `decel` and StopSettleRate.
@@ -250,10 +273,9 @@ inline void StepPlanarVelocity(float& vx, float& vz, float wishX, float wishZ,
     const float curX = vx, curZ = vz;
     const float speed = std::sqrt(curX * curX + curZ * curZ);
     if (!moving) {
-        const float rate = StopSettleRate(decel, groundedStop, speed);
-        const float step = rate * dt;
-        if (speed <= step || speed < 1e-4f) { vx = 0.0f; vz = 0.0f; return; }
-        const float k = (speed - step) / speed;
+        const float after = StoppedSpeed(speed, decel, groundedStop, dt);
+        if (after <= 0.0f) { vx = 0.0f; vz = 0.0f; return; }
+        const float k = after / speed;
         vx = curX * k; vz = curZ * k;
         return;
     }

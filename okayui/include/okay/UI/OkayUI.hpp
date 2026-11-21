@@ -87,6 +87,7 @@ struct Input {
     float       mouseY    = 0.0f;
     bool        mouseDown = false;     // left mouse button held this frame
     bool        rightDown = false;     // right mouse button held this frame (context menus)
+    bool        middleDown = false;    // middle mouse button held this frame (IsMouseDown(2), GetMouseDragDelta(2))
     bool        blocked   = false;     // another layer (e.g. ImGui) owns the mouse -> ignore clicks
     // Keyboard (for TextField). The host forwards SDL_TEXTINPUT text and key edges
     // only when OkayUI should receive them (e.g. ImGui isn't capturing the keyboard).
@@ -343,6 +344,7 @@ void ResizableNextWindow(float minW = 100.0f, float minH = 60.0f);
 /// position. `w`/`h` <= 0 fill the remaining width / use a default height. Always pair
 /// with EndChild(). Returns true (visible) — call EndChild regardless.
 bool BeginChild(const char* id, float w = 0.0f, float h = 0.0f, bool border = true);
+/// Dear ImGui's form, BeginChild(id, size, childFlags, windowFlags), and its ChildFlags are in OkayUICompat.hpp.
 void EndChild();
 /// The scroll offset (pixels from the top) of the innermost open BeginChild region, and the largest offset its content
 /// allowed on the last frame (0 until the region has been laid out once). Both are 0 outside a child.
@@ -510,6 +512,9 @@ bool InputTextMultiline(const char* label, char* buf, int cap, Vec2 size = Vec2{
 bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags = 0);
 /// The next text field drawn takes the keyboard focus (and puts the caret at the end of its text).
 void SetKeyboardFocusHere();
+/// The next item, when it is on the line of a taller item (after SameLine), is centred on that item instead of sharing its top: Dear
+/// ImGui lines up a small button with the text of a frame-tall row this way. Applies to one item.
+void CenterNextOnLine();
 /// An integer field with [-]/[+] stepper buttons that change *value by `step`.
 /// Returns true on any frame the value changed.
 bool InputInt(const char* label, int* value, int step = 1);
@@ -559,6 +564,21 @@ bool DragInt3(const char* label, int v[3], float speed = 0.25f, int minV = 0, in
 bool DragInt4(const char* label, int v[4], float speed = 0.25f, int minV = 0, int maxV = 0);
 /// A low and a high value in one row: the low cell never goes above the high one and the high never below the low.
 bool DragFloatRange2(const char* label, float* lo, float* hi, float speed = 0.1f, float minV = 0.0f, float maxV = 0.0f);
+/// Dear ImGui's formatted fields and framed sliders (StyleVar_FramedWidgets pushed): the format forms in OkayUICompat.hpp (DragFloat(.., fmt, flags),
+/// DragFloat2/3, SliderFloat(.., fmt, flags), SliderFloat2/3, SliderInt) draw as Dear ImGui does while that style is pushed: a drag field is a
+/// frame in the Col_FrameBg colours with the value in the middle (Ctrl+click or a double click types a number); a slider is a frame, a grab
+/// block (16 pixels, or one step of an integer range) and the value in the middle. Cells of a row are StyleVar_ItemInnerSpacing.x apart
+/// (default 4) and the label follows at that gap (default 8). Slider_Logarithmic moves on a logarithmic scale of a positive range.
+/// Without the style they keep OkayUI's own look (SetNextNumberFormat). The hooks below are what OkayUICompat.cpp calls.
+bool FramedNumbersOn();
+bool FramedDragFloatN(const char* label, float* v, int n, float speed, float minV, float maxV, const char* format, bool logarithmic);
+bool FramedSliderFloat(const char* label, float* v, float minV, float maxV, const char* format, bool logarithmic);
+bool FramedSliderInt(const char* label, int* v, int minV, int maxV, const char* format);
+bool FramedSliderFloatN(const char* label, float* v, int n, float minV, float maxV, const char* format);
+/// The editor's search field: a text field with a magnifier drawn at the left (the text starts after it), `hint` while it is empty, and a
+/// clear button (a cross) at the right while it has text. A click on the cross empties the buffer, gives up the keyboard and returns true.
+/// `width` > 0 is the width; 0 or less fills the width left minus |width|. At least three rows wide. True on any frame the text changed.
+bool SearchField(const char* id, const char* hint, char* buf, int cap, float width = 0.0f);
 
 /// The integer version of DragFloatRange2.
 bool DragIntRange2(const char* label, int* lo, int* hi, float speed = 0.25f, int minV = 0, int maxV = 0);
@@ -670,7 +690,11 @@ bool Selectable(const char* label);
 /// the row toggles *p_selected when clicked. Flags: Disabled (dim, no hover or click), ClosePopup (choosing it closes the innermost
 /// popup), SpanAllColumns (in a table: the row covers every column; the cell widgets after it stay in place), DoubleClickOnly (only a
 /// double click chooses it).
-enum SelectableFlags : unsigned { Selectable_None = 0, Selectable_Disabled = 1, Selectable_ClosePopup = 2, Selectable_SpanAllColumns = 4, Selectable_DoubleClickOnly = 8 };
+/// Selectable_Header (OkayUI's own) draws Dear ImGui's row: flat and square, Col_Header when selected, Col_HeaderHovered under the
+/// pointer, Col_HeaderActive while held, the label half the item spacing in from the row's left edge (Dear ImGui's highlight reaches
+/// that far past its text). Without it a row has OkayUI's look (the launcher look: a rounded accent tint and a bar when selected).
+enum SelectableFlags : unsigned { Selectable_None = 0, Selectable_Disabled = 1, Selectable_ClosePopup = 2, Selectable_SpanAllColumns = 4, Selectable_DoubleClickOnly = 8,
+                                  Selectable_Header = 16 };
 bool Selectable(const char* label, bool selected, unsigned flags, Vec2 size = Vec2{});
 bool Selectable(const char* label, bool* p_selected, unsigned flags = 0, Vec2 size = Vec2{});
 
@@ -763,6 +787,8 @@ enum TableFlags : int {
     Table_SortTristate = 32,  // ascending, descending, then unsorted
     Table_ScrollX      = 64,  // horizontal scrolling inside the outer size
     Table_ScrollY      = 128, // vertical scrolling inside the outer size
+    Table_Hideable     = 256, // a right click on the header row opens a menu that shows and hides columns
+    // (Table_BordersOuter and the other names ported tables use are in OkayUICompat.hpp.)
 };
 enum TableColumnFlags : int {
     Col_None       = 0,
@@ -770,6 +796,12 @@ enum TableColumnFlags : int {
     Col_NoSort     = 2,       // a Sortable table's header click does not sort by this column
     Col_DefaultSort = 4,      // starts as a sort key
     Col_PreferSortDescending = 8,   // the first click sorts descending (the default is ascending)
+    Col_WidthStretch = 16,    // `widthOrWeight` is a weight (the default; accepted so ported code can say it)
+    Col_NoResize     = 32,    // the borders on either side of this column cannot be dragged
+    Col_DefaultHide  = 64,    // starts hidden (a Table_Hideable table's header menu, or TableSetColumnEnabled, shows it)
+    Col_NoHide       = 128,   // cannot be hidden
+    Col_NoHeaderLabel = 256,  // the header row draws no label for this column (the sort arrow still shows)
+    Col_NoReorder = 512, Col_NoClip = 1024, Col_NoSortAscending = 2048, Col_NoSortDescending = 4096, Col_IndentEnable = 8192,   // accepted, nothing to do yet
 };
 /// The same column flags under the names ported code uses. Stretch is the default (flag 0), Fixed is Col_WidthFixed.
 enum TableColumnFlagNames : int { TableColumn_None = 0, TableColumn_WidthStretch = 0, TableColumn_WidthFixed = Col_WidthFixed, TableColumn_NoSort = Col_NoSort,
@@ -811,6 +843,18 @@ void TableSetScroll(float x, float y);
 bool TableSetColumnIndex(int column);
 int  TableGetColumnIndex();   // -1 before the first cell of a row
 int  TableGetRowIndex();      // -1 before the first row
+/// Hiding columns (flag-style tables). A column starts hidden with Col_DefaultHide; a Table_Hideable table's header row opens a menu on
+/// right click (a check box per column; NoHide columns and the last visible one are locked); TableSetColumnEnabled(col, false) hides one
+/// from code (false when it cannot be hidden), taking effect next frame. The choice is remembered per table. A hidden column has no
+/// width, header or border; TableNextColumn / TableSetColumnIndex return false for it and anything drawn in its cell lands off screen.
+bool TableSetColumnEnabled(int column, bool enabled);
+bool TableGetColumnIsEnabled(int column);
+int  TableGetColumnCount();
+/// The label and the flags given to TableSetupColumn (column < 0: the current column; "" and 0 when there is none).
+const char* TableGetColumnName(int column = -1);
+int  TableGetColumnFlags(int column = -1);
+/// The visible column under the pointer while it is over the table (header and rows so far), else -1.
+int  TableGetHoveredColumn();
 /// The row clipper is on by default (rows wholly outside the clip emit no geometry; the picture is identical); off only to compare or debug.
 void SetTableRowClipping(bool on);
 bool TableRowIsVisible();     // false while the current row is wholly outside the clip (the row clipper): its widgets still lay out but emit no geometry, so skip expensive cell content
@@ -886,14 +930,30 @@ struct DragPayload {
     bool IsDelivery() const { return delivery; }
 };
 typedef DragPayload ImGuiPayload;
-enum DragDropFlags : int { DragDrop_None = 0, DragDrop_AcceptBeforeDelivery = 1 };
+/// DragDrop_NoDefaultRect (for BeginDragDropTarget) leaves out the accent outline, for a target that draws where the drop would land
+/// itself (a list showing a line between rows).
+enum DragDropFlags : int { DragDrop_None = 0, DragDrop_AcceptBeforeDelivery = 1, DragDrop_NoDefaultRect = 2 };
 bool BeginDragDropSource(int flags = 0);
 bool SetDragDropPayload(const char* type, const void* data, int size);
 void SetDragDropPreview(const char* text);
 void EndDragDropSource();
 bool BeginDragDropTarget();
+bool BeginDragDropTarget(int flags);
 const DragPayload* AcceptDragDropPayload(const char* type = nullptr, int flags = 0);
 void EndDragDropTarget();
+/// The drag in flight once it has a payload (its type and bytes; delivery false), or null. Lets a list show where a drop would land,
+/// and lets a host hand an OkayUI drag on to another toolkit when the pointer leaves the OkayUI area.
+const DragPayload* GetDragDropPayload();
+/// A drag that began OUTSIDE OkayUI (in another toolkit's panel beside an OkayUI one, such as a file dragged from a Dear ImGui panel):
+/// the host calls this every frame the drag lasts, after BeginFrame and before the OkayUI widgets that may take it, with `released` true
+/// on the frame the button is let go. OkayUI's drop targets see it like one of their own drags (the pointer counts even while
+/// Input::blocked is set, since the other toolkit owns the mouse) and AcceptDragDropPayload delivers it on the released frame. A frame
+/// without the call ends it. No chip follows the pointer (the other toolkit draws its own).
+void SetExternalDragDrop(const char* type, const void* data, int size, bool released);
+/// True while the drag in flight came from SetExternalDragDrop.
+bool IsDragDropExternal();
+/// End the drag in flight without a drop. Escape does this too (until the button is let go nothing starts again).
+void CancelDragDrop();
 
 // ---- ID stack ------------------------------------------------------------------
 // Widget ids are hashed from their label, so two widgets with the same label in a
@@ -934,6 +994,11 @@ struct Rect { float x = 0, y = 0, w = 0, h = 0; };
 /// The rectangle of the last auto-layout item (Button, Checkbox, SliderFloat, InputText, Combo,
 /// Selectable, TreeNode, Text ...): the whole row including a label. Zero outside a window.
 Rect GetItemRect();
+/// The overlays opened so far this frame (combo lists, popups, menu dropdowns), in the order they were opened, each as a rectangle in
+/// screen pixels (index out of range: a zero Rect). A host that hands the mouse to OkayUI by region offers the ones its panel opened,
+/// so a list that hangs out of the panel still takes the click.
+int GetOverlayCount();
+Rect GetOverlayRect(int index);
 /// True when the mouse is over the last auto-layout item and nothing covers it (a blocked
 /// Input, or an open combo list / popup, counts as covered).
 bool IsItemHovered();
@@ -1287,13 +1352,33 @@ bool IsKeyDown(KeyId key);
 bool IsKeyPressed(KeyId key, bool repeat = true);
 bool IsKeyReleased(KeyId key);
 /// Temporarily change a style value until the matching PopStyleVar (they nest; up to 32 deep; an unbalanced push is undone at the
-/// next frame). Supported: ItemSpacing (x, y between widgets), WindowPadding (x), FrameRounding and ChildRounding (corner radius),
-/// WindowRounding, BorderSize (all three ImGui border sizes). The others are accepted and do nothing, so ported code compiles:
-/// FramePadding, ButtonTextAlign, SelectableTextAlign, ItemInnerSpacing, ScrollbarSize, Alpha.
+/// next frame). Supported: ItemSpacing (x, y between widgets), WindowPadding (x for windows; x and y for the padded and framed
+/// children of the flags form of BeginChild, which otherwise pad by 6), FrameRounding and ChildRounding (corner radius),
+/// WindowRounding, BorderSize (all three ImGui border sizes), ButtonTextAlign (x only: where a button's label sits, 0 left, 0.5
+/// centred, 1 right), CellPadding (a table cell's inner gap: x across, default 4; y above the first item and below the last one, which
+/// then ends the row without its item spacing; by default a row ends after the last item's spacing), FramePadding (y only: every
+/// frame, button, field and row is a text line plus twice y tall, and the box of Checkbox and RadioButton too; by default a frame is a
+/// text line plus 15 (12 without the launcher look) and a box a text line plus 6). The others are accepted and do
+/// nothing, so ported code compiles: SelectableTextAlign, Alpha.
+/// TextRowHeight is OkayUI's own: the height a line of plain text (Text, TextColored, TextDisabled, TextUnformatted, wrapped lines)
+/// takes in the layout. 0 (the default) is a frame's height, so text lines up with buttons and fields on its row; a value above 0 is
+/// that many pixels (Dear ImGui's text rows: pass GetFontSize() for one text line). A shorter text line that follows a taller item
+/// on the same line is centred on it.
+/// PopupPadding and PopupWidth are OkayUI's own too, read when a popup or context menu begins: the padding inside it (x, y; default
+/// 6 and 6) and its width (default 160). With a pushed padding the popup is exactly as tall as its content (no item spacing after the
+/// last item), as in Dear ImGui. ItemInnerSpacing (x only) is the gap inside the formatted drag rows and before their label.
+/// FramePadding's x is read by framed combos only (where their text starts; see FramedWidgets).
+/// ScrollbarSize sets the width of the scroll bars of children (the flags form of BeginChild) and the vertical bar of scrolling tables (default: OkayUI's
+/// own 10-pixel bar); with a pushed size the bar sits inside a framed child's or a bordered table's one-pixel outline and its grab is 2
+/// pixels inside the bar on every side and fully rounded, Dear ImGui's proportions.
+/// FramedWidgets is OkayUI's own (0 off, the default; anything else on): Checkbox draws Dear ImGui's box (a rounded frame in Col_FrameBg, or
+/// the accent at 45% once ticked, and a tick in Col_CheckMark), and Combo and BeginCombo draw a field in Col_FrameBg with a square arrow
+/// button at its right end (Col_Button, a filled triangle in the text colour) and the text FramePadding.x in.
 enum StyleVar : int {
     StyleVar_Alpha = 0, StyleVar_WindowPadding, StyleVar_WindowRounding, StyleVar_FramePadding, StyleVar_FrameRounding,
     StyleVar_ItemSpacing, StyleVar_ItemInnerSpacing, StyleVar_ChildRounding, StyleVar_BorderSize, StyleVar_ButtonTextAlign,
-    StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_GrabMinSize, StyleVar_COUNT,
+    StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_GrabMinSize, StyleVar_TextRowHeight, StyleVar_CellPadding, StyleVar_PopupPadding,
+    StyleVar_PopupWidth, StyleVar_FramedWidgets, StyleVar_COUNT,
     // Names ported code uses for the border sizes (BorderSize sets all three, as before).
     StyleVar_WindowBorderSize = StyleVar_BorderSize, StyleVar_FrameBorderSize = StyleVar_BorderSize, StyleVar_ChildBorderSize = StyleVar_BorderSize
 };
@@ -1324,7 +1409,7 @@ MouseCursor GetMouseCursor();
 /// the UI wants the mouse (pointer over a window or a widget is active) or the keyboard (a text field has focus), so the host knows
 /// not to also give them to the game.
 struct IO {
-    Vec2 mousePos, mouseDelta, displaySize; float mouseWheel = 0.0f; bool mouseDown[2] = {false, false};
+    Vec2 mousePos, mouseDelta, displaySize; float mouseWheel = 0.0f; bool mouseDown[3] = {false, false, false};
     bool keyCtrl = false, keyShift = false, keyAlt = false;
     bool wantCaptureMouse = false, wantCaptureKeyboard = false, wantTextInput = false;
     float deltaTime = 1.0f / 60.0f;

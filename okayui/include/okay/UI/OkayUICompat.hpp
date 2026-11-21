@@ -540,12 +540,13 @@ enum WindowFlagNames : int {
     Window_NoDocking = 1 << 14, Window_NoInputs = 1 << 15, Window_MenuBar = 1 << 16, Window_HorizontalScrollbar = 1 << 17,
     Window_AlwaysVerticalScrollbar = 1 << 18, Window_Modal = 1 << 19, Window_ChildMenu = 1 << 20
 };
-/// Table flags beyond OkayUI's own, all accepted and without effect except that Table_Resizable is the default (0) and Table_Borders is Table_BordersInnerH:
-/// column sizing policies, vertical and outer borders, outer padding and the saved-settings opt-out.
+/// Table flags beyond OkayUI's own, accepted and without effect except that Table_Resizable is the default (0), Table_Borders is Table_BordersInnerH and
+/// Table_BordersOuter draws a one-pixel frame in Col_TableBorderStrong around the table (or its scrolling box): column sizing policies, vertical
+/// borders, outer padding, the saved-settings opt-out and column reordering (there is none yet).
 enum TableFlagNames : int {
     Table_Resizable = 0, Table_Borders = Table_BordersInnerH,
     Table_BordersInnerV = 1 << 9, Table_BordersOuter = 1 << 10, Table_SizingFixedFit = 1 << 11, Table_SizingStretchProp = 1 << 12, Table_SizingStretchSame = 1 << 13,
-    Table_PadOuterX = 1 << 14, Table_NoSavedSettings = 1 << 15
+    Table_PadOuterX = 1 << 14, Table_NoSavedSettings = 1 << 15, Table_Reorderable = 1 << 16
 };
 enum TableColumnExtraFlags : int { TableColumn_NoResize = 64, TableColumn_NoHide = 128 };   // accepted, no effect
 /// Selectable flags: Selectable_DontClosePopups is the default here (0); AllowDoubleClick and AllowOverlap are accepted and change nothing.
@@ -558,9 +559,13 @@ enum DragDropFlagNames : int { DragDrop_AcceptNoDrawDefaultRect = 1 << 8, DragDr
 /// Button flags for InvisibleButton(id, size, flags): the mouse buttons are accepted; the button reports left clicks (use IsItemClicked(1) for right).
 enum ButtonFlags : int { Button_None = 0, Button_MouseButtonLeft = 1, Button_MouseButtonRight = 2, Button_MouseButtonMiddle = 4 };
 bool InvisibleButton(const char* id, Vec2 size, int flags = 0);
-enum TabBarFlags : int { TabBar_None = 0, TabBar_Reorderable = 1, TabBar_FittingPolicyResizeDown = 2, TabBar_FittingPolicyScroll = 4, TabBar_IsFocused = 8 };
+enum TabBarFlags : int { TabBar_None = 0, TabBar_Reorderable = 1, TabBar_FittingPolicyResizeDown = 2, TabBar_FittingPolicyScroll = 4, TabBar_IsFocused = 8,
+                         TabBar_AutoSelectNewTabs = 16, TabBar_NoCloseWithMiddleMouseButton = 32 };
 bool BeginTabBar(const char* id, int flags);
-enum TabItemExtraFlags : int { TabItem_Button = 16 };
+/// Where a dragged tab lands in a reorderable bar (TabBar_Reorderable): the tabs' widths in their order, the dragged one's index, the bar's left edge,
+/// the gap between tabs and the pointer's x. Returns the index the dragged tab moves to (the same index when it stays). Pure, so it is tested alone.
+int TabDragTarget(const float* widths, int n, int from, float left, float gap, float mouseX);
+enum TabItemExtraFlags : int { TabItem_UnsavedDocument = 8, TabItem_Button = 16, TabItem_NoCloseWithMiddleMouseButton = 32, TabItem_NoReorder = 64, TabItem_Leading = 128 };
 /// Input flags (Shortcut and key queries): Input_Repeat is Shortcut_AllowRepeat.
 enum InputFlags : int { Input_None = 0, Input_Repeat = Shortcut_AllowRepeat };
 /// Backend flags a host reports on the IO: accepted, nothing reads them.

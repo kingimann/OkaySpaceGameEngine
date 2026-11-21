@@ -193,7 +193,9 @@ encryption of content (anyone who gets the manifest URL can download the files).
 * `HttpTransport` uses WinHTTP, which UWP apps may not call. `MakeTransport` returns `UwpTransportStub` when `OKAY_XBOX_UWP` is
   defined; it only fails with "Downloading game content is not available in the Xbox app yet". It needs
   `Windows.Web.Http.HttpClient` (WinRT) from the UWP glue, or our own HTTP over Winsock, behind the same interface. **Nothing
-  here has run on an Xbox, and the UWP transport does not work.**
+  here has run on an Xbox, and the UWP transport does not work.** Update: the seam is now written (`platform/xbox_uwp/XboxHttp.hpp`
+  driver over an abstract client, `XboxContentTransport.hpp` adapter, `okaycontent::UwpTransportFactory()` hook, Linux test
+  `xbox_uwp_content` with a fake client). The stub is still used until the app registers a factory over a real WinRT client (not written).
 * Content is data and scripts, never code; that is what keeps this inside Store rules. Check the current Store policy before
   shipping.
 

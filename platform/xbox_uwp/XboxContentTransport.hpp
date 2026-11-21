@@ -24,7 +24,7 @@ public:
         if (h.onHead) hh.onHead = [&h](const http::GetHead& x) { okaycontent::GetHead y; y.status = x.status; y.bodyStart = x.bodyStart; y.totalSize = x.totalSize; return h.onHead(y); };
         if (h.onData) hh.onData = h.onData;
         const http::GetResult r = http::Get(client_, base_, name, rangeFrom, maxBytes, hh, opt_);
-        okaycontent::GetResult out; out.reached = r.reached; out.aborted = r.aborted; out.error = r.error; return out;
+        okaycontent::GetResult out; out.reached = r.reached; out.aborted = r.aborted; out.error = r.error; return out;   // cancelled / timedOut stay in http::GetResult (the error text says "timed out")
     }
     const char* Describe() const override { return "uwp-http"; }
 private:

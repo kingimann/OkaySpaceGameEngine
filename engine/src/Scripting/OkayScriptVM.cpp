@@ -6124,9 +6124,12 @@ struct OkayScriptVM::Impl {
                 ps->Emit(a.empty() ? 1 : SafeInt(a[0].AsFloat()));
             return Value{};
         };
-        b["particles_on"] = [go](std::vector<Value>& a) {  // start/stop continuous emission
-            if (GameObject* g = go()) if (auto* ps = g->GetComponent<ParticleSystem>())
-                ps->playing = a.empty() || a[0].AsBool();
+        b["particles_on"] = [go](std::vector<Value>& a) {  // start/stop emission
+            // Play() / Stop(), not the raw flag: Play() starts a new cycle on a stopped or finished
+            // one-shot, so a script can fire the same effect again.
+            if (GameObject* g = go()) if (auto* ps = g->GetComponent<ParticleSystem>()) {
+                if (a.empty() || a[0].AsBool()) ps->Play(); else ps->Stop();
+            }
             return Value{};
         };
         // explode([count]): burst particles AND remove this object — the classic death

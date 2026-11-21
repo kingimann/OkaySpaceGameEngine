@@ -24,6 +24,16 @@ inline void ShowTip(const Entry& e) {
     else if (!e.tip.empty()) ImGui::SetTooltip("%s", e.tip.c_str());
 }
 
+/// SlotUI drawn with Dear ImGui: what the slots drew before they were written against SlotUI.
+struct ImGuiSlotUI : SlotUI {
+    bool Item(const char* label, bool enabled) override { return ImGui::MenuItem(label, nullptr, false, enabled); }
+    bool BeginMenu(const char* label, bool enabled) override { return ImGui::BeginMenu(label, enabled); }
+    void EndMenu() override { ImGui::EndMenu(); }
+    void Separator() override { ImGui::Separator(); }
+    void Note(const char* text) override { ImGui::TextDisabled("%s", text); }
+    void Tip(const char* text) override { if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", text); }
+};
+
 inline void DrawEntries(const std::vector<Entry>& es, const Host& h) {
     for (const Entry& e : es) {
         switch (e.kind) {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline tests of the fast release path (scripts/fast_release.py, .github/workflows/fast-release.yml, docs/fast_release.md).
+"""Offline tests of the fast release path (scripts/fast_release.py, .github/workflows/fast-release.yml, docs/release/releasing.md).
 
 GitHub Actions cannot run here, so this does what can be done without it:
   * the decisions, with fake data: the next version (minor, patch, override, refusals: exists, older, LTS line, bad text), the CI gate

@@ -3,7 +3,7 @@
 // materials, skin weights and animation sets. Written from the public description of the format (the DirectX SDK
 // documentation of the .x file format and its standard templates). Bounds-checked, capped; the frame tree, unknown
 // objects and animation sets are walked with loops and explicit stacks (no recursion). See okay/Render/ModelData.hpp and
-// docs/own_x_reader.md.
+// docs/content/model_readers.md.
 //
 // DirectX is left-handed and writes its matrices for row vectors. The model is turned into the engine's right-handed space
 // by mirroring Z (positions, normals, matrices; the winding of every triangle is reversed). A rotation key (w, x, y, z)

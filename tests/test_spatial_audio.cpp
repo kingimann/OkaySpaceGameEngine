@@ -202,7 +202,7 @@ int main() {
         CHECK(std::fabs(room - cave) > 1.0e-4);
     }
 
-    // ---- RoomReverb design checks (our own tuning; docs/audio.md "Reverb zones") ------------------------------------
+    // ---- RoomReverb design checks (our own tuning; docs/audio/audio.md "Reverb zones") ------------------------------------
     {
         auto isPrime = [](int n) { if (n < 2) return false; for (int d = 2; d * d <= n; ++d) if (n % d == 0) return false; return true; };
         for (int rate : {8000, 22050, 44100, 48000, 96000, 192000}) {

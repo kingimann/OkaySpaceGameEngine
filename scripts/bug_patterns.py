@@ -4,7 +4,7 @@
   python3 scripts/bug_patterns.py [--base origin/main] [--head HEAD | --rev <commit>] [--github] [--strict]
   python3 scripts/bug_patterns.py --files a.cpp b.cpp        scan whole files (for trying it out)
 
-The classes come from the bugs that independent reviews found late (docs/review_log.md). Each rule is a heuristic with
+The classes come from the bugs that independent reviews found late (docs/process/review_log.md). Each rule is a heuristic with
 a known false-positive risk, so nothing here fails a build; fix the finding or say in the PR why it is fine. Silence a
 line with `lint-allow: <id>` in a comment on it.
 

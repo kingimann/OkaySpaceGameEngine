@@ -1,5 +1,5 @@
 // In-game build mode (BuildMode), logic links (LogicSource / LogicTarget) and
-// creation save / load (BuildCreation). See docs/build_mode.md.
+// creation save / load (BuildCreation). See docs/gameplay/build_mode.md.
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/LogicLinks.hpp"
 #include "okay/Components/Buildable.hpp"

@@ -1,5 +1,5 @@
 #pragma once
-// The editor's real panel code running on OkayUI in window mode (docs/own_ui_toolkit.md 6.24 step 5). Console and Scene Manager are the same source files the
+// The editor's real panel code running on OkayUI in window mode (docs/ui/own_ui_toolkit.md 6.24 step 5). Console and Scene Manager are the same source files the
 // Dear ImGui editor builds (editor/ConsolePanel.cpp, EditorWidgets.cpp, SceneManagerPanel.cpp), compiled a second time against OkayUI's Dear ImGui
 // compatibility layer (okayui/probe/imgui.h) into editor/OkayUIHostPanels.cpp, under renamed entry points so the two copies live in one program. The Project
 // window is written here (the editor's Project panel is still inside main.cpp), over the real okaypb::Browser and the real dialogs of ProjectPanelUI.cpp.

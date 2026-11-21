@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Shared helpers for the collaboration scripts (find_existing, collision_check, branch_lint, bug_patterns).
 
-Standard library and git only. Plain rules: docs/collaboration.md. Lanes table: docs/lanes.json.
+Standard library and git only. Plain rules: docs/process/collaboration.md. Lanes table: docs/lanes.json.
 Written from our own design; no code from another project.
 """
 import datetime, fnmatch, json, os, re, subprocess, sys, urllib.request
@@ -181,7 +181,7 @@ def claim_status(claim, last_push, now=None):
 
 
 def check_claim_rules(claim, lanes, other_claims, files=None):
-    """Problems that make a claim refused (docs/collaboration.md, claim protocol)."""
+    """Problems that make a claim refused (docs/process/collaboration.md, claim protocol)."""
     probs = []
     lane = lane_of_branch(claim["branch"])
     if not claim.get("has_fields"):

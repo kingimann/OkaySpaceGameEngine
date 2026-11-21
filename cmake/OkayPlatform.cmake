@@ -79,7 +79,7 @@ function(okay_add_platform_library)
     if(_sdl_opts)
         target_compile_options(okay_platform PRIVATE ${_sdl_opts})
     endif()
-    # OKAY_OWN_STACK=ON (docs/own_stack_rollout.md) makes own the default on Linux only: the Win32 backend has never run on real Windows.
+    # OKAY_OWN_STACK=ON (docs/status/own_stack_rollout.md) makes own the default on Linux only: the Win32 backend has never run on real Windows.
     if(OKAY_PLATFORM_BACKEND STREQUAL "own" OR (OKAY_OWN_STACK AND CMAKE_SYSTEM_NAME STREQUAL "Linux"))
         target_compile_definitions(okay_platform PRIVATE OKAY_PLATFORM_DEFAULT_OWN)
     endif()

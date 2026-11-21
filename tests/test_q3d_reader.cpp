@@ -1,6 +1,6 @@
 // Our own Q3D reader (engine/src/Render/Q3dReader.cpp): Quick3D objects and scenes. SYNTHETIC fixture built by hand in memory
 // (BuildQ3d in batche2_fixtures.hpp), checked against hand-computed numbers. The four real files of the
-// model corpus are checked by model_corpus (docs/model_corpus.md). Builds on its own with -DOKAY_STANDALONE_TEST (reader source only).
+// model corpus are checked by model_corpus (docs/content/model_corpus.md). Builds on its own with -DOKAY_STANDALONE_TEST (reader source only).
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
 #include "batche2_fixtures.hpp"

@@ -3,7 +3,7 @@
 // corners point at them by <PREF>, <NREF>, <TCREF>, and <OBJECT> blocks that place a mesh with a <TRANSFORM>), and of ZGL,
 // which is the same text compressed as one zlib stream; no code from any other importer. One part per (mesh, material) on
 // the node of each object that uses the mesh. Uses the strict XML reader of the batch-B readers and the engine's own
-// inflate. Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/own_xgl_reader.md.
+// inflate. Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"
 #include "XmlLite.hpp"

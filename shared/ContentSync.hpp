@@ -1,5 +1,5 @@
 #pragma once
-// Content sync: bring a local content folder up to date with a signed manifest on a server. Docs: docs/content_delivery.md.
+// Content sync: bring a local content folder up to date with a signed manifest on a server. Docs: docs/release/content_delivery.md.
 // A plain state machine over the abstract Transport (ContentTransport.hpp): no sockets, no threads, no engine code here. It runs on the
 // caller's thread (the player runs it from its own job); progress and cancel come through callbacks.
 //

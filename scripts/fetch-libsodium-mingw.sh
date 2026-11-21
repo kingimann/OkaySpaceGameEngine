@@ -4,7 +4,7 @@
 # Usage: scripts/fetch-libsodium-mingw.sh <work-dir>
 #   Prints the prefix (<work-dir>/libsodium-mingw/libsodium-win64) as the last line on stdout. Callers export it as
 #   OKAY_SODIUM_MINGW_PREFIX. Fails (exit 1) if the download, the SHA-256 pin or the layout is wrong: a release must never
-#   quietly build without libsodium (CLAUDE.md rule 18, docs/own_stack_rollout.md).
+#   quietly build without libsodium (CLAUDE.md rule 18, docs/status/own_stack_rollout.md).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 dir="${1:?usage: $0 <work-dir>}"

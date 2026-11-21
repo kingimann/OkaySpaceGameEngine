@@ -1,5 +1,5 @@
 #pragma once
-// A focus graph for keyboard and gamepad menu navigation (docs/accessibility.md).
+// A focus graph for keyboard and gamepad menu navigation (docs/engine/accessibility.md).
 //
 // It knows nothing about rendering or scenes: it holds rectangles (where each focusable thing is
 // on screen) and answers "what gets focus when the player presses Down?". Directional moves

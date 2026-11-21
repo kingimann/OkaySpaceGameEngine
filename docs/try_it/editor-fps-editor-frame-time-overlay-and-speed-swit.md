@@ -6,7 +6,7 @@ row: | editor-fps | Editor frame-time overlay and speed switches | Editor menu *
 
 **What it is.** A small window inside the editor that shows your FPS, the frame time in milliseconds, a graph of the last
 120 frames, and where each frame goes (3D view, panels, ImGui, present, Play mode). Plus a few switches to make the editor
-cheaper. All switches are off until you turn them on. Guide: `docs/editor_performance.md`.
+cheaper. All switches are off until you turn them on. Guide: `docs/editor/editor_performance.md`.
 
 **Steps (read the numbers).**
 1. Open the editor (`Tools\OkayEngine.exe`). Open a project, or use **File > Open Scene** and pick `<install folder>\examples\perf\many_lights.okayscene`.

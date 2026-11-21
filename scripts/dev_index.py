@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Maintain dev/versions.json, the list of TEST BUILDS (the "dev channel"). Docs: docs/release_channels.md ("Test builds").
+"""Maintain dev/versions.json, the list of TEST BUILDS (the "dev channel"). Docs: docs/release/release_channels.md ("Test builds").
 
 scripts/publish-supabase-dev.sh calls this. It is the test builds' counterpart of scripts/versions_index.py, and it is kept apart on purpose:
 nothing here can write, read or change the list of real releases, and a real release can never be written by this tool.

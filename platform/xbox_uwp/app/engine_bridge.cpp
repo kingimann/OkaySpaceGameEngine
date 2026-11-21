@@ -83,7 +83,7 @@ Engine* Create(const ShellCallbacks& cb, const std::string& installDir, const st
     e->host.cb = cb;
     e->roots.install = installDir; if (!e->roots.install.empty() && e->roots.install.back() != '/' && e->roots.install.back() != '\\') e->roots.install += "/";
     e->roots.local = localDir; e->roots.temp = tempDir;
-    // The Paths override must be in place before anything asks for a per-user folder (docs/xbox_uwp.md, "Files").
+    // The Paths override must be in place before anything asks for a per-user folder (docs/platform/xbox_uwp.md, "Files").
     e->env.appData = xb::DesktopDirToLocal(e->roots, xb::DesktopDir::RoamingAppData);
     e->env.localAppData = xb::DesktopDirToLocal(e->roots, xb::DesktopDir::LocalAppData);
     e->env.home = xb::DesktopDirToLocal(e->roots, xb::DesktopDir::Documents);

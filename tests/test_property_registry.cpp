@@ -1134,7 +1134,7 @@ static void TestSerializerCrossCheck() {
 }
 
 // Properties the scene file writes only together with another one: each rides on its
-// companion when it is set alone (see docs/properties.md, "What the cross-check showed").
+// companion when it is set alone (see docs/engine/properties.md, "What the cross-check showed").
 static const std::map<std::string, std::pair<std::string, PropertyValue>>& Companions() {
     static const std::map<std::string, std::pair<std::string, PropertyValue>> companion = {
         {"MeshRenderer.toonBands", {"MeshRenderer.shader", PropertyValue::MakeEnum(2)}},

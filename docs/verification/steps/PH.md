@@ -10,8 +10,8 @@
   3. Drive with W and S (gas and brake), A and D (steer), Space (handbrake). Press E again to get out.
   4. Walk to the right door (prompt says Ride) and press E.
 - **See:** the car ignores keys until you press E at the driver door; you get out at the driver side; at the passenger door you are carried but cannot drive.
-- **Partial:** wheels are for looks only and do not spin; no sitting animation; seats are not replicated in multiplayer; no script node to enter or exit yet (docs/vehicle_controller.md).
-- **Link:** [vehicle_controller.md](../../vehicle_controller.md)
+- **Partial:** wheels are for looks only and do not spin; no sitting animation; seats are not replicated in multiplayer; no script node to enter or exit yet (docs/gameplay/vehicles.md).
+- **Link:** [vehicle_controller.md](../../gameplay/vehicles.md#vehicle-controller-arcade)
 - **Grounded:** no
 
 ### V-PH-002 Vehicle seats example scene
@@ -31,8 +31,8 @@
   1. Choose **File > New Project...** and the **Vehicle (3D)** template.
   2. Press Play and drive with W A S D.
 - **See:** a car with suspension that drives on the road.
-- **Partial:** see docs/vehicle_controller.md for known rough edges.
-- **Link:** [vehicle_controller.md](../../vehicle_controller.md)
+- **Partial:** see docs/gameplay/vehicles.md for known rough edges.
+- **Link:** [vehicle_controller.md](../../gameplay/vehicles.md#vehicle-controller-arcade)
 
 ### V-PH-004 Navmesh bake
 - **Map:** 9
@@ -42,8 +42,8 @@
   2. Press **Add Nav Mesh Surface**, then **Bake**.
   3. Read the Console: "Navigation: baked N polygons ...".
 - **See:** translucent blue polygons cover the floor in the Scene view; a `.okaynav` file appears next to the scene.
-- **Partial:** one nav surface per scene is the normal case; carving only works while the scene runs (docs/navigation.md).
-- **Link:** [navigation.md](../../navigation.md)
+- **Partial:** one nav surface per scene is the normal case; carving only works while the scene runs (docs/gameplay/navigation.md).
+- **Link:** [navigation.md](../../gameplay/navigation.md)
 
 ### V-PH-005 Navmesh from a Mesh Collider
 - **Map:** 9, 6
@@ -53,7 +53,7 @@
   2. Open **View > Editors & Tools > Navigation**, press **Add Nav Mesh Surface** and **Bake**.
   3. Use a ramp or an L-shaped mesh to see the difference.
 - **See:** the baked area follows the real triangles, not a box; the Console prints the polygon and link counts.
-- **Partial:** over 2,000,000 triangles are cut off with a warning; one crack makes the collider two-sided (docs/navigation.md).
+- **Partial:** over 2,000,000 triangles are cut off with a warning; one crack makes the collider two-sided (docs/gameplay/navigation.md).
 - **Link:** [../../try_it.md](../../try_it.md)
 
 ### V-PH-006 Skipped bake before Play

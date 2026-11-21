@@ -196,7 +196,7 @@ private:
         const Vec3 fw = q * Vec3{0, 0, 1}, rt = q * Vec3{1, 0, 0};
         const float speed = std::fabs(m_speed);
         const bool active = wake && bu->InWater();
-        // Tell a Water with the realistic look where the boat is going, so it lays rings along the path (docs/water_visuals.md).
+        // Tell a Water with the realistic look where the boat is going, so it lays rings along the path (docs/rendering/terrain_water.md).
         if (bu->InWater()) {
             if (Rigidbody3D* wrb = Body()) {
                 for (Water* w : sc->FindObjectsOfType<Water>()) {

@@ -1,5 +1,5 @@
 // Our own OFF (Object File Format, text mesh) reader. Written from the public description of the format (Geomview's
-// "off" manual page). Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/own_off_reader.md.
+// "off" manual page). Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "PolygonTriangulate.hpp"
 #include "TextReaderUtil.hpp"
 #include "okay/Render/ModelData.hpp"

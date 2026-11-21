@@ -2,7 +2,7 @@
 // Plain data for monitors and display modes: filtering, sorting, the fallback when a
 // saved monitor or mode is gone, and the text form of a saved choice. Nothing here
 // opens a window or talks to SDL. The player fills the monitor list; DisplaySettings
-// stores the choice. See docs/display_settings.md.
+// stores the choice. See docs/engine/display_settings.md.
 #include <string>
 #include <vector>
 

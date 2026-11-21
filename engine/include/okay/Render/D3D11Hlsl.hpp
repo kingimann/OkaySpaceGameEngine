@@ -3,7 +3,7 @@
 // macros) so tools that are not Windows programs can read it: scripts/xbox-compile-shaders.ps1 asks `okay-shaders dump`
 // for this text and compiles each entry point with the SDK's fxc.exe at BUILD time (D3DCompile does not exist in a UWP
 // app). The desktop renderer still compiles the very same string at run time. Pure text, no Direct3D include.
-// UNVERIFIED on a GPU (see docs/xbox_uwp.md).
+// UNVERIFIED on a GPU (see docs/platform/xbox_uwp.md).
 #include "okay/Render/PostQualityMath.hpp"
 #include "okay/Render/D3DPostHLSL.hpp"
 #include "okay/Render/DofMath.hpp"

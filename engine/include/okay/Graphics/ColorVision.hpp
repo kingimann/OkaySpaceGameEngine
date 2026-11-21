@@ -1,7 +1,7 @@
 #pragma once
 // Colour vision: what a colour looks like with a colour vision deficiency, how to shift a
 // colour so it is easier to tell apart, a palette that stays readable for everyone, and
-// contrast helpers (docs/accessibility.md).
+// contrast helpers (docs/engine/accessibility.md).
 //
 // Everything is a pure function of its arguments. Colours are sRGB in [0, 1] like Color; the
 // matrices act on linear light. Alpha is never changed.

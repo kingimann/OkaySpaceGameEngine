@@ -1,4 +1,4 @@
-// In-game UI quality: the numbers behind "sharper, smoother UI" (docs/in_game_ui_quality.md). Everything is measured, none compared to a
+// In-game UI quality: the numbers behind "sharper, smoother UI" (docs/ui/in_game_ui.md). Everything is measured, none compared to a
 // stored picture:
 //   * text: glyph weight (stem darkening), exact quarter-pixel face sizes, subpixel glyph phases that move the ink by the phase, text
 //     that lands on the device pixel grid (sharper than a resampled one), quarter-pixel text positions in Best;

@@ -4,7 +4,7 @@ group: switches
 ---
 ## Switches that are off by default (own code)
 
-CLAUDE.md rule 17 and `docs/own_stack_rollout.md`: our own code exists beside the third-party library, off by default,
+CLAUDE.md rule 17 and `docs/status/own_stack_rollout.md`: our own code exists beside the third-party library, off by default,
 and switches on by an environment variable. **The release does not set any of them.** You can set them yourself before
 starting a program, with no rebuild.
 

@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.898.0
+  No more GitHub in the apps
+  - The launcher and editor now get updates, the version list, "What's New"
+    and downloads only from our own update server.
+  - Help, report and GitHub links were removed. "Report a Bug" opens the
+    Crash Log window.
+  - Forgot your password? The launcher now emails you a code and lets you
+    set a new password right there.
+  - Versions older than 2.892.0 can no longer be downloaded from the
+    Versions page.
+  - OGRE model files (.mesh.xml) now load with their skeleton, animations
+    and skinning.
+
 v2.897.0
   Small fixes
   - Fixed: a damaged FLAC sound file could crash the engine. It is now

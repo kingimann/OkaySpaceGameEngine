@@ -153,9 +153,7 @@ void ConvexHullCollider3D::Refresh() const {
     m_key = points;
     m_pts = PointsFromText(points);
     if ((int)m_pts.size() > kMaxHullPoints) {                    // too many typed in: wrap them, then keep the spread-out corners
-        Mesh w = Mesh::ConvexHull(m_pts);
-        if (w.vertices.size() >= 4) m_pts = w.vertices;
-        m_pts = ThinPoints(m_pts, kMaxHullPoints);
+        m_pts = ThinPoints(m_pts, kMaxHullPoints);               // (thin first: the wrap itself is slow on huge clouds)
     }
     if (m_pts.empty()) {
         for (int i = 0; i < 8; ++i) m_pts.push_back({i & 1 ? 0.5f : -0.5f, i & 2 ? 0.5f : -0.5f, i & 4 ? 0.5f : -0.5f});
@@ -172,6 +170,7 @@ LocalShape3D ConvexHullCollider3D::Local() const { Refresh(); return m_shape; }
 void ConvexHullCollider3D::SetPoints(const std::vector<Vec3>& in, int maxPoints) {
     std::vector<Vec3> p;
     for (const Vec3& v : in) if (UsablePoint(v)) p.push_back(v);
+    p = ThinPoints(p, kMaxHullPoints);                          // (thin first: the wrap itself is slow on huge clouds)
     Mesh h = Mesh::ConvexHull(p);
     if (h.vertices.size() >= 4) p = h.vertices;                 // only the corners matter
     maxPoints = std::min(std::max(maxPoints, 4), kMaxHullPoints);
@@ -182,6 +181,7 @@ void ConvexHullCollider3D::SetPoints(const std::vector<Vec3>& in, int maxPoints)
 bool ConvexHullCollider3D::SetFromMesh(const Mesh& m, int maxPoints) {
     std::vector<Vec3> good;
     for (const Vec3& v : m.vertices) if (UsablePoint(v)) good.push_back(v);
+    good = ThinPoints(good, kMaxHullPoints);
     Mesh h = Mesh::ConvexHull(good);
     if (h.vertices.size() < 4) return false;
     SetPoints(h.vertices, maxPoints);

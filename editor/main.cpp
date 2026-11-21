@@ -35554,10 +35554,13 @@ void DrawInspector(EditorState& ed) {
     if (auto* co = dynamic_cast<ConeCollider3D*>(curComp)) {
         if (CompHeader("Cone Collider 3D", co, &toRemove)) {
             ImGui::TextDisabled("A round base and a point: party hats, traffic cones, spikes.");
-            ImGui::DragFloat("Radius##cone3", &co->radius, 0.05f, 0.0f, 1000.0f);
-            ImGui::DragFloat("Height##cone3", &co->height, 0.05f, 0.0f, 1000.0f);
+            ImGui::DragFloat("Radius (m)##cone3", &co->radius, 0.05f, 0.0f, 1000.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "How wide the round base is, in metres. Default 0.5.");
+            ImGui::DragFloat("Height (m)##cone3", &co->height, 0.05f, 0.0f, 1000.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Base to tip, in metres. Default 1.");
             const char* axes[] = {"X", "Y", "Z"};
             ImGui::Combo("Tip points along##cone3", &co->axis, axes, 3);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Which direction the point faces (the positive side of this axis). Default Y = up.");
             colliderCommon3D(co, "cone3");
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##cone3")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
@@ -35570,7 +35573,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* hc = dynamic_cast<ConvexHullCollider3D*>(curComp)) {
         if (CompHeader("Convex Hull Collider 3D", hc, &toRemove)) {
             ImGui::TextDisabled("Shrink-wrap around a cloud of points. Solid inside, so it can move and stack.");
-            ImGui::Text("Points: %d", hc->PointCount());
+            ImGui::Text("Points: %d (most 4096)", hc->PointCount());
             colliderCommon3D(hc, "hull3");
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Wrap around mesh##hull3")) { FitColliders(go); ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fill the points from the model, keeping only the outer corners.");
@@ -35607,11 +35610,16 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Heightfield Collider 3D", hf, &toRemove)) {
             ImGui::TextDisabled("Hilly ground from a grid of heights. Solid below the surface.");
             bool gridChanged = false;
-            gridChanged |= ImGui::DragInt("Columns##hf3", &hf->columns, 0.2f, 2, 2048);
-            gridChanged |= ImGui::DragInt("Rows##hf3", &hf->rows, 0.2f, 2, 2048);
-            ImGui::DragFloat("Cell width (X)##hf3", &hf->cellX, 0.05f, 0.01f, 1000.0f);
-            ImGui::DragFloat("Cell depth (Z)##hf3", &hf->cellZ, 0.05f, 0.01f, 1000.0f);
-            ImGui::DragFloat("Height scale##hf3", &hf->heightScale, 0.05f);
+            gridChanged |= ImGui::DragInt("Columns (samples)##hf3", &hf->columns, 0.2f, 2, 2048);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Height samples along X, 2 to 2048. Default 2.");
+            gridChanged |= ImGui::DragInt("Rows (samples)##hf3", &hf->rows, 0.2f, 2, 2048);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Height samples along Z, 2 to 2048. Default 2.");
+            ImGui::DragFloat("Cell width X (m)##hf3", &hf->cellX, 0.05f, 0.01f, 1000.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Metres between two samples along X. Default 1.");
+            ImGui::DragFloat("Cell depth Z (m)##hf3", &hf->cellZ, 0.05f, 0.01f, 1000.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Metres between two samples along Z. Default 1.");
+            ImGui::DragFloat("Height scale (x)##hf3", &hf->heightScale, 0.05f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Multiplies every height: 2 makes the hills twice as tall. Default 1.");
             if (gridChanged) { hf->columns = std::max(hf->columns, 2); hf->rows = std::max(hf->rows, 2); ed.dirty = true; }
             colliderCommon3D(hf, "hf3");
             if (go->GetComponent<Terrain>() && ImGui::SmallButton("Copy from Terrain##hf3")) { FitColliders(go); ed.dirty = true; }

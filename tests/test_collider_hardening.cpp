@@ -12,8 +12,8 @@ using namespace okay;
 
 namespace {
 GameObject* Obj(Scene& s, const char* name, Vec3 p) { GameObject* g = s.CreateGameObject(name); g->transform->localPosition = p; return g; }
-bool Finite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
-bool BoundsOk(Collider3D* c) { Vec3 a, b; c->WorldAABB(a, b); return Finite(a) && Finite(b) && a.x <= b.x && a.y <= b.y && a.z <= b.z; }
+bool AllFinite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+bool BoundsOk(Collider3D* c) { Vec3 a, b; c->WorldAABB(a, b); return AllFinite(a) && AllFinite(b) && a.x <= b.x && a.y <= b.y && a.z <= b.z; }
 void Settle(Scene& s, int n) { for (int i = 0; i < n; ++i) s.Update(1.0f / 60.0f); }
 const float NaN = std::numeric_limits<float>::quiet_NaN();
 }
@@ -46,10 +46,10 @@ int main() {
             CHECK(BoundsOk(h));
             Vec3 c, in; float v = 0;
             bool m = h->MassShape(c, v, in);
-            CHECK(!m || (v >= 0.0f && std::isfinite(v) && Finite(in) && Finite(c)));
+            CHECK(!m || (v >= 0.0f && std::isfinite(v) && AllFinite(in) && AllFinite(c)));
             (void)s.physics3D().Raycast(s, {0.3f, 5, 0.3f}, {0, -1, 0}, 10);
             Settle(s, 30);
-            CHECK(Finite(f->transform->Position()));
+            CHECK(AllFinite(f->transform->Position()));
         }
     }
     {   // A coplanar cloud keeps its true (flat) extent.
@@ -90,7 +90,7 @@ int main() {
             Vec3 cm, in; float v;
             CHECK(!c->MassShape(cm, v, in) || (v > 0 && std::isfinite(v)));
             Settle(s, 20);
-            CHECK(Finite(f->transform->Position()));
+            CHECK(AllFinite(f->transform->Position()));
         }
         Scene s("cmp_empty"); auto* c = Obj(s, "C", {0, 0, 0})->AddComponent<CompoundCollider3D>();
         s.Start();
@@ -122,7 +122,7 @@ int main() {
             CHECK(BoundsOk(hf));
             (void)s.physics3D().Raycast(s, {0.1f, 9, 0.1f}, {0, -1, 0}, 30);
             Settle(s, 30);
-            CHECK(Finite(b->transform->Position()));
+            CHECK(AllFinite(b->transform->Position()));
             float y; (void)hf->LocalHeight(0, 0, y);
             std::vector<std::array<Vec3, 3>> tr; hf->CollectTriangles({-5, -5, -5}, {5, 5, 5}, tr);
             CHECK(tr.size() < 1000000);

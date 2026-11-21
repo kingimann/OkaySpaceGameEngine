@@ -127,6 +127,12 @@ public:
     float heightScale = 1.0f;
     std::string heights = "0 0 0 0";
     Shape shape() const override { return Shape::Heightfield; }
+    // The settings as the collision uses them: grid 2..2048 per side, cells never zero, negative or not a number.
+    int Cols() const { return columns < 2 ? 2 : columns > 2048 ? 2048 : columns; }
+    int Rows() const { return rows < 2 ? 2 : rows > 2048 ? 2048 : rows; }
+    float CX() const { return (cellX >= 1e-4f && cellX <= 1e6f) ? cellX : (cellX > 1e6f ? 1e6f : 1e-4f); }
+    float CZ() const { return (cellZ >= 1e-4f && cellZ <= 1e6f) ? cellZ : (cellZ > 1e6f ? 1e6f : 1e-4f); }
+
     /// Number of numbers actually present (it may be fewer than columns * rows: missing ones read as 0).
     float HeightAt(int col, int row) const;
     void  SetHeights(int cols, int rws, const std::vector<float>& h);

@@ -2422,9 +2422,9 @@ static void DrawShapeWire(okay::Collider3D* col, LineFn line) {
     case Shape::Heightfield: {
         auto* hf = static_cast<HeightfieldCollider3D*>(col);
         shape3d::Frame f = shape3d::FrameOf(*col);
-        const int C = std::max(hf->columns, 2), R = std::max(hf->rows, 2);
+        const int C = hf->Cols(), R = hf->Rows();
         const int si = std::max(1, C / 64), sj = std::max(1, R / 64);
-        auto P = [&](int i, int j) { return shape3d::ToWorldPoint(f, {(i - (C - 1) * 0.5f) * hf->cellX, hf->HeightAt(i, j), (j - (R - 1) * 0.5f) * hf->cellZ}); };
+        auto P = [&](int i, int j) { return shape3d::ToWorldPoint(f, {(i - (C - 1) * 0.5f) * hf->CX(), hf->HeightAt(i, j), (j - (R - 1) * 0.5f) * hf->CZ()}); };
         for (int j = 0; j < R; j += sj) for (int i = 0; i + 1 < C; ++i) line(P(i, j), P(i + 1, j));
         for (int i = 0; i < C; i += si) for (int j = 0; j + 1 < R; ++j) line(P(i, j), P(i, j + 1));
         break;

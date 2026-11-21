@@ -66,15 +66,16 @@ def bin_node(n, pos, wide, compress):
     name = n.name.encode()
     hdr = 25 if wide else 13
     body_start = pos + hdr + len(name) + len(props)
-    kids = b''
+    parts = []   # joined once at the end: appending bytes to bytes is quadratic for big sections
     cur = body_start
     for c in n.children:
         cb = bin_node(c, cur, wide, compress)
-        kids += cb
+        parts.append(cb)
         cur += len(cb)
     if n.children:
-        kids += b'\0' * hdr
+        parts.append(b'\0' * hdr)
         cur += hdr
+    kids = b''.join(parts)
     if wide:
         head = struct.pack('<QQQB', cur, len(n.props), len(props), len(name))
     else:
@@ -84,13 +85,15 @@ def bin_node(n, pos, wide, compress):
 
 def write_binary(path, top, version, compress=True):
     wide = version >= 7500
-    out = b'Kaydara FBX Binary  \x00\x1a\x00' + struct.pack('<I', version)
+    parts = [b'Kaydara FBX Binary  \x00\x1a\x00' + struct.pack('<I', version)]
+    size = len(parts[0])
     for n in top:
-        out += bin_node(n, len(out), wide, compress)
-    out += b'\0' * (25 if wide else 13)
-    out += b'\0' * 16 + bytes(range(16)) + b'\0' * 4   # a plausible footer (the reader ignores it)
+        parts.append(bin_node(n, size, wide, compress))
+        size += len(parts[-1])
+    parts.append(b'\0' * (25 if wide else 13))
+    parts.append(b'\0' * 16 + bytes(range(16)) + b'\0' * 4)   # a plausible footer (the reader ignores it)
     with open(path, 'wb') as f:
-        f.write(out)
+        f.write(b''.join(parts))
 
 
 # ---------------------------------------------------------------- ascii writer

@@ -124,7 +124,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Editor:** Player Controller panel > Third person (orbit, aim, spring arm); Inspector for Camera Follow
 - **Docs:** `docs/gameplay/making_a_game.md`
 - **Tests:** `player`, `view_ground`, `run_feel`
-- **Status:** Works - player test checks the wall pull-in; view_ground checks the lens stays above ground through hitches; CameraFollow has no dedicated test I found
+- **Status:** Works - player test checks the wall pull-in; view_ground checks the lens stays above ground through hitches; CameraFollow is tested in `camera_robust` (parented camera, first frame, 30/60/144 fps, NaN, destroyed target, yields to a camera brain with a live shot)
 - **Open:** #554 landed on 2026-11-10 with the head and walk jitter work (tests `test_anim_jitter`, `test_head_stability`); the turning-character stutter (render interpolation cancelled by `RestorePose` when game code changes `localRotation`) is fixed and covered by `turn_interpolation` (a bare Scene with a turning body) and by `controller_interpolation` (the real ThirdPersonController with a rigged character, walking in circles under 50 Hz physics with smoothing on, drawn at 30, 60 and 144 fps: the drawn root moved evenly to within 2 mm per frame and the camera to within 1 mm of the straight walk; one rig, one turn rate, headless, no screen); no other open item recorded
 - **Related:** 4.1, 4.8, 4.10
 - **Words:** third-person camera, orbit, spring arm, camera collision, shoulder offset, CameraFollow, chase camera, recenter
@@ -167,7 +167,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **API:** `VirtualCamera::priority`, `BindingMode`, `AddImpulse`, `CinemachineBrain::blendTime`, `LiveCamera()`, `DollyPath`, `DollyCart`, `Scene::CameraStack()`, `Camera::ClearPlan`, `VirtualCamera::ApplyStyle`, `DampingMode`, `groupTargets`, `CameraRoom`, `cam::BlendStyle`, `CinemachineBrain::ForceLive`; scripts `Camera.BlendTo`, `Camera.SetTarget`, `Camera.AddToGroup`, `Camera.RemoveFromGroup`
 - **Editor:** Inspector panels for Virtual Camera (Camera Rig, Framing, Group, 2D camera, Walls sections), Cinemachine Brain (blend style and curve), Camera Room, Dolly Path, Dolly Cart; Add Component "Camera Rig" and "Camera Room"; GameObject > Camera > Camera Rig: Follow / Orbit / Look At and Camera Room; Scene view gizmo (frustum, dead and soft zone, wall probe, group circle, room boxes); Camera Preview for a selected rig
 - **Docs:** `docs/gameplay/cameras.md`, `docs/gameplay/cameras.md` (Cameras), `docs/engine/splines.md`, `docs/gameplay/cutscenes.md`
-- **Tests:** `cinemachine`, `layers_tags_cameras`, `scene_cameras`, `camera_cine`, `camera_math`, `camera_rig`
+- **Tests:** `cinemachine`, `layers_tags_cameras`, `scene_cameras`, `camera_cine`, `camera_math`, `camera_rig`, `camera_robust`
 - **Status:** Works - cinemachine, scene_cameras and layers_tags_cameras tests exist; the depth rule for the main camera landed in #570
 - **Open:** the shot now really faces its Look At target (before the camera upgrade it aimed the opposite way: the vcam rotated +Z to the target but a camera looks down -Z); no dialogue hook exists, scripts call `Camera.BlendTo` from a dialogue event; the camera upgrade was checked headless only (`docs/gameplay/cameras.md`); the player and editor still draw only the main camera; looping their render path over `CameraStack()` with ClearPlan, viewport rect and culling mask is not done (per docs/gameplay/cameras.md)
 - **Related:** 4.10, 10.1, 2.7, 1.3

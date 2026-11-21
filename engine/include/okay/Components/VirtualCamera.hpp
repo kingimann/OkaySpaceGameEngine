@@ -258,7 +258,10 @@ public:
                     orbitPitch -= d.y * mouseSensitivity;
                 }
             }
-            orbitPitch = Mathf::Clamp(orbitPitch, orbitMinPitch, orbitMaxPitch);
+            if (!std::isfinite(orbitYaw)) orbitYaw = 0.0f;
+            if (!std::isfinite(orbitPitch)) orbitPitch = 0.5f * (orbitMinPitch + orbitMaxPitch);
+            orbitYaw = std::remainder(orbitYaw, 360.0f);   // -180..180: no precision loss after long play
+            orbitPitch = Mathf::Clamp(orbitPitch, std::min(orbitMinPitch, orbitMaxPitch), std::max(orbitMinPitch, orbitMaxPitch));
             flPivot = fp + Vec3{0.0f, orbitHeight, 0.0f};
             Quat orot = Quat::Euler(orbitPitch, orbitYaw, 0.0f);
             desiredPos = flPivot + orot * Vec3{0.0f, 0.0f, -std::max(orbitRadius, fitDist)};

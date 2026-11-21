@@ -69,6 +69,19 @@ int main() {
         for (int i = 0; i < 5; ++i) s.Update(1.0f / 60.0f);
         CHECK(Finite3(cg->transform->Position()));
     }
+    {   // One owner: a camera with a brain and a live shot is placed by the shot, not dragged back by CameraFollow
+        Scene s("S"); s.physicsEnabled = false;
+        s.CreateGameObject("T");
+        GameObject* cg = s.CreateGameObject("Cam"); cg->AddComponent<Camera>();
+        CinemachineBrain* br = cg->AddComponent<CinemachineBrain>(); br->blendTime = 0.0f;
+        CameraFollow* f = cg->AddComponent<CameraFollow>(); f->targetName = "T"; f->offset = {0, 0, 50}; f->smoothing = 0.0f;
+        GameObject* vg = s.CreateGameObject("Shot"); vg->transform->localPosition = {0, 5, -10};
+        VirtualCamera* vc = vg->AddComponent<VirtualCamera>(); vc->follow = ""; vc->lookAt = ""; vc->positionDamping = 0.0f;
+        s.Start();
+        for (int i = 0; i < 30; ++i) s.Update(1.0f / 60.0f);
+        CHECK(br->LiveCamera() == vc);
+        CHECK(cg->transform->Position().z < 0.0f);   // at the shot, not at the follow offset (z = 50)
+    }
     {   // Camera: a NaN shake or zoom must not poison the camera for good
         Scene s("S"); s.physicsEnabled = false;
         GameObject* g = s.CreateGameObject("Cam"); Camera* c = g->AddComponent<Camera>();

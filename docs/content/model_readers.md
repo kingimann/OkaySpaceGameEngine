@@ -1662,7 +1662,7 @@ Run on OFF files from more than one source (we have two); Windows run; owner app
 
 *Was `docs/own_ogre_reader.md` until 2026-11-20.*
 
-Status: **side by side, off by default**: the XML form behind `OKAY_OWN_OGRE` (slot 23), the binary `.mesh` behind `OKAY_OWN_OGREBIN` (slot 43, added 2026-11-16 in the "Assimp gap" batch, `docs/status/own_code_roadmap.md`, section "What still needs Assimp"); same rules as `docs/content/model_readers.md`. Assimp (when built) is still the only other reader of OGRE meshes. Nothing was flipped. **Skeletons are not read** in either form (`.skeleton`, `.skeleton.xml`; see "Not done").
+Status: **side by side, off by default**: the XML form behind `OKAY_OWN_OGRE` (slot 23), the binary `.mesh` behind `OKAY_OWN_OGREBIN` (slot 43, added 2026-11-16 in the "Assimp gap" batch, `docs/status/own_code_roadmap.md`, section "What still needs Assimp"); same rules as `docs/content/model_readers.md`. Assimp (when built) is still the only other reader of OGRE meshes. Nothing was flipped. **Skeletons: the XML form (`.skeleton.xml`) is read since 2026-11-20 (bones, bind pose, animations, skin weights; see "Skeletons"); the binary `.skeleton` is not.**
 
 ### What it is
 
@@ -1697,13 +1697,13 @@ Before anything is allocated from a vertex count, the positions must sit in a ve
 
 ### Not handled (each is a line in `out.notes`)
 
-The skeleton link and `<boneassignments>` (the mesh is imported rigid, at its bind pose), poses and morph animation, levels of detail, vertex colours, tangents, second and later texture coordinate sets, everything in material scripts beyond the first pass colours and first texture (parents, other techniques, shaders, blend modes).
+The binary mesh's skeleton link and bone assignments (the binary mesh is still imported rigid, at its bind pose), poses and morph animation, levels of detail, vertex colours, tangents, second and later texture coordinate sets, everything in material scripts beyond the first pass colours and first texture (parents, other techniques, shaders, blend modes).
 
 ### Not done
 
 - **The editor does not recognise `.mesh.xml` by itself.** Its project panel and drag-and-drop look at the last extension (`.xml`), so only the Import Model dialog (whose file filter lists `*.mesh.xml`) and `ImportModelData` / `ImportModel` take the file. Teaching the editor's `IsModelExt` the two-part extension is not done.
 - **Binary `.mesh`: done** (2026-11-16, above). Not read in it: vertex elements that are not 32-bit floats (16-bit texture coordinates, packed normals), big-endian files.
-- **`.skeleton` and `.skeleton.xml`**: bones, bind pose, animations, weights. Not started in either form; it needs the skin path the other skinned readers use. Assimp reads them (fish has 4 bones and a clip, ninja 21 bones and 20 clips), so a skinned OGRE mesh still imports rigid with ours.
+- **Binary `.skeleton`**: not started. The binary `.mesh` stays rigid with a note. (`.skeleton.xml` is done, below.)
 
 ### Limits
 
@@ -1751,6 +1751,14 @@ Peak heap of one read, ours / Assimp (MB): `fish` 1.79 -> 1.35 / 1.73, `ninja` 2
 Later (the integration of `claude2/own-readers-gap-2`): the reader moved to `xml::ParseFlat`, which stores offsets into the
 file text instead of copies, so the file's bytes now stay alive while the meshes are built and the `keepText` switch is no
 longer used by OGRE (it stays in `XmlLite.hpp`, default on). That parser keeps less again: `TheThing` 1.82 / 3.37 MB.
+
+### Skeletons (`.skeleton.xml`, 2026-11-20)
+
+Written from the public description of the OGRE skeleton XML (the bone, bone hierarchy and animation elements of the OGRE manual); no code from OGRE or any importer. `ReadOgreSkeletonXml` (`ModelData.hpp`) reads a skeleton alone: the root node `OGRE` and the bones as nodes under it, parent first (children listed before their parents are reordered; a parent loop, a duplicate bone id or name, or an unknown parent is refused), the local bind pose from `<position>`, `<rotation angle>` with an `<axis>` (radians) and `<scale>` (`x y z` or `factor`), and each `<animation>` as a clip with one channel per `<track>`. A keyframe is relative to the bind pose, as OGRE applies it (reset to the bind pose, then translate, rotate, scale): position = bind + translate, rotation = bind * rotate, scale = bind * scale. Tracks for a bone the skeleton does not have are skipped with a note.
+
+`ReadOgreXmlBuffer` takes an optional skeleton text (`ReadOgreXmlFile` loads `<skeletonlink name>.xml` next to the mesh, kept inside that folder). With a skeleton every part is skinned: each `<vertexboneassignment>` (the submesh's own list, or the mesh-level list for shared vertices) maps a bone id to a bone, the four strongest weights per vertex are kept and renormalised (the same bone twice adds up), and the inverse bind of a bone is the inverse of its world bind matrix. A vertex with no usable weight follows the root node through an extra bone `OGRE`. Bad assignments (a vertex or bone that does not exist, a weight that is not positive), dropped fifth weights and flat-scale bones are counted in `out.notes`. A skeleton that cannot be read leaves the mesh rigid and says why. Without a skeleton the output is exactly as before.
+
+Tested by `ogre_skeleton_reader` (`tests/test_ogre_skeleton_reader.cpp`, 1,462 checks): a five-bone fixture whose world bind positions are worked out by hand (Hand at (2,2,0)), inverse binds checked by sending that point back to the bone's origin, a three-key clip (translate, a further 90 degree turn, doubled scale), the four-strongest rule (0.4, 0.3, 0.2, 0.06 over 0.96), the root-bone fallback, bad assignments, refusals, a loop, and every truncation of the file. **Not verified:** a real OGRE skeleton (fish has 4 bones and a clip, ninja 21 bones and 20 clips in Assimp's folder, not in this repository, so the comparison with Assimp's output has not been run); the keyframe composition rule is from the documented behaviour, not checked against a real exporter's file; no Windows run. Binary `.skeleton` (and so skinned binary meshes) is not done.
 
 ## Our own PMX reader (`.pmx`)
 

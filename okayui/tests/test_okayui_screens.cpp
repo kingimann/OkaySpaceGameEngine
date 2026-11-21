@@ -100,10 +100,10 @@ int main() {
     {   // What's New: the idle page; each state offers the right button and it does what the ImGui page does
         NewsRig r;
         r.Frames(3);
-        CHECK(r.res.updateButton.w > 0 && r.res.updateButtonEnabled && r.res.releasesButton.w > 0);
+        CHECK(r.res.updateButton.w > 0 && r.res.updateButtonEnabled);
         CHECK(r.res.firstEarlierHeader.w > 0);
         const S::WhatsNewResult c = r.Click(r.res.updateButton);
-        CHECK(c.checkForUpdates && !c.installNow && !c.restartNow && !c.openReleasesPage);   // one action, one frame
+        CHECK(c.checkForUpdates && !c.installNow && !c.restartNow);   // one action, one frame
         r.Frames(2);
         CHECK(!r.res.checkForUpdates);                                                       // not repeated while nothing is pressed
     }
@@ -141,12 +141,6 @@ int main() {
             CHECK(r.Click(r.res.updateButton).checkForUpdates);
         }
     }
-    {   // the link to all releases
-        NewsRig r(900);   // tall enough that the page does not scroll
-        r.Frames(3);
-        CHECK(r.Click(r.res.releasesButton).openReleasesPage);
-        CHECK(std::strstr(S::WhatsNewReleasesUrl(), "github.com/kingimann/OkaySpaceGameEngine/releases") != nullptr);
-    }
     {   // earlier releases: the first starts open, a click folds it (fewer shapes), a click again opens it
         NewsRig r(900);
         r.Frames(3);
@@ -166,7 +160,6 @@ int main() {
         const int before = UI::GetDrawData().vertexCount;
         r.sim.wheel = -5.0f; r.Frame(); r.Frame();
         CHECK(UI::GetDrawData().vertexCount > 0 && before > 0);
-        CHECK(r.res.releasesButton.y > 0);   // the button exists after scrolling (its position is where the layout put it)
     }
     {   // the page is a real window of the app: a hosted rectangle smaller than the page still clips to itself
         Reset(); UI::UseLauncherLook(true); UI::Style().caretBlink = false;

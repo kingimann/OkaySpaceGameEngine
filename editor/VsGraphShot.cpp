@@ -7,6 +7,7 @@
 
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"
+#include "okay/Platform/BmpWriter.hpp"
 #include "PainterBridge.hpp"
 #include <cstdio>
 
@@ -15,23 +16,8 @@
 #include <string>
 #include <vector>
 
-// A 32-bit BMP (BGRA, bottom-up) from RGBA bytes, top row first: what SDL_SaveBMP wrote for these pictures, without SDL.
 static bool WriteBmp(const std::string& path, const std::vector<std::uint8_t>& rgba, int w, int h) {
-    std::FILE* f = std::fopen(path.c_str(), "wb");
-    if (!f) return false;
-    const std::uint32_t imageSize = (std::uint32_t)w * (std::uint32_t)h * 4u, fileSize = 54u + imageSize;
-    unsigned char hdr[54] = {'B', 'M'};
-    auto put32 = [&](int at, std::uint32_t v) { for (int i = 0; i < 4; ++i) hdr[at + i] = (unsigned char)(v >> (8 * i)); };
-    put32(2, fileSize); put32(10, 54); put32(14, 40); put32(18, (std::uint32_t)w); put32(22, (std::uint32_t)h);
-    hdr[26] = 1; hdr[28] = 32; put32(34, imageSize);
-    bool ok = std::fwrite(hdr, 1, 54, f) == 54;
-    std::vector<unsigned char> row((size_t)w * 4);
-    for (int y = h - 1; y >= 0 && ok; --y) {
-        const std::uint8_t* src = &rgba[(size_t)y * (size_t)w * 4];
-        for (int x = 0; x < w; ++x) { row[(size_t)x * 4] = src[x * 4 + 2]; row[(size_t)x * 4 + 1] = src[x * 4 + 1]; row[(size_t)x * 4 + 2] = src[x * 4]; row[(size_t)x * 4 + 3] = src[x * 4 + 3]; }
-        ok = std::fwrite(row.data(), 1, row.size(), f) == row.size();
-    }
-    return std::fclose(f) == 0 && ok;
+    return okay::platform::WriteBmp32(path.c_str(), rgba.data(), w, h);
 }
 
 namespace fs = std::filesystem;

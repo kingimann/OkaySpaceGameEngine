@@ -820,6 +820,7 @@ private:
 };
 
 WinWindow::~WinWindow() {
+    if (BackendsShutDown()) return;   // static destruction after the backend went: m_b is gone, call nothing
     DestroyGLContext();
     if (m_iconBig) DestroyIcon(m_iconBig);
     if (m_iconSmall) DestroyIcon(m_iconSmall);

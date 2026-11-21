@@ -1,8 +1,8 @@
 // What Ctrl+S, Ctrl+Shift+S and Ctrl+Alt+S do, as plain data (no ImGui, header-only, so a test replays key presses).
 // Written from the owner's report "Ctrl+S doesn't save anything" and the rules in the File menu, nothing copied.
-//   Ctrl+S        saves the document you are in; if that has no file/changes, saves everything that changed; if nothing
-//                 changed, says "Nothing to save". It works while a text field is active (saving is not a text key).
-//   Ctrl+Shift+S  Save As (scene or prefab).     Ctrl+Alt+S  Save All.
+//   Ctrl+S        saves the document you are in; if that has no document, saves everything that changed; if nothing
+//                 changed: a scene or prefab is still rewritten (File > Save always did), any other focus says "Nothing to save". It works while a text field is active (saving is not a text key).
+//   Ctrl+Shift+S  Save As for the scene or prefab, whatever window has focus (script windows save themselves with Ctrl+S).     Ctrl+Alt+S  Save All.
 #pragma once
 #include <string>
 

@@ -654,14 +654,14 @@ struct CameraFollowNode : VsNode {   // in0 = object name, in1 = smoothing (unwi
 struct ParticlePlayNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
-        if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr) ps->playing = true;
+        if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr) ps->Play();   // a finished one-shot plays again
         return 0;
     }
 };
 struct ParticleStopNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
-        if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr) ps->playing = false;
+        if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr) ps->Stop();
         return 0;
     }
 };

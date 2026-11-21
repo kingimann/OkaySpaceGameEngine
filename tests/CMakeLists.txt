@@ -4582,3 +4582,11 @@ add_test(NAME save_shortcut_model COMMAND test_save_shortcut_model)
 add_executable(test_vs_pan_model test_vs_pan_model.cpp)
 target_include_directories(test_vs_pan_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME vs_pan_model COMMAND test_vs_pan_model)
+
+add_executable(test_area1_audit test_area1_audit.cpp)
+target_link_libraries(test_area1_audit PRIVATE okay::engine)
+add_test(NAME area1_audit COMMAND test_area1_audit)
+
+add_executable(test_area1_roundtrip test_area1_roundtrip.cpp)
+target_link_libraries(test_area1_roundtrip PRIVATE okay::engine)
+add_test(NAME area1_roundtrip COMMAND test_area1_roundtrip)

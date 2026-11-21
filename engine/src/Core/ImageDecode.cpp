@@ -16,7 +16,7 @@ namespace okay {
 namespace {
 
 constexpr std::size_t kMaxPixelBytes = std::size_t(1) << 31;   // 2 GiB of RGBA at most
-constexpr std::size_t kMaxAnimationBytes = std::size_t(512) << 20;   // all GIF frames together
+constexpr std::size_t kMaxAnimationBytes = std::size_t(256) << 20;   // all GIF frames together (the vector doubles while it grows, so the live peak is about twice this)
 
 bool Fail(std::string& err, const char* msg) { if (err.empty()) err = msg; return false; }
 

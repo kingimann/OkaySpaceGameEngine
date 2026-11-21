@@ -143,7 +143,7 @@ function Fail-With([string]$message) {
     if ($all -match 'v145') { Write-Host 'Hint: "v145" in the error: the generated project picked a newer platform toolset than the one with the UWP libraries. The script passes -T v143,version=<MSVC folder>; send us build\app\*.vcxproj lines with PlatformToolset.' -ForegroundColor Yellow }
     if ($all -match 'ZW') { Write-Host 'Hint: "ZW" in the error: the project compiled as C++/CX (/ZW). It must be plain C++ with C++/WinRT (uwp_cpp.props sets CompileAsWinRT false).' -ForegroundColor Yellow }
     if ($all -match '(?i)appxmanifest') { Write-Host 'Hint: "appxmanifest" in the error: the MSBuild project wants a Package.appxmanifest (platform/xbox_uwp/app has a minimal one; check it was picked up).' -ForegroundColor Yellow }
-    if ($all -match '(?i)VCLibs') { Write-Host 'Hint: "VCLibs": the package depends on Microsoft.VCLibs.140.00; install it first (see the next-steps lines of a successful run or docs/xbox_uwp.md).' -ForegroundColor Yellow }
+    if ($all -match '(?i)VCLibs') { Write-Host 'Hint: "VCLibs": the package depends on Microsoft.VCLibs.140.00; install it first (see the next-steps lines of a successful run or docs/platform/xbox_uwp.md).' -ForegroundColor Yellow }
     if ($script:Hints.ContainsKey($script:StepNo)) { Write-Host ''; Write-Host ('WHAT TO DO NEXT: ' + $script:Hints[$script:StepNo]) -ForegroundColor Cyan }
     Write-Host ("Full log (paste it to us): " + $script:LogFile) -ForegroundColor Yellow
     Log ("FAILED in step " + $script:StepName + ": " + $message)
@@ -233,7 +233,7 @@ try {
         $std = [regex]::Match($vtext, '<LanguageStandard>([^<]*)</LanguageStandard>').Groups[1].Value
         $m = "vcxproj check: /ZW or CompileAsWinRT=true present: $zw; /await present: $aw; LanguageStandard: '$std'"
         Write-Host $m; Log $m
-        if ($zw -or $aw) { Write-Host 'WARNING: the project passes /ZW or /await; the C++/WinRT build is likely to fail (see docs/xbox_uwp.md).' -ForegroundColor Yellow }
+        if ($zw -or $aw) { Write-Host 'WARNING: the project passes /ZW or /await; the C++/WinRT build is likely to fail (see docs/platform/xbox_uwp.md).' -ForegroundColor Yellow }
     } else { Write-Host 'vcxproj check: OkaySpaceXbox.vcxproj not found (is the generator a Visual Studio one?).' }
     Step 5 $(if ($EngineMode) { 'Compiling the UWP app WITH THE ENGINE (can take 10 minutes or much more)' } else { 'Compiling the UWP app (can take a few minutes)' })
     # Only the app target (not ALL_BUILD). MSBuild's AppX validation runs AFTER the exe is linked; if that validation (and nothing else) fails, the exe is
@@ -329,7 +329,7 @@ try {
     Write-Host '  If Windows says 0x800B0109 / "certificate chain": the Import-Certificate line was not run as administrator. If it says 0x80073CF3: a dependency or the manifest is wrong (send build.log).'
     Write-Host ''
     Write-Host 'B) FOR THE XBOX (Developer Mode): open https://<the Xbox IP>:11443 in a browser on the PC, Apps > Add, choose the .appx above, add the VCLibs package under dependencies, and the .cer file above if the page offers a certificate field.' -ForegroundColor Cyan
-    Write-Host '   Step by step with every screen: docs/try_it/ (the "Xbox UWP next" page) or docs/xbox_uwp.md, "Deploy to an Xbox in Developer Mode".'
+    Write-Host '   Step by step with every screen: docs/try_it/ (the "Xbox UWP next" page) or docs/platform/xbox_uwp.md, "Deploy to an Xbox in Developer Mode".'
     Write-Host ''
     Write-Host 'C) WHERE THE APP WRITES ITS LOG (UNVERIFIED): file okayspace.log in the app''s LocalState\logs folder.' -ForegroundColor Cyan
     Write-Host '   On this PC: %LOCALAPPDATA%\Packages\<the package family name>\LocalState\logs   (type %LOCALAPPDATA%\Packages\ in Explorer and look for a folder starting with com.okayspace.test).'

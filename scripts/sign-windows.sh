@@ -28,7 +28,7 @@ if [ -z "${WINDOWS_SIGN_PFX_BASE64:-}" ]; then
   msg="No Windows code-signing certificate is configured (WINDOWS_SIGN_PFX_BASE64 is empty): the programs are NOT signed."
   if [ "${SIGN_REQUIRED:-0}" = "1" ]; then echo "error: $msg" >&2; exit 1; fi
   echo "warning: $msg"
-  [ -n "${GITHUB_ACTIONS:-}" ] && echo "::warning title=Windows programs are not signed::$msg Add the repository secrets WINDOWS_SIGN_PFX_BASE64 and WINDOWS_SIGN_PFX_PASSWORD (see docs/packaging.md)."
+  [ -n "${GITHUB_ACTIONS:-}" ] && echo "::warning title=Windows programs are not signed::$msg Add the repository secrets WINDOWS_SIGN_PFX_BASE64 and WINDOWS_SIGN_PFX_PASSWORD (see docs/release/packaging.md)."
   exit 0
 fi
 

@@ -25,7 +25,7 @@ inline const Tip kTips[] = {
         {2, "Movement in one line", "on_key_move(5) moves with WASD or the arrow keys; platformer(6, 8) is a whole 2D side-scroller controller."},
         {3, "Choose the scenes you ship", "File > Build Settings > Scenes In Build: tick the scenes to include. The top one loads first."},
         {3, "Fullscreen toggle", "Turn on the fullscreen toggle in Build Settings so players can press Alt+Enter or F11."},
-        {3, "Share on GitHub", "Right-click a project on the Create page to publish it to GitHub, then use Commit & Push for later changes."},
+        {3, "Share with Git", "Right-click a project on the Create page to publish it to a Git server, then use Commit & Push for later changes."},
         {3, "Play web games", "Drop an .html game (or a folder with index.html) into your games folder and it shows up under Play."},
         {4, "Jump between pages", "When you're not typing, the number keys switch pages (1 Create, 2 Play, 3 Community). Ctrl+F searches the current page."},
         {4, "Chat your way", "Chat can open in its own window or dock inside the launcher. Use the dock / pop-out button in the chat window."},

@@ -5,7 +5,7 @@
 // stores, so a value set through the registry survives Save and Load (the
 // cross-check in tests/test_property_registry.cpp proves it for every property).
 // Fields the scene file does not keep (runtime pointers, caches) are left out. See
-// docs/properties.md.
+// docs/engine/properties.md.
 #include "BuiltinPropertiesShared.hpp"
 #include "okay/Components/LocalPlayerInput.hpp"
 
@@ -661,18 +661,33 @@ void RegisterPlatformer25DController() {
 
 // ---- Vehicles, projectiles and spawners ------------------------------------
 
+// The open-world tuning settings come from one table (VehicleTuning.hpp): the same rows the presets, the scene file and
+// SetSetting use. Grouped so the Inspector shows Simple first, then Engine, Drivetrain, Steering and so on.
+static void AddVehicleTuningRows(PropertyBuilder<VehicleController>& b) {
+    for (const VehicleTuning::Desc& d : VehicleTuning::Table()) {
+        switch (d.kind) {
+            case VehicleTuning::KFloat:
+                b.AddFloat(d.name, static_cast<float VehicleController::*>(d.f)).Range(d.lo, d.hi, d.step); break;
+            case VehicleTuning::KInt:
+                b.AddInt(d.name, static_cast<int VehicleController::*>(d.i)).Range(d.lo, d.hi, 1); break;
+            case VehicleTuning::KBool:
+                b.AddBool(d.name, static_cast<bool VehicleController::*>(d.b)); break;
+            case VehicleTuning::KEnum: {
+                std::vector<std::string> opts; std::string cur;
+                for (const char* c = d.options; ; ++c) { if (*c == '|' || !*c) { opts.push_back(cur); cur.clear(); if (!*c) break; } else cur += *c; }
+                b.AddEnum(d.name, static_cast<int VehicleController::*>(d.i), opts); break; }
+            case VehicleTuning::KKey:
+                b.AddKey(d.name, static_cast<char VehicleController::*>(d.k)); break;
+        }
+        b.Group(d.group).Tooltip(d.tip);
+    }
+}
+
 // VehicleController
 void RegisterVehicleController() {
     PropertyBuilder<VehicleController> b("VehicleController", "vehicle", "Vehicles");
-    b.AddFloat("acceleration", &VehicleController::acceleration).Range(0, kBig, 1).Tooltip("How quickly it reaches top speed (units/s^2)")
-     .AddFloat("maxSpeed", &VehicleController::maxSpeed).Range(0, 10000, 0.1).Tooltip("Forward top speed (units/s)")
-     .AddFloat("reverseSpeed", &VehicleController::reverseSpeed).Range(0, 10000, 0.1).Tooltip("Top reverse speed")
-     .AddFloat("brakeForce", &VehicleController::brakeForce).Range(0, kBig, 0.1).Tooltip("Deceleration when braking (units/s^2)")
-     .AddFloat("drag", &VehicleController::drag).Range(0, kBig, 0.1).Tooltip("Rolling resistance while coasting (no throttle)")
-     .AddFloat("turnSpeed", &VehicleController::turnSpeed).Range(0, 36000, 1).Tooltip("Steering rate at speed (degrees/s)")
-     .AddFloat("grip", &VehicleController::grip).Range(0, 1000, 0.01).Tooltip("How fast sideways slide is killed (higher = sticky)")
-     .AddFloat("handbrakeGrip", &VehicleController::handbrakeGrip).Range(0, 1000, 0.01).Tooltip("Grip while the handbrake is held (low = drifty)")
-     .AddFloat("groundCheckDistance", &VehicleController::groundCheckDistance).Range(0, kBig, 0.05).Tooltip("Down-ray length for \"on the ground\"")
+    AddVehicleTuningRows(b);
+    b.AddFloat("groundCheckDistance", &VehicleController::groundCheckDistance).Range(0, kBig, 0.05).Tooltip("Down-ray length for \"on the ground\"")
      .Section("Per-wheel raycast suspension")
      .AddBool("suspension", &VehicleController::suspension).Tooltip("Enable spring suspension + body tilt")
      .AddFloat("rideHeight", &VehicleController::rideHeight).Range(0, kBig, 0.05).Tooltip("Chassis height the spring rests at (units)")
@@ -760,7 +775,7 @@ void RegisterVolume() {
     b.Commit();
 }
 
-// Wind (docs/wind.md)
+// Wind (docs/gameplay/wind.md)
 void RegisterWind() {
     {
         PropertyBuilder<WindZone> b("WindZone", "windzone", "Environment");
@@ -1134,7 +1149,25 @@ void RegisterWater() {
      .AddFloat("waveSteepness", &Water::waveSteepness).Range(0, 1, 0.01).Tooltip("0 = round smooth waves, 1 = sharp crests (Ocean)")
      .AddInt("waveCount", &Water::waveCount).Range(1, 8, 1).Tooltip("How many waves are added together (Ocean)")
      .AddInt("waveSeed", &Water::waveSeed).Range(0, 1000000, 1).Tooltip("The same number always makes the same sea")
-     .AddVec2("current", &Water::current).Range(-kBig, kBig, 0.1).Tooltip("A steady stream in the water, metres per second along X and Z");
+     .AddVec2("current", &Water::current).Range(-kBig, kBig, 0.1).Tooltip("A steady stream in the water, metres per second along X and Z")
+     .AddInt("seaState", &Water::seaState).Range(0, 4, 1).Tooltip("0 your own waves, 1 Calm, 2 Light, 3 Rough, 4 Storm (the Inspector slider sets the wave numbers)")
+     .AddBool("realisticLook", &Water::realisticLook).Tooltip("Depth colour, foam, glow in the crests and ripples")
+     .AddColor("shallowColor", &Water::shallowColor).Tooltip("Colour of shallow water")
+     .AddColor("deepColor", &Water::deepColor).Tooltip("Colour of deep water")
+     .AddFloat("clarity", &Water::clarity).Range(0.05, 200, 0.1).Tooltip("How many metres of depth before the water looks deep. Small = murky")
+     .AddFloat("assumedDepth", &Water::assumedDepth).Range(0, 10000, 0.5).Tooltip("Depth used where there is no Terrain under the water and Depth is 0")
+     .AddFloat("foamAmount", &Water::foamAmount).Range(0, 1, 0.01).Tooltip("White caps on the crests and steep waves")
+     .AddFloat("shoreFoamWidth", &Water::shoreFoamWidth).Range(0, 50, 0.05).Tooltip("Metres of foam where the water meets the ground. 0 = none")
+     .AddColor("foamColor", &Water::foamColor).Tooltip("Colour of the foam")
+     .AddFloat("scatter", &Water::scatter).Range(0, 1, 0.01).Tooltip("Green-blue glow in the crests when the sun is behind them")
+     .AddFloat("ripples", &Water::ripples).Range(0, 1, 0.01).Tooltip("Small ripples that never stop, even on a calm lake")
+     .AddFloat("rippleSize", &Water::rippleSize).Range(0.05, 20, 0.05).Tooltip("Size of the small ripples. 1 is normal")
+     .AddBool("lod", &Water::lod).Tooltip("Rings of squares: fine near the camera, coarse far away. Detail is the cells per ring side")
+     .AddInt("lodRings", &Water::lodRings).Range(1, 8, 1).Tooltip("How many rings. Each is twice as coarse as the one inside it")
+     .AddBool("infinite", &Water::infinite).Tooltip("With rings: the sea follows the camera and has no edge")
+     .AddBool("interactive", &Water::interactive).Tooltip("Things that fall in or move through the water make rings and splashes")
+     .AddBool("underwaterEffect", &Water::underwaterEffect).Tooltip("Blue-green fog when the camera is under the surface")
+     .AddBool("bubbles", &Water::bubbles).Tooltip("Bubbles rise around the camera under the surface");
     b.Commit();
 }
 

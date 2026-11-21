@@ -511,7 +511,7 @@ int main() {
         }
     }
 
-    // ---- Game::Reset keeps the time scale; BeginSession is what a new session wants (the caller audit in docs/loop_and_time.md) ---------------------------------------------
+    // ---- Game::Reset keeps the time scale; BeginSession is what a new session wants (the caller audit in docs/engine/loop_and_time.md) ---------------------------------------------
     {
         Fresh();
         Time::SetTimeScale(0.0f);                                     // a script froze the game

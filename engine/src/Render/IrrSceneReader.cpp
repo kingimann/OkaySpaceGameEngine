@@ -4,7 +4,7 @@
 // positions, rotations (degrees) and scales of the nodes; "cube" and "sphere" nodes become meshes of their own; "mesh" and
 // "animatedMesh" nodes name another model file, which is read through the loader the caller supplies (the import seam gives
 // one that uses the engine's own readers). Uses the strict XML reader of the batch-B readers. Bounds-checked, capped, no
-// recursion. See okay/Render/ModelData.hpp and docs/own_irr_reader.md.
+// recursion. See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"
 #include "SceneRefPath.hpp"

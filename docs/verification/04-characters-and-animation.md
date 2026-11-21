@@ -82,7 +82,7 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
   - **More:** [../../try_it.md](../../try_it.md)
 
 - [ ] **V-CH-S3** Area 3: 3D modeling & import (smoke test, steps unverified)
-  - **Map:** [3](../feature_map/03-modeling-import.md), 11 sub-areas, 11 built.
+  - **Map:** [3](../feature_map/03-modeling-import.md), 12 sub-areas, 12 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 3.1 Edit mode [Works]. Where: Modeling window (View > Editors & Tools > Modeling), the 3D view's Object/Edit header and status line, Edit...
     - 3.2 Edge and loop tools [Works]. Where: Modeling window > Edit Mesh > Edge loops group; Ctrl+R / Ctrl+B / K in the 3D view
@@ -95,8 +95,9 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
     - 3.9 Generate and whole-mesh operations [Works]. Where: Modeling window > Generate and Edit tabs
     - 3.10 Add library and procedural props [Works]. Where: Modeling window > Add (filter box, categories) and Shape tab; GameObject > 3D Object > Nature / Props /...
     - 3.11 Guided creation (templates, parts, safe regeneration) [Partial]. Where: Modeling window > Guided
+    - 3.12 Simple view of the Modeling window (beginner mode) [Partial]. Where: Modeling window (opens on the Easy page; the other pages are in the list on its left)
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known gaps:** see [docs/feature_map/03-modeling-import.md](../feature_map/03-modeling-import.md) (area 3, sections 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11): the Open line of each section. Not copied here so it cannot go stale.
+  - **Known gaps:** see [docs/feature_map/03-modeling-import.md](../feature_map/03-modeling-import.md) (area 3, sections 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "make G snap to the grid while Ctrl is held"; "Extrude Faces leaves the collider behind"
 
 - [ ] **V-CH-S4** Area 4: Characters & cameras (smoke test, steps unverified)
@@ -106,12 +107,12 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
     - 4.2 Stances and movement [Works]. Where: Player Controller panel sections (Crouch / prone, Slide, Dodge, Vault and mantle, Stance changes on the...
     - 4.3 2D and 2.5D controllers [Works]. Where: Inspector panels per controller; GameObject > Player > Top Down (2D), 2.5D Platformer (LittleBigPlanet)
     - 4.4 Shooter and top-down [Works]. Where: Inspector panels per controller; GameObject > Player > Third Person Shooter, Top Down (3D), Top Down Shooter...
-    - 4.5 Vehicles [Works]. Where: Add Component > Gameplay > Vehicle Controller (Car) / Vehicle Controller 2D / Vehicle Seat; File > Open...
+    - 4.5 Vehicles [Works]. Where: Add Component > Gameplay > Vehicle Controller (Car) / Vehicle Controller 2D / Vehicle Seat / Boat Controller...
     - 4.6 Third-person camera [Works]. Where: Player Controller panel > Third person (orbit, aim, spring arm); Inspector for Camera Follow
     - 4.7 First-person camera and hands [Works]. Where: First Person Hands component panel (Open Preview), "First Person Hands" window
-    - 4.8 Virtual cameras and dollies [Works]. Where: Inspector panels for Virtual Camera, Cinemachine Brain, Dolly Path, Dolly Cart; Add Component menu "Virtual...
+    - 4.8 Virtual cameras and dollies [Works]. Where: Inspector panels for Virtual Camera (Camera Rig, Framing, Group, 2D camera, Walls sections), Cinemachine...
     - 4.9 Blocky Character and customization [Works]. Where: Character inspector, "Separate Into Parts (editable rig)", Unrig, Animation tab
-    - 4.10 Camera component, shake and zoom [Works]. Where: Camera inspector; GameObject > Camera > Camera
+    - 4.10 Camera component, shake and zoom [Works]. Where: Camera inspector (with Camera Effects buttons for Play); GameObject > Camera > Camera
     - 4.11 Seats and sitting [Works]. Where: Seat inspector panel
     - 4.12 Premade players [Works]. Where: GameObject > Player submenu
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).

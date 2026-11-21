@@ -79,7 +79,7 @@ private:
 
 #ifdef OKAY_WITH_PHOTON
 // Defined in PhotonTransport.cpp (compiled only when the Photon SDK is wired
-// in with -DOKAY_WITH_PHOTON=ON; see docs/photon.md).
+// in with -DOKAY_WITH_PHOTON=ON; see docs/online/photon.md).
 std::unique_ptr<INetTransport> CreatePhotonNetTransport();
 #endif
 

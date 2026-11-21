@@ -1,6 +1,6 @@
 // Drawing of the Project panel's right-click menus and of the Properties rows: just ImGui and the lists from
 // ProjectContextModel.hpp, no file operations and no engine, so a small test program can draw them headless
-// (the screenshots of docs/project_panel.md are made that way).
+// (the screenshots of docs/editor/project_panel.md are made that way).
 #include "ProjectPanelUI.hpp"
 
 #include <imgui.h>

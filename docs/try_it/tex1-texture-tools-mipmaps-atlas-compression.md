@@ -4,7 +4,7 @@ row: | tex1 | Texture tools (our own): mipmaps, atlas, BC compression, DDS | Win
 ---
 ## tex1. Texture tools: mipmaps, atlas, compression
 
-What it is: our own texture library (`docs/own_texture_library.md`). It makes mip chains (box, Lanczos, Kaiser,
+What it is: our own texture library (`docs/rendering/own_texture_library.md`). It makes mip chains (box, Lanczos, Kaiser,
 colour-correct), packs sprites into an atlas with a manifest, compresses pictures to BC1/BC3/BC4/BC5 and writes
 `.dds` files you can open in a DDS viewer, and plans which mip each texture needs for a memory budget. It only adds
 tools: nothing existing is switched off or replaced, so there is no switch to turn on.

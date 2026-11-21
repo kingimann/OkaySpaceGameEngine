@@ -22,7 +22,7 @@ extern bool g_consoleCollapse;     // Console 'Collapse' toggle: merge identical
 void SaveSettings();               // writes okay_settings.txt
 extern float g_editorFov;          // the Scene view's vertical field of view (degrees)
 extern float g_uiScale;            // the editor's UI scale (1.0 = 100%)
-// The opt-in OkayUI backend (docs/own_ui_toolkit.md, section 5). True when the setting or OKAY_UI_BACKEND picked OkayUI and this
+// The opt-in OkayUI backend (docs/ui/own_ui_toolkit.md, section 5). True when the setting or OKAY_UI_BACKEND picked OkayUI and this
 // build has it: the panels with an OkayUI port (the Console, today) are drawn by OkayUI into a rectangle they reserve in ImGui.
 bool UseOkayUIBackend();
 #ifdef OKAY_HAVE_OKAYUI

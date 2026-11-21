@@ -1,4 +1,4 @@
-// Wind in the editor. See WindTools.hpp and docs/wind.md.
+// Wind in the editor. See WindTools.hpp and docs/gameplay/wind.md.
 #include "WindTools.hpp"
 #include "ConsolePanel.hpp"     // ConsoleLog
 #include "okay/Components/MeshRenderer.hpp"

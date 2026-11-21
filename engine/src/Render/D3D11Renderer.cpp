@@ -1635,7 +1635,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     LastCullCounters().drawn = drawnN;
 
     const bool useChain = chain && p->EnsurePostTargets();
-    PostVignetteHandled() = useChain && rsTop.vignette > 0.0f;
+    PostVignetteHandled() = useChain && rsTop.vignette + rsTop.vignettePulse > 0.0f;
 
     // ---- Ambient occlusion depth pre-pass (UNVERIFIED on a real GPU) -------------
     // Runs only when the post chain is on AND an Ambient Occlusion switch is on
@@ -1753,7 +1753,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         ID3D11RenderTargetView* finalRtv = directRtv ? directRtv : p->out.rtv;
         pc.p0[0] = ExposureScale(rsTop); pc.p0[1] = hdrOut ? 1.0f : 0.0f; pc.p0[2] = (float)ps.tonemap; pc.p0[3] = bloomOn ? 1.0f : 0.0f;
         pc.p1[0] = bloomIntensity; pc.p1[1] = ps.grading ? 1.0f : 0.0f; pc.p1[2] = ps.temperature; pc.p1[3] = ps.tint;
-        pc.p2[0] = ps.saturation; pc.p2[1] = ps.contrast; pc.p2[2] = rsTop.vignette > 1.0f ? 1.0f : rsTop.vignette; pc.p2[3] = ps.vignetteSmooth;
+        pc.p2[0] = ps.saturation; pc.p2[1] = ps.contrast; pc.p2[2] = rsTop.vignette + rsTop.vignettePulse > 1.0f ? 1.0f : rsTop.vignette + rsTop.vignettePulse; pc.p2[3] = ps.vignetteSmooth;
         pc.lift[0] = ps.lift.x; pc.lift[1] = ps.lift.y; pc.lift[2] = ps.lift.z; pc.aspect = (float)w / (float)h;
         pc.gamma[0] = ps.gamma.x; pc.gamma[1] = ps.gamma.y; pc.gamma[2] = ps.gamma.z;
         pc.gain[0] = ps.gain.x; pc.gain[1] = ps.gain.y; pc.gain[2] = ps.gain.z;

@@ -5,7 +5,7 @@ row: | own-switch | One place to switch our own code on and off (launcher Settin
 ## own-switch. One place to try our own code (no environment variables)
 
 **Read this first: built and unit-tested on Linux; nothing of this was run on Windows.** The screens and the file logic are
-new; the own parts they switch on are the ones described in `docs/own_code_roadmap.md`.
+new; the own parts they switch on are the ones described in `docs/status/own_code_roadmap.md`.
 
 What it is: a list of switches. Each one swaps a third-party part for our own. **All are off until you turn them on.** The
 choice is saved in one small file, `own_switches.cfg` (Windows: `%LOCALAPPDATA%\OkaySpace\own_switches.cfg`; Linux:
@@ -25,7 +25,7 @@ What to do:
 5. Click **Back to normal (all off)** (launcher page or editor menu). Every switch goes to off and the words say
    **off after restart**. After a restart everything is as in a normal release.
 6. To check a switch really does something: turn on **Our own WAV reader**, restart, add a `.wav` file to a scene and press
-   Play. It plays through our decoder (`docs/own_wav_decoder.md` lists the formats). **Our own web client** and **Our own
+   Play. It plays through our decoder (`docs/audio/own_wav_decoder.md` lists the formats). **Our own web client** and **Our own
    window layer** are not shown on Windows (Windows uses WinHTTP and its own window code).
 7. An environment variable you set yourself always wins. Start the launcher from a Command Prompt with
    `set OKAY_OWN_WAV=1`: the row says **set by an environment variable** and its switch is greyed out.

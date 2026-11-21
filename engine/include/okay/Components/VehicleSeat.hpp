@@ -124,6 +124,13 @@ public:
         return true;
     }
 
+    /// Throw out whoever drives `car` (a script or a game rule). The person is placed beside the door as with E.
+    static bool EjectDriver(VehicleController* car) {
+        if (!car) return false;
+        for (VehicleSeat* s : Occupied())
+            if (s->m_who && s->m_driverCar.get() == car) { s->Exit(); return true; }
+        return false;
+    }
     /// Put the occupant back on their feet at the exit point, upright. No-op when empty.
     void Exit() {
         GameObject* who = m_who;
@@ -159,7 +166,7 @@ public:
         Sync();
         if (m_who && (m_who->IsDestroyed() || !m_who->transform)) Forget();
         if (m_who && HumanoidActions::IsDead(m_who)) Exit();   // a dead body is not at the wheel
-        const bool down = Input::GetKeyDown(enterKey);
+        const bool down = Input::GetKeyDown(enterKey) || Input::GetGamepadButtonDown(Input::PadY);   // E or the pad's Y
         if (!down) s_justExited() = nullptr;
         playerInRange = false;
         if (m_who) {
@@ -294,6 +301,7 @@ private:
             return;
         }
         VehicleController* v = Vehicle();
+        if (v && v->openWorld && v->HasDriverSeat() && v->Driver() == m_who) { v->DriveCamera(m_cam, dt); return; }   // the open-world chase camera
         const float dist = v ? v->camDistance : 6.5f, high = v ? v->camHeight : 2.6f, lerp = v ? v->camLerp : 5.0f;
         const Vec3 carPos = car->Position();
         const Vec3 want = carPos - fp * dist + Vec3{0.0f, high, 0.0f};

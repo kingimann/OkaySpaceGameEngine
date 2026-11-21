@@ -1,5 +1,5 @@
 #pragma once
-// The own-stack dogfood switch and the startup line (docs/own_stack_rollout.md).
+// The own-stack dogfood switch and the startup line (docs/status/own_stack_rollout.md).
 //
 // Two jobs, both header-only so the player, launcher, editor and the tests all use the same text:
 //

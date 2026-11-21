@@ -427,6 +427,7 @@ public:
         // finished frame, so it looks identical on every renderer backend. Great for
         // focus/mood without touching the 3D shading path.
         float vignette   = 0.0f;
+        float vignettePulse = 0.0f;   ///< runtime only, never saved: a camera's hit flash, added to `vignette` when drawn
         // Filmic rendering: a gamma-correct pipeline (albedo decoded to linear,
         // lighting in linear space, sRGB-encoded output) plus ACES tonemapping,
         // which rolls bright over-1.0 lighting off toward white instead of
@@ -542,6 +543,10 @@ public:
     /// bitmap font. A widget/Text with its own fontPath overrides this. Travels with
     /// the scene so the editor preview and the shipped player match.
     std::string uiFont;
+    /// In-game UI drawing quality: 0 Fast, 1 Good (the default), 2 Best, 3 Old look (the drawing before the UI quality work, kept for comparison).
+    /// Saved with the scene as `uiquality N`; a scene without the record is Good. The environment variables
+    /// OKAY_UI_QUALITY=fast|good|best|old and OKAY_CLASSIC_UI=1 override it (see okay/UI/UIFontPolicy.hpp).
+    int uiQuality = 1;
     /// Scene-level records of the file this build does not know (a setting a newer build wrote), each one whole
     /// line, written back as they were by SceneSerializer::Serialize. Set by a full load (not by a merge or
     /// Instantiate), cleared with the scene. See GameObject::unknownRecords for the per-object ones.

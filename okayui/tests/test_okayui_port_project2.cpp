@@ -2,7 +2,7 @@
 // project folder: the delete confirmation (it lists what uses the assets), the references window ("used by" / "uses"), the broken-references list, the
 // "move to" folder picker, the Properties window and the import settings editor. The Browser and the asset database are the real ones (hand-linked
 // engine sources); the files are written by the test. Buttons are found by their colour in the rendered picture and clicked with synthetic input.
-// See docs/own_ui_toolkit.md 6.17.
+// See docs/ui/own_ui_toolkit.md 6.17.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "ProjectPanelUI.hpp"

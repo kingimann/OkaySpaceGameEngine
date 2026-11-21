@@ -7,7 +7,7 @@
 //     (the preferred path wherever it is built), unless -DOKAY_OWN_CRYPTO=ON asks for our own;
 //   * everywhere else (no libsodium, or OKAY_OWN_CRYPTO), and for SHA-512 always, it goes to okay::crypto
 //     (engine/include/okay/Crypto/Crypto.hpp, the static library okay_crypto), which is our own code written from RFC 8032
-//     and FIPS 180-4. okay::crypto has NOT had its outside review yet (CLAUDE.md rule 18, docs/crypto_review_package.md).
+//     and FIPS 180-4. okay::crypto has NOT had its outside review yet (CLAUDE.md rule 18, docs/platform/crypto_review_package.md).
 // It used to hold a C++ port of public-domain TweetNaCl as the fallback; the owner approved replacing it. Before it was
 // deleted, tests/test_anticheat_golden.cpp recorded what it answered on a fixed set of inputs, and that recorded answer is
 // still checked on every build. The extra checks libsodium 1.0.18's crypto_sign_verify_detached makes (S < L, R not
@@ -15,7 +15,7 @@
 // are pinned in tests/test_anticheat_integrity.cpp (the identity-key forgery). Not claimed to match libsodium on every
 // malformed input beyond those checks (crypto_difftest compares the two on millions of inputs).
 // Signing never needs randomness (ed25519 is deterministic), and no key is ever made here: the owner makes them
-// (docs/anticheat.md).
+// (docs/online/anticheat.md).
 //
 // Anything that includes this header and is not linked to the engine must link okay_crypto (target okay::crypto).
 //

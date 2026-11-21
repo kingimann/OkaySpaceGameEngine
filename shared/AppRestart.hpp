@@ -237,7 +237,7 @@ struct Request {
     std::uint64_t minBytes = 0;
     int timeoutMs = 120000;
     bool keepBackup = true;
-    // Verified restart (docs/updater.md). With `expectVersion` set the helper first runs `<executable> --okay-selfcheck <version>`; when the
+    // Verified restart (docs/release/updater.md). With `expectVersion` set the helper first runs `<executable> --okay-selfcheck <version>`; when the
     // new file cannot start or is another version it puts `replaceBackup` back over `rollbackTarget`, records the failure in `stateFile`
     // and starts the previous program instead. After a normal launch it waits up to `confirmMs` for the new program to clear the state file.
     std::string expectVersion;

@@ -1,5 +1,5 @@
 // Our own DXF (ASCII) reader. Written from the public description of the DXF group-code format, no code from any other
-// importer. See docs/own_dxf_reader.md.
+// importer. See docs/content/model_readers.md.
 #include "FileOpen.hpp"
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"

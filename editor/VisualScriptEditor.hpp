@@ -363,7 +363,7 @@ inline const std::vector<VsDef>& Registry() {
         {"AnimState",    "Anim State",     CAT_DATA, false, {}, {}, {"State"}, 0, nullptr},
         {"IkLook",       "IK Look At",     CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 0, nullptr},
         {"IkHand",       "IK Hand Reach",  CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 1, "left / right"},
-        // --- Look: weather, fog, post-processing (docs/rendering.md) ---
+        // --- Look: weather, fog, post-processing (docs/rendering/rendering.md) ---
         {"SetWeather",    "Set Weather",     CAT_ACTION, true, {""}, {"Intensity"}, {}, 1, "none / rain / snow / storm"},
         {"SetFog",        "Set Fog",         CAT_ACTION, true, {""}, {"On","Start","End"}, {}, 0, nullptr},
         {"SetPostEffect", "Set Post Effect", CAT_ACTION, true, {""}, {"Value"}, {}, 1, "bloom / exposure / saturation / ..."},
@@ -3693,6 +3693,7 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
 #include "VisualScriptClarity.hpp"
 #include "VisualScriptGuide.hpp"       // plain sentences, pin tips, next steps, Try this node, the help card
 #include "VisualScriptPan.hpp"
+#include "VisualScriptPanModel.hpp"
 #include "VisualScriptPalette.hpp"
 #include "VisualScriptEasyOps.hpp"   // graph-in, graph-out rules for the canvas (needs the graph model above)
 #include "VisualScriptPlainWords.hpp" // every "something is wrong" sentence, in plain words
@@ -4417,6 +4418,7 @@ inline void Draw(EditorState& ed, bool* open) {
     ImGui::InvisibleButton("vscbg", ImVec2(canvasMax.x - canvasMin.x, canvasMax.y - canvasMin.y),
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     bool canvasHovered = ImGui::IsItemHovered();
+    const bool bgActive = ImGui::IsItemActive();   // the left press began on empty canvas
     if (!st.refHint.empty()) {
         ImGui::SetCursorScreenPos(ImVec2(canvasMin.x + 8, canvasMin.y + 8));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.45f, 1.0f));
@@ -4513,12 +4515,22 @@ inline void Draw(EditorState& ed, bool* open) {
         const bool spaceHeld = winFocused && !typing && ImGui::IsKeyDown(ImGuiKey_Space);
         st.panLeftNow = false; st.spaceOpen = false;
         if (canvasWindowHovered) {
-            if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 1.0f) ||
-                (ImGui::IsMouseDragging(ImGuiMouseButton_Right, 1.0f) && VsRightDragPans(std::sqrt(io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right]), st.dragging)) ||
-                (VsLeftDragMode(spaceHeld, st.panTool) == VsLeftDrag::Pan && !st.boxing && ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
-                 ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f))) {
-                st.pan.x += VsPanDeltaFromMouse(io.MouseDelta.x, z); st.pan.y += VsPanDeltaFromMouse(io.MouseDelta.y, z);
-                st.panLeftNow = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+            VsPanFrame pf;
+            pf.hovered = true;
+            pf.leftDown = ImGui::IsMouseDown(ImGuiMouseButton_Left); pf.middleDown = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+            pf.rightDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+            pf.leftDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f);
+            pf.middleDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 1.0f);
+            pf.rightDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Right, 1.0f);
+            pf.rightMaxDrag = std::sqrt(io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right]);
+            pf.dx = io.MouseDelta.x; pf.dy = io.MouseDelta.y;
+            pf.pressedOnBackground = bgActive; pf.nodeDragging = st.dragging; pf.boxing = st.boxing;
+            pf.space = spaceHeld; pf.panTool = st.panTool; pf.shift = io.KeyShift; pf.ctrl = io.KeyCtrl;
+            const VsPanOut po = VsPanStep(pf);
+            if (po.pans) {
+                st.pan.x += po.dx; st.pan.y += po.dy;
+                st.panLeftNow = po.leftPan;
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);   // the grab hand while the view moves
             }
         }
         // Space tap versus Space pan
@@ -5588,10 +5600,17 @@ inline void Draw(EditorState& ed, bool* open) {
 
     const bool userWiredNow = g.execLinks.size() + g.dataLinks.size() > wiresBeforeDrag;   // a wire dropped on a plug
     // ---- Box selection --------------------------------------------------------------
-    if (bgClicked && !st.dragging && !io.KeyAlt && VsLeftDragMode(ImGui::IsKeyDown(ImGuiKey_Space), st.panTool) == VsLeftDrag::Box) {
-        st.boxing = true; st.boxStart = mouse;
-        if (!io.KeyCtrl && !io.KeyShift) { st.sel.clear(); st.selected = -1; }
+    // Plain left-drag on empty canvas pans (above); Shift or Ctrl + drag draws the selection box.
+    if (bgClicked && !st.dragging && !io.KeyAlt && !io.KeyCtrl && !io.KeyShift && !ImGui::IsKeyDown(ImGuiKey_Space)) {
+        st.sel.clear(); st.selected = -1;   // a plain click on empty canvas still deselects
     }
+    if (bgClicked && !st.dragging && !io.KeyAlt &&
+        VsLeftDragModeEmpty(ImGui::IsKeyDown(ImGuiKey_Space), st.panTool, io.KeyShift, io.KeyCtrl) == VsLeftDrag::Box) {
+        st.boxing = true; st.boxStart = mouse;
+    }
+    if (!st.boxing && g.nodes.size() < 3 && !st.dragging)
+        dl->AddText(ImVec2(canvasMin.x + 16, canvasMax.y - 28), IM_COL32(170, 180, 200, 170),
+                    "Drag the background to move around. Scroll to zoom.");
     if (st.boxing) {
         ImVec2 a(std::min(st.boxStart.x, mouse.x), std::min(st.boxStart.y, mouse.y));
         ImVec2 b(std::max(st.boxStart.x, mouse.x), std::max(st.boxStart.y, mouse.y));

@@ -2,7 +2,7 @@
 // The editor's main menu bar as plain data (no ImGui, no editor state): what each top-level menu holds, in what order,
 // with which shortcut, and when an item is greyed out and why. The editor (main.cpp) draws these lists with
 // MenuEntriesUI.hpp and runs the item ids; the rules live here so tests/test_menu_bar_model.cpp can check them
-// without a window. docs/editor_menus.md is the audit and the final map.
+// without a window. docs/editor/editor_menus.md is the audit and the final map.
 //
 // Written from the owner's request (2026-11-15, "clean the menu bar better") and the menu code that was in main.cpp; no
 // code from another project.
@@ -127,7 +127,7 @@ inline std::vector<Entry> CreateCategories() {
         SlotMenu("create.2d", "2D Object", "Sprites, premade shapes, sprite-sheet characters and tilemaps."),
         SlotMenu("create.3d", "3D Object", "Primitives, nature, props, structures, terrain, water and characters."),
         SlotMenu("create.player", "Player", "A fully set-up player (character, controller and physics) dropped into the scene."),
-        SlotMenu("create.vehicles", "Vehicles", "Ready-made vehicles you can drive: a boat on the water."),
+        SlotMenu("create.vehicles", "Vehicles", "Ready-made vehicles you can drive: cars, trucks, a bus, a buggy and a boat on the water."),
         SlotMenu("create.light", "Light", "Directional, point and spot lights."),
         SlotMenu("create.camera", "Camera", "A camera, and the Cinemachine virtual cameras, brain and dolly rails."),
         SlotMenu("create.audio", "Audio", "A sound source and a music player."),
@@ -320,11 +320,10 @@ inline std::vector<Entry> ViewMenu(const State& s) {
 inline std::vector<Entry> HelpMenu(const State&) {
     std::vector<Entry> m;
     m.push_back(Item("help.scripting", "Scripting Reference"));
-    m.push_back(Item("help.docs", "Documentation (online)", "", "Open the engine's documentation folder in your browser."));
     m.push_back(Item("help.shortcuts", "Keyboard Shortcuts"));
     m.push_back(Sep());
     m.push_back(Item("help.updates", "Check for Updates..."));
-    m.push_back(Item("help.bug", "Report a Bug...", "", "Open the issue page in your browser. The version line is copied first, so you can paste it into the report."));
+    m.push_back(Item("help.bug", "Report a Bug...", "", "Open the Crash Log, where saved reports can be copied. The version line is copied first, so you can paste it into the report."));
     m.push_back(Sep());
     m.push_back(Item("help.about", "About OkaySpace"));
     return m;

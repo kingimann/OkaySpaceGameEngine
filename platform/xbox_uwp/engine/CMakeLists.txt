@@ -2,7 +2,7 @@
 # Only configured when OKAY_BUILD_XBOX_UWP is ON and the toolchain is a UWP one (CMAKE_SYSTEM_NAME=WindowsStore); anything else leaves it out,
 # so the desktop build is untouched. Included by the UWP app project (platform/xbox_uwp/app) with -DOKAY_SOURCE_ROOT=<repo>.
 #
-# What it leaves out or replaces (docs/xbox_uwp.md, "The reduced engine target"; the list is checked by okay-uwp-audit):
+# What it leaves out or replaces (docs/platform/xbox_uwp.md, "The reduced engine target"; the list is checked by okay-uwp-audit):
 #   OpenGL renderer, Direct3D 12 renderer, Photon adapter      -> uwp_exclude.txt
 #   d3dcompiler (D3DCompile)       -> not linked; D3D11Renderer loads .cso files (ShaderBundle.hpp) when OKAY_XBOX_UWP is defined
 #   winhttp                        -> not linked; NativeHttp.hpp has no native client under OKAY_XBOX_UWP (HTTP calls report "not reached")
@@ -64,7 +64,7 @@ if(MSVC)
     target_compile_options(okay_engine_uwp PRIVATE /EHsc /permissive- /bigobj /W3)
 endif()
 
-# ---- our own code instead of third-party code (docs/xbox_uwp_thirdparty.md) ----
+# ---- our own code instead of third-party code (docs/platform/xbox_uwp.md) ----
 # Models: ufbx.c is excluded (uwp_exclude.txt), Assimp is never linked (no OKAY_HAVE_ASSIMP), so every model format goes through our own readers. Their
 # OKAY_OWN_<FMT>_DEFAULT switches are read from the ON options of the root CMakeLists.txt, so a reader added there is on here too without an edit.
 # ModelImport.cpp and FbxScene.cpp also compile their "other reader" paths out under OKAY_XBOX_UWP: a file our reader refuses fails with a plain message.

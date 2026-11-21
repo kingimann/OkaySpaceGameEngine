@@ -1,0 +1,172 @@
+name: Windows tests
+
+# Builds the whole unit-test suite with the release compiler (MinGW-w64, win32 thread model, cross-compiled on
+# Ubuntu exactly like the "Cross-compile Windows build (MinGW)" job in ci.yml) and runs it on a real Windows machine.
+# NON-BLOCKING (owner, 2026-11-20): it does not run on pull requests, so it can never hold a PR merge or a release.
+# A failing test turns this workflow red (visible on main), but nothing waits on it.
+# The owner decides later whether to make it required. No secrets are used.
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: "17 3 * * *"   # 03:17 UTC nightly, a quiet hour and not on the hour
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit to test (empty = the branch this was started on)"
+        required: false
+        default: ""
+
+concurrency:
+  group: windows-tests-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows tests (MinGW cross-compile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SDL2_VERSION: 2.30.9
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Note the runner image
+        run: echo "RUNNER_IMAGE=$ImageVersion" >> "$GITHUB_ENV"
+
+      - name: Restore downloaded apt packages
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/apt-cache
+          key: apt-mingw-${{ env.RUNNER_IMAGE }}-wintests-${{ github.run_id }}
+          restore-keys: apt-mingw-${{ env.RUNNER_IMAGE }}-
+
+      - name: Install toolchain
+        timeout-minutes: 25
+        run: |
+          mkdir -p ~/apt-cache/partial
+          bash scripts/ci-apt-mirror.sh
+          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives=$HOME/apt-cache"
+          for i in 1 2 3; do
+            if timeout 240 sudo apt-get $APT update && \
+               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev ccache; then
+              exit 0
+            fi
+            echo "apt attempt $i failed or timed out; retrying"
+            sleep 10
+          done
+          exit 1
+
+      - name: Fetch SDL2 and libsodium (MinGW)
+        run: |
+          bash scripts/fetch-tarball.sh sdl2-mingw.tar.gz \
+            "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz" \
+            "https://www.libsdl.org/release/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
+          mkdir -p sdl2-mingw && tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
+          echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
+          echo "OKAY_SODIUM_MINGW_PREFIX=$(bash scripts/fetch-libsodium-mingw.sh "$PWD")" >> "$GITHUB_ENV"   # pinned SHA-256
+
+      # Restores the ci.yml MinGW cache too (same compiler and flags), so the first run is not fully cold.
+      - name: Restore compiler cache and downloads
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            .ccache
+            build-wt/_deps/*-src
+          key: wintests-${{ github.sha }}
+          restore-keys: |
+            wintests-
+            ccache-mingw-ci-
+
+      # Default-off options (own replacements, C#, Xbox) are left at their defaults. -k 0 keeps going past a test
+      # that does not compile for Windows; those are listed in the summary instead of stopping the whole run.
+      - name: Configure and build the tests
+        run: |
+          cmake -S . -B build-wt -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.toolchain.cmake -DCMAKE_BUILD_TYPE=Release \
+            -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \
+            -DOKAY_BUILD_PLAYER=OFF -DOKAY_BUILD_EDITOR=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
+            -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
+            -DOKAY_SODIUM_PREFIX="$OKAY_SODIUM_MINGW_PREFIX"
+          set +e
+          cmake --build build-wt -j "$(nproc)" -- -k 0 2>&1 | tee build.log
+          set -e
+          grep '^FAILED: ' build.log | sed 's/^FAILED: //' > build-failures.txt || true
+          echo "targets that did not compile: $(wc -l < build-failures.txt)"
+
+      - name: Export the test list and collect the executables
+        run: |
+          ctest --test-dir build-wt --show-only=json-v1 > tests.json
+          mkdir -p wt/bin
+          (cd build-wt && find . -path ./_deps -prune -o \( -name '*.exe' -o -name '*.dll' \) -print0 | tar --null -T - -cf - | tar -xf - -C ../wt/bin)
+          cp "$SDL2_MINGW_PREFIX/bin/SDL2.dll" wt/bin/
+          find "$OKAY_SODIUM_MINGW_PREFIX" -name '*.dll' -exec cp {} wt/bin/ \; || true
+          for f in /usr/lib/gcc/x86_64-w64-mingw32/*-win32/{libstdc++-6,libgcc_s_seh-1}.dll; do [ -f "$f" ] && cp "$f" wt/bin/; done
+          cp tests.json build-failures.txt wt/
+          echo "$PWD/build-wt" > wt/build-root.txt
+          du -sh wt
+
+      - name: Upload Windows tests
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-tests-bin
+          path: wt/
+          retention-days: 3
+
+      - name: Save compiler cache and downloads
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .ccache
+            build-wt/_deps/*-src
+          key: wintests-${{ github.sha }}
+
+  test:
+    name: Run tests on Windows
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Download Windows tests
+        uses: actions/download-artifact@v6
+        with:
+          name: windows-tests-bin
+          path: wt
+
+      - name: Run the tests
+        shell: pwsh
+        run: |
+          $root = (Get-Content wt/build-root.txt).Trim()
+          python scripts/run_windows_tests.py --tests wt/tests.json --build-root $root --bin "$PWD/wt/bin" `
+            --source "$PWD" --build-failures wt/build-failures.txt --timeout 300 -j $env:NUMBER_OF_PROCESSORS `
+            --log Testing/Temporary/LastTest.log --summary $env:GITHUB_STEP_SUMMARY --strict
+          exit $LASTEXITCODE
+
+      - name: Upload the test log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-tests-log
+          path: |
+            Testing/Temporary/LastTest.log
+            wt/build-failures.txt
+          retention-days: 14

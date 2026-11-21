@@ -1,6 +1,6 @@
 # Turns the crash reports the launcher uploaded (Supabase table crash_reports, docs/sql/crash_reports.sql) into GitHub issues:
 # one issue per crash signature, labelled `crash`; the same crash again adds a comment (count, versions, systems), never a second issue.
-# Details and the one-time setup: docs/crash_reports.md.
+# Details and the one-time setup: docs/online/crash_reports.md.
 #
 # This workflow is OPT-IN. Merging it does nothing until the owner has done two things, once, in the browser (no key is ever pasted in chat):
 #   1. Run docs/sql/crash_reports.sql in the Supabase SQL editor (it makes the table; until then every run would fail with "table not found").
@@ -44,9 +44,9 @@ jobs:
       - name: No secret, nothing to do
         if: env.HAVE_KEY != 'true'
         run: |
-          echo "::notice title=Crash reports::SUPABASE_SERVICE_KEY is not set in this repository's secrets, so there is nothing to read. Nothing was done (docs/crash_reports.md says how to add it)."
+          echo "::notice title=Crash reports::SUPABASE_SERVICE_KEY is not set in this repository's secrets, so there is nothing to read. Nothing was done (docs/online/crash_reports.md says how to add it)."
           echo "### Crash reports" >> "$GITHUB_STEP_SUMMARY"
-          echo "No \`SUPABASE_SERVICE_KEY\` secret: skipped. See docs/crash_reports.md, section 'One-time setup'." >> "$GITHUB_STEP_SUMMARY"
+          echo "No \`SUPABASE_SERVICE_KEY\` secret: skipped. See docs/online/crash_reports.md, section 'One-time setup'." >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/checkout@v6
         if: env.HAVE_KEY == 'true'

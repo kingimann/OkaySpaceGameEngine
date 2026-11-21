@@ -34,7 +34,7 @@ struct AnimEvent {
 /// describe a few poses over time in a tiny text format and play it by name on a
 /// Character. The engine interpolates between keys each frame.
 ///
-/// Text format (see docs/animation.md):
+/// Text format (see docs/gameplay/animation.md):
 ///   clip wave loop          # name + optional loop|once (default loop)
 ///   key 0.0                 # a keyframe at t=0s
 ///     r_uparm 0 0 -150      # <bone> <x> <y> <z>  (Euler degrees)

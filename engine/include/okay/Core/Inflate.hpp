@@ -11,7 +11,7 @@
 // Provenance: written from RFC 1950 (zlib), RFC 1951 (deflate) and RFC 1952 (gzip) ONLY. No decoder source
 // (zlib, puff, miniz, stb_image, libdeflate or any other) was read, fetched, copied or ported for this file.
 // An earlier version of this file was flagged by an outside review as closely following a public reference
-// decoder; this is a rewrite with a different design (see docs/provenance_audit.md).
+// decoder; this is a rewrite with a different design (see docs/status/provenance_audit.md).
 //
 // Design: a table-driven canonical Huffman decoder.
 //  - Codes are assigned as RFC 1951 section 3.2.2 describes (next_code per length, symbols in order).

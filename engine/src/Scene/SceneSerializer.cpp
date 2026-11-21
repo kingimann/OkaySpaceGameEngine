@@ -112,6 +112,7 @@
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
+#include "okay/Components/CameraRoom.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/Animator.hpp"
@@ -874,13 +875,21 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (!cam->renderTarget.empty()) out << " " << Quote(cam->renderTarget);
         out << "\n";
     }
+    for (auto* cam : go->GetComponents<Camera>()) {   // keyed extension (docs/gameplay/cameras.md); older readers skip the line
+        if (cam->hitPulseVignette != 0.5f) {   // only when changed, so scenes that never touch it save exactly as before
+            out << "  camerax";
+            KvOut k{out};
+            k("hitPulse", cam->hitPulseVignette);
+            out << "\n";
+        }
+    }
     // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
     // geometry for it — the component below rebuilds it on load.
     if (!go->GetComponent<Terrain>() && !go->GetComponent<Character>() && !go->GetComponent<Decal>()) {  // a decal's mesh is cut from the scene again on load
     for (auto* mr : go->GetComponents<MeshRenderer>()) {
         out << "  mesh " << Quote(mr->mesh.name) << " "
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
-            << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
+            << (mr->fadeBaseAlpha >= 0.0f ? mr->fadeBaseAlpha : mr->color.a) << " " << (mr->wireframe ? 1 : 0) << " "
             << Quote(mr->meshPath) << " " << (mr->doubleSided ? 1 : 0) << "\n";
         // Procedural variant of a named nature prop (compact: one int regenerates
         // the exact varied shape on load, instead of baking meshgeo/meshcolors).
@@ -2108,6 +2117,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v->handbrakeGrip << " " << v->groundCheckDistance
             << " " << (v->followCamera ? 1 : 0) << " " << v->camDistance << " " << v->camHeight
             << " " << v->camLerp << " " << (int)(unsigned char)v->handbrakeKey << "\n";
+        {   // the open-world settings that differ from the defaults, plus the wheel spacing (the model steers by it; it used to be saved only with suspension)
+            std::ostringstream tl; tl << v->ToLine();
+            if (std::fabs(v->wheelBase - 2.4f) > 1e-4f) tl << "wheelBase=" << v->wheelBase << " ";
+            if (std::fabs(v->trackWidth - 1.6f) > 1e-4f) tl << "trackWidth=" << v->trackWidth << " ";
+            if (!tl.str().empty()) out << "  vehicletune " << tl.str() << "\n";
+        }   // the open-world settings that differ from the defaults
         if (v->suspension)
             out << "  vehiclesusp 1 " << v->rideHeight << " " << v->springStrength << " "
                 << v->springDamping << " " << v->suspensionTravel << " " << v->wheelBase << " "
@@ -2969,6 +2984,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << cf->offset.x << " " << cf->offset.y << " " << cf->offset.z << " "
             << cf->smoothing << "\n";
     }
+    const VirtualCamera defaultVcam;
     for (auto* vc : go->GetComponents<VirtualCamera>()) {
         out << "  vcam " << vc->priority << " " << Quote(vc->follow) << " " << Quote(vc->lookAt)
             << " " << vc->followOffset.x << " " << vc->followOffset.y << " " << vc->followOffset.z
@@ -2990,9 +3006,45 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << vc->dutch << " " << (vc->confine ? 1 : 0)
             << " " << vc->confineMin.x << " " << vc->confineMin.y << " " << vc->confineMin.z
             << " " << vc->confineMax.x << " " << vc->confineMax.y << " " << vc->confineMax.z << "\n";
+        // The camera rig layer, as keys (written right after its vcam line; read back onto that vcam).
+        // Written only when something differs from a new Virtual Camera, so scenes that never use it save as before.
+        auto rigKeys = [](const VirtualCamera* v) {
+            std::ostringstream o;
+            KvOut k{o};
+            k("damp", (int)v->dampingMode)("gpad", v->groupPadding).b("gfit", v->groupFrame)
+             ("look", v->lookaheadTime)("lookMax", v->lookaheadMax)("lookSm", v->lookaheadSmooth)
+             .b("zones", v->useZones)("dzw", v->deadZoneW)("dzh", v->deadZoneH)("szw", v->softZoneW)("szh", v->softZoneH)
+             ("zdamp", v->zoneDamping).b("o2d", v->ortho2D)("osize", v->orthoSize).b("cview", v->confineToView)
+             .b("rooms", v->useRooms)("roomT", v->roomBlendTime)
+             .b("col", v->collision)("colR", v->collisionRadius)("colSkin", v->collisionSkin)("colRec", v->collisionRecover)
+             ("colIn", v->collisionPullIn).b("colSnap", v->collisionSnapIn)("colMask", v->collisionMask)
+             .b("fade", v->fadeOccluders)("fadeA", v->occlusionAlpha)("fadeSpd", v->occlusionFadeSpeed)
+             ("blendIn", v->blendIn)("blendInStyle", v->blendInStyle).b("aimFollow", v->aimAtFollow)
+             ("ng", (int)v->groupTargets.size());
+            for (std::size_t gi = 0; gi < v->groupTargets.size(); ++gi) k.str(("g" + std::to_string(gi)).c_str(), v->groupTargets[gi]);
+            return o.str();
+        };
+        const std::string rig = rigKeys(vc), rigDefault = rigKeys(&defaultVcam);
+        if (rig != rigDefault) out << "  vcamx" << rig << "\n";
     }
     for (auto* cb : go->GetComponents<CinemachineBrain>()) {
-        out << "  cmbrain " << cb->blendTime << " " << (cb->easeInOut ? 1 : 0) << "\n";
+        out << "  cmbrain " << cb->blendTime << " " << (cb->blendStyle == cam::BlendStyle::Linear ? 0 : 1) << "\n";
+        const CinemachineBrain defaultBrain;
+        if (cb->blendStyle != defaultBrain.blendStyle || cb->yieldToCutscene != defaultBrain.yieldToCutscene ||
+            cb->customCurve[0] != defaultBrain.customCurve[0] || cb->customCurve[1] != defaultBrain.customCurve[1] ||
+            cb->customCurve[2] != defaultBrain.customCurve[2] || cb->customCurve[3] != defaultBrain.customCurve[3]) {
+            out << "  cmbrainx";
+            KvOut k{out};
+            k("style", (int)cb->blendStyle)("c0", cb->customCurve[0])("c1", cb->customCurve[1])("c2", cb->customCurve[2])("c3", cb->customCurve[3])
+             .b("cutscene", cb->yieldToCutscene);
+            out << "\n";
+        }
+    }
+    for (auto* rm : go->GetComponents<CameraRoom>()) {
+        out << "  camroom";
+        KvOut k{out};
+        k("w", rm->size.x)("h", rm->size.y);
+        out << "\n";
     }
     for (auto* dp : go->GetComponents<DollyPath>()) {
         out << "  dollypath " << (dp->looped ? 1 : 0) << " " << dp->waypoints.size();
@@ -3995,6 +4047,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     out << "okayscene 3\n";
     out << "name " << Quote(scene.Name()) << "\n";
     if (!scene.uiFont.empty()) out << "uifont " << Quote(scene.uiFont) << "\n";
+    if (scene.uiQuality != 1) out << "uiquality " << scene.uiQuality << "\n";
     for (const std::string& r : scene.unknownRecords) out << r << "\n";   // what a newer build wrote at the top, as it was
     out << "gravity " << scene.physics().gravity.x << " " << scene.physics().gravity.y << "\n";
     if (scene.HasCustomLayerCollisions()) {   // optional: older scenes have none (everything collides)
@@ -4394,6 +4447,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             std::string nm = ReadQuoted(in); if (clear) scene.SetName(nm);
         } else if (token == "uifont") {
             std::string uf = ReadQuoted(in); if (clear) scene.uiFont = uf;
+        } else if (token == "uiquality") {
+            int q = 1; in >> q; if (clear) scene.uiQuality = q < 0 ? 0 : (q > 3 ? 3 : q);
         } else if (token == "layermatrix") {
             std::uint32_t rows[32]; bool ok = true;
             for (int i = 0; i < 32; ++i) { unsigned long long v = 0; if (!(in >> v) || v > 0xFFFFFFFFull) { ok = false; break; } rows[i] = (std::uint32_t)v; }
@@ -4548,6 +4603,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             int nIkAim = 0, nIkLook = 0, nIkLimb = 0, nIkChain = 0;
             while (in >> field) {
                 if (field == "end") { sawEnd = true; break; }
+                bool fieldDone = true;   // the chain is split in chunks: MSVC allows ~128 nested blocks (C1061)
                 if (field == "active") { int a = 1; in >> a; go->active = (a != 0); }
                 else if (field == "tag") { go->tag = ReadQuoted(in); }
                 else if (field == "static") { int s = 0; in >> s; go->isStatic = (s != 0); }
@@ -5133,7 +5189,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                     long na = 0; in >> na;
                     for (long k = 0; k < na && in; ++k) { int m = 0; in >> m; if (k < (long)sm2->anyState.size()) sm2->anyState[k].syncPhase = m != 0; }
-                } else if (field == "animsmstance") {
+                } else { fieldDone = false; }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "animsmstance") {
                     StanceTimes& t = smFor()->stanceTimes;
                     in >> t.standCrouch >> t.crouchProne >> t.proneStand;
                 } else if (field == "animsmxfade") {
@@ -5477,7 +5535,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
                     auto all = LegacyColliders3D(*go);
                     if (index >= 0 && index < (int)all.size() && std::isfinite(off) && off >= 0.0f) all[(std::size_t)index]->contactOffset = off;
-                } else if (field == "trigfilter2d" || field == "trigfilter3d") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "trigfilter2d" || field == "trigfilter3d") {
                     std::string tag = ReadQuoted(in);
                     std::uint32_t layers = 0xFFFFFFFFu;
                     in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> layers;
@@ -6015,7 +6076,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                            >> cc->airControl >> da >> fik;
                         cc->sprintKey = (char)sk; cc->driveAnimation = (da != 0); cc->footIK = (fik != 0);
                     }
-                } else if (field == "vehicle") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "vehicle") {
                     auto* v = go->AddComponent<VehicleController>();
                     in >> v->acceleration >> v->maxSpeed >> v->reverseSpeed >> v->brakeForce
                        >> v->drag >> v->turnSpeed >> v->grip >> v->handbrakeGrip
@@ -6023,6 +6087,17 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int fc = 0; in >> fc; v->followCamera = (fc != 0);
                     in >> v->camDistance >> v->camHeight >> v->camLerp;
                     int hk = 32; in >> hk; v->handbrakeKey = (char)hk;
+                } else if (field == "vehicletune") {
+                    auto* v = LastOf(go->GetComponents<VehicleController>());
+                    std::string rest; std::getline(in, rest);
+                    if (v) v->FromLine(rest);
+                    if (v) {   // wheel spacing travels in the same line
+                        std::istringstream ts(rest); std::string tok;
+                        while (ts >> tok) {
+                            if (tok.rfind("wheelBase=", 0) == 0) v->wheelBase = (float)std::atof(tok.c_str() + 10);
+                            else if (tok.rfind("trackWidth=", 0) == 0) v->trackWidth = (float)std::atof(tok.c_str() + 11);
+                        }
+                    }
                 } else if (field == "vehiclesusp") {
                     auto* v = LastOf(go->GetComponents<VehicleController>());
                     int on = 0; in >> on;
@@ -6592,7 +6667,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     c->paused = (ps != 0); c->controlSun = (cs != 0); c->rotateSun = (rs != 0); c->controlSky = (ck != 0);
                     auto col = [&](Color& k) { in >> k.r >> k.g >> k.b; k.a = 1.0f; };
                     col(c->dayLight); col(c->nightLight); col(c->skyDay); col(c->skyHorizon); col(c->skyNight);
-                } else if (field == "npc") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "npc") {
                     auto* c = go->AddComponent<NPCController>();
                     int fm = 1;
                     in >> c->behavior >> c->moveSpeed >> c->sightRange >> c->wanderRadius
@@ -7201,7 +7279,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> jp->force >> uo >> jp->forwardBoost >> jp->cooldown;
                     jp->useObjectUp = (uo != 0);
                     jp->triggerTag = ReadQuoted(in);
-                } else if (field == "triggerzone") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "triggerzone") {
                     auto* tz = go->AddComponent<TriggerZone>();
                     int once = 1; in >> tz->action;
                     tz->varName = ReadQuoted(in);
@@ -7358,7 +7439,45 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     auto* cb = go->AddComponent<CinemachineBrain>();
                     in >> cb->blendTime;
                     in >> std::ws;
-                    if (std::isdigit(in.peek())) { int e = 1; in >> e; cb->easeInOut = (e != 0); }
+                    if (std::isdigit(in.peek())) { int e = 1; in >> e; cb->blendStyle = e != 0 ? cam::BlendStyle::EaseInOut : cam::BlendStyle::Linear; }
+                } else if (field == "cmbrainx") {
+                    KvIn k(in);
+                    if (auto* cb = LastOf(go->GetComponents<CinemachineBrain>())) {
+                        int st = (int)cb->blendStyle; k.i("style", st);
+                        cb->blendStyle = (cam::BlendStyle)std::clamp(st, 0, (int)cam::BlendStyle::Custom);
+                        k.f("c0", cb->customCurve[0]); k.f("c1", cb->customCurve[1]); k.f("c2", cb->customCurve[2]); k.f("c3", cb->customCurve[3]);
+                        k.b("cutscene", cb->yieldToCutscene);
+                    }
+                } else if (field == "camroom") {
+                    KvIn k(in);
+                    auto* rm = go->AddComponent<CameraRoom>();
+                    k.f("w", rm->size.x); k.f("h", rm->size.y);
+                } else if (field == "camerax") {
+                    KvIn k(in);
+                    if (auto* cam = LastOf(go->GetComponents<Camera>())) k.f("hitPulse", cam->hitPulseVignette);
+                } else if (field == "vcamx") {
+                    KvIn k(in);
+                    if (auto* vc = LastOf(go->GetComponents<VirtualCamera>())) {
+                        int dm = (int)vc->dampingMode; k.i("damp", dm);
+                        vc->dampingMode = dm == 1 ? VirtualCamera::DampingMode::Spring : VirtualCamera::DampingMode::Smooth;
+                        k.f("gpad", vc->groupPadding); k.b("gfit", vc->groupFrame);
+                        k.f("look", vc->lookaheadTime); k.f("lookMax", vc->lookaheadMax); k.f("lookSm", vc->lookaheadSmooth);
+                        k.b("zones", vc->useZones); k.f("dzw", vc->deadZoneW); k.f("dzh", vc->deadZoneH);
+                        k.f("szw", vc->softZoneW); k.f("szh", vc->softZoneH); k.f("zdamp", vc->zoneDamping);
+                        k.b("o2d", vc->ortho2D); k.f("osize", vc->orthoSize); k.b("cview", vc->confineToView);
+                        k.b("rooms", vc->useRooms); k.f("roomT", vc->roomBlendTime);
+                        k.b("col", vc->collision); k.f("colR", vc->collisionRadius); k.f("colSkin", vc->collisionSkin);
+                        k.f("colRec", vc->collisionRecover); k.f("colIn", vc->collisionPullIn); k.b("colSnap", vc->collisionSnapIn);
+                        k.u("colMask", vc->collisionMask);
+                        k.b("fade", vc->fadeOccluders); k.f("fadeA", vc->occlusionAlpha); k.f("fadeSpd", vc->occlusionFadeSpeed);
+                        k.f("blendIn", vc->blendIn); k.i("blendInStyle", vc->blendInStyle); k.b("aimFollow", vc->aimAtFollow);
+                        int ng = 0; k.i("ng", ng);
+                        vc->groupTargets.clear();
+                        for (int gi = 0; gi < std::min(ng, 256); ++gi) {
+                            std::string n; k.str(("g" + std::to_string(gi)).c_str(), n);
+                            if (!n.empty()) vc->groupTargets.push_back(n);
+                        }
+                    }
                 } else if (field == "text") {
                     std::string str = ReadQuoted(in);
                     Color c; float px = 0.1f; int ss = 0; Vec2 sp;
@@ -7817,7 +7936,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     as->saveOnStart = sos != 0;
                     as->slot = ReadQuoted(in);
                     as->label = ReadQuoted(in);
-                } else if (field == "flashlight") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "flashlight") {
                     auto* fl = go->AddComponent<Flashlight>();
                     int tk = 'f', onv = 1;
                     in >> tk >> onv >> fl->range >> fl->angle >> fl->intensity
@@ -8376,7 +8498,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         int rich = 0; in >> rich >> tt->offset.x >> tt->offset.y;
                         tt->richText = (rich != 0);
                     }
-                } else if (field == "uilayout") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "uilayout") {
                     auto* lg = go->AddComponent<UILayoutGroup>();
                     std::string rest; std::getline(in, rest);   // whole line: newer files carry extra fields
                     std::istringstream rs(rest);
@@ -9109,7 +9234,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         }
                         ql->records.push_back(r);
                     }
-                } else if (field == "questlogdef") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "questlogdef") {
                     // One inline quest of the Quest Log read just before it.
                     KvIn k(in);
                     auto* ql = LastOf(go->GetComponents<QuestLog>());
@@ -9268,6 +9396,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     const std::string rest = ReadRecordLine(in);
                     if (go->unknownRecords.size() < kMaxUnknownRecords && field.size() + rest.size() <= kMaxUnknownRecordSize)
                         go->unknownRecords.push_back(field + rest);
+                }
                 }
             }
             // A read that ran off the end (or choked) leaves the stream failed, so
@@ -9843,6 +9972,52 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(waterwaves));
 
+    // How the water looks (sea state, depth colours, foam, ripples, rings, splashes, underwater). A scene without this record
+    // loads with every look setting off, so old scenes look as they did. docs/rendering/terrain_water.md.
+    ComponentSerializerRegistry::Entry watervis;
+    watervis.name = "watervis";
+    watervis.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* w : go.GetComponents<Water>()) {
+            const Water def;
+            auto sameCol = [](const Color& x, const Color& y) { return x.r == y.r && x.g == y.g && x.b == y.b && x.a == y.a; };
+            if (!w->realisticLook && !w->lod && !w->interactive && !w->underwaterEffect && !w->bubbles && w->seaState == 0 &&
+                w->clarity == def.clarity && w->assumedDepth == def.assumedDepth && w->foamAmount == def.foamAmount &&
+                w->shoreFoamWidth == def.shoreFoamWidth && w->scatter == def.scatter && w->ripples == def.ripples &&
+                w->rippleSize == def.rippleSize && w->lodRings == def.lodRings && w->infinite == def.infinite &&
+                sameCol(w->shallowColor, def.shallowColor) && sameCol(w->deepColor, def.deepColor) && sameCol(w->foamColor, def.foamColor)) continue;
+            out << "  watervis";
+            KvOut k{out};
+            k("sea", w->seaState).b("rich", w->realisticLook).col("sh", w->shallowColor).col("dp", w->deepColor)
+             ("clar", w->clarity)("adep", w->assumedDepth).col("fm", w->foamColor)
+             ("foam", w->foamAmount)("shore", w->shoreFoamWidth)
+             ("scat", w->scatter)("rip", w->ripples)("ripsz", w->rippleSize).b("lod", w->lod)("rings", w->lodRings)
+             .b("inf", w->infinite).b("inter", w->interactive).b("under", w->underwaterEffect).b("bub", w->bubbles);
+            out << "\n";
+        }
+    };
+    watervis.read = [](GameObject& go, std::istream& in) {
+        auto ws = go.GetComponents<Water>();
+        Water* w = ws.empty() ? nullptr : ws.back();
+        KvIn k(in);
+        if (!w) return;
+        auto fin = [](float& v, float lo, float hi, float fallback) { if (!std::isfinite(v)) v = fallback; v = std::min(hi, std::max(lo, v)); };
+        k.i("sea", w->seaState); k.b("rich", w->realisticLook);
+        k.col("sh", w->shallowColor); k.col("dp", w->deepColor); k.col("fm", w->foamColor);
+        k.f("clar", w->clarity); k.f("adep", w->assumedDepth); k.f("foam", w->foamAmount); k.f("shore", w->shoreFoamWidth);
+        k.f("scat", w->scatter); k.f("rip", w->ripples); k.f("ripsz", w->rippleSize);
+        k.b("lod", w->lod); k.i("rings", w->lodRings); k.b("inf", w->infinite); k.b("inter", w->interactive);
+        k.b("under", w->underwaterEffect); k.b("bub", w->bubbles);
+        w->seaState = std::min(4, std::max(0, w->seaState));
+        w->lodRings = std::min(8, std::max(1, w->lodRings));
+        fin(w->clarity, 0.05f, 200.0f, 6.0f); fin(w->assumedDepth, 0.0f, 10000.0f, 12.0f); fin(w->foamAmount, 0.0f, 1.0f, 0.5f);
+        fin(w->shoreFoamWidth, 0.0f, 50.0f, 1.2f); fin(w->scatter, 0.0f, 1.0f, 0.4f); fin(w->ripples, 0.0f, 1.0f, 0.0f);
+        fin(w->rippleSize, 0.05f, 20.0f, 1.0f);
+        for (float* c : {&w->shallowColor.r, &w->shallowColor.g, &w->shallowColor.b, &w->shallowColor.a, &w->deepColor.r, &w->deepColor.g,
+                         &w->deepColor.b, &w->deepColor.a, &w->foamColor.r, &w->foamColor.g, &w->foamColor.b, &w->foamColor.a}) fin(*c, 0.0f, 1000.0f, 0.5f);
+        if (w->realisticLook || w->lod) w->Apply();     // the look decides the material colour, normal map and mesh
+    };
+    ComponentSerializerRegistry::Register(std::move(watervis));
+
     ComponentSerializerRegistry::Entry buoy;
     buoy.name = "buoyancy";
     buoy.write = [](const GameObject& go, std::ostream& out) {
@@ -10019,7 +10194,7 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(vol));
 
-    // Wind (docs/wind.md): the zone and the three things that listen to it.
+    // Wind (docs/gameplay/wind.md): the zone and the three things that listen to it.
     ComponentSerializerRegistry::Entry wz;
     wz.name = "windzone";
     wz.write = [](const GameObject& go, std::ostream& out) {

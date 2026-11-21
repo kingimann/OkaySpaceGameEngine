@@ -1,5 +1,5 @@
 #pragma once
-// Wind in the editor (WindTools.cpp, docs/wind.md): Wind Zones drawn in the Scene view with arrows that show the real wind
+// Wind in the editor (WindTools.cpp, docs/gameplay/wind.md): Wind Zones drawn in the Scene view with arrows that show the real wind
 // (direction, strength, gusts), the Inspector rows for Wind Zone / Wind Drag / Wind Sway / Wind Ambience, the menu rows
 // (GameObject > Effects > Environment, Add Component > Environment) and the Wind section of the Lighting window.
 #include "EditorState.hpp"

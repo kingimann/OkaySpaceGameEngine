@@ -35,6 +35,8 @@ public:
     void SetDrawColor(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) override;
     void FillRect(const Rect* r) override;
     void FillRectF(const FRect* r) override;
+    bool SupportsBulkRects() override { return !m_passthrough; }
+    void FillRectsF(const ColoredRect* q, int n) override;
     void DrawRect(const Rect* r) override;
     void DrawLine(int x0, int y0, int x1, int y1) override;
     void DrawPoint(int x, int y) override;
@@ -45,6 +47,7 @@ public:
     void SetScale(float sx, float sy) override;
 
     Tex  LoadTexture(const std::string& path) override;
+    Tex  LoadTextureSized(const std::string& path, int w, int h) override;
     Tex  FontAtlas(TtfFont* font) override;
     void QueryTexture(Tex t, int* w, int* h) override;
     void SetTextureColorMod(Tex t, std::uint8_t r, std::uint8_t g, std::uint8_t b) override;

@@ -27,6 +27,9 @@ public:
     /// colliders then keep their size instead of chasing each pose.
     bool  deformed = false;
     Color color = Color::White;        // base (albedo) color
+    /// Runtime only: while a camera rig has made this mesh see-through, the alpha it had before (-1 = not faded).
+    /// A scene saved meanwhile stores this one, not the faded value.
+    float fadeBaseAlpha = -1.0f;
     /// A picture per material slot (Mesh::triSlot): slot i draws with slotTextures[i] when it is
     /// not empty, else with `texture`. Drawn by the software renderer; the GPU renderers do not
     /// use it yet (they show the slot colours).

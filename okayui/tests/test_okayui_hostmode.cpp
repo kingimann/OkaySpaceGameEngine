@@ -1,5 +1,5 @@
 // Window mode (shared/OkayUIHostMode.hpp, editor/OkayUIHostMode.cpp), headless: the three-switch gate, and the window-mode screen run through the real frame
-// loop with a fake backend and a software painter. Steps 1 and 2 of the plan in docs/own_ui_toolkit.md 6.23.
+// loop with a fake backend and a software painter. Steps 1 and 2 of the plan in docs/ui/own_ui_toolkit.md 6.23.
 #define OKAY_HAVE_OKAYUI 1
 #define OKAYUI_HOST_PLATFORM 1
 #include "test_framework.hpp"

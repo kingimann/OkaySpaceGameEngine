@@ -1829,7 +1829,7 @@ inline void ApplyColorGrade(Raster& r) {
 /// Same maths as the OpenGL "uber" pass (kUberFrag), but on 8-bit colour: the software renderer shades
 /// in display space and has no HDR buffer, so the curves act on 0..1 values (the process-wide switches
 /// behave exactly as before). NOT supported on the CPU: SSAO from the scene, depth of field (see
-/// docs/render_status.md).
+/// docs/rendering/rendering.md).
 struct ScenePostPlan {
     int   tonemap = 1;           // 0 none, 1 ACES, 2 Filmic
     float exposure = 1.0f;
@@ -1849,7 +1849,7 @@ inline ScenePostPlan PlanScenePost(const Scene::RenderSettings& rs) {
     p.grade = ps.grading;
     p.temperature = ps.temperature; p.tint = ps.tint; p.saturation = ps.saturation; p.contrast = ps.contrast;
     p.lift = ps.lift; p.gamma = ps.gamma; p.gain = ps.gain;
-    p.vignette = rs.vignette > 1.0f ? 1.0f : (rs.vignette > 0.0f ? rs.vignette : 0.0f);
+    { const float vg = rs.vignette + rs.vignettePulse; p.vignette = vg > 1.0f ? 1.0f : (vg > 0.0f ? vg : 0.0f); }
     p.vignetteSmooth = ps.vignetteSmooth;
     return p;
 }

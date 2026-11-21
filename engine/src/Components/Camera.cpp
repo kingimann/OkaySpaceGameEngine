@@ -111,6 +111,47 @@ void Camera::ZoomTo(float target, float seconds) {
     m_zoomFrom = zoom; m_zoomTarget = target; m_zoomTime = 0.0f; m_zoomDur = seconds;
 }
 
+void Camera::ShakePreset(cam::ShakePreset preset, float strength) {
+    const float scale = Accessibility::MotionScale();
+    if (scale <= 0.0f) return;   // the player turned off screen shake
+    m_shaker.Add(preset, strength * std::min(1.0f, scale));
+}
+
+void Camera::AddShake(const cam::ShakeParams& params, float strength) {
+    const float scale = Accessibility::MotionScale();
+    if (scale <= 0.0f) return;
+    m_shaker.Add(params, strength * std::min(1.0f, scale));
+}
+
+void Camera::SetHandheld(float amount) {
+    m_shaker.SetHandheld(Accessibility::MotionScale() <= 0.0f ? 0.0f : amount);
+}
+
+void Camera::KickFov(float degrees, float seconds) {
+    const float scale = Accessibility::MotionScale();
+    if (scale <= 0.0f || !std::isfinite(degrees)) return;
+    seconds = std::isfinite(seconds) ? std::max(0.05f, seconds) : 0.4f;
+    // A kick adds speed, not position: the view widens smoothly (no jump) and peaks
+    // about a fifth of the way through `seconds`, then settles to under 10% by the end.
+    m_fovKickOmega = 5.0f / seconds;
+    m_fovKickV += degrees * std::min(1.0f, scale) * m_fovKickOmega * 2.71828183f;
+}
+
+void Camera::OnDestroy() {
+    if (m_pulseApplied > 0.0f) if (Scene* sc = GetScene()) sc->renderSettings.vignettePulse = 0.0f;
+}
+
+void Camera::SetFovOffset(float degrees, float seconds) {
+    if (!std::isfinite(degrees)) return;
+    m_fovHoldTarget = Accessibility::MotionScale() <= 0.0f ? 0.0f : degrees;
+    m_fovHoldOmega = 5.0f / (std::isfinite(seconds) ? std::max(0.02f, seconds) : 0.25f);
+}
+
+void Camera::HitPulse(float strength) {
+    if (!std::isfinite(strength) || strength <= 0.0f) return;
+    m_pulse = Mathf::Clamp(m_pulse + strength, 0.0f, 1.0f);
+}
+
 void Camera::LateUpdate(float dt) {
     if (m_zoomDur > 0.0f) {   // smooth zoom (ease in-out)
         m_zoomTime += dt;
@@ -119,18 +160,44 @@ void Camera::LateUpdate(float dt) {
         zoom = m_zoomFrom + (m_zoomTarget - m_zoomFrom) * t;
         if (m_zoomTime >= m_zoomDur) { zoom = m_zoomTarget; m_zoomDur = 0.0f; }
     }
-    if (Accessibility::MotionScale() <= 0.0f) m_trauma = 0.0f;   // reduced motion switched on mid-shake: stop at once
-    if (m_trauma <= 0.0f) { m_shakePos = {0, 0, 0}; m_shakeRot = {0, 0, 0}; return; }
-    m_shakeTime += dt;
-    // Smooth pseudo-noise: two incommensurate sines per channel.
-    auto n = [&](float seed) {
-        const float t = m_shakeTime * shakeFrequency;
-        return std::sin(t * 1.00f + seed) * 0.6f + std::sin(t * 1.73f + seed * 2.31f) * 0.4f;
-    };
-    const float k = m_trauma * m_trauma;
-    m_shakePos = {n(1.3f) * shakeAmount * k, n(7.9f) * shakeAmount * k, 0.0f};
-    m_shakeRot = {n(3.7f) * shakeAngle * k, n(5.1f) * shakeAngle * k, n(9.4f) * shakeAngle * k * 0.5f};
-    m_trauma = Mathf::Max(0.0f, m_trauma - shakeRecovery * dt);
+    // Field of view: the kick settles back to nothing, the held change eases to its target.
+    if (m_fovKick != 0.0f || m_fovKickV != 0.0f) {
+        cam::SpringStep(m_fovKick, m_fovKickV, 0.0f, m_fovKickOmega, dt);
+        if (std::fabs(m_fovKick) < 1e-3f && std::fabs(m_fovKickV) < 1e-3f) { m_fovKick = 0.0f; m_fovKickV = 0.0f; }
+    }
+    if (m_fovHold != m_fovHoldTarget || m_fovHoldV != 0.0f) {
+        cam::SpringStep(m_fovHold, m_fovHoldV, m_fovHoldTarget, m_fovHoldOmega, dt);
+        if (std::fabs(m_fovHold - m_fovHoldTarget) < 1e-3f && std::fabs(m_fovHoldV) < 1e-3f) { m_fovHold = m_fovHoldTarget; m_fovHoldV = 0.0f; }
+    }
+    // Hit pulse: fades by itself. It is handed to the renderer as a runtime-only add (RenderSettings::vignettePulse),
+    // never written into the scene's own vignette, so saving mid-pulse writes the base value.
+    {
+        Scene* sc = GetScene();
+        if (m_pulse > 0.0f) {
+            m_pulse *= std::exp(-4.0f * dt);
+            if (m_pulse < 1e-3f) m_pulse = 0.0f;
+        }
+        const bool mine = sc && sc->mainCamera == this && m_pulse > 0.0f;
+        if (mine) { sc->renderSettings.vignettePulse = m_pulse * hitPulseVignette; m_pulseApplied = 1.0f; }
+        else if (m_pulseApplied > 0.0f) { if (sc) sc->renderSettings.vignettePulse = 0.0f; m_pulseApplied = 0.0f; }
+    }
+    if (Accessibility::MotionScale() <= 0.0f) { m_trauma = 0.0f; m_shaker.Clear(); }   // reduced motion switched on mid-shake: stop at once
+    m_shaker.Step(dt);
+    Vec3 tp{0, 0, 0}, tr{0, 0, 0};
+    if (m_trauma > 0.0f) {
+        m_shakeTime += dt;
+        // Smooth pseudo-noise: two incommensurate sines per channel.
+        auto n = [&](float seed) {
+            const float t = m_shakeTime * shakeFrequency;
+            return std::sin(t * 1.00f + seed) * 0.6f + std::sin(t * 1.73f + seed * 2.31f) * 0.4f;
+        };
+        const float k = m_trauma * m_trauma;
+        tp = {n(1.3f) * shakeAmount * k, n(7.9f) * shakeAmount * k, 0.0f};
+        tr = {n(3.7f) * shakeAngle * k, n(5.1f) * shakeAngle * k, n(9.4f) * shakeAngle * k * 0.5f};
+        m_trauma = Mathf::Max(0.0f, m_trauma - shakeRecovery * dt);
+    }
+    m_shakePos = tp + m_shaker.Pos();
+    m_shakeRot = tr + m_shaker.RotDeg();
 }
 
 float Camera::VerticalFovDegrees(float aspect) const {
@@ -145,6 +212,7 @@ float Camera::VerticalFovDegrees(float aspect) const {
         float hf = fieldOfView * Mathf::Deg2Rad * 0.5f;
         vfov = 2.0f * std::atan(std::tan(hf) / aspect) * Mathf::Rad2Deg;
     }
+    if (m_fovKick != 0.0f || m_fovHold != 0.0f) vfov = Mathf::Clamp(vfov + m_fovKick + m_fovHold, 1.0f, 170.0f);   // kick and held change (perspective)
     if (std::fabs(zoom - 1.0f) > 1e-4f && zoom > 0.01f)   // zoom narrows the view like a longer lens
         vfov = 2.0f * std::atan(std::tan(vfov * Mathf::Deg2Rad * 0.5f) / zoom) * Mathf::Rad2Deg;
     return vfov;

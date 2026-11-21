@@ -6,7 +6,7 @@
 // GetRawInputDeviceList, GetRawInputDeviceInfo (RIDI_PREPARSEDDATA, RIDI_DEVICEINFO), GetRawInputData (RAWHID),
 // WM_INPUT_DEVICE_CHANGE, HidP_GetCaps / HidP_GetButtonCaps / HidP_GetValueCaps / HidP_GetUsages / HidP_GetUsageValue.
 //
-// Standard layout: PadMap.hpp (our own text map file, see docs/platform_layer.md). A pad found in the map file has
+// Standard layout: PadMap.hpp (our own text map file, see docs/platform/platform_layer.md). A pad found in the map file has
 // HasBuiltinMapping() true; otherwise Axis()/Button() use a guess from the axis, button and hat counts and
 // HasBuiltinMapping() is false. RawAxis / RawButton / RawHat always work. The name comes from HidD_GetProductString.
 //
@@ -22,7 +22,13 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
-#include <ntdef.h>
+#ifdef _MSC_VER
+// MSVC's Windows SDK redefines windows.h types if <ntdef.h> follows it (C2011). hidpi.h only needs NTSTATUS, which is
+// a plain LONG; a repeated identical typedef is legal C++, so this is safe even if another header already has it.
+typedef LONG NTSTATUS;
+#else
+#include <ntdef.h>   // MinGW path, unchanged
+#endif
 #include <hidusage.h>
 #include <hidpi.h>
 #include <hidsdi.h>

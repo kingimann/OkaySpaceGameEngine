@@ -383,6 +383,12 @@ int ResetComponentValues(Component& c) {
 // ---- Field labels and asset kinds ---------------------------------------------------------------------------------
 
 std::string PrettyName(const std::string& n) {
+    // Names that would read as jargon ("Ao Map", "Uv Min") get a plain label. The saved name never changes.
+    static const struct { const char* name; const char* label; } kPlain[] = {
+        {"fovAxisHorizontal", "Field Of View Along Width"}, {"aoMap", "Crease Shadow Map"}, {"aoStrength", "Crease Shadow Strength"},
+        {"uvScroll", "Texture Scroll Speed"}, {"uvMin", "Picture Start"}, {"uvMax", "Picture End"},
+    };
+    for (const auto& r : kPlain) if (n == r.name) return r.label;
     std::string out;
     for (std::size_t i = 0; i < n.size(); ++i) {
         const char c = n[i];
@@ -635,13 +641,88 @@ const TipRow kTips[] = {
     {"VirtualCamera.occlusionAlpha", "How see-through things in the way become (0 invisible, 1 solid)."},
     {"VirtualCamera.occlusionFadeSpeed", "How fast things in the way fade. Higher is faster."},
     {"CinemachineBrain.blendStyle", "The curve of a blend between shots: Cut jumps, Linear is even, the Ease options start or end gently."},
+    // ---- Small gameplay and UI parts (written from each component's header comments) ----
+    {"UIDamageNumbers.textSize", "Text size of a normal number, in pixels."},
+    {"UIDamageNumbers.critScale", "How much bigger a critical hit is drawn (1.6 means 60 percent bigger)."},
+    {"UIDamageNumbers.popScale", "Every number starts this many times bigger and settles down to normal size."},
+    {"UIDamageNumbers.maxActive", "Most numbers on screen at once (a count). The oldest goes first when there are more."},
+    {"UIDamageNumbers.normalColor", "Colour of a normal damage number."},
+    {"UIDamageNumbers.critColor", "Colour of a critical hit."},
+    {"UIDamageNumbers.healColor", "Colour of healing numbers."},
+    {"UIDamageNumbers.missColor", "Colour of a miss."},
+    {"UIDamageNumbers.infoColor", "Colour of information text."},
+    {"DayNightCycle.paused", "Freeze the time of day where it is."},
+    {"DayNightCycle.dayIntensity", "Brightness of the sun in the middle of the day."},
+    {"DayNightCycle.nightIntensity", "Brightness of the sun (or moon light) at night."},
+    {"DayNightCycle.dayAmbient", "How bright the shadowy parts are by day (0 to 1)."},
+    {"DayNightCycle.nightAmbient", "How bright the shadowy parts are at night (0 to 1)."},
+    {"Draggable.axis", "Limit dragging to sideways only, up and down only, or free."},
+    {"Draggable.gridX", "Snap the dragged item sideways to steps of this many world units (metres). 0 is no snap."},
+    {"Draggable.gridY", "Snap the dragged item up and down to steps of this many world units (metres). 0 is no snap."},
+    {"DropZone.acceptTag", "Only items with this tag can be dropped here. Empty accepts any."},
+    {"FollowTarget2D.speed", "How fast it moves towards the target, in metres per second."},
+    {"Collectible.respawnDelay", "Seconds until it comes back after being picked up (only when it respawns)."},
+    {"UIFrame.anchorMin", "Lower-left corner of the area it is stretched across in its parent (0 to 1 of the parent). Equal Min and Max pin it to one point."},
+    {"UIFrame.anchorMax", "Upper-right corner of the area it is stretched across in its parent (0 to 1 of the parent)."},
+    {"UIFrame.pivot", "The point the frame turns and resizes around (0 to 1 across its own size)."},
+    {"UIFlexItem.baseSize", "Its size in pixels before growing or shrinking. 0 uses the widget's own size."},
+    {"UILayoutGroup.direction", "How the children are lined up: a column, a row, a grid or a wrapping flex line."},
+    {"UIRadialProgress.clockwise", "Fill clockwise. Off fills anti-clockwise."},
+    {"UIRadialProgress.spin", "Keep the arc turning (a loading spinner)."},
+    {"UIRadialProgress.spinSpeed", "How fast the spinner turns, in degrees per second."},
+    {"UIScrollView.axis", "Scroll up and down, sideways, or both."},
+    {"UIScrollView.autoContent", "Measure the content from its children automatically."},
+    {"UIScrollView.inertia", "How long a wheel scroll keeps gliding. 0 stops at once; higher stops sooner (per second)."},
+    {"UIDraggable.axis", "Limit dragging to sideways only, up and down only, or free."},
+    {"UIDraggable.dragThreshold", "Pixels the pointer must move before a drag starts, so a small click does not drag. 0 starts at once."},
     {"EdgeCollider2D.oneWayNormal", "Which way is the solid side of a one-way edge (a direction, not a distance)."},
+};
+
+// Explanations that replace a registry tooltip which names no unit or no range. Looked up first.
+const TipRow kTipOverrides[] = {
+    {"FollowTarget2D.stopDistance", "It stops this many metres from the target (0 = touch it)."},
+    {"UIScrollView.contentHeight", "Total height of the scrollable content, in pixels."},
+    {"UIScrollView.contentWidth", "Total width of the scrollable content, in pixels (sideways scrolling)."},
+    {"Camera.focalLength", "Lens length in millimetres. Longer zooms in (physical camera only)."},
+    {"Camera.sensorHeight", "Height of the camera sensor in millimetres. A taller sensor sees a wider view (physical camera only)."},
+    {"Rigidbody2D.bounciness", "How much speed it keeps after a hit (0 to 1: 0 stops dead, 1 bounces back as fast)."},
+    {"Rigidbody3D.bounciness", "How much speed it keeps after a hit (0 to 1: 0 stops dead, 1 bounces back as fast)."},
+    {"Rigidbody2D.friction", "How much it grips what it touches (0 to 10: 0 is ice, 1 is a normal grip)."},
+    {"Rigidbody3D.friction", "How much it grips what it touches (0 to 10: 0 is ice, 1 is a normal grip)."},
+    {"Rigidbody2D.rollingResistance", "How quickly a rolling ball or wheel slows down (0 to 1). 0 rolls on, 0.03 stops a ball in about 15 seconds. Needs the Improved physics quality."},
+    {"Rigidbody3D.rollingResistance", "How quickly a rolling ball or wheel slows down (0 to 1). 0 rolls on, 0.03 stops a ball in about 15 seconds. Needs the Improved physics quality."},
+    {"VirtualCamera.followOffset", "Where the camera stands relative to what it follows, in metres on each axis."},
+    {"VirtualCamera.lookAtOffset", "Aim above or beside the target, in metres (for example at the head)."},
+    {"VirtualCamera.occlusionAlpha", "How see-through things in the way become (0 to 1: 0 invisible, 1 solid)."},
+    {"Spawner.spawnRadius", "Spawns land within this many metres of the spawner."},
+    {"Spawner.startDelay", "Seconds to wait before the first spawn."},
+    {"Spawner.waveDelay", "Seconds to pause between waves (0 = just the Interval)."},
+    {"TriggerZone.action", "What happens when something enters: set or add to a variable, turn the target on or off, win, lose or quit."},
+    {"NavMeshAgent.radius", "Body radius used to steer around others, in metres."},
+    {"NavMeshAgent.height", "Body height in metres (information only: the baked navigation mesh sets the real clearance)."},
+    {"NavMeshAgent.stoppingDistance", "It counts as arrived when this close to the destination, in metres."},
+    {"NavMeshAgent.avoidanceRange", "How far it looks for other agents and obstacles to steer around, in metres (0 is off)."},
+    {"NavMeshAgent.baseOffset", "How far the object's origin is above its feet, in metres (a cube's centre is half its height)."},
+    {"UIButton.borderWidth", "Thickness of the border, in pixels (0 is no border)."},
+    {"UIImage.borderWidth", "Thickness of a frame drawn around the picture, in pixels (0 is no frame)."},
+    {"Light.range", "How far a point, spot or area light reaches, in metres."},
+    {"MeshRenderer.texOffset", "Slides the picture across the surface (in repeats of the picture: 1 is one full picture)."},
+    {"MeshRenderer.uvScroll", "Makes the picture crawl across the surface, in repeats of the picture per second."},
+    {"MeshRenderer.outlineWidth", "Thickness of the outline, in metres."},
+    {"AudioSource.pitch", "Speed and pitch together (1 is normal, 2 is twice as fast and an octave higher)."},
+    {"AudioSource.minDistance", "Within this many metres the sound is at full volume."},
+    {"AudioSource.maxDistance", "Beyond this many metres the sound is silent."},
+    {"AudioSource.occlusionVolume", "How loud it stays when a wall is in the way (0 to 1: 1 is no quieter)."},
+    {"ParticleSystem.noiseScroll", "Turbulence: how fast the wobble pattern changes over time, in seconds of drift per second (0 freezes it)."},
+    {"CameraFollow.offset", "Where the camera sits relative to the target, in metres on each axis."},
+    {"UIPanel.outlineWidth", "Thickness of a ring drawn outside the panel edge, in pixels. 0 is off."},
 };
 }
 
 std::string TooltipFor(const std::string& typeName, const PropertyDesc& d) {
-    if (!d.tooltip.empty()) return d.tooltip;
     const std::string key = typeName + "." + d.name;
+    for (const TipRow& r : kTipOverrides) if (key == r.key) return r.text;
+    if (!d.tooltip.empty()) return d.tooltip;
     for (const TipRow& r : kTips) if (key == r.key) return r.text;
     return {};
 }

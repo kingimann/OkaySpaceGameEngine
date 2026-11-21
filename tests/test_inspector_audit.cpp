@@ -24,9 +24,10 @@ static bool Has(const std::string& h, const char* n) { return h.find(n) != std::
 static std::string UnitClassOf(const PropertyDesc& d) {
     if (d.type != PropertyType::Float && d.type != PropertyType::Int && d.type != PropertyType::Vec2 && d.type != PropertyType::Vec3) return "";
     const std::string n = Low(d.name);
+    if (Has(n, "lowpass") || Has(n, "matchwidth") || Has(n, "texoffset")) return "";
     for (const char* k : {"duration", "delay", "lifetime", "interval", "cooldown", "period", "timeout", "fadein", "fadeout", "blendtime", "seconds"})
         if (Has(n, k)) return "seconds";
-    for (const char* k : {"fieldofview", "angle", "yaw", "pitch", "roll", "degrees"})
+    for (const char* k : {"fieldofview", "angle", "yaw", "degrees"})
         if (Has(n, k)) return "degrees";
     for (const char* k : {"distance", "radius", "height", "width", "range", "mindist", "maxdist", "offset", "stepheight", "orthographicsize"})
         if (Has(n, k)) return "length";
@@ -106,9 +107,10 @@ static void TestMeasureTable() {
 // The components that were cleaned up: every shown setting is explained, has its unit, and a plain name.
 static void TestCleanedComponents() {
     RegisterBuiltinProperties();
-    const std::vector<std::string> fixed = {"GameObject", "Transform", "Rigidbody2D", "Rigidbody3D", "BoxCollider2D", "BoxCollider3D",
-        "SphereCollider3D", "CircleCollider2D", "Camera", "Light", "MeshRenderer", "SpriteRenderer", "AudioSource", "ParticleSystem",
-        "Mover", "Spinner", "Lifetime", "CameraFollow", "Canvas", "UIPanel"};
+    const std::vector<std::string> fixed = {"GameObject", "Transform", "Rigidbody2D", "Rigidbody3D", "VirtualCamera", "CinemachineBrain", "Spawner", "TriggerZone", "NavMeshAgent", "UIButton", "TextRenderer", "UIImage",
+        "Camera", "Light", "MeshRenderer", "SpriteRenderer", "AudioSource", "ParticleSystem",
+        "Mover", "Spinner", "Lifetime", "CameraFollow", "Canvas", "UIPanel", "UIDamageNumbers", "DayNightCycle", "Draggable",
+        "DropZone", "FollowTarget2D", "Collectible", "UIFrame", "UIFlexItem", "UILayoutGroup", "UIRadialProgress", "UIScrollView", "UIDraggable"};
     for (const std::string& name : fixed) {
         auto info = PropertyRegistry::FindByName(name);
         CHECK(info != nullptr);
@@ -120,8 +122,10 @@ static void TestCleanedComponents() {
             const std::string cls = UnitClassOf(*d);
             if (!cls.empty() && !t.empty() && !TipNamesUnit(t, cls)) std::fprintf(stderr, "  no unit: %s.%s: %s\n", name.c_str(), d->name.c_str(), t.c_str());
             CHECK(cls.empty() || TipNamesUnit(t, cls));
+            if (JargonName(d->name)) std::fprintf(stderr, "  jargon name: %s.%s\n", name.c_str(), d->name.c_str());
             CHECK(!JargonName(d->name));
         }
+        { std::map<std::string, std::string> seen; for (auto* d : Shown(*info)) { std::string t = oked::TooltipFor(info->name, *d); if (t.empty()) continue; if (seen.count(t)) std::fprintf(stderr, "  same text: %s.%s and %s\n", name.c_str(), d->name.c_str(), seen[t].c_str()); seen[t] = d->name; } }
         Row r = Measure(*info);
         if (r.dup) std::fprintf(stderr, "  repeated text in %s: %d\n", name.c_str(), r.dup);
         CHECK(r.dup == 0);

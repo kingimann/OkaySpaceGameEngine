@@ -3288,6 +3288,12 @@ add_executable(test_jobs test_jobs.cpp)
 target_link_libraries(test_jobs PRIVATE okay::engine)
 add_test(NAME jobs COMMAND test_jobs 3)
 
+# The engine's own work on the job system (physics bounds, skinning, asset loads, navmesh bakes):
+# 0 and 4 workers give bit-identical results. `test_jobs_adoption bench 2000` prints step times.
+add_executable(test_jobs_adoption test_jobs_adoption.cpp)
+target_link_libraries(test_jobs_adoption PRIVATE okay::engine)
+add_test(NAME jobs_adoption COMMAND test_jobs_adoption)
+
 # FrameArena, PoolAllocator, SlotMap / Handle, StringId.
 add_executable(test_arena_handles test_arena_handles.cpp)
 target_link_libraries(test_arena_handles PRIVATE okay::engine)

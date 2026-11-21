@@ -485,6 +485,17 @@ JobSystem& JobSystem::Global() {
     return h.js;
 }
 
+namespace {
+std::atomic<JobSystem*> g_engineJobs{nullptr};
+} // namespace
+
+JobSystem& EngineJobs() {
+    JobSystem* js = g_engineJobs.load(std::memory_order_acquire);
+    return js ? *js : JobSystem::Global();
+}
+
+void SetEngineJobs(JobSystem* js) { g_engineJobs.store(js, std::memory_order_release); }
+
 int JobSystem::WorkerCount() const {
     corethreads::LockGuard g(m_impl->mu);
     return m_impl->liveWorkers;

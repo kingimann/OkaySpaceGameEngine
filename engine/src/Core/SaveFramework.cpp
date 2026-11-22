@@ -300,11 +300,13 @@ FileStatus ParseContainer(const std::string& bytes, std::size_t totalSize, Parse
     if (!found) return bad(bytes.size() >= SaveStore::kMaxHeaderBytes ? "header is too large" : "is cut short (no complete header)");
     if (!haveVersion || p.info.version < 1) return bad("has no data version");
     if (!IsHex16(p.payloadSum)) return bad("has a bad payload checksum field");
-    if (totalSize < p.headerLen + p.payloadBytes) return bad("is cut short (payload is smaller than its header says)");
-    if (totalSize > p.headerLen + p.payloadBytes) return bad("has extra data after its payload");
     p.info.savedAt = p.info.savedAtMs / 1000;
     p.info.exists = true;
+    // The header itself is sound from here on: a load menu can still show its values when the payload is not.
+    const bool shortPayload = totalSize < p.headerLen + p.payloadBytes, extra = totalSize > p.headerLen + p.payloadBytes;
     out = std::move(p);
+    if (shortPayload) return bad("is cut short (payload is smaller than its header says)");
+    if (extra) return bad("has extra data after its payload");
     return FileStatus::Ok;
 }
 
@@ -376,6 +378,33 @@ std::string SaveStore::SlotPath(const std::string& slot) const {
     std::string d = Directory();
     if (!d.empty() && d.back() != '/' && d.back() != '\\') d += '/';
     return d + slot + kExtension;
+}
+
+std::string SaveStore::LegacySlotPath(const std::string& slot) const {
+    std::string d = Directory();
+    if (!d.empty() && d.back() != '/' && d.back() != '\\') d += '/';
+    return d + slot + kLegacyExtension;
+}
+
+bool SaveStore::LegacyOnly(const std::string& slot) const {
+    std::error_code ec;
+    return !fs::is_regular_file(SlotPath(slot), ec) && fs::is_regular_file(LegacySlotPath(slot), ec);
+}
+
+void SaveStore::RetireLegacy(const std::string& slot) {
+    const std::string path = LegacySlotPath(slot);
+    std::error_code ec;
+    if (!fs::is_regular_file(path, ec)) return;
+    if (wholescene::LegacyInfo(path, slot, false).incompatible) {
+        // Saved by a newer build: keep it, so going back to that build still finds it.
+        std::string old, kept;
+        const std::string backup = path + ".newer.bak";
+        if (savefmt::ReadFileCapped(path, m_maxBytes, old, nullptr) &&
+            !(savefmt::ReadFileCapped(backup, m_maxBytes, kept, nullptr) && kept == old))
+            savefmt::AtomicWrite(backup, old);
+    }
+    for (const char* suffix : {".bak", ".tmp", ".corrupt", ".swap"}) fs::remove(path + suffix, ec);
+    fs::remove(path, ec);
 }
 
 bool SaveStore::ValidSlot(const std::string& slot) {
@@ -461,6 +490,7 @@ bool SaveStore::Write(const std::string& slot, const SaveDocument& doc, SaveSlot
     const std::string bytes = BuildContainer(meta, payload);
     if (bytes.size() > m_maxBytes) { if (error) *error = "Slot \"" + slot + "\" would be too large (" + std::to_string(bytes.size()) + " bytes)"; return false; }
     if (!Install(slot, bytes, error)) return false;
+    RetireLegacy(slot);
     if (m_verifyAfterWrite) {
         SaveDocument back;
         std::string rerr;
@@ -504,6 +534,25 @@ FileStatus ReadSlotFile(const std::string& path, const std::string& slot, std::s
 bool SaveStore::Read(const std::string& slot, SaveDocument& out, SaveSlotInfo* info, std::string* error, SaveLoadReport* report) const {
     if (report) *report = SaveLoadReport();
     if (!ValidSlot(slot)) { if (error) *error = "\"" + slot + "\" isn't a valid slot name"; return false; }
+    if (LegacyOnly(slot)) {
+        // An older SaveGame file: a whole-scene document with the file's own header values.
+        wholescene::State st;
+        SaveSlotInfo si;
+        bool usedBackup = false;
+        std::string err;
+        if (wholescene::ReadLegacy(LegacySlotPath(slot), slot, st, si, &usedBackup, &err) != wholescene::LegacyStatus::Ok) {
+            if (error) *error = err;
+            if (info) *info = si;
+            return false;
+        }
+        SaveDocument doc;
+        wholescene::ToDocument(st, doc);
+        if (report) { report->usedBackup = usedBackup; report->fromVersion = report->toVersion = m_dataVersion; }
+        if (info) *info = si;
+        if (error) *error = usedBackup ? err : std::string();
+        out = std::move(doc);
+        return true;
+    }
     const std::string path = SlotPath(slot);
     SaveDocument doc;
     SaveSlotInfo si;
@@ -540,6 +589,7 @@ SaveSlotInfo SaveStore::Info(const std::string& slot, bool deep) const {
     SaveSlotInfo i;
     i.slot = slot;
     if (!ValidSlot(slot)) return i;
+    if (LegacyOnly(slot)) return wholescene::LegacyInfo(LegacySlotPath(slot), slot, deep);
     const std::string path = SlotPath(slot);
     std::error_code ec;
     if (!fs::is_regular_file(path, ec)) return i;
@@ -547,7 +597,7 @@ SaveSlotInfo SaveStore::Info(const std::string& slot, bool deep) const {
     Parsed p;
     std::string why;
     FileStatus st = LoadContainerFile(path, false, m_maxBytes, p, nullptr, &why);
-    bool headerKnown = st == FileStatus::Ok;   // the header is fine even if the rest turns out not to be
+    bool headerKnown = st == FileStatus::Ok || p.headerLen > 0;   // the header is fine even if the rest turns out not to be
     if (st == FileStatus::Ok && deep) {
         Parsed whole;
         if (LoadContainerFile(path, true, m_maxBytes, whole, nullptr, &why) != FileStatus::Ok) st = FileStatus::Damaged;
@@ -584,7 +634,7 @@ SaveSlotInfo SaveStore::Info(const std::string& slot, bool deep) const {
 
 bool SaveStore::Exists(const std::string& slot) const {
     std::error_code ec;
-    return ValidSlot(slot) && fs::is_regular_file(SlotPath(slot), ec);
+    return ValidSlot(slot) && (fs::is_regular_file(SlotPath(slot), ec) || fs::is_regular_file(LegacySlotPath(slot), ec));
 }
 
 std::vector<SaveSlotInfo> SaveStore::ListSlots(SlotSort sort, bool deep) const {
@@ -592,9 +642,12 @@ std::vector<SaveSlotInfo> SaveStore::ListSlots(SlotSort sort, bool deep) const {
     std::error_code ec;
     const fs::path dir = fs::path(SlotPath("x")).parent_path();
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-        if (it->path().extension() != kExtension) continue;
+        const fs::path ext = it->path().extension();
+        const bool legacy = ext == kLegacyExtension;
+        if (ext != kExtension && !legacy) continue;
         const std::string slot = it->path().stem().string();
         if (!ValidSlot(slot)) continue;
+        if (legacy && !LegacyOnly(slot)) continue;   // the .okayslot file of the same slot is the one that counts
         SaveSlotInfo i = Info(slot, deep);
         if (i.exists) out.push_back(std::move(i));
     }
@@ -640,7 +693,29 @@ bool SaveStore::Delete(const std::string& slot) {
     fs::remove(path + ".bak", ec);
     fs::remove(path + ".tmp", ec);
     fs::remove(path + ".newer.bak", ec);
-    return fs::remove(path, ec);
+    const bool removed = fs::remove(path, ec);
+    const bool removedLegacy = wholescene::RemoveLegacy(LegacySlotPath(slot));
+    return removed || removedLegacy;
+}
+
+bool SaveStore::UpgradeLegacy(const std::string& slot, std::string* error) {
+    wholescene::State st;
+    SaveSlotInfo meta;
+    bool usedBackup = false;
+    std::string err;
+    if (wholescene::ReadLegacy(LegacySlotPath(slot), slot, st, meta, &usedBackup, &err) != wholescene::LegacyStatus::Ok) {
+        if (error) *error = err;
+        return false;
+    }
+    SaveDocument doc;
+    wholescene::ToDocument(st, doc);
+    meta.version = m_dataVersion;
+    meta.legacyFile = meta.fromBackup = false;
+    if (meta.kind.empty()) meta.kind = SlotKind::Manual;
+    if (meta.savedAtMs == 0) meta.savedAtMs = meta.savedAt * 1000;   // the save keeps its time
+    if (!Install(slot, BuildContainer(meta, doc.Serialize()), error)) return false;
+    RetireLegacy(slot);
+    return true;
 }
 
 namespace {
@@ -663,6 +738,7 @@ bool RewriteHeader(const std::string& bytes, const std::function<void(SaveSlotIn
 
 bool SaveStore::UpdateInfo(const std::string& slot, const std::function<void(SaveSlotInfo&)>& fn, std::string* error) {
     if (!ValidSlot(slot)) { if (error) *error = "\"" + slot + "\" isn't a valid slot name"; return false; }
+    if (LegacyOnly(slot) && !UpgradeLegacy(slot, error)) return false;
     const std::string path = SlotPath(slot);
     std::string bytes, rerr;
     if (!savefmt::ReadFileCapped(path, m_maxBytes, bytes, &rerr)) { if (error) *error = "No save in slot \"" + slot + "\""; return false; }
@@ -732,12 +808,15 @@ bool SaveStore::ImportRaw(const std::string& slot, const std::string& bytes, boo
     ParseContainer(bytes, bytes.size(), p, nullptr);
     if (!SaveDocument::Parse(bytes.substr(p.headerLen), probe, &why)) { if (error) *error = "The data for slot \"" + slot + "\" is damaged: " + why; return false; }
     if (!overwrite && Exists(slot)) { if (error) *error = "Slot \"" + slot + "\" already exists"; return false; }
-    return Install(slot, bytes, error);
+    if (!Install(slot, bytes, error)) return false;
+    RetireLegacy(slot);
+    return true;
 }
 
 bool SaveStore::Copy(const std::string& from, const std::string& to, bool overwrite, std::string* error) {
     if (!ValidSlot(from) || !ValidSlot(to)) { if (error) *error = "not a valid slot name"; return false; }
     if (from == to) { if (error) *error = "source and destination are the same slot"; return false; }
+    if (LegacyOnly(from) && !UpgradeLegacy(from, error)) return false;
     std::string bytes;
     SaveSlotInfo info;
     if (!ExportRaw(from, bytes, &info, error)) return false;
@@ -751,13 +830,16 @@ bool SaveStore::Copy(const std::string& from, const std::string& to, bool overwr
         std::string out;
         if (RewriteHeader(bytes, [&](SaveSlotInfo& i) { i.thumbnail = ec ? std::string() : newName; }, out, nullptr)) bytes = std::move(out);
     }
-    return Install(to, bytes, error);
+    if (!Install(to, bytes, error)) return false;
+    RetireLegacy(to);
+    return true;
 }
 
 bool SaveStore::Rename(const std::string& from, const std::string& to, bool overwrite, std::string* error) {
     if (!ValidSlot(from) || !ValidSlot(to)) { if (error) *error = "not a valid slot name"; return false; }
     if (from == to) return true;
     if (!Exists(from)) { if (error) *error = "No save in slot \"" + from + "\""; return false; }
+    if (LegacyOnly(from) && !UpgradeLegacy(from, error)) return false;
     if (Exists(to)) {
         if (!overwrite) { if (error) *error = "Slot \"" + to + "\" already exists"; return false; }
         Delete(to);

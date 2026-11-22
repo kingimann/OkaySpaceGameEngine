@@ -566,7 +566,38 @@ void SaveSystem::NoteLevelObject(Scene& scene, GameObject& go) {
     MarkSceneLoaded(scene);   // a level (re)loaded: its objects are the new starting set
 }
 
+namespace wholescene {
+
+void ToDocument(const State& st, SaveDocument& doc) {
+    SaveWriter w = doc.Writer(kBlock);
+    w.Int("format", 1);
+    w.String("scene", st.sceneText);
+    w.String("state", st.stateText);
+    w.Float("playTime", st.playTime);
+}
+
+bool FromDocument(const SaveDocument& doc, State& st) {
+    const SaveBlock* b = doc.Find(kBlock);
+    if (!b) return false;
+    SaveReader r(*b);
+    st.sceneText = r.String("scene");
+    st.stateText = r.String("state");
+    st.playTime = r.Float("playTime", 0.0f);
+    return true;
+}
+
+} // namespace wholescene
+
 SaveDocument SaveSystem::CaptureScene(Scene& scene, const SaveCaptureOptions& options, SaveCaptureReport* report) {
+    if (options.wholeScene) {
+        SaveDocument whole;
+        wholescene::ToDocument(wholescene::Capture(scene), whole);
+        if (report) {
+            *report = SaveCaptureReport();
+            for (const auto& o : scene.Objects()) if (o && !o->IsDestroyed()) ++report->objects;
+        }
+        return whole;
+    }
     SaveCaptureReport rep;
     for (const auto& up : scene.Objects()) {   // dynamic objects need their id before keys are built
         GameObject* g = up.get();
@@ -665,6 +696,15 @@ bool SaveSystem::VerifyCapture(Scene& scene, std::string* why, const SaveCapture
 
 SaveApplyReport SaveSystem::ApplyScene(Scene& scene, const SaveDocument& doc, const SaveApplyOptions& options) {
     SaveApplyReport rep;
+    wholescene::State whole;
+    if (wholescene::FromDocument(doc, whole)) {
+        // A whole-scene save (SaveGame): the scene is replaced by the saved one.
+        const SaveReader wr = doc.Reader(wholescene::kBlock);
+        if (wr.Int("format", 0) != 1) { rep.ok = false; rep.error = "the whole-scene data is in an unknown format"; return rep; }
+        if (!wholescene::ApplyNow(scene, whole, options.restorePlayTime, &rep.error)) { rep.ok = false; return rep; }
+        for (const auto& o : scene.Objects()) if (o && !o->IsDestroyed()) ++rep.restored;
+        return rep;
+    }
     const SaveBlock* sb = doc.Find("scene");
     if (!sb) { rep.ok = false; rep.error = "the save has no scene data"; return rep; }
     SaveReader sr(*sb);
@@ -869,6 +909,7 @@ bool SaveManager::Save(Scene& scene, const std::string& slot, const SaveRequest&
     meta.thumbnail = request.thumbnail;
     meta.kind = request.kind.empty() ? std::string(SlotKind::Manual) : request.kind;
     meta.fields = request.fields;
+    meta.gameVersion = request.gameVersion;
     if (!m_store->Write(slot, doc, meta, &err)) return finish(false);
     Log::Info("Saved to slot ", slot);
     return finish(true);
@@ -897,6 +938,26 @@ bool SaveManager::Load(Scene& scene, const std::string& slot, const SaveLoadOpti
     if (!SaveStore::ValidSlot(slot)) return fail("\"" + slot + "\" isn't a valid slot name");
     if (!m_store->Exists(slot)) return fail("No save in slot \"" + slot + "\"");
     if (options.deferred) {
+        // A whole-scene save replaces the scene: that happens at the end of the frame (Scene::RequestLoadText),
+        // like any scene load. Read it now, so a damaged slot is reported where the game asked.
+        SaveDocument doc;
+        SaveSlotInfo info;
+        std::string rerr;
+        if (!m_store->Read(slot, doc, &info, &rerr)) return fail(rerr);
+        wholescene::State whole;
+        if (wholescene::FromDocument(doc, whole)) {
+            if (doc.Reader(wholescene::kBlock).Int("format", 0) != 1) return fail("the whole-scene data is in an unknown format");
+            std::string cerr;
+            if (!wholescene::Check(whole, &cerr)) return fail("Slot \"" + slot + "\": " + cerr);
+            const SaveLoadOptions copy = options;
+            auto shared = std::make_shared<SaveDocument>(std::move(doc));
+            wholescene::ApplyDeferred(scene, std::move(whole), options.apply.restorePlayTime, [copy, shared, info]() {
+                if (copy.onLoaded) copy.onLoaded(*shared, info);
+                if (copy.onDone) copy.onDone(true, std::string());
+            });
+            if (error) *error = rerr;   // "" unless the backup was used
+            return true;
+        }
         SaveLoadOptions copy = options;
         copy.deferred = false;
         copy.outDocument = nullptr;

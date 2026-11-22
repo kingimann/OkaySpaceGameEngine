@@ -31,7 +31,14 @@ it and everything comes back:
   file. Each slot has its own copy, so slots don't share progress.
 - **Play time.**
 
-Slots are files in the player's save folder, under `saves/<slot>.okaygame`. A
+Slots are files in the player's save folder, under `saves/<slot>.okayslot`: the
+same store the save framework below uses (SaveGame is its "whole scene" mode,
+`SaveCaptureOptions::wholeScene`). So a slot saved with `save_game` is seen by
+`game_slot_exists`, Continue, the autosave ring and the Save Slots screen, and a
+slot saved with `game_save` is seen by `has_save` and `save_slots`. Saves written
+before 2026-11-22 are `saves/<slot>.okaygame` files: they still load, list and
+count for Continue (`SaveSlotInfo::legacyFile`), and the next save to that slot
+writes the `.okayslot` file and removes the old one. A
 slot name uses letters, digits, `-` and `_` (up to 64): `1`, `quick`, `autosave`,
 `chapter_2`. Names Windows treats as devices (`con`, `prn`, `aux`, `nul`, `com1`-`com9`,
 `lpt1`-`lpt9`, any case) are refused, so a save works the same on every platform.
@@ -118,26 +125,35 @@ whole file and check it (use them for one slot, not a long list of big saves).
   so a crash mid-save never leaves a broken slot. If the write fails (full disk, no
   permission, read-only folder) `SaveGame::Save` returns false, the old slot is
   untouched and `error` says why ("the disk is full", "permission denied...").
-- Each file starts with `okaygame <version>` and ends with an end marker and
-  a checksum line. A file that is cut short, edited by hand or otherwise
-  damaged is detected and refused rather than half loaded. Files from before
-  versioning (version 1, no checksum) still load.
+- Each file is a framework slot file (header with its own checksum, then the
+  payload with its checksum; see "Save game framework"). A file that is cut
+  short, edited by hand or otherwise damaged is detected and refused rather than
+  half loaded. Older `.okaygame` files start with `okaygame <version>` and end with
+  an end marker and a checksum line; those from before versioning (version 1, no
+  checksum) still load.
 - A file written by a **newer** version of the game is refused with a message
   ("saved by a newer version ..."); it is never half loaded. It is still listed
   (`incompatible`), and if this older build saves over that slot the newer file is
-  first kept as `<slot>.okaygame.newer.bak`, so going back to the newer build finds it.
-  To upgrade older files when you change the format, register a step with
-  `SaveGame::SetMigration(fromVersion, fn)`; the steps run in order on the
-  file's text before it is read.
+  first kept as `<slot>.okayslot.newer.bak` (`<slot>.okaygame.newer.bak` for an
+  older-format file), so going back to the newer build finds it.
+  `SaveGame::SetMigration(fromVersion, fn)` still upgrades older `.okaygame` text
+  before it is read; for the slot data itself use the store's
+  `RegisterMigration` (framework section).
 - When a slot is saved over, the previous good file is kept as
-  `<slot>.okaygame.bak`. If the main file fails its checks, loading uses the
+  `<slot>.okayslot.bak`. If the main file fails its checks, loading uses the
   `.bak` instead; the load still succeeds, `error` says what happened and
   `SaveGame::LastLoadUsedBackup()` returns true. A damaged file never replaces
   a good `.bak`.
-- Load menus: `SaveGame::List()` and `Info()` read only the header lines of
-  each slot, not the scene, so listing many large saves is cheap.
+- Load menus: `SaveGame::List()` and `Info()` read only the header of each slot,
+  not the scene, so listing many large saves is cheap. The header has its own
+  checksum and the file size is compared with it, so a hand-edited header or a
+  file cut short is flagged even there (an edited header shows the `.bak`'s values
+  with `fromBackup`).
 - A slot file over 256 MB, or with more than 8 million lines, is refused
-  (`SaveGame::SetLimits` changes the caps for tools).
+  (`SaveGame::SetLimits` changes the caps for tools; the byte cap is the store's
+  `SetMaxBytes` too).
+- Play time is one clock for both systems: `SaveGame::PlayTime()` is
+  `SaveSystem::PlayTime()`.
 - **Loading a slot replaces the default Save file.** The `save("gold", 120)`
   keys in the slot overwrite the game's default save file, so anything kept
   there (unlocks, settings, achievements) is rolled back to what it was when
@@ -285,8 +301,12 @@ first becomes active.
 ```
 
 Framework slots are files named `<slot>.okayslot` in the save folder
-(`saves/` under `Save::BaseDir()` by default). They never touch SaveGame's
-`<slot>.okaygame` files, and each system lists only its own.
+(`saves/` under `Save::BaseDir()` by default). SaveGame writes the same files
+(whole-scene slots, one reserved block `sys.wholescene`), and the store also
+reads, lists, continues, copies, renames and deletes SaveGame's older
+`<slot>.okaygame` files (Copy, Rename and UpdateInfo first rewrite such a slot as
+an `.okayslot` file with the same header values). Until 2026-11-22 the two systems
+kept separate files and lists.
 
 ### Quick start
 

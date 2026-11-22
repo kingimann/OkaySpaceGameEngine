@@ -4847,3 +4847,43 @@ add_executable(test_own_gltf1_samples test_own_gltf1_samples.cpp)
 target_link_libraries(test_own_gltf1_samples PRIVATE okay::engine)
 target_compile_definitions(test_own_gltf1_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME own_gltf1_samples COMMAND test_own_gltf1_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Our own OpenGEX and MDL (Quake 1 / Half-Life 1) readers (docs/content/model_readers.md, sections OpenGEX and MDL): one test per
+# reader on SYNTHETIC files built in memory (tests/e4_fixtures.hpp), one standalone hostile-input + budget + mutation-fuzz test for
+# both (reader sources only, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;
+# OKAY_READER_FUZZ_ITERS raises the sweep; with OKAY_MODEL_CORPUS set the real files are read and fuzzed too), the import seam
+# routing, the build-default check and the sample files in examples/own_readers.
+function(okay_e4_reader_test name src)
+    add_executable(test_${name} test_${name}.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${src})
+    target_include_directories(test_${name} PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Render ${PROJECT_SOURCE_DIR}/engine/src/Core)
+    target_compile_definitions(test_${name} PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ${name} COMMAND test_${name} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endfunction()
+okay_e4_reader_test(ogex_reader OgexReader.cpp)
+okay_e4_reader_test(mdl_reader MdlReader.cpp)
+add_executable(test_e4_hostile test_e4_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/OgexReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/MdlReader.cpp)
+target_include_directories(test_e4_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Render ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_e4_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME e4_hostile COMMAND test_e4_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(e4_hostile PROPERTIES TIMEOUT 600)
+add_executable(test_own_dispatch_e4 test_own_dispatch_e4.cpp)
+target_link_libraries(test_own_dispatch_e4 PRIVATE okay::engine)
+add_executable(test_own_e4_default test_own_e4_default.cpp)
+target_link_libraries(test_own_e4_default PRIVATE okay::engine)
+foreach(_t test_own_dispatch_e4 test_own_e4_default)
+    if(OKAY_OWN_OPENGEX)
+        target_compile_definitions(${_t} PRIVATE OKAY_EXPECT_OWN_OPENGEX)
+    endif()
+    if(OKAY_OWN_MDL)
+        target_compile_definitions(${_t} PRIVATE OKAY_EXPECT_OWN_MDL)
+    endif()
+endforeach()
+add_test(NAME own_dispatch_e4 COMMAND test_own_dispatch_e4 WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_test(NAME own_e4_default COMMAND test_own_e4_default WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+# `test_own_e4_samples --write <dir>` rewrites the two .mdl sample files from the fixtures.
+add_executable(test_own_e4_samples test_own_e4_samples.cpp)
+target_link_libraries(test_own_e4_samples PRIVATE okay::engine)
+target_compile_definitions(test_own_e4_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME own_e4_samples COMMAND test_own_e4_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

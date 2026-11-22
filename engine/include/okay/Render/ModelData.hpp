@@ -8,7 +8,7 @@
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
 //   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF,
-//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML and binary, ZAE, XGL / ZGL, Irrlicht scene, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS / MOT) are
+//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML and binary, ZAE, XGL / ZGL, Irrlicht scene, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, OpenGEX, Quake 1 / Half-Life 1 MDL, PMX, LWS / MOT) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -411,6 +411,26 @@ bool IsGltf1(const std::string& bytesOrPrefix);
 /// with no version, whose meshes / nodes / accessors are objects keyed by id). Reads and parses the file.
 bool GltfFileIsVersion1(const std::string& path);
 
+/// OpenGEX (.ogex, Open Game Engine Exchange, written in OpenDDL text; UTF-8 or UTF-16 with a byte order mark): the node tree
+/// (Node, BoneNode, GeometryNode, CameraNode, LightNode; Transform, Translation, Rotation and Scale in file order, a Transform
+/// marked `object` baked into that node's geometry), GeometryObjects as one part per IndexArray (triangle, quad and triangle strip
+/// meshes, position, normal and the first texture coordinate set as written, winding from the `front` property), materials (diffuse,
+/// emission, opacity, specular power, diffuse / normal / specular textures that lie inside `baseDir`), skins (the four strongest
+/// weights per vertex, the skin transform folded into the inverse bind matrices) and Animation tracks as one clip per clip index
+/// (sampled at the union of a node's key times). Metric distance scales and Metric up turns the root node. Cameras, lights,
+/// vertex colours, tangents, morph targets, level-of-detail meshes and curve tangents are not read (reported in `out.notes`).
+/// The text parser is bounded (structures, nesting depth, values, string bytes). `baseDir` ends with a slash or is empty.
+bool ReadOgexBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+bool ReadOgexFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// MDL (.mdl), two of the formats that use the extension: the Quake 1 model ("IDPO", version 6: the first frame of the vertex
+/// animation as one static part, texture coordinates with the seam rule, smooth normals, winding reversed, Z-up turned into Y-up
+/// on the root) and the Half-Life 1 studio model ("IDST", version 10: the bone tree as nodes, the first sub-model of every body
+/// part as skinned parts rigidly bound to their bones, triangle strips and fans, the texture table as materials, and each
+/// sequence stored in the file as one clip from the run-length coded bone values). The pictures embedded in either format are
+/// not extracted (the materials carry the names only). The 3D GameStudio formats (MDL3, MDL4, MDL5, MDL7), Half-Life 2 models
+/// and the Half-Life sequence group files are refused with a message that names them. `baseDir` ends with a slash or is empty.
+bool ReadMdlBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+bool ReadMdlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {

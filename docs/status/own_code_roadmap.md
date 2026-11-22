@@ -149,13 +149,13 @@ owner's approval and a Windows run, which none has. When this list was counted n
 | `.gltf`, `.glb` | 48, 6 | glTF 2.0 is always ours and never goes to Assimp. **glTF 1.0** (7 of the corpus): our own reader since 2026-11-22 (`OKAY_OWN_GLTF1`, **off by default**; without it a 1.0 file is refused, Assimp is never asked); all 7 read, 0.58x Assimp's read time and 0.50x its largest peak (`docs/content/own_readers_speed.md`, row `gltf1`; `docs/content/model_readers.md`, section glTF 1.0) |
 | `.fbx` | 43 | never goes to Assimp: ufbx reads FBX, and our own FBX reader (`OKAY_OWN_FBX`) replaces ufbx, not Assimp (`docs/content/model_readers.md`) |
 | `.ogex` | 6 | OpenGEX: our own reader since 2026-11-22 (`OKAY_OWN_OPENGEX`, **off by default**, Assimp the fallback); 4 of 6 read (the other 2 hold no node and are refused by Assimp too), 0.46x Assimp's read time and 0.36x its largest peak on the 3 both read (`docs/content/own_readers_speed.md`, row `ogex`) |
+| `.mdl` | 43 | MDL: our own reader for Quake 1 and Half-Life 1 since 2026-11-22 (`OKAY_OWN_MDL`, **off by default**, Assimp the fallback); 17 read, 0.26x Assimp's read time and 0.37x its largest peak on those; the 6 3D GameStudio files (MDL3, MDL5, MDL7) have no reader of ours and stay with Assimp |
 | `.ndo` | 0 | Nendo: a seam that recognises the header and refuses every file (no description and no file exist; `docs/content/model_readers.md`) |
 
 **3. Written on branch `claude/own-readers-6`, being brought onto main by branch `claude2/own-readers-last` (2026-11-22; a row leaves this table when its reader is on that branch):**
 
 | Extensions | Corpus | Format |
 |---|---:|---|
-| `.mdl` | 43 | MDL (Quake 1, Half-Life 1, 3D GameStudio) |
 | `.bsp`, `.pk3` | 0, 1 | Quake III BSP |
 | `.sib` | 1 | Silo |
 

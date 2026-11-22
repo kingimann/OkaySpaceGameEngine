@@ -31,6 +31,7 @@
 - [Our own MD3 reader (`.md3`)](#our-own-md3-reader-md3) (was `docs/own_md3_reader.md`)
 - [Our own MD5 reader (`.md5mesh`, `.md5anim`)](#our-own-md5-reader-md5mesh-md5anim) (was `docs/own_md5_reader.md`)
 - [Our own MDC reader (`.mdc`)](#our-own-mdc-reader-mdc) (was `docs/own_mdc_reader.md`)
+- [Our own MDL reader (`.mdl`: Quake 1 and Half-Life 1)](#our-own-mdl-reader-mdl-quake-1-and-half-life-1) (new on main 2026-11-22; was `docs/own_mdl_reader.md` on an unmerged branch)
 - [Our own MS3D reader (`.ms3d`)](#our-own-ms3d-reader-ms3d) (was `docs/own_ms3d_reader.md`)
 - [Our own NDO reader (`.ndo`): a seam only, no geometry](#our-own-ndo-reader-ndo-a-seam-only-no-geometry) (was `docs/own_ndo_reader.md`)
 - [Our own NFF reader (`.nff` `.enff`)](#our-own-nff-reader-nff-enff) (was `docs/own_nff_reader.md`)
@@ -1694,6 +1695,88 @@ The only real file is `spider.mdc` from the `test/models/MDC` folder of an Assim
 **Decision for the owner:** keep the compressed-first-frame path (unverified, but it only matters for files whose frame 0 is compressed, which the game's own tools did not seem to write), or refuse such surfaces until a real file shows the constants. Currently it reads them and says so in `notes`.
 
 Unverified: a compressed first frame (no real example), the compressed offset scale, tag rotation, other MDC versions, files from games other than Return to Castle Wolfenstein, a run on real Windows.
+
+## Our own MDL reader (`.mdl`: Quake 1 and Half-Life 1)
+
+*Written on branch `claude/readers-e4` (2026-11-15), brought onto main on 2026-11-22 (branch `claude2/own-readers-last`).*
+
+Status: **side by side, off by default** (`OKAY_OWN_MDL`, slot 38 of the table in `ModelImport.cpp`). Assimp (when built) is the
+fallback for a file ours refuses, so the 3D GameStudio MDL files it reads still import with the default choice.
+
+### What it is
+
+`.mdl` is used by four unrelated binary formats. This reader does two:
+
+- **Quake 1** (magic `IDPO`, version 6): one vertex-animated mesh.
+- **Half-Life 1** (magic `IDST`, version 10): the "studio" model, with bones, body parts, textures and sequences.
+
+**Not done: 3D GameStudio MDL3, MDL4, MDL5 and MDL7** (no description of their layouts in hand; a file with those magics is
+refused with a message that names the format, so Assimp reads it). Also refused with their own messages: Half-Life sequence
+group files (`IDSQ`, animation only) and Half-Life 2 / Source models (`IDST` version 44 to 49).
+
+| File | What |
+|---|---|
+| `engine/src/Render/MdlReader.cpp` | `okay::ReadMdlBuffer` / `okay::ReadMdlFile` (declared in `ModelData.hpp`) |
+| `engine/src/Render/BinReader.hpp`, `ReaderCommon.hpp`, `AffineInverse.hpp` | Shared pieces: the bounds-checked cursor, the mesh builder, the affine inverse |
+| `engine/src/Render/ModelImport.cpp` | The seam: slot 38 (extension `.mdl`) |
+| `tests/test_mdl_reader.cpp`, `tests/e4_fixtures.hpp` | Hand-computed checks on synthetic files (`mdl_reader`) |
+| `tests/test_e4_hostile.cpp` | Budgets, hostile input, mutation fuzz and real files, for OpenGEX and MDL (`e4_hostile`) |
+| `tests/test_own_dispatch_e4.cpp`, `tests/test_own_e4_default.cpp` | The seam routes `.mdl` (both formats); `-DOKAY_OWN_MDL=ON` really makes it the default |
+| `tests/test_own_e4_samples.cpp`, `examples/own_readers/quake_pyramid.mdl`, `halflife_tri.mdl` | The sample files (the test fixtures written out: a Quake pyramid and a Half-Life triangle with two bones and a clip) import through the seam with the reader on (`own_e4_samples`) |
+
+### What it reads
+
+**Quake 1.** The header (scale, origin, counts, skin size), the skin list (sizes only), texture coordinates and triangles. **The
+first frame** as one static part: position = byte * scale + origin. Texture coordinates by the seam rule: an `onseam` vertex of a
+triangle that does not face front takes `s + skinwidth / 2`; `u = (s + 0.5) / skinwidth`, `v = (t + 0.5) / skinheight`. Quake
+winds clockwise, so the corner order is reversed. Vertices are welded, smooth normals generated, the root turns Z-up into Y-up.
+Further frames and the skin pictures (8-bit palette indices) are not read (noted).
+
+**Half-Life 1.** The bone table becomes the node tree under a root that turns Z-up into Y-up (a parent loop is cut, repeated names
+get a suffix); Euler angles are rotations about X, then Y, then Z (`q = qz * qy * qx`). For every body part the **first model** is
+read; every mesh is one part from its triangle commands (positive count: strip, negative: fan), vertices welded, moved from bone
+space to the bind pose and rigidly skinned to their bone. Strips and fans are reversed; each mesh's winding is checked against the
+stored normals and flipped back (with a note) when most triangles face against them. The texture table gives one material per
+texture (name only; the pictures are embedded palette images and are not extracted). Each sequence stored in the file (group 0)
+is one clip: the first blend, per bone a position and rotation key per frame from the run-length coded values.
+
+Not handled (a line in `out.notes`): Quake frames after the first, skin pictures, stored normals; Half-Life alternative
+sub-models, skin families after the first, embedded pictures, `<name>T.mdl` texture files, external sequence groups, blends after
+the first, controllers, hit boxes, attachments, events.
+
+### Limits
+
+File 256 MiB. Quake: 200,000 vertices, 400,000 triangles, 4,096 skins, 100,000 frames. Half-Life: 1,024 bones, body parts and
+models per part, 4,096 meshes per model and per file, 200,000 vertices per model, 4,096 textures and sequences, 65,536 frames per
+sequence, 2,000,000 output vertices and triangles, 4,000,000 animation keys, a file-wide work budget of 16,000,000 units and
+1,000,000 bone entries over all parts. Every offset and count is checked in 64-bit arithmetic before use.
+
+### Real files and checks
+
+43 `.mdl` files under `models/MDL` and `models-nonbsd/MDL` of the Assimp 5.4.3 test folder (`docs/content/model_corpus.md`; rows
+`mdl` of `tests/data/model_corpus_manifest.tsv`): the 3 Quake 1 models and 14 Half-Life 1 models read; the 19 Half-Life
+sequence-group files (`IDSQ`) and `manT.mdl` (textures only, no bones) are refused by ours and by Assimp; the 6 GameStudio files
+(MDL3, MDL5, MDL7) are refused by ours with their message and read by Assimp, which stays the fallback for them. Against Assimp
+(`bench_model_readers`, 2026-11-22, the 17 files both read): 0.26x the read time, 0.37x the largest peak, 0.29x the import time
+(`docs/content/own_readers_speed.md`, row `mdl`). What differs (`--compare`):
+- Quake 1: Assimp keeps zero-area triangles, ours drops them with a note (`gijoe` 404 / 408, `steg` 304 / 305, `tekmechbot`
+  1,702 / 1,748); vertex counts and boxes are the same.
+- Half-Life 1: same triangles, vertices, materials, clips and boxes on 10 of the 14 (on `unnamed_bones` the skin lists 9 bones to Assimp's 8; not looked into); Assimp makes many more nodes (it adds
+  nodes for body parts, meshes and sequences), ours only the bone tree. Assimp reads every sub-model of a body part and the
+  companion files: `duplicate_submodels` 3 / 6 parts, `man.mdl` 72 / 190 triangles, 0 / 5 materials and 3 / 6 clips (Assimp
+  also opens `manT.mdl` for the textures and `man01.mdl` for more sequences; ours reads the one file and says so in its notes),
+  and the two `*_sequence_groups.mdl` 0 / 9 clips (their sequences live in the `01` to `09` files). `e4_hostile` under ASan, UBSan and
+float-cast-overflow (2026-11-22): 20,000 mutations per synthetic seed and 5,000 per real file (`man.mdl`, `multiple_roots.mdl`,
+`chrome_sphere.mdl`, `steg.mdl`), 0 failures.
+
+### Provenance (what this file was written from)
+
+`MdlReader.cpp` was written from scratch for this project. The record layouts of the Quake 1 model and of the Half-Life 1 studio
+model, the seam rule and the Euler order were **recalled from memory** of the publicly documented layouts (the id Software and
+Valve SDK descriptions and the format notes built on them); no document, header or source was open while writing it, and no code
+of Assimp or any other importer was read, copied or ported. Recollection cannot be audited; it is checked against the real files
+above and against Assimp's output on them (`own_readers_speed.md`). Unverified: Half-Life models with several skin families,
+Quake models from other tools, a Windows run.
 
 ## Our own MS3D reader (`.ms3d`)
 

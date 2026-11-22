@@ -225,23 +225,26 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Ask me like:** "how do I run everything on our own code?"
 
 ### 41.12 Collaboration tooling (lanes, claims, find-existing, collision check, branch lint)
-- **What:** The working agreement between Claude 2 and the coordinator, made automatic: a lanes table, one claim format on issue #422, a search for what already exists, a collision report over all open branches, cheap checks on every branch push, a "How to try it" check on PRs and a brief builder that pastes the current rules into every agent brief.
+- **What:** The working agreement between the three Claudes (coordinator `claude/*`, Claude 2 `claude2/*`, Claude 3 `claude3/*`), made automatic: a lanes table with each lane's branch prefix, one claim format on issue #422, a search for what already exists, a collision report over all open branches, cheap checks on every branch push, a "How to try it" check on PRs and a brief builder that pastes the current rules into every agent brief.
 - **Parts:**
-  - 41.12.1 Agreement and lanes - `docs/process/collaboration.md`, `docs/lanes.json`, `docs/process/agent_brief_template.md` - who owns which paths, the claim protocol, the readiness checklist, the weekly dedupe audit
+  - 41.12.1 Agreement and lanes - `docs/process/collaboration.md`, `docs/lanes.json`, `docs/process/agent_brief_template.md`, `docs/process/claude3_start.md` - who owns which paths, the claim protocol, who merges and who releases, hand-over, the readiness checklist, the weekly dedupe audit
   - 41.12.2 Find existing - `scripts/find_existing.py` - ranked "Existing:" report (feature map, notes, code names, tests, examples, open branches, PRs, claims) to paste into a claim
   - 41.12.3 Collision check - `scripts/collision_check.py` - file and line-range overlaps between branches, claims table, stale claims, out-of-lane edits, generated files edited by hand, duplicate test names; Markdown or JSON; also in `WORK_BOARD.md` via `scripts/work_board.py`
-  - 41.12.4 Branch lint - `.github/workflows/branch-lint.yml`, `scripts/branch_lint.py` - forbidden thread includes (rule 21a), secrets, docs changed, feature map, MinGW syntax check
+  - 41.12.4 Branch lint - `.github/workflows/branch-lint.yml`, `scripts/branch_lint.py` - on pushes to every lane's branches and on pull requests from any other branch or fork: forbidden thread includes (rule 21a), secrets, docs changed, feature map, MinGW syntax check
   - 41.12.5 Bug patterns - `scripts/bug_patterns.py` - warnings for the bug classes reviews keep finding
   - 41.12.6 PR hygiene and briefs - `.github/workflows/pr-hygiene.yml`, `scripts/check_pr_body.py`, `scripts/make_brief.py`
-- **Code:** `scripts/collab_lib.py`, `scripts/find_existing.py`, `scripts/collision_check.py`, `scripts/branch_lint.py`, `scripts/bug_patterns.py`, `scripts/check_pr_body.py`, `scripts/make_brief.py`, `scripts/work_board.py`, `.github/workflows/branch-lint.yml`, `.github/workflows/pr-hygiene.yml`, `.github/workflows/work-board.yml`
-- **Docs:** `docs/process/collaboration.md`, `docs/process/agent_brief_template.md`, `docs/process/review_log.md`
-- **Tests:** `collab_scripts` (`scripts/tests/test_collab.py`: throw-away git repos, no GitHub)
+  - 41.12.7 Duplicate-code guard - `scripts/dup_lint.py`, `scripts/dup_baseline.json`, `scripts/install_hooks.sh`, `docs/engine/shared_code.md` - pasted blocks (exact copies of 80+ tokens fail, renamed copies warn) and new copies of shared helpers (FNV, CRC-32, Base64, Trim/Split, JSON escape ...) in every language, with a shrink-only baseline; runs in branch-lint on every branch, main and fork PRs; optional pre-push hook; similar-name warnings; retired names (`OKAY_DEPRECATED`, `engine/include/okay/Core/Deprecated.hpp`) cannot be used again; copies and similar names between open branches (in `collision_check.py`); weekly scan `.github/workflows/dup-scan.yml`
+  - 41.12.8 Code index - `scripts/gen_code_index.py`, `docs/engine/code_index.md` - every public class, struct, enum and free function in the public headers with file:line and its doc line, one page per folder; searched by `find_existing.py`; branch-lint warns when stale
+  - 41.12.9 PR body "Existing code" - `scripts/check_pr_body.py`, `.github/workflows/pr-hygiene.yml`, `.github/PULL_REQUEST_TEMPLATE.md` - a PR names the code it reuses or replaces, or what it searched
+- **Code:** `scripts/collab_lib.py`, `scripts/find_existing.py`, `scripts/collision_check.py`, `scripts/branch_lint.py`, `scripts/bug_patterns.py`, `scripts/check_pr_body.py`, `scripts/make_brief.py`, `scripts/work_board.py`, `scripts/dup_lint.py`, `scripts/install_hooks.sh`, `scripts/gen_code_index.py`, `.github/workflows/branch-lint.yml`, `.github/workflows/dup-scan.yml`, `.github/workflows/pr-hygiene.yml`, `.github/workflows/pr-hygiene.yml`, `.github/workflows/work-board.yml`
+- **Docs:** `docs/process/collaboration.md`, `docs/process/agent_brief_template.md`, `docs/process/review_log.md`, `docs/process/no_duplicates.md`, `docs/engine/shared_code.md`
+- **Tests:** `collab_scripts` (`scripts/tests/test_collab.py`: throw-away git repos, no GitHub), `dup_lint_script` (`scripts/tests/test_dup_lint.py`)
 - **Status:** Works - the scripts and their tests were run on Linux against the real repo; the two new workflows have not run on GitHub yet
 - **Open:** heuristics can give false positives (see the "false positives" notes in `docs/process/collaboration.md`); the weekly dedupe audit and the answers to claims are by hand
 - **Related:** 41.1, 41.8
-- **Words:** collaboration, claim, lane, duplicate, collision, branch lint, find existing, brief, how to try it check
+- **Words:** collaboration, claim, lane, duplicate, collision, branch lint, find existing, brief, how to try it check, copy paste, clone detection, dup lint, shared code
 - **Seen as:** `WORK_BOARD.md` on the `work-board` branch, a red "Branch lint" check on a pushed branch, a red "PR hygiene" check on a PR
-- **Ask me like:** "how do the two Claudes avoid doing the same work?"
+- **Ask me like:** "how do the three Claudes avoid doing the same work?"
 
 ### 41.13 Engine modules (stage 0: groups, test labels, module list, dependency check)
 - **What:** The engine split into 40 named modules on paper: each has a manifest saying what it requires and which engine files and tests are its own. The build groups the engine's files by module and labels every test with its module, without changing what is built. First step of the modular engine plan (`docs/design/modular_gameplay_contracts.md`, section 9, PR 1).

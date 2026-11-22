@@ -811,6 +811,7 @@ target_sources(okay_engine PRIVATE
     src/Core/FrameOverlay.cpp
     src/Core/TimeSnapshot.cpp
     src/Core/LoopConsole.cpp
+    src/Core/ConsoleHost.cpp
 )
 
 # The module list the engine knows at run time (okay/Modules/ModuleRegistry.hpp): the manifests embedded as text by

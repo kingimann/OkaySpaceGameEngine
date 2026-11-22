@@ -2,6 +2,7 @@
 #include <cctype>
 #include "ScriptInternal.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Components/ScriptComponent.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include <cmath>
 #include <set>
@@ -14,11 +15,17 @@ struct NextScriptVM::Impl {
     std::shared_ptr<Program> prog;
     std::unique_ptr<Instance> inst;
     std::string source;   ///< statics are shared by the objects in a scene running this exact source
+    /// Waiting for scripts it names that haven't loaded yet: compiled again when the
+    /// scene starts (Bind) or another script looks it up, whichever comes first.
+    bool pending = false;
+    bool finalCompile = false;   ///< the scene has started: report unknown types instead of waiting
+    std::vector<std::pair<std::string, vs::VsValue>> pendingFields;   ///< Inspector values until then
 };
 
 void NextScriptVM::ForgetSceneStatics(const Scene* scene) { script::ForgetSceneStatics(scene); }
 
 NextScriptVM::NextScriptVM() : m_impl(std::make_unique<Impl>()) {}
+NextScriptVM::NextScriptVM(const std::string& language) : m_impl(std::make_unique<Impl>()), m_csharp(IsCSharpId(language)) {}
 NextScriptVM::~NextScriptVM() = default;
 
 std::vector<std::string> NextScriptVM::BuiltinNames() const {
@@ -32,6 +39,7 @@ std::vector<std::string> NextScriptVM::BuiltinNames() const {
     }
     for (const auto& l : LifecycleMethods()) names.insert(l.name);
     for (const char* n : {"gameObject", "transform", "enabled", "GetComponent", "Destroy", "Behaviour"}) names.insert(n);
+    if (m_csharp) names.insert("MonoBehaviour");
     return {names.begin(), names.end()};
 }
 
@@ -43,8 +51,33 @@ std::string FirstError(const Program& p) {
 }
 } // namespace
 
+namespace {
+// Every error is an unknown type name: maybe a script that loads later.
+bool OnlyUnknownTypes(const Program& p) {
+    if (p.unknownTypes.empty() || p.component < 0) return false;
+    for (const auto& d : p.diags) {
+        if (d.severity != 0) continue;
+        bool named = false;
+        for (const auto& t : p.unknownTypes)
+            if (d.message.rfind("Unknown type '" + t + "'", 0) == 0 || d.message.rfind("'" + t + "' isn't a component", 0) == 0) named = true;
+        if (!named) return false;
+    }
+    return true;
+}
+} // namespace
+
 bool NextScriptVM::Load(const std::string& source, std::string* error) {
-    auto prog = Compile(source);
+    RegisterScriptSource(source, m_csharp);   // so other scripts can use this one
+    m_impl->pending = false;
+    m_impl->pendingFields.clear();
+    auto prog = Compile(source, m_csharp);
+    if (!prog->ok() && !m_impl->finalCompile && OnlyUnknownTypes(*prog)) {   // check again once the scene's other scripts are loaded
+        m_impl->source = source;
+        m_impl->prog.reset();
+        m_impl->inst.reset();
+        m_impl->pending = true;
+        return true;
+    }
     if (!prog->ok()) {
         if (error) *error = FirstError(*prog);
         m_impl->prog.reset();
@@ -65,18 +98,41 @@ bool NextScriptVM::Load(const std::string& source, std::string* error) {
 }
 
 bool NextScriptVM::Validate(const std::string& source, std::string* error) {
-    auto prog = Compile(source);
+    auto prog = Compile(source, m_csharp);
     if (prog->ok()) return true;
     if (error) *error = FirstError(*prog);
     return false;
 }
 
 std::vector<ScriptDiagnostic> NextScriptVM::ValidateAll(const std::string& source) {
-    return Compile(source)->diags;
+    return Compile(source, m_csharp)->diags;
+}
+
+// A script that waited for others: compile it now. False (and logged) if it still fails.
+bool NextScriptVM::FinishPending() {
+    if (!m_impl->pending) return true;
+    m_impl->pending = false;
+    std::vector<std::pair<std::string, vs::VsValue>> fields = std::move(m_impl->pendingFields);
+    std::string error;
+    const std::string source = m_impl->source;
+    m_impl->finalCompile = true;
+    const bool ok = Load(source, &error);
+    m_impl->finalCompile = false;
+    if (!ok) {
+        m_impl->inst.reset();
+        ++m_errorCount;
+        m_lastError = error;
+        const std::string obj = m_host && m_host->gameObject ? m_host->gameObject->name : std::string("?");
+        Log::Error("Script on '", obj, "': ", m_lastError);
+        return false;
+    }
+    for (auto& f : fields) SetGlobal(f.first, f.second);
+    return true;
 }
 
 void NextScriptVM::Bind(ScriptHost* host) {
     m_host = host;
+    FinishPending();
     if (m_impl->inst && host) {
         m_impl->inst->Context().self = host->gameObject;
         m_impl->inst->Context().component = host->component;
@@ -122,6 +178,18 @@ void NextScriptVM::CallStart() {
 void NextScriptVM::CallUpdate(float deltaTime) {
     if (m_host) m_host->deltaTime = deltaTime;
     RunMethod("Update");
+    // Then the coroutines whose wait is over (after Update, as in C# game engines).
+    if (!m_impl->inst) return;
+    CallContext& c = m_impl->inst->Context();
+    c.deltaTime = deltaTime;
+    try {
+        m_impl->inst->TickCoroutines(deltaTime);
+    } catch (const RuntimeError& e) {
+        ++m_errorCount;
+        const std::string obj = c.self ? c.self->name : std::string("?");
+        m_lastError = "line " + std::to_string(e.loc.line) + ": " + e.what();
+        Log::Error("Script on '", obj, "', coroutine line ", e.loc.line, ": ", e.what());
+    }
 }
 
 void NextScriptVM::CallEvent(const std::string& function) {
@@ -229,7 +297,24 @@ bool NextScriptVM::HasEvent(const std::string& function) const {
 vs::VsValue NextScriptVM::CallEventArgs(const std::string& function, const std::vector<vs::VsValue>& given,
                                         std::string* error) {
     if (!m_impl->inst) return {};
-    const int idx = m_impl->prog->MethodIndex(function);
+    int idx = m_impl->prog->MethodIndex(function);
+    if (idx < 0 && (function.rfind("on_trigger_", 0) == 0 || function.rfind("on_collision_", 0) == 0)) {
+        // A collision message: on_trigger_enter reaches OnTriggerEnter, and the 2D event
+        // (on_trigger_enter_2d) OnTriggerEnter2D, else OnTriggerEnter; private or public,
+        // with the other object as its argument.
+        const bool twoD = function.size() > 3 && function.compare(function.size() - 3, 3, "_2d") == 0;
+        const std::string base = twoD ? function.substr(0, function.size() - 3) : function;
+        std::string name;
+        bool up = true;
+        for (char ch : base) {
+            if (ch == '_') { up = true; continue; }
+            name += up ? (char)std::toupper((unsigned char)ch) : ch;
+            up = false;
+        }
+        idx = twoD ? m_impl->prog->MethodIndex(name + "2D") : -1;
+        if (idx < 0) idx = m_impl->prog->MethodIndex(name);
+        if (idx < 0) { CallEvent(base); return {}; }
+    }
     if (idx < 0) { CallEvent(function); return {}; }   // engine lifecycle names, or no such method
     const MethodDecl& m = m_impl->prog->Component()->methods[(std::size_t)idx];
     auto fail = [&](const std::string& msg) {
@@ -245,7 +330,13 @@ vs::VsValue NextScriptVM::CallEventArgs(const std::string& function, const std::
         if (i >= given.size()) { args.push_back(DefaultOf(m.params[i].resolved)); continue; }
         Value v;
         std::string why;
-        if (!FromVs(given[i], m.params[i].resolved, m.params[i].name, v, why)) { fail(function + "(): " + why); return {}; }
+        vs::VsValue g = given[i];
+        // An object given where text is wanted (OnTriggerEnter(string other)): its name.
+        if (g.IsObject() && m.params[i].resolved.kind == TK::String) {
+            const GameObject* o = g.AsObjectId() ? GameObject::FromInstanceId(g.AsObjectId()) : nullptr;
+            g = vs::VsValue{o ? o->name : std::string()};
+        }
+        if (!FromVs(g, m.params[i].resolved, m.params[i].name, v, why)) { fail(function + "(): " + why); return {}; }
         args.push_back(std::move(v));
     }
     CallContext& c = m_impl->inst->Context();
@@ -268,6 +359,7 @@ vs::VsValue NextScriptVM::GetGlobal(const std::string& name) const {
 }
 
 void NextScriptVM::SetGlobal(const std::string& name, const vs::VsValue& v) {
+    if (m_impl->pending) { m_impl->pendingFields.emplace_back(name, v); return; }
     if (!m_impl->inst) return;
     Value x;
     if (v.IsBool()) x = Value{v.AsBool()};
@@ -278,3 +370,24 @@ void NextScriptVM::SetGlobal(const std::string& name, const vs::VsValue& v) {
 }
 
 } // namespace okay
+
+namespace okay::script {
+
+Instance* FindScriptInstance(GameObject* go, const std::string& name) {
+    if (!go) return nullptr;
+    for (const auto& c : go->Components()) {
+        auto* sc = dynamic_cast<ScriptComponent*>(c.get());
+        if (!sc || !NextScriptVM::IsTypedId(sc->Language())) continue;
+        auto* vm = dynamic_cast<NextScriptVM*>(sc->VM());
+        if (!vm || !vm->FinishPending() || !vm->m_impl->inst) continue;
+        Instance* inst = vm->m_impl->inst.get();
+        const ClassDecl* cls = inst->program().Component();
+        if (!cls || cls->name != name) continue;
+        // Used before its own Start: it already belongs to this object.
+        if (!inst->Context().self) { inst->Context().self = go; inst->Context().component = sc; }
+        return inst;
+    }
+    return nullptr;
+}
+
+} // namespace okay::script

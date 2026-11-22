@@ -1070,6 +1070,47 @@ class Menu : Behaviour {
 - A lambda made by a script that has since been destroyed stops the callback
   with an error if it's called.
 
+#### Events
+
+An `event` is a field that holds functions to call when something happens.
+Other code adds a function with `+=` and takes it out with `-=`; outside its
+class that's all it can do. The class itself calls it, usually with `?.Invoke`,
+since an event nobody has added to is `null`.
+
+```csharp
+class Health {
+    public event Action<int> Damaged;
+    public event Action Died;
+    public int hp = 100;
+    public void Hit(int amount) {
+        hp -= amount;
+        Damaged?.Invoke(amount);
+        if (hp <= 0) Died?.Invoke();
+    }
+}
+
+class Player : Behaviour {
+    Health health = new Health();
+    void OnDied() { Debug.Log("Game over"); }
+    void Start() {
+        health.Died += OnDied;                         // a method's name works as a function
+        health.Damaged += amount => Debug.Log($"-{amount}");
+    }
+    void OnDestroy() { health.Died -= OnDied; }       // takes out what += OnDied added
+}
+```
+
+- The functions run in the order they were added. A `Func` event gives the
+  last one's value.
+- `+=` and `-=` work on any `Func` or `Action` variable too, not only events.
+- `-=` takes out the same function: the same method of the same object, or the
+  very same lambda value (a second `x => ...` written the same way is a
+  different lambda, so keep it in a variable if you'll remove it).
+- Adding or removing a handler while the event runs takes effect the next time
+  it's called.
+- A method's name also works where a lambda would: `targets.Where(IsAlive)`.
+- Events and `Func` / `Action` fields don't show in the Inspector.
+
 #### LINQ-style methods
 
 Lists and arrays have the usual query methods. Each gives a new `List` (or a
@@ -1151,11 +1192,175 @@ class Inventory : Behaviour {
   parameter).
 - Plain classes aren't on an object, so `gameObject`, `transform` and
   `GetComponent` only exist in the Behaviour class. They can't be `static` or
-  `const` yet, and classes can't extend each other yet.
+  `const` yet.
 - Objects are freed as soon as nothing refers to them, except objects that
   refer to each other in a loop (`a.next = b; b.next = a;`). Those stay in
   memory until the game quits, so set one of the links to `null` when you're
   done with them.
+
+#### Inheritance and interfaces
+
+Plain classes can extend one class and implement any number of interfaces, so
+different enemies can share code and still each do their own thing.
+
+```csharp
+interface IDamageable { void TakeDamage(int amount); }
+
+abstract class Enemy : IDamageable {
+    protected int hp;
+    public Enemy(int hp) { this.hp = hp; }
+    public virtual void TakeDamage(int amount) { hp -= amount; }
+    public abstract int Reward();
+}
+
+class Boss : Enemy {
+    int armor = 5;
+    public Boss() : base(500) { }
+    public override void TakeDamage(int amount) { base.TakeDamage(amount - armor); }
+    public override int Reward() { return 100; }
+}
+
+class Crate : IDamageable {
+    public void TakeDamage(int amount) { Debug.Log("crack"); }
+}
+```
+
+```csharp
+List<IDamageable> hit = new List<IDamageable> { new Boss(), new Crate() };
+foreach (var t in hit) t.TakeDamage(10);      // each runs its own TakeDamage
+if (hit[0] is Enemy) total += (hit[0] as Enemy).Reward();
+Boss boss = (Boss)hit[0];                      // an error with its line if it isn't one
+```
+
+- A class names what it extends after `:`; the class first, then interfaces.
+  An interface lists methods without bodies, and every class that implements
+  it must have them, `public`.
+- To change a method in a subclass, mark it `virtual` (or `abstract`, with no
+  body) in the base class and `override` in the subclass, with the same
+  parameters and result. A subclass can't reuse a base class's method or field
+  name otherwise.
+- `base.Method()` runs the base class's version; a constructor runs the base
+  class's constructor first: `: base(...)`, or the one that takes nothing.
+- `protected` members are for the class and the classes that extend it.
+- An `abstract` class, or an interface, can't be made with `new`.
+- `x is T` is true when `x` is a `T` (and not null); `x as T` gives it as a
+  `T`, or null. A cast `(T)x` stops the callback with an error if `x` isn't one.
+- The Behaviour class can't extend a class or implement interfaces yet.
+
+#### Scripts using each other
+
+`GetComponent<Health>()` finds another script on an object, the same way it
+finds a `Rigidbody`. The script's class name is a type, and its `public`
+fields and methods can be used through it.
+
+```csharp
+class Health : Behaviour {
+    public int hp = 100;
+    public void TakeDamage(int amount) { hp -= amount; if (hp <= 0) Destroy(gameObject); }
+}
+
+class Bullet : Behaviour {
+    public void Hit(GameObject target) {
+        Health h = target.GetComponent<Health>();   // null if target has no Health script
+        if (h != null) h.TakeDamage(10);
+    }
+}
+```
+
+- Scripts can load in any order: a script that names one loaded later is
+  checked again when the scene starts, and an error then names the type it
+  couldn't find.
+- Only values that mean the same to every script cross between them: numbers,
+  text, `Vector3`, engine objects (`GameObject`, `Transform`, ...), other
+  scripts, and coroutines (`StartCoroutine(h.Regen())`). A public field or
+  method using one of a script's own types (an array, a list, a plain class
+  or an enum) can't be used from another script yet.
+- `h.gameObject` and `h.transform` are the object the script is on.
+- A reference finds the script again each time it's used, so after the object
+  is destroyed (or loses the script) using it is an error with its line.
+
+#### Coroutines
+
+A coroutine is a method that runs over several frames: it returns
+`IEnumerator`, and each `yield return` pauses it until something happens.
+`StartCoroutine` runs it right away up to its first `yield`; after that the
+game picks it up once a frame, after `Update`.
+
+```csharp
+class Door : Behaviour {
+    public float openTime = 1.5f;
+    Coroutine closing;
+
+    IEnumerator OpenThenClose() {
+        transform.Translate(0, 3, 0);
+        yield return new WaitForSeconds(openTime);   // a wait you can keep in a field and reuse
+        transform.Translate(0, -3, 0);
+    }
+    IEnumerator Flash(int times) {
+        for (int i = 0; i < times; i++) { Debug.Log("on"); yield return null; }   // null: the next frame
+    }
+    public void Open() { closing = StartCoroutine(OpenThenClose()); }
+    public void Cancel() { if (closing != null) StopCoroutine(closing); }
+}
+```
+
+What `yield return` can wait for:
+
+| `yield return` | Goes on |
+|---|---|
+| `null` (or any other value) | the next frame |
+| `new WaitForSeconds(t)` | once `t` seconds of game time have passed |
+| `new WaitUntil(() => cond)` / `new WaitWhile(() => cond)` | the first frame `cond` is true / false |
+| `new WaitForEndOfFrame()`, `new WaitForFixedUpdate()` | the next frame |
+| `StartCoroutine(Other())` or a coroutine already running | when that coroutine ends |
+
+- `yield break;` ends a coroutine early; it also ends at the end of its body.
+  `return` isn't used in a coroutine.
+- Calling `Blink()` on its own only makes the coroutine; `StartCoroutine(Blink())`
+  runs it. `StopCoroutine(c)` stops one (at its next `yield`) and
+  `StopAllCoroutines()` stops every coroutine the script started.
+- A coroutine belongs to the script that started it, and stops with it.
+  A plain class can have coroutine methods too: `StartCoroutine(enemy.Patrol())`.
+- `yield` works inside loops, `if` and `switch`, not inside `try`, a lambda,
+  or a method that doesn't return `IEnumerator`.
+- An error in a coroutine stops that coroutine and is reported with its line;
+  the script's other coroutines keep running.
+
+#### try / catch and exceptions
+
+`throw` stops what's running and goes to the nearest `catch` that takes that
+kind of exception. Every script has `Exception`, with a `Message`; extend it
+for your own kinds.
+
+```csharp
+class NotEnoughGold : Exception {
+    public int missing;
+    public NotEnoughGold(int missing) : base("Need " + missing + " more gold") { this.missing = missing; }
+}
+
+public void Buy(Item item) {
+    try {
+        wallet.Pay(item.price);              // throws NotEnoughGold
+        inventory.Add(item);
+    } catch (NotEnoughGold e) {
+        ShowMessage(e.Message);
+    } finally {
+        shopOpen = true;                     // runs however the try ends
+    }
+}
+```
+
+- `catch (T e)` takes T or any class that extends it; `catch` and
+  `catch (Exception e)` take everything. The first catch that fits runs, so
+  a later one that an earlier one already covers is an error.
+- Engine errors (a null object, dividing by zero, an index outside a list)
+  can be caught as `Exception`, with the error as the `Message`. An endless
+  loop or endless recursion can't: it always stops the callback.
+- Inside a catch, `throw;` throws the same exception on.
+- `finally` runs after the try (and catch) whether they finish, return, break
+  or throw. It can't `return` itself, or `break` / `continue` out of itself.
+- An exception nothing catches stops the callback and is reported with its
+  class, message and the line that threw it.
 
 #### foreach
 
@@ -1167,6 +1372,102 @@ int total = 0;
 foreach (var s in scores) total += s;
 foreach (float w in new int[] { 1, 2 }) Debug.Log(w / 2);   // ints convert to float
 ```
+
+#### Properties and => bodies
+
+A property looks like a field from outside and can run code when it is read or
+set. An auto-property (`{ get; set; }`) is simply a field; a property with code
+becomes the methods `get_Name()` / `set_Name(value)`, which reading and writing
+the property call.
+
+```csharp
+public int Score { get; private set; }          // a field others read
+public float Health { get; set; } = 10f;        // with a starting value
+public bool Alive => hp > 0;                    // worked out when read
+public float Speed {
+    get { return speed; }
+    set { speed = Mathf.Clamp(value, 0f, 5f); }
+}
+int Twice(int x) => x * 2;                       // a method with a => body
+```
+
+- `Speed = 9`, `Speed += 1`, `Speed++` call the setter (with the getter for the
+  old value). Setting a property that only has a `get` is an error.
+- `private set` / `init` on an auto-property are accepted but not enforced.
+- Properties can't be `virtual` or in an interface yet, and don't show in the
+  Inspector.
+
+### C# scripts (.cs)
+
+Language id `csharp` (also `cs`) and `.cs` files run on this same typed
+language in **C# mode**, so the C# a Unity user writes runs unchanged. New
+scripts are C# by default (the "Language" box in the Script Editor's New
+Script dialog; the choice is remembered in `okay_settings.txt` as
+`newscriptcsharp`). Existing scripts keep their language. This is our own C#,
+written from the ECMA-334 C# specification: no Mono or .NET is used.
+
+C# mode adds, on top of everything above:
+
+- `using A.B;` lines (also `using static`, `using X = A.B;`) at the top of the
+  file; they are read and skipped, since every engine type is available.
+- `namespace A.B { ... }` and the file-scoped `namespace A.B;`.
+- `MonoBehaviour` as the name of `Behaviour`.
+- `private`, `readonly`, `sealed` and `internal` modifiers (accepted; `readonly`
+  is not enforced, `internal` means `public`), `public const`.
+- Unknown field attributes such as `[HideInInspector]` are a warning, not an
+  error.
+- `KeyCode.W`, `KeyCode.Space`, `KeyCode.LeftShift`, ... for `Input.GetKey`,
+  `GetKeyDown`, `GetKeyUp` (each is the key's name: `KeyCode.W` is `"w"`).
+- Collision messages, private or public: `OnTriggerEnter(Collider other)`,
+  `OnTriggerStay`, `OnTriggerExit`, `OnCollisionEnter(Collision c)`,
+  `OnCollisionStay`, `OnCollisionExit` and the `2D` ones (`Collider2D`,
+  `Collision2D`). The argument is the other object: `other.name`, `other.tag`,
+  `other.gameObject`, `other.transform`, `other.CompareTag("Coin")`. The
+  parameter can also be a `GameObject`, a `string` (its name) or left out.
+  `gameObject.CompareTag(tag)` works too.
+- Text members: `s.Length`, `ToUpper()`, `ToLower()`, `Trim()`, `Contains`,
+  `StartsWith`, `EndsWith`, `IndexOf`, `Substring(start[, length])`,
+  `Replace`, `Split(",")` (gives a `string[]`); `x.ToString()` on numbers,
+  `bool`, enums and `Vector3` (the same text as `"" + x`). A character literal
+  such as `','` is a one-letter text (there is no `char` type). These work in
+  `okayscript-next` too.
+- `int.Parse("42")`, `float.Parse("2.5")` (text that isn't a number is an
+  error with its line), `int.MaxValue` / `MinValue`, `float.MaxValue` /
+  `MinValue`, `string.IsNullOrEmpty(s)`.
+- Default parameter values: `void Hit(int amount = 1, string why = "bump")`,
+  then `Hit()`, `Hit(3)`. Defaults must be fixed values (numbers, text,
+  true/false, null, an enum value) at the end of the list; not on
+  constructors yet. Works in `okayscript-next` too.
+- `delegate` declarations (at the top of the file or in a class) name a
+  function type: `public delegate void Died(string who);` is `Action<string>`,
+  `delegate int Combine(int a, int b);` is `Func<int, int, int>`. Use them for
+  fields, events (`public event Died OnDied;`), variables and parameters.
+- `Random.Range(0, 3)` (a whole number, 3 left out), `Random.Range(-1f, 1f)`,
+  `Random.value` and `Random.InitState(seed)` (these work in `okayscript-next`
+  too: the binding table is shared).
+
+```csharp
+using UnityEngine;
+
+namespace MyGame
+{
+    public class Mover : MonoBehaviour
+    {
+        [SerializeField] private float speed = 6f;
+
+        void Update()
+        {
+            transform.position += new Vector3(1, 0, 0) * speed * Time.deltaTime;
+            if (Input.GetKeyDown(KeyCode.Space)) Debug.Log("jump");
+        }
+    }
+}
+```
+
+An old scene that named the removed Mono backend (`csharp` / `cs`) now runs
+its script if it compiles; if not, the Console and the scene validator show the
+checker's error with its line. Example scene: `examples/csharp/csharp_playground.okayscene`.
+The plan for retiring the old OkayScript VM is in [migration_plan.md](migration_plan.md).
 
 ### Other backends
 

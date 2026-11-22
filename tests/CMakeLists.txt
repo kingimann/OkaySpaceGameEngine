@@ -606,7 +606,7 @@ target_link_libraries(test_steam PRIVATE okay::engine)
 add_test(NAME steam COMMAND test_steam)
 
 
-# Old scenes naming the removed Lua / Mono C# backends still load and say "no longer supported".
+# Old scenes naming the removed third-party Lua / Mono C# backends still load; both languages now run on our own code.
 add_executable(test_script_removed_langs test_script_removed_langs.cpp)
 target_link_libraries(test_script_removed_langs PRIVATE okay::engine)
 add_test(NAME script_removed_langs COMMAND test_script_removed_langs)
@@ -2588,6 +2588,11 @@ add_test(NAME anim_script_control COMMAND test_anim_script_control)
 add_executable(test_okayscript_next_csharp test_okayscript_next_csharp.cpp)
 target_link_libraries(test_okayscript_next_csharp PRIVATE okay::engine)
 add_test(NAME okayscript_next_csharp COMMAND test_okayscript_next_csharp)
+
+add_executable(test_csharp_scripts test_csharp_scripts.cpp)
+target_link_libraries(test_csharp_scripts PRIVATE okay::engine)
+target_compile_definitions(test_csharp_scripts PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME csharp_scripts COMMAND test_csharp_scripts)
 
 add_executable(test_vs_acceptance test_vs_acceptance.cpp)
 target_link_libraries(test_vs_acceptance PRIVATE okay::engine)

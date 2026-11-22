@@ -35,6 +35,7 @@
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Net/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
 #include "okay/Core/Game.hpp"
+#include "okay/VisualScript/VsApi.hpp"   // VsApiReference(): the C# engine API list in the Scripting Reference
 #include "okay/Core/AssetManager.hpp"   // CachedCount() for the crash report
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "ContentEditors.hpp"          // Items, Loot & Recipes (items.okayitems, .okayloot, .okayrecipes)
@@ -2262,6 +2263,14 @@ static oked::SimHooks<EditorState> EditorSimHooks() {
 }
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
 bool g_consoleCollapse = false;   // the Console's Collapse toggle (okay_settings.txt "consolecollapse")
+// The language NEW scripts are made in (okay_settings.txt "newscriptcsharp"): C# by default,
+// otherwise Lua when "newscriptlua" is 1, otherwise OkayScript (the old language). Existing
+// scripts keep their own language. Changing the default is the owner's call: this is the
+// switch (New Script dialog, "Language").
+bool g_newScriptCSharp = true;
+bool g_newScriptLua = false;
+const char* NewScriptLanguage() { return g_newScriptCSharp ? "csharp" : g_newScriptLua ? "lua" : "okayscript"; }
+const char* NewScriptLanguageName() { return g_newScriptCSharp ? "C#" : g_newScriptLua ? "Lua" : "OkayScript"; }
 // The UI backend setting (okay_settings.txt "uibackend 0|1"; absent = never chosen). OKAY_UI_BACKEND overrides it. Today the
 // Console panel has an OkayUI port; everything else is Dear ImGui either way.
 std::string g_uiBackendSetting;
@@ -2774,6 +2783,8 @@ void LoadSettings() {
         else if (k == "docautosave") g_docAutosaveSec = (float)(v < 5 ? 5 : (v > 600 ? 600 : v));
         else if (k == "autosavetofile") g_autosaveToFile = (v != 0);
         else if (k == "consolecollapse") g_consoleCollapse = (v != 0);
+        else if (k == "newscriptcsharp") g_newScriptCSharp = (v != 0);
+        else if (k == "newscriptlua") g_newScriptLua = (v != 0);
         // (multiwin is no longer a setting — multi-window panels are always on)
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
@@ -2837,7 +2848,9 @@ void SaveSettings() {
       << "sidetabs " << g_sideTabs << "\n"
       << "docautosave " << (int)(g_docAutosaveSec + 0.5f) << "\n"
       << "autosavetofile " << (g_autosaveToFile ? 1 : 0) << "\n"
-      << "consolecollapse " << (g_consoleCollapse ? 1 : 0) << "\n";
+      << "consolecollapse " << (g_consoleCollapse ? 1 : 0) << "\n"
+      << "newscriptcsharp " << (g_newScriptCSharp ? 1 : 0) << "\n"
+      << "newscriptlua " << (g_newScriptLua ? 1 : 0) << "\n";
     okayproj::WriteTextAtomic("okay_settings.txt", f.str());   // whole or not at all: a crash never leaves a cut-off file
 }
 
@@ -3043,7 +3056,7 @@ static void OpenScriptFileInEditor(const std::string& path) {
     std::string ext;
     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    std::string lang = (ext == ".lua") ? "lua" : (ext == ".cs") ? "cs" : "okayscript";
+    std::string lang = (ext == ".lua") ? "lua" : okay::ScriptLanguageForExtension(ext);   // .cs: C# on our typed language
     auto sc = std::make_unique<okay::ScriptComponent>(lang);
     std::string err; sc->LoadFile(path, &err); sc->SetPath(path);
     okay::ScriptComponent* raw = sc.get();
@@ -4261,10 +4274,10 @@ static bool AttachScriptAsset(okay::editor::EditorState& ed, okay::GameObject* g
     std::string ext;
     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    if (ext == ".okay") {
+    if (ext == ".okay" || ext == ".cs") {
         ed.PushUndo();
         // Always a new component (objects can hold several, even the same script twice).
-        auto* nsc = go->AddComponent<okay::ScriptComponent>("okayscript");
+        auto* nsc = go->AddComponent<okay::ScriptComponent>(okay::ScriptLanguageForExtension(ext));
         std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
         if (!err.empty()) ConsoleLog("Script error in " + path + ": " + err, 2);
         SetCodeBuffer(nsc, nsc->Source());
@@ -4344,7 +4357,7 @@ void OpenExternal(const std::string& path) {
     if (!r.ok) ConsoleLog("Couldn't open " + path + " in an editor: " + r.error, 1);
 }
 std::string ExtFor(const std::string& lang) {
-    return lang == "lua" ? "lua" : lang == "csharp" ? "cs" : "okay";
+    return lang == "lua" ? "lua" : (lang == "csharp" || lang == "cs") ? "cs" : "okay";
 }
 // The script a new script file starts with (Scripting/StarterScripts.hpp): an
 // empty Start and Update in the selected language's syntax.
@@ -11281,9 +11294,10 @@ void DrawProject(EditorState& ed) {
         askCreate("New folder", "", "New Folder", "", "folder", [](const std::string& d, const std::string& n) { return g_pb->CreateFolder(d, n); });
     };
     auto mkScript = [&]{
-        askCreate("New script", "A script you attach to objects.", "NewScript", ".okay", "script", [](const std::string& d, const std::string& n) {
+        askCreate("New script", (std::string("A ") + NewScriptLanguageName() + " script you attach to objects.").c_str(), "NewScript",
+                  std::string(".") + extide::ExtFor(NewScriptLanguage()), "script", [](const std::string& d, const std::string& n) {
             std::string stem = fs::path(fs::u8path(n)).stem().string();
-            return g_pb->MakeFile(d, n, extide::RenameScriptClass(extide::StarterScript("okayscript"), extide::ClassIdent(stem)));
+            return g_pb->MakeFile(d, n, extide::RenameScriptClass(extide::StarterScript(NewScriptLanguage()), extide::ClassIdent(stem)));
         }, [](const std::string& p) { OpenScriptFileInEditor(NativePath(p)); g_showScriptEditor = true; });
     };
     auto mkMaterial = [&]{
@@ -13837,8 +13851,67 @@ void DrawScriptDocs() {
         ImGui::PopStyleColor(2);
     };
 
+    // ---- C#: the language new scripts are made in (engine/src/Script, our own) ----
+    if (ImGui::CollapsingHeader("C# (new scripts)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextWrapped("New scripts are C# files (.cs). They run on the engine's own C# language: "
+            "no Mono or .NET is needed. A script is a class that extends MonoBehaviour (or Behaviour); "
+            "its public fields show in the Inspector and the engine calls Start, Update and the other "
+            "lifecycle methods by name. The script is checked before it runs: a mistake shows in the "
+            "Script Editor with its line and column. Old OkayScript (.okay) scripts keep working.");
+        code("using UnityEngine;\n\npublic class Mover : MonoBehaviour\n{\n    [SerializeField] private float speed = 5f;\n"
+             "    public int Score { get; private set; }\n\n    void Update()\n    {\n"
+             "        float h = Input.GetAxis(\"Horizontal\");\n"
+             "        transform.position += new Vector3(h, 0, 0) * speed * Time.deltaTime;\n"
+             "        if (Input.GetKeyDown(KeyCode.Space)) Score++;\n    }\n}");
+        SectionHeader("What works");
+        ImGui::BulletText("using lines, a namespace, public / private, [SerializeField], [Header], [Range], [Tooltip]");
+        ImGui::BulletText("fields, properties ({ get; set; }, => and get / set code), methods, => bodies");
+        ImGui::BulletText("int, float, bool, string, Vector3, arrays, List<T>, Dictionary<K, V>, enums");
+        ImGui::BulletText("if, switch, for, foreach, while, do, try / catch / finally, throw");
+        ImGui::BulletText("classes, inheritance, interfaces, is / as, events, lambdas, Func / Action, LINQ-style methods");
+        ImGui::BulletText("coroutines: IEnumerator, yield return new WaitForSeconds(t), StartCoroutine");
+        ImGui::BulletText("GetComponent<T>() for engine components and your own scripts; KeyCode.W style keys");
+        ImGui::BulletText("OnTriggerEnter(Collider other), OnCollisionEnter(Collision c) and the 2D ones");
+        ImGui::BulletText("text members (Length, Substring, Split, ...), ToString(), int.Parse, Random.Range");
+        ImGui::BulletText("delegate declarations, default parameter values");
+        SectionHeader("Not yet");
+        ImGui::TextWrapped("structs, generics of your own, Quaternion, async, static members in plain classes. "
+            "Using one gives a clear error with its line.");
+        SectionHeader("Engine API for C#");
+        ImGui::TextWrapped("Every type and member a C# script can use (the same table the checker, autocomplete "
+            "and the visual-script Engine API nodes use).");
+        static char s_csFilter[64] = "";
+        ImGui::SetNextItemWidth(260);
+        ImGui::InputTextWithHint("##csapifilter", "Filter (e.g. Rigidbody, Translate)", s_csFilter, sizeof s_csFilter);
+        static const std::string s_ref = okay::vs::VsApiReference();
+        ImGui::BeginChild("##csapiref", ImVec2(-1, 260), true);
+        {
+            std::string needle = s_csFilter;
+            for (auto& c : needle) c = (char)std::tolower((unsigned char)c);
+            std::size_t a = 0;
+            int shown = 0;
+            while (a < s_ref.size() && shown < 600) {
+                std::size_t b = s_ref.find('\n', a);
+                if (b == std::string::npos) b = s_ref.size();
+                std::string line = s_ref.substr(a, b - a);
+                a = b + 1;
+                if (line.empty()) continue;
+                if (!needle.empty()) {
+                    std::string low = line;
+                    for (auto& c : low) c = (char)std::tolower((unsigned char)c);
+                    if (low.find(needle) == std::string::npos) continue;
+                }
+                if (line.rfind("#", 0) == 0) ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "%s", line.c_str());
+                else ImGui::TextWrapped("%s", line.c_str());
+                ++shown;
+            }
+        }
+        ImGui::EndChild();
+        ImGui::Spacing();
+    }
+
     // ---- Tutorial: teach the language from scratch ----
-    if (ImGui::CollapsingHeader("Learn the basics", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader("OkayScript (old language): learn the basics")) {
         ImGui::TextWrapped("OkayScript is a small, friendly language for game logic. "
             "You write two functions: start() runs once, update(dt) runs every frame "
             "(dt = seconds since the last frame). Everything below is just those two "
@@ -14552,6 +14625,31 @@ static const std::vector<std::string>& ScriptCompletions() {
         if (auto vm = CreateScriptVM("okayscript"))
             for (auto& n : vm->BuiltinNames())
                 if (seen.insert(n).second) m.push_back(n);
+        return m;
+    }();
+    return merged;
+}
+
+// Completion words for C# (and okayscript-next) tabs: the C# keywords the typed
+// language reads, then every type and member of the engine binding table (the same
+// table the checker resolves names against and the visual-script API nodes use).
+static const std::vector<std::string>& CSharpCompletions() {
+    static const std::vector<std::string> merged = [] {
+        std::vector<std::string> m = {
+            "if","else","for","while","do","return","break","continue","switch","case","default",
+            "var","new","public","private","protected","static","const","readonly","true","false","null",
+            "this","base","foreach","in","try","catch","finally","throw","yield","is","as",
+            "class","interface","abstract","virtual","override","event","enum","using","namespace",
+            "get","set","value","void","int","float","bool","string",
+            "MonoBehaviour","IEnumerator","Coroutine","WaitForSeconds","WaitUntil","WaitWhile",
+            "StartCoroutine","StopCoroutine","StopAllCoroutines","GetComponent","Destroy",
+            "List","Dictionary","KeyValuePair","Action","Func","Exception",
+            "SerializeField","Header","Range","Tooltip",
+        };
+        std::unordered_set<std::string> seen(m.begin(), m.end());
+        okay::NextScriptVM vm(okay::NextScriptVM::kCSharpLanguage);
+        for (auto& n : vm.BuiltinNames())
+            if (seen.insert(n).second) m.push_back(n);
         return m;
     }();
     return merged;
@@ -15728,7 +15826,7 @@ static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
             "WaitForEndOfFrame","Rigidbody","Rigidbody2D","SpriteRenderer","MeshRenderer","Renderer",
             "Animator","AudioSource","Collider","Collider2D","Collision","Collision2D","ForceMode2D",
             "SerializeField","Header","Range","Tooltip","Action","Func","String","Text",
-            "SortedDictionary","IEnumerable",
+            "SortedDictionary","IEnumerable","MonoBehaviour","Behaviour","Exception","WaitUntil","WaitWhile",
         };
         for (auto* t : kTypes) {
             TextEditor::Identifier id; id.mDeclaration = std::string(t) + " (built-in type)";
@@ -15941,26 +16039,30 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
     for (const char* c = name; *c; ++c)
         if (std::isalnum((unsigned char)*c) || *c == '_') stem += *c;
     if (stem.size() > 5 && stem.substr(stem.size() - 4) == "okay") stem.erase(stem.size() - 4);
+    if (stem.size() > 2 && stem.substr(stem.size() - 2) == "cs" && std::strchr(name, '.')) stem.erase(stem.size() - 2);
     if (stem.empty() || std::isdigit((unsigned char)stem[0])) stem = "Script" + stem;
-    // The language (every backend this build runs): its file extension and starter script.
-    static int langIdx = 0;
-    static const std::vector<std::string> langs = okay::AvailableScriptLanguages();
-    if (langIdx < 0 || langIdx >= (int)langs.size()) langIdx = 0;
-    const std::string lang = langs.empty() ? std::string("okayscript") : langs[(std::size_t)langIdx];
-    const std::string ext = "." + extide::ExtFor(lang);
+    const std::string lang = NewScriptLanguage();
+    const std::string ext = std::string(".") + extide::ExtFor(lang);
     fs::path p = dir / (stem + ext);
     ImGui::TextDisabled("A new script file you can attach to any object.");
     ImGui::Spacing();
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     ImGui::SetNextItemWidth(320);
     bool enter = ImGui::InputText("Name", name, sizeof(name), ImGuiInputTextFlags_EnterReturnsTrue);
-    if (langs.size() > 1) {
-        std::vector<std::string> labels;
-        for (const auto& l : langs) labels.push_back(l == "okayscript" ? "OkayScript (.okay)" : l == "lua" ? "Lua (.lua)" : l);
-        std::vector<const char*> items;
-        for (const auto& l : labels) items.push_back(l.c_str());
+    // The language for new scripts (remembered; existing scripts keep theirs).
+    {
+        int li = g_newScriptCSharp ? 0 : (g_newScriptLua ? 1 : 2);
+        const char* langs[] = {"C# (.cs)", "Lua (.lua)", "OkayScript (old, .okay)"};
         ImGui::SetNextItemWidth(320);
-        ImGui::Combo("Language", &langIdx, items.data(), (int)items.size());
+        if (ImGui::Combo("Language", &li, langs, 3)) {
+            g_newScriptCSharp = (li == 0);
+            g_newScriptLua = (li == 1);
+            SaveSettings();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("C# runs on the engine's own C# language (class Name : MonoBehaviour).\n"
+                              "Lua runs on the engine's own Lua 5.4 interpreter (a file returning a table).\n"
+                              "OkayScript is the older language; its scripts keep working.");
     }
     ImGui::TextDisabled("Assets/Scripts/%s%s", stem.c_str(), ext.c_str());
     std::error_code ec;
@@ -17255,11 +17357,13 @@ void DrawScriptEditor(EditorState& ed) {
                         }
                     }
                 }
-                if (sc->Language() == okay::NextScriptVM::kLanguage) {
-                    // The new language's own checker: every error and "does nothing"
+                if (okay::NextScriptVM::IsTypedId(sc->Language())) {
+                    // The new language's own checker (also C#): every error and "does nothing"
                     // warning comes from the compiler that runs the script.
                     static okay::NextScriptVM s_nextCheck;
-                    for (auto& d : s_nextCheck.ValidateAll(buf.data())) {
+                    static okay::NextScriptVM s_csCheck(okay::NextScriptVM::kCSharpLanguage);
+                    okay::NextScriptVM& checker = okay::NextScriptVM::IsCSharpId(sc->Language()) ? s_csCheck : s_nextCheck;
+                    for (auto& d : checker.ValidateAll(buf.data())) {
                         if (d.severity == 0) s_diags.push_back(d);
                         else s_warns.push_back({d.line, d.message, {}, {}, d.column});
                     }
@@ -18151,7 +18255,8 @@ void DrawScriptEditor(EditorState& ed) {
                 std::vector<std::string> combined;
                 if (!memberMode) {
                     static const std::vector<std::string> s_luaWords = okay::LuaScriptVM::CompletionNames();
-                    combined = sc->Language() == okay::LuaScriptVM::kLanguage ? s_luaWords : ScriptCompletions();
+                    combined = sc->Language() == okay::LuaScriptVM::kLanguage ? s_luaWords
+                             : okay::NextScriptVM::IsTypedId(sc->Language()) ? CSharpCompletions() : ScriptCompletions();
                     AddBufferIdentifiers(buf.data(), combined);
                 }
                 const std::vector<std::string>& pool = memberMode ? members : combined;
@@ -21902,7 +22007,7 @@ void DrawHierarchy(EditorState& ed) {
                         else if (auto* mr = node->GetComponent<MeshRenderer>())   mr->texture = path;
                         else if (auto* sr = node->GetComponent<SpriteRenderer>()) sr->texture = path;
                         ed.dirty = true; ConsoleLog("Set texture on " + node->name);
-                    } else if (ext == ".okay" || ext == ".okayvs") {   // attach a script
+                    } else if (ext == ".okay" || ext == ".cs" || ext == ".okayvs") {   // attach a script
                         AttachScriptAsset(ed, node, path);
                         ed.Select(node);
                     } else if (ext == ".ttf" || ext == ".otf") {   // set font on a Text/Button
@@ -28593,6 +28698,13 @@ static bool ScriptAttrArg(const std::string& line, const char* attr, std::string
 // brace depth 0 (classic top-level) or 1,
 // where the left side is an identifier (optionally typed / public / attributed)
 // and not a function call. Locals inside function bodies (deeper) are ignored.
+// Events and Func / Action fields hold functions, not values to type in.
+static bool IsFunctionField(const std::vector<std::string>& toks) {
+    for (const auto& t : toks)
+        if (t == "event" || t == "Action" || t.rfind("Action<", 0) == 0 || t.rfind("Func<", 0) == 0) return true;
+    return false;
+}
+
 static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
     std::vector<ScriptField> out;
     std::unordered_set<std::string> seen;
@@ -28603,11 +28715,17 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
     std::string pendH, pendT; bool pendR = false; float pendRmin = 0, pendRmax = 1;
     std::istringstream in(src);
     std::string line;
+    // A C# `namespace X { ... }` puts the class one level deeper: its fields are at depth 2.
+    int nsLevels = 0;
     while (std::getline(in, line)) {
         int startDepth = depth;
         std::string code = line;
         if (auto cm = code.find("//"); cm != std::string::npos) code = code.substr(0, cm);
-        if (startDepth <= 1) {
+        if (depth == 0 && nsLevels == 0) {
+            std::istringstream ns(code); std::string w0;
+            if (ns >> w0 && w0 == "namespace" && code.find(';') == std::string::npos) nsLevels = 1;
+        }
+        if (startDepth <= 1 + nsLevels) {
             // Capture [Header("..")] / [Tooltip("..")] / [Range(a,b)] (standalone or inline).
             std::string av;
             if (ScriptAttrArg(code, "Header", av))  pendH = av;
@@ -28636,8 +28754,8 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
                     for (char c : lhs) { if (c == '[') inb = true; else if (c == ']') inb = false; else if (!inb) l2 += c; }
                     std::vector<std::string> toks; { std::istringstream ls(l2); std::string t; while (ls >> t) toks.push_back(t); }
                     bool hasPublic = false, hasPrivate = false;
-                    for (auto& t : toks) { if (t == "public") hasPublic = true; if (t == "private" || t == "static") hasPrivate = true; }   // a static is shared, not this object's setting
-                    if (!toks.empty() && (hasPublic || hasSerialize) && !hasPrivate) {
+                    for (auto& t : toks) { if (t == "public") hasPublic = true; if ((t == "private" && !hasSerialize) || t == "static") hasPrivate = true; }   // a static is shared, not this object's setting; [SerializeField] private shows (C#)
+                    if (!toks.empty() && (hasPublic || hasSerialize) && !hasPrivate && !IsFunctionField(toks)) {
                         std::string name = toks.back();
                         bool valid = !name.empty() && (std::isalpha((unsigned char)name[0]) || name[0] == '_');
                         for (char c : name) if (!(std::isalnum((unsigned char)c) || c == '_')) valid = false;
@@ -28678,8 +28796,8 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
                     for (char c : c2) { if (c == '[') inb = true; else if (c == ']') inb = false; else if (!inb) l2 += c; }
                     std::vector<std::string> toks; { std::istringstream ls(l2); std::string t; while (ls >> t) toks.push_back(t); }
                     bool hasPublic = false, hasPrivate = false;
-                    for (auto& t : toks) { if (t == "public") hasPublic = true; if (t == "private" || t == "static") hasPrivate = true; }   // a static is shared, not this object's setting
-                    if (toks.size() >= 2 && (hasPublic || hasSerialize) && !hasPrivate) {
+                    for (auto& t : toks) { if (t == "public") hasPublic = true; if ((t == "private" && !hasSerialize) || t == "static") hasPrivate = true; }   // [SerializeField] private shows (C#)
+                    if (toks.size() >= 2 && (hasPublic || hasSerialize) && !hasPrivate && !IsFunctionField(toks)) {
                         std::string name = toks.back();
                         bool valid = !name.empty() && (std::isalpha((unsigned char)name[0]) || name[0] == '_');
                         for (char c : name) if (!(std::isalnum((unsigned char)c) || c == '_')) valid = false;
@@ -31116,7 +31234,7 @@ static void InspectorHeaderDrop(EditorState& ed, GameObject* go, bool okayui = f
             std::string path((const char*)p->Data), ext;
             if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
             for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-            if (ext == ".okay" || ext == ".okayvs") {
+            if (ext == ".okay" || ext == ".cs" || ext == ".okayvs") {
                 AttachScriptAsset(ed, go, path);
             } else if (ext == ".okaymat") {
                 if (auto* mr = go->GetComponent<MeshRenderer>()) {
@@ -36855,7 +36973,7 @@ void DrawInspector(EditorState& ed) {
             std::string path((const char*)p->Data), ext;
             if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
             for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-            if (ext == ".okay" || ext == ".okayvs") {
+            if (ext == ".okay" || ext == ".cs" || ext == ".okayvs") {
                 AttachScriptAsset(ed, go, path);
             } else if (ext == ".okaymat") {
                 if (auto* mr = go->GetComponent<MeshRenderer>()) {
@@ -49022,10 +49140,10 @@ void DrawInspector(EditorState& ed) {
                     if (!e.is_regular_file()) continue;
                     std::string ext = e.path().extension().string();
                     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-                    if (ext != ".okay" && ext != ".okayvs") continue;
+                    if (ext != ".okay" && ext != ".cs" && ext != ".okayvs") continue;
                     std::string full = e.path().string();
                     std::string rel = fs::relative(e.path(), assets, ec).string();
-                    std::string lbl = rel + (ext == ".okayvs" ? "  (visual)" : "");
+                    std::string lbl = rel + (ext == ".okayvs" ? "  (visual)" : ext == ".cs" ? "  (C#)" : "");
                     if (item(true, lbl.c_str())) AttachScriptAsset(ed, go, full);
                 }
             }
@@ -49313,7 +49431,7 @@ void DrawInspector(EditorState& ed) {
     // to the target object.
     if (g_newScriptOpen && !ImGui::IsPopupOpen("New Script")) ImGui::OpenPopup("New Script");
     if (ImGui::BeginPopupModal("New Script", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextDisabled("Creates Assets/<name>.okay and attaches it.");
+        ImGui::TextDisabled("Creates Assets/<name>.%s (%s) and attaches it.", extide::ExtFor(NewScriptLanguage()).c_str(), NewScriptLanguageName());
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         bool enter = ImGui::InputText("Name", g_newScriptName, sizeof(g_newScriptName),
                                       ImGuiInputTextFlags_EnterReturnsTrue);
@@ -49338,15 +49456,17 @@ void DrawInspector(EditorState& ed) {
                                                       : fs::path(ed.projectDir()) / "Assets";
             std::error_code se; fs::create_directories(assets, se);
             std::string base = g_newScriptName;
-            if (base.size() < 5 || base.substr(base.size() - 5) != ".okay") base += ".okay";
+            const std::string nlang = NewScriptLanguage();
+            const std::string next = std::string(".") + extide::ExtFor(nlang);
+            if (base.size() < next.size() || base.substr(base.size() - next.size()) != next) base += next;
             fs::path p = assets / base;
             if (fs::exists(p, se)) {
                 ConsoleLog("Script already exists: " + p.string());
             } else {
                 // Class name follows the file name.
-                std::ofstream(p) << extide::StarterScriptNamed("okayscript", p.stem().string());
+                std::ofstream(p) << extide::StarterScriptNamed(nlang, p.stem().string());
             }
-            auto* nsc = g_newScriptGO->AddComponent<ScriptComponent>("okayscript");
+            auto* nsc = g_newScriptGO->AddComponent<ScriptComponent>(nlang);
             std::string err; nsc->LoadFile(p.string(), &err); nsc->SetPath(p.string());
             ConsoleLog("Created + attached " + p.string());
             ed.dirty = true;
@@ -49369,7 +49489,7 @@ void DrawInspector(EditorState& ed) {
                 std::string path((const char*)p->Data), ext;
                 if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
                 for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-                if (ext == ".okay" || ext == ".okayvs") {
+                if (ext == ".okay" || ext == ".cs" || ext == ".okayvs") {
                     AttachScriptAsset(ed, go, path);
                 } else if (ext == ".okaymat") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
@@ -55302,7 +55422,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             Vec3 drop = ed.view3D ? ed.camTarget
                                   : Vec3{ed.cameraPos.x, ed.cameraPos.y, 0.0f};
             GameObject* placed = nullptr;
-            if (ext == ".okay" || ext == ".okayvs") {
+            if (ext == ".okay" || ext == ".cs" || ext == ".okayvs") {
                 // A script dropped on the view goes on the selected object.
                 if (ed.selected()) AttachScriptAsset(ed, ed.selected(), path);
                 else ConsoleLog("Select an object first (or drop the script onto it in the Hierarchy).", 1);
@@ -56924,8 +57044,9 @@ static bool SaveProject(EditorState& ed, bool interactive) {
             namespace fs = std::filesystem;
             const fs::path dir = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
             std::error_code ec; fs::create_directories(dir, ec);
-            std::string p = (dir / "Untitled.okay").string();
-            for (int k = 2; fs::exists(p, ec); ++k) p = (dir / ("Untitled" + std::to_string(k) + ".okay")).string();
+            const std::string uext = std::string(".") + extide::ExtFor(t->Language());
+            std::string p = (dir / ("Untitled" + uext)).string();
+            for (int k = 2; fs::exists(p, ec); ++k) p = (dir / ("Untitled" + std::to_string(k) + uext)).string();
             t->SetPath(p);
         }
         if (SaveEditorDocument(t->Path(), live)) { g_scriptSaved[t] = live; ++scripts; }
@@ -59061,19 +59182,28 @@ int main(int argc, char** argv) {
                 g_showScriptEditor = true; g_scriptDockReq = 1;
                 if (sn[0] == '2') g_seNewReq = true;
             }
-            // OKAY_UI_SCRIPT=open: the selection's own script; =lua: a Lua starter script; =luaerr: a Lua
-            // script with a syntax error and a misspelled engine name (the checks, in screenshots).
+            // OKAY_UI_SCRIPT=open: the selection's own script; =1: an OkayScript starter; =lua: a Lua
+            // starter; =luaerr: a Lua script with a syntax error and a misspelled engine name; =cs: a
+            // C# starter; =csbad: a C# script with a mistake (the checks show inline, in screenshots).
             if (const char* us = std::getenv("OKAY_UI_SCRIPT"); us && s_focusFrames == 42)
                 if (GameObject* g = ed.selected()) {
                     const std::string mode = us;
                     if (mode != "open") {
                         const bool lua = mode == "lua" || mode == "luaerr";
-                        auto* scr = g->AddComponent<ScriptComponent>(lua ? "lua" : "okayscript");
-                        std::string src = extide::StarterScriptNamed(lua ? "lua" : "okayscript", "Player");
+                        const bool cs = mode.compare(0, 2, "cs") == 0;
+                        const char* lang = lua ? "lua" : cs ? "csharp" : "okayscript";
+                        auto* scr = g->AddComponent<ScriptComponent>(lang);
+                        std::string src = extide::StarterScriptNamed(lang, "Player");
                         if (mode == "luaerr")
                             src = "local Player = { speed = 5 }\n\nfunction Player:Update(dt)\n"
                                   "    if Input.GetKeyy(\"space\") then\n        self.transform:Translate(0, self.speed * dt, 0)\n"
                                   "    end\n    local broken = = 1\nend\n\nreturn Player\n";
+                        if (mode == "csbad")
+                            src = "using UnityEngine;\n\npublic class Player : MonoBehaviour\n{\n    [SerializeField] private float speed = 5f;\n"
+                                  "    public int Score { get; private set; }\n\n    void Update()\n    {\n"
+                                  "        transform.position += new Vector3(1, 0, 0) * sped * Time.deltaTime;\n"
+                                  "        if (Input.GetKeyDown(KeyCode.Space)) Score++;\n    }\n}\n";
+                        if (std::getenv("OKAY_UI_SCRIPTDOCS")) g_showScriptDocs = true;
                         scr->SetSource(src); scr->LoadSource(src);
                     }
                     g_showScriptEditor = true; ImGui::SetWindowFocus("Script Editor");

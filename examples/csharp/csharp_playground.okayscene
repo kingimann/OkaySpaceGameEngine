@@ -1,0 +1,157 @@
+okayscene 3
+name "C# playground: three C# scripts (move, hop, spin, score)"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+gameobject 0 "Sun"
+  guid "c5a1e07002a0af2d3f73728704c43b01"
+  active 1
+  parent -1
+  transform 0 0 0 0.38791165 -0.27470842 0.12230807 0.8712638 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 1 "Main Camera"
+  guid "c5a4c9148d86bc350b24f4a47c0eb87f"
+  active 1
+  parent -1
+  transform 0 7 14 -0.25881904 0 0 0.9659258 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 2 "Ground"
+  guid "c5c147bbfcf6810ee5a9e4366a03c08e"
+  active 1
+  parent -1
+  transform 0 -0.5 0 0 0 0 1 30 1 30
+  mesh "Cube" 0.36 0.55 0.28 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 3 "Player"
+  guid "c5d7bd259186f1af8d87b0469ac09a36"
+  active 1
+  parent -1
+  transform -2 0.5 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.2 0.6 1 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  script "csharp" "using UnityEngine;
+using System.Collections;
+
+namespace Playground
+{
+    // Move with W A S D (or the arrow keys). Space hops; every hop is counted.
+    public class PlayerMover : MonoBehaviour
+    {
+        [Header(\"Movement\")]
+        [SerializeField] private float speed = 5f;
+        [Range(0, 5)] public float hopHeight = 1.5f;
+
+        // A property: other scripts can read it, only this class sets it.
+        public int Hops { get; private set; }
+
+        void Start()
+        {
+            Debug.Log(\"C# playground: move with W A S D, hop with Space.\");
+        }
+
+        void Update()
+        {
+            float h = Input.GetAxis(\"Horizontal\");
+            float v = Input.GetAxis(\"Vertical\");
+            transform.position += new Vector3(h, 0, -v) * speed * Time.deltaTime;
+            if (Input.GetKeyDown(KeyCode.Space)) StartCoroutine(Hop());
+        }
+
+        // A coroutine: up, wait a quarter of a second, down.
+        IEnumerator Hop()
+        {
+            Hops++;
+            transform.Translate(0, hopHeight, 0);
+            yield return new WaitForSeconds(0.25f);
+            transform.Translate(0, -hopHeight, 0);
+            Debug.Log($\"Hops: {Hops}\");
+        }
+    }
+}
+" "" 0
+  script "csharp" "using System.Collections.Generic;
+using UnityEngine;
+using Playground;   // PlayerMover lives in this namespace
+
+// How hops turn into points. Swap in another class to change the rules.
+public interface IScorer
+{
+    int Score(int hops);
+}
+
+public class Doubler : IScorer
+{
+    public int Score(int hops) => hops * 2;
+}
+
+// Every three seconds: reads the hops from the PlayerMover script on the same
+// object, keeps a list of scores and logs the best one so far.
+public class Scoreboard : MonoBehaviour
+{
+    private List<int> history = new List<int>();
+    private IScorer scorer;
+    private float timer;
+
+    void Start()
+    {
+        scorer = new Doubler();
+    }
+
+    void Update()
+    {
+        timer += Time.deltaTime;
+        if (timer < 3f) return;
+        timer = 0f;
+
+        PlayerMover mover = GetComponent<PlayerMover>();
+        if (mover == null) return;
+        int points = scorer.Score(mover.Hops);
+        history.Add(points);
+
+        int best = 0;
+        foreach (int p in history)
+            if (p > best) best = p;
+
+        string rank;
+        switch (best)
+        {
+            case 0: rank = \"no hops yet\"; break;
+            case 2: case 4: rank = \"warming up\"; break;
+            default: rank = \"hopping well\"; break;
+        }
+        Debug.Log($\"Score {points}, best {best}: {rank}\");
+    }
+}
+" "" 0
+end
+gameobject 4 "Spinner"
+  guid "c5e8ce36a297f2b0e9e9c157abd0ab47"
+  active 1
+  parent -1
+  transform 3 1 0 0 0 0 1 1 2 1
+  mesh "Cube" 1 0.55 0.2 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  script "csharp" "using UnityEngine;
+
+// Turns the object around its up axis. Change Degrees Per Second in the Inspector.
+public class Spinner : MonoBehaviour
+{
+    public float degreesPerSecond = 90f;
+    private float turned;
+
+    // A property with code: worked out each time it is read.
+    public float Turns => turned / 360f;
+
+    void Update()
+    {
+        float step = degreesPerSecond * Time.deltaTime;
+        transform.Rotate(0, step, 0);
+        turned += step;
+    }
+}
+" "" 0
+end

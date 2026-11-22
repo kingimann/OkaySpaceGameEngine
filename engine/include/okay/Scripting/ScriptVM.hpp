@@ -107,17 +107,23 @@ public:
     virtual std::vector<std::string> GlobalNames() const { return {}; }
 };
 
-/// Names of the script backends in this build: "okayscript" (our own VM) and "lua"
-/// (our own Lua interpreter, okay::lua).
+/// Names of the script backends in this build: "okayscript" (our own VM), "csharp"
+/// (C#, run by our own typed language; "cs" is accepted as the same id) and "lua"
+/// (our own Lua 5.4 interpreter, okay::lua).
 std::vector<std::string> AvailableScriptLanguages();
 
 /// Create a VM for the given language, or nullptr if unsupported in this build.
 std::unique_ptr<IScriptVM> CreateScriptVM(const std::string& language);
 
-/// Old scenes and projects may still name the removed third-party Mono backend
-/// ("csharp"/"cs"). Returns a clear "no longer supported" message for those
-/// language names, or an empty string for any other name. Loading such a script
-/// fails with this message instead of failing silently.
+/// Old scenes and projects may name a removed third-party backend. Returns a clear
+/// "no longer supported" message for such a language name, or an empty string for
+/// any other name. Today the list is empty: "lua" runs on our own interpreter
+/// (okay::lua) and "csharp"/"cs" run on our own typed language. The function stays
+/// so a future removal has one place to report it.
 std::string RemovedScriptLanguageMessage(const std::string& language);
+
+/// The language id for a script file's extension (".cs" -> "csharp", ".okay" ->
+/// "okayscript"; case is ignored). Unknown extensions give "okayscript".
+const char* ScriptLanguageForExtension(const std::string& ext);
 
 } // namespace okay

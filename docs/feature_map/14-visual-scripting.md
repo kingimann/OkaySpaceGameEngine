@@ -171,7 +171,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Docs:** `docs/scripting/visual_scripting.md`
 - **Tests:** `vs_editor_model` (`export_wait_delay_matches_runtime`, `export_timer_matches_runtime`, `export_actions_matches_runtime`)
 - **Status:** Works for Wait, Delay, Timer, and every Actions step. A graph node with no script fails the export by name instead of becoming a comment
-- **Open:** some graph nodes (object references, functions, lists, scene and global variables, springs) are still listed as not translated; Cooldown is still a comment
+- **Open:** some graph nodes (object references, functions, lists, scene and global variables, springs) are still listed as not translated; Cooldown is still a comment; the preview has no C# target yet (planned: one graph walk, a C# writer beside `CompileToOkayScript`, see `docs/scripting/migration_plan.md` "Visual scripting")
 - **Related:** 14.1, 14.6, 13.1
 - **Words:** convert graph to script, OkayScript preview, export to code, import script, recipes
 - **Seen as:** the generated script behaves differently from the graph; View as OkayScript names a node it cannot export; import loses a step

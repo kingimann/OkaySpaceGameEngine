@@ -769,7 +769,7 @@ static void Classes() {
             "    public Bag(int a) { }\n"                                // 8
             "}\n"                                                         // 9
             "class Node { public int value; }\n"                         // 10
-            "class Fancy : Node { }\n"                                   // 11
+            "class Fancy : Node, Bag { }\n"                              // 11
             "class Node { }\n"                                           // 12
             "class T : Behaviour {\n"                                    // 13
             "    T() { }\n"                                              // 14
@@ -790,7 +790,7 @@ static void Classes() {
         CHECK(Has(d, 0, "static members only work in the Behaviour class for now", 6, 16));
         CHECK(Has(d, 0, "A constructor can't return a value", 7, 25));
         CHECK(Has(d, 0, "Bag already has a constructor that takes 1 value", 8, 12));
-        CHECK(Has(d, 0, "Inheritance between classes isn't supported yet", 11, 15));
+        CHECK(Has(d, 0, "A class extends one class, named first: Bag is a class", 11, 21));
         CHECK(Has(d, 0, "'Node' is declared twice", 12, 7));
         CHECK(Has(d, 0, "A Behaviour script has no constructor: set things up in Awake() or Start()", 14, 5));
         CHECK(Has(d, 0, "Bag has no constructor that takes 0 values", 19, 17));
@@ -1178,6 +1178,512 @@ static void Lambdas() {
     }
 }
 
+static void Events() {
+    {   // event fields, += / -= with lambdas and methods, called in the order added
+        World w(
+            "class Health {\n"
+            "    public event Action<int> Damaged;\n"
+            "    public event Action Died;\n"
+            "    public int hp = 10;\n"
+            "    public void Hit(int d) {\n"
+            "        hp -= d;\n"
+            "        Damaged?.Invoke(d);\n"
+            "        if (hp <= 0) Died?.Invoke();\n"
+            "    }\n"
+            "}\n"
+            "class T : Behaviour {\n"
+            "    public int taken, deaths, order, afterRemove, cleared;\n"
+            "    public bool same, noneLeft;\n"
+            "    void OnDamaged(int d) { taken += d; order = order * 10 + 1; }\n"
+            "    void OnDied() { deaths++; }\n"
+            "    void Start() {\n"
+            "        Health h = new Health();\n"
+            "        h.Damaged += OnDamaged;\n"
+            "        h.Damaged += d => order = order * 10 + 2;\n"
+            "        h.Died += OnDied;\n"
+            "        h.Hit(4);\n"
+            "        h.Damaged -= OnDamaged;\n"
+            "        h.Hit(6);\n"
+            "        afterRemove = taken;\n"
+            "        h.Died -= OnDied;\n"
+            "        h.Hit(1);\n"
+            "        Action a = OnDied, b = OnDied;\n"
+            "        same = a == b;\n"
+            "        Action c = a;\n"
+            "        c += b;\n"
+            "        c -= a; c -= b;\n"
+            "        noneLeft = c == null;\n"
+            "        Func<int> one = () => 1, two = () => 2;\n"
+            "        Func<int> both = one;\n"
+            "        both += two;\n"
+            "        cleared = both();\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("taken"), 4.0f, 1e-6f);
+        CHECK_NEAR(w.F("afterRemove"), 4.0f, 1e-6f);
+        CHECK_NEAR(w.F("deaths"), 1.0f, 1e-6f);
+        CHECK_NEAR(w.F("order"), 1222.0f, 1e-6f);        // 1 then 2 (first hit), 2 (second), 2 (third)
+        CHECK(w.sc->VM()->GetGlobal("same").AsBool());     // the same method of the same object
+        CHECK(w.sc->VM()->GetGlobal("noneLeft").AsBool());
+        CHECK_NEAR(w.F("cleared"), 2.0f, 1e-6f);           // a Func with two parts gives the last one's value
+    }
+    {   // a handler that removes itself while the event runs doesn't upset it; methods given to LINQ-style calls
+        World w(
+            "class Bus { public event Action Ping; public void Send() { Ping?.Invoke(); } }\n"
+            "class T : Behaviour {\n"
+            "    public int pings, alive;\n"
+            "    Bus bus = new Bus();\n"
+            "    void Once() { pings++; bus.Ping -= Once; }\n"
+            "    bool IsAlive(int hp) { return hp > 0; }\n"
+            "    void Start() {\n"
+            "        bus.Ping += Once;\n"
+            "        bus.Ping += () => pings += 10;\n"
+            "        bus.Send(); bus.Send();\n"
+            "        alive = new List<int> { 3, 0, 5 }.Count(IsAlive);\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("pings"), 21.0f, 1e-6f);
+        CHECK_NEAR(w.F("alive"), 2.0f, 1e-6f);
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(
+            "class Health { public event Action<int> Damaged; public event int hp; void Fire() { Damaged(1); Damaged = null; } }\n"   // 1
+            "class T : Behaviour {\n"                                                       // 2
+            "    void OnHit() { }\n"                                                        // 3
+            "    void Start() {\n"                                                          // 4
+            "        Health h = new Health();\n"                                            // 5
+            "        h.Damaged(3);\n"                                                       // 6
+            "        h.Damaged = null;\n"                                                   // 7
+            "        var f = h.Damaged;\n"                                                  // 8
+            "        h.Damaged += OnHit;\n"                                                 // 9
+            "        Debug.Log(OnHit);\n"                                                   // 10
+            "        h.Damaged *= null;\n"                                                  // 11
+            "    }\n"
+            "    public event void Bad() { }\n"                                             // 13
+            "}\n");
+        CHECK(Has(d, 0, "An event holds functions: event Action hp; or event Action<int> hp;", 1, 67));
+        CHECK(Has(d, 0, "'Damaged' is an event of Health: outside Health it can only be added to (+=) or removed from (-=)", 6, 11));
+        CHECK(Has(d, 0, "'Damaged' is an event of Health: outside Health it can only be added to (+=) or removed from (-=)", 7, 11));
+        CHECK(Has(d, 0, "'Damaged' is an event of Health: outside Health it can only be added to (+=) or removed from (-=)", 8, 19));
+        CHECK(Has(d, 0, "OnHit() takes 0 values, not 1", 9, 22));
+        CHECK(Has(d, 0, "'OnHit' is a method: call it with OnHit()", 10, 19));
+        CHECK(Has(d, 0, "Only fields can be events: event Action<int> Damaged;", 13, 12));
+        CHECK(std::none_of(d.begin(), d.end(), [](const ScriptDiagnostic& x) { return x.line == 1 && x.message.find("Damaged") != std::string::npos; }));
+    }
+}
+
+static void Inheritance() {
+    {   // classes that extend classes, interfaces, virtual / override / abstract, base, protected, is / as / casts
+        World w(
+            "interface IDamageable { void TakeDamage(int amount); bool IsDead(); }\n"
+            "abstract class Enemy : IDamageable {\n"
+            "    protected int hp;\n"
+            "    public string kind = \"enemy\";\n"
+            "    public Enemy(int hp) { this.hp = hp; }\n"
+            "    public virtual void TakeDamage(int amount) { hp -= amount; }\n"
+            "    public bool IsDead() { return hp <= 0; }\n"
+            "    public abstract int Reward();\n"
+            "    public int Hp() { return hp; }\n"
+            "    public string Describe() { return kind + \":\" + Reward(); }\n"
+            "}\n"
+            "class Grunt : Enemy {\n"
+            "    public Grunt() : base(10) { kind = \"grunt\"; }\n"
+            "    public override int Reward() { return 5; }\n"
+            "}\n"
+            "class Boss : Enemy {\n"
+            "    int armor = 2;\n"
+            "    public Boss(int hp) : base(hp) { }\n"
+            "    public override void TakeDamage(int amount) { base.TakeDamage(amount - armor); }\n"
+            "    public override int Reward() { return 100; }\n"
+            "}\n"
+            "class Crate : IDamageable {\n"
+            "    public int hits;\n"
+            "    public void TakeDamage(int amount) { hits++; }\n"
+            "    public bool IsDead() { return hits >= 2; }\n"
+            "}\n"
+            "class T : Behaviour {\n"
+            "    public int gruntHp, bossHp, reward, dead, bosses, crateHits;\n"
+            "    public string desc;\n"
+            "    public bool notEnemy, same;\n"
+            "    void Start() {\n"
+            "        List<IDamageable> targets = new List<IDamageable> { new Grunt(), new Boss(50), new Crate() };\n"
+            "        foreach (IDamageable t in targets) t.TakeDamage(10);\n"
+            "        foreach (var t in targets) t.TakeDamage(10);\n"
+            "        Enemy g = targets[0] as Enemy;\n"
+            "        gruntHp = g.Hp();\n"
+            "        Boss b = (Boss)targets[1];\n"
+            "        bossHp = b.Hp();\n"
+            "        foreach (var t in targets) {\n"
+            "            if (t is Enemy) reward += (t as Enemy).Reward();\n"
+            "            if (t.IsDead()) dead++;\n"
+            "            if (t is Boss) bosses++;\n"
+            "        }\n"
+            "        crateHits = (targets[2] as Crate).hits;\n"
+            "        desc = g.Describe() + \",\" + b.Describe();\n"
+            "        notEnemy = targets[2] as Enemy == null;\n"
+            "        Enemy e = b;\n"
+            "        same = e == targets[1];\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("gruntHp"), -10.0f, 1e-6f);
+        CHECK_NEAR(w.F("bossHp"), 34.0f, 1e-6f);          // the override takes armor off, then runs the base method
+        CHECK_NEAR(w.F("reward"), 105.0f, 1e-6f);
+        CHECK_NEAR(w.F("dead"), 2.0f, 1e-6f);
+        CHECK_NEAR(w.F("bosses"), 1.0f, 1e-6f);
+        CHECK_NEAR(w.F("crateHits"), 2.0f, 1e-6f);
+        CHECK(w.S("desc") == "grunt:5,enemy:100");          // base code calls the object's own Reward()
+        CHECK(w.sc->VM()->GetGlobal("notEnemy").AsBool());
+        CHECK(w.sc->VM()->GetGlobal("same").AsBool());
+    }
+    {   // a cast to the wrong class is an error with its line
+        g_errs.clear();
+        World w("class A { } class B : A { } class C : A { }\nclass T : Behaviour {\n    void Start() { A a = new C(); B b = (B)a; Debug.Log(b); }\n}\n");
+        CHECK(ErrHas("Start() line 3: This C isn't a B"));
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(
+            "interface IA { void Run(); }\n"   // 1
+            "class Base { public void Walk() { } public virtual int Score() { return 1; } int secret; protected int shared; }\n"   // 2
+            "class D : Base {\n"   // 3
+            "    public void Walk() { }\n"   // 4
+            "    public override string Score() { return \"\"; }\n"   // 5
+            "    public override void Fly() { }\n"   // 6
+            "    public void Use() { secret = 1; shared = 2; base.Nope(); }\n"   // 7
+            "}\n"   // 8
+            "class C : IA { }\n"   // 9
+            "abstract class A { public abstract void Go(); }\n"   // 10
+            "class B : A { }\n"   // 11
+            "class P { public P(int x) { } }\n"   // 12
+            "class Q : P { }\n"   // 13
+            "class R : P { public R() : base(\"a\") { } }\n"   // 14
+            "class K : A { public override void Go() { base.Go(); } }\n"   // 15
+            "class X : Y { }\n"   // 16
+            "class Y : X { }\n"   // 17
+            "class T : Behaviour, IA {\n"   // 18
+            "    void Start() {\n"   // 19
+            "        A a = new A();\n"   // 20
+            "        IA i = new IA();\n"   // 21
+            "        D d = new D(); C c = new C();\n"   // 22
+            "        bool x = d is C;\n"   // 23
+            "        Debug.Log(\"\" + a + i + x + c);\n"   // 24
+            "    }\n"   // 25
+            "    public void Run() { }\n"   // 26
+            "}\n"   // 27
+            );
+        CHECK(Has(d, 0, "Walk() is already in Base: to change what it does, mark it virtual there and override here", 4, 17));
+        CHECK(Has(d, 0, "An override must match what it overrides: int Score() in Base", 5, 28));
+        CHECK(Has(d, 0, "There's no virtual Fly() in what D extends, so there's nothing to override", 6, 26));
+        CHECK(Has(d, 0, "'secret' is private to Base: make it protected (or public) to use it in classes that extend it", 7, 25));
+        CHECK(Has(d, 0, "Base has no method 'Nope'", 7, 54));
+        CHECK(Has(d, 0, "C must have IA's method: public void Run()", 9, 7));
+        CHECK(Has(d, 0, "B must override A.Go()", 11, 7));
+        CHECK(Has(d, 0, "Q needs a constructor that calls base(...): P has no constructor that takes 0 values", 13, 7));
+        CHECK(Has(d, 0, "is string but needs int", 14, 33));
+        CHECK(Has(d, 0, "A.Go() is abstract: there's nothing to call", 15, 48));
+        CHECK(Has(d, 0, "X ends up extending itself", 16, 11));
+        CHECK(Has(d, 0, "A Behaviour class can't extend a class or implement interfaces yet", 18, 22));
+        CHECK(Has(d, 0, "A is abstract: make one of the classes that extend it", 20, 15));
+        CHECK(Has(d, 0, "IA is an interface: make one of the classes that implement it", 21, 16));
+        CHECK(Has(d, 0, "This D is never a C", 23, 20));
+    }
+}
+
+static void TryCatch() {
+    {   // throw / catch by class, engine errors as Exception, throw; and finally in every case
+        World w(
+            "class NotEnoughGold : Exception {\n"
+            "    public int needed;\n"
+            "    public NotEnoughGold(int needed) : base(\"Need \" + needed + \" gold\") { this.needed = needed; }\n"
+            "}\n"
+            "class Shop {\n"
+            "    public int gold = 5;\n"
+            "    public void Buy(int price) { if (price > gold) throw new NotEnoughGold(price - gold); gold -= price; }\n"
+            "}\n"
+            "class T : Behaviour {\n"
+            "    public int needed, finallies, passes, ret, caught;\n"
+            "    public string msg, nullMsg, order;\n"
+            "    int Tries() { try { return 1; } finally { finallies++; } }\n"
+            "    int Forever(int n) { return Forever(n + 1); }\n"
+            "    void Start() {\n"
+            "        Shop s = new Shop();\n"
+            "        try { s.Buy(3); s.Buy(10); msg = \"bought\"; }\n"
+            "        catch (NotEnoughGold e) { needed = e.needed; msg = e.Message; }\n"
+            "        finally { finallies++; }\n"
+            "        try { Shop none = null; none.Buy(1); }\n"
+            "        catch (Exception e) { nullMsg = e.Message; }\n"
+            "        order = \"\";\n"
+            "        try {\n"
+            "            try { throw new Exception(\"inner\"); }\n"
+            "            catch (Exception e) { order += \"c1\"; throw; }\n"
+            "            finally { order += \"f1\"; }\n"
+            "        } catch (Exception e) { order += \"c2:\" + e.Message; }\n"
+            "        ret = Tries();\n"
+            "        for (int i = 0; i < 3; i++) { try { if (i == 1) break; passes++; } finally { finallies++; } }\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("needed"), 8.0f, 1e-6f);
+        CHECK(w.S("msg") == "Need 8 gold");
+        CHECK(w.S("nullMsg") == "'none' is null here");
+        CHECK(w.S("order") == "c1f1c2:inner");
+        CHECK_NEAR(w.F("ret"), 1.0f, 1e-6f);
+        CHECK_NEAR(w.F("passes"), 1.0f, 1e-6f);
+        CHECK_NEAR(w.F("finallies"), 4.0f, 1e-6f);     // the first try, Tries(), and the loop's two passes (one breaks)
+    }
+    {   // an exception nobody catches is reported with its line; endless recursion can't be caught
+        g_errs.clear();
+        World a(
+            "class Oops : Exception { public Oops() : base(\"no ammo\") { } }\n"
+            "class T : Behaviour {\n"
+            "    void Start() { throw new Oops(); }\n"
+            "}\n");
+        CHECK(ErrHas("Start() line 3: Oops: no ammo"));
+        World b(Wrap(
+            "    public int caught;\n"
+            "    int Forever(int n) { return Forever(n + 1); }\n"
+            "    void Start() { try { Forever(0); } catch { caught = 1; } }\n"));
+        CHECK(ErrHas("calls itself too deeply"));
+        CHECK_NEAR(b.F("caught"), 0.0f, 1e-6f);
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(
+            "class T : Behaviour {\n"   // 1
+            "    int F() { try { return 1; } finally { return 2; } }\n"   // 2
+            "    void Start() {\n"   // 3
+            "        throw;\n"   // 4
+            "        throw 5;\n"   // 5
+            "        try { } catch (int e) { }\n"   // 6
+            "        try { } catch (Exception) { } catch (Exception e) { }\n"   // 7
+            "        for (;;) { try { } finally { break; } }\n"   // 8
+            "        Exception x = new Exception(\"a\"); x.Message = \"b\";\n"   // 9
+            "        try { }\n"   // 10
+            "        Debug.Log(F());\n"   // 11
+            "    }\n"   // 12
+            "}\n"   // 13
+            );
+        CHECK(Has(d, 0, "return can't leave a finally block", 2, 43));
+        CHECK(Has(d, 0, "throw; on its own only works inside a catch (it throws the caught exception again)", 4, 9));
+        CHECK(Has(d, 0, "throw needs an Exception, like throw new Exception(\"what went wrong\"), not int", 5, 15));
+        CHECK(Has(d, 0, "catch takes Exception or a class that extends it, not int", 6, 24));
+        CHECK(Has(d, 0, "An earlier catch already catches Exception, so this one never runs", 7, 39));
+        CHECK(Has(d, 0, "break can't leave a finally block", 8, 38));
+        CHECK(Has(d, 0, "'Message' can only be read", 9, 45));
+        CHECK(Has(d, 0, "A try needs a catch or a finally after it", 10, 9));
+    }
+}
+
+static void Coroutines() {
+    {   // StartCoroutine runs to the first yield; null waits a frame, WaitForSeconds its time,
+        // a coroutine its end, WaitUntil its condition; StopCoroutine and yield break end one
+        World w(Wrap(
+            "    public int ticks, blinks, after, nested, finished, cond, early;\n"
+            "    public bool ready;\n"
+            "    Coroutine loop;\n"
+            "    IEnumerator Count() { while (true) { ticks++; yield return null; } }\n"
+            "    IEnumerator Blink(int times) { for (int i = 0; i < times; i++) { blinks++; yield return new WaitForSeconds(0.1f); } after = 1; }\n"
+            "    IEnumerator Child() { yield return null; yield return null; nested = 1; }\n"
+            "    IEnumerator Parent() { yield return StartCoroutine(Child()); finished = nested * 10; }\n"
+            "    IEnumerator WaitReady() { yield return new WaitUntil(() => ready); cond = 1; }\n"
+            "    IEnumerator Early() { early = 1; yield break; }\n"
+            "    void Start() {\n"
+            "        loop = StartCoroutine(Count());\n"
+            "        StartCoroutine(Blink(3)); StartCoroutine(Parent()); StartCoroutine(WaitReady()); StartCoroutine(Early());\n"
+            "    }\n"
+            "    void Update() { if (ticks == 5) { StopCoroutine(loop); ready = true; } }\n"));
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("ticks"), 1.0f, 1e-6f);      // ran to its first yield inside Start
+        CHECK_NEAR(w.F("early"), 1.0f, 1e-6f);
+        w.Frames(1);
+        CHECK_NEAR(w.F("ticks"), 1.0f, 1e-6f);      // paused during Start's frame: goes on from the next one
+        w.Frames(1);
+        CHECK_NEAR(w.F("ticks"), 2.0f, 1e-6f);
+        w.Frames(4);
+        CHECK_NEAR(w.F("blinks"), 1.0f, 1e-6f);     // 0.1 s is six frames
+        CHECK_NEAR(w.F("finished"), 10.0f, 1e-6f);  // waited for Child's end
+        w.Frames(1);
+        CHECK_NEAR(w.F("blinks"), 2.0f, 1e-6f);
+        CHECK_NEAR(w.F("cond"), 1.0f, 1e-6f);
+        w.Frames(20);
+        CHECK_NEAR(w.F("ticks"), 5.0f, 1e-6f);      // stopped
+        CHECK_NEAR(w.F("blinks"), 3.0f, 1e-6f);
+        CHECK_NEAR(w.F("after"), 1.0f, 1e-6f);
+    }
+    {   // coroutines of plain classes; loops, foreach, switch, break and continue around yields
+        World w(
+            "class Spawner {\n"
+            "    public int spawned;\n"
+            "    public IEnumerator Waves(int[] sizes) {\n"
+            "        foreach (int n in sizes) {\n"
+            "            for (int i = 0; i < n; i++) { if (i == 2) break; spawned++; yield return null; }\n"
+            "            yield return null;\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+            "class T : Behaviour {\n"
+            "    public int spawned, log;\n"
+            "    Spawner sp = new Spawner();\n"
+            "    IEnumerator Machine() {\n"
+            "        int step = 0;\n"
+            "        while (true) {\n"
+            "            switch (step) {\n"
+            "                case 0: log = log * 10 + 1; step = 1; yield return null; break;\n"
+            "                case 1: log = log * 10 + 2; step = 2; continue;\n"
+            "                default: log = log * 10 + 3; yield break;\n"
+            "            }\n"
+            "            log = log * 10 + 9;\n"
+            "        }\n"
+            "    }\n"
+            "    void Start() { StartCoroutine(sp.Waves(new int[] { 1, 3 })); StartCoroutine(Machine()); }\n"
+            "    void Update() { spawned = sp.spawned; }\n"
+            "}\n");
+        CHECK(w.loaded);
+        w.Frames(20);
+        CHECK_NEAR(w.F("spawned"), 3.0f, 1e-6f);
+        CHECK_NEAR(w.F("log"), 1923.0f, 1e-6f);
+    }
+    {   // the same coroutine timing on the old runtime (yield return null exactly)
+        const std::string src = Wrap(
+            "    public int ticks, blinks, a1, a7, a8;\n"
+            "    IEnumerator Count() { while (true) { ticks++; yield return null; } }\n"
+            "    IEnumerator Blink() { while (true) { blinks++; yield return new WaitForSeconds(0.1f); } }\n"
+            "    void Start() { StartCoroutine(Count()); StartCoroutine(Blink()); }\n");
+        World next(src), old(src, "okayscript");
+        for (int f = 0; f < 15; ++f) {
+            CHECK_NEAR(next.F("ticks"), old.F("ticks"), 1e-6f);
+            // WaitForSeconds: the old runtime can land a frame later (float rounding on 0.1 - 6 * 1/60)
+            CHECK_NEAR(next.F("blinks"), old.F("blinks"), 1.0f + 1e-6f);
+            next.Frames(1); old.Frames(1);
+        }
+    }
+    {   // an error in a coroutine is reported with its line and ends that coroutine
+        g_errs.clear();
+        World w(Wrap(
+            "    public int after;\n"
+            "    IEnumerator Bad() { yield return null; int[] a = new int[1]; a[3] = 1; after = 1; }\n"
+            "    void Start() { StartCoroutine(Bad()); }\n"));
+        w.Frames(3);
+        CHECK(ErrHas("coroutine line 3: Index 3 is outside the array (length 1)"));
+        CHECK_NEAR(w.F("after"), 0.0f, 1e-6f);
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(
+            "class T : Behaviour {\n"   // 1
+            "    IEnumerator NoYield() { Debug.Log(1); }\n"   // 2
+            "    IEnumerator Ret() { yield return null; return; }\n"   // 3
+            "    void NotCo() { yield return null; }\n"   // 4
+            "    IEnumerator InTry() { try { yield return null; } finally { } }\n"   // 5
+            "    void Start() {\n"   // 6
+            "        Ret();\n"   // 7
+            "        StartCoroutine(\"Ret\");\n"   // 8
+            "        var w = new WaitForSeconds();\n"   // 9
+            "        Action a = () => { yield return null; };\n"   // 10
+            "        StartCoroutine(InTry()); StartCoroutine(NoYield()); a(); NotCo(); Debug.Log(\"\" + w);\n"   // 11
+            "    }\n"   // 12
+            "}\n"   // 13
+            );
+        CHECK(Has(d, 0, "NoYield() returns IEnumerator, so it's a coroutine: it needs a yield return (or yield break)", 2, 17));
+        CHECK(Has(d, 0, "A coroutine ends with yield break, not return", 3, 44));
+        CHECK(Has(d, 0, "yield only works in a coroutine: a method that returns IEnumerator", 4, 20));
+        CHECK(Has(d, 0, "yield can't be inside a try, catch or finally", 5, 33));
+        CHECK(Has(d, 0, "Ret() makes a coroutine but doesn't run it: StartCoroutine(Ret())", 7, 9));
+        CHECK(Has(d, 0, "StartCoroutine takes the coroutine itself, not its name: StartCoroutine(Blink())", 8, 24));
+        CHECK(Has(d, 0, "new WaitForSeconds takes 1 value, not 0", 9, 17));
+        CHECK(Has(d, 0, "yield doesn't work inside a lambda", 10, 28));
+    }
+}
+
+static void Scripts() {
+    // The attacker loads first: it names Health before Health is loaded, so it's
+    // checked again when the scene starts.
+    const std::string health =
+            "class Health : Behaviour {\n"
+            "    public int hp = 100;\n"
+            "    public int[] secrets;\n"
+            "    public void TakeDamage(int amount) { hp -= amount; if (hp <= 0) Destroy(gameObject); }\n"
+            "    public bool IsAlive() { return hp > 0; }\n"
+            "    public string Name() { return gameObject.name; }\n"
+            "    public IEnumerator Regen() { while (hp < 100) { hp++; yield return null; } }\n"
+            "}\n"
+;
+    const std::string attacker =
+            "class Attacker : Behaviour {\n"
+            "    public int seen, after, missing, later;\n"
+            "    public string who;\n"
+            "    public bool alive;\n"
+            "    Health h;\n"
+            "    void Start() {\n"
+            "        h = GameObject.Find(\"Target\").GetComponent<Health>();\n"
+            "        h.TakeDamage(30);\n"
+            "        seen = h.hp;\n"
+            "        h.hp -= 5;\n"
+            "        after = h.hp;\n"
+            "        alive = h.IsAlive();\n"
+            "        who = h.Name();\n"
+            "        missing = GetComponent<Health>() == null ? 1 : 0;\n"
+            "        StartCoroutine(h.Regen());\n"
+            "    }\n"
+            "    void Update() { later = h.hp; }\n"
+            "    public void Kill() { h.TakeDamage(1000); }\n"
+            "}\n"
+;
+    {   // fields, methods, gameObject, coroutines and null for a script the object doesn't have
+        Scene scene{"S"};
+        GameObject* a = scene.CreateGameObject("Attacker");
+        GameObject* t = scene.CreateGameObject("Target");
+        std::string err;
+        auto* sa = a->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+        CHECK(sa->LoadSource(attacker, &err));
+        auto* st = t->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+        CHECK(st->LoadSource(health, &err));
+        scene.Start();
+        auto F = [&](const char* n) { return sa->VM()->GetGlobal(n).AsFloat(); };
+        CHECK_NEAR(F("seen"), 70.0f, 1e-6f);
+        CHECK_NEAR(F("after"), 65.0f, 1e-6f);
+        CHECK(sa->VM()->GetGlobal("alive").AsBool());
+        CHECK(sa->VM()->GetGlobal("who").AsString() == "Target");
+        CHECK_NEAR(F("missing"), 1.0f, 1e-6f);
+        CHECK_NEAR(st->VM()->GetGlobal("hp").AsFloat(), 66.0f, 1e-6f);   // Regen ran to its first yield
+        for (int i = 0; i < 5; ++i) scene.Update(kDt);
+        CHECK(st->VM()->GetGlobal("hp").AsFloat() > 66.0f);                // and goes on in Health's frames
+        // once its object is destroyed, using it is an error with the line
+        g_errs.clear();
+        sa->VM()->CallEvent("Kill");
+        scene.Update(kDt);
+        scene.Update(kDt);
+        CHECK(ErrHas("Update() line 17: This object was destroyed"));
+    }
+    {   // a script naming one that never loads says so when the scene starts
+        g_errs.clear();
+        Scene scene{"S"};
+        GameObject* a = scene.CreateGameObject("A");
+        std::string err;
+        auto* sa = a->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+        CHECK(sa->LoadSource("class Lonely : Behaviour {\n    void Start() { Ghost g = GetComponent<Ghost>(); }\n}\n", &err));
+        scene.Start();
+        CHECK(ErrHas("Unknown type 'Ghost'"));
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(
+            "class Bad : Behaviour {\n"
+            "    void Start() {\n"
+            "        Health h = GetComponent<Health>();\n"
+            "        Debug.Log(h.secrets);\n"
+            "        h.Nope();\n"
+            "        var x = GetComponent<Helth>();\n"
+            "        h.TakeDamage(\"a\");\n"
+            "    }\n"
+            "}\n"
+            );
+        CHECK(Has(d, 0, "Health.secrets can't be used from another script: it holds an array, list or other collection", 4, 21));
+        CHECK(Has(d, 0, "Health has no public method 'Nope'", 5, 11));
+        CHECK(Has(d, 0, "'Helth' isn't a component scripts can get yet", 6, 30));
+        CHECK(Has(d, 0, "Value 1 is string but needs int", 7, 22));
+    }
+}
+
 static void Parity() {
     // The same C# snippet gives the same results on the old OkayScript runtime.
     const std::string src =
@@ -1254,9 +1760,9 @@ static void BackCompat() {
     CHECK(w.loaded);
     CHECK_NEAR(w.F("total"), 12.0f, 1e-6f);
     // Features still to come keep their message.
-    auto d = Diags(Wrap("    virtual void V() { }\n    void Start() { try { } }\n"));
-    CHECK(Has(d, 0, "virtual isn't supported"));
-    CHECK(Has(d, 0, "try / catch isn't supported yet"));
+    auto d = Diags(Wrap("    readonly int r = 1;\n    void Start() { goto end; }\n"));
+    CHECK(Has(d, 0, "readonly isn't supported yet"));
+    CHECK(Has(d, 0, "goto isn't supported"));
 }
 
 static void Fuzz() {
@@ -1300,6 +1806,11 @@ int main() {
     Classes();
     Collections();
     Lambdas();
+    Events();
+    Inheritance();
+    TryCatch();
+    Coroutines();
+    Scripts();
     Parity();
     Followups();
     BackCompat();

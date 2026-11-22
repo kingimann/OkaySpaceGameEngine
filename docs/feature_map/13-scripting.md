@@ -2,7 +2,7 @@
 
 Text scripting for games and for the editor: the default OkayScript language (one big VM with several hundred built-in functions), a newer typed C#-style language that is checked before it runs, the Script component that runs them, and the Script Editor.
 Covers `engine/include/okay/Scripting/*`, `engine/include/okay/Script/*`, `engine/src/Scripting/*`, `engine/src/Script/*` (about 11.3k + 7.1k lines), `engine/src/Lua/*` and `engine/include/okay/Lua/*` (our own Lua interpreter, about 6.9k lines), `Components/ScriptComponent`, `docs/scripting*.md` and the Script Editor inside `editor/main.cpp` (about 3k lines plus completion and docs windows).
-Two OkayScript languages exist side by side: id `okayscript` (old VM, the default) and `okayscript-next` (typed, `class Name : Behaviour`); the typed language is being grown to replace the old one, with several branches not on main yet. Lua (`lua`, 13.3) runs on our own interpreter and binds to the same engine API table as the typed language.
+Two OkayScript languages exist side by side: id `okayscript` (old VM) and `okayscript-next` (typed, `class Name : Behaviour`); the typed language also runs C# (id `csharp` / `cs`, `.cs` files, C# mode, 13.8) and is being grown to replace the old one (plan: `docs/scripting/migration_plan.md`). Lua (`lua`, 13.3) runs on our own interpreter and binds to the same engine API table as the typed language.
 
 ## 13. Scripting
 
@@ -41,33 +41,33 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **API:** `NextScriptVM::kLanguage` (`okayscript-next`), `NextScriptVM::ForgetSceneStatics`, `LastError`, `ErrorCount`; script syntax `class Name : Behaviour { public float speed; void Update() {...} }`
 - **Editor:** the Script Editor runs this checker for scripts whose language is `okayscript-next` (inline errors and warnings with columns)
 - **Docs:** `docs/scripting/scripting.md` (partly describes both languages), `docs/engine_api.md`
-- **Tests:** `okayscript_next`, `okayscript_next_csharp`
-- **Status:** Partial - on main: classes, enums, switch, arrays, foreach, statics, interpolation, `??` and `?.`, List and Dictionary, lambdas; not on main: try/catch, coroutines, events, inheritance and interfaces
-- **Open:** in flight (branches, no PR, 2026-10-26): claude/csharp-p1-events, -inheritance, -try, -coroutines, -getcomponent, claude/next-event-args; `AvailableScriptLanguages()` lacks `okayscript-next` so New Script cannot pick it (possible gap); replacing the old VM is not done
+- **Tests:** `okayscript_next`, `okayscript_next_csharp`, `csharp_scripts`
+- **Status:** Partial - classes, enums, switch, arrays, foreach, statics, interpolation, `??` and `?.`, List and Dictionary, lambdas, events (`+=` and `-=` on functions, methods as functions), interfaces, inheritance, `is` / `as` and casts, try / catch / finally with throw and Exception, coroutines, scripts using each other and `GetComponent<MyScript>()` (the five claude/csharp-* branches merged on claude2/csharp-scripting); properties (auto, `=>`, get / set code) and `=>` method bodies; C# mode (13.8)
+- **Open:** missing C#: struct, Quaternion, own generics, static / const in plain classes (list and order in `docs/scripting/migration_plan.md` stage 2); claude/next-event-args does not exist on origin; replacing the old VM is not done (migration plan stages 3-6)
 - **Related:** 13.1, 13.6, 13.5, 14.7
 - **Words:** okayscript-next, typed OkayScript, new OkayScript, class Behaviour, checker, interpreter, C# parity, lambdas, LINQ, statics, NextScriptVM
 - **Seen as:** a script is rejected with "isn't supported yet"; a new feature works in one language and not the other; "A script needs a class"; errors point at the wrong column
 - **Ask me like:** "work on 13.2.2, add try/catch to the typed language"; "which branch has coroutines for the new OkayScript"
 
-### 13.3 Lua scripts (our own interpreter) and the removed C# (Mono) backend
-- **What:** `.lua` scripts (language `lua`) run on okay::lua, our own Lua 5.4 interpreter written from the Lua 5.4 Reference Manual (no Lua C source, no port). A script returns a table: its fields are Inspector settings and `Start`, `Update(dt)`, `OnTriggerEnter(other)` and the other lifecycle names run by name (old `function update(dt)` scripts work too). The engine API is the typed-language binding table (13.6), the same one the C#-style language and the visual-script Engine API nodes use. The third-party Lua and Mono backends stay removed; a scene naming `csharp` or `cs` still loads and says "no longer supported".
+### 13.3 Lua scripts (our own interpreter)
+- **What:** `.lua` scripts (language `lua`) run on okay::lua, our own Lua 5.4 interpreter written from the Lua 5.4 Reference Manual (no Lua C source, no port). A script returns a table: its fields are Inspector settings and `Start`, `Update(dt)`, `OnTriggerEnter(other)` and the other lifecycle names run by name (old `function update(dt)` scripts work too). The engine API is the typed-language binding table (13.6), the same one the C#-style language and the visual-script Engine API nodes use. The third-party Lua and Mono backends stay removed (no Lua C source); C# (`csharp`/`cs`) runs on our own typed language (13.8).
 - **Parts:**
   - 13.3.1 Compiler - `engine/src/Lua/LuaCompiler.cpp` - lexer, one-pass parser and code generator to our own stack bytecode (manual sections 3 and 9): locals, `<const>` and `<close>`, multiple assignment and results, varargs, closures and upvalues, numeric and generic for, goto and labels, integer and float literals, string escapes, long strings and comments; syntax errors with line and column, several per check
   - 13.3.2 Runtime - `engine/src/Lua/LuaState.cpp`, `engine/include/okay/Lua/Lua.hpp`, `engine/src/Lua/LuaCode.hpp` - values, tables (array part + hash part), metatables and metamethods, weak tables, integer/float arithmetic rules, mark and sweep collector, coroutines without threads (an explicit frame stack), errors with chunk:line, instruction budget and memory limit (endless loops stop; pcall can not catch the stop)
   - 13.3.3 Libraries - `engine/src/Lua/LuaLibBase.cpp`, `LuaLibString.cpp`, `LuaLibTable.cpp`, `LuaLibUtf8.cpp` - sandboxed base, coroutine, string (with patterns, format), table, utf8, math (xoshiro256** random) and a safe os (clock, time, date, difftime); no io, os.execute, require, loadlib or debug
   - 13.3.4 Engine glue - `engine/src/Lua/LuaScriptVM.cpp`, `engine/include/okay/Lua/LuaScriptVM.hpp` - `IScriptVM` for `lua`: engine objects as userdata (an object id, so a destroyed object is an error, not a crash), Vector3 with operators, static types as global tables (Input, Time, Debug, Mathf, GameObject, Vector3, ...), `GetComponent("Rigidbody")`, `Destroy(obj)`, events get the other GameObject, Inspector settings from the returned table, per-callback budget
   - 13.3.5 Script Editor support - `editor/main.cpp` (`LuaLangDef`, `ScriptFieldsFor`) - Lua colours, New Script / language picker gives the Lua template (`StarterScriptSource("lua")`), errors with line and column, warnings for engine names that do not exist and misspelled handlers (`LuaScriptVM::Lint`), autocomplete of Lua words and the bound API including `obj:` members, hover docs with the bound signatures, Format Document by Lua blocks, Inspector settings from the returned table; dev screenshot hook `OKAY_UI_SCRIPT=open|lua|luaerr`
-  - 13.3.6 Removed-language message - `Scripting/ScriptVM` - `RemovedScriptLanguageMessage(lang)` gives the clear text for `csharp` and `cs`; used by `ScriptComponent::LoadSource` and the scene validator
+  - 13.3.6 Removed-language message - `Scripting/ScriptVM` - `RemovedScriptLanguageMessage(lang)` is empty for every language today (`lua` and `csharp`/`cs` both run on our own code); it stays as the one place a future removal reports from (`ScriptComponent::LoadSource`, scene validator)
 - **Code:** `engine/src/Lua/*`, `engine/include/okay/Lua/*`, `Scripting/ScriptVM`, `Components/ScriptComponent`
-- **API:** `CreateScriptVM("lua")`, `LuaScriptVM` (`kLanguage`, `SetBudget`, `CompletionNames`, `CompletionMembers`, `CompletionDoc`, `Lint`, `Settings`, `Format`), `okay::lua::State` (Load, PCallHost, DoString, CheckSyntax, SetBudget, memoryLimit), `RemovedScriptLanguageMessage()`, `AvailableScriptLanguages()` (`okayscript`, `lua`)
-- **Editor:** Script Editor language picker and New Script offer Lua; `.lua` files open in the Script Editor with Lua colours; Inspector shows the script table's fields; example scene `examples/lua/lua_scripts.okayscene`
+- **API:** `CreateScriptVM("lua")`, `LuaScriptVM` (`kLanguage`, `SetBudget`, `CompletionNames`, `CompletionMembers`, `CompletionDoc`, `Lint`, `Settings`, `Format`), `okay::lua::State` (Load, PCallHost, DoString, CheckSyntax, SetBudget, memoryLimit), `RemovedScriptLanguageMessage()`, `AvailableScriptLanguages()` (`okayscript`, `csharp`, `lua`)
+- **Editor:** Script Editor language picker and New Script offer Lua (New Script's Language box: C# (default), Lua, OkayScript (old); settings `newscriptcsharp` / `newscriptlua`); `.lua` files open in the Script Editor with Lua colours; Inspector shows the script table's fields; example scene `examples/lua/lua_scripts.okayscene`
 - **Docs:** `docs/scripting/lua.md` (supported language and library, binding rules, what each file was written from), `docs/scripting/scripting.md`
 - **Tests:** `lua_core` (standalone: conformance script `tests/lua/conformance.lua` written from the manual, syntax errors, budget, memory limit, host API, mutation fuzz; clean under ASan and UBSan), `lua_script` (game scripts driving GameObjects), `script_removed_langs`, `starter_script`, `examples_work`
 - **Status:** Partial - language, coroutines and libraries work and are tested; not in Lua: `__gc` finalizers, full ephemeron weak keys, yielding across xpcall or a metamethod (a clear error; inside pcall it works), string.pack/unpack, binary chunks; the Script Editor has no Lua debugger
-- **Open:** the Lua parts above; a Lua visual-script node (UNFINISHED "text-script nodes"); nothing converts old C# scripts; editor build and screenshots unverified on Windows
+- **Open:** the Lua parts above; a Lua visual-script node (UNFINISHED "text-script nodes"); editor build and screenshots unverified on Windows
 - **Related:** 13.4, 13.5, 13.6, 14.7
-- **Words:** Lua, lua script, .lua, okay::lua, Lua 5.4, coroutine, metatable, pcall, C#, Mono, csharp, removed language, language not supported, old project, script language dropdown
-- **Seen as:** a Lua script errors with "script:12: ..."; a Lua script stops with "instruction budget exceeded"; a Lua setting is missing in the Inspector; an old C# script does nothing and the Console says the language is no longer supported
+- **Words:** Lua, lua script, .lua, okay::lua, Lua 5.4, coroutine, metatable, pcall, removed language, old project, script language dropdown
+- **Seen as:** a Lua script errors with "script:12: ..."; a Lua script stops with "instruction budget exceeded"; a Lua setting is missing in the Inspector
 - **Ask me like:** "work on 13.3.2, add weak tables to Lua"; "why does my Lua script say yield across a C-call boundary"
 
 ### 13.4 Script components and script UI
@@ -76,7 +76,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
   - 13.4.1 VM interface and factory - `Scripting/ScriptVM` - `IScriptVM`, `ScriptHost`, `ScriptDiagnostic`, `CreateScriptVM`, `AvailableScriptLanguages`
   - 13.4.2 Script component - `Components/ScriptComponent` - language, source or file path, Reload, lifecycle forwarding, serialized per-instance field overrides
   - 13.4.3 Public fields in the Inspector - `editor/main.cpp` (`ParseScriptFields` ~25567-25708, Script header ~31140) - reads `public` fields and `[Header]`, `[Tooltip]`, `[Range]` from the source
-  - 13.4.4 Starter scripts - `Scripting/StarterScripts` - what a new empty script starts as, per language
+  - 13.4.4 Starter scripts - `Scripting/StarterScripts` - what a new empty script starts as, per language (C#: `public class NewScript : MonoBehaviour` with Start and Update)
   - 13.4.5 Script UI bridge - `Scripting/ScriptUI`, `shared/OkayScriptUIBridge.hpp` - `ui_*` builtins forward to a host toolkit (OkayUI); see 40.4
 - **Code:** `Scripting/ScriptVM`, `Components/ScriptComponent`, `Scripting/StarterScripts`, `Scripting/ScriptUI`, `shared/OkayScriptUIBridge.hpp`
 - **API:** `ScriptComponent::LoadSource/LoadFile/Reload/Source/fields`, `SetScriptUI`, `ScriptUIBridge`, `StarterScriptSource(lang)`
@@ -109,7 +109,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Docs:** `docs/editor/editor.md` (Script Editor), `docs/scripting/scripting.md`
 - **Tests:** `editor` (selftest covers ScriptText outline, identifier search and the lint), `starter_script`
 - **Status:** Works - features are present as menu items and code per the editor source; no separate unit tests except the selftest
-- **Open:** earlier map: "meaningful syntax only; classes and templates for New Script" (open); no step debugger for text scripts (only the visual-script debugger, 14.5); the 2.7k-line window lives in `main.cpp` (15.10). Script compile errors and missing script files are also rows in the project Problems panel (15.11.8), separate from this window's own Problems list
+- **Open:** New Script offers C# (default for new scripts, setting `newscriptcsharp`, the dialog's Language box) , Lua (setting `newscriptlua`) and OkayScript (old); C# tabs get errors from the C# checker and autocomplete from the binding table, and the Scripting Reference has a C# section (seen in a Linux build, not on Windows; see 13.8); signature help and member completion are still fed by the old VM's tables; no step debugger for text scripts (only the visual-script debugger, 14.5); the 2.7k-line window lives in `main.cpp` (15.10). Script compile errors and missing script files are also rows in the project Problems panel (15.11.8), separate from this window's own Problems list
 - **Related:** 13.1, 13.2, 13.4, 15.10, 15.8
 - **Words:** script editor, code editor, autocomplete, red squiggles, problems, rename symbol, format document, find in files, go to definition, outline, snippets, external IDE, VS Code, live sync, syntax highlighting
 - **Seen as:** red squiggles are wrong or missing; autocomplete does not offer a function; Rename misses a usage; Format changes code; a save in the external IDE does not reload; typing lags in a big script
@@ -156,3 +156,30 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Words:** builtin, built-in function, scripting reference, walk, spin, follow, tween_move, prefs_get, save_game, raycast, net_send, steam_unlock, nav_path, music_play, ui_set_text
 - **Seen as:** "unknown function"; a function behaves differently than the reference says; a function exists in OkayScript but not in a graph node or the typed API
 - **Ask me like:** "work on 13.7.6, add a capsule cast"; "list the built-ins for camera shake"
+
+### 13.8 C# scripts on our own typed language
+- **What:** `.cs` files and the language ids `csharp` / `cs` run on the typed language (13.2) in C# mode, so a Unity-style C# script (using lines, a namespace, `public class X : MonoBehaviour`, `[SerializeField] private`, properties, `KeyCode.W`) runs unchanged. Our own C#, written from the ECMA-334 specification; no Mono, .NET or other C# library. New scripts are C# by default (a setting).
+- **Parts:**
+  - 13.8.1 Language ids and file extension - `Scripting/ScriptVM` - `CreateScriptVM("csharp"/"cs")`, `AvailableScriptLanguages()` lists `csharp`, `ScriptLanguageForExtension(".cs")`
+  - 13.8.2 C# mode - `engine/src/Script/Parser.cpp`, `Checker.cpp` (`Program::csharp`) - using directives, namespaces (block and file-scoped), MonoBehaviour, private / readonly / sealed / internal, public const, unknown attributes as warnings
+  - 13.8.3 Properties and => bodies - `engine/src/Script/Parser.cpp` (`Property`, `ArrowBody`), `Checker.cpp` (`PropGetOwn`, `PropSet`) - auto-properties are fields; code properties are get_X / set_X methods the checker calls
+  - 13.8.4 KeyCode - `engine/src/Script/EngineApi.cpp` - static string properties (A-Z, Alpha0-9, Space, Return, Escape, Tab, Backspace, shifts, controls, arrows)
+  - 13.8.8 Random - `engine/src/Script/EngineApi.cpp` - `Random.Range` (int, max left out; float), `Random.value`, `Random.InitState` over `okay::Random::Shared()`
+  - 13.8.10 Text members - `EngineApi.cpp` (a script-only `string` type, `ApiType::scriptOnly`), `Checker.cpp`, `Lexer.cpp` (character literals as one-letter text) - Length, ToUpper, ToLower, Trim, Contains, StartsWith, EndsWith, IndexOf, Substring, Replace, Split; ToString() on numbers, bool, enums, Vector3; `int.Parse`, `float.Parse`, `int/float.MaxValue/MinValue`, `string.IsNullOrEmpty`
+  - 13.8.11 Default parameter values - `Parser.cpp` (`Params`), `Checker.cpp` (`CheckDefaults`, `ArgsFit` fills left-out arguments) - fixed values at the end of the list; not on constructors
+  - 13.8.12 Delegate declarations - `Parser.cpp` (`Delegate`), `Checker.cpp` (`ResolveType`) - a delegate name is the Func / Action type it describes
+  - 13.8.9 Collision messages - `Checker.cpp` (`CheckLifecycleSignature`), `NextScriptVM.cpp` (`CallEventArgs`), `Components/ScriptComponent` (`FireWithObject`), `EngineApi.cpp` (Collider, Collision, Collider2D, Collision2D types; `GameObject.CompareTag`) - `OnTriggerEnter(Collider other)` and the other five, plus 2D, private or public
+  - 13.8.5 C# starter script - `Scripting/StarterScripts` - `using UnityEngine; public class NewScript : MonoBehaviour { Start, Update }`
+  - 13.8.6 Editor - `editor/main.cpp` - New Script Language box (setting `newscriptcsharp`, C# default), `.cs` open / drop / attach as C#, C# checker diagnostics, `CSharpCompletions()` from the binding table, Scripting Reference "C# (new scripts)" section with the API list (`VsApiReference`)
+  - 13.8.7 Example - `examples/csharp/` - `csharp_playground.okayscene` with PlayerMover.cs (move, hop coroutine, property), Spinner.cs, Scoreboard.cs (interface, List, foreach, switch, GetComponent<PlayerMover>()); shipped by `scripts/build-windows-dist.sh`
+- **Code:** `Scripting/ScriptVM`, `Scripting/NextScriptVM`, `engine/src/Script/*`, `Scripting/StarterScripts`, `editor/main.cpp`
+- **API:** `NextScriptVM::kCSharpLanguage`, `NextScriptVM(const std::string& language)`, `IsCSharpId`, `IsTypedId`, `ScriptLanguageForExtension`, `script::Compile(src, csharp)`
+- **Editor:** Script Editor > File > New Script (Language: C# / Lua / OkayScript (old)); Project > Create > Script; drag a `.cs` onto an object; Help > Scripting Reference > C# (new scripts)
+- **Docs:** `docs/scripting/scripting.md` ("C# scripts (.cs)", "Properties and => bodies"), `docs/scripting/migration_plan.md`
+- **Tests:** `csharp_scripts`, `script_removed_langs`, `starter_script`, `okayscript_next_csharp`
+- **Status:** Partial - the language core runs C# files; the gaps of 13.2 apply
+- **Open:** making C# the default for new scripts is the owner's call (setting in place, default C#); editor parts seen only in a Linux Xvfb build (New Script dialog with Language C#, a C# tab with the checker's error at line 10 column 54, Scripting Reference C# section), not on Windows; the Script Editor's per-tab language box shows raw ids (`okayscript`, `csharp`); the Inspector field parser fix ([SerializeField] private, namespace) has no unit test; signature help / member lists are the old VM's; converter from old OkayScript to C# and the C# target of the graph preview (14.8) are planned in `docs/scripting/migration_plan.md`
+- **Related:** 13.2, 13.3, 13.5, 13.6, 14.8
+- **Words:** C#, csharp, .cs, Unity script, MonoBehaviour, using, namespace, SerializeField, property, get set, KeyCode, new script language, default language
+- **Seen as:** a `.cs` script reports an error; `using` or `namespace` is rejected; New Script makes the wrong kind of file; an old C# scene's script does not run
+- **Ask me like:** "work on 13.8, add Quaternion for C# scripts"; "make new scripts OkayScript again"

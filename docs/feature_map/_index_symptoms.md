@@ -14,6 +14,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a .dae/.3ds file will not import without Assimp | [3.6](03-modeling-import.md#36-model-import) Model import |
 | a 10,000-row list is slow | [40.8](40-okayui-library.md#408-porting-helpers-tooltip-scope-style-fields-mapping-layer-list-clipper) Porting helpers: tooltip scope, style fields, mapping layer, list clipper |
 | a 2D level is made of flat coloured squares | [43.1](43-proposals.md#431-tilemaps-and-tilesets) Tilemaps and tilesets |
+| a `.cs` script reports an error | [13.8](13-scripting.md#138-c-scripts-on-our-own-typed-language) C# scripts on our own typed language |
 | a ball does not bounce | [6.1](06-physics.md#61-2d-bodies-and-colliders) 2D bodies and colliders |
 | a ban banner on the launcher with an Appeal button | [39.6](39-security-anticheat.md#396-reports-bans-appeals-and-the-hardware-hash) Reports, bans, appeals and the hardware hash |
 | a banned player can still join a server that doesn't require tickets | [39.3](39-security-anticheat.md#393-session-tickets-and-the-ticket-service) Session tickets and the ticket service |
@@ -155,9 +156,9 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a loop cut previews but does not apply | [3.2](03-modeling-import.md#32-edge-and-loop-tools) Edge and loop tools |
 | a loop never ends or runs once | [14.3](14-visual-scripting.md#143-functions-loops-control-flow) Functions, loops, control flow |
 | a loop over thousands of items is slow on one thread | [1.18](01-core-scene.md#118-core-runtime-utilities) Core runtime utilities |
-| a Lua script errors with "script:12: ... | [13.3](13-scripting.md#133-lua-scripts-our-own-interpreter-and-the-removed-c-mono-backend) Lua scripts (our own interpreter) and the removed C# (Mono) backend |
-| a Lua script stops with "instruction budget exceeded | [13.3](13-scripting.md#133-lua-scripts-our-own-interpreter-and-the-removed-c-mono-backend) Lua scripts (our own interpreter) and the removed C# (Mono) backend |
-| a Lua setting is missing in the Inspector | [13.3](13-scripting.md#133-lua-scripts-our-own-interpreter-and-the-removed-c-mono-backend) Lua scripts (our own interpreter) and the removed C# (Mono) backend |
+| a Lua script errors with "script:12: ... | [13.3](13-scripting.md#133-lua-scripts-our-own-interpreter) Lua scripts (our own interpreter) |
+| a Lua script stops with "instruction budget exceeded | [13.3](13-scripting.md#133-lua-scripts-our-own-interpreter) Lua scripts (our own interpreter) |
+| a Lua setting is missing in the Inspector | [13.3](13-scripting.md#133-lua-scripts-our-own-interpreter) Lua scripts (our own interpreter) |
 | a marquee picks nodes it only touches | [36.4](36-math-geometry.md#364-bounds-rectangles-and-shapes) Bounds, rectangles and shapes |
 | a material change does not show | [2.2](02-rendering-world.md#22-materials-and-textures) Materials and textures |
 | a material does not apply to the selection | [15.13](15-editor.md#1513-content-editors-and-tool-windows) Content editors and tool windows |
@@ -384,7 +385,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an object spins or slides forever | [11.10](11-gameplay-systems.md#1110-no-code-behaviours-move-spin-lifetime) No-code behaviours: move, spin, lifetime |
 | an object stays where the cutscene left it | [10.1](10-story-cinematics.md#101-cutscene-sequences-and-sequence-player) Cutscene sequences and Sequence Player |
 | an object survives (or does not survive) a scene change | [1.4](01-core-scene.md#14-scene-lifecycle) Scene lifecycle |
-| an old C# script does nothing and the Console says the language is no longer supported | [13.3](13-scripting.md#133-lua-scripts-our-own-interpreter-and-the-removed-c-mono-backend) Lua scripts (our own interpreter) and the removed C# (Mono) backend |
+| an old C# scene's script does not run | [13.8](13-scripting.md#138-c-scripts-on-our-own-typed-language) C# scripts on our own typed language |
 | an old client can't join a server with replay protection | [39.2](39-security-anticheat.md#392-transport-security-encryption-replay-protection-sealed-join-host-keys) Transport security: encryption, replay protection, sealed join, host keys |
 | an old object with Actions behaves differently in the graph | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
 | an option has no effect | [41.1](41-build-tools-infra.md#411-cmake-project-layout-and-options) CMake project layout and options |
@@ -724,6 +725,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | need to record a trailer | [50.3](43-proposals.md#503-video-recording) Video recording |
 | need to tweak a value without an update | [49.4](43-proposals.md#494-remote-configuration) Remote configuration |
 | new project is empty or missing the controller I expected | [25.1](20-35-planned.md#251-templates) Templates |
+| New Script makes the wrong kind of file | [13.8](13-scripting.md#138-c-scripts-on-our-own-typed-language) C# scripts on our own typed language |
 | no autosave for a scene I never saved | [22.2](20-35-planned.md#222-autosave) Autosave |
 | no captions for sounds | [32.2](20-35-planned.md#322-subtitles) Subtitles |
 | no checkpoint between rooms | [11.12](11-gameplay-systems.md#1112-volumes-and-zones) Volumes and zones |
@@ -1234,6 +1236,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | update signature check: OFF" in About | [17.11](17-launcher-platform.md#1711-security-plan-sec1) Security plan SEC1 |
 | updating a pack overwrites my edits | [25.4](20-35-planned.md#254-dependency-management) Dependency management |
 | using the software renderer briefly | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |
+| using` or `namespace` is rejected | [13.8](13-scripting.md#138-c-scripts-on-our-own-typed-language) C# scripts on our own typed language |
 | V does not switch view or the camera pops | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
 | values reset after editing | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
 | vibration cannot be turned off by the player | [8.6](08-input.md#86-rumble-and-haptics) Rumble and haptics |

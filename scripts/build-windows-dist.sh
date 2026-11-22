@@ -190,6 +190,7 @@ EXAMPLE_DIRS="
 behavior_trees
 boat
 camera
+csharp
 cutscene
 fp_hand
 input

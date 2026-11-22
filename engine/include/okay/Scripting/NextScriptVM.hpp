@@ -7,21 +7,37 @@
 namespace okay {
 
 class Scene;
+class GameObject;
+namespace script {
+class Instance;
+Instance* FindScriptInstance(GameObject* go, const std::string& name);
+}
 
 /// The new OkayScript: C#-style classes compiled and checked before they run
 /// (engine/src/Script). A script is a class extending Behaviour; its fields are
 /// the component's settings and the engine calls its Awake / OnEnable / Start /
 /// Update / LateUpdate / FixedUpdate / OnDisable / OnDestroy by name.
 ///
-/// Language id "okayscript-next" while it grows to replace the older VM.
+/// Language id "okayscript-next" while it grows to replace the older VM. The same
+/// VM runs C# (language id "csharp", also "cs", and `.cs` files): in C# mode a
+/// file may also start with `using` lines and a namespace, and a class may extend
+/// MonoBehaviour (the same as Behaviour), so a Unity-style script runs unchanged.
 class NextScriptVM : public IScriptVM {
 public:
     static constexpr const char* kLanguage = "okayscript-next";
+    static constexpr const char* kCSharpLanguage = "csharp";
+    /// "csharp" or "cs".
+    static bool IsCSharpId(const std::string& id) { return id == "csharp" || id == "cs"; }
+    /// Any id this VM runs: "okayscript-next", "csharp" or "cs".
+    static bool IsTypedId(const std::string& id) { return id == kLanguage || IsCSharpId(id); }
 
     NextScriptVM();
+    /// `language`: kLanguage or kCSharpLanguage (C# mode).
+    explicit NextScriptVM(const std::string& language);
     ~NextScriptVM() override;
 
-    const char* Language() const override { return kLanguage; }
+    const char* Language() const override { return m_csharp ? kCSharpLanguage : kLanguage; }
+    bool IsCSharp() const { return m_csharp; }
     /// Every engine type and member scripts can use (for autocomplete).
     std::vector<std::string> BuiltinNames() const override;
 
@@ -55,11 +71,14 @@ public:
     int ErrorCount() const { return m_errorCount; }
 
 private:
+    friend script::Instance* script::FindScriptInstance(GameObject* go, const std::string& name);
+    bool FinishPending();
     struct Impl;
     std::unique_ptr<Impl> m_impl;
     ScriptHost* m_host = nullptr;
     std::string m_lastError;
     int m_errorCount = 0;
+    bool m_csharp = false;
     bool RunMethod(const std::string& name);
 };
 

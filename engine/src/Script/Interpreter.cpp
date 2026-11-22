@@ -36,6 +36,8 @@ std::string ValueToString(const Value& v) {
         std::string operator()(const DictRef& d) const { return d ? d->typeName : "null"; }
         std::string operator()(const FuncRef& f) const { return f ? f->typeName : "null"; }
         std::string operator()(const CellRef& c) const { return c ? std::visit(*this, c->v) : "null"; }
+        std::string operator()(const CoRef& c) const { return c && c->method ? c->method->name + "()" : "null"; }
+        std::string operator()(const WaitRef& w) const { return w ? WaitTypeName((int)w->kind) : "null"; }
     };
     return std::visit(V{}, v);
 }
@@ -130,7 +132,7 @@ thread_local int g_depth = 0;
 constexpr int kMaxDepth = 200;
 struct DepthGuard {
     DepthGuard(const std::string& what, SrcLoc loc) {
-        if (g_depth >= kMaxDepth) throw RuntimeError(what + " calls itself too deeply (endless recursion?)", loc);
+        if (g_depth >= kMaxDepth) throw RuntimeError(what + " calls itself too deeply (endless recursion?)", loc, true);
         ++g_depth;
     }
     ~DepthGuard() { --g_depth; }
@@ -168,6 +170,7 @@ public:
 
     Value CallMethod(int index, std::vector<Value>& args) {
         const MethodDecl& m = prog_.classes[(std::size_t)cls_].methods[(std::size_t)index];
+        if (m.isCoroutine) return MakeCoroutine(m, args);
         DepthGuard depth(m.name + "()", m.loc);
         std::vector<Value> frame((std::size_t)std::max(m.localCount, (int)m.params.size()));
         for (std::size_t i = 0; i < m.params.size() && i < args.size(); ++i) frame[i] = args[i];
@@ -177,6 +180,7 @@ public:
         fn_ = nullptr;
         Value ret;
         try {
+            if (m.baseCall) Eval(*m.baseCall);   // the base class's constructor first
             Flow f = Run(*m.body);
             if (f == Flow::Return) ret = std::move(retVal_);
         } catch (...) { locals_ = saved; fn_ = savedFn; throw; }
@@ -185,9 +189,66 @@ public:
         return ret;
     }
 
+    // ---- Coroutines ----
+    // Calling an IEnumerator method makes a coroutine; nothing runs until StartCoroutine.
+    Value MakeCoroutine(const MethodDecl& m, std::vector<Value>& args) {
+        auto co = std::make_shared<CoState>();
+        co->method = &m;
+        co->prog = inst_.programPtr();
+        co->inst = &inst_;
+        co->alive = inst_.AliveToken();
+        co->self = this_;
+        co->cls = cls_;
+        co->locals.resize((std::size_t)std::max(m.localCount, (int)m.params.size()));
+        for (std::size_t i = 0; i < m.params.size() && i < args.size(); ++i) co->locals[i] = args[i];
+        co->stack.push_back(CoFrame{m.body.get(), &m.body->body});
+        return Value{std::move(co)};
+    }
+    // StartCoroutine: on the object that made it, running now until its first yield.
+    void StartCo(const CoRef& co, SrcLoc loc) {
+        if (co->alive.expired()) throw RuntimeError("This coroutine belongs to a script that was destroyed", loc);
+        if (co->started) throw RuntimeError(co->method->name + "() was already started: call it again for a new coroutine", loc);
+        co->started = true;
+        co->inst->coroutines.push_back(co);
+        if (co->inst != &inst_ || co->prog.get() != &prog_) {
+            Exec other(*co->prog, co->inst->Fields(), co->inst->Context(), *co->inst);
+            other.ResumeCo(*co);
+        } else {
+            ResumeCo(*co);
+        }
+    }
+    // Run `co` until its next yield (true) or its end (false).
+    bool ResumeCo(CoState& co) {
+        if (co.done) return false;
+        DepthGuard depth(co.method->name + "()", co.method->loc);
+        std::vector<Value>* self = self_;
+        std::vector<Value>* locals = locals_;
+        const FuncObj* fn = fn_;
+        const int cls = cls_;
+        ObjPtr savedThis = std::move(this_);
+        self_ = co.self ? &co.self->fields : &inst_.Fields();
+        cls_ = co.cls;
+        this_ = co.self;
+        locals_ = &co.locals;
+        fn_ = nullptr;
+        auto restore = [&] { self_ = self; locals_ = locals; fn_ = fn; cls_ = cls; this_ = std::move(savedThis); };
+        bool yielded = false;
+        try { yielded = CoRun(co); }
+        catch (...) { co.done = true; co.stack.clear(); restore(); throw; }
+        restore();
+        if (!yielded) { co.done = true; co.stack.clear(); }
+        return yielded;
+    }
+
     // Call a lambda value. It runs as code of the object that made it, which may
     // be another script object running the same program.
     Value Invoke(const FuncRef& f, std::vector<Value>& args, SrcLoc loc) {
+        if (!f->list.empty()) {   // a += b: each in turn; a Func gives the last one's value
+            const std::vector<FuncRef> list = f->list;   // a handler may change the event while it runs
+            Value ret;
+            for (const FuncRef& g : list) { std::vector<Value> a = args; ret = Invoke(g, a, loc); }
+            return ret;
+        }
         if (f->alive.expired()) throw RuntimeError("This function belongs to a script that was destroyed", loc);
         if (f->inst != &inst_ || f->prog.get() != &prog_) {
             Exec other(*f->prog, f->inst->Fields(), f->inst->Context(), *f->inst);
@@ -211,6 +272,136 @@ private:
     std::vector<Value>* locals_ = nullptr;
     const FuncObj* fn_ = nullptr;   ///< the lambda running now (its captures)
     Value retVal_;
+
+    // The coroutine's statements, one at a time: the statements with a yield inside
+    // keep where they are on co.stack; the rest run as usual.
+    enum class CoFlow { Normal, Break, Continue, End, Yielded };
+    static CoFlow FromFlow(Flow f) {
+        return f == Flow::Break ? CoFlow::Break : f == Flow::Continue ? CoFlow::Continue : f == Flow::Return ? CoFlow::End : CoFlow::Normal;
+    }
+    static bool IsLoop(SK k) { return k == SK::While || k == SK::DoWhile || k == SK::For || k == SK::Foreach; }
+    bool CoRun(CoState& co) {
+        while (!co.stack.empty()) {
+            CoFlow r = CoFlow::Normal;
+            {
+                CoFrame& f = co.stack.back();   // not used after CoStmt, which may push
+                const Stmt& s = *f.s;
+                switch (s.kind) {
+                    case SK::Block: case SK::Switch:
+                        if (f.pc >= f.list->size()) { co.stack.pop_back(); continue; }
+                        r = CoStmt(co, *(*f.list)[f.pc++]);
+                        break;
+                    case SK::While:
+                        if (f.phase == 1) Step(s.loc);
+                        if (!AsB(Eval(*s.expr))) { co.stack.pop_back(); continue; }
+                        f.phase = 1;
+                        r = CoStmt(co, *s.loopBody);
+                        break;
+                    case SK::DoWhile:
+                        if (f.phase == 1) { Step(s.loc); if (!AsB(Eval(*s.expr))) { co.stack.pop_back(); continue; } }
+                        f.phase = 1;
+                        r = CoStmt(co, *s.loopBody);
+                        break;
+                    case SK::For:
+                        if (f.phase == 0 && s.init) Run(*s.init);
+                        if (f.phase == 1) { for (auto& st : s.step) Eval(*st); Step(s.loc); }
+                        if (s.expr && !AsB(Eval(*s.expr))) { co.stack.pop_back(); continue; }
+                        f.phase = 1;
+                        r = CoStmt(co, *s.loopBody);
+                        break;
+                    case SK::Foreach: {
+                        if (f.phase == 0) {
+                            f.coll = Receiver(*s.expr);
+                            f.version = CollVersion(f.coll);
+                            f.pc = 0;
+                        } else {
+                            ++f.pc;
+                            Step(s.loc);
+                        }
+                        if (CollVersion(f.coll) != f.version) throw RuntimeError("The " + ValueToString(f.coll) + " was changed during foreach", s.loc);
+                        Value item;
+                        if (!ForeachItem(s, f.coll, f.pc, item)) { co.stack.pop_back(); continue; }
+                        (*locals_)[(std::size_t)s.locals[0].slot] = std::move(item);
+                        f.phase = 1;
+                        r = CoStmt(co, *s.loopBody);
+                        break;
+                    }
+                    default: co.stack.pop_back(); continue;
+                }
+            }
+            if (r == CoFlow::Yielded) return true;
+            if (r == CoFlow::End) { co.stack.clear(); return false; }
+            if (r == CoFlow::Normal) continue;
+            // break / continue: out to the nearest loop (or, for break, switch)
+            while (!co.stack.empty()) {
+                const SK k = co.stack.back().s->kind;
+                if (IsLoop(k) && r == CoFlow::Continue) { co.stack.back().phase = 1; break; }
+                const bool target = IsLoop(k) || (k == SK::Switch && r == CoFlow::Break);
+                co.stack.pop_back();
+                if (target) break;
+            }
+        }
+        return false;
+    }
+    CoFlow CoStmt(CoState& co, const Stmt& s) {
+        if (!s.hasYield) return FromFlow(Run(s));
+        Step(s.loc);
+        switch (s.kind) {
+            case SK::Yield: return CoYield(co, s);
+            case SK::If: {
+                const Stmt* b = AsB(Eval(*s.expr)) ? s.then.get() : s.otherwise.get();
+                return b ? CoStmt(co, *b) : CoFlow::Normal;
+            }
+            case SK::Block: co.stack.push_back(CoFrame{&s, &s.body}); return CoFlow::Normal;
+            case SK::Switch: {
+                if (const SwitchSection* sec = PickSection(s)) co.stack.push_back(CoFrame{&s, &sec->body});
+                return CoFlow::Normal;
+            }
+            case SK::While: case SK::DoWhile: case SK::For: case SK::Foreach:
+                co.stack.push_back(CoFrame{&s});
+                return CoFlow::Normal;
+            default: return FromFlow(Run(s));   // the checker keeps yields out of everything else
+        }
+    }
+    // yield return x: what to wait for before going on.
+    CoFlow CoYield(CoState& co, const Stmt& s) {
+        if (s.yieldBreak) return CoFlow::End;
+        Value v = Eval(*s.expr);
+        co.wait = 0.0f;
+        co.until.reset();
+        co.waitFor.reset();
+        if (auto* w = std::get_if<WaitRef>(&v); w && *w) {
+            if ((*w)->kind == WaitKind::Seconds) co.wait = (*w)->seconds;
+            else if ((*w)->kind == WaitKind::Until || (*w)->kind == WaitKind::While) co.until = *w;
+        } else if (auto* c = std::get_if<CoRef>(&v); c && *c) {   // another coroutine: start it if needed, wait for its end
+            if (!(*c)->started) StartCo(*c, s.loc);
+            if (!(*c)->done) co.waitFor = *c;
+        }
+        co.stamp = inst_.ticks;
+        return CoFlow::Yielded;
+    }
+    static std::uint32_t CollVersion(const Value& c) {
+        if (auto* d = std::get_if<DictRef>(&c)) return (*d)->version;
+        if (auto* a = std::get_if<ArrayRef>(&c)) return (*a)->version;
+        return 0;
+    }
+    // Item i of a foreach's collection (a dictionary gives KeyValuePairs), or false past the end.
+    bool ForeachItem(const Stmt& s, const Value& c, std::size_t i, Value& out) {
+        const LocalDecl& d = s.locals[0];
+        if (auto* dict = std::get_if<DictRef>(&c)) {
+            if (i >= (*dict)->entries.size()) return false;
+            auto kv = std::make_shared<ArrayObj>();
+            kv->typeName = prog_.NameOf(d.resolved);
+            kv->items = {(*dict)->entries[i].first, (*dict)->entries[i].second};
+            out = Value{std::move(kv)};
+            return true;
+        }
+        const ArrayRef& arr = std::get<ArrayRef>(c);
+        if (i >= arr->items.size()) return false;
+        out = arr->items[i];
+        if (d.promote) if (auto* n = std::get_if<std::int32_t>(&out)) out = Value{(float)*n};
+        return true;
+    }
 
     Value RunFunc(const FuncObj& f, std::vector<Value>& args, SrcLoc loc) {
         const LambdaDecl& L = *f.decl;
@@ -265,7 +456,65 @@ private:
 
     void Step(SrcLoc loc) {
         if (++inst_.steps > inst_.stepLimit)
-            throw RuntimeError("This ran too long and was stopped (an endless loop?)", loc);
+            throw RuntimeError("This ran too long and was stopped (an endless loop?)", loc, true);
+    }
+
+    // ---- try / catch / throw ----
+    std::vector<ObjPtr> caught_;   ///< the exceptions the running catch blocks caught (for throw;)
+
+    // Exception's Message (a script's own Exception class may not have one).
+    static std::string MessageOf(const ScriptObj& ex, const Program& p) {
+        for (const FieldDecl& f : p.classes[(std::size_t)p.exceptionClass].fields)
+            if (f.name == "Message")
+                if (auto* s = std::get_if<std::string>(&ex.fields[(std::size_t)f.index])) return *s;
+        return std::string();
+    }
+    [[noreturn]] void Throw(ObjPtr ex, SrcLoc loc) {
+        const std::string text = ex->className + ": " + MessageOf(*ex, prog_);
+        throw ScriptThrow(text, loc, std::move(ex));
+    }
+    // An engine error (null, division by zero, ...) as an Exception a catch can look at.
+    ObjPtr AsException(const RuntimeError& err) {
+        if (auto* st = dynamic_cast<const ScriptThrow*>(&err)) return st->ex;
+        const ClassDecl& k = prog_.classes[(std::size_t)prog_.exceptionClass];
+        auto ex = std::make_shared<ScriptObj>();
+        ex->cls = prog_.exceptionClass;
+        ex->className = k.name;
+        ex->fields.resize((std::size_t)k.fieldCount);
+        for (const FieldDecl& f : k.fields) ex->fields[(std::size_t)f.index] = f.name == "Message" ? Value{std::string(err.what())} : DefaultFor(f.resolved);
+        return ex;
+    }
+    Flow RunTry(const Stmt& s) {
+        Flow flow = Flow::Normal;
+        std::exception_ptr pending;   // thrown again once the finally has run
+        try {
+            flow = Run(*s.then);
+        } catch (const RuntimeError& err) {
+            if (err.fatal || prog_.exceptionClass < 0) throw;   // an endless loop or recursion: nothing may catch it
+            ObjPtr ex = AsException(err);
+            const CatchClause* hit = nullptr;
+            for (const CatchClause& c : s.catches)
+                if (c.resolved.kind == TK::Class && prog_.classes[(std::size_t)ex->cls].isA[(std::size_t)c.resolved.id]) { hit = &c; break; }
+            if (!hit) pending = std::current_exception();
+            else {
+                if (hit->slot >= 0) (*locals_)[(std::size_t)hit->slot] = Value{ex};
+                caught_.push_back(ex);
+                try { flow = Run(*hit->body); }
+                catch (const RuntimeError& again) {
+                    caught_.pop_back();
+                    if (again.fatal) throw;
+                    pending = std::current_exception();
+                }
+                if (!pending) caught_.pop_back();
+            }
+        }
+        if (s.finallyBody) {
+            Value ret = retVal_;   // a return in the try block keeps its value
+            Run(*s.finallyBody);
+            retVal_ = std::move(ret);
+        }
+        if (pending) std::rethrow_exception(pending);
+        return flow;
     }
 
     Flow Run(const Stmt& s) {
@@ -313,18 +562,19 @@ private:
                 retVal_ = s.expr ? Eval(*s.expr) : Value{};
                 return Flow::Return;
             case SK::Break: return Flow::Break;
+            case SK::Try: return RunTry(s);
+            case SK::Yield: return Flow::Normal;   // only reached inside a coroutine, which runs it itself
+            case SK::Throw: {
+                if (!s.expr) Throw(caught_.back(), s.loc);   // throw; in a catch (the checker made sure)
+                const Value v = Eval(*s.expr);
+                const ObjPtr* ex = std::get_if<ObjPtr>(&v);
+                if (!ex || !*ex) throw RuntimeError("throw got null instead of an Exception", s.loc);
+                Throw(*ex, s.loc);
+            }
             case SK::Continue: return Flow::Continue;
             case SK::Switch: {
                 // The checker made sure no section runs into the next one.
-                const Value v = Eval(*s.expr);
-                const SwitchSection* hit = nullptr;
-                const SwitchSection* def = nullptr;
-                for (const SwitchSection& sec : s.sections) {
-                    if (sec.isDefault) def = &sec;
-                    for (const Value& c : sec.values) if (Equal(v, c)) { hit = &sec; break; }
-                    if (hit) break;
-                }
-                if (!hit) hit = def;
+                const SwitchSection* hit = PickSection(s);
                 if (!hit) return Flow::Normal;
                 for (auto& st : hit->body) {
                     Flow f = Run(*st);
@@ -353,6 +603,17 @@ private:
             }
         }
         return Flow::Normal;
+    }
+
+    // The section a switch's value picks (or default), or null.
+    const SwitchSection* PickSection(const Stmt& s) {
+        const Value v = Eval(*s.expr);
+        const SwitchSection* def = nullptr;
+        for (const SwitchSection& sec : s.sections) {
+            if (sec.isDefault) def = &sec;
+            for (const Value& c : sec.values) if (Equal(v, c)) return &sec;
+        }
+        return def;
     }
 
     // foreach over a dictionary: each entry as a KeyValuePair (key, value).
@@ -649,18 +910,43 @@ private:
         }
     }
 
-    // Run `f` as code of object `o` (its fields, its class, `this`).
+    bool IsA(const ScriptObj& o, int k) const { return prog_.classes[(std::size_t)o.cls].isA[(std::size_t)k] != 0; }
+    static std::string Article(const std::string& n) { return (std::string("aeiouAEIOU").find(n[0]) != std::string::npos ? "an " : "a ") + n; }
+
+    // Run `f` as code of class `k` (the class o is, or one it extends) for object `o`.
     template <typename F>
-    Value As(const ObjPtr& o, F&& f) {
+    Value As(const ObjPtr& o, int k, F&& f) {
         std::vector<Value>* self = self_;
         const int cls = cls_;
         ObjPtr saved = std::move(this_);
-        self_ = &o->fields; cls_ = o->cls; this_ = o;
+        self_ = &o->fields; cls_ = k; this_ = o;
         auto restore = [&] { self_ = self; cls_ = cls; this_ = std::move(saved); };
         Value v;
         try { v = f(); } catch (...) { restore(); throw; }
         restore();
         return v;
+    }
+
+    // Class k's part of making `o`: its fields' starting values, then its constructor
+    // (which starts with the base class's), or the base class's part when it has none.
+    void Construct(const ObjPtr& o, int k, int ctor, std::vector<Value>& args, SrcLoc loc) {
+        const ClassDecl& c = prog_.classes[(std::size_t)k];
+        // A field that starts as `new` of its own class would come back here forever.
+        if (g_depth >= kMaxDepth) throw RuntimeError("Making a " + c.name + " makes more objects without end (a field that starts as new " + c.name + "?)", loc, true);
+        DepthGuard depth(c.name, loc);
+        As(o, k, [&] {
+            for (const FieldDecl& f : c.fields)
+                if (f.init) o->fields[(std::size_t)f.index] = Eval(*f.init);
+            if (ctor >= 0) CallMethod(ctor, args);
+            else if (c.baseClass >= 0) {
+                std::vector<Value> none;
+                int baseCtor = -1;   // the base's constructor that takes nothing (the checker made sure there is one, if it has any)
+                const auto& bm = prog_.classes[(std::size_t)c.baseClass].methods;
+                for (std::size_t i = 0; i < bm.size(); ++i) if (bm[i].isCtor && bm[i].params.empty()) baseCtor = (int)i;
+                Construct(o, c.baseClass, baseCtor, none, loc);
+            }
+            return Value{};
+        });
     }
 
     // new Node(...): fields at their defaults, then their starting values, then the constructor.
@@ -670,19 +956,15 @@ private:
         for (auto& a : e.args) args.push_back(Eval(*a));
         const ClassDecl& k = prog_.classes[(std::size_t)e.slot];
         // A field that starts as `new` of its own class would recurse in here forever.
-        if (g_depth >= kMaxDepth) throw RuntimeError("Making a " + k.name + " makes more objects without end (a field that starts as new " + k.name + "?)", e.loc);
+        if (g_depth >= kMaxDepth) throw RuntimeError("Making a " + k.name + " makes more objects without end (a field that starts as new " + k.name + "?)", e.loc, true);
         DepthGuard depth(k.name, e.loc);
         auto o = std::make_shared<ScriptObj>();
         o->cls = e.slot;
         o->className = k.name;
-        o->fields.reserve(k.fields.size());
-        for (const FieldDecl& f : k.fields) o->fields.push_back(DefaultFor(f.resolved));
-        As(o, [&] {
-            for (std::size_t i = 0; i < k.fields.size(); ++i)
-                if (k.fields[i].init) o->fields[i] = Eval(*k.fields[i].init);
-            if (e.member >= 0) CallMethod(e.member, args);
-            return Value{};
-        });
+        o->fields.resize((std::size_t)k.fieldCount);
+        for (int c = e.slot; c >= 0; c = prog_.classes[(std::size_t)c].baseClass)
+            for (const FieldDecl& f : prog_.classes[(std::size_t)c].fields) o->fields[(std::size_t)f.index] = DefaultFor(f.resolved);
+        Construct(o, e.slot, e.member, args, e.loc);
         return Value{std::move(o)};
     }
 
@@ -727,6 +1009,16 @@ private:
         return "this value";
     }
 
+    // The script a reference (GetComponent<Health>()) points at, found again on each use.
+    Instance& ScriptOf(const Expr& recv, bool nullCond = false) {
+        const ObjRef r = AsRef(Receiver(recv, nullCond));
+        GameObject* g = Resolve(r, recv.loc);
+        const std::string& name = ScriptClassName(-1000 - r.type);
+        Instance* other = FindScriptInstance(g, name);
+        if (!other) throw RuntimeError(g->name + " doesn't have its " + name + " script any more", recv.loc);
+        return *other;
+    }
+
     Value SelfRef(int which) {
         GameObject* g = ctx_.self;
         if (!g) throw RuntimeError("This script isn't attached to an object", ctx_.loc);
@@ -746,6 +1038,13 @@ private:
             case EK::Call: return Call(e);
             case EK::New: {
                 if (e.bind == Bind::NewObject) return NewObject(e);
+                if (e.bind == Bind::NewWait) {
+                    auto w = std::make_shared<WaitObj>();
+                    w->kind = (WaitKind)e.member;
+                    if (w->kind == WaitKind::Seconds) w->seconds = AsF(Eval(*e.args[0]));
+                    if (w->kind == WaitKind::Until || w->kind == WaitKind::While) w->cond = std::get<FuncRef>(Receiver(*e.args[0]));
+                    return Value{std::move(w)};
+                }
                 if (e.bind == Bind::NewCollection) {
                     if (e.type.kind == TK::Dict) {
                         auto d = std::make_shared<DictObj>();
@@ -785,6 +1084,12 @@ private:
             }
             case EK::Cast: {
                 Value a = Eval(*e.lhs);
+                if (e.type.kind == TK::Class) {   // (Boss)enemy: null stays null, anything else must really be one
+                    const ObjPtr* o = std::get_if<ObjPtr>(&a);
+                    if (e.slot == 1 && o && *o && !IsA(**o, e.type.id))
+                        throw RuntimeError("This " + (*o)->className + " isn't " + Article(prog_.NameOf(e.type)), e.loc);
+                    return a;
+                }
                 if (e.type.kind == TK::Int || e.type.kind == TK::Enum) {
                     if (auto* f = std::get_if<float>(&a)) {
                         if (!std::isfinite(*f)) throw RuntimeError("Can't turn this number into an int (it isn't finite)", e.loc);
@@ -802,6 +1107,13 @@ private:
                 try { return Eval(*e.lhs); } catch (const NullSkip&) { return Value{}; }
             case EK::NewArray: case EK::ArrayLit: return MakeArray(e);
             case EK::Lambda: return MakeLambda(e);
+            case EK::Is: case EK::As: {
+                const Value a = Eval(*e.lhs);
+                const ObjPtr* o = std::get_if<ObjPtr>(&a);
+                const bool yes = o && *o && IsA(**o, e.slot);
+                if (e.kind == EK::Is) return Value{yes};
+                return yes ? a : Value{};
+            }
             case EK::Interp: {
                 std::string s;
                 for (auto& a : e.args) s += ValueToString(Eval(*a));
@@ -843,6 +1155,11 @@ private:
                 out->typeName = prog_.NameOf(e.type);
                 for (auto& kv : d->entries) out->items.push_back(e.bind == Bind::DictKeys ? kv.first : kv.second);
                 return Value{std::move(out)};
+            }
+            case Bind::ScriptField: return ScriptOf(*e.object, e.nullCond).GetField(e.name);
+            case Bind::ScriptSelf: {
+                GameObject* g = Resolve(AsRef(Receiver(*e.object, e.nullCond)), e.object->loc);
+                return MakeRef(g, e.slot == 0 ? api_.gameObject : api_.transform);
             }
             case Bind::PairKey: case Bind::PairValue:
                 return std::get<ArrayRef>(Receiver(*e.object, e.nullCond))->items[e.bind == Bind::PairKey ? 0 : 1];
@@ -886,6 +1203,9 @@ private:
             case Bind::Captured: fn_->captures[(std::size_t)e.slot]->v = v; return;
             case Bind::Field: (*self_)[(std::size_t)e.slot] = v; return;
             case Bind::StaticField: inst_.Statics()[(std::size_t)e.slot] = v; return;
+            case Bind::ScriptField:
+                if (!ScriptOf(*e.object).SetField(e.name, v)) throw RuntimeError("Can't set " + e.name + " to " + ValueToString(v), e.loc);
+                return;
             case Bind::SelfMember:
                 if (e.slot == 2 && ctx_.component) ctx_.component->enabled = AsB(v);
                 return;
@@ -912,6 +1232,7 @@ private:
     }
 
     Value Arith(T op, const Value& a, const Value& b, const Type& type, bool pl, bool pr, SrcLoc loc) {
+        if (type.kind == TK::Func) return CombineFuncs(op, a, b);
         if (type.kind == TK::String) return Value{ValueToString(a) + ValueToString(b)};
         if (type.kind == TK::Vector3) {
             const bool av = std::holds_alternative<Vec3>(a), bv = std::holds_alternative<Vec3>(b);
@@ -954,6 +1275,50 @@ private:
         }
     }
 
+    // The same function: the same lambda value, or the same method of the same
+    // object (so -= OnDied removes what += OnDied added), or the same list of them.
+    static bool SameFunc(const FuncRef& a, const FuncRef& b) {
+        if (a == b) return true;
+        if (!a || !b) return false;
+        if (!a->list.empty() || !b->list.empty()) {
+            if (a->list.size() != b->list.size()) return false;
+            for (std::size_t i = 0; i < a->list.size(); ++i) if (!SameFunc(a->list[i], b->list[i])) return false;
+            return true;
+        }
+        return a->decl->method >= 0 && a->decl->method == b->decl->method && a->cls == b->cls && a->self == b->self &&
+               a->inst == b->inst && a->prog == b->prog && !a->alive.expired();
+    }
+    static std::vector<FuncRef> Parts(const Value& v) {
+        const auto* f = std::get_if<FuncRef>(&v);
+        if (!f) return {};
+        return (*f)->list.empty() ? std::vector<FuncRef>{*f} : (*f)->list;
+    }
+    static Value FromParts(std::vector<FuncRef> parts, const std::string& typeName) {
+        if (parts.empty()) return Value{};
+        if (parts.size() == 1) return Value{std::move(parts[0])};
+        auto m = std::make_shared<FuncObj>();
+        m->typeName = typeName;
+        m->list = std::move(parts);
+        return Value{std::move(m)};
+    }
+    // a += b adds b's functions after a's; a -= b takes out the last run of b's
+    // functions in a (as in C#). Either gives a new value: copies made before don't change.
+    static Value CombineFuncs(T op, const Value& a, const Value& b) {
+        std::vector<FuncRef> pa = Parts(a);
+        const std::vector<FuncRef> pb = Parts(b);
+        const std::string name = !pa.empty() ? pa[0]->typeName : !pb.empty() ? pb[0]->typeName : std::string();
+        if (op == T::Plus) { pa.insert(pa.end(), pb.begin(), pb.end()); return FromParts(std::move(pa), name); }
+        if (pb.empty() || pb.size() > pa.size()) return a;
+        for (std::size_t at = pa.size() - pb.size() + 1; at-- > 0;) {
+            bool match = true;
+            for (std::size_t j = 0; j < pb.size() && match; ++j) match = SameFunc(pa[at + j], pb[j]);
+            if (!match) continue;
+            pa.erase(pa.begin() + (std::ptrdiff_t)at, pa.begin() + (std::ptrdiff_t)(at + pb.size()));
+            return FromParts(std::move(pa), name);
+        }
+        return a;
+    }
+
     static bool Equal(const Value& a, const Value& b) {
         if (std::holds_alternative<std::monostate>(a) || std::holds_alternative<std::monostate>(b)) {
             // null == ref: a reference to a destroyed object also counts as null.
@@ -965,6 +1330,7 @@ private:
         if (a.index() != b.index()) return AsF(a) == AsF(b);
         if (auto* r = std::get_if<ObjRef>(&a)) return *r == std::get<ObjRef>(b);
         if (auto* v = std::get_if<Vec3>(&a)) { Vec3 w = std::get<Vec3>(b); return v->x == w.x && v->y == w.y && v->z == w.z; }
+        if (auto* f = std::get_if<FuncRef>(&a)) return SameFunc(*f, std::get<FuncRef>(b));
         return a == b;
     }
 
@@ -1055,12 +1421,29 @@ private:
                 for (auto& a : e.args) args.push_back(Eval(*a));
                 return Invoke(std::get<FuncRef>(f), args, e.loc);
             }
-            case Bind::ObjMethod: {
+            case Bind::ObjMethod: {   // the method the object's own class has under that name
                 ObjPtr o = std::get<ObjPtr>(Receiver(*e.object, e.nullCond));
                 std::vector<Value> args;
                 args.reserve(e.args.size());
                 for (auto& a : e.args) args.push_back(Eval(*a));
-                return As(o, [&] { return CallMethod(e.slot, args); });
+                const auto [k, m] = prog_.classes[(std::size_t)o->cls].dispatch[(std::size_t)e.slot];
+                if (m < 0) throw RuntimeError("Internal error: " + o->className + " has no " + e.name + "()", e.loc);
+                return As(o, k, [&] { return CallMethod(m, args); });
+            }
+            case Bind::BaseMethod: {
+                std::vector<Value> args;
+                args.reserve(e.args.size());
+                for (auto& a : e.args) args.push_back(Eval(*a));
+                const ObjPtr self = this_;   // a copy: As() swaps this_ out
+                return As(self, e.member, [&] { return CallMethod(e.slot, args); });
+            }
+            case Bind::BaseCtor: {
+                std::vector<Value> args;
+                args.reserve(e.args.size());
+                for (auto& a : e.args) args.push_back(Eval(*a));
+                const ObjPtr self = this_;   // a copy: As() swaps this_ out
+                Construct(self, e.slot, e.member, args, e.loc);
+                return Value{};
             }
             case Bind::ApiStaticMethod: case Bind::ApiMethod: {
                 const ApiType& t = api_.types[(std::size_t)e.slot];
@@ -1080,6 +1463,37 @@ private:
                 const ApiType& t = api_.types[(std::size_t)e.slot];
                 return t.find && t.find(g) ? MakeRef(g, e.slot) : Value{};
             }
+            case Bind::GetScript: {   // the script on the object, or null
+                GameObject* g = e.object ? Resolve(AsRef(Receiver(*e.object, e.nullCond)), e.object->loc) : ctx_.self;
+                if (!g) throw RuntimeError("This script isn't attached to an object", e.loc);
+                return FindScriptInstance(g, ScriptClassName(e.slot)) ? MakeRef(g, ScriptRefType(e.slot)) : Value{};
+            }
+            case Bind::ScriptMethod: {
+                Instance& other = ScriptOf(*e.object, e.nullCond);
+                std::vector<Value> args;
+                args.reserve(e.args.size());
+                for (auto& a : e.args) args.push_back(Eval(*a));
+                const int m = other.program().MethodIndex(e.name);
+                if (m < 0) throw RuntimeError(other.program().Component()->name + " has no " + e.name + "() any more", e.loc);
+                const std::uint64_t steps = other.steps;
+                Value r = other.Call(m, std::move(args));
+                other.steps = steps;   // a call from another script isn't a callback of its own
+                return r;
+            }
+            case Bind::StartCoroutine: {
+                const Value v = Receiver(*e.args[0]);
+                const CoRef& co = std::get<CoRef>(v);
+                StartCo(co, e.loc);
+                return v;
+            }
+            case Bind::StopCoroutine: {   // takes effect at its next yield
+                const Value v = Eval(*e.args[0]);
+                if (auto* co = std::get_if<CoRef>(&v); co && *co) (*co)->done = true;
+                return Value{};
+            }
+            case Bind::StopAllCoroutines:
+                for (const CoRef& co : inst_.coroutines) co->done = true;
+                return Value{};
             case Bind::Destroy: {
                 GameObject* g = Resolve(AsRef(Eval(*e.args[0])), e.args[0]->loc);
                 if (Scene* sc = g->scene()) sc->Destroy(g);
@@ -1146,6 +1560,44 @@ void Instance::AttachStatics(std::shared_ptr<StaticStore> store) {
 }
 
 void ForgetSceneStatics(const Scene* scene) { AllStatics().erase(scene); }
+
+// Once a frame (after Update): resume each coroutine whose wait is over. One that
+// paused during this frame waits for the next. An error stops that coroutine only;
+// the first one is thrown once the others have had their turn.
+void Instance::TickCoroutines(float dt) {
+    if (coroutines.empty()) { ++ticks; return; }
+    const std::uint64_t now = ticks;
+    Exec ex(*prog_, fields_, ctx_, *this);
+    std::exception_ptr first;
+    for (std::size_t i = 0; i < coroutines.size(); ++i) {   // by index: a coroutine can start more
+        const CoRef co = coroutines[i];
+        if (co->done || co->stamp >= now) continue;
+        try {
+            steps = 0;
+            if (co->waitFor) {
+                if (!co->waitFor->done) continue;
+                co->waitFor.reset();
+            } else if (co->until) {
+                std::vector<Value> none;
+                const Value got = ex.Invoke(co->until->cond, none, co->method->loc);
+                const bool c = std::holds_alternative<bool>(got) && std::get<bool>(got);
+                if (co->until->kind == WaitKind::Until ? !c : c) continue;
+                co->until.reset();
+            } else if (co->wait > 0.0f) {
+                co->wait -= dt;
+                if (co->wait > 1e-5f) continue;
+            }
+            ex.ResumeCo(*co);
+        } catch (const RuntimeError& e) {
+            co->done = true;
+            if (e.fatal || !first) first = std::current_exception();
+            if (e.fatal) break;
+        }
+    }
+    coroutines.erase(std::remove_if(coroutines.begin(), coroutines.end(), [](const CoRef& c) { return c->done; }), coroutines.end());
+    ++ticks;
+    if (first) std::rethrow_exception(first);
+}
 
 Value Instance::Call(int method, std::vector<Value> args) {
     steps = 0;

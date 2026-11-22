@@ -72,7 +72,20 @@ std::string Program::NameOf(const Type& t) const {
         return n + ">";
     }
     if (t.kind == TK::Lambda) return "a lambda";
+    if (t.kind == TK::Routine) return "IEnumerator";
+    if (t.kind == TK::Coroutine) return "Coroutine";
+    if (t.kind == TK::Wait) return WaitTypeName(t.id);
+    if (t.kind == TK::Script) return ScriptClassName(t.id);
     return TypeName(t);
+}
+
+const char* WaitTypeName(int kind) {
+    static const char* const names[] = {"WaitForSeconds", "WaitUntil", "WaitWhile", "WaitForEndOfFrame", "WaitForFixedUpdate"};
+    return kind >= 0 && kind < 5 ? names[kind] : "Wait";
+}
+static int WaitKindOf(const std::string& n) {
+    for (int k = 0; k < 5; ++k) if (n == WaitTypeName(k)) return k;
+    return -1;
 }
 
 Type Program::FuncOf(const std::vector<Type>& params, const Type& ret) {
@@ -135,45 +148,79 @@ public:
             if (!HasErrors()) Error({1, 1}, "A script needs a class: class Name : Behaviour { ... }");
             return;
         }
-        // The Behaviour class is the component; any others are plain classes the script makes with new.
+        // The Behaviour class is the component; any others are plain classes (and
+        // interfaces) the script makes with new.
         int comp = -1;
         bool badBase = false;
+        std::vector<std::string> extendable = {"Behaviour"};
+        for (auto& k : prog_.classes) extendable.push_back(k.name);
         for (std::size_t i = 0; i < prog_.classes.size(); ++i) {
             ClassDecl& c = prog_.classes[i];
             if ((int)i != ClassIndex(c.name)) Error(c.loc, "'" + c.name + "' is declared twice");
             else if (api_.Find(c.name) >= 0) Error(c.loc, "'" + c.name + "' is already an engine type: pick another name");
-            if (c.base == "Behaviour") {
-                if (comp < 0) comp = (int)i;
-                else Error(c.loc, "Only one Behaviour class per script: put '" + c.name + "' in its own script");
-            } else if (!c.base.empty()) {
-                badBase = true;
-                if (ClassIndex(c.base) >= 0) Error(c.baseLoc, "Inheritance between classes isn't supported yet");
-                else Error(c.baseLoc, "'" + c.base + "' isn't something a script can extend. Scripts extend Behaviour" + Suggest(c.base, {"Behaviour"}));
-                if (comp < 0 && ClassIndex(c.base) < 0) comp = (int)i;   // check it as the component anyway
+            for (std::size_t b = 0; b < c.bases.size(); ++b) {
+                const std::string& n = c.bases[b];
+                const SrcLoc l = c.baseLocs[b];
+                if (n == "Behaviour") {
+                    if (c.isInterface || c.isAbstract) Error(l, std::string(c.isInterface ? "An interface" : "An abstract class") + " can't extend Behaviour");
+                    else if (b != 0) Error(l, "Behaviour comes first: class " + c.name + " : Behaviour");
+                    else if (comp < 0) comp = (int)i;
+                    else Error(c.loc, "Only one Behaviour class per script: put '" + c.name + "' in its own script");
+                    continue;
+                }
+                const int bi = ClassIndex(n);
+                if (bi < 0) {
+                    badBase = true;
+                    Error(l, "'" + n + "' isn't something a script can extend. Scripts extend Behaviour, a class or an interface" + Suggest(n, extendable));
+                    if (comp < 0 && b == 0 && !c.isInterface) comp = (int)i;   // check it as the component anyway
+                    continue;
+                }
+                const ClassDecl& k = prog_.classes[(std::size_t)bi];
+                if (bi == (int)i) Error(l, "A class can't extend itself");
+                else if (k.isInterface) c.interfaces.push_back(bi);
+                else if (c.isInterface) Error(l, "An interface can only extend interfaces: " + n + " is a class");
+                else if (b != 0) Error(l, "A class extends one class, named first: " + n + " is a class");
+                else c.baseClass = bi;
             }
         }
         if (comp < 0) {
-            if (!badBase) Error(prog_.classes[0].loc, "A script class must extend Behaviour: class " + prog_.classes[0].name + " : Behaviour");
-            comp = 0;
+            if (!badBase) {
+                int first = 0;   // the first class that isn't an interface
+                while (first + 1 < (int)prog_.classes.size() && prog_.classes[(std::size_t)first].isInterface) ++first;
+                Error(prog_.classes[(std::size_t)first].loc, "A script class must extend Behaviour: class " + prog_.classes[(std::size_t)first].name + " : Behaviour");
+                comp = first;
+            } else comp = 0;
         }
         prog_.component = comp;
-        cls_ = &prog_.classes[(std::size_t)comp];
+        ClassDecl& compCls = prog_.classes[(std::size_t)comp];
+        if (compCls.baseClass >= 0 || !compCls.interfaces.empty()) {
+            Error(compCls.baseLocs.size() > 1 ? compCls.baseLocs[1] : compCls.loc, "A Behaviour class can't extend a class or implement interfaces yet");
+            compCls.baseClass = -1;
+            compCls.interfaces.clear();
+        }
+        LinkClasses();
+        prog_.exceptionClass = ClassIndex("Exception");
+        cls_ = &compCls;
         CheckEnums();
 
         // Every class's members first, so code can use fields and call methods in any order.
         for (ClassDecl& c : prog_.classes) { cls_ = &c; DeclareMembers(c); }
+        for (std::size_t i = 0; i < prog_.classes.size(); ++i) Layout((int)i);
+        for (ClassDecl& c : prog_.classes) { cls_ = &c; CheckInheritance(c); }
         for (ClassDecl& c : prog_.classes) {
             cls_ = &c;
             for (FieldDecl& f : c.fields) CheckField(f);
-            for (MethodDecl& m : c.methods) CheckMethod(m);
+            for (MethodDecl& m : c.methods) if (m.body) CheckMethod(m);
         }
+        BuildDispatch();
 
         // Methods nothing calls do nothing: lifecycle methods run by name and public
         // ones can be wired to UI events, everything else must be called somewhere.
         for (ClassDecl& c : prog_.classes) {
+            if (c.builtin) continue;
             cls_ = &c;
             for (MethodDecl& m : c.methods)
-                if (!m.isCtor && m.lifecycle < 0 && !m.isPublic && !m.called) {
+                if (!m.isCtor && m.lifecycle < 0 && !m.isPublic && !m.called && !m.isAbstract) {
                     std::string hint;
                     if (InComponent())
                         for (const auto& l : LifecycleMethods())
@@ -199,6 +246,10 @@ private:
     int nextSlot_ = 0, maxSlot_ = 0, loopDepth_ = 0, switchDepth_ = 0;
     bool inFieldInit_ = false;
     bool inEnumValue_ = false;   ///< checking an enum member's value (fields aren't declared yet)
+    bool allowEvent_ = false;    ///< checking the target of += / -= (another class's event is allowed there)
+    int catchDepth_ = 0;         ///< inside a catch (throw; works)
+    int tryDepth_ = 0;           ///< inside a try statement (a coroutine can't yield there)
+    int finallyDepth_ = 0;       ///< inside a finally (return, and break / continue to outside it, don't)
     std::vector<int> enumReady_;   ///< per enum: how many members have their value worked out
 
     // ---- Lambdas ----
@@ -212,6 +263,7 @@ private:
         Type ret;
         bool inferRet;
         int retState;
+        int catchDepth, finallyDepth;
     };
     std::vector<Outer> outer_;            ///< the code around the lambda being checked, innermost last
     LambdaDecl* lambda_ = nullptr;        ///< the lambda being checked
@@ -236,22 +288,325 @@ private:
     }
     static std::string Values(std::size_t n) { return std::to_string(n) + (n == 1 ? " value" : " values"); }
 
+    // ---- Classes that extend classes and implement interfaces ----
+    ClassDecl& Cls(int i) { return prog_.classes[(std::size_t)i]; }
+    // Break loops (A : B, B : A), then work out what each class is.
+    void LinkClasses() {
+        const int n = (int)prog_.classes.size();
+        for (int i = 0; i < n; ++i) {
+            int steps = 0;
+            for (int c = Cls(i).baseClass; c >= 0; c = Cls(c).baseClass)
+                if (c == i || ++steps > n) { Error(Cls(i).baseLocs[0], Cls(i).name + " ends up extending itself"); Cls(i).baseClass = -1; break; }
+        }
+        for (int i = 0; i < n; ++i) {
+            ClassDecl& c = Cls(i);
+            c.isA.assign((std::size_t)n, 0);
+            std::vector<int> todo = {i};
+            while (!todo.empty()) {
+                const int k = todo.back();
+                todo.pop_back();
+                if (c.isA[(std::size_t)k]) continue;
+                c.isA[(std::size_t)k] = 1;
+                if (Cls(k).baseClass >= 0) todo.push_back(Cls(k).baseClass);
+                for (int f : Cls(k).interfaces) todo.push_back(f);
+            }
+        }
+        for (int i = 0; i < n; ++i)   // an interface that reaches itself through others
+            for (std::size_t j = 0; j < Cls(i).interfaces.size(); ++j)
+                if (Cls(Cls(i).interfaces[j]).isA[(std::size_t)i]) {
+                    Error(Cls(i).loc, Cls(i).name + " ends up extending itself");
+                    Cls(i).interfaces.clear();
+                    break;
+                }
+    }
+    bool IsA(int sub, int super) const {
+        return sub >= 0 && super >= 0 && prog_.classes[(std::size_t)sub].isA.size() > (std::size_t)super && prog_.classes[(std::size_t)sub].isA[(std::size_t)super];
+    }
+    // Each object's fields: the classes it extends first, then its own.
+    void Layout(int i) {
+        ClassDecl& c = Cls(i);
+        if (c.fieldCount > 0 || (c.fields.empty() && c.baseClass < 0)) return;
+        int at = 0;
+        if (c.baseClass >= 0) { Layout(c.baseClass); at = Cls(c.baseClass).fieldCount; }
+        for (FieldDecl& f : c.fields) f.index = at++;
+        c.fieldCount = at;
+    }
+    int NameId(const std::string& n) {
+        auto& names = prog_.methodNames;
+        for (std::size_t i = 0; i < names.size(); ++i) if (names[i] == n) return (int)i;
+        names.push_back(n);
+        return (int)names.size() - 1;
+    }
+    // The field `n` of class k or a class it extends (and which class has it).
+    FieldDecl* FindField(int k, const std::string& n, int* owner = nullptr) {
+        for (int c = k; c >= 0; c = Cls(c).baseClass)
+            for (FieldDecl& f : Cls(c).fields)
+                if (f.name == n) { if (owner) *owner = c; return &f; }
+        return nullptr;
+    }
+    // The method `n` of class k, a class it extends, or (for interfaces and abstract classes) an interface it has.
+    MethodDecl* FindMethod(int k, const std::string& n, int* owner = nullptr, int* index = nullptr) {
+        auto in = [&](int c) -> MethodDecl* {
+            auto& ms = Cls(c).methods;
+            for (std::size_t i = 0; i < ms.size(); ++i)
+                if (!ms[i].isCtor && ms[i].name == n) { if (owner) *owner = c; if (index) *index = (int)i; return &ms[i]; }
+            return nullptr;
+        };
+        for (int c = k; c >= 0; c = Cls(c).baseClass) if (MethodDecl* m = in(c)) return m;
+        for (std::size_t c = 0; c < prog_.classes.size(); ++c)
+            if (Cls(k).isA[c] && Cls((int)c).isInterface) if (MethodDecl* m = in((int)c)) return m;
+        return nullptr;
+    }
+    // A property with code named `n` in class k or a class it extends.
+    PropDecl* FindProp(int k, const std::string& n, int* owner = nullptr) {
+        for (int c = k; c >= 0; c = Cls(c).baseClass)
+            for (PropDecl& p : Cls(c).props)
+                if (p.name == n) { if (owner) *owner = c; return &p; }
+        return nullptr;
+    }
+    // `Name` / `this.Name` / `T.Name` read as a property of the current class: becomes get_Name().
+    bool PropGetOwn(Expr& e) {
+        int owner = -1;
+        PropDecl* p = FindProp(ClassId(), e.name, &owner);
+        if (!p) return false;
+        if (!CanUse(owner, p->isPublic, p->isProtected)) { Error(e.loc, NotUsable(e.name, owner)); return true; }
+        e.kind = EK::Call; e.name = "get_" + e.name; e.args.clear(); e.object.reset();
+        CheckCall(e);
+        return true;
+    }
+    static ExprPtr NewExpr(EK k, SrcLoc l) { auto x = std::make_unique<Expr>(); x->kind = k; x->loc = l; return x; }
+    // `Name = v`, `Name += v`, `Name++` (also on this.Name and obj.Name with obj a local or
+    // field of a class) on a property with code: becomes set_Name(v) / set_Name(get_Name() + v).
+    bool PropSet(Expr& e) {
+        if (!e.lhs) return false;
+        Expr& t = *e.lhs;
+        int k = -1;
+        const Expr* recvName = nullptr;   // obj in obj.Name (null: the current object or class)
+        if (t.kind == EK::Name) {
+            if (FindLocal(t.name) || FindField(ClassId(), t.name)) return false;
+            k = ClassId();
+        } else if (t.kind == EK::Member && t.object && !t.nullCond) {
+            if (t.object->kind == EK::This) k = ClassId();
+            else if (t.object->kind == EK::Name) {
+                const std::string& on = t.object->name;
+                if (LocalVar* v = FindLocal(on)) { if (v->type.kind == TK::Class) { k = v->type.id; recvName = t.object.get(); } }
+                else if (FieldDecl* f = FindField(ClassId(), on)) { if (f->resolved.kind == TK::Class) { k = f->resolved.id; recvName = t.object.get(); } }
+                else if (on == cls_->name) k = ClassId();
+            }
+        }
+        if (k < 0) return false;
+        int owner = -1;
+        PropDecl* p = FindProp(k, t.name, &owner);
+        if (!p) return false;
+        if (!CanUse(owner, p->isPublic, p->isProtected)) { Error(t.loc, NotUsable(t.name, owner)); return true; }
+        if (!p->hasSet) {
+            if (e.rhs) CheckExpr(*e.rhs);
+            Error(t.loc, "'" + p->name + "' can't be set: the property only has a get");
+            return true;
+        }
+        auto recv = [&]() -> ExprPtr {
+            if (!recvName) return nullptr;
+            auto r = NewExpr(EK::Name, recvName->loc);
+            r->name = recvName->name;
+            return r;
+        };
+        auto getter = [&]() {
+            auto g = NewExpr(EK::Call, t.loc);
+            g->name = "get_" + p->name;
+            g->object = recv();
+            return g;
+        };
+        ExprPtr value;
+        if (e.kind == EK::Assign && e.op == T::Assign) {
+            value = std::move(e.rhs);
+        } else {
+            T bop = T::End;
+            if (e.kind == EK::IncDec) bop = e.op == T::PlusPlus ? T::Plus : T::Minus;
+            else switch (e.op) {
+                case T::PlusEq: bop = T::Plus; break;
+                case T::MinusEq: bop = T::Minus; break;
+                case T::StarEq: bop = T::Star; break;
+                case T::SlashEq: bop = T::Slash; break;
+                case T::PercentEq: bop = T::Percent; break;
+                default: break;
+            }
+            if (bop == T::End) {
+                if (e.rhs) CheckExpr(*e.rhs);
+                Error(e.loc, std::string("Can't use ") + TokenName(e.op) + " on the property '" + p->name + "'");
+                return true;
+            }
+            auto bin = NewExpr(EK::Binary, e.loc);
+            bin->op = bop;
+            bin->lhs = getter();
+            if (e.kind == EK::IncDec) { bin->rhs = NewExpr(EK::IntLit, e.loc); bin->rhs->ival = 1; }
+            else bin->rhs = std::move(e.rhs);
+            value = std::move(bin);
+        }
+        ExprPtr r = recv();
+        e.kind = EK::Call;
+        e.name = "set_" + p->name;
+        e.lhs.reset(); e.rhs.reset(); e.op = T::End; e.prefix = false;
+        e.args.clear();
+        e.args.push_back(std::move(value));
+        e.object = std::move(r);
+        CheckCall(e);
+        return true;
+    }
+
+    // Members of class `owner` the code being checked can use.
+    bool CanUse(int owner, bool isPublic, bool isProtected) const {
+        return isPublic || owner == ClassId() || (isProtected && IsA(ClassId(), owner));
+    }
+    std::string NotUsable(const std::string& name, int owner) {
+        if (IsA(ClassId(), owner))
+            return "'" + name + "' is private to " + Cls(owner).name + ": make it protected (or public) to use it in classes that extend it";
+        return "'" + name + "' is private to " + Cls(owner).name + ": make it public to use it here";
+    }
+    // obj.M(...) with obj of class (or interface) k, its arguments already checked:
+    // runs the method the object's own class has under that name.
+    void CallClassMethod(Expr& e, int k) {
+        int owner = -1;
+        MethodDecl* m = FindMethod(k, e.name, &owner);
+        if (!m) {
+            std::vector<std::string> opts;
+            for (std::size_t c = 0; c < prog_.classes.size(); ++c)
+                if (Cls(k).isA[c]) for (auto& x : Cls((int)c).methods) if (!x.isCtor) opts.push_back(x.name);
+            Error(e.loc, Cls(k).name + " has no method '" + e.name + "'" + Suggest(e.name, opts));
+            return;
+        }
+        if (!CanUse(owner, m->isPublic, m->isProtected)) { Error(e.loc, NotUsable(e.name, owner)); return; }
+        if (m != method_) m->called = true;
+        if (!ArgsFit(e, *m)) return;
+        e.bind = Bind::ObjMethod; e.slot = m->nameId; e.member = k; e.type = m->retType;
+    }
+    // base.M(...): the method of the class this one extends, not this class's override.
+    void CheckBaseCall(Expr& e) {
+        for (auto& a : e.args) CheckExpr(*a);
+        if (cls_->baseClass < 0) { Error(e.object->loc, cls_->name + " doesn't extend a class, so there's no base"); return; }
+        if (method_ && method_->isStatic) { Error(e.object->loc, "A static method has no base"); return; }
+        int owner = -1, index = -1;
+        MethodDecl* m = FindMethod(cls_->baseClass, e.name, &owner, &index);
+        if (!m || Cls(owner).isInterface) { Error(e.loc, Cls(cls_->baseClass).name + " has no method '" + e.name + "'"); return; }
+        if (!m->body) { Error(e.loc, Cls(owner).name + "." + e.name + "() is abstract: there's nothing to call"); return; }
+        if (!CanUse(owner, m->isPublic, m->isProtected)) { Error(e.loc, NotUsable(e.name, owner)); return; }
+        m->called = true;
+        if (!ArgsFit(e, *m)) return;
+        UsesSelf();
+        e.object.reset();
+        e.bind = Bind::BaseMethod; e.slot = index; e.member = owner; e.type = m->retType;
+    }
+    static bool SameSignature(const MethodDecl& a, const MethodDecl& b) {
+        if (a.params.size() != b.params.size() || a.retType != b.retType) return false;
+        for (std::size_t i = 0; i < a.params.size(); ++i) if (a.params[i].resolved != b.params[i].resolved) return false;
+        return true;
+    }
+    std::string Signature(const MethodDecl& m) {
+        std::string s = (m.retType.kind == TK::Void ? std::string("void") : TypeName(m.retType)) + " " + m.name + "(";
+        for (std::size_t i = 0; i < m.params.size(); ++i) s += (i ? ", " : "") + TypeName(m.params[i].resolved);
+        return s + ")";
+    }
+    // override / virtual / abstract and interfaces, the C# way.
+    void CheckInheritance(ClassDecl& c) {
+        const int self = ClassId();
+        for (FieldDecl& f : c.fields) {
+            int owner = -1;
+            if (c.baseClass >= 0 && (FindField(c.baseClass, f.name, &owner) || FindMethod(c.baseClass, f.name, &owner)))
+                Error(f.loc, "'" + f.name + "' is already in " + Cls(owner).name + ": pick another name");
+        }
+        for (MethodDecl& m : c.methods) {
+            if (m.isCtor) continue;
+            if (m.isStatic && (m.isVirtual || m.isOverride || m.isAbstract)) Error(m.loc, "A static method can't be virtual, override or abstract");
+            if (m.isAbstract && !c.isAbstract && !c.isInterface) Error(m.loc, "Only an abstract class can have abstract methods: write abstract class " + c.name);
+            if ((m.isVirtual || m.isAbstract) && !c.isInterface && !m.isPublic && !m.isProtected)
+                Error(m.loc, "A virtual or abstract method can't be private: make it public or protected");
+            int owner = -1;
+            if (c.baseClass >= 0 && FindField(c.baseClass, m.name, &owner)) { Error(m.loc, "'" + m.name + "' is already a field in " + Cls(owner).name); continue; }
+            MethodDecl* inh = c.baseClass >= 0 ? FindMethod(c.baseClass, m.name, &owner) : nullptr;
+            if (inh && Cls(owner).isInterface) inh = nullptr;   // an interface's method is implemented, not overridden
+            if (!inh) {
+                if (m.isOverride) Error(m.loc, "There's no virtual " + m.name + "() in what " + c.name + " extends, so there's nothing to override");
+                continue;
+            }
+            if (!m.isOverride) Error(m.loc, m.name + "() is already in " + Cls(owner).name + ": to change what it does, mark it virtual there and override here");
+            else if (!inh->isVirtual && !inh->isAbstract && !inh->isOverride) Error(m.loc, m.name + "() in " + Cls(owner).name + " isn't virtual, so it can't be overridden: mark it virtual");
+            else if (!SameSignature(m, *inh)) Error(m.loc, "An override must match what it overrides: " + Signature(*inh) + " in " + Cls(owner).name);
+            else if (m.isPublic != inh->isPublic) Error(m.loc, "An override keeps the access of what it overrides: make it " + std::string(inh->isPublic ? "public" : "protected"));
+            m.called = true;   // runs whenever the method it overrides is called
+        }
+        if (c.isInterface) return;
+        if (c.baseClass >= 0 && !CtorWith(c.baseClass, 0) && HasCtor(c.baseClass) && !HasCtor(self))
+            Error(c.loc, c.name + " needs a constructor that calls base(...): " + Cls(c.baseClass).name + " has no constructor that takes 0 values");
+        // Everything abstract must have a body somewhere, unless the class is abstract itself.
+        for (std::size_t k = 0; k < prog_.classes.size(); ++k) {
+            if (!c.isA[k] || (int)k == self) continue;
+            for (MethodDecl& am : Cls((int)k).methods) {
+                if (!am.isAbstract) continue;
+                int owner = -1;
+                MethodDecl* impl = nullptr;
+                for (int x = self; x >= 0 && !impl; x = Cls(x).baseClass)
+                    for (MethodDecl& cm : Cls(x).methods)
+                        if (!cm.isCtor && cm.name == am.name && (cm.body || (c.isAbstract && Cls((int)k).isInterface))) { impl = &cm; owner = x; break; }
+                if (!impl) {
+                    if (c.isAbstract && !Cls((int)k).isInterface) continue;
+                    Error(c.loc, c.name + (Cls((int)k).isInterface ? " must have " + Cls((int)k).name + "'s method: public " + Signature(am)
+                                                                     : " must override " + Cls((int)k).name + "." + am.name + "()"));
+                    continue;
+                }
+                if (Cls((int)k).isInterface) {
+                    if (!SameSignature(*impl, am)) Error(impl->loc, impl->name + "() must match " + Cls((int)k).name + "'s " + Signature(am));
+                    else if (!impl->isPublic) Error(impl->loc, impl->name + "() is " + Cls((int)k).name + "'s, so it must be public");
+                    impl->called = true;
+                    (void)owner;
+                }
+            }
+        }
+    }
+    // Exception's Message: set by its constructor, read by everyone else.
+    bool IsBuiltinField(const FieldDecl& f) {
+        for (const ClassDecl& c : prog_.classes)
+            if (c.builtin) for (const FieldDecl& g : c.fields) if (&g == &f) return true;
+        return false;
+    }
+    bool HasCtor(int k) { for (auto& m : Cls(k).methods) if (m.isCtor) return true; return false; }
+    int CtorWith(int k, std::size_t params) {
+        for (std::size_t i = 0; i < Cls(k).methods.size(); ++i)
+            if (Cls(k).methods[i].isCtor && Cls(k).methods[i].params.size() == params) return (int)i + 1;   // + 1: 0 is "none"
+        return 0;
+    }
+    // Which method each class's objects run for each name: the most derived body.
+    void BuildDispatch() {
+        for (std::size_t i = 0; i < prog_.classes.size(); ++i) {
+            ClassDecl& c = Cls((int)i);
+            c.dispatch.assign(prog_.methodNames.size(), {-1, -1});
+            if (c.isInterface) continue;
+            std::vector<int> chain;
+            for (int k = (int)i; k >= 0; k = Cls(k).baseClass) chain.push_back(k);
+            for (auto k = chain.rbegin(); k != chain.rend(); ++k)
+                for (std::size_t m = 0; m < Cls(*k).methods.size(); ++m) {
+                    const MethodDecl& md = Cls(*k).methods[m];
+                    if (!md.isCtor && md.body && md.nameId >= 0) c.dispatch[(std::size_t)md.nameId] = {*k, (int)m};
+                }
+        }
+    }
+
     void DeclareMembers(ClassDecl& c) {
         const bool comp = InComponent();
         std::set<std::string> names;
         std::set<std::size_t> ctorArgs;
         for (std::size_t i = 0; i < c.fields.size(); ++i) {
             FieldDecl& f = c.fields[i];
-            f.index = (int)i;
             if (!names.insert(f.name).second) Error(f.loc, "'" + f.name + "' is declared twice");
             if (comp && IsSelfMemberName(f.name)) Error(f.loc, "'" + f.name + "' is already the object's own " + f.name + ": pick another name");
             if (!comp && f.isStatic) Error(f.loc, "static members only work in the Behaviour class for now");
             if (!comp && f.isConst) Error(f.loc, "const only works in the Behaviour class for now");
             f.resolved = ResolveType(f.type, false);
+            if (f.isEvent && f.resolved.kind != TK::Func && f.resolved.kind != TK::Error)
+                Error(f.loc, "An event holds functions: event Action " + f.name + "; or event Action<int> " + f.name + ";");
         }
         for (std::size_t i = 0; i < c.methods.size(); ++i) {
             MethodDecl& m = c.methods[i];
             for (auto& p : m.params) p.resolved = ResolveType(p.type, false);
+            CheckDefaults(m);
             if (m.isCtor) {
                 m.retType = Type::Of(TK::Void);
                 if (comp) Error(m.loc, "A Behaviour script has no constructor: set things up in Awake() or Start()");
@@ -259,14 +614,61 @@ private:
                     Error(m.loc, c.name + " already has a constructor that takes " + Values(m.params.size()));
                 continue;
             }
+            m.nameId = NameId(m.name);
             if (!comp && m.isStatic) Error(m.loc, "static members only work in the Behaviour class for now");
             if (!names.insert(m.name).second) Error(m.loc, "'" + m.name + "' is declared twice (methods can't share a name yet)");
             m.retType = m.ret.name == "void" ? Type::Of(TK::Void) : ResolveType(m.ret, false);
+            m.isCoroutine = m.retType.kind == TK::Routine;
             if (comp) CheckLifecycleSignature(m, (int)i);
         }
     }
+    // Default parameter values: fixed values, and only at the end of the list.
+    void CheckDefaults(MethodDecl& m) {
+        bool seen = false;
+        for (auto& p : m.params) {
+            if (!p.def) {
+                if (seen) Error(p.loc, "'" + p.name + "' comes after a parameter with a default value, so it needs one too");
+                continue;
+            }
+            seen = true;
+            if (m.isCtor) { Error(p.def->loc, "Default values on constructors aren't supported yet: add a second constructor"); continue; }
+            if (p.resolved.kind == TK::Error) continue;
+            inFieldInit_ = true;
+            scopes_.clear();
+            nextSlot_ = maxSlot_ = 0;
+            CheckInit(*p.def, p.resolved, "The default value of '" + p.name + "'");
+            inFieldInit_ = false;
+            if (p.def->type.kind == TK::Error) continue;
+            std::optional<Value> v;
+            if (p.def->kind == EK::NullLit) v = Value{};
+            else if (IsConstant(*p.def)) v = Fold(*p.def);
+            if (!v) { Error(p.def->loc, "A default value must be fixed (a number, text, true/false, null or an enum value)"); continue; }
+            Value dv = *v;
+            if (p.resolved.kind == TK::Float)
+                if (auto* iv = std::get_if<std::int32_t>(&dv)) dv = Value{(float)*iv};
+            p.defVal = dv;
+            p.hasDefault = true;
+        }
+    }
+    // A checked literal for a left-out argument.
+    ExprPtr DefaultArg(const Param& p, SrcLoc at) {
+        auto x = NewExpr(EK::NullLit, at);
+        if (auto* i = std::get_if<std::int32_t>(&p.defVal)) { x->kind = EK::IntLit; x->ival = *i; x->type = Type::Of(TK::Int); }
+        else if (auto* f = std::get_if<float>(&p.defVal)) { x->kind = EK::FloatLit; x->fval = *f; x->type = Type::Of(TK::Float); }
+        else if (auto* s = std::get_if<std::string>(&p.defVal)) { x->kind = EK::StringLit; x->sval = *s; x->type = Type::Of(TK::String); }
+        else if (auto* b = std::get_if<bool>(&p.defVal)) { x->kind = EK::BoolLit; x->bval = *b; x->type = Type::Of(TK::Bool); }
+        else x->type = Type::Of(TK::Null);
+        if (p.resolved.kind == TK::Enum) x->type = p.resolved;   // the enum value's number
+        return x;
+    }
     // The method's parameters take the call's (checked) arguments.
     bool ArgsFit(Expr& e, const MethodDecl& m) {
+        if (e.args.size() < m.params.size()) {   // left-out arguments with default values
+            std::size_t n = e.args.size();
+            while (n < m.params.size() && m.params[n].hasDefault) ++n;
+            if (n == m.params.size())
+                for (std::size_t i = e.args.size(); i < m.params.size(); ++i) e.args.push_back(DefaultArg(m.params[i], e.loc));
+        }
         if (e.args.size() != m.params.size()) {
             Error(e.loc, e.name + "() takes " + Values(m.params.size()) + ", not " + std::to_string(e.args.size()));
             return false;
@@ -327,7 +729,7 @@ private:
             case EK::Member: if (e.bind == Bind::EnumValue) r = Value{e.ival}; break;
             case EK::Name:
                 if (e.bind == Bind::Field) {
-                    const FieldDecl& f = cls_->fields[(std::size_t)e.slot];
+                    const FieldDecl& f = FieldAt(e.slot);
                     if (f.isConst && f.init) r = Fold(*f.init);
                 }
                 break;
@@ -408,12 +810,27 @@ private:
         if (t.name == "bool") return Type::Of(TK::Bool);
         if (t.name == "string") return Type::Of(TK::String);
         if (t.name == "Vector3") return Type::Of(TK::Vector3);
+        if (t.name == "IEnumerator") return Type::Of(TK::Routine);
+        if (t.name == "Coroutine") return Type::Of(TK::Coroutine);
+        if (int w = WaitKindOf(t.name); w >= 0) return Type{TK::Wait, w};
         if (t.name == "var" && allowVar) return Type{};   // inferred by the caller
         if (t.name == "double") { Error(t.loc, "Use float for decimal numbers (double isn't supported)"); return Type{}; }
         if (t.name == "void") { Error(t.loc, "void isn't a type a value can have"); return Type{}; }
         if (int ei = EnumIndex(t.name); ei >= 0) return Type{TK::Enum, ei};
+        for (const DelegateDecl& d : prog_.delegates)
+            if (d.name == t.name) {   // a delegate: the function type it names
+                std::vector<Type> ps;
+                for (const TypeRef& p : d.params) {
+                    Type pt = ResolveType(p, false);
+                    if (pt.kind == TK::Error) return pt;
+                    ps.push_back(pt);
+                }
+                Type r = d.ret.name == "void" ? Type::Of(TK::Void) : ResolveType(d.ret, false);
+                if (r.kind == TK::Error) return r;
+                return prog_.FuncOf(ps, r);
+            }
         if (int ci = ClassIndex(t.name); ci >= 0) {
-            if (ci == prog_.component) { Error(t.loc, "'" + t.name + "' is this script's Behaviour class: it can't be used as a type yet"); return Type{}; }
+            if (ci == prog_.component) return Type{TK::Script, ScriptClassId(t.name)};   // another object's copy of this script
             return Type{TK::Class, ci};
         }
         int id = api_.Find(t.name);
@@ -423,6 +840,8 @@ private:
         for (auto& at : api_.types) if (!at.isStatic && !at.isValueType) opts.push_back(at.name);
         for (auto& en : prog_.enums) opts.push_back(en.name);
         for (auto& k : prog_.classes) opts.push_back(k.name);
+        if (FindScriptView(t.name)) return Type{TK::Script, ScriptClassId(t.name)};   // another script's class
+        prog_.unknownTypes.push_back(t.name);
         Error(t.loc, "Unknown type '" + t.name + "'" + Suggest(t.name, opts));
         return Type{};
     }
@@ -479,15 +898,39 @@ private:
             if (m.retType.kind != TK::Void) Error(m.loc, m.name + "() must be void: the engine ignores anything it returns");
             if (!m.params.empty()) Error(m.loc, m.name + "() takes no parameters (the engine calls it " + lc[i].when + ")");
         }
+        // Collision messages (the C# names; 2D ones too): the engine calls them, private or
+        // public, with the other object as a Collider / Collision, a GameObject, its name, or nothing.
+        static const char* kMessages[] = {"OnTriggerEnter", "OnTriggerStay", "OnTriggerExit",
+                                          "OnCollisionEnter", "OnCollisionStay", "OnCollisionExit"};
+        for (const char* msg : kMessages) {
+            const std::string base = msg;
+            if (m.name != base && m.name != base + "2D") continue;
+            const bool trigger = base.rfind("OnTrigger", 0) == 0;
+            const std::string want = std::string(trigger ? "Collider" : "Collision") + (m.name.size() > base.size() ? "2D" : "");
+            m.called = true;
+            if (m.isStatic) Error(m.loc, m.name + "() can't be static: the engine calls it on each object");
+            if (m.retType.kind != TK::Void) Error(m.loc, m.name + "() must be void: the engine ignores anything it returns");
+            if (m.params.size() > 1) { Error(m.loc, m.name + "() takes (" + want + " other) or nothing"); continue; }
+            if (m.params.size() == 1) {
+                const Type& t = m.params[0].resolved;
+                bool ok = t.kind == TK::String || t.kind == TK::Error;
+                if (t.kind == TK::Object) {
+                    const std::string& tn = api_.types[(std::size_t)t.id].name;
+                    ok = t.id == api_.gameObject || tn == "Collider" || tn == "Collision" || tn == "Collider2D" || tn == "Collision2D";
+                }
+                if (!ok) Error(m.params[0].loc, m.name + "() takes (" + want + " other) or nothing, not " + TypeName(t));
+            }
+        }
     }
 
     // ---- Conversions ----
-    static bool Convertible(const Type& from, const Type& to) {
+    bool Convertible(const Type& from, const Type& to) const {
         if (from.kind == TK::Error || to.kind == TK::Error) return true;   // already reported
         if (to.kind == TK::Any) return from.kind != TK::Void;
         if (from == to) return true;
         if (from.kind == TK::Int && to.kind == TK::Float) return true;
         if (from.kind == TK::Null && CanBeNull(to)) return true;
+        if (from.kind == TK::Class && to.kind == TK::Class) return IsA(from.id, to.id);   // a Boss is an Enemy
         if (from.kind == TK::Lambda) return to.kind == TK::Func || to.kind == TK::Any;   // the lambda itself is checked by Expect
         return false;
     }
@@ -500,6 +943,7 @@ private:
     }
     // Check `e` can be used as `to`; mark int->float promotion.
     void Expect(Expr& e, const Type& to, const std::string& what) {
+        if (e.kind == EK::Name && e.type.kind == TK::Lambda && to.kind == TK::Func) MethodAsLambda(e, prog_.funcs[(std::size_t)to.id].params.size());
         if (e.kind == EK::Lambda && e.type.kind == TK::Lambda) { CheckLambda(e, to, what); return; }
         if (!Convertible(e.type, to)) { Error(e.loc, ConvertError(e.type, to, what)); return; }
         if (e.type.kind == TK::Int && to.kind == TK::Float) e.toFloat = true;
@@ -532,7 +976,13 @@ private:
                 if (a.args.size() != 2) Error(a.loc, "[Range(min, max)] needs two numbers");
                 if (!f.resolved.IsNumeric() && f.resolved.kind != TK::Error) Error(a.loc, "[Range] only works on int or float fields");
             } else if (a.name == "SerializeField") {
-                if (f.isPublic) Error(a.loc, "[SerializeField] does nothing on a public field (it's already in the Inspector). Delete it");
+                if (f.isPublic) {
+                    if (prog_.csharp) Warning(a.loc, "[SerializeField] does nothing on a public field (it's already in the Inspector)");
+                    else Error(a.loc, "[SerializeField] does nothing on a public field (it's already in the Inspector). Delete it");
+                }
+            } else if (prog_.csharp) {   // [HideInInspector], [Space], [TextArea], ...: a C# file may carry them
+                Warning(a.loc, "[" + a.name + "] has no effect here. Fields use [Header], [Tooltip], [Range] and [SerializeField]");
+                continue;
             } else {
                 Error(a.loc, "[" + a.name + "] isn't an attribute OkayScript uses. Fields can have [Header], [Tooltip], [Range] and [SerializeField]");
                 continue;
@@ -540,7 +990,7 @@ private:
             if (a.name != "SerializeField" && !f.isPublic && !HasAttr(f, "SerializeField"))
                 Error(a.loc, "[" + a.name + "] only shows in the Inspector for public fields: make '" + f.name + "' public or delete it");
         }
-        if (f.isConst && f.isPublic) Error(f.loc, "A const can't be public: the Inspector can't change it. Remove `public`");
+        if (f.isConst && f.isPublic && !prog_.csharp) Error(f.loc, "A const can't be public: the Inspector can't change it. Remove `public`");
         if (f.init) {
             inFieldInit_ = true;
             scopes_.clear();
@@ -574,7 +1024,12 @@ private:
             scopes_.back().push_back({p.name, p.resolved, nextSlot_++, p.loc, true});
         }
         maxSlot_ = nextSlot_;
+        if (m.isCtor) CheckBaseCtor(m);
         bool completes = CheckBlockBody(*m.body);
+        if (m.isCoroutine) {
+            if (!MarkYields(*m.body)) Error(m.loc, m.name + "() returns IEnumerator, so it's a coroutine: it needs a yield return (or yield break)");
+            completes = false;   // a coroutine just ends
+        }
         if (completes && m.retType.kind != TK::Void && m.retType.kind != TK::Error)
             Error(m.loc, m.name + "() must return a " + TypeName(m.retType) + " on every path");
         PopScope();
@@ -582,9 +1037,76 @@ private:
         method_ = nullptr;
         FlushLambdas();
     }
+    // StartCoroutine(Routine()), StopCoroutine(c), StopAllCoroutines(): the object's coroutines.
+    void CheckCoroutineCall(Expr& e) {
+        for (auto& a : e.args) CheckExpr(*a);
+        if (RejectOutsideComponent(e.name, e.loc) || RejectInStatic(e.name, e.loc)) return;
+        const bool all = e.name == "StopAllCoroutines";
+        if (e.args.size() != (all ? 0u : 1u)) {
+            Error(e.loc, all ? std::string("StopAllCoroutines() takes no values") : e.name + " takes the coroutine: " + e.name + "(Blink())");
+            return;
+        }
+        if (!all) {
+            const Type t = e.args[0]->type;
+            const bool ok = t.kind == TK::Routine || (e.name == "StopCoroutine" && t.kind == TK::Coroutine);
+            if (!ok && t.kind != TK::Error) {
+                Error(e.args[0]->loc, t.kind == TK::String ? e.name + " takes the coroutine itself, not its name: " + e.name + "(Blink())"
+                                                         : e.name + " needs a coroutine (a method that returns IEnumerator), not " + TypeName(t));
+                return;
+            }
+        }
+        UsesSelf();
+        e.bind = e.name == "StartCoroutine" ? Bind::StartCoroutine : e.name == "StopCoroutine" ? Bind::StopCoroutine : Bind::StopAllCoroutines;
+        e.type = e.name == "StartCoroutine" ? Type::Of(TK::Coroutine) : Type::Of(TK::Void);
+    }
+
+    // A constructor of a class that extends another runs one of the base class's
+    // constructors first: the : base(...) one, or the one that takes nothing.
+    void CheckBaseCtor(MethodDecl& m) {
+        for (auto& a : m.baseArgs) CheckExpr(*a);
+        if (cls_->baseClass < 0) {
+            if (m.hasBaseCall) Error(m.baseLoc, cls_->name + " doesn't extend a class, so there's no base(...) to call");
+            return;
+        }
+        const int b = cls_->baseClass;
+        const int ctor = CtorWith(b, m.baseArgs.size()) - 1;
+        if (ctor < 0 && (HasCtor(b) || !m.baseArgs.empty())) {
+            Error(m.hasBaseCall ? m.baseLoc : m.loc, Cls(b).name + " has no constructor that takes " + Values(m.baseArgs.size()) +
+                                                     (m.hasBaseCall ? std::string() : ": call base(...) with what it needs"));
+            return;
+        }
+        auto call = std::make_unique<Expr>();
+        call->kind = EK::Call;
+        call->loc = m.hasBaseCall ? m.baseLoc : m.loc;
+        call->name = Cls(b).name;
+        if (ctor >= 0) {
+            MethodDecl& bc = Cls(b).methods[(std::size_t)ctor];
+            if (!CanUse(b, bc.isPublic, bc.isProtected)) { Error(call->loc, Cls(b).name + "'s constructor is private: make it protected or public"); return; }
+            bc.called = true;
+            for (std::size_t i = 0; i < m.baseArgs.size(); ++i) Expect(*m.baseArgs[i], bc.params[i].resolved, bc.params[i].name);
+        }
+        call->args = std::move(m.baseArgs);
+        call->bind = Bind::BaseCtor; call->slot = b; call->member = ctor; call->type = Type::Of(TK::Void);
+        m.baseCall = std::move(call);
+    }
+
+    // Mark the statements with a yield inside (a coroutine runs those step by step).
+    static bool MarkYields(Stmt& s) {
+        bool y = s.kind == SK::Yield;
+        auto sub = [&](StmtPtr& c) { if (c && MarkYields(*c)) y = true; };
+        for (auto& c : s.body) sub(c);
+        sub(s.then); sub(s.otherwise); sub(s.loopBody); sub(s.finallyBody);
+        for (auto& sec : s.sections) for (auto& c : sec.body) sub(c);
+        for (auto& c : s.catches) sub(c.body);
+        s.hasYield = y;
+        return y;
+    }
+
     // Lambdas that ended up somewhere without a Func or Action type.
     void FlushLambdas() {
-        for (Expr* e : pending_) Error(e->loc, "A lambda only works where a Func or Action is expected");
+        for (Expr* e : pending_)
+            Error(e->loc, e->kind == EK::Name ? "'" + e->name + "' is a method: call it with " + e->name + "()"
+                                              : std::string("A lambda only works where a Func or Action is expected"));
         pending_.clear();
     }
 
@@ -643,15 +1165,23 @@ private:
         maxSlot_ = std::max(maxSlot_, nextSlot_);
         return scopes_.back().back().slot;
     }
-    int FieldIndex(const std::string& n) const {
-        for (auto& f : cls_->fields) if (f.name == n) return f.index;
-        return -1;
+    // A field of the current class, its own or one it extends (by slot or by name).
+    int FieldIndex(const std::string& n) {
+        FieldDecl* f = FindField(ClassId(), n);
+        return f ? f->index : -1;
+    }
+    FieldDecl& FieldAt(int slot) {
+        for (int c = ClassId(); c >= 0; c = Cls(c).baseClass)
+            for (FieldDecl& f : Cls(c).fields) if (f.index == slot) return f;
+        return cls_->fields[(std::size_t)slot];   // not reached: every bound slot is one of these
     }
     int MethodIdx(const std::string& n) const {
         for (std::size_t i = 0; i < cls_->methods.size(); ++i)
             if (!cls_->methods[i].isCtor && cls_->methods[i].name == n) return (int)i;   // constructors run through new
         return -1;
     }
+    // A method the current class has, its own or one it extends.
+    bool HasMethod(const std::string& n) { return FindMethod(ClassId(), n) != nullptr; }
 
     // Statements; return whether execution can reach the end.
     bool CheckBlockBody(Stmt& b) { return CheckStmts(b.body); }
@@ -669,6 +1199,10 @@ private:
             case SK::Expr: {
                 CheckExpr(*s.expr);
                 EK k = s.expr->kind;
+                if (k == EK::Call && s.expr->type.kind == TK::Routine) {
+                    Error(s.expr->loc, s.expr->name + "() makes a coroutine but doesn't run it: StartCoroutine(" + s.expr->name + "())");
+                    return true;
+                }
                 if (k != EK::Assign && k != EK::IncDec && k != EK::Call && !(k == EK::NullCond && s.expr->lhs->kind == EK::Call))
                     Error(s.expr->loc, "This line does nothing: it works out a value but doesn't use it");
                 return true;
@@ -736,7 +1270,13 @@ private:
                 return !( !s.expr && !ContainsBreak(*s.loopBody));
             }
             case SK::Return: {
+                if (finallyDepth_ > 0) { if (s.expr) CheckExpr(*s.expr); Error(s.loc, "return can't leave a finally block"); return false; }
                 if (lambda_) return CheckLambdaReturn(s);
+                if (method_->isCoroutine) {
+                    if (s.expr) CheckExpr(*s.expr);
+                    Error(s.loc, "A coroutine ends with yield break, not return");
+                    return false;
+                }
                 const Type& rt = method_->retType;
                 if (s.expr && method_->isCtor) { CheckExpr(*s.expr); Error(s.loc, "A constructor can't return a value"); return false; }
                 if (s.expr) {
@@ -750,10 +1290,33 @@ private:
                 return false;
             }
             case SK::Break:
-                if (loopDepth_ == 0 && switchDepth_ == 0) Error(s.loc, "break only works inside a loop or a switch");
+                if (loopDepth_ == 0 && switchDepth_ == 0)
+                    Error(s.loc, finallyDepth_ > 0 ? "break can't leave a finally block" : "break only works inside a loop or a switch");
                 return false;
             case SK::Continue:
-                if (loopDepth_ == 0) Error(s.loc, "continue only works inside a loop");
+                if (loopDepth_ == 0) Error(s.loc, finallyDepth_ > 0 ? "continue can't leave a finally block" : "continue only works inside a loop");
+                return false;
+            case SK::Try: return CheckTry(s);
+            case SK::Yield: {
+                if (s.expr) {
+                    CheckExpr(*s.expr);
+                    if (s.expr->type.kind == TK::Void) Error(s.expr->loc, "This doesn't produce a value: yield return null; waits for the next frame");
+                    else Expect(*s.expr, Type::Of(TK::Any), "");
+                }
+                if (lambda_) Error(s.loc, "yield doesn't work inside a lambda");
+                else if (!method_ || !method_->isCoroutine)
+                    Error(s.loc, "yield only works in a coroutine: a method that returns IEnumerator");
+                else if (tryDepth_ > 0) Error(s.loc, "yield can't be inside a try, catch or finally");
+                return !s.yieldBreak;
+            }
+            case SK::Throw:
+                if (!s.expr) {
+                    if (catchDepth_ == 0) Error(s.loc, "throw; on its own only works inside a catch (it throws the caught exception again)");
+                    return false;
+                }
+                CheckExpr(*s.expr);
+                if (s.expr->type.kind != TK::Error && !(s.expr->type.kind == TK::Class && IsA(s.expr->type.id, prog_.exceptionClass)))
+                    Error(s.expr->loc, "throw needs an Exception, like throw new Exception(\"what went wrong\"), not " + TypeName(s.expr->type));
                 return false;
             case SK::Switch: return CheckSwitch(s);
             case SK::Foreach: {
@@ -783,6 +1346,50 @@ private:
             }
         }
         return true;
+    }
+
+    // try / catch / finally: it finishes normally if the try block or a catch does
+    // (and the finally does).
+    bool CheckTry(Stmt& s) {
+        ++tryDepth_;
+        struct Leave { int& d; ~Leave() { --d; } } leave{tryDepth_};
+        bool completes = CheckStmt(*s.then);
+        std::vector<Type> earlier;
+        const Type any{TK::Class, prog_.exceptionClass};
+        for (CatchClause& c : s.catches) {
+            Type t = any;
+            if (c.typed) {
+                t = ResolveType(c.type, false);
+                if (t.kind != TK::Error && !(t.kind == TK::Class && IsA(t.id, prog_.exceptionClass))) {
+                    Error(c.type.loc, "catch takes Exception or a class that extends it, not " + TypeName(t));
+                    t = Type{};
+                }
+            }
+            if (t.kind == TK::Class)
+                for (const Type& e : earlier)
+                    if (IsA(t.id, e.id)) {
+                        Error(c.loc, "An earlier catch already catches " + TypeName(t) + (t == e ? std::string() : " (as " + TypeName(e) + ")") + ", so this one never runs");
+                        break;
+                    }
+            if (t.kind == TK::Class) earlier.push_back(t);
+            c.resolved = t;
+            PushScope();
+            if (!c.name.empty()) c.slot = Declare(c.name, t, c.nameLoc);
+            ++catchDepth_;
+            if (CheckStmt(*c.body)) completes = true;
+            --catchDepth_;
+            PopScope();
+        }
+        if (s.finallyBody) {
+            const int loops = loopDepth_, switches = switchDepth_;
+            loopDepth_ = switchDepth_ = 0;   // break / continue can't leave it either
+            ++finallyDepth_;
+            const bool f = CheckStmt(*s.finallyBody);
+            --finallyDepth_;
+            loopDepth_ = loops; switchDepth_ = switches;
+            if (!f) completes = false;
+        }
+        return completes;
     }
 
     bool CheckLambdaReturn(Stmt& s) {
@@ -864,6 +1471,10 @@ private:
             case SK::Break: return true;
             case SK::Block: for (auto& c : s.body) if (ContainsBreak(*c)) return true; return false;
             case SK::If: return ContainsBreak(*s.then) || (s.otherwise && ContainsBreak(*s.otherwise));
+            case SK::Try:
+                if (ContainsBreak(*s.then)) return true;
+                for (auto& c : s.catches) if (ContainsBreak(*c.body)) return true;
+                return false;
             default: return false;   // a nested loop's break is its own
         }
     }
@@ -947,11 +1558,33 @@ private:
                 for (auto& a : e.args) CheckExpr(*a);
                 Error(e.loc, "{ ... } only works right after `=` in a declaration: write new int[] { ... }");
                 return;
+            case EK::Is: case EK::As: CheckTypeTest(e); return;
             case EK::Lambda:   // its type comes from where it goes (Expect)
                 e.type = Type::Of(TK::Lambda);
                 pending_.push_back(&e);
                 return;
         }
+    }
+
+    // OnDied as a function: the lambda ($0, ...) => OnDied($0, ...), remembering the
+    // method so that -= OnDied removes what += OnDied added.
+    void MethodAsLambda(Expr& e, std::size_t params) {
+        auto L = std::make_unique<LambdaDecl>();
+        L->method = NameId(e.name);
+        auto call = std::make_unique<Expr>();
+        call->kind = EK::Call; call->loc = e.loc; call->name = e.name;
+        for (std::size_t i = 0; i < params; ++i) {
+            Param p;
+            p.name = "$" + std::to_string(i);   // not a name a script can write
+            p.loc = e.loc;
+            auto arg = std::make_unique<Expr>();
+            arg->kind = EK::Name; arg->loc = e.loc; arg->name = p.name;
+            call->args.push_back(std::move(arg));
+            L->params.push_back(std::move(p));
+        }
+        L->value = std::move(call);
+        e.kind = EK::Lambda;
+        e.lambda = std::move(L);
     }
 
     void Unpend(Expr& e) { pending_.erase(std::remove(pending_.begin(), pending_.end(), &e), pending_.end()); }
@@ -981,6 +1614,7 @@ private:
             const Program::FuncSig& sig = prog_.funcs[(std::size_t)e.type.id];
             if (sig.params == params) return e.type;
         }
+        if (e.kind == EK::Name && e.type.kind == TK::Lambda) MethodAsLambda(e, params.size());
         if (e.kind != EK::Lambda || e.type.kind != TK::Lambda) {
             if (e.type.kind != TK::Error) Error(e.loc, who + " needs a lambda here, like x => x * 2");
             return Type{};
@@ -1004,7 +1638,8 @@ private:
     Type LambdaBody(Expr& e, const std::vector<Type>& params, Type ret, bool infer) {
         LambdaDecl& L = *e.lambda;
         outer_.push_back(Outer{std::move(scopes_), std::move(captures_), lambda_, nextSlot_, maxSlot_, loopDepth_, switchDepth_,
-                               lambdaRet_, inferRet_, retState_});
+                               lambdaRet_, inferRet_, retState_, catchDepth_, finallyDepth_});
+        catchDepth_ = finallyDepth_ = 0;   // a lambda's code runs later, not inside the catch / finally around it
         scopes_.clear();
         scopes_.emplace_back();
         captures_.clear();
@@ -1033,7 +1668,7 @@ private:
             } else if (ret.kind == TK::Void) {
                 if (!IsStatementLike(v) && v.type.kind != TK::Error) Error(v.loc, "This lambda works out a value but an Action doesn't use it");
             } else {
-                Expect(v, ret, "This lambda's value");
+                Expect(v, ret, L.method >= 0 ? v.name + "()" : std::string("This lambda's value"));
             }
         } else {
             const bool completes = CheckBlockBody(*L.body);
@@ -1051,6 +1686,7 @@ private:
         lambda_ = o.lambda;
         nextSlot_ = o.nextSlot; maxSlot_ = o.maxSlot; loopDepth_ = o.loopDepth; switchDepth_ = o.switchDepth;
         lambdaRet_ = o.ret; inferRet_ = o.inferRet; retState_ = o.retState;
+        catchDepth_ = o.catchDepth; finallyDepth_ = o.finallyDepth;
         outer_.pop_back();
         return result;
     }
@@ -1119,10 +1755,12 @@ private:
     // e.name as one of the current class's own members (a field, or the object's
     // gameObject / transform / enabled); false if it's neither.
     bool BindOwnMember(Expr& e) {
-        int fi = FieldIndex(e.name);
-        if (fi >= 0) {
+        int owner = -1;
+        if (FieldDecl* fp = FindField(ClassId(), e.name, &owner)) {
             if (inFieldInit_) { Error(e.loc, "A field's starting value can't use another field: set '" + e.name + "' up in Start()"); return true; }
-            FieldDecl& f = cls_->fields[(std::size_t)fi];
+            FieldDecl& f = *fp;
+            const int fi = f.index;
+            if (!CanUse(owner, f.isPublic, f.isProtected)) { Error(e.loc, NotUsable(e.name, owner)); return true; }
             if (!f.isStatic && !f.isConst && RejectInStatic(e.name, e.loc)) return true;
             f.read = true;
             if (!f.isStatic && !f.isConst) UsesSelf();
@@ -1152,7 +1790,12 @@ private:
             v->used = true; e.bind = v->captured ? Bind::Captured : Bind::Local; e.slot = v->slot; e.type = v->type; return;
         }
         if (BindOwnMember(e)) return;
-        if (MethodIdx(e.name) >= 0) { Error(e.loc, "'" + e.name + "' is a method: call it with " + e.name + "()"); return; }
+        if (PropGetOwn(e)) return;
+        if (HasMethod(e.name)) {   // a method used as a function (Died += OnDied): Expect turns it into one
+            e.type = Type::Of(TK::Lambda);
+            pending_.push_back(&e);
+            return;
+        }
         if (ClassIndex(e.name) >= 0) { Error(e.loc, "'" + e.name + "' is a class: make one with new " + e.name + "(...)"); return; }
         if (EnumIndex(e.name) >= 0) { Error(e.loc, "'" + e.name + "' is an enum: use one of its values, like " + e.name + "." +
                                                    (prog_.enums[(std::size_t)EnumIndex(e.name)].members.empty() ? std::string("Value")
@@ -1169,6 +1812,8 @@ private:
     // Returns: 0 = value, 1 = static type (id in typeId), 2 = this, 3 = enum (id in typeId),
     // 4 = the script's own class (T.staticMember), -1 = error.
     int Receiver(Expr& obj, int& typeId) {
+        if (obj.kind == EK::Name && obj.name == "base" && !FindLocal("base") && !InComponent() && cls_->baseClass >= 0)
+            obj.kind = EK::This;   // base.field is the same field as this.field
         if (obj.kind == EK::This) {
             if (inFieldInit_) { Error(obj.loc, "A field's starting value can't use `this`"); return -1; }
             if (method_ && method_->isStatic) { Error(obj.loc, "A static method has no `this`: use the static member directly"); return -1; }
@@ -1188,7 +1833,12 @@ private:
     template <typename L>
     std::vector<std::string> Names(const std::vector<L>& v) { std::vector<std::string> n; for (auto& x : v) n.push_back(x.name); return n; }
 
+    static std::string EventOutside(const FieldDecl& f, const ClassDecl& k) {
+        return "'" + f.name + "' is an event of " + k.name + ": outside " + k.name + " it can only be added to (+=) or removed from (-=)";
+    }
     void CheckMember(Expr& e) {
+        const bool allowEvent = allowEvent_;   // only for this member, not for what's inside it
+        allowEvent_ = false;
         int typeId = -1;
         int r = Receiver(*e.object, typeId);
         if (r < 0 || BadNullCond(e, r)) return;
@@ -1196,12 +1846,13 @@ private:
             int fi = FieldIndex(e.name);
             const FieldDecl* f = fi >= 0 ? &cls_->fields[(std::size_t)fi] : nullptr;
             if (f && !f->isStatic && !f->isConst) { Error(e.loc, "'" + e.name + "' isn't static: use it without " + cls_->name + "."); return; }
-            if (!f && MethodIdx(e.name) < 0) { Error(e.loc, cls_->name + " has no '" + e.name + "'"); return; }
+            if (!f && !HasMethod(e.name) && !FindProp(ClassId(), e.name)) { Error(e.loc, cls_->name + " has no '" + e.name + "'"); return; }
         }
         if (r == 2 || r == 4) {   // this.x, T.x: a member, never a local of the same name
             e.object.reset();
             if (BindOwnMember(e)) return;
-            if (MethodIdx(e.name) >= 0) { Error(e.loc, "'" + e.name + "' is a method: call it with " + e.name + "()"); return; }
+            if (PropGetOwn(e)) return;
+            if (HasMethod(e.name)) { Error(e.loc, "'" + e.name + "' is a method: call it with " + e.name + "()"); return; }
             Error(e.loc, cls_->name + " has no '" + e.name + "'" + Suggest(e.name, Names(cls_->fields)));
             return;
         }
@@ -1233,22 +1884,31 @@ private:
         }
         const Type& ot = e.object->type;
         if (ot.kind == TK::Class) {
-            ClassDecl& k = prog_.classes[(std::size_t)ot.id];
-            for (std::size_t i = 0; i < k.fields.size(); ++i) {
-                FieldDecl& f = k.fields[i];
-                if (f.name != e.name) continue;
-                if (!f.isPublic && &k != cls_) { Error(e.loc, "'" + e.name + "' is private to " + k.name + ": make it public to use it here"); return; }
-                f.read = true;
-                e.bind = Bind::ObjField; e.slot = (int)i; e.type = f.resolved;
+            int owner = -1;
+            if (FieldDecl* f = FindField(ot.id, e.name, &owner)) {
+                if (!CanUse(owner, f->isPublic, f->isProtected)) { Error(e.loc, NotUsable(e.name, owner)); return; }
+                if (f->isEvent && owner != ClassId() && !allowEvent) { Error(e.loc, EventOutside(*f, Cls(owner))); return; }
+                f->read = true;
+                e.bind = Bind::ObjField; e.slot = f->index; e.type = f->resolved;
                 return;
             }
-            std::vector<std::string> opts = Names(k.fields);
-            for (auto& m : k.methods) if (!m.isCtor) opts.push_back(m.name);
-            for (auto& m : k.methods)
-                if (!m.isCtor && m.name == e.name) { Error(e.loc, e.name + " is a method: call it with " + e.name + "(...)"); return; }
-            Error(e.loc, k.name + " has no '" + e.name + "'" + Suggest(e.name, opts));
+            if (PropDecl* p = FindProp(ot.id, e.name, &owner)) {   // obj.Name: obj.get_Name()
+                if (!CanUse(owner, p->isPublic, p->isProtected)) { Error(e.loc, NotUsable(e.name, owner)); return; }
+                e.kind = EK::Call; e.name = "get_" + e.name; e.args.clear();
+                CallClassMethod(e, ot.id);
+                return;
+            }
+            if (FindMethod(ot.id, e.name)) { Error(e.loc, e.name + " is a method: call it with " + e.name + "(...)"); return; }
+            std::vector<std::string> opts;
+            for (std::size_t c = 0; c < prog_.classes.size(); ++c)
+                if (Cls(ot.id).isA[c]) {
+                    for (auto& f : Cls((int)c).fields) opts.push_back(f.name);
+                    for (auto& m : Cls((int)c).methods) if (!m.isCtor) opts.push_back(m.name);
+                }
+            Error(e.loc, Cls(ot.id).name + " has no '" + e.name + "'" + Suggest(e.name, opts));
             return;
         }
+        if (ot.kind == TK::Script) { CheckScriptMember(e, ot); return; }
         if (ot.kind == TK::Vector3) {
             if (e.name == "x" || e.name == "y" || e.name == "z") {
                 e.bind = Bind::VecField; e.member = e.name[0] - 'x'; e.type = Type::Of(TK::Float); return;
@@ -1280,7 +1940,20 @@ private:
             return;
         }
         if (ot.kind == TK::List || ot.kind == TK::Dict || ot.kind == TK::Pair) { CheckCollectionMember(e, ot); return; }
-        if (ot.kind == TK::String && e.name == "Length") { Error(e.loc, "Text length isn't supported yet"); return; }
+        if (ot.kind == TK::String) {   // s.Length: the string type's members (EngineApi "string")
+            const int st = api_.Find("string");
+            if (st >= 0) {
+                const ApiType& t = api_.types[(std::size_t)st];
+                for (std::size_t i = 0; i < t.props.size(); ++i)
+                    if (t.props[i].name == e.name) { e.bind = Bind::ApiProp; e.slot = st; e.member = (int)i; e.type = FromApi(t.props[i].type); return; }
+                for (auto& m : t.methods)
+                    if (m.name == e.name) { Error(e.loc, e.name + " is a method: call it with " + e.name + "(...)"); return; }
+                std::vector<std::string> opts = Names(t.props);
+                for (auto& m : t.methods) opts.push_back(m.name);
+                Error(e.loc, "Text has no '" + e.name + "'" + Suggest(e.name, opts));
+                return;
+            }
+        }
         Error(e.loc, TypeName(ot) + " values have no members");
     }
 
@@ -1364,11 +2037,12 @@ private:
             CheckInvoke(e);
             return;
         }
-        if (!e.object && e.typeArg.name.empty() && (FindLocal(e.name) || (FieldIndex(e.name) >= 0 && MethodIdx(e.name) < 0))) {
+        if (!e.object && e.typeArg.name.empty() && (FindLocal(e.name) || (FieldIndex(e.name) >= 0 && !HasMethod(e.name)))) {
             AsInvoke(e, nullptr);   // a variable or field holding a function
             return;
         }
         if (inFieldInit_ && !e.object) { Error(e.loc, "A field's starting value can't call methods: set it up in Start()"); return; }
+        if (e.object && e.object->kind == EK::Name && e.object->name == "base" && !FindLocal("base")) { CheckBaseCall(e); return; }
         // GetComponent<T>() (on this object or another)
         if (e.name == "GetComponent") { CheckGetComponent(e); return; }
         if (!e.typeArg.name.empty()) { Error(e.loc, e.name + " doesn't take a <type>"); return; }
@@ -1379,12 +2053,16 @@ private:
                 return;
             }
             const bool viaClass = e.object && e.object->kind == EK::Name;
-            if (e.object && MethodIdx(e.name) < 0 && FieldIndex(e.name) >= 0) {   // this.onHit(): a field holding a function
+            if (e.object && !HasMethod(e.name) && FieldIndex(e.name) >= 0) {   // this.onHit(): a field holding a function
                 ExprPtr recv = std::move(e.object);
                 AsInvoke(e, std::move(recv));
                 return;
             }
             if (e.object) e.object.reset();
+            if ((e.name == "StartCoroutine" || e.name == "StopCoroutine" || e.name == "StopAllCoroutines") && !HasMethod(e.name)) {
+                CheckCoroutineCall(e);
+                return;
+            }
             if (e.name == "Destroy") {
                 if (inFieldInit_) { Error(e.loc, "A field's starting value can't destroy things"); return; }
                 for (auto& a : e.args) CheckExpr(*a);
@@ -1396,6 +2074,16 @@ private:
                     return;
                 }
                 e.bind = Bind::Destroy; e.type = Type::Of(TK::Void);
+                return;
+            }
+            if (!InComponent() && HasMethod(e.name)) {   // a plain class's method (maybe one it extends): run as the object's class has it
+                for (auto& a : e.args) CheckExpr(*a);
+                if (viaClass) { Error(e.loc, "'" + e.name + "' isn't static: call it without " + cls_->name + "."); return; }
+                auto self = std::make_unique<Expr>();
+                self->kind = EK::This; self->loc = e.loc; self->type = Type{TK::Class, ClassId()};
+                e.object = std::move(self);
+                UsesSelf();
+                CallClassMethod(e, ClassId());
                 return;
             }
             int mi = MethodIdx(e.name);
@@ -1427,19 +2115,17 @@ private:
             CheckInvoke(e);
             return;
         }
-        if (r == 0 && e.object->type.kind == TK::Class && !e.nullCond) {   // obj.onHit(): a public field holding a function
-            ClassDecl& k = prog_.classes[(std::size_t)e.object->type.id];
-            bool method = false;
-            for (auto& m : k.methods) if (!m.isCtor && m.name == e.name) method = true;
-            for (std::size_t i = 0; i < k.fields.size() && !method; ++i) {
-                FieldDecl& f = k.fields[i];
-                if (f.name != e.name || f.resolved.kind != TK::Func) continue;
-                if (!f.isPublic && &k != cls_) { Error(e.loc, "'" + e.name + "' is private to " + k.name + ": make it public to use it here"); return; }
-                f.read = true;
+        if (r == 0 && e.object->type.kind == TK::Class && !e.nullCond && !FindMethod(e.object->type.id, e.name)) {   // obj.onHit(): a field holding a function
+            int owner = -1;
+            FieldDecl* f = FindField(e.object->type.id, e.name, &owner);
+            if (f && f->resolved.kind == TK::Func) {
+                if (!CanUse(owner, f->isPublic, f->isProtected)) { Error(e.loc, NotUsable(e.name, owner)); return; }
+                if (f->isEvent && owner != ClassId()) { Error(e.loc, EventOutside(*f, Cls(owner))); return; }
+                f->read = true;
                 auto m = std::make_unique<Expr>();   // obj.field, its receiver already checked
                 m->kind = EK::Member; m->loc = e.loc; m->name = e.name;
                 m->object = std::move(e.object);
-                m->bind = Bind::ObjField; m->slot = (int)i; m->type = f.resolved;
+                m->bind = Bind::ObjField; m->slot = f->index; m->type = f->resolved;
                 e.object = std::move(m);
                 e.name = "Invoke";
                 CheckInvoke(e);
@@ -1471,22 +2157,37 @@ private:
             if (CheckLinq(e, ot, elem)) return;
         }
         if (ot.kind == TK::List || ot.kind == TK::Dict) { CheckCollectionCall(e, ot); return; }
-        if (ot.kind == TK::Class) {
-            ClassDecl& k = prog_.classes[(std::size_t)ot.id];
-            std::vector<std::string> opts;
-            for (std::size_t i = 0; i < k.methods.size(); ++i) {
-                MethodDecl& m = k.methods[i];
-                if (m.isCtor) continue;
-                opts.push_back(m.name);
-                if (m.name != e.name) continue;
-                if (!m.isPublic && &k != cls_) { Error(e.loc, "'" + e.name + "' is private to " + k.name + ": make it public to use it here"); return; }
-                if (&m != method_) m.called = true;
-                if (!ArgsFit(e, m)) return;
-                e.bind = Bind::ObjMethod; e.slot = (int)i; e.member = ot.id; e.type = m.retType;
+        if (ot.kind == TK::Class) { CallClassMethod(e, ot.id); return; }
+        if (ot.kind == TK::Script) { CheckScriptCall(e, ot); return; }
+        if (e.name == "ToString" && e.args.empty() &&
+            (ot.kind == TK::Int || ot.kind == TK::Float || ot.kind == TK::Bool || ot.kind == TK::String || ot.kind == TK::Enum || ot.kind == TK::Vector3)) {
+            // x.ToString(): the same text as "" + x
+            auto empty = NewExpr(EK::StringLit, e.loc);
+            empty->type = Type::Of(TK::String);
+            ExprPtr value = std::move(e.object);
+            e.kind = EK::Binary; e.op = T::Plus; e.name.clear(); e.bind = Bind::None;
+            e.lhs = std::move(empty); e.rhs = std::move(value);
+            CheckBinaryChecked(e);
+            return;
+        }
+        if (ot.kind == TK::String) {
+            const int st = api_.Find("string");
+            if (st >= 0) {
+                const ApiType& t = api_.types[(std::size_t)st];
+                const ApiMethod* m = PickOverload(t.methods, "", e);
+                if (!m) {
+                    bool exists = false;
+                    for (auto& x : t.methods) if (x.name == e.name) exists = true;
+                    if (!exists) {
+                        std::vector<std::string> opts = Names(t.methods);
+                        Error(e.loc, "Text has no method '" + e.name + "'" + Suggest(e.name, opts));
+                    }
+                    return;
+                }
+                BindArgs(e, *m);
+                e.bind = Bind::ApiMethod; e.slot = st; e.member = (int)(m - t.methods.data()); e.type = FromApi(m->ret);
                 return;
             }
-            Error(e.loc, k.name + " has no method '" + e.name + "'" + Suggest(e.name, opts));
-            return;
         }
         if (ot.kind != TK::Object) { Error(e.loc, TypeName(ot) + " values have no methods"); return; }
         const ApiType& t = api_.types[(std::size_t)ot.id];
@@ -1508,7 +2209,9 @@ private:
         if (e.typeArg.name.empty()) { Error(e.loc, "Say which component: GetComponent<Transform>()"); return; }
         if (!e.args.empty()) { Error(e.loc, "GetComponent<T>() takes no values"); return; }
         int ti = api_.Find(e.typeArg.name);
-        if (ti < 0 || !api_.types[(std::size_t)ti].isComponent) {
+        const bool script = (ti < 0 || !api_.types[(std::size_t)ti].isComponent) && ViewOf(e.typeArg.name);
+        if (!script && (ti < 0 || !api_.types[(std::size_t)ti].isComponent)) {
+            if (ti < 0) prog_.unknownTypes.push_back(e.typeArg.name);
             std::vector<std::string> comps;
             for (auto& t : api_.types) if (t.isComponent) comps.push_back(t.name);
             std::string list;
@@ -1520,13 +2223,107 @@ private:
             int typeId = -1;
             int r = Receiver(*e.object, typeId);
             if (r < 0) return;
-            if (r != 0 || e.object->type.kind != TK::Object) { Error(e.loc, "GetComponent works on a GameObject or a component"); return; }
+            if (r != 0 || (e.object->type.kind != TK::Object && e.object->type.kind != TK::Script)) { Error(e.loc, "GetComponent works on a GameObject or a component"); return; }
         } else {
             e.object.reset();
             if (RejectOutsideComponent("GetComponent", e.loc) || RejectInStatic("GetComponent", e.loc)) return;
             UsesSelf();
         }
+        if (script) {   // another script on the object: GetComponent<Health>()
+            e.bind = Bind::GetScript; e.slot = ScriptClassId(e.typeArg.name); e.type = Type{TK::Script, e.slot};
+            return;
+        }
         e.bind = Bind::GetComponent; e.slot = ti; e.type = Type::Obj(ti);
+    }
+
+    // ---- Other scripts (GetComponent<Health>()) ----
+    // What a script class offers: this script's own (from this file), or one from the library.
+    std::shared_ptr<const ScriptView> ownView_;
+    std::shared_ptr<const ScriptView> ViewOf(const std::string& name) {
+        if (prog_.component >= 0 && name == prog_.classes[(std::size_t)prog_.component].name) {
+            if (!ownView_) {
+                auto v = std::make_shared<ScriptView>();
+                const ClassDecl& c = prog_.classes[(std::size_t)prog_.component];
+                v->name = c.name;
+                for (const FieldDecl& f : c.fields)
+                    if (f.isPublic && !f.isStatic && !f.isConst && !f.isEvent) v->fields.push_back({f.name, f.type, f.loc});
+                for (const MethodDecl& m : c.methods) {
+                    if (!m.isPublic || m.isStatic || m.isCtor) continue;
+                    ScriptView::Method sm{m.name, {}, m.ret};
+                    for (const Param& p : m.params) sm.params.push_back(p.type);
+                    v->methods.push_back(std::move(sm));
+                }
+                ownView_ = std::move(v);
+            }
+            return ownView_;
+        }
+        return FindScriptView(name);
+    }
+    // A member type of another script, as this script sees it: only types that mean
+    // the same in every script cross over. Error type (with `why`) otherwise.
+    Type ForeignType(const TypeRef& t, std::string& why) {
+        if (t.rank > 0 || !t.args.empty()) { why = "an array, list or other collection"; return Type{}; }
+        if (t.name == "void") return Type::Of(TK::Void);
+        if (t.name == "int") return Type::Of(TK::Int);
+        if (t.name == "float") return Type::Of(TK::Float);
+        if (t.name == "bool") return Type::Of(TK::Bool);
+        if (t.name == "string") return Type::Of(TK::String);
+        if (t.name == "Vector3") return Type::Of(TK::Vector3);
+        if (t.name == "IEnumerator") return Type::Of(TK::Routine);
+        if (t.name == "Coroutine") return Type::Of(TK::Coroutine);
+        const int id = api_.Find(t.name);
+        if (id >= 0 && !api_.types[(std::size_t)id].isStatic && !api_.types[(std::size_t)id].isValueType) return Type::Obj(id);
+        if (ViewOf(t.name)) return Type{TK::Script, ScriptClassId(t.name)};
+        why = "its own type " + t.name;
+        return Type{};
+    }
+    // h.hp, h.gameObject: a field of another script (public ones only).
+    void CheckScriptMember(Expr& e, const Type& ot) {
+        if (e.name == "gameObject" || e.name == "transform") {
+            e.bind = Bind::ScriptSelf; e.slot = e.name == "gameObject" ? 0 : 1;
+            e.type = Type::Obj(e.slot == 0 ? api_.gameObject : api_.transform);
+            return;
+        }
+        const std::string& cls = ScriptClassName(ot.id);
+        auto v = ViewOf(cls);
+        if (!v) { Error(e.loc, "The script " + cls + " isn't loaded"); return; }
+        for (const auto& f : v->fields) {
+            if (f.name != e.name) continue;
+            std::string why;
+            const Type t = ForeignType(f.type, why);
+            if (t.kind == TK::Error) { Error(e.loc, cls + "." + e.name + " can't be used from another script: it holds " + why); return; }
+            e.bind = Bind::ScriptField; e.type = t;
+            return;
+        }
+        for (const auto& m : v->methods)
+            if (m.name == e.name) { Error(e.loc, e.name + " is a method: call it with " + e.name + "(...)"); return; }
+        std::vector<std::string> opts = {"gameObject", "transform"};
+        for (const auto& f : v->fields) opts.push_back(f.name);
+        Error(e.loc, cls + " has no public '" + e.name + "'" + Suggest(e.name, opts));
+    }
+    // h.TakeDamage(10): a public method of another script.
+    void CheckScriptCall(Expr& e, const Type& ot) {
+        const std::string& cls = ScriptClassName(ot.id);
+        auto v = ViewOf(cls);
+        if (!v) { Error(e.loc, "The script " + cls + " isn't loaded"); return; }
+        for (const auto& m : v->methods) {
+            if (m.name != e.name) continue;
+            std::string why;
+            std::vector<Type> ps;
+            for (const auto& p : m.params) {
+                ps.push_back(ForeignType(p, why));
+                if (ps.back().kind == TK::Error) { Error(e.loc, cls + "." + e.name + "() can't be called from another script: it takes " + why); return; }
+            }
+            const Type ret = ForeignType(m.ret, why);
+            if (ret.kind == TK::Error) { Error(e.loc, cls + "." + e.name + "() can't be called from another script: it gives " + why); return; }
+            if (e.args.size() != ps.size()) { Error(e.loc, e.name + "() takes " + Values(ps.size()) + ", not " + std::to_string(e.args.size())); return; }
+            for (std::size_t i = 0; i < ps.size(); ++i) Expect(*e.args[i], ps[i], "Value " + std::to_string(i + 1));
+            e.bind = Bind::ScriptMethod; e.type = ret;
+            return;
+        }
+        std::vector<std::string> opts;
+        for (const auto& m : v->methods) opts.push_back(m.name);
+        Error(e.loc, cls + " has no public method '" + e.name + "'" + Suggest(e.name, opts));
     }
 
     // xs.Count, d.Keys / d.Values, kv.Key / kv.Value.
@@ -1683,6 +2480,15 @@ private:
         if (!e.typeArg.args.empty() || e.typeArg.name == "List" || e.typeArg.name == "Dictionary") { CheckNewCollection(e); return; }
         if (e.hasInit) { Error(e.loc, "{ ... } after new only fills a List: set the fields after new " + e.typeArg.name + "()"); return; }
         if (int ci = ClassIndex(e.typeArg.name); ci >= 0) { CheckNewObject(e, ci); return; }
+        if (int w = WaitKindOf(e.typeArg.name); w >= 0) {   // new WaitForSeconds(0.5f), new WaitUntil(() => ready), ...
+            const WaitKind k = (WaitKind)w;
+            const std::size_t want = k == WaitKind::EndOfFrame || k == WaitKind::FixedUpdate ? 0 : 1;
+            if (e.args.size() != want) { Error(e.loc, "new " + e.typeArg.name + " takes " + Values(want) + ", not " + std::to_string(e.args.size())); return; }
+            if (k == WaitKind::Seconds) Expect(*e.args[0], Type::Of(TK::Float), "The seconds");
+            if (k == WaitKind::Until || k == WaitKind::While) Expect(*e.args[0], prog_.FuncOf({}, Type::Of(TK::Bool)), "The condition");
+            e.bind = Bind::NewWait; e.member = w; e.type = Type{TK::Wait, w};
+            return;
+        }
         if (e.typeArg.name != "Vector3") {
             if (api_.Find(e.typeArg.name) >= 0 || e.typeArg.name == "GameObject")
                 Error(e.loc, "'new " + e.typeArg.name + "' isn't supported: only new Vector3(x, y, z) for now");
@@ -1700,6 +2506,8 @@ private:
     void CheckNewObject(Expr& e, int ci) {
         if (ci == prog_.component) { Error(e.loc, "Behaviour scripts are added to objects, not made with new"); return; }
         ClassDecl& k = prog_.classes[(std::size_t)ci];
+        if (k.isInterface) { Error(e.loc, k.name + " is an interface: make one of the classes that implement it"); return; }
+        if (k.isAbstract) { Error(e.loc, k.name + " is abstract: make one of the classes that extend it"); return; }
         int ctor = -1;
         bool any = false;
         for (std::size_t i = 0; i < k.methods.size(); ++i)
@@ -1710,7 +2518,7 @@ private:
         }
         if (ctor >= 0) {
             MethodDecl& m = k.methods[(std::size_t)ctor];
-            if (!m.isPublic && &k != cls_) { Error(e.loc, k.name + "'s constructor is private: make it public to use it here"); return; }
+            if (!CanUse(ci, m.isPublic, m.isProtected)) { Error(e.loc, k.name + "'s constructor is private: make it public to use it here"); return; }
             m.called = true;
             for (std::size_t i = 0; i < e.args.size(); ++i) Expect(*e.args[i], m.params[i].resolved, m.params[i].name);
         }
@@ -1730,9 +2538,30 @@ private:
         e.type = t;
     }
 
+    // Can a value of class a also be a b? (One extends the other, or either is an
+    // interface some other class might implement.)
+    bool MayBeSame(int a, int b) const {
+        return IsA(a, b) || IsA(b, a) || prog_.classes[(std::size_t)a].isInterface || prog_.classes[(std::size_t)b].isInterface;
+    }
+    // x is T / x as T
+    void CheckTypeTest(Expr& e) {
+        CheckExpr(*e.lhs);
+        const Type t = ResolveType(e.typeArg, false);
+        const Type a = e.lhs->type;
+        if (t.kind == TK::Error || a.kind == TK::Error) return;
+        const char* op = e.kind == EK::Is ? "is" : "as";
+        if (t.kind != TK::Class || a.kind != TK::Class) {
+            Error(e.loc, std::string(op) + " works on the script's classes and interfaces, not " + TypeName(a.kind != TK::Class ? a : t));
+            return;
+        }
+        if (!MayBeSame(a.id, t.id)) { Error(e.loc, "This " + TypeName(a) + " is never " + Article(TypeName(t))); return; }
+        e.slot = t.id;
+        e.type = e.kind == EK::Is ? Type::Of(TK::Bool) : t;
+    }
+
     static bool CanBeNull(const Type& t) {
         return t.kind == TK::Object || t.kind == TK::Array || t.kind == TK::Class || t.kind == TK::List || t.kind == TK::Dict ||
-               t.kind == TK::Func;
+               t.kind == TK::Func || t.kind == TK::Routine || t.kind == TK::Coroutine || t.kind == TK::Wait || t.kind == TK::Script;
     }
     static std::string Article(const std::string& n) { return (std::string("aeiouAEIOU").find(n[0]) != std::string::npos ? "an " : "a ") + n; }
     // ?. only on something that might be null: an object or an array.
@@ -1745,6 +2574,10 @@ private:
     void CheckBinary(Expr& e) {
         CheckExpr(*e.lhs);
         CheckExpr(*e.rhs);
+        CheckBinaryChecked(e);
+    }
+    // The operator, its two sides already checked.
+    void CheckBinaryChecked(Expr& e) {
         const Type a = e.lhs->type, b = e.rhs->type;
         if (a.kind == TK::Error || b.kind == TK::Error) return;
         if (e.op == T::QuestionQuestion) {   // a ?? b: a, or b when a is null (or a destroyed object)
@@ -1798,7 +2631,7 @@ private:
                 if (a == b && (a.kind == TK::Bool || a.kind == TK::String || a.kind == TK::Vector3 || a.kind == TK::Enum)) return;
                 // Arrays, lists, dictionaries and class objects compare as references (or with null).
                 if (a.kind != TK::Object && b.kind != TK::Object && (CanBeNull(a) || CanBeNull(b)) &&
-                    (a == b || a.kind == TK::Null || b.kind == TK::Null))
+                    (a == b || a.kind == TK::Null || b.kind == TK::Null || (a.kind == TK::Class && b.kind == TK::Class && MayBeSame(a.id, b.id))))
                     return;
                 if ((a.kind == TK::Object || a.kind == TK::Null) && (b.kind == TK::Object || b.kind == TK::Null)) {
                     if (a.kind == TK::Null && b.kind == TK::Null) { Error(e.loc, "Comparing null with null is always true"); return; }
@@ -1821,7 +2654,12 @@ private:
     bool Assignable(Expr& e) {
         if (e.kind == EK::Index) return true;
         switch (e.bind) {
-            case Bind::StaticField: case Bind::ObjField: return true;
+            case Bind::StaticField: case Bind::ScriptField: return true;
+            case Bind::ObjField: {
+                FieldDecl* f = FindField(e.object->type.id, e.name);
+                if (f && IsBuiltinField(*f) && !cls_->builtin) { Error(e.loc, "'" + e.name + "' can only be read"); return false; }
+                return true;
+            }
             case Bind::Local: case Bind::Captured:
                 if (LocalVar* v = FindLocal(e.name); v && v->readOnly) {
                     Error(e.loc, "'" + e.name + "' is the foreach variable, so it can't be changed");
@@ -1831,7 +2669,8 @@ private:
             case Bind::ArrayLength: Error(e.loc, "'Length' can only be read"); return false;
             case Bind::EnumValue: Error(e.loc, "'" + e.name + "' is an enum value, so it can't change"); return false;
             case Bind::Field: {
-                FieldDecl& f = cls_->fields[(std::size_t)e.slot];
+                FieldDecl& f = FieldAt(e.slot);
+                if (IsBuiltinField(f) && !cls_->builtin) { Error(e.loc, "'" + f.name + "' can only be read: pass it to base(...)"); return false; }
                 if (f.isConst) { Error(e.loc, "'" + f.name + "' is const, so it can't change"); return false; }
                 return true;
             }
@@ -1864,14 +2703,17 @@ private:
     }
 
     void CheckAssign(Expr& e) {
+        if (PropSet(e)) return;
         // A plain `x = ...` writes x without reading it, so it doesn't count as a use.
         LocalVar* lv = nullptr; FieldDecl* fd = nullptr;
         bool wasUsed = false;
         if (e.op == T::Assign && e.lhs->kind == EK::Name) {
             if ((lv = FindLocal(e.lhs->name))) wasUsed = lv->used;
-            else if (int fi = FieldIndex(e.lhs->name); fi >= 0) { fd = &cls_->fields[(std::size_t)fi]; wasUsed = fd->read; }
+            else if ((fd = FindField(ClassId(), e.lhs->name))) wasUsed = fd->read;
         }
+        allowEvent_ = e.op == T::PlusEq || e.op == T::MinusEq;
         CheckExpr(*e.lhs);
+        allowEvent_ = false;
         if (lv) lv->used = wasUsed;
         if (fd) fd->read = wasUsed;
         CheckExpr(*e.rhs);
@@ -1883,6 +2725,10 @@ private:
         if (e.op == T::QuestionQuestionEq) {
             if (!CanBeNull(lt)) { Error(e.loc, "??= only works on objects and arrays, which can be null: " + Article(TypeName(lt)) + " never is"); return; }
             Expect(*e.rhs, lt, "The value");
+            return;
+        }
+        if (lt.kind == TK::Func && (e.op == T::PlusEq || e.op == T::MinusEq)) {   // add or remove a function (an event's handler)
+            Expect(*e.rhs, lt, "The function");
             return;
         }
         const Type rt = e.rhs->type;
@@ -1905,6 +2751,7 @@ private:
     }
 
     void CheckIncDec(Expr& e) {
+        if (PropSet(e)) return;
         CheckExpr(*e.lhs);
         if (e.lhs->type.kind == TK::Error) return;
         if (!e.lhs->type.IsNumeric()) { Error(e.loc, std::string(TokenName(e.op)) + " needs a number, not " + TypeName(e.lhs->type)); return; }
@@ -1927,6 +2774,11 @@ private:
             e.type = to;
             return;
         }
+        if (from.kind == TK::Class && to.kind == TK::Class && MayBeSame(from.id, to.id)) {   // (Boss)enemy: checked while playing
+            e.type = to;
+            e.slot = IsA(from.id, to.id) ? 0 : 1;
+            return;
+        }
         if (to.kind == TK::String) { Error(e.loc, "To turn a value into text, join it: \"\" + value"); return; }
         Error(e.loc, "Can't turn " + TypeName(from) + " into " + TypeName(to));
     }
@@ -1940,6 +2792,10 @@ private:
         if (a == b) { e.type = a; return; }
         if (a.IsNumeric() && b.IsNumeric()) { e.type = Type::Of(TK::Float); e.lhs->toFloat = a.kind == TK::Int; e.rhs->toFloat = b.kind == TK::Int; return; }
         if (CanBeNull(a) && b.kind == TK::Null) { e.type = a; return; }
+        if (a.kind == TK::Class && b.kind == TK::Class && (IsA(a.id, b.id) || IsA(b.id, a.id))) {   // the one both are
+            e.type = IsA(a.id, b.id) ? b : a;
+            return;
+        }
         if (a.kind == TK::Null && CanBeNull(b)) { e.type = b; return; }
         Error(e.loc, "Both sides of ?: must be the same type (" + TypeName(a) + " vs " + TypeName(b) + ")");
     }
@@ -1956,10 +2812,32 @@ void Check(Program& prog) {
                      [](const ScriptDiagnostic& a, const ScriptDiagnostic& b) { return a.line < b.line; });
 }
 
-std::shared_ptr<Program> Compile(const std::string& src) {
+// Classes every script has, added after the script's own (so they never move its
+// line numbers or class indexes). A script's own class of the same name wins.
+static void AddBuiltins(Program& p) {
+    if (p.classes.empty()) return;
+    for (const ClassDecl& c : p.classes) if (c.name == "Exception") return;
+    static const char* const kExceptionSource =
+        "class Exception {\n"
+        "    public string Message;\n"
+        "    public Exception() { Message = \"Exception of type 'Exception' was thrown.\"; }\n"
+        "    public Exception(string message) { Message = message; }\n"
+        "}\n";
+    Program builtins;
+    std::vector<ScriptDiagnostic> none;
+    Parse(Lex(kExceptionSource, none), builtins);
+    for (ClassDecl& c : builtins.classes) {
+        c.builtin = true;
+        p.classes.push_back(std::move(c));
+    }
+}
+
+std::shared_ptr<Program> Compile(const std::string& src, bool csharp) {
     auto p = std::make_shared<Program>();
+    p->csharp = csharp;
     std::vector<Token> toks = Lex(src, p->diags);
     Parse(toks, *p);
+    AddBuiltins(*p);
     Check(*p);
     return p;
 }

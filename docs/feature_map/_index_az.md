@@ -1881,6 +1881,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - GPU skinning and sky (38.3.6)
 - GPU timer (38.11)
 - GPU timing and frame debugging (38.11)
+- GPU upload (2.13.7)
 - GpuTimer (1.10, 23.1)
 - grab (3.1, 3.8)
 - gradient (2.7, 12.2)

@@ -4733,12 +4733,17 @@ add_executable(test_wind test_wind.cpp)
 target_link_libraries(test_wind PRIVATE okay::engine)
 add_test(NAME wind COMMAND test_wind)
 # okay::tex, our own texture library (docs/rendering/own_texture_library.md). Pure CPU, deterministic.
-foreach(_t IN ITEMS mip atlas convert bc dds_stream)
+foreach(_t IN ITEMS mip atlas convert bc dds_stream dds_load)
     add_executable(test_tex_${_t} test_tex_${_t}.cpp)
     target_link_libraries(test_tex_${_t} PRIVATE okay::engine)
     add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()
+# The OpenGL renderer uploading .dds files and compressed import copies, on Mesa llvmpipe through EGL (SKIPPED without one).
+add_executable(test_gl_dds_upload test_gl_dds_upload.cpp)
+target_link_libraries(test_gl_dds_upload PRIVATE okay::engine ${CMAKE_DL_LIBS})
+add_test(NAME gl_dds_upload COMMAND test_gl_dds_upload WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(gl_dds_upload PROPERTIES TIMEOUT 240)
 
 # Colliders behave as the shapes they are (not boxes): Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield, 2D polygon / capsule / composite.
 add_executable(test_collider_shapes test_collider_shapes.cpp)

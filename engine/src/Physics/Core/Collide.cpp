@@ -416,7 +416,63 @@ bool PlanePair(const Shape& plane, const Xf& xp, const Shape& b, const Xf& xb, f
 
 void Flip(Manifold& m) {
     m.normal = -m.normal;
-    for (int i = 0; i < m.count; ++i) { const V3 t = m.pts[i].pA; m.pts[i].pA = m.pts[i].pB; m.pts[i].pB = t; }
+    for (int i = 0; i < m.count; ++i) {
+        const V3 t = m.pts[i].pA; m.pts[i].pA = m.pts[i].pB; m.pts[i].pB = t;
+        m.pts[i].normal = -m.pts[i].normal;
+    }
+}
+
+bool CollideConvex(const Shape& a, const Xf& xa, const Shape& b, const Xf& xb, float speculative, Manifold& m);
+
+// A static triangle source (A) against a convex shape (B): every nearby triangle is a convex piece; their points are
+// pooled and reduced to four, each keeping its own normal. Points that come from a triangle's edge or corner while
+// another triangle offers a face contact are dropped (the "internal edge" bumps a box gets sliding across a mesh).
+bool MeshPair(const Shape& mesh, const Xf& xm, const Shape& b, const Xf& xb, float speculative, Manifold& m) {
+    if (!mesh.mesh) return false;
+    const Xf rel{InvRotate(xm.q, xb.p - xm.p), NormalizeQ(Conj(xm.q) * xb.q)};
+    const Aabb box = b.Bounds(rel).Grown(speculative);
+    std::vector<Tri3> tris;
+    mesh.mesh->Collect(box, tris);
+    if (tris.empty()) return false;
+    ContactPoint pool[64];
+    bool face[64];
+    int n = 0;
+    bool anyFace = false;
+    for (const Tri3& t : tris) {
+        const Shape ts = Shape::Triangle(t.a, t.b, t.c);
+        Manifold mt;
+        if (!CollideConvex(ts, xm, b, xb, speculative, mt)) continue;
+        const V3 fn = Normalize(Rotate(xm.q, Cross(t.b - t.a, t.c - t.a)));
+        const bool isFace = std::fabs(Dot(fn, mt.normal)) > 0.995f;
+        anyFace = anyFace || isFace;
+        for (int i = 0; i < mt.count && n < 64; ++i) {
+            pool[n] = mt.pts[i];
+            pool[n].normal = mt.normal;
+            face[n] = isFace;
+            ++n;
+        }
+    }
+    if (n == 0) return false;
+    if (anyFace) {   // keep face contacts; an edge contact only when it is clearly deeper than every face contact
+        float faceMin = 1e30f;
+        for (int i = 0; i < n; ++i) if (face[i]) faceMin = std::min(faceMin, pool[i].separation);
+        int k = 0;
+        for (int i = 0; i < n; ++i)
+            if (face[i] || pool[i].separation < faceMin - 0.02f) { pool[k] = pool[i]; face[k] = face[i]; ++k; }
+        n = k;
+    }
+    int deepest = 0;
+    for (int i = 1; i < n; ++i) if (pool[i].separation < pool[deepest].separation) deepest = i;
+    const V3 mainN = pool[deepest].normal;
+    n = ReduceContacts(pool, n, mainN);
+    m.count = n;
+    m.normal = pool[0].normal;
+    m.mixedNormals = false;
+    for (int i = 0; i < n; ++i) {
+        m.pts[i] = pool[i];
+        if (Dot(pool[i].normal, m.normal) < 0.9999f) m.mixedNormals = true;
+    }
+    return true;
 }
 
 } // namespace
@@ -591,6 +647,21 @@ int ReduceContacts(ContactPoint* pts, int count, const V3& n) {
 
 bool Collide(const Shape& a, const Xf& xa, const Shape& b, const Xf& xb, float speculative, Manifold& m) {
     m.count = 0;
+    m.mixedNormals = false;
+    bool hit;
+    if (a.type == ShapeType::Mesh && b.type == ShapeType::Mesh) return false;
+    if (a.type == ShapeType::Mesh && b.type == ShapeType::Plane) return false;
+    if (a.type == ShapeType::Plane && b.type == ShapeType::Mesh) return false;
+    if (b.type == ShapeType::Mesh) { hit = MeshPair(b, xb, a, xa, speculative, m); if (hit) Flip(m); return hit; }
+    if (a.type == ShapeType::Mesh) return MeshPair(a, xa, b, xb, speculative, m);
+    hit = CollideConvex(a, xa, b, xb, speculative, m);
+    if (hit) for (int i = 0; i < m.count; ++i) m.pts[i].normal = m.normal;
+    return hit;
+}
+
+namespace {
+bool CollideConvex(const Shape& a, const Xf& xa, const Shape& b, const Xf& xb, float speculative, Manifold& m) {
+    m.count = 0;
     if (a.type == ShapeType::Plane && b.type == ShapeType::Plane) return false;
     if (b.type == ShapeType::Plane) { if (!PlanePair(b, xb, a, xa, speculative, m)) return false; Flip(m); return true; }
     if (a.type == ShapeType::Plane) return PlanePair(a, xa, b, xb, speculative, m);
@@ -618,6 +689,8 @@ bool Collide(const Shape& a, const Xf& xa, const Shape& b, const Xf& xb, float s
     BuildManifold(a, xa, b, xb, n, wA, wB, speculative, m);
     return m.count > 0;
 }
+
+} // namespace
 
 } // namespace phys
 } // namespace okay

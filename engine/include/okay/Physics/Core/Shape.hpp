@@ -27,7 +27,35 @@
 namespace okay {
 namespace phys {
 
-enum class ShapeType : std::uint8_t { Sphere, Box, Capsule, Cylinder, Cone, Hull, Triangle, Plane };
+enum class ShapeType : std::uint8_t { Sphere, Box, Capsule, Cylinder, Cone, Hull, Triangle, Plane, Mesh };
+
+struct Tri3 { V3 a, b, c; };
+
+/// Static triangle geometry (a triangle mesh, a height field, a terrain): anything that can list the triangles near a
+/// box. A Mesh shape holds one; it collides as the union of its triangles and is for static bodies only.
+class TriangleSource {
+public:
+    virtual ~TriangleSource() = default;
+    /// Append the triangles (shape frame) that may overlap `box` (shape frame).
+    virtual void Collect(const Aabb& box, std::vector<Tri3>& out) const = 0;
+    /// Bounds of all triangles (shape frame).
+    virtual Aabb Bounds() const = 0;
+};
+
+/// A triangle list with its own bounding volume tree (a DynamicTree built once).
+class TriMeshSource : public TriangleSource {
+public:
+    explicit TriMeshSource(std::vector<Tri3> tris);
+    ~TriMeshSource() override;
+    void Collect(const Aabb& box, std::vector<Tri3>& out) const override;
+    Aabb Bounds() const override { return m_bounds; }
+    std::size_t Size() const { return m_tris.size(); }
+private:
+    std::vector<Tri3> m_tris;
+    Aabb m_bounds;
+    struct Tree;
+    std::unique_ptr<Tree> m_tree;
+};
 
 /// A convex hull built from points: its vertices and triangles (outward, counter-clockwise seen from outside).
 struct HullData {
@@ -58,6 +86,7 @@ public:
     V3 tri[3];                          // Triangle (used for mesh and terrain pieces)
     V3 planeNormal{0, 1, 0};            // Plane: the solid side is dot(n, x) <= planeOffset (infinite; static only)
     float planeOffset = 0.0f;
+    std::shared_ptr<const TriangleSource> mesh;   // Mesh (static only)
 
     static Shape Sphere(float r) { Shape s; s.type = ShapeType::Sphere; s.radius = r; return s; }
     static Shape Box(const V3& h) { Shape s; s.type = ShapeType::Box; s.halfExtents = h; s.radius = 0.0f; return s; }
@@ -67,6 +96,7 @@ public:
     static Shape Hull(const std::vector<V3>& pts) { Shape s; s.type = ShapeType::Hull; s.radius = 0.0f; s.hull = HullData::Build(pts); return s; }
     static Shape Triangle(const V3& a, const V3& b, const V3& c) { Shape s; s.type = ShapeType::Triangle; s.radius = 0.0f; s.tri[0] = a; s.tri[1] = b; s.tri[2] = c; return s; }
     static Shape Plane(const V3& n, float offset) { Shape s; s.type = ShapeType::Plane; s.radius = 0.0f; s.planeNormal = Normalize(n); s.planeOffset = offset; return s; }
+    static Shape Mesh(std::shared_ptr<const TriangleSource> src) { Shape s; s.type = ShapeType::Mesh; s.radius = 0.0f; s.mesh = std::move(src); return s; }
 
     /// The radius added around the core (sphere and capsule; 0 for the solid shapes).
     float CoreRadius() const { return (type == ShapeType::Sphere || type == ShapeType::Capsule) ? radius : 0.0f; }
@@ -83,7 +113,7 @@ public:
     float OuterRadius() const;
     /// The smallest half-size (for "is this body moving fast for its size", continuous collision).
     float InnerRadius() const;
-    bool IsConvexSolid() const { return type != ShapeType::Plane; }
+    bool IsConvexSolid() const { return type != ShapeType::Plane && type != ShapeType::Mesh; }
 };
 
 /// Put `pts` in counter-clockwise order as seen from the side `n` points to (around their average).

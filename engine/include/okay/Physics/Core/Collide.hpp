@@ -44,13 +44,15 @@ PenetrationResult EpaPenetration(const Shape& a, const Xf& xa, const Shape& b, c
 
 struct ContactPoint {
     V3 pA, pB;              // points on the surfaces of A and B (world)
-    float separation = 0;   // along the manifold normal; < 0 = overlapping
+    float separation = 0;   // along the point's normal; < 0 = overlapping
+    V3 normal;              // this point's normal (A toward B); equals Manifold::normal unless mixedNormals
 };
 
 struct Manifold {
-    V3 normal;              // from A toward B
+    V3 normal;              // from A toward B (for a mesh: the normal of the deepest point)
     int count = 0;
     ContactPoint pts[4];
+    bool mixedNormals = false;   // the points come from different triangles of a mesh and have their own normals
 };
 
 /// Contact manifold between two shapes when they are closer than `speculative` (points with separation up to that

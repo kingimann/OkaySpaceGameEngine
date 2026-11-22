@@ -1,5 +1,6 @@
 // Convex shapes of the physics core (see Shape.hpp for the sources each part was written from).
 #include "okay/Physics/Core/Shape.hpp"
+#include "okay/Physics/Core/DynamicTree.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -46,6 +47,24 @@ void SortPolygon(V3* pts, int count, const V3& n) {
     V3 tmp[32];
     for (int i = 0; i < count; ++i) tmp[i] = pts[idx[i]];
     for (int i = 0; i < count; ++i) pts[i] = tmp[i];
+}
+
+// ---- triangle meshes ---------------------------------------------------------------------------------------------------
+struct TriMeshSource::Tree { DynamicTree tree; };
+TriMeshSource::TriMeshSource(std::vector<Tri3> tris) : m_tris(std::move(tris)), m_tree(new Tree) {
+    m_tree->tree.margin = 0.0f;
+    m_bounds = Aabb{V3{1e30f, 1e30f, 1e30f}, V3{-1e30f, -1e30f, -1e30f}};
+    for (std::size_t i = 0; i < m_tris.size(); ++i) {
+        const Tri3& t = m_tris[i];
+        const Aabb b{Min(Min(t.a, t.b), t.c), Max(Max(t.a, t.b), t.c)};
+        m_bounds = Aabb::Union(m_bounds, b);
+        m_tree->tree.Create(b, (std::uint64_t)i);
+    }
+    if (m_tris.empty()) m_bounds = Aabb{};
+}
+TriMeshSource::~TriMeshSource() = default;
+void TriMeshSource::Collect(const Aabb& box, std::vector<Tri3>& out) const {
+    m_tree->tree.Query(box, [&](int p) { out.push_back(m_tris[(std::size_t)m_tree->tree.User(p)]); return true; });
 }
 
 // ---- convex hull -------------------------------------------------------------------------------------------------------
@@ -210,6 +229,7 @@ V3 Shape::Support(const V3& d) const {
             for (int i = 1; i < 3; ++i) { const float k = Dot(tri[i], d); if (k > bd) { bd = k; bi = i; } }
             return tri[bi];
         }
+        case ShapeType::Mesh: return mesh ? mesh->Bounds().Center() : V3{};
         case ShapeType::Plane: {
             // not a bounded shape: the support is pushed far out (only used if someone asks; the narrow phase special-cases planes)
             V3 t1, t2;
@@ -351,7 +371,8 @@ int Shape::SupportFeature(const V3& dIn, V3* out, V3& normal) const {
                 if (maxD - Dot(tri[i], d) < kEdgeSin * 0.1f * ext && c < 2) out[c++] = tri[i];
             return c;
         }
-        case ShapeType::Plane: out[0] = Support(d); return 1;
+        case ShapeType::Plane:
+        case ShapeType::Mesh: out[0] = Support(d); return 1;
     }
     out[0] = V3{};
     return 1;
@@ -381,6 +402,14 @@ Aabb Shape::Bounds(const Xf& x) const {
         case ShapeType::Plane: {
             const V3 big{1e6f, 1e6f, 1e6f};
             return {x.p - big, x.p + big};
+        }
+        case ShapeType::Mesh: {
+            if (!mesh) return Aabb{x.p, x.p};
+            const Aabb lb = mesh->Bounds();
+            const V3 c = x.Apply(lb.Center()), h = (lb.hi - lb.lo) * 0.5f;
+            V3 e;
+            for (int k = 0; k < 3; ++k) e[k] = std::fabs(R.m[k][0]) * h.x + std::fabs(R.m[k][1]) * h.y + std::fabs(R.m[k][2]) * h.z;
+            return {c - e, c + e};
         }
         default: {   // cone, hull, triangle: the support along each world axis
             Aabb b;
@@ -465,6 +494,7 @@ MassProps Shape::Mass(float density) const {
         }
         case ShapeType::Triangle:
         case ShapeType::Plane:
+        case ShapeType::Mesh:
             mp.mass = 0.0f;
             mp.inertia = M33::Zero();
             break;
@@ -482,6 +512,11 @@ float Shape::OuterRadius() const {
         case ShapeType::Hull: { float m = 0.0f; for (const V3& v : hull->verts) m = std::max(m, Len(v)); return m; }
         case ShapeType::Triangle: return std::max({Len(tri[0]), Len(tri[1]), Len(tri[2])});
         case ShapeType::Plane: return 1e6f;
+        case ShapeType::Mesh: {
+            if (!mesh) return 0.0f;
+            const Aabb b = mesh->Bounds();
+            return Len(Max(Abs(b.lo), Abs(b.hi)));
+        }
     }
     return 0.0f;
 }
@@ -499,7 +534,8 @@ float Shape::InnerRadius() const {
             return std::max(m, 0.0f);
         }
         case ShapeType::Triangle:
-        case ShapeType::Plane: return 0.0f;
+        case ShapeType::Plane:
+        case ShapeType::Mesh: return 0.0f;
     }
     return 0.0f;
 }

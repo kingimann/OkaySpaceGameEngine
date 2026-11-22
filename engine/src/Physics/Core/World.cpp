@@ -567,6 +567,7 @@ void World::Step(float dt) {
             cp.count = 0;
             if (!hit) { cp.touching = false; continue; }
             cp.normal = man.normal;
+            cp.mixed = man.mixedNormals;
             cp.count = man.count;
             float minSep = 1e30f;
             for (int k = 0; k < man.count; ++k) {
@@ -575,6 +576,7 @@ void World::Step(float dt) {
                 p.localA = ba.xf.ApplyInv(man.pts[k].pA);
                 p.localB = bb.xf.ApplyInv(man.pts[k].pB);
                 p.separation = man.pts[k].separation;
+                p.normal = man.pts[k].normal;
                 minSep = std::min(minSep, p.separation);
             }
             if (cp.sensor) { cp.touching = minSep <= 0.0f; cp.count = 0; continue; }
@@ -858,6 +860,45 @@ bool RayShape(const Shape& s, const V3& o, const V3& d, float maxT, float& tOut,
             if (axis >= 0) nOut[axis] = sgn; else nOut = -d;   // started inside
             return true;
         }
+        case ShapeType::Mesh: {   // ray against each triangle near the ray (T. Moller and B. Trumbore, "Fast, minimum storage
+                                  // ray-triangle intersection", J. Graphics Tools 1997)
+            if (!s.mesh) return false;
+            const float reach = std::min(maxT, 1e6f);
+            Aabb box{Min(o, o + d * reach), Max(o, o + d * reach)};
+            std::vector<Tri3> tris;
+            // long rays: walk the ray in pieces so the triangle list stays short
+            const int pieces = std::max(1, std::min(64, (int)(reach / 16.0f)));
+            bool hit = false;
+            float best = maxT;
+            for (int pc = 0; pc < pieces && !hit; ++pc) {
+                const float t0 = reach * (float)pc / (float)pieces, t1 = reach * (float)(pc + 1) / (float)pieces;
+                box = Aabb{Min(o + d * t0, o + d * t1), Max(o + d * t0, o + d * t1)}.Grown(1e-4f);
+                tris.clear();
+                s.mesh->Collect(box, tris);
+                for (const Tri3& t : tris) {
+                    const V3 e1 = t.b - t.a, e2 = t.c - t.a;
+                    const V3 pv = Cross(d, e2);
+                    const float det = Dot(e1, pv);
+                    if (std::fabs(det) < 1e-12f) continue;
+                    const float inv = 1.0f / det;
+                    const V3 tv = o - t.a;
+                    const float u = Dot(tv, pv) * inv;
+                    if (u < 0.0f || u > 1.0f) continue;
+                    const V3 qv = Cross(tv, e1);
+                    const float v = Dot(d, qv) * inv;
+                    if (v < 0.0f || u + v > 1.0f) continue;
+                    const float tt = Dot(e2, qv) * inv;
+                    if (tt < 0.0f || tt > best) continue;
+                    best = tt;
+                    V3 n = Normalize(Cross(e1, e2));
+                    if (Dot(n, d) > 0.0f) n = -n;
+                    nOut = n;
+                    hit = true;
+                }
+            }
+            if (hit) tOut = best;
+            return hit;
+        }
         case ShapeType::Plane: {
             const float den = Dot(s.planeNormal, d);
             const float h = Dot(s.planeNormal, o) - s.planeOffset;
@@ -970,7 +1011,7 @@ RayHit World::ShapeCast(const Shape& shape, const Xf& xf, const V3& dirIn, float
         float t = 0.0f;
         for (int it = 0; it < 64; ++it) {   // conservative advancement of the moving shape
             const Xf xm{xf.p + dir * t, xf.q};
-            if (cd.def.shape.type == ShapeType::Plane) {
+            if (cd.def.shape.type == ShapeType::Plane || cd.def.shape.type == ShapeType::Mesh) {
                 Manifold mm;
                 const float far = bestT - t + 1.0f;
                 if (!Collide(cd.def.shape, xo, shape, xm, far, mm)) return true;

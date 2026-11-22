@@ -22,6 +22,7 @@ namespace phys {
 namespace {
 
 struct CPoint {
+    V3 n, t1, t2;         // normal and friction directions of this point
     V3 rA, rB;            // arms from the centres of mass (world) at the start of the step
     V3 cA, cB;            // contact points relative to the centres of mass, in each body's frame (position pass)
     float nMass = 0, tMass[2] = {0, 0};
@@ -35,6 +36,7 @@ struct CSolver {
     V3 n, t1, t2;
     float friction = 0, restitution = 0, rolling = 0;
     int count = 0;
+    bool mixed = false;
     CPoint p[4];
     V3 rollImpulse;
     float rollRadius = 0.0f;
@@ -217,6 +219,7 @@ void SolveIsland(World::Impl& w, const IslandWork& is, const SolveSettings& s) {
         c.rollRadius = std::max(std::min(ca.def.shape.InnerRadius(), cb.def.shape.type == ShapeType::Plane ? 1e30f : cb.def.shape.InnerRadius()), 0.0f);
         if (cb.def.shape.type != ShapeType::Plane && ca.def.shape.type == ShapeType::Plane) c.rollRadius = cb.def.shape.InnerRadius();
         c.count = cp.count;
+        c.mixed = cp.mixed;
         const BodyData& BA = w.bodies[ca.body];
         const BodyData& BB = w.bodies[cb.body];
         SolverBody& A = sb[(std::size_t)c.a];
@@ -230,10 +233,12 @@ void SolveIsland(World::Impl& w, const IslandWork& is, const SolveSettings& s) {
             p.rB = pB - B.com;
             p.cA = st.localA - BA.localCom;
             p.cB = st.localB - BB.localCom;
-            p.nMass = EffMass(A, B, p.rA, p.rB, c.n);
-            p.tMass[0] = EffMass(A, B, p.rA, p.rB, c.t1);
-            p.tMass[1] = EffMass(A, B, p.rA, p.rB, c.t2);
-            p.relVel = Dot(VelAt(B, p.rB) - VelAt(A, p.rA), c.n);
+            if (cp.mixed) { p.n = st.normal; Basis(p.n, p.t1, p.t2); }
+            else { p.n = c.n; p.t1 = c.t1; p.t2 = c.t2; }
+            p.nMass = EffMass(A, B, p.rA, p.rB, p.n);
+            p.tMass[0] = EffMass(A, B, p.rA, p.rB, p.t1);
+            p.tMass[1] = EffMass(A, B, p.rA, p.rB, p.t2);
+            p.relVel = Dot(VelAt(B, p.rB) - VelAt(A, p.rA), p.n);
             p.bias = st.separation > 0.0f ? st.separation * invDt : 0.0f;
             st.maxNormalImpulse = 0.0f;
             if (!s.warmStarting) { st.normalImpulse = 0; st.tangentImpulse[0] = st.tangentImpulse[1] = 0; }
@@ -253,7 +258,7 @@ void SolveIsland(World::Impl& w, const IslandWork& is, const SolveSettings& s) {
             SolverBody& B = sb[(std::size_t)c.b];
             for (int k = 0; k < c.count; ++k) {
                 const CPoint& p = c.p[k];
-                const V3 P = c.n * p.st->normalImpulse + c.t1 * p.st->tangentImpulse[0] + c.t2 * p.st->tangentImpulse[1];
+                const V3 P = p.n * p.st->normalImpulse + p.t1 * p.st->tangentImpulse[0] + p.t2 * p.st->tangentImpulse[1];
                 Apply(A, B, P, p.rA, p.rB);
             }
         }
@@ -273,16 +278,16 @@ void SolveIsland(World::Impl& w, const IslandWork& is, const SolveSettings& s) {
                 const float maxF = c.friction * p.st->normalImpulse;
                 const V3 dv = VelAt(B, p.rB) - VelAt(A, p.rA);
                 if (s.frictionCone) {
-                    const float l1 = -p.tMass[0] * Dot(dv, c.t1), l2 = -p.tMass[1] * Dot(dv, c.t2);
+                    const float l1 = -p.tMass[0] * Dot(dv, p.t1), l2 = -p.tMass[1] * Dot(dv, p.t2);
                     const float o1 = p.st->tangentImpulse[0], o2 = p.st->tangentImpulse[1];
                     float n1 = o1 + l1, n2 = o2 + l2;
                     const float len = std::sqrt(n1 * n1 + n2 * n2);
                     if (len > maxF) { const float sc = len > 0.0f ? maxF / len : 0.0f; n1 *= sc; n2 *= sc; }
                     p.st->tangentImpulse[0] = n1; p.st->tangentImpulse[1] = n2;
-                    Apply(A, B, c.t1 * (n1 - o1) + c.t2 * (n2 - o2), p.rA, p.rB);
+                    Apply(A, B, p.t1 * (n1 - o1) + p.t2 * (n2 - o2), p.rA, p.rB);
                 } else {
                     for (int t = 0; t < 2; ++t) {
-                        const V3& tn = t == 0 ? c.t1 : c.t2;
+                        const V3& tn = t == 0 ? p.t1 : p.t2;
                         const V3 dvt = VelAt(B, p.rB) - VelAt(A, p.rA);
                         const float l = -p.tMass[t] * Dot(dvt, tn);
                         const float o = p.st->tangentImpulse[t];
@@ -293,20 +298,20 @@ void SolveIsland(World::Impl& w, const IslandWork& is, const SolveSettings& s) {
                 }
             }
             float sumN = 0.0f;
-            if (c.count >= 2 && blockNormals) {
+            if (c.count >= 2 && blockNormals && !c.mixed) {
                 sumN = BlockNormal(c, A, B);
             } else {
                 // (the points are visited forward on even passes and backward on odd ones, so no corner is always first)
                 for (int kk = 0; kk < c.count; ++kk) {
                     const int k = (it & 1) ? c.count - 1 - kk : kk;
                     CPoint& p = c.p[k];
-                    const float vn = Dot(VelAt(B, p.rB) - VelAt(A, p.rA), c.n);
+                    const float vn = Dot(VelAt(B, p.rB) - VelAt(A, p.rA), p.n);
                     const float l = -p.nMass * (vn + p.bias);
                     const float o = p.st->normalImpulse;
                     const float nw = std::max(o + l, 0.0f);
                     p.st->normalImpulse = nw;
                     p.st->maxNormalImpulse = std::max(p.st->maxNormalImpulse, nw);
-                    Apply(A, B, c.n * (nw - o), p.rA, p.rB);
+                    Apply(A, B, p.n * (nw - o), p.rA, p.rB);
                     sumN += nw;
                 }
             }
@@ -340,12 +345,12 @@ void SolveIsland(World::Impl& w, const IslandWork& is, const SolveSettings& s) {
         for (int k = 0; k < c.count; ++k) {
             CPoint& p = c.p[k];
             if (p.relVel > -s.restitutionThreshold || p.st->maxNormalImpulse <= 0.0f) continue;
-            const float vn = Dot(VelAt(B, p.rB) - VelAt(A, p.rA), c.n);
+            const float vn = Dot(VelAt(B, p.rB) - VelAt(A, p.rA), p.n);
             const float l = -p.nMass * (vn + c.restitution * p.relVel);
             const float o = p.st->normalImpulse;
             const float nw = std::max(o + l, 0.0f);
             p.st->normalImpulse = nw;
-            Apply(A, B, c.n * (nw - o), p.rA, p.rB);
+            Apply(A, B, p.n * (nw - o), p.rA, p.rB);
         }
     }
 
@@ -370,11 +375,11 @@ void SolveIsland(World::Impl& w, const IslandWork& is, const SolveSettings& s) {
             for (int k = 0; k < c.count; ++k) {
                 const CPoint& p = c.p[k];
                 const V3 rA = Rotate(A.q, p.cA), rB = Rotate(B.q, p.cB);
-                const float sep = Dot((B.com + rB) - (A.com + rA), c.n);
+                const float sep = Dot((B.com + rB) - (A.com + rA), p.n);
                 const float C = std::max(std::min(s.positionCorrection * (sep + s.linearSlop), 0.0f), -s.maxCorrection);
                 if (C >= 0.0f) continue;
-                const float m = EffMass(A, B, rA, rB, c.n);
-                const V3 P = c.n * (-C * m);
+                const float m = EffMass(A, B, rA, rB, p.n);
+                const V3 P = p.n * (-C * m);
                 if (A.dynamic) { A.com -= Mul(A.invMassAxis, P); A.q = Integrate(A.q, A.invI * Cross(rA, P) * -1.0f, 1.0f); }
                 if (B.dynamic) { B.com += Mul(B.invMassAxis, P); B.q = Integrate(B.q, B.invI * Cross(rB, P), 1.0f); }
             }

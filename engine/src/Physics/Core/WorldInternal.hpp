@@ -42,6 +42,7 @@ struct ColliderData {
 
 struct ContactPointState {
     V3 localA, localB;                // the two contact points in each body's frame (origin frame)
+    V3 normal;                        // this point's normal, A to B (differs between points only on meshes)
     float separation = 0.0f;
     float normalImpulse = 0.0f, tangentImpulse[2] = {0.0f, 0.0f};
     float maxNormalImpulse = 0.0f;
@@ -57,6 +58,7 @@ struct ContactPair {
     bool touching = false, wasTouching = false;
     bool active = false;              // looked at this step (one side awake)
     V3 normal;                        // A to B
+    bool mixed = false;               // points have their own normals (a mesh pair)
     int count = 0;
     ContactPointState pts[4];
     float friction = 0.5f, restitution = 0.0f, rolling = 0.0f;

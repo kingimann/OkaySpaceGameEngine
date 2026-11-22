@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Lua/LuaScriptVM.hpp"
+#include "okay/Scripting/StarterScripts.hpp"
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -288,6 +289,97 @@ return C
             for (int i = 0; i < 30; ++i) loaded.Update(kDt);
             CHECK(std::fabs(g->transform->Rotation().ToEuler().y) > 10.0f);
         }
+    }
+
+    // 13. Editor support: the starter script, lint warnings, member completion and Inspector settings.
+    {
+        const std::string starter = StarterScriptSource("lua");
+        CHECK(starter.find("function Script:Update(dt)") != std::string::npos);
+        LuaScriptVM vm;
+        CHECK(vm.ValidateAll(starter).empty());
+        std::vector<ScriptDiagnostic> w = LuaScriptVM::Lint(
+            "local M = {}\nfunction M:Updte(dt)\n  if Input.GetKeyy(\"a\") then end\n  local s = \"Input.Nope\" -- Time.Nope\nend\nreturn M\n");
+        CHECK(w.size() == 2);
+        if (w.size() == 2) {
+            CHECK(w[0].line == 2 && w[0].severity == 1 && w[0].message.find("Did you mean Update?") != std::string::npos);
+            CHECK(w[1].line == 3 && w[1].message.find("Input has no member 'GetKeyy'. Did you mean GetKey?") != std::string::npos);
+            CHECK(w[1].column == 12);
+        }
+        CHECK(LuaScriptVM::Lint("function update(dt) end\nfunction Start() end\nlocal v = Vector3.new(1, 2, 3)").empty());
+        auto has = [](const std::vector<std::string>& v, const char* x) { return std::find(v.begin(), v.end(), x) != v.end(); };
+        std::vector<std::string> m = LuaScriptVM::CompletionMembers("Input");
+        CHECK(has(m, "GetKey") && has(m, "GetAxis"));
+        m = LuaScriptVM::CompletionMembers("self.transform");
+        CHECK(has(m, "position") && has(m, "Translate") && has(m, "GetComponent"));
+        m = LuaScriptVM::CompletionMembers("self.transform.position");
+        CHECK(has(m, "x") && has(m, "magnitude"));
+        m = LuaScriptVM::CompletionMembers("string");
+        CHECK(has(m, "format") && has(m, "gsub"));
+        m = LuaScriptVM::CompletionMembers("Vector3");
+        CHECK(has(m, "new") && has(m, "Distance") && has(m, "up"));
+        CHECK(LuaScriptVM::CompletionMembers("nothingKnown").empty());
+        std::vector<std::string> words = LuaScriptVM::CompletionNames();
+        CHECK(has(words, "function") && has(words, "Input.GetKey") && has(words, "Update"));
+        std::vector<LuaScriptVM::Setting> st = LuaScriptVM::Settings(
+            "local P = { speed = 5, name = 'ship', alive = true, offset = Vector3.new(1, 2.5, 0), onHit = function() end }\n"
+            "print('not shown')\nreturn P\n");
+        CHECK(st.size() == 4);
+        if (st.size() == 4) {
+            CHECK(st[0].name == "speed" && st[0].type == "number" && st[0].defaultText == "5");
+            CHECK(st[1].name == "name" && st[1].defaultText == "\"ship\"");
+            CHECK(st[2].name == "alive" && st[2].defaultText == "true");
+            CHECK(st[3].name == "offset" && st[3].defaultText == "Vector3(1, 2.5, 0)");
+        }
+        CHECK(!LogHas("not shown"));
+        CHECK(LuaScriptVM::Settings("this is not lua").empty());
+    }
+
+    // 14. Format Document for Lua: re-indent by blocks; strings, comments and long strings are not blocks.
+    {
+        const std::string messy =
+            "local M = {\n"
+            "speed = 1,\n"
+            "}\n"
+            "function M:Update(dt)\n"
+            "if dt > 0 then\n"
+            "print(\"end then do\") -- end\n"
+            "elseif dt < 0 then\n"
+            "x = 1\n"
+            "else\n"
+            "for i = 1, 3 do y = i end\n"
+            "end\n"
+            "foo(function()\n"
+            "z = [[\n"
+            "  keep\n"
+            "]]\n"
+            "end)\n"
+            "end\n"
+            "return M";
+        const std::string want =
+            "local M = {\n"
+            "    speed = 1,\n"
+            "}\n"
+            "function M:Update(dt)\n"
+            "    if dt > 0 then\n"
+            "        print(\"end then do\") -- end\n"
+            "    elseif dt < 0 then\n"
+            "        x = 1\n"
+            "    else\n"
+            "        for i = 1, 3 do y = i end\n"
+            "    end\n"
+            "    foo(function()\n"
+            "        z = [[\n"
+            "  keep\n"
+            "]]\n"
+            "    end)\n"
+            "end\n"
+            "return M";
+        const std::string got = LuaScriptVM::Format(messy);
+        if (got != want) std::cerr << "--- formatted:\n" << got << "\n---\n";
+        CHECK(got == want);
+        CHECK(LuaScriptVM::Format(want) == want);   // formatting twice changes nothing
+        LuaScriptVM vm;
+        CHECK(vm.ValidateAll(got).empty());
     }
 
     TEST_MAIN_RESULT();

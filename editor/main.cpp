@@ -772,6 +772,7 @@ int main(int argc, char** argv) {
 #include "okay/Components/Seat.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scripting/StarterScripts.hpp"
+#include "okay/Lua/LuaScriptVM.hpp"          // Lua scripts: colours, checks and autocomplete (our own interpreter)
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
@@ -15769,13 +15770,64 @@ static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
     return d;
 }
 
+// Lua language definition (scripts in language "lua", our own interpreter okay::lua):
+// the Lua keywords, '--' and '--[[ ]]' comments, both string quotes, and every bound
+// engine type and member (LuaScriptVM::CompletionNames) as a known identifier.
+static const TextEditor::LanguageDefinition& LuaLangDef() {
+    static bool inited = false;
+    static TextEditor::LanguageDefinition d;
+    if (!inited) {
+        for (const char* k : {"and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if",
+                              "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
+                              "self"})
+            d.mKeywords.insert(k);
+        for (const auto& name : okay::LuaScriptVM::CompletionNames()) {
+            if (d.mKeywords.count(name)) continue;
+            TextEditor::Identifier id;
+            id.mDeclaration = "Lua / engine name";
+            d.mIdentifiers.insert(std::make_pair(name, id));
+        }
+        for (const char* t : {"GameObject", "Transform", "Vector3", "Input", "Time", "Debug", "Mathf", "Rigidbody"})
+            d.mTypeNames.insert(t);
+        d.mSemantic = true;
+        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
+            "\"(\\\\.|[^\"\\\\])*\"", TextEditor::PaletteIndex::String));
+        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
+            "'(\\\\.|[^'\\\\])*'", TextEditor::PaletteIndex::String));
+        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
+            "0[xX][0-9a-fA-F]+([.][0-9a-fA-F]*)?([pP][+-]?[0-9]+)?", TextEditor::PaletteIndex::Number));
+        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
+            "([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?", TextEditor::PaletteIndex::Number));
+        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
+            "[a-zA-Z_][a-zA-Z0-9_]*", TextEditor::PaletteIndex::Identifier));
+        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
+            "[\\[\\]\\{\\}\\!\\%\\^\\&\\*\\(\\)\\-\\+\\=\\~\\|\\<\\>\\?\\/\\;\\,\\.\\#\\:]", TextEditor::PaletteIndex::Punctuation));
+        d.mCommentStart = "--[[";
+        d.mCommentEnd = "]]";
+        d.mSingleLineComment = "--";
+        d.mPreprocChar = '\x01';   // '#' is Lua's length operator, not a preprocessor line
+        d.mCaseSensitive = true;
+        d.mAutoIndentation = true;
+        d.mName = "Lua";
+        inited = true;
+    }
+    return d;
+}
+
 // One script code widget (ScriptEditorWidget) per open script, lazily created and configured.
+// The colouring follows the script's language (switched with the language picker).
 static std::unordered_map<okay::ScriptComponent*, std::unique_ptr<ScriptEditorWidget>> g_codeEditors;
+static std::unordered_map<okay::ScriptComponent*, std::string> g_codeEditorLang;
 static ScriptEditorWidget& CodeEditorFor(okay::ScriptComponent* sc) {
     auto it = g_codeEditors.find(sc);
+    if (it != g_codeEditors.end() && g_codeEditorLang[sc] != sc->Language()) {
+        g_codeEditorLang[sc] = sc->Language();
+        it->second->SetLanguageDefinition(sc->Language() == okay::LuaScriptVM::kLanguage ? LuaLangDef() : OkayScriptLangDef());
+    }
     if (it == g_codeEditors.end()) {
         auto te = std::make_unique<ScriptEditorWidget>();
-        te->SetLanguageDefinition(OkayScriptLangDef());
+        g_codeEditorLang[sc] = sc->Language();
+        te->SetLanguageDefinition(sc->Language() == okay::LuaScriptVM::kLanguage ? LuaLangDef() : OkayScriptLangDef());
         te->SetPalette(OkayScriptPalette());
         te->SetShowWhitespaces(false);
         te->SetTabSize(4);
@@ -15826,6 +15878,12 @@ static std::string FormatOkayScript(const std::string& src) {
         ls = le + 1;
     }
     return out;
+}
+
+// Format Document for the script's language: Lua re-indents by its blocks (LuaScriptVM::Format).
+static std::string FormatScriptFor(const okay::ScriptComponent* sc, const std::string& src) {
+    if (sc && sc->Language() == okay::LuaScriptVM::kLanguage) return okay::LuaScriptVM::Format(src);
+    return FormatOkayScript(src);
 }
 
 // Rename every use of identifier `from` in code to `to`: comments and strings
@@ -15883,13 +15941,27 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
         if (std::isalnum((unsigned char)*c) || *c == '_') stem += *c;
     if (stem.size() > 5 && stem.substr(stem.size() - 4) == "okay") stem.erase(stem.size() - 4);
     if (stem.empty() || std::isdigit((unsigned char)stem[0])) stem = "Script" + stem;
-    fs::path p = dir / (stem + ".okay");
+    // The language (every backend this build runs): its file extension and starter script.
+    static int langIdx = 0;
+    static const std::vector<std::string> langs = okay::AvailableScriptLanguages();
+    if (langIdx < 0 || langIdx >= (int)langs.size()) langIdx = 0;
+    const std::string lang = langs.empty() ? std::string("okayscript") : langs[(std::size_t)langIdx];
+    const std::string ext = "." + extide::ExtFor(lang);
+    fs::path p = dir / (stem + ext);
     ImGui::TextDisabled("A new script file you can attach to any object.");
     ImGui::Spacing();
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     ImGui::SetNextItemWidth(320);
     bool enter = ImGui::InputText("Name", name, sizeof(name), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::TextDisabled("Assets/Scripts/%s.okay", stem.c_str());
+    if (langs.size() > 1) {
+        std::vector<std::string> labels;
+        for (const auto& l : langs) labels.push_back(l == "okayscript" ? "OkayScript (.okay)" : l == "lua" ? "Lua (.lua)" : l);
+        std::vector<const char*> items;
+        for (const auto& l : labels) items.push_back(l.c_str());
+        ImGui::SetNextItemWidth(320);
+        ImGui::Combo("Language", &langIdx, items.data(), (int)items.size());
+    }
+    ImGui::TextDisabled("Assets/Scripts/%s%s", stem.c_str(), ext.c_str());
     std::error_code ec;
     const bool exists = fs::exists(p, ec);
     if (exists) ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "That file exists - it will be opened.");
@@ -15901,7 +15973,7 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
     if (ImGui::Button("Cancel", ImVec2(100, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
     if (create) {
         fs::create_directories(dir, ec);
-        if (!exists) std::ofstream(p) << extide::StarterScriptNamed("okayscript", stem);
+        if (!exists) std::ofstream(p) << extide::StarterScriptNamed(lang, stem);
         if (attach && sel) AttachScriptAsset(ed, sel, p.string());   // its tab opens with the selection
         else OpenScriptFileInEditor(p.string());
         ConsoleLog((exists ? "Opened " : "Created ") + p.string());
@@ -16286,7 +16358,7 @@ void DrawScriptEditor(EditorState& ed) {
             doSave();
         if (s_tbFormat) {          // re-indent by brace depth
             s_tbFormat = false;
-            caret.replaceAll = FormatOkayScript(buf.data());   // applied via callback / leftover path
+            caret.replaceAll = FormatScriptFor(sc, buf.data());   // applied via callback / leftover path
             ed.dirty = true; ConsoleLog("Formatted script");
         }
 
@@ -16315,7 +16387,7 @@ void DrawScriptEditor(EditorState& ed) {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Edit")) {
-                if (ImGui::MenuItem("Format Document", "Ctrl+Alt+L")) { caret.replaceAll = FormatOkayScript(buf.data()); ed.dirty = true; }
+                if (ImGui::MenuItem("Format Document", "Ctrl+Alt+L")) { caret.replaceAll = FormatScriptFor(sc, buf.data()); ed.dirty = true; }
                 if (ImGui::MenuItem("Toggle Comment", "Ctrl+/")) caret.toggleComment = true;
                 if (ImGui::MenuItem("Find / Replace", "Ctrl+F")) s_showFind = true;
                 ImGui::Separator();
@@ -16500,7 +16572,7 @@ void DrawScriptEditor(EditorState& ed) {
             // check typing AltGr characters (ł, @, {…) would silently reformat.
             if (kio.KeyAlt && !kio.KeyShift && kio.InputQueueCharacters.Size == 0 &&
                 ImGui::IsKeyPressed(ImGuiKey_L, false)) {
-                caret.replaceAll = FormatOkayScript(buf.data());
+                caret.replaceAll = FormatScriptFor(sc, buf.data());
                 ed.dirty = true;
             }
         }
@@ -17041,7 +17113,7 @@ void DrawScriptEditor(EditorState& ed) {
             std::vector<Cmd> cmds = {
                 {"Run (compile & execute)", [&]{ bool ok = sc->LoadSource(buf.data(), &s_error); if (ok) s_error.clear(); ed.dirty = true; }},
                 {"Save", [&]{ std::string p = filePath(); if (extide::WriteFile(p, buf.data())) { sc->SetPath(p); g_scriptSaved[sc] = buf.data(); } ed.dirty = true; }},
-                {"Format Document", [&]{ caret.replaceAll = FormatOkayScript(buf.data()); ed.dirty = true; }},
+                {"Format Document", [&]{ caret.replaceAll = FormatScriptFor(sc, buf.data()); ed.dirty = true; }},
                 {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); if (s.empty()) SetCodeBuffer(sc, s); else caret.replaceAll = s; std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
                 {"Toggle Syntax Highlight", [&]{ s_highlight = !s_highlight; }},
                 {"Toggle Minimap", [&]{ s_minimap = !s_minimap; }},
@@ -17187,6 +17259,20 @@ void DrawScriptEditor(EditorState& ed) {
                     // warning comes from the compiler that runs the script.
                     static okay::NextScriptVM s_nextCheck;
                     for (auto& d : s_nextCheck.ValidateAll(buf.data())) {
+                        if (d.severity == 0) s_diags.push_back(d);
+                        else s_warns.push_back({d.line, d.message, {}, {}, d.column});
+                    }
+                    if (!s_diags.empty()) {
+                        const auto& d0 = s_diags[0];
+                        s_error = d0.line > 0 ? "line " + std::to_string(d0.line) +
+                            (d0.column > 0 ? ", column " + std::to_string(d0.column) : std::string()) + ": " : std::string();
+                        s_error += d0.message;
+                    }
+                } else if (sc->Language() == okay::LuaScriptVM::kLanguage) {
+                    // Lua: syntax errors with line and column from our own compiler, plus
+                    // warnings for engine names that do not exist and misspelled handlers.
+                    static okay::LuaScriptVM s_luaCheck;
+                    for (auto& d : s_luaCheck.ValidateAll(buf.data())) {
                         if (d.severity == 0) s_diags.push_back(d);
                         else s_warns.push_back({d.line, d.message, {}, {}, d.column});
                     }
@@ -17965,8 +18051,18 @@ void DrawScriptEditor(EditorState& ed) {
                 recvExpr.assign(t + es, t + (ws - 1));
             }
             std::vector<std::string> csMembers;
-            const std::vector<std::string>* membersP = &ScriptMembers(receiver);
-            if (membersP->empty() || recvExpr.find('.') != std::string::npos || recvExpr.find('<') != std::string::npos) {
+            const bool luaScript = sc->Language() == okay::LuaScriptVM::kLanguage;
+            if (luaScript && ws > 0 && t[ws - 1] == ':') {   // obj:Method in Lua
+                int rs = ws - 1; while (rs > 0 && (isWord(t[rs - 1]) || t[rs - 1] == '.')) --rs;
+                receiver.assign(t + rs, t + (ws - 1));
+                recvExpr = receiver;
+            }
+            static const std::vector<std::string> s_noMembers;
+            const std::vector<std::string>* membersP = luaScript ? &s_noMembers : &ScriptMembers(receiver);
+            if (luaScript) {
+                if (!recvExpr.empty()) csMembers = okay::LuaScriptVM::CompletionMembers(recvExpr);
+                membersP = &csMembers;
+            } else if (membersP->empty() || recvExpr.find('.') != std::string::npos || recvExpr.find('<') != std::string::npos) {
                 csMembers = CsMembersFor(std::string(t), recvExpr);
                 if (!csMembers.empty()) membersP = &csMembers;
             }
@@ -18052,7 +18148,11 @@ void DrawScriptEditor(EditorState& ed) {
                 struct Hit { const std::string* w; bool fuzzy; int score; };
                 std::vector<Hit> exact, ci, fuzz;
                 std::vector<std::string> combined;
-                if (!memberMode) { combined = ScriptCompletions(); AddBufferIdentifiers(buf.data(), combined); }
+                if (!memberMode) {
+                    static const std::vector<std::string> s_luaWords = okay::LuaScriptVM::CompletionNames();
+                    combined = sc->Language() == okay::LuaScriptVM::kLanguage ? s_luaWords : ScriptCompletions();
+                    AddBufferIdentifiers(buf.data(), combined);
+                }
                 const std::vector<std::string>& pool = memberMode ? members : combined;
                 for (const auto& w : pool) {
                     if (w.size() < prefix.size()) continue;
@@ -31448,12 +31548,33 @@ static bool DrawMeshCollider3DWithOkayUI(EditorState& ed, GameObject* go, MeshCo
     return true;
 }
 
+// The Inspector settings of a script: `public` fields for OkayScript; the fields of the
+// returned table for Lua (LuaScriptVM::Settings runs the chunk once per source text).
+static std::vector<ScriptField> ScriptFieldsFor(ScriptComponent* sc, const std::string& src) {
+    if (sc->Language() != okay::LuaScriptVM::kLanguage) return ParseScriptFields(src);
+    static std::unordered_map<std::size_t, std::vector<ScriptField>> s_cache;
+    const std::size_t h = std::hash<std::string>{}(src);
+    auto it = s_cache.find(h);
+    if (it != s_cache.end()) return it->second;
+    if (s_cache.size() > 64) s_cache.clear();
+    std::vector<ScriptField> out;
+    for (const auto& st : okay::LuaScriptVM::Settings(src)) {
+        ScriptField f;
+        f.name = st.name;
+        f.type = st.type;
+        f.def = st.defaultText;
+        out.push_back(f);
+    }
+    s_cache[h] = out;
+    return out;
+}
+
 static bool DrawScriptWithOkayUI(EditorState& ed, ScriptComponent* sc) {
     using namespace okaypanels;
     InspFieldList L;
     const int kOpen = L.SmallButton("Open in Script Editor");
     const char* liveBuf = PeekCodeBuffer(sc);
-    const std::vector<ScriptField> fields = ParseScriptFields(liveBuf ? std::string(liveBuf) : sc->Source());
+    const std::vector<ScriptField> fields = ScriptFieldsFor(sc, liveBuf ? std::string(liveBuf) : sc->Source());
     struct Var {   // one variable's rows and the values they edit
         std::string cur, text;
         bool overridden = false, b = false, isVec = false, isNum = false, isObj = false;
@@ -41321,7 +41442,7 @@ void DrawInspector(EditorState& ed) {
             // vars appear as you type), else the last-compiled source.
             const char* liveBuf = PeekCodeBuffer(sc);
             std::vector<ScriptField> fields =
-                ParseScriptFields(liveBuf ? std::string(liveBuf) : sc->Source());
+                ScriptFieldsFor(sc, liveBuf ? std::string(liveBuf) : sc->Source());
             if (fields.empty()) {
                 ImGui::TextDisabled("No public variables. Declare top-level vars,");
                 ImGui::TextDisabled("e.g.  public float speed = 5;");

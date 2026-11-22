@@ -863,6 +863,97 @@ std::vector<LuaScriptVM::Setting> LuaScriptVM::Settings(const std::string& sourc
     return out;
 }
 
+std::string LuaScriptVM::Format(const std::string& src) {
+    // Tokens that open and close blocks, per line, outside strings and comments.
+    // Indentation is a stack of levels: a line that opens blocks pushes one level
+    // (however many openers it has, so "foo(function()" indents once), and a level
+    // goes when all of its openers are closed. Leading closers ("end", "}", "else")
+    // pull their own line out.
+    struct Line { std::vector<std::string> toks; bool verbatim = false; std::size_t begin = 0, end = 0; };
+    std::vector<Line> lines(1);
+    std::size_t i = 0;
+    auto newline = [&]() { lines.back().end = i; lines.emplace_back(); lines.back().begin = i + 1; };
+    auto longLevel = [&](std::size_t at) -> int {
+        std::size_t k = at + 1;
+        int lvl = 0;
+        while (k < src.size() && src[k] == '=') { ++lvl; ++k; }
+        return (k < src.size() && src[k] == '[') ? lvl : -1;
+    };
+    auto skipLong = [&](int lvl) {
+        std::string close = "]" + std::string((std::size_t)lvl, '=') + "]";
+        std::size_t e = src.find(close, i);
+        std::size_t stop = e == std::string::npos ? src.size() : e + close.size();
+        for (; i < stop; ++i)
+            if (src[i] == '\n') { newline(); lines.back().verbatim = true; }
+    };
+    while (i < src.size()) {
+        char c = src[i];
+        if (c == '\n') { newline(); ++i; continue; }
+        if (c == '-' && i + 1 < src.size() && src[i + 1] == '-') {
+            i += 2;
+            if (i < src.size() && src[i] == '[' && longLevel(i) >= 0) { skipLong(longLevel(i)); continue; }
+            while (i < src.size() && src[i] != '\n') ++i;
+            continue;
+        }
+        if (c == '[' && longLevel(i) >= 0) { lines.back().toks.push_back("x"); skipLong(longLevel(i)); continue; }
+        if (c == '"' || c == '\'') {
+            lines.back().toks.push_back("x");
+            ++i;
+            while (i < src.size() && src[i] != c && src[i] != '\n') i += (src[i] == '\\' && i + 1 < src.size()) ? 2 : 1;
+            if (i < src.size() && src[i] == c) ++i;
+            continue;
+        }
+        if (std::isalpha((unsigned char)c) || c == '_') {
+            std::size_t s0 = i;
+            while (i < src.size() && (std::isalnum((unsigned char)src[i]) || src[i] == '_')) ++i;
+            lines.back().toks.push_back(src.substr(s0, i - s0));
+            continue;
+        }
+        if (c == '{' || c == '}' || c == '(' || c == ')') { lines.back().toks.push_back(std::string(1, c)); ++i; continue; }
+        if (c != ' ' && c != '\t' && c != '\r') lines.back().toks.push_back("x");
+        ++i;
+    }
+    lines.back().end = src.size();
+    auto isOpen = [](const std::string& w) { return w == "function" || w == "do" || w == "then" || w == "repeat" || w == "{" || w == "("; };
+    auto isClose = [](const std::string& w) { return w == "end" || w == "until" || w == "}" || w == ")"; };
+    std::vector<int> levels;   // open tokens per level
+    std::string out;
+    for (std::size_t n = 0; n < lines.size(); ++n) {
+        const Line& L = lines[n];
+        std::string text = src.substr(L.begin, L.end > L.begin ? L.end - L.begin : 0);
+        bool pushed = false;
+        auto close = [&]() {
+            if (levels.empty()) return;
+            if (--levels.back() <= 0) { levels.pop_back(); if (pushed) pushed = false; }
+        };
+        auto open = [&]() {
+            if (pushed && !levels.empty()) ++levels.back();
+            else { levels.push_back(1); pushed = true; }
+        };
+        std::size_t indent = std::string::npos;
+        for (const std::string& w : L.toks) {
+            bool leadingCloser = indent == std::string::npos && (isClose(w) || w == "else" || w == "elseif");
+            if (w == "else" || w == "elseif") {
+                close();
+                if (leadingCloser) indent = levels.size();
+                if (w == "else") open();   // elseif's own 'then' opens again
+                continue;
+            }
+            if (isClose(w)) { close(); continue; }
+            if (indent == std::string::npos) indent = levels.size();
+            if (isOpen(w)) open();
+        }
+        if (indent == std::string::npos) indent = levels.size();
+        if (n) out += '\n';
+        if (L.verbatim) { out += text; continue; }
+        std::size_t a = text.find_first_not_of(" \t");
+        std::size_t b = text.find_last_not_of(" \t\r");
+        if (a == std::string::npos) continue;   // blank lines stay blank
+        out += std::string(indent * 4, ' ') + text.substr(a, b - a + 1);
+    }
+    return out;
+}
+
 std::vector<ScriptDiagnostic> LuaScriptVM::Lint(const std::string& source) {
     std::vector<ScriptDiagnostic> out;
     const auto& api = Api();

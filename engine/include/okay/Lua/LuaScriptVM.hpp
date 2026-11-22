@@ -72,6 +72,10 @@ public:
     /// The script's settings in source order, found by running the chunk in a
     /// throwaway interpreter (no object attached, small budget). Empty on an error.
     static std::vector<Setting> Settings(const std::string& source);
+    /// Re-indent a Lua source by its blocks (4 spaces a level): function / do / then /
+    /// repeat / { / ( open one, end / until / } / ) close one, else and elseif sit one
+    /// level out. Lines inside long strings and long comments are kept as they are.
+    static std::string Format(const std::string& source);
 
     struct Impl;   ///< internal (engine/src/Lua/LuaScriptVM.cpp)
 private:

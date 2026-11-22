@@ -36,6 +36,7 @@
 - [Our own NFF reader (`.nff` `.enff`)](#our-own-nff-reader-nff-enff) (was `docs/own_nff_reader.md`)
 - [Our own OFF reader (`.off`)](#our-own-off-reader-off) (was `docs/own_off_reader.md`)
 - [Our own OGRE mesh readers (`.mesh.xml` and binary `.mesh`)](#our-own-ogre-mesh-readers-meshxml-and-binary-mesh) (was `docs/own_ogre_reader.md`)
+- [Our own OpenGEX reader (`.ogex`)](#our-own-opengex-reader-ogex) (new on main 2026-11-22; was `docs/own_ogex_reader.md` on an unmerged branch)
 - [Our own PMX reader (`.pmx`)](#our-own-pmx-reader-pmx) (was `docs/own_pmx_reader.md`)
 - [Our own Q3D reader (`.q3o` `.q3s`)](#our-own-q3d-reader-q3o-q3s) (was `docs/own_q3d_reader.md`)
 - [Our own RAW reader (`.raw`)](#our-own-raw-reader-raw) (was `docs/own_raw_reader.md`)
@@ -2056,6 +2057,80 @@ bench program was local and is not in the repository; memory was not measured.
 **Not verified:** a real file of version 1.80, a real file with scales, additive clips or links, a real file from an exporter
 other than the OGRE SDK tools; no Windows run. The switch is not in the launcher's Experimental list (`shared/OwnSwitches.hpp`
 is the coordinator's) and is not in the import seam's backend table: it is read by the OGRE reader itself.
+
+## Our own OpenGEX reader (`.ogex`)
+
+*Written on branch `claude/readers-e4` (2026-11-15), brought onto main on 2026-11-22 (branch `claude2/own-readers-last`).*
+
+Status: **side by side, off by default** (`OKAY_OWN_OPENGEX`, slot 37 of the table in `ModelImport.cpp`). Assimp (when built) is
+the fallback for a file ours refuses, and the reader when the switch is off.
+
+### What it is
+
+OpenGEX (Open Game Engine Exchange, Eric Lengyel) is a scene format written in OpenDDL, a small text data language. A file holds a
+node tree, geometry objects (meshes), materials, skins and animation tracks.
+
+| File | What |
+|---|---|
+| `engine/src/Render/OpenDdl.hpp` | The OpenDDL parser: bounded (structures, nesting depth, values, string bytes), iterative, header only |
+| `engine/src/Render/OgexReader.cpp` | `okay::ReadOgexBuffer` / `okay::ReadOgexFile` (declared in `ModelData.hpp`) |
+| `engine/src/Render/AffineInverse.hpp` | The inverse of an affine matrix (bind poses), shared with the MDL reader |
+| `engine/src/Render/ModelImport.cpp` | The seam: slot 37 (extension `.ogex`) |
+| `tests/test_ogex_reader.cpp`, `tests/e4_fixtures.hpp` | Hand-computed checks on synthetic files (`ogex_reader`) |
+| `tests/test_e4_hostile.cpp` | Budgets, hostile input, mutation fuzz and the real files when `OKAY_MODEL_CORPUS` is set, for OpenGEX and MDL (`e4_hostile`) |
+| `tests/test_own_dispatch_e4.cpp`, `tests/test_own_e4_default.cpp` | The seam routes `.ogex`; `-DOKAY_OWN_OPENGEX=ON` really makes it the default |
+| `tests/test_own_e4_samples.cpp`, `examples/own_readers/cube_spin.ogex` | The sample file (a red cube with a 2 second turn, typed by us) imports through the seam with the reader on (`own_e4_samples`) |
+
+### What it reads
+
+**OpenDDL.** Structures `Name $global %local (property = value, ...) { ... }` and the primitive data structures (`bool`, `int8` to
+`int64`, `unsigned_int8` to `unsigned_int64` and their short names, `half`, `float`, `double`, `string`, `ref`, `type`, with an
+optional `[n]` and sub-arrays); `//` and `/* */` comments; decimal, `0x`, `0o`, `0b`, character and `_`-separated literals; a hex,
+octal or binary float literal as the IEEE bit pattern; string escapes and adjacent strings joined; references. A sub-array must
+hold exactly `n` values.
+
+**OpenGEX.** `Metric` (`distance` scales the root node, `angle` and `time` scale angles and key times, `up` "z" turns the root by
+-90 degrees about X). `Node`, `BoneNode`, `GeometryNode`, `CameraNode`, `LightNode` as nodes (camera and light nodes stay empty)
+with `Name`, `Transform` (4x4, column-major), `Translation`, `Rotation` (`x`, `y`, `z`, `axis`, `quaternion`) and `Scale`. Several
+transform structures on one node compose in file order, first listed outermost. A transform marked `object` is baked into that
+node's own geometry. `GeometryObject` with its first full-detail `Mesh`: `triangles`, `quads` or `triangle_strip` (with
+`restart`); `position`, `normal` and the first `texcoord`; one part per `IndexArray` with its `material` index through the node's
+`MaterialRef`s; `front = "cw"` reverses the winding; smooth normals when the file has none. `Material`: `Color` `diffuse`,
+`emission`, `opacity`, `Param` `specular_power` and `opacity`, `Texture` `diffuse`, `normal`, `specular` (files inside the model's
+folder only). `Skin`: the bind-shape `Transform`, `Skeleton` with `BoneRefArray` and one bind `Transform` per bone,
+`BoneCountArray`, `BoneIndexArray`, `BoneWeightArray` (the four strongest weights, normalised). `Animation` / `Track` / `Time` /
+`Value` / `Key`: one clip per `clip` index, each animated node sampled at the union of its tracks' key times (linear between keys;
+bezier and TCB tangents are not used). Texture coordinates are kept as written.
+
+Not handled (a line in `out.notes`): `CameraObject`, `LightObject`, `Extension`, vertex colours, tangents, further texture
+coordinate sets, morph targets, level-of-detail meshes after the first, points and lines, curve tangents, texture transforms.
+
+Refused: OpenDDL syntax errors; budgets passed (structures, depth, values, string bytes, vertices, triangles, keys); a file with
+no nodes and no meshes; bad references; non-finite numbers; **a node or animated transform whose decomposition overflows** (added
+2026-11-22: the mutation fuzz seeded with the real `Example.ogex` changed one matrix element to 0x60000000, about 3.7e19; the
+matrix is finite but its squared column length is not, so the node's scale came out as infinity; `e4_hostile`, "huge node
+matrix", fails on the old code and passes now).
+
+### Real files and checks
+
+Six `.ogex` files under `models/OpenGEX` of the Assimp 5.4.3 test folder (`docs/content/model_corpus.md`): four read (rows `ogex`
+of `tests/data/model_corpus_manifest.tsv`), `empty_camera.ogex` and `light_issue1262.ogex` hold only a camera or a light and no
+node, and are refused ("the file has no nodes and no meshes"; Assimp refuses both too). Against Assimp (`bench_model_readers`,
+2026-11-22): `animation_example.ogex` is read only by ours (Assimp refuses it); on the 3 files both read ours takes 0.46x the
+time and 0.36x the largest peak (`docs/content/own_readers_speed.md`, row `ogex`). Same triangles and vertices on all 3; the
+boxes differ because ours turns `Metric up "z"` into Y-up (Assimp keeps Z up), and `collada.ogex` gives 2 materials to Assimp's 1. `e4_hostile` under ASan, UBSan and
+float-cast-overflow, 20,000 mutations per synthetic seed and 5,000 per real file (`Example.ogex`, `animation_example.ogex`,
+`collada.ogex`), 2026-11-22: 0 failures after the fix above.
+
+### Provenance (what this file was written from)
+
+`OpenDdl.hpp` and `OgexReader.cpp` were written from scratch for this project. The OpenDDL grammar and the OpenGEX structures,
+properties and conventions were **recalled from the public specifications** (openddl.org, opengex.org); no code, comment, table or
+test of Assimp or any other importer was read, copied or ported. On 2026-11-22 the specification site could not be reached from
+the build machine (blocked by its network rules), so the recollection is still **not checked against the text**; it is checked
+against the six real files and against Assimp's output on them instead. Unverified: the transform composition order and the
+texture-coordinate origin on files from other exporters, the per-bone bind matrices of a skin with several bones from another
+exporter, a Windows run.
 
 ## Our own PMX reader (`.pmx`)
 

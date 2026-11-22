@@ -1,4 +1,4 @@
-# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X / AC3D / OGRE / XGL / IRR / NFF / Terragen / Q3D / LWS / OGRE binary / ZAE / .xml / LXO / glTF 1.0 readers: what each reader gave on each file when this
+# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X / AC3D / OGRE / XGL / IRR / NFF / Terragen / Q3D / LWS / OGRE binary / ZAE / .xml / LXO / glTF 1.0 / OpenGEX readers: what each reader gave on each file when this
 # manifest was written. The files are not in this repository (see docs/content/model_corpus.md): they come from the
 # test/models and test/models-nonbsd directories of an Assimp 5.4.3 source checkout; paths below are relative to
 # that checkout's "test" directory (OKAY_MODEL_CORPUS points at it). Tab separated:
@@ -478,3 +478,10 @@ gltf1	models/glTF/BoxTextured-glTF/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris
 gltf1	models/glTF/CesiumMilkTruck/CesiumMilkTruck.gltf	ok	area=64.8164	meshes=5	tris=3624	bones=0	skinned=0	clips=0	dur=0.000	mat=4	bbox=-2.431,0.001,-1.396,2.438,2.584,1.396	verts=8348	tex=1	nodes=8	uv=1	nrm=1
 gltf1	models/glTF/IncorrectVertexArrays/Cube_v1.gltf	ok	area=92.0000	meshes=4	tris=46	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-3.500,-1.000,-1.000,3.500,1.000,3.500	verts=142	tex=0	nodes=9	uv=0	nrm=1
 gltf1	models/glTF/TwoBoxes/TwoBoxes.gltf	ok	area=7.5000	meshes=2	tris=24	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,1.250,0.500	verts=48	tex=0	nodes=4	uv=0	nrm=1
+# ogex: own OpenGEX reader, switched on for the run. The two FAIL rows hold only a camera or a light object and no node (the message says so).
+ogex	models/OpenGEX/Example.ogex	ok	area=119294.3086	meshes=2	tris=24	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-52.494,-0.000,-60.570,184.098,93.112,41.568	verts=48	tex=1	nodes=3	uv=1	nrm=1
+ogex	models/OpenGEX/animation_example.ogex	ok	area=105.8617	meshes=2	tris=64	bones=5	skinned=1	clips=1	dur=10.417	mat=2	bbox=-1.000,-1.000,-2.929,1.000,7.000,1.000	verts=104	tex=0	nodes=11	uv=1	nrm=1
+ogex	models/OpenGEX/camera.ogex	ok	area=24.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.000,-1.000,-1.000,1.000,1.000,1.000	verts=24	tex=0	nodes=4	uv=0	nrm=1
+ogex	models/OpenGEX/collada.ogex	ok	area=63.9231	meshes=2	tris=6722	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=-4.000,-0.000,-2.000,4.000,1.081,2.000	verts=3370	tex=0	nodes=9	uv=0	nrm=1
+ogex	models/OpenGEX/empty_camera.ogex	FAIL	OpenGEX: the file has no nodes and no meshes
+ogex	models/OpenGEX/light_issue1262.ogex	FAIL	OpenGEX: the file has no nodes and no meshes

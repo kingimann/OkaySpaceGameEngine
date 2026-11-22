@@ -414,6 +414,10 @@ add_executable(test_particles_fx test_particles_fx.cpp)
 target_link_libraries(test_particles_fx PRIVATE okay::engine)
 add_test(NAME particles_fx COMMAND test_particles_fx)
 
+add_executable(test_world_edges test_world_edges.cpp)
+target_link_libraries(test_world_edges PRIVATE okay::engine)
+add_test(NAME world_edges COMMAND test_world_edges)
+
 add_executable(test_profiler test_profiler.cpp)
 target_link_libraries(test_profiler PRIVATE okay::engine)
 add_test(NAME profiler COMMAND test_profiler)

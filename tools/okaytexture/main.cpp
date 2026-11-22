@@ -83,10 +83,7 @@ static bool ReadAll(const std::string& path, std::vector<std::uint8_t>* out) {
     return true;
 }
 
-static const char* DdsName(DdsFormat f) {
-    switch (f) { case DdsFormat::RGBA8: return "RGBA8"; case DdsFormat::BC1: return "BC1"; case DdsFormat::BC3: return "BC3";
-                 case DdsFormat::BC4: return "BC4"; default: return "BC5"; }
-}
+static const char* DdsName(DdsFormat f) { return DdsFormatName(f); }
 
 int main(int argc, char** argv) {
     if (argc < 2) return Usage();

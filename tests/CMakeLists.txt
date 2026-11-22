@@ -147,6 +147,11 @@ add_executable(test_physics3d test_physics3d.cpp)
 target_link_libraries(test_physics3d PRIVATE okay::engine)
 add_test(NAME physics3d COMMAND test_physics3d)
 
+# Classic and Improved 3D physics give bit-identical results for the same scene, wherever the heap puts the objects
+add_executable(test_physics3d_determinism test_physics3d_determinism.cpp)
+target_link_libraries(test_physics3d_determinism PRIVATE okay::engine)
+add_test(NAME physics3d_determinism COMMAND test_physics3d_determinism)
+
 # MeshCollider3D: real triangle-mesh collision (BVH): rays, overlaps, casts, bodies, edits, perf
 add_executable(test_meshcollider3d test_meshcollider3d.cpp)
 target_link_libraries(test_meshcollider3d PRIVATE okay::engine)
@@ -2896,6 +2901,11 @@ add_test(NAME navmesh_carving COMMAND test_navmesh_carving)
 add_executable(test_dialogue test_dialogue.cpp)
 target_link_libraries(test_dialogue PRIVATE okay::engine)
 add_test(NAME dialogue COMMAND test_dialogue)
+# Shared Interact action (seat, dialogue, pickups; lean-right off E), death on a seat goes to the exit point,
+# per-line dialogue camera shots (blend in on the line, back at the end, scene record)
+add_executable(test_interact_seat_dialogue test_interact_seat_dialogue.cpp)
+target_link_libraries(test_interact_seat_dialogue PRIVATE okay::engine)
+add_test(NAME interact_seat_dialogue COMMAND test_interact_seat_dialogue)
 
 # Quests: objectives from every source, prerequisites, rewards once, scene + save-game round trips
 add_executable(test_quests test_quests.cpp)
@@ -4723,12 +4733,17 @@ add_executable(test_wind test_wind.cpp)
 target_link_libraries(test_wind PRIVATE okay::engine)
 add_test(NAME wind COMMAND test_wind)
 # okay::tex, our own texture library (docs/rendering/own_texture_library.md). Pure CPU, deterministic.
-foreach(_t IN ITEMS mip atlas convert bc dds_stream)
+foreach(_t IN ITEMS mip atlas convert bc dds_stream dds_load)
     add_executable(test_tex_${_t} test_tex_${_t}.cpp)
     target_link_libraries(test_tex_${_t} PRIVATE okay::engine)
     add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()
+# The OpenGL renderer uploading .dds files and compressed import copies, on Mesa llvmpipe through EGL (SKIPPED without one).
+add_executable(test_gl_dds_upload test_gl_dds_upload.cpp)
+target_link_libraries(test_gl_dds_upload PRIVATE okay::engine ${CMAKE_DL_LIBS})
+add_test(NAME gl_dds_upload COMMAND test_gl_dds_upload WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(gl_dds_upload PROPERTIES TIMEOUT 240)
 
 # Colliders behave as the shapes they are (not boxes): Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield, 2D polygon / capsule / composite.
 add_executable(test_collider_shapes test_collider_shapes.cpp)

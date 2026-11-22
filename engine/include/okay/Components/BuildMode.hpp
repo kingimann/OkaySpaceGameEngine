@@ -39,7 +39,7 @@ struct BuildBindings {
     char toggle    = 'b';   ///< enter / leave build mode
     int  place     = 0;     ///< mouse: place / drop / pick in link mode
     int  remove    = 1;     ///< mouse: delete / cancel a move / clear the link pick
-    char removeKey = 'x';   ///< key that deletes too (like the remove mouse button)
+    char removeKey = 'x';   ///< key that deletes too (like the remove mouse button); also first-person lean-right, which steps aside while build mode is on (LeanKeyTaken)
     char rotate    = 'r';   ///< turn the piece (Shift turns the other way)
     char move      = 'g';   ///< pick up the aimed object to move it (press again to drop)
     char duplicate = 'v';   ///< copy the aimed object and carry the copy

@@ -732,7 +732,7 @@ gameobject 79 "Player"
   rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
   boxcollider3d 0.6 1.8 0.6 0 0.9 0 0 0 0
   playercontroller view=2 allow=1 start=1 key=118 pad=4 blend=0.3 ease=1 snap=0 ex=0 ey=0 ez=0 dist=-1 shoulder=0 presetKeys=1
-  pcfirst 2 5.5 6 0.15 1 1 0 130 90 0.78 0.12 0.12 16 0 17 122 1 1 0.5 1.6 1.2 0.4 12 113 101 14 0.35 10 1 0
+  pcfirst 2 5.5 6 0.15 1 1 0 130 90 0.78 0.12 0.12 16 0 17 122 1 1 0.5 1.6 1.2 0.4 12 113 120 14 0.35 10 1 0
   pcfirstfeel 0 8 8 1 40 0.55 0.12 1 10.5 0.75 0.9 1 1 1 0.035 9 0 0.8 8 0.12 14 0 0 7.5 0.35 0.55 18 0 0 0 0
   pcfirststance prone=1 resize=1 crouchH=0.65 proneH=0.33 pad=1 hold=0.4 walkA=64 steer=260 dive=1 diveHop=0.25 diveSlide=0.45 capSens=0.15 capPx=220 slope=50 step=0.35 fallY=-4 swim=2.2 swimUp=2.4 swimDown=2.2 varJump=0 jumpCut=0.5 climb=2.5 hardLand=12 preset=0 stickRamp=0
   pcthird 2 5.5 6 0.2 24 5 1.5 1 1 0 0 2 12 1 0 20 -20 70 0 130 90 0.78 0.12 0.12 1 0.3 16 0 17 122 1 1 0.5 0.4 1.1 12 113 101 12 0.5 10 1 0 20 10 0.6 0.05 0.2 4294967295 30 6

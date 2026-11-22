@@ -373,7 +373,11 @@ public:
                 Aim(c, f, u, u + 1, u + 2, point);
                 const BodyState hs = c.Body(u + 2);
                 const Vec3 tip = hs.position + hs.rotation * (Vec3::Up * c.BodyHalfLength(u + 2));
-                if (Vec3::Distance(tip, point) < 0.12f * c.Height() / 1.8f) {
+                // The hand grips wherever it meets the surface (it may have slid
+                // along it on the way), not only at the aimed point.
+                const float gap = Vec3::Dot(tip - p, nrm);
+                if (gap < 0.08f * c.Height() / 1.8f && Vec3::Distance(tip, point) < 0.8f * reach) {
+                    point = tip - nrm * gap + nrm * c.BodyRadius(u + 2);
                     c.m_grabBody = u + 2;
                     c.Physics()->SetPin(u + 2, Vec3::Up * c.BodyHalfLength(u + 2), point,
                                         c.TotalMass() * 9.81f / (0.06f * c.Height() / 1.8f));
@@ -819,6 +823,10 @@ void DynamicCharacter::ChangeState(CharState s) {
     if (s == CharState::Animated && was == CharState::Blending) m_lastRecovery = m_clock - m_disturbedAt;
     if (was == CharState::GettingUp && (s == CharState::Blending || s == CharState::Balancing)) ++m_getUps;
     if (s != CharState::GettingUp) m_phys->ClearHelpers();
+    if (s != CharState::Balancing && s != CharState::Falling && m_grabBody >= 0) {
+        m_phys->ClearPin(m_grabBody);   // a grip never outlives the stumble
+        m_grabBody = -1;
+    }
     m_state = s;
     m_stateTime = 0.0f;
     m_stableTime = 0.0f;

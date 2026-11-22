@@ -4869,3 +4869,8 @@ add_test(NAME grok_145_146_153_155 COMMAND test_grok_145_146_153_155)
 add_executable(test_controller_actions test_controller_actions.cpp)
 target_link_libraries(test_controller_actions PRIVATE okay::engine)
 add_test(NAME controller_actions COMMAND test_controller_actions)
+
+# One rebinding store for InputActions and the typed ActionSet (duplicate audit #422, item 2).
+add_executable(test_input_one_store test_input_one_store.cpp)
+target_link_libraries(test_input_one_store PRIVATE okay::engine)
+add_test(NAME input_one_store COMMAND test_input_one_store)

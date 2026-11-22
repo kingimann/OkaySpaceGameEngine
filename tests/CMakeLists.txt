@@ -4366,6 +4366,14 @@ add_test(NAME own_dispatch COMMAND test_own_dispatch WORKING_DIRECTORY ${CMAKE_C
 add_executable(test_dof_math test_dof_math.cpp)
 target_link_libraries(test_dof_math PRIVATE okay::engine)
 add_test(NAME dof_math COMMAND test_dof_math)
+# OpenGL post chain keeps the frame's coverage (a transparent clear stays transparent through depth of field):
+# a real GL context on Xvfb (Mesa software GL); skips (77) without Xvfb or GL.
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_gl_post_alpha test_gl_post_alpha.cpp)
+    target_link_libraries(test_gl_post_alpha PRIVATE okay::engine)
+    add_test(NAME gl_post_alpha COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_gl_post_alpha>)
+    set_tests_properties(gl_post_alpha PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+endif()
 add_executable(test_post_quality_math test_post_quality_math.cpp)
 target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)

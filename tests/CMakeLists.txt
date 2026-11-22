@@ -1051,6 +1051,7 @@ add_test(NAME data_load_checks COMMAND test_data_load_checks)
 add_executable(test_project_upgrade test_project_upgrade.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
 target_include_directories(test_project_upgrade PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_project_upgrade PRIVATE okay::engine)
+target_compile_definitions(test_project_upgrade PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME project_upgrade COMMAND test_project_upgrade)
 
 # The Project panel's logic (editor/ProjectBrowser.*, ImGui-free): folder model, safe create / rename / move / copy / delete with undo, references rewritten, clipboard, failure injection at every file step.

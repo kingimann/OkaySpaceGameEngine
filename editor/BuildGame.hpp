@@ -1,7 +1,7 @@
 #pragma once
 // Build Game (BuildGame.cpp): export the current scene as a standalone runnable game (the player runtime plus the
-// game's data), the data-only exports for Web, Android and Xbox, and the dedicated server folder. Used by the Build
-// Settings window, File > Build And Run and `--build-game` / `--build-server` on the command line (main.cpp).
+// game's data), the data-only exports for Web, Android and Xbox, and the dedicated server folder. Called from main.cpp:
+// the Build Settings window's Build button (DrawFileDialogs), `--build-game` (RunBuildGameCli), the OKAY_UI_BUILDSERVER hook.
 // Moved out of main.cpp unchanged (docs/editor/main_split_plan.md, move 1).
 #include "EditorState.hpp"
 #include "ProjectState.hpp"              // BuildSettings, ProjectSettings

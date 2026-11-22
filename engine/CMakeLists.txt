@@ -31,6 +31,9 @@ add_library(okay_physcore STATIC
     src/Physics/Core/DynamicTree.cpp
     src/Physics/Core/Shape.cpp
     src/Physics/Core/Collide.cpp
+    src/Physics/Core/World.cpp
+    src/Physics/Core/Solver.cpp
+    src/Physics/Core/Joint.cpp
 )
 target_include_directories(okay_physcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(okay_physcore PUBLIC cxx_std_17)

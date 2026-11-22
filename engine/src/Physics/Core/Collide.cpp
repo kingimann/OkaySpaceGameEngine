@@ -96,6 +96,14 @@ bool ClosestOnSimplex(SPt* s, int& n, float* lam, V3& v) {
     return true;
 }
 
+// The size the tolerances are measured against: the smaller shape (so a 1 m box on a 100 m ground box is resolved to
+// micrometres), but never below what float rounding on the bigger one allows.
+float TolScale(const Shape& a, const Shape& b) {
+    const float ra = a.OuterRadius(), rb = b.OuterRadius();
+    const float small = std::min(ra, rb), big = std::max(ra, rb);
+    return std::max(std::max(small, 0.05f * big), 1e-3f);
+}
+
 // GJK in a frame where A sits at the origin (better float precision far from the world origin).
 DistanceResult Gjk(const Shape& a, const Xf& xa, const Shape& b, const Xf& xb, SPt* simplexOut, int* countOut) {
     DistanceResult r;
@@ -108,7 +116,7 @@ DistanceResult Gjk(const Shape& a, const Xf& xa, const Shape& b, const Xf& xb, S
     float lam[4] = {1, 0, 0, 0};
     V3 v = s[0].w;
     float prev = 1e30f;
-    const float scale = std::max(a.OuterRadius() + b.OuterRadius(), 1e-3f);
+    const float scale = TolScale(a, b);
     const float tolSq = (1e-6f * scale) * (1e-6f * scale);
     for (int it = 0; it < 64; ++it) {
         r.iterations = it + 1;
@@ -328,6 +336,59 @@ bool RoundPair(const Shape& a, const Xf& xa, const Shape& b, const Xf& xb, float
     return true;
 }
 
+// Box against box by the separating axis test (Ericson 4.4.1: the 3 + 3 face normals and the 9 edge-pair cross
+// products). The axis with the largest separation (or least overlap) wins; face axes are preferred over edge axes
+// unless an edge axis is clearly better, so resting boxes keep a steady face normal. A face axis is then clipped into
+// a full manifold; an edge axis gives one point between the two edges.
+bool BoxBox(const Shape& a, const Xf& xa, const Shape& b, const Xf& xb, float speculative, Manifold& m) {
+    const M33 Ra = M33::FromQ(xa.q), Rb = M33::FromQ(xb.q);
+    const V3 ua[3] = {Ra.Col(0), Ra.Col(1), Ra.Col(2)}, ub[3] = {Rb.Col(0), Rb.Col(1), Rb.Col(2)};
+    const V3 ha = a.halfExtents, hb = b.halfExtents;
+    const V3 T = xb.p - xa.p;
+    float bestFace = -1e30f, bestEdge = -1e30f;
+    V3 nFace, nEdge;
+    int edgeI = -1, edgeJ = -1;
+    auto test = [&](const V3& axisIn, bool face, int ei, int ej) -> bool {
+        const float l = Len(axisIn);
+        if (l < 1e-5f) return true;   // parallel edges: covered by the face axes
+        const V3 L = axisIn * (1.0f / l);
+        const float ra = ha.x * std::fabs(Dot(ua[0], L)) + ha.y * std::fabs(Dot(ua[1], L)) + ha.z * std::fabs(Dot(ua[2], L));
+        const float rb = hb.x * std::fabs(Dot(ub[0], L)) + hb.y * std::fabs(Dot(ub[1], L)) + hb.z * std::fabs(Dot(ub[2], L));
+        const float tl = Dot(T, L);
+        const float sep = std::fabs(tl) - (ra + rb);
+        if (sep > speculative) return false;
+        const V3 n = tl < 0.0f ? -L : L;
+        if (face) { if (sep > bestFace) { bestFace = sep; nFace = n; } }
+        else if (sep > bestEdge) { bestEdge = sep; nEdge = n; edgeI = ei; edgeJ = ej; }
+        return true;
+    };
+    for (int i = 0; i < 3; ++i) if (!test(ua[i], true, -1, -1)) return false;
+    for (int i = 0; i < 3; ++i) if (!test(ub[i], true, -1, -1)) return false;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) if (!test(Cross(ua[i], ub[j]), false, i, j)) return false;
+    const float faceTol = 0.005f + 0.02f * std::min({ha.x, ha.y, ha.z, hb.x, hb.y, hb.z});
+    if (edgeI >= 0 && bestEdge > bestFace + faceTol) {
+        // edge against edge: the two edges that face each other along n, and their closest points
+        const V3 n = nEdge;
+        V3 pa = xa.p, pb = xb.p;
+        for (int k = 0; k < 3; ++k) {
+            if (k != edgeI) pa += ua[k] * (Dot(ua[k], n) > 0.0f ? ha[k] : -ha[k]);
+            if (k != edgeJ) pb += ub[k] * (Dot(ub[k], n) < 0.0f ? hb[k] : -hb[k]);
+        }
+        V3 c1, c2;
+        ClosestSegSeg(pa - ua[edgeI] * ha[edgeI], pa + ua[edgeI] * ha[edgeI], pb - ub[edgeJ] * hb[edgeJ], pb + ub[edgeJ] * hb[edgeJ], c1, c2);
+        m.normal = n;
+        m.count = 1;
+        m.pts[0].pA = c1;
+        m.pts[0].pB = c2;
+        m.pts[0].separation = Dot(c2 - c1, n);
+        return m.pts[0].separation <= speculative;
+    }
+    const V3 n = nFace;
+    BuildManifold(a, xa, b, xb, n, xa.Apply(a.Support(InvRotate(xa.q, n))), xb.Apply(b.Support(InvRotate(xb.q, -n))), speculative, m);
+    return m.count > 0;
+}
+
 // A plane (A) against any convex shape (B).
 bool PlanePair(const Shape& plane, const Xf& xp, const Shape& b, const Xf& xb, float speculative, Manifold& m) {
     const V3 n = Rotate(xp.q, plane.planeNormal);
@@ -376,7 +437,7 @@ PenetrationResult EpaPenetration(const Shape& a, const Xf& xaIn, const Shape& b,
     int n = 0;
     const DistanceResult g = Gjk(a, xa, b, xb, simplex, &n);
     if (!g.overlap) return res;
-    const float scale = std::max(a.OuterRadius() + b.OuterRadius(), 1e-3f);
+    const float scale = TolScale(a, b);
     const float eps = 1e-5f * scale;
 
     std::vector<SPt> verts(simplex, simplex + n);
@@ -534,6 +595,7 @@ bool Collide(const Shape& a, const Xf& xa, const Shape& b, const Xf& xb, float s
     if (b.type == ShapeType::Plane) { if (!PlanePair(b, xb, a, xa, speculative, m)) return false; Flip(m); return true; }
     if (a.type == ShapeType::Plane) return PlanePair(a, xa, b, xb, speculative, m);
     if (IsRound(a) && IsRound(b)) return RoundPair(a, xa, b, xb, speculative, m);
+    if (a.type == ShapeType::Box && b.type == ShapeType::Box) return BoxBox(a, xa, b, xb, speculative, m);
 
     const float rA = a.CoreRadius(), rB = b.CoreRadius();
     const DistanceResult d = GjkDistance(a, xa, b, xb);

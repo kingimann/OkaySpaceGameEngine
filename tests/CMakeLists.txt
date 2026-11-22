@@ -997,6 +997,9 @@ add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --wa
 add_executable(test_physcore_tree test_physcore_tree.cpp)
 target_link_libraries(test_physcore_tree PRIVATE okay::physcore)
 add_test(NAME physcore_tree COMMAND test_physcore_tree)
+add_executable(test_physcore_collide test_physcore_collide.cpp)
+target_link_libraries(test_physcore_collide PRIVATE okay::physcore)
+add_test(NAME physcore_collide COMMAND test_physcore_collide)
 
 add_executable(test_broadphase test_broadphase.cpp)
 target_link_libraries(test_broadphase PRIVATE okay::engine)

@@ -12,7 +12,7 @@
 namespace okay::pb {
 
 /// OkayUI's own renderer state for the app's SDL renderers (OKAY_UI_OWN_RENDER, OkayUIRenderSDL.hpp).
-inline OkayUI::render::SdlGLHost& OkayUIHostState() { static auto* h = new OkayUI::render::SdlGLHost(); return *h; }
+inline OkayUI::render::SdlHost& OkayUIHostState() { static auto* h = new OkayUI::render::SdlHost(); return *h; }
 /// Which renderer drew the last OkayUI frame and why (tests, the About line).
 inline const OkayUI::render::HostFrame& OkayUILastFrame() { return OkayUIHostState().Last(); }
 /// Called by okay::pb::Forget (DestroyRenderer) while the renderer is still alive: frees the own renderer's GL objects for it.
@@ -22,9 +22,9 @@ inline void OkayUIEndFrame(SDL_Renderer* r) {
     okay::platform::Painter* p = For(r);
     if (!p) return;
     if (p->Kind() == okay::platform::PainterKind::Sdl2) {
-        // OKAY_UI_OWN_RENDER=1 (off by default): OkayUI's own OpenGL renderer draws the frame when SDL's renderer is an OpenGL one;
+        // OKAY_UI_OWN_RENDER=1 (off by default): OkayUI's own renderer draws the frame when SDL's renderer is OpenGL or Direct3D 11;
         // otherwise, and with the switch off, OkayUI::EndFrame(r) exactly as before.
-        OkayUI::render::SdlGLHost& host = OkayUIHostState();
+        OkayUI::render::SdlHost& host = OkayUIHostState();
         if (OkayUI::render::OwnRenderSwitchOn()) {
             if (!OnForget()) OnForget() = &OkayUIForgetRenderer;
             host.EndFrame(r);

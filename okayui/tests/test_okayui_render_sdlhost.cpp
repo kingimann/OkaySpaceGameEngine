@@ -252,6 +252,7 @@ void RunDriver(const char* driver, R::HostPath wantPath, R::GLFlavor want) {
                 CHECK(s.frame.path == wantPath);
                 if (s.frame.path != wantPath) std::cout << "  host image frame not drawn by the own renderer: " << s.frame.reason << "\n";
                 CHECK(s.frame.stats.unresolvedSpans == 0);
+                CHECK(s.frame.images == 1 && okay::pb::OkayUIHostState().ImageCount() == 1);
                 const std::uint32_t p = Px(s.got, s.w, 375, 20);          // the image's top border row is white
                 CHECK((p >> 24) > 200 && ((p >> 16) & 255) > 200 && ((p >> 8) & 255) > 200);
                 const rscenes::Diff d = rscenes::Compare(s.got, s.ref, s.w, s.h, 8);

@@ -229,7 +229,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
 void EndFrame(SDL_Renderer* renderer);
 /// The drawing half of EndFrame(SDL_Renderer*) alone: draws the frame that EndFrameData already finished through the SDL
 /// renderer (nothing is finished or built here, so the toasts must have been built by EndFrameData(w, h)). For a host that
-/// finishes the frame first and then decides which renderer draws it (OkayUI::render::SdlGLHost falls back to this one).
+/// finishes the frame first and then decides which renderer draws it (OkayUI::render::SdlHost falls back to this one).
 void DrawFinishedFrame(SDL_Renderer* renderer);
 
 // ---- Custom backends (e.g. Direct3D 11, the software rasteriser) --------------

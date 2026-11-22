@@ -72,10 +72,11 @@ target_link_libraries(okay_ui_soft PUBLIC okay_ui okay_ui_screens)
 # ---- Render interface and backends (OkayUIRender.hpp): own code, off by default ----------------------------------------
 # One interface from OkayUI's draw data to a backend, a validator for it, and the backends: software (the reference),
 # okay::platform::Painter, OpenGL 3.3 core / ES 3.0 (entry points through a get-proc function, no link-time GL), Direct3D 11
-# (Windows), and SdlGLHost (OkayUIRender_SDLGL.cpp): the OpenGL backend inside SDL's OpenGL renderer, which the editor and launcher link
-# for their hosted OkayUI screens and use only with OKAY_UI_OWN_RENDER=1 (off by default).
+# (Windows), and SdlHost (OkayUIRender_SDL.cpp): the OpenGL backend inside SDL's OpenGL renderers and the Direct3D 11 backend inside
+# SDL's direct3d11 renderer, which the editor and launcher link for their hosted OkayUI screens and use only with OKAY_UI_OWN_RENDER=1
+# (off by default).
 add_library(okay_ui_render STATIC render/OkayUIRender.cpp render/OkayUIRender_Soft.cpp render/OkayUIRender_Painter.cpp
-            render/OkayUIRender_GL.cpp render/OkayUIRender_D3D11.cpp render/OkayUIRender_SDLGL.cpp)
+            render/OkayUIRender_GL.cpp render/OkayUIRender_D3D11.cpp render/OkayUIRender_SDL.cpp)
 target_link_libraries(okay_ui_render PUBLIC okay_ui_soft)
 
 if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)

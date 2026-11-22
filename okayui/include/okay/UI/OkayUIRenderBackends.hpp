@@ -1,6 +1,6 @@
 #pragma once
 // The OkayUI render backends (see OkayUIRender.hpp for the contract). Each one is a render::Backend in its own file
-// under okayui/render/. All of them are OWN CODE, OFF BY DEFAULT; only the OpenGL one is wired, behind
+// under okayui/render/. All of them are OWN CODE, OFF BY DEFAULT; the OpenGL and Direct3D 11 ones are wired, behind
 // OKAY_UI_OWN_RENDER=1 (OkayUIRenderSDL.hpp).
 //
 //   Soft      OkayUIRender_Soft.cpp      CPU, into an RGBA bitmap. The REFERENCE: every other backend is compared with it.

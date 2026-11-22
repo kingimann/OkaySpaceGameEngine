@@ -205,9 +205,17 @@ public:
         m_tex[id] = t;
         return id;
     }
+    TexId WrapNativeTexture(std::uintptr_t native, int w, int h, bool) override {
+        // The host's GL_TEXTURE_2D name: drawn with the filter and wrap settings it already has, never changed or deleted here.
+        if (!native || native > 0xffffffffu || w <= 0 || h <= 0) return 0;
+        const TexId id = ++m_next;
+        m_tex[id] = (GLuint_)native;
+        m_wrapped[id] = true;
+        return id;
+    }
     bool UpdateTexture(TexId id, int w, int h, const std::uint8_t* rgba) override {
         auto it = m_tex.find(id);
-        if (it == m_tex.end() || !rgba) return false;
+        if (it == m_tex.end() || !rgba || m_wrapped.count(id)) return false;
         GLint_ oldTex = 0; m_g.GetIntegerv(GL_TEXTURE_BINDING_2D_, &oldTex);
         m_g.BindTexture(GL_TEXTURE_2D_, it->second);
         Upload(w, h, rgba);
@@ -217,7 +225,7 @@ public:
     void DestroyTexture(TexId id) override {
         auto it = m_tex.find(id);
         if (it == m_tex.end()) return;
-        m_g.DeleteTextures(1, &it->second);
+        if (!m_wrapped.erase(id)) m_g.DeleteTextures(1, &it->second);   // a host texture is only let go of
         m_tex.erase(it);
     }
 
@@ -346,8 +354,8 @@ private:
     }
     void Destroy() {
         if (!m_g.DeleteTextures) return;
-        for (auto& kv : m_tex) m_g.DeleteTextures(1, &kv.second);
-        m_tex.clear();
+        for (auto& kv : m_tex) if (!m_wrapped.count(kv.first)) m_g.DeleteTextures(1, &kv.second);
+        m_tex.clear(); m_wrapped.clear();
         if (m_white) m_g.DeleteTextures(1, &m_white);
         if (m_vbo) m_g.DeleteBuffers(1, &m_vbo);
         if (m_ibo) m_g.DeleteBuffers(1, &m_ibo);
@@ -361,6 +369,7 @@ private:
     GLuint_ m_prog = 0, m_vao = 0, m_vbo = 0, m_ibo = 0, m_white = 0;
     GLint_ m_uScale = -1, m_uTex = -1;
     std::unordered_map<TexId, GLuint_> m_tex;
+    std::unordered_map<TexId, bool> m_wrapped;   // ids of host textures (WrapNativeTexture): never deleted here
     TexId m_next = 0;
     int m_w = 0, m_h = 0; float m_dpi = 1.0f;
     // saved state

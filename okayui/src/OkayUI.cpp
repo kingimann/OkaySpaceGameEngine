@@ -2079,6 +2079,10 @@ void EndFrameData(int outputWidth, int outputHeight) {
 void EndFrame(SDL_Renderer* r) {
     if (r && g_ntoasts) { int ow = 0, oh = 0; SDL_GetRendererOutputSize(r, &ow, &oh); drawToasts((float)ow, (float)oh); }
     finalizeFrame();
+    DrawFinishedFrame(r);
+}
+
+void DrawFinishedFrame(SDL_Renderer* r) {
     if (!r || g_nv == 0 || g_ni == 0) return;
     SDL_Texture* const defTex = resolveTex(r, g_defTex);
     // Save/restore the renderer's blend mode so we never disturb ImGui or anything

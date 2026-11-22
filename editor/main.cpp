@@ -63,6 +63,7 @@
 #include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
 #include "okay/Render/LightingPresets.hpp"
 #include "okay/Render/LightProbeBake.hpp"
+#include "okay/Render/GpuTexture.hpp"   // ShipCompressedCopy: a build ships the BC copy of `compress` pictures
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
@@ -4776,6 +4777,13 @@ std::string Build(EditorState& ed, const std::string& outDir,
             fs::path md = dst; md += ".okaymeta";
             fs::copy_file(ms, md, fs::copy_options::overwrite_existing, me);
             if (!me) why[relRoot(md)] = "import settings of " + a.dest;
+        }
+        {   // a picture set to `compress`: its BC copy ships beside it, so the game never encodes it at run time
+            std::string terr;
+            if (okay::gputex::ShipCompressedCopy(a.src, dst.string(), &terr))
+                why[relRoot(fs::u8path(okay::gputex::CompressedCachePath(dst.string())))] = "compressed GPU copy of " + a.dest;
+            else if (!terr.empty())
+                R.r.Warn("Couldn't make the compressed copy of " + a.dest + " (" + terr + "): the game makes it when it first draws it.");
         }
     }
     for (const bp::MissingAsset& m : walk.missing) {
@@ -16502,7 +16510,7 @@ void DrawScriptEditor(EditorState& ed) {
         //   Ctrl+G       go to line              Ctrl+Alt+L  reformat the file
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl) {
             ImGuiIO& kio = ImGui::GetIO();
-            if (ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;
+            if (!UseOkayUIBackend() && ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;   // (the OkayUI code widget does Ctrl+/ itself)
             if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_E, false))
                 ImGui::OpenPopup("##tabswitcher");
             if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false))
@@ -18346,10 +18354,14 @@ void DrawScriptEditor(EditorState& ed) {
                 for (int i = l0; i <= l1 && i < (int)ls.size(); ++i) out.push_back(ls[i]);
                 return out;
             };
+            // The OkayUI code widget does Ctrl+/, Ctrl+D, Ctrl+Shift+K and Alt+Up/Down itself (OkayUI::CodeEdit line commands,
+            // one undo step each); here they are only for the Dear ImGui editor, or they would run twice.
+            const bool widgetLineKeys = te.UsingOkayUI();
             // Ctrl+/ — toggle "// " on the selected lines (also the toolbar button).
             bool wantComment = caret.toggleComment;
             caret.toggleComment = false;
-            if ((chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
+            if (widgetLineKeys && wantComment) { te.okay().Edit().ToggleLineComment(); syncFromWidget(); wantComment = false; }
+            if ((!widgetLineKeys && chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
                  ImGui::IsKeyPressed(ImGuiKey_Slash, false)) || wantComment) {
                 std::vector<std::string> ls = linesText(selL0, selL1);
                 bool allCommented = true;
@@ -18370,7 +18382,7 @@ void DrawScriptEditor(EditorState& ed) {
                 if (!ls.empty()) replaceLines(selL0, selL1, repl, caret.line - 1, 0);
             }
             // Ctrl+D — duplicate the selected line(s) below themselves.
-            if (chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
+            if (!widgetLineKeys && chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
                 ImGui::IsKeyPressed(ImGuiKey_D, false)) {
                 std::vector<std::string> ls = linesText(selL0, selL1);
                 if (!ls.empty()) {
@@ -18379,7 +18391,7 @@ void DrawScriptEditor(EditorState& ed) {
                 }
             }
             // Ctrl+Shift+K — delete the selected line(s).
-            if (chordOK && cio.KeyCtrl && cio.KeyShift && !cio.KeyAlt &&
+            if (!widgetLineKeys && chordOK && cio.KeyCtrl && cio.KeyShift && !cio.KeyAlt &&
                 ImGui::IsKeyPressed(ImGuiKey_K, false)) {
                 int total = te.GetTotalLines();
                 te.SetSelection(ScriptEditorWidget::Coordinates(selL0, 0),
@@ -18402,8 +18414,8 @@ void DrawScriptEditor(EditorState& ed) {
                 }
             }
             // Alt+Up / Alt+Down — move the selected line(s) up/down one row.
-            bool mvUp = chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
-            bool mvDn = chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+            bool mvUp = !widgetLineKeys && chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
+            bool mvDn = !widgetLineKeys && chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
             if (mvUp || mvDn) {
                 int total = te.GetTotalLines();
                 if ((mvUp && selL0 > 0) || (mvDn && selL1 + 1 < total)) {
@@ -58704,13 +58716,14 @@ int main(int argc, char** argv) {
         // stopped/paused so editor keyboard nav still works.
         // Same in mesh edit mode: Enter confirms a G / R / S transform there, and
         // must not also press whichever button last had focus.
-        // And while a hosted OkayUI field has the keyboard: Space would press the ImGui item that last had nav focus, which holds
-        // ImGui's active item for a frame and keeps the next typed letter from the field.
+        // And while the OkayUI script editor has the keyboard (developer OkayUI backend), or a hosted OkayUI field has it:
+        // Space and Enter are typing there, and Space would otherwise press the ImGui item that last had nav focus.
+        const bool codeKeys = g_scriptCodeOwnsKeys; g_scriptCodeOwnsKeys = false;   // set again by this frame's Render
         bool okayTyping = false;
 #ifdef OKAY_HAVE_OKAYUI
         okayTyping = UseOkayUIBackend() && OkayUI::WantsTextInput();
 #endif
-        if ((ed.isPlaying() && !g_paused) || (g_meshEdit && g_meshEditObj) || okayTyping)
+        if ((ed.isPlaying() && !g_paused) || (g_meshEdit && g_meshEditObj) || codeKeys || okayTyping)
             ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
         else
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;

@@ -10,6 +10,8 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Components/InventoryPlayer.hpp"
+#include "okay/Components/HitZones.hpp"
+#include "okay/Components/Interactable.hpp"
 #include "okay/Components/Seat.hpp"
 #include "okay/Components/VehicleSeat.hpp"
 #include "okay/Components/SettingsScreen.hpp"
@@ -40,8 +42,8 @@ using namespace okay;
     X(EventSystem) X(FirstPersonController) X(FirstPersonHand) X(FirstPersonHands) X(Flashlight) \
     X(FollowTarget2D) X(Foliage) X(FootIK) X(FreeRoamController) X(FullBodyIK) X(GridCostLayer) X(GridInventory) X(GridInventoryUI) \
     X(GridObstacle2D) X(GridPathAgent2D) \
-    X(HealthStat) X(HoldPrompt) X(LocalPlayerInput) X(HoldableObject) X(HumanoidRetarget) X(HungerStat) X(IKTarget) X(Inventory) \
-    X(InventoryUI) X(ItemPickup) X(Joint2D) X(Joint3D) X(JumpPad) X(Lifetime) X(Light) X(LimbIK) X(LineRenderer) \
+    X(HealthStat) X(HitZones) X(HoldPrompt) X(LocalPlayerInput) X(HoldableObject) X(HumanoidRetarget) X(HungerStat) X(IKTarget) X(Inventory) \
+    X(Interactable) X(InteractionSensor) X(InventoryUI) X(ItemPickup) X(Joint2D) X(Joint3D) X(JumpPad) X(Lifetime) X(Light) X(LimbIK) X(LineRenderer) \
     X(LoadingScreen) X(LogicSource) X(LogicTarget) X(LookAtIK) X(LootSource) X(MeleeAttacker) X(MeshCollider3D) \
     X(MeshModifiers) X(MeshRenderer) X(Minimap) X(MinimapBlip) X(ModelAnimator) X(Mover) X(MusicPlayer) \
     X(NPCController) X(NavMeshAgent) X(NavMeshLink) X(NavMeshModifier) X(NavMeshObstacle) X(NavMeshSurface) X(NetInventory) X(NetValidator) \

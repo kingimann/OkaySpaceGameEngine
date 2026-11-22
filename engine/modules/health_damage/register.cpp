@@ -5,6 +5,7 @@
 #include "okay/Components/Damage.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scene/ComponentSerializer.hpp"
+#include "okay/Scene/PropertyBuilder.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <istream>
@@ -56,6 +57,12 @@ void Register_health_damage(ModuleContext&) {
     hz.write = WriteHitZones;
     hz.read = ReadHitZones;
     ComponentSerializerRegistry::Register(std::move(hz));
+    // Property table (the Inspector, scripts, the save coverage gate); the zone list and the per-type scales are saved by
+    // the record above only.
+    PropertyBuilder<HitZones> b("HitZones", "hitzones", "Gameplay");
+    b.AddFloat("headFromHeight", &HitZones::headFromHeight).Range(0, 50, 0.05).Tooltip("Height above the feet where the head starts (m)")
+     .AddFloat("legsToHeight", &HitZones::legsToHeight).Range(0, 50, 0.05).Tooltip("Height above the feet where the legs end (m)");
+    b.Commit();
 }
 } // namespace modules
 } // namespace okay

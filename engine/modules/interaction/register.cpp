@@ -9,6 +9,8 @@
 #include "okay/Modules/Interact.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scene/ComponentSerializer.hpp"
+#include "okay/Scene/PropertyBuilder.hpp"
+#include "okay/Scene/RecordIO.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include <iomanip>
 #include <sstream>
@@ -87,48 +89,48 @@ void Register_interaction(ModuleContext&) {
     interact::AddFinder("Interactable", [](GameObject* g, std::vector<std::unique_ptr<IInteractable>>& out) {
         for (Interactable* c : g->GetComponents<Interactable>()) out.emplace_back(new UseInteractable(c));
     });
+    // Records: key=value through the shared helpers (okay/Scene/RecordIO.hpp); the prompt is a quoted string.
     ComponentSerializerRegistry::Entry ia;
     ia.name = "interactable";
     ia.write = [](const GameObject& go, std::ostream& out) {
-        for (auto* c : go.GetComponents<Interactable>())
-            out << "  interactable range=" << c->range << " hold=" << c->holdSeconds << " once=" << (c->oneShot ? 1 : 0)
-                << " key=" << (int)(unsigned char)c->key << " prompt=" << std::quoted(c->prompt) << "\n";
+        for (auto* c : go.GetComponents<Interactable>()) {
+            out << "  interactable";
+            rec::KvOut{out}("range", c->range)("hold", c->holdSeconds).b("once", c->oneShot).key("key", c->key).str("prompt", c->prompt);
+            out << "\n";
+        }
     };
     ia.read = [](GameObject& go, std::istream& in) {
         auto* c = go.AddComponent<Interactable>();
-        std::string tok;
-        while (in >> tok) {
-            const size_t eq = tok.find('=');
-            if (eq == std::string::npos) continue;
-            const std::string k = tok.substr(0, eq), v = tok.substr(eq + 1);
-            if (k == "range") c->range = (float)std::atof(v.c_str());
-            else if (k == "hold") c->holdSeconds = (float)std::atof(v.c_str());
-            else if (k == "once") c->oneShot = std::atoi(v.c_str()) != 0;
-            else if (k == "key") c->key = (char)std::atoi(v.c_str());
-            else if (k == "prompt") {   // a quoted string, possibly with spaces
-                std::string rest = v;
-                if (!rest.empty() && rest[0] == '"' && (rest.size() < 2 || rest.back() != '"')) {
-                    std::string more; std::getline(in, more); rest += more;
-                }
-                std::istringstream qs(rest);
-                std::string unq;
-                if (qs >> std::quoted(unq)) c->prompt = unq;
-            }
-        }
+        const rec::KvIn kv(in);
+        kv.f("range", c->range); kv.f("hold", c->holdSeconds); kv.b("once", c->oneShot); kv.key("key", c->key); kv.str("prompt", c->prompt);
     };
     ComponentSerializerRegistry::Register(std::move(ia));
     ComponentSerializerRegistry::Entry is;
     is.name = "interactionsensor";
     is.write = [](const GameObject& go, std::ostream& out) {
-        for (auto* c : go.GetComponents<InteractionSensor>()) out << "  interactionsensor range=" << c->maxRange << "\n";
+        for (auto* c : go.GetComponents<InteractionSensor>()) { out << "  interactionsensor"; rec::KvOut{out}("range", c->maxRange); out << "\n"; }
     };
     is.read = [](GameObject& go, std::istream& in) {
         auto* c = go.AddComponent<InteractionSensor>();
-        std::string tok;
-        while (in >> tok)
-            if (tok.compare(0, 6, "range=") == 0) c->maxRange = (float)std::atof(tok.c_str() + 6);
+        rec::KvIn(in).f("range", c->maxRange);
     };
     ComponentSerializerRegistry::Register(std::move(is));
+    // Property tables (the Inspector, scripts, the save coverage gate). Saving stays with the records above.
+    {
+        PropertyBuilder<Interactable> b("Interactable", "interactable", "Gameplay");
+        b.AddFloat("range", &Interactable::range).Range(0, 1000, 0.1).Tooltip("Metres from the user")
+         .AddString("prompt", &Interactable::prompt).Tooltip("Shown as \"E to <prompt>\"")
+         .AddFloat("holdSeconds", &Interactable::holdSeconds).Range(0, 60, 0.1).Tooltip("0 = a tap; more = hold the key this long")
+         .AddBool("oneShot", &Interactable::oneShot).Tooltip("Can be used once")
+         .AddKey("key", &Interactable::key).Tooltip("e = the Interact action; 0 = not usable")
+         .AddInt("useCount", &Interactable::useCount).RuntimeOnly();
+        b.Commit();
+    }
+    {
+        PropertyBuilder<InteractionSensor> b("InteractionSensor", "interactionsensor", "Gameplay");
+        b.AddFloat("maxRange", &InteractionSensor::maxRange).Range(0, 1000, 0.1).Tooltip("0 = each thing's own range");
+        b.Commit();
+    }
     interact::AddFinder("InventoryInteractable", [](GameObject* g, std::vector<std::unique_ptr<IInteractable>>& out) {
         for (InventoryInteractable* c : g->GetComponents<InventoryInteractable>()) out.emplace_back(new OpenableInteractable(c));
     });

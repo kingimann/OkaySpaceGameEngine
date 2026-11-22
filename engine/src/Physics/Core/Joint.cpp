@@ -160,13 +160,18 @@ void JointsPrepare(World::Impl& w, const IslandWork& island, std::vector<SolverB
             const float L = Len(f.d);
             const V3 n = L > 1e-6f ? f.d * (1.0f / L) : f.ax[0];
             const V3 ca = Cross(f.rA, n), cb = Cross(f.rB, n);
-            const bool rod = d.minLength >= d.maxLength && d.distanceSpring <= 0.0f;
+            const bool spring = d.distanceSpring > 0.0f || d.distanceStiffness > 0.0f;
+            const bool rod = d.minLength >= d.maxLength && !spring;
             if (rod) {
                 AddRow(j, A, B, n, ca, cb, &jd.distImpulse, false);
             } else {
-                if (d.distanceSpring > 0.0f) {
+                if (spring) {
                     JointRow* r = AddRow(j, A, B, n, ca, cb, &jd.distImpulse, false);
-                    if (r) { float k, c; FreqToKC(r->mass, d.distanceSpring, d.distanceDamping, k, c); MakeSoft(r, k, c, L - d.maxLength, dt); }
+                    if (r) {
+                        float k = d.distanceStiffness, c = d.distanceDamper;
+                        if (d.distanceSpring > 0.0f) FreqToKC(r->mass, d.distanceSpring, d.distanceDamping, k, c);
+                        MakeSoft(r, k, c, L - d.maxLength, dt);
+                    }
                 } else if (JointRow* r = AddRow(j, A, B, -n, -ca, -cb, &jd.linHighImpulse[0], false)) {   // L <= max
                     r->lo = 0.0f; r->bias = std::max(d.maxLength - L, 0.0f) / dt;
                 }
@@ -378,7 +383,7 @@ void JointsSolvePosition(World::Impl& w, std::vector<JointSolver>& js, std::vect
             const float L = Len(f.d);
             if (L < 1e-6f) continue;
             const V3 n = f.d * (1.0f / L);
-            if (d.distanceSpring > 0.0f) {
+            if (d.distanceSpring > 0.0f || d.distanceStiffness > 0.0f) {
                 if (d.minLength > 0.0f && L < d.minLength) pushAlong(n, f.rA, f.rB, L - d.minLength);
                 continue;
             }

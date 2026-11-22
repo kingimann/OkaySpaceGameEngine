@@ -67,6 +67,31 @@ void TriMeshSource::Collect(const Aabb& box, std::vector<Tri3>& out) const {
     m_tree->tree.Query(box, [&](int p) { out.push_back(m_tris[(std::size_t)m_tree->tree.User(p)]); return true; });
 }
 
+HeightGridSource::HeightGridSource(int cols, int rows, float x0, float z0, float cx, float cz, std::vector<float> heights)
+    : m_cols(std::max(cols, 2)), m_rows(std::max(rows, 2)), m_x0(x0), m_z0(z0), m_cx(std::max(cx, 1e-6f)), m_cz(std::max(cz, 1e-6f)),
+      m_h(std::move(heights)) {
+    m_h.resize((std::size_t)m_cols * (std::size_t)m_rows, 0.0f);
+    float lo = 1e30f, hi = -1e30f;
+    for (float& h : m_h) { if (!std::isfinite(h)) h = 0.0f; lo = std::min(lo, h); hi = std::max(hi, h); }
+    m_bounds = Aabb{V3{m_x0, lo, m_z0}, V3{m_x0 + (float)(m_cols - 1) * m_cx, hi, m_z0 + (float)(m_rows - 1) * m_cz}};
+}
+void HeightGridSource::Collect(const Aabb& box, std::vector<Tri3>& out) const {
+    if (!box.Overlaps(m_bounds)) return;
+    const int i0 = std::max(0, (int)std::floor((box.lo.x - m_x0) / m_cx)), i1 = std::min(m_cols - 2, (int)std::floor((box.hi.x - m_x0) / m_cx));
+    const int j0 = std::max(0, (int)std::floor((box.lo.z - m_z0) / m_cz)), j1 = std::min(m_rows - 2, (int)std::floor((box.hi.z - m_z0) / m_cz));
+    std::size_t made = 0;
+    for (int j = j0; j <= j1; ++j)
+        for (int i = i0; i <= i1; ++i) {
+            if (made >= kMaxTriangles) return;
+            const V3 a = P(i, j), b = P(i + 1, j), c = P(i, j + 1), d = P(i + 1, j + 1);
+            const float lo = std::min({a.y, b.y, c.y, d.y}), hi = std::max({a.y, b.y, c.y, d.y});
+            if (hi < box.lo.y || lo > box.hi.y) continue;
+            out.push_back({a, b, c});
+            out.push_back({b, d, c});
+            made += 2;
+        }
+}
+
 // ---- convex hull -------------------------------------------------------------------------------------------------------
 std::shared_ptr<HullData> HullData::Build(const std::vector<V3>& input) {
     std::vector<V3> pts;

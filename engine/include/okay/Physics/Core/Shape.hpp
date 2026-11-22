@@ -42,6 +42,22 @@ public:
     virtual Aabb Bounds() const = 0;
 };
 
+/// A regular grid of heights (a height field or a terrain): vertex (i, j) sits at (x0 + i * cx, h[j * cols + i], z0 + j * cz)
+/// in the shape frame; each cell is two triangles. Nothing is built: Collect walks only the cells under the box.
+class HeightGridSource : public TriangleSource {
+public:
+    HeightGridSource(int cols, int rows, float x0, float z0, float cx, float cz, std::vector<float> heights);
+    void Collect(const Aabb& box, std::vector<Tri3>& out) const override;
+    Aabb Bounds() const override { return m_bounds; }
+    static constexpr std::size_t kMaxTriangles = 200000;   // a box over a huge grid stops here
+private:
+    int m_cols, m_rows;
+    float m_x0, m_z0, m_cx, m_cz;
+    std::vector<float> m_h;
+    Aabb m_bounds;
+    V3 P(int i, int j) const { return V3{m_x0 + (float)i * m_cx, m_h[(std::size_t)j * (std::size_t)m_cols + (std::size_t)i], m_z0 + (float)j * m_cz}; }
+};
+
 /// A triangle list with its own bounding volume tree (a DynamicTree built once).
 class TriMeshSource : public TriangleSource {
 public:

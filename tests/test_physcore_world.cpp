@@ -78,6 +78,36 @@ int main() {
         CHECK_NEAR(w.GetLinearVelocity(b).y, -9.81, 1e-3);
     }
 
+    RUN_SUITE("physcore world: fixed steps for any frame rate, drawn part way between steps");
+    {
+        // 1 s of frames at 144 fps and at 30 fps runs the same 60 fixed steps, so the body ends at the same bits
+        World a, b;
+        a.gravity = b.gravity = V3{0, -9.81f, 0};
+        const BodyId ba = Ball(a, V3{0, 10, 0}, 0.5f), bb = Ball(b, V3{0, 10, 0}, 0.5f);
+        int na = 0, nb = 0;
+        for (int i = 0; i < 144; ++i) na += a.Advance(1.0f / 144.0f, kDt);
+        for (int i = 0; i < 30; ++i) nb += b.Advance(1.0f / 30.0f, kDt);
+        CHECK(std::abs(na - nb) <= 1);          // (summing 1/144 and 1/30 rounds differently: one step may wait a frame)
+        CHECK(na >= 59 && na <= 60 && nb >= 59 && nb <= 60);
+        while (na < nb) na += a.Advance(0.0f, kDt) + (a.Step(kDt), 1);
+        while (nb < na) nb += b.Advance(0.0f, kDt) + (b.Step(kDt), 1);
+        CHECK(a.GetPosition(ba) == b.GetPosition(bb));   // the same steps give the same bits
+        // the drawn pose lies between the last two steps
+        const Xf mid = a.InterpolatedTransform(ba, 0.5f);
+        a.Step(kDt);
+        const float y1 = a.GetPosition(ba).y;
+        const Xf before = a.InterpolatedTransform(ba, 0.0f), after = a.InterpolatedTransform(ba, 1.0f);
+        CHECK(after.p.y == y1);
+        CHECK(before.p.y > after.p.y);
+        CHECK(a.InterpolatedTransform(ba, 0.5f).p.y < before.p.y && a.InterpolatedTransform(ba, 0.5f).p.y > after.p.y);
+        (void)mid;
+        // a frame of 2 s with at most 8 steps drops the rest instead of spiralling
+        World c;
+        Ball(c, V3{0, 10, 0}, 0.5f);
+        CHECK(c.Advance(2.0f, kDt, 8) == 8);
+        CHECK(c.Alpha() >= 0.0f && c.Alpha() < 1.0f);
+    }
+
     RUN_SUITE("physcore world: a box rests without sinking and falls asleep; a hit wakes it");
     {
         World w;

@@ -108,6 +108,7 @@ struct JointDef {
     /// Distance joint: rest length range (min = max for a rod; min 0 for a rope) and an optional spring.
     float minLength = 1.0f, maxLength = 1.0f;
     float distanceSpring = 0.0f, distanceDamping = 0.7f;   // Hz and damping ratio
+    float distanceStiffness = 0.0f, distanceDamper = 0.0f; // or N/m and N*s/m (used when distanceSpring is 0)
     /// Orientation drive (powered ragdolls): pulls B's frame toward `driveTarget` (B's frame expressed in A's frame)
     /// like a damped spring, never with more than driveMaxTorque. Stiffness and damping in N*m/rad and N*m*s/rad,
     /// or, when driveFrequency > 0, as a frequency (Hz) and damping ratio that scale with the bodies' inertia.

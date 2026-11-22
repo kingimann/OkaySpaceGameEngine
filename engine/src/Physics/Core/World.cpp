@@ -151,6 +151,13 @@ void World::SetTransform(BodyId id, const V3& p, const Q& q) {
     b.prevXf = b.xf;
     b.com = b.xf.Apply(b.localCom);
     if (b.type != BodyType::Static) { b.awake = true; b.sleepTime = 0.0f; }
+    // whatever rested on it must notice that it moved
+    for (const ContactPair& cp : m->contacts) {
+        if (!cp.alive) continue;
+        const BodyId ba = m->colliders[cp.a].body, bb = m->colliders[cp.b].body;
+        if (ba == id && bb != id) Wake(bb);
+        else if (bb == id && ba != id) Wake(ba);
+    }
     for (ColliderId c : b.colliders) {
         ColliderData& cd = m->colliders[c];
         cd.box = ColliderWorldBox(*m, cd);

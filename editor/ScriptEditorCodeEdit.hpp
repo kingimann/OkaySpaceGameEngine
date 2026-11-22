@@ -125,6 +125,8 @@ private:
     OkayUI::CodeEdit ed_;
     unsigned seenVersion_ = 0;
     bool colorize_ = true;
+    OkayUI::CodeLanguage language_;             // what SetColorizerEnable(true) turns back on
+    std::vector<std::string> userTypes_;
     float offX_ = 0.0f, offY_ = 0.0f;
 };
 

@@ -119,10 +119,16 @@ void PopupDrawsOverTheCode() {
 
 void SameAsTheOldWayWithoutPopups() {
     // With nothing over it, the code looks the same whether OkayUI draws it last (the old way) or ImGui draws it in place.
-    Editor a, b;
-    a.embedded = false;
-    a.Frame(); a.Frame(); b.Frame(); b.Frame();
-    const Diff d = Compare(a.ras.bmp, b.ras.bmp);
+    Bitmap oldWay(kW, kH);
+    {   // one Dear ImGui context at a time (the rig's font atlas belongs to its context)
+        Editor a;
+        a.embedded = false;
+        a.Frame(); a.Frame();
+        oldWay = a.ras.bmp;
+    }
+    Editor b;
+    b.Frame(); b.Frame();
+    const Diff d = Compare(oldWay, b.ras.bmp);
     std::printf("  old way against embedded: average difference %.3f, clearly different %.3f%%\n", d.avg, d.clearly);
     CHECK(d.clearly < 0.5);
 }

@@ -24,7 +24,7 @@ namespace okay::lua {
 const char* const kTMNames[TM_COUNT] = {
     "__index", "__newindex", "__call", "__add", "__sub", "__mul", "__mod", "__pow", "__div", "__idiv",
     "__band", "__bor", "__bxor", "__shl", "__shr", "__unm", "__bnot", "__len", "__concat", "__eq",
-    "__lt", "__le", "__close", "__tostring", "__name", "__metatable", "__pairs"};
+    "__lt", "__le", "__close", "__tostring", "__name", "__metatable", "__pairs", "__mode"};
 
 namespace {
 constexpr int kMaxStack = 1'000'000;
@@ -368,6 +368,7 @@ void State::OpenLibs() {
     OpenMath(*this);
     OpenCoroutine(*this);
     OpenOs(*this);
+    OpenUtf8(*this);
 }
 
 // ------------------------------------------------------------------ collector
@@ -381,9 +382,15 @@ void State::MarkValue(const Value& v, std::vector<GcObj*>& gray) {
     if (v.IsGc()) Mark(v.o, gray);
 }
 
+namespace {
+// an object a weak table may drop (strings behave as values)
+bool IsWeakRef(const Value& v) { return v.IsGc() && v.t != Type::String; }
+}
+
 void State::CollectGarbage() {
     gcPending = false;
     std::vector<GcObj*> gray;
+    weakTables.clear();
     Mark(globals_, gray);
     Mark(registry, gray);
     Mark(stringMeta, gray);
@@ -401,11 +408,23 @@ void State::CollectGarbage() {
             case Type::Table: {
                 Table* t = static_cast<Table*>(o);
                 Mark(t->meta, gray);
-                for (const Value& v : t->arr) MarkValue(v, gray);
+                // weak tables (manual 2.5.4): a weak part does not keep its objects alive.
+                // Strings count as values here (never removed). Weak keys are not full
+                // ephemerons: a value that refers to its own key keeps the entry.
+                bool weakK = false, weakV = false;
+                if (t->meta) {
+                    Value mode = t->meta->GetStr(tmName[TM_MODE]);
+                    if (mode.IsString()) {
+                        weakK = mode.Str()->s.find('k') != std::string::npos;
+                        weakV = mode.Str()->s.find('v') != std::string::npos;
+                    }
+                }
+                if (weakK || weakV) weakTables.push_back(t);
+                for (const Value& v : t->arr) if (!weakV || !IsWeakRef(v)) MarkValue(v, gray);
                 for (const Table::Node& n : t->node) {
                     if (n.v.IsNil()) continue;   // cleared entries keep their key only as a marker
-                    MarkValue(n.k, gray);
-                    MarkValue(n.v, gray);
+                    if (!weakK || !IsWeakRef(n.k)) MarkValue(n.k, gray);
+                    if (!weakV || !IsWeakRef(n.v)) MarkValue(n.v, gray);
                 }
                 break;
             }
@@ -437,6 +456,16 @@ void State::CollectGarbage() {
             default: break;
         }
     }
+    // weak tables: drop entries whose weak key or value is about to be freed
+    for (Table* t : weakTables) {
+        for (Value& v : t->arr)
+            if (IsWeakRef(v) && !v.o->marked) v = Value();
+        for (Table::Node& n : t->node) {
+            if (n.v.IsNil()) continue;
+            if ((IsWeakRef(n.v) && !n.v.o->marked) || (IsWeakRef(n.k) && !n.k.o->marked)) n.v = Value();
+        }
+    }
+    weakTables.clear();
     // cleared table entries whose key is about to be freed become tombstones (the key
     // is only a position marker for next(); a dead key must not be compared later)
     for (GcObj* o = gcList_; o; o = o->gcNext) {
@@ -1232,6 +1261,8 @@ bool State::PCallHost(int nargs, int nres, std::string* errOut) {
     Coroutine* co = co_;
     int func = co->top - nargs - 1;
     std::size_t nframes = co->frames.size();
+    const int depth0 = cDepth, nest0 = co->nest;   // a host call may be nested inside running Lua code
+    const std::size_t coDepth0 = coStack_.size();
     try {
         if (PCall(nargs, nres)) return true;
         Value e = Pop();
@@ -1240,11 +1271,15 @@ bool State::PCallHost(int nargs, int nres, std::string* errOut) {
         if (errOut && e.IsNumber()) *errOut = NumberToString(e);
         return false;
     } catch (const LuaFatal& f) {
-        RecoverFatal(co, nframes, func);
+        RecoverFatal(co, nframes, func, coDepth0);
+        cDepth = depth0;
+        co->nest = nest0;
         if (errOut) *errOut = f.message;
         return false;
     } catch (const std::exception& e) {
-        RecoverFatal(co, nframes, func);
+        RecoverFatal(co, nframes, func, coDepth0);
+        cDepth = depth0;
+        co->nest = nest0;
         if (errOut) *errOut = std::string("internal error: ") + e.what();
         return false;
     }
@@ -1252,15 +1287,17 @@ bool State::PCallHost(int nargs, int nres, std::string* errOut) {
 
 // After a stop that pcall can not catch: back to the host's coroutine and frame. The
 // coroutines that were running on the way are dead; to-be-closed variables are dropped.
-void State::RecoverFatal(Coroutine* co, std::size_t nframes, int func) {
+void State::RecoverFatal(Coroutine* co, std::size_t nframes, int func, std::size_t coDepth) {
     if (co_ != co) {
         co_->status = CoStatus::Dead;
         co_->frames.clear();
         co_->top = 0;
     }
-    for (Coroutine* c : coStack_)
+    for (std::size_t i = coDepth; i < coStack_.size(); ++i) {
+        Coroutine* c = coStack_[i];
         if (c != co) { c->status = CoStatus::Dead; c->frames.clear(); c->top = 0; c->nest = 0; }
-    coStack_.clear();
+    }
+    coStack_.resize(std::min(coDepth, coStack_.size()));
     co_ = co;
     co->status = CoStatus::Running;
     co->frames.resize(nframes);

@@ -139,6 +139,7 @@ add_library(okay_engine
     src/Lua/LuaLibBase.cpp
     src/Lua/LuaLibString.cpp
     src/Lua/LuaLibTable.cpp
+    src/Lua/LuaLibUtf8.cpp
     src/Lua/LuaScriptVM.cpp
     src/Components/ScriptComponent.cpp
     src/Components/AnimControl.cpp

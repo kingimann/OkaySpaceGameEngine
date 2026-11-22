@@ -617,7 +617,7 @@ add_test(NAME script_removed_langs COMMAND test_script_removed_langs)
 add_executable(test_lua_core test_lua_core.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaCompiler.cpp ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaState.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaLibBase.cpp ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaLibString.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaLibTable.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaLibTable.cpp ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaLibUtf8.cpp)
 target_compile_features(test_lua_core PRIVATE cxx_std_17)
 target_include_directories(test_lua_core PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_lua_core PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

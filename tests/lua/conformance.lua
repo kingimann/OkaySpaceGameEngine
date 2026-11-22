@@ -237,4 +237,104 @@ for q = 1, 100 do local r = math.random(3, 5); if r < 3 or r > 5 then check("ran
 check("random float", math.random() < 1)
 check("os", type(os.time()) == "number" and type(os.clock()) == "number" and os.date("!%Y", 0) == "1970")
 check("no io", io == nil and require == nil and dofile == nil and debug == nil and os.execute == nil)
+-- more metamethods (manual 2.4): every arithmetic and bitwise event
+local M = setmetatable({}, {
+  __sub = function() return "sub" end, __mul = function() return "mul" end, __div = function() return "div" end,
+  __mod = function() return "mod" end, __pow = function() return "pow" end, __idiv = function() return "idiv" end,
+  __band = function() return "band" end, __bor = function() return "bor" end, __bxor = function() return "bxor" end,
+  __shl = function() return "shl" end, __shr = function() return "shr" end, __bnot = function() return "bnot" end,
+})
+check("mm all", M - 1 == "sub" and 2 * M == "mul" and M / 1 == "div" and M % 1 == "mod" and M ^ 1 == "pow"
+  and M // 1 == "idiv" and M & 1 == "band" and M | 1 == "bor" and M ~ 1 == "bxor" and M << 1 == "shl"
+  and M >> 1 == "shr" and ~M == "bnot")
+check("pairs mm", (function() local r = 0 for k, v in pairs(setmetatable({}, {__pairs = function(t) return function(_, k) if not k then return 1, 10 end end, t, nil end})) do r = r + v end return r end)() == 10)
+check("ipairs index mm", (function() local p = setmetatable({}, {__index = function(t, i) if i <= 3 then return i * 2 end end}) local s = 0 for _, v in ipairs(p) do s = s + v end return s end)() == 12)
+check("string index", ("abc").len == string.len and ("abc"):len() == 3)
+check("tostring name", tostring(setmetatable({}, {__name = "Thing"})):find("^Thing: ") ~= nil)
+-- numbers
+check("int for no overflow", (function() local c = 0 for i = math.maxinteger - 1, math.maxinteger, 2 do c = c + 1 end return c end)() == 1)
+check("neg for", (function() local c = 0 for i = math.mininteger, math.mininteger + 2 do c = c + 1 end return c end)() == 3)
+check("float loop accum", (function() local c = 0 for x = 0, 1, 0.25 do c = c + 1 end return c end)() == 5)
+check("format q roundtrip", load("return " .. string.format("%q", "a\0b\r\n\"\\z"))() == "a\0b\r\n\"\\z")
+check("format q float", load("return " .. string.format("%q", 0.1))() == 0.1)
+check("byte char", string.char(("hello"):byte(1, -1)) == "hello")
+check("select neg", select(-2, "a", "b", "c") == "b")
+check("tostring -nan", tostring(0/0):find("nan") ~= nil)
+check("int div float", 7 // 2.0 == 3.0 and math.type(7 // 2.0) == "float")
+check("compare int float edge", (2^53 + 1) == 2^53 and math.maxinteger ~= 2^63 and math.maxinteger < math.huge and math.mininteger > -math.huge)
+check("string to int coercion in for", (function() local c = 0 for i = "1", "3" do c = c + 1 end return c end)() == 3)
+-- coroutines
+local ce = coroutine.create(function() error({code = 7}) end)
+local okce, ece = coroutine.resume(ce)
+check("co error object", not okce and type(ece) == "table" and ece.code == 7)
+local okcl, ecl = coroutine.close(ce)
+check("close errored", okcl == false and ecl.code == 7)
+check("co status running", (function() local co; co = coroutine.create(function() return coroutine.status(co) end) return select(2, coroutine.resume(co)) end)() == "running")
+check("co normal", (function() local outer; outer = coroutine.create(function() local inner = coroutine.create(function() return coroutine.status(outer) end) return select(2, coroutine.resume(inner)) end) return select(2, coroutine.resume(outer)) end)() == "normal")
+check("resume self", (function() local co; co = coroutine.create(function() return coroutine.resume(co) end) local _, ok2, msg = coroutine.resume(co) return ok2 == false and msg:find("non%-suspended") ~= nil end)())
+check("deep pcall in co", (function() local co = coroutine.wrap(function() local function f(n) if n == 0 then coroutine.yield("deep") return "x" end return f(n - 1) end return f(500) end) return co() end)() == "deep")
+check("wrap error pos", (function() local w = coroutine.wrap(function() error("inner") end) local ok3, e3 = pcall(w) return not ok3 and e3:find("inner") ~= nil end)())
+-- goto continue with closures (each iteration a fresh local)
+local gfs = {}
+for i = 1, 3 do
+  local v = i * 10
+  gfs[#gfs + 1] = function() return v end
+  if i < 3 then goto cont end
+  ::cont::
+end
+check("goto closures", gfs[1]() == 10 and gfs[3]() == 30)
+do
+  local i = 1
+  ::again::
+  local captured = i
+  gfs[i] = function() return captured end
+  i = i + 1
+  if i <= 3 then goto again end
+  check("goto back fresh local", gfs[1]() == 1 and gfs[2]() == 2)
+end
+-- to-be-closed order and nested blocks
+local order = {}
+do
+  local a <close> = setmetatable({}, {__close = function() order[#order + 1] = "a" end})
+  local b <close> = setmetatable({}, {__close = function() order[#order + 1] = "b" end})
+end
+check("close order", order[1] == "b" and order[2] == "a")
+order = {}
+for _, v in (function() local i = 0 return function() i = i + 1 if i <= 2 then return i end end, nil, nil,
+  setmetatable({}, {__close = function() order[#order + 1] = "iter" end}) end)() do
+  if v == 1 then break end
+end
+check("generic for closes", order[1] == "iter")
+check("non closable", select(2, pcall(load("local x <close> = 5"))):find("non%-closable") ~= nil)
+-- load with a reader function
+local pieces = {"return ", "1 ", "+ 2"}
+local pi = 0
+check("load reader", load(function() pi = pi + 1 return pieces[pi] end)() == 3)
+-- table functions with holes and metamethods
+local proxy = setmetatable({}, {__index = {10, 20, 30}, __len = function() return 3 end})
+check("concat via mm", table.concat(proxy, ",") == "10,20,30")
+check("unpack range", select('#', table.unpack({}, 1, 3)) == 3)
+check("remove empty", table.remove({}) == nil)
+check("insert end", (function() local t = {} table.insert(t, "a") table.insert(t, "b") return t[2] end)() == "b")
+-- utf8 library (manual 6.5)
+check("utf8 char", utf8.char(72, 228, 8364, 128512) == "H\u{E4}\u{20AC}\u{1F600}")
+check("utf8 len", utf8.len("H\u{E4}\u{20AC}") == 3 and utf8.len("\xFF") == nil and select(2, utf8.len("a\xFFb")) == 2)
+check("utf8 codepoint", select('#', utf8.codepoint("H\u{E4}\u{20AC}", 1, -1)) == 3 and utf8.codepoint("\u{20AC}") == 8364)
+check("utf8 offset", utf8.offset("a\u{E4}b", 3) == 4 and utf8.offset("a\u{E4}b", -1) == 4 and utf8.offset("a\u{E4}b", 0, 3) == 2)
+check("utf8 codes", (function() local r = {} for p, c in utf8.codes("a\u{E4}") do r[#r + 1] = p .. ":" .. c end return table.concat(r, ",") end)() == "1:97,2:228")
+check("utf8 strict", not pcall(utf8.codepoint, "\u{D800}") and utf8.codepoint("\u{D800}", 1, 1, true) == 0xD800)
+check("utf8 pattern", select(2, ("a\u{E4}\u{20AC}"):gsub(utf8.charpattern, "")) == 3)
+-- weak tables (manual 2.5.4)
+local weakv = setmetatable({}, {__mode = "v"})
+local weakk = setmetatable({}, {__mode = "k"})
+do
+  local obj = {}
+  weakv[1] = obj
+  weakv.s = "strings stay"
+  weakk[{}] = "gone"
+  weakk[weakv] = "kept"
+end
+collectgarbage()
+check("weak values", weakv[1] == nil and weakv.s == "strings stay")
+check("weak keys", (function() local n = 0 for k in pairs(weakk) do n = n + 1 end return n end)() == 1 and weakk[weakv] == "kept")
 print("conformance done")

@@ -360,6 +360,7 @@ public:
     Coroutine* co_ = nullptr;
     Coroutine* main_ = nullptr;
     std::vector<Coroutine*> coStack_;   ///< coroutines waiting in Resume (roots)
+    std::vector<Table*> weakTables;     ///< found while marking (collector only)
 private:
     void Mark(GcObj* o, std::vector<GcObj*>& gray);
     void MarkValue(const Value& v, std::vector<GcObj*>& gray);
@@ -370,7 +371,7 @@ private:
     int CallTM(int func, int nargs);                 ///< put __call in front; returns the new nargs
     bool ForPrep(int base, int a);
     bool ForLoop(int base, int a);
-    void RecoverFatal(Coroutine* co, std::size_t nframes, int func);
+    void RecoverFatal(Coroutine* co, std::size_t nframes, int func, std::size_t coDepth);
     GcObj* gcList_ = nullptr;
     Table* globals_ = nullptr;
     std::uint64_t budget_ = 0, used_ = 0;

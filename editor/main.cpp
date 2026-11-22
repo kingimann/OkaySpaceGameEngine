@@ -59060,11 +59060,21 @@ int main(int argc, char** argv) {
                 g_showScriptEditor = true; g_scriptDockReq = 1;
                 if (sn[0] == '2') g_seNewReq = true;
             }
-            if (std::getenv("OKAY_UI_SCRIPT") && s_focusFrames == 42)
+            // OKAY_UI_SCRIPT=open: the selection's own script; =lua: a Lua starter script; =luaerr: a Lua
+            // script with a syntax error and a misspelled engine name (the checks, in screenshots).
+            if (const char* us = std::getenv("OKAY_UI_SCRIPT"); us && s_focusFrames == 42)
                 if (GameObject* g = ed.selected()) {
-                    auto* scr = g->AddComponent<ScriptComponent>();
-                    std::string src = extide::StarterScriptNamed("okayscript", "Player");
-                    scr->SetSource(src); scr->LoadSource(src);
+                    const std::string mode = us;
+                    if (mode != "open") {
+                        const bool lua = mode == "lua" || mode == "luaerr";
+                        auto* scr = g->AddComponent<ScriptComponent>(lua ? "lua" : "okayscript");
+                        std::string src = extide::StarterScriptNamed(lua ? "lua" : "okayscript", "Player");
+                        if (mode == "luaerr")
+                            src = "local Player = { speed = 5 }\n\nfunction Player:Update(dt)\n"
+                                  "    if Input.GetKeyy(\"space\") then\n        self.transform:Translate(0, self.speed * dt, 0)\n"
+                                  "    end\n    local broken = = 1\nend\n\nreturn Player\n";
+                        scr->SetSource(src); scr->LoadSource(src);
+                    }
                     g_showScriptEditor = true; ImGui::SetWindowFocus("Script Editor");
                     g_scriptDockReq = 1;   // its own large window
                 }

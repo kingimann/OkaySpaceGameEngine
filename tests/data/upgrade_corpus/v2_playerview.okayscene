@@ -1,0 +1,23 @@
+okayscene 2
+name "Switchable player"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Player"
+  guid "ddd78a1fdc1c1deaf8744ab8a362439b"
+  active 1
+  parent -1
+  transform 0 1 0 0 0 0 1 1 1 1
+  fpctrl 2 5.5 6 0.15 1 1 0 130 90 0.78 0.12 0.12 16 0 17 122 1 1 0.5 1.6 1.2 0.4 12 113 101 14 0.35 10 1 0
+  fpfeel 0 8 8 1 40 0.55 0.12 1 10.5 0.75 0.9 1 1 1 0.035 9 0 0.8 8 0.12 14 0 0 7.5 0.35 0.55 18 0 0 0 0
+  fpstance prone=1 resize=1 crouchH=0.65 proneH=0.33 pad=1 hold=0.4 walkA=64 steer=260 dive=1 diveHop=0.25 diveSlide=0.45 capSens=0.15 capPx=220 slope=50 step=0.35 fallY=-100 swim=2.2 swimUp=2.4 swimDown=2.2 varJump=0 jumpCut=0.5 climb=2.5 hardLand=12 preset=0 stickRamp=0
+  playerview allow=1 view=0 key=118 pad=4 blend=0.3 ease=1 snap=0 ex=0 ey=0 ez=0 dist=-1 shoulder=0.45 presetKeys=0
+end
+gameobject 1 "Ground"
+  guid "543afdb75778fb7620b70929955985e0"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 20 1 20
+end

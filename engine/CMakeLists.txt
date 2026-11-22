@@ -75,6 +75,8 @@ add_library(okay_engine
     src/Input/TouchControls.cpp
     src/Core/DisplaySettings.cpp
     src/Core/DisplayModes.cpp
+    src/Render/TextureCacheFiles.cpp
+    src/Render/ModelImportProblem.cpp
     src/Render/ConsoleRenderer.cpp
     src/Render/GLRenderer.cpp
     src/Render/OkayShader.cpp

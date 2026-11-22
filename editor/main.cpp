@@ -11,6 +11,8 @@
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
+#include "okay/Render/TextureCacheFiles.hpp"   // InvalidateTextureCacheForFile: a changed picture is shown changed
+#include "okay/Render/ModelImportProblem.hpp"   // DescribeModelImportProblem: why a model did not import
 #include "OwnSwitches.hpp"   // the table of own replacements that can be switched on (View > Rendering & Performance)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/online/crash_reports.md)
@@ -9195,6 +9197,11 @@ static void QueueCharacterModel(GameObject* go, const std::string& path) {
     sPendingCharacterModels.push_back({go, path});
 }
 
+// The Console line for a model that did not import: what was tried and why it failed, in plain words.
+static std::string ModelImportFailLine(const std::string& what, const std::string& path) {
+    return what + " failed: " + std::filesystem::u8path(path).filename().u8string() + ": " + okay::DescribeModelImportProblem(path) + " (" + path + ")";
+}
+
 // Editor wrapper over okay::AttachCharacterModel: undo, selection, console log.
 static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, const std::string& path) {
     if (!target) return;
@@ -9202,8 +9209,7 @@ static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, cons
     std::string log;
     GameObject* root = okay::AttachCharacterModel(ed.scene(), target, path, &log);
     if (!root) {
-        ConsoleLog("Character model import failed: " + path +
-                   (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
+        ConsoleLog(ModelImportFailLine("Character model import", path), 2);
         return;
     }
     ed.Select(target); ed.dirty = true;
@@ -10998,6 +11004,12 @@ void DrawProject(EditorState& ed) {
     g_projectSelected = selected;
     if (!pb.Indexed() && !ed.projectDir().empty() && fs::is_directory(root, ec)) pb.Sync();   // first look at the project: index the assets once
     pb.Poll(okay::platform::TicksMs32());   // keep the database fresh without a thread: an incremental scan when due (waits at least 2 s and 30x as long as the last scan took)
+    // A picture changed in another program, given new import settings, or reimported by hand: the Scene view shows the new
+    // one now (before, only the panel's thumbnail was made again and the renderer kept the old pixels until a restart).
+    for (const std::string& f : pb.TakeChangedFiles()) {
+        if (okay::AssetTypeFromPath(f) != okay::AssetType::Texture) continue;
+        if (okay::InvalidateTextureCacheForFile(f) > 0) ConsoleLog("Reloaded the picture " + fs::u8path(f).filename().u8string() + " in the Scene view");
+    }
     // Let OS file-drops land in the folder we're browsing (falls back to Assets root).
     g_assetImportDir = fs::is_directory(dir, ec) ? dir.string() : root.string();
 
@@ -11931,7 +11943,7 @@ void DrawProject(EditorState& ed) {
                 ed.Select(r); ed.dirty = true;
                 ConsoleLog("Imported " + full);
                 LogModelReport(ed, r);
-            } else ConsoleLog("Model import failed: " + full, 2);
+            } else ConsoleLog(ModelImportFailLine("Model import", full), 2);
         }
     };
 
@@ -19070,7 +19082,7 @@ void DrawFileDialogs(EditorState& ed) {
                         ed.camTarget = (lo + hi) * 0.5f;
                         ed.camDist = std::fmax(1.0f, ext * 1.8f);
                     }
-                } else ConsoleLog("Import failed: couldn't read " + src, 2);
+                } else ConsoleLog(ModelImportFailLine("Import", src), 2);
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
@@ -21219,8 +21231,7 @@ static GameObject* HierInstantiateAsset(EditorState& ed, const std::string& path
         if (ok && placed) ApplyModelImportScale(placed, path);
         if (!ok || !placed) {
             placed = nullptr;
-            ConsoleLog("Model import failed: " + path +
-                       (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
+            ConsoleLog(ModelImportFailLine("Model import", path), 2);
         }
     } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
         placed = ed.CreateSprite(std::filesystem::path(path).stem().string());   // takes its own undo step
@@ -55488,8 +55499,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 placed = okay::ImportModelScene(ed.scene(), path, &ok);
                 if (ok && placed) ApplyModelImportScale(placed, path);
                 if (!ok || !placed)
-                    ConsoleLog("Model import failed: " + path +
-                               (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
+                    ConsoleLog(ModelImportFailLine("Model import", path), 2);
             }
             if (placed) {
                 placed->transform->SetPosition(drop);

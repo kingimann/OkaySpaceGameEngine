@@ -622,7 +622,7 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 |---|---|---|---|---|
 | [25.1](feature_map/20-35-planned.md#251-templates) | Templates | Works | Starting points for a new project: a blank scene, a genre starter or a complete small game. | template list is hard-coded in the launcher (and must match the editor's list "exactly" per a comment); no template versioning. |
 | [25.2](feature_map/20-35-planned.md#252-project-settings) | Project settings | Partial | One place for project-wide choices such as game name, window size, physics gravity and rendering defaults. | `project.okayproj` is loaded from the current directory, so opening a project from elsewhere depends on the working directory... |
-| [25.3](feature_map/20-35-planned.md#253-migration) | Migration | Partial | Open a project made with an older engine version and have scenes, prefabs and settings brought up to date safely. | no policy yet on how long old formats stay readable; `MigrateThroughEngine` drops records this build does not know and gives... |
+| [25.3](feature_map/20-35-planned.md#253-migration) | Migration | Partial | Open a project made with an older engine version and have scenes, prefabs and settings brought up to date safely. | no policy yet on how long old formats stay readable; `MigrateThroughEngine` keeps records this build does not know only up to the... |
 | [25.4](feature_map/20-35-planned.md#254-dependency-management) | Dependency management | Planned | Track which packages (asset packs, plugins, templates) a project uses and which versions, and install or update them. | where packages are hosted (Workshop, GitHub) is undecided. |
 
 ## 26. Shader & material editor (High)

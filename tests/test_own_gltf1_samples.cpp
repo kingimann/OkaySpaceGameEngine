@@ -1,5 +1,5 @@
 // The glTF 1.0 sample files shipped for our own glTF 1.0 reader (examples/own_readers/box_v1.gltf and box_v1.glb, written by
-// scripts/gen_gltf1_samples.py; docs/try_it.md section 8 tells the owner to import them) must import through the seam with the
+// scripts/gen_gltf1_samples.py; examples/own_readers ships them in the Windows release) must import through the seam with the
 // own reader switched on and give what the docs say: an orange box of 24 vertices and 12 triangles on a node 0.5 up, one
 // material. Both forms (JSON with a data URI, and the binary KHR_binary_glTF container) must agree. With the switch off the
 // import must be refused with a message that names the switch (the Windows release has no other glTF 1.0 reader).

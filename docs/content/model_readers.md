@@ -20,6 +20,7 @@
 - [Our own CSM reader (`.csm`)](#our-own-csm-reader-csm) (was `docs/own_csm_reader.md`)
 - [Our own DXF reader (`.dxf`)](#our-own-dxf-reader-dxf) (was `docs/own_dxf_reader.md`)
 - [Our own FBX reader (`okay::fbx`)](#our-own-fbx-reader-okayfbx) (was `docs/own_fbx_reader.md`)
+- [Our own glTF 1.0 reader (`.gltf`, `.glb` of version 1)](#our-own-gltf-10-reader-gltf-glb-of-version-1) (new 2026-11-22; was `docs/own_gltf1_reader.md` on an unmerged branch)
 - [Our own HMP reader (`.hmp`, version HMP7)](#our-own-hmp-reader-hmp-version-hmp7) (was `docs/own_hmp_reader.md`)
 - [Our own IQM reader (`.iqm`)](#our-own-iqm-reader-iqm) (was `docs/own_iqm_reader.md`)
 - [Our own Irrlicht scene reader (`.irr`)](#our-own-irrlicht-scene-reader-irr) (was `docs/own_irr_reader.md`)
@@ -1005,6 +1006,96 @@ ASCII FBX numbers are converted to the correctly rounded double (what `strtod` g
 - `fbx_file_keys` (standalone): the clip keys against the curves at 240 Hz, the tolerances, jumps and the 30 Hz clip; `fbx_exact` (standalone): the fast paths bit for bit against the plain code; `decimal_to_double` (standalone): the ASCII number conversion against `strtod`.
 - Sanitizers, 2026-11-21 (after the UV-set and skin changes): `fbx_hostile` (20,000 mutations per fixture), `fbx_file_keys` and a driver that loads, triangulates and keys every corpus file and fixture, all built standalone with `-fsanitize=address,undefined,float-cast-overflow`: clean. The engine-linked `fbx_reader` was not rebuilt under sanitizers this time.
 - Regenerate fixtures with `python3 scripts/gen_fbx_fixtures.py`. They are 1 to 12 KB each.
+
+## Our own glTF 1.0 reader (`.gltf`, `.glb` of version 1)
+
+*Written on branch `claude/own-readers-6` (2026-11-15), brought onto main on 2026-11-22 (branch `claude2/own-readers-last`).*
+
+Status: **side by side, off by default** (`OKAY_OWN_GLTF1`, slot 41 of the table in `ModelImport.cpp`, under the pseudo-extension
+`.gltf1` because 1.0 and 2.0 share `.gltf` / `.glb`). Without it a glTF 1.0 file is refused, with a message that names the
+switch. `.gltf` / `.glb` never go to Assimp, so before this reader the engine could not read glTF 1.0 at all. glTF 2.0 files are
+read by the glTF 2.0 reader (`okay/Render/Gltf.hpp`) whether this switch is on or off.
+
+### What it is
+
+glTF 1.0 is the first version of Khronos's transmission format (2015), replaced by 2.0 in 2017. It differs enough to be a separate
+reader: every top-level collection is an object keyed by string ids (not an array), a node lists several meshes, accessors carry
+their own `byteStride`, materials are a technique plus a dictionary of values, and the binary form (`KHR_binary_glTF`) is a
+20-byte header, one JSON block and one body.
+
+**Where it was written from.** The Khronos glTF 1.0 specification only: `specification/1.0/README.md` of the KhronosGroup/glTF
+repository and its JSON schemas, and the `KHR_binary_glTF` and `KHR_materials_common` extension descriptions. No importer source
+was read (rule 19a). The JSON parser and the base64 decoder are the engine's own, the ones the glTF 2.0 reader uses. Assimp was
+used only as a black box, through the engine's own seam, to compare results on the corpus files.
+
+| File | What |
+|---|---|
+| `engine/src/Render/Gltf1Reader.cpp` | `okay::ReadGltf1Buffer` / `ReadGltf1File`, `IsGltf1`, `GltfFileIsVersion1` (declared in `ModelData.hpp`) |
+| `engine/src/Render/ModelImport.cpp` | The seam: `ImportModelData`, `ImportModel` and the scene importer send version-1 files here when the switch is on (`Gltf1Wanted`, inside `RunReaderGuarded`); `ImportModelData(..., ImportBackend::Own)` always does |
+| `tests/test_gltf1_reader.cpp`, `tests/gltf1_test_build.hpp` | Hand-computed checks on files built in memory, files on disk, refusals and the seam (`gltf1_reader`) |
+| `tests/test_gltf1_hostile.cpp` | Hostile input, memory and time budget, mutation fuzz, real files when `OKAY_MODEL_CORPUS` is set; builds without the engine library (`gltf1_hostile`) |
+| `tests/test_own_gltf1_default.cpp` | Fails if `-DOKAY_OWN_GLTF1=ON` stops making this reader the default (`own_gltf1_default`) |
+| `tests/test_own_gltf1_samples.cpp`, `examples/own_readers/box_v1.gltf`, `box_v1.glb`, `scripts/gen_gltf1_samples.py` | The sample files (an orange box, JSON and binary, written by our script) import through the seam with the reader on (`own_gltf1_samples`) |
+
+Switch it on with `SetImportBackend(".gltf1", ImportBackend::Own)`, `OKAY_OWN_GLTF1=1` (or `0` to force it off), or
+`-DOKAY_OWN_GLTF1=ON`. Only when it is on does the importer parse a `.gltf` / `.glb` a second time to see its version.
+
+### What it reads
+
+- **Container.** JSON (a UTF-8 byte order mark is dropped), or the binary form: magic `glTF`, version 1, total length, content
+  length (more than 0), content format 0 (JSON); the body is the buffer `binary_glTF`. A binary file shorter than its header's
+  length is read with a note, every accessor still checked against the bytes that exist (one real sample is 33 bytes short).
+- **Buffers.** The binary body, base64 `data:` URIs, or files inside the model's own folder (`SceneRefPath.hpp`; `%20` and other
+  escapes are decoded first, so an escaped `..` is still refused). A buffer shorter than its `byteLength` is refused.
+- **Accessors.** `SCALAR` to `MAT4`; byte, unsigned byte, short, unsigned short, float, and unsigned int for indices.
+  `byteStride` 0 is tightly packed, else at least one element and at most 255; the last element must end inside the bufferView
+  (`byteLength` 0 runs to the end of the buffer); every float must be finite.
+- **Scene.** The node tree under one root `glTF`, walked with an explicit stack: the file's `scene`, else the first scene by id,
+  else every node that is nobody's child. A node reached twice (a loop or two parents) is refused. A node's transform is its
+  `matrix` (column-major; shear dropped with a note) or `translation`, `rotation` (x, y, z, w; normalised) and `scale`. Y up and
+  metres, as the engine, so nothing is converted.
+- **Meshes.** Each triangle primitive of a node's `meshes` is one part: triangles (4), strips (5, alternate triangles reordered so
+  all face the same way) and fans (6); `POSITION`, `NORMAL` (made from the faces when missing or zero), `TEXCOORD_0` (kept as
+  written, like the 2.0 reader), indices (each inside the primitive's vertices). Points and lines are skipped with a note.
+- **Materials.** One per glTF material, from `values` and `extensions.KHR_materials_common.values`: `diffuse` as a colour or as a
+  texture id that leads to an image file inside the model's folder, `emission`, `shininess`.
+
+Reported, not read (a line in `out.notes`): skins (skinned meshes come in their bind pose), animations, cameras, techniques and
+shaders, embedded images, image paths outside the folder, points and lines, unknown modes, NORMAL / TEXCOORD_0 that are not one
+VEC3 / VEC2 per vertex, degenerate triangles, bytes after a binary file's length.
+
+Refused: not JSON; nesting deeper than 128; `asset.version` 2.x or array collections; a bad binary header; a missing accessor,
+bufferView, buffer, mesh, node or default scene; a bad count, offset, stride, type or component type; reads past a bufferView or
+buffer; a non-finite value; an index past the vertices; a node loop; a bad matrix, translation, rotation or scale; a buffer file
+outside the folder or missing; a scene with no triangles.
+
+### Limits
+
+File 512 MiB; all buffers 512 MiB; 20,000,000 elements in one accessor; 64,000,000 accessor values decoded in the whole file
+(checked before allocating; a mesh listed by several nodes counts each time); 20,000,000 vertices; 20,000,000 triangle slots,
+degenerate ones included; 100,000 nodes; 100,000 primitives; JSON nesting 128. Measured by `gltf1_hostile` with a counting
+allocator: a 1,000,000-triangle file reads in 0.4 s at a 58 MB peak; one mesh listed 4 times with 20,000,000 degenerate indices
+each is refused at 95 MB; an 80,000,000-value accessor is refused before allocating (76 MB, the copied body).
+
+Known limits: the shared JSON parser turns `\u` escapes into `?`; only the value names `diffuse`, `emission` and `shininess` are
+used; with the switch on a file is held twice while it is read (the version check, then the reader); the JSON parser has no cap
+on the number of values in one array (shared with the 2.0 reader).
+
+### Tests and real files
+
+- `gltf1_reader`: the quad scene with every value worked out by hand (matrix and TRS transforms, positions, normals, UVs,
+  indices, material), the binary form and a binary file cut short, a file with no scenes, `KHR_materials_common`, textures inside
+  and outside the folder, strips, fans, points and lines, 24 refusals with their messages, a NaN position, files on disk (a
+  subfolder with a UTF-8 name, a missing buffer, `%20` names), a glTF 2.0 file not taken, and the seam (off by default, env,
+  `SetImportBackend`, `ImportModelScene`, `ImportModel`, flatten).
+- `gltf1_hostile` under ASan, UBSan and float-cast-overflow (2026-11-22, `OKAY_READER_FUZZ_ITERS=100000`, seeded also with the
+  real `BoxTextured` JSON and binary files): 147,615 checks, 0 failures. Before this reader (the refusing stub of the test
+  commit): 4 failures. Its corpus paths were wrong on the old branch (`glTF/...` instead of `models/glTF/...`), so the real
+  files were silently skipped there; fixed.
+- **Real files**: the 7 glTF 1.0 files under `models/glTF` of the Assimp 5.4.3 test folder all read (the `gltf1` rows of
+  `tests/data/model_corpus_manifest.tsv`). Comparison with Assimp and speed: `docs/content/own_readers_speed.md`, row `gltf1`.
+
+Not verified: files from other exporters, skinned or animated 1.0 files (not read), a run on real Windows.
 
 ## Our own HMP reader (`.hmp`, version HMP7)
 

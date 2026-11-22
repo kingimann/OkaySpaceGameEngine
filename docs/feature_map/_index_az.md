@@ -3181,6 +3181,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Own DXF reader (side by side, off by default) (3.6.24)
 - own FBX reader (3.6)
 - Own FBX reader (side by side, off by default) (3.6.10)
+- Own glTF 1.0 reader (side by side, off by default) (3.6.43)
 - Own Irrlicht mesh reader (side by side, off by default) (3.6.28)
 - Own Irrlicht scene reader (side by side, off by default) (3.6.34)
 - Own Linux backend (17.17.3)

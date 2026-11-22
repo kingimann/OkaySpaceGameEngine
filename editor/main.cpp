@@ -12899,6 +12899,8 @@ void DrawSaveManager(EditorState& ed) {
     ImGui::End();
 }
 
+static bool DrawCustomShaderFields(std::string& customShader, std::string& shaderParams);   // (with the Inspector code below)
+
 // Edit a .okaymat asset: tweak the surface
 // look and Save, or stamp it onto the selected mesh with Apply to Selection.
 void DrawMaterialEditor(EditorState& ed) {
@@ -12940,6 +12942,15 @@ void DrawMaterialEditor(EditorState& ed) {
     ImGui::Checkbox("Unlit", &mat.unlit);
     ImGui::SameLine();
     ImGui::Checkbox("Double-sided", &mat.doubleSided);
+    {   // Shading model; Custom = an .okayshader file and its property values (saved in the .okaymat)
+        int sh = (int)mat.shader;
+        const char* shaders[] = {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet", "Custom"};
+        if (sh < 0 || sh > 9) sh = 0;
+        if (ImGui::Combo("Shader##matwin", &sh, shaders, 10)) mat.shader = (MeshRenderer::Shader)sh;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Custom: an .okayshader file (surface and vertex blocks) and its properties,\nsaved in this material and copied by Apply to Selection.");
+        if (mat.shader == MeshRenderer::Shader::Toon) ImGui::SliderInt("Cel Bands##matwin", &mat.toonBands, 2, 6);
+        if (mat.shader == MeshRenderer::Shader::Custom) DrawCustomShaderFields(mat.customShader, mat.shaderParams);
+    }
     char tex[256]; std::strncpy(tex, mat.texture.c_str(), sizeof(tex) - 1); tex[sizeof(tex) - 1] = '\0';
     ImGui::SetNextItemWidth(210);
     if (ImGui::InputText("##mattex", tex, sizeof(tex))) mat.texture = tex;
@@ -27851,26 +27862,30 @@ static bool AcceptAssetPathField(std::string& field);
 // error with its line and column when not), and one control per declared property and texture.
 // The values live in MeshRenderer::shaderParams as text, so a property the file no longer has is
 // kept (and ignored) instead of lost. The renderers reload the file by themselves when it changes.
-static bool DrawCustomShaderFields(MeshRenderer& mr) {
+// Shared by the Inspector (a Mesh Renderer) and the Material window (an .okaymat): both keep the
+// file in `customShader` and the values in `shaderParams`.
+static bool DrawCustomShaderFields(std::string& customShader, std::string& shaderParams);
+static bool DrawCustomShaderFields(MeshRenderer& mr) { return DrawCustomShaderFields(mr.customShader, mr.shaderParams); }
+static bool DrawCustomShaderFields(std::string& customShader, std::string& shaderParams) {
     bool ch = false;
     char path[260];
-    std::strncpy(path, mr.customShader.c_str(), sizeof(path) - 1);
+    std::strncpy(path, customShader.c_str(), sizeof(path) - 1);
     path[sizeof(path) - 1] = '\0';
-    if (ImGui::InputText("Shader File##mesh", path, sizeof(path))) { mr.customShader = path; ch = true; }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("An .okayshader file: a surface block that sets albedo, emission, alpha,\nnormal, metallic, specular and shininess. Edits reload by themselves.\nExamples: examples/shaders/lava.okayshader, dissolve.okayshader, rim_glow.okayshader");
-    if (AcceptAssetPathField(mr.customShader)) ch = true;
-    if (mr.customShader.empty()) { ImGui::TextDisabled("Pick an .okayshader file (drawn magenta until then)."); return ch; }
-    const oshader::ShaderFile sf = oshader::LoadShaderFile(mr.customShader);
+    if (ImGui::InputText("Shader File##mesh", path, sizeof(path))) { customShader = path; ch = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("An .okayshader file: a surface block that sets albedo, emission, alpha,\nnormal, metallic, specular and shininess, and an optional vertex block that\nmoves position and normal. Edits reload by themselves.\nExamples: examples/shaders/lava.okayshader, dissolve.okayshader, rim_glow.okayshader,\nflag_wave.okayshader, wobble.okayshader");
+    if (AcceptAssetPathField(customShader)) ch = true;
+    if (customShader.empty()) { ImGui::TextDisabled("Pick an .okayshader file (drawn magenta until then)."); return ch; }
+    const oshader::ShaderFile sf = oshader::LoadShaderFile(customShader);
     const oshader::Compiled* c = sf.compiled.get();
     if (!c || !c->ok) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.7f, 1.0f));
-        ImGui::TextWrapped("%s", c ? c->FirstError(mr.customShader).c_str() : "cannot read the shader file");
+        ImGui::TextWrapped("%s", c ? c->FirstError(customShader).c_str() : "cannot read the shader file");
         ImGui::PopStyleColor();
         ImGui::TextDisabled("Drawn magenta until the file compiles; save it and it reloads.");
         return ch;
     }
-    ImGui::TextDisabled("%s%s", c->name.empty() ? "Compiled" : c->name.c_str(), c->unlit ? "  (unlit)" : "");
-    const std::vector<float> vals = oshader::ResolveProperties(*c, mr.shaderParams);
+    ImGui::TextDisabled("%s%s%s", c->name.empty() ? "Compiled" : c->name.c_str(), c->unlit ? "  (unlit)" : "", c->hasVertex ? "  (moves vertices)" : "");
+    const std::vector<float> vals = oshader::ResolveProperties(*c, shaderParams);
     for (std::size_t i = 0; i < c->props.size(); ++i) {
         const oshader::Property& p = c->props[i];
         float v[4] = {vals[i * 4], vals[i * 4 + 1], vals[i * 4 + 2], vals[i * 4 + 3]};
@@ -27883,20 +27898,20 @@ static bool DrawCustomShaderFields(MeshRenderer& mr) {
         else if (w == 2) edited = ImGui::DragFloat2(label.c_str(), v, 0.01f);
         else if (w == 3) edited = ImGui::DragFloat3(label.c_str(), v, 0.01f);
         else edited = ImGui::DragFloat4(label.c_str(), v, 0.01f);
-        if (edited) { mr.shaderParams = oshader::SetParam(mr.shaderParams, p.name, v, w); ch = true; }
+        if (edited) { shaderParams = oshader::SetParam(shaderParams, p.name, v, w); ch = true; }
     }
     for (std::size_t t = 0; t < c->textures.size(); ++t) {
         const std::string key = "tex:" + c->textures[t].name;
-        std::string pic = oshader::GetTextParam(mr.shaderParams, key);
+        std::string pic = oshader::GetTextParam(shaderParams, key);
         char buf[260];
         std::strncpy(buf, pic.c_str(), sizeof(buf) - 1);
         buf[sizeof(buf) - 1] = '\0';
         const std::string label = c->textures[t].name + "##okt";
-        if (ImGui::InputText(label.c_str(), buf, sizeof(buf))) { pic = buf; mr.shaderParams = oshader::SetTextParam(mr.shaderParams, key, pic); ch = true; }
+        if (ImGui::InputText(label.c_str(), buf, sizeof(buf))) { pic = buf; shaderParams = oshader::SetTextParam(shaderParams, key, pic); ch = true; }
         if (ImGui::IsItemHovered() && !c->textures[t].defaultPath.empty()) ImGui::SetTooltip("Empty: %s", c->textures[t].defaultPath.c_str());
-        if (AcceptAssetPathField(pic)) { mr.shaderParams = oshader::SetTextParam(mr.shaderParams, key, pic); ch = true; }
+        if (AcceptAssetPathField(pic)) { shaderParams = oshader::SetTextParam(shaderParams, key, pic); ch = true; }
     }
-    if (!mr.shaderParams.empty() && ImGui::SmallButton("Reset Properties##okp")) { mr.shaderParams.clear(); ch = true; }
+    if (!shaderParams.empty() && ImGui::SmallButton("Reset Properties##okp")) { shaderParams.clear(); ch = true; }
     return ch;
 }
 

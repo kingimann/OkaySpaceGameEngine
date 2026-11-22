@@ -18,6 +18,7 @@
 #include "XboxHttp.hpp"
 #include "XboxOwnHttp.hpp"
 #include "XboxTitleSafe.hpp"
+#include "XboxPadSync.hpp"
 #include "okay/Core/Paths.hpp"
 #include <cmath>
 #include <filesystem>
@@ -868,8 +869,53 @@ static void TitleSafeTests() {
     { SafeInsets i; i.left = -1; i.right = 3; i.top = 0.1f; i.bottom = 0.0f / 0.0f; const SafeInsets c = Clamped(i); CHECK(c.left == 0 && c.right == 0.25f && c.top == 0.1f && c.bottom == 0); }
 }
 
+// ---- pad sync: the shell's list of connected pads (stable keys) -> hub slots, owned devices, events (XboxPadSync.hpp) ----
+// Before: the bridge made one PadDevice per INDEX of Gamepad::Gamepads() and deleted them all whenever the count changed, while
+// the backend's open pads still pointed at them (use after free on the next poll), and a pad unplugged in the middle moved every
+// later player down one index. Nothing called the hub (PadConnected / PadDisconnected) from the app.
+namespace {
+struct KeyPad : okay::xbox::PadDevice {
+    std::string key; int* alive; okay::xbox::PadReading r;
+    KeyPad(std::string k, int* a) : key(std::move(k)), alive(a) { ++*alive; }
+    ~KeyPad() override { --*alive; }
+    bool Read(okay::xbox::PadReading& o) override { o = r; return true; }
+    void SendVibration(const okay::xbox::Vibration&) override {}
+};
+}
+static void PadSyncTests() {
+    using namespace okay::xbox; using namespace okay::platform;
+    FakeUwpHost host; PathRoots roots; roots.install = "C:/x/"; roots.local = "/tmp/okay_xbox_padsync_local"; roots.temp = "/tmp/okay_xbox_padsync_temp";
+    UwpBackend b(&host, roots); b.Init(InitFlags());
+    std::uint64_t t = 0; b.clockOverride = [&] { return t; };
+    b.EnableHub(2, 1000);
+    int alive = 0;
+    std::map<std::string, KeyPad*> made;
+    auto make = [&](const std::string& k) -> std::unique_ptr<PadDevice> { auto* p = new KeyPad(k, &alive); made[k] = p; return std::unique_ptr<PadDevice>(p); };
+    PadSync sync;
+    CHECK(sync.Sync(b, {"padA", "padB", "padA"}, make) == 2 && alive == 2 && sync.Count() == 2);   // a repeated key is one pad
+    { auto ev = Drain(b); int adds = 0; for (auto& e : ev) if (e.type == EventType::GamepadAdded) ++adds; CHECK(adds == 2); }
+    auto g0 = b.OpenGamepad(0); auto g1 = b.OpenGamepad(1); CHECK(g0 && g1);
+    made["padB"]->r.buttons = kPadA; Drain(b); CHECK(g1->Button(GamepadButton::A) && !g0->Button(GamepadButton::A));
+    // padA unplugged: padB keeps slot 1 (no index shift), padA's device is freed, the open pad reads as disconnected, nothing dangles.
+    t = 100; CHECK(sync.Sync(b, {"padB"}, make) == 0 && alive == 1 && sync.Count() == 1);
+    Drain(b); CHECK(g1->Button(GamepadButton::A) && !g0->Button(GamepadButton::A) && !b.IsGamepad(0) && b.IsGamepad(1));
+    // padA back inside the grace time: same slot, same open pad object works again, a new device is made for it.
+    t = 500; made["padA"] = nullptr; CHECK(sync.Sync(b, {"padB", "padA"}, make) == 1 && alive == 2 && made["padA"]);
+    made["padA"]->r.buttons = kPadB; Drain(b); CHECK(g0->Button(GamepadButton::B) && b.IsGamepad(0));
+    // A third pad with both slots taken is refused and tried again on the next sync (not stored, no device kept).
+    CHECK(sync.Sync(b, {"padB", "padA", "padC"}, make) == 0 && alive == 2 && sync.Count() == 2);
+    t = 600; sync.Sync(b, {"padA", "padC"}, make);                  // padB leaves, but its slot is held for the grace time
+    CHECK(sync.Count() == 1 && alive == 1);
+    t = 1700; Drain(b);                                              // grace over: slot 1 freed (GamepadRemoved)
+    CHECK(sync.Sync(b, {"padA", "padC"}, make) == 1 && sync.Count() == 2 && alive == 2 && b.IsGamepad(1));
+    // Empty keys are ignored; Clear disconnects everything and frees every device.
+    CHECK(sync.Sync(b, {"padA", "padC", ""}, make) == 0 && sync.Count() == 2);
+    sync.Clear(b); CHECK(alive == 0 && sync.Count() == 0 && !b.IsGamepad(0) && !b.IsGamepad(1));
+    g0.reset(); g1.reset(); Drain(b);
+}
+
 int main() {
-    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests(); RecoveryTests(); HttpTests(); OwnHttpTests(); TitleSafeTests();
+    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests(); RecoveryTests(); HttpTests(); OwnHttpTests(); TitleSafeTests(); PadSyncTests();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp_runtime: all passed\n");
     return 0;

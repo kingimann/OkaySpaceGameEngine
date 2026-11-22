@@ -4975,3 +4975,11 @@ add_executable(test_own_q3bsp_samples test_own_q3bsp_samples.cpp)
 target_link_libraries(test_own_q3bsp_samples PRIVATE okay::engine)
 target_compile_definitions(test_own_q3bsp_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME own_q3bsp_samples COMMAND test_own_q3bsp_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# One hostile-input battery over all six late own readers (glTF 1.0, OpenGEX, MDL, Q3BSP, IQM, COB): every truncation, every 32-bit word set to lying
+# values, bit flips, overlapping blocks, garbage with and without magic, deep nesting; time and counted-memory limits (tests/test_own_readers_sweep.cpp).
+add_executable(test_own_readers_sweep test_own_readers_sweep.cpp)
+target_link_libraries(test_own_readers_sweep PRIVATE okay::engine)
+target_include_directories(test_own_readers_sweep PRIVATE ${PROJECT_SOURCE_DIR}/engine/src/Render ${PROJECT_SOURCE_DIR}/engine/src/Core)
+add_test(NAME own_readers_sweep COMMAND test_own_readers_sweep WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(own_readers_sweep PROPERTIES TIMEOUT 900)

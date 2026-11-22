@@ -156,6 +156,14 @@ owner's approval and a Windows run, which none has. When this list was counted n
 **3. (Was: being written on branch `claude/own-readers-6`.)** Since 2026-11-22 glTF 1.0, OpenGEX, MDL and Q3BSP are in table 2
 above (on main, off by default). The SIB reader of that branch was not brought over (no public specification; table 4).
 
+**3a. Audit status of those four readers (2026-11-22).** OpenGEX, Quake and Half-Life MDL and Quake III BSP were **written from memory of the
+format descriptions, not audited against a specification** (opengex.org cannot be reached from the build network); glTF 1.0 was written from the
+Khronos text. Because of that, hostile-input tests matter more for them. Every one of the six late readers (these four, IQM, COB) has its own
+hostile test, and `tests/test_own_readers_sweep.cpp` (ctest `own_readers_sweep`) runs one battery over all six under the sanitizers: every
+truncation, every 32-bit word set to lying values, bit flips, overlapping blocks, garbage with and without magic, deep nesting, a time limit and a
+counted-memory limit. It found one real bug (IQM: a tiny positive animation framerate made infinite key times; fixed). Still not covered: real files
+other than the corpus runs, and anything the memory-written formats do that a specification would show.
+
 **4. No reader of ours (the gap):**
 
 Which Assimp importer claims each of these extensions, and what the format is, comes from public format documentation and the

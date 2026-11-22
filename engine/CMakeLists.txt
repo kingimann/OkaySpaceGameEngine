@@ -306,6 +306,7 @@ add_library(okay_engine
     src/Render/RawReader.cpp
     src/Render/PmxReader.cpp
     src/Render/LwsReader.cpp
+    src/Render/Gltf1Reader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/Measure.cpp
     src/Modeling/SelectOps.cpp

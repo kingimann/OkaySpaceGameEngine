@@ -397,6 +397,20 @@ bool ReadPmxFile(const std::string& path, ImportedModel& out, std::string* err =
 /// `path` is a .lws scene or a .mot motion file.
 bool ReadLwsFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
 
+/// glTF 1.0 (`.gltf` with asset.version 1.x, or the binary KHR_binary_glTF form): the default scene's node tree (matrix or
+/// translation / rotation / scale per node, under one root node "glTF"), one part per triangle primitive (triangles, strips
+/// and fans; POSITION, NORMAL, TEXCOORD_0, indices), one material per glTF material (diffuse colour or texture, emission,
+/// shininess, from `values` or KHR_materials_common). Buffers may be the binary body, base64 data URIs or files inside the
+/// model's folder. Skins, animations, cameras, techniques and embedded images are reported in `out.notes`, not read.
+/// `baseDir` ends with a slash or is empty (it prefixes buffer and image file names). glTF 2.0 is read by Gltf.hpp.
+bool ReadGltf1Buffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+bool ReadGltf1File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// True for the first bytes of a binary glTF 1.0 file ("glTF" then version 1). A JSON .gltf is told by its asset.version.
+bool IsGltf1(const std::string& bytesOrPrefix);
+/// True when the file at `path` is glTF 1.0: a binary version-1 header, or JSON whose asset.version starts with "1" (or,
+/// with no version, whose meshes / nodes / accessors are objects keyed by id). Reads and parses the file.
+bool GltfFileIsVersion1(const std::string& path);
+
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {

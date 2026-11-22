@@ -1,0 +1,18 @@
+// Rim glow: the edges facing away from the camera glow, and the glow pulses.
+// A soft, see-through energy-shield look; the body keeps the material colour.
+shader "Rim glow";
+
+property color rimColor = (0.2, 0.9, 1.0);
+property float power = 2.5 range(0.5, 8);
+property float strength = 1.5 range(0, 5);
+property float pulse = 1.5 range(0, 10);
+
+surface {
+    float facing = saturate(dot(normal, view));
+    float rim = pow(1.0 - facing, power);
+    float beat = 0.75 + 0.25 * sin(time * pulse);
+    emission = rimColor * (rim * strength * beat);
+    albedo = albedo * 0.6;
+    specular = 0.6;
+    shininess = 48.0;
+}

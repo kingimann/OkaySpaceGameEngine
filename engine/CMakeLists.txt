@@ -77,6 +77,7 @@ add_library(okay_engine
     src/Core/DisplayModes.cpp
     src/Render/ConsoleRenderer.cpp
     src/Render/GLRenderer.cpp
+    src/Render/OkayShader.cpp
     src/Render/D3D11Renderer.cpp
     src/Render/D3D12Renderer.cpp
     src/Scene/Component.cpp

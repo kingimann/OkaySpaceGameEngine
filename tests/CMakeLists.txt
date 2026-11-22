@@ -632,6 +632,26 @@ add_executable(test_shaders test_shaders.cpp)
 target_link_libraries(test_shaders PRIVATE okay::engine)
 add_test(NAME shaders COMMAND test_shaders)
 
+# OkayShader language (docs/rendering/shaders.md): parser / checker errors, hostile inputs and fuzz, GLSL / HLSL text,
+# the CPU program, material property text, file hot reload, the shipped example shaders.
+add_executable(test_okayshader test_okayshader.cpp)
+target_link_libraries(test_okayshader PRIVATE okay::engine)
+target_compile_definitions(test_okayshader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME okayshader COMMAND test_okayshader)
+# The Custom shader mode on the software renderer (fields, per-pixel surface, error material, discard, hot reload, example scene).
+add_executable(test_okayshader_render test_okayshader_render.cpp)
+target_link_libraries(test_okayshader_render PRIVATE okay::engine)
+target_compile_definitions(test_okayshader_render PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME okayshader_render COMMAND test_okayshader_render)
+# Software vs OpenGL (Mesa llvmpipe on a private Xvfb display) on the same .okayshader surfaces; skips (77) without Xvfb.
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_okayshader_gl test_okayshader_gl.cpp)
+    target_link_libraries(test_okayshader_gl PRIVATE okay::engine okay::platform)
+    target_compile_definitions(test_okayshader_gl PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME okayshader_gl COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_okayshader_gl>)
+    set_tests_properties(okayshader_gl PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+endif()
+
 add_executable(test_uishape test_uishape.cpp)
 target_link_libraries(test_uishape PRIVATE okay::engine)
 add_test(NAME uishape COMMAND test_uishape)

@@ -1,6 +1,6 @@
 #pragma once
 // OKF1: our own small container for embedded binary assets (the fonts), and its decoder. Header only,
-// standard library only, no allocation beyond the output vector. Replaces the Dear ImGui base85 +
+// standard library and okay/Core/Base64.hpp only (the Base64 text is joined once before decoding). Replaces the Dear ImGui base85 +
 // stb_compress reader that engine/src/Graphics/EmbeddedFont.cpp used to carry.
 //
 // ---- Format --------------------------------------------------------------------------------------------------------
@@ -28,7 +28,9 @@
 // bytes, a wrong size or CRC) is an error and Decode returns false without crashing. scripts/gen_embedded_fonts.py writes
 // the data and has an independent Python reader; tests/test_embedded_font.cpp pins the decoded bytes by SHA-256.
 #include <cstddef>
+#include "okay/Core/Base64.hpp"
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace okf {
@@ -47,37 +49,12 @@ inline std::uint32_t Crc32(const std::uint8_t* p, std::size_t n) {
     return crc ^ 0xFFFFFFFFu;
 }
 
-// Base64 (RFC 4648) of the concatenated lines -> bytes. False on any character outside the alphabet, on misplaced or
-// missing padding, or on a length that is not a multiple of 4.
+// Base64 (RFC 4648) of the concatenated lines -> bytes: okay/Core/Base64.hpp's strict padded decoder. False on any
+// character outside the alphabet, on misplaced or missing padding, or on a length that is not a multiple of 4.
 inline bool Base64Decode(const char* const* lines, std::size_t lineCount, std::vector<std::uint8_t>& out) {
-    out.clear();
-    std::uint32_t acc = 0;
-    int have = 0, pad = 0;
-    std::size_t chars = 0;
-    for (std::size_t l = 0; l < lineCount; ++l) {
-        for (const char* s = lines[l]; *s; ++s) {
-            const char c = *s;
-            int v;
-            if (c >= 'A' && c <= 'Z') v = c - 'A';
-            else if (c >= 'a' && c <= 'z') v = c - 'a' + 26;
-            else if (c >= '0' && c <= '9') v = c - '0' + 52;
-            else if (c == '+') v = 62;
-            else if (c == '/') v = 63;
-            else if (c == '=') { ++pad; v = 0; }
-            else return false;
-            if (pad && c != '=') return false;             // data after padding
-            if (pad > 2) return false;
-            ++chars;
-            acc = (acc << 6) | static_cast<std::uint32_t>(v);
-            if (++have == 4) {
-                out.push_back(static_cast<std::uint8_t>(acc >> 16));
-                if (pad < 2) out.push_back(static_cast<std::uint8_t>(acc >> 8));
-                if (pad < 1) out.push_back(static_cast<std::uint8_t>(acc));
-                have = 0; acc = 0;
-            }
-        }
-    }
-    return have == 0 && chars % 4 == 0;
+    std::string text;
+    for (std::size_t l = 0; l < lineCount; ++l) text += lines[l];
+    return okay::base64::DecodePadded(text, out);
 }
 
 // The OKF1 blob -> the raw bytes.

@@ -188,15 +188,20 @@ int main() {
         CHECK(!loaded.Find("Off")->GetComponent<UIInputField>()->focusable);
         CHECK(loaded.Find("Off")->GetComponent<UIInputField>()->multiline);
         CHECK(loaded.Find("On")->GetComponent<UIInputField>()->focusable);
-        // Old format: drop the trailing focusable number from every uiinput line.
-        std::string old; std::size_t pos = 0; int cut = 0;
+        // The field is written only when off: the default field's line ends with the multiline number (the pre-change text), the off one
+        // has one more trailing 0. Old scenes (no field) are exactly the default line.
+        std::string old; std::size_t pos = 0; int cut = 0, defaultLines = 0;
         while (pos < text.size()) {
             std::size_t e = text.find('\n', pos); if (e == std::string::npos) e = text.size();
             std::string line = text.substr(pos, e - pos);
-            if (line.find("  uiinput ") == 0) { line.erase(line.find_last_of(' ')); ++cut; }
+            if (line.find("  uiinput ") == 0) {
+                if (line.size() > 4 && line.compare(line.size() - 4, 4, " 1 0") == 0) { line.erase(line.find_last_of(' ')); ++cut; }   // multiline 1, focusable 0
+                else { CHECK(line.compare(line.size() - 2, 2, " 0") == 0); ++defaultLines; }   // multiline 0, nothing after it
+            }
             old += line + "\n"; pos = e + 1;
         }
-        CHECK(cut == 2);
+        CHECK(cut == 1);
+        CHECK(defaultLines == 1);
         Scene oldLoaded("OL");
         CHECK(SceneSerializer::Deserialize(oldLoaded, old));
         CHECK(oldLoaded.Find("Off")->GetComponent<UIInputField>()->multiline);

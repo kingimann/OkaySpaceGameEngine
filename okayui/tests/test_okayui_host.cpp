@@ -137,6 +137,14 @@ int main() {
         CHECK(in.keyDown[UI::KeyId_PageDown] && in.keyDown[UI::KeyId_F5]);
         CHECK(InputCollector::KeyIdOf(SDLK_F13) == UI::KeyId_None && InputCollector::KeyIdOf(SDLK_a) == UI::KeyId_A &&
               InputCollector::KeyIdOf(SDLK_9) == UI::KeyId_9 && InputCollector::KeyIdOf(SDLK_RCTRL) == UI::KeyId_Ctrl);
+        // '/' and Alt are named keys too: the code editor's Ctrl+/ (comment) and Alt+Up / Alt+Down (move lines)
+        CHECK(InputCollector::KeyIdOf(SDLK_SLASH) == UI::KeyId_Slash && InputCollector::KeyIdOf(SDLK_LALT) == UI::KeyId_Alt);
+        c.Feed(Key(SDLK_SLASH, KMOD_CTRL));
+        in = c.Build(0, 0, false, false, false, true);
+        CHECK(in.keyDown[UI::KeyId_Slash] && in.ctrl);
+        using PK2 = okay::platform::Key;
+        CHECK(InputCollector::KeyIdOf(PK2::Slash, 0) == UI::KeyId_Slash && InputCollector::KeyIdOf(PK2::Slash, '/') == UI::KeyId_Slash);
+        CHECK(InputCollector::KeyIdOf(PK2::LAlt, 0) == UI::KeyId_Alt);
     }
     {   // end to end: a CodeEdit driven only by SDL events (arrows, Tab, Ctrl+Z/Y, Ctrl+C then Ctrl+V, Ctrl+Left word move)
         okayuitest::Reset();

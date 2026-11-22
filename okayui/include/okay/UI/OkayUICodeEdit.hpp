@@ -175,6 +175,15 @@ public:
     void SetShowLineNumbers(bool b) { showLineNumbers_ = b; }
     void SetShowBreakpointGutter(bool b) { showBreakpoints_ = b; }
     void SetLineSpacing(float s) { lineSpacing_ = s < 1.0f ? 1.0f : (s > 3.0f ? 3.0f : s); }
+    /// Key bindings for the line commands while the editor has the keyboard (on by default; the script editor's keys):
+    /// Ctrl+/ ToggleLineComment, Ctrl+D DuplicateLines, Ctrl+Shift+K DeleteLines, Alt+Up and Alt+Down MoveLines.
+    void SetLineCommandKeys(bool on) { lineKeys_ = on; }
+    bool LineCommandKeys() const { return lineKeys_; }
+    /// Draw the code (text and line numbers) in this font instead of the current OkayUI font: a font made by AddFontTtf
+    /// (OkayUICompat.hpp) that should be monospaced. `px` is the height of a line of text in pixels (0: the font's own size).
+    /// The window's font and text scale are put back after Draw. Null: the current OkayUI font (the default).
+    void SetFont(const Font* font, float px = 0.0f) { font_ = font; fontPx_ = (px > 0.0f && px < 1000.0f) ? px : 0.0f; }
+    const Font* CodeFont() const { return font_; }
     void SetPalette(const CodePalette& p) { pal_ = p; }
     const CodePalette& Palette() const { return pal_; }
     /// The syntax highlighter (empty: no colouring). Takes effect at once.
@@ -288,7 +297,9 @@ private:
     std::vector<int> breakpoints_;
     std::function<void(int, bool)> onBreakpoint_; bool autoToggle_ = true;
 
-    bool readOnly_ = false, insertSpaces_ = true, autoIndent_ = true, showLineNumbers_ = true, showBreakpoints_ = true;
+    bool readOnly_ = false, insertSpaces_ = true, autoIndent_ = true, showLineNumbers_ = true, showBreakpoints_ = true, lineKeys_ = true;
+    const Font* font_ = nullptr; float fontPx_ = 0.0f;
+    bool drawImpl(const char* id, float w, float h);
     int tabSize_ = 4;
     float lineSpacing_ = 1.2f;
     CodePalette pal_;

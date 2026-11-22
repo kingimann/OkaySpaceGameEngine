@@ -535,6 +535,21 @@ void FindTests() {
     e.SetFind("a");
     CHECK(e.ReplaceAll("x\ny") == 2 && e.GetText() == "x\ny x\ny" && e.LineCount() == 3);
     e.Undo(); CHECK(e.GetText() == "a a");
+    // overlapping matches: "aa" in "aaaa" is replaced left to right without reusing characters; the whole thing is one undo step
+    e.SetText("aaaa");
+    e.SetFind("aa");
+    CHECK(e.ReplaceAll("b") == 2 && e.GetText() == "bb");
+    e.Undo(); CHECK(e.GetText() == "aaaa" && !e.CanUndo());
+    e.SetText("aaa");
+    CHECK(e.ReplaceAll("b") == 1 && e.GetText() == "ba");
+    // replacing with text that contains the needle must not loop
+    e.SetText("ab");
+    e.SetFind("a");
+    CHECK(e.ReplaceAll("aa") == 1 && e.GetText() == "aab");
+    // case-insensitive replace-all, then the caret/selection is on a valid position
+    e.SetText("Foo FOO foo");
+    e.SetFind("foo");
+    CHECK(e.ReplaceAll("x") == 3 && e.GetText() == "x x x" && e.Clamp(e.Caret()) == e.Caret());
     e.SetReadOnly(true);
     CHECK(e.ReplaceAll("z") == 0 && !e.ReplaceCurrent("z"));
 }

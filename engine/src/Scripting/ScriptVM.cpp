@@ -25,4 +25,8 @@ std::string RemovedScriptLanguageMessage(const std::string& language) {
     return {};
 }
 
+const char* ScriptLanguageForExtension(const std::string& /*ext*/) {
+    return "okayscript";
+}
+
 } // namespace okay

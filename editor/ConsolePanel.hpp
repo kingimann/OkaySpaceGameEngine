@@ -3,6 +3,8 @@
 // The panel draws ConsoleModel::Rows(): filters, collapse, Error Pause and
 // Open Script live on that model, not on a second buffer.
 #include "okay/Debug/ConsoleModel.hpp"
+#include "okay/Core/LoopConsole.hpp"
+#include <memory>
 #include <string>
 
 namespace oked {
@@ -22,6 +24,12 @@ void DrawConsole();
 // The panel's OkayUI port (the opt-in backend): called by DrawConsole in place of the ImGui body.
 void DrawConsoleOkayUI(const char* windowTitle);
 #endif
+// The console commands behind the panel's command line: the standard cvars and commands (okay/Core/ConsoleHost.hpp),
+// the Play loop's time.* commands, and `--cvar NAME=VALUE` from the command line (a bad one is a warning here).
+// Keep the result alive while `loop` lives (it removes the time.* commands when destroyed).
+std::unique_ptr<okay::LoopConsole> ConsoleAttachHost(okay::GameLoop& loop, int argc, char** argv);
+// Run one console line as if typed into the panel: "> line" and the output go into the log (category "console").
+void ConsoleRunLine(const std::string& line);
 // Demo / tests: the category dropdown starts on this name ("All" clears it).
 void ConsolePreferCategory(const std::string& category);
 

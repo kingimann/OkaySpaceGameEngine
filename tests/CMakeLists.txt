@@ -36,6 +36,7 @@ if(OKAY_PYTHON)
     find_program(OKAY_GIT NAMES git)
     if(OKAY_GIT)
         add_test(NAME collab_scripts COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_collab.py)
+        add_test(NAME dup_lint_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_dup_lint.py)
     endif()
 endif()
 
@@ -3086,6 +3087,10 @@ add_test(NAME core_cli COMMAND test_core_cli)
 add_executable(test_core_console test_core_console.cpp)
 target_link_libraries(test_core_console PRIVATE okay::engine)
 add_test(NAME core_console COMMAND test_core_console)
+# The console with a real host (okay/Core/ConsoleHost.hpp): GameLoop commands, the typed line, --cvar, standard cvars, player-style profiler sections
+add_executable(test_console_host test_console_host.cpp)
+target_link_libraries(test_console_host PRIVATE okay::engine)
+add_test(NAME console_host COMMAND test_console_host)
 # Core wave 6, 1.18: CommandLine defaults, Cvar extremes and flags (read-only, cheat, restart required), Console nesting, StateMachine exit
 add_executable(test_core_utils_audit test_core_utils_audit.cpp)
 target_link_libraries(test_core_utils_audit PRIVATE okay::engine)
@@ -3589,6 +3594,12 @@ if(NOT WIN32 AND NOT EMSCRIPTEN AND TARGET okay_ui_soft AND CMAKE_SYSTEM_NAME ST
     add_test(NAME platform_painter_window
              COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_painter_window>)
     set_tests_properties(platform_painter_window PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+    # The OpenGL painter (engine/src/Platform/GLPainter.cpp) on an own-backend GL window against the software painter. Own code, off by default.
+    add_executable(test_gl_painter test_gl_painter.cpp)
+    target_link_libraries(test_gl_painter PRIVATE okay_ui_soft)
+    add_test(NAME gl_painter COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_gl_painter>)
+    set_tests_properties(gl_painter PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 endif()
 
 # The controller -> Input bridge (Input/PlatformGamepad.hpp) with a fake okay::platform::Gamepad.
@@ -4824,6 +4835,10 @@ add_test(NAME save_shortcut_model COMMAND test_save_shortcut_model)
 add_executable(test_vs_pan_model test_vs_pan_model.cpp)
 target_include_directories(test_vs_pan_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME vs_pan_model COMMAND test_vs_pan_model)
+
+add_executable(test_ledge_hands_ik test_ledge_hands_ik.cpp)
+target_link_libraries(test_ledge_hands_ik PRIVATE okay::engine)
+add_test(NAME ledge_hands_ik COMMAND test_ledge_hands_ik)
 
 add_executable(test_damage test_damage.cpp)
 target_link_libraries(test_damage PRIVATE okay::engine)

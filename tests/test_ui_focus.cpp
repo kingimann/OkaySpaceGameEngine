@@ -71,6 +71,50 @@ int main() {
         UIFocus::Reset();
     }
 
+    {   // A controller reaches a text field: the d-pad highlights it (not editing yet), A starts editing, the d-pad belongs to the
+        // field while it edits, and once editing ends (Enter, Esc, or the console's on-screen keyboard closed) the d-pad moves on.
+        // Before 2026-11-22 an Input Field was not focusable by NavigateUI at all: a player with only a pad could never type a name.
+        Scene s("field");
+        s.physicsEnabled = false;
+        UIButton* top = Button(s, "Top", {20, 20});
+        auto* field = s.CreateGameObject("Name")->AddComponent<UIInputField>();
+        field->position = {20, 80};
+        field->size = {200, 36};
+        CHECK(IsNavFocusable(field->gameObject));
+        NavigateUI(s);
+        CHECK(top->IsFocused() && !field->IsNavFocused());
+        Input::FeedGamepad({0, 0}, 0); Input::FeedGamepad({0, 0}, 1u << 9);   // D-pad down
+        NavigateUI(s);
+        CHECK(field->IsNavFocused() && !top->IsFocused());
+        CHECK(!field->focused);                                                   // highlighted, not editing
+        CHECK(field->CurrentColor().r == field->focusColor.r && field->CurrentColor().g == field->focusColor.g && field->CurrentColor().b == field->focusColor.b);   // drawn as focused
+        Input::FeedGamepad({0, 0}, 0); Input::FeedGamepad({0, 0}, 1u << 0);   // A
+        GameObject* hit = NavigateUI(s);
+        CHECK(hit == field->gameObject && field->focused);                       // A starts editing
+        CHECK(UITextFieldHasKeyboard(s));
+        Input::FeedGamepad({0, 0}, 0); Input::FeedGamepad({0, 0}, 1u << 8);   // D-pad up while editing: stays
+        NavigateUI(s);
+        CHECK(field->focused && field->IsNavFocused() && !top->IsFocused());
+        field->focused = false;                                                   // editing ended (Enter / Esc / keyboard closed)
+        Input::FeedGamepad({0, 0}, 0); Input::FeedGamepad({0, 0}, 1u << 8);
+        NavigateUI(s);
+        CHECK(top->IsFocused() && !field->IsNavFocused());
+        CHECK(SetUIFocus(field->gameObject) && field->IsNavFocused() && !top->IsFocused() && !field->focused);
+        field->enabled = false;
+        CHECK(!IsNavFocusable(field->gameObject));
+        NavigateUI(s);
+        CHECK(!field->IsNavFocused());                                            // a disabled field drops its ring
+        field->enabled = true; field->focusable = false;
+        CHECK(!IsNavFocusable(field->gameObject));
+        // The first focus prefers a button over a field that comes first in reading order.
+        field->focusable = true; field->position = {20, 0}; top->SetFocused(false); field->SetNavFocused(false);
+        Input::FeedGamepad({0, 0}, 0);
+        NavigateUI(s);
+        CHECK(top->IsFocused() && !field->IsNavFocused());
+        ReleaseInput();
+        UIFocus::Reset();
+    }
+
     {   // Theme style, thickness scale, high visibility, and reduce motion.
         Scene s("style");
         s.physicsEnabled = false;

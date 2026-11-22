@@ -9,11 +9,14 @@
 #include "XboxLog.hpp"
 #include "XboxOverlay.hpp"
 #include "XboxRecovery.hpp"
+#include "XboxSuspend.hpp"
+#include "XboxTextEntry.hpp"
 #include "XboxSoftPainter.hpp"
 #include "XboxPresent.hpp"
 #include "XboxPadSync.hpp"
 #include "XboxUwpBackend.hpp"
 #include "XboxWasapi.hpp"
+#include "okay/Core/Log.hpp"
 #include "okay/Core/Paths.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Render/D3D11Renderer.hpp"
@@ -52,6 +55,12 @@ struct KeyedPad : xb::PadDevice {
         return true;
     }
     void SendVibration(const xb::Vibration& v) override { if (cb && cb->padVibrateKey) cb->padVibrateKey(cb->user, key, v.leftMotor, v.rightMotor, v.leftTrigger, v.rightTrigger); }
+    bool ReadBattery(xb::BatteryInfo& o) override {
+        BatteryPod b;
+        if (!cb || !cb->padBatteryKey || !cb->padBatteryKey(cb->user, key, &b)) return false;
+        o.status = b.status; o.remainingMwh = b.remainingMwh; o.fullMwh = b.fullMwh;
+        return true;
+    }
 };
 
 struct BridgeHost : xb::UwpHost {
@@ -93,6 +102,7 @@ struct Engine {
     xb::DeviceRecovery recovery;      // GPU device loss: rebuild with backoff, give up after a few tries
     xb::FileLog log;                  // LocalState\\logs\\okayspace.log: what the owner reads from the Device Portal
     xb::PadSync padSync;              // pads by stable key -> hub slots (when the shell gives padKeys)
+    std::uint64_t suspendBudgetMs = 4000;   // what the current suspend leaves for saving (XboxSuspend.hpp FlushBudgetMs)
 };
 
 namespace {
@@ -125,6 +135,12 @@ Engine* Create(const ShellCallbacks& cb, const std::string& installDir, const st
         if (lp.ok) e->log.Open(lp.path);
         Engine* raw = e.get();
         e->backend->logSink = [raw](const std::string& line) { raw->log.Line(line); };
+        // The engine's own log lines (okay::Log: scene loading, save framework, scripts, the suspend summary) go into the same file.
+        // Before 2026-11-22 only the backend's lines did.
+        okay::Log::sink = [raw](okay::Log::Level lv, const std::string& msg) {
+            static const char* const kTag[] = {"trace", "info", "warning", "error"};
+            raw->log.Line(std::string("engine ") + kTag[(int)lv & 3] + ": " + msg);
+        };
         e->backend->Log("OkaySpace Xbox app (EXPERIMENTAL, UNVERIFIED) starting. Install folder: " + e->roots.install + "  Local folder: " + e->roots.local);
         e->backend->Log(e->log.IsOpen() ? "Log file: " + e->log.Path() : "No log file (" + (lp.ok ? e->log.Error() : lp.error) + ")");
     }
@@ -135,8 +151,9 @@ Engine* Create(const ShellCallbacks& cb, const std::string& installDir, const st
 }
 
 void Log(Engine* e, const std::string& line) { if (e) e->backend->Log(line); }
+std::string FailureMessage(Engine* e, const std::string& reason) { return xb::FailureText(reason, e && e->log.IsOpen() ? e->log.Path() : std::string()); }
 
-void Destroy(Engine* e) { if (!e) return; e->padSync.Clear(*e->backend); xb::InstallBackend(nullptr); okay::Paths::SetEnvOverride(nullptr); delete e; }
+void Destroy(Engine* e) { if (!e) return; okay::Log::sink = nullptr; e->padSync.Clear(*e->backend); xb::InstallBackend(nullptr); okay::Paths::SetEnvOverride(nullptr); delete e; }
 
 void Resized(Engine* e, float w, float h, float dpi) { if (e) e->backend->Life().Resized(w, h, dpi); }
 void Visibility(Engine* e, bool v) { if (e) e->backend->Life().VisibilityChanged(v); }
@@ -147,6 +164,8 @@ void ScreenBounds(Engine* e, bool fullScreen, const std::string& family) {
     if (!e) return;
     const xb::SafeInsets i = xb::TitleSafeInsets(fullScreen ? xb::BoundsMode::FullScreen : xb::BoundsMode::SystemSafe, xb::IsXboxDeviceFamily(family));
     xb::XboxGameRuntime::SetTitleSafe(i);
+    // A console has no keyboard on the desk: UI input fields bring up the system's on-screen keyboard (XboxTextEntry.hpp).
+    e->runtime.EnableOnScreenKeyboard(xb::IsXboxDeviceFamily(family) && e->host.cb.textEntry != nullptr);
     e->backend->Log("Xbox app: device family " + (family.empty() ? std::string("unknown") : family) + ", " + (fullScreen ? "full screen" : "system TV-safe layout") +
                     ", UI title-safe inset " + std::to_string((int)(i.left * 100.0f + 0.5f)) + "% per edge.");
 }
@@ -156,10 +175,13 @@ void PointerMove(Engine* e, int x, int y) { if (e) e->backend->PushPointerMove(x
 void PointerButton(Engine* e, int b, bool down, int x, int y) { if (e) e->backend->PushPointerButton(b, down, x, y); }
 void Wheel(Engine* e, float n) { if (e) e->backend->PushWheel(n); }
 
-void Suspending(Engine* e, std::uint64_t deadlineMs) {
+void Suspending(Engine* e, long long deadlineTicks, long long nowTicks) {
     if (!e) return;
-    e->backend->Life().Suspending(e->backend->TicksMs(), deadlineMs);
-    e->backend->ServiceLifecycle();   // runs onSuspend (the save) and marks the save done
+    const std::uint64_t remaining = xb::SuspendRemainingMs(deadlineTicks, nowTicks);
+    e->suspendBudgetMs = xb::FlushBudgetMs(remaining);
+    e->backend->Log("Xbox app: suspending, " + std::to_string(remaining) + " ms until the deadline, " + std::to_string(e->suspendBudgetMs) + " ms for saving.");
+    e->backend->Life().Suspending(e->backend->TicksMs(), remaining);
+    e->backend->ServiceLifecycle();   // stops rumble, runs onSuspend (settings + game state, in the budget) and marks the save done
     e->presenter.Release();           // the swap chain goes with the trim; Resuming rebuilds it
     if (void* dev = e->renderer.DeviceForPresent()) {
         IDXGIDevice3* d = nullptr;
@@ -167,6 +189,10 @@ void Suspending(Engine* e, std::uint64_t deadlineMs) {
     }
 }
 void Resuming(Engine* e) { if (e) e->backend->Life().Resuming(); }
+void KeyboardShown(Engine* e) { if (e) e->runtime.KeyboardShown(); }
+void KeyboardHidden(Engine* e) { if (e) e->runtime.KeyboardHidden(); }
+std::string KeyboardText(Engine* e, const std::string& utf8) { return e ? e->runtime.KeyboardText(utf8) : std::string(); }
+void KeyboardSubmit(Engine* e) { if (e) e->runtime.KeyboardSubmit(); }
 
 namespace {
 bool SceneHasUi(okay::Scene& sc) {
@@ -190,12 +216,19 @@ bool Run(Engine* e, std::string& err) {
         return true;
     };
     if (!buildGpu()) return fail("The Direct3D 11 renderer or the swap chain could not start (see the log). package\\Shaders must hold shaders.manifest and the .cso files.");
-    e->runtime.SetSaveDir(e->roots.local + "/saves");
+    e->runtime.SetLocalDir(e->roots.local);   // saves, settings (Prefs) and the suspend snapshot (XboxSuspend.hpp SaveLayoutFor)
+    // Text from CharacterReceived (a USB keyboard) and from the on-screen keyboard reaches UI input fields only while text input is on;
+    // the desktop player turns it on for the whole run. Before 2026-11-22 nothing here did, so every typed character was dropped.
+    e->backend->StartTextInput();
+    if (e->host.cb.textEntry) {
+        const ShellCallbacks* cb = &e->host.cb;
+        e->runtime.onKeyboard = [cb](bool show, xb::TextScope scope, const std::string& text) { cb->textEntry(cb->user, show, (int)scope, text); };
+    }
     e->backend->Log("Xbox app: shaders from " + e->roots.install + "Shaders; saves in " + e->roots.local + "/saves; game data in " + e->roots.install + "Data; pads connected: " + std::to_string(e->host.PadCount()));
     SyncPads(e);   // pads already plugged in get their slots before the game opens them (PadSet::OpenAll)
     std::string rerr;
     if (!e->runtime.Start(e->roots.install + "Data", rerr)) return fail(rerr);
-    e->backend->onSuspend = [e] { e->runtime.OnSuspend(); };
+    e->backend->onSuspend = [e] { e->runtime.OnSuspend(e->suspendBudgetMs); e->backend->Log("Xbox app: suspend save: " + e->runtime.LastSuspend().Summary()); };
     e->backend->onResume = [e] { e->runtime.OnResume(); };
     auto last = std::chrono::steady_clock::now();
     bool quit = false, lostReported = false;

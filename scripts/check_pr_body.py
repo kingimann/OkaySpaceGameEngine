@@ -49,6 +49,7 @@ def check(body, files=None):
     return True, "ok"
 
 
+EXISTING_RULE_SINCE = "2026-11-23T00:00:00Z"   # the Existing code rule applies to PRs opened from this time on
 EXISTING_RE = re.compile(r"^#{1,6}\s*Existing code\b.*$", re.I | re.M)
 
 
@@ -89,8 +90,16 @@ def main():
     ok, msg = check(body, files)
     print(("OK: " if ok else "::error title=PR needs a How to try it section::") + msg)
     ok2, msg2 = check_existing(body, files)
-    print(("OK: " if ok2 else "::error title=PR needs an Existing code section::") + msg2)
-    return 0 if ok and ok2 else 1
+    # PRs opened before the rule existed get a warning, not a failure, so they are not blocked mid-flight.
+    created = os.environ.get("PR_CREATED_AT", "")
+    grandfathered = bool(created) and created < EXISTING_RULE_SINCE
+    if ok2:
+        print("OK: " + msg2)
+    elif grandfathered:
+        print("::warning title=PR needs an Existing code section::" + msg2 + " (PR opened before " + EXISTING_RULE_SINCE + ": warning only)")
+    else:
+        print("::error title=PR needs an Existing code section::" + msg2)
+    return 0 if ok and (ok2 or grandfathered) else 1
 
 
 if __name__ == "__main__":

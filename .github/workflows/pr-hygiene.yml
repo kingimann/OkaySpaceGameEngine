@@ -19,4 +19,5 @@ jobs:
       - name: "PR body: How to try it, Existing code (fatal)"
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_CREATED_AT: ${{ github.event.pull_request.created_at }}
         run: python3 scripts/check_pr_body.py --base origin/main --head HEAD

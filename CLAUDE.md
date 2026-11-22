@@ -150,6 +150,14 @@ then this file gets updated. Keep this file short and true.
     requests, issues and the internal record of releases. The repository may become private at any time, so never add a
     public-facing link to github.com, and a repo check fails if one appears in shipped code or shipped files.
 
+19c. **No duplicate code, across the whole repository, every language.** (Owner rule, 2026-11-22: "create a system so
+    duplicates can't happen again".) Before writing a helper or a system, look in `docs/engine/shared_code.md` and use or
+    extend the one listed there; never paste code from another file. Search `docs/engine/code_index.md` first; a PR lists
+    the existing code it reuses ("## Existing code"). Every claim on #422 names the existing code it builds on
+    ("Existing:"). `python3 scripts/dup_lint.py check` runs in CI and must pass: a pasted block or a new copy of a known
+    helper fails. A real need for a copy is marked `dup-allow: <reason>` on the line and explained in the PR. When a dedup
+    lands, shrink the baseline with `--update-baseline` in the same PR; the baseline may only go down.
+
 ## Machine and agents
 
 20. **Disk is tight.** Run `df -h /` before big builds, stop at under 5 GB free, build with `ninja -j2` and only

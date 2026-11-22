@@ -6,8 +6,11 @@
 // captures). The matcher is a plain backtracking matcher of our own design
 // with a depth limit and every step counted against the run budget, so a
 // hostile pattern can not hang the game. Character classes are ASCII only
-// (independent of the C locale). string.pack / unpack / packsize and
-// string.dump are not provided.
+// (independent of the C locale). string.pack / unpack / packsize follow
+// manual 6.4.2 (format strings): our own format reader and byte writer, with
+// the sizes of this build's types (C int 4, long / lua_Integer / size_t 8,
+// float 4, double / lua_Number 8, native order little-endian, native maximum
+// alignment 8). string.dump is not provided (no binary chunks).
 #include "LuaCode.hpp"
 #include <algorithm>
 #include <cmath>
@@ -666,6 +669,293 @@ int S_format(State& L, int n) {
     return 1;
 }
 
+// ---------------------------------------------------------------- pack / unpack (manual 6.4.2)
+enum class PackKind { Int, Uint, Float, Double, Char, String, Zstr, Pad, PadAlign, None };
+
+struct PackItem {
+    PackKind kind = PackKind::None;
+    int size = 0;     ///< bytes the item takes (for String: the length prefix)
+    int align = 0;    ///< padding bytes before it
+};
+
+struct PackReader {
+    State& L;
+    const char* fname;
+    const std::string& fmt;
+    std::size_t pos = 0;
+    bool little = true;
+    int maxAlign = 1;
+
+    bool Digit(char c) const { return c >= '0' && c <= '9'; }
+    // an optional size after an option letter; `def` when there is none
+    int Size(int def) {
+        if (pos >= fmt.size() || !Digit(fmt[pos])) return def;
+        std::int64_t n = 0;
+        while (pos < fmt.size() && Digit(fmt[pos])) {
+            n = n * 10 + (fmt[pos++] - '0');
+            if (n > 0x7fffffff / 10) L.ArgError(0, fname, "invalid format (size too large)");
+        }
+        return (int)n;
+    }
+    int IntSize(int def) {
+        int n = Size(def);
+        if (n < 1 || n > 16) L.Error(std::string("integral size (") + std::to_string(n) + ") out of limits [1,16]");
+        return n;
+    }
+    // the next option without alignment; returns false at the end of the format
+    bool Option(PackItem& it) {
+        for (;;) {
+            if (pos >= fmt.size()) return false;
+            char c = fmt[pos++];
+            it = PackItem();
+            switch (c) {
+                case ' ': continue;
+                case '<': little = true; continue;
+                case '>': little = false; continue;
+                case '=': little = true; continue;   // this build's native order
+                case '!': {
+                    int n = Size(8);
+                    if (n < 1 || n > 16) L.Error(std::string("integral size (") + std::to_string(n) + ") out of limits [1,16]");
+                    maxAlign = n;
+                    continue;
+                }
+                case 'b': it.kind = PackKind::Int; it.size = 1; return true;
+                case 'B': it.kind = PackKind::Uint; it.size = 1; return true;
+                case 'h': it.kind = PackKind::Int; it.size = 2; return true;
+                case 'H': it.kind = PackKind::Uint; it.size = 2; return true;
+                case 'l': case 'j': it.kind = PackKind::Int; it.size = 8; return true;
+                case 'L': case 'J': case 'T': it.kind = PackKind::Uint; it.size = 8; return true;
+                case 'i': it.kind = PackKind::Int; it.size = IntSize(4); return true;
+                case 'I': it.kind = PackKind::Uint; it.size = IntSize(4); return true;
+                case 'f': it.kind = PackKind::Float; it.size = 4; return true;
+                case 'd': case 'n': it.kind = PackKind::Double; it.size = 8; return true;
+                case 's': it.kind = PackKind::String; it.size = IntSize(8); return true;
+                case 'z': it.kind = PackKind::Zstr; return true;
+                case 'x': it.kind = PackKind::Pad; it.size = 1; return true;
+                case 'c': {
+                    if (pos >= fmt.size() || !Digit(fmt[pos])) L.Error("missing size for format option 'c'");
+                    it.kind = PackKind::Char;
+                    it.size = Size(0);
+                    return true;
+                }
+                case 'X': it.kind = PackKind::PadAlign; return true;
+                default: L.Error(std::string("invalid format option '") + c + "'");
+            }
+        }
+    }
+    // the next item with its alignment padding worked out (`total` = bytes so far)
+    bool Next(PackItem& it, std::size_t total) {
+        if (!Option(it)) return false;
+        int align = it.size;
+        if (it.kind == PackKind::PadAlign) {
+            // Xop: align to op's size; op itself is not packed
+            PackItem op;
+            std::size_t save = pos;
+            if (!Option(op) || op.kind == PackKind::Char || op.kind == PackKind::Zstr || op.kind == PackKind::PadAlign || op.size == 0)
+                L.ArgError(0, fname, "invalid next option for option 'X'");
+            (void)save;
+            align = op.size;
+            it.size = 0;
+        }
+        const bool alignable = it.kind == PackKind::Int || it.kind == PackKind::Uint || it.kind == PackKind::Float ||
+                               it.kind == PackKind::Double || it.kind == PackKind::PadAlign;
+        if (alignable && align > 1) {
+            if (align > maxAlign) align = maxAlign;
+            if ((align & (align - 1)) != 0) L.ArgError(0, fname, "format asks for alignment not power of 2");
+            it.align = (int)((std::size_t)(align - (int)(total & (std::size_t)(align - 1))) & (std::size_t)(align - 1));
+        }
+        return true;
+    }
+};
+
+void PackInt(std::string& out, std::uint64_t v, int size, bool little, bool negative) {
+    unsigned char b[16];
+    for (int i = 0; i < size; ++i) b[i] = i < 8 ? (unsigned char)(v >> (8 * i)) : (negative ? 0xff : 0);
+    for (int i = 0; i < size; ++i) out += (char)b[little ? i : size - 1 - i];
+}
+
+std::uint64_t ReadUInt(State& L, const char* p, int size, bool little, bool isSigned) {
+    std::uint64_t v = 0;
+    int limit = size < 8 ? size : 8;
+    for (int i = 0; i < limit; ++i) {
+        unsigned char c = (unsigned char)p[little ? i : size - 1 - i];
+        v |= (std::uint64_t)c << (8 * i);
+    }
+    if (size < 8) {
+        if (isSigned) {
+            std::uint64_t signBit = std::uint64_t(1) << (size * 8 - 1);
+            if (v & signBit) v |= ~((signBit << 1) - 1);
+        }
+    } else if (size > 8) {
+        // the extra bytes must be a plain sign (or zero) extension
+        unsigned char fill = (isSigned && (std::int64_t)v < 0) ? 0xff : 0;
+        for (int i = 8; i < size; ++i)
+            if ((unsigned char)p[little ? i : size - 1 - i] != fill)
+                L.Error(std::to_string(size) + "-byte integer does not fit into Lua Integer");
+    }
+    return v;
+}
+
+int S_pack(State& L, int n) {
+    const std::string fmt = L.CheckStr(0, "pack")->s;
+    PackReader rd{L, "pack", fmt};
+    std::string out;
+    int arg = 1;
+    PackItem it;
+    while (rd.Next(it, out.size())) {
+        out.append((std::size_t)it.align, '\0');
+        switch (it.kind) {
+            case PackKind::Int: case PackKind::Uint: {
+                std::int64_t v = L.CheckInt(arg, "pack");
+                if (it.size < 8) {
+                    if (it.kind == PackKind::Int) {
+                        std::int64_t lim = std::int64_t(1) << (it.size * 8 - 1);
+                        if (v < -lim || v >= lim) L.ArgError(arg, "pack", "integer overflow");
+                    } else if ((std::uint64_t)v >= (std::uint64_t(1) << (it.size * 8))) {
+                        L.ArgError(arg, "pack", "unsigned overflow");
+                    }
+                }
+                PackInt(out, (std::uint64_t)v, it.size, rd.little, v < 0);
+                ++arg;
+                break;
+            }
+            case PackKind::Float: {
+                float f = (float)L.CheckNum(arg++, "pack");
+                std::uint32_t bits;
+                std::memcpy(&bits, &f, 4);
+                PackInt(out, bits, 4, rd.little, false);
+                break;
+            }
+            case PackKind::Double: {
+                double d = L.CheckNum(arg++, "pack");
+                std::uint64_t bits;
+                std::memcpy(&bits, &d, 8);
+                PackInt(out, bits, 8, rd.little, false);
+                break;
+            }
+            case PackKind::Char: {
+                const std::string& str = L.CheckStr(arg, "pack")->s;
+                if (str.size() > (std::size_t)it.size) L.ArgError(arg, "pack", "string longer than given size");
+                out += str;
+                out.append((std::size_t)it.size - str.size(), '\0');
+                ++arg;
+                break;
+            }
+            case PackKind::String: {
+                const std::string& str = L.CheckStr(arg, "pack")->s;
+                if (it.size < 8 && (std::uint64_t)str.size() >= (std::uint64_t(1) << (it.size * 8)))
+                    L.ArgError(arg, "pack", "string length does not fit in given size");
+                PackInt(out, (std::uint64_t)str.size(), it.size, rd.little, false);
+                out += str;
+                ++arg;
+                break;
+            }
+            case PackKind::Zstr: {
+                const std::string& str = L.CheckStr(arg, "pack")->s;
+                if (str.find('\0') != std::string::npos) L.ArgError(arg, "pack", "string contains zeros");
+                out += str;
+                out += '\0';
+                ++arg;
+                break;
+            }
+            case PackKind::Pad: out += '\0'; break;
+            case PackKind::PadAlign: case PackKind::None: break;
+        }
+        if (out.size() > kMaxStringResult) L.Error("resulting string too large");
+    }
+    (void)n;
+    L.Charge(out.size() / 64);
+    L.PushString(out);
+    return 1;
+}
+
+int S_packsize(State& L, int n) {
+    (void)n;
+    const std::string fmt = L.CheckStr(0, "packsize")->s;
+    PackReader rd{L, "packsize", fmt};
+    std::size_t total = 0;
+    PackItem it;
+    while (rd.Next(it, total)) {
+        if (it.kind == PackKind::String || it.kind == PackKind::Zstr) L.ArgError(0, "packsize", "variable-length format");
+        total += (std::size_t)it.align + (std::size_t)it.size;
+        if (total > 0x7fffffff) L.ArgError(0, "packsize", "format result too large");
+    }
+    L.Push(Value::Int((std::int64_t)total));
+    return 1;
+}
+
+int S_unpack(State& L, int n) {
+    const std::string fmt = L.CheckStr(0, "unpack")->s;
+    LString* data = L.CheckStr(1, "unpack");
+    const std::string& d = data->s;
+    std::int64_t init = n >= 3 ? L.OptInt(2, "unpack", 1) : 1;
+    if (init < 0) init = (std::int64_t)d.size() + init + 1;
+    if (init < 1 || init - 1 > (std::int64_t)d.size()) L.ArgError(2, "unpack", "initial position out of string");
+    std::size_t pos = (std::size_t)(init - 1);
+    PackReader rd{L, "unpack", fmt};
+    PackItem it;
+    int results = 0;
+    auto need = [&](std::size_t bytes) {
+        if (bytes > d.size() || pos > d.size() - bytes) L.ArgError(1, "unpack", "data string too short");
+    };
+    while (rd.Next(it, pos)) {
+        need((std::size_t)it.align + (std::size_t)it.size);
+        pos += (std::size_t)it.align;
+        L.CheckStack(2);
+        switch (it.kind) {
+            case PackKind::Int: case PackKind::Uint: {
+                std::uint64_t v = ReadUInt(L, d.data() + pos, it.size, rd.little, it.kind == PackKind::Int);
+                L.Push(Value::Int((std::int64_t)v));
+                ++results;
+                break;
+            }
+            case PackKind::Float: {
+                std::uint32_t bits = (std::uint32_t)ReadUInt(L, d.data() + pos, 4, rd.little, false);
+                float f;
+                std::memcpy(&f, &bits, 4);
+                L.Push(Value::Num((double)f));
+                ++results;
+                break;
+            }
+            case PackKind::Double: {
+                std::uint64_t bits = ReadUInt(L, d.data() + pos, 8, rd.little, false);
+                double v;
+                std::memcpy(&v, &bits, 8);
+                L.Push(Value::Num(v));
+                ++results;
+                break;
+            }
+            case PackKind::Char:
+                L.Push(Value::Obj(L.NewString(d.data() + pos, (std::size_t)it.size)));
+                ++results;
+                break;
+            case PackKind::String: {
+                std::uint64_t len = ReadUInt(L, d.data() + pos, it.size, rd.little, false);
+                pos += (std::size_t)it.size;
+                if (len > d.size() - pos) L.ArgError(1, "unpack", "data string too short");
+                L.Push(Value::Obj(L.NewString(d.data() + pos, (std::size_t)len)));
+                pos += (std::size_t)len;
+                it.size = 0;
+                ++results;
+                break;
+            }
+            case PackKind::Zstr: {
+                std::size_t end = d.find('\0', pos);
+                if (end == std::string::npos) L.ArgError(1, "unpack", "unfinished string for format 'z'");
+                L.Push(Value::Obj(L.NewString(d.data() + pos, end - pos)));
+                pos = end + 1;
+                ++results;
+                break;
+            }
+            case PackKind::Pad: case PackKind::PadAlign: case PackKind::None: break;
+        }
+        pos += (std::size_t)it.size;
+        if (results > 200) L.CheckStack(results);
+    }
+    L.Push(Value::Int((std::int64_t)pos + 1));
+    return results + 1;
+}
+
 } // namespace
 
 void OpenString(State& L) {
@@ -674,7 +964,8 @@ void OpenString(State& L) {
     const struct { const char* n; NativeFn f; } fns[] = {
         {"len", S_len}, {"sub", S_sub}, {"upper", S_upper}, {"lower", S_lower}, {"reverse", S_reverse},
         {"rep", S_rep}, {"byte", S_byte}, {"char", S_char}, {"find", S_find}, {"match", S_match},
-        {"gmatch", S_gmatch}, {"gsub", S_gsub}, {"format", S_format},
+        {"gmatch", S_gmatch}, {"gsub", S_gsub}, {"format", S_format}, {"pack", S_pack},
+        {"packsize", S_packsize}, {"unpack", S_unpack},
     };
     for (const auto& f : fns) L.Register(t, f.n, f.f);
     Table* mt = L.NewTable();

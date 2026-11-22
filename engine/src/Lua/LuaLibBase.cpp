@@ -123,6 +123,8 @@ int B_setmetatable(State& L, int n) {
     if (!mt.IsNil() && !mt.IsTable()) L.TypeError(1, "setmetatable", "nil or table");
     if (t->meta && !t->meta->GetStr(L.tmName[TM_METATABLE]).IsNil()) L.Error("cannot change a protected metatable");
     t->meta = mt.IsNil() ? nullptr : mt.Tab();
+    // manual 2.5.3: a metatable with a __gc field at this moment marks the table for finalization
+    if (t->meta && !t->meta->GetStr(L.tmName[TM_GC]).IsNil()) L.MarkForFinalization(t);
     L.Push(L.Arg(0));
     return 1;
 }

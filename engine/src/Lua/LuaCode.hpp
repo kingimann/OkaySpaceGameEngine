@@ -60,7 +60,7 @@ enum TM : int {
     TM_INDEX, TM_NEWINDEX, TM_CALL,
     TM_ADD, TM_SUB, TM_MUL, TM_MOD, TM_POW, TM_DIV, TM_IDIV, TM_BAND, TM_BOR, TM_BXOR, TM_SHL, TM_SHR,
     TM_UNM, TM_BNOT, TM_LEN, TM_CONCAT, TM_EQ, TM_LT, TM_LE, TM_CLOSE, TM_TOSTRING, TM_NAME, TM_METATABLE,
-    TM_PAIRS, TM_MODE, TM_COUNT
+    TM_PAIRS, TM_MODE, TM_GC, TM_COUNT
 };
 extern const char* const kTMNames[TM_COUNT];
 /// Value a native returns to say "I yielded" (coroutine.yield).

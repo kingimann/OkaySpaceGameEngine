@@ -39,6 +39,7 @@ struct GcObj {
     std::size_t gcSize = 0;   ///< bytes counted for this object
     Type type;
     bool marked = false;
+    bool fin = false;   ///< marked for finalization (setmetatable with a __gc field), not run yet
     explicit GcObj(Type t) : type(t) {}
     virtual ~GcObj() = default;
 };
@@ -364,6 +365,9 @@ public:
     Coroutine* main_ = nullptr;
     std::vector<Coroutine*> coStack_;   ///< coroutines waiting in Resume (roots)
     std::vector<Table*> weakTables;     ///< found while marking (collector only)
+    /// Mark an object for finalization (setmetatable did it when the metatable has __gc).
+    void MarkForFinalization(GcObj* o);
+    void RunFinalizers();
 private:
     void Mark(GcObj* o, std::vector<GcObj*>& gray);
     void MarkValue(const Value& v, std::vector<GcObj*>& gray);
@@ -380,6 +384,9 @@ private:
     std::uint64_t budget_ = 0, used_ = 0;
     std::size_t gcThreshold_ = 1u << 20;
     std::vector<int> freeRefs_;
+    std::vector<GcObj*> finObjs_;      ///< marked for finalization, in marking order
+    std::vector<GcObj*> toFinalize_;   ///< unreachable, finalizer not run yet (roots)
+    bool runningFinalizers_ = false;
 };
 
 } // namespace okay::lua

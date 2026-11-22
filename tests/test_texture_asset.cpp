@@ -311,6 +311,27 @@ int main() {
         CHECK(mem.Count(MemoryTracker::Textures) == baseCount);
     }
 
+    // --- Background loading: the renderers get null (draw untextured) until the decode finishes, then the picture.
+    {
+        const std::string p = d + "/async.png";
+        CHECK(Solid(32, 32, 66, 0, 0).SavePNG(p));
+        textures::SetAsyncLoading(true);
+        CHECK(textures::AsyncLoading());
+        const TextureAsset* first = textures::ForRender(p);
+        CHECK(first == nullptr || Red(&first->image) == 66);   // a fast worker may already be done; never wrong pixels
+        CHECK(PumpUntil([&] { return textures::ForRender(p) != nullptr; }));
+        CHECK(Red(GetCachedTexture(p)) == 66);
+        CHECK(textures::GetStats().loading == 0);
+        // A missing file under async loading: null, and no endless retry.
+        CHECK(textures::ForRender(d + "/async_missing.png") == nullptr);
+        CHECK(PumpUntil([&] { return textures::GetStats().loading == 0; }));
+        CHECK(textures::ForRender(d + "/async_missing.png") == nullptr);
+        textures::SetAsyncLoading(false);
+        textures::Drop(p);
+        textures::Drop(d + "/async_missing.png");
+        CHECK(mem.Count(MemoryTracker::Textures) == baseCount);
+    }
+
     // --- InvalidateTextureCache (the editor's Apply) re-decodes a picture still held elsewhere.
     {
         const std::string p = d + "/inv.png";

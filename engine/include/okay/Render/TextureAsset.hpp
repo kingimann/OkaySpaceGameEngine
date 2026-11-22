@@ -48,7 +48,7 @@ struct TextureSettings {
     int  maxSize = 0;          ///< longest side in pixels; 0 = no limit
     bool mipmaps = true;
     bool compress = false;     ///< block-compressed GPU copy (GpuTexture.hpp)
-    int  anisotropy = 8;       ///< 1 = off; 2..16 = anisotropic filtering level (with Bilinear or Trilinear)
+    int  anisotropy = 8;       ///< 1 = off; 2..16 = anisotropic filtering level (applies with Trilinear)
     bool normalMap = false;    ///< RGB is a tangent-space normal: linear, mips renormalised, auto compression BC5
     int  mipFilter = MipBox;
     int  compression = CompressAuto;   ///< with `compress`: auto (BC1 opaque, BC3 alpha, BC5 normal maps) or one format
@@ -69,6 +69,11 @@ std::vector<std::pair<std::string, std::string>> TextureExtraKeys(const TextureS
 void ApplyTextureExtraKeys(TextureSettings& s, const std::vector<std::pair<std::string, std::string>>& keys);
 const char* TextureCompressionName(int compression);   // "auto", "bc1", ...
 const char* TextureMipFilterName(int mipFilter);       // "box", "kaiser"
+
+/// A mip chain for `base`, level 0 (a copy) first, down to 1x1, with the settings' filter (box or Kaiser), in linear
+/// light for colour pictures and renormalised for normal maps. Just level 0 when mipmaps are off. For a GPU upload that
+/// does not need to keep the chain; TextureAsset::Mips() keeps one.
+std::vector<Image> BuildMipChain(const Image& base, const TextureSettings& settings);
 
 /// One decoded picture, shared by every renderer.
 class TextureAsset {
@@ -94,19 +99,22 @@ public:
     /// The mip chain, level 0 (a copy of `image`) first, down to 1x1, built on first use with our own filter (box or
     /// Kaiser, linear light for colour, renormalised normal maps). Just level 0 when `settings.mipmaps` is off.
     const std::vector<Image>& Mips() const;
-    bool MipsBuilt() const { return m_mipsSerial == serial && !m_mips.empty(); }
+    /// The same chain as a shared pointer, so a renderer can keep it while the asset rebuilds or reloads.
+    std::shared_ptr<const std::vector<Image>> SharedMips() const;
+    bool MipsBuilt() const { return m_mips && m_mipsSerial == serial; }
+    int  MipLevels() const { return MipsBuilt() ? static_cast<int>(m_mips->size()) : 1; }
     /// CPU bytes held: the base level plus the mip chain when built.
     std::size_t Bytes() const;
     /// The pixels changed in place (a painted terrain splat): a new serial, the mip chain dropped, the count updated.
     void Touch();
-    /// Recount this asset's bytes in MemoryTracker (after `image` was replaced).
-    void Track();
+    /// Count (or recount) this asset's bytes in MemoryTracker "Textures" and the library's list.
+    void Track() const;
 
 private:
-    mutable std::vector<Image> m_mips;
+    mutable std::shared_ptr<std::vector<Image>> m_mips;
     mutable std::uint64_t m_mipsSerial = 0;
     mutable std::int64_t m_tracked = -1;   ///< bytes counted in MemoryTracker; -1 = not counted
-    void Untrack();
+    void Untrack() const;
 };
 
 /// A counted reference to a TextureAsset. Copy it freely; the asset lives while any copy does.
@@ -171,10 +179,17 @@ int Pump();
 void SetHotReload(bool enabled, double intervalSeconds = 0.5);
 bool HotReload();
 
+/// Background loading: ForRender starts the decode on AssetManager's worker and returns null (the renderers draw the
+/// surface untextured) until it is done, instead of stopping the frame for a big picture. Off by default;
+/// OKAY_TEXTURE_ASYNC=1 turns it on. Finished loads are picked up by ForRender (Pump runs the callbacks).
+void SetAsyncLoading(bool enabled);
+bool AsyncLoading();
+
 struct Stats {
     std::size_t count = 0;          ///< live texture assets (all of them, not only the renderers')
     std::size_t bytes = 0;          ///< their CPU bytes (base levels plus built mip chains)
     std::size_t rendererHeld = 0;   ///< names the renderers' cache holds
+    std::size_t loading = 0;        ///< background loads not finished yet
     std::size_t budgetBytes = 0;
     bool overBudget = false;
     std::uint64_t reloads = 0;      ///< hot reloads and Reload calls since start

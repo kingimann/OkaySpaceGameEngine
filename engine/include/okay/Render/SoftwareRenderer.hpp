@@ -19,6 +19,9 @@
 #include <unordered_set>
 #include "okay/Graphics/Image.hpp"
 #include "okay/Render/ProcTexture.hpp"
+#include "okay/Texture/Dds.hpp"         // .dds pictures: read and decoded on the CPU (okay::tex)
+#include "okay/Core/Log.hpp"
+#include <cstring>
 #include "okay/Core/Profiler.hpp"
 #include "okay/Core/Time.hpp"
 #include <algorithm>
@@ -839,6 +842,22 @@ inline void RegisterTexture(const std::string& name, Image img) {
     TextureCacheMap()[name] = std::move(img);
 }
 
+// A .dds picture as RGBA8: its top level, block formats decoded on the CPU (okay::tex::DecodeBc). The software renderer
+// and the Direct3D renderers draw .dds files this way; the OpenGL renderer uploads them compressed when it can.
+inline bool LoadDdsImage(const std::string& path, Image& img) {
+    tex::DdsImage d;
+    std::string why;
+    std::vector<std::uint8_t> rgba;
+    if (!tex::ReadDdsFile(path, &d, &why) || !tex::DdsLevelToRGBA8(d, 0, &rgba)) {
+        Log::Warning("[asset] cannot load image '", path, "': ", why.empty() ? std::string("decode failed") : why);
+        img = Image();
+        return false;
+    }
+    img = Image(d.width, d.height);
+    std::memcpy(img.Data(), rgba.data(), rgba.size());
+    return true;
+}
+
 inline Image* GetCachedTexture(const std::string& path) {
     auto& cache = TextureCacheMap();
     auto it = cache.find(path);
@@ -846,6 +865,8 @@ inline Image* GetCachedTexture(const std::string& path) {
         Image img;
         if (path.rfind("proc:", 0) == 0)
             img = GenerateProcTexture(path);   // built-in procedural (no file)
+        else if (tex::IsDdsPath(path))
+            LoadDdsImage(path, img);
         else
             img.Load(path);                    // leaves the image empty on failure
         ApplyTextureImportSettings(path, img);   // the asset's own "largest side", if it has one

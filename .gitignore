@@ -80,3 +80,6 @@ dbg*.png
 /okay_settings.txt
 /okay_recovery/
 /okay_recent.txt
+
+# Import cache: compressed texture copies the engine builds next to pictures (rebuilt on demand)
+.okaycache/

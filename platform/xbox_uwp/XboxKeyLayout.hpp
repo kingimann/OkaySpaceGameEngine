@@ -15,6 +15,8 @@
 #include <cstdint>
 #include <string>
 
+#include "okay/Core/Utf8.hpp"
+
 namespace okay::xbox {
 
 enum class KeyLayout { US, French, German, Nordic, Russian };
@@ -135,12 +137,10 @@ inline int KeyForChar(KeyLayout l, char32_t c) {
     return 0;
 }
 
+// The engine's UTF-8 encoder (Core/Utf8.hpp), not a second copy: a value that is not a Unicode scalar becomes U+FFFD.
 inline std::string EncodeUtf8(char32_t c) {
     std::string o;
-    if (c < 0x80) o += (char)c;
-    else if (c < 0x800) { o += (char)(0xC0 | (c >> 6)); o += (char)(0x80 | (c & 0x3F)); }
-    else if (c < 0x10000) { o += (char)(0xE0 | (c >> 12)); o += (char)(0x80 | ((c >> 6) & 0x3F)); o += (char)(0x80 | (c & 0x3F)); }
-    else { o += (char)(0xF0 | (c >> 18)); o += (char)(0x80 | ((c >> 12) & 0x3F)); o += (char)(0x80 | ((c >> 6) & 0x3F)); o += (char)(0x80 | (c & 0x3F)); }
+    okay::utf8::Append(o, (std::uint32_t)c);
     return o;
 }
 

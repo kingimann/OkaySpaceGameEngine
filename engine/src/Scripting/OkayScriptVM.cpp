@@ -4393,6 +4393,7 @@ struct OkayScriptVM::Impl {
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{false};
             Scene* sc = rt.host->gameObject->scene();
             if (!sc) return Value{false};
+            if (!ScriptAssetPathOk(a[0].AsString(), "pool_get")) return Value{false};
             ObjectPool* pool = ObjectPool::ForPrefab(*sc, a[0].AsString());
             GameObject* go = pool ? pool->Get() : nullptr;
             if (!go) return Value{false};
@@ -4409,7 +4410,8 @@ struct OkayScriptVM::Impl {
         };
         b["pool_prewarm"] = [this](std::vector<Value>& a) {
             Scene* sc = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            ObjectPool* pool = (sc && !a.empty()) ? ObjectPool::ForPrefab(*sc, a[0].AsString()) : nullptr;
+            ObjectPool* pool = (sc && !a.empty() && ScriptAssetPathOk(a[0].AsString(), "pool_prewarm"))
+                                   ? ObjectPool::ForPrefab(*sc, a[0].AsString()) : nullptr;
             if (!pool) return Value{0.0f};
             const float n = a.size() > 1 ? a[1].AsFloat() : 1.0f;
             pool->Prewarm(n > 0.0f && n < 100000.0f ? static_cast<int>(n) : 0);
@@ -4417,7 +4419,8 @@ struct OkayScriptVM::Impl {
         };
         b["pool_idle"] = [this](std::vector<Value>& a) {
             Scene* sc = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            ObjectPool* pool = (sc && !a.empty()) ? ObjectPool::ForPrefab(*sc, a[0].AsString()) : nullptr;
+            ObjectPool* pool = (sc && !a.empty() && ScriptAssetPathOk(a[0].AsString(), "pool_idle"))
+                                   ? ObjectPool::ForPrefab(*sc, a[0].AsString()) : nullptr;
             return Value{pool ? static_cast<float>(pool->IdleCount()) : 0.0f};
         };
         // Destroy this script's own GameObject (deferred to end of frame).

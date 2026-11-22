@@ -246,10 +246,85 @@ static void TestScan() {
     fs::remove_all(dir, ec);
 }
 
+static std::string Txt(const StringTable& t, const char* k, const char* l) {
+    const std::string* s = t.Text(k, l);
+    return s ? *s : std::string();
+}
+
+// The window's import confirm step: a plan says what would change and leaves the live table alone;
+// CSV, whole-table JSON and one-language JSON (named by the file's stem) all read; a broken file
+// says why; Export JSON reads back to the same table.
+static void TestImportPlan() {
+    RUN_SUITE("loc window import plan (CSV and JSON, confirm before applying)");
+    const StringTable live = Sample();
+    const std::string before = live.Write();
+
+    CHECK(LocImportFormatFor("a/b/strings.JSON") == LocImportFormat::Json);
+    CHECK(LocImportFormatFor("strings.csv") == LocImportFormat::Csv);
+    CHECK(LocImportFormatFor("dir.json/strings") == LocImportFormat::Csv);
+
+    // CSV: fills French for menu.quit, changes the French score, adds a key.
+    const std::string csv = "key,note,en,fr\nmenu.quit,,Quit,Quitter\nhud.score,,Score: {0},Score : {0}\nmenu.new,,New,Nouveau\n";
+    LocImportPlan p = PlanLocImport(live, csv, LocImportFormat::Csv, "sheet.csv");
+    CHECK(p.ok && p.Changes());
+    CHECK(live.Write() == before);                         // nothing applied yet
+    CHECK(Txt(p.after, "menu.quit", "fr") == "Quitter");
+    CHECK(p.diff.filled.size() >= 1 && p.diff.changed.size() >= 1 && p.diff.addedKeys.size() == 1);
+    const std::string sum = LocImportSummary(p);
+    CHECK(sum.find("3 rows") == 0);
+    CHECK(sum.find("filled") != std::string::npos && sum.find("changed") != std::string::npos && sum.find("1 new key") != std::string::npos);
+    const std::vector<std::string> lines = LocImportChangeLines(p, 100);
+    CHECK(std::find(lines.begin(), lines.end(), "menu.new  (new key)") != lines.end());
+    CHECK(std::find(lines.begin(), lines.end(), "fr  menu.quit  filled") != lines.end());
+    const std::vector<std::string> cut = LocImportChangeLines(p, 1);
+    CHECK(cut.size() == 2 && cut.back().rfind("and ", 0) == 0);
+
+    // The same file again on top of the result: nothing would change.
+    const LocImportPlan again = PlanLocImport(p.after, csv, LocImportFormat::Csv, "sheet.csv");
+    CHECK(again.ok && !again.Changes());
+    CHECK(LocImportSummary(again).find("nothing would change") != std::string::npos);
+
+    // Export JSON and read it into an empty table: the same texts come back.
+    std::string exportedLang = "x";
+    const std::string json = LocExportJson(p.after, "out/strings.json", &exportedLang);
+    CHECK(exportedLang.empty());
+    CHECK(json.find("\"keys\"") != std::string::npos);
+    const LocImportPlan whole = PlanLocImport(StringTable(), json, LocImportFormat::Json, "export.json");
+    CHECK(whole.ok && whole.language.empty());
+    CHECK(Txt(whole.after, "menu.quit", "fr") == "Quitter" && Txt(whole.after, "menu.new", "en") == "New");
+    CHECK(whole.after.FindLanguage("ar") != nullptr);
+
+    // One language's JSON: the language is the file's stem.
+    const LocImportPlan flat = PlanLocImport(live, "{\"menu.quit\": \"Beenden\", \"menu.start\": \"Start\"}",
+                                             LocImportFormat::Json, "C:\\loc\\de.json");
+    CHECK(flat.ok && flat.language == "de");
+    CHECK(Txt(flat.after, "menu.quit", "de") == "Beenden");
+    CHECK(flat.diff.addedLanguages.size() == 1 && flat.diff.addedLanguages[0] == "de");
+    CHECK(LocImportSummary(flat).find("of de") != std::string::npos);
+    CHECK(live.Write() == before);
+
+    // Export to a file named after a language: that language alone, which reads back as it.
+    std::string frLang;
+    const std::string frJson = LocExportJson(p.after, "loc/fr.json", &frLang);
+    CHECK(frLang == "fr" && frJson.find("\"keys\"") == std::string::npos && frJson.find("Quitter") != std::string::npos);
+    StringTable enOnly;
+    enOnly.AddLanguage("en", "English");
+    enOnly.Set("menu.quit", "en", "Quit");
+    const LocImportPlan back = PlanLocImport(enOnly, frJson, LocImportFormat::Json, "loc/fr.json");
+    CHECK(back.ok && back.language == "fr" && Txt(back.after, "menu.quit", "fr") == "Quitter");
+
+    // A broken file: not ok, the reason is in the summary, nothing to apply.
+    const LocImportPlan bad = PlanLocImport(live, "{\"keys\": ", LocImportFormat::Json, "bad.json");
+    CHECK(!bad.ok && !bad.Changes() && !bad.error.empty());
+    CHECK(LocImportSummary(bad).rfind("Can't import: ", 0) == 0);
+    CHECK(LocImportChangeLines(bad, 10).empty());
+}
+
 int main() {
     TestMissingKey();
     TestPlaceholderMismatch();
     TestPseudoPreview();
     TestScan();
+    TestImportPlan();
     TEST_MAIN_RESULT();
 }

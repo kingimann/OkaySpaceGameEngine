@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include "okay/Platform/Steam/SteamService.hpp"
 
 namespace okay {
@@ -22,6 +23,14 @@ public:
     /// Override the app id used when the service is first created. Call before
     /// the first Get(); ignored afterwards.
     static void SetAppId(std::uint32_t appId);
+    /// The app id the service is (or will be) created with.
+    static std::uint32_t AppId();
+    /// When true (a shipped store build), the real backend asks Steam to relaunch the game through the Steam
+    /// client if it was started directly (SteamAPI_RestartAppIfNecessary). Call before the first Get().
+    static void SetRelaunchCheck(bool on);
+
+    /// Replace how the service is made (tests). nullptr restores the default (CreateSteamService).
+    static void SetFactory(std::function<std::unique_ptr<ISteamService>()> factory);
 };
 
 } // namespace okay

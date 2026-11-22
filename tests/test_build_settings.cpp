@@ -90,7 +90,8 @@ int main() {
     }
     {
         RUN_SUITE("pages per platform");
-        CHECK(PagesFor(0).size() == 8 && PageShown(kGame, 0) && PageShown(kAdvanced, 0));
+        CHECK(PagesFor(0).size() == 9 && PageShown(kGame, 0) && PageShown(kAdvanced, 0) && PageShown(kStores, 0));
+        CHECK(!PageShown(kStores, 1) && !PageShown(kStores, 3));
         CHECK(!PageShown(kGame, 1) && !PageShown(kGame, 3) && PageShown(kServer, 3) && !PageShown(kDisplay, 3));
         CHECK(PageShown(kXbox, 4) && !PageShown(kXbox, 0));
         for (int p = 0; p < kPageCount; ++p) CHECK(PageName(p)[0] && PageTip(p)[0]);
@@ -296,6 +297,56 @@ int main() {
         BuildProfile p; p.settings = s;
         BuildProfile q; CHECK(ReadProfileFile(WriteProfileFile(p), q));
         CHECK(WriteBuildProfileBlockText(q.settings) == WriteBuildProfileBlockText(s));
+    }
+    {
+        RUN_SUITE("Stores page: Steam and Epic settings save, load, search and check");
+        BuildSettings b;
+        b.storeTarget = 1; b.steamAppId = 2468; b.steamDepotId = 2469;
+        std::snprintf(b.steamSdkPath, sizeof b.steamSdkPath, "C:/sdk/steamworks");
+        std::snprintf(b.steamBranch, sizeof b.steamBranch, "beta");
+        std::snprintf(b.steamBuildDesc, sizeof b.steamBuildDesc, "Demo = build | 2");
+        std::snprintf(b.epicProductId, sizeof b.epicProductId, "prod1");
+        std::snprintf(b.epicSandboxId, sizeof b.epicSandboxId, "sbx1");
+        std::snprintf(b.epicDeploymentId, sizeof b.epicDeploymentId, "dep1");
+        std::snprintf(b.epicClientId, sizeof b.epicClientId, "cli1");
+        std::snprintf(b.epicOrgId, sizeof b.epicOrgId, "org1");
+        std::snprintf(b.epicArtifactId, sizeof b.epicArtifactId, "art1");
+        std::snprintf(b.epicBptClientId, sizeof b.epicBptClientId, "bpt1");
+        std::snprintf(b.epicBptPath, sizeof b.epicBptPath, "C:/BPT/BuildPatchTool.exe");
+        std::snprintf(b.epicSdkPath, sizeof b.epicSdkPath, "C:/sdk/eos");
+        BuildProfile p; p.name = "Steam"; p.settings = b;
+        const std::string text = WriteBuildProfiles({p});
+        const std::vector<BuildProfile> back = ParseBuildProfiles(text);
+        CHECK(back.size() == 1);
+        const BuildSettings& r = back[0].settings;
+        CHECK(r.storeTarget == 1 && r.steamAppId == 2468 && r.steamDepotId == 2469);
+        CHECK(std::string(r.steamSdkPath) == "C:/sdk/steamworks" && std::string(r.steamBranch) == "beta");
+        CHECK(std::string(r.steamBuildDesc) == "Demo = build | 2");
+        CHECK(std::string(r.epicProductId) == "prod1" && std::string(r.epicSandboxId) == "sbx1" && std::string(r.epicDeploymentId) == "dep1");
+        CHECK(std::string(r.epicClientId) == "cli1" && std::string(r.epicOrgId) == "org1" && std::string(r.epicArtifactId) == "art1");
+        CHECK(std::string(r.epicBptClientId) == "bpt1" && std::string(r.epicBptPath) == "C:/BPT/BuildPatchTool.exe" && std::string(r.epicSdkPath) == "C:/sdk/eos");
+        CHECK(WriteBuildProfileBlockText(r) == WriteBuildProfileBlockText(b));
+        // There is no field for either secret, so a saved profile can never hold one.
+        CHECK(text.find("ecret") == std::string::npos);
+        CHECK(PageChanged(kStores, b) && ResetPage(kStores, b) > 0 && b.storeTarget == 0 && b.steamAppId == 0);
+        CHECK(!Search("steam", 0).empty() && !Search("epic", 0).empty() && Search("steam", 3).empty());
+        // The checks: Steam chosen without an app id is an error on the Stores page.
+        ValidateInput in; in.productName = "Moon Hop"; in.outputDir = "out"; in.enabledScenes = 1;
+        in.s.storeTarget = 1;
+        bool err = false;
+        for (const Issue& i : Validate(in)) if (i.page == kStores && i.sev == Severity::Error) err = true;
+        CHECK(err);
+        in.s.steamAppId = 2468;
+        err = false;
+        for (const Issue& i : Validate(in)) if (i.page == kStores && i.sev == Severity::Error) err = true;
+        CHECK(!err);
+        // The export input carries the ids; the store line goes into the game's config.
+        const okay::stores::ExportInput ex = StoreExportFrom(in.s);
+        CHECK(ex.store == okay::StoreKind::Steam && ex.steam.appId == 2468 && ex.steam.depotId == 0);
+        // Summary says where the game is going.
+        SummaryInput si; si.productName = "Moon Hop"; si.outputDir = "out"; si.s = in.s;
+        std::string all; for (const auto& l : BuildSummary(si)) all += l + "\n";
+        CHECK(all.find("Steam") != std::string::npos);
     }
     TEST_MAIN_RESULT();
 }

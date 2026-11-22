@@ -1,4 +1,5 @@
 #include "okay/VisualScript/VsTypes.hpp"
+#include "okay/VisualScript/QuickBlocks.hpp"
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/VsBuiltins.hpp"
@@ -626,6 +627,9 @@ const std::unordered_map<std::string, NodeSignature>& Table() {
             if (tp >= 0 && tp == (int)s.ins.size()) s.ins += 'O';
             m.emplace(r.type, s);
         }
+        // Quick blocks: typed fields only (any value), flow in when they have it. No data output.
+        for (const QuickBlock& b : QuickBlocks())
+            m.emplace(b.type, NodeSignature{b.flowIn, std::string(QbAllFields(b).size(), 'A'), ""});
         return m;
     }();
     return t;
@@ -635,6 +639,7 @@ const std::unordered_map<std::string, NodeSignature>& Table() {
 std::vector<std::string> AllNodeTypes() {
     std::vector<std::string> v;
     for (const Row& r : kRows) v.push_back(r.type);
+    for (const QuickBlock& b : QuickBlocks()) v.push_back(b.type);
     for (const VsApiEntry& e : VsApiEntries()) v.push_back(e.type);
     for (const BuiltinNodeInfo& b : BuiltinNodes()) v.push_back(b.type);
     for (const char* t : {"GetProperty","SetProperty","CallMethod","GetComponent","AddComponent",

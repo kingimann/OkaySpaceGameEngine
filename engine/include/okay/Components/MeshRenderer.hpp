@@ -27,6 +27,9 @@ public:
     /// colliders then keep their size instead of chasing each pose.
     bool  deformed = false;
     Color color = Color::White;        // base (albedo) color
+    /// Runtime only: while a camera rig has made this mesh see-through, the alpha it had before (-1 = not faded).
+    /// A scene saved meanwhile stores this one, not the faded value.
+    float fadeBaseAlpha = -1.0f;
     /// A picture per material slot (Mesh::triSlot): slot i draws with slotTextures[i] when it is
     /// not empty, else with `texture`. Drawn by the software renderer; the GPU renderers do not
     /// use it yet (they show the slot colours).
@@ -40,8 +43,15 @@ public:
     /// ramp by surface up-ness (gradientBottom -> gradientTop); Fresnel = a glowing rim
     /// look (base darkened, edges lit by rimColor). New models are honoured by the
     /// software renderer and the GPU (GL / D3D11) renderers.
-    enum class Shader { Standard, Unlit, Toon, Gradient, Fresnel, Iridescent, Hologram, Posterize, Velvet };
+    /// Custom = the surface comes from an .okayshader file (`customShader`), our own shader language
+    /// (okay/Render/OkayShader.hpp): every renderer lights it like Standard. A file that does not compile
+    /// draws magenta and logs the error.
+    enum class Shader { Standard, Unlit, Toon, Gradient, Fresnel, Iridescent, Hologram, Posterize, Velvet, Custom };
     Shader shader = Shader::Standard;
+    /// Custom shader: the .okayshader file, and the material's values for its properties and textures
+    /// as text ("speed=0.5;hot=1,0.5,0.1;tex:detail=rock.png", see oshader::ResolveProperties).
+    std::string customShader;
+    std::string shaderParams;
     /// Number of cel bands for the Toon shader (2-6 reads best). Ignored otherwise.
     int    toonBands = 3;
     /// Gradient shader endpoints (bottom = downward faces, top = upward faces).
@@ -59,6 +69,9 @@ public:
     /// big terrain that never occludes anything; receiving off for emissive props.
     bool   castShadows    = true;
     bool   receiveShadows = true;
+    /// Glow light: a glowing (emissive) object also lights its surroundings, like a small lamp of its colour that reaches this
+    /// many metres. 0 = off (the object only glows itself).
+    float  glowLightRange = 0.0f;
 
     /// Ground contact shadow: cast a flat "blob" shadow projected onto the horizontal
     /// plane y = groundShadowY along the light, so objects sit on the ground instead of

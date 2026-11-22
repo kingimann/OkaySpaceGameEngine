@@ -8,7 +8,7 @@
 using namespace okay;
 
 // Follow-up to real-life digging: a terrain that is moved, turned and scaled, the world-edge catch, the dug material's dust
-// colour and sound (docs/terrain_water.md, "Real-life digging").
+// colour and sound (docs/rendering/terrain_water.md, "Real-life digging").
 namespace {
 bool AllFiniteField(const VoxelTerrain& v) { for (float f : v.density) if (!std::isfinite(f)) return false; return true; }
 struct World {
@@ -361,10 +361,26 @@ int main() {
             ++ok; worst = std::max(worst, std::fabs(p1.y - p2.y)); nyMin = std::min(nyMin, n1.y);
             CHECK(std::fabs(n1.Magnitude() - 1.0f) < 1e-3f);
         }
+        // Timing: 60 density queries take only ~0.1 ms in all, so one scheduler stall on a busy CI runner can swamp that single sum
+        // (seen on CI: 0.07 ms per density query against 0.0015 ms locally, ray cast unchanged at ~0.18 ms). Measure each path in
+        // 7 separate rounds and compare the medians. Locally the density path is ~100x faster, so 5x keeps wide headroom.
+        auto median = [](std::vector<double> v) { std::sort(v.begin(), v.end()); return v[v.size() / 2]; };
+        std::vector<double> rf, rs;
+        for (int round = 0; round < 7; ++round) {
+            double a = 0, b = 0;
+            for (int i = 0; i < 60; ++i) {
+                const float x = -40.0f + (i % 10) * 8.0f, z = -35.0f + (i / 10) * 12.0f;
+                Vec3 p1, n1;
+                auto t0 = Clk::now(); (void)fast(x, z, p1, n1); a += std::chrono::duration<double, std::milli>(Clk::now() - t0).count();
+                t0 = Clk::now(); (void)slow(x, z, p1, n1); b += std::chrono::duration<double, std::milli>(Clk::now() - t0).count();
+            }
+            rf.push_back(a); rs.push_back(b);
+        }
+        tf = median(rf); ts = median(rs);
         std::cout << "  foliage ground query: " << tf / 60 << " ms (density) against " << ts / 60 << " ms (ray cast), worst height difference " << worst << " m\n";
         CHECK(ok > 40 && n >= ok);
         CHECK(worst < 1.2f);                                           // within a voxel and a half (the mesh and the density sample differ a little)
-        CHECK(tf * 5.0 < ts);
+        CHECK(tf * 5.0 < ts);                                          // medians of 7 rounds (see above)
         CHECK(nyMin > -0.01f);
     }
 

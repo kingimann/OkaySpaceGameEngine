@@ -197,7 +197,7 @@ int main() {
         // off by default: with no Assimp the file does not import, and the message says how to switch the reader on
         SetImportBackend(".3mf", ImportBackend::Default);
         unsetenv("OKAY_OWN_3MF");
-        if (EffectiveImportBackend(".3mf") != ImportBackend::Own) {
+        if (EffectiveImportBackend(".3mf") == ImportBackend::Default) {   // no reader at all: no Assimp in this build and ours off
             CHECK(!ImportModelData(path, m, ImportBackend::Default, false, &err) && err.find("OKAY_OWN_3MF") != std::string::npos);
             CHECK(ImportableExtensions().find(".3mf") == std::string::npos);
         }

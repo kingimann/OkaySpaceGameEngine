@@ -3,6 +3,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Environment/Wind.hpp"
+#include "okay/Environment/WindField.hpp"
 #include "okay/Render/Color.hpp"
 #include <vector>
 #include <string>
@@ -10,6 +11,16 @@
 #include <cmath>
 
 namespace okay {
+
+class Terrain;
+
+/// A Terrain a particle system bounces off this frame (its matrices taken once per Update).
+struct ParticleGround {
+    const Terrain* terrain = nullptr;
+    Mat4  toLocal = Mat4::Identity();
+    Mat4  toWorld = Mat4::Identity();
+    float half = 0.0f;   ///< half the terrain's side, in its local units
+};
 
 /// A colour gradient of up to `kMaxStops` (time, colour) stops over a 0..1
 /// range, linearly blended (no separate alpha track).
@@ -246,19 +257,35 @@ public:
     float bounce = 0.5f;                // restitution: 0 = stick, 1 = perfect bounce
     float collisionFriction = 0.1f;     // 0..1 tangential speed lost per bounce
     float collisionLifeLoss = 0.0f;     // 0..1 fraction of remaining life lost per bounce
+    /// With `collision` on, also bounce off every active Terrain in the scene: its heights and slopes, moved,
+    /// turned and scaled with its object. A particle that comes down on a hill stops or bounces there and slides
+    /// down the slope (Bounce, Friction and Life Loss as for the plane). Off by default.
+    bool  collideTerrain = false;
 
     std::uint64_t seed = 1234567u;
 
     /// Clamp the pool size so a malformed/hand-edited scene (negative or absurd
     /// maxParticles) can't trigger length_error / bad_alloc.
-    int SafeMax() const { return maxParticles < 0 ? 0 : (maxParticles > 100000 ? 100000 : maxParticles); }
+    /// A limit on every particle system's pool, set by the game (Build Settings > Graphics > Particle limit). 0 = none.
+    static int& GlobalCap() { static int cap = 0; return cap; }
+    int SafeMax() const {
+        int n = maxParticles < 0 ? 0 : (maxParticles > 100000 ? 100000 : maxParticles);
+        if (GlobalCap() > 0 && n > GlobalCap()) n = GlobalCap();
+        return n;
+    }
 
     void Awake() override { m_rng.Seed(seed); m_particles.assign(SafeMax(), Particle{}); m_age = 0.0f; m_burstFired = false; m_hasLast = false; m_playOnReuse = playing; m_awake = true; }
     /// A pooled effect that is reused starts again: no particle of the last use is left and it plays if it did at the start.
     void OnPoolReuse() override { if (!m_awake) return; Restart(); m_hasLast = false; playing = m_playOnReuse; }
 
-    /// Begin/stop emitting (existing particles keep living when stopped).
-    void Play()  { playing = true; }
+    /// Begin/stop emitting (existing particles keep living when stopped). Play() on a
+    /// stopped effect, or on a one-shot whose cycle has ended, starts a new cycle (its
+    /// burst fires again); on an effect that is already running it changes nothing.
+    void Play()  {
+        const bool finished = !loop && duration > 0.0f && m_age >= duration;
+        if (!playing || finished) { m_age = 0.0f; m_burstFired = false; m_accum = 0.0f; }
+        playing = true;
+    }
     void Stop()  { playing = false; }
     /// Clear all particles and restart the cycle from zero.
     void Restart() { for (Particle& p : m_particles) p.alive = false; m_age = 0.0f; m_burstFired = false; m_accum = 0.0f; }
@@ -289,7 +316,7 @@ public:
         simulationSpace = SimulationSpace::World; inheritVelocity = 0.0f;
         noiseStrength = 0.0f; noiseFrequency = 1.0f; noiseScroll = 0.5f;
         orbitSpeed = 0.0f; orbitAxis = {0.0f, 1.0f, 0.0f}; vortexStrength = 0.0f; vortexPull = 0.0f;
-        collision = false;
+        collision = false; collideTerrain = false;
         auto& G = colorGradient;
         switch (which) {
             case Preset::Fire:   // rising tongues: white-hot core -> orange -> red smoke, flickering
@@ -401,7 +428,7 @@ public:
     }
 
     void Update(float dt) override {
-        if (m_particles.empty()) m_particles.assign(SafeMax(), Particle{});
+        EnsurePool();   // Max Particles (or the game's particle limit) changed since the pool was made
 
         // Track the emitter's motion: its velocity (for inheritVelocity) and, in
         // Local space, carry live particles along by this frame's move + turn.
@@ -429,6 +456,8 @@ public:
             m_age += dt;
             if (duration > 0.0f) {
                 if (m_age >= duration) {
+                    // A burst due by the end of the cycle (burstTime == duration) fires before the clock wraps.
+                    if (burstCount > 0 && !m_burstFired && burstTime <= duration) { Emit(burstCount); m_burstFired = true; }
                     if (loop) { m_age = std::fmod(m_age, duration); m_burstFired = false; }
                     else      { emitting = false; }
                 }
@@ -440,10 +469,17 @@ public:
             }
         }
 
-        // Steady-rate emission.
+        // Steady-rate emission. At most the free slots are filled in one frame, and what a full pool could not take is
+        // dropped instead of banked, so an enormous or infinite rate fills the pool once and returns.
         if (emitting && emissionRate > 0.0f) {
-            m_accum += emissionRate * dt;
-            while (m_accum >= 1.0f) { m_accum -= 1.0f; Emit(); }
+            m_accum += emissionRate * (dt > 0.0f ? dt : 0.0f);
+            if (!(m_accum < 1.0e9f)) m_accum = 1.0e9f;   // also catches inf and NaN
+            const int want = (int)m_accum;
+            if (want > 0) {
+                const int made = Emit(want);
+                m_accum -= (float)want;
+                if (made < want) m_accum = 0.0f;   // the pool is full
+            }
         }
 
         // Integrate.
@@ -461,18 +497,25 @@ public:
         const bool useSpeedCurve = speedOverLife && speedCurve.Active();
         // Wind: the sideways velocity relaxes toward the wind's, so rain leans
         // and snow drifts without piling up speed over a long life.
-        const Vec3 wind = WindVector() * windInfluence;
-        const bool windy = wind.SqrMagnitude() > 1e-6f;
+        // With Wind Zones in the scene each particle feels the wind where it flies (WindField::At); with none this is
+        // the weather's wind for everyone, exactly as before.
+        const bool windField = windInfluence != 0.0f && WindField::Active();
+        const Vec3 wind = windField ? Vec3{0, 0, 0} : WindVector() * windInfluence;
+        const bool windy = windField || wind.SqrMagnitude() > 1e-6f;
         const float windK = dt * 1.5f > 1.0f ? 1.0f : dt * 1.5f;
+        // Terrains to bounce off: their matrices are taken once per frame.
+        bool hitTerrain = false;
+        if (collision && collideTerrain) { GatherGround(); hitTerrain = !m_ground.empty(); }
         for (Particle& p : m_particles) {
             if (!p.alive) continue;
             p.life -= dt;
             if (p.life <= 0.0f) { p.alive = false; continue; }
             p.velocity += gravity * (gravityModifier * dt);
             if (windy) {
-                p.velocity.x += (wind.x - p.velocity.x) * windK;
-                p.velocity.z += (wind.z - p.velocity.z) * windK;
-                p.velocity.y += wind.y * dt;
+                const Vec3 wv = windField ? WindField::At(simulationSpace == SimulationSpace::Local ? origin : p.position) * windInfluence : wind;
+                p.velocity.x += (wv.x - p.velocity.x) * windK;
+                p.velocity.z += (wv.z - p.velocity.z) * windK;
+                p.velocity.y += wv.y * dt;
             }
             if (swirl && (vortexStrength != 0.0f || vortexPull != 0.0f)) {
                 // Radial offset from the axis line through the emitter.
@@ -517,6 +560,20 @@ public:
                 p.velocity.x *= keep; p.velocity.z *= keep;
                 if (collisionLifeLoss > 0.0f) p.life -= p.maxLife * Mathf::Clamp01(collisionLifeLoss);
             }
+            // Terrain collision: lift the particle back onto the surface, take away the speed into the ground
+            // (keeping Bounce of it, pointing out) and lose Friction of the speed along the ground.
+            if (hitTerrain) {
+                Vec3 surf, nrm;
+                if (GroundHit(p.position, surf, nrm)) {
+                    p.position = surf;
+                    const float vn = Vec3::Dot(p.velocity, nrm);
+                    if (vn < 0.0f) {
+                        const Vec3 along = (p.velocity - nrm * vn) * (1.0f - Mathf::Clamp01(collisionFriction));
+                        p.velocity = along - nrm * (vn * Mathf::Clamp01(bounce));
+                        if (collisionLifeLoss > 0.0f) p.life -= p.maxLife * Mathf::Clamp01(collisionLifeLoss);
+                    }
+                }
+            }
             float t = 1.0f - Mathf::Clamp01(p.life / p.maxLife);   // 0 at birth -> 1 at death
             if (sizeOverLife) {
                 if (sizeCurve.Active()) p.size = p.size0 * sizeCurve.Evaluate(t);
@@ -544,21 +601,39 @@ public:
     }
     const std::vector<Particle>& Particles() const { return m_particles; }
 
-    /// Spawn a burst of `count` particles immediately.
-    void Emit(int count) { for (int i = 0; i < count; ++i) Emit(); }
+    /// Spawn a burst of up to `count` particles immediately (no more than the pool has free slots).
+    /// Returns how many were made. One walk over the pool, however large `count` is.
+    int Emit(int count) {
+        EnsurePool();
+        int made = 0;
+        std::size_t slot = 0;
+        while (made < count && EmitFrom(slot)) { ++made; ++slot; }
+        return made;
+    }
 
 private:
-    void Emit() {
-        // Find a free slot (reuse dead particles).
-        for (Particle& p : m_particles) {
-            if (p.alive) continue;
+    /// Fill m_ground with the scene's active terrains (ParticleSystem.cpp).
+    void GatherGround();
+    /// The highest terrain surface above `pos` that `pos` is below: the world point on it and its unit normal.
+    bool GroundHit(const Vec3& pos, Vec3& surface, Vec3& normal) const;
+    /// Make the pool match SafeMax(): grow with dead slots, or shrink (the particles beyond the new size go).
+    void EnsurePool() {
+        const std::size_t want = (std::size_t)SafeMax();
+        if (m_particles.size() != want) m_particles.resize(want, Particle{});
+    }
+    /// Spawn one particle into the first free slot at or after `slot` (updated to the slot used). False when full.
+    bool EmitFrom(std::size_t& slot) {
+        while (slot < m_particles.size() && m_particles[slot].alive) ++slot;
+        if (slot >= m_particles.size()) return false;
+        {
+            Particle& p = m_particles[slot];
             p.alive = true;
             p.maxLife = p.life = startLifetime + (startLifetimeRandom > 0.0f
                                   ? m_rng.Range(-startLifetimeRandom, startLifetimeRandom) : 0.0f);
-            if (p.life < 0.01f) p.life = p.maxLife = 0.01f;
+            if (!(p.life >= 0.01f)) p.life = p.maxLife = 0.01f;   // also a NaN lifetime: it would never die
             p.size0 = p.size = startSize + (startSizeRandom > 0.0f
                                ? m_rng.Range(-startSizeRandom, startSizeRandom) : 0.0f);
-            if (p.size0 < 0.0f) p.size0 = p.size = 0.0f;
+            if (!(p.size0 >= 0.0f)) p.size0 = p.size = 0.0f;     // negative or NaN
             p.rotation = startRotation + (startRotationRandom > 0.0f
                          ? m_rng.Range(-startRotationRandom, startRotationRandom) : 0.0f);
             p.angularVel = rotationSpeed + (rotationSpeedRandom > 0.0f
@@ -619,8 +694,8 @@ private:
 
             p.position = origin + off;
             p.velocity = vel;
-            return;
         }
+        return true;
     }
 
     static float VLen(const Vec3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
@@ -653,6 +728,7 @@ private:
     }
 
     std::vector<Particle> m_particles;
+    std::vector<ParticleGround> m_ground;   // terrains this frame (collideTerrain)
     bool m_playOnReuse = true, m_awake = false;   // `playing` as the object was made (a pool puts it back)
     float m_accum = 0.0f;
     float m_age = 0.0f;        // seconds into the current cycle

@@ -1,8 +1,8 @@
 # ---- okay::crypto as its own static library --------------------------
-# Our own crypto primitives (docs/crypto.md). A separate target so that code which must not
+# Our own crypto primitives (docs/platform/crypto.md). A separate target so that code which must not
 # link the whole engine (the launcher, shared/AntiCheatCrypto.hpp with -DOKAY_OWN_CRYPTO=ON,
 # the crypto tests, the fuzz targets and the benchmark) can use it alone. okay_engine links it
-# PUBLIC, so everything that links the engine gets it as before. UNREVIEWED; see docs/crypto.md.
+# PUBLIC, so everything that links the engine gets it as before. UNREVIEWED; see docs/platform/crypto.md.
 add_library(okay_crypto STATIC
     src/Crypto/Util.cpp
     src/Crypto/Random.cpp
@@ -35,6 +35,7 @@ add_library(okay_engine
     src/Core/DebugOverlay.cpp
     src/Core/SaveGame.cpp
     src/Core/SaveFile.cpp
+    src/Core/TolerantNumbers.cpp
     src/Core/SaveFramework.cpp
     src/Core/SaveFrameworkScene.cpp
     src/Core/SaveFrameworkSync.cpp
@@ -56,6 +57,17 @@ add_library(okay_engine
     src/Core/ThumbnailCache.cpp
     src/Core/Localization.cpp
     src/Input/Input.cpp
+    src/Input/InputRecorder.cpp
+    src/Input/InputDebug.cpp
+    src/Input/Haptics.cpp
+    src/Input/GamepadInfo.cpp
+    src/Input/ControllerMapping.cpp
+    src/Input/PadProfiles.cpp
+    src/Input/ActionSet.cpp
+    src/Input/InputAsset.cpp
+    src/Input/PlayerInput.cpp
+    src/Input/InputRuntime.cpp
+    src/Input/ActionEditor.cpp
     src/Input/InputActions.cpp
     src/Input/GameInput.cpp
     src/Input/GestureRecognizer.cpp
@@ -63,8 +75,11 @@ add_library(okay_engine
     src/Input/TouchControls.cpp
     src/Core/DisplaySettings.cpp
     src/Core/DisplayModes.cpp
+    src/Render/TextureCacheFiles.cpp
+    src/Render/ModelImportProblem.cpp
     src/Render/ConsoleRenderer.cpp
     src/Render/GLRenderer.cpp
+    src/Render/OkayShader.cpp
     src/Render/D3D11Renderer.cpp
     src/Render/D3D12Renderer.cpp
     src/Scene/Component.cpp
@@ -127,6 +142,7 @@ add_library(okay_engine
     src/Inventory/InventoryOps.cpp
     src/Combat/WeaponBook.cpp
     src/Components/MeleeAttacker.cpp
+    src/Components/Damage.cpp
     src/Components/RangedWeapon.cpp
     src/Inventory/ItemDatabase.cpp
     src/Inventory/LootTable.cpp
@@ -145,6 +161,12 @@ add_library(okay_engine
     src/Components/UITooltip.cpp
     src/Components/UITextBind.cpp
     src/Components/UIBarBind.cpp
+    src/Components/UIVars.cpp
+    src/Components/UIDataGlue.cpp
+    src/Components/UIGameHud.cpp
+    src/Components/UIAppParts.cpp
+    src/UI/UIGameHudDraw.cpp
+    src/UI/UIAppPartsDraw.cpp
     src/Components/UIOwnerData.cpp
     src/Components/UIDamageNumbers.cpp
     src/Components/UIDialogueBox.cpp
@@ -153,6 +175,7 @@ add_library(okay_engine
     src/Components/Draggable.cpp
     src/Components/Terrain.cpp
     src/Components/Foliage.cpp
+    src/Components/ParticleSystem.cpp
     src/Components/Cable.cpp
     src/Components/Decal.cpp
     src/Components/VoxelTerrain.cpp
@@ -175,6 +198,7 @@ add_library(okay_engine
     src/Components/LineRenderer.cpp
     src/Components/BuildMode.cpp
     src/Components/Volume.cpp
+    src/Components/WindZone.cpp
     src/Components/DialogueGraph.cpp
     src/Components/DialogueRunner.cpp
     src/Components/QuestLog.cpp
@@ -184,6 +208,9 @@ add_library(okay_engine
     src/Platform/Account/Account.cpp
     src/Physics/Physics2D.cpp
     src/Physics/Physics3D.cpp
+    src/Physics/ColliderShapes3D.cpp
+    src/Physics/ColliderShapes2D.cpp
+    src/Physics/PhysicsToys.cpp
     src/Physics/TriMesh.cpp
     src/Physics/MeshCollider3D.cpp
     src/Audio/AudioMixer.cpp
@@ -228,14 +255,15 @@ add_library(okay_engine
     src/UI/UIRenderer.cpp
     src/UI/UIWidgetsMoreDraw.cpp
     src/UI/UIBatcher.cpp
+    src/UI/UIImageScale.cpp
     src/UI/UILayoutUpdate.cpp
     src/UI/UIFrameTransform.cpp
-    # Localization tools (docs/localization_tools.md)
+    # Localization tools (docs/engine/localization.md)
     src/Core/LocCheck.cpp
     src/Core/LocTable.cpp
     src/Core/LocScan.cpp
     src/Core/LocPreview.cpp
-    # Accessibility (docs/accessibility.md)
+    # Accessibility (docs/engine/accessibility.md)
     src/Graphics/ColorVision.cpp
     src/Core/Subtitles.cpp
     src/Core/AccessibilitySettings.cpp
@@ -244,6 +272,7 @@ add_library(okay_engine
     src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
     src/Render/ModelReaders.cpp
+    src/Render/BlendModifiers.cpp   # helper of the Blender reader; the readers themselves are model_import compile= files
     src/Modeling/EditTransform.cpp
     src/Modeling/Measure.cpp
     src/Modeling/SelectOps.cpp
@@ -275,6 +304,15 @@ add_library(okay_engine
     src/Optimize/BatchPlanner.cpp
     src/Optimize/StreamingGrid.cpp
     src/Optimize/MipBudget.cpp
+    src/Texture/Texture.cpp
+    src/Texture/Mip.cpp
+    src/Texture/Atlas.cpp
+    src/Texture/Convert.cpp
+    src/Texture/Bc.cpp
+    src/Texture/Dds.cpp
+    src/Texture/Stream.cpp
+    src/Texture/Export.cpp
+    src/Render/GpuTexture.cpp
     src/Optimize/SceneOptimizationReport.cpp
     src/Testing/TestRegistry.cpp
     src/Testing/PlayTest.cpp
@@ -295,14 +333,13 @@ if(OKAY_OWN_FBX)
 endif()
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
-# ---- engine modules (docs/modular_engine.md) ----
+# ---- engine modules (docs/engine/modular_engine.md) ----
 # The manifests under engine/modules/ and the OKAY_MODULES option become modules_enabled.cpp.
 include(${CMAKE_SOURCE_DIR}/cmake/OkayModules.cmake)
 okay_modules_generate("${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp")
 target_sources(okay_engine PRIVATE
     src/Modules/ModuleManifest.cpp
     src/Modules/ModuleRegistry.cpp
-    src/Modules/Health.cpp
     src/Modules/Interact.cpp
     src/Render/ModelReaderRegistry.cpp
     src/Scripting/ScriptApiRegistry.cpp
@@ -312,6 +349,21 @@ target_sources(okay_engine PRIVATE
 list(LENGTH OKAY_MODULES_ENABLED _okay_mod_on)
 list(LENGTH OKAY_MODULES_DISABLED _okay_mod_off)
 message(STATUS "OkaySpace: modules ${OKAY_MODULES} (${_okay_mod_on} on, ${_okay_mod_off} off)")
+# The UI library's data files (assets/ui/*.okaydata: screens, styles, themes, icons, components) are embedded into the engine, so every
+# program has them without shipping the files. Edit the .okaydata file and rebuild; scripts/gen_ui_catalogue.py counts the same files.
+set(OKAY_UI_DATA_NAMES ui_screens ui_styles ui_themes ui_icons ui_components)
+set(_okay_ui_data_cpp "${CMAKE_CURRENT_BINARY_DIR}/ui_library_data.cpp")
+set(_okay_ui_data_text "// Generated by engine/CMakeLists.txt from assets/ui/*.okaydata. Do not edit.\n#include <cstring>\nnamespace okay { namespace uilib {\nconst char* EmbeddedData(const char* name) {\n")
+foreach(_n ${OKAY_UI_DATA_NAMES})
+    set(_f "${PROJECT_SOURCE_DIR}/assets/ui/${_n}.okaydata")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_f}")
+    file(READ "${_f}" _c)
+    string(APPEND _okay_ui_data_text "    if (!std::strcmp(name, \"${_n}\")) return R\"OKAYUIDATA(${_c})OKAYUIDATA\";\n")
+endforeach()
+string(APPEND _okay_ui_data_text "    return \"\";\n}\n}}\n")
+file(WRITE "${_okay_ui_data_cpp}.new" "${_okay_ui_data_text}")
+execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_okay_ui_data_cpp}.new" "${_okay_ui_data_cpp}")
+target_sources(okay_engine PRIVATE "${_okay_ui_data_cpp}")
 
 target_include_directories(okay_engine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -384,7 +436,7 @@ endif()
 # an empty TU unless this is turned on with the SDK unpacked somewhere local:
 #   cmake -DOKAY_WITH_PHOTON=ON -DOKAY_PHOTON_SDK_DIR=/path/to/photon-sdk ...
 # The SDK dir is the one containing LoadBalancing-cpp/, Photon-cpp/ and
-# Common-cpp/. See docs/photon.md for the full walkthrough.
+# Common-cpp/. See docs/online/photon.md for the full walkthrough.
 option(OKAY_WITH_PHOTON "Photon Realtime transport adapter (requires the Photon C++ SDK)" OFF)
 set(OKAY_PHOTON_SDK_DIR "" CACHE PATH "Root of the unpacked Photon Realtime C++ SDK")
 if(OKAY_WITH_PHOTON)
@@ -419,7 +471,7 @@ endif()
 # The primitives in src/Crypto are ALWAYS compiled (and tested); OKAY_OWN_CRYPTO only
 # decides whether the network layer uses them instead of libsodium. UNREVIEWED by an
 # outside cryptographer: it must not become the default, and libsodium must not be
-# removed, before that review (docs/own_code_roadmap.md, docs/crypto.md).
+# removed, before that review (docs/status/own_code_roadmap.md, docs/platform/crypto.md).
 target_link_libraries(okay_engine PUBLIC okay_crypto)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
 set(OKAY_SODIUM_IN_BUILD OFF CACHE INTERNAL "libsodium was found and linked into okay_engine")   # reset on every configure; set ON below
 if(OKAY_REQUIRE_SODIUM)
@@ -580,7 +632,7 @@ okay_add_platform_library()
 target_link_libraries(okay_engine PUBLIC okay_platform)
 # okay::platform::Painter (the 2D drawing surface of a window): the shared part and the sdl2 implementation.
 # The software implementation lives in okayui/soft (okay_ui_soft). Own code, not ready, off by default.
-target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/SdlPainter.cpp)
+target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/SdlPainter.cpp src/Platform/GLPainter.cpp)
 if(OKAY_PLATFORM_SDL_INCLUDES)
     target_include_directories(okay_engine PRIVATE ${OKAY_PLATFORM_SDL_INCLUDES})
 endif()
@@ -588,10 +640,12 @@ if(OKAY_PLATFORM_SDL_OPTIONS)
     set_source_files_properties(src/Platform/SdlPainter.cpp PROPERTIES COMPILE_OPTIONS "${OKAY_PLATFORM_SDL_OPTIONS}")
 endif()
 
+# The model reader defaults below (OKAY_PREFER_OWN_READERS_DEFAULT, OKAY_OWN_<FMT>_DEFAULT) are read by ModelImport.cpp only, so they
+# are put on that one file: switching a reader's default rebuilds one file, not the whole engine.
 # Our own STL / PLY readers are always built. With Assimp also on, this picks which one
-# a format uses by default (docs/model_import.md); SetImportBackend() changes it at run time.
+# a format uses by default (docs/content/model_import.md); SetImportBackend() changes it at run time.
 if(OKAY_PREFER_OWN_READERS)
-    target_compile_definitions(okay_engine PRIVATE OKAY_PREFER_OWN_READERS_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_PREFER_OWN_READERS_DEFAULT)
     message(STATUS "OkaySpace: model import prefers the built-in STL/PLY readers over Assimp")
 endif()
 
@@ -599,17 +653,17 @@ endif()
 # has it, and a build without Assimp reads no .dae at all until the reader is switched on, with
 # -DOKAY_OWN_COLLADA=ON, the OKAY_OWN_COLLADA=1 environment variable, or SetImportBackend(".dae", Own).
 if(OKAY_OWN_COLLADA)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_COLLADA_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_COLLADA_DEFAULT)
     message(STATUS "OkaySpace: model import reads .dae with the built-in Collada reader first")
 endif()
 # Our own 3DS (.3ds) and BVH (.bvh) readers: same opt-in rules as Collada (default OFF; run-time env
 # OKAY_OWN_3DS=0/1 / OKAY_OWN_BVH=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_3DS)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_3DS_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_3DS_DEFAULT)
     message(STATUS "OkaySpace: model import reads .3ds with the built-in 3DS reader first")
 endif()
 if(OKAY_OWN_BVH)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BVH_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_BVH_DEFAULT)
     message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
 endif()
 # Our own WAV decoder (PCM, float, A-law, mu-law, MS and IMA ADPCM): AudioClip::LoadWAV uses it when this is ON
@@ -620,38 +674,38 @@ if(OKAY_OWN_WAV)
 endif()
 # Our own OFF (.off) reader (same opt-in rules; env OKAY_OWN_OFF=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_OFF)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_OFF_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_OFF_DEFAULT)
     message(STATUS "OkaySpace: model import reads .off with the built-in OFF reader")
 endif()
 # Our own SMD reader (same opt-in rules; env OKAY_OWN_SMD=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_SMD)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_SMD_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_SMD_DEFAULT)
     message(STATUS "OkaySpace: model import reads .smd with the built-in SMD reader")
 endif()
 # Our own MD5 reader (same opt-in rules; env OKAY_OWN_MD5=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_MD5)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_MD5_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_MD5_DEFAULT)
     message(STATUS "OkaySpace: model import reads .md5mesh / .md5anim with the built-in MD5 reader")
 endif()
 # Our own MS3D reader (same opt-in rules; env OKAY_OWN_MS3D=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_MS3D)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_MS3D_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_MS3D_DEFAULT)
     message(STATUS "OkaySpace: model import reads .ms3d with the built-in MS3D reader")
 endif()
 # Our own ASE reader (same opt-in rules; env OKAY_OWN_ASE=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_ASE)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_ASE_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_ASE_DEFAULT)
     message(STATUS "OkaySpace: model import reads .ase with the built-in ASE reader")
 endif()
-# Our own Blender (.blend) reader (docs/own_blend_reader.md): same opt-in rules, default OFF.
+# Our own Blender (.blend) reader (docs/content/model_readers.md): same opt-in rules, default OFF.
 if(OKAY_OWN_BLEND)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BLEND_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_BLEND_DEFAULT)
     message(STATUS "OkaySpace: model import reads .blend with the built-in Blender reader first")
 endif()
 # Our own 3MF / AMF / X3D / DXF / LWO readers (batch B), same opt-in rules as 3DS: default OFF.
 foreach(_fmt 3MF AMF X3D DXF LWO)
     if(OKAY_OWN_${_fmt})
-        target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
+        set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")
     endif()
 endforeach()
@@ -671,14 +725,14 @@ foreach(_h IN LISTS _okay_heads)
 endforeach()
 foreach(_line IN LISTS _okay_own_opts)
     string(REGEX REPLACE "^option\\(OKAY_OWN_([A-Z0-9]+) .*$" "\\1" _name "${_line}")
-    string(FIND "${_okay_this_file}" "target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_name}_DEFAULT)" _okay_lit)
+    string(FIND "${_okay_this_file}" "COMPILE_DEFINITIONS OKAY_OWN_${_name}_DEFAULT)" _okay_lit)
     if(NOT _name IN_LIST _okay_looped AND _okay_lit EQUAL -1)
         message(FATAL_ERROR "OKAY_OWN_${_name} is an option in CMakeLists.txt but is in no foreach(_fmt ...) list of engine/CMakeLists.txt and has no OKAY_OWN_${_name}_DEFAULT definition: its default would never be applied")
     endif()
 endforeach()
-foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB NDO PMX LWS)
+foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB NDO PMX LWS OGREBIN ZAE XML LXO)
     if(OKAY_OWN_${_fmt})
-        target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
+        set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")
     endif()
 endforeach()
@@ -686,7 +740,7 @@ endforeach()
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)
 
-# 1.1 Loop and time (docs/loop_and_time.md): Time effects + clocks, Game pause reasons /
+# 1.1 Loop and time (docs/engine/loop_and_time.md): Time effects + clocks, Game pause reasons /
 # quit guard, the shared GameLoop driver, dice parser. Clock.hpp and RandomExtras'
 # templates are header-only.
 target_sources(okay_engine PRIVATE
@@ -695,12 +749,12 @@ target_sources(okay_engine PRIVATE
     src/Core/GameLoop.cpp
     src/Core/RandomExtras.cpp
 )
-# ---- Prefab system wave 2 (docs/prefab_system.md): nested prefabs, variants, unpack,
+# ---- Prefab system wave 2 (docs/engine/prefabs.md): nested prefabs, variants, unpack,
 # per-record / per-field apply and revert, prefab queries and the asset validator.
 target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp)
-# Project tag list and layer names in the project settings file (docs/layers_tags_cameras.md).
+# Project tag list and layer names in the project settings file (docs/gameplay/cameras.md).
 target_sources(okay_engine PRIVATE src/Scene/ProjectLists.cpp)
-# ---- Property reflection (docs/properties.md) ----
+# ---- Property reflection (docs/engine/properties.md) ----
 # PropertyValue / PropertyDesc, the registry with path access and change hook,
 # snapshot / diff / copy, and the built-in component registrations.
 target_sources(okay_engine PRIVATE
@@ -712,14 +766,14 @@ target_sources(okay_engine PRIVATE
 )
 
 # ---- Core runtime foundations: job system, memory arenas, handles and ids, frame pacing ----
-# (docs/core_runtime.md). Appended as a block; Jobs.cpp and StringId.cpp keep their
+# (docs/engine/core_runtime.md). Appended as a block; Jobs.cpp and StringId.cpp keep their
 # threading behind engine/src/Core/CoreThreads.hpp (native Win32 primitives on Windows).
 target_sources(okay_engine PRIVATE
     src/Core/Jobs.cpp
     src/Core/StringId.cpp
     src/Core/FramePacing.cpp
 )
-# Scene text tools for version control (docs/scene_diff_merge.md): canonical form, diff,
+# Scene text tools for version control (docs/engine/scene_diff_merge.md): canonical form, diff,
 # three-way merge and format migration. Text level only: none of these builds a Scene.
 target_sources(okay_engine PRIVATE
     src/Scene/SceneText.cpp
@@ -728,7 +782,7 @@ target_sources(okay_engine PRIVATE
     src/Scene/SceneMerge.cpp
     src/Scene/SceneMigration.cpp)
 
-# 1.1 Loop and time, second pass (docs/loop_and_time.md): frame recorder / player and the rolling
+# 1.1 Loop and time, second pass (docs/engine/loop_and_time.md): frame recorder / player and the rolling
 # frame-time statistics GameLoop feeds. TickPacer.hpp is header-only.
 target_sources(okay_engine PRIVATE
     src/Core/FrameRecord.cpp

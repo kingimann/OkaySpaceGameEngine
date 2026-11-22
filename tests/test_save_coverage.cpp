@@ -30,17 +30,17 @@ using namespace okay;
 
 #define OKAY_SAVE_COMPONENTS(X) \
     X(ActionList) X(AimIK) X(AimOffset) X(AnimStateMachine) X(Animator) X(AntiCheatConfig) X(AudioSource) \
-    X(AutoSave) X(BehaviorTreeRunner) X(BleedingStat) X(BlendShapes) X(BlockBuilder) X(BoxCollider2D) \
-    X(BoxCollider3D) X(BuildMode) X(BuildPiece) X(Buildable) X(BuilderMode) X(Cable) X(Camera) X(CameraFollow) X(Canvas) \
+    X(AutoSave) X(BehaviorTreeRunner) X(BleedingStat) X(BlendShapes) X(BlockBuilder) X(BoatController) X(Buoyancy) X(BoxCollider2D) \
+    X(BoxCollider3D) X(BuildMode) X(BuildPiece) X(Buildable) X(BuilderMode) X(Cable) X(Camera) X(CameraFollow) X(CameraRoom) X(CameraZone) X(Canvas) \
     X(CapsuleCollider2D) X(CapsuleCollider3D) X(CarryWeightStat) X(ChainIK) X(Character) X(CharacterController2D) \
     X(CharacterController3D) X(CheckpointTrigger) X(ChestInventory) X(CinemachineBrain) X(CircleCollider2D) \
     X(ClickToMoveController) X(Collectible) X(Consumables) X(Crafting) X(CraftingMenu) X(CraftingStation) \
-    X(Crosshair) X(CylinderCollider3D) X(DamageOnTouch) X(DayNightCycle) X(Decal) X(Destructible) X(DialogueRunner) \
+    X(Crosshair) X(CylinderCollider3D) X(ConeCollider3D) X(ConvexHullCollider3D) X(PlaneCollider3D) X(CompoundCollider3D) X(HeightfieldCollider3D) X(CompositeCollider2D) X(DamageOnTouch) X(DayNightCycle) X(Decal) X(Destructible) X(DialogueRunner) \
     X(DollyCart) X(DollyPath) X(Draggable) X(DropZone) X(EdgeCollider2D) X(Equipment) X(testing::EventProbe) \
     X(EventSystem) X(FirstPersonController) X(FirstPersonHand) X(FirstPersonHands) X(Flashlight) \
     X(FollowTarget2D) X(Foliage) X(FootIK) X(FreeRoamController) X(FullBodyIK) X(GridCostLayer) X(GridInventory) X(GridInventoryUI) \
     X(GridObstacle2D) X(GridPathAgent2D) \
-    X(HealthStat) X(HoldPrompt) X(HoldableObject) X(HumanoidRetarget) X(HungerStat) X(IKTarget) X(Inventory) \
+    X(HealthStat) X(HoldPrompt) X(LocalPlayerInput) X(HoldableObject) X(HumanoidRetarget) X(HungerStat) X(IKTarget) X(Inventory) \
     X(InventoryUI) X(ItemPickup) X(Joint2D) X(Joint3D) X(JumpPad) X(Lifetime) X(Light) X(LimbIK) X(LineRenderer) \
     X(LoadingScreen) X(LogicSource) X(LogicTarget) X(LookAtIK) X(LootSource) X(MeleeAttacker) X(MeshCollider3D) \
     X(MeshModifiers) X(MeshRenderer) X(Minimap) X(MinimapBlip) X(ModelAnimator) X(Mover) X(MusicPlayer) \
@@ -57,15 +57,15 @@ using namespace okay;
     X(TemperatureStat) X(Terrain) X(TerrainDigger) X(TextRenderer) X(ThirdPersonController) \
     X(ThirdPersonShooterController) X(ThirstStat) X(Tilemap) X(TilemapCollider2D) X(TimedDestroy) \
     X(TopDownController) X(TopDownController2D) X(TopDownShooterController) X(TrailRenderer) X(TriggerZone) \
-    X(TurnManager) X(TweenAnimation) X(UIAccordion) X(UIAnimation) X(UIAspectRatio) X(UIInputValidator) X(UIRangeSlider) X(UIBarBind) X(UIBottomSheet) X(UIBreadcrumbs) X(UIButton) X(UIColorPicker) X(UIContextMenu) \
+    X(TurnManager) X(TweenAnimation) X(UIAccordion) X(UIAnimation) X(UIAspectRatio) X(UIInputValidator) X(UIRangeSlider) X(UIRadialMenu) X(UIKillFeed) X(UIMenuBar) X(UIToolbar) X(UITreeView) X(UIDataTable) X(UIWizard) X(UIFormGroup) X(UIColorSquare) X(UIAmmoCounter) X(UIInteractionPrompt) X(UIObjectiveTracker) X(UICompass) X(UIItemTooltipCard) X(UIAbilityIcon) X(UIBind) X(UIVisibleIf) X(UIListBind) X(UIHotReload) X(UIFocusHint) X(UIRichLinks) X(UIBarBind) X(UIBottomSheet) X(UIBreadcrumbs) X(UIButton) X(UIColorPicker) X(UIContextMenu) \
     X(UIDamageNumbers) X(UIDateTimePicker) X(UIInventoryBind) X(UIDialogueBox) X(UIStyleVariant) X(UIDocument) X(UIDraggable) X(UIDropTarget) X(UIDropdown) X(UIFilePicker) X(UIFlexItem) X(UIFrame) X(UIImage) \
     X(UIInputField) X(UIKeybindField) X(UILayoutGroup) X(UIListView) X(UIMask) X(UIModal) X(UIPanel) \
     X(UIPagination) X(UIProgressBar) X(UIRadialProgress) X(UIRating) X(UIRawImage) X(UISafeArea) X(UIScrollView) X(UISearchBar) X(UISkeleton) X(UISlider) \
     X(UISlotGrid) X(UIStepper) X(UITabs) X(UITextBind) X(UITheme) X(UIToast) X(UIToastItem) X(UIToggle) \
     X(TouchButton) X(TouchDPad) X(VirtualJoystick) \
     X(UITooltip) X(VehicleController) X(VehicleController2D) X(VehicleSeat) X(VirtualCamera) X(VisualScriptComponent) \
-    X(VoxelDigger) X(VoxelTerrain) X(Volume) X(Water) X(WeatherRig) X(WetnessStat) X(WorldSpaceUI) X(WorldStreamer) \
-    X(WorldUI)
+    X(VoxelDigger) X(VoxelTerrain) X(Volume) X(Water) X(WeatherRig) X(WindZone) X(WindDrag) X(WindSway) X(WindAmbience) X(WetnessStat) X(WorldSpaceUI) X(WorldStreamer) \
+    X(WorldUI) X(PhysicsSurface) X(ConveyorBelt) X(ForceField) X(GravityZone) X(Turntable) X(MovingPlatform) X(Explosion) X(Breakable)
 
 namespace {
 
@@ -132,17 +132,16 @@ int main() {
 
     // Types that are never authored in a scene file, so a scene without them is complete:
     //   StatComponent          the base class of the stat components (Health, Hunger, ...), which are saved
-    //   TimedDestroy           the timer Destructible adds to its own debris
     //   UIToastItem            one toast row the UIToast component builds while it plays
     //   WeatherRig             the particle rig the scene's weather settings make (those settings are saved)
-    //   NetworkAvatarMotion    the motion driver NetworkPlayerSpawner puts on each avatar it spawns
     //   testing::EventProbe    a test helper (okay/Testing/PlayTest.hpp)
     //   SettingsScreen         rebuilt on its own: SettingsScreen::Ensure binds the "Settings" panel when Play starts
-    //   SteamManager           added by game code at startup (docs/steam_release.md), not a scene object
-    //   CheckpointTrigger      the Save Framework's: added by game code, saved by the framework (docs/save_framework.md)
-    //   (Saveable and SaveConfig are saved in the scene file: the no-code save route, docs/save_framework.md)
-    const std::set<std::string> kRuntimeOnly = {"StatComponent", "TimedDestroy", "UIToastItem", "WeatherRig", "NetworkAvatarMotion",
-                                                "testing::EventProbe", "SettingsScreen", "SteamManager", "CheckpointTrigger"};
+    //   SteamManager           added by game code at startup (docs/release/steam_release.md), not a scene object
+    //   (Saveable and SaveConfig are saved in the scene file: the no-code save route, docs/engine/save_games.md)
+    //   (TimedDestroy, NetworkAvatarMotion and CheckpointTrigger are saved through the generic property record now,
+    //    ComponentSerializerRegistry::RegisterFromProperties, docs/engine/scene_serializer.md)
+    const std::set<std::string> kRuntimeOnly = {"StatComponent", "UIToastItem", "WeatherRig",
+                                                "testing::EventProbe", "SettingsScreen", "SteamManager"};
     for (const auto& n : dropped) CHECK(kRuntimeOnly.count(n) != 0);
     for (const auto& n : kRuntimeOnly) CHECK(std::find(dropped.begin(), dropped.end(), n) != dropped.end());   // keep this list honest: remove a type once it is saved
     CHECK(notSwitchable.empty());

@@ -5,13 +5,20 @@
 // stores, so a value set through the registry survives Save and Load (the
 // cross-check in tests/test_property_registry.cpp proves it for every property).
 // Fields the scene file does not keep (runtime pointers, caches) are left out. See
-// docs/properties.md.
+// docs/engine/properties.md.
 #include "BuiltinPropertiesShared.hpp"
+#include "okay/Components/Buildable.hpp"
+#include "okay/Components/NetworkAvatarMotion.hpp"
+#include "okay/Components/TilemapCollider2D.hpp"
+#include "okay/Core/GameSaves.hpp"
+#include "okay/Core/SaveFramework.hpp"
+#include "okay/Components/LocalPlayerInput.hpp"
 
 #include "okay/Components/CharacterController2D.hpp"
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/DebrisEmitter.hpp"
+namespace okay { void RegisterPhysicsToyProperties(); }
 #include "okay/Components/Destructible.hpp"
 #include "okay/Components/Draggable.hpp"
 #include "okay/Components/FirstPersonController.hpp"
@@ -49,7 +56,10 @@
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/VehicleSeat.hpp"
 #include "okay/Components/Volume.hpp"
+#include "okay/Components/WindZone.hpp"
 #include "okay/Components/Water.hpp"
+#include "okay/Components/Buoyancy.hpp"
+#include "okay/Components/BoatController.hpp"
 
 namespace okay {
 namespace detail {
@@ -446,6 +456,9 @@ void RegisterClickToMoveController() {
      .AddBool("usePlayerHeight", &ClickToMoveController::usePlayerHeight).Tooltip("Pick on the plane at the player's current Y")
      .AddBool("usePathfinding", &ClickToMoveController::usePathfinding).Tooltip("Route around obstacles with the scene navigation")
      .AddFloat("repathInterval", &ClickToMoveController::repathInterval).Range(0, 3600, 0.05).Tooltip("Seconds between path re-plans")
+     .AddBool("pickColliders", &ClickToMoveController::pickColliders).Tooltip("A click lands on the floor, stair or platform under the pointer (solid, facing up); else the flat plane")
+     .AddBool("giveUpWhenStuck", &ClickToMoveController::giveUpWhenStuck).Tooltip("Stop walking when pressed against a wall instead of running on the spot")
+     .AddFloat("stuckTime", &ClickToMoveController::stuckTime).Range(0.05, 60, 0.05).Tooltip("Seconds of barely moving before giving up")
      .Section("Follow camera")
      .AddBool("followCamera", &ClickToMoveController::followCamera).Tooltip("Position the main Camera each frame")
      .AddFloat("cameraHeight", &ClickToMoveController::cameraHeight).Range(0, kBig, 0.05).Tooltip("Look target height above the player origin")
@@ -655,18 +668,33 @@ void RegisterPlatformer25DController() {
 
 // ---- Vehicles, projectiles and spawners ------------------------------------
 
+// The open-world tuning settings come from one table (VehicleTuning.hpp): the same rows the presets, the scene file and
+// SetSetting use. Grouped so the Inspector shows Simple first, then Engine, Drivetrain, Steering and so on.
+static void AddVehicleTuningRows(PropertyBuilder<VehicleController>& b) {
+    for (const VehicleTuning::Desc& d : VehicleTuning::Table()) {
+        switch (d.kind) {
+            case VehicleTuning::KFloat:
+                b.AddFloat(d.name, static_cast<float VehicleController::*>(d.f)).Range(d.lo, d.hi, d.step); break;
+            case VehicleTuning::KInt:
+                b.AddInt(d.name, static_cast<int VehicleController::*>(d.i)).Range(d.lo, d.hi, 1); break;
+            case VehicleTuning::KBool:
+                b.AddBool(d.name, static_cast<bool VehicleController::*>(d.b)); break;
+            case VehicleTuning::KEnum: {
+                std::vector<std::string> opts; std::string cur;
+                for (const char* c = d.options; ; ++c) { if (*c == '|' || !*c) { opts.push_back(cur); cur.clear(); if (!*c) break; } else cur += *c; }
+                b.AddEnum(d.name, static_cast<int VehicleController::*>(d.i), opts); break; }
+            case VehicleTuning::KKey:
+                b.AddKey(d.name, static_cast<char VehicleController::*>(d.k)); break;
+        }
+        b.Group(d.group).Tooltip(d.tip);
+    }
+}
+
 // VehicleController
 void RegisterVehicleController() {
     PropertyBuilder<VehicleController> b("VehicleController", "vehicle", "Vehicles");
-    b.AddFloat("acceleration", &VehicleController::acceleration).Range(0, kBig, 1).Tooltip("How quickly it reaches top speed (units/s^2)")
-     .AddFloat("maxSpeed", &VehicleController::maxSpeed).Range(0, 10000, 0.1).Tooltip("Forward top speed (units/s)")
-     .AddFloat("reverseSpeed", &VehicleController::reverseSpeed).Range(0, 10000, 0.1).Tooltip("Top reverse speed")
-     .AddFloat("brakeForce", &VehicleController::brakeForce).Range(0, kBig, 0.1).Tooltip("Deceleration when braking (units/s^2)")
-     .AddFloat("drag", &VehicleController::drag).Range(0, kBig, 0.1).Tooltip("Rolling resistance while coasting (no throttle)")
-     .AddFloat("turnSpeed", &VehicleController::turnSpeed).Range(0, 36000, 1).Tooltip("Steering rate at speed (degrees/s)")
-     .AddFloat("grip", &VehicleController::grip).Range(0, 1000, 0.01).Tooltip("How fast sideways slide is killed (higher = sticky)")
-     .AddFloat("handbrakeGrip", &VehicleController::handbrakeGrip).Range(0, 1000, 0.01).Tooltip("Grip while the handbrake is held (low = drifty)")
-     .AddFloat("groundCheckDistance", &VehicleController::groundCheckDistance).Range(0, kBig, 0.05).Tooltip("Down-ray length for \"on the ground\"")
+    AddVehicleTuningRows(b);
+    b.AddFloat("groundCheckDistance", &VehicleController::groundCheckDistance).Range(0, kBig, 0.05).Tooltip("Down-ray length for \"on the ground\"")
      .Section("Per-wheel raycast suspension")
      .AddBool("suspension", &VehicleController::suspension).Tooltip("Enable spring suspension + body tilt")
      .AddFloat("rideHeight", &VehicleController::rideHeight).Range(0, kBig, 0.05).Tooltip("Chassis height the spring rests at (units)")
@@ -754,6 +782,61 @@ void RegisterVolume() {
     b.Commit();
 }
 
+// Wind (docs/gameplay/wind.md)
+void RegisterWind() {
+    {
+        PropertyBuilder<WindZone> b("WindZone", "windzone", "Environment");
+        b.AddEnum("mode", &WindZone::mode, {"Everywhere", "Direction", "Pushes outward"}).Tooltip("Everywhere = the scene's wind. Direction = wind inside a region. Pushes outward = a fan or blast")
+         .AddEnum("shape", &WindZone::shape, {"Box", "Sphere", "Cylinder"}).Tooltip("The region's shape (not used by Everywhere)")
+         .AddVec3("size", &WindZone::size).Range(0.05, kBig, 0.1).Tooltip("The box the region fills, in local units (the Transform's scale multiplies it)")
+         .AddVec3("offset", &WindZone::offset).Range(-kBig, kBig, 0.1).Tooltip("Where the middle of the region sits, in local units")
+         .AddFloat("edge", &WindZone::edge).Range(0, 1, 0.01).Tooltip("How softly the wind fades in from the edge (0 = a hard edge)")
+         .AddFloat("falloff", &WindZone::falloff).Range(0, 1, 0.01).Tooltip("How much weaker the wind is near the edge than in the middle")
+         .AddVec3("direction", &WindZone::direction).Range(-1, 1, 0.05).Tooltip("The way the wind blows, in local units. Turn the object to aim it")
+         .AddFloat("strength", &WindZone::strength).Range(-200, 200, 0.1).Tooltip("Wind speed in metres per second (3 breeze, 10 gale). Outward: negative sucks in")
+         .AddFloat("gustAmount", &WindZone::gustAmount).Range(0, 1, 0.01).Tooltip("How much the wind swells and drops. 1 = from calm to double")
+         .AddFloat("gustFrequency", &WindZone::gustFrequency).Range(0, 10, 0.01).Tooltip("Gusts per second (0.2 = one every 5 seconds)")
+         .AddFloat("gustSpeed", &WindZone::gustSpeed).Range(0, 200, 0.5).Tooltip("How fast a gust travels downwind. 0 = it hits everywhere at once")
+         .AddFloat("turbulence", &WindZone::turbulence).Range(0, 1, 0.01).Tooltip("Random swirling, as a fraction of the strength")
+         .AddFloat("turbulenceScale", &WindZone::turbulenceScale).Range(0.001, 10, 0.01).Tooltip("Smaller = bigger swirls")
+         .AddInt("seed", &WindZone::seed).Range(0, 1000000, 1).Tooltip("Same number, same wind every time")
+         .AddString("curveKeys", &WindZone::curveKeys).Tooltip("Strength over time as seconds:multiplier pairs, e.g. 0:0.2, 10:1.5, 20:0.2. Empty = steady")
+         .AddFloat("curveLength", &WindZone::curveLength).Range(0.1, 100000, 1).Tooltip("Seconds before the strength curve repeats")
+         .AddInt("priority", &WindZone::priority).Range(-1000, 1000, 1).Tooltip("Where winds overlap, the higher number is applied last")
+         .AddBool("additive", &WindZone::additive).Tooltip("Add to the wind underneath instead of replacing it");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<WindDrag> b("WindDrag", "winddrag", "Physics 3D");
+        b.AddFloat("area", &WindDrag::area).Range(0, 1000, 0.05).Tooltip("How big it looks to the wind, in square metres")
+         .AddFloat("dragCoefficient", &WindDrag::dragCoefficient).Range(0, 5, 0.05).Tooltip("0.5 = slippery, 1 = a flat box, 2 = a parachute")
+         .AddFloat("strength", &WindDrag::strength).Range(0, 10, 0.05).Tooltip("A volume knob for how hard the wind pushes")
+         .AddBool("includeChildren", &WindDrag::includeChildren).Tooltip("Also push every physics body below this object (a ragdoll's bones)");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<WindSway> b("WindSway", "windsway", "Environment");
+        b.AddEnum("weight", &WindSway::weight, {"Height", "Flag"}).Tooltip("Height: the top moves most (trees, grass). Flag: the far edge waves, the pole side stays")
+         .AddFloat("amount", &WindSway::amount).Range(0, 20, 0.01).Tooltip("Metres the top moves in a strong wind (12 m/s)")
+         .AddFloat("height", &WindSway::height).Range(0, 1000, 0.1).Tooltip("Metres of the mesh that bend. 0 = measure the mesh")
+         .AddFloat("stiffness", &WindSway::stiffness).Range(0.5, 6, 0.05).Tooltip("1 = bends evenly, 3 = only the top bends")
+         .AddFloat("flutter", &WindSway::flutter).Range(0, 1, 0.01).Tooltip("How much the leaves shiver")
+         .AddFloat("flutterSpeed", &WindSway::flutterSpeed).Range(0, 20, 0.1).Tooltip("Shivers per second")
+         .AddFloat("updateRate", &WindSway::updateRate).Range(1, 60, 1).Tooltip("Times a second the shape is redone (lower is lighter)")
+         .AddFloat("maxDistance", &WindSway::maxDistance).Range(0, 100000, 1).Tooltip("Stops moving when the camera is further than this. 0 = always")
+         .AddBool("turnToWind", &WindSway::turnToWind).Tooltip("Flag: swing round so it points downwind");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<WindAmbience> b("WindAmbience", "windambience", "Audio");
+        b.AddFloat("volume", &WindAmbience::volume).Range(0, 1, 0.01).Tooltip("Loudest the wind sound gets")
+         .AddFloat("fullAt", &WindAmbience::fullAt).Range(0.1, 100, 0.1).Tooltip("Wind speed (m/s) at which the sound is loudest")
+         .AddFloat("quietBelow", &WindAmbience::quietBelow).Range(0, 50, 0.05).Tooltip("Silent in wind slower than this (m/s)")
+         .AddFloat("smoothing", &WindAmbience::smoothing).Range(0, 20, 0.1).Tooltip("Seconds it takes to follow a change");
+        b.Commit();
+    }
+}
+
 // Spawner
 void RegisterSpawner() {
     PropertyBuilder<Spawner> b("Spawner", "spawner", "Gameplay");
@@ -788,6 +871,20 @@ void RegisterDebrisEmitter() {
      .AddFloat("lifetime", &DebrisEmitter::lifetime).Range(0.1, 3600, 0.1).Tooltip("Seconds a chunk may live at the most")
      .AddFloat("settledLife", &DebrisEmitter::settledLife).Range(0.1, 3600, 0.1).Tooltip("Seconds a chunk stays once it has landed and gone to sleep")
      .AddBool("collideWithEachOther", &DebrisEmitter::collideWithEachOther).Tooltip("Off: chunks only hit the world, which is much cheaper");
+    b.Commit();
+}
+
+// ---- Input -----------------------------------------------------------------
+
+// LocalPlayerInput
+void RegisterPlayerInput() {
+    PropertyBuilder<LocalPlayerInput> b("LocalPlayerInput", "playerinput", "Input");
+    b.AddString("actions", &LocalPlayerInput::actions).Tooltip("Path of a .okayinput asset (empty = the default asset)")
+     .AddEnum("device", &LocalPlayerInput::device, {"Any", "Keyboard", "Controller"}).Tooltip("Which device this player uses; Any switches with the last one used")
+     .AddInt("controller", &LocalPlayerInput::controller).Range(0, 3, 1).Tooltip("Which controller (0 = first) when the device is Controller")
+     .AddString("scheme", &LocalPlayerInput::scheme).Tooltip("Control scheme to start in (empty = the one that fits the device)")
+     .AddBool("autoSwitch", &LocalPlayerInput::autoSwitch).Tooltip("With device Any: follow the device used last")
+     .AddString("startMaps", &LocalPlayerInput::startMaps).Tooltip("Comma list of action maps switched on at start; the others are off (empty = as the asset says)");
     b.Commit();
 }
 
@@ -1032,7 +1129,78 @@ void RegisterWater() {
      .AddAssetPath("texture", &Water::texture, "image").Tooltip("Optional water/normal-ripple texture")
      .AddFloat("depth", &Water::depth).Range(0, kBig, 0.1)
      .AddFloat("fluidDensity", &Water::fluidDensity).Range(0, kBig, 0.1)
-     .AddFloat("linearDrag", &Water::linearDrag).Range(0, kBig, 0.1).Tooltip("How fast a submerged prop's velocity fades (1/s, scaled by how much of it is under)");
+     .AddFloat("linearDrag", &Water::linearDrag).Range(0, kBig, 0.1).Tooltip("How fast a submerged prop's velocity fades (1/s, scaled by how much of it is under)")
+     .AddEnum("style", &Water::style, {"Classic", "Ocean", "Calm lake"}).Tooltip("Classic = the original rolling sines. Ocean = travelling waves with sharp crests that boats and floating things follow exactly. Calm lake = the same, low and gentle")
+     .AddFloat("waveDirection", &Water::waveDirection).Range(-360, 360, 1).Tooltip("Which way the main swell runs, in degrees (Ocean and Calm lake)")
+     .AddFloat("waveSteepness", &Water::waveSteepness).Range(0, 1, 0.01).Tooltip("0 = round smooth waves, 1 = sharp crests (Ocean)")
+     .AddInt("waveCount", &Water::waveCount).Range(1, 8, 1).Tooltip("How many waves are added together (Ocean)")
+     .AddInt("waveSeed", &Water::waveSeed).Range(0, 1000000, 1).Tooltip("The same number always makes the same sea")
+     .AddVec2("current", &Water::current).Range(-kBig, kBig, 0.1).Tooltip("A steady stream in the water, metres per second along X and Z")
+     .AddInt("seaState", &Water::seaState).Range(0, 4, 1).Tooltip("0 your own waves, 1 Calm, 2 Light, 3 Rough, 4 Storm (the Inspector slider sets the wave numbers)")
+     .AddBool("realisticLook", &Water::realisticLook).Tooltip("Depth colour, foam, glow in the crests and ripples")
+     .AddColor("shallowColor", &Water::shallowColor).Tooltip("Colour of shallow water")
+     .AddColor("deepColor", &Water::deepColor).Tooltip("Colour of deep water")
+     .AddFloat("clarity", &Water::clarity).Range(0.05, 200, 0.1).Tooltip("How many metres of depth before the water looks deep. Small = murky")
+     .AddFloat("assumedDepth", &Water::assumedDepth).Range(0, 10000, 0.5).Tooltip("Depth used where there is no Terrain under the water and Depth is 0")
+     .AddFloat("foamAmount", &Water::foamAmount).Range(0, 1, 0.01).Tooltip("White caps on the crests and steep waves")
+     .AddFloat("shoreFoamWidth", &Water::shoreFoamWidth).Range(0, 50, 0.05).Tooltip("Metres of foam where the water meets the ground. 0 = none")
+     .AddColor("foamColor", &Water::foamColor).Tooltip("Colour of the foam")
+     .AddFloat("scatter", &Water::scatter).Range(0, 1, 0.01).Tooltip("Green-blue glow in the crests when the sun is behind them")
+     .AddFloat("ripples", &Water::ripples).Range(0, 1, 0.01).Tooltip("Small ripples that never stop, even on a calm lake")
+     .AddFloat("rippleSize", &Water::rippleSize).Range(0.05, 20, 0.05).Tooltip("Size of the small ripples. 1 is normal")
+     .AddBool("lod", &Water::lod).Tooltip("Rings of squares: fine near the camera, coarse far away. Detail is the cells per ring side")
+     .AddInt("lodRings", &Water::lodRings).Range(1, 8, 1).Tooltip("How many rings. Each is twice as coarse as the one inside it")
+     .AddBool("infinite", &Water::infinite).Tooltip("With rings: the sea follows the camera and has no edge")
+     .AddBool("interactive", &Water::interactive).Tooltip("Things that fall in or move through the water make rings and splashes")
+     .AddBool("underwaterEffect", &Water::underwaterEffect).Tooltip("Blue-green fog when the camera is under the surface")
+     .AddBool("bubbles", &Water::bubbles).Tooltip("Bubbles rise around the camera under the surface");
+    b.Commit();
+}
+
+// Buoyancy
+void RegisterBuoyancy() {
+    PropertyBuilder<Buoyancy> b("Buoyancy", "buoyancy", "Physics 3D");
+    b.AddInt("gridX", &Buoyancy::gridX).Range(1, 16, 1).Tooltip("Automatic float points across the width of the hull")
+     .AddInt("gridZ", &Buoyancy::gridZ).Range(1, 16, 1).Tooltip("Automatic float points along the length of the hull")
+     .AddFloat("volume", &Buoyancy::volume).Range(0, kBig, 0.1).Tooltip("Cubic metres of water the whole hull pushes aside. 0 = work it out from the collider")
+     .AddFloat("fullness", &Buoyancy::fullness).Range(0, 1, 0.01).Tooltip("How much of the collider box the hull really fills (1 = solid block, 0.5 = a hollow boat)")
+     .AddFloat("hullHeight", &Buoyancy::hullHeight).Range(0, kBig, 0.05).Tooltip("Height of the part that goes under as the hull sinks. 0 = the collider height")
+     .AddFloat("density", &Buoyancy::density).Range(0, kBig, 0.05).Tooltip("Water density to use. 0 = the Water's own")
+     .AddFloat("dragForward", &Buoyancy::dragForward).Range(0, kBig, 0.01).Tooltip("Slows the hull along its nose, per second")
+     .AddFloat("dragForward2", &Buoyancy::dragForward2).Range(0, kBig, 0.01).Tooltip("Extra slowing that grows with speed, along the nose")
+     .AddFloat("dragSide", &Buoyancy::dragSide).Range(0, kBig, 0.01).Tooltip("Slows sideways sliding, per second (the keel)")
+     .AddFloat("dragSide2", &Buoyancy::dragSide2).Range(0, kBig, 0.01).Tooltip("Extra slowing that grows with speed, sideways")
+     .AddFloat("dragUp", &Buoyancy::dragUp).Range(0, kBig, 0.01).Tooltip("Slows bobbing up and down, per second")
+     .AddFloat("dragUp2", &Buoyancy::dragUp2).Range(0, kBig, 0.01).Tooltip("Extra slowing that grows with speed, up and down")
+     .AddFloat("angularDamping", &Buoyancy::angularDamping).Range(0, kBig, 0.05).Tooltip("Slows spinning while in the water")
+     .AddFloat("maxPushAcceleration", &Buoyancy::maxPushAcceleration).Range(1, kBig, 1).Tooltip("The water never pushes harder than this (m/s^2): keeps very light things calm")
+     .AddBool("letTilt", &Buoyancy::letTilt).Tooltip("Let the body lean and roll on the waves (switches off Freeze Rotation when Play starts)")
+     .AddBool("splashEffect", &Buoyancy::splashEffect).Tooltip("Throw spray where the hull hits the water")
+     .AddFloat("splashMinSpeed", &Buoyancy::splashMinSpeed).Range(0, kBig, 0.1).Tooltip("Slower than this (m/s) makes no splash")
+     .Custom("points", PropertyType::String,
+             [](const Buoyancy& c) { return PropertyValue::MakeString(c.PointsText()); },
+             [](Buoyancy& c, const PropertyValue& v) { c.SetPointsText(v.AsString()); return true; })
+        .Tooltip("Your own float points as x,y,z;x,y,z in the object's own space. Empty = an automatic grid across the collider");
+    b.Commit();
+}
+
+// BoatController
+void RegisterBoatController() {
+    PropertyBuilder<BoatController> b("BoatController", "boat", "Vehicles");
+    b.AddBool("isPlayer", &BoatController::isPlayer).Tooltip("Drive it with the keyboard or stick (W/S throttle, A/D steer, Space brake). Off: only code moves it")
+     .AddFloat("maxSpeed", &BoatController::maxSpeed).Range(0, 1000, 0.1).Tooltip("Top speed forward, metres per second")
+     .AddFloat("reverseSpeed", &BoatController::reverseSpeed).Range(0, 1000, 0.1).Tooltip("Top speed backwards")
+     .AddFloat("enginePower", &BoatController::enginePower).Range(0, kBig, 0.1).Tooltip("How hard the engine pushes from a standstill (m/s^2)")
+     .AddFloat("brakePower", &BoatController::brakePower).Range(0, kBig, 0.1).Tooltip("Extra slowing when braking (Space) or pulling back while going forward")
+     .AddFloat("turnRate", &BoatController::turnRate).Range(0, 720, 1).Tooltip("How fast it turns at full rudder, degrees per second")
+     .AddFloat("steerResponse", &BoatController::steerResponse).Range(0, 100, 0.1).Tooltip("How quickly it swings into a turn")
+     .AddBool("wake", &BoatController::wake).Tooltip("A foam trail behind the stern")
+     .AddBool("bowSplash", &BoatController::bowSplash).Tooltip("Spray at the bow when going fast")
+     .AddBool("engineSound", &BoatController::engineSound).Tooltip("Tune an Audio Source on the same object to the engine speed")
+     .AddBool("followCamera", &BoatController::followCamera).Tooltip("Chase the main camera behind the boat")
+     .AddFloat("camDistance", &BoatController::camDistance).Range(0, kBig, 0.05).Tooltip("Distance of the chase camera behind the boat")
+     .AddFloat("camHeight", &BoatController::camHeight).Range(0, kBig, 0.05).Tooltip("Height of the chase camera above the boat")
+     .AddFloat("camLerp", &BoatController::camLerp).Range(0, 1000, 0.1).Tooltip("How fast the chase camera follows");
     b.Commit();
 }
 
@@ -1223,8 +1391,74 @@ void RegisterRangedWeapon() {
     b.Commit();
 }
 
+// ---- Saved through the generic record (ComponentSerializerRegistry::RegisterFromProperties) ----------------
+// These had no scene record at all before: the generic path writes every authored property below as
+// `  <record> key=value ...` (see docs/engine/scene_serializer.md, "The generic record").
+
+// CheckpointTrigger (Core/SaveFramework.hpp)
+void RegisterCheckpointTrigger() {
+    PropertyBuilder<CheckpointTrigger> b("CheckpointTrigger", "checkpointtrigger", "Gameplay");
+    b.AddString("checkpoint", &CheckpointTrigger::checkpoint).Tooltip("The checkpoint name saved when it fires")
+     .AddString("targetTag", &CheckpointTrigger::targetTag).Tooltip("Objects with this tag set it off")
+     .AddFloat("radius", &CheckpointTrigger::radius).Range(0, kBig, 0.1).Tooltip("How close the target must come. 0 = trigger colliders only")
+     .AddBool("once", &CheckpointTrigger::once).Tooltip("Fire a single time per scene load")
+     .AddBool("deferred", &CheckpointTrigger::deferred).Tooltip("Save at the start of the next frame")
+     .AddFloat("checkInterval", &CheckpointTrigger::checkInterval).Range(0, 3600, 0.01).Tooltip("Seconds between distance checks")
+     .AddBool("triggered", &CheckpointTrigger::triggered).RuntimeOnly().Tooltip("It has fired (live state)");
+    b.Commit();
+}
+
+// TimedDestroy (Components/Destructible.hpp): removes its object after `life` seconds (debris pieces).
+void RegisterTimedDestroy() {
+    PropertyBuilder<TimedDestroy> b("TimedDestroy", "timeddestroy", "Effects");
+    b.AddFloat("life", &TimedDestroy::life).Range(0, kBig, 0.1).Tooltip("Seconds left before the object is removed");
+    b.Commit();
+}
+
+// NetworkAvatarMotion (Components/NetworkAvatarMotion.hpp): faces and animates a remote avatar from its movement.
+void RegisterNetworkAvatarMotion() {
+    PropertyBuilder<NetworkAvatarMotion> b("NetworkAvatarMotion", "netavatarmotion", "Networking");
+    b.AddFloat("turnSpeed", &NetworkAvatarMotion::turnSpeed).Range(0, kBig, 1).Tooltip("Degrees per second it turns to face where it goes. 0 = snap")
+     .AddFloat("moveEpsilon", &NetworkAvatarMotion::moveEpsilon).Range(0, 100, 0.01).Tooltip("Below this speed it counts as standing still")
+     .AddFloat("runSpeed", &NetworkAvatarMotion::runSpeed).Range(0, kBig, 0.1).Tooltip("At or above this speed the walk becomes a run");
+    b.Commit();
+}
+
+// ---- Saved by their own records in SceneSerializer.cpp -----------------------------------------------------
+
+// SaveConfig (`savesettings`): the scene's autosave settings. The record keeps 1..20 slots.
+void RegisterSaveConfig() {
+    PropertyBuilder<SaveConfig> b("SaveConfig", "savesettings", "Gameplay");
+    b.AddFloat("autosaveInterval", &SaveConfig::autosaveInterval).Range(0, kBig, 1).Tooltip("Seconds of play between autosaves. 0 = off")
+     .AddBool("autosaveOnSceneStart", &SaveConfig::autosaveOnSceneStart).Tooltip("Save when this scene starts")
+     .AddInt("autosaveSlots", &SaveConfig::autosaveSlots).Range(1, 20, 1).Tooltip("How many autosaves are kept");
+    b.Commit();
+}
+
+// Buildable (`buildable`): a piece players may edit in build mode.
+void RegisterBuildable() {
+    PropertyBuilder<Buildable> b("Buildable", "buildable", "Building");
+    b.AddInt("buildId", &Buildable::buildId).Range(0, 2147483647, 1).Tooltip("Stable id for links, undo and creations. 0 = not assigned yet")
+     .AddBool("editable", &Buildable::editable).Tooltip("Players may move, rotate, copy, delete and wire it")
+     .AddBool("placed", &Buildable::placed).Tooltip("A player placed it in build mode")
+     .AddAssetPath("prefab", &Buildable::prefab, "prefab").Tooltip("The palette prefab it was placed from (empty for level objects)");
+    b.Commit();
+}
+
+// TilemapCollider2D (`tilemapcollider`): builds colliders from the Tilemap on the same object. No fields of its own.
+void RegisterTilemapCollider2D() {
+    PropertyBuilder<TilemapCollider2D> b("TilemapCollider2D", "tilemapcollider", "Physics 2D");
+    b.Commit();
+}
+
 void RegisterGameplayProperties() {
     RegisterPlayerController();
+    RegisterCheckpointTrigger();
+    RegisterTimedDestroy();
+    RegisterNetworkAvatarMotion();
+    RegisterSaveConfig();
+    RegisterBuildable();
+    RegisterTilemapCollider2D();
     RegisterPlayerView();
     RegisterFirstPersonController();
     RegisterThirdPersonController();
@@ -1245,8 +1479,11 @@ void RegisterGameplayProperties() {
     RegisterRangedWeapon();
     RegisterSpawner();
     RegisterDebrisEmitter();
+    RegisterPhysicsToyProperties();   // Physics Surface and the physics toys
     RegisterVolume();
+    RegisterWind();
     RegisterMusicPlayer();
+    RegisterPlayerInput();
     RegisterCollectible();
     RegisterDamageOnTouch();
     RegisterTeleporter();
@@ -1263,6 +1500,8 @@ void RegisterGameplayProperties() {
     RegisterJoint2D();
     RegisterJoint3D();
     RegisterWater();
+    RegisterBuoyancy();
+    RegisterBoatController();
     RegisterNavMeshAgent();
     RegisterNavMeshObstacle();
     RegisterNavMeshModifier();

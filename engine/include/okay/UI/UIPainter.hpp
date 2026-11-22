@@ -46,6 +46,9 @@ inline bool IntersectRect(const Rect* a, const Rect* b, Rect* out) {
     return true;
 }
 
+/// A float rectangle with its own colour, for Painter::FillRectsF.
+struct ColoredRect { FRect r; RGBA c; };
+
 class Painter {
 public:
     virtual ~Painter() = default;
@@ -65,6 +68,12 @@ public:
         Rect q{x0, y0, x1 - x0, y1 - y0};
         if (q.w > 0 && q.h > 0) FillRect(&q);
     }
+    /// Many coloured float rectangles in one call (the replay of a recorded shape). Only used when SupportsBulkRects() is true; the
+    /// default draws them one by one.
+    virtual bool SupportsBulkRects() { return false; }
+    virtual void FillRectsF(const ColoredRect* q, int n) {
+        for (int i = 0; i < n; ++i) { SetDrawColor(q[i].c.r, q[i].c.g, q[i].c.b, q[i].c.a); FillRectF(&q[i].r); }
+    }
     virtual void DrawRect(const Rect* r) = 0;
     virtual void DrawLine(int x0, int y0, int x1, int y1) = 0;
     virtual void DrawPoint(int x, int y) = 0;
@@ -78,6 +87,10 @@ public:
     // Textures. LoadTexture resolves an asset path (cached by the backend; null when
     // it can't be read). FontAtlas returns the glyph atlas texture of a TTF font.
     virtual Tex  LoadTexture(const std::string& path) = 0;
+    /// A copy of the picture filtered down to `w` x `h` pixels (see UIImageScale.hpp), for drawing it that size
+    /// without skipping texels; cached by the backend. The default just returns the full-size LoadTexture, so a
+    /// backend that does not filter keeps drawing as before.
+    virtual Tex  LoadTextureSized(const std::string& path, int w, int h) { (void)w; (void)h; return LoadTexture(path); }
     virtual Tex  FontAtlas(TtfFont* font) = 0;
     virtual void QueryTexture(Tex t, int* w, int* h) = 0;   // SDL_QueryTexture without format/access
     virtual void SetTextureColorMod(Tex t, std::uint8_t r, std::uint8_t g, std::uint8_t b) = 0;
@@ -89,6 +102,14 @@ public:
     virtual void CopyExF(Tex t, const Rect* src, const FRect* dst, double angle,
                          const FPoint* center, int flip) = 0;
     virtual void Geometry(Tex t, const Vertex* verts, int numVerts, const int* indices, int numIndices) = 0;
+
+    /// How images (LoadTexture results) are sampled when they are drawn at another size than
+    /// their own: linear (smooth, the UI default) or nearest (pixel-art). RenderSceneUI sets it
+    /// at the start of each pass from the scene's UI look (Scene::uiFont "pixel" = nearest).
+    /// Backends that cannot choose ignore it (the default).
+    virtual void SetImageFilter(bool linear) { (void)linear; }
+    /// Same for one texture handle (an atlas page the batcher uploaded, say).
+    virtual void SetTextureFilter(Tex t, bool linear) { (void)t; (void)linear; }
 
     /// Told when a widget names a texture that can't be loaded, with the rect it
     /// would fill (after the widget drew its fallback). Editors label it; the game

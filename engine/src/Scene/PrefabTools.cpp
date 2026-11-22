@@ -1,5 +1,5 @@
 // Prefab tools, wave 2: nested prefabs, variants, unpack, per-record / per-field apply
-// and revert, queries and the asset validator. See docs/prefab_system.md.
+// and revert, queries and the asset validator. See docs/engine/prefabs.md.
 //
 // How it works, in one paragraph: a prefab FILE is read into a RawDoc (the lines as
 // written, so a file can be edited and written back without losing anything). Resolving
@@ -202,6 +202,20 @@ struct RawDoc {
     std::vector<RawObj> objs;
 };
 
+// A top-level line that is a complete record this loader knows: a `variant` with its
+// quoted base path, or a well-formed override / unset / remove record.
+bool IsWholeTopRecord(const std::string& t) {
+    const std::string tok = FirstToken(t);
+    if (tok == "variant") {
+        std::size_t p = t.find(tok) + tok.size();
+        SkipSpaces(t, p);
+        std::string b;
+        return p < t.size() && t[p] == '"' && ReadQuoted(t, p, b) && !b.empty();
+    }
+    Delta d;
+    return ParseDeltaLine(t, d) == 1;
+}
+
 // Strict about structure, so a truncated or damaged file is refused here and never
 // reaches the object loader half-built.
 bool ParseRaw(const std::string& text, RawDoc& doc, std::string& err) {
@@ -246,6 +260,13 @@ bool ParseRaw(const std::string& text, RawDoc& doc, std::string& err) {
             doc.objs.push_back({idx, name, {}});
             cur = &doc.objs.back();
             continue;
+        }
+        // The writer ends every line with a newline. A last top-level line without one
+        // that is not a whole record means the file was cut in the middle of that line:
+        // refuse it instead of dropping the half record and loading a different prefab.
+        if (in.eof() && !IsWholeTopRecord(t)) {
+            err = "the file is cut short (its last line '" + t + "' is incomplete)";
+            return false;
         }
         (doc.objs.empty() ? doc.head : doc.tail).push_back(t);
     }
@@ -938,6 +959,16 @@ const std::vector<const char*>* Schema(const std::string& rec) {
                          "freezeRotation", "allowSleep", "continuousCollision"}},
         {"boxcollider2d", {"size.x", "size.y", "offset.x", "offset.y", "isTrigger", "layer", "autoFit"}},
         {"circlecollider2d", {"radius", "offset.x", "offset.y", "isTrigger", "layer", "autoFit"}},
+        // the other colliders' records (SceneSerializer): their fields by name, so an Inspector row (Radius, Size, Offset ...) finds its
+        // difference from the prefab (they were "arg0", "arg1" ... before, and no row matched them)
+        {"capsulecollider2d", {"size.x", "size.y", "direction", "offset.x", "offset.y", "isTrigger", "layer", "autoFit"}},
+        {"edgecollider2d", {"offset.x", "offset.y", "isTrigger", "layer", "oneWay", "oneWayNormal.x", "oneWayNormal.y"}},
+        {"polygoncollider2d", {"offset.x", "offset.y", "isTrigger", "layer"}},
+        {"boxcollider3d", {"size.x", "size.y", "size.z", "offset.x", "offset.y", "offset.z", "isTrigger", "layer", "autoFit"}},
+        {"meshcollider3d", {"size.x", "size.y", "size.z", "offset.x", "offset.y", "offset.z", "isTrigger", "layer", "autoFit"}},
+        {"spherecollider3d", {"radius", "offset.x", "offset.y", "offset.z", "isTrigger", "layer", "autoFit"}},
+        {"capsulecollider3d", {"radius", "height", "axis", "offset.x", "offset.y", "offset.z", "isTrigger", "layer", "autoFit"}},
+        {"cylindercollider3d", {"radius", "height", "axis", "offset.x", "offset.y", "offset.z", "isTrigger", "layer", "autoFit"}},
         {"tag", {"value"}}, {"active", {"value"}}, {"layer", {"value"}}, {"static", {"value"}}, {"uiorder", {"value"}},
     };
     auto it = s.find(rec);

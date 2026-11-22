@@ -1,6 +1,6 @@
 # Engine modules: reads engine/modules/*/module.okaymodule, applies the OKAY_MODULES option and writes
 # modules_enabled.cpp (every manifest embedded as text, with an on/off flag), which okay_engine compiles.
-# Format and design: docs/modular_engine.md, docs/design/modular_gameplay_contracts.md.
+# Format and design: docs/engine/modular_engine.md, docs/design/modular_gameplay_contracts.md.
 #
 #   -DOKAY_MODULES=all                     every module on (the default, nothing changes for anyone)
 #   -DOKAY_MODULES=core                    only the core
@@ -8,7 +8,7 @@
 #
 # Stage note: in this stage the option decides what the ModuleRegistry reports and what the editor and the
 # checks treat as on. Code is stripped from the binary only once a module's scene records, scripts and
-# nodes register themselves (docs/modular_engine.md, "What is not stripped yet").
+# nodes register themselves (docs/engine/modular_engine.md, "What is not stripped yet").
 
 set(OKAY_MODULES "all" CACHE STRING "Engine modules to build: all, core, or a comma separated list (requirements are added)")
 

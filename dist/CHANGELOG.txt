@@ -1,5 +1,338 @@
 OkaySpace Game Engine — Changelog
 
+v2.903.0
+  Interact key and dialogue cameras
+  - One Interact key (E, or X on a controller) for seats, item pickups,
+    "hold to use" prompts, buttons, dialogue and visual-script interact
+    events. Changing the Interact binding changes it for all of them.
+  - First-person lean right is now X instead of E, so E is free for
+    Interact. Old scenes keep the lean key they saved.
+  - Someone who dies while sitting now gets up from the seat.
+  - Dialogue lines can switch to camera shots, and the camera returns when
+    the talk ends.
+  - Fixed: a fast object made of several collider shapes could fall
+    through thin floors, and the same 3D scene could play out slightly
+    differently from one run to the next.
+  - .dds texture files and compressed imported textures now load on the
+    GPU (OpenGL and Direct3D 11), and BC3-compressed colours are correct.
+  - Changing a key in the Controls screen now changes it for the built-in
+    player, shooter, platformer and vehicle controllers and the pause menu
+    too. With the default keys nothing changes.
+  - Fixed: with depth of field on, the sky could turn black when the
+    camera clears to a colour or the sky is off.
+  - Depth of field and ambient occlusion strength now also work in the
+    software renderer.
+  - Particles can land on terrain: Particle System > Collision > "Collide
+    with Terrain".
+  - Fixed: particles with a huge or endless emission rate froze the game;
+    the edge of a raised terrain sloped down to zero; scattered plants
+    ignored "Align to Surface"; a damaged water setting crashed loading;
+    star settings were lost or not reset by the sky looks.
+  - Faster character animation: with several CPU cores, skinning many
+    characters is about 3 times faster. Results are exactly the same.
+  - Try it (off by default): Settings > Experimental > "OkayUI own
+    renderer" draws our own UI screens with our own renderer on OpenGL and
+    Direct3D 11.
+
+v2.902.0
+  Fixes and faster model import
+  - FBX models import faster and use less memory, and every UV set is read.
+  - OGRE models (.mesh.xml) now find their skeleton file and animate.
+  - Fixed: objects switched off under a parent stay off when the parent is
+    switched back on.
+  - Fixed: lights under a switched-off parent now go dark.
+  - Fixed: resizing a terrain no longer stops sculpting from working.
+  - Fixed: animation clips played backwards once now end properly, and
+    particles can be replayed.
+  - Fixed: the editor could crash when closing.
+  - The new collider shapes are sturdier.
+
+v2.901.0
+  Cameras and smoother animation
+  - Camera zones: areas where the camera smoothly changes its view angle,
+    offset and smoothing as the player walks in.
+  - Six one-click camera presets: platformer, top-down, third person, first
+    person, racing and cinematic.
+  - The follow camera starts right on its target, and can no longer break on
+    bad numbers.
+  - Animations turn at an even speed between keyframes (no more uneven or
+    "rubbery" turns, and no wrong-way spins).
+
+v2.900.0
+  Movement, animation and menus
+  - The character controller now stops the same way at any frame rate, and
+    has Simple and Advanced tuning settings.
+  - Fixed: the knee snapped at every step in the walk and run animation.
+  - Inventory items can wear out and be repaired.
+  - GameObject > UI menu is tidier: 12 common items on top, the rest under
+    "More".
+  - New collider shapes: cylinder, cone, convex hull, compound, plane and
+    heightfield in 3D; rotating capsules, polygons and composite in 2D.
+  - Vehicles: street-style controls you can remap, better seat fit, settings
+    in plain words with reset buttons.
+  - Inventory: tools wear out when used; item names fit their slot.
+
+v2.899.0
+  Editor and model fixes
+  - Code editor: new line commands (toggle comment, duplicate line, move
+    lines up and down).
+  - OGRE binary model files (.mesh) now animate with their skeleton.
+  - Behind the scenes: more tests for Ctrl+S saving, Xbox export fixes
+    (still experimental and off by default), and our own picture writer.
+
+v2.898.0
+  No more GitHub in the apps
+  - The launcher and editor now get updates, the version list, "What's New"
+    and downloads only from our own update server.
+  - Help, report and GitHub links were removed. "Report a Bug" opens the
+    Crash Log window.
+  - Forgot your password? The launcher now emails you a code and lets you
+    set a new password right there.
+  - Versions older than 2.892.0 can no longer be downloaded from the
+    Versions page.
+  - OGRE model files (.mesh.xml) now load with their skeleton, animations
+    and skinning.
+
+v2.897.0
+  Small fixes
+  - Fixed: a damaged FLAC sound file could crash the engine. It is now
+    refused safely.
+  - Behind the scenes (no visible change yet): number boxes in our own UI
+    toolkit follow their display format and slider options, and the
+    launcher's tray-icon handling has its own tests.
+
+v2.896.0
+  Behind-the-scenes Xbox work
+  - Experimental Xbox export (still off by default): game content downloads
+    can now time out, be cancelled and show progress. Nothing changes for
+    Windows games.
+
+v2.895.0
+  Launcher and editor fixes
+  - Fixed: opening the Community tab in the launcher could make it use more
+    and more memory until Windows closed it.
+  - The Game view's size and FPS text no longer covers your game's own text
+    in the top-left corner; it moves to the bottom left when needed.
+  - The launcher's side menu fits short windows: it switches to a compact
+    layout, and scrolls if even that does not fit, so "What's New" is never
+    cut off.
+
+v2.894.0
+  Better driving, easier panning, Ctrl+S that always saves
+  - Vehicles drive like an open-world game now: gears, drifting with the
+    handbrake, ABS and traction control, rear, front or all wheel drive, and
+    grip that changes on ice, mud and grass. Pick a preset (Sedan, Sports Car,
+    Muscle Car, Pickup, Heavy Truck, Bus, Buggy, Rally Car, Drift Car) and
+    tune about 85 settings. Keyboard and gamepad both work. Try the new
+    "Driving World" template. Old scenes keep the old driving.
+  - Visual Script: drag the empty background to move around the graph.
+    Shift or Ctrl and drag still selects an area.
+  - Ctrl+S now always does something: it saves what you are working on, or
+    everything that changed, even while you are typing in a box. The bottom
+    bar says what was saved, or "Nothing to save".
+  - The Modeling page list grows with the editor's text size, long names
+    no longer run out of their row, and with no model selected it tells you
+    how to start.
+
+v2.893.0
+  Better cameras and a sharper in-game UI
+  - New camera system: Virtual Cameras that follow, orbit or look at things
+    (or a whole group), with smooth damping, collision so walls do not get
+    in the way, see-through fading, blends between cameras, shake, field of
+    view effects, a hit flash, and 2D camera rooms. Example scenes are in
+    the examples\camera folder.
+  - Changed: a camera shot that looks at something now really faces it.
+    Before, it pointed the other way, so old scenes that use Look At or
+    Orbit shots will look different (and correct).
+  - Changed: while a cutscene is playing, the camera brain now lets the
+    cutscene take over and blends back when it ends. Turn off "Let
+    cutscenes take over" on the Cinemachine Brain to keep the old way.
+  - The in-game UI is sharper. Rounded corners and circles are smooth,
+    small text is evenly spaced, shadows have no rings, and pictures no
+    longer flicker when shrunk. Pick the level in the Lighting window under
+    UI Font > UI Quality: Fast, Good (the default), Best, or Old look.
+    Open examples\ui_quality to compare. The new look was only checked on
+    the software renderer, not yet on a real graphics card.
+
+v2.892.0
+  Physics materials and toys, better lighting, water that looks like water
+  - New Physics Materials: give a 3D model a feel (Ice, Rubber, Wood, Metal
+    and more) and it slides, grips and bounces that way.
+  - New physics toys: Conveyor Belt, Force Field, Gravity Zone, Turntable,
+    Moving Platform, Explosion and Breakable. Stacks of crates now settle
+    and stay still.
+  - Lighting: steadier shadows and softer shadow edges, lighting presets you
+    can pick in one click, panel lights, real-world light units and light
+    probes. (New GPU lighting paths have not been run on a real graphics
+    card yet.)
+  - Water is no longer a flat plane. Turn on the realistic look for waves,
+    colour that gets darker with depth, foam at the edges, and a wake behind
+    a moving boat. Plain Water keeps its old look.
+
+v2.891.0
+  Wind, a bigger Build Settings window, upgrade fixes
+  - New Wind: add a Wind Zone and objects with Wind Sway or Wind Drag
+    move with it. Particles can be pushed by wind too.
+  - Build Settings has been rebuilt. Search for any setting, see a blue dot
+    on pages you changed, reset a page, save and load build profiles, and
+    read a "What will happen" summary with Fix buttons. Many new settings
+    (game speed, volume, language, log detail, files left out of the build,
+    and more) are really used by the game.
+  - Fixed: after you upgraded a project, the launcher kept saying it was
+    older. It now updates within a second, and Open picks the right editor.
+  - Fixed: File > Project Upgrade could upgrade the wrong project, and a
+    build profile name with a slash or equals sign came back changed.
+
+v2.890.0
+  Boats and water, clearer Visual Script blocks, Xbox editor lag fix
+  - New Boat: GameObject > Vehicles > Boat makes a boat you can drive on
+    water. W and S for speed, A and D to steer, Space to brake. Open
+    examples\boat\boat_lake.okayscene and press Play to try it.
+  - Water now has real wave shapes (Water > Style: Ocean or Calm lake) and
+    things float properly. Crates and balls no longer bounce on the water:
+    they settle at the right height at any frame rate. Plain Water settings
+    keep their old look.
+  - Visual Script blocks explain themselves: every block has a plain
+    sentence under its name, a "What is this?" card for the selected block
+    shows what to plug in, a block that is missing an input says "Needs
+    input", "Next steps" buttons add the blocks that usually come next, and
+    "Try this node" adds a small working example. Some block names are
+    plainer now; the old names still work in search.
+  - Fixed: the editor no longer freezes for several seconds when you switch
+    Build Settings to the Xbox platform. It checks your PC in the
+    background and remembers the answer.
+  - Behind the scenes: more of our own UI toolkit (OkayUI) is in, off by
+    default.
+
+v2.889.0
+  Try our own code, texture tools, Xbox fixes
+  - New Settings > Experimental page in the launcher (and View > Rendering >
+    Experimental in the editor). Switch our own replacements on to try them:
+    our own sound-file reader and our own UI toolkit (OkayUI). Everything is
+    off until you turn it on. "Back to normal" turns everything off again.
+    Changes apply after you restart.
+  - New texture tools: make mipmaps, pack pictures into an atlas and compress
+    pictures to DDS. In the editor, click a picture in the Project panel and
+    use "Generate mipmaps / compress" in Import Settings. The okay-texture
+    tool and a try-it example are in the Tools and examples folders.
+  - Xbox test export: clearer messages when a step fails (each one says what
+    to do next), the test certificate is reused between runs, and the app
+    writes a log file you can read from the Device Portal. Still experimental
+    and never run on a real Xbox.
+  - Behind the scenes: our own window and input layer is used for the event
+    loops of the launcher and editor (still off by default; SDL2 is used
+    unless you turn it on), plus our own build tools for developers.
+
+v2.888.0
+  Editor speed tools, Xbox test export, downloadable game content
+  - The editor has a frame-time overlay: View > Rendering > Frame-time overlay
+    shows your FPS, the time each frame takes and where the time goes.
+    View > Rendering also has a Frame rate limit, Slow down when idle, a
+    smaller Viewport resolution and a Performance mode for the Scene view.
+    Everything is off until you turn it on.
+  - Experimental: an Xbox One test export (Developer Mode, UWP). File > Build
+    Settings > Xbox (exp.) checks your tools and makes an app package. It has
+    never been run on a real Xbox yet, so treat it as a test.
+  - Downloadable game content: an exported game can fetch signed updates of
+    its own models, textures, scenes and scripts without a new build. Off
+    unless a game turns it on. The okay-content tool in the Tools folder makes
+    and checks the content.
+  - Behind the scenes: slow checks now have longer time limits, and a rare
+    flicker in picture edges (round pictures) is fixed.
+
+v2.887.0
+  Visual Script made simpler again
+  - The Visual Script side panel now uses plain words and has a "Saved values"
+    list. To make a saved value, type its name where you need it and pick
+    Me (only this object) or All (every object). No setup step first.
+  - About 30 new game-logic blocks: health, timers, chase and flee,
+    switches, saving a number, respawn and more.
+  - A new Rule block says "when this is true, do that" in one block.
+  - Set Value To has presets so common choices are one click.
+  - Move, Turn and Resize are one block, and Show and Hide are one block.
+  - Five new recipe cards on the empty-script start screen.
+  - The block that is running is highlighted while you press Play.
+
+v2.886.0
+  Simpler Modeling, Project panel, Visual Script and Scene menu
+  - Modeling no longer has an Advanced menu. Every tool is in the page list
+    and the pages have plain names.
+  - The Project panel can be one column (folders open in place) or two
+    columns (folder tree and contents). Pick it in the panel.
+  - Visual Script can be moved around easily: a Pan button, hold Space and
+    drag, arrow keys, and a trackpad option where plain scrolling pans.
+  - An empty Visual Script shows big recipe cards, with Start empty if you
+    want a blank page. New blocks join the selected block by themselves.
+  - Problems are explained in plain words, with a Fix it for me button for
+    unconnected blocks and wires of the wrong kind. A short note under a
+    running block says what just happened, and a one-line hint tells you
+    the next step.
+  - Right-click in the Scene view opens an Add menu (shapes, lights, camera,
+    character, UI, audio, effects, prefabs, search) and places the new
+    object where you clicked.
+
+v2.885.0
+  Easier scripts and modeling
+  - Visual Script is much simpler: Quick blocks do a whole job in one block
+    (for example "Open Door When Touched" instead of 10 nodes and 8 wires).
+    An empty script shows recipe cards you click to start.
+  - The Add node list shows 55 plain-named nodes in six groups. Tick
+    "Show all nodes" to see everything.
+  - The node search window is bigger, has a preview, and works with the
+    keyboard. The script window has Compact, Comfortable and Spacious sizes.
+  - Project panel has Assets, Favourites and Recent tabs.
+  - Modeling is easier: fewer clicks, starter shapes, and the side bar folds
+    with Ctrl+\.
+
+v2.884.0
+  Fixes
+  - Save before stopping really saves, Timeline keys survive dragging, and
+    LOD distances work on big objects.
+  - Prefab variants: a prefab file that is cut short is refused instead of
+    half loading, and long Windows paths are no longer cut off.
+  - Release checks wait longer for the update server before publishing.
+
+Unreleased
+  Fixes and new things
+  - Models now open with our own readers, written for this engine,
+    instead of the Assimp and ufbx libraries. They are faster and use
+    less memory on the test files. This covers FBX, COLLADA (.dae),
+    Blender, 3DS, OBJ, STL, PLY, DirectX .x and about 40 more formats.
+    If our reader cannot read a file, the old library still tries it,
+    and the Console says which one read it.
+  - To go back to the old libraries for every model, set
+    OKAY_THIRD_PARTY=1 before starting the program. To go back for one
+    format only, set OKAY_OWN_<FORMAT>=0 (for example OKAY_OWN_FBX=0).
+    Please tell us about any model that looks different.
+
+v2.883.0
+  Fixes and new things
+  - Editor: Dark and Light mode replace the Preferences window, and
+    anti-aliasing and VSync have an Auto choice that picks the best setting
+    for your PC.
+  - Fixes: project numbers are safe, tagging no longer shrinks textures,
+    material paths with spaces work, OkayScript object references and the 3D
+    Rigidbody API are fixed, and the Inspector no longer shows the wrong
+    object after Undo while locked.
+  - Scripts can no longer spawn prefabs from outside the game folder.
+  - Launcher and editor screens: the Install now button, the Community
+    games list, overlapping viewport text and cut-off fields are fixed.
+  - Editor no longer flips a window setting every frame on systems with
+    one window.
+  - Under the hood: an own download client (off by default) and faster
+    release builds.
+
+v2.882.0
+  Fixes and new things
+  - Security: scripts can no longer read or write files outside the project,
+    the relay and updater checks were tightened, and a reactions database
+    hole was closed.
+  - Modeling: Recenter, Ground and Fit 1u now survive saving; typed NaN or
+    infinity values no longer break a mesh; Solidify closes open edges; Export
+    OBJ keeps colours, polygons and normals; every whole-mesh button is one
+    undo step in Edit Mesh.
+  - Many smaller bug fixes in scenes, scripts and saving.
+
 v2.881.0
   New things
   - Anti-cheat hardening for multiplayer games: the server can keep a ban
@@ -156,7 +489,7 @@ v2.876.0
     3D Object, Player, Light, Camera, Audio, Effects and UI. Help has
     Documentation, Keyboard Shortcuts, Check for Updates and Report a Bug.
     The old Engine and Window menus are gone; their items moved (the list is
-    in docs/editor_menus.md). A menu item that is greyed out now says why
+    in docs/editor/editor_menus.md). A menu item that is greyed out now says why
     when you hover it.
   - Hierarchy right-click menus: Create Child offers every category, there is
     an Add Component... item, Select > Same Type, plural labels, and a
@@ -243,7 +576,7 @@ v2.875.0
 
   Team tooling
   - New checks that stop two people building the same thing and catch common
-    mistakes early (docs/collaboration.md).
+    mistakes early (docs/process/collaboration.md).
 
 v2.874.0
   Gameplay
@@ -271,7 +604,7 @@ v2.874.0
   - Navigation: a Mesh Collider now builds the navigation mesh from its real
     triangles instead of its bounding box, with limits so a huge model cannot
     freeze the editor. A mesh with a crack in it counts as two-sided (see
-    docs/navigation.md).
+    docs/gameplay/navigation.md).
 
   Safety
   - OBJ model textures: network paths, Windows device names and paths that
@@ -694,7 +1027,7 @@ v2.861.0
   Launcher
   - "Download my data" and "Delete my account" in Account > Sign-in & security;
     deleting needs your password and removes or anonymises your rows (#651;
-    needs the delete-account function deployed, see docs/account_data.md; until
+    needs the delete-account function deployed, see docs/online/account_data.md; until
     then the launcher says deletion is not set up).
   - Report a message, post, item or profile; reports are reviewed by staff
     (#652, needs docs/sql/reports.sql, applied to the live project).
@@ -1317,7 +1650,7 @@ v2.847.0
     lost out to the run clip and the character ran when it should walk. When
     such a model is attached, a Walk Speed or Run Speed that is still at its
     default is set to a pace the clips can show (about 2.0 and 5.0 m/s). A
-    speed you changed yourself is kept (#541; see docs/animation.md).
+    speed you changed yourself is kept (#541; see docs/gameplay/animation.md).
   Scripts and tools
   - A new script in the Script Editor starts as an empty Start and Update,
     with a line saying when each runs. The longer example is still in the
@@ -1331,7 +1664,7 @@ v2.847.0
   - New docs/README.md indexes every guide by what you want to do. The README
     is shorter and its claims were checked against the code (a few wrong
     ones were fixed), and the scripting function reference is now
-    docs/scripting_reference.md (#544).
+    docs/scripting/scripting.md (#544).
   - New docs/FEATURE_MAP.md splits the engine into 19 areas, with the code,
     docs and editor window for each and what is still open (#546).
 
@@ -1400,7 +1733,7 @@ v2.842.0
     controllers no longer show up in Add Component. Scenes saved with the
     old controllers load as one Player Controller, and scripts get
     set_view, get_view and a PlayerController type (#523; see
-    docs/making_a_game.md).
+    docs/gameplay/making_a_game.md).
   - Downloaded Mixamo-style characters now move naturally. Walk and run
     clips play at the pace the body really moves, so a walk no longer looks
     like a jog and a run is a real run clip rather than a faster walk.
@@ -1409,7 +1742,7 @@ v2.842.0
     skeleton, and the body leans a little into starts, stops and turns.
     A new Character Model panel at the top of the Inspector shows which
     animation comes from the file and which is built in, and says which
-    components to edit (#524; see docs/animation.md).
+    components to edit (#524; see docs/gameplay/animation.md).
   - Characters standing on a rotating platform now turn with it instead of
     keeping their old facing (#526).
 
@@ -1447,7 +1780,7 @@ v2.840.0
     spawned and destroyed objects, velocities, script variables and play
     time. Load it from a script or a menu; an AutoSave component saves
     every N seconds or on scene start. Scripts get SaveGame.Save / Load /
-    Exists / Delete / Label and playTime (#498; see docs/save_games.md).
+    Exists / Delete / Label and playTime (#498; see docs/engine/save_games.md).
   Animation
   - Built-in action clips for the Character: a dolphin dive from a sprint
     into prone, chair and ground sitting with a Seat component, hit
@@ -1457,7 +1790,7 @@ v2.840.0
   - Ragdolls: a character goes limp when it dies, pushed away from the hit,
     and hits shove the struck part and spring back. Works on the blocky
     Character and on imported humanoid rigs; revive restores the pose.
-    Scripts: ragdoll, ragdoll_push, is_ragdoll (#501; see docs/ragdolls.md).
+    Scripts: ragdoll, ragdoll_push, is_ragdoll (#501; see docs/physics/physics.md).
   - Animation window: a Character clip's keys are a lane of diamonds you
     click, box-select, drag and nudge, with per-key easing, retime,
     amplify and offset, copy / paste / mirror of a pose or the clip, and
@@ -1517,7 +1850,7 @@ v2.838.0
     levels are saved and come back the next time they play.
   - New Audio Mixer window (Window > Panels): group volumes, mutes, output
     meters and ducking. Scripts and visual scripts get Audio commands
-    (#492; see docs/audio.md).
+    (#492; see docs/audio/audio.md).
   Controls
   - Named actions (Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact,
     Reload, Inventory, Pause) work on keyboard, mouse and controller at
@@ -1528,7 +1861,7 @@ v2.838.0
     Play mode reads the whole controller too.
   - Scripts and visual scripts: Input.GetButton / GetButtonDown,
     GetActionVector, Rumble, RebindAction and DefineAction (#494; see
-    docs/input.md).
+    docs/engine/input.md).
   Animation and characters
   - Built-in action framework and death clips (#435).
   - One shared bone mapper finds the humanoid bones on imported models,
@@ -4774,7 +5107,7 @@ v2.15.3
   - Script editor autocomplete: as you type an identifier, a suggestion list of
     keywords / API / builtins pops up at the caret — click one to insert it.
   - Scripting reference updated with the save()/load() system (in-editor Help >
-    Scripting Reference and docs/scripting.md).
+    Scripting Reference and docs/scripting/scripting.md).
 
 v2.15.2
   - Script editor tabs: edit several scripts at once. Selecting an object with a
@@ -5062,7 +5395,7 @@ v2.1.0
     cast_ray, set_camera / set_zoom, save_value / load_number / load_text,
     random_float / random_chance, log, and more. Each maps onto an existing
     builtin, so old scripts and the new names all keep working. New
-    "Plain-English names" table in docs/scripting.md.
+    "Plain-English names" table in docs/scripting/scripting.md.
 
 v2.0.0
   - C#-style scripting, completed. Building on v1.99, OkayScript now also

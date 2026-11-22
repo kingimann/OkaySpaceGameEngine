@@ -10,7 +10,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **What:** The Visual Script window (View > Editors & Tools > Visual Script): a zoomable canvas where nodes are placed from a palette, wired, commented and run live, with the runtime graph and the OkayVS file format behind it.
 - **Parts:**
   - 14.1.1 Canvas - `editor/VisualScriptEditor.hpp` - zoom, pan, grid, box select, comment frames, minimap, Fit, drag wires
-  - 14.1.2 Node palette and registry - `editor/VisualScriptEditor.hpp` (`Registry()`), `editor/VisualScriptPalette.hpp` - every node type with pins and defaults; right-click, Space or Add node opens one search panel (topics on the left under section headings, favourites, details); engine API nodes sit in the topic they belong to
+  - 14.1.2 Node palette and registry - `editor/VisualScriptEditor.hpp` (`Registry()`), `editor/VisualScriptPalette.hpp` - every node type with pins and defaults; right-click, Space or Add node opens one search popup (see 14.1.12); engine API nodes sit in the topic they belong to
   - 14.1.3 Node help - `editor/VisualScriptNodeDocs.hpp`, `editor/VisualScriptNodeDocs.inc`, `docs/visual_scripting_nodes.md` - description, every pin (type, meaning, default), requirements, example and keywords for every registered node; the same text is the search details pane, the node tooltip and the generated page
   - 14.1.10 Graph tabs and save prompts - `editor/VisualScriptEditor.hpp` - several graphs open at once; a dirty graph asks Save / Cancel / Don't Save before a tab closes; New adds an Untitled tab; tabs restore from `okay_vs_tabs.txt` and a missing file is an error tab
   - 14.1.4 Toolbar, templates and shortcuts - `editor/VisualScriptEditor.hpp` - File/Edit/+ Add/Templates, events list (click to jump), problems list, key picker for key nodes
@@ -18,13 +18,15 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
   - 14.1.6 Runtime graph - `VisualScript/NodeGraph` - `NodeGraph::Parse`, `Run`, entries, exec and data links, suspended waits, `MakeNode` by type name
   - 14.1.7 Graph component - `Components/VisualScriptComponent` - attaches a graph to an object: OnStart, OnUpdate and event entries, LoadFromText, LoadFromFile, serialized with the scene
   - 14.1.8 Inspector hook - `editor/main.cpp` (Visual Script header ~28850) - graph file path, Open in node editor, Reload; inspector values can be dropped onto a graph
+  - 14.1.12 Node search popup - `editor/VisualScriptPalette.hpp` (`DrawNodePalette`, `VsPaletteStore`), `editor/VisualScriptSearchNav.hpp` - big three-column popup (880 x 780 at Comfortable, 760 x 640 Compact, 1040 x 860 Spacious, at most 85% of the screen, at least 640 x 480; drag the bottom-right grip to resize, the size is kept in `okay_vsnodes.txt`): a 40 px search box with a magnifier and Clear, big segmented level buttons, a banner while a wire is dragged ("Showing nodes that fit this plug" and a Show all switch); topics with counts on the left (Starter, Recent, Favourites, All, then the topics), node rows in the middle (36 px tile, name, level tag, up to two wrapped lines of what it does, a 32 px star), a Preview on the right (name, plain description, example, how it plugs in, needs and gives, an Add this node button); Up/Down/PageUp/PageDown/Home/End, Left/Right between topics, Enter adds, Esc closes, Tab switches search and list, typing anywhere goes to search (letters typed while it opens are kept); hover and keys share one highlight and the chosen row scrolls into view; an empty result gives a message and the nearest few names; Recent keeps the last 8 (no repeats); the pure maths is covered by `vs_search_nav`
   - 14.1.11 Add Node topics - `editor/VisualScriptCategories.hpp`, `editor/VisualScriptPlaceRules.hpp`, `editor/VisualScriptLegacyPlaces.hpp`, `editor/VisualScriptPlace.hpp` - 70 topics in 14 sections (99 subcategories) instead of 19 big ones; every node (hand-written, library, gameplay library, text-script function, engine-API node, Actions step) sits in exactly one topic by a table of rules; no topic has more than 30 nodes directly in it; every "On ..." node is in an event topic; a node that moved is still found by its old topic name; favourites are kept by node name
+  - 14.1.13 Nodes explain themselves - `editor/VisualScriptGuide.hpp`, `editor/VisualScriptGuideDraw.hpp`, `kVsPlainRenames` in `editor/VisualScriptPlain.hpp` - one plain sentence under every node title; pin hover tips with an example value; an always-visible "What is this?" card for the selected node (what it does, what to plug in, a tiny example chain, common mistakes, what to do next; Hide folds it and the choice is kept as `helpcard` in `okay_vs_usage.txt`); "Needs input" badge and a "needed" box on an empty input the node cannot work without; Next steps chips that add and wire a type-compatible node in one click; a Try this node button that adds a small ready-made graph; a "What do you want to do?" group in the Add Node list (12 headings); 8 plainer titles with the old names kept as search words; see `docs/scripting/visual_script_clarity.md`, covered by `vs_guide`, not run in a real window
   - 14.1.9 Outline, snap and align - `editor/VisualScriptEditor.hpp`, `editor/VsCanvasTools.hpp` - (#577) a left outline lists the graph's events, variables (grouped by scope) and parameters; a moved node snaps to a 20 px grid on release (the "Snap to grid" menu item); align Left, Right, Top or Bottom for the selected nodes; a hint line on the canvas when a graph has nodes but no event ("Nothing runs yet"); the helpers (`VsSnap`, `VsAlignNodes`, `VsCollectVariables`, `VsCollectParameters`) are pure data, covered by the editor selftest, and nothing new is written into the `.okayvs` file
-- **Code:** `editor/VisualScriptEditor.hpp`, `editor/VisualScriptPalette.hpp`, `editor/VisualScriptCategories.hpp`, `editor/VisualScriptPlaceRules.hpp`, `editor/VisualScriptNodeDocs.hpp`, `editor/VsCanvasTools.hpp`, `editor/VisualScriptNodeHelp.hpp`, `VisualScript/NodeGraph`, `Components/VisualScriptComponent`
+- **Code:** `editor/VisualScriptEditor.hpp`, `editor/VisualScriptPalette.hpp`, `editor/VisualScriptSearchNav.hpp`, `editor/VisualScriptCategories.hpp`, `editor/VisualScriptPlaceRules.hpp`, `editor/VisualScriptNodeDocs.hpp`, `editor/VsCanvasTools.hpp`, `editor/VisualScriptNodeHelp.hpp`, `VisualScript/NodeGraph`, `Components/VisualScriptComponent`
 - **API:** `vs::NodeGraph::Add/ConnectExec/ConnectData/Parse`, `VisualScriptComponent::SetGraph/LoadFromText/LoadFromFile`; file directives `node`, `exec`, `data`, `entry`
 - **Editor:** View > Editors & Tools > Visual Script; Inspector header "Visual Script"; Project panel `.okayvs` files
-- **Docs:** `docs/visual_scripting.md` (OkayVS format, Flow Graph editor, working faster, palette index); `docs/visual_scripting_nodes.md` (every node, generated from the editor's doc table); `docs/visual_scripting_naming.md` (names, the topic list, how to place a new node); `docs/visual_scripting_topics.md` (every node under its topic, generated); `docs/visual_script_category_audit.md` (where every node sat before and where it sits now)
-- **Tests:** `visualscript`, `vs_categories` (every node has one place, no empty or oversized topic, no catch-all, events in event topics, old topic names still search, favourites keys), `vs_palette_categories`, `vs_editor_model` (graph model without drawing, tab dirty state, fuzzy search), `vs_node_docs` (every registered node is documented), `vs_nodes`, `vs_pin_defaults`, `editor` (selftest: snap, align, variable outline, and a saved graph reopening with the same nodes)
+- **Docs:** `docs/scripting/visual_scripting.md` (OkayVS format, Flow Graph editor, working faster, palette index); `docs/visual_scripting_nodes.md` (every node, generated from the editor's doc table); `docs/visual_scripting_naming.md` (names, the topic list, how to place a new node); `docs/visual_scripting_topics.md` (every node under its topic, generated); `docs/visual_script_category_audit.md` (where every node sat before and where it sits now)
+- **Tests:** `visualscript`, `vs_categories` (every node has one place, no empty or oversized topic, no catch-all, events in event topics, old topic names still search, favourites keys), `vs_palette_categories`, `vs_search_nav` (popup size, selection movement, scroll maths, recent list, pin filter, nearest names), `vs_editor_model` (graph model without drawing, tab dirty state, fuzzy search), `vs_node_docs` (every registered node is documented), `vs_nodes`, `vs_pin_defaults`, `editor` (selftest: snap, align, variable outline, and a saved graph reopening with the same nodes)
 - **Status:** Works - editor model, text format and runtime are covered; `vs_editor_model` checks save then load stays identical
 - **Open:** earlier map: docs update (the doc still has a retired "Flow Graph editor" section next to "One graph editor"); possible bug area: node definitions exist in the editor registry and in the engine pin table (`VsTypes`), so a new node must be added in both
 - **Related:** 14.2, 14.4, 14.7, 15.2, 15.10
@@ -44,7 +46,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Code:** `VisualScript/VsTypes`, `VisualScript/VsValue`, `VisualScript/VsVariables`, `VisualScript/VsDecl`, `editor/VsVariablePanel.hpp`, `editor/EditorState.*`
 - **API:** `vs::PinType`, `vs::SignatureFor`, `vs::ValidateGraphText`, `vs::ValidateSceneGraphs`, `vs::VsValue`, `vs::VsObject`
 - **Editor:** pin colours and wire refusal in the graph editor; problems list in the toolbar; Play logs graph errors and warnings to the Console (`EditorState::Play`); Build Settings stops the build on graph errors and offers a retry
-- **Docs:** `docs/visual_scripting.md` ("Pin types and the graph checker", "Scene and global variables", "Declared variables, lists, maps and structs")
+- **Docs:** `docs/scripting/visual_scripting.md` ("Pin types and the graph checker", "Scene and global variables", "Declared variables, lists, maps and structs")
 - **Tests:** `vs_types`, `vs_pin_defaults`, `vs_acceptance`, `vs_variables` (literals, declarations, typing, copy versus reference, checker, save and scene round trips, hostile input)
 - **Status:** Works - table and checker are on main and exercised by `vs_types`; `vs_acceptance` saves and reloads real scenes
 - **Open:** none found; object variables and SyncVars are covered in 14.4
@@ -64,7 +66,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Code:** `VisualScript/NodesFunctions`, `VisualScript/NodesLoops`, `VisualScript/Nodes`
 - **API:** node types `Function`, `Return`, `CallFunction`, `While`, `ForEach`, `Break`, `Continue`, `Branch`, `Sequence`
 - **Editor:** palette categories Flow, Events, Variables; Function node signature field
-- **Docs:** `docs/visual_scripting.md` ("Functions", "Loops, lists and variable scopes")
+- **Docs:** `docs/scripting/visual_scripting.md` ("Functions", "Loops, lists and variable scopes")
 - **Tests:** `visualscript`, `vs_acceptance`, `vs_debug` (stepping into and out of functions), `vs_wave4`
 - **Status:** Works - implemented and covered, including stepping through function calls
 - **Open:** none found
@@ -85,9 +87,9 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
   - 14.4.7 Inventory nodes - `VisualScript/NodesInventory` - Add, Remove, Has, Count, Equip, Craft, Loot Roll, Spawn Pickup
   - 14.4.8 Action nodes - `VisualScript/NodesActions` - Action, Actions block, Condition, Delay (see 14.6)
 - **Code:** `VisualScript/Nodes`, `VisualScript/NodesExtra`, `VisualScript/NodesWave4`, `VisualScript/NodesPhysics`, `VisualScript/NodesStory`, `VisualScript/NodesBuild`, `VisualScript/NodesInventory`, `VisualScript/NodesActions`
-- **API:** node type names in `.okayvs` files; palette index in `docs/visual_scripting.md`
+- **API:** node type names in `.okayvs` files; palette index in `docs/scripting/visual_scripting.md`
 - **Editor:** graph editor palette (categories Events, Flow, Variables, Math, Logic, Input, Transform, Actions, Data, Multiplayer & Steam)
-- **Docs:** `docs/visual_scripting.md` ("More nodes", "Third wave", "Fourth wave", "Physics", "Build mode nodes", "Palette index")
+- **Docs:** `docs/scripting/visual_scripting.md` ("More nodes", "Third wave", "Fourth wave", "Physics", "Build mode nodes", "Palette index")
 - **Tests:** `vs_nodes`, `vs_wave4`, `vs_inventory`, `vs_media`, `vs_acceptance`, `visualscript`
 - **Status:** Works - eight node files with tests per wave; media nodes arrived with #566 and inventory nodes with #562 per git history
 - **Open:** custom nodes written by users (plugin area 24.3) do not exist; the earlier plan item "On Value Changed, On Hover, Set Progress, Focus, Create Widget" for UI is not present (12.13)
@@ -107,7 +109,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Code:** `VisualScript/VsDebug`, `editor/GameFiber.hpp`, `editor/VisualScriptEditor.hpp`, `editor/main.cpp`
 - **API:** `vs::VsDebugger::Get()`, `SetBreakpoint`, `RequestStep(Step::Into/Over/Out)`, `onStop`
 - **Editor:** breakpoint toggle on nodes, debug bar in the Visual Script window, View > Panels > Variables (watch)
-- **Docs:** `docs/visual_scripting.md` ("Debugging: breakpoints, stepping and the watch panel")
+- **Docs:** `docs/scripting/visual_scripting.md` ("Debugging: breakpoints, stepping and the watch panel")
 - **Tests:** `vs_debug`, `game_fiber`
 - **Status:** Works - engine half and fiber have tests; the drawing side is not unit-tested
 - **Open:** the debugger covers graphs only: text scripts have no breakpoints (13.5); fiber debugging is used only while a breakpoint is set
@@ -129,7 +131,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Code:** `Components/ActionList`, `VisualScript/ActionGraph`, `VisualScript/NodesActions`, `Components/NoCode`, `editor/main.cpp`
 - **API:** `ActionList::Trigger`, `ActionList::Item`, `vs::ActionListToGraph`, `vs::ActionTriggerToEvent`; Collectible, DamageOnTouch, Teleporter, JumpPad, TriggerZone components
 - **Editor:** Inspector "Actions" card, View > Editors & Tools > Custom Actions, the graph editor's Action / Actions nodes
-- **Docs:** `docs/visual_scripting.md` ("ActionList - no-code triggers", "One graph editor (Actions merged in)")
+- **Docs:** `docs/scripting/visual_scripting.md` ("ActionList - no-code triggers", "One graph editor (Actions merged in)")
 - **Tests:** `actionlist`, `action_graph`
 - **Status:** Works - ActionList and the graph conversion have tests
 - **Open:** possible dead code: `DrawFlowGraph` is marked retired and has no caller (about 1,060 lines); `LogicSource` / `LogicTarget` in `Components/LogicLinks` belong to build mode (11.5)
@@ -147,7 +149,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Code:** `VisualScript/VsApi`, `engine/src/Script/EngineApi.cpp`
 - **API:** `vs::VsApiEntries()`, node types such as `Transform.Translate/3`, `Rigidbody.AddForce/1`, `Mathf.Clamp/3`
 - **Editor:** each engine-API node sits in the topic it belongs to (Position, Numbers, Forces & Velocity, Keyboard ...); there is no "Engine API" group, and searching "engine api" still lists them (`VsWithApiDefs` builds them)
-- **Docs:** `docs/visual_scripting.md` ("Engine API nodes"), `docs/engine_api.md`
+- **Docs:** `docs/scripting/visual_scripting.md` ("Engine API nodes"), `docs/engine_api.md`
 - **Tests:** `vs_acceptance` (API nodes end to end), `vs_types`, `vs_pin_defaults`
 - **Status:** Works - one binding table feeds scripts, nodes and docs
 - **Open:** the binding table is a different list from the old VM's built-ins (13.7)
@@ -166,7 +168,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Code:** `editor/VisualScriptEditor.hpp`, `editor/ActionExport.hpp`, `editor/main.cpp`
 - **API:** menu items in the graph editor (OkayScript preview, Copy); Inspector Actions card conversion buttons
 - **Editor:** Visual Script window preview panel; Inspector Actions card
-- **Docs:** `docs/visual_scripting.md`
+- **Docs:** `docs/scripting/visual_scripting.md`
 - **Tests:** `vs_editor_model` (`export_wait_delay_matches_runtime`, `export_timer_matches_runtime`, `export_actions_matches_runtime`)
 - **Status:** Works for Wait, Delay, Timer, and every Actions step. A graph node with no script fails the export by name instead of becoming a comment
 - **Open:** some graph nodes (object references, functions, lists, scene and global variables, springs) are still listed as not translated; Cooldown is still a comment

@@ -1,4 +1,5 @@
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/ComponentCache.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "okay/Scripting/NextScriptVM.hpp"
@@ -15,6 +16,8 @@
 #include "okay/Scene/SceneLocalization.hpp"
 #include "okay/Components/ActionList.hpp"   // per-scene variable pools follow this scene
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/SkinnedMesh.hpp"   // LateUpdate skins runs of them together (SkinBatch)
+#include "okay/Core/Jobs.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/UIAnchor.hpp"        // UICanvas::Width/Height (viewport)
 #include "okay/Physics/Collider2D.hpp"
@@ -26,6 +29,7 @@
 #include "okay/Core/Profiler.hpp"
 #include "okay/Net/NetTransport.hpp"   // per-frame pump for non-native transports
 #include "okay/Environment/Weather.hpp"   // rain / snow / storm rig following the camera
+#include "okay/Components/WindZone.hpp"   // the wind field (docs/gameplay/wind.md)
 #include "okay/Physics/BodyPose.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -37,6 +41,7 @@
 #include <limits>
 #include <typeindex>
 #include <unordered_map>
+#include <typeinfo>
 #include <vector>
 
 namespace okay {
@@ -213,6 +218,7 @@ void Scene::Clear() {
     m_physics3d.autoContinuous = true;
     m_physicsAcc = 0.0f;
     uiFont.clear();                            // the loaded scene sets its own, if any
+    uiQuality = 1;                             // Good, unless the file says otherwise
     unknownRecords.clear();                    // ... and brings the unknown records of its own file
     mainCamera = nullptr;
     ResetLayerCollisions();   // the layer matrix belongs to the scene being cleared
@@ -428,6 +434,7 @@ void Scene::Update(float deltaTime) {
 
     m_scheduler.Update(deltaTime);
     UpdateWeather(*this, deltaTime);   // the scene's weather preset -> emitters, wind, lightning
+    WindZone::UpdateAll(deltaTime);    // wind zones -> the shared wind field (before anything that reads the wind)
     {   // Tweens set to ignore the time scale use the real frame time.
         m_tweens.Update(deltaTime, Time::UnscaledFor(deltaTime));   // exact even in a frame where a hit stop ends or a ramp runs
     }
@@ -440,7 +447,18 @@ void Scene::Update(float deltaTime) {
 
     {
         OKAY_PROFILE("Scripts.Update");
+        // A click that shows a screen must not also click the button that appears under the pointer (a "Give up" button over a Game Over
+        // screen's "Try again"): on a frame where the mouse goes down, a component that was switched off when the frame began is left
+        // for the next frame. Only those frames pay for the snapshot.
+        std::vector<char> wasOn;
+        if (Input::GetMouseButtonDown(0)) {
+            wasOn.reserve(m_active.size());
+            for (Component* c : m_active) wasOn.push_back(c && c->gameObject && c->gameObject->ActiveInHierarchy() ? 1 : 0);
+        }
+        std::size_t activeIndex = 0;
         for (Component* c : m_active) {
+            const std::size_t at = activeIndex++;
+            if (!wasOn.empty() && at < wasOn.size() && !wasOn[at]) continue;
             if (c && c->enabled && c->gameObject && c->gameObject->ActiveInHierarchy()) {
                 if (!c->m_started) {   // switched on since it joined: its Start comes first
                     if (!StartComponent(c)) continue;   // its OnEnable removed/destroyed it: it is gone
@@ -462,9 +480,38 @@ void Scene::Update(float deltaTime) {
 
     {
         OKAY_PROFILE("Scripts.LateUpdate");
-        for (Component* c : m_active) {
-            if (c && c->m_started && c->enabled && c->gameObject && c->gameObject->ActiveInHierarchy())
-                c->LateUpdate(deltaTime);
+        auto runs = [](const Component* c) { return c && c->m_started && c->enabled && c->gameObject && c->gameObject->ActiveInHierarchy(); };
+        if (!m_hasOrdered) {
+            // No component has a non-zero ExecutionOrder (no SkinnedMesh was activated through
+            // FlushPending), so there are no skin runs to batch: the plain loop, at its old cost.
+            // A SkinnedMesh that got here another way still skins in its own LateUpdate.
+            for (Component* c : m_active)
+                if (runs(c)) c->LateUpdate(deltaTime);
+        } else {
+            // The cheap virtual ExecutionOrder() check comes first: typeid equality falls back to a
+            // name strcmp for every type that does not match, and doing that for every component
+            // cost 2-3% of a 2,000-body physics frame (callgrind, test_jobs_adoption scenes).
+            auto isSkin = [](const Component* c) {
+                return c && c->ExecutionOrder() == SkinnedMesh::kExecutionOrder && typeid(*c) == typeid(SkinnedMesh);
+            };
+            std::vector<SkinnedMesh*> skins;
+            for (std::size_t k = 0; k < m_active.size(); ++k) {
+                Component* c = m_active[k];
+                if (isSkin(c)) {
+                    // A run of SkinnedMesh components next to each other in the update order (they all
+                    // have order 200, so they sit together) is skinned as one batch: the deforms then
+                    // spread over the job system. Skin() only reads its own bones and writes its own
+                    // renderer's mesh, so the result is the same as one LateUpdate after the other.
+                    skins.clear();
+                    std::size_t j = k;
+                    for (; j < m_active.size() && isSkin(m_active[j]); ++j)
+                        if (runs(m_active[j])) skins.push_back(static_cast<SkinnedMesh*>(m_active[j]));
+                    SkinnedMesh::SkinBatch(skins.data(), skins.size(), EngineJobs());
+                    k = j - 1;
+                    continue;
+                }
+                if (runs(c)) c->LateUpdate(deltaTime);
+            }
         }
     }
     }   // end of BusyScope
@@ -605,7 +652,7 @@ void ShowPose(Transform* t, PoseHistory& h, bool stepped, float alpha) {
 }
 
 void CarryParents(Scene& scene, float frameDt) {
-    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+    for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
         if (!rb->transform || rb->bodyType == Rigidbody3D::BodyType::Static) continue;
         Vec3 spin;
         const Vec3 add = ParentDetachVelocity(rb->parentCarry, rb->transform->Parent(),
@@ -616,7 +663,7 @@ void CarryParents(Scene& scene, float frameDt) {
             rb->WakeUp();
         }
     }
-    for (Rigidbody2D* rb : scene.FindObjectsOfType<Rigidbody2D>()) {
+    for (Rigidbody2D* rb : CachedComponents<Rigidbody2D>(scene)) {
         if (!rb->transform || rb->bodyType == Rigidbody2D::BodyType::Static) continue;
         Vec3 spin;
         const Vec3 add = ParentDetachVelocity(rb->parentCarry, rb->transform->Parent(),
@@ -691,8 +738,8 @@ void Scene::StepPhysics(float deltaTime) {
         m_physicsSteps = 1; m_physicsAlpha = 0.0f;
         return;
     }
-    const auto bodies3 = FindObjectsOfType<Rigidbody3D>();
-    const auto bodies2 = FindObjectsOfType<Rigidbody2D>();
+    const auto bodies3 = CachedComponents<Rigidbody3D>(*this);
+    const auto bodies2 = CachedComponents<Rigidbody2D>(*this);
     if (interpolatePhysics) {
         for (Rigidbody3D* rb : bodies3) if (rb->transform) RestorePose(rb->transform, rb->poseHistory);
         for (Rigidbody2D* rb : bodies2) if (rb->transform) RestorePose(rb->transform, rb->poseHistory);

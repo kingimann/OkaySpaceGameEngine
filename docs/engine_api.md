@@ -124,6 +124,9 @@ A row of color swatches. The chosen swatch is the current color.
 |---|---|---|---|---|---|
 | `GetComponent<UIColorPicker>().SetValue(index)` | `UIColorPicker.SetValue/1` | step | index (Number), Target (Object) | - | Select a swatch by index. The chip shows that color. |
 | `GetComponent<UIColorPicker>().Value()` | `UIColorPicker.Value/0` | value | Target (Object) | Result (Number) | The selected swatch, or -1. |
+| `GetComponent<UIColorPicker>().SetAdvanced(on)` | `UIColorPicker.SetAdvanced/1` | step | on (Bool), Target (Object) | - | Show or hide the hue / saturation square and the value and alpha sliders. |
+| `GetComponent<UIColorPicker>().SetHSVA(hue, saturation, value, alpha)` | `UIColorPicker.SetHSVA/4` | step | hue (Number), saturation (Number), value (Number), alpha (Number), Target (Object) | - | Make a colour from hue (0 to 360 degrees), saturation, value and alpha (each 0 to 1). |
+| `GetComponent<UIColorPicker>().Hex()` | `UIColorPicker.Hex/0` | value | Target (Object) | Result (Text) | The current colour as "#RRGGBB" ("#RRGGBBAA" when see-through). |
 
 ## Crosshair
 
@@ -386,6 +389,157 @@ A panel that slides up from the bottom. on_change fires when it opens or closes.
 | `GetComponent<UIBottomSheet>().Toggle()` | `UIBottomSheet.Toggle/0` | step | Target (Object) | - | Open it if it is closed, or close it if it is open. |
 | `GetComponent<UIBottomSheet>().IsOpen()` | `UIBottomSheet.IsOpen/0` | value | Target (Object) | Result (Bool) | True while the sheet is open. |
 
+## UIRadialMenu
+
+A wheel of choices. on_select fires when one is chosen; Chosen() is its index (0 is the top, going clockwise).
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIRadialMenu>().Open()` | `UIRadialMenu.Open/0` | step | Target (Object) | - | Show the wheel. |
+| `GetComponent<UIRadialMenu>().Close()` | `UIRadialMenu.Close/0` | step | Target (Object) | - | Hide the wheel without choosing. |
+| `GetComponent<UIRadialMenu>().Choose(index)` | `UIRadialMenu.Choose/1` | step | index (Number), Target (Object) | Result (Bool) | Choose wedge number `index` as if the player picked it. False when there is no such wedge. |
+| `GetComponent<UIRadialMenu>().Chosen()` | `UIRadialMenu.Chosen/0` | value | Target (Object) | Result (Number) | The wedge chosen last (-1 for none yet). |
+| `GetComponent<UIRadialMenu>().IsOpen()` | `UIRadialMenu.IsOpen/0` | value | Target (Object) | Result (Bool) | True while the wheel is showing. |
+
+## UIKillFeed
+
+The lines that stack in a corner when something dies. Lines fade after their lifetime.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIKillFeed>().Push(killer, victim, weapon)` | `UIKillFeed.Push/3` | step | killer (Text), victim (Text), weapon (Text), Target (Object) | - | Add a line. `weapon` may be an empty string. |
+| `GetComponent<UIKillFeed>().Clear()` | `UIKillFeed.Clear/0` | step | Target (Object) | - | Remove every line. |
+
+## UIAmmoCounter
+
+The ammo number. It reads a Ranged Weapon or variables; SetAmmo types the numbers in by hand.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIAmmoCounter>().SetAmmo(current, reserve)` | `UIAmmoCounter.SetAmmo/2` | step | current (Number), reserve (Number), Target (Object) | - | Show these numbers (used when no weapon or variable supplies them). |
+| `GetComponent<UIAmmoCounter>().Text()` | `UIAmmoCounter.Text/0` | value | Target (Object) | Result (Text) | The number as shown, like "12 / 90". |
+
+## UIInteractionPrompt
+
+A key cap and a word that shows only when the player is near. on_interact fires when the key is pressed while it shows.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIInteractionPrompt>().SetAction(text)` | `UIInteractionPrompt.SetAction/1` | step | text (Text), Target (Object) | - | Change the word next to the key. |
+| `GetComponent<UIInteractionPrompt>().IsShowing()` | `UIInteractionPrompt.IsShowing/0` | value | Target (Object) | Result (Bool) | True when the prompt should be on screen now. |
+
+## UICompass
+
+A heading strip. North is +Z.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UICompass>().Heading()` | `UICompass.Heading/0` | value | Target (Object) | Result (Number) | The heading now, in degrees clockwise from north. |
+
+## UIItemTooltipCard
+
+The card for one item from the item database.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIItemTooltipCard>().Show(item, count)` | `UIItemTooltipCard.Show/2` | step | item (Text), count (Number), Target (Object) | - | Show the card for this item id and stack size. |
+| `GetComponent<UIItemTooltipCard>().Hide()` | `UIItemTooltipCard.Hide/0` | step | Target (Object) | - | Hide the card. |
+
+## UIAbilityIcon
+
+An ability slot with a cooldown ring. on_ability_use and on_ability_ready fire on the object's script.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIAbilityIcon>().Use()` | `UIAbilityIcon.Use/0` | step | Target (Object) | Result (Bool) | Spend a charge and start the cooldown. False when it is not ready. |
+| `GetComponent<UIAbilityIcon>().Reset()` | `UIAbilityIcon.Reset/0` | step | Target (Object) | - | Make the ability ready now. |
+| `GetComponent<UIAbilityIcon>().IsReady()` | `UIAbilityIcon.IsReady/0` | value | Target (Object) | Result (Bool) | True when a charge is ready. |
+| `GetComponent<UIAbilityIcon>().SecondsLeft()` | `UIAbilityIcon.SecondsLeft/0` | value | Target (Object) | Result (Number) | Seconds until the next charge. |
+
+## UIHotReload
+
+Watches a UI markup file or .okaytheme and applies it when it changes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIHotReload>().ReloadNow()` | `UIHotReload.ReloadNow/0` | step | Target (Object) | Result (Bool) | Apply the file now. False (and the reason in the log) when it could not be applied. |
+
+## UIMenuBar
+
+A bar of menus. on_select fires when an entry is chosen; ChosenPath() is "File/Open".
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIMenuBar>().Open(menu)` | `UIMenuBar.Open/1` | step | menu (Number), Target (Object) | - | Drop menu number `menu` down (0 is the first). |
+| `GetComponent<UIMenuBar>().Close()` | `UIMenuBar.Close/0` | step | Target (Object) | - | Close the open menu. |
+| `GetComponent<UIMenuBar>().Choose(menu, entry)` | `UIMenuBar.Choose/2` | step | menu (Number), entry (Number), Target (Object) | Result (Bool) | Choose an entry as if it was clicked. False for a separator, a greyed-out entry or one that does not exist. |
+| `GetComponent<UIMenuBar>().ChosenPath()` | `UIMenuBar.ChosenPath/0` | value | Target (Object) | Result (Text) | The entry chosen last, like "File/Open" (empty before the first). |
+| `GetComponent<UIMenuBar>().IsOpen()` | `UIMenuBar.IsOpen/0` | value | Target (Object) | Result (Bool) | True while a menu is dropped down. |
+
+## UIToolbar
+
+A row of buttons, toggles and one-of-a-group choices. on_select fires when one is pressed.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIToolbar>().Press(index)` | `UIToolbar.Press/1` | step | index (Number), Target (Object) | Result (Bool) | Press button number `index` (separators count). False when it cannot be pressed. |
+| `GetComponent<UIToolbar>().IsOn(index)` | `UIToolbar.IsOn/1` | value | index (Number), Target (Object) | Result (Bool) | True while the toggle or radio button is on. |
+| `GetComponent<UIToolbar>().SetOn(index, on)` | `UIToolbar.SetOn/2` | step | index (Number), on (Bool), Target (Object) | - | Turn a toggle or radio button on or off without pressing it. |
+
+## UITreeView
+
+Nested rows that open and close. on_select fires when the selected row changes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UITreeView>().Select(row)` | `UITreeView.Select/1` | step | row (Number), Target (Object) | Result (Bool) | Select node number `row` (opens the rows above it). False when there is no such node. |
+| `GetComponent<UITreeView>().Selected()` | `UITreeView.Selected/0` | value | Target (Object) | Result (Number) | The selected node (-1 for none). |
+| `GetComponent<UITreeView>().SelectedPath()` | `UITreeView.SelectedPath/0` | value | Target (Object) | Result (Text) | The selected node's path, like "World/Level 1". |
+| `GetComponent<UITreeView>().Toggle(node)` | `UITreeView.Toggle/1` | step | node (Number), Target (Object) | - | Open a closed node, or close an open one. |
+| `GetComponent<UITreeView>().ExpandAll()` | `UITreeView.ExpandAll/0` | step | Target (Object) | - | Open every node. |
+| `GetComponent<UITreeView>().CollapseAll()` | `UITreeView.CollapseAll/0` | step | Target (Object) | - | Close every node. |
+| `GetComponent<UITreeView>().SetNodes(nodes)` | `UITreeView.SetNodes/1` | step | nodes (Text), Target (Object) | - | Replace the tree (World|>Level 1|>>Boss ...). |
+
+## UIDataTable
+
+Columns and rows with sorting and a selected row. on_select and on_sort fire on the object's script.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIDataTable>().SortBy(column, ascending)` | `UIDataTable.SortBy/2` | step | column (Number), ascending (Bool), Target (Object) | - | Sort by a column (0 is the first; -1 keeps the written order). |
+| `GetComponent<UIDataTable>().SetRows(rows)` | `UIDataTable.SetRows/1` | step | rows (Text), Target (Object) | - | Replace every row (Ava|Mage|42;Bo|Rogue|17). |
+| `GetComponent<UIDataTable>().AddRow(cells)` | `UIDataTable.AddRow/1` | step | cells (Text), Target (Object) | - | Add one row at the end (Ava|Mage|42). |
+| `GetComponent<UIDataTable>().Select(row)` | `UIDataTable.Select/1` | step | row (Number), Target (Object) | Result (Bool) | Select a row by its place in the written rows. False when there is no such row. |
+| `GetComponent<UIDataTable>().Selected()` | `UIDataTable.Selected/0` | value | Target (Object) | Result (Number) | The selected row's place in the written rows (-1 for none). |
+| `GetComponent<UIDataTable>().RowCount()` | `UIDataTable.RowCount/0` | value | Target (Object) | Result (Number) | How many rows there are. |
+| `GetComponent<UIDataTable>().Cell(row, column)` | `UIDataTable.Cell/2` | value | row (Number), column (Number), Target (Object) | Result (Text) | The text of a cell, counting rows in the order shown (after sorting). |
+
+## UIWizard
+
+A sequence of steps. on_next, on_back, on_invalid and on_finish fire on the object's script.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIWizard>().Next()` | `UIWizard.Next/0` | step | Target (Object) | Result (Bool) | Go to the next step (or finish on the last). False when the step is not valid yet. |
+| `GetComponent<UIWizard>().Back()` | `UIWizard.Back/0` | step | Target (Object) | Result (Bool) | Go back one step. |
+| `GetComponent<UIWizard>().GoTo(step)` | `UIWizard.GoTo/1` | step | step (Number), Target (Object) | Result (Bool) | Jump to a step (earlier ones always; later ones only with Free Navigation). |
+| `GetComponent<UIWizard>().Restart()` | `UIWizard.Restart/0` | step | Target (Object) | - | Go back to the first step. |
+| `GetComponent<UIWizard>().Step()` | `UIWizard.Step/0` | value | Target (Object) | Result (Number) | The current step (0 is the first). |
+| `GetComponent<UIWizard>().IsFinished()` | `UIWizard.IsFinished/0` | value | Target (Object) | Result (Bool) | True after Next on the last step. |
+
+## UIFormGroup
+
+Labelled input fields that check themselves. on_submit and on_invalid fire on the object's script.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIFormGroup>().Submit()` | `UIFormGroup.Submit/0` | step | Target (Object) | Result (Bool) | Check every field. When all are valid, write the answers to the variables and run on_submit; else show the problems. |
+| `GetComponent<UIFormGroup>().Reset()` | `UIFormGroup.Reset/0` | step | Target (Object) | - | Empty every field. |
+| `GetComponent<UIFormGroup>().IsValid()` | `UIFormGroup.IsValid/0` | value | Target (Object) | Result (Bool) | True when every field is acceptable now. |
+| `GetComponent<UIFormGroup>().ErrorCount()` | `UIFormGroup.ErrorCount/0` | value | Target (Object) | Result (Number) | How many fields are not acceptable now. |
+| `GetComponent<UIFormGroup>().Value(label)` | `UIFormGroup.Value/1` | value | label (Text), Target (Object) | Result (Text) | What is typed in the field with this label. |
+| `GetComponent<UIFormGroup>().SetValue(label, text)` | `UIFormGroup.SetValue/2` | step | label (Text), text (Text), Target (Object) | - | Type text into the field with this label. |
+
 ## Input
 
 Keyboard, mouse and gamepad.
@@ -414,6 +568,19 @@ Keyboard, mouse and gamepad.
 | `Input.RebindAction(action, binding)` | `Input.RebindAction/2` | step | action (Text), binding (Text) | Result (Bool) | Bind an action to "key:e", "mouse:right", "pad:rt"... for this player (saved). False if the binding isn't understood. |
 | `Input.DefineAction(action, binding, binding2)` | `Input.DefineAction/3` | step | action (Text), binding (Text), binding2 (Text) | - | Add a game action (or change its defaults), e.g. ("Dash", "key:q", "pad:rs"). Use "" for an unused binding. |
 | `Input.DefineDirection(action, binding, binding2)` | `Input.DefineDirection/3` | step | action (Text), binding (Text), binding2 (Text) | - | Add a direction action, e.g. ("Steer", "keys:i,k,j,l", "stick:right"). |
+| `Input.PlayerActionValue(action, player)` | `Input.PlayerActionValue/2` | value | action (Text), player (Number) | Result (Vector3) | A local player's action as x, y, z: a button is x 0 to 1, an axis is x, a 2D vector is x and y (y up), a 3D vector uses z too. |
+| `Input.PlayerActionHeld(action, player)` | `Input.PlayerActionHeld/2` | value | action (Text), player (Number) | Result (Bool) | True while a local player's action is held (past its press point). |
+| `Input.PlayerActionPressed(action, player)` | `Input.PlayerActionPressed/2` | value | action (Text), player (Number) | Result (Bool) | True on the frame a local player's action is pressed. |
+| `Input.PlayerActionReleased(action, player)` | `Input.PlayerActionReleased/2` | value | action (Text), player (Number) | Result (Bool) | True on the frame a local player's action is released. |
+| `Input.PlayerActionStarted(action, player)` | `Input.PlayerActionStarted/2` | value | action (Text), player (Number) | Result (Bool) | True on the frame a local player's action starts (the first press of a hold, tap or multi-tap). |
+| `Input.PlayerActionPerformed(action, player)` | `Input.PlayerActionPerformed/2` | value | action (Text), player (Number) | Result (Bool) | True on the frame a local player's action is performed (its hold, tap, multi-tap or repeat completes). |
+| `Input.PlayerActionCanceled(action, player)` | `Input.PlayerActionCanceled/2` | value | action (Text), player (Number) | Result (Bool) | True on the frame a local player's action is canceled (let go too early, too slow). |
+| `Input.PlayerActionProgress(action, player)` | `Input.PlayerActionProgress/2` | value | action (Text), player (Number) | Result (Number) | How far through a hold the action is, 0 to 1 (a hold-to-confirm bar). |
+| `Input.PlayerActionPhase(action, player)` | `Input.PlayerActionPhase/2` | value | action (Text), player (Number) | Result (Text) | "started", "performed", "canceled" or "waiting": where a local player's action is. |
+| `Input.SetActionMapEnabled(map, enabled, player)` | `Input.SetActionMapEnabled/3` | value | map (Text), enabled (Bool), player (Number) | Result (Bool) | Switch a local player's action map on or off (Gameplay, UI ...). False for an unknown map. |
+| `Input.PlayerRebind(action, binding, part, input, player)` | `Input.PlayerRebind/5` | value | action (Text), binding (Number), part (Number), input (Text), player (Number) | Result (Bool) | Change one input of a local player's action (binding and part count from 0), e.g. ("Jump", 0, 0, "key:j", 0). False if it is not understood. |
+| `Input.MyPlayer()` | `Input.MyPlayer/0` | value | - | Result (Number) | The local player index of the Player Input component on this object (use it as the player of the Player calls), or -1 when there is none or the game is not playing. |
+| `Input.PlayerScheme(player)` | `Input.PlayerScheme/1` | value | player (Number) | Result (Text) | The control scheme a local player is in now (Keyboard+Mouse, Gamepad ...); it follows the device used last when the player uses any device. |
 | `Input.Gesture(name)` | `Input.Gesture/1` | value | name (Text) | Result (Bool) | True on the frame a touch gesture happens. name is "tap", "double tap", "long press", "swipe", "swipe up", "swipe down", "swipe left", "swipe right", "pinch" or "rotate". |
 
 ## Time
@@ -487,7 +654,7 @@ Whole-game saves in named slots: every object, the player, inventories, script v
 
 ## Localization
 
-Text in the player's language from the project's string table (docs/localization.md). A script hears a change of language in OnLanguageChanged().
+Text in the player's language from the project's string table (docs/engine/localization.md). A script hears a change of language in OnLanguageChanged().
 
 | In a script | Node | Kind | Inputs | Gives | What it does |
 |---|---|---|---|---|---|
@@ -543,6 +710,19 @@ Rain, snow and storms falling around the camera, and the wind particles and wate
 | `Weather.preset` | `Weather.preset` | value | - | preset (Text) | The current preset's name. |
 | `Weather.Set(preset, intensity)` | `Weather.Set/2` | step | preset (Text), intensity (Number) | - | "none", "rain", "snow" or "storm" at an intensity from 0 to 1; it cross-fades over the scene's weather fade time. |
 | `Weather.SetWind(x, y, z)` | `Weather.SetWind/3` | step | x (Number), y (Number), z (Number) | - | The wind (world units per second) that particles drift with and water waves follow. |
+
+## Wind
+
+The wind field: how hard and which way the air moves at a point (weather, wind zones and the scene's own wind together).
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Wind.Strength` | `Wind.Strength` | value | - | Strength (Number) | The wind speed (metres per second) where this object is. |
+| `Wind.Direction` | `Wind.Direction` | value | - | Direction (Vector3) | The way the wind blows where this object is, as a unit vector (0, 0, 0 when it is calm). |
+| `Wind.At(position)` | `Wind.At/1` | value | position (Vector3) | Result (Vector3) | The wind (speed and direction, metres per second) at a world position, right now. |
+| `Wind.SetStrength(metresPerSecond)` | `Wind.SetStrength/1` | step | metresPerSecond (Number) | - | Set the scene's own wind speed (about 3 is a breeze, 10 a strong wind). Makes the wind object if the scene has none. |
+| `Wind.SetDirection(direction)` | `Wind.SetDirection/1` | step | direction (Vector3) | - | Aim the scene's own wind along a direction, for example Wind.SetDirection(Vec3(1, 0, 0)) blows toward +X. |
+| `Wind.SetGust(amount, perSecond)` | `Wind.SetGust/2` | step | amount (Number), perSecond (Number) | - | How much the scene's wind swells and drops (0 steady, 1 calm to double) and how many gusts come each second (0.2 = one every 5 seconds). |
 
 ## NavMeshAgent
 

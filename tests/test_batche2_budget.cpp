@@ -69,7 +69,7 @@ static std::string Q3dBig(int meshes, std::uint32_t nv, std::uint32_t nf, bool q
         for (std::uint32_t i = 0; i < nf; ++i) w.U16(quads ? 4 : 3);
         for (std::uint32_t i = 0; i < nf; ++i) { if (quads) { for (int k = 0; k < 4; ++k) w.I32((std::uint32_t)k); } else { for (int k = 0; k < 3; ++k) w.I32(3 * i + (std::uint32_t)k); } }
         for (std::uint32_t i = 0; i < nf; ++i) w.I32(0xFFFFFFFFu);   // no material
-        w.I32(0);
+        w.I32(0); w.I32(0);   // normals, texture coordinates
         for (int i = 0; i < 9; ++i) w.F(0.0f);
     }
     return w.s;
@@ -86,7 +86,7 @@ static std::string Q3dStars(std::uint32_t n, std::uint32_t nf) {
     for (std::uint32_t i = 0; i < nf; ++i) w.U16(n);
     for (std::uint32_t i = 0; i < nf; ++i) for (std::uint32_t k = 0; k < n; ++k) w.I32(k);
     for (std::uint32_t i = 0; i < nf; ++i) w.I32(0xFFFFFFFFu);
-    w.I32(0);
+    w.I32(0); w.I32(0);   // normals, texture coordinates
     for (int i = 0; i < 9; ++i) w.F(0.0f);
     return w.s;
 }

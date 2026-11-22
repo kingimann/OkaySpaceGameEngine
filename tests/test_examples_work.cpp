@@ -32,6 +32,7 @@
 #include "../shared/ProjectCreate.hpp"
 #include <Okay.hpp>
 #include "okay/Debug/ProjectDiagnostics.hpp"
+#include "okay/Components/WorldSpaceUI.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -96,7 +97,7 @@ std::vector<std::string> PlayFrames(EditorState& ed, int frames, LogCatch& logs,
     } catch (const std::exception& e) { bad.push_back(std::string("exception: ") + e.what()); }
     catch (...) { bad.push_back("unknown exception"); }
     for (std::size_t i = errorsBefore; i < logs.errors.size(); ++i) {
-        // examples/security_paths shows the file-path gate refusing bad names on purpose (docs/security.md): those lines are the point.
+        // examples/security_paths shows the file-path gate refusing bad names on purpose (docs/online/security.md): those lines are the point.
         if (logs.errors[i].find("[script] ") == 0 && logs.errors[i].find(": refusing file '") != std::string::npos) continue;
         bad.push_back("Console error during Play: " + logs.errors[i]);
     }
@@ -142,18 +143,18 @@ void RunScene(const fs::path& copyRoot, const fs::path& scene, Result& r) {
 // ---- the packaging: which example folders the Windows release carries ---------------------------------------------------
 
 std::vector<std::string> DistExampleDirs() {
+    // EXAMPLE_DIRS="..." lists one folder per line (sorted); the list ends at the closing quote, which may be on a later line.
     std::vector<std::string> dirs;
-    std::istringstream in(ReadAll(fs::path(OKAY_SOURCE_DIR) / "scripts" / "build-windows-dist.sh"));
-    std::string line;
-    while (std::getline(in, line)) {
-        const std::string key = "EXAMPLE_DIRS=\"";
-        if (line.rfind(key, 0) != 0) continue;
-        std::string list = line.substr(key.size());
-        list = list.substr(0, list.find('"'));
-        std::istringstream words(list);
-        std::string w;
-        while (words >> w) dirs.push_back(w);
-    }
+    const std::string text = ReadAll(fs::path(OKAY_SOURCE_DIR) / "scripts" / "build-windows-dist.sh");
+    const std::string key = "\nEXAMPLE_DIRS=\"";
+    std::size_t at = text.find(key);
+    if (at == std::string::npos) return dirs;
+    at += key.size();
+    const std::size_t end = text.find('"', at);
+    if (end == std::string::npos) return dirs;
+    std::istringstream words(text.substr(at, end - at));
+    std::string w;
+    while (words >> w) dirs.push_back(w);
     return dirs;
 }
 
@@ -300,6 +301,29 @@ int main() {
         for (const std::string& p : found) listed.insert(fs::path(p).filename().string());
         CHECK(listed == onDisk);
         for (const std::string& p : found) { EditorState ed; std::string err; CHECK(ed.Load(p, &err)); }
+    }
+
+    // ---- a scene opens in the view it is made for (it used to keep the editor's view, so 3D scenes opened flattened
+    // into the 2D view and the physics playground's depth-separated labels were drawn on top of each other) ----
+    {
+        EditorState ed; std::string err;
+        const std::string physics = (copy / "physics" / "physics_playground.okayscene").string();
+        const std::string flat = (copy / "ui_text" / "ui_text.okayscene").string();
+        CHECK(ed.Load(physics, &err) && ed.view3D);                                  // perspective camera: the 3D view
+        CHECK(EditorState::SceneViewFor(ed.scene()) == 1);
+        CHECK(ed.Load(flat, &err) && !ed.view3D);                                    // orthographic camera: the 2D view
+        CHECK(EditorState::SceneViewFor(ed.scene()) == 0);
+        CHECK(ed.Load(physics, &err) && ed.view3D);                                  // and back
+        int labels = 0;                                                              // its station labels are 3D text, drawn in the
+        for (const auto& up : ed.scene().Objects()) {                                // 3D view and the game (world text only shows in 2D)
+            if (up->name.size() != 7 || up->name.substr(1) != " Label") continue;
+            const auto* tr = up->GetComponent<TextRenderer>();
+            CHECK(tr && tr->screenSpace && up->GetComponent<WorldSpaceUI>() != nullptr);
+            ++labels;
+        }
+        CHECK(labels == 9);
+        Scene empty;
+        CHECK(EditorState::SceneViewFor(empty) == -1);                               // no camera: the view is kept
     }
 
     CHECK(sandbox.Verify());   // nothing was written into the source tree

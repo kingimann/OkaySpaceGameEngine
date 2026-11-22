@@ -5,6 +5,7 @@
 #include "okay/Components/InventoryPlayer.hpp"
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Modules/Interact.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scene/ComponentSerializer.hpp"
@@ -32,7 +33,7 @@ public:
     }
     std::string Prompt(const InteractContext&) const override {
         std::string n = p_->item.empty() ? p_->gameObject->name : p_->item;
-        return interact::KeyLabel(p_->interactKey) + " to pick up " + n;
+        return UseKeyName(p_->interactKey) + " to pick up " + n;
     }
     bool Interact(const InteractContext& c) override {
         if (!CanInteract(c)) return false;
@@ -52,7 +53,7 @@ public:
     float Range() const override { return c_->range; }
     bool CanInteract(const InteractContext&) const override { return c_->enabled && c_->PlayerInRange(); }
     std::string Prompt(const InteractContext&) const override {
-        return interact::KeyLabel(c_->InteractKey()) + (c_->open ? " to close" : " to open");
+        return UseKeyName(c_->InteractKey()) + (c_->open ? " to close" : " to open");
     }
     bool Interact(const InteractContext&) override { c_->open = !c_->open; return true; }
     const char* Model() const override { return "InventoryInteractable"; }
@@ -68,7 +69,7 @@ public:
     bool CanInteract(const InteractContext& c) const override {
         return c_->Available() && c.actor && DistanceTo(c.actor, c_->gameObject) <= c_->range;
     }
-    std::string Prompt(const InteractContext&) const override { return interact::KeyLabel(c_->key) + " to " + c_->prompt; }
+    std::string Prompt(const InteractContext&) const override { return UseKeyName(c_->key) + " to " + c_->prompt; }
     bool Interact(const InteractContext& c) override { return c_->Use(c.actor); }
     float HoldSeconds() const override { return c_->holdSeconds; }
     const char* Model() const override { return "Interactable"; }

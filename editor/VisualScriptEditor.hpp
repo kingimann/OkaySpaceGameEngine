@@ -24,6 +24,8 @@
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/VisualScript/VsDebug.hpp"
 #include "VisualScriptNodeHelp.hpp"
+#include "ScriptingDensity.hpp"      // the Density choice: one table of sizes for the graph, palette and toolbar
+#include "ScriptingDensityUi.hpp"
 #include "VisualScriptChoices.hpp"
 #include "VisualScriptNames.hpp"
 #include "VisualScriptCategories.hpp"
@@ -36,6 +38,13 @@
 #include "VisualScriptLevels.hpp"
 #include "VisualScriptCategories.hpp"
 #include "VisualScriptFriendly.hpp"
+#include "VisualScriptPlain.hpp"
+#include "okay/VisualScript/QuickBlocks.hpp"
+#include "VisualScriptRecipes.hpp"
+#include "VisualScriptAutoConnect.hpp"
+#include "VisualScriptAdvanced.hpp"
+#include "VisualScriptPlainWire.hpp"
+#include "VisualScriptPanelWords.hpp"
 #include "DocRecovery.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -163,6 +172,27 @@ inline std::vector<VsDef> ApplyFriendlyNames(std::vector<VsDef> defs) {
     return defs;
 }
 
+// Quick blocks (okay/VisualScript/QuickBlocks.hpp): one node each, the typed fields are its data inputs.
+inline std::vector<VsDef> VsWithQuickBlockDefs(std::vector<VsDef> defs) {
+    for (const okay::vs::QuickBlock& b : okay::vs::QuickBlocks()) {
+        VsDef d{b.type, b.title, CAT_ACTION, b.flowIn, {}, {}, {}, 0, nullptr};
+        if (b.thenOut) d.execOut.push_back("Then do");
+        for (const okay::vs::QbField& f : okay::vs::QbAllFields(b)) d.dataIn.push_back(f.name);
+        d.level = VsLevel::Basic;
+        defs.push_back(d);
+    }
+    return defs;
+}
+
+// Plain words (VisualScriptPlain.hpp): a hand-picked name, else the banned words swapped for everyday ones.
+inline std::vector<VsDef> ApplyPlainTitles(std::vector<VsDef> defs) {
+    for (VsDef& d : defs) {
+        if (const char* t = VsPlainTitleFor(d.type)) { d.title = t; continue; }
+        if (d.title && !VsGlossaryViolation(d.title).empty()) d.title = VsIntern(VsPlainText(d.title, true));
+    }
+    return defs;
+}
+
 // Levels come from VisualScriptLevels.hpp, not from the big list below, so a
 // new node (including one added on another branch) gets a level by name.
 inline std::vector<VsDef> ApplyLevels(std::vector<VsDef> defs) {
@@ -177,7 +207,7 @@ inline std::vector<VsDef> ApplyLevels(std::vector<VsDef> defs) {
 // A curated, genuinely-useful set of nodes (all supported by the engine runtime),
 // then the generated engine-API nodes.
 inline const std::vector<VsDef>& Registry() {
-    static const std::vector<VsDef> defs = ApplyLevels(ApplyFriendlyNames(VsWithBuiltinDefs(VsWithApiDefs(VsWithTargetPins({
+    static const std::vector<VsDef> defs = ApplyLevels(ApplyPlainTitles(ApplyFriendlyNames(VsWithQuickBlockDefs(VsWithBuiltinDefs(VsWithApiDefs(VsWithTargetPins({
         // Events
         {"OnStart",  "On Start",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnUpdate", "On Update", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -333,7 +363,7 @@ inline const std::vector<VsDef>& Registry() {
         {"AnimState",    "Anim State",     CAT_DATA, false, {}, {}, {"State"}, 0, nullptr},
         {"IkLook",       "IK Look At",     CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 0, nullptr},
         {"IkHand",       "IK Hand Reach",  CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 1, "left / right"},
-        // --- Look: weather, fog, post-processing (docs/rendering.md) ---
+        // --- Look: weather, fog, post-processing (docs/rendering/rendering.md) ---
         {"SetWeather",    "Set Weather",     CAT_ACTION, true, {""}, {"Intensity"}, {}, 1, "none / rain / snow / storm"},
         {"SetFog",        "Set Fog",         CAT_ACTION, true, {""}, {"On","Start","End"}, {}, 0, nullptr},
         {"SetPostEffect", "Set Post Effect", CAT_ACTION, true, {""}, {"Value"}, {}, 1, "bloom / exposure / saturation / ..."},
@@ -829,7 +859,7 @@ inline const std::vector<VsDef>& Registry() {
         {"IsValid",         "Is Valid",         CAT_LOGIC, false, {}, {"Value"}, {"Yes"}, 0, nullptr},
         {"CallScript",      "Call Script",      CAT_ACTION, true, {""}, {"Argument"}, {"Result"}, 1, "function"},
         {"RunGraph",        "Run Graph",        CAT_FLOW,  true, {""}, {}, {}, 1, "file.okayvs or file|Event"},
-    })))));
+    })))))));
     return defs;
 }
 
@@ -873,6 +903,8 @@ inline std::string VsCapturedKey() {
     for (const M& m : named) if (ImGui::IsKeyPressed(m.k, false)) return m.n;
     return {};
 }
+/// What a new Quick block fills itself in from: the last key picked, the selected object, the scene's objects.
+inline okay::vs::QbContext& VsQuickContext() { static okay::vs::QbContext c; return c; }
 inline bool KeyPicker(std::string& arg, float width) {
     bool changed = false;
     std::string lbl = "Key: " + VsKeyLabel(arg) + "##keypick";
@@ -968,6 +1000,11 @@ struct VsComment { float x = 0, y = 0, w = 300, h = 200; std::string text = "Com
 // The runtime entry name an event node registers under ("" = not an event):
 // "OnStart", "OnKey:space", "OnTimer:2", "OnEvent:Hit", "OnAnimEvent:step"...
 // Spaces become '_' so the name stays one token (the runtime does the same).
+/// A quick block that starts on its own event (no flow input) counts as the start of a script.
+inline bool VsStartsOnItsOwn(const std::string& type) {
+    const okay::vs::QuickBlock* b = okay::vs::FindQuickBlock(type);
+    return b && !b->flowIn;
+}
 inline std::string VsEntryName(const std::string& type, const std::string& arg) {
     auto tok = [](std::string v, const char* d) {
         if (v.empty()) v = d;
@@ -1074,6 +1111,11 @@ public:
             {"AddItem", "item"}, {"RemoveItem", "item"}, {"HasItem", "item"}, {"ItemCount", "item"}, {"EquipItem", "item"},
             {"CraftItem", "item"}, {"LootRoll", "loot"}, {"SpawnPickup", "item"}, {"SetWeapon", "sword"}};
         if (d) if (auto it = kArg.find(d->type); it != kArg.end()) n.arg = it->second;
+        // A quick block starts with the values its fields show, so it works the moment it is dropped.
+        if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(type)) {
+            int pin = 0;
+            for (const okay::vs::QbField& f : okay::vs::QbAllFields(*qb)) n.pinDefault[pin++] = okay::vs::QbSmartDefault(f, VsQuickContext());
+        }
         nodes.push_back(n); dirty = true; return n.id;
     }
     void removeNode(int id) {
@@ -1377,9 +1419,43 @@ public:
             if (dest) continue;
             for (auto& l : execLinks) if (l.from == n.id && l.pin == 4) l.pin = ncases;
         }
+        // Quick blocks saved by an earlier release: bring their typed values up to the current fields.
+        for (auto& n : nodes) if (okay::vs::FindQuickBlock(n.type)) okay::vs::QbUpgradeFields(n.type, n.pinDefault);
+        // Old Show / Hide, Move and Turn nodes with only typed values become the one merged block (nothing wired into them).
+        for (auto& n : nodes) {
+            bool wired = false;
+            for (const auto& l : dataLinks) if (l.consumer == n.id) wired = true;
+            std::string newType; std::map<int, std::string> newPins;
+            if (!wired && okay::vs::QbConvertOldNode(n.type, n.arg, n.pinDefault, newType, newPins)) {
+                n.type = newType; n.arg.clear(); n.pinDefault = newPins;
+            }
+        }
         nextId = maxId + 1;
     }
 };
+
+/// The names of the saved values a graph already uses (typed on Get / Set / Add Saved Value blocks, or in the Name field
+/// of a Quick block), each once, in the order first used. The Name field offers these, so a typo cannot make a new one.
+inline std::vector<std::string> VsUsedValueNames(const VsEditGraph& g) {
+    std::vector<std::string> out;
+    auto add = [&](const std::string& name) {
+        if (name.empty()) return;
+        for (const std::string& o : out) if (o == name) return;
+        out.push_back(name);
+    };
+    for (const VsEditNode& n : g.nodes) {
+        if (n.type == "GetVar" || n.type == "SetVar" || n.type == "AddVar" || n.type == "Toggle" || n.type == "HasVar") add(n.arg);
+        if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(n.type)) {
+            const auto fields = okay::vs::QbAllFields(*qb);
+            for (std::size_t i = 0; i < fields.size(); ++i) {
+                if (fields[i].kind != okay::vs::QbKind::Name) continue;
+                auto it = n.pinDefault.find((int)i);
+                add(okay::vs::QbNameBare(it != n.pinDefault.end() && !it->second.empty() ? it->second : std::string(fields[i].def)));
+            }
+        }
+    }
+    return out;
+}
 
 // The graph a new visual script starts with: the same thing the starter text
 // script does, so every node is doing a job. On Start prints that the object is
@@ -2299,7 +2375,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g, std::vector<okay::v
         };
         for (const auto& n : g.nodes) {
             const int tp = okay::vs::TargetPinFor(n.type);
-            bool objectUse = n.type == "Self" || n.type == "Other" || n.type == "FindObject" || n.type == "Raycast3D" || n.type == "SpringStep" ||
+            bool objectUse = n.type.rfind("Qb", 0) == 0 || n.type == "Self" || n.type == "Other" || n.type == "FindObject" || n.type == "Raycast3D" || n.type == "SpringStep" ||
                              IsFunctionNode(n.type) || n.type == "SetLocal" || n.type == "GetLocal" || IsApiNode(n.type) ||
                              n.type == "ForEach" || n.type == "ForEachMap" || n.type.rfind("List", 0) == 0 || n.type == "NewList" ||
                              n.type == "NewMap" || n.type.rfind("Map", 0) == 0 || n.type == "RunGraph" || n.type == "CallScript" ||
@@ -2562,6 +2638,16 @@ struct VsEditState {
     bool   snapGrid = true;      // snap a moved node to the canvas grid on release
     bool   wasNodeDrag = false;
     bool   showHint = true;      // the one-line canvas hint
+    bool   panTool = false;      // the hand "Pan" button: plain left-drag pans
+    bool   scrollPans = false;   // trackpad mode: plain scroll pans (Ctrl+scroll zooms)
+    bool   panLeftNow = false;   // a left-drag pan is running this frame (nodes must not move)
+    bool   spaceDown = false; float spaceT = 0.0f, spaceMoved = 0.0f; bool spaceOpen = false;   // Space tap vs Space pan
+    float  rightT = 0.0f;        // how long the right button has been down (click vs pan)
+    bool   startedEmpty = false; // "Start empty" on the start card: no cards for this graph
+    std::size_t valueSig = 0; int sigNodes = 0;   // a fingerprint of the typed values: a change means a number was edited
+    int    lastUsed = -1;        // the block added last: the next added block joins it when nothing is selected
+    // A wire that was double-clicked: the block picked in the popup is put on it. (exec: from, pin, to; value: consumer, inPin)
+    bool   wireInsOn = false, wireInsExec = true; int wireInsA = 0, wireInsB = 0, wireInsC = 0;
     int    focusNode = -1;       // centre the view on this node next frame
     bool   addAtCenter = false;  // "+ Add" in the toolbar: palette, node placed mid-view
     bool   pasteTemplate = false; std::string templateText;   // a chosen template, placed mid-view
@@ -2627,16 +2713,7 @@ inline ImU32 VsPinColor(okay::vs::PinType t) {
 inline bool VsWireOk(const VsEditGraph& g, int consumer, int inPin, int producer, int outPin, std::string* why = nullptr) {
     const okay::vs::PinType from = VsOutPinType(g, producer, outPin), to = VsInPinType(g, consumer, inPin);
     if (okay::vs::PinCompatible(from, to)) return true;
-    if (why) {
-        auto article = [](const char* w) {
-            const char c = w && w[0] ? (char)std::tolower((unsigned char)w[0]) : 'x';
-            return (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u') ? "an " : "a ";
-        };
-        *why = std::string(article(okay::vs::PinTypeName(from))) + okay::vs::PinTypeName(from)
-             + " can't go into " + article(okay::vs::PinTypeName(to)) + okay::vs::PinTypeName(to) + " input";
-        const std::string h = okay::vs::ConversionHint(from, to);
-        if (!h.empty()) *why += " - " + h;
-    }
+    if (why) *why = VsPlainWireRefusal(from, to);
     return false;
 }
 
@@ -2807,6 +2884,8 @@ inline void ResetEditState(VsEditState& st) {
     st.pendingBase.clear(); st.trackInit = false; st.seenExec.clear(); st.flash.clear();
     st.dragging = st.linkPending = st.boxing = false;
     st.dragComment = st.resizeComment = st.renameComment = -1;
+    st.lastUsed = -1; st.wireInsOn = false;
+    st.startedEmpty = false;   // a graph that was just opened or reset shows the start cards again if it is empty
 }
 
 inline void VsSaveTabList();
@@ -3082,6 +3161,56 @@ inline std::string VsSelectionText(const VsEditGraph& g, const std::set<int>& se
 }
 // Paste OkayVS text into the graph with fresh ids, its top-left at (wx, wy)
 // (world units). Returns the new node ids.
+/// A node just added from the popup joins the flow: the last node before it when that node still has a free
+/// "then" plug (the new node is placed beside it), else a nearby node with a free plug (VisualScriptAutoConnect.hpp).
+/// Returns the node it was connected after, or -1. The node must have a flow input.
+inline int VsAutoHook(VsEditGraph& g, int newId) {
+    VsEditNode* n = g.find(newId);
+    if (!n) return -1;
+    const VsDef* d = FindDef(n->type);
+    if (!d || !d->execIn) return -1;
+    std::vector<VsLayoutNode> layout;
+    int last = -1;
+    for (const VsEditNode& m : g.nodes) {
+        if (m.id == newId) continue;
+        const VsDef* md = FindDef(m.type);
+        if (!md) continue;
+        VsLayoutNode ln;
+        ln.id = m.id; ln.x = m.x; ln.y = m.y;
+        ln.hasFlowOut = !md->execOut.empty();
+        for (const VsExecLink& l : g.execLinks) if (l.from == m.id && l.pin == 0) ln.flowOutUsed = true;
+        layout.push_back(ln);
+        last = m.id;
+    }
+    int from = VsAutoConnectFrom(layout, n->x, n->y, true);
+    if (from < 0 && last >= 0)
+        for (const VsLayoutNode& ln : layout)
+            if (ln.id == last && ln.hasFlowOut && !ln.flowOutUsed) {
+                from = last;
+                n->x = ln.x + 260.0f; n->y = ln.y;   // put it beside the node it follows
+            }
+    if (from < 0) return -1;
+    g.linkExec(from, 0, newId);
+    return from;
+}
+
+/// A node dropped on a flow wire splits it: from -> node -> to. The node needs a flow input and a flow output and
+/// no flow wires of its own yet. `wireIndex` indexes g.execLinks. Returns true when it was inserted.
+inline bool VsInsertOnWire(VsEditGraph& g, int nodeId, int wireIndex) {
+    if (wireIndex < 0 || wireIndex >= (int)g.execLinks.size()) return false;
+    const VsEditNode* n = g.find(nodeId);
+    const VsDef* d = n ? FindDef(n->type) : nullptr;
+    if (!d || !d->execIn || d->execOut.empty()) return false;
+    for (const VsExecLink& l : g.execLinks) if (l.from == nodeId || l.to == nodeId) return false;
+    const VsExecLink wire = g.execLinks[(std::size_t)wireIndex];
+    if (wire.from == nodeId || wire.to == nodeId) return false;
+    for (const VsFlowLink& k : VsInsertOnWire(VsFlowLink{wire.from, wire.pin, wire.to}, nodeId, 0)) (void)k;
+    g.unlinkExec(wire.from, wire.pin, wire.to);
+    g.linkExec(wire.from, wire.pin, nodeId);
+    g.linkExec(nodeId, 0, wire.to);
+    return true;
+}
+
 inline std::set<int> VsPasteText(VsEditGraph& g, const std::string& text, float wx, float wy) {
     VsEditGraph part; part.fromText(text);
     std::set<int> made;
@@ -3272,6 +3401,109 @@ inline bool VsApplyDrop(EditorState& ed, VsEditState& st, okay::vs::VsRefKind ki
 }
 
 // One reference slot: name, picker, clear, and drag-drop. True when `value` changed.
+/// One field of a Quick block, drawn with the widget for its kind: a number you drag or type, a key to press, an object
+/// to pick, a dropdown, a colour swatch, or the presets list. Returns true when the value changed. Plain text fields
+/// return false (the caller draws the text box).
+inline bool VsDrawQuickField(EditorState& ed, VsEditGraph& g, VsEditNode& n, const okay::vs::QuickBlock& qb, int i, std::string& dv, float width) {
+    using okay::vs::QbKind;
+    const std::vector<okay::vs::QbField> fields = okay::vs::QbAllFields(qb);
+    if (i < 0 || i >= (int)fields.size()) return false;
+    const okay::vs::QbField& f = fields[(std::size_t)i];
+    bool changed = false;
+    char id[24]; std::snprintf(id, sizeof id, "##qf%d", i);
+    ImGui::SetNextItemWidth(width);
+    switch (f.kind) {
+        case QbKind::Number: {
+            float v = (float)std::atof((dv.empty() ? std::string(f.def) : dv).c_str());
+            if (ImGui::DragFloat(id, &v, 0.1f, 0.0f, 0.0f, "%g")) { char b[32]; std::snprintf(b, sizeof b, "%g", v); dv = b; changed = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s: drag, or Ctrl+click to type a number", f.name);
+            return changed;
+        }
+        case QbKind::Key: {
+            std::string k = dv.empty() ? std::string(f.def) : dv;
+            if (KeyPicker(k, width)) { dv = k; VsQuickContext().lastKey = k; changed = true; }
+            return changed;
+        }
+        case QbKind::Object: {
+            const std::string shown = dv.empty() ? std::string("This object") : dv;
+            if (ImGui::BeginCombo(id, shown.c_str())) {
+                if (ImGui::Selectable("This object", dv.empty())) { dv.clear(); changed = true; }
+                for (const auto& up : ed.scene().Objects())
+                    if (up && ImGui::Selectable(up->name.c_str(), dv == up->name)) { dv = up->name; changed = true; }
+                ImGui::EndCombo();
+            }
+            return changed;
+        }
+        case QbKind::Choice: {
+            const std::string cur = dv.empty() ? std::string(f.def) : dv;
+            std::string label = cur;
+            for (const auto& c : okay::vs::QbChoices(f.choices)) if (c.second == cur) label = c.first;
+            if (ImGui::BeginCombo(id, label.c_str())) {
+                for (const auto& c : okay::vs::QbChoices(f.choices))
+                    if (ImGui::Selectable(c.first.c_str(), c.second == cur)) { dv = c.second; changed = true; }
+                ImGui::EndCombo();
+            }
+            return changed;
+        }
+        case QbKind::Colour: {
+            const std::string cur = dv.empty() ? std::string(f.def) : dv;
+            float col[3] = {1, 1, 1};
+            if (okay::vs::QbValidate(QbKind::Colour, cur))
+                for (int k = 0; k < 3; ++k) col[k] = (float)std::strtol(cur.substr(1 + (std::size_t)k * 2, 2).c_str(), nullptr, 16) / 255.0f;
+            if (ImGui::ColorEdit3(id, col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) {
+                char b[16]; std::snprintf(b, sizeof b, "#%02x%02x%02x", (int)(col[0] * 255.0f + 0.5f), (int)(col[1] * 255.0f + 0.5f), (int)(col[2] * 255.0f + 0.5f));
+                dv = b; changed = true;
+            }
+            return changed;
+        }
+        case QbKind::Name: {
+            // Type a name (it is made on the spot) or pick one the script already uses, so a typo cannot make a new one.
+            // The small button says who can see it: only this object (the default) or everyone (every graph in the scene).
+            const std::string whole = dv.empty() ? std::string(f.def) : dv;
+            const bool shared = okay::vs::QbNameShared(whole);
+            char buf[64]; std::snprintf(buf, sizeof buf, "%s", okay::vs::QbNameBare(whole).c_str());
+            const float btn = 22.0f, scopeW = 34.0f;
+            ImGui::SetNextItemWidth(std::max(30.0f, width - btn - scopeW - 8.0f));
+            if (ImGui::InputTextWithHint(id, "name, like score", buf, sizeof buf)) {
+                dv = okay::vs::QbNameWithScope(okay::vs::QbNormalizeName(buf), shared); changed = true;
+            }
+            ImGui::SameLine(0, 4);
+            if (ImGui::Button("v##names", ImVec2(btn, 0))) ImGui::OpenPopup("##namelist");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick a saved value this script already uses");
+            ImGui::SameLine(0, 4);
+            if (ImGui::Button(shared ? "All##scope" : "Me##scope", ImVec2(scopeW, 0))) {
+                dv = okay::vs::QbNameWithScope(buf, !shared); changed = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(shared ? "Everyone can see this. Click for only this object." : "Only this object. Click for everyone can see this.");
+            if (ImGui::BeginPopup("##namelist")) {
+                const std::vector<std::string> used = VsUsedValueNames(g);
+                if (used.empty()) ImGui::TextDisabled("No saved values yet. Type a name.");
+                for (const std::string& u : used) if (ImGui::Selectable(u.c_str())) { dv = okay::vs::QbNameWithScope(u, shared); changed = true; }
+                ImGui::EndPopup();
+            }
+            return changed;
+        }
+        case QbKind::Preset: {
+            if (ImGui::BeginCombo(id, "Choose a preset")) {
+                for (const auto& c : okay::vs::QbChoices(f.choices))
+                    if (ImGui::Selectable(c.first.c_str())) {
+                        std::vector<std::string> values;
+                        for (std::size_t k = 0; k < qb.fields.size(); ++k) {
+                            auto it = n.pinDefault.find((int)k);
+                            values.push_back(it != n.pinDefault.end() ? it->second : std::string(qb.fields[k].def));
+                        }
+                        if (okay::vs::QbApplyPreset(qb, c.second, values))
+                            for (std::size_t k = 0; k < values.size(); ++k) n.pinDefault[(int)k] = values[k];
+                        dv.clear(); changed = true;
+                    }
+                ImGui::EndCombo();
+            }
+            return changed;
+        }
+        default: return false;
+    }
+}
+
 inline bool VsDrawRefSlot(EditorState& ed, VsEditState& st, std::string& value, okay::vs::VsRefKind kind,
                           bool defaultSelf, float width, const char* id) {
     using okay::vs::VsRefKind;
@@ -3459,7 +3691,16 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
 }
 }  // namespace okay::editor::vsed
 #include "VisualScriptClarity.hpp"
+#include "VisualScriptGuide.hpp"       // plain sentences, pin tips, next steps, Try this node, the help card
+#include "VisualScriptPan.hpp"
+#include "VisualScriptPanModel.hpp"
 #include "VisualScriptPalette.hpp"
+#include "VisualScriptEasyOps.hpp"   // graph-in, graph-out rules for the canvas (needs the graph model above)
+#include "VisualScriptPlainWords.hpp" // every "something is wrong" sentence, in plain words
+#include "VisualScriptWhatHappened.hpp" // "Moved 3 steps right": the line under a block that ran
+#include "VisualScriptHints.hpp"      // the one-line next-step bar
+#include "VisualScriptStartDraw.hpp"  // the big recipe cards shown for an empty graph
+#include "VisualScriptGuideDraw.hpp"  // the "What is this?" card, next-step chips, Try this node
 namespace okay::editor::vsed {
 
 // ---- The editor window -----------------------------------------------------
@@ -3489,7 +3730,8 @@ inline void Draw(EditorState& ed, bool* open) {
     const bool typing = io.WantTextInput;
     {
         VsSession& ses = Session();
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f, 8.0f));
+        const oked::scriptui::Metrics dm = oked::scriptui::Current();
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(dm.tabPad.x, dm.tabPad.y));
         if (ImGui::BeginTabBar("##vstabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
             for (int i = 0; i < (int)ses.tabs.size(); ++i) {
                 VsEditState& tab = *ses.tabs[(std::size_t)i];
@@ -3610,9 +3852,10 @@ inline void Draw(EditorState& ed, bool* open) {
     bool addComment = false;
     bool openTpl = false;
     int alignReq = 0;   // 1 left, 2 right, 3 top, 4 bottom
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 8.0f));
+    const oked::scriptui::Metrics dm = oked::scriptui::Current();   // Density (Graph > Density): every pane reads this one table
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(dm.framePad.x, dm.framePad.y));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 7.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(dm.itemSpacing.x, dm.itemSpacing.y));
     if (ImGui::Button("Graph")) ImGui::OpenPopup("##vsfile");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("New, open, save, undo, align, and the panels");
     if (ImGui::BeginPopup("##vsfile")) {
@@ -3661,13 +3904,15 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::Separator();
         ImGui::MenuItem("Outline", nullptr, &st.showOutline);
         ImGui::MenuItem("Node details", nullptr, &st.showDetails);
+        oked::scriptui::DrawDensityMenu();   // Compact / Comfortable / Spacious, shared with the Script editor
         ImGui::MenuItem("Minimap", nullptr, &st.showMinimap);
         ImGui::MenuItem("Live values while playing", nullptr, &st.liveValues);
         ImGui::MenuItem("Show as OkayScript", nullptr, &st.showScript);
         ImGui::MenuItem("Canvas hint", nullptr, &st.showHint);
+        ImGui::MenuItem("Scroll moves the view (trackpad)", nullptr, &st.scrollPans);
         ImGui::Separator();
         ImGui::TextDisabled("Right-click or Space adds a node");
-        ImGui::TextDisabled("Scroll zooms. Home fits everything. F fits the selection.");
+        ImGui::TextDisabled("Scroll zooms (Ctrl+scroll always). Arrow keys, middle/right-drag or Space+drag move the view. Home fits everything. F fits the selection.");
         ImGui::EndPopup();
     }
     if (st.openTemplates) { ImGui::OpenPopup("##vsgraphtemplates"); st.openTemplates = false; }
@@ -3779,8 +4024,8 @@ inline void Draw(EditorState& ed, bool* open) {
     if (ImGui::Button("Save")) doSave();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save this graph (Ctrl+S)");
     ImGui::SameLine();
-    if (ImGui::Button("Recipes")) ImGui::OpenPopup("##vsrecipes");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop in a ready-made graph: coins, a chasing enemy, a door, a health pickup, a countdown.");
+    if (ImGui::Button("Pick a recipe")) ImGui::OpenPopup("##vsrecipes");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start here. Drop in a ready-made graph: move with arrow keys, jump, coins and score, a door, an enemy that follows you.");
     if (ImGui::BeginPopup("##vsrecipes")) {
         struct Rec { const char* name; const char* text; };
         static const Rec recs[] = {
@@ -3801,6 +4046,24 @@ inline void Draw(EditorState& ed, bool* open) {
             {"Countdown then win",
              "node 1 OnStart\npos 1 40 40\nentry OnStart 1\nnode 2 Countdown 0.4\npos 2 300 40\nexec 1 0 2\nnode 3 Win\npos 3 560 40\nexec 2 0 3\n"},
         };
+        // The first things a beginner sees: small ready-made recipes (VisualScriptRecipes.hpp), one click each.
+        ImGui::TextDisabled("Start here. One click adds a small working graph.");
+        for (const VsRecipe& r : VsRecipes()) {
+            if (ImGui::MenuItem(r.name)) {
+                st.templateText = r.graph; st.pasteTemplate = true;
+                if (GameObject* go = ed.selected()) VsAddTemplateComponents(go, r.add);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(320);
+                ImGui::TextUnformatted(r.blurb);
+                if (r.needs[0]) ImGui::TextDisabled("%s", r.needs);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
+        ImGui::Separator();
+        ImGui::TextDisabled("More recipes");
         for (const Rec& r : recs)
             if (ImGui::MenuItem(r.name)) { st.templateText = r.text; st.pasteTemplate = true; }
         ImGui::EndPopup();
@@ -3833,8 +4096,18 @@ inline void Draw(EditorState& ed, bool* open) {
     {
         int nErr = 0, nWarn = 0;
         for (const auto& is : st.issues) (is.severity == 0 ? nErr : nWarn)++;
-        const float rightW = 520.0f;
+        // The right cluster is as wide as its buttons (padding follows the Density). When the window is too narrow for all of
+        // it beside the left buttons, the Outline / Details buttons drop out (both are in the Graph menu as well) instead of
+        // the clusters running into each other.
+        auto btnW = [&](const char* t) { return ImGui::CalcTextSize(t, nullptr, true).x + 2.0f * dm.framePad.x + dm.itemSpacing.x; };
+        char probLbl[64];
+        if (nErr + nWarn == 0) std::snprintf(probLbl, sizeof probLbl, "No problems");
+        else std::snprintf(probLbl, sizeof probLbl, "%d problem%s", nErr + nWarn, nErr + nWarn == 1 ? "" : "s");
+        const float coreW = btnW(probLbl) + btnW("Fit") + btnW("Pan") + btnW("-") + btnW("100%") + btnW("+");
+        const float panelW = btnW("Outline") + btnW("Details");
         const float avail = ImGui::GetWindowContentRegionMax().x;
+        const bool panelBtns = avail - ImGui::GetCursorPosX() >= coreW + panelW + 24.0f;
+        const float rightW = coreW + (panelBtns ? panelW : 0.0f);
         ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 16.0f, avail - rightW));
         {
             char lbl[64];
@@ -3850,8 +4123,16 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::SameLine();
         }
         if (ImGui::Button("Fit")) st.frameAll = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show every node (Home). F frames the selection.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show every block (Home, or F with nothing selected). F frames the selected blocks.");
         ImGui::SameLine();
+        {   // the hand: while on, dragging with the left button moves the view instead of selecting
+            if (st.panTool) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.46f, 0.78f, 1.0f));
+            if (ImGui::Button("Pan##vspantool")) st.panTool = !st.panTool;
+            if (st.panTool) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Hand tool. While on, drag with the left button to move the view.\nAlways works: middle-drag, right-drag on empty space, hold Space and drag, arrow keys.");
+            ImGui::SameLine();
+        }
         if (ImGui::Button("-##vszoomout")) st.zoom = std::clamp(st.zoom / 1.12f, 0.28f, 2.2f);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom out");
         ImGui::SameLine();
@@ -3863,11 +4144,13 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ImGui::Button("+##vszoomin")) st.zoom = std::clamp(st.zoom * 1.12f, 0.28f, 2.2f);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom in");
         ImGui::SameLine();
-        if (ImGui::Button(st.showOutline ? "Outline" : "Outline##off")) st.showOutline = !st.showOutline;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Events, variables and parameters");
-        ImGui::SameLine();
-        if (ImGui::Button(st.showDetails ? "Details" : "Details##off")) st.showDetails = !st.showDetails;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("What the selected node does");
+        if (panelBtns) {
+            if (ImGui::Button(st.showOutline ? "Outline" : "Outline##off")) st.showOutline = !st.showOutline;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Events, variables and parameters");
+            ImGui::SameLine();
+            if (ImGui::Button(st.showDetails ? "Details" : "Details##off")) st.showDetails = !st.showDetails;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("What the selected node does");
+        }
     }
     ImGui::PopStyleVar(3);
     if (alignReq && st.sel.size() >= 2) {
@@ -3949,7 +4232,7 @@ inline void Draw(EditorState& ed, bool* open) {
     {
         bool hasEvent = false;
         for (const auto& n : g.nodes)
-            if (!VsEntryName(n.type, n.arg).empty()) { hasEvent = true; break; }
+            if (!VsEntryName(n.type, n.arg).empty() || VsStartsOnItsOwn(n.type)) { hasEvent = true; break; }
         st.needsEvent = !g.nodes.empty() && !hasEvent;   // shown on the canvas
     }
     // The running instance of this graph (Play mode): the selected object's if it
@@ -3984,10 +4267,10 @@ inline void Draw(EditorState& ed, bool* open) {
 
     // ---- Events list: every event chain in the graph; click one to jump to it ----
     if (st.showOutline) {
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
-        ImGui::BeginChild("vsoutline", ImVec2(268, 0), true);
-        ImGui::TextUnformatted("Events");
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(dm.windowPad.x, dm.windowPad.y));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(dm.itemSpacing.x, dm.itemSpacing.y * 0.8f));
+        ImGui::BeginChild("vsoutline", ImVec2(dm.outlineW, 0), true);
+        ImGui::TextUnformatted(kPanelEvents);
         ImGui::Separator();
         int shown = 0;
         for (const auto& n : g.nodes) {
@@ -4001,16 +4284,16 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::PushID(n.id);
             const bool on = st.sel.count(n.id) > 0;
             if (ImGui::Selectable(lbl.c_str(), on, 0, ImVec2(0, 30))) { st.sel = {n.id}; st.selected = n.id; st.focusNode = n.id; }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%d step(s) after it. Click to jump there.", steps);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(kPanelEventTip, steps);
             ImGui::PopID();
             ++shown;
         }
-        if (!shown) ImGui::TextWrapped("No events yet. Use Add node and pick an event such as On Start.");
+        if (!shown) ImGui::TextWrapped("%s", kPanelNoEvents);
         // The graph's functions (Function nodes), each with how often it's called.
         bool fnHeader = false;
         for (const auto& n : g.nodes) {
             if (n.type != "FunctionStart") continue;
-            if (!fnHeader) { ImGui::Spacing(); ImGui::TextUnformatted("Functions"); ImGui::Separator(); fnHeader = true; }
+            if (!fnHeader) { ImGui::Spacing(); ImGui::TextUnformatted(kPanelNamedActions); ImGui::Separator(); fnHeader = true; }
             const std::string nm = okay::vs::FunctionNameOf(n.arg);
             int calls = 0;
             for (const auto& m : g.nodes) if (m.type == "CallFunction" && okay::vs::FunctionNameOf(m.arg) == nm) ++calls;
@@ -4027,13 +4310,13 @@ inline void Draw(EditorState& ed, bool* open) {
             for (const auto& bp : dbg.Breakpoints()) {
                 if (bp.first != g.path) continue;
                 const VsEditNode* bn = g.find(bp.second);
-                if (!bpHeader) { ImGui::Spacing(); ImGui::TextUnformatted("Breakpoints"); ImGui::Separator(); bpHeader = true; }
+                if (!bpHeader) { ImGui::Spacing(); ImGui::TextUnformatted(kPanelStopPoints); ImGui::Separator(); bpHeader = true; }
                 const VsDef* bd = bn ? FindDef(bn->type) : nullptr;
-                std::string lbl = "\xE2\x97\x8F " + std::string(bd ? bd->title : bn ? bn->type.c_str() : "(deleted node)") +
+                std::string lbl = "\xE2\x97\x8F " + std::string(bd ? bd->title : bn ? bn->type.c_str() : kPanelStopGone) +
                                   " #" + std::to_string(bp.second);
                 ImGui::PushID(bp.second + 100000);
                 if (ImGui::Selectable(lbl.c_str(), st.sel.count(bp.second) > 0) && bn) { st.sel = {bp.second}; st.selected = bp.second; st.focusNode = bp.second; }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to jump there. Right-click to remove.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelStopTip);
                 if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) removeBp = bp.second;
                 ImGui::PopID();
             }
@@ -4049,14 +4332,35 @@ inline void Draw(EditorState& ed, bool* open) {
         {
             std::vector<VsVarNode> refs;
             refs.reserve(g.nodes.size());
-            for (const auto& n : g.nodes) refs.push_back({n.type, n.arg, n.id});
+            for (const auto& n : g.nodes) {
+                refs.push_back({n.type, n.arg, n.id});
+                if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(n.type)) {   // a Quick block's Name field is a saved value too
+                    const auto fields = okay::vs::QbAllFields(*qb);
+                    for (std::size_t fi = 0; fi < fields.size(); ++fi) {
+                        if (fields[fi].kind != okay::vs::QbKind::Name) continue;
+                        auto it = n.pinDefault.find((int)fi);
+                        refs.push_back({"GetVar", okay::vs::QbNameBare(it != n.pinDefault.end() && !it->second.empty() ? it->second : std::string(fields[fi].def)), n.id});
+                    }
+                }
+            }
+            // In Play: the running copy of this graph, so each saved value can show what it holds now.
+            VisualScriptComponent* liveComp = nullptr;
+            if (ed.isPlaying() && !g.path.empty())
+                for (const auto& up : ed.scene().Objects()) {
+                    if (!up || liveComp) continue;
+                    for (auto* vc : up->GetComponents<VisualScriptComponent>()) if (vc->Path() == g.path) { liveComp = vc; break; }
+                }
             const std::vector<VsVarRef> vars = VsCollectVariables(refs);
             const std::vector<VsParamRef> params = VsCollectParameters(refs);
-            VsDrawVariableDecls(g);
+            // Nobody has to declare anything: a name typed on a block is made on the spot. The start-value form only
+            // shows when the script already has declarations, or when asked for.
+            static bool s_showDecls = false;
+            if (!g.vars.empty() || !g.structs.empty() || s_showDecls) VsDrawVariableDecls(g);
+            else if (ImGui::SmallButton(kPanelStartValues)) s_showDecls = true;
             ImGui::Spacing();
-            ImGui::TextUnformatted("Variables used");
+            ImGui::TextUnformatted(kPanelUsed);
             ImGui::Separator();
-            if (vars.empty()) ImGui::TextWrapped("Names you type on Get Var, Set Var, scene and global variable nodes show up here.");
+            if (vars.empty()) ImGui::TextWrapped("%s", kPanelNoneUsed);
             VsVarScope last = VsVarScope::Object;
             bool anyScope = false;
             for (const auto& v : vars) {
@@ -4065,25 +4369,28 @@ inline void Draw(EditorState& ed, bool* open) {
                     last = v.scope; anyScope = true;
                 }
                 ImGui::PushID(v.nodeId + 500000 + (int)v.scope);
-                if (ImGui::Selectable(v.name.c_str(), st.sel.count(v.nodeId) > 0, 0, ImVec2(0, 28))) {
+                std::string rowText = v.name;
+                if (liveComp) rowText += "   =   " + okay::vs::VsToLiteral(liveComp->GetVariable(v.name));
+                if (ImGui::Selectable(rowText.c_str(), st.sel.count(v.nodeId) > 0, 0, ImVec2(0, 28))) {
                     st.sel = {v.nodeId}; st.selected = v.nodeId; st.focusNode = v.nodeId;
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to jump to this variable's node.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelUsedTip);
                 ImGui::PopID();
             }
             ImGui::Spacing();
-            ImGui::TextUnformatted("Parameters");
-            ImGui::Separator();
-            if (params.empty()) ImGui::TextWrapped("A Function node's signature lists its parameters here.");
+            // Folded away unless a named action has inputs.
+            if (ImGui::CollapsingHeader(kPanelInputs, params.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (params.empty()) ImGui::TextWrapped("%s", kPanelNoInputs);
             for (const auto& p : params) {
                 std::string row = p.function;
                 if (!p.name.empty()) row += "  " + p.name + (p.type.empty() ? "" : " : " + p.type);
-                else row += "  (no parameters)";
+                else row += "  (no inputs)";
                 ImGui::PushID(p.nodeId + 800000);
                 if (ImGui::Selectable(row.c_str(), st.sel.count(p.nodeId) > 0, 0, ImVec2(0, 28))) {
                     st.sel = {p.nodeId}; st.selected = p.nodeId; st.focusNode = p.nodeId;
                 }
                 ImGui::PopID();
+            }
             }
         }
         ImGui::EndChild();
@@ -4111,6 +4418,7 @@ inline void Draw(EditorState& ed, bool* open) {
     ImGui::InvisibleButton("vscbg", ImVec2(canvasMax.x - canvasMin.x, canvasMax.y - canvasMin.y),
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     bool canvasHovered = ImGui::IsItemHovered();
+    const bool bgActive = ImGui::IsItemActive();   // the left press began on empty canvas
     if (!st.refHint.empty()) {
         ImGui::SetCursorScreenPos(ImVec2(canvasMin.x + 8, canvasMin.y + 8));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.45f, 1.0f));
@@ -4146,14 +4454,18 @@ inline void Draw(EditorState& ed, bool* open) {
     // them by the same factor the nodes grew, so saved graphs keep their gaps.
     const float kLayout = 1.4f;
     const ImVec2 mouse = io.MousePos;
-    if (canvasWindowHovered && io.MouseWheel != 0.0f && !ImGui::IsAnyItemActive() &&
+    if (canvasWindowHovered && (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f) && !ImGui::IsAnyItemActive() &&
         !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
-        float wx = (mouse.x - canvasMin.x - st.pan.x) / z, wy = (mouse.y - canvasMin.y - st.pan.y) / z;
-        z = std::clamp(z * (io.MouseWheel > 0 ? 1.12f : 1.0f / 1.12f), 0.28f, 2.2f);
-        st.pan = ImVec2(mouse.x - canvasMin.x - wx * z, mouse.y - canvasMin.y - wy * z);
+        const VsWheelResult wr = VsWheel(io.MouseWheelH, io.MouseWheel, io.KeyCtrl, io.KeyShift, st.scrollPans);
+        st.pan.x += wr.panX; st.pan.y += wr.panY;
+        if (wr.zoomSteps != 0.0f) {
+            float wx = (mouse.x - canvasMin.x - st.pan.x) / z, wy = (mouse.y - canvasMin.y - st.pan.y) / z;
+            z = std::clamp(z * std::pow(1.12f, wr.zoomSteps > 0 ? 1.0f : -1.0f), 0.28f, 2.2f);
+            st.pan = ImVec2(mouse.x - canvasMin.x - wx * z, mouse.y - canvasMin.y - wy * z);
+        }
     }
     if (winFocused && !typing && ImGui::IsKeyPressed(ImGuiKey_Home, false)) st.frameAll = true;
-    if (winFocused && !typing && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false) && !st.sel.empty()) st.frameSel = true;
+    if (winFocused && !typing && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) { if (!st.sel.empty()) st.frameSel = true; else st.frameAll = true; }   // F fits the selection, or everything
     if (st.focusNode >= 0) {   // centre on one node, keeping the zoom readable
         if (const VsEditNode* fn = g.find(st.focusNode)) {
             z = std::max(z, 0.8f);
@@ -4197,10 +4509,57 @@ inline void Draw(EditorState& ed, bool* open) {
             dl->AddLine(ImVec2(canvasMin.x, canvasMin.y + y), ImVec2(canvasMax.x, canvasMin.y + y), (j % 4 == 0) ? gridMajor : gridMinor);
     }
 
-    // Pan with middle or right drag (anywhere on the canvas); a right CLICK
-    // without dragging still opens the add menu.
-    if (canvasWindowHovered && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 6.0f))) {
-        st.pan.x += io.MouseDelta.x; st.pan.y += io.MouseDelta.y;
+    // Pan: middle drag, right drag on empty canvas, Space + left drag, the hand button + left drag, arrow keys.
+    // A right CLICK / Space TAP without dragging still opens the add menu (VisualScriptPan.hpp decides).
+    {
+        const bool spaceHeld = winFocused && !typing && ImGui::IsKeyDown(ImGuiKey_Space);
+        st.panLeftNow = false; st.spaceOpen = false;
+        if (canvasWindowHovered) {
+            VsPanFrame pf;
+            pf.hovered = true;
+            pf.leftDown = ImGui::IsMouseDown(ImGuiMouseButton_Left); pf.middleDown = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+            pf.rightDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+            pf.leftDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f);
+            pf.middleDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 1.0f);
+            pf.rightDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Right, 1.0f);
+            pf.rightMaxDrag = std::sqrt(io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right]);
+            pf.dx = io.MouseDelta.x; pf.dy = io.MouseDelta.y;
+            pf.pressedOnBackground = bgActive; pf.nodeDragging = st.dragging; pf.boxing = st.boxing;
+            pf.space = spaceHeld; pf.panTool = st.panTool; pf.shift = io.KeyShift; pf.ctrl = io.KeyCtrl;
+            const VsPanOut po = VsPanStep(pf);
+            if (po.pans) {
+                st.pan.x += po.dx; st.pan.y += po.dy;
+                st.panLeftNow = po.leftPan;
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);   // the grab hand while the view moves
+            }
+        }
+        // Space tap versus Space pan
+        if (spaceHeld) {
+            if (!st.spaceDown) { st.spaceDown = true; st.spaceT = 0.0f; st.spaceMoved = 0.0f; }
+            st.spaceT += io.DeltaTime;
+            st.spaceMoved += std::sqrt(io.MouseDelta.x * io.MouseDelta.x + io.MouseDelta.y * io.MouseDelta.y);
+        } else if (st.spaceDown) {
+            st.spaceDown = false;
+            st.spaceOpen = VsSpaceOpensPopup(st.spaceT, st.spaceMoved);
+        }
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) st.rightT = 0.0f;
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) st.rightT += io.DeltaTime;
+        // Arrow keys (canvas focused, no text field)
+        if (winFocused && !typing && !io.KeyCtrl && !io.KeyAlt) {
+            float dx, dy;
+            VsKeyPan(ImGui::IsKeyDown(ImGuiKey_LeftArrow), ImGui::IsKeyDown(ImGuiKey_RightArrow), ImGui::IsKeyDown(ImGuiKey_UpArrow),
+                     ImGui::IsKeyDown(ImGuiKey_DownArrow), io.KeyShift, io.DeltaTime, dx, dy);
+            st.pan.x += dx; st.pan.y += dy;
+        }
+        // Keep some of the graph on screen (Fit works from anywhere)
+        if (!g.nodes.empty()) {
+            float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+            for (const auto& n : g.nodes) {
+                x0 = std::min(x0, n.x * kLayout); y0 = std::min(y0, n.y * kLayout);
+                x1 = std::max(x1, n.x * kLayout + 230.0f); y1 = std::max(y1, n.y * kLayout + 150.0f);
+            }
+            VsClampPan(st.pan.x, st.pan.y, canvasMax.x - canvasMin.x, canvasMax.y - canvasMin.y, x0, y0, x1, y1, z);
+        }
     }
 
     auto W2S = [&](float wx, float wy) { return ImVec2(canvasMin.x + st.pan.x + wx * kLayout * z, canvasMin.y + st.pan.y + wy * kLayout * z); };
@@ -4214,9 +4573,11 @@ inline void Draw(EditorState& ed, bool* open) {
     };
 
     // Roomy layout (world units, scaled by the zoom).
-    const float NODE_W_BASE = 292.0f * z, HEADER_H = 64.0f * z, ROW_H = 40.0f * z, PIN_R = 9.0f * z;
-    const float BOX_W = 136.0f * z;   // inline value box on an unconnected data input
-    const float PAD = 16.0f * z, ROUND = 12.0f * z;
+    // Sizes come from the Density table (editor/ScriptingDensity.hpp), scaled by the canvas zoom.
+    // (`dm` is the Density table read at the top of this function.)
+    const float NODE_W_BASE = dm.nodeW * z, HEADER_H = dm.headerH * z, ROW_H = dm.rowH * z, PIN_R = dm.pinR * z;
+    const float BOX_W = dm.boxW * z;   // inline value box on an unconnected data input
+    const float PAD = dm.nodePad * z, ROUND = dm.round * z;
     auto inputLinked = [&](int node, int pin) {
         for (const auto& l : g.dataLinks) if (l.consumer == node && l.inPin == pin) return true;
         return false;
@@ -4251,7 +4612,7 @@ inline void Draw(EditorState& ed, bool* open) {
             for (const auto& n : g.nodes)
                 if (n.x >= c.x && n.y >= c.y && n.x <= c.x + c.w && n.y <= c.y + c.h) st.commentNodes.push_back(n.id);
         }
-        if (st.dragComment == ci && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        if (st.dragComment == ci && !st.panLeftNow && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             float dx = io.MouseDelta.x / (z * kLayout), dy = io.MouseDelta.y / (z * kLayout);
             c.x += dx; c.y += dy;
             for (int id : st.commentNodes) if (VsEditNode* n = g.find(id)) { n->x += dx; n->y += dy; }
@@ -4360,8 +4721,8 @@ inline void Draw(EditorState& ed, bool* open) {
         std::string inlineMsg;
         bool inlineErr = false;
         for (const auto& is : st.issues) if (is.node == n.id) {
-            if (is.severity == 0) { inlineMsg = is.message; inlineErr = true; break; }
-            if (inlineMsg.empty()) inlineMsg = is.message;
+            if (is.severity == 0) { inlineMsg = VsPlainIssue(is.message); inlineErr = true; break; }
+            if (inlineMsg.empty()) inlineMsg = VsPlainIssue(is.message);
         }
         const bool isSwitch = IsSwitchNode(n.type);
         bool targetWired = false;
@@ -4386,10 +4747,13 @@ inline void Draw(EditorState& ed, bool* open) {
         const std::string title = VsNodeTitle(n, *d);
         const bool isStep = d->param >= 3 && d->param <= 5;   // Action / Action Steps / Check
         const std::string stepLine = isStep ? VsStepLine(n) : std::string();
-        float titleW = ImGui::CalcTextSize(title.c_str()).x + PAD * 2.0f;
-        if (isStep) titleW = std::max(titleW, std::min(ImGui::CalcTextSize(stepLine.c_str()).x, 320.0f * z) + PAD * 2.0f);
-        const float NODE_W = std::max({NODE_W_BASE, titleW,
-            d->dataIn.empty() ? 0.0f : PAD + inLabelW + 8.0f * z + BOX_W + PAD + outLabelW + PAD});
+        float titleTextW = ImGui::CalcTextSize(title.c_str()).x;
+        if (isStep) titleTextW = std::max(titleTextW, std::min(ImGui::CalcTextSize(stepLine.c_str()).x, 320.0f * z));
+        // The width rule (title + the status badge beside it, input labels + value box + output labels) is in the header.
+        oked::scriptui::NodeWidthIn nwi;
+        nwi.zoom = z; nwi.titleW = titleTextW; nwi.badgeW = ImGui::CalcTextSize("Needs input").x + 10.0f * z;
+        nwi.hasDataIn = !d->dataIn.empty(); nwi.inLabelW = inLabelW; nwi.outLabelW = outLabelW; nwi.boxW = BOX_W;
+        const float NODE_W = oked::scriptui::NodeWidth(dm, nwi);
         ImVec2 p0 = W2S(n.x, n.y), p1 = ImVec2(p0.x + NODE_W, p0.y + h);
         nodeRect[n.id] = {p0, p1};
         const bool hovered = ImGui::IsMouseHoveringRect(p0, p1) && canvasWindowHovered;
@@ -4400,6 +4764,11 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ln) {
             unsigned& seen = st.seenExec[n.id];
             if (ln->execCount != seen) { st.flash[n.id] = 1.0f; seen = ln->execCount; }
+        } else if (live && okay::vs::FindQuickBlock(n.type)) {
+            // A Quick block is one node here but several in the running graph: light it when any of them ran.
+            const unsigned ran = live->BlockExecCount(n.id);
+            unsigned& seen = st.seenExec[n.id];
+            if (ran != seen) { st.flash[n.id] = 1.0f; seen = ran; }
         }
         const float fl = (live && st.flash.count(n.id)) ? st.flash[n.id] : 0.0f;
 
@@ -4413,7 +4782,7 @@ inline void Draw(EditorState& ed, bool* open) {
         {
             int worst = 2; std::string tips;
             for (const auto& is : st.issues)
-                if (is.node == n.id) { worst = std::min(worst, is.severity); tips += (tips.empty() ? "" : "\n") + std::string(is.severity == 0 ? "Error: " : "Warning: ") + is.message; }
+                if (is.node == n.id) { worst = std::min(worst, is.severity); tips += (tips.empty() ? "" : "\n") + std::string(is.severity == 0 ? "Error: " : "Warning: ") + VsPlainIssue(is.message); }
             if (worst < 2) {
                 const ImVec2 bc(p1.x - 12.0f * z, p0.y + HEADER_H * 0.5f);
                 const ImU32 col = worst == 0 ? IM_COL32(255, 85, 75, 255) : IM_COL32(240, 185, 70, 255);
@@ -4438,24 +4807,36 @@ inline void Draw(EditorState& ed, bool* open) {
         } else {
             dl->AddRect(p0, p1, hovered ? IM_COL32(150, 154, 166, 200) : IM_COL32(0, 0, 0, 170), ROUND, 0, hovered ? 1.5f : 1.0f);
         }
-        text(ImVec2(p0.x + PAD, p0.y + 6.0f * z), IM_COL32(244, 246, 250, 255), title.c_str());
+        {   // a title longer than the widest node is cut with "..." (the full name is in the node's help)
+            const float titleRoom = NODE_W - PAD * 2.0f - (ImGui::CalcTextSize("Needs input").x + 10.0f * z + PAD * 0.5f);
+            const std::string shownTitle = oked::scriptui::ElideToWidth(title, titleRoom,
+                [](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; });
+            text(ImVec2(p0.x + PAD, p0.y + 6.0f * z), IM_COL32(244, 246, 250, 255), shownTitle.c_str());
+        }
         {
-            const char* help = VsNodeHelp(d->type);
-            std::string hint = help ? help : (d->paramHint ? std::string("Needs: ") + d->paramHint : std::string());
+            const std::string full = VsPlainLineCached(*d);   // one plain sentence for every node (VisualScriptGuide.hpp)
+            std::string hint = full;
             const float maxW = NODE_W - PAD * 2.0f - 78.0f * z;
             while (hint.size() > 8 && ImGui::CalcTextSize(hint.c_str()).x > maxW) hint.pop_back();
-            if (help && hint.size() < std::strlen(help)) hint += "...";
-            if (!hint.empty())
-                text(ImVec2(p0.x + PAD, p0.y + 8.0f * z + fs), IM_COL32(230, 236, 244, 210), hint.c_str());
+            if (hint.size() < full.size()) hint += "...";
             bool hasErr = false;
             std::string miss;
             for (const auto& is : st.issues) if (is.node == n.id && is.severity == 0) hasErr = true;
-            const VsReady ready = VsNodeReadiness(n.type, !n.arg.empty(), [&](int pin) {
+            auto pinFilled = [&](int pin) {
                 if (inputLinked(n.id, pin)) return true;
                 auto it = n.pinDefault.find(pin);
                 return it != n.pinDefault.end() && !it->second.empty();
-            }, hasErr, &miss);
-            const char* badge = VsReadyName(ready);
+            };
+            VsReady ready = VsNodeReadiness(n.type, !n.arg.empty(), pinFilled, hasErr, &miss);
+            if (ready != VsReady::Error) {   // an empty input the node cannot work without: say so on the node, not just on hover
+                for (int pi = 0; pi < (int)d->dataIn.size(); ++pi)
+                    if (VsPinNeedsInput(*d, pi) && !pinFilled(pi)) {
+                        ready = VsReady::Missing;
+                        if (miss.empty() || miss.rfind("Required: ", 0) == 0) { miss = VsMissingHint(*d, pi) + "."; miss[0] = (char)std::toupper((unsigned char)miss[0]); }
+                        break;
+                    }
+            }
+            const char* badge = ready == VsReady::Missing ? "Needs input" : VsReadyName(ready);
             const ImVec2 bts = ImGui::CalcTextSize(badge);
             const ImVec2 br(p1.x - PAD - bts.x - 10.0f * z, p0.y + 5.0f * z);
             const ImU32 bg = ready == VsReady::Error ? IM_COL32(150, 48, 44, 255)
@@ -4463,8 +4844,11 @@ inline void Draw(EditorState& ed, bool* open) {
                            : IM_COL32(36, 110, 72, 255);
             dl->AddRectFilled(br, ImVec2(br.x + bts.x + 10.0f * z, br.y + bts.y + 4.0f * z), bg, 4.0f * z);
             text(ImVec2(br.x + 5.0f * z, br.y + 2.0f * z), IM_COL32(255, 248, 240, 255), badge);
+            // Under the title: the plain sentence, or (when an input is empty) what to plug in, in amber.
             if (ready == VsReady::Missing && !miss.empty())
-                text(ImVec2(p0.x + PAD, p0.y + HEADER_H - fs - 2.0f * z), IM_COL32(255, 196, 140, 255), miss.c_str());
+                text(ImVec2(p0.x + PAD, p0.y + 8.0f * z + fs), IM_COL32(255, 196, 140, 255), miss.c_str());
+            else if (!hint.empty())
+                text(ImVec2(p0.x + PAD, p0.y + 8.0f * z + fs), IM_COL32(230, 236, 244, 210), hint.c_str());
         }
         if (!g.path.empty() && dbg.HasBreakpoint(g.path, n.id)) {   // breakpoint: a red dot left of the header
             const ImVec2 bc(p0.x - 11.0f * z, p0.y + HEADER_H * 0.5f);
@@ -4487,7 +4871,7 @@ inline void Draw(EditorState& ed, bool* open) {
             } else if (!st.sel.count(n.id)) { st.sel.clear(); st.sel.insert(n.id); }
             st.selected = n.id;
         }
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        if (!st.panLeftNow && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             startNodeDrag = true;   // move every selected node together (after the loop)
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !ImGui::IsItemActive())
@@ -4585,7 +4969,7 @@ inline void Draw(EditorState& ed, bool* open) {
             for (const auto& is : st.issues)
                 if (is.node == n.id && is.pin == i && is.pinDir == 0 && is.severity == 0) badPin = true;
             dataDot(pp, linked || badPin, badPin ? IM_COL32(255, 72, 64, 255) : VsPinColor(pt));
-            const bool req = VsRequiredWhat(n.type, i) && !linked && n.pinDefault.count(i) == 0;
+            const bool req = VsPinNeedsInput(*d, i) && !linked && n.pinDefault.count(i) == 0;
             if (req) dl->AddCircle(pp, PIN_R + 3.0f * z, IM_COL32(255, 80, 70, 255), 16, 2.0f * z);
             text(ImVec2(p0.x + PAD, pp.y - fs * 0.5f), labelCol, d->dataIn[i]);
             pinPos[pk(n.id, 1, 0, i)] = pp;
@@ -4594,10 +4978,15 @@ inline void Draw(EditorState& ed, bool* open) {
                 ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(5 * z, 3 * z));
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4 * z);
                 const float boxH = fs + 6 * z;
-                ImGui::SetCursorScreenPos(ImVec2(p0.x + PAD + inLabelW + 8 * z, pp.y - boxH * 0.5f));
+                ImGui::SetCursorScreenPos(ImVec2(p0.x + PAD + inLabelW + dm.pinLabelGap * z, pp.y - boxH * 0.5f));
                 const okay::vs::VsRefKind rk = VsPinKind(n.type, i, pt, d->dataIn[i]);
                 std::string& dv = n.pinDefault[i];
-                if (rk != okay::vs::VsRefKind::None) {
+                const okay::vs::QuickBlock* qbk = okay::vs::FindQuickBlock(n.type);
+                const auto qfields = qbk ? okay::vs::QbAllFields(*qbk) : std::vector<okay::vs::QbField>();
+                if (qbk && i < (int)qfields.size() && qfields[(std::size_t)i].kind != okay::vs::QbKind::Text) {
+                    if (VsDrawQuickField(ed, g, n, *qbk, i, dv, BOX_W)) g.dirty = true;
+                    if (dv.empty()) n.pinDefault.erase(i);
+                } else if (rk != okay::vs::VsRefKind::None) {
                     const bool selfDefault = okay::vs::TargetPinFor(n.type) == i;
                     char bid[16]; std::snprintf(bid, sizeof(bid), "pd%d", i);
                     if (VsDrawRefSlot(ed, st, dv, rk, selfDefault, BOX_W, bid)) g.dirty = true;
@@ -4606,9 +4995,12 @@ inline void Draw(EditorState& ed, bool* open) {
                     ImGui::SetNextItemWidth(BOX_W);
                     char vb[128]; std::snprintf(vb, sizeof(vb), "%s", dv.c_str());
                     char bid[16]; std::snprintf(bid, sizeof(bid), "##pd%d", i);
-                    if (ImGui::InputTextWithHint(bid, "value", vb, sizeof(vb))) { dv = vb; g.dirty = true; }
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s: type a value (text, a number, true/false), or wire a node in", d->dataIn[i]);
+                    const bool needsHere = VsPinNeedsInput(*d, i);
+                    if (ImGui::InputTextWithHint(bid, needsHere ? "needed" : "value", vb, sizeof(vb))) { dv = vb; g.dirty = true; }
+                    if (ImGui::IsItemHovered()) {
+                        if (needsHere) ImGui::SetTooltip("%s: %s. Or type it here.", d->dataIn[i], VsMissingHint(*d, i).c_str());
+                        else ImGui::SetTooltip("%s: type a value (text, a number, true/false), or wire a node in", d->dataIn[i]);
+                    }
                     if (dv.empty()) n.pinDefault.erase(i);
                 }
                 ImGui::PopStyleVar(2);
@@ -4816,7 +5208,7 @@ inline void Draw(EditorState& ed, bool* open) {
         auto pinButton = [&](long long key, int kind, int side, int idx) {
             auto it = pinPos.find(key); if (it == pinPos.end()) return;
             ImVec2 pp = it->second;
-            const float hit = std::max(26.0f, 32.0f * z);
+            const float hit = oked::scriptui::PinHitSize(dm, z);
             ImGui::SetCursorScreenPos(ImVec2(pp.x - hit * 0.5f, pp.y - hit * 0.5f));
             char id[24]; std::snprintf(id, sizeof(id), "p%d%d%d", kind, side, idx);
             ImGui::InvisibleButton(id, ImVec2(hit, hit));
@@ -4828,7 +5220,7 @@ inline void Draw(EditorState& ed, bool* open) {
                 if (kindOk && sideOk) {
                     if (st.dragExec) {
                         fit = !(side == 0 && d && !d->execIn);
-                        if (!fit) why = "Events start a chain. Wire this into a step, not into another event.";
+                        if (!fit) why = VsPlainRefuseEventIntoEvent();
                     } else {
                         const int cons = st.dragFromOutput ? n.id : st.dragNode;
                         const int inP = st.dragFromOutput ? idx : st.dragPin;
@@ -4838,7 +5230,7 @@ inline void Draw(EditorState& ed, bool* open) {
                         if (fit) {
                             std::vector<std::pair<int, int>> edges;
                             for (const auto& l : g.dataLinks) edges.push_back({l.producer, l.consumer});
-                            if (VsDataWouldCycle(edges, prod, cons)) { fit = false; why = "That would loop: this value already depends on the node you are wiring into."; }
+                            if (VsDataWouldCycle(edges, prod, cons)) { fit = false; why = VsPlainRefuseLoop(); }
                         }
                     }
                 } else if (!kindOk) {
@@ -4879,9 +5271,12 @@ inline void Draw(EditorState& ed, bool* open) {
                     const VsNodeDoc* nd = VsNodeDocFor(n.type);
                     const VsPinDoc* pd = nd ? VsPinDocFor(*nd, input, exec, pname) : nullptr;
                     const char* tn = exec ? "Flow" : okay::vs::PinTypeName(input ? VsInPinType(g, n.id, idx) : VsOutPinType(g, n.id, idx));
+                    const bool needsNow = input && !exec && !inputLinked(n.id, idx) && n.pinDefault.count(idx) == 0 && VsPinNeedsInput(*d, idx);
+                    const std::string needText = needsNow ? VsMissingHint(*d, idx) : std::string();
+                    const std::string plainTip = VsPinTip(*d, input, exec, idx);
                     VsPinTooltip(pd, pname.c_str(), tn,
                                  exec ? okay::vs::PinType::Any : (input ? VsInPinType(g, n.id, idx) : VsOutPinType(g, n.id, idx)), !input, exec,
-                                 (input && !exec && !inputLinked(n.id, idx) && n.pinDefault.count(idx) == 0) ? VsRequiredWhat(n.type, idx) : nullptr);
+                                 needsNow ? needText.c_str() : nullptr, plainTip.c_str());
                 }
             }
         };
@@ -4910,6 +5305,27 @@ inline void Draw(EditorState& ed, bool* open) {
                 ImGui::SetTooltip("%s", reqGap.message.c_str());
         }
 
+        // Play feedback: a short "what happened" line under a block that has run (the glow is the flash above).
+        if (live && ln && ln->execCount > 0 && st.liveValues) {
+            std::vector<std::string> shown;
+            for (int pi = 0; pi < (int)d->dataIn.size(); ++pi) {
+                std::string val;
+                for (const auto& l : g.dataLinks)
+                    if (l.consumer == n.id && l.inPin == pi)
+                        if (okay::vs::VsNode* pn = liveNode(l.producer))
+                            if (l.outPin < (int)pn->lastOut.size()) val = VsDebugText(pn->lastOut[(std::size_t)l.outPin]);
+                if (val.empty()) { const auto it = n.pinDefault.find(pi); if (it != n.pinDefault.end()) val = it->second; }
+                shown.push_back(val);
+            }
+            const std::string said = VsWhatHappened(n.type, n.arg, shown, ln->execCount);
+            const ImVec2 sz = ImGui::CalcTextSize(said.c_str());
+            const ImVec2 q0(p0.x, p1.y + 6.0f * z), q1(p0.x + std::min(NODE_W + 40.0f * z, sz.x + 16.0f * z), q0.y + sz.y + 6.0f * z);
+            const float fade = 0.55f + 0.45f * (st.flash.count(n.id) ? st.flash[n.id] : 0.0f);
+            dl->AddRectFilled(q0, q1, IM_COL32(26, 64, 40, (int)(235 * fade)), 6.0f * z);
+            dl->PushClipRect(q0, q1, true);
+            dl->AddText(ImVec2(q0.x + 8.0f * z, q0.y + 3.0f * z), IM_COL32(190, 245, 205, (int)(255 * fade)), said.c_str());
+            dl->PopClipRect();
+        }
         ImGui::PopID();
     }
     // Move the dragged node and every other selected node with it.
@@ -4920,6 +5336,30 @@ inline void Draw(EditorState& ed, bool* open) {
             g.dirty = true;
         }
     }
+    // Every wire with its two plugs on screen (for dropping a block on a wire and double-clicking one).
+    auto wireEnds = [&]() {
+        std::vector<VsWireEnds> out;
+        for (int i = 0; i < (int)g.execLinks.size(); ++i) {
+            const auto& l = g.execLinks[(std::size_t)i];
+            auto a = pinPos.find(pk(l.from, 0, 1, l.pin)), b = pinPos.find(pk(l.to, 0, 0, 0));
+            if (a != pinPos.end() && b != pinPos.end()) out.push_back({true, i, a->second.x, a->second.y, b->second.x, b->second.y});
+        }
+        for (int i = 0; i < (int)g.dataLinks.size(); ++i) {
+            const auto& l = g.dataLinks[(std::size_t)i];
+            auto a = pinPos.find(pk(l.producer, 1, 1, l.outPin)), b = pinPos.find(pk(l.consumer, 1, 0, l.inPin));
+            if (a != pinPos.end() && b != pinPos.end()) out.push_back({false, i, a->second.x, a->second.y, b->second.x, b->second.y});
+        }
+        return out;
+    };
+    // A block with no wires, dropped with its middle on a wire: the wire goes through the block.
+    if (st.wasNodeDrag && !startNodeDrag && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && st.sel.size() == 1 &&
+        VsIsLoose(g, *st.sel.begin()) && nodeRect.count(*st.sel.begin())) {
+        const auto& rc = nodeRect[*st.sel.begin()];
+        const std::vector<VsWireEnds> we = wireEnds();
+        const int hit = VsNearestWire(we, (rc.first.x + rc.second.x) * 0.5f, (rc.first.y + rc.second.y) * 0.5f, z, 26.0f * z);
+        if (hit >= 0 && VsSplitWire(g, VsRefOfWire(g, we[(std::size_t)hit].exec, we[(std::size_t)hit].index), *st.sel.begin()))
+            st.lastUsed = *st.sel.begin();
+    }
     if (st.wasNodeDrag && !startNodeDrag && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && st.snapGrid) {
         bool moved = false;
         for (auto& n : g.nodes) if (st.sel.count(n.id)) {
@@ -4927,6 +5367,20 @@ inline void Draw(EditorState& ed, bool* open) {
             if (x != n.x || y != n.y) { n.x = x; n.y = y; moved = true; }
         }
         if (moved) g.dirty = true;
+    }
+    if (st.wasNodeDrag && !startNodeDrag && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && st.sel.size() == 1) {
+        // Dropped on a flow wire: the node goes into the wire and both sides stay connected.
+        const int dropped = *st.sel.begin();
+        const auto at = pinPos.find(pk(dropped, 0, 0, 0));
+        if (at != pinPos.end()) {
+            std::vector<VsWireLine> lines;
+            for (const auto& l : g.execLinks) {
+                const auto a = pinPos.find(pk(l.from, 0, 1, l.pin)), b = pinPos.find(pk(l.to, 0, 0, 0));
+                lines.push_back(a != pinPos.end() && b != pinPos.end() ? VsWireLine{a->second.x, a->second.y, b->second.x, b->second.y}
+                                                                       : VsWireLine{-1e6f, -1e6f, -1e6f, -1e6f});
+            }
+            if (VsInsertOnWire(g, dropped, VsWireUnder(lines, at->second.x, at->second.y, 18.0f * z))) g.dirty = true;
+        }
     }
     st.wasNodeDrag = startNodeDrag;
     if (pendingDup >= 0 || (winFocused && !typing && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && !st.sel.empty())) {
@@ -4947,13 +5401,13 @@ inline void Draw(EditorState& ed, bool* open) {
     }
     if (pendingDelete >= 0) {
         if (!st.sel.count(pendingDelete)) st.sel = {pendingDelete};
-        for (int id : st.sel) g.removeNode(id);
+        VsDeleteBlocks(g, st.sel, io.KeyShift);   // the blocks around it are joined; Shift cuts instead
         st.sel.clear(); st.selected = -1;
     }
     if (winFocused && !typing && (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) &&
         (!st.sel.empty() || st.selected >= 0)) {
         if (st.selected >= 0) st.sel.insert(st.selected);
-        for (int id : st.sel) g.removeNode(id);
+        VsDeleteBlocks(g, st.sel, io.KeyShift);   // Delete joins the blocks around it; Shift+Delete cuts instead
         st.sel.clear(); st.selected = -1;
     }
 
@@ -5041,7 +5495,19 @@ inline void Draw(EditorState& ed, bool* open) {
 
     // Live drag wire + release handling.
     bool openPaletteNow = false;
+    const std::size_t wiresBeforeDrag = g.execLinks.size() + g.dataLinks.size();
     if (st.dragging) {
+        // While a wire is dragged: a green ring on every plug it can go into, a red ring on the ones that would refuse it.
+        {
+            const int wantSide = st.dragFromOutput ? 0 : 1, wantKind = st.dragExec ? 0 : 1;
+            const float rr = 11.0f * std::max(0.8f, z);
+            for (const auto& kvp : pinPos) {
+                const int node = (int)(kvp.first >> 20), kind = (int)((kvp.first >> 18) & 3), side = (int)((kvp.first >> 16) & 3), idx = (int)(kvp.first & 0xFFFF);
+                if (kind != wantKind || side != wantSide || node == st.dragNode) continue;
+                const bool fits = VsPlugAccepts(g, st.dragExec, st.dragFromOutput, st.dragNode, st.dragPin, node, idx);
+                dl->AddCircle(kvp.second, rr, fits ? IM_COL32(90, 230, 130, 255) : IM_COL32(245, 90, 80, 235), 20, 3.0f);
+            }
+        }
         auto from = pinPos.find(pk(st.dragNode, st.dragExec ? 0 : 1, st.dragFromOutput ? 1 : 0, st.dragPin));
         if (from != pinPos.end()) {
             ImVec2 m = io.MousePos;
@@ -5071,7 +5537,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     const VsDef* dd = nullptr;
                     if (const VsEditNode* dn = g.find(dest)) dd = FindDef(dn->type);
                     if (dd && !dd->execIn) {
-                        st.refuseMsg = "Events start a chain. Wire this into a step, not into another event.";
+                        st.refuseMsg = VsPlainStartIntoStart();
                         st.refuseTime = 5.0f; st.offerOn = false;
                     } else if (st.dragFromOutput) g.linkExec(st.dragNode, st.dragPin, bestNode);
                     else g.linkExec(bestNode, bestIdx, st.dragNode);
@@ -5083,15 +5549,18 @@ inline void Draw(EditorState& ed, bool* open) {
                     std::vector<std::pair<int, int>> edges;
                     for (const auto& l : g.dataLinks) edges.push_back({l.producer, l.consumer});
                     if (VsDataWouldCycle(edges, prod, cons)) {
-                        st.refuseMsg = "That would loop: this value already depends on the node you are wiring into.";
+                        st.refuseMsg = VsPlainWouldLoop();
                         st.refuseTime = 5.0f; st.offerOn = false;
                     } else if (VsWireOk(g, cons, inP, prod, outP, &why)) {
                         g.linkData(cons, inP, prod, outP); st.offerOn = false;
                     } else {
                         const auto offer = VsOfferConvert((char)VsOutPinType(g, prod, outP), (char)VsInPinType(g, cons, inP));
-                        st.refuseMsg = why.empty() ? offer.why : why;
-                        if (!offer.why.empty() && st.refuseMsg.find(offer.why) == std::string::npos && offer.type.empty())
-                            st.refuseMsg += " " + offer.why;
+                        (void)why;
+                        st.refuseMsg = VsPlainMismatch(VsOutPinType(g, prod, outP), VsInPinType(g, cons, inP));
+                        if (offer.type.empty()) {   // no one-click fix: a plain tip when there is one
+                            const std::string tip = VsPlainMismatchTip(VsOutPinType(g, prod, outP), VsInPinType(g, cons, inP));
+                            if (!tip.empty()) st.refuseMsg += " " + tip;
+                        }
                         st.refuseTime = 6.0f;
                         st.offerOn = !offer.type.empty();
                         st.offerCons = cons; st.offerIn = inP; st.offerProd = prod; st.offerOut = outP;
@@ -5111,9 +5580,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     if (dx * dx + dy * dy < hitDist2) { nk = kind; ns = side; break; }
                 }
                 if (nk >= 0 && nk != (st.dragExec ? 0 : 1)) {
-                    st.refuseMsg = st.dragExec
-                        ? "This wire carries the flow (the white triangle). Drop it on another triangle, not on a value circle."
-                        : "This wire carries a value. Drop it on a coloured circle, not on a flow triangle.";
+                    st.refuseMsg = st.dragExec ? VsPlainFlowToValue() : VsPlainValueToFlow();
                     st.refuseTime = 5.0f; st.offerOn = false; (void)ns;
                 } else {
                 // Dropped in empty space: offer the palette and wire up what's picked.
@@ -5131,11 +5598,19 @@ inline void Draw(EditorState& ed, bool* open) {
         }
     }
 
+    const bool userWiredNow = g.execLinks.size() + g.dataLinks.size() > wiresBeforeDrag;   // a wire dropped on a plug
     // ---- Box selection --------------------------------------------------------------
-    if (bgClicked && !st.dragging && !io.KeyAlt) {
-        st.boxing = true; st.boxStart = mouse;
-        if (!io.KeyCtrl && !io.KeyShift) { st.sel.clear(); st.selected = -1; }
+    // Plain left-drag on empty canvas pans (above); Shift or Ctrl + drag draws the selection box.
+    if (bgClicked && !st.dragging && !io.KeyAlt && !io.KeyCtrl && !io.KeyShift && !ImGui::IsKeyDown(ImGuiKey_Space)) {
+        st.sel.clear(); st.selected = -1;   // a plain click on empty canvas still deselects
     }
+    if (bgClicked && !st.dragging && !io.KeyAlt &&
+        VsLeftDragModeEmpty(ImGui::IsKeyDown(ImGuiKey_Space), st.panTool, io.KeyShift, io.KeyCtrl) == VsLeftDrag::Box) {
+        st.boxing = true; st.boxStart = mouse;
+    }
+    if (!st.boxing && g.nodes.size() < 3 && !st.dragging)
+        dl->AddText(ImVec2(canvasMin.x + 16, canvasMax.y - 28), IM_COL32(170, 180, 200, 170),
+                    "Drag the background to move around. Scroll to zoom.");
     if (st.boxing) {
         ImVec2 a(std::min(st.boxStart.x, mouse.x), std::min(st.boxStart.y, mouse.y));
         ImVec2 b(std::max(st.boxStart.x, mouse.x), std::max(st.boxStart.y, mouse.y));
@@ -5194,10 +5669,26 @@ inline void Draw(EditorState& ed, bool* open) {
         st.linkNode = pconn.node; st.linkPin = pconn.pin;
         openPaletteNow = true; pconnPlace = true;
     }
+    // Double-click a wire: the palette opens, and the block picked goes onto that wire.
+    if (canvasHovered && !st.dragging && !io.KeyAlt && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        bool onNode = false;
+        for (const auto& kv : nodeRect)
+            if (mouse.x >= kv.second.first.x && mouse.x <= kv.second.second.x && mouse.y >= kv.second.first.y && mouse.y <= kv.second.second.y) onNode = true;
+        const std::vector<VsWireEnds> we = wireEnds();
+        const int hit = onNode ? -1 : VsNearestWire(we, mouse.x, mouse.y, z, 12.0f);
+        if (hit >= 0) {
+            const VsWireRef ref = VsRefOfWire(g, we[(std::size_t)hit].exec, we[(std::size_t)hit].index);
+            st.wireInsOn = ref.on; st.wireInsExec = ref.exec; st.wireInsA = ref.a; st.wireInsB = ref.b; st.wireInsC = ref.c;
+            st.linkPending = false;
+            openPaletteNow = ref.on;
+            st.sel.clear(); st.selected = -1;
+        }
+    }
     // Right-click empty canvas (or Space): node palette.
-    if ((canvasHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right] < 36.0f && !st.dragging) ||
-        (winFocused && !typing && canvasWindowHovered && ImGui::IsKeyPressed(ImGuiKey_Space, false)) || openPaletteNow || st.addAtCenter) {
+    if ((canvasHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && VsRightClickOpensMenu(st.rightT, std::sqrt(io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right])) && !st.dragging) ||
+        (winFocused && !typing && canvasWindowHovered && st.spaceOpen) || openPaletteNow || st.addAtCenter) {
         st.openPalette = true;
+        st.spaceOpen = false;
         if (!openPaletteNow) st.linkPending = false;
         st.paletteWorld = st.addAtCenter ? S2W(ImVec2((canvasMin.x + canvasMax.x) * 0.5f - 100.0f, (canvasMin.y + canvasMax.y) * 0.5f - 40.0f))
                                          : S2W(io.MousePos);
@@ -5216,9 +5707,27 @@ inline void Draw(EditorState& ed, bool* open) {
     }
     // Add a node from the palette; wire it to the dropped pin when there is one.
     auto addFromPalette = [&](const VsDef& d, const std::string& arg = std::string()) {
+        const int prevSel = st.selected;   // the block this one should join, when nothing else says where it goes
+        {   // a new Quick block fills itself in from the scene: the selected object, its neighbours, the last key
+            okay::vs::QbContext& qc = VsQuickContext();
+            qc.objectNames.clear();
+            for (const auto& up : ed.scene().Objects()) if (up) qc.objectNames.push_back(up->name);
+            qc.selfName = ed.selected() ? ed.selected()->name : std::string();
+        }
         int nid = g.add(d.type, st.paletteWorld.x, st.paletteWorld.y);
         if (!arg.empty()) if (VsEditNode* nn = g.find(nid)) nn->arg = arg;
         st.selected = nid; st.sel = {nid};
+        if (st.wireInsOn) {
+            VsWireRef ref; ref.on = true; ref.exec = st.wireInsExec; ref.a = st.wireInsA; ref.b = st.wireInsB; ref.c = st.wireInsC;
+            st.wireInsOn = false;
+            if (!VsSplitWire(g, ref, nid)) {
+                g.removeNode(nid); st.sel.clear(); st.selected = -1;
+                st.refuseMsg = VsPlainDoesNotFitWire();
+                st.refuseTime = 4.0f; st.offerOn = false;
+                return;
+            }
+        } else if (!st.linkPending) VsConnectAndPlace(g, nid, prevSel, st.lastUsed);
+        st.lastUsed = nid;
         if (st.linkPending) {
             if (st.linkExec) {
                 if (st.linkFromOutput) { if (d.execIn) g.linkExec(st.linkNode, st.linkPin, nid); }
@@ -5236,6 +5745,8 @@ inline void Draw(EditorState& ed, bool* open) {
             // Drop it beside the pin rather than under the cursor tip.
             if (VsEditNode* nn = g.find(nid)) { if (!st.linkFromOutput) nn->x -= 170.0f; }
             st.linkPending = false;
+        } else {
+            VsAutoHook(g, nid);   // joins the last node (or a close one) when it fits, so no wire to draw
         }
     };
     // "Connect to... > a node": add it already wired to the pin it was chosen for.
@@ -5246,48 +5757,95 @@ inline void Draw(EditorState& ed, bool* open) {
         addFromPalette(*pconn.def);
         st.linkPending = false;
     }
-    ImGui::SetNextWindowSize(ImVec2(1180, 760), ImGuiCond_Always);
-    if (ImGui::BeginPopup("##vspalette")) {
+    // The popup opens at the size you left it at (or the default for the Density), inside the screen.
+    ImGui::SetNextWindowSize(VsPaletteWantedSize(ImGui::GetMainViewport()->Size), ImGuiCond_Always);   // Always: a popup otherwise falls back to its content size
+    if (ImGui::BeginPopup("##vspalette", ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         DrawNodePalette(st, g, [&](const VsDef& d, const std::string& arg) { addFromPalette(d, arg); });
         ImGui::EndPopup();
 
-} else if (st.linkPending && !openPaletteNow) {
-        st.linkPending = false;   // palette dismissed without a pick
+} else if ((st.linkPending || st.wireInsOn) && !openPaletteNow) {
+        st.linkPending = false; st.wireInsOn = false;   // palette dismissed without a pick
     }
 
+    // Guided first steps: which one-line hint to show (VisualScriptHints.hpp), and what is already done.
+    VsHintResult guide;
+    {
+        VsHintFacts hf;
+        hf.nodeCount = (int)g.nodes.size();
+        hf.wireCount = (int)(g.execLinks.size() + g.dataLinks.size());
+        hf.playing = ed.isPlaying();
+        hf.userWired = userWiredNow;
+        std::size_t sig = 0;
+        for (const auto& n : g.nodes) {
+            sig = sig * 131u + std::hash<std::string>()(n.arg);
+            for (const auto& pd : n.pinDefault) sig = sig * 131u + std::hash<std::string>()(pd.second) + (std::size_t)pd.first;
+        }
+        hf.editedNumber = st.sigNodes > 0 && st.sigNodes == hf.nodeCount && sig != st.valueSig;
+        st.valueSig = sig; st.sigNodes = hf.nodeCount;
+        guide = VsHintStep(VsPrefs().hintsDone, hf, st.showHint && !st.missing);
+        if (guide.done != VsPrefs().hintsDone) { VsPrefs().hintsDone = guide.done; VsPrefsSave(); }
+        if (VsStartVisible(hf.nodeCount, VsPrefs().hideStart, st.startedEmpty, st.missing)) guide.hint = VsHint::None;   // the cards already say it
+    }
     if (st.missing) {
         const char* msg = "This graph file could not be opened.";
         const std::string path = g.path.empty() ? std::string("(no path)") : g.path;
         dl->AddText(ImVec2(canvasMin.x + 24.0f, canvasMin.y + 24.0f), IM_COL32(255, 170, 150, 255), msg);
         dl->AddText(ImVec2(canvasMin.x + 24.0f, canvasMin.y + 48.0f), IM_COL32(200, 206, 216, 255), path.c_str());
+    } else if (VsStartVisible((int)g.nodes.size(), VsPrefs().hideStart, st.startedEmpty, st.missing)) {
+        VsDrawStartScreen(ed, st, canvasMin, canvasMax);
     } else if (g.nodes.empty()) {
-        const float cardW = 480.0f, cardH = 220.0f;
+        const float cardW = 580.0f, cardH = 360.0f;
         const ImVec2 c0((canvasMin.x + canvasMax.x - cardW) * 0.5f, (canvasMin.y + canvasMax.y - cardH) * 0.5f);
         const ImVec2 c1(c0.x + cardW, c0.y + cardH);
         dl->AddRectFilled(c0, c1, IM_COL32(32, 36, 46, 245), 16.0f);
         dl->AddRect(c0, c1, IM_COL32(120, 140, 168, 160), 16.0f, 0, 1.5f);
-        const char* title = "This graph is empty";
-        const char* hint = "Right-click the canvas, or press Space, to add a node.";
-        const char* hint2 = "Start with an event such as On Start, then wire what happens next.";
+        const char* title = "What is this?";
+        const char* hint = "A script is a chain of blocks: when something happens, do something. Press Pick a recipe to start.";
+        const char* hint2 = "Or add a block and open the Starter group at the top of the list.";
         const ImVec2 ts = ImGui::CalcTextSize(title);
-        dl->AddText(ImVec2(c0.x + (cardW - ts.x) * 0.5f, c0.y + 36.0f), IM_COL32(236, 240, 246, 255), title);
+        dl->AddText(ImVec2(c0.x + (cardW - ts.x) * 0.5f, c0.y + 18.0f), IM_COL32(236, 240, 246, 255), title);
         const ImVec2 hs = ImGui::CalcTextSize(hint);
-        dl->AddText(ImVec2(c0.x + (cardW - hs.x) * 0.5f, c0.y + 72.0f), IM_COL32(170, 180, 196, 255), hint);
-        const ImVec2 h2 = ImGui::CalcTextSize(hint2);
-        dl->AddText(ImVec2(c0.x + (cardW - h2.x) * 0.5f, c0.y + 96.0f), IM_COL32(150, 160, 176, 255), hint2);
-        ImGui::SetCursorScreenPos(ImVec2(c0.x + (cardW - 180.0f) * 0.5f, c0.y + 148.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(16.0f, 10.0f));
-        if (ImGui::Button("Add a node", ImVec2(180.0f, 0.0f))) st.addAtCenter = true;
-        ImGui::PopStyleVar();
+        dl->AddText(ImVec2(c0.x + (cardW - hs.x) * 0.5f, c0.y + 46.0f), IM_COL32(170, 180, 196, 255), hint);
+        // Big one-click cards: each is a small working graph (VisualScriptRecipes.hpp).
+        int shownCards = 0;
+        for (const VsRecipe& r : VsRecipes()) {
+            if (shownCards >= 8) break;
+            const int col = shownCards % 2, row = shownCards / 2;
+            ImGui::SetCursorScreenPos(ImVec2(c0.x + 24.0f + col * 272.0f, c0.y + 80.0f + row * 54.0f));
+            ImGui::PushID(shownCards);
+            if (ImGui::Button(r.name, ImVec2(262.0f, 46.0f))) {
+                st.templateText = r.graph; st.pasteTemplate = true;
+                if (GameObject* go = ed.selected()) VsAddTemplateComponents(go, r.add);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", r.blurb);
+            ImGui::PopID();
+            ++shownCards;
+        }
+        ImGui::SetCursorScreenPos(ImVec2(c0.x + (cardW - 180.0f) * 0.5f, c1.y - 46.0f));
+        if (ImGui::Button("Or add a block", ImVec2(180.0f, 0.0f))) st.addAtCenter = true;
     } else if (st.needsEvent) {
-        const char* msg = "Nothing runs yet. Add an event (On Start, On Update, On Key) and wire it to the first step.";
+        const char* msg = "Nothing runs yet. Add a block that starts with On (On Start, On Key Pressed) or a Quick block, and plug the first step into it.";
         const ImVec2 ts = ImGui::CalcTextSize(msg);
         const ImVec2 bp(canvasMin.x + 18.0f, canvasMin.y + 16.0f);
         dl->AddRectFilled(bp, ImVec2(bp.x + ts.x + 24.0f, bp.y + ts.y + 16.0f), IM_COL32(64, 48, 24, 230), 8.0f);
         dl->AddText(ImVec2(bp.x + 12.0f, bp.y + 8.0f), IM_COL32(245, 214, 150, 255), msg);
-    } else if (st.showHint) {
-        const char* msg = "Right-click or press Space to add a node    ·    Scroll to zoom    ·    Drag empty space to select";
+    } else if (st.showHint && guide.hint == VsHint::None) {
+        const char* msg = "Right-click or tap Space to add a node    ·    Move the view: middle-drag, right-drag, or hold Space and drag    ·    Scroll to zoom    ·    Drag empty space to select";
         dl->AddText(ImVec2(canvasMin.x + 16.0f, canvasMax.y - 28.0f), IM_COL32(168, 178, 194, 180), msg);
+    }
+    // The next-step bar: one thin line at the bottom, gone once each step has been done.
+    if (guide.hint != VsHint::None) {
+        const char* msg = VsHintText(guide.hint);
+        const ImVec2 ts = ImGui::CalcTextSize(msg);
+        const float maxW = std::max(120.0f, canvasMax.x - canvasMin.x - 260.0f);
+        const ImVec2 b0(canvasMin.x + 12.0f, canvasMax.y - ts.y - 24.0f);
+        const ImVec2 b1(b0.x + std::min(maxW, ts.x + 44.0f), canvasMax.y - 10.0f);
+        dl->AddRectFilled(b0, b1, IM_COL32(28, 58, 96, 238), 12.0f);
+        dl->AddRect(b0, b1, IM_COL32(110, 160, 235, 200), 12.0f);
+        dl->AddCircleFilled(ImVec2(b0.x + 16.0f, (b0.y + b1.y) * 0.5f), 4.5f, IM_COL32(120, 190, 255, 255));
+        dl->PushClipRect(b0, b1, true);
+        dl->AddText(ImVec2(b0.x + 30.0f, b0.y + 7.0f), IM_COL32(232, 240, 252, 255), msg);
+        dl->PopClipRect();
     }
     // Why the last wire was refused. Wrapped, so the suggestion is not cut off.
     if (st.refuseTime > 0.0f && !st.refuseMsg.empty()) {
@@ -5300,7 +5858,7 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::PushTextWrapPos(boxW - 16.0f);
         ImGui::TextUnformatted(st.refuseMsg.c_str());
         ImGui::PopTextWrapPos();
-        if (st.offerOn && !st.offerType.empty() && ImGui::Button(st.offerWhy.empty() ? "Insert conversion" : st.offerWhy.c_str())) {
+        if (st.offerOn && !st.offerType.empty() && ImGui::Button(VsPlainFixIt())) {
             const VsEditNode* prod = g.find(st.offerProd);
             const VsEditNode* cons = g.find(st.offerCons);
             const float x = prod && cons ? (prod->x + cons->x) * 0.5f : 80.0f;
@@ -5313,6 +5871,8 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::EndChild();
         ImGui::PopStyleColor(2);
     }
+    // The "What is this?" card for the selected node (bottom right), with next-step chips and Try this node.
+    if (!st.missing && !g.nodes.empty()) VsDrawHelpCard(st, canvasMin, canvasMax);
     // The checker's list (toolbar button): click a row to jump to its node.
     if (st.showIssues && !st.issues.empty()) {
         const float w = std::min(820.0f, canvasMax.x - canvasMin.x - 36.0f);
@@ -5325,13 +5885,22 @@ inline void Draw(EditorState& ed, bool* open) {
             const auto& is = st.issues[i];
             ImGui::PushID((int)i);
             ImGui::PushStyleColor(ImGuiCol_Text, is.severity == 0 ? ImVec4(1.0f, 0.5f, 0.45f, 1) : ImVec4(0.95f, 0.78f, 0.4f, 1));
-            std::string row = std::string(is.severity == 0 ? "Error: " : "Warning: ") + is.message;
-            if (ImGui::Selectable(row.c_str()) && is.node >= 0) { st.sel = {is.node}; st.selected = is.node; st.focusNode = is.node; }
+            std::string row = std::string(is.severity == 0 ? "Error: " : "Warning: ") + VsPlainIssue(is.message);
+            const bool canFix = VsFixAvailable(g, is.message, is.node, is.pin, is.pinDir);
+            if (ImGui::Selectable(row.c_str(), false, 0, ImVec2(canFix ? w - 190.0f : 0.0f, 0.0f)) && is.node >= 0) { st.sel = {is.node}; st.selected = is.node; st.focusNode = is.node; }
             if (ImGui::IsItemHovered()) {   // long messages: the whole text
                 ImGui::BeginTooltip(); ImGui::PushTextWrapPos(ImGui::GetFontSize() * 36.0f);
                 ImGui::TextUnformatted(row.c_str()); ImGui::PopTextWrapPos(); ImGui::EndTooltip();
             }
             ImGui::PopStyleColor();
+            if (canFix) {   // an obvious fix exists: one button
+                ImGui::SameLine();
+                if (ImGui::SmallButton(VsPlainFixIt())) {
+                    VsFixIssue(g, is.message, is.node, is.pin, is.pinDir);
+                    ImGui::PopID();
+                    break;   // the list is rebuilt next frame
+                }
+            }
             ImGui::PopID();
         }
         ImGui::EndChild();

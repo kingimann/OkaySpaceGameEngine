@@ -27,15 +27,15 @@ using namespace okay;
 #define OKAY_SAVE_COMPONENTS(X) \
     X(ActionList) X(AimIK) X(AimOffset) X(AnimStateMachine) X(Animator) X(AntiCheatConfig) X(AudioSource) \
     X(AutoSave) X(BehaviorTreeRunner) X(BleedingStat) X(BlendShapes) X(BlockBuilder) X(BoxCollider2D) \
-    X(BoxCollider3D) X(BuildMode) X(BuildPiece) X(Buildable) X(BuilderMode) X(Cable) X(Camera) X(CameraFollow) X(Canvas) \
+    X(BoxCollider3D) X(BuildMode) X(BuildPiece) X(Buildable) X(BuilderMode) X(Cable) X(Camera) X(CameraFollow) X(CameraRoom) X(CameraZone) X(Canvas) \
     X(CapsuleCollider2D) X(CapsuleCollider3D) X(CarryWeightStat) X(ChainIK) X(Character) X(CharacterController2D) \
     X(CharacterController3D) X(CheckpointTrigger) X(ChestInventory) X(CinemachineBrain) X(CircleCollider2D) \
     X(ClickToMoveController) X(Collectible) X(Consumables) X(Crafting) X(CraftingMenu) X(CraftingStation) \
-    X(Crosshair) X(CylinderCollider3D) X(DamageOnTouch) X(DayNightCycle) X(Decal) X(Destructible) X(DialogueRunner) \
+    X(Crosshair) X(CylinderCollider3D) X(ConeCollider3D) X(ConvexHullCollider3D) X(PlaneCollider3D) X(CompoundCollider3D) X(HeightfieldCollider3D) X(CompositeCollider2D) X(DamageOnTouch) X(DayNightCycle) X(Decal) X(Destructible) X(DialogueRunner) \
     X(DollyCart) X(DollyPath) X(Draggable) X(DropZone) X(EdgeCollider2D) X(Equipment) X(testing::EventProbe) \
     X(EventSystem) X(FirstPersonController) X(FirstPersonHand) X(FirstPersonHands) X(Flashlight) \
     X(FollowTarget2D) X(Foliage) X(FootIK) X(FreeRoamController) X(FullBodyIK) X(GridInventory) X(GridInventoryUI) \
-    X(HealthStat) X(HoldPrompt) X(HoldableObject) X(HumanoidRetarget) X(HungerStat) X(IKTarget) X(Inventory) \
+    X(HealthStat) X(HoldPrompt) X(LocalPlayerInput) X(HoldableObject) X(HumanoidRetarget) X(HungerStat) X(IKTarget) X(Inventory) \
     X(InventoryUI) X(ItemPickup) X(Joint2D) X(Joint3D) X(JumpPad) X(Lifetime) X(Light) X(LimbIK) X(LineRenderer) \
     X(LoadingScreen) X(LogicSource) X(LogicTarget) X(LookAtIK) X(LootSource) X(MeleeAttacker) X(MeshCollider3D) \
     X(MeshModifiers) X(MeshRenderer) X(Minimap) X(MinimapBlip) X(ModelAnimator) X(Mover) X(MusicPlayer) \
@@ -63,9 +63,10 @@ using namespace okay;
 
 namespace {
 
+// (CheckpointTrigger, TimedDestroy and NetworkAvatarMotion are saved now, through their registry entries.)
 const std::set<std::string> kRuntimeOnly = {
-    "StatComponent", "TimedDestroy", "UIToastItem", "WeatherRig", "NetworkAvatarMotion",
-    "testing::EventProbe", "SettingsScreen", "SteamManager", "CheckpointTrigger"};
+    "StatComponent", "UIToastItem", "WeatherRig",
+    "testing::EventProbe", "SettingsScreen", "SteamManager"};
 
 // These adopt or rebuild something on the first load, then the text settles.
 const std::set<std::string> kChangesOnce = {

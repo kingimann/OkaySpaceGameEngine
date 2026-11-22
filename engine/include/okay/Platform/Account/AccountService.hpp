@@ -32,6 +32,9 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#if defined(OKAY_XBOX_UWP)
+#include "okay/Core/Paths.hpp"
+#endif
 #include <fstream>
 #include <random>
 #include <sstream>
@@ -40,6 +43,9 @@
 
 #if defined(_WIN32)
 #  include <windows.h>
+#  if defined(OKAY_XBOX_UWP)
+#    include <bcrypt.h>
+#  endif
 #endif
 #include "okay/Crypto/Sha256.hpp"   // the engine's one SHA-256 / HMAC / PBKDF2
 #include "okay/Platform/NativeHttp.hpp"
@@ -49,7 +55,7 @@ namespace okay::account {
 namespace fs = std::filesystem;
 
 // ===========================================================================
-// SHA-256 / PBKDF2. These are thin wrappers over the engine's one implementation, okay/Crypto/Sha256.hpp (docs/sha256_comparison.md).
+// SHA-256 / PBKDF2. These are thin wrappers over the engine's one implementation, okay/Crypto/Sha256.hpp (docs/platform/sha256_comparison.md).
 // The wrapper keeps the interface the account service, the updater and the anti-cheat code already use.
 // ===========================================================================
 namespace detail {
@@ -99,7 +105,10 @@ inline std::string HashPassword(const std::string& password, const std::string& 
 // Random bytes from the operating system's CSPRNG (never a seeded Mersenne Twister): getrandom-style /dev/urandom on POSIX,
 // RtlGenRandom (SystemFunction036) on Windows, found at run time so nothing extra is linked. False when the system has none.
 inline bool OsRandom(std::uint8_t* out, std::size_t n) {
-#if defined(_WIN32)
+#if defined(OKAY_XBOX_UWP)
+    // UWP: no LoadLibrary. BCryptGenRandom with the system-preferred RNG needs no algorithm handle (Microsoft's BCryptGenRandom page).
+    return BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(out), (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) >= 0;
+#elif defined(_WIN32)
     typedef unsigned char (__stdcall *RtlGenRandomFn)(void*, unsigned long);
     static RtlGenRandomFn fn = [] {
         HMODULE m = LoadLibraryA("advapi32.dll");
@@ -175,7 +184,9 @@ inline bool SecureEquals(const std::string& a, const std::string& b) {
 // console window flashes for each curl request (CREATE_NO_WINDOW); elsewhere it
 // is std::system. Returns the process exit code (-1 on spawn failure).
 inline int RunCommand(const std::string& cmd) {
-#if defined(_WIN32)
+#if defined(OKAY_XBOX_UWP)
+    (void)cmd; return -1;   // a UWP app cannot start other programs (no curl fallback): "not reached"
+#elif defined(_WIN32)
     std::string full = "cmd /c " + cmd;
     std::vector<char> buf(full.begin(), full.end()); buf.push_back('\0');
     STARTUPINFOA si; ZeroMemory(&si, sizeof(si)); si.cb = sizeof(si);
@@ -473,7 +484,7 @@ public:
     }
 
     /// Where the emailed reset link should land (the hosted page from
-    /// supabase/auth-pages/reset-password, see docs/password-reset.md). Must be an
+    /// supabase/auth-pages/reset-password, see docs/online/password-reset.md). Must be an
     /// http(s) URL that is also on the Supabase Auth redirect allow-list. Empty =
     /// not configured: Supabase then uses the project's Site URL instead.
     void SetResetRedirect(std::string url) { resetRedirect_ = std::move(url); }
@@ -498,6 +509,41 @@ public:
                                     "{\"email\":\"" + detail::JsonEscape(email) + "\"}", {});
         if (!r.reached) return Fail("Couldn't reach the account server.");
         if (!r.ok) return Fail("Couldn't start password reset (HTTP " + std::to_string(r.status) + ").");
+        Result ok; ok.ok = true; return ok;
+    }
+
+    /// A reset code from the email: 6 to 10 digits (Supabase's {{ .Token }} in the "Reset Password" email template).
+    static bool LooksLikeRecoveryCode(const std::string& code) {
+        if (code.size() < 6 || code.size() > 10) return false;
+        for (char c : code) if (c < '0' || c > '9') return false;
+        return true;
+    }
+    /// The body of POST auth/v1/verify that trades an emailed reset code for a session. Pure, so it is unit tested.
+    static std::string RecoveryVerifyBody(const std::string& email, const std::string& code) {
+        return "{\"type\":\"recovery\",\"email\":\"" + detail::JsonEscape(email) + "\",\"token\":\"" + detail::JsonEscape(code) + "\"}";
+    }
+
+    /// Choose a new password with the code from the reset email, all inside the program: no web page (and no GitHub Pages) is
+    /// needed. Supabase: POST auth/v1/verify (type recovery) gives a short session, then PUT auth/v1/user sets the password.
+    /// The session is used only for that and is not kept: the person signs in with the new password afterwards.
+    Result ResetPasswordWithCode(const std::string& email, const std::string& code, const std::string& newPassword) {
+        if (provider_ != Provider::Supabase) return Fail("Password reset needs the online (Supabase) account server.");
+        if (!LooksLikeEmail(email)) return Fail("Enter a valid email address.");
+        if (!LooksLikeRecoveryCode(code)) return Fail("Enter the code from the reset email (digits only).");
+        if (newPassword.size() < 6) return Fail("Password must be at least 6 characters.");
+        std::string base = serverUrl_;
+        if (!base.empty() && base.back() == '/') base.pop_back();
+        ApiResponse v = HttpRequest("POST", base + "/auth/v1/verify", RecoveryVerifyBody(email, code), {});
+        if (!v.reached) return Fail("Couldn't reach the account server.");
+        const std::string token = detail::JsonField(v.body, "access_token");
+        if (!v.ok || token.empty()) return Fail("That code is wrong or has expired. Ask for a new reset email.");
+        ApiResponse u = HttpRequest("PUT", base + "/auth/v1/user", "{\"password\":\"" + detail::JsonEscape(newPassword) + "\"}", token);
+        if (!u.reached) return Fail("Couldn't reach the account server.");
+        if (!u.ok) {
+            std::string e = detail::JsonField(u.body, "msg");
+            if (e.empty()) e = detail::JsonField(u.body, "message");
+            return Fail(e.empty() ? "Password change failed." : e);
+        }
         Result ok; ok.ok = true; return ok;
     }
 
@@ -1257,7 +1303,9 @@ private:
 /// on Windows, $XDG_CONFIG_HOME or ~/.config/OkaySpace elsewhere, falling back
 /// to `fallbackBesideExe` if no home directory is known.
 inline fs::path DefaultConfigDir(const fs::path& fallbackBesideExe) {
-#if defined(_WIN32)
+#if defined(OKAY_XBOX_UWP)
+    { const std::string ad = okay::Paths::Env::Current().appData; if (!ad.empty()) return fs::path(ad) / "OkaySpace"; }   // ApplicationData, set by the UWP shell
+#elif defined(_WIN32)
     if (const char* appdata = std::getenv("APPDATA"))
         return fs::path(appdata) / "OkaySpace";
 #else

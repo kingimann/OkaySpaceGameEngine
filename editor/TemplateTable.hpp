@@ -7,7 +7,7 @@
 // for it. Header-only and free of ImGui and SDL, so the editor and the tests (tests/test_templates_work.cpp)
 // use exactly the same table.
 //
-// Adding a template: see docs/templates_check.md. The short version: one row in okayproj::Templates(), one row
+// Adding a template: see docs/process/templates_check.md. The short version: one row in okayproj::Templates(), one row
 // here, one builder in EditorState, one row in tests/test_templates_work.cpp. The test fails until all four agree.
 //
 //   FindBuilder(title)       the builder for exactly this title, or null when there is none
@@ -35,8 +35,7 @@ inline const std::vector<TemplateEntry>& TemplateTable() {
         {"3D Scene",                   &E::NewScene3D},
         {"2D Scene",                   &E::NewScene2D},
         {"Empty",                      &E::NewScene},
-        {"First Person",               &E::NewFPS},
-        {"Third Person",               &E::NewThirdPerson},
+        {"First and Third Person",       &E::NewThirdPerson},
         {"Third Person Shooter",       &E::NewThirdPersonShooter},
         {"Platformer",                 &E::NewPlatformer},
         {"Top-Down",                   &E::NewTopDown},
@@ -45,6 +44,7 @@ inline const std::vector<TemplateEntry>& TemplateTable() {
         {"Point & Click",              &E::NewPointAndClick},
         {"Vehicle (3D)",               &E::NewVehicle3D},
         {"Vehicle (get in and drive)", &E::NewVehicleSeats3D},
+        {"Driving World (open-world cars)", &E::NewDrivingWorld},
         {"Vehicle (2D)",               &E::NewVehicle2D},
         {"Sandbox",                    &E::NewVoxelSandbox},
         {"Multiplayer",                &E::NewMultiplayer},
@@ -56,6 +56,10 @@ inline const std::vector<TemplateEntry>& TemplateTable() {
 /// The builder for exactly `title`, or null when the table has none (a title the launcher lists that the editor does
 /// not know would otherwise silently become a 3D Scene).
 inline TemplateBuilder FindBuilder(const std::string& title) {
+    // The two titles this one replaced (2.880 and older launchers, scripts and saved --template arguments still pass them).
+    // They are not in the table: the table is what the New Project list shows.
+    if (title == "First Person") return &okay::editor::EditorState::NewThirdPerson;   // starts behind the player; V goes to the eyes
+    if (title == "Third Person") return &okay::editor::EditorState::NewThirdPerson;
     for (const TemplateEntry& e : TemplateTable())
         if (title == e.title) return e.build;
     return nullptr;

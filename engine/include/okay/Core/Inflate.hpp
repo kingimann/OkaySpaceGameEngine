@@ -11,7 +11,7 @@
 // Provenance: written from RFC 1950 (zlib), RFC 1951 (deflate) and RFC 1952 (gzip) ONLY. No decoder source
 // (zlib, puff, miniz, stb_image, libdeflate or any other) was read, fetched, copied or ported for this file.
 // An earlier version of this file was flagged by an outside review as closely following a public reference
-// decoder; this is a rewrite with a different design (see docs/provenance_audit.md).
+// decoder; this is a rewrite with a different design (see docs/status/provenance_audit.md).
 //
 // Design: a table-driven canonical Huffman decoder.
 //  - Codes are assigned as RFC 1951 section 3.2.2 describes (next_code per length, symbols in order).
@@ -76,6 +76,14 @@ struct BitReader {
 
     BitReader(const uint8_t* d, size_t n) : src(d), len(n) {}
     void Refill() {
+        if (cnt <= 56 && len - pos >= 8) {   // whole bytes at once while 8 input bytes remain: one load, not a loop
+            uint64_t w;
+            std::memcpy(&w, src + pos, 8);   // little-endian host assumed (as everywhere in the engine)
+            const int take = (63 - cnt) >> 3;   // bytes that fit above `cnt`: 0 to 7, so the shift below is < 64
+            buf |= (w & ((uint64_t(1) << (take * 8)) - 1)) << cnt;   // keep the bits above the new `cnt` zero
+            pos += size_t(take); cnt += take * 8;
+            return;
+        }
         while (cnt <= 56 && pos < len) { buf |= uint64_t(src[pos++]) << cnt; cnt += 8; }
     }
     uint32_t Take(int n) {             // n <= 16
@@ -94,36 +102,68 @@ struct BitReader {
     size_t BytesUsed() const { return pos - size_t(cnt >> 3); }
 };
 
+// The low `bits` bits of v (bits <= 16) in reverse order: all 16 bits reversed by swapping ever larger groups
+// (single bits, pairs, nibbles, bytes), then shifted down.
 inline uint32_t Reverse(uint32_t v, int bits) {
-    uint32_t r = 0;
-    for (int i = 0; i < bits; ++i) { r = (r << 1) | (v & 1); v >>= 1; }
-    return r;
+    v &= (1u << bits) - 1u;   // only the low `bits` bits take part, as before
+    v = ((v >> 1) & 0x5555u) | ((v & 0x5555u) << 1);
+    v = ((v >> 2) & 0x3333u) | ((v & 0x3333u) << 2);
+    v = ((v >> 4) & 0x0F0Fu) | ((v & 0x0F0Fu) << 4);
+    v = ((v >> 8) & 0x00FFu) | ((v & 0x00FFu) << 8);
+    return v >> (16 - bits);
 }
 
 // ---- canonical Huffman decoder ---------------------------------------------------------------------
 constexpr int kFastBits = 10;
 constexpr int kMaxBits = 15;
 
-struct Decoder {
-    // quick[i]: (symbol << 4 | length) for the code whose reversed bits are the low kFastBits of i, 0 if none
-    uint16_t quick[1 << kFastBits];
+struct DecoderBase {
+    enum class Shape { Oversubscribed, Incomplete, Complete };
+    enum : int { kBadCode = -1, kStarved = -2 };
+    // What the symbols mean, for the extra fields of a table entry (see `quick`): Plain symbols carry nothing more;
+    // LitLen (the literal/length code) gives a length symbol 257..285 its base length and extra-bit count, Dist (the
+    // distance code) gives a distance symbol 0..29 its base distance and extra-bit count (RFC 1951 section 3.2.5).
+    enum class Role { Plain, LitLen, Dist };
+    // Entry layout: bits 0-3 code length, bits 4-7 extra bits after the code, bits 8-22 base value, bits 23-31 symbol.
+    // 0 means no code of at most `bits` bits (a longer code, or none). Every real entry has a code length of at least 1,
+    // so it is never 0, and "entry - 1 < (S << 23) - 1" asks "is this a table hit with a symbol below S" in one compare.
+    static constexpr uint32_t Entry(uint32_t sym, uint32_t len, uint32_t extra, uint32_t base) {
+        return sym << 23 | base << 8 | extra << 4 | len;
+    }
+};
+
+// FastBits: the widest the direct lookup table gets. Literal/length and distance codes use kFastBits; the code-length
+// code (lengths of at most 7 bits) uses 7, so each dynamic block fills a 128-entry table for it instead of 1024.
+// The table actually used is `bits` wide: FastBits, or the longest code when that is shorter (a small block's distance
+// code often has codes of at most 5 or 6 bits: 64 entries to fill instead of 1024). Every code no longer than `bits`
+// is found in the table, longer ones (only when bits == FastBits) by the slow path, so the width changes nothing but
+// the work.
+template <int FastBits>
+struct DecoderT : DecoderBase {
+    // quick[i]: the entry (DecoderBase::Entry) for the code whose reversed bits are the low `bits` bits of i, 0 if none;
+    // only the first 2^bits entries are used
+    uint32_t quick[1 << FastBits];
+    int bits = FastBits;                  // table width in use (1..FastBits)
+    uint32_t mask = (1u << FastBits) - 1; // (1 << bits) - 1
     uint16_t sorted[288];                 // symbols ordered by (length, symbol)
     uint16_t lowestCode[kMaxBits + 1];     // first canonical code of each length
     uint16_t slotBase[kMaxBits + 1];     // index in `sorted` of the first symbol of each length
     uint16_t countOf[kMaxBits + 1];
     int used = 0;                         // symbols that have a code
 
-    enum class Shape { Oversubscribed, Incomplete, Complete };
-
-    Shape Build(const uint8_t* lens, int n) {
-        std::memset(quick, 0, sizeof quick);
+    Shape Build(const uint8_t* lens, int n, Role role = Role::Plain) {
         for (int l = 0; l <= kMaxBits; ++l) countOf[l] = 0;
         for (int i = 0; i < n; ++i) ++countOf[lens[i]];
         used = n - countOf[0];
         // Kraft sum in units of 2^-15: a prefix code is complete exactly when it reaches 2^15.
         uint32_t kraft = 0;
-        for (int l = 1; l <= kMaxBits; ++l) kraft += uint32_t(countOf[l]) << (kMaxBits - l);
+        int longest = 0;
+        for (int l = 1; l <= kMaxBits; ++l) { kraft += uint32_t(countOf[l]) << (kMaxBits - l); if (countOf[l]) longest = l; }
         if (kraft > (1u << kMaxBits)) return Shape::Oversubscribed;
+        bits = longest < 1 ? 1 : (longest < FastBits ? longest : FastBits);
+        mask = (1u << bits) - 1;
+        // A complete code whose codes all fit the table writes every entry below: nothing to clear first.
+        if (!(kraft == (1u << kMaxBits) && longest <= bits)) std::memset(quick, 0, sizeof(uint32_t) << bits);
         // RFC 1951 3.2.2: next_code[bits] = (next_code[bits-1] + bl_count[bits-1]) << 1
         uint32_t next[kMaxBits + 2]; uint32_t code = 0; uint16_t slot = 0;
         lowestCode[0] = 0; slotBase[0] = 0;
@@ -139,30 +179,32 @@ struct Decoder {
             if (!l) continue;
             sorted[slotBase[l] + fill[l]++] = uint16_t(sym);
             uint32_t c = next[l]++;
-            if (l <= kFastBits) {
+            if (l <= bits) {
+                uint32_t extra = 0, base = 0;
+                if (role == Role::LitLen && sym >= 257 && sym < 257 + 29) { extra = kSym.lenExtra[sym - 257]; base = kSym.lenBase[sym - 257]; }
+                else if (role == Role::Dist && sym < 30) { extra = kSym.distExtra[sym]; base = kSym.distBase[sym]; }
+                const uint32_t entry = Entry(uint32_t(sym), uint32_t(l), extra, base);
                 uint32_t rev = Reverse(c, l);
-                for (uint32_t i = rev; i < (1u << kFastBits); i += (1u << l)) quick[i] = uint16_t(sym << 4 | l);
+                for (uint32_t i = rev; i < (1u << bits); i += (1u << l)) quick[i] = entry;
             }
         }
         return kraft == (1u << kMaxBits) ? Shape::Complete : Shape::Incomplete;
     }
 
-    enum : int { kBadCode = -1, kStarved = -2 };
-
     // Returns the symbol, kBadCode (no such code) or kStarved (the input ends inside the code).
     int Next(BitReader& br) const {
         if (br.cnt < kMaxBits) br.Refill();
-        uint16_t e = quick[br.buf & ((1u << kFastBits) - 1)];
+        const uint32_t e = quick[br.buf & mask];
         if (e) {
-            int l = e & 15;
+            int l = int(e & 15);
             if (l > br.cnt) return kStarved;
             br.Drop(l);
-            return e >> 4;
+            return int(e >> 23);
         }
         // slow path: compare the next 15 bits, as a most-significant-first number, with each length's range
         uint32_t v = uint32_t(br.buf & ((1u << kMaxBits) - 1));
         v = Reverse(v, kMaxBits);
-        for (int l = kFastBits + 1; l <= kMaxBits; ++l) {
+        for (int l = bits + 1; l <= kMaxBits; ++l) {   // (codes longer than the table exist only when bits == FastBits)
             uint32_t prefix = v >> (kMaxBits - l);
             uint32_t k = prefix - lowestCode[l];
             if (prefix >= lowestCode[l] && k < countOf[l]) {
@@ -175,25 +217,29 @@ struct Decoder {
         return br.cnt < kMaxBits && br.pos >= br.len ? kStarved : kBadCode;
     }
 };
+using Decoder = DecoderT<kFastBits>;
 
 struct FixedCodes {
     Decoder lit, dist;
     FixedCodes() {
         uint8_t l[288];
         for (int i = 0; i < 288; ++i) l[i] = uint8_t(i < 144 ? 8 : i < 256 ? 9 : i < 280 ? 7 : 8);
-        lit.Build(l, 288);
+        lit.Build(l, 288, Decoder::Role::LitLen);
         uint8_t d[32];
         for (int i = 0; i < 32; ++i) d[i] = 5;
-        dist.Build(d, 32);
+        dist.Build(d, 32, Decoder::Role::Dist);
     }
 };
 
 // ---- output buffer: grows only up to the cap, never doubles past it --------------------------------
 // Writes straight into the caller's vector (no second copy of the result). `size` is the number of bytes
-// produced; the vector itself is sized in steps and trimmed to `size` at the end.
-struct Output {
-    std::vector<uint8_t>& v; size_t size = 0, limit; bool capped = false;
-    Output(std::vector<uint8_t>& vec, size_t maxOut) : v(vec), limit(maxOut) {}
+// produced; the vector itself is sized in steps and trimmed to `size` at the end. Vec is std::vector<uint8_t>, or a
+// byte vector whose allocator leaves new bytes unset on resize (no zero fill: every byte below `size` is written by
+// the decoder before anything reads it, and the rest is cut off at the end).
+template <class Vec>
+struct OutputT {
+    Vec& v; size_t size = 0, limit; bool capped = false;
+    OutputT(Vec& vec, size_t maxOut) : v(vec), limit(maxOut) {}
     // Make room for `extra` more bytes (the caller has already checked size + extra <= limit).
     void Room(size_t extra) {
         size_t need = size + extra;
@@ -226,10 +272,150 @@ struct Options {
 
 namespace detail {
 
+// Copies a match of `length` bytes that starts `back` bytes behind `d` (back >= 1; the bytes may overlap, which
+// repeats the last `back` bytes). Same result as copying one byte at a time; it only moves more bytes per step:
+// eight at a time while the source is at least eight bytes behind (each step then reads bytes already written),
+// one repeated byte as a fill, and a plain copy when the two ranges do not overlap at all.
+inline void CopyMatch(uint8_t* d, size_t back, size_t length) {
+    const uint8_t* s = d - back;
+    if (back >= length) { std::memcpy(d, s, length); return; }
+    if (back == 1) { std::memset(d, *s, length); return; }
+    size_t i = 0;
+    if (back >= 8) for (; i + 8 <= length; i += 8) { uint64_t w; std::memcpy(&w, s + i, 8); std::memcpy(d + i, &w, 8); }
+    for (; i < length; ++i) d[i] = s[i];
+}
+
+// CopyMatch for the fast path, where the output has at least `length + 8` and at least 16 bytes of room: it may write
+// up to 13 bytes past the end of the match (they are overwritten by what follows, or cut off when the output is
+// trimmed), so short matches take two 8-byte steps without a test instead of a call. Each 8-byte step reads only bytes
+// that are already final: with back >= 8 the source of a step ends before the step's own destination begins.
+inline void CopyMatchFast(uint8_t* d, size_t back, size_t length) {
+    const uint8_t* s = d - back;
+    if (back >= 8) {
+        // two steps without a test first: most matches are 16 bytes or shorter
+        uint64_t w; std::memcpy(&w, s, 8); std::memcpy(d, &w, 8);
+        std::memcpy(&w, s + 8, 8); std::memcpy(d + 8, &w, 8);
+        for (size_t i = 16; i < length; i += 8) { std::memcpy(&w, s + i, 8); std::memcpy(d + i, &w, 8); }
+        return;
+    }
+    if (back == 1) { std::memset(d, *s, length); return; }
+    // back 2 to 7: the match repeats its first `back` bytes. Each 8-byte step below reads from a distance that is a
+    // whole number of periods back and writes 8 bytes of which as many as the distance are final (read from bytes that are
+    // already final); the rest is scratch that the next step overwrites (or that lies past the end of the match).
+    // First steps of one period until `stride` bytes are final, then steps of `stride`, the most whole periods that
+    // fit in 8 bytes.
+    uint64_t w0; std::memcpy(&w0, s, 8); std::memcpy(d, &w0, 8);   // the first period (all of a match no longer than it)
+    if (length <= back) return;
+    const size_t stride = back * (8 / back);
+    size_t i = back;
+    for (; i < length && i < stride; i += back) { uint64_t w; std::memcpy(&w, d + i - back, 8); std::memcpy(d + i, &w, 8); }
+    for (; i < length; i += stride) { uint64_t w; std::memcpy(&w, d + i - stride, 8); std::memcpy(d + i, &w, 8); }
+}
+
 // Decodes the symbols of one Huffman-coded block until its end-of-block symbol.
+template <class Output>
 inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Output& out, const Options& op, std::string& why) {
     static const char* const kTooBig = "decoded body larger than the limit";
     for (;;) {
+        // Fast path, taken while at least 8 input bytes are left and the output has room for the longest match (258
+        // bytes, plus 8 for CopyMatchFast) without growing. The bit buffer is topped up to at least 56 bits before each symbol, more than
+        // one length/distance pair can need (15 + 5 + 15 + 13 = 48), so no read below can run out of bits and the output
+        // never needs to grow: the same checks in the same order as the general path, without its refill and room tests.
+        // The reader and output state live in locals here (stores into the output bytes could otherwise alias them)
+        // and are written back before anything else looks at them.
+        // The output cap: the vector is never larger than `limit` (OutputT::Room), and here size <= outSafe =
+        // v.size() - 266, so a literal or a match of at most 258 bytes always ends below the cap: the general path's
+        // cap tests (output too large, stopAtMax reached) cannot fire on this path and are left out.
+        if (br.len - br.pos >= 8 && out.v.size() - out.size >= 258 + 8) {
+            const uint8_t* const src = br.src;
+            const size_t inSafe = br.len - 8;
+            size_t pos = br.pos; uint64_t buf = br.buf; int cnt = br.cnt;
+            uint8_t* const o = out.v.data();
+            const size_t outSafe = out.v.size() - (258 + 8);
+            const uint32_t litMask = lit.mask, distMask = dist.mask;
+            size_t size = out.size;
+            // Here the bits of `buf` above `cnt` are not kept zero: a refill ORs in all 8 loaded bytes, and the ones above
+            // the new `cnt` are the stream's next bits, which the following refill ORs in again at the same place (the
+            // same bits, so nothing changes). save() clears them, so BitReader's rule (zero above cnt) holds outside.
+            auto save = [&] { br.pos = pos; br.buf = buf & ((uint64_t(1) << cnt) - 1); br.cnt = cnt; out.size = size; };
+            auto load = [&] { pos = br.pos; buf = br.buf; cnt = br.cnt; };
+            // The loop runs while pos <= inSafe and size <= outSafe. Rather than test both every turn, it runs in rounds of
+            // `turns` turns that cannot cross either bound: one turn takes at most 7 input bytes (the refill below) and
+            // gives at most 258 output bytes (a match; literals give at most 3).
+            while (pos <= inSafe && size <= outSafe) {
+            size_t turns = (inSafe - pos) / 8 + 1;
+            if ((outSafe - size) / 258 + 1 < turns) turns = (outSafe - size) / 258 + 1;
+            do {
+                // Top up to at least 56 bits, every time: with 48 bits or more there are 0 or 1 whole bytes to add, and
+                // adding them unconditionally is cheaper than a hard-to-predict test (the bytes come from the 8 that are
+                // there; the bits above the new `cnt` are the stream's next bits, as above).
+                {
+                    uint64_t w; std::memcpy(&w, src + pos, 8);
+                    buf |= w << cnt;
+                    pos += size_t((63 - cnt) >> 3);
+                    cnt |= 56;   // cnt + 8 * ((63 - cnt) / 8) for 0 <= cnt < 64: 56 + (cnt & 7)
+                }
+                const uint32_t e = lit.quick[buf & litMask];
+                if (e - 1u < (256u << 23) - 1u) {   // a literal from the table
+                    const int l = int(e & 15); buf >>= l; cnt -= l;
+                    o[size++] = uint8_t(e >> 23);
+                    // Up to two more literals straight from the table: each is what the loop's next turn would decode
+                    // (size stays below outSafe + 3, under the cap; the loop's own bounds are tested again at its top).
+                    // Their bits are in the buffer: it held at least 56 when the first was decoded, three codes take at most 45.
+                    for (int extra = 0; extra < 2; ++extra) {
+                        const uint32_t e2 = lit.quick[buf & litMask];
+                        if (e2 - 1u >= (256u << 23) - 1u) break;
+                        const int l2 = int(e2 & 15);
+                        buf >>= l2; cnt -= l2;
+                        o[size++] = uint8_t(e2 >> 23);
+                    }
+                    continue;
+                }
+                size_t length;
+                if (e - (257u << 23) < (29u << 23)) {   // a length symbol from the table: its base and extra-bit count are in the entry
+                    const int l = int(e & 15), le = int((e >> 4) & 15);
+                    buf >>= l;
+                    length = ((e >> 8) & 0x7fffu) + uint32_t(buf & ((uint64_t(1) << le) - 1));
+                    buf >>= le; cnt -= l + le;
+                } else {   // the end of the block, symbol 286 or 287, or a code longer than the table
+                    int sym;
+                    if (e) { const int l = int(e & 15); buf >>= l; cnt -= l; sym = int(e >> 23); }
+                    else {
+                        save(); sym = lit.Next(br); load();
+                        if (sym < 0) { why = sym == Decoder::kStarved ? "deflate data ends early" : "invalid deflate code"; return false; }
+                        if (sym < 256) { o[size++] = uint8_t(sym); continue; }
+                    }
+                    if (sym == 256) { save(); return true; }
+                    const int li = sym - 257;
+                    if (li >= 29) { save(); why = "invalid deflate length symbol"; return false; }
+                    const int le = kSym.lenExtra[li];
+                    length = kSym.lenBase[li] + uint32_t(buf & ((uint64_t(1) << le) - 1));
+                    buf >>= le; cnt -= le;
+                }
+                size_t back;
+                const uint32_t d = dist.quick[buf & distMask];
+                if (d - 1u < (30u << 23) - 1u) {   // a distance symbol 0..29 from the table
+                    const int l = int(d & 15), de = int((d >> 4) & 15);
+                    buf >>= l;
+                    back = ((d >> 8) & 0x7fffu) + uint32_t(buf & ((uint64_t(1) << de) - 1));
+                    buf >>= de; cnt -= l + de;
+                } else {
+                    if (d) { save(); why = "invalid deflate distance symbol"; return false; }   // symbol 30 or 31
+                    save(); const int ds = dist.Next(br); load();   // a code longer than the table
+                    if (ds < 0) { why = ds == Decoder::kStarved ? "deflate data ends early" : "invalid deflate code"; return false; }
+                    if (ds >= 30) { save(); why = "invalid deflate distance symbol"; return false; }
+                    const int de = kSym.distExtra[ds];
+                    back = kSym.distBase[ds] + uint32_t(buf & ((uint64_t(1) << de) - 1));
+                    buf >>= de; cnt -= de;
+                }
+                if (back > size) { save(); why = "back-reference starts before the output"; return false; }
+                CopyMatchFast(o + size, back, length);   // (ends below the cap: see above)
+                size += length;
+            } while (--turns);
+            }
+            save();
+            continue;   // near the end of the input or of the output buffer: the general path below
+        }
         int sym = lit.Next(br);
         if (sym < 0) { why = sym == Decoder::kStarved ? "deflate data ends early" : "invalid deflate code"; return false; }
         if (sym < 256) {
@@ -258,16 +444,14 @@ inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Out
             length = out.limit - out.size;   // keep the part that fits, then stop
         }
         out.Room(length);
-        uint8_t* d = out.Data() + out.size;
-        const uint8_t* s = d - back;
-        if (back >= length) std::memcpy(d, s, length);
-        else for (size_t i = 0; i < length; ++i) d[i] = s[i];   // overlapping copy repeats the pattern
+        CopyMatch(out.Data() + out.size, back, length);   // an overlapping copy repeats the pattern
         out.size += length;
         if (op.stopAtMax && out.size == out.limit) { out.capped = true; return true; }
     }
 }
 
 // ---- the three block kinds --------------------------------------------------------------------------
+template <class Output>
 inline bool StoredBlock(BitReader& br, Output& out, std::string& why) {
     br.AlignToByte();
     if (br.len - br.pos < 4) { why = "deflate data ends early"; return false; }
@@ -286,6 +470,7 @@ inline bool StoredBlock(BitReader& br, Output& out, std::string& why) {
     return true;
 }
 
+template <class Output>
 inline bool FixedBlock(BitReader& br, Output& out, const Options& op, std::string& why) {
     // Built on first use (a function-local static). C++11 makes that initialisation thread-safe, but this has not been
     // proven under MinGW's "win32" thread model; nothing here uses <mutex>, <thread> or call_once (CLAUDE.md rule 21a).
@@ -294,6 +479,7 @@ inline bool FixedBlock(BitReader& br, Output& out, const Options& op, std::strin
     return RunBlock(br, fixed.lit, fixed.dist, out, op, why);
 }
 
+template <class Output>
 inline bool DynamicBlock(BitReader& br, Output& out, const Options& op, std::string& why) {
     int hlit = int(br.Take(5)) + 257, hdist = int(br.Take(5)) + 1, hclen = int(br.Take(4)) + 4;
     if (br.starved) { why = "deflate data ends early"; return false; }
@@ -301,7 +487,7 @@ inline bool DynamicBlock(BitReader& br, Output& out, const Options& op, std::str
     uint8_t clLens[19] = {0};
     for (int i = 0; i < hclen; ++i) clLens[kClOrder[i]] = uint8_t(br.Take(3));
     if (br.starved) { why = "deflate data ends early"; return false; }
-    Decoder cl;
+    DecoderT<7> cl;
     auto cs = cl.Build(clLens, 19);
     if (cs == Decoder::Shape::Oversubscribed || (op.strictCodes && cs != Decoder::Shape::Complete)) {
         why = "deflate code-length code is not a complete prefix code"; return false;
@@ -327,10 +513,10 @@ inline bool DynamicBlock(BitReader& br, Output& out, const Options& op, std::str
     if (lens[256] == 0) { why = "deflate block has no end-of-block code"; return false; }
 
     Decoder lit, dist;
-    auto ls = lit.Build(lens, hlit);
+    auto ls = lit.Build(lens, hlit, Decoder::Role::LitLen);
     if (ls == Decoder::Shape::Oversubscribed) { why = "deflate literal code is over-subscribed"; return false; }
     if (op.strictCodes && ls == Decoder::Shape::Incomplete && lit.used != 1) { why = "deflate literal code is incomplete"; return false; }
-    auto ds = dist.Build(lens + hlit, hdist);
+    auto ds = dist.Build(lens + hlit, hdist, Decoder::Role::Dist);
     if (ds == Decoder::Shape::Oversubscribed) { why = "deflate distance code is over-subscribed"; return false; }
     if (op.strictCodes && ds == Decoder::Shape::Incomplete && dist.used > 1) { why = "deflate distance code is incomplete"; return false; }
     return RunBlock(br, lit, dist, out, op, why);
@@ -378,11 +564,13 @@ inline uint32_t Le32(const uint8_t* p) { return p[0] | (uint32_t(p[1]) << 8) | (
 // decoded bytes. Input may be any pointer when n == 0.
 
 /// Raw deflate stream (RFC 1951). `consumed` is the number of input bytes used (not meaningful with stopAtMax).
-inline bool Raw(const uint8_t* in, size_t n, std::vector<uint8_t>& out, const Options& op, size_t& consumed, std::string& why) {
+/// Vec: std::vector<uint8_t> or another vector of bytes (see detail::OutputT).
+template <class Vec>
+inline bool RawInto(const uint8_t* in, size_t n, Vec& out, const Options& op, size_t& consumed, std::string& why) {
     using namespace detail;
     out.clear();
     BitReader br(in, n);
-    Output o(out, op.maxOutput);
+    OutputT<Vec> o(out, op.maxOutput);
     if (op.hint) {
         // The first allocation is only a guess, so it never needs to be more than the stream could possibly produce:
         // DEFLATE cannot expand more than 1032:1 (a 258-byte match costs at least two bits plus a code). A header that
@@ -411,9 +599,13 @@ inline bool Raw(const uint8_t* in, size_t n, std::vector<uint8_t>& out, const Op
     out.resize(o.size);
     return true;
 }
+inline bool Raw(const uint8_t* in, size_t n, std::vector<uint8_t>& out, const Options& op, size_t& consumed, std::string& why) {
+    return RawInto(in, n, out, op, consumed, why);
+}
 
 /// zlib stream (RFC 1950). With op.checkTrailer: window <= 32K, Adler-32 must match, no bytes after it.
-inline bool Zlib(const uint8_t* in, size_t n, std::vector<uint8_t>& out, const Options& op, std::string& why) {
+template <class Vec>
+inline bool ZlibInto(const uint8_t* in, size_t n, Vec& out, const Options& op, std::string& why) {
     using namespace detail;
     out.clear();
     // CMF FLG; CM 8, header check divisible by 31, no preset dictionary
@@ -421,13 +613,16 @@ inline bool Zlib(const uint8_t* in, size_t n, std::vector<uint8_t>& out, const O
     const bool badHeader = op.checkTrailer ? (n < 6 || (cmf >> 4) > 7) : n < 2;
     if (badHeader || (cmf & 0x0f) != 8 || ((cmf << 8) | flg) % 31 != 0 || (flg & 0x20)) { why = "not a zlib stream"; return false; }
     size_t used = 0;
-    if (!Raw(in + 2, n - 2, out, op, used, why)) return false;
+    if (!RawInto(in + 2, n - 2, out, op, used, why)) return false;
     if (!op.checkTrailer) return true;
     const size_t off = 2 + used;
     if (n - off != 4) { why = "bad zlib trailer"; out.clear(); return false; }
     const uint32_t want = (uint32_t(in[off]) << 24) | (uint32_t(in[off + 1]) << 16) | (uint32_t(in[off + 2]) << 8) | in[off + 3];
     if (want != Adler32(out.data(), out.size())) { why = "zlib checksum mismatch"; out.clear(); return false; }
     return true;
+}
+inline bool Zlib(const uint8_t* in, size_t n, std::vector<uint8_t>& out, const Options& op, std::string& why) {
+    return ZlibInto(in, n, out, op, why);
 }
 
 /// One gzip member (RFC 1952). CRC-32 and size are always checked; extra bytes (a second member) are refused.

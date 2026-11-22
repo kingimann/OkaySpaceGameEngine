@@ -1,6 +1,6 @@
 // Our own Terragen (.ter) reader: synthetic files built in memory (tests/terragen_test_build.hpp) with values worked out
 // by hand from the published specification, the optional chunks and their defaults, curve mode 1, every refusal, and the
-// import seam (opt-in switch, UTF-8 path). The real files are checked by test_model_corpus (docs/model_corpus.md).
+// import seam (opt-in switch, UTF-8 path). The real files are checked by test_model_corpus (docs/content/model_corpus.md).
 #include "test_framework.hpp"
 #include "terragen_test_build.hpp"
 #include <Okay.hpp>

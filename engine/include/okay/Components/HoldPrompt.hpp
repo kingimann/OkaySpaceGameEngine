@@ -3,7 +3,6 @@
 // hold-in-hands item is in range, and "E or G to drop" while one is carried.
 // Drop lives here, not in the holding solver. E is also lean-right while held;
 // the drop is the press, the lean is the hold.
-#include "okay/Modules/Interact.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -11,7 +10,9 @@
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Core/Localization.hpp"
+#include "okay/Modules/Interact.hpp"
 #include <string>
 #include <utility>
 #include <vector>
@@ -43,14 +44,14 @@ public:
         ProceduralObjectHolding* hold = gameObject ? gameObject->GetComponent<ProceduralObjectHolding>() : nullptr;
         const bool holding = hold && hold->IsHolding();
         if (m_wasHolding && holding) {
-            const bool main = dropKey && Input::GetKeyDown(dropKey);
+            const bool main = UseKeyDown(dropKey);
             // The holder's throw key already lets go (a tap throws softly), and
             // dropping on it too would let the same press pick the item back up.
             const bool alt = altDropKey && altDropKey != dropKey && altDropKey != hold->throwKey &&
                              Input::GetKeyDown(altDropKey);
             if (main || alt) {
                 hold->Drop();
-                if (main) interact::Block();
+                if (main) ItemPickup::BlockInteract();
             }
         }
     }
@@ -58,7 +59,7 @@ public:
     void LateUpdate(float) override {
         ProceduralObjectHolding* hold = gameObject ? gameObject->GetComponent<ProceduralObjectHolding>() : nullptr;
         m_wasHolding = hold && hold->IsHolding();
-        interact::ClearBlock();
+        ItemPickup::ClearInteractBlock();
         Refresh(hold);   // after this frame's pick up, drop or throw
     }
 
@@ -91,7 +92,7 @@ private:
         if (!tr) return;
         std::string msg;
         if (hold && hold->IsHolding() && (dropKey || altDropKey)) {
-            std::string keys = dropKey ? Input::KeyName(dropKey) : std::string();
+            std::string keys = dropKey ? UseKeyName(dropKey) : std::string();
             if (altDropKey && altDropKey != dropKey) {
                 const std::string alt = Input::KeyName(altDropKey);
                 if (keys.empty()) keys = alt;
@@ -99,8 +100,8 @@ private:
             }
             msg = localized ? Localize("hold.drop", keys) : keys + " to drop";
         } else if (ItemPickup* pk = Nearest(gameObject)) {
-            msg = localized ? Localize("hold.pickup", interact::KeyLabel(pk->interactKey))
-                            : interact::KeyLabel(pk->interactKey) + " to pick up";
+            msg = localized ? Localize("hold.pickup", UseKeyName(pk->interactKey))
+                            : UseKeyName(pk->interactKey) + " to pick up";
         } else {
             msg = ExtraPrompt();
             if (msg.empty()) {   // nothing of its own to say: show the prompt of whatever can be used (a lever, a seat, a chest)

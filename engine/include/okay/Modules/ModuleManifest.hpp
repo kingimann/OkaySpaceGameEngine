@@ -6,7 +6,7 @@ namespace okay {
 
 /// What one engine module says about itself. The text form is a `module.okaymodule` file
 /// (`key=value` lines, `#` comments, lists separated by commas, `sources` by spaces), see
-/// docs/modular_engine.md. Written from that format description only.
+/// docs/engine/modular_engine.md. Written from that format description only.
 struct ModuleManifest {
     std::string name;          ///< lowercase id: letters, digits, underscore ("health_damage")
     std::string title;         ///< human name shown in the editor
@@ -16,7 +16,7 @@ struct ModuleManifest {
     bool defaultOn = true;     ///< ticked in a new project of the "full" preset
     bool core = false;         ///< never switched off
     std::vector<std::string> requires_;   ///< modules that must be on too
-    std::vector<std::string> provides;    ///< shared contracts this module implements ("IHealth")
+    std::vector<std::string> provides;    ///< shared contracts this module implements ("Damage")
     std::vector<std::string> components;  ///< component types it adds
     std::vector<std::string> serializers; ///< scene record names it reads and writes
     std::vector<std::string> vsNodes;     ///< visual-script nodes it adds (names)

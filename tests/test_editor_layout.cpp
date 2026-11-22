@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include "EditorLayoutMath.hpp"
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,47 @@ int main() {
         CHECK_NEAR(bl.rect.x0, 8, 1e-4); CHECK_NEAR(bl.rect.y1, 592, 1e-4);
         auto br = PlaceOverlay(canvas, sz, Corner::BottomRight, 8, {});
         CHECK_NEAR(br.rect.x1, 792, 1e-4); CHECK_NEAR(br.rect.y1, 592, 1e-4);
+    }
+    {   // The stats line keeps off the scene's own UI text: an example's instruction text at the top left sent it
+        // to the bottom left (it used to be drawn straight over the instructions).
+        const Pt line{260, 22};
+        const Rc top = PlaceStatsLine(canvas, line, 4, 3, 6, {});
+        CHECK_NEAR(top.x0, 4, 1e-4); CHECK_NEAR(top.y0, 3, 1e-4);                        // nothing there: top left
+        const Rc instructions = MakeRc(18, 16, 420, 110);
+        const Rc moved = PlaceStatsLine(canvas, line, 4, 3, 6, {instructions});
+        CHECK_NEAR(moved.x0, 4, 1e-4); CHECK_NEAR(moved.y1, 594, 1e-4);                  // bottom left
+        CHECK(!Overlaps(moved, instructions));
+        const Rc fullScreen = MakeRc(0, 0, 800, 600);                                    // a panel over everything: no better spot
+        const Rc stay = PlaceStatsLine(canvas, line, 4, 3, 6, {fullScreen});
+        CHECK_NEAR(stay.y0, 3, 1e-4);
+        const Rc footer = MakeRc(0, 560, 800, 40);                                       // text at both corners: the one covered less
+        const Rc less = PlaceStatsLine(canvas, line, 4, 3, 6, {instructions, footer});
+        CHECK_NEAR(less.y0, 3, 1e-4);                                                    // the footer covers all of the bottom spot
+        const Rc tiny = PlaceStatsLine(MakeRc(0, 0, 400, 40), line, 4, 3, 6, {instructions});   // too short for a second spot
+        CHECK_NEAR(tiny.y0, 3, 1e-4);
+        const Rc unrelated = MakeRc(500, 300, 100, 50);                                  // UI elsewhere does not move it
+        CHECK_NEAR(PlaceStatsLine(canvas, line, 4, 3, 6, {unrelated}).y0, 3, 1e-4);
+    }
+    {   // The Game view's readout block over examples/own_wav, as in the editor screenshots: a 560 x 454 view at 432,222,
+        // the scene's instruction panel (dark background, text inside) across the top from 450,238 to the right edge,
+        // 150 high. In edit mode ("560 x 454 px" + "Edit mode - press Play to run") and in play mode (the readout +
+        // the PLAYING pill and the FPS label) the block goes to the bottom left, clear of the panel and of the cursor hint.
+        const Rc view = MakeRc(432, 222, 560, 454);
+        const Rc panel = MakeRc(450, 238, 542, 150);
+        const float lh = 17.0f;
+        for (const Pt block : {Pt{206, 2 * lh + 8}, Pt{210, 2 * lh + 15}}) {   // edit mode, play mode
+            const float dy = GameViewLabelShift(view, block, 0, 0, lh, {panel});
+            const Rc at = MakeRc(view.x0 + 3, view.y0 + 2 + dy, block.x, block.y);
+            CHECK(dy > 0.0f);
+            CHECK(!Overlaps(at, panel));
+            CHECK(at.y1 <= view.y1 - (6 + lh + 16) + 1e-3f);                   // above the centred cursor hint
+            CHECK(at.y0 >= view.y0);
+            CHECK_NEAR(GameViewLabelShift(view, block, 0, 0, lh, {}), 0, 1e-4);   // nothing there: it stays at the top
+        }
+        // On an emulated phone (notch and rounded corners) both spots move in by the insets.
+        const float dyDev = GameViewLabelShift(view, Pt{206, 2 * lh + 8}, 20, 30, lh, {panel});
+        CHECK(dyDev > 0.0f);
+        CHECK(view.y0 + 2 + 30 + dyDev + 2 * lh + 8 <= view.y1 - (6 + lh + 16 + 30) + 1e-3f);
     }
     {   // The stats line at the top left: the camera readout steps below it (the reported collision).
         const Rc statsLine = MakeRc(8, 6, 300, 18);
@@ -96,6 +138,102 @@ int main() {
         LabelReq q; q.anchor = {300, 200}; q.size = {60, 14}; q.keepOut = 20; q.priority = 3;
         auto a = PlaceLabels({q, q}, canvas, {}); auto b = PlaceLabels({q, q}, canvas, {});
         CHECK(a[1].rect.x0 == b[1].rect.x0 && a[1].rect.y0 == b[1].rect.y0);
+    }
+    {   // SegmentHitsRect: a line through the box, one that misses, one that only reaches it with the pad, a single
+        // point, and a line lying wholly inside.
+        const Rc b = MakeRc(100, 100, 50, 20);
+        CHECK(SegmentHitsRect({50, 110}, {200, 110}, b));            // straight through
+        CHECK(SegmentHitsRect({90, 90}, {160, 130}, b));             // diagonal through
+        CHECK(!SegmentHitsRect({50, 90}, {200, 90}, b));             // passes above
+        CHECK(!SegmentHitsRect({90, 140}, {160, 125}, b));           // passes below, sloping
+        CHECK(!SegmentHitsRect({50, 50}, {95, 95}, b));              // stops short of the corner
+        CHECK(SegmentHitsRect({50, 95}, {200, 95}, b, 6));           // 5 px above: inside a 6 px pad
+        CHECK(!SegmentHitsRect({50, 93}, {200, 93}, b, 6));          // 7 px above: outside it
+        CHECK(SegmentHitsRect({120, 110}, {120, 110}, b));           // a point inside
+        CHECK(!SegmentHitsRect({170, 110}, {170, 110}, b, 4));       // a point 20 px to the right
+        CHECK(SegmentHitsRect({110, 105}, {140, 115}, b));           // wholly inside
+        CHECK(SegmentHitsRect({200, 110}, {50, 110}, b));            // direction does not matter
+    }
+    {   // The bug: the selected cube A's name was drawn about 155 px to its right, on the next cube B, because it was
+        // placed outside the whole gizmo circle. The numbers are from that screenshot (1200 x 850 view): A's outline,
+        // its move gizmo's arms (up, right, down-left), and B beside it.
+        const Rc view = MakeRc(0, 0, 1200, 850);
+        LabelReq q; q.anchor = {810, 510}; q.size = {16, 18}; q.keepOut = 126; q.priority = 100;
+        q.hasBody = true; q.body = Rc{775, 478, 848, 548};
+        q.avoid = {Seg{{810, 510}, {810, 510}}, Seg{{810, 510}, {805, 380}}, Seg{{810, 510}, {918, 535}}, Seg{{810, 510}, {716, 548}}};
+        q.avoidPad = 11;
+        const Rc cubeB = Rc{900, 500, 985, 580};
+        auto r = PlaceLabels({q}, view, {});
+        CHECK(r[0].visible && r[0].alpha == 1.0f && !r[0].leader);
+        const Rc& L = r[0].rect;
+        CHECK(L.y1 <= q.body.y0 + 1e-3);                              // just above A ...
+        CHECK(q.body.y0 - L.y1 <= 4.0f);                              // ... touching distance, not floating away
+        CHECK(L.x1 > q.body.x0 && L.x0 < q.body.x1);                  // over A, not beside it
+        CHECK(!Overlaps(L, cubeB));                                   // and not on B
+        for (const Seg& sg : q.avoid) CHECK(!SegmentHitsRect(sg.a, sg.b, L, q.avoidPad));   // off every handle
+        // Without the outline (the old way) the same name lands a gizmo's length to the right: on B.
+        LabelReq old = q; old.hasBody = false;
+        CHECK(Overlaps(PlaceLabels({old}, view, {})[0].rect, cubeB));
+    }
+    {   // No gizmo (it is turned off, or mesh edit is on): the name goes straight above the middle of the object.
+        LabelReq q; q.anchor = {400, 300}; q.size = {40, 14}; q.keepOut = 6; q.priority = 100;
+        q.hasBody = true; q.body = Rc{360, 260, 440, 340};
+        auto r = PlaceLabels({q}, canvas, {});
+        const Rc& L = r[0].rect;
+        CHECK_NEAR((L.x0 + L.x1) * 0.5f, 400, 1e-3);
+        CHECK_NEAR(L.y1, 258, 1e-3);                                  // 2 px pad above the top edge
+    }
+    {   // An object at the top of the view: the name has no room above, so it sits on the object's top edge, inside
+        // the view, not pushed off to the side.
+        LabelReq q; q.anchor = {400, 40}; q.size = {40, 14}; q.keepOut = 6; q.priority = 100;
+        q.hasBody = true; q.body = Rc{360, 2, 440, 80};
+        auto r = PlaceLabels({q}, canvas, {});
+        const Rc& L = r[0].rect;
+        CHECK(Inside(canvas, L));
+        CHECK(L.x1 > q.body.x0 && L.x0 < q.body.x1 && L.y0 < q.body.y1);
+    }
+    {   // Rotate gizmo: rings round the object. The name keeps off the ring lines and stays near the object.
+        LabelReq q; q.anchor = {400, 300}; q.size = {40, 14}; q.keepOut = 96; q.priority = 100;
+        q.hasBody = true; q.body = Rc{370, 270, 430, 330}; q.avoidPad = 8;
+        for (float rad : {60.0f, 72.0f}) {
+            Pt prev{400 + rad, 300};
+            for (int k = 1; k <= 32; ++k) {
+                const float a = k / 32.0f * 6.2831853f;
+                const Pt cur{400 + rad * std::cos(a), 300 + rad * std::sin(a)};
+                q.avoid.push_back(Seg{prev, cur}); prev = cur;
+            }
+        }
+        auto r = PlaceLabels({q}, canvas, {});
+        CHECK(r[0].visible && r[0].alpha == 1.0f);
+        for (const Seg& sg : q.avoid) CHECK(!SegmentHitsRect(sg.a, sg.b, r[0].rect, q.avoidPad));
+        CHECK(RectGap(r[0].rect, q.body) <= 4.0f);                    // inside the rings, by the object
+    }
+    {   // Rotate gizmo round a SMALL object (rings much wider than the object, no room for the name inside them): the
+        // name goes up above the rings, still over its object, not off to the side onto whatever is next to it.
+        LabelReq q; q.anchor = {400, 300}; q.size = {70, 14}; q.keepOut = 40; q.priority = 100;
+        q.hasBody = true; q.body = Rc{392, 292, 408, 308}; q.avoidPad = 8;
+        for (float rad : {34.0f, 41.0f}) {
+            Pt prev{400 + rad, 300};
+            for (int k = 1; k <= 32; ++k) {
+                const float a = k / 32.0f * 6.2831853f;
+                const Pt cur{400 + rad * std::cos(a), 300 + rad * std::sin(a)};
+                q.avoid.push_back(Seg{prev, cur}); prev = cur;
+            }
+        }
+        auto r = PlaceLabels({q}, canvas, {});
+        const Rc& L = r[0].rect;
+        CHECK(r[0].visible && r[0].alpha == 1.0f);
+        for (const Seg& sg : q.avoid) CHECK(!SegmentHitsRect(sg.a, sg.b, L, q.avoidPad));
+        CHECK(L.y1 <= 300 - 41);                                      // above the outer ring
+        CHECK(L.x1 > q.body.x0 && L.x0 < q.body.x1);                  // straight above the object
+    }
+    {   // A name label still keeps off the stats line and the other names when it has an outline.
+        LabelReq q; q.anchor = {100, 60}; q.size = {40, 14}; q.keepOut = 6; q.priority = 100;
+        q.hasBody = true; q.body = Rc{80, 40, 120, 80};
+        const Rc hud = MakeRc(0, 0, 300, 40);                         // covers every spot above the object
+        auto r = PlaceLabels({q}, canvas, {hud});
+        CHECK(r[0].visible && !Overlaps(r[0].rect, hud));
+        CHECK(RectGap(r[0].rect, q.body) <= 4.0f);
     }
     {   // Crowd fade: 1 when roomy, 0.35 floor when packed, falling in between.
         CHECK(CrowdFade(1, 100) == 1.0f);
@@ -190,6 +328,18 @@ int main() {
         CHECK(c.camHudCorner == kCornerCount - 1 && c.camHudOpacityPct == 20 && c.density == 1);
         c = ViewPrefs::Parse("camhudcorner -3\ncamhudopacity 900\ndensity -1\n");
         CHECK(c.camHudCorner == 0 && c.camHudOpacityPct == 100 && c.density == 0);
+        // Modeling window: there is no Advanced switch any more. An old saved "modelingadvanced" line is read and ignored:
+        // it does not break the lines around it and it is never written back.
+        CHECK(ViewPrefs::Parse("modelingadvanced 1\nmodelingmirror 0\ndensity 0\n").modelingMirror == false);
+        CHECK(ViewPrefs::Parse("modelingmirror 0\nmodelingadvanced 7\ndensity 0\n").modelingMirror == false);
+        CHECK(ViewPrefs::Parse("modelingadvanced 1\n").Write().find("modelingadvanced") == std::string::npos);
+        CHECK(d.Write().find("modelingadvanced") == std::string::npos);
+        // Simple Modeling view: mirroring is on by default, the last four tools are remembered, junk is ignored.
+        CHECK(d.modelingMirror && d.modelingRecent[0] == 0);
+        { ViewPrefs m; m.modelingMirror = false; m.modelingRecent[0] = 123; m.modelingRecent[3] = 456;
+          ViewPrefs r = ViewPrefs::Parse(m.Write());
+          CHECK(!r.modelingMirror && r.modelingRecent[0] == 123 && r.modelingRecent[1] == 0 && r.modelingRecent[3] == 456);
+          CHECK(ViewPrefs::Parse("modelingrecent9 5\nmodelingrecent2 -7\n").modelingRecent[2] == 0); }
         // The built-in layout that was on screen comes back; -1 (a custom arrangement) is kept; junk is clamped.
         CHECK(d.layoutPreset == 0);
         CHECK(ViewPrefs::Parse("layoutpreset 3\n").layoutPreset == 3 && ViewPrefs::Parse("layoutpreset -1\n").layoutPreset == -1);

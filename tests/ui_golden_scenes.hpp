@@ -52,6 +52,7 @@ inline GameObject* PixelCanvas(Scene& s, const char* name = "canvas") {
 /// `pixelFont` selects the classic 8x8 font instead of the default UI font.
 inline void Build(int i, Scene& s, const std::string& tex) {
     s.physicsEnabled = false;
+    s.uiQuality = 3;   // Old look: these pictures pin the drawing from before the UI quality work (test_ui_quality covers the new one)
     switch (i) {
     case 0: {   // panels: shapes, gradients, shadows, outline, border, highlight, corner mask
         GameObject* cv = PixelCanvas(s);

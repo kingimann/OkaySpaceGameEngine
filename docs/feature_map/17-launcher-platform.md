@@ -12,7 +12,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **What:** The launcher program players double-click (`OkaySpace.exe`): window and sidebar, the pages, settings, notifications, the loading screen, and the self-updater that keeps the launcher, editor and player current.
 - **Parts:**
   - 17.1.1 Window, sidebar and pages - `launcher/main.cpp` - SDL2 plus Dear ImGui; tabs Create, Play, Community, Account, Settings, Achievements, Friends, Market, Servers, Forums, Downloads, plus Multiplayer, What's New, Tips and Admin; `main()` starts near L16377, the tab pages from L17892; number keys switch pages
-  - 17.1.2 Self-updater - `launcher/main.cpp` (L136-326) - compares its baked version with the published `VERSION.txt` and downloads the launcher, editor and player; every file must have a SHA-256 in `versions.json` (`launcher/UpdaterCore.hpp`: no checksum, mismatch, failed download or failed swap = refused with a reason, nothing replaced); a replaced launcher is self-checked before it starts and rolled back if it cannot start or is another version (`shared/SelfUpdate.hpp`, state file `okay_selfupdate.state`; see `docs/updater.md`); `ShellSafeUrl` refuses URLs that could break out of the shell command; `versions.json` itself is unsigned (see 17.11)
+  - 17.1.2 Self-updater - `launcher/main.cpp` (L136-326) - compares its baked version with the published `VERSION.txt` and downloads the launcher, editor and player; every file must have a SHA-256 in `versions.json` (`launcher/UpdaterCore.hpp`: no checksum, mismatch, failed download or failed swap = refused with a reason, nothing replaced); a replaced launcher is self-checked before it starts and rolled back if it cannot start or is another version (`shared/SelfUpdate.hpp`, state file `okay_selfupdate.state`; see `docs/release/updater.md`); `ShellSafeUrl` refuses URLs that could break out of the shell command; `versions.json` itself is unsigned (see 17.11)
   - 17.1.3 Supabase mirror and periodic check - `launcher/main.cpp` (L810-1031) - uses whichever of the Supabase `releases` bucket and GitHub Releases has the newer version; `OKAY_UPDATE_SERVER` overrides; "newer version" badge
   - 17.1.4 What's New and Tips - `launcher/main.cpp` (L4050, tabs 12 and 13) - release history cards and a searchable tips list with a tip of the day
   - 17.1.5 Settings page - `launcher/main.cpp` (tab 4, L20333) - Appearance, Chat & Notifications, Loading screen, Behavior, Game libraries, Account, About, Privacy & Safety, Voice & Audio, Crash reports; saved in `launcher.cfg` next to the exe
@@ -20,11 +20,11 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
   - 17.1.7 Shared look and startup frame - `shared/OkayTheme.hpp`, `shared/Splash.hpp`, `shared/AppIcon.hpp`, `shared/RobotoFont.h`, `shared/JetBrainsMonoFont.h` - the Slate theme shared with the editor, a branded splash drawn before ImGui starts, a procedural window icon, embedded fonts
   - 17.1.8 Windows resources and build - `launcher/CMakeLists.txt`, `launcher/okayspace.rc`, `launcher/okayspace.ico` - target `okayspace-launcher` builds `OkaySpace.exe`; it does not link the engine library (only engine headers plus `ServerQuery.cpp` and `UdpSocket.cpp`)
   - 17.1.9 Script UI bridge and test panel - `shared/OkayScriptUIBridge.hpp`, `shared/OkayTestPanel.hpp` - not launcher code: OkayUI widgets for script `ui_*` calls and the F1 "Test UI" panel, used by the editor and the player
-  - 17.1.10 Start-up update screen - `shared/StartupUpdate.hpp`, `shared/LauncherDemo.hpp`, `StartupUpdateBegin` / `StartupUpdateFrame` in `launcher/main.cpp` - checks for updates when the launcher opens and shows a centred "Checking for updates / Downloading / Installing / Restarting" panel (Skip only while checking, 8 s check timeout, never while the editor runs, no editor or game start during an install, `OKAY_UPDATE_ON_LAUNCH=0` and the demo modes skip it); install and verification are the existing updater's; unit-tested rules, the screen itself unverified in the real app (`docs/updater.md`)
+  - 17.1.10 Start-up update screen - `shared/StartupUpdate.hpp`, `shared/LauncherDemo.hpp`, `StartupUpdateBegin` / `StartupUpdateFrame` in `launcher/main.cpp` - checks for updates when the launcher opens and shows a centred "Checking for updates / Downloading / Installing / Restarting" panel (Skip only while checking, 8 s check timeout, never while the editor runs, no editor or game start during an install, `OKAY_UPDATE_ON_LAUNCH=0` and the demo modes skip it); install and verification are the existing updater's; unit-tested rules, the screen itself unverified in the real app (`docs/release/updater.md`)
 - **Code:** `launcher/main.cpp`, `launcher/UpdaterCore.hpp`, `launcher/CMakeLists.txt`, `launcher/okayspace.rc`, `launcher/okayspace.ico`, `shared/OkayTheme.hpp`, `shared/Splash.hpp`, `shared/AppIcon.hpp`, `shared/RobotoFont.h`, `shared/JetBrainsMonoFont.h`, `shared/OkayScriptUIBridge.hpp`, `shared/OkayTestPanel.hpp`
 - **API:** `OkaySpace.exe`, `launcher.cfg`, env `OKAY_UPDATE_SERVER`, `OKAY_ACCOUNT_SERVER`, dev hooks `OKAY_UI_DEMO_TAB`, `OKAY_CHAT_DEMO`
 - **Editor:** none (the launcher starts `OkayEngine.exe` and `OkaySpacePlayer.exe` from `Tools/`)
-- **Docs:** `docs/packaging.md`, `docs/releasing.md`, `docs/launcher-multiplayer.md`
+- **Docs:** `docs/release/packaging.md`, `docs/release/releasing.md`, `docs/online/multiplayer.md`
 - **Tests:** none for the shell itself; `startup_update` (the start-up screen rules); the updater rules and helpers have tests (`self_update`, `app_restart` verified-restart cases, `launcher_versions` updater suite, `versions_index`, `crash_reports`, `project_delete`, `official_game`, `chat_json`, `friends_json`)
 - **Status:** Works - the shipping app, structure read from `main.cpp`; no automated UI test
 - **Open:** split `launcher/main.cpp` (1.5 MB, see 19.4 and ROADMAP "Later"); the update index (`versions.json`) is not signed (17.11); the updater itself requires and verifies checksums
@@ -36,20 +36,20 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 ### 17.2 Accounts and sign-in
 - **What:** One account service shared by the launcher, editor, player and game scripts: sign up and in, session tokens that refresh, cloud saves and leaderboards. It works offline with a local on-disk account, with a custom server, or with Supabase.
 - **Parts:**
-  - 17.2.1 Account service - `Platform/Account/AccountService` - providers Local (salted PBKDF2-HMAC-SHA256 file, on `Crypto/Sha256.hpp`), Remote (your server, see 42.4) and Supabase (email sign-up, password reset (emails a link to the hosted page `supabase/auth-pages/reset-password`, see `docs/password-reset.md`), change email or username, token refresh); `Api()` adds the key and bearer token
+  - 17.2.1 Account service - `Platform/Account/AccountService` - providers Local (salted PBKDF2-HMAC-SHA256 file, on `Crypto/Sha256.hpp`), Remote (your server, see 42.4) and Supabase (email sign-up, password reset (emails a link to the hosted page `supabase/auth-pages/reset-password`, see `docs/online/password-reset.md`), change email or username, token refresh); `Api()` adds the key and bearer token
   - 17.2.2 Account facade - `Platform/Account/Account` - process-wide `okay::Account` used by editor, player and the `account_*` script builtins; `OKAY_ACCOUNT_SERVER`
   - 17.2.3 Cloud saves and leaderboards - `Platform/Account/AccountService` - `CloudSave`, `CloudLoad`, `CloudList`, `LeaderboardSubmit`, `LeaderboardTop` on two Supabase tables
-  - 17.2.4 Native HTTPS - `Platform/NativeHttp` - pooled WinHTTP connections on Windows (no curl process per request); elsewhere, or if WinHTTP can't reach, the code falls back to curl with secrets passed in files (Linux can opt in to our own HTTP client with the system OpenSSL, `docs/own_http_client.md`)
+  - 17.2.4 Native HTTPS - `Platform/NativeHttp` - pooled WinHTTP connections on Windows (no curl process per request); elsewhere, or if WinHTTP can't reach, the code falls back to curl with secrets passed in files (Linux can opt in to our own HTTP client with the system OpenSSL, `docs/platform/own_http.md`)
   - 17.2.5 Account page - `launcher/main.cpp` (tab 3, L19634) - sign in or create, profile, sign-in and security, privacy, more
   - 17.2.7 Download my data - `Platform/Account/AccountData` and launcher Account > Sign-in & security > Your data - reads only rows the signed-in user may read (RLS) and saves one JSON in `exports/` next to the launcher, with honest progress, "not set up" sections and a failed-sections list
-  - 17.2.8 Delete my account - `supabase/functions/delete-account` and the same card - type the username and the password, then the Edge Function (user id from the JWT only) deletes or anonymises the user's rows in every table in `docs/sql/`, removes uploaded files and the auth user; the launcher shows server step errors, "function not deployed", and signs out on success; see `docs/account_data.md`
+  - 17.2.8 Delete my account - `supabase/functions/delete-account` and the same card - type the username and the password, then the Edge Function (user id from the JWT only) deletes or anonymises the user's rows in every table in `docs/sql/`, removes uploaded files and the auth user; the launcher shows server step errors, "function not deployed", and signs out on success; see `docs/online/account_data.md`
   - 17.2.6 Baked default server - `CMakeLists.txt` - `OKAY_DEFAULT_ACCOUNT_URL` and `OKAY_DEFAULT_ACCOUNT_KEY` compiled into every binary; read from `config/public-account.json` (-D and environment override), empty builds work without online features
 - **Code:** `Platform/Account/Account`, `Platform/Account/AccountService`, `Platform/NativeHttp`
 - **API:** `okay::Account::Get`, `Login`, `Logout`, `Token`, `IsLoggedIn`, `AccountService::Register`, `Login`, `Api`, `CloudSave`, `LeaderboardTop`, scripts `account_login`, `account_register`, `account_logout`, `account_is_logged_in`, `account_token`, `account_get`, `account_post`
 - **Editor:** none (the sign-in page is the launcher's Account tab; the player and game scripts use the same service)
-- **Docs:** `docs/accounts.md`, `docs/supabase-backend.md`, `docs/account_data.md`
+- **Docs:** `docs/online/accounts.md`, `docs/online/supabase-backend.md`, `docs/online/account_data.md`
 - **Tests:** `account`, `account_script`, `account_data`, `delete_account_function`
-- **Status:** Works - local backend, session persistence and the script facade are tested; the remote and Supabase paths need a live server and are not exercised in CI. Export and delete: client logic and the function logic are unit-tested with fakes; the function is not deployed or run against a live project (owner steps in `docs/account_data.md`)
+- **Status:** Works - local backend, session persistence and the script facade are tested; the remote and Supabase paths need a live server and are not exercised in CI. Export and delete: client logic and the function logic are unit-tested with fakes; the function is not deployed or run against a live project (owner steps in `docs/online/account_data.md`)
 - **Open:** the default Supabase project URL and publishable key are hardcoded in `CMakeLists.txt` (old map: remove them; the release workflow deliberately no longer overrides them); possible risk: `AccountService` shells out to curl on non-Windows
 - **Related:** 17.9, 17.11, 42.4, 41.6
 - **Words:** account, sign in, login, register, username, password, session, token, Supabase, cloud save, leaderboard, AccountService, NativeHttp, WinHTTP, curl, JWT, delete account, export my data, download my data, GDPR, privacy
@@ -66,7 +66,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `Platform/Friends`, `Platform/Parties`, `docs/sql/follows.sql`, `docs/sql/parties.sql`
 - **API:** `okay::Friends`, `okay::Parties`, `net_invite_friends`, `/invite`, `/party`
 - **Editor:** none
-- **Docs:** `docs/launcher-multiplayer.md`
+- **Docs:** `docs/online/multiplayer.md`
 - **Tests:** `friends_json`, `launcher_join`
 - **Status:** Works - shipping pages; tests cover the profile JSON and party parsing, not the live tables
 - **Open:** no test for follows or the SQL; `parties.sql` and `follows.sql` must be run once or the features hide
@@ -90,7 +90,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `Platform/Messages`, `Platform/Privacy`, `Platform/BlockList`, `docs/sql/group_chats.sql`, `docs/sql/chat_extras.sql`, `docs/sql/chat_media.sql`, `docs/sql/blocks.sql`
 - **API:** `okay::Messages`, `okay::BlockList`, `okay::privacy`, chat slash commands `/invite`, `/party`, launcher Chat window
 - **Editor:** none
-- **Docs:** `docs/supabase-backend.md`, `docs/launcher-multiplayer.md`
+- **Docs:** `docs/online/supabase-backend.md`, `docs/online/multiplayer.md`
 - **Tests:** `chat_json`, `chat_receipts` (missing-table detection), `chat_receipts_sql` (local Postgres, skipped unless `OKAY_SQL_TEST_PGHOST`), `blocks_privacy` (rule parsing, missing-table detection, settings, pending block changes), `blocks_sql` (local Postgres, 99 checks), `member_moderation`
 - **Status:** Works - shipping; typing and read marks work once the owner has run `chat_receipts.sql` (not applied to any live project by us); the JSON splitter, the missing-table check and the block/privacy logic are tested. Server-side blocks need `docs/sql/blocks.sql` run by the owner (until then blocking is PC-only and Settings says so)
 - **Open:** most of the 24.8k lines of `main.cpp` are chat code and untested (split, see 19.4); `chat_extras.sql` and `group_chats.sql` are optional and degrade silently; the live typing / read-mark round trip against a real Supabase project is untested
@@ -108,7 +108,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `Platform/Forums`, `docs/sql/forum_sections.sql`
 - **API:** `okay::Forums`
 - **Editor:** none
-- **Docs:** `docs/supabase-backend.md`
+- **Docs:** `docs/online/supabase-backend.md`
 - **Tests:** none: only `chat_json` touches the class
 - **Status:** Works - shipping page; untested
 - **Open:** no test; staff tools live in 17.9
@@ -126,7 +126,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `Platform/Workshop`
 - **API:** `okay::Workshop`, `WorkshopItem`
 - **Editor:** none (the editor's Project panel marketplace asset manager is 15.4)
-- **Docs:** `docs/supabase-backend.md`
+- **Docs:** `docs/online/supabase-backend.md`
 - **Tests:** none for this class (`steam` tests the Steam Workshop calls)
 - **Status:** Works - shipping page, untested
 - **Open:** possible bug: two different structs named `okay::WorkshopItem` exist (`Platform/Workshop.hpp` and `Platform/Steam/SteamService.hpp`); including both headers in one file will not compile, and different layouts in two files is an ODR risk
@@ -146,7 +146,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `Platform/Achievements`, `Platform/Profiles`, `docs/sql/profile_showcase.sql`, `docs/sql/profile_extras.sql`
 - **API:** `okay::Achievements`, `okay::Profiles`, `steam_unlock` (Steam side, 17.10)
 - **Editor:** none
-- **Docs:** `docs/accounts.md`
+- **Docs:** `docs/online/accounts.md`
 - **Tests:** `friends_json` (profile rows in `Friends.hpp`); none for `Achievements` or `Profiles`
 - **Status:** Works - shipping; the SQL degrades when not run (showcases hidden, points kept locally)
 - **Open:** achievement cloud sync is "layered on later" per the header; no tests for `Achievements` or `Profiles`
@@ -161,11 +161,11 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
   - 17.8.1 Servers client - `Platform/Servers` - `create_server` and `join_server` are SECURITY DEFINER calls so a non-member can make or join one; channels, members, messages
   - 17.8.2 Servers page - `launcher/main.cpp` (tab 8, L22622; background poll L14858) - server rail, channels, member list
   - 17.8.3 Server voice rooms - `launcher/VoiceChat.hpp` - room key from the server's invite code (16.7)
-  - 17.8.4 Member moderation (servers and group chats) - `shared/MemberModeration.hpp`, `docs/sql/member_moderation.sql` - Remove, Ban (reason, length), Unban, Banned list and Make/Remove admin on the existing members lists; owner > admin > member enforced by the database; needs the SQL applied (see `docs/member_moderation.md`)
+  - 17.8.4 Member moderation (servers and group chats) - `shared/MemberModeration.hpp`, `docs/sql/member_moderation.sql` - Remove, Ban (reason, length), Unban, Banned list and Make/Remove admin on the existing members lists; owner > admin > member enforced by the database; needs the SQL applied (see `docs/online/member_moderation.md`)
 - **Code:** `Platform/Servers`, `shared/MemberModeration.hpp`, `docs/sql/member_moderation.sql`
 - **API:** `okay::Servers`, `Server`, `Channel`, `ChannelMessage`
 - **Editor:** none
-- **Docs:** `docs/supabase-backend.md`, `docs/member_moderation.md`
+- **Docs:** `docs/online/supabase-backend.md`, `docs/online/member_moderation.md`
 - **Tests:** `member_moderation`, `member_moderation_sql` (local Postgres, opt-in); `chat_json` reads the channel JSON shape
 - **Status:** Works - shipping page, untested
 - **Open:** no mute, no invite expiry or revoke; moderation needs `member_moderation.sql` applied by the owner (until then the buttons answer "not set up"); the page itself is untested; the name clashes with game "servers" everywhere else (browser, dedicated)
@@ -186,10 +186,10 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `Platform/Admin`, `docs/sql/admin.sql`, `shared/UserReports.hpp`, `docs/sql/reports.sql`
 - **API:** `okay::Admin`, `AdminUser`, `AdminBan`
 - **Editor:** none
-- **Docs:** `docs/supabase-backend.md`
+- **Docs:** `docs/online/supabase-backend.md`
 - **Tests:** none for `Admin`; the anti-cheat parts of `admin.sql` are exercised by `anticheat_sql`; user reports by `user_reports` (requests, outcomes) and `reports_sql` (RLS on a local Postgres)
 - **Status:** Works - shipping page; untested client
-- **Open:** create test servers without a game (old map). Needs a definition of "test server" from the owner first (see docs/unfinished_launcher.md)
+- **Open:** create test servers without a game (old map). Needs a definition of "test server" from the owner first (see docs/status/unfinished_launcher.md)
 - **Related:** 39.6, 17.14, 17.5, 17.6
 - **Words:** admin, moderator, staff, role, badge, ban, unban, audit log, admin_log, site_bans, dashboard
 - **Seen as:** Admin tab missing (rank 0); ban banner on sign-in; a moderation action is refused
@@ -206,7 +206,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `Platform/Steam/SteamService`, `Platform/Steam/Steam`, `Platform/Steam/NullSteamService`, `Platform/Steam/SteamworksService`, `Platform/PlayFab/PlayFab`, `Components/SteamManager`
 - **API:** `ISteamService`, `Steam::Get`, `SteamManager`, scripts `steam_*`, `PlayFab::Get().Configure`, `playfab_*`
 - **Editor:** View > Panels > Services (Steam: backend live or simulation, achievements, stats, leaderboard, cloud, overlay; PlayFab test); Add Component > Steam Manager
-- **Docs:** `docs/steam_release.md`, `docs/photon.md` (provider seams)
+- **Docs:** `docs/release/steam_release.md`, `docs/online/photon.md` (provider seams)
 - **Tests:** `steam`, `steam_script`
 - **Status:** Works - the simulation backend and the script builtins are tested; the real Steamworks backend can't be built here and is untested
 - **Open:** `release.yml` does not set `STEAMWORKS_SDK_PATH`, so the GitHub release exes use the simulation backend; PlayFab client has no test; Steam upload kit is manual (18.8)
@@ -216,7 +216,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "unlock a Steam achievement when the boss dies", "log in with PlayFab at game start"
 
 ### 17.11 Security plan SEC1
-- **What:** A four-item security plan: relay isolation, script file-path safety, updater signing and a reactions privacy fix. All four are in the repository; the SQL is a file for the owner to run, and the update signature check stays OFF until the owner adds a key. Details and owner steps: `docs/security.md`. The cross-cutting security page is area 39.
+- **What:** A four-item security plan: relay isolation, script file-path safety, updater signing and a reactions privacy fix. All four are in the repository; the SQL is a file for the owner to run, and the update signature check stays OFF until the owner adds a key. Details and owner steps: `docs/online/security.md`. The cross-cutting security page is area 39.
 - **Parts:**
   - 17.11.1 Relay session isolation - `Net/RelayServer` - isolation from #254, plus (SEC1) a per-address and a per-session forwarding cap and a hello table that a forged-source flood can no longer lock (see 39.8)
   - 17.11.2 Script file paths - `Core/PathSafety`, `Core/ScriptPaths`, `Core/SaveData` - one validator (`okay::pathsafety::Check`: relative only, no `..`, drive, stream, device name, trailing dot or space, control character, over-long) plus a symlink-escape check; used by `Save::IsSafeRelative`, `ScriptPathOk` (OkayScript, action lists, visual-script nodes incl. Save/Load Creation and spawn nodes); tests `path_safety`, `script_paths`; example `examples/security_paths`
@@ -225,7 +225,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `Core/PathSafety`, `Core/ScriptPaths`, `Core/SaveData`, `docs/sql/reactions_privacy.sql`, `Net/RelayServer`, `shared/UpdateGuard`
 - **API:** `okay::pathsafety::Check`, `okay::pathsafety::StaysInside`, `ScriptPathOk`, `Save::IsSafeRelative`, `okayupdate::SignatureStatus`, `okayupdate::ReplayProblem`
 - **Editor:** Help > About (update signature line), launcher Settings > About
-- **Docs:** `docs/security.md`, `docs/updater.md`, `docs/relay.md`, `docs/anticheat.md`
+- **Docs:** `docs/online/security.md`, `docs/release/updater.md`, `docs/online/relay.md`, `docs/online/anticheat.md`
 - **Tests:** `path_safety`, `script_paths`, `relay_security`, `update_security`, `update_signature`, `sign_release_script`, `reactions_sql`, `reactions_sql_static`
 - **Status:** Partial - built and tested on Linux; nothing ran on Windows or against the real Supabase; the update signature check is OFF until the owner sets `OKAY_UPDATE_SIGNING_SEED` and `OKAY_UPDATE_TRUSTED_KEYS`, and the reactions SQL is not applied
 - **Open:** owner steps (key pair, two GitHub entries, run the SQL); a signed timestamp against a "freeze"; per-packet authentication on relay data frames; move the app to `reaction_counts` and then limit the raw reactions SELECT
@@ -243,7 +243,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `shared/ProjectDelete.hpp`, `launcher/main.cpp`
 - **API:** launcher Create page; right-click menu: Delete project, Publish to GitHub, Commit & Push
 - **Editor:** the project opens in the editor; the starter templates are 1.6
-- **Docs:** `docs/making_a_game.md`
+- **Docs:** `docs/gameplay/making_a_game.md`
 - **Tests:** `project_delete`
 - **Status:** Works - the safety rules are unit tested (added in 2.829.0, #334); Git calls shell out and are untested
 - **Open:** project templates are static scene templates; project migration across engine versions is planned (area 25)
@@ -263,7 +263,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `launcher/main.cpp`
 - **API:** launcher Play page; `Settings > Game libraries`
 - **Editor:** none
-- **Docs:** `docs/packaging.md`
+- **Docs:** `docs/release/packaging.md`
 - **Tests:** none
 - **Status:** Works - shipping page; untested
 - **Open:** none recorded
@@ -283,7 +283,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `shared/OfficialGame.hpp`, `docs/sql/official_game_admin.sql`, `scripts/publish-official-game.sh`
 - **API:** `okayofficial::Verify`, `CheckPublish`, `scripts/publish-official-game.sh <folder> [version]`
 - **Editor:** File > Build Settings (Windows) builds the folder that gets published
-- **Docs:** `docs/releasing.md` (Publishing the official game)
+- **Docs:** `docs/release/releasing.md` (Publishing the official game)
 - **Tests:** `official_game`, `official_publish`, `publish_official_cleanup`
 - **Status:** Works - parsing, diff, swap journal, publish rules and the script's clean-up are tested (script against a stub curl)
 - **Open:** keep `publish-official-game.sh` rules in step with `CheckPublish` by hand (the script header says so); the release workflow does not publish the official game
@@ -304,7 +304,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `Platform/GameIpc`, `launcher/main.cpp`
 - **API:** `GameIpc::WritePresence`, `RequestInvite`, `PostJoin`, `TakeJoin`, `GamePresence`, flags `--join LINK`, `--connect HOST:PORT`
 - **Editor:** none (in a game: Shift+Tab opens the invite window)
-- **Docs:** `docs/launcher-multiplayer.md`
+- **Docs:** `docs/online/multiplayer.md`
 - **Tests:** `launcher_join`
 - **Status:** Works - `launcher_join` covers links, queries, presence, the IPC files and a game launched to join
 - **Open:** none recorded; invites need the friends and chat tables (17.3, 17.4)
@@ -326,10 +326,10 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `shared/CrashReports.hpp`, `shared/CrashScrub.hpp`, `shared/CrashUpload.hpp`, `launcher/main.cpp`, `scripts/crash_to_issue.py`, `docs/sql/crash_reports.sql`, `.github/workflows/crash-issues.yml`
 - **API:** `okaycrash::Report`, `okaycrash::ParseOne`, `okaycrash::ParseLog`, `okaycrash::Signature`, `okaycrash::Scrub`, `okaycrash::upload::BuildPayload`, `okaycrash::upload::Run`, `okaycrash::upload::IssueUrl`; `OKAY_CRASH_UPLOAD`, `OKAY_CRASH_DIR`
 - **Editor:** the editor writes the reports (15.9, 22.3.2)
-- **Docs:** `docs/crash_reports.md`, `docs/editor.md`, `docs/try_it.md` (section 7f)
+- **Docs:** `docs/online/crash_reports.md`, `docs/editor/editor.md`, `docs/try_it.md` (section 7f)
 - **Tests:** `crash_reports`, `crash_scrub`, `crash_upload`, `crash_context`, `crash_handler`; `tests/scripts/test_crash_reports_sql.sh`, `tests/scripts/test_crash_to_issue.py`, `tests/scripts/test_crash_to_issue_http.py`, `tests/scripts/test_crash_workflow.py`
-- **Status:** Partial - the parser, scrubber, uploader, table SQL, issue script and workflow file are tested (and were security reviewed, docs/crash_reports.md); the launcher page, notice window and worker were only syntax-checked, and the server half does nothing until the owner runs the SQL and sets the repository variable (the secret is the one releases use)
-- **Open:** a real crash on Windows and an upload to the real project have not been run; function names for a stripped release need the release's `OkayEngine.debug` (see docs/crash_reports.md); no upload from the player (no player handler, 48.1)
+- **Status:** Partial - the parser, scrubber, uploader, table SQL, issue script and workflow file are tested (and were security reviewed, docs/online/crash_reports.md); the launcher page, notice window and worker were only syntax-checked, and the server half does nothing until the owner runs the SQL and sets the repository variable (the secret is the one releases use)
+- **Open:** a real crash on Windows and an upload to the real project have not been run; function names for a stripped release need the release's `OkayEngine.debug` (see docs/online/crash_reports.md); no upload from the player (no player handler, 48.1)
 - **Related:** 15.9, 22.3, 48.1, 48.4
 - **Words:** crash report, okay_crash.txt, okay_crashlog.txt, last step, exception, SIGSEGV, send crash reports, OKAY_CRASH_UPLOAD, crash signature, scrub, preview what would be sent, Report on GitHub, crash_reports table
 - **Seen as:** the editor closed by itself; Crash reports page empty; "waiting to be sent" never changes; "The server has no crash_reports table yet"
@@ -341,15 +341,15 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
   - 17.17.1 Interface - `Platform/Platform` - `Backend`, `Window`, `Event` (incl. touch), `Key` (USB HID numbering = SDL scancodes), `AudioDevice`, `Gamepad`, free timer functions; `Get(kind)`, `Default()`; run-time override `OKAY_PLATFORM_BACKEND=sdl2|own`; also `RelativeMouseState`, `ModState`, `KeyForChar`, `BasePath`, `PrefPath`, `PreferredLocales`, `ShowErrorBox`, `Window::SetIcon` / `IsFullscreen` / `RefreshRateHz`
   - 17.17.2 SDL2 backend - `engine/src/Platform/SdlBackend.cpp` - thin wrapper, the default
   - 17.17.3 Own Linux backend - `engine/src/Platform/OwnLinuxX11.cpp`, `OwnLinuxAudio.cpp`, `OwnLinuxEvdev.cpp`, `OwnLinux.cpp` - X11 + GLX window, keys, text, mouse, clipboard; ALSA playback and capture; evdev controllers; all `dlopen`
-  - 17.17.4 Own Windows backend - `engine/src/Platform/OwnWin32.cpp` - Win32, WGL, XInput; compiles under MinGW, never run
+  - 17.17.4 Own Windows backend - `engine/src/Platform/OwnWin32.cpp` - Win32, WGL, XInput (hot-plug events and timed rumble: `Win32XInput.hpp`), Raw Input HID pads; compiles under MinGW, never run
   - 17.17.5 Build switch - `cmake/OkayPlatform.cmake` - `-DOKAY_PLATFORM_BACKEND=sdl2|own` picks `Default()`; both are built
   - 17.17.6 2D painter - `Platform/Painter`, `engine/src/Platform/Painter.cpp`, `SdlPainter.cpp`, `okayui/soft/OkayUI_SoftPainter.cpp` - one interface for a window's 2D drawing (rects, lines, clip, textures, triangles, present, vsync); sdl2 implementation over `SDL_Renderer` (default), software implementation (CPU, okayui rasteriser, `Window::PresentPixels` = X11 `XPutImage` / Win32 `StretchDIBits`; off, not ready)
 - **Code:** `Platform/Platform`, `Platform/Painter`, `engine/src/Platform/Painter.cpp`, `engine/src/Platform/SdlPainter.cpp`, `okayui/soft/OkayUI_SoftPainter.cpp`, `engine/src/Platform/Platform.cpp`, `engine/src/Platform/SdlBackend.cpp`, `engine/src/Platform/OwnLinux.cpp`, `engine/src/Platform/OwnLinuxX11.cpp`, `engine/src/Platform/OwnLinuxAudio.cpp`, `engine/src/Platform/OwnLinuxEvdev.cpp`, `engine/src/Platform/OwnWin32.cpp`
 - **API:** `okay::platform::Backend`, `Window`, `Window::PresentPixels`, `Painter`, `CreateSdl2Painter`, `OkayUI::soft::CreateWindowPainter`, `AudioDevice`, `Gamepad`, `Get`, `Default`, `TicksMs32`
 - **Editor:** none
-- **Docs:** `docs/platform_layer.md` (the SDL audit, what is and is not behind the seam, what was tested)
+- **Docs:** `docs/platform/platform_layer.md` (the SDL audit, what is and is not behind the seam, what was tested)
 - **Tests:** `platform`, `platform_window_sdl2`, `platform_window_own` (these two need Xvfb and xdotool and skip without them), `platform_default_env_sdl2`, `platform_default_env_own`, `okayui_painter`, `platform_painter_window` (needs Xvfb)
-- **Status:** Works on Linux for the pieces behind the seam (tested under Xvfb on both backends); Windows backend compiles only; the player's window is moved (checked against the unchanged player under Xvfb), the editor's and launcher's are not. The player runs on the own backend with the software painter (Xvfb, screenshots compared with the sdl2 run; differences listed in `docs/platform_layer.md`); that path is off by default and not ready
+- **Status:** Works on Linux for the pieces behind the seam (tested under Xvfb on both backends); Windows backend compiles only; the player's window is moved (checked against the unchanged player under Xvfb), the editor's and launcher's are not. The player runs on the own backend with the software painter (Xvfb, screenshots compared with the sdl2 run; differences listed in `docs/platform/platform_layer.md`); that path is off by default and not ready
 - **Open:** editor and launcher windows, events and GL still use SDL, and they draw through `SDL_Renderer` / ImGui's SDL backends, which need an `SDL_Window`; the software painter has no GPU, no XShm, no HiDPI, and the Win32 present was only syntax-checked; no Wayland, XDND file drop, touch or DPI queries in the own Linux backend; no Windows audio; no macOS
 - **Related:** 7.1, 8.2, 17.1
 - **Words:** SDL2, platform layer, backend, own backend, X11, GLX, ALSA, evdev, Win32, WGL, XInput, window, event loop, OKAY_PLATFORM_BACKEND, Xvfb

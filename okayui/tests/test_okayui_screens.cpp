@@ -100,10 +100,10 @@ int main() {
     {   // What's New: the idle page; each state offers the right button and it does what the ImGui page does
         NewsRig r;
         r.Frames(3);
-        CHECK(r.res.updateButton.w > 0 && r.res.updateButtonEnabled && r.res.releasesButton.w > 0);
+        CHECK(r.res.updateButton.w > 0 && r.res.updateButtonEnabled);
         CHECK(r.res.firstEarlierHeader.w > 0);
         const S::WhatsNewResult c = r.Click(r.res.updateButton);
-        CHECK(c.checkForUpdates && !c.installNow && !c.restartNow && !c.openReleasesPage);   // one action, one frame
+        CHECK(c.checkForUpdates && !c.installNow && !c.restartNow);   // one action, one frame
         r.Frames(2);
         CHECK(!r.res.checkForUpdates);                                                       // not repeated while nothing is pressed
     }
@@ -141,12 +141,6 @@ int main() {
             CHECK(r.Click(r.res.updateButton).checkForUpdates);
         }
     }
-    {   // the link to all releases
-        NewsRig r(900);   // tall enough that the page does not scroll
-        r.Frames(3);
-        CHECK(r.Click(r.res.releasesButton).openReleasesPage);
-        CHECK(std::strstr(S::WhatsNewReleasesUrl(), "github.com/kingimann/OkaySpaceGameEngine/releases") != nullptr);
-    }
     {   // earlier releases: the first starts open, a click folds it (fewer shapes), a click again opens it
         NewsRig r(900);
         r.Frames(3);
@@ -166,7 +160,6 @@ int main() {
         const int before = UI::GetDrawData().vertexCount;
         r.sim.wheel = -5.0f; r.Frame(); r.Frame();
         CHECK(UI::GetDrawData().vertexCount > 0 && before > 0);
-        CHECK(r.res.releasesButton.y > 0);   // the button exists after scrolling (its position is where the layout put it)
     }
     {   // the page is a real window of the app: a hosted rectangle smaller than the page still clips to itself
         Reset(); UI::UseLauncherLook(true); UI::Style().caretBlink = false;
@@ -246,6 +239,25 @@ int main() {
             CHECK(c.res.firstRow.w > 0 && c.res.logArea.w > 0);
             CHECK(c.res.detailsCopyButton.w == 0);                    // "Select a log entry to see details."
         }
+        {   // a narrow Console (the editor's bottom dock at 1280 x 800) wraps the toggles and buttons onto the next line
+            // instead of cutting "Auto-scroll" off at the right edge; nothing runs past the panel
+            CRig c; c.Fill();
+            const float x0 = 16, w = 560;
+            for (int i = 0; i < 3; ++i) c.sim.Frame([&] { c.res = S::DrawConsole(c.model, c.st, c.host.h, x0, 12, w, 520 - 24); });
+            for (const UI::Rect* r : {&c.res.warnToggle, &c.res.errorToggle, &c.res.collapseToggle, &c.res.autoScrollToggle,
+                                      &c.res.clearOnPlayToggle, &c.res.pauseOnErrorToggle, &c.res.copyAllButton, &c.res.saveButton,
+                                      &c.res.searchField, &c.res.categoryCombo}) {
+                CHECK(r->w > 0);
+                CHECK(r->x + r->w <= x0 + w + 0.5f);
+            }
+            CHECK(c.res.autoScrollToggle.y > c.res.warnToggle.y);                    // moved down a line
+            CHECK(c.res.autoScrollToggle.y < c.res.clearOnPlayToggle.y);             // and the next row still comes after it
+            CHECK(c.res.firstRow.y > c.res.saveButton.y + c.res.saveButton.h);       // the log starts below every control
+            Check("console_narrow", c.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]));
+            // At the usual width everything still fits on its own rows.
+            CRig wide; wide.Fill(); wide.Frames(3);
+            CHECK(wide.res.autoScrollToggle.y == wide.res.warnToggle.y);
+        }
         {   // selecting a row shows its details and Copy sends the message; right-click offers the copy menu
             CRig c; c.Fill(); c.Frames(3);
             c.Click(c.res.firstRow);
@@ -280,7 +292,7 @@ int main() {
             CHECK(std::string(c.st.filter) == "slow" && c.res.rowsShown == 1);
             c.sim.Type("zzz"); c.Frame(); c.Frame();
             CHECK(c.res.rowsShown == 0);
-            for (int i = 0; i < 7; ++i) c.sim.Tap(Key_Backspace, [&] { c.Frame(); });
+            for (int i = 0; i < 7; ++i) { c.sim.Press(Key_Backspace); c.Frame(); }   // one frame each (Tap with c.Frame nested a frame in a frame)
             c.Frames(2);
             CHECK(c.res.rowsShown == 4 && c.st.filter[0] == 0);
         }

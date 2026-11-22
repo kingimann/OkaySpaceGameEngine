@@ -4,7 +4,7 @@ row: | 17 | Hierarchy right-click menus: Create Child with every category, Add C
 ---
 ## 17. Hierarchy right-click menus
 
-Where: the **Hierarchy** panel (left side by default). Map and the Existing / Gap table: [editor_menus.md](editor_menus.md), section 2.
+Where: the **Hierarchy** panel (left side by default). Map and the Existing / Gap table: [editor_menus.md](editor/editor_menus.md), section 2.
 
 1. Right-click an object. The menu starts with Copy, Cut, Paste, Paste as Child, then Rename (F2), Duplicate, Delete, Delete Children, then
    Create Empty Child, **Create Child**, Create Parent, Parent To, Unparent, Order, then Select, Expand All Below, then Deactivate, Lock, Focus in
@@ -21,7 +21,7 @@ Where: the **Hierarchy** panel (left side by default). Map and the Existing / Ga
 7. Right-click the empty space under the rows: Create Empty, the eight Create categories, Paste, Select All, Deselect, Expand All, Collapse All,
    Sort A-Z. The **[+]** button at the top has Create Empty, Create Empty Child, Group Selected and the same categories.
 
-Screenshots of the real editor (Linux, virtual display): [docs/images/editor_menus/](images/editor_menus/) (`hierarchy_row_menu.png`,
+Screenshots of the real editor (Linux, virtual display): a picture folder (pictures are no longer stored in the repository) (`hierarchy_row_menu.png`,
 `hierarchy_create_child.png`, `hierarchy_create_child_result.png`, `hierarchy_three_selected.png`, `hierarchy_same_type_reason.png`,
 `hierarchy_add_component.png`, `hierarchy_empty_space.png`).
 
@@ -33,7 +33,7 @@ Screenshots of the real editor (Linux, virtual display): [docs/images/editor_men
 * `editor/main.cpp` and `editor/UIRuntimeTools.cpp` with the editor's flags and `-fsyntax-only -Wall -Wextra`: no error and no warning in the
   files changed.
 * **The real editor**, built from this branch (`okay-editor`, Linux, engine `-O1`, `main.cpp` `-O0`, asserts on) and run under Xvfb with the
-  software renderer, started with `--dev`, the mouse driven by `xdotool`: the clicks listed in [editor_menus.md](editor_menus.md) section 3b
+  software renderer, started with `--dev`, the mouse driven by `xdotool`: the clicks listed in [editor_menus.md](editor/editor_menus.md) section 3b
   worked as described (Create Child and its undo, Add Component, Same Type, Cut / Paste, Delete, Create Empty Parent / Child, Isolate, Panels,
   Audio Source, the greyed items and their reasons, also while the game runs). No crash and no
   Dear ImGui assert while clicking, in 15 sessions of this kind. The one assert seen was at shutdown, in two sessions that were closed with a

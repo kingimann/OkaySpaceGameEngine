@@ -7,7 +7,7 @@
   scripts/check_modules.py --update-baseline   rewrite scripts/module_deps_baseline.txt (use only when
                                        a violation was removed; never to hide a new one)
 
-Rules (docs/modular_engine.md, section "The dependency check"):
+Rules (docs/engine/modular_engine.md, section "The dependency check"):
   1. A file owned by module A may include a header owned by B only if B is A, B is `core`, or B is in A's
      transitive `requires`. Anything else is a forbidden include.
   2. `core` includes no other module (core has no requires, so rule 1 covers it).

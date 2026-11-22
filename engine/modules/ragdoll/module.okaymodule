@@ -1,4 +1,4 @@
-# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
 name=ragdoll
 title=Ragdoll
 area=Physics
@@ -14,3 +14,6 @@ editor=
 sources=include/okay/Components/Ragdoll.hpp src/Components/Ragdoll.cpp
 compile=src/Components/Ragdoll.cpp
 script_api=ragdoll,ragdoll_push,is_ragdoll
+# planned= files another branch is adding (claude2/active-ragdoll: ActiveRagdoll, ragdoll physics, dynamic character). Not copied
+# here; they move into sources= (and ActiveRagdoll into components=) when that branch merges. Read by nobody yet.
+planned=include/okay/Animation/DynamicCharacter.hpp include/okay/Animation/RagdollPhysics.hpp include/okay/Components/ActiveRagdoll.hpp include/okay/Components/RagdollShared.hpp src/Animation/DynamicCharacter.cpp src/Animation/RagdollPhysics.cpp src/Components/ActiveRagdoll.cpp src/Components/RagdollShared.cpp

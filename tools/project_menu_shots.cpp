@@ -1,4 +1,4 @@
-// Headless pictures of the Project panel's right-click menus and Properties window (docs/images/project_menus/), drawn with the REAL
+// Headless pictures of the Project panel's right-click menus and Properties window (pass an output folder; pictures are no longer stored in the repo), drawn with the REAL
 // drawing code (editor/ProjectMenuDraw.cpp) and the REAL item lists (editor/ProjectContextModel.hpp). Dear ImGui draws into a software
 // SDL surface: no window, no editor, no GPU. The look is ImGui's default dark style and its built-in font with the Project panel's roomy
 // spacing, NOT the editor's own skin, so colours and fonts differ from the real window; the items, their order, what is greyed and the
@@ -11,6 +11,7 @@
 //
 // Written for this repository (the drawing of menus is Dear ImGui's own public API; no other project's code).
 #include <SDL.h>
+#include "okay/Platform/BmpWriter.hpp"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include "imgui_impl_sdlrenderer2.h"
@@ -73,7 +74,7 @@ static void Capture(const std::string& file, const std::string& caption, const s
         if (f >= 6 && found && ++hold > 4) break;
     }
     const std::string bmp = g_outDir + "/" + file + ".bmp";
-    SDL_SaveBMP(g_surface, bmp.c_str());
+    okay::platform::WriteBmp32Bgra(bmp.c_str(), g_surface->pixels, g_surface->w, g_surface->h, g_surface->pitch);
     std::printf("wrote %s\n", bmp.c_str());
 }
 

@@ -1,6 +1,6 @@
 #pragma once
 // SYNTHETIC fixtures for the batch-E own readers (Q3D, RAW), written by hand from the format descriptions (no real file, no
-// importer output). Expected numbers in the tests are computed by hand from these.
+// importer output; the Q3D layout follows the corpus files where the description is open, docs/content/model_readers.md). Expected numbers in the tests are computed by hand from these.
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -37,16 +37,17 @@ inline std::string BuildQ3d(bool be = false, bool scene = false, bool tex = true
     for (int i : {0, 1, 2, 3, 0, 1, 4}) w.I32((std::uint32_t)i);
     w.I32(0); w.I32(1);             // materials
     w.I32(0);                       // normals
+    w.I32(tex ? 4 : 0);             // texture coordinate count: always there (the coordinates only when the header names textures)
     if (tex) {
-        w.I32(4);
         const float t[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
         for (const auto& p : t) { w.F(p[0]); w.F(p[1]); }
         for (int i : {0, 1, 2, 3, 0, 1, 2}) w.I32((std::uint32_t)i);
     }
     for (int i = 0; i < 9; ++i) w.F(0.0f);      // centre of mass, bounding box (6 floats)
     w.U8('c');
-    w.Str("red");  for (float f : {0.1f, 0.1f, 0.1f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f}) w.F(f); w.F(0.25f);
-    w.Str("blue"); for (float f : {0.1f, 0.1f, 0.1f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f}) w.F(f); w.F(0.0f);
+    // name, ambient, diffuse, specular, transparency, texture index (-1 = none)
+    w.Str("red");  for (float f : {0.1f, 0.1f, 0.1f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f}) w.F(f); w.F(0.25f); w.I32(tex ? 0u : 0xFFFFFFFFu);
+    w.Str("blue"); for (float f : {0.1f, 0.1f, 0.1f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f}) w.F(f); w.F(0.0f); w.I32(0xFFFFFFFFu);
     if (tex) { w.U8('t'); w.Str("tex"); w.I32(2); w.I32(1); for (int i = 0; i < 6; ++i) w.U8(i * 40); }
     if (scene) { w.U8('s'); for (int i = 0; i < 64; ++i) w.U8(0); }
     return w.s;

@@ -2,7 +2,7 @@
 -- advisory lock, no pruning), kept so tests/scripts/test_crash_reports_sql.sh can check that loading the current file on top of a table
 -- made by it brings it up to date. Never loaded anywhere but a throwaway test database.
 -- OkaySpace crash reports: the launcher sends each editor crash report, with the person's name, folders, email and addresses taken out
--- first (docs/crash_reports.md), as one row in this table; a scheduled GitHub workflow (.github/workflows/crash-issues.yml) turns new
+-- first (docs/online/crash_reports.md), as one row in this table; a scheduled GitHub workflow (.github/workflows/crash-issues.yml) turns new
 -- rows into issues. Run once in your Supabase project's SQL editor. Needs nothing else (no other docs/sql file). Idempotent: re-running
 -- is safe. Until it has run, the launcher keeps the reports on the computer and says the server is not set up (it never says "sent"
 -- unless the server accepted the row).

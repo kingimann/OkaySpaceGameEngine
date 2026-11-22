@@ -40,7 +40,6 @@
 // hits in a chain, how long the next hit may wait, and the extra damage fraction
 // added for each hit after the first.
 #include "okay/Math/Vec3.hpp"
-#include "okay/Modules/Damage.hpp"
 #include <deque>
 #include <string>
 #include <vector>
@@ -130,10 +129,9 @@ const WeaponDefinition* FindWeapon(const std::string& id, const std::string& fil
 /// the item's custom "weapon" field, or the weapon whose item id matches.
 const WeaponDefinition* WeaponForHolder(GameObject* go);
 
-/// Hurt `target` once through the health contract (okay/Modules/Health.hpp): whichever health it has.
-/// `impulse` is added to a dynamic rigid body on that object (a knockback). Returns true when something
-/// took the damage.
-bool ApplyCombatDamage(GameObject* target, float amount, const Vec3& from, const Vec3& impulse,
-                       DamageType type = DamageType::Generic, GameObject* instigator = nullptr);
+/// Hurt `target` once: its Health, or its survival health, or its RPG stats, or
+/// its NPC health, whichever it has. `impulse` is added to a dynamic rigid body
+/// on that object (a knockback). Returns true when something took the damage.
+bool ApplyCombatDamage(GameObject* target, float amount, const Vec3& from, const Vec3& impulse);
 
 } // namespace okay

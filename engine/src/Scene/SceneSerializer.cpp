@@ -1,6 +1,9 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/PrefabTools.hpp"
 #include "okay/Scene/SceneText.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"
+#include <iterator>
+#include "okay/Core/TolerantNumbers.hpp"
 #include <cerrno>
 #include <iostream>
 #include <charconv>
@@ -39,6 +42,8 @@
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
+#include "okay/Components/Buoyancy.hpp"
+#include "okay/Components/BoatController.hpp"
 #include "okay/Components/BlockBuilder.hpp"
 #include "okay/Components/StructureBuilder.hpp"
 #include "okay/Components/BuilderMode.hpp"
@@ -62,6 +67,7 @@
 #include "okay/Components/SurvivalSystems.hpp"
 #include "okay/Components/SurvivalZone.hpp"
 #include "okay/Components/Volume.hpp"
+#include "okay/Components/WindZone.hpp"
 #include "okay/Components/Consumables.hpp"
 #include "okay/Scene/RecordIO.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
@@ -93,6 +99,7 @@
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/ColliderShapes3D.hpp"
 #include "okay/Components/Mover.hpp"
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/Lifetime.hpp"
@@ -107,6 +114,8 @@
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
+#include "okay/Components/CameraRoom.hpp"
+#include "okay/Components/CameraZone.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/Animator.hpp"
@@ -185,6 +194,7 @@
 #include "okay/Components/PoseCapture.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/HoldPrompt.hpp"
+#include "okay/Components/LocalPlayerInput.hpp"
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/AutoSave.hpp"
@@ -268,52 +278,7 @@ protected:
         return out;
     }
 };
-// Reads "nan" / "inf" (what the writer prints for a non-finite float) as well as numbers. The
-// standard stream reader fails on those words, which made a scene saved with one NaN in it
-// (a physics blow-up, then an autosave) a file that could not be opened at all. Other values
-// parse exactly as before: the sign is taken here and the digits go to the standard reader.
-class TolerantNumGet : public std::num_get<char> {
-public:
-    explicit TolerantNumGet(std::size_t refs) : std::num_get<char>(refs) {}
-protected:
-    using std::num_get<char>::do_get;
-    iter_type do_get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, float& v) const override {
-        return Get(in, end, str, err, v);
-    }
-    iter_type do_get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, double& v) const override {
-        return Get(in, end, str, err, v);
-    }
-private:
-    template <class F>
-    iter_type Get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, F& v) const {
-        bool neg = false;
-        if (in != end && (*in == '-' || *in == '+')) {
-            neg = (*in == '-'); ++in;
-            if (in != end && (*in == '-' || *in == '+')) { v = 0; err |= std::ios_base::failbit; return in; }   // "--5" is not a number
-        }
-        if (in != end && (*in == 'n' || *in == 'N' || *in == 'i' || *in == 'I')) {
-            std::string word;
-            while (in != end && std::isalpha(static_cast<unsigned char>(*in))) { word += static_cast<char>(std::tolower(static_cast<unsigned char>(*in))); ++in; }
-            if (in != end && *in == '(') {   // nan(payload)
-                while (in != end && *in != ')') ++in;
-                if (in != end) ++in;
-            }
-            if (word == "nan")                        v = std::numeric_limits<F>::quiet_NaN();
-            else if (word == "inf" || word == "infinity") v = std::numeric_limits<F>::infinity();
-            else { v = 0; err |= std::ios_base::failbit; return in; }
-            if (neg) v = -v;
-            if (in == end) err |= std::ios_base::eofbit;
-            return in;
-        }
-        iter_type r = std::num_get<char>::do_get(in, end, str, err, v);
-        if (neg && !(err & std::ios_base::failbit)) v = -v;
-        return r;
-    }
-};
-const std::locale& TolerantLocale() {
-    static const std::locale* loc = new std::locale(std::locale::classic(), new TolerantNumGet(0));   // lives to the end of the process, like the writer's
-    return *loc;
-}
+// TolerantLocale() (reads "nan" / "inf" as numbers) lives in okay/Core/TolerantNumbers.hpp, shared with the .okaymat reader.
 void UseRoundTripFloats(std::ostream& o) {
     // The locale is allocated once and never destroyed (a static std::locale object would be torn down at exit,
     // orphaning the facet and tripping leak checkers, and streams used during static destruction need it alive).
@@ -490,6 +455,32 @@ void WritePhysicsMaterials(std::ostream& out, const char* rec, const std::vector
         out << "  " << rec << " " << c->friction << " " << c->bounciness << " " << (int)c->frictionCombine
             << " " << (int)c->bounceCombine << " " << i << "\n";
     }
+}
+
+// The colliders a file from before the newer shapes knows about: the Cone, Convex Hull, Plane, Compound and Heightfield
+// colliders save every setting (physics material, trigger filter, contact offset) in their own record, so the older
+// "by index" records count only the rest and an index means the same thing before and after those shapes exist.
+std::vector<Collider3D*> LegacyColliders3D(const GameObject& go) {
+    std::vector<Collider3D*> out;
+    for (Collider3D* c : go.GetComponents<Collider3D>()) {
+        switch (c->shape()) {
+        case Collider3D::Shape::Cone: case Collider3D::Shape::ConvexHull: case Collider3D::Shape::Compound:
+        case Collider3D::Shape::Heightfield: case Collider3D::Shape::Plane: break;
+        default: out.push_back(c);
+        }
+    }
+    return out;
+}
+std::vector<Collider2D*> LegacyColliders2D(const GameObject& go) {
+    std::vector<Collider2D*> out;
+    for (Collider2D* c : go.GetComponents<Collider2D>()) if (c->shape() != Collider2D::Shape::Composite) out.push_back(c);
+    return out;
+}
+// The contact offset (a skin on the collider): one line per collider that has one, so a scene without any writes nothing.
+template <class T>
+void WriteContactOffsets(std::ostream& out, const char* rec, const std::vector<T*>& cols) {
+    for (int i = 0; i < (int)cols.size(); ++i)
+        if (cols[(std::size_t)i]->contactOffset > 0.0f) out << "  " << rec << " " << cols[(std::size_t)i]->contactOffset << " " << i << "\n";
 }
 
 // The crouch / prone options of a movement controller (StanceControl) and the
@@ -793,13 +784,21 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (!cam->renderTarget.empty()) out << " " << Quote(cam->renderTarget);
         out << "\n";
     }
+    for (auto* cam : go->GetComponents<Camera>()) {   // keyed extension (docs/gameplay/cameras.md); older readers skip the line
+        if (cam->hitPulseVignette != 0.5f) {   // only when changed, so scenes that never touch it save exactly as before
+            out << "  camerax";
+            KvOut k{out};
+            k("hitPulse", cam->hitPulseVignette);
+            out << "\n";
+        }
+    }
     // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
     // geometry for it — the component below rebuilds it on load.
     if (!go->GetComponent<Terrain>() && !go->GetComponent<Character>() && !go->GetComponent<Decal>()) {  // a decal's mesh is cut from the scene again on load
     for (auto* mr : go->GetComponents<MeshRenderer>()) {
         out << "  mesh " << Quote(mr->mesh.name) << " "
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
-            << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
+            << (mr->fadeBaseAlpha >= 0.0f ? mr->fadeBaseAlpha : mr->color.a) << " " << (mr->wireframe ? 1 : 0) << " "
             << Quote(mr->meshPath) << " " << (mr->doubleSided ? 1 : 0) << "\n";
         // Procedural variant of a named nature prop (compact: one int regenerates
         // the exact varied shape on load, instead of baking meshgeo/meshcolors).
@@ -963,6 +962,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << "  shader " << (int)mr->shader << " " << mr->toonBands
                 << " " << mr->gradientTop.r << " " << mr->gradientTop.g << " " << mr->gradientTop.b
                 << " " << mr->gradientBottom.r << " " << mr->gradientBottom.g << " " << mr->gradientBottom.b << "\n";
+        // Custom shader file + its property values (separate record so older scenes still load).
+        if (!mr->customShader.empty() || !mr->shaderParams.empty())
+            out << "  customshader " << Quote(mr->customShader) << " " << Quote(mr->shaderParams) << "\n";
         // Per-material rim (Fresnel) backlight (separate record).
         if (mr->rimStrength > 0.0f)
             out << "  rim " << mr->rimStrength << " " << mr->rimPower << " "
@@ -981,6 +983,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                 << mr->groundShadowY << " " << mr->groundShadowStrength << "\n";
         if (!mr->castShadows || !mr->receiveShadows)
             out << "  meshshadows " << (mr->castShadows ? 1 : 0) << " " << (mr->receiveShadows ? 1 : 0) << "\n";
+        if (mr->glowLightRange != 0.0f) out << "  meshglow " << mr->glowLightRange << "\n";
         // A hidden mesh (e.g. a Boolean modifier's cutter) stays hidden after a reload.
         if (!mr->enabled) out << "  meshenabled 0\n";
     }
@@ -1409,7 +1412,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << vd->power << " " << vd->hardnessScale << " " << (int)vd->shape << " " << vd->depthLimit << " " << vd->protectBelow
             << " " << (vd->snapToGrid ? 1 : 0) << " " << vd->debrisMax << " " << vd->debrisLife << " " << (vd->slump ? 1 : 0)
             << " " << (vd->collapse ? 1 : 0) << " " << (vd->giveItems ? 1 : 0) << " " << Quote(vd->hudTarget) << " " << vd->slumpPasses << " " << (vd->toolsFromInventory ? 1 : 0) << " " << (vd->buildFromItems ? 1 : 0)
-            << " " << vd->bareHandsPower << " " << Quote(vd->tools) << " " << vd->caveInSpan << " " << (int)(unsigned char)vd->pourKey << " " << vd->pourCells << "\n";
+            << " " << vd->bareHandsPower << " " << Quote(vd->tools) << " " << vd->caveInSpan << " " << (int)(unsigned char)vd->pourKey << " " << vd->pourCells
+            << " " << vd->reach << " " << ((vd->playerAim ? 1 : 0) | (vd->useActions ? 2 : 0) | (vd->hotbarKeys ? 4 : 0) | (vd->showProgress ? 8 : 0)) << "\n";
     }
     for (auto* pm : go->GetComponents<PauseMenu>()) {
         out << "  pausemenu " << (int)(unsigned char)pm->toggleKey
@@ -1630,6 +1634,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << " " << (li->castShadows ? 1 : 0) << " " << li->shadowStrength << " " << li->shadowBias
                 << " " << li->flicker << " " << li->flickerSpeed << " " << (li->enabled ? 1 : 0);
         out << "\n";
+        // Newer light settings: an append-only record of its own for the light just written, only when something differs
+        // from the defaults. Older builds keep it as an unknown record.
+        if (li->shadowSoftness != 0.5f || li->areaWidth != 0.0f || li->areaHeight != 0.0f || !li->cookie.empty() ||
+            li->cookieScale != 4.0f || li->unit != Light::Unit::Simple)
+            out << "  lightx " << li->shadowSoftness << " " << li->areaWidth << " " << li->areaHeight << " "
+                << li->cookieScale << " " << (int)li->unit << " " << Quote(li->cookie) << "\n";
     }
     for (auto* rb : go->GetComponents<Rigidbody2D>()) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
@@ -1672,8 +1682,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // Trigger tag / layer filter. One record when every collider shares it (older scenes
     // read that as applying to all). Differing filters are one indexed record each.
-    WriteTriggerFilters(out, "trigfilter2d", go->GetComponents<Collider2D>());
-    WritePhysicsMaterials(out, "physmat2d", go->GetComponents<Collider2D>());
+    WriteTriggerFilters(out, "trigfilter2d", LegacyColliders2D(*go));
+    WritePhysicsMaterials(out, "physmat2d", LegacyColliders2D(*go));
+    WriteContactOffsets(out, "colskin2d", LegacyColliders2D(*go));
     for (auto* rb : go->GetComponents<Rigidbody3D>()) {
         out << "  rigidbody3d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness << " "
@@ -1969,8 +1980,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
     // See the 2D filter: one shared record, or one indexed record per collider when they differ.
-    WriteTriggerFilters(out, "trigfilter3d", go->GetComponents<Collider3D>());
-    WritePhysicsMaterials(out, "physmat3d", go->GetComponents<Collider3D>());
+    WriteTriggerFilters(out, "trigfilter3d", LegacyColliders3D(*go));
+    WritePhysicsMaterials(out, "physmat3d", LegacyColliders3D(*go));
+    WriteContactOffsets(out, "colskin3d", LegacyColliders3D(*go));
     // Each script is one self-contained line (lang, source, then optional path
     // and field overrides) so a GameObject can carry several scripts.
     for (auto* sc : go->GetComponents<ScriptComponent>()) {
@@ -2017,6 +2029,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v->handbrakeGrip << " " << v->groundCheckDistance
             << " " << (v->followCamera ? 1 : 0) << " " << v->camDistance << " " << v->camHeight
             << " " << v->camLerp << " " << (int)(unsigned char)v->handbrakeKey << "\n";
+        {   // the open-world settings that differ from the defaults, plus the wheel spacing (the model steers by it; it used to be saved only with suspension)
+            std::ostringstream tl; tl << v->ToLine();
+            if (std::fabs(v->wheelBase - 2.4f) > 1e-4f) tl << "wheelBase=" << v->wheelBase << " ";
+            if (std::fabs(v->trackWidth - 1.6f) > 1e-4f) tl << "trackWidth=" << v->trackWidth << " ";
+            if (!tl.str().empty()) out << "  vehicletune " << tl.str() << "\n";
+        }   // the open-world settings that differ from the defaults
         if (v->suspension)
             out << "  vehiclesusp 1 " << v->rideHeight << " " << v->springStrength << " "
                 << v->springDamping << " " << v->suspensionTravel << " " << v->wheelBase << " "
@@ -2300,7 +2318,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << c->invincibleTime << " " << c->overhealMax << " " << c->overhealDecay
             << " " << (c->destroyOnDeath ? 1 : 0) << " " << (c->respawn ? 1 : 0)
             << " " << c->respawnDelay << " " << c->lives
-            << " " << (c->playDeathAnim ? 1 : 0) << " " << (c->playHitAnim ? 1 : 0) << "\n";
+            << " " << (c->playDeathAnim ? 1 : 0) << " " << (c->playHitAnim ? 1 : 0)
+            << " " << (c->keepActiveOnDeath ? 1 : 0) << " " << kDamageTypeCount;   // then one resistance per damage kind
+        for (int i = 0; i < kDamageTypeCount; ++i) out << " " << c->typeResistance[i];
+        out << "\n";
     }
     for (auto* c : go->GetComponents<Seat>()) {
         out << "  seat " << c->seatHeight << " "
@@ -2753,7 +2774,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << cm->cameraDamping
             << " " << cm->arriveRadius                       // extended (back-compatible trailing field)
             << " " << (cm->footIK ? 1 : 0) << " " << (cm->showCursor ? 1 : 0)
-            << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval << "\n";
+            << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval;
+        // extended (back-compatible trailing fields): click on colliders, give up when stuck. Written only when one differs
+        // from its default, so a scene saved before they existed saves byte for byte the same (registry_serializer).
+        if (!cm->pickColliders || !cm->giveUpWhenStuck || cm->stuckTime != 1.0f)
+            out << " " << (cm->pickColliders ? 1 : 0) << " " << (cm->giveUpWhenStuck ? 1 : 0) << " " << cm->stuckTime;
+        out << "\n";
     }
     for (auto* ft : go->GetComponents<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -2861,6 +2887,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << cf->offset.x << " " << cf->offset.y << " " << cf->offset.z << " "
             << cf->smoothing << "\n";
     }
+    const VirtualCamera defaultVcam;
     for (auto* vc : go->GetComponents<VirtualCamera>()) {
         out << "  vcam " << vc->priority << " " << Quote(vc->follow) << " " << Quote(vc->lookAt)
             << " " << vc->followOffset.x << " " << vc->followOffset.y << " " << vc->followOffset.z
@@ -2882,9 +2909,53 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << vc->dutch << " " << (vc->confine ? 1 : 0)
             << " " << vc->confineMin.x << " " << vc->confineMin.y << " " << vc->confineMin.z
             << " " << vc->confineMax.x << " " << vc->confineMax.y << " " << vc->confineMax.z << "\n";
+        // The camera rig layer, as keys (written right after its vcam line; read back onto that vcam).
+        // Written only when something differs from a new Virtual Camera, so scenes that never use it save as before.
+        auto rigKeys = [](const VirtualCamera* v) {
+            std::ostringstream o;
+            KvOut k{o};
+            k("damp", (int)v->dampingMode)("gpad", v->groupPadding).b("gfit", v->groupFrame)
+             ("look", v->lookaheadTime)("lookMax", v->lookaheadMax)("lookSm", v->lookaheadSmooth)
+             .b("zones", v->useZones)("dzw", v->deadZoneW)("dzh", v->deadZoneH)("szw", v->softZoneW)("szh", v->softZoneH)
+             ("zdamp", v->zoneDamping).b("o2d", v->ortho2D)("osize", v->orthoSize).b("cview", v->confineToView)
+             .b("rooms", v->useRooms)("roomT", v->roomBlendTime)
+             .b("col", v->collision)("colR", v->collisionRadius)("colSkin", v->collisionSkin)("colRec", v->collisionRecover)
+             ("colIn", v->collisionPullIn).b("colSnap", v->collisionSnapIn)("colMask", v->collisionMask)
+             .b("fade", v->fadeOccluders)("fadeA", v->occlusionAlpha)("fadeSpd", v->occlusionFadeSpeed)
+             ("blendIn", v->blendIn)("blendInStyle", v->blendInStyle).b("aimFollow", v->aimAtFollow)
+             ("ng", (int)v->groupTargets.size());
+            for (std::size_t gi = 0; gi < v->groupTargets.size(); ++gi) k.str(("g" + std::to_string(gi)).c_str(), v->groupTargets[gi]);
+            return o.str();
+        };
+        const std::string rig = rigKeys(vc), rigDefault = rigKeys(&defaultVcam);
+        if (rig != rigDefault) out << "  vcamx" << rig << "\n";
     }
     for (auto* cb : go->GetComponents<CinemachineBrain>()) {
-        out << "  cmbrain " << cb->blendTime << " " << (cb->easeInOut ? 1 : 0) << "\n";
+        out << "  cmbrain " << cb->blendTime << " " << (cb->blendStyle == cam::BlendStyle::Linear ? 0 : 1) << "\n";
+        const CinemachineBrain defaultBrain;
+        if (cb->blendStyle != defaultBrain.blendStyle || cb->yieldToCutscene != defaultBrain.yieldToCutscene ||
+            cb->customCurve[0] != defaultBrain.customCurve[0] || cb->customCurve[1] != defaultBrain.customCurve[1] ||
+            cb->customCurve[2] != defaultBrain.customCurve[2] || cb->customCurve[3] != defaultBrain.customCurve[3]) {
+            out << "  cmbrainx";
+            KvOut k{out};
+            k("style", (int)cb->blendStyle)("c0", cb->customCurve[0])("c1", cb->customCurve[1])("c2", cb->customCurve[2])("c3", cb->customCurve[3])
+             .b("cutscene", cb->yieldToCutscene);
+            out << "\n";
+        }
+    }
+    for (auto* cz : go->GetComponents<CameraZone>()) {
+        out << "  camzone";
+        KvOut k{out};
+        k("shape", (int)cz->shape)("sx", cz->size.x)("sy", cz->size.y)("sz", cz->size.z)("ox", cz->offset.x)("oy", cz->offset.y)("oz", cz->offset.z)
+         ("blend", cz->blend)("prio", cz->priority)("fov", cz->fieldOfView)("fx", cz->followOffset.x)("fy", cz->followOffset.y)("fz", cz->followOffset.z)
+         ("damp", cz->positionDamping).str("shot", cz->shot);
+        out << "\n";
+    }
+    for (auto* rm : go->GetComponents<CameraRoom>()) {
+        out << "  camroom";
+        KvOut k{out};
+        k("w", rm->size.x)("h", rm->size.y);
+        out << "\n";
     }
     for (auto* dp : go->GetComponents<DollyPath>()) {
         out << "  dollypath " << (dp->looped ? 1 : 0) << " " << dp->waypoints.size();
@@ -2893,7 +2964,11 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     for (auto* dc : go->GetComponents<DollyCart>()) {
         out << "  dollycart " << Quote(dc->path) << " " << dc->position << " "
-            << dc->speed << " " << (dc->autoMove ? 1 : 0) << "\n";
+            << dc->speed << " " << (dc->autoMove ? 1 : 0);
+        // extended (trailing): only when one is on, so older scenes save byte for byte the same (registry_serializer)
+        if (dc->speedInMetres || dc->pingPong || dc->orientToPath)
+            out << " " << (dc->speedInMetres ? 1 : 0) << " " << (dc->pingPong ? 1 : 0) << " " << (dc->orientToPath ? 1 : 0);
+        out << "\n";
     }
     for (auto* tr : go->GetComponents<TextRenderer>()) {
         out << "  text " << Quote(tr->text) << " "
@@ -3418,6 +3493,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << cp->swatch << " " << cp->gap << " " << cp->value << " " << cp->swatches.size();
         for (const Color& c : cp->swatches)
             out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
+        if (cp->advanced || cp->useCustom)   // slice 3: the advanced mode, appended so an older reader stops after the swatches
+            out << " " << (cp->advanced ? 1 : 0) << " " << cp->hue << " " << cp->sat << " " << cp->val << " " << cp->alpha << " "
+                << (cp->useCustom ? 1 : 0) << " " << cp->squareSize;
         out << "\n";
     }
     for (auto* sa : go->GetComponents<UISafeArea>())
@@ -3548,6 +3626,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "\n";
         // How much the scene's wind carries the particles (own record; 1 = the default).
         if (ps->windInfluence != 1.0f) out << "  particleswind " << ps->windInfluence << "\n";
+        // Collide with Terrain (own record, written only when on; older files and readers do without it).
+        if (ps->collideTerrain) out << "  particlesterrain 1\n";
     }
     // Sequence player (cutscenes). key=value record; the playback state is not saved.
     for (auto* sp : go->GetComponents<SequencePlayer>()) {   // every instance
@@ -3563,6 +3643,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         KvOut k{out};
         k("variant", sv->variant);
         if (!sv->themeName.empty()) k.str("vtheme", sv->themeName);
+        if (!sv->style.empty()) k.str("vstyle", sv->style);
+        if (!sv->styleSize.empty()) k.str("vsize", sv->styleSize);
+        if (!sv->styleDensity.empty()) k.str("vdens", sv->styleDensity);
         out << "\n";
     }
     for (auto* dn : go->GetComponents<UIDamageNumbers>()) {
@@ -3673,6 +3756,14 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          .str("prompt", dr->promptText).str("pobj", dr->promptObject).b("pause", dr->pausePlayer)
          ("type", dr->typewriterSpeed)("auto", dr->autoAdvance).b("ui", dr->drawUI).b("cancel", dr->canCancel)
          ("start", dr->startNode).str("player", dr->playerName);
+        if (!dr->cameraShots.empty()) {   // per-line camera shots; not written when there are none (old records stay the same)
+            k("shots", (int)dr->cameraShots.size());
+            for (std::size_t i = 0; i < dr->cameraShots.size(); ++i) {
+                const std::string p = "sh" + std::to_string(i);
+                k((p + "n").c_str(), dr->cameraShots[i].node).str((p + "c").c_str(), dr->cameraShots[i].camera);
+            }
+        }
+        if (dr->shotBlend != -1.0f) k("shb", dr->shotBlend);
         out << "\n";
     }
     for (auto* ql : go->GetComponents<QuestLog>()) {
@@ -3834,6 +3925,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     out << "okayscene 3\n";
     out << "name " << Quote(scene.Name()) << "\n";
     if (!scene.uiFont.empty()) out << "uifont " << Quote(scene.uiFont) << "\n";
+    if (scene.uiQuality != 1) out << "uiquality " << scene.uiQuality << "\n";
     for (const std::string& r : scene.unknownRecords) out << r << "\n";   // what a newer build wrote at the top, as it was
     out << "gravity " << scene.physics().gravity.x << " " << scene.physics().gravity.y << "\n";
     if (scene.HasCustomLayerCollisions()) {   // optional: older scenes have none (everything collides)
@@ -3874,11 +3966,20 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
             out << "sky " << rs.skyHorizonPos << " " << (rs.skySun ? 1 : 0) << " "
                 << rs.skySunX << " " << rs.skySunY << " " << rs.skySunSize << " "
                 << rs.skySunColor.r << " " << rs.skySunColor.g << " " << rs.skySunColor.b << "\n";
-        // Star field (separate append-only record so older engines still load the scene).
-        if (rs.skyStars)
-            out << "skystars 1 " << rs.skyStarDensity << " " << rs.skyStarBright << "\n";
+        // Star field (separate append-only record so older engines still load the scene). Also written with the
+        // overlay off when the density or brightness changed: the Procedural sky draws its night stars with them.
+        const Scene::RenderSettings starDefaults;
+        if (rs.skyStars || rs.skyStarDensity != starDefaults.skyStarDensity || rs.skyStarBright != starDefaults.skyStarBright)
+            out << "skystars " << (rs.skyStars ? 1 : 0) << " " << rs.skyStarDensity << " " << rs.skyStarBright << "\n";
         if (rs.ambientMode != Scene::RenderSettings::AmbientHemisphere || rs.ambientSkyTint != 0.7f)
             out << "ambientmode " << rs.ambientMode << " " << rs.ambientSkyTint << "\n";
+        if (!rs.autoBrightness) out << "lightunits 0\n";
+        if (rs.probes.Baked() || !rs.probes.enabled) {   // baked light probes (append-only record; older builds keep it as unknown)
+            out << "probegrid " << (rs.probes.enabled ? 1 : 0) << " " << rs.probes.spacing << " " << rs.probes.origin.x << " " << rs.probes.origin.y
+                << " " << rs.probes.origin.z << " " << rs.probes.nx << " " << rs.probes.ny << " " << rs.probes.nz << " " << rs.probes.sh.size();
+            for (float v : rs.probes.sh) out << " " << v;
+            out << "\n";
+        }
         // Fog modes, the procedural sky, post-processing and weather: each an
         // append-only record of its own, written only when it differs from the
         // defaults, so an untouched scene's text stays exactly as it was.
@@ -4226,6 +4327,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             std::string nm = ReadQuoted(in); if (clear) scene.SetName(nm);
         } else if (token == "uifont") {
             std::string uf = ReadQuoted(in); if (clear) scene.uiFont = uf;
+        } else if (token == "uiquality") {
+            int q = 1; in >> q; if (clear) scene.uiQuality = q < 0 ? 0 : (q > 3 ? 3 : q);
         } else if (token == "layermatrix") {
             std::uint32_t rows[32]; bool ok = true;
             for (int i = 0; i < 32; ++i) { unsigned long long v = 0; if (!(in >> v) || v > 0xFFFFFFFFull) { ok = false; break; } rows[i] = (std::uint32_t)v; }
@@ -4299,6 +4402,18 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             int m = Scene::RenderSettings::AmbientHemisphere; float tint = 0.7f; in >> m >> tint;
             if (m < 0 || m > 2) m = Scene::RenderSettings::AmbientHemisphere;
             if (clear) { scene.renderSettings.ambientMode = m; scene.renderSettings.ambientSkyTint = tint; }
+        } else if (token == "probegrid") {
+            LightProbeGrid g; int en = 1; std::size_t count = 0;
+            in >> en >> g.spacing >> g.origin.x >> g.origin.y >> g.origin.z >> g.nx >> g.ny >> g.nz >> count;
+            g.enabled = en != 0;
+            const std::size_t want = (std::size_t)(g.nx > 0 ? g.nx : 0) * (g.ny > 0 ? g.ny : 0) * (g.nz > 0 ? g.nz : 0) * 12;
+            if (count == want && count <= 12 * 12 * 6 * 12 * 4) { g.sh.resize(count); for (float& v : g.sh) in >> v; }
+            else { g.Clear(); }
+            if (!g.Baked()) g.Clear();
+            if (clear) scene.renderSettings.probes = g;
+        } else if (token == "lightunits") {
+            int on = 1; in >> on;
+            if (clear) scene.renderSettings.autoBrightness = (on != 0);
         } else if (token == "fogmode") {
             Scene::RenderSettings v;   // defaults for anything the record leaves out
             int ms = 0; in >> v.fogMode >> v.fogDensity >> v.fogHeight >> v.fogFalloff >> ms;
@@ -4368,6 +4483,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             int nIkAim = 0, nIkLook = 0, nIkLimb = 0, nIkChain = 0;
             while (in >> field) {
                 if (field == "end") { sawEnd = true; break; }
+                bool fieldDone = true;   // the chain is split in chunks: MSVC allows ~128 nested blocks (C1061)
                 if (field == "active") { int a = 1; in >> a; go->active = (a != 0); }
                 else if (field == "tag") { go->tag = ReadQuoted(in); }
                 else if (field == "static") { int s = 0; in >> s; go->isStatic = (s != 0); }
@@ -4953,7 +5069,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                     long na = 0; in >> na;
                     for (long k = 0; k < na && in; ++k) { int m = 0; in >> m; if (k < (long)sm2->anyState.size()) sm2->anyState[k].syncPhase = m != 0; }
-                } else if (field == "animsmstance") {
+                } else { fieldDone = false; }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "animsmstance") {
                     StanceTimes& t = smFor()->stanceTimes;
                     in >> t.standCrouch >> t.crouchProne >> t.proneStand;
                 } else if (field == "animsmxfade") {
@@ -5166,6 +5284,23 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                                >> mr->gradientBottom.r >> mr->gradientBottom.g >> mr->gradientBottom.b;
                         }
                     }
+                } else if (field == "customshader") {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
+                        in >> std::ws;
+                        std::string p = in.peek() == '"' ? ReadQuoted(in) : std::string();
+                        // A path written next to the scene ("lava.okayshader") is found in the scene's folder.
+                        if (!p.empty()) {
+                            const std::filesystem::path pp(p);
+                            std::error_code ec;
+                            if (!pp.is_absolute() && !g_loadingSceneDir.empty() && !std::filesystem::exists(pp, ec)) {
+                                const std::filesystem::path alt = std::filesystem::path(g_loadingSceneDir) / pp;
+                                if (std::filesystem::exists(alt, ec)) p = alt.string();
+                            }
+                        }
+                        mr->customShader = p;
+                        in >> std::ws;
+                        if (in.peek() == '"') mr->shaderParams = ReadQuoted(in);
+                    }
                 } else if (field == "rim") {
                     if (auto* mr = LastOf(go->GetComponents<MeshRenderer>()))
                         in >> mr->rimStrength >> mr->rimPower
@@ -5217,6 +5352,16 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "meshshadows") {
                     int cs = 1, rs = 1; in >> cs >> rs;
                     if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) { mr->castShadows = (cs != 0); mr->receiveShadows = (rs != 0); }
+                } else if (field == "meshglow") {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) in >> mr->glowLightRange;
+                } else if (field == "lightx") {
+                    if (auto* li = LastOf(go->GetComponents<Light>())) {
+                        int unit = 0;
+                        in >> li->shadowSoftness >> li->areaWidth >> li->areaHeight >> li->cookieScale >> unit;
+                        li->unit = unit == 1 ? Light::Unit::RealWorld : Light::Unit::Simple;
+                        in >> std::ws;
+                        if (in.peek() == '"') li->cookie = ReadQuoted(in);
+                    }
                 } else if (field == "groundshadow") {
                     if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         int gs = 1; in >> gs >> mr->groundShadowY >> mr->groundShadowStrength;
@@ -5267,15 +5412,30 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
                     auto clampMode = [](int m) { return (CombineMode)(m < 0 || m > 4 ? 0 : m); };
                     if (field == "physmat2d") {
-                        auto all = go->GetComponents<Collider2D>();
+                        auto all = LegacyColliders2D(*go);
                         for (int i = 0; i < (int)all.size(); ++i)
                             if (index < 0 || i == index) { all[(std::size_t)i]->friction = fr; all[(std::size_t)i]->bounciness = bn; all[(std::size_t)i]->frictionCombine = clampMode(fm); all[(std::size_t)i]->bounceCombine = clampMode(bm); }
                     } else {
-                        auto all = go->GetComponents<Collider3D>();
+                        auto all = LegacyColliders3D(*go);
                         for (int i = 0; i < (int)all.size(); ++i)
                             if (index < 0 || i == index) { all[(std::size_t)i]->friction = fr; all[(std::size_t)i]->bounciness = bn; all[(std::size_t)i]->frictionCombine = clampMode(fm); all[(std::size_t)i]->bounceCombine = clampMode(bm); }
                     }
-                } else if (field == "trigfilter2d" || field == "trigfilter3d") {
+                } else if (field == "colskin2d") {
+                    float off = 0.0f; int index = -1;
+                    in >> off;
+                    in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
+                    auto all = LegacyColliders2D(*go);
+                    if (index >= 0 && index < (int)all.size() && std::isfinite(off) && off >= 0.0f) all[(std::size_t)index]->contactOffset = off;
+                } else if (field == "colskin3d") {
+                    float off = 0.0f; int index = -1;
+                    in >> off;
+                    in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
+                    auto all = LegacyColliders3D(*go);
+                    if (index >= 0 && index < (int)all.size() && std::isfinite(off) && off >= 0.0f) all[(std::size_t)index]->contactOffset = off;
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "trigfilter2d" || field == "trigfilter3d") {
                     std::string tag = ReadQuoted(in);
                     std::uint32_t layers = 0xFFFFFFFFu;
                     in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> layers;
@@ -5283,11 +5443,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int index = -1;   // no index: the one record applies to every collider, as older files did
                     if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
                     if (field == "trigfilter2d") {
-                        auto all = go->GetComponents<Collider2D>();
+                        auto all = LegacyColliders2D(*go);
                         if (index < 0) { for (Collider2D* c : all) { c->triggerTag = tag; c->triggerLayers = layers; } }
                         else if (index < (int)all.size()) { all[(std::size_t)index]->triggerTag = tag; all[(std::size_t)index]->triggerLayers = layers; }
                     } else {
-                        auto all = go->GetComponents<Collider3D>();
+                        auto all = LegacyColliders3D(*go);
                         if (index < 0) { for (Collider3D* c : all) { c->triggerTag = tag; c->triggerLayers = layers; } }
                         else if (index < (int)all.size()) { all[(std::size_t)index]->triggerTag = tag; all[(std::size_t)index]->triggerLayers = layers; }
                     }
@@ -5795,6 +5955,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         in >> std::ws; if (std::isdigit(in.peek())) { int sc = 1; in >> sc; cm->showCursor = (sc != 0); }
                         in >> std::ws; if (std::isdigit(in.peek())) { int pf = 1; in >> pf; cm->usePathfinding = (pf != 0); }
                         if (LooksNumeric(in)) in >> cm->repathInterval;
+                        // click on colliders, give up when stuck (added later; older scenes keep the defaults)
+                        in >> std::ws; if (std::isdigit(in.peek())) { int pc = 1; in >> pc; cm->pickColliders = (pc != 0); }
+                        in >> std::ws; if (std::isdigit(in.peek())) { int gu = 1; in >> gu; cm->giveUpWhenStuck = (gu != 0); }
+                        if (LooksNumeric(in)) in >> cm->stuckTime;
                     }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
@@ -5813,7 +5977,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                            >> cc->airControl >> da >> fik;
                         cc->sprintKey = (char)sk; cc->driveAnimation = (da != 0); cc->footIK = (fik != 0);
                     }
-                } else if (field == "vehicle") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "vehicle") {
                     auto* v = go->AddComponent<VehicleController>();
                     in >> v->acceleration >> v->maxSpeed >> v->reverseSpeed >> v->brakeForce
                        >> v->drag >> v->turnSpeed >> v->grip >> v->handbrakeGrip
@@ -5821,6 +5988,17 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int fc = 0; in >> fc; v->followCamera = (fc != 0);
                     in >> v->camDistance >> v->camHeight >> v->camLerp;
                     int hk = 32; in >> hk; v->handbrakeKey = (char)hk;
+                } else if (field == "vehicletune") {
+                    auto* v = LastOf(go->GetComponents<VehicleController>());
+                    std::string rest; std::getline(in, rest);
+                    if (v) v->FromLine(rest);
+                    if (v) {   // wheel spacing travels in the same line
+                        std::istringstream ts(rest); std::string tok;
+                        while (ts >> tok) {
+                            if (tok.rfind("wheelBase=", 0) == 0) v->wheelBase = (float)std::atof(tok.c_str() + 10);
+                            else if (tok.rfind("trackWidth=", 0) == 0) v->trackWidth = (float)std::atof(tok.c_str() + 11);
+                        }
+                    }
                 } else if (field == "vehiclesusp") {
                     auto* v = LastOf(go->GetComponents<VehicleController>());
                     int on = 0; in >> on;
@@ -6263,6 +6441,22 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     if (std::isdigit(in.peek())) {
                         int pha = 0; in >> pha; c->playHitAnim = (pha != 0);
                     }
+                    in >> std::ws;   // optional: "Nothing" on death, then one resistance per damage kind
+                    if (std::isdigit(in.peek())) {
+                        // Read only the rest of this record's line, so a wrong or hostile count can neither
+                        // loop for long nor eat the next record. At most 64 kinds; stop at the first bad value.
+                        std::string rest; std::getline(in, rest);
+                        std::istringstream ls(rest);
+                        int ka = 0, n = 0;
+                        if (ls >> ka) c->keepActiveOnDeath = (ka != 0);
+                        if ((ls >> n) && n > 0 && n <= 64) {
+                            for (int i = 0; i < n; ++i) {
+                                float r = 0.0f;
+                                if (!(ls >> r)) break;
+                                if (i < kDamageTypeCount && std::isfinite(r)) c->typeResistance[i] = Mathf::Clamp(r, -1.0f, 1.0f);
+                            }
+                        }
+                    }
                 } else if (field == "seat") {
                     auto* c = go->AddComponent<Seat>();
                     in >> c->seatHeight >> c->sitPoint.x >> c->sitPoint.y >> c->sitPoint.z
@@ -6382,7 +6576,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         r.item = ItemId(ReadQuoted(in)); r.action = ReadQuoted(in); in >> r.amount;
                         c->recipes.push_back(r);
                     }
-                } else if (field == "npc") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "npc") {
                     auto* c = go->AddComponent<NPCController>();
                     int fm = 1;
                     in >> c->behavior >> c->moveSpeed >> c->sightRange >> c->wanderRadius
@@ -6637,6 +6834,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     KvIn k(in);
                     k.i("variant", sv->variant);
                     k.str("vtheme", sv->themeName);
+                    k.str("vstyle", sv->style); k.str("vsize", sv->styleSize); k.str("vdens", sv->styleDensity);
                 } else if (field == "uidamage") {
                     auto* dn = go->AddComponent<UIDamageNumbers>();
                     KvIn k(in);
@@ -6983,7 +7181,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> jp->force >> uo >> jp->forwardBoost >> jp->cooldown;
                     jp->useObjectUp = (uo != 0);
                     jp->triggerTag = ReadQuoted(in);
-                } else if (field == "triggerzone") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "triggerzone") {
                     auto* tz = go->AddComponent<TriggerZone>();
                     int once = 1; in >> tz->action;
                     tz->varName = ReadQuoted(in);
@@ -7136,11 +7337,62 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int am = 1;
                     in >> dc->position >> dc->speed >> am;
                     dc->autoMove = (am != 0);
+                    // metres per second, ping-pong, face along the path (added later; older scenes keep the defaults)
+                    in >> std::ws; if (std::isdigit(in.peek())) { int v = 0; in >> v; dc->speedInMetres = (v != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int v = 0; in >> v; dc->pingPong = (v != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int v = 0; in >> v; dc->orientToPath = (v != 0); }
                 } else if (field == "cmbrain") {
                     auto* cb = go->AddComponent<CinemachineBrain>();
                     in >> cb->blendTime;
                     in >> std::ws;
-                    if (std::isdigit(in.peek())) { int e = 1; in >> e; cb->easeInOut = (e != 0); }
+                    if (std::isdigit(in.peek())) { int e = 1; in >> e; cb->blendStyle = e != 0 ? cam::BlendStyle::EaseInOut : cam::BlendStyle::Linear; }
+                } else if (field == "cmbrainx") {
+                    KvIn k(in);
+                    if (auto* cb = LastOf(go->GetComponents<CinemachineBrain>())) {
+                        int st = (int)cb->blendStyle; k.i("style", st);
+                        cb->blendStyle = (cam::BlendStyle)std::clamp(st, 0, (int)cam::BlendStyle::Custom);
+                        k.f("c0", cb->customCurve[0]); k.f("c1", cb->customCurve[1]); k.f("c2", cb->customCurve[2]); k.f("c3", cb->customCurve[3]);
+                        k.b("cutscene", cb->yieldToCutscene);
+                    }
+                } else if (field == "camzone") {
+                    KvIn k(in);
+                    auto* cz = go->AddComponent<CameraZone>();
+                    int sh = (int)cz->shape; k.i("shape", sh); cz->shape = (VolumeShape)std::clamp(sh, 0, kVolumeShapeCount - 1);
+                    k.f("sx", cz->size.x); k.f("sy", cz->size.y); k.f("sz", cz->size.z);
+                    k.f("ox", cz->offset.x); k.f("oy", cz->offset.y); k.f("oz", cz->offset.z);
+                    k.f("blend", cz->blend); k.i("prio", cz->priority); k.f("fov", cz->fieldOfView);
+                    k.f("fx", cz->followOffset.x); k.f("fy", cz->followOffset.y); k.f("fz", cz->followOffset.z);
+                    k.f("damp", cz->positionDamping); k.str("shot", cz->shot);
+                } else if (field == "camroom") {
+                    KvIn k(in);
+                    auto* rm = go->AddComponent<CameraRoom>();
+                    k.f("w", rm->size.x); k.f("h", rm->size.y);
+                } else if (field == "camerax") {
+                    KvIn k(in);
+                    if (auto* cam = LastOf(go->GetComponents<Camera>())) k.f("hitPulse", cam->hitPulseVignette);
+                } else if (field == "vcamx") {
+                    KvIn k(in);
+                    if (auto* vc = LastOf(go->GetComponents<VirtualCamera>())) {
+                        int dm = (int)vc->dampingMode; k.i("damp", dm);
+                        vc->dampingMode = dm == 1 ? VirtualCamera::DampingMode::Spring : VirtualCamera::DampingMode::Smooth;
+                        k.f("gpad", vc->groupPadding); k.b("gfit", vc->groupFrame);
+                        k.f("look", vc->lookaheadTime); k.f("lookMax", vc->lookaheadMax); k.f("lookSm", vc->lookaheadSmooth);
+                        k.b("zones", vc->useZones); k.f("dzw", vc->deadZoneW); k.f("dzh", vc->deadZoneH);
+                        k.f("szw", vc->softZoneW); k.f("szh", vc->softZoneH); k.f("zdamp", vc->zoneDamping);
+                        k.b("o2d", vc->ortho2D); k.f("osize", vc->orthoSize); k.b("cview", vc->confineToView);
+                        k.b("rooms", vc->useRooms); k.f("roomT", vc->roomBlendTime);
+                        k.b("col", vc->collision); k.f("colR", vc->collisionRadius); k.f("colSkin", vc->collisionSkin);
+                        k.f("colRec", vc->collisionRecover); k.f("colIn", vc->collisionPullIn); k.b("colSnap", vc->collisionSnapIn);
+                        k.u("colMask", vc->collisionMask);
+                        k.b("fade", vc->fadeOccluders); k.f("fadeA", vc->occlusionAlpha); k.f("fadeSpd", vc->occlusionFadeSpeed);
+                        k.f("blendIn", vc->blendIn); k.i("blendInStyle", vc->blendInStyle); k.b("aimFollow", vc->aimAtFollow);
+                        int ng = 0; k.i("ng", ng);
+                        vc->groupTargets.clear();
+                        for (int gi = 0; gi < std::min(ng, 256); ++gi) {
+                            std::string n; k.str(("g" + std::to_string(gi)).c_str(), n);
+                            if (!n.empty()) vc->groupTargets.push_back(n);
+                        }
+                    }
                 } else if (field == "text") {
                     std::string str = ReadQuoted(in);
                     Color c; float px = 0.1f; int ss = 0; Vec2 sp;
@@ -7520,7 +7772,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             in >> std::ws;
                             if (std::isdigit(in.peek())) { in >> tf >> bf >> vd->bareHandsPower; vd->tools = ReadQuoted(in); vd->toolsFromInventory = tf != 0; vd->buildFromItems = bf != 0;
                                 in >> std::ws; if (std::isdigit(in.peek())) { in >> vd->caveInSpan; vd->caveInSpan = std::max(0, std::min(64, vd->caveInSpan));
-                                    in >> std::ws; if (std::isdigit(in.peek())) { int pk = 0; in >> pk >> vd->pourCells; vd->pourKey = (char)pk; vd->pourCells = std::max(1, std::min(2000, vd->pourCells)); } } }
+                                    in >> std::ws; if (std::isdigit(in.peek())) { int pk = 0; in >> pk >> vd->pourCells; vd->pourKey = (char)pk; vd->pourCells = std::max(1, std::min(2000, vd->pourCells));
+                                        in >> std::ws; if (std::isdigit(in.peek())) { int fl = 0; in >> vd->reach >> fl; vd->reach = std::max(0.5f, std::min(1000.0f, vd->reach));
+                                            vd->playerAim = (fl & 1) != 0; vd->useActions = (fl & 2) != 0; vd->hotbarKeys = (fl & 4) != 0; vd->showProgress = (fl & 8) != 0; } } } }
                         }
                         vd->collect = (VoxelDigger::Collect)std::max(0, std::min(3, col));
                         vd->needsMaterial = nm != 0; vd->creative = cr != 0; vd->snapToGrid = sn != 0;
@@ -7597,7 +7851,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     as->saveOnStart = sos != 0;
                     as->slot = ReadQuoted(in);
                     as->label = ReadQuoted(in);
-                } else if (field == "flashlight") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "flashlight") {
                     auto* fl = go->AddComponent<Flashlight>();
                     int tk = 'f', onv = 1;
                     in >> tk >> onv >> fl->range >> fl->angle >> fl->intensity
@@ -8156,7 +8413,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         int rich = 0; in >> rich >> tt->offset.x >> tt->offset.y;
                         tt->richText = (rich != 0);
                     }
-                } else if (field == "uilayout") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "uilayout") {
                     auto* lg = go->AddComponent<UILayoutGroup>();
                     std::string rest; std::getline(in, rest);   // whole line: newer files carry extra fields
                     std::istringstream rs(rest);
@@ -8528,6 +8788,12 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         in >> c.r >> c.g >> c.b >> c.a;
                         cp->swatches.push_back(c);
                     }
+                    {   // slice 3 fields; an older file ends after the swatches. Read into temporaries so a short line leaves the defaults.
+                        int adv = 0, custom = 0; float hh = 0, ss = 0, vv = 0, aa = 1, sq = 140;
+                        if (in >> adv >> hh >> ss >> vv >> aa >> custom >> sq) {
+                            cp->advanced = adv != 0; cp->useCustom = custom != 0; cp->hue = hh; cp->sat = ss; cp->val = vv; cp->alpha = aa; cp->squareSize = sq;
+                        } else in.clear();
+                    }
                 } else if (field == "uisafearea") {
                     auto* sa = go->AddComponent<UISafeArea>();
                     int l = 1, t = 1, r = 1, b = 1, en = 1;
@@ -8724,6 +8990,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             }
                         }
                     }
+                } else if (field == "particlesterrain") {
+                    auto* ps = LastOf(go->GetComponents<ParticleSystem>());   // the one the `particles` record above made
+                    if (!ps) ps = go->AddComponent<ParticleSystem>();
+                    int on = 0; in >> on;
+                    ps->collideTerrain = (on != 0);
                 } else if (field == "particleswind") {
                     auto* ps = LastOf(go->GetComponents<ParticleSystem>());   // the one the `particles` record above made
                     if (!ps) ps = go->AddComponent<ParticleSystem>();
@@ -8816,6 +9087,15 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.str("prompt", dr->promptText); k.str("pobj", dr->promptObject); k.b("pause", dr->pausePlayer);
                     k.f("type", dr->typewriterSpeed); k.f("auto", dr->autoAdvance); k.b("ui", dr->drawUI); k.b("cancel", dr->canCancel);
                     k.i("start", dr->startNode); k.str("player", dr->playerName);
+                    int shots = 0;
+                    k.i("shots", shots);   // missing in records written before dialogue camera shots: none
+                    for (int i = 0; i < shots && i < 100000; ++i) {
+                        const std::string p = "sh" + std::to_string(i);
+                        DialogueRunner::CameraShotEntry e;
+                        k.i((p + "n").c_str(), e.node); k.str((p + "c").c_str(), e.camera);
+                        if (!e.camera.empty()) dr->cameraShots.push_back(e);
+                    }
+                    k.f("shb", dr->shotBlend);
                 } else if (field == "questlog") {
                     auto* ql = go->AddComponent<QuestLog>();
                     KvIn k(in);
@@ -8837,7 +9117,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         }
                         ql->records.push_back(r);
                     }
-                } else if (field == "questlogdef") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "questlogdef") {
                     // One inline quest of the Quest Log read just before it.
                     KvIn k(in);
                     auto* ql = LastOf(go->GetComponents<QuestLog>());
@@ -8984,7 +9267,13 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "override") {
                     GameObject::PrefabOverride ov; in >> ov.object; ov.line = ReadQuoted(in);
                     if (in && ov.object >= 0 && !ov.line.empty()) go->prefabOverrides.push_back(ov);
-                } else if (auto reg = ComponentSerializerRegistry::Find(field)) {
+                } else if (auto reg = ComponentSerializerRegistry::Find(field); reg && reg->readWithNotes) {
+                    // A component that registered itself and reports what it skipped (the generic record).
+                    std::istringstream ls(ReadRecordLine(in));
+                    std::vector<std::string> notes;
+                    reg->readWithNotes(*go, ls, notes);
+                    for (const auto& n : notes) warn(n + " on object " + std::to_string(idx));
+                } else if (reg) {
                     // A component that registered itself (no branch in this chain).
                     std::string rest; std::getline(in, rest);
                     std::istringstream ls(rest);
@@ -9000,6 +9289,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     const std::string rest = ReadRecordLine(in);
                     if (go->unknownRecords.size() < kMaxUnknownRecords && field.size() + rest.size() <= kMaxUnknownRecordSize)
                         go->unknownRecords.push_back(field + rest);
+                }
                 }
             }
             // A read that ran off the end (or choked) leaves the stream failed, so
@@ -9508,9 +9798,83 @@ bool SceneSerializer::MergeFromFile(Scene& scene, const std::string& path, const
 }
 
 
+// ---- The generic path: a component saved from its PropertyRegistry entry ------------------------------------
+// ComponentSerializerRegistry::RegisterFromProperties (ComponentSerializer.cpp) builds a record from these two. The
+// format is the key=value form the newer records already use (see KvOut): `  <record> key=value key="text" ...`.
+// Written from docs/engine/properties.md (the value text forms) and the scene format notes in
+// docs/engine/scene_serializer.md; no code from elsewhere.
+namespace {
+// Saved: what a person sets (not read-only, runtime-only, derived or structural). `enabled` is kept by the
+// `compoff` record for every component, and an object reference is left out: the object it names may load later.
+bool GenericSaved(const PropertyDesc& d) {
+    if (d.IsReadOnly() || d.IsRuntimeOnly() || d.IsDerived() || (d.flags & PropertyFlag::Structural) != 0) return false;
+    if (d.name == "enabled" || d.type == PropertyType::ObjectRef) return false;
+    return d.name.find_first_of("=\"") == std::string::npos;   // the key must be one token
+}
+// Read: the saved ones, plus `enabled` when a hand-written record carries it.
+bool GenericRead(const PropertyDesc& d) {
+    return GenericSaved(d) || (d.name == "enabled" && !d.IsReadOnly());
+}
+} // namespace
+
+void ComponentSerializerRegistry::WritePropertyFields(const Component& c, const ComponentTypeInfo& info, std::ostream& out) {
+    for (const PropertyDesc& d : info.properties) {
+        if (!GenericSaved(d)) continue;
+        const PropertyValue v = d.Get(c);
+        if (!v.IsValid()) continue;
+        out << ' ' << d.name << '=';
+        // Numbers and switches as they are; everything that may hold a space (text, vectors, "1 Point") quoted.
+        if (v.Type() == PropertyType::Bool || v.Type() == PropertyType::Int || v.Type() == PropertyType::Float) out << v.ToString();
+        else out << Quote(v.ToString());
+    }
+}
+
+int ComponentSerializerRegistry::ReadPropertyFields(Component& c, const ComponentTypeInfo& info, std::istream& in,
+                                                     std::vector<std::string>* notes) {
+    auto note = [&](const std::string& n) { if (notes) notes->push_back(n); };
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::istringstream ls(text);
+    // key -> value text, by property; a key given twice keeps the last one
+    std::unordered_map<const PropertyDesc*, std::string> given;
+    while (true) {
+        ls >> std::ws;
+        if (!ls || ls.peek() == EOF) break;
+        std::string key;
+        char ch = 0;
+        while (ls.get(ch) && ch != '=' && !std::isspace((unsigned char)ch)) key += ch;
+        if (ch != '=') {
+            if (!key.empty()) note("skipped '" + key + "' (no '=')");
+            continue;
+        }
+        std::string value;
+        if (ls.peek() == '"') value = ReadQuoted(ls);
+        else ls >> value;
+        const PropertyDesc* d = info.Find(key);
+        if (!d || !GenericRead(*d)) { note("skipped unknown field '" + key + "'"); continue; }
+        given[d] = value;
+    }
+    // Apply in the entry's order, whatever order the file had, so a setter that looks at another field sees the
+    // same thing every time.
+    int set = 0;
+    for (const PropertyDesc& d : info.properties) {
+        auto it = given.find(&d);
+        if (it == given.end()) continue;
+        PropertyValue v;
+        if (!d.ParseText(it->second, v) || !d.Set(c, v)) {
+            note("kept the default of '" + d.name + "': could not use '" + it->second + "'");
+            continue;
+        }
+        ++set;
+    }
+    return set;
+}
+
 // ---- Components that use the registry ------------------------------------
 namespace detail {
 void RegisterBuiltinComponentSerializers() {
+    RegisterPhysicsToySerializers();
+    RegisterColliderShape2DSerializers(); // Composite 2D collider
+    RegisterColliderShapeSerializers();   // Cone, Convex Hull, Plane, Compound, Heightfield colliders
     ComponentSerializerRegistry::Entry trail;
     trail.name = "trailrenderer";
     trail.write = [](const GameObject& go, std::ostream& out) {
@@ -9538,6 +9902,136 @@ void RegisterBuiltinComponentSerializers() {
         ReadGradientKv(k, "g", tr->colorGradient);
     };
     ComponentSerializerRegistry::Register(std::move(trail));
+
+    // Water waves beyond the old sines (style, direction, steepness, count, seed, current), kept as their own record
+    // so older scene files and older readers are untouched.
+    ComponentSerializerRegistry::Entry waterwaves;
+    waterwaves.name = "waterwaves";
+    waterwaves.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* w : go.GetComponents<Water>()) {
+            const Water d;   // a fresh one: write the record only when something differs from it
+            if (w->style == d.style && w->waveDirection == d.waveDirection && w->waveSteepness == d.waveSteepness &&
+                w->waveCount == d.waveCount && w->waveSeed == d.waveSeed && w->current.x == d.current.x && w->current.y == d.current.y) continue;
+            out << "  waterwaves";
+            KvOut k{out};
+            k("style", (int)w->style)("dir", w->waveDirection)("steep", w->waveSteepness)("count", w->waveCount)
+             ("seed", w->waveSeed)("curx", w->current.x)("cury", w->current.y);
+            out << "\n";
+        }
+    };
+    waterwaves.read = [](GameObject& go, std::istream& in) {
+        auto ws = go.GetComponents<Water>();
+        Water* w = ws.empty() ? nullptr : ws.back();
+        KvIn k(in);
+        if (!w) return;
+        int style = 0;
+        k.i("style", style); k.f("dir", w->waveDirection); k.f("steep", w->waveSteepness); k.i("count", w->waveCount);
+        k.i("seed", w->waveSeed); k.f("curx", w->current.x); k.f("cury", w->current.y);
+        w->style = style == 1 ? Water::WaveStyle::Ocean : style == 2 ? Water::WaveStyle::Calm : Water::WaveStyle::Classic;
+        if (!std::isfinite(w->waveDirection)) w->waveDirection = 0.0f;
+        if (!std::isfinite(w->waveSteepness)) w->waveSteepness = 0.5f;
+        w->waveSteepness = std::min(1.0f, std::max(0.0f, w->waveSteepness));
+        w->waveCount = std::min(8, std::max(1, w->waveCount));
+        if (!std::isfinite(w->current.x) || !std::isfinite(w->current.y)) w->current = Vec2{0.0f, 0.0f};
+    };
+    ComponentSerializerRegistry::Register(std::move(waterwaves));
+
+    // How the water looks (sea state, depth colours, foam, ripples, rings, splashes, underwater). A scene without this record
+    // loads with every look setting off, so old scenes look as they did. docs/rendering/terrain_water.md.
+    ComponentSerializerRegistry::Entry watervis;
+    watervis.name = "watervis";
+    watervis.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* w : go.GetComponents<Water>()) {
+            const Water def;
+            auto sameCol = [](const Color& x, const Color& y) { return x.r == y.r && x.g == y.g && x.b == y.b && x.a == y.a; };
+            if (!w->realisticLook && !w->lod && !w->interactive && !w->underwaterEffect && !w->bubbles && w->seaState == 0 &&
+                w->clarity == def.clarity && w->assumedDepth == def.assumedDepth && w->foamAmount == def.foamAmount &&
+                w->shoreFoamWidth == def.shoreFoamWidth && w->scatter == def.scatter && w->ripples == def.ripples &&
+                w->rippleSize == def.rippleSize && w->lodRings == def.lodRings && w->infinite == def.infinite &&
+                sameCol(w->shallowColor, def.shallowColor) && sameCol(w->deepColor, def.deepColor) && sameCol(w->foamColor, def.foamColor)) continue;
+            out << "  watervis";
+            KvOut k{out};
+            k("sea", w->seaState).b("rich", w->realisticLook).col("sh", w->shallowColor).col("dp", w->deepColor)
+             ("clar", w->clarity)("adep", w->assumedDepth).col("fm", w->foamColor)
+             ("foam", w->foamAmount)("shore", w->shoreFoamWidth)
+             ("scat", w->scatter)("rip", w->ripples)("ripsz", w->rippleSize).b("lod", w->lod)("rings", w->lodRings)
+             .b("inf", w->infinite).b("inter", w->interactive).b("under", w->underwaterEffect).b("bub", w->bubbles);
+            out << "\n";
+        }
+    };
+    watervis.read = [](GameObject& go, std::istream& in) {
+        auto ws = go.GetComponents<Water>();
+        Water* w = ws.empty() ? nullptr : ws.back();
+        KvIn k(in);
+        if (!w) return;
+        auto fin = [](float& v, float lo, float hi, float fallback) { if (!std::isfinite(v)) v = fallback; v = std::min(hi, std::max(lo, v)); };
+        k.i("sea", w->seaState); k.b("rich", w->realisticLook);
+        k.col("sh", w->shallowColor); k.col("dp", w->deepColor); k.col("fm", w->foamColor);
+        k.f("clar", w->clarity); k.f("adep", w->assumedDepth); k.f("foam", w->foamAmount); k.f("shore", w->shoreFoamWidth);
+        k.f("scat", w->scatter); k.f("rip", w->ripples); k.f("ripsz", w->rippleSize);
+        k.b("lod", w->lod); k.i("rings", w->lodRings); k.b("inf", w->infinite); k.b("inter", w->interactive);
+        k.b("under", w->underwaterEffect); k.b("bub", w->bubbles);
+        w->seaState = std::min(4, std::max(0, w->seaState));
+        w->lodRings = std::min(8, std::max(1, w->lodRings));
+        fin(w->clarity, 0.05f, 200.0f, 6.0f); fin(w->assumedDepth, 0.0f, 10000.0f, 12.0f); fin(w->foamAmount, 0.0f, 1.0f, 0.5f);
+        fin(w->shoreFoamWidth, 0.0f, 50.0f, 1.2f); fin(w->scatter, 0.0f, 1.0f, 0.4f); fin(w->ripples, 0.0f, 1.0f, 0.0f);
+        fin(w->rippleSize, 0.05f, 20.0f, 1.0f);
+        for (float* c : {&w->shallowColor.r, &w->shallowColor.g, &w->shallowColor.b, &w->shallowColor.a, &w->deepColor.r, &w->deepColor.g,
+                         &w->deepColor.b, &w->deepColor.a, &w->foamColor.r, &w->foamColor.g, &w->foamColor.b, &w->foamColor.a}) fin(*c, 0.0f, 1000.0f, 0.5f);
+        if (w->realisticLook || w->lod) w->Apply();     // the look decides the material colour, normal map and mesh
+    };
+    ComponentSerializerRegistry::Register(std::move(watervis));
+
+    ComponentSerializerRegistry::Entry buoy;
+    buoy.name = "buoyancy";
+    buoy.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* b : go.GetComponents<Buoyancy>()) {
+            if (b->autoAdded) continue;   // made by a Water at Play for a plain prop
+            out << "  buoyancy";
+            KvOut k{out};
+            k("gridX", b->gridX)("gridZ", b->gridZ)("volume", b->volume)("fullness", b->fullness)("hullH", b->hullHeight)
+             ("density", b->density)("dfw", b->dragForward)("dfw2", b->dragForward2)("dsd", b->dragSide)("dsd2", b->dragSide2)
+             ("dup", b->dragUp)("dup2", b->dragUp2)("angd", b->angularDamping)("maxpush", b->maxPushAcceleration)
+             .b("tilt", b->letTilt).b("splash", b->splashEffect)("splashmin", b->splashMinSpeed)
+             .str("points", b->PointsText());
+            out << "\n";
+        }
+    };
+    buoy.read = [](GameObject& go, std::istream& in) {
+        auto* b = go.AddComponent<Buoyancy>();
+        KvIn k(in);
+        k.i("gridX", b->gridX); k.i("gridZ", b->gridZ); k.f("volume", b->volume); k.f("fullness", b->fullness);
+        k.f("hullH", b->hullHeight); k.f("density", b->density);
+        k.f("dfw", b->dragForward); k.f("dfw2", b->dragForward2); k.f("dsd", b->dragSide); k.f("dsd2", b->dragSide2);
+        k.f("dup", b->dragUp); k.f("dup2", b->dragUp2); k.f("angd", b->angularDamping); k.f("maxpush", b->maxPushAcceleration);
+        k.b("tilt", b->letTilt); k.b("splash", b->splashEffect); k.f("splashmin", b->splashMinSpeed);
+        std::string pts; k.str("points", pts); b->SetPointsText(pts);
+        b->gridX = std::min(16, std::max(1, b->gridX)); b->gridZ = std::min(16, std::max(1, b->gridZ));
+    };
+    ComponentSerializerRegistry::Register(std::move(buoy));
+
+    ComponentSerializerRegistry::Entry boat;
+    boat.name = "boat";
+    boat.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* b : go.GetComponents<BoatController>()) {
+            out << "  boat";
+            KvOut k{out};
+            k.b("player", b->isPlayer)("maxSpeed", b->maxSpeed)("revSpeed", b->reverseSpeed)("power", b->enginePower)
+             ("brake", b->brakePower)("turn", b->turnRate)("steerResp", b->steerResponse)
+             .b("wake", b->wake).b("bow", b->bowSplash).b("sound", b->engineSound).b("cam", b->followCamera)
+             ("camDist", b->camDistance)("camH", b->camHeight)("camLerp", b->camLerp);
+            out << "\n";
+        }
+    };
+    boat.read = [](GameObject& go, std::istream& in) {
+        auto* b = go.AddComponent<BoatController>();
+        KvIn k(in);
+        k.b("player", b->isPlayer); k.f("maxSpeed", b->maxSpeed); k.f("revSpeed", b->reverseSpeed); k.f("power", b->enginePower);
+        k.f("brake", b->brakePower); k.f("turn", b->turnRate); k.f("steerResp", b->steerResponse);
+        k.b("wake", b->wake); k.b("bow", b->bowSplash); k.b("sound", b->engineSound); k.b("cam", b->followCamera);
+        k.f("camDist", b->camDistance); k.f("camH", b->camHeight); k.f("camLerp", b->camLerp);
+    };
+    ComponentSerializerRegistry::Register(std::move(boat));
 
     ComponentSerializerRegistry::Entry lod;
     lod.name = "lodgroup";
@@ -9604,6 +10098,26 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(debris));
 
+    ComponentSerializerRegistry::Entry pin;
+    pin.name = "playerinput";
+    pin.write = [](const GameObject& go, std::ostream& out) {
+        for (const LocalPlayerInput* pi : go.GetComponents<LocalPlayerInput>()) {
+            if (!pi) continue;
+            out << "  playerinput";
+            KvOut k{out};
+            k.str("actions", pi->actions)("device", (int)pi->device)("pad", pi->controller).str("scheme", pi->scheme).b("auto", pi->autoSwitch).str("maps", pi->startMaps);
+            out << "\n";
+        }
+    };
+    pin.read = [](GameObject& go, std::istream& in) {
+        auto* pi = go.AddComponent<LocalPlayerInput>();
+        KvIn k(in);
+        int dev = (int)pi->device;
+        k.str("actions", pi->actions); k.i("device", dev); k.i("pad", pi->controller); k.str("scheme", pi->scheme); k.b("auto", pi->autoSwitch); k.str("maps", pi->startMaps);
+        pi->device = dev < 0 || dev > 2 ? LocalPlayerInput::Device::Any : (LocalPlayerInput::Device)dev;
+    };
+    ComponentSerializerRegistry::Register(std::move(pin));
+
     ComponentSerializerRegistry::Entry vol;
     vol.name = "volume";
     vol.write = [](const GameObject& go, std::ostream& out) {
@@ -9643,6 +10157,96 @@ void RegisterBuiltinComponentSerializers() {
         if (v->reverbAmount > 1.0f) v->reverbAmount = 1.0f;
     };
     ComponentSerializerRegistry::Register(std::move(vol));
+
+    // Wind (docs/gameplay/wind.md): the zone and the three things that listen to it.
+    ComponentSerializerRegistry::Entry wz;
+    wz.name = "windzone";
+    wz.write = [](const GameObject& go, std::ostream& out) {
+        for (const WindZone* w : go.GetComponents<WindZone>()) {
+            if (!w) continue;
+            out << "  windzone";
+            KvOut k{out};
+            k("mode", (int)w->mode)("shape", w->shape)
+             ("sx", w->size.x)("sy", w->size.y)("sz", w->size.z)("ox", w->offset.x)("oy", w->offset.y)("oz", w->offset.z)
+             ("edge", w->edge)("falloff", w->falloff)
+             ("dx", w->direction.x)("dy", w->direction.y)("dz", w->direction.z)("str", w->strength)
+             ("gust", w->gustAmount)("gfreq", w->gustFrequency)("gspeed", w->gustSpeed)
+             ("turb", w->turbulence)("tscale", w->turbulenceScale)("seed", w->seed)
+             .str("curve", w->curveKeys)("clen", w->curveLength)("prio", w->priority).b("add", w->additive);
+            out << "\n";
+        }
+    };
+    wz.read = [](GameObject& go, std::istream& in) {
+        auto* w = go.AddComponent<WindZone>();
+        KvIn k(in);
+        int mode = (int)w->mode;
+        k.i("mode", mode); k.i("shape", w->shape);
+        w->mode = (WindZone::Mode)std::clamp(mode, 0, 2);
+        w->shape = std::clamp(w->shape, 0, 2);
+        k.f("sx", w->size.x); k.f("sy", w->size.y); k.f("sz", w->size.z);
+        k.f("ox", w->offset.x); k.f("oy", w->offset.y); k.f("oz", w->offset.z);
+        k.f("edge", w->edge); k.f("falloff", w->falloff);
+        k.f("dx", w->direction.x); k.f("dy", w->direction.y); k.f("dz", w->direction.z); k.f("str", w->strength);
+        k.f("gust", w->gustAmount); k.f("gfreq", w->gustFrequency); k.f("gspeed", w->gustSpeed);
+        k.f("turb", w->turbulence); k.f("tscale", w->turbulenceScale); k.i("seed", w->seed);
+        k.str("curve", w->curveKeys); k.f("clen", w->curveLength); k.i("prio", w->priority); k.b("add", w->additive);
+    };
+    ComponentSerializerRegistry::Register(std::move(wz));
+
+    ComponentSerializerRegistry::Entry wd;
+    wd.name = "winddrag";
+    wd.write = [](const GameObject& go, std::ostream& out) {
+        for (const WindDrag* w : go.GetComponents<WindDrag>()) {
+            if (!w) continue;
+            out << "  winddrag";
+            KvOut{out}("area", w->area)("cd", w->dragCoefficient)("str", w->strength).b("kids", w->includeChildren);
+            out << "\n";
+        }
+    };
+    wd.read = [](GameObject& go, std::istream& in) {
+        auto* w = go.AddComponent<WindDrag>();
+        KvIn k(in);
+        k.f("area", w->area); k.f("cd", w->dragCoefficient); k.f("str", w->strength); k.b("kids", w->includeChildren);
+    };
+    ComponentSerializerRegistry::Register(std::move(wd));
+
+    ComponentSerializerRegistry::Entry wsw;
+    wsw.name = "windsway";
+    wsw.write = [](const GameObject& go, std::ostream& out) {
+        for (const WindSway* w : go.GetComponents<WindSway>()) {
+            if (!w || w->weight == WindSway::Weight::Custom) continue;   // Custom weights belong to a Foliage chunk, which is never saved
+            out << "  windsway";
+            KvOut{out}("weight", (int)w->weight)("amount", w->amount)("height", w->height)("stiff", w->stiffness)
+                ("flutter", w->flutter)("fspeed", w->flutterSpeed)("rate", w->updateRate)("dist", w->maxDistance).b("turn", w->turnToWind);
+            out << "\n";
+        }
+    };
+    wsw.read = [](GameObject& go, std::istream& in) {
+        auto* w = go.AddComponent<WindSway>();
+        KvIn k(in);
+        int wt = (int)w->weight;
+        k.i("weight", wt); w->weight = (WindSway::Weight)std::clamp(wt, 0, 1);
+        k.f("amount", w->amount); k.f("height", w->height); k.f("stiff", w->stiffness);
+        k.f("flutter", w->flutter); k.f("fspeed", w->flutterSpeed); k.f("rate", w->updateRate); k.f("dist", w->maxDistance); k.b("turn", w->turnToWind);
+    };
+    ComponentSerializerRegistry::Register(std::move(wsw));
+
+    ComponentSerializerRegistry::Entry wam;
+    wam.name = "windambience";
+    wam.write = [](const GameObject& go, std::ostream& out) {
+        for (const WindAmbience* w : go.GetComponents<WindAmbience>()) {
+            if (!w) continue;
+            out << "  windambience";
+            KvOut{out}("vol", w->volume)("full", w->fullAt)("quiet", w->quietBelow)("smooth", w->smoothing);
+            out << "\n";
+        }
+    };
+    wam.read = [](GameObject& go, std::istream& in) {
+        auto* w = go.AddComponent<WindAmbience>();
+        KvIn k(in);
+        k.f("vol", w->volume); k.f("full", w->fullAt); k.f("quiet", w->quietBelow); k.f("smooth", w->smoothing);
+    };
+    ComponentSerializerRegistry::Register(std::move(wam));
 
     ComponentSerializerRegistry::Entry occ;
     occ.name = "occluder";
@@ -9717,7 +10321,7 @@ void RegisterBuiltinComponentSerializers() {
         k.str("mesh", f->mesh).str("path", f->meshPath).str("prefab", f->prefabPath).col("t", f->tint)("var", f->variants)
          ("r", f->radius)("dens", f->density)("smin", f->minScale)("smax", f->maxScale)("slope", f->maxSlope)
          ("hmin", f->minHeight)("hmax", f->maxHeight).b("yaw", f->randomYaw)("align", f->alignToSurface)
-         ("gap", f->spacing)("seed", f->seed)("tris", f->maxTriangles)("chunk", f->chunkSize).b("shadow", f->castShadows);
+         ("gap", f->spacing)("seed", f->seed)("tris", f->maxTriangles)("chunk", f->chunkSize).b("shadow", f->castShadows)("wind", f->windSway);
         std::string s;
         char buf[160];
         for (const auto& i : f->instances) {
@@ -9736,7 +10340,7 @@ void RegisterBuiltinComponentSerializers() {
         k.i("var", f->variants); k.f("r", f->radius); k.f("dens", f->density); k.f("smin", f->minScale); k.f("smax", f->maxScale);
         k.f("slope", f->maxSlope); k.f("hmin", f->minHeight); k.f("hmax", f->maxHeight); k.b("yaw", f->randomYaw);
         k.f("align", f->alignToSurface); k.f("gap", f->spacing); k.u("seed", f->seed); k.i("tris", f->maxTriangles);
-        k.f("chunk", f->chunkSize); k.b("shadow", f->castShadows);
+        k.f("chunk", f->chunkSize); k.b("shadow", f->castShadows); k.f("wind", f->windSway);
         std::string s;
         k.str("inst", s);
         const char* c = s.c_str();
@@ -9764,7 +10368,7 @@ void RegisterBuiltinComponentSerializers() {
         out << "  cable";
         KvOut{out}.str("from", c->startObject).str("to", c->endObject)("sx", c->startOffset.x)("sy", c->startOffset.y)
             ("sz", c->startOffset.z)("ex", c->endOffset.x)("ey", c->endOffset.y)("ez", c->endOffset.z)("sag", c->sag)
-            ("seg", c->segments)("w", c->width).col("c", c->color);
+            ("seg", c->segments)("w", c->width).col("c", c->color)("swing", c->windSwing);
         out << "\n";
         }
     };
@@ -9774,7 +10378,7 @@ void RegisterBuiltinComponentSerializers() {
         k.str("from", c->startObject); k.str("to", c->endObject);
         k.f("sx", c->startOffset.x); k.f("sy", c->startOffset.y); k.f("sz", c->startOffset.z);
         k.f("ex", c->endOffset.x); k.f("ey", c->endOffset.y); k.f("ez", c->endOffset.z);
-        k.f("sag", c->sag); k.i("seg", c->segments); k.f("w", c->width); k.col("c", c->color);
+        k.f("sag", c->sag); k.i("seg", c->segments); k.f("w", c->width); k.col("c", c->color); k.f("swing", c->windSwing);
     };
     ComponentSerializerRegistry::Register(std::move(cab));
 
@@ -9931,6 +10535,9 @@ void RegisterBuiltinComponentSerializers() {
         k.col("c", b->color); k.col("p", b->pressedColor); k.col("t", b->textColor);
     };
     ComponentSerializerRegistry::Register(std::move(tbtn));
+    // Last, so every record written before keeps its place. Saved from their PropertyRegistry entries, no code of their own (none of them was saved before).
+    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion"})
+        ComponentSerializerRegistry::RegisterFromProperties(type);
 }
 } // namespace detail
 
@@ -10037,15 +10644,6 @@ std::string SpliceOverrides(const std::string& prefabText, const std::vector<Gam
     return JoinObjects(preamble, objs);
 }
 
-void CollectSubtree(GameObject* go, std::vector<GameObject*>& out) {   // depth first, siblings in order; a stack so a deep hierarchy cannot overflow
-    std::vector<GameObject*> stack{go};
-    while (!stack.empty()) {
-        GameObject* g = stack.back(); stack.pop_back();
-        out.push_back(g);
-        const auto& kids = g->transform->Children();
-        for (std::size_t i = kids.size(); i-- > 0;) stack.push_back(kids[i]->gameObject);
-    }
-}
 } // namespace
 
 bool SceneSerializer::CapturePrefabOverrides(GameObject& instanceRoot, std::string* error) {
@@ -10108,28 +10706,10 @@ GameObject* SceneSerializer::InstantiatePrefab(Scene& scene, const std::string& 
 GameObject* SceneSerializer::ReapplyPrefab(Scene& scene, GameObject& instanceRoot, std::string* error,
                                            std::vector<std::string>* warnings) {
     if (instanceRoot.prefabSource.empty()) { if (error) *error = "object is not a prefab instance"; return nullptr; }
-    if (PrefabTools::FileUsesPrefabStructure(instanceRoot.prefabSource)) return PrefabTools::Reapply(scene, instanceRoot, error, warnings);
-    GameObject* fresh = InstantiatePrefab(scene, instanceRoot.prefabSource, instanceRoot.prefabOverrides, error, warnings);
-    if (!fresh) return nullptr;   // nothing was added, the instance is as it was
-    // The new instance takes the old one's place: same name, parent, sibling slot, and
-    // the same persistent ids object for object (so references by id stay valid).
-    fresh->name = instanceRoot.name;
-    std::vector<GameObject*> oldSub, newSub;
-    CollectSubtree(&instanceRoot, oldSub);
-    CollectSubtree(fresh, newSub);
-    for (std::size_t i = 0; i < oldSub.size() && i < newSub.size(); ++i)
-        if (oldSub[i]->name == newSub[i]->name || i == 0) newSub[i]->SetGuid(oldSub[i]->Guid());
-    Transform* par = instanceRoot.transform->Parent();
-    if (par) {
-        int slot = 0;
-        for (std::size_t i = 0; i < par->Children().size(); ++i) if (par->Children()[i] == instanceRoot.transform) slot = (int)i;
-        fresh->transform->SetParent(par, /*worldPositionStays=*/false);
-        // Slot `slot` of the list that still holds the old instance is the old one's place.
-        Transform* before = (std::size_t)slot < par->Children().size() ? par->Children()[(std::size_t)slot] : nullptr;
-        if (before && before != fresh->transform) par->ReorderChild(fresh->transform, before, /*after=*/false);
-    }
-    scene.Destroy(&instanceRoot);   // like any Destroy: removed at the end of the frame
-    return fresh;
+    // Every prefab file, plain, nested or variant, is rebuilt by PrefabTools::Reapply: it keeps the instance's
+    // name, place and ids, and moves objects added under the instance onto the rebuilt one. (The plain path
+    // used to build a fresh copy here and lost those added objects.)
+    return PrefabTools::Reapply(scene, instanceRoot, error, warnings);
 }
 
 // ---- Validation ---------------------------------------------------------

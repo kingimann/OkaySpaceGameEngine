@@ -1,11 +1,12 @@
 // Our own Q3D reader (engine/src/Render/Q3dReader.cpp): Quick3D objects and scenes. SYNTHETIC fixture built by hand in memory
-// (BuildQ3d in batche2_fixtures.hpp), checked against hand-computed numbers. No real .q3o file is in the repository: the reader
-// is unverified against real files. Builds on its own with -DOKAY_STANDALONE_TEST (reader source only).
+// (BuildQ3d in batche2_fixtures.hpp), checked against hand-computed numbers. The four real files of the
+// model corpus are checked by model_corpus (docs/content/model_corpus.md). Builds on its own with -DOKAY_STANDALONE_TEST (reader source only).
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
 #include "batche2_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <cmath>
+#include <cstring>
 #include <string>
 
 using namespace okay;
@@ -45,6 +46,26 @@ int main() {
     {   // no textures in the header: the texture coordinate fields are not in the file
         ImportedModel m; std::string err;
         CHECK(ReadQ3dBuffer(fx2::BuildQ3d(false, false, false), m, &err) && fx::TriCount(m) == 3 && m.parts[0].mesh.uvs.empty());
+        // the corpus file E-AT-AT.q3o: a texture coordinate count of 230 in a file without textures, and no coordinates after it
+        std::string s = fx2::BuildQ3d(false, false, false);
+        s[22 + 1 + 4 + 5 * 12 + 4 + 2 * 2 + 7 * 4 + 2 * 4 + 4] = (char)230;
+        CHECK(ReadQ3dBuffer(s, m, &err) && fx::TriCount(m) == 3 && m.parts[0].mesh.uvs.empty() && HasNote(m, "no UVs"));
+    }
+    {   // the corpus file WusonOrange.q3s: signature "quick3Do" but a scene chunk at the end, then more bytes
+        std::string s = fx2::BuildQ3d(false, true, true);
+        s[7] = 'o';
+        s += "quick3Ds";
+        ImportedModel m; std::string err;
+        CHECK(ReadQ3dBuffer(s, m, &err) && fx::TriCount(m) == 3 && HasNote(m, "scene chunk"));
+    }
+    {   // transparency 1 (WusonOrange's only material): read as opaque, with a note; 0.25 stays alpha 0.75
+        std::string s = fx2::BuildQ3d();
+        const std::size_t at = s.find(std::string("red\0", 4)) + 4 + 9 * 4;
+        const float one = 1.0f; std::memcpy(&s[at], &one, 4);
+        ImportedModel m; std::string err;
+        CHECK(ReadQ3dBuffer(s, m, &err) && m.materials.size() == 2);
+        CHECK_NEAR(m.materials[0].diffuse.a, 1.0, 1e-6);
+        CHECK(HasNote(m, "read as opaque"));
     }
     {   // refusals with a reason
         ImportedModel m; std::string err;

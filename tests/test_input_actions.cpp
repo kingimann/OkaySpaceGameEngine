@@ -149,21 +149,21 @@ int main() {
 
     // ---- Games add their own actions ----
     {
-        InputActions::Define("Dash", {"key:q", "pad:rs"});
+        InputActions::Define("Blink", {"key:q", "pad:rs"});
         Frame({'q'});
-        CHECK(InputActions::Down("Dash"));
+        CHECK(InputActions::Down("Blink"));
         InputActions::Define("Steer", {"keys:i,k,j,l", "stick:right"}, true);
         Frame({'l'});
         CHECK_NEAR(InputActions::Vector("Steer").x, 1.0f, 1e-4);
         CHECK(InputActions::Has("Steer"));
         // Redefining keeps what the player rebound.
-        CHECK(InputActions::Rebind("Dash", "key:z"));
-        InputActions::Define("Dash", {"key:q", "pad:rs"});
-        CHECK(InputActions::Current("Dash", false)->ToString() == "key:z");
-        InputActions::Reset("Dash");
-        CHECK(InputActions::Current("Dash", false)->ToString() == "key:q");
+        CHECK(InputActions::Rebind("Blink", "key:z"));
+        InputActions::Define("Blink", {"key:q", "pad:rs"});
+        CHECK(InputActions::Current("Blink", false)->ToString() == "key:z");
+        InputActions::Reset("Blink");
+        CHECK(InputActions::Current("Blink", false)->ToString() == "key:q");
         InputActions::Restore();
-        CHECK(!InputActions::Has("Dash"));
+        CHECK(!InputActions::Has("Blink"));
     }
 
     // ---- Gamepad: names, rumble requests ----

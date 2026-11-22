@@ -9,6 +9,11 @@
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/VoxelAim.hpp"
+#include "okay/Components/PlayerController.hpp"
+#include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Audio/AudioLoad.hpp"
 #include <memory>
@@ -49,6 +54,18 @@ public:
     float strength = 8.0f;     ///< density change per second while held
     float range    = 80.0f;    ///< how far the aim ray reaches
     bool  showBrush  = true;
+    // ---- Aim and controls (first AND third person; docs/gameplay/voxel_sandbox_dig.md) ----
+    /// How far from the CHARACTER (not the camera) ground can be dug or built on. Used when the scene has a player.
+    float reach = 12.0f;
+    /// With a player in the scene the aim ray starts where the view line passes the character (third person) and refuses
+    /// hits inside the body or behind a wall. Off: the ray starts at the camera, as the old digger did.
+    bool  playerAim = true;
+    /// Read the named input actions Dig, Place, PickBlock, HotbarNext, HotbarPrev (rebindable) as well as the raw buttons.
+    /// Once an action is rebound its default raw button stops working.
+    bool  useActions = true;
+    /// Number keys 1-9 pick the building material, the mouse wheel and the bumpers step through them (or change the brush size when the terrain has no materials).
+    bool  hotbarKeys = true;
+    bool  showProgress = true;     ///< the marker shrinks and turns white while a dig works through the ground, red when the tool is too weak
     Color brushColor = Color::FromBytes(255, 180, 70, 200);
     /// When you finish a dig (release the button), delete any disconnected solid
     /// "crumbs" smaller than this many voxels — the little floating bits a dig leaves
@@ -56,7 +73,7 @@ public:
     int   removeFloaters = 8;
 
 
-    // ---- Real-life digging (docs/terrain_water.md). All off by default: a digger from an older scene acts as before. ----
+    // ---- Real-life digging (docs/rendering/terrain_water.md). All off by default: a digger from an older scene acts as before. ----
     /// What happens to the ground a brush takes away. Vanish = today's behaviour.
     enum class Collect { Vanish, Store, Debris, Both };
     enum class Preset { Custom, Realistic, Arcade, Creative };
@@ -157,30 +174,75 @@ public:
         return s->FindObjectOfType<Camera>();
     }
 
-    /// March the camera aim ray and return the local-space point where it first
-    /// enters solid voxel (Dig) or the last air point before it (Add). Returns
-    /// false if the ray never finds the surface within `range`.
-    bool AimAtVoxel(VoxelTerrain* vox, Vec3& outLocal) const {
-        if (!vox || !vox->gameObject || !vox->gameObject->transform) return false;
+    /// The character the aim is measured from: the player the camera belongs to (first person: its parent; third person: the
+    /// camera is a child of the player too), otherwise the scene's Player Controller. nullptr when there is none.
+    Transform* FindBody(Camera* cam) const {
+        auto isBody = [](GameObject* g) {
+            return g && (g->GetComponent<PlayerController>() || g->GetComponent<FirstPersonController>() || g->GetComponent<ThirdPersonController>());
+        };
+        if (cam && cam->gameObject && cam->gameObject->transform)
+            for (Transform* t = cam->gameObject->transform; t; t = t->Parent()) if (isBody(t->gameObject)) return t;
+        Scene* sc = GetScene();
+        if (!sc) return nullptr;
+        if (auto* pc = sc->FindObjectOfType<PlayerController>()) return pc->gameObject ? pc->gameObject->transform : nullptr;
+        if (auto* fp = sc->FindObjectOfType<FirstPersonController>()) return fp->gameObject ? fp->gameObject->transform : nullptr;
+        if (auto* tp = sc->FindObjectOfType<ThirdPersonController>()) return tp->gameObject ? tp->gameObject->transform : nullptr;
+        return nullptr;
+    }
+
+    /// The aim input for the current camera and player (what AimAtVoxel marches). Public so tests and tools can look at it.
+    bool BuildAim(VoxelAimInput& in, bool place) const {
         Camera* cam = AimCamera();
         if (!cam || !cam->gameObject || !cam->gameObject->transform) return false;
         Transform* ct = cam->gameObject->transform;
-        Vec3 ro = ct->Position();
-        Vec3 rd = ct->Forward() * -1.0f;   // aim is -Forward (see BlockBuilder)
-        { float m = std::sqrt(rd.x * rd.x + rd.y * rd.y + rd.z * rd.z); if (m > 1e-6f) rd = rd * (1.0f / m); }
-        Transform* vt = vox->gameObject->transform;
-        float step = vox->voxelSize * 0.4f; if (step < 0.05f) step = 0.05f;
-        Vec3 prevLocal{0, 0, 0}; bool havePrev = false;
-        for (float d = 0.0f; d <= range; d += step) {
-            Vec3 p = ro + rd * d;
-            const Vec3 local = vt->InverseTransformPoint(p);   // the terrain may be moved, turned or scaled
-            if (vox->SampleDensity(local) > vox->iso) {     // hit solid
-                outLocal = (mode == Mode::Add && havePrev) ? prevLocal : local;
-                return true;
-            }
-            prevLocal = local; havePrev = true;
-        }
+        in.camPos = ct->Position();
+        in.camDir = ct->Forward() * -1.0f;   // aim is -Forward (see BlockBuilder)
+        in.range = range; in.reach = reach; in.place = place;
+        if (playerAim) if (Transform* body = FindBody(cam)) { in.hasBody = true; in.feet = body->Position(); }
+        return true;
+    }
+
+    /// March the camera aim ray and return the local-space point where it first enters solid voxel (Dig) or the last air
+    /// point before it (`place`). The ray goes through the screen centre, in first and in third person; see VoxelAim.hpp for
+    /// the character rules (reach from the character, not inside the body, not through a wall).
+    bool AimAtVoxel(VoxelTerrain* vox, Vec3& outLocal) const { return AimAtVoxel(vox, outLocal, mode == Mode::Add); }
+    bool AimAtVoxel(VoxelTerrain* vox, Vec3& outLocal, bool place) const {
+        lastAim_ = VoxelAimHit{};
+        if (!vox || !vox->gameObject || !vox->gameObject->transform) return false;
+        VoxelAimInput in;
+        if (!BuildAim(in, place)) return false;
+        lastAim_ = VoxelAimFind(*vox, *vox->gameObject->transform, in);
+        if (!lastAim_.hit) return false;
+        outLocal = lastAim_.local;
+        return true;
+    }
+    const VoxelAimHit& LastAim() const { return lastAim_; }
+    /// 0..1: how much of the ground under the brush this stroke has taken away. 1 = it has all gone.
+    float StrokeProgress() const { return progress_; }
+    /// The aimed ground is harder than the tool can dig (materials on).
+    bool AimBlocked() const { return aimBlocked_; }
+
+    /// Input helpers (actions and raw buttons).
+    static bool ActionRebound(const char* name) {
+        const InputActions::Action* a = InputActions::Find(name);
+        if (!a) return false;
+        if (a->bindings.size() != a->defaults.size()) return true;
+        for (std::size_t i = 0; i < a->bindings.size(); ++i) if (a->bindings[i].ToString() != a->defaults[i].ToString()) return true;
         return false;
+    }
+    bool DigHeld() const {
+        const bool rebound = useActions && ActionRebound("Dig");
+        if (button >= 0 && useActions && InputActions::Get("Dig")) return true;
+        if (button >= 0 && !rebound && useActions && InputActions::Get("Fire")) return true;   // left mouse / RT (or the player's Fire keys)
+        if (button >= 0 && Input::GetMouseButton(button) && !rebound) return true;
+        return key && Input::GetKey(key);
+    }
+    bool PlaceHeld() const {
+        if (addButton < 0) return false;
+        const bool rebound = useActions && ActionRebound("Place");
+        if (useActions && InputActions::Get("Place")) return true;
+        if (useActions && !rebound && InputActions::Get("Aim")) return true;                   // right mouse / LT (or the player's Aim keys)
+        return Input::GetMouseButton(addButton) && !rebound;
     }
 
     void Update(float dt) override {
@@ -192,15 +254,19 @@ public:
         if (GameInputBlocked(GetScene())) { HideBrush(); DigSound(false); return; }
         VoxelTerrain* vox = FindVoxel();
         if (!vox) { HideBrush(); DigSound(false); return; }
-        Vec3 local;
-        bool aiming = AimAtVoxel(vox, local);
-        if (showBrush && aiming) ShowBrushAt(*vox, local);
-        else HideBrush();
-
         // Primary button does `mode`; the secondary button does the opposite — so
         // the player can both dig and raise (add) terrain with one component.
-        bool primary = (button >= 0 && Input::GetMouseButton(button)) || (key && Input::GetKey(key));
-        bool secondary = (addButton >= 0 && Input::GetMouseButton(addButton));
+        bool primary = DigHeld();
+        bool secondary = PlaceHeld();
+        if (hotbarKeys) HandleHotbar(*vox);
+        // Building aims at the air in front of the surface, digging at the surface itself.
+        const bool wantAdd = (mode == Mode::Add && !(secondary && !primary)) || (mode == Mode::Dig && secondary && !primary);
+        Vec3 local;
+        bool aiming = AimAtVoxel(vox, local, wantAdd);
+        if (aiming && useActions && InputActions::Down("PickBlock")) PickBlockAtAim(*vox);
+        aimBlocked_ = aiming && AimTooHard(*vox);
+        if (showBrush && aiming) ShowBrushAt(*vox, local);
+        else HideBrush();
         bool acting = (primary || secondary) && dt > 0.0f && aiming;
 
         if (acting) {
@@ -212,7 +278,7 @@ public:
             // A hitch (one very long frame) must not carve a crater: the brush counts at most a tenth of a second.
             float amt = strength * std::min(dt, 0.1f);
             bool changed = false;
-            if (!m_wasActing) { vox->BeginStroke(); strokeY_ = local.y; }
+            if (!m_wasActing) { vox->BeginStroke(); strokeY_ = local.y; strokeAt_ = local; solid0_ = SolidFraction(*vox, local); progress_ = 0.0f; }
             if ((m == Mode::Dig || m == Mode::Add) && UsesRealLife(*vox)) {
                 changed = RealEdit(*vox, local, amt, m == Mode::Dig);
             }
@@ -232,8 +298,10 @@ public:
                     KickDebris(vox->gameObject->transform->TransformPoint(local), lastDigMaterial);
                 }
             }
+            if (m == Mode::Dig && solid0_ > 0.02f) { const float now = SolidFraction(*vox, strokeAt_);  /* measured where the stroke began: the aim point sinks as the ground goes */ progress_ = std::max(0.0f, std::min(1.0f, 1.0f - now / solid0_)); }
             DigSound(true);
         } else {
+            progress_ = 0.0f;
             if (m_wasActing) {
                 // Just released: sweep up any floating crumbs the dig left behind, then
                 // re-skin once. (Done on release, not every frame, so it stays cheap, and only
@@ -265,6 +333,54 @@ public:
     }
 
 private:
+    mutable VoxelAimHit lastAim_;
+    float progress_ = 0.0f, solid0_ = 0.0f;
+    Vec3  strokeAt_{0, 0, 0};
+    bool  aimBlocked_ = false;
+
+    /// Share of sample points inside the brush that are solid (a cheap 3x3x3 spread).
+    float SolidFraction(const VoxelTerrain& vox, const Vec3& c) const {
+        int solid = 0, n = 0;
+        const float r = std::max(0.2f, radius * 0.45f);   // corners stay inside the brush
+        for (int ix = -1; ix <= 1; ++ix) for (int iy = -1; iy <= 1; ++iy) for (int iz = -1; iz <= 1; ++iz) {
+            ++n; if (vox.SampleDensity({c.x + ix * r, c.y + iy * r, c.z + iz * r}) > vox.iso) ++solid;
+        }
+        return n ? (float)solid / (float)n : 0.0f;
+    }
+    int CellMaterialAt(const VoxelTerrain& vox, const Vec3& local) const {
+        if (!vox.UseMaterials()) return 0;
+        auto cl = [](int v, int hi) { return std::max(0, std::min(hi - 1, v)); };
+        const int x = cl((int)std::lround((local.x + vox.HalfX()) / vox.voxelSize), vox.nx);
+        const int y = cl((int)std::lround(local.y / vox.voxelSize), vox.ny);
+        const int z = cl((int)std::lround((local.z + vox.HalfZ()) / vox.voxelSize), vox.nz);
+        return vox.MaterialAt(x, y, z);
+    }
+    /// The material under the aim is harder than the tool's power (materials and tool power matter only when UsesRealLife).
+    bool AimTooHard(const VoxelTerrain& vox) const {
+        if (!vox.UseMaterials() || !lastAim_.hit) return false;
+        const int id = CellMaterialAt(vox, lastAim_.surfaceLocal);
+        if (id < 0 || id >= (int)vox.materials.size()) return false;
+        return vox.materials[(std::size_t)id].hardness > CurrentPower();
+    }
+    void PickBlockAtAim(VoxelTerrain& vox) {
+        if (!vox.UseMaterials() || !lastAim_.hit) return;
+        const int id = CellMaterialAt(vox, lastAim_.surfaceLocal);
+        if (id >= 0 && id < (int)vox.materials.size()) addMaterial = id;
+    }
+    /// Number keys 1-9 pick the material to build with; the wheel and the bumpers step through them. With no materials they
+    /// change the brush size instead.
+    void HandleHotbar(const VoxelTerrain& vox) {
+        const int nm = vox.UseMaterials() ? (int)vox.materials.size() : 0;
+        for (int k = 1; k <= 9; ++k)
+            if (Input::GetKeyDown((char)('0' + k)) && nm > 0 && k - 1 < nm) addMaterial = k - 1;
+        int step = 0;
+        const float w = Input::MouseWheel();
+        if (w > 0.01f) step += 1; else if (w < -0.01f) step -= 1;
+        if (useActions) { if (InputActions::Down("HotbarNext")) step += 1; if (InputActions::Down("HotbarPrev")) step -= 1; }
+        if (step == 0) return;
+        if (nm > 0) addMaterial = ((addMaterial + step) % nm + nm) % nm;
+        else radius = std::max(1.0f, std::min(8.0f, radius + 0.5f * (float)step));
+    }
     float strokeY_ = 0.0f;
     bool hudDirty_ = true;
     std::map<int, double> itemFrac_;
@@ -398,6 +514,7 @@ private:
         b->active = true;
         b->transform->localPosition = vox.gameObject->transform->TransformPoint(local);
         float dscale = radius * 2.0f;   // sphere mesh has radius 0.5
+        if (showProgress) dscale *= 1.0f - 0.25f * progress_;
         // the marker follows the brush shape: a cube for Cube, a squashed disc for Plane, a tall can for Cylinder
         float sx = dscale, sy = dscale, sz = dscale;
         if (shape == VoxelTerrain::EditOptions::Shape::Plane) sy = dscale / 3.0f;
@@ -405,6 +522,10 @@ private:
         b->transform->localScale = {sx, sy, sz};
         if (auto* mr = b->GetComponent<MeshRenderer>()) {
             mr->color = brushColor;
+            if (showProgress) {
+                if (aimBlocked_) mr->color = Color::FromBytes(230, 50, 40, 220);
+                else if (progress_ > 0.0f) mr->color = Color{brushColor.r + (1.0f - brushColor.r) * progress_, brushColor.g + (1.0f - brushColor.g) * progress_, brushColor.b + (1.0f - brushColor.b) * progress_, brushColor.a};
+            }
             if (brushShapeShown_ != (int)shape) {
                 brushShapeShown_ = (int)shape;
                 mr->mesh = shape == VoxelTerrain::EditOptions::Shape::Cube ? Mesh::Cube() : (shape == VoxelTerrain::EditOptions::Shape::Cylinder ? Mesh::Cylinder(0.5f, 1.0f, 16) : Mesh::Sphere(0.5f, 8, 12));

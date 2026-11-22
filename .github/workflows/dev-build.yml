@@ -3,7 +3,7 @@ run-name: Test build of ${{ inputs.ref || github.ref_name }}
 
 # A TEST BUILD: builds any branch, tag or commit for Windows and publishes it to the dev/ folder of the Supabase release bucket, so the owner can try
 # unmerged work in the launcher in about 15 to 30 minutes, without a pull request, a GitHub Release or a normal release. Docs:
-# docs/release_channels.md ("Test builds"), docs/try_it.md (7v).
+# docs/release/release_channels.md ("Test builds"), docs/try_it.md (7v).
 #
 # Start it (only from main; the coordinator does this when the owner asks):
 #   gh workflow run dev-build.yml --ref main -f ref=claude/walk-vs-run -f note="try the new run speed"
@@ -69,7 +69,7 @@ jobs:
       # The launcher's trusted keys: public keys, so repository variables (the same two release.yml builds in).
       OKAY_AC_TRUSTED_KEYS: ${{ vars.OKAY_AC_TRUSTED_KEYS }}
       OKAY_UPDATE_TRUSTED_KEYS: ${{ vars.OKAY_UPDATE_TRUSTED_KEYS }}
-      # The account/update server comes from config/public-account.json; these optional repository variables override it (docs/accounts.md).
+      # The account/update server comes from config/public-account.json; these optional repository variables override it (docs/online/accounts.md).
       OKAY_DEFAULT_ACCOUNT_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
       OKAY_DEFAULT_ACCOUNT_KEY: ${{ vars.OKAY_DEFAULT_ACCOUNT_KEY }}
       OKAY_REQUIRE_ACCOUNT: "1"
@@ -128,7 +128,7 @@ jobs:
           fail() { echo "::error title=Cannot number the test build::$1"; echo "**$1**" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
           if [ -f scripts/public-account.sh ]; then . scripts/public-account.sh; fi
           URL="$(printf '%s' "${OKAY_DEFAULT_ACCOUNT_URL:-$(type okay_public_account >/dev/null 2>&1 && okay_public_account url)}" | grep -oE '^https://[a-z0-9]+\.supabase\.co' || true)"
-          [ -n "$URL" ] || fail "No update server address: config/public-account.json has no url and the repository variable OKAY_DEFAULT_ACCOUNT_URL is not set (or it is not an https://<project>.supabase.co address). See docs/accounts.md."
+          [ -n "$URL" ] || fail "No update server address: config/public-account.json has no url and the repository variable OKAY_DEFAULT_ACCOUNT_URL is not set (or it is not an https://<project>.supabase.co address). See docs/online/accounts.md."
           # The release published NOW is the base: a test build is numbered after it (read only; nothing is written to the server here).
           BASE="$(curl -fsS --max-time 30 -H 'Cache-Control: no-cache' "$URL/storage/v1/object/public/releases/VERSION.txt?nocache=$(date +%s)" | head -n1 | tr -d '\r ' || true)"
           [[ "$BASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Could not read the newest release (VERSION.txt on the update server said '$BASE'), so the test build cannot be numbered. Try again."
@@ -166,8 +166,8 @@ jobs:
           ls ~/apt-cache/*.deb 2>/dev/null | wc -l > ~/apt-debs-before
           APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives=$HOME/apt-cache"
           for i in 1 2 3; do
-            if timeout 240 sudo apt-get $APT update && \
-               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev zip nsis ccache osslsigncode; then
+            if timeout 120 sudo apt-get $APT update && \
+               timeout 240 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev zip nsis ccache osslsigncode; then
               exit 0
             fi
             echo "apt attempt $i failed or timed out; retrying"

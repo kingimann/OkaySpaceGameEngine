@@ -215,6 +215,11 @@ class Lint(unittest.TestCase):
                        "tests/test_x.cpp": "#include <thread>\nstd::thread t;\n"}, BL.check_includes)
         self.assertEqual(f, [])
 
+    def test_comment_mentions_are_not_uses(self):
+        f = self.lint({"launcher/main.cpp": "// MinGW has no std::thread here\nint x; // std::mutex is not used\n/* std::thread */\n * std::condition_variable\n",
+                       "launcher/other.cpp": "std::thread t;  // a real use\n"}, BL.check_includes)
+        self.assertEqual([(x["file"], x["line"]) for x in f], [("launcher/other.cpp", 1)])
+
     def test_guarded_is_warning_and_allow_marker(self):
         f = self.lint({"engine/src/Core/X.cpp": "#if !defined(_WIN32)\n#include <thread>\n#endif\n#include <mutex>  // lint-allow: win32-thread\n"}, BL.check_includes)
         self.assertEqual([x["sev"] for x in f], ["warning"])
@@ -225,10 +230,14 @@ class Lint(unittest.TestCase):
         f = self.lint({"dist/OkaySpace.exe": "MZ\0\0", "dist/SDL2.dll": "MZ\0", "lib/libfoo.so": "\0ELF", "out/game.zip": "PK\0\0"}, BL.check_binaries)
         self.assertEqual(sorted(x["file"] for x in f), ["dist/OkaySpace.exe", "dist/SDL2.dll", "lib/libfoo.so", "out/game.zip"])
         self.assertTrue(all(x["sev"] == "error" for x in f))
-        # a big binary with an unknown extension is refused; a big png, font, mesh or anything in docs/images is fine
+        # a big binary with an unknown extension is refused; a big png, font or mesh is fine outside docs/
         self.r.close(); self.r = Repo()
-        f = self.lint({"tools/blob.dat": big, "assets/a.png": big, "assets/f.ttf": big, "examples/m.okaymesh": big, "docs/images/shot.dll": big}, BL.check_binaries)
+        f = self.lint({"tools/blob.dat": big, "assets/a.png": big, "assets/f.ttf": big, "examples/m.okaymesh": big, "tests/golden/shot.png": big}, BL.check_binaries)
         self.assertEqual([x["file"] for x in f], ["tools/blob.dat"])
+        # a screenshot under docs/ is refused (owner rule 2026-11-17)
+        self.r.close(); self.r = Repo()
+        f = self.lint({"docs/images/shot.png": "x", "docs/pic.jpg": "x", "shot.png": "x", "tests/golden/ok.png": "x"}, BL.check_binaries)
+        self.assertEqual(sorted(x["file"] for x in f), ["docs/images/shot.png", "docs/pic.jpg", "shot.png"])
         # small binaries and big TEXT files (source, scene json, docs) are fine
         self.r.close(); self.r = Repo()
         f = self.lint({"tools/small.dat": "\0" * 100, "docs/big.md": "word " * 100000, "dist/CHANGELOG.txt": "text\n" * 50000}, BL.check_binaries)

@@ -32,7 +32,7 @@
 //   scene.duplicate_guid   (ValidateText / ValidateFile) two objects carry the same guid (the loader renames one)
 //   scene.broken_parent    (ValidateText / ValidateFile) `parent N` names an object that is not in the file (it loads as a root)
 //
-// Two validators, two jobs (see docs/automated_testing.md):
+// Two validators, two jobs (see docs/process/automated_testing.md):
 //   SceneValidator (this file)        the loaded scene's meaning: assets, cameras, names, scripts, transforms, physics.
 //                                     It is the one for CI and for "check before you ship"; ValidateText / ValidateFile
 //                                     also carry over the file-level findings below so one report is enough.

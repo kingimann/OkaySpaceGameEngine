@@ -15,6 +15,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <clocale>
 #include <cstring>
@@ -322,6 +323,26 @@ int main() {
         CHECK(EffectiveImportBackend(".obj") == ImportBackend::Own);          // OBJ never went through Assimp
         if (AssimpAvailable()) CHECK(EffectiveImportBackend(".stl") == ImportBackend::Assimp || EffectiveImportBackend(".stl") == ImportBackend::Own);
         else { CHECK(EffectiveImportBackend(".stl") == ImportBackend::Own); CHECK(EffectiveImportBackend(".dae") == ImportBackend::Default || EffectiveImportBackend(".dae") == ImportBackend::Own); }
+        {   // STL / PLY ways back (2026-11-17): OKAY_OWN_STL / OKAY_OWN_PLY = 0, or OKAY_THIRD_PARTY=1, hand them to Assimp when it is built in
+            auto setEnv = [](const char* n, const char* v) {
+#if defined(_WIN32)
+                _putenv_s(n, v ? v : "");
+#else
+                if (v) setenv(n, v, 1); else unsetenv(n);
+#endif
+            };
+            const ImportBackend back = AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own;
+            setEnv("OKAY_OWN_STL", "0"); CHECK(EffectiveImportBackend(".stl") == back); setEnv("OKAY_OWN_STL", nullptr);
+            setEnv("OKAY_OWN_PLY", "0"); CHECK(EffectiveImportBackend(".ply") == back); setEnv("OKAY_OWN_PLY", nullptr);
+            setEnv("OKAY_OWN_STL", "1"); CHECK(EffectiveImportBackend(".stl") == ImportBackend::Own); setEnv("OKAY_OWN_STL", nullptr);
+            setEnv("OKAY_THIRD_PARTY", "1");
+            CHECK(EffectiveImportBackend(".stl") == back && EffectiveImportBackend(".ply") == back);
+            CHECK(EffectiveImportBackend(".obj") == ImportBackend::Own);   // OBJ was always ours: not a third-party format here
+            setEnv("OKAY_THIRD_PARTY", nullptr);
+#if defined(OKAY_EXPECT_OWN_READERS)
+            CHECK(EffectiveImportBackend(".stl") == ImportBackend::Own && EffectiveImportBackend(".ply") == ImportBackend::Own && EffectiveImportBackend(".dae") == ImportBackend::Own);
+#endif
+        }
         SetImportBackend(".stl", ImportBackend::Own);
         CHECK(EffectiveImportBackend(".stl") == ImportBackend::Own);
         SetImportBackend(".stl", ImportBackend::Assimp);
@@ -374,7 +395,7 @@ int main() {
         std::remove("mr_big.stl");
     }
 
-    // ---------------- Found by the real-file corpus (docs/model_corpus.md) ----------------
+    // ---------------- Found by the real-file corpus (docs/content/model_corpus.md) ----------------
     {
         // An L-shaped (concave) hexagon in the XY plane, area 3, wound counter-clockwise: a fan from the first corner covers
         // the notch (area 3.5 or more) or flips triangles; ear clipping gives area 3 with every triangle facing +Z.

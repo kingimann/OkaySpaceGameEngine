@@ -6,7 +6,7 @@ row: | 7h | Project panel right-click menus (asset, folder, tree, Favourites, em
 
 **What it is.** The right-click menus of the editor's Project panel were reworked and filled out: one list per place you can click
 (an asset, a folder, a folder in the tree on the left, a starred item, the empty space), with a tooltip on every item, greyed items that
-say why, and counts when several items are selected ("Delete 3 Items"). Full list of items: `docs/project_panel.md`, section
+say why, and counts when several items are selected ("Delete 3 Items"). Full list of items: `docs/editor/project_panel.md`, section
 "Right-click menus". Code: `editor/ProjectContextModel.hpp` (the lists), `editor/ProjectPanelUI.cpp` (drawing, the Move to...
 picker, Properties), `DrawProject` in `editor/main.cpp`.
 
@@ -73,7 +73,7 @@ manager onto the editor window, or use the Project panel's **Import** button.
 tooltip, is a bug: tell us which item.
 
 **Left out on purpose.** Export Package (no package exporter exists), Select Dependencies, a Localization table and an Animation in Create: reasons in
-`docs/project_panel.md`.
+`docs/editor/project_panel.md`.
 
 **Status.** The item lists, labels, greyed reasons, Copy Text, which file types run code, the Move to... rule, the path helpers (nested selections, the nearest folder that exists),
 Set as Start Scene, the dates and the Properties rows are tested headlessly (`project_context_model`, `project_menu_ops`). The new story and AI files are read back with the engine's parsers,
@@ -81,4 +81,4 @@ and Standard Folders, Duplicate of a selection and the tags a menu lists are tes
 (`editor/LaunchFile.cpp`) is tested on Linux against fake programs on PATH (`launch_file`): a hostile file name reaches the program as one untouched argument and program and script types are
 refused before anything starts; its Windows half (`ShellExecuteW`) was only compile-checked with the MinGW cross compiler. **Unverified:** everything you see in the real window (drawing, tooltips, the Move to... and Properties
 windows, the Explorer, Notepad and default-app launches on Windows, the tree's expand and collapse, the panel following a renamed folder). Nothing here was run on Windows. The changed editor files (`editor/main.cpp`, `ProjectPanelUI.cpp`, `ProjectMenuDraw.cpp`, `ProjectBrowser.cpp`, `ContentEditors.cpp`, `LaunchFile.cpp`) were compiled with `-fsyntax-only` on Linux with the editor's real flags (no error; `main.cpp` has older warnings of its own) and the launcher, the panel and the menu drawing also with the MinGW Windows cross compiler; the editor was not linked or started.
-**Pictures:** `docs/images/project_menus/*.png` (listed in `docs/project_panel.md`) are headless renders, **not screenshots of the editor window**: the real item lists and the real menu drawing code, drawn by Dear ImGui into a software surface with ImGui's default look and font (`tools/project_menu_shots.cpp`). The editor itself could not be built and run on the machine that wrote this, so there is no screenshot of the real window; the OkayUI panels have no Project panel, so there is no second copy of this menu to keep in step.
+**Pictures:** a picture folder (pictures are no longer stored in the repository) (listed in `docs/editor/project_panel.md`) are headless renders, **not screenshots of the editor window**: the real item lists and the real menu drawing code, drawn by Dear ImGui into a software surface with ImGui's default look and font (`tools/project_menu_shots.cpp`). The editor itself could not be built and run on the machine that wrote this, so there is no screenshot of the real window; the OkayUI panels have no Project panel, so there is no second copy of this menu to keep in step.

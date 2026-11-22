@@ -2,7 +2,7 @@ name: Preset player builds (plan, run by hand)
 
 # PLAN, NOT YET RUN. Builds the player for each module preset of the editor (2D game, 3D action, Survival, Everything) so that
 # the editor can download the smallest player that contains the modules a project uses. Today turning a module off removes only
-# the model readers and Interactable from the binary (see docs/modular_engine.md), so the variants differ little until the
+# the model readers and Interactable from the binary (see docs/engine/modular_engine.md), so the variants differ little until the
 # serializer, script, property and node registries are cut. Never part of a release: only workflow_dispatch.
 #
 # The editor side: `python3 scripts/preset_modules.py --smallest <project modules>` picks the preset (the same rule is meant for

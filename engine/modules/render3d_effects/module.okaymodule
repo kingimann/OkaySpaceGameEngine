@@ -1,4 +1,4 @@
-# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
 name=render3d_effects
 title=3D render effects
 area=Rendering

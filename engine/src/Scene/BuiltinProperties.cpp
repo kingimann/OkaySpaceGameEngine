@@ -1,6 +1,6 @@
 // The property registrations of the built-in components. They are described here,
 // from outside, through each component's public fields, so the component headers
-// and the scene serializer stay as they are. See docs/properties.md for what is
+// and the scene serializer stay as they are. See docs/engine/properties.md for what is
 // covered and what is not.
 #include "BuiltinPropertiesShared.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -8,6 +8,10 @@
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/CameraFollow.hpp"
+#include "okay/Components/CameraRoom.hpp"
+#include "okay/Components/CameraZone.hpp"
+#include "okay/Components/CinemachineBrain.hpp"
+#include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/Lifetime.hpp"
 #include "okay/Components/Light.hpp"
@@ -19,6 +23,8 @@
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/ColliderShapes3D.hpp"
+#include "okay/Physics/ColliderShapes2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 
@@ -140,8 +146,85 @@ void RegisterCamera() {
      .AddFloat("shakeAmount", &Camera::shakeAmount).Range(0, 1000, 0.05)
      .AddFloat("shakeAngle", &Camera::shakeAngle).Range(0, 180, 0.1)
      .AddFloat("shakeFrequency", &Camera::shakeFrequency).Range(0, 1000, 0.5)
-     .AddFloat("shakeRecovery", &Camera::shakeRecovery).Range(0, 1000, 0.1);
+     .AddFloat("shakeRecovery", &Camera::shakeRecovery).Range(0, 1000, 0.1)
+     .AddFloat("hitPulseVignette", &Camera::hitPulseVignette).Range(0, 1, 0.01).Tooltip("How dark the screen edges get at a full hit pulse");
     b.Commit();
+}
+
+// ---- Camera rigs (docs/gameplay/cameras.md) ---------------------------------------------------------
+
+void RegisterCameraRigs() {
+    {
+        PropertyBuilder<VirtualCamera> b("VirtualCamera", "vcam", "Rendering");
+        b.Section("Shot")
+         .AddInt("priority", &VirtualCamera::priority).Range(-1000, 1000).Tooltip("The shot with the highest priority is the one on screen")
+         .AddString("follow", &VirtualCamera::follow).Tooltip("Name of the object the camera follows")
+         .AddString("lookAt", &VirtualCamera::lookAt).Tooltip("Name of the object the camera looks at")
+         .AddVec3("followOffset", &VirtualCamera::followOffset).Tooltip("Where the camera stands, relative to what it follows")
+         .AddVec3("lookAtOffset", &VirtualCamera::lookAtOffset).Tooltip("Aim above or beside the target, for example at the head")
+         .AddFloat("fieldOfView", &VirtualCamera::fieldOfView).Range(1, 179, 0.5).Tooltip("How wide the shot is, in degrees")
+         .AddFloat("dutch", &VirtualCamera::dutch).Range(-180, 180, 0.5).Tooltip("Tilt the horizon, degrees")
+         .AddBool("aimAtFollow", &VirtualCamera::aimAtFollow).Tooltip("With no Look At object, aim at the followed object")
+         .Section("Smoothing")
+         .AddEnum("dampingMode", &VirtualCamera::dampingMode, {"Smooth", "Spring"}).Tooltip("Spring never overshoots and keeps its speed when the target turns")
+         .AddFloat("positionDamping", &VirtualCamera::positionDamping).Range(0, 100, 0.1).Tooltip("Higher is snappier. 0 = jump straight there")
+         .AddFloat("rotationDamping", &VirtualCamera::rotationDamping).Range(0, 100, 0.1)
+         .Section("Framing")
+         .AddBool("useZones", &VirtualCamera::useZones).Tooltip("Let the target move around in the middle of the screen without the camera moving")
+         .AddFloat("deadZoneW", &VirtualCamera::deadZoneW).Range(0, 1, 0.01).Tooltip("Width of the middle area where nothing moves (fraction of the screen)")
+         .AddFloat("deadZoneH", &VirtualCamera::deadZoneH).Range(0, 1, 0.01)
+         .AddFloat("softZoneW", &VirtualCamera::softZoneW).Range(0, 1, 0.01).Tooltip("Past this the camera catches up at once")
+         .AddFloat("softZoneH", &VirtualCamera::softZoneH).Range(0, 1, 0.01)
+         .AddFloat("zoneDamping", &VirtualCamera::zoneDamping).Range(0, 100, 0.1)
+         .AddFloat("lookaheadTime", &VirtualCamera::lookaheadTime).Range(0, 5, 0.05).Tooltip("Look this many seconds ahead of a moving target")
+         .AddFloat("lookaheadMax", &VirtualCamera::lookaheadMax).Range(0, 100, 0.1)
+         .Section("Group")
+         .AddFloat("groupPadding", &VirtualCamera::groupPadding).Range(0, 100, 0.1).Tooltip("Extra room round a group of targets")
+         .AddBool("groupFrame", &VirtualCamera::groupFrame).Tooltip("Step back (or zoom out in 2D) to keep the whole group in view")
+         .Section("2D")
+         .AddBool("ortho2D", &VirtualCamera::ortho2D).Tooltip("A flat camera that slides with the target and never turns")
+         .AddFloat("orthoSize", &VirtualCamera::orthoSize).Range(0, 1000, 0.1).Tooltip("How many units up the picture shows (0 = leave it alone)")
+         .AddBool("confineToView", &VirtualCamera::confineToView).Tooltip("Keep the edges of the picture inside the confine box")
+         .AddBool("useRooms", &VirtualCamera::useRooms).Tooltip("Stay inside the Camera Room the target is in")
+         .AddFloat("roomBlendTime", &VirtualCamera::roomBlendTime).Range(0, 10, 0.05)
+         .Section("Collision")
+         .AddBool("collision", &VirtualCamera::collision).Tooltip("Move in when a wall is between the camera and the target")
+         .AddFloat("collisionRadius", &VirtualCamera::collisionRadius).Range(0, 5, 0.01)
+         .AddFloat("collisionSkin", &VirtualCamera::collisionSkin).Range(0, 2, 0.01)
+         .AddFloat("collisionRecover", &VirtualCamera::collisionRecover).Range(0, 100, 0.1)
+         .AddBool("collisionSnapIn", &VirtualCamera::collisionSnapIn).Tooltip("Jump in at once so the camera is never inside a wall")
+         .AddBool("fadeOccluders", &VirtualCamera::fadeOccluders).Tooltip("Make things between the camera and the target see-through")
+         .AddFloat("occlusionAlpha", &VirtualCamera::occlusionAlpha).Range(0, 1, 0.01)
+         .AddFloat("occlusionFadeSpeed", &VirtualCamera::occlusionFadeSpeed).Range(0, 100, 0.1)
+         .Section("Blend")
+         .AddFloat("blendIn", &VirtualCamera::blendIn).Range(-1, 60, 0.05).Tooltip("Seconds to blend into this shot (-1 = the brain's time)")
+         .AddInt("blendInStyle", &VirtualCamera::blendInStyle).Range(-1, 5).Tooltip("-1 brain's, 0 Cut, 1 Linear, 2 Ease In and Out, 3 Ease In, 4 Ease Out, 5 Custom");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<CinemachineBrain> b("CinemachineBrain", "cmbrain", "Rendering");
+        b.AddFloat("blendTime", &CinemachineBrain::blendTime).Range(0, 60, 0.05).Tooltip("Seconds to blend when the live shot changes (0 = cut)")
+         .AddEnum("blendStyle", &CinemachineBrain::blendStyle, {"Cut", "Linear", "EaseInOut", "EaseIn", "EaseOut", "Custom"})
+         .AddBool("yieldToCutscene", &CinemachineBrain::yieldToCutscene).Tooltip("Let a playing cutscene have the camera, then blend back");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<CameraZone> b("CameraZone", "camzone", "Rendering");
+        b.AddVec3("size", &CameraZone::size).Tooltip("The size of the region, in local units")
+         .AddVec3("offset", &CameraZone::offset).Tooltip("Where its middle is, relative to this object")
+         .AddFloat("blend", &CameraZone::blend).Range(0, 1, 0.01).Tooltip("How far in from the edge the effect takes to reach full strength")
+         .AddInt("priority", &CameraZone::priority).Range(-100, 100).Tooltip("A higher number is applied over a lower one")
+         .AddString("shot", &CameraZone::shot).Tooltip("Only this shot (a camera rig's object name). Blank = every shot")
+         .AddFloat("fieldOfView", &CameraZone::fieldOfView).Range(0, 179, 0.5).Tooltip("The field of view inside, in degrees. 0 = leave it alone")
+         .AddVec3("followOffset", &CameraZone::followOffset).Tooltip("Added to where the camera stands, while inside")
+         .AddFloat("positionDamping", &CameraZone::positionDamping).Range(-1, 100, 0.1).Tooltip("How snappy the camera is inside. -1 = leave it alone");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<CameraRoom> b("CameraRoom", "camroom", "Rendering");
+        b.AddVec2("size", &CameraRoom::size).Tooltip("Width and height of the room, in world units");
+        b.Commit();
+    }
 }
 
 // ---- Light -----------------------------------------------------------------------------------
@@ -154,6 +237,7 @@ void RegisterLight() {
      .AddFloat("ambient", &Light::ambient).Range(0, 1, 0.01).Tooltip("Unlit floor, taken from the first light")
      .AddColor("ambientColor", &Light::ambientColor).Range(0, 16, 0.01).Tooltip("Tint of the ambient floor")
      .Section("Shape")
+     .AddEnum("unit", &Light::unit, {"Simple", "RealWorld"}).Tooltip("Simple: the number is the brightness. RealWorld: lux for the sun, lumens for lamps")
      .AddFloat("range", &Light::range).Range(0, kBig, 0.5).Tooltip("Reach of a point, spot or area light")
      .AddFloat("spotAngle", &Light::spotAngle).Range(1, 179, 0.5).Tooltip("Spot cone, full angle in degrees")
      .AddFloat("spotSoftness", &Light::spotSoftness).Range(0, 1, 0.01)
@@ -165,6 +249,12 @@ void RegisterLight() {
      .AddBool("castShadows", &Light::castShadows)
      .AddFloat("shadowStrength", &Light::shadowStrength).Range(0, 1, 0.01)
      .AddFloat("shadowBias", &Light::shadowBias).Range(0, 100, 0.05)
+     .AddFloat("shadowSoftness", &Light::shadowSoftness).Range(0, 1, 0.01).Tooltip("Soft edges: shadows get softer the farther they fall from the object (0 = even edge)")
+     .Section("Shape and mask")
+     .AddFloat("areaWidth", &Light::areaWidth).Range(0, 100, 0.1).Tooltip("Area light panel width in metres (0 = soft glow)")
+     .AddFloat("areaHeight", &Light::areaHeight).Range(0, 100, 0.1).Tooltip("Area light panel height in metres (0 = soft glow)")
+     .AddString("cookie", &Light::cookie).Tooltip("A mask the light shines through: builtin:window, builtin:blinds, builtin:dots, builtin:leaves, builtin:star, builtin:soft-circle, or an image file")
+     .AddFloat("cookieScale", &Light::cookieScale).Range(0.1, 200, 0.1).Tooltip("Sun only: metres per repeat of the mask")
      .Section("Flicker")
      .AddFloat("flicker", &Light::flicker).Range(0, 1, 0.01).Tooltip("How far the intensity may dim")
      .AddFloat("flickerSpeed", &Light::flickerSpeed).Range(0, 1000, 0.5);
@@ -203,7 +293,9 @@ void RegisterMeshRenderer() {
      .AddBool("wireframe", &MeshRenderer::wireframe)
      .AddBool("doubleSided", &MeshRenderer::doubleSided)
      .Section("Shading")
-     .AddEnum("shader", &MeshRenderer::shader, {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet"})
+     .AddEnum("shader", &MeshRenderer::shader, {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet", "Custom"})
+     .AddAssetPath("customShader", &MeshRenderer::customShader, "shader").Tooltip("The .okayshader file the Custom shader draws with")
+     .AddString("shaderParams", &MeshRenderer::shaderParams).Tooltip("The Custom shader's property values (name=value;...)")
      .AddInt("toonBands", &MeshRenderer::toonBands).Range(1, 16).Tooltip("Cel bands for the Toon shader")
      .AddColor("gradientTop", &MeshRenderer::gradientTop).Range(0, 1, 0.01)
      .AddColor("gradientBottom", &MeshRenderer::gradientBottom).Range(0, 1, 0.01)
@@ -239,7 +331,9 @@ void RegisterMeshRenderer() {
      .AddBool("receiveShadows", &MeshRenderer::receiveShadows)
      .AddBool("groundShadow", &MeshRenderer::groundShadow).Tooltip("A flat blob shadow while real shadow maps are off")
      .AddFloat("groundShadowY", &MeshRenderer::groundShadowY).Range(-kBig, kBig, 0.1)
-     .AddFloat("groundShadowStrength", &MeshRenderer::groundShadowStrength).Range(0, 1, 0.01);
+     .AddFloat("groundShadowStrength", &MeshRenderer::groundShadowStrength).Range(0, 1, 0.01)
+     .Section("Glow")
+     .AddFloat("glowLightRange", &MeshRenderer::glowLightRange).Range(0, kBig, 0.5).Tooltip("A glowing object also lights things around it, this many metres out (0 = off). Set the Emissive colour first.");
     b.Commit();
 }
 
@@ -305,6 +399,7 @@ void Collider2DCommon(PropertyBuilder<C>& b, bool withAutoFit = true) {
      .AddBool("isTrigger", &Collider2D::isTrigger).Tooltip("Detects overlaps without pushing objects apart")
      .AddInt("layer", &Collider2D::layer).Range(0, 31).Tooltip("Collision layer");
     if (withAutoFit) b.AddBool("autoFit", &Collider2D::autoFit).Tooltip("Keep the collider matched to the sprite bounds");
+    b.AddFloat("contactOffset", &Collider2D::contactOffset).Range(0, 1, 0.005).Tooltip("A skin of this many units: the collider counts as that much thicker when it touches something (0 = the exact shape)");
     b.Section("Physics material")
      .AddFloat("friction", &Collider2D::friction).Range(-1, 10, 0.01).Tooltip("-1 = use the Rigidbody's friction; 0 is ice")
      .AddFloat("bounciness", &Collider2D::bounciness).Range(-1, 1, 0.01).Tooltip("-1 = use the Rigidbody's bounciness; 1 is a super ball")
@@ -324,6 +419,7 @@ void Collider3DCommon(PropertyBuilder<C>& b) {
      .AddBool("isTrigger", &Collider3D::isTrigger).Tooltip("Detects overlaps without pushing objects apart")
      .AddInt("layer", &Collider3D::layer).Range(0, 31).Tooltip("Collision layer")
      .AddBool("autoFit", &Collider3D::autoFit).Tooltip("Keep the collider matched to the mesh bounds")
+     .AddFloat("contactOffset", &Collider3D::contactOffset).Range(0, 1, 0.005).Tooltip("A skin of this many metres: the collider counts as that much thicker when it touches something (0 = the exact shape)")
      .Section("Physics material")
      .AddFloat("friction", &Collider3D::friction).Range(-1, 10, 0.01).Tooltip("-1 = use the Rigidbody's friction; 0 is ice")
      .AddFloat("bounciness", &Collider3D::bounciness).Range(-1, 1, 0.01).Tooltip("-1 = use the Rigidbody's bounciness; 1 is a super ball")
@@ -369,34 +465,76 @@ void RegisterColliders2D() {
         Collider2DCommon(b, false);
         b.Commit();
     }
+    {
+        PropertyBuilder<CompositeCollider2D> b("CompositeCollider2D", "compositecollider2d", "Physics 2D");
+        b.AddString("parts", &CompositeCollider2D::parts).Tooltip("The shapes it is made of, one per ';': circle x y radius; box x y width height angle; capsule x y radius length angle; polygon x y x y x y ...");
+        Collider2DCommon(b, false);
+        b.Commit();
+    }
 }
 
 void RegisterColliders3D() {
     {
         PropertyBuilder<BoxCollider3D> b("BoxCollider3D", "boxcollider3d", "Physics 3D");
-        b.AddVec3("size", &BoxCollider3D::size).Range(0, kBig, 0.1);
+        b.AddVec3("size", &BoxCollider3D::size).Range(0, kBig, 0.1).Tooltip("Width, height and depth in metres (default 1 x 1 x 1)");
         Collider3DCommon(b);
         b.Commit();
     }
     {
         PropertyBuilder<SphereCollider3D> b("SphereCollider3D", "spherecollider3d", "Physics 3D");
-        b.AddFloat("radius", &SphereCollider3D::radius).Range(0, kBig, 0.05);
+        b.AddFloat("radius", &SphereCollider3D::radius).Range(0, kBig, 0.05).Tooltip("Ball radius in metres (default 0.5)");
         Collider3DCommon(b);
         b.Commit();
     }
     {
         PropertyBuilder<CapsuleCollider3D> b("CapsuleCollider3D", "capsulecollider3d", "Physics 3D");
-        b.AddFloat("radius", &CapsuleCollider3D::radius).Range(0, kBig, 0.05)
-         .AddFloat("height", &CapsuleCollider3D::height).Range(0, kBig, 0.1).Tooltip("Tip to tip")
+        b.AddFloat("radius", &CapsuleCollider3D::radius).Range(0, kBig, 0.05).Tooltip("Width of the round ends, in metres")
+         .AddFloat("height", &CapsuleCollider3D::height).Range(0, kBig, 0.1).Tooltip("Tip to tip, in metres")
          .AddEnum("axis", &CapsuleCollider3D::axis, {"X", "Y", "Z"}).Tooltip("The long axis");
         Collider3DCommon(b);
         b.Commit();
     }
     {
         PropertyBuilder<CylinderCollider3D> b("CylinderCollider3D", "cylindercollider3d", "Physics 3D");
-        b.AddFloat("radius", &CylinderCollider3D::radius).Range(0, kBig, 0.05)
-         .AddFloat("height", &CylinderCollider3D::height).Range(0, kBig, 0.1)
+        b.AddFloat("radius", &CylinderCollider3D::radius).Range(0, kBig, 0.05).Tooltip("Radius of the round side, in metres")
+         .AddFloat("height", &CylinderCollider3D::height).Range(0, kBig, 0.1).Tooltip("Flat end to flat end, in metres")
          .AddEnum("axis", &CylinderCollider3D::axis, {"X", "Y", "Z"}).Tooltip("The long axis");
+        Collider3DCommon(b);
+        b.Commit();
+    }
+    {
+        PropertyBuilder<ConeCollider3D> b("ConeCollider3D", "conecollider3d", "Physics 3D");
+        b.AddFloat("radius", &ConeCollider3D::radius).Range(0, kBig, 0.05).Tooltip("How wide the round base is, in metres (default 0.5)")
+         .AddFloat("height", &ConeCollider3D::height).Range(0, kBig, 0.1).Tooltip("Base to tip, in metres (default 1)")
+         .AddEnum("axis", &ConeCollider3D::axis, {"X", "Y", "Z"}).Tooltip("Which way the tip points (the positive side of this axis)");
+        Collider3DCommon(b);
+        b.Commit();
+    }
+    {
+        PropertyBuilder<ConvexHullCollider3D> b("ConvexHullCollider3D", "convexhullcollider3d", "Physics 3D");
+        b.AddString("points", &ConvexHullCollider3D::points).Tooltip("The corner points as text: x y z; x y z; ... The collider is the shrink-wrap around them. Use Wrap Around Mesh to fill it in");
+        Collider3DCommon(b);
+        b.Commit();
+    }
+    {
+        PropertyBuilder<PlaneCollider3D> b("PlaneCollider3D", "planecollider3d", "Physics 3D");
+        Collider3DCommon(b);
+        b.Commit();
+    }
+    {
+        PropertyBuilder<CompoundCollider3D> b("CompoundCollider3D", "compoundcollider3d", "Physics 3D");
+        b.AddString("parts", &CompoundCollider3D::parts).Tooltip("The shapes it is made of, one per ';': kind px py pz rx ry rz a b c axis. Kinds: box (a b c = size), sphere (a = radius), capsule / cylinder / cone (a = radius, b = height, axis 0/1/2)");
+        Collider3DCommon(b);
+        b.Commit();
+    }
+    {
+        PropertyBuilder<HeightfieldCollider3D> b("HeightfieldCollider3D", "heightfieldcollider3d", "Physics 3D");
+        b.AddInt("columns", &HeightfieldCollider3D::columns).Range(2, 2048, 1).Tooltip("Height samples along X, 2 to 2048 (default 2)")
+         .AddInt("rows", &HeightfieldCollider3D::rows).Range(2, 2048, 1).Tooltip("Height samples along Z, 2 to 2048 (default 2)")
+         .AddFloat("cellX", &HeightfieldCollider3D::cellX).Range(0.01, kBig, 0.1).Tooltip("Metres between samples along X (default 1)")
+         .AddFloat("cellZ", &HeightfieldCollider3D::cellZ).Range(0.01, kBig, 0.1).Tooltip("Metres between samples along Z (default 1)")
+         .AddFloat("heightScale", &HeightfieldCollider3D::heightScale).Range(-kBig, kBig, 0.05).Tooltip("Multiplies every height, a plain number (default 1)")
+         .AddString("heights", &HeightfieldCollider3D::heights).Tooltip("columns x rows heights in metres, row after row, at most 4 million numbers");
         Collider3DCommon(b);
         b.Commit();
     }
@@ -487,7 +625,7 @@ void RegisterParticleSystem() {
      .AddVec3("gravity", &PS::gravity).Range(-kBig, kBig, 0.1)
      .AddFloat("gravityModifier", &PS::gravityModifier).Range(-1000, 1000, 0.05)
      .AddFloat("damping", &PS::damping).Range(0, 1000, 0.01)
-     .AddFloat("windInfluence", &PS::windInfluence).Range(0, 100, 0.05)
+     .AddFloat("windInfluence", &PS::windInfluence).Range(0, 100, 0.05).Tooltip("Affected by wind: 0 ignores the wind, 1 drifts at the wind's speed (weather and Wind Zones)")
      .Section("Motion")
      .AddEnum("simulationSpace", &PS::simulationSpace, {"World", "Local"})
      .AddFloat("inheritVelocity", &PS::inheritVelocity).Range(0, 100, 0.05)
@@ -503,7 +641,8 @@ void RegisterParticleSystem() {
      .AddFloat("collisionY", &PS::collisionY).Range(-kBig, kBig, 0.1)
      .AddFloat("bounce", &PS::bounce).Range(0, 1, 0.01)
      .AddFloat("collisionFriction", &PS::collisionFriction).Range(0, 1, 0.01)
-     .AddFloat("collisionLifeLoss", &PS::collisionLifeLoss).Range(0, 1, 0.01);
+     .AddFloat("collisionLifeLoss", &PS::collisionLifeLoss).Range(0, 1, 0.01)
+     .AddBool("collideTerrain", &PS::collideTerrain).Tooltip("With collision on, also bounce off every Terrain in the scene (hills and slopes)");
     b.Commit();
 }
 
@@ -596,6 +735,7 @@ void RegisterBuiltinPropertyTable() {
     RegisterGameObject();
     RegisterTransform();
     RegisterCamera();
+    RegisterCameraRigs();
     RegisterLight();
     RegisterSpriteRenderer();
     RegisterMeshRenderer();

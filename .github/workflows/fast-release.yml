@@ -1,12 +1,12 @@
 name: Fast release
 
-# ONE dispatch makes a release, with no version-bump pull request and no second hour of CI (docs/fast_release.md).
+# ONE dispatch makes a release, with no version-bump pull request and no second hour of CI (docs/release/releasing.md).
 #
 #   gh workflow run fast-release.yml --ref main -f dry_run=true     # first: prints what it would do, builds nothing
 #   gh workflow run fast-release.yml --ref main                      # the real thing (needs the repository variable FAST_RELEASE_ENABLED=1)
 #
 # What it does, in order (the old way, a bump PR and then release.yml by hand, still works unchanged):
-#   1. plan: the commit must be the head of main AND already have a finished, fully green CI run from main's own push (CLAUDE.md rule 6:
+#   1. plan: the commit must be the head of main AND have a finished, fully green CI run (if CI is still running it is waited for: 30 s polls, 90 min at most) from main's own push (CLAUDE.md rule 6:
 #      the gate is the CI run the commit already had; there is no second one). The next version is worked out from what is published
 #      (rule 12: never a version that exists). The release notes are put together from the small files in dist/changelog.d/.
 #   2. release: calls release.yml for exactly that commit. The version is put into the build (CMakeLists.txt in the runner's copy only),
@@ -31,6 +31,11 @@ on:
         description: "Optional: release exactly this version (x.y.z; must be new and newer than every release). Empty = work it out."
         type: string
         default: ""
+      gate:
+        description: "full = every job of main's CI run must be green and finished (rule 6, the default). release = only the jobs that build and test what ships (RELEASE_GATE_JOBS in scripts/fast_release.py) must be green; informational jobs still running are not waited for, but any job already red or cancelled still refuses."
+        type: choice
+        options: [full, release]
+        default: full
       allow_empty:
         description: "Release even though no new changelog entry exists (players then see 'Small fixes and improvements')"
         type: boolean
@@ -49,7 +54,7 @@ jobs:
   plan:
     name: Plan (version, CI gate, notes)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 105   # 90 min CI wait + the rest
     permissions:
       contents: read
       actions: read        # to read main's CI run for this commit
@@ -63,6 +68,7 @@ jobs:
       REPO: ${{ github.repository }}
       DRY_RUN: ${{ inputs.dry_run }}
       BUMP: ${{ inputs.bump }}
+      GATE: ${{ inputs.gate }}
       WANT_VERSION: ${{ inputs.version }}
       ALLOW_EMPTY: ${{ inputs.allow_empty }}
       ENABLED: ${{ vars.FAST_RELEASE_ENABLED }}
@@ -114,24 +120,56 @@ jobs:
           echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
           echo "why=$WHY" >> "$GITHUB_OUTPUT"
 
-      - name: Check that CI already passed for this commit (rule 6)
+      - name: Wait for CI on this commit, then check it passed (rule 6)
+        env:
+          VER: ${{ steps.version.outputs.version }}
         run: |
           fail() { echo "::error title=CI gate: release refused::$*"; echo "**Refused:** $*" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
-          gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&per_page=30" > runs.json || fail "Could not read CI runs from GitHub."
-          set +e
-          dec="$(python3 -I scripts/fast_release.py ci-run --runs runs.json --sha "$SHA")"; rc=$?
-          set -e
+          # Poll instead of failing when CI is still going (the first fast release failed after 3 min for that reason).
+          # Every 30 s, at most 90 min. A run that has not started yet is given 10 min to appear. A job that already ended red or
+          # cancelled stops the wait at once (the run cannot become green any more). Nothing is cancelled or re-run from here.
+          LIMIT=$(( $(date +%s) + 90*60 )); MISSING_LIMIT=$(( $(date +%s) + 10*60 )); waited=0
+          while :; do
+            gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&per_page=30" > runs.json || fail "Could not read CI runs from GitHub."
+            set +e
+            dec="$(python3 -I scripts/fast_release.py ci-run --runs runs.json --sha "$SHA")"; rc=$?
+            set -e
+            state="$(printf '%s' "$dec" | python3 -c 'import sys,json;print(json.load(sys.stdin)["state"])')"
+            msg="$(printf '%s' "$dec" | python3 -c 'import sys,json;print(json.load(sys.stdin)["message"])')"
+            RID="$(printf '%s' "$dec" | python3 -c 'import sys,json;print(json.load(sys.stdin)["run_id"])')"
+            [ "$rc" -eq 0 ] && break
+            if [ "$GATE" = "release" ] && [ "$state" = "running" ]; then
+              gh api --paginate "repos/$REPO/actions/runs/$RID/jobs?per_page=100" --jq '.jobs[] | {name, status, conclusion}' > jobs.json || fail "Could not read the jobs of CI run $RID."
+              set +e; gd="$(python3 -I scripts/fast_release.py ci-jobs --jobs jobs.json --gate release)"; grc=$?; set -e
+              if [ "$grc" -eq 0 ]; then echo "release gate passed while other CI jobs still run: $gd"; break; fi
+            fi
+            case "$state" in
+              red) fail "$msg" ;;
+              missing) [ "$(date +%s)" -lt "$MISSING_LIMIT" ] || fail "$msg (waited 10 min for it to start)" ;;
+              running)
+                gh api --paginate "repos/$REPO/actions/runs/$RID/jobs?per_page=100" --jq '.jobs[] | {name, status, conclusion}' > jobs.json || fail "Could not read the jobs of CI run $RID."
+                set +e; jf="$(python3 -I scripts/fast_release.py ci-jobs --jobs jobs.json --failed-only)"; jrc=$?; set -e
+                [ "$jrc" -eq 0 ] || fail "CI run $RID for this commit already has red or cancelled jobs: $(printf '%s' "$jf" | python3 -c 'import sys,json;print("; ".join(json.load(sys.stdin)["bad"]))'). Fix it on main first; this release does not wait for the rest of the run."
+                ;;
+              *) fail "$msg" ;;
+            esac
+            [ "$(date +%s)" -lt "$LIMIT" ] || fail "CI for this commit did not finish within 90 min ($msg). Nothing was released; dispatch again when it has."
+            echo "$(date -u +%T) $state: $msg (waited ${waited}s)"
+            sleep 30; waited=$((waited+30))
+          done
           echo "$dec"
-          msg="$(printf '%s' "$dec" | python3 -c 'import sys,json;print(json.load(sys.stdin)["message"])')"
-          [ "$rc" -eq 0 ] || fail "$msg"
-          RID="$(printf '%s' "$dec" | python3 -c 'import sys,json;print(json.load(sys.stdin)["run_id"])')"
           # The run says "success", but a job that was allowed to fail would not show there: every job must be success or skipped.
           gh api --paginate "repos/$REPO/actions/runs/$RID/jobs?per_page=100" --jq '.jobs[] | {name, status, conclusion}' > jobs.json || fail "Could not read the jobs of CI run $RID."
           set +e
-          jd="$(python3 -I scripts/fast_release.py ci-jobs --jobs jobs.json)"; rc=$?
+          if [ "$GATE" = "release" ]; then jd="$(python3 -I scripts/fast_release.py ci-jobs --jobs jobs.json --gate release)"; rc=$?
+          else jd="$(python3 -I scripts/fast_release.py ci-jobs --jobs jobs.json)"; rc=$?; fi
           set -e
           echo "$jd"
-          [ "$rc" -eq 0 ] || fail "CI run $RID for this commit has jobs that did not pass: $(printf '%s' "$jd" | python3 -c 'import sys,json;print("; ".join(json.load(sys.stdin)["bad"]))')"
+          [ "$rc" -eq 0 ] || fail "CI run $RID for this commit has jobs that did not pass: $(printf '%s' "$jd" | python3 -c 'import sys,json;d=json.load(sys.stdin);print("; ".join(d["bad"]+d.get("pending",[])))')"
+          # After a long wait: main must still be this commit and the version still free (rule 12).
+          git fetch -q origin main
+          [ "$(git rev-parse origin/main)" = "$SHA" ] || fail "main moved while waiting for CI ($SHA is not its head any more). Dispatch again."
+          if gh release view "v$VER" --repo "$REPO" >/dev/null 2>&1; then fail "GitHub got a release for v$VER while waiting (rule 12). Dispatch again."; fi
           echo "CI_RUN_URL=https://github.com/$REPO/actions/runs/$RID" >> "$GITHUB_ENV"
           echo "CI_JOBS=$(printf '%s' "$jd" | python3 -c 'import sys,json;print(json.load(sys.stdin)["count"])')" >> "$GITHUB_ENV"
 
@@ -175,14 +213,14 @@ jobs:
             echo "| | |"; echo "|---|---|"
             echo "| Version | **v$VER** ($WHY; after v${LATEST:-none}) |"
             echo "| Commit | \`$SHA\` (the head of main) |"
-            echo "| CI gate | passed: [run]($CI_RUN_URL), $CI_JOBS jobs all success or skipped |"
+            echo "| CI gate | passed ($GATE gate): [run]($CI_RUN_URL), $CI_JOBS jobs listed |"
             echo "| Changelog entries | $(wc -l < release-notes/entries.txt) new |"
             echo
             echo "### Would run next"
             echo "1. release.yml on this commit with the version stamped to $VER (build, sign, zip, installer, GitHub release, Supabase publish, Linux server, make latest)."
             echo "2. an after-check of the release, the tag, VERSION.txt, versions.json and its three SHA-256."
             echo
-            echo "### ROADMAP.md row (for the catch-up PR, see docs/fast_release.md)"
+            echo "### ROADMAP.md row (for the catch-up PR, see docs/release/releasing.md)"
             echo '```'; cat release-notes/ROADMAP_ROW.txt; echo '```'
             echo "### Update card (NOTES.txt)"
             echo '```'; cat release-notes/NOTES.txt; echo '```'
@@ -203,6 +241,7 @@ jobs:
     if: ${{ !inputs.dry_run }}
     permissions:
       contents: write
+      actions: read        # release.yml's last step reads this run's artifacts and jobs (the Linux server build)
     uses: ./.github/workflows/release.yml
     with:
       channel: latest
@@ -231,7 +270,7 @@ jobs:
       - name: The release workflow must have finished green
         run: |
           if [ "$RELEASE_RESULT" != "success" ]; then
-            msg="The release job ended as '$RELEASE_RESULT' for v$VER. The release is hidden from launchers unless the last job (Make the release visible) ran: look at that job, then at https://github.com/$REPO/releases (a hidden release shows there as 'Pre-release'/not latest). Fix the cause on main and run a NEW fast release: never re-run a version that exists (rule 12). docs/fast_release.md, \"When it goes wrong\"."
+            msg="The release job ended as '$RELEASE_RESULT' for v$VER. The release is hidden from launchers unless the last job (Make the release visible) ran: look at that job, then at https://github.com/$REPO/releases (a hidden release shows there as 'Pre-release'/not latest). Fix the cause on main and run a NEW fast release: never re-run a version that exists (rule 12). docs/release/releasing.md, \"When it goes wrong\"."
             echo "::error title=Release did not finish::$msg"; echo "**$msg**" >> "$GITHUB_STEP_SUMMARY"; exit 1
           fi
 
@@ -266,10 +305,10 @@ jobs:
           { echo "## Release check for v$VER"; echo '```'; cat verify.txt verify-err.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           cat verify.txt verify-err.txt
           if [ "$ok" != 1 ]; then
-            fail "At least one check failed for v$VER (see the summary). Do NOT re-run. To take it back from launchers: gh release edit v$VER --prerelease and set the previous release latest (docs/fast_release.md, \"Roll back or hide a release\")."
+            fail "At least one check failed for v$VER (see the summary). Do NOT re-run. To take it back from launchers: gh release edit v$VER --prerelease and set the previous release latest (docs/release/releasing.md, \"Roll back or hide a release\")."
           fi
           echo "v$VER passed every after-check." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Catch-up reminder
         run: |
-          echo "Optional, whenever convenient: a docs-only catch-up PR puts v$VER's ROADMAP row, changelog section and CMakeLists.txt version into the repository (artifact release-notes of this run; python3 scripts/fast_release.py sync-docs --version $VER --notes-dir <the artifact>). docs/fast_release.md." >> "$GITHUB_STEP_SUMMARY"
+          echo "Optional, whenever convenient: a docs-only catch-up PR puts v$VER's ROADMAP row, changelog section and CMakeLists.txt version into the repository (artifact release-notes of this run; python3 scripts/fast_release.py sync-docs --version $VER --notes-dir <the artifact>). docs/release/releasing.md." >> "$GITHUB_STEP_SUMMARY"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end check of the build pipeline's output layout (docs/build_pipeline.md), with the editor's real Build:
+# End-to-end check of the build pipeline's output layout (docs/release/build_pipeline.md), with the editor's real Build:
 # export tests/export's scene as a small project that also holds an unused asset and a StreamingAssets file, then
 #   * Folder layout: <Name>.exe next to <Name>_Data/ with the scene, config, build.json, the one asset the scene
 #     uses and StreamingAssets/; the unused asset, the visual-script sources and any Data/ folder are NOT there;

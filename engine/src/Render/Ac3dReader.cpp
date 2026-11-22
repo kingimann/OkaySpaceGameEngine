@@ -3,7 +3,7 @@
 // no code from any other importer. One part per (object, material, shading) group; polygons are triangulated; triangle
 // strips (surface type 4, written by the "acc" files of newer AC3D versions) are unrolled; per-vertex normals are read when
 // a vertex line carries them, otherwise smooth normals are made from the surfaces flagged "shaded". Bounds-checked, capped,
-// no recursion. See okay/Render/ModelData.hpp and docs/own_ac3d_reader.md.
+// no recursion. See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"
@@ -215,9 +215,8 @@ long CatmullClark(std::vector<Vec3>& pos, Faces& F, long levels, std::size_t max
 } // namespace ac
 } // namespace
 
-static bool ReadAc3dImpl(const std::string& input, const std::string& baseDir, ImportedModel& out, std::string* err) {
+static bool ReadAc3dImpl(std::string text, const std::string& baseDir, ImportedModel& out, std::string* err) {
     using namespace ac;
-    std::string text = input;
     bool converted = false;
     std::string why;
     if (!detail::txt::NormalizeEncoding(text, converted, why, kMaxFileBytes)) return Fail(err, why);
@@ -570,7 +569,11 @@ bool ReadAc3dFile(const std::string& path, ImportedModel& out, std::string* err)
     std::string dir;
     const std::size_t sl = path.find_last_of("/\\");
     if (sl != std::string::npos) dir = path.substr(0, sl + 1);
-    return ReadAc3dBuffer(bytes, dir, out, err);
+    // the bytes are handed over, not copied (ReadAc3dBuffer copies the caller's text)
+    out = ImportedModel{};
+    const bool ok = ReadAc3dImpl(std::move(bytes), dir, out, err);
+    if (!ok) out = ImportedModel{};
+    return ok;
 }
 
 } // namespace okay

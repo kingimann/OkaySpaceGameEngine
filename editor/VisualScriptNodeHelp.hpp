@@ -3,7 +3,10 @@
 // category and a short "what it does" for every node type in Registry().
 // Keyed by the node's serialization type; a node with no entry simply shows
 // its pins without a description.
+#include "VisualScriptPlain.hpp"
+#include "okay/VisualScript/QuickBlocks.hpp"
 #include <cstring>
+#include <set>
 #include <string>
 #include <unordered_map>
 
@@ -47,13 +50,42 @@ inline const char* VsStepCatBlurb(bool cond) {
                   "in the node, no wiring needed.";
 }
 
-inline const char* VsNodeHelp(const char* type) {
+inline const char* VsNodeHelpRaw(const char* type) {
+    if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(type ? type : "")) return qb->description;
     if (type && std::strncmp(type, "Fn.", 3) == 0) {
         if (std::strcmp(type, "Fn.get_clipboard_text") == 0)
             return "The text on the clipboard. Empty when there is nothing to paste.";
         if (std::strcmp(type, "Fn.set_clipboard_text") == 0)
             return "Puts the text wired into First onto the clipboard. Control characters are removed, and text past the limit is cut short.";
         const std::string t = type;
+        // Vehicles (docs/gameplay/vehicles.md). First is the vehicle (its object name); leave it empty for the object this graph is on.
+        if (t == "Fn.Vehicle.SetSetting") return "Changes one setting of a vehicle while the game runs. First is the vehicle, Second is the setting's name (like maxSpeed or grip), Third is the new number. Gives 1 when it worked, 0 for an unknown name.";
+        if (t == "Fn.Vehicle.GetSetting") return "Reads one setting of a vehicle. First is the vehicle, Second is the setting's name.";
+        if (t == "Fn.Vehicle.ApplyPreset") return "Turns a vehicle into a kind of vehicle: Sedan, Sports Car, Muscle Car, Pickup, Heavy Truck, Bus, Buggy, Rally Car or Drift Car. First is the vehicle, Second is the name.";
+        if (t == "Fn.Vehicle.SetThrottle") return "Presses the gas by First (the vehicle) Second, 0 to 1. Use it to drive a vehicle from a script.";
+        if (t == "Fn.Vehicle.SetBrake") return "Presses the brake, 0 to 1. At a standstill the brake also reverses the vehicle.";
+        if (t == "Fn.Vehicle.SetSteer") return "Turns the wheel. -1 is full left, 1 is full right.";
+        if (t == "Fn.Vehicle.SetHandbrake") return "Pulls the handbrake (1) or lets it go (0). Pull it while turning to drift.";
+        if (t == "Fn.Vehicle.Boost") return "Switches the boost on (1) or off (0). It uses up the boost tank and needs the boost setting on.";
+        if (t == "Fn.Vehicle.Horn") return "Presses the horn (1) or lets it go (0).";
+        if (t == "Fn.Vehicle.Lights") return "Switches the headlights on (1) or off (0). Objects in the vehicle whose name starts with Headlight are shown or hidden.";
+        if (t == "Fn.Vehicle.ClearInput") return "Hands the pedals and wheel back to the player. Set Throttle, Brake, Steer, Handbrake and Boost also let go by themselves half a second after the last time they were called.";
+        if (t == "Fn.Vehicle.Recover") return "Puts the vehicle back on its wheels, a little above where it is.";
+        if (t == "Fn.Vehicle.Eject") return "Throws the driver out beside the vehicle. Gives 1 when someone was driving.";
+        if (t == "Fn.Vehicle.Enter") return "Makes a person (Second, an object name) sit in the vehicle's driver seat. Gives 1 when it worked.";
+        if (t == "Fn.Vehicle.Speed") return "How fast the vehicle goes, in metres per second. Negative when it reverses.";
+        if (t == "Fn.Vehicle.Gear") return "The gear: 1 and up going forward, -1 in reverse.";
+        if (t == "Fn.Vehicle.Rpm") return "How fast the engine is turning (revolutions per minute).";
+        // Camera rigs and effects (docs/gameplay/cameras.md).
+        if (t == "Fn.Camera.Shake") return "Shakes the main camera. First is a word (impact, explosion, footstep or handheld), Second is how strong, 0 to 1. A number alone is the old shake.";
+        if (t == "Fn.Camera.BlendTo") return "Cuts or blends to a camera shot and keeps it. First is the shot's object name, Second is the seconds to blend. An empty name goes back to the shot with the highest priority.";
+        if (t == "Fn.Camera.SetTarget") return "Makes the camera shot that is showing follow and look at the object named in First.";
+        if (t == "Fn.Camera.AddToGroup") return "Adds the object named in First to the group the shot frames. The camera steps back to keep everyone in view.";
+        if (t == "Fn.Camera.RemoveFromGroup") return "Takes the object named in First out of the group. With no name it empties the group.";
+        if (t == "Fn.Camera.FovKick") return "A quick punch of the view: it widens by First degrees and settles back over Second seconds.";
+        if (t == "Fn.Camera.SetFovOffset") return "Holds the view wider or narrower by First degrees (a sprint, aiming). Second is the seconds to ease there. 0 eases back.";
+        if (t == "Fn.Camera.HitPulse") return "Darkens the edges of the screen for a moment, like being hit. First is how strong, 0 to 1.";
+        if (t == "Fn.Camera.SetHandheld") return "A steady slight wobble, like a held camera. First is how much, 0 to 1. 0 switches it off.";
         if (t == "Fn.get_monitor") return "The name of the monitor the game is using. Empty when none was chosen.";
         if (t == "Fn.get_monitors") return "The names of the monitors connected right now.";
         if (t == "Fn.set_monitor") return "Use a connected monitor. First is its name, or its number starting at 0.";
@@ -91,8 +123,8 @@ inline const char* VsNodeHelp(const char* type) {
             return "Shoves this object's 2D body away from a point. Arguments: centre x y, force, radius, and an optional upward bias. Nothing past the radius moves.";
     }
     if (type && std::strncmp(type, "Fn.", 3) == 0)
-        return "Calls this text-script builtin on the current object. Requires: wire only the arguments it takes "
-               "(First, Second, Third, Fourth). A failure is an error on this node. Search for the builtin name.";
+        return "Does this job on this object. Fill in only the boxes it needs (First, Second, Third, Fourth). "
+               "If it cannot work, this block shows an error. Search for its name to find it.";
     static const std::unordered_map<std::string, const char*> help = {
         // ---- Events ----
         {"OnStart",        "Runs once when the object starts (the scene loads or the object is spawned)."},
@@ -412,7 +444,7 @@ inline const char* VsNodeHelp(const char* type) {
         {"IkHand",         "Makes the character's left or right hand reach for a point (Weight 0 lets go)."},
         {"SetWeather",     "Switches the scene's weather to none / rain / snow / storm at an Intensity 0..1 (it fades over the scene's weather fade time)."},
         {"SetFog",         "Turns the scene's fog On or off, fading from Start to End world units from the camera."},
-        {"SetPostEffect",  "Sets one post-processing value by name (bloom, exposure, saturation, vignette, fxaa, ...; see docs/rendering.md). 0 / 1 for switches."},
+        {"SetPostEffect",  "Sets one post-processing value by name (bloom, exposure, saturation, vignette, fxaa, ...; see docs/rendering/rendering.md). 0 / 1 for switches."},
         {"NavMoveTo",      "Sends this object's Nav Mesh Agent walking to a point over the navmesh."},
         {"NavStop",        "Stops this object's Nav Mesh Agent where it is."},
         {"NavArrived",     "True once the Nav Mesh Agent reached its last Nav Move To point."},
@@ -716,6 +748,15 @@ inline const char* VsNodeHelp(const char* type) {
     if (!type) return nullptr;
     auto it = help.find(type);
     return it == help.end() ? nullptr : it->second;
+}
+
+// The sentence the palette and the tooltips show: the hand-written help, with programming words swapped for
+// everyday ones (VisualScriptPlain.hpp). The text lives for the whole run, so the pointer stays valid.
+inline const char* VsNodeHelp(const char* type) {
+    const char* raw = VsNodeHelpRaw(type);
+    if (!raw) return nullptr;
+    static std::set<std::string> kept;
+    return kept.insert(VsPlainText(raw)).first->c_str();
 }
 
 }  // namespace okay::editor::vsed

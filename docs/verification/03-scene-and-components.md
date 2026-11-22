@@ -32,7 +32,7 @@ Areas: 1, 20, 21, 36, 44, 45. Rows ids start `V-SC-`. `V-SC-S<area>` rows are sm
     3. Right-click it again and choose **Create Variant**, then **Validate Prefab**.
   - **You should see (expected, not yet seen on Windows):** a second copy appears in the scene; a variant file is created; Validate reports no problems or lists them.
   - **Known partial:** map area 21 is marked planned in parts: expect gaps (nested prefab overrides, for example).
-  - **More:** [prefabs.md](../../prefabs.md)
+  - **More:** [prefabs.md](../../engine/prefabs.md#prefabs-and-overrides)
 
 - [ ] **V-SC-004** Merge another scene into this one
   - **Map:** 1, 20. **Where:** editor, File menu and Project panel
@@ -54,11 +54,11 @@ Areas: 1, 20, 21, 36, 44, 45. Rows ids start `V-SC-`. `V-SC-S<area>` rows are sm
   - **Map:** 44, 1. **Where:** editor, GameObject menu
   - **Steps:**
     1. Open **GameObject > Volume** and pick a kind to draw (Checkpoint, Kill and so on), then drag a box in the Scene view.
-    2. Make a player (**GameObject > Player > Third Person**) and a floor, and put the volume where the player will walk.
+    2. Make a player (**GameObject > Player > Player Controller (first / third person)**) and a floor, and put the volume where the player will walk.
     3. Press Play and walk into the volume.
   - **You should see (expected, not yet seen on Windows):** a Kill volume sends the body back to its last checkpoint; a Checkpoint volume sets the respawn point. Volumes are drawn as coloured translucent shapes in the Scene view (toggle with **View > Scene Overlays > Volumes**).
-  - **Known partial:** see docs/volumes.md for kinds that need other components (Ambience needs an Audio Source with a clip and Loop).
-  - **More:** [volumes.md](../../volumes.md)
+  - **Known partial:** see docs/engine/volumes.md for kinds that need other components (Ambience needs an Audio Source with a clip and Loop).
+  - **More:** [volumes.md](../../engine/volumes.md)
 
 - [ ] **V-SC-007** Place nature, props and structures
   - **Map:** 44, 2. **Where:** editor, GameObject menu
@@ -93,7 +93,7 @@ Areas: 1, 20, 21, 36, 44, 45. Rows ids start `V-SC-`. `V-SC-S<area>` rows are sm
     - 1.3 Scene graph [Works]. Where: Hierarchy and Inspector (15.1, 15.2); layer picker on the Camera culling mask and object layer fields...
     - 1.4 Scene lifecycle [Works]. Where: View > Panels > Scene Manager ('editor/SceneManagerPanel.*'); Build Settings edits the same list (15.7)
     - 1.5 Scene serializer [Works]. Where: File menu Save/Open (15.9); the same serializer feeds undo snapshots, copy/paste and prefab files; no window...
-    - 1.6 Prefabs and templates [Partial]. Where: GameObject > Create menu, Hierarchy prefab Apply/Revert/Reload (editor/main.cpp); override UI in the...
+    - 1.6 Prefabs and templates [Partial]. Where: GameObject menu, Hierarchy prefab Apply/Revert/Reload (editor/main.cpp); override UI in the Inspector header...
     - 1.7 Saves and prefs [Works]. Where: AutoSave component in the Inspector (editor/main.cpp); no save-slot UI components yet (12.8)
     - 1.8 Localization [Works]. Where: Localization window (1.16, 'editor/LocalizationWindow.*')
     - 1.9 Events and ECS [Works].
@@ -155,7 +155,7 @@ Areas: 1, 20, 21, 36, 44, 45. Rows ids start `V-SC-`. `V-SC-S<area>` rows are sm
     - 44.1 Blockout and grid placement [Basic]. Where: GameObject menu, toolbar Snap, 3D Modeling window
     - 44.2 Prefab brush and placement [Works]. Where: Project panel drag and drop, Terrain scatter, Foliage Inspector brush, Plugins > New Plugin
     - 44.3 Measuring and level metrics [Basic]. Where: Scene view > View options > Measure tool
-    - 44.4 Volumes and zones [Partial]. Where: Collider Inspector "Trigger" box; GameObject > Volume (11.12.5)
+    - 44.4 Volumes and zones [Partial]. Where: Collider Inspector "Trigger" box; GameObject > Effects > Volume (11.12.5)
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
   - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 44, sections 44.1, 44.2, 44.3, 44.4): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add a blockout palette with snapping walls and floors"

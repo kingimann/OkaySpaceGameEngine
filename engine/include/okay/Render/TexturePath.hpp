@@ -162,7 +162,9 @@ inline std::vector<std::filesystem::path> HomeFolders() {
     std::vector<std::string> names;
     auto add = [&](const char* v) { if (v && *v) names.push_back(v); };
     add(std::getenv("HOME"));
+#if !defined(OKAY_XBOX_UWP)   // no user profile folder in a UWP app
     add(std::getenv("USERPROFILE"));
+#endif
     const char* drive = std::getenv("HOMEDRIVE");
     const char* path = std::getenv("HOMEPATH");
     if (drive && *drive && path && *path) names.push_back(std::string(drive) + path);

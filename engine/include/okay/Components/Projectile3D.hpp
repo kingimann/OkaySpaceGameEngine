@@ -6,16 +6,30 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
-#include "okay/Modules/Health.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
 namespace okay {
 
+/// Damage the nearest health holder (Health Stat, Survival Stats, RPG Stats or NPC Controller) on
+/// `target` or one of its parents, through the one damage path. Returns true when a holder was found.
+inline bool DamageGameObject(GameObject* target, const DamageEvent& ev) {
+    for (GameObject* g = target; g;) {
+        if (HasHealth(g)) { DealDamage(g, ev); return true; }
+        Transform* p = g->transform ? g->transform->Parent() : nullptr;
+        g = p ? p->gameObject : nullptr;
+    }
+    return false;
+}
+inline bool DamageGameObject(GameObject* target, float amount, GameObject* source = nullptr,
+                             DamageType type = DamageType::Physical) {
+    return DamageGameObject(target, DamageEvent::Make(amount, type, source));
+}
+
 /// A bullet / rocket / arrow in 3D. It flies along `velocity`, sweeps a ray each
-/// frame so fast shots never pass through thin walls, damages whatever with health
-/// it hits, pushes Rigidbody3Ds, and calls on_hit() on its own script. Spawned by
+/// frame so fast shots never pass through thin walls, damages the HealthStat it
+/// hits, pushes Rigidbody3Ds, and calls on_hit() on its own script. Spawned by
 /// the TopDownShooterController (or any script); also fine on a prefab.
 class Projectile3D : public Behaviour {
 public:
@@ -85,11 +99,7 @@ private:
     void OnHit(Scene& sc, const RaycastHit3D& hit, const Vec3& dir) {
         ++m_hits;
         m_lastHit = hit.gameObject;
-        DamageEvent hurt = DamageEvent::Of(damage, DamageType::Bullet);
-        hurt.source = gameObject; hurt.instigator = owner;
-        hurt.point = hit.point; hurt.hasPoint = true;
-        // The nearest object up the hierarchy with health of any kind (HealthStat, survival, RPG stats, NPC).
-        const bool damaged = health::Damage(hit.gameObject, hurt, true).handled;
+        const bool damaged = DamageGameObject(hit.gameObject, DamageEvent::At(damage, hit.point, DamageType::Physical, owner));
         if (hit.gameObject)
             if (auto* rb = hit.gameObject->GetComponent<Rigidbody3D>())
                 if (impactForce > 0.0f) rb->AddImpulse(dir * impactForce);

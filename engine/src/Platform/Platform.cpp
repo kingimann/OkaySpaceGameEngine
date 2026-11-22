@@ -1,11 +1,16 @@
 // Backend registry and the timer fallbacks of okay::platform.
 #include "okay/Platform/Platform.hpp"
+#include <atomic>
 #include "Internal.hpp"
 #include <chrono>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
+#if defined(OKAY_XBOX_UWP)
+#include "okay/Core/Paths.hpp"   // UWP: per-user folders come from ApplicationData (Paths::SetEnvOverride)
+#include <filesystem>
+#endif
 #if defined(_WIN32)
 #  ifndef WIN32_LEAN_AND_MEAN
 #    define WIN32_LEAN_AND_MEAN
@@ -49,23 +54,43 @@ BackendKind DefaultKind() {
 #endif
         BackendKind fromEnv;
         if (ParseBackendName(std::getenv("OKAY_PLATFORM_BACKEND"), fromEnv)) k = fromEnv;
+        else if (const char* o = std::getenv("OKAY_OWN_PLATFORM")) {   // short switch: 1 / true / yes / on = own
+            const std::string v = o;
+            if (v == "1" || v == "true" || v == "yes" || v == "on") k = BackendKind::Own;
+        }
         return k;
     }();
     return kind;
 }
 
+namespace {
+// Set when a backend instance is destroyed. That happens only during static destruction, at the very end of the process (after
+// main() returns, or inside std::exit). A plain atomic with a trivial destructor, so it can still be read by objects destroyed later.
+std::atomic<bool> g_backendsGone{false};
+
+// Holds one backend instance for the process. Its destructor raises the flag first, so a window destroyed later (a global that
+// still owns one, for example) can see that its backend is gone and must not call it.
+struct BackendHolder {
+    std::unique_ptr<Backend> p;
+    explicit BackendHolder(std::unique_ptr<Backend> b) : p(std::move(b)) {}
+    ~BackendHolder() { g_backendsGone.store(true); p.reset(); }
+};
+} // namespace
+
+bool BackendsShutDown() { return g_backendsGone.load(); }
+
 Backend* Get(BackendKind k) {
     if (k == BackendKind::Sdl2) {
 #ifdef OKAY_PLATFORM_HAVE_SDL2
-        static std::unique_ptr<Backend> inst = CreateSdl2Backend();
-        return inst.get();
+        static BackendHolder inst(CreateSdl2Backend());
+        return inst.p.get();
 #else
         return nullptr;
 #endif
     }
 #ifdef OKAY_PLATFORM_HAVE_OWN
-    static std::unique_ptr<Backend> inst = CreateOwnBackend();
-    return inst.get();
+    static BackendHolder inst(CreateOwnBackend());
+    return inst.p.get();
 #else
     return nullptr;
 #endif
@@ -87,6 +112,14 @@ Key Backend::KeyForChar(char c) {
     return Key::Unknown;
 }
 
+char Backend::CharForKey(Key k) {
+    if (k == Key::Unknown) return 0;
+    static const char kChars[] = "abcdefghijklmnopqrstuvwxyz0123456789 ";
+    for (const char* c = kChars; *c; ++c)
+        if (KeyForChar(*c) == k) return *c;
+    return 0;
+}
+
 bool Backend::ShowErrorBox(const std::string& title, const std::string& text, Window*) {
     std::fprintf(stderr, "ERROR: %s: %s\n", title.c_str(), text.c_str());
     return false;
@@ -94,10 +127,16 @@ bool Backend::ShowErrorBox(const std::string& title, const std::string& text, Wi
 
 std::string Backend::BasePath() {
 #if defined(_WIN32)
-    wchar_t buf[MAX_PATH * 4];
-    const DWORD n = GetModuleFileNameW(nullptr, buf, (DWORD)(sizeof(buf) / sizeof(buf[0])));
-    if (n == 0 || n >= sizeof(buf) / sizeof(buf[0])) return std::string();
-    std::wstring w(buf, n);
+    // Grow the buffer until the whole path fits (a fixed one gave no path at all for a
+    // program in a very deep folder).
+    std::wstring w(512, L'\0');
+    for (;;) {
+        const DWORD n = GetModuleFileNameW(nullptr, w.data(), (DWORD)w.size());
+        if (n == 0) return std::string();
+        if (n < w.size()) { w.resize(n); break; }
+        if (w.size() >= 32768) return std::string();   // the longest path Windows has
+        w.assign(w.size() * 2, L'\0');
+    }
     const size_t cut = w.find_last_of(L"\\/");
     if (cut == std::wstring::npos) return std::string();
     w.resize(cut + 1);
@@ -119,7 +158,16 @@ std::string Backend::BasePath() {
 
 std::string Backend::PrefPath(const std::string& org, const std::string& app) {
     if (org.empty() || app.empty()) return std::string();
-#if defined(_WIN32)
+#if defined(OKAY_XBOX_UWP)
+    const std::string uwpBase = okay::Paths::Env::Current().appData;   // UWP: ApplicationData folder set by the app shell
+    if (uwpBase.empty()) return std::string();
+    std::string root = uwpBase;
+    for (const std::string& part : {org, app}) {
+        root += "/" + part;
+        std::error_code ec; std::filesystem::create_directories(root, ec);
+    }
+    return root + "/";
+#elif defined(_WIN32)
     const char* base = std::getenv("APPDATA");
     if (!base || !*base) return std::string();
     std::string root = base;
@@ -216,6 +264,11 @@ void DelayMs(uint32_t ms) {
     if (Backend* b = Default()) { b->DelayMs(ms); return; }
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
+
+#ifndef OKAY_PLATFORM_HAVE_SDL2
+bool TranslateSdl2Event(const void*, Event&) { return false; }
+std::unique_ptr<Window> WrapSdl2Window(void*) { return nullptr; }   // the real one is in SdlBackend.cpp
+#endif
 
 void Log(const std::string& line) {
     if (Backend* b = Default()) { b->Log(line); return; }

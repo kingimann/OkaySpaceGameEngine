@@ -1,6 +1,6 @@
 // Anti-cheat hardening (2026-11 audit follow-up): the ban list file, the audit log, the packet ceiling,
 // the input-regularity (bot / macro) detector, the cheat simulator, and a hostile-field fuzz of a live
-// server. See docs/anticheat_hardening_status.md for the item list. Headless; loopback only.
+// server. See docs/online/anticheat.md for the item list. Headless; loopback only.
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Net/AntiCheat.hpp"

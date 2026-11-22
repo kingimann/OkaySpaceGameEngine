@@ -96,7 +96,7 @@ int main() {
         // A dev build ("dev" is older than every release) never crashes the rule.
         CHECK(su::EvaluateStartup(sw, "dev").kind == su::StartupKind::NotApplied);
 
-        // Going back from a test build to the release it was made on (docs/release_channels.md "Test builds") is the one deliberate downgrade. Its target is
+        // Going back from a test build to the release it was made on (docs/release/release_channels.md "Test builds") is the one deliberate downgrade. Its target is
         // OLDER than what was running, so "the running version is the target or newer" would call a launcher that did not change "confirmed".
         su::State back; back.phase = su::Phase::Swapped; back.from = "2.876.0.17"; back.to = "2.876.0"; back.attempts = 1;
         v = su::EvaluateStartup(back, "2.876.0");                                  // the release is running: done
@@ -320,7 +320,7 @@ int main() {
         CHECK(okayupdater::IndexProblem(ix, ix.Find("2.856.0"), "2.856.0").empty());
         CHECK(Has(okayupdater::IndexProblem(Index{}, nullptr, "2.856.0"), "could not be loaded"));
         CHECK(Has(okayupdater::IndexProblem(ix, ix.Find("2.999.0"), "2.999.0"), "does not list v2.999.0"));
-        const Index fb = FallbackIndex("2.856.0", "", "", true);
+        const Index fb = FallbackIndex("2.856.0", "", true);
         CHECK(Has(okayupdater::IndexProblem(fb, fb.Find("2.856.0"), "2.856.0"), "has no checksum list"));
         FileInfo weak; weak.size = 1; weak.sha256 = "abc";
         CHECK(Has(okayupdater::RequireChecksum("OkaySpace.exe", &weak), "no valid SHA-256") && Has(okayupdater::RequireChecksum("OkaySpace.exe", nullptr), "does not list this file"));

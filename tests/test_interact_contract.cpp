@@ -9,38 +9,8 @@ using namespace okay;
 int main() {
     RUN_SUITE("interact_contract");
 
-    // ---- the key: default E from the Interact action, rebindable; an explicit other letter stays raw
-    {
-        InputActions::Restore();
-        CHECK(interact::KeyLabel('e') == "E");
-        Input::FeedKeys({'e'});
-        CHECK(interact::Pressed('e'));
-        CHECK(!interact::Pressed(0));                // 0 = not interactable
-        Input::FeedKeys({'f'});
-        CHECK(!interact::Pressed('e') && interact::Pressed('f'));   // 'f' was chosen on purpose
-        Input::FeedKeys({});
-        // rebind the Interact action to F: 'e' components now follow it, raw E no longer counts
-        CHECK(InputActions::Rebind("Interact", "key:f"));
-        CHECK(interact::KeyLabel('e') == "F");
-        Input::FeedKeys({'e'});
-        CHECK(!interact::Pressed('e'));
-        Input::FeedKeys({});
-        InputActions::Reset("Interact");             // Restore alone would keep the saved rebinding
-        InputActions::Restore();
-        CHECK(interact::KeyLabel('e') == "E");
-    }
-
-    // ---- one press, one use
-    {
-        interact::ClearBlock();
-        Input::FeedKeys({'e'});
-        CHECK(interact::Take('e'));
-        CHECK(!interact::Take('e') && interact::Blocked());
-        interact::ClearBlock();
-        CHECK(interact::Take('e'));
-        interact::ClearBlock();
-        Input::FeedKeys({});
-    }
+    // The key itself (the shared Interact action) is tested by main's test_interact_seat_dialogue; this test is the finding.
+    ItemPickup::ClearInteractBlock();
 
     ItemDatabase::Get().Clear();
     ItemDatabase::Get().LoadText("okayitems 1\nitem \"crate\"\n  name \"Crate\"\nend\n");
@@ -78,10 +48,8 @@ int main() {
         near = interact::Nearest(s, hero, &d);
         CHECK(near && near->Object() == crate);
         CHECK(!pf->enabled || interact::Find(far)[0]->CanInteract(InteractContext{hero}) == false);   // out of range
-        CHECK(interact::Use(s, hero));
+        CHECK(near && near->Interact(InteractContext{hero}));
         CHECK(inv->Count("crate") == 1);
-        CHECK(interact::Blocked());
-        interact::ClearBlock();
 
         // seats: the contract sees the chair and the occupant
         chair->active = true;

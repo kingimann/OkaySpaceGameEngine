@@ -1,6 +1,6 @@
 // The editor's windows for "upgrade project": the version question, the progress and the result, File > Project Upgrade...
 // (re-run and restore from a backup). The decisions are okayup::ProjectGate's and the work okayup::UpgradeJob's
-// (ProjectUpgrade.hpp, no ImGui); this file only draws them and wires them into the editor. See docs/project_upgrade.md.
+// (ProjectUpgrade.hpp, no ImGui); this file only draws them and wires them into the editor. See docs/editor/project_upgrade.md.
 #include "ProjectUpgradeUI.hpp"
 #include "EditorCommon.hpp"
 #include "EditorWidgets.hpp"
@@ -258,7 +258,21 @@ void DrawGatePrompt() {
             ImGui::TextWrapped("Backup at %s", r.backupDir.c_str());
             ImGui::TextDisabled("%s in the backup: a complete copy of the project.", Plural((int)r.files, "file", "files").c_str());
             if (!pr.backupOnly) ImGui::TextDisabled("The project is now marked as made with v%s.", rv.c_str());
+            if (!pr.backupOnly) {
+                if (r.losses.empty()) ImGui::TextColored(kGreen, "Nothing was lost: every object and record is in the upgraded files.");
+                else ImGui::TextColored(kAmber, "%s", (Plural((int)r.losses.size(), "thing", "things") + " could not be kept. They are listed below and in the report.").c_str());
+            }
             for (const std::string& w : r.warnings) { ImGui::TextColored(kAmber, "%s", FitEnd(w, textW).c_str()); }
+            if (!pr.backupOnly && (!r.changed.empty() || !r.log.empty())) {
+                // What changed, file by file: the same lines as the report the backup holds.
+                if (ImGui::CollapsingHeader(("What changed (" + Plural((int)r.changed.size(), "file", "files") + ")").c_str())) {
+                    ImGui::BeginChild("##upchanges", ImVec2(0, 160), true);
+                    for (const std::string& c : r.changed) ImGui::TextUnformatted(("Rewritten: " + c).c_str());
+                    for (const std::string& l : r.log) ImGui::TextWrapped("%s", l.c_str());
+                    ImGui::EndChild();
+                }
+            }
+            if (!r.reportPath.empty()) ImGui::TextDisabled("%s", ("Report: " + FitEnd(r.reportPath, textW - 60.0f)).c_str());
             ImGui::Dummy(ImVec2(0, 8));
             if (Btn("Open project", first, true)) g_gate.Answer(Choice::Continue);
             if (Btn("Open backup folder", first)) OpenFolder(r.backupDir);
@@ -348,7 +362,7 @@ void DrawUpgradeWindow(okay::editor::EditorState& ed) {
     const bool upgrade = Accent((std::string("Upgrade project") + (rv.empty() ? "" : " to v" + rv) + "...").c_str());
     ImGui::EndDisabled();
     if (upgrade) {
-        const std::string scene = ed.path().empty() ? (fs::path(dir) / "Assets" / "project.okayscene").string() : ed.path();   // only its folder matters here
+        const std::string scene = okayup::SceneKeyForProject(dir);   // the project's own folder, never the open scene's (a loose scene belongs to no project)
         ImGui::CloseCurrentPopup();
         RunAfterSavePrompt(ed, "upgrading the project", [&ed, scene] {
             g_gate.Upgrade(scene, [&ed] {   // the scene on disk may have been rewritten: open it again

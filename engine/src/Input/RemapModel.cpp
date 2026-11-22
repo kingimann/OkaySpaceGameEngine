@@ -1,4 +1,5 @@
 #include "okay/Input/RemapModel.hpp"
+#include "okay/Input/PadProfiles.hpp"
 #include "okay/Input/Input.hpp"
 
 #include <algorithm>
@@ -42,7 +43,7 @@ RemapSlot MakeSlot(const InputActions::Action& a, bool gamepad) {
     if (const InputBinding* cur = SlotIn(a.bindings, gamepad)) {
         s.bound = true;
         s.binding = *cur;
-        s.label = cur->Label();
+        s.label = gamepad && cur->kind == InputBinding::Kind::PadButton ? PadProfiles::BindingLabel(*cur) : cur->Label();
         if (cur->kind == InputBinding::Kind::Keys4)
             for (int i = 0; i < 4; ++i) s.partLabels.push_back(Input::KeyName(cur->keys[i]));
     }
@@ -67,7 +68,8 @@ bool RemapOverlap(const InputBinding& a, const InputBinding& b) {
     if (a.kind == K::None || b.kind == K::None) return false;
     if (a.kind == b.kind) {
         switch (a.kind) {
-            case K::Key: case K::Mouse: case K::PadButton: return a.code == b.code;
+            case K::Key: case K::Mouse: case K::PadButton: case K::Wheel: return a.code == b.code;
+            case K::Chord: return std::equal(a.keys, a.keys + 4, b.keys);   // the same keys (a chord keeps its keys from single bindings, so a chord and a lone key do not conflict)
             case K::Keys4:
                 for (int i = 0; i < 4; ++i) if (KeyIndex(b, (unsigned char)a.keys[i]) >= 0) return true;
                 return false;
@@ -103,8 +105,11 @@ std::vector<RemapConflict> RemapConflicts(const std::string& action, const std::
     const InputBinding nb = InputBinding::Parse(bindingText);
     if (nb.kind == InputBinding::Kind::None) return out;
     const std::string self = Lower(action);
+    const InputActions::Action* me = InputActions::Find(action);
+    const std::string myContext = me ? Lower(me->context) : std::string();
     for (const InputActions::Action& a : InputActions::All()) {
         const bool same = Lower(a.name) == self;
+        if (!same && Lower(a.context) != myContext) continue;   // another context: the key may mean both
         const InputBinding* slot = same ? SlotIn(a.bindings, nb.IsGamepad()) : nullptr;
         for (const InputBinding& b : a.bindings) {
             if (same) {
@@ -137,6 +142,7 @@ std::vector<RemapDuplicate> RemapAllConflicts(const RemapOptions& o) {
     for (const InputActions::Action& a : InputActions::All()) if (!Listed(o.hidden, a.name)) list.push_back(&a);
     for (std::size_t i = 0; i < list.size(); ++i)
         for (std::size_t j = i + 1; j < list.size(); ++j) {
+            if (Lower(list[i]->context) != Lower(list[j]->context)) continue;   // different contexts never clash
             bool found = false;
             for (const InputBinding& x : list[i]->bindings) {
                 for (const InputBinding& y : list[j]->bindings)

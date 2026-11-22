@@ -1,5 +1,5 @@
 #pragma once
-// Draws CaptionManager::Main() on screen (docs/accessibility.md). The manager
+// Draws CaptionManager::Main() on screen (docs/engine/accessibility.md). The manager
 // decides the words, colours, wrap and fade; this widget only places them.
 // One overlay per scene also advances the manager's clock. Player and editor
 // Play call Ensure so a scene does not need the object saved into it.

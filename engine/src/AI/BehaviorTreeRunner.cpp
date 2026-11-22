@@ -9,12 +9,13 @@
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/Damage.hpp"
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/MeleeAttacker.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
 #include "okay/Components/ScriptComponent.hpp"
-#include "okay/Components/SurvivalAfflictions.hpp"   // health::Damage
+#include "okay/Components/SurvivalAfflictions.hpp"   // DamageHealthOn
 #include "okay/Components/SurvivalComponents.hpp"    // HealthStat
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
@@ -546,10 +547,7 @@ void BehaviorTreeRunner::RunService(int idx, float elapsed) {
         if (m_npc) m_npc->SetAlert(noticed);
     } else if (n.type == BtNodeType::HealthWatcher) {
         float hp = 0.0f, max = 0.0f;
-        if (m_npc) { hp = m_npc->health; max = m_npc->maxHealth; }
-        else if (auto* s = gameObject->GetComponent<SurvivalStats>()) { hp = s->health; max = s->maxHealth; }
-        else if (auto* h = gameObject->GetComponent<HealthStat>()) { hp = h->health; max = h->maxHealth; }
-        else return;
+        if (!HealthOf(gameObject, hp, max)) return;   // the one health lookup (Damage.hpp), same order as a hit
         const float pct = max > 0.0f ? std::clamp(hp / max, 0.0f, 1.0f) : 1.0f;
         if (const std::string k = n.Str("healthKey"); !k.empty()) blackboard.Set(k, BtValue::Number(hp));
         if (const std::string k = n.Str("pctKey"); !k.empty()) blackboard.Set(k, BtValue::Number(pct));
@@ -739,10 +737,9 @@ bool BehaviorTreeRunner::ResolveTarget(const std::string& spec, Vec3& pos, GameO
 }
 
 float BehaviorTreeRunner::HealthFraction() const {
-    if (m_npc) return m_npc->maxHealth > 0.0f ? m_npc->health / m_npc->maxHealth : 1.0f;
-    if (auto* s = gameObject->GetComponent<SurvivalStats>()) return s->Fraction();
-    if (auto* h = gameObject->GetComponent<HealthStat>()) return h->maxHealth > 0.0f ? h->health / h->maxHealth : 1.0f;
-    return 1.0f;
+    float hp = 0.0f, max = 0.0f;   // the one health lookup (Damage.hpp), same order as a hit
+    if (!HealthOf(gameObject, hp, max)) return 1.0f;
+    return max > 0.0f ? std::clamp(hp / max, 0.0f, 1.0f) : 1.0f;
 }
 
 bool BehaviorTreeRunner::Test(const BtNode& n) const {
@@ -990,7 +987,7 @@ BtStatus BehaviorTreeRunner::TickTask(int idx, float dt, bool first) {
             if (r.flag && m_time < r.timer) return BtStatus::Running;
             float damage = n.Num("damage");
             if (damage <= 0.0f) damage = 10.0f;
-            health::Damage(g, damage);
+            DamageHealthOn(g, damage);
             r.flag = false;
             r.until = m_time + std::max(0.0f, n.Num("interval"));
             if (sc) for (ActionList* al : sc->FindObjectsOfType<ActionList>()) if (al) al->ReceiveMessage("npc_attack");

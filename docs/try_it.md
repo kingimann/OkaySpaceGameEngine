@@ -65,8 +65,11 @@ release job or the installer build for this change.
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7j | Nameplates bound to their characters, and a rich-text sign | `examples\ui_text\ui_text.okayscene` (File > Open..., then Play) | New in this change; real window unverified |
 | 7k | UI library slice 1: range slider, input validation, aspect-ratio box | File > Examples > UI library > ui_library_1 (then Play), or GameObject > UI > Controls and Layout & Overlays; file `examples\ui_library\ui_library_1.okayscene` | New in this change; headless pictures only, real window unverified |
+| 7lit | Lighting upgrade: presets, soft shadows, masks, panels, real-world units | Editor: **View > Lighting** (Lighting Presets), **File > Examples > Lighting presets**, any Light's Inspector | New in this change (branch `claude/lighting-2`); only the software renderer was run, no GPU, no Windows |
+| 7pl | Project panel: One column / Two columns | Editor: **View > Panels > Project**, buttons at the right end of the Assets / Favourites / Recent row | New in this change; unverified in the real window (only syntax-checked) |
 | 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
 | 7s | Digging the voxel terrain no longer drops the frame rate | `examples\voxel\voxel_big_world.okayscene`, or New Project > Sandbox; `OKAY_VOXEL_OLD_REMESH=1` for the old behaviour | New in this change; CPU numbers measured, GPU and Windows unverified |
+| 7scrc | Right-click in the Scene view to add objects | Editor > Scene view: right-click (no drag) on empty space or an object | Built, unverified in the real editor |
 | 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
@@ -83,21 +86,50 @@ release job or the installer build for this change.
 | 7zn | Guided: Randomise within a style (seed), validation check, save-edit-reopen round trip | Modeling > **Guided** > Variation and check; File > Examples > Guided modeling > `guided_car_styles` | New in this change; tested on Linux, buttons never clicked in a window (unverified) |
 | 7zo | Guided: no more lag when you change a slider, style or Detail; a live drag preview; a "Last change" time line | Modeling > **Guided**, select a guided model (File > Examples > Guided modeling > `guided_vehicles`), drag any slider, press Ultra | New in this change; timings measured headless on Linux (`test_guided_perf`), the editor panel compiles but was **never opened in a real window** (unverified) |
 | 7zq | Modeling: curves, bevel weights, Quad Remesh, reference images, mirror/undo/snapping fixes, faces keeping slots and UVs, slot remove and reorder | `examples\modeling_tools\curves_bevel.okayscene` (File > Open...), then the Modeling window > Edit Mesh | Linux headless tests only; editor window, Direct3D and OpenGL per-slot pictures unverified |
-| 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
+| 7zr | A prefab variant cut in the middle of a line is refused ("cut short"), not loaded with a record missing; deep project folders work | Drag a damaged `.okayprefab` variant into the scene in `Tools\OkayEngine.exe` | New in this change; see section 7zr |
+| 7zsd | Sandbox digging works in first and third person; crosshair, dig feedback, rebindable dig/place/pick actions, hotbar | New Project > Sandbox, or File > Examples > voxel > `voxel_sandbox` (also `voxel_big_world`); press V to switch view | New in this change; tested headless on Linux, not run in a window or on Windows |
+| 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/platform/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| 87 | Project upgrade and saving fixes | Launcher project cards; File > Project Upgrade...; example `examples\old_project` | Tested headless (project_version, project_upgrade, project_state); the launcher and editor windows not run, Windows not run |
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
+| boat1 | Water waves, floating things and a boat to drive | `examples\boat\boat_lake.okayscene` (File > Open, Play), **GameObject > Vehicles > Boat**, Add Component > Physics 3D > Buoyancy and Gameplay > Boat Controller, Water Inspector > Style | New in this change; headless tests only, Windows and GPU not run |
+| bs2 | Build Settings: search, Game and Advanced pages, checks, history | Editor: File > Build Settings (Ctrl+B) | New in this change; the editor and player were compile-checked on Linux but not run on Windows |
+| cam-up | Camera rigs and effects (Follow, Orbit, Look At, Group, walls, blends, shake presets, 2D rooms) | File > Open `examples\camera\camera_rigs.okayscene` and `examples\camera\camera_2d_rooms.okayscene`, then Play; GameObject > Camera > Camera Rig | Built and tested headless on Linux only; editor and Windows not run |
+| content-delivery | Downloadable game content: signed models, textures, scripts and data that an exported game fetches (off by default) | `okay-content.exe` in `Tools/`, or `content.okayconfig` / `OKAY_CONTENT_URL` for the player | Built; Linux-tested only |
+| editor-fps | Editor frame-time overlay and speed switches | Editor menu **View > Rendering**: Frame-time overlay, Frame rate limit, Slow down when idle, Viewport resolution, Performance mode. Heavy test scenes: `examples\perf\` | New in this change. Real Direct3D 11 numbers on a Windows machine are unverified; sent back by the owner |
 | fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
+| input | Input upgrade: input playground, rumble patterns, vibration setting, key positions (AZERTY) | Editor: File > Open, `examples\input\input_playground.okayscene`, then Play | Tested headless on Linux; nothing run on Windows or with a real controller or AZERTY keyboard |
+| okayui-apps | The launcher and editor built on OkayUI (OkaySpaceOkayUI / OkayEngineOkayUI), off by default | CMake `OKAY_LAUNCHER_ON_OKAYUI` / `OKAY_EDITOR_ON_OKAYUI`; Settings > Experimental > Run on our own UI | Launcher ran headless on Linux; the editor on OkayUI not built or run yet |
+| okayui-window | OkayUI window mode (editor window and frame run by OkayUI, no Dear ImGui): Scene and Game views, Hierarchy, Inspector, Console, Project, dialogs, menu bar | `OKAY_DEV=1 OKAY_UI_BACKEND=okayui OKAY_UI_HOST=okayui`; steps in the section "OkayUI window mode" | Headless tests only; the editor was never built or started with it |
+| one-controller | One Player Controller for first and third person; no Humanoid or separate First and Third Person entries | Editor: GameObject > Player, Add Component > Gameplay, File > New Project (First and Third Person) | Tests run on Linux only; not run in a real editor or on Windows |
+| own-switch | One place to switch our own code on and off (launcher Settings > Experimental, editor View menu) | Launcher: Settings > Experimental. Editor: View > Rendering & Performance > Experimental | Linux build only; Windows unverified |
+| pm1 | Physics Material: how a surface feels (14 presets, .okayphysmat files, Physics Surface component) | Open `examples\physics_materials\physics_materials.okayscene` and press Play; or select an object, Add Component > Physics 3D > Physics Surface | Tested headless on Linux; the Inspector rows were compiled, not opened |
+| pt1 | Physics toys: Conveyor Belt, Force Field, Gravity Zone, Turntable, Moving Platform, Explosion, Breakable | Open `examples\physics_toys\physics_toys.okayscene` and press Play; Add Component > Physics 3D | Tested headless on Linux; menu entry under GameObject not built |
+| pu1 | Physics upgrade: steady towers at any step rate, fast bodies, heavy ropes, callbacks that set speed | Open `examples\physics\physics_upgrade.okayscene` in `Tools\OkayEngine.exe` and press Play | Tested headless on Linux; nothing run on Windows or on a screen |
 | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
-| 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
-| 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
+| tex1 | Texture tools (our own): mipmaps, atlas, BC compression, DDS | Windows release: `examples\texture\try_texture.bat` (needs `Tools\okay-texture.exe`); editor: Project panel > pick a picture > Import Settings > "Generate mipmaps / compress" | Unverified on Windows; Linux tests and CLI run |
+| ui-quality-1 | In-game UI looks sharper: crisp text at any scale, smooth soft shadows, filtered pictures, even borders, kerning; a "UI Quality" setting (Fast / Good / Best / Old look) | Open `examples/ui_quality/ui_quality.okayscene` (File > Open), Lighting window > UI Font > **UI Quality**; or start with `OKAY_CLASSIC_UI=1` to see the old look | Written and unit-tested; pictures and numbers come from the headless software renderer on Linux only. Never run in a real editor or player window, on Windows, on an OpenGL or Direct3D 11 renderer, or on a high-DPI screen (unverified) |
+| vehicle-1 | Open-world driving: cars, presets, Driving World | New Project template **Driving World (open-world cars)**, or `examples\driving\driving_world.okayscene`; **GameObject > Vehicles**; Inspector on a Vehicle Controller | New; built and tested on Linux only, not run on Windows or by a person |
+| vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
+| vsclarity | Visual Script nodes explain themselves (plain line, What is this? card, Needs input, Next steps, Try this node, What do you want to do? list) | `Tools\OkayEngine.exe`: View > Editors & Tools > Visual Script, drop any node | Compiled and unit-tested (`vs_guide`); never drawn in a real window, Windows unverified |
+| water1 | Water that is never flat: presets, sea states, foam, splashes | `examples\water\lake.okayscene`, `ocean`, `river`, `shore` (File > Open, Play), **GameObject > 3D Object > Water** (pick a kind), Water Inspector > **Look** | New in this change; software-renderer pictures and headless tests only, Windows, GPU and the editor window not run |
+| wind-field | Wind: trees, grass, flags, leaves, a pushed box and the sound of wind | Editor: File > Open `examples\wind\wind.okayscene`, press Play; GameObject > Effects > Environment; Add Component > Environment; Lighting window > Wind | Tests pass on Linux (`wind_field`, `wind`); the editor and the example were not run on Windows or on a screen |
+| xbox-next | Xbox UWP next: one-page guide (PC test, Dev Mode, IP, Device Portal, deploy, logs) and the new log file | Windows release: `xbox-src\scripts\build-xbox-uwp.ps1`; editor File > Build Settings > Xbox (exp.) | Linux-tested only; nothing here has run on a console |
+| xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): one-click build (check, export, compile, shaders, pack, sign, install), own .appx packer, engine mode | File > Build Settings > platform "Xbox (exp.)" > Build Xbox package | Linux-tested only |
+| 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/status/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
+| 8 | Own model readers: **the default** since 2026-11-17 (`OKAY_THIRD_PARTY=1` = back to Assimp / ufbx) | import anything; `examples\own_readers`; `OKAY_THIRD_PARTY=1` or `OKAY_OWN_<FMT>=0` to go back | Not in a release yet (branch `claude2/own-readers-integration`); Linux tests only, Windows unverified |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
+| 12b | OkayUI Crash Log (visible rows only) and Audio Mixer (meter tooltip), off by default | `OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`, editor View menu | Headless tests and images only; never run in the Windows editor |
+| 12c | OkayUI DockBuilder, SetNextWindowDockID, Shortcut and eleven small calls (library only, nothing uses them yet) | none in the Windows release; headless tests only: `ctest -R "okayui_dockbuilder|okayui_internals"` | **Cannot be tried in the Windows release yet**; Linux headless tests only |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
+| 15b | Blender reader applies Mirror and Subdivision Surface modifiers (off by default, like the reader) | `OKAY_OWN_BLEND=1`, `examples\own_readers\mirror_subdiv_box.blend` | Tests only (Linux); not run in a Windows editor |
+| 15c | Blender reader: Subdivision Surface options of Blender 2.9+ (UV Smooth, Boundary Smooth keep corners, limit surface, creases by DeRose's rules) | `OKAY_OWN_BLEND=1`, `examples\own_readers\subsurf_options_42.blend` | Tests only (Linux); synthetic file, not written by Blender |
 | ci1 | CI and release speed-up: how to tell it worked | GitHub Actions (not in the Windows release) | Unverified until a real CI run |
 
 ---
@@ -105,7 +137,7 @@ release job or the installer build for this change.
 ## 1. Vehicle: get in and drive
 
 **What it is.** A car with a driver seat and a passenger seat. You walk up, press E, and the car listens to your keys.
-Code: `VehicleSeat` and `VehicleController` (`docs/vehicle_controller.md`).
+Code: `VehicleSeat` and `VehicleController` (`docs/gameplay/vehicles.md`).
 
 **Steps (template).**
 1. Open the editor (`Tools\OkayEngine.exe`) or the launcher's Create page. Choose **New Project**, pick the template
@@ -128,7 +160,7 @@ Code: `VehicleSeat` and `VehicleController` (`docs/vehicle_controller.md`).
 * Walk to the other door (+X side), the prompt says **Ride**. Press **E**: you sit in the passenger seat and are carried
   along, but the car does not drive.
 * **First person:** press **V** before getting in. After **E** the camera sits at your eyes in the car.
-* **Moving a seat to another car** (a bug fix, see `docs/vehicle_controller.md`): add a second car, press Play, sit in
+* **Moving a seat to another car** (a bug fix, see `docs/gameplay/vehicles.md`): add a second car, press Play, sit in
   the car, drag the seat object onto the other car in the Hierarchy, press **E**. The first car must not drive by itself.
 
 **How you know it worked.** Before you press E the car does not move when you press W. After E, W moves the car and
@@ -138,7 +170,7 @@ the prompt is gone. After the second E you are standing outside again and W move
 a player with a first or third person controller). To try it, select `Player`, remove the Third Person Controller and
 add a First Person Controller in the Inspector. Unverified in the editor.
 
-**Known rough.** From `docs/vehicle_controller.md`: hands do not hold the wheel (generic chair sit); the car is a stack
+**Known rough.** From `docs/gameplay/vehicles.md`: hands do not hold the wheel (generic chair sit); the car is a stack
 of boxes; first person has no mouse look from the seat; the look was only checked in software-renderer screenshots; multiplayer does not replicate seats; no script or visual
 script node for enter and exit yet; a scene saved while someone sits stores the person standing free.
 
@@ -188,7 +220,7 @@ There is no momentum (no flick). Touch only exists on a touch screen.
 
 ## 4. Play start: shared audio and the skipped navmesh bake
 
-Two speed-ups to Play start (`docs/audio.md`, `docs/navigation.md`).
+Two speed-ups to Play start (`docs/audio/audio.md`, `docs/gameplay/navigation.md`).
 
 **Audio sharing.** Sources that use the same sound file now hold one decoded copy. **There is no log line or other
 sign of this in the editor**: it only saves memory and time. Open `examples\spatial_audio\spatial_audio.okayscene`
@@ -222,7 +254,7 @@ ramp, a floor with a hole or a concave room bakes as it is.
    would give a plain rectangle).
 
 **Limits.** Meshes over 2,000,000 triangles are cut off with a warning in the Console (`Navigation: the bake may be
-missing geometry`). One crack anywhere in a mesh makes the whole collider two-sided (`docs/navigation.md`).
+missing geometry`). One crack anywhere in a mesh makes the whole collider two-sided (`docs/gameplay/navigation.md`).
 
 **Status.** Tested on main: the headless test `navmesh_mesh_collider`. Unverified: the editor windows and menu names.
 
@@ -341,9 +373,6 @@ measurement in [visual_script_category_audit.md](visual_script_category_audit.md
 Screenshots (headless renders: the real Add Node panel code drawn with ImGui's software renderer and its default font, so
 the font and window frame differ from the editor):
 
-* [Numbers open, with its subcategories and the hover description](images/vs_palette_topics.png)
-* [Typing `weather`: nine nodes, all in Weather & Fog](images/vs_palette_search_weather.png)
-* [The Events section folded away](images/vs_palette_folded_section.png)
 
 Status: the topic list, the rule that every node has exactly one place, the size limits, the search words for old topic
 names and the favourites keys are checked by `tests/test_vs_categories.cpp` (compiled and run with g++ on Linux). The
@@ -354,7 +383,7 @@ how the sidebar looks and feels in the real editor window (font, dot colours, sc
 
 The two tests `templates_work` and `examples_work` run every New Project template and every example scene the way a person
 does (keys, mouse, Play, Stop, save, reopen) and fail when one is broken. What each one checks, how to add a template or an
-example, and the one known failure are in [templates_check.md](templates_check.md).
+example, and the one known failure are in [templates_check.md](process/templates_check.md).
 
 **Commands** (a Linux checkout):
 
@@ -386,7 +415,7 @@ the checks are headless, so every "you should see" line is unverified until you 
 6. **Card text.** The launcher's cards for Vehicle (3D), Vehicle (2D) and Sandbox now say what the templates do.
 
 Status: tested on Linux (headless, about 6 seconds). Not run: a real window, the launcher, Windows. Before and after pictures of six
-of the changed example scenes are in [templates_check.md](templates_check.md#pictures-the-cameras-that-looked-away-before-and-after);
+of the changed example scenes are in [templates_check.md](process/templates_check.md#pictures-the-cameras-that-looked-away-before-and-after);
 they are headless software renders (meshes only, no on-screen text), not window screenshots.
 
 ## 7f. Crash reports: detailed report, sending, GitHub issues
@@ -394,7 +423,7 @@ they are headless software renders (meshes only, no on-screen text), not window 
 **What it is.** When the editor crashes it now writes a much fuller report (version and build, Windows version, CPU, memory, graphics card, the
 scene's name, the last 64 steps, the last 200 Console lines, a backtrace). The launcher shows it, lets you read exactly what would be sent
 (names, folders, emails and addresses removed), tells you once that a sent report becomes a **public GitHub issue**, sends it for you (switch **on by
-default**), and a GitHub job turns it into an issue. Full story: [crash_reports.md](crash_reports.md).
+default**), and a GitHub job turns it into an issue. Full story: [crash_reports.md](online/crash_reports.md).
 
 > **The server half (steps 9 and 10) cannot work until the owner has done two one-time steps, in the browser, in this order:**
 > - **Owner step A:** run `docs/sql/crash_reports.sql` once in the Supabase SQL editor (open the project, **SQL editor**, paste the whole file,
@@ -462,7 +491,7 @@ Supabase, the GitHub workflow on GitHub, the browser page of step 11, and `OKAY_
 
 ## 7g. Install, uninstall and Versions: look at today's behaviour yourself (audit)
 
-Why: the install audit (`docs/install_audit.md`) found things it could only read in code or run on a Linux test machine. Nothing
+Why: the install audit (`docs/release/install.md`) found things it could only read in code or run on a Linux test machine. Nothing
 in the program changed in that branch. These steps let you see on Windows whether it is right. They use a **copy** of a project, never
 a real one, because two of the checks touch projects.
 
@@ -482,13 +511,13 @@ a real one, because two of the checks touch projects.
 
 **Status.** Windows steps unverified. What was run: the installer under wine on Linux (install, update, uninstall, running programs,
 full disk, odd folders) and two small test programs against the real Versions and project-gate code. Details, results and the plan to
-fix each item are in `docs/install_audit.md`; the comparison with other launchers is `docs/install_comparison.md`.
+fix each item are in `docs/release/install.md`; the comparison with other launchers is `docs/release/install.md`.
 
 ## 7h. Project panel right-click menus
 
 **What it is.** The right-click menus of the editor's Project panel were reworked and filled out: one list per place you can click
 (an asset, a folder, a folder in the tree on the left, a starred item, the empty space), with a tooltip on every item, greyed items that
-say why, and counts when several items are selected ("Delete 3 Items"). Full list of items: `docs/project_panel.md`, section
+say why, and counts when several items are selected ("Delete 3 Items"). Full list of items: `docs/editor/project_panel.md`, section
 "Right-click menus". Code: `editor/ProjectContextModel.hpp` (the lists), `editor/ProjectPanelUI.cpp` (drawing, the Move to...
 picker, Properties), `DrawProject` in `editor/main.cpp`.
 
@@ -555,7 +584,7 @@ manager onto the editor window, or use the Project panel's **Import** button.
 tooltip, is a bug: tell us which item.
 
 **Left out on purpose.** Export Package (no package exporter exists), Select Dependencies, a Localization table and an Animation in Create: reasons in
-`docs/project_panel.md`.
+`docs/editor/project_panel.md`.
 
 **Status.** The item lists, labels, greyed reasons, Copy Text, which file types run code, the Move to... rule, the path helpers (nested selections, the nearest folder that exists),
 Set as Start Scene, the dates and the Properties rows are tested headlessly (`project_context_model`, `project_menu_ops`). The new story and AI files are read back with the engine's parsers,
@@ -563,7 +592,7 @@ and Standard Folders, Duplicate of a selection and the tags a menu lists are tes
 (`editor/LaunchFile.cpp`) is tested on Linux against fake programs on PATH (`launch_file`): a hostile file name reaches the program as one untouched argument and program and script types are
 refused before anything starts; its Windows half (`ShellExecuteW`) was only compile-checked with the MinGW cross compiler. **Unverified:** everything you see in the real window (drawing, tooltips, the Move to... and Properties
 windows, the Explorer, Notepad and default-app launches on Windows, the tree's expand and collapse, the panel following a renamed folder). Nothing here was run on Windows. The changed editor files (`editor/main.cpp`, `ProjectPanelUI.cpp`, `ProjectMenuDraw.cpp`, `ProjectBrowser.cpp`, `ContentEditors.cpp`, `LaunchFile.cpp`) were compiled with `-fsyntax-only` on Linux with the editor's real flags (no error; `main.cpp` has older warnings of its own) and the launcher, the panel and the menu drawing also with the MinGW Windows cross compiler; the editor was not linked or started.
-**Pictures:** `docs/images/project_menus/*.png` (listed in `docs/project_panel.md`) are headless renders, **not screenshots of the editor window**: the real item lists and the real menu drawing code, drawn by Dear ImGui into a software surface with ImGui's default look and font (`tools/project_menu_shots.cpp`). The editor itself could not be built and run on the machine that wrote this, so there is no screenshot of the real window; the OkayUI panels have no Project panel, so there is no second copy of this menu to keep in step.
+**Pictures:** a picture folder (pictures are no longer stored in the repository) (listed in `docs/editor/project_panel.md`) are headless renders, **not screenshots of the editor window**: the real item lists and the real menu drawing code, drawn by Dear ImGui into a software surface with ImGui's default look and font (`tools/project_menu_shots.cpp`). The editor itself could not be built and run on the machine that wrote this, so there is no screenshot of the real window; the OkayUI panels have no Project panel, so there is no second copy of this menu to keep in step.
 
 ## 7j. Nameplates that show their own character, and a sign with rich text
 
@@ -572,7 +601,7 @@ dark card with the name, a gold level pill and a red health bar). Each plate is 
 character's name, level and health, live. The Goblin loses a little health by itself soon after Play starts, so you can see
 its bar drop. Behind them is a wooden sign whose text uses the rich-text tags: a big bold title, a gold line, red bold and
 italic words and a small line. Code: `UIOwnerData` (the `owner.` keys), `UIGallery::AddNameplate`, `ui2d::DrawWorldText`
-(`docs/ui_runtime.md`, `docs/ui_world_space.md`).
+(`docs/ui/in_game_ui.md`, `docs/ui/in_game_ui.md`).
 
 **Steps.**
 1. Open the editor (`Tools\OkayEngine.exe`, or start it from the launcher). **File > Open...**, paste
@@ -611,7 +640,7 @@ inside the card at any size of the window.
 World Space UI object: the Game view and the player draw it; whether the Scene view previews it is unverified. The sign uses
 the 8x8 pixel font (no new font system). A big `[size]` run does not change how a line is wrapped or centred.
 
-**Pictures** (headless renders through the same UI pass as the game, not a real window; they are in `docs/images/ui_text/`;
+**Pictures** (headless renders through the same UI pass as the game, not a real window; they are in a picture folder (pictures are no longer stored in the repository);
 the test `ui_text_shots` makes the "after" ones again, the two "before" ones are the unmerged branches' own renders):
 
 | File | What it shows |
@@ -638,7 +667,7 @@ the test `ui_text_shots` makes the "after" ones again, the two "before" ones are
   (`ui_nameplate_bound`) and 2 of 272 (`world_text_rich`) checks; with the fix both are 0.
 * All of the above ran on the branch before two merges: `main` (one SHA-256, vehicles, owner rules; no conflicts) and Claude 2's
   nine newer commits of `claude2/world-text-rich` (its own fix for the same line-overlap problem, which was compared with
-  mine and left out of the code, plus its overlap test, its picture block and its text; conflicts in `docs/ui_runtime.md`,
+  mine and left out of the code, plus its overlap test, its picture block and its text; conflicts in `docs/ui/in_game_ui.md`,
   `editor/main.cpp` and `tests/test_world_text_rich.cpp`). After those merges only the cheap checks were repeated: a configure
   of the merged tree, the feature map check, the branch lint, the MinGW win32 syntax check and a syntax-only compile of the
   editor, the player, the renderer and the tests. **The suites were not re-run on the merged tree here** (the shared build
@@ -654,7 +683,7 @@ menu entry was only syntax-checked, not run. The pictures are headless renders, 
 ## 7k. UI library slice 1: range slider, input validation, aspect-ratio box
 
 **What it is.** A UI screen with three cards that show the parts added in slice 1 of the in-game UI component library
-([ui_library.md](ui_library.md); [ui_component_audit.md](ui_component_audit.md) says what already existed): a range slider
+([ui_library.md](ui/in_game_ui.md#ui-component-library); [ui_component_audit.md](ui/in_game_ui.md#in-game-ui-component-library-audit-what-exists-what-is-missing) says what already existed): a range slider
 with two handles, input boxes with rules (email, number range, password and repeat) and a 16:9 frame that keeps its shape.
 
 **Steps.**
@@ -672,12 +701,78 @@ with two handles, input boxes with rules (email, number range, password and repe
    Range Slider** or **Input Field with Validation**, **Layout & Overlays > Aspect Ratio Box**.
 
 **What you should see.** A red ring and a sentence appear only after typing a wrong value; the range handles stop at each
-other; the blue frame is 16:9 at every window shape. Pictures: `docs/images/ui_library/`.
+other; the blue frame is 16:9 at every window shape. Pictures: a picture folder (pictures are no longer stored in the repository).
 
 **Status.** Logic and the shipped scene are tested headless (`ui_library`, `ui_library_example`: 179 checks, run on Linux).
 The pictures are software renders (`ui_library_shots`), not a real window. The editor menu entries and Inspector panels
 were written but the editor was not built or run here, and nothing ran on Windows. The aspect box does not follow a
 world-space Canvas yet.
+
+## 7lit. Lighting upgrade: presets, soft shadows, masks, panels, real-world units
+
+**What it is.** The lights and shadows got better. What changed and why: `docs/rendering/lighting.md` (it has the Existing / Gap
+table). Code: `ShadowMath.hpp`, `Lighting.hpp`, `LightingPresets.hpp`, `SoftwareRenderer.hpp`.
+
+**Which renderer shows what.** Press **F3** in the editor: the overlay says which renderer is drawing. The Light Inspector prints a
+grey note under Soft Edges, Mask and Panel Width/Height when the renderer ignores them.
+* Software renderer: everything below (run headless).
+* Direct3D 11 and OpenGL (round 2, **written without a GPU and never run**): presets, real-world units, Auto brightness, Glow Light
+  Range, the smooth spot cone, stable sun shadows, Soft Edges, light masks, rectangle panels, the shadow fade. If a GPU picture looks
+  wrong (black light, wrong mask), the shader text in `D3D11Hlsl.hpp` / `GLRenderer.cpp` is the place to look. OpenGL softens by an
+  approximation. **Light probes** show in the software renderer only.
+
+**Steps: the five looks.**
+1. Open the editor. **File > Examples > Lighting presets (sun, sunset, night, indoor, fog)** and pick `sunny_day`. (Windows release:
+   `examples\lighting\sunny_day.okayscene` next to the programs.) Press **Play**.
+2. Open **View > Lighting**. At the top is **Lighting Presets**: click **Sunset**, then **Night with lamps**, **Indoor**,
+   **Spooky fog**, **Sunny day**. The sky, fog, ambient light and lights change at once. **Ctrl+Z** undoes a click.
+3. Look in the Hierarchy: lights a preset added are named `Lighting: ...`. Select one and change it in the Inspector like any light.
+
+**Steps: the Light Inspector.** Select a Light.
+* **Units**: switch Simple to *Real world*. The sun is in lux (try the **Noon sun**, **Overcast**, **Moon** buttons), lamps in lumens
+  (**Candle**, **Bulb**, **Street lamp**). In View > Lighting, **Auto brightness** keeps the scene readable (untick it to see the
+  fixed level).
+* **Panel Width / Height** (Area light only): set 2 and 1.4. The light becomes a rectangle shining along its blue arrow. 0 and 0 is
+  the old soft glow.
+* **Mask** (Directional or Spot): pick *window*. The sun now shines through window panes; *Metres per repeat* sets their size. A
+  Spot light shows the mask inside its cone. *Picture file...* takes your own picture (white lets light through).
+* **Soft Edges** (under Shadows): 0 = the same soft edge everywhere, 1 = a shadow is sharp where the object touches the ground and
+  gets softer the farther it falls.
+* On a Mesh Renderer, **Glow** section: give the object an Emissive colour, set **Glow Light Range** to 5: it now lights its
+  surroundings.
+* View > Lighting > **Light Probes**: press **Bake probes**; ambient light now differs between a room under a roof and open ground (software renderer). **Clear probes** removes them.
+* Scene Ambient occlusion (Post-processing) now also darkens corners in the software renderer.
+* View > Lighting: **Classic lighting look** (software renderer only) goes back to the old shadows and light roll-off, to compare.
+
+**What you should see.** Five clearly different moods; soft shadows that are sharp at the foot of an object; a window pattern on the
+floor; a bright panel over a table. Sun shadows stay still when you fly the camera slowly.
+
+**Status.** Verified here: the maths and the software renderer, headless (`test_lighting_upgrade`, 194 checks; `light_shadows`,
+`renderer_features`; before and after pictures were looked at, not committed). **Not verified:** OpenGL, Direct3D 11 and Direct3D 12 (the
+cascade fix, the slope bias and the smooth cone were edited in their code but never run on a GPU); Windows; the editor panels (the new Inspector fields, the Lighting window buttons and the File > Examples entry were only compile-checked with `g++ -fsyntax-only`; the editor was not linked or run, so nothing was drawn or clicked).
+
+## 7pl. Project panel: One column / Two columns
+
+**What it is.** The Project panel can be shown two ways. Pick with the two buttons at the right end of the Assets / Favourites / Recent row.
+Two columns is the old look and the default: folders on the left, what is inside the chosen folder on the right.
+One column is a single list: click the small arrow in front of a folder and its contents open right beneath it.
+The choice is remembered when you close the editor (it is saved in `okay_settings.txt` as `projectcolumns`; an old file with no such line opens as two columns).
+Code: `editor/ProjectLayout.hpp` (the decisions), `DrawProject` in `editor/main.cpp`. Written from the panel's own behaviour; no outside code.
+
+**Steps.**
+1. Open the editor, open a project, make sure **View > Panels > Project** is on.
+2. Click **One column**. The folder pane on the left goes away and everything is one list.
+3. Click the arrow in front of a folder. Its files and folders appear under it, moved to the right. Click the arrow again to close it.
+4. Click a row, then press Down / Up to move, Right to open a folder (press Right again to step into it), Left to close it (Left again goes to the folder that holds it), Enter to open the item, Delete to delete (as before).
+5. Click the Favourites and Recent tabs: they show their lists in both layouts. Click Assets to come back.
+6. Click **Two columns**. Drag the line between the two sides: it stops before the left side is too thin or the right side too small. Double-click the line to reset it.
+7. Close and open the editor: the layout you picked is still on.
+
+**What you should see.** Big readable labels on the two buttons; the picked one is highlighted. Nothing is drawn as a picture of text.
+
+**Verified and not.** The decisions are tested headless (`test_project_layout`, run by `ctest -R project_layout`): the divider clamp and widths,
+which rows an open-in-place list shows, what every key does, and that old settings files load as two columns. `DrawProject` was only
+checked for syntax. Nothing was run in a real editor or on Windows, so every "you should see" line above is unverified. Not in One column: the Smart Filters list (use the type filter button).
 
 ## 7r. The walk looks like a walk, Shift looks like a run
 
@@ -685,7 +780,7 @@ Why: "the character walking is basically running". The player used to move at 4.
 Shift, which is a sprint, so both looked like running (the legs stepped about 270 times a minute for W and 250 for Shift). Now W is a
 real walk (2 m/s, about 125 steps a minute, one foot always on the ground, arms hanging and swinging a little) and Shift is a real run
 (5.5 m/s, about 185 steps a minute, both feet leave the ground, elbows bent, chest leaning forward). The full numbers, the targets and
-the pictures are in [walk_vs_run.md](walk_vs_run.md).
+the pictures are in [walk_vs_run.md](gameplay/walk_vs_run.md).
 
 **A new project.**
 1. Open the launcher (`OkaySpace.exe`) > **Create** > **New Project**. On the first step pick **Third Person** (under **All templates** if the starter
@@ -719,13 +814,32 @@ Linux, not screenshots of Windows. **Unverified:** the feel in the real editor a
 (compile-checked only), a real Mixamo model (the checks use the test rigs), and whether 2 m/s feels right for your game. The default speeds are one number in
 `NaturalGait.hpp` and two fields in the Inspector if you want them faster (above about 2.4 m/s the legs start to jog).
 
+## 7scrc. Right-click in the Scene view to add objects
+
+Branch `claude/scene-right-click-add-1`. Not in a release yet.
+
+1. Open the editor, make a new 3D scene (File > New 3D Scene), look at the Scene view.
+2. Right-click on empty space (a quick click: do not move the mouse). A menu opens at the cursor with a search box on top, then
+   Shapes & Things, Lights, Camera, Empty Object, Character / Player, UI, Audio, Effects, Prefabs.
+3. Pick Shapes & Things > Cube. The cube appears where you clicked (on the ground or on the surface under the cursor), is selected,
+   and Ctrl+Z removes it in one step.
+4. Right-click again, type `sphere` in the box and press Enter. Turn Snap on (toolbar) and add another: it lines up to the grid.
+5. Right-click on the cube you made: the menu now also has Focus on Cube, Rename Cube, Duplicate Cube, Copy Cube, Paste Here, Delete Cube.
+6. Hold the right button and drag: the view orbits as before; hold it and press W A S D: you fly as before. No menu opens.
+7. Make a 2D scene (File > New 2D Scene): right-click, Sprites & Shapes > Sprite: it lands at the clicked spot.
+8. Check both the light and the dark theme: the menu text should be as crisp as the other menus.
+
+Status: the click rule, the placement maths, the menu list and the search have a headless test (`scene_add_menu`). The drawing and the
+mouse handling in `editor/main.cpp` were only checked with a syntax-only compile on Linux; nothing was run in a real editor or on
+Windows, and there are no screenshots. Details: `docs/editor/scene_right_click_add.md`.
+
 ## 7u. Physics: crates that stand, a playground, materials, a slider and debris
 
 **What it is.** The physics got a second way to solve contacts, called **Improved** (the old one is **Classic**; old scenes keep it, new scenes
 get Improved). Crates stack and stay put, a ball bounces and rolls to a stop, fast bullets stop at thin walls, resting things go to sleep
 (cheap) and wake when what holds them up goes away. Also new: a physics material on every collider (icy or bouncy floors), a **Slider** joint, ropes that
-stay near their length, joints in the physics debug view and a debris emitter. Plain explanation and the numbers: [physics.md](physics.md) and
-[physics_plan.md](physics_plan.md). Code: `Physics/Physics3DImproved.inl`, `Physics/ContactSolver.hpp`, `Physics/BoxManifold.hpp`,
+stay near their length, joints in the physics debug view and a debris emitter. Plain explanation and the numbers: [physics.md](physics/physics.md#physics-quality-materials-joints-debris-hinges-mesh-colliders-2d-casts-and-step-rate) and
+[physics_plan.md](physics/physics.md#physics-audit-and-plan). Code: `Physics/Physics3DImproved.inl`, `Physics/ContactSolver.hpp`, `Physics/BoxManifold.hpp`,
 `Physics/DebrisPool.hpp`.
 
 **How to reach it.**
@@ -763,7 +877,6 @@ ones grey, contacts red, joints orange.
 
 **Screenshots (headless Linux software renders of the same scene, not the editor window; camera and look differ from the editor):**
 
-* [Start of Play](images/physics/playground_0.png), [after 1.2 s](images/physics/playground_1.png), [after 3 s](images/physics/playground_2.png), [after 8 s](images/physics/playground_3.png)
 
 **Status.** Tested headless on Linux (`tests/test_physics_deep_*.cpp`: manifold, solver, bugs, improved, save, more; the existing physics, joint, hinge,
 ragdoll, vehicle, destructible, controller and net-prediction tests stay green). The playground was played headless for 10 seconds and the
@@ -775,7 +888,7 @@ editor or player, any real GPU. The 2D step has no Improved solver yet (the sett
 **What it is.** Today a change waits about an hour for the pull-request checks, is merged, and then a release builds for 15 to 30 minutes before you
 can see it. A **test build** skips all of that: the coordinator builds one branch for you, it is published to its own folder on the update server,
 and your launcher offers it **only if you switched "Get test builds" on**. It never touches the normal "latest" update, and a normal player never
-sees it. It may be broken: that is what a test is. Rules and files: [release_channels.md](release_channels.md#test-builds-for-the-owner-to-try-a-branch-not-a-channel-for-players).
+sees it. It may be broken: that is what a test is. Rules and files: [release_channels.md](release/release_channels.md#test-builds-for-the-owner-to-try-a-branch-not-a-channel-for-players).
 
 **How to try it.**
 
@@ -845,16 +958,16 @@ Walk -Z (straight ahead) past the signs. Each sign says what to try; what you sh
 **Compare with the old player**: close the game, set the environment variable `OKAY_OLD_PLAYER=1` (for example in a command
 prompt: `set OKAY_OLD_PLAYER=1` then start `OkaySpacePlayer.exe` from that prompt, or start the editor from it), and walk the same
 stations. F3 then adds "[old player path]" to the first player line. With it set: standing on ramps 25 to 49 degrees creeps, the
-stairs down hop, a jump from the platform loses its speed, and every frame costs more (see `docs/player_audit.md`).
+stairs down hop, a jump from the platform loses its speed, and every frame costs more (see `docs/status/player_audit.md`).
 
 Settings you can now change and that are saved: select the player, the **Player Controller** panel, **Step Offset** and **Slope
 Limit** (first and third person).
 
-**Pictures** (headless software render, flat shading, no signs or water shine, made by `tests/render_course.cpp`): `docs/images/player_course/` (`02_ramps.png`, `07_f3_player_lines_on_30_degree_ramp.png` shows the F3 lines as the 8x8 font draws them; the real F3 panel was not seen).
+**Pictures** (headless software render, flat shading, no signs or water shine, made by `tests/render_course.cpp`): a picture folder (pictures are no longer stored in the repository) (`02_ramps.png`, `07_f3_player_lines_on_30_degree_ramp.png` shows the F3 lines as the 8x8 font draws them; the real F3 panel was not seen).
 
 **Checks run here (Linux, headless)**: `tests/test_player_deep.cpp` (860 checks, each fails with `OKAY_OLD_PLAYER=1`),
 `tests/test_player_course.cpp` (the shipped file is what the code writes, and a player walks stations 1, 3, 7), and the older player,
-controller, stance, character and multiplayer prediction tests: all pass. Frame numbers: `docs/player_audit.md`.
+controller, stance, character and multiplayer prediction tests: all pass. Frame numbers: `docs/status/player_audit.md`.
 **Not seen:** Windows, a window, a picture of the course (none was made), the F3 text on screen, the Inspector fields, real feel.
 
 ## 7wa. Player feel lab: compare five controller feels, and see which system costs the frame
@@ -892,7 +1005,7 @@ the old scene-wide searches (see the numbers below).
 **Checks run here (Linux, headless):** `tests/test_player_feel.cpp` (127 checks: presets, saved, hotkeys, stick ramp, camera
 steadiness at 30/60/144/240 fps, eye bob range, foot sliding of the real controller for all presets walking and running, system
 rows), `tests/test_player_feel_lab.cpp` (the shipped scene is what the code writes; 1-5 switch the preset), and the player,
-controller, net prediction, character and locomotion tests. Frame numbers of the busy scene: `docs/player_audit.md` (section
+controller, net prediction, character and locomotion tests. Frame numbers of the busy scene: `docs/status/player_audit.md` (section
 "Busy scene").
 **Not seen:** Windows, a window, the Inspector drop-down, the F3 systems page on a screen, the lab scene on a screen, gamepad
 feel with a real pad, whether the preset numbers feel right (they were chosen by measurement and by reasoning, not by playing).
@@ -902,8 +1015,8 @@ feel with a real pad, whether the preset numbers feel right (they were chosen by
 **What it is.** Your own arm in first person (the player in the First Person starter). Before: no arm unless you held
 something, then a floating skin block, and a left click did nothing. Now: a hand and forearm in your shirt colour, always in
 view at the lower right, a left click swings it, and other players see the whole body. Before and after pictures:
-`docs/images/fp_hand/before/` and `docs/images/fp_hand/after/` (headless renders: left your camera, middle a camera in
-front of the player, right a camera at the side). Details: [fp_hand.md](fp_hand.md).
+a picture folder (pictures are no longer stored in the repository) and a picture folder (pictures are no longer stored in the repository) (headless renders: left your camera, middle a camera in
+front of the player, right a camera at the side). Details: [fp_hand.md](gameplay/fp_hand.md).
 
 **How to try it (Windows release).**
 
@@ -925,11 +1038,11 @@ The editor window code compiles but was not run; no Windows, GPU, or real multip
 **What it is.** The existing Modeling window has a new **Guided** page. You pick a category, a thing (today only the
 **Fence**), a starting design, and get a normal editable mesh. You can change its settings, swap parts, and keep
 modeling by hand; rebuilding never overwrites your hand edits without asking. Written from general parametric
-modeling; no code, models or assets from other projects. Design: `docs/guided_modeling_design.md`.
+modeling; no code, models or assets from other projects. Design: `docs/editor/guided_modeling.md`.
 
 **Status.** The generation, the rebuild rules, the files and undo are tested on Linux (`ctest -R guided_modeling`, about
 600 checks). The editor page (`editor/GuidedPanel.cpp`) compiles but nobody has opened it in a real window yet, and
-nothing here ran on Windows. Pictures in `docs/images/guided_modeling/` are headless software renders of the generated
+nothing here ran on Windows. Pictures in a picture folder (pictures are no longer stored in the repository) are headless software renders of the generated
 meshes (our own small rasteriser), not screenshots of the editor.
 
 **Try it (the example scene).**
@@ -992,7 +1105,7 @@ to one of them (it is in the Modeling window; the exact tab is unverified), or o
 
 
 **More modeling tools (same example folder).** Open `examples\modeling_tools\spin_path_curve.okayscene`. You should see a blue **Spun Vase**, a **Bent Horn**
-(a box with a curved horn pulled out of its top) and a row of small cubes called **Curve Array** following a curve. `docs/images/modeling_more/spin_path_curve.png` is a
+(a box with a curved horn pulled out of its top) and a row of small cubes called **Curve Array** following a curve. a picture folder (pictures are no longer stored in the repository) is a
 headless software render of it.
 1. **Array Along Curve.** Click **Curve Array**. In the Inspector find **Modifiers**: the first one is *Array Along Curve*, with a time like `0.05 ms` under its name.
    Drag one of the curve points: the cubes follow. Press **Wave** or **Helix** or **Arc**: the row takes that shape. Untick **Follow the curve**: the cubes stop turning.
@@ -1036,7 +1149,7 @@ headless software render of it.
 4. **Reduce Polygons.** Click the **Wrap Target** sphere (many triangles), Edit Mesh, set **Reduce to %** to 25, Ctrl+K, type `reduce`, Enter: the Console shows the triangle count dropping to about a quarter and the sphere still looks round.
 5. **Mesh library.** Use **Save as Mesh Asset** on a model, then Modeling > Import page > **Mesh library**: it appears (press Refresh); **Add** puts a copy in the scene.
 
-**Picture.** `docs/images/modeling_more/material_slots.png` is a headless software render of the example scene (not a GPU render, not the editor window).
+**Picture.** a picture folder (pictures are no longer stored in the repository) is a headless software render of the example scene (not a GPU render, not the editor window).
 
 **What was and was not checked.** The tests `modeling_more` and `modeling_more_scene` ran on Linux (slots through scene save/load, `.okaymesh` files,
 the software renderer drawing each slot's colour and picture, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, the library, the dissolve/weld/delete fixes). Nobody has clicked these buttons in the real
@@ -1056,7 +1169,7 @@ model is an ordinary mesh, parts have names, and rebuilding never overwrites you
 **Status.** Generation and rebuild rules are tested on Linux (`ctest -R guided_architecture`, about 1400 checks:
 every design sound and closed, parts never overlap, every setting at its limits, a fuzz, swapping windows, door and roof of a
 building, your edits and your own additions surviving). The page itself was never opened in a real window; nothing ran on Windows.
-Pictures in `docs/images/guided_modeling/architecture_*.png` and `building_part_swap_before_after.png` are headless renders of the
+Pictures in a picture folder (pictures are no longer stored in the repository) and `building_part_swap_before_after.png` are headless renders of the
 generated meshes, not editor screenshots.
 
 **Try it.**
@@ -1088,8 +1201,8 @@ every guided model: **Detail** (Low, Medium, High, Ultra) with the triangle coun
 **Status.** Tested on Linux (`ctest -R "guided_vehicles|guided_detail"`: about 2300 and 980 checks: every design sound, parts never
 overlap, every setting at its limits, fuzz, swapping wheels, headlights and bumpers, your edits surviving, the triangle counts and
 level changes). The page was never opened in a real window; nothing ran on Windows. Pictures
-(`docs/images/guided_modeling/vehicle_*.png`, `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
-small rasteriser (the detail pictures show triangle edges), not editor screenshots. Motorcycle pictures: `docs/images/guided_modeling/motorcycles_side_views.png` and `motorcycles_three_quarter.png` (Medium detail). The motorcycles are still blocky at Medium: tubes, boxes and simple profiles, not shaped like real tanks and engines.
+(a picture folder (pictures are no longer stored in the repository), `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
+small rasteriser (the detail pictures show triangle edges), not editor screenshots. Motorcycle pictures: a picture folder (pictures are no longer stored in the repository) and `motorcycles_three_quarter.png` (Medium detail). The motorcycles are still blocky at Medium: tubes, boxes and simple profiles, not shaped like real tanks and engines.
 
 **Try it.**
 
@@ -1104,7 +1217,7 @@ small rasteriser (the detail pictures show triangle edges), not editor screensho
 4c. **Fine detail**: set Detail to High or Ultra on a car. Under **Parts and materials** the new **Fine fittings** (door handles, seams, window rubber,
    wipers, grille bars, lamp lenses, mirror glass, plate, exhaust tips, underbody, brake discs, tyre ridges) appear and can be switched off. A building has
    **Tiles and gutters** (rows of roof tiles, gutters, a down pipe); a human with a top has **Fine fittings** (buttons, placket, pockets). Ultra is about 100k
-   triangles for a car, 30k to 115k for a building and 115k to 125k for a human (table in docs/guided_detail.md).
+   triangles for a car, 30k to 115k for a building and 115k to 125k for a human (table in docs/editor/guided_modeling.md).
 4a. **Car styles side by side**: File > Examples > Guided modeling > `guided_car_styles` (sedan, hatchback, coupe, SUV, pickup, sports, van at the
    same size; only the shape differs). Wheels sit in round arches on axles; the mirrors and bumpers are joined to the body.
 4b. Open **Variation and check**: it shows whether the model is one connected object with no bad faces. Under **Each part**, **Remove** takes a part off;
@@ -1125,7 +1238,7 @@ The editor's Detail slider, Variation and check, and Remove/Add back controls co
 
 **Status.** Tested on Linux (`ctest -R guided_characters`, about 2000 checks: every design of every part sound and non-overlapping, every
 setting at its limits, fuzz, swapping hands, hair, hats, proportions, creature body plans, your edits and your own additions surviving). The page
-was never opened in a real window; nothing ran on Windows. Pictures (`docs/images/guided_modeling/characters_*.png` sheets and
+was never opened in a real window; nothing ran on Windows. Pictures (a picture folder (pictures are no longer stored in the repository) sheets and
 `character_<type>_<design>.png`, 26 files, plus `detail_human.png`) are headless renders by our own small rasteriser, not editor screenshots.
 Humans from Medium up are organic (lofted body, separate face parts); robots and creatures are blocky; spiders and insects have crude legs. Style, hair and clothes pictures: `characters_styles.png` (realistic, stylised low poly, cartoon, blocky at Medium and High) and `characters_hairstyles.png` (13 hairstyles from behind and the side). A human can be given a skeleton and skin weights (see step 8). What is checked: `ctest -R guided_animation`.
 
@@ -1156,7 +1269,7 @@ Humans from Medium up are organic (lofted body, separate face parts); robots and
 
 **What it is.** Seven environment templates on the Modeling window's **Guided** page, same rules as 7zg to 7zk: every one is a set of named parts that can be given another design, with a **Seed** setting for the random-looking shapes (the same seed always gives the same tree), the **Detail** level (Low to Ultra), Randomise within style, the model check and the save-as-template round trip.
 
-**Status.** Tested on Linux (`ctest -R "guided_environment|guided_detail|guided_quality"`): every start design of every template is sound at all four Detail levels; the road and hedge follow a path you draw; every setting at its limits; fuzz; swapping designs; your edits surviving. Picture: `docs/images/guided_modeling/environment_overview.png` (every start design, headless render by our own small rasteriser, not an editor screenshot). Rocks, plants and the street lamp parts are not always one connected piece by design (pebbles, flower beds).
+**Status.** Tested on Linux (`ctest -R "guided_environment|guided_detail|guided_quality"`): every start design of every template is sound at all four Detail levels; the road and hedge follow a path you draw; every setting at its limits; fuzz; swapping designs; your edits surviving. Picture: a picture folder (pictures are no longer stored in the repository) (every start design, headless render by our own small rasteriser, not an editor screenshot). Rocks, plants and the street lamp parts are not always one connected piece by design (pebbles, flower beds).
 
 **Try it.**
 
@@ -1172,7 +1285,7 @@ Humans from Medium up are organic (lofted body, separate face parts); robots and
 
 **What it is.** Four prop templates on the **Guided** page (category Props), same rules and the same Detail, Randomise, model check and template controls.
 
-**Status.** Tested on Linux (`ctest -R "guided_quality|guided_detail|guided"`): every start design of the four templates is one connected, sound object at all four Detail levels, every start is different, every slot has designs that change the model, 1000 random seeds per template without a failure. Picture: `docs/images/guided_modeling/props_overview.png` (headless render).
+**Status.** Tested on Linux (`ctest -R "guided_quality|guided_detail|guided"`): every start design of the four templates is one connected, sound object at all four Detail levels, every start is different, every slot has designs that change the model, 1000 random seeds per template without a failure. Picture: a picture folder (pictures are no longer stored in the repository) (headless render).
 
 **Try it.**
 
@@ -1209,7 +1322,7 @@ clicked in a real window (unverified).
 
 **What it is.** The Guided page used to freeze for a moment (a second or more on a car or a person at Ultra) when you moved a slider, picked a design or
 changed Detail, and it cost a little on every frame just by being open. It is fixed: sliders show a cheap live preview while you drag, the real model is built
-once when you let go (one undo step), and a time line under the Undo buttons tells you what the last change cost. Numbers and causes: `docs/guided_perf.md`.
+once when you let go (one undo step), and a time line under the Undo buttons tells you what the last change cost. Numbers and causes: `docs/editor/guided_modeling.md`.
 
 **Status.** The engine side is tested on Linux (`ctest -R guided_perf`, about 1,240 checks, plus the existing guided tests). The panel changes
 (`editor/GuidedPanel.cpp`) compile but nobody has opened them in a real window yet (unverified). Nothing here ran on Windows.
@@ -1236,7 +1349,7 @@ a few centimetres off the back (a design choice); `guided_pictures` renders were
 **Steps.** Open the Modeling window and follow these.
 
 More new steps (same branch):
-- **Curves and bevel weights example**: File > Open `examples\modeling_tools\curves_bevel.okayscene` (picture: `docs/images/modeling_more/curves_bevel.png`). You see a pipe, a flat ribbon, a swept square tube and a cube with only its top edges rounded, with three hint lines on screen. Press Play to look at it, Stop to edit. Select the cube, open Edit Mesh: its top edges are drawn green (bevel weights).
+- **Curves and bevel weights example**: File > Open `examples\modeling_tools\curves_bevel.okayscene` (picture: a picture folder (pictures are no longer stored in the repository)). You see a pipe, a flat ribbon, a swept square tube and a cube with only its top edges rounded, with three hint lines on screen. Press Play to look at it, Stop to edit. Select the cube, open Edit Mesh: its top edges are drawn green (bevel weights).
 - **Coloured edges**: in Edit Mesh, creased edges are pink and bevel-weighted edges are green. Select two edges, Ctrl+K, type "crease" or "bevel weight", run Set; the colours appear at once. Clear removes them.
 - **Quad Remesh**: add a Sphere, open Modeling > Edit Mesh, set "Quads target" to 300, press Ctrl+K and run "Quad Remesh". The Console says how many triangles became how many quads, and the sphere is now made of quads (switch on the wireframe to see them). Undo brings the old mesh back. Limits: it does not follow flow lines; slots, vertex colours and UVs are dropped.
 - **Reference images are saved**: Import page > Reference images: add a PNG, save the scene, reopen it: the picture plane is still there (path, plane, size, opacity, flip, visible).
@@ -1247,11 +1360,66 @@ More new steps (same branch):
 
 **What it is.** The 3D modeler can now give faces to numbered material slots. Each slot has a colour, and changing a slot's colour
 
-**Status.** The engine side is covered by the Linux tests `modeling_more`, `modeling_more_scene` and `modeling_fuzz` (headless). The editor buttons and menus here were not compiled with the editor on Linux and not clicked in the Windows editor; the Direct3D 11/12 and OpenGL per-slot drawing never ran on a GPU. The picture `docs/images/modeling_more/curves_bevel.png` is a headless software render.
+**Status.** The engine side is covered by the Linux tests `modeling_more`, `modeling_more_scene` and `modeling_fuzz` (headless). The editor buttons and menus here were not compiled with the editor on Linux and not clicked in the Windows editor; the Direct3D 11/12 and OpenGL per-slot drawing never ran on a GPU. The picture a picture folder (pictures are no longer stored in the repository) is a headless software render.
+
+## 7zr. Damaged prefab variants and deep project folders
+
+What changed: a variant prefab file that was cut off in the middle of its last line (a crash or a full disk while
+saving, a bad copy) used to load anyway, quietly missing the half-written record (for example a colour or tag
+override). It is now refused with an error that says the file is cut short, and the scene is left as it was.
+
+1. In the editor, make a prefab, then **Create Variant** of it, and change something on the variant (a tag) so the
+   variant file has an `override` line.
+2. Close the editor. Open the variant `.okayprefab` in Notepad. Delete the end of the file from the middle of an
+   `override ...` line onwards (keep `override 2 ` and delete the rest), and save.
+3. Start the editor and drag the variant into the scene. You should see an error that names the variant and says
+   "cut short", and nothing is added. Before this change the variant appeared without that override.
+4. Deep folders: put the project in a folder whose full path is longer than 260 characters and repeat steps 1 and 3
+   with an undamaged variant. It should load normally.
+
+Also fixed for deep folders on Windows (code only): a file dragged onto the editor window from a deep folder kept
+only the first 520 characters of its path; the editor's own path (used to find the player, plugins, downloads and
+crash reports) was cut at 260 characters; the crash report folder was cut at 260 characters.
+
+**Checks run for this change** (Linux): `prefab_variants` passed with 201 different temp folder path lengths
+(about 100 to 300 characters); its new suite cuts a variant in a folder over 300 characters deep at every byte, and
+failed before the fix (82 cuts in the middle of a line loaded). `ctest -R "prefab|scene|asset|path"`: see the PR.
+
+**Not seen:** the editor steps above were not run; the Windows changes (drag and drop, editor path, crash folder,
+`Backend::BasePath`) were only syntax-checked with MinGW, not built or run on Windows.
+
+## 7zsd. Sandbox digging: first and third person
+
+**What it is.** The Sandbox's digger now aims the same way in both views. The aim line always goes through the
+crosshair (the centre of the screen). In third person it starts where that line passes the character (not at the lens
+behind you), the reach is measured from the character, and it will not dig inside your own body, with your head in the
+ground, or the ground behind a wall you are looking over. The same Player Controller View setting (First Person,
+Third Person, Both) is used; the Sandbox template now uses Both and starts in first person.
+
+**Steps.**
+1. Open the editor, choose New Project > Sandbox (or File > Examples > voxel > `voxel_sandbox`), press Play.
+2. Look at the ground. A hollow orange marker shows where you will dig. Hold left mouse (or RT on a pad): the ground
+   goes, the marker shrinks and turns white as the ground under it is taken away. Right mouse (or LT) builds.
+3. Press V (or Back on a pad) to switch to third person. Dig again: the marker is still under the crosshair, and
+   ground more than 14 m from the character is out of reach (the marker disappears).
+4. Stand with a wall of ground between you and a spot you look at over your shoulder: it will not dig that spot.
+5. Press 1 to 9 to pick the material to build with, or use the mouse wheel or the bumpers (LB / RB) to step through
+   them. With a terrain that has no materials, the wheel changes the brush size instead. T (or a click on the right
+   stick) picks the material under the crosshair.
+6. Rebind: the actions are named Dig, Place, PickBlock, HotbarNext and HotbarPrev (the Input settings / remap
+   screen list them; until you rebind Dig and Place they follow Fire and Aim, i.e. left and right mouse, RT and LT). Once an action is rebound its old default button stops working.
+
+**What you should see.** The same dig in both views, a crosshair dot in the middle of the screen, the help line at
+the top listing the controls. A material the tool is too weak for (Realistic preset, hardness above the tool
+power) shows a red marker.
+
+**Status.** Verified here: the `voxel_aim` test (ray start, reach, wall, body, both views with a real Player
+Controller, actions, hotbar, progress, scene save) on Linux. Unverified: nothing was run in a window, on Windows
+or with a real pad or touch screen.
 
 ## 16. Main menu bar (cleaned up)
 
-What changed and why: [editor_menus.md](editor_menus.md) (the map, and a table of every old item and where it went).
+What changed and why: [editor_menus.md](editor/editor_menus.md) (the map, and a table of every old item and where it went).
 Where: the menu bar at the top of the editor, `Tools\OkayEngine.exe` (or start the editor from the launcher). Open any project.
 
 1. Click **File**. You should see, in this order: New 2D Scene, New 3D Scene, Open Scene... (Ctrl+O), Open Recent, **one** Examples
@@ -1276,13 +1444,13 @@ Where: the menu bar at the top of the editor, `Tools\OkayEngine.exe` (or start t
 6. The **Window** and **Engine** menus are gone: their items were duplicates (Items, Loot & Recipes is in View > Editors & Tools; Build
    Settings is in File) or moved (Check for Updates to Help).
 
-Screenshots of the real editor (built and run on Linux, in a virtual display; not Windows): [docs/images/editor_menus/](images/editor_menus/)
+Screenshots of the real editor (built and run on Linux, in a virtual display; not Windows): a picture folder (pictures are no longer stored in the repository)
 (`file.png`, `file_examples.png`, `file_play_save_greyed.png`, `edit_undo_named.png`, `gameobject.png`, `view.png`, `help.png`). What was and
-was not clicked is listed in [editor_menus.md](editor_menus.md) section 3b; "Checks run for this change" is at the end of section 17.
+was not clicked is listed in [editor_menus.md](editor/editor_menus.md) section 3b; "Checks run for this change" is at the end of section 17.
 
 ## 17. Hierarchy right-click menus
 
-Where: the **Hierarchy** panel (left side by default). Map and the Existing / Gap table: [editor_menus.md](editor_menus.md), section 2.
+Where: the **Hierarchy** panel (left side by default). Map and the Existing / Gap table: [editor_menus.md](editor/editor_menus.md), section 2.
 
 1. Right-click an object. The menu starts with Copy, Cut, Paste, Paste as Child, then Rename (F2), Duplicate, Delete, Delete Children, then
    Create Empty Child, **Create Child**, Create Parent, Parent To, Unparent, Order, then Select, Expand All Below, then Deactivate, Lock, Focus in
@@ -1299,7 +1467,7 @@ Where: the **Hierarchy** panel (left side by default). Map and the Existing / Ga
 7. Right-click the empty space under the rows: Create Empty, the eight Create categories, Paste, Select All, Deselect, Expand All, Collapse All,
    Sort A-Z. The **[+]** button at the top has Create Empty, Create Empty Child, Group Selected and the same categories.
 
-Screenshots of the real editor (Linux, virtual display): [docs/images/editor_menus/](images/editor_menus/) (`hierarchy_row_menu.png`,
+Screenshots of the real editor (Linux, virtual display): a picture folder (pictures are no longer stored in the repository) (`hierarchy_row_menu.png`,
 `hierarchy_create_child.png`, `hierarchy_create_child_result.png`, `hierarchy_three_selected.png`, `hierarchy_same_type_reason.png`,
 `hierarchy_add_component.png`, `hierarchy_empty_space.png`).
 
@@ -1311,7 +1479,7 @@ Screenshots of the real editor (Linux, virtual display): [docs/images/editor_men
 * `editor/main.cpp` and `editor/UIRuntimeTools.cpp` with the editor's flags and `-fsyntax-only -Wall -Wextra`: no error and no warning in the
   files changed.
 * **The real editor**, built from this branch (`okay-editor`, Linux, engine `-O1`, `main.cpp` `-O0`, asserts on) and run under Xvfb with the
-  software renderer, started with `--dev`, the mouse driven by `xdotool`: the clicks listed in [editor_menus.md](editor_menus.md) section 3b
+  software renderer, started with `--dev`, the mouse driven by `xdotool`: the clicks listed in [editor_menus.md](editor/editor_menus.md) section 3b
   worked as described (Create Child and its undo, Add Component, Same Type, Cut / Paste, Delete, Create Empty Parent / Child, Isolate, Panels,
   Audio Source, the greyed items and their reasons, also while the game runs). No crash and no
   Dear ImGui assert while clicking, in 15 sessions of this kind. The one assert seen was at shutdown, in two sessions that were closed with a
@@ -1324,11 +1492,27 @@ items listed as "not clicked" in editor_menus.md section 3b (among them the Orde
 project always has its scene in the list); Help > Documentation and Report a Bug open a browser, which this machine does not
 have, so the page and the clipboard line were not seen. The software renderer was used, so nothing about the GPU path was seen.
 
+## 87. Project upgrade and saving fixes
+
+**What it is.** The launcher's project cards used to keep saying "older" after you upgraded the project (they were read once and never again), and a plain Open then even picked the old editor from that stale card. They now follow the file. Also fixed: File > Project Upgrade... upgraded the wrong project (or none) when the open scene was a loose file from somewhere else; saving a scene into another project no longer marks that project "up to date"; a zip name with a `\`, `|` or `=` in the build settings came back changed.
+
+**Steps.**
+1. Copy the folder `examples\old_project` somewhere you can write (for example your Desktop). It is a small project made by an old version (`engine_version=2.1.0`).
+2. In the launcher, open the Projects page and use "Open a project folder" on the copy. The card shows an "older" badge.
+3. The editor opens and asks to upgrade. Press **Upgrade**, wait for "Done", press **Continue**.
+4. Go back to the launcher window (leave it open the whole time). Within about a second the card's version changes to this editor's version and the "older" badge goes away.
+5. In the editor open **File > Project Upgrade...**. It says "Up to date." Close the editor and press Open on the card again: no question is asked.
+6. Optional: open a scene from another folder (File > Open), then File > Project Upgrade... Before the fix this did nothing or touched the wrong project. It now works on the project shown in the Project panel.
+
+**What you should see.** The card, the "Last saved by" line in the upgrade window and the next Open all agree, with no restart of the launcher. A backup folder "old_project (backup v2.1.0)" appears next to the project.
+
+**Status.** The version logic is covered by tests that run on the build machine (`test_project_version`, `test_project_upgrade`, `test_project_state`). The launcher and editor windows were not run here and Windows was not run: unverified.
+
 ## ac-cheat-sim. Anti-cheat: watch the server catch a cheater (cheat simulator)
 
 What this is: a self-test of the server's anti-cheat. It starts a server on your own machine (nothing goes on the
 network) and a fake "cheating" client, and the cheating client does eight things a modified game would do. You read what
-the server did. Details: `docs/anticheat.md` ("The cheat simulator"), the status table: `docs/anticheat_hardening_status.md`.
+the server did. Details: `docs/online/anticheat.md` ("The cheat simulator"), the status table: `docs/online/anticheat.md`.
 
 **How to try it (Windows release).**
 
@@ -1354,6 +1538,101 @@ the server did. Details: `docs/anticheat.md` ("The cheat simulator"), the status
 on Linux over loopback. **Unverified:** nothing was run on Windows or on a real network; the `macro` step hands the button presses to the
 detector instead of sending real input packets; the simulator's packets are not encrypted.
 
+## boat1. Water waves, floating things and a boat to drive
+
+**What it is.** The sea now has real waves that things can float on, crates bob and settle at the right depth, heavy things
+sink, and there is a boat you drive with the keyboard. Details and the list of what is not done: `docs/rendering/terrain_water.md`.
+
+**Steps (the example lake).**
+1. Open the editor (`Tools\OkayEngine.exe`). **File > Open...** and pick `<install folder>\examples\boat\boat_lake.okayscene`.
+2. Press **Play**.
+3. **W** goes forward, **S** goes back, **A** turns left, **D** turns right, **Space** brakes. The camera follows the boat.
+
+**What you should see.** A lake with rolling waves, a wooden dock on the west shore, a white boat with a red stripe beside
+the dock pointing out over the water, six wooden crates floating near it that bob and drift, and a grey stone that
+sinks to the bottom. Hold W: the boat speeds up to about 12 metres per second, rises and falls with the waves, leaves two
+white foam trails behind and throws spray at the bow. Tap A or D while moving: it turns. Let go of W: it coasts and slows.
+Drive into a crate: it is pushed away and bobs. Pushing the boat onto the shore stops it. The Console says nothing about errors.
+
+**Steps (make your own boat).**
+1. New 3D scene. **GameObject > Vehicles > Boat**. If the scene has no Water, a lake is made with it. Press Play, W / S / A / D.
+2. Or by hand: make a Cube, scale it 2 x 0.8 x 4.6, add **Rigidbody3D** (mass 2.5), **Box Collider 3D**, **Buoyancy** (Fullness 0.55) and
+   **Boat Controller** (Add Component). Put a **Water** under it (GameObject > 3D Object > Water).
+
+**Steps (waves).** Select the Water. In the Inspector set **Style** to **Ocean** (sharp crests) or **Calm lake**. Change
+**Direction**, **Steepness**, **Wave count** and **Seed** (the same seed always makes the same sea), and **Current** (a stream:
+floating crates drift with it). Wave Height, Length and Speed work as before. Classic keeps the old look.
+
+**Steps (floating).** Make a Cube with Rigidbody3D (mass 0.5), Box Collider 3D and **Buoyancy** above the water, press Play: it falls,
+splashes, bobs and settles half under. Change the mass: 0.25 floats higher, 2 sinks. Select it and look at the Inspector:
+Grid X/Z, Fullness, Drag numbers, Splash Effect.
+
+**Steps (no more bouncing).** Open any old scene with Water (Depth above 0) and a Rigidbody crate, or make one: Cube + Rigidbody3D + Box Collider 3D (mass 0.5) 3 m above a Water with Depth 5. Press Play: it splashes in, dips once, and settles within a couple of seconds at the same height whatever the frame rate. Before this change it kept hopping at the surface.
+
+**How you know it worked.** The crate at mass 0.5 ends with its middle at the water line; the boat does not flip over in the
+waves; with the boat in the air (drag it up in the scene before Play) the engine does nothing until it lands.
+
+**Status.** Tested headless on Linux (`boat` test: wave formula, draft, sinking, frame rate 30/60/144, no NaN, energy, steering,
+reverse, saving and loading, the example file). **Unverified:** the Windows release, the editor window (the menu entry, Add
+Component entries and Water fields are syntax-checked only), a GPU, what the wake and spray look like on screen, and how the
+boat feels with a real keyboard. Boarding a boat with E is not done.
+
+## bs2. Build Settings: search, Game and Advanced pages, checks, history
+
+**What it is.** The Build Settings window has a search box over every setting, a dot beside each page that has changed settings, a "Reset page to defaults" button, two new pages (Game and Advanced), a "What will happen" summary with checks and Fix buttons, Debug and Release starting points, duplicate profile, `.okaybuild` files and a build history. Every new setting is read by the built game or by the build step (see `docs/editor/build_settings_upgrade.md`).
+
+**Steps.**
+1. Open the editor, open a project, press Ctrl+B (File > Build Settings). The platform must be Desktop.
+2. Type `fps` in the search box at the top left. Click "Frame rate cap (Display)". You land on the Display page.
+3. Change the window width. A blue dot appears beside Display. Click "Reset page to defaults" and confirm; the width goes back and the dot goes away.
+4. Open the Game page. Set Game speed to 0.5, Log detail to "Warnings", tick "Write a log file", type `de` as Starting language, and under Description type a sentence. Choose an output folder and press Build & Run.
+5. In the running game everything moves at half speed. Close it. Open the save folder of the game (the per-user app folder, named after the company and the game): `game.log` is there. In the build's `<Name>_Data/game.okayconfig` you see `time_scale=0.5`, `log_level=warn`, `log_file=game.log`, `default_language=de`.
+6. Open the Advanced page. Turn on "Allow build commands", type `echo built {name} {version}` after the build, build again. The Console says "ran your command after the build". With the switch off, nothing runs.
+7. Still on Advanced: press "Create or update .gitignore" (a `.gitignore` appears in the project) and look at the Build history list (time, version, size, "Open output folder").
+8. At the bottom, "What will happen" lists the build in plain words. Make the name `Bad:Name`, tick Full screen and Borderless together: Check lines appear with Fix buttons. Press Fix and they go away.
+9. Under the profile bar press Debug or Release (changes the developer panel, FPS counter, stripping, compression, logging). Save a profile, press Duplicate profile, then "Save as file": `BuildProfiles/<name>.okaybuild` appears in the project; "Load file..." brings it back.
+10. Round 2: on Graphics pick "3D renderer" = Software only and a Particle limit of 50; on Audio & Input set Gamepad dead zone and Sound quality; on Output type a file in "Files left out" or right-click a file in the Project panel and choose "Exclude from Build", then Dry Run: the file is not in the report. Drag a scene by its name in the Scenes list to reorder. After a build, the Advanced page shows the coloured last build log.
+
+**What you should see.** As in each step. Defaults write nothing new: a project that never touched the Game or Advanced pages builds exactly the `game.okayconfig` it built before.
+
+**Status.** Tested on Linux: the model (pages, search, reset, presets, summary, checks and fixes, history, commands, ignore file, profile files) and the player's config reader (`tests/test_build_settings.cpp`), and every new setting through the profile file (`tests/test_project_state.cpp`). `editor/main.cpp` and `player/main.cpp` were compile-checked (syntax only) on Linux. NOT run: the window on screen, a Windows build, and the player reading the config in a real game.
+
+## cam-up. Camera rigs and effects
+
+**What it is.** A camera rig is a shot that follows, circles or watches something for you, smoothly. It can look a little ahead of a
+moving target, frame several things at once, stay out of walls, fade things in the way, blend to other shots and shake on hits. A 2D
+camera can be held inside rooms and slide from room to room. Details: `docs/gameplay/cameras.md`.
+
+**Steps (3D example).**
+1. Open the editor. File > Open, pick `examples\camera\camera_rigs.okayscene`, press Play.
+2. Walk the blue capsule with W A S D. The camera follows smoothly and leans a little ahead of you.
+3. Walk behind the orange wall (toward the camera). The camera moves in instead of going through the wall, and glides back out.
+4. Press `2`: the Orbit shot. Hold the right mouse button and drag to circle the player.
+5. Press `3` (Look At: the camera stands still and turns to watch you), `4` (Group: it frames you and the orange ball and steps back
+   to fit both), `5` (See-Through: the camera stays behind the wall and the wall turns see-through), `0` (back to automatic).
+6. Effects: `Z` impact, `X` explosion, `C` footstep, `V` field of view kick, `B` hit flash (the screen edges darken), `H` handheld wobble on or off.
+7. Make your own: select an object, then GameObject > Camera > Camera Rig: Follow (or Orbit, Look At). Select the new rig: the Inspector
+   has sections Camera Rig, Framing, Group, Walls and Blend, and the Scene view shows its frustum, dead zone (green), soft zone (orange) and
+   the wall probe. The Camera Preview inset (bottom right of the Scene view) shows what the rig sees.
+8. Blend styles: select the Main Camera, look at Cinemachine Brain > Blend style (Cut, Linear, Ease In and Out, Ease In, Ease Out, Custom
+   curve). Then press `1` and `2` in Play to see the difference.
+
+**Steps (2D example).**
+1. File > Open `examples\camera\camera_2d_rooms.okayscene`, Play.
+2. Walk with W A S D. The view stays inside Room A. Walk right out of the room: the camera slides to Room B. Walk up: Room C.
+3. Select "Shot 2D": Camera Rig, Framing and 2D camera sections hold these settings. Select a Camera Room (yellow box in the Scene view)
+   and change its Size.
+
+**From a script.** `Camera.Shake("impact", 1)`, `Camera.BlendTo("Shot Group", 0.8)`, `Camera.SetTarget("Boss")`, `Camera.AddToGroup("Boss")`,
+`Camera.FovKick(10, 0.5)`, `Camera.SetFovOffset(8, 0.3)` (sprint), `Camera.HitPulse(0.9)`, `Camera.SetHandheld(1)`. In a visual script search the
+palette for `Camera.` (each one is a node).
+
+**What you should see.** No jitter at any frame rate, no pop when a wall moves in or out or when you switch shots part way through a
+blend, and the example's two help lines of keys in the top left.
+
+**Status.** Numbers were tested headless on Linux at 30, 60 and 144 frames a second (`camera_math`, `camera_rig`). The editor was
+not run (menus, Inspector, gizmo and preview inset are compiled but unseen) and nothing ran on Windows or a GPU.
+
 ## Console: Collapse button (branch `claude/console-collapse`, not merged or released yet)
 
 Owner request 2026-11-15: "for console allow user to collapse the same log."
@@ -1375,6 +1654,46 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## content-delivery. Downloadable game content (off by default, Windows first)
+
+An exported game can download updated **data and scripts** (models, textures, animations, scenes, audio, dialogue, Visual Script
+and OkayScript files) from a folder or a server. Never code or programs. Full description: `docs/release/content_delivery.md`.
+Nothing changes in a game unless a content URL is set. Not tested on Windows or an Xbox yet.
+
+You need a Windows PC with the release folder (the `Tools` folder holds `okay-content.exe`), Git Bash or WSL for the
+publish script (only for step 6), and Python 3 once to make a key.
+
+1. **Make a key.** In a terminal in the repo: `python3 scripts/sign_index.py genkey`. It prints a seed (private: keep it, never
+   share it) and a public key. Write them down for the steps below (`SEED` and `PUB`).
+2. **Make a content folder** (for example `C:\test\content-v1`) holding a few real files, in the same layout your game uses:
+   `models\ship.obj`, `scripts\boss.okayvs` (copy a graph saved by the Visual Script editor), `strings.okayloc`.
+3. **Sign it.** `set OKAY_CONTENT_SIGNING_SEED=SEED` then
+   `okay-content.exe make-manifest C:\test\content-v1 --game mygame --version 1`. You should see "wrote content.manifest ... and
+   content.manifest.sig". Then `okay-content.exe verify C:\test\content-v1 --keys PUB --game mygame` should say `OK`.
+   Try a file named `run.exe` in the folder: make-manifest must refuse it.
+4. **Download it like a player.** `okay-content.exe sync C:\test\content-v1 C:\test\player-content --game mygame --keys PUB`.
+   You should see each file, then `status=updated ... downloaded=3`. Run it again: `status=up-to-date`, nothing downloaded.
+   Change one file, make version 2 (`--version 2`), sync again: only the changed file downloads.
+5. **Try a bad key.** Repeat the sync with a different public key: it must refuse and `C:\test\player-content\current.txt` must not
+   appear (or stay at the old version).
+6. **Use it in a game.** Build a game with Build Game, put a text file `content.okayconfig` beside `OkaySpacePlayer.exe` (next to the
+   game's `_Data` folder) with
+   ```
+   url=file:///C:/test/content-v1
+   game=mygame
+   keys=PUB
+   ```
+   (or set the environment variables `OKAY_CONTENT_URL`, `OKAY_CONTENT_GAME`, `OKAY_CONTENT_KEYS`). Start the game. The game's log
+   (the player prints it at start-up; a development build also writes it to `game.log`) shows `content: updated, serving downloaded content version 1`. A downloaded
+   `strings.okayloc`, `items.okayitems`, `weapons.okayweapon`, a scene named in the scene list, a UI image or an `.obj` mesh now
+   wins over the installed one. With no `content.okayconfig` and no variable the game is unchanged.
+7. **Publish for real (optional).** With Git Bash and a Supabase service key in `SUPABASE_SERVICE_KEY`:
+   `OKAY_CONTENT_SIGNING_SEED=SEED scripts/publish-content.sh C:/test/content-v1 --game mygame --version 3`. It prints the
+   `url=` line to use. `DRY_RUN=1` checks everything and uploads nothing.
+
+Tests (Linux): `ctest -R "content_"` and `ctest -R publish_content`. Not verified: Windows, a real bucket, the Xbox app (its
+network transport is a stub that says so).
+
 ## Remove from list and Delete project (launcher Create page)
 
 **Where.** Launcher > **Create**. Your projects are the folders inside the **Projects** folder next to `OkaySpace.exe`
@@ -1394,12 +1713,82 @@ Status: the list logic (hide, restart, a project that is both in the folder and 
 forms, more than 100 hidden projects, delete clean-up) is tested by `tests/test_project_list.cpp` (g++ on Linux). The
 Recycle Bin call and the clicks were not run on Windows.
 
+## Damaged project, texture and material files load safely (branch `claude2/data-load-checks`, not merged or released yet)
+
+Three bug fixes from issue #888 (findings 74, 75 and 78). Nothing new to click; what changes is what you see after loading.
+
+**Project settings with bad numbers (finding 74).**
+1. Close the editor. Open your project folder and edit `project.okayproj` in Notepad. Change three lines to
+   `gravity3d=0 nan 0`, `ambient=5` and `splash_bg_top=nan 1e39 -3`, and save.
+2. Open the project in the editor and open **Edit > Project Settings**.
+3. You should see Gravity 3D back at `0, -9.81, 0` (a line with `nan` is ignored, so the default stays), Ambient at
+   `1` (5 is pulled down to the top of 0..1) and the splash background top colour at its default. Before this fix the
+   window showed `nan`, and Apply to current scene copied `nan` into the scene.
+   The rules: sizes 16..16384, gravity -10000..10000 per part, steps per second 1..500, ambient and colours 0..1. Each
+   corrected line writes one `WARN` line to the engine log.
+
+**Tagging a texture no longer shrinks it (finding 75).**
+1. Put a large picture (for example 4096 x 4096 px) in `Assets` and use it on a material, so you can see it is sharp.
+2. In the Project panel, right-click the picture and add a tag.
+3. Close and reopen the project (or reimport the picture). It should still be sharp: open its Import Settings and
+   **Largest side** says **No limit**. Before this fix the tag wrote `set maxSize 2048` into `big.png.okaymeta` and the
+   picture came back at 2048 px. To shrink a picture on purpose, choose a size in **Largest side**; that still works.
+   Pictures that already have a meta keep whatever it says (an old meta with `maxSize 2048` still shrinks; pick
+   **No limit** to undo it).
+
+**Materials with spaces in the texture path, or a bad number (finding 78).**
+1. Double-click a `.okaymat` (or make one in the Material editor). Set its texture to a file whose name has a space,
+   for example `Assets/Art/stone wall.png`. Save, close it, and open it again.
+2. You should see the full path and the texture on the object. Before this fix it came back as `Assets/Art/stone`
+   and the object was untextured. In the file the line is now `texture "Assets/Art/stone wall.png"` (a path without
+   spaces is still written bare, so older versions read it as before).
+3. Edit the `.okaymat` in Notepad and change the `emissive` line to `emissive inf 0 0`. Open it again: only emissive
+   red falls back to its default; tiling, rim, outline and the texture are all still there. Before, every line after
+   the `inf` was lost.
+
+**Checked:** `test_data_load_checks` (headless, Linux). **Not checked:** the editor windows above (the editor was
+not built for this change); anything on Windows.
+
+## editor-fps. Editor frame-time overlay and speed switches
+
+**What it is.** A small window inside the editor that shows your FPS, the frame time in milliseconds, a graph of the last
+120 frames, and where each frame goes (3D view, panels, ImGui, present, Play mode). Plus a few switches to make the editor
+cheaper. All switches are off until you turn them on. Guide: `docs/editor/editor_performance.md`.
+
+**Steps (read the numbers).**
+1. Open the editor (`Tools\OkayEngine.exe`). Open a project, or use **File > Open Scene** and pick `<install folder>\examples\perf\many_lights.okayscene`.
+2. Open the menu **View**, then **Rendering**. Click **Frame-time overlay**. A window called "Frame time" appears at the top right.
+   Drag it where you like. It stays open the next time you start the editor.
+3. Leave the mouse over the Scene view for a few seconds, then orbit the camera (hold the right mouse button and move).
+4. Read the top line (FPS and ms) and the bars below it. The bar that is longest is where the time goes.
+5. Press **Copy report** in the overlay. Paste it into a message to us. That is the number to send back. Also say your
+   graphics card and the window size, and whether the line "Renderer:" in the overlay says "Direct3D 11 (GPU, direct to the view)".
+6. For more detail, press **Open Profiler** (or **View > Rendering > Profiler window**).
+
+**Steps (try the switches).** All in **View > Rendering**, each takes effect at once. Look at the overlay after each one.
+1. **Viewport resolution** > **75%** then **50%**: the 3D view gets a little softer and the "3D view render" bar shrinks.
+2. **Performance mode (Scene view)**: the Scene view loses ambient occlusion, bloom and edge smoothing; the Game view does not change.
+3. **Frame rate limit** > **120 FPS**: the FPS settles near 120 and a new bar "Frame limiter sleep" shows the time slept on purpose.
+   The overlay also says what the frame costs without the sleep ("possible FPS").
+4. **Slow down when idle**: take your hands off the mouse and keyboard for a second: FPS drops to the idle rate (30 by default)
+   and the GPU rests. Move the mouse: full speed again. It never slows down while the game is playing.
+5. Turn each switch off again to compare.
+
+**What you should see.** The overlay's numbers move when you change a switch. The sections add up to the frame time
+(the line "Not timed" is what no timer covers).
+
+**Status.** Logic tested headless on Linux (`test_editor_perf`: section maths, history numbers, idle and limiter decisions,
+scale, performance mode). The editor was built and started on Linux with a virtual screen and SDL's software 2D renderer: the
+frame limiter was seen working (a 10 FPS cap gave 99.7 ms frames with a "Frame limiter sleep" section) and the sections add up.
+The overlay window was drawn only with the profiler data path (not looked at on screen), no scene viewport was exercised, and
+nothing was run on Windows or a real GPU, so the Direct3D 11 numbers are unverified until you send the report.
+
 ## fast1. Fast release: one dispatch, no version-bump PR
 
 **What it is.** A release without the version-bump PR and its extra hour of CI. One click on "Fast release" works out the next version,
 refuses a commit that has no fully green CI run on main, builds exactly that commit, publishes, and then checks the release itself.
 The release notes come from small files, one per change (`dist/changelog.d/<id>.txt`), so they never clash. The old way (a bump PR,
-then "Release Windows build") still works. Everything: `docs/fast_release.md`.
+then "Release Windows build") still works. Everything: `docs/release/releasing.md`.
 
 **Steps (the dry run, safe: builds and publishes nothing).**
 1. On GitHub open Actions > **Fast release** > Run workflow. Branch `main`. Tick **dry_run**. Run.
@@ -1434,6 +1823,46 @@ asset `digest` field. The first dry run and the first real release are the proof
 3. You should see the example scene open, with a line in the Console. Press Play (or open Modeling > Guided).
 4. If the examples folder is missing, or a scene fails to open, a popup now says so instead of doing nothing.
 
+## Bug fixes: particle fade, Scene Manager rename, Exit after a dialog, text box editing (#888: 140, 141, 142, 131)
+
+**140. Particle "Fade Out" now lasts the whole lifetime.** Before, a plain Particle System faded out in a fraction of a
+second (faster at higher frame rates), because the fade was multiplied again on every frame.
+
+1. Windows editor: **GameObject > Effects > Particle System**. In the Inspector set **Lifetime** to 4 and leave
+   **Fade Out** on and **Color Over Life** off. Press **Play**.
+2. You should see each particle fade smoothly over its full 4 seconds (half visible at 2 s). It looks the same with
+   VSync on or off.
+
+**141. Scene Manager > Rename no longer saves your unsaved edits or deletes the saved file.**
+
+1. Windows editor: save a scene (for example `MyLevel`). Change something without saving; the title says unsaved.
+2. **View > Panels > Scene Manager**, click **Rename** on that scene. The dialog now says "The file is renamed as last
+   saved. Your unsaved changes stay unsaved." Enter `MyLevel2` and click **Rename**.
+3. You should see: the title still says unsaved, your change is still in the scene, and `MyLevel2.okayscene` on disk
+   holds the last *saved* version (open it from the Project panel in another way, or press **File > Open** and choose
+   **Don't Save** to see it). Nothing was written until you press Save.
+
+**142. File > Exit and the window's close button keep working after a quit arrives while another dialog is open.**
+
+1. Windows editor: change the scene without saving. Open another scene (Project panel or **File > Open**) so the
+   "Save changes?" dialog is up.
+2. While it is up, click the window's close button (X). Then press **Cancel** in "Save changes?".
+3. You should see the "Unsaved Changes" quit prompt appear as soon as the first dialog closes. Press **Cancel**.
+4. Now **File > Exit**: the "Unsaved Changes" prompt appears again (before the fix, Exit and the X did nothing for the
+   rest of the session).
+
+**131. In-game text boxes: hold Backspace/Delete, the Delete key, and a movable caret.**
+
+1. Windows editor: **GameObject > UI > Input Field**, press **Play**, click the box and type `hello world`.
+2. Press **Left** five times, type `X`: you get `hello Xworld`, and the caret is drawn where you are typing.
+3. **Delete** removes the character after the caret, **Backspace** the one before it. **Home** / **End** jump to the
+   start / end. Holding Backspace or Delete keeps deleting (after a short pause, like a normal text box); holding Left
+   or Right keeps moving.
+
+Test: `ctest -R fix_140_141_142_131` (runs each repro headless: fade at 30, 60 and 144 fps; rename with a real
+EditorState and files on disk; the quit prompt's state machine; the input field with a real Input feed).
+Not verified on Windows; the editor GUI steps above were not run here (the editor files were only syntax-checked).
+
 ## hygiene1. Repository hygiene: one account config file, no built programs in git
 
 What changes for you:
@@ -1446,9 +1875,272 @@ What changes for you:
 
 **Verified here:** the tests, on Linux. **Unverified:** no release, dev build or Pages run happened (workflows were read and checked as YAML only); nothing was run on Windows.
 
+## input. Input upgrade: playground, rumble patterns, vibration setting, key positions
+
+**What it is.** One scene with eight stations (devices, timing, chords, curves, rebinding, two players, recording) that shows the input system working. New in this step: the vibration setting now switches off all rumble (not only patterns), and a switch to read letters by key position so AZERTY players keep WASD under the same fingers.
+
+**Steps.**
+1. Open the editor from the Windows release. Click **File > Open** and choose `examples\input\input_playground.okayscene` (the folder sits beside the editor).
+2. Press **Play**. Press keys and move the mouse: station A shows what the game sees. Station F ("Players") is the one for this change.
+3. With a controller plugged in: press **H** (heartbeat shake on pad 1) and **J** (pulse on pad 2).
+4. Press **0**: the line "Rumble strength" goes from 1 to 0 and the controller stops shaking; press H again, nothing shakes. Press **0** again to turn it back on.
+5. Press **K**: the line "Letters read by key position" goes from false to true. On an AZERTY keyboard, W A S D movement now works on the Z Q S D keys (the US places). Press K again to go back.
+6. In a built game the same switches are the script calls `haptic_strength(0..1)` and `key_positions(true/false)`; both are kept for the player.
+
+**What you should see.** The station F text changes as described. Without a controller you still see the strength and key-position lines change.
+
+**Status.** Tested headless on Linux (`input_deep`, `input_playground`; the playground test presses H, 0 and K and renders a software picture). Unverified: Windows, a real controller (rumble was only checked as the request the host takes), a real AZERTY keyboard. No Settings-screen toggle yet.
+
+## okay-build: our own replacement for CMake (not part of the Windows release; Linux checkout only, off by default)
+
+CMake stays the default build. okay-build is a second way to build the engine that does not need CMake or Ninja. Nothing in the release
+uses it. Plan and numbers: [own_build_plan.md](platform/own_build_plan.md), section "Round 11".
+
+Needs g++, the SDL2 development headers and about 2 GB of disk. Run from a checkout of the repository.
+
+1. Build the tool and its tests: `sh tools/okaybuild/build.sh /tmp/okb`. You should see `okaybuild tests: N checks passed` (a few checks need
+   wine or libsodium and may fail on a machine without them; the failing names are printed).
+2. Read the project's CMake files with okay-build itself and see what it can express:
+   `/tmp/okb/okay-build cmake . -o build.cmake.okay --audit`.
+   You should see `okay-build cmake: 815 of 820 targets written ...` and a table (targets, sources, definitions, tests, what was not understood).
+   Options work like `-D`: `--opt OKAY_BUILD_EDITOR=ON --opt OKAY_BUILD_PLAYER=ON`. `--build-type None` gives plain `-O0` flags (Release is the default,
+   as in CMake). `--fetched imgui=/folder/with/imgui` says where the Dear ImGui sources already are (okay-build does not download).
+3. Build one program and its tests with no CMake: `/tmp/okb/okay-build -f build.cmake.okay -j2 --build-dir /tmp/okb-tree test_math`
+   (about 350 steps; delete `/tmp/okb-tree` and `build.cmake.okay` afterwards).
+4. Run the project's `add_test` lines like ctest: `/tmp/okb/okay-build -f build.cmake.okay -j2 --build-dir /tmp/okb-tree ctest '^(math|scene|serialize)$'`.
+   You should see `PASS math 0.0s` lines and `3 tests, 0 failed, 0 skipped`. The argument is a regular expression on the test name; with none, every test runs.
+5. Compare with CMake (needs cmake and ninja): configure with `cmake -G Ninja -B /tmp/cm -DCMAKE_EXPORT_COMPILE_COMMANDS=ON`, then
+   `okay-build -f build.cmake.okay compdb --build-dir /tmp/okb-tree` and
+   `python3 tools/okaybuild/examples/compare_cmake_commands.py /tmp/cm/compile_commands.json compile_commands.json $PWD`.
+   You should see `identical settings: N, different: 0`.
+
+Unverified: Windows (the reader and `ctest` were only run on Linux; `ctest` is not done on Windows), MSVC.
+
+## OkayScript: object references, Rigidbody calls and Find (bug fixes, branch `claude2/okayscript-object-refs`, not merged or released yet)
+
+Issue #888, Findings 108 to 111. Before: a bullet that hit the third "Enemy" destroyed the first one,
+`other.GetComponent<Rigidbody>()` pushed the attacker instead of the target, most `Rigidbody` calls did nothing, and
+`GameObject.Find` returned switched-off objects.
+
+1. Open the editor (`Tools\OkayEngine.exe` or Open from the launcher), then **File > Open** and pick
+   `examples\physics\script_object_refs.okayscene`.
+2. You see three red boxes, all named **Enemy**, a blue ball above the **right** one, and a yellow **Spinner** box.
+3. Press **Play** and open **View > Console**.
+4. Expect: the ball falls on the right enemy and **that** enemy disappears (the left and middle ones stay). The
+   Console shows `Ball hit Enemy at x = 3`. Before this fix the left enemy (x = -3) vanished instead.
+5. Expect: the yellow Spinner floats (its script turns gravity off with `rb.useGravity = false`) and spins about its
+   vertical axis (`rb.AddTorque(..., ForceMode.VelocityChange)`). The Console shows
+   `Spinner: spin = 3 rad/s, Find(Hidden Enemy) found = false, FindIncludingInactive found = true`
+   ("Hidden Enemy" is switched off in the Hierarchy).
+6. Try your own: select the Ball, open its script and change `Destroy(other);` to
+   `other.GetComponent<Renderer>().color = Color.green;`. Press Play: the hit enemy turns green, not the ball.
+
+What changed for scripts: `other`, `gameObject`, `GameObject.Find(..)`, `FindWithTag(..)`,
+`FindGameObjectsWithTag(..)` and what `Instantiate` / `spawn` return now carry the object's unique id. They still
+print and compare as the name, and a quoted name (`Destroy("Enemy")`) still means the first object with that name.
+Details: [scripting.md](scripting/scripting.md#object-references).
+
+**Status.** Engine tests run on Linux (see the PR). The editor and the Windows build were not run here, so steps 4
+to 6 are unverified on Windows; the same scene file is loaded and played headless by `test_okayscript_object_refs`.
+
+## The launcher (and editor) on our own UI: OkaySpaceOkayUI / OkayEngineOkayUI (off by default)
+
+What it is: the same launcher and editor programs, compiled against OkayUI instead of Dear ImGui (`docs/ui/own_ui_toolkit.md` 6.26). They are extra programs; the normal ones are unchanged.
+
+1. Build: configure CMake with `-DOKAY_LAUNCHER_ON_OKAYUI=ON` (and `-DOKAY_EDITOR_ON_OKAYUI=ON` with `-DOKAY_BUILD_EDITOR=ON`), then build the targets `okayspace-launcher-okayui` and `okay-editor-okayui`. They are written to the same `bin` folder as `OkaySpaceOkayUI` and `OkayEngineOkayUI` (`.exe` on Windows). `scripts/build-windows-dist.sh` copies them into the Windows folder when they were built (the launcher beside `OkaySpace.exe`, the editor in `Tools\`).
+2. Run: double-click `OkaySpaceOkayUI.exe`, or in the normal launcher open Settings > Experimental and press Restart on "Run on our own UI (restart into OkaySpaceOkayUI.exe)" (the row appears only when that file is next to the launcher). In the OkayUI launcher the same page has "Back to the normal UI".
+3. What you should see: the launcher looks like the normal one (same pages, fonts, colours). The start-up text line says "UI drawing: OkayUI frame through okay::platform::Painter (the OkayUI build; Dear ImGui is not in this program)". Starting a project from the OkayUI launcher opens `OkayEngineOkayUI` when it is next to it.
+4. Honest status: the launcher ran only headless on Linux (scripted clicks, pictures looked at); the editor on OkayUI has not been built or run yet; nothing was run on Windows. Report anything that looks or behaves differently from the normal programs.
+
+## OkayUI window mode (off by default; Scene, Game, Hierarchy, Inspector, Console, Project, dialogs)
+
+What it is: the editor's window, frame and panels run by OkayUI alone, with Dear ImGui not started. It is a dev switch, so three settings are needed.
+
+1. Start the editor (Windows: `OkayEngine.exe`, from a console or a shortcut) with the environment variables `OKAY_DEV=1`, `OKAY_UI_BACKEND=okayui` and `OKAY_UI_HOST=okayui`. Optional: `OKAY_UI_HOST_PROJECT=<a project folder>` (otherwise the current folder is used if it has an `Assets` folder; without a project the Project window and Scene Manager are not offered) and `OKAY_UI_HOST_STATE=<file>` (where the layout is remembered).
+2. You should see: a window titled "OkaySpace Editor (OkayUI window mode)" and, in the console, the line `[okayui-host] window mode on (OKAY_UI_HOST=okayui): OkayUI owns the window; Dear ImGui is not started`. Any other combination of settings opens the normal editor.
+3. Try: the tabs Scene and Game in the middle (the Scene tab shows the scene's meshes; drag with the mouse over the picture to orbit, use the wheel to zoom; Game looks through the main camera; 2D scenes show nothing yet). Hierarchy and Project on the left (click a row to select, `+` adds an object, right-click Duplicate or Delete, type in the search box), Inspector on the right (the selected object's fields; change one and the scene is marked unsaved), the Console along the bottom (it shows the lines the editor logs). Drag a tab to move a panel, click its x to close it; close and reopen the window and the layout comes back.
+4. To see the error and save questions: with an unsaved scene, use the Scene Manager's open-scene button on another scene; "Save changes?" appears (Save, Don't Save, Cancel). A failed action shows "Something went wrong".
+5. Pictures: `OKAYUI_SHOT=file.png` with the headless tests `okayui_hostviews`, `okayui_hostobjects`, `okayui_hostdialogs` writes a picture of the window (software-rendered, 8x8 test font; the real window uses the launcher look). **These are headless renders, not screenshots of the real editor window.**
+6. **Honest status:** the editor program itself was not built or started with this; everything above was run only in headless tests. If something in steps 1 to 4 does not work in the real window, that is a bug to report.
+
+## one-controller. One Player Controller for first and third person (no Humanoid)
+
+**What it is.** A walking first- or third-person character is made with one thing, the **Player Controller**. Its **View**
+setting is First Person, Third Person or Both. The separate First Person, Third Person and Humanoid entries are gone from the
+menus and template lists. Third Person Shooter, Top Down, Vehicle, 2.5D, Click To Move and Free Roam stay (they are other
+kinds of game). Older scenes still open.
+
+**Steps.**
+1. Open the editor. Open **GameObject > Player**. You see **Player Controller (first / third person)** as the first entry, then
+   Third Person Shooter, Top Down and the others. There is no First Person, Third Person or Humanoid entry.
+2. Click **Player Controller (first / third person)**. A player and a camera appear. In the Inspector the **Player Controller**
+   panel has **View** (First Person only / Third Person only / Both). Press Play: you start behind the player; press **V** to
+   go to the eyes. Stop, set **View** to First Person only, press Play: eyes only, V does nothing.
+3. Select any object, **Add Component > Gameplay**. There is one **Player Controller (first / third person)** entry, and no
+   separate First Person or Third Person controller. (Foot IK: Add Component > Foot IK on the player; it wires itself.)
+4. **File > New Project...**: the template list has **First and Third Person** and no separate First Person, Third Person or
+   Humanoid template. The launcher's quick list shows the same one card.
+5. Old scenes: open a scene saved before this change that has a Humanoid player or a First Person or Third Person player
+   (for example any older project of yours). It opens, the player has a **Player Controller** with the same speeds and
+   settings, and Foot IK and Root Motion are still on it.
+6. Old launchers or scripts that pass `--template "First Person"` or `"Third Person"` to the editor still get this scene (it starts behind the player; press V for the eyes).
+
+**What you should see.** One controller entry in both menus, one New Project template, and old scenes loading with their
+settings. The Console says "Added Player Controller (View: Both ...)" when you use the menu entry.
+
+**Status.** Unverified in a real editor and on Windows. Tests run on Linux: `one_controller` (an old-format Humanoid scene and
+an old First plus Third scene load as one Player Controller and keep their settings), `templates_work` (one template, old titles
+still build, Humanoid gone), `scene_cameras`, `player_controller`, `view_upgrade`.
+
+## own-switch. One place to try our own code (no environment variables)
+
+**Read this first: built and unit-tested on Linux; nothing of this was run on Windows.** The screens and the file logic are
+new; the own parts they switch on are the ones described in `docs/status/own_code_roadmap.md`.
+
+What it is: a list of switches. Each one swaps a third-party part for our own. **All are off until you turn them on.** The
+choice is saved in one small file, `own_switches.cfg` (Windows: `%LOCALAPPDATA%\OkaySpace\own_switches.cfg`; Linux:
+`~/.config/okayspace/own_switches.cfg`). The launcher and the editor read the same file.
+
+What to do:
+
+1. Start `OkaySpace.exe` (the launcher). Click **Settings**, then **Experimental** in the list on the left.
+2. You see one row per switch (our own WAV reader, plus OkayUI screens where the build has OkayUI, and two more on Linux), each with a
+   one-line description and a word on the right: **off**. Click a switch. The word changes to **on after restart**.
+3. Close the launcher and start it again. The word is now **on now**. The launcher also printed one line at start
+   (Linux: in the terminal; Windows: **Help > About** in the editor shows the same text), and it ends with
+   `switches=wav` (the ids that are on). With nothing on, the line has no `switches=` part.
+4. Open the editor from the launcher. It inherits the choice. In the editor open **View > Rendering & Performance >
+   Experimental: try our own code**. The same switches are there, with the same words. Clicking one there changes the
+   same file.
+5. Click **Back to normal (all off)** (launcher page or editor menu). Every switch goes to off and the words say
+   **off after restart**. After a restart everything is as in a normal release.
+6. To check a switch really does something: turn on **Our own WAV reader**, restart, add a `.wav` file to a scene and press
+   Play. It plays through our decoder (`docs/audio/own_wav_decoder.md` lists the formats). **Our own web client** and **Our own
+   window layer** are not shown on Windows (Windows uses WinHTTP and its own window code).
+7. An environment variable you set yourself always wins. Start the launcher from a Command Prompt with
+   `set OKAY_OWN_WAV=1`: the row says **set by an environment variable** and its switch is greyed out.
+
+Good to know:
+
+* The numbered model readers (FBX, COLLADA, 3DS ...) are already our own code by default since 2026-11-17 and do not need a
+  switch. `OKAY_THIRD_PARTY=1` sends them back to Assimp and ufbx.
+* Options chosen only when the program is built (`-DOKAY_OWN_CRYPTO`, `-DOKAY_OWN_STACK`, `-DOKAY_UI_DEFAULT_BACKEND`) are not
+  in this list. Cryptography is never on here (owner rule 18).
+* The old developer row **UI backend** (shown only with `OKAY_DEV=1`) still works. The **OkayUI screens** switch sets
+  `OKAY_UI_BACKEND=okayui`, which already overrides that row.
+* To add a switch later (okay::platform events, our own ImGui renderer, the okayui host): add one line to `Items()` in
+  `shared/OwnSwitches.hpp`.
+
+Tested on Linux: the `own_switches` test (reading and writing the file, master off, an environment variable you set winning,
+the status words, items hidden where they cannot work) and the `own_stack` test (the `switches=` part of the line).
+Unverified: the Settings page and the editor menu were compiled but not looked at on a desktop; Windows not run.
+
+## pm1. Physics Material: how a surface feels
+
+**What it is.** A named material says how a surface feels: grip when still, grip when sliding, bounciness, how two surfaces mix, density, rolling friction, damping
+(mud, sand), grip on slopes, and the sound, effect and surface names a hit should use. Fourteen are always there (Default, Ice, Rubber, Bouncy Ball, Metal, Wood, Stone,
+Glass, Mud, Sand, Sticky, Slippery, Trampoline, Cloth). Plain words and the file format: [physics_materials.md](../physics/physics.md#physics-material-how-a-surface-feels).
+
+**Steps.**
+1. **File > Open Scene**, pick `examples\physics_materials\physics_materials.okayscene`, press **Play**.
+2. Or on your own object: select it, **Add Component > Physics 3D > Physics Surface**, type a preset name in **Material** (for example `Ice`), press Play.
+3. Make your own: write a text file `MyGel.okayphysmat` (see physics_materials.md for the lines), put it anywhere in the project folder; its name then works in **Material**.
+4. Tick **Mass From Density** to let the body's mass come from the material's density times the size of its colliders.
+
+**What you should see.** One row per preset. Left: a plain crate sits on a 20 degree ramp of that material: it slides away on Ice and Slippery, stays on Rubber and Sticky. Right: a ball is dropped
+on a pad of that material: it bounces high on Trampoline and Bouncy Ball, hardly at all on Stone, Mud and Sand. Each row has a text label.
+
+**Status.** Tested headless on Linux (`tests/test_physics_materials.cpp`: file round trip, presets, ice slides / rubber holds, still grip, bounce height, density to mass, change at run time,
+contact reports the material pair, mud slows). Unverified: the editor (the Physics Surface Inspector row comes from the generic property list; the dropdown of presets and the "+ New material" button are
+NOT built yet: type the name), Windows, the character controller and vehicles do not yet read the ground material.
+
+## pt1. Physics toys: ready-made physics for no-code games
+
+**What it is.** Small components you add, tune with plain Inspector numbers and press Play: **Conveyor Belt** (carries what stands on it), **Force Field** (attract, repel, gravity well, whirlpool;
+turn on and off), **Gravity Zone** (a box with its own gravity: floating, moon), **Turntable** (a physical round plate that carries things), **Moving Platform** (glides through up to four points, riders go along),
+**Explosion** (a shove, by timer or from script) and **Breakable** (breaks into pieces when hit hard). The jump pad already existed (Add Component > Gameplay > Jump Pad). Details: [physics_toys.md](../physics/physics.md#physics-toys-ready-made-physics-no-code).
+
+**Steps.**
+1. **File > Open Scene**, pick `examples\physics_toys\physics_toys.okayscene`, press **Play**. Walk along the row of ten stations (WASD, mouse); each has a text label.
+2. Or add one yourself: make a cube, give it a **Box Collider 3D** and a static **Rigidbody 3D**, then **Add Component > Physics 3D > Conveyor Belt**; drop a crate on it.
+3. Change numbers while it plays only in the Inspector fields (Speed, Strength, Radius, Gravity...): each has a plain tooltip.
+
+**What you should see.** 1 crates ride the belt; 2 a ball bounces on the green pad; 3 balls fall to the blue attractor and run from the orange repeller; 4 balls fall into the purple well and swirl round the teal whirlpool;
+5 a ball floats in the zero-g zone, drifts down slowly in the moon zone and falls normally outside; 6 crates are carried round the turntable; 7 a crate rides the platform; 8 after 3 seconds the bomb goes off and the breakable crates burst into pieces
+that vanish after a few seconds; 9 a pendulum and a rope swing; 10 a ball bounces high on the trampoline patch, a crate slides far on ice and stops quickly on the sticky patch.
+
+**Status.** Tested headless on Linux (`tests/test_physics_toys.cpp`: every toy measured, saved and loaded back; `tests/test_physics_examples.cpp`). Not built: the GameObject > Physics Toys menu (presets exist as code in
+`Components/PhysicsToyPresets.hpp` and are used by the example scene), Visual Script nodes for the toys (a script can switch a Force Field by property: `ForceField.active`), One-Way Platform, Rope/Chain component, Vehicle wheel.
+Unverified: Windows and the editor on a screen.
+
+## pu1. Physics upgrade: steady towers, fast bodies, heavy ropes
+
+**What it is.** The Improved physics now keeps a tower of ten crates standing at 30, 50, 60 and 144 steps a second (it fell over at 30 and
+leaned at 50), a fast ball can no longer jump over a thin plate that can move, a 50 kg ball on a chain of light links hangs close to the chain's real
+length, a breakable joint snaps without first stopping the body, and a speed set inside `OnCollisionEnter3D` (a jump pad, a blast) is kept. The
+numbers before and after are in [physics_upgrade.md](../physics/physics.md#physics-upgrade-what-exists-what-was-missing-what-changed).
+
+**Steps.**
+1. Open `Tools\OkayEngine.exe` (or the launcher), **File > Open Scene**, pick `examples\physics\physics_upgrade.okayscene` (it ships in the zip and the installer).
+2. Press **Play**. Use the character (WASD, mouse) or just watch from the start position.
+3. To compare step rates: **Project Settings > Physics > Steps per second**, set 30, press Play again, set 144, press Play again. The tower looks the same.
+
+**What you should see.** Station 1: ten crates stand still and go to sleep after about two seconds. Station 2: a red ball rolls down a short ramp and topples
+sixteen dominoes in a line. Station 3: a 50 kg wrecking ball swings on a chain into a wall of crates and scatters them. Station 4: the same crate on ramps of
+Ice, Wood and Rubber: it slides on ice, holds on rubber. Station 5: a blue platform glides to and fro; walk onto it and ride.
+
+**Status.** Tested headless on Linux (`tests/test_physics_upgrade.cpp`, `tests/test_physics_examples.cpp`): tower, tunnelling, ropes, joints, dominoes, wall, ramps.
+Unverified: Windows, the editor on a screen, how it feels with the real character.
+
+## Importing a `.raw` file with several groups no longer crashes (bug fix, branch `claude2/own-readers-speed-3`, not released yet)
+
+The Windows release reads `.raw` (raw triangle text) through Assimp, and Assimp 5.4.3 breaks on a file with two or more groups
+of triangles: the import crashed. Such a file now goes to our own RAW reader. To try it once released: save this as `two.raw`
+
+```
+first
+0 0 0  1 0 0  0 1 0
+second
+0 0 1  1 0 1  0 1 1
+```
+
+and import it in the editor. Expect two parts (`first`, `second`) and a log line "... more than one group of triangles, which
+Assimp 5.4.3's RAW importer cannot read safely; reading it with our own RAW reader". A `.raw` file with one group still goes to
+Assimp. Not tried on Windows (checked on Linux in a build with Assimp). Details: `docs/content/model_readers.md`.
+
+## Model reader bench: our readers against Assimp (developer tool, Linux)
+
+Not in the Windows release: it needs a build with `-DOKAY_USE_ASSIMP=ON` and Assimp's test files. On a Linux checkout:
+
+1. Configure with `-DOKAY_USE_ASSIMP=ON -DOKAY_BUILD_TESTS=ON` and build `bench_model_readers`.
+2. `OKAY_MODEL_CORPUS=<assimp v5.4.3 checkout>/test build/tests/bench_model_readers --format dae` prints one row per Collada
+   file (our read time and peak heap against Assimp's, the full import with each) and a summary line saying "met" or "NOT
+   met". Leave out `--format` for every reader (about half an hour).
+3. `--digest` prints a hash of our output per file (it must not change when only speed work was done); `--compare` lists
+   where our reader and Assimp disagree on counts and bounds.
+
+What to expect and the latest numbers: `docs/content/own_readers_speed.md`.
+
+## Scene view: the selected object's name sits on its object (bug fix)
+
+The small name box of the selected object in the 3D Scene view used to be drawn a gizmo's length to the right of the
+object, often on top of the next object (select cube A and its "A" sat on cube B). It now sits just above the object,
+beside the gizmo's up arrow, and never on a gizmo handle.
+
+1. Make a new 3D scene. Add two cubes (**GameObject > Cube** twice). Set the first one's Position to
+   -1.5, 0.5, 0 and the second one's to 1.5, 0.5, 0. Rename them A and B.
+2. Select A. Its name box sits just above the orange cube A, to the side of the green arrow, not on B. Select B: its box
+   sits just above B.
+3. Press the Rotate tool (the circle arrow button). The name stays by the object, inside the rings, or straight above the
+   rings when the object is small; it is never on a ring. Try the Scale tool and a few window sizes: the same.
+4. Switch the view to **2D**: the name sits at the object's corner, as before.
+
+Tests: `ctest -R editor_layout` (the placement maths, with the numbers from the screenshot that showed the bug).
+Checked by screenshots on Linux (Xvfb) at 1280x800, 1600x900 and 1920x1200; not checked on Windows.
+
 ## Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL
 
-Details and the reasons: [security.md](security.md). Four protections; two you can see in the Windows release, two are owner steps.
+Details and the reasons: [security.md](online/security.md). Four protections; two you can see in the Windows release, two are owner steps.
 
 **Script file paths (try it in the editor).**
 
@@ -1474,9 +2166,43 @@ paste it > Run. Check it with `select * from public.reaction_counts('dm', array[
 `sign_release_script`, and `reactions_sql` against a throwaway local Postgres. The editor and launcher lines are code that compiles
 in the build but was not seen on screen; nothing ran on Windows or against your real Supabase project.
 
+## Stop prompt saves, Timeline keys pass each other, LOD distances on big objects (bug fixes, issue #888 findings 85, 76, 77)
+
+Branch `claude2/editor-stop-save-timeline-lod`, not merged or released yet.
+
+**Save in the Stop prompt (finding 85).**
+1. Open any scene in the editor and change something (select a cube, press **Ctrl+D**). The title says "unsaved".
+2. Press **Play**. In "Save your work before playing?" click **Don't Save**.
+3. Press **Stop**. "Save your work before stopping?" lists "Scene". Click **Save**.
+4. Expected: Play stops, the title no longer says "unsaved", the Console says `Project saved: scene, settings`, and the
+   `.okayscene` file has the copied cube (open it again from the Project panel to check). The next Play does not ask.
+   Anything you changed *while playing* is still thrown away, as before.
+   Before the fix the Console said "The scene wasn't saved while playing" and the scene stayed unsaved.
+   The same now happens for "Save your work before opening another scene?" while playing.
+
+**Timeline keys (finding 76).**
+1. **Window > Timeline**, open or make a sequence, add a Transform track and keys at 0 s, 1 s and 2 s (double-click the row).
+2. Drag the 0 s key to 1.5 s, past the 1 s key.
+3. Expected: three keys (1 s, 1.5 s, 2 s); the 1 s key keeps its pose. Before the fix the 1 s key disappeared.
+   A key cannot land exactly on another key: it stops one frame before and moves on once you drag past. Typing another
+   key's time in the **Time** field is refused the same way (the field keeps the old time). Letterbox, Shake and Fade
+   keys behave the same.
+
+**LOD distances (finding 77).**
+1. Add a big object (a cube scaled to 20) and give it a **LOD Group** (distance mode, the default) with distances 5, 15, 40.
+   Turn on its debug tint so each level has a colour.
+2. Move the Scene camera away from it. Expected: level 1 from about 5.5 m and level 2 from about 16.7 m from the object's
+   centre (the extra 11 % is the 0.1 hysteresis), whatever the object's size. Before the fix a 20-unit object switched at
+   about 19 m and 39 m, and a 100-unit one at about 96 m and 193 m.
+
+**Checked (Linux, headless):** `test_stop_save_timeline_lod` 45 checks, 0 failures (21 of 41 failed before the fix);
+`test_editor_hooks`, `test_editor_undo`, `test_play*`, `test_player*`, `test_sequence`, `test_visibility_lod`,
+`test_optimize_simplify` and `test_optimize_occlusion` all pass. `editor/main.cpp` and `editor/TimelineWindow.cpp` were
+syntax-checked only (not built or run): the three walkthroughs above have not been tried in the GUI or on Windows.
+
 ## Team tooling (not part of the Windows release)
 
-How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in
+How to try the collaboration tools ([collaboration.md](process/collaboration.md)); these run on a Linux checkout and on GitHub, not in
 `OkaySpace.exe`:
 
 1. Open `WORK_BOARD.md` on the `work-board` branch (after the workflow has run once on main): it now has a **Claims** table and
@@ -1486,34 +2212,63 @@ How to try the collaboration tools ([collaboration.md](collaboration.md)); these
    fails with the file and line and says to use `debugutil::SpinLock`.
 4. Open a PR without a "How to try it" section: the **PR hygiene** check fails and says what to add.
 
-## Modeling fixes: pivot buttons saved, one undo per button, NaN guard, closed Solidify, full OBJ export, no duplicate tools (issue #888, findings 134-139)
+## tex1. Texture tools: mipmaps, atlas, compression
 
-All steps are in the Windows editor (OkaySpace.exe), with any scene open. Test: `ctest -R modeling_fixes_134_139`.
+What it is: our own texture library (`docs/rendering/own_texture_library.md`). It makes mip chains (box, Lanczos, Kaiser,
+colour-correct), packs sprites into an atlas with a manifest, compresses pictures to BC1/BC3/BC4/BC5 and writes
+`.dds` files you can open in a DDS viewer, and plans which mip each texture needs for a memory budget. It only adds
+tools: nothing existing is switched off or replaced, so there is no switch to turn on.
 
-1. **Recenter / Ground / Fit 1u are saved (134).** GameObject > 3D > Cube. Window > Modeling > **Edit** page > **Ground**. The
-   cube jumps up so its base is at y = 0. Ctrl+S, close the scene and open it again: the cube is still resting on y = 0 (before,
-   it was centred again). Same with **Fit 1u** after a **Stretch X**, and on a ready-made prop (Add > Nature > Tree).
-2. **One undo per button (135).** Select the cube, turn **Edit Mesh** on, then on the Modeling window's **Edit** page press
-   UV **Box**, then **Twist Y**. Edit > Undo once: only the twist goes; the UV section still shows UVs. Redo brings the twist
-   back alone. In object mode (Edit Mesh off), **Ground** then Ctrl+Z puts the cube back (before, nothing happened).
-3. **A typed `nan` is ignored (136).** Double-click the **shear** field, type `nan`, Enter, press **Shear X**: the cube stays as
-   it was (before, it vanished and the scene saved `nan` vertices). Same for Jitter, Cast Cyl, Shrink/Fatten, Wireframe and the
-   UV **tile** field.
-4. **Solidify closes the sides (137).** Modeling > Add > **Plane**, then Edit > **Solidify** (0.10). The Edit Mesh page stats
-   show no open edges (before: "8 open edges"), and the slab looks solid from the side.
-5. **Export OBJ keeps the model (138).** Add > Props > **Barrel** (a coloured prop), Edit > **Export OBJ**. The console names
-   `Assets/<name>.obj`; next to it is `<name>.mtl` with one `Kd` colour per face colour. Press Export OBJ again: it writes
-   `<name>_2.obj` instead of replacing the first file. Open the .obj in a text editor: `v` lines carry vertex colours when the
-   mesh has them, faces are grouped under `usemtl colorN`, and a quad cube has 6 four-corner `f` lines. (The test reads the
-   file back with our OBJ reader and gets the same colours, polygons and positions; dragging it into the editor goes through
-   the same reader but was not tried by hand.)
-6. **One implementation per tool (139).** The Edit page's axis tool is now called **Slice X/Y/Z** (it cuts with planes); the
-   real **Loop Cut** is Ctrl+R / the Loop Cut button in Edit Mesh. Inspector > Mesh Renderer: **Subdivide**, **Weld**,
-   **Recenter**, **Ground**, **Fit 1u** behave exactly like the Modeling window's buttons, including undo and saving.
+**Try it from the release (command line)**
+1. Unzip the Windows release. Open `examples\texture` and double-click `try_texture.bat`.
+2. A console runs six steps and a new `out` folder appears with: `checker_0.png` ... `checker_7.png` (the mip
+   levels, each half the size), `checker.dds`, `fence.dds`, `bumps.dds`, `icons.png` and `icons.json`.
+3. What you should see in the console: `wrote 8 mip level(s)`, then `BC1 128x128, 8 mip level(s)` with a list of
+   level sizes (128x128 down to 1x1), `BC3` for the fence (it has see-through parts), `BC5` for the normal map,
+   `packed 3 picture(s)`, and the last line says which mip the streaming planner keeps at 100 pixels on screen.
+4. Open `out\icons.png` in any picture viewer: three icons side by side, one turned sideways (`"rotated": true` in
+   `icons.json`). Open `out\checker_3.png`: a smaller, smooth checker, not a blocky one.
+5. Your own pictures: `Tools\okay-texture.exe compress my.png` writes `my.dds`; run `okay-texture.exe` alone for
+   every command and option (`--filter box|lanczos|kaiser`, `--srgb`, `--normal`, `--cutout`, `--format bc1|bc3|bc4|bc5`).
 
-What is not covered: the Problems panel still does not flag a mesh that already holds NaN vertices (from an older scene);
-`.okaymesh` (Save as Mesh Asset) still drops the Auto Smooth angle; "Split in two objects" stays a scene undo step even in Edit
-Mesh (it creates a second object).
+**Try it in the editor**
+1. Open the editor (OkayEngine.exe), open any project, click a `.png` in the Project panel.
+2. In the details strip, Import Settings, scroll to "MIPMAPS AND COMPRESSION". Pick "Mipmaps + compressed",
+   a filter, tick "Colour picture" for photos and colours, then click "Generate mipmaps / compress".
+3. You should see a line "Wrote <your picture>.dds" under the button, and the `.dds` file next to the picture
+   (open it in a DDS viewer; the Project panel may need a refresh to list it). The picture and its import settings
+   are not changed. The game and editor renderers do not load `.dds` yet (see the doc, "Not done").
+
+Verified: unit tests `tex_mip`, `tex_atlas`, `tex_convert`, `tex_bc`, `tex_dds_stream` and the six commands above
+run on Linux (headless). Not verified: the
+Windows build of `okay-texture.exe`, the `.bat`, the editor section in a real window, and any DDS viewer.
+
+## Lock Inspector keeps the right object after Undo (bug fix)
+
+**What was wrong:** with **Lock Inspector** on, pressing **Ctrl+Z** could make the Inspector show a *different* object. Undo
+rebuilds every object in the scene, and the Inspector remembered the locked object by its place in memory, which a new object
+could take over. It now remembers the object by its id (the GUID saved with the scene) and finds it again every frame.
+
+**Try it** (editor, `Tools\OkayEngine.exe`):
+
+1. **File > New Scene**. Add two cubes with the editor's create menu (**Cube**, twice). Name them `A` and `B`.
+2. Select `A`. In the Inspector tick **Lock Inspector** (top of the panel).
+3. Change something on `A` (for example its X position), then press **Ctrl+Z**.
+   You should see: the Inspector still shows `A`, with the old X value.
+4. Click `B` in the Hierarchy. The Inspector should still show `A` (it is locked).
+5. Add another new object (for example a third **Cube**). The Inspector should still show `A`, not the new object.
+6. Delete `A` (select it in the Hierarchy, press **Delete**).
+   You should see: the Inspector stays locked and says **"Locked object is gone"**, with an **Unlock Inspector** button.
+   It does not jump to another object.
+7. Press **Ctrl+Z**. `A` comes back and the locked Inspector shows it again.
+8. Click **Unlock Inspector** (or untick **Lock Inspector**): the Inspector follows the selection again.
+
+**Also fixed the same way** (they remember the object by its id now): the Hierarchy **Rename** box, **Save as Prefab** box,
+the editor's automatic placeholder camera, the Animator live preview, mesh edit mode (Tab) and the UI drag in the Scene view.
+None of these can now act on a different object after an Undo.
+
+**Checked here (Linux, headless):** `tests/test_inspector_lock.cpp` (lock, undo, new object, delete, undo again, new scene).
+**Not seen:** the editor on Windows, the "Locked object is gone" message on screen.
 
 ## UI Notify template: no freeze when toasts pile up (bug fix)
 
@@ -1527,9 +2282,317 @@ pushed out now stops counting at once.
    and each card goes away by itself after about six seconds. The editor keeps responding.
 4. Test: `ctest -R ui_toast` (it also pushes 10 toasts in one frame and runs the template's click sequence).
 
+## ui-quality-1. In-game UI: sharper text, smooth shadows, filtered pictures
+
+**What it is.** The UI that games draw (buttons, panels, text, pictures, sliders) looked a little rough. Text was
+resampled at half-pixel positions (soft), soft shadows were a stack of hard steps, big pictures shown small were
+sampled with skipped pixels, and borders at a 1.5x scale were a pixel and a half wide. They are now drawn on the
+real pixel grid. A new **UI Quality** setting chooses how careful the drawing is:
+
+- **Fast**: text sits on whole pixels (crisp), the rest as before.
+- **Good** (the default): plus slightly heavier small text, smooth soft shadows, pictures filtered when shrunk, borders and shapes snapped to whole pixels at 1.5x, kerning (AV, To pull together).
+- **Best**: plus quarter-pixel text positions (even letter spacing) and dithered gradients (no bands).
+- **Old look**: the drawing from before this change, so you can compare.
+
+**Steps.**
+1. Start the editor. File > Open, go to the `examples` folder, `ui_quality`, open `ui_quality.okayscene`. You see the same
+   card three times, drawn at 1x, 1.5x and 2x scale (a title, small text, a button with a border, a slider, a progress bar,
+   two small pictures and a thin line, on a card with a soft shadow).
+2. Open **Lighting** (Window menu) and the **UI Font** header. Pick **UI Quality** = **Old look**. Look at the three cards:
+   text edges are soft, the shadow shows steps, the small picture shimmers. Switch to **Good**, then **Best**. Text becomes
+   sharp, the shadow smooth, the picture clean. Press Play to see the same in the Game view.
+3. The other two files show each look without touching the setting: `ui_quality_best.okayscene` (Best) and
+   `ui_quality_old_look.okayscene` (Old look).
+4. To see the old look in any game without editing it, start the editor, player or your exported game with the
+   environment variable `OKAY_CLASSIC_UI=1` (for the quality levels: `OKAY_UI_QUALITY=fast`, `good`, `best` or `old`).
+   The startup log is unchanged; the setting is read when a scene is drawn.
+5. Old scenes load unchanged: a scene without the setting is **Good**. Scenes you save keep the setting (`uiquality` line).
+
+**What you should see.** Good and Best: text edges are crisp, small text is a little bolder, letters in a title are evenly
+spaced (Best), the card shadow fades smoothly with no visible rings, a 1 px border is the same width all round at every
+scale, a 128 px picture shown at 24 px is clean not noisy. Old look: the opposite.
+
+**Checked.** `test_ui_quality` (no window needed) measures every claim above with numbers; `ui_quality_shot` writes
+headless pictures (`ui_quality_shot out.png 1280 720 good`). Not checked: a real window, Windows, GPU renderers, high-DPI.
+Details and the before/after table: `docs/ui/in_game_ui.md`.
+
+## Visible UI fixes: launcher library, update card, Scene view, Project Settings, Console (bug fixes)
+
+Fixes for things seen in screenshots of the default (Dear ImGui) launcher and editor, plus the Console of the OkayUI preview.
+
+1. **Launcher, Community page.** Put two game folders (each with an `.okayscene`) in the `community` folder next to
+   `OkaySpace.exe` and open **Community**. You should see each game **once** ("YOUR LIBRARY — 2"; it used to say 4 and show
+   each card twice). The **Play** badge counts each built game once.
+2. **Launcher, update card.** When a newer version is found, the sidebar card "Update available" shows a full **Install now**
+   button (the label's bottom used to be cut off). To see it without a real update: start the launcher with
+   `OKAY_UI_DEMO_UPDATE=9.0.0`.
+3. **Editor, opening a scene.** Open `examples\physics\physics_playground.okayscene`. It opens in the **3D** view (it used to
+   open in 2D, flattened). Open **Game**: the nine station labels ("1 TOWER ..." to "9 DEBRIS ...") are readable, each on its
+   own dark box, none on top of another at the default layout. Open `examples\ui_text\ui_text.okayscene`: it opens in 2D.
+4. **Editor, Scene view stats line.** Open `examples\own_wav\own_wav_test.okayscene`. The "3D | 3 objects | .. FPS" line sits
+   at the **bottom left**, because the scene's instruction text is at the top left (it used to be drawn over that text).
+   In a scene with nothing at the top left it stays at the top left.
+5. **Editor, Edit > Project Settings.** Under Player, Width and Height show **1280** and **720** in full. The first line wraps;
+   the physics Quality box says **Improved** with what it does on the line below.
+6. **Editor, Project panel > select a sound.** In the Inspector, Import Settings: "Load the whole file" shows in full and the
+   notes wrap instead of running off the right edge.
+7. **OkayUI preview Console** (start the editor with `OKAY_UI_BACKEND=okayui`): the Console sits inside its dock (it was drawn
+   off by the window's place on the screen), "Search" is the hint inside the box, and in a narrow dock "Auto-scroll" moves
+   to the next line instead of being cut to "Auto-scro".
+
+Tests: `ctest -R "library_scan|editor_layout|examples_work|okayui_screens"`. Checked by screenshots on Linux (Xvfb); not
+checked on Windows.
+
+## vehicle-1. Open-world driving: cars, presets, Driving World
+
+**What it is.** The vehicle controller now has an "open-world driving" model: hold the brake to reverse, gears and engine
+revs, steering that gets lighter at speed, a handbrake that starts a drift, ABS, boost, flip recovery, nine vehicle presets
+(Sedan, Sports Car, Muscle Car, Pickup, Heavy Truck, Bus, Buggy, Rally Car, Drift Car) and a chase camera that swings out in
+drifts. Details: `docs/gameplay/vehicles.md`.
+
+**Steps (the example world).**
+1. Open the editor (`Tools\OkayEngine.exe`). **File > New Project**, pick the template **Driving World (open-world cars)**.
+   Or **File > Open...** and paste `<install folder>\examples\driving\driving_world.okayscene`.
+2. Press **Play**. You are a walking person standing at the driver door of a red Sedan on the east-west road. Nine
+   vehicles stand in a row to the west (walk with **W A S D** to try another); a mud patch, an ice patch, two ramps and a
+   circle of cones are further away.
+3. The prompt says **Drive**. Press **E**.
+4. Drive: **W** gas, **S** brake and, when stopped, reverse (let go to roll), **A / D** steer, **Space** handbrake,
+   **Left Shift** boost, **R** put the car back on its wheels, **H** horn flag, **L** headlights, **C** changes camera
+   (chase, far, hood, bonnet), **B** hold to look behind. **E** gets you out beside the door.
+5. Top-left text shows speed and gear.
+
+**Gamepad.** Right trigger gas, left trigger brake and reverse, left stick steer, **A** handbrake, **B** boost, **Y** get
+in or out, left stick click horn, right stick click camera, **RB / LB** gear up and down (manual gearbox only), **Back** recover.
+
+**Steps (your own vehicle).** **GameObject > Vehicles > Pickup** (or any type) puts a ready vehicle at the Scene view's
+target. Add a player with **GameObject > Player**, press Play, walk up, press **E**.
+
+**Steps (tuning).** Select a vehicle, open the **Vehicle Controller** in the Inspector. **Simple** tab: Vehicle preset,
+Handling slider (Realistic to Arcade), Top speed, Acceleration, Grip, Drift amount. **Advanced** tab: every setting in groups
+(Engine, Drivetrain, Steering, Brakes, Tyres, Body, Assists, Boost, Controls, Gamepad, Camera) with tooltips. **Presets**
+tab: type a file name and press **Save as preset** or **Load preset** (a `.okayvehicle` text file).
+Slippery ground: tag an object **Ice**, **Mud** or **Grass** and the car grips less on it.
+
+**Switches.** Old scenes keep the older model; the new model is on for vehicles made from the menu or a preset
+(Inspector: **Open-world driving**). Player options are stored in the user prefs keys `driving.*` (km/h or mph, steering
+sensitivity, camera, assists). There is no Settings window page for them yet (see the doc).
+
+**What you should see.** In the Sedan, W for a few seconds: speed climbs and the gear digit goes 1, 2, 3. Pull Space while
+steering at speed: the back slides, the camera swings out; let go and the car straightens. On the ice patch the same car takes
+much longer to stop.
+
+**Status.** Built and tested headless on Linux (`test_vehicle_drive`, `test_vehicle_world`; numbers in the doc). The editor
+menus and Inspector tabs are written but the editor was not built here. Not run on Windows, no GPU, and nobody has driven it by
+hand: the feel is unverified.
+
+## vpa. Multi-window panels: set once, before the first frame
+
+What changed: the editor turns on Dear ImGui's multi-window panels ("viewports") once, before its first frame, and only when the
+video driver can make extra OS windows and read the mouse anywhere on the desktop. It no longer switches them back on at the end of a
+frame after Dear ImGui has turned them off. Up to v2.880 it did, and a build with assertions on stopped at its second frame with
+"Please set ViewportsEnable before the first call to NewFrame()". Release builds ignored that check but flipped the option on and
+off every frame.
+
+Try it on Windows (the Windows driver always supports it, so nothing should change for you):
+1. Start `Tools\OkayEngine.exe` and open any project.
+2. Drag the **Console** tab out of the editor window and let go over the desktop. It becomes its own window. Drag it back over the
+   editor to dock it again.
+3. Open the **Console**: there is no "Multi-window panels are off" line.
+
+What you should see on a system without that support (Linux with `SDL_VIDEODRIVER=wayland`, or `SDL_VIDEODRIVER=offscreen`): the
+editor starts, a dragged tab stays inside the editor window, and the Console says once "Multi-window panels are off: the video driver
+... cannot open extra windows here."
+
+Verified on Linux with an editor built with assertions on (`-O1`, no `NDEBUG`, Dear ImGui included): with `SDL_VIDEODRIVER=offscreen`
+the editor before this change stopped at its second frame every time, in both backends (Dear ImGui and `OKAY_UI_BACKEND=okayui`); with
+it, it ran for the whole 25-second check in both and printed the "Multi-window panels are off" line. Under Xvfb (X11) both versions
+ran in both backends without stopping, and with the change a Project tab dragged outside the editor still became its own window. The
+intermittent stop seen before under Xvfb was SDL falling back to the `offscreen` driver when the X server was not ready yet.
+Unverified: Windows (not built or run here), a real Wayland session.
+
+## vsclarity. Visual Script nodes explain themselves
+
+What changed: when you drop a node you now see what it does, what to plug in, and what to do next. Nothing about saved
+graphs or how scripts run changed. Notes and the full gap table: `docs/scripting/visual_script_clarity.md`.
+
+Try it on Windows (this is all in the normal editor, nothing to switch on):
+1. Start `Tools\OkayEngine.exe`, open a project, select an object and open View > Editors & Tools > Visual Script.
+2. Press "Or add a block" (or right-click the canvas, or tap Space) and drop **If Then Else**.
+   * Under its title you should see one plain sentence, not a blank line.
+   * The node shows an amber **Needs input** badge and the line "Plug the condition in here." The Condition box says "needed".
+   * Hover the Condition circle: the tip says what goes in and gives "Example: true".
+3. Look at the bottom-right corner of the canvas: the **What is this?** card for the selected node. It lists what it does,
+   what to plug in, a tiny example chain, common mistakes and what to do next. Press **Hide** to fold it; close and reopen
+   the editor and it stays folded (`helpcard 0` in `okay_vs_usage.txt`). Press **Show** to open it again.
+4. In the card, under "Next steps", click a chip (for example **Say Text**). The node is added next to the selected one and
+   wired in. Chips only suggest nodes that fit.
+5. Drop **Add Numbers** (a value node). Its chips add a node that takes a number, with the wire already drawn from the result.
+6. Press **Try this node** at the bottom of the card. A small ready-made graph (On Start, the node with sensible values, a
+   Say Text step) appears. Press Play: the Console shows the message, and for a value node it shows the result (Add Numbers: 10).
+7. Open the Add Node list (right-click the canvas). In the left list find **What do you want to do?** and click **Move things**,
+   **Show messages** and so on. Each row has its plain sentence under the name. Type `move things` in the search: the movement
+   nodes come up.
+8. Renamed nodes: search `Wait Seconds`, `Flip Flop` or `Every Seconds`. The nodes now called **Wait Then Continue**, **Switch
+   Between Two Paths** and **Repeat Every Few Seconds** are found. An old saved graph that used them loads unchanged.
+
+What was and was not verified: the rules behind every item were unit-tested over all nodes in the list on Linux (`vs_guide`,
+and the existing `vs_clarity`, `vs_node_docs`, `vs_names`, `vs_start` suites). The drawing was compile-checked only: it was never
+shown in a real window, on Linux or on Windows, so card size on a small window and the second line on a narrow node are unchecked.
+
+## water1. Water that is never flat: presets, sea states, foam, splashes
+
+**What it is.** The water now has real wave shapes (sharp crests), small ripples that never stop, turquoise shallows and deep blue
+depths, white foam on the waves and along the shore, a glow in the crests, rings and spray when something falls in, and a blue-green
+murk when the camera goes under. There are eight ready kinds of water and four sea states. Details: `docs/rendering/terrain_water.md`.
+
+**Steps (the example scenes).**
+1. Open the editor (`Tools\OkayEngine.exe`). **File > Open...** and pick `<install folder>\examples\water\lake.okayscene`. Press **Play**.
+2. Look at the lake: the surface is never one flat colour. Small ripples drift in two directions, the water is turquoise near the shore and
+   dark blue in the middle, the sky is mirrored in it. A dock, a rock, a red rowing target and three crates float or stand in it.
+3. Press **Stop**. In the Hierarchy select **Crate 1**, drag it up in the Scene view, press **Play**: it falls in, rings spread across the
+   water and a little spray jumps up.
+4. Open `ocean.okayscene` and press Play: big rolling waves with white caps. Select **Water**. In the Inspector, **Look > Sea State**:
+   Calm, Light, Rough, Storm. The waves, their sharpness and the foam change at once. The crates ride the same waves.
+5. Open `river.okayscene`: ripples and foam flow to the right and the crates drift downstream. Open `shore.okayscene`: a white foam line
+   surges along the waterline and round the rocks; the water goes from clear turquoise to deep blue.
+
+**Steps (make your own).**
+1. **GameObject > 3D Object > Water** and pick **Calm Lake**, **Pond**, **Ocean**, **Stormy Sea**, **River**, **Swamp**, **Tropical** or **Ice-cold**.
+2. Select it and open **Look** in the Inspector: **Preset** switches kind, **Realistic look** turns the whole new look on or off (off = the old
+   plain blue plane), **Clarity**, **Foam**, **Shore foam**, **Ripples**, **Rings of detail**, **Splashes and ripples**, **Underwater look**, **Bubbles**.
+3. Put a Terrain under it: the colour and shore foam follow the real depth. Move the Scene camera under the surface (or Play with a camera
+   below it): blue-green fog, and bubbles with **Bubbles** on.
+
+**How you know it worked.** With **Realistic look** off the water looks like it did before this change (a scene saved before it loads with
+the look off). With it on, the Ocean preset shows white caps and a sea that has no edge near you.
+
+**Status.** Pictures made with the software renderer on Linux and a headless test (`water_visuals`). **Unverified:** the Windows release, the
+editor window (menu, Inspector fields: syntax-checked only), the GL and D3D11 renderers (they draw the same vertex colours and normal map but
+nothing was run), per-vertex clear water over the bottom (see the Not done list in `docs/rendering/terrain_water.md`).
+
+## wind-field. Wind: trees, grass, flags, leaves, a pushed box and the sound
+
+**What it is.** One wind that blows trees, grass, a flag, a rope, leaves (particles) and a light box, with a wind sound that gets
+louder in strong wind. You set the wind in one place: a **Wind** object (or the Wind Zone component). A scene with no wind object
+looks and plays exactly as before. Details: `docs/gameplay/wind.md`.
+
+**Steps (the example).**
+1. Start `Tools\OkayEngine.exe` and open a project.
+2. File > Open, pick `examples\wind\wind.okayscene` (it is in the folder you installed to).
+3. Press **Play**. Wait about 10 seconds: the wind rises and falls on a 24-second cycle (calm, storm, calm).
+4. Look and listen.
+
+**What you should see and hear.**
+- (The camera looks toward -Z, so +X is to your right.) The trees, pines and little bushes lean to the right and shiver; stronger in the gusts. The one tree in the shaded corner on
+  the right (inside the "Calm zone") stands still: that is a wind-free zone.
+- The red flag on the pole waves and points downwind. The rope between the two posts swings sideways.
+- Orange leaves drift across from the left (Particle System, "Affected by wind" at 1).
+- The wooden box near the camera is pushed along in the strong gusts (Wind Drag, 8 kg; in a 14-second headless run it slid about 4 m and stopped between gusts).
+- A soft "whoosh" that swells with the wind (Wind Sound: made by the engine, no sound file).
+
+**Steps (make your own).**
+1. Open any scene. GameObject > Effects > Environment > **Wind (whole scene)**. Select it: arrows appear in the Scene view.
+   Set **Strength** to 8, **Gusts** to 0.5.
+2. Select a tree or bush mesh: Add Component > Environment > **Wind Sway**. Press Play: it leans downwind.
+3. Select a Foliage layer: set **Sway in the wind** (Inspector) to 0.8. Select a Cable: set **Sway in the wind**.
+4. A physics box: Add Component > Environment > **Wind Drag** (it adds a Rigidbody 3D if missing).
+5. A Particle System: the **Affected by wind** slider (1 = drifts with the wind, 0 = ignores it).
+6. View > Lighting (Lighting window) > **Wind**: compass direction, strength, gusts, and a live arrow.
+7. Fan: GameObject > Effects > Environment > **Fan (blows outward)**: leaves and light boxes near it blow away from the middle.
+
+**Scripts.** In an OkayScript: `wind_set(12, 90)` (strength 12, blowing toward +X), `wind_gust(0.8, 0.3)`, `wind_speed()` (speed
+where the camera is). In the new script language: `Wind.SetStrength(12)`, `Wind.SetGust(0.8, 0.3)`, `Wind.At(Vec3(0, 1, 0))`,
+`Wind.Strength`, `Wind.Direction`.
+
+**Status.** Tested on Linux: the wind maths (noise, gust period, zone blending, no NaN) and the components in a scene (zones, particles,
+drag, sway, foliage, cable, sound, save/load). Not run: Windows, a GPU renderer, the editor on a screen. The example scene was made by
+a throw-away generator, loaded and run for 14 simulated seconds headless (22 swaying plant chunks, the box moved, no NaN), and rendered headless with the software renderer (no pictures kept in the repo); nobody has watched it move on a screen.
+
+## xbox-next. Xbox UWP next: PC test, Dev Mode, Device Portal, logs
+
+**Read this first: EXPERIMENTAL and UNVERIFIED.** The triangle package ran on a Windows 11 PC (owner, 2026-11-18). Nothing has run on an Xbox. This makes a UWP app for an Xbox One in **Developer Mode**. It is not a native console game, and we make no claim that any console hardware is supported. Steps that talk to the Xbox are from Microsoft's public pages and may look different on your console: if a screen differs, write down what it says and send it. Background: `docs/platform/xbox_uwp.md`.
+
+**What is new in this change.** (1) The app now writes a log file `okayspace.log` (see step 9). (2) The build script prints a "WHAT TO DO NEXT" line at every failure, re-uses its test certificate, and prints the install lines for the PC and the Xbox at the end. (3) Linux tests that run the pack-and-verify pipeline and check the PowerShell scripts without Windows: `ctest -R xbox_uwp`.
+
+### A. The PC test (do this first; no Xbox needed)
+
+1. Install Visual Studio (2022 or newer, free Community edition) with the workload **Universal Windows Platform development**. Check with: `powershell -ExecutionPolicy Bypass -File scripts\xbox-check-sdk.ps1`. Every line should say FOUND. A MISSING line tells you what to install.
+2. Open a normal PowerShell in the source folder (in the release: the `xbox-src` folder next to `OkayEngine.exe`). Run the triangle test (about a few minutes):
+   `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-test -MinimalTest`
+   It prints `[1/9]` to `[9/9]`. If a step fails it prints `FAILED in step ...` and then **WHAT TO DO NEXT**. The full log is `xbox-test\build.log`: send it to us.
+3. At the end the script prints the lines for the PC (block A). In an **administrator** PowerShell run them (remove an older copy first if there is one, then `Import-Certificate ...`, then `Add-AppxPackage ...`).
+4. Start **OkaySpace Test** from the Start menu. You should see a dark window with a coloured triangle. With a pad connected the background turns green, the left stick moves the triangle, **A** centres it, **B** closes it.
+5. Then the engine mode (long compile, may fail; this has never been through Microsoft's compiler on a console path):
+   `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-engine -MinimalTest -EngineMode`
+   Install it the same way. You should see an orange cube in a blue sky and a dark panel "Hello Xbox (UI layer)". **B** closes it. Press the Windows key and come back to test suspend and resume.
+6. If Windows refuses to install: `0x800B0109` = the certificate was not imported as administrator; `0x80073CFB` = an older copy with the same version is installed (`Get-AppxPackage com.okayspace.test | Remove-AppxPackage`); `0x80073CF3` with "dependency" = install the VCLibs package whose path the script prints.
+
+### B. Turn on Developer Mode on the Xbox (reported steps, unverified)
+
+7. On the Xbox install the free **Dev Mode Activation** app from the Microsoft Store and follow it (it needs a Microsoft account registered as a developer; cost and rules are on Microsoft's page "Activate Developer Mode on your Xbox"). The console restarts into **Dev Home**. Dev Mode is a separate mode: your normal games are not available while it is on.
+
+### C. Find the Xbox's address and open the Device Portal
+
+8. In Dev Home the console's **IP address** is shown (also under the console's Settings > Network > Advanced settings). Write it down. The PC and the Xbox must be on the same network.
+   In Dev Home open the remote-access settings and turn on **Windows Device Portal** (it asks for a user name and password: choose any, do not reuse a real password). Then on the PC open `https://<the IP address>:11443` in a browser. The browser warns about the certificate: continue. Sign in with the user name and password you just chose. (The "pair with Visual Studio" PIN screen is for Visual Studio, not needed here.)
+
+### D. Deploy the package
+
+9. In the Device Portal choose **Apps** (Add / Install app). Pick the signed `.appx` (`xbox-test\com.okayspace.test_1.0.0.0_x64.appx` or the one the script printed). Add `Microsoft.VCLibs.x64.14.00.appx` as a dependency if the page has the field (the script prints where that file is). If the page has a **certificate** field, choose `OkaySpaceXbox-test.cer`. Press Install / Go.
+10. Start **OkaySpace Test** from Dev Home's list of Dev Mode apps. Expected: the same triangle, a pad turns the background green, B exits. Whether the console accepts our self-made test certificate is **unknown**: if the portal refuses the package, write down the exact message. Microsoft's usual route is Visual Studio's Remote Machine deployment, which we have not set up.
+
+### E. Where the logs are (new)
+
+11. The app writes `okayspace.log` (and the older `okayspace.1.log` once it grew past 512 KB) into its **LocalState\logs** folder. Each line starts with the seconds since the app started. Look there first when something goes wrong: it lists the start-up line, the folders in use, pads connected, suspend and resume, and the reason the app exited.
+    * On a PC: in Explorer type `%LOCALAPPDATA%\Packages\` and open the folder whose name starts with `com.okayspace.test`, then `LocalState\logs`.
+    * On the Xbox: Device Portal > Apps > the app > its file browser (**LocalAppData / LocalState / logs**), if your portal has that page. Browser address form (unverified): `https://<ip>:11443/api/filesystem/apps/file?knownfolderid=LocalAppData&packagefullname=<package full name>&path=\LocalState\logs&filename=okayspace.log`.
+    * The build log is on the PC: `<ExportDir>\build.log`.
+
+### F. What to send back
+
+12. A photo or description of each screen, the exact text of any error (the script's `FAILED` block, the portal's message, the console's error code), the console model (One, One S, One X), the Dev Home / OS version, `okayspace.log` if the app started, and whether the pad worked. Never send passwords or the contents of certificates.
+
+### Without Windows
+
+`ctest -R xbox_uwp` (needs `-DOKAY_BUILD_XBOX_UWP=ON -DOKAY_BUILD_TESTS=ON`) now also runs: `xbox_uwp_next` (the log file: appending, rotation, bad folder), `xbox_uwp_pipeline` (export, pack with our packer, read back with our reader and with Python's zip reader, manifest rules, damaged packages refused) and `xbox_uwp_scripts` (every bracket and quote in the five PowerShell scripts balanced, files ASCII, every repo path the scripts name exists, a next-step hint for each of the 9 steps, the switches named in the docs exist).
+
+**Status.** Linux-tested: the log file code, the packer (it now also refuses device names such as `CON.txt`), the script checks. Compiled only by reading (never by Microsoft's compiler): the log wiring in `app/main.cpp`, `app/engine_bridge.cpp` and `app/engine_shell.hpp`. Never run: the PowerShell script changes, anything on an Xbox. Windows PowerShell was not available here, so the script was checked by a static scan only.
+
+## xbox-uwp. Xbox One (experimental, Developer Mode) export
+
+**Read this first: the triangle-test package was built, installed and run on a Windows 11 PC on 2026-11-18 (Visual Studio 2026, MSVC 14.52, toolset v145, Windows SDK 10.0.26100.0); nothing has run on an Xbox, and the editor button, the gamepad, suspend/resume and engine mode are not verified.** It makes a UWP package for an Xbox One in Developer Mode, not a native console game. Full text: `docs/platform/xbox_uwp.md`; audit: `docs/platform/xbox_uwp.md`.
+
+What to do (needs a Windows PC and a release built with `-DOKAY_BUILD_XBOX_UWP=ON`, which `build-windows-dist.sh` sets; it also ships `xbox-src` next to the editor):
+
+1. **Once:** install Visual Studio 2022 (free Community edition) with the workload "Universal Windows Platform development", its C++ UWP tools and a Windows 10/11 SDK.
+2. Open the editor, **File > Build Settings**, click **Xbox (exp.)** at the top. **The editor must not freeze** (it did before: the tool check ran on the editor thread and called Visual Studio's `vswhere` four times). Now you first see "Checking your PC for the Xbox tools..." with a small spinner, the **Build Xbox package** button is greyed (hover it: "Checking your PC ..."), you can keep clicking and typing in the editor, and after a short moment (a few seconds the first time, instant on the next editor start because the answer is cached in `%LOCALAPPDATA%\OkaySpace\xbox_vswhere_cache.txt`) the text changes to the list. If `vswhere` does not answer within 5 seconds it is stopped and the page says so. **Check again** asks again (and ignores the cache). If the editor still lags when you switch to Xbox, tell us (UNVERIFIED on Windows: nobody has run this fix). You should see an orange "EXPERIMENTAL and UNVERIFIED" line, the limits text, the tools list (found / MISSING with the install step), and the package name, version and publisher. A missing required tool greys the button with a tooltip; **Check again** re-checks.
+3. Leave **Engine mode** unticked the first time (a triangle test, the safest). Tick **Also install on this PC afterwards** if you want it on this PC. Press **Build Xbox package**.
+4. Watch the page: a step list (Check the Windows tools, Export, Set up the UWP app build, Compile the UWP app, Put the program into the package, Compile the shaders, Pack and check the .appx, Sign, Install) with a status per step and a live log. **Cancel build** stops it. If a step fails you get a plain message and the first error lines: send us those.
+5. If you ticked install, Windows shows **one** administrator (UAC) prompt: accept it. Then start the app from the Start menu: you should see a dark window with a coloured triangle (the background turns green once a pad is connected; left stick moves it, A centres it, B exits).
+6. The result is `<output>\<name>_<version>_x64.appx` (signed with a test certificate from PowerShell + SignTool: the page says so) and `OkaySpaceXbox-test.cer` (public part only).
+7. **Engine mode** (EXPERIMENTAL): tick it and build again to try running your exported game (`package\Data`): 3D scene, scripts, physics, gamepad and keyboard. The 2D / UI layer is not drawn. It has never been compiled with Microsoft's compiler, so a compile error is likely: the page then tells you to untick it. Please send the first error lines.
+8. **No editor with the Xbox tab yet?** One command from a source checkout or `xbox-src`:
+   `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-test -MinimalTest -SkipInstall`
+   It writes a test export, builds, packs and signs it (progress lines `[1/9]` ... `[9/9]`). On a failure it prints the step and the last 15 lines of output; send us `xbox-test\build.log`.
+9. **Engine mode round 2 (EXPERIMENTAL, nobody has compiled it with Microsoft's compiler):**
+   `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-engine -MinimalTest -EngineMode -SkipInstall`
+   builds the real engine into the app and a tiny scene (a cube, a camera and a UI panel with a text label) into the package. The compile is long. If it works the installed app shows an orange cube in a blue sky and a dark UI panel with "Hello Xbox (UI layer)"; B closes it. Suspend/resume (Xbox button and back) writes `saves\xbox_suspend.okayslot` in the app's LocalState. If it fails, send `xbox-engine\build.log` (the failing step and its last lines are printed).
+10. For the console: `docs/platform/xbox_uwp.md`, "Deploy to an Xbox in Developer Mode" (Device Portal upload).
+
+Checks you can run without Windows: `ctest -R xbox_uwp` (needs `-DOKAY_BUILD_XBOX_UWP=ON -DOKAY_BUILD_TESTS=ON`) runs the Linux tests: the old package/packer tests, `xbox_uwp_runtime` (shader bundle, display, lifecycle, pad mapping, paths, audio conversion, the backend over a fake host, the build plan and runner, the API audit, game config), `xbox_uwp_audit` (no forbidden UWP API in the engine sources the UWP target compiles) and `xbox_uwp_sources_cmake`.
+
+Verified on Windows (owner, 2026-11-18, the `-MinimalTest` command): the whole script, MakeAppx accepting our package, signing, install and the triangle on a PC. Verified on Linux: everything in the tests. Not verified: the editor page drawing and one-click button, the gamepad, suspend/resume, engine mode, the console. The `Microsoft.VCLibs` install line printed at the end is optional and may fail harmlessly with 0x80073D02 when the framework is in use.
+
+**Own code instead of third-party libraries (2026-11-18, UNVERIFIED on Windows):** the Xbox build links no SDL, Dear ImGui, Assimp, ufbx or libsodium; `docs/platform/xbox_uwp.md` has the table. What you can try:
+
+* Open any export's `README_XBOX.txt` (made by Build Xbox package or `-MinimalTest`): it has a "Third-party code in this build" paragraph, including "own crypto, not independently reviewed; for experiments only; do not ship".
+* In a source checkout or `xbox-src` (needs the Windows PC set-up above): `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-engine -MinimalTest -EngineMode -SkipInstall -Http own` builds engine mode with our own HTTP client (plain `http://` only). Add `-OwnCrypto` to switch on our own packet encryption (the script prints a yellow warning; never for a release). Without these two options you get Windows.Web.Http and no packet encryption.
+* Without Windows: `ctest -R xbox_uwp` now also runs `xbox_uwp_models` (17 sample models through our own readers only, with the UWP defines) and the HTTP choice tests; `ctest -R release_refuses_own_crypto` shows the release guard refusing `OKAY_XBOX_OWN_CRYPTO`.
+
 ## Switches that are off by default (own code)
 
-CLAUDE.md rule 17 and `docs/own_stack_rollout.md`: our own code exists beside the third-party library, off by default,
+CLAUDE.md rule 17 and `docs/status/own_stack_rollout.md`: our own code exists beside the third-party library, off by default,
 and switches on by an environment variable. **The release does not set any of them.** You can set them yourself before
 starting a program, with no rebuild.
 
@@ -1564,7 +2627,7 @@ Tested on main (Linux): the line format and that each variable changes it, by th
 
 ### 7n. Every own replacement at a glance: how to try each, and what is missing
 
-This is the one table for everything that is built and switched off. It is the same table as section 5 of `docs/own_flip_proposal.md`,
+This is the one table for everything that is built and switched off. It is the same table as section 5 of `docs/status/own_flip_proposal.md`,
 which also says how ready each item is, in what order they could become the default, and what blocks deleting the library each one replaces
 (CLAUDE.md rules 4a and 17). Set a switch the way the section "Switches that are off by default" says: an environment variable in the
 Command Prompt, then start the program from that window. The sure way to see which parts are ours is **Help > About OkaySpace** in the editor.
@@ -1580,6 +2643,7 @@ Checked by reading the code and the CI logs on 2026-11-15. Nothing here was run 
 | BVH, SMD, MD5, MS3D, ASE, Blender | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
 | 3MF, AMF, X3D, DXF, LWO, MD2, MD3, IRRMESH, B3D, X | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
 | AC3D, OGRE, XGL, IRR, NFF, TER, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS | `OKAY_OWN_<FMT>=1` | **none** | **nothing**: they are not in the stack line and no log line says which reader ran | no sample and no way to tell |
+| OGRE binary, ZAE, `.xml` (gap batch) | `OKAY_OWN_OGREBIN=1`, `OKAY_OWN_ZAE=1`, `OKAY_OWN_XML=1` | `examples\own_readers\cube.mesh`, `cube.zae`, `cube_irrmesh.xml` | **nothing** (same as the row above) | no way to tell |
 | STL and PLY first | build option `OKAY_PREFER_OWN_READERS` only | none | nothing | no run-time switch, no sample, no sign |
 | WAV | `OKAY_OWN_WAV=1` (`0` = old) | `examples\own_wav\own_wav_test.okayscene` with `mulaw_tone.wav` | you hear it: old = buzzy, own = a clean 440 Hz tone | no startup word, no log line |
 | Own HTTP | Linux builds only: `OKAY_OWN_HTTP=1` | none | `http=own` (Linux) | cannot be tried on the Windows download |
@@ -1594,13 +2658,30 @@ at the top (rule 4a).
 
 ### 8. Own model readers
 
+* **Now the default (owner approval 2026-11-17; branch `claude2/own-readers-integration`, not in a release yet).** Every model
+  format that has a reader of ours is read by it with nothing set: FBX, COLLADA, Blender, 3DS, STL, PLY, `.x` and about 40 more
+  (not NDO: that reader refuses every file). Assimp and ufbx are still in the program: a file ours refuses goes to them.
+  **Steps, once a release has it:**
+  1. Start `Tools\OkayEngine.exe` with nothing set. **File > Import Model...**, choose `examples\own_readers\cube.off`. A white
+     cube appears and the **Console** says `model import '...cube.off': read by the own OFF reader in ... ms`.
+     **Help > About OkaySpace** says `readers=own(fbx,dae,3ds,...)+assimp`.
+  2. Close it. In a Command Prompt: `set OKAY_THIRD_PARTY=1`, then start `Tools\OkayEngine.exe` from that window. Import the same
+     file: the same cube, and the Console says `read by Assimp in ... ms`. About says `readers=ufbx+assimp`. This is the way back
+     for **every** model format (only the exact value `1` counts).
+  3. Close it, `set OKAY_THIRD_PARTY=`, `set OKAY_OWN_OFF=0`, start again and import: `read by Assimp` for `.off` only; any other
+     format is still ours. `OKAY_OWN_FBX=0` sends FBX back to ufbx; `OKAY_OWN_STL=0` / `OKAY_OWN_PLY=0` work for STL and PLY.
+  4. If a model looks wrong with ours and right with `OKAY_THIRD_PARTY=1`, that is a bug in our reader: please report the file.
+  Checked on Linux by `own_dispatch_c`, `own_dispatch_d`, `own_dispatch_gap`, `own_stack`, `own_stack_third_party` and
+  `model_readers`; **nothing here was run on Windows** and no editor window was opened (unverified).
+* The text below is from before the switch, when every reader had to be switched on; the variables still work the same way.
+
 * **Variables.** `OKAY_OWN_STACK=1` turns on all of them (plus the settings below). Or one at a time: `OKAY_OWN_FBX`,
   `OKAY_OWN_COLLADA` (.dae), `OKAY_OWN_3DS`, `OKAY_OWN_BVH`, `OKAY_OWN_OFF`, `OKAY_OWN_SMD`, `OKAY_OWN_MD5`,
   `OKAY_OWN_MS3D`, `OKAY_OWN_ASE`, `OKAY_OWN_3MF`, `OKAY_OWN_AMF`, `OKAY_OWN_X3D`, `OKAY_OWN_DXF`, `OKAY_OWN_LWO`,
   `OKAY_OWN_BLEND`, `OKAY_OWN_MD2`, `OKAY_OWN_MD3`, `OKAY_OWN_IRRMESH`, `OKAY_OWN_B3D`, `OKAY_OWN_X`. Each set to `1`.
   A variable you set to `0` wins over `OKAY_OWN_STACK=1`. The newer readers (AC3D, Ogre, XGL, Irrlicht scene, NFF, MDC,
   HMP, CSM, Q3D, RAW, IQM, COB, NDO and others) have their own `OKAY_OWN_<NAME>` variables listed in
-  `docs/own_readers_remaining.md`; the startup line only lists the 20 above, so for those the only proof is an import
+  `docs/content/own_readers_remaining.md`; the startup line only lists the 20 above, so for those the only proof is an import
   that works.
 * **Sample files** (shipped in `examples\own_readers`): `cube.off` (OFF), `cube.3ds` (3DS), `skinned_strip.dae`
   (COLLADA), `cube_gzip.blend` (gzip `.blend`) and `cube_compressed_arrays.fbx` (FBX with zlib arrays). Tiny files from our
@@ -1610,13 +2691,33 @@ at the top (rule 4a).
      `readers=own(off)+assimp` (with `OKAY_OWN_STACK=1`: a long `own(fbx,dae,3ds,...)` list).
   2. **File > Import Model...** and choose `examples\own_readers\cube.off`. A white unit cube appears in the scene.
   3. Close the editor, start it again with no variable, import the same file: you get the same cube, read by Assimp.
-* **How you can tell it is really ours.** Only the About popup or startup line (`own(off)`). There is no per-import
-  log line saying which reader ran, and the two readers give the same cube here (the corpus comparisons in
-  `docs/own_stack_rollout.md` say how closely they agree). Honest gap: a "read with the built-in OFF reader" Console
-  line on import would close this; it does not exist. Without Assimp in a build, a format whose own reader is off fails
+* **How you can tell it is really ours.** Since 2026-11-16 (branch `claude2/own-readers-gap-2`, not in a release yet) every
+  import writes one line in the **Console**: `model import '...cube.off': read by the own OFF reader in 0.05 ms (whole
+  import 0.40 ms)`. Without the variable the same import says `read by Assimp in ...`. If ours refuses a file and Assimp
+  reads it, the line says `read by Assimp (the own OFF reader refused it: <why>)`. FBX says `ufbx` or `the own FBX reader`,
+  glTF `the own glTF reader`. Before that change only the About popup or startup line (`own(off)`) told you. Tested on
+  Linux by `lwo_reader` (the line for a `.lxo` import); the Console showing it is **unverified** (no editor window was
+  opened). Without Assimp in a build, a format whose own reader is off fails
   with `no OFF reader enabled: our own reader is off by default (set OKAY_OWN_OFF=1 ...)`; the Windows release has
   Assimp, so you will not see that message.
 * **More sample files** for other formats are under `tests\data\models` in a source checkout (not in the release).
+* **The "Assimp gap" readers (2026-11-16, off by default)**: OGRE binary meshes, ZAE archives and `.xml` model files. Each has
+  a cube in `examples\own_readers`, written by our own `scripts/gen_gap_fixtures.py` (no outside source):
+  * **OGRE binary `.mesh`**: `set OKAY_OWN_OGREBIN=1`, start the editor, **File > Import Model...**, choose
+    `examples\own_readers\cube.mesh`. A unit cube appears (12 triangles, material `Cube/White`; no `.material` file ships, so
+    it is the default white). `docs/content/model_readers.md`.
+  * **ZAE (COLLADA in a ZIP)**: `set OKAY_OWN_ZAE=1`, import `examples\own_readers\cube.zae`. A red unit cube appears.
+    For a ZAE with textures inside, ours writes each image next to the `.zae` as `<name>_zae_<file>`. `docs/content/model_readers.md`.
+  * **`.xml` (Irrlicht scene or mesh, COLLADA, XGL, OGRE XML by the root element)**: `set OKAY_OWN_XML=1`, import
+    `examples\own_readers\cube_irrmesh.xml`. A green unit cube appears. `docs/content/model_readers.md`.
+  * **Modo `.lxo`** (added on branch `claude2/own-readers-gap-2`, not in a release yet): `set OKAY_OWN_LXO=1`, import
+    `examples\own_readers\cube.lxo`. A **blue** unit cube appears (material `Blue`, colour 0.2 / 0.4 / 0.9, from the file's
+    material item). The Console line says `read by the own LXO reader`. Without the variable Assimp reads it: the same cube,
+    but **grey** (Assimp does not read Modo's material items) and the line says `read by Assimp`. `docs/content/model_readers.md`,
+    section LXO.
+  * Without the variable the same files are read by Assimp (the Windows release has it), so you see the same cube (grey for
+    `.lxo`); the Console line on each import names the reader (see above). Checked on Linux by the `own_dispatch_gap` test (all
+    four samples read as 12 triangles, area 6); **not run on Windows**.
 
 ### 9. Own WAV decoder
 
@@ -1644,6 +2745,25 @@ not compiled into Windows programs, and `OKAY_OWN_HTTP=1` does nothing there. It
 would need our own TLS, which is cryptography and waits for the outside review (rule 18). Tested on main on Linux only:
 its test programs (`own_http`, `own_http_net`).
 
+What was added on 2026-11-16 (retries with backoff and `Retry-After`, downloads to a temporary file with SHA-256 while
+streaming, resume after a dropped connection, atomic rename) is in the same place: Linux builds only, not in the
+Windows release. On Windows nothing changed; the launcher's Versions download and the editor's update check use WinHTTP
+and curl exactly as before.
+
+On a Linux build (`cmake -DOKAY_OWN_HTTP=ON`, launcher and editor built), to try it:
+
+1. Start the launcher with `OKAY_OWN_HTTP=1 ./OkaySpace` (the launcher). Open **Versions** and download a version. Expect:
+   the download runs, a `<file>.part` file grows next to the target and is renamed to the real name only when the whole
+   file has arrived; the version then installs as with curl. Pull the network cable (or stop Wi-Fi) for a few seconds
+   in the middle: the download continues where it stopped (up to two more tries) instead of starting over.
+2. Start the editor with `OKAY_OWN_HTTP=1 ./OkayEngine` and use **Engine > Check for Updates**. Expect: the version check and
+   (if there is an update) the download work as before. With `OKAY_HTTP_CURL=1` as well, curl is used instead.
+3. Without a desktop: build `test_own_http_download` and run it (`ctest -R own_http_download`), or compare with curl:
+   `python3 scripts/own_http_bench.py build/tests/test_own_http_download 200 3` (prints a table and MET or NOT MET).
+
+Unverified: steps 1 and 2 have not been run on a desktop here (the new code is covered by the loopback tests and the
+launcher and editor files were only syntax-checked).
+
 ### 11. Own platform layer (window, input, audio device)
 
 `OKAY_PLATFORM_BACKEND=own` selects it, and `OKAY_OWN_STACK=1` sets it on Linux only (not on Windows, on purpose). The
@@ -1653,12 +2773,89 @@ through SDL2 anyway, so only the seam parts (timers, audio, gamepads, voice) wou
 `platform=own` when it took effect; if this release was not built with the own backend it stays `platform=sdl2`.
 **Unverified, not ready**, expect problems. Never ship with it.
 
+Audio on the own Windows backend (WASAPI) is new and has never run on Windows: with `OKAY_PLATFORM_BACKEND=own` the player's
+sound goes through it. If you hear nothing, or the startup log shows an audio error, that is the thing to report. A Linux check of
+its pure parts: `ctest -R platform_audio_pump`.
+
+**Try the own Windows backend with the self-test (4 steps).** The release does not build it unless asked
+(`-DOKAY_BUILD_PLATFORM_SELFTEST=ON`); when it is built it is `Tools\okay-platform-selftest.exe`.
+1. Plug in a pad if you have one. Double-click `Tools\okay-platform-selftest.exe`. A console and a window open for 20 seconds.
+2. In the window: move the mouse, click, scroll, type letters, press keys, move the pad, press T to hear the 440 Hz tone again. Esc ends it early.
+3. You should see colour bars, an orange square sliding along the bottom and a black cross at the mouse, and hear one second of a tone.
+4. The console shows PASS, FAIL or NOT TESTED per item and saves it to `okay-platform-selftest.txt` next to the program. Send that file.
+`--sdl2` runs the same checks on SDL2 to compare. `OKAY_OWN_PLATFORM=1` is a short way to write `OKAY_PLATFORM_BACKEND=own` for the player.
+It has only run on Linux (Xvfb) so far; the Windows run is the point.
+
+**Try a non-XInput pad (Windows, own backend, never run yet).** Use a DirectInput-only pad (an old generic USB pad, not an Xbox pad).
+In step 2 of the self-test above, move its sticks and press its buttons. You should see lines like `pad raw axis 0 value 32767`,
+`pad raw button 3 down`, `pad raw hat 0 bits 2` in the console, and "gamepads found" should name it "HID game controller VVVV:PPPP".
+Unplug and replug it: a "gamepad removed / added" event is counted. Xbox pads still go through XInput. If nothing appears, send the file.
+
 ### 12. OkayUI
 
 `OKAY_UI_BACKEND=okayui` (or `OKAY_OWN_STACK=1`) starts the launcher and editor on OkayUI where it is compiled in. Only
-the screens that have an OkayUI port change (in the editor, the Console panel today); everything else stays Dear ImGui.
+the screens that have an OkayUI port change (in the editor, the Console, Crash Log and Audio Mixer panels; see 12b); everything else stays Dear ImGui.
 The About popup shows `ui=okayui` when it took effect. Whether the Windows release contains OkayUI is unverified: if not,
 the line stays `ui=imgui`. Nothing was run in a real window.
+
+### 12b. OkayUI: Crash Log and Audio Mixer panels
+
+**What it is.** Two editor windows can be drawn by our own UI toolkit (OkayUI) instead of Dear ImGui. The Crash Log now uses the
+new `ListClipper` (only the rows you can see are laid out, so a report of 100,000 lines scrolls as fast as one of 10), and the
+Audio Mixer meters now show a small tooltip box (the meter name, then the level in dB on its own line) built with the new
+`BeginTooltip` / `EndTooltip`. With the switch off (the default) you get exactly the old Dear ImGui windows.
+
+**Switch (developer only, off by default).** In a Windows command prompt:
+
+    set OKAY_DEV=1
+    set OKAY_UI_BACKEND=okayui
+    OkayEngine.exe
+
+(Without `OKAY_DEV=1` the switch is ignored on purpose: owner rule, no own code is turned on for users yet.)
+
+**How to tell it is on.** The startup stack line in the console says `ui=okayui` (`[okay] stack: ... ui=okayui`), Help > About shows
+`ui=okayui`, and View > Rendering & Performance > UI backend has "OkayUI (preview)" ticked and says "OKAY_UI_BACKEND is set and decides this."
+
+**Steps: Crash Log.**
+1. Open **View > Debug & Data > Crash Log**. With no reports you see "No crash reports - nice." in green.
+2. To get something to look at, copy any long text file to `okay_crashlog.txt` next to `OkayEngine.exe` (for example a few thousand lines
+   of a log) and press **Refresh**. You should see the newest line at the bottom, "Newest report is at the bottom", and a scroll bar. Scroll with
+   the wheel to the top: the window stays smooth however long the file is.
+3. **Copy All** puts the text on the clipboard, **Open Folder** opens the folder, **Clear** asks first (Cancel keeps the file, Delete removes it).
+4. Unset `OKAY_UI_BACKEND` and start again: the same window, drawn by Dear ImGui. It should behave the same (differences below).
+
+**Steps: Audio Mixer.**
+1. Open **View > World & Gameplay > Audio Mixer** and play a scene with sound (Play) so the meters move.
+2. Hover the mouse over the green "Output" bars. A box appears with `Left` or `Right` and, under it, the level in dB (for example `-12.3 dB`).
+3. Drag the volume sliders, click the mute boxes, tick "Duck music under voice" (three more sliders appear) and press **Reset**.
+
+**Differences from the Dear ImGui versions (said plainly).** Report text cannot be selected with the mouse (use Copy All); a very long line is
+cut at the window edge; the meter tooltip has two lines, not one (`Left` / `-12.3 dB`, was `Left: -12.3 dB`); sliders show no number text.
+
+**What was checked.** `ctest -R "okayui_panels|okayui_scopes"` (headless): a 5,000-line report lays out fewer than 60 rows, scrolls to the oldest and
+newest line, and its picture is pixel for pixel the same as before the change (the three Crash Log golden images did not change); the meter
+tooltip has a golden image (`okayui/tests/golden/audiomixer_meter_tip.png`, a headless software render, not a screenshot of the editor window).
+**Not verified:** the Windows editor was not built or run with these changes; a real GPU and real mouse were not used.
+
+### 12c. OkayUI: DockBuilder, SetNextWindowDockID, Shortcut and small calls
+
+**Cannot be tried in the Windows release yet.** These are calls in the OkayUI library (`okayui/`) that ported editor code will use
+(the editor's layout presets, its keyboard shortcuts, its drag and drop). No editor or launcher screen calls them yet, so there is
+no menu, switch or sample scene that shows them. What is missing for that: a ported editor dock space (the editor's own dock space
+still runs on Dear ImGui). The first screen that will show them is the OkayUI dock space when the editor's layout presets are ported.
+
+**What you can run (Linux or a Windows build with the OkayUI tests on):**
+
+    ctest -R "okayui_dockbuilder|okayui_internals" --output-on-failure
+
+**What you should see.** Both tests print `PASS`. `okayui_dockbuilder` builds the editor's "Default" layout (Hierarchy on the left,
+Inspector on the right, Console / Problems / Project / ... as seven tabs along the bottom, Scene and Game as tabs in the middle) with
+the same call sequence the editor's `BuildLayoutPreset` uses, draws it, and prints the measured widths and heights next to the expected
+ones (for 1280 x 720: left 255.2, right 427.1, bottom 157.5 px). `okayui_internals` covers Shortcut (Ctrl+S style chords), resizing a
+window by title, the drag-and-drop payload, and the state store.
+
+**Not verified:** nothing here was run in the Windows editor or launcher, and the preset call sequence was copied by hand from the
+editor source, not run through it. See `docs/ui/own_ui_toolkit.md` section 6.9.
 
 ### 13. Own cryptography
 
@@ -1700,6 +2897,61 @@ streams it compared with an independent slow decoder and ends with `ok:`.
 `own_http_inflate`, `png_hint`, and the existing `image_decoder`, `blend_reader`, `3mf_reader`, `amf_reader`, `fbx_reader`,
 `fbx_hostile`, `x_reader`, `xgl_reader`, `own_http` tests. **Unverified:** every editor step above (nothing here opens a
 real editor window), anything on Windows, real-world files other than our own samples.
+
+### 15b. Blender files: Mirror and Subdivision Surface modifiers are applied
+
+**What it is.** Our own `.blend` reader (off by default, `OKAY_OWN_BLEND=1`) used to show a Blender model as it is stored,
+without its modifiers, so a model with a Subdivision Surface looked blocky and a mirrored model showed only one half.
+Now it applies the two modifiers Assimp applies, Mirror and Subdivision Surface, in the order of the modifier stack. Any
+other modifier (Array, Boolean, Solidify, ...) is skipped and named in one log line, for example
+`modifier 'Array' (Array) not applied (not supported) on 1 object(s)`.
+
+**Steps.**
+1. `set OKAY_OWN_BLEND=1`, start the editor (`Tools\OkayEngine.exe`).
+2. **File > Import Model...**, choose `examples\own_readers\mirror_subdiv_box.blend` (our own test file, written by
+   `scripts/gen_blend_fixtures.py`, not by Blender). It stores half a box (one side open) with Mirror, Array and
+   Subdivision Surface level 1.
+3. You should see one closed, rounded box, symmetric left to right (the mirror filled in the missing half and the
+   subdivision rounded it), 80 triangles. One bottom edge on each side stays straight (it has a crease). The console
+   or log shows the warning about the Array modifier.
+4. If you have Blender files with Subdivision Surface or Mirror of your own, import them the same way: the result should
+   look like Blender's viewport (the subdivision level used is the higher of the viewport and render levels).
+
+**What to expect if it is off** (`OKAY_OWN_BLEND` not set): Assimp reads the file, as before.
+
+**Status.** Verified here (Linux, headless): `blend_modifiers` (hand-computed results, the sample file, the four Assimp
+test files with modifiers: triangle counts equal Assimp's on `SuzanneSubdiv_252`, `yxa_1` and `HUMAN`), `blend_reader`,
+`blend_hostile`, `model_corpus`, ASan and UBSan runs. **Unverified:** the editor steps (no window opened), anything on
+Windows, real Blender 2.8+ files (the corpus files are Blender 2.49 to 2.60), and Blender's own output (no Blender run).
+
+### 15c. Blender files: the Subdivision Surface options of Blender 2.9+
+
+**What it is.** Blender 2.9 and later give the Subdivision Surface modifier more options. Our `.blend` reader (off by
+default, `OKAY_OWN_BLEND=1`) now reads and applies them: **UV Smooth** (which UV points stay put: none, corners, junctions,
+concave corners, boundaries, or all smoothed), **Boundary Smooth: Keep Corners** (an open mesh keeps its corners),
+**Use Limit Surface** (on by default in Blender: the points are moved onto the final smooth surface, so the shape is a
+little rounder than plain subdivision) and **Use Creases** (creased edges stay sharp for some levels, by the rules of the
+DeRose 1998 paper). Files older than 2.9 behave as before.
+
+**Steps.**
+1. `set OKAY_OWN_BLEND=1`, start the editor (`Tools\OkayEngine.exe`).
+2. **File > Import Model...**, choose `examples\own_readers\subsurf_options_42.blend` (our own test file in the Blender
+   4.2 layout, written by `scripts/gen_blend_fixtures.py`, **not** by Blender). It stores a flat 3 x 3 grid of points with
+   the middle point raised, one creased edge, and a Subdivision Surface with 2 levels, limit surface on, UV Smooth
+   "Keep Corners" and Boundary Smooth "Keep Corners".
+3. You should see a square sheet with a smooth bump in the middle, 128 triangles. Its four corners are exactly at the
+   corners of the original square (keep corners); without that option they would be pulled in. The edge from the bump to
+   the middle of one side is sharper than the rest (the crease). A texture applied to it covers the whole square to its corners.
+4. Your own Blender 2.9+ files with these options can be imported the same way.
+
+**What to expect if it is off** (`OKAY_OWN_BLEND` not set): Assimp reads the file (Assimp does not read these options).
+
+**Status.** Verified here (Linux, headless): `blend_modifiers` (limit positions checked against hand-computed values and
+against each other across levels, every UV mode, keep corners, the paper's crease rules, the three new fixture files
+against the same steps done by hand), `blend_reader`, `blend_hostile`, `blend_fixtures_check`, `model_corpus`.
+**Unverified:** the editor steps (no window opened), anything on Windows, and above all real Blender 2.9+ files: the field
+names and option values are from memory of Blender's file format (a `.blend` file names its fields but does not say
+what the option numbers mean) and no real file with these options was available.
 
 ## 7s. Sandbox fps: read where the time goes (F3) and the dig-time fix
 
@@ -1748,7 +3000,7 @@ merges is cold on purpose: the cache is only saved by pushes to `main`, so a PR 
 **Steps.**
 1. Open the PR's Actions run and look at the job "Build & test (Ubuntu)". Compare its total time with the baseline of
    about 62 minutes (run 43950229920: 10 min waiting for a runner, 53.9 min build, 6.6 min test).
-2. (There is no linker step to check: lld was tried and removed, see `docs/automated_testing.md`.)
+2. (There is no linker step to check: lld was tried and removed, see `docs/process/automated_testing.md`.)
 3. Open "Restore compiler cache". `Cache restored from key: ccache-ubuntu-ci-...` means a cache was found. "Cache not found"
    means the build was cold.
 4. Open "Compiler cache statistics" (at the end of the job). Look at the hit rate (`Hits` against `Misses`). Warm is above
@@ -1769,7 +3021,7 @@ measured) and the same tests passing. All other jobs still run on every PR and o
 
 **Status.** Unverified: no GitHub Actions run was possible where this was written. The YAML was parsed with PyYAML, the
 CMake test set was compared (805 tests with and without the launcher and sandbox), and `tests/scripts/test_dev_workflow.py`
-passes. Nothing was run on GitHub or Windows. See `docs/automated_testing.md` "CI speed" for the details and what was left
+passes. Nothing was run on GitHub or Windows. See `docs/process/automated_testing.md` "CI speed" for the details and what was left
 out.
 
 ## Five starter templates removed from New Project

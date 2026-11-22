@@ -4,6 +4,8 @@ on:
   push:
     branches: [ main ]
   pull_request:
+  # Manual run on a branch: lets the MSVC job (skipped on pull requests) be run on demand to read real MSVC errors.
+  workflow_dispatch:
 
 # A new push to a pull request cancels that PR's older run, so stale runs don't
 # hold the runners. Each push to main keeps its own run.
@@ -11,6 +13,8 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
+# Job time limits: the shared runners are often queued and slow (apt downloads alone took 5-10 minutes on busy days), so
+# the short limits (15/20/30 minutes) were cancelling healthy jobs (PR #969: 'Anti-cheat tests with libsodium' hit 15 minutes).
 jobs:
   build-and-test:
     name: Build & test (Ubuntu)
@@ -18,8 +22,10 @@ jobs:
     # The compiler cache makes a warm run recompile only what changed. The player and
     # editor builds are their own jobs below so they run in parallel with this one.
     # This job builds and runs the unit tests (about 800). The sandbox and example programs are built by the
-    # "player" job and the launcher by the "editor" job, so nothing is left unbuilt (docs/automated_testing.md "CI speed").
-    timeout-minutes: 90
+    # "player" job and the launcher by the "editor" job, so nothing is left unbuilt (docs/process/automated_testing.md "CI speed").
+    # 150, not 90: on a busy runner with a cold or partial compiler cache this job takes 90 minutes or more (PR #1000
+    # finished in 89m42s, and #960 and #969 were cancelled by the old 90 minute limit while still running tests).
+    timeout-minutes: 150
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       # No CCACHE_BASEDIR: it makes ccache hand the compiler relative source paths, so __FILE__ is relative
@@ -28,6 +34,14 @@ jobs:
       CCACHE_MAXSIZE: 2G
     steps:
       - uses: actions/checkout@v6
+
+      # The runner disk filled up while linking the ~800 tests ("final link failed: No space left on device", 2026-11-20).
+      # Remove big preinstalled SDKs this job never uses (about 25 GB) before building.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift || true
+          df -h /
 
       - name: Install toolchain
         run: |
@@ -57,13 +71,13 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure -j4 --timeout 300
 
-      # How warm the compiler cache was: look for the hit rate here (docs/automated_testing.md "CI speed").
+      # How warm the compiler cache was: look for the hit rate here (docs/process/automated_testing.md "CI speed").
       - name: Compiler cache statistics
         if: always()
         run: ccache -s || true
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
@@ -120,7 +134,7 @@ jobs:
           retention-days: 1
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
@@ -172,7 +186,7 @@ jobs:
           retention-days: 1
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
@@ -188,7 +202,7 @@ jobs:
     name: Export a game and check its visual scripts (Ubuntu)
     needs: [player, editor]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
 
@@ -221,17 +235,38 @@ jobs:
   sanitizers:
     name: Scripting and robustness tests (ASan + UBSan)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75   # was 45: a cold-cache run on a pull request needs 41-45 min and was cancelled at the limit (PR #1088)
     env:
       ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
     steps:
       - uses: actions/checkout@v6
+
+      # The runner disk filled up while linking the ~800 tests ("final link failed: No space left on device", 2026-11-20).
+      # Remove big preinstalled SDKs this job never uses (about 25 GB) before building.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift || true
+          df -h /
 
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+
+      # Same rule as the other jobs (#953): every run restores, only a push to main saves. This job was the critical path
+      # (about 21.6 min, of which a 16.3 min build with no cache). Linking is not cached, so the link share stays.
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .ccache
+          key: ccache-ubuntu-asan-${{ github.sha }}
+          restore-keys: |
+            ccache-ubuntu-asan-
 
       # The runner kernel's high mmap randomness can break ASan's shadow memory
       # setup (random "DEADLYSIGNAL" crashes before main); 28 bits is safe.
@@ -239,12 +274,15 @@ jobs:
         run: sudo sysctl -w vm.mmap_rnd_bits=28
 
       # -g1: line tables are enough for file:line in sanitizer stack traces and
-      # keep the Debug objects a fraction of the size of full -g.
+      # keep the Debug objects a fraction of the size of full -g. -gz and the linker flag compress that debug
+      # data: without them this job ran out of disk even after "Free disk space" (2026-11-20, #1067).
       - name: Configure
         run: |
-          cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS_DEBUG=-g1 \
+          cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug "-DCMAKE_CXX_FLAGS_DEBUG=-g1 -gz" \
+            "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--compress-debug-sections=zlib" \
             -DOKAY_SANITIZE=address,undefined,float-cast-overflow -DOKAY_BUILD_TESTS=ON \
-            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF -DOKAY_BUILD_XBOX_UWP=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       # Every test_script_* target is picked up from tests/CMakeLists.txt, so new
       # script tests join this job without editing it.
@@ -269,6 +307,13 @@ jobs:
           OKAYUI_TESTS="test_okayui_fuzz test_okayui_codeedit_fuzz test_okayui_dock_fuzz test_okayui_windows_fuzz"
           TESTS="$TESTS $OKAYUI_TESTS"
           echo "OKAYUI_TESTS=$OKAYUI_TESTS" >> "$GITHUB_ENV"
+          # The experimental Xbox UWP backend (OKAY_BUILD_XBOX_UWP=ON above; no other job turns it on). Only tests that do not link
+          # the engine (each about 10 to 25 s to build): touch and text composition, the runtime pieces (lifecycle with the back
+          # button, title-safe area, pads, paths, audio, backend over a fake host, HTTP) and pad hot-plug slots. Before 2026-11-22
+          # only the touch test ran anywhere in CI.
+          XBOX_TESTS="test_xbox_uwp_touch test_xbox_uwp_runtime test_xbox_uwp_padhub"
+          TESTS="$TESTS $XBOX_TESTS"
+          echo "XBOX_TESTS=$XBOX_TESTS" >> "$GITHUB_ENV"
           echo "SAN_TESTS=$TESTS" >> "$GITHUB_ENV"
           echo "$TESTS"
 
@@ -276,14 +321,28 @@ jobs:
       # (out of memory) on most runs, because every sanitized test executable links the
       # whole sanitized engine.
       - name: Build
-        run: cmake --build build-asan -j 3 --target $SAN_TESTS
+        run: |
+          ccache -z || true
+          cmake --build build-asan -j 3 --target $SAN_TESTS
+
+      # Look for the hit rate here: it is the before/after measure for the cache.
+      - name: Compiler cache statistics
+        if: always()
+        run: ccache -s || true
+
+      - name: Save compiler cache (main only)
+        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v5
+        with:
+          path: .ccache
+          key: ccache-ubuntu-asan-${{ github.sha }}
 
       - name: Test
         working-directory: build-asan/tests
         run: |
           failed=""
           for t in $SAN_TESTS; do
-            case " $OKAYUI_TESTS " in *" $t "*) continue;; esac
+            case " $OKAYUI_TESTS $XBOX_TESTS " in *" $t "*) continue;; esac
             echo "== $t"
             "./$t" || failed="$failed $t"
           done
@@ -291,6 +350,11 @@ jobs:
           for t in $OKAYUI_TESTS; do
             echo "== $t"
             (cd "$GITHUB_WORKSPACE" && SDL_VIDEODRIVER=dummy "build-asan/okayui/$t") || failed="$failed $t"
+          done
+          # The Xbox UWP tests live in build-asan/platform/xbox_uwp.
+          for t in $XBOX_TESTS; do
+            echo "== $t"
+            "$GITHUB_WORKSPACE/build-asan/platform/xbox_uwp/$t" || failed="$failed $t"
           done
           if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
 
@@ -347,13 +411,18 @@ jobs:
       - name: Build
         run: |
           cmake --build build-assimp -j --target test_model_readers test_model_readers_fuzz test_collada_reader \
-            test_model_import_rig test_gltf_import test_fbx_reader test_glb_container
+            test_model_import_rig test_gltf_import test_fbx_reader test_glb_container test_model_corpus
 
       - name: Test
         run: ctest --test-dir build-assimp --output-on-failure -R '^(model_readers|model_readers_fuzz|collada_reader|model_import_rig|gltf_import|fbx_reader|glb_container)$'
 
+      # The real-file corpus (docs/content/model_corpus.md): every row of tests/data/model_corpus_manifest.tsv re-read from
+      # the test folder of the Assimp checkout above, so a reader change that alters a real file's counts fails here.
+      - name: Test the real-file corpus
+        run: OKAY_MODEL_CORPUS="$HOME/assimp-src/test" ctest --test-dir build-assimp --output-on-failure -R '^model_corpus$'
+
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
@@ -361,7 +430,7 @@ jobs:
           path: .ccache
           key: ccache-assimp-${{ github.sha }}
 
-  # Our own HTTP client (docs/own_http_client.md) with the CMake option on. NOT required for merging and the
+  # Our own HTTP client (docs/platform/own_http.md) with the CMake option on. NOT required for merging and the
   # option stays OFF by default everywhere else. Only the two header-only test targets are built (the client
   # does not link the engine). OKAY_REQUIRE_TLS_TESTS=1 makes a skipped TLS case (no libssl, no openssl program)
   # a failure, so the certificate checks cannot silently go missing. The sanitizer script then runs both tests
@@ -369,7 +438,7 @@ jobs:
   own-http:
     name: Own HTTP client (OKAY_OWN_HTTP=ON, TLS tests required)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
 
@@ -386,13 +455,13 @@ jobs:
           grep -q 'OKAY_OWN_HTTP=1' build-http/build.ninja
 
       - name: Build
-        run: cmake --build build-http -j2 --target test_own_http test_own_http_inflate test_own_http_net test_launcher_download_own test_native_fetch test_playfab_own
+        run: cmake --build build-http -j2 --target test_own_http test_own_http_inflate test_own_http_net test_own_http_download test_launcher_download_own test_native_fetch test_playfab_own
 
       - name: Test (a skipped TLS case fails)
         env:
           OKAY_REQUIRE_TLS_TESTS: "1"
           OKAY_REQUIRE_DIFFERENTIAL: "1"
-        run: ctest --test-dir build-http --output-on-failure -R '^(own_http|own_http_inflate|own_http_net|launcher_download_own|native_fetch|playfab_own)$'
+        run: ctest --test-dir build-http --output-on-failure -R '^(own_http|own_http_inflate|own_http_net|own_http_download|launcher_download_own|native_fetch|playfab_own)$'
 
       - name: Sanitizers (ASan + UBSan)
         env:
@@ -400,7 +469,7 @@ jobs:
           OKAY_REQUIRE_DIFFERENTIAL: "1"
         run: scripts/own_http_sanitized.sh 100000
 
-  # The whole own stack at once (docs/own_stack_rollout.md): a build with -DOKAY_OWN_STACK=ON, so our own model readers,
+  # The whole own stack at once (docs/status/own_stack_rollout.md): a build with -DOKAY_OWN_STACK=ON, so our own model readers,
   # HTTP client, okay::platform backend and OkayUI are the defaults, and no libsodium. -DOKAY_OWN_STACK_CRYPTO_TEST=ON also
   # lets our own (unreviewed) crypto run in THESE tests; it is for test builds only and releases refuse it
   # (scripts/check_release_own_stack.sh). Not a required check: it tells us how ready the own stack is, it does not gate
@@ -467,7 +536,7 @@ jobs:
         run: ctest --test-dir build-own --output-on-failure -j 2 -R "$OWN_STACK_TESTS" -E 'net_crypto_sodium|anticheat_sql' 
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
@@ -481,7 +550,7 @@ jobs:
   anticheat-crypto-nosodium:
     name: Anti-cheat crypto without libsodium (Ubuntu)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
 
@@ -504,7 +573,7 @@ jobs:
   windows-cross:
     name: Cross-compile Windows build (MinGW)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90   # a cold compiler cache (main's CI not finished, so no fresh cache) took over 60 min twice on 2026-11-22 (#1104, #1106); warm runs take 22-34 min
     env:
       SDL2_VERSION: 2.30.9
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -597,11 +666,12 @@ jobs:
             -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
             -DOKAY_SODIUM_PREFIX="$OKAY_SODIUM_MINGW_PREFIX"
           cmake --build build-win-tests -j --target test_vs_acceptance test_vs_debug test_game_fiber \
-            test_polymesh test_mesh_asset test_poly_ops
+            test_polymesh test_mesh_asset test_poly_ops test_okayui_render_sdlhost
           mkdir -p win-tests
           cp build-win-tests/tests/test_vs_acceptance.exe build-win-tests/tests/test_vs_debug.exe \
              build-win-tests/tests/test_game_fiber.exe build-win-tests/tests/test_polymesh.exe \
              build-win-tests/tests/test_mesh_asset.exe build-win-tests/tests/test_poly_ops.exe \
+             build-win-tests/okayui/test_okayui_render_sdlhost.exe \
              "$SDL2_MINGW_PREFIX/bin/SDL2.dll" win-tests/
 
       - name: Upload Windows build
@@ -614,7 +684,7 @@ jobs:
           retention-days: 3
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
@@ -629,7 +699,7 @@ jobs:
     name: Windows export check
     needs: windows-cross
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
 
@@ -643,7 +713,9 @@ jobs:
         shell: pwsh
         run: |
           $failed = @()
-          foreach ($t in "test_vs_acceptance", "test_vs_debug", "test_game_fiber", "test_polymesh", "test_mesh_asset", "test_poly_ops") {
+          # test_okayui_render_sdlhost: OkayUI's own Direct3D 11 renderer inside SDL's direct3d11 renderer (OKAY_UI_OWN_RENDER), on the
+          # runner's Direct3D 11 device (no GPU: Windows' software adapter); it says SKIPPED for a renderer SDL cannot make here.
+          foreach ($t in "test_vs_acceptance", "test_vs_debug", "test_game_fiber", "test_polymesh", "test_mesh_asset", "test_poly_ops", "test_okayui_render_sdlhost") {
             Write-Host "== $t"
             & "winbuild/win-tests/$t.exe"
             if ($LASTEXITCODE -ne 0) { $failed += $t }
@@ -664,7 +736,7 @@ jobs:
   windows-restart:
     name: Windows updater restart
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
 
@@ -684,6 +756,36 @@ jobs:
         # app_restart also drives the verified restart with real processes: self-check, rollback to the previous launcher file, state file.
         # --timeout: a hang in a real-process case fails in 150 s with its output instead of using the whole 30 minutes; -V prints each case as it runs.
         run: ctest --test-dir build -C Release -R "^(app_restart|self_update|anticheat_golden|anticheat_integrity_fallback)$" --output-on-failure --timeout 150 -V
+
+  # MSVC build-and-test (rule 24d, step 1). NOT required. Builds the core engine library and pure-logic tests with
+  # the real MSVC compiler (the release stays the MinGW cross-compile). Nothing from the SDK is shipped.
+  msvc-build:
+    name: MSVC build and test (not required)
+    # Not on pull requests yet: CLAUDE.md rule 6 needs every PR job green, and this job is new. It runs on pushes to
+    # main so its results are visible without blocking merges; the owner decides later whether it becomes required.
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure (MSVC, Ninja, Release)
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && cmake -S . -B build-msvc -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_BUILD_EDITOR=OFF -DOKAY_BUILD_PLAYER=OFF -DOKAY_USE_SODIUM=OFF -DOKAY_BUILD_OKAYUI_TESTS=OFF"
+          if ($LASTEXITCODE -ne 0) { throw "configure failed" }
+
+      - name: Build the engine and pure-logic tests
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && cmake --build build-msvc --target test_math test_scene test_serialize test_material test_actionlist test_prefs test_physics3d test_core_features test_charctrl test_transform_input"
+          if ($LASTEXITCODE -ne 0) { throw "build failed" }
+
+      - name: Run the tests
+        shell: pwsh
+        run: ctest --test-dir build-msvc -R "^(math|scene|serialize|material|actionlist|prefs|physics3d|core_features|charctrl|transform_input)$" --output-on-failure --timeout 150
 
   web-build:
     name: WebGL build (Emscripten)
@@ -737,7 +839,7 @@ jobs:
           path: build-web/web/
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
@@ -756,7 +858,7 @@ jobs:
   sql-tests:
     name: SQL row-level-security tests (Postgres)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     services:
       postgres:
         image: postgres:16
@@ -798,7 +900,7 @@ jobs:
   ticket-and-script-tests:
     name: Ticket function, update signing and account server tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
 
@@ -836,6 +938,9 @@ jobs:
       - name: Crash reports workflow keeps its safety properties (opt-in schedule, dry run by default, minimal permissions)
         run: python3 -I tests/scripts/test_crash_workflow.py
 
+      - name: The programs never need GitHub (no GitHub address or word in shipped code and files; releases bake in the update server)
+        run: python3 -I tests/scripts/test_no_github_runtime.py
+
   # The anti-cheat tests that only do their real work with libsodium. The main Ubuntu job installs
   # no libsodium-dev, so a test that says "built without libsodium" there only runs its refusal
   # branch and never signs, seals or verifies anything (docs/feature_map/39). This job installs it,
@@ -845,7 +950,7 @@ jobs:
   anticheat-crypto:
     name: Anti-cheat tests with libsodium (Ubuntu)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_COMPRESS: "1"
@@ -888,7 +993,7 @@ jobs:
           fi
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5

@@ -2,7 +2,7 @@
 // OkayUI::CodeEdit: a multi-line code editor widget (own code; replaces the vendored ImGuiColorTextEdit).
 // Line-number gutter with breakpoint marks, caret and selection (mouse and keyboard), typing, auto-indent, clipboard,
 // undo/redo with grouping, find, bracket matching, scrolling, a pluggable syntax highlighter (plus a built-in C-like and
-// OkayScript one), read-only mode and error markers. See docs/own_ui_code_editor.md.
+// OkayScript one), read-only mode and error markers. See docs/ui/own_ui_code_editor.md.
 //
 // A CodeEdit is a plain object that owns its text and state (one per open script). Call Draw() once per frame inside an
 // OkayUI window; it reads the frame's input, edits, and draws the visible lines only. The editing operations are also
@@ -126,6 +126,15 @@ public:
     bool NewLine();
     /// Tab: indent (insert spaces to the next tab stop, or the lines of a multi-line selection); `outdent` (Shift+Tab) removes one level.
     bool Tab(bool outdent = false);
+    /// Line commands (each one undo step; the lines are the selection's, a selection that ends at column 0 leaves that line out).
+    /// ToggleLineComment: put `prefix` and a space before the first non-blank of every non-blank line, or take it away when every
+    /// such line has it ("" prefix: the language's first line comment, else "//"). DuplicateLines copies the lines below themselves
+    /// and moves the selection onto the copy. DeleteLines removes them with their newline. MoveLines swaps them with the line
+    /// above (up) or below; false at the document ends. Breakpoints follow the text.
+    bool ToggleLineComment(const std::string& prefix = "");
+    bool DuplicateLines();
+    bool DeleteLines();
+    bool MoveLines(bool up);
     bool Cut();          // copies to the clipboard, then deletes
     bool Copy() const;   // the selection to OkayUI::SetClipboardText
     bool Paste();
@@ -166,6 +175,15 @@ public:
     void SetShowLineNumbers(bool b) { showLineNumbers_ = b; }
     void SetShowBreakpointGutter(bool b) { showBreakpoints_ = b; }
     void SetLineSpacing(float s) { lineSpacing_ = s < 1.0f ? 1.0f : (s > 3.0f ? 3.0f : s); }
+    /// Key bindings for the line commands while the editor has the keyboard (on by default; the script editor's keys):
+    /// Ctrl+/ ToggleLineComment, Ctrl+D DuplicateLines, Ctrl+Shift+K DeleteLines, Alt+Up and Alt+Down MoveLines.
+    void SetLineCommandKeys(bool on) { lineKeys_ = on; }
+    bool LineCommandKeys() const { return lineKeys_; }
+    /// Draw the code (text and line numbers) in this font instead of the current OkayUI font: a font made by AddFontTtf
+    /// (OkayUICompat.hpp) that should be monospaced. `px` is the height of a line of text in pixels (0: the font's own size).
+    /// The window's font and text scale are put back after Draw. Null: the current OkayUI font (the default).
+    void SetFont(const Font* font, float px = 0.0f) { font_ = font; fontPx_ = (px > 0.0f && px < 1000.0f) ? px : 0.0f; }
+    const Font* CodeFont() const { return font_; }
     void SetPalette(const CodePalette& p) { pal_ = p; }
     const CodePalette& Palette() const { return pal_; }
     /// The syntax highlighter (empty: no colouring). Takes effect at once.
@@ -237,6 +255,7 @@ private:
     CodePos edit(int kind, CodePos from, CodePos to, const std::string& ins);
     void beginCompound();
     void endCompound();
+    void lineRange(int& l0, int& l1) const;
     bool replaceSelection(const std::string& ins, int kind);
     bool deleteSelectionIfAny();
     std::string textIn(CodePos a, CodePos b) const;
@@ -278,7 +297,9 @@ private:
     std::vector<int> breakpoints_;
     std::function<void(int, bool)> onBreakpoint_; bool autoToggle_ = true;
 
-    bool readOnly_ = false, insertSpaces_ = true, autoIndent_ = true, showLineNumbers_ = true, showBreakpoints_ = true;
+    bool readOnly_ = false, insertSpaces_ = true, autoIndent_ = true, showLineNumbers_ = true, showBreakpoints_ = true, lineKeys_ = true;
+    const Font* font_ = nullptr; float fontPx_ = 0.0f;
+    bool drawImpl(const char* id, float w, float h);
     int tabSize_ = 4;
     float lineSpacing_ = 1.2f;
     CodePalette pal_;

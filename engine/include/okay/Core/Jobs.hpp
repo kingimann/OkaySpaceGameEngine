@@ -1,6 +1,6 @@
 #pragma once
 // A small job system: a worker pool, a task graph, ParallelFor / ParallelReduce, a
-// main-thread queue, cancellation and counters. See docs/core_runtime.md.
+// main-thread queue, cancellation and counters. See docs/engine/core_runtime.md.
 //
 // This header exposes plain C++ types only (atomics, std::function, shared_ptr).
 // The locks and threads live in Jobs.cpp behind a platform shim, because the
@@ -229,6 +229,14 @@ private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };
+
+/// The job system the engine's own systems run their work on: physics bounding boxes,
+/// skinning, AssetManager background loads and navmesh bakes. It is Global() unless
+/// SetEngineJobs chose another one (tests compare JobSystem(0) with JobSystem(4)).
+JobSystem& EngineJobs();
+/// Use `js` for the engine's work from now on (nullptr = back to Global()). `js` must
+/// outlive everything that was started on it; set it before starting work, not during.
+void SetEngineJobs(JobSystem* js);
 
 // ---- templates ----------------------------------------------------------
 

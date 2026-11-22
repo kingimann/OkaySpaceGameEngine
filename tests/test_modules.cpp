@@ -83,7 +83,7 @@ int main() {
         CHECK(r.IsEnabled("core"));
         const auto* hd = r.ModuleOfComponent("HealthStat");
         CHECK(hd && hd->manifest.name == "health_damage");
-        CHECK(r.ModuleProviding("IHealth") && r.ModuleProviding("IDamageable"));
+        CHECK(r.ModuleProviding("Damage"));   // the one damage path, okay/Components/Damage.hpp
         CHECK(r.ModuleOfRecord("stat_health") != nullptr);
         CHECK(r.Find("weapons") && Has(r.Find("weapons")->manifest.requires_, "health_damage"));
         std::string sel = detail::ConfiguredModuleSelection();

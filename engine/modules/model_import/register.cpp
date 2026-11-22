@@ -1,5 +1,6 @@
 // Module model_import: registers the readers for every model format except OBJ, STL and PLY (those are core).
-// Written from the old slot dispatch in ModelImport.cpp, unchanged in behaviour. Linked only when the module is on.
+// Written from the old slot dispatch in ModelImport.cpp, unchanged in behaviour (slot 45, .xml, stays in ModelImport.cpp and picks one of these by
+// the root element). Linked only when the module is on.
 #include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Render/ModelReaderRegistry.hpp"
 #include "okay/Render/ModelData.hpp"
@@ -47,6 +48,9 @@ void Register_model_import(ModuleContext&) {
     RegisterModelReader(36, [](const std::string& path, ImportedModel& out, std::string* err, bool flatten, const IrrMeshLoader* irrLoader) { (void)flatten; (void)irrLoader; return ReadNdoFile(path, out, err); });
     RegisterModelReader(39, [](const std::string& path, ImportedModel& out, std::string* err, bool flatten, const IrrMeshLoader* irrLoader) { (void)flatten; (void)irrLoader; return ReadPmxFile(path, out, err); });
     RegisterModelReader(40, [](const std::string& path, ImportedModel& out, std::string* err, bool flatten, const IrrMeshLoader* irrLoader) { (void)flatten; (void)irrLoader; return ReadLwsFile(path, out, err, irrLoader); });
+    RegisterModelReader(43, [](const std::string& path, ImportedModel& out, std::string* err, bool flatten, const IrrMeshLoader* irrLoader) { (void)flatten; (void)irrLoader; return ReadOgreBinaryFile(path, out, err); });
+    RegisterModelReader(44, [](const std::string& path, ImportedModel& out, std::string* err, bool flatten, const IrrMeshLoader* irrLoader) { (void)flatten; (void)irrLoader; return ReadZaeFile(path, out, err, flatten); });
+    RegisterModelReader(46, [](const std::string& path, ImportedModel& out, std::string* err, bool flatten, const IrrMeshLoader* irrLoader) { (void)flatten; (void)irrLoader; return ReadLwoFile(path, out, err); });   // LXOB is read by the LWO reader
 }
 } // namespace modules
 } // namespace okay

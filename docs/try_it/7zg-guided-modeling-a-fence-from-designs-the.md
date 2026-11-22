@@ -7,11 +7,11 @@ row: | 7zg | Guided modeling: make a fence from designs, customise it, swap part
 **What it is.** The existing Modeling window has a new **Guided** page. You pick a category, a thing (today only the
 **Fence**), a starting design, and get a normal editable mesh. You can change its settings, swap parts, and keep
 modeling by hand; rebuilding never overwrites your hand edits without asking. Written from general parametric
-modeling; no code, models or assets from other projects. Design: `docs/guided_modeling_design.md`.
+modeling; no code, models or assets from other projects. Design: `docs/editor/guided_modeling.md`.
 
 **Status.** The generation, the rebuild rules, the files and undo are tested on Linux (`ctest -R guided_modeling`, about
 600 checks). The editor page (`editor/GuidedPanel.cpp`) compiles but nobody has opened it in a real window yet, and
-nothing here ran on Windows. Pictures in `docs/images/guided_modeling/` are headless software renders of the generated
+nothing here ran on Windows. Pictures in a picture folder (pictures are no longer stored in the repository) are headless software renders of the generated
 meshes (our own small rasteriser), not screenshots of the editor.
 
 **Try it (the example scene).**

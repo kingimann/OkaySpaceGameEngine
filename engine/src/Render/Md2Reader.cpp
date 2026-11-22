@@ -1,7 +1,7 @@
 // Our own MD2 (Quake II model, binary) reader: the first frame of the vertex animation as one static mesh, with the
 // texture coordinates and the first skin name. Written from the public description of the format (id Software's
 // Quake II source, qfiles.h, and the many format notes built on it). Bounds-checked, capped, no recursion.
-// See okay/Render/ModelData.hpp and docs/own_md2_reader.md.
+// See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "BinReader.hpp"
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"
@@ -27,7 +27,9 @@ bool Fail(std::string* err, const std::string& m) { if (err) *err = "MD2: " + m;
 } // namespace md2
 } // namespace
 
-bool ReadMd2Buffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err) {
+// `release`: the caller's buffer behind `bytes`, freed once the tables are read (nothing below points into it), so the file
+// is not held while the mesh is built. ReadMd2File passes its own bytes; ReadMd2Buffer passes none.
+static bool ReadMd2Impl(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err, std::string* release) {
     using namespace md2;
     out = ImportedModel{};
     Br b(bytes);
@@ -100,6 +102,8 @@ bool ReadMd2Buffer(const std::string& bytes, const std::string& baseDir, Importe
         if (!texture.empty() && !baseDir.empty() && texture[0] != '/' && texture.find(':') == std::string::npos) texture = baseDir + texture;
     }
 
+    if (release) std::string().swap(*release);   // `bytes` and `b` are not used below
+
     // ---- build ----
     ImportedPart part;
     detail::rc::BuildStats stats;
@@ -134,6 +138,10 @@ bool ReadMd2Buffer(const std::string& bytes, const std::string& baseDir, Importe
     return true;
 }
 
+bool ReadMd2Buffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err) {
+    return ReadMd2Impl(bytes, baseDir, out, err, nullptr);
+}
+
 bool ReadMd2File(const std::string& path, ImportedModel& out, std::string* err) {
     out = ImportedModel{};
     std::string bytes;
@@ -141,7 +149,7 @@ bool ReadMd2File(const std::string& path, ImportedModel& out, std::string* err) 
     std::string dir;
     const std::size_t sl = path.find_last_of("/\\");
     if (sl != std::string::npos) dir = path.substr(0, sl + 1);
-    return ReadMd2Buffer(bytes, dir, out, err);
+    return ReadMd2Impl(bytes, dir, out, err, &bytes);
 }
 
 } // namespace okay

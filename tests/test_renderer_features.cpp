@@ -38,10 +38,10 @@ static FeatureSupport Expect(RenderFeature feature, RenderBackend backend) {
         {F::SceneFxaa, B::Software, S::Yes}, {F::SceneFxaa, B::OpenGL, S::Yes},
         {F::SceneFxaa, B::Direct3D11, S::Yes}, {F::SceneFxaa, B::Direct3D12, S::No},
 
-        {F::SceneSsao, B::Software, S::No}, {F::SceneSsao, B::OpenGL, S::Yes},
+        {F::SceneSsao, B::Software, S::Yes}, {F::SceneSsao, B::OpenGL, S::Yes},
         {F::SceneSsao, B::Direct3D11, S::Yes}, {F::SceneSsao, B::Direct3D12, S::No},
 
-        {F::DepthOfField, B::Software, S::No}, {F::DepthOfField, B::OpenGL, S::Yes},
+        {F::DepthOfField, B::Software, S::Yes}, {F::DepthOfField, B::OpenGL, S::Yes},
         {F::DepthOfField, B::Direct3D11, S::Yes}, {F::DepthOfField, B::Direct3D12, S::No},
 
         {F::ProceduralSkyDetail, B::Software, S::No}, {F::ProceduralSkyDetail, B::OpenGL, S::Yes},
@@ -76,6 +76,9 @@ static FeatureSupport Expect(RenderFeature feature, RenderBackend backend) {
 
         {F::SoftwareColorGrade, B::Software, S::Yes}, {F::SoftwareColorGrade, B::OpenGL, S::No},
         {F::SoftwareColorGrade, B::Direct3D11, S::No}, {F::SoftwareColorGrade, B::Direct3D12, S::No},
+
+        {F::LightShapes, B::Software, S::Yes}, {F::LightShapes, B::OpenGL, S::Yes},
+        {F::LightShapes, B::Direct3D11, S::Yes}, {F::LightShapes, B::Direct3D12, S::No},
     };
     for (const Cell& c : k)
         if (c.f == feature && c.b == backend) return c.s;
@@ -110,11 +113,12 @@ int main() {
                       "The software renderer draws them, like sun shadows, by default: it lights per pixel while a shadow is on screen.") == 0);
 
     CHECK(std::strcmp(FeatureGapNote(RenderFeature::SceneSsao),
-                      "Ambient occlusion in Post-processing is not drawn on Direct3D 12 or the software renderer. "
+                      "Ambient occlusion in Post-processing is not drawn on Direct3D 12. "
                       "The Ambient occlusion switch under Rendering, and in Build Settings, is a separate switch.") == 0);
 
     CHECK(std::strcmp(FeatureGapNote(RenderFeature::DepthOfField),
-                      "Depth of field is not drawn on Direct3D 12 or the software renderer.") == 0);
+                      "Depth of field is not drawn on Direct3D 12. "
+                      "The software renderer draws it for perspective cameras only.") == 0);
 
     CHECK(std::strcmp(FeatureGapNote(RenderFeature::BuildBloom),
                       "Bloom in Build Settings and Rendering is not drawn on Direct3D 12. "

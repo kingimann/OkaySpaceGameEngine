@@ -1,5 +1,5 @@
 #pragma once
-// What a "Controls" screen needs from the input system (docs/accessibility.md): the list of
+// What a "Controls" screen needs from the input system (docs/engine/accessibility.md): the list of
 // rebindable actions with their current and default bindings, which other actions already use
 // a binding, and a rebind that deals with those conflicts the way the player chooses.
 //

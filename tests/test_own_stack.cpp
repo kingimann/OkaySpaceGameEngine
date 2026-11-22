@@ -1,4 +1,4 @@
-// The own-stack dogfood switch and the startup line (shared/OwnStack.hpp, docs/own_stack_rollout.md).
+// The own-stack dogfood switch and the startup line (shared/OwnStack.hpp, docs/status/own_stack_rollout.md).
 //
 // Two modes, two ctest entries, because the okay::platform default and the FBX choice are decided on first use and then kept:
 //   test_own_stack          what this BUILD does with nothing set in the environment: the old line in a default build
@@ -8,6 +8,9 @@
 //                           among them, and that every setting reaches the real selectors.
 #include "test_framework.hpp"
 #include "OwnStack.hpp"
+#include "okay/Core/ThirdParty.hpp"
+
+#include <cstdio>
 
 #include <cstring>
 #include <set>
@@ -43,6 +46,9 @@ static void TestText() {
     CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=ufbx+assimp crypto=libsodium ui=imgui");
     old.assimp = false;
     CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=ufbx crypto=libsodium ui=imgui");
+    old.switches = "wav,http";   // ids turned on from Settings > Experimental (shared/OwnSwitches.hpp) are appended; none adds nothing
+    CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=ufbx crypto=libsodium ui=imgui switches=wav,http");
+    old.switches.clear();
 
     Info mix;
     mix.platform = "own"; mix.http = "curl"; mix.ownReaders = {"fbx", "dae", "3ds", "bvh"}; mix.assimp = true;
@@ -145,7 +151,13 @@ static void TestBuildDefaults() {
 #  else
     CHECK(i.crypto != "own" && i.crypto != "own(test)");
 #  endif
-#else               // a default build: exactly the old stack, nothing of ours switched on
+#elif defined(OKAY_EXPECT_OWN_READERS)   // a default build since 2026-11-17: our own model readers, the rest still the old stack
+    CHECK(i.ownReaders.size() == Readers().size());
+    CHECK(!i.ufbx);
+    CHECK(i.platform == "sdl2");
+    CHECK(i.http == "curl" || i.http == "winhttp");
+    CHECK(Has(line, "readers=own(fbx,dae,"));
+#else               // a build with the reader options switched OFF: exactly the old stack
     CHECK(i.ownReaders.empty());
     CHECK(i.ufbx);
     CHECK(i.platform == "sdl2");
@@ -208,8 +220,37 @@ static void TestEnvironment() {
     CHECK(Gather("imgui").crypto == i.crypto);
 }
 
+// OKAY_THIRD_PARTY=1 at run time (okay/Core/ThirdParty.hpp): every model reader back to Assimp / ufbx, whatever the build default
+// and whatever OKAY_OWN_<FMT> says. Its own ctest entry: the FBX choice is decided on first use and then kept.
+static void TestThirdParty() {
+    ClearStackEnvironment();
+    Set("OKAY_THIRD_PARTY", "1");
+    Set("OKAY_OWN_3DS", "1");   // the master switch wins over a per-format 1
+    CHECK(okay::ThirdPartyForced());
+    const Info i = Gather("imgui");
+    std::printf("%s\n", FormatLine(i).c_str());
+    CHECK(i.ufbx && !okay::fbx::OwnReaderEnabled());
+#ifdef OKAY_HAVE_ASSIMP
+    CHECK(i.ownReaders.empty());
+    CHECK(Has(FormatLine(i), "readers=ufbx+assimp"));
+#else
+    // no Assimp compiled in: ours still read those formats (nothing else could), only FBX goes back (to ufbx)
+    CHECK(i.ownReaders.size() + 1 >= Readers().size() || i.ownReaders.empty());
+#endif
+    Set("OKAY_THIRD_PARTY", "0");
+    CHECK(!okay::ThirdPartyForced());
+    Set("OKAY_THIRD_PARTY", "yes");
+    CHECK(!okay::ThirdPartyForced());   // only the exact value 1
+    Set("OKAY_THIRD_PARTY", "11");
+    CHECK(!okay::ThirdPartyForced());
+    Unset("OKAY_THIRD_PARTY");
+    CHECK(!okay::ThirdPartyForced());
+    Unset("OKAY_OWN_3DS");
+}
+
 int main(int argc, char** argv) {
     RUN_SUITE("own stack switch and startup line");
+    if (argc > 1 && std::string(argv[1]) == "thirdparty") { TestThirdParty(); TEST_MAIN_RESULT(); }
     TestText();
     TestTables();
     if (argc > 1 && std::string(argv[1]) == "env") TestEnvironment();

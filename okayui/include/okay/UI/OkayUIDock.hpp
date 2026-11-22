@@ -2,7 +2,7 @@
 // OkayUI docking: a dock space inside the display, windows docked into the left / right / top / bottom / centre of a node,
 // splitters, tabs when several windows share a node, drag a tab or a title bar to float it or to dock it somewhere else (with
 // a drop-target preview), close a tab, and the layout saved to a text blob and back. Own code, off by default, not wired
-// into any program. See docs/own_ui_toolkit.md section 4.30.
+// into any program. See docs/ui/own_ui_toolkit.md section 4.30.
 //
 // Two layers:
 //  * DockLayout is the data model: a binary tree of nodes (a split of two children, or a leaf holding tabs) plus the floating
@@ -42,6 +42,7 @@ public:
         float ratio = 0.5f;               // split only: the first child's share of the space (without the gap)
         std::vector<std::string> tabs;    // leaf only
         int active = 0;                   // leaf only: index of the chosen tab
+        bool noTabBar = false;            // leaf only: no tab strip (SetNoTabBar); never saved, the host sets it again each frame
         Rect rect;                        // from the last Compute
         bool IsSplit() const { return child[0] != 0; }
     };
@@ -79,6 +80,9 @@ public:
     bool MoveTab(const std::string& window, int index);   // reorder inside its leaf
     bool SetFloatingRect(const std::string& window, Rect rect, bool markDirty = false);
     bool TakeDirty(const std::string& window, Rect* rect);   // true once after the host should place a floating window
+    /// Hide (or show again) the tab strip of a leaf: the content fills the whole node and the chosen tab is the only one drawn. Not saved in
+    /// the layout text and dropped when the layout is rebuilt (Load, Repair), so a host that wants it sets it every frame. False for an unknown node.
+    bool SetNoTabBar(int leaf, bool on);
     void SetMinSize(const std::string& window, float w, float h);   // a docked window's smallest content size
     bool SetRatio(int splitNode, float ratio);       // clamped to the minimum sizes when the layout has been computed
 
@@ -142,9 +146,29 @@ void DockSpace(Rect area);
 /// `*p_open` is set false when its close button or tab is clicked, and the window leaves the layout. Always call DockEnd.
 bool DockBegin(const char* title, bool* p_open = nullptr, int flags = 0);
 void DockEnd();
+/// Dock-aware Begin / End for code written for Dear ImGui (SetDockAwareBegin(true), off by default): a `Begin(title, &open, flags)` whose title is a window of the
+/// dock layout (docked or floating there) is run as DockBegin, and the End that closes it as DockEnd, so a panel that opens itself with Begin and
+/// closes with End sits in the dock like one written for DockBegin. `*p_open` is set false when its tab is closed, as for DockBegin. A title the
+/// layout does not hold is an ordinary window. DockBegin's own call to Begin is never routed back.
+void SetDockAwareBegin(bool on);
+bool DockAwareBegin();
+bool DockClosedPending(const char* title);   // not for hosts: a closed tab whose window has not been told (its next Begin gets *p_open = false)
+bool DockInsideBegin();   // not for hosts: Begin asks this to tell DockBegin's own call from a panel's
 /// Layout text for saving and loading (see DockLayout::Save / Load).
 std::string DockSaveLayout();
 bool DockLoadLayout(const std::string& blob, int* repairs = nullptr);
+/// One tab of the last DockSpace, for hosts that draw over the strips or ask where a tab is (the node, its place in the node, its rectangle in
+/// screen pixels, the width it would like when the strip is not squeezed, and whether it is the chosen tab). Empty before the first DockSpace.
+struct DockTabInfo { std::string window; int node = 0; int index = 0; Rect rect; float idealWidth = 0.0f; bool selected = false; };
+std::vector<DockTabInfo> GetDockTabs();
+/// The area given to the last DockSpace (zero size before the first one) and the height of a tab strip.
+Rect GetDockArea();
+float GetDockTabHeight();
+/// Leave `width` pixels free at the right end of the leaf's strip from the next DockSpace on (for a button the host puts there with
+/// TabItemButton); 0 removes it. Kept until changed; ids of nodes that no longer exist are dropped.
+void SetDockTrailingReserve(int leaf, float width);
+/// The rectangle of a leaf's tab strip (the last DockSpace); empty for an unknown leaf or one without a strip.
+Rect GetDockStripRect(int leaf);
 /// What a drag in progress would do now (for hosts and tests): the node, the side and the preview rectangle.
 struct DockDropInfo { bool active = false; bool rootEdge = false; int node = 0; DockSide side = DockSide_Center; Rect preview; std::string window; };
 DockDropInfo GetDockDrop();

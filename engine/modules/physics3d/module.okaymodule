@@ -1,4 +1,4 @@
-# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
 name=physics3d
 title=3D physics
 area=Physics
@@ -12,3 +12,6 @@ serializers=joint3d
 vs_group=physics
 editor=
 sources=include/okay/Physics/Physics3D.hpp include/okay/Physics/Collider3D.hpp include/okay/Physics/Rigidbody3D.hpp include/okay/Physics/TriMesh.hpp include/okay/Physics/ContactSolver.hpp include/okay/Physics/ConvexContact.hpp include/okay/Physics/BoxManifold.hpp include/okay/Physics/BodyPose.hpp include/okay/Physics/PoseHistory.hpp include/okay/Physics/PlayerCollision.hpp include/okay/Physics/PhysicsDebug.hpp include/okay/Physics/PhysicsMaterial.hpp include/okay/Physics/PhysicsQuality.hpp include/okay/Physics/ColliderFit.hpp include/okay/Physics/DebrisPool.hpp include/okay/Physics/ForceMode.hpp src/Physics/Physics3D.cpp src/Physics/TriMesh.cpp src/Physics/MeshCollider3D.cpp include/okay/Components/Joint3D.hpp include/okay/Components/VoxelDebris.hpp include/okay/Components/DebrisEmitter.hpp
+# planned= files another branch is adding (claude2/own-physics-engine: the Engine physics quality, our own solver, new Joint3D
+# modes). Not copied here; they move into sources= when that branch merges. Read by nobody yet.
+planned=include/okay/Physics/Core/Collide.hpp include/okay/Physics/Core/DynamicTree.hpp include/okay/Physics/Core/PMath.hpp include/okay/Physics/Core/Shape.hpp include/okay/Physics/Core/World.hpp src/Physics/Core/Collide.cpp src/Physics/Core/DynamicTree.cpp src/Physics/Core/Joint.cpp src/Physics/Core/Shape.cpp src/Physics/Core/Solver.cpp src/Physics/Core/World.cpp src/Physics/Core/WorldInternal.hpp src/Physics/Physics3DEngine.inl

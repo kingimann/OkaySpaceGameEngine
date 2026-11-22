@@ -1,5 +1,5 @@
 #pragma once
-#include "okay/Modules/Interact.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -14,6 +14,7 @@
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Render/Mesh.hpp"
@@ -41,6 +42,13 @@ public:
     /// Pressing interactKey picks it up in the hands (ProceduralObjectHolding) instead of
     /// putting it in the bag, when the player can hold objects. While held it isn't collected.
     bool  holdInHands = false;
+
+    /// The rest of this frame ignores interactKey. A drop on that same press (E again)
+    /// would otherwise put the object straight back in the hands.
+    static void BlockInteract() { InteractBlocked() = true; }
+    static void ClearInteractBlock() { InteractBlocked() = false; }
+    /// True when something already used this frame's interact press.
+    static bool InteractIsBlocked() { return InteractBlocked(); }
 
     void OnTriggerEnter2D(Collider2D* o) override { if (pickupOnTouch && o) GiveTo(o->gameObject); }
     void OnTriggerEnter3D(Collider3D* o) override { if (pickupOnTouch && o) GiveTo(o->gameObject); }
@@ -70,11 +78,11 @@ public:
         const Vec3 d = p - me;
         const float dist = d.Magnitude();
         if (autoRadius > 0.0f && dist <= autoRadius) { Give(player); return; }
-        if (interactKey && dist <= interactRange && interact::Pressed(interactKey) && !interact::Blocked()
+        if (interactKey && dist <= interactRange && UseKeyDown(interactKey) && !InteractBlocked()
             && NearestHold(player, dist)) {
             auto* hands = holdInHands ? player->GetComponent<ProceduralObjectHolding>() : nullptr;
             if (hands && hands->Pickup(gameObject)) {
-                interact::Block();   // this press is used; a second prop must not take it
+                BlockInteract();   // this press is used; a second prop must not take it
                 return;
             }
             Give(player);
@@ -86,7 +94,7 @@ public:
         }
     }
 
-    void LateUpdate(float) override { interact::ClearBlock(); }
+    void LateUpdate(float) override { ClearInteractBlock(); }
 
     /// Lower is a better pickup: closest to the camera aim, then nearer to the camera.
     static float AimScore(const Vec3& point, GameObject* player) {
@@ -165,6 +173,7 @@ private:
 
     bool m_gone = false;
 
+    static bool& InteractBlocked() { static bool blocked = false; return blocked; }
 
     /// Hold-in-hands props share one key. The one closest to the aim ray takes it
     /// (distance breaks a tie), so a block sitting beside a crate does not steal

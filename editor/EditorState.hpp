@@ -1,4 +1,7 @@
 #pragma once
+#ifdef OKAYUI_PORT_STAND_IN_EDITORSTATE   // only the okayui port tests define this: a small stand-in class (okayui/tests/shadow/EditorState.hpp) for headless panel runs
+#include "../okayui/tests/shadow/EditorState.hpp"
+#else
 #include "okay/Render/TexturePath.hpp"
 #include <cstdint>
 #include <functional>
@@ -7,6 +10,7 @@
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Core/Undo.hpp"
 #include "SceneUndo.hpp"
+#include "ObjectRef.hpp"
 #include <memory>
 #include <string>
 #include <vector>
@@ -63,8 +67,9 @@ public:
     /// added to a camera-less scene if it's still untouched.
     void AdoptCamera(Camera* cam);
     /// The "Main Camera" the editor added automatically because the scene had
-    /// none (null once it's gone or the user adds their own).
-    GameObject* autoCamera = nullptr;
+    /// none (empty once it's gone or the user adds their own). Held by GUID (ObjectRef), so a scene rebuilt by
+    /// undo / reload can never make another object at the same address count as the placeholder.
+    ObjectRef autoCamera;
     GameObject* CreateCube(const std::string& name = "Cube");
     GameObject* CreatePyramid(const std::string& name = "Pyramid");
     /// Create a GameObject with a MeshRenderer for any named primitive
@@ -92,9 +97,7 @@ public:
     /// Starter templates that build a small playable scene to learn from.
     void NewPlatformer();
     void NewPlatformer3D();
-    void NewFPS();
     void NewThirdPerson();
-    void NewHumanoid();
     void NewThirdPersonShooter();
     void NewPointAndClick();
     void NewMultiplayer();
@@ -103,6 +106,7 @@ public:
     void NewPlatformer25D();
     void NewVehicle3D();
     void NewVehicleSeats3D();
+    void NewDrivingWorld();
     void NewVehicle2D();
     void NewCoinCollector();
     void NewMainMenu();
@@ -127,6 +131,9 @@ public:
     /// history and its saved state exactly as they were (`error` says why). A loaded scene starts a
     /// fresh undo history, so Undo can never put the old scene's objects into the new file.
     bool Load(const std::string& path, std::string* error = nullptr);
+    /// The view `scene` is made for: 1 = 3D (its camera is a perspective camera), 0 = 2D (orthographic), -1 = no
+    /// camera. Load switches the Scene view to it.
+    static int SceneViewFor(const Scene& scene);
     /// Load scene text recovered from an autosave. The scene's path stays `keepPath`
     /// and the scene is left unsaved, so the real file is not overwritten.
     bool LoadRecoveredText(const std::string& text, const std::string& keepPath, std::string* error = nullptr);
@@ -284,7 +291,7 @@ public:
     /// Why the last Undo / Redo failed ("" when it did not).
     const std::string& UndoError() const { return m_stack->LastError(); }
 
-    // ---- Prefab mode (see docs/prefab_mode.md) ---------------------------------------------------
+    // ---- Prefab mode (see docs/engine/prefabs.md) ---------------------------------------------------
     // Open a .okayprefab in isolation: its contents become the scene being edited, the scene you were in
     // is put aside (text, selection, camera, undo history, unsaved mark) and comes back, as it was, on
     // ClosePrefab. Opening a prefab while one is open (a nested instance, or any other prefab) stacks
@@ -501,3 +508,4 @@ private:
 };
 
 } // namespace okay::editor
+#endif // OKAYUI_PORT_STAND_IN_EDITORSTATE

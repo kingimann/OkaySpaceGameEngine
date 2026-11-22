@@ -76,8 +76,8 @@ public:
         if (dt <= 0.0f) return;
         for (size_t i = 0; i < m_effects.size(); ) {
             Effect& e = m_effects[i];
-            if (e.hpPerSecond < 0.0f)      health::Damage(gameObject, -e.hpPerSecond * dt);
-            else if (e.hpPerSecond > 0.0f) health::Heal(gameObject, e.hpPerSecond * dt);
+            if (e.hpPerSecond < 0.0f)      DamageHealthOn(gameObject, -e.hpPerSecond * dt);
+            else if (e.hpPerSecond > 0.0f) HealOn(gameObject, e.hpPerSecond * dt);
             e.remaining -= dt;
             if (e.remaining <= 0.0f) {
                 std::string n = e.name;

@@ -4,6 +4,7 @@
 
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "OkayThreads.hpp"   // our own threads, recursive mutexes, atomics (replaces SDL's)
 
 #include <algorithm>
 #include <atomic>
@@ -25,7 +26,7 @@ namespace fs = std::filesystem;
 // ---- background jobs --------------------------------------------------------------------------------------------------------
 
 struct IndexJob {
-    SDL_Thread* th = nullptr;
+    okay::thr::Thread* th = nullptr;
     std::atomic<bool> done{false};
     Sources sources;
     FetchTextFn fetch;
@@ -39,18 +40,18 @@ int IndexWorker(void* p) {
 }
 
 struct InstallJob {
-    SDL_Thread* th = nullptr;
+    okay::thr::Thread* th = nullptr;
     std::atomic<bool> done{false}, cancel{false};
     std::atomic<std::uint64_t> fileBytes{0}, fileTotal{0}, doneBytes{0}, totalBytes{0};
     std::atomic<int> fileIndex{0}, fileCount{0};
-    SDL_mutex* mu = nullptr;
+    okay::thr::Mutex* mu = nullptr;
     std::string file;                                   // guarded by mu
     std::string version;
     fs::path launcherDir;
     InstallPlan plan;
     InstallOptions options;
     Result result;
-    ~InstallJob() { if (mu) SDL_DestroyMutex(mu); }
+    ~InstallJob() { if (mu) okay::thr::DestroyMutex(mu); }
 };
 int InstallWorker(void* p) {
     InstallJob* j = static_cast<InstallJob*>(p);
@@ -66,9 +67,9 @@ int InstallWorker(void* p) {
         j->totalBytes = pr.totalBytes;
         j->fileIndex = pr.fileIndex;
         j->fileCount = pr.fileCount;
-        SDL_LockMutex(j->mu);
+        okay::thr::LockMutex(j->mu);
         j->file = pr.file;
-        SDL_UnlockMutex(j->mu);
+        okay::thr::UnlockMutex(j->mu);
     };
     j->result = Install(j->launcherDir, plan, j->options, io);
     j->done = true;
@@ -202,7 +203,7 @@ void StartIndex(const Host& h) {
     st.indexJob = std::make_unique<IndexJob>();
     st.indexJob->sources = h.sources;
     st.indexJob->fetch = h.fetchText;
-    st.indexJob->th = SDL_CreateThread(IndexWorker, "okay-versions-index", st.indexJob.get());
+    st.indexJob->th = okay::thr::CreateThread(IndexWorker, "okay-versions-index", st.indexJob.get());
     if (!st.indexJob->th) st.indexJob.reset();
 }
 
@@ -210,12 +211,12 @@ void StartJob(const Host& h, const InstallPlan& plan) {
     State& st = S();
     if (st.job) return;
     auto j = std::make_unique<InstallJob>();
-    j->mu = SDL_CreateMutex();
+    j->mu = okay::thr::CreateMutex();
     j->version = plan.version;
     j->launcherDir = h.launcherDir;
     j->plan = plan;
     j->totalBytes = plan.totalBytes();
-    j->th = SDL_CreateThread(InstallWorker, "okay-versions-install", j.get());
+    j->th = okay::thr::CreateThread(InstallWorker, "okay-versions-install", j.get());
     if (!j->th) { Toast(h, "Couldn't start the download.", 2); return; }
     st.notes.erase(plan.version);
     st.job = std::move(j);
@@ -592,14 +593,14 @@ void DrawAvailable(const Host& h) {
             const std::uint64_t listed = ListedSize(e);
             if (listed) sub += (sub.empty() ? "" : "  \xC2\xB7  ") + std::string("about ") + HumanSize(listed);
             const bool checkable = !e.files.empty() && e.files.count("OkayEngine.exe") && !e.files.at("OkayEngine.exe").sha256.empty();
-            sub += std::string(sub.empty() ? "" : "  \xC2\xB7  ") + (e.inBucket ? "from the OkaySpace download server" : "from GitHub");
+            sub += std::string(sub.empty() ? "" : "  \xC2\xB7  ") + (e.inBucket ? "from the OkaySpace download server" : "older than the download server: can't be downloaded any more");
             if (!checkable) sub += "  \xC2\xB7  no checksum: can't be installed here";
             if (lts) sub += "  \xC2\xB7  only gets fixes";
             if (mine) {
                 std::string file;
-                SDL_LockMutex(st.job->mu);
+                okay::thr::LockMutex(st.job->mu);
                 file = st.job->file;
-                SDL_UnlockMutex(st.job->mu);
+                okay::thr::UnlockMutex(st.job->mu);
                 sub = st.job->cancel ? std::string("Cancelling\xE2\x80\xA6") : "Downloading " + file + " (" + std::to_string(st.job->fileIndex.load()) + " of " + std::to_string(st.job->fileCount.load()) + ")";
             }
             DrawTextAt(r.dl, ImVec2(r.p0.x, r.p0.y + 33), Fit(sub, r.width - rightW - 16.0f).c_str(), ImGui::GetColorU32(ImGuiCol_TextDisabled));
@@ -619,7 +620,7 @@ void DrawAvailable(const Host& h) {
                 ImGui::EndDisabled();
             } else {
                 ImGui::SetCursorScreenPos(ImVec2(r.p0.x + r.width - 120.0f, r.p0.y + 14));
-                ImGui::BeginDisabled(st.job != nullptr);
+                ImGui::BeginDisabled(st.job != nullptr || !e.inBucket);   // (a version that is not in the bucket has nowhere to come from: GitHub is never used)
                 if (AccentButton(h, "Install", ImVec2(120, 30))) BeginInstall(h, e.version);
                 ImGui::EndDisabled();
             }
@@ -690,6 +691,8 @@ bool TakePageRequest() {
     return r;
 }
 bool InstallRunning() { return S().job != nullptr; }
+bool IndexBusy() { return S().indexJob != nullptr; }
+bool IndexLoaded() { return S().haveIndex; }
 
 const std::vector<std::string>& InstalledVersionsCached(const fs::path& launcherDir) {
     State& st = S();
@@ -706,7 +709,7 @@ void Tick(const Host& h) {
     State& st = S();
     if (!st.staleCleaned) { st.staleCleaned = true; CleanStale(h.launcherDir); }
     if (st.indexJob && st.indexJob->done) {
-        SDL_WaitThread(st.indexJob->th, nullptr);
+        okay::thr::WaitThread(st.indexJob->th, nullptr);
         st.index = std::move(st.indexJob->result);
         st.indexJob.reset();
         st.haveIndex = true;
@@ -719,7 +722,7 @@ void Tick(const Host& h) {
         ResolveHighlight();
     }
     if (st.job && st.job->done) {
-        SDL_WaitThread(st.job->th, nullptr);
+        okay::thr::WaitThread(st.job->th, nullptr);
         const Result r = st.job->result;
         const std::string v = st.job->version;
         st.job.reset();
@@ -769,11 +772,11 @@ void Shutdown() {
     State& st = S();
     if (st.job) {
         st.job->cancel = true;
-        SDL_WaitThread(st.job->th, nullptr);
+        okay::thr::WaitThread(st.job->th, nullptr);
         st.job.reset();
     }
     if (st.indexJob) {
-        SDL_WaitThread(st.indexJob->th, nullptr);
+        okay::thr::WaitThread(st.indexJob->th, nullptr);
         st.indexJob.reset();
     }
 }

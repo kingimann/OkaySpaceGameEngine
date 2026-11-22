@@ -1,4 +1,4 @@
-# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
 name=model_import
 title=Model import
 area=Tools
@@ -12,4 +12,4 @@ serializers=
 vs_group=
 editor=
 sources=include/okay/Render/*Reader.hpp src/Render/*Reader.cpp include/okay/Render/Gltf.hpp include/okay/Render/ModelImport.hpp src/Render/ModelImport*.cpp src/Render/FbxScene.cpp
-compile=src/Render/ColladaReader.cpp src/Render/Max3dsReader.cpp src/Render/BvhReader.cpp src/Render/OffReader.cpp src/Render/SmdReader.cpp src/Render/Md5Reader.cpp src/Render/Ms3dReader.cpp src/Render/AseReader.cpp src/Render/BlendReader.cpp src/Render/ThreeMfReader.cpp src/Render/AmfReader.cpp src/Render/X3dReader.cpp src/Render/DxfReader.cpp src/Render/LwoReader.cpp src/Render/Md2Reader.cpp src/Render/Md3Reader.cpp src/Render/IrrMeshReader.cpp src/Render/B3dReader.cpp src/Render/XFileReader.cpp src/Render/Ac3dReader.cpp src/Render/OgreXmlReader.cpp src/Render/XglReader.cpp src/Render/IrrSceneReader.cpp src/Render/NffReader.cpp src/Render/IqmReader.cpp src/Render/CobReader.cpp src/Render/NdoReader.cpp src/Render/TerragenReader.cpp src/Render/MdcReader.cpp src/Render/HmpReader.cpp src/Render/CsmReader.cpp src/Render/Q3dReader.cpp src/Render/RawReader.cpp src/Render/PmxReader.cpp src/Render/LwsReader.cpp
+compile=src/Render/ColladaReader.cpp src/Render/Max3dsReader.cpp src/Render/BvhReader.cpp src/Render/OffReader.cpp src/Render/SmdReader.cpp src/Render/Md5Reader.cpp src/Render/Ms3dReader.cpp src/Render/AseReader.cpp src/Render/BlendReader.cpp src/Render/ThreeMfReader.cpp src/Render/AmfReader.cpp src/Render/X3dReader.cpp src/Render/DxfReader.cpp src/Render/LwoReader.cpp src/Render/Md2Reader.cpp src/Render/Md3Reader.cpp src/Render/IrrMeshReader.cpp src/Render/B3dReader.cpp src/Render/XFileReader.cpp src/Render/Ac3dReader.cpp src/Render/OgreXmlReader.cpp src/Render/XglReader.cpp src/Render/IrrSceneReader.cpp src/Render/NffReader.cpp src/Render/IqmReader.cpp src/Render/CobReader.cpp src/Render/NdoReader.cpp src/Render/TerragenReader.cpp src/Render/MdcReader.cpp src/Render/HmpReader.cpp src/Render/CsmReader.cpp src/Render/Q3dReader.cpp src/Render/RawReader.cpp src/Render/PmxReader.cpp src/Render/LwsReader.cpp src/Render/ZaeReader.cpp

@@ -368,5 +368,23 @@ int main() {
         CHECK(ResolveKeepTarget("2.850.0", InstalledVersions(launcher)) == "2.850.1");
     }
 
+    // ---- a remembered stamp follows the disk (the launcher's project cards stay open while the editor upgrades) --------
+    {
+        TempDir td;
+        std::string err;
+        CHECK(WriteProjectVersion(td.str(), "2.850.0", &err));
+        std::string shown = ReadProjectVersion(td.str());              // what the card was made from
+        CHECK(shown == "2.850.0");
+        CHECK(!RefreshStamp(td.str(), shown) && shown == "2.850.0");   // nothing happened: unchanged
+        CHECK(WriteProjectVersion(td.str(), "2.900.0", &err));         // the editor upgrades the project (same length, same second)
+        CHECK(RefreshStamp(td.str(), shown) && shown == "2.900.0");    // the card now says so
+        CHECK(!RefreshStamp(td.str(), shown));
+        CHECK(WriteProjectVersion(td.str(), "2.1000.0", &err));        // numbers, not text: 1000 is newer than 900
+        CHECK(RefreshStamp(td.str(), shown) && shown == "2.1000.0" && CompareVersions(shown, "2.900.0") > 0);
+        fs::remove(okayproj::SettingsPath(td.str()));
+        CHECK(RefreshStamp(td.str(), shown) && shown.empty());          // the file went away: no stamp
+        CHECK(!RefreshStamp((td.path / "nope").string(), shown));       // a folder that is not there is "no stamp" too
+    }
+
     TEST_MAIN_RESULT();
 }

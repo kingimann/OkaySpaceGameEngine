@@ -9,7 +9,9 @@
 #include "batche2_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "okay/Render/ModelImport.hpp"
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -69,9 +71,66 @@ int main() {
             if (!ok) std::fprintf(stderr, "  %s: %s\n", c.file, e0.c_str());
             CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
             CHECK(ok && d.backend == "own" && !d.parts.empty());
+        } else if (AssimpAvailable() && std::string(c.ext) == ".raw") {
+            // The RAW fixture has two groups of triangles. Assimp 5.4.3's RAW importer leaves null child nodes for such a file and
+            // the import crashed; the seam now reads it with our reader even though the default for .raw is Assimp.
+            std::printf("  note: %s has two groups of triangles, which Assimp's RAW importer cannot read safely: the Assimp side is skipped, our reader reads it\n", c.file);
+            CHECK(RawFileUnsafeForAssimp(path));
+            CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
+            CHECK(ok && d.backend == "own" && fx::TriCount(d) == c.tris);
+            ImportedModel x; std::string ex;   // asked for Assimp by name: refused with a message, not crashed
+            CHECK(!ImportModelData(path, x, ImportBackend::Assimp, false, &ex) && ex.find("Assimp") != std::string::npos && x.parts.empty());
         } else {
             CHECK(!ok || d.backend != "own");
             CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
+        }
+    }
+    {   // the guard: which RAW files Assimp is kept away from (RawFileUnsafeForAssimp errs on the side of "unsafe")
+        using namespace std::string_literals;   // ""s keeps the NUL bytes of a case
+        struct G { std::string bytes; bool unsafe; };
+        const G gs[] = {
+            {"0 0 0 1 0 0 0 1 0\n1 0 0 0 0 0 0 0 2\n"s, false},                          // only the default group
+            {"wing\n0 0 0 1 0 0 0 1 0\n"s, false},                                      // one named group
+            {"# notes\nwing\n0 0 0 1 0 0 0 1 0\n"s, false},                           // a name line without triangles is not counted
+            {"0 0 0 1 0 0 0 1 0\nwing\n0 0 0 1 0 0 0 1 0\n"s, true},                   // default group and a named one
+            {"a\n0 0 0 1 0 0 0 1 0\nb\n0 0 0 1 0 0 0 1 0\n"s, true},                 // two named groups
+            {"a\n0 0 0 1 0 0 0 1 0\nb\na\n0 0 0 1 0 0 0 1 0\n"s, false},            // the same group named again
+            {"a \n0 0 0 1 0 0 0 1 0\nb\na \n0 0 0 1 0 0 0 1 0\n"s, true},           // a blank after the name: not found again, a new group
+            {"a\n0 0 0 1 0 0 0 1 0\nb\na x\n0 0 0 1 0 0 0 1 0\n"s, true},           // "a x" is not the whole name: a new group
+            {"a\r\n0 0 0 1 0 0 0 1 0\r\nb\r\n-1 0 0 1 0 0 0 1 0\r\n"s, true},      // CR LF; a minus sign starts a number
+            {"a\n0 0 0 1 0 0 0 1 0\n\0b\n0 0 0 1 0 0 0 1 0\n"s, false},             // the text ends at a NUL
+            {"\xEF\xBB\xBF" "0 0 0 1 0 0 0 1 0\n"s, false},                           // a UTF-8 mark is skipped
+            {"\xFF\xFE" "0\0"s, true},                                                 // UTF-16: not modelled, unsafe
+        };
+        int k = 0;
+        for (const G& g : gs) {
+            const std::string p = (dir / ("guard" + std::to_string(k) + ".raw")).string();
+            WriteFile(p, g.bytes);
+            if (RawFileUnsafeForAssimp(p) != g.unsafe) std::fprintf(stderr, "  guard case %d: expected %s\n", k, g.unsafe ? "unsafe" : "safe");
+            CHECK(RawFileUnsafeForAssimp(p) == g.unsafe);
+            ++k;
+        }
+        std::string longLine(5000, '1');
+        WriteFile((dir / "long.raw").string(), longLine + "\n");
+        CHECK(RawFileUnsafeForAssimp((dir / "long.raw").string()));
+        CHECK(!RawFileUnsafeForAssimp((dir / "no_such_file.raw").string()));
+        // the corpus files (docs/content/model_corpus.md): Assimp crashed on WithColor and WithTexture; Wuson has one group and stays with Assimp
+        if (const char* corpus = std::getenv("OKAY_MODEL_CORPUS")) {
+            const fs::path r = fs::path(corpus) / "models" / "RAW";
+            if (fs::exists(r / "Wuson.raw")) {
+                CHECK(RawFileUnsafeForAssimp((r / "WithColor.raw").string()));
+                CHECK(RawFileUnsafeForAssimp((r / "WithTexture.raw").string()));
+                CHECK(!RawFileUnsafeForAssimp((r / "Wuson.raw").string()));
+                if (AssimpAvailable()) {
+                    std::printf("  note: WithColor.raw and WithTexture.raw are not given to Assimp (known crash); our reader reads them\n");
+                    for (const char* nm : {"WithColor.raw", "WithTexture.raw"}) {
+                        ImportedModel m; std::string e;
+                        CHECK(ImportModelData((r / nm).string(), m, ImportBackend::Default, false, &e) && m.backend == "own" && !m.parts.empty());
+                    }
+                    ImportedModel w; std::string e;
+                    CHECK(ImportModelData((r / "Wuson.raw").string(), w, ImportBackend::Default, false, &e) && w.backend == (EXPECT_RAW ? "own" : "assimp"));
+                }
+            }
         }
     }
     for (const Case& c : cases) {

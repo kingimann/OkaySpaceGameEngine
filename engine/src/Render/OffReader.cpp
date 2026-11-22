@@ -1,5 +1,5 @@
 // Our own OFF (Object File Format, text mesh) reader. Written from the public description of the format (Geomview's
-// "off" manual page). Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/own_off_reader.md.
+// "off" manual page). Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "PolygonTriangulate.hpp"
 #include "TextReaderUtil.hpp"
 #include "okay/Render/ModelData.hpp"
@@ -37,7 +37,7 @@ struct Reader {
             while (lines.Next(line)) {
                 const std::size_t h = line.find('#');
                 if (h != std::string::npos) line.resize(h);
-                tk = Split(line);
+                SplitInto(line, tk);   // reuses the vector and its strings
                 if (!tk.empty()) return true;
             }
             return false;

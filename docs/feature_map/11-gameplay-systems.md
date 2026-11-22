@@ -2,8 +2,8 @@
 
 The ready-made game-logic kit: inventory and equipment, items, loot and crafting, survival, player building, spawners, melee
 and RPG stats. Code is `engine/include/okay/Inventory/*` (8 headers), `engine/src/Inventory/*` (about 2.6k lines) and about 35
-components in `Components/`; editor pieces are in `editor/main.cpp`. Docs: `docs/survival_kit.md`, `docs/npcs_and_crafting.md`,
-`docs/build_mode.md`; the inventory, item database, loot and equipment have none. ROADMAP.md lists inventory items 6-9 (gameplay,
+components in `Components/`; editor pieces are in `editor/main.cpp`. Docs: `docs/gameplay/survival_kit.md`, `docs/gameplay/npcs_and_crafting.md`,
+`docs/gameplay/build_mode.md`; the inventory, item database, loot and equipment have none. ROADMAP.md lists inventory items 6-9 (gameplay,
 scripting, UI polish, networking) as open although `inv_*` scripting, pickups and a host-owned inventory are on main: ask first.
 No open PR touches this area.
 
@@ -23,7 +23,7 @@ No open PR touches this area.
 - **Code:** `Components/Inventory`, `Components/InventoryUI`, `Components/GridInventory`, `Components/GridInventoryUI`, `Components/ChestInventory`, `Components/InventoryPlayer`, `Components/Equipment`, `Components/Sockets`, `engine/src/Inventory/Equipment.cpp`, `Inventory/InventoryOps`, `Inventory/InventoryInput`, `Inventory/InventoryEvents`, `Inventory/InventoryPersistence`, `Inventory/ItemPresentation`
 - **API:** `Inventory`, `InventoryUI`, `GridInventory`, `ChestInventory`, `Equipment`, `InventoryOps::Move`, `InventoryPersistence::SaveObject`, `FindInventoryPlayer`, script `inv_add`, `inv_remove`, `inv_count`, `inv_has`, `inv_move`, `equip`, `on_item_added`, `on_inventory_full`, visual-script inventory nodes
 - **Editor:** Add Component > RPG / Turn-Based (Inventory, Equipment, Chest / Container); Inventory UI and Grid Inventory come from the GameObject > UI inventory templates; inspectors with item name pickers backed by the Item Database
-- **Docs:** `docs/survival_kit.md` (items feed survival stats only); no inventory doc
+- **Docs:** `docs/gameplay/survival_kit.md` (items feed survival stats only); no inventory doc
 - **Tests:** `inventory_core`, `inventory_wiring`, `inventory_ops`, `inventory_ui`, `grid_inventory`, `grid_inventory_fixes`, `inventory_equipment`, `inventory_holding`, `inventory_script`, `inventory_persist_craft`, `vs_inventory`, `item_presentation`
 - **Status:** Works - Inventory.hpp, InventoryOps::Move (checks first, leaves containers unchanged on rejection) and Equipment::EquipFrom (rolls the bag back when there is no room) read; correctness (no dupes, no item loss, stack caps) and wiring covered by the tests above
 - **Open:** ROADMAP "Unturned-style inventory improvements" and inventory plan items 6-9 are listed open there (gameplay features, scripting, UI polish, networking) although parts exist (see 11.8); no doc for the inventory system; the old `Inventory` slot model and `GridInventory` are two separate data models
@@ -43,7 +43,7 @@ No open PR touches this area.
 - **Code:** `Inventory/ItemDatabase`, `Inventory/LootTable`, `Components/ItemPickup`, `Components/LootSource`, `editor/ContentEditors.cpp`
 - **API:** `ItemDatabase::Get`, `ItemDefinition`, `ItemInstanceData`, `EquipSlot`, `LootTable::Roll`, `LootTable::Shares`, `LootTable::Issues`, `ItemPickup`, `LootSource`, `ItemPickup::Spawn`, script `loot_roll`, visual-script Loot Roll, Spawn Pickup
 - **Editor:** View > Editors & Tools > Items, Loot & Recipes; Add Component > RPG / Turn-Based > Item Pickup, Loot Source (Edit Loot Table)
-- **Docs:** `docs/asset_database.md` (lists the extensions only); `docs/editor.md`
+- **Docs:** `docs/engine/asset_database.md` (lists the extensions only); `docs/editor/editor.md`
 - **Tests:** `item_database`, `item_loot_recipes`, `inventory_gameplay`, `inventory_build_charge`, `vs_inventory`
 - **Status:** Works - ItemDatabase.hpp, LootTable.hpp and ItemPickup.hpp read; item definitions, pickups, drops, loot rolls, file round trip and roll distribution covered by `item_database`, `item_loot_recipes` and `inventory_gameplay`
 - **Open:** no separate doc page that spells the `.okayitems` or `.okayloot` text format out line by line; unknown item names become "loose" definitions that are never saved until Define it is used
@@ -62,10 +62,10 @@ No open PR touches this area.
 - **Code:** `Inventory/Recipe`, `Components/Crafting`, `Components/CraftingMenu`, `Components/CraftingStation`, `editor/main.cpp` (crafting inspectors)
 - **API:** `Recipe`, `Ingredient`, `RecipeBook`, `CraftQueue`, `Crafting::Craft`, `CraftingStation`, script `craft`, visual-script Craft, `on_craft`, `on_craft_failed`
 - **Editor:** View > Editors & Tools > Items, Loot & Recipes (Recipes tab) edits `.okayrecipes` (inputs, outputs, crafting time, bench, unlock); Add Component > Gameplay > Crafting, Crafting Menu; RPG / Turn-Based > Crafting Station (Edit Recipe Book); recipe rows in the inspector; optional `.okayrecipes` picker
-- **Docs:** `docs/npcs_and_crafting.md`, `docs/asset_database.md` (lists the `.okayrecipes` extension only), `docs/editor.md`
+- **Docs:** `docs/gameplay/npcs_and_crafting.md`, `docs/engine/asset_database.md` (lists the `.okayrecipes` extension only), `docs/editor/editor.md`
 - **Tests:** `inventory_persist_craft`, `item_loot_recipes`, `npc_crafting`, `vs_inventory`
 - **Status:** Works - Recipe.hpp and the CraftQueue functions in Recipe.cpp read; queue, bench tags, unlocks, craft counts and the recipe file round trip covered by `inventory_persist_craft` and `item_loot_recipes`
-- **Open:** `docs/npcs_and_crafting.md` predates the shared recipe book and craft queue and does not describe them
+- **Open:** `docs/gameplay/npcs_and_crafting.md` predates the shared recipe book and craft queue and does not describe them
 - **Related:** 11.1, 11.2, 11.5, 9.5
 - **Words:** crafting, recipe, .okayrecipes, workbench, crafting station, craft time, byproduct, craft queue, ingredients, CraftingMenu, unlock recipe
 - **Seen as:** crafting takes items but gives nothing; the same button appears twice after loading; a bench opens for the wrong player; craft time never finishes
@@ -81,13 +81,14 @@ No open PR touches this area.
   - 11.4.5 Zones - `Components/SurvivalZone` - trigger volumes that drive radiation, water, cold, fire and similar inputs
   - 11.4.6 Consumables - `Components/Consumables` - maps item names to Eat, Drink, Heal and similar; works from `Use(item)` or by dropping a world item on the player
   - 11.4.7 Death lock and speed scale - `Components/DeathLock`, `Components/MoveSpeed` - a dead body does not read move input; one multiplier for load, holding and overweight that controllers apply to their speed
+  - 11.4.8 One damage path - `Components/Damage` - `DamageEvent` (amount, type, source, target, hit point), 13 damage types, per-type resistances and a death choice on `HealthStat`, damaged / healed / death listeners, and `DealDamage`, `HealObject`, `KillObject`, `HealthOf` that reach a Health Stat, Survival Stats, RPG Stats or NPC Controller; melee, guns, projectiles, afflictions, survival drains, Visual Script and `hurt()` all use it; existing games keep their old rules (knockback lands during i-frames, scripts reach RPG Stats then Survival Stats first, afflictions reach Survival Stats then Health Stat, RPG heal still revives); `KillObject` kills every holder outright; an immune hit changes nothing (`test_damage`)
 - **Code:** `Components/SurvivalStats`, `Components/SurvivalComponents`, `Components/SurvivalAfflictions`, `Components/SurvivalSystems`, `Components/SurvivalZone`, `Components/Consumables`, `Components/DeathLock`, `Components/MoveSpeed`, `editor/main.cpp` (Stat inspectors and Add Component rows)
 - **API:** `SurvivalStats`, `HealthStat`, `HungerStat`, `StaminaStat`, `StatusEffectStat`, `CarryWeightStat`, `SurvivalSave`, `SurvivalZone`, `Consumables`, `MoveSpeedScale`, `DeathLocksInput`, messages `died`, `starving`, `dehydrated`, script `Stats` and `SurvivalStats` access
 - **Editor:** Add Component > Gameplay > Survival Stats and Stat rows; UI buttons can call Eat, Drink and Heal through On Click (native UI actions)
-- **Docs:** `docs/survival_kit.md`
+- **Docs:** `docs/gameplay/survival_kit.md`
 - **Tests:** `survival`, `death_lock`
 - **Status:** Works - SurvivalComponents.hpp (HealthStat read in detail), SurvivalSystems.hpp and the docs read; drain, damage, armor, death and save round trip covered by the 728-line `survival` test
-- **Open:** three separate health models exist: HealthStat, SurvivalStats' own health and the older RPG `Stats` (11.9) plus `NPCController`'s own `health` (9.5) (possible duplication, not unified)
+- **Open:** four health holders still exist (HealthStat, SurvivalStats' own health, the older RPG `Stats` (11.9) and `NPCController`'s own `health` (9.5)); they now share one damage path and one set of listeners (11.4.8) but are not merged into one component, and only HealthStat has per-type resistances and the death choice; the editor Inspector for HealthStat does not show the new resistances or death choice yet (not built or seen in a window)
 - **Related:** 11.1, 11.7, 9.5, 6.6, 12.2, 5.8
 - **Words:** survival, health, HealthStat, hunger, thirst, stamina, oxygen, temperature, sanity, radiation, bleeding, poison, wetness, status effect, buff, debuff, damage over time, respawn, lives, consumable
 - **Seen as:** the player never gets hungry or never dies; health does not regenerate; the stamina bar stays full; a dead player can still move; eating an item does nothing; the bar does not update
@@ -104,10 +105,10 @@ No open PR touches this area.
 - **Code:** `Components/BuildMode`, `Components/Buildable`, `Components/LogicLinks`, `Components/StructureBuilder`, `Components/BuildPiece`, `Components/BlockBuilder`, `Components/BuilderMode`, `editor/main.cpp` (build inspectors)
 - **API:** `BuildMode`, `Buildable`, `BuildPaletteItem`, `BuildCreation`, `LogicSource`, `LogicTarget`, `StructureBuilder`, `BuildPiece`, `BlockBuilder`, `BuilderMode`, script `build_enter`, `build_exit`, `build_toggle`, `on_object_placed`, `fire_output`, Actions step `fire_output`, `LogicSource::IoLink`, `FireOutput`
 - **Editor:** Add Component > Gameplay rows "Build Mode (players build + wire)", "Buildable (players may edit)", Logic Source (with an I/O Links list: Add, Test, Remove, broken-target warning), Logic Target, "Block Builder (voxel)", "Structure Builder (Rust-style)"; Builder Mode is toggled in Play from the editor
-- **Docs:** `docs/build_mode.md`
+- **Docs:** `docs/gameplay/build_mode.md`
 - **Tests:** `build_mode`, `io_links`, `structure_builder`, `block_builder`, `builder_mode`, `inventory_build_charge`
 - **Status:** Works - BuildMode.hpp, Buildable.hpp, LogicLinks.hpp and the other builder headers read; placement, undo, links and charging for pieces covered by `build_mode`, `structure_builder` and `inventory_build_charge`
-- **Open:** per `docs/build_mode.md` "Not covered yet": building is 3D only (multiplayer building is server checked and synced, 16.8.8; door and mover state is not), pressure plates need a collider; Build Mode and Builder Mode are different features with confusingly similar names
+- **Open:** per `docs/gameplay/build_mode.md` "Not covered yet": building is 3D only (multiplayer building is server checked and synced, 16.8.8; door and mover state is not), pressure plates need a collider; Build Mode and Builder Mode are different features with confusingly similar names
 - **Related:** 6.6, 11.1, 11.3, 12.8, 16.8, 2.6
 - **Words:** build mode, building, place objects, Buildable, logic link, button door, pressure plate, creation, structure builder, Rust building, foundation, wall, block builder, Minecraft, Builder Mode, F2, snap to grid
 - **Seen as:** a piece will not place (red ghost); players can delete the level floor; a link stops working after loading; a built structure floats; pieces do not snap together
@@ -122,9 +123,9 @@ No open PR touches this area.
 - **Code:** `Components/Spawner`, `Components/TurnManager`, `Components/Minimap`, `editor/main.cpp` (Spawner, Turn Manager, Minimap rows)
 - **API:** `Spawner`, `SpawnOne`, `AliveCount`, `StartWaves`, `TurnManager`, `EndTurn`, `Minimap`, `MinimapBlip`, script `spawner_start`, `spawner_stop`, `spawner_alive`
 - **Editor:** Add Component > Gameplay > Spawner; RPG / Turn-Based > Turn Manager; UI > Minimap and Minimap Blip
-- **Docs:** `docs/minimap.md` (minimap and turn manager), `docs/npcs_and_crafting.md` (Spawner only)
+- **Docs:** `docs/gameplay/minimap.md` (minimap and turn manager), `docs/gameplay/npcs_and_crafting.md` (Spawner only)
 - **Tests:** `rpg`, `minimap`, `npc_crafting`
-- **Status:** Works - Spawner.hpp, TurnManager.hpp and Minimap.hpp read; covered by `rpg` (turn order), `minimap` and `npc_crafting`. The minimap and the turn manager are written up in `docs/minimap.md`
+- **Status:** Works - Spawner.hpp, TurnManager.hpp and Minimap.hpp read; covered by `rpg` (turn order), `minimap` and `npc_crafting`. The minimap and the turn manager are written up in `docs/gameplay/minimap.md`
 - **Open:** Spawner has no object pooling hook (see pooling in area 1.4); the minimap is a flat top-down picture (no tilted or perspective view)
 - **Related:** 9.5, 12.8, 1.4, 16.8
 - **Words:** spawner, enemy waves, wave spawner, spawn point, turn manager, turn-based, initiative, round, minimap, radar, blip, MinimapBlip
@@ -140,10 +141,10 @@ No open PR touches this area.
 - **Code:** `Components/MeleeAttacker`, `Components/DodgeAction`, `Components/DiveAction`, `editor/main.cpp` (Melee Attacker inspector)
 - **API:** `MeleeAttacker`, `MeleeAttacker::Swing`, `DodgeMove`, `DiveMotion`, `DiveTune`, script `dodge()`, Action List message `player_attack`
 - **Editor:** Add Component > Gameplay > Melee Attacker
-- **Docs:** `docs/npcs_and_crafting.md` (Melee Attacker)
+- **Docs:** `docs/gameplay/npcs_and_crafting.md` (Melee Attacker)
 - **Tests:** `npc_crafting`
 - **Status:** Works for melee (MeleeAttacker.hpp read; covered by `npc_crafting`); Basic for dodge and dive (headers read; used by the player controllers in area 4, no dedicated test file found)
-- **Open:** dodge and dive still have no test of their own. Melee now hits Health, survival health, RPG stats and NPCs, and only during its hit window and arc or hit box. Weapon definitions live in `.okayweapon` (View > Editors & Tools > Weapons), name the item they belong to, and drive Melee Attacker, Ranged Weapon and the top-down shooter. See `docs/weapons.md`.
+- **Open:** dodge and dive still have no test of their own. Melee now hits Health, survival health, RPG stats and NPCs, and only during its hit window and arc or hit box. Weapon definitions live in `.okayweapon` (View > Editors & Tools > Weapons), name the item they belong to, and drive Melee Attacker, Ranged Weapon and the top-down shooter. See `docs/gameplay/weapons.md`.
 - **Related:** 9.5, 6.6, 4.2, 4.4, 11.4, 8.6
 - **Words:** melee, attack, sword swing, MeleeAttacker, hit arc, cooldown, dodge, roll, dive, dolphin dive, combat, weapon, player_attack
 - **Seen as:** swinging hits nothing; hits through walls; dodge does nothing because it is off by default; the player dives when it should slide
@@ -178,7 +179,7 @@ No open PR touches this area.
 - **Docs:** -
 - **Tests:** `rpg`
 - **Status:** Works - Stats.hpp read in full; covered by `rpg` (damage, heal, XP levelling)
-- **Open:** a fourth health model next to HealthStat, SurvivalStats and NPCController (possible duplication, see 11.4); no skill tree, buff stacking or save wiring
+- **Open:** a fourth health holder next to HealthStat, SurvivalStats and NPCController (they share one damage path, see 11.4.8, but are not merged); no skill tree, buff stacking or save wiring
 - **Related:** 11.4, 11.6, 9.5
 - **Words:** RPG, stats, health, mana, level up, XP, experience, attributes, strength, defense, Stats component
 - **Seen as:** damage ignores armor; the character never levels; on_level_up never fires
@@ -193,7 +194,7 @@ No open PR touches this area.
 - **Code:** `Components/Mover`, `Components/Spinner`, `Components/Lifetime`
 - **API:** `Mover`, `Spinner`, `Lifetime`, `velocity`, `angularVelocity`, `seconds`
 - **Editor:** Add Component > Gameplay > Mover, Spinner, Lifetime
-- **Docs:** `docs/making_a_game.md` (one-line mention)
+- **Docs:** `docs/gameplay/making_a_game.md` (one-line mention)
 - **Tests:** `gameplay`
 - **Status:** Works - all three headers read in full (each is under 30 lines); covered by `gameplay` including serialization
 - **Open:** the Lifetime header says it counts from when the scene starts running (ambiguous for objects spawned later; not checked); no easing or path motion (see area 4.8 dolly paths)
@@ -232,7 +233,7 @@ No open PR touches this area.
 - **Code:** `Components/Volume`, `editor/VolumeTools.*`, `Scene/SceneSerializer`, `Scene/BuiltinPropertiesGameplay`, `Testing/SceneValidator`
 - **API:** `Volume`, `Volume::Kind`, `VolumeGeometry`, `Volume::RespawnPoint`, `Volume::SetRespawnPoint`, `Volume::Occupants`, `Volume::ViewerWeight`
 - **Editor:** GameObject > Effects > Volume; Scene Overlays > Volumes; Add Component > Gameplay > Volume rows; Inspector "Volume (zone)"
-- **Docs:** `docs/volumes.md`
+- **Docs:** `docs/engine/volumes.md`
 - **Tests:** `volumes`, `spatial_audio`, `save_coverage`, `property_registry`
 - **Status:** Works - all six kinds act in Play and are covered by the `volumes` test (shapes, handle math, respawn, force, fog and sound blend, reverb weight and tail, scene and prefab round trip, validator) and `spatial_audio` (presets, edge blend, the demo scene); the Scene view tools were driven in the real editor
 - **Open:** no per-scene post settings beyond fog and vignette, no navigation-area volume, no convex region shape; Force reaches Rigidbody 3D bodies only (not 2D, and a character controller that sets its own velocity each frame overrides it); Atmosphere overrides weather fog while the camera is inside; a Kill needs the body to have been seen outside the volume to know where to send it; reverb follows the listener only (a sound does not carry the room it is standing in once you have left)

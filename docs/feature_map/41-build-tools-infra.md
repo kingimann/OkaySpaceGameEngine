@@ -20,7 +20,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Code:** `CMakeLists.txt`, `engine/CMakeLists.txt`, `launcher/CMakeLists.txt`, `player/CMakeLists.txt`, `relay/CMakeLists.txt`, `sandbox/CMakeLists.txt`, `examples/CMakeLists.txt`, `tools/CMakeLists.txt`, `tests/CMakeLists.txt`
 - **API:** `cmake -S . -B build`, `-DOKAY_BUILD_EDITOR=ON`, `-DOKAY_BUILD_PLAYER=ON`, `-DOKAY_USE_SODIUM=OFF`, `-DOKAY_WITH_STEAM=ON -DSTEAMWORKS_SDK_PATH=`, `-DOKAY_WITH_PHOTON=ON`, `-DOKAY_SODIUM_PREFIX=`
 - **Editor:** none
-- **Docs:** `README.md` (build section), `docs/packaging.md`
+- **Docs:** `README.md` (build section), `docs/release/packaging.md`
 - **Tests:** none (the CI jobs configure with these options, 18.3)
 - **Status:** Works - read the CMake files; CI configures five different option sets
 - **Open:** the default Supabase URL and publishable key are written in `CMakeLists.txt` (old map: remove; release CI deliberately doesn't override them); two similarly named switches, `OKAY_STATIC_SDL` (toolchain and root) and `OKAY_EDITOR_STATIC_SDL` (editor, launcher, player); the engine's explicit source list must be edited for every new file
@@ -39,7 +39,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Code:** `cmake/OkayWinVersion.cmake`, `cmake/okay_version.rc.in`, `cmake/okayspace.exe.manifest`, `cmake/mingw-w64-x86_64.toolchain.cmake`, `cmake/OkayAntiCheatKeys.cmake`
 - **API:** `okay_win_version()`, `okay_ac_check_trusted_keys()`, `-DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.toolchain.cmake`
 - **Editor:** none
-- **Docs:** `docs/packaging.md`, `docs/anticheat.md`
+- **Docs:** `docs/release/packaging.md`, `docs/online/anticheat.md`
 - **Tests:** `anticheat_keys_ok`, `anticheat_keys_bad_*` (the key check only)
 - **Status:** Works - used by every Windows build (2.847.0 added the exe names and versions, #545)
 - **Open:** no test checks the generated resource; the toolchain's pthread workaround falls back silently
@@ -58,7 +58,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Code:** `scripts/build.sh`, `scripts/build.bat`, `scripts/build-windows-exe.sh`, `launch.sh`, `launch.bat`, `scripts/build-windows-dist.sh`, `scripts/build-web.sh`, `scripts/publish-supabase.sh`, `scripts/publish-official-game.sh`, `scripts/okayspace-installer.nsi`
 - **API:** `scripts/build.sh`, `./launch.sh`, `./build/bin/sandbox`, `cd build && ctest --output-on-failure`
 - **Editor:** none
-- **Docs:** `README.md`, `docs/packaging.md`
+- **Docs:** `README.md`, `docs/release/packaging.md`
 - **Tests:** `publish_official_cleanup`, `publish_supabase_checks` (the two publish scripts only)
 - **Status:** Works - short scripts, read in full; only the publish scripts have tests
 - **Open:** `launch.sh` and `launch.bat` say "update from GitHub, build, and run" but only build and run (stale comment); `build.sh` places `build/` in the repo root
@@ -96,7 +96,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Code:** `deploy/voice-server/Dockerfile`, `deploy/voice-server/docker-compose.yml`, `deploy/voice-server/install.sh`, `deploy/voice-server/okayspace-voice.service`, `relay/main.cpp`, `relay/CMakeLists.txt`
 - **API:** `docker build -f deploy/voice-server/Dockerfile -t okayspace-voice .`, `sudo bash deploy/voice-server/install.sh`
 - **Editor:** none
-- **Docs:** `docs/voice-server.md`, `docs/relay.md`
+- **Docs:** `docs/audio/voice-server.md`, `docs/online/relay.md`
 - **Tests:** `relay_security`
 - **Status:** Basic - short, plausible scripts read in full; never run here (no Docker or root)
 - **Open:** the Docker build copies the whole repository (`COPY . .`) and builds without libsodium on purpose; no health check or log shipping; no CI job builds the image
@@ -118,7 +118,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Code:** `supabase/functions/session-ticket/index.ts`, `supabase/functions/session-ticket/ticket.ts`, `supabase/functions/session-ticket/make_key.ts`, `supabase/functions/session-ticket/ticket_test.ts`, `docs/sql/*` (all 18 files, named one by one in the Parts above)
 - **API:** `supabase functions deploy session-ticket`, `supabase secrets set`, the SQL editor; Storage buckets `releases`, `chat`, `workshop`
 - **Editor:** none
-- **Docs:** `docs/supabase-backend.md`, `docs/accounts.md`, `docs/anticheat.md`
+- **Docs:** `docs/online/supabase-backend.md`, `docs/online/accounts.md`, `docs/online/anticheat.md`
 - **Tests:** `anticheat_sql`, `chat_receipts_sql` and `blocks_sql` (local Postgres, skipped in CI), `anticheat_backend`
 - **Status:** Works - the files are in use by the shipping launcher; only one has a local test
 - **Open:** no migration tracking (re-run by hand); 15 of 18 SQL files have no test; the Edge function is not deployed and its self-test is not in CI; run order from the headers: `social`, `profile_showcase`, `profile_extras`, `forum_sections`, `follows`, `group_chats`, `chat_extras`, `chat_media`, `admin`, then `anticheat`, `app_config`, `official_game_admin`, and `game_servers`, `matches`, `parties`, `matchmaking`
@@ -135,7 +135,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Code:** `steam/app_build_1172560.vdf`, `steam/depot_build_1172561.vdf`, `steam/upload.sh`, `steam/upload.bat`, `steam/README.md`
 - **API:** `STEAM_USER=<builder> steam/upload.sh`
 - **Editor:** none
-- **Docs:** `docs/steam_release.md`, `steam/README.md`
+- **Docs:** `docs/release/steam_release.md`, `steam/README.md`
 - **Tests:** none
 - **Status:** Basic - see 18.8
 - **Open:** see 18.8
@@ -154,7 +154,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Code:** `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.github/PULL_REQUEST_TEMPLATE.md`
 - **API:** workflow triggers, `workflow_dispatch`, `actions/checkout@v6`, `actions/cache@v5`, `softprops/action-gh-release@v3`, `mymindstorm/setup-emsdk@v15`
 - **Editor:** none
-- **Docs:** `docs/releasing.md`, `docs/qa_workflow.md`
+- **Docs:** `docs/release/releasing.md`, `docs/process/qa_workflow.md`
 - **Tests:** -
 - **Status:** Works - both files read in full
 - **Open:** see 18.3 and 18.4 for the gaps (no libsodium in the Ubuntu job, no TSan, no tests in the release); action versions are pinned by tag, not by commit
@@ -174,7 +174,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Code:** `CMakeLists.txt`, `dist/VERSION.txt`, `dist/CHANGELOG.txt`, `ROADMAP.md`
 - **API:** `project(... VERSION ...)`, `OKAY_ENGINE_VERSION`, `VERSION.txt`
 - **Editor:** Help > Check for Updates...
-- **Docs:** `docs/releasing.md`
+- **Docs:** `docs/release/releasing.md`
 - **Tests:** none
 - **Status:** Works - the 2.849.0 diff (PR #573) and the open 2.852.0 PR (#588) touch exactly those three files (per the PR file lists)
 - **Open:** `dist/VERSION.txt` is stale and `release.yml`'s comment still points at it (19.6); the changelog is hand-written
@@ -193,7 +193,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Code:** `CMakeLists.txt`, `engine/CMakeLists.txt`, `launcher/CMakeLists.txt`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`
 - **API:** `OKAY_IMGUI_TAG`, `FETCHCONTENT_SOURCE_DIR_IMGUI`, `OKAY_IMGUI_SRC`, `SDL2_VERSION`
 - **Editor:** none
-- **Docs:** `docs/packaging.md`, `docs/THIRD_PARTY.md`, `docs/own_code_roadmap.md` (every third-party library is planned for removal, with criteria), `docs/crypto_review_package.md`, `docs/crypto_review_request.md`, `scripts/make_crypto_review_bundle.sh`
+- **Docs:** `docs/release/packaging.md`, `docs/status/THIRD_PARTY.md`, `docs/status/own_code_roadmap.md` (every third-party library is planned for removal, with criteria), `docs/platform/crypto_review_package.md`, `docs/platform/crypto_review_request.md`, `scripts/make_crypto_review_bundle.sh`
 - **Tests:** none
 - **Status:** Works - versions read from the CMake and workflow files
 - **Open:** the ImGui tag is duplicated in two files and must be changed together; configuring the editor, launcher or Assimp needs network access (offline: point `FETCHCONTENT_SOURCE_DIR_IMGUI` at a checkout)
@@ -210,11 +210,12 @@ where the files live and how they are wired. Nobody is touching it now apart fro
   - 41.11.3 Startup line - `shared/OwnStack.hpp` - `[okay] stack: platform=... http=... readers=... crypto=... ui=...` written to stderr by the player, launcher and editor, and shown in the editor's About popup
   - 41.11.4 Release guard - `scripts/check_release_own_stack.sh` - fails a release build when own crypto or the own-stack switch is on, or when libsodium is not really in the build (cache `OKAY_SODIUM_IN_BUILD`, compiler flags, `--binary` startup line `crypto=libsodium`); `-DOKAY_REQUIRE_SODIUM=ON` makes CMake fail too; the libsodium download is SHA-256 pinned (`scripts/fetch-tarball.sh --sha256`, `scripts/libsodium-mingw.pin`); called by `scripts/build-windows-dist.sh`, `release-local.sh` and `release.yml`
   - 41.11.5 CI job - `.github/workflows/ci.yml` - `own-stack` (not required): builds with the switch on and no libsodium and runs the own pieces' tests; green on main
-  - 41.11.6 Flip proposal - `docs/own_flip_proposal.md` - which own replacement could become the default, in what order (one group per release), the readiness rating of each, the prep work (Step 0), a checklist for every flip an agent can run, what blocks deleting each third-party library and how to try each replacement; no default is flipped by it
-- **Code:** `CMakeLists.txt`, `engine/CMakeLists.txt`, `shared/OwnStack.hpp`, `scripts/check_release_own_stack.sh`, `scripts/fetch-tarball.sh`, `scripts/fetch-libsodium-mingw.sh`, `.github/workflows/ci.yml`, `cmake/OkayPlatform.cmake`
+  - 41.11.7 Settings switches - `shared/OwnSwitches.hpp` - table of the own parts chosen at run time (OkayUI screens, own WAV reader, own HTTP client and own window layer on Linux), all off by default; saved in `own_switches.cfg`, applied as environment variables at the top of `main()` (a variable the person set wins); launcher Settings > Experimental and editor View > Rendering & Performance > Experimental share it; the startup line gets `switches=<ids>`; a new seam is one line in `Items()`
+  - 41.11.6 Flip proposal - `docs/status/own_flip_proposal.md` - which own replacement could become the default, in what order (one group per release), the readiness rating of each, the prep work (Step 0), a checklist for every flip an agent can run, what blocks deleting each third-party library and how to try each replacement; no default is flipped by it
+- **Code:** `CMakeLists.txt`, `engine/CMakeLists.txt`, `shared/OwnStack.hpp`, `shared/OwnSwitches.hpp`, `scripts/check_release_own_stack.sh`, `scripts/fetch-tarball.sh`, `scripts/fetch-libsodium-mingw.sh`, `.github/workflows/ci.yml`, `cmake/OkayPlatform.cmake`
 - **API:** `OKAY_OWN_STACK`, `OKAY_OWN_STACK_CRYPTO_TEST`, `OKAY_REQUIRE_SODIUM`, `OKAY_PRINT_STACK_AND_EXIT`, `okay::ownstack::Startup`, `okay::ownstack::Describe`
-- **Editor:** Help > About OkaySpace (the stack line)
-- **Docs:** `docs/own_stack_rollout.md`, `docs/own_code_roadmap.md`, `docs/own_flip_proposal.md`, `docs/try_it.md`
+- **Editor:** Help > About OkaySpace (the stack line); View > Rendering & Performance > Experimental: try our own code; launcher: Settings > Experimental
+- **Docs:** `docs/status/own_stack_rollout.md`, `docs/status/own_code_roadmap.md`, `docs/status/own_flip_proposal.md`, `docs/try_it.md`
 - **Tests:** `own_stack`, `own_stack_env`, `release_refuses_own_crypto`
 - **Status:** Works - tested on Linux; the CI job `own-stack` is green on main (it prints the stack line and runs 131 tests); nothing of it has run on real Windows
 - **Open:** the switch and the line cover only 20 readers (FBX and 19 formats), not the 16 newest readers or WAV; the line cannot know a UI backend saved in a developer build's settings at the top of `main()`; the job builds without Assimp and no test covers the readers' automatic fallback to the old reader
@@ -226,17 +227,17 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 ### 41.12 Collaboration tooling (lanes, claims, find-existing, collision check, branch lint)
 - **What:** The working agreement between Claude 2 and the coordinator, made automatic: a lanes table, one claim format on issue #422, a search for what already exists, a collision report over all open branches, cheap checks on every branch push, a "How to try it" check on PRs and a brief builder that pastes the current rules into every agent brief.
 - **Parts:**
-  - 41.12.1 Agreement and lanes - `docs/collaboration.md`, `docs/lanes.json`, `docs/agent_brief_template.md` - who owns which paths, the claim protocol, the readiness checklist, the weekly dedupe audit
+  - 41.12.1 Agreement and lanes - `docs/process/collaboration.md`, `docs/lanes.json`, `docs/process/agent_brief_template.md` - who owns which paths, the claim protocol, the readiness checklist, the weekly dedupe audit
   - 41.12.2 Find existing - `scripts/find_existing.py` - ranked "Existing:" report (feature map, notes, code names, tests, examples, open branches, PRs, claims) to paste into a claim
   - 41.12.3 Collision check - `scripts/collision_check.py` - file and line-range overlaps between branches, claims table, stale claims, out-of-lane edits, generated files edited by hand, duplicate test names; Markdown or JSON; also in `WORK_BOARD.md` via `scripts/work_board.py`
   - 41.12.4 Branch lint - `.github/workflows/branch-lint.yml`, `scripts/branch_lint.py` - forbidden thread includes (rule 21a), secrets, docs changed, feature map, MinGW syntax check
   - 41.12.5 Bug patterns - `scripts/bug_patterns.py` - warnings for the bug classes reviews keep finding
   - 41.12.6 PR hygiene and briefs - `.github/workflows/pr-hygiene.yml`, `scripts/check_pr_body.py`, `scripts/make_brief.py`
 - **Code:** `scripts/collab_lib.py`, `scripts/find_existing.py`, `scripts/collision_check.py`, `scripts/branch_lint.py`, `scripts/bug_patterns.py`, `scripts/check_pr_body.py`, `scripts/make_brief.py`, `scripts/work_board.py`, `.github/workflows/branch-lint.yml`, `.github/workflows/pr-hygiene.yml`, `.github/workflows/work-board.yml`
-- **Docs:** `docs/collaboration.md`, `docs/agent_brief_template.md`, `docs/review_log.md`
+- **Docs:** `docs/process/collaboration.md`, `docs/process/agent_brief_template.md`, `docs/process/review_log.md`
 - **Tests:** `collab_scripts` (`scripts/tests/test_collab.py`: throw-away git repos, no GitHub)
 - **Status:** Works - the scripts and their tests were run on Linux against the real repo; the two new workflows have not run on GitHub yet
-- **Open:** heuristics can give false positives (see the "false positives" notes in `docs/collaboration.md`); the weekly dedupe audit and the answers to claims are by hand
+- **Open:** heuristics can give false positives (see the "false positives" notes in `docs/process/collaboration.md`); the weekly dedupe audit and the answers to claims are by hand
 - **Related:** 41.1, 41.8
 - **Words:** collaboration, claim, lane, duplicate, collision, branch lint, find existing, brief, how to try it check
 - **Seen as:** `WORK_BOARD.md` on the `work-board` branch, a red "Branch lint" check on a pushed branch, a red "PR hygiene" check on a PR

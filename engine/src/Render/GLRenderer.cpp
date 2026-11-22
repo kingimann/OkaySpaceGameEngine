@@ -13,7 +13,19 @@
 #include "okay/Components/Character.hpp"
 #include <utility>
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Time.hpp"
+#include "okay/Render/OkayShader.hpp"     // Custom (.okayshader) surfaces
 
+#if defined(_WIN32)
+// The Windows SDK's GL/gl.h (MSVC) needs WINGDIAPI/APIENTRY from windows.h first; MinGW's does not.
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#endif
 #include <GL/gl.h>          // GL 1.1 types + enums only
 #include <cmath>
 #include <cstring>
@@ -129,6 +141,9 @@ typedef void   (*PFNGenTextures)(GLsizei, GLuint*);
 typedef void   (*PFNBindTexture)(GLenum, GLuint);
 typedef void   (*PFNTexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*);
 typedef void   (*PFNTexParameteri)(GLenum, GLenum, GLint);
+typedef void   (*PFNCompressedTexImage2D)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLint, GLsizei, const void*);
+typedef const GLubyte* (*PFNGetString)(GLenum);
+typedef const GLubyte* (*PFNGetStringi)(GLenum, GLuint);
 typedef void   (*PFNDeleteTextures)(GLsizei, const GLuint*);
 typedef void   (*PFNViewport)(GLint, GLint, GLsizei, GLsizei);
 typedef void   (*PFNClearColor)(GLfloat, GLfloat, GLfloat, GLfloat);
@@ -154,6 +169,10 @@ typedef void   (*PFNDeleteVertexArrays)(GLsizei, const GLuint*);
 // depth-texture-only framebuffer is complete. glDrawBuffer/glReadBuffer are core 1.0.
 typedef void   (*PFNDrawBuffer)(GLenum);
 typedef void   (*PFNReadBuffer)(GLenum);
+// Custom shaders: copy the frame's uniforms from the main program (GL 2.0 core).
+typedef void   (*PFNGetActiveUniform)(GLuint, GLuint, GLsizei, GLsizei*, GLint*, GLenum*, char*);
+typedef void   (*PFNGetUniformfv)(GLuint, GLint, GLfloat*);
+typedef void   (*PFNGetUniformiv)(GLuint, GLint, GLint*);
 
 struct GL {
     PFNCreateShader CreateShader; PFNShaderSource ShaderSource; PFNCompileShader CompileShader;
@@ -183,6 +202,9 @@ struct GL {
     PFNGenVertexArrays GenVertexArrays; PFNBindVertexArray BindVertexArray;
     PFNDeleteVertexArrays DeleteVertexArrays;
     PFNDrawBuffer DrawBuffer; PFNReadBuffer ReadBuffer;
+    PFNGetActiveUniform GetActiveUniform = nullptr; PFNGetUniformfv GetUniformfv = nullptr; PFNGetUniformiv GetUniformiv = nullptr;
+    // optional: block-compressed textures (.dds) and the extension list that says which formats the GPU takes
+    PFNCompressedTexImage2D CompressedTexImage2D = nullptr; PFNGetString GetString = nullptr; PFNGetStringi GetStringi = nullptr;
     bool ok = false;
 };
 GL g;   // resolved entry points
@@ -249,6 +271,8 @@ const char* kFrag =
     "uniform float uLType[16]; uniform vec3 uLPos[16]; uniform vec3 uLDir[16];\n"
     "uniform vec3 uLCol[16]; uniform float uLRange[16]; uniform float uLCosOut[16]; uniform float uLCosIn[16];\n"
     "uniform float uLFalloff[16];\n"   // 0 = linear (1-d/r)^2, 1 = physical inverse-square
+    "uniform vec4 uLRect[16]; uniform vec3 uLRight[16]; uniform vec3 uLUp[16];\n"   // x=panel half width y=half height z=mask row (-1 none) w=mask scale; panel axes
+    "uniform sampler2D uCookieTex; uniform float uCookieRows; uniform float uSunSoft; uniform float uFadeDist;\n"   // light masks (unit 8), sun Soft Edges, shadow fade distance
     "uniform float uFogOn; uniform vec3 uFogColor; uniform float uFogStart; uniform float uFogEnd;\n"  // distance fog
     "uniform float uFogMode; uniform float uFogDensity; uniform float uFogHeight; uniform float uFogFalloff;\n"  // linear / exponential / height (Atmosphere.hpp)
     "uniform float uTonemap;\n"                                                                        // filmic ACES tonemap toggle
@@ -274,6 +298,45 @@ const char* kFrag =
     "uniform float uLocalSize; uniform float uReceive;\n"
     "uniform vec3 uAmbSky; uniform vec3 uAmbGround;\n"                                          // ambient mode (up / down)
     "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol; varying vec3 vTan;\n"
+    // ---- 2026-11 lighting upgrade: same maths as okay::Lighting / okay::ShadowMath (UNVERIFIED on a GPU) ----
+    "float softClip(float x){ return x <= 1.0 ? max(x, 0.0) : 1.0 + 0.3 * (1.0 - exp(-(x - 1.0) / 0.3)); }\n"
+    "float distFade(float d, float dist){\n"
+    "  if (dist <= 0.0) return 1.0;\n"
+    "  float st = dist * 0.8; if (d <= st) return 1.0; if (d >= dist) return 0.0;\n"
+    "  float t = (d - st) / (dist - st); return 1.0 - t * t * (3.0 - 2.0 * t);\n"
+    "}\n"
+    "float lightAtten(float d, float rng, float fo){\n"
+    "  if (fo > 0.5) { float dr = d / rng; float win = max(1.0 - dr*dr*dr*dr, 0.0); win *= win; return win / (1.0 + 8.0 * d * d / (rng * rng)); }\n"
+    "  float a = max(1.0 - d / rng, 0.0); return a * a;\n"
+    "}\n"
+    "float rectTerm(int li, vec3 p, vec3 N){\n"
+    "  vec3 axis = normalize(uLDir[li]); float sum = 0.0;\n"
+    "  for (int j = 0; j < 3; j++) { for (int k = 0; k < 3; k++) {\n"
+    "    float fu = (float(k) - 1.0) * 0.6666667; float fv = (float(j) - 1.0) * 0.6666667;\n"
+    "    vec3 q = uLPos[li] + uLRight[li] * (fu * uLRect[li].x) + uLUp[li] * (fv * uLRect[li].y); vec3 v = q - p; float d = length(v);\n"
+    "    if (d < 1e-4) { sum += 1.0; }\n"
+    "    else { vec3 l = v / d; float recv = dot(N, l); float emit = dot(axis, -l);\n"
+    "      if (recv > 0.0 && emit > 0.0) sum += recv * emit * lightAtten(d, max(uLRange[li], 1e-4), uLFalloff[li]); }\n"
+    "  } }\n"
+    "  return sum / 9.0;\n"
+    "}\n"
+    "float cookieSample(float row, vec2 uv, bool wrapIt){\n"
+    "  if (!wrapIt && (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)) return 0.0;\n"
+    "  if (wrapIt) uv = fract(uv);\n"
+    "  uv = clamp(uv, vec2(0.0078125), vec2(0.9921875));\n"
+    "  return texture2D(uCookieTex, vec2(uv.x, (row + uv.y) / max(uCookieRows, 1.0))).r;\n"
+    "}\n"
+    "float cookieAt(int li, vec3 p){\n"
+    "  float row = uLRect[li].z; if (row < -0.5) return 1.0;\n"
+    "  if (uLType[li] > 0.5 && uLType[li] < 1.5) return 1.0;\n"           // point lights have none
+    "  if (uLType[li] > 2.5) return 1.0;\n"                               // nor do area lights
+    "  if (uLType[li] < 0.5) { float sc = max(uLRect[li].w, 0.05);\n"       // sun: laid across the world, repeating
+    "    return cookieSample(row, vec2(dot(p, uLRight[li]) / sc + 0.5, 0.5 - dot(p, uLUp[li]) / sc), true); }\n"
+    "  vec3 dd = p - uLPos[li]; float z = dot(dd, normalize(uLDir[li])); if (z <= 1e-4) return 0.0;\n"   // spot: fits the cone
+    "  float co = uLCosOut[li]; float th = sqrt(max(1.0 - co * co, 0.0)) / max(co, 1e-3);\n"
+    "  float k = 0.5 / (z * max(th, 1e-3));\n"
+    "  return cookieSample(row, vec2(0.5 + dot(dd, uLRight[li]) * k, 0.5 - dot(dd, uLUp[li]) * k), false);\n"
+    "}\n"
     "mat2 gRot;\n"                                                                              // per-pixel Poisson rotation
     "float sunTap(vec2 uv, vec2 o, float z, float ci){\n"
     "  float e = 1.0 / uCasSize;\n"                                                             // stay a texel inside the cascade tile
@@ -284,10 +347,18 @@ const char* kFrag =
     "  float tx = uCasTexel[i];\n"
     // World-space bias: push the receiver off its surface along the normal (more
     // for a wider filter) and a little toward the sun. Same rule for every cascade.
-    "  vec3 p = wp + n * (tx * (1.0 + 0.6 * uShadowSoft) * uSunBias) + uLightDir * (tx * 0.75 * uSunBias);\n"
+    "  float sinT = sqrt(max(1.0 - clamp(dot(n, uLightDir), 0.0, 1.0) * clamp(dot(n, uLightDir), 0.0, 1.0), 0.0));\n"   // slope: shadowmath::NormalOffset
+    "  vec3 p = wp + n * (tx * (0.6 + 1.6 * sinT + 0.6 * uShadowSoft) * uSunBias) + uLightDir * (tx * 0.75 * uSunBias);\n"
     "  vec3 q = (uCasVP[i] * vec4(p, 1.0)).xyz * 0.5 + 0.5;\n"
     "  if (q.z >= 1.0) return 1.0;\n"
-    "  float r = uShadowSoft / uCasSize; float ci = float(i); float s = 0.0;\n"
+    "  float r0 = uShadowSoft / uCasSize; float ci = float(i); float s = 0.0;\n"
+    "  float sr = r0 + (1.5 + 4.0 * uSunSoft) / uCasSize; float bl = 0.0;\n"      // is anything in the way within a slightly wider ring?
+    "  bl += 1.0 - sunTap(q.xy, vec2( 0.000, 1.000)*sr, q.z, ci); bl += 1.0 - sunTap(q.xy, vec2( 0.866, 0.500)*sr, q.z, ci);\n"
+    "  bl += 1.0 - sunTap(q.xy, vec2( 0.866,-0.500)*sr, q.z, ci); bl += 1.0 - sunTap(q.xy, vec2( 0.000,-1.000)*sr, q.z, ci);\n"
+    "  bl += 1.0 - sunTap(q.xy, vec2(-0.866,-0.500)*sr, q.z, ci); bl += 1.0 - sunTap(q.xy, vec2(-0.866, 0.500)*sr, q.z, ci);\n"
+    "  if (bl < 0.05) return 1.0;\n"                                                // nothing in the way: no need to filter
+    "  float r = r0 * (1.0 + 2.0 * uSunSoft * (bl / 6.0));\n"                      // wider where more of the ring is blocked (no raw depth read: an approximation of the gap)
+
     "  s += sunTap(q.xy, vec2(-0.326,-0.406)*r, q.z, ci); s += sunTap(q.xy, vec2(-0.840,-0.074)*r, q.z, ci);\n"
     "  s += sunTap(q.xy, vec2(-0.696, 0.457)*r, q.z, ci); s += sunTap(q.xy, vec2(-0.203, 0.621)*r, q.z, ci);\n"
     "  s += sunTap(q.xy, vec2( 0.962,-0.195)*r, q.z, ci); s += sunTap(q.xy, vec2( 0.473,-0.480)*r, q.z, ci);\n"
@@ -305,7 +376,7 @@ const char* kFrag =
     "    float edge = R * 0.82;\n"                                                              // blend into the next cascade (no seam)
     "    if (d > edge) { float f = (d - edge) / (R - edge);\n"
     "      s = mix(s, (i + 1 < cnt) ? sunCascade(i + 1, wp, n) : 1.0, f); }\n"                // last one fades out at the distance
-    "    return 1.0 - uSunStrength * (1.0 - s);\n"
+    "    return 1.0 - uSunStrength * distFade(length(wp - uEye), uFadeDist) * (1.0 - s);\n"
     "  }\n"
     "  return 1.0;\n"
     "}\n"
@@ -341,6 +412,7 @@ const char* kFrag =
     "}\n"
     "void main(){\n"
     "  if (uShadowAlpha >= 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, uShadowAlpha); return; }\n"
+    "  float gAlpha = uAlpha;\n"                                  // opacity (a Custom surface may change it)
     "  vec3 N = normalize(vN);\n"
     "  if (uHasNormal > 0.5) {\n"                                  // perturb N by the tangent-space normal map
     "    vec3 tn = texture2D(uNormalTex, vUV).rgb * 2.0 - 1.0;\n"
@@ -367,6 +439,14 @@ const char* kFrag =
     "  bool holo = uShaderMode > 5.5 && uShaderMode < 6.5;\n"     // Hologram
     "  if (holo) base *= 0.18 * (0.55 + 0.45 * sin(vWorld.y * 40.0));\n"
     "  if (uShaderMode > 6.5) base = floor(base * 5.0) / 5.0;\n"  // Posterize (retro banding)
+    // Custom (.okayshader) surface: the generated okaySurface() decides albedo, emission, alpha,
+    // normal, metallic, specular and shininess; the lighting below is unchanged (OkayShader.hpp).
+    "#ifdef OKAY_SURFACE\n"
+    "  vec3 okE = uEmissive; if (uHasEmis > 0.5) okE *= texture2D(uEmisTex, vUV).rgb;\n"
+    "  OkaySurface okS = okaySurface(vUV, vWorld, Vv, vCol, uOkTime, base, okE, uAlpha, N, uMetallic, uSpecular, uShininess);\n"
+    "  base = okS.albedo; gAlpha = okS.alpha;\n"
+    "  if (dot(okS.normal, okS.normal) > 1e-12) N = normalize(okS.normal);\n"
+    "#endif\n"
     // Filmic mode = a gamma-correct pipeline: albedo/emissive are authored in
     // sRGB, so decode to LINEAR before lighting and re-encode at the end.
     // Lighting math done directly in sRGB space (the old path, kept when the
@@ -375,6 +455,9 @@ const char* kFrag =
     "  if (lin) base = pow(max(base, vec3(0.0)), vec3(2.2));\n"
     "  vec3 emis = uEmissive;\n"
     "  if (uHasEmis > 0.5) emis *= texture2D(uEmisTex, vUV).rgb;\n"
+    "#ifdef OKAY_SURFACE\n"
+    "  emis = okS.emission;\n"
+    "#endif\n"
     "  if (lin) emis = pow(max(emis, vec3(0.0)), vec3(2.2));\n"
     "  float shiny = uShininess; float metalK = uMetallic; float specK = uSpecular;\n"
     "  if (uHasMR > 0.5) {\n"
@@ -385,10 +468,13 @@ const char* kFrag =
     "    shiny = 4.0 + (1.0 - rough) * 124.0;\n"
     "    specK *= clamp(1.0 - rough, 0.04, 1.0);\n"
     "  }\n"
+    "#ifdef OKAY_SURFACE\n"
+    "  metalK = okS.metallic; specK = okS.specular; shiny = okS.shininess;\n"
+    "#endif\n"
     // Unlit: decode+encode cancel, so unlit colors look identical either way.
     "  if (uUnlit > 0.5) { vec3 uc = base + emis;\n"
     "    if (lin && uHdrOut < 0.5) uc = pow(max(uc, vec3(0.0)), vec3(1.0/2.2));\n"
-    "    gl_FragColor = vec4(uc, uAlpha); return; }\n"
+    "    gl_FragColor = vec4(uc, gAlpha); return; }\n"
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  vec3 amb = mix(uAmbGround, uAmbSky, clamp(N.y * 0.5 + 0.5, 0.0, 1.0));\n"  // scene Ambient Mode (flat / hemisphere / sky)
     "  vec3 lit = amb; vec3 spec = vec3(0.0);\n"
@@ -400,7 +486,7 @@ const char* kFrag =
     "  if (uLightCount < 1) {\n"                                  // fallback: the global directional
     "    float ndl = max(dot(N, uLightDir), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
     "    lit += uLightColor * ndl * sh;\n"
-    "    if (uSpecular > 0.0) { vec3 H = normalize(uLightDir + Vv);\n"
+    "    if (specK > 0.0) { vec3 H = normalize(uLightDir + Vv);\n"
     "      spec = vec3(pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * sh); }\n"
     "  } else {\n"
     "    for (int i = 0; i < 16; i++) { if (i >= uLightCount) break;\n"   // directional + point + spot
@@ -416,14 +502,18 @@ const char* kFrag =
     "        else if (uLType[i] > 1.5) { float cs = dot(normalize(uLDir[i]), -ld);\n"   // spot cone
     "          float dn = uLCosIn[i] - uLCosOut[i];\n"
     "          float sp = dn > 1e-4 ? clamp((cs - uLCosOut[i]) / dn, 0.0, 1.0) : (cs >= uLCosOut[i] ? 1.0 : 0.0);\n"
-    "          at *= sp * sp; } }\n"
-    "      float ndl = max((dot(N, ld) + wrap) / (1.0 + wrap), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
+    "          at *= sp * sp * (3.0 - 2.0 * sp); } }\n"   // smoothstep cone (okay::SpotCone)
+    "      bool rect = uLType[i] > 2.5 && uLRect[i].x > 0.0 && uLRect[i].y > 0.0;\n"    // Area light with a Panel size: a real rectangle
+    "      float ndl = max((dot(N, ld) + wrap) / (1.0 + wrap), 0.0);\n"
+    "      if (rect) { ndl = rectTerm(i, vWorld, N); at = 1.0; }\n"
+    "      if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
+    "      if (uLRect[i].z > -0.5) at *= cookieAt(i, vWorld);\n"                       // light mask
     "      if (ndl * at <= 0.0) continue;\n"                      // no light reaches here: skip the shadow lookup
     "      float lsh = 1.0;\n"
     "      if (uLType[i] < 0.5) { if (abs(float(i) - uSunIndex) < 0.5) lsh = sh; }\n"   // only the main sun has cascades
     "      else if (recv && uLShadow[i].x > -0.5) lsh = localShadow(i, vWorld, Ns, ld, d);\n"     // spot / point / area shadow tiles
     "      lit += uLCol[i] * ndl * at * lsh;\n"
-    "      if (uSpecular > 0.0) { vec3 H = normalize(ld + Vv);\n"   // highlights take the light's colour + intensity
+    "      if (specK > 0.0) { vec3 H = normalize(ld + Vv);\n"   // highlights take the light's colour + intensity
     "        spec += uLCol[i] * (pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * at * lsh); }\n"
     "    }\n"
     "  }\n"
@@ -437,6 +527,7 @@ const char* kFrag =
     "  float metal = clamp(metalK, 0.0, 1.0);\n"                 // metalness: kill diffuse, tint spec/reflection
     "  float diffK = 1.0 - 0.9 * metal;\n"
     "  vec3 f0 = mix(vec3(1.0), base, metal);\n"                  // dielectric = white, metal = albedo-tinted
+    "  if (uTonemap < 0.5 && !toon) lit = vec3(softClip(lit.x), softClip(lit.y), softClip(lit.z));\n"   // roll-off above 1.0 (the filmic path has ACES)
     "  vec3 diff = base * lit * diffK;\n"
     "  vec3 rim = vec3(0.0);\n"                                   // rim glow (Fresnel/Hologram or rimStr>0)
     "  float rs = uRimStr; if ((fres || holo) && rs < 0.8) rs = 1.6;\n"
@@ -470,7 +561,7 @@ const char* kFrag =
     // were displayed raw, crushing mid-tones. With the post chain running the
     // colour stays linear here: the chain exposes, tonemaps and encodes it.
     "  if (lin && uHdrOut < 0.5) { col = aces(col); col = pow(max(col, vec3(0.0)), vec3(1.0/2.2)); }\n"
-    "  gl_FragColor = vec4(col, uAlpha);\n"
+    "  gl_FragColor = vec4(col, gAlpha);\n"
     "}\n";
 
 // ---- Depth-only program (shadow-map pass) -------------------------------------
@@ -589,6 +680,14 @@ bool GLRenderer::LoadGL(GLGetProc gp) {
     // Optional: GPU skinning (bone matrices as a vec4 uniform array).
     load(g.Uniform4fv, gp, "glUniform4fv");
     load(g.GetIntegerv, gp, "glGetIntegerv");
+    // Optional: Custom (.okayshader) programs copy the frame's uniforms with these.
+    load(g.GetActiveUniform, gp, "glGetActiveUniform");
+    load(g.GetUniformfv, gp, "glGetUniformfv");
+    load(g.GetUniformiv, gp, "glGetUniformiv");
+    // Optional: compressed (.dds) uploads. Without them every .dds is decoded on the CPU and uploaded as RGBA8.
+    load(g.CompressedTexImage2D, gp, "glCompressedTexImage2D");
+    load(g.GetString, gp, "glGetString");
+    load(g.GetStringi, gp, "glGetStringi");
     g.ok = r;
     if (!r) Log::Error("[gl] required OpenGL entry points missing — using software renderer");
     return r;
@@ -648,6 +747,10 @@ bool GLRenderer::EnsureProgram() {
     m_uLFalloff = g.GetUniformLocation(m_prog, "uLFalloff");
     m_uLCosOut = g.GetUniformLocation(m_prog, "uLCosOut");
     m_uLCosIn  = g.GetUniformLocation(m_prog, "uLCosIn");
+    m_uLRect = g.GetUniformLocation(m_prog, "uLRect"); m_uLRight = g.GetUniformLocation(m_prog, "uLRight");
+    m_uLUp = g.GetUniformLocation(m_prog, "uLUp"); m_uCookieTex = g.GetUniformLocation(m_prog, "uCookieTex");
+    m_uCookieRows = g.GetUniformLocation(m_prog, "uCookieRows"); m_uSunSoft = g.GetUniformLocation(m_prog, "uSunSoft");
+    m_uFadeDist = g.GetUniformLocation(m_prog, "uFadeDist");
     m_uNormalTex = g.GetUniformLocation(m_prog, "uNormalTex");
     m_uHasNormal = g.GetUniformLocation(m_prog, "uHasNormal");
     m_uNormalStrength = g.GetUniformLocation(m_prog, "uNormalStrength");
@@ -702,6 +805,7 @@ bool GLRenderer::EnsureProgram() {
     g.Uniform1i(m_uLocalTex, 5);
     g.Uniform1i(m_uMrTex, 6);
     g.Uniform1i(m_uEmisTex, 7);
+    if (m_uCookieTex >= 0) g.Uniform1i(m_uCookieTex, 8);   // light masks
     g.UseProgram(0);
     g.GenBuffers(1, &m_vbo);
     // A core-profile context refuses to draw without a bound VAO (and some drivers
@@ -709,6 +813,171 @@ bool GLRenderer::EnsureProgram() {
     // the default VAO is used instead. This persists across viewport resizes.
     if (g.GenVertexArrays && !m_vao) g.GenVertexArrays(1, &m_vao);
     return true;
+}
+
+// ---- Custom (.okayshader) surfaces ------------------------------------------------------------
+// The uniforms the per-object draw code sets through m_u* members. While a custom object draws,
+// these members hold the custom program's locations (SwapObjectLocations); everything else the
+// main program has is copied over once per frame.
+namespace {
+struct ObjUniform { int GLRenderer::* member; const char* name; };
+}
+#define OKAY_OBJ_UNIFORMS(X) \
+    X(m_uMVP, "uMVP") X(m_uModel, "uModel") X(m_uColor, "uColor") X(m_uEmissive, "uEmissive") \
+    X(m_uSpecular, "uSpecular") X(m_uShininess, "uShininess") X(m_uUnlit, "uUnlit") X(m_uReceive, "uReceive") \
+    X(m_uShaderMode, "uShaderMode") X(m_uToonBands, "uToonBands") X(m_uRimStr, "uRimStr") X(m_uRimColor, "uRimColor") \
+    X(m_uGradTop, "uGradTop") X(m_uGradBot, "uGradBot") X(m_uTex, "uTex") X(m_uUseTex, "uUseTex") X(m_uTiling, "uTiling") \
+    X(m_uNormalTex, "uNormalTex") X(m_uHasNormal, "uHasNormal") X(m_uNormalStrength, "uNormalStrength") \
+    X(m_uSpecTex, "uSpecTex") X(m_uHasSpecMap, "uHasSpecMap") X(m_uAoTex, "uAoTex") X(m_uHasAo, "uHasAo") \
+    X(m_uAoStrength, "uAoStrength") X(m_uHasMR, "uHasMR") X(m_uHasEmis, "uHasEmis") X(m_uMetallic, "uMetallic") \
+    X(m_uReflectivity, "uReflectivity") X(m_uTexOffset, "uTexOffset") X(m_uAlpha, "uAlpha") \
+    X(m_uShadowAlpha, "uShadowAlpha") X(m_uSkin, "uSkin") X(m_uBones, "uBones")
+
+GLRenderer::CustomGL* GLRenderer::EnsureCustomProgram(const std::string& path) {
+    const oshader::ShaderFile sf = oshader::LoadShaderFile(path);
+    CustomGL& cp = m_custom[path];
+    if (cp.generation == sf.generation && (cp.prog || cp.failed)) return cp.failed ? nullptr : &cp;
+    if (cp.prog) { g.DeleteProgram(cp.prog); cp.prog = 0; }
+    cp = CustomGL{};
+    cp.generation = sf.generation;
+    const oshader::Compiled* c = sf.compiled.get();
+    if (!c || !c->ok || !m_prog || !g.GetActiveUniform || !g.GetUniformfv || !g.GetUniformiv) {
+        cp.failed = true;
+        if (c && c->ok) Log::Error("[gl] custom shaders need glGetActiveUniform / glGetUniformfv; ", path, " draws magenta");
+        return nullptr;
+    }
+    // The main fragment shader with the generated surface function spliced in before main().
+    std::string frag = kFrag;
+    const std::size_t at = frag.find("void main(){");
+    if (at == std::string::npos) { cp.failed = true; return nullptr; }
+    frag.insert(at, "#define OKAY_SURFACE 1\n" + c->glsl);
+    GLuint vs = compile(GL_VERTEX_SHADER, kVert), fs = compile(GL_FRAGMENT_SHADER, frag.c_str());
+    if (!vs || !fs) {
+        if (vs) g.DeleteShader(vs);
+        if (fs) g.DeleteShader(fs);
+        Log::Error("[gl] custom shader ", path, " did not compile on this GPU; it draws magenta");
+        cp.failed = true;
+        return nullptr;
+    }
+    cp.prog = g.CreateProgram();
+    g.AttachShader(cp.prog, vs); g.AttachShader(cp.prog, fs);
+    const char* attrs[] = {"aPos", "aNormal", "aUV", "aColor", "aTan", "aJoints", "aWeights"};
+    for (int i = 0; i < 7; ++i) g.BindAttribLocation(cp.prog, (GLuint)i, attrs[i]);
+    g.LinkProgram(cp.prog);
+    GLint ok = 0; g.GetProgramiv(cp.prog, GL_LINK_STATUS, &ok);
+    g.DeleteShader(vs); g.DeleteShader(fs);
+    if (!ok) {
+        char log[512]; g.GetProgramInfoLog(cp.prog, 512, nullptr, log);
+        Log::Error("[gl] custom shader ", path, " link: ", log);
+        g.DeleteProgram(cp.prog); cp.prog = 0; cp.failed = true;
+        return nullptr;
+    }
+#define OKAY_OBJ_LOC(m, n) cp.locs.push_back(g.GetUniformLocation(cp.prog, n));
+    OKAY_OBJ_UNIFORMS(OKAY_OBJ_LOC)
+#undef OKAY_OBJ_LOC
+    cp.unlit = c->unlit;
+    cp.writesAlpha = c->writesAlpha;
+    cp.uTime = g.GetUniformLocation(cp.prog, "uOkTime");
+    for (const oshader::Property& pr : c->props) cp.uProps.push_back(g.GetUniformLocation(cp.prog, ("okp_" + pr.name).c_str()));
+    cp.texCount = (int)c->textures.size();
+    g.UseProgram(cp.prog);
+    for (int i = 0; i < cp.texCount; ++i) {
+        const GLint l = g.GetUniformLocation(cp.prog, ("okt_" + c->textures[(std::size_t)i].name).c_str());
+        if (l >= 0) g.Uniform1i(l, oshader::kFirstTextureUnit + i);
+    }
+    // Everything else the main program has (lights, shadows, fog, sky, samplers): copied each frame.
+    GLint count = 0;
+    g.GetProgramiv(cp.prog, 0x8B86 /*GL_ACTIVE_UNIFORMS*/, &count);
+    for (GLint u = 0; u < count; ++u) {
+        char name[128]; GLsizei len = 0; GLint size = 0; GLenum type = 0;
+        g.GetActiveUniform(cp.prog, (GLuint)u, sizeof(name), &len, &size, &type, name);
+        std::string base(name, (std::size_t)(len > 0 ? len : 0));
+        if (base.size() > 3 && base.compare(base.size() - 3, 3, "[0]") == 0) base.resize(base.size() - 3);
+        if (base.rfind("okp_", 0) == 0 || base.rfind("okt_", 0) == 0 || base == "uOkTime") continue;
+        bool perObject = false;
+#define OKAY_OBJ_NAME(m, n) if (base == n) perObject = true;
+        OKAY_OBJ_UNIFORMS(OKAY_OBJ_NAME)
+#undef OKAY_OBJ_NAME
+        if (perObject) continue;
+        for (GLint e = 0; e < size; ++e) {
+            const std::string nm = size > 1 ? base + "[" + std::to_string(e) + "]" : base;
+            CustomGL::Copy cc;
+            cc.from = g.GetUniformLocation(m_prog, nm.c_str());
+            cc.to = g.GetUniformLocation(cp.prog, nm.c_str());
+            cc.type = type;
+            if (cc.from >= 0 && cc.to >= 0) cp.frameCopies.push_back(cc);
+        }
+    }
+    g.UseProgram(m_prog);
+    return &cp;
+}
+
+void GLRenderer::SwapObjectLocations(CustomGL& cp) {
+    std::size_t i = 0;
+#define OKAY_OBJ_SWAP(m, n) if (i < cp.locs.size()) std::swap(m, cp.locs[i]); ++i;
+    OKAY_OBJ_UNIFORMS(OKAY_OBJ_SWAP)
+#undef OKAY_OBJ_SWAP
+}
+
+void GLRenderer::BeginCustom(CustomGL& cp, const MeshRenderer& mr) {
+    g.UseProgram(cp.prog);
+    if (cp.syncedFrame != m_frame) {   // the frame's lights, shadows, fog and sky, from the main program
+        cp.syncedFrame = m_frame;
+        for (const CustomGL::Copy& c : cp.frameCopies) {
+            float f[16]; GLint iv[4];
+            switch (c.type) {
+                case 0x1406: g.GetUniformfv(m_prog, c.from, f); g.Uniform1f(c.to, f[0]); break;                    // float
+                case 0x8B50: g.GetUniformfv(m_prog, c.from, f); g.Uniform2f(c.to, f[0], f[1]); break;              // vec2
+                case 0x8B51: g.GetUniformfv(m_prog, c.from, f); g.Uniform3f(c.to, f[0], f[1], f[2]); break;        // vec3
+                case 0x8B52: if (g.Uniform4fv) { g.GetUniformfv(m_prog, c.from, f); g.Uniform4fv(c.to, 1, f); } break;   // vec4
+                case 0x8B5C: g.GetUniformfv(m_prog, c.from, f); g.UniformMatrix4fv(c.to, 1, GL_FALSE, f); break;   // mat4
+                case 0x1404: case 0x8B56: case 0x8B5E: case 0x8B62:                                                // int, bool, samplers
+                    g.GetUniformiv(m_prog, c.from, iv); g.Uniform1i(c.to, iv[0]); break;
+                default: break;
+            }
+        }
+    }
+    SwapObjectLocations(cp);
+    g.Uniform1f(m_uShadowAlpha, -1.0f);   // the lit draw (the main program has it set once per frame)
+    const oshader::ShaderFile sf = oshader::LoadShaderFile(mr.customShader);
+    if (cp.uTime >= 0) g.Uniform1f(cp.uTime, Time::ElapsedTime());
+    if (sf.compiled && sf.compiled->ok && sf.generation == cp.generation) {
+        const std::vector<float> v = oshader::ResolveProperties(*sf.compiled, mr.shaderParams);
+        for (std::size_t i = 0; i < cp.uProps.size() && i < sf.compiled->props.size(); ++i) {
+            const GLint l = cp.uProps[i];
+            if (l < 0) continue;
+            const float* p = &v[i * 4];
+            switch (oshader::Width(sf.compiled->props[i].type)) {
+                case 1: g.Uniform1f(l, p[0]); break;
+                case 2: g.Uniform2f(l, p[0], p[1]); break;
+                case 3: g.Uniform3f(l, p[0], p[1], p[2]); break;
+                default: if (g.Uniform4fv) g.Uniform4fv(l, 1, p); break;
+            }
+        }
+        for (int i = 0; i < cp.texCount && i < oshader::kMaxTextures; ++i) {
+            const std::string pic = oshader::ResolveTexture(*sf.compiled, i, mr.shaderParams);
+            unsigned int t = pic.empty() ? 0u : TextureFor(pic);
+            if (!t) {
+                if (!m_whiteTex) {
+                    const unsigned char white[4] = {255, 255, 255, 255};
+                    g.GenTextures(1, &m_whiteTex);
+                    g.BindTexture(GL_TEXTURE_2D, m_whiteTex);
+                    g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                    g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                    g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, white);
+                }
+                t = m_whiteTex;
+            }
+            g.ActiveTexture(GL_TEXTURE0 + (GLenum)(oshader::kFirstTextureUnit + i));
+            g.BindTexture(GL_TEXTURE_2D, t);
+        }
+        g.ActiveTexture(GL_TEXTURE0);
+    }
+}
+
+void GLRenderer::EndCustom(CustomGL& cp) {
+    SwapObjectLocations(cp);   // the main program's locations back
+    g.UseProgram(m_prog);
 }
 
 bool GLRenderer::EnsureDepthProgram() {
@@ -767,6 +1036,7 @@ void GLRenderer::DestroyShadow() {
     if (m_shadowTex) { g.DeleteTextures(1, &m_shadowTex); m_shadowTex = 0; }
     if (m_shadowFbo) { g.DeleteFramebuffers(1, &m_shadowFbo); m_shadowFbo = 0; }
     if (m_localTex) { g.DeleteTextures(1, &m_localTex); m_localTex = 0; }
+    if (m_cookieTex) { g.DeleteTextures(1, &m_cookieTex); m_cookieTex = 0; m_cookieCount = 0; }
     if (m_localFbo) { g.DeleteFramebuffers(1, &m_localFbo); m_localFbo = 0; }
     m_shadowW = m_shadowH = m_localW = m_localH = 0;
 }
@@ -1175,7 +1445,11 @@ const char* kFxaaFrag =
     "}\n";
 
 // Depth of field: blend toward the blurred frame by how far the pixel's linear
-// depth (the SSAO depth pass) sits outside the focus range.
+// depth (the SSAO depth pass) sits outside the focus range. The blurred copy is
+// premultiplied (colour times coverage, kDofCopyFrag + kDofBlurFrag) and the mix
+// happens premultiplied too, so an empty pixel (alpha 0, where the host paints its
+// sky) stays empty and a far object fades into the sky without a dark fringe.
+// Before, the copy and blur wrote alpha 1, which turned the sky an opaque dark blur.
 const char* kDofFrag =
     "#version 120\n"
     "uniform sampler2D uSrc; uniform sampler2D uBlur; uniform sampler2D uDepth;\n"
@@ -1184,7 +1458,24 @@ const char* kDofFrag =
     "  vec4 t = texture2D(uDepth, vUV); float dn = t.r + t.g / 255.0;\n"
     "  float d = dn >= 0.995 ? uFar * 4.0 : dn * uFar;\n"                           // background: far away
     "  float coc = clamp((abs(d - uFocus) - uRange * 0.5) / max(uRange, 1e-3), 0.0, 1.0);\n"
-    "  gl_FragColor = mix(texture2D(uSrc, vUV), texture2D(uBlur, vUV), coc);\n"
+    "  vec4 s = texture2D(uSrc, vUV);\n"
+    "  vec4 p = mix(vec4(s.rgb * s.a, s.a), texture2D(uBlur, vUV), coc);\n"         // premultiplied mix
+    "  gl_FragColor = vec4(p.a > 1e-4 ? p.rgb / p.a : vec3(0.0), p.a);\n"
+    "}\n";
+// The depth of field's blurred copy: the display image premultiplied by its coverage ...
+const char* kDofCopyFrag =
+    "#version 120\n"
+    "uniform sampler2D uSrc; varying vec2 vUV;\n"
+    "void main(){ vec4 c = texture2D(uSrc, vUV); gl_FragColor = vec4(c.rgb * c.a, c.a); }\n";
+// ... blurred with the same 9-tap gaussian as kBlurFrag, alpha included.
+const char* kDofBlurFrag =
+    "#version 120\n"
+    "uniform sampler2D uSrc; uniform vec2 uDir; varying vec2 vUV;\n"
+    "void main(){\n"
+    "  vec4 s = texture2D(uSrc, vUV) * 0.227027;\n"
+    "  s += (texture2D(uSrc, vUV + uDir * 1.384615) + texture2D(uSrc, vUV - uDir * 1.384615)) * 0.316216;\n"
+    "  s += (texture2D(uSrc, vUV + uDir * 3.230769) + texture2D(uSrc, vUV - uDir * 3.230769)) * 0.070270;\n"
+    "  gl_FragColor = s;\n"
     "}\n";
 
 GLuint buildQuadProgram(const char* fragSrc) {
@@ -1255,7 +1546,7 @@ bool GLRenderer::EnsureSkyProgram() {
 }
 
 bool GLRenderer::EnsurePostChain() {
-    if (m_uberProg && m_fxaaProg && m_dofProg && m_downProg) return true;
+    if (m_uberProg && m_fxaaProg && m_dofProg && m_dofCopyProg && m_dofBlurProg && m_downProg) return true;
     if (!EnsurePostProgs()) return false;   // the shared blur / add programs + the quad
     if (!m_uberProg) {
         m_uberProg = buildQuadProgram(kUberFrag);
@@ -1280,6 +1571,16 @@ bool GLRenderer::EnsurePostChain() {
         auto u = [&](const char* n) { return g.GetUniformLocation(m_dofProg, n); };
         m_udfSrc = u("uSrc"); m_udfBlur = u("uBlur"); m_udfDepth = u("uDepth");
         m_udfFocus = u("uFocus"); m_udfRange = u("uRange"); m_udfFar = u("uFar");
+    }
+    if (!m_dofCopyProg) {
+        m_dofCopyProg = buildQuadProgram(kDofCopyFrag);
+        if (!m_dofCopyProg) return false;
+        m_udcSrc = g.GetUniformLocation(m_dofCopyProg, "uSrc");
+    }
+    if (!m_dofBlurProg) {
+        m_dofBlurProg = buildQuadProgram(kDofBlurFrag);
+        if (!m_dofBlurProg) return false;
+        m_udbSrc = g.GetUniformLocation(m_dofBlurProg, "uSrc"); m_udbDir = g.GetUniformLocation(m_dofBlurProg, "uDir");
     }
     if (!m_downProg) {
         m_downProg = buildQuadProgram(kDownFrag);
@@ -1488,28 +1789,37 @@ unsigned int GLRenderer::TextureFor(const std::string& name) {
         for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
         m_texCache.clear();
         m_texInfo.clear();
+        m_uploadInfo.clear();
         m_texGen = TextureCacheGeneration();
     }
     auto it = m_texCache.find(name);
     if (it != m_texCache.end()) return it->second;
-    unsigned int tex = 0;
-    Image* img = GetCachedTexture(name);
-    if (img && img->Width() > 0) {
-        g.GenTextures(1, &tex);
-        g.BindTexture(GL_TEXTURE_2D, tex);
-        g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img->Width(), img->Height(), 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, img->Data());
-        // The picture's own Filter / Wrap / Mipmaps import settings (defaults: repeat, trilinear, mipmapped).
-        const TextureSampling ts = TextureImportSampling(name);
+    // The picture's own Filter / Wrap / Mipmaps import settings (defaults: repeat, trilinear, mipmapped).
+    TextureSampling ts = TextureImportSampling(name);
+    TextureUploadInfo info;
+    // A .dds file, or the compressed import copy of a picture set to `compress`: its own levels, kept compressed when
+    // the GPU takes the format (see GpuTexture.hpp). Anything else goes the ordinary RGBA8 way below, as before.
+    unsigned int tex = UploadDdsTexture(name, ts, info);
+    Image* img = tex ? nullptr : GetCachedTexture(name);
+    if (tex || (img && img->Width() > 0)) {
+        if (!tex) {
+            g.GenTextures(1, &tex);
+            g.BindTexture(GL_TEXTURE_2D, tex);
+            g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img->Width(), img->Height(), 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, img->Data());
+            info.glFormat = GL_RGBA8;
+            if (!g.GenerateMipmap) ts.mipmaps = false;   // no way to build them: sample level 0 only
+            else if (ts.mipmaps) g.GenerateMipmap(GL_TEXTURE_2D);
+        }
         m_texInfo[tex] = ts;
+        m_uploadInfo[name] = info;
         const int wrapMode = ts.wrap == TextureSampling::Clamp ? GL_CLAMP_TO_EDGE
                            : ts.wrap == TextureSampling::Mirror ? 0x8370 /*GL_MIRRORED_REPEAT*/ : GL_REPEAT;
         g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
         g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
         const bool point = ts.filter == TextureSampling::Point;
         g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, point ? 0x2600 /*GL_NEAREST*/ : GL_LINEAR);
-        if (g.GenerateMipmap && ts.mipmaps) {
-            g.GenerateMipmap(GL_TEXTURE_2D);
+        if (ts.mipmaps) {
             const int minF = point ? 0x2700 /*GL_NEAREST_MIPMAP_NEAREST*/
                            : ts.filter == TextureSampling::Bilinear ? 0x2701 /*GL_LINEAR_MIPMAP_NEAREST*/
                                                                     : GL_LINEAR_MIPMAP_LINEAR;
@@ -1523,6 +1833,97 @@ unsigned int GLRenderer::TextureFor(const std::string& name) {
     }
     m_texCache[name] = tex;
     return tex;
+}
+
+gputex::Caps GLRenderer::QueryTextureCaps() {
+    std::vector<std::string> ext;
+    const char* version = g.GetString ? reinterpret_cast<const char*>(g.GetString(GL_VERSION)) : nullptr;
+    GLint n = 0;
+    if (g.GetStringi && g.GetIntegerv) g.GetIntegerv(0x821D /*GL_NUM_EXTENSIONS*/, &n);
+    if (n > 0 && n < 100000) {
+        for (GLint i = 0; i < n; ++i) {
+            const GLubyte* s = g.GetStringi(GL_EXTENSIONS, GLuint(i));
+            if (s) ext.emplace_back(reinterpret_cast<const char*>(s));
+        }
+    } else if (g.GetString) {   // GL 2.1: one space-separated string (a core profile refuses this; the list stays empty)
+        const GLubyte* s = g.GetString(GL_EXTENSIONS);
+        std::string all = s ? reinterpret_cast<const char*>(s) : "";
+        std::size_t p = 0;
+        while (p < all.size()) {
+            std::size_t q = all.find(' ', p);
+            if (q == std::string::npos) q = all.size();
+            if (q > p) ext.push_back(all.substr(p, q - p));
+            p = q + 1;
+        }
+    }
+    if (g.GetError) for (int i = 0; i < 16 && g.GetError() != 0; ++i) {}
+    return gputex::CapsFrom(version, ext);
+}
+
+const GLRenderer::TextureUploadInfo* GLRenderer::UploadInfo(const std::string& name) const {
+    auto it = m_uploadInfo.find(name);
+    return it == m_uploadInfo.end() ? nullptr : &it->second;
+}
+
+// Upload a plan's levels; 0 (nothing left behind) when GL reports an error.
+static unsigned int UploadPlanLevels(const gputex::Plan& p) {
+    if (p.levels.empty() || (p.compressed && !g.CompressedTexImage2D)) return 0;
+    for (int i = 0; i < 16 && g.GetError() != 0; ++i) {}   // start from a clean error state
+    GLuint t = 0;
+    g.GenTextures(1, &t);
+    g.BindTexture(GL_TEXTURE_2D, t);
+    for (std::size_t l = 0; l < p.levels.size(); ++l) {
+        const gputex::Level& lv = p.levels[l];
+        if (p.compressed)
+            g.CompressedTexImage2D(GL_TEXTURE_2D, GLint(l), GLenum(p.glFormat), lv.width, lv.height, 0, GLsizei(lv.bytes.size()), lv.bytes.data());
+        else
+            g.TexImage2D(GL_TEXTURE_2D, GLint(l), GL_RGBA8, lv.width, lv.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, lv.bytes.data());
+    }
+    g.TexParameteri(GL_TEXTURE_2D, 0x813C /*GL_TEXTURE_BASE_LEVEL*/, 0);
+    g.TexParameteri(GL_TEXTURE_2D, 0x813D /*GL_TEXTURE_MAX_LEVEL*/, GLint(p.levels.size()) - 1);   // a short chain is complete
+    if (g.GetError() != 0) { g.DeleteTextures(1, &t); return 0; }
+    return t;
+}
+
+unsigned int GLRenderer::UploadDdsTexture(const std::string& name, TextureSampling& ts, TextureUploadInfo& info) {
+    tex::DdsImage dds;
+    std::string why;
+    if (!gputex::Source(name, &dds, &why)) {
+        if (!why.empty()) Log::Warning("[gl] texture '", name, "': ", why, "; using the picture itself");
+        return 0;
+    }
+    if (!m_texCapsKnown) { m_texCaps = QueryTextureCaps(); m_texCapsKnown = true; }
+    gputex::Caps caps = m_texCaps;
+    bool forcedOff = false;
+    if (const char* off = std::getenv("OKAY_GL_NO_COMPRESSED")) if (off[0] == '1') { caps = gputex::Caps(); forcedOff = true; }
+    const tex::DdsFormat fmt = dds.format;
+    gputex::Plan plan;
+    if (!gputex::PlanUpload(std::move(dds), caps, &plan)) return 0;
+    if (forcedOff && !plan.compressed && !plan.note.empty() && plan.note.find("multiple of 4") == std::string::npos)
+        plan.note = "OKAY_GL_NO_COMPRESSED=1; decoded on the CPU";
+    unsigned int t = UploadPlanLevels(plan);
+    if (!t && plan.compressed) {   // the driver refused the compressed data after all: decode it on the CPU
+        tex::DdsImage again;
+        if (gputex::Source(name, &again, nullptr) && gputex::PlanUpload(std::move(again), gputex::Caps(), &plan)) {
+            plan.note = "the driver refused the compressed upload; decoded on the CPU";
+            t = UploadPlanLevels(plan);
+        }
+    }
+    if (!t) return 0;
+    info.fromDds = true;
+    info.compressed = plan.compressed;
+    info.glFormat = plan.glFormat;
+    info.levels = int(plan.levels.size());
+    info.note = plan.note;
+    if (plan.levels.size() == 1 && ts.mipmaps) {
+        if (!plan.compressed && g.GenerateMipmap) {   // one RGBA8 level: GL builds the rest, as for a PNG
+            g.TexParameteri(GL_TEXTURE_2D, 0x813D /*GL_TEXTURE_MAX_LEVEL*/, 1000);
+            g.GenerateMipmap(GL_TEXTURE_2D);
+        } else ts.mipmaps = false;                    // compressed without levels: sample level 0 only
+    }
+    Log::Info("[gl] texture '", name, "': ", tex::DdsFormatName(fmt), plan.compressed ? " kept compressed on the GPU" : " uploaded as RGBA8",
+              " (", info.levels, info.levels == 1 ? " level)" : " levels)", info.note.empty() ? "" : "; ", info.note);
+    return t;
 }
 
 // ---- Per-mesh vertex-buffer cache -------------------------------------------
@@ -2006,6 +2407,8 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.Uniform1f(m_uSunIndex, (float)plan.sunLight);
         g.Uniform1f(m_uSunStrength, sun ? sun->shadowStrength : 1.0f);
         g.Uniform1f(m_uSunBias, sun ? sun->shadowBias : 1.0f);
+        if (m_uSunSoft >= 0) g.Uniform1f(m_uSunSoft, sun ? sun->shadowSoftness : 0.5f);
+        if (m_uFadeDist >= 0) g.Uniform1f(m_uFadeDist, ShadowDistance() > 0.0f ? ShadowDistance() : 0.0f);
     }
     if (shadowOn) {
         float cvp[16 * ShadowPlan::kMaxCascades] = {0}, csph[4 * ShadowPlan::kMaxCascades] = {0};
@@ -2074,6 +2477,45 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             lc[i*3+0] = s.color.x; lc[i*3+1] = s.color.y; lc[i*3+2] = s.color.z;
             lr[i] = s.range; lco[i] = s.cosOuter; lci[i] = s.cosInner;
         }
+        // Panel size, panel axes and light mask row per light (see okay::Lighting: rectangle Area lights and masks).
+        float lrect[16 * 4] = {0}, lright[48] = {0}, lup[48] = {0}; bool anyCookie = false;
+        for (int i = 0; i < n; ++i) {
+            const LightSample& s = L[i];
+            lrect[i*4+0] = s.halfW; lrect[i*4+1] = s.halfH;
+            lrect[i*4+2] = (s.cookie >= 0 && s.cookie < 8) ? (float)s.cookie : -1.0f; if (lrect[i*4+2] >= 0.0f) anyCookie = true;
+            lrect[i*4+3] = s.cookieScale;
+            lright[i*3+0] = s.right.x; lright[i*3+1] = s.right.y; lright[i*3+2] = s.right.z;
+            lup[i*3+0] = s.up.x; lup[i*3+1] = s.up.y; lup[i*3+2] = s.up.z;
+        }
+        for (int i = n; i < 16; ++i) lrect[i*4+2] = -1.0f;
+        if (m_uLRect >= 0 && g.Uniform4fv) g.Uniform4fv(m_uLRect, 16, lrect);
+        if (m_uLRight >= 0) g.Uniform3fv(m_uLRight, 16, lright);
+        if (m_uLUp >= 0) g.Uniform3fv(m_uLUp, 16, lup);
+        if (m_uCookieRows >= 0) g.Uniform1f(m_uCookieRows, 8.0f);
+        if (anyCookie) {   // the mask atlas: 64 px wide, 8 rows of 64 px, the mask in every channel (unit 8)
+            if (!m_cookieTex || m_cookieCount != LightCookies::Store().size()) {
+                std::vector<unsigned char> px((size_t)64 * 64 * 8 * 4, 255);
+                const auto& st = LightCookies::Store();
+                for (int r = 0; r < 8 && r < (int)st.size(); ++r) {
+                    const LightCookie& ck = st[(size_t)r];
+                    if (ck.w <= 0 || ck.h <= 0) continue;
+                    for (int y = 0; y < 64; ++y) for (int x = 0; x < 64; ++x) {
+                        float v = ck.At(x * ck.w / 64, y * ck.h / 64); v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+                        const unsigned char b = (unsigned char)(v * 255.0f + 0.5f);
+                        unsigned char* d = &px[(((size_t)r * 64 + y) * 64 + x) * 4]; d[0] = d[1] = d[2] = d[3] = b;
+                    }
+                }
+                if (!m_cookieTex) g.GenTextures(1, &m_cookieTex);
+                g.BindTexture(GL_TEXTURE_2D, m_cookieTex);
+                g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64 * 8, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+                m_cookieCount = st.size();
+            }
+            g.ActiveTexture(GL_TEXTURE0 + 8);
+            g.BindTexture(GL_TEXTURE_2D, m_cookieTex);
+            g.ActiveTexture(GL_TEXTURE0);
+        }
         g.Uniform1i(m_uLightCount, n);
         if (n > 0) {
             g.Uniform1fv(m_uLType, n, lt);
@@ -2100,6 +2542,14 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         if (V.empty() || T.size() < 3) continue;
         ++drawn;
         unsigned int tex = TextureFor(mr->texture);
+        // Custom (.okayshader) surface: its own program, or the magenta error material when it does not compile.
+        CustomGL* cust = nullptr;
+        bool custBad = false;
+        if (mr->shader == MeshRenderer::Shader::Custom) {
+            cust = EnsureCustomProgram(mr->customShader);
+            custBad = cust == nullptr;
+            if (custBad) tex = 0;
+        }
 
         // Geometry source: static meshes draw from the per-mesh cached GPU buffer
         // (expanded + uploaded once — see EnsureMeshVB); meshes deformed on the CPU
@@ -2121,18 +2571,24 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
 
         Mat4 model = it.model;
         Mat4 mvp = vp * model;
+        if (cust) BeginCustom(*cust, *mr);
         g.UniformMatrix4fv(m_uMVP, 1, GL_FALSE, mvp.m);
         g.UniformMatrix4fv(m_uModel, 1, GL_FALSE, model.m);
-        bool unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
+        bool unlit = cust ? cust->unlit : (custBad || mr->unlit || mr->shader == MeshRenderer::Shader::Unlit);
         float tintR = 1, tintG = 1, tintB = 1;
         if (it.lod >= 0) if (auto* lg = go->GetComponent<LODGroup>(); lg) lg->DebugTint(it.lod, tintR, tintG, tintB);
+        if (custBad) {
+            g.Uniform3f(m_uColor, oshader::kErrorColor[0], oshader::kErrorColor[1], oshader::kErrorColor[2]);
+            g.Uniform3f(m_uEmissive, 0.0f, 0.0f, 0.0f);
+        } else {
         g.Uniform3f(m_uColor, mr->color.r * tintR, mr->color.g * tintG, mr->color.b * tintB);
         g.Uniform3f(m_uEmissive, mr->emissive.r, mr->emissive.g, mr->emissive.b);
+        }
         g.Uniform1f(m_uSpecular, unlit ? 0.0f : mr->specular);
         g.Uniform1f(m_uShininess, mr->shininess);
         g.Uniform1f(m_uUnlit, unlit ? 1.0f : 0.0f);
         g.Uniform1f(m_uReceive, mr->receiveShadows ? 1.0f : 0.0f);
-        g.Uniform1f(m_uShaderMode, (float)(int)mr->shader);
+        g.Uniform1f(m_uShaderMode, (cust || custBad) ? 0.0f : (float)(int)mr->shader);
         g.Uniform1f(m_uToonBands, (float)mr->toonBands);
         g.Uniform1f(m_uRimStr, mr->rimStrength);
         g.Uniform3f(m_uRimColor, mr->rimColor.r, mr->rimColor.g, mr->rimColor.b);
@@ -2165,6 +2621,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         }
         };
         applyBaseTex(tex);
+        if (cust) g.Uniform2f(m_uTiling, mr->tiling.x, mr->tiling.y);   // a custom surface's uv is tiled with or without a picture
 
         // Normal/bump map on texture unit 1: perturbs the surface normal per fragment
         // so flat faces show sculpted detail under lighting, matching the software path.
@@ -2249,8 +2706,8 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         // Transparency: a material alpha < 1 (water, glass) alpha-blends over the
         // scene and doesn't write depth, so geometry behind shows through. (Objects
         // draw in scene order — keep transparent meshes after opaque ones.)
-        float matAlpha = mr->color.a;
-        bool transparent = matAlpha < 0.999f;
+        float matAlpha = custBad ? 1.0f : mr->color.a;
+        bool transparent = matAlpha < 0.999f || (cust && cust->writesAlpha);   // a shader that sets alpha blends
         g.Uniform1f(m_uAlpha, matAlpha);
         if (transparent) {
             g.Enable(GL_BLEND);
@@ -2303,6 +2760,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.Disable(GL_BLEND);
             g.Uniform1f(m_uShadowAlpha, -1.0f);
         }
+        if (cust) EndCustom(*cust);
     }
 
     LastCullCounters().drawn = drawn;
@@ -2349,7 +2807,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     };
 
     const bool useChain = chain && EnsurePostTargets(w, h, m_hdr);
-    PostVignetteHandled() = useChain && rsTop.vignette > 0.0f;
+    PostVignetteHandled() = useChain && rsTop.vignette + rsTop.vignettePulse > 0.0f;
     unsigned int readFbo = m_resolveFbo;
     if (useChain) {
         const auto& ps = rsTop.post;
@@ -2432,7 +2890,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.Uniform3f(m_uuLift, ps.lift.x, ps.lift.y, ps.lift.z);
             g.Uniform3f(m_uuGamma, ps.gamma.x, ps.gamma.y, ps.gamma.z);
             g.Uniform3f(m_uuGain, ps.gain.x, ps.gain.y, ps.gain.z);
-            g.Uniform1f(m_uuVignette, rsTop.vignette > 1.0f ? 1.0f : rsTop.vignette);
+            g.Uniform1f(m_uuVignette, rsTop.vignette + rsTop.vignettePulse > 1.0f ? 1.0f : rsTop.vignette + rsTop.vignettePulse);
             g.Uniform1f(m_uuVignetteSmooth, ps.vignetteSmooth);
             g.Uniform1f(m_uuAspect, (float)w / (float)h);
             DrawQuad();
@@ -2442,15 +2900,14 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         // 4) Depth of field: a blurred copy (half res, two blur rounds) mixed in
         //    by the distance from the focus plane.
         if (dofOn) {
-            quadPass(m_addProg, m_bloomFboA, m_bloomW, m_bloomH, cur, m_uaSrc);
-            g.Uniform1f(m_uaStrength, 1.0f);
+            quadPass(m_dofCopyProg, m_bloomFboA, m_bloomW, m_bloomH, cur, m_udcSrc);   // premultiplied half-res copy
             DrawQuad();
             for (int it = 0; it < 2; ++it) {
-                quadPass(m_blurProg, m_bloomFboB, m_bloomW, m_bloomH, m_bloomTexA, m_ublSrc);
-                g.Uniform2f(m_ublDir, 1.0f / (float)m_bloomW, 0.0f);
+                quadPass(m_dofBlurProg, m_bloomFboB, m_bloomW, m_bloomH, m_bloomTexA, m_udbSrc);
+                g.Uniform2f(m_udbDir, 1.0f / (float)m_bloomW, 0.0f);
                 DrawQuad();
-                quadPass(m_blurProg, m_bloomFboA, m_bloomW, m_bloomH, m_bloomTexB, m_ublSrc);
-                g.Uniform2f(m_ublDir, 0.0f, 1.0f / (float)m_bloomH);
+                quadPass(m_dofBlurProg, m_bloomFboA, m_bloomW, m_bloomH, m_bloomTexB, m_udbSrc);
+                g.Uniform2f(m_udbDir, 0.0f, 1.0f / (float)m_bloomH);
                 DrawQuad();
             }
             unsigned int dst = nextTarget();
@@ -2563,8 +3020,13 @@ void GLRenderer::Destroy() {
     for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
     m_texCache.clear();
     m_texInfo.clear();
+    m_uploadInfo.clear();
+    m_texCapsKnown = false;
     for (auto& kv : m_meshVB) if (kv.second.vbo) g.DeleteBuffers(1, &kv.second.vbo);
     m_meshVB.clear();
+    for (auto& kv : m_custom) if (kv.second.prog) g.DeleteProgram(kv.second.prog);
+    m_custom.clear();
+    if (m_whiteTex) { g.DeleteTextures(1, &m_whiteTex); m_whiteTex = 0; }
     if (m_vbo) { g.DeleteBuffers(1, &m_vbo); m_vbo = 0; }
     if (m_quadVbo) { g.DeleteBuffers(1, &m_quadVbo); m_quadVbo = 0; }
     if (m_vao && g.DeleteVertexArrays) { g.DeleteVertexArrays(1, &m_vao); m_vao = 0; }
@@ -2576,6 +3038,8 @@ void GLRenderer::Destroy() {
     if (m_uberProg) { g.DeleteProgram(m_uberProg); m_uberProg = 0; }
     if (m_fxaaProg) { g.DeleteProgram(m_fxaaProg); m_fxaaProg = 0; }
     if (m_dofProg) { g.DeleteProgram(m_dofProg); m_dofProg = 0; }
+    if (m_dofCopyProg) { g.DeleteProgram(m_dofCopyProg); m_dofCopyProg = 0; }
+    if (m_dofBlurProg) { g.DeleteProgram(m_dofBlurProg); m_dofBlurProg = 0; }
     if (m_downProg) { g.DeleteProgram(m_downProg); m_downProg = 0; }
     if (m_ssaoDepthProg) { g.DeleteProgram(m_ssaoDepthProg); m_ssaoDepthProg = 0; }
     if (m_ssaoProg) { g.DeleteProgram(m_ssaoProg); m_ssaoProg = 0; }

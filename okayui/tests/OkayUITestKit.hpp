@@ -9,9 +9,11 @@
 #include "OkayUI_Soft.hpp"
 #include "okay/Core/ImageWrite.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -20,6 +22,18 @@
 #endif
 
 namespace okayuitest {
+
+/// Pictures must not depend on the machine: the engine looks for installed fonts (DejaVu, Noto, ...) when the embedded Roboto lacks a character, and a CI
+/// image has other fonts than a developer's computer, so every golden test runs with the installed fonts switched off (OKAY_NO_SYSTEM_FONTS, read once by
+/// the engine the first time a fallback font is looked up; this runs before main).
+inline const int kPinnedFonts = [] {
+#ifdef _WIN32
+    _putenv("OKAY_NO_SYSTEM_FONTS=1");
+#else
+    setenv("OKAY_NO_SYSTEM_FONTS", "1", 1);
+#endif
+    return 1;
+}();
 
 using OkayUI::soft::Bitmap;
 
@@ -39,7 +53,7 @@ inline float CenterY(const OkayUI::Rect& r) { return r.y + r.h * 0.5f; }
 struct Sim {
     float W = 640, H = 480;
     float mx = 0, my = 0;
-    bool down = false, rdown = false, blocked = false, shift = false, ctrl = false;
+    bool down = false, rdown = false, mdown = false, blocked = false, shift = false, ctrl = false;
     float wheel = 0;
     std::string text;
     bool edge[Key_COUNT] = {};
@@ -58,7 +72,7 @@ struct Sim {
 
     void Frame(const std::function<void()>& ui) {
         OkayUI::Input in;
-        in.mouseX = mx; in.mouseY = my; in.mouseDown = down; in.rightDown = rdown; in.blocked = blocked;
+        in.mouseX = mx; in.mouseY = my; in.mouseDown = down; in.rightDown = rdown; in.middleDown = mdown; in.blocked = blocked;
         in.wheel = wheel; in.text = text.empty() ? nullptr : text.c_str();
         in.backspace = edge[Key_Backspace]; in.del = edge[Key_Delete]; in.left = edge[Key_Left]; in.right = edge[Key_Right];
         in.home = edge[Key_Home]; in.end = edge[Key_End]; in.enter = edge[Key_Enter]; in.escape = edge[Key_Escape];
@@ -270,20 +284,56 @@ inline Png ReadPng(const std::string& path) {
     return png;
 }
 
+/// Where a failing golden writes its actual picture: $OKAYUI_ACTUAL_DIR, else the system temp folder. Never the working directory (that is the source tree
+/// when a test is run by hand, and pictures must not be committed by accident).
+inline std::string ActualPath(const std::string& name) {
+    const char* d = std::getenv("OKAYUI_ACTUAL_DIR");
+    std::error_code ec;
+    const std::filesystem::path dir = d && d[0] ? std::filesystem::path(d) : std::filesystem::temp_directory_path(ec);
+    return (dir / (name + ".actual.png")).string();
+}
 inline bool WritePng(const std::string& path, const Bitmap& b) {
     return okay::ImageWrite::WritePNG(path, b.w, b.h, 4, b.rgba.data());
 }
 
+/// What a failing golden prints: the box and the rows where the pictures differ, and the actual picture as base-64 PNG (when it is under 600 KB), so a CI log is
+/// enough to see what the other machine drew (decode: grep ACTUAL_PNG_BASE64 | cut -d' ' -f3 | base64 -d > x.png).
+inline void DiffReport(const std::string& name, const Png& g, const Bitmap& b) {
+    int x0 = b.w, y0 = b.h, x1 = -1, y1 = -1;
+    std::vector<int> rows((size_t)b.h, 0);
+    for (int y = 0; y < b.h; ++y) for (int x = 0; x < b.w; ++x) {
+        const size_t i = ((size_t)y * (size_t)b.w + (size_t)x) * 4;
+        bool d = false; for (int k = 0; k < 4; ++k) if (std::abs((int)g.rgba[i + (size_t)k] - (int)b.rgba[i + (size_t)k]) > 2) d = true;
+        if (d) { x0 = std::min(x0, x); x1 = std::max(x1, x); y0 = std::min(y0, y); y1 = std::max(y1, y); ++rows[(size_t)y]; }
+    }
+    std::fprintf(stderr, "  golden %s: differs inside x %d..%d, y %d..%d; differing pixels per 40 rows:", name.c_str(), x0, x1, y0, y1);
+    for (int y = 0; y < b.h; y += 40) { int n = 0; for (int k = y; k < y + 40 && k < b.h; ++k) n += rows[(size_t)k]; std::fprintf(stderr, " %d", n); }
+    std::fprintf(stderr, "\n");
+    std::FILE* f = std::fopen(ActualPath(name).c_str(), "rb");
+    if (!f) { std::fprintf(stderr, "  (the actual picture could not be read back from %s)\n", ActualPath(name).c_str()); return; }
+    std::string bytes; char buf[4096]; size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) bytes.append(buf, n);
+    std::fclose(f);
+    if (bytes.size() > 600 * 1024) { std::fprintf(stderr, "  (the actual picture is %zu bytes: too big to print)\n", bytes.size()); return; }
+    static const char* t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string o;
+    for (size_t i = 0; i < bytes.size(); i += 3) {
+        const unsigned v = ((unsigned char)bytes[i] << 16) | (i + 1 < bytes.size() ? (unsigned char)bytes[i + 1] << 8 : 0) | (i + 2 < bytes.size() ? (unsigned char)bytes[i + 2] : 0);
+        o += t[(v >> 18) & 63]; o += t[(v >> 12) & 63]; o += i + 1 < bytes.size() ? t[(v >> 6) & 63] : '='; o += i + 2 < bytes.size() ? t[v & 63] : '=';
+    }
+    std::fprintf(stderr, "ACTUAL_PNG_BASE64 %s %s\n", name.c_str(), o.c_str());
+}
+
 /// Compare with a committed golden PNG (per-channel tolerance 2, up to 0.05 percent of pixels may differ
 /// beyond it, to survive compilers that round floats differently). OKAYUI_UPDATE_GOLDEN=1 rewrites the golden.
-/// On a mismatch the actual image is written to the working directory as <name>.actual.png.
+/// On a mismatch the actual image is written as <name>.actual.png into $OKAYUI_ACTUAL_DIR or the temp folder.
 inline bool MatchesGolden(const std::string& name, const Bitmap& b, std::string* why = nullptr) {
     const std::string path = std::string(OKAYUI_GOLDEN_DIR) + "/" + name + ".png";
     const char* up = std::getenv("OKAYUI_UPDATE_GOLDEN");
     if (up && up[0] == '1') return WritePng(path, b);
     Png g = ReadPng(path);
-    if (!g.ok) { if (why) *why = "cannot read golden " + path; WritePng(name + ".actual.png", b); return false; }
-    if (g.w != b.w || g.h != b.h) { if (why) *why = "size differs"; WritePng(name + ".actual.png", b); return false; }
+    if (!g.ok) { if (why) *why = "cannot read golden " + path; WritePng(ActualPath(name), b); return false; }
+    if (g.w != b.w || g.h != b.h) { if (why) *why = "size differs"; WritePng(ActualPath(name), b); return false; }
     size_t bad = 0;
     for (size_t i = 0; i < b.rgba.size(); i += 4) {
         bool differs = false;
@@ -291,7 +341,12 @@ inline bool MatchesGolden(const std::string& name, const Bitmap& b, std::string*
         if (differs) ++bad;
     }
     const size_t allowed = (size_t)b.w * b.h / 2000;
-    if (bad > allowed) { if (why) *why = std::to_string(bad) + " pixels differ"; WritePng(name + ".actual.png", b); return false; }
+    if (bad > allowed) {
+        if (why) *why = std::to_string(bad) + " pixels differ";
+        WritePng(ActualPath(name), b);
+        DiffReport(name, g, b);   // CI logs are all anyone sees of a failing machine: say where, and carry the picture
+        return false;
+    }
     return true;
 }
 

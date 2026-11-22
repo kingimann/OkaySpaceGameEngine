@@ -6,7 +6,7 @@
 // the mesh matrix), materials (diffuse / specular / bump texture, colours,
 // shininess, self illumination), the keyframe section (node hierarchy, pivots,
 // position / rotation / scale tracks) and the master scale. Everything it did not
-// read is listed in ImportedModel::notes. See docs/own_3ds_reader.md.
+// read is listed in ImportedModel::notes. See docs/content/model_readers.md.
 #include "FileOpen.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
@@ -806,6 +806,7 @@ bool Read3dsFile(const std::string& path, ImportedModel& out, std::string* err, 
     std::FILE* fp = detail::OpenRead(path);
     if (!fp) { if (err) *err = "cannot open file"; return false; }
     std::string bytes;
+    detail::ReserveForFile(fp, bytes, tds::kMaxFileBytes);
     char buf[65536];
     for (;;) {
         const std::size_t k = std::fread(buf, 1, sizeof(buf), fp);

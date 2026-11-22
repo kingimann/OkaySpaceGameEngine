@@ -40,22 +40,8 @@ public:
 
 namespace interact {
 
-/// ---- The interact key ----
-/// The `Interact` input action (default E, pad X; a player can rebind it) is what every interactable reads.
-/// A component's own `interactKey` character is kept for old scenes: 0 means "not interactable", 'e' (the
-/// old default) means "the Interact action", any other letter was chosen on purpose and stays a raw key.
-bool Pressed(char legacyKey);
-/// The name to show for that key: "E", or whatever the player rebound the action to ("F", "X").
-std::string KeyLabel(char legacyKey);
-
-/// ---- One key press is used once ----
-/// The first thing that handles a press calls Block(); everything else in the frame checks Blocked() and
-/// leaves it alone. ClearBlock() runs at the end of the frame (ItemPickup and HoldPrompt do it in LateUpdate).
-void Block();
-bool Blocked();
-void ClearBlock();
-/// Pressed(key) and not already used this frame; marks it used. Use it where a press should do one thing.
-bool Take(char legacyKey);
+/// The key itself is main's shared Interact action (okay/Input/GameInput.hpp: InteractPressed, UseKeyDown,
+/// UseKeyName), and "one press is used once" is ItemPickup::BlockInteract. This file only finds things to use.
 
 /// ---- Finding what can be used ----
 /// Add the interactables one object has to `out`.
@@ -67,8 +53,6 @@ std::vector<std::unique_ptr<IInteractable>> Find(GameObject* go);
 /// The interactable nearest `actor` that can be used now (within its range), or null. `out` receives the
 /// distance when given.
 std::unique_ptr<IInteractable> Nearest(Scene& scene, GameObject* actor, float* distance = nullptr);
-/// Use whatever is nearest. True when something was used (and the press is marked used).
-bool Use(Scene& scene, GameObject* actor);
 
 } // namespace interact
 } // namespace okay

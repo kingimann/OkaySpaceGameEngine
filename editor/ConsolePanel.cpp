@@ -6,7 +6,7 @@
 #include "MainShared.hpp"
 #include "ProblemsPanel.hpp"
 #include "ConsoleScriptLink.hpp"   // shared/: which script and line an entry points to (also used by the OkayUI port)
-#include "CrashContext.hpp"        // shared/: the last 200 lines are kept for the crash report (docs/crash_reports.md)
+#include "CrashContext.hpp"        // shared/: the last 200 lines are kept for the crash report (docs/online/crash_reports.md)
 
 #include <cstdlib>
 #include <ctime>
@@ -113,6 +113,9 @@ void ConsolePreferCategory(const std::string& category) {
     g_preferPending = true;
 }
 
+static void (*g_consoleMirror)(const std::string&, int) = nullptr;
+void ConsoleSetMirror(void (*fn)(const std::string&, int)) { g_consoleMirror = fn; }
+
 void ConsoleLog(const std::string& msg, int level) {
     if (level < 0) level = 0;
     if (level > 2) level = 2;
@@ -127,6 +130,7 @@ void ConsoleLog(const std::string& msg, int level) {
     g_model.Add(ToLevel(level), text, category, src);
     if (g_model.ConsumePauseRequest()) g_paused = true;
     RefreshCounts();
+    if (g_consoleMirror) g_consoleMirror(msg, level);
 }
 
 void ConsoleClear() {
@@ -135,7 +139,7 @@ void ConsoleClear() {
 }
 
 #ifdef OKAY_HAVE_OKAYUI
-// The Console panel drawn by OkayUI (Edit > Preferences > UI backend, or OKAY_UI_BACKEND=okayui). The ImGui window stays: it
+// The Console panel drawn by OkayUI (View > Rendering & Performance > UI backend, or OKAY_UI_BACKEND=okayui). The ImGui window stays: it
 // is the dock tab, the title with the counts and the close box, and it hands its free area to OkayUI as one rectangle.
 namespace {
 okayuiscreens::ConsoleViewState g_okayView;
@@ -146,7 +150,7 @@ void DrawConsoleOkayUI(const char* title) {
     if (g_model.ConsumePauseRequest()) g_paused = true;
     if (g_preferPending) { g_okayView.preferCategory = g_preferCategory; g_preferPending = false; }
     if (ImGui::Begin(title, &g_showConsole, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const ImVec2 p = okayuihost::ToMainWindowPixels(ImGui::GetCursorScreenPos());   // OkayUI's pixels, not ImGui's desktop ones
         ImVec2 a = ImGui::GetContentRegionAvail();
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
         ImGui::InvisibleButton("##okayui_console", a);   // the rectangle: an ImGui item, so ImGui does not move or scroll the window under it
@@ -183,21 +187,25 @@ void DrawConsole() {
     static int catSel = 0;
 
     char conTitle[64];
+#ifdef OKAYUI_STABLE_PANEL_TITLES   // window mode (editor/OkayUIHostPanels.cpp): the dock layout names a window by its title, so the title must not carry the counts
+    std::snprintf(conTitle, sizeof(conTitle), "Console###Console");
+#else
     if (g_consoleCounts[2] > 0)
         std::snprintf(conTitle, sizeof(conTitle), "Console  [x %d]###Console", g_consoleCounts[2]);
     else if (g_consoleCounts[1] > 0)
         std::snprintf(conTitle, sizeof(conTitle), "Console  [! %d]###Console", g_consoleCounts[1]);
     else
         std::snprintf(conTitle, sizeof(conTitle), "Console###Console");
+#endif
     g_model.SetPauseOnError(g_errorPause);
     if (g_model.ConsumePauseRequest()) g_paused = true;
 
 #ifdef OKAY_HAVE_OKAYUI
     // The opt-in OkayUI backend: the same panel, drawn by OkayUI inside this window. OkayUI draws over every ImGui window, so
-    // while an ImGui popup (a menu, a modal) is over the panel the Dear ImGui version below is drawn instead.
+    // while an ImGui popup (a menu, a modal) or a window in front is over the panel the Dear ImGui version below is drawn instead.
     if (UseOkayUIBackend()) {
         const ImGuiWindow* cw = ImGui::FindWindowByName(conTitle);
-        if (!cw || !okayuihost::PopupCoversRect(cw->Pos.x, cw->Pos.y, cw->Size.x, cw->Size.y)) {
+        if (!cw || !okayuihost::CoveredInImGui(cw, cw->Pos.x, cw->Pos.y, cw->Size.x, cw->Size.y)) {
             DrawConsoleOkayUI(conTitle);
             return;
         }

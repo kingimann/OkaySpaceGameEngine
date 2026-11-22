@@ -1,6 +1,6 @@
 #include "okay/Components/Interactable.hpp"
-#include "okay/Input/Input.hpp"
-#include "okay/Input/InputActions.hpp"
+#include "okay/Components/ItemPickup.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -30,14 +30,15 @@ void InteractionSensor::Update(float dt) {
     const float hold = it->HoldSeconds();
     if (hold <= 0.0f) {
         m_progress = 0.0f; m_held = 0.0f;
-        if (!interact::Blocked() && interact::Pressed('e')) { interact::Block(); it->Interact(ctx); }
+        if (!ItemPickup::InteractIsBlocked() && InteractPressed()) { ItemPickup::BlockInteract(); it->Interact(ctx); }
         return;
     }
-    const bool down = InputActions::Get("Interact") || Input::GetKey('e');
-    if (!down || interact::Blocked()) { m_held = 0.0f; m_progress = 0.0f; return; }
+    if (!InteractHeld() || ItemPickup::InteractIsBlocked()) { m_held = 0.0f; m_progress = 0.0f; return; }
     m_held += dt;
     m_progress = m_held / hold;
-    if (m_held >= hold) { m_held = 0.0f; m_progress = 0.0f; interact::Block(); it->Interact(ctx); }
+    if (m_held >= hold) { m_held = 0.0f; m_progress = 0.0f; ItemPickup::BlockInteract(); it->Interact(ctx); }
 }
+
+void InteractionSensor::LateUpdate(float) { ItemPickup::ClearInteractBlock(); }
 
 } // namespace okay

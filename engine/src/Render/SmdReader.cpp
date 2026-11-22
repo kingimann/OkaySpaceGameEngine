@@ -1,7 +1,7 @@
 // Our own SMD (Valve "Studiomdl Data", text) reader: a skeleton, a skinned triangle mesh and a skeletal animation.
 // Written from the public description of the format (the Valve Developer Community's SMD page) and of Valve's published
 // math library for the Euler angle convention. Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and
-// docs/own_smd_reader.md.
+// docs/content/model_readers.md.
 #include "TextReaderUtil.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
@@ -11,6 +11,7 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -65,14 +66,95 @@ struct Reader {
     int dupBoneIds = 0;
     std::unordered_map<int, int> boneOfId;        // SMD bone id -> index in `bones`
 
-    static std::string StripComment(const std::string& s) {
+    static std::string_view StripComment(std::string_view s) {
         const std::size_t p = s.find("//");
-        return p == std::string::npos ? s : s.substr(0, p);
+        return p == std::string_view::npos ? s : s.substr(0, p);
+    }
+
+    // ---- fast paths for the lines that make up nearly all of a big file ----
+    // A triangle vertex line or a bone pose line with the usual layout is read straight from the text (LineScan: the same
+    // tokens and numbers as SplitInto, ToInt and ToFloat). No '/' may appear in such a line (a "//" comment is the general
+    // path's job: every accepted token is a number). Nothing is changed unless the whole line reads and no limit is
+    // reached; otherwise the line goes the general way, which reports it exactly as before.
+    int curMatIdx = -1;   // the index of curMat once a triangle has used it (-1: look it up)
+    bool FastVertex(std::string_view raw, int& triState, const std::string& curMat, std::size_t& triCount) {
+        LineScan sc{raw.data(), raw.data() + raw.size()};
+        Corner c;
+        long long b = 0;
+        float v[8];
+        int extra = 0;   // links past the 4 strongest (counted only once the line has read)
+        if (!sc.Int(b)) return false;
+        for (float& x : v) if (!sc.Flt(x)) return false;
+        if (!sc.End()) {   // a bone link list
+            long long nl = 0;
+            if (!sc.Int(nl) || nl < 0 || nl > 64) return false;
+            int kept = 0;
+            for (long long k = 0; k < nl; ++k) {
+                long long lb = 0; float w = 0;
+                if (!sc.Int(lb) || !sc.Flt(w)) return false;
+                if (w <= 0) continue;
+                if (kept < 4) { c.linkBone[kept] = (int)lb; c.linkWt[kept] = w; ++kept; }
+                else {
+                    ++extra;
+                    int mn = 0; for (int q = 1; q < 4; ++q) if (c.linkWt[q] < c.linkWt[mn]) mn = q;   // keep the 4 strongest
+                    if (w > c.linkWt[mn]) { c.linkBone[mn] = (int)lb; c.linkWt[mn] = w; }
+                }
+            }
+            if (!sc.End()) return false;
+            c.nlinks = kept;
+        }
+        if (raw.find('/') != std::string_view::npos) return false;
+        c.bone = (int)b;
+        c.p[0] = v[0]; c.p[1] = v[1]; c.p[2] = v[2]; c.n[0] = v[3]; c.n[1] = v[4]; c.n[2] = v[5]; c.uv[0] = v[6]; c.uv[1] = v[7];
+        if (triState == 1) {
+            if (triCount >= kMaxTriangles || (curMatIdx < 0 && !matIndex.count(curMat) && matNames.size() >= kMaxMaterials)) return false;
+            if (curMatIdx < 0) {
+                auto it = matIndex.find(curMat);
+                if (it == matIndex.end()) {
+                    curMatIdx = (int)matNames.size(); matNames.push_back(curMat); matIndex[curMat] = curMatIdx;
+                } else curMatIdx = it->second;
+            }
+            triMat.push_back(curMatIdx);
+            ++triCount;
+        }
+        extraLinks += extra;
+        corners.push_back(c);
+        triState = triState == 3 ? 0 : triState + 1;
+        return true;
+    }
+    // The material line before each triangle: the whole line, trimmed. A line with '/' or a quote, an empty line and "end" go
+    // the general way.
+    bool FastMaterial(std::string_view raw, int& triState, std::string& curMat) {
+        if (raw.find_first_of("/\"") != std::string_view::npos) return false;
+        std::size_t a = 0, b = raw.size();
+        while (a < b && IsWs(raw[a])) ++a;
+        while (b > a && IsWs(raw[b - 1])) --b;
+        const std::string_view v = raw.substr(a, b - a);
+        if (v.empty() || (v.size() == 3 && Lower(std::string(v)) == "end")) return false;
+        if (v != curMat) { curMat.assign(v.data(), v.size()); curMatIdx = -1; }
+        triState = 1;
+        return true;
+    }
+    // "id px py pz rx ry rz" in a skeleton section after a time line
+    bool FastPose(std::string_view raw, int curTime, std::size_t& keyCount) {
+        LineScan sc{raw.data(), raw.data() + raw.size()};
+        long long id = 0;
+        float v[6];
+        if (!sc.Int(id)) return false;
+        for (float& x : v) if (!sc.Flt(x)) return false;
+        if (!sc.End() || raw.find('/') != std::string_view::npos || keyCount + 1 > kMaxKeys) return false;
+        ++keyCount;
+        auto b = boneOfId.find((int)id);
+        if (b == boneOfId.end()) { ++droppedBoneEntries; return true; }
+        Pose& p = frames[curTime][(int)id];
+        p.px = v[0]; p.py = v[1]; p.pz = v[2]; p.rx = v[3]; p.ry = v[4]; p.rz = v[5];
+        return true;
     }
 
     bool Parse(const std::string& text) {
         Lines lines(text);
-        std::string raw;
+        std::string_view raw;      // views into the text: no copy per line
+        std::vector<std::string_view> tk;
         enum Sec { None, Nodes, Skeleton, Triangles, Skip } sec = None;
         int curTime = -1;
         bool haveTime = false;
@@ -82,13 +164,16 @@ struct Reader {
         bool sawVersion = false, sawAnything = false;
         while (lines.Next(raw)) {
             const std::size_t ln = lines.number;
-            const std::string line = StripComment(raw);
-            std::vector<std::string> tk = Split(line);
+            if (sec == Triangles && triState != 0 && FastVertex(raw, triState, curMat, triCount)) continue;
+            if (sec == Skeleton && haveTime && FastPose(raw, curTime, keyCount)) continue;
+            if (sec == Triangles && triState == 0 && FastMaterial(raw, triState, curMat)) continue;
+            const std::string_view line = StripComment(raw);
+            SplitInto(line, tk);
             if (tk.empty()) continue;
-            const std::string kw = Lower(tk[0]);
+            const std::string kw = Lower(std::string(tk[0]));
             if (sec == None || (sec != Triangles && (kw == "end" || kw == "nodes" || kw == "skeleton" || kw == "triangles" || kw == "version" || kw == "vertexanimation") && tk.size() <= 2)) {
                 // section structure
-                if (kw == "version") { if (tk.size() >= 2) { long long v; if (!ToInt(tk[1], v) || v != 1) return Fail("unsupported version " + tk[1], ln); } sawVersion = true; sec = None; continue; }
+                if (kw == "version") { if (tk.size() >= 2) { long long v; if (!ToInt(tk[1], v) || v != 1) return Fail("unsupported version " + std::string(tk[1]), ln); } sawVersion = true; sec = None; continue; }
                 if (kw == "nodes") { sec = Nodes; sawAnything = true; continue; }
                 if (kw == "skeleton") { sec = Skeleton; haveTime = false; sawAnything = true; continue; }
                 if (kw == "triangles") { sec = Triangles; triState = 0; sawAnything = true; continue; }
@@ -139,10 +224,11 @@ struct Reader {
                 if (kw == "end" && triState == 0 && tk.size() == 1) { sec = None; continue; }
                 if (triState == 0) {
                     // the material is the whole line (it may contain spaces); quotes are not used here
-                    std::string m = line;
+                    std::string m(line);
                     while (!m.empty() && IsWs(m.back())) m.pop_back();
                     std::size_t a = 0; while (a < m.size() && IsWs(m[a])) ++a;
                     curMat = m.substr(a);
+                    curMatIdx = -1;
                     triState = 1;
                     continue;
                 }
@@ -266,7 +352,7 @@ struct Reader {
                 allBones.resize(nb);
                 for (std::size_t i = 0; i < nb; ++i) { allBones[i].name = nodeName[i]; allBones[i].inverseBind = world[i].Inverse(); }
             }
-            struct PartAcc { ImportedPart part; std::unordered_map<std::string, int> weld; bool badNormal = false; };
+            struct PartAcc { ImportedPart part; WeldMap<16> weld; bool badNormal = false; };   // key: position, normal, uv, joints, weights
             std::vector<PartAcc> parts(matNames.size());
             for (std::size_t t = 0; t < ntri; ++t) {
                 PartAcc& pa = parts[(std::size_t)triMat[t]];
@@ -298,17 +384,14 @@ struct Reader {
                     const float f[8] = {c.p[0], c.p[1], c.p[2], nrm.x, nrm.y, nrm.z, c.uv[0], c.uv[1]};
                     for (int q = 0; q < 8; ++q) std::memcpy(&key[q], &f[q], 4);
                     for (int q = 0; q < 4; ++q) { key[8 + q] = (std::uint32_t)ji[(std::size_t)q]; std::memcpy(&key[12 + q], &jw[(std::size_t)q], 4); }
-                    const std::string ks((const char*)key, sizeof key);
-                    auto it = pa.weld.find(ks);
-                    int vi;
-                    if (it == pa.weld.end()) {
-                        vi = (int)pa.part.mesh.vertices.size();
+                    bool added = false;
+                    const int vi = pa.weld.Get(key, (int)pa.part.mesh.vertices.size(), added);
+                    if (added) {
                         pa.part.mesh.vertices.push_back(Vec3{c.p[0], c.p[1], c.p[2]});
                         pa.part.mesh.normals.push_back(nrm);
                         pa.part.mesh.uvs.push_back(Vec2{c.uv[0], 1.0f - c.uv[1]});
                         if (skinned) { pa.part.jointIdx.push_back(ji); pa.part.jointWt.push_back(jw); }
-                        pa.weld.emplace(ks, vi);
-                    } else vi = it->second;
+                    }
                     pa.part.mesh.triangles.push_back(vi);
                 }
             }
@@ -370,11 +453,12 @@ struct Reader {
 } // namespace smd
 } // namespace
 
-bool ReadSmdBuffer(const std::string& textIn, const std::string& baseDir, ImportedModel& out, std::string* err) {
+// The text is taken by value: ReadSmdFile hands its bytes over (no second copy of the file), ReadSmdBuffer copies.
+static bool ReadSmdOwned(std::string text, const std::string& baseDir, ImportedModel& out, std::string* err) {
     out = ImportedModel{};
     smd::Reader r;
     r.baseDir = baseDir;
-    std::string text = textIn, why;
+    std::string why;
     bool conv = false;
     bool ok = detail::txt::NormalizeEncoding(text, conv, why, smd::kMaxFileBytes);
     if (!ok) r.err = "SMD: " + why;
@@ -389,6 +473,10 @@ bool ReadSmdBuffer(const std::string& textIn, const std::string& baseDir, Import
     return true;
 }
 
+bool ReadSmdBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err) {
+    return ReadSmdOwned(text, baseDir, out, err);
+}
+
 bool ReadSmdFile(const std::string& path, ImportedModel& out, std::string* err) {
     out = ImportedModel{};
     std::string bytes;
@@ -396,7 +484,7 @@ bool ReadSmdFile(const std::string& path, ImportedModel& out, std::string* err) 
     std::string dir;
     const std::size_t sl = path.find_last_of("/\\");
     if (sl != std::string::npos) dir = path.substr(0, sl + 1);
-    return ReadSmdBuffer(bytes, dir, out, err);
+    return ReadSmdOwned(std::move(bytes), dir, out, err);
 }
 
 } // namespace okay

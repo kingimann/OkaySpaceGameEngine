@@ -1,6 +1,6 @@
 #pragma once
 // Accessibility options a player sets once and every part of the game honours
-// (docs/accessibility.md): text size, high contrast, reduced motion and flashing, colour
+// (docs/engine/accessibility.md): text size, high contrast, reduced motion and flashing, colour
 // vision correction, subtitle and caption settings, hold versus toggle, aim assist and
 // screen-reader hints.
 //
@@ -121,6 +121,8 @@ public:
     static Color TextColor(const Color& foreground, const Color& background);
     /// Whether this action toggles instead of holding.
     static bool ToggleFor(const std::string& action);
+    /// True when any action toggles (so the per-frame action loop can skip the lookup when none does).
+    static bool AnyToggle();
     /// 0 .. 1 for the player's aim assist level.
     static float AimAssistStrength();
 

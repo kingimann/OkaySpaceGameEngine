@@ -6,6 +6,28 @@
 
 namespace okay::platform {
 
+void Painter::GeometryRaw(ui2d::Tex t, const float* xy, int xyStride, const std::uint8_t* rgba, int rgbaStride, const float* uv, int uvStride,
+                          int numVerts, const void* indices, int numIndices, int indexSize) {
+    if (!xy || !rgba || numVerts <= 0 || numVerts > (1 << 24)) return;
+    if (indices && indexSize != 1 && indexSize != 2 && indexSize != 4) return;
+    std::vector<ui2d::Vertex> v((size_t)numVerts);
+    for (int i = 0; i < numVerts; ++i) {
+        const float* p = (const float*)((const std::uint8_t*)xy + (size_t)i * (size_t)xyStride);
+        const std::uint8_t* c = rgba + (size_t)i * (size_t)rgbaStride;
+        v[(size_t)i].position.x = p[0]; v[(size_t)i].position.y = p[1];
+        v[(size_t)i].color.r = c[0]; v[(size_t)i].color.g = c[1]; v[(size_t)i].color.b = c[2]; v[(size_t)i].color.a = c[3];
+        if (uv) { const float* q = (const float*)((const std::uint8_t*)uv + (size_t)i * (size_t)uvStride); v[(size_t)i].tex_coord.x = q[0]; v[(size_t)i].tex_coord.y = q[1]; }
+        else { v[(size_t)i].tex_coord.x = 0; v[(size_t)i].tex_coord.y = 0; }
+    }
+    if (!indices || numIndices <= 0) { Geometry(t, v.data(), numVerts, nullptr, 0); return; }
+    std::vector<int> idx((size_t)numIndices);
+    for (int i = 0; i < numIndices; ++i)
+        idx[(size_t)i] = indexSize == 1 ? (int)((const std::uint8_t*)indices)[i]
+                       : indexSize == 2 ? (int)((const std::uint16_t*)indices)[i] : (int)((const std::uint32_t*)indices)[i];
+    Geometry(t, v.data(), numVerts, idx.data(), numIndices);
+}
+
+
 void Painter::ReleaseCachedTextures() {
     for (auto& kv : m_cache) if (kv.second) DestroyTexture(kv.second);
     m_cache.clear();
@@ -29,9 +51,21 @@ ui2d::Tex Painter::LoadTexture(const std::string& path) {
     }
     TextureDesc d;
     d.width = img.Width(); d.height = img.Height();
+    d.scale = m_imgLinear ? ScaleMode::Linear : ScaleMode::Nearest;
     ui2d::Tex tex = CreateTexture(d, (const std::uint8_t*)img.Data());
     m_cache[path] = tex;
     return tex;
+}
+
+void Painter::SetImageFilter(bool linear) {
+    if (linear == m_imgLinear) return;
+    m_imgLinear = linear;
+    for (auto& kv : m_cache)
+        if (kv.second) SetTextureScaleMode(kv.second, linear ? ScaleMode::Linear : ScaleMode::Nearest);
+}
+
+void Painter::SetTextureFilter(ui2d::Tex t, bool linear) {
+    if (t) SetTextureScaleMode(t, linear ? ScaleMode::Linear : ScaleMode::Nearest);
 }
 
 ui2d::Tex Painter::FontAtlas(okay::TtfFont* f) {

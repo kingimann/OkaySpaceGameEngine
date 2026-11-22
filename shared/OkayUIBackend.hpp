@@ -85,4 +85,11 @@ inline int Source(const char* envValue, const std::string& settingValue, bool de
     return 0;
 }
 
+/// The Inspector drawn by OkayUI (a preview, off by default; docs/ui/own_ui_toolkit.md sections 14-22). It needs the OkayUI backend
+/// (`b`) and one more deliberate act on top: the developer flag OKAY_DEV, or OKAY_UI_INSPECTOR (what the Settings > Experimental item
+/// "OkayUI Inspector" sets). The OkayUI backend alone (the "OkayUI screens" item) leaves the Inspector to Dear ImGui.
+inline bool InspectorOn(Backend b, const char* okayDevEnv, const char* inspectorEnv) {
+    return b == Backend::OkayUI && (DevMode(okayDevEnv) || DevMode(inspectorEnv));
+}
+
 } // namespace okayuibackend

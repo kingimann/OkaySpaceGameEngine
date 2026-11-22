@@ -9,6 +9,7 @@
 #include "../editor/ProjectUpgrade.hpp"
 #include "../editor/ProjectState.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <map>
@@ -69,7 +70,7 @@ Tree Kept(Tree t) {
     return t;
 }
 // The backup folder's tree without the manifest the editor adds.
-Tree WithoutManifest(Tree t) { t.erase(".okay/upgrade_backup.txt"); return t; }
+Tree WithoutManifest(Tree t) { t.erase(".okay/upgrade_backup.txt"); t.erase(".okay/upgrade_report.txt"); return t; }
 
 std::string Current(const std::string& name, int objects) {
     Scene s(name);
@@ -176,6 +177,17 @@ int main() {
         WriteFile(td.path / "loose" / "Desktop.okayscene", "x");
         CHECK(ProjectRootForScene((td.path / "loose" / "Desktop.okayscene").string()).empty());                // a loose file is no project
         CHECK(ProjectRootForScene("").empty());
+        // The upgrade window asks about the open PROJECT by its folder. Going through the open scene's path upgraded the wrong
+        // project (or none) whenever that scene was a loose file somewhere else.
+        CHECK(ProjectRootForScene(SceneKeyForProject(root)) == root);
+        CHECK(ProjectRootForScene(SceneKeyForProject(root + "/")) == root);
+        CHECK(SceneKeyForProject((td.path / "loose").string()).empty() && SceneKeyForProject("").empty());
+        {
+            TempDir flat;
+            WriteFile(flat.path / "project.okayproj", "company=x\n");
+            WriteFile(flat.path / "Main.okayscene", "x");
+            CHECK(ProjectRootForScene(SceneKeyForProject(flat.path.string())) == flat.path.string());   // the old flat layout (no Assets folder)
+        }
         CHECK(IsProjectRoot(p.root) && !IsProjectRoot(td.path / "loose") && !IsProjectRoot(td.path / "nowhere"));
         CHECK(RootKey(root) == RootKey(root + "/") && RootKey(root) == RootKey((p.root / "Assets" / "..").string()));
     }
@@ -224,11 +236,11 @@ int main() {
         Proj p(td.path);
         const Tree before = Snap(p.root);
         UpgradeJob job(p.Opts(""));
-        CHECK(job.progress().phase == Phase::Scanning && !job.Finished());
+        CHECK(job.progress().phase == okayup::Phase::Scanning && !job.Finished());
         job.Run();
         const Result& r = job.result();
         if (!r.ok) std::cerr << "  upgrade failed: " << r.error << "\n";
-        CHECK(r.ok && job.Finished() && r.error.empty() && !r.cancelled && job.progress().phase == Phase::Done);
+        CHECK(r.ok && job.Finished() && r.error.empty() && !r.cancelled && job.progress().phase == okayup::Phase::Done);
         CHECK(r.scenes == 4 && r.prefabs == 2);                                  // every scene and prefab was loaded
         CHECK(r.rewritten == 3);                                                 // ... and only the ones that had to change were written
         CHECK(r.changed == (std::vector<std::string>{kChanged1, kChanged2, kChanged3, "project.okayproj"}) ||
@@ -351,7 +363,7 @@ int main() {
             UpgradeJob j(fo);
             j.Run();
             const Result& r = j.result();
-            const bool bad = r.ok || Snap(p.root) != before || !NoPartial(p.base) || r.error.empty() || r.restoreNote.empty() || !r.rolledBack || j.progress().phase != Phase::Failed;
+            const bool bad = r.ok || Snap(p.root) != before || !NoPartial(p.base) || r.error.empty() || r.restoreNote.empty() || !r.rolledBack || j.progress().phase != okayup::Phase::Failed;
             if (bad) std::cerr << "  injected failure #" << i << " at " << calls[i].first << " " << calls[i].second << ": ok=" << r.ok << " error='" << r.error
                                << "' rolledBack=" << r.rolledBack << " tree-equal=" << (Snap(p.root) == before) << " partial-free=" << NoPartial(p.base) << "\n";
             CHECK(!bad);                                                          // the project is exactly as it was, and the reason is given
@@ -543,7 +555,7 @@ int main() {
             ++steps;
         }
         CHECK(j.result().ok && monotone && countsOk && steps > 20);                  // many small steps: the UI is never held for a big file
-        CHECK(j.progress().fraction > 0.999 && j.progress().phase == Phase::Done);
+        CHECK(j.progress().fraction > 0.999 && j.progress().phase == okayup::Phase::Done);
         CHECK(WithoutManifest(Snap(j.result().backupDir)) == Kept(before));         // the 3 MB binary file arrived whole, in chunks
         CHECK(!j.Step(std::chrono::milliseconds(5)));                                // finished jobs stay finished
 
@@ -552,7 +564,7 @@ int main() {
         const Tree b2 = Snap(q.root);
         UpgradeJob c(q.Opts("2.850.0"));
         for (int i = 0; i < 16; ++i) c.Step(std::chrono::milliseconds(0));          // into the middle of the copy
-        CHECK(!c.Finished() && c.progress().phase == Phase::Backup && c.progress().done > 0 && c.progress().total > 0);
+        CHECK(!c.Finished() && c.progress().phase == okayup::Phase::Backup && c.progress().done > 0 && c.progress().total > 0);
         CHECK(fs::exists(fs::path(c.result().backupDir.empty() ? (q.base / "My Game \xC3\xBC (backup v2.850.0).partial").string() : c.result().backupDir)));
         c.Cancel();
         c.Run();
@@ -1027,6 +1039,134 @@ int main() {
             CHECK(g.prompt().kind == PromptKind::Done);
             CHECK(!fs::exists(fs::path(g.prompt().result.backupDir) / "Export") && ReadFile(p.root / "project.okayproj") == "company=Shared\nengine_version=2.855.0\n");
         }
+    }
+
+    // ---- the upgrade report, and nothing lost without saying so -------------------------------------------------------
+    RUN_SUITE("CheckSceneFile: what one file's upgrade changes and loses");
+    {
+        FileCheck same = CheckSceneFile(Current("Now", 3));
+        CHECK(same.ok && !same.changed && same.losses.empty() && same.objectsBefore == 3 && same.objectsAfter == 3);
+        FileCheck chars = CheckSceneFile(CharacterScene(1));
+        CHECK(chars.ok && chars.changed && chars.fromVersion == 1 && chars.toVersion == SceneMigration::CurrentVersion());
+        CHECK(chars.losses.empty() && chars.objectsBefore == chars.objectsAfter && chars.objectsAfter >= 1 && !chars.log.empty());
+        // records a newer build wrote are carried through the engine's round trip
+        std::string withFuture = CharacterScene(1);
+        withFuture.insert(withFuture.find("  active"), "  futurefield 1 2 3\n");
+        withFuture += "futurerecord \"kept\"\n";
+        FileCheck fut = CheckSceneFile(withFuture);
+        CHECK(fut.ok && fut.changed && fut.unknownBefore == 2 && fut.unknownKept == 2 && fut.losses.empty());
+        CHECK(Has(fut.text, "futurefield 1 2 3") && Has(fut.text, "futurerecord \"kept\""));
+        // ...but one bigger than the loader keeps (64 KB) does not survive it: the loss is named, not silent
+        std::string huge = CharacterScene(1);
+        huge.insert(huge.find("  active"), "  futureblob " + std::string(70000, 'x') + "\n");
+        FileCheck lossy = CheckSceneFile(huge);
+        CHECK(lossy.ok && lossy.changed && lossy.unknownBefore == 1 && lossy.unknownKept == 0);
+        CHECK(lossy.losses.size() == 1 && Has(lossy.losses[0], "1 record this version doesn't know could not be kept"));
+        // a file that is not rewritten loses nothing, whatever its loader keeps
+        std::string hugeNow = Current("Now", 1);
+        hugeNow.insert(hugeNow.find("  active"), "  futureblob " + std::string(70000, 'x') + "\n");
+        FileCheck kept = CheckSceneFile(hugeNow);
+        CHECK(kept.ok && !kept.changed && kept.losses.empty() && kept.text == hugeNow);
+        // refusals keep their reasons
+        FileCheck newer = CheckSceneFile("okayscene 99\nname \"Future\"\n");
+        CHECK(!newer.ok && !newer.loadFailed && Has(newer.error, "newer"));
+        FileCheck junk = CheckSceneFile("this is not a scene\n");
+        CHECK(!junk.ok && !junk.error.empty());
+    }
+
+    RUN_SUITE("the upgrade writes a report into the backup and shows what it lost");
+    {
+        TempDir td;
+        Proj p(td.path, 64 * 1024);
+        std::string huge = CharacterScene(1);
+        huge.insert(huge.find("  active"), "  futureblob " + std::string(70000, 'x') + "\n");
+        WriteFile(p.root / "Assets" / "Scenes" / "Lossy.okayscene", huge);
+        UpgradeJob j(p.Opts("2.850.0"));
+        j.Run();
+        const Result& r = j.result();
+        CHECK(r.ok && !r.reportPath.empty() && fs::exists(r.reportPath));
+        CHECK(fs::path(r.reportPath).parent_path().parent_path() == fs::path(r.backupDir));     // <backup>/.okay/upgrade_report.txt
+        CHECK(r.losses.size() == 1 && Has(r.losses[0], "Assets/Scenes/Lossy.okayscene") && Has(r.losses[0], "could not be kept"));
+        bool warned = false;
+        for (const std::string& w : r.warnings) if (Has(w, "Lossy.okayscene") && Has(w, "backup")) warned = true;
+        CHECK(warned);                                                               // the result window shows the warnings in amber
+        const std::string rep = ReadFile(r.reportPath);
+        CHECK(Has(rep, "From:      v2.850.0") && Has(rep, "To:        v2.855.0") && Has(rep, "Backup:    "));
+        CHECK(Has(rep, "Lost in the upgrade") && Has(rep, "Lossy.okayscene: 1 record this version doesn't know could not be kept"));
+        CHECK(Has(rep, "- " + kChanged1) && Has(rep, "- " + kChanged2) && Has(rep, "- " + kChanged3) && Has(rep, "- project.okayproj"));
+        CHECK(Has(rep, "okayscene 1 -> 2") && Has(rep, "Restore..."));
+        CHECK(Snap(p.root).count(".okay/upgrade_report.txt") == 0);                  // the project itself gets no report: only the backup
+        // a clean project's report says nothing was lost
+        TempDir t2;
+        Proj q(t2.path, 64 * 1024);
+        UpgradeJob j2(q.Opts(""));
+        j2.Run();
+        CHECK(j2.result().ok && j2.result().losses.empty());
+        const std::string rep2 = ReadFile(j2.result().reportPath);
+        CHECK(Has(rep2, "an unknown version") && Has(rep2, "Nothing. Every object and every record"));
+        // the backup made before opening a newer project changes nothing, so it has no report
+        TempDir t3;
+        Proj n(t3.path, 64 * 1024);
+        UpgradeJob j3(n.Opts("2.900.0", false));
+        j3.Run();
+        CHECK(j3.result().ok && j3.result().reportPath.empty() && !fs::exists(fs::path(j3.result().backupDir) / ".okay" / "upgrade_report.txt"));
+        // the text itself, for a fixed input
+        Options o;
+        o.projectDir = "/p/Game"; o.fromVersion = "2.1.0"; o.toVersion = "2.855.0";
+        Result fake;
+        fake.scenes = 2; fake.prefabs = 0; fake.rewritten = 1;
+        fake.changed = {"Assets/a.okayscene", "project.okayproj"};
+        fake.log = {"Assets/a.okayscene: okayscene 1 -> 2 (character-animator): applied"};
+        const std::string t = UpgradeReportText(o, fake, "");
+        CHECK(Has(t, "Checked 2 scenes and 0 prefabs; 1 file rewritten.") && !Has(t, "Made:") && !Has(t, "Warnings"));
+    }
+
+    RUN_SUITE("corpus: every scene and prefab this repository ships, old formats included, upgrades with nothing lost");
+    {
+        // The shipped examples and test scenes were written by many older versions of the editor (format 1 files among
+        // them); tests/data/upgrade_corpus adds hand-made ones for what the examples lack (a version 2 switchable
+        // player, records from a newer build, a file from the future). Every one must upgrade, load, lose nothing and
+        // come out stable (upgrading the result again changes nothing).
+        std::vector<fs::path> files;
+        for (const char* dir : {"examples", "tests", "assets"}) {
+            std::error_code ec;
+            const fs::path base = fs::path(OKAY_SOURCE_DIR) / dir;
+            for (fs::recursive_directory_iterator it(base, ec), end; !ec && it != end; it.increment(ec)) {
+                const std::string ext = it->path().extension().string();
+                if (it->is_regular_file(ec) && (ext == ".okayscene" || ext == ".okayprefab")) files.push_back(it->path());
+            }
+        }
+        std::sort(files.begin(), files.end());
+        int byVersion[8] = {0}, upgraded = 0, refused = 0;
+        for (const fs::path& f : files) {
+            const std::string text = ReadFile(f);
+            const std::string rel = f.lexically_relative(OKAY_SOURCE_DIR).generic_string();
+            FileCheck fc = CheckSceneFile(text);
+            const bool future = rel.find("upgrade_corpus/future_") != std::string::npos;
+            if (future) {                                                            // newer than this build: refused, never rewritten
+                if (fc.ok || !Has(fc.error, "newer")) std::cerr << "  " << rel << " should have been refused as newer\n";
+                CHECK(!fc.ok && Has(fc.error, "newer"));
+                ++refused;
+                continue;
+            }
+            if (!fc.ok || !fc.losses.empty()) std::cerr << "  " << rel << ": " << (fc.ok ? fc.losses[0] : fc.error) << "\n";
+            CHECK(fc.ok && fc.losses.empty());
+            if (!fc.ok) continue;
+            if (fc.fromVersion >= 0 && fc.fromVersion < 8) ++byVersion[fc.fromVersion];
+            if (fc.changed) ++upgraded;
+            FileCheck again = CheckSceneFile(fc.text);
+            if (!again.ok || again.changed) std::cerr << "  " << rel << ": a second upgrade still changes it\n";
+            CHECK(again.ok && !again.changed && again.objectsAfter == fc.objectsAfter);
+        }
+        std::cout << "  corpus: " << files.size() << " files; format 1: " << byVersion[1] << ", 2: " << byVersion[2] << ", 3: " << byVersion[3]
+                  << "; " << upgraded << " rewritten, " << refused << " refused as newer\n";
+        CHECK(files.size() >= 100 && byVersion[1] >= 20 && byVersion[2] >= 1 && byVersion[3] >= 50 && refused >= 1);
+        // the hand-made version 2 player gets both view controllers through the loader's upgrade
+        FileCheck pv = CheckSceneFile(ReadFile(fs::path(OKAY_SOURCE_DIR) / "tests" / "data" / "upgrade_corpus" / "v2_playerview.okayscene"));
+        CHECK(pv.ok && pv.changed && pv.fromVersion == 2 && pv.losses.empty());
+        // ...and the one with a newer build's records keeps them
+        FileCheck nr = CheckSceneFile(ReadFile(fs::path(OKAY_SOURCE_DIR) / "tests" / "data" / "upgrade_corpus" / "v1_newer_records.okayscene"));
+        CHECK(nr.ok && nr.changed && nr.unknownBefore >= 2 && nr.unknownKept == nr.unknownBefore && nr.losses.empty());
     }
 
     TEST_MAIN_RESULT();

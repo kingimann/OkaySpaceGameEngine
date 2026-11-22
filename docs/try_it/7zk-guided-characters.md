@@ -8,7 +8,7 @@ row: | 7zk | Guided characters (human, robot, creature) with swappable head, hai
 
 **Status.** Tested on Linux (`ctest -R guided_characters`, about 2000 checks: every design of every part sound and non-overlapping, every
 setting at its limits, fuzz, swapping hands, hair, hats, proportions, creature body plans, your edits and your own additions surviving). The page
-was never opened in a real window; nothing ran on Windows. Pictures (`docs/images/guided_modeling/characters_*.png` sheets and
+was never opened in a real window; nothing ran on Windows. Pictures (a picture folder (pictures are no longer stored in the repository) sheets and
 `character_<type>_<design>.png`, 26 files, plus `detail_human.png`) are headless renders by our own small rasteriser, not editor screenshots.
 Humans from Medium up are organic (lofted body, separate face parts); robots and creatures are blocky; spiders and insects have crude legs. Style, hair and clothes pictures: `characters_styles.png` (realistic, stylised low poly, cartoon, blocky at Medium and High) and `characters_hairstyles.png` (13 hairstyles from behind and the side). A human can be given a skeleton and skin weights (see step 8). What is checked: `ctest -R guided_animation`.
 

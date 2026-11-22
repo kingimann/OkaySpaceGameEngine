@@ -18,7 +18,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/MeshRenderer.hpp"
-#include "okay/Components/SurvivalAfflictions.hpp"   // health::Damage / health::Heal
+#include "okay/Components/SurvivalAfflictions.hpp"   // DamageHealthOn / HealOn
 #include "okay/Components/ActionList.hpp"            // ActionList::Vars() (score, flags)
 #include "okay/Core/Game.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -61,7 +61,7 @@ public:
         if (m_taken || !who || who == gameObject) return;
         if (!NoCodeMatches(who, collectorTag)) return;
         ActionList::Vars()[scoreVar] += points;
-        if (heal > 0.0f) health::Heal(who, heal);
+        if (heal > 0.0f) HealOn(who, heal);
         if (respawn) { m_taken = true; m_timer = respawnDelay; SetVisible(false); }
         else if (gameObject && gameObject->scene()) gameObject->scene()->Destroy(gameObject);
     }
@@ -116,7 +116,7 @@ public:
         if (!NoCodeMatches(who, targetTag)) return;
         if (once && m_hitOnce) return;
         if (m_cooldown > 0.0f) return;
-        health::Damage(who, damage);
+        DamageHealthOn(who, damage);
         if (knockback > 0.0f) ApplyKnockback(who);
         m_hitOnce = true;
         m_cooldown = interval;

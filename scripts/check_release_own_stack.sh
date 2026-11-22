@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Refuse to build or ship a RELEASE with our own unreviewed crypto or the own-stack dogfood switch on.
-# (CLAUDE.md rule 18: cryptography cannot be replaced on our word; docs/own_stack_rollout.md.)
+# (CLAUDE.md rule 18: cryptography cannot be replaced on our word; docs/status/own_stack_rollout.md.)
 #
 #   scripts/check_release_own_stack.sh                 check the environment and the cmake arguments after "--"
 #   scripts/check_release_own_stack.sh --cache DIR     also read DIR/CMakeCache.txt (a configured build tree)
@@ -17,12 +17,14 @@
 # in the build.ninja or compile_commands.json (a toolchain file `set(OKAY_OWN_CRYPTO ON)` leaves no cache entry but does
 # reach the compiler as -DOKAY_OWN_CRYPTO).
 #
-# Refused: the environment variables OKAY_OWN_CRYPTO, OKAY_OWN_STACK_CRYPTO_TEST and OKAY_OWN_STACK set to anything
+# OKAY_XBOX_OWN_CRYPTO is the Xbox UWP experiment's own-crypto switch (platform/xbox_uwp/engine/CMakeLists.txt, docs/platform/xbox_uwp.md): it is refused
+# in a release exactly like OKAY_OWN_CRYPTO, in the environment, a cache and a -D argument.
+# Refused: the environment variables OKAY_OWN_CRYPTO, OKAY_OWN_STACK_CRYPTO_TEST, OKAY_OWN_STACK and OKAY_XBOX_OWN_CRYPTO set to anything
 # that is not empty, 0, OFF or NO; and the same names set ON/1/TRUE/YES in a cmake cache or on a -D argument.
 # Exit 0 = fine, 1 = refused (the message names what), 2 = bad use.
 set -u
 
-NAMES="OKAY_OWN_CRYPTO OKAY_OWN_STACK_CRYPTO_TEST OKAY_OWN_STACK"
+NAMES="OKAY_OWN_CRYPTO OKAY_OWN_STACK_CRYPTO_TEST OKAY_OWN_STACK OKAY_XBOX_OWN_CRYPTO"
 
 is_on() {   # a value that means "on" for CMake
     case "$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')" in
@@ -127,24 +129,31 @@ self_test() {
         if [ "$rc" -ne "$want" ]; then echo "SELF-TEST FAIL: $what (exit $rc, wanted $want)" >&2; fails=$((fails + 1)); fi
     }
     local me="$0"
-    expect 0 "clean environment"                      env -u OKAY_OWN_CRYPTO -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_STACK bash "$me"
+    expect 0 "clean environment"                      env -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_STACK bash "$me"
     expect 1 "OKAY_OWN_CRYPTO=1 in the environment"    env OKAY_OWN_CRYPTO=1 bash "$me"
     expect 1 "OKAY_OWN_CRYPTO=ON in the environment"   env OKAY_OWN_CRYPTO=ON bash "$me"
     expect 1 "OKAY_OWN_STACK_CRYPTO_TEST=1"            env OKAY_OWN_STACK_CRYPTO_TEST=1 bash "$me"
     expect 1 "OKAY_OWN_STACK=1"                        env OKAY_OWN_STACK=1 bash "$me"
-    expect 0 "OKAY_OWN_CRYPTO=0 is off"                env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST OKAY_OWN_CRYPTO=0 bash "$me"
-    expect 0 "empty value is off"                      env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST OKAY_OWN_CRYPTO= bash "$me"
-    expect 1 "-DOKAY_OWN_CRYPTO=ON argument"           env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO bash "$me" -- -DCMAKE_BUILD_TYPE=Release -DOKAY_OWN_CRYPTO=ON
-    expect 1 "-DOKAY_OWN_STACK:BOOL=ON argument"       env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO bash "$me" -- -DOKAY_OWN_STACK:BOOL=ON
-    expect 0 "-DOKAY_OWN_CRYPTO=OFF argument"          env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO bash "$me" -- -DOKAY_OWN_CRYPTO=OFF -DOKAY_USE_ASSIMP=ON
+    # the Xbox UWP experiment's own-crypto switch is refused like OKAY_OWN_CRYPTO (environment, -D forms, cache)
+    expect 1 "OKAY_XBOX_OWN_CRYPTO=ON in the environment" env OKAY_XBOX_OWN_CRYPTO=ON bash "$me"
+    expect 1 "OKAY_XBOX_OWN_CRYPTO=1 in the environment"  env OKAY_XBOX_OWN_CRYPTO=1 bash "$me"
+    expect 0 "OKAY_XBOX_OWN_CRYPTO=OFF is off"            env -u OKAY_OWN_CRYPTO -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST OKAY_XBOX_OWN_CRYPTO=OFF bash "$me"
+    expect 1 "-DOKAY_XBOX_OWN_CRYPTO=ON argument"         env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -DOKAY_XBOX_OWN_CRYPTO=ON
+    expect 1 "-D OKAY_XBOX_OWN_CRYPTO:BOOL=ON (space)"    env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -D OKAY_XBOX_OWN_CRYPTO:BOOL=ON
+    expect 0 "-DOKAY_XBOX_OWN_CRYPTO=OFF argument"        env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -DOKAY_XBOX_OWN_CRYPTO=OFF
+    expect 0 "OKAY_OWN_CRYPTO=0 is off"                env -u OKAY_XBOX_OWN_CRYPTO -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST OKAY_OWN_CRYPTO=0 bash "$me"
+    expect 0 "empty value is off"                      env -u OKAY_XBOX_OWN_CRYPTO -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST OKAY_OWN_CRYPTO= bash "$me"
+    expect 1 "-DOKAY_OWN_CRYPTO=ON argument"           env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -DCMAKE_BUILD_TYPE=Release -DOKAY_OWN_CRYPTO=ON
+    expect 1 "-DOKAY_OWN_STACK:BOOL=ON argument"       env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -DOKAY_OWN_STACK:BOOL=ON
+    expect 0 "-DOKAY_OWN_CRYPTO=OFF argument"          env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -DOKAY_OWN_CRYPTO=OFF -DOKAY_USE_ASSIMP=ON
     # --- the -D forms, including a space after -D
-    expect 1 "-D OKAY_OWN_CRYPTO=ON (space after -D)"  env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO bash "$me" -- -D OKAY_OWN_CRYPTO=ON
-    expect 1 "-D OKAY_OWN_STACK:BOOL=ON (space)"       env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO bash "$me" -- -D OKAY_OWN_STACK:BOOL=ON
-    expect 0 "-D OKAY_OWN_CRYPTO=OFF (space) is fine"  env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO bash "$me" -- -D OKAY_OWN_CRYPTO=OFF
-    expect 1 "-DOKAY_USE_SODIUM=OFF argument"          env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO bash "$me" -- -DOKAY_USE_SODIUM=OFF
-    expect 1 "-D OKAY_USE_SODIUM=OFF (space)"          env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO bash "$me" -- -D OKAY_USE_SODIUM=OFF
-    expect 1 "-DOKAY_REQUIRE_SODIUM=OFF argument"      env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO bash "$me" -- -DOKAY_REQUIRE_SODIUM=OFF
-    expect 0 "-DOKAY_REQUIRE_SODIUM=ON argument"       env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO bash "$me" -- -DOKAY_REQUIRE_SODIUM=ON
+    expect 1 "-D OKAY_OWN_CRYPTO=ON (space after -D)"  env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -D OKAY_OWN_CRYPTO=ON
+    expect 1 "-D OKAY_OWN_STACK:BOOL=ON (space)"       env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -D OKAY_OWN_STACK:BOOL=ON
+    expect 0 "-D OKAY_OWN_CRYPTO=OFF (space) is fine"  env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -D OKAY_OWN_CRYPTO=OFF
+    expect 1 "-DOKAY_USE_SODIUM=OFF argument"          env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -DOKAY_USE_SODIUM=OFF
+    expect 1 "-D OKAY_USE_SODIUM=OFF (space)"          env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -D OKAY_USE_SODIUM=OFF
+    expect 1 "-DOKAY_REQUIRE_SODIUM=OFF argument"      env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -DOKAY_REQUIRE_SODIUM=OFF
+    expect 0 "-DOKAY_REQUIRE_SODIUM=ON argument"       env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -DOKAY_REQUIRE_SODIUM=ON
 
     # --- configured trees. mk <name> <cache-lines...>: a tree with those cache lines; ninja <name> <text>: a build.ninja
     mk() { local n="$1"; shift; mkdir -p "$d/$n"; : > "$d/$n/CMakeCache.txt"; for l in "$@"; do echo "$l" >> "$d/$n/CMakeCache.txt"; done; }
@@ -152,13 +161,15 @@ self_test() {
     local good="OKAY_SODIUM_IN_BUILD:INTERNAL=ON OKAY_REQUIRE_SODIUM:BOOL=ON OKAY_USE_SODIUM:BOOL=ON"
     mk good $good; nin "$d/good" '-DOKAY_HAVE_SODIUM -DOKAY_NET_CRYPTO -DSODIUM_STATIC=1'
     printf 'build tests/CMakeFiles/test_x.dir/x.cpp.o: CXX x.cpp\n  DEFINES = -DOKAY_OWN_CRYPTO\n' >> "$d/good/build.ninja"   # a TEST target may define it
-    local cl="env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO bash $me"
+    local cl="env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash $me"
     expect 0 "a build with libsodium (cache + build.ninja)" $cl --cache "$d/good"
     expect 2 "missing cache is a usage error"          $cl --cache "$d/none"
     mk own1 OKAY_SODIUM_IN_BUILD:INTERNAL=ON OKAY_REQUIRE_SODIUM:BOOL=ON OKAY_OWN_CRYPTO:BOOL=ON;  nin "$d/own1" '-DOKAY_HAVE_SODIUM -DOKAY_OWN_CRYPTO' 
     expect 1 "cache with OKAY_OWN_CRYPTO ON"           $cl --cache "$d/own1"
     mk own2 $good OKAY_OWN_STACK:BOOL=ON;                          cp "$d/good/build.ninja" "$d/own2/"
     expect 1 "cache with OKAY_OWN_STACK ON"            $cl --cache "$d/own2"
+    mk ownx $good OKAY_XBOX_OWN_CRYPTO:BOOL=ON;                     cp "$d/good/build.ninja" "$d/ownx/"
+    expect 1 "cache with OKAY_XBOX_OWN_CRYPTO ON"      $cl --cache "$d/ownx"
     mk own3 $good OKAY_OWN_STACK_CRYPTO_TEST:BOOL=ON;              cp "$d/good/build.ninja" "$d/own3/"
     expect 1 "cache with OKAY_OWN_STACK_CRYPTO_TEST ON" $cl --cache "$d/own3"
     # a build WITHOUT libsodium: the cache says so

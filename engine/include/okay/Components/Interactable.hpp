@@ -33,7 +33,7 @@ public:
     /// 0..1 while the key is held for a hold interactable.
     float HoldProgress() const { return m_progress; }
     void Update(float dt) override;
-    void LateUpdate(float) override { interact::ClearBlock(); }   // the press of this frame is spent
+    void LateUpdate(float) override;   // the press of this frame is spent
 private:
     GameObject* m_target = nullptr;
     std::string m_prompt;

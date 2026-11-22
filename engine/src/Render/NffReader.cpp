@@ -3,7 +3,7 @@
 // tet / hex / oct / dod / ico, `tess`), and the "nff" object files of the Sense8 WorldToolKit (a vertex list, polygons by
 // index with `matid`, a `.mat` material table). Written from the public descriptions of both; no code from any other
 // importer. Spheres are subdivided icosahedra, cones and cylinders are tubes with caps; `tess` sets how fine. Bounds-checked,
-// capped, no recursion. See okay/Render/ModelData.hpp and docs/own_nff_reader.md.
+// capped, no recursion. See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"
 #include "SceneRefPath.hpp"
@@ -139,13 +139,13 @@ std::string FixTexture(std::string t, const std::string& baseDir) {
 }
 
 // Cuts "//" comments (Sense8 files) and a whole-line '#' (classic NFF).
-std::string StripComment(const std::string& s, bool sense8) {
+std::string_view StripComment(std::string_view s, bool sense8) {   // a view into s
     const std::size_t a = s.find("//");
-    std::string r = a == std::string::npos ? s : s.substr(0, a);
+    std::string_view r = a == std::string_view::npos ? s : s.substr(0, a);
     if (!sense8) {
         std::size_t i = 0;
         while (i < r.size() && detail::txt::IsWs(r[i])) ++i;
-        if (i < r.size() && r[i] == '#') r.clear();
+        if (i < r.size() && r[i] == '#') r = std::string_view();
     }
     return r;
 }
@@ -155,9 +155,8 @@ bool IsNumber(const std::string& s) { double d; return detail::txt::ToDouble(s, 
 } // namespace nff
 } // namespace
 
-static bool ReadNffImpl(const std::string& input, const std::string& baseDir, ImportedModel& out, std::string* err) {
+static bool ReadNffImpl(std::string text, const std::string& baseDir, ImportedModel& out, std::string* err) {
     using namespace nff;
-    std::string text = input;
     bool converted = false;
     std::string why;
     if (!detail::txt::NormalizeEncoding(text, converted, why, kMaxFileBytes)) return Fail(err, why);
@@ -168,8 +167,8 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
     {
         detail::txt::Lines peek(text);
         while (peek.Next(raw)) {
-            const std::string c = StripComment(raw, true);
-            const auto t = detail::txt::Split(c);
+            const std::string_view c = StripComment(raw, true);
+            const auto t = detail::txt::Split(std::string(c));
             if (t.empty()) continue;
             sense8 = t.size() == 1 && detail::txt::Lower(t[0]) == "nff";
             break;
@@ -198,7 +197,7 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
     };
     auto tokens = [&](std::vector<std::string>& t) -> bool {
         while (lines.Next(raw)) {
-            t = detail::txt::Split(StripComment(raw, sense8));
+            detail::txt::SplitInto(StripComment(raw, sense8), t);   // refills t, reusing its room
             if (!t.empty()) return true;
         }
         return false;
@@ -247,8 +246,8 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
                 p.name = k;
                 std::vector<V3> v;
                 std::vector<std::vector<int>> faces;
+                std::vector<std::array<int, 3>> tr;   // a sphere's triangles (then `faces` stays empty)
                 if (k == "s") {
-                    std::vector<std::array<int, 3>> tr;
                     Icosahedron(v, tr);
                     // subdivide `tess` times; vertices are shared by the edge midpoint cache
                     for (int lvl = 0; lvl < tess; ++lvl) {
@@ -271,26 +270,31 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
                         }
                         tr.swap(nt);
                     }
-                    for (const auto& f : tr) faces.push_back({f[0], f[1], f[2]});
                     p.explicitNormals = true;
                 } else {
                     Solid(k, v, faces);
                 }
+                p.soup.pos.reserve(v.size());
                 for (const V3& q : v) p.soup.pos.push_back(Vec3{(float)(a[0] + q.x * a[3]), (float)(a[1] + q.y * ry), (float)(a[2] + q.z * rz)});
-                for (const auto& f : faces) {
-                    std::vector<Vec3> poly;
-                    for (int ix : f) poly.push_back(p.soup.pos[(std::size_t)ix]);
-                    std::vector<std::array<int, 3>> tri;
-                    detail::TriangulatePolygon(poly, tri);
-                    for (const auto& tt : tri) for (int c = 0; c < 3; ++c) {
-                        const int vi = f[(std::size_t)tt[(std::size_t)c]];
-                        p.soup.ci.push_back((std::uint32_t)vi);
-                        if (p.explicitNormals) {   // normal of an ellipsoid: the unit direction divided by the radii
-                            const V3& q = v[(std::size_t)vi];
-                            const double nx = q.x / a[3], ny = q.y / ry, nz = q.z / rz, l = std::sqrt(nx * nx + ny * ny + nz * nz);
-                            p.soup.cnrm.push_back(Vec3{(float)(nx / l), (float)(ny / l), (float)(nz / l)});
-                        }
+                auto corner = [&](int vi) {
+                    p.soup.ci.push_back((std::uint32_t)vi);
+                    if (p.explicitNormals) {   // normal of an ellipsoid: the unit direction divided by the radii
+                        const V3& q = v[(std::size_t)vi];
+                        const double nx = q.x / a[3], ny = q.y / ry, nz = q.z / rz, l = std::sqrt(nx * nx + ny * ny + nz * nz);
+                        p.soup.cnrm.push_back(Vec3{(float)(nx / l), (float)(ny / l), (float)(nz / l)});
                     }
+                };
+                // a triangle triangulates to itself (TriangulatePolygon gives {0, 1, 2} for three corners)
+                p.soup.ci.reserve(tr.size() * 3);
+                if (p.explicitNormals) p.soup.cnrm.reserve(tr.size() * 3);
+                for (const auto& f : tr) { corner(f[0]); corner(f[1]); corner(f[2]); }
+                std::vector<Vec3> poly;
+                std::vector<std::array<int, 3>> tri;
+                for (const auto& f : faces) {
+                    poly.clear();
+                    for (int ix : f) poly.push_back(p.soup.pos[(std::size_t)ix]);
+                    detail::TriangulatePolygon(poly, tri);
+                    for (const auto& tt : tri) for (int c = 0; c < 3; ++c) corner(f[(std::size_t)tt[(std::size_t)c]]);
                 }
                 outVerts += p.soup.ci.size();
                 if (outVerts > kMaxOutVerts) return Fail(err, "too many vertices");
@@ -344,8 +348,8 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
                 if (t.size() < 2 || !detail::txt::ToInt(t[1], n) || n < 0 || n > kMaxPolyVerts) return Fail(err, "bad polygon vertex count on line " + std::to_string(lines.number));
                 const bool withN = k == "pp";
                 std::vector<Vec3> pts, nrm;
+                std::vector<std::string> vt;   // refilled line after line (SplitInto reuses its room)
                 for (long long i = 0; i < n; ++i) {
-                    std::vector<std::string> vt;
                     if (!tokens(vt)) return Fail(err, "the file ends after " + std::to_string(i) + " of " + std::to_string(n) + " polygon vertices");
                     double f[6];
                     for (std::size_t j = 0; j < 3; ++j) if (!numAt(vt, j, f[j])) return Fail(err, "bad polygon vertex on line " + std::to_string(lines.number));
@@ -413,8 +417,8 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
             std::vector<Vec2> uv;
             std::vector<char> hasUv;
             pos.reserve((std::size_t)std::min<long>(vcount, (long)(text.size() / 8 + 1)));
+            std::vector<std::string> vt;   // refilled line after line
             for (long i = 0; i < vcount; ++i) {
-                std::vector<std::string> vt;
                 if (!tokens(vt)) return Fail(err, "the file ends after " + std::to_string(i) + " of " + std::to_string(vcount) + " vertices");
                 double f[3];
                 for (std::size_t j = 0; j < 3; ++j) if (!numAt(vt, j, f[j])) return Fail(err, "bad vertex on line " + std::to_string(lines.number));
@@ -442,7 +446,7 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
                     std::string r2;
                     int idx = -1;
                     while (ml.Next(r2)) {
-                        const auto mtk = detail::txt::Split(StripComment(r2, true));
+                        const auto mtk = detail::txt::Split(std::string(StripComment(r2, true)));
                         if (mtk.empty()) continue;
                         const std::string mk = detail::txt::Lower(mtk[0]);
                         if (mk == "matdef") { table.push_back(Material{}); idx = (int)table.size() - 1; table.back().name = "mat" + std::to_string(idx); if (table.size() > 100000) break; continue; }
@@ -459,12 +463,18 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
                 } else ++noMtable;
             }
             std::map<std::pair<int, std::string>, std::size_t> groups;
+            std::vector<std::string> pt;   // refilled line after line
+            std::vector<std::uint32_t> ix;   // reused polygon after polygon
+            std::vector<Vec3> poly;
+            std::vector<std::array<int, 3>> tr;
+            std::size_t lastGroup = 0;       // the group of the polygon before (the same material id and texture: no map lookup)
+            int lastMatid = -2;
+            std::string lastTex;
             for (long pi = 0; pi < pcount; ++pi) {
-                std::vector<std::string> pt;
                 if (!tokens(pt)) return Fail(err, "the file ends after " + std::to_string(pi) + " of " + std::to_string(pcount) + " polygons");
                 long long nv;
                 if (!detail::txt::ToInt(pt[0], nv) || nv < 0 || nv > kMaxPolyVerts || (std::size_t)nv + 1 > pt.size()) return Fail(err, "bad polygon on line " + std::to_string(lines.number));
-                std::vector<std::uint32_t> ix;
+                ix.clear();
                 for (long long j = 0; j < nv; ++j) {
                     long long v;
                     if (!detail::txt::ToInt(pt[(std::size_t)j + 1], v) || v < 0 || v >= (long long)pos.size()) return Fail(err, "polygon vertex index out of range on line " + std::to_string(lines.number));
@@ -480,19 +490,21 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
                     else tex = pt[j];
                 }
                 if (nv < 3) { ++badPolys; continue; }
-                const auto key = std::make_pair(matid, tex);
-                auto it = groups.find(key);
-                if (it == groups.end()) {
-                    Prim p; p.crease = 0;
-                    p.mat = matid; p.name = tex;   // reused as: material id and texture name, resolved below
-                    prims.push_back(std::move(p));
-                    if (prims.size() > kMaxPrims) return Fail(err, "too many primitives");
-                    it = groups.emplace(key, prims.size() - 1).first;
+                if (matid != lastMatid || tex != lastTex) {
+                    const auto key = std::make_pair(matid, tex);
+                    auto it = groups.find(key);
+                    if (it == groups.end()) {
+                        Prim p; p.crease = 0;
+                        p.mat = matid; p.name = tex;   // reused as: material id and texture name, resolved below
+                        prims.push_back(std::move(p));
+                        if (prims.size() > kMaxPrims) return Fail(err, "too many primitives");
+                        it = groups.emplace(key, prims.size() - 1).first;
+                    }
+                    lastGroup = it->second; lastMatid = matid; lastTex = tex;
                 }
-                Prim& p = prims[it->second];
-                std::vector<Vec3> poly;
+                Prim& p = prims[lastGroup];
+                poly.clear();
                 for (std::uint32_t v : ix) poly.push_back(pos[v]);
-                std::vector<std::array<int, 3>> tr;
                 detail::TriangulatePolygon(poly, tr);
                 const std::uint32_t base = (std::uint32_t)p.soup.pos.size();
                 for (std::uint32_t v : ix) { p.soup.pos.push_back(pos[v]); }
@@ -591,7 +603,11 @@ bool ReadNffFile(const std::string& path, ImportedModel& out, std::string* err) 
     std::string dir;
     const std::size_t sl = path.find_last_of("/\\");
     if (sl != std::string::npos) dir = path.substr(0, sl + 1);
-    return ReadNffBuffer(bytes, dir, out, err);
+    // the bytes are handed over, not copied (ReadNffBuffer copies the caller's text)
+    out = ImportedModel{};
+    const bool ok = ReadNffImpl(std::move(bytes), dir, out, err);
+    if (!ok) out = ImportedModel{};
+    return ok;
 }
 
 } // namespace okay

@@ -17,7 +17,7 @@ endif()
 
 # The Direct3D 11 backend (src/OkayUI_D3D11.cpp) is guarded by #if defined(_WIN32),
 # so it compiles to nothing off Windows and never affects the Linux/SDL build.
-add_library(okay_ui STATIC src/OkayUI.cpp src/OkayUI_FontAtlas.cpp src/OkayUI_D3D11.cpp src/OkayUICodeEdit.cpp src/OkayUIDock.cpp src/OkayUIDockLayout.cpp src/OkayUIColor.cpp src/OkayUIPlots.cpp src/OkayUIText.cpp src/OkayUICompat.cpp)
+add_library(okay_ui STATIC src/OkayUI.cpp src/OkayUI_FontAtlas.cpp src/OkayUI_D3D11.cpp src/OkayUICodeEdit.cpp src/OkayUIDock.cpp src/OkayUIDockLayout.cpp src/OkayUIDockBuilder.cpp src/OkayUIDockNodes.cpp src/OkayUIColor.cpp src/OkayUIPlots.cpp src/OkayUIText.cpp src/OkayUICompat.cpp)
 target_include_directories(okay_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # The launcher look's font: Roboto (shared/RobotoFont.h) baked with the engine's own
 # TrueType rasterizer (Graphics/TtfRaster).
@@ -37,9 +37,9 @@ add_library(okay::ui ALIAS okay_ui)
 
 # The real screens the launcher and the editor host as the opt-in OkayUI backend (What's New, Console). Plain functions
 # over OkayUI and the engine's console model; no SDL and no Dear ImGui in them, so the headless tests drive them as is.
-add_library(okay_ui_screens STATIC screens/OkayUIScreens.cpp screens/OkayUIPanels.cpp)
+add_library(okay_ui_screens STATIC screens/OkayUIScreens.cpp screens/OkayUIPanels.cpp screens/OkayUIEditorPanels.cpp)
 target_include_directories(okay_ui_screens PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/screens)
-target_include_directories(okay_ui_screens PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared)   # ConsoleScriptLink.hpp
+target_include_directories(okay_ui_screens PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../shared)    # ConsoleScriptLink.hpp, EditorPanelModels.hpp (in the public header)
 target_link_libraries(okay_ui_screens PUBLIC okay_ui)
 add_library(okay::ui_screens ALIAS okay_ui_screens)
 
@@ -53,7 +53,7 @@ if(WIN32)
 endif()
 
 # Backend check tools: write the render-test scenes as draw data plus the software reference picture, and (Windows, or Wine) draw
-# them with the Direct3D 11 backend and compare. See docs/own_ui_toolkit.md, the render interface section.
+# them with the Direct3D 11 backend and compare. See docs/ui/own_ui_toolkit.md, the render interface section.
 if(WIN32)
     add_executable(okayui_render_d3d11_check tools/okayui_render_d3d11_check.cpp)
     target_link_libraries(okayui_render_d3d11_check PRIVATE okay_ui_render d3d11)
@@ -62,25 +62,27 @@ endif()
 # ---- Headless harness: software backend, tests, demo ---------------------------------------
 # OkayUI's draw list (OkayUI::GetDrawData) rasterised on the CPU into an RGBA bitmap, so the toolkit
 # is tested with no window, GPU or display: behaviour tests (synthetic mouse, keys and text fed to
-# OkayUI::BeginFrame), golden images, a fuzz test. See docs/own_ui_toolkit.md.
+# OkayUI::BeginFrame), golden images, a fuzz test. See docs/ui/own_ui_toolkit.md.
 # The software side is always built (it is small): the draw-list rasteriser the tests use and the software
 # okay::platform::Painter the player draws with on the own platform backend (own code, not ready, off by default).
 add_library(okay_ui_soft STATIC soft/OkayUI_Soft.cpp soft/OkayUI_SoftPainter.cpp)
 target_include_directories(okay_ui_soft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/soft)
 target_link_libraries(okay_ui_soft PUBLIC okay_ui okay_ui_screens)
 
-# ---- Render interface and backends (OkayUIRender.hpp): own code, off by default, wired into nothing ----------------------
+# ---- Render interface and backends (OkayUIRender.hpp): own code, off by default ----------------------------------------
 # One interface from OkayUI's draw data to a backend, a validator for it, and the backends: software (the reference),
 # okay::platform::Painter, OpenGL 3.3 core / ES 3.0 (entry points through a get-proc function, no link-time GL), Direct3D 11
-# (Windows). The editor and launcher still draw through Dear ImGui; nothing links this yet except its tests.
+# (Windows), and SdlHost (OkayUIRender_SDL.cpp): the OpenGL backend inside SDL's OpenGL renderers and the Direct3D 11 backend inside
+# SDL's direct3d11 renderer, which the editor and launcher link for their hosted OkayUI screens and use only with OKAY_UI_OWN_RENDER=1
+# (off by default).
 add_library(okay_ui_render STATIC render/OkayUIRender.cpp render/OkayUIRender_Soft.cpp render/OkayUIRender_Painter.cpp
-            render/OkayUIRender_GL.cpp render/OkayUIRender_D3D11.cpp)
+            render/OkayUIRender_GL.cpp render/OkayUIRender_D3D11.cpp render/OkayUIRender_SDL.cpp)
 target_link_libraries(okay_ui_render PUBLIC okay_ui_soft)
 
 if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
 
     # What the tests need: the shared test framework header and the committed golden images.
-    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_bench okayui_screens okayui_host okayui_compat okayui_panels)
+    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_sdlhost okayui_render_bench okayui_screens okayui_host okayui_compat okayui_scopes okayui_internals okayui_dockbuilder okayui_panels okayui_itemedit okayui_calls okayui_names okayui_host_platform okayui_docknodes okayui_channels okayui_host_shapes okayui_fonts okayui_frameloop okayui_dockaware okayui_imvector okayui_numfmt okayui_editor_panels okayui_hierarchy okayui_inspector okayui_imcompat)
         add_executable(test_${t} tests/test_${t}.cpp)
         target_link_libraries(test_${t} PRIVATE okay_ui_render)
         target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
@@ -92,10 +94,59 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     # The OpenGL and performance tests make a GL context with EGL through dlopen (no link-time GL).
     target_link_libraries(test_okayui_render_gl PRIVATE ${CMAKE_DL_LIBS})
     target_link_libraries(test_okayui_render_bench PRIVATE ${CMAKE_DL_LIBS})
+    # Port probe, run: editor panels written for Dear ImGui, compiled against OkayUI through the stand-in imgui.h in probe/ and drawn headless
+    # (docs/ui/own_ui_toolkit.md 6.14). The probe directory comes FIRST so no real imgui.h is used. Fake engine state, stubs for what main.cpp gives.
+    function(okayui_port_test name)
+        add_executable(test_${name} tests/test_${name}.cpp ${ARGN})
+        target_include_directories(test_${name} BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/probe)
+        target_include_directories(test_${name} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_CURRENT_SOURCE_DIR}/screens)
+        target_link_libraries(test_${name} PRIVATE okay_ui_render)
+        target_compile_definitions(test_${name} PRIVATE OKAYUI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
+        add_test(NAME ${name} COMMAND test_${name})
+        set_tests_properties(${name} PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    endfunction()
+    okayui_port_test(okayui_port_console ../editor/ConsolePanel.cpp ../editor/EditorWidgets.cpp)
+    okayui_port_test(okayui_port_versions ../launcher/VersionsUI.cpp ../launcher/VersionsManager.cpp ../launcher/VersionsNet.cpp)
+    okayui_port_test(okayui_port_project ../editor/ProjectPanelUI.cpp ../editor/ProjectMenuDraw.cpp ../editor/ProjectBrowser.cpp)
+    okayui_port_test(okayui_port_project2 ../editor/ProjectPanelUI.cpp ../editor/ProjectMenuDraw.cpp ../editor/ProjectBrowser.cpp)
+    # The Scene Manager panel over a small stand-in EditorState (tests/shadow/EditorState.hpp, switched on by the macro; the real class owns the engine's scene and play loop).
+    # OkayUIHostMode.cpp is the window-mode screen: it needs OKAY_HAVE_OKAYUI in every test that links it (else it compiles to the not-built stub).
+    set_source_files_properties(../editor/OkayUIHostMode.cpp PROPERTIES COMPILE_DEFINITIONS OKAY_HAVE_OKAYUI=1)
+    # Window mode (OKAY_UI_HOST=okayui): the three-switch gate and the window-mode screen through the frame loop, fake backend, software painter.
+    okayui_port_test(okayui_hostmode ../editor/OkayUIHostMode.cpp)
+    target_compile_definitions(test_okayui_hostmode PRIVATE OKAY_HAVE_OKAYUI=1)
+    okayui_port_test(okayui_hoststate ../editor/OkayUIHostMode.cpp)   # window-mode persistence: state file, sanitiser, saver, two simulated runs
+    target_compile_definitions(test_okayui_hoststate PRIVATE OKAY_HAVE_OKAYUI=1)
+    # Window mode with the editor's real panels (Console, Scene Manager, Project window) over the stand-in editor state.
+    okayui_port_test(okayui_hostpanels ../editor/OkayUIHostPanels.cpp ../editor/OkayUIHostMode.cpp ../editor/ProjectBrowser.cpp)
+    target_compile_definitions(test_okayui_hostpanels PRIVATE OKAYUI_PORT_STAND_IN_EDITORSTATE)
+    # Hierarchy and Inspector (6.24 step 9): the REAL EditorState and a real scene; the editor's InspectorPanel.cpp field code compiled against OkayUI.
+    okayui_port_test(okayui_hostobjects ../editor/OkayUIHostObjects.cpp ../editor/OkayUIHostMode.cpp ../editor/EditorState.cpp ../editor/InspectorModel.cpp ../editor/PrefabEdit.cpp ../shared/FileDialog.cpp)
+    target_include_directories(test_okayui_hostobjects PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_okayui_hostobjects PRIVATE okay_engine)
+    # The menu bar and shortcuts (real MenuBarModel, real EditorState), 6.24 round 12.
+    okayui_port_test(okayui_hostmenu ../editor/OkayUIHostMenu.cpp ../editor/OkayUIHostMode.cpp ../editor/EditorState.cpp ../editor/InspectorModel.cpp ../editor/PrefabEdit.cpp ../shared/FileDialog.cpp)
+    target_include_directories(test_okayui_hostmenu PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_okayui_hostmenu PRIVATE okay_engine)
+    okayui_port_test(okayui_hostdialogs ../editor/OkayUIHostDialogs.cpp)   # the error modal and the save question as OkayUI popups (DialogService, 6.24 step 7)
+    okayui_port_test(okayui_frametick)   # the editor's game step (editor/EditorFrameTick.hpp) with a fake editor state
+    okayui_port_test(okayui_port_scenemanager ../editor/SceneManagerPanel.cpp ../editor/ConsolePanel.cpp ../editor/EditorWidgets.cpp)
+    target_compile_definitions(test_okayui_port_scenemanager PRIVATE OKAYUI_PORT_STAND_IN_EDITORSTATE)
+
+    # Scene and Game views (window mode, 6.24 step 6): a real okay::Scene rendered by the engine's software renderer through editor/SceneViewCore.hpp.
+    add_executable(test_okayui_sceneview tests/test_okayui_sceneview.cpp)
+    target_include_directories(test_okayui_sceneview PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/editor)
+    target_link_libraries(test_okayui_sceneview PRIVATE okay_engine)
+    add_test(NAME okayui_sceneview COMMAND test_okayui_sceneview)
+    okayui_port_test(okayui_hostviews ../editor/OkayUIHostViews.cpp ../editor/OkayUIHostMode.cpp)
+    target_compile_definitions(test_okayui_hostviews PRIVATE OKAY_HAVE_OKAYUI=1)
+    target_include_directories(test_okayui_hostviews PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_okayui_hostviews PRIVATE okay_engine)
+
     # The script editor's adapter over CodeEdit (editor/ScriptEditorCodeEdit.cpp: no ImGui, no SDL).
     add_executable(test_okayui_script_adapter tests/test_okayui_script_adapter.cpp ../editor/ScriptEditorCodeEdit.cpp)
     target_link_libraries(test_okayui_script_adapter PRIVATE okay_ui_soft)
-    target_include_directories(test_okayui_script_adapter PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/editor)
+    target_include_directories(test_okayui_script_adapter PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
     add_test(NAME okayui_script_adapter COMMAND test_okayui_script_adapter)
     set_tests_properties(okayui_script_adapter PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()

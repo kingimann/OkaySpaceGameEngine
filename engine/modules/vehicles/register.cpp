@@ -4,6 +4,7 @@
 #include "okay/Components/Seat.hpp"
 #include "okay/Components/VehicleSeat.hpp"
 #include "okay/Modules/ISeat.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Modules/Interact.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -39,7 +40,7 @@ public:
         return s_->enabled && !s_->occupied && c.actor && FlatDistance(c.actor, s_->SitWorld()) <= s_->useRadius;
     }
     std::string Prompt(const InteractContext&) const override {
-        return interact::KeyLabel('e') + " to " + (s_->prompt.empty() ? std::string("sit") : s_->prompt);
+        return UseKeyName('e') + " to " + (s_->prompt.empty() ? std::string("sit") : s_->prompt);
     }
     bool Interact(const InteractContext& c) override { return Enter(c.actor); }
 private:
@@ -62,7 +63,7 @@ public:
         return s_->enabled && !s_->occupied && c.actor && FlatDistance(c.actor, s_->SitWorld()) <= s_->useRadius;
     }
     std::string Prompt(const InteractContext&) const override {
-        return interact::KeyLabel(s_->enterKey) + " to " + (s_->prompt.empty() ? std::string("drive") : s_->prompt);
+        return UseKeyName(s_->enterKey) + " to " + (s_->prompt.empty() ? std::string("drive") : s_->prompt);
     }
     bool Interact(const InteractContext& c) override { return Enter(c.actor); }
 private:

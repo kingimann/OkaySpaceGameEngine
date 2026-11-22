@@ -19,6 +19,7 @@
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/CameraFollow.hpp"
+#include "okay/Components/CameraCollision.hpp"   // SpringArm, EaseFactor (moved out so the camera rigs share them)
 #include "okay/Components/CinemachineBrain.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Physics/Physics3D.hpp"
@@ -146,10 +147,6 @@ private:
     bool m_have = false;
 };
 
-/// 1 - e^(-k dt): the share of the way an exponential ease covers this frame
-/// (frame-rate independent; k <= 0 = all the way at once).
-inline float EaseFactor(float k, float dt) { return k > 0.0f ? 1.0f - std::exp(-k * dt) : 1.0f; }
-
 /// A grounded stop keeps full deceleration until the last 2.2 m/s, then
 /// decays with a 0.10 s time constant so the body settles. The last 0.12 m/s
 /// uses the full rate again, so the stop still reaches rest. A held move,
@@ -187,34 +184,6 @@ private:
     bool m_have = false;
 };
 
-/// Camera collision for an orbit camera: how far the arm may reach from the
-/// pivot along `dir` this frame. A sphere (not a thin ray, which flickers on
-/// edges, poles and railings) is swept against solid colliders only (triggers
-/// never pull the camera in), skipping the player's whole hierarchy. Blocked:
-/// snap in, so nothing ever clips, unless the change is tiny (under a quarter of
-/// the skin), which eases in so 1-2 cm of edge flicker doesn't pump. Clear: glide
-/// back out.
-struct SpringArm {
-    float Step(Scene& sc, GameObject* self, const Vec3& from, const Vec3& dir, float want,
-               float radius, float skin, std::uint32_t mask, float pullIn, float recover, float dt) {
-        float allow = want;
-        {
-            Physics3D::IgnoreHierarchy own(self);
-            const RaycastHit3D hit = radius > 0.0f
-                ? sc.physics3D().SphereCast(sc, from, dir, radius, want + skin, self, mask, /*queryTriggers=*/false)
-                : sc.physics3D().Raycast(sc, from, dir, want + skin, self, mask, /*queryTriggers=*/false);
-            if (hit.hit) allow = std::max(0.0f, hit.distance - skin);
-        }
-        if (m_len < 0.0f) m_len = allow;                                  // first frame: the right length at once
-        else if (allow < m_len - skin * 0.25f) m_len = allow;             // blocked: in at once, never left inside
-        else if (allow < m_len) m_len += (allow - m_len) * EaseFactor(pullIn, dt);    // a hair closer: ease
-        else m_len += (allow - m_len) * EaseFactor(recover, dt);         // clear: glide back out
-        return m_len;
-    }
-    void Reset() { m_len = -1.0f; }
-private:
-    float m_len = -1.0f;
-};
 
 /// The Game view (and the player) switch the pointer between canvas pixels and
 /// a relative-mode virtual cursor. Call this on that switch, before the mouse
@@ -270,6 +239,29 @@ inline float ClampLookPitch(float pitch) {
     return pitch;
 }
 
+/// Speed left after `dt` seconds with no input. Same curve as StopSettleRate (a steady `decel` above 2.2 m/s, then
+/// the rate eases down with the speed, so it settles instead of snapping), but solved exactly over dt, so the stop
+/// takes the same time and distance at 30, 60 or 144 frames a second. (Stepping the rate once per frame made a
+/// 30 fps stop 3 times shorter than a 144 fps one.)
+inline float StoppedSpeed(float speed, float decel, bool groundedStop, float dt) {
+    if (speed < 1e-4f || decel <= 0.0f) return speed < 1e-4f ? 0.0f : speed;
+    float rem = dt;
+    if (!groundedStop) { const float v = speed - decel * dt; return v > 0.0f ? v : 0.0f; }
+    if (speed >= 2.2f) {                                   // steady braking down to the settle band
+        const float t = (speed - 2.2f) / decel;
+        if (rem <= t) return speed - decel * rem;
+        speed = 2.2f; rem -= t;
+    }
+    constexpr float kTau = 0.10f, kFloor = 0.12f;
+    if (speed >= kFloor && speed < kTau * decel) {         // exponential settle (rate = speed / tau)
+        const float t = kTau * std::log(speed / kFloor);
+        if (rem <= t) return speed * std::exp(-rem / kTau);
+        speed = kFloor; rem -= t;
+    }
+    const float v = speed - decel * rem;                    // last bit: steady braking, ends at 0
+    return v > 0.0f ? v : 0.0f;
+}
+
 /// One horizontal step toward `wish`. `accel` changes speed along the wish,
 /// `steer` removes the part of the velocity that isn't the wish, so a turn
 /// does not keep the old heading. Stopping uses `decel` and StopSettleRate.
@@ -281,10 +273,9 @@ inline void StepPlanarVelocity(float& vx, float& vz, float wishX, float wishZ,
     const float curX = vx, curZ = vz;
     const float speed = std::sqrt(curX * curX + curZ * curZ);
     if (!moving) {
-        const float rate = StopSettleRate(decel, groundedStop, speed);
-        const float step = rate * dt;
-        if (speed <= step || speed < 1e-4f) { vx = 0.0f; vz = 0.0f; return; }
-        const float k = (speed - step) / speed;
+        const float after = StoppedSpeed(speed, decel, groundedStop, dt);
+        if (after <= 0.0f) { vx = 0.0f; vz = 0.0f; return; }
+        const float k = after / speed;
         vx = curX * k; vz = curZ * k;
         return;
     }

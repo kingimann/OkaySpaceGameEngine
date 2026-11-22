@@ -42,9 +42,9 @@ function(okay_add_platform_library)
 
     # --- own backend ----------------------------------------------------------------
     if(WIN32)
-        list(APPEND _srcs src/Platform/OwnWin32.cpp)
+        list(APPEND _srcs src/Platform/OwnWin32.cpp src/Platform/OwnWin32Audio.cpp src/Platform/OwnWin32Hid.cpp)
         list(APPEND _defs OKAY_PLATFORM_HAVE_OWN)
-        list(APPEND _libs user32 gdi32 opengl32 shell32)
+        list(APPEND _libs user32 gdi32 opengl32 shell32 ole32 imm32 hid)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         list(APPEND _srcs src/Platform/OwnLinux.cpp src/Platform/OwnLinuxX11.cpp
                           src/Platform/OwnLinuxAudio.cpp src/Platform/OwnLinuxEvdev.cpp)
@@ -79,7 +79,7 @@ function(okay_add_platform_library)
     if(_sdl_opts)
         target_compile_options(okay_platform PRIVATE ${_sdl_opts})
     endif()
-    # OKAY_OWN_STACK=ON (docs/own_stack_rollout.md) makes own the default on Linux only: the Win32 backend has never run on real Windows.
+    # OKAY_OWN_STACK=ON (docs/status/own_stack_rollout.md) makes own the default on Linux only: the Win32 backend has never run on real Windows.
     if(OKAY_PLATFORM_BACKEND STREQUAL "own" OR (OKAY_OWN_STACK AND CMAKE_SYSTEM_NAME STREQUAL "Linux"))
         target_compile_definitions(okay_platform PRIVATE OKAY_PLATFORM_DEFAULT_OWN)
     endif()

@@ -2,7 +2,7 @@
 // The editor's main menu bar as plain data (no ImGui, no editor state): what each top-level menu holds, in what order,
 // with which shortcut, and when an item is greyed out and why. The editor (main.cpp) draws these lists with
 // MenuEntriesUI.hpp and runs the item ids; the rules live here so tests/test_menu_bar_model.cpp can check them
-// without a window. docs/editor_menus.md is the audit and the final map.
+// without a window. docs/editor/editor_menus.md is the audit and the final map.
 //
 // Written from the owner's request (2026-11-15, "clean the menu bar better") and the menu code that was in main.cpp; no
 // code from another project.
@@ -96,6 +96,95 @@ inline Entry OnlyIf(Entry e, bool ok, const std::string& why) { return ok ? e : 
 /// "Delete" for one object, "Delete 3 Objects" for several.
 inline std::string Counted(const std::string& verb, int n) { return n > 1 ? verb + " " + std::to_string(n) + " Objects" : verb; }
 
+// ---- host-drawn menu content, written once for every toolkit ----
+/// What a SlotMenu's content is drawn with. A host writes its live list (Parent To's objects, Rig & IK) once against this, and it can
+/// be drawn with Dear ImGui (MenuEntriesUI.hpp ImGuiSlotUI), recorded into entries for another toolkit (SlotRecorder: the OkayUI
+/// Hierarchy draws those) and replayed to run the item that was picked there (SlotReplayer). Item and BeginMenu answer like Dear
+/// ImGui's MenuItem and BeginMenu.
+struct SlotUI {
+    virtual ~SlotUI() = default;
+    virtual bool Item(const char* label, bool enabled = true) = 0;
+    virtual bool BeginMenu(const char* label, bool enabled = true) = 0;
+    virtual void EndMenu() = 0;
+    virtual void Separator() = 0;
+    virtual void Note(const char* text) = 0;   ///< a dim line that is not an item
+    virtual void Tip(const char* text) = 0;    ///< the hover text of the item just drawn
+};
+
+namespace detail {
+// The id of the `index`th entry of a level: "<parent id>/<index>:<label>".
+inline std::string SlotStep(const std::string& parent, int index, const char* label) {
+    return parent + "/" + std::to_string(index) + ":" + (label ? label : "");
+}
+}
+
+/// Records a slot's content as entries. Every entry's id starts with the slot's id, so a picked item can be told apart from the
+/// menu's own items and handed to a SlotReplayer.
+class SlotRecorder : public SlotUI {
+public:
+    explicit SlotRecorder(std::string slotId) { m_levels.push_back(Level{std::move(slotId), &m_root, 0}); }
+    std::vector<Entry> Take() { return std::move(m_root); }
+    bool Item(const char* label, bool enabled) override {
+        Level& l = m_levels.back();
+        Entry e; e.kind = Kind::Item; e.id = detail::SlotStep(l.id, l.n++, label); e.label = label ? label : ""; e.enabled = enabled;
+        l.out->push_back(std::move(e));
+        return false;
+    }
+    bool BeginMenu(const char* label, bool enabled) override {
+        Level& l = m_levels.back();
+        Entry e; e.kind = Kind::Submenu; e.id = detail::SlotStep(l.id, l.n++, label); e.label = label ? label : ""; e.enabled = enabled;
+        l.out->push_back(std::move(e));
+        if (!enabled) return false;
+        Entry& sub = l.out->back();
+        m_levels.push_back(Level{sub.id, &sub.children, 0});
+        return true;
+    }
+    void EndMenu() override { if (m_levels.size() > 1) m_levels.pop_back(); }
+    void Separator() override { Level& l = m_levels.back(); ++l.n; l.out->push_back(Sep()); }
+    void Note(const char* text) override { Level& l = m_levels.back(); ++l.n; l.out->push_back(Head(text ? text : "")); }
+    void Tip(const char* text) override {
+        Level& l = m_levels.back();
+        if (l.out->empty() || !text) return;
+        Entry& e = l.out->back();
+        if (e.enabled) e.tip = text; else e.reason = text;
+    }
+private:
+    struct Level { std::string id; std::vector<Entry>* out; int n; };
+    std::vector<Entry> m_root;
+    std::vector<Level> m_levels;
+};
+
+/// Walks a slot's content again so that only the item whose id is `pick` (an id a SlotRecorder gave) answers true, and only the
+/// sub-menus on its way open. The slot must draw the same list it drew when it was recorded (it is replayed right after the pick).
+class SlotReplayer : public SlotUI {
+public:
+    SlotReplayer(std::string slotId, std::string pick) : m_pick(std::move(pick)) { m_levels.push_back(Level{std::move(slotId), 0}); }
+    bool Item(const char* label, bool enabled) override {
+        Level& l = m_levels.back();
+        const bool hit = enabled && detail::SlotStep(l.id, l.n++, label) == m_pick;
+        if (hit) m_ran = true;
+        return hit;
+    }
+    bool BeginMenu(const char* label, bool enabled) override {
+        Level& l = m_levels.back();
+        const std::string id = detail::SlotStep(l.id, l.n++, label);
+        if (!enabled || m_pick.compare(0, id.size() + 1, id + "/") != 0) return false;
+        m_levels.push_back(Level{id, 0});
+        return true;
+    }
+    void EndMenu() override { if (m_levels.size() > 1) m_levels.pop_back(); }
+    void Separator() override { ++m_levels.back().n; }
+    void Note(const char*) override { ++m_levels.back().n; }
+    void Tip(const char*) override {}
+    /// True once the picked item was found (and its code ran).
+    bool Ran() const { return m_ran; }
+private:
+    struct Level { std::string id; int n; };
+    std::string m_pick;
+    std::vector<Level> m_levels;
+    bool m_ran = false;
+};
+
 // ---- why-sentences, shared by every menu that greys the same thing out ----
 inline constexpr const char* kNeedSelection = "Select an object in the Hierarchy or the Scene view first.";
 inline constexpr const char* kStopPlayFirst = "Stop Play first: saving now would save the running game, not your scene.";
@@ -116,6 +205,7 @@ struct State {
     int  recentCount = 0;           // scenes in Open Recent
     bool assimp = false;            // Import Model reads more formats (tooltip only)
     bool isolating = false;         // Isolate mode is on
+    bool darkMode = true;           // the editor is in dark mode (false = light mode)
 };
 
 // ---- GameObject > Create: the categories every "create an object" menu shares ----
@@ -126,6 +216,7 @@ inline std::vector<Entry> CreateCategories() {
         SlotMenu("create.2d", "2D Object", "Sprites, premade shapes, sprite-sheet characters and tilemaps."),
         SlotMenu("create.3d", "3D Object", "Primitives, nature, props, structures, terrain, water and characters."),
         SlotMenu("create.player", "Player", "A fully set-up player (character, controller and physics) dropped into the scene."),
+        SlotMenu("create.vehicles", "Vehicles", "Ready-made vehicles you can drive: cars, trucks, a bus, a buggy and a boat on the water."),
         SlotMenu("create.light", "Light", "Directional, point and spot lights."),
         SlotMenu("create.camera", "Camera", "A camera, and the Cinemachine virtual cameras, brain and dolly rails."),
         SlotMenu("create.audio", "Audio", "A sound source and a music player."),
@@ -212,10 +303,15 @@ inline std::vector<Entry> EditMenu(const State& s) {
                        s.objectCount > 0, "The scene has no objects."));
     m.push_back(OnlyIf(Item("edit.deselect", "Deselect"), sel, "Nothing is selected."));
     m.push_back(Sep());
-    m.push_back(SlotMenu("edit.preferences", "Preferences", "How the editor looks: UI scale, row density, theme and accent colour."));
+    m.push_back(OnlyIf(Item("edit.darkmode", "Dark Mode", "", "Dark editor colours."), !s.darkMode, "The editor is already in dark mode."));
+    m.push_back(OnlyIf(Item("edit.lightmode", "Light Mode", "", "Light editor colours."), s.darkMode, "The editor is already in light mode."));
     m.push_back(Item("edit.projectsettings", "Project Settings..."));
     return m;
 }
+
+/// Old okay_settings.txt files saved one of three themes (0 Slate, 1 Light, 2 Classic). Only light is a light look; Slate and
+/// Classic are dark, and anything unknown falls back to dark.
+inline bool LegacyThemeIsDark(int oldTheme) { return oldTheme != 1; }
 
 inline std::vector<Entry> GameObjectMenu(const State& s) {
     std::vector<Entry> m;
@@ -251,7 +347,6 @@ inline std::vector<Entry> PanelsSubmenu() {
     p.push_back(Toggle("panel.scenemanager", "Scene Manager"));
     p.push_back(Toggle("panel.net", "Net"));
     p.push_back(Toggle("panel.savemanager", "Save Manager"));
-    p.push_back(Toggle("panel.varwatch", "Variables (watch)"));
     p.push_back(Sep());
     p.push_back(Toggle("panel.history", "History"));
     p.push_back(Toggle("panel.stats", "Stats"));
@@ -260,12 +355,12 @@ inline std::vector<Entry> PanelsSubmenu() {
     p.push_back(Toggle("panel.assetmanager", "Asset Manager"));
     p.push_back(Toggle("panel.crashlog", "Crash Log", "View past crash reports (okay_crashlog.txt) and copy them to send to support."));
     p.push_back(Toggle("panel.audiomixer", "Audio Mixer", "Master and group volumes (Music, SFX, UI, Voice), output levels while playing, and music ducking."));
+    p.push_back(Toggle("panel.input", "Input", "Live keys, mouse, controllers and actions while the game plays, the last events, input recording and replay, and each action's response curve."));
     return p;
 }
 
 inline std::vector<Entry> ToolsSubmenu() {
     std::vector<Entry> t;
-    t.push_back(Toggle("tool.customactions", "Custom Actions"));
     t.push_back(Toggle("tool.visualscript", "Visual Script"));
     t.push_back(Toggle("tool.scripteditor", "Script Editor"));
     t.push_back(Sep());
@@ -281,9 +376,11 @@ inline std::vector<Entry> ToolsSubmenu() {
     t.push_back(Toggle("tool.spriteeditor", "Sprite Editor", "Paint custom 2D sprites pixel-by-pixel, start from a shape, and save them into the project's Assets/Sprites."));
     t.push_back(Sep());
     t.push_back(Toggle("tool.uieditor", "UI Editor (separate tab)", "Open a dedicated, dockable UI editing tab (flat canvas) beside the Scene view,\nso you can keep the 3D Scene and the UI layout visible at the same time."));
+    t.push_back(Toggle("tool.uigallery", "UI Gallery", "Search every UI component, style, look, icon and ready-made screen, preview it and add it with one click."));
     t.push_back(Toggle("tool.uitheme", "UI Theme", "Define a reusable UI style (colors, corners, borders) and apply it to every widget at once: pick a preset or make your own, then restyle the whole UI in one click."));
     t.push_back(Toggle("tool.items", "Items, Loot & Recipes", "Define items, loot tables and crafting recipes. Saved as items.okayitems, .okayloot and .okayrecipes."));
     t.push_back(Toggle("tool.weapons", "Weapons", "Define swords and guns once (damage, swing or fire rate, range, rounds and reload, hit window, arc or hit box, combo and knockback). Melee and guns use these."));
+    t.push_back(Toggle("tool.inputactions", "Input Actions", "Author an input asset (.okayinput): control schemes, action maps, typed actions (button, axis, 2D and 3D vector), bindings with processors, and interactions (hold, tap, multi-tap, repeat), with a check list and a live view."));
     t.push_back(Toggle("tool.localization", "Localization", "The project's string table: every text key in every language, how complete each language is, CSV for translators and a pseudo-localized preview."));
     return t;
 }
@@ -312,11 +409,10 @@ inline std::vector<Entry> ViewMenu(const State& s) {
 inline std::vector<Entry> HelpMenu(const State&) {
     std::vector<Entry> m;
     m.push_back(Item("help.scripting", "Scripting Reference"));
-    m.push_back(Item("help.docs", "Documentation (online)", "", "Open the engine's documentation folder in your browser."));
     m.push_back(Item("help.shortcuts", "Keyboard Shortcuts"));
     m.push_back(Sep());
     m.push_back(Item("help.updates", "Check for Updates..."));
-    m.push_back(Item("help.bug", "Report a Bug...", "", "Open the issue page in your browser. The version line is copied first, so you can paste it into the report."));
+    m.push_back(Item("help.bug", "Report a Bug...", "", "Open the Crash Log, where saved reports can be copied. The version line is copied first, so you can paste it into the report."));
     m.push_back(Sep());
     m.push_back(Item("help.about", "About OkaySpace"));
     return m;

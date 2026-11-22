@@ -1,5 +1,5 @@
 #pragma once
-#include "okay/Modules/Damage.hpp"
+#include "okay/Components/Damage.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -9,8 +9,8 @@
 namespace okay {
 
 /// Where on a body a hit landed changes how much it hurts. Put it on the same object as the health
-/// (HealthStat, SurvivalStats, Stats or an NPC). A hit that names a zone uses it; a hit with only a point
-/// is sorted by height above the object's feet into head / body / legs. It also scales by damage type, so
+/// (HealthStat, SurvivalStats, Stats or an NPC); DealDamage applies it. A hit whose `hitPoint` is where it landed
+/// (`impact`) is sorted by height above the object's feet into head / body / legs; any other hit is scaled only by its kind. It also scales by damage type, so
 /// a fire-proof guard takes half from fire. Written for this engine from the usual idea of "headshot
 /// multipliers"; the numbers are plain defaults, change them freely.
 class HitZones : public Behaviour {
@@ -23,7 +23,8 @@ public:
     float headFromHeight = 1.5f;
     float legsToHeight = 0.5f;
     /// Multiplier per DamageType (index = DamageType), 1 = unchanged.
-    float typeScale[kDamageTypeCount] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    float typeScale[kDamageTypeCount];
+    HitZones() { for (float& t : typeScale) t = 1.0f; }
 
     float ZoneScale(const std::string& name) const {
         for (auto& z : zones) if (z.name == name) return z.scale;
@@ -37,10 +38,9 @@ public:
         if (h <= legsToHeight) return "legs";
         return "body";
     }
-    /// Fill in the zone name (when the hit has a point and no name) and scale the amount.
+    /// Scale the amount by where it landed and by its kind.
     void Scale(DamageEvent& e) const {
-        if (e.zone.empty() && e.hasPoint) e.zone = ZoneForPoint(e.point);
-        e.amount *= ZoneScale(e.zone);
+        if (e.hasHitPoint && e.impact) e.amount *= ZoneScale(ZoneForPoint(e.hitPoint));
         int t = (int)e.type;
         if (t >= 0 && t < kDamageTypeCount) e.amount *= typeScale[t];
     }

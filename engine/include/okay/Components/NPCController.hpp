@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Components/Damage.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/AI/Navigation.hpp"
 #include "okay/AI/Perception.hpp"
@@ -9,7 +10,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/StanceControl.hpp"
-#include "okay/Components/SurvivalAfflictions.hpp"   // health::Damage
+#include "okay/Components/SurvivalAfflictions.hpp"   // DamageHealthOn
 #include "okay/Net/NetOwnership.hpp"                  // IsLocallyControlled (MP-safe AI)
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Vec3.hpp"
@@ -135,21 +136,41 @@ public:
 
     /// Take damage; provokes (if allowed), and on death broadcasts `npc_died`, plays a
     /// sibling AudioSource and removes the object. Call from a weapon or trap.
-    void Damage(float amount) {
-        if (m_dead || invulnerable || amount <= 0.0f) return;
+    void Damage(float amount) { Damage(DamageEvent::Make(amount)); }
+    /// Same hit as a Health Stat takes; listeners are told. True if it took health.
+    bool Damage(DamageEvent ev) {
+        const float amount = SaneDamage(ev.amount);
+        if (m_dead || invulnerable || amount <= 0.0f) return false;
+        const float before = health;
         health -= amount;
+        ev.target = gameObject; ev.amount = amount;
+        ev.dealt = before - Mathf::Max(0.0f, health); ev.killed = health <= 0.0f;
+        NotifyDamaged(ev);
         if (provokable) { m_provoked = true; m_sightLost = 0.0f; if (GameObject* t = Target()) m_lastKnown = TP(t); }
-        if (health <= 0.0f) {
-            health = 0.0f; m_dead = true;
-            Broadcast("npc_died");
-            if (gameObject) {
-                if (auto* au = gameObject->GetComponent<AudioSource>()) au->Play();
-                if (gameObject->scene()) gameObject->scene()->Destroy(gameObject);
-                else gameObject->active = false;
-            }
-        }
+        if (health <= 0.0f) Die(ev);
+        return true;
+    }
+    /// Kill outright (ignores `invulnerable`): the same death as a lethal hit. No effect if already dead.
+    void Kill(GameObject* source = nullptr) {
+        if (m_dead) return;
+        DamageEvent ev = DamageEvent::Make(health > 0.0f ? health : 0.0f, DamageType::Generic, source);
+        ev.target = gameObject; ev.dealt = ev.amount; ev.killed = true;
+        NotifyDamaged(ev);
+        Die(ev);
     }
 
+private:
+    void Die(const DamageEvent& ev) {
+        health = 0.0f; m_dead = true;
+        Broadcast("npc_died");
+        NotifyDeath(ev);
+        if (gameObject) {
+            if (auto* au = gameObject->GetComponent<AudioSource>()) au->Play();
+            if (gameObject->scene()) gameObject->scene()->Destroy(gameObject);
+            else gameObject->active = false;
+        }
+    }
+public:
     /// Crouch and prone from scripts (SetStance): a smaller, slower body that
     /// eases between stances (sneaking guards, a wounded NPC down on the ground).
     StanceControl stanceControl{0, 0, true};
@@ -440,7 +461,7 @@ private:
         if (m_atkTimer > 0.0f || !tgt) return false;
         if (attackWindup > 0.0f && m_windup <= 0.0f && !m_winding) { m_windup = attackWindup; m_winding = true; return false; }
         if (m_winding && m_windup > 0.0f) return false;   // still telegraphing
-        health::Damage(tgt, attackDamage);
+        DamageHealthOn(tgt, attackDamage);
         m_atkTimer = attackInterval; m_winding = false;
         Broadcast("npc_attack");
         return true;

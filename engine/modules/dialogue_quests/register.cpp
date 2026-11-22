@@ -1,5 +1,6 @@
 // Module dialogue_quests: the DialogueRunner adapter for the interaction contract.
 #include "okay/Components/DialogueRunner.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Modules/Interact.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -16,7 +17,7 @@ public:
         return d_->enabled && d_->startMode == 0 && d_->interactKey && !d_->IsActive() && d_->InRange();
     }
     std::string Prompt(const InteractContext&) const override {
-        return d_->promptText.empty() ? interact::KeyLabel(d_->interactKey) + " to talk" : d_->promptText;
+        return d_->promptText.empty() ? UseKeyName(d_->interactKey) + " to talk" : d_->promptText;
     }
     bool Interact(const InteractContext&) override { return d_->StartDialogue(); }
     const char* Model() const override { return "DialogueRunner"; }

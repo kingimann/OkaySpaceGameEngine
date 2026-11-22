@@ -4,7 +4,7 @@
 // painter as a few Geometry calls, one per run of the same clip and atlas page.
 //
 // Everything it draws comes from one atlas: page 0 holds font glyph atlases and is
-// sampled linearly, page 1 holds UI images and is sampled nearest (as plain image
+// sampled linearly, page 1 holds UI images and is sampled nearest unless SetImageFilter(true) (as plain image
 // textures are), and each page carries a white texel for untextured shapes, so a
 // rect and the text on it share a texture. Images too big for a page fall back to
 // their own texture. Keep one BatchPainter alive across frames (it owns the atlas
@@ -35,6 +35,8 @@ public:
     void SetDrawColor(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) override;
     void FillRect(const Rect* r) override;
     void FillRectF(const FRect* r) override;
+    bool SupportsBulkRects() override { return !m_passthrough; }
+    void FillRectsF(const ColoredRect* q, int n) override;
     void DrawRect(const Rect* r) override;
     void DrawLine(int x0, int y0, int x1, int y1) override;
     void DrawPoint(int x, int y) override;
@@ -45,6 +47,7 @@ public:
     void SetScale(float sx, float sy) override;
 
     Tex  LoadTexture(const std::string& path) override;
+    Tex  LoadTextureSized(const std::string& path, int w, int h) override;
     Tex  FontAtlas(TtfFont* font) override;
     void QueryTexture(Tex t, int* w, int* h) override;
     void SetTextureColorMod(Tex t, std::uint8_t r, std::uint8_t g, std::uint8_t b) override;
@@ -55,6 +58,9 @@ public:
     void CopyExF(Tex t, const Rect* src, const FRect* dst, double angle, const FPoint* center, int flip) override;
     void Geometry(Tex t, const Vertex* v, int nv, const int* idx, int ni) override;
     void MissingTexture(const std::string& path, const Rect& where) override { m_b.MissingTexture(path, where); }
+    /// Images in the atlas (page 1) and the backend's own image textures sample linearly (true) or
+    /// nearest (false, the old behaviour and the pixel-art mode). Font glyphs are always linear.
+    void SetImageFilter(bool linear) override;
 
 private:
     // A texture handed to the renderer: a region of an atlas page, or (too big for a
@@ -91,6 +97,7 @@ private:
     Painter& m_b;
     ImageLoader m_load;
     bool m_passthrough = false;
+    bool m_imgLinear = false;             // how page 1 and own image textures are sampled
     Page m_pages[2];
     std::deque<Entry> m_entries;
     std::unordered_map<std::string, Entry*> m_byPath;   // null = could not load

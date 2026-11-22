@@ -13,6 +13,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/UI/FocusGraph.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
+#include "okay/Components/UIDataGlue.hpp"
 #include "okay/UI/UIFocus.hpp"
 #include <algorithm>
 #include <vector>
@@ -20,7 +21,7 @@
 namespace okay {
 
 /// True when NavigateUI would let focus rest on this object: an enabled, focusable, interactable
-/// Button, Toggle, Slider, Dropdown, Tabs (with tabs) or Keybind field. (Visibility and modals
+/// Button, Toggle, Slider, Dropdown, Tabs (with tabs), Keybind field or Input Field. (Visibility and modals
 /// are checked separately.)
 inline bool IsNavFocusable(GameObject* go) {
     if (auto* b = go->GetComponent<UIButton>())        return b->enabled && b->focusable && b->interactable;
@@ -31,6 +32,7 @@ inline bool IsNavFocusable(GameObject* go) {
     if (auto* kb = go->GetComponent<UIKeybindField>()) return kb->enabled && kb->focusable && kb->interactable;
     if (auto* st = go->GetComponent<UIStepper>())      return st->enabled && st->focusable && st->interactable;
     if (auto* rt = go->GetComponent<UIRating>())       return rt->enabled && rt->focusable && !rt->readOnly;
+    if (auto* in = go->GetComponent<UIInputField>())   return in->enabled && in->focusable;
     if (MoreNav::Focusable(go)) return true;
     return false;
 }
@@ -79,6 +81,7 @@ inline void SetWidgetFocused(GameObject* go, bool f) {
     if (auto* kb = go->GetComponent<UIKeybindField>()) kb->SetFocused(f);
     if (auto* st = go->GetComponent<UIStepper>())      st->SetFocused(f);
     if (auto* rt = go->GetComponent<UIRating>())       rt->SetFocused(f);
+    if (auto* in = go->GetComponent<UIInputField>())   in->SetNavFocused(f);
 }
 
 /// Scroll the nearest Scroll View or List View just enough that `go` is on screen.
@@ -142,12 +145,13 @@ inline bool SetUIFocus(GameObject* go) {
 ///   * Slider   — Left/Right adjust the value by 5% (on_change()).
 ///   * Tabs     — Left/Right select the previous / next enabled tab (on_change()).
 ///   * Keybind  — Enter/Space/A starts listening for a key (focus holds while it listens).
+///   * Input    — Enter/Space/A starts editing; while it edits the keys are the field's (Enter / Esc end it).
 /// While a modal is open only the widgets inside it take focus. Mouse interaction
 /// still works independently. Returns the widget activated this frame
 /// (button/toggle/dropdown/keybind), or nullptr.
 inline GameObject* NavigateUI(Scene& scene) {
     // Collect focusable, interactable widgets and a quick type tag.
-    enum Kind { Button, Toggle, Slider, Dropdown, Tabs, Keybind, Stepper, Rating, More };
+    enum Kind { Button, Toggle, Slider, Dropdown, Tabs, Keybind, Stepper, Rating, Input, More };
     struct Item { GameObject* go; Kind kind; Vec2 origin; Vec2 size; Vec2 centre; };
     std::vector<Item> items;
     auto notePointer = []() {
@@ -173,6 +177,7 @@ inline GameObject* NavigateUI(Scene& scene) {
         if (auto* d = go->GetComponent<UIDropdown>())      drop(d, d->enabled && d->focusable);
         if (auto* st = go->GetComponent<UIStepper>())      drop(st, st->enabled && st->focusable);
         if (auto* rt = go->GetComponent<UIRating>())       drop(rt, rt->enabled && rt->focusable);
+        if (auto* in = go->GetComponent<UIInputField>(); in && in->IsNavFocused() && (hidden || !in->enabled || !in->focusable)) in->SetNavFocused(false);
         MoreNav::DropIfUnusable(go.get(), hidden);
         if (auto* tb = go->GetComponent<UITabs>())         drop(tb, tb->enabled && tb->interactable && tb->focusable);
         if (auto* kb = go->GetComponent<UIKeybindField>()) drop(kb, kb->enabled && kb->interactable && kb->focusable);
@@ -188,6 +193,7 @@ inline GameObject* NavigateUI(Scene& scene) {
         if (auto* kb = go->GetComponent<UIKeybindField>()) { if (kb->enabled && kb->focusable && kb->interactable) items.push_back({go.get(), Keybind, {}, {}, {}}); continue; }
         if (auto* st = go->GetComponent<UIStepper>()) { if (st->enabled && st->focusable && st->interactable) items.push_back({go.get(), Stepper, {}, {}, {}}); continue; }
         if (auto* rt = go->GetComponent<UIRating>())  { if (rt->enabled && rt->focusable && !rt->readOnly) items.push_back({go.get(), Rating, {}, {}, {}}); continue; }
+        if (auto* in = go->GetComponent<UIInputField>()) { if (in->enabled && in->focusable) items.push_back({go.get(), Input, {}, {}, {}}); continue; }
         if (MoreNav::Focusable(go.get())) { items.push_back({go.get(), More, {}, {}, {}}); continue; }
     }
     if (items.empty()) { notePointer(); return nullptr; }
@@ -219,6 +225,7 @@ inline GameObject* NavigateUI(Scene& scene) {
         if (auto* kb = it.go->GetComponent<UIKeybindField>()) return kb->IsFocused();
         if (auto* st = it.go->GetComponent<UIStepper>()) return st->IsFocused();
         if (auto* rt = it.go->GetComponent<UIRating>())  return rt->IsFocused();
+        if (auto* in = it.go->GetComponent<UIInputField>()) return in->IsNavFocused();
         if (MoreNav::IsFocused(it.go)) return true;
         return false;
     };
@@ -231,6 +238,7 @@ inline GameObject* NavigateUI(Scene& scene) {
         if (auto* kb = it.go->GetComponent<UIKeybindField>()) kb->SetFocused(f);
         if (auto* st = it.go->GetComponent<UIStepper>()) st->SetFocused(f);
         if (auto* rt = it.go->GetComponent<UIRating>())  rt->SetFocused(f);
+        if (auto* in = it.go->GetComponent<UIInputField>()) in->SetNavFocused(f);
         MoreNav::SetFocused(it.go, f);
     };
 
@@ -244,8 +252,10 @@ inline GameObject* NavigateUI(Scene& scene) {
     bool right = Input::GetKeyDown('d') || Input::GetGamepadButtonDown(11);
     bool activate = Input::GetKeyDown(' ') || Input::GetKeyDown('\r') ||
                     Input::GetKeyDown('\n') || Input::GetGamepadButtonDown(0);
+    const bool tabKey = Input::GetKeyDown('\t');   // Tab / Shift+Tab walk the tab order (UIFocusHint.tabIndex, else reading order)
+    const bool shiftKey = Input::GetKey(Input::KeyShift);
     // The ring follows the device. A click in the same frame as a key hides it.
-    if (down || up || left || right || activate) UIFocus::NoteKeyboard();
+    if (down || up || left || right || activate || tabKey) UIFocus::NoteKeyboard();
     notePointer();
 
     auto asNode = [](const Item& it) {
@@ -269,9 +279,30 @@ inline GameObject* NavigateUI(Scene& scene) {
         return best;
     };
 
+    // The focus graph (okay/UI/FocusGraph.hpp) over these widgets: its tab order and each widget's UIFocusHint.
+    FocusGraph tabGraph;
+    if (tabKey) {
+        for (int i = 0; i < n; ++i) {
+            FocusNode fn = asNode(items[i]);
+            fn.id = i + 1;
+            if (auto* h = items[i].go->GetComponent<UIFocusHint>()) fn.tabIndex = h->tabIndex;
+            tabGraph.Add(fn);
+        }
+    }
+    auto hintTarget = [&](int from, const std::string UIFocusHint::*link) -> int {   // -2 no hint, -1 stay put, else an item
+        auto* h = items[from].go->GetComponent<UIFocusHint>();
+        if (!h || (h->*link).empty()) return -2;
+        if ((h->*link) == "-") return -1;
+        for (int i = 0; i < n; ++i) if (items[i].go->name == (h->*link)) return i;
+        return -2;   // a name nothing answers to falls back to the geometry
+    };
     bool moved = false;
     if (focused < 0) {
         focused = up ? n - 1 : 0;
+        // The first focus prefers a widget over a text field (A on a field starts typing; a menu should open on its buttons).
+        if (items[focused].kind == Input)
+            for (int k = 0; k < n; ++k) { const int i = up ? n - 1 - k : k; if (items[i].kind != Input) { focused = i; break; } }
+        if (tabKey) { const int t = shiftKey ? tabGraph.Last() : tabGraph.First(); if (t > 0) focused = t - 1; }
         left = right = false;
     } else {
         // Left/Right belong to the focused slider / dropdown / tabs; otherwise they move.
@@ -279,10 +310,19 @@ inline GameObject* NavigateUI(Scene& scene) {
         const bool valueKeys = fk == Slider || fk == Dropdown || fk == Tabs || fk == Stepper || fk == Rating
             || (fk == More && MoreNav::UsesArrows(items[focused].go));
         int to = -1;
-        if (down)      { to = nearest(focused, 0.0f, 1.0f);  if (to < 0) to = 0; }
-        else if (up)   { to = nearest(focused, 0.0f, -1.0f); if (to < 0) to = n - 1; }
-        else if (!valueKeys && left)  to = nearest(focused, -1.0f, 0.0f);
-        else if (!valueKeys && right) to = nearest(focused, 1.0f, 0.0f);
+        auto linked = [&](const std::string UIFocusHint::*link, float dx, float dy, bool wrapAround) {
+            const int h = hintTarget(focused, link);
+            if (h == -1) return focused;
+            if (h >= 0) return h;
+            int t = nearest(focused, dx, dy);
+            if (t < 0 && wrapAround) t = dy > 0.0f ? 0 : n - 1;
+            return t;
+        };
+        if (tabKey)    { const int t = tabGraph.Move(focused + 1, shiftKey ? FocusDir::Previous : FocusDir::Next); if (t > 0) to = t - 1; }
+        else if (down) to = linked(&UIFocusHint::down, 0.0f, 1.0f, true);
+        else if (up)   to = linked(&UIFocusHint::up, 0.0f, -1.0f, true);
+        else if (!valueKeys && left)  to = linked(&UIFocusHint::left, -1.0f, 0.0f, false);
+        else if (!valueKeys && right) to = linked(&UIFocusHint::right, 1.0f, 0.0f, false);
         if (!valueKeys) left = right = false;
         if (to >= 0 && to != focused) { focused = to; left = right = false; moved = true; }
     }
@@ -337,6 +377,9 @@ inline GameObject* NavigateUI(Scene& scene) {
         }
         case Keybind:
             if (activate) { it.go->GetComponent<UIKeybindField>()->Listen(); return it.go; }
+            break;
+        case Input:   // A / Enter / Space starts typing (an Xbox brings up its on-screen keyboard); the d-pad is the field's until it ends
+            if (activate) { it.go->GetComponent<UIInputField>()->BeginEdit(); return it.go; }
             break;
         case More:
             MoreNav::OnKeys(it.go, left, right, activate);

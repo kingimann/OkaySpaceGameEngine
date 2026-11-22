@@ -81,6 +81,7 @@ here now, so "where does my script start?" has one answer. The test checks it.
 |  | Waiting & Timers | Wait, repeat on a timer, cooldowns, stopwatches, and delayed calls from a script. | Delayed Calls |
 |  | Functions & Calls | Define your own function, call another graph or script, or run a list of steps. |  |
 |  | Time & Game Speed | The clock, the frame time, slow motion and pausing the game. | Clock, Game Speed, Pausing, Time Math |
+| **Quick blocks** | Quick blocks | One-block actions: move around, game rules, objects in the game, show and sound, do in order. | Move Around, Game Rules, Objects In The Game, Show And Sound, Do In Order |
 | **Variables, Lists & Saving** | Variables | Remember a number, a word or a yes/no on this object, the scene or the whole game. | Change a Variable, Check a Variable, Shared Variables |
 |  | Saving & Loading | Keep things between runs: save slots, saved values and checkpoints. | Saved Values, Save Slots, Save Files |
 |  | Lists | Several values in order under one name: add, remove, sort, search, and array functions. | Sorting & Searching, Array Functions |
@@ -102,7 +103,7 @@ here now, so "where does my script start?" has one answer. The test checks it.
 |  | Particles & Trails | Particles, lines and trails. |  |
 | **Movement & Physics** | Position | Where an object is, putting it somewhere else, and keeping it in bounds. | Read a Position, Stay in Bounds |
 |  | Rotation & Scale | Turn an object, face or look at something, and change its size. | Facing & Looking, Scale |
-|  | Move & Follow | Walk toward something, follow, chase, patrol, orbit, bob, spin, motion patterns and script functions. | Motion Patterns, Script Movement Functions |
+|  | Move & Follow | Walk toward something, follow, chase, patrol, orbit, bob, spin, motion patterns, vehicles and script functions. | Motion Patterns, Vehicles, Script Movement Functions |
 |  | Tweens | Smoothly change a position, size, color or number over time. | Start a Tween, Control Tweens, Tween Options, Tween Events, Tween Sequences |
 |  | Paths & Splines | Curves and paths an object can follow. |  |
 |  | Forces & Velocity | Push things, set their speed, jump, and set up their physics body. | Speed & Jumping, Body Settings |
@@ -125,7 +126,7 @@ here now, so "where does my script start?" has one answer. The test checks it.
 |  | Camera | Where the player is looking: follow, switch, zoom, tilt and shake. | Follow & Switch, Zoom & Shake |
 |  | Screen Text | Words and numbers drawn on the screen. | Text Style & Format, Numbers in Text, Script Text Widgets |
 |  | Buttons & Inputs | Buttons, sliders, toggles, dropdowns, text fields and pickers. | Sliders & Toggles, Dropdowns & Text Fields, Pickers & Search |
-|  | Bars & Layout | Progress bars, tabs and pages, scroll areas and grids, layout helpers and themes. | Progress Bars, Tabs & Pages, Scroll Areas & Grids, Layout Helpers, Themes |
+|  | Bars & Layout | Progress bars, game HUD parts, app parts, tabs and pages, scroll areas and grids, layout helpers and themes. | Progress Bars, Game HUD, App Parts, Tabs & Pages, Scroll Areas & Grids, Layout Helpers, Themes |
 |  | Popups & Dialogs | Toasts, tooltips, modals and bottom sheets. | Toasts & Tooltips, Modals & Sheets |
 | **Scenes & Environment** | Scenes & Levels | Load, restart and quit scenes, and read which scene is open. |  |
 |  | Lighting & Sky | Ambient light, background color and the lights in a scene. |  |
@@ -135,7 +136,7 @@ here now, so "where does my script start?" has one answer. The test checks it.
 |  | Cutscenes | Play a cutscene (a sequence) and build one from tweens. |  |
 | **Input** | Keyboard | Is a key held, pressed or released. |  |
 |  | Mouse & Touch | The mouse position and buttons, the cursor, taps and swipes. | Touch & Gestures |
-|  | Gamepad & Controls | Movement axes, the gamepad, named actions and rebinding keys. | Named Actions |
+|  | Gamepad & Controls | Movement axes, the gamepad, named actions and rebinding keys, local players and the controllers they use. | Named Actions, Local Players, Controllers |
 | **Online** | Multiplayer | Host or join, browse servers, matchmaking, messages, synced objects, players and matches. | Hosting & Joining, Server Browser, Matchmaking & Relay, Messages & RPC, Synced Objects & Variables, Players & Matches |
 |  | Steam | Steam achievements, stats, lobbies, friends, cloud files and the workshop. | Achievements & Stats, Lobbies & Friends, Cloud & Workshop |
 |  | Server Security | Anti-cheat: validate what clients send, rate limits, kicks and budgets. |  |
@@ -304,7 +305,7 @@ checks the result (the object moved, the door opened, the score went up).
 
 ## Docs
 
-The palette index in `docs/visual_scripting.md` uses the title people see, with
+The palette index in `docs/scripting/visual_scripting.md` uses the title people see, with
 the file token in backticks. Update that group when you rename it.
 
 `docs/visual_scripting_nodes.md` (generated on the node-docs branch) must use

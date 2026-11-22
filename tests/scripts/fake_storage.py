@@ -20,6 +20,7 @@ import json
 import os
 import sys
 import threading
+import urllib.parse
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -61,7 +62,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return os.path.join(self.server.root, bucket, *parts)
 
     def _split(self):
-        return self.path.split("?")[0].split("/")   # ['', 'storage', 'v1', 'object', ...]
+        return urllib.parse.unquote(self.path.split("?")[0]).split("/")   # (percent-decoded like the real service) ['', 'storage', 'v1', 'object', ...]
 
     def _not_found(self):
         self._send(400, {"statusCode": "404", "error": "not_found", "message": "Object not found"})

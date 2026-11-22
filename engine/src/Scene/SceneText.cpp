@@ -1,4 +1,5 @@
 #include "okay/Scene/SceneText.hpp"
+#include "SceneTextDetail.hpp"
 #include "okay/Scene/ComponentSerializer.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 
@@ -95,14 +96,14 @@ const std::unordered_set<std::string>& KnownObjectKeys() {
     "jumppad", "layer", "lifetime", "light", "limbik", "linerenderer", "loadingscreen",
     "loc", "locked", "logicsource", "logictarget", "lookatik", "lootsource", "material",
     "melee", "mesh", "meshcollider3d", "meshcolors", "meshenabled", "meshgeo", "meshpoly",
-    "mrmap", "emissivemap",
+    "mrmap", "emissivemap", "customshader",
     "meshseams", "meshshade", "meshshadows", "meshuv", "meshvar", "minimap", "minimapblip",
     "mod", "modelanim", "modelanimair", "modelanimblend", "modelanimcubic", "modelanimdir", "modelanimdrive",
     "modelanimevents", "modelanimlegs", "modelanimroot", "modelanimsmooth", "modelanimstance", "modelanimstride", "modstack",
     "mover", "music", "navagent", "navlink", "navmod", "navobstacle", "navsurface", "netinventory", "netobject",
     "netprefab", "netsync", "nettransform", "netvalidator", "network", "normalmap", "npc",
     "npcstance", "npcwp", "npspawner", "objholding", "outline", "override", "p25ctrl",
-    "parent", "particles", "particlesfx", "particleswind", "pausemenu", "pcfirst", "pcfirstfeel",
+    "parent", "particles", "particlesfx", "particlesterrain", "particleswind", "pausemenu", "pcfirst", "pcfirstfeel",
     "pcfirststance", "pcthird", "pcthirdfeel", "pcthirdstance", "playercontroller", "playerview", "polygoncollider2d",
     "posecap", "prefab", "proj3d", "questlog", "questlogdef", "questtrigger", "ragdoll",
     "reflect", "rigidbody2d", "rigidbody3d", "rim", "rootmotion", "saveable", "savesettings", "script", "scriptfields",
@@ -242,6 +243,10 @@ bool SceneText::IsValidGuid(const std::string& g) {
         if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || c == '-')) return false;
     return true;
 }
+
+namespace scenetext {
+bool IsBuiltinObjectRecord(const std::string& key) { return KnownObjectKeys().count(key) != 0; }
+} // namespace scenetext
 
 bool SceneText::IsKnownRecord(const std::string& key) {
     if (KnownObjectKeys().count(key)) return true;

@@ -2,7 +2,7 @@
 // four items and BuildMot one envelope set; every number is checked by hand below), read through a fake object loader that records
 // the paths it is asked for. Then: parent loops, a scene that names itself or another scene, every path that climbs out of the scene's
 // folder, truncated and flipped files. No real .lws / .mot file is in this repository: the reader is unverified against real files
-// (and the radians / bank-first conventions are an assumption, docs/own_lws_reader.md). Builds on its own with -DOKAY_STANDALONE_TEST.
+// (and the radians / bank-first conventions are an assumption, docs/content/model_readers.md). Builds on its own with -DOKAY_STANDALONE_TEST.
 #include "test_framework.hpp"
 #include "pmxlws_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"
@@ -187,7 +187,7 @@ int main() {
     // ---- object files stay inside the scene's folder, and a scene cannot load a scene ----
     {
         const std::string s = "LWSC\n3\n"
-            "LoadObject ../secret.lwo\nLoadObjectLayer 1 /etc/passwd\nLoadObject C:\\x.lwo\nLoadObject Objects/../../x.lwo\nLoadObject \\\\host\\s\\x.lwo\n"
+            "LoadObject ../../secret.lwo\nLoadObjectLayer 1 /etc/passwd\nLoadObject C:\\x.lwo\nLoadObject Objects/../../x.lwo\nLoadObject \\\\host\\s\\x.lwo\n"
             "LoadObject self.lws\nLoadObject sub/more.MOT\nLoadObject My Objects/a b.lwo\nLoadObjectLayer 2 10000009 good/ok.lwo\nLoadObject missing.lwo\nLoadObject ./up.lwo\n";
         fx::FakeLoad fake; const IrrMeshLoader l = fake.Fn();
         ImportedModel m; std::string err;
@@ -199,12 +199,60 @@ int main() {
         CHECK(HasNote(m, "5 object file(s) refused") && HasNote(m, "2 object reference(s) to a scene file refused") && HasNote(m, "8 object(s) whose file could not be read"));
         CHECK(m.parts.size() == 3);
         // nothing readable: the scene is refused and says which file was first
-        CHECK(Refused("LWSC\n3\nLoadObject ../x.lwo\n", "first that could not be read: ../x.lwo (refused", &l));
+        CHECK(Refused("LWSC\n3\nLoadObject ../../x.lwo\n", "first that could not be read: ../../x.lwo (refused", &l));
+        CHECK(Refused("LWSC\n3\nLoadObject ../x.obj\n", "first that could not be read: ../x.obj (refused", &l));   // only LightWave objects from the folder above
         CHECK(Refused("LWSC\n3\nLoadObject me.lws\n", "a scene may not load another scene", &l));
         CHECK(Refused("LWSC\n3\nLoadObject missing.lwo\n", "no such file", &l));
         // the items a refused path would have created are still nodes
         ImportedModel m2; std::string e2;
-        CHECK(ReadLwsBuffer("LWSC\n3\nLoadObject ../x.lwo\nLoadObject Objects/ok.lwo\n", "dir/", m2, &e2, &l) && m2.nodes.size() == 4 && m2.parts.size() == 1);
+        CHECK(ReadLwsBuffer("LWSC\n3\nLoadObject ../../x.lwo\nLoadObject Objects/ok.lwo\n", "dir/", m2, &e2, &l) && m2.nodes.size() == 4 && m2.parts.size() == 1);
+        // one leading ../ to a LightWave object: LightWave's content directory, the folder above the scene (QuickDraw v.2.2.lws)
+        fake.paths.clear();
+        ImportedModel m3; std::string e3;
+        CHECK(ReadLwsBuffer("LWSC\n3\nLoadObject ../LWO/a.lwo\nLoadObject ..\\LWO\\b.LXO\n", "dir/", m3, &e3, &l) && m3.parts.size() == 2);
+        CHECK(fake.paths == (std::vector<std::string>{"dir/../LWO/a.lwo", "dir/../LWO/b.LXO"}) && HasNote(m3, "2 object path(s) read from the folder above the scene"));
+    }
+    {   // the older motion layout (versions 1 and 2): channel count, per channel a key count and "value time span t c b" lines,
+        // angles in degrees (written like the corpus file move_x_oldformat_56.lws; every number below by hand)
+        const std::string old =
+            "LWSC\n2\n\nFramesPerSecond 30\n\nAddNullObject Mover\nObjectMotion (unnamed)\n  9\n"
+            "  3\n  0 0 2 0 0 0\n  2 0.5 2 0 0 0\n  -4 1 2 0 0 0\n"   // x: three keys
+            "  1\n  -0.5 0 2 0 0 0\n"                                     // y
+            "  1\n  0 0 2 0 0 0\n"                                        // z
+            "  1\n  90 0 2 0 0 0\n"                                       // heading 90 degrees
+            "  1\n  0 0 2 0 0 0\n  1\n  0 0 2 0 0 0\n"                  // pitch, bank
+            "  1\n  2 0 2 0 0 0\n  1\n  1 0 2 0 0 0\n  1\n  1 0 2 0 0 0\n" // scale
+            "Pre/PostBehavior 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1\n"
+            "AddLight\nLightName Sun\nLightMotion (unnamed)\n  9\n  1\n  0 0 2 0 0 0\n  1\n  0 0 2 0 0 0\n  1\n  0 0 2 0 0 0\n"
+            "  1\n  0 0 2 0 0 0\n  1\n  0 0 2 0 0 0\n  1\n  0 0 2 0 0 0\n  1\n  1 0 2 0 0 0\n  1\n  1 0 2 0 0 0\n  1\n  1 0 2 0 0 0\n";
+        ImportedModel m; std::string err;
+        const bool ok = ReadLwsBuffer(old, "dir/", m, &err);
+        if (!ok) std::fprintf(stderr, "  old layout refused: %s\n", err.c_str());
+        CHECK(ok && m.nodes.size() == 3 && m.nodes[1].name == "Mover" && m.nodes[2].name == "Sun");
+        if (ok && m.nodes.size() == 3) {
+            CHECK(Near(m.nodes[1].position.x, 0) && Near(m.nodes[1].position.y, -0.5f) && Near(m.nodes[1].scale.x, 2));
+            // heading 90 degrees = pi/2 about Y; with the z mirror (0, -0.7071, 0, 0.7071)
+            CHECK(Near(m.nodes[1].rotation.y, -0.70710678f) && Near(m.nodes[1].rotation.w, 0.70710678f));
+            const ImportedChannel* c = Chan(m, "Mover");
+            CHECK(m.clips.size() == 1 && c && c->position.size() == 3);
+            if (c && c->position.size() == 3) CHECK(Near(c->position[1].time, 0.5f) && Near(c->position[1].value.x, 2) && Near(c->position[2].value.x, -4) && Near(c->position[2].value.y, -0.5f));
+            const ImportedChannel* sun = Chan(m, "Sun");   // one key per channel: a channel of one key, as in the version 3 layout
+            CHECK(sun && sun->position.size() == 1);
+            CHECK(HasNote(m, "2 motion block(s) in the older layout") && HasNote(m, "20 key(s)") && HasNote(m, "1 envelope(s) with pre / post behaviours"));
+        }
+        // a block that breaks the layout (a key line of five numbers) is dropped for its item; the scene still reads
+        std::string bad = old;
+        bad.replace(bad.find("  2 0.5 2 0 0 0"), 15, "  2 0.5 2 0 0");
+        ImportedModel b; std::string e2;
+        CHECK(ReadLwsBuffer(bad, "dir/", b, &e2) && b.nodes.size() == 3 && Near(b.nodes[1].position.y, 0) && Near(b.nodes[1].scale.x, 1) && HasNote(b, "1 older-layout motion block(s)"));
+        // truncated inside a block: dropped, not read past the end
+        ImportedModel t; std::string e3;
+        CHECK(ReadLwsBuffer("LWSC\n2\nAddNullObject N\nObjectMotion (unnamed)\n  9\n  2\n  5 0 2 0 0 0\n", "dir/", t, &e3) && t.nodes.size() == 2 && Near(t.nodes[1].position.x, 0) && HasNote(t, "1 older-layout"));
+        // a huge key count is refused at once
+        CHECK(Refused("LWSC\n2\nAddNullObject N\nObjectMotion (unnamed)\n  9\n  4294967295\n", "keys (budget)"));
+        // version 3 and up: "ObjectMotion" is followed by NumChannels and the old reading never starts
+        ImportedModel v3; std::string e4;
+        CHECK(ReadLwsBuffer(fx::BuildLws(), "dir/", v3, &e4) && !HasNote(v3, "older layout"));
     }
     TEST_MAIN_RESULT();
 }

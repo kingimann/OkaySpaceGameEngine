@@ -9,7 +9,7 @@ dark card with the name, a gold level pill and a red health bar). Each plate is 
 character's name, level and health, live. The Goblin loses a little health by itself soon after Play starts, so you can see
 its bar drop. Behind them is a wooden sign whose text uses the rich-text tags: a big bold title, a gold line, red bold and
 italic words and a small line. Code: `UIOwnerData` (the `owner.` keys), `UIGallery::AddNameplate`, `ui2d::DrawWorldText`
-(`docs/ui_runtime.md`, `docs/ui_world_space.md`).
+(`docs/ui/in_game_ui.md`, `docs/ui/in_game_ui.md`).
 
 **Steps.**
 1. Open the editor (`Tools\OkayEngine.exe`, or start it from the launcher). **File > Open...**, paste
@@ -48,7 +48,7 @@ inside the card at any size of the window.
 World Space UI object: the Game view and the player draw it; whether the Scene view previews it is unverified. The sign uses
 the 8x8 pixel font (no new font system). A big `[size]` run does not change how a line is wrapped or centred.
 
-**Pictures** (headless renders through the same UI pass as the game, not a real window; they are in `docs/images/ui_text/`;
+**Pictures** (headless renders through the same UI pass as the game, not a real window; they are in a picture folder (pictures are no longer stored in the repository);
 the test `ui_text_shots` makes the "after" ones again, the two "before" ones are the unmerged branches' own renders):
 
 | File | What it shows |
@@ -75,7 +75,7 @@ the test `ui_text_shots` makes the "after" ones again, the two "before" ones are
   (`ui_nameplate_bound`) and 2 of 272 (`world_text_rich`) checks; with the fix both are 0.
 * All of the above ran on the branch before two merges: `main` (one SHA-256, vehicles, owner rules; no conflicts) and Claude 2's
   nine newer commits of `claude2/world-text-rich` (its own fix for the same line-overlap problem, which was compared with
-  mine and left out of the code, plus its overlap test, its picture block and its text; conflicts in `docs/ui_runtime.md`,
+  mine and left out of the code, plus its overlap test, its picture block and its text; conflicts in `docs/ui/in_game_ui.md`,
   `editor/main.cpp` and `tests/test_world_text_rich.cpp`). After those merges only the cheap checks were repeated: a configure
   of the merged tree, the feature map check, the branch lint, the MinGW win32 syntax check and a syntax-only compile of the
   editor, the player, the renderer and the tests. **The suites were not re-run on the merged tree here** (the shared build

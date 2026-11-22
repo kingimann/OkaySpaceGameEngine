@@ -3,6 +3,8 @@
 // GL header files only supply types and constants; with them absent (no
 // OKAY_PLATFORM_X11_HEADERS) this file is just "no display".
 #include "OwnLinux.hpp"
+#include "UriList.hpp"
+#include "CursorMap.hpp"
 
 #ifndef OKAY_PLATFORM_X11_HEADERS
 namespace okay::platform::own {
@@ -18,6 +20,7 @@ std::unique_ptr<X11System> X11System::Open(std::string& err) {
 #include <X11/Xatom.h>
 #include <X11/keysym.h>
 #include <GL/glx.h>
+#undef CursorShape   // Xlib defines it as a number (XQueryBestSize class); ours is okay::platform::CursorShape
 #include <dlfcn.h>
 #include <cstdio>
 #include <cstdlib>
@@ -78,6 +81,7 @@ namespace {
     F(int, XFreePixmap, (Display*, Pixmap)) \
     F(int, XFreeCursor, (Display*, Cursor)) \
     F(int, XDefineCursor, (Display*, ::Window, Cursor)) \
+    F(Cursor, XCreateFontCursor, (Display*, unsigned)) \
     F(int, XUndefineCursor, (Display*, ::Window)) \
     F(int, XGrabPointer, (Display*, ::Window, int, unsigned, int, int, ::Window, Cursor, Time)) \
     F(int, XUngrabPointer, (Display*, Time)) \
@@ -227,6 +231,10 @@ public:
     void Restore() override;
     void SetFullscreen(bool on) override;
     bool IsFocused() const override;
+    bool HasMouseFocus() const override { return m_mouseIn; }
+    bool IsMinimized() const override;
+    bool IsVisible() const override;
+    bool SetInputFocus() override;
     bool IsFullscreen() const override { return m_fullscreen; }
     bool SetIcon(const uint8_t* rgba, int w, int h) override;
     bool PresentPixels(const uint8_t* rgba, int w, int h) override;
@@ -243,6 +251,7 @@ public:
     GLXFBConfig m_fbc = nullptr;
     GLXContext m_ctx = nullptr;
     bool m_focused = false;
+    bool m_mouseIn = false;            // the pointer is inside the window (Enter / Leave events)
     bool m_fullscreen = false;
     bool m_resizable = true;
     int m_minW = 0, m_minH = 0;
@@ -256,6 +265,7 @@ class X11Impl final : public X11System {
 public:
     ~X11Impl() override {
         if (m_blankCursor) m_x.XFreeCursor(m_dpy, m_blankCursor);
+        for (Cursor c : m_shapeCursor) if (c) m_x.XFreeCursor(m_dpy, c);
         if (m_im) m_x.XCloseIM(m_im);
         if (m_dpy) m_x.XCloseDisplay(m_dpy);
         // libX11 / libGL stay loaded; they may be shared with other code.
@@ -273,6 +283,7 @@ public:
         m_aProtocols = m_x.XInternAtom(m_dpy, "WM_PROTOCOLS", False);
         m_aNetState = m_x.XInternAtom(m_dpy, "_NET_WM_STATE", False);
         m_aNetFull = m_x.XInternAtom(m_dpy, "_NET_WM_STATE_FULLSCREEN", False);
+        m_aNetHidden = m_x.XInternAtom(m_dpy, "_NET_WM_STATE_HIDDEN", False);
         m_aMaxH = m_x.XInternAtom(m_dpy, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
         m_aMaxV = m_x.XInternAtom(m_dpy, "_NET_WM_STATE_MAXIMIZED_VERT", False);
         m_aNetIcon = m_x.XInternAtom(m_dpy, "_NET_WM_ICON", False);
@@ -282,6 +293,18 @@ public:
         m_aTargets = m_x.XInternAtom(m_dpy, "TARGETS", False);
         m_aProp = m_x.XInternAtom(m_dpy, "OKAY_SELECTION", False);
         m_aTextPlain = m_x.XInternAtom(m_dpy, "text/plain;charset=utf-8", False);
+        m_aDndAware = m_x.XInternAtom(m_dpy, "XdndAware", False);
+        m_aDndEnter = m_x.XInternAtom(m_dpy, "XdndEnter", False);
+        m_aDndPosition = m_x.XInternAtom(m_dpy, "XdndPosition", False);
+        m_aDndStatus = m_x.XInternAtom(m_dpy, "XdndStatus", False);
+        m_aDndLeave = m_x.XInternAtom(m_dpy, "XdndLeave", False);
+        m_aDndDrop = m_x.XInternAtom(m_dpy, "XdndDrop", False);
+        m_aDndFinished = m_x.XInternAtom(m_dpy, "XdndFinished", False);
+        m_aDndSelection = m_x.XInternAtom(m_dpy, "XdndSelection", False);
+        m_aDndCopy = m_x.XInternAtom(m_dpy, "XdndActionCopy", False);
+        m_aDndTypeList = m_x.XInternAtom(m_dpy, "XdndTypeList", False);
+        m_aUriList = m_x.XInternAtom(m_dpy, "text/uri-list", False);
+        m_aDndProp = m_x.XInternAtom(m_dpy, "OKAY_XDND", False);
         if (m_x.XSupportsLocale()) {
             m_x.XSetLocaleModifiers("");
             m_im = m_x.XOpenIM(m_dpy, nullptr, nullptr, nullptr);
@@ -321,7 +344,7 @@ public:
         swa.override_redirect = False;
         swa.event_mask = KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask |
                          PointerMotionMask | StructureNotifyMask | ExposureMask | FocusChangeMask |
-                         PropertyChangeMask;
+                         PropertyChangeMask | EnterWindowMask | LeaveWindowMask;
         ::Window w = m_x.XCreateWindow(m_dpy, m_root, x, y, (unsigned)d.width, (unsigned)d.height, 0, depth,
             InputOutput, visual, CWColormap | CWBorderPixel | CWBackPixel | CWEventMask, &swa);
         if (!w) { err = "XCreateWindow failed"; m_x.XFreeColormap(m_dpy, cmap); return nullptr; }
@@ -332,6 +355,10 @@ public:
         m_wins[w] = win;
         Atom protos[1] = {m_aDelete};
         m_x.XSetWMProtocols(m_dpy, w, protos, 1);
+        {   // accept file drops (XDND protocol version 5)
+            const Atom ver = 5;
+            m_x.XChangeProperty(m_dpy, w, m_aDndAware, XA_ATOM, 32, PropModeReplace, (const unsigned char*)&ver, 1);
+        }
         win->SetTitle(d.title);
         XSizeHints* sh2 = m_x.XAllocSizeHints();
         if (sh2) {
@@ -356,6 +383,7 @@ public:
             else if (d.maximized && d.resizable) { st[n++] = m_aMaxH; st[n++] = m_aMaxV; }
             if (n) m_x.XChangeProperty(m_dpy, w, m_aNetState, XA_ATOM, 32, PropModeReplace, (const unsigned char*)st, n);
         }
+        if (m_shape != CursorShape::Arrow || m_cursorHidden) HideCursorOn(w, m_cursorHidden || m_relative);
         if (!d.hidden) win->Show();
         m_x.XSync(m_dpy, False);
         return std::unique_ptr<Window>(win);
@@ -383,6 +411,7 @@ public:
         if (win) e.windowId = (uint32_t)win->m_win;
         switch (ev.type) {
         case ClientMessage:
+            if (win && HandleDndMessage(ev.xclient, *win)) break;
             if (win && ev.xclient.message_type == m_aProtocols && (Atom)ev.xclient.data.l[0] == m_aDelete) {
                 e.type = EventType::WindowClose; m_pending.push_back(e);
                 if (m_wins.size() == 1) { Event q; q.type = EventType::Quit; q.timestampMs = e.timestampMs; m_pending.push_back(q); }
@@ -396,6 +425,14 @@ public:
                     m_pending.push_back(e);
                 }
             }
+            break;
+        case EnterNotify:
+            if (win && ev.xcrossing.mode != NotifyGrab && ev.xcrossing.mode != NotifyUngrab) win->m_mouseIn = true;
+            break;
+        case LeaveNotify:
+            // Moving onto a child window of ours is detail NotifyInferior: the pointer is still inside.
+            if (win && ev.xcrossing.mode != NotifyGrab && ev.xcrossing.mode != NotifyUngrab && ev.xcrossing.detail != NotifyInferior)
+                win->m_mouseIn = false;
             break;
         case FocusIn:
             if (win && ev.xfocus.mode != NotifyGrab && ev.xfocus.mode != NotifyUngrab) {
@@ -438,7 +475,10 @@ public:
             break;
         case SelectionRequest: HandleSelectionRequest(ev.xselectionrequest); break;
         case SelectionClear: m_ownsClip = false; break;
-        case SelectionNotify: m_selNotify = true; m_selProp = ev.xselection.property; break;
+        case SelectionNotify:
+            if (ev.xselection.selection == m_aDndSelection) HandleDndData(ev.xselection);
+            else { m_selNotify = true; m_selProp = ev.xselection.property; }
+            break;
         default: break;
         }
     }
@@ -533,6 +573,15 @@ public:
                 if (KeyFromEvdev(code - 8) == k) return true;
         return false;
     }
+    uint32_t KeyboardFocusWindowId() override { return m_focus && m_wins.count(m_focus) ? (uint32_t)m_focus : 0; }
+    uint32_t MouseFocusWindowId() override {
+        for (auto& kv : m_wins) if (kv.second->m_mouseIn) return (uint32_t)kv.first;
+        return 0;
+    }
+    void* NativeHandleFromId(uint32_t id) override {
+        auto it = m_wins.find((::Window)id);
+        return it == m_wins.end() ? nullptr : (void*)(uintptr_t)it->first;
+    }
     uint32_t MouseState(int* x, int* y) override {
         ::Window root, child; int rx, ry, wx = 0, wy = 0; unsigned mask = 0;
         ::Window target = m_focus;
@@ -546,6 +595,21 @@ public:
         if (mask & Button2Mask) r |= MouseMask(MouseMiddle);
         if (mask & Button3Mask) r |= MouseMask(MouseRight);
         return r;
+    }
+    // The pointer on the whole screen: the root window's coordinates from XQueryPointer.
+    bool GlobalMouseState(int* x, int* y, uint32_t* buttons) override {
+        ::Window root, child; int rx = 0, ry = 0, wx, wy; unsigned mask = 0;
+        if (!m_x.XQueryPointer(m_dpy, m_root, &root, &child, &rx, &ry, &wx, &wy, &mask)) { if (x) *x = 0; if (y) *y = 0; if (buttons) *buttons = 0; return false; }
+        if (x) *x = rx;
+        if (y) *y = ry;
+        if (buttons) {
+            uint32_t r = 0;
+            if (mask & Button1Mask) r |= MouseMask(MouseLeft);
+            if (mask & Button2Mask) r |= MouseMask(MouseMiddle);
+            if (mask & Button3Mask) r |= MouseMask(MouseRight);
+            *buttons = r;
+        }
+        return true;
     }
     uint32_t RelativeMouseState(int* dx, int* dy) override {
         if (dx) *dx = m_relAccX;
@@ -563,6 +627,7 @@ public:
         return kc ? KeyFromEvdev((int)kc - 8) : Key::Unknown;
     }
     bool IsCursorShown() override { return !m_cursorHidden; }
+    bool IsRelativeMouse() const override { return m_relative; }
     bool SetRelativeMouse(bool on) override {
         if (on == m_relative) return true;
         m_relAccX = m_relAccY = 0;   // no stale motion across a mode change
@@ -593,8 +658,25 @@ public:
         for (auto& kv : m_wins) HideCursorOn(kv.first, m_cursorHidden || m_relative);
         m_x.XFlush(m_dpy);
     }
+    // The pointer's shape (font cursors, X11/cursorfont.h glyphs chosen in CursorMap.hpp) for every window of ours. Arrow = the
+    // server's default (no cursor set on the window). Applies to windows made later too; a hidden pointer stays hidden.
+    bool SetCursorShape(CursorShape shape) override {
+        const int glyph = X11FontCursorFor(shape);
+        const int i = (int)shape;
+        if (glyph < 0 || i < 0 || i >= 11) return false;
+        if (!m_shapeCursor[i]) m_shapeCursor[i] = m_x.XCreateFontCursor(m_dpy, (unsigned)glyph);
+        if (!m_shapeCursor[i]) return false;
+        m_shape = shape;
+        for (auto& kv : m_wins) HideCursorOn(kv.first, m_cursorHidden || m_relative);
+        m_x.XFlush(m_dpy);
+        return true;
+    }
     void HideCursorOn(::Window w, bool hide) {
-        if (!hide) { m_x.XUndefineCursor(m_dpy, w); return; }
+        if (!hide) {
+            if (m_shape == CursorShape::Arrow) m_x.XUndefineCursor(m_dpy, w);
+            else m_x.XDefineCursor(m_dpy, w, m_shapeCursor[(int)m_shape]);
+            return;
+        }
         if (!m_blankCursor) {
             static const char data[1] = {0};
             XColor black; std::memset(&black, 0, sizeof(black));
@@ -650,6 +732,75 @@ public:
             m_x.XFree(data);
         }
         return out;
+    }
+    // ---- file drops (XDND, version 5; written from the freedesktop XDND protocol text) ------------------------------------------
+    // Source -> us: XdndEnter (the types on offer), XdndPosition (answered with XdndStatus: accept as a copy), XdndLeave or
+    // XdndDrop. On the drop we ask for the XdndSelection as text/uri-list, turn the URIs into paths (one DropFile event per
+    // file, window id = the window it was dropped on) and answer XdndFinished.
+    void DndSend(::Window to, Atom type, long l0, long l1, long l2, long l3 = 0, long l4 = 0) {
+        XEvent r; std::memset(&r, 0, sizeof(r));
+        r.xclient.type = ClientMessage; r.xclient.display = m_dpy; r.xclient.window = to;
+        r.xclient.message_type = type; r.xclient.format = 32;
+        r.xclient.data.l[0] = l0; r.xclient.data.l[1] = l1; r.xclient.data.l[2] = l2; r.xclient.data.l[3] = l3; r.xclient.data.l[4] = l4;
+        m_x.XSendEvent(m_dpy, to, False, NoEventMask, &r);
+        m_x.XFlush(m_dpy);
+    }
+    bool HandleDndMessage(XClientMessageEvent& m, X11Win& win) {
+        const Atom t = m.message_type;
+        if (t == m_aDndEnter) {
+            m_dndSource = (::Window)m.data.l[0];
+            m_dndVersion = (int)((unsigned long)m.data.l[1] >> 24);
+            m_dndAccept = false;
+            if (m_dndVersion < 1 || m_dndVersion > 5) { m_dndSource = 0; return true; }   // a version we do not know
+            if (m.data.l[1] & 1) {   // more than three types: the source's XdndTypeList holds them
+                Atom type; int fmt; unsigned long n, rest; unsigned char* data = nullptr;
+                if (m_x.XGetWindowProperty(m_dpy, m_dndSource, m_aDndTypeList, 0, 1 << 16, False, XA_ATOM, &type, &fmt, &n, &rest, &data) == Success && data) {
+                    if (fmt == 32) for (unsigned long i = 0; i < n; ++i) if (((long*)data)[i] == (long)m_aUriList) m_dndAccept = true;
+                    m_x.XFree(data);
+                }
+            } else {
+                for (int i = 2; i < 5; ++i) if ((Atom)m.data.l[i] == m_aUriList) m_dndAccept = true;
+            }
+            return true;
+        }
+        if (t == m_aDndPosition) {
+            if (!m_dndSource || (::Window)m.data.l[0] != m_dndSource) return true;
+            DndSend(m_dndSource, m_aDndStatus, (long)win.m_win, m_dndAccept ? 1 : 0, 0, 0, m_dndAccept ? (long)m_aDndCopy : (long)None);
+            return true;
+        }
+        if (t == m_aDndLeave) { if ((::Window)m.data.l[0] == m_dndSource) { m_dndSource = 0; m_dndAccept = false; } return true; }
+        if (t == m_aDndDrop) {
+            if (!m_dndSource || (::Window)m.data.l[0] != m_dndSource) return true;
+            if (!m_dndAccept) { DndSend(m_dndSource, m_aDndFinished, (long)win.m_win, 0, (long)None); m_dndSource = 0; return true; }
+            m_dndTarget = win.m_win;
+            const Time tm = m_dndVersion >= 1 ? (Time)m.data.l[2] : CurrentTime;
+            m_x.XDeleteProperty(m_dpy, win.m_win, m_aDndProp);
+            m_x.XConvertSelection(m_dpy, m_aDndSelection, m_aUriList, m_aDndProp, win.m_win, tm);
+            m_x.XFlush(m_dpy);
+            return true;
+        }
+        return false;
+    }
+    void HandleDndData(XSelectionEvent& se) {
+        const ::Window source = m_dndSource, target = m_dndTarget;
+        m_dndSource = 0; m_dndAccept = false;
+        std::string text;
+        bool got = false;
+        if (se.property != None && m_wins.count(se.requestor)) {
+            Atom type; int fmt; unsigned long n, rest; unsigned char* data = nullptr;
+            if (m_x.XGetWindowProperty(m_dpy, se.requestor, se.property, 0, 1 << 20, True, AnyPropertyType, &type, &fmt, &n, &rest, &data) == Success && data) {
+                if (fmt == 8 && type == m_aUriList) { text.assign((char*)data, n); got = true; }   // (an INCR transfer is not supported: it is refused)
+                m_x.XFree(data);
+            }
+        }
+        size_t count = 0;
+        if (got) {
+            for (const std::string& p : UriListToPaths(text)) {
+                Event d; d.type = EventType::DropFile; d.windowId = (uint32_t)target; d.timestampMs = (uint32_t)NowMs(); d.text = p;
+                m_pending.push_back(d); ++count;
+            }
+        }
+        if (source) DndSend(source, m_aDndFinished, (long)target, count ? 1 : 0, count ? (long)m_aDndCopy : (long)None);
     }
     void HandleSelectionRequest(XSelectionRequestEvent& rq) {
         XEvent r; std::memset(&r, 0, sizeof(r));
@@ -710,19 +861,26 @@ public:
     ::Window m_root = 0;
     XIM m_im = nullptr;
     Atom m_aMaxH = 0, m_aMaxV = 0, m_aNetIcon = 0;
-    Atom m_aDelete = 0, m_aProtocols = 0, m_aNetState = 0, m_aNetFull = 0, m_aNetName = 0, m_aUtf8 = 0,
+    Atom m_aDelete = 0, m_aProtocols = 0, m_aNetState = 0, m_aNetFull = 0, m_aNetHidden = 0, m_aNetName = 0, m_aUtf8 = 0,
          m_aClipboard = 0, m_aTargets = 0, m_aProp = 0, m_aTextPlain = 0;
     std::unordered_map<::Window, X11Win*> m_wins;
     std::deque<Event> m_pending;
     ::Window m_focus = 0;
     bool m_textInput = false, m_relative = false, m_warped = false, m_cursorHidden = false;
     Cursor m_blankCursor = 0;
+    Cursor m_shapeCursor[11] = {};
+    CursorShape m_shape = CursorShape::Arrow;
     int m_lastX = 0, m_lastY = 0;
     int m_relAccX = 0, m_relAccY = 0;   // motion since RelativeMouseState was last read
     int m_lastBtn = 0, m_clicks = 0; unsigned long m_lastBtnTime = 0;
     std::string m_clip;
     bool m_ownsClip = false, m_selNotify = false;
     Atom m_selProp = 0;
+    Atom m_aDndAware = 0, m_aDndEnter = 0, m_aDndPosition = 0, m_aDndStatus = 0, m_aDndLeave = 0, m_aDndDrop = 0, m_aDndFinished = 0,
+         m_aDndSelection = 0, m_aDndCopy = 0, m_aDndTypeList = 0, m_aUriList = 0, m_aDndProp = 0;
+    ::Window m_dndSource = 0, m_dndTarget = 0;   // the drag in progress: who offers it, which of our windows it entered
+    int m_dndVersion = 0;
+    bool m_dndAccept = false;                    // the source offers text/uri-list
 };
 
 // ---- X11Win methods ------------------------------------------------------------------
@@ -730,6 +888,7 @@ public:
 #define XF m_sys->m_x
 
 X11Win::~X11Win() {
+    if (BackendsShutDown()) return;   // static destruction after the backend (and its X display) went: m_sys is gone, call nothing
     DestroyGLContext();
     if (m_ic) XF.XDestroyIC(m_ic);
     if (m_gc) XF.XFreeGC(XD, m_gc);
@@ -855,6 +1014,30 @@ void X11Win::SetFullscreen(bool on) {
     XF.XFlush(XD);
 }
 bool X11Win::IsFocused() const { return m_focused; }
+// Minimized = the window manager put _NET_WM_STATE_HIDDEN in the window's state list (EWMH).
+bool X11Win::IsMinimized() const {
+    Atom type = 0; int fmt = 0; unsigned long n = 0, rest = 0; unsigned char* data = nullptr;
+    if (XF.XGetWindowProperty(XD, m_win, m_sys->m_aNetState, 0, 64, False, XA_ATOM, &type, &fmt, &n, &rest, &data) != Success || !data)
+        return false;
+    bool hidden = false;
+    if (type == XA_ATOM && fmt == 32) {
+        const unsigned long* a = (const unsigned long*)data;
+        for (unsigned long i = 0; i < n; ++i) if ((Atom)a[i] == m_sys->m_aNetHidden) hidden = true;
+    }
+    XF.XFree(data);
+    return hidden;
+}
+bool X11Win::IsVisible() const {
+    XWindowAttributes at;
+    if (!XF.XGetWindowAttributes(XD, m_win, &at)) return false;
+    return at.map_state != IsUnmapped || IsMinimized();   // a minimized window is unmapped but not hidden by us
+}
+bool X11Win::SetInputFocus() {
+    g_lastXError = 0;
+    XF.XSetInputFocus(XD, m_win, RevertToParent, CurrentTime);
+    XF.XSync(XD, False);
+    return g_lastXError == 0;
+}
 
 bool X11Win::CreateGLContext(const GLAttributes& a) {
     DestroyGLContext();

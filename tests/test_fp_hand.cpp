@@ -413,6 +413,11 @@ int main() {
         const Vec3 feet = player->transform->Position();
         side->transform->SetPosition(feet + Vec3{3.2f, 1.6f, 2.4f});
         side->transform->SetRotation(Quat::LookRotation(side->transform->Position() - (feet + Vec3{0, 0.6f, 0})));
+        // One 256 texel cascade must cover the scene closely enough to hold a head. At the default 80 m distance a texel is 0.6 m,
+        // wider than the 0.25 m head, so whether the head lands on any texel centre is luck of the grid alignment (it did by
+        // chance with the old grid and not with the stable one). 12 m makes a texel 0.09 m, so the head is always in the map.
+        const float savedShadowDistance = ShadowDistance();
+        ShadowDistance() = 12.0f;
         hmr->castShadows = true;
         auto shA = shot(sideCam, W, H);
         hmr->castShadows = false;
@@ -420,6 +425,7 @@ int main() {
         hmr->castShadows = true;
         PerPixelLighting() = false;
         CHECK(differ(shA, shB) > 0);
+        ShadowDistance() = savedShadowDistance;
     }
 
     // Host on 127.0.0.1, one client. The host plays in first person. The

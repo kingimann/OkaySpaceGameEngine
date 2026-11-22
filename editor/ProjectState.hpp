@@ -10,6 +10,7 @@
 // Every value is written so it reads back to the same number (shortest text that round trips); older
 // files, which wrote six digits, still load. Unknown lines are ignored, so a file written by a newer
 // editor loads in an older one.
+#include <cerrno>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -19,6 +20,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "okay/Core/Log.hpp"
 #include "okay/Scene/ProjectLists.hpp"
 #include "../shared/ProjectCreate.hpp"
 
@@ -61,7 +63,7 @@ struct BuildSettings {
     bool  cleanOutput = true;              // wipe stale build files first
     bool  dataFolder = true;               // clean Data/ layout (exe at root)
     bool  encryptData = false;             // obfuscate scenes + config
-    int   antiCheat = 0;                   // 0 off, 1 report, 2 enforce (docs/anticheat.md)
+    int   antiCheat = 0;                   // 0 off, 1 report, 2 enforce (docs/online/anticheat.md)
     // ---- Player presentation ----
     char  icon[260] = "";                  // window/taskbar icon PNG
     char  bundleId[160] = "com.okayspace.game";  // application identifier
@@ -91,7 +93,7 @@ struct BuildSettings {
     // ---- Post-build actions (handled by the editor, not the builder) ----
     bool  openFolderAfter = true;          // reveal the output folder when done
     bool  zipAfter = false;                // also produce <Name>.zip of the build
-    // ---- Output layout, stripping, versioning (docs/build_pipeline.md) ----
+    // ---- Output layout, stripping, versioning (docs/release/build_pipeline.md) ----
     int   layout = 0;                      // 0 Folder (<Name>.exe + <Name>_Data/), 1 Compact (exe + Data/), 2 Zip archive
     bool  stripAssets = true;              // ship only the assets the built scenes use (off: every project asset)
     bool  compress = true;                 // zip: deflate files that shrink (off: store)
@@ -115,6 +117,25 @@ struct BuildSettings {
     float srvMaxSpeed = 0.0f;              // anti-cheat: units/second (0 = off)
     int   srvRateLimit = 0;                // messages per second per player (0 = off)
     int   srvKickAfter = 0;                // rejected moves per minute before a kick (0 = never)
+    // ---- Build Settings upgrade (docs/editor/build_settings_upgrade.md): every one is read by the player or the build step ----
+    float timeScale = 1.0f;                // game speed (player: Time::SetTimeScale)
+    int   maxFixedSteps = 0;               // most physics steps in one frame (0 = engine default)
+    float musicVolume = 1.0f;              // starting music volume
+    float sfxVolume = 1.0f;                // starting sound-effects volume
+    char  defaultLanguage[16] = "";        // first-run language code ("" = the computer's language)
+    char  logLevel[16] = "";               // "", trace, info, warn, error
+    bool  logToFile = false;               // write game.log in the save folder
+    char  envVars[512] = "";               // KEY=VALUE;KEY2=VALUE2 set before the game starts
+    char  description[256] = "";           // one line about the game (config + start-up log)
+    bool  allowBuildCommands = false;      // the two commands below only run when this is on
+    char  preBuildCommand[260] = "";       // run before the build; a failure stops it
+    char  postBuildCommand[260] = "";      // run after a successful build
+    // ---- round 2 ----
+    int   renderer = 0;                    // 0 automatic, 1 Direct3D 11, 2 OpenGL, 3 software
+    int   particleCap = 0;                 // 0 = no extra limit
+    float gamepadDeadzone = 0.18f;         // stick dead zone
+    int   sampleRate = 0;                  // 0 = 44100
+    char  excludeList[1024] = "";          // project files left out of the build: "Assets/a.png;Assets/Old/" (a trailing / is a whole folder)
 };
 // ---- Build profiles -------------
 // Persist the full Build Settings under named profiles in the project's
@@ -191,13 +212,23 @@ inline void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "gpu=" << b.gpuRenderer << "\n" << "d3d12=" << b.preferD3D12 << "\n";
     o << "openFolder=" << b.openFolderAfter << "\n" << "zip=" << b.zipAfter << "\n";
     o << "layout=" << b.layout << "\n" << "strip=" << b.stripAssets << "\n" << "compress=" << b.compress << "\n";
-    o << "buildNumber=" << b.buildNumber << "\n" << "autoBuild=" << b.autoBuildNumber << "\n" << "archiveName=" << b.archiveName << "\n";
+    o << "buildNumber=" << b.buildNumber << "\n" << "autoBuild=" << b.autoBuildNumber << "\n" << "archiveName=" << EscapeProfileValue(b.archiveName) << "\n";
     o << "fsToggle=" << b.fullscreenToggle << "\n";
     o << "srvTarget=" << b.srvTarget << "\n" << "srvName=" << EscapeProfileValue(b.srvName) << "\n" << "srvPort=" << b.srvPort << "\n";
     o << "srvMax=" << b.srvMaxPlayers << "\n" << "srvTick=" << b.srvTick << "\n" << "srvPassword=" << EscapeProfileValue(b.srvPassword) << "\n";
     o << "srvAuth=" << b.srvAuth << "\n" << "srvAdvertise=" << b.srvAdvertise << "\n" << "srvAddr=" << EscapeProfileValue(b.srvPublicAddr) << "\n";
     o << "srvRegion=" << EscapeProfileValue(b.srvRegion) << "\n" << "srvMaxSpeed=" << FloatText(b.srvMaxSpeed) << "\n" << "srvRate=" << b.srvRateLimit << "\n";
     o << "srvKick=" << b.srvKickAfter << "\n";
+    // Build Settings upgrade fields (kept together so a merge with other edits to the list above stays easy).
+    o << "timeScale=" << FloatText(b.timeScale) << "\n" << "maxFixedSteps=" << b.maxFixedSteps << "\n";
+    o << "musicVolume=" << FloatText(b.musicVolume) << "\n" << "sfxVolume=" << FloatText(b.sfxVolume) << "\n";
+    o << "defaultLanguage=" << EscapeProfileValue(b.defaultLanguage) << "\n" << "logLevel=" << EscapeProfileValue(b.logLevel) << "\n";
+    o << "logToFile=" << b.logToFile << "\n" << "envVars=" << EscapeProfileValue(b.envVars) << "\n";
+    o << "description=" << EscapeProfileValue(b.description) << "\n" << "allowCommands=" << b.allowBuildCommands << "\n";
+    o << "preBuild=" << EscapeProfileValue(b.preBuildCommand) << "\n" << "postBuild=" << EscapeProfileValue(b.postBuildCommand) << "\n";
+    o << "renderer=" << b.renderer << "\n" << "particleCap=" << b.particleCap << "\n";
+    o << "gamepadDeadzone=" << FloatText(b.gamepadDeadzone) << "\n" << "sampleRate=" << b.sampleRate << "\n";
+    o << "exclude=" << EscapeProfileValue(b.excludeList) << "\n";
     for (const BuildScene& sc : b.scenes) o << "scene=" << (sc.on ? 1 : 0) << "|" << EscapeProfileValue(sc.path) << "\n";
 }
 
@@ -281,6 +312,23 @@ inline void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "srvMaxSpeed") b.srvMaxSpeed = F();
     else if (k == "srvRate")   b.srvRateLimit = I();
     else if (k == "srvKick")   b.srvKickAfter = I();
+    else if (k == "timeScale") b.timeScale = F();
+    else if (k == "maxFixedSteps") b.maxFixedSteps = std::max(0, I());
+    else if (k == "musicVolume") b.musicVolume = F();
+    else if (k == "sfxVolume") b.sfxVolume = F();
+    else if (k == "defaultLanguage") S(b.defaultLanguage, sizeof(b.defaultLanguage));
+    else if (k == "logLevel")  S(b.logLevel, sizeof(b.logLevel));
+    else if (k == "logToFile") b.logToFile = B();
+    else if (k == "envVars")   S(b.envVars, sizeof(b.envVars));
+    else if (k == "description") S(b.description, sizeof(b.description));
+    else if (k == "allowCommands") b.allowBuildCommands = B();
+    else if (k == "preBuild")  S(b.preBuildCommand, sizeof(b.preBuildCommand));
+    else if (k == "postBuild") S(b.postBuildCommand, sizeof(b.postBuildCommand));
+    else if (k == "renderer")  b.renderer = std::max(0, std::min(3, I()));
+    else if (k == "particleCap") b.particleCap = std::max(0, I());
+    else if (k == "gamepadDeadzone") b.gamepadDeadzone = F();
+    else if (k == "sampleRate") b.sampleRate = I();
+    else if (k == "exclude")   S(b.excludeList, sizeof(b.excludeList));
 }
 
 
@@ -401,41 +449,90 @@ inline std::string WriteProjectSettings(const ProjectSettings& s, const std::str
 /// The text of project.okayproj for `s` with the tag list and layer names that are live now.
 inline std::string WriteProjectSettings(const ProjectSettings& s) { return WriteProjectSettings(s, okay::ProjectLists::Write()); }
 
+// The range each number in project.okayproj may take. A value outside it is pulled to the nearest end; a value
+// that is not a number at all (text, nan, inf) leaves the setting as it was (the default on a fresh load).
+constexpr int   kProjectMinSize = 16, kProjectMaxSize = 16384;   // default window / build size, pixels
+constexpr float kProjectMaxGravity = 10000.0f;                   // each gravity part, m/s^2, either sign
+constexpr float kProjectMinHz = 1.0f, kProjectMaxHz = 500.0f;    // physics steps per second
+
+/// Read exactly `n` finite floats, separated by spaces, from the start of `v`. False (and `out` untouched)
+/// when there are fewer, or any is nan or inf.
+inline bool ParseFiniteFloats(const std::string& v, float* out, int n) {
+    float tmp[4] = {};
+    const char* p = v.c_str();
+    for (int i = 0; i < n; ++i) {
+        char* end = nullptr;
+        const float x = std::strtof(p, &end);
+        if (end == p || !std::isfinite(x)) return false;
+        tmp[i] = x;
+        p = end;
+    }
+    for (int i = 0; i < n; ++i) out[i] = tmp[i];
+    return true;
+}
+/// Read one whole integer (spaces around it allowed). False for anything else.
+inline bool ParseWholeInt(const std::string& v, long long& out) {
+    const char* p = v.c_str();
+    while (*p == ' ' || *p == '\t') ++p;
+    char* end = nullptr;
+    errno = 0;
+    const long long x = std::strtoll(p, &end, 10);
+    if (end == p || errno == ERANGE) return false;
+    while (*end == ' ' || *end == '\t') ++end;
+    if (*end != '\0') return false;
+    out = x;
+    return true;
+}
+
 /// Apply one project.okayproj line. False for a key that is not a project setting (the tag and layer lines
-/// are ProjectLists' and are handled by the caller).
-inline bool ApplyProjectSettingLine(ProjectSettings& s, const std::string& k, const std::string& v) {
-    auto f3 = [&](float* dst) { float a = dst[0], b = dst[1], c = dst[2]; std::sscanf(v.c_str(), "%f %f %f", &a, &b, &c); dst[0] = a; dst[1] = b; dst[2] = c; };
+/// are ProjectLists' and are handled by the caller). A number that is not usable keeps the old value and one
+/// out of range is clamped; either way `warning`, when given, gets one line saying what happened.
+inline bool ApplyProjectSettingLine(ProjectSettings& s, const std::string& k, const std::string& v, std::string* warning = nullptr) {
+    auto warn = [&](const std::string& what) { if (warning) *warning = "project.okayproj: " + k + "=" + v + ": " + what; };
+    auto clampf = [](float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); };
+    // n floats, each pulled into [lo, hi]; the whole line is ignored if any part is not a finite number.
+    auto floats = [&](float* dst, int n, float lo, float hi) {
+        float t[4];
+        if (!ParseFiniteFloats(v, t, n)) { warn("not " + std::to_string(n) + " finite number(s), kept the old value"); return; }
+        bool clamped = false;
+        for (int i = 0; i < n; ++i) {
+            const float c = clampf(t[i], lo, hi);
+            if (c != t[i]) clamped = true;
+            dst[i] = c;
+        }
+        if (clamped) warn("out of range " + FloatText(lo) + ".." + FloatText(hi) + ", clamped");
+    };
+    auto size = [&](int& dst) {
+        long long x = 0;
+        if (!ParseWholeInt(v, x)) { warn("not a whole number, kept " + std::to_string(dst)); return; }
+        const long long c = x < kProjectMinSize ? kProjectMinSize : (x > kProjectMaxSize ? kProjectMaxSize : x);
+        if (c != x) warn("out of range " + std::to_string(kProjectMinSize) + ".." + std::to_string(kProjectMaxSize) + ", clamped to " + std::to_string(c));
+        dst = (int)c;
+    };
     if      (k == "company") { std::snprintf(s.company, sizeof(s.company), "%s", v.c_str()); }
     else if (k == "version") { std::snprintf(s.version, sizeof(s.version), "%s", v.c_str()); }
-    else if (k == "width")   s.defaultWidth = std::atoi(v.c_str());
-    else if (k == "height")  s.defaultHeight = std::atoi(v.c_str());
-    else if (k == "gravity2d") { float a = s.gravity2D[0], b = s.gravity2D[1]; std::sscanf(v.c_str(), "%f %f", &a, &b); s.gravity2D[0] = a; s.gravity2D[1] = b; }
-    else if (k == "gravity3d") f3(s.gravity3D);
-    else if (k == "physics_hz") {
-        char* end = nullptr;
-        float h = std::strtof(v.c_str(), &end);
-        if (end != v.c_str() && std::isfinite(h)) {
-            if (h < 1.0f) h = 1.0f;
-            if (h > 500.0f) h = 500.0f;
-            s.physicsHz = h;
-        }
-    }
+    else if (k == "width")   size(s.defaultWidth);
+    else if (k == "height")  size(s.defaultHeight);
+    else if (k == "gravity2d") floats(s.gravity2D, 2, -kProjectMaxGravity, kProjectMaxGravity);
+    else if (k == "gravity3d") floats(s.gravity3D, 3, -kProjectMaxGravity, kProjectMaxGravity);
+    else if (k == "physics_hz") floats(&s.physicsHz, 1, kProjectMinHz, kProjectMaxHz);
     else if (k == "physics_smooth") s.smoothPhysics = std::atoi(v.c_str()) != 0;
-    else if (k == "ambient") s.ambient = (float)std::atof(v.c_str());
+    else if (k == "ambient") floats(&s.ambient, 1, 0.0f, 1.0f);
     else if (k == "skybox")  s.skybox = std::atoi(v.c_str()) != 0;
     else if (k == "modules") s.modules = v;
     else if (k == "splash_logo") std::snprintf(s.splashLogo, sizeof(s.splashLogo), "%s", v.c_str());
     else if (k == "splash_bar") s.splashShowBar = std::atoi(v.c_str()) != 0;
     else if (k == "splash_accent_on") s.splashAccentOverride = std::atoi(v.c_str()) != 0;
-    else if (k == "splash_bg_top") f3(s.splashBgTop);
-    else if (k == "splash_bg_bot") f3(s.splashBgBot);
-    else if (k == "splash_accent") f3(s.splashAccent);
+    else if (k == "splash_bg_top") floats(s.splashBgTop, 3, 0.0f, 1.0f);
+    else if (k == "splash_bg_bot") floats(s.splashBgBot, 3, 0.0f, 1.0f);
+    else if (k == "splash_accent") floats(s.splashAccent, 3, 0.0f, 1.0f);
     else return false;
     return true;
 }
 
 /// Read project.okayproj text into `s` and the tag / layer lists. The lists start from their defaults.
-inline void ParseProjectSettings(ProjectSettings& s, const std::string& text) {
+/// Each number that was clamped or ignored gives one warning line: logged, and added to `warnings` when given.
+inline void ParseProjectSettings(ProjectSettings& s, const std::string& text, std::vector<std::string>* warnings = nullptr) {
     okay::ProjectLists::Reset();
     std::istringstream f(text);
     std::string line;
@@ -445,7 +542,12 @@ inline void ParseProjectSettings(ProjectSettings& s, const std::string& text) {
         if (eq == std::string::npos) continue;
         const std::string k = line.substr(0, eq), v = line.substr(eq + 1);
         if (okay::ProjectLists::ApplyLine(k, v)) continue;   // tag=, strict_tags=, layer_name_N=
-        ApplyProjectSettingLine(s, k, v);
+        std::string w;
+        ApplyProjectSettingLine(s, k, v, &w);
+        if (!w.empty()) {
+            okay::Log::Warning(w);
+            if (warnings) warnings->push_back(w);
+        }
     }
 }
 

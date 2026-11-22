@@ -38,6 +38,14 @@ bool LocalizationUndo(bool redo);
 // is localized (the caller then hides its literal text box).
 bool LocalizedTextField(okay::editor::EditorState& ed, const char* id, okay::LocalizedText& loc,
                         std::string& literal, okay::GameObject* go);
+// What LocalizedSwitch's checkbox does for a Pause Menu or a Hold Prompt (an undo step, the switch, the keys added); its tooltips. For the
+// Inspector's OkayUI rows (stage 6).
+void LocalizedSwitchApply(okay::editor::EditorState& ed, okay::Component* c, bool on);
+extern const char* const kPauseLocalizedTip;
+extern const char* const kHoldLocalizedTip;
+// What LocalizedTextField's checkbox does when it is ticked (on) or cleared: an undo step, the key (reused or added) or none, the
+// object's text refreshed. For the Inspector's OkayUI rows, which draw the checkbox themselves.
+void LocalizedTextSwitch(okay::editor::EditorState& ed, okay::LocalizedText& loc, std::string& literal, okay::GameObject* go, bool on);
 // A string-table key field: the key, a picker listing the table's keys with their
 // text, and the default language's text under it.
 bool LocKeyInput(okay::editor::EditorState& ed, const char* label, std::string& key);
@@ -56,7 +64,8 @@ void CopyLocalizationFiles(okay::editor::EditorState& ed, const std::string& dat
 
 // Dev screenshot hooks: OKAY_UI_LOC=1 opens the window, OKAY_UI_LANG=<code>
 // previews that language (qps-ploc = pseudo-localized), OKAY_UI_LOCKEY=<key>
-// selects a key (its Find in Scene list shows).
+// selects a key (its Find in Scene list shows), OKAY_UI_LOCIMPORT=<file> reads a CSV or JSON
+// file as Import... does and shows the Import Translations confirm box.
 void LocalizationDevHooks(okay::editor::EditorState& ed);
 
 } // namespace oked

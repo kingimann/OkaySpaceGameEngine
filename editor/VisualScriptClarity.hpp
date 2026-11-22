@@ -3,10 +3,11 @@
 // this pin connect to?" in plain words, for tooltips in the Visual Script editor.
 // Everything here is computed from the node table and PinCompatible, so a new node
 // or a changed wire rule shows up in the text without a second copy to edit.
-// docs/visual_script_clarity_audit.md is the audit this comes from.
+// docs/scripting/visual_script_clarity.md is the audit this comes from.
 // Included by VisualScriptEditor.hpp, after the node table (Registry, VsDef) it reads.
 #include "okay/VisualScript/VsTypes.hpp"
 
+#include <cctype>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -182,6 +183,26 @@ inline std::string VsFirstSentence(const std::string& s, std::size_t maxLen = 12
     return r;
 }
 
+/// Drops a leading "Wait Seconds. " style sentence: a short run of capitalised words that only repeats a title
+/// (the node's old or new name), so the text starts with what the node does.
+inline std::string VsStripTitleEcho(const std::string& text, const char* title = nullptr) {
+    if (title && title[0]) {
+        const std::string echo = std::string(title) + ". ";
+        if (text.size() > echo.size() && text.compare(0, echo.size(), echo) == 0) return text.substr(echo.size());
+    }
+    const auto dot = text.find(". ");
+    if (dot == std::string::npos || dot == 0 || dot > 32 || dot + 2 >= text.size()) return text;
+    int words = 0;
+    bool start = true;
+    for (std::size_t i = 0; i < dot; ++i) {
+        const char c = text[i];
+        if (c == ' ') { start = true; continue; }
+        if (!std::isalpha((unsigned char)c) && c != '-' && c != '(' && c != ')') return text;
+        if (start) { if (!std::isupper((unsigned char)c)) return text; ++words; start = false; }
+    }
+    return words >= 1 && words <= 4 ? text.substr(dot + 2) : text;
+}
+
 inline VsNodeBrief VsNodeBriefFor(const VsDef& d) {
     VsNodeBrief b;
     const VsNodeDoc* doc = VsNodeDocFor(d.type);
@@ -192,8 +213,7 @@ inline VsNodeBrief VsNodeBriefFor(const VsDef& d) {
         b.does = std::string("Runs the text-script function ") + (d.type + 3) + ".";
     } else if (doc && !doc->description.empty()) {
         std::string text = doc->description;
-        const std::string echo = std::string(d.title ? d.title : "") + ". ";   // "Wait Seconds. Pauses..." names itself first
-        if (echo.size() > 2 && text.compare(0, echo.size(), echo) == 0 && text.size() > echo.size()) text = text.substr(echo.size());
+        text = VsStripTitleEcho(text, d.title);   // "Wait Seconds. Pauses..." names itself first
         b.does = VsFirstSentence(text);
     } else {
         b.does = std::string(d.title ? d.title : d.type) + ".";

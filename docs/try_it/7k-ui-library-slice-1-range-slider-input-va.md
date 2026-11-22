@@ -5,7 +5,7 @@ row: | 7k | UI library slice 1: range slider, input validation, aspect-ratio box
 ## 7k. UI library slice 1: range slider, input validation, aspect-ratio box
 
 **What it is.** A UI screen with three cards that show the parts added in slice 1 of the in-game UI component library
-([ui_library.md](ui_library.md); [ui_component_audit.md](ui_component_audit.md) says what already existed): a range slider
+([ui_library.md](ui/in_game_ui.md#ui-component-library); [ui_component_audit.md](ui/in_game_ui.md#in-game-ui-component-library-audit-what-exists-what-is-missing) says what already existed): a range slider
 with two handles, input boxes with rules (email, number range, password and repeat) and a 16:9 frame that keeps its shape.
 
 **Steps.**
@@ -23,7 +23,7 @@ with two handles, input boxes with rules (email, number range, password and repe
    Range Slider** or **Input Field with Validation**, **Layout & Overlays > Aspect Ratio Box**.
 
 **What you should see.** A red ring and a sentence appear only after typing a wrong value; the range handles stop at each
-other; the blue frame is 16:9 at every window shape. Pictures: `docs/images/ui_library/`.
+other; the blue frame is 16:9 at every window shape. Pictures: a picture folder (pictures are no longer stored in the repository).
 
 **Status.** Logic and the shipped scene are tested headless (`ui_library`, `ui_library_example`: 179 checks, run on Linux).
 The pictures are software renders (`ui_library_shots`), not a real window. The editor menu entries and Inspector panels

@@ -80,6 +80,12 @@ target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_
 # default; OKAY_UI_DEFAULT_BACKEND=okayui flips the build's default. Without okay_ui (no SDL2) the setting is absent.
 if(TARGET okay_ui_screens)
     target_link_libraries(okayspace-launcher PRIVATE okay_ui_screens)
+    if(TARGET okay_ui_soft)   # the software painter: the launcher's window on the own platform backend (OKAY_PLATFORM_BACKEND=own)
+        target_link_libraries(okayspace-launcher PRIVATE okay_ui_soft)
+    endif()
+    if(TARGET okay_ui_render)   # OkayUI's own OpenGL renderer for the hosted screens (OKAY_UI_OWN_RENDER=1, off by default; shared/OkayUIFrame.hpp)
+        target_link_libraries(okayspace-launcher PRIVATE okay_ui_render)
+    endif()
     target_compile_definitions(okayspace-launcher PRIVATE OKAY_HAVE_OKAYUI=1)
 endif()
 if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui" OR OKAY_OWN_STACK)   # OKAY_OWN_STACK: the dogfood build starts on OkayUI
@@ -110,4 +116,37 @@ set_target_properties(okayspace-launcher PROPERTIES
 # window behind the launcher. (Child commands are already run hidden.)
 if(WIN32)
     set_target_properties(okayspace-launcher PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+
+if(OKAY_ENABLE_TEST_HOOKS)   # scripted input for headless runs (shared/TestHooks.hpp); off in every normal and release build
+    target_compile_definitions(okayspace-launcher PRIVATE OKAY_ENABLE_TEST_HOOKS=1)
+endif()
+
+# ---- The launcher on OkayUI (OKAY_LAUNCHER_ON_OKAYUI, off by default) ----------------------------------------------------------------------------
+# The SAME sources, compiled against OkayUI's Dear ImGui compatibility header (okayui/probe first on the include path: <imgui.h> is OkayUI's) instead of
+# Dear ImGui. The input is shared/ImGuiPlatformFeed.hpp (OKAY_ON_OKAYUI makes it the only path); the backend entry points are shared/OkayUIImGuiBackendShim.cpp.
+# Output: bin/OkaySpaceOkayUI(.exe) next to OkaySpace(.exe). docs/ui/own_ui_toolkit.md "Running the real launcher and editor on OkayUI".
+if(OKAY_LAUNCHER_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
+    set(_ok_src "")
+    foreach(_f ${OKAY_LAUNCHER_SOURCES})
+        list(APPEND _ok_src ${_f})
+    endforeach()
+    add_executable(okayspace-launcher-okayui ${_ok_src} ${CMAKE_SOURCE_DIR}/shared/OkayUIImGuiBackendShim.cpp)
+    okay_win_version(okayspace-launcher-okayui "OkaySpace Launcher (OkayUI)" "OkaySpaceOkayUI.exe")
+    target_compile_definitions(okayspace-launcher-okayui PRIVATE ${OKAY_VERSION_DEFINE} OKAY_ON_OKAYUI=1 OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
+    target_compile_features(okayspace-launcher-okayui PRIVATE cxx_std_17)
+    target_include_directories(okayspace-launcher-okayui BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe ${CMAKE_SOURCE_DIR}/okayui/probe/backends)
+    target_include_directories(okayspace-launcher-okayui PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/okayui/include ${CMAKE_SOURCE_DIR}/okayui/screens)
+    target_link_libraries(okayspace-launcher-okayui PRIVATE okay_ui_screens okay_ui ${OKAY_LAUNCHER_SDL} okay::platform okay_crypto)
+    if(TARGET okay_engine)
+        target_link_libraries(okayspace-launcher-okayui PRIVATE okay_engine)
+    endif()
+    if(WIN32)
+        target_link_libraries(okayspace-launcher-okayui PRIVATE shell32 comdlg32 ole32 user32 ws2_32 winhttp)
+        set_target_properties(okayspace-launcher-okayui PROPERTIES WIN32_EXECUTABLE TRUE)
+    endif()
+    set_target_properties(okayspace-launcher-okayui PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin OUTPUT_NAME "OkaySpaceOkayUI")
+    if(OKAY_ENABLE_TEST_HOOKS)
+        target_compile_definitions(okayspace-launcher-okayui PRIVATE OKAY_ENABLE_TEST_HOOKS=1)
+    endif()
 endif()

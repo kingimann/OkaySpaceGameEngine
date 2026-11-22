@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The logic behind the one-dispatch "Fast release" workflow (.github/workflows/fast-release.yml, docs/fast_release.md).
+"""The logic behind the one-dispatch "Fast release" workflow (.github/workflows/fast-release.yml, docs/release/releasing.md).
 
 Everything that decides something lives here, as plain functions over plain data (JSON files, text files), so it can be tested
 offline with fake data (tests/scripts/test_fast_release.py). The workflow only fetches data (git, `gh`, curl) and calls this.
@@ -24,7 +24,7 @@ Entry files (dist/changelog.d/<id>.txt), one per change, written in the change's
     - What changed, in plain words players can read. A second line of the same
       bullet is indented by two spaces.
 
-Written from our own design (docs/fast_release.md); Python standard library only.
+Written from our own design (docs/release/releasing.md); Python standard library only.
 """
 import argparse
 import json
@@ -90,7 +90,7 @@ def next_version(existing, cmake=None, bump="minor", override=None, lts=None):
     Releases are numbered 2.<build>.<patch>. "minor" counts the build (2.880.0 -> 2.881.0, what every release did so far), "patch"
     counts the patch (2.880.0 -> 2.880.1). The counter starts from the newest published version; a CMakeLists.txt VERSION that is
     newer than anything published (somebody pre-bumped it) is used as it is. Never a version that already exists (rule 12), never one
-    in the LTS line (those are cut on their own branch, docs/release_channels.md)."""
+    in the LTS line (those are cut on their own branch, docs/release/release_channels.md)."""
     if bump not in ("minor", "patch"):
         raise Refused("bump must be minor or patch (got %r)" % bump)
     latest = max(existing) if existing else None
@@ -158,6 +158,48 @@ def ci_jobs_decision(jobs):
         c = j.get("conclusion")
         if c not in ("success", "skipped"):
             bad.append("%s: %s" % (j.get("name", "?"), c or j.get("status") or "unknown"))
+    return {"ok": not bad, "bad": bad, "count": len(jobs)}
+
+
+# The smaller "release gate": the CI jobs that build and test what ships (the Windows programs, the player/editor, the scripting
+# sanitizers, the update-signing tests). The other jobs (Assimp comparison, own HTTP, own stack, no-libsodium crypto, WebGL, SQL) are
+# informational for a release: they do not build anything that is released. Display names of ci.yml jobs; a test keeps this list honest.
+RELEASE_GATE_JOBS = (
+    "Build & test (Ubuntu)",
+    "Build player runtime (Ubuntu)",
+    "Build & self-test editor (Ubuntu)",
+    "Export a game and check its visual scripts (Ubuntu)",
+    "Scripting and robustness tests (ASan + UBSan)",
+    "Cross-compile Windows build (MinGW)",
+    "Windows export check",
+    "Windows updater restart",
+    "Ticket function, update signing and account server tests",
+    "Anti-cheat tests with libsodium (Ubuntu)",
+)
+
+
+def ci_gate_decision(jobs, gate=RELEASE_GATE_JOBS):
+    """The release gate, for a CI run that may still be going: every gate job success/skipped, and NO job anywhere already red or
+    cancelled. Jobs outside the gate that are still running are not waited for. Returns {ok, bad, pending, count}."""
+    if isinstance(jobs, dict):
+        jobs = jobs.get("jobs", [])
+    by = {j.get("name"): j for j in jobs}
+    bad = ci_jobs_failed(jobs)["bad"]
+    pending = []
+    for n in gate:
+        j = by.get(n)
+        c = j.get("conclusion") if j else None
+        if c not in ("success", "skipped") and not (j and c in ("failure", "cancelled", "timed_out", "startup_failure", "action_required")):
+            pending.append("%s: %s" % (n, (j.get("status") if j else None) or "not started"))
+    return {"ok": not bad and not pending, "bad": bad, "pending": pending, "count": len(jobs)}
+
+
+def ci_jobs_failed(jobs):
+    """Jobs of a CI run that is still going which already ended red or cancelled (so waiting longer cannot make that run green)."""
+    if isinstance(jobs, dict):
+        jobs = jobs.get("jobs", [])
+    bad = ["%s: %s" % (j.get("name", "?"), j.get("conclusion")) for j in jobs
+           if j.get("conclusion") in ("failure", "cancelled", "timed_out", "startup_failure", "action_required")]
     return {"ok": not bad, "bad": bad, "count": len(jobs)}
 
 
@@ -310,7 +352,7 @@ def build_notes(entries_dir, released_names, base_text, version, allow_empty=Fal
     new = new_entries(entries, released_names)
     if not new and not allow_empty:
         raise Refused("No new changelog entries since the last release: players would see nothing under v%s. Every change adds a file "
-                      "dist/changelog.d/<id>.txt (docs/fast_release.md); or dispatch with allow_empty to release anyway." % version)
+                      "dist/changelog.d/<id>.txt (docs/release/releasing.md); or dispatch with allow_empty to release anyway." % version)
     block = render_block(version, new) if new else "v%s\n  %s\n  - Small fixes and improvements.\n" % (version, DEFAULT_SECTION)
     changelog = merge_changelog(base_text, version, block)
     body = ["## What's new in v%s" % version, ""]
@@ -446,6 +488,8 @@ def main(argv):
     a.add_argument("--sha", required=True)
     a = sub.add_parser("ci-jobs")
     a.add_argument("--jobs", required=True)
+    a.add_argument("--gate", choices=("release",), help="the smaller release gate (RELEASE_GATE_JOBS); exit 0 ok, 1 red, 3 still pending")
+    a.add_argument("--failed-only", action="store_true", help="only look for jobs that already ended red/cancelled (a run still in progress)")
     a = sub.add_parser("notes")
     a.add_argument("--entries-dir", default=os.path.join(ROOT, "dist", "changelog.d"))
     a.add_argument("--released-list")
@@ -489,7 +533,11 @@ def main(argv):
             print(json.dumps(d))
             return 0 if d["state"] == "pass-run" else 1
         elif args.cmd == "ci-jobs":
-            d = ci_jobs_decision(_read_json(args.jobs) or [])
+            if args.gate:
+                d = ci_gate_decision(_read_json(args.jobs) or [])
+                print(json.dumps(d))
+                return 0 if d["ok"] else (1 if d["bad"] else 3)
+            d = (ci_jobs_failed if args.failed_only else ci_jobs_decision)(_read_json(args.jobs) or [])
             print(json.dumps(d))
             return 0 if d["ok"] else 1
         elif args.cmd == "notes":

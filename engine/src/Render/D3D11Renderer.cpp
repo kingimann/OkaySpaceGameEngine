@@ -10,9 +10,12 @@
 #include "okay/Components/LODGroup.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shared texture cache
+#include "okay/Render/GpuTexture.hpp"         // .dds / compressed import copies: BC blocks uploaded as they are
 #include "okay/Render/ShadowSetup.hpp"
+#include "okay/Render/D3D11Layout.hpp"
 #include "okay/Render/PostQualityMath.hpp"   // shared bloom soft knee + AO power (UNVERIFIED on a GPU)
 #include "okay/Render/DofMath.hpp"    // shared depth of field constants + HLSL (UNVERIFIED on a GPU)
+#include "okay/Render/D3D11Hlsl.hpp"   // the HLSL text (moved out of this file, same bytes)
 #include "okay/Render/D3DPostHLSL.hpp"   // shared post-chain HLSL (UNVERIFIED on a GPU)
 #include "okay/Render/SsaoMath.hpp"   // shared SSAO constants + HLSL (UNVERIFIED on a GPU)
 #include "okay/Render/Atmosphere.hpp"   // sky palette, fog modes, post settings
@@ -20,9 +23,17 @@
 #include "okay/Components/SkinnedMesh.hpp"    // skinned meshes: VB cache keyed on SkinnedMesh::version
 #include "okay/Components/Character.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Time.hpp"
+#include "okay/Render/OkayShader.hpp"   // Custom (.okayshader) surfaces
 
 #include <d3d11.h>
-#include <d3dcompiler.h>
+#if !defined(OKAY_XBOX_UWP)
+#include <d3dcompiler.h>   // run-time HLSL compile: desktop only. A UWP app loads the .cso bundle instead (ShaderBundle.hpp).
+#else
+#include "okay/Render/ShaderBundle.hpp"
+#include "okay/Render/D3D11OverlayHlsl.hpp"   // the text the bundle is built from (renderer HLSL + the UI overlay shaders)
+#include <fstream>
+#endif
 #include <cstdint>
 #include <array>
 #include <cstring>
@@ -40,461 +51,90 @@ namespace {
 // projection yields GL-style clip z in [-1,1]; D3D wants [0,1], so we remap z in the
 // vertex shader: z' = (z + w) / 2. No row flip is needed on read-back (D3D textures
 // are top-left, like SDL).
-const char* kHLSL =
-    "cbuffer CB : register(b0) {\n"
-    "  float4x4 uMVP; float4x4 uModel;\n"
-    "  float3 uColor;     float uSpecular;\n"
-    "  float3 uEmissive;  float uShininess;\n"
-    "  float3 uLightDir;  float uUnlit;\n"
-    "  float3 uLightColor; float uUseTex;\n"
-    "  float3 uAmbient;   float uHasNormal;\n"      // _p0 repurposed: 1 = sample normal map
-    "  float3 uEye;       float uNormalStrength;\n" // _p1 repurposed: bump intensity
-    "  float2 uTiling;    float uShadowAlpha; float uAlpha;\n"   // _p2 repurposed: material opacity
-    "  float3 uRimColor;  float uShaderMode;\n"
-    "  float3 uGradTop;   float uToonBands;\n"
-    "  float3 uGradBot;   float uRimStr;\n"
-    "  float4 uPbr;\n"                        // x=metallic y=reflectivity z=hasSpecMap w=hasAo
-    "  float4 uPbr2;\n"                       // x=aoStrength y=envOn z=texOffset.x w=texOffset.y
-    "  float4 uSky[3];\n"                     // [0]=top [1]=horizon [2]=bottom (xyz) for reflections
-    "  float4 uLightCount;\n"                 // .x = number of scene lights (0 = use uLightDir)
-    "  float4 uLights[64];\n"                 // 16 lights x 4: [dir,type][pos,range][col,cosOut][cosIn,..]
-    "  float4 uFog;\n"                        // x=on y=start z=end (distance fog) w=receive shadows
-    "  float4 uFogCol;\n"                     // xyz = fog colour, w = filmic pipeline flag
-    "  float4 uFog2;\n"                       // x=mode (0 linear 1 exponential 2 height) y=density z=height w=falloff
-    "  float4 uPost;\n"                       // x=1: leave the colour linear for the post chain
-    "};\n"
-    // Shadows + ambient: once per frame (b2). Sun = cascades side by side in t4;
-    // spot/point lights = a 4x4 tile atlas in t5 (see ShadowSetup.hpp).
-    "cbuffer SH : register(b2) {\n"
-    "  float4x4 uCasVP[4];\n"
-    "  float4 uCasSphere[4];\n"               // xyz = centre, w = radius
-    "  float4 uCasInfo[4];\n"                 // x = world texel size
-    "  float4 uShadow;\n"                     // x=on y=cascade count z=cascade size w=softness (texels)
-    "  float4 uShadow2;\n"                    // x=sun light index y=sun strength z=sun bias w=local tile size
-    "  float4 uAmbSky;\n"                     // ambient for up-facing surfaces (scene Ambient Mode)
-    "  float4 uAmbGround;\n"                  // ... and down-facing ones
-    "  float4x4 uLocalVP[16];\n"
-    "  float4 uLShadow[16];\n"                // per light: x=first tile (-1 none) y=strength z=bias w=texel at 1m
-    "};\n"
-    "Texture2D uTex : register(t0);\n"
-    "Texture2D uNormalTex : register(t1);\n"        // bump/normal map (tangent-space)
-    "Texture2D uSpecTex : register(t2);\n"          // gloss/specular map
-    "Texture2D uAoTex : register(t3);\n"            // ambient-occlusion map
-    "Texture2D uMrTex : register(t6);\n"            // glTF metallic-roughness (G rough, B metal)
-    "Texture2D uEmisTex : register(t7);\n"          // glTF emissive
-    "Texture2D uShadowTex : register(t4);\n"        // sun cascade atlas (depth)
-    "Texture2D uLocalTex : register(t5);\n"         // spot/point light tile atlas (depth)
-    "SamplerState uSamp : register(s0);\n"
-    "SamplerComparisonState uShadowCmp : register(s1);\n"   // filtered depth compare (hardware PCF)
-    "static float2x2 gRot;\n"                       // per-pixel Poisson rotation
-    "float sunTap(float2 uv, float2 o, float z, float ci){\n"
-    "  float e = 1.0 / uShadow.z;\n"                                  // stay a texel inside the cascade tile
-    "  float2 t = clamp(uv + mul(gRot, o), e, 1.0 - e);\n"
-    "  return uShadowTex.SampleCmpLevelZero(uShadowCmp, float2((ci + t.x) / uShadow.y, t.y), z);\n"
-    "}\n"
-    "float sunCascade(int ci, float3 wp, float3 n){\n"
-    "  float tx = uCasInfo[ci].x;\n"
-    // World-space bias (same as GL): along the normal, more for a wider filter,
-    // plus a little toward the sun.
-    "  float3 p = wp + n * (tx * (1.0 + 0.6 * uShadow.w) * uShadow2.z) + uLightDir * (tx * 0.75 * uShadow2.z);\n"
-    "  float4 sc = mul(uCasVP[ci], float4(p, 1.0));\n"
-    "  float2 uv = float2(sc.x * 0.5 + 0.5, -sc.y * 0.5 + 0.5);\n"        // D3D texture v is top-down
-    "  float z = sc.z * 0.5 + 0.5;\n"                                   // GL clip z [-1,1] -> [0,1]
-    "  if (z >= 1.0) return 1.0;\n"
-    "  float r = uShadow.w / uShadow.z; float c = (float)ci; float s = 0.0;\n"
-    "  s += sunTap(uv, float2(-0.326,-0.406)*r, z, c); s += sunTap(uv, float2(-0.840,-0.074)*r, z, c);\n"
-    "  s += sunTap(uv, float2(-0.696, 0.457)*r, z, c); s += sunTap(uv, float2(-0.203, 0.621)*r, z, c);\n"
-    "  s += sunTap(uv, float2( 0.962,-0.195)*r, z, c); s += sunTap(uv, float2( 0.473,-0.480)*r, z, c);\n"
-    "  s += sunTap(uv, float2( 0.519, 0.767)*r, z, c); s += sunTap(uv, float2( 0.185,-0.893)*r, z, c);\n"
-    "  s += sunTap(uv, float2( 0.507, 0.064)*r, z, c); s += sunTap(uv, float2( 0.896, 0.412)*r, z, c);\n"
-    "  s += sunTap(uv, float2(-0.322,-0.933)*r, z, c); s += sunTap(uv, float2(-0.792,-0.598)*r, z, c);\n"
-    "  return s / 12.0;\n"
-    "}\n"
-    "float shadowFactor(float3 wp, float3 n){\n"     // sun: 0 = shadowed .. 1 = lit
-    "  if (uShadow.x < 0.5) return 1.0;\n"
-    "  int cnt = (int)(uShadow.y + 0.5);\n"
-    "  [loop] for (int ci = 0; ci < 4; ci++) { if (ci >= cnt) break;\n"
-    "    float d = length(wp - uCasSphere[ci].xyz); float R = uCasSphere[ci].w;\n"
-    "    if (d >= R) continue;\n"                                         // tightest cascade holding the point
-    "    float s = sunCascade(ci, wp, n);\n"
-    "    float edge = R * 0.82;\n"                                        // blend into the next cascade (no seam)
-    "    if (d > edge) { float f = (d - edge) / (R - edge);\n"
-    "      s = lerp(s, (ci + 1 < cnt) ? sunCascade(ci + 1, wp, n) : 1.0, f); }\n"
-    "    return 1.0 - uShadow2.y * (1.0 - s);\n"
-    "  }\n"
-    "  return 1.0;\n"
-    "}\n"
-    "float localTap(float2 org, float2 uv, float2 o, float z){\n"
-    "  float e = 1.0 / uShadow2.w;\n"
-    "  float2 t = clamp(uv + mul(gRot, o), e, 1.0 - e);\n"
-    "  return uLocalTex.SampleCmpLevelZero(uShadowCmp, org + t * 0.25, z);\n"
-    "}\n"
-    "float localShadow(int li, float3 lpos, float ltype, float3 wp, float3 n, float3 l, float dist){\n"
-    "  float4 info = uLShadow[li];\n"
-    "  float tw = dist * info.w;\n"                                      // world size of a shadow texel here
-    "  float3 p = wp + n * (tw * (1.5 + 0.6 * uShadow.w) * info.z) + l * (tw * info.z);\n"
-    "  float tile = info.x;\n"
-    "  if (ltype < 1.5 || ltype > 2.5) {\n"                              // point / area: pick the cube face
-    "    float3 v = p - lpos; float3 a = abs(v);\n"
-    "    if (a.x >= a.y && a.x >= a.z) tile += (v.x > 0.0) ? 0.0 : 1.0;\n"
-    "    else if (a.y >= a.z) tile += (v.y > 0.0) ? 2.0 : 3.0;\n"
-    "    else tile += (v.z > 0.0) ? 4.0 : 5.0;\n"
-    "  }\n"
-    "  float4 sc = mul(uLocalVP[(int)(tile + 0.5)], float4(p, 1.0));\n"
-    "  if (sc.w <= 1e-5) return 1.0;\n"
-    "  float3 q = sc.xyz / sc.w;\n"
-    "  float2 uv = float2(q.x * 0.5 + 0.5, -q.y * 0.5 + 0.5); float z = q.z * 0.5 + 0.5;\n"
-    "  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || z >= 1.0) return 1.0;\n"
-    "  float2 org = float2(fmod(tile, 4.0), floor(tile / 4.0 + 0.01)) * 0.25;\n"
-    "  float r = uShadow.w / uShadow2.w; float s = 0.0;\n"
-    "  s += localTap(org, uv, float2(-0.326,-0.406)*r, z); s += localTap(org, uv, float2(-0.840,-0.074)*r, z);\n"
-    "  s += localTap(org, uv, float2(-0.696, 0.457)*r, z); s += localTap(org, uv, float2(-0.203, 0.621)*r, z);\n"
-    "  s += localTap(org, uv, float2( 0.962,-0.195)*r, z); s += localTap(org, uv, float2( 0.473,-0.480)*r, z);\n"
-    "  s += localTap(org, uv, float2( 0.519, 0.767)*r, z); s += localTap(org, uv, float2( 0.185,-0.893)*r, z);\n"
-    "  s += localTap(org, uv, float2( 0.507, 0.064)*r, z); s += localTap(org, uv, float2( 0.896, 0.412)*r, z);\n"
-    "  s += localTap(org, uv, float2(-0.322,-0.933)*r, z); s += localTap(org, uv, float2(-0.792,-0.598)*r, z);\n"
-    "  return 1.0 - info.y * (1.0 - s / 12.0);\n"
-    "}\n"
-    // ACES filmic curve (matches the GL renderer) for the linear/filmic pipeline.
-    "float3 aces(float3 x){\n"
-    "  return saturate((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14));\n"
-    "}\n"
-    "float4 VSDepth(float3 pos:POSITION):SV_POSITION {\n"          // depth-only shadow pass
-    "  float4 cp = mul(uMVP, float4(pos,1.0)); cp.z = (cp.z + cp.w) * 0.5; return cp;\n"
-    "}\n"
-    "struct VSIn { float3 pos:POSITION; float3 nrm:NORMAL; float2 uv:TEXCOORD; float3 col:COLOR; float3 tan:TANGENT; };\n"
-    "struct PSIn { float4 pos:SV_POSITION; float3 nrm:NORMAL; float3 world:TEXCOORD1; float2 uv:TEXCOORD0; float3 col:COLOR; float3 tan:TEXCOORD2; };\n"
-    "PSIn VSMain(VSIn i){\n"
-    "  PSIn o;\n"
-    "  float4 cp = mul(uMVP, float4(i.pos,1.0));\n"
-    "  cp.z = (cp.z + cp.w) * 0.5;\n"        // GL [-1,1] -> D3D [0,1]
-    "  o.pos = cp;\n"
-    "  o.nrm = mul((float3x3)uModel, i.nrm);\n"
-    "  o.tan = mul((float3x3)uModel, i.tan);\n"
-    "  o.world = mul(uModel, float4(i.pos,1.0)).xyz;\n"
-    "  o.uv = i.uv * uTiling + uPbr2.zw;\n"
-    "  o.col = i.col;\n"
-    "  return o;\n"
-    "}\n"
-    // ---- GPU skinning: up to 256 joints as 3x4 affine rows (b1) ----
-    "cbuffer Bones : register(b1) { float4 uBones[768]; };\n"
-    "float3x4 skinMat(float4 j, float4 w){\n"
-    "  float sw = w.x + w.y + w.z + w.w;\n"
-    "  if (sw < 1e-6) return float3x4(1,0,0,0, 0,1,0,0, 0,0,1,0);\n"   // unweighted: bind pose
-    "  int4 b = (int4)(j + 0.5) * 3;\n"
-    "  float3x4 m = w.x * float3x4(uBones[b.x], uBones[b.x+1], uBones[b.x+2]);\n"
-    "  m += w.y * float3x4(uBones[b.y], uBones[b.y+1], uBones[b.y+2]);\n"
-    "  m += w.z * float3x4(uBones[b.z], uBones[b.z+1], uBones[b.z+2]);\n"
-    "  m += w.w * float3x4(uBones[b.w], uBones[b.w+1], uBones[b.w+2]);\n"
-    "  return m / sw;\n"
-    "}\n"
-    "struct VSInSkin { float3 pos:POSITION; float3 nrm:NORMAL; float2 uv:TEXCOORD; float3 col:COLOR; float3 tan:TANGENT;\n"
-    "                  float4 bj:BLENDINDICES; float4 bw:BLENDWEIGHT; };\n"
-    "PSIn VSSkin(VSInSkin i){\n"
-    "  float3x4 m = skinMat(i.bj, i.bw);\n"
-    "  VSIn v; v.pos = mul(m, float4(i.pos,1.0)); v.nrm = normalize(mul((float3x3)m, i.nrm));\n"
-    "  v.tan = mul((float3x3)m, i.tan); v.uv = i.uv; v.col = i.col;\n"
-    "  return VSMain(v);\n"
-    "}\n"
-    "float4 VSDepthSkin(float3 pos:POSITION, float4 bj:BLENDINDICES, float4 bw:BLENDWEIGHT):SV_POSITION {\n"
-    "  return VSDepth(mul(skinMat(bj, bw), float4(pos,1.0)));\n"
-    "}\n"
-    "float4 PSMain(PSIn i):SV_TARGET {\n"
-    "  if (uShadowAlpha >= 0.0) return float4(0,0,0,uShadowAlpha);\n"   // flat ground contact shadow
-    "  float3 N = normalize(i.nrm);\n"
-    "  if (uHasNormal > 0.5) {\n"                                       // perturb N by the tangent-space normal map
-    "    float3 tn = uNormalTex.Sample(uSamp, i.uv).rgb * 2.0 - 1.0;\n"
-    "    tn.xy *= uNormalStrength;\n"
-    "    float3 Tn = i.tan - N * dot(N, i.tan);\n"                      // Gram-Schmidt orthonormalize
-    "    if (length(Tn) > 1e-5) {\n"
-    "      Tn = normalize(Tn); float3 Bn = cross(N, Tn);\n"
-    "      float3 pn = Tn * tn.x + Bn * tn.y + N * tn.z;\n"
-    "      if (length(pn) > 1e-5) N = normalize(pn);\n"
-    "    }\n"
-    "  }\n"
-    "  float3 base = uColor * i.col;\n"      // per-vertex/face color (white when unused)
-    "  if (uUseTex > 0.5) base *= uTex.Sample(uSamp, i.uv).rgb;\n"
-    "  float3 Vv = normalize(uEye - i.world);\n"
-    "  float fz = 1.0 - max(dot(N, Vv), 0.0);\n"               // Fresnel term (grazing)
-    "  if (uShaderMode > 2.5 && uShaderMode < 3.5)\n"           // Gradient
-    "    base = lerp(uGradBot, uGradTop, saturate(N.y * 0.5 + 0.5));\n"
-    "  bool fres = uShaderMode > 3.5 && uShaderMode < 4.5;\n"   // Fresnel
-    "  if (fres) base *= 0.10;\n"
-    "  if (uShaderMode > 4.5 && uShaderMode < 5.5) {\n"         // Iridescent (oil-slick)
-    "    float ph = fz * 6.2831853;\n"
-    "    base *= float3(0.5+0.5*cos(ph), 0.5+0.5*cos(ph+2.0944), 0.5+0.5*cos(ph+4.1888));\n"
-    "  }\n"
-    "  bool holo = uShaderMode > 5.5 && uShaderMode < 6.5;\n"   // Hologram
-    "  if (holo) base *= 0.18 * (0.55 + 0.45 * sin(i.world.y * 40.0));\n"
-    "  if (uShaderMode > 6.5) base = floor(base * 5.0) / 5.0;\n"  // Posterize (retro banding)
-    // Filmic mode (uFogCol.w): gamma-correct pipeline — decode sRGB albedo/emissive
-    // to linear, light in linear, ACES + sRGB-encode at the end (matches GL).
-    "  bool lin = uFogCol.w > 0.5;\n"
-    "  if (lin) base = pow(max(base, 0.0), 2.2);\n"
-    "  float3 emis = uEmissive;\n"
-    "  if (uLightCount.z > 0.5) emis *= uEmisTex.Sample(uSamp, i.uv).rgb;\n"
-    "  if (lin) emis = pow(max(emis, 0.0), 2.2);\n"
-    "  float shiny = uShininess; float metalK = uPbr.x; float specK = uSpecular;\n"
-    "  if (uLightCount.y > 0.5) {\n"
-    "    float4 mr = uMrTex.Sample(uSamp, i.uv);\n"
-    "    metalK *= mr.b;\n"
-    "    float rough0 = saturate(1.0 - (uShininess - 4.0) / 124.0);\n"
-    "    float rough = saturate(rough0 * mr.g);\n"
-    "    shiny = 4.0 + (1.0 - rough) * 124.0;\n"
-    "    specK *= clamp(1.0 - rough, 0.04, 1.0);\n"
-    "  }\n"
-    "  if (uUnlit > 0.5) { float3 uc = base + emis;\n"            // decode+encode cancel: unlit unchanged
-    "    if (lin) uc = pow(max(uc, 0.0), 1.0/2.2);\n"
-    "    return float4(uc, uAlpha); }\n"
-    "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
-    "  float3 amb = lerp(uAmbGround.xyz, uAmbSky.xyz, saturate(N.y * 0.5 + 0.5));\n"  // scene Ambient Mode
-    "  float3 lit = amb; float3 spec = float3(0,0,0);\n"
-    "  { float a = 52.9829189 * frac(dot(i.pos.xy, float2(0.06711056, 0.00583715))) * 6.2831853;\n"
-    "    float ca = cos(a), sa = sin(a); gRot = float2x2(ca, -sa, sa, ca); }\n"   // interleaved-gradient noise rotation
-    "  float3 Ns = normalize(i.nrm);\n"                         // geometric normal for shadow bias
-    "  bool recv = uFog.w > 0.5;\n"                             // MeshRenderer::receiveShadows
-    "  float sh = recv ? shadowFactor(i.world, Ns) : 1.0;\n"    // sun occlusion (real cast shadows)
-    "  int lc = (int)uLightCount.x;\n"
-    "  if (lc < 1) {\n"                                          // fallback: global directional
-    "    float ndl = max(dot(N, uLightDir), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
-    "    lit += uLightColor * ndl * sh;\n"
-    "    if (uSpecular > 0.0) { float3 H = normalize(uLightDir + Vv);\n"
-    "      spec = pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * sh; }\n"
-    "  } else {\n"
-    "    [loop] for (int li = 0; li < 16; li++) { if (li >= lc) break;\n"   // directional + point + spot + area
-    "      float4 d0 = uLights[li*4+0]; float4 d1 = uLights[li*4+1];\n"
-    "      float4 d2 = uLights[li*4+2]; float4 d3 = uLights[li*4+3];\n"
-    "      float3 ld; float at = 1.0; float wrap = 0.0; float dist = 0.0;\n"
-    "      if (d0.w < 0.5) { ld = normalize(-d0.xyz); }\n"             // directional
-    "      else { float3 toL = d1.xyz - i.world; dist = length(toL); ld = toL / max(dist, 1e-4);\n"
-    "        float rng = max(d1.w, 1e-4);\n"
-    "        if (d3.y > 0.5) { float dr = dist / rng; float win = max(1.0 - dr*dr*dr*dr, 0.0); win *= win;\n"   // physical inverse-square, windowed
-    "          at = win / (1.0 + 8.0 * dist * dist / (rng * rng)); }\n"
-    "        else { at = max(1.0 - dist / rng, 0.0); at *= at; }\n"           // linear rolloff
-    "        if (d0.w > 2.5) { wrap = 0.5; }\n"                               // area: soft wrap fill
-    "        else if (d0.w > 1.5) { float cs = dot(normalize(d0.xyz), -ld);\n"   // spot cone
-    "          float dn = d3.x - d2.w; float sp = dn > 1e-4 ? saturate((cs - d2.w) / dn) : (cs >= d2.w ? 1.0 : 0.0);\n"
-    "          at *= sp * sp; } }\n"
-    "      float ndl = max((dot(N, ld) + wrap) / (1.0 + wrap), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
-    "      if (ndl * at <= 0.0) continue;\n"                     // no light reaches here: skip the shadow lookup
-    "      float lsh = 1.0;\n"
-    "      if (d0.w < 0.5) { if (abs((float)li - uShadow2.x) < 0.5) lsh = sh; }\n"   // only the main sun has cascades
-    "      else if (recv && uLShadow[li].x > -0.5) lsh = localShadow(li, d1.xyz, d0.w, i.world, Ns, ld, dist);\n"
-    "      lit += d2.xyz * ndl * at * lsh;\n"
-    "      if (uSpecular > 0.0) { float3 H = normalize(ld + Vv);\n"   // highlights take the light's colour + intensity
-    "        spec += d2.xyz * (pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * at * lsh); }\n"
-    "    }\n"
-    "  }\n"
-    "  if (uShaderMode > 7.5) lit += fz * fz * lit * 0.6;\n"      // Velvet: fuzzy grazing sheen
-    "  float gloss = 1.0;\n"                                      // gloss/specular map
-    "  if (uPbr.z > 0.5) gloss = dot(uSpecTex.Sample(uSamp, i.uv).rgb, float3(0.2126, 0.7152, 0.0722));\n"
-    "  if (uPbr.w > 0.5) {\n"                                     // ambient-occlusion map
-    "    float ao = dot(uAoTex.Sample(uSamp, i.uv).rgb, float3(0.2126, 0.7152, 0.0722));\n"
-    "    lit *= (1.0 - uPbr2.x * (1.0 - ao));\n"
-    "  }\n"
-    "  float metal = saturate(metalK);\n"                       // metalness
-    "  float diffK = 1.0 - 0.9 * metal;\n"
-    "  float3 f0 = lerp(float3(1,1,1), base, metal);\n"
-    "  float3 diff = base * lit * diffK;\n"
-    "  float3 rim = float3(0,0,0);\n"
-    "  float rs = uRimStr; if ((fres || holo) && rs < 0.8) rs = 1.6;\n"
-    "  if (rs > 0.0) rim = uRimColor * (fz*fz*fz * rs);\n"
-    "  float3 col = diff + (spec * gloss) * f0 + rim + emis;\n"
-    "  float reflAmt = max(uPbr.y, metal);\n"                     // env reflection of the sky gradient
-    "  float reflK = reflAmt * gloss;\n"
-    "  if (reflK > 0.0 && uPbr2.y > 0.5) {\n"
-    "    float ndv = max(dot(N, Vv), 0.0);\n"
-    "    float3 R = reflect(-Vv, N); float ry = clamp(R.y, -1.0, 1.0);\n"
-    "    float3 env = lerp(uSky[1].xyz, ry >= 0.0 ? uSky[0].xyz : uSky[2].xyz, abs(ry));\n"
-    "    if (lin) env = pow(max(env, 0.0), 2.2);\n"
-    "    float fr2 = 1.0 - ndv; fr2 = fr2*fr2*fr2*fr2*fr2;\n"     // Schlick
-    "    float kk = reflK + (1.0 - reflK) * fr2;\n"
-    "    col = col * (1.0 - kk) + env * f0 * kk;\n"
-    "  }\n"
-    "  if (uFog.x > 0.5) {\n"                                    // fog (Atmosphere.hpp FogFactor, same maths)
-    "    float fd = length(uEye - i.world);\n"
-    "    float ff;\n"
-    "    if (uFog2.x < 0.5) ff = saturate((fd - uFog.y) / max(uFog.z - uFog.y, 1e-3));\n"   // linear
-    "    else if (uFog2.x < 1.5) ff = 1.0 - exp(-uFog2.y * fd);\n"                            // exponential
-    "    else { float te = exp(-max(uEye.y - uFog2.z, 0.0) * uFog2.w);\n"                      // height: thins above fogHeight
-    "           float tw = exp(-max(i.world.y - uFog2.z, 0.0) * uFog2.w);\n"
-    "           ff = 1.0 - exp(-uFog2.y * fd * 0.5 * (te + tw)); }\n"
-    "    float3 fc = uFogCol.xyz;\n"
-    "    if (lin) fc = pow(max(fc, 0.0), 2.2);\n"                 // fog is authored sRGB too
-    "    col = lerp(col, fc, ff);\n"
-    "  }\n"
-    // Filmic output: ACES roll-off in linear light, then encode back to sRGB. With
-    // the post chain running the colour stays linear: the chain exposes, tonemaps
-    // and encodes it.
-    "  if (lin && uPost.x < 0.5) { col = aces(col); col = pow(max(col, 0.0), 1.0/2.2); }\n"
-    "  return float4(col, uAlpha);\n"
-    "}\n"
-    // ---- Procedural sky + the post chain (mirrors the GLSL in GLRenderer.cpp) ----
-    "cbuffer PC : register(b3) {\n"
-    "  float4x4 uInvVP;\n"
-    "  float4 uEyeSz;\n"                      // xyz eye, w sun disc radius (radians)
-    "  float4 uSunDirHalo;\n"                 // xyz toward the sun, w halo
-    "  float4 uZenithDisc;\n"                 // xyz zenith colour, w disc visibility
-    "  float4 uHorizonHaze;\n"                // xyz horizon colour, w haze
-    "  float4 uGroundNight;\n"                // xyz ground colour, w night (0..1)
-    "  float4 uSunColorStar;\n"               // xyz sun colour, w star density
-    "  float4 uCloud;\n"                      // cover, density, scale, star brightness
-    "  float4 uCloudOffTL;\n"                 // xy cloud offset, z time, w linear output
-    "  float4 uP0;\n"                         // exposure, linearIn, tonemap, bloomOn
-    "  float4 uP1;\n"                         // bloomIntensity, gradeOn, temperature, tint
-    "  float4 uP2;\n"                         // saturation, contrast, vignette, vignetteSmooth
-    "  float4 uLiftAspect;\n"                 // xyz lift, w aspect
-    "  float4 uGammaThresh;\n"                // xyz gamma, w bloom threshold
-    "  float4 uGainRadius;\n"                 // xyz gain, w blur / downsample radius
-    "  float4 uTexelDir;\n"                   // xy source texel, zw blur direction (uv)
-    "  float4 uP7;\n"                         // SSAO: x radius, y far, z strength, w AO power; DoF: x focus, y range, z far; bloom bright-pass: w softness
-    "  float4 uTopMode;\n"                    // Colour sky: xyz top, w mode (0 colour, 1 procedural)
-    "  float4 uHorHp;\n"                      // xyz horizon, w horizon position
-    "  float4 uBotStars;\n"                   // xyz bottom, w stars on
-    "  float4 uSunPosRad;\n"                  // xy sun position (uv), z radius (of height), w sun on
-    "  float4 uViewSize;\n"                   // xy pixels
-    "};\n"
-    "SamplerState uSampClamp : register(s2);\n"
-    "struct PSQuad { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };\n"
-    "PSQuad VSQuad(uint id : SV_VertexID) {\n"                   // one fullscreen triangle, no vertex buffer
-    "  PSQuad o; float2 uv = float2((id << 1) & 2, id & 2);\n"
-    "  o.pos = float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0); o.uv = uv; return o;\n"
-    "}\n"
-    "float hash21(float2 p){ p = frac(p * float2(123.34, 456.21)); p += dot(p, p + 45.32); return frac(p.x * p.y); }\n"
-    "float vnoise(float2 p){ float2 i = floor(p), f = frac(p); f = f * f * (3.0 - 2.0 * f);\n"
-    "  float a = hash21(i), b = hash21(i + float2(1.0, 0.0)), c = hash21(i + float2(0.0, 1.0)), d = hash21(i + float2(1.0, 1.0));\n"
-    "  return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y); }\n"
-    "float fbm(float2 p){ float s = 0.0, a = 0.5; [unroll] for (int k = 0; k < 5; k++) { s += a * vnoise(p); p = p * 2.03 + float2(17.1, 9.7); a *= 0.5; } return s; }\n"
-    "float4 PSSky(PSQuad i) : SV_TARGET {\n"
-    "  if (uTopMode.w < 0.5) {\n"                                     // Colour mode: the host's screen-space gradient, in-frame
-    "    float t = i.uv.y; float hp = clamp(uHorHp.w, 0.05, 0.95);\n"
-    "    float3 col = t < hp ? lerp(uTopMode.xyz, uHorHp.xyz, t / hp) : lerp(uHorHp.xyz, uBotStars.xyz, (t - hp) / (1.0 - hp));\n"
-    "    float hz = 1.0 - abs(t - hp) / 0.10;\n"
-    "    if (hz > 0.0) col = lerp(col, min(uHorHp.xyz * float3(1.15, 1.15, 1.10) + float3(0.12, 0.12, 0.10), 1.0), hz * 0.5);\n"
-    "    if (uBotStars.w > 0.5 && t < hp) {\n"
-    "      float2 g = i.uv * uViewSize.xy / 22.0; float2 cell = floor(g), cf = frac(g);\n"
-    "      float h = hash21(cell); float2 sp = float2(hash21(cell + 3.1), hash21(cell + 9.7)) * 0.8 + 0.1;\n"
-    "      col += (h > 1.0 - 0.5 * uSunColorStar.w ? 1.0 : 0.0) * smoothstep(0.12, 0.0, length(cf - sp)) * uCloud.w;\n"
-    "    }\n"
-    "    if (uSunPosRad.w > 0.5) {\n"
-    "      float dp = length((i.uv - uSunPosRad.xy) * uViewSize.xy);\n"
-    "      float r = max(uSunPosRad.z, 0.005) * uViewSize.y; float glowR = 0.45 * uViewSize.y;\n"
-    "      [unroll] for (int k = 12; k >= 1; --k) { float fr = (float)k / 12.0; if (dp < glowR * fr) col = lerp(col, uSunColorStar.xyz, (34.0 / 255.0) * (1.0 - fr) * (1.0 - fr)); }\n"
-    "      [unroll] for (int gi = 4; gi >= 1; --gi) { if (dp < r * (1.0 + (float)gi * 0.7)) col = lerp(col, uSunColorStar.xyz, (40.0 - (float)gi * 6.0) / 255.0); }\n"
-    "      if (dp < r) col = uSunColorStar.xyz;\n"
-    "    }\n"
-    "    if (uCloudOffTL.w > 0.5) col = pow(max(col, 0.0), 2.2);\n"
-    "    return float4(col, 1.0);\n"
-    "  }\n"
-    "  float2 ndc = float2(i.uv.x * 2.0 - 1.0, 1.0 - i.uv.y * 2.0);\n"
-    "  float4 p0 = mul(uInvVP, float4(ndc, -1.0, 1.0)); float4 p1 = mul(uInvVP, float4(ndc, 1.0, 1.0));\n"
-    "  float3 dir = normalize(p1.xyz / p1.w - p0.xyz / p0.w);\n"
-    "  float y = dir.y;\n"
-    "  float3 zen = uZenithDisc.xyz, hor = uHorizonHaze.xyz, grd = uGroundNight.xyz, sunC = uSunColorStar.xyz, sunD = uSunDirHalo.xyz;\n"
-    "  float haze = uHorizonHaze.w, night = uGroundNight.w, disc = uZenithDisc.w;\n"
-    "  float3 col = (y >= 0.0) ? lerp(hor, zen, pow(max(y, 0.0), 0.55)) : lerp(hor, grd, smoothstep(0.0, 0.25, -y));\n"
-    "  float3 hazeCol = hor * 1.12 + 0.06;\n"
-    "  col = lerp(col, hazeCol, haze * 0.6 * exp(-abs(y) * 5.0));\n"
-    "  float3 flatD = normalize(float3(dir.x, 0.0, dir.z) + 1e-5); float3 flatS = normalize(float3(sunD.x, 0.0, sunD.z) + 1e-5);\n"
-    "  col += sunC * (0.14 * haze * disc * exp(-abs(y) * 4.0) * pow(max(dot(flatD, flatS), 0.0), 3.0));\n"
-    "  float ang = acos(clamp(dot(dir, sunD), -1.0, 1.0));\n"
-    "  float dsc = (1.0 - smoothstep(uEyeSz.w * 0.85, uEyeSz.w * 1.15, ang)) * disc;\n"
-    "  float halo = uSunDirHalo.w * disc * (0.6 * exp(-ang * 4.0) + 0.3 * exp(-ang * 1.2));\n"
-    "  col += sunC * (dsc * 1.2 + halo);\n"
-    "  if (night > 0.0 && y > 0.0) {\n"
-    "    float az = atan2(dir.z, dir.x); float el = asin(clamp(y, -1.0, 1.0));\n"
-    "    float2 sc = float2(az, el) * (64.0 * (0.5 + uSunColorStar.w));\n"
-    "    float2 ci = floor(sc), cf = frac(sc);\n"
-    "    float h = hash21(ci);\n"
-    "    float2 sp = float2(hash21(ci + 7.3), hash21(ci + 13.7)) * 0.8 + 0.1;\n"
-    "    float d = length(cf - sp);\n"
-    "    float star = (h > 1.0 - 0.35 * uSunColorStar.w ? 1.0 : 0.0) * smoothstep(0.09, 0.0, d);\n"
-    "    float tw = 0.7 + 0.3 * sin(uCloudOffTL.z * 3.0 + h * 40.0);\n"
-    "    col += star * uCloud.w * night * tw * smoothstep(0.0, 0.15, y);\n"
-    "  }\n"
-    "  if (uCloud.x > 0.0 && y > 0.01) {\n"
-    "    float2 uv = dir.xz / (y + 0.12) * (0.6 / max(uCloud.z, 0.05)) + uCloudOffTL.xy;\n"
-    "    float n = fbm(uv);\n"
-    "    float cov = smoothstep(1.0 - uCloud.x, 1.0 - uCloud.x * 0.6 + 0.05, n);\n"
-    "    float lit = saturate(0.5 + (fbm(uv + flatS.xz * 0.06) - n) * 7.0);\n"
-    "    float3 bright = lerp(float3(1, 1, 1), sunC, 0.35) * (0.95 - 0.8 * night);\n"
-    "    float3 shade = lerp(hor, zen, 0.5) * (0.8 - 0.3 * night);\n"
-    "    float3 cc = lerp(shade, bright, lit);\n"
-    "    float a = cov * uCloud.y * smoothstep(0.0, 0.2, y);\n"
-    "    col = lerp(col, cc, a);\n"
-    "  }\n"
-    "  if (uCloudOffTL.w > 0.5) col = pow(max(col, 0.0), 2.2);\n"
-    "  return float4(col, 1.0);\n"
-    "}\n"
-    // Post-chain pixel shaders (bright-pass, blur, uber, FXAA): shared text, D3DPostHLSL.hpp.
-    OKAY_POST_HLSL
-    // Ambient occlusion (SsaoMath.hpp): depth, estimate and multiply pixel shaders.
-    OKAY_SSAO_HLSL
-    // Depth of field (DofMath.hpp): mixes the sharp and blurred frame by distance from focus.
-    OKAY_DOF_HLSL;
+const char* const kHLSL = D3D11HlslSource();   // text lives in D3D11Hlsl.hpp (shared with the offline shader step)
 
-// Constant-buffer layout mirrored on the C++ side (must match the cbuffer, 16-byte
-// rules: each float3 is followed by a float to fill its 16-byte row).
-struct CB {
-    float mvp[16];
-    float model[16];
-    float color[3];     float specular;
-    float emissive[3];  float shininess;
-    float lightDir[3];  float unlit;
-    float lightColor[3]; float useTex;
-    float ambient[3];   float hasNormal;
-    float eye[3];       float normalStrength;
-    float tiling[2];    float shadowAlpha; float alpha;
-    float rimColor[3];  float shaderMode;
-    float gradTop[3];   float toonBands;
-    float gradBot[3];   float rimStr;
-    float pbr[4];              // metallic, reflectivity, hasSpecMap, hasAo
-    float pbr2[4];             // aoStrength, envOn, texOffset.x, texOffset.y
-    float sky[12];             // 3 float4: top, horizon, bottom (xyz)
-    float lightCount[4];       // .x = number of scene lights
-    float lights[256];         // 64 float4: 16 lights x 4 rows
-    float fog[4];              // x=on y=start z=end w=receive shadows
-    float fogCol[4];           // xyz = fog colour, w = filmic pipeline flag (linear + ACES + gamma)
-    float fog2[4];             // mode, density, height, falloff
-    float post[4];             // x = leave the colour linear for the post chain
+// One compiled shader. Desktop: the D3DCompile blob (compiled when asked, as before). OKAY_XBOX_UWP: bytes from the
+// pre-compiled bundle (shaders.manifest + .cso made by scripts/xbox-compile-shaders.ps1); D3DCompile does not exist in a UWP app.
+struct ShaderCode {
+    ID3DBlob* blob = nullptr;
+    const void* data = nullptr; SIZE_T size = 0;
+    std::string error;
+    ShaderCode() = default;
+    ShaderCode(const ShaderCode&) = delete; ShaderCode& operator=(const ShaderCode&) = delete;
+    ~ShaderCode() { if (blob) blob->Release(); }
+    const void* Ptr() const { return data; }
+    SIZE_T Size() const { return size; }
 };
-// Sky + post-chain constants (cbuffer PC, b3); see the HLSL for each slot.
-struct PostCB {
-    float invVP[16];
-    float eye[3], sunSize;
-    float sunDir[3], sunHalo;
-    float zenith[3], sunDisc;
-    float horizon[3], haze;
-    float ground[3], night;
-    float sunColor[3], starDensity;
-    float cloud[4];
-    float cloudOff[2], time, lin;
-    float p0[4];
-    float p1[4];
-    float p2[4];
-    float lift[3], aspect;
-    float gamma[3], thresh;
-    float gain[3], radius;
-    float texel[2], dir[2];
-    float p7[4];
-    float top[3], mode;
-    float hor[3], horizonPos;
-    float bot[3], starsOn;
-    float sunPos[2], sunRad, sunOn;
-    float viewSize[4];
-};
-// Per-frame shadow + ambient constants (cbuffer SH, b2).
-struct ShadowCB {
-    float casVP[16 * 4];
-    float casSphere[4 * 4];    // xyz centre, w radius
-    float casInfo[4 * 4];      // x texel world size
-    float shadow[4];           // on, cascade count, cascade size, softness
-    float shadow2[4];          // sun index, sun strength, sun bias, local tile size
-    float ambSky[4];
-    float ambGround[4];
-    float localVP[16 * 16];
-    float lshadow[4 * 16];     // first tile (-1 none), strength, bias, texel at 1m
-};
+#if defined(OKAY_XBOX_UWP)
+std::string g_shaderDir;                     // set by D3D11Renderer::SetShaderBundleDir (the package's Shaders folder)
+shaderbundle::Bundle g_bundle; bool g_bundleTried = false, g_bundleOk = false; std::string g_bundleErr;
+bool EnsureBundle() {
+    if (g_bundleTried) return g_bundleOk;
+    g_bundleTried = true;
+    auto rd = [](const std::string& name, std::vector<unsigned char>& out) {
+        std::ifstream in(g_shaderDir + "/" + name, std::ios::binary);
+        if (!in) return false;
+        out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        return true;
+    };
+    g_bundleOk = g_bundle.Load(rd, D3D11BundleSourceText().c_str(), &g_bundleErr);
+    if (!g_bundleOk) Log::Error("[d3d11] shader bundle: " + g_bundleErr);
+    for (const std::string& w : g_bundle.Warnings()) Log::Warning("[d3d11] shader bundle: " + w);
+    return g_bundleOk;
+}
+#endif
+bool CompileShader(const char* entry, const char* profile, ShaderCode& out) {
+#if defined(OKAY_XBOX_UWP)
+    (void)profile;
+    if (!EnsureBundle()) { out.error = g_bundleErr; return false; }
+    const std::vector<unsigned char>* b = g_bundle.Find(entry);
+    if (!b) { out.error = std::string("no pre-compiled shader for ") + entry; return false; }
+    out.data = b->data(); out.size = (SIZE_T)b->size();
+    return true;
+#else
+    ID3DBlob* err = nullptr;
+    const SIZE_T n = (SIZE_T)std::strlen(kHLSL);
+    if (FAILED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, entry, profile, 0, 0, &out.blob, &err))) {
+        if (err) { out.error = (const char*)err->GetBufferPointer(); err->Release(); }
+        if (out.blob) { out.blob->Release(); out.blob = nullptr; }
+        return false;
+    }
+    if (err) err->Release();
+    out.data = out.blob->GetBufferPointer(); out.size = out.blob->GetBufferSize();
+    return true;
+#endif
+}
+
+using okay::d3d11layout::CB;
+using okay::d3d11layout::PostCB;
+using okay::d3d11layout::ShadowCB;
+using okay::d3d11layout::kCookieRows;
+
+// The light-mask atlas (t8): LightCookies' masks, each resampled to 64 x 64, stacked one per row (R8). UNVERIFIED on a GPU.
+static bool BuildCookieAtlas(ID3D11Device* dev, ID3D11Texture2D*& tex, ID3D11ShaderResourceView*& srv) {
+    if (srv) { srv->Release(); srv = nullptr; }
+    if (tex) { tex->Release(); tex = nullptr; }
+    std::vector<unsigned char> px((size_t)64 * 64 * kCookieRows, 255);
+    const auto& st = LightCookies::Store();
+    for (int r = 0; r < kCookieRows && r < (int)st.size(); ++r) {
+        const LightCookie& ck = st[(size_t)r];
+        if (ck.w <= 0 || ck.h <= 0) continue;
+        for (int y = 0; y < 64; ++y)
+            for (int x = 0; x < 64; ++x) {
+                float v = ck.At(x * ck.w / 64, y * ck.h / 64);
+                v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+                px[((size_t)r * 64 + y) * 64 + x] = (unsigned char)(v * 255.0f + 0.5f);
+            }
+    }
+    D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
+    td.Width = 64; td.Height = 64 * kCookieRows; td.MipLevels = 1; td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_R8_UNORM; td.SampleDesc.Count = 1; td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA sd; std::memset(&sd, 0, sizeof(sd)); sd.pSysMem = px.data(); sd.SysMemPitch = 64;
+    if (FAILED(dev->CreateTexture2D(&td, &sd, &tex)) || !tex) { tex = nullptr; return false; }
+    if (FAILED(dev->CreateShaderResourceView(tex, nullptr, &srv))) { srv = nullptr; tex->Release(); tex = nullptr; return false; }
+    return true;
+}
 
 } // namespace
 
@@ -541,6 +181,7 @@ struct D3D11Renderer::Impl {
         }
     };
     DepthTarget sunAtlas, localAtlas;
+    ID3D11Texture2D* cookieTex = nullptr; ID3D11ShaderResourceView* cookieSrv = nullptr; size_t cookieCount = 0;   // light masks (t8)
     ID3D11Buffer*           vbDepth = nullptr; int vbDepthCap = 0;
     bool EnsureDepthTarget(DepthTarget& t, int w, int h);
     // Size-dependent targets:
@@ -572,6 +213,7 @@ struct D3D11Renderer::Impl {
     // shaders and half-resolution targets, built on first use, so a failure here
     // only turns SSAO off. UNVERIFIED on a real GPU.
     ID3D11PixelShader *psAoDepth = nullptr, *psAo = nullptr, *psAoMul = nullptr, *psDof = nullptr;
+    ID3D11PixelShader *psDofCopy = nullptr, *psDofBlur = nullptr;   // depth of field: premultiplied blurred copy
     bool ssaoTried = false, ssaoReady = false;
     struct SsaoSet {
         int w = 0, h = 0; DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -660,9 +302,68 @@ struct D3D11Renderer::Impl {
     std::vector<std::array<int, 3>> slotRanges;   // filled by BuildExpandedVerts(.., true) // fill `verts` (14 floats/vertex)
 
     ID3D11ShaderResourceView* TextureFor(const std::string& name);
+    // Custom (.okayshader) surfaces: PSMain compiled again with the generated okaySurface() spliced in
+    // (OKAY_SURFACE), one pixel shader per shader file; properties + time in b4, pictures from t9.
+    // UNVERIFIED on Windows: written and syntax-checked with the MinGW headers only.
+    struct CustomPS { ID3D11PixelShader* ps = nullptr; std::uint64_t generation = 0; bool failed = false, unlit = false, writesAlpha = false; };
+    std::unordered_map<std::string, CustomPS> customPs;
+    ID3D11Buffer* customCB = nullptr;                      // float4 time + one float4 per property
+    ID3D11Texture2D* whiteTex = nullptr; ID3D11ShaderResourceView* whiteSrv = nullptr;   // an unbound custom picture
+    CustomPS* EnsureCustomPS(const std::string& path);
     bool EnsureTargets(int W, int H, int S);
     void DestroyTargets();
 };
+
+D3D11Renderer::Impl::CustomPS* D3D11Renderer::Impl::EnsureCustomPS(const std::string& path) {
+    const oshader::ShaderFile sf = oshader::LoadShaderFile(path);
+    CustomPS& cp = customPs[path];
+    if (cp.generation == sf.generation && (cp.ps || cp.failed)) return cp.failed ? nullptr : &cp;
+    if (cp.ps) { cp.ps->Release(); cp.ps = nullptr; }
+    cp = CustomPS{};
+    cp.generation = sf.generation;
+    const oshader::Compiled* c = sf.compiled.get();
+    if (!c || !c->ok) { cp.failed = true; return nullptr; }
+#if defined(OKAY_XBOX_UWP)
+    Log::Error("[d3d11] custom shaders need the run-time HLSL compiler, which a UWP app does not have; ", path, " draws magenta");
+    cp.failed = true;
+    return nullptr;
+#else
+    std::string src = kHLSL;
+    const std::size_t at = src.find("float4 PSMain(");
+    if (at == std::string::npos) { cp.failed = true; return nullptr; }
+    src.insert(at, "#define OKAY_SURFACE 1\n" + c->hlsl);
+    ID3DBlob* blob = nullptr; ID3DBlob* err = nullptr;
+    if (FAILED(D3DCompile(src.c_str(), (SIZE_T)src.size(), "okaycustom", nullptr, nullptr, "PSMain", "ps_4_0", 0, 0, &blob, &err))) {
+        Log::Error("[d3d11] custom shader ", path, " did not compile: ", err ? (const char*)err->GetBufferPointer() : "?");
+        if (err) err->Release();
+        if (blob) blob->Release();
+        cp.failed = true;
+        return nullptr;
+    }
+    if (err) err->Release();
+    dev->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &cp.ps);
+    blob->Release();
+    if (!customCB) {
+        D3D11_BUFFER_DESC bd; std::memset(&bd, 0, sizeof(bd));
+        bd.ByteWidth = (UINT)(16 * (1 + oshader::kMaxProperties)); bd.Usage = D3D11_USAGE_DYNAMIC;
+        bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER; bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(dev->CreateBuffer(&bd, nullptr, &customCB))) customCB = nullptr;
+    }
+    if (!whiteSrv) {
+        const unsigned char white[4] = {255, 255, 255, 255};
+        D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
+        td.Width = 1; td.Height = 1; td.MipLevels = 1; td.ArraySize = 1; td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        td.SampleDesc.Count = 1; td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA sd; std::memset(&sd, 0, sizeof(sd)); sd.pSysMem = white; sd.SysMemPitch = 4;
+        if (SUCCEEDED(dev->CreateTexture2D(&td, &sd, &whiteTex)) && whiteTex)
+            if (FAILED(dev->CreateShaderResourceView(whiteTex, nullptr, &whiteSrv))) whiteSrv = nullptr;
+    }
+    if (!cp.ps || !customCB) { if (cp.ps) cp.ps->Release(); cp.ps = nullptr; cp.failed = true; return nullptr; }
+    cp.unlit = c->unlit;
+    cp.writesAlpha = c->writesAlpha;
+    return &cp;
+#endif
+}
 
 bool D3D11Renderer::InitShared(void* device) {
     if (m_impl) return m_impl->shared;
@@ -693,15 +394,12 @@ bool D3D11Renderer::Init() {
             Destroy(); return false;
         }
     }
-    ID3DBlob* vsb = nullptr; ID3DBlob* psb = nullptr; ID3DBlob* err = nullptr;
-    const SIZE_T n = (SIZE_T)std::strlen(kHLSL);
-    if (FAILED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, "VSMain", "vs_4_0", 0, 0, &vsb, &err)) ||
-        FAILED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, "PSMain", "ps_4_0", 0, 0, &psb, &err))) {
-        if (err) err->Release(); if (vsb) vsb->Release();
-        Log::Error("[d3d11] shader compile failed"); Destroy(); return false;
+    ShaderCode vsb, psb;
+    if (!CompileShader("VSMain", "vs_4_0", vsb) || !CompileShader("PSMain", "ps_4_0", psb)) {
+        Log::Error("[d3d11] shader compile failed" + (vsb.error.empty() ? std::string() : ": " + vsb.error)); Destroy(); return false;
     }
-    p->dev->CreateVertexShader(vsb->GetBufferPointer(), vsb->GetBufferSize(), nullptr, &p->vs);
-    p->dev->CreatePixelShader(psb->GetBufferPointer(), psb->GetBufferSize(), nullptr, &p->ps);
+    p->dev->CreateVertexShader(vsb.Ptr(), vsb.Size(), nullptr, &p->vs);
+    p->dev->CreatePixelShader(psb.Ptr(), psb.Size(), nullptr, &p->ps);
     const D3D11_INPUT_ELEMENT_DESC il[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -709,8 +407,7 @@ bool D3D11Renderer::Init() {
         {"COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 44, D3D11_INPUT_PER_VERTEX_DATA, 0},
     };
-    p->dev->CreateInputLayout(il, 5, vsb->GetBufferPointer(), vsb->GetBufferSize(), &p->layout);
-    vsb->Release(); psb->Release();
+    p->dev->CreateInputLayout(il, 5, vsb.Ptr(), vsb.Size(), &p->layout);
 
     D3D11_BUFFER_DESC cbd; std::memset(&cbd, 0, sizeof(cbd));
     cbd.ByteWidth = sizeof(CB); cbd.Usage = D3D11_USAGE_DYNAMIC;
@@ -766,24 +463,22 @@ bool D3D11Renderer::Init() {
     p->dev->CreateSamplerState(&ss, &p->sampShadow);
 
     // Depth-only vertex shader + position-only input layout for the shadow pass.
-    ID3DBlob* vdb = nullptr; ID3DBlob* derr = nullptr;
-    if (SUCCEEDED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, "VSDepth", "vs_4_0", 0, 0, &vdb, &derr)) && vdb) {
-        p->dev->CreateVertexShader(vdb->GetBufferPointer(), vdb->GetBufferSize(), nullptr, &p->vsDepth);
+    ShaderCode vdb;
+    if (CompileShader("VSDepth", "vs_4_0", vdb)) {
+        p->dev->CreateVertexShader(vdb.Ptr(), vdb.Size(), nullptr, &p->vsDepth);
         const D3D11_INPUT_ELEMENT_DESC ild[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
         };
-        p->dev->CreateInputLayout(ild, 1, vdb->GetBufferPointer(), vdb->GetBufferSize(), &p->layoutDepth);
-        vdb->Release();
+        p->dev->CreateInputLayout(ild, 1, vdb.Ptr(), vdb.Size(), &p->layoutDepth);
     }
-    if (derr) derr->Release();
 
     // GPU skinning shaders + layouts (stream 0: the usual 14-float vertex,
     // stream 1: joints.xyzw + weights.xyzw). Optional: without them skinned
     // meshes keep deforming on the CPU.
     {
-        ID3DBlob* sb = nullptr; ID3DBlob* se = nullptr;
-        if (SUCCEEDED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, "VSSkin", "vs_4_0", 0, 0, &sb, &se)) && sb) {
-            p->dev->CreateVertexShader(sb->GetBufferPointer(), sb->GetBufferSize(), nullptr, &p->vsSkin);
+        ShaderCode sb;
+        if (CompileShader("VSSkin", "vs_4_0", sb)) {
+            p->dev->CreateVertexShader(sb.Ptr(), sb.Size(), nullptr, &p->vsSkin);
             const D3D11_INPUT_ELEMENT_DESC ils[] = {
                 {"POSITION",     0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0},
                 {"NORMAL",       0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -793,21 +488,18 @@ bool D3D11Renderer::Init() {
                 {"BLENDINDICES", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0},
                 {"BLENDWEIGHT",  0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D11_INPUT_PER_VERTEX_DATA, 0},
             };
-            p->dev->CreateInputLayout(ils, 7, sb->GetBufferPointer(), sb->GetBufferSize(), &p->layoutSkin);
-            sb->Release();
-        } else if (se) Log::Warning(std::string("[d3d11] skinning shader: ") + (const char*)se->GetBufferPointer());
-        if (se) { se->Release(); se = nullptr; }
-        if (SUCCEEDED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, "VSDepthSkin", "vs_4_0", 0, 0, &sb, &se)) && sb) {
-            p->dev->CreateVertexShader(sb->GetBufferPointer(), sb->GetBufferSize(), nullptr, &p->vsDepthSkin);
+            p->dev->CreateInputLayout(ils, 7, sb.Ptr(), sb.Size(), &p->layoutSkin);
+        } else if (!sb.error.empty()) Log::Warning("[d3d11] skinning shader: " + sb.error);
+        ShaderCode sb2;
+        if (CompileShader("VSDepthSkin", "vs_4_0", sb2)) {
+            p->dev->CreateVertexShader(sb2.Ptr(), sb2.Size(), nullptr, &p->vsDepthSkin);
             const D3D11_INPUT_ELEMENT_DESC ilds[] = {
                 {"POSITION",     0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0},
                 {"BLENDINDICES", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0},
                 {"BLENDWEIGHT",  0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D11_INPUT_PER_VERTEX_DATA, 0},
             };
-            p->dev->CreateInputLayout(ilds, 3, sb->GetBufferPointer(), sb->GetBufferSize(), &p->layoutDepthSkin);
-            sb->Release();
+            p->dev->CreateInputLayout(ilds, 3, sb2.Ptr(), sb2.Size(), &p->layoutDepthSkin);
         }
-        if (se) se->Release();
         D3D11_BUFFER_DESC bb; std::memset(&bb, 0, sizeof(bb));
         bb.ByteWidth = 768 * 16; bb.Usage = D3D11_USAGE_DYNAMIC;
         bb.BindFlags = D3D11_BIND_CONSTANT_BUFFER; bb.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -879,20 +571,17 @@ bool D3D11Renderer::Impl::EnsurePostTargets() {
 bool D3D11Renderer::Impl::EnsurePost() {
     if (postTried) return postReady;
     postTried = true;
-    const SIZE_T n = (SIZE_T)std::strlen(kHLSL);
     auto ps = [&](const char* entry, ID3D11PixelShader*& outPs) {
-        ID3DBlob* b = nullptr; ID3DBlob* e = nullptr;
-        const bool ok = SUCCEEDED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, entry, "ps_4_0", 0, 0, &b, &e)) && b &&
-                        SUCCEEDED(dev->CreatePixelShader(b->GetBufferPointer(), b->GetBufferSize(), nullptr, &outPs));
-        if (!ok && e) Log::Warning(std::string("[d3d11] post shader ") + entry + ": " + (const char*)e->GetBufferPointer());
-        if (b) b->Release(); if (e) e->Release();
+        ShaderCode b;
+        const bool ok = CompileShader(entry, "ps_4_0", b) &&
+                        SUCCEEDED(dev->CreatePixelShader(b.Ptr(), b.Size(), nullptr, &outPs));
+        if (!ok && !b.error.empty()) Log::Warning(std::string("[d3d11] post shader ") + entry + ": " + b.error);
         return ok;
     };
-    ID3DBlob* vb = nullptr; ID3DBlob* ve = nullptr;
-    bool ok = SUCCEEDED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, "VSQuad", "vs_4_0", 0, 0, &vb, &ve)) && vb &&
-              SUCCEEDED(dev->CreateVertexShader(vb->GetBufferPointer(), vb->GetBufferSize(), nullptr, &vsQuad));
-    if (!ok && ve) Log::Warning(std::string("[d3d11] quad shader: ") + (const char*)ve->GetBufferPointer());
-    if (vb) vb->Release(); if (ve) ve->Release();
+    ShaderCode vb;
+    bool ok = CompileShader("VSQuad", "vs_4_0", vb) &&
+              SUCCEEDED(dev->CreateVertexShader(vb.Ptr(), vb.Size(), nullptr, &vsQuad));
+    if (!ok && !vb.error.empty()) Log::Warning("[d3d11] quad shader: " + vb.error);
     ok = ok && ps("PSSky", psSky) && ps("PSDown", psDown) && ps("PSBlur", psBlur) && ps("PSUber", psUber) && ps("PSFxaa", psFxaa);
     if (ok) {
         D3D11_BUFFER_DESC cbd; std::memset(&cbd, 0, sizeof(cbd));
@@ -923,17 +612,18 @@ bool D3D11Renderer::Impl::EnsureSsaoShaders() {
     if (ssaoTried) return ssaoReady;
     ssaoTried = true;
     if (!postReady) return false;
-    const SIZE_T n = (SIZE_T)std::strlen(kHLSL);
     auto ps = [&](const char* entry, ID3D11PixelShader*& outPs) {
-        ID3DBlob* b = nullptr; ID3DBlob* e = nullptr;
-        const bool ok = SUCCEEDED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, entry, "ps_4_0", 0, 0, &b, &e)) && b &&
-                        SUCCEEDED(dev->CreatePixelShader(b->GetBufferPointer(), b->GetBufferSize(), nullptr, &outPs));
-        if (!ok && e) Log::Warning(std::string("[d3d11] ssao shader ") + entry + ": " + (const char*)e->GetBufferPointer());
-        if (b) b->Release(); if (e) e->Release();
+        ShaderCode b;
+        const bool ok = CompileShader(entry, "ps_4_0", b) &&
+                        SUCCEEDED(dev->CreatePixelShader(b.Ptr(), b.Size(), nullptr, &outPs));
+        if (!ok && !b.error.empty()) Log::Warning(std::string("[d3d11] ssao shader ") + entry + ": " + b.error);
         return ok;
     };
     ssaoReady = ps("PSAoDepth", psAoDepth) && ps("PSAo", psAo) && ps("PSAoMul", psAoMul) && vsDepth && layoutDepth;
-    if (ssaoReady) ps("PSDof", psDof);   // separate: a depth of field compile failure must not cost ambient occlusion
+    if (ssaoReady && !(ps("PSDof", psDof) && ps("PSDofCopy", psDofCopy) && ps("PSDofBlur", psDofBlur))) {
+        // separate: a depth of field compile failure must not cost ambient occlusion
+        for (ID3D11PixelShader** s : {&psDof, &psDofCopy, &psDofBlur}) if (*s) { (*s)->Release(); *s = nullptr; }
+    }
     if (!ssaoReady) Log::Warning("[d3d11] ambient occlusion unavailable on this device");
     return ssaoReady;
 }
@@ -1318,6 +1008,41 @@ D3D11Renderer::Impl::MeshVB* D3D11Renderer::Impl::EnsureMeshVB(const Mesh& mesh,
     return &e;
 }
 
+// A planned .dds texture (gputex::PlanUpload) as one Direct3D 11 texture with all its levels. BC1-BC5 are sampled by every
+// Direct3D 11 GPU (feature level 10 and up), so the blocks go up as they are; DXGI numbers from the DXGI_FORMAT list.
+static ID3D11ShaderResourceView* UploadDdsPlan(ID3D11Device* dev, const gputex::Plan& p) {
+    if (p.levels.empty()) return nullptr;
+    DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
+    UINT blockBytes = 0;
+    if (p.compressed) {
+        switch (p.source) {
+            case tex::DdsFormat::BC1: fmt = DXGI_FORMAT_BC1_UNORM; blockBytes = 8; break;
+            case tex::DdsFormat::BC2: fmt = DXGI_FORMAT_BC2_UNORM; blockBytes = 16; break;
+            case tex::DdsFormat::BC3: fmt = DXGI_FORMAT_BC3_UNORM; blockBytes = 16; break;
+            case tex::DdsFormat::BC4: fmt = DXGI_FORMAT_BC4_UNORM; blockBytes = 8; break;
+            case tex::DdsFormat::BC5: fmt = DXGI_FORMAT_BC5_UNORM; blockBytes = 16; break;
+            default: return nullptr;
+        }
+    }
+    D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
+    td.Width = (UINT)p.levels[0].width; td.Height = (UINT)p.levels[0].height; td.MipLevels = (UINT)p.levels.size(); td.ArraySize = 1;
+    td.Format = fmt; td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_IMMUTABLE; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    std::vector<D3D11_SUBRESOURCE_DATA> sr(p.levels.size());
+    for (std::size_t l = 0; l < p.levels.size(); ++l) {
+        std::memset(&sr[l], 0, sizeof(sr[l]));
+        sr[l].pSysMem = p.levels[l].bytes.data();
+        sr[l].SysMemPitch = p.compressed ? (UINT)((p.levels[l].width + 3) / 4) * blockBytes : (UINT)p.levels[l].width * 4;
+    }
+    ID3D11Texture2D* t = nullptr;
+    ID3D11ShaderResourceView* srv = nullptr;
+    if (SUCCEEDED(dev->CreateTexture2D(&td, sr.data(), &t)) && t) {
+        dev->CreateShaderResourceView(t, nullptr, &srv);
+        t->Release();
+    }
+    return srv;
+}
+
 ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& name) {
     if (name.empty()) return nullptr;
     if (texGen != TextureCacheGeneration()) {   // a picture was reimported / its import settings changed
@@ -1329,7 +1054,16 @@ ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& nam
     auto it = texCache.find(name);
     if (it != texCache.end()) return it->second;
     ID3D11ShaderResourceView* srv = nullptr;
-    Image* img = GetCachedTexture(name);
+    // A .dds file, or the compressed import copy of a picture set to `compress`: its own levels, BC blocks kept
+    // compressed (a top level that is not a multiple of 4 is decoded on the CPU). Anything else: the RGBA8 picture.
+    {
+        tex::DdsImage dds;
+        gputex::Plan plan;
+        gputex::Caps caps; caps.s3tc = caps.rgtc = true;
+        if (gputex::Source(name, &dds, nullptr) && gputex::PlanUpload(std::move(dds), caps, &plan)) srv = UploadDdsPlan(dev, plan);
+        if (srv) Log::Info("[d3d11] texture '", name, "': ", tex::DdsFormatName(plan.source), plan.compressed ? " kept compressed" : " uploaded as RGBA8", " (", plan.levels.size(), " levels)");
+    }
+    Image* img = srv ? nullptr : GetCachedTexture(name);
     if (img && img->Width() > 0) {
         D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
         td.Width = img->Width(); td.Height = img->Height(); td.MipLevels = 1; td.ArraySize = 1;
@@ -1712,17 +1446,21 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     Vec3 toLight = (SceneLight::Direction() * -1.0f).Normalized();
     // Gather all scene lights once per frame (directional + point + spot) into the
     // packed cbuffer array so every light shades on the GPU, not just the sun.
-    float frameLights[256]; std::memset(frameLights, 0, sizeof(frameLights));
+    float frameLights[384]; std::memset(frameLights, 0, sizeof(frameLights));
     int frameLightCount = 0;
     {
         const auto& LS = SceneLights::List();
         int n = (int)LS.size(); if (n > 16) n = 16; frameLightCount = n;
         for (int i = 0; i < n; ++i) {
-            const LightSample& s = LS[i]; Vec3 d = s.dir.Normalized(); int b = i * 16;
+            const LightSample& s = LS[i]; Vec3 d = s.dir.Normalized(); int b = i * 24;
             frameLights[b+0] = d.x; frameLights[b+1] = d.y; frameLights[b+2] = d.z; frameLights[b+3] = (float)s.type;
             frameLights[b+4] = s.pos.x; frameLights[b+5] = s.pos.y; frameLights[b+6] = s.pos.z; frameLights[b+7] = s.range;
             frameLights[b+8] = s.color.x; frameLights[b+9] = s.color.y; frameLights[b+10] = s.color.z; frameLights[b+11] = s.cosOuter;
             frameLights[b+12] = s.cosInner; frameLights[b+13] = (float)s.falloff;
+            frameLights[b+14] = s.halfW; frameLights[b+15] = s.halfH;                                    // Area light panel (0 = soft glow)
+            frameLights[b+16] = s.right.x; frameLights[b+17] = s.right.y; frameLights[b+18] = s.right.z;
+            frameLights[b+19] = (s.cookie >= 0 && s.cookie < kCookieRows) ? (float)s.cookie : -1.0f;      // mask row, -1 = none
+            frameLights[b+20] = s.up.x; frameLights[b+21] = s.up.y; frameLights[b+22] = s.up.z; frameLights[b+23] = s.cookieScale;
         }
     }
     Vec3 d3amb = SceneLights::AmbientColor();
@@ -1735,6 +1473,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             sh.casSphere[ci * 4 + 0] = plan.cascade[ci].center.x; sh.casSphere[ci * 4 + 1] = plan.cascade[ci].center.y;
             sh.casSphere[ci * 4 + 2] = plan.cascade[ci].center.z; sh.casSphere[ci * 4 + 3] = plan.cascade[ci].radius;
             sh.casInfo[ci * 4] = plan.cascade[ci].texelWorld;
+            sh.casInfo[ci * 4 + 1] = plan.cascade[ci].depthRange;
         }
         const LightSample* sun = SceneLights::Sun();
         sh.shadow[0] = shadowOn ? 1.0f : 0.0f; sh.shadow[1] = (float)plan.cascades;
@@ -1744,6 +1483,9 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         sh.shadow2[1] = sun ? sun->shadowStrength : 1.0f;
         sh.shadow2[2] = sun ? sun->shadowBias : 1.0f;
         sh.shadow2[3] = (float)(plan.tileSize > 0 ? plan.tileSize : 1);
+        sh.sunExtra[0] = sun ? sun->shadowSoftness : 0.5f;
+        sh.sunExtra[1] = ShadowDistance() > 0.0f ? ShadowDistance() : 0.0f;
+        sh.sunExtra[2] = (float)kCookieRows;
         Vec3 aSky, aGround;
         SceneAmbientColors(scene.renderSettings, d3amb, aSky, aGround);   // the scene's Ambient Mode
         sh.ambSky[0] = aSky.x; sh.ambSky[1] = aSky.y; sh.ambSky[2] = aSky.z;
@@ -1769,6 +1511,16 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         ID3D11ShaderResourceView* atl[2] = {shadowOn ? p->sunAtlas.srv : nullptr, localOn ? p->localAtlas.srv : nullptr};
         c->PSSetShaderResources(4, 2, atl);   // sun cascades on t4, local tiles on t5
         c->PSSetSamplers(1, 1, &p->sampShadow);
+        {   // light masks on t8 (only when a light uses one)
+            bool any = false;
+            for (const LightSample& ls : SceneLights::List()) if (ls.cookie >= 0 && ls.cookie < kCookieRows) any = true;
+            if (any && (!p->cookieSrv || p->cookieCount != LightCookies::Store().size())) {
+                BuildCookieAtlas(p->dev, p->cookieTex, p->cookieSrv);
+                p->cookieCount = LightCookies::Store().size();
+            }
+            ID3D11ShaderResourceView* cs = any ? p->cookieSrv : nullptr;
+            c->PSSetShaderResources(8, 1, &cs);
+        }
     }
     // Flat ground contact shadows stand in for real shadows only when the sun's
     // shadow map isn't drawn (Shadows off / unsupported) but the sun does cast.
@@ -1795,6 +1547,14 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         if (V.empty() || T.size() < 3) continue;
         ++drawnN;
         ID3D11ShaderResourceView* srv = p->TextureFor(mr->texture);
+        // Custom (.okayshader) surface: its own pixel shader, or the magenta error material.
+        Impl::CustomPS* cust = nullptr;
+        bool custBad = false;
+        if (mr->shader == MeshRenderer::Shader::Custom) {
+            cust = p->EnsureCustomPS(mr->customShader);
+            custBad = cust == nullptr;
+            if (custBad) srv = nullptr;
+        }
 
         // Geometry source: static meshes draw from the per-mesh cached GPU buffer
         // (expanded + uploaded once — see Impl::EnsureMeshVB); meshes deformed on
@@ -1842,7 +1602,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
 
         Mat4 model = it.model;
         Mat4 mvp = vp * model;
-        bool unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
+        bool unlit = cust ? cust->unlit : (custBad || mr->unlit || mr->shader == MeshRenderer::Shader::Unlit);
         CB cb; std::memset(&cb, 0, sizeof(cb));
         std::memcpy(cb.mvp, mvp.m, sizeof(cb.mvp));
         std::memcpy(cb.model, model.m, sizeof(cb.model));
@@ -1863,7 +1623,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         cb.normalStrength = mr->normalStrength;
         ID3D11ShaderResourceView* ssrv = mr->specularMap.empty() ? nullptr : p->TextureFor(mr->specularMap);
         ID3D11ShaderResourceView* aosrv = mr->aoMap.empty() ? nullptr : p->TextureFor(mr->aoMap);
-        bool d3unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
+        bool d3unlit = unlit;
         cb.pbr[0] = d3unlit ? 0.0f : mr->metallic;       // metallic
         cb.pbr[1] = d3unlit ? 0.0f : mr->reflectivity;   // reflectivity
         cb.pbr[2] = ssrv ? 1.0f : 0.0f;                  // hasSpecMap
@@ -1876,14 +1636,19 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
           cb.sky[4] = sky.horizon.x; cb.sky[5] = sky.horizon.y; cb.sky[6] = sky.horizon.z;
           cb.sky[8] = sky.bottom.x;  cb.sky[9] = sky.bottom.y;  cb.sky[10] = sky.bottom.z; }
         cb.tiling[0] = srv ? mr->tiling.x : 1.0f; cb.tiling[1] = srv ? mr->tiling.y : 1.0f;
-        cb.shaderMode = (float)(int)mr->shader;
+        cb.shaderMode = (cust || custBad) ? 0.0f : (float)(int)mr->shader;
+        if (cust) { cb.tiling[0] = mr->tiling.x; cb.tiling[1] = mr->tiling.y; }   // a custom surface's uv is tiled with or without a picture
+        if (custBad) {
+            cb.color[0] = oshader::kErrorColor[0]; cb.color[1] = oshader::kErrorColor[1]; cb.color[2] = oshader::kErrorColor[2];
+            cb.emissive[0] = cb.emissive[1] = cb.emissive[2] = 0.0f;
+        }
         cb.toonBands = (float)mr->toonBands;
         cb.rimStr = mr->rimStrength;
         cb.rimColor[0] = mr->rimColor.r; cb.rimColor[1] = mr->rimColor.g; cb.rimColor[2] = mr->rimColor.b;
         cb.gradTop[0] = mr->gradientTop.r; cb.gradTop[1] = mr->gradientTop.g; cb.gradTop[2] = mr->gradientTop.b;
         cb.gradBot[0] = mr->gradientBottom.r; cb.gradBot[1] = mr->gradientBottom.g; cb.gradBot[2] = mr->gradientBottom.b;
         cb.shadowAlpha = -1.0f;   // lit pass (>=0 would draw the flat shadow — must be off here)
-        cb.alpha = mr->color.a;   // material opacity (1 = opaque); < 1 alpha-blends (water/glass)
+        cb.alpha = custBad ? 1.0f : mr->color.a;   // material opacity (1 = opaque); < 1 alpha-blends (water/glass)
         cb.lightCount[0] = (float)frameLightCount;
         cb.lightCount[1] = mr->metallicRoughnessMap.empty() ? 0.0f : 1.0f;
         cb.lightCount[2] = mr->emissiveMap.empty() ? 0.0f : 1.0f;
@@ -1901,6 +1666,27 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         }
         if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
             std::memcpy(ms.pData, &cb, sizeof(cb)); c->Unmap(p->cb, 0);
+        }
+        if (cust) {   // the custom pixel shader, its properties + time (b4) and its pictures (t9..)
+            c->PSSetShader(cust->ps, nullptr, 0);
+            const oshader::ShaderFile sf = oshader::LoadShaderFile(mr->customShader);
+            float cdata[4 * (1 + oshader::kMaxProperties)];
+            std::memset(cdata, 0, sizeof(cdata));
+            cdata[0] = Time::ElapsedTime();
+            if (sf.compiled && sf.compiled->ok) {
+                const std::vector<float> v = oshader::ResolveProperties(*sf.compiled, mr->shaderParams);
+                std::memcpy(cdata + 4, v.data(), sizeof(float) * std::min<std::size_t>(v.size(), 4 * oshader::kMaxProperties));
+                for (int t = 0; t < (int)sf.compiled->textures.size() && t < oshader::kMaxTextures; ++t) {
+                    const std::string pic = oshader::ResolveTexture(*sf.compiled, t, mr->shaderParams);
+                    ID3D11ShaderResourceView* ts = pic.empty() ? nullptr : p->TextureFor(pic);
+                    if (!ts) ts = p->whiteSrv;
+                    c->PSSetShaderResources((UINT)(oshader::kFirstTextureUnit + t), 1, &ts);
+                }
+            }
+            if (SUCCEEDED(c->Map(p->customCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
+                std::memcpy(ms.pData, cdata, sizeof(cdata)); c->Unmap(p->customCB, 0);
+            }
+            c->PSSetConstantBuffers((UINT)oshader::kHlslPropRegister, 1, &p->customCB);
         }
         if (srv) c->PSSetShaderResources(0, 1, &srv);
         if (nsrv) c->PSSetShaderResources(1, 1, &nsrv);   // normal/bump map on t1
@@ -1930,7 +1716,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         // scene and doesn't write depth, so geometry behind shows through. Reuses the
         // ground-shadow blend + no-depth-write states. Draw transparent meshes after
         // opaque ones (objects draw in scene order).
-        bool transparent = mr->color.a < 0.999f && p->blend && p->depthNoWrite;
+        bool transparent = (cust ? (mr->color.a < 0.999f || cust->writesAlpha) : (!custBad && mr->color.a < 0.999f)) && p->blend && p->depthNoWrite;
         const float blendF[4] = {0, 0, 0, 0};
         if (transparent) {
             c->OMSetBlendState(p->blend, blendF, 0xffffffff);
@@ -1989,11 +1775,12 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             c->OMSetDepthStencilState(p->depth, 0);
         }
         if (svb) { c->IASetInputLayout(p->layout); c->VSSetShader(p->vs, nullptr, 0); }
+        if (cust) c->PSSetShader(p->ps, nullptr, 0);
     }
     LastCullCounters().drawn = drawnN;
 
     const bool useChain = chain && p->EnsurePostTargets();
-    PostVignetteHandled() = useChain && rsTop.vignette > 0.0f;
+    PostVignetteHandled() = useChain && rsTop.vignette + rsTop.vignettePulse > 0.0f;
 
     // ---- Ambient occlusion depth pre-pass (UNVERIFIED on a real GPU) -------------
     // Runs only when the post chain is on AND an Ambient Occlusion switch is on
@@ -2111,7 +1898,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         ID3D11RenderTargetView* finalRtv = directRtv ? directRtv : p->out.rtv;
         pc.p0[0] = ExposureScale(rsTop); pc.p0[1] = hdrOut ? 1.0f : 0.0f; pc.p0[2] = (float)ps.tonemap; pc.p0[3] = bloomOn ? 1.0f : 0.0f;
         pc.p1[0] = bloomIntensity; pc.p1[1] = ps.grading ? 1.0f : 0.0f; pc.p1[2] = ps.temperature; pc.p1[3] = ps.tint;
-        pc.p2[0] = ps.saturation; pc.p2[1] = ps.contrast; pc.p2[2] = rsTop.vignette > 1.0f ? 1.0f : rsTop.vignette; pc.p2[3] = ps.vignetteSmooth;
+        pc.p2[0] = ps.saturation; pc.p2[1] = ps.contrast; pc.p2[2] = rsTop.vignette + rsTop.vignettePulse > 1.0f ? 1.0f : rsTop.vignette + rsTop.vignettePulse; pc.p2[3] = ps.vignetteSmooth;
         pc.lift[0] = ps.lift.x; pc.lift[1] = ps.lift.y; pc.lift[2] = ps.lift.z; pc.aspect = (float)w / (float)h;
         pc.gamma[0] = ps.gamma.x; pc.gamma[1] = ps.gamma.y; pc.gamma[2] = ps.gamma.z;
         pc.gain[0] = ps.gain.x; pc.gain[1] = ps.gain.y; pc.gain[2] = ps.gain.z;
@@ -2123,12 +1910,12 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         //    the distance from the focus plane, read from the AO depth image.
         if (dofOn) {
             pc.texel[0] = 1.0f / (float)w; pc.texel[1] = 1.0f / (float)h; pc.thresh = 0.0f; pc.radius = 1.0f;
-            pass(p->psDown, bA.rtv, bA.w, bA.h, cur, nullptr, nullptr);
+            pass(p->psDofCopy, bA.rtv, bA.w, bA.h, cur, nullptr, nullptr);   // premultiplied: the sky's alpha 0 survives
             for (int it = 0; it < 2; ++it) {
                 pc.dir[0] = 1.0f / (float)bA.w; pc.dir[1] = 0.0f;
-                pass(p->psBlur, bB.rtv, bB.w, bB.h, bA.srv, nullptr, nullptr);
+                pass(p->psDofBlur, bB.rtv, bB.w, bB.h, bA.srv, nullptr, nullptr);
                 pc.dir[0] = 0.0f; pc.dir[1] = 1.0f / (float)bA.h;
-                pass(p->psBlur, bA.rtv, bA.w, bA.h, bB.srv, nullptr, nullptr);
+                pass(p->psDofBlur, bA.rtv, bA.w, bA.h, bB.srv, nullptr, nullptr);
             }
             pc.texel[0] = 1.0f / (float)aoSet->depth.w; pc.texel[1] = 1.0f / (float)aoSet->depth.h;
             pc.p7[0] = ps.dofFocus; pc.p7[1] = ps.dofRange; pc.p7[2] = ssao::kFar;
@@ -2210,6 +1997,24 @@ void* D3D11Renderer::BoundRenderTargetTexture() {
     res->Release();
     return tex;
 }
+bool D3D11Renderer::BundleShader(const char* entry, const void** data, std::size_t* size) {
+#if defined(OKAY_XBOX_UWP)
+    if (!entry || !data || !size || !EnsureBundle()) return false;
+    const std::vector<unsigned char>* b = g_bundle.Find(entry);
+    if (!b) return false;
+    *data = b->data(); *size = b->size(); return true;
+#else
+    (void)entry; (void)data; (void)size; return false;
+#endif
+}
+void D3D11Renderer::SetShaderBundleDir(const char* dir) {
+#if defined(OKAY_XBOX_UWP)
+    g_shaderDir = dir ? dir : ""; g_bundleTried = false; g_bundleOk = false;
+#else
+    (void)dir;
+#endif
+}
+void* D3D11Renderer::DeviceForPresent() const { return m_impl ? static_cast<void*>(m_impl->dev) : nullptr; }
 void D3D11Renderer::ReleaseCom(void* unknown) { if (unknown) static_cast<IUnknown*>(unknown)->Release(); }
 
 
@@ -2247,6 +2052,11 @@ void D3D11Renderer::Destroy() {
     for (auto& kv : p->texCache) if (kv.second) kv.second->Release();
     p->texCache.clear();
     p->texSampling.clear();
+    for (auto& kv : p->customPs) if (kv.second.ps) kv.second.ps->Release();
+    p->customPs.clear();
+    if (p->customCB) { p->customCB->Release(); p->customCB = nullptr; }
+    if (p->whiteSrv) { p->whiteSrv->Release(); p->whiteSrv = nullptr; }
+    if (p->whiteTex) { p->whiteTex->Release(); p->whiteTex = nullptr; }
     for (auto& kv : p->sampCombo) if (kv.second) kv.second->Release();
     p->sampCombo.clear();
     for (auto& kv : p->meshVB) if (kv.second.vbuf) kv.second.vbuf->Release();
@@ -2256,9 +2066,11 @@ void D3D11Renderer::Destroy() {
     if (p->shCB) p->shCB->Release();
     if (p->postCB) p->postCB->Release();
     if (p->sampClamp) p->sampClamp->Release();
+    if (p->cookieSrv) p->cookieSrv->Release();
+    if (p->cookieTex) p->cookieTex->Release();
     if (p->depthOff) p->depthOff->Release();
     if (p->vsQuad) p->vsQuad->Release();
-    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa, p->psAoDepth, p->psAo, p->psAoMul, p->psDof}) if (s) s->Release();
+    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa, p->psAoDepth, p->psAo, p->psAoMul, p->psDof, p->psDofCopy, p->psDofBlur}) if (s) s->Release();
     for (auto& t : p->ssaoSets) t.Release();
     p->ssaoSets.clear();
     if (p->depthPlanar) p->depthPlanar->Release();

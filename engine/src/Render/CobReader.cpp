@@ -3,7 +3,7 @@
 // header, the object chunk with its 48 byte centre-and-axes block and 3x4 matrix, the face record, Mat1, the ShBx parameter type codes 3 / 6 / 7 / 10
 // and the "file name" parameter) was settled by a hex dump and a text view of 8 real sample files. No importer source was read. Bounds-checked,
 // every count is checked against the data that is really there and a per-file budget before anything is allocated, no recursion.
-// See okay/Render/ModelData.hpp and docs/own_cob_reader.md.
+// See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "BinReader.hpp"
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"
@@ -270,6 +270,7 @@ bool ParseAscii(const std::string& text, Parsed& P, std::string* err) {
             Obj o;
             o.poly = type == "PolH"; o.id = id; o.parent = parent;
             bool haveTransform = false;
+            std::vector<std::string> rowTk, ft, ct;   // token vectors refilled row after row (SplitInto reuses their room)
             while (R.Body(l)) {
                 const auto tk = detail::txt::Split(l);
                 if (tk.empty()) continue;
@@ -295,7 +296,8 @@ bool ParseAscii(const std::string& text, Parsed& P, std::string* err) {
                     for (long long i = 0; i < n; ++i) {
                         std::string row;
                         if (!R.Body(row)) return Fail(err, "the vertex list ends early");
-                        if (!Nums(detail::txt::Split(row), 0, 3, v)) return Fail(err, "a vertex line is not three numbers");
+                        detail::txt::SplitInto(row, rowTk);
+                        if (!Nums(rowTk, 0, 3, v)) return Fail(err, "a vertex line is not three numbers");
                         o.v.push_back(Vec3{(float)v[0], (float)v[1], (float)v[2]});
                     }
                 } else if (o.poly && tk[0] == "Texture" && tk.size() == 3 && tk[1] == "Vertices") {
@@ -306,7 +308,8 @@ bool ParseAscii(const std::string& text, Parsed& P, std::string* err) {
                     for (long long i = 0; i < n; ++i) {
                         std::string row;
                         if (!R.Body(row)) return Fail(err, "the texture vertex list ends early");
-                        if (!Nums(detail::txt::Split(row), 0, 2, v)) return Fail(err, "a texture vertex line is not two numbers");
+                        detail::txt::SplitInto(row, rowTk);
+                        if (!Nums(rowTk, 0, 2, v)) return Fail(err, "a texture vertex line is not two numbers");
                         o.uv.push_back(Vec2{(float)v[0], (float)v[1]});
                     }
                 } else if (o.poly && tk[0] == "Faces" && tk.size() == 2) {
@@ -317,7 +320,7 @@ bool ParseAscii(const std::string& text, Parsed& P, std::string* err) {
                     for (long long i = 0; i < n; ++i) {
                         std::string fl, cl;
                         if (!R.Body(fl) || !R.Body(cl)) return Fail(err, "the face list ends early");
-                        const auto ft = detail::txt::Split(fl);
+                        detail::txt::SplitInto(fl, ft);
                         long long fn, ff, fm;
                         if (ft.size() < 7 || ft[0] != "Face" || !detail::txt::ToInt(ft[2], fn) || !detail::txt::ToInt(ft[4], ff) || !detail::txt::ToInt(ft[6], fm) || fn < 0 || fn > (long long)kMaxFaceCorners || fm < 0 || fm > 65535 || ff < 0 || ff > 255)
                             return Fail(err, "a Face line is malformed");
@@ -325,7 +328,7 @@ bool ParseAscii(const std::string& text, Parsed& P, std::string* err) {
                         P.corners += (std::size_t)fn;
                         Face f;
                         f.first = (std::uint32_t)o.c.size(); f.n = (std::uint16_t)fn; f.mat = (std::uint16_t)fm; f.flags = (std::uint8_t)ff;
-                        const auto ct = detail::txt::Split(cl);
+                        detail::txt::SplitInto(cl, ct);
                         if ((long long)ct.size() < fn) return Fail(err, "a face has fewer corners than it says");
                         for (long long k = 0; k < fn; ++k) {
                             const std::string& s = ct[(std::size_t)k];   // <vertex,texture vertex>
@@ -403,7 +406,9 @@ Mat4 Conj(const float* m) {
 } // namespace cob
 } // namespace
 
-static bool ReadCobImpl(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err) {
+// `release`: the caller's buffer behind `bytes`, which may be freed once it is parsed (ReadCobFile owns its bytes: the
+// file is then not held while the meshes are built). Nothing parsed refers back into it.
+static bool ReadCobImpl(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err, std::string* release = nullptr) {
     using namespace cob;
     if (bytes.size() < 32 || bytes.compare(0, 8, "Caligari") != 0 || bytes[9] != 'V') return Fail(err, "not a COB file (the text \"Caligari V..\" is missing)");
     const char kind = bytes[15];
@@ -412,6 +417,7 @@ static bool ReadCobImpl(const std::string& bytes, const std::string& baseDir, Im
     Parsed P;
     if (kind == 'B') { if (!ParseBinary(bytes, P, err)) return false; }
     else { if (!ParseAscii(bytes, P, err)) return false; }
+    if (release) std::string().swap(*release);   // `bytes` is not used below
 
     int objectsWithoutMaterial = 0;
     // ---- hierarchy: groups and polygon objects become nodes, parents first ----
@@ -597,7 +603,10 @@ bool ReadCobFile(const std::string& path, ImportedModel& out, std::string* err) 
     std::string dir;
     const std::size_t sl = path.find_last_of("/\\");
     if (sl != std::string::npos) dir = path.substr(0, sl + 1);
-    return ReadCobBuffer(bytes, dir, out, err);
+    const bool ok = ReadCobImpl(bytes, dir, out, err, &bytes);   // as ReadCobBuffer, freeing the file once it is parsed
+    if (!ok) { out = ImportedModel{}; return false; }
+    out.backend = "own";
+    return true;
 }
 
 } // namespace okay

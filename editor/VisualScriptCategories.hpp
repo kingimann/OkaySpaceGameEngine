@@ -14,6 +14,8 @@
 #include <cstring>
 #include <string>
 
+#include "okay/VisualScript/QuickBlocks.hpp"
+
 namespace okay::editor::vsed {
 
 struct VsPaletteCategory {
@@ -40,6 +42,8 @@ inline const VsPaletteCategory kPaletteCategories[] = {
     {"Waiting & Timers", "Wait, repeat on a timer, cooldowns, stopwatches, and delayed calls from a script.", "Flow"},
     {"Functions & Calls", "Define your own function, call another graph or script, or run a list of steps.", "Flow"},
     {"Time & Game Speed", "The clock, the frame time, slow motion and pausing the game.", "Flow"},
+    // ---- Quick blocks: one-block ready-made actions for beginners.
+    {"Quick blocks",    "One-block actions: move around, game rules, objects in the game, show and sound, do in order.", "Quick blocks"},
     // ---- Variables, lists and saving: remember things.
     {"Variables",       "Remember a number, a word or a yes/no on this object, the scene or the whole game.", "Variables, Lists & Saving"},
     {"Saving & Loading", "Keep things between runs: save slots, saved values and checkpoints.", "Variables, Lists & Saving"},
@@ -66,7 +70,7 @@ inline const VsPaletteCategory kPaletteCategories[] = {
     // ---- Movement & physics
     {"Position",        "Where an object is, putting it somewhere else, and keeping it in bounds.", "Movement & Physics"},
     {"Rotation & Scale", "Turn an object, face or look at something, and change its size.", "Movement & Physics"},
-    {"Move & Follow",   "Walk toward something, follow, chase, patrol, orbit, bob, spin, motion patterns and script functions.", "Movement & Physics"},
+    {"Move & Follow",   "Walk toward something, follow, chase, patrol, orbit, bob, spin, motion patterns, vehicles and script functions.", "Movement & Physics"},
     {"Tweens",          "Smoothly change a position, size, color or number over time.", "Movement & Physics"},
     {"Paths & Splines", "Curves and paths an object can follow.", "Movement & Physics"},
     {"Forces & Velocity", "Push things, set their speed, jump, and set up their physics body.", "Movement & Physics"},
@@ -92,7 +96,7 @@ inline const VsPaletteCategory kPaletteCategories[] = {
     {"Camera",          "Where the player is looking: follow, switch, zoom, tilt and shake.", "Sound, Camera & Screen"},
     {"Screen Text",     "Words and numbers drawn on the screen.", "Sound, Camera & Screen"},
     {"Buttons & Inputs", "Buttons, sliders, toggles, dropdowns, text fields and pickers.", "Sound, Camera & Screen"},
-    {"Bars & Layout",   "Progress bars, tabs and pages, scroll areas and grids, layout helpers and themes.", "Sound, Camera & Screen"},
+    {"Bars & Layout",   "Progress bars, game HUD parts, app parts, tabs and pages, scroll areas and grids, layout helpers and themes.", "Sound, Camera & Screen"},
     {"Popups & Dialogs", "Toasts, tooltips, modals and bottom sheets.", "Sound, Camera & Screen"},
     // ---- Scenes and the environment
     {"Scenes & Levels", "Load, restart and quit scenes, and read which scene is open.", "Scenes & Environment"},
@@ -104,7 +108,7 @@ inline const VsPaletteCategory kPaletteCategories[] = {
     // ---- Input
     {"Keyboard",        "Is a key held, pressed or released.", "Input"},
     {"Mouse & Touch",   "The mouse position and buttons, the cursor, taps and swipes.", "Input"},
-    {"Gamepad & Controls", "Movement axes, the gamepad, named actions and rebinding keys.", "Input"},
+    {"Gamepad & Controls", "Movement axes, the gamepad, named actions and rebinding keys, local players and the controllers they use.", "Input"},
     // ---- Online
     {"Multiplayer",     "Host or join, browse servers, matchmaking, messages, synced objects, players and matches.", "Online"},
     {"Steam",           "Steam achievements, stats, lobbies, friends, cloud files and the workshop.", "Online"},
@@ -142,6 +146,12 @@ struct VsPaletteSub {
     const char* blurb;
 };
 inline const VsPaletteSub kPaletteSubs[] = {
+    // Quick blocks
+    {"Quick blocks", "Move Around", "Move with keys, jump, follow, walk back and forth."},
+    {"Quick blocks", "Game Rules", "Score, health, winning, losing and checkpoints."},
+    {"Quick blocks", "Objects In The Game", "Coins, doors, platforms, bullets and things that spin or appear."},
+    {"Quick blocks", "Show And Sound", "Messages, sounds, colours and the camera."},
+    {"Quick blocks", "Do In Order", "Wait, repeat, do forever, and do something only when a key is pressed or touched."},
     // Flow
     {"Branches & Gates", "State Machines", "Keep one state at a time and react when it changes."},
     {"Waiting & Timers", "Delayed Calls", "Call something later, or every few seconds, from a script."},
@@ -193,6 +203,7 @@ inline const VsPaletteSub kPaletteSubs[] = {
     {"Rotation & Scale", "Facing & Looking", "Face a direction or an object, and look at a point."},
     {"Rotation & Scale", "Scale", "Read and change the size of an object."},
     {"Move & Follow", "Motion Patterns", "Back and forth, in a circle, a hop, a shake, bob and spin."},
+    {"Move & Follow", "Vehicles", "Drive a vehicle from a script: settings, presets, pedals, boost, lights, get in and out."},
     {"Move & Follow", "Script Movement Functions", "The same jobs written as text-script function calls, like move to, chase or wasd move."},
     {"Tweens", "Start a Tween", "Begin moving, turning, scaling or fading something over time."},
     {"Tweens", "Control Tweens", "Pause, play, restart, rewind or kill tweens."},
@@ -230,6 +241,8 @@ inline const VsPaletteSub kPaletteSubs[] = {
     {"Buttons & Inputs", "Dropdowns & Text Fields", "Dropdown lists and text boxes."},
     {"Buttons & Inputs", "Pickers & Search", "Color, date, time and file pickers, and search bars."},
     {"Bars & Layout", "Progress Bars", "Progress bars, radial bars, spinners and loading skeletons."},
+    {"Bars & Layout", "Game HUD", "Radial menus, kill feeds, ammo counters, key prompts, objective trackers, compasses, item cards and ability icons."},
+    {"Bars & Layout", "App Parts", "Menu bars, toolbars, tree views, data tables, wizards and form groups."},
     {"Bars & Layout", "Tabs & Pages", "Tabs, pages, accordions and breadcrumbs."},
     {"Bars & Layout", "Scroll Areas & Grids", "Scroll views and slot grids."},
     {"Bars & Layout", "Layout Helpers", "Begin and end a panel or card, put things on one line, separators and list rows."},
@@ -239,6 +252,8 @@ inline const VsPaletteSub kPaletteSubs[] = {
     // Input
     {"Mouse & Touch", "Touch & Gestures", "Touch screens, swipes, pinches and twists."},
     {"Gamepad & Controls", "Named Actions", "Define an action, read its value, rebind its key and rumble the pad."},
+    {"Gamepad & Controls", "Local Players", "A local player's typed actions: values, phases, action maps, control scheme and rebinding."},
+    {"Gamepad & Controls", "Controllers", "Which controller is plugged in, its family and battery, lightbar, trigger rumble, Controller Setup and rumble patterns."},
     // Online
     {"Multiplayer", "Hosting & Joining", "Host, join, leave and ask who is the server."},
     {"Multiplayer", "Server Browser", "List servers and join one."},
@@ -302,6 +317,11 @@ inline VsPlace VsPlaceForBuiltin(const char* name);   // a text-script function 
 // A type no rule covers comes back with a null category.
 inline VsPlace VsPlaceForNode(const char* type) {
     if (!type || !type[0]) return {};
+    if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(type)) {
+        const std::string g = qb->group;
+        return VsAt("Quick blocks", g == "Movement" ? "Move Around" : g == "Game rules" ? "Game Rules"
+                                    : g == "World" ? "Objects In The Game" : g == "Feedback" ? "Show And Sound" : "Do In Order");
+    }
     if (VsPre(type, "Fn.")) return VsPlaceForBuiltin(type + 3);
     if (const VsRule* r = VsFindRule(kNodeRules, VsRuleCount(kNodeRules), type)) return VsAt(r->category, r->sub);
     return VsTranslateLegacy(VsLegacyPlaceForNode(type));

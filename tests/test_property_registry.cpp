@@ -375,7 +375,10 @@ static void TestRegistryBasics() {
         "UILayoutGroup", "UIFrame", "UIFlexItem", "UIRawImage", "UIKeybindField", "UIDraggable", "LoadingScreen",
         "UITheme", "UIStyleVariant", "UIDamageNumbers", "UIDialogueBox", "UIInventoryBind",
         "UISearchBar", "UIDateTimePicker", "UIFilePicker", "UIAccordion", "UIBreadcrumbs",
-        "UIPagination", "UISkeleton", "UIBottomSheet", "UIRangeSlider", "UIAspectRatio", "UIInputValidator"};
+        "UIPagination", "UISkeleton", "UIBottomSheet", "UIRangeSlider", "UIAspectRatio", "UIInputValidator", "UIRadialMenu", "UIKillFeed", "UIMenuBar", "UIToolbar", "UITreeView", "UIDataTable", "UIWizard", "UIFormGroup", "UIColorSquare", "UIAmmoCounter", "UIInteractionPrompt",
+        "UIObjectiveTracker", "UICompass", "UIItemTooltipCard", "UIAbilityIcon", "UIBind", "UIVisibleIf", "UIListBind", "UIHotReload", "UIFocusHint", "UIRichLinks",
+        "CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion", "SaveConfig", "Buildable", "TilemapCollider2D",
+        "EventSystem", "UIMask", "UISafeArea", "UIDocument"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");
@@ -1133,7 +1136,7 @@ static void TestSerializerCrossCheck() {
 }
 
 // Properties the scene file writes only together with another one: each rides on its
-// companion when it is set alone (see docs/properties.md, "What the cross-check showed").
+// companion when it is set alone (see docs/engine/properties.md, "What the cross-check showed").
 static const std::map<std::string, std::pair<std::string, PropertyValue>>& Companions() {
     static const std::map<std::string, std::pair<std::string, PropertyValue>> companion = {
         {"MeshRenderer.toonBands", {"MeshRenderer.shader", PropertyValue::MakeEnum(2)}},

@@ -62,6 +62,28 @@ int main() {
         SDL_Event m = d; m.button.button = SDL_BUTTON_MIDDLE; c.Feed(m);      // other buttons are not OkayUI's
         CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
     }
+    {   // two clicks between two frames (a fast double click at a low frame rate): two presses, each an up-then-down edge
+        InputCollector c;
+        SDL_Event d; std::memset(&d, 0, sizeof(d)); d.type = SDL_MOUSEBUTTONDOWN; d.button.button = SDL_BUTTON_LEFT;
+        SDL_Event u = d; u.type = SDL_MOUSEBUTTONUP;
+        c.Feed(d); c.Feed(u); c.Feed(d); c.Feed(u);
+        CHECK(c.Build(5, 5, false, false, false, false).mouseDown);
+        CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
+        CHECK(c.Build(5, 5, false, false, false, false).mouseDown);
+        CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
+        // a second click arriving in the frame after the first was shown: the button is shown up once in between
+        c.Feed(d); c.Feed(u);
+        CHECK(c.Build(5, 5, false, false, false, false).mouseDown);
+        c.Feed(d); c.Feed(u);
+        CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
+        CHECK(c.Build(5, 5, false, false, false, false).mouseDown);
+        // a press held across frames (a drag) stays down
+        c.Feed(d);
+        CHECK(!c.Build(5, 5, true, false, false, false).mouseDown);   // the last frame showed it down: up once first
+        CHECK(c.Build(5, 5, true, false, false, false).mouseDown);
+        CHECK(c.Build(5, 5, true, false, false, false).mouseDown);
+        CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
+    }
     {   // keys are dropped, not kept, when OkayUI may not have them: nothing arrives a frame late
         InputCollector c;
         c.Feed(Text("x")); c.Feed(Key(SDLK_BACKSPACE));
@@ -115,6 +137,14 @@ int main() {
         CHECK(in.keyDown[UI::KeyId_PageDown] && in.keyDown[UI::KeyId_F5]);
         CHECK(InputCollector::KeyIdOf(SDLK_F13) == UI::KeyId_None && InputCollector::KeyIdOf(SDLK_a) == UI::KeyId_A &&
               InputCollector::KeyIdOf(SDLK_9) == UI::KeyId_9 && InputCollector::KeyIdOf(SDLK_RCTRL) == UI::KeyId_Ctrl);
+        // '/' and Alt are named keys too: the code editor's Ctrl+/ (comment) and Alt+Up / Alt+Down (move lines)
+        CHECK(InputCollector::KeyIdOf(SDLK_SLASH) == UI::KeyId_Slash && InputCollector::KeyIdOf(SDLK_LALT) == UI::KeyId_Alt);
+        c.Feed(Key(SDLK_SLASH, KMOD_CTRL));
+        in = c.Build(0, 0, false, false, false, true);
+        CHECK(in.keyDown[UI::KeyId_Slash] && in.ctrl);
+        using PK2 = okay::platform::Key;
+        CHECK(InputCollector::KeyIdOf(PK2::Slash, 0) == UI::KeyId_Slash && InputCollector::KeyIdOf(PK2::Slash, '/') == UI::KeyId_Slash);
+        CHECK(InputCollector::KeyIdOf(PK2::LAlt, 0) == UI::KeyId_Alt);
     }
     {   // end to end: a CodeEdit driven only by SDL events (arrows, Tab, Ctrl+Z/Y, Ctrl+C then Ctrl+V, Ctrl+Left word move)
         okayuitest::Reset();
@@ -168,6 +198,30 @@ int main() {
         r.NextFrame();                                         // ...but a panel that was not drawn again is dropped
         CHECK(!r.Owns(150, 120) && !r.Valid());
     }
+    {   // several hosted rectangles in one frame (a page and the notifications panel over it): each owns its own area
+        Region r;
+        r.Offer(0, 0, 400, 300, false);                        // the page, covered here by the panel's ImGui window
+        r.Offer(250, 50, 200, 200, true);                      // the panel
+        CHECK(r.Count() == 2);
+        CHECK(r.Owns(300, 100) && !r.Owns(100, 100));          // inside the panel: owned; the covered page: not
+        r.NextFrame();
+        r.Offer(0, 0, 400, 300, true);                         // panel closed: only the page is offered now
+        CHECK(r.Owns(100, 100));
+        r.NextFrame();
+        CHECK(r.Count() == 1 && r.Owns(100, 100) && !r.Owns(440, 240));   // the panel's rectangle went with its frame
+        r.NextFrame();
+        CHECK(r.Count() == 0 && !r.Owns(100, 100));
+        for (int i = 0; i < Region::kMax + 3; ++i) r.Offer((float)i * 10, 0, 5, 5, true);   // more than it holds: the rest are ignored
+        CHECK(r.Count() == Region::kMax && r.Owns(1, 1) && !r.Owns((Region::kMax + 1) * 10.0f + 1, 1));
+    }
+    {   // an open menu offered as an overlay: the host keeps a press there from ImGui (OwnsOverlay); the panel itself is not an overlay
+        Region r;
+        r.Offer(0, 0, 300, 600, true);                         // the Hierarchy panel
+        r.Offer(250, 100, 260, 700, true, true);               // its menu, hanging out over the Scene view
+        CHECK(r.Owns(400, 300) && r.OwnsOverlay(400, 300) && !r.OwnsOverlay(100, 50) && r.Owns(100, 50));
+        r.NextFrame(); r.NextFrame();                          // the menu closed: no longer kept from ImGui
+        CHECK(!r.OwnsOverlay(400, 300));
+    }
     {   // end to end through OkayUI: typed text from SDL events edits a focused field; a blocked frame does not click
         okayuitest::Reset();
         okayuitest::Sim sim(300, 100);
@@ -200,6 +254,52 @@ int main() {
         c.Feed(Key(SDLK_ESCAPE));
         frame(c.Build(cx, cy, false, false, false, true));
         CHECK(!UI::WantsTextInput());
+    }
+    {   // the okay::platform::Event path gives the same Input as the SDL one for the same sequence of events
+        using okay::platform::Event; using okay::platform::EventType; using PK = okay::platform::Key;
+        auto pText = [](const char* t) { Event e; e.type = EventType::TextInput; e.text = t; return e; };
+        auto pKey = [](PK k, uint32_t mods = 0, bool down = true) { Event e; e.type = down ? EventType::KeyDown : EventType::KeyUp; e.key = k; e.mods = mods; return e; };
+        struct Pair { SDL_Keycode sym; PK key; };
+        const Pair keys[] = {{SDLK_BACKSPACE, PK::Backspace}, {SDLK_DELETE, PK::Delete}, {SDLK_LEFT, PK::Left}, {SDLK_RIGHT, PK::Right},
+            {SDLK_HOME, PK::Home}, {SDLK_END, PK::End}, {SDLK_RETURN, PK::Return}, {SDLK_ESCAPE, PK::Escape}, {SDLK_UP, PK::Up},
+            {SDLK_DOWN, PK::Down}, {SDLK_TAB, PK::Tab}, {SDLK_F5, PK::F5}, {SDLK_SPACE, PK::Space}, {SDLK_PAGEUP, PK::PageUp}};
+        InputCollector s, p;
+        s.Feed(Text("ab")); p.Feed(pText("ab"));
+        s.Feed(Text("\xC3\xA9")); p.Feed(pText("\xC3\xA9"));
+        for (const Pair& k : keys) { s.Feed(Key(k.sym)); p.Feed(pKey(k.key)); }
+        s.Feed(Key(SDLK_w)); p.Feed(pKey(PK::W));
+        s.Feed(Key(SDLK_3)); p.Feed(pKey(PK::N3));
+        s.Feed(Key(SDLK_a, KMOD_CTRL)); p.Feed(pKey(PK::A, okay::platform::ModCtrl));
+        s.Feed(Key(SDLK_c, KMOD_GUI)); p.Feed(pKey(PK::C, okay::platform::ModGui));
+        s.Feed(Key(SDLK_x, KMOD_CTRL)); p.Feed(pKey(PK::X, okay::platform::ModCtrl));
+        s.Feed(Key(SDLK_v, KMOD_CTRL)); p.Feed(pKey(PK::V, okay::platform::ModCtrl));
+        s.Feed(Key(SDLK_LSHIFT, KMOD_LSHIFT)); p.Feed(pKey(PK::LShift, okay::platform::ModShift));
+        s.Feed(Wheel(2)); { Event w; w.type = EventType::MouseWheel; w.wheelY = 2; p.Feed(w); }
+        s.Feed(Wheel(3, SDL_MOUSEWHEEL_FLIPPED)); { Event w; w.type = EventType::MouseWheel; w.wheelY = -3; w.wheelFlipped = true; p.Feed(w); }
+        { SDL_Event d; std::memset(&d, 0, sizeof(d)); d.type = SDL_MOUSEBUTTONDOWN; d.button.button = SDL_BUTTON_RIGHT; s.Feed(d);
+          Event e; e.type = EventType::MouseButtonDown; e.button = okay::platform::MouseRight; p.Feed(e); }
+        const UI::Input a = s.Build(1, 2, false, false, false, true), b = p.Build(1, 2, false, false, false, true);
+        CHECK(a.text && b.text && !std::strcmp(a.text, b.text));
+        CHECK(a.backspace == b.backspace && a.del == b.del && a.left == b.left && a.right == b.right && a.home == b.home && a.end == b.end);
+        CHECK(a.enter == b.enter && a.escape == b.escape && a.up == b.up && a.down == b.down);
+        CHECK(a.selectAll == b.selectAll && a.copy == b.copy && a.cut == b.cut && a.paste == b.paste);
+        CHECK(a.shift == b.shift && a.ctrl == b.ctrl && a.wheel == b.wheel && a.rightDown == b.rightDown);
+        bool sameKeys = true;
+        for (int k = 0; k < UI::KeyId_COUNT; ++k) sameKeys = sameKeys && a.keyDown[k] == b.keyDown[k];
+        CHECK(sameKeys);
+        CHECK(b.backspace && b.selectAll && b.copy && b.cut && b.paste && b.wheel == -1.0f && a.wheel == -1.0f);
+        CHECK(b.keyDown[UI::KeyId_W] && b.keyDown[UI::KeyId_3] && b.keyDown[UI::KeyId_F1 + 4] && b.keyDown[UI::KeyId_Tab]);
+        // a layout where the "a" key types "q" (AZERTY): Ctrl on that key is the shortcut of the letter it types
+        InputCollector az;
+        az.Feed(pKey(PK::A, okay::platform::ModCtrl), 'q');
+        CHECK(!az.Build(0, 0, false, false, false, true).selectAll);
+        az.Feed(pKey(PK::Q, okay::platform::ModCtrl), 'a');
+        CHECK(az.Build(0, 0, false, false, false, true).selectAll);
+        // text past the buffer is dropped, not cut through a character or overrun
+        InputCollector big;
+        for (int i = 0; i < 40; ++i) big.Feed(pText("xyz"));
+        const UI::Input bi = big.Build(0, 0, false, false, false, true);
+        CHECK(bi.text && std::strlen(bi.text) < 64);
     }
     TEST_MAIN_RESULT();
 }

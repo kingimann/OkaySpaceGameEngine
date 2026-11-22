@@ -31,6 +31,9 @@
 #include "okay/Components/UIRangeSlider.hpp"
 #include "okay/Components/UIAspectRatio.hpp"
 #include "okay/Components/UIInputValidator.hpp"
+#include "okay/Components/UIGameHud.hpp"
+#include "okay/Components/UIAppParts.hpp"
+#include "okay/Components/UIDataGlue.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/UIAnimation.hpp"
@@ -171,6 +174,7 @@ inline UIRect GetUIRect(GameObject* go) {
     else if (auto* sh = go->GetComponent<UIBottomSheet>()) { r.valid = true; r.anchor = sh->anchor; r.anchorPtr = &sh->anchor; r.position = &sh->position; r.sizePtr = &sh->size; r.size = sh->size; }
     else if (auto* rs = go->GetComponent<UIRangeSlider>()) { r.valid = true; r.anchor = rs->anchor; r.anchorPtr = &rs->anchor; r.position = &rs->position; r.sizePtr = &rs->size; r.size = rs->size; }
     else if (auto* ar = go->GetComponent<UIAspectRatio>()) { r.valid = true; r.anchor = ar->anchor; r.anchorPtr = &ar->anchor; r.position = &ar->position; r.sizePtr = &ar->size; r.size = ar->size; }
+    else if (auto* hud = go->GetComponent<UIHudBase>()) { r.valid = true; r.anchor = hud->anchor; r.anchorPtr = &hud->anchor; r.position = &hud->position; r.sizePtr = &hud->size; r.size = hud->size; }   // slice 2 game HUD parts
     else if (auto* sv = go->GetComponent<UIScrollView>()) { r.valid = true; r.anchor = sv->anchor; r.anchorPtr = &sv->anchor; r.position = &sv->position; r.sizePtr = &sv->size; r.size = sv->size; }
     else if (auto* lv = go->GetComponent<UIListView>())   { r.valid = true; r.anchor = lv->anchor; r.anchorPtr = &lv->anchor; r.position = &lv->position; r.sizePtr = &lv->size; r.size = lv->size; }
     else if (auto* fl = go->GetComponent<UILayoutGroup>(); fl && fl->IsFlex()) {   // a flex box: a real, resizable rect
@@ -382,6 +386,7 @@ inline bool UIShowsFocusRing(GameObject* go) {
     if (auto* d = go->GetComponent<UIDropdown>()) return on(d);
     if (auto* tb = go->GetComponent<UITabs>())    return on(tb);
     if (auto* kb = go->GetComponent<UIKeybindField>()) return on(kb);
+    if (auto* in = go->GetComponent<UIInputField>()) return in->enabled && in->IsNavFocused() && !in->focused;   // editing: its own border
     if (auto* sb = go->GetComponent<UISearchBar>()) return on(sb);
     if (auto* dt = go->GetComponent<UIDateTimePicker>()) return on(dt);
     if (auto* fp = go->GetComponent<UIFilePicker>()) return on(fp);
@@ -546,6 +551,9 @@ enum : int {
     K_BottomSheet,
     K_RangeSlider,  // UIRangeSlider (appended: older layer numbers stay put)
     K_Validator,    // UIInputValidator ring and message (over the input it checks)
+    K_GameHud,      // slice 2 game HUD parts: radial menu, kill feed, ammo, prompt, objectives, compass, item card, ability icon
+    K_AppParts,     // slice 3 app parts: menu bar, toolbar, tree view, data table, wizard, form group labels, colour square
+    K_AppPopup,     // slice 3: what an app part opens over everything else (a menu bar's dropdown)
     K_Count
 };
 } // namespace uilayers
@@ -557,7 +565,7 @@ inline const char* UILayerName(int kind) {
         "minimap", "slider", "stepper", "rating", "toggle", "tabs", "button", "text",
         "world ui", "dropdown", "input", "crosshair", "focus ring", "tooltip",
         "keybind", "modal dim", "context menu", "captions", "virtual stick", "d-pad", "touch button",
-        "search", "date", "files", "accordion", "breadcrumbs", "pages", "skeleton", "sheet", "range slider", "validation"};
+        "search", "date", "files", "accordion", "breadcrumbs", "pages", "skeleton", "sheet", "range slider", "validation", "game hud", "app parts", "app popup"};
     return (kind >= 0 && kind < uilayers::K_Count) ? kNames[kind] : "";
 }
 
@@ -607,6 +615,8 @@ inline void UIQueueDrawItems(GameObject* g, std::size_t index, std::vector<UIDra
     if (g->GetComponent<UIBottomSheet>())    add(K_BottomSheet);
     if (g->GetComponent<UIRangeSlider>())    add(K_RangeSlider);
     if (g->GetComponent<UIInputValidator>() && g->GetComponent<UIInputField>()) add(K_Validator);
+    if (g->GetComponent<UIAppBase>()) { add(K_AppParts); if (g->GetComponent<UIMenuBar>()) add(K_AppPopup); }
+    else if (g->GetComponent<UIHudBase>() || g->GetComponent<UIAbilityIcon>()) add(K_GameHud);
 }
 
 /// The canonical default draw layer for whatever UI widget a GameObject carries
@@ -652,6 +662,8 @@ inline int UIDefaultLayer(GameObject* go) {
     if (go->GetComponent<UISkeleton>())       return K_Skeleton;
     if (go->GetComponent<UIBottomSheet>())    return K_BottomSheet;
     if (go->GetComponent<UIRangeSlider>())    return K_RangeSlider;
+    if (go->GetComponent<UIAppBase>()) return K_AppParts;
+    if (go->GetComponent<UIHudBase>() || go->GetComponent<UIAbilityIcon>()) return K_GameHud;
     if (auto* tr = go->GetComponent<TextRenderer>()) return tr->screenSpace ? K_Text : -1;
     return -1;
 }

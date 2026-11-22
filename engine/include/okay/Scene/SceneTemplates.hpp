@@ -10,6 +10,7 @@
 #include "okay/Components/Spinner.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/UITextBind.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -36,6 +37,7 @@
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/VehicleSeat.hpp"
+#include "okay/Scene/VehicleBuilder.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
@@ -56,6 +58,8 @@
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/VoxelDigger.hpp"
 #include "okay/Components/Water.hpp"
+#include "okay/Components/Buoyancy.hpp"
+#include "okay/Components/BoatController.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/Light.hpp"
@@ -516,47 +520,6 @@ inline void ThirdPerson(Scene& scene) {
     AddSharedView(player, PlayerView::View::Third, 0.45f);   // V switches to the eyes
     PoseRestingOrbit(MountEyeCamera(scene, player, "Main Camera"));
     AddTemplateHoldables(scene, player);
-}
-
-/// A "drop-in humanoid" starter: the same third-person scene, but the player is a
-/// fully-wired humanoid (part rig + physics capsule + foot IK that plants the feet
-/// on uneven ground + root motion hooked to the hips). Shows the one-call setup
-/// AddHumanoidPlayer() gives you. Stepped ground so the foot IK is visible.
-inline void Humanoid(Scene& scene) {
-    scene.Clear();
-    scene.SetName("Humanoid");
-
-    GameObject* light = scene.CreateGameObject("Directional Light");
-    light->AddComponent<Light>();
-    light->transform->localRotation = Quat::Euler({50, -30, 0});
-
-    GameObject* ground = scene.CreateGameObject("Ground");
-    ground->transform->localPosition = {0, -0.5f, 0};
-    ground->transform->localScale = {40, 1, 40};
-    auto* gmr = ground->AddComponent<MeshRenderer>();
-    gmr->mesh = Mesh::Cube();
-    gmr->color = Color::FromBytes(95, 110, 95);
-    ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
-    ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
-
-    // A couple of low steps so foot IK has uneven ground to plant on.
-    const Vec3 steps[2] = {{2.0f, 0.1f, 0}, {3.0f, 0.25f, 0}};
-    for (int i = 0; i < 2; ++i) {
-        GameObject* s = scene.CreateGameObject("Step");
-        s->transform->localPosition = steps[i];
-        s->transform->localScale = {1.5f, 0.2f + 0.3f * i, 1.5f};
-        auto* mr = s->AddComponent<MeshRenderer>();
-        mr->mesh = Mesh::Cube();
-        mr->color = Color::FromBytes(120, 120, 130);
-        s->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
-        s->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
-    }
-
-    // The camera goes in BEFORE the player. The player's part rig (generated objects the scene file leaves out) then comes last
-    // in the scene, so the file's object numbers have no gap after it: a scene with the rig and the same scene reloaded
-    // (rig not rebuilt yet) save the same text, and Play then Stop does not make the project read as changed.
-    EnsureMainCamera(scene);
-    AddHumanoidPlayer(scene, {0, 1.0f, 0});   // rig + capsule + camera + foot IK, wired
 }
 
 /// A third-person SHOOTER starter: the blocky Character driven by a
@@ -1095,6 +1058,72 @@ inline void VehicleSeats3D(Scene& scene) {
     block("Pillar Right Front", ct, {0.83f, 1.075f, 0.525f}, {0.07f, 1.05f, 0.05f}, trim, {-25, 0, 0});
     block("Pillar Left Rear", ct, {-0.83f, 1.07f, -1.32f}, {0.07f, 1.0f, 0.07f}, trim);
     block("Pillar Right Rear", ct, {0.83f, 1.07f, -1.32f}, {0.07f, 1.0f, 0.07f}, trim);
+}
+
+/// "Driving World": a flat city-like grid of roads with ramps, a mud patch and an ice patch, a drift circle of cones, a
+/// row of parked vehicles of every type, and a walking player. Walk to a vehicle (WASD), press E to get in, drive with
+/// WASD / Space (handbrake) / Shift (boost), C changes the camera, E again to get out.
+/// examples/driving/driving_world.okayscene is this scene saved to a file (see tests/test_vehicle_drive_scene.cpp).
+inline void DrivingWorld(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Driving World");
+    auto rgb = [](int r, int g, int b, int a = 255) { return Color::FromBytes(r, g, b, a); };
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    auto slab = [&](const char* name, Vec3 pos, Vec3 size, Color col, bool solid, const char* tag = "", Vec3 rot = {0, 0, 0}) {
+        GameObject* o = scene.CreateGameObject(name);
+        o->transform->localPosition = pos; o->transform->localScale = size;
+        o->transform->localRotation = Quat::Euler(rot);
+        auto* mr = o->AddComponent<MeshRenderer>(); mr->mesh = Mesh::Cube(); mr->color = col;
+        if (solid) { o->AddComponent<BoxCollider3D>()->size = {1, 1, 1}; o->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static; }
+        if (tag[0]) o->SetTag(tag);
+        return o;
+    };
+    slab("Ground", {0, -0.5f, 0}, {300, 1, 300}, rgb(84, 128, 70), true);
+    // Roads: a 3 x 3 grid, 12 m wide, look-only slabs on the ground.
+    for (int i = -1; i <= 1; ++i) {
+        slab("Road (across)", {0, 0.01f, i * 70.0f}, {300, 0.04f, 12}, rgb(58, 60, 66), false);
+        slab("Road (along)", {i * 70.0f, 0.01f, 0}, {12, 0.04f, 300}, rgb(58, 60, 66), false);
+    }
+    for (int i = -4; i <= 4; ++i) slab("Lane Dash", {i * 16.0f, 0.04f, 0}, {5, 0.02f, 0.2f}, rgb(235, 215, 90), false);
+    // City blocks between the roads.
+    const float bx[4] = {-35, 35, -35, 35}, bz[4] = {-35, -35, 35, 35};
+    for (int i = 0; i < 4; ++i) {
+        const float h = 8.0f + 5.0f * (float)i;
+        slab("Building", {bx[i], h * 0.5f, bz[i]}, {40, h, 40}, rgb(150 + i * 20, 140, 130), true);
+    }
+    // Ramps (a tilted slab), a mud patch and an ice patch (surfaces change the grip).
+    slab("Ramp", {0, 0.9f, 120}, {8, 0.3f, 10}, rgb(190, 150, 70), true, "", {-14, 0, 0});
+    slab("Ramp", {-70, 0.9f, 120}, {8, 0.3f, 10}, rgb(190, 150, 70), true, "", {-14, 0, 0});
+    slab("Mud Patch", {100, 0.02f, 40}, {30, 0.04f, 20}, rgb(96, 70, 44), true, "Mud");
+    slab("Ice Patch", {100, 0.02f, -30}, {30, 0.04f, 30}, rgb(190, 225, 245), true, "Ice");
+    // A drift circle of cones.
+    for (int i = 0; i < 20; ++i) {
+        const float a = (float)i / 20.0f * 6.2831853f;
+        GameObject* o = scene.CreateGameObject("Cone");
+        o->transform->localPosition = {-110.0f + 24.0f * std::cos(a), 0.35f, -60.0f + 24.0f * std::sin(a)};
+        o->transform->localScale = {0.4f, 0.7f, 0.4f};
+        auto* mr = o->AddComponent<MeshRenderer>(); mr->mesh = Mesh::Cone(); mr->color = rgb(238, 120, 30);
+        o->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        o->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+    }
+    // Parked vehicles, one of each kind, side by side along the east-west road, facing +X; the Sedan is at the east end with the road clear ahead.
+    const char* kinds[] = {"Sedan", "Sports Car", "Muscle Car", "Pickup", "Buggy", "Bus", "Heavy Truck", "Rally Car", "Drift Car"};
+    const Color paints[] = {rgb(205, 60, 55), rgb(240, 200, 40), rgb(40, 90, 200), rgb(90, 140, 90), rgb(230, 130, 40), rgb(230, 230, 235), rgb(120, 60, 150), rgb(40, 170, 180), rgb(30, 30, 34)};
+    for (int i = 0; i < 9; ++i) VehicleBuilder::Make(scene, kinds[i], {40.0f - 11.0f * (float)i, 0.0f, -3.5f}, 90.0f, paints[i], true, false);
+    AddThirdPersonPlayer(scene, {40.0f, 1.0f, -0.8f});    // standing at the first car's driver door
+    // A speedometer in the corner: the UI kit's Text Bind reads the numbers the driven vehicle publishes.
+    GameObject* hud = scene.CreateGameObject("Speedometer");
+    auto* htr = hud->AddComponent<TextRenderer>();
+    htr->screenSpace = true; htr->screenPos = {16, kHudTop}; htr->pixelSize = 3.0f; htr->vcenter = false;
+    htr->text = "0 km/h  Gear N";
+    hud->AddComponent<UITextBind>()->format = "{vehicle_speed|0} {vehicle_unit|km/h}   Gear {vehicle_gear|N}";
+    GameObject* help = scene.CreateGameObject("Help");
+    auto* htx = help->AddComponent<TextRenderer>();
+    htx->screenSpace = true; htx->screenPos = {16, kHudTop + 34.0f}; htx->pixelSize = 2.0f; htx->vcenter = false;
+    htx->text = "WASD walk / drive   E get in or out   Space handbrake   Shift boost   C camera   R recover   H horn   L lights";
 }
 
 /// A 2D top-down driving starter: a car you steer with WASD/arrows (throttle + turn,
@@ -1748,7 +1777,7 @@ inline void VoxelSandbox(Scene& scene, int gridX, int gridY, int gridZ,
     vox->DecodeDensity(vox->EncodeDensity());
     vox->Apply();
     auto* dig = ground->AddComponent<VoxelDigger>();
-    dig->radius = 3.0f; dig->strength = 10.0f;   // left = dig, right = add (defaults)
+    dig->radius = 3.0f; dig->strength = 10.0f; dig->reach = 14.0f;   // left = dig, right = add; reach is measured from the player
 
     // A lake in the low ground. 0.32 * SizeY is below every hill this Generate
     // builds (surface = SizeY * 0.55 ± amplitude), so the water used to sit
@@ -1810,7 +1839,15 @@ inline void VoxelSandbox(Scene& scene, int gridX, int gridY, int gridZ,
     }
     // Right mouse fills terrain (VoxelDigger). The controller's aim-down-sights
     // zoom is the same button, and it pulled the view from 60° to 40° while placing.
-    PlayerController::Add(player, PlayerController::ViewMode::First)->first()->zoomWithRightMouse = false;
+    // View = Both: starts in first person, V (or Back on a pad) switches to the third-person orbit. Digging and building
+    // aim through the crosshair in both views (VoxelDigger / VoxelAim.hpp).
+    {
+        auto* pc = PlayerController::Add(player, PlayerController::ViewMode::Both, PlayerView::View::First);
+        if (pc->first()) pc->first()->zoomWithRightMouse = false;
+        if (pc->third()) pc->third()->aimWithRightMouse = false;
+        if (auto* pv = pc->toggle()) pv->defaultView = PlayerView::View::First;
+        player->AddComponent<FirstPersonHands>();
+    }
     player->AddComponent<ProceduralObjectHolding>();   // G / middle mouse / pad X: pick up, hold to throw
 
     // Something to pick up and throw, a step in front of the spawn.
@@ -1833,11 +1870,11 @@ inline void VoxelSandbox(Scene& scene, int gridX, int gridY, int gridZ,
     camObj->transform->SetParent(player->transform, false);
     camObj->transform->localPosition = {0, 1.62f, 0.0f};
     camObj->AddComponent<Flashlight>();   // F to toggle — so you can see inside caves
-    camObj->AddComponent<FirstPersonHand>();   // Minecraft-style arm + punch on LMB
+    camObj->AddComponent<Crosshair>()->dot = true;   // the aim point in both views (third person aims through the screen centre)
 
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();
-    ht->text = "WASD + mouse. Dig: LMB. Fill: RMB. Jump / swim up: Space. Swim down: Ctrl. Throw: hold G. Light: F. Pause: Esc.";
+    ht->text = "WASD + mouse. Dig: left mouse / RT. Build: right mouse / LT. Pick material: T. Material: 1-9, wheel or bumpers. View: V. Jump: Space. Throw: hold G. Light: F. Pause: Esc.";
     ht->screenSpace = true;
     ht->anchor = UIAnchor::StretchHorizontal;
     // Top-aligned under the PLAYING badge. Centering a wrapped line in this
@@ -1848,6 +1885,134 @@ inline void VoxelSandbox(Scene& scene, int gridX, int gridY, int gridZ,
 
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();
 }
+/// A boat you can drive, ready to float: a hull with a Rigidbody3D, a box collider, Buoyancy and a Boat Controller
+/// (W/S throttle, A/D steer, Space brake, camera behind it). It has a cabin, a windscreen and an engine as plain
+/// look-only blocks. The nose points along +Z of the object. `pos` is where the waterline of the hull goes (the
+/// hull sits half under it). If the scene has no Water, a lake is made under it so the boat floats at once.
+/// Written from our own design (docs/rendering/terrain_water.md); not taken from any other engine.
+inline GameObject* AddBoat(Scene& scene, const Vec3& pos = {0, 0, 0}, float yawDegrees = 0.0f) {
+    if (scene.FindObjectsOfType<Water>().empty()) {
+        GameObject* lake = scene.CreateGameObject("Lake");
+        lake->transform->localPosition = {pos.x, pos.y, pos.z};
+        auto* w = lake->AddComponent<Water>();
+        w->size = 120.0f; w->resolution = 64; w->depth = 8.0f;
+        w->style = Water::WaveStyle::Ocean;
+        w->waveHeight = 0.5f; w->waveLength = 14.0f; w->waveSteepness = 0.35f; w->waveSpeed = 1.0f;
+        w->Apply();
+    }
+    auto block = [&](GameObject* parent, const char* name, Vec3 at, Vec3 scale, Color col, Vec3 euler = {0, 0, 0}) {
+        GameObject* o = scene.CreateGameObject(name);
+        o->transform->SetParent(parent->transform, false);
+        o->transform->localPosition = at;
+        o->transform->localScale = scale;
+        if (euler.x != 0.0f || euler.y != 0.0f || euler.z != 0.0f) o->transform->localRotation = Quat::Euler(euler);
+        auto* mr = o->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube(); mr->color = col;
+        return o;
+    };
+    GameObject* boat = scene.CreateGameObject("Boat");
+    boat->transform->localPosition = pos;
+    boat->transform->localRotation = Quat::Euler({0, yawDegrees, 0});
+    auto* rb = boat->AddComponent<Rigidbody3D>();
+    rb->mass = 2.5f;
+    rb->freezeRotation = false;
+    rb->allowSleep = false;               // it always rocks a little
+    rb->angularDrag = 0.2f;
+    auto* col = boat->AddComponent<BoxCollider3D>();
+    col->size = {2.0f, 0.9f, 4.6f};       // half of it under the water line when it floats
+    auto* bu = boat->AddComponent<Buoyancy>();
+    bu->fullness = 0.55f;                 // a boat is a shell, not a block
+    bu->gridX = 3; bu->gridZ = 5;
+    bu->dragForward = 0.15f; bu->dragForward2 = 0.02f;   // slips forward ...
+    bu->dragSide = 1.5f; bu->dragSide2 = 0.5f;            // ... and grips sideways (the keel)
+    bu->angularDamping = 2.0f;
+    auto* bc = boat->AddComponent<BoatController>();
+    bc->followCamera = true;
+    const Color white = Color::FromBytes(236, 238, 240), red = Color::FromBytes(200, 50, 48);
+    block(boat, "Hull", {0, -0.1f, -0.2f}, {2.0f, 0.7f, 3.9f}, white);
+    block(boat, "Bow", {0, -0.1f, 1.55f}, {1.43f, 0.7f, 1.43f}, white, {0, 45, 0});
+    block(boat, "Stripe", {0, 0.27f, -0.2f}, {2.04f, 0.1f, 3.94f}, red);
+    block(boat, "Cabin", {0, 0.75f, 0.0f}, {1.5f, 0.8f, 1.5f}, Color::FromBytes(225, 228, 232));
+    block(boat, "Windscreen", {0, 0.85f, 0.76f}, {1.4f, 0.45f, 0.06f}, Color::FromBytes(120, 170, 210, 200));
+    block(boat, "Seat", {0, 0.45f, -1.2f}, {1.3f, 0.2f, 0.5f}, Color::FromBytes(60, 70, 90));
+    block(boat, "Engine", {0, 0.15f, -2.35f}, {0.45f, 0.55f, 0.35f}, Color::FromBytes(40, 42, 48));
+    return boat;
+}
+
+/// "Boat Lake": a lake with rolling waves, a wooden dock, floating crates, a stone that sinks and a boat to drive.
+/// Open it, press Play, drive with W / S (go, back) and A / D (steer), Space brakes. examples/boat/boat_lake.okayscene
+/// is this scene saved to a file (tests/test_boat.cpp checks the file still matches; regenerate with OKAY_REGEN_BOAT=1).
+inline void BoatLake(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Boat Lake");
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    GameObject* lake = scene.CreateGameObject("Lake");
+    auto* w = lake->AddComponent<Water>();
+    w->size = 96.0f; w->resolution = 80; w->depth = 8.0f;
+    w->style = Water::WaveStyle::Ocean;
+    w->waveHeight = 0.6f; w->waveLength = 14.0f; w->waveSteepness = 0.35f; w->waveCount = 4;
+    w->waveSpeed = 1.0f; w->waveDirection = 20.0f; w->waveSeed = 11;
+    w->Apply();
+
+    auto solid = [&](const char* name, Vec3 at, Vec3 size, Color c) {
+        GameObject* o = scene.CreateGameObject(name);
+        o->transform->localPosition = at;
+        o->transform->localScale = size;
+        auto* mr = o->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube(); mr->color = c;
+        o->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        o->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+        return o;
+    };
+    const Color sand = Color::FromBytes(210, 190, 140), wood = Color::FromBytes(140, 100, 60);
+    solid("Lake Floor", {0, -9.5f, 0}, {200, 1, 200}, Color::FromBytes(120, 110, 90));
+    solid("Shore West", {-72, -3.0f, 0}, {48, 6.0f, 200}, sand);     // banks around the 96 m lake (top at y = 0)
+    solid("Shore East", {72, -3.0f, 0}, {48, 6.0f, 200}, sand);
+    solid("Shore North", {0, -3.0f, 72}, {200, 6.0f, 48}, sand);
+    solid("Shore South", {0, -3.0f, -72}, {200, 6.0f, 48}, sand);
+    // A dock reaching out from the west bank: planks on posts.
+    solid("Dock Planks", {-43.0f, 0.35f, -6.0f}, {10.0f, 0.3f, 3.0f}, wood);
+    for (int i = 0; i < 3; ++i) {
+        solid("Dock Post", {-39.5f + i * -3.5f, -0.6f, -4.7f}, {0.4f, 2.0f, 0.4f}, Color::FromBytes(100, 70, 45));
+        solid("Dock Post", {-39.5f + i * -3.5f, -0.6f, -7.3f}, {0.4f, 2.0f, 0.4f}, Color::FromBytes(100, 70, 45));
+    }
+
+    // Crates that float (light for their size) and a stone that sinks.
+    const Vec3 crates[] = {{-30, 1.0f, 0}, {-28, 1.0f, 3.5f}, {-24, 1.0f, -3}, {-20, 1.0f, 6}, {-26, 1.0f, -8}, {-18, 1.0f, -4}};
+    for (const Vec3& c : crates) {
+        GameObject* o = scene.CreateGameObject("Floating Crate");
+        o->transform->localPosition = c;
+        auto* mr = o->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube(); mr->color = Color::FromBytes(176, 128, 74);
+        o->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        auto* rb = o->AddComponent<Rigidbody3D>();
+        rb->mass = 0.5f; rb->freezeRotation = false; rb->allowSleep = false;
+        o->AddComponent<Buoyancy>();
+    }
+    {
+        GameObject* o = scene.CreateGameObject("Heavy Stone (sinks)");
+        o->transform->localPosition = {-16, 2.0f, 4};
+        auto* mr = o->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube(); mr->color = Color::FromBytes(110, 112, 118);
+        o->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        auto* rb = o->AddComponent<Rigidbody3D>();
+        rb->mass = 3.0f; rb->freezeRotation = false;
+        o->AddComponent<Buoyancy>();
+    }
+
+    AddBoat(scene, {-33.0f, 0.0f, -11.0f}, 90.0f);   // beside the dock, nose out over the lake
+
+    GameObject* camObj = scene.CreateGameObject("Main Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->localPosition = {-45, 4, -11};    // the boat keeps it behind itself
+    camObj->transform->localRotation = Quat::Euler({15, 90, 0});
+}
+
 /// The Sandbox at its default size. A separate overload (not default arguments) so `&Templates::VoxelSandbox` still converts to `void (*)(Scene&)`,
 /// which the template table and several tests rely on.
 inline void VoxelSandbox(Scene& scene) { VoxelSandbox(scene, 72, 44, 72); }

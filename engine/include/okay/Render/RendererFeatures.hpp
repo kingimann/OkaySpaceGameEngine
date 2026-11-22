@@ -6,15 +6,19 @@
 // it does not turn any switch on. Backends, in RenderBackend order:
 //
 //   Software   engine/include/okay/Render/SoftwareRenderer.hpp
+//              (2026-11 lighting upgrade, docs/rendering/lighting.md: stable cascades, slope bias, soft penumbra, distance fade,
+//              light masks, rectangle Area lights; software only for now.)
 //              FogFactor for every fog mode (RenderMeshes). Sun cascades via
 //              ShadowDistance / ShadowCascades (RenderShadowMap). No local
 //              light shadow map. Scene post settings: post.exposure, the
 //              tonemap curve and rs.tonemap, post.grading, the vignette (with
 //              smoothness; PostVignetteHandled() is set true so the host skips
 //              its overlay), post.bloom and post.fxaa are read (PlanScenePost /
-//              ApplyScenePost). post.ssao and post.dof are not. Procedural sky colours come
+//              ApplyScenePost). post.ssao runs ApplySSAO with the scene's radius
+//              and intensity; post.dof runs ApplySceneDof (perspective cameras
+//              only). Procedural sky colours come
 //              from EffectiveSkyColors; the disc, halo, clouds and stars are not
-//              drawn. ApplySSAO reads the process-wide switch only; ApplyBloom, ApplyFXAA
+//              drawn. ApplyBloom, ApplyFXAA
 //              and ApplyColorGrade also still read theirs. PerPixelLighting is
 //              read only here, and ShadowsUsePerPixel (default on) lights per
 //              pixel while a shadow map exists, so shadows show by default.
@@ -87,6 +91,7 @@ enum class RenderFeature : int {
     PerPixelLighting,      // PerPixelLighting()
     SoftwareToneMap,       // ToneMapEnabled and its Exposure slider
     SoftwareColorGrade,    // ColorGradeEnabled in Rendering
+    LightShapes,           // light masks (cookies), rectangle Area lights, soft shadow edges, smooth light roll-off
     Count
 };
 
@@ -124,8 +129,9 @@ inline const RenderFeatureRow& RenderFeatureRowAt(RenderFeature feature) {
         {"Anti-aliasing in Post-processing", false, nullptr, nullptr, {S::Yes, S::Yes, S::Yes, S::No}},
         {"Ambient occlusion in Post-processing", false,
          "The Ambient occlusion switch under Rendering, and in Build Settings, is a separate switch.",
-         nullptr, {S::No, S::Yes, S::Yes, S::No}},
-        {"Depth of field", false, nullptr, nullptr, {S::No, S::Yes, S::Yes, S::No}},
+         nullptr, {S::Yes, S::Yes, S::Yes, S::No}},
+        {"Depth of field", false, "The software renderer draws it for perspective cameras only.", nullptr,
+         {S::Yes, S::Yes, S::Yes, S::No}},
         {"The procedural sun disc, halo, clouds and stars", true,
          "Direct3D 12 and the software renderer show the sun's colours as a plain gradient.",
          nullptr, {S::No, S::Yes, S::Yes, S::No}},
@@ -153,6 +159,9 @@ inline const RenderFeatureRow& RenderFeatureRowAt(RenderFeature feature) {
         {"Color grading in Rendering", false,
          "OpenGL and Direct3D 11 use Colour grading in Post-processing instead.",
          nullptr, {S::Yes, S::No, S::No, S::No}},
+        {"Light masks, Area light panel sizes and soft shadow edges", true,
+         "Direct3D 11 and OpenGL got them in round 2 of docs/rendering/lighting.md, written without a GPU and never run.",
+         nullptr, {S::Yes, S::Yes, S::Yes, S::No}},
     };
     static_assert(sizeof(kRows) / sizeof(kRows[0]) == static_cast<int>(RenderFeature::Count),
                   "one row per render feature");

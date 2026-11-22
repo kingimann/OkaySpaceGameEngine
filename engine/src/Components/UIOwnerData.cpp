@@ -1,6 +1,7 @@
 // The character a piece of UI belongs to, for `owner.` binding keys (see okay/Components/UIOwnerData.hpp).
 #include "okay/Components/UIOwnerData.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/Damage.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/Stats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
@@ -19,14 +20,6 @@ namespace {
 bool HasOwnerData(const GameObject* g) {
     return g->GetComponent<HealthStat>() || g->GetComponent<Stats>() || g->GetComponent<SurvivalStats>() ||
            g->GetComponent<NPCController>() || g->GetComponent<Character>();
-}
-// Health and its maximum from the first health model the owner has.
-bool Health(const GameObject* o, float& hp, float& maxHp) {
-    if (auto* h = o->GetComponent<HealthStat>())    { hp = h->health; maxHp = h->maxHealth; return true; }
-    if (auto* s = o->GetComponent<Stats>())         { hp = s->health; maxHp = s->maxHealth; return true; }
-    if (auto* v = o->GetComponent<SurvivalStats>()) { hp = v->health; maxHp = v->maxHealth; return true; }
-    if (auto* n = o->GetComponent<NPCController>()) { hp = n->health; maxHp = n->maxHealth; return true; }
-    return false;
 }
 } // namespace
 
@@ -60,7 +53,7 @@ bool Lookup(const GameObject* ui, const std::string& key, std::string& text, flo
         return false;
     }
     float hp = 0.0f, maxHp = 0.0f;
-    if (!Health(o, hp, maxHp)) return false;
+    if (!HealthOf(o, hp, maxHp)) return false;   // the one health lookup (Damage.hpp), same order as a hit
     if (k == "health") return num(hp);
     if (k == "maxHealth") return num(maxHp);
     const float frac = maxHp > 0.0f ? Mathf::Clamp01(hp / maxHp) : 0.0f;

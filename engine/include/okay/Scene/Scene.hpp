@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <typeindex>
+#include "okay/Render/LightProbes.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Core/Scheduler.hpp"
@@ -426,6 +427,7 @@ public:
         // finished frame, so it looks identical on every renderer backend. Great for
         // focus/mood without touching the 3D shading path.
         float vignette   = 0.0f;
+        float vignettePulse = 0.0f;   ///< runtime only, never saved: a camera's hit flash, added to `vignette` when drawn
         // Filmic rendering: a gamma-correct pipeline (albedo decoded to linear,
         // lighting in linear space, sRGB-encoded output) plus ACES tonemapping,
         // which rolls bright over-1.0 lighting off toward white instead of
@@ -459,6 +461,11 @@ public:
         enum AmbientMode { AmbientFlat = 0, AmbientHemisphere = 1, AmbientSky = 2 };
         int   ambientMode = AmbientHemisphere;
         float ambientSkyTint = 0.7f;    // Sky mode: how strongly the sky colours tint (0..1.5)
+        // Auto brightness: lights set to real-world units (lux, lumens) are scaled so the scene's brightest light
+        // shows as "fully lit", like an eye or camera adapting. Off = a fixed reference (a bright overcast day).
+        bool  autoBrightness = true;
+        // Baked light probes (Lighting window > Bake probes): ambient light that changes from place to place.
+        LightProbeGrid probes;
 
         // ---- Fog modes (extend the distance fog above) ----
         // Linear uses fogStart/fogEnd. Exponential thickens with `fogDensity` per
@@ -536,6 +543,10 @@ public:
     /// bitmap font. A widget/Text with its own fontPath overrides this. Travels with
     /// the scene so the editor preview and the shipped player match.
     std::string uiFont;
+    /// In-game UI drawing quality: 0 Fast, 1 Good (the default), 2 Best, 3 Old look (the drawing before the UI quality work, kept for comparison).
+    /// Saved with the scene as `uiquality N`; a scene without the record is Good. The environment variables
+    /// OKAY_UI_QUALITY=fast|good|best|old and OKAY_CLASSIC_UI=1 override it (see okay/UI/UIFontPolicy.hpp).
+    int uiQuality = 1;
     /// Scene-level records of the file this build does not know (a setting a newer build wrote), each one whole
     /// line, written back as they were by SceneSerializer::Serialize. Set by a full load (not by a merge or
     /// Instantiate), cleared with the scene. See GameObject::unknownRecords for the per-object ones.

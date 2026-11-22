@@ -54,6 +54,22 @@ public:
         else c.AddOrReplaceKey(time, value, 1e-4f);
         if (c.Duration() > m_length) m_length = c.Duration();
     }
+    /// The same as calling AddKey(track, times[i], values[i]) for i = 0 .. n-1 in order, with the track looked up
+    /// once (importers add thousands of baked keys per track). n == 0 does nothing.
+    void AddKeys(const std::string& track, const float* times, const float* values, std::size_t n) {
+        if (n == 0) return;
+        auto it = m_tracks.find(track);
+        if (it == m_tracks.end()) { it = m_tracks.emplace(track, AnimationCurve{}).first; it->second.smooth = smoothKeys; m_chan.valid = false; }
+        AnimationCurve& c = it->second;
+        if (loop && !m_spanned) c.wrap = AnimationCurve::Wrap::Loop;
+        c.Reserve(c.Count() + n);
+        for (std::size_t i = 0; i < n; ++i) {
+            const float time = times[i], value = values[i];
+            if (c.Empty() || time > c.Keys().back().time + 1e-4f) c.AddKey(time, value);
+            else c.AddOrReplaceKey(time, value, 1e-4f);
+            if (c.Duration() > m_length) m_length = c.Duration();
+        }
+    }
     void RemoveTrack(const std::string& track) { m_tracks.erase(track); m_chan.valid = false; Recompute(); }
     /// Remove the key nearest `time` (within eps) from every track whose name
     /// starts with `prefix` ("" = all tracks). Tracks left empty are dropped.
@@ -223,6 +239,8 @@ public:
         }
         if (!(mask & kRot)) return;
         if (c.anyQuat) {
+            Quat r;
+            if (SlerpQuat(c, t, r)) { rot = r; return; }
             float x = c.q[0] ? c.q[0]->Evaluate(t) : 0.0f, y = c.q[1] ? c.q[1]->Evaluate(t) : 0.0f;
             float z = c.q[2] ? c.q[2]->Evaluate(t) : 0.0f, w = c.q[3] ? c.q[3]->Evaluate(t) : 0.0f;
             float ln = std::sqrt(x * x + y * y + z * z + w * w);
@@ -236,13 +254,20 @@ public:
 
     /// Keyframe reduction on every linear track (see AnimationCurve::Reduce).
     /// Position tolerance scales with how far the track travels (so centimetre
-    /// rigs aren't over- or under-reduced); rotation components and scale use
-    /// `rotTol` / `sclTol`. Returns keys removed.
+    /// rigs aren't over- or under-reduced); scale uses `sclTol`. A linear
+    /// quaternion rotation (rotation.qx/qy/qz/qw with shared key times) is
+    /// reduced as one rotation: `rotTol` is then the largest allowed ANGLE in
+    /// radians between the slerp of the kept keys and every dropped key. Other
+    /// rotation tracks (euler, or quaternion curves that don't line up) use
+    /// `rotTol` per component as before. Returns keys removed.
     std::size_t Reduce(float posTol = 0.0005f, float rotTol = 0.0005f, float sclTol = 0.0005f) {
         std::size_t removed = 0;
+        bool quatDone = false;
+        if (LinearQuatTracks()) { removed += ReduceQuat(rotTol); quatDone = true; }
         for (auto& kv : m_tracks) {
             AnimationCurve& c = kv.second;
             if (c.smooth || c.Count() < 3) continue;
+            if (quatDone && kv.first.rfind("rotation.q", 0) == 0) continue;
             float tol = sclTol;
             if (kv.first.rfind("rotation.", 0) == 0) tol = rotTol;
             else if (kv.first.rfind("position.", 0) == 0) {
@@ -308,6 +333,107 @@ public:
     }
 
 private:
+    /// Unit quaternion from four raw key values (zero-length -> identity).
+    static Quat KeyQuat(const AnimationCurve* const q[4], std::size_t k) {
+        float x = q[0]->Keys()[k].value, y = q[1]->Keys()[k].value, z = q[2]->Keys()[k].value, w = q[3]->Keys()[k].value;
+        float n = std::sqrt(x * x + y * y + z * z + w * w);
+        if (n < 1e-8f) return Quat{0.0f, 0.0f, 0.0f, 1.0f};
+        return Quat{x / n, y / n, z / n, w / n};
+    }
+    /// Spherical interpolation from a to b by u along the shorter arc. Written
+    /// from the definition: with cos(theta) = a.b (b negated first when the dot
+    /// is negative, since q and -q are the same rotation), the point at angle
+    /// u*theta on the great circle is a*sin((1-u)theta)/sin(theta) +
+    /// b*sin(u*theta)/sin(theta). Very small arcs fall back to a normalised
+    /// lerp, which is exact to float precision there.
+    static Quat SlerpShort(const Quat& a, Quat b, float u) {
+        double d = (double)a.x * b.x + (double)a.y * b.y + (double)a.z * b.z + (double)a.w * b.w;
+        if (d < 0.0) { b = Quat{-b.x, -b.y, -b.z, -b.w}; d = -d; }
+        double wa = 1.0 - u, wb = u;
+        if (d < 0.99999) {
+            double th = std::acos(d > 1.0 ? 1.0 : d), s = std::sin(th);
+            wa = std::sin((1.0 - u) * th) / s; wb = std::sin(u * th) / s;
+        }
+        double x = wa * a.x + wb * b.x, y = wa * a.y + wb * b.y, z = wa * a.z + wb * b.z, w = wa * a.w + wb * b.w;
+        double n = std::sqrt(x * x + y * y + z * z + w * w);
+        if (n < 1e-12) return a;
+        return Quat{(float)(x / n), (float)(y / n), (float)(z / n), (float)(w / n)};
+    }
+    /// The four quaternion curves when they can be slerped as one rotation:
+    /// all present, all linear, same key count and the same key times.
+    /// Null otherwise (the caller keeps the per-component path).
+    const AnimationCurve* const* LinearQuatTracks() const {
+        const Channels& c = Chan();
+        for (int k = 0; k < 4; ++k) if (!c.q[k] || c.q[k]->smooth) return nullptr;
+        const std::size_t n = c.q[3]->Count();
+        for (int k = 0; k < 3; ++k) if (c.q[k]->Count() != n) return nullptr;
+        for (std::size_t i = 0; i < n; ++i) {
+            float t = c.q[3]->Keys()[i].time;
+            for (int k = 0; k < 3; ++k) if (std::fabs(c.q[k]->Keys()[i].time - t) > 1e-5f) return nullptr;
+        }
+        return c.q;
+    }
+    /// Linear quaternion keys: slerp the bracketing pair (glTF LINEAR rotation
+    /// semantics). Smooth keys stay on the per-component monotone cubic +
+    /// renormalise path, which is C1 through the keys (what "smooth" promises);
+    /// changing it would alter every hand-authored clip already saved.
+    bool SlerpQuat(const Channels& c, float t, Quat& out) const {
+        for (int k = 0; k < 4; ++k) if (!c.q[k] || c.q[k]->smooth) return false;
+        std::size_t i; float u;
+        if (!c.q[3]->Locate(t, i, u)) return false;
+        const std::size_t n = c.q[3]->Count();
+        for (int k = 0; k < 3; ++k) {
+            const auto& ks = c.q[k]->Keys();
+            if (ks.size() != n || std::fabs(ks[i].time - c.q[3]->Keys()[i].time) > 1e-5f ||
+                std::fabs(ks[i + 1].time - c.q[3]->Keys()[i + 1].time) > 1e-5f) return false;
+        }
+        out = SlerpShort(KeyQuat(c.q, i), KeyQuat(c.q, i + 1), u);
+        return true;
+    }
+    /// Angle in radians between two unit quaternions (as rotations).
+    static float QuatAngle(const Quat& a, const Quat& b) {
+        double d = std::fabs((double)a.x * b.x + (double)a.y * b.y + (double)a.z * b.z + (double)a.w * b.w);
+        return (float)(2.0 * std::acos(d > 1.0 ? 1.0 : d));
+    }
+    /// Greedy reduction of the linear quaternion rotation: extend each kept
+    /// segment while the slerp between its ends stays within `tolRad` of every
+    /// original key it skips. First and last keys stay; all four curves keep
+    /// identical key times.
+    std::size_t ReduceQuat(float tolRad) {
+        const AnimationCurve* const* q = LinearQuatTracks();
+        if (!q || tolRad <= 0.0f) return 0;
+        const std::size_t n = q[3]->Count();
+        if (n < 3) return 0;
+        std::vector<Quat> qs(n); std::vector<float> ts(n);
+        for (std::size_t i = 0; i < n; ++i) { qs[i] = KeyQuat(q, i); ts[i] = q[3]->Keys()[i].time; }
+        std::vector<std::size_t> keep{0};
+        std::size_t a = 0;
+        while (a + 1 < n) {
+            std::size_t b = a + 1;
+            while (b + 1 < n) {
+                std::size_t c = b + 1;
+                float span = ts[c] - ts[a];
+                bool fits = span > 0.0f;
+                for (std::size_t i = a + 1; i < c && fits; ++i)
+                    if (QuatAngle(SlerpShort(qs[a], qs[c], (ts[i] - ts[a]) / span), qs[i]) > tolRad) fits = false;
+                if (!fits) break;
+                b = c;
+            }
+            keep.push_back(b);
+            a = b;
+        }
+        if (keep.size() == n) return 0;
+        static const char* names[4] = {"rotation.qx", "rotation.qy", "rotation.qz", "rotation.qw"};
+        for (const char* nm : names) {
+            AnimationCurve& src = m_tracks[nm];
+            AnimationCurve nc; nc.wrap = src.wrap; nc.smooth = src.smooth;
+            for (std::size_t k : keep) nc.AddKey(src.Keys()[k].time, src.Keys()[k].value);   // raw values: file data unchanged
+            src = std::move(nc);
+        }
+        m_chan.valid = false;
+        return n - keep.size();
+    }
+
     // Copies of a clip must rebuild their own channel table (the pointers point
     // into the source's track map).
     struct ChanCache {

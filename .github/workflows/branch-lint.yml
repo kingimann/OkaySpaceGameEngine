@@ -1,5 +1,5 @@
 # Branch lint: cheap checks on every push to claude/** and claude2/** (not the full CI; about 1 to 5 minutes).
-# Plain rules: docs/collaboration.md. Scripts: scripts/branch_lint.py, bug_patterns.py, collision_check.py.
+# Plain rules: docs/process/collaboration.md. Scripts: scripts/branch_lint.py, bug_patterns.py, collision_check.py.
 #   fatal:      forbidden thread includes in Windows code (rule 21a), secrets, a push into the other lane's open claim
 #   warnings:   no docs changed, feature map not regenerated, MinGW syntax check, bug-class patterns
 # Each warning shows as an annotation on the commit and in the job summary; nothing is commented on any issue or PR.
@@ -46,17 +46,6 @@ jobs:
           cat collision.md >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
-      - name: "Try-it entries are valid (fatal)"
-        if: always()
-        run: python3 scripts/gen_try_it.py --check-entries
-
-      - name: "Do not commit the generated docs/try_it.md (warning)"
-        if: always()
-        run: |
-          if [ -n "$(git diff --name-only origin/main...HEAD -- docs/try_it.md)" ]; then
-            echo "::warning title=docs/try_it.md::docs/try_it.md is generated. Add or edit a file in docs/try_it/ instead (see docs/try_it/README.md); the coordinator regenerates the page. Committing it makes PRs conflict."
-          fi
-
       - name: "Docs changed with the code (warning)"
         if: always()
         run: python3 scripts/branch_lint.py docs --base origin/main --head HEAD
@@ -71,6 +60,13 @@ jobs:
       - name: "Module dependency check (fatal: no new forbidden include)"
         if: always()
         run: python3 scripts/check_modules.py
+
+      - name: "UI catalogue regenerated (warning)"
+        if: always()
+        run: |
+          if ! python3 scripts/gen_ui_catalogue.py --check; then
+            echo "::warning title=UI catalogue::docs/ui_catalogue.md is out of date. Run: python3 scripts/gen_ui_catalogue.py"
+          fi
 
       - name: "Bug-class patterns (warning)"
         if: always()

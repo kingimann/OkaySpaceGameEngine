@@ -1,0 +1,466 @@
+okayscene 3
+name "UI Library 2"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "ac0ef7fe766b088bfcbea174272cbeeb"
+  active 1
+  parent -1
+  transform 0 0 10 0 0 0 1 1 1 1
+  camera 0 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Canvas"
+  guid "61d1ca0922333e408a136e0d2121cf0b"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  canvas 1 1280 720 0.5 1 0 1 1 0 1280 720 100 1 1
+end
+gameobject 2 "EventSystem"
+  guid "c5329f4d74e14984b61c55b6a9fa7cb6"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  eventsystem
+end
+gameobject 3 "UI Library 2"
+  guid "ffadb5328f68b430b4ad589aaaacede9"
+  active 1
+  parent 1
+  transform 0 0 0 0 0 0 1 1 1 1
+end
+gameobject 4 "Backdrop"
+  guid "87e7d8ae56788f62b42263919b626b29"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 0 0 0 0 0.07058824 0.078431375 0.101960786 0.98039216 11 0 0 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 0 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+end
+gameobject 5 "Title"
+  guid "578219cda0e10456c06a3e51bac07d9e"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "UI Library 2" 0.9098039 0.92156863 0.9411765 1 3.75 1 32 12 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 1 600 40 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 6 "Subtitle"
+  guid "804d733e5020d6ee30d4b39bd0a9fc05"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Game parts and data-driven parts. Press Play, then click the buttons and drag the sliders. Q uses the ability, Tab moves the focus ring." 0.5882353 0.6156863 0.6745098 1 1.625 1 34 50 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 800 40 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 7 "Demo"
+  guid "a2fedbf719d5397b6914f7599955d85d"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function start() {
+  start_quest(\"wolves\");
+  run_action(\"array_push scores 120 ; array_push scores 85 ; array_push scores 40\");
+}
+function quest_wolf() { add_quest_progress(\"wolves\", 0, 1); }
+function quest_talk() { complete_objective(\"wolves\", 1); }
+function quest_bridge() { complete_objective(\"wolves\", 2); }
+function quest_again() { fail_quest(\"wolves\"); start_quest(\"wolves\"); }
+function more_scores() { run_action(\"array_push scores 55\"); }
+function empty_scores() { run_action(\"array_clear scores\"); }
+" "" 0
+end
+gameobject 8 "Quests"
+  guid "449b807359e0b5b3fecba451fc9f67d3"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  questlog file="" tracker=0 journal=0 jkey=106 notify=0 ui=1 tracked="" player="" n=0
+  questlogdef id="wolves" title="Wolf trouble" desc="" rep=1 pre="" nobj=3 o0k="custom" o0d="Hunt the wolves" o0t="wolf" o0n=3 o0opt=0 o1k="custom" o1d="Tell the mayor" o1t="mayor" o1n=1 o1opt=0 o2k="custom" o2d="Cross the bridge" o2t="bridge" o2n=1 o2opt=0 nri=0 nrv=0 revent=""
+end
+gameobject 9 "AmmoCard"
+  guid "bfc44e12051aa79232441f2405e4c1bc"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 32 96 392 304 0.11764706 0.12941177 0.16078432 0.9882353 0 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+  uix pblock=1
+end
+gameobject 10 "Caption"
+  guid "75f9d12d0c5dfe3b41dce12c7f6616a5"
+  active 1
+  parent 9
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Ammo, ability, prompt" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 11 "Ammo"
+  guid "3f475fdc58d94caeeda5f0ef81310d00"
+  active 1
+  parent 9
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiammo 20 44 214 84 0 0.09411765 0.10980392 0.14901961 0.8235294 0.25882354 0.5882353 0.98039216 1 1 1 1 1 24 90 30 0 0.25 1 1 0.98039216 0.74509805 0.23529412 1 0.92156863 0.3137255 0.3137255 1 "" "" "" "AMMO"
+end
+gameobject 12 "Shoot"
+  guid "9e49f3911a2174456938f7cefde7e409"
+  active 1
+  parent 9
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "Shoot" 248 44 124 36 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 1.5 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "Ammo" "Shoot" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+  uivariant variant=0
+end
+gameobject 13 "Reload"
+  guid "074bb8ffa2b0e634f88a622c1144b1c0"
+  active 1
+  parent 9
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "Reload" 248 92 124 36 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 1.5 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "Ammo" "Reload" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+  uivariant variant=0
+end
+gameobject 14 "Dash"
+  guid "06d4be705f5d8e6d22b40826582a1f5e"
+  active 1
+  parent 9
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiradial 20 142 72 72 0 7 0 1 0.43137255 0.84313726 0.5882353 0.8627451 0.05490196 0.0627451 0.09411765 0.9411765 0 0 1 1 1 1 0 220
+  uiability 113 4 1 0.23529412 0.3529412 0.627451 1 0.47058824 0.8627451 0.5882353 1 "Q" "" "Q"
+end
+gameobject 15 "UseAbility"
+  guid "d504629797ee8c739b4a0dbed1f97da3"
+  active 1
+  parent 9
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "Use (or press Q)" 108 160 264 36 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 1.5 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "Dash" "Use" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+  uivariant variant=0
+end
+gameobject 16 "NearDoor"
+  guid "66a4785529b8988acf898817fd63dde3"
+  active 1
+  parent 9
+  transform 0 0 0 0 0 0 1 1 1 1
+  uidatabind 0 "near_door" ""
+  uitoggle "I am near the door" 20 226 28 28 0 0.16078432 0.18039216 0.23137255 1 0.25882354 0.5882353 0.98039216 1 1 1 1 1 0 3 0 0.92156863 0.92156863 0.9411765 1 1 12
+  comporder "UIToggle" "UIBind"
+end
+gameobject 17 "Prompt"
+  guid "5534c985679a66b06904c02a178ecae5"
+  active 1
+  parent 9
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiprompt 20 262 352 34 0 0.09411765 0.10980392 0.14901961 0.8235294 0.25882354 0.5882353 0.98039216 1 1 1 1 1 2.5 0 8 "E" "Open the door" "" "near_door" "Player"
+end
+gameobject 18 "WheelCard"
+  guid "8366dce885577f7dd213f6161fb1b727"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 444 96 392 304 0.11764706 0.12941177 0.16078432 0.9882353 0 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+  uix pblock=1
+end
+gameobject 19 "Caption"
+  guid "552ee342401df7e0e49cf1957c836c43"
+  active 1
+  parent 18
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Radial menu, kill feed" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 20 "Wheel"
+  guid "c0438f2b7c3d7e32c4ed0d7624f7705e"
+  active 1
+  parent 18
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiradialmenu 10 58 220 220 0 0.09411765 0.10980392 0.14901961 0.8235294 0.25882354 0.5882353 0.98039216 1 1 1 1 1 30 0 0 1 1 "Attack|Defend|Heal|Run" "" "radial_pick"
+end
+gameobject 21 "PickedLabel"
+  guid "659cb6cc1f5397ed1d40eb1889887765"
+  active 1
+  parent 18
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "You picked" 0.5882353 0.6156863 0.6745098 1 1.5 1 244 62 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 130 20 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 22 "Picked"
+  guid "1be8bd2d6d6f54f1f331f3d02dcadb9c"
+  active 1
+  parent 18
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "nothing yet" 0.9098039 0.92156863 0.9411765 1 1.875 1 244 82 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 130 40 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uibind "{radial_pick_text|nothing yet}"
+end
+gameobject 23 "NewKill"
+  guid "c1fbaf128dc3e67c1d73339cd0c974be"
+  active 1
+  parent 18
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "New kill" 244 140 128 36 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 1.5 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "KillFeed" "AddSampleKill" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+  uivariant variant=0
+end
+gameobject 24 "WheelHint"
+  guid "277e53989b84e6b7e9153613f2013d97"
+  active 1
+  parent 18
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Click a wedge. Kills show at the top right of the screen." 0.5882353 0.6156863 0.6745098 1 1.5 1 244 186 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 128 90 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 25 "KillFeed"
+  guid "a08958af591bc4316d86f0361d836456"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uikillfeed -32 10 400 80 2 0.09411765 0.10980392 0.14901961 0.8235294 0.25882354 0.5882353 0.98039216 1 1 1 1 1 3 12 0.5 26 1 "Player" "{killer}  >  {victim}" "{killer}  [{weapon}]  {victim}"
+end
+gameobject 26 "QuestCard"
+  guid "efea25c8b50828f201da6328f511e794"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 856 96 392 304 0.11764706 0.12941177 0.16078432 0.9882353 0 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+  uix pblock=1
+end
+gameobject 27 "Caption"
+  guid "d7e9bc580eb45d3e8976a2eed2288df8"
+  active 1
+  parent 26
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Objectives, compass" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 28 "Tracker"
+  guid "f048b30d4d07e2d49c1314df4ea788c8"
+  active 1
+  parent 26
+  transform 0 0 0 0 0 0 1 1 1 1
+  uitracker 20 44 352 124 0 0.09411765 0.10980392 0.14901961 0.8235294 0.25882354 0.5882353 0.98039216 1 1 1 1 1 3 0 0.43137255 0.8235294 0.54901963 1 "Objectives" ""
+end
+gameobject 29 "Wolf"
+  guid "d11e3f6145b0e110f8768101b07b4bf6"
+  active 1
+  parent 26
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "Wolf" 20 176 80 32 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 1.5 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "Demo" "quest_wolf" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+  uivariant variant=0
+end
+gameobject 30 "Talk"
+  guid "0448d92a7e074366f5e3c00534cffcef"
+  active 1
+  parent 26
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "Talk" 108 176 80 32 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 1.5 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "Demo" "quest_talk" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+  uivariant variant=0
+end
+gameobject 31 "Bridge"
+  guid "0a264ca699f67e618c315e6637a74e3f"
+  active 1
+  parent 26
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "Bridge" 196 176 88 32 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 1.5 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "Demo" "quest_bridge" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+  uivariant variant=0
+end
+gameobject 32 "Again"
+  guid "8afacc0b9763f6a491fdbab445489096"
+  active 1
+  parent 26
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "Again" 292 176 80 32 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 1.5 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "Demo" "quest_again" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+  uivariant variant=1
+end
+gameobject 33 "CompassLabel"
+  guid "af1c786a812f19d8636565a375969e84"
+  active 1
+  parent 26
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Turn the compass" 0.5882353 0.6156863 0.6745098 1 1.625 1 20 218 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 200 20 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 34 "Heading"
+  guid "f23adff5e1f68f76f560ab76d0f3bdc7"
+  active 1
+  parent 26
+  transform 0 0 0 0 0 0 1 1 1 1
+  uislider 20 240 352 18 20 0 360 0.16078432 0.18039216 0.23137255 1 0.25882354 0.5882353 0.98039216 1 0.9607843 0.96862745 0.9882353 1 0 3 0.6 1 1 1 1 1 1 1 0 1 1 0 0 0.47058824 0.8235294 1 1 -1 ""
+  uidatabind 0 "compass_deg" ""
+end
+gameobject 35 "Compass"
+  guid "0faf8fd038637b3c02a2afd7c6d27980"
+  active 1
+  parent 26
+  transform 0 0 0 0 0 0 1 1 1 1
+  uicompass 20 264 352 32 0 0.09411765 0.10980392 0.14901961 0.8235294 0.25882354 0.5882353 0.98039216 1 1 1 1 1 0 140 0 1 0.98039216 0.78431374 0.3137255 1 "" "" "compass_deg"
+end
+gameobject 36 "ItemCard"
+  guid "41cd9434aae12a686096ffaba38159ad"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 32 412 392 292 0.11764706 0.12941177 0.16078432 0.9882353 0 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+  uix pblock=1
+end
+gameobject 37 "Caption"
+  guid "c3fe94af82831b24841e0a0ee222540a"
+  active 1
+  parent 36
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Item tooltip card" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 38 "ItemPick"
+  guid "e33123d9dc38170a3072d16e2a9847c6"
+  active 1
+  parent 36
+  transform 0 0 0 0 0 0 1 1 1 1
+  uidropdown 20 44 352 34 0 0 0.16078432 0.18039216 0.23137255 1 0.21568628 0.24313726 0.3137255 1 0.11764706 0.12941177 0.16078432 1 1 1 1 1 1 1 1 0.08627451 3 "Iron Sword" "Healing Potion" "Leather Cap" 1 "Select..." 1 6 0 0 0
+  uidatabind 0 "item_pick" ""
+end
+gameobject 39 "Card"
+  guid "c7988938e44ad1b67b712a139e010673"
+  active 1
+  parent 36
+  transform 0 0 0 0 0 0 1 1 1 1
+  uicard 20 92 352 190 0 0.09411765 0.10980392 0.14901961 0.8235294 0.25882354 0.5882353 0.98039216 1 1 1 1 1 1 1 1 1 1 1 "Iron Sword" "item_pick_text" "" "examples/ui_library/ui_library_items.okayitems"
+end
+gameobject 40 "BindCard"
+  guid "1a6462a765e37460924f11f9a7997335"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 444 412 392 292 0.11764706 0.12941177 0.16078432 0.9882353 0 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+  uix pblock=1
+end
+gameobject 41 "Caption"
+  guid "5d6557022a09df34a8ec30c2045f15d3"
+  active 1
+  parent 40
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Bindings and conditions" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 42 "VolLabel"
+  guid "079ffe3e9d71b0f03bf63d099bb9a973"
+  active 1
+  parent 40
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Volume: slider and box match" 0.5882353 0.6156863 0.6745098 1 1.625 1 20 44 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 20 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 43 "Volume"
+  guid "b232f63595df0486fb0aca8a4e5e803e"
+  active 1
+  parent 40
+  transform 0 0 0 0 0 0 1 1 1 1
+  uislider 20 70 352 20 60 0 100 0.16078432 0.18039216 0.23137255 1 0.25882354 0.5882353 0.98039216 1 0.9607843 0.96862745 0.9882353 1 0 3 0.6 0 1 1 1 1 1 1 0 1 1 0 0 0.47058824 0.8235294 1 1 -1 ""
+  uidatabind 0 "volume" ""
+end
+gameobject 44 "VolumeBox"
+  guid "635e1c0f9748557cacf1bb9830a8b035"
+  active 1
+  parent 40
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiinput 20 110 170 36 0 64 "" "0 to 100" 0.18039216 0.2 0.2509804 1 0 1 6 1 0.25882354 0.5882353 0.98039216 1 0
+  uidatabind 0 "volume" ""
+end
+gameobject 45 "Mute"
+  guid "03345f263622b1ed524bb111cb7e611e"
+  active 1
+  parent 40
+  transform 0 0 0 0 0 0 1 1 1 1
+  uidatabind 0 "muted" ""
+  uitoggle "Mute" 212 114 28 28 0 0.16078432 0.18039216 0.23137255 1 0.25882354 0.5882353 0.98039216 1 1 1 1 1 0 3 0 0.92156863 0.92156863 0.9411765 1 1 12
+  comporder "UIToggle" "UIBind"
+end
+gameobject 46 "VolNow"
+  guid "1d58d0e17e9c4db4e315d692ea7ab74e"
+  active 1
+  parent 40
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Volume is 60" 0.9098039 0.92156863 0.9411765 1 1.625 1 20 160 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 20 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uibind "Volume is {volume|?}"
+end
+gameobject 47 "LowWarning"
+  guid "7faea91a018171c97d0a3e77c933a1de"
+  active 1
+  parent 40
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Very quiet: turn it up" 0.8862745 0.32156864 0.32156864 1 1.625 1 20 190 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 20 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uivisible 0 "volume < 20 && !muted" ""
+end
+gameobject 48 "MutedNote"
+  guid "89224b8998568f2e8ae327a7ab235a7c"
+  active 1
+  parent 40
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Muted" 0.25882354 0.5882353 0.98039216 1 1.625 1 300 190 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 72 20 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uivisible 0 "muted" ""
+end
+gameobject 49 "BindHint"
+  guid "9eb1220bbd84dafe5a17b794ae474dac"
+  active 1
+  parent 40
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Drag the slider, or type in the box. Slide below 20 for the warning. Turn Mute on to swap it." 0.5882353 0.6156863 0.6745098 1 1.625 1 20 224 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 56 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 50 "ListCard"
+  guid "c25c30df837fafa4fc4258047d485aba"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 856 412 392 292 0.11764706 0.12941177 0.16078432 0.9882353 0 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+  uix pblock=1
+end
+gameobject 51 "Caption"
+  guid "54197bdd35c1861fac89e6d5b17188dd"
+  active 1
+  parent 50
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "List, links, hot reload" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 52 "Scores"
+  guid "2a39f1f753d45f74318627eb00ab2e63"
+  active 1
+  parent 50
+  transform 0 0 0 0 0 0 1 1 1 1
+  uilist 20 44 352 84 0 1 1 1 0.05490196 1 1 1 0.18039216 26 2 0 -1 30 0
+  uilistbind "scores" "Score {index}:  {item} points" "No scores yet"
+end
+gameobject 53 "Row"
+  guid "5cffc0844721649c193f9243878b79f5"
+  active 1
+  parent 52
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "{item}" 0.9098039 0.92156863 0.9411765 1 1.75 1 8 0 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 336 26 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 54 "AddScore"
+  guid "c8b6a4201b45171aa649e97f8d635f76"
+  active 1
+  parent 50
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "Add a score" 20 136 172 30 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 1.5 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "Demo" "more_scores" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+  uivariant variant=0
+end
+gameobject 55 "ClearScores"
+  guid "3a750574dced2657fa56d9eaddf68775"
+  active 1
+  parent 50
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "Clear" 200 136 172 30 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 1.5 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "Demo" "empty_scores" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+  uivariant variant=1
+end
+gameobject 56 "Links"
+  guid "ae35e6c8342378d0cff54dd4e89cf094"
+  active 1
+  parent 50
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Read the [url=manual]manual[/url], or buy [icon=Iron Sword] and [icon=Healing Potion] for 5 [icon=coin]." 0.9098039 0.92156863 0.9411765 1 1.75 1 20 176 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 40 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uirichlinks 1 1
+  uix rich=1
+end
+gameobject 57 "LastLink"
+  guid "38d3788f8448e791a30250900a543004"
+  active 1
+  parent 50
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Link you clicked: none yet" 0.5882353 0.6156863 0.6745098 1 1.625 1 20 222 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 20 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uibind "Link you clicked: {ui_link|none yet}"
+end
+gameobject 58 "HotDoc"
+  guid "97115b1865b2b08201472b487e90a8c7"
+  active 1
+  parent 50
+  transform 0 0 0 0 0 0 1 1 1 1
+  uidocument "text \"HOT RELOAD: edit and save\" pos=20,254 size=1.5 color=250,200,80,255
+text \"hot_reload_demo.okayui\" pos=20,270 size=1.5 color=250,200,80,255
+"
+  uihotreload 0.5 1 "examples/ui_library/hot_reload_demo.okayui" ""
+end

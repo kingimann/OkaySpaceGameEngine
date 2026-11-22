@@ -5,6 +5,7 @@
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/GameInput.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Physics/Physics3D.hpp"
@@ -60,8 +61,6 @@ int RangedWeapon::Rounds() const {
     const Tune t = Current();
     return std::max(0, t.magazine);
 }
-
-int RangedWeapon::MagazineSize() const { return std::max(0, Current().magazine); }
 
 int RangedWeapon::Spare() const {
     if (!m_ready) return Current().reserve;
@@ -128,7 +127,7 @@ bool RangedWeapon::Shoot(const Tune& t) {
     }
     const RaycastHit3D hit = scene->physics3D().Raycast(*scene, origin, dir, std::max(0.0f, t.range), gameObject);
     if (!hit.hit || !hit.gameObject) return true;   // the shot still left the gun
-    ApplyCombatDamage(hit.gameObject, t.damage, origin, dir * t.knockback, DamageType::Bullet, gameObject);
+    ApplyCombatDamage(hit.gameObject, t.damage, origin, dir * t.knockback);
     return true;
 }
 
@@ -171,9 +170,10 @@ void RangedWeapon::Update(float dt) {
     if (!IsLocallyControlled(gameObject)) return;
     if (GameInputBlocked(gameObject ? gameObject->scene() : nullptr)) return;
     if (Input::UICaptured()) return;
-    if (reloadKey && Input::GetKeyDown(reloadKey)) Reload();
-    const bool mouse = fireButton >= 0 && Input::GetMouseButton(fireButton);
-    const bool key = fireKey && Input::GetKey(fireKey);
+    // "Reload" and "Fire" actions: these keys until the player rebinds them, then the new bindings.
+    if (InputActions::ControlKeyDown("Reload", reloadKey)) Reload();
+    const bool mouse = InputActions::ControlMouse("Fire", fireButton);
+    const bool key = InputActions::ControlKey("Fire", fireKey);
     if (mouse || key) Fire();
 }
 

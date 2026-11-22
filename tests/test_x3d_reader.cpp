@@ -214,7 +214,8 @@ int main() {
         CHECK(ImportModelData(path, m, ImportBackend::Own, false, &err) && m.backend == "own" && m.parts.size() == 1);
         SetImportBackend(".x3d", ImportBackend::Default);
         unsetenv("OKAY_OWN_X3D");
-        if (EffectiveImportBackend(".x3d") != ImportBackend::Own) CHECK(!ImportModelData(path, m, ImportBackend::Default, false, &err) && err.find("OKAY_OWN_X3D") != std::string::npos);
+        // no reader at all: no Assimp in this build and ours off
+        if (EffectiveImportBackend(".x3d") == ImportBackend::Default) CHECK(!ImportModelData(path, m, ImportBackend::Default, false, &err) && err.find("OKAY_OWN_X3D") != std::string::npos);
         setenv("OKAY_OWN_X3D", "1", 1);
         CHECK(EffectiveImportBackend(".x3d") == ImportBackend::Own && ImportableExtensions().find(".x3d") != std::string::npos);
         bool ok = false; std::string tex;

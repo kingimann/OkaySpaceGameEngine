@@ -58,12 +58,65 @@ Terrain::Terrain() {
     Resize(resolution);
 }
 
+// The grid is resampled, not cleared (#888 finding 146): every new vertex reads the old grid
+// bilinearly at the same place on the terrain (0..1 across it), so sculpting survives a resolution
+// change. Painted layer weights are resampled the same way and kept summing to 255.
 void Terrain::Resize(int res) {
     if (res < 1) res = 1;
+    const int oldRes = resolution;
+    const std::size_t oldDim = (std::size_t)oldRes + 1, oldN = oldDim * oldDim;
+    const bool keepHeights = oldRes >= 1 && heights.size() == oldN;
+    const std::size_t L = layers.size();
+    const bool keepSplat = keepHeights && L > 0 && splat.size() == oldN * L;
+    std::vector<float> oldH; oldH.swap(heights);
+    std::vector<std::uint8_t> oldS; if (keepSplat) oldS.swap(splat);
     resolution = res;
-    heights.assign((std::size_t)Dim() * Dim(), 0.0f);
+    const std::size_t dim = (std::size_t)Dim(), n = dim * dim;
+    heights.assign(n, 0.0f);
+    if (keepHeights) {
+        // Where new index i lands on the old grid: cell c0, next cell c1, fraction f.
+        std::vector<int> c0(dim), c1(dim); std::vector<float> f(dim);
+        for (std::size_t i = 0; i < dim; ++i) {
+            const double p = (double)i * oldRes / res;
+            int a = (int)std::floor(p);
+            if (a < 0) a = 0;
+            if (a > oldRes) a = oldRes;
+            c0[i] = a; c1[i] = a < oldRes ? a + 1 : a;
+            f[i] = (float)(p - a);
+            if (f[i] < 0.0f) f[i] = 0.0f;
+            if (f[i] > 1.0f) f[i] = 1.0f;
+        }
+        auto at = [&](const auto& v, std::size_t base, int x, int z) { return (float)v[base + (std::size_t)z * oldDim + (std::size_t)x]; };
+        auto bilerp = [&](const auto& v, std::size_t base, std::size_t x, std::size_t z) {
+            const float top = at(v, base, c0[x], c0[z]) + (at(v, base, c1[x], c0[z]) - at(v, base, c0[x], c0[z])) * f[x];
+            const float bot = at(v, base, c0[x], c1[z]) + (at(v, base, c1[x], c1[z]) - at(v, base, c0[x], c1[z])) * f[x];
+            return top + (bot - top) * f[z];
+        };
+        for (std::size_t z = 0; z < dim; ++z)
+            for (std::size_t x = 0; x < dim; ++x) heights[z * dim + x] = bilerp(oldH, 0, x, z);
+        if (keepSplat) {
+            splat.assign(n * L, 0);
+            std::vector<int> w(L);
+            for (std::size_t z = 0; z < dim; ++z)
+                for (std::size_t x = 0; x < dim; ++x) {
+                    int sum = 0; std::size_t big = 0;
+                    for (std::size_t k = 0; k < L; ++k) {
+                        w[k] = (int)std::lround(bilerp(oldS, k * oldN, x, z));
+                        if (w[k] < 0) w[k] = 0;
+                        if (w[k] > 255) w[k] = 255;
+                        sum += w[k];
+                        if (w[k] > w[big]) big = k;
+                    }
+                    if (sum <= 0) { w.assign(L, 0); w[0] = 255; }
+                    else w[big] += 255 - sum;   // rounding left over goes to the strongest layer
+                    if (w[big] < 0) w[big] = 0;
+                    for (std::size_t k = 0; k < L; ++k) splat[k * n + z * dim + x] = (std::uint8_t)w[k];
+                }
+            splatSized_ = 0;
+        }
+    }
     ForgetFloor();
-    ResetSplat();
+    if (!keepSplat) ResetSplat();
 }
 
 float Terrain::GetHeight(int x, int z) const {
@@ -217,7 +270,13 @@ void Terrain::Generate(int type, float amplitude, float frequency, int octaves, 
 
 float Terrain::SampleHeight(float localX, float localZ) const {
     float cell = CellSize(), half = size * 0.5f;
+    if (!(cell > 1e-8f) || heights.empty()) return heights.empty() ? 0.0f : GetHeight(0, 0);   // size 0 (or NaN)
     float gx = (localX + half) / cell, gz = (localZ + half) / cell;
+    // Points just past the edge read the edge row, not height 0 beyond the grid (that made the last cell slope down
+    // to 0: wrong normals for bodies and plants at the edge of a raised terrain).
+    const float gmax = (float)resolution;
+    gx = gx < 0.0f ? 0.0f : (gx > gmax ? gmax : gx);
+    gz = gz < 0.0f ? 0.0f : (gz > gmax ? gmax : gz);
     int x0 = (int)std::floor(gx), z0 = (int)std::floor(gz);
     float fx = gx - x0, fz = gz - z0;
     float h00 = GetHeight(x0, z0), h10 = GetHeight(x0 + 1, z0);
@@ -386,11 +445,18 @@ void Terrain::ErodeAt(float localX, float localZ, float radius, float amount) {
 }
 
 Vec3 Terrain::NormalAt(float localX, float localZ) const {
-    float e = CellSize();
-    float hl = SampleHeight(localX - e, localZ), hr = SampleHeight(localX + e, localZ);
-    float hd = SampleHeight(localX, localZ - e), hu = SampleHeight(localX, localZ + e);
-    // Central differences -> surface normal (Y up).
-    Vec3 n{(hl - hr), 2.0f * e, (hd - hu)};
+    const float e = CellSize(), half = size * 0.5f;
+    if (!(e > 1e-8f)) return Vec3{0, 1, 0};
+    // Central differences inside the terrain; at the edge the sample that would fall outside is taken on the edge
+    // and the step is shortened to match (a one-sided difference), so the slope there is the real one.
+    auto clampIn = [half](float v) { return v < -half ? -half : (v > half ? half : v); };
+    const float xl = clampIn(localX - e), xr = clampIn(localX + e);
+    const float zd = clampIn(localZ - e), zu = clampIn(localZ + e);
+    const float sx = xr - xl > 1e-8f ? xr - xl : 2.0f * e, sz = zu - zd > 1e-8f ? zu - zd : 2.0f * e;
+    float hl = SampleHeight(xl, localZ), hr = SampleHeight(xr, localZ);
+    float hd = SampleHeight(localX, zd), hu = SampleHeight(localX, zu);
+    // Surface normal (Y up) from the slope in x and z.
+    Vec3 n{-(hr - hl) / sx, 1.0f, -(hu - hd) / sz};
     float m = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
     return m > 1e-6f ? Vec3{n.x / m, n.y / m, n.z / m} : Vec3{0, 1, 0};
 }

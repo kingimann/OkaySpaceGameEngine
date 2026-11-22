@@ -143,7 +143,7 @@ void Op(const char* name, int rounds, const std::function<const char*()>& body) 
     }
     ++okaytest::g_checks;
     // Known gaps: these operators still leave a stale optional list behind (the renderers ignore a list whose size
-    // does not match, so the attribute is lost, not corrupted). Listed in docs/UNFINISHED.md; they are printed, not failed.
+    // does not match, so the attribute is lost, not corrupted). Listed in docs/status/UNFINISHED.md; they are printed, not failed.
     static const std::set<std::string> kKnownGaps = {};   // empty: every operator must keep its lists in step
 
     if (bad && kKnownGaps.count(name)) { std::cout << "  GAP: " << name << ": " << bad << " of " << rounds << " runs leave a list out of step (" << first << ")\n"; return; }
@@ -165,6 +165,7 @@ int main() {
     MESHOP("InsetFacesIndividual", m.InsetFacesIndividual(t, a));
     MESHOP("SeparateFaces", m.SeparateFaces(t));
     MESHOP("FlipNormals", m.FlipNormals());
+    MESHOP("FlipFaces", m.FlipFaces(t));
     MESHOP("OrientFacesOutward", m.OrientFacesOutward());
     MESHOP("WeldVertices", m.WeldVertices(a));
     MESHOP("FillHoles", m.FillHoles());
@@ -240,6 +241,23 @@ int main() {
     POLYOP("CompactVerts", CompactVerts(pm));
     POLYOP("Creased CatmullClark", { for (const auto& ed : pm.Edges()) if (R(2)) pm.SetCrease(ed.a, ed.b, F(0.0f, 3.0f)); pm = CatmullClark(pm, R(3)); });
     POLYOP("KnifeCut", KnifeCut(pm, std::vector<KnifePoint>{{R(8), R(8), a}, {R(8), -1, 0}}, &err));
+    // Selection helpers only read the mesh: every answer must name real vertices / faces, and the mesh must not change.
+    Op("Selection helpers (path, checker, outline, problem edges)", N, [&]() -> const char* {
+        Mesh base = RandomMesh(); PolyMesh pm = PolyMesh::FromMesh(base);
+        const std::string before = pm.Serialize();
+        const int nv = (int)pm.verts.size(), nf = (int)pm.faces.size();
+        const auto v = RandomVerts(base); const auto t = RandomTris(base);
+        auto inV = [&](int x) { return x >= 0 && x < nv; };
+        auto inF = [&](int x) { return x >= 0 && x < nf; };
+        for (int x : ShortestVertPath(pm, R(nv + 3) - 1, R(nv + 3) - 1)) if (!inV(x)) return "path vertex out of range";
+        for (int x : ShortestFacePath(pm, R(nf + 3) - 1, R(nf + 3) - 1)) if (!inF(x)) return "path face out of range";
+        for (int x : CheckerVerts(pm, v)) if (!inV(x)) return "checker vertex out of range";
+        for (int x : CheckerFaces(pm, t)) if (!inF(x)) return "checker face out of range";
+        for (const auto& e : RegionOutline(pm, t)) if (!inV(e.first) || !inV(e.second)) return "outline edge out of range";
+        for (const auto& e : ProblemEdges(pm, R(2) == 0, R(2) == 0)) if (!inV(e.first) || !inV(e.second)) return "problem edge out of range";
+        if (pm.Serialize() != before) return "a selection helper changed the mesh";
+        return nullptr;
+    });
     RUN_SUITE("fuzz: polygon tools keep slots, colours and corner UVs");
 #define RPOLYOP(name, call) Op(name, N, [&]() -> const char* { Mesh base = RandomMesh(); PolyMesh pm = RichPoly(base); const bool had = !pm.faces.empty(); const auto e = RandomEdges(base); EdgeList el(e.begin(), e.end()); const auto t = RandomTris(base); const auto v = RandomVerts(base); const float a = RandomAmount(); (void)el; (void)t; (void)v; (void)a; std::string err; (void)err; call; if (const char* bad = SanePoly(pm)) return bad; return PolyAttrs(pm, had); })
     RPOLYOP("rich LoopCut", LoopCut(pm, R(8), R(8), 1 + R(4), a));
@@ -294,6 +312,7 @@ int main() {
     RICHOP("rich ExtrudeFacesIndividual", m.ExtrudeFacesIndividual(t, a));
     RICHOP("rich InsetFacesIndividual", m.InsetFacesIndividual(t, a));
     RICHOP("rich FlipNormals", m.FlipNormals());
+    RICHOP("rich FlipFaces", m.FlipFaces(t));
     RICHOP("rich OrientFacesOutward", m.OrientFacesOutward());
     RICHOP("rich WeldVertices", m.WeldVertices(a));
     RICHOP("rich FillHoles", m.FillHoles());

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.881.0
+    VERSION 2.903.0
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (ufbx)
 
@@ -24,12 +24,16 @@ option(OKAY_BUILD_SANDBOX  "Build the sandbox demo game"       ON)
 option(OKAY_BUILD_TESTS    "Build the unit tests"              ON)
 option(OKAY_BUILD_LAUNCHER "Build the self-updating launcher"  ON)
 option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OFF)
+option(OKAY_ENABLE_TEST_HOOKS "Compile scripted input and screenshots (OKAY_TEST_SCRIPT, shared/TestHooks.hpp) into the launcher and editor for headless test runs. Never for a release." OFF)
 option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2)" OFF)
 option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     ON)
 option(OKAY_REQUIRE_SODIUM "RELEASE builds: configuring FAILS unless libsodium is found and OKAY_OWN_CRYPTO is OFF (never silently fall back to our own unreviewed crypto; CLAUDE.md rule 18)" OFF)
+if(OKAY_ENABLE_TEST_HOOKS AND OKAY_REQUIRE_SODIUM)
+    message(FATAL_ERROR "OKAY_ENABLE_TEST_HOOKS (scripted input) must never be on in a release build (OKAY_REQUIRE_SODIUM marks one)")
+endif()
 option(OKAY_OWN_CRYPTO    "Network encryption via our OWN okay::crypto instead of libsodium (UNREVIEWED; keep OFF in shipped builds)" OFF)
 option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; downloads at configure time)" OFF)
-option(OKAY_PREFER_OWN_READERS "With OKAY_USE_ASSIMP: read STL/PLY with our own readers first (Assimp stays the fallback); no effect without Assimp" OFF)
+option(OKAY_PREFER_OWN_READERS "With OKAY_USE_ASSIMP: read STL/PLY with our own readers first (Assimp stays the fallback); no effect without Assimp" ON)
 # The UI toolkit the launcher and editor use for the screens that have an OkayUI port. Dear ImGui stays the default until
 # OkayUI is proven; a person can still choose OkayUI in Settings, or with the OKAY_UI_BACKEND environment variable.
 set(OKAY_UI_DEFAULT_BACKEND "imgui" CACHE STRING "Which UI toolkit the launcher and editor start with: imgui (default) or okayui (preview)")
@@ -38,47 +42,57 @@ if(NOT OKAY_UI_DEFAULT_BACKEND STREQUAL "imgui" AND NOT OKAY_UI_DEFAULT_BACKEND 
     message(FATAL_ERROR "OKAY_UI_DEFAULT_BACKEND must be imgui or okayui (got '${OKAY_UI_DEFAULT_BACKEND}')")
 endif()
 option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its tests (behaviour, golden images, fuzz) and demo (small; needs OKAY_BUILD_TESTS and SDL2)" ON)
-option(OKAY_OWN_COLLADA   "Read .dae with our own Collada reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .dae load at all; run-time env OKAY_OWN_COLLADA=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_3DS       "Read .3ds with our own 3DS reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .3ds load at all; run-time env OKAY_OWN_3DS=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_BVH       "Read .bvh motion capture with our own BVH reader by default (run-time env OKAY_OWN_BVH=0/1 and SetImportBackend override)" OFF)
+# Our own model readers are the DEFAULT since 2026-11-17 (owner: "start switching them so i can test them out"). Assimp and ufbx
+# stay compiled in as the fallback: a file our reader refuses goes to them, OKAY_OWN_<FMT>=0 switches one format back and
+# OKAY_THIRD_PARTY=1 (okay/Core/ThirdParty.hpp) switches every format back at run time. NDO stays OFF: that reader is a seam that
+# refuses every file. An existing build folder keeps the old OFF values in its CMakeCache.txt: configure a fresh one.
+option(OKAY_OWN_COLLADA   "Read .dae with our own Collada reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .dae load at all; run-time env OKAY_OWN_COLLADA=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_3DS       "Read .3ds with our own 3DS reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .3ds load at all; run-time env OKAY_OWN_3DS=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_BVH       "Read .bvh motion capture with our own BVH reader by default (run-time env OKAY_OWN_BVH=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_WAV       "Load .wav with our own WAV decoder (PCM, float, A-law, mu-law, MS and IMA ADPCM) by default (run-time env OKAY_OWN_WAV=0/1 overrides)" OFF)
-option(OKAY_OWN_OFF       "Read .off meshes with our own OFF reader by default (run-time env OKAY_OWN_OFF=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_SMD       "Read .smd (Valve Studiomdl Data) with our own SMD reader by default (run-time env OKAY_OWN_SMD=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_MD5       "Read .md5mesh / .md5anim (id Tech 4 / Doom 3) with our own MD5 reader by default (run-time env OKAY_OWN_MD5=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_MS3D       "Read .ms3d (MilkShape 3D) with our own MS3D reader by default (run-time env OKAY_OWN_MS3D=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_ASE       "Read .ase (3ds Max ASCII Scene Export) with our own ASE reader by default (run-time env OKAY_OWN_ASE=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_BLEND     "Read .blend with our own Blender reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .blend load at all; run-time env OKAY_OWN_BLEND=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_HTTP      "Allow our own HTTP/1.1 client (system OpenSSL loaded at run time) on Linux for NativeHttp instead of spawning curl; still needs OKAY_OWN_HTTP=1 in the environment at run time, curl stays the fallback (docs/own_http_client.md)" OFF)
-option(OKAY_OWN_3MF       "Read .3mf with our own 3MF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_3MF=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_AMF       "Read .amf with our own AMF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_AMF=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_X3D       "Read .x3d with our own X3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_X3D=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_DXF       "Read .dxf with our own DXF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_DXF=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_LWO       "Read .lwo with our own LWO reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LWO=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_MD2       "Read .md2 (Quake II models) with our own MD2 reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MD2=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_MD3       "Read .md3 (Quake III Arena models) with our own MD3 reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MD3=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_IRRMESH   "Read .irrmesh (Irrlicht meshes) with our own IRRMESH reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IRRMESH=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_B3D       "Read .b3d (Blitz3D models) with our own B3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_B3D=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_X         "Read .x (DirectX models) with our own X reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_X=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_AC3D     "Read .ac / .acc / .ac3d (AC3D models) with our own AC3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_AC3D=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_OGRE     "Read .mesh.xml (OGRE XML meshes) with our own OGRE reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_OGRE=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_XGL      "Read .xgl / .zgl (XGL scenes) with our own XGL reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_XGL=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_IRR      "Read .irr (Irrlicht scenes) with our own IRR reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IRR=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_NFF      "Read .nff / .enff (Neutral File Format) with our own NFF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_NFF=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_IQM      "Read .iqm (Inter-Quake Models) with our own IQM reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IQM=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_COB      "Read .cob (Caligari trueSpace) with our own COB reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_COB=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_OFF       "Read .off meshes with our own OFF reader by default (run-time env OKAY_OWN_OFF=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_SMD       "Read .smd (Valve Studiomdl Data) with our own SMD reader by default (run-time env OKAY_OWN_SMD=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_MD5       "Read .md5mesh / .md5anim (id Tech 4 / Doom 3) with our own MD5 reader by default (run-time env OKAY_OWN_MD5=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_MS3D       "Read .ms3d (MilkShape 3D) with our own MS3D reader by default (run-time env OKAY_OWN_MS3D=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_ASE       "Read .ase (3ds Max ASCII Scene Export) with our own ASE reader by default (run-time env OKAY_OWN_ASE=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_BLEND     "Read .blend with our own Blender reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .blend load at all; run-time env OKAY_OWN_BLEND=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_HTTP      "Allow our own HTTP/1.1 client (system OpenSSL loaded at run time) on Linux for NativeHttp instead of spawning curl; still needs OKAY_OWN_HTTP=1 in the environment at run time, curl stays the fallback (docs/platform/own_http.md)" OFF)
+option(OKAY_OWN_3MF       "Read .3mf with our own 3MF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_3MF=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_AMF       "Read .amf with our own AMF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_AMF=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_X3D       "Read .x3d with our own X3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_X3D=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_DXF       "Read .dxf with our own DXF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_DXF=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_LWO       "Read .lwo with our own LWO reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LWO=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_MD2       "Read .md2 (Quake II models) with our own MD2 reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MD2=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_MD3       "Read .md3 (Quake III Arena models) with our own MD3 reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MD3=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_IRRMESH   "Read .irrmesh (Irrlicht meshes) with our own IRRMESH reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IRRMESH=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_B3D       "Read .b3d (Blitz3D models) with our own B3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_B3D=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_X         "Read .x (DirectX models) with our own X reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_X=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_AC3D     "Read .ac / .acc / .ac3d (AC3D models) with our own AC3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_AC3D=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_OGRE     "Read .mesh.xml (OGRE XML meshes) with our own OGRE reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_OGRE=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_XGL      "Read .xgl / .zgl (XGL scenes) with our own XGL reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_XGL=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_IRR      "Read .irr (Irrlicht scenes) with our own IRR reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IRR=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_NFF      "Read .nff / .enff (Neutral File Format) with our own NFF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_NFF=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_IQM      "Read .iqm (Inter-Quake Models) with our own IQM reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IQM=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_COB      "Read .cob (Caligari trueSpace) with our own COB reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_COB=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_NDO      "Read .ndo (Nendo; the reader is a header-only seam and refuses every file) with our own NDO reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_NDO=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_MDC      "Read .mdc (Return to Castle Wolfenstein models) with our own MDC reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MDC=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_HMP      "Read .hmp (3D GameStudio HMP7 terrain) with our own HMP reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_HMP=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_CSM      "Read .csm (Character Studio motion capture) with our own CSM reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_CSM=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_TER      "Read .ter (Terragen terrain) with our own Terragen reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_TER=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_Q3D      "Read .q3o / .q3s (Quick3D) with our own Q3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_Q3D=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_RAW      "Read .raw (plain triangle text) with our own RAW reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_RAW=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_PMX      "Read .pmx (MikuMikuDance models) with our own PMX reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_PMX=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_LWS      "Read .lws / .mot (LightWave scenes and motions) with our own LWS reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LWS=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" OFF)
+option(OKAY_OWN_MDC      "Read .mdc (Return to Castle Wolfenstein models) with our own MDC reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MDC=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_HMP      "Read .hmp (3D GameStudio HMP7 terrain) with our own HMP reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_HMP=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_CSM      "Read .csm (Character Studio motion capture) with our own CSM reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_CSM=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_TER      "Read .ter (Terragen terrain) with our own Terragen reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_TER=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_Q3D      "Read .q3o / .q3s (Quick3D) with our own Q3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_Q3D=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_RAW      "Read .raw (plain triangle text) with our own RAW reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_RAW=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_PMX      "Read .pmx (MikuMikuDance models) with our own PMX reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_PMX=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_OGREBIN  "Read .mesh (OGRE binary meshes) with our own OGRE binary reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_OGREBIN=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_ZAE      "Read .zae (COLLADA in a ZIP archive) with our own ZAE reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_ZAE=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_XML      "Read .xml (an Irrlicht scene or mesh, COLLADA, XGL or OGRE XML, told apart by the root element) with our own readers by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_XML=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_LXO      "Read .lxo (Modo objects) with our own LWO reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LXO=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_LWS      "Read .lws / .mot (LightWave scenes and motions) with our own LWS reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LWS=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" ON)
+option(OKAY_BUILD_PLATFORM_SELFTEST "Build okay-platform-selftest: tries the own okay::platform backend (window, input, audio, pad, clipboard) and prints what worked. OFF by default" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
+option(OKAY_BUILD_XBOX_UWP "EXPERIMENTAL, UNVERIFIED Xbox One Developer Mode (UWP) export: its tests, the editor entry and (on a UWP toolchain) the app. platform/xbox_uwp, docs/platform/xbox_uwp.md" OFF)
 
-# ---- One switch to dogfood the whole own stack (docs/own_stack_rollout.md) -------------------------------------
+# ---- One switch to dogfood the whole own stack (docs/status/own_stack_rollout.md) -------------------------------------
 # -DOKAY_OWN_STACK=ON turns on every own backend that is safe to try in a developer or CI build: our own model readers
 # (FBX and every format that has one), our own HTTP client (Linux), our own okay::platform backend as the default (Linux),
 # and OkayUI as the launcher / editor UI default. Each is still an ordinary option or run-time switch underneath and each
@@ -87,8 +101,10 @@ option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    O
 # (owner rule: needs an outside review first). OKAY_OWN_STACK_CRYPTO_TEST=ON (or that variable set to 1 in the environment at
 # configure time) additionally turns on OKAY_OWN_CRYPTO, for TEST builds and the CI own-stack job only. Releases refuse both
 # (scripts/check_release_own_stack.sh, called by scripts/build-windows-dist.sh and release.yml).
-option(OKAY_OWN_STACK "Developer/CI dogfood build: own readers, own HTTP, own platform backend and OkayUI by default (never crypto; see docs/own_stack_rollout.md). NEVER for releases" OFF)
+option(OKAY_OWN_STACK "Developer/CI dogfood build: own readers, own HTTP, own platform backend and OkayUI by default (never crypto; see docs/status/own_stack_rollout.md). NEVER for releases" OFF)
 option(OKAY_OWN_STACK_CRYPTO_TEST "With OKAY_OWN_STACK: ALSO use our own UNREVIEWED crypto (OKAY_OWN_CRYPTO). Test builds and CI only; releases refuse it" OFF)
+option(OKAY_LAUNCHER_ON_OKAYUI "Also build OkaySpaceOkayUI(.exe): the SAME launcher sources compiled against OkayUI's Dear ImGui compatibility layer (no Dear ImGui). Off by default; docs/ui/own_ui_toolkit.md" OFF)
+option(OKAY_EDITOR_ON_OKAYUI   "Also build OkayEngineOkayUI(.exe): the SAME editor sources compiled against OkayUI's Dear ImGui compatibility layer (no Dear ImGui). Off by default; docs/ui/own_ui_toolkit.md" OFF)
 if(NOT OKAY_OWN_STACK_CRYPTO_TEST AND "$ENV{OKAY_OWN_STACK_CRYPTO_TEST}" STREQUAL "1")
     set(OKAY_OWN_STACK_CRYPTO_TEST ON)
 endif()
@@ -108,9 +124,15 @@ if(OKAY_OWN_STACK)
 endif()
 
 if(MSVC)
-    add_compile_options(/W4 /permissive-)
+    add_compile_options(/W4 /permissive- /bigobj)
+    # Windows headers must not define min/max macros (Tween.hpp uses std::numeric_limits<T>::max()).
+    add_compile_definitions(NOMINMAX)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
+    # No fused multiply-add contraction: on a compiler or CPU target with FMA, GCC fuses a*b+c differently in the scalar and
+    # the SSE code of the software renderer (TriangleSpan.hpp), so the two paths stop being bit for bit equal. Plain IEEE
+    # float arithmetic keeps every path (and every machine) giving the same pixels.
+    add_compile_options(-ffp-contract=off)
 endif()
 
 # Sanitizer build (GCC/Clang), used by CI's sanitizer job. Off by default, e.g.
@@ -179,19 +201,26 @@ endif()
 if(OKAY_DEFAULT_ACCOUNT_URL AND NOT OKAY_DEFAULT_ACCOUNT_KEY)
     message(STATUS "Account API key baked in: NO")
 endif()
-# Hosted password-reset page (supabase/auth-pages/reset-password, docs/password-reset.md).
+# The updater reads releases ONLY from <account server>/storage/v1/object/public/releases/ (the programs never use GitHub,
+# owner decision 2026-11-20). A release build (OKAY_REQUIRE_SODIUM=ON marks one) without that address would never update,
+# so it stops here. scripts/check_no_github_runtime.py checks this guard is in place.
+if(OKAY_REQUIRE_SODIUM AND NOT OKAY_DEFAULT_ACCOUNT_URL MATCHES "^https://[a-z0-9]+\\.supabase\\.co/?$")
+    message(FATAL_ERROR "No update server for this release build: OKAY_DEFAULT_ACCOUNT_URL must be the https://<project>.supabase.co address "
+                        "(config/public-account.json or the OKAY_DEFAULT_ACCOUNT_URL variable). Without it the programs could never update.")
+endif()
+# Hosted password-reset page (supabase/auth-pages/reset-password, docs/online/password-reset.md).
 # Empty = not configured; the launcher then says so when it sends a reset email.
 set(OKAY_DEFAULT_PASSWORD_RESET_URL "" CACHE STRING "URL of the hosted password-reset page, sent to Supabase as redirect_to")
 if(OKAY_DEFAULT_PASSWORD_RESET_URL)
     add_compile_definitions(OKAY_DEFAULT_PASSWORD_RESET_URL="${OKAY_DEFAULT_PASSWORD_RESET_URL}")
 endif()
 # Default voice server for launcher calls ("host" or "host:port" of a running
-# okayspace-relay; see docs/relay.md). Empty = players set one in Settings > Chat.
+# okayspace-relay; see docs/online/relay.md). Empty = players set one in Settings > Chat.
 set(OKAY_DEFAULT_VOICE_RELAY "" CACHE STRING "Default voice relay (host[:port]) compiled into the launcher")
 if(OKAY_DEFAULT_VOICE_RELAY)
     add_compile_definitions(OKAY_DEFAULT_VOICE_RELAY="${OKAY_DEFAULT_VOICE_RELAY}")
 endif()
-# Anti-cheat (opt-in, docs/anticheat.md): the ed25519 PUBLIC keys accepted on a
+# Anti-cheat (opt-in, docs/online/anticheat.md): the ed25519 PUBLIC keys accepted on a
 # build's Data/manifest.json, as hex, comma-separated (e.g. the release key, then
 # the dev key). Public keys only; the private keys never go near CMake. Empty =
 # none built in (a signature is checked but not its signer).
@@ -204,7 +233,7 @@ set(OKAY_AC_PLAYER_TRUSTED_KEYS "" CACHE STRING "Anti-cheat: the player's truste
 include(${CMAKE_SOURCE_DIR}/cmake/OkayAntiCheatKeys.cmake)
 okay_ac_check_trusted_keys("${OKAY_AC_TRUSTED_KEYS}")          # exactly 64 hex digits per key, or configure fails
 okay_ac_check_trusted_keys("${OKAY_AC_PLAYER_TRUSTED_KEYS}")
-# Signed releases (docs/updater.md): the ed25519 PUBLIC keys that must have signed
+# Signed releases (docs/release/updater.md): the ed25519 PUBLIC keys that must have signed
 # the release index (versions.json.sig) before the launcher or editor will install
 # anything from it: the current key, and during a rotation the next one too.
 # Empty = none built in: an unsigned index is accepted (the transition for feeds
@@ -278,6 +307,25 @@ if(OKAY_BUILD_PLAYER OR OKAY_BUILD_EDITOR)
     endif()
 endif()
 
+# ---- Content delivery tool (docs/release/content_delivery.md) ----------------
+# okay-content: make-manifest / verify / sync / status / rollback for the signed game content that an exported game can download.
+# Tiny (crypto + our own HTTP layer only); it is what scripts/publish-content.sh calls and what the owner uses to test a content folder.
+option(OKAY_BUILD_CONTENT_TOOL "Build the okay-content command-line tool" ON)
+if(OKAY_BUILD_CONTENT_TOOL AND NOT EMSCRIPTEN)
+    add_executable(okay-content tools/okay-content/main.cpp)
+    target_compile_features(okay-content PRIVATE cxx_std_17)
+    target_include_directories(okay-content PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(okay-content PRIVATE okay::crypto)
+    if(WIN32)
+        target_link_libraries(okay-content PRIVATE winhttp ws2_32)
+    elseif(OKAY_OWN_HTTP AND NOT APPLE)
+        target_compile_definitions(okay-content PRIVATE OKAY_OWN_HTTP=1)
+        find_package(Threads REQUIRED)
+        target_link_libraries(okay-content PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    endif()
+    set_target_properties(okay-content PROPERTIES OUTPUT_NAME "okay-content")
+endif()
+
 # ---- Ship SDL2.dll beside the binaries ----
 # Unless fully static (OKAY_STATIC_SDL), the Windows exes link SDL2 dynamically and
 # need SDL2.dll next to them. Copy it into the output bin dir so a build is runnable
@@ -303,6 +351,9 @@ if(WIN32 AND NOT OKAY_STATIC_SDL AND DEFINED SDL2_DIR)
 endif()
 
 # ---- Developer tools (opt-in) ----------------------------------------
+if(OKAY_BUILD_PLATFORM_SELFTEST AND NOT EMSCRIPTEN)
+    add_subdirectory(tools/platform_selftest)
+endif()
 if(OKAY_BUILD_TOOLS)
     add_subdirectory(tools)
 endif()
@@ -312,6 +363,16 @@ endif()
 # Emscripten/WebGL, where raw UDP sockets don't exist in the browser sandbox.
 if(NOT EMSCRIPTEN)
     add_subdirectory(relay)
+endif()
+
+# ---- okay-texture: command line texture tool (mips, atlas, compress), no graphics deps -----
+if(NOT EMSCRIPTEN)
+    add_subdirectory(tools/okaytexture)
+endif()
+
+# ---- Xbox One Developer Mode export (experimental, OFF by default) -----
+if(OKAY_BUILD_XBOX_UWP)
+    add_subdirectory(platform/xbox_uwp)
 endif()
 
 # ---- Tests ------------------------------------------------------------

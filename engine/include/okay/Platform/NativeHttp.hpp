@@ -11,7 +11,7 @@
 // Request returns reached=false and callers fall back to the curl path.
 //
 // Linux and other POSIX systems can OPT IN to our own HTTP/1.1 client
-// (OwnHttp.hpp / OwnHttpNet.hpp, docs/own_http_client.md): build with
+// (OwnHttp.hpp / OwnHttpNet.hpp, docs/platform/own_http.md): build with
 // -DOKAY_OWN_HTTP=ON and set the environment variable OKAY_OWN_HTTP=1. TLS then
 // comes from the system OpenSSL, loaded at run time. If libssl cannot be loaded,
 // the certificate does not verify, or anything else goes wrong before a response
@@ -27,7 +27,11 @@
 #include <string>
 #include <vector>
 
-#if defined(_WIN32)
+#if defined(OKAY_HTTP_WINHTTP) && !defined(OKAY_XBOX_UWP)
+#  define OKAY_HTTP_WINHTTP 1   // WinHTTP is the native client on the desktop; the UWP build has none yet (docs/platform/xbox_uwp.md)
+#endif
+
+#if defined(OKAY_HTTP_WINHTTP)
 #  include <windows.h>
 #  include <winhttp.h>
 #elif defined(OKAY_OWN_HTTP) && !defined(__APPLE__)
@@ -49,7 +53,7 @@ struct Result {
     bool        maybeSent = false;
 };
 
-#if defined(_WIN32)
+#if defined(OKAY_HTTP_WINHTTP)
 namespace detail {
 inline std::wstring Widen(const std::string& s) {
     if (s.empty()) return std::wstring();
@@ -84,7 +88,7 @@ inline HINTERNET Session() {
 /// True where the native client exists: Windows (WinHTTP), or POSIX built with
 /// OKAY_OWN_HTTP and run with OKAY_OWN_HTTP=1. The curl path is used otherwise.
 inline bool NativeAvailable() {
-#if defined(_WIN32)
+#if defined(OKAY_HTTP_WINHTTP)
     return detail::Session() != nullptr && !std::getenv("OKAY_HTTP_CURL");
 #elif defined(OKAY_OWN_HTTP_ACTIVE)
     const char* on = std::getenv("OKAY_OWN_HTTP");
@@ -112,7 +116,7 @@ inline Result Request(const std::string& method, const std::string& url,
                       const std::string& outFile = std::string(),
                       int timeoutMs = 0) {
     Result r;
-#if defined(_WIN32)
+#if defined(OKAY_HTTP_WINHTTP)
     HINTERNET ses = detail::Session();
     if (!ses) return r;
     std::wstring wurl = detail::Widen(url);

@@ -7,8 +7,8 @@ row: | 7u | Physics: Improved quality, physics playground, materials, slider joi
 **What it is.** The physics got a second way to solve contacts, called **Improved** (the old one is **Classic**; old scenes keep it, new scenes
 get Improved). Crates stack and stay put, a ball bounces and rolls to a stop, fast bullets stop at thin walls, resting things go to sleep
 (cheap) and wake when what holds them up goes away. Also new: a physics material on every collider (icy or bouncy floors), a **Slider** joint, ropes that
-stay near their length, joints in the physics debug view and a debris emitter. Plain explanation and the numbers: [physics.md](physics.md) and
-[physics_plan.md](physics_plan.md). Code: `Physics/Physics3DImproved.inl`, `Physics/ContactSolver.hpp`, `Physics/BoxManifold.hpp`,
+stay near their length, joints in the physics debug view and a debris emitter. Plain explanation and the numbers: [physics.md](physics/physics.md#physics-quality-materials-joints-debris-hinges-mesh-colliders-2d-casts-and-step-rate) and
+[physics_plan.md](physics/physics.md#physics-audit-and-plan). Code: `Physics/Physics3DImproved.inl`, `Physics/ContactSolver.hpp`, `Physics/BoxManifold.hpp`,
 `Physics/DebrisPool.hpp`.
 
 **How to reach it.**
@@ -46,7 +46,6 @@ ones grey, contacts red, joints orange.
 
 **Screenshots (headless Linux software renders of the same scene, not the editor window; camera and look differ from the editor):**
 
-* [Start of Play](images/physics/playground_0.png), [after 1.2 s](images/physics/playground_1.png), [after 3 s](images/physics/playground_2.png), [after 8 s](images/physics/playground_3.png)
 
 **Status.** Tested headless on Linux (`tests/test_physics_deep_*.cpp`: manifold, solver, bugs, improved, save, more; the existing physics, joint, hinge,
 ragdoll, vehicle, destructible, controller and net-prediction tests stay green). The playground was played headless for 10 seconds and the

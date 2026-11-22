@@ -1,9 +1,10 @@
 // OkayUI plots with the Dear ImGui options: PlotLines and PlotHistogram over an array or a getter, a ring-buffer start, an overlay text, a
 // size, a hover that highlights the point or bar under the pointer and names it in a tooltip. Built on the public OkayUI calls only.
-// The plain PlotLines / PlotHistogram (scale and height only) stay in OkayUI.cpp. See docs/own_ui_toolkit.md section 4.34.
+// The plain PlotLines / PlotHistogram (scale and height only) stay in OkayUI.cpp. See docs/ui/own_ui_toolkit.md section 4.34.
 #include "okay/UI/OkayUI.hpp"
 
 #include <algorithm>
+#include <string>
 #include <cmath>
 
 namespace OkayUI {
@@ -27,7 +28,9 @@ int PlotImpl(const char* label, const Source& src, const PlotOptions& opt, bool 
     const int count = src.count;
     const char* name = label ? label : "";
     PushID(name);
-    const float lw = CalcTextSize(name).x > 0.0f ? CalcTextSize(name).x + 8.0f : 0.0f;
+    char vis[128];   // the label as shown: what comes before "##" (the rest is only the id, as for every other widget)
+    { int n = 0; for (; name[n] && n < 127; ++n) if (name[n] == '#' && name[n + 1] == '#') break; for (int i = 0; i < n; ++i) vis[i] = name[i]; vis[n] = 0; }
+    const float lw = CalcTextSize(vis).x > 0.0f ? CalcTextSize(vis).x + 8.0f : 0.0f;
     const float availW = GetContentRegionAvail().x;
     const float pw = std::max(24.0f, (opt.size.x > 0.0f && std::isfinite(opt.size.x) ? opt.size.x : availW - lw));
     const float ph = opt.size.y > 0.0f && std::isfinite(opt.size.y) ? opt.size.y : GetFrameHeight() * 2.4f;
@@ -48,7 +51,7 @@ int PlotImpl(const char* label, const Source& src, const PlotOptions& opt, bool 
     auto norm = [&](float v) { return std::max(0.0f, std::min(1.0f, (v - lo) / span)); };
 
     const DrawList& dl = GetWindowDrawList();
-    if (lw > 0.0f) dl.AddText(V(r.x + r.w + 8.0f, r.y + (r.h - CalcTextSize(name).y) * 0.5f), GetColorU32(Col_Text), name);   // the label, to the right
+    if (lw > 0.0f) dl.AddText(V(r.x + r.w + 8.0f, r.y + (r.h - CalcTextSize(vis).y) * 0.5f), GetColorU32(Col_Text), vis);   // the label, to the right
     dl.AddRectFilled(V(r.x, r.y), V(r.x + r.w, r.y + r.h), GetColorU32(Col_Track));
     const float ix = r.x + 2.0f, iw = r.w - 4.0f, iy = r.y + 2.0f, ih = r.h - 4.0f;
     int hot = -1;

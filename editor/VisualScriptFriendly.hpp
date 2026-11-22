@@ -14,6 +14,8 @@
 #include <string>
 #include <vector>
 
+#include "okay/VisualScript/QuickBlocks.hpp"
+
 namespace okay::editor::vsed {
 
 inline const char* VsIntern(std::string s) {
@@ -312,6 +314,10 @@ inline void VsFillFriendlyPins(const okay::vs::VsApiEntry& e,
 // Old titles and raw identifiers. The palette searches this as well as the title.
 inline std::string VsNodeSearchText(const char* type) {
     std::string s = VsSearchKeywords(type);
+    if (const VsPlainRename* r = VsPlainRenameFor(type)) {   // a renamed node is still found by its old name
+        if (!s.empty()) s += ' ';
+        s += r->oldTitle;
+    }
     if (type && std::strncmp(type, "Fn.", 3) == 0) {
         if (!s.empty()) s += ' ';
         s += type + 3;
@@ -374,9 +380,36 @@ inline const VsNodeDoc* VsBuiltinDocFor(const std::string& type) {
     return &cache.emplace(type, std::move(d)).first->second;
 }
 
+// A quick block's page: built from its table row (description, example, one input per field).
+inline const VsNodeDoc* VsQuickBlockDocFor(const std::string& type) {
+    const okay::vs::QuickBlock* b = okay::vs::FindQuickBlock(type);
+    if (!b) return nullptr;
+    static std::unordered_map<std::string, VsNodeDoc> cache;
+    auto it = cache.find(type);
+    if (it != cache.end()) return &it->second;
+    VsNodeDoc d;
+    d.type = type;
+    d.title = b->title;
+    d.description = b->description;
+    d.requirements = "No component is required unless the block says so. It runs in Play mode.";
+    d.example = b->example;
+    d.related = "Quick blocks";
+    d.keywords = std::string(b->title) + " " + b->group + " quick block";
+    if (b->flowIn) d.pins.push_back({true, true, "", "Flow", "The flow arrives here. The block does its job when a wire reaches this pin.", ""});
+    if (b->thenOut) d.pins.push_back({false, true, "Then do", "Flow", "After the block is done, the flow carries on from here.", ""});
+    for (const okay::vs::QbField& f : okay::vs::QbAllFields(*b))
+        d.pins.push_back({true, false, f.name, "Any", std::string("Type the value on the block: ") + f.name + ".", f.def});
+    return &cache.emplace(type, std::move(d)).first->second;
+}
+
+inline const VsNodeDoc* VsExtraDocs(const std::string& type) {
+    if (const VsNodeDoc* q = VsQuickBlockDocFor(type)) return q;
+    return VsBuiltinDocFor(type);
+}
+
 inline const bool kVsDocHooks = [] {
     VsApiDocFixup = &VsFriendlyApiDocFixup;
-    VsExtraDocFor = &VsBuiltinDocFor;
+    VsExtraDocFor = &VsExtraDocs;
     return true;
 }();
 

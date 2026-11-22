@@ -1,6 +1,9 @@
 #include "okay/Combat/WeaponDefinition.hpp"
 #include "okay/Components/Equipment.hpp"
-#include "okay/Modules/Health.hpp"
+#include "okay/Components/NPCController.hpp"
+#include "okay/Components/Stats.hpp"
+#include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Components/SurvivalStats.hpp"
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -295,18 +298,16 @@ const WeaponDefinition* WeaponForHolder(GameObject* go) {
     return WeaponBook::Get().ForItem(item);
 }
 
-bool ApplyCombatDamage(GameObject* target, float amount, const Vec3& from, const Vec3& impulse, DamageType type,
-                       GameObject* instigator) {
+bool ApplyCombatDamage(GameObject* target, float amount, const Vec3& from, const Vec3& impulse) {
     if (!target || !(amount > 0.0f)) return false;
-    DamageEvent e = DamageEvent::Of(amount, type);
-    e.instigator = instigator;
-    e.origin = from; e.hasOrigin = true;
-    // Health of any kind on the target itself (not its parents): HealthStat, survival, RPG stats or NPC.
-    const DamageResult r = health::Damage(target, e);
-    const bool hurt = r.handled && !r.blocked;
-    if (hurt && (impulse.x != 0.0f || impulse.y != 0.0f || impulse.z != 0.0f))
+    // As before the one damage path: any live target counts as hit and takes the push, even when god
+    // mode, i-frames or a dodge keep its health (so knockback still lands during a dodge).
+    float health = 0.0f, maxHealth = 0.0f;
+    if (!HealthOf(target, health, maxHealth) || IsObjectDead(target)) return false;
+    DealDamage(target, DamageEvent::From(amount, from, DamageType::Physical));
+    if (impulse.x != 0.0f || impulse.y != 0.0f || impulse.z != 0.0f)
         if (auto* body = target->GetComponent<Rigidbody3D>()) body->AddImpulse(impulse);
-    return hurt;
+    return true;
 }
 
 } // namespace okay

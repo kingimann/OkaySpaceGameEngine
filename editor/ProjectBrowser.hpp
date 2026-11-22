@@ -10,7 +10,7 @@
 //     moved file (or at a file inside a moved folder) is rewritten, the .okaymeta (GUID) moves with the file,
 //   * "what uses this asset" for the delete confirmation and Find References,
 //   * the copy / cut / paste clipboard.
-// It sits on okay::AssetDatabase (GUIDs, dependency graph). See docs/project_panel.md.
+// It sits on okay::AssetDatabase (GUIDs, dependency graph). See docs/editor/project_panel.md.
 // Failure injection: SetFailureHook makes any file step fail, so tests can check nothing is lost.
 #include "ProjectContextModel.hpp"
 #include "okay/Core/AssetDatabase.hpp"
@@ -227,6 +227,11 @@ public:
     /// Reimport a folder: every asset inside it, below it too ("Reimport All" in the folder menu). Returns how many
     /// assets were read again (0 for a path outside Assets or an empty folder). A file path reimports that one file.
     int ReimportFolder(const std::string& path);
+    /// The files to load again (absolute paths, each once, in the order they were found): the ones a scan saw change on
+    /// disk (changed in another program), the ones whose import settings were changed, and every file reimported by hand
+    /// (even when its bytes are the same: the person asked). Handed out once. The editor calls it every frame and drops
+    /// those pictures from the renderers' texture cache, so the Scene view shows the new one without a restart.
+    std::vector<std::string> TakeChangedFiles();
     // ---- thumbnails: the database's ThumbnailCache, keyed by GUID and content hash --------------------------
     /// The cache key of a file's thumbnail: the asset's GUID (a stable stand-in made from the path while it has no
     /// meta) and its content hash from the database; for a prefab, scene or material the hashes of everything it
@@ -326,6 +331,7 @@ private:
     okay::Guid ThumbGuidOf(const okay::AssetRecord& rec) const;
     std::function<bool(const char*, const std::string&)> m_fail;
     std::vector<UndoEntry> m_undo;
+    std::vector<std::string> m_changedFiles;                        // reimported by hand since the last TakeChangedFiles
 
     friend struct Tx;
     Result MoveCore(const std::vector<std::pair<std::string, std::string>>& items, const std::string& label, bool pushUndo);

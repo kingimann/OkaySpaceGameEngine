@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 #include "MenuBarModel.hpp"
+#include "UIMenuModel.hpp"
+#include "AutoPerf.hpp"
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -184,8 +186,18 @@ int main() {
         State s;
         CHECK((Ids(EditMenu(s)) == std::vector<std::string>{
             "edit.undo", "edit.redo", "---", "edit.cut", "edit.copy", "edit.paste", "edit.duplicate", "edit.delete", "---",
-            "edit.selectall", "edit.deselect", "---", "edit.preferences", "edit.projectsettings"}));
+            "edit.selectall", "edit.deselect", "---", "edit.darkmode", "edit.lightmode", "edit.projectsettings"}));
         CHECK(FindId(EditMenu(s), "edit.undo")->label == "Undo");
+        // One look choice: Dark Mode / Light Mode. The mode that is on is greyed with a reason; no Preferences menu is left.
+        CHECK(FindId(EditMenu(s), "edit.preferences") == nullptr);
+        CHECK(FindId(EditMenu(s), "edit.darkmode")->label == "Dark Mode");
+        CHECK(FindId(EditMenu(s), "edit.lightmode")->label == "Light Mode");
+        CHECK(!FindId(EditMenu(s), "edit.darkmode")->enabled && FindId(EditMenu(s), "edit.lightmode")->enabled);
+        CHECK(FindId(EditMenu(s), "edit.darkmode")->reason == "The editor is already in dark mode.");
+        { State l; l.darkMode = false;
+          CHECK(FindId(EditMenu(l), "edit.darkmode")->enabled && !FindId(EditMenu(l), "edit.lightmode")->enabled); }
+        // Old settings files: theme 0 Slate and 2 Classic are dark, 1 Light is light, unknown values fall back to dark.
+        CHECK(LegacyThemeIsDark(0) && !LegacyThemeIsDark(1) && LegacyThemeIsDark(2) && LegacyThemeIsDark(99));
         CHECK(!FindId(EditMenu(s), "edit.undo")->enabled);
         CHECK(FindId(EditMenu(s), "edit.undo")->reason == "Nothing to undo yet.");
         CHECK(FindId(EditMenu(s), "edit.redo")->reason == "Nothing to redo.");
@@ -228,7 +240,7 @@ int main() {
         State none;
         CHECK((Ids(GameObjectMenu(none)) == std::vector<std::string>{
             "go.empty", "go.emptychild", "go.emptyparent", "---",
-            "create.2d", "create.3d", "create.player", "create.light", "create.camera", "create.audio", "create.effects", "create.ui", "---",
+            "create.2d", "create.3d", "create.player", "create.vehicles", "create.light", "create.camera", "create.audio", "create.effects", "create.ui", "---",
             "go.instantiate", "---", "go.arraydup", "go.snap"}));
         CHECK(FindId(GameObjectMenu(none), "go.empty")->enabled);
         for (const char* id : {"go.emptychild", "go.emptyparent", "go.arraydup", "go.snap"}) {
@@ -247,7 +259,7 @@ int main() {
             const Entry* c = FindLabel(goMenu, label);
             CHECK(c != nullptr && c->kind == Kind::SlotMenu);
         }
-        CHECK(CreateCategories().size() == 8);
+        CHECK(CreateCategories().size() == 9);
     }
 
     {   // View: the windows (each listed once) and the layouts, then the Scene view's commands, overlays and rendering settings.
@@ -272,7 +284,7 @@ int main() {
 
     {   // Help: docs, shortcuts, updates, bug report, about.
         CHECK((Ids(HelpMenu(State{})) == std::vector<std::string>{
-            "help.scripting", "help.docs", "help.shortcuts", "---", "help.updates", "help.bug", "---", "help.about"}));
+            "help.scripting", "help.shortcuts", "---", "help.updates", "help.bug", "---", "help.about"}));
     }
 
     {   // The checker really finds the old problems: the pre-2026-11-15 File menu listed "Examples" three times and the old View
@@ -304,7 +316,7 @@ int main() {
             {"Edit", "Undo", "edit.undo"}, {"Edit", "Redo", "edit.redo"}, {"Edit", "Project Settings...", "edit.projectsettings"},
             {"View", "Panels", "view.panels"}, {"View", "Editors & Tools", "view.tools"},
             {"View", "Rendering & Performance", "view.rendering"}, {"View", "Scene Overlays", "view.overlays"},
-            {"View", "Appearance", "edit.preferences"}, {"View", "Camera Bookmarks", "view.bookmarks"},
+            {"View", "Appearance", "edit.darkmode"}, {"View", "Camera Bookmarks", "view.bookmarks"},
             {"View", "Layout", "view.layout"}, {"View", "Reset Layout", "view.layout"},
             {"View > Editors & Tools", "UI Editing Mode", "view.uionly"},
             {"Window", "Items, Loot & Recipes", "tool.items"},   // the Window menu held only this duplicate
@@ -328,13 +340,64 @@ int main() {
         for (const Moved& m : moved) CHECK(FindId(all, m.where) != nullptr);
         // Panels and tool windows keep their labels and are each reachable.
         for (const char* label : {"Hierarchy", "Inspector", "Project", "Console", "Problems", "Game", "Services", "Scene Manager", "Net",
-                                  "Save Manager", "Variables (watch)", "History", "Stats", "Lighting", "Profiler", "Asset Manager",
-                                  "Crash Log", "Audio Mixer", "Custom Actions", "Visual Script", "Script Editor", "Animation",
+                                  "Save Manager", "History", "Stats", "Lighting", "Profiler", "Asset Manager",
+                                  "Crash Log", "Audio Mixer", "Visual Script", "Script Editor", "Animation",
                                   "Animator (state graph)", "Timeline (cutscenes)", "Navigation", "Dialogue & Quests", "Behavior Tree",
                                   "Modeling", "UV Editor", "Sprite Editor", "UI Editor (separate tab)", "UI Theme", "Items, Loot & Recipes",
                                   "Weapons", "Localization", "UI Editing Mode"}) {
             const Entry* e = FindLabel(all, label);
             CHECK(e != nullptr && e->kind == Kind::Toggle);
+        }
+    }
+
+    {   // GameObject > UI (2026-11-17, "make it more simple so the user understands"): eight short groups with plain names, every item with a
+        // one-sentence tip, nothing listed twice, the Gallery last, and every item of the old menu still has a home. The screen sections
+        // come from the screen registry in the real editor; here the old screens stand in for them (tests/test_ui_library4.cpp checks the real list).
+        std::vector<oked::uimenu::ScreenGroup> screens(2);
+        screens[0].name = "Menus"; screens[0].tip = "Title, pause and settings screens.";
+        screens[1].name = "Loading"; screens[1].tip = "Loading screens.";
+        for (const auto& l : oked::uimenu::LegacyItems())
+            if (std::string(l.id).rfind("ui.scr.", 0) == 0) screens[std::string(l.id).find("loading") != std::string::npos ? 1 : 0].items.push_back({std::string(l.id).substr(7), l.label, "A ready-made screen."});
+        const auto menu = oked::uimenu::UIMenu(screens);
+        int groups = 0;
+        for (const Entry& e : menu) groups += e.kind == Kind::Submenu;
+        CHECK(groups == 3);                                   // Game HUD, Menus & Screens, More
+        CHECK(menu.size() <= 12);                             // owner 2026-11-21: a short flat list, at most 12 entries at the top
+        CHECK(menu.size() == 12);
+        { std::vector<std::string> top; for (const Entry& e : menu) top.push_back(e.label);   // the order is stable
+          const std::vector<std::string> want = {"Text", "Image", "Button", "Panel", "Text Field", "Slider", "Toggle", "Dropdown", "Scroll Area", "Game HUD", "Menus & Screens", "More"};
+          CHECK(top == want); }
+        for (const Entry& e : menu) CHECK(e.kind == Kind::Submenu || e.kind == Kind::Item);   // no separators or helper rows at the top
+        CHECK(menu.back().id == "ui.g.more" && menu.back().children.back().id == "ui.browse");   // the Gallery is the last thing in More
+        CHECK(menu.front().label == "Text");   // the common things come first, flat
+        CHECK(LabelsUniquePerLevel(menu));
+        std::set<std::string> ids; std::set<std::string> labels; int items = 0;
+        Walk(menu, [&](const Entry& e, int) {
+            if (e.kind == Kind::Separator || e.kind == Kind::Heading) return;
+            CHECK(!e.id.empty() && !e.label.empty());
+            CHECK(!e.tip.empty());                            // every entry says what it does in one sentence
+            CHECK(e.tip.size() < 230);
+            CHECK(ids.insert(e.id).second);                   // no id twice
+            if (e.kind == Kind::Item) { ++items; CHECK(labels.insert(e.label).second); }   // no label twice anywhere in the menu
+        });
+        CHECK(items >= 100);
+        // The old menu's items all have a home: in the menu, or on the removed list (the editor still runs those ids, the Gallery adds them).
+        std::set<std::string> removed; for (const char* r : oked::uimenu::RemovedFromMenu()) { removed.insert(r); CHECK(ids.count(r) == 0); }
+        for (const auto& l : oked::uimenu::LegacyItems()) CHECK(ids.count(l.id) + removed.count(l.id) == 1);
+        // No jargon in the words a beginner reads first.
+        for (const Entry& g : menu) {
+            for (const char* bad : {"Canvas", "Raw Image", "Masked", "Flex", "Layout Group", "Safe Area"}) CHECK(g.label.find(bad) == std::string::npos);
+            CHECK(g.id.rfind("ui.", 0) == 0);
+        }
+        // Every id is run by the editor (a dead click is a bug): ui.scr.* ids are run by one prefix rule, the rest by an exact id.
+        const std::string src = EditorSources();
+        if (src.empty()) std::cout << "  (editor sources not found: UI menu wiring check skipped)\n";
+        else for (const std::string& id : [&] { std::set<std::string> a = ids; a.insert(removed.begin(), removed.end()); return a; }()) {
+            if (id.rfind("ui.g.", 0) == 0 || id.rfind("ui.scr.", 0) == 0) continue;
+            const bool wired = src.find("id == \"" + id + "\"") != std::string::npos || (id.rfind("ui.o.", 0) == 0 && src.find("id.rfind(\"ui.o.\"") != std::string::npos)
+                            || (id.rfind("ui.w3d.", 0) == 0 && src.find("id.rfind(\"ui.w3d.\"") != std::string::npos);
+            if (!wired) std::cerr << "  not run in editor/*.cpp: " << id << "\n";
+            CHECK(wired);
         }
     }
 
@@ -360,5 +423,18 @@ int main() {
         }
     }
 
+    {   // Auto for Rendering & Performance: best value for this PC, shown as "Auto (On)"; the user can still force a value.
+        using namespace oked::autoperf;
+        Hardware strong; strong.gpuRenderer = true; strong.cpuCores = 8; strong.ramMB = 16000; strong.displayHz = 144;
+        Hardware weak;   weak.gpuRenderer = false;  weak.cpuCores = 2;   weak.ramMB = 4000;
+        Hardware midGpu = strong; midGpu.cpuCores = 2;
+        Hardware unknown;
+        CHECK(AutoAntiAliasing(strong) && !AutoAntiAliasing(weak) && !AutoAntiAliasing(midGpu) && !AutoAntiAliasing(unknown));
+        CHECK(AutoVSync(strong) && !AutoVSync(weak) && !AutoVSync(unknown));
+        CHECK(Resolve(Auto, true) && !Resolve(Auto, false));
+        CHECK(!Resolve(ForceOff, true) && Resolve(ForceOn, false));   // an override beats Auto
+        CHECK(ClampMode(-1) == Auto && ClampMode(7) == Auto && ClampMode(2) == ForceOn);
+        CHECK(Label(Auto, true) == "Auto (On)" && Label(Auto, false) == "Auto (Off)" && Label(ForceOff, false) == "Off" && Label(ForceOn, true) == "On");
+    }
     TEST_MAIN_RESULT();
 }

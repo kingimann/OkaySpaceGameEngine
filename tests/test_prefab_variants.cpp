@@ -275,6 +275,10 @@ static void TestVariantErrors() {
         const std::size_t b0 = Live(s);
         GameObject* r = SceneSerializer::InstantiateFromFile(s, f.P("cutv.okayprefab"), &err, &warn);
         if (!r) CHECK(Live(s) == b0);   // never a half-built tree
+        // A cut that lands exactly on a line end leaves a smaller but whole variant, which
+        // loads (where that happens depends on the length of the temp folder path). Remove
+        // it so the object count below still matches.
+        if (r) { s.Destroy(r); s.FlushDestroyed(); CHECK(Live(s) == b0); }
     }
     Write(f.P("cutbase.okayprefab"), "okayscene 3\ngameobject 0 \"Base\"\n  transform 0 0 0 0 0");
     Write(f.P("ofcut.okayprefab"), "okayscene 3\nvariant " + Q(f.P("cutbase.okayprefab")) + "\n");
@@ -524,6 +528,69 @@ static void TestValidator() {
     CHECK(!oc.Ok() && Contains(oc.ToString(), "cut.okayprefab") && Contains(oc.ToString(), "cut short"));
 }
 
+// A project folder deeper than Windows' old 260-character limit, and a variant file cut
+// at every possible byte. A cut in the middle of a line is always refused (it used to
+// load when the cut fell just after a record's first word, dropping that record); a cut
+// on a line end may load the shorter file. The scene never keeps a half-built tree.
+static void TestLongPathAndEveryCut() {
+    RUN_SUITE("long project path and a variant cut at every byte");
+    std::string deep = "okay_prefab_var_long";
+    for (int i = 0; i < 4; ++i) deep += "/" + std::string(70, (char)('p' + i));
+    struct RemoveTop {   // Files removes only the deepest folder; take the whole chain away at the end
+        ~RemoveTop() { std::error_code ec; fs::remove_all(fs::temp_directory_path() / "okay_prefab_var_long", ec); }
+    } removeTop;
+    Files f(deep);
+    CHECK(f.base.size() > 300);
+    MakeRobot(f.base);
+    const std::string good = VariantText(f.base);
+    Write(f.P("v.okayprefab"), good);
+    Scene s("s");
+    std::string err;
+    std::vector<std::string> warn;
+    GameObject* v = PrefabTools::Instantiate(s, f.P("v.okayprefab"), {}, &err, &warn);
+    CHECK(v != nullptr);
+    if (!v) { std::cerr << "  err: " << err << "\n"; return; }
+    CHECK(v->prefabSource == f.P("v.okayprefab"));
+    CHECK(Child(v, "Head") && Child(v, "Head")->tag == "head");
+    CHECK(warn.empty());
+    const std::size_t start = Live(s);
+
+    int midLineLoads = 0, halfBuilt = 0;
+    for (std::size_t cut = 0; cut < good.size(); ++cut) {
+        Write(f.P("cut.okayprefab"), good.substr(0, cut));
+        err.clear();
+        warn.clear();
+        GameObject* r = PrefabTools::Instantiate(s, f.P("cut.okayprefab"), {}, &err, &warn);
+        if (!r) { if (Live(s) != start) ++halfBuilt; continue; }
+        const bool onLineEnd = cut == 0 || good[cut - 1] == '\n' || good[cut] == '\n' || good[cut] == '\r';
+        if (!onLineEnd) {
+            ++midLineLoads;
+            std::string tail = good.substr(cut > 40 ? cut - 40 : 0, cut > 40 ? 40 : cut);
+            for (char& c : tail) if (c == '\n') c = '/';
+            std::cerr << "  cut at " << cut << " loaded: ..." << tail << "|\n";
+        }
+        s.Destroy(r);
+        s.FlushDestroyed();
+    }
+    CHECK(midLineLoads == 0);
+    CHECK(halfBuilt == 0);
+    CHECK(Live(s) == start);
+
+    // The cut that used to load: right after "override 2 ", the tag override lost.
+    const std::size_t at = good.find("override 2 ") + std::string("override 2 ").size();
+    Write(f.P("cut.okayprefab"), good.substr(0, at));
+    err.clear();
+    CHECK(PrefabTools::Instantiate(s, f.P("cut.okayprefab"), {}, &err, &warn) == nullptr);
+    CHECK(Contains(err, "cut short"));
+    CHECK(Live(s) == start);
+    // A hand-written file whose last whole record has no newline still loads.
+    Write(f.P("nonl.okayprefab"), "okayscene 3\nvariant " + Q(f.base) + "\nremove 1");
+    err.clear();
+    GameObject* n = PrefabTools::Instantiate(s, f.P("nonl.okayprefab"), {}, &err, &warn);
+    CHECK(n != nullptr);
+    CHECK((n && ChildNames(n) == std::vector<std::string>{"Head"}));
+}
+
 int main() {
     TestVariantInstantiate();
     TestVariantWithNestedObject();
@@ -532,5 +599,6 @@ int main() {
     TestVariantApplyAndReapply();
     TestGuidRule();
     TestValidator();
+    TestLongPathAndEveryCut();
     TEST_MAIN_RESULT();
 }

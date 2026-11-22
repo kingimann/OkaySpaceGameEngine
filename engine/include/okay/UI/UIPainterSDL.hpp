@@ -3,6 +3,7 @@
 // pass was written against. Header-only so the engine library stays SDL-free; include
 // it only from code that links SDL2 (the player, SDL-based tests).
 #include "okay/UI/UIPainter.hpp"
+#include "okay/UI/UIImageScale.hpp"
 #include "okay/Graphics/Image.hpp"
 #include "okay/Graphics/TtfFont.hpp"
 #include <SDL.h>
@@ -40,14 +41,22 @@ inline SDL_Texture* LoadSDLTexture(SDL_Renderer* r, const std::string& path, con
     return tex;
 }
 
-/// Upload a TTF glyph atlas as an SDL texture (cached per font for the process;
-/// one renderer per process, as in the player). Uploaded again when the font
-/// baked new characters (TtfFont::Generation).
+/// The uploaded glyph atlases: one per (renderer, font), so a second renderer in the same process (a test, a second window) gets its own texture
+/// instead of the first one's. A renderer that is about to be destroyed calls SDLForgetRenderer, which drops its entries (the textures go with it).
+struct SDLAtlasUp { SDL_Texture* tex = nullptr; std::uint32_t gen = 0; int w = 0, h = 0; };
+inline std::unordered_map<std::string, SDLAtlasUp>& SDLAtlasCache() { static std::unordered_map<std::string, SDLAtlasUp> c; return c; }
+inline std::string SDLAtlasKey(SDL_Renderer* r, TtfFont* f) { return std::to_string((unsigned long long)(std::uintptr_t)r) + ":" + std::to_string((unsigned long long)(std::uintptr_t)f); }
+inline void SDLForgetRenderer(SDL_Renderer* r) {
+    const std::string prefix = std::to_string((unsigned long long)(std::uintptr_t)r) + ":";
+    auto& c = SDLAtlasCache();
+    for (auto it = c.begin(); it != c.end();) it = it->first.compare(0, prefix.size(), prefix) == 0 ? c.erase(it) : std::next(it);
+}
+
+/// Upload a TTF glyph atlas as an SDL texture (cached per renderer and font; the player has one renderer for the process). Uploaded again when the
+/// font baked new characters (TtfFont::Generation).
 inline SDL_Texture* SDLFontAtlas(SDL_Renderer* r, TtfFont* f) {
     if (!f || !f->Valid()) return nullptr;
-    struct Up { SDL_Texture* tex = nullptr; std::uint32_t gen = 0; int w = 0, h = 0; };
-    static std::unordered_map<TtfFont*, Up> cache;
-    Up& u = cache[f];
+    SDLAtlasUp& u = SDLAtlasCache()[SDLAtlasKey(r, f)];
     const Image& a = f->Atlas();
     if (u.tex && u.gen == f->Generation()) return u.tex;
     if (u.tex && (u.w != a.Width() || u.h != a.Height())) { SDL_DestroyTexture(u.tex); u.tex = nullptr; }
@@ -86,7 +95,29 @@ public:
     void SetScale(float sx, float sy) override { SDL_RenderSetScale(m_r, sx, sy); }
 
     Tex LoadTexture(const std::string& path) override {
-        return m_cache ? LoadSDLTexture(m_r, path, m_baseDir, *m_cache) : nullptr;
+        SDL_Texture* t = m_cache ? LoadSDLTexture(m_r, path, m_baseDir, *m_cache) : nullptr;
+        if (t && m_filterSet) SDL_SetTextureScaleMode(t, m_linear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+        return t;
+    }
+    Tex LoadTextureSized(const std::string& path, int w, int h) override {
+        if (!m_cache || path.empty() || w <= 0 || h <= 0) return LoadTexture(path);
+        const std::string key = path + "@" + std::to_string(w) + "x" + std::to_string(h);
+        auto it = m_cache->find(key);
+        if (it != m_cache->end()) return it->second ? (Tex)it->second : LoadTexture(path);
+        Image img;
+        if (!img.Load(path) && !img.Load(m_baseDir + path)) return LoadTexture(path);
+        const Image small = UIDownscaleImage(img, w, h, false);
+        SDL_Texture* tex = SDL_CreateTexture(m_r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, small.Width(), small.Height());
+        if (!tex) return LoadTexture(path);
+        SDL_UpdateTexture(tex, nullptr, small.Data(), small.Width() * 4);
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+        (*m_cache)[key] = tex;
+        return tex;
+    }
+    void SetImageFilter(bool linear) override { m_linear = linear; m_filterSet = true; }
+    void SetTextureFilter(Tex t, bool linear) override {
+        if (t) SDL_SetTextureScaleMode((SDL_Texture*)t, linear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
     }
     Tex FontAtlas(TtfFont* font) override { return SDLFontAtlas(m_r, font); }
     void QueryTexture(Tex t, int* w, int* h) override { SDL_QueryTexture((SDL_Texture*)t, nullptr, nullptr, w, h); }
@@ -132,6 +163,7 @@ private:
     SDL_Renderer* m_r;
     std::unordered_map<std::string, SDL_Texture*>* m_cache;
     std::string m_baseDir;
+    bool m_linear = false, m_filterSet = false;
 };
 
 inline const Rect& FromSDL(const SDL_Rect& r) { return *(const Rect*)&r; }

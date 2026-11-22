@@ -11,12 +11,13 @@
 #include "okay/Platform/Platform.hpp"   // okay::platform: window, GL context, events, input, timers, audio, controllers
 
 #include <Okay.hpp>
-#include "SdlClipboard.hpp"          // OS clipboard for games (SDL directly, not okay::platform)
+#include "PlatformClipboard.hpp"     // OS clipboard for games (through okay::platform)
 #include "okay/Components/SettingsScreen.hpp"
 #include "okay/Components/CaptionOverlay.hpp"
 #include "SdlDisplays.hpp"             // monitor list and display modes (SDL directly; not the platform seam)
 #include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
 #include "okay/Core/BuildPipeline.hpp"   // FindDataDir (<Name>_Data layout) and build.json
+#include "okay/Core/BuildConfigExtra.hpp"   // game speed, start volumes, language, logging, environment variables from Build Settings > Game
 #include "okay/Core/Paths.hpp"
 #include <filesystem>
 #if defined(__linux__)
@@ -61,6 +62,9 @@
 #include "OkayTestPanel.hpp"
 #endif
 #include "DevLog.hpp"             // development-build log file (used with or without OkayUI)
+#include "okay/Core/BuildInfo.hpp"
+#include "GameContent.hpp"         // optional downloaded game content (off unless a content URL is configured; docs/release/content_delivery.md)
+#include "GameContentValidators.hpp"  // graph / script checks for downloaded scripts
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -1132,9 +1136,9 @@ static std::string ResolveGameBaseDir(const char* argv0) {
 }
 
 int main(int argc, char** argv) {
-    okay::ownstack::Startup("none");   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
+    okay::ownstack::Startup("none");   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
     // The window, events, input and GL context go through okay::platform (SDL2 is the default
-    // backend; see docs/platform_layer.md). The 2D drawing below still needs an SDL window.
+    // backend; see docs/platform/platform_layer.md). The 2D drawing below still needs an SDL window.
     okay::platform::Backend* pb = okay::platform::Default();
     if (!pb) { std::fprintf(stderr, "no okay::platform backend is compiled in\n"); return 1; }
     // Windows 11 / high-DPI: per-monitor-DPI-aware so the game renders at native
@@ -1290,7 +1294,7 @@ int main(int argc, char** argv) {
     }
     // Games copy and paste through SDL. The memory clipboard stays the default
     // everywhere else (tests, a headless run), so this does not turn okay::platform on.
-    static okay::SdlClipboard s_osClipboard;
+    static okay::PlatformClipboard s_osClipboard;
     okay::InstallGameClipboard(&s_osClipboard);
 
     // Resolve where the game files live: <Name>_Data/ beside the exe (the Folder layout), Data/ (the compact
@@ -1343,10 +1347,11 @@ int main(int argc, char** argv) {
         bool  bootAccentOn = false;
         float bootAccent[3] = {0.235f, 0.475f, 0.800f};
         bool  bootBar = true;
-        std::string antiCheat;     // "" / off, report, enforce (docs/anticheat.md)
+        std::string antiCheat;     // "" / off, report, enforce (docs/online/anticheat.md)
         float physicsHz = 50.0f;     // project setting; 50 matches the old fixed step
         bool smoothPhysics = true;
         bool sawPhysics = false;
+        okay::buildpipe::ExtraConfig extra;   // Build Settings > Game (docs/editor/build_settings_upgrade.md)
     } cfg;
     {
         // Read the whole config and transparently decode it if it was obfuscated at
@@ -1423,22 +1428,17 @@ int main(int argc, char** argv) {
                 cfg.smoothPhysics = std::atoi(v.c_str()) != 0;
                 cfg.sawPhysics = true;
             }
+            else okay::buildpipe::ApplyExtraKey(cfg.extra, k, v);   // time_scale, music_volume, log_level, env ...
         }
     }
-    // Register the build's scenes so scripts can load_scene_index / load_next.
-    SceneManager::ClearScenes();
-    for (const std::string& s : cfg.scenes) SceneManager::AddScene(baseDir + s);
-
-    // Resolve the scene path: CLI arg > config startup > game.okayscene.
-    std::string scenePath;
-    if (dedicatedServer && !serverOpts.scenePath.empty()) {   // --scene: as given, else beside the game
-        scenePath = serverOpts.scenePath;
-        if (!std::ifstream(scenePath).good()) scenePath = baseDir + serverOpts.scenePath;
+    // Environment variables from Build Settings > Game, set before anything below reads the environment.
+    for (const auto& kv : cfg.extra.env) {
+#if defined(_WIN32)
+        _putenv_s(kv.first.c_str(), kv.second.c_str());
+#else
+        ::setenv(kv.first.c_str(), kv.second.c_str(), 1);
+#endif
     }
-    else if (!dedicatedServer && !launchScene.empty()) scenePath = launchScene;
-    else if (!cfg.startup.empty()) scenePath = baseDir + cfg.startup;
-    else scenePath = baseDir + "game.okayscene";
-
     // Where the game WRITES saves: a per-user, writable
     // app folder when enabled — so saving works even from a read-only install (e.g.
     // Program Files) and two games never clash. Falls back to beside-the-exe.
@@ -1450,6 +1450,46 @@ int main(int argc, char** argv) {
         if (!pref.empty()) saveDir = pref;
     }
     okay::Save::SetBaseDir(saveDir);  // relative SaveData files (save.okaysave, ...) land here
+    // Build Settings > Game: how much the game logs, and an optional log file in the save folder.
+    if (!cfg.extra.logLevel.empty()) okay::Log::Configure(cfg.extra.logLevel);
+    if (!cfg.extra.logFile.empty()) okay::Log::OpenFile(saveDir + cfg.extra.logFile);
+    if (!cfg.extra.description.empty()) pb->Log("game: " + cfg.title + " - " + cfg.extra.description);
+
+    // Optional downloaded content (docs/release/content_delivery.md): OFF unless a content URL is set (content.okayconfig beside the game, or the
+    // environment variable OKAY_CONTENT_URL). With no URL nothing below does anything and the game is exactly as before. With one, the game
+    // brings its content folder up to date from the signed manifest (data and scripts only, never code), then looks for each file there first
+    // and in the installed game files second. A failed or offline update keeps serving the last good content.
+    {
+        std::string cfgWhy;
+        const okaycontent::GameContentConfig gcc = okaycontent::ResolveConfig(okaycontent::SlurpFile(baseDir + "content.okayconfig"), okaycontent::RealEnv(), &cfgWhy);
+        if (!cfgWhy.empty()) pb->Log("content: " + cfgWhy);
+        if (gcc.Enabled()) {
+            const okaycontent::StartOutcome oc = okaycontent::StartGameContent(
+                gcc, saveDir + "content/", okay::BuildInfo::Version(), okaycontent::ValidateContentFile,
+                [pb](int ms) { pb->DelayMs(static_cast<uint32_t>(ms)); }, [pb](const std::string& l) { pb->Log(l); });
+            (void)oc;   // the one status line was logged by StartGameContent
+        }
+    }
+    // A file of the game: the downloaded content first (when there is any), else beside the game.
+    auto contentPath = [&baseDir](const std::string& rel) {
+        const std::string d = okaycontent::Overlay::Global().Find(rel);
+        return d.empty() ? baseDir + rel : d;
+    };
+
+    // Register the build's scenes so scripts can load_scene_index / load_next.
+    SceneManager::ClearScenes();
+    for (const std::string& s : cfg.scenes) SceneManager::AddScene(contentPath(s));
+
+    // Resolve the scene path: CLI arg > config startup > game.okayscene.
+    std::string scenePath;
+    if (dedicatedServer && !serverOpts.scenePath.empty()) {   // --scene: as given, else beside the game
+        scenePath = serverOpts.scenePath;
+        if (!std::ifstream(scenePath).good()) scenePath = baseDir + serverOpts.scenePath;
+    }
+    else if (!dedicatedServer && !launchScene.empty()) scenePath = launchScene;
+    else if (!cfg.startup.empty()) scenePath = contentPath(cfg.startup);
+    else scenePath = contentPath("game.okayscene");
+
 
     // Persistent prefs (high scores, settings) live in the save folder.
     std::string prefsPath = saveDir + "game.okayprefs";
@@ -1460,17 +1500,19 @@ int main(int argc, char** argv) {
     Character::SetAssetBaseDir(baseDir);   // a Character's relative clips file, too
     AntiCheatConfig::SetAssetBaseDir(baseDir);   // a relative anti-cheat rules file (.okayac) is looked for in the data folder
     BehaviorTreeRunner::SetAssetBaseDir(baseDir);   // a Behavior Tree Runner's relative .okaybt
-    ItemDatabase::Get().Load(baseDir + "items.okayitems");   // the project's item definitions (shipped by Build Game)
-    WeaponBook::Get().Load(baseDir + "weapons.okayweapon"); // the project's weapons (shipped by Build Game)
+    ItemDatabase::Get().Load(contentPath("items.okayitems"));   // the project's item definitions (shipped by Build Game)
+    WeaponBook::Get().Load(contentPath("weapons.okayweapon")); // the project's weapons (shipped by Build Game)
     // The project's strings in every language (shipped by Build Game), and the
     // language to show: the one the player chose before, else the OS language
     // when the game has it, else the table's default.
-    if (std::ifstream(baseDir + "strings.okayloc").good()) {
+    if (std::ifstream(contentPath("strings.okayloc")).good()) {
         std::string locErr;
-        if (!Localization::LoadTable(baseDir + "strings.okayloc", &locErr)) pb->Log("strings.okayloc: " + locErr);
+        if (!Localization::LoadTable(contentPath("strings.okayloc"), &locErr)) pb->Log("strings.okayloc: " + locErr);
     }
     {
         std::vector<std::string> osLocales = pb->PreferredLocales();
+        // Build Settings > Game > Starting language: tried first, but the language the player chose before still wins.
+        if (!cfg.extra.defaultLanguage.empty()) osLocales.insert(osLocales.begin(), cfg.extra.defaultLanguage);
         Localization::LoadSettings(osLocales);
     }
 
@@ -1562,7 +1604,7 @@ int main(int argc, char** argv) {
             if (nm->AuthToken().empty() && okay::Account::IsLoggedIn()) nm->SetAuthToken(okay::Account::Token());
     if (okay::Account::IsLoggedIn())   // also for networks scripts create later
         okay::NetworkManager::SetDefaultIdentity(okay::Account::Token(), okay::Account::Username());
-    {   // Session tickets (docs/anticheat.md "Joining a server that needs a ticket"): with okay_tickets.cfg next to the game, every join
+    {   // Session tickets (docs/online/anticheat.md "Joining a server that needs a ticket"): with okay_tickets.cfg next to the game, every join
         // (the launcher's --join, a reconnect, a script's net_join) first gets a ticket from the ticket service and never goes out without
         // one when the file says `mode required`. No file = no gate: joins behave as before.
         okayac::ticket::Config tcfg = okayac::ticket::LoadConfig((std::filesystem::u8path(baseDir) / okayac::ticket::kConfigName).u8string());
@@ -1629,7 +1671,7 @@ int main(int argc, char** argv) {
     // The 2D drawing goes through okay::platform::Painter: SDL_Renderer on an sdl2 window (as always),
     // or on the own backend the software painter, which draws into a frame buffer on the CPU and hands it to the
     // window. The software painter is own code and NOT READY: it is only reachable by choosing the own backend
-    // through OKAY_PLATFORM_BACKEND=own in the environment (docs/platform_layer.md).
+    // through OKAY_PLATFORM_BACKEND=own in the environment (docs/platform/platform_layer.md).
     std::unique_ptr<okay::platform::Painter> painterOwner;
     if (window) {
         okay::platform::PainterDesc pd;
@@ -1660,7 +1702,7 @@ int main(int argc, char** argv) {
         okay::SplashStyle st;
         if (cfg.bootAccentOn) { st.ar = cfg.bootAccent[0]; st.ag = cfg.bootAccent[1]; st.ab = cfg.bootAccent[2]; }
         auto C = [](const float* c) -> SDL_Color {
-            auto u = [](float v){ return (Uint8)((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };
+            auto u = [](float v){ return (Uint8)((!(v > 0) ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };   // nan counts as 0 (a nan cast is undefined)
             return SDL_Color{u(c[0]), u(c[1]), u(c[2]), 255}; };
         st.bgTop = C(cfg.bootBgTop); st.bgBottom = C(cfg.bootBgBot); st.showProgress = cfg.bootBar;
         if (!cfg.bootLogo.empty()) {
@@ -1688,6 +1730,12 @@ int main(int argc, char** argv) {
     ShadowCascades()   = cfg.shadowCascades;
     ShadowMapResolution() = cfg.shadowResolution;
     BloomEnabled()     = cfg.bloom;
+    okay::ParticleSystem::GlobalCap() = cfg.extra.particleCap;   // Build Settings > Graphics > Particle limit
+    if (cfg.extra.gamepadDeadzone != 0.18f)   // Build Settings > Audio & Input > Gamepad dead zone (every player's sticks)
+        for (int gp = 0; gp < okay::Input::kMaxGamepads; ++gp) {
+            okay::Input::GamepadSettings(gp).left.deadZone = cfg.extra.gamepadDeadzone;
+            okay::Input::GamepadSettings(gp).right.deadZone = cfg.extra.gamepadDeadzone;
+        }
     SSAOEnabled()      = cfg.ssao;
     FXAAEnabled()      = cfg.fxaa;
     if (!cfg.sawCursorMode && cfg.lockCursor) cfg.cursorMode = 1;
@@ -1710,24 +1758,30 @@ int main(int argc, char** argv) {
     bool                 glCtx = false;                 // its GL context exists
     bool                 glReady = false, d3dReady = false, d3d12Ready = false;
 #ifndef __EMSCRIPTEN__
+    // Build Settings > Graphics > 3D renderer: 1 = only Direct3D 11, 2 = only OpenGL, 3 = software only. Whatever is
+    // chosen and cannot start falls back to software, as before.
+    const int rendererChoice = cfg.extra.renderer;
+    if (rendererChoice == 3) cfg.gpu = false;
     if (cfg.gpu) {
 #if defined(_WIN32)
         // Opt-in Direct3D 12 backend, preferred when enabled; otherwise D3D11.
-        if (cfg.d3d12) {
+        if (cfg.d3d12 && rendererChoice != 2) {
             d3d12Renderer = new okay::D3D12Renderer();
             if (d3d12Renderer->Init()) d3d12Ready = true;
             else { delete d3d12Renderer; d3d12Renderer = nullptr; }
         }
-        d3dRenderer = new okay::D3D11Renderer();
-        if (d3dRenderer->Init()) d3dReady = true;
-        else { delete d3dRenderer; d3dRenderer = nullptr; }
+        if (rendererChoice != 2) {
+            d3dRenderer = new okay::D3D11Renderer();
+            if (d3dRenderer->Init()) d3dReady = true;
+            else { delete d3dRenderer; d3dRenderer = nullptr; }
+        }
 #endif
         // A 3.2 compatibility context: core FBOs/MSAA + our #version 120 shaders
         // (GLAttributes' defaults: 3.2, compatibility profile, 24-bit depth).
         okay::platform::WindowDesc gd;
         gd.title = "okay-gl"; gd.x = 0; gd.y = 0; gd.width = 16; gd.height = 16;
         gd.resizable = false; gd.opengl = true; gd.hidden = true;
-        glWindow = pb->MakeWindow(gd);
+        if (rendererChoice != 1) glWindow = pb->MakeWindow(gd);   // "Direct3D 11 only" never starts OpenGL
         if (glWindow) {
             glCtx = glWindow->CreateGLContext(okay::platform::GLAttributes());
             if (glCtx) {   // CreateGLContext also made it current
@@ -1745,13 +1799,16 @@ int main(int argc, char** argv) {
     int gpuFails = 0;   // self-heal: after repeated GPU failures, fall back for good
 
     okay::platform::AudioSpec want, have;
-    want.freq = 44100; want.format = okay::platform::SampleFormat::F32; want.channels = 2; want.frames = 1024;
+    want.freq = cfg.extra.sampleRate > 0 ? cfg.extra.sampleRate : 44100;   // Build Settings > Audio & Input > Sound quality
+     want.format = okay::platform::SampleFormat::F32; want.channels = 2; want.frames = 1024;
     want.allowChange = true;
     // Float output at whatever rate and channel count the device gives us.
     std::unique_ptr<okay::platform::AudioDevice> audioDev;
     if (okay::platform::Backend* pb = okay::platform::Default()) audioDev = pb->OpenAudio(want, false, nullptr, &have);
     if (audioDev) { AudioMixer::sampleRate = have.freq; audioDev->Pause(false); }
     AudioMixer::masterVolume = cfg.volume;   // global mix scale from build settings
+    AudioMixer::groupVolume[(int)AudioGroup::Music] = cfg.extra.musicVolume;   // Build Settings > Game: starting group volumes
+    AudioMixer::groupVolume[(int)AudioGroup::SFX] = cfg.extra.sfxVolume;
     AudioMixer::LoadSettings();   // the player's own volume settings win over it
     InputActions::Load();   // the player's own control bindings
 
@@ -1759,6 +1816,7 @@ int main(int argc, char** argv) {
     // The UI pass draws through one batcher for the whole run: it keeps the UI atlas
     // (fonts + images) and its vertex buffers between frames.
     ui2d::BatchPainter uiBatch(*renderer, [&baseDir](const std::string& path, Image& out) {
+        { const std::string c = okaycontent::Overlay::Global().Find(path); if (!c.empty() && out.Load(c)) return true; }   // downloaded content first
         return out.Load(path) || out.Load(baseDir + path);
     });
     // Z-buffered 3D: meshes are rasterized into this texture each frame so
@@ -1775,7 +1833,9 @@ int main(int argc, char** argv) {
         auto* mr = up->GetComponent<MeshRenderer>();
         if (!mr || mr->meshPath.empty()) continue;
         bool ok = false;
-        Mesh m = Mesh::LoadOBJ(mr->meshPath, &ok);
+        Mesh m;
+        { const std::string c = okaycontent::Overlay::Global().Find(mr->meshPath); if (!c.empty()) m = Mesh::LoadOBJ(c, &ok); }   // downloaded content first
+        if (!ok || m.vertices.empty()) m = Mesh::LoadOBJ(mr->meshPath, &ok);
         if (!ok || m.vertices.empty()) m = Mesh::LoadOBJ(baseDir + mr->meshPath, &ok);
         if (ok && !m.vertices.empty()) mr->mesh = m;
     }
@@ -1783,7 +1843,7 @@ int main(int argc, char** argv) {
     // One frame driver for the run (okay/Core/GameLoop.hpp). It does what this loop used to do by hand,
     // in the same order: clamp the frame time to 0.1 s (a window drag or an alt-tab is not a giant
     // step), even it out when smoothDt (and snap to the display's refresh periods with vsync),
-    // Time::Step, the scene's Update, and the quit check. docs/loop_and_time.md ("Adopting GameLoop in
+    // Time::Step, the scene's Update, and the quit check. docs/engine/loop_and_time.md ("Adopting GameLoop in
     // the player and the editor") and test_loop_player_style pin that the Time values are identical.
     // On top of that it ticks the Clock channels ("ui", "game", "cinematic"), keeps frame statistics
     // (loop.Stats()) and runs OnFixedUpdate steps for anything that registers one.
@@ -1792,11 +1852,13 @@ int main(int argc, char** argv) {
     okay::GameLoop::Options loopOpt;
     loopOpt.maxDelta = 0.1f;
     loopOpt.smoothDelta = cfg.smoothDt;
+    if (cfg.extra.maxFixedSteps > 0) loopOpt.maxFixedSteps = cfg.extra.maxFixedSteps;   // Build Settings > Game > Most physics steps per frame
     okay::GameLoop loop(loopOpt);
     loop.OnUpdate = [&](float dt) { if (loopTick) scene.Update(dt); };
     // A new session: no stale pause or quit from a prior scene, and the time scale back to 1 (Game::Reset
     // kept a scale a script had left, so a scene loaded after one that froze the game started frozen).
     loop.BeginSession();
+    if (cfg.extra.timeScale != 1.0f) okay::Time::SetTimeScale(cfg.extra.timeScale);   // Build Settings > Game > Game speed
     scene.Start();
 
     // Open every connected game controller (up to Input::kMaxGamepads, one per player).
@@ -1946,6 +2008,16 @@ int main(int argc, char** argv) {
             if (e.type == ET::MouseButtonDown && cursorReleased) cursorReleased = false;
             if (e.type == ET::GamepadAdded) pads.Add(e.deviceId);
             if (e.type == ET::GamepadRemoved) pads.Remove(e.deviceId);
+            if (keyDown && !e.repeat) {   // a tap shorter than one frame is still a press (the held-key poll below would miss it)
+                std::vector<char> tapped;
+                okay::TapCharsForKey(e.key, [&](char c) { return okay::KeyForLetter(*pb, c); }, tapped);
+                for (char c : tapped) Input::FeedKeyTap(c);
+            }
+            if (e.type == ET::MouseButtonDown) {
+                if (e.button == okay::platform::MouseLeft) Input::FeedMouseTap(0);
+                else if (e.button == okay::platform::MouseRight) Input::FeedMouseTap(1);
+                else if (e.button == okay::platform::MouseMiddle) Input::FeedMouseTap(2);
+            }
             if (e.type == ET::TextInput) Input::FeedText(e.text.c_str());   // real characters
             if (e.type == ET::MouseWheel) Input::FeedMouseWheel(osWheelY);
             if (e.type == ET::FingerDown || e.type == ET::FingerMotion || e.type == ET::FingerUp) {
@@ -1992,9 +2064,9 @@ int main(int argc, char** argv) {
         auto keyHeld = [pb](PK k) { return pb->IsKeyDown(k); };
         std::vector<char> down;
         for (char c = 'a'; c <= 'z'; ++c)
-            if (keyHeld(pb->KeyForChar(c))) down.push_back(c);   // by the layout's letter: AZERTY WASD works
+            if (keyHeld(okay::KeyForLetter(*pb, c))) down.push_back(c);   // by the layout's letter: AZERTY WASD works; layouts without Latin letters fall back to the US place
         for (char c = '0'; c <= '9'; ++c)
-            if (keyHeld(pb->KeyForChar(c))) down.push_back(c);
+            if (keyHeld(okay::KeyForLetter(*pb, c))) down.push_back(c);
         if (keyHeld(PK::Space)) down.push_back(' ');
         if (keyHeld(PK::LShift) || keyHeld(PK::RShift)) down.push_back(Input::KeyShift); // sprint
         if (keyHeld(PK::LCtrl)  || keyHeld(PK::RCtrl))  down.push_back(Input::KeyCtrl);  // crouch
@@ -2038,6 +2110,7 @@ int main(int argc, char** argv) {
         okay::CaptionOverlay::Ensure(scene);
         const bool gameModal = invModal || okay::Game::Paused() || okay::SettingsScreen::AnyOpen(&scene);
         Input::SetUICaptured(gameModal || okay::GameInputBlocked(&scene, (unsigned)okay::GameInputMask::World));
+        Input::SetTextFocused(okay::GameInputBlocked(&scene, (unsigned)okay::GameInputMask::Text));   // typing in a field does not also move the player
 
         // Apply the game's requested cursor state.
         static Vec2 s_virtualMouse{0, 0};
@@ -2107,11 +2180,7 @@ int main(int argc, char** argv) {
             if (ow > 0 && oh > 0) UICanvas::Set((float)ow, (float)oh);
             if (SDL_GetNumTouchDevices() > 0) Input::SetTouchScreen(true);
             TouchControls::Sample(scene);
-#if SDL_VERSION_ATLEAST(2, 0, 18)
-            Gestures::Tick((double)SDL_GetTicks64() / 1000.0);
-#else
-            Gestures::Tick((double)SDL_GetTicks() / 1000.0);
-#endif
+            Gestures::Tick((double)okay::platform::TicksMs() / 1000.0);
         }
         InputActions::Tick();   // after every device is fed, including the on-screen controls
 

@@ -1,8 +1,9 @@
 #pragma once
 // OkayUI render interface: OkayUI's draw data on screen WITHOUT any Dear ImGui backend code.
 //
-// OWN CODE, OFF BY DEFAULT, wired nowhere (the editor and launcher still draw through Dear ImGui). See
-// docs/own_ui_toolkit.md, "OkayUI render interface".
+// OWN CODE, OFF BY DEFAULT. The only host that uses it: the launcher's and editor's OkayUI screens with OKAY_UI_OWN_RENDER=1, through
+// OkayUIRenderSDL.hpp (the OpenGL backend inside SDL's OpenGL renderers, the Direct3D 11 backend inside SDL's direct3d11 renderer).
+// See docs/ui/own_ui_toolkit.md, section 7.
 //
 // Three layers:
 //
@@ -155,6 +156,11 @@ public:
     /// Replace the pixels; the size may differ from the old one. False on failure (the texture is then unusable).
     virtual bool  UpdateTexture(TexId t, int w, int h, const std::uint8_t* rgba) = 0;
     virtual void  DestroyTexture(TexId t) = 0;
+    /// A texture the HOST owns, drawn as it is, without copying: OpenGL takes a texture name (GL_TEXTURE_2D, sampled with the filter
+    /// and wrap settings the host gave it), Direct3D 11 an ID3D11Texture2D* made with D3D11_BIND_SHADER_RESOURCE (sampled linearly or
+    /// nearest as `linear` says). The backend never changes or frees the host's object; DestroyTexture lets go of it only. UpdateTexture
+    /// on such an id fails. 0 when the backend cannot (the default: software and Painter backends have no native textures).
+    virtual TexId WrapNativeTexture(std::uintptr_t native, int w, int h, bool linear) { (void)native; (void)w; (void)h; (void)linear; return 0; }
 
     /// Start a frame on a target of fbW x fbH pixels; logical coordinates are multiplied by `dpi`.
     virtual bool BeginFrame(int fbW, int fbH, float dpi) = 0;
@@ -202,6 +208,10 @@ public:
     /// A host image under `key` (the pointer the host gave OkayUI::Image / DrawTexture / DrawList::AddImage).
     /// Replaces the image under that key. False on a bad size (0 or above kMaxTexture) or a null key.
     bool SetImage(const void* key, int w, int h, const std::uint8_t* rgba, bool linear = true);
+    /// A host image under `key` that is a native texture the host owns (Backend::WrapNativeTexture): nothing is copied, the backend
+    /// samples the host's texture. Calling it again with the same texture, size and filter keeps the image as it is (cheap, so a host
+    /// may call it every frame); anything else replaces it. False when the backend cannot wrap it (the key then has no image).
+    bool SetNativeImage(const void* key, std::uintptr_t native, int w, int h, bool linear = true);
     void RemoveImage(const void* key);
     bool HasImage(const void* key) const { return m_images.count(key) != 0; }
 
@@ -218,7 +228,7 @@ public:
     void SetOptions(const Options& o) { m_o = o; }
 
 private:
-    struct Img { TexId id = 0; int w = 0, h = 0; };
+    struct Img { TexId id = 0; int w = 0, h = 0; std::uintptr_t native = 0; bool linear = true; };
     struct FontTex { TexId id = 0; int w = 0, h = 0; std::uint32_t gen = ~0u; };
     Backend& m_b;
     Options m_o;

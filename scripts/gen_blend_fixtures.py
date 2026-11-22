@@ -9,16 +9,19 @@ code paths (the 3.x / 4.x attribute mesh storage, face offsets, node-tree materi
 armatures with vertex-group weights, F-Curves with bezier handles, big endian + 32 bit pointers, gzip)
 agree with this script's reading of the format. They do NOT prove agreement with a real Blender 3.x /
 4.x file: no such file was available when they were written. The real-file evidence for the reader is
-in docs/own_blend_reader.md (Assimp's test directory: Blender 2.41 to 2.93 files).
+in docs/content/model_readers.md (Assimp's test directory: Blender 2.41 to 2.93 files).
 
-Deterministic: running it twice gives the same bytes. Run from the repository root:
-    python3 scripts/gen_blend_fixtures.py
+Deterministic: running it twice gives the same bytes, on any Python 3 (see mmul and gzip_fixed for the two things
+that once made it drift). Run from the repository root:
+    python3 scripts/gen_blend_fixtures.py            # rewrites the fixtures
+    python3 scripts/gen_blend_fixtures.py --check    # writes nothing, exit 1 when a committed fixture differs (ctest blend_fixtures_check)
 The expected values are checked in tests/test_blend_reader.cpp.
 """
-import gzip
+import zlib
 import math
 import os
 import struct
+import sys
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "data", "models")
 
@@ -34,7 +37,12 @@ def S(*fields):
 
 def dna_defs(naming):
     """naming: '36' (totvert / vdata / poly_offset_indices), '41' (verts_num / vert_data / face_offset_indices),
-    'legacy' (2.7x: mvert / mpoly / mloop / dvert pointers)."""
+    'legacy' (2.7x: mvert / mpoly / mloop / dvert pointers), 'legacy_mods' (legacy plus MEdge and the modifier structs).
+    A '+sub29' suffix ('legacy_mods+sub29', '36+sub29', '41+sub29') adds ModifierData and the 2.9+ SubsurfModifierData (with
+    uv_smooth, quality, boundary_smooth); on the attribute namings that is the only modifier struct."""
+    sub29 = naming.endswith("+sub29")
+    if sub29:
+        naming = naming[: -len("+sub29")]
     d = {}
     d["ListBase"] = S("void *first", "void *last")
     d["ID"] = S("void *next", "void *prev", "ID *newid", "Library *lib", "char name[66]", "short flag", "int tag", "int us", "int icon_id", "IDProperty *properties")
@@ -48,10 +56,12 @@ def dna_defs(naming):
                     "float obmat[4][4]", "float parentinv[4][4]", "short rotmode", "bPose *pose", "ListBase defbase", "ListBase constraints")
     d["CustomDataLayer"] = S("int type", "int offset", "int flag", "int active", "int active_rnd", "int active_clone", "int active_mask", "int uid", "char name[64]", "void *data")
     d["CustomData"] = S("CustomDataLayer *layers", "int typemap[51]", "int totlayer", "int maxlayer", "int totsize", "void *pool", "void *external")
-    if naming == "legacy":
+    if naming in ("legacy", "legacy_mods"):
         d["Mesh"] = S("ID id", "AnimData *adt", "Key *key", "Material **mat", "MPoly *mpoly", "MLoop *mloop", "MLoopUV *mloopuv", "MVert *mvert",
                       "MDeformVert *dvert", "CustomData vdata", "CustomData edata", "CustomData fdata", "CustomData pdata", "CustomData ldata",
                       "int totvert", "int totedge", "int totface", "int totpoly", "int totloop", "short totcol", "short flag")
+        if naming == "legacy_mods":
+            d["Mesh"] = d["Mesh"] + S("MEdge *medge")
     elif naming == "36":
         d["Mesh"] = S("ID id", "AnimData *adt", "Key *key", "Material **mat", "int totvert", "int totedge", "int totpoly", "int totloop",
                       "CustomData vdata", "CustomData edata", "CustomData fdata", "CustomData pdata", "CustomData ldata", "int *poly_offset_indices",
@@ -99,6 +109,23 @@ def dna_defs(naming):
     d["FPoint"] = S("float vec[2]", "int flag", "int pad")
     d["BezTriple"] = S("float vec[3][3]", "float alfa", "float weight", "float radius", "char ipo", "char h1", "char h2", "char f1", "char f2", "char f3",
                        "char hide", "char easing", "float back", "float amplitude", "float period", "char pad[4]")
+    if naming == "legacy_mods":
+        # field names as Blender 2.7x writes them; the reader finds each by name, so the order here is free
+        d["MEdge"] = S("int v1", "int v2", "char crease", "char bweight", "short flag")
+        d["ModifierData"] = S("ModifierData *next", "ModifierData *prev", "int type", "int mode", "int stackindex", "short flag", "short pad",
+                              "char name[64]", "char *error")
+        d["MirrorModifierData"] = S("ModifierData modifier", "short axis", "short flag", "float tolerance", "float uv_offset[2]",
+                                    "float uv_offset_copy[2]", "Object *mirror_ob")
+        d["SubsurfModifierData"] = S("ModifierData modifier", "short subdivType", "short levels", "short renderLevels", "short flags",
+                                     "void *emCache", "void *mCache")
+        d["ArrayModifierData"] = S("ModifierData modifier", "Object *start_cap", "Object *end_cap", "int count")
+    if sub29:
+        # Blender 2.9+ names (from memory of the DNA headers; the reader finds each by name): the three options after flags
+        if "ModifierData" not in d:
+            d["ModifierData"] = S("ModifierData *next", "ModifierData *prev", "int type", "int mode", "int stackindex", "short flag", "short pad",
+                                  "char name[64]", "char *error")
+        d["SubsurfModifierData"] = S("ModifierData modifier", "short subdivType", "short levels", "short renderLevels", "short flags",
+                                     "short uv_smooth", "short quality", "short boundary_smooth", "char _pad[2]", "void *emCache", "void *mCache")
     return d
 
 
@@ -262,7 +289,13 @@ def mmul(a, b):
     r = [0.0] * 16
     for c in range(4):
         for row in range(4):
-            r[c * 4 + row] = sum(a[k * 4 + row] * b[c * 4 + k] for k in range(4))
+            # plain left-to-right additions, on purpose: Python 3.12+ made sum() of floats compensated (Neumaier), which
+            # changed the last bits of child_m (-1.2e-16 instead of 0.0) and so the committed blend_attr_* fixtures,
+            # which were written with an older Python. A loop of + gives the same bits on every Python version.
+            acc = 0.0
+            for k in range(4):
+                acc = acc + a[k * 4 + row] * b[c * 4 + k]
+            r[c * 4 + row] = acc
     return r
 
 
@@ -481,20 +514,260 @@ def build_skin(ps=8, le=True):
     return b
 
 
+# ---------------------------------------------------------------------------------------------
+# Fixture 3: modifiers. An open box (x from 0 to 1, no face on x = 0) with Mirror X (merge 0.001, flip U), then an
+# Array (not supported: must be named), then Subdivision Surface level 1 (smooth UVs); edge 1-2 has crease 1.0 (byte 255,
+# written as -1 because SDNA calls the field char).
+# Expected: 12 vertices after the mirror (4 merged), 10 quads, 40 quads after one level = 80 triangles.
+# ---------------------------------------------------------------------------------------------
+BOX_POS = [(0, -1, -1), (1, -1, -1), (1, 1, -1), (0, 1, -1), (0, -1, 1), (1, -1, 1), (1, 1, 1), (0, 1, 1)]
+BOX_FACES = [[0, 3, 2, 1], [4, 5, 6, 7], [1, 2, 6, 5], [0, 1, 5, 4], [3, 7, 6, 2]]
+BOX_CREASE = (1, 2)
+
+
+def build_mods(ps=8, le=True):
+    b = Blend("legacy_mods", ps, le, 279)
+    mv_a = b.array_block("MVert", [{"co": list(v)} for v in BOX_POS])
+    loops, polys = [], []
+    for f in BOX_FACES:
+        polys.append({"loopstart": len(loops), "totloop": len(f), "mat_nr": 0, "flag": 1})
+        loops += f
+    ml_a = b.array_block("MLoop", [{"v": v, "e": 0} for v in loops])
+    mp_a = b.array_block("MPoly", polys)
+    uv_a = b.array_block("MLoopUV", [{"uv": [BOX_POS[v][0] * 0.5, (BOX_POS[v][1] + 1) * 0.25 + (BOX_POS[v][2] + 1) * 0.25]} for v in loops])
+    edges = set()
+    for f in BOX_FACES:
+        for i in range(len(f)):
+            a, c = f[i], f[(i + 1) % len(f)]
+            edges.add((min(a, c), max(a, c)))
+    edges = sorted(edges)
+    me_a = b.array_block("MEdge", [{"v1": a, "v2": c, "crease": -1 if (a, c) == BOX_CREASE else 0} for a, c in edges])
+    b.struct_block("ME", "Mesh", {"id": {"name": "MEBox"}, "mpoly": mp_a, "mloop": ml_a, "mloopuv": uv_a, "mvert": mv_a, "medge": me_a,
+                                  "totvert": len(BOX_POS), "totedge": len(edges), "totpoly": len(BOX_FACES), "totloop": len(loops)}, "me")
+    mir = b.struct_block("DATA", "MirrorModifierData", {"modifier": {"type": 5, "mode": 3, "name": "Mirror", "next": b.addr("arr")},
+                                                        "axis": 0, "flag": 8 | 2, "tolerance": 0.001}, "mir")
+    b.struct_block("DATA", "ArrayModifierData", {"modifier": {"type": 12, "mode": 3, "name": "Array", "prev": mir, "next": b.addr("sub")}, "count": 2}, "arr")
+    b.struct_block("DATA", "SubsurfModifierData", {"modifier": {"type": 1, "mode": 3, "name": "Subsurf", "prev": b.addr("arr")},
+                                                   "subdivType": 0, "levels": 1, "renderLevels": 1, "flags": 8}, "sub")
+    b.struct_block("OB", "Object", ob_vals("Box", 1, b.addr("me"), extra={"modifiers": {"first": mir, "last": b.addr("sub")}}), "ob")
+    base = b.struct_block("DATA", "Base", {"object": b.addr("ob")}, "base")
+    b.struct_block("SC", "Scene", {"id": {"name": "SCScene"}, "base": {"first": base, "last": base}, "r": {"frs_sec": 24, "frs_sec_base": 1.0, "cfra": 1, "sfra": 1, "efra": 250}}, "sc")
+    b.struct_block("GLOB", "FileGlobal", {"curscene": b.addr("sc")})
+    return b
+
+
+# ---------------------------------------------------------------------------------------------
+# Fixtures 4 to 6: the Subdivision Surface options of Blender 2.9+ (uv_smooth, quality, boundary_smooth, the "use creases"
+# flag 16 and the limit-surface flag 64 that is SET when the limit surface is OFF), in three mesh layouts. The expected
+# results are computed in tests/test_blend_modifiers.cpp by running the same steps on the same mesh by hand.
+# ---------------------------------------------------------------------------------------------
+GRID_POS = [(x, y, 0.5 if (x, y) == (1, 1) else 0.0) for y in range(3) for x in range(3)]   # 3 x 3 vertices, raised centre
+GRID_FACES = [[0, 1, 4, 3], [1, 2, 5, 4], [3, 4, 7, 6], [4, 5, 8, 7]]
+GRID_CREASE = (1, 4, 0.5)          # edge 1-4, crease 0.5
+
+
+def subsurf_vals(prev, levels, render_levels, flags, uv_smooth, quality, boundary_smooth):
+    return {"modifier": {"type": 1, "mode": 3, "name": "Subdivision", "prev": prev}, "subdivType": 0, "levels": levels,
+            "renderLevels": render_levels, "flags": flags, "uv_smooth": uv_smooth, "quality": quality, "boundary_smooth": boundary_smooth}
+
+
+def scene_for(b, ob_key):
+    base = b.struct_block("DATA", "Base", {"object": b.addr(ob_key)}, "base")
+    b.struct_block("SC", "Scene", {"id": {"name": "SCScene"}, "base": {"first": base, "last": base}, "r": {"frs_sec": 24, "frs_sec_base": 1.0, "cfra": 1, "sfra": 1, "efra": 250}}, "sc")
+    b.struct_block("GLOB", "FileGlobal", {"curscene": b.addr("sc")})
+
+
+def edges_of(faces):
+    es = set()
+    for f in faces:
+        for i in range(len(f)):
+            a, c = f[i], f[(i + 1) % len(f)]
+            es.add((min(a, c), max(a, c)))
+    return sorted(es)
+
+
+def attr_mesh(b, naming, pos, faces, uvs, crease=None):
+    """An attribute-storage mesh (3.6 or 4.x names) with float2 UVs; crease = (v0, v1, value) adds .edge_verts + crease_edge."""
+    d = b.dna
+    corners = [v for f in faces for v in f]
+    offs = [0]
+    for f in faces:
+        offs.append(offs[-1] + len(f))
+    pos_a = b.raw_block(struct.pack(d.e + "%df" % (3 * len(pos)), *[c for p in pos for c in p]))
+    cv_a = b.raw_block(struct.pack(d.e + "%di" % len(corners), *corners))
+    uv_a = b.raw_block(struct.pack(d.e + "%df" % (2 * len(uvs)), *[c for u in uvs for c in u]))
+    off_a = b.raw_block(struct.pack(d.e + "%di" % len(offs), *offs))
+    vl = b.array_block("CustomDataLayer", [layer(48, "position", pos_a)])
+    ll = b.array_block("CustomDataLayer", [layer(45, ".corner_vert", cv_a), layer(49, "UVMap", uv_a)])
+    edges = edges_of(faces)
+    el, nel = 0, 0
+    if crease is not None:
+        ev_a = b.raw_block(struct.pack(d.e + "%di" % (2 * len(edges)), *[c for e in edges for c in e]))
+        cr_a = b.raw_block(struct.pack(d.e + "%df" % len(edges), *[crease[2] if e == (min(crease[:2]), max(crease[:2])) else 0.0 for e in edges]))
+        # 53 / 10: the custom-data type numbers of int2 and float (the reader finds these two layers by name)
+        el = b.array_block("CustomDataLayer", [layer(53, ".edge_verts", ev_a), layer(10, "crease_edge", cr_a)])
+        nel = 2
+    if naming == "41":
+        mv = {"verts_num": len(pos), "edges_num": len(edges), "faces_num": len(faces), "corners_num": len(corners), "vert_data": customdata_vals(vl, 1),
+              "edge_data": customdata_vals(el, nel), "corner_data": customdata_vals(ll, 2), "face_offset_indices": off_a}
+    else:
+        mv = {"totvert": len(pos), "totedge": len(edges), "totpoly": len(faces), "totloop": len(corners), "vdata": customdata_vals(vl, 1),
+              "edata": customdata_vals(el, nel), "ldata": customdata_vals(ll, 2), "poly_offset_indices": off_a}
+    mv.update({"id": {"name": "MEMesh"}})
+    return b.struct_block("ME", "Mesh", mv, "me")
+
+
+def build_subsurf_41():
+    """Blender 4.x layout (4.2 names): the raised 3 x 3 grid, edge 1-4 creased 0.5 (crease_edge attribute), UVs = xy / 2.
+    Subdivision: viewport 2, render 1 (2 levels), use creases (16), limit surface on (64 clear), UV smooth 1 "keep corners",
+    quality 3, boundary smooth 1 "keep corners"."""
+    b = Blend("41+sub29", 8, True, 402)
+    uvs = [(GRID_POS[v][0] / 2.0, GRID_POS[v][1] / 2.0) for f in GRID_FACES for v in f]
+    attr_mesh(b, "41", GRID_POS, GRID_FACES, uvs, GRID_CREASE)
+    sub = b.struct_block("DATA", "SubsurfModifierData", subsurf_vals(0, 2, 1, 16, 1, 3, 1), "sub")
+    b.struct_block("OB", "Object", ob_vals("Grid", 1, b.addr("me"), extra={"modifiers": {"first": sub, "last": sub}}), "ob")
+    scene_for(b, "ob")
+    return b
+
+
+# a fan of 6 quads around vertex 0 (ring of 12 vertices at 30 degree steps, radius 1, centre raised 0.25)
+# (rounded to 6 digits so that a different maths library cannot change the bytes)
+FAN_POS = [(0.0, 0.0, 0.25)] + [(round(math.cos(math.radians(30 * j)), 6), round(math.sin(math.radians(30 * j)), 6), 0.0) for j in range(12)]
+FAN_FACES = [[0, 1 + 2 * i, 1 + 2 * i + 1, 1 + (2 * i + 2) % 12] for i in range(6)]
+
+
+def fan_uvs(islands):
+    """UVs = the fan's xy, each island (a list of face indices) shifted by its own offset so it is cut off from the others."""
+    uvs = []
+    for fi, f in enumerate(FAN_FACES):
+        k = next(i for i, isl in enumerate(islands) if fi in isl)
+        for v in f:
+            uvs.append((round(FAN_POS[v][0] * 0.2 + 0.25 + 0.5 * (k % 2), 6), round(FAN_POS[v][1] * 0.2 + 0.25 + 0.5 * (k // 2), 6)))
+    return uvs
+
+
+def build_subsurf_36():
+    """Blender 3.6 layout (3.6 names): the fan with three UV islands of two faces each (a junction at the centre).
+    Subdivision: 1 level, creases off (no flag 16), limit surface on, UV smooth 2 "keep corners, junctions", quality 3,
+    boundary smooth 0 "all"."""
+    b = Blend("36+sub29", 8, True, 306)
+    attr_mesh(b, "36", FAN_POS, FAN_FACES, fan_uvs([[0, 1], [2, 3], [4, 5]]))
+    sub = b.struct_block("DATA", "SubsurfModifierData", subsurf_vals(0, 1, 1, 0, 2, 3, 0), "sub")
+    b.struct_block("OB", "Object", ob_vals("Fan", 1, b.addr("me"), extra={"modifiers": {"first": sub, "last": sub}}), "ob")
+    scene_for(b, "ob")
+    return b
+
+
+def build_subsurf_293():
+    """Blender 2.93 layout (MPoly / MLoop / MEdge pointers): the open box of fixture 3, edge 1-2 crease byte 128, UVs as there.
+    Subdivision: viewport 1, render 2 (2 levels), use creases (16), limit surface OFF (flag 64), UV smooth 4 "keep
+    boundaries", quality 3, boundary smooth 0."""
+    b = Blend("legacy_mods+sub29", 8, True, 293)
+    mv_a = b.array_block("MVert", [{"co": list(v)} for v in BOX_POS])
+    loops, polys = [], []
+    for f in BOX_FACES:
+        polys.append({"loopstart": len(loops), "totloop": len(f), "mat_nr": 0, "flag": 1})
+        loops += f
+    ml_a = b.array_block("MLoop", [{"v": v, "e": 0} for v in loops])
+    mp_a = b.array_block("MPoly", polys)
+    uv_a = b.array_block("MLoopUV", [{"uv": [BOX_POS[v][0] * 0.5, (BOX_POS[v][1] + 1) * 0.25 + (BOX_POS[v][2] + 1) * 0.25]} for v in loops])
+    edges = edges_of(BOX_FACES)
+    me_a = b.array_block("MEdge", [{"v1": a, "v2": c, "crease": -128 if (a, c) == BOX_CREASE else 0} for a, c in edges])
+    b.struct_block("ME", "Mesh", {"id": {"name": "MEBox"}, "mpoly": mp_a, "mloop": ml_a, "mloopuv": uv_a, "mvert": mv_a, "medge": me_a,
+                                  "totvert": len(BOX_POS), "totedge": len(edges), "totpoly": len(BOX_FACES), "totloop": len(loops)}, "me")
+    sub = b.struct_block("DATA", "SubsurfModifierData", subsurf_vals(0, 1, 2, 16 | 64, 4, 3, 0), "sub")
+    b.struct_block("OB", "Object", ob_vals("Box", 1, b.addr("me"), extra={"modifiers": {"first": sub, "last": sub}}), "ob")
+    scene_for(b, "ob")
+    return b
+
+
+def gzip_fixed(data):
+    """gzip with a fixed header: no time stamp, 'max compression' flag 2, OS byte 3 (Unix). gzip.compress() is not used
+    because Python 3.13 writes OS byte 255 there, while the committed fixture (written with an older Python) has 3. The
+    deflate body is zlib's level 9 output; a different zlib could still change it (--check would say so)."""
+    co = zlib.compressobj(9, zlib.DEFLATED, -15)
+    body = co.compress(data) + co.flush()
+    return b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\x03" + body + struct.pack("<II", zlib.crc32(data) & 0xffffffff, len(data) & 0xffffffff)
+
+
 def main():
-    os.makedirs(OUT, exist_ok=True)
+    check = "--check" in sys.argv[1:]
+    out = OUT
+    for i, a in enumerate(sys.argv[1:]):
+        if a == "--out" and i + 2 < len(sys.argv):
+            out = sys.argv[i + 2]
     files = {
         "blend_attr_41.blend": build_attr("41", 8, True).bytes(),
         "blend_attr_36.blend": build_attr("36", 8, True).bytes(),
         "blend_attr_be32.blend": build_attr("36", 4, False).bytes(),
         "blend_skin_anim.blend": build_skin(8, True).bytes(),
+        "blend_modifiers.blend": build_mods(8, True).bytes(),
+        "blend_subsurf_41.blend": build_subsurf_41().bytes(),
+        "blend_subsurf_36.blend": build_subsurf_36().bytes(),
+        "blend_subsurf_293.blend": build_subsurf_293().bytes(),
     }
-    files["blend_attr_41_gz.blend"] = gzip.compress(files["blend_attr_41.blend"], 9, mtime=0)
+    files["blend_attr_41_gz.blend"] = gzip_fixed(files["blend_attr_41.blend"])
+    # copies shipped for the owner to try (examples/own_readers, docs/try_it.md): checked by --check, written with the fixtures
+    examples = {"cube_gzip.blend": "blend_attr_41_gz.blend", "mirror_subdiv_box.blend": "blend_modifiers.blend",
+                "subsurf_options_42.blend": "blend_subsurf_41.blend"}
+    ex_dir = os.path.join(out, "..", "..", "..", "examples", "own_readers")
+    if check:
+        # --check: write nothing; fail when a committed fixture is not exactly what this script writes
+        bad = 0
+        for ex, src in examples.items():
+            try:
+                with open(os.path.join(ex_dir, ex), "rb") as fh:
+                    have = fh.read()
+            except OSError as e:
+                print("MISSING example", ex, e)
+                bad += 1
+                continue
+            if have != files[src]:
+                print("DRIFT example", ex, "is not a copy of", src)
+                bad += 1
+            else:
+                print("same example", ex)
+        for name, data in files.items():
+            path = os.path.join(out, name)
+            try:
+                with open(path, "rb") as fh:
+                    have = fh.read()
+            except OSError as e:
+                print("MISSING", name, e)
+                bad += 1
+                continue
+            if have != data and name.endswith("_gz.blend") and have[:10] == data[:10]:
+                # another zlib (zlib-ng, a newer release) may pick other deflate blocks for the same bytes; the fixture is
+                # still right when its header matches and it inflates to exactly what this script writes
+                try:
+                    inner = zlib.decompress(have[10:-8], -15)
+                except zlib.error:
+                    inner = None
+                if inner == files[name.replace("_gz.blend", ".blend")] and have[-8:] == data[-8:]:
+                    print("same content", name, "(deflate bytes differ: another zlib)")
+                    continue
+            if have != data:
+                first = next((i for i in range(min(len(have), len(data))) if have[i] != data[i]), min(len(have), len(data)))
+                print("DRIFT", name, "file", len(have), "bytes, script", len(data), "bytes, first difference at byte", first)
+                bad += 1
+            else:
+                print("same", name, len(data), "bytes")
+        if bad:
+            print(bad, "fixture(s) differ from scripts/gen_blend_fixtures.py; run it without --check to rewrite them")
+            return 1
+        return 0
+    os.makedirs(out, exist_ok=True)
     for name, data in files.items():
-        with open(os.path.join(OUT, name), "wb") as fh:
+        with open(os.path.join(out, name), "wb") as fh:
             fh.write(data)
         print("wrote", name, len(data), "bytes")
+    if os.path.isdir(ex_dir):
+        for ex, src in examples.items():
+            with open(os.path.join(ex_dir, ex), "wb") as fh:
+                fh.write(files[src])
+            print("wrote example", ex)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

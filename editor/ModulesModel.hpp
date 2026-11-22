@@ -1,7 +1,7 @@
 #pragma once
 // What the "which modules does this project use" pages show and do, with no drawing: the New Project form's
 // second step and Edit > Project Settings > Modules both use it (ModulesPanelUI.hpp draws it). Header-only,
-// built on the engine's ModuleRegistry; written for this repository from docs/modular_engine.md.
+// built on the engine's ModuleRegistry; written for this repository from docs/engine/modular_engine.md.
 //
 //   Selection sel(ModuleRegistry::Get(), project.modules);   // "" = every module (an old project)
 //   sel.Set("weapons", true)  -> turns on what weapons needs too and says which

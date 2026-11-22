@@ -81,6 +81,7 @@ private:
         return i < toks_.size() ? toks_[i] : toks_.back();
     }
     bool Is(T t, std::size_t o = 0) const { return Peek(o).type == t; }
+    const Token& Toks(std::size_t i) const { return i < toks_.size() ? toks_[i] : toks_.back(); }
     bool IsWord(const char* w, std::size_t o = 0) const { return Is(T::Ident, o) && Peek(o).text == w; }
     bool Match(T t) { if (Is(t)) { ++pos_; return true; } return false; }
     const Token& Expect(T t, const char* what) {
@@ -128,6 +129,7 @@ private:
                 Attribute a;
                 a.loc = Peek().loc;
                 a.name = Expect(T::Ident, "an attribute name").text;
+                while (Is(T::Dot) && Is(T::Ident, 1)) { ++pos_; a.name = Toks(pos_++).text; }   // [System.Serializable]: the last part
                 if (Match(T::LParen)) {
                     if (!Is(T::RParen)) do { a.args.push_back(Expression()); } while (Match(T::Comma));
                     Expect(T::RParen, "')'");

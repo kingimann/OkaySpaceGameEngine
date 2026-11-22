@@ -107,6 +107,9 @@ static void UnityStyleFile() {
     CHECK_NEAR(w.player->transform->localPosition.x, 6.0f, 0.05f);
     CHECK_NEAR(w.F("x"), 6.0f, 0.05f);
 
+    // Class attributes with dotted names, as Unity data classes carry them.
+    CHECK(Clean("[System.Serializable]\npublic class Item { public int count; }\n"
+                "[RequireComponent(typeof(Rigidbody))]\npublic class A : MonoBehaviour { public Item item; void Start() { item = new Item(); item.count = 2; } }\n"));
     // File-scoped namespace (C# 10) works too.
     CHECK(Clean("using UnityEngine;\nnamespace Game;\npublic class A : MonoBehaviour { void Start() {} }\n"));
     // `using` is still an error in the old typed id, which never promised C# files.

@@ -3086,6 +3086,10 @@ add_test(NAME core_cli COMMAND test_core_cli)
 add_executable(test_core_console test_core_console.cpp)
 target_link_libraries(test_core_console PRIVATE okay::engine)
 add_test(NAME core_console COMMAND test_core_console)
+# The console with a real host (okay/Core/ConsoleHost.hpp): GameLoop commands, the typed line, --cvar, standard cvars, player-style profiler sections
+add_executable(test_console_host test_console_host.cpp)
+target_link_libraries(test_console_host PRIVATE okay::engine)
+add_test(NAME console_host COMMAND test_console_host)
 # Core wave 6, 1.18: CommandLine defaults, Cvar extremes and flags (read-only, cheat, restart required), Console nesting, StateMachine exit
 add_executable(test_core_utils_audit test_core_utils_audit.cpp)
 target_link_libraries(test_core_utils_audit PRIVATE okay::engine)

@@ -41,8 +41,12 @@ inline okay::platform::Painter* For(SDL_Renderer* ren) {
     if (it == t.end()) it = t.emplace(ren, okay::platform::WrapSdl2Renderer(ren)).first;
     return it->second.get();
 }
+/// One function told about a renderer that is about to be destroyed, while it still works (OkayUI's own renderer frees its GL objects
+/// there: shared/OkayUIFrame.hpp). Null = none.
+using ForgetHook = void (*)(SDL_Renderer*);
+inline ForgetHook& OnForget() { static ForgetHook h = nullptr; return h; }
 /// Forget the wrapper of a renderer that is about to be destroyed (a new renderer may get the same address).
-inline void Forget(SDL_Renderer* ren) { detail::Table().erase(ren); }
+inline void Forget(SDL_Renderer* ren) { if (ren && OnForget()) OnForget()(ren); detail::Table().erase(ren); }
 
 enum class Access { Static, Streaming, Target };
 

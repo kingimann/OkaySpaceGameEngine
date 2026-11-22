@@ -10,6 +10,7 @@
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Core/Localization.hpp"
 #include <string>
 #include <utility>
@@ -42,7 +43,7 @@ public:
         ProceduralObjectHolding* hold = gameObject ? gameObject->GetComponent<ProceduralObjectHolding>() : nullptr;
         const bool holding = hold && hold->IsHolding();
         if (m_wasHolding && holding) {
-            const bool main = dropKey && Input::GetKeyDown(dropKey);
+            const bool main = UseKeyDown(dropKey);
             // The holder's throw key already lets go (a tap throws softly), and
             // dropping on it too would let the same press pick the item back up.
             const bool alt = altDropKey && altDropKey != dropKey && altDropKey != hold->throwKey &&
@@ -90,7 +91,7 @@ private:
         if (!tr) return;
         std::string msg;
         if (hold && hold->IsHolding() && (dropKey || altDropKey)) {
-            std::string keys = dropKey ? Input::KeyName(dropKey) : std::string();
+            std::string keys = dropKey ? UseKeyName(dropKey) : std::string();
             if (altDropKey && altDropKey != dropKey) {
                 const std::string alt = Input::KeyName(altDropKey);
                 if (keys.empty()) keys = alt;
@@ -98,8 +99,8 @@ private:
             }
             msg = localized ? Localize("hold.drop", keys) : keys + " to drop";
         } else if (ItemPickup* pk = Nearest(gameObject)) {
-            msg = localized ? Localize("hold.pickup", Input::KeyName(pk->interactKey))
-                            : Input::KeyName(pk->interactKey) + " to pick up";
+            msg = localized ? Localize("hold.pickup", UseKeyName(pk->interactKey))
+                            : UseKeyName(pk->interactKey) + " to pick up";
         } else msg = ExtraPrompt();
         tr->text = msg;
         tr->background = !msg.empty();

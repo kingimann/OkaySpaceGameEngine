@@ -9,10 +9,10 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 ### 3.1 Edit mode
 - **What:** Blender-style mesh edit mode (Tab, G/R/S, axis lock, snapping, mirror) on the selected object's Mesh Renderer: Tab to enter, Vertex/Edge/Face selection, G/R/S modal transforms with axis locks, typed values and snapping, soft select, X symmetry and a set of face, edge and vertex tools. The mesh is kept welded while editing.
 - **Parts:**
-  - 3.1.1 Edit mode, selection and polygon stats - `editor/main.cpp`, `Render/Mesh` - Tab or the Edit Mesh tick, Object/Edit header, keys 1/2/3, click, Shift, Alt-click loop, Ctrl+Alt ring, Grow/Shrink/Linked/Invert, stats line
-  - 3.1.2 G/R/S modal transforms - `Modeling/EditTransform` - EditTransformSession, AxisLock (X/Y/Z, Shift = plane), NumericInput, Move/Rotate/ScaleMatrix, Ctrl snap, Esc restores exactly
+  - 3.1.1 Edit mode, selection and polygon stats - `editor/main.cpp`, `Render/Mesh` - Tab or the Edit Mesh tick, Object/Edit header, keys 1/2/3, click, Shift, Alt-click loop, Ctrl+Alt ring, Ctrl+click shortest path (ShortestVertPath / ShortestFacePath), Grow/Shrink/Linked/Invert, Checker Deselect, Select Boundary Loop, Select Open / Non-Manifold Edges (PolyOps: CheckerVerts / CheckerFaces, RegionOutline, ProblemEdges), stats line
+  - 3.1.2 G/R/S modal transforms - `Modeling/EditTransform` - EditTransformSession, AxisLock (X/Y/Z, Shift = plane), NumericInput, Move/Rotate/ScaleMatrix, Ctrl snap, Esc restores exactly; pivot Median / Individual Origins / Active Vertex (EditPivot; Edit Mesh combo, `.` cycles); the move-handle drag uses the same session (soft select, symmetry X/Y/Z)
   - 3.1.3 Soft Select, Symmetry X and vertex snap - `Render/Mesh` - MoveVerticesSoft, SnapToGrid, hold V to snap to vertices
-  - 3.1.4 Face tools - `Render/Mesh` - ExtrudeFaces, InsetFaces, SubdivideFaces, PokeFaces, Extrude/Inset Individual, DeleteFaces, FlipNormals, OrientFacesOutward (Recalc Outside), DuplicateFaces, SeparateFaces
+  - 3.1.4 Face tools - `Render/Mesh` - ExtrudeFaces, InsetFaces, SubdivideFaces, PokeFaces, Extrude/Inset Individual, DeleteFaces, FlipNormals (keeps flat or smooth shading), FlipFaces (selected faces only), OrientFacesOutward (Recalc Outside), DuplicateFaces, SeparateFaces
   - 3.1.5 Edge and vertex tools - `Render/Mesh` - CollapseEdges, SplitEdges, ExtrudeEdges, BevelVertices, SmoothVertices (Relax Sel), FlattenVertices, ShrinkFatten, SphereizeVertices, WeldVertices (Merge by Distance)
   - 3.1.6 Polygon mesh core - `Modeling/PolyMesh` - quads and n-gons with per-corner UVs, face colour and material slot; FromMesh/ToMesh, Check report, Euler characteristic
   - 3.1.7 Edit-session undo - `editor/main.cpp` - Ctrl+Z steps through single mesh edits; leaving edit mode makes the whole session one scene undo step (per docs)
@@ -20,9 +20,9 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **API:** `EditTransformSession`, `AxisLock`, `NumericInput`, `PolyMesh::FromMesh/ToMesh`, `Mesh::ExtrudeFaces`, `InsetFaces`, `OrientFacesOutward`; keys Tab, G, R, S, X/Y/Z, Ctrl+Z
 - **Editor:** Modeling window (View > Editors & Tools > Modeling), the 3D view's Object/Edit header and status line, Edit Mesh section
 - **Docs:** `docs/editor/modeling.md`
-- **Tests:** `edit_transform`, `meshedit`, `polymesh`, `modeling`
+- **Tests:** `edit_transform`, `meshedit`, `polymesh`, `modeling`, `poly_ops`
 - **Status:** Works - four test suites cover the maths and mesh ops; I read the headers but not the editor key handling in main.cpp
-- **Open:** tools that rebuild triangles outside the polygon core (the classic Extrude) fall back to one UV per vertex where they touch (per docs); possible doc gap: docs/editor/modeling.md says seams and edge split are "not here yet" but UV seams exist (3.4)
+- **Open:** tools that rebuild triangles outside the polygon core (the classic Extrude) fall back to one UV per vertex where they touch (per docs); no per-edge Mark Sharp or Edge Split tool (UV seams exist, 3.4; Auto Smooth covers shading by angle); no local / normal transform orientation, 3D cursor pivot, rip, loop-to-region or vertex slide (audit: `docs/status/modeling_tab_audit.md`); Ctrl+click path, pivot modes and the handle-drag symmetry are tested headless but not tried in a running editor
 - **Related:** 3.2, 3.4, 3.8, 15.9
 - **Words:** edit mode (Tab, G/R/S, axis lock, snapping, mirror), Edit Mesh, Tab, G R S, grab, rotate, scale, extrude, inset, poke, soft select, proportional editing, symmetry X, recalc normals, merge by distance, separate, duplicate faces
 - **Seen as:** pressing Tab over the 3D view does nothing; a tool is greyed out; faces look dark or inside out after a weld or mirror; Esc does not put the vertices back; a typed distance goes the wrong way
@@ -32,18 +32,18 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **What:** Edge-loop modeling on the polygon mesh: select loops and rings, cut new loops, slide, bevel, knife, dissolve, bridge, fill. Each tool keeps the numbering of existing vertices so a selection survives it.
 - **Parts:**
   - 3.2.1 Loop and ring selection - `Modeling/PolyOps` - EdgeLoop, EdgeRing, OrderChains, PolyTopology; Alt-click loop, Ctrl+Alt-click ring, Select Loop/Ring buttons
-  - 3.2.2 Loop cut and edge slide - `Modeling/PolyOps` - LoopCut (Ctrl+R preview, scroll for more cuts), EdgeSlide (G then G)
+  - 3.2.2 Loop cut and edge slide - `Modeling/PolyOps` - LoopCut (Ctrl+R preview, scroll for more cuts), EdgeSlide (G then G; per-corner UVs follow, seams stay split)
   - 3.2.3 Bevel - `Modeling/PolyOps` - BevelEdges (Ctrl+B), segments and profile; where three or more bevels meet the corner is closed with one face
   - 3.2.4 Knife, split edge, connect - `Modeling/PolyOps` - KnifeCut (K), SplitEdge, SplitFace (Connect Verts)
-  - 3.2.5 Dissolve, merge, bridge and fill - `Modeling/PolyOps` - DissolveEdges, DissolveVerts, MergeVerts, BridgeEdgeLoops, FillFaces, GridFill, CompactVerts
+  - 3.2.5 Dissolve, merge, bridge and fill - `Modeling/PolyOps` - DissolveEdges, DissolveVerts, MergeVerts, BridgeEdgeLoops, BridgeFaces (two face groups: delete, then bridge; Face mode in the editor), FillFaces, GridFill, CompactVerts
   - 3.2.6 Catmull-Clark subdivision - `Modeling/PolyOps` - CatmullClark(pm, levels) on real polygons (used by the Subdivision modifier)
 - **Code:** `Modeling/PolyOps`, `Modeling/PolyMesh`, `editor/main.cpp`
-- **API:** `EdgeLoop`, `EdgeRing`, `LoopCut`, `EdgeSlide`, `BevelEdges`, `KnifeCut`, `DissolveEdges`, `BridgeEdgeLoops`, `GridFill`, `CatmullClark`; keys Ctrl+R, Ctrl+B, K
+- **API:** `EdgeLoop`, `EdgeRing`, `LoopCut`, `EdgeSlide`, `BevelEdges`, `KnifeCut`, `DissolveEdges`, `BridgeEdgeLoops`, `BridgeFaces`, `GridFill`, `CatmullClark`; keys Ctrl+R, Ctrl+B, K
 - **Editor:** Modeling window > Edit Mesh > Edge loops group; Ctrl+R / Ctrl+B / K in the 3D view
 - **Docs:** `docs/editor/modeling.md`
 - **Tests:** `poly_ops`
 - **Status:** Works - poly_ops checks counts, closed shells and winding on real geometry; limits listed in Open
-- **Open:** Bevel needs edges with a face on both sides; Bridge works on open borders only and does not remove faces first; Edge slide does not adjust UVs so a textured surface stretches; Grid Fill needs an even number of rim edges (all per docs)
+- **Open:** Bevel needs edges with a face on both sides; Bridge face groups must each be one patch without holes, not touching, with outlines of the same edge count; Grid Fill needs an even number of rim edges (all per docs); edge slide UVs and Bridge in Face mode are tested in poly_ops but not tried in a running editor
 - **Related:** 3.1, 3.3, 3.4
 - **Words:** loop cut, edge loop, edge ring, edge slide, bevel, chamfer, knife, dissolve, bridge, fill, grid fill, merge at center, Catmull-Clark, subdivision surface
 - **Seen as:** a loop cut previews but does not apply; a bevel leaves a hole at a corner; a bridge says the loops need the same edge count; a slid loop stretches the texture
@@ -164,7 +164,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Docs:** `docs/content/model_import.md`, `docs/editor/modeling.md`, `docs/gameplay/animation.md` (imported characters, blend shapes, Tips), `docs/content/model_readers.md`, `docs/content/own_readers_speed.md` (speed and memory of our readers against Assimp, `tests/bench_model_readers.cpp`), `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/own_readers_remaining.md`, `docs/content/model_corpus.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`
 - **Tests:** `gltf_import`, `gltf_cubicspline`, `model_import_rig`, `blend_shapes`, `obj_import`, `loaders_robust`, `model_readers`, `obj_texture_roots`, `model_readers_fuzz`, `collada_reader`, `3ds_reader`, `bvh_reader`, `3ds_bvh_hostile`, `3mf_reader`, `batchb_hostile`, `md2_reader`, `md3_reader`, `irrmesh_reader`, `b3d_reader`, `x_reader`, `batchc_hostile`, `own_dispatch_c`, `ac3d_reader`, `ogre_reader`, `xgl_reader`, `irr_reader`, `nff_reader`, `batchd_hostile`, `terragen_reader`, `terragen_hostile`, `own_dispatch_d`, `model_corpus`, `fbx_reader`, `fbx_hostile`, `mdc_reader`, `hmp_reader`, `csm_reader`, `batche_hostile`, `own_dispatch_e`, `own_reader_wiring`
 - **Status:** Partial - glTF, OBJ, STL and PLY are well tested (the last two with fixtures, malformed input and a fuzz sweep); FBX is exercised by `fbx_reader` and `fbx_hostile` on small generated fixtures (both the ufbx path and our own reader, compared) and, when `OKAY_MODEL_CORPUS` is set, on 43 real files, with no real-world file stored in the repository; the Assimp formats are only exercised by `model_readers` in a build with OKAY_USE_ASSIMP, where it compares Assimp with our readers (so the default suite does not cover them)
-- **Open:** our Collada, 3DS and BVH readers are off by default and were checked on one outside corpus only (`docs/content/model_corpus.md`; Collada has no morphs and flattens curve interpolation to linear, see `docs/content/model_import.md`); still Assimp-only (no reader of ours yet): the formats listed in `docs/content/own_readers_remaining.md` (6 switched on in our build: OpenGEX, MDL, Q3BSP, SIB, Nendo, glTF 1.0) and OGRE's binary `.mesh`, `.skeleton` and `.skeleton.xml`; the 39 importers that have a reader of ours (counted 2026-11-15) are all off by default except the always-on glTF 2.0, OBJ, STL and PLY (`docs/status/own_flip_proposal.md` has the order of flips and the readiness of each); OBJ keeps v as written while PLY/FBX/Assimp flip it (`docs/content/model_import.md`); packed metallic-roughness and emissive textures not imported; BVH is named in the Add-animations dialog; it reads through our own reader only when switched on (`OKAY_OWN_BVH`), otherwise only with an Assimp build; sample Mixamo menu items download from GitHub with curl on first use; our own FBX reader is non-default and checked on one outside corpus of 43 files only, see the NOT handled list in docs/content/model_readers.md
+- **Open:** our Collada, 3DS and BVH readers are off by default and were checked on one outside corpus only (`docs/content/model_corpus.md`; Collada has no morphs and flattens curve interpolation to linear, see `docs/content/model_import.md`); still Assimp-only (no reader of ours yet): the formats listed in `docs/content/own_readers_remaining.md` (6 switched on in our build: OpenGEX, MDL, Q3BSP, SIB, Nendo, glTF 1.0) and OGRE's binary `.skeleton` by default (our reader reads it only with `OKAY_OWN_OGRE_SKELBIN=1`); the 39 importers that have a reader of ours (counted 2026-11-15) are all off by default except the always-on glTF 2.0, OBJ, STL and PLY (`docs/status/own_flip_proposal.md` has the order of flips and the readiness of each); OBJ keeps v as written while PLY/FBX/Assimp flip it (`docs/content/model_import.md`); packed metallic-roughness and emissive textures not imported; BVH is named in the Add-animations dialog; it reads through our own reader only when switched on (`OKAY_OWN_BVH`), otherwise only with an Assimp build; sample Mixamo menu items download from GitHub with curl on first use; our own FBX reader is non-default and checked on one outside corpus of 43 files only, see the NOT handled list in docs/content/model_readers.md
 - **Related:** 3.7, 5.5, 5.2, 20.4, 2.2
 - **Words:** import, glTF, GLB, FBX, OBJ, MTL, STL, PLY, DAE, Collada, Assimp, ufbx, skin, bones, weights, morph target, blend shape, shape key, Mixamo, import report, textures, own FBX reader, OKAY_OWN_FBX, okay::fbx
 - **Seen as:** imported model is white or has no textures; model faces the wrong way or is a tiny or huge size; character stays in a T-pose; faces dark; Console warns about missing bones or unweighted vertices; FBX will not import in a default build; a .dae/.3ds file will not import without Assimp
@@ -195,15 +195,15 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 ### 3.8 Sculpt and paint brushes
 - **What:** Viewport brushes on an edited mesh: sculpt (Grab, Inflate, Smooth, Flatten, Pinch) and per-face colour painting that multiplies with the material colour.
 - **Parts:**
-  - 3.8.1 Sculpt brush - `Render/Mesh` - SculptBrush with radius, strength, Symmetry X; subdivide first for detail
-  - 3.8.2 Paint brush and fill - `Render/Mesh` - EnsureFaceColors, PaintFaces, FillFacesColor, MottleFaceColors, Clear Paint; saved with the scene
+  - 3.8.1 Sculpt brush - `Render/Mesh` - SculptBrush (Grab, Inflate, Smooth = Laplacian over edge neighbours, Flatten, Pinch) with radius, strength, BrushFalloff (smoothstep), symmetryX in one pass; seam and pole copies move together; subdivide first for detail
+  - 3.8.2 Paint brush and fill - `Render/Mesh` - EnsureFaceColors, PaintFaces (a quad or n-gon paints as one face), FillFacesColor, MottleFaceColors, Clear Paint; saved with the scene
 - **Code:** `Render/Mesh`, `editor/main.cpp`
-- **API:** `Mesh::SculptBrush`, `Mesh::PaintFaces`, `FillFacesColor`
+- **API:** `Mesh::SculptBrush`, `Mesh::BrushFalloff`, `Mesh::PaintFaces`, `FillFacesColor`
 - **Editor:** Modeling > Edit Mesh > Sculpt Brush and Paint Brush ticks
 - **Docs:** `docs/editor/modeling.md`
-- **Tests:** `meshedit`, `mesh3d`
-- **Status:** Basic - brush maths are in the Mesh header and docs describe them; I found no test that names sculpt or paint specifically
-- **Open:** no per-vertex weight or texture painting; paint colours are per face only
+- **Tests:** `sculpt_paint`, `meshedit`, `mesh3d`
+- **Status:** Works - `sculpt_paint` checks every brush, the falloff, X symmetry and face paint against hand-worked numbers; the editor strokes themselves are not tried in a running editor
+- **Open:** no per-vertex weight or texture painting (vertex colours are separate, see docs); no Draw/Clay/Crease brush
 - **Related:** 3.1, 2.2
 - **Words:** sculpt, brush, inflate, grab, pinch, flatten, paint, vertex colour, face colour
 - **Seen as:** brush does nothing on a coarse mesh; paint colour is muddy because it multiplies with the material

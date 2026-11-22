@@ -13,9 +13,13 @@
 #include <winrt/Windows.Media.Devices.h>
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.System.h>
+#include <winrt/Windows.System.Profile.h>
 #include <winrt/Windows.UI.ViewManagement.h>
 
 #include <cstring>
+#include <string>
+#include <utility>
+#include <vector>
 #include <exception>
 
 namespace okay_xbox_app {
@@ -62,6 +66,34 @@ struct GameApp : winrt::implements<GameApp, wac::IFrameworkViewSource, wac::IFra
             wgi::GamepadVibration v{l, r, lt, rt};
             pads.GetAt(static_cast<uint32_t>(i)).Vibration(v);
         };
+        // Pads by a stable key: RawGameController.NonRoamableId (the same pad keeps its key across a reconnect). The list is
+        // re-read once a frame on this (UI) thread from Gamepad::Gamepads(); the engine keeps player slots by key (XboxPadSync.hpp).
+        cb.padKeys = [](void* u, std::vector<std::string>* out) {
+            auto* self = static_cast<GameApp*>(u);
+            self->m_padCache.clear();
+            for (wgi::Gamepad const& g : wgi::Gamepad::Gamepads()) {
+                std::string key;
+                try { if (auto raw = wgi::RawGameController::FromGameController(g)) key = winrt::to_string(raw.NonRoamableId()); } catch (...) {}
+                if (key.empty()) continue;   // no stable id: skipped rather than guessed
+                self->m_padCache.emplace_back(key, g);
+                out->push_back(key);
+            }
+        };
+        cb.padReadKey = [](void* u, const std::string& key, bridge::PadReadingPod* o) -> bool {
+            for (auto const& kv : static_cast<GameApp*>(u)->m_padCache) {
+                if (kv.first != key) continue;
+                const wgi::GamepadReading r = kv.second.GetCurrentReading();
+                o->buttons = static_cast<std::uint32_t>(r.Buttons);
+                o->leftTrigger = r.LeftTrigger; o->rightTrigger = r.RightTrigger;
+                o->leftX = r.LeftThumbstickX; o->leftY = r.LeftThumbstickY; o->rightX = r.RightThumbstickX; o->rightY = r.RightThumbstickY;
+                return true;
+            }
+            return false;
+        };
+        cb.padVibrateKey = [](void* u, const std::string& key, double l, double r, double lt, double rt) {
+            for (auto const& kv : static_cast<GameApp*>(u)->m_padCache)
+                if (kv.first == key) { wgi::GamepadVibration v{l, r, lt, rt}; kv.second.Vibration(v); return; }
+        };
         cb.audioDeviceId = [](void*, wchar_t* buf, int cap) -> int {
             const winrt::hstring id = winrt::Windows::Media::Devices::MediaDevice::GetDefaultAudioRenderId(winrt::Windows::Media::Devices::AudioDeviceRole::Default);
             const int n = static_cast<int>(id.size());
@@ -77,6 +109,16 @@ struct GameApp : winrt::implements<GameApp, wac::IFrameworkViewSource, wac::IFra
             auto b = m_window.Bounds();
             bridge::Resized(m_engine, b.Width, b.Height, wgd::DisplayInformation::GetForCurrentView().LogicalDpi());
         };
+        // A game draws to the whole TV, not only the system's TV-safe area; the UI then keeps itself inside the title-safe area
+        // (XboxTitleSafe.hpp through bridge::ScreenBounds). SetDesiredBoundsMode returns false where it is refused.
+        {
+            bool full = false;
+            try { full = winrt::Windows::UI::ViewManagement::ApplicationView::GetForCurrentView().SetDesiredBoundsMode(winrt::Windows::UI::ViewManagement::ApplicationViewBoundsMode::UseCoreWindow); }
+            catch (...) { full = false; }
+            std::string family;
+            try { family = winrt::to_string(winrt::Windows::System::Profile::AnalyticsInfo::VersionInfo().DeviceFamily()); } catch (...) {}
+            bridge::ScreenBounds(m_engine, full, family);
+        }
         resize();
         w.SizeChanged([resize](auto&&, auto&&) { resize(); });
         w.VisibilityChanged([this](auto&&, wui::VisibilityChangedEventArgs const& a) { bridge::Visibility(m_engine, a.Visible()); });
@@ -93,7 +135,8 @@ struct GameApp : winrt::implements<GameApp, wac::IFrameworkViewSource, wac::IFra
         w.PointerPressed([this, scale](auto&&, wui::PointerEventArgs const& a) { auto p = a.CurrentPoint().Position(); bridge::PointerButton(m_engine, 1, true, scale(p.X), scale(p.Y)); });
         w.PointerReleased([this, scale](auto&&, wui::PointerEventArgs const& a) { auto p = a.CurrentPoint().Position(); bridge::PointerButton(m_engine, 1, false, scale(p.X), scale(p.Y)); });
         w.PointerWheelChanged([this](auto&&, wui::PointerEventArgs const& a) { bridge::Wheel(m_engine, a.CurrentPoint().Properties().MouseWheelDelta() / 120.0f); });
-        // B on the pad: the system's back request. Handled here (so the system does not close the app abruptly); the loop leaves cleanly.
+        // B on the pad: the system's back request. Marked handled (so the system does not close the app); the game gets a back press
+        // (closes a pause menu) and keeps running. Leaving is the game's Quit or closing the window.
         wui::SystemNavigationManager::GetForCurrentView().BackRequested([this](auto&&, wui::BackRequestedEventArgs const& a) { a.Handled(true); bridge::BackRequested(m_engine); });
     }
 
@@ -118,6 +161,7 @@ private:
     void OnResuming(wf::IInspectable const&, wf::IInspectable const&) { if (m_engine) { bridge::Log(m_engine, "Xbox app: resumed."); bridge::Resuming(m_engine); } }
 
     wui::CoreWindow m_window{nullptr};
+    std::vector<std::pair<std::string, wgi::Gamepad>> m_padCache;   // refreshed by padKeys once a frame (UI thread only)
     bridge::Engine* m_engine = nullptr;
     winrt::event_token m_susp{}, m_res{};
 };

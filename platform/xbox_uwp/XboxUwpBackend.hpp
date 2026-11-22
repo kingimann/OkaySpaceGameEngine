@@ -10,8 +10,10 @@
 #include "XboxLifecycle.hpp"
 #include "XboxPadHub.hpp"
 #include "XboxPaths.hpp"
+#include "XboxTouch.hpp"
 #include "okay/Platform/Platform.hpp"
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <deque>
 #include <filesystem>
@@ -33,6 +35,7 @@ struct UwpHost {
     virtual void SetTitle(const std::string&) {}        // ApplicationView.Title
     virtual std::vector<std::string> Locales() { return {"en-US"}; }
     virtual void ShowMessage(const std::string&, const std::string&) {}
+    virtual int TouchDevices() { return 0; }            // PointerDevice.GetPointerDevices(): touch digitizers present (an Xbox usually has none)
 };
 
 class UwpBackend;
@@ -83,6 +86,35 @@ public:
         if (down) mouse_ |= platform::MouseMask(button); else mouse_ &= ~platform::MouseMask(button);
         platform::Event e = Base(down ? platform::EventType::MouseButtonDown : platform::EventType::MouseButtonUp); e.button = button; e.x = x; e.y = y; e.clicks = 1; q_.push_back(e);
     }
+    /// Touch / pen pointer from PointerPressed / Moved / Released / Canceled. `dipX`, `dipY` are in DIPs (device-independent pixels,
+    /// 96 per inch), the unit of CoreWindow's PointerPoint.Position; they are turned into physical pixels with the window's DPI
+    /// (Life().Dpi(), from Resized), the same pixels as the window size. Raw points become FingerDown / FingerMotion / FingerUp
+    /// (x, y in pixels; fx, fy are pixel / window pixels, 0..1 inside the window, outside it while a pointer is captured).
+    /// Mouse rule: the finger that goes down while no other finger is down "owns" the mouse: it moves it and presses the left button,
+    /// and its up or cancel releases it. No other finger touches the mouse, not even one that becomes the tracker's primary after the
+    /// owner lifts; the next finger that goes down after every finger has lifted owns it again. So every MouseButtonDown has exactly
+    /// one MouseButtonUp, and the mouse never moves under a finger with no button held. Recognised taps and drags are available
+    /// through TakeGestures. UNVERIFIED with a real touch screen.
+    void PushTouch(long long id, PointerPhase ph, float dipX, float dipY) {
+        const float dpi = life_.Dpi();
+        Route(touch_.Feed(id, ph, DipPosToPixels(dipX, dpi), DipPosToPixels(dipY, dpi), TicksMs()));
+    }
+    /// The window lost focus or the app suspends: every finger ends as a cancel (the mouse button is released too).
+    void CancelTouches() { Route(touch_.CancelAll()); }
+    std::vector<TouchEvent> TakeGestures() { std::vector<TouchEvent> v; v.swap(gestures_); return v; }
+    TouchTracker& Touch() { return touch_; }
+    /// Text composition (IME / on-screen keyboard): TextEditing while composing (text = composed string, x = caret in code points),
+    /// TextEditing "" when it ends, TextInput on commit. Only while text input is on. UNVERIFIED with a real IME.
+    void PushComposition(const std::string& utf8, int caret) {
+        if (!textInput_ || !comp_.Update(utf8, caret)) return;
+        platform::Event e = Base(platform::EventType::TextEditing); e.text = comp_.Active() ? comp_.Text() : std::string(); e.x = comp_.Caret(); q_.push_back(e);
+    }
+    void PushCompositionCommit(const std::string& finalText = std::string()) {
+        const bool was = comp_.Active(); const std::string t = comp_.Commit(finalText);
+        if (!textInput_) return;
+        if (was) q_.push_back(Base(platform::EventType::TextEditing));
+        PushText(t);
+    }
     void PushWheel(float notchesY) { platform::Event e = Base(platform::EventType::MouseWheel); e.wheelY = notchesY; q_.push_back(e); }
     void PushPadAdded(int index) { platform::Event e = Base(platform::EventType::GamepadAdded); e.deviceId = index; q_.push_back(e); }
     void PushPadRemoved(int instanceId) { platform::Event e = Base(platform::EventType::GamepadRemoved); e.deviceId = instanceId; q_.push_back(e); }
@@ -123,7 +155,10 @@ public:
     void* GLProcAddress(const char*) override { return nullptr; }
     void ReleaseCurrent() override {}
     void StartTextInput() override { textInput_ = true; }
-    void StopTextInput() override { textInput_ = false; }
+    void StopTextInput() override { if (comp_.Cancel() && textInput_) q_.push_back(Base(platform::EventType::TextEditing)); textInput_ = false; }
+    void SetTextInputRect(int x, int y, int w, int h) override { imeRect_[0] = x; imeRect_[1] = y; imeRect_[2] = w; imeRect_[3] = h; }   // where the app wants the on-screen keyboard / candidates
+    const int* TextInputRect() const { return imeRect_; }
+    int TouchDeviceCount() override { return host_->TouchDevices(); }
     bool IsKeyDown(platform::Key k) override { return keys_.count((int)k) != 0; }
     std::uint32_t MouseState(int* x, int* y) override { if (x) *x = mx_; if (y) *y = my_; return mouse_; }
     bool SetRelativeMouse(bool on) override { rel_ = on; return true; }
@@ -202,12 +237,44 @@ private:
         const char* Name() const override { return target ? target->Name() : "Xbox controller"; }
         bool HasTriggerMotors() const override { return target ? target->HasTriggerMotors() : true; }
     };
+    void Route(const std::vector<TouchEvent>& evs) {
+        const SizePx sz = life_.Size(); const float w = sz.w > 0 ? (float)sz.w : 1.0f, h = sz.h > 0 ? (float)sz.h : 1.0f;
+        for (const TouchEvent& g : evs) {
+            const bool down = g.kind == TouchEvent::RawDown, move = g.kind == TouchEvent::RawMove;
+            if (!down && !move && g.kind != TouchEvent::RawUp && g.kind != TouchEvent::RawCancel) { gestures_.push_back(g); if (gestures_.size() > 256) gestures_.erase(gestures_.begin()); continue; }
+            platform::Event e = Base(down ? platform::EventType::FingerDown : move ? platform::EventType::FingerMotion : platform::EventType::FingerUp);
+            e.fingerId = g.id; e.fx = (float)g.x / w; e.fy = (float)g.y / h; e.x = g.x; e.y = g.y; q_.push_back(e);
+            // The mouse rule (see PushTouch): only the finger that pressed the mouse moves and releases it.
+            if (down) {
+                if (mouseFinger_ >= 0 || !g.primary) continue;
+                mouseFinger_ = g.id; PushPointerMove(g.x, g.y); PushPointerButton(platform::MouseLeft, true, g.x, g.y);
+            } else if (g.id != mouseFinger_) {
+                continue;
+            } else if (move) {
+                PushPointerMove(g.x, g.y);
+            } else {
+                mouseFinger_ = -1; PushPointerButton(platform::MouseLeft, false, g.x, g.y);
+            }
+        }
+    }
+    /// A pointer position in DIPs to pixels, rounded to the nearest pixel. Unlike DipsToPixels (sizes) it keeps 0 and negative values.
+    static int DipPosToPixels(float dips, float dpi) {
+        if (!(dpi > 0.0f)) dpi = 96.0f;
+        if (!(dips == dips)) return 0;   // NaN
+        double px = std::floor(double(dips) * double(dpi) / 96.0 + 0.5);
+        if (px > 1e6) px = 1e6;
+        if (px < -1e6) px = -1e6;
+        return int(px);
+    }
     std::uint64_t Now() { return clockOverride ? clockOverride() : TicksMs(); }
     platform::Event Base(platform::EventType t) { platform::Event e; e.type = t; e.timestampMs = (std::uint32_t)TicksMs(); e.windowId = 1; return e; }
 public:
     /// Turn lifecycle changes into engine events (and run onSuspend / onResume) and poll the pads. PollEvent does this when its queue is
     /// empty; the Windows glue also calls it from the Suspending handler, so the state is saved before the system's deadline.
     void ServiceLifecycle() { Translate(); }
+    /// Back requests (B on a console pad) since the last call. The engine bridge hands them to the game as an Escape tap
+    /// (XboxGameRuntime::BackPressed); they never quit the app.
+    int TakeBackPresses() { const int n = backPresses_; backPresses_ = 0; return n; }
 private:
     void Translate() {
         const std::uint64_t now = TicksMs();
@@ -221,12 +288,17 @@ private:
         for (BackendPad* p : pads_) p->Poll(now);
         const LifecyclePending p = life_.Take();
         if (p.saveState) {
+            // A suspended app gets no PointerReleased or composition end: cancel every finger (releases the mouse button) and clear
+            // the composition now, so nothing is stuck after resume.
+            CancelTouches();
+            if (comp_.Cancel() && textInput_) q_.push_back(Base(platform::EventType::TextEditing));
             q_.push_back(Base(platform::EventType::WindowFocusLost));
             if (onSuspend) onSuspend();
             life_.SaveDone();
         }
         if (p.resized) { platform::Event e = Base(platform::EventType::WindowResized); e.width = life_.Size().w; e.height = life_.Size().h; q_.push_back(e); }
         if (p.resumed) { q_.push_back(Base(platform::EventType::WindowFocusGained)); if (onResume) onResume(); }
+        if (p.back && !quitSent_) ++backPresses_;
         if (p.exitRequested && !quitSent_) { quitSent_ = true; q_.push_back(Base(platform::EventType::Quit)); }
     }
     friend class UwpWindow;
@@ -234,7 +306,9 @@ private:
     Lifecycle life_; std::deque<platform::Event> q_; std::set<int> keys_; std::vector<BackendPad*> pads_; int nextPadId_ = 1; std::unique_ptr<PadHub> hub_; std::vector<SlotProxy> proxies_;
     std::deque<std::string> log_; std::string clip_, err_;
     int mx_ = 0, my_ = 0, relDx_ = 0, relDy_ = 0; std::uint32_t mouse_ = 0;
+    TouchTracker touch_; std::vector<TouchEvent> gestures_; long long mouseFinger_ = -1; TextComposition comp_; int imeRect_[4] = {0, 0, 0, 0};
     bool inited_ = false, textInput_ = false, rel_ = false, cursor_ = true, quitSent_ = false;
+    int backPresses_ = 0;
 };
 
 inline void* UwpWindow::NativeHandle() const { return b_->host_->CoreWindowHandle(); }

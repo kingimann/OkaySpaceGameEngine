@@ -1,4 +1,5 @@
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/ColliderShapes3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Render/Mesh.hpp"
@@ -47,8 +48,10 @@ Vec3 HullNormal(const Mesh& src) {
 
 // The convex hull of the vertices. A flat (or collinear) cloud has no volume, so
 // it is thickened slightly along its normal: a dynamic body still has a shape.
+// A mesh with more than kMaxHullPoints vertices is thinned first (the same farthest-point thinning as the Convex Hull
+// collider): the hull wrap's duplicate check and seed search grow with the square of the point count.
 Mesh BuildConvexHull(const Mesh& src) {
-    Mesh h = Mesh::ConvexHull(src.vertices);
+    Mesh h = Mesh::ConvexHull(ThinHullPoints(src.vertices));
     if (h.vertices.size() >= 4 && h.triangles.size() >= 4) return h;
     if (src.vertices.size() < 3) return h;
     Vec3 n = HullNormal(src);
@@ -69,7 +72,7 @@ Mesh BuildConvexHull(const Mesh& src) {
         pts.push_back(v + n * eps);
         pts.push_back(v + side * eps);
     }
-    return Mesh::ConvexHull(pts);
+    return Mesh::ConvexHull(ThinHullPoints(pts));
 }
 } // namespace
 

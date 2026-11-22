@@ -147,5 +147,47 @@ int main() {
         CHECK(m.name.empty());
     }
 
+    // --- FlipNormals keeps the shading: a flat (edit-mode) mesh stays flat --------
+    // Bug: FlipNormals always called ComputeSmoothNormals, so pressing Flip Normals in
+    // Edit Mesh (where the welded mesh is flat shaded, normals empty) turned a cube
+    // into a blobby smooth-shaded one.
+    {
+        Mesh m = Mesh::Cube();
+        m.WeldVertices();
+        m.normals.clear();                                   // flat, as in edit mode
+        m.FlipNormals();
+        CHECK(m.normals.empty());                            // still flat
+        Mesh s = Mesh::Sphere();
+        s.ComputeSmoothNormals();
+        const Vec3 n0 = s.normals[0];
+        s.FlipNormals();
+        CHECK(s.normals.size() == s.vertices.size());
+        CHECK((s.normals[0] + n0).Magnitude() < 1e-4f);      // smooth normals turn round with the faces
+    }
+
+    // --- FlipFaces: only the listed triangles turn; UVs follow; hostile lists ------
+    {
+        Mesh m = Mesh::Cube();
+        m.WeldVertices();
+        m.normals.clear();
+        m.cornerUVs.clear();
+        for (std::size_t i = 0; i < m.triangles.size(); ++i) m.cornerUVs.push_back(Vec2{(float)i, (float)(i % 3)});   // a distinct UV per corner
+        const std::vector<int> before = m.triangles;
+        const std::vector<Vec2> uvBefore = m.cornerUVs;
+        CHECK(m.FlipFaces({2, 3, 3, -1, 999}) == 2);         // repeats and bad numbers ignored
+        CHECK(m.triangles[6] == before[6] && m.triangles[7] == before[8] && m.triangles[8] == before[7]);
+        CHECK(m.triangles[9] == before[9] && m.triangles[10] == before[11]);
+        bool rest = true;
+        for (std::size_t i = 0; i < before.size(); ++i) if ((i < 6 || i >= 12) && m.triangles[i] != before[i]) rest = false;
+        CHECK(rest);
+        CHECK(m.cornerUVs.size() == uvBefore.size());
+        CHECK(m.cornerUVs.size() > 8 && m.cornerUVs[7].x == uvBefore[8].x && m.cornerUVs[8].x == uvBefore[7].x);
+        CHECK(m.normals.empty());                            // flat stays flat
+        CHECK(m.FlipFaces({2, 3}) == 2);
+        CHECK(m.triangles == before);                        // twice is back to the start
+        CHECK(m.FlipFaces({}) == 0);
+        Mesh e; CHECK(e.FlipFaces({0}) == 0);                // empty mesh
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -14,9 +14,11 @@
 //              tonemap curve and rs.tonemap, post.grading, the vignette (with
 //              smoothness; PostVignetteHandled() is set true so the host skips
 //              its overlay), post.bloom and post.fxaa are read (PlanScenePost /
-//              ApplyScenePost). post.ssao and post.dof are not. Procedural sky colours come
+//              ApplyScenePost). post.ssao runs ApplySSAO with the scene's radius
+//              and intensity; post.dof runs ApplySceneDof (perspective cameras
+//              only). Procedural sky colours come
 //              from EffectiveSkyColors; the disc, halo, clouds and stars are not
-//              drawn. ApplySSAO reads the process-wide switch only; ApplyBloom, ApplyFXAA
+//              drawn. ApplyBloom, ApplyFXAA
 //              and ApplyColorGrade also still read theirs. PerPixelLighting is
 //              read only here, and ShadowsUsePerPixel (default on) lights per
 //              pixel while a shadow map exists, so shadows show by default.
@@ -128,7 +130,8 @@ inline const RenderFeatureRow& RenderFeatureRowAt(RenderFeature feature) {
         {"Ambient occlusion in Post-processing", false,
          "The Ambient occlusion switch under Rendering, and in Build Settings, is a separate switch.",
          nullptr, {S::Yes, S::Yes, S::Yes, S::No}},
-        {"Depth of field", false, nullptr, nullptr, {S::No, S::Yes, S::Yes, S::No}},
+        {"Depth of field", false, "The software renderer draws it for perspective cameras only.", nullptr,
+         {S::Yes, S::Yes, S::Yes, S::No}},
         {"The procedural sun disc, halo, clouds and stars", true,
          "Direct3D 12 and the software renderer show the sun's colours as a plain gradient.",
          nullptr, {S::No, S::Yes, S::Yes, S::No}},

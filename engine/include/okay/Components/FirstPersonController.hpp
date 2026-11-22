@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Input/InputActions.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/Component.hpp"
@@ -134,7 +135,7 @@ public:
 
     // ---- Lean (peek around corners) ----
     char  leanLeftKey  = 'q';           // 0 = disabled
-    char  leanRightKey = 'e';           // 0 = disabled
+    char  leanRightKey = 'x';           // 0 = disabled. Was E; E is the shared Interact key now (scenes that saved E keep it)
     float leanAngle  = 14.0f;           // camera roll while leaning (degrees)
     float leanOffset = 0.35f;           // sideways camera shift while leaning (units)
     float leanSpeed  = 10.0f;           // how fast the lean eases in/out
@@ -323,7 +324,7 @@ public:
         // local -Z, so yaw decreases with rightward mouse movement.
         Vec2 mp = Input::MousePosition();
         bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
-        bool zoom = !uiBlocked && Input::GetMouseButton(1);
+        bool zoom = !uiBlocked && InputActions::ControlMouse("Aim", 1);
         if (Accessibility::ToggleFor("Aim")) zoom = m_aimLatch.Update(zoom, true);
         else m_aimLatch.Reset();
         in.yaw = yaw; in.pitch = pitch;
@@ -369,24 +370,28 @@ public:
         in.yaw = yaw;
         in.pitch = pitch;
 
-        in.move = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
-        auto key = [&](char k, std::uint32_t bit) {
+        in.move = uiBlocked ? Vec2{0, 0} : InputActions::ControlMove();   // freeze while a bag is open
+        // Jump, sprint and crouch read their named actions, so a player's rebinding reaches them; with the
+        // default bindings they are exactly Space, sprintKey and crouchKey (InputActions::ControlKey).
+        auto key = [&](const char* action, char k, std::uint32_t bit, char stock = 0) {
             if (!k) return;
+            const bool held = action ? InputActions::ControlKey(action, k, stock) : Input::GetKey(k);
+            const bool down = action ? InputActions::ControlKeyDown(action, k, stock) : Input::GetKeyDown(k);
             // A key that is neither down nor just pressed sets no bit, whoever owns it: do not search the scene
             // (every use prompt, pickup and bag) for who that is, twice a frame.
-            if (!OldPlayerPath() && !Input::GetKey(k) && !Input::GetKeyDown(k)) return;
+            if (!OldPlayerPath() && !held && !down) return;
             if ((bit == PlayerInput::LeanLeft || bit == PlayerInput::LeanRight) &&
-                LeanKeyTaken(gameObject ? gameObject->scene() : nullptr, k)) return;   // a use or bag press, not a lean
-            if (Input::GetKey(k))     in.held |= bit;
-            if (Input::GetKeyDown(k)) in.pressed |= bit;
+                LeanKeyTaken(gameObject ? gameObject->scene() : nullptr, k, gameObject)) return;   // a use or bag press, not a lean
+            if (held) in.held |= bit;
+            if (down) in.pressed |= bit;
         };
-        key(' ', PlayerInput::Jump);
-        key(sprintKey, PlayerInput::Sprint);
-        key(crouchKey, PlayerInput::Crouch);
-        key(proneKey, PlayerInput::Prone);
+        key("Jump", ' ', PlayerInput::Jump);
+        key("Sprint", sprintKey, PlayerInput::Sprint);
+        key("Crouch", crouchKey, PlayerInput::Crouch);
+        key("Prone", proneKey, PlayerInput::Prone, 'z');
         m_dodgeEdge = dodge.canDodge && dodge.key && Input::GetKeyDown(dodge.key);
-        key(leanLeftKey, PlayerInput::LeanLeft);
-        key(leanRightKey, PlayerInput::LeanRight);
+        key("LeanLeft", leanLeftKey, PlayerInput::LeanLeft, 'q');
+        key("LeanRight", leanRightKey, PlayerInput::LeanRight, 'x');   // stock keys: the actions start unbound (first person ships X, E is Interact)
         if (stanceGamepadButton >= 0 && Input::GetGamepadButton(stanceGamepadButton)) in.held |= PlayerInput::StanceButton;
         return in;
     }

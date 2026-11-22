@@ -623,6 +623,13 @@ add_executable(test_shaders test_shaders.cpp)
 target_link_libraries(test_shaders PRIVATE okay::engine)
 add_test(NAME shaders COMMAND test_shaders)
 
+# OkayShader language (docs/rendering/shaders.md): parser / checker errors, hostile inputs and fuzz, GLSL / HLSL text,
+# the CPU program, material property text, file hot reload, the shipped example shaders.
+add_executable(test_okayshader test_okayshader.cpp)
+target_link_libraries(test_okayshader PRIVATE okay::engine)
+target_compile_definitions(test_okayshader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME okayshader COMMAND test_okayshader)
+
 add_executable(test_uishape test_uishape.cpp)
 target_link_libraries(test_uishape PRIVATE okay::engine)
 add_test(NAME uishape COMMAND test_uishape)

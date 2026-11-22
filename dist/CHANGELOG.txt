@@ -15,6 +15,11 @@ v2.903.0
     differently from one run to the next.
   - .dds texture files and compressed imported textures now load on the
     GPU (OpenGL and Direct3D 11), and BC3-compressed colours are correct.
+  - Faster character animation: with several CPU cores, skinning many
+    characters is about 3 times faster. Results are exactly the same.
+  - Try it (off by default): Settings > Experimental > "OkayUI own
+    renderer" draws our own UI screens with our own renderer on OpenGL and
+    Direct3D 11.
 
 v2.902.0
   Fixes and faster model import

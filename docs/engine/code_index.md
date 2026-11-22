@@ -17,7 +17,6 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Core | 75 | 453 | [code_index/engine-Core.md](code_index/engine-Core.md) |
 | engine-Crypto | 2 | 21 | [code_index/engine-Crypto.md](code_index/engine-Crypto.md) |
 | engine-Debug | 11 | 80 | [code_index/engine-Debug.md](code_index/engine-Debug.md) |
-| engine-ECS | 5 | 9 | [code_index/engine-ECS.md](code_index/engine-ECS.md) |
 | engine-Environment | 5 | 51 | [code_index/engine-Environment.md](code_index/engine-Environment.md) |
 | engine-Graphics | 5 | 36 | [code_index/engine-Graphics.md](code_index/engine-Graphics.md) |
 | engine-Input | 22 | 107 | [code_index/engine-Input.md](code_index/engine-Input.md) |

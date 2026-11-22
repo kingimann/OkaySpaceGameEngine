@@ -1,7 +1,7 @@
 # 1. Core & scene
 
-The engine's spine: the main loop and clock, timers and tweens, the scene graph (Scene, GameObject, Transform, Component), scene loading and saving, prefabs, save games and prefs, localization, events and ECS, logging and profiling, the asset manager and asset database, and the runtime utilities, property registry and scene text tools that merged in waves 4 and 5.
-Covers `engine/include/okay/Core` (56 headers, 45 sources in `engine/src/Core`), `Scene` (26 headers, 20 sources; `SceneSerializer.cpp` alone is about 9.0k lines), `ECS` (5 headers, header-only) and three editor files. The data layers for undo, debugging, optimization and testing live in `Debug`, `Optimize` and `Testing` (areas 22, 23, 27, 33).
+The engine's spine: the main loop and clock, timers and tweens, the scene graph (Scene, GameObject, Transform, Component), scene loading and saving, prefabs, save games and prefs, localization, events, logging and profiling, the asset manager and asset database, and the runtime utilities, property registry and scene text tools that merged in waves 4 and 5.
+Covers `engine/include/okay/Core` (56 headers, 45 sources in `engine/src/Core`), `Scene` (26 headers, 20 sources; `SceneSerializer.cpp` alone is about 9.0k lines) and three editor files. The data layers for undo, debugging, optimization and testing live in `Debug`, `Optimize` and `Testing` (areas 22, 23, 27, 33).
 Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #575 scene hierarchy, #578 core wave 5, #579 loop and time pass 1) plus #581 (loop and time pass 2), #582 (scene text tools know `gravity3`), #577 (editor layout redesign) and the feature map (#576). Merged after it: the scene graph wave (#586, 1.3), timers and tweens (#587, 1.2) and the third loop and time pass (#585, 1.1). Release 2.852.0 (draft PR #588) is being cut and will contain #585, #586 and #587. Nothing else is open in this area.
 
 ## 1. Core & scene
@@ -202,27 +202,21 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Seen as:** "1 item / 2 items" reads wrong; some letters show as boxes; text stays in the old language after switching; a key name shows instead of text
 - **Ask me like:** "Add Polish plural rules"; "Why does the Japanese menu show squares?"
 
-### 1.9 Events and ECS
-- **What:** A typed publish/subscribe event bus and a small data-oriented ECS that lives beside the GameObject scene, with a bridge that draws ECS entities as GameObjects and a networked world.
+### 1.9 Events
+- **What:** A typed publish/subscribe event bus. (A second, data-only object store, `okay::ecs`, used to sit here beside the GameObject scene. Nothing in the engine, editor, player, examples or templates used it, so it was removed on 2026-11-22 to leave one object model: Scenes and Objects. Bulk work on many simple things uses `ObjectPool`, the particle systems and `NetworkSync`.)
 - **Parts:**
   - 1.9.1 Event bus - `Core/EventBus` - `Subscribe<E>`, `Publish`, scoped subscription handle; safe when handlers subscribe, unsubscribe or publish during a publish
-  - 1.9.2 ECS world - `ECS/World` - entities as ids, sparse-set component pools, `each<A, B>` queries, add/get/remove
-  - 1.9.3 System scheduler - `ECS/Systems` - named systems run in order each tick, can be toggled
-  - 1.9.4 Scene bridge - `ECS/SceneBridge` - `EcsTransform` entities mirrored to GameObjects created by your factory, with interpolation
-  - 1.9.5 Networked ECS - `ECS/NetWorld`, `ECS/NetWorldSync` - register replicated component types, `snapshot()/apply()`, `WorldReplicator` broadcast/listen over the NetworkManager RPC channel (see 16.3); delta snapshots with acknowledgements and a linear-time apply (#571)
-  - 1.9.6 Command buffer and safe iteration - `ECS/World` - (#571) `world.commands()` records create, destroy, add, set and remove during `each` and `flush()` applies them in order; destroying inside `each` is safe
-  - 1.9.7 Event bus extras - `Core/EventBus` - (#571) priorities, `SubscribeOnce`, scoped `Listen`, `Queue` and `Flush`
-- **Code:** `Core/EventBus`, `ECS/World`, `ECS/Systems`, `ECS/SceneBridge`, `ECS/NetWorld`, `ECS/NetWorldSync`
-- **API:** `EventBus::Subscribe`, `EventBus::Publish`, `ecs::World`, `ecs::SystemScheduler`, `ecs::SceneBridge`, `ecs::NetWorld`, `ecs::WorldReplicator`
+  - 1.9.2 Event bus extras - `Core/EventBus` - (#571) priorities, `SubscribeOnce`, scoped `Listen`, `Queue` and `Flush`
+- **Code:** `Core/EventBus`
+- **API:** `EventBus::Subscribe`, `EventBus::Publish`
 - **Editor:** none
-- **Docs:** -
-- **Tests:** `eventbus`, `ecs`, `core_audit`, `ecs_commands`
-- **Status:** Works - read the headers; `eventbus` and `ecs` tests are thorough, but it is opt-in library code: nothing in the engine, editor or player uses `EventBus` or the ECS (grep finds no consumer)
-- **Open:** the old note that `SceneBridge` keeps raw `GameObject*` is out of date: it keeps instance ids and re-creates a lost object (`respawnLost`, re-checked 2026-11-22 in `ECS/SceneBridge.hpp`); #571 added the command buffer, safe `World::each`, delta snapshots with ack and the `EventBus` extras (docs `docs/engine/ecs.md`, `docs/engine/core_tools.md`)
-- **Related:** 16.3, 1.3
-- **Words:** EventBus, event, publish, subscribe, ECS, entity, component pool, World, system, SceneBridge, NetWorld, snapshot, replication, event bus, command buffer, delta snapshot, ack, SubscribeOnce, event priority
-- **Seen as:** a handler still runs after it unsubscribed; an ECS unit does not show on screen; the client's ECS world differs from the server's
-- **Ask me like:** "Use the ECS for 5000 bullets and draw them through the bridge"; "Send only changed components to clients"
+- **Docs:** `docs/engine/core_tools.md`
+- **Tests:** `eventbus`, `core_events_ecs`
+- **Status:** Works - read the header; the `eventbus` tests are thorough, but it is opt-in library code: nothing in the engine, editor or player uses `EventBus` yet (grep finds no consumer)
+- **Open:** nothing calls the bus at run time yet
+- **Words:** EventBus, event, publish, subscribe, event bus, SubscribeOnce, event priority, ECS (removed), entity component system
+- **Seen as:** a handler still runs after it unsubscribed; looking for the ECS (it was removed: use GameObjects, ObjectPool or particles)
+- **Ask me like:** "Tell every enemy when the player dies"; "Run this handler only once"
 
 ### 1.10 Logging and profiling
 - **What:** Messages for developers (levels, categories, file output) and a frame profiler with a scrubbable history and trace export.

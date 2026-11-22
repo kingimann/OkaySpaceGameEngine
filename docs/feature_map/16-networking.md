@@ -56,22 +56,21 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Ask me like:** "turn on server-authoritative movement for my shooter", "other players jitter at 100 ms ping, check the interpolation buffer"
 
 ### 16.3 Snapshots and sync, interest
-- **What:** How object state reaches other peers: the drop-in Network Sync component, shared ids and variables, quantized binary delta snapshots, culling by distance, and an ECS world with replication built in.
+- **What:** How object state reaches other peers: the drop-in Network Sync component, shared ids and variables, quantized binary delta snapshots and culling by distance.
 - **Parts:**
   - 16.3.1 Network Sync - `Components/NetworkSync` - put it on any object and its position and rotation replicate; authority Host, Mine or Manual; same `netId` on every peer; "Players can claim it" for shared objects like a ball
   - 16.3.2 NetworkObject, NetworkTransform, SyncVar - `Components/NetworkObject` - shared id plus owner, named RPCs "<netId>/<name>", a one-string synced field; sits on the same NetworkManager calls
   - 16.3.3 Binary delta snapshots - `Net/NetDelta` - poses in millimetres, quaternions in 15 bits per component, sent as changes from the baseline the receiver acknowledged; `binarySnapshots` is on by default
   - 16.3.4 Interest management - `Net/NetworkManager` - `interestRadius` sends a client only peers and owned objects near its avatar (grid cell plus radius); 0 = everyone in the room
-  - 16.3.5 ECS replication - `ECS/NetWorld`, `ECS/NetWorldSync` - an ECS `World` with networking built in, and a `WorldReplicator`
-- **Code:** `Components/NetworkSync`, `Components/NetworkObject`, `Net/NetDelta`, `ECS/NetWorld`, `ECS/NetWorldSync`
-- **API:** `NetworkSync` (component), `NetworkObject`, `NetworkTransform`, `SyncVar`, `NetworkManager::RegisterSync`, `syncRate`, `binarySnapshots`, `interestRadius`, `ecs::NetWorld`, `WorldReplicator`
+- **Code:** `Components/NetworkSync`, `Components/NetworkObject`, `Net/NetDelta`
+- **API:** `NetworkSync` (component), `NetworkObject`, `NetworkTransform`, `SyncVar`, `NetworkManager::RegisterSync`, `syncRate`, `binarySnapshots`, `interestRadius`
 - **Editor:** Inspector: Network Sync (authority, id, claimable), Add Component menu; Net panel shows bytes per object (16.13); `interestRadius` has no inspector field
 - **Docs:** `docs/online/multiplayer.md`
-- **Tests:** `net_sync`, `net_aoi`, `net_interp`, `net_anim_actions`, `ecs`, `ecs_commands`
+- **Tests:** `net_sync`, `net_aoi`, `net_interp`, `net_anim_actions`
 - **Status:** Works - transform replication, interest culling and the delta path are exercised by `net_sync`, `net_aoi`, `net_interp`; read `SendSnap` and `OnSnapDelta` in NetworkManager.cpp
-- **Open:** the old map listed "Delta snapshots" as open, but they exist and are on by default; no test names `NetDelta` or `QPose` directly; PR #571 (merged after this map was started) gave `ECS/NetWorld.hpp` delta snapshots against the newest acknowledged tick, a command buffer and `docs/engine/ecs.md`; the header's top comment still says "full-state snapshots", and the `ecs_commands` test covers the new code
+- **Open:** the old map listed "Delta snapshots" as open, but they exist and are on by default; no test names `NetDelta` or `QPose` directly; the separate ECS world with its own replication (`ECS/NetWorld`) was removed on 2026-11-22 because nothing used it: `NetworkSync` is the one replication path
 - **Related:** 16.2, 16.8, 1.9, 16.13
-- **Words:** NetworkSync, netId, authority, snapshot, delta snapshot, quantized, baseline, ack, interest management, area of interest, culling, syncRate, NetWorld, WorldReplicator, replicate, SyncVar, claimable
+- **Words:** NetworkSync, netId, authority, snapshot, delta snapshot, quantized, baseline, ack, interest management, area of interest, culling, syncRate, replicate, SyncVar, claimable
 - **Seen as:** an object moves on the host but not on clients; two players see different object positions; too much bandwidth with many objects; a far-away player still pops in; a shared ball is owned by nobody
 - **Ask me like:** "make this platform move the same on every client", "only send players who are within 50 units"
 

@@ -8,7 +8,7 @@
 
 ## The main finding
 
-Many foundation libraries are written and tested but **nothing in the engine, editor or player calls them**: the job system, the allocators and slot map, the ECS, the asset manager, the memory tracker, the console and cvars, the event bus, the GPU timer and render stats, and the property-level undo commands. The code that actually runs uses hand-written paths instead:
+Many foundation libraries are written and tested but **nothing in the engine, editor or player calls them**: the job system, the allocators and slot map, the ECS (removed 2026-11-22), the asset manager, the memory tracker, the console and cvars, the event bus, the GPU timer and render stats, and the property-level undo commands. The code that actually runs uses hand-written paths instead:
 
 - `engine/src/Scene/SceneSerializer.cpp` is about 10k lines with about 400 `else if` branches, one per component field family.
 - `editor/main.cpp` is about 50k lines with the Inspector, Add Component menu and many panels written by hand.
@@ -23,7 +23,7 @@ Unity, Unreal and Godot all drive serialization, the Inspector, undo, scripting 
 |---|---|---|---|---|
 | 1 | Memory | `Core/Memory.hpp` (frame arena, pool), `Core/SlotMap.hpp`, `Debug/MemoryTracker`: tests only | Per-frame arenas in use, per-system budgets, GPU memory accounting, leak report | Important |
 | 2 | Job system | `Core/Jobs.hpp`: tests only. Raw `std::thread` in 8 places, one OS thread per OkayScript coroutine | Physics, skinning, culling, rasteriser and asset loading on worker threads; render thread | Blocks others (speed) |
-| 3 | Object model | GameObject/Component runs everything; lifecycle order is tested. `ECS/*`: tests only | Generational handles instead of raw pointers; per-type component index (118 `FindObjectsOfType` scans) | Important |
+| 3 | Object model | GameObject/Component runs everything; lifecycle order is tested. The separate `ECS/*` store (tests only) was removed on 2026-11-22 | Generational handles instead of raw pointers; per-type component index (118 `FindObjectsOfType` scans) | Important |
 | 4 | Reflection | `PropertyRegistry` (112 of about 240 component types), used by the fallback Inspector, tweens, visual script and one OkayScript builtin | One registry driving serializer, Inspector, undo, scripting and networking | **Blocks others** |
 | 5 | Serialization | Text `okayscene 3`, positional records, migrations | Named fields (reorder-safe), GUID asset references instead of paths, binary/cooked form | Important (needs 4) |
 | 6 | Asset pipeline | `AssetDatabase` (GUID meta, dependencies) used by the Project panel and build; `AssetManager` (handles, async, hot reload): no caller. Real loads are global maps, never unloaded | Import cache, cooking, file watcher, async load and unload on the real path | **Blocks others** |
@@ -40,11 +40,11 @@ Unity, Unreal and Godot all drive serialization, the Inspector, undo, scripting 
 | 17 | Platform, files | Platform layer used, but direct SDL calls remain (player 116, editor 310, launcher 710); 69 direct file opens | Virtual file system with mounted packs; async file I/O | Important |
 | 18 | Debug, profiling | Profiler markers only in `Scene.cpp` and the editor; console, cvars, GPU timer, render stats: no host | In-game console and cvars, GPU timings, frame debugger | Important |
 | 19 | Build, tests | Build copies source files plus a zip; 688 test registrations | Cooking step; GPU backend tests; performance budgets in CI | Important |
-| 20 | Networking | Transforms plus named string vars and RPCs; `ECS/NetWorld`: unused | Property replication driven by the registry | Nice to have (needs 4) |
+| 20 | Networking | Transforms plus named string vars and RPCs (the unused `ECS/NetWorld` was removed on 2026-11-22) | Property replication driven by the registry | Nice to have (needs 4) |
 
 ## Built more than once
 
-Object model (GameObject and ECS), component description (about seven separate paths), undo (three), asset caches (about seven), threads (job system plus raw threads), fixed step (two), shading (four copies), debug overlays and stats (several), random and time helpers, two script VMs plus visual script, three animation clip formats, three character-collision paths, and direct SDL use beside the platform layer.
+Object model (GameObject and ECS; the ECS was deleted on 2026-11-22, so it is one now), component description (about seven separate paths), undo (three), asset caches (about seven), threads (job system plus raw threads), fixed step (two), shading (four copies), debug overlays and stats (several), random and time helpers, two script VMs plus visual script, three animation clip formats, three character-collision paths, and direct SDL use beside the platform layer.
 
 ## Build order
 
@@ -59,11 +59,11 @@ Wiring existing code comes before writing new code. Each task ends with a test t
 7. **Property-level undo from the registry** for Inspector edits. Test: undo and redo keep the same object pointers.
 8. **Built-in controllers read input actions**, so rebinding reaches them. Test: rebind jump to a pad button and the controller jumps; old scenes keep their keys.
 
-After those: per-type component index, a physics broad phase, one fixed step, GUID asset references in scene files, a cooked format with a mounted pack, presenting GPU output without readback, and a decision on the ECS (wire it or delete it).
+After those: per-type component index, a physics broad phase, one fixed step, GUID asset references in scene files, a cooked format with a mounted pack, presenting GPU output without readback, and a decision on the ECS (decided 2026-11-22: deleted, nothing used it).
 
 ## Stale docs found
 
-`docs/FEATURE_MAP.md` and `docs/feature_map/01-core-scene.md` section 1.9 mark "Events and ECS" as Works, but nothing at run time uses either.
+`docs/FEATURE_MAP.md` and `docs/feature_map/01-core-scene.md` section 1.9 marked "Events and ECS" as Works, but nothing at run time used either. The ECS has since been removed and 1.9 is now "Events".
 
 ## Not verified
 

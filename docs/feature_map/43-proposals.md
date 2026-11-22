@@ -279,9 +279,9 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ### 46.2 State replay and killcam
 - **What:** Replay from recorded object states (snapshots) instead of inputs, to show the last seconds of a match from any camera.
 - **Parts:**
-  - 46.2.1 Network snapshots and deltas - `Net/NetDelta`, `ECS/NetWorldSync` - the engine already produces compact state snapshots for networking
+  - 46.2.1 Network snapshots and deltas - `Net/NetDelta` - the engine already produces compact state snapshots for networking
   - 46.2.2 Rewind raycast - `Net/NetworkManager` - the host keeps about a second of object poses and `RewindRaycast` shoots against where things were at an earlier net tick (lag compensation)
-- **Code:** `Net/NetDelta`, `ECS/NetWorldSync`, `Net/NetworkManager`
+- **Code:** `Net/NetDelta`, `Net/NetworkManager`
 - **API:** `NetDelta`, `NetworkManager::RewindRaycast`
 - **Editor:** none
 - **Docs:** `docs/online/dedicated-server.md`

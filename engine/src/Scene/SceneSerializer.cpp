@@ -3895,6 +3895,14 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          .str("prompt", dr->promptText).str("pobj", dr->promptObject).b("pause", dr->pausePlayer)
          ("type", dr->typewriterSpeed)("auto", dr->autoAdvance).b("ui", dr->drawUI).b("cancel", dr->canCancel)
          ("start", dr->startNode).str("player", dr->playerName);
+        if (!dr->cameraShots.empty()) {   // per-line camera shots; not written when there are none (old records stay the same)
+            k("shots", (int)dr->cameraShots.size());
+            for (std::size_t i = 0; i < dr->cameraShots.size(); ++i) {
+                const std::string p = "sh" + std::to_string(i);
+                k((p + "n").c_str(), dr->cameraShots[i].node).str((p + "c").c_str(), dr->cameraShots[i].camera);
+            }
+        }
+        if (dr->shotBlend != -1.0f) k("shb", dr->shotBlend);
         out << "\n";
     }
     for (auto* ql : go->GetComponents<QuestLog>()) {
@@ -9231,6 +9239,15 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.str("prompt", dr->promptText); k.str("pobj", dr->promptObject); k.b("pause", dr->pausePlayer);
                     k.f("type", dr->typewriterSpeed); k.f("auto", dr->autoAdvance); k.b("ui", dr->drawUI); k.b("cancel", dr->canCancel);
                     k.i("start", dr->startNode); k.str("player", dr->playerName);
+                    int shots = 0;
+                    k.i("shots", shots);   // missing in records written before dialogue camera shots: none
+                    for (int i = 0; i < shots && i < 100000; ++i) {
+                        const std::string p = "sh" + std::to_string(i);
+                        DialogueRunner::CameraShotEntry e;
+                        k.i((p + "n").c_str(), e.node); k.str((p + "c").c_str(), e.camera);
+                        if (!e.camera.empty()) dr->cameraShots.push_back(e);
+                    }
+                    k.f("shb", dr->shotBlend);
                 } else if (field == "questlog") {
                     auto* ql = go->AddComponent<QuestLog>();
                     KvIn k(in);

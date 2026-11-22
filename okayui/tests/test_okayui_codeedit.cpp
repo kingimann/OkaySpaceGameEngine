@@ -1194,6 +1194,48 @@ void LineCommandTests() {
     }
 }
 
+// The line commands on the script editor's keys, through the widget: Ctrl+/ comment, Ctrl+D duplicate, Ctrl+Shift+K delete,
+// Alt+Up and Alt+Down move. Alt+Up must not also move the caret up; plain Up still moves.
+void LineCommandKeyTests() {
+    Rig r;
+    r.ce.SetLanguage(UI::OkayScriptLanguage());
+    r.ce.SetText("a\nb\nc");
+    r.Frames(2);
+    ClickPos(r, P(1, 1));
+    CHECK(r.ce.Focused() && At(r.ce, 1, 1));
+    r.sim.ctrl = true; r.Named(UI::KeyId_Slash); r.sim.ctrl = false;
+    CHECK(r.ce.GetText() == "a\n// b\nc");
+    r.sim.ctrl = true; r.Named(UI::KeyId_Slash); r.sim.ctrl = false;
+    CHECK(r.ce.GetText() == "a\nb\nc");
+    r.sim.ctrl = true; r.Named(UI::KeyId_D); r.sim.ctrl = false;
+    CHECK(r.ce.GetText() == "a\nb\nb\nc" && r.ce.Caret().line == 2);
+    r.sim.ctrl = true; r.sim.shift = true; r.Named(UI::KeyId_K); r.sim.ctrl = false; r.sim.shift = false;
+    CHECK(r.ce.GetText() == "a\nb\nc" && r.ce.Caret().line == 2);
+    r.sim.Hold(UI::KeyId_Alt, true);
+    r.Key(Key_Up);                                         // c moves above b; the caret goes with it, one line, not two
+    CHECK(r.ce.GetText() == "a\nc\nb" && r.ce.Caret().line == 1);
+    r.Key(Key_Down);
+    CHECK(r.ce.GetText() == "a\nb\nc" && r.ce.Caret().line == 2);
+    r.sim.Hold(UI::KeyId_Alt, false); r.Frame();
+    r.Key(Key_Up);                                         // without Alt: a plain caret move
+    CHECK(r.ce.GetText() == "a\nb\nc" && r.ce.Caret().line == 1);
+    // each command is one undo step (Ctrl+Z)
+    r.sim.ctrl = true; r.Named(UI::KeyId_D); r.Named(UI::KeyId_Z); r.sim.ctrl = false;
+    CHECK(r.ce.GetText() == "a\nb\nc");
+    // typing a '/' with Ctrl held is a command, not text; plain '/' is text
+    r.sim.ctrl = true; r.sim.Type("/"); r.Named(UI::KeyId_Slash); r.sim.ctrl = false;
+    CHECK(r.ce.GetText() == "a\n// b\nc");
+    // off: the keys do nothing
+    r.ce.SetLineCommandKeys(false);
+    r.sim.ctrl = true; r.Named(UI::KeyId_D); r.sim.ctrl = false;
+    CHECK(r.ce.GetText() == "a\n// b\nc");
+    r.ce.SetLineCommandKeys(true);
+    // read only: nothing
+    r.ce.SetReadOnly(true);
+    r.sim.ctrl = true; r.Named(UI::KeyId_D); r.sim.ctrl = false;
+    CHECK(r.ce.GetText() == "a\n// b\nc");
+}
+
 } // namespace
 
 int main() {
@@ -1214,6 +1256,7 @@ int main() {
     WidgetTests();
     ExtraTests();
     LineCommandTests();
+    LineCommandKeyTests();
     DrawTests();
     PerfTests();
     TEST_MAIN_RESULT();

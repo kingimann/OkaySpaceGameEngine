@@ -46,6 +46,9 @@ public:
     /// Localized: a string-table key whose text replaces `placeholder` in the current language.
     LocalizedText loc;
     int  maxLength = 64;
+    /// Keyboard / gamepad menus (NavigateUI) may rest their focus here: the d-pad highlights the field and A / Enter starts
+    /// editing (on an Xbox that brings up the on-screen keyboard). Not saved in scenes yet (always on when loaded).
+    bool focusable = true;
     ContentType contentType = ContentType::Standard;
     char passwordChar = '*';
     bool focused = false;
@@ -85,7 +88,13 @@ public:
         return p.x >= o.x && p.y >= o.y && p.x <= o.x + sz.x && p.y <= o.y + sz.y;
     }
 
-    Color CurrentColor() const { return focused ? focusColor : color; }
+    Color CurrentColor() const { return (focused || m_navFocused) ? focusColor : color; }
+
+    /// Menu focus (NavigateUI): highlighted, not editing. `focused` is the editing state.
+    bool IsNavFocused() const { return m_navFocused; }
+    void SetNavFocused(bool f) { m_navFocused = f; }
+    /// Start editing (A / Enter on the highlighted field): caret at the end, solid.
+    void BeginEdit() { focused = true; caret = -1; m_blink = 0.0f; }
 
     /// What the renderer should draw for the value (masked for Password).
     std::string DisplayText() const {
@@ -287,6 +296,7 @@ public:
     }
 
 private:
+    bool m_navFocused = false;
     static bool IsContinuation(char c) { return ((unsigned char)c & 0xC0) == 0x80; }
     /// How many times a held key acts this frame: once when it goes down, then after `repeatDelay`
     /// once per `repeatInterval` while it stays down (several in one long frame, capped).

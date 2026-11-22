@@ -106,6 +106,11 @@ int main() {
         CHECK(!field->IsNavFocused());                                            // a disabled field drops its ring
         field->enabled = true; field->focusable = false;
         CHECK(!IsNavFocusable(field->gameObject));
+        // The first focus prefers a button over a field that comes first in reading order.
+        field->focusable = true; field->position = {20, 0}; top->SetFocused(false); field->SetNavFocused(false);
+        Input::FeedGamepad({0, 0}, 0);
+        NavigateUI(s);
+        CHECK(top->IsFocused() && !field->IsNavFocused());
         ReleaseInput();
         UIFocus::Reset();
     }

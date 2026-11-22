@@ -61,6 +61,8 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/WindZone.hpp"   // Wind (docs/gameplay/wind.md)
+#include "okay/Scene/ObjectPool.hpp"
+#include "okay/Core/ScriptPaths.hpp"
 #include <cmath>
 #include <set>
 
@@ -1616,6 +1618,45 @@ EngineApi Build() {
             [](const Value&, CallContext&) { return Value{SaveGame::PlayTime()}; },
             "Seconds played, counting the time in the save that was loaded."));
         api.types.push_back(std::move(sg));
+    }
+    // ---- ObjectPool ----
+    // The scene's pool for a prefab file (ObjectPool::ForPrefab), the same pools OkayScript's pool_get / pool_prewarm /
+    // pool_idle / pool_release use. Being in this table also makes them visual-script nodes (ObjectPool.Get/4 ...).
+    {
+        ApiType op; op.name = "ObjectPool"; op.isStatic = true;
+        op.doc = "Reuse spawned objects (bullets, sparks, coins) instead of making and freeing each one: one pool per prefab file in this scene.";
+        auto poolOf = [](const std::string& file, CallContext& c, const char* api) -> ObjectPool* {
+            Scene* s = c.self ? c.self->scene() : nullptr;
+            if (!s || !ScriptAssetPathOk(file, api)) return nullptr;
+            return ObjectPool::ForPrefab(*s, file);
+        };
+        op.staticMethods.push_back(method("Get", {tString, tFloat, tFloat, tFloat}, {"prefab", "x", "y", "z"}, tGO,
+            [poolOf, goIdx](const Value&, std::vector<Value>& a, CallContext& c) {
+                ObjectPool* pool = poolOf(S(a[0]), c, "ObjectPool.Get");
+                GameObject* go = pool ? pool->Get() : nullptr;
+                if (go && go->transform) go->transform->localPosition = {F(a[1]), F(a[2]), F(a[3])};
+                return MakeRef(go, goIdx);
+            }, "An object from the prefab's pool placed at x, y, z: an idle one when there is one (reset to a fresh copy), else a new one. Null when the prefab can't be loaded."));
+        op.staticMethods.push_back(method("Prewarm", {tString, tInt}, {"prefab", "count"}, tInt,
+            [poolOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                ObjectPool* pool = poolOf(S(a[0]), c, "ObjectPool.Prewarm");
+                if (!pool) return Value{(std::int32_t)0};
+                const float n = F(a[1]);
+                pool->Prewarm(n > 0.0f && n < 100000.0f ? static_cast<int>(n) : 0);
+                return Value{(std::int32_t)pool->IdleCount()};
+            }, "Make count idle objects ahead of time (no hitch at the first shot). Returns how many are idle."));
+        op.staticMethods.push_back(method("Idle", {tString}, {"prefab"}, tInt,
+            [poolOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                ObjectPool* pool = poolOf(S(a[0]), c, "ObjectPool.Idle");
+                return Value{(std::int32_t)(pool ? pool->IdleCount() : 0)};
+            }, "How many objects of the prefab's pool are idle (ready to reuse)."));
+        op.staticMethods.back().pure = true;
+        op.staticMethods.push_back(method("Release", {}, {}, tBool,
+            [](const Value&, std::vector<Value>&, CallContext& c) {
+                Scene* s = c.self ? c.self->scene() : nullptr;
+                return Value{s ? s->Despawn(c.self) : false};
+            }, "Give THIS object back to its pool (it is destroyed when it did not come from one)."));
+        api.types.push_back(std::move(op));
     }
     // ---- Localization ----
     {

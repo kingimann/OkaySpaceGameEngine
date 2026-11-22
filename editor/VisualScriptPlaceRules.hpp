@@ -1005,6 +1005,7 @@ inline const VsRule kApiRules[] = {
     {"Time.PushPause*", "Time & Game Speed", "Pausing"}, {"Time.PopPause*", "Time & Game Speed", "Pausing"},
     {"Time.IsPausedBy*", "Time & Game Speed", "Pausing"}, {"Time.*", "Time & Game Speed", "Clock"},
     {"Debug.*", "Debug", ""}, {"Audio.*", "Music & Volume", ""}, {"SaveGame.*", "Saving & Loading", "Save Slots"},
+    {"ObjectPool.*", "Create & Destroy", "Spawners & Pools"},
     {"Localization.*", "Language & Translation", ""}, {"Sequence.*", "Cutscenes", ""},
     {"PostProcess.*", "Post Effects", ""}, {"Fog.*", "Weather & Fog", ""}, {"Weather.*", "Weather & Fog", ""}, {"Wind.*", "Weather & Fog", ""},
     {"NavMeshAgent.*", "Navigation", ""}, {"GridPathAgent2D.*", "Navigation", "Grid Paths"},

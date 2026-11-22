@@ -47,8 +47,10 @@ private:
 /// Process-wide, data-driven rules for AddComponent: components a type needs next to
 /// it (RequireComponent) and types that may appear once per object
 /// (DisallowMultipleComponent). Register once at startup (before scenes load);
-/// the rules are then applied to every AddComponent<T> call, the editor's
-/// Add Component menu and the scene loader included. Exact-type match on T.
+/// the rules are then applied to every AddComponent<T> call (scripts, the editor's
+/// Add Component menu) except while SceneSerializer reads a file: a loaded object
+/// gets exactly what its lines name. Exact-type match on T. The engine's own rules:
+/// Scene/BuiltinComponentRules.hpp.
 class ComponentRules {
 public:
     struct Requirement {

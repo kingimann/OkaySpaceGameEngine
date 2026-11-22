@@ -25,6 +25,7 @@ std::atomic<std::uint64_t> g_rulesGeneration{0};   // moves whenever a rule is a
 std::unordered_map<std::type_index, std::vector<ComponentRules::Requirement>> g_requirements;
 std::unordered_set<std::type_index> g_unique;
 thread_local std::vector<std::type_index> t_applying;   // owners whose requirements are being added
+thread_local int t_rulesPaused = 0;   // > 0 while this thread reads a scene file (SceneSerializer): no rule runs
 std::string NewGuid() {   // caller holds g_registryMutex
     static std::mt19937_64 rng{std::random_device{}() ^ (std::uint64_t)std::chrono::steady_clock::now().time_since_epoch().count()};
     static const char* hex = "0123456789abcdef";
@@ -51,7 +52,7 @@ void ComponentRules::SetUnique(std::type_index owner) {
     g_anyRules = true;
     g_rulesGeneration.fetch_add(1, std::memory_order_relaxed);
 }
-bool ComponentRules::Any() { return g_anyRules.load(std::memory_order_relaxed); }
+bool ComponentRules::Any() { return t_rulesPaused == 0 && g_anyRules.load(std::memory_order_relaxed); }
 bool ComponentRules::IsUnique(std::type_index owner) {
     std::lock_guard<std::mutex> lock(g_rulesMutex);
     return g_unique.count(owner) != 0;
@@ -71,6 +72,7 @@ namespace detail {
 /// Moves whenever the RequireComponent / DisallowMultipleComponent rules change: the order a loader gives an
 /// object's components depends on them (SceneSerializer keeps what it worked out per rule state).
 std::uint64_t ComponentRulesGeneration() { return g_rulesGeneration.load(std::memory_order_relaxed); }
+void PauseComponentRules(bool pause) { t_rulesPaused += pause ? 1 : (t_rulesPaused > 0 ? -1 : 0); }
 } // namespace detail
 
 void GameObject::ApplyRequirements(std::type_index owner) {

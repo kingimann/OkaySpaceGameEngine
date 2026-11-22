@@ -14,7 +14,7 @@ inline bool SceneHasOverlayNeedingDepth(const Scene& scene) {
     for (const auto& up : scene.Objects()) {
         if (!up || !up->active) continue;
         if (up->GetComponent<LineRenderer>() || up->GetComponent<TrailRenderer>()) return true;
-        if (auto* ps = up->GetComponent<ParticleSystem>())
+        for (ParticleSystem* ps : up->GetComponents<ParticleSystem>())   // every one on the object, not just the first
             for (const auto& p : ps->Particles()) if (p.alive) return true;
     }
     return false;

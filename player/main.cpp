@@ -43,6 +43,8 @@
 #include "okay/Render/SkyStars.hpp"      // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"    // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/OcclusionOverlay.hpp"
+#include "okay/Render/ParticleDrawList.hpp"
+#include "okay/Scene/BuiltinComponentRules.hpp"
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Render/D3D12Renderer.hpp" // optional GPU (Direct3D 12) 3D renderer (Windows, opt-in)
 #include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
@@ -1136,7 +1138,8 @@ static std::string ResolveGameBaseDir(const char* argv0) {
 }
 
 int main(int argc, char** argv) {
-    okay::ownstack::Startup("none");   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
+    okay::ownstack::Startup("none");
+    okay::RegisterBuiltinComponentRules();   // the same component rules as the editor (Scene/BuiltinComponentRules.hpp)   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
     // The window, events, input and GL context go through okay::platform (SDL2 is the default
     // backend; see docs/platform/platform_layer.md). The 2D drawing below still needs an SDL window.
     okay::platform::Backend* pb = okay::platform::Default();
@@ -1428,6 +1431,7 @@ int main(int argc, char** argv) {
                 cfg.smoothPhysics = std::atoi(v.c_str()) != 0;
                 cfg.sawPhysics = true;
             }
+            else if (okay::ProjectLists::ApplyLine(k, v)) {}       // tag=, strict_tags=, layer_name_N= (the project's lists)
             else okay::buildpipe::ApplyExtraKey(cfg.extra, k, v);   // time_scale, music_volume, log_level, env ...
         }
     }
@@ -2612,9 +2616,9 @@ int main(int argc, char** argv) {
                     // len/wid = half-extents along/across the billboard; ang = long-axis angle (deg).
                     struct PP { float depth, sx, sy, len, wid, ang; SDL_Color col; ui2d::Tex tex; bool stretch; };
                     std::vector<PP> pp;
-                    for (const auto& up : scene.Objects()) {
-                        auto* ps = up->GetComponent<ParticleSystem>();
-                        if (!ps || !up->active || UIHidden(up.get())) continue;
+                    std::vector<ParticleSystem*> drawPs;   // every Particle System on an object, not just the first
+                    okay::CollectParticleSystemsToDraw(scene.Objects(), drawPs, [](GameObject* g) { return UIHidden(g); });
+                    for (ParticleSystem* ps : drawPs) {
                         ui2d::Tex ptex = ps->texture.empty() ? nullptr
                                             : GetTexture(renderer, ps->texture);
                         const bool stretchMode = ps->renderMode == ParticleSystem::RenderMode::Stretch;
@@ -2741,9 +2745,9 @@ int main(int argc, char** argv) {
             }
 
             // Particle systems: draw each live particle as a small fading quad.
-            for (const auto& up : scene.Objects()) {
-                auto* ps = up->GetComponent<ParticleSystem>();
-                if (!ps || !up->active || UIHidden(up.get())) continue;
+            std::vector<ParticleSystem*> drawPs2d;   // every Particle System on an object, not just the first
+            okay::CollectParticleSystemsToDraw(scene.Objects(), drawPs2d, [](GameObject* g) { return UIHidden(g); });
+            for (ParticleSystem* ps : drawPs2d) {
                 for (const auto& p : ps->Particles()) {
                     if (!p.alive) continue;
                     SDL_Color col{(Uint8)(p.color.r * 255), (Uint8)(p.color.g * 255),

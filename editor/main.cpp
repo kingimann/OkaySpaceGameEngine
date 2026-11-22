@@ -97,6 +97,8 @@
 #include "okay/Components/ControllerPresets.hpp"   // Controller Preset combo
 #include "okay/Core/FrameOverlay.hpp"
 #include "okay/Render/OcclusionOverlay.hpp"
+#include "okay/Render/ParticleDrawList.hpp"
+#include "okay/Scene/BuiltinComponentRules.hpp"
 #include "okay/Animation/HumanoidLibrary.hpp"  // built-in clip names in the Animator clip slot
 #include "okay/Animation/PlayerSetup.hpp"      // controller: wire missing animation and IK
 #include "okay/Animation/ClipGraph.hpp"       // an Animator graph from an imported model's clips
@@ -4850,6 +4852,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "boot_bar=" << (opt.bootBar ? 1 : 0) << "\n";
         cf << "startup=game.okayscene\n";
         cf << okay::buildpipe::WriteExtraConfig(opt.extra);   // nothing at the defaults, so old projects build the same config
+        cf << okay::ProjectLists::Write();   // the project's tags, strict-tags switch and layer names: the game reads them back (Layers::NameToLayer, SetTag)
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
         if (opt.antiCheat) cf << "anticheat=" << okayac::ModeName((okayac::Mode)opt.antiCheat) << "\n";
         settingsText = cf.str();
@@ -48605,7 +48608,13 @@ void DrawInspector(EditorState& ed) {
         return;
     }
     // Apply a queued component removal (undoable).
-    if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
+    if (toRemove) {   // refused while another component on the object needs it (RequireComponent)
+        if (Component* needs = go->RequiredBy(toRemove)) {
+            const auto ne = okay::PropertyRegistry::FindFor(*needs);
+            ConsoleLog(std::string("Can't remove this component: ") + (ne ? ne->name : std::string("another component")) +
+                       " on this object needs it. Remove that one first.");
+        } else { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
+    }
 
     // Apply a deferred reorder request (set by CompHeader's arrows / context menu).
     if (sMoveComp && sMoveComp->gameObject == go) {
@@ -51062,10 +51071,10 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             }
     }
 
-    // Particles: filled circles (move during Play).
-    for (const auto& up : objs) {
-        auto* ps = up->GetComponent<ParticleSystem>();
-        if (!ps || !up->active || UIHidden(up.get())) continue;
+    // Particles: filled circles (move during Play). Every Particle System on an object, not just the first.
+    static std::vector<ParticleSystem*> drawPs2d; drawPs2d.clear();
+    okay::CollectParticleSystemsToDraw(objs, drawPs2d, [](GameObject* g) { return UIHidden(g); });
+    for (ParticleSystem* ps : drawPs2d) {
         for (const auto& p : ps->Particles()) {
             if (!p.alive) continue;
             ImVec2 sp = worldToScreen(p.position);
@@ -52795,9 +52804,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         // ax/ay are the half-extent screen axes of the billboard (length, width).
         struct PP { float depth; ImVec2 sp, ax, ay; float rad; ImU32 col; ImTextureID tex; bool stretch; };
         static std::vector<PP> pp; pp.clear();
-        for (const auto& up : objs) {
-            auto* ps = up->GetComponent<ParticleSystem>();
-            if (!ps || !up->active) continue;
+        static std::vector<ParticleSystem*> drawPs; drawPs.clear();
+        okay::CollectParticleSystemsToDraw(objs, drawPs);   // every Particle System on an object, not just the first
+        for (ParticleSystem* ps : drawPs) {
             ImTextureID ptex = ps->texture.empty() ? (ImTextureID)0
                                : (ImTextureID)GetThumb(ps->texture);   // sprite handle (0 = soft puff)
             const bool stretchMode = ps->renderMode == ParticleSystem::RenderMode::Stretch;
@@ -57369,6 +57378,7 @@ int main(int argc, char** argv) {
     okay::restart::RememberArguments(argc, argv);
     okay::editor::ExamplesExeDir() = OkayExeDir();   // File > Examples finds the shipped "examples" folder beside the program
     okay::ownswitches::Startup();   // View > Rendering & Performance > Experimental (same file as the launcher's Settings page): set the variables before anything reads them
+    okay::RegisterBuiltinComponentRules();   // a Joint gets its Rigidbody first, and so on (Scene/BuiltinComponentRules.hpp)
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
     std::fprintf(stderr, "[updater] %s\n", okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys()).line.c_str());   // OFF is never silent (docs/online/security.md "Updater signing")
     okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate

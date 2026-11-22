@@ -156,7 +156,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Docs:** `docs/rendering/particles.md`, `docs/engine/splines.md` (lines and trails), `docs/rendering/rendering.md` (weather)
 - **Tests:** `particles_fx`, `particles_serialize`, `particles_tilemap`
 - **Status:** Works - read the `ParticleSystem.hpp` fields and `LineRenderer.hpp` header; tests cover gradients, curves, presets and scene round trips
-- **Open:** particles are CPU billboards drawn by the host, not GPU particles; lines and trails are unlit and cast no shadows; one Line and one Trail renderer per object
+- **Open:** (fixed in claude2/area1-core-3: only the first Particle System on an object was drawn; every host now asks `Render/ParticleDrawList` `CollectParticleSystemsToDraw`, test `particles_fx`) particles are CPU billboards drawn by the host, not GPU particles; lines and trails are unlit and cast no shadows; one Line and one Trail renderer per object
 - **Related:** 2.4, 2.11, 38.10, 11.7
 - **Words:** particles, ParticleSystem, emitter, burst, gradient, trail, TrailRenderer, LineRenderer, laser, rope, ribbon, fire, smoke, sparks, explosion, rain, lines, trails
 - **Seen as:** particles show through walls in the editor; a trail looks flat or jagged; an explosion preset is too slow; too many particles tank the frame rate

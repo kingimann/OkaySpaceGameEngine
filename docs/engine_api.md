@@ -652,6 +652,17 @@ Whole-game saves in named slots: every object, the player, inventories, script v
 | `SaveGame.Delete(slot)` | `SaveGame.Delete/1` | step | slot (Text) | Result (Bool) | Delete the save in a slot. |
 | `SaveGame.Label(slot)` | `SaveGame.Label/1` | value | slot (Text) | Result (Text) | The label a slot was saved with ("" if empty). |
 
+## ObjectPool
+
+Reuse spawned objects (bullets, sparks, coins) instead of making and freeing each one: one pool per prefab file in this scene.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `ObjectPool.Get(prefab, x, y, z)` | `ObjectPool.Get/4` | step | prefab (Text), x (Number), y (Number), z (Number) | Result (Object) | An object from the prefab's pool placed at x, y, z: an idle one when there is one (reset to a fresh copy), else a new one. Null when the prefab can't be loaded. |
+| `ObjectPool.Prewarm(prefab, count)` | `ObjectPool.Prewarm/2` | step | prefab (Text), count (Number) | Result (Number) | Make count idle objects ahead of time (no hitch at the first shot). Returns how many are idle. |
+| `ObjectPool.Idle(prefab)` | `ObjectPool.Idle/1` | value | prefab (Text) | Result (Number) | How many objects of the prefab's pool are idle (ready to reuse). |
+| `ObjectPool.Release()` | `ObjectPool.Release/0` | step | - | Result (Bool) | Give THIS object back to its pool (it is destroyed when it did not come from one). |
+
 ## Localization
 
 Text in the player's language from the project's string table (docs/engine/localization.md). A script hears a change of language in OnLanguageChanged().

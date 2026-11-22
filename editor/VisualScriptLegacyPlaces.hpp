@@ -376,6 +376,7 @@ inline VsPlace VsLegacyPlaceForApi(const char* apiType, const char* member) {
     if (VsIs(apiType, "Debug")) return VsAt("Debug");
     if (VsIs(apiType, "Audio")) return VsAt("Audio");
     if (VsIs(apiType, "SaveGame")) return VsAt("Variables", "Saved");
+    if (VsIs(apiType, "ObjectPool")) return VsAt("Objects");
     if (VsIs(apiType, "Localization")) return VsAt("Text", "Language");
     if (VsIs(apiType, "Sequence")) return VsAt("Animation", "Cutscenes");
     if (VsIs(apiType, "PostProcess") || VsIs(apiType, "Fog") || VsIs(apiType, "Weather") || VsIs(apiType, "Wind")) return VsAt("Scene", "Atmosphere");

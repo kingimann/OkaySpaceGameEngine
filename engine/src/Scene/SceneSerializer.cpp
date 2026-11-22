@@ -238,6 +238,7 @@ static thread_local std::string g_lastSceneDir;
 
 namespace detail {
 std::uint64_t ComponentRulesGeneration();        // GameObject.cpp
+void PauseComponentRules(bool pause);            // GameObject.cpp: the loader keeps what the file says
 std::uint64_t ComponentSerializerGeneration();   // ComponentSerializer.cpp
 } // namespace detail
 
@@ -4409,6 +4410,12 @@ struct ParseSession {
 static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                       GameObject** firstNew, std::string* error,
                       std::vector<std::string>* warnings, int maxObjects = 0, bool* finished = nullptr) {
+    // RequireComponent rules do not run while a file is read: an object gets exactly the components its lines name (an old
+    // scene with a joint and no body must not gain a falling body), and a body line after a joint line makes no second body.
+    struct RulesPause {
+        RulesPause() { detail::PauseComponentRules(true); }
+        ~RulesPause() { detail::PauseComponentRules(false); }
+    } rulesPause;
     if (finished) *finished = true;
     const std::string& text = S.text;
     std::istringstream& in = S.in;

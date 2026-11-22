@@ -133,6 +133,10 @@ bullets.Release(b);          // off + kept for the next Get
 - **Scripts:** `pool_get("Bullet.okayprefab", x, y [, z])` spawns from the scene's shared pool for that file (`ObjectPool::ForPrefab`:
   one pool per scene and file, made on first use, read once); `pool_release()` hands the script's own object back (destroys
   it when it did not come from a pool); `pool_prewarm("Bullet.okayprefab", n)` and `pool_idle("Bullet.okayprefab")`.
+- The typed (C#-style) language has the same calls as `ObjectPool.Get(prefab, x, y, z)` (returns the object or
+  null), `ObjectPool.Prewarm(prefab, n)`, `ObjectPool.Idle(prefab)` and `ObjectPool.Release()`. Being in the binding
+  table makes them visual-script nodes too: `ObjectPool.Get/4`, `ObjectPool.Prewarm/2`, `ObjectPool.Idle/1` (a value
+  node) and `ObjectPool.Release/0`. The prefab name goes through the same game-folder check as `spawn`.
 
 ## RequireComponent / DisallowMultipleComponent
 
@@ -144,8 +148,9 @@ RequireComponent<Gun, Rigidbody3D>();     // chains work; a loop (A needs B need
 DisallowMultipleComponent<Solo>();        // a second AddComponent<Solo> returns the existing one
 ```
 
-- The rules run inside `GameObject::AddComponent<T>`, so they cover scripts, the scene loader,
-  prefab instantiation and the editor's Add Component. Required components land before the
+- The rules run inside `GameObject::AddComponent<T>`, so they cover scripts and the editor's Add
+  Component. They do not run while `SceneSerializer` reads a scene or prefab file (a loaded object gets
+  exactly the components its lines name, so an old file never gains a component it did not have). Required components land before the
   one that needs them (so they `Awake` first). With no rules registered the cost is one flag read.
 - Matching is on the exact type `T`. For uniqueness an existing component of `T` or a subclass
   counts.
@@ -153,6 +158,25 @@ DisallowMultipleComponent<Solo>();        // a second AddComponent<Solo> returns
   (or nullptr), so an editor can grey out Remove. `RemoveComponent` itself does not refuse,
   so scene teardown and scripts keep working.
 - `ComponentRules::Clear()` drops every rule (tests).
+
+### The engine's own rules
+
+`RegisterBuiltinComponentRules()` (`Scene/BuiltinComponentRules.hpp`) is called once by the editor and
+the player at start. It says:
+
+| Component | Needs (added first) |
+|---|---|
+| Joint 3D | Rigidbody 3D |
+| Joint 2D | Rigidbody 2D |
+| Buoyancy | Rigidbody 3D |
+| Boat Controller | Rigidbody 3D |
+| UI Input Validator | UI Input Field |
+
+Each pair is one where the first does nothing without the second. Because the loader does not apply
+rules, an old scene with a joint and no body loads as it was, and a file whose joint line comes before
+its body line still loads one body. The Inspector's remove (x)
+refuses a component another one needs and says which (Console line in the Dear ImGui Inspector,
+an error box in the OkayUI one).
 
 ## Spawning and destroying objects
 

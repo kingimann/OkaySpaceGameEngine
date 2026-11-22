@@ -15,6 +15,19 @@ v2.903.0
     differently from one run to the next.
   - .dds texture files and compressed imported textures now load on the
     GPU (OpenGL and Direct3D 11), and BC3-compressed colours are correct.
+  - Changing a key in the Controls screen now changes it for the built-in
+    player, shooter, platformer and vehicle controllers and the pause menu
+    too. With the default keys nothing changes.
+  - Fixed: with depth of field on, the sky could turn black when the
+    camera clears to a colour or the sky is off.
+  - Depth of field and ambient occlusion strength now also work in the
+    software renderer.
+  - Particles can land on terrain: Particle System > Collision > "Collide
+    with Terrain".
+  - Fixed: particles with a huge or endless emission rate froze the game;
+    the edge of a raised terrain sloped down to zero; scattered plants
+    ignored "Align to Surface"; a damaged water setting crashed loading;
+    star settings were lost or not reset by the sky looks.
   - Faster character animation: with several CPU cores, skinning many
     characters is about 3 times faster. Results are exactly the same.
   - Try it (off by default): Settings > Experimental > "OkayUI own

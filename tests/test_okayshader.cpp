@@ -160,7 +160,7 @@ int main() {
         std::string props;
         for (int i = 0; i < 40; ++i) props += "property float p" + std::to_string(i) + " = 1.0;\n";
         hostile.push_back(props + "surface { }");
-        hostile.push_back(std::string("surface { alpha = 1.0; }\0garbage", 34));
+        hostile.push_back(std::string("surface { alpha = 1.0; }\0garbage", 32));
         const auto t0 = std::chrono::steady_clock::now();
         int failedAsExpected = 0;
         for (const std::string& h : hostile) {

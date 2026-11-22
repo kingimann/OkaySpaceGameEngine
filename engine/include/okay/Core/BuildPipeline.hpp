@@ -157,6 +157,10 @@ struct Report {
     bool archiveCompressed = false;
     double seconds = 0.0;
     int missingAssets = 0;
+    bool checked = false;                    ///< the export check ran (CheckExport)
+    std::vector<std::string> checkErrors;    ///< what the export check found missing: the game will not work as built
+    std::string checkSummary;                ///< its one-line result
+    bool cancelled = false;                  ///< stopped with Cancel: the output folder is incomplete
 
     void AddFile(const std::string& path, std::uintmax_t bytes, const std::string& reason = std::string());
     void AddExcluded(const std::string& path, std::uintmax_t bytes, const std::string& reason);
@@ -177,6 +181,33 @@ std::string HumanBytes(std::uintmax_t b);   ///< "1.5 MB"
 /// build used (any spelling: they are compared by canonical path).
 std::vector<ExcludedFile> FindUnshipped(const std::string& projectDir, const std::vector<std::string>& shippedSources,
                                         const std::vector<std::string>& sceneSources);
+
+// ---- the export check ------------------------------------------------------------------------------
+
+/// What to check in a finished build. Only `outDir` is required; the rest narrows the check.
+struct ExportCheckInput {
+    std::string outDir;                         ///< the build folder (where the game's exe is)
+    std::string exeName;                        ///< the exe that must be there ("" = do not check)
+    std::vector<std::string> requiredLibs;      ///< files that must sit beside the exe (SDL2.dll on Windows)
+    std::vector<std::string> devPaths;          ///< folders of the machine that built it (project, editor, home):
+                                                ///< a shipped text file that names one will not work on another computer
+};
+struct ExportCheckResult {
+    std::vector<std::string> errors;            ///< the game will not start, or a scene will miss a file
+    std::vector<std::string> warnings;          ///< it starts, but something may not work on another computer
+    std::string dataDir;                        ///< the data folder the player will use (ends in '/')
+    int scenesChecked = 0, refsChecked = 0, filesScanned = 0;
+    bool Ok() const { return errors.empty(); }
+    /// One line: "Export check: 3 scenes, 41 files they use, all found." or the first problem.
+    std::string Summary() const;
+};
+/// Read a finished build the way the player will: find its data folder (FindDataDir), read game.okayconfig
+/// (packed or not), check the start scene and every scene= line, the icon / splash / boot logo, then every
+/// asset each shipped scene and prefab names, looked up in the data folder exactly as the player looks it up
+/// (data folder + the path as written). Also the exe and `requiredLibs` beside it, and that no shipped text
+/// file names one of `devPaths`. A visual-script or script file a scene already carries inside itself is not
+/// required. Reads files only; never writes.
+ExportCheckResult CheckExport(const ExportCheckInput& in);
 
 // ---- zip -------------------------------------------------------------------------------------------
 

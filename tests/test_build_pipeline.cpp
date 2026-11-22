@@ -4,6 +4,7 @@
 // Temp folders only; nothing sleeps.
 #include "test_framework.hpp"
 #include "okay/Core/BuildPipeline.hpp"
+#include "okay/Core/DataPack.hpp"
 #include "../editor/ProjectState.hpp"
 
 #include <algorithm>
@@ -356,6 +357,69 @@ void TestSettingsText() {
 
 } // namespace
 
+// The export check reads a finished build the way the player does and lists what is missing.
+void TestExportCheck(const fs::path& tmp) {
+    RUN_SUITE("export check");
+    const fs::path out = tmp / "check" / "out";
+    const fs::path data = out / "Game_Data";
+    Write(out / "Game.exe", "MZ");
+    Write(out / "SDL2.dll", "lib");
+    Write(data / "game.okayconfig", "title=Game\nicon=icon.png\nsplash=logo.png\nstartup=game.okayscene\nscene=game.okayscene\nscene=Level2.okayscene\nscene=Gone.okayscene\n");
+    Write(data / "icon.png", "png");
+    Write(data / "Textures/grass.png", "png");
+    Write(data / "Prefabs/enemy.okayprefab", "gameobject \"Enemy\"\n  meshrenderer \"Models/enemy.obj\"\n  note \"/home/dev/MyProject/Assets/x.txt\"\n");
+    Write(data / "game.okayscene",
+          "gameobject \"Ground\"\n  sprite \"Textures/grass.png\"\n  audio \"Sounds/wind.wav\" 1\n"
+          "  visualscript \"graph { node }\"\n  visualscriptpath \"logic.okayvs\"\n"
+          "  script \"cs\" \"class A {}\" \"Scripts/A.cs\" 0\n"
+          "  script \"cs\" \"\" \"Scripts/B.cs\" 0\n"
+          "  visualscript \"\"\n  visualscriptpath \"empty.okayvs\"\n"
+          "  sprite \"C:/Users/dev/Desktop/far.png\"\n");
+    Write(data / "Level2.okayscene", okay::DataPack::Pack("gameobject \"Box\"\n  sprite \"Textures/grass.png\"\n  prefab \"Prefabs/enemy.okayprefab\"\n"));
+
+    bp::ExportCheckInput in;
+    in.outDir = out.string(); in.exeName = "Game.exe"; in.requiredLibs = {"SDL2.dll", "libmissing.dll"}; in.devPaths = {"/home/dev/MyProject"};
+    const bp::ExportCheckResult r = bp::CheckExport(in);
+    auto hasErr = [&](const std::string& part) { for (const auto& e : r.errors) if (e.find(part) != std::string::npos) return true; return false; };
+    auto hasWarn = [&](const std::string& part) { for (const auto& e : r.warnings) if (e.find(part) != std::string::npos) return true; return false; };
+    CHECK(!r.Ok());
+    CHECK(r.dataDir.find("Game_Data") != std::string::npos);
+    CHECK(hasErr("libmissing.dll"));                 // a runtime library is not beside the exe
+    CHECK(!hasErr("SDL2.dll"));
+    CHECK(hasErr("logo.png"));                       // the splash the config names
+    CHECK(!hasErr("icon.png"));
+    CHECK(hasErr("Gone.okayscene"));                 // a listed scene that is not there
+    CHECK(hasErr("Sounds/wind.wav"));                // a scene names a sound the build lacks
+    CHECK(!hasErr("Textures/grass.png"));
+    CHECK(!hasErr("logic.okayvs"));                  // its graph is written in the scene
+    CHECK(!hasErr("Scripts/A.cs"));                  // its source is written in the scene
+    CHECK(hasErr("Scripts/B.cs"));                   // no source in the scene and no file: the script is missing
+    CHECK(hasErr("empty.okayvs"));
+    CHECK(hasErr("Models/enemy.obj"));               // inside a prefab of the build (a packed scene uses it)
+    CHECK(hasWarn("C:/Users/dev/Desktop/far.png"));  // an absolute path: a warning
+    CHECK(hasWarn("enemy.okayprefab"));              // names a folder on the machine that built it
+    CHECK(r.scenesChecked == 2);
+    CHECK(r.Summary().rfind("Export check: ", 0) == 0);
+
+    // A complete build passes.
+    const fs::path ok = tmp / "check" / "ok";
+    Write(ok / "Game.exe", "MZ");
+    Write(ok / "Game_Data" / "game.okayconfig", "startup=game.okayscene\nscene=game.okayscene\n");
+    Write(ok / "Game_Data" / "game.okayscene", "gameobject \"A\"\n  sprite \"Textures/grass.png\"\n");
+    Write(ok / "Game_Data" / "Textures/grass.png", "png");
+    bp::ExportCheckInput in2; in2.outDir = ok.string(); in2.exeName = "Game.exe";
+    const bp::ExportCheckResult r2 = bp::CheckExport(in2);
+    CHECK(r2.Ok());
+    CHECK(r2.refsChecked == 1);
+    CHECK(r2.Summary().find("all found") != std::string::npos);
+
+    // No config at all: an error, not a crash.
+    bp::ExportCheckInput in3; in3.outDir = (tmp / "check").string();
+    CHECK(!bp::CheckExport(in3).Ok());
+    bp::ExportCheckInput in4; in4.outDir = (tmp / "check" / "nope").string();
+    CHECK(!bp::CheckExport(in4).Ok());
+}
+
 int main() {
     std::error_code ec;
     const fs::path tmp = fs::temp_directory_path(ec) / ("okay_build_pipeline_" + std::to_string((long long)std::time(nullptr)));
@@ -369,6 +433,7 @@ int main() {
     TestReport();
     TestZip(tmp);
     TestSettingsText();
+    TestExportCheck(tmp);
     fs::remove_all(tmp, ec);
     TEST_MAIN_RESULT();
 }

@@ -1,5 +1,6 @@
 #include "okay/Core/BuildPipeline.hpp"
 #include "okay/Core/AssetDatabase.hpp"
+#include "okay/Core/DataPack.hpp"
 #include "okay/Core/ImageWrite.hpp"
 
 #include <algorithm>
@@ -662,6 +663,11 @@ std::string Report::ToText(std::size_t maxRows) const {
         if (maxRows && n++ >= maxRows) { o << "  ... " << (excluded.size() - maxRows) << " more\n"; break; }
         o << "  " << HumanBytes(e.bytes) << "  " << e.path << "  (" << e.reason << ")\n";
     }
+    if (checked) {
+        o << "\n" << checkSummary << "\n";
+        for (const std::string& e : checkErrors) o << "  PROBLEM: " << e << "\n";
+    }
+    if (cancelled) o << "\nCANCELLED: the build was stopped before it finished; the output folder is incomplete.\n";
     o << "\nWarnings: " << warnings.size() << "\n";
     for (const std::string& w : warnings) o << "  " << w << "\n";
     return o.str();
@@ -798,6 +804,164 @@ bool ReadZipDirectory(const std::string& zipPath, std::vector<ZipEntry>& out, st
         p += 46 + nl + xl + cl;
     }
     return true;
+}
+
+
+// ---- the export check ------------------------------------------------------------------------------
+// Written for this engine from how player/main.cpp reads a build: FindDataDir, game.okayconfig, then each asset
+// path looked up as <data folder> + the path as the scene writes it.
+
+std::string ExportCheckResult::Summary() const {
+    if (!errors.empty())
+        return "Export check: " + std::to_string(errors.size()) + " problem" + (errors.size() == 1 ? "" : "s") + ". First: " + errors.front();
+    std::string s = "Export check: " + std::to_string(scenesChecked) + " scene" + (scenesChecked == 1 ? "" : "s") + ", " +
+                    std::to_string(refsChecked) + " file" + (refsChecked == 1 ? "" : "s") + " they use, all found";
+    if (!warnings.empty()) s += " (" + std::to_string(warnings.size()) + " warning" + (warnings.size() == 1 ? "" : "s") + ")";
+    return s + ".";
+}
+
+namespace {
+bool ReadMaybePacked(const fs::path& p, std::string& out) {
+    std::ifstream f(p, std::ios::binary);
+    if (!f) return false;
+    std::ostringstream ss; ss << f.rdbuf();
+    bool ok = true;
+    out = okay::DataPack::Unpack(ss.str(), &ok);
+    return ok;
+}
+// The quoted value at the start of the line holding `pos` after the line's first word, e.g. the source of
+// `visualscript "<graph>"` or `script "cs" "<source>" ...` (the second quoted value for a script line).
+bool LineCarriesItsOwnSource(const std::string& text, std::size_t lineBegin, std::size_t lineEnd) {
+    const std::string line = text.substr(lineBegin, lineEnd - lineBegin);
+    std::size_t i = line.find_first_not_of(" \t");
+    if (i == std::string::npos) return false;
+    std::size_t w = line.find_first_of(" \t", i);
+    const std::string head = line.substr(i, w == std::string::npos ? std::string::npos : w - i);
+    int skip = head == "visualscript" ? 0 : head == "script" ? 1 : -1;
+    if (skip < 0 || w == std::string::npos) return false;
+    std::size_t q = w;
+    for (int n = 0; n <= skip; ++n) {
+        q = line.find('"', q);
+        if (q == std::string::npos) return false;
+        if (n == skip) return q + 1 < line.size() && line[q + 1] != '"';   // a non-empty quoted value
+        // skip this quoted value (escapes: \" inside)
+        for (++q; q < line.size() && line[q] != '"'; ++q) if (line[q] == '\\') ++q;
+        ++q;
+    }
+    return false;
+}
+void LineBounds(const std::string& t, std::size_t pos, std::size_t& b, std::size_t& e) {
+    b = t.rfind('\n', pos == 0 ? 0 : pos - 1); b = (b == std::string::npos || pos == 0) ? 0 : b + 1;
+    e = t.find('\n', pos); if (e == std::string::npos) e = t.size();
+}
+std::string LowerSlashes(std::string s) {
+    for (char& c : s) c = c == '\\' ? '/' : (char)std::tolower((unsigned char)c);
+    while (s.size() > 1 && s.back() == '/') s.pop_back();
+    return s;
+}
+} // namespace
+
+ExportCheckResult CheckExport(const ExportCheckInput& in) {
+    ExportCheckResult r;
+    std::error_code ec;
+    const fs::path out = fs::u8path(in.outDir);
+    if (in.outDir.empty() || !fs::is_directory(out, ec)) { r.errors.push_back("The build folder " + in.outDir + " does not exist."); return r; }
+    const std::string stem = in.exeName.empty() ? std::string() : Generic(fs::u8path(in.exeName).stem());
+    if (!in.exeName.empty() && !IsFile(out / fs::u8path(in.exeName)))
+        r.errors.push_back("The game program " + in.exeName + " is not in the build folder.");
+    for (const std::string& lib : in.requiredLibs)
+        if (!IsFile(out / fs::u8path(lib))) r.errors.push_back(lib + " is not beside the game program, so the game cannot start.");
+
+    r.dataDir = FindDataDir(Generic(out), stem);
+    const fs::path data = fs::u8path(r.dataDir);
+    const std::string dataName = Generic(data.parent_path().filename());
+    std::string cfgText;
+    if (!ReadMaybePacked(data / "game.okayconfig", cfgText)) {
+        r.errors.push_back("There is no readable game.okayconfig in " + r.dataDir + ": the game starts with no scene.");
+        return r;
+    }
+    std::string startup = "game.okayscene";
+    std::vector<std::string> scenes;
+    {
+        std::istringstream cs(cfgText);
+        std::string line;
+        while (std::getline(cs, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            const std::size_t eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            const std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+            if (k == "startup" && !v.empty()) startup = v;
+            else if (k == "scene" && !v.empty()) scenes.push_back(v);
+            else if ((k == "icon" || k == "splash" || k == "boot_logo") && !v.empty() && !IsFile(data / fs::u8path(v)))
+                r.errors.push_back("game.okayconfig names the " + std::string(k == "icon" ? "icon" : k == "splash" ? "splash image" : "boot logo") + " " + v + ", but it is not in the build.");
+        }
+    }
+    if (std::find(scenes.begin(), scenes.end(), startup) == scenes.end()) scenes.insert(scenes.begin(), startup);
+
+    // Every scene, then every prefab in the build: the files they name must be where the player looks.
+    std::vector<fs::path> toScan;
+    for (const std::string& s : scenes) {
+        if (!IsFile(data / fs::u8path(s))) {
+            r.errors.push_back(s == startup ? "The start scene " + s + " is not in the build." : "The scene " + s + " (listed in game.okayconfig) is not in the build.");
+            continue;
+        }
+        toScan.push_back(data / fs::u8path(s));
+    }
+    for (fs::recursive_directory_iterator it(data, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file(ec) && ExtOf(it->path().filename().string()) == "okayprefab") toScan.push_back(it->path());
+    std::set<std::string> reported;
+    for (const fs::path& file : toScan) {
+        std::string text;
+        if (!ReadMaybePacked(file, text)) { r.errors.push_back(Generic(file.lexically_relative(data)) + " is damaged (it cannot be unpacked)."); continue; }
+        const bool isScene = ExtOf(file.filename().string()) == "okayscene";
+        if (isScene) ++r.scenesChecked;
+        const std::string who = Generic(file.lexically_relative(data));
+        for (const FoundRef& f : ExtractSceneRefs(text)) {
+            const std::string& ref = f.path;
+            if (ref.empty() || ref[0] == '@' || ref == "-" || ref.find("://") != std::string::npos || ref.rfind("proc:", 0) == 0) continue;
+            std::size_t lb = 0, le = 0;
+            LineBounds(text, f.begin, lb, le);
+            const std::string ext = ExtOf(ref);
+            if (ext == "okayvs") {   // `visualscriptpath`: the graph on the line above is the one the game runs
+                std::size_t pb = 0, pe = 0;
+                if (lb > 0) { LineBounds(text, lb - 1, pb, pe); if (LineCarriesItsOwnSource(text, pb, pe)) continue; }
+            }
+            if (LineCarriesItsOwnSource(text, lb, le)) continue;   // a script line with its source written in
+            ++r.refsChecked;
+            if (IsAbsolutePath(ref)) {
+                if (reported.insert("abs|" + ref).second)
+                    r.warnings.push_back(who + " uses the absolute path " + ref + ": it only works on a computer that has that file.");
+                continue;
+            }
+            const std::string dest = DestinationFor(ref);
+            if (dest.empty() || IsFile(data / fs::u8path(dest))) continue;
+            if (reported.insert(who + "|" + ref).second)
+                r.errors.push_back(who + " uses " + ref + ", but the build has no " + dataName + "/" + dest + ".");
+        }
+    }
+
+    // Shipped text files must not name folders of the computer that built the game.
+    std::vector<std::string> dev;
+    for (const std::string& d : in.devPaths) { const std::string l = LowerSlashes(d); if (l.size() > 3) dev.push_back(l); }
+    if (!dev.empty()) {
+        static const std::set<std::string> textExt = {"okayscene", "okayprefab", "okayconfig", "okaymat", "okayloc", "okayitems", "okayweapon", "okaydata",
+                                                      "okaybt", "okayseq", "okaydialogue", "okayquests", "okayanim", "okayanimator", "okayclips", "okayac", "mtl", "json"};
+        for (fs::recursive_directory_iterator it(out, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+            if (!it->is_regular_file(ec) || !textExt.count(ExtOf(it->path().filename().string()))) continue;
+            std::error_code se;
+            if (fs::file_size(it->path(), se) > (8u << 20)) continue;
+            std::string text;
+            if (!ReadMaybePacked(it->path(), text)) continue;
+            ++r.filesScanned;
+            const std::string low = LowerSlashes(text);
+            for (const std::string& d : dev)
+                if (low.find(d) != std::string::npos) {
+                    r.warnings.push_back(Generic(it->path().lexically_relative(out)) + " names " + d + ", a folder on the computer that made the build. On another computer that path does not exist.");
+                    break;
+                }
+        }
+    }
+    return r;
 }
 
 } // namespace buildpipe

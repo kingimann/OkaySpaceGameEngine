@@ -1,21 +1,31 @@
-# Branch lint: cheap checks on every push to claude/** and claude2/** (not the full CI; about 1 to 5 minutes).
-# Plain rules: docs/process/collaboration.md. Scripts: scripts/branch_lint.py, bug_patterns.py, collision_check.py.
-#   fatal:      forbidden thread includes in Windows code (rule 21a), secrets, a push into the other lane's open claim
+# Branch lint: cheap checks (not the full CI; about 1 to 5 minutes) on every push to every branch of this repository
+# (claude/**, claude2/**, john/**, any other contributor's branch, and main itself), and on pull requests from forks
+# (a pull request from a branch of this repository is already covered by the push run on the same commit).
+# On main the checks look at what the push brought in (the commit before the push ... the new head), so a copy that
+# lands some other way is caught at once.
+# Plain rules: docs/process/collaboration.md, docs/process/no_duplicates.md.
+# Scripts: scripts/branch_lint.py, bug_patterns.py, collision_check.py, dup_lint.py.
+#   fatal:      forbidden thread includes in Windows code (rule 21a), secrets, a push into the other lane's open claim,
+#               pasted code or a new copy of a shared helper (dup_lint.py, every language)
 #   warnings:   no docs changed, feature map not regenerated, MinGW syntax check, bug-class patterns
 # Each warning shows as an annotation on the commit and in the job summary; nothing is commented on any issue or PR.
 name: Branch lint
 on:
   push:
-    branches: ['claude/**', 'claude2/**']
+    branches: ['**']
+  pull_request:
 permissions:
   contents: read
   issues: read
   pull-requests: read
 concurrency:
   group: branch-lint-${{ github.ref }}
-  cancel-in-progress: true
+  # never cancel a run on main: every push to main must be checked
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   lint:
+    # pull requests: only from forks (a branch of this repository already ran on push)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -24,20 +34,36 @@ jobs:
           fetch-depth: 0
       - name: Make sure origin/main is there
         run: git fetch --quiet origin main:refs/remotes/origin/main || true
+      - name: Pick what to compare against
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          base=origin/main
+          if [ "${GITHUB_EVENT_NAME}" = push ] && [ "${GITHUB_REF}" = refs/heads/main ]; then
+            # main: check what this push brought in
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then base="$BEFORE"; else base=HEAD^; fi
+          fi
+          echo "BASE=$base" >> "$GITHUB_ENV"
+          echo "comparing $base...HEAD"
 
       - name: "Windows build rule 21a: no thread or mutex use in Windows code (fatal)"
-        run: python3 scripts/branch_lint.py includes --base origin/main --head HEAD
+        run: python3 scripts/branch_lint.py includes --base "$BASE" --head HEAD
 
       - name: "Secrets (fatal)"
         if: always()
-        run: python3 scripts/branch_lint.py secrets --base origin/main --head HEAD
+        run: python3 scripts/branch_lint.py secrets --base "$BASE" --head HEAD
 
       - name: "No built programs or big binary files in git (fatal)"
         if: always()
-        run: python3 scripts/branch_lint.py binaries --base origin/main --head HEAD
+        run: python3 scripts/branch_lint.py binaries --base "$BASE" --head HEAD
+
+      - name: "Duplicate code: pasted blocks and new copies of shared helpers, every language (fatal)"
+        if: always()
+        run: python3 scripts/dup_lint.py check --base "$BASE" --head HEAD
 
       - name: "Claims: do not push into another lane's open claim (fatal)"
-        if: always()
+        # the lane claims on issue #422 are for the agents' claude/** and claude2/** branches only
+        if: always() && (startsWith(github.ref, 'refs/heads/claude/') || startsWith(github.ref, 'refs/heads/claude2/'))
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -48,7 +74,7 @@ jobs:
 
       - name: "Docs changed with the code (warning)"
         if: always()
-        run: python3 scripts/branch_lint.py docs --base origin/main --head HEAD
+        run: python3 scripts/branch_lint.py docs --base "$BASE" --head HEAD
 
       - name: "Feature map regenerated (warning)"
         if: always()
@@ -66,17 +92,17 @@ jobs:
 
       - name: "Bug-class patterns (warning)"
         if: always()
-        run: python3 scripts/bug_patterns.py --base origin/main --head HEAD --github | tee bug_patterns.txt
+        run: python3 scripts/bug_patterns.py --base "$BASE" --head HEAD --github | tee bug_patterns.txt
 
       - name: "Are engine files changed? (decides whether to install MinGW)"
         if: always()
         id: eng
         run: |
-          n=$(git diff --name-only origin/main...HEAD -- 'engine/**.hpp' 'engine/**.h' 'engine/**.cpp' | wc -l)
+          n=$(git diff --name-only "$BASE"...HEAD -- 'engine/**.hpp' 'engine/**.h' 'engine/**.cpp' | wc -l)
           echo "count=$n" >> "$GITHUB_OUTPUT"
 
-      - name: Install the MinGW compiler (same way as release.yml, only when engine files changed)
-        if: always() && steps.eng.outputs.count != '0'
+      - name: Install the MinGW compiler (same way as release.yml, only when engine files changed; not on main)
+        if: always() && steps.eng.outputs.count != '0' && github.ref != 'refs/heads/main'
         continue-on-error: true
         timeout-minutes: 8
         run: |
@@ -85,6 +111,6 @@ jobs:
           sudo apt-get $APT install -y --no-install-recommends g++-mingw-w64-x86-64 mingw-w64-x86-64-dev
 
       - name: "MinGW -fsyntax-only on changed engine files (warning)"
-        if: always() && steps.eng.outputs.count != '0'
+        if: always() && steps.eng.outputs.count != '0' && github.ref != 'refs/heads/main'
         continue-on-error: true
-        run: python3 scripts/branch_lint.py mingw --base origin/main --head HEAD
+        run: python3 scripts/branch_lint.py mingw --base "$BASE" --head HEAD

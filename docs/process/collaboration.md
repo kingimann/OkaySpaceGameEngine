@@ -119,7 +119,8 @@ stale rules. The coordinator uses this for its own agents and posts the same bri
 
 | Check | Where | Fatal? |
 |---|---|---|
-| Forbidden thread includes in Windows code (rule 21a) | `branch-lint` on every push to `claude/**`, `claude2/**` | yes |
+| Forbidden thread includes in Windows code (rule 21a) | `branch-lint` on every push to every branch (and main, and pull requests from forks) | yes |
+| Pasted code, or a new copy of a shared helper, in any language ([no_duplicates.md](no_duplicates.md)) | `branch-lint` (`scripts/dup_lint.py check`) | yes (renamed near copies: warning) |
 | Secrets (private keys, `sk-`, `ghp_`, `AKIA`, long key strings) | `branch-lint` | yes |
 | Push into the other lane's open claim | `branch-lint` (`collision_check.py --branch`) | yes |
 | Code changed with no docs changed | `branch-lint` | warning |
@@ -135,6 +136,7 @@ Try them locally, from the repo root with the branch checked out:
 python3 scripts/find_existing.py tween
 python3 scripts/collision_check.py --branch $(git branch --show-current)
 python3 scripts/branch_lint.py all
+python3 scripts/dup_lint.py check         # pasted code / new copies of shared helpers (also: bash scripts/install_hooks.sh)
 python3 scripts/bug_patterns.py
 python3 scripts/tests/test_collab.py      # the scripts' own tests (also ctest: collab_scripts)
 ```

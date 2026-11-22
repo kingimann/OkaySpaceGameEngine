@@ -925,10 +925,15 @@ bool SkelBinSwitchOn() {
 }
 
 // The skeleton a mesh file links to, next to the mesh: `<link>.xml` first (the form the XML tools write), then, with the switch
-// on, the binary `<link>` itself. False when neither is there.
+// on, the binary `<link>` itself. A link that already names the XML file (`fish.skeleton.xml`, as the XML converter writes it
+// into a .mesh.xml) is read as it is. False when none is there.
 bool LoadLinkedSkeleton(const std::string& baseDir, const std::string& link, std::string& text) {
     std::string path, e2;
     if (detail::ResolveInsideDir(baseDir, link + ".xml", path, e2) && detail::txt::ReadFileCapped(path, kMaxFileBytes, text, &e2)) return true;
+    text.clear();
+    const bool namesXml = link.size() > 4 && detail::txt::Lower(link.substr(link.size() - 4)) == ".xml";
+    path.clear(); e2.clear();
+    if (namesXml && detail::ResolveInsideDir(baseDir, link, path, e2) && detail::txt::ReadFileCapped(path, kMaxFileBytes, text, &e2)) return true;
     text.clear();
     if (!SkelBinSwitchOn()) return false;
     path.clear(); e2.clear();

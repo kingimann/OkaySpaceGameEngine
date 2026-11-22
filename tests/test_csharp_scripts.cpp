@@ -175,6 +175,39 @@ static void Properties() {
     CHECK(Errors(d) >= 1);
 }
 
+// Random.Range (int: max excluded; float: both ends), Random.value, Random.InitState.
+static void RandomApi() {
+    const std::string src =
+        "public class R : MonoBehaviour {\n"
+        "    public int minI = 100, maxI = -100;\n"
+        "    public float minF = 100f, maxF = -100f, v;\n"
+        "    public int same;\n"
+        "    void Start() {\n"
+        "        for (int i = 0; i < 500; i++) {\n"
+        "            int n = Random.Range(0, 3);\n"
+        "            if (n < minI) minI = n; if (n > maxI) maxI = n;\n"
+        "            float f = Random.Range(-1f, 1f);\n"
+        "            if (f < minF) minF = f; if (f > maxF) maxF = f;\n"
+        "        }\n"
+        "        v = Random.value;\n"
+        "        Random.InitState(7); int a = Random.Range(0, 1000000);\n"
+        "        Random.InitState(7); int b = Random.Range(0, 1000000);\n"
+        "        same = a == b ? 1 : 0;\n"
+        "    }\n"
+        "}\n";
+    CHECK(Clean(src));
+    World w(src);
+    CHECK(w.loaded);
+    CHECK_NEAR(w.F("minI"), 0.0f, 1e-4f);
+    CHECK_NEAR(w.F("maxI"), 2.0f, 1e-4f);   // 3 is never returned
+    CHECK(w.F("minF") >= -1.0f && w.F("minF") < -0.8f);
+    CHECK(w.F("maxF") <= 1.0f && w.F("maxF") > 0.8f);
+    CHECK(w.F("v") >= 0.0f && w.F("v") < 1.0f);
+    CHECK_NEAR(w.F("same"), 1.0f, 1e-4f);
+    // int result: assigning Random.Range(0f, 1f) to an int is an error
+    CHECK(Errors(Diags("public class R : MonoBehaviour { void Start() { int n = Random.Range(0f, 1f); } }\n")) >= 1);
+}
+
 // An old scene that named "csharp" (the removed Mono backend) now loads and runs if the
 // script compiles, and shows the checker's errors if it does not.
 static void OldScenes() {
@@ -275,6 +308,7 @@ int main() {
     UnityStyleFile();
     KeyCodes();
     Properties();
+    RandomApi();
     OldScenes();
     ExampleScene();
     TEST_MAIN_RESULT();

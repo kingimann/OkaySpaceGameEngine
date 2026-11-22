@@ -102,7 +102,8 @@ EdgeList KnifeCut(PolyMesh& pm, const std::vector<KnifePoint>& points, std::stri
 
 /// Fill: make a face from each selected loop of border edges (a hole's rim), or
 /// from a single open chain of 3+ vertices. Faces it makes run the opposite way
-/// to their neighbours (consistent normals). Returns how many faces were made.
+/// to their neighbours (consistent normals). A chain whose vertices lie on one
+/// straight line is skipped (the face would have no area). Returns how many faces were made.
 int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error = nullptr);
 /// Grid fill: close a hole whose rim is one loop of an even number of edges
 /// with a grid of quads (shaped to blend the four sides). `span` is the number

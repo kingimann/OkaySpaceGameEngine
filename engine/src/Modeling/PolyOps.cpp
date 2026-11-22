@@ -1073,6 +1073,7 @@ int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error) {
     const bool uv = MeshHasUV(pm);
     const int facesBefore = (int)pm.faces.size();
     int made = 0;
+    bool flat = false;
     for (EdgeChain& c : chains) {
         if (c.verts.size() < 3) continue;
         bool allBorder = true;
@@ -1081,6 +1082,16 @@ int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error) {
             if (T.FacesOf(a, b).size() >= 2) allBorder = false;
         }
         if (!allBorder) continue;   // filling across faces that are already there would double them up
+        // A chain whose vertices lie on one straight line would make a face with no area (invisible, no normal):
+        // compare the polygon's area (half the length of the sum of edge cross products) with its perimeter squared.
+        Vec3 twiceArea{0, 0, 0};
+        float perimeter = 0.0f;
+        for (std::size_t i = 0; i < c.verts.size(); ++i) {
+            const Vec3 p = pm.verts[(std::size_t)c.verts[i]], q = pm.verts[(std::size_t)c.verts[(i + 1) % c.verts.size()]];
+            twiceArea += Vec3::Cross(p, q);
+            perimeter += (q - p).Magnitude();
+        }
+        if (!(twiceArea.Magnitude() > 1e-6f * perimeter * perimeter)) { flat = true; continue; }
         OrientAgainstNeighbours(pm, c.verts);
         PolyFace f;
         f.verts = c.verts;
@@ -1089,6 +1100,7 @@ int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error) {
         pm.faces.push_back(f);
         ++made;
     }
+    if (!made && flat) return fail("Those vertices are in a straight line, so the face would have no area: select edges that go round a corner or a hole.");
     if (!made) return fail("Fill needs edges on an open border (the rim of a hole), not edges between two faces.");
     return made;
 }

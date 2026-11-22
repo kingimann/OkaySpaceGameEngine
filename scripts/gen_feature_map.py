@@ -113,12 +113,13 @@ def idkey(i):
 
 
 def status_word(text):
-    """The leading status word of a Status line ("Works for the cursor..." -> "Works")."""
-    t = text.strip()
+    """The leading status word of a Status line ("Works for the cursor..." -> "Works"); also used by
+    gen_verify_checklist.py. Anything else gives the text before " - " (or "?" when empty)."""
+    t = text.split(' - ')[0].strip()
     for w in STATUS_WORDS:
-        if t.lower().startswith(w.lower()):
+        if t.startswith(w):
             return w
-    return short(t.split(' - ')[0], 30)
+    return t or '?'
 
 
 def system_entries(sub):
@@ -247,7 +248,7 @@ def build_systems(root, areas, problems, link):
             subs = [home] + sorted((s for _, s in e['subs'] if s is not home), key=lambda s: idkey(s['id']))
             counts = {}
             for s in subs:
-                w = status_word(s['f'].get('Status', ''))
+                w = short(status_word(s['f'].get('Status', '')), 30)
                 counts[w] = counts.get(w, 0) + 1
             if len(counts) == 1:
                 status = next(iter(counts))

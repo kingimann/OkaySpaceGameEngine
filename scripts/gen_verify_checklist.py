@@ -65,7 +65,6 @@ GROUPS = [
      'Our own replacements for third-party code. Every one is off by default and switched on by an environment variable.'),
 ]
 
-STATUS_ORDER = ('Works', 'Partial', 'Basic', 'In flight', 'Planned')
 
 
 def load_map(root):
@@ -83,11 +82,7 @@ def one_line(text, limit):
 
 
 def status_word(sub):
-    s = sub['f'].get('Status', '').split(' - ')[0].strip()
-    for w in STATUS_ORDER:
-        if s.startswith(w):
-            return w
-    return s or '?'
+    return fm.status_word(sub['f'].get('Status', ''))
 
 
 def parse_steps(path, problems):

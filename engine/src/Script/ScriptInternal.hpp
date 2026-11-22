@@ -426,7 +426,12 @@ struct FieldDecl {
     bool promote = false;
     bool read = false;
 };
-struct Param { TypeRef type; std::string name; SrcLoc loc; Type resolved; };
+struct Param {
+    TypeRef type; std::string name; SrcLoc loc; Type resolved;
+    std::shared_ptr<Expr> def;   ///< `= value` (a fixed value): a call may leave the parameter out
+    bool hasDefault = false;     ///< checked: defVal holds the value
+    Value defVal;
+};
 struct LambdaDecl {
     std::vector<Param> params;
     ExprPtr value;                  ///< x => value

@@ -280,7 +280,7 @@ private:
                 p.type = Type(false);
                 p.loc = Peek().loc;
                 p.name = Expect(T::Ident, "a parameter name").text;
-                if (Is(T::Assign)) throw ParseError{Peek().loc, "Default parameter values aren't supported yet"};
+                if (Match(T::Assign)) p.def = std::shared_ptr<Expr>(Expression().release());   // a default value
                 ps.push_back(std::move(p));
             } while (Match(T::Comma));
         }

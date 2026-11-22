@@ -1107,6 +1107,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Default clip library (5.4.4)
 - Default graph for the built-in body (5.1.8)
 - default language (13.8)
+- Default parameter values (13.8.11)
 - default resolution (25.2)
 - Default voice server (16.7.3)
 - defense (11.9)

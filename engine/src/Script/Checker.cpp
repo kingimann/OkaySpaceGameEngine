@@ -606,6 +606,7 @@ private:
         for (std::size_t i = 0; i < c.methods.size(); ++i) {
             MethodDecl& m = c.methods[i];
             for (auto& p : m.params) p.resolved = ResolveType(p.type, false);
+            CheckDefaults(m);
             if (m.isCtor) {
                 m.retType = Type::Of(TK::Void);
                 if (comp) Error(m.loc, "A Behaviour script has no constructor: set things up in Awake() or Start()");
@@ -621,8 +622,53 @@ private:
             if (comp) CheckLifecycleSignature(m, (int)i);
         }
     }
+    // Default parameter values: fixed values, and only at the end of the list.
+    void CheckDefaults(MethodDecl& m) {
+        bool seen = false;
+        for (auto& p : m.params) {
+            if (!p.def) {
+                if (seen) Error(p.loc, "'" + p.name + "' comes after a parameter with a default value, so it needs one too");
+                continue;
+            }
+            seen = true;
+            if (m.isCtor) { Error(p.def->loc, "Default values on constructors aren't supported yet: add a second constructor"); continue; }
+            if (p.resolved.kind == TK::Error) continue;
+            inFieldInit_ = true;
+            scopes_.clear();
+            nextSlot_ = maxSlot_ = 0;
+            CheckInit(*p.def, p.resolved, "The default value of '" + p.name + "'");
+            inFieldInit_ = false;
+            if (p.def->type.kind == TK::Error) continue;
+            std::optional<Value> v;
+            if (p.def->kind == EK::NullLit) v = Value{};
+            else if (IsConstant(*p.def)) v = Fold(*p.def);
+            if (!v) { Error(p.def->loc, "A default value must be fixed (a number, text, true/false, null or an enum value)"); continue; }
+            Value dv = *v;
+            if (p.resolved.kind == TK::Float)
+                if (auto* iv = std::get_if<std::int32_t>(&dv)) dv = Value{(float)*iv};
+            p.defVal = dv;
+            p.hasDefault = true;
+        }
+    }
+    // A checked literal for a left-out argument.
+    ExprPtr DefaultArg(const Param& p, SrcLoc at) {
+        auto x = NewExpr(EK::NullLit, at);
+        if (auto* i = std::get_if<std::int32_t>(&p.defVal)) { x->kind = EK::IntLit; x->ival = *i; x->type = Type::Of(TK::Int); }
+        else if (auto* f = std::get_if<float>(&p.defVal)) { x->kind = EK::FloatLit; x->fval = *f; x->type = Type::Of(TK::Float); }
+        else if (auto* s = std::get_if<std::string>(&p.defVal)) { x->kind = EK::StringLit; x->sval = *s; x->type = Type::Of(TK::String); }
+        else if (auto* b = std::get_if<bool>(&p.defVal)) { x->kind = EK::BoolLit; x->bval = *b; x->type = Type::Of(TK::Bool); }
+        else x->type = Type::Of(TK::Null);
+        if (p.resolved.kind == TK::Enum) x->type = p.resolved;   // the enum value's number
+        return x;
+    }
     // The method's parameters take the call's (checked) arguments.
     bool ArgsFit(Expr& e, const MethodDecl& m) {
+        if (e.args.size() < m.params.size()) {   // left-out arguments with default values
+            std::size_t n = e.args.size();
+            while (n < m.params.size() && m.params[n].hasDefault) ++n;
+            if (n == m.params.size())
+                for (std::size_t i = e.args.size(); i < m.params.size(); ++i) e.args.push_back(DefaultArg(m.params[i], e.loc));
+        }
         if (e.args.size() != m.params.size()) {
             Error(e.loc, e.name + "() takes " + Values(m.params.size()) + ", not " + std::to_string(e.args.size()));
             return false;

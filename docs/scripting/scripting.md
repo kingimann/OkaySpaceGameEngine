@@ -1434,6 +1434,10 @@ C# mode adds, on top of everything above:
 - `int.Parse("42")`, `float.Parse("2.5")` (text that isn't a number is an
   error with its line), `int.MaxValue` / `MinValue`, `float.MaxValue` /
   `MinValue`, `string.IsNullOrEmpty(s)`.
+- Default parameter values: `void Hit(int amount = 1, string why = "bump")`,
+  then `Hit()`, `Hit(3)`. Defaults must be fixed values (numbers, text,
+  true/false, null, an enum value) at the end of the list; not on
+  constructors yet. Works in `okayscript-next` too.
 - `Random.Range(0, 3)` (a whole number, 3 left out), `Random.Range(-1f, 1f)`,
   `Random.value` and `Random.InitState(seed)` (these work in `okayscript-next`
   too: the binding table is shared).

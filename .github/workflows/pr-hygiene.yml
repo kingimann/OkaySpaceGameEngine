@@ -1,4 +1,4 @@
-# PR hygiene: the PR body needs a "How to try it" section (CLAUDE.md rule 4a) and an "Existing code" section
+# PR hygiene: the PR body needs an "Existing code" section (CLAUDE.md rule 19c). "How to try it" is no longer required (rule 4a)
 # (docs/process/no_duplicates.md). scripts/check_pr_body.py; standard library only, no secrets.
 name: PR hygiene
 on:
@@ -16,7 +16,7 @@ jobs:
           fetch-depth: 0
       - name: Make sure origin/main is there
         run: git fetch --quiet origin main:refs/remotes/origin/main || true
-      - name: "PR body: How to try it, Existing code (fatal)"
+      - name: "PR body: Existing code (fatal)"
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_CREATED_AT: ${{ github.event.pull_request.created_at }}

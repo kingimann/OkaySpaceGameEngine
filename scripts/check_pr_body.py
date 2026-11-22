@@ -87,8 +87,10 @@ def main():
     files = a.files
     if files is None and a.base:
         files = subprocess.run(["git", "diff", "--name-only", f"{a.base}...{a.head}"], stdout=subprocess.PIPE, text=True).stdout.split()
-    ok, msg = check(body, files)
-    print(("OK: " if ok else "::error title=PR needs a How to try it section::") + msg)
+    # CLAUDE.md rule 4a (owner, 2026-11-17): "How to try it" sections are no longer required, so this is a note only.
+    ok_try, msg = check(body, files)
+    print(("OK: " if ok_try else "note (not required, rule 4a): ") + msg)
+    ok = True
     ok2, msg2 = check_existing(body, files)
     # PRs opened before the rule existed get a warning, not a failure, so they are not blocked mid-flight.
     created = os.environ.get("PR_CREATED_AT", "")

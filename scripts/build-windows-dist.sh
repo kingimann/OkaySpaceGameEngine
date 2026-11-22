@@ -194,6 +194,7 @@ cutscene
 fp_hand
 input
 lighting
+lua
 modeling
 modeling_tools
 node_playground

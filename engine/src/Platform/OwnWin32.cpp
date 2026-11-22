@@ -13,6 +13,8 @@
 #include "Win32Hid.hpp"
 #include "Win32Icon.hpp"
 #include "Win32Ime.hpp"
+#include "Win32XInput.hpp"
+#include "Win32Messages.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -299,7 +301,6 @@ public:
     bool Rumble(uint16_t lo, uint16_t hi, uint32_t ms) override;
 private:
     WinBackend* m_b; int m_slot; int m_id;
-    mutable unsigned long long m_rumbleUntil = 0;
 };
 
 class WinBackend final : public Backend {
@@ -387,6 +388,7 @@ public:
     }
     bool PollEvent(Event& out) override {
         PumpMessages();
+        ServiceXInput();
         own::RawPads::Change ch;
         while (m_raw.PopChange(ch)) {
             Event e; e.timestampMs = (uint32_t)TicksMs();
@@ -557,11 +559,32 @@ public:
 
     // Controllers: XInput, four slots, loaded on first use.
     // Indices: the connected XInput slots first, then the other HID pads found through Raw Input.
+    // Which slots are connected is kept by m_xslots (Win32XInput.hpp): connected slots are asked on every scan, empty ones
+    // once a second or after WM_DEVICECHANGE, and the differences become GamepadAdded / GamepadRemoved events.
+    void ScanXInput() {
+        if (!LoadXInput()) return;
+        const uint64_t now = TicksMs();
+        const unsigned ask = m_xslots.SlotsToAsk(now);
+        unsigned answered = 0;
+        for (int i = 0; i < win32xi::kSlots; ++i)
+            if ((ask >> i) & 1u) { XINPUT_STATE s; if (m_getState((DWORD)i, &s) == ERROR_SUCCESS) answered |= 1u << i; }
+        m_xslots.Update(ask, answered, now);
+    }
+    void ServiceXInput() {
+        ScanXInput();
+        win32xi::SlotChange c;
+        while (m_xslots.PopChange(c)) {
+            Event e; e.timestampMs = (uint32_t)TicksMs();
+            if (c.added) { e.type = EventType::GamepadAdded; e.deviceId = m_xslots.IndexOfSlot(c.slot); if (e.deviceId < 0) continue; }
+            else { e.type = EventType::GamepadRemoved; e.deviceId = c.instanceId; m_rumble.Forget(c.slot); }
+            m_pending.push_back(e);
+        }
+        const unsigned stop = m_rumble.Expired(TicksMs());   // a Rumble(..., ms) whose time is over
+        for (int i = 0; i < win32xi::kSlots; ++i) if ((stop >> i) & 1u) XVibrateRaw(i, 0, 0);
+    }
     int XInputCount() {
-        if (!LoadXInput()) return 0;
-        int n = 0;
-        for (int i = 0; i < 4; ++i) { XINPUT_STATE s; if (m_getState(i, &s) == ERROR_SUCCESS) ++n; }
-        return n;
+        if (!m_xslots.Scanned()) ScanXInput();
+        return m_xslots.Count();
     }
     int GamepadDeviceCount() override { return XInputCount() + m_raw.Count(); }
     bool IsGamepad(int i) override { return i >= 0 && i < GamepadDeviceCount(); }
@@ -571,7 +594,12 @@ public:
         return i >= XInputCount() ? m_raw.Open(i - XInputCount()) : nullptr;
     }
     bool XState(int slot, XINPUT_STATE& s) { return LoadXInput() && m_getState((DWORD)slot, &s) == ERROR_SUCCESS; }
-    bool XVibrate(int slot, uint16_t lo, uint16_t hi) {
+    bool XVibrate(int slot, uint16_t lo, uint16_t hi, uint32_t ms) {
+        uint16_t sl = 0, sh = 0;
+        m_rumble.Start(slot, lo, hi, ms, TicksMs(), sl, sh);   // switched off again by ServiceXInput when `ms` is over
+        return XVibrateRaw(slot, sl, sh);
+    }
+    bool XVibrateRaw(int slot, uint16_t lo, uint16_t hi) {
         if (!LoadXInput() || !m_setState) return false;
         XINPUT_VIBRATION v; v.wLeftMotorSpeed = lo; v.wRightMotorSpeed = hi;
         return m_setState((DWORD)slot, &v) == ERROR_SUCCESS;
@@ -658,6 +686,7 @@ public:
             }
             break;
         }
+        case WM_DEVICECHANGE: b->m_xslots.DeviceChangeHint(); break;   // a device came or went: ask every XInput slot on the next poll
         case WM_SETFOCUS: e.type = EventType::WindowFocusGained; b->m_pending.push_back(e); return 0;
         case WM_KILLFOCUS:
             for (const win32ime::Editing& ed : win->m_ime.FocusLost()) {
@@ -707,12 +736,21 @@ public:
                      : (m == WM_MBUTTONDOWN || m == WM_MBUTTONUP) ? MouseMiddle
                      : (m == WM_RBUTTONDOWN || m == WM_RBUTTONUP) ? MouseRight
                      : (HIWORD(wp) == XBUTTON1 ? MouseX1 : MouseX2);
-            e.x = (short)LOWORD(lp); e.y = (short)HIWORD(lp); e.clicks = 1;
-            if (down) SetCapture(h); else ReleaseCapture();
+            e.x = (short)LOWORD(lp); e.y = (short)HIWORD(lp);
+            // 1 single, 2 double, 3 triple: counted with the system's double-click time and box (Win32Messages.hpp).
+            e.clicks = down ? b->m_clicks.Down(e.button, e.x, e.y, (uint32_t)GetMessageTime(), (uint32_t)GetDoubleClickTime(),
+                                              GetSystemMetrics(SM_CXDOUBLECLK), GetSystemMetrics(SM_CYDOUBLECLK))
+                            : b->m_clicks.Up(e.button);
+            if (down) SetCapture(h);
+            else if (!(wp & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON | MK_XBUTTON1 | MK_XBUTTON2))) ReleaseCapture();   // keep the capture while another button is held
             b->m_pending.push_back(e);
             return (m == WM_XBUTTONDOWN || m == WM_XBUTTONUP) ? TRUE : 0;
         }
         case WM_LBUTTONDBLCLK: return 0;
+        case WM_SYSCOMMAND:   // Alt or F10 alone, Alt+letter: no menu mode (it stole the next key); Alt+Space keeps the window menu
+            if (win32msg::SwallowSysCommand((uint64_t)wp, (int64_t)lp)) return 0;
+            break;
+        case WM_MENUCHAR: return (LRESULT)win32msg::MenuCharReply();   // Alt+key with no menu: no beep
         case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL: {
             e.type = EventType::MouseWheel;
             const float notches = (float)(short)HIWORD(wp) / (float)WHEEL_DELTA;
@@ -819,11 +857,12 @@ private:
         return m_getState != nullptr;
     }
     int SlotOfIndex(int index) {   // the index-th connected slot
-        if (!LoadXInput()) return -1;
-        int seen = 0;
-        for (int i = 0; i < 4; ++i) { XINPUT_STATE s; if (m_getState(i, &s) == ERROR_SUCCESS) { if (seen == index) return i; ++seen; } }
-        return -1;
+        if (!m_xslots.Scanned()) ScanXInput();
+        return m_xslots.SlotOfIndex(index);
     }
+    win32xi::SlotTracker m_xslots;
+    win32msg::ClickCounter m_clicks;
+    win32xi::RumbleTimer m_rumble;
     typedef DWORD (WINAPI *GetStateFn)(DWORD, XINPUT_STATE*);
     typedef DWORD (WINAPI *SetStateFn)(DWORD, XINPUT_VIBRATION*);
     LARGE_INTEGER m_freq, m_t0;
@@ -900,7 +939,7 @@ bool WinPad::Button(GamepadButton b) const {
     }
     return false;
 }
-bool WinPad::Rumble(uint16_t lo, uint16_t hi, uint32_t) { return m_b->XVibrate(m_slot, lo, hi); }   // duration: not timed yet
+bool WinPad::Rumble(uint16_t lo, uint16_t hi, uint32_t ms) { return m_b->XVibrate(m_slot, lo, hi, ms); }   // stopped after `ms` by the backend's poll
 
 } // namespace
 

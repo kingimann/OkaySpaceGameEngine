@@ -2271,7 +2271,7 @@ MeshRendererResult DrawMeshRenderer(MeshRendererModel& m, float x, float y, floa
         if (!stats.empty()) UI::TextDisabled(stats.c_str());
         if (InspColorEdit("Color##mesh", v.color, 4, &res.color)) ch = true;
         box("Wireframe", &v.wireframe, &res.wireframe);
-        if (combo("Shader##mesh", &v.shader, kMeshShaderNames, 9, &res.shader)) { ch = true; in.shaderChanged = true; }
+        if (combo("Shader##mesh", &v.shader, kMeshShaderNames, kMeshShaderCount, &res.shader)) { ch = true; in.shaderChanged = true; }
         if (v.shader == MeshShaderToon) {
             UI::SetNextItemWidth(WithLabel(itemW, "Cel Bands##mesh"));
             if (UI::SliderInt("Cel Bands##mesh", &v.toonBands, 2, 6, "%d")) ch = true;

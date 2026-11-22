@@ -37,6 +37,8 @@ bool TtfFont::LoadFromFile(const std::string& path, float bakeHeightPx) {
     long sz = std::ftell(f);
     std::fseek(f, 0, SEEK_SET);
     if (sz <= 0) { std::fclose(f); Log::Error("[ttf] empty file ", path); return false; }
+    // A folder opens on some systems and reports a huge size (LONG_MAX on Linux); no font is anywhere near 256 MB.
+    if (sz > 256L * 1024L * 1024L) { std::fclose(f); Log::Error("[ttf] not a font file (a folder, or over 256 MB) ", path); return false; }
     std::vector<unsigned char> data((std::size_t)sz);
     std::size_t got = std::fread(data.data(), 1, (std::size_t)sz, f);
     std::fclose(f);

@@ -359,11 +359,60 @@ static void TestPrefabOverrides() {
     fs::remove_all(dir);
 }
 
+// A plain prefab file (no nested prefabs, no variant): objects the user added under an instance,
+// at the root and under a prefab child, are still there after ReapplyPrefab, with their ids and
+// components, under the matching objects of the rebuilt instance (docs/engine/prefabs.md Limits
+// used to say they were dropped).
+static void TestReapplyKeepsAddedObjects() {
+    RUN_SUITE("re-apply keeps objects added under a plain prefab instance");
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "okay_prefab_keep_added_test";
+    fs::create_directories(dir);
+    const std::string path = (dir / "tower.okayprefab").string();
+    Scene src("src");
+    GameObject* root = src.CreateGameObject("Tower");
+    root->AddComponent<SpriteRenderer>();
+    GameObject* top = src.CreateGameObject("Top");
+    top->transform->SetParent(root->transform, false);
+    CHECK(SceneSerializer::SaveObjectToFile(*root, path));
+    CHECK(!PrefabTools::FileUsesPrefabStructure(path));   // the plain path, not the nested/variant one
+
+    Scene live("live");
+    GameObject* inst = SceneSerializer::InstantiateFromFile(live, path);
+    CHECK(inst != nullptr);
+    if (!inst) { fs::remove_all(dir); return; }
+    GameObject* flag = live.CreateGameObject("Flag");
+    flag->transform->SetParent(inst->transform->Children()[0], false);   // under Top
+    flag->transform->localPosition = Vec3{0, 2, 0};
+    flag->AddComponent<SpriteRenderer>()->glyph = 'f';
+    GameObject* sign = live.CreateGameObject("Sign");
+    sign->transform->SetParent(inst->transform, false);                  // under the root
+    const std::string flagGuid = flag->Guid(), signGuid = sign->Guid();
+
+    std::string err;
+    GameObject* fresh = SceneSerializer::ReapplyPrefab(live, *inst, &err);
+    CHECK(fresh != nullptr);
+    live.FlushDestroyed();
+    GameObject* f = live.FindByGuid(flagGuid);
+    GameObject* g = live.FindByGuid(signGuid);
+    CHECK(f != nullptr && g != nullptr);
+    if (fresh && f && g) {
+        CHECK(!f->IsDestroyed() && !g->IsDestroyed());
+        CHECK(g->transform->Parent() == fresh->transform);
+        CHECK(f->transform->Parent() && f->transform->Parent()->gameObject->name == "Top");
+        CHECK(f->transform->Parent() && f->transform->Parent()->Parent() == fresh->transform);
+        CHECK_NEAR(f->transform->localPosition.y, 2, 1e-5);
+        CHECK(f->GetComponent<SpriteRenderer>() && f->GetComponent<SpriteRenderer>()->glyph == 'f');
+    }
+    fs::remove_all(dir);
+}
+
 int main() {
     TestGuids();
     TestOrderAndFlags();
     TestDuplicateComponents();
     TestRegistry();
     TestPrefabOverrides();
+    TestReapplyKeepsAddedObjects();
     TEST_MAIN_RESULT();
 }

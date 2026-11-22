@@ -102,8 +102,8 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Editor:** View > Panels > Scene Manager (`editor/SceneManagerPanel.*`); Build Settings edits the same list (15.7)
 - **Docs:** `docs/engine/scene_management.md`, `docs/gameplay/making_a_game.md`
 - **Tests:** `scene_lifecycle`, `scenemanager`, `scene_load`, `scene_load_pool`
-- **Status:** Works - merged in #558 and #570; read `Scene.cpp` (Update order) and `SceneManager.hpp`; but no loading-screen component, editor or player code calls `LoadSceneAsync`, `ObjectPool` or `RequireComponent` yet (grep finds no caller)
-- **Open:** wire async load into the Loading Screen component (12.8); since #575 unload runs OnDisable/OnDestroy for every awakened component, `Scene::LastLoadError()` keeps the reason a load failed and `ActiveIndex` moves only after a successful load (1.17)
+- **Status:** Works - merged in #558 and #570; read `Scene.cpp` (Update order) and `SceneManager.hpp`; the Loading Screen component's `asyncLoad` calls `SceneManager::LoadSceneAsyncByName` (re-checked 2026-11-22, `Components/LoadingScreen.hpp`); the Spawner, `Lifetime`, `Projectile3D`, `DebrisPool` and the script `pool_*` calls use `ObjectPool` (1.13)
+- **Open:** no editor or engine caller of `RequireComponent` outside tests (grep); since #575 unload runs OnDisable/OnDestroy for every awakened component, `Scene::LastLoadError()` keeps the reason a load failed and `ActiveIndex` moves only after a successful load (1.17)
 - **Related:** 1.5, 1.13, 12.8, 15.7
 - **Words:** SceneManager, LoadScene, build list, scenes in build, async load, additive, unload, DontDestroyOnLoad, Awake, Start, OnEnable, OnDisable, RequireComponent, loading screen, scene manager, object pool, object pooling, Scene Manager panel
 - **Seen as:** loading a scene crashes or loses things; Start runs before the object is ready; the loading bar jumps from 0 to 100; an object survives (or does not survive) a scene change
@@ -155,7 +155,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Docs:** `docs/engine/prefabs.md`, `docs/engine/prefabs.md`, `docs/engine/prefabs.md`, `docs/gameplay/making_a_game.md`, `docs/process/templates_check.md`
 - **Tests:** `instantiate`, `templates`, `templates_work`, `scene_cameras`, `scene_defaults`, `prefab_nested`, `prefab_variants`, `prefab_apply_revert`, `prefab_editor`, `prefab_mode`
 - **Status:** Partial - prefab files, override data, nested prefabs and variants work as library code and the editor shows and edits them (1.6.10; tests `prefab_editor`); prefab mode edits a prefab on its own and saves it to every instance (1.6.11; test `prefab_mode`)
-- **Open:** the old override unit is a whole record, `PrefabTools::Diff` goes per field but falls back to whole records for unknown ones; objects added under an instance are kept by `PrefabTools::Reapply` (which `ReapplyPrefab` uses for nested and variant prefab files and prefab mode uses), but the older wave 1 `ReapplyPrefab` path that plain prefab files still take drops them (`docs/engine/prefabs.md` Limits)
+- **Open:** the old override unit is a whole record, `PrefabTools::Diff` goes per field but falls back to whole records for unknown ones. Fixed 2026-11-22: `ReapplyPrefab` on a plain prefab file (no nested prefab, no variant) dropped the objects added under the instance; every file now goes through `PrefabTools::Reapply`, which keeps them (test `scene_ids_prefabs`, suite "re-apply keeps objects added under a plain prefab instance")
 - **Related:** 1.5, 12.7, 15.2, 21
 - **Words:** prefab, okayprefab, instantiate, override, template, starter, platformer template, player template, UI template, Slate, EnsureSceneCamera, nested prefab, prefab variant, PrefabTools, unpack, apply to prefab, revert override
 - **Seen as:** prefab changes don't apply to instances; a template scene has no camera or starts dark; an instance lost its colour change after re-apply
@@ -218,7 +218,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Docs:** -
 - **Tests:** `eventbus`, `ecs`, `core_audit`, `ecs_commands`
 - **Status:** Works - read the headers; `eventbus` and `ecs` tests are thorough, but it is opt-in library code: nothing in the engine, editor or player uses `EventBus` or the ECS (grep finds no consumer)
-- **Open:** possible bug: `SceneBridge` keeps raw `GameObject*` and dereferences them on the next sync if something else destroyed the object (core_audit_notes); #571 added the command buffer, safe `World::each`, delta snapshots with ack and the `EventBus` extras (docs `docs/engine/ecs.md`, `docs/engine/core_tools.md`)
+- **Open:** the old note that `SceneBridge` keeps raw `GameObject*` is out of date: it keeps instance ids and re-creates a lost object (`respawnLost`, re-checked 2026-11-22 in `ECS/SceneBridge.hpp`); #571 added the command buffer, safe `World::each`, delta snapshots with ack and the `EventBus` extras (docs `docs/engine/ecs.md`, `docs/engine/core_tools.md`)
 - **Related:** 16.3, 1.3
 - **Words:** EventBus, event, publish, subscribe, ECS, entity, component pool, World, system, SceneBridge, NetWorld, snapshot, replication, event bus, command buffer, delta snapshot, ack, SubscribeOnce, event priority
 - **Seen as:** a handler still runs after it unsubscribed; an ECS unit does not show on screen; the client's ECS world differs from the server's
@@ -272,16 +272,17 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.12.1 GUIDs and meta files - `Core/AssetDatabase` - `Scan`, `Guid`, `.okaymeta` sidecars, `MoveAsset`, rename and duplicate handling, orphan reports, labels; `ScanOptions::indexUnmetaed` (index assets that have no meta in memory, write nothing), `EnsureMeta`, `Folders()` (every folder walked, empty ones too), `Revision()` (moves only when the index changed)
   - 1.12.2 Dependency graph - `Core/AssetDatabaseDeps` - extractors for scenes, prefabs, materials and text assets; `DependenciesOf`, `UsedBy`, `BuildClosure`, `FindUnused`, `FindMissing`, `FixStaleReferences`
   - 1.12.3 Import settings - `Core/ImportSettings` - typed texture, model and audio settings with versions and migration; reimport signal
+  - 1.12.4 Live picture reload - `Render/TextureCacheFiles`, `editor/ProjectBrowser` - `Browser::TakeChangedFiles` (files the scan saw change on disk, new import settings, every hand Reimport) and `InvalidateTextureCacheForFile` (every texture-cache key that names the file, relative or absolute): a picture repainted in another program or reimported is shown changed in the Scene view within one poll, with a Console line
   - 1.12.4 Thumbnails - see 1.20 (`Core/ThumbnailCache` is its own sub-area)
   - 1.12.5 Search and paging - `Core/AssetDatabaseSearch` - filter, sort and page query with per-type counts
   - 1.12.6 Shared helpers - `Core/AssetDatabaseInternal` - private utilities used by the three database sources
-- **Code:** `Core/AssetDatabase`, `Core/AssetDatabaseDeps`, `Core/AssetDatabaseSearch`, `Core/AssetDatabaseInternal`, `Core/ImportSettings`
+- **Code:** `Core/AssetDatabase`, `Core/AssetDatabaseDeps`, `Core/AssetDatabaseSearch`, `Core/AssetDatabaseInternal`, `Core/ImportSettings`, `Render/TextureCacheFiles`
 - **API:** `AssetDatabase::Scan`, `AssetDatabase::BuildClosurePaths`, `AssetDatabase::Search`, `Guid`, `ImportSettings`
 - **Editor:** Project panel (`editor/ProjectBrowser.*`: listing, search, filters, counts, folder tree, info strip, Find References, Show Dependencies, tags, broken-reference badge, Broken References list with Fix)
 - **Docs:** `docs/engine/asset_database.md`, `docs/editor/project_panel.md`
-- **Tests:** `asset_database`, `project_panel`, `project_panel_db`
+- **Tests:** `asset_database`, `project_panel`, `project_panel_db`, `texture_reimport`
 - **Status:** Partial - the Project panel reads the listing, search, dependency graph, labels and import settings from it; no importer reads `srgb`, `compress` or the audio settings, scenes still store paths, the build/export code does not call it
-- **Open:** importers reading the remaining settings; GUID references inside scene files (the panel rewrites paths on rename and move); build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no operating-system file watcher (the panel polls the incremental scan every 2 s or more); an asset has a `.okaymeta` only after it is given a tag or import settings, so its GUID is session-long until then
+- **Open:** importers reading the remaining settings; GUID references inside scene files (the panel rewrites paths on rename and move); build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no operating-system file watcher (the panel polls the incremental scan every 2 s or more, and a changed picture reloads on that poll); a changed model file is not reloaded into the open scene (only pictures are; audio was not checked); an asset has a `.okaymeta` only after it is given a tag or import settings, so its GUID is session-long until then
 - **Related:** 1.11, 1.20, 20, 15.4, 18.1
 - **Words:** AssetDatabase, GUID, meta file, okaymeta, dependency, import settings, unused assets, missing assets, asset browser, reference, closure
 - **Seen as:** moving a file in the project loses its texture in scenes; the build ships unused files or misses one; a Project panel row without a type or a wrong Used By count
@@ -295,11 +296,11 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.13.3 Pool statistics - `Scene/ObjectPool` - `IdleCount`, `ActiveCount`, `CreatedCount`, `ReuseCount` for tuning the pre-warm size
 - **Code:** `Scene/ObjectPool`
 - **API:** `ObjectPool`, `ObjectPool::Get`, `ObjectPool::Release`, `ObjectPool::Prewarm`
-- **Editor:** none
+- **Editor:** Inspector > Spawner > **Use Pool** (with made / reused / waiting counts during Play)
 - **Docs:** `docs/engine/scene_management.md`
-- **Tests:** `scene_load_pool`
-- **Status:** Partial - merged in #570 and tested; no component, script builtin or editor option uses it yet (grep)
-- **Open:** a script builtin and a no-code Spawner option; resetting Rigidbody velocities is each component's job
+- **Tests:** `scene_load_pool`, `object_pool_audit`
+- **Status:** Works - merged in #570; the Spawner's `usePool` (Inspector **Use Pool**, added 2026-11-22: the field was saved but had no Inspector box), `Lifetime`, `Projectile3D` and `DebrisPool` use it, and scripts have `pool_get`, `pool_release`, `pool_prewarm` and `pool_idle`. Fixed 2026-11-22: the script `pool_*` calls skipped the file gate `spawn` uses, so a script could load a prefab from outside the game folder (test `object_pool_audit`, suite "script pool calls refuse prefab files outside the game folder")
+- **Open:** resetting Rigidbody velocities is each component's job (`OnPoolReuse`); no visual-script nodes for the pool calls
 - **Related:** 1.4, 11.6
 - **Words:** ObjectPool, pool, pooling, Get, Release, Prewarm, bullet pool, reuse, object pool
 - **Seen as:** a frame hitch when many bullets spawn; a reused bullet keeps its old speed or state
@@ -344,7 +345,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **What:** The editor side of localization: the string-table grid, CSV import and export, language preview, pseudo-localization and finding where a key is used.
 - **Parts:**
   - 1.16.1 Localization window - `editor/LocalizationWindow.*` - grid of keys by languages, inline edit with undo, completion bars, search and missing/unused filters, Find in Scene
-  - 1.16.2 CSV and build copy - `editor/LocalizationWindow.*` - Import/Export CSV for translators; Build Game copies the table and the fonts the languages name
+  - 1.16.2 CSV, JSON and build copy - `editor/LocalizationWindow.*`, `editor/LocalizationTools` - **Import...** (CSV or JSON: the whole table or one language named by its file, `fr.json`) with an **Import Translations** confirm box listing what would be filled, changed, cleared and added before anything changes (`PlanLocImport`); **Export CSV...** and **Export JSON...**; Build Game copies the table and the fonts the languages name
   - 1.16.3 Preview language - `editor/LocalizationWindow.*` - toolbar language menu and pseudo-localize switch; the scene follows in Scene and Game views
   - 1.16.4 Inspector helpers - `editor/LocalizationWindow.*` - `LocalizedTextField`, `LocKeyInput`, `LocalizedSwitch` for Pause Menu, Hold Prompt and Loading Screen
   - 1.16.5 Table model, checker, scanner and previews - `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`, `Core/LocPreview`, `editor/LocalizationTools` - (#574) cell states, CSV and JSON, placeholder and plural checks, a scan for used, unused and undefined keys, pseudo-localization and mirrored-text previews; the Localization window calls them (31.1, 31.3)
@@ -354,8 +355,8 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Editor:** View > Editors & Tools > Localization; toolbar language menu next to Build
 - **Docs:** `docs/engine/localization.md`, `docs/engine/localization.md`
 - **Tests:** `localization`, `loc_tools`, `loc_window`
-- **Status:** Partial - the window draws the `LocTable` grid, the `LocCheck` / `LocMissingReport` list, the `LocScanProject` unused and undefined keys, and a `LocPreview` line (pseudo-locale and mirrored right-to-left text). JSON in the window, a confirm step before CSV import, and the font coverage report are still out.
-- **Open:** JSON import and export in the window, a confirm step before CSV import, the font coverage report, and right-to-left layout (the window shows a mirrored preview of the selected key; the Scene view does not mirror). Accessibility text scaling is area 32.
+- **Status:** Partial - the window draws the `LocTable` grid, the `LocCheck` / `LocMissingReport` list, the `LocScanProject` unused and undefined keys, and a `LocPreview` line (pseudo-locale and mirrored right-to-left text); since 2026-11-22 it imports and exports JSON and shows what an import would change before applying it (test `loc_window`). The font coverage report is still out.
+- **Open:** the font coverage report, and right-to-left layout (the window shows a mirrored preview of the selected key; the Scene view does not mirror). Accessibility text scaling is area 32.
 - **Related:** 1.8, 31, 32, 15.6
 - **Words:** Localization window, translation table, CSV import, pseudo-localize, language preview, Find in Scene, missing key, translators, LocTable, LocCheck, LocScan, LocPreview, placeholder check, caption manager
 - **Seen as:** a translated text is cut off; unused keys pile up; a language shows empty cells

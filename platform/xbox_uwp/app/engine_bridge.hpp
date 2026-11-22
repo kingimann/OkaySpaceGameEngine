@@ -5,6 +5,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace okay_xbox_bridge {
 
@@ -19,6 +20,11 @@ struct ShellCallbacks {
     bool (*padRead)(void* user, int index, PadReadingPod* out) = nullptr;
     void (*padVibrate)(void* user, int index, double left, double right, double leftTrigger, double rightTrigger) = nullptr;
     int (*audioDeviceId)(void* user, wchar_t* buffer, int capacity) = nullptr;   // writes the default render device id, returns its length (0 = none)
+    // Pads by a stable key (RawGameController.NonRoamableId). When padKeys is set the engine uses these instead of the index ones above:
+    // each frame it asks for the connected keys (XboxPadSync.hpp), so pads keep their player slot when another pad comes or goes.
+    void (*padKeys)(void* user, std::vector<std::string>* out) = nullptr;
+    bool (*padReadKey)(void* user, const std::string& key, PadReadingPod* out) = nullptr;
+    void (*padVibrateKey)(void* user, const std::string& key, double left, double right, double leftTrigger, double rightTrigger) = nullptr;
 };
 
 struct Engine;   // opaque
@@ -34,7 +40,10 @@ void Resized(Engine* e, float dipsW, float dipsH, float dpi);
 void Visibility(Engine* e, bool visible);
 void Activated(Engine* e, bool active);
 void Closed(Engine* e);
-void BackRequested(Engine* e);
+void BackRequested(Engine* e);   // a back press for the game (closes a pause menu), never an exit
+/// How the app is laid out: `fullScreen` = ApplicationViewBoundsMode.UseCoreWindow was accepted (the picture reaches the TV edges);
+/// `deviceFamily` = AnalyticsInfo.VersionInfo.DeviceFamily. Sets the title-safe insets the UI keeps to (XboxTitleSafe.hpp).
+void ScreenBounds(Engine* e, bool fullScreen, const std::string& deviceFamily);
 void Key(Engine* e, int virtualKey, bool down, bool repeat);
 void Text(Engine* e, const std::string& utf8);
 void PointerMove(Engine* e, int x, int y);
@@ -44,7 +53,7 @@ void Wheel(Engine* e, float notches);
 void Suspending(Engine* e, std::uint64_t deadlineMs);
 void Resuming(Engine* e);
 
-/// The game loop. Returns true when the game ended normally (quit / back); false with `err` set when it could not start or failed.
+/// The game loop. Returns true when the game ended normally (the game quit or the window closed); false with `err` set when it could not start or failed.
 bool Run(Engine* e, std::string& err);
 
 } // namespace okay_xbox_bridge

@@ -351,4 +351,144 @@ check("error after yield in pcall", f1 == "first" and okl == false and el:find("
 check("nested pcall results", select('#', pcall(pcall, error, "x")) == 3 and select(3, pcall(pcall, error, "x", 0)) == "x")
 check("pcall tbc on error", (function() local closed = false pcall(function() local c <close> = setmetatable({}, {__close = function() closed = true end}) error("e") end) return closed end)())
 check("pcall deep", (function() local function rec(n) if n == 0 then error("bottom") end return pcall(rec, n - 1) end local r = {rec(150)} return #r == 151 and r[1] == true and r[150] == false and r[151]:find("bottom") ~= nil end)())
+-- string.pack / unpack / packsize (manual 6.4.2)
+check("pack i4", string.pack("<i4", 1) == "\1\0\0\0" and string.pack(">i4", 1) == "\0\0\0\1")
+check("pack neg", string.pack("<i2", -2) == "\254\255" and string.unpack("<i2", "\254\255") == -2)
+check("pack unsigned", string.unpack("<I2", "\254\255") == 65534 and string.unpack("B", "\200") == 200 and string.unpack("b", "\200") == -56)
+check("pack j", string.unpack("<j", string.pack("<j", math.mininteger)) == math.mininteger)
+check("pack i16", #string.pack("i16", -3) == 16 and string.unpack("i16", string.pack("i16", -3)) == -3)
+check("pack i16 bytes", string.pack("<i16", -1) == string.rep("\255", 16) and string.pack(">I9", 1) == string.rep("\0", 8) .. "\1")
+check("unpack big no fit", not pcall(string.unpack, "<i9", "\0\0\0\0\0\0\0\0\1"))
+check("pack overflow", select(2, pcall(string.pack, "i1", 128)):find("overflow") ~= nil and select(2, pcall(string.pack, "I1", -1)):find("overflow") ~= nil)
+check("pack float", string.unpack("<d", string.pack("<d", 1.5)) == 1.5 and string.unpack("<f", string.pack("<f", 0.25)) == 0.25 and string.unpack("n", string.pack("n", -2.5)) == -2.5)
+check("pack d bytes", string.pack("<d", 1.0) == "\0\0\0\0\0\0\240\63" and string.pack(">f", 1.0) == "\63\128\0\0")
+check("pack float type", math.type(string.unpack("d", string.pack("d", 3))) == "float")
+check("pack s", string.pack("<s1", "hi") == "\2hi" and string.unpack("<s1", "\2hi") == "hi" and #string.pack("s", "abc") == 11)
+check("pack s too long", not pcall(string.pack, "s1", string.rep("x", 256)))
+check("pack z", string.pack("z", "ab") == "ab\0" and string.unpack("z", "ab\0cd") == "ab" and not pcall(string.pack, "z", "a\0b"))
+check("unpack z unfinished", not pcall(string.unpack, "z", "abc"))
+check("pack c", string.pack("c5", "ab") == "ab\0\0\0" and string.unpack("c2", "xyz") == "xy" and not pcall(string.pack, "c1", "ab"))
+check("pack c needs size", not pcall(string.pack, "c", "a"))
+check("pack x", string.pack("<i1xi1", 1, 2) == "\1\0\2")
+check("pack align", string.pack("<!4 i1 i4", 1, 2) == "\1\0\0\0\2\0\0\0" and string.packsize("!8 i1 d") == 16 and string.packsize("i1 d") == 9)
+check("pack Xop", string.pack("<!4 i1 Xi4 i1", 1, 2) == "\1\0\0\0\2" and string.packsize("!8 b Xd") == 8)
+check("pack align pow2", not pcall(string.packsize, "!3 i1 i3"))
+check("packsize", string.packsize("i4i8") == 12 and string.packsize("<!2 b h") == 4 and not pcall(string.packsize, "s") and not pcall(string.packsize, "z"))
+check("pack sizes", string.packsize("b h i l j T f d n") == 1 + 2 + 4 + 8 + 8 + 8 + 4 + 8 + 8)
+check("pack bad option", select(2, pcall(string.pack, "y", 1)):find("invalid format option 'y'") ~= nil)
+check("pack bad size", not pcall(string.pack, "i17", 1) and not pcall(string.pack, "i0", 1))
+do
+  local a, b, c, nextpos = string.unpack("<i2 z B", string.pack("<i2 z B", 7, "hey", 9))
+  check("unpack multi", a == 7 and b == "hey" and c == 9 and nextpos == 2 + 4 + 1 + 1)
+  check("unpack pos", string.unpack("<i2", "\0\0\5\0", 3) == 5 and string.unpack("<i2", "\0\0\5\0", -2) == 5)
+  check("unpack short", not pcall(string.unpack, "i4", "abc") and not pcall(string.unpack, "i1", "a", 5))
+  check("pack method", ("<I2"):pack(258) == "\2\1" and ("\2\1"):unpack("<I2") == 258)
+  check("pack spaces", string.pack(" < i1 ", 3) == "\3")
+  check("pack integer floats", string.pack("i1", 3.0) == "\3" and not pcall(string.pack, "i1", 3.5))
+end
+-- __gc finalizers (manual 2.5.3)
+do
+  local log = {}
+  do
+    setmetatable({}, {__gc = function(o) log[#log + 1] = "a" end})
+    local kept = setmetatable({name = "b"}, {__gc = function(o) log[#log + 1] = o.name end})
+    _G.keepme = kept
+  end
+  collectgarbage(); collectgarbage()
+  check("gc runs", #log == 1 and log[1] == "a")
+  _G.keepme = nil
+  collectgarbage(); collectgarbage()
+  check("gc gets object", #log == 2 and log[2] == "b")
+  -- a metatable without __gc at setmetatable time: not marked, even if __gc is added later
+  local mt = {}
+  do setmetatable({}, mt) end
+  mt.__gc = function() log[#log + 1] = "late" end
+  collectgarbage(); collectgarbage()
+  check("gc mark at setmetatable", #log == 2)
+  -- resurrection: the finalizer stores the object; it is not finalized twice
+  local saved
+  do setmetatable({v = 5}, {__gc = function(o) saved = o log[#log + 1] = "r" end}) end
+  collectgarbage(); collectgarbage()
+  check("gc resurrect", saved and saved.v == 5 and log[#log] == "r")
+  saved = nil
+  local n = #log
+  collectgarbage(); collectgarbage()
+  check("gc once", #log == n)
+  -- an error in a finalizer does not stop the program
+  do setmetatable({}, {__gc = function() error("bad gc") end}) end
+  check("gc error ignored", pcall(function() collectgarbage(); collectgarbage() end))
+  -- order: reverse order of marking
+  local order = {}
+  local hold = {}
+  for i = 1, 3 do hold[i] = setmetatable({}, {__gc = function() order[#order + 1] = i end}) end
+  hold = nil
+  collectgarbage()
+  check("gc order", table.concat(order, ",") == "3,2,1")
+  -- weak values drop the object before its finalizer runs
+  local wv = setmetatable({}, {__mode = "v"})
+  local seen
+  do wv[1] = setmetatable({}, {__gc = function() seen = wv[1] end}) end
+  collectgarbage()
+  check("gc weak values cleared first", seen == nil and wv[1] == nil)
+end
+-- yielding across xpcall and metamethods (they run inside the interpreter loop)
+do
+  local co = coroutine.wrap(function()
+    local ok, v = xpcall(function() return coroutine.yield("x") + 1 end, debug and debug.traceback or tostring)
+    coroutine.yield(ok, v)
+    local ok2, e2 = xpcall(function() coroutine.yield("y") error("boom") end, function(m) return "H:" .. m end)
+    return ok2, e2
+  end)
+  check("yield in xpcall", co() == "x")
+  local a, b = co(41)
+  check("yield in xpcall result", a == true and b == 42)
+  check("yield in xpcall 2", co() == "y")
+  local c, d = co()
+  check("yield in xpcall handler", c == false and d:find("^H:.*boom") ~= nil)
+  local mt = {
+    __index = function(t, k) return coroutine.yield("idx " .. k) end,
+    __newindex = function(t, k, v) rawset(t, k, coroutine.yield("set " .. k) or v) end,
+    __add = function(a, b) return coroutine.yield("add") end,
+    __lt = function(a, b) return coroutine.yield("lt") end,
+    __eq = function(a, b) return coroutine.yield("eq") end,
+    __len = function(a) return coroutine.yield("len") end,
+    __concat = function(a, b) return coroutine.yield("cat") end,
+    __unm = function(a) return coroutine.yield("unm") end,
+  }
+  local obj = setmetatable({}, mt)
+  local other = setmetatable({}, mt)
+  local m = coroutine.wrap(function()
+    local r = {}
+    r[1] = obj.foo
+    obj.bar = 1
+    r[2] = obj + 1
+    r[3] = obj < other
+    r[4] = obj == other
+    r[5] = #obj
+    r[6] = obj .. "s"
+    r[7] = -obj
+    r[8] = obj ~= other
+    r[9] = obj > other
+    return r
+  end)
+  local asks = {}
+  asks[1] = m()
+  asks[2] = m("F")
+  asks[3] = m(7)
+  asks[4] = m("A")
+  asks[5] = m(1)
+  asks[6] = m(nil)
+  asks[7] = m(5)
+  asks[8] = m("C")
+  asks[9] = m("U")
+  asks[10] = m(false)
+  local r = m(true)
+  check("yield meta asks", table.concat(asks, ",") == "idx foo,set bar,add,lt,eq,len,cat,unm,eq,lt")
+  check("yield meta results", r[1] == "F" and rawget(obj, "bar") == 7 and r[2] == "A" and r[3] == true and r[4] == false
+    and r[5] == 5 and r[6] == "C" and r[7] == "U" and r[8] == true and r[9] == true)
+  -- a yield inside a metamethod called from a native (table.sort's comparator) is still an error
+  local s = coroutine.wrap(function() return pcall(table.sort, {1, 2, 3}, function(a, b) coroutine.yield() return a < b end) end)
+  local okS, eS = s()
+  check("yield across sort", okS == false and eS:find("C%-call boundary") ~= nil)
+end
 print("conformance done")

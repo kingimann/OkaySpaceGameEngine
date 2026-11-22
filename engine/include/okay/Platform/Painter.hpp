@@ -6,6 +6,9 @@
 //   software  (own backend; OkayUI::soft::CreateWindowPainter in okayui/soft) draws on the CPU into an
 //             RGBA8 frame buffer with OkayUI's software rasteriser and hands the finished frame to the
 //             window (Window::PresentPixels: XPutImage on X11, StretchDIBits on Win32). No GPU.
+//   opengl    (own backend; CreateGLPainter below, engine/src/Platform/GLPainter.cpp) draws with OpenGL 3.3 core
+//             (3.0 / GLSL 1.30 when that is all there is) on the window's own GL context (GLX on X11, WGL on
+//             Win32). Entry points come from Backend::GLProcAddress, so there is no link-time GL.
 //
 // It extends okay::ui2d::Painter (the primitive set the in-game UI pass already draws through: colour
 // state, rects, lines, clip, textures, copies, triangle geometry) with what an app needs around that:
@@ -24,7 +27,7 @@
 
 namespace okay::platform {
 
-enum class PainterKind { Sdl2, Software };
+enum class PainterKind { Sdl2, Software, OpenGL };
 enum class BlendMode { None, Blend };      // SDL_BLENDMODE_NONE / SDL_BLENDMODE_BLEND (source-over)
 enum class ScaleMode { Nearest, Linear };
 
@@ -43,7 +46,7 @@ public:
     ~Painter() override = default;
 
     virtual PainterKind Kind() const = 0;
-    const char* Name() const { return Kind() == PainterKind::Sdl2 ? "sdl2" : "software"; }
+    const char* Name() const { return Kind() == PainterKind::Sdl2 ? "sdl2" : Kind() == PainterKind::OpenGL ? "opengl" : "software"; }
     /// The SDL_Renderer* behind an sdl2 painter, else null. Only for libraries that still speak SDL
     /// (OkayUI::EndFrame(SDL_Renderer*), Dear ImGui's backend).
     virtual void* NativeRenderer() = 0;
@@ -140,5 +143,12 @@ std::unique_ptr<Painter> WrapSdl2Renderer(void* sdlRenderer);
 /// Headless sdl2 painter: SDL's software renderer on an RGBA surface. For tests and tools that need the
 /// sdl2 implementation without a window. Null when SDL is not compiled in.
 std::unique_ptr<Painter> CreateSdl2SurfacePainter(int w, int h);
+
+/// opengl (own code, off by default): a GPU painter on a window of the own backend made with WindowDesc::opengl. It creates the
+/// window's GL context (Window::CreateGLContext, 3.3 core first, else what the driver gives), loads its entry points through
+/// `b.GLProcAddress` and owns the context (destroyed with the painter, which must go before the window). Pixels and rules follow
+/// the software painter (same device rounding, source-over blending, nearest = floor(u * w), clip = scissor), so the two agree
+/// within GPU rounding. Null (and `err`) for an sdl2 window, a window without a GL pixel format, or a GL older than 3.0.
+std::unique_ptr<Painter> CreateGLPainter(Window& w, Backend& b, const PainterDesc& d = PainterDesc(), std::string* err = nullptr);
 
 } // namespace okay::platform

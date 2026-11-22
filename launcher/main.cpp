@@ -148,6 +148,7 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "TestHooks.hpp"   // scripted input and screenshots for headless test runs (OKAY_TEST_SCRIPT); not in normal builds
 #endif
 #include "ImGuiPainterRenderer.hpp"   // our own Dear ImGui renderer over okay::platform::Painter (OKAY_IMGUI_RENDER=own; default stays imgui_impl_sdlrenderer2)
+#include "OwnPainter.hpp"     // which painter draws an own-backend window (OpenGL, else software)
 #include "PainterBridge.hpp"   // the 2D renderer calls (textures, clear, present, size) through okay::platform::Painter
 #include "OkayThreads.hpp"   // our own threads, recursive mutexes, atomics (replaces SDL's)
 
@@ -16705,7 +16706,9 @@ static bool ChatHostCreate() {
     okay::platform::WindowDesc cd;
     cd.title = "OkaySpace Chat"; cd.x = x; cd.y = y; cd.width = g_chatWinW; cd.height = g_chatWinH;
     cd.resizable = true; cd.highDpi = true; cd.hidden = true;
-    g_chatHostOwner = sb ? sb->MakeWindow(cd).release() : nullptr;   // owning; like before, the chat window lives until the process ends (never freed on purpose: it must not outlive SDL's shutdown in a static destructor)
+    cd.opengl = okay::pb::OwnWindowsWantGL(sb);   // own backend: a GL pixel format for the OpenGL painter (sdl2: unchanged)
+    g_chatHostOwner = sb ? sb->MakeWindow(cd).release() : nullptr;
+    if (!g_chatHostOwner && sb && cd.opengl) { cd.opengl = false; g_chatHostOwner = sb->MakeWindow(cd).release(); }   // no GL here: the software painter   // owning; like before, the chat window lives until the process ends (never freed on purpose: it must not outlive SDL's shutdown in a static destructor)
     g_chatHost.win = g_chatHostOwner ? (SDL_Window*)g_chatHostOwner->NativeHandle() : nullptr;
     if (!g_chatHost.win) return false;
     okay::pb::RegisterWindow(*g_chatHostOwner);   // the lw:: helpers find the window by its native handle
@@ -18201,13 +18204,13 @@ int main(int argc, char** argv) {
     okay::platform::WindowDesc mainDesc;
     mainDesc.title = "OkaySpace Launcher  v" OKAY_ENGINE_VERSION; mainDesc.width = g_winW; mainDesc.height = g_winH;
     mainDesc.resizable = true; mainDesc.highDpi = true; mainDesc.hidden = true;
+    mainDesc.opengl = okay::pb::OwnWindowsWantGL(sdlSeam);   // own backend: a GL pixel format for the OpenGL painter (sdl2: unchanged)
     std::unique_ptr<okay::platform::Window> mainWinOwner = sdlSeam->MakeWindow(mainDesc);   // owns the window
+    if (!mainWinOwner && mainDesc.opengl) { mainDesc.opengl = false; mainWinOwner = sdlSeam->MakeWindow(mainDesc); }   // no GL here: the software painter
     if (!mainWinOwner) return 1;
     SDL_Window* window = (SDL_Window*)mainWinOwner->NativeHandle();
     okay::pb::RegisterWindow(*mainWinOwner);   // the lw:: helpers find the window by its native handle
-#if defined(OKAY_HAVE_OKAYUI) || defined(OKAY_ON_OKAYUI)   // the OkayUI build draws every window of the own backend through the software painter
-    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w) { return OkayUI::soft::CreateWindowPainter(w); });   // the software painter, for own-backend windows
-#endif
+    okay::pb::SetOwnPainterFactory(okay::pb::MakeOwnPainter);   // own-backend windows: the OpenGL painter, else the software one (shared/OwnPainter.hpp)
     g_launcherWindow = window;   // games ask us to come forward (Invite friends)
     lw::SetMinSize(window, 720, 480);   // the fixed layout needs this much
     okay::SetAppIcon(*mainWinOwner);   // placeholder OkaySpace logo

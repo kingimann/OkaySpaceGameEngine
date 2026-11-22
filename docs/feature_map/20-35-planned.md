@@ -603,19 +603,22 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 25.3.2 Save and import-settings migrations - `Core/SaveGame`, `Core/ImportSettings` - `SaveGame::SetMigration(fromVersion, fn)`; import settings upgrade old layouts on read
   - 25.3.3 Version helpers - `Core/BuildInfo` - `CompareVersions`, `IsCompatible`, `Version()` (merged in #571)
   - 25.3.4 Scene migration steps (#578) - `Scene/SceneMigration` - `MigrateToCurrent(text)` runs registered `N -> N+1` steps on the scene text and writes canonical text, `Register(step)`, `Describe()`, `MigrateThroughEngine` for upgrades that need component classes; a newer or damaged file comes back untouched
-- **Code:** `Scene/SceneSerializer`, `Core/SaveGame`, `Core/ImportSettings`, `Core/BuildInfo`, `Scene/SceneMigration`
-- **API:** `SceneSerializer::kSceneFormatVersion`, `SaveGame::SetMigration`, `BuildInfo::IsCompatible`, `SceneMigration::MigrateToCurrent`, `SceneMigration::Register`
-- **Editor:** none
+  - 25.3.5 Project upgrade - `editor/ProjectUpgrade`, `editor/ProjectUpgradeUI`, `shared/ProjectVersion` - `engine_version` stamp in `project.okayproj`, the question on open (older / unknown / newer), a verified full backup, all-or-nothing rewrite of scenes and prefabs, Restore (`docs/editor/project_upgrade.md`)
+  - 25.3.6 Upgrade report and loss check - `editor/ProjectUpgrade` - `CheckSceneFile` loads the old and the upgraded text and names anything the new file no longer holds (objects, records this version does not know beyond the loader's 256-per-object / 64 KB limits); `<backup>/.okay/upgrade_report.txt` lists versions, files rewritten, every step and every loss; the result window shows "Nothing was lost" or the losses, and a "What changed" list
+  - 25.3.7 Old-file corpus - `tests/test_project_upgrade.cpp`, `tests/data/upgrade_corpus` - every `.okayscene` / `.okayprefab` the repository ships (format 1 files written by older editors among them) plus hand-made version 2, newer-records and future files: each must upgrade, load, lose nothing and be stable on a second upgrade; the future file must be refused
+- **Code:** `Scene/SceneSerializer`, `Core/SaveGame`, `Core/ImportSettings`, `Core/BuildInfo`, `Scene/SceneMigration`, `editor/ProjectUpgrade`, `editor/ProjectUpgradeUI`, `shared/ProjectVersion`
+- **API:** `SceneSerializer::kSceneFormatVersion`, `SaveGame::SetMigration`, `BuildInfo::IsCompatible`, `SceneMigration::MigrateToCurrent`, `SceneMigration::Register`, `okayup::UpgradeJob`, `okayup::CheckSceneFile`, `okayup::UpgradeReportText`
+- **Editor:** the version question when a project is opened; File > Project Upgrade... (upgrade again, Restore a backup); example `examples/old_project`
 - **Docs:** `docs/engine/scene_serializer.md`, `docs/engine/core_tools.md`, `docs/engine/scene_diff_merge.md`
-- **Tests:** `scene_safe_load`, `structure_version`, `core_audit`, `scene_migration`
-- **Status:** Partial - forward compatibility plus a scene text migration library (#578) exist; the two built-in steps (1 to 2, 2 to 3) only raise the number when nothing needs the engine, and no editor dialog or version stamp uses it.
-- **Exists today:** Old scenes keep loading because the loader ignores what it does not know and defaults what is missing; nothing in the editor rewrites an old scene or tells the user it was made by an older build; `SceneMigration` can, but nothing calls it.
+- **Tests:** `scene_safe_load`, `structure_version`, `core_audit`, `scene_migration`, `project_upgrade`, `project_version`
+- **Status:** Partial - the project upgrade (stamp, question, backup, rewrite, report, restore) is built and tested headless; the windows were not run on Windows; `.okaymeta` import settings and other data files are upgraded on read only (not by the project upgrade, which rewrites scenes, prefabs and `project.okayproj`).
+- **Exists today:** An old project asks before it is touched, is backed up, upgraded file by file with a report of what changed and what could not be kept, and can be restored from File > Project Upgrade....
 - **Work packages:**
   1. S - Stamp scenes and `project.okayproj` with the engine version that wrote them. Depends on: nothing.
   2. S - Register a step (and a hand-written old-format fixture in `scene_migration`) whenever `kSceneFormatVersion` is bumped; the registry already exists. Depends on: #578 (on main).
   3. M - "Upgrade project" dialog: back up first (22.4), migrate scenes and prefabs, list what changed. Depends on: #578 (on main, `SceneMigration`), 22.4 package 1.
   4. S - Warn when a scene was saved by a newer build and would lose data on save. Depends on: package 1.
-- **Open:** no policy yet on how long old formats stay readable; `MigrateThroughEngine` drops records this build does not know and gives id-less objects new ids, so it is only for files from older builds.
+- **Open:** no policy yet on how long old formats stay readable; `MigrateThroughEngine` keeps records this build does not know only up to the loader's limits (256 per object, 64 KB each; a loss beyond that is now named in the report, not prevented) and gives id-less objects new ids, so it is only for files from older builds; the backup cannot be put in another folder; the result window was not run on a screen.
 - **Related:** 1.5, 20.4, 28.2, 35.4
 - **Words:** migration, upgrade project, scene version, format version, old project, forward compatible, SetMigration, IsCompatible
 - **Seen as:** old project opens with missing pieces; a newer scene loses data in an older editor
@@ -1165,7 +1168,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Parts:**
   - 31.1.1 String table file - `Core/Localization` - `strings.okayloc` with languages, keys, notes and per-language texts; plural forms and number, currency, percent and date formatting (merged #571)
   - 31.1.2 Localization window - `editor/LocalizationWindow.*` - grid of keys by languages with in-place editing, completion bars per language, search, filters (missing in a language, unused keys), Find in Scene, Add Dialogue and Quest Text, own undo
-  - 31.1.3 CSV exchange - `editor/LocalizationWindow.*` - Export CSV and Import CSV (header row names columns, comma/semicolon/tab, BOM)
+  - 31.1.3 CSV and JSON exchange - `editor/LocalizationWindow.*`, `editor/LocalizationTools` - Export CSV, Export JSON (whole table, or one language when the file is named after it) and Import... for both, with a confirm box that lists what would change first (CSV header row names columns, comma/semicolon/tab, BOM)
   - 31.1.4 Table tool layer (#574) - `Core/LocTable`, `Core/LocCheck`, `Core/LocScan` - cell states (translated, missing, same-as-source, placeholder mismatch, extra), CSV and JSON, placeholder and plural checker, scan for used, unused and undefined keys
   - 31.1.5 Scene text binding - `Scene/SceneLocalization` - localized text on scene objects follows the current language
 - **Code:** `Core/Localization`, `Scene/SceneLocalization`, `editor/LocalizationWindow.*`, `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`
@@ -1173,16 +1176,16 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** View > Editors & Tools > Localization; Inspector "Localized" checkbox on text fields
 - **Docs:** `docs/engine/localization.md`, `docs/engine/localization.md`; `docs/engine/localization.md`
 - **Tests:** `localization`, `loc_prefs_time`; `loc_tools`, `loc_window`
-- **Status:** Partial - the window uses `LocTable` for the grid and cell states, `LocCheck` and `LocMissingReport` for the report, and `LocScanProject` for unused and undefined keys. JSON in the window and a confirm step before CSV import are still out.
-- **Exists today:** The window and file format (`docs/engine/localization.md`). The grid, the missing-key and placeholder report, and the project scan go through `editor/LocalizationTools`. CSV import reports the `LocDiffTables` summary. JSON exchange and a confirm-before-import step are engine-only.
+- **Status:** Partial - the window uses `LocTable` for the grid and cell states, `LocCheck` and `LocMissingReport` for the report, and `LocScanProject` for unused and undefined keys. JSON import and export and the confirm step before an import are in the window (2026-11-22, test `loc_window`).
+- **Exists today:** The window and file format (`docs/engine/localization.md`). The grid, the missing-key and placeholder report, and the project scan go through `editor/LocalizationTools`. An import (CSV or JSON) is planned first (`PlanLocImport`) and an Import Translations box shows the `LocDiffTables` changes before they are applied.
 - **Work packages:**
   1. M - Done. Window uses `LocTable` for cell states (same-as-source, placeholder mismatch, extra) and a state filter.
   2. S - Done. Checker report panel (`LocCheck`): broken placeholders and plural forms, click to jump to the key.
-  3. S - Import preview: the status line reports the diff after a CSV import (`LocDiffTables`). A confirm step before applying it is still open. Depends on: package 1.
-  4. S - JSON import and export (one file per language) for web translators. Depends on: package 1.
+  3. S - Done. Import preview: an Import Translations box lists the `LocDiffTables` changes and applies them only on Import.
+  4. S - Done. JSON import and export (whole table, or one file per language named by its code) for web translators.
   5. M - Done. Key scan uses `LocScanProject` for "used in code, scenes, dialogue" and flags undefined keys.
   6. M - Translation memory and machine-translation suggestion hook (optional). Depends on: package 1.
-- **Open:** JSON import and export in the window, a confirm step before CSV import, and translation memory. The window uses `LocTable`, `LocCheck` and `LocScan`. Right-to-left scripts are drawn left to right (see 31.3).
+- **Open:** translation memory. The window uses `LocTable`, `LocCheck` and `LocScan`. Right-to-left scripts are drawn left to right (see 31.3).
 - **Related:** 1.8, 12.2, 31.2, 31.3, 10.2
 - **Words:** localization, translation, string table, strings.okayloc, CSV, missing keys, unused keys, plural, translators, languages, i18n
 - **Seen as:** missing translation shows the key; placeholder `{0}` lost in a translation; cannot hand translators a spreadsheet

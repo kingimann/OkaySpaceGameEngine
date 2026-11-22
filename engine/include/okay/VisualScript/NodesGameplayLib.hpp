@@ -992,7 +992,7 @@ return flow;
 case 8: {
 GameObject* o = GpPin(this, 0, g, ctx, false, "a target"); (void)o;
 int flow = 0; (void)flow;
-if (HealthStat* h = GpHealth(this, o, g, ctx)) if (!h->IsDead()) h->Damage(h->health + h->armor + h->maxHealth + 1000.0f);
+if (HealthStat* h = GpHealth(this, o, g, ctx)) h->Kill(ctx.gameObject);
 return flow;
 }
 case 9: {
@@ -1006,7 +1006,7 @@ case 11: {
 float n0 = In(0, g, ctx, VsValue{5.0f}).AsFloat(); (void)n0;
 GameObject* o = GpPin(this, 1, g, ctx, false, "a target"); (void)o;
 int flow = 0; (void)flow;
-if (HealthStat* h = GpHealth(this, o, g, ctx)) h->Damage(std::max(0.0f, n0) * ctx.deltaTime);
+if (HealthStat* h = GpHealth(this, o, g, ctx)) h->Damage(DamageEvent::Make(std::max(0.0f, n0) * ctx.deltaTime, DamageType::Generic, ctx.gameObject));
 return flow;
 }
 case 12: {

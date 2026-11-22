@@ -382,23 +382,23 @@ int main() {
         Fresh();
         Press({'q'});
         CHECK(c->ReadLocalInput().Held(PlayerInput::LeanLeft));
-        Press({'e'});
+        Press({'x'});   // first person ships lean right on X (#1101: E is Interact)
         CHECK(c->ReadLocalInput().Held(PlayerInput::LeanRight));
         Press({'z'});
         CHECK(c->ReadLocalInput().Held(PlayerInput::Prone));
         CHECK(InputActions::Has("LeanLeft") && InputActions::Has("LeanRight") && InputActions::Has("Prone"));
         CHECK(InputActions::Rebind("LeanLeft", "key:1"));
         CHECK(InputActions::Rebind("LeanRight", "key:3"));
-        CHECK(InputActions::Rebind("Prone", "key:x"));
+        CHECK(InputActions::Rebind("Prone", "key:4"));
         Press({'1'});
         CHECK(c->ReadLocalInput().Held(PlayerInput::LeanLeft));
         Press({'q'});
         CHECK(!c->ReadLocalInput().Held(PlayerInput::LeanLeft));
         Press({'3'});
         CHECK(c->ReadLocalInput().Held(PlayerInput::LeanRight));
-        Press({'e'});
-        CHECK(!c->ReadLocalInput().Held(PlayerInput::LeanRight));
         Press({'x'});
+        CHECK(!c->ReadLocalInput().Held(PlayerInput::LeanRight));
+        Press({'4'});
         CHECK(c->ReadLocalInput().Held(PlayerInput::Prone));
         Press({'z'});
         CHECK(!c->ReadLocalInput().Held(PlayerInput::Prone));

@@ -135,7 +135,7 @@ public:
 
     // ---- Lean (peek around corners) ----
     char  leanLeftKey  = 'q';           // 0 = disabled
-    char  leanRightKey = 'e';           // 0 = disabled
+    char  leanRightKey = 'x';           // 0 = disabled. Was E; E is the shared Interact key now (scenes that saved E keep it)
     float leanAngle  = 14.0f;           // camera roll while leaning (degrees)
     float leanOffset = 0.35f;           // sideways camera shift while leaning (units)
     float leanSpeed  = 10.0f;           // how fast the lean eases in/out
@@ -381,7 +381,7 @@ public:
             // (every use prompt, pickup and bag) for who that is, twice a frame.
             if (!OldPlayerPath() && !held && !down) return;
             if ((bit == PlayerInput::LeanLeft || bit == PlayerInput::LeanRight) &&
-                LeanKeyTaken(gameObject ? gameObject->scene() : nullptr, k)) return;   // a use or bag press, not a lean
+                LeanKeyTaken(gameObject ? gameObject->scene() : nullptr, k, gameObject)) return;   // a use or bag press, not a lean
             if (held) in.held |= bit;
             if (down) in.pressed |= bit;
         };
@@ -391,7 +391,7 @@ public:
         key("Prone", proneKey, PlayerInput::Prone, 'z');
         m_dodgeEdge = dodge.canDodge && dodge.key && Input::GetKeyDown(dodge.key);
         key("LeanLeft", leanLeftKey, PlayerInput::LeanLeft, 'q');
-        key("LeanRight", leanRightKey, PlayerInput::LeanRight, 'e');   // stock keys: the actions start unbound
+        key("LeanRight", leanRightKey, PlayerInput::LeanRight, 'x');   // stock keys: the actions start unbound (first person ships X, E is Interact)
         if (stanceGamepadButton >= 0 && Input::GetGamepadButton(stanceGamepadButton)) in.held |= PlayerInput::StanceButton;
         return in;
     }

@@ -270,8 +270,8 @@ public:
         {
             float target = 0.0f;
             const Scene* ls = gameObject ? gameObject->scene() : nullptr;
-            if (InputActions::ControlKey("LeanLeft", leanLeftKey, 'q')   && !LeanKeyTaken(ls, leanLeftKey))  target -= 1.0f;
-            if (InputActions::ControlKey("LeanRight", leanRightKey, 'e') && !LeanKeyTaken(ls, leanRightKey)) target += 1.0f;
+            if (InputActions::ControlKey("LeanLeft", leanLeftKey, 'q')   && !LeanKeyTaken(ls, leanLeftKey, gameObject))  target -= 1.0f;
+            if (InputActions::ControlKey("LeanRight", leanRightKey, 'e') && !LeanKeyTaken(ls, leanRightKey, gameObject)) target += 1.0f;
             float lt = leanSpeed > 0.0f ? (1.0f - std::exp(-leanSpeed * dt)) : 1.0f;
             m_lean += (target - m_lean) * lt;
         }

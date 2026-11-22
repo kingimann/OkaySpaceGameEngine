@@ -4,11 +4,11 @@
 >
 > **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
 >
-> **Last checked:** 2026-11-20 (moved into `ui/`, paths and links checked; the text itself was not re-checked against the code).
+> **Last checked:** 2026-11-21 (step 28: run in a real window under Xvfb; the step 27 "Not done" list and the limits re-checked against the code).
 
 Own code. Part of the "replace every third-party library" work (`docs/status/own_code_roadmap.md`, rows ImGuiColorTextEdit and Dear ImGui; toolkit background in `docs/ui/own_ui_toolkit.md`, section 4.29).
 
-**Status: built and tested headless; wired into the script editor behind the developer-only OkayUI backend (step 27 below), never run in a real window.** OkayUI is off by default and the editor still draws its script editor with the vendored `editor/vendor/TextEditor.*` on Dear ImGui unless that developer switch is on. (This line used to say "Nothing was wired in"; step 27 below wired it through `ScriptEditorWidget`.) What blocks deleting the vendored widget: `docs/status/own_flip_proposal.md` section 4.
+**Status: built and tested headless; wired into the script editor behind the developer-only OkayUI backend (step 27 below); run in a real window once (Linux, Xvfb, step 28 below), what that showed is fixed or listed there.** OkayUI is off by default and the editor still draws its script editor with the vendored `editor/vendor/TextEditor.*` on Dear ImGui unless that developer switch is on. (This line used to say "Nothing was wired in"; step 27 below wired it through `ScriptEditorWidget`.) What blocks deleting the vendored widget: `docs/status/own_flip_proposal.md` section 4.
 
 ## Where it is
 
@@ -36,7 +36,7 @@ ed.SetMarkers({{line, colStart, colEnd, "unknown name 'x'"}});   // compile erro
 
 `Draw` reads the frame's input itself (mouse, wheel, typed text, key edges, `ctrl` and `shift`), edits, draws only the visible lines, and returns true when the text changed. Every editing operation is also a public method (`InsertText`, `Backspace`, `NewLine`, `Tab`, `Undo`, `Move`, `FindNext`, ...), so the editor can be driven and tested with no input at all.
 
-Keys the widget acts on while it has the keyboard: typed text; Enter; Backspace and Delete (with Ctrl: by word); Left, Right, Up, Down (Ctrl: by word on Left and Right); Home (first non-blank, then column 0) and End (Ctrl: start and end of text); PageUp and PageDown; Tab and Shift+Tab; Ctrl+A; Ctrl+C, Ctrl+X, Ctrl+V (as the host's `Input::copy`, `cut`, `paste` edges); Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y; Escape drops the selection. Shift extends the selection on every movement key. Find, replace and go-to-line are methods; the dialog (Ctrl+F, Ctrl+G) is the caller's.
+Keys the widget acts on while it has the keyboard: typed text; Enter; Backspace and Delete (with Ctrl: by word); Left, Right, Up, Down (Ctrl: by word on Left and Right); Home (first non-blank, then column 0) and End (Ctrl: start and end of text); PageUp and PageDown; Tab and Shift+Tab; Ctrl+A; Ctrl+C, Ctrl+X, Ctrl+V (as the host's `Input::copy`, `cut`, `paste` edges); Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y; Escape drops the selection; the line commands, the same keys as the Dear ImGui script editor (`SetLineCommandKeys`, on by default): Ctrl+/ comment or uncomment, Ctrl+D duplicate, Ctrl+Shift+K delete, Alt+Up and Alt+Down move the lines (Alt+Up does not also move the caret). Shift extends the selection on every movement key. Find, replace and go-to-line are methods; the dialog (Ctrl+F, Ctrl+G) is the caller's.
 
 Mouse: click places the caret, Shift+click extends, drag selects (and scrolls when the pointer leaves the view), double click selects a word, triple click a line, a click on the line numbers selects the line, a click in the narrow column left of the numbers toggles a breakpoint, the wheel scrolls three lines (Shift+wheel sideways), both scroll bars can be dragged or clicked.
 
@@ -103,7 +103,7 @@ The test asserts generous limits (a frame under 20 ms, a jump under 2 s, ...) an
 
 ## Limits and decisions, said bluntly
 
-- **A monospaced font is assumed.** The cell width is the width of `0`. The 8x8 classic font is monospaced; the launcher look's Roboto is not, and with it the caret and selection would drift. OkayUI has no way yet to choose a code font (family 23 in `own_ui_toolkit.md`); JetBrains Mono is in `shared/` but not hooked up.
+- **A monospaced font is assumed.** The cell width is the width of `0`. The 8x8 classic font is monospaced; the launcher look's Roboto is not, and with it the text drifts off its cells (seen in the real window: `Start  ()`, `once ,`). `SetFont(font, px)` draws the code in another font made with `AddFontTtf`, for that Draw only (the window's font and text scale are put back). The script editor uses the embedded JetBrains Mono (`shared/JetBrainsMonoFontOwn.h`, OFL, already listed in `docs/status/THIRD_PARTY.md`; decoded once by `ScriptEditorCodeEdit::CodeFont`) at the size the Dear ImGui editor uses (its zoom and the UI scale).
 - **One character is one cell.** Wide (CJK, emoji) characters are drawn one cell wide and may overlap their neighbour; combining marks take a cell. The 8x8 font has only ASCII glyphs, so other characters show as the font's fallback.
 - **The clipboard holds 4095 bytes** (`kClipboardMax`). Copy of a bigger selection is cut; Cut of a bigger selection does nothing (it never deletes text it could not copy). This is the OkayUI clipboard's limit, not the editor's.
 - **Columns are byte offsets** (on character boundaries). The library counted columns; a port has to convert (`ByteToColumn`, `ColumnToByte`).
@@ -122,7 +122,7 @@ The test asserts generous limits (a frame under 20 ms, a jump under 2 s, ...) an
 - **Code folding.**
 - **Word wrap.** Long lines scroll sideways.
 - **Auto-close brackets and quotes**, **auto-dedent when typing `}`**: not in the library the script editor uses either.
-- Line commands now in the widget (`ToggleLineComment`, `DuplicateLines`, `DeleteLines`, `MoveLines`, tested headless in `LineCommandTests`): the script editor still does Ctrl+/, Ctrl+D, Ctrl+Shift+K and Alt+Up/Down itself in `editor/main.cpp`; they are not yet bound to keys in `Draw` and not wired into the adapter. Written from the editor's documented behaviour, no outside code. `FormatOkayScript` stays the editor's.
+- Line commands (`ToggleLineComment`, `DuplicateLines`, `DeleteLines`, `MoveLines`, tested headless in `LineCommandTests`) are bound to keys in `Draw` (`LineCommandKeyTests`). With the OkayUI editor active, `editor/main.cpp` leaves those keys to the widget (they would run twice) and its toolbar comment button calls `ToggleLineComment`; the Dear ImGui editor keeps its own handling. Ctrl+Shift+J (join lines) and Alt+Enter (quick fix) stay the script editor's. Written from the editor's documented behaviour, no outside code. `FormatOkayScript` stays the editor's.
 - **Autocomplete popup and the hover tooltip**: the editor draws them itself (they use `CaretScreenPosBelow`, `ScreenToPos`, `LineTokens`); the widget only offers the geometry and `SetHandleKeyboardInput`.
 - **Drag and drop of selected text**, **drop of files onto the editor**.
 - **Show whitespace**, **minimap**, **indent guides**, **matching word highlight**.
@@ -140,9 +140,27 @@ The script editor (`editor/main.cpp`) now holds its code widget through `ScriptE
 
 Tested: `test_okayui_script_adapter` (display-column conversion with tabs and two- and three-byte characters, the round trip for every column, selection given backwards, word under the caret, undo steps, change flag, 1-based marks, colouring on and off, user types, geometry after a real Draw, ImGui-free) and `test_okayui_host` (the new keys and states, and a `CodeEdit` driven only by SDL events through `InputCollector`: arrows, Ctrl+word move, Ctrl+C then Ctrl+V, Ctrl+Z and Ctrl+Y, Ctrl+Home, Tab).
 
-Not done, said plainly:
-- The OkayUI path of the script editor was NOT run in a real window. Only the adapter and the host input are tested headless.
-- The ImGui side of the editor still draws first and OkayUI draws last, on top: an ImGui autocomplete or tooltip popup that overlaps the code rectangle is hidden behind the OkayUI editor, and ImGui shortcuts (Ctrl+S, Ctrl+Z at the script level) are not blocked while the OkayUI editor has the keyboard. Both need a real window to settle.
-- The editor's own colours (`OkayScriptPalette`) and the code font (`g_codeFont`, zoom) are the ImGui editor's; the OkayUI editor uses `DefaultCodePalette()` and OkayUI's font at the editor's UI scale. `SetShowWhitespaces`, `SetLeftMargin` and the language regexes only apply to the ImGui editor.
+Not done, said plainly (updated by step 28):
+- The ImGui side of the editor still draws first and OkayUI draws last, on top: an ImGui autocomplete or tooltip popup, or a modal dialog, that overlaps the code rectangle is hidden behind the OkayUI editor (seen in step 28). Not fixed.
+- The editor's own colours (`OkayScriptPalette`) are the ImGui editor's; the OkayUI editor uses `DefaultCodePalette()`. `SetShowWhitespaces`, `SetLeftMargin` and the language regexes only apply to the ImGui editor.
 - Error markers cover the whole line's text (the script editor gives a line, not a column range).
+
+## Step 28: first run in a real window (Linux, Xvfb)
+
+The editor (Release, `-O1 -g0`) was run under Xvfb with `OKAY_DEV=1 OKAY_UI_BACKEND=okayui`, the existing screenshot hooks (`OKAY_UI_SELECT="Main Camera" OKAY_UI_SCRIPT=1 OKAY_UI_SHOT=<png> OKAY_UI_QUIT=1`) and `xdotool` for clicks and keys. The screenshots were looked at one by one; they are not in the repository.
+
+What it showed, and what was done:
+
+| Seen | Cause | Now |
+|---|---|---|
+| The code was drawn 160 px right and 50 px down of its rectangle, over the Inspector and the status line; the rectangle itself was empty | `ScriptEditorWidget::Render` gave OkayUI Dear ImGui's desktop coordinates (multi-window viewports); OkayUI draws in the window's own pixels. The Console already took the viewport position off; the script editor did not | Fixed: the viewport position is taken off for drawing and added back for the geometry the script editor uses for its popups and Ctrl+click (`ScriptEditorCodeEdit::SetScreenOffset`, tested in `test_okayui_script_adapter`) |
+| Text in the proportional UI font (Roboto) at 13 px: tokens drifted off their cells (`Start  ()`, `once ,`), the zoom (125%) was ignored | No code font on the OkayUI side | Fixed: `CodeEdit::SetFont`; the script editor draws in the embedded JetBrains Mono at the ImGui editor's size (`ImGui::GetFontSize()` inside its `PushFont`: zoom and UI scale). `MMMM` and `iiii` now take the same width; the text lines up with the Dear ImGui editor's (tested: cell width, line height, the window font put back, a click on the right cell) |
+| Typing a space or Enter in the code also pressed Dear ImGui buttons (the "Scripts" button got the navigation focus and the script list opened while typing; the editor then moved and later keys were lost) | Dear ImGui keyboard navigation stayed on while OkayUI had the keyboard | Fixed: `g_scriptCodeOwnsKeys`; `main.cpp` turns ImGui keyboard navigation off for the next frame while it is set (the same switch Play and mesh edit use) |
+| Ctrl+D in the code duplicated the selected GameObject | A click on the OkayUI code did not focus the Script Editor's ImGui window, so the scene shortcuts ran | Fixed: a press inside the code focuses the Script Editor window; a press anywhere else takes the keyboard from the code |
+| Ctrl+/, Ctrl+D, Ctrl+Shift+K, Alt+Up / Alt+Down not in the widget | Not bound | Fixed: bound in `CodeEdit::Draw` (`LineCommandKeyTests`), the host now names the `/` key (`KeyId_Slash`, `test_okayui_host`), and `main.cpp` leaves those keys to the widget on the OkayUI path (its own Ctrl+/ chord too, or the comment toggled twice) |
+| The autocomplete popup, its documentation tooltip and a modal ("Unsaved Changes") were drawn under the OkayUI code | Draw order: OkayUI's frame is flushed after Dear ImGui's | NOT fixed. Needs the OkayUI code drawn inside Dear ImGui's draw order (a draw callback) or the popups moved to OkayUI |
+
+Checked working in the window after the fixes: click to place the caret, typing (auto-indent after `{`), Enter, Ctrl+D, Ctrl+Shift+K, Alt+Up and Alt+Down, Ctrl+Z, the error marker (gutter mark, wash, wavy underline, tooltip), bracket match, current line, the status bar's line and column. With the Dear ImGui backend (the default) the screenshot is the same as before except the frames-per-second counter.
+
+Not checked in the window: Ctrl+/ after the last fix (fixed from the cause found in the window, with headless tests; the rebuilt editor was not run again for it), drag selection, the wheel and the scroll bars, find (Ctrl+F) and replace, copy and paste with the real clipboard, IME. `xdotool` drops modifiers on `ctrl+slash` under Xvfb (the `/` arrived without Ctrl), so that key is checked with a held Ctrl. Windows: not built, not run.
 

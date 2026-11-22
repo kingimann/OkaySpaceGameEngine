@@ -4,6 +4,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/Gestures.hpp"
 #include "okay/Components/UIButton.hpp"
@@ -266,21 +267,21 @@ void VisualScriptComponent::Update(float dt) {
 
 namespace {
 bool ActionDown(const std::string& name) {
-    if (name == "interact" || name == "use") return Input::GetKeyDownGame('e');
+    if (name == "interact" || name == "use") return InteractPressed();
     if (name == "jump") return Input::GetKeyDownGame(' ');
     if (name == "fire" || name == "attack") return Input::GetMouseButtonDown(0);
     if (name == "crouch") return Input::GetKeyDownGame('c');
     return Input::GetKeyDownGame(Input::KeyFromName(name));
 }
 bool ActionUp(const std::string& name) {
-    if (name == "interact" || name == "use") return Input::GetKeyUp('e');
+    if (name == "interact" || name == "use") return InteractReleased();
     if (name == "jump") return Input::GetKeyUp(' ');
     if (name == "fire" || name == "attack") return Input::GetMouseButtonUp(0);
     if (name == "crouch") return Input::GetKeyUp('c');
     return Input::GetKeyUp(Input::KeyFromName(name));
 }
 bool ActionHeld(const std::string& name) {
-    if (name == "interact" || name == "use") return Input::GetKeyGame('e');
+    if (name == "interact" || name == "use") return InteractHeld();
     if (name == "jump") return Input::GetKeyGame(' ');
     if (name == "fire" || name == "attack") return Input::GetMouseButton(0);
     if (name == "crouch") return Input::GetKeyGame('c');
@@ -297,7 +298,7 @@ void VisualScriptComponent::FireTagged(const char* prefix, GameObject* other) {
 
 void VisualScriptComponent::PollGameplay(float) {
     if (!m_graph || !gameObject) return;
-    if (!m_graph->Entries("OnInteract").empty() && Input::GetKeyDownGame('e') && transform && gameObject->scene()) {
+    if (!m_graph->Entries("OnInteract").empty() && InteractPressed() && transform && gameObject->scene()) {
         GameObject* best = nullptr;
         float bestD = 2.0f;
         for (const auto& up : gameObject->scene()->Objects()) {

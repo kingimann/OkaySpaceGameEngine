@@ -2429,9 +2429,9 @@ static void DrawShapeWire(okay::Collider3D* col, LineFn line) {
     case Shape::Heightfield: {
         auto* hf = static_cast<HeightfieldCollider3D*>(col);
         shape3d::Frame f = shape3d::FrameOf(*col);
-        const int C = std::max(hf->columns, 2), R = std::max(hf->rows, 2);
+        const int C = hf->Cols(), R = hf->Rows();
         const int si = std::max(1, C / 64), sj = std::max(1, R / 64);
-        auto P = [&](int i, int j) { return shape3d::ToWorldPoint(f, {(i - (C - 1) * 0.5f) * hf->cellX, hf->HeightAt(i, j), (j - (R - 1) * 0.5f) * hf->cellZ}); };
+        auto P = [&](int i, int j) { return shape3d::ToWorldPoint(f, {(i - (C - 1) * 0.5f) * hf->CX(), hf->HeightAt(i, j), (j - (R - 1) * 0.5f) * hf->CZ()}); };
         for (int j = 0; j < R; j += sj) for (int i = 0; i + 1 < C; ++i) line(P(i, j), P(i + 1, j));
         for (int i = 0; i < C; i += si) for (int j = 0; j + 1 < R; ++j) line(P(i, j), P(i, j + 1));
         break;
@@ -16490,7 +16490,7 @@ void DrawScriptEditor(EditorState& ed) {
         //   Ctrl+G       go to line              Ctrl+Alt+L  reformat the file
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl) {
             ImGuiIO& kio = ImGui::GetIO();
-            if (ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;
+            if (!UseOkayUIBackend() && ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;   // (the OkayUI code widget does Ctrl+/ itself)
             if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_E, false))
                 ImGui::OpenPopup("##tabswitcher");
             if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false))
@@ -18334,10 +18334,14 @@ void DrawScriptEditor(EditorState& ed) {
                 for (int i = l0; i <= l1 && i < (int)ls.size(); ++i) out.push_back(ls[i]);
                 return out;
             };
+            // The OkayUI code widget does Ctrl+/, Ctrl+D, Ctrl+Shift+K and Alt+Up/Down itself (OkayUI::CodeEdit line commands,
+            // one undo step each); here they are only for the Dear ImGui editor, or they would run twice.
+            const bool widgetLineKeys = te.UsingOkayUI();
             // Ctrl+/ — toggle "// " on the selected lines (also the toolbar button).
             bool wantComment = caret.toggleComment;
             caret.toggleComment = false;
-            if ((chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
+            if (widgetLineKeys && wantComment) { te.okay().Edit().ToggleLineComment(); syncFromWidget(); wantComment = false; }
+            if ((!widgetLineKeys && chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
                  ImGui::IsKeyPressed(ImGuiKey_Slash, false)) || wantComment) {
                 std::vector<std::string> ls = linesText(selL0, selL1);
                 bool allCommented = true;
@@ -18358,7 +18362,7 @@ void DrawScriptEditor(EditorState& ed) {
                 if (!ls.empty()) replaceLines(selL0, selL1, repl, caret.line - 1, 0);
             }
             // Ctrl+D — duplicate the selected line(s) below themselves.
-            if (chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
+            if (!widgetLineKeys && chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
                 ImGui::IsKeyPressed(ImGuiKey_D, false)) {
                 std::vector<std::string> ls = linesText(selL0, selL1);
                 if (!ls.empty()) {
@@ -18367,7 +18371,7 @@ void DrawScriptEditor(EditorState& ed) {
                 }
             }
             // Ctrl+Shift+K — delete the selected line(s).
-            if (chordOK && cio.KeyCtrl && cio.KeyShift && !cio.KeyAlt &&
+            if (!widgetLineKeys && chordOK && cio.KeyCtrl && cio.KeyShift && !cio.KeyAlt &&
                 ImGui::IsKeyPressed(ImGuiKey_K, false)) {
                 int total = te.GetTotalLines();
                 te.SetSelection(ScriptEditorWidget::Coordinates(selL0, 0),
@@ -18390,8 +18394,8 @@ void DrawScriptEditor(EditorState& ed) {
                 }
             }
             // Alt+Up / Alt+Down — move the selected line(s) up/down one row.
-            bool mvUp = chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
-            bool mvDn = chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+            bool mvUp = !widgetLineKeys && chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
+            bool mvDn = !widgetLineKeys && chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
             if (mvUp || mvDn) {
                 int total = te.GetTotalLines();
                 if ((mvUp && selL0 > 0) || (mvDn && selL1 + 1 < total)) {
@@ -41202,10 +41206,13 @@ void DrawInspector(EditorState& ed) {
     if (auto* co = dynamic_cast<ConeCollider3D*>(curComp)) {
         if (CompHeader("Cone Collider 3D", co, &toRemove)) {
             ImGui::TextDisabled("A round base and a point: party hats, traffic cones, spikes.");
-            ImGui::DragFloat("Radius##cone3", &co->radius, 0.05f, 0.0f, 1000.0f);
-            ImGui::DragFloat("Height##cone3", &co->height, 0.05f, 0.0f, 1000.0f);
+            ImGui::DragFloat("Radius (m)##cone3", &co->radius, 0.05f, 0.0f, 1000.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "How wide the round base is, in metres. Default 0.5.");
+            ImGui::DragFloat("Height (m)##cone3", &co->height, 0.05f, 0.0f, 1000.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Base to tip, in metres. Default 1.");
             const char* axes[] = {"X", "Y", "Z"};
             ImGui::Combo("Tip points along##cone3", &co->axis, axes, 3);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Which direction the point faces (the positive side of this axis). Default Y = up.");
             colliderCommon3D(co, "cone3");
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##cone3")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
@@ -41218,7 +41225,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* hc = dynamic_cast<ConvexHullCollider3D*>(curComp)) {
         if (CompHeader("Convex Hull Collider 3D", hc, &toRemove)) {
             ImGui::TextDisabled("Shrink-wrap around a cloud of points. Solid inside, so it can move and stack.");
-            ImGui::Text("Points: %d", hc->PointCount());
+            ImGui::Text("Points: %d (most 4096)", hc->PointCount());
             colliderCommon3D(hc, "hull3");
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Wrap around mesh##hull3")) { FitColliders(go); ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fill the points from the model, keeping only the outer corners.");
@@ -41255,11 +41262,16 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Heightfield Collider 3D", hf, &toRemove)) {
             ImGui::TextDisabled("Hilly ground from a grid of heights. Solid below the surface.");
             bool gridChanged = false;
-            gridChanged |= ImGui::DragInt("Columns##hf3", &hf->columns, 0.2f, 2, 2048);
-            gridChanged |= ImGui::DragInt("Rows##hf3", &hf->rows, 0.2f, 2, 2048);
-            ImGui::DragFloat("Cell width (X)##hf3", &hf->cellX, 0.05f, 0.01f, 1000.0f);
-            ImGui::DragFloat("Cell depth (Z)##hf3", &hf->cellZ, 0.05f, 0.01f, 1000.0f);
-            ImGui::DragFloat("Height scale##hf3", &hf->heightScale, 0.05f);
+            gridChanged |= ImGui::DragInt("Columns (samples)##hf3", &hf->columns, 0.2f, 2, 2048);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Height samples along X, 2 to 2048. Default 2.");
+            gridChanged |= ImGui::DragInt("Rows (samples)##hf3", &hf->rows, 0.2f, 2, 2048);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Height samples along Z, 2 to 2048. Default 2.");
+            ImGui::DragFloat("Cell width X (m)##hf3", &hf->cellX, 0.05f, 0.01f, 1000.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Metres between two samples along X. Default 1.");
+            ImGui::DragFloat("Cell depth Z (m)##hf3", &hf->cellZ, 0.05f, 0.01f, 1000.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Metres between two samples along Z. Default 1.");
+            ImGui::DragFloat("Height scale (x)##hf3", &hf->heightScale, 0.05f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Multiplies every height: 2 makes the hills twice as tall. Default 1.");
             if (gridChanged) { hf->columns = std::max(hf->columns, 2); hf->rows = std::max(hf->rows, 2); ed.dirty = true; }
             colliderCommon3D(hf, "hf3");
             if (go->GetComponent<Terrain>() && ImGui::SmallButton("Copy from Terrain##hf3")) { FitColliders(go); ed.dirty = true; }
@@ -58686,13 +58698,14 @@ int main(int argc, char** argv) {
         // stopped/paused so editor keyboard nav still works.
         // Same in mesh edit mode: Enter confirms a G / R / S transform there, and
         // must not also press whichever button last had focus.
-        // And while a hosted OkayUI field has the keyboard: Space would press the ImGui item that last had nav focus, which holds
-        // ImGui's active item for a frame and keeps the next typed letter from the field.
+        // And while the OkayUI script editor has the keyboard (developer OkayUI backend), or a hosted OkayUI field has it:
+        // Space and Enter are typing there, and Space would otherwise press the ImGui item that last had nav focus.
+        const bool codeKeys = g_scriptCodeOwnsKeys; g_scriptCodeOwnsKeys = false;   // set again by this frame's Render
         bool okayTyping = false;
 #ifdef OKAY_HAVE_OKAYUI
         okayTyping = UseOkayUIBackend() && OkayUI::WantsTextInput();
 #endif
-        if ((ed.isPlaying() && !g_paused) || (g_meshEdit && g_meshEditObj) || okayTyping)
+        if ((ed.isPlaying() && !g_paused) || (g_meshEdit && g_meshEditObj) || codeKeys || okayTyping)
             ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
         else
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;

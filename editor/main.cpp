@@ -950,6 +950,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "InputDebugger.hpp"       // View > Panels > Input: live keys, axes, actions, events, curves
 #include "InputActionsWindow.hpp" // View > Editors & Tools > Input Actions: author a .okayinput asset, live view
 #include "TemplateTable.hpp"        // template title -> scene builder (New Project)
+#include "ModulesPanelUI.hpp"      // Project Settings > Modules: which engine modules the project uses
 #include "AutoPerf.hpp"           // Auto for anti-aliasing and VSync (best value for this PC; tested)
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
@@ -5104,7 +5105,13 @@ std::string Build(EditorState& ed, const std::string& outDir,
     rp.Finish();
     {   // the engine modules in the player, with their sizes from module_sizes.txt beside it (docs/engine/modular_engine.md)
         const std::string pl = FindPlayer();
-        rp.AddModules(pl.empty() ? std::string() : (fs::path(pl).parent_path() / "module_sizes.txt").string());
+        rp.AddModules(pl.empty() ? std::string() : (fs::path(pl).parent_path() / "module_sizes.txt").string(), g_project.modules);
+        okaymod::Selection sel(okay::ModuleRegistry::Get(), g_project.modules);   // Project Settings > Modules
+        for (const auto& u : okaymod::UsedButOff(sel, okaymod::UsageInScene(okay::ModuleRegistry::Get(), ed.scene()))) {
+            const auto* mi = okay::ModuleRegistry::Get().Find(u.first);
+            rp.Warn("The scene uses " + std::to_string(u.second) + " object(s) of the module " + (mi ? mi->manifest.title : u.first) +
+                    ", which is off in Project Settings > Modules. The game still contains it in this version.");
+        }
     }
     rp.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 
@@ -20021,12 +20028,12 @@ void DrawFileDialogs(EditorState& ed) {
                 if (!RP.modules.empty() && ImGui::BeginTabItem("Modules")) {   // the engine modules in the player (docs/engine/modular_engine.md)
                     ImGui::TextDisabled("Every module ships in this version; leaving modules out comes later.");
                     if (ImGui::BeginTable("bymodule", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(460, 200))) {
-                        ImGui::TableSetupColumn("Module", ImGuiTableColumnFlags_WidthStretch, 3.0f); ImGui::TableSetupColumn("Shipped"); ImGui::TableSetupColumn("Size");
+                        ImGui::TableSetupColumn("Module", ImGuiTableColumnFlags_WidthStretch, 3.0f); ImGui::TableSetupColumn("In project"); ImGui::TableSetupColumn("Size");
                         ImGui::TableHeadersRow();
                         for (const auto& m : RP.modules) {
                             ImGui::TableNextRow();
                             ImGui::TableNextColumn(); ImGui::TextUnformatted(m.title.c_str());
-                            ImGui::TableNextColumn(); ImGui::TextUnformatted(m.shipped ? "yes" : "no");
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(m.projectOn ? "on" : "off (still shipped)");
                             ImGui::TableNextColumn(); ImGui::TextUnformatted(RP.moduleSizesKnown ? bp::HumanBytes(m.bytes).c_str() : "-");
                         }
                         ImGui::EndTable();
@@ -20911,6 +20918,10 @@ void DrawProjectSettings(EditorState& ed) {
             }
         }
         if (ImGui::CollapsingHeader("Tags and Layers")) DrawTagsAndLayersSettings(ed);
+        if (ImGui::CollapsingHeader("Modules")) {   // engine modules this project uses (editor/ModulesPanelUI.hpp)
+            static std::string modulesNote;
+            if (okaymod::DrawModulesSettings(g_project.modules, ed.scene(), modulesNote)) SaveProjectSettings();
+        }
         if (ImGui::CollapsingHeader("Loading screen")) {
             ImGui::TextDisabled("Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.");
             const auto pngFilt = okay::filedialog::Filters("PNG image", {"*.png"});

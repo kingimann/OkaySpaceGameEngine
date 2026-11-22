@@ -159,7 +159,9 @@ struct Report {
     int missingAssets = 0;
     /// The engine modules in the shipped player (docs/engine/modular_engine.md). Every module ships in this version (no
     /// module is stripped yet); `bytes` is that module's share of the player, 0 when the size file was not found.
-    struct ModuleRow { std::string name, title; bool shipped = true; std::uintmax_t bytes = 0; };
+    /// `projectOn` is false for a module the project turned off in Project Settings > Modules (it still ships until
+    /// modules can be left out of the player).
+    struct ModuleRow { std::string name, title; bool shipped = true; bool projectOn = true; std::uintmax_t bytes = 0; };
     std::vector<ModuleRow> modules;
     bool moduleSizesKnown = false;
 
@@ -170,7 +172,8 @@ struct Report {
     void Finish();
     /// Fill `modules` from the build's module list (ModuleRegistry) and, when `sizesFile` exists, each module's bytes from
     /// it ("name<TAB>bytes" lines, written beside the player by scripts/module_sizes.py). Rows are largest first.
-    void AddModules(const std::string& sizesFile);
+    /// `projectModules` is the project's module list (project.okayproj modules=, "" = every module).
+    void AddModules(const std::string& sizesFile, const std::string& projectModules = std::string());
     /// (extension, bytes, count) rows, largest first; files without one are "(none)".
     struct TypeRow { std::string ext; std::uintmax_t bytes = 0; int count = 0; };
     std::vector<TypeRow> ByExtension() const;

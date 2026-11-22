@@ -517,6 +517,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | each component needs hand-written Inspector and serializer code | [1.19](01-core-scene.md#119-property-reflection) Property reflection |
 | eating an item does nothing | [11.4](11-gameplay-systems.md#114-survival-stats-afflictions-zones) Survival: stats, afflictions, zones |
 | echo in the call | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
+| Edit > Project Settings > Modules | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
 | edited a material and objects did not change | [26.2](20-35-planned.md#262-material-editor) Material editor |
 | editing a part prefab does not update the big one | [21.2](20-35-planned.md#212-nested-prefabs) Nested prefabs |
 | editor closed by itself and I want my scene back | [22.3](20-35-planned.md#223-crash-recovery) Crash recovery |

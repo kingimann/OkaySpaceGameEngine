@@ -379,6 +379,15 @@ void TestReportModules(const fs::path& tmp) {
     const std::string text = r.ToText();
     CHECK(text.find("3D physics (physics3d)") != std::string::npos);
     CHECK(text.find("program") == std::string::npos);    // only modules are listed
+    // a project that turned modules off: they are marked, and still ship in this version
+    r.AddModules((tmp / "module_sizes.txt").string(), "physics2d");
+    bool p2 = false, p3 = false;
+    for (const auto& m : r.modules) {
+        if (m.name == "physics2d") p2 = m.projectOn && m.shipped;
+        if (m.name == "physics3d") p3 = !m.projectOn && m.shipped;
+    }
+    CHECK(p2 && p3);
+    CHECK(r.ToText().find("off in Project Settings, still in the player") != std::string::npos);
 }
 
 } // namespace

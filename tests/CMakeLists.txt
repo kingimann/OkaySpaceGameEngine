@@ -4889,6 +4889,11 @@ add_test(NAME controller_actions COMMAND test_controller_actions)
 add_executable(test_modules test_modules.cpp)
 target_link_libraries(test_modules PRIVATE okay::engine)
 add_test(NAME modules COMMAND test_modules)
+# Project Settings > Modules: the model behind the page (editor/ModulesModel.hpp) and the project file line, no drawing.
+add_executable(test_modules_model test_modules_model.cpp)
+target_link_libraries(test_modules_model PRIVATE okay::engine)
+target_include_directories(test_modules_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+add_test(NAME modules_model COMMAND test_modules_model)
 # scripts/check_modules.py (the module dependency check) on a made-up tree.
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)

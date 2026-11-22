@@ -620,7 +620,7 @@ void Report::Finish() {
     for (const ExcludedFile& e : excluded) excludedBytes += e.bytes;
     valid = true;
 }
-void Report::AddModules(const std::string& sizesFile) {
+void Report::AddModules(const std::string& sizesFile, const std::string& projectModules) {
     modules.clear();
     std::map<std::string, std::uintmax_t> bytes;
     moduleSizesKnown = false;
@@ -634,9 +634,14 @@ void Report::AddModules(const std::string& sizesFile) {
             moduleSizesKnown = true;
         }
     }
-    for (const ModuleRegistry::Info& m : ModuleRegistry::Get().All()) {
+    const ModuleRegistry& reg = ModuleRegistry::Get();
+    std::set<std::string> wanted;
+    if (!projectModules.empty())
+        for (const std::string& n : reg.Resolve(ModuleManifest::SplitList(projectModules))) wanted.insert(n);
+    for (const ModuleRegistry::Info& m : reg.All()) {
         ModuleRow r;
         r.name = m.manifest.name; r.title = m.manifest.title; r.shipped = m.enabled;
+        r.projectOn = projectModules.empty() || wanted.count(r.name) != 0;
         auto it = bytes.find(r.name);
         if (it != bytes.end()) r.bytes = it->second;
         modules.push_back(r);
@@ -696,7 +701,7 @@ std::string Report::ToText(std::size_t maxRows) const {
           << (moduleSizesKnown ? "" : "; sizes unknown (module_sizes.txt not found beside the player)") << "\n";
         for (const ModuleRow& m : modules)
             o << "  " << (m.shipped ? "shipped " : "left out ") << (moduleSizesKnown ? HumanBytes(m.bytes) : std::string("-"))
-              << "  " << m.title << " (" << m.name << ")\n";
+              << "  " << m.title << " (" << m.name << ")" << (m.projectOn ? "" : "  - off in Project Settings, still in the player") << "\n";
     }
     o << "\nWarnings: " << warnings.size() << "\n";
     for (const std::string& w : warnings) o << "  " << w << "\n";

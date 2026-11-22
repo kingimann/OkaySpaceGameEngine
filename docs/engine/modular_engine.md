@@ -37,6 +37,15 @@ Design, plan and decisions: `../design/modular_gameplay_contracts.md` (sections 
 - Header-only components count in the .cpp files that include them, so a module whose code is in headers looks small.
 - Not checked yet: a real MinGW map (the parser was tested on a Linux map and a made-up one).
 
+## Stage 3, step 1: Project Settings > Modules
+- Edit > Project Settings > Modules: the module list with presets (2D game, 3D action, Survival, Everything) and a tick
+  per module. Turning one on turns on what it needs; one that another needs cannot be turned off (the reason shows on
+  hover). The open scene's use of each module is shown ("used by 3 objects"), and a module it uses that is off gets a red line.
+- Saved as `modules=` in `project.okayproj` (no line = every module, as in projects made before modules).
+- The Build report marks a module that is off ("off in Project Settings, still in the player") and warns when the open
+  scene uses one. In this version the player still contains every module: leaving code out needs stage 1 and 2.
+- Code: `editor/ModulesModel.hpp` (no drawing; test `modules_model`), `editor/ModulesPanelUI.hpp` (drawing).
+
 ## Manifest keys
 `name`, `title`, `area`, `description`, `default`, `core`, `requires` (comma separated), `provides`, `components`,
 `serializers` (scene records), `vs_group`, `editor`, `sources` (space separated file patterns), `tests` (space separated test

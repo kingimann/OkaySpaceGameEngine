@@ -20,7 +20,7 @@ being landed first, in small branches made from main; everything after it waits 
 | 1 | 14 | `check_modules.py` blocking | Blocking for new edges only (baseline ratchet) | - |
 | 2 | 15-21 | Move each module's files into `engine/modules/<name>/` | Not started (manifests point at today's paths) | - |
 | 2 | 22 | Core-only build, `OKAY_MODULES`, player with a module list | `OKAY_MODULES` works for the registry and the `compile=` files (model readers, Interactable, Ragdoll); core-only library about 10% smaller (measured 2026-11-17, -O0) | - |
-| 3 | 23 | Project Settings > Modules, Add Component filter, Problems rules | Model and drawing code exist (`editor/ModulesModel.hpp`, `ModulesPanelUI.hpp`, test `modules_model`); not wired into `editor/main.cpp` on this branch | - |
+| 3 | 23 | Project Settings > Modules, Add Component filter, Problems rules | Model and drawing code exist (`editor/ModulesModel.hpp`, `ModulesPanelUI.hpp`, test `modules_model`); not wired into `editor/main.cpp` on this branch | `claude2/modular-s3-settings`: Project Settings > Modules page, saved in project.okayproj, Build report marks off modules; no stripping, no Add Component filter yet |
 | 3 | 24 | New Project module picker with presets | Same as 23 | - |
 | 3 | 25 | Export: Modules table, `assets=` roots, drop disabled components | Not started | - |
 | 3 | 26 | Preset player variants | `.github/workflows/preset-players.yml` (manual only, never run), `scripts/preset_modules.py` | - |

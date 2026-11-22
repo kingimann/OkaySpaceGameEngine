@@ -84,6 +84,39 @@ std::vector<std::string> ModuleRegistry::TransitiveRequires(const std::string& n
     return out;
 }
 
+const ModuleRegistry::Info* ModuleRegistry::ModuleOfComponent(const std::string& type) const {
+    for (auto& e : mods_) if (Has(e.manifest.components, type)) return &e;
+    return nullptr;
+}
+
+std::vector<std::string> ModuleRegistry::RequiredBy(const std::string& name) const {
+    std::vector<std::string> out;
+    for (auto& e : mods_)
+        if (e.manifest.name != name && Has(TransitiveRequires(e.manifest.name), name)) out.push_back(e.manifest.name);
+    return out;
+}
+
+std::vector<std::string> ModuleRegistry::Resolve(const std::vector<std::string>& wanted,
+                                                 std::vector<std::string>* added,
+                                                 std::vector<std::string>* unknown) const {
+    std::set<std::string> on;
+    for (auto& e : mods_) if (e.manifest.core) on.insert(e.manifest.name);
+    for (auto& w : wanted) {
+        if (!Find(w)) { if (unknown && !Has(*unknown, w)) unknown->push_back(w); continue; }
+        on.insert(w);
+    }
+    std::set<std::string> asked = on;
+    for (auto& n : std::vector<std::string>(on.begin(), on.end()))
+        for (auto& q : TransitiveRequires(n))
+            if (Find(q)) on.insert(q);
+    if (added)
+        for (auto& n : on)
+            if (!asked.count(n)) added->push_back(n);
+    std::vector<std::string> out;
+    for (auto& n : DependencyOrder()) if (on.count(n)) out.push_back(n);
+    return out;
+}
+
 void ModuleRegistry::SetRegisterHook(const std::string& name, ModuleRegisterFn fn) {
     for (auto& h : hooks_)
         if (h.name == name) { h.fn = fn; h.ran = false; return; }

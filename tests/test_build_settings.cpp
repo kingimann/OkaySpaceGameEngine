@@ -207,6 +207,16 @@ int main() {
         CHECK(RunCommandLine("exit 0", fs::temp_directory_path().string()) == 0 && fs::current_path() == before);   // the folder is put back
     }
     {
+        RUN_SUITE("output folder: a relative folder is inside the project");
+        const fs::path proj = fs::temp_directory_path() / "okay_bs_proj";
+        CHECK(fs::path(ResolveOutputDir("build/MyGame", proj.string())) == proj / "build" / "MyGame");
+        CHECK(fs::path(ResolveOutputDir("./out/../Builds/Win", proj.string())) == proj / "Builds" / "Win");
+        const std::string abs = (fs::temp_directory_path() / "elsewhere").string();
+        CHECK(ResolveOutputDir(abs, proj.string()) == abs);            // an absolute folder stays
+        CHECK(ResolveOutputDir("build/MyGame", "") == "build/MyGame"); // no project: as written
+        CHECK(ResolveOutputDir("", proj.string()).empty());
+    }
+    {
         RUN_SUITE("version control file");
         const auto lines = IgnoreLines("Builds\\Win/");
         CHECK(std::find(lines.begin(), lines.end(), "Builds/Win/") != lines.end());

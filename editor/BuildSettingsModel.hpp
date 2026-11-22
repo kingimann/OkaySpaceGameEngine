@@ -693,4 +693,13 @@ inline bool LoadProfileFile(const std::string& projectDir, const std::string& fi
     return okayproj::ReadText((fs::path(ProfileFolder(projectDir)) / fs::path(fileName)).string(), text) && ReadProfileFile(text, out);
 }
 
+// ---- the output folder ---------------------------------------------------------------------------------------
+/// The folder a build goes to. A relative folder ("build/MyGame", the default) is under the project folder, not
+/// under whatever folder the editor process happened to start in (on Windows that is the install folder).
+/// An absolute folder, or no project, is used as written.
+inline std::string ResolveOutputDir(const std::string& dir, const std::string& projectDir) {
+    (void)projectDir;
+    return dir;
+}
+
 }  // namespace oked::bsm

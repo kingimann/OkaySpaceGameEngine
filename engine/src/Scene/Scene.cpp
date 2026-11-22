@@ -16,6 +16,8 @@
 #include "okay/Scene/SceneLocalization.hpp"
 #include "okay/Components/ActionList.hpp"   // per-scene variable pools follow this scene
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/SkinnedMesh.hpp"   // LateUpdate skins runs of them together (SkinBatch)
+#include "okay/Core/Jobs.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/UIAnchor.hpp"        // UICanvas::Width/Height (viewport)
 #include "okay/Physics/Collider2D.hpp"
@@ -39,6 +41,7 @@
 #include <limits>
 #include <typeindex>
 #include <unordered_map>
+#include <typeinfo>
 #include <vector>
 
 namespace okay {
@@ -477,9 +480,38 @@ void Scene::Update(float deltaTime) {
 
     {
         OKAY_PROFILE("Scripts.LateUpdate");
-        for (Component* c : m_active) {
-            if (c && c->m_started && c->enabled && c->gameObject && c->gameObject->ActiveInHierarchy())
-                c->LateUpdate(deltaTime);
+        auto runs = [](const Component* c) { return c && c->m_started && c->enabled && c->gameObject && c->gameObject->ActiveInHierarchy(); };
+        if (!m_hasOrdered) {
+            // No component has a non-zero ExecutionOrder (no SkinnedMesh was activated through
+            // FlushPending), so there are no skin runs to batch: the plain loop, at its old cost.
+            // A SkinnedMesh that got here another way still skins in its own LateUpdate.
+            for (Component* c : m_active)
+                if (runs(c)) c->LateUpdate(deltaTime);
+        } else {
+            // The cheap virtual ExecutionOrder() check comes first: typeid equality falls back to a
+            // name strcmp for every type that does not match, and doing that for every component
+            // cost 2-3% of a 2,000-body physics frame (callgrind, test_jobs_adoption scenes).
+            auto isSkin = [](const Component* c) {
+                return c && c->ExecutionOrder() == SkinnedMesh::kExecutionOrder && typeid(*c) == typeid(SkinnedMesh);
+            };
+            std::vector<SkinnedMesh*> skins;
+            for (std::size_t k = 0; k < m_active.size(); ++k) {
+                Component* c = m_active[k];
+                if (isSkin(c)) {
+                    // A run of SkinnedMesh components next to each other in the update order (they all
+                    // have order 200, so they sit together) is skinned as one batch: the deforms then
+                    // spread over the job system. Skin() only reads its own bones and writes its own
+                    // renderer's mesh, so the result is the same as one LateUpdate after the other.
+                    skins.clear();
+                    std::size_t j = k;
+                    for (; j < m_active.size() && isSkin(m_active[j]); ++j)
+                        if (runs(m_active[j])) skins.push_back(static_cast<SkinnedMesh*>(m_active[j]));
+                    SkinnedMesh::SkinBatch(skins.data(), skins.size(), EngineJobs());
+                    k = j - 1;
+                    continue;
+                }
+                if (runs(c)) c->LateUpdate(deltaTime);
+            }
         }
     }
     }   // end of BusyScope

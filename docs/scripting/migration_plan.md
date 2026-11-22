@@ -38,7 +38,7 @@ flip the default with approval, delete one release later).
 
 In order of how often Unity-style scripts need them (rule 24: a failing test first for each):
 
-1. `Quaternion` (and `transform.rotation`), `Random.Range`, `Vector2`, `Color`.
+1. `Quaternion` (and `transform.rotation`), `Vector2`, `Color` (`Random.Range` / `value` / `InitState` done).
 2. `struct` value types (copy semantics), then generic methods and classes of the script's own.
 3. `delegate` declarations; `params`; default parameter values; named arguments.
 4. `static` and `const` in plain classes; nested classes; `readonly` enforced.

@@ -3734,7 +3734,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - rail (2.11, 4.8)
 - rain (2.4, 2.7, 53.2)
 - raise lower (29.1)
-- Random (1.1)
+- Random (1.1, 13.8.8)
 - Random and seeds (29.3.3)
 - Random extras (1.1.10)
 - Random generator (1.1.4)

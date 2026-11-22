@@ -2,6 +2,7 @@
 // Each one calls real engine code; there are no placeholders. The checker
 // resolves names against this table and the editor's autocomplete lists it.
 #include "ScriptInternal.hpp"
+#include "okay/Core/Random.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -2426,6 +2427,28 @@ EngineApi Build() {
             [trailOf](const Value& s, const Value& v, CallContext& c) { trailOf(s, c)->emitting = std::get<bool>(v); },
             "Whether new points are added as it moves (off: the trail fades away)."));
         api.types.push_back(std::move(tr));
+    }
+    // ---- Random ----
+    // Random numbers from the engine's shared generator (okay::Random::Shared()).
+    // Range(int, int) leaves out max, Range(float, float) can return either end.
+    {
+        ApiType r; r.name = "Random"; r.isStatic = true; r.doc = "Random numbers.";
+        r.staticMethods.push_back(method("Range", {tInt, tInt}, {"min", "max"}, tInt,
+            [](const Value&, std::vector<Value>& a, CallContext&) {
+                const std::int32_t lo = I(a[0]), hi = I(a[1]);
+                return Value{hi <= lo ? lo : (std::int32_t)okay::Random::Shared().Range((int)lo, (int)hi)};
+            }, "A whole number from min up to max, never max itself."));
+        r.staticMethods.push_back(method("Range", {tFloat, tFloat}, {"min", "max"}, tFloat,
+            [](const Value&, std::vector<Value>& a, CallContext&) {
+                const float lo = F(a[0]), hi = F(a[1]);
+                return Value{hi <= lo ? lo : okay::Random::Shared().Range(lo, hi)};
+            }, "A number from min to max."));
+        r.staticProps.push_back(ro("value", tFloat, [](const Value&, CallContext&) { return Value{okay::Random::Shared().Value()}; },
+            "A number from 0 up to (not including) 1."));
+        r.staticMethods.push_back(method("InitState", {tInt}, {"seed"}, tVoid,
+            [](const Value&, std::vector<Value>& a, CallContext&) { okay::Random::Shared().Seed((std::uint64_t)(std::int64_t)I(a[0])); return Value{}; },
+            "Start the random numbers from this seed, so the same seed gives the same numbers."));
+        api.types.push_back(std::move(r));
     }
     // ---- Mathf ----
     {

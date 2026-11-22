@@ -1418,6 +1418,9 @@ C# mode adds, on top of everything above:
   error.
 - `KeyCode.W`, `KeyCode.Space`, `KeyCode.LeftShift`, ... for `Input.GetKey`,
   `GetKeyDown`, `GetKeyUp` (each is the key's name: `KeyCode.W` is `"w"`).
+- `Random.Range(0, 3)` (a whole number, 3 left out), `Random.Range(-1f, 1f)`,
+  `Random.value` and `Random.InitState(seed)` (these work in `okayscript-next`
+  too: the binding table is shared).
 
 ```csharp
 using UnityEngine;

@@ -62,6 +62,7 @@ const Built& Data() {
         const EngineApi& api = EngineApi::Get();   // static: the pointers below stay valid
         for (std::size_t ti = 0; ti < api.types.size(); ++ti) {
             const ApiType& t = api.types[ti];
+            if (t.scriptOnly) continue;
             // How a member of this type is reached from a script attached to the object.
             const std::string recv = t.name == "GameObject" ? "gameObject"
                                    : t.name == "Transform"  ? "transform"
@@ -370,6 +371,7 @@ std::string VsApiReference() {
         "value nodes give a value whenever something reads them.\n";
     const EngineApi& api = EngineApi::Get();
     for (const ApiType& t : api.types) {
+        if (t.scriptOnly) continue;
         md += "\n## " + t.name + "\n\n" + t.doc + "\n\n";
         md += "| In a script | Node | Kind | Inputs | Gives | What it does |\n|---|---|---|---|---|---|\n";
         for (const VsApiEntry& e : VsApiEntries()) {

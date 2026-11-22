@@ -1425,6 +1425,12 @@ C# mode adds, on top of everything above:
   `other.gameObject`, `other.transform`, `other.CompareTag("Coin")`. The
   parameter can also be a `GameObject`, a `string` (its name) or left out.
   `gameObject.CompareTag(tag)` works too.
+- Text members: `s.Length`, `ToUpper()`, `ToLower()`, `Trim()`, `Contains`,
+  `StartsWith`, `EndsWith`, `IndexOf`, `Substring(start[, length])`,
+  `Replace`, `Split(",")` (gives a `string[]`); `x.ToString()` on numbers,
+  `bool`, enums and `Vector3` (the same text as `"" + x`). A character literal
+  such as `','` is a one-letter text (there is no `char` type). These work in
+  `okayscript-next` too.
 - `Random.Range(0, 3)` (a whole number, 3 left out), `Random.Range(-1f, 1f)`,
   `Random.value` and `Random.InitState(seed)` (these work in `okayscript-next`
   too: the binding table is shared).

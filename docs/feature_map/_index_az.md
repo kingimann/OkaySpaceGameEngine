@@ -4977,6 +4977,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - text format (1.5, 10.2.4)
 - Text formatting and link previews (17.4.5)
 - text input (8.1, 37.2, 37.2.3)
+- Text members (13.8.10)
 - text scale (40.2)
 - Text widget and colours (13.5.2)
 - TextField (40.1)

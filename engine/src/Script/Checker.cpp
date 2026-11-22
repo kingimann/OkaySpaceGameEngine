@@ -1882,7 +1882,20 @@ private:
             return;
         }
         if (ot.kind == TK::List || ot.kind == TK::Dict || ot.kind == TK::Pair) { CheckCollectionMember(e, ot); return; }
-        if (ot.kind == TK::String && e.name == "Length") { Error(e.loc, "Text length isn't supported yet"); return; }
+        if (ot.kind == TK::String) {   // s.Length: the string type's members (EngineApi "string")
+            const int st = api_.Find("string");
+            if (st >= 0) {
+                const ApiType& t = api_.types[(std::size_t)st];
+                for (std::size_t i = 0; i < t.props.size(); ++i)
+                    if (t.props[i].name == e.name) { e.bind = Bind::ApiProp; e.slot = st; e.member = (int)i; e.type = FromApi(t.props[i].type); return; }
+                for (auto& m : t.methods)
+                    if (m.name == e.name) { Error(e.loc, e.name + " is a method: call it with " + e.name + "(...)"); return; }
+                std::vector<std::string> opts = Names(t.props);
+                for (auto& m : t.methods) opts.push_back(m.name);
+                Error(e.loc, "Text has no '" + e.name + "'" + Suggest(e.name, opts));
+                return;
+            }
+        }
         Error(e.loc, TypeName(ot) + " values have no members");
     }
 
@@ -2088,6 +2101,36 @@ private:
         if (ot.kind == TK::List || ot.kind == TK::Dict) { CheckCollectionCall(e, ot); return; }
         if (ot.kind == TK::Class) { CallClassMethod(e, ot.id); return; }
         if (ot.kind == TK::Script) { CheckScriptCall(e, ot); return; }
+        if (e.name == "ToString" && e.args.empty() &&
+            (ot.kind == TK::Int || ot.kind == TK::Float || ot.kind == TK::Bool || ot.kind == TK::String || ot.kind == TK::Enum || ot.kind == TK::Vector3)) {
+            // x.ToString(): the same text as "" + x
+            auto empty = NewExpr(EK::StringLit, e.loc);
+            empty->type = Type::Of(TK::String);
+            ExprPtr value = std::move(e.object);
+            e.kind = EK::Binary; e.op = T::Plus; e.name.clear(); e.bind = Bind::None;
+            e.lhs = std::move(empty); e.rhs = std::move(value);
+            CheckBinaryChecked(e);
+            return;
+        }
+        if (ot.kind == TK::String) {
+            const int st = api_.Find("string");
+            if (st >= 0) {
+                const ApiType& t = api_.types[(std::size_t)st];
+                const ApiMethod* m = PickOverload(t.methods, "", e);
+                if (!m) {
+                    bool exists = false;
+                    for (auto& x : t.methods) if (x.name == e.name) exists = true;
+                    if (!exists) {
+                        std::vector<std::string> opts = Names(t.methods);
+                        Error(e.loc, "Text has no method '" + e.name + "'" + Suggest(e.name, opts));
+                    }
+                    return;
+                }
+                BindArgs(e, *m);
+                e.bind = Bind::ApiMethod; e.slot = st; e.member = (int)(m - t.methods.data()); e.type = FromApi(m->ret);
+                return;
+            }
+        }
         if (ot.kind != TK::Object) { Error(e.loc, TypeName(ot) + " values have no methods"); return; }
         const ApiType& t = api_.types[(std::size_t)ot.id];
         const ApiMethod* m = PickOverload(t.methods, "", e);
@@ -2473,6 +2516,10 @@ private:
     void CheckBinary(Expr& e) {
         CheckExpr(*e.lhs);
         CheckExpr(*e.rhs);
+        CheckBinaryChecked(e);
+    }
+    // The operator, its two sides already checked.
+    void CheckBinaryChecked(Expr& e) {
         const Type a = e.lhs->type, b = e.rhs->type;
         if (a.kind == TK::Error || b.kind == TK::Error) return;
         if (e.op == T::QuestionQuestion) {   // a ?? b: a, or b when a is null (or a destroyed object)

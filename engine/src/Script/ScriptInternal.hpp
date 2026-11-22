@@ -229,6 +229,9 @@ struct ApiType {
     bool isComponent = false;   ///< reachable through GetComponent<T>()
     bool isStatic = false;      ///< only static members (Input, Time, Debug, Mathf)
     bool isValueType = false;   ///< Vector3
+    /// Only for text scripts, not visual-script nodes or the API page: the members of
+    /// string values, and Collider / Collision (what collision messages receive).
+    bool scriptOnly = false;
     std::vector<ApiProperty> props, staticProps;
     std::vector<ApiMethod> methods, staticMethods;
     std::string doc;

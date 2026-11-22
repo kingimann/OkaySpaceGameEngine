@@ -1462,7 +1462,7 @@ EngineApi Build() {
     // OnCollisionEnter(Collision c), OnTriggerEnter2D(Collider2D other), ... Each is a
     // reference to the OTHER object, with the members scripts use most.
     for (const char* tn : {"Collider", "Collision", "Collider2D", "Collision2D"}) {
-        ApiType k; k.name = tn;
+        ApiType k; k.name = tn; k.scriptOnly = true;
         k.doc = std::string(tn) + " given to a collision message: the other object.";
         k.props.push_back(ro("gameObject", tGO,
             [goIdx](const Value& s, CallContext& c) { return MakeRef(Resolve(std::get<ObjRef>(s), c.loc), goIdx); }, "The other object."));
@@ -1478,6 +1478,69 @@ EngineApi Build() {
         ct.pure = true;
         k.methods.push_back(std::move(ct));
         api.types.push_back(std::move(k));
+    }
+    // ---- string ----
+    // The members of text values (s.Length, s.ToUpper(), ...): C# names, checked like any
+    // other member; out-of-range positions are errors with the line.
+    {
+        ApiType st; st.name = "string"; st.scriptOnly = true; st.doc = "Text.";
+        auto str = [](const Value& v) -> const std::string& { return std::get<std::string>(v); };
+        auto pm = [&](const char* n, std::vector<Type> ps, std::vector<std::string> names, Type ret, auto fn, const char* doc) {
+            ApiMethod m = method(n, std::move(ps), std::move(names), ret, fn, doc);
+            m.pure = true;
+            st.methods.push_back(std::move(m));
+        };
+        st.props.push_back(ro("Length", tInt, [str](const Value& s, CallContext&) { return Value{(std::int32_t)str(s).size()}; },
+            "How many characters the text has."));
+        pm("ToUpper", {}, {}, tString, [str](const Value& s, std::vector<Value>&, CallContext&) {
+            std::string r = str(s); for (char& ch : r) ch = (char)std::toupper((unsigned char)ch); return Value{r}; }, "The text in capitals.");
+        pm("ToLower", {}, {}, tString, [str](const Value& s, std::vector<Value>&, CallContext&) {
+            std::string r = str(s); for (char& ch : r) ch = (char)std::tolower((unsigned char)ch); return Value{r}; }, "The text in small letters.");
+        pm("Trim", {}, {}, tString, [str](const Value& s, std::vector<Value>&, CallContext&) {
+            const std::string& r = str(s);
+            const auto a = r.find_first_not_of(" \t\r\n"), b = r.find_last_not_of(" \t\r\n");
+            return Value{a == std::string::npos ? std::string() : r.substr(a, b - a + 1)}; }, "The text without spaces at the start and end.");
+        pm("Contains", {tString}, {"part"}, tBool, [str](const Value& s, std::vector<Value>& a, CallContext&) {
+            return Value{str(s).find(S(a[0])) != std::string::npos}; }, "True when the text has this part in it.");
+        pm("StartsWith", {tString}, {"part"}, tBool, [str](const Value& s, std::vector<Value>& a, CallContext&) {
+            return Value{str(s).rfind(S(a[0]), 0) == 0}; }, "True when the text starts with this part.");
+        pm("EndsWith", {tString}, {"part"}, tBool, [str](const Value& s, std::vector<Value>& a, CallContext&) {
+            const std::string& t = str(s); const std::string& p = S(a[0]);
+            return Value{t.size() >= p.size() && t.compare(t.size() - p.size(), p.size(), p) == 0}; }, "True when the text ends with this part.");
+        pm("IndexOf", {tString}, {"part"}, tInt, [str](const Value& s, std::vector<Value>& a, CallContext&) {
+            const auto p = str(s).find(S(a[0])); return Value{p == std::string::npos ? -1 : (std::int32_t)p}; },
+            "Where the part starts (0 = the first character), or -1 when it isn't there.");
+        auto sub = [str](const Value& s, std::int32_t start, std::int32_t len, CallContext& c) {
+            const std::string& t = str(s);
+            if (start < 0 || start > (std::int32_t)t.size() || len < 0 || (std::int64_t)start + len > (std::int64_t)t.size())
+                throw RuntimeError("Substring(" + std::to_string(start) + (len >= 0 ? ", " + std::to_string(len) : std::string()) +
+                                   ") is outside the text (" + std::to_string(t.size()) + " characters)", c.loc);
+            return Value{t.substr((std::size_t)start, (std::size_t)len)};
+        };
+        pm("Substring", {tInt}, {"start"}, tString, [sub, str](const Value& s, std::vector<Value>& a, CallContext& c) {
+            return sub(s, I(a[0]), (std::int32_t)str(s).size() - I(a[0]), c); }, "The text from this position to the end.");
+        pm("Substring", {tInt, tInt}, {"start", "length"}, tString, [sub](const Value& s, std::vector<Value>& a, CallContext& c) {
+            return sub(s, I(a[0]), I(a[1]), c); }, "This many characters from this position.");
+        pm("Replace", {tString, tString}, {"old", "new"}, tString, [str](const Value& s, std::vector<Value>& a, CallContext& c) {
+            const std::string& from = S(a[0]); const std::string& to = S(a[1]);
+            if (from.empty()) throw RuntimeError("Replace needs something to look for, not empty text", c.loc);
+            std::string r = str(s);
+            for (std::size_t p = r.find(from); p != std::string::npos; p = r.find(from, p + to.size())) r.replace(p, from.size(), to);
+            return Value{r}; }, "The text with every copy of old changed to new.");
+        pm("Split", {tString}, {"separator"}, Type::ApiStrings(), [str](const Value& s, std::vector<Value>& a, CallContext& c) {
+            const std::string& sep = S(a[0]);
+            if (sep.empty()) throw RuntimeError("Split needs a separator, not empty text", c.loc);
+            std::vector<std::string> parts;
+            const std::string& t = str(s);
+            std::size_t at = 0;
+            for (std::size_t p = t.find(sep); p != std::string::npos; p = t.find(sep, at)) { parts.push_back(t.substr(at, p - at)); at = p + sep.size(); }
+            parts.push_back(t.substr(at));
+            (void)c;
+            auto list = std::make_shared<ArrayObj>();
+            list->typeName = "string[]";
+            for (auto& p : parts) list->items.push_back(Value{p});
+            return Value{list}; }, "The pieces between each separator.");
+        api.types.push_back(std::move(st));
     }
     // ---- KeyCode ----
     // C# scripts name keys as KeyCode.W, KeyCode.Space (the names a Unity user types);

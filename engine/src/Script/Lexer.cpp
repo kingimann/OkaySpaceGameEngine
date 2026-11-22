@@ -247,6 +247,24 @@ std::vector<Token> LexAt(const std::string& src, std::vector<ScriptDiagnostic>& 
             out.push_back(std::move(t));
             continue;
         }
+        if (c == '\'' && i + 2 < src.size()) {   // 'a', '\n': a character is a one-letter text (there is no char type)
+            std::size_t save = i;
+            adv();
+            char d = adv();
+            if (d == '\\' && i < src.size()) {
+                const char e = adv();
+                d = e == 'n' ? '\n' : e == 't' ? '\t' : e;
+            }
+            if (d != '\n' && i < src.size() && peek() == '\'') {
+                adv();
+                t.text = std::string(1, d);
+                t.type = T::StringLit;
+                out.push_back(std::move(t));
+                continue;
+            }
+            i = save;   // not a character literal: reported below as a bad character
+            line = t.loc.line; col = t.loc.col;
+        }
         auto two = [&](char a, char b) { return peek() == a && peek(1) == b; };
         struct Op { const char* s; T t; };
         static const Op ops[] = {

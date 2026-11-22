@@ -4825,6 +4825,9 @@ add_executable(test_vs_pan_model test_vs_pan_model.cpp)
 target_include_directories(test_vs_pan_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME vs_pan_model COMMAND test_vs_pan_model)
 
+add_executable(test_damage test_damage.cpp)
+target_link_libraries(test_damage PRIVATE okay::engine)
+add_test(NAME damage COMMAND test_damage)
 # Collider shapes under bad input: NaN / huge numbers, flat or tiny hulls, empty or over-large compounds and grids, scale, order.
 add_executable(test_collider_hardening test_collider_hardening.cpp)
 target_link_libraries(test_collider_hardening PRIVATE okay::engine)

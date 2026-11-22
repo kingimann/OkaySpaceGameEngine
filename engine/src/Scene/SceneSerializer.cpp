@@ -2412,7 +2412,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << c->invincibleTime << " " << c->overhealMax << " " << c->overhealDecay
             << " " << (c->destroyOnDeath ? 1 : 0) << " " << (c->respawn ? 1 : 0)
             << " " << c->respawnDelay << " " << c->lives
-            << " " << (c->playDeathAnim ? 1 : 0) << " " << (c->playHitAnim ? 1 : 0) << "\n";
+            << " " << (c->playDeathAnim ? 1 : 0) << " " << (c->playHitAnim ? 1 : 0)
+            << " " << (c->keepActiveOnDeath ? 1 : 0) << " " << kDamageTypeCount;   // then one resistance per damage kind
+        for (int i = 0; i < kDamageTypeCount; ++i) out << " " << c->typeResistance[i];
+        out << "\n";
     }
     for (auto* c : go->GetComponents<Seat>()) {
         out << "  seat " << c->seatHeight << " "
@@ -6595,6 +6598,22 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws;   // optional: light hit flinch (defaults off)
                     if (std::isdigit(in.peek())) {
                         int pha = 0; in >> pha; c->playHitAnim = (pha != 0);
+                    }
+                    in >> std::ws;   // optional: "Nothing" on death, then one resistance per damage kind
+                    if (std::isdigit(in.peek())) {
+                        // Read only the rest of this record's line, so a wrong or hostile count can neither
+                        // loop for long nor eat the next record. At most 64 kinds; stop at the first bad value.
+                        std::string rest; std::getline(in, rest);
+                        std::istringstream ls(rest);
+                        int ka = 0, n = 0;
+                        if (ls >> ka) c->keepActiveOnDeath = (ka != 0);
+                        if ((ls >> n) && n > 0 && n <= 64) {
+                            for (int i = 0; i < n; ++i) {
+                                float r = 0.0f;
+                                if (!(ls >> r)) break;
+                                if (i < kDamageTypeCount && std::isfinite(r)) c->typeResistance[i] = Mathf::Clamp(r, -1.0f, 1.0f);
+                            }
+                        }
                     }
                 } else if (field == "seat") {
                     auto* c = go->AddComponent<Seat>();

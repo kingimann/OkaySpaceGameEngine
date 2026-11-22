@@ -143,6 +143,7 @@ add_library(okay_engine
     src/Inventory/InventoryOps.cpp
     src/Combat/WeaponBook.cpp
     src/Components/MeleeAttacker.cpp
+    src/Components/Damage.cpp
     src/Components/RangedWeapon.cpp
     src/Inventory/ItemDatabase.cpp
     src/Inventory/LootTable.cpp

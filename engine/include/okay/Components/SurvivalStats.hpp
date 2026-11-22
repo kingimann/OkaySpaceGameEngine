@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Components/Damage.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -113,10 +114,10 @@ public:
 
         // Empty stats damage health directly (latched messages, fired once).
         bool tookEnv = false;
-        tookEnv |= Drain(hunger,  starveDamage,    dt, m_starv,  "starving");
-        tookEnv |= Drain(thirst,  dehydrateDamage, dt, m_dehy,   "dehydrated");
-        tookEnv |= Drain(oxygen,  drownDamage,     dt, m_drown,  "drowning");
-        tookEnv |= Drain(warmth,  freezeDamage,    dt, m_freeze, "freezing");
+        tookEnv |= Drain(hunger,  starveDamage,    dt, m_starv,  "starving",    DamageType::Hunger);
+        tookEnv |= Drain(thirst,  dehydrateDamage, dt, m_dehy,   "dehydrated",  DamageType::Thirst);
+        tookEnv |= Drain(oxygen,  drownDamage,     dt, m_drown,  "drowning",    DamageType::Drowning);
+        tookEnv |= Drain(warmth,  freezeDamage,    dt, m_freeze, "freezing",    DamageType::Cold);
 
         if (m_regenTimer > 0.0f) m_regenTimer -= dt;
         if (!tookEnv && m_regenTimer <= 0.0f && hunger > 0.0f && thirst > 0.0f && regenWhenFed > 0.0f)
@@ -126,17 +127,43 @@ public:
     }
 
     // ---- Actions (callable from On Click / Action List / code) ----
-    void Damage(float amount) {
-        if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return;
+    void Damage(float amount) { Damage(DamageEvent::Make(amount)); }
+    /// Same hit as a Health Stat takes (type, source, hit point); listeners are told. This holder has no
+    /// per-type resistances; add a Health Stat to the object when you need them (it is used first).
+    bool Damage(DamageEvent ev) {
+        const float amount = SaneDamage(ev.amount);
+        if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return false;
         float dmg = Mathf::Max(0.0f, amount - (armor + equipArmor)) * (1.0f - Mathf::Clamp01(resistance));
+        const float before = health;
         health -= dmg;
         m_regenTimer = regenDelay;
         m_iframes = invincibleTime;
-        if (health <= 0.0f) { health = 0.0f; dead = true; OnDeath(); }
+        ev.target = gameObject; ev.amount = amount;
+        ev.dealt = Mathf::Max(0.0f, before - Mathf::Max(0.0f, health));
+        ev.killed = health <= 0.0f;
+        NotifyDamaged(ev);
+        if (health <= 0.0f) { health = 0.0f; dead = true; OnDeath(); NotifyDeath(ev); }
+        return true;
+    }
+    /// Kill outright (ignores armor, resistance, god mode and i-frames). No effect if already dead.
+    void Kill(GameObject* source = nullptr) {
+        if (dead) return;
+        DamageEvent ev = DamageEvent::Make(health > 0.0f ? health : 0.0f, DamageType::Generic, source);
+        ev.target = gameObject; ev.dealt = ev.amount; ev.killed = true;
+        health = 0.0f; dead = true;
+        NotifyDamaged(ev);
+        OnDeath();
+        NotifyDeath(ev);
     }
     void SetGodMode(bool on) { godMode = on; }
     bool IsInvincible() const { return godMode || m_iframes > 0.0f; }
-    void Heal(float a)    { if (!dead) health = Mathf::Min(maxHealth, health + a); }
+    /// As before: no effect when dead, and a negative amount takes health away. NaN is ignored.
+    void Heal(float a) {
+        if (dead || std::isnan(a)) return;
+        const float before = health;
+        health = Mathf::Min(maxHealth, health + a);
+        if (health > before) NotifyHealed(gameObject, health - before);
+    }
     void Eat(float a)     { hunger = Mathf::Min(maxHunger, hunger + a); if (a > 0) m_starv = false; }
     void Drink(float a)   { thirst = Mathf::Min(maxThirst, thirst + a); if (a > 0) m_dehy = false; }
     void Breathe(float a) { oxygen = Mathf::Min(maxOxygen, oxygen + a); if (a > 0) m_drown = false; }
@@ -155,9 +182,9 @@ private:
 
     // If `stat` is empty, apply `dps` damage and fire `msg` once. Returns true if it
     // bit this frame (so health regen stays paused).
-    bool Drain(float stat, float dps, float dt, bool& latch, const char* msg) {
+    bool Drain(float stat, float dps, float dt, bool& latch, const char* msg, DamageType type) {
         if (stat > 0.0f) { latch = false; return false; }
-        Damage(dps * dt);
+        Damage(DamageEvent::Make(dps * dt, type));
         if (!latch) { latch = true; Broadcast(msg); }
         return true;
     }

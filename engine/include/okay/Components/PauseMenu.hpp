@@ -21,7 +21,7 @@
 
 namespace okay {
 
-/// A ready-made pause menu: press the toggle key (Escape by default) to freeze the
+/// A ready-made pause menu: press the toggle key (Escape by default) or Start on a pad to freeze the
 /// game and pop up a centred card with Resume / Restart / Main Menu / Quit buttons,
 /// Volume, Music and Effects sliders, and a hint line, over a dimmed backdrop. No scripting —
 /// drop it on any object. It pauses via the global Game state (so all gameplay
@@ -97,7 +97,10 @@ public:
         if (!m_built) EnsureBuilt();
         // Escape until the player rebinds "Pause"; then its bindings. Read past the menu's own Block context, which
         // swallows every action while it is open, so the same key also closes it.
-        if (InputActions::MenuKeyDown("Pause", toggleKey)) Toggle();
+        // Controller-only players (an Xbox, a PC with just a pad): Start (Menu) on any pad toggles the menu like the toggle key,
+        // and B closes an open menu. B never opens it: B is an ordinary game button.
+        if (InputActions::MenuKeyDown("Pause", toggleKey) || AnyPadPressed(Input::PadStart)) Toggle();
+        else if (Game::Paused() && m_shown && AnyPadPressed(Input::PadB)) Resume();
         // Keep the overlay synced to the pause state (another source un-pausing also
         // closes it). Only touch it on a change so we don't fight other systems.
         bool paused = Game::Paused();
@@ -159,6 +162,10 @@ public:
     void Resume() { Game::SetPaused(false); SetOverlayActive(false); m_shown = false; SyncInputCapture(false); }
 
 private:
+    static bool AnyPadPressed(int button) {
+        for (int p = 0; p < Input::kMaxGamepads; ++p) if (Input::GetGamepadButtonDown(button, p)) return true;
+        return false;
+    }
     std::vector<GameObject*> m_objects;   ///< every overlay object (toggled together)
     GameObject* m_root  = nullptr;
     UIButton* m_resume  = nullptr;

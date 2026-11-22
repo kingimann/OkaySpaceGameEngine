@@ -43,8 +43,15 @@ public:
     /// ramp by surface up-ness (gradientBottom -> gradientTop); Fresnel = a glowing rim
     /// look (base darkened, edges lit by rimColor). New models are honoured by the
     /// software renderer and the GPU (GL / D3D11) renderers.
-    enum class Shader { Standard, Unlit, Toon, Gradient, Fresnel, Iridescent, Hologram, Posterize, Velvet };
+    /// Custom = the surface comes from an .okayshader file (`customShader`), our own shader language
+    /// (okay/Render/OkayShader.hpp): every renderer lights it like Standard. A file that does not compile
+    /// draws magenta and logs the error.
+    enum class Shader { Standard, Unlit, Toon, Gradient, Fresnel, Iridescent, Hologram, Posterize, Velvet, Custom };
     Shader shader = Shader::Standard;
+    /// Custom shader: the .okayshader file, and the material's values for its properties and textures
+    /// as text ("speed=0.5;hot=1,0.5,0.1;tex:detail=rock.png", see oshader::ResolveProperties).
+    std::string customShader;
+    std::string shaderParams;
     /// Number of cel bands for the Toon shader (2-6 reads best). Ignored otherwise.
     int    toonBands = 3;
     /// Gradient shader endpoints (bottom = downward faces, top = upward faces).

@@ -632,6 +632,26 @@ add_executable(test_shaders test_shaders.cpp)
 target_link_libraries(test_shaders PRIVATE okay::engine)
 add_test(NAME shaders COMMAND test_shaders)
 
+# OkayShader language (docs/rendering/shaders.md): parser / checker errors, hostile inputs and fuzz, GLSL / HLSL text,
+# the CPU program, material property text, file hot reload, the shipped example shaders.
+add_executable(test_okayshader test_okayshader.cpp)
+target_link_libraries(test_okayshader PRIVATE okay::engine)
+target_compile_definitions(test_okayshader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME okayshader COMMAND test_okayshader)
+# The Custom shader mode on the software renderer (fields, per-pixel surface, error material, discard, hot reload, example scene).
+add_executable(test_okayshader_render test_okayshader_render.cpp)
+target_link_libraries(test_okayshader_render PRIVATE okay::engine)
+target_compile_definitions(test_okayshader_render PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME okayshader_render COMMAND test_okayshader_render)
+# Software vs OpenGL (Mesa llvmpipe on a private Xvfb display) on the same .okayshader surfaces; skips (77) without Xvfb.
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_okayshader_gl test_okayshader_gl.cpp)
+    target_link_libraries(test_okayshader_gl PRIVATE okay::engine okay::platform)
+    target_compile_definitions(test_okayshader_gl PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME okayshader_gl COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_okayshader_gl>)
+    set_tests_properties(okayshader_gl PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+endif()
+
 add_executable(test_uishape test_uishape.cpp)
 target_link_libraries(test_uishape PRIVATE okay::engine)
 add_test(NAME uishape COMMAND test_uishape)
@@ -1060,6 +1080,7 @@ add_test(NAME data_load_checks COMMAND test_data_load_checks)
 add_executable(test_project_upgrade test_project_upgrade.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
 target_include_directories(test_project_upgrade PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_project_upgrade PRIVATE okay::engine)
+target_compile_definitions(test_project_upgrade PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME project_upgrade COMMAND test_project_upgrade)
 
 # The Project panel's logic (editor/ProjectBrowser.*, ImGui-free): folder model, safe create / rename / move / copy / delete with undo, references rewritten, clipboard, failure injection at every file step.
@@ -1073,6 +1094,17 @@ add_executable(test_project_panel_db test_project_panel_db.cpp ${PROJECT_SOURCE_
 target_include_directories(test_project_panel_db PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_project_panel_db PRIVATE okay::engine)
 add_test(NAME project_panel_db COMMAND test_project_panel_db)
+
+# A picture changed on disk or reimported is shown changed in the Scene view: InvalidateTextureCacheForFile drops every cache key that names the file (relative, ./, absolute), and Browser::TakeChangedFiles hands out the files a scan found changed plus every hand reimport, once each.
+add_executable(test_texture_reimport test_texture_reimport.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
+target_include_directories(test_texture_reimport PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_texture_reimport PRIVATE okay::engine)
+add_test(NAME texture_reimport COMMAND test_texture_reimport)
+
+# Why a model did not import, in plain words (DescribeModelImportProblem): missing, folder, empty, unknown extension, a picture renamed to .glb, text in a .glb, glTF 1, cut-off files, broken JSON, not an FBX, the seam reader's own error.
+add_executable(test_model_import_problem test_model_import_problem.cpp)
+target_link_libraries(test_model_import_problem PRIVATE okay::engine)
+add_test(NAME model_import_problem COMMAND test_model_import_problem)
 
 # The Project panel's right-click menus (editor/ProjectContextModel.hpp, header-only, no ImGui, no engine): order, labels and plurals of the item, folder, tree, favourites and empty-space menus, what is greyed and why, no doubled separators, Copy Text, Assets-relative paths, the file types that run code (never offered to the system's open, and .js is not a text file), a folder that is gone, the path text helpers (Outermost, NearestFolder), the Move to... rule, Set as Start Scene, dates and the Properties rows.
 add_executable(test_project_context_model test_project_context_model.cpp)
@@ -2676,6 +2708,10 @@ add_executable(test_poly_ops test_poly_ops.cpp)
 target_link_libraries(test_poly_ops PRIVATE okay::engine)
 add_test(NAME poly_ops COMMAND test_poly_ops)
 
+add_executable(test_sculpt_paint test_sculpt_paint.cpp)
+target_link_libraries(test_sculpt_paint PRIVATE okay::engine)
+add_test(NAME sculpt_paint COMMAND test_sculpt_paint)
+
 add_executable(test_locomotion test_locomotion.cpp)
 target_link_libraries(test_locomotion PRIVATE okay::engine)
 add_test(NAME locomotion COMMAND test_locomotion)
@@ -3568,6 +3604,12 @@ if(NOT WIN32 AND NOT EMSCRIPTEN AND TARGET okay_ui_soft AND CMAKE_SYSTEM_NAME ST
     add_test(NAME platform_painter_window
              COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_painter_window>)
     set_tests_properties(platform_painter_window PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+    # The OpenGL painter (engine/src/Platform/GLPainter.cpp) on an own-backend GL window against the software painter. Own code, off by default.
+    add_executable(test_gl_painter test_gl_painter.cpp)
+    target_link_libraries(test_gl_painter PRIVATE okay_ui_soft)
+    add_test(NAME gl_painter COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_gl_painter>)
+    set_tests_properties(gl_painter PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 endif()
 
 # The controller -> Input bridge (Input/PlatformGamepad.hpp) with a fake okay::platform::Gamepad.
@@ -4740,6 +4782,12 @@ target_link_libraries(test_camera_rig PRIVATE okay::engine)
 target_compile_definitions(test_camera_rig PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME camera_rig COMMAND test_camera_rig)
 
+# Area 4 fixes (claude2/area4-chars-2): click-to-move camera below y = 0, remote copies leave the main camera alone,
+# the dolly cart's position, ends, facing and metre speed, click-to-move ground picking and giving up when stuck.
+add_executable(test_char_cam_fixes test_char_cam_fixes.cpp)
+target_link_libraries(test_char_cam_fixes PRIVATE okay::engine)
+add_test(NAME char_cam_fixes COMMAND test_char_cam_fixes)
+
 # Water visuals: shading maths, ring grid, depth colour, foam, ripples, splashes, underwater, presets, pictures (docs/rendering/terrain_water.md).
 add_executable(test_water_visuals test_water_visuals.cpp)
 target_link_libraries(test_water_visuals PRIVATE okay::engine)
@@ -4798,6 +4846,9 @@ add_executable(test_vs_pan_model test_vs_pan_model.cpp)
 target_include_directories(test_vs_pan_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME vs_pan_model COMMAND test_vs_pan_model)
 
+add_executable(test_damage test_damage.cpp)
+target_link_libraries(test_damage PRIVATE okay::engine)
+add_test(NAME damage COMMAND test_damage)
 # Collider shapes under bad input: NaN / huge numbers, flat or tiny hulls, empty or over-large compounds and grids, scale, order.
 add_executable(test_collider_hardening test_collider_hardening.cpp)
 target_link_libraries(test_collider_hardening PRIVATE okay::engine)

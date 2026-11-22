@@ -1978,6 +1978,9 @@ struct Mesh {
             std::FILE* fp = std::fopen(path.c_str(), "rb");
             if (!fp) { if (ok) *ok = false; return m; }
             std::fseek(fp, 0, SEEK_END); long sz = std::ftell(fp); std::fseek(fp, 0, SEEK_SET);
+            // A folder opens on some systems and reports a huge size (LONG_MAX on Linux): refuse it, and anything over
+            // 2 GB, instead of asking for that much memory (std::length_error ended the editor).
+            if (sz < 0 || sz >= 0x7fffffffL) { std::fclose(fp); if (ok) *ok = false; return m; }
             if (sz > 0) {
                 data.resize((std::size_t)sz);
                 if (std::fread(&data[0], 1, (std::size_t)sz, fp) != (std::size_t)sz) {
@@ -3628,7 +3631,10 @@ public:
     }
 
     /// Reverse the winding of every triangle (swap the 2nd and 3rd index) so all
-    /// faces point the other way, then recompute normals.
+    /// faces point the other way. The shading is kept: a flat mesh (no normals, as
+    /// in Edit Mesh) stays flat, and stored normals (smooth or auto smooth) turn
+    /// round with the faces. (It used to always compute smooth normals, so Flip
+    /// Normals in Edit Mesh rounded off a box.)
     void FlipNormals() {
         AttrGuard attrGuard_(*this);
         const bool cuv = HasCornerUVs();
@@ -3637,7 +3643,30 @@ public:
             if (cuv) std::swap(cornerUVs[i + 1], cornerUVs[i + 2]);
         }
         name = "";
-        ComputeSmoothNormals();
+        for (Vec3& n : normals) n = n * -1.0f;
+    }
+
+    /// Reverse the winding of just the listed triangles (repeats and bad numbers are
+    /// ignored). Corner UVs follow their corners; stored normals are recomputed
+    /// (a flat mesh stays flat). Returns how many triangles were flipped.
+    int FlipFaces(const std::vector<int>& tris) {
+        AttrGuard attrGuard_(*this);
+        const int nt = (int)triangles.size() / 3;
+        const bool cuv = HasCornerUVs();
+        std::vector<char> done((std::size_t)std::max(nt, 0), 0);
+        int n = 0;
+        for (int t : tris) {
+            if (t < 0 || t >= nt || done[(std::size_t)t]) continue;
+            done[(std::size_t)t] = 1;
+            std::swap(triangles[(std::size_t)t * 3 + 1], triangles[(std::size_t)t * 3 + 2]);
+            if (cuv) std::swap(cornerUVs[(std::size_t)t * 3 + 1], cornerUVs[(std::size_t)t * 3 + 2]);
+            ++n;
+        }
+        if (n == 0) return 0;
+        name = "";
+        if (n == nt) for (Vec3& v : normals) v = v * -1.0f;
+        else RefreshNormals();
+        return n;
     }
 
     /// Make every face's winding coherent with its neighbors and point each closed
@@ -3730,57 +3759,143 @@ public:
     }
 
 
+    /// The sculpt and paint brush falloff: 1 at the centre, 0 at `radius` and beyond,
+    /// smoothstep of 1 - dist / radius in between (s(x) = x * x * (3 - 2x)).
+    static float BrushFalloff(float dist, float radius) {
+        if (!(radius > 0.0f) || !(dist < radius)) return 0.0f;
+        const float w = 1.0f - dist / radius;
+        return w * w * (3.0f - 2.0f * w);
+    }
+
     /// A sculpting brush in LOCAL mesh space. Vertices within `radius` of `center`
-    /// are displaced with a smoothstep falloff `w`. mode: 0 = GRAB (push along
-    /// `dir`), 1 = INFLATE (push along each vertex's own normal), 2 = SMOOTH (pull
-    /// toward the local average of nearby vertices), 3 = FLATTEN (press the region
-    /// onto its own average plane), 4 = PINCH (draw vertices toward the brush
-    /// centre, sharpening creases). SMOOTH/FLATTEN read a snapshot so the
-    /// relaxation doesn't feed back within one call.
-    void SculptBrush(const Vec3& center, const Vec3& dir, float radius, float strength, int mode) {
+    /// are displaced with the BrushFalloff weight `w`. mode: 0 = GRAB (push along
+    /// `dir` by strength * w), 1 = INFLATE (push along each vertex's own normal),
+    /// 2 = SMOOTH (pull each vertex toward the average of the vertices it shares an
+    /// edge with, a Laplacian step), 3 = FLATTEN (press the region onto its own
+    /// average plane), 4 = PINCH (draw vertices toward the brush centre, sharpening
+    /// creases). SMOOTH, FLATTEN and PINCH move at most all the way (no overshoot).
+    /// Every mode reads one snapshot, so the stroke doesn't feed back on itself.
+    /// Vertices at the same position (UV seam and pole copies) move as one.
+    /// `symmetryX` adds the mirrored stroke across x = 0 (centre and dir mirrored):
+    /// each vertex takes the stroke on its own side of the plane and vertices on the
+    /// plane take the average of the two, so a mirror-symmetric mesh stays
+    /// mirror-symmetric and nothing is moved twice.
+    void SculptBrush(const Vec3& center, const Vec3& dir, float radius, float strength, int mode, bool symmetryX = false) {
         if (!(radius > 1e-6f) || vertices.empty()) return;
         if (!std::isfinite(radius + strength + center.x + center.y + center.z + dir.x + dir.y + dir.z)) return;   // a typed NaN or infinite value would turn every vertex into NaN
-        std::vector<Vec3> vn;
-        if (mode == 1 || mode == 3) vn = Normals();    // vertex normals for INFLATE/FLATTEN
-        std::vector<Vec3> snapshot = vertices;         // SMOOTH reads positions pre-edit
-        float inv = 1.0f / radius;
-        // FLATTEN presses toward the best-fit plane of the brush region: its
-        // centroid with the averaged vertex normal.
-        Vec3 planeC{0, 0, 0}, planeN{0, 1, 0};
-        if (mode == 3) {
-            Vec3 nsum{0, 0, 0}; int cnt = 0;
-            for (std::size_t i = 0; i < snapshot.size(); ++i)
-                if ((snapshot[i] - center).Magnitude() < radius) {
-                    planeC += snapshot[i]; nsum += vn[i]; ++cnt;
-                }
-            if (cnt == 0) return;
-            planeC = planeC * (1.0f / cnt);
-            float m = nsum.Magnitude();
-            if (m > 1e-6f) planeN = nsum * (1.0f / m);
+        const std::size_t n = vertices.size();
+        const std::vector<Vec3> snap = vertices;
+        // Copies of one point (split for UVs or at a pole) are one group and move together.
+        // Copies made with sin / cos can differ in the last bits, so points closer than a
+        // tiny tolerance (1e-5 of the mesh size) count as one: a grid of cells that size,
+        // each point checked against the groups in its own and the 26 cells around it.
+        std::vector<int> group(n);
+        std::vector<Vec3> gpos;
+        int groups = 0;
+        {
+            Vec3 lo = snap[0], hi = snap[0];
+            for (const Vec3& p : snap) {
+                lo.x = std::fmin(lo.x, p.x); lo.y = std::fmin(lo.y, p.y); lo.z = std::fmin(lo.z, p.z);
+                hi.x = std::fmax(hi.x, p.x); hi.y = std::fmax(hi.y, p.y); hi.z = std::fmax(hi.z, p.z);
+            }
+            const float extent = std::fmax(std::fmax(hi.x - lo.x, hi.y - lo.y), std::fmax(hi.z - lo.z, 1e-3f));
+            const float tol = extent * 1e-5f, inv = 1.0f / tol;
+            if (!std::isfinite(extent)) return;   // a NaN or infinite vertex: leave the mesh alone
+            using Cell = std::tuple<long long, long long, long long>;
+            std::map<Cell, std::vector<int>> cells;   // cell -> groups whose first point is in it
+            for (std::size_t i = 0; i < n; ++i) {
+                const Vec3 p = snap[i];
+                const long long cx = (long long)std::floor((p.x - lo.x) * inv), cy = (long long)std::floor((p.y - lo.y) * inv),
+                                cz = (long long)std::floor((p.z - lo.z) * inv);
+                int found = -1;
+                for (long long dx = -1; dx <= 1 && found < 0; ++dx)
+                    for (long long dy = -1; dy <= 1 && found < 0; ++dy)
+                        for (long long dz = -1; dz <= 1 && found < 0; ++dz) {
+                            auto it = cells.find(Cell{cx + dx, cy + dy, cz + dz});
+                            if (it == cells.end()) continue;
+                            for (int g : it->second)
+                                if ((gpos[(std::size_t)g] - p).Magnitude() <= tol) { found = g; break; }
+                        }
+                if (found < 0) { found = groups++; gpos.push_back(p); cells[Cell{cx, cy, cz}].push_back(found); }
+                group[i] = found;
+            }
         }
-        for (std::size_t i = 0; i < vertices.size(); ++i) {
-            float d = (snapshot[i] - center).Magnitude();
-            if (d >= radius) continue;
-            float w = 1.0f - d * inv;                   // linear falloff in [0,1]
-            if (w < 0.0f) w = 0.0f;
-            w = w * w * (3.0f - 2.0f * w);              // smoothstep for a nicer curve
-            if (mode == 1) {                            // INFLATE: along vertex normal
-                vertices[i] += vn[i] * (strength * w);
-            } else if (mode == 2) {                     // SMOOTH: toward local average
-                Vec3 avg{0, 0, 0}; int cnt = 0;
-                for (std::size_t j = 0; j < snapshot.size(); ++j)
-                    if ((snapshot[j] - center).Magnitude() < radius) { avg += snapshot[j]; ++cnt; }
-                if (cnt > 0) { avg = avg * (1.0f / cnt);
-                    vertices[i] += (avg - snapshot[i]) * (strength * w); }
-            } else if (mode == 3) {                     // FLATTEN: press onto the plane
-                float off = Vec3::Dot(snapshot[i] - planeC, planeN);
-                float k = strength * w; if (k > 1.0f) k = 1.0f;
-                vertices[i] += planeN * (-off * k);
-            } else if (mode == 4) {                     // PINCH: gather toward centre
-                float k = strength * w; if (k > 1.0f) k = 1.0f;
-                vertices[i] += (center - snapshot[i]) * k;
-            } else {                                    // GRAB: along `dir`
-                vertices[i] += dir * (strength * w);
+        // Area-weighted normal of each group (INFLATE, FLATTEN).
+        std::vector<Vec3> gnorm;
+        if (mode == 1 || mode == 3) {
+            gnorm.assign((std::size_t)groups, Vec3{0, 0, 0});
+            for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+                const int a = triangles[t], b = triangles[t + 1], c = triangles[t + 2];
+                if (a < 0 || b < 0 || c < 0 || a >= (int)n || b >= (int)n || c >= (int)n) continue;
+                const Vec3 face = Vec3::Cross(snap[b] - snap[a], snap[c] - snap[a]);
+                gnorm[(std::size_t)group[a]] += face; gnorm[(std::size_t)group[b]] += face; gnorm[(std::size_t)group[c]] += face;
+            }
+            for (Vec3& v : gnorm) if (v.SqrMagnitude() > 1e-20f) v = v.Normalized();
+        }
+        // Average neighbour position of each group (SMOOTH).
+        std::vector<Vec3> gavg;
+        if (mode == 2) {
+            std::vector<std::vector<int>> nb((std::size_t)groups);
+            for (std::size_t t = 0; t + 2 < triangles.size(); t += 3)
+                for (int k = 0; k < 3; ++k) {
+                    const int a = triangles[t + k], b = triangles[t + (k + 1) % 3];
+                    if (a < 0 || b < 0 || a >= (int)n || b >= (int)n) continue;
+                    const int ga = group[a], gb = group[b];
+                    if (ga == gb) continue;
+                    nb[(std::size_t)ga].push_back(gb); nb[(std::size_t)gb].push_back(ga);
+                }
+            gavg = gpos;
+            for (int g = 0; g < groups; ++g) {
+                std::vector<int>& l = nb[(std::size_t)g];
+                std::sort(l.begin(), l.end());
+                l.erase(std::unique(l.begin(), l.end()), l.end());
+                if (l.empty()) continue;
+                Vec3 sum{0, 0, 0};
+                for (int h : l) sum += gpos[(std::size_t)h];
+                gavg[(std::size_t)g] = sum * (1.0f / (float)l.size());
+            }
+        }
+        // One stroke's displacement of every group.
+        auto stroke = [&](const Vec3& c, const Vec3& d, std::vector<Vec3>& disp) {
+            disp.assign((std::size_t)groups, Vec3{0, 0, 0});
+            Vec3 planeC{0, 0, 0}, planeN{0, 1, 0};
+            if (mode == 3) {   // the best-fit plane of the region: its centroid and averaged normal
+                Vec3 nsum{0, 0, 0}; int cnt = 0;
+                for (int g = 0; g < groups; ++g)
+                    if ((gpos[(std::size_t)g] - c).Magnitude() < radius) { planeC += gpos[(std::size_t)g]; nsum += gnorm[(std::size_t)g]; ++cnt; }
+                if (cnt == 0) return;
+                planeC = planeC * (1.0f / (float)cnt);
+                const float m = nsum.Magnitude();
+                if (m > 1e-6f) planeN = nsum * (1.0f / m);
+            }
+            for (int g = 0; g < groups; ++g) {
+                const Vec3 p = gpos[(std::size_t)g];
+                const float w = BrushFalloff((p - c).Magnitude(), radius);
+                if (w <= 0.0f) continue;
+                const float k = std::fmin(strength * w, 1.0f);
+                Vec3& out = disp[(std::size_t)g];
+                if (mode == 1) out = gnorm[(std::size_t)g] * (strength * w);                    // INFLATE
+                else if (mode == 2) out = (gavg[(std::size_t)g] - p) * k;                       // SMOOTH
+                else if (mode == 3) out = planeN * (-Vec3::Dot(p - planeC, planeN) * k);       // FLATTEN
+                else if (mode == 4) out = (c - p) * k;                                          // PINCH
+                else out = d * (strength * w);                                                  // GRAB
+            }
+        };
+        std::vector<Vec3> dispA;
+        stroke(center, dir, dispA);
+        if (!symmetryX) {
+            for (std::size_t i = 0; i < n; ++i) vertices[i] = snap[i] + dispA[(std::size_t)group[i]];
+        } else {
+            std::vector<Vec3> dispB;
+            stroke(Vec3{-center.x, center.y, center.z}, Vec3{-dir.x, dir.y, dir.z}, dispB);
+            const bool aIsPlus = center.x >= 0.0f;   // stroke A works on the side its centre is on
+            for (std::size_t i = 0; i < n; ++i) {
+                const std::size_t g = (std::size_t)group[i];
+                const float x = snap[i].x;
+                Vec3 dv;
+                if (x == 0.0f) dv = (dispA[g] + dispB[g]) * 0.5f;
+                else dv = ((x > 0.0f) == aIsPlus) ? dispA[g] : dispB[g];
+                vertices[i] = snap[i] + dv;
             }
         }
         name = "";
@@ -4657,19 +4772,36 @@ public:
         if (!HasFaceColors()) triColors.assign(TriangleCount(), base);
     }
 
-    /// Paint brush: blend the faces whose centroid lies within `radius` of
-    /// `center` toward color `c`, with a smoothstep falloff scaled by `blend`.
-    /// Painting keeps the primitive name — a painted cube is still a Cube.
+    /// Paint brush: blend the faces whose centre lies within `radius` of `center`
+    /// toward color `c`, by BrushFalloff times `blend` (at most all the way).
+    /// When the mesh knows its polygons (polyFace), a quad or n-gon is one face:
+    /// its centre is the average of its corners and all its triangles get the same
+    /// colour. Painting keeps the primitive name — a painted cube is still a Cube.
     void PaintFaces(const Vec3& center, float radius, const Color& c, float blend = 1.0f) {
-        if (radius <= 1e-6f || triangles.empty() || blend <= 0.0f) return;
+        if (!(radius > 1e-6f) || triangles.empty() || !(blend > 0.0f)) return;
+        if (!std::isfinite(radius + blend + center.x + center.y + center.z + c.r + c.g + c.b + c.a)) return;   // NaN would spread into the colours
         EnsureFaceColors();
-        for (int f = 0; f < TriangleCount(); ++f) {
-            float d = (FaceCenter(f) - center).Magnitude();
-            if (d >= radius) continue;
-            float w = 1.0f - d / radius;
-            w = w * w * (3.0f - 2.0f * w) * blend;
+        const int tc = TriangleCount();
+        const bool poly = (int)polyFace.size() == tc;
+        std::map<int, std::vector<int>> polyVerts;   // polygon id -> its corners
+        if (poly)
+            for (int f = 0; f < tc; ++f)
+                for (int k = 0; k < 3; ++k) polyVerts[polyFace[(std::size_t)f]].push_back(triangles[(std::size_t)f * 3 + k]);
+        std::map<int, Vec3> polyCentre;
+        for (auto& pv : polyVerts) {
+            std::vector<int>& l = pv.second;
+            std::sort(l.begin(), l.end());
+            l.erase(std::unique(l.begin(), l.end()), l.end());
+            Vec3 sum{0, 0, 0}; int cnt = 0;
+            for (int v : l) if (v >= 0 && v < (int)vertices.size()) { sum += vertices[(std::size_t)v]; ++cnt; }
+            polyCentre[pv.first] = cnt ? sum * (1.0f / (float)cnt) : Vec3{0, 0, 0};
+        }
+        for (int f = 0; f < tc; ++f) {
+            const Vec3 fc = poly ? polyCentre[polyFace[(std::size_t)f]] : FaceCenter(f);
+            float w = BrushFalloff((fc - center).Magnitude(), radius) * blend;
+            if (w <= 0.0f) continue;
             if (w > 1.0f) w = 1.0f;
-            Color& o = triColors[f];
+            Color& o = triColors[(std::size_t)f];
             o.r += (c.r - o.r) * w;
             o.g += (c.g - o.g) * w;
             o.b += (c.b - o.b) * w;

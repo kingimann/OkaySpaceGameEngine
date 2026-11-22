@@ -133,5 +133,54 @@ int main() {
         Input::SetUICaptured(false);
     }
 
+    // Controller only (an Xbox, a PC with just a pad): Start (Menu) on any pad opens and closes the menu, B closes it. Before
+    // 2026-11-22 only the keyboard toggle key did, so a player without a keyboard could not pause at all.
+    {
+        Input::FeedKeys({});
+        Input::SetUICaptured(false);
+        Game::SetPaused(false);
+        for (int i = 0; i < Input::kMaxGamepads; ++i) { Input::FeedGamepadAt(i, {}, 0); Input::FeedGamepadAt(i, {}, 0); }
+        Scene g("pause-pad");
+        auto* pm = g.CreateGameObject("PauseHolder")->AddComponent<PauseMenu>();
+        g.Start();
+        g.Update(0.016f);
+        CHECK(!Game::Paused());
+        const unsigned start = 1u << Input::PadStart, bButton = 1u << Input::PadB;
+        Input::FeedGamepadAt(0, {}, start);
+        g.Update(0.016f);
+        CHECK(Game::Paused());                                   // Start opens it
+        CHECK(g.Find("PauseMenu UI") && g.Find("PauseMenu UI")->active);
+        Input::FeedGamepadAt(0, {}, start);                      // the host feeds the pads every frame: still held
+        g.Update(0.016f);
+        CHECK(Game::Paused());                                   // held, not pressed again: stays open
+        Input::FeedGamepadAt(0, {}, 0);
+        g.Update(0.016f);
+        Input::FeedGamepadAt(0, {}, bButton);
+        g.Update(0.016f);
+        CHECK(!Game::Paused());                                  // B closes it
+        CHECK(g.Find("PauseMenu UI") && !g.Find("PauseMenu UI")->active);
+        Input::FeedGamepadAt(0, {}, 0);
+        g.Update(0.016f);
+        Input::FeedGamepadAt(0, {}, bButton);
+        g.Update(0.016f);
+        CHECK(!Game::Paused());                                  // B during play does not open it (B is a game button)
+        Input::FeedGamepadAt(0, {}, 0);
+        Input::FeedGamepadAt(2, {}, start);
+        g.Update(0.016f);
+        CHECK(Game::Paused());                                   // any player's Start
+        Input::FeedGamepadAt(2, {}, 0);
+        g.Update(0.016f);
+        Input::FeedGamepadAt(2, {}, start);
+        g.Update(0.016f);
+        CHECK(!Game::Paused());                                  // Start again closes it
+        Input::FeedGamepadAt(2, {}, 0);
+        g.Update(0.016f);
+        (void)pm;
+        Input::FeedKeys({});
+        InputActions::ClearContexts();
+        Game::SetPaused(false);
+        Input::SetUICaptured(false);
+    }
+
     TEST_MAIN_RESULT();
 }

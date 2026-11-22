@@ -1,0 +1,17 @@
+okayscene 1
+name "Old level with newer records"
+gravity 0 -9.81
+skybox2 "Sunset" 1 0.5
+gameobject 0 "Hero"
+  active 1
+  parent -1
+  transform 1 2 0 0 0 0 1 1 1 1
+  character
+  jetpack 1 4.5 "blue"
+end
+gameobject 1 "Cam"
+  active 1
+  parent 0
+  transform 0 0 -10 0 0 0 1 1 1 1
+  camera 0 5 60 0.1 0.1 0.1 1 1
+end

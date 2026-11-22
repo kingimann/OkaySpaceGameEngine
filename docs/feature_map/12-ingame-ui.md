@@ -73,7 +73,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Parts:**
   - 12.3.1 Slider - `Components/UISlider` - drag to a value in a range, whole-number mode, step, format, on_change()
   - 12.3.2 Toggle - `Components/UIToggle` - checkbox or sliding switch with label, on_toggle()
-  - 12.3.3 Input field - `Components/UIInputField` - OS text input, caret, placeholder, number or password mode, character whitelist, multiline, on_submit()
+  - 12.3.3 Input field - `Components/UIInputField` - OS text input, caret, placeholder, number or password mode, character whitelist, multiline, on_submit(); reachable by keyboard / pad menu navigation (`NavigateUI`: d-pad highlights, A / Enter starts editing; `focusable`, not saved in scenes yet; on an Xbox the on-screen keyboard comes up, see 18.10.8)
   - 12.3.4 Dropdown - `Components/UIDropdown` - header plus open option list, swallows the click under the list
   - 12.3.5 Stepper - `Components/UIStepper` - [-] value [+] with step and range
   - 12.3.6 Keybind field - `Components/UIKeybindField` - listen for a key, Escape cancels, Backspace resets, saves to Prefs
@@ -191,7 +191,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Parts:**
   - 12.8.1 Loading screen - `Components/LoadingScreen` - show-on-start or scene transition, progress, fade, rotating tips, bar and spinner styles, logo, slow zoom
   - 12.8.2 Loading layouts - `Components/LoadingScreenLayout` - one draw-command list (rect, gradient, image, text, arc) drawn identically by the player and the editor preview
-  - 12.8.3 Pause menu - `Components/PauseMenu` - Escape toggle, freezes time, free cursor, builds editable UI objects in the scene, keyboard and gamepad
+  - 12.8.3 Pause menu - `Components/PauseMenu` - Escape or Start on any pad toggles, B on a pad closes it (2026-11-22, controller-only play), freezes time, free cursor, builds editable UI objects in the scene, keyboard and gamepad
   - 12.8.4 Settings screen - `Components/SettingsScreen` - Music, Effects, Monitor, Display mode, Resolution, Refresh rate, VSync, Quality; Apply then "Keep these settings?" for 10 seconds; Text size, Colour filter, High contrast, Reduce motion, Reduce flashing, Subtitles, Sound captions, Hold to toggle, Aim assist, High-vis focus and Focus thickness bound to `Accessibility` (applied live, saved to Prefs on Done); Done returns to the pause menu
 - **Code:** `Components/LoadingScreen`, `Components/LoadingScreenLayout`, `Components/PauseMenu`, `Components/SettingsScreen`, `editor/main.cpp` (Loading Screen and Pause Menu inspectors ~31719, ~29517)
 - **API:** `LoadingScreen::Begin("Scene")`, `PauseMenu`, `SettingsScreen::AnyOpen`, `GameInputBlocked`

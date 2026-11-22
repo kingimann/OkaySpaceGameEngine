@@ -236,6 +236,7 @@ private:
         void SendVibration(const Vibration& v) override { if (target) target->SendVibration(v); }
         const char* Name() const override { return target ? target->Name() : "Xbox controller"; }
         bool HasTriggerMotors() const override { return target ? target->HasTriggerMotors() : true; }
+        bool ReadBattery(BatteryInfo& b) override { return target && target->ReadBattery(b); }
     };
     void Route(const std::vector<TouchEvent>& evs) {
         const SizePx sz = life_.Size(); const float w = sz.w > 0 ? (float)sz.w : 1.0f, h = sz.h > 0 ? (float)sz.h : 1.0f;
@@ -272,6 +273,9 @@ public:
     /// Turn lifecycle changes into engine events (and run onSuspend / onResume) and poll the pads. PollEvent does this when its queue is
     /// empty; the Windows glue also calls it from the Suspending handler, so the state is saved before the system's deadline.
     void ServiceLifecycle() { Translate(); }
+    /// Back requests (B on a console pad) since the last call. The engine bridge hands them to the game as an Escape tap
+    /// (XboxGameRuntime::BackPressed); they never quit the app.
+    int TakeBackPresses() { const int n = backPresses_; backPresses_ = 0; return n; }
 private:
     void Translate() {
         const std::uint64_t now = TicksMs();
@@ -289,12 +293,15 @@ private:
             // the composition now, so nothing is stuck after resume.
             CancelTouches();
             if (comp_.Cancel() && textInput_) q_.push_back(Base(platform::EventType::TextEditing));
+            // Motors off before the save: Windows.Gaming.Input holds a vibration until it is changed, and nothing polls while suspended.
+            for (BackendPad* bp : pads_) bp->StopRumble();
             q_.push_back(Base(platform::EventType::WindowFocusLost));
             if (onSuspend) onSuspend();
             life_.SaveDone();
         }
         if (p.resized) { platform::Event e = Base(platform::EventType::WindowResized); e.width = life_.Size().w; e.height = life_.Size().h; q_.push_back(e); }
         if (p.resumed) { q_.push_back(Base(platform::EventType::WindowFocusGained)); if (onResume) onResume(); }
+        if (p.back && !quitSent_) ++backPresses_;
         if (p.exitRequested && !quitSent_) { quitSent_ = true; q_.push_back(Base(platform::EventType::Quit)); }
     }
     friend class UwpWindow;
@@ -304,6 +311,7 @@ private:
     int mx_ = 0, my_ = 0, relDx_ = 0, relDy_ = 0; std::uint32_t mouse_ = 0;
     TouchTracker touch_; std::vector<TouchEvent> gestures_; long long mouseFinger_ = -1; TextComposition comp_; int imeRect_[4] = {0, 0, 0, 0};
     bool inited_ = false, textInput_ = false, rel_ = false, cursor_ = true, quitSent_ = false;
+    int backPresses_ = 0;
 };
 
 inline void* UwpWindow::NativeHandle() const { return b_->host_->CoreWindowHandle(); }

@@ -36,6 +36,7 @@
 #include "okay/Net/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
 #include "okay/Core/Game.hpp"
 #include "okay/Core/AssetManager.hpp"   // CachedCount() for the crash report
+#include "okay/Render/TextureAsset.hpp"  // textures::Pump once a frame, hot reload, the texture rows of the Profiler
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "ContentEditors.hpp"          // Items, Loot & Recipes (items.okayitems, .okayloot, .okayrecipes)
 #include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
@@ -55912,6 +55913,34 @@ void DrawProfiler(EditorState& ed) {
     if (F.buckets.empty())
         ImGui::TextDisabled(ed.isPlaying() ? "Collecting samples..."
                                            : "Press Play to time Scripts/Physics; the editor render is always timed.");
+    // Textures: every picture the shared texture library holds (Render/TextureAsset.hpp), its size and memory, and the
+    // budget (OKAY_TEXTURE_BUDGET_MB). GPU bytes are what the renderers uploaded (MemoryTracker "Textures (GPU)").
+    if (ImGui::CollapsingHeader("Textures")) {
+        const okay::textures::Stats ts = okay::textures::GetStats();
+        ImGui::TextUnformatted(okay::textures::OverlayLine().c_str());
+        if (ts.overBudget) ImGui::TextColored(ImVec4(1, 0.5f, 0.45f, 1), "Over the texture budget: unused pictures are let go of.");
+        ImGui::TextDisabled("Hot reload %s, %llu reloaded, %llu let go of for the budget", okay::textures::HotReload() ? "on" : "off",
+                            (unsigned long long)ts.reloads, (unsigned long long)ts.trimmed);
+        if (ImGui::BeginTable("proftex", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp |
+                              ImGuiTableFlags_ScrollY, ImVec2(0, 180))) {
+            ImGui::TableSetupColumn("Texture", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+            ImGui::TableSetupColumn("Size");
+            ImGui::TableSetupColumn("Mips");
+            ImGui::TableSetupColumn("MB");
+            ImGui::TableSetupColumn("Kind");
+            ImGui::TableHeadersRow();
+            for (const okay::textures::Row& r : okay::textures::Report()) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(std::filesystem::path(r.path).filename().string().c_str());
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", r.path.c_str());
+                ImGui::TableNextColumn(); ImGui::Text("%dx%d", r.width, r.height);
+                ImGui::TableNextColumn(); ImGui::Text("%d", r.mipLevels);
+                ImGui::TableNextColumn(); ImGui::Text("%.2f", r.bytes / 1048576.0);
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(r.registered ? "in memory" : r.normalMap ? "normal" : r.sRGB ? "colour" : "data");
+            }
+            ImGui::EndTable();
+        }
+    }
     ImGui::End();
 }
 
@@ -58745,6 +58774,18 @@ int main(int argc, char** argv) {
         if (GImGui && GImGui->ActiveId == 0 && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
             ed.CommitUndo();
         ApplyPrefabModeQueue(ed);   // prefab mode: open / leave / revert rebuild the scene, so they run here, between frames
+        {
+            // The shared texture library: a picture changed on disk shows in every view without a restart (hot reload
+            // on in the editor; OKAY_TEXTURE_HOT_RELOAD=0 turns it off), the memory budget, the F3 / Profiler numbers.
+            static const bool s_texHot = [] {
+                const char* e = std::getenv("OKAY_TEXTURE_HOT_RELOAD");
+                const bool on = !(e && e[0] == '0');
+                okay::textures::SetHotReload(on, 0.5);
+                return on;
+            }();
+            (void)s_texHot;
+            okay::textures::Pump();
+        }
         {
             TabPaddingScope tabPad;   // floating panel groups lay their tabs out in NewFrame()
             ImGui::NewFrame();

@@ -811,6 +811,7 @@ target_sources(okay_engine PRIVATE
     src/Core/FrameOverlay.cpp
     src/Core/TimeSnapshot.cpp
     src/Core/LoopConsole.cpp
+    src/Core/ConsoleHost.cpp
 )
 
 # Which module each engine file belongs to (engine/modules/*/module.okaymodule sources=). Keep this last: it reads the

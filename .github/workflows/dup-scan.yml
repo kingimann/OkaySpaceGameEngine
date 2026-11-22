@@ -1,0 +1,39 @@
+# Weekly duplicate-code scan of main (docs/process/no_duplicates.md).
+# Runs scripts/dup_lint.py scan over the whole repository: hits per fingerprint rule, exact and renamed clone pairs,
+# per language. The report is uploaded as an artifact. Fails when main is over the duplicate baseline (a copy landed
+# some other way) or when scripts/dup_baseline.json grew in the last 7 days (it may only shrink).
+# Pure Python and git; no secrets.
+name: Weekly duplicate scan
+on:
+  schedule:
+    - cron: '17 4 * * 1'   # Mondays 04:17 UTC
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Whole-tree duplicate scan
+        run: |
+          set -o pipefail
+          python3 scripts/dup_lint.py scan --histogram --loose --top 40 --fail-over-baseline 7 | tee dup_scan_report.txt
+      - name: Copies between open branches
+        if: always()
+        run: |
+          git fetch --quiet origin '+refs/heads/claude/*:refs/remotes/origin/claude/*' '+refs/heads/claude2/*:refs/remotes/origin/claude2/*' || true
+          python3 scripts/collision_check.py --offline > collision_report.md || true
+          cat collision_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: dup-scan-report
+          path: |
+            dup_scan_report.txt
+            collision_report.md
+          retention-days: 30

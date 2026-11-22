@@ -508,7 +508,7 @@ static std::string RunScenario(const Fix& fx, const std::string& text, int* errC
     Steam::Shutdown();
     vs::GlobalVariables().clear();
     Save::Clear();
-    TraverseJobs().clear(); HangPoints().clear(); HangGravity().clear();   // keyed by object address: a scene that ended mid-move leaves stale entries
+    TraverseJobs().clear(); HangPoints().clear(); HangEdges().clear(); HangGravity().clear();   // keyed by object address: a scene that ended mid-move leaves stale entries
     Scene s; s.physicsEnabled = true;
     GameObject* me; RichPopulate(s, me, fx.variant);
     if (fx.setup) fx.setup(s, me);

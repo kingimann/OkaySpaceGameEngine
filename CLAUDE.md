@@ -8,14 +8,18 @@ then this file gets updated. Keep this file short and true.
 
 1. **Keep working.** Do not stop to ask or to wait. When a decision is the owner's, pick the safe default, say what
    you picked, and carry on. Use several agents at once for independent work.
-2. **Always be working on something real, and keep the two Claudes apart.** (Owner rule, 2026-11-15: "have him work on
+2. **Always be working on something real, and keep the three Claudes apart.** (Owner rule, 2026-11-15: "have him work on
    bug fixes and third party and you work on unfinished features", and "no duplicate features". This replaces the
    earlier split of the same day, which was the other way round.)
-   - **Claude 2 (`claude2/*`, issue #422)** works on bug fixes and on building our own replacements for third-party
-     libraries (`docs/status/own_code_roadmap.md`: SDL2, Dear ImGui, the text editor, Assimp, ufbx, curl, libsodium).
+   - **Three Claudes since 2026-11-22** (owner: "I have 3 Claudes. I want 3 Claudes to be able to work together."). The
+     lanes and the paths each owns are in `docs/lanes.json`; the plain rules are in `docs/process/collaboration.md`.
    - **The coordinator session and its agents (`claude/*`)** work on unfinished features (`docs/status/UNFINISHED.md` and its
-     audits) and on coordinating: reviews, merges, releases, CI, and checking on Claude 2 (reading its reports,
-     answering it). The coordinator also finishes the feature branches Claude 2 left parked.
+     audits), the Xbox UWP port and our own replacements for third-party libraries (`docs/status/own_code_roadmap.md`;
+     handed over from Claude 2 on 2026-11-22), and on coordinating: reviews, releases, CI, and checking on the other Claudes.
+   - **Claude 2 (`claude2/*`, issue #422)** works on bug fixes, physics (own physics engine, ragdolls), removing duplicate
+     code and the duplicate guard, and splitting `editor/main.cpp`.
+   - **Claude 3 (`claude3/*`, issue #422)** works on the Build window and game export, streaming and LOD, the Steam/Epic
+     Store Kit, and C# and Lua scripting. It starts from `docs/process/claude3_start.md`.
    - **No duplicate features, in either lane.** Before building anything, search the feature map and the code
      (`python3 scripts/find_existing.py <keywords>`), then extend and finish what already exists instead of writing a
      second copy, and say in every claim what exists and what the gap is. (Owner, 2026-11-15: "make sure Claude 2 is
@@ -23,10 +27,10 @@ then this file gets updated. Keep this file short and true.
      duplicate found later is compared first, then merged or deleted.
    - Waiting for CI is not a reason to stop: start or continue one of those things while it runs, and never sit
      polling GitHub. If an agent or the main session has nothing running, start more agents on the next items.
-2a. **Do not give Claude 2 tasks.** (Owner rule, 2026-11-17: "stop giving claude 2 tasks".) The coordinator and its
-    agents do not assign, request or queue work for Claude 2, and do not post task requests for it on issue #422. Claude 2
-    chooses and claims its own work (rule 2). If a Claude 2 branch or PR needs fixing, the coordinator fixes it itself
-    (rules 8 and 25) and does not ask Claude 2 to.
+2a. **Do not give the other Claudes tasks.** (Owner rule, 2026-11-17: "stop giving claude 2 tasks".) The coordinator and its
+    agents do not assign, request or queue work for Claude 2 or Claude 3, and do not post task requests for them on issue #422.
+    Each Claude chooses and claims its own work in its lane (rule 2). If another Claude's branch or PR needs fixing, fix it
+    yourself (rules 8 and 25) and do not ask that Claude to.
 3. **Explain plainly.** Short, simple sentences. Say what you did, what it means and what is left. No jargon
    without a word of explanation.
 4. **Be honest.** Say exactly what was run and what was not. Say "unverified" when it is. Never call something
@@ -61,13 +65,13 @@ then this file gets updated. Keep this file short and true.
    run the relevant tests, push. This includes the `john/` branches (the owner allowed it).
 9. **Keep the open PR count low.** Merge or close. Close PRs that are superseded, with a comment saying by what.
    Do not open new PRs faster than CI can check them.
-10. Agents push only their own branch (plain push, never force) and do not open PRs unless told. The main session
-    opens and merges PRs.
-26. **Two Claudes, one set of lanes.** Claude 2 (`claude2/*`) and the coordinator (`claude/*`) follow
+10. Agents push only their own branch (plain push, never force) and do not open PRs unless told. Each Claude's main
+    session opens and merges its own lane's PRs (rule 6). Only the coordinator merges the release PR and runs `release.yml`.
+26. **Three Claudes, one set of lanes.** The coordinator (`claude/*`), Claude 2 (`claude2/*`) and Claude 3 (`claude3/*`) follow
     `docs/process/collaboration.md` and its table `docs/lanes.json`: run `python3 scripts/find_existing.py <keywords>` before
     you start anything; claim it with one comment `Claim: <branch>` on issue #422 (`Existing:`, `Gap:`, `Files:`,
     `Test-first:`, `Try-it:`; `Release: <branch>` when done; a claim expires after 24 hours with no push); never
-    touch files another open claim or the other lane owns without an `Agree:` reply; meet the readiness checklist
+    touch files another open claim or another lane owns without an `Agree:` reply from that lane; meet the readiness checklist
     before asking for a review. Every agent brief starts from `docs/process/agent_brief_template.md` with the current
     rules pasted in, so no agent works from stale rules. The checks are automatic: `scripts/collision_check.py`
     (in the live work board), `branch-lint` on every push, and the PR "How to try it" check.
@@ -150,6 +154,14 @@ then this file gets updated. Keep this file short and true.
     requests, issues and the internal record of releases. The repository may become private at any time, so never add a
     public-facing link to github.com, and a repo check fails if one appears in shipped code or shipped files.
 
+19c. **No duplicate code, across the whole repository, every language.** (Owner rule, 2026-11-22: "create a system so
+    duplicates can't happen again".) Before writing a helper or a system, look in `docs/engine/shared_code.md` and use or
+    extend the one listed there; never paste code from another file. Search `docs/engine/code_index.md` first; a PR lists
+    the existing code it reuses ("## Existing code"). Every claim on #422 names the existing code it builds on
+    ("Existing:"). `python3 scripts/dup_lint.py check` runs in CI and must pass: a pasted block or a new copy of a known
+    helper fails. A real need for a copy is marked `dup-allow: <reason>` on the line and explained in the PR. When a dedup
+    lands, shrink the baseline with `--update-baseline` in the same PR; the baseline may only go down.
+
 ## Machine and agents
 
 20. **Disk is tight.** Run `df -h /` before big builds, stop at under 5 GB free, build with `ninja -j2` and only
@@ -206,7 +218,7 @@ then this file gets updated. Keep this file short and true.
     sits behind a CMake option that is OFF by default, and code must keep compiling with the MinGW release compiler (rule
     21a). Only the public SDK: no GDK, GDKX or other restricted or separately licensed Microsoft SDKs without asking. Say
     "unverified" for anything not built and run on Windows. Rule 19a still holds for everything else.
-25. **Claude 2 reports its usage.** With each result Claude 2 posts `Usage: about N% left` on issue #422, and
+25. **Claude 2 and Claude 3 report their usage.** With each result each of them posts `Usage: about N% left` on issue #422, and
     `HANDOFF SOON` at about 20% and `HANDOFF NOW` at about 5%, naming its branches and what is unfinished, so the
-    coordinator can take its branches over. Claude 2 pushes only `claude2/*` branches, opens no PRs, and starts a
+    coordinator can take its branches over. Each pushes only its own lane's branches (`claude2/*` or `claude3/*`), and starts a
     piece of work only after posting "Claim: <branch>" with "Existing: ... / Gap: ..." (rule 2).

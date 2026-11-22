@@ -147,6 +147,11 @@ add_executable(test_physics3d test_physics3d.cpp)
 target_link_libraries(test_physics3d PRIVATE okay::engine)
 add_test(NAME physics3d COMMAND test_physics3d)
 
+# Classic and Improved 3D physics give bit-identical results for the same scene, wherever the heap puts the objects
+add_executable(test_physics3d_determinism test_physics3d_determinism.cpp)
+target_link_libraries(test_physics3d_determinism PRIVATE okay::engine)
+add_test(NAME physics3d_determinism COMMAND test_physics3d_determinism)
+
 # MeshCollider3D: real triangle-mesh collision (BVH): rays, overlaps, casts, bodies, edits, perf
 add_executable(test_meshcollider3d test_meshcollider3d.cpp)
 target_link_libraries(test_meshcollider3d PRIVATE okay::engine)

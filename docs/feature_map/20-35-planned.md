@@ -1168,7 +1168,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Parts:**
   - 31.1.1 String table file - `Core/Localization` - `strings.okayloc` with languages, keys, notes and per-language texts; plural forms and number, currency, percent and date formatting (merged #571)
   - 31.1.2 Localization window - `editor/LocalizationWindow.*` - grid of keys by languages with in-place editing, completion bars per language, search, filters (missing in a language, unused keys), Find in Scene, Add Dialogue and Quest Text, own undo
-  - 31.1.3 CSV exchange - `editor/LocalizationWindow.*` - Export CSV and Import CSV (header row names columns, comma/semicolon/tab, BOM)
+  - 31.1.3 CSV and JSON exchange - `editor/LocalizationWindow.*`, `editor/LocalizationTools` - Export CSV, Export JSON (whole table, or one language when the file is named after it) and Import... for both, with a confirm box that lists what would change first (CSV header row names columns, comma/semicolon/tab, BOM)
   - 31.1.4 Table tool layer (#574) - `Core/LocTable`, `Core/LocCheck`, `Core/LocScan` - cell states (translated, missing, same-as-source, placeholder mismatch, extra), CSV and JSON, placeholder and plural checker, scan for used, unused and undefined keys
   - 31.1.5 Scene text binding - `Scene/SceneLocalization` - localized text on scene objects follows the current language
 - **Code:** `Core/Localization`, `Scene/SceneLocalization`, `editor/LocalizationWindow.*`, `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`
@@ -1176,16 +1176,16 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** View > Editors & Tools > Localization; Inspector "Localized" checkbox on text fields
 - **Docs:** `docs/engine/localization.md`, `docs/engine/localization.md`; `docs/engine/localization.md`
 - **Tests:** `localization`, `loc_prefs_time`; `loc_tools`, `loc_window`
-- **Status:** Partial - the window uses `LocTable` for the grid and cell states, `LocCheck` and `LocMissingReport` for the report, and `LocScanProject` for unused and undefined keys. JSON in the window and a confirm step before CSV import are still out.
-- **Exists today:** The window and file format (`docs/engine/localization.md`). The grid, the missing-key and placeholder report, and the project scan go through `editor/LocalizationTools`. CSV import reports the `LocDiffTables` summary. JSON exchange and a confirm-before-import step are engine-only.
+- **Status:** Partial - the window uses `LocTable` for the grid and cell states, `LocCheck` and `LocMissingReport` for the report, and `LocScanProject` for unused and undefined keys. JSON import and export and the confirm step before an import are in the window (2026-11-22, test `loc_window`).
+- **Exists today:** The window and file format (`docs/engine/localization.md`). The grid, the missing-key and placeholder report, and the project scan go through `editor/LocalizationTools`. An import (CSV or JSON) is planned first (`PlanLocImport`) and an Import Translations box shows the `LocDiffTables` changes before they are applied.
 - **Work packages:**
   1. M - Done. Window uses `LocTable` for cell states (same-as-source, placeholder mismatch, extra) and a state filter.
   2. S - Done. Checker report panel (`LocCheck`): broken placeholders and plural forms, click to jump to the key.
-  3. S - Import preview: the status line reports the diff after a CSV import (`LocDiffTables`). A confirm step before applying it is still open. Depends on: package 1.
-  4. S - JSON import and export (one file per language) for web translators. Depends on: package 1.
+  3. S - Done. Import preview: an Import Translations box lists the `LocDiffTables` changes and applies them only on Import.
+  4. S - Done. JSON import and export (whole table, or one file per language named by its code) for web translators.
   5. M - Done. Key scan uses `LocScanProject` for "used in code, scenes, dialogue" and flags undefined keys.
   6. M - Translation memory and machine-translation suggestion hook (optional). Depends on: package 1.
-- **Open:** JSON import and export in the window, a confirm step before CSV import, and translation memory. The window uses `LocTable`, `LocCheck` and `LocScan`. Right-to-left scripts are drawn left to right (see 31.3).
+- **Open:** translation memory. The window uses `LocTable`, `LocCheck` and `LocScan`. Right-to-left scripts are drawn left to right (see 31.3).
 - **Related:** 1.8, 12.2, 31.2, 31.3, 10.2
 - **Words:** localization, translation, string table, strings.okayloc, CSV, missing keys, unused keys, plural, translators, languages, i18n
 - **Seen as:** missing translation shows the key; placeholder `{0}` lost in a translation; cannot hand translators a spreadsheet

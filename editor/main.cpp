@@ -43983,6 +43983,11 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Start Delay##spwn");
             if (ImGui::Checkbox("Hide Template##spwn", &c->deactivateTemplate)) ed.dirty = true;
             oked::FieldTip("Hide Template##spwn");
+            if (ImGui::Checkbox("Use Pool##spwn", &c->usePool)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Reuse finished copies instead of making new ones. A copy that ends with a Lifetime,\n"
+                                  "a Projectile 3D or pool_release() goes back to this spawner's pool and the next spawn\n"
+                                  "takes it again, reset to a fresh copy of the template. Good for bullets, sparks and pickups.");
             ImGui::SeparatorText("Waves");
             if (ImGui::DragInt("Count Per Wave##spwn", &c->count, 0.1f, 1, 200)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawns per wave. 1 = classic steady drip (no waves).");
@@ -43996,6 +44001,9 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("%s — wave %d done, %d alive, %d spawned",
                                     c->Running() ? "Running" : "Stopped",
                                     c->WavesDone(), c->AliveCount(), c->Spawned());
+            if (ed.isPlaying() && c->Pool())
+                ImGui::TextDisabled("Pool: %d made, %d reused, %d waiting",
+                                    c->Pool()->CreatedCount(), c->Pool()->ReuseCount(), c->Pool()->IdleCount());
             if (ImGui::SmallButton("Remove##spwn")) toRemove = c;
         }
     }
@@ -59165,7 +59173,7 @@ int main(int argc, char** argv) {
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
-            LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY
+            LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY / OKAY_UI_LOCIMPORT
             ContentEditorsDevHooks(ed); // OKAY_UI_CONTENT / OKAY_UI_CONTENT_TAB / OKAY_UI_CONTENT_DIR
             WeaponEditorDevHooks(ed);   // OKAY_UI_WEAPONS / OKAY_UI_WEAPONS_FILE
             SplineDevHooks(ed);       // OKAY_UI_SPLINE / SPLINESEL / SPLINECAM

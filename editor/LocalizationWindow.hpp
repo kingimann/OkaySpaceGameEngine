@@ -64,7 +64,8 @@ void CopyLocalizationFiles(okay::editor::EditorState& ed, const std::string& dat
 
 // Dev screenshot hooks: OKAY_UI_LOC=1 opens the window, OKAY_UI_LANG=<code>
 // previews that language (qps-ploc = pseudo-localized), OKAY_UI_LOCKEY=<key>
-// selects a key (its Find in Scene list shows).
+// selects a key (its Find in Scene list shows), OKAY_UI_LOCIMPORT=<file> reads a CSV or JSON
+// file as Import... does and shows the Import Translations confirm box.
 void LocalizationDevHooks(okay::editor::EditorState& ed);
 
 } // namespace oked

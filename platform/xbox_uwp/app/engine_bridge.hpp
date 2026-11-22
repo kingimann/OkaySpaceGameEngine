@@ -9,6 +9,8 @@
 
 namespace okay_xbox_bridge {
 
+/// Windows.Gaming.Input BatteryReport: Status (Windows.System.Power.BatteryStatus, -1 = none) and the nullable capacities (-1 = not given).
+struct BatteryPod { int status = -1; long long remainingMwh = -1, fullMwh = -1; };
 struct PadReadingPod { std::uint32_t buttons = 0; double leftTrigger = 0, rightTrigger = 0, leftX = 0, leftY = 0, rightX = 0, rightY = 0; };
 
 /// What the engine side asks of the shell (Windows.Gaming.Input, the dispatcher, the audio device id). All called on the UI thread.
@@ -25,6 +27,11 @@ struct ShellCallbacks {
     void (*padKeys)(void* user, std::vector<std::string>* out) = nullptr;
     bool (*padReadKey)(void* user, const std::string& key, PadReadingPod* out) = nullptr;
     void (*padVibrateKey)(void* user, const std::string& key, double left, double right, double leftTrigger, double rightTrigger) = nullptr;
+    /// IGameControllerBatteryInfo.TryGetBatteryReport of the pad with this key; false = no report. Asked at most every 5 s per pad.
+    bool (*padBatteryKey)(void* user, const std::string& key, BatteryPod* out) = nullptr;
+    /// The on-screen keyboard (XboxTextEntry.hpp): show = true brings it up for a field holding `utf8` (scope 0 default, 1 number,
+    /// 2 password); false puts it away. Called from inside Run, on the UI thread.
+    void (*textEntry)(void* user, bool show, int scope, const std::string& utf8) = nullptr;
 };
 
 struct Engine;   // opaque
@@ -49,9 +56,18 @@ void Text(Engine* e, const std::string& utf8);
 void PointerMove(Engine* e, int x, int y);
 void PointerButton(Engine* e, int button, bool down, int x, int y);
 void Wheel(Engine* e, float notches);
-/// Suspend: saves (runs the game's hook), trims the GPU. Synchronous; the shell completes its deferral right after. Resume re-checks the device.
-void Suspending(Engine* e, std::uint64_t deadlineMs);
+/// Suspend: stops rumble, saves the settings and the game state inside the deadline, trims the GPU. Synchronous; the shell completes
+/// its deferral right after. `deadlineTicks` = SuspendingOperation.Deadline and `nowTicks` = clock::now(), both DateTime 100 ns ticks
+/// (0 = unknown: about 5 s is assumed). Resume re-checks the device.
+void Suspending(Engine* e, long long deadlineTicks, long long nowTicks);
 void Resuming(Engine* e);
+
+// The on-screen keyboard: InputPane Showing / Hiding, and the edit context's text. KeyboardText takes the whole new value (UTF-8)
+// and returns what the field kept (its length and content-type rules), so the shell can re-sync the keyboard. KeyboardSubmit = Enter.
+void KeyboardShown(Engine* e);
+void KeyboardHidden(Engine* e);
+std::string KeyboardText(Engine* e, const std::string& utf8);
+void KeyboardSubmit(Engine* e);
 
 /// The game loop. Returns true when the game ended normally (the game quit or the window closed); false with `err` set when it could not start or failed.
 bool Run(Engine* e, std::string& err);

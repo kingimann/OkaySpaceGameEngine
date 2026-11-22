@@ -932,16 +932,16 @@ Value State::CallMeta2(const Value& f, const Value& a, const Value& b) {
     return co_->stack[(std::size_t)--co_->top];
 }
 
-Value State::Index(const Value& objIn, const Value& key) {
+bool State::IndexStep(const Value& objIn, const Value& key, Value& out, Value& fn, Value& self) {
     Value obj = objIn;
     for (int loop = 0; loop < 100; ++loop) {
         Value tm;
         if (obj.t == Type::Table) {
             Table* t = obj.Tab();
             Value v = t->Get(key);
-            if (!v.IsNil() || !t->meta) return v;
+            if (!v.IsNil() || !t->meta) { out = v; return true; }
             tm = t->meta->GetStr(tmName[TM_INDEX]);
-            if (tm.IsNil()) return v;
+            if (tm.IsNil()) { out = v; return true; }
         } else {
             tm = GetTM(obj, TM_INDEX);
             if (tm.IsNil()) {
@@ -949,23 +949,30 @@ Value State::Index(const Value& objIn, const Value& key) {
                 Error(std::string("attempt to index a ") + TypeName(obj) + " value");
             }
         }
-        if (tm.IsFunction()) return CallMeta2(tm, obj, key);
+        if (tm.t == Type::LFunc) { fn = tm; self = obj; return false; }
+        if (tm.IsFunction()) { out = CallMeta2(tm, obj, key); return true; }
         obj = tm;
     }
     Error("'__index' chain too long; possible loop");
 }
 
-void State::SetIndex(const Value& objIn, const Value& key, const Value& v) {
+Value State::Index(const Value& obj, const Value& key) {
+    Value out, fn, self;
+    if (IndexStep(obj, key, out, fn, self)) return out;
+    return CallMeta2(fn, self, key);
+}
+
+bool State::NewIndexStep(const Value& objIn, const Value& key, const Value& v, Value& fn, Value& self) {
     Value obj = objIn;
     for (int loop = 0; loop < 100; ++loop) {
         Value tm;
         if (obj.t == Type::Table) {
             Table* t = obj.Tab();
-            if (!t->meta) { t->Set(*this, key, v); return; }
+            if (!t->meta) { t->Set(*this, key, v); return true; }
             Value cur = t->Get(key);
-            if (!cur.IsNil()) { t->Set(*this, key, v); return; }
+            if (!cur.IsNil()) { t->Set(*this, key, v); return true; }
             tm = t->meta->GetStr(tmName[TM_NEWINDEX]);
-            if (tm.IsNil()) { t->Set(*this, key, v); return; }
+            if (tm.IsNil()) { t->Set(*this, key, v); return true; }
         } else {
             tm = GetTM(obj, TM_NEWINDEX);
             if (tm.IsNil()) {
@@ -973,6 +980,7 @@ void State::SetIndex(const Value& objIn, const Value& key, const Value& v) {
                 Error(std::string("attempt to index a ") + TypeName(obj) + " value");
             }
         }
+        if (tm.t == Type::LFunc) { fn = tm; self = obj; return false; }
         if (tm.IsFunction()) {
             CheckStack(5);
             int func = co_->top;
@@ -981,11 +989,23 @@ void State::SetIndex(const Value& objIn, const Value& key, const Value& v) {
             co_->stack[(std::size_t)co_->top++] = key;
             co_->stack[(std::size_t)co_->top++] = v;
             CallAt(func, 0);
-            return;
+            return true;
         }
         obj = tm;
     }
     Error("'__newindex' chain too long; possible loop");
+}
+
+void State::SetIndex(const Value& obj, const Value& key, const Value& v) {
+    Value fn, self;
+    if (NewIndexStep(obj, key, v, fn, self)) return;
+    CheckStack(5);
+    int func = co_->top;
+    co_->stack[(std::size_t)co_->top++] = fn;
+    co_->stack[(std::size_t)co_->top++] = self;
+    co_->stack[(std::size_t)co_->top++] = key;
+    co_->stack[(std::size_t)co_->top++] = v;
+    CallAt(func, 0);
 }
 
 namespace {
@@ -1149,6 +1169,51 @@ Value State::Arith(int op, const Value& a, const Value& b) {
     Value tmp;
     bool aok = ToNumber(a, tmp);
     OpError("perform arithmetic on", aok ? b : a, aok ? 1 : 0);
+}
+
+Value State::ArithLuaTM(int op, const Value& a, const Value& b) {
+    Value x, y;
+    if (op >= BAND) {
+        if (a.IsNumber() && b.IsNumber()) return Value();
+    } else if (ToNumber(a, x) && ToNumber(b, y)) {
+        return Value();
+    }
+    int tm = TM_ADD + (op - ADD);
+    Value f = GetTM(a, tm);
+    if (f.IsNil()) f = GetTM(b, tm);
+    return f.t == Type::LFunc ? f : Value();
+}
+
+void State::PushMetaFrame(int dst, const Value& f, const Value* args, int nargs, int nres, std::uint8_t post) {
+    Value fn = f, a[3];
+    for (int i = 0; i < nargs; ++i) a[i] = args[i];   // the arguments may live in the slots we overwrite
+    CheckStack(nargs + 2);
+    Coroutine* co = co_;
+    co->stack[(std::size_t)dst] = fn;
+    for (int i = 0; i < nargs; ++i) co->stack[(std::size_t)(dst + 1 + i)] = a[i];
+    co->top = dst + 1 + nargs;
+    PushLuaFrame(dst, nargs, nres, false);
+    co->frames.back().post = post;
+}
+
+void State::PushXPcallMarker(int func, int nargs, int nres) {
+    Coroutine* co = co_;
+    if (co->frames.size() >= 200000) Error("stack overflow");
+    NClosure* xp = co->stack[(std::size_t)func].NFn();
+    // func: xpcall, func+1: f, func+2: handler, args... -> func: handler, func+1: f, args...
+    co->stack[(std::size_t)func] = co->stack[(std::size_t)(func + 2)];
+    for (int i = func + 2; i < co->top - 1; ++i) co->stack[(std::size_t)i] = co->stack[(std::size_t)(i + 1)];
+    co->top--;
+    Frame m;
+    m.ncl = xp;
+    m.func = func;
+    m.base = func + 1;
+    m.nres = nres;
+    m.pcallMark = true;
+    m.xpcallMark = true;
+    m.tbcMark = (int)co->tbc.size();
+    co->frames.push_back(m);
+    PushLuaFrame(func + 1, nargs - 2, -1, false);
 }
 
 Value State::Length(const Value& v) {
@@ -1647,6 +1712,20 @@ bool State::RecoverAtPcall(std::size_t entryIdx) {
     if (!found) return false;
     Frame m = co->frames[idx];
     Value err = errorValue;
+    if (m.xpcallMark) {
+        // xpcall: the message handler runs where the error happened (the frames are still there)
+        try {
+            CheckStack(3);
+            int hf = co->top;
+            co->stack[(std::size_t)hf] = co->stack[(std::size_t)m.func];
+            co->stack[(std::size_t)(hf + 1)] = err;
+            co->top = hf + 2;
+            CallAt(hf, 1);
+            err = co->stack[(std::size_t)(co->top - 1)];
+        } catch (const LuaError&) {
+            err = errorValue;
+        }
+    }
     Unwind(idx, m.func + 1, err);   // drops the marker too; closes variables with the error
     errorValue = Value();
     CheckStack(2);
@@ -1700,78 +1779,93 @@ newframe:
             }
             case GETUP: S(TOP) = cl->up[(std::size_t)in.a]->v; ++TOP; break;
             case SETUP: cl->up[(std::size_t)in.a]->v = S(--TOP); break;
+            // The table operations below call a Lua __index / __newindex function as a frame of
+            // this loop (PushMetaFrame), so a coroutine can yield inside it; a native handler is
+            // called directly.
             case GETTABUPK: {
                 Value t = cl->up[(std::size_t)in.a]->v;
                 Value r;
                 if (t.t == Type::Table) {
                     r = t.Tab()->GetStr(K[in.b].Str());
-                    if (r.IsNil() && t.Tab()->meta) r = Index(t, K[in.b]);
-                } else {
-                    r = Index(t, K[in.b]);
+                    if (!r.IsNil() || !t.Tab()->meta) { S(TOP++) = r; break; }
                 }
-                S(TOP++) = r;
-                break;
+                Value fn, self;
+                if (IndexStep(t, K[in.b], r, fn, self)) { S(TOP++) = r; break; }
+                Value args[2] = {self, K[in.b]};
+                PushMetaFrame(TOP, fn, args, 2, 1, 0);
+                goto newframe;
             }
             case SETTABUPK: {
                 Value t = cl->up[(std::size_t)in.a]->v;
                 Value v = S(TOP - 1);
-                if (t.t == Type::Table && !t.Tab()->meta) t.Tab()->Set(*this, K[in.b], v);
-                else SetIndex(t, K[in.b], v);
-                --TOP;
-                break;
+                if (t.t == Type::Table && !t.Tab()->meta) { t.Tab()->Set(*this, K[in.b], v); --TOP; break; }
+                Value fn, self;
+                if (NewIndexStep(t, K[in.b], v, fn, self)) { --TOP; break; }
+                Value args[3] = {self, K[in.b], v};
+                PushMetaFrame(TOP - 1, fn, args, 3, 0, 0);
+                goto newframe;
             }
             case GETINDEX: {
                 Value t = S(TOP - 2), k = S(TOP - 1);
                 Value r;
                 if (t.t == Type::Table) {
                     r = t.Tab()->Get(k);
-                    if (r.IsNil() && t.Tab()->meta) r = Index(t, k);
-                } else {
-                    r = Index(t, k);
+                    if (!r.IsNil() || !t.Tab()->meta) { --TOP; S(TOP - 1) = r; break; }
                 }
-                --TOP;
-                S(TOP - 1) = r;
-                break;
+                Value fn, self;
+                if (IndexStep(t, k, r, fn, self)) { --TOP; S(TOP - 1) = r; break; }
+                Value args[2] = {self, k};
+                PushMetaFrame(TOP - 2, fn, args, 2, 1, 0);
+                goto newframe;
             }
             case GETFIELD: {
                 Value t = S(TOP - 1);
                 Value r;
                 if (t.t == Type::Table) {
                     r = t.Tab()->GetStr(K[in.a].Str());
-                    if (r.IsNil() && t.Tab()->meta) r = Index(t, K[in.a]);
-                } else {
-                    r = Index(t, K[in.a]);
+                    if (!r.IsNil() || !t.Tab()->meta) { S(TOP - 1) = r; break; }
                 }
-                S(TOP - 1) = r;
-                break;
+                Value fn, self;
+                if (IndexStep(t, K[in.a], r, fn, self)) { S(TOP - 1) = r; break; }
+                Value args[2] = {self, K[in.a]};
+                PushMetaFrame(TOP - 1, fn, args, 2, 1, 0);
+                goto newframe;
             }
             case SETINDEX: {
-                Value t = S(TOP - 3);
-                if (t.t == Type::Table && !t.Tab()->meta) t.Tab()->Set(*this, S(TOP - 2), S(TOP - 1));
-                else SetIndex(t, S(TOP - 2), S(TOP - 1));
-                TOP -= 3;
-                break;
+                Value t = S(TOP - 3), k = S(TOP - 2), v = S(TOP - 1);
+                if (t.t == Type::Table && !t.Tab()->meta) { t.Tab()->Set(*this, k, v); TOP -= 3; break; }
+                Value fn, self;
+                if (NewIndexStep(t, k, v, fn, self)) { TOP -= 3; break; }
+                Value args[3] = {self, k, v};
+                PushMetaFrame(TOP - 3, fn, args, 3, 0, 0);
+                goto newframe;
             }
             case SETFIELD: {
-                Value t = S(TOP - 2);
-                if (t.t == Type::Table && !t.Tab()->meta) t.Tab()->Set(*this, K[in.a], S(TOP - 1));
-                else SetIndex(t, K[in.a], S(TOP - 1));
-                TOP -= 2;
-                break;
+                Value t = S(TOP - 2), v = S(TOP - 1);
+                if (t.t == Type::Table && !t.Tab()->meta) { t.Tab()->Set(*this, K[in.a], v); TOP -= 2; break; }
+                Value fn, self;
+                if (NewIndexStep(t, K[in.a], v, fn, self)) { TOP -= 2; break; }
+                Value args[3] = {self, K[in.a], v};
+                PushMetaFrame(TOP - 2, fn, args, 3, 0, 0);
+                goto newframe;
             }
             case SETINDEXAT: {
-                Value t = S(base + in.a);
-                if (t.t == Type::Table && !t.Tab()->meta) t.Tab()->Set(*this, S(base + in.a + 1), S(TOP - 1));
-                else SetIndex(t, S(base + in.a + 1), S(TOP - 1));
-                --TOP;
-                break;
+                Value t = S(base + in.a), k = S(base + in.a + 1), v = S(TOP - 1);
+                if (t.t == Type::Table && !t.Tab()->meta) { t.Tab()->Set(*this, k, v); --TOP; break; }
+                Value fn, self;
+                if (NewIndexStep(t, k, v, fn, self)) { --TOP; break; }
+                Value args[3] = {self, k, v};
+                PushMetaFrame(TOP - 1, fn, args, 3, 0, 0);
+                goto newframe;
             }
             case SETFIELDAT: {
-                Value t = S(base + in.a);
-                if (t.t == Type::Table && !t.Tab()->meta) t.Tab()->Set(*this, K[in.b], S(TOP - 1));
-                else SetIndex(t, K[in.b], S(TOP - 1));
-                --TOP;
-                break;
+                Value t = S(base + in.a), v = S(TOP - 1);
+                if (t.t == Type::Table && !t.Tab()->meta) { t.Tab()->Set(*this, K[in.b], v); --TOP; break; }
+                Value fn, self;
+                if (NewIndexStep(t, K[in.b], v, fn, self)) { --TOP; break; }
+                Value args[3] = {self, K[in.b], v};
+                PushMetaFrame(TOP - 1, fn, args, 3, 0, 0);
+                goto newframe;
             }
             case SETKV: {
                 S(base + in.a).Tab()->Set(*this, S(TOP - 2), S(TOP - 1));
@@ -1820,12 +1914,24 @@ newframe:
                     --TOP;
                     break;
                 }
+                Value lf = ArithLuaTM(in.op, S(TOP - 2), S(TOP - 1));
+                if (lf.t == Type::LFunc) {
+                    Value args[2] = {S(TOP - 2), S(TOP - 1)};
+                    PushMetaFrame(TOP - 2, lf, args, 2, 1, 0);
+                    goto newframe;
+                }
                 Value r = Arith(in.op, S(TOP - 2), S(TOP - 1));
                 --TOP;
                 S(TOP - 1) = r;
                 break;
             }
             case MOD: case POW: case DIV: case IDIV: case BAND: case BOR: case BXOR: case SHL: case SHR: {
+                Value lf = ArithLuaTM(in.op, S(TOP - 2), S(TOP - 1));
+                if (lf.t == Type::LFunc) {
+                    Value args[2] = {S(TOP - 2), S(TOP - 1)};
+                    PushMetaFrame(TOP - 2, lf, args, 2, 1, 0);
+                    goto newframe;
+                }
                 Value r = Arith(in.op, S(TOP - 2), S(TOP - 1));
                 --TOP;
                 S(TOP - 1) = r;
@@ -1841,6 +1947,11 @@ newframe:
                     else {
                         Value tm = GetTM(v, TM_UNM);
                         if (tm.IsNil()) OpError("perform arithmetic on", v, 0);
+                        if (tm.t == Type::LFunc) {
+                            Value args[2] = {v, v};
+                            PushMetaFrame(TOP - 1, tm, args, 2, 1, 0);
+                            goto newframe;
+                        }
                         Value r = CallMeta2(tm, v, v);
                         S(TOP - 1) = r;
                     }
@@ -1857,6 +1968,11 @@ newframe:
                         if (v.IsNumber()) Error("number has no integer representation");
                         OpError("perform bitwise operation on", v, 0);
                     }
+                    if (tm.t == Type::LFunc) {
+                        Value args[2] = {v, v};
+                        PushMetaFrame(TOP - 1, tm, args, 2, 1, 0);
+                        goto newframe;
+                    }
                     Value r = CallMeta2(tm, v, v);
                     S(TOP - 1) = r;
                 }
@@ -1867,7 +1983,16 @@ newframe:
                 Value v = S(TOP - 1);
                 if (v.t == Type::String) S(TOP - 1) = Value::Int((std::int64_t)v.Str()->s.size());
                 else if (v.t == Type::Table && !v.Tab()->meta) S(TOP - 1) = Value::Int(v.Tab()->Length());
-                else { Value r = Length(v); S(TOP - 1) = r; }
+                else {
+                    Value tm = v.t == Type::String ? Value() : GetTM(v, TM_LEN);
+                    if (tm.t == Type::LFunc) {
+                        Value args[2] = {v, v};
+                        PushMetaFrame(TOP - 1, tm, args, 2, 1, 0);
+                        goto newframe;
+                    }
+                    Value r = Length(v);
+                    S(TOP - 1) = r;
+                }
                 break;
             }
             case CONCAT: {
@@ -1892,6 +2017,19 @@ newframe:
                     Charge(s.size() / 64);
                     TOP -= n - 1;
                     S(TOP - 1) = Value::Obj(NewString(s));
+                } else if (n == 2) {
+                    // two values: a Lua __concat runs as a frame of the loop (it can yield)
+                    Value a = S(TOP - 2), b = S(TOP - 1);
+                    Value tm = GetTM(a, TM_CONCAT);
+                    if (tm.IsNil()) tm = GetTM(b, TM_CONCAT);
+                    if (tm.t == Type::LFunc) {
+                        Value args[2] = {a, b};
+                        PushMetaFrame(TOP - 2, tm, args, 2, 1, 0);
+                        goto newframe;
+                    }
+                    Value r = Concat(a, b);
+                    --TOP;
+                    S(TOP - 1) = r;
                 } else {
                     for (int k = n; k > 1; --k) {
                         Value r = Concat(S(TOP - 2), S(TOP - 1));
@@ -1903,6 +2041,15 @@ newframe:
             }
             case EQ: case NE: {
                 Value a = S(TOP - 2), b = S(TOP - 1);
+                if (a.t == b.t && (a.t == Type::Table || a.t == Type::Userdata) && !RawEquals(a, b)) {
+                    Value tm = GetTM(a, TM_EQ);
+                    if (tm.IsNil()) tm = GetTM(b, TM_EQ);
+                    if (tm.t == Type::LFunc) {
+                        Value args[2] = {a, b};
+                        PushMetaFrame(TOP - 2, tm, args, 2, 1, in.op == EQ ? 1 : 2);
+                        goto newframe;
+                    }
+                }
                 bool r = (a.t == b.t && a.t != Type::Table && a.t != Type::Userdata) ? RawEquals(a, b) : Equals(a, b);
                 --TOP;
                 S(TOP - 1) = Value::Bool(in.op == EQ ? r : !r);
@@ -1913,6 +2060,24 @@ newframe:
                 bool r;
                 if (a.t == Type::Int && b.t == Type::Int) {
                     r = in.op == LT ? a.i < b.i : in.op == LE ? a.i <= b.i : in.op == GT ? a.i > b.i : a.i >= b.i;
+                } else if (!(a.IsNumber() && b.IsNumber()) && !(a.IsString() && b.IsString())) {
+                    // a Lua __lt / __le runs as a frame of the loop (GT and GE swap the operands)
+                    const bool swap = in.op == GT || in.op == GE;
+                    const int ev = (in.op == LT || in.op == GT) ? TM_LT : TM_LE;
+                    Value x = swap ? b : a, y = swap ? a : b;
+                    Value tm = GetTM(x, ev);
+                    if (tm.IsNil()) tm = GetTM(y, ev);
+                    if (tm.t == Type::LFunc) {
+                        Value args[2] = {x, y};
+                        PushMetaFrame(TOP - 2, tm, args, 2, 1, 1);
+                        goto newframe;
+                    }
+                    switch (in.op) {
+                        case LT: r = LessThan(a, b); break;
+                        case LE: r = LessEqual(a, b); break;
+                        case GT: r = LessThan(b, a); break;
+                        default: r = LessEqual(b, a); break;
+                    }
                 } else {
                     switch (in.op) {
                         case LT: r = LessThan(a, b); break;
@@ -1963,6 +2128,10 @@ newframe:
                         PushLuaFrame(func + 1, nargs - 1, -1, false);
                         goto newframe;
                     }
+                    if (f.t == Type::NFunc && f.NFn()->fn == XPCallNative && nargs >= 2 && S(func + 1).t == Type::LFunc) {
+                        PushXPcallMarker(func, nargs, in.c);
+                        goto newframe;
+                    }
                     if (f.t == Type::NFunc) {
                         if (CallNative(func, nargs, in.c) == kYieldResult) {
                             co->yieldFunc = func;
@@ -1995,6 +2164,10 @@ newframe:
                     PushLuaFrame(func + 1, nargs - 1, -1, false);
                     goto newframe;
                 }
+                if (S(func).t == Type::NFunc && S(func).NFn()->fn == XPCallNative && nargs >= 2 && S(func + 1).t == Type::LFunc) {
+                    PushXPcallMarker(func, nargs, -1);   // return xpcall(f, h, ...)
+                    goto newframe;
+                }
                 if (S(func).t == Type::NFunc) {
                     if (CallNative(func, nargs, -1) == kYieldResult) {
                         co->yieldFunc = func;
@@ -2011,6 +2184,7 @@ newframe:
                 co->frames.pop_back();
                 PushLuaFrame(dst, nargs, old.nres, old.entry);
                 FR.tail = true;
+                FR.post = old.post;   // a metamethod's tail call: its result is still converted
                 goto newframe;
             }
             case RETURN: {
@@ -2024,6 +2198,10 @@ newframe:
                 Frame done = FR;
                 co->frames.pop_back();
                 PostCall(done, first, n);
+                if (done.post) {   // a comparison metamethod: the result is a boolean
+                    const bool t = S(done.func).Truthy();
+                    S(done.func) = Value::Bool(done.post == 1 ? t : !t);
+                }
                 if (done.entry) return false;
                 goto newframe;
             }

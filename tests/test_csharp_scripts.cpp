@@ -301,6 +301,24 @@ static void StringMembers() {
     CHECK_NEAR(w.F("parts"), 3.0f, 1e-4f);
     CHECK(S("joined") == "c");
     CHECK(S("num") == "42/1.5/True");
+    // int.Parse / float.Parse / string.IsNullOrEmpty / int.MaxValue
+    {
+        World p("public class P : MonoBehaviour { public int n, big; public float f; public bool empty, full;\n"
+                "  void Start() { n = int.Parse(\"42\") + 1; f = float.Parse(\"2.5\"); big = int.MaxValue;\n"
+                "    empty = string.IsNullOrEmpty(\"\"); full = string.IsNullOrEmpty(\"x\"); } }\n");
+        CHECK(p.loaded);
+        CHECK_NEAR(p.F("n"), 43.0f, 1e-4f);
+        CHECK_NEAR(p.F("f"), 2.5f, 1e-4f);
+        CHECK(p.F("big") > 2.0e9f);
+        CHECK(p.sc->VM() && p.sc->VM()->GetGlobal("empty").AsBool());
+        CHECK(p.sc->VM() && !p.sc->VM()->GetGlobal("full").AsBool());
+        g_errs.clear();
+        World q("public class P : MonoBehaviour { public int n = 7; void Start() { n = int.Parse(\"seven\"); } }\n");
+        CHECK_NEAR(q.F("n"), 7.0f, 1e-4f);   // the error stops Start before the assignment
+        bool said = false;
+        for (auto& e : g_errs) if (e.find("seven") != std::string::npos) said = true;
+        CHECK(said);
+    }
     // Out of range is a runtime error with the line, not a crash.
     World bad("public class S : MonoBehaviour { public string r; void Start() { r = \"abc\".Substring(5); } }\n");
     CHECK(!bad.loaded || (bad.sc->VM() && bad.sc->VM()->GetGlobal("r").AsString().empty()));

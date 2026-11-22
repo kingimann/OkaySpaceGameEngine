@@ -144,6 +144,26 @@ button on the Edit Mesh page (Edge loops and joins, or Pick parts for the cursor
 - **Merge at Last:** `MergeVertsAt` (Center / First / Last); the page's merge buttons and three new Ctrl+K entries share it.
 - **Loop to Region:** `LoopToRegion`: the smaller group of faces the selected loop cuts off.
 
+### Found while trying the tools in the editor (Xvfb, Linux, software drawing, `OKAY_PLATFORM_BACKEND=own`), fixed
+
+- **G started an edge slide instead of a move** (also on `main`). The G that started the move was read again in the same
+  frame by the "G again (GG) = edge slide" check, so a single G press slid the selected edges. The switch check now only runs
+  for a transform that was already going before this frame. Editor only (no headless test reaches the key handling);
+  seen on the screenshots before and after.
+- **Rip moved the side that stays.** The move after a rip started in the same frame, with the list of vertices to move made
+  before the rip (those numbers now belong to the side that stays), so the surrounding faces stretched instead of the torn
+  face coming away. The move now starts a frame later. Editor only.
+- **Rip of a closed loop tore a mix of inside and outside faces** (each edge chose its own side). It now chooses one side per
+  connected run of edges, and in the editor the side is where the mouse points on the surface. Test: `poly_ops` "A closed
+  loop tears off one whole side" (244 checks, 3 failures before; 0 after).
+
+Tried in the editor and seen working (screenshots, not committed): Mark Sharp (cyan overlay; hard crease on the rounded cube
+after leaving Edit Mesh), Loop to Region, Offset Edge Loops, Rip (face torn off and lifted, hole left), Edge Split (face
+lifted away, cyan edges on both sides), Move along Z with Normal axes on the sphere ("along Z (Normal)" on the status line),
+Scale about the 3D cursor (placed with Cursor to Selected on a corner), Vertex Slide (yellow rail), Merge at Last. Not tried
+in the editor: Shift+right-click placing the cursor (the test script has no Shift+click), the `,` key, Ctrl+Shift+R, Local
+axes, Clear Sharp. Nothing was tried on Windows or with a GPU.
+
 ### Limits found and left
 
 - In Edit Mesh the mesh is welded by position on entry, so the two sides of an Edge Split or a Rip left at the same place are
@@ -154,3 +174,8 @@ button on the Edit Mesh page (Edge loops and joins, or Pick parts for the cursor
 - Normal orientation's X axis is chosen level with the world, not along a selected edge.
 - Snapping during a move with Local or Normal axes still rounds the world-space offset to the grid.
 - Connect vertex path is still missing.
+- Offset Edge Loops around a single face (a loop that turns at every corner): the new edges do not join at the corners.
+  It is meant for loops that run through quads.
+- Loop to Region after an Edge Split along the same loop finds nothing (the loop's edges are border edges then: the inside is
+  already a separate piece); select the inside by clicking it.
+- In the editor, the mouse wheel did not zoom the 3D view during the scripted run (not looked into).

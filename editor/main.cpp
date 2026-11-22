@@ -3750,7 +3750,7 @@ static std::vector<int> SelectedTriangles(const Mesh& m) {
     return out;
 }
 static bool g_isolating = false;                    // local view is on (the hidden faces are the ones outside it)
-static int  g_pendingMove = 0;                      // 1: start a Move (G) next frame; 2: ... locked to the selection's normal axis
+static int  g_pendingMove = 0;                      // 1: start a Move (G) next frame; 2: ... locked to the selection's normal axis; 3: a frame later (Rip)
 static Vec3 g_cursorOrigin{0, 0, 0}, g_cursorDir{0, 0, -1};   // the mouse ray in the 3D view, last seen while the pointer was over it
 static std::vector<GameObject*> g_hiddenObjects;    // objects hidden with H in object mode (Alt+H brings them back)
 static void WorldRange(const GameObject* go, int axis, float& lo, float& hi, bool& ok) {
@@ -3894,8 +3894,11 @@ static bool RipNow(EditorState& ed, MeshRenderer* mr) {
     c = c * (0.5f / (float)edges.size());
     const Vec3 cw = M.MultiplyPoint(c);
     const Vec3 d = g_cursorDir.SqrMagnitude() > 1e-12f ? g_cursorDir.Normalized() : Vec3{0, 0, -1};
-    const Vec3 near = g_cursorOrigin + d * Vec3::Dot(cw - g_cursorOrigin, d);   // the mouse ray's closest point to the edges
-    Vec3 side = M.Inverse().MultiplyVector(near - cw);
+    // Where the mouse points on the surface (else the mouse ray's closest point to the edges): the side to tear off.
+    const Mat4 Mi = M.Inverse();
+    const okay::modeling::RayHit hit = okay::modeling::RayMeshHit(mr->mesh, Mi.MultiplyPoint(g_cursorOrigin), Mi.MultiplyVector(d));
+    const Vec3 near = hit.found ? M.MultiplyPoint(hit.point) : g_cursorOrigin + d * Vec3::Dot(cw - g_cursorOrigin, d);
+    Vec3 side = Mi.MultiplyVector(near - cw);
     if (!(side.SqrMagnitude() > 1e-12f)) side = Vec3{1, 0, 0};
     std::string err;
     std::vector<int> made;
@@ -3904,7 +3907,9 @@ static bool RipNow(EditorState& ed, MeshRenderer* mr) {
         if (made.empty()) return false;
         g_meshSelVerts = made; g_meshSelEdges.clear(); g_meshSelMode = 0;
         return true; });
-    if (ok) { ConsoleLog("Rip: " + std::to_string(made.size()) + " vertex(es) torn off; move them now (Esc leaves them in place)"); g_pendingMove = 1; }
+    // 3 = start the move a frame later: this frame's list of vertices to move was made before the rip (the old numbers
+    // now belong to the side that stays).
+    if (ok) { ConsoleLog("Rip: " + std::to_string(made.size()) + " vertex(es) torn off; move them now (Esc leaves them in place)"); g_pendingMove = 3; }
     else ConsoleLog("Rip: " + err, 1);
     return ok;
 }
@@ -53934,7 +53939,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     }
                 }
                 // Shift+D / E asked for a move to start: begin it now that the new selection is in place.
-                if (g_pendingMove && idle && !affected.empty()) {
+                if (g_pendingMove == 3) g_pendingMove = 1;   // (a rip: wait a frame for the new selection's vertices)
+                else if (g_pendingMove && idle && !affected.empty()) {
                     beginModal(mdl::EditXform::Move);
                     if (g_pendingMove == 2 && g_meModal.Active()) {       // E: slide along the selection's normal (the Normal axes' Z, whatever way it points)
                         Vec3 n{0, 0, 0};
@@ -54086,6 +54092,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     dl->PopClipRect();
                 }
             }
+            // The G / R / S that starts a transform must not also count as the second press of GG (or a switch) in the
+            // same frame: that turned every G into an edge slide (seen in the round-3 editor run).
+            const bool modalBeforeThisFrame = g_meModal.Active();
             if (g_ptool == PolyTool::None && !g_meModal.Active() && !g_meEditGrab && hovered && keysFree && !affected.empty()) {
                 if (ImGui::IsKeyPressed(ImGuiKey_G, false)) beginModal(mdl::EditXform::Move);
                 else if (ImGui::IsKeyPressed(ImGuiKey_R, false) && !io.KeyShift) beginModal(mdl::EditXform::Rotate);
@@ -54094,7 +54103,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                        (ImGui::IsKeyPressed(ImGuiKey_G, false) || ImGui::IsKeyPressed(ImGuiKey_R, false) || ImGui::IsKeyPressed(ImGuiKey_S, false))) {
                 ConsoleLog("Select some vertices, edges or faces first (G / R / S move, rotate and scale the selection)", 1);
             }
-            if (g_meModal.Active()) {
+            if (g_meModal.Active() && modalBeforeThisFrame) {
                 // Switch tool mid-way (Blender does): start over from the original positions.
                 if (keysFree) {
                     mdl::EditXform next = g_meModal.Kind();

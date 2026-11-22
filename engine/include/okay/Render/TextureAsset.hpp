@@ -92,6 +92,13 @@ public:
     TextureSettings settings;
     std::uint64_t serial = 0;     ///< new for every decode or change (never 0 once loaded)
     bool registered = false;      ///< made in memory (RegisterTexture), not read from a file
+    /// Mip streaming (textures::SetStreaming): `image` may hold a smaller mip of the picture. residentMip is which one
+    /// (0 = full size); fullWidth x fullHeight is the size at mip 0 (import maxSize applied). Without streaming
+    /// residentMip is 0 and the full size is the image's.
+    int residentMip = 0;
+    int fullWidth = 0, fullHeight = 0;
+    int FullWidth() const { return fullWidth > 0 ? fullWidth : image.Width(); }
+    int FullHeight() const { return fullHeight > 0 ? fullHeight : image.Height(); }
 
     bool Valid() const { return image.Valid(); }
     int  Width() const { return image.Width(); }
@@ -233,6 +240,53 @@ void SetIdleFrames(int frames);
 /// Whether the renderers' cache holds this name now. A GPU renderer that sees Generation() change frees its own copies
 /// of names no longer held (that is how a trimmed or dropped texture leaves video memory too).
 bool IsHeld(const std::string& name);
+
+// ---- mip streaming (feature map 2.13) ----------------------------------------------------------------------------
+// Off by default; OKAY_TEXTURE_STREAMING=1, SetStreaming(true) or an Asset Streaming component in the scene turns it on.
+// While on, a picture file (mipmaps on, not "proc:" or "@") is loaded at a small mip first: the asset's `image` is the
+// first mip whose longest side is at most StreamStartSize() (64 by default), so a scene opens fast and small. The
+// streaming planner (Render/AssetStreaming.hpp, from Texture/Stream + Optimize/MipBudget) then asks for sharper mips as
+// the camera comes close: RequestMip queues a background decode on the engine's JobSystem, and ApplyStreamLoads (run by
+// Pump) moves the finished pixels into the same asset (new serial: every renderer uploads it again). Asking for a
+// blurrier mip than the resident one evicts at once (the image is replaced by that smaller mip). Main thread only.
+
+void SetStreaming(bool on);
+bool Streaming();
+void SetStreamStartSize(int longestSidePx);
+int StreamStartSize();
+
+/// Size of mip `mip` of a w x h picture (each level halves, rounding down, never below 1).
+void MipSize(int w, int h, int mip, int& mw, int& mh);
+/// Number of mips of a full chain for w x h (1 for 1x1).
+int MipCountFor(int w, int h);
+/// The first mip whose longest side is at most `startSize` (0 when the picture is already that small).
+int StartMipFor(int w, int h, int startSize);
+
+enum class StreamResult { Unchanged, Queued, Evicted, NotStreamable };
+/// Make `mip` the resident mip of the texture the renderers hold under `name` (clamped to its chain). Sharper than
+/// now: a background load is queued (unless one is already running). Blurrier: the image shrinks now.
+StreamResult RequestMip(const std::string& name, int mip);
+/// Move finished background loads into their assets. Returns how many were applied. Pump calls it.
+int ApplyStreamLoads();
+/// Wait for every queued streaming load and apply it (tests, a loading screen).
+void FinishStreamLoads();
+
+struct StreamInfo {
+    std::string name;
+    int fullWidth = 0, fullHeight = 0;
+    int residentMip = 0;
+    int pendingMip = -1;       ///< a background load for this mip is running (-1 = none)
+    int mipCount = 1;
+    std::size_t bytes = 0;     ///< CPU bytes now (image plus a built chain)
+};
+/// Every streamable texture the renderers hold, in name order.
+std::vector<StreamInfo> StreamedTextures();
+struct StreamCounters {
+    std::uint64_t loadsQueued = 0, loadsDone = 0, loadsFailed = 0, evictions = 0;
+    std::uint64_t bytesLoaded = 0, bytesEvicted = 0;
+    int pending = 0;           ///< background loads not applied yet
+};
+StreamCounters GetStreamCounters();
 
 /// For tests: forget everything the library holds (registered pictures too) and reset the counters.
 void ResetForTests();

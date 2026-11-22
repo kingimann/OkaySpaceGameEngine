@@ -31,8 +31,15 @@ public:
     float cullScreen = 0.0f;
     /// -1 = automatic. Otherwise force that level (levels.size() = culled).
     int forceLevel = -1;
-    /// Tint the object by its level in the view (debug). Off by default.
+    /// Tint the object by its level in the view (debug). Off by default. The Scene view's
+    /// "LOD colours" overlay (visibility::LodOverlay) tints every LOD Group the same way.
     bool debugTint = false;
+
+    /// How a level change looks. CrossFade (the default) dissolves the new level in over the old
+    /// one with a screen-door dither for `fadeDuration` seconds, so nothing pops; None switches at once.
+    enum FadeMode { FadeNone = 0, FadeCrossFade = 1 };
+    int fadeMode = FadeCrossFade;
+    float fadeDuration = 0.35f;
 
     std::vector<Level> levels;          ///< best first; level 0 is the MeshRenderer
     std::vector<Mesh> lodMeshes;        ///< lodMeshes[i] is the mesh for level i+1
@@ -41,8 +48,19 @@ public:
     int lodState = -1;
     int activeLevel = 0;
 
+    /// Cross-fade state (runtime, not saved): the level being left (-1 = culled) and when the change began
+    /// (visibility::LodClock seconds). fadeFrom == kNoFade when nothing is fading.
+    static constexpr int kNoFade = -2;
+    int fadeFrom = kNoFade;
+    int shownLevel = kNoFade;   ///< the level shown last frame (-1 culled); kNoFade before the first frame
+    double fadeStart = 0.0;
+
     /// Build four levels (100/50/25/10 percent) from `src` and distances from the chain.
     void Generate(const Mesh& src);
+    /// Build `levelCount` levels (1..kMaxLevels), each keeping `reduction` of the triangles of the one before,
+    /// switched by screen size: `screen[i]` is where level i is left (missing entries halve the previous one,
+    /// starting at 0.5). Below a quarter of the last hand-over threshold the object is culled. What model import uses.
+    void GenerateScreenSize(const Mesh& src, int levelCount, float reduction, const std::vector<float>& screen);
     /// Fill lodMeshes from each level's ratio. Level 0 is not stored.
     void RebuildFromRatios(const Mesh& src);
 

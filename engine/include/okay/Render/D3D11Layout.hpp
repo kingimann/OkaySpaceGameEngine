@@ -29,7 +29,7 @@ struct CB {
     float fog[4];              // x=on y=start z=end w=receive shadows
     float fogCol[4];           // xyz = fog colour, w = filmic pipeline flag (linear + ACES + gamma)
     float fog2[4];             // mode, density, height, falloff
-    float post[4];             // x = leave the colour linear for the post chain
+    float post[4];             // x = leave the colour linear for the post chain; y = LOD dither mode (0 off, 1, 2), z = fade
 };
 // Sky + post-chain constants (cbuffer PC, b3); see the HLSL for each slot.
 struct PostCB {

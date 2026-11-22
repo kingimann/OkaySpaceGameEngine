@@ -329,6 +329,8 @@ add_library(okay_engine
     src/Modeling/GuidedRig.cpp
     src/Components/LODGroup.cpp
     src/Render/Visibility.cpp
+    src/Render/AssetStreaming.cpp
+    src/Components/AssetStreamer.cpp
     src/Render/SurfaceRaycast.cpp
     src/Optimize/MeshSimplify.cpp
     src/Optimize/LodGroup.cpp

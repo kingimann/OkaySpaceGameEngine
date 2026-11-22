@@ -33,7 +33,7 @@ inline const char* D3D11HlslSource() {
     "  float4 uFog;\n"                        // x=on y=start z=end (distance fog) w=receive shadows
     "  float4 uFogCol;\n"                     // xyz = fog colour, w = filmic pipeline flag
     "  float4 uFog2;\n"                       // x=mode (0 linear 1 exponential 2 height) y=density z=height w=falloff
-    "  float4 uPost;\n"                       // x=1: leave the colour linear for the post chain
+    "  float4 uPost;\n"                       // x=1: leave the colour linear for the post chain; y,z = LOD dither mode, fade
     "};\n"
     // Shadows + ambient: once per frame (b2). Sun = cascades side by side in t4;
     // spot/point lights = a 4x4 tile atlas in t5 (see ShadowSetup.hpp).
@@ -234,6 +234,12 @@ inline const char* D3D11HlslSource() {
     "  return VSDepth(mul(skinMat(bj, bw), float4(pos,1.0)));\n"
     "}\n"
     "float4 PSMain(PSIn i):SV_TARGET {\n"
+    // LOD cross-fade (LodDither.hpp): uPost.y = 0 off, 1 keep the pixels whose 4x4 dither threshold is below uPost.z, 2 the others.
+    "  if (uPost.y > 0.5) {\n"
+    "    float2 dp = fmod(floor(i.pos.xy), 4.0); float2 dl = fmod(dp, 2.0); float2 dh = floor(dp * 0.5);\n"
+    "    float dt = (4.0 * fmod(2.0 * dl.x + 3.0 * dl.y, 4.0) + fmod(2.0 * dh.x + 3.0 * dh.y, 4.0) + 0.5) / 16.0;\n"
+    "    if ((dt < uPost.z) == (uPost.y > 1.5)) discard;\n"
+    "  }\n"
     "  if (uShadowAlpha >= 0.0) return float4(0,0,0,uShadowAlpha);\n"   // flat ground contact shadow
     "  float3 N = normalize(i.nrm);\n"
     "  if (uHasNormal > 0.5) {\n"                                       // perturb N by the tangent-space normal map

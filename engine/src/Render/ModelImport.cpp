@@ -6,6 +6,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include "okay/Render/ModelImport.hpp"
+#include "okay/Components/LODGroup.hpp"
 #include "okay/Render/ThreeMfReader.hpp"
 #include "okay/Render/AmfReader.hpp"
 #include "okay/Render/X3dReader.hpp"
@@ -2593,6 +2594,20 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
             if (opt.normals == ModelImportOptions::Calculate) mr->mesh.ComputeAutoSmoothNormals(opt.smoothingAngle);
             else { mr->mesh.normals.clear(); mr->mesh.autoSmoothAngle = 0.0f; }   // flat: one normal per face
         }
+    }
+    if (opt.generateLods) {
+        // Automatic LOD (import setting "Generate LODs"): a LOD Group per unskinned mesh, its levels simplified by
+        // our MeshSimplify (UV seams, hard normals and open borders kept), switched by screen size and cross-faded.
+        // Meshes too small to gain anything (under 64 triangles) are left alone.
+        int groups = 0;
+        for (MeshRenderer* mr : root->GetComponentsInChildren<MeshRenderer>(true)) {
+            GameObject* host = mr->gameObject;
+            if (!host || host->GetComponent<SkinnedMesh>() || host->GetComponent<BlendShapes>() || host->GetComponent<LODGroup>()) continue;
+            if (mr->mesh.TriangleCount() < 64) continue;
+            host->AddComponent<LODGroup>()->GenerateScreenSize(mr->mesh, opt.lodLevels, opt.lodReduction, opt.lodScreen);
+            ++groups;
+        }
+        if (groups > 0) Log::Info("model import '", path, "': generated LODs for ", groups, " mesh(es), ", opt.lodLevels, " levels");
     }
     if (!opt.importAnimations) {
         std::vector<GameObject*> all{root};

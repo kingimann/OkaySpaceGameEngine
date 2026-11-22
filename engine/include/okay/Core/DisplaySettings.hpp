@@ -19,6 +19,7 @@ struct QualityPreset {
     float shadowDistance;     ///< world units the cascades reach (ShadowDistance())
     int   shadowCascades;     ///< ShadowCascades()
     float shadowSoftness;     ///< ShadowSoftness(), in texels
+    float lodBias;            ///< visibility::LodBias(): < 1 cheaper LOD levels sooner, > 1 detail kept longer
 };
 
 /// The values the Settings screen drives: window mode, resolution, vsync and the

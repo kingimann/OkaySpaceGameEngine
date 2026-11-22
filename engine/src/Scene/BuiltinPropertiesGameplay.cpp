@@ -7,6 +7,7 @@
 // Fields the scene file does not keep (runtime pointers, caches) are left out. See
 // docs/engine/properties.md.
 #include "BuiltinPropertiesShared.hpp"
+#include "okay/Components/AssetStreamer.hpp"
 #include "okay/Components/Buildable.hpp"
 #include "okay/Components/NetworkAvatarMotion.hpp"
 #include "okay/Components/TilemapCollider2D.hpp"
@@ -1443,6 +1444,18 @@ void RegisterNetworkAvatarMotion() {
     b.Commit();
 }
 
+// AssetStreamer (Components/AssetStreamer.hpp): streams the scene's texture mips and model meshes while it plays.
+void RegisterAssetStreamer() {
+    PropertyBuilder<AssetStreamer> b("AssetStreamer", "assetstreamer", "Rendering");
+    b.AddBool("streamTextures", &AssetStreamer::streamTextures).Tooltip("Load pictures small first and sharpen them as the camera comes close")
+     .AddInt("startSize", &AssetStreamer::startSize).Range(1, 16384, 1).Tooltip("Longest side a picture is loaded at first, in pixels")
+     .AddFloat("budgetMB", &AssetStreamer::budgetMB).Range(0, 65536, 1).Tooltip("Texture memory to stay within (MB). 0 = the texture budget")
+     .AddFloat("uploadMBPerFrame", &AssetStreamer::uploadMBPerFrame).Range(0, 4096, 0.5).Tooltip("Sharper mips started per frame (MB). 0 = no limit")
+     .AddFloat("mipBias", &AssetStreamer::mipBias).Range(-4, 8, 0.1).Tooltip("Above 0 blurrier and cheaper, below 0 sharper")
+     .AddBool("backgroundMeshes", &AssetStreamer::backgroundMeshes).Tooltip("In a game, read model files in the background and show a cube until each is ready");
+    b.Commit();
+}
+
 // ---- Saved by their own records in SceneSerializer.cpp -----------------------------------------------------
 
 // SaveConfig (`savesettings`): the scene's autosave settings. The record keeps 1..20 slots.
@@ -1475,6 +1488,7 @@ void RegisterGameplayProperties() {
     RegisterCheckpointTrigger();
     RegisterTimedDestroy();
     RegisterNetworkAvatarMotion();
+    RegisterAssetStreamer();
     RegisterSaveConfig();
     RegisterBuildable();
     RegisterTilemapCollider2D();

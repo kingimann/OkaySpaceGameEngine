@@ -3,6 +3,7 @@
 #include "okay/Render/TextureAsset.hpp"
 
 #include "okay/Core/AssetManager.hpp"
+#include "okay/Core/Jobs.hpp"
 #include "okay/Core/ImportSidecar.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Debug/DebugUtil.hpp"
@@ -146,6 +147,9 @@ TextureAsset& TextureAsset::operator=(TextureAsset&& o) noexcept {
     settings = o.settings;
     serial = o.serial;
     registered = o.registered;
+    residentMip = o.residentMip;
+    fullWidth = o.fullWidth;
+    fullHeight = o.fullHeight;
     m_mips = std::move(o.m_mips);
     m_mipsSerial = o.m_mipsSerial;
     o.image = Image();
@@ -232,7 +236,22 @@ void TextureAsset::Untrack() const {
 // ---- decoding (may run on AssetManager's worker thread) ------------------------------------------------------------
 
 namespace {
-bool DecodeInto(const std::string& path, TextureAsset& a, std::string& err) {
+std::atomic<bool> g_streamOn{false};
+std::atomic<int> g_streamStart{64};
+
+bool StreamableName(const std::string& path) { return !path.empty() && path[0] != '@' && path.rfind("proc:", 0) != 0; }
+
+// Mip `mip` of `img` built with the picture's own filter (BuildMipChain), or `img` itself for mip 0.
+Image MipOf(const Image& img, const TextureSettings& s, int mip) {
+    if (mip <= 0 || !img.Valid()) return img;
+    std::vector<Image> chain = BuildMipChain(img, s);
+    if (chain.empty()) return img;
+    const int i = mip < (int)chain.size() ? mip : (int)chain.size() - 1;
+    return std::move(chain[(std::size_t)i]);
+}
+
+// `keepMip` -1: the streaming rule (the start mip while streaming is on, else the full picture); >= 0: that mip.
+bool DecodeInto(const std::string& path, TextureAsset& a, std::string& err, int keepMip = -1) {
     a.path = path;
     a.settings = ReadTextureSettings(path);
     a.registered = false;
@@ -253,12 +272,23 @@ bool DecodeInto(const std::string& path, TextureAsset& a, std::string& err) {
     if (!img.Valid()) { if (err.empty()) err = "cannot load '" + path + "'"; return false; }
     const int ms = a.settings.maxSize;
     if (ms > 0 && (img.Width() > ms || img.Height() > ms)) img = BoxDownscale(img, ms);
+    a.fullWidth = img.Width();
+    a.fullHeight = img.Height();
+    a.residentMip = 0;
+    int mip = keepMip;
+    if (mip < 0) mip = (g_streamOn.load() && a.settings.mipmaps && StreamableName(path))
+                           ? textures::StartMipFor(img.Width(), img.Height(), g_streamStart.load()) : 0;
+    if (mip > 0 && a.settings.mipmaps) {
+        mip = std::min(mip, textures::MipCountFor(img.Width(), img.Height()) - 1);
+        img = MipOf(img, a.settings, mip);
+        a.residentMip = mip;
+    }
     a.image = std::move(img);
     a.serial = NextSerial();
     return true;
 }
 
-std::shared_ptr<TextureAsset> Decode(const std::string& path, std::string& err) {
+std::shared_ptr<TextureAsset> Decode(const std::string& path, std::string& err) {   // (a streamed picture starts small)
     auto a = std::make_shared<TextureAsset>();
     if (!DecodeInto(path, *a, err)) return nullptr;
     return a;
@@ -288,6 +318,18 @@ struct Library {
     bool warnedOver = false;
     std::uint64_t reloads = 0, trimmed = 0;
     int reloadsThisPump = 0;
+    // Mip streaming: one background load per held name at a time.
+    struct StreamJob {
+        std::shared_ptr<TextureAsset> asset;   // kept alive while the job runs
+        std::string path;
+        int mip = 0;
+        std::atomic<int> state{0};             // 0 running, 1 done, 2 failed
+        bool stale = false;                    // an eviction since: do not sharpen with this result
+        TextureAsset result;
+    };
+    std::unordered_map<std::string, std::shared_ptr<StreamJob>> streamJobs;
+    std::vector<JobHandle> streamHandles;      // for FinishStreamLoads (kept apart: a job's function holds its StreamJob)
+    textures::StreamCounters stream;
 };
 Library& Lib() { static Library* l = new Library(); return *l; }   // never destroyed: renderers may ask during exit
 
@@ -315,6 +357,7 @@ void EnsureLoader() {
     });
     if (const char* e = std::getenv("OKAY_TEXTURE_HOT_RELOAD")) if (e[0] == '1') { L.hot = true; am.SetHotReload(true, L.hotInterval); }
     if (const char* e = std::getenv("OKAY_TEXTURE_ASYNC")) if (e[0] == '1') L.async = true;
+    if (const char* e = std::getenv("OKAY_TEXTURE_STREAMING")) if (e[0] == '1') g_streamOn = true;
 }
 
 std::shared_ptr<TextureAsset> Tracked(std::shared_ptr<TextureAsset> p) {
@@ -549,6 +592,7 @@ int Pump() {
     L.reloadsThisPump = 0;
     AssetManager::Instance().Pump();
     for (auto& kv : L.held) Resolve(kv.first, kv.second);
+    ApplyStreamLoads();
     // With hot reload on, a missing picture is looked for again now and then (it may have been created since).
     if (L.hot && L.frame % 120 == 0)
         for (auto it = L.held.begin(); it != L.held.end();) it = (it->second.p || it->second.loading) ? std::next(it) : L.held.erase(it);
@@ -665,8 +709,155 @@ void SetBudgetBytes(std::size_t bytes) { Library& L = Lib(); L.budget = bytes; L
 std::size_t BudgetBytes() { const Library& L = Lib(); return L.budgetSet ? L.budget : DefaultBudget(); }
 void SetIdleFrames(int frames) { Lib().idleFrames = frames < 1 ? 1 : frames; }
 
+// ---- mip streaming ---------------------------------------------------------------------------------------------------
+
+void SetStreaming(bool on) { EnsureLoader(); g_streamOn = on; }
+bool Streaming() { EnsureLoader(); return g_streamOn.load(); }
+void SetStreamStartSize(int px) { g_streamStart = px < 1 ? 1 : (px > 16384 ? 16384 : px); }
+int StreamStartSize() { return g_streamStart.load(); }
+
+void MipSize(int w, int h, int mip, int& mw, int& mh) {
+    mw = w < 1 ? 1 : w; mh = h < 1 ? 1 : h;
+    for (int i = 0; i < mip && (mw > 1 || mh > 1); ++i) { mw = mw > 1 ? mw / 2 : 1; mh = mh > 1 ? mh / 2 : 1; }
+}
+
+int MipCountFor(int w, int h) {
+    int n = 1;
+    while (w > 1 || h > 1) { w = w > 1 ? w / 2 : 1; h = h > 1 ? h / 2 : 1; ++n; }
+    return n;
+}
+
+int StartMipFor(int w, int h, int startSize) {
+    if (startSize < 1) startSize = 1;
+    int m = 0;
+    while ((w > startSize || h > startSize) && (w > 1 || h > 1)) { w = w > 1 ? w / 2 : 1; h = h > 1 ? h / 2 : 1; ++m; }
+    return m;
+}
+
+namespace {
+bool Streamable(const std::string& name, const TextureAsset* a) {
+    return a && a->Valid() && !a->registered && a->settings.mipmaps && StreamableName(name);
+}
+} // namespace
+
+StreamResult RequestMip(const std::string& name, int mip) {
+    Library& L = Lib();
+    auto it = L.held.find(name);
+    if (it == L.held.end() || !it->second.p) return StreamResult::NotStreamable;
+    std::shared_ptr<TextureAsset> a = it->second.p;
+    if (!Streamable(name, a.get())) return StreamResult::NotStreamable;
+    const int count = MipCountFor(a->FullWidth(), a->FullHeight());
+    mip = std::max(0, std::min(mip, count - 1));
+    auto job = L.streamJobs.find(name);
+    if (mip < a->residentMip) {
+        if (job != L.streamJobs.end()) {
+            if (!job->second->stale) return StreamResult::Unchanged;   // one load at a time; the next plan asks again
+            L.streamJobs.erase(job);                                    // (a stale one still runs; its result is dropped)
+        }
+        auto j = std::make_shared<Library::StreamJob>();
+        j->asset = a;
+        j->path = a->path;
+        j->mip = mip;
+        JobOptions opt;
+        opt.priority = JobPriority::Low;
+        opt.name = "texture stream " + name;
+        JobHandle h = JobSystem::Global().Submit([j]() {
+            std::string err;
+            const bool ok = DecodeInto(j->path, j->result, err, j->mip);
+            if (!ok) Log::Warning("[texture] streaming load of '", j->path, "' failed: ", err);
+            j->state.store(ok ? 1 : 2, std::memory_order_release);
+        }, opt);
+        L.streamHandles.erase(std::remove_if(L.streamHandles.begin(), L.streamHandles.end(),
+                                             [](const JobHandle& x) { return x.IsDone(); }), L.streamHandles.end());
+        L.streamHandles.push_back(h);
+        L.streamJobs[name] = std::move(j);
+        ++L.stream.loadsQueued;
+        return StreamResult::Queued;
+    }
+    if (mip > a->residentMip) {
+        if (job != L.streamJobs.end()) job->second->stale = true;
+        const std::size_t before = a->Bytes();
+        const int step = mip - a->residentMip;
+        const std::vector<Image>& chain = a->Mips();   // the chain from the resident mip down
+        Image smaller = step < (int)chain.size() ? chain[(std::size_t)step] : MipOf(a->image, a->settings, step);
+        a->image = std::move(smaller);
+        a->residentMip = mip;
+        a->Touch();
+        const std::size_t after = a->Bytes();
+        ++L.stream.evictions;
+        L.stream.bytesEvicted += before > after ? before - after : 0;
+        return StreamResult::Evicted;
+    }
+    return StreamResult::Unchanged;
+}
+
+int ApplyStreamLoads() {
+    Library& L = Lib();
+    int applied = 0;
+    for (auto it = L.streamJobs.begin(); it != L.streamJobs.end();) {
+        Library::StreamJob& j = *it->second;
+        const int st = j.state.load(std::memory_order_acquire);
+        if (st == 0) { ++it; continue; }
+        if (st == 1 && !j.stale && j.result.Valid() && j.result.residentMip < j.asset->residentMip) {
+            TextureAsset& live = *j.asset;
+            live.image = std::move(j.result.image);
+            live.residentMip = j.result.residentMip;
+            live.fullWidth = j.result.fullWidth;
+            live.fullHeight = j.result.fullHeight;
+            live.settings = j.result.settings;
+            live.Touch();
+            ++L.stream.loadsDone;
+            L.stream.bytesLoaded += live.image.Pixels().size();
+            ++applied;
+        } else if (st == 2) {
+            ++L.stream.loadsFailed;
+        }
+        it = L.streamJobs.erase(it);
+    }
+    return applied;
+}
+
+void FinishStreamLoads() {
+    Library& L = Lib();
+    const std::vector<JobHandle> handles = L.streamHandles;
+    for (const JobHandle& h : handles) { try { JobSystem::Global().Wait(h); } catch (...) {} }
+    L.streamHandles.clear();
+    ApplyStreamLoads();
+}
+
+std::vector<StreamInfo> StreamedTextures() {
+    const Library& L = Lib();
+    std::vector<StreamInfo> out;
+    for (const auto& kv : L.held) {
+        const TextureAsset* a = kv.second.p.get();
+        if (!Streamable(kv.first, a)) continue;
+        StreamInfo i;
+        i.name = kv.first;
+        i.fullWidth = a->FullWidth();
+        i.fullHeight = a->FullHeight();
+        i.residentMip = a->residentMip;
+        i.mipCount = MipCountFor(i.fullWidth, i.fullHeight);
+        i.bytes = a->Bytes();
+        auto j = L.streamJobs.find(kv.first);
+        if (j != L.streamJobs.end() && !j->second->stale) i.pendingMip = j->second->mip;
+        out.push_back(std::move(i));
+    }
+    std::sort(out.begin(), out.end(), [](const StreamInfo& x, const StreamInfo& y) { return x.name < y.name; });
+    return out;
+}
+
+StreamCounters GetStreamCounters() {
+    const Library& L = Lib();
+    StreamCounters c = L.stream;
+    c.pending = (int)L.streamJobs.size();
+    return c;
+}
+
 void ResetForTests() {
     Library& L = Lib();
+    FinishStreamLoads();
+    L.streamJobs.clear();
+    L.stream = StreamCounters{};
     L.held.clear();
     L.registered.clear();
     ++L.generation;

@@ -100,7 +100,7 @@ bool ParseEnum(const std::string& v, const char* const* names, int count, E& out
 const char* const kFilterNames[] = {"point", "bilinear", "trilinear"};
 const char* const kWrapNames[] = {"repeat", "clamp", "mirror"};
 const char* const kNormalNames[] = {"import", "calculate", "flat"};
-const char* const kLoadNames[] = {"decode", "stream"};
+const char* const kLoadNames[] = {"decode", "stream", "memory"};
 
 // --- Migrations: one step from `v` to `v + 1` --------------------------------------
 
@@ -231,6 +231,16 @@ ImportSettings::Pairs ImportSettings::ToPairs() const {
             p.emplace_back("normals", kNormalNames[static_cast<int>(model.normals)]);
             p.emplace_back("importAnimations", model.importAnimations ? "1" : "0");
             p.emplace_back("smoothingAngle", FloatText(model.smoothingAngle));
+            if (model.generateLods) {   // only while on, so models without LODs keep the text (and fingerprint) they had
+                p.emplace_back("generateLods", "1");
+                p.emplace_back("lodLevels", std::to_string(model.lodLevels));
+                p.emplace_back("lodReduction", FloatText(model.lodReduction));
+                if (!model.lodScreen.empty()) {
+                    std::string list;
+                    for (float f : model.lodScreen) { if (!list.empty()) list += ','; list += FloatText(f); }
+                    p.emplace_back("lodScreen", list);
+                }
+            }
             break;
         case AssetType::Audio:
             p.emplace_back("loadMode", kLoadNames[static_cast<int>(audio.loadMode)]);
@@ -293,9 +303,24 @@ ImportSettings ImportSettings::FromPairs(AssetType kind, int version, const Pair
             else if (k == "normals") { if (!ParseEnum(v, kNormalNames, 3, s.model.normals)) bad(kv.first, v); }
             else if (k == "importanimations") { if (!ParseBool(v, s.model.importAnimations)) bad(kv.first, v); }
             else if (k == "smoothingangle") { if (!ParseFloat(v, s.model.smoothingAngle)) bad(kv.first, v); }
+            else if (k == "generatelods") { if (!ParseBool(v, s.model.generateLods)) bad(kv.first, v); }
+            else if (k == "lodlevels") { if (!ParseInt(v, s.model.lodLevels)) bad(kv.first, v); }
+            else if (k == "lodreduction") { if (!ParseFloat(v, s.model.lodReduction)) bad(kv.first, v); }
+            else if (k == "lodscreen") {
+                s.model.lodScreen.clear();
+                std::size_t at = 0;
+                while (at <= v.size()) {
+                    const std::size_t comma = v.find(',', at);
+                    const std::string part = v.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+                    float f = 0.0f;
+                    if (!part.empty()) { if (ParseFloat(part, f)) s.model.lodScreen.push_back(f); else bad(kv.first, v); }
+                    if (comma == std::string::npos) break;
+                    at = comma + 1;
+                }
+            }
             else handled = false;
         } else if (kind == AssetType::Audio) {
-            if (k == "loadmode") { if (!ParseEnum(v, kLoadNames, 2, s.audio.loadMode)) bad(kv.first, v); }
+            if (k == "loadmode") { if (!ParseEnum(v, kLoadNames, 3, s.audio.loadMode)) bad(kv.first, v); }
             else if (k == "forcemono") { if (!ParseBool(v, s.audio.forceMono)) bad(kv.first, v); }
             else if (k == "quality") { if (!ParseFloat(v, s.audio.quality)) bad(kv.first, v); }
             else handled = false;
@@ -314,6 +339,11 @@ void ImportSettings::Clamp() {
     model.scale = std::max(0.0001f, std::min(10000.0f, model.scale));
     if (!std::isfinite(model.smoothingAngle)) model.smoothingAngle = 60.0f;
     model.smoothingAngle = std::max(0.0f, std::min(180.0f, model.smoothingAngle));
+    model.lodLevels = std::max(2, std::min(6, model.lodLevels));
+    if (!std::isfinite(model.lodReduction)) model.lodReduction = 0.5f;
+    model.lodReduction = std::max(0.05f, std::min(0.95f, model.lodReduction));
+    if (model.lodScreen.size() > 6) model.lodScreen.resize(6);
+    for (float& f : model.lodScreen) f = std::isfinite(f) ? std::max(0.001f, std::min(1.0f, f)) : 0.5f;
     if (!std::isfinite(audio.quality)) audio.quality = 0.7f;
     audio.quality = std::max(0.0f, std::min(1.0f, audio.quality));
 }

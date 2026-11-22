@@ -209,6 +209,7 @@ physics2d
 player
 security_paths
 spatial_audio
+streaming_assets
 texture
 touch_controls
 driving
@@ -292,6 +293,10 @@ examples/ example scenes to try: in the editor use File > Open and pick
                         and 2x; Lighting > UI Font > UI Quality switches the old look back on).
                         examples\wind\wind.okayscene (trees, grass, a flag and leaves in the
                         wind, a box the gusts push, and a wind sound).
+                        examples\streaming_assets\streaming_assets.okayscene (144 rocks with
+                        LOD levels that dissolve into each other and pictures that sharpen as
+                        you fly close; Play, hold the right mouse button and use W A S D;
+                        Stats panel > LOD colours and Streaming show what happens).
                         More in docs/try_it.md.
 
 Each .exe needs SDL2.dll in its own folder — that's why one sits beside the

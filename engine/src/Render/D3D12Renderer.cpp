@@ -892,6 +892,9 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
     const visibility::Frame& vis = visibility::Current();
     int drawnN = 0;
     for (const visibility::Item& it : vis.items) {
+        // No LOD dither in this renderer's shader yet: a cross-fading object shows only its incoming level (a plain
+        // switch, as before the cross-fade existed), and an object dissolving away stays whole until it is culled.
+        if (it.fadeSecondary) continue;
         GameObject* go = it.go;
         auto* mr = it.mr;
         const Mesh& mesh = *it.mesh;

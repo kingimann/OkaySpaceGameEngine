@@ -11,6 +11,7 @@
 #include "okay/Render/SoftwareRenderer.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -23,6 +24,9 @@ namespace visibility {
 namespace {
 
 struct Cand {
+    float fade = 1.0f;
+    const Mesh* fadeMesh = nullptr;
+    int fadeLod = -1;
     GameObject* go = nullptr;
     MeshRenderer* mr = nullptr;
     const Mesh* mesh = nullptr;
@@ -73,11 +77,14 @@ Bounds WorldBox(const GameObject* go, const Mesh& mesh) {
     return b;
 }
 
+struct FadeInfo { float fade = 1.0f; const Mesh* fadeMesh = nullptr; int lod = -1; int fadeLod = -1; };
+
 struct Store {
     Frame frame;
     std::unordered_map<const GameObject*, const Mesh*> lodMesh;
     std::unordered_set<const GameObject*> lodCulled;
     std::unordered_set<const GameObject*> visible;
+    std::unordered_map<const GameObject*, FadeInfo> fades;
     std::vector<Mesh> owned;          ///< merged meshes; item pointers address these
     std::uint64_t cacheKey = 0;
     std::vector<Mesh> cache;
@@ -85,64 +92,134 @@ struct Store {
 
 Store& S() { static Store s; return s; }
 
-const Mesh* ChooseLod(GameObject* go, MeshRenderer* mr, const Vec3& eye, float fovY, int viewH,
-                      int& lodOut, bool& culled) {
-    lodOut = -1;
-    culled = false;
+struct LodPick {
+    const Mesh* mesh = nullptr;      ///< what to draw (null + culled = nothing)
+    int lod = -1;
+    bool culled = false;
+    bool fading = false;             ///< a cross-fade is running for this object
+    float fade = 1.0f;               ///< dither value for `mesh` (1 = all of it)
+    const Mesh* fadeMesh = nullptr;  ///< outgoing level, drawn inverted
+    int fadeLod = -1;
+};
+
+LodPick ChooseLod(GameObject* go, MeshRenderer* mr, const Vec3& eye, float fovY, int viewH, double now) {
+    LodPick pick;
     auto* group = go->GetComponent<LODGroup>();
     const Mesh& src = mr->DisplayMesh();
+    pick.mesh = &src;
     if (!group || group->levels.empty() || go->GetComponent<SkinnedMesh>() || go->GetComponent<Character>())
-        return &src;
-    if (group->forceLevel >= (int)group->levels.size()) { culled = true; group->activeLevel = -1; return nullptr; }
-    if (group->forceLevel >= 0) {
-        lodOut = group->forceLevel;
-        group->activeLevel = lodOut;
-        group->lodState = lodOut;
-        return group->MeshForLevel(lodOut, mr);
-    }
-    Vec3 c; float r = 0.5f;
-    if (!ObjectWorldSphere(go, mr, c, r) || !(r > 1e-4f)) {
-        c = go->transform->Position();
-        r = 0.5f;
-    }
-    const float dist = (c - eye).Magnitude();
-    const int n = std::min((int)group->levels.size(), LODGroup::kMaxLevels);
-    optimize::LodSelection sel;
-    if (group->useScreenSize) {
-        optimize::LodGroup g;
-        g.size = std::max(r * 2.0f, 0.01f);
-        g.hysteresis = group->hysteresis;
-        g.fadeMode = optimize::LodFadeMode::None;
-        g.levels.resize((std::size_t)n);
-        optimize::LodView view{(float)std::max(viewH, 1), fovY > 1.0f ? fovY : 60.0f};
-        for (int i = 0; i < n; ++i)
-            g.levels[(std::size_t)i].screenHeight = i + 1 < n ? group->levels[(std::size_t)i].screenSize : 0.0f;
-        g.cullScreenHeight = std::max(0.0f, group->cullScreen);
-        // Thresholds must fall, or SelectLod rejects the group.
-        for (int i = 1; i + 1 < n; ++i)
-            if (!(g.levels[(std::size_t)i].screenHeight < g.levels[(std::size_t)i - 1].screenHeight))
-                g.levels[(std::size_t)i].screenHeight = g.levels[(std::size_t)i - 1].screenHeight * 0.5f;
-        if (n >= 2 && g.cullScreenHeight >= g.levels[(std::size_t)(n - 2)].screenHeight)
-            g.cullScreenHeight = g.levels[(std::size_t)(n - 2)].screenHeight * 0.5f;
-        if (!g.Valid()) return &src;
-        sel = optimize::SelectLod(g, dist, view, 1.0f, group->lodState);
+        return pick;
+    const float bias = (std::isfinite(LodBias()) && LodBias() > 0.01f) ? LodBias() : 1.0f;
+    int level = 0;
+    bool culled = false;
+    if (group->forceLevel >= (int)group->levels.size()) {
+        culled = true;
+    } else if (group->forceLevel >= 0) {
+        level = group->forceLevel;
+        group->lodState = level;
     } else {
-        // Distance mode compares the camera distance with the typed distances directly, whatever the
-        // object's size (issue #888, finding 77: a screen-height conversion clamped short distances away).
-        std::vector<float> d((std::size_t)n);
-        for (int i = 0; i < n; ++i) d[(std::size_t)i] = group->levels[(std::size_t)i].distance;
-        sel = optimize::SelectLodByDistance(d, group->cullDistance, group->hysteresis, dist, group->lodState);
+        Vec3 c; float r = 0.5f;
+        if (!ObjectWorldSphere(go, mr, c, r) || !(r > 1e-4f)) {
+            c = go->transform->Position();
+            r = 0.5f;
+        }
+        const float dist = (c - eye).Magnitude();
+        const int n = std::min((int)group->levels.size(), LODGroup::kMaxLevels);
+        optimize::LodSelection sel;
+        bool selected = true;
+        if (group->useScreenSize) {
+            optimize::LodGroup g;
+            g.size = std::max(r * 2.0f, 0.01f);
+            g.hysteresis = group->hysteresis;
+            g.fadeMode = optimize::LodFadeMode::None;
+            g.levels.resize((std::size_t)n);
+            optimize::LodView view{(float)std::max(viewH, 1), fovY > 1.0f ? fovY : 60.0f};
+            for (int i = 0; i < n; ++i)
+                g.levels[(std::size_t)i].screenHeight = i + 1 < n ? group->levels[(std::size_t)i].screenSize : 0.0f;
+            g.cullScreenHeight = std::max(0.0f, group->cullScreen);
+            // Thresholds must fall, or SelectLod rejects the group.
+            for (int i = 1; i + 1 < n; ++i)
+                if (!(g.levels[(std::size_t)i].screenHeight < g.levels[(std::size_t)i - 1].screenHeight))
+                    g.levels[(std::size_t)i].screenHeight = g.levels[(std::size_t)i - 1].screenHeight * 0.5f;
+            if (n >= 2 && g.cullScreenHeight >= g.levels[(std::size_t)(n - 2)].screenHeight)
+                g.cullScreenHeight = g.levels[(std::size_t)(n - 2)].screenHeight * 0.5f;
+            if (g.Valid()) sel = optimize::SelectLod(g, dist, view, bias, group->lodState);
+            else selected = false;
+        } else {
+            // Distance mode compares the camera distance with the typed distances directly, whatever the
+            // object's size (issue #888, finding 77: a screen-height conversion clamped short distances away).
+            // The LOD bias scales the distance: bias 2 sees everything as half as far.
+            std::vector<float> d((std::size_t)n);
+            for (int i = 0; i < n; ++i) d[(std::size_t)i] = group->levels[(std::size_t)i].distance;
+            sel = optimize::SelectLodByDistance(d, group->cullDistance, group->hysteresis, dist / bias, group->lodState);
+        }
+        if (!selected) return pick;   // a broken group draws the plain mesh
+        group->lodState = sel.state;
+        culled = sel.culled;
+        level = sel.level;
     }
-    group->lodState = sel.state;
-    if (sel.culled) { culled = true; group->activeLevel = -1; return nullptr; }
-    lodOut = sel.level;
-    group->activeLevel = sel.level;
-    return group->MeshForLevel(sel.level, mr);
+    group->activeLevel = culled ? -1 : level;
+
+    // Cross-fade: a change of the shown level starts a dissolve from the old one (LodDither.hpp).
+    const int shown = culled ? -1 : level;
+    const bool fadeOn = group->fadeMode == LODGroup::FadeCrossFade && group->fadeDuration > 1e-4f;
+    if (!fadeOn) group->fadeFrom = LODGroup::kNoFade;
+    else if (group->shownLevel != LODGroup::kNoFade && shown != group->shownLevel) {
+        group->fadeFrom = group->shownLevel;
+        group->fadeStart = now;
+    }
+    group->shownLevel = shown;
+    float p = 1.0f;
+    if (group->fadeFrom != LODGroup::kNoFade) {
+        const double t = (now - group->fadeStart) / (double)group->fadeDuration;
+        if (!(t >= 0.0) || t >= 1.0) group->fadeFrom = LODGroup::kNoFade;   // done (or the clock went back)
+        else p = (float)t;
+    }
+    if (group->fadeFrom == LODGroup::kNoFade) {
+        if (culled) { pick.culled = true; pick.mesh = nullptr; return pick; }
+        pick.lod = level;
+        pick.mesh = group->MeshForLevel(level, mr);
+        return pick;
+    }
+    pick.fading = true;
+    if (!culled) {
+        pick.lod = level;
+        pick.mesh = group->MeshForLevel(level, mr);
+        pick.fade = p;
+        if (group->fadeFrom >= 0) {
+            pick.fadeLod = group->fadeFrom;
+            pick.fadeMesh = group->MeshForLevel(group->fadeFrom, mr);
+        }
+    } else {
+        // Dissolving away: the old level alone, thinning out.
+        pick.lod = group->fadeFrom;
+        pick.mesh = group->MeshForLevel(group->fadeFrom, mr);
+        pick.fade = 1.0f - p;
+    }
+    if (!pick.mesh) { pick.culled = true; pick.fading = false; }
+    return pick;
 }
 
 } // namespace
 
 const Frame& Current() { return S().frame; }
+
+double LodClock() {
+    if (LodClockOverride() >= 0.0) return LodClockOverride();
+    static const auto t0 = std::chrono::steady_clock::now();
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+}
+
+const Mesh* Frame::FadeFor(const GameObject* go, float& fade, int& mainLod, int& fadeLod) const {
+    fade = 1.0f; mainLod = -1; fadeLod = -1;
+    if (!Visible(go)) return nullptr;
+    auto it = S().fades.find(go);
+    if (it == S().fades.end()) return nullptr;
+    fade = it->second.fade;
+    mainLod = it->second.lod;
+    fadeLod = it->second.fadeLod;
+    return it->second.fadeMesh;
+}
 
 const Mesh* Frame::ShadowMesh(const GameObject* go, const MeshRenderer* mr) const {
     if (!ready || !go) return mr ? &mr->DisplayMesh() : nullptr;
@@ -169,7 +246,12 @@ const Frame& Build(const Scene& scene, const Mat4& vp, const Vec3& eye, int view
     st.lodMesh.clear();
     st.lodCulled.clear();
     st.visible.clear();
+    st.fades.clear();
     st.owned.clear();
+    const double lodNow = LodClock();
+    st.frame.eye = eye;
+    st.frame.fovY = fovY > 1.0f ? fovY : 60.0f;
+    st.frame.viewH = viewH;
     const Frustum fr = Frustum::FromVP(vp);
     const bool occOn = OcclusionCullingEnabled();
     optimize::OcclusionBuffer occ(160, 90);
@@ -213,9 +295,10 @@ const Frame& Build(const Scene& scene, const Mat4& vp, const Vec3& eye, int view
         const Mesh& shown = mr->DisplayMesh();
         if (shown.vertices.empty() || shown.triangles.size() < 3) continue;
         if (CulledByFrustum(fr, go, mr)) { ++st.frame.frustumCulled; continue; }
-        int lod = -1; bool lodOff = false;
-        const Mesh* mesh = ChooseLod(go, mr, eye, fovY, viewH, lod, lodOff);
-        if (lodOff || !mesh) { ++st.frame.lodCulled; st.lodCulled.insert(go); continue; }
+        const LodPick pick = ChooseLod(go, mr, eye, fovY, viewH, lodNow);
+        const int lod = pick.lod;
+        const Mesh* mesh = pick.mesh;
+        if (pick.culled || !mesh) { ++st.frame.lodCulled; st.lodCulled.insert(go); continue; }
         st.lodMesh[go] = mesh;
         if (haveOcc && !go->GetComponent<Occluder>()) {
             const Bounds box = WorldBox(go, *mesh);
@@ -224,6 +307,13 @@ const Frame& Build(const Scene& scene, const Mat4& vp, const Vec3& eye, int view
         Cand c;
         c.go = go; c.mr = mr; c.mesh = mesh; c.model = go->transform->LocalToWorldMatrix();
         c.lod = lod; c.box = WorldBox(go, *mesh);
+        if (pick.fading) {
+            c.fade = pick.fade;
+            c.fadeMesh = pick.fadeMesh;
+            c.fadeLod = pick.fadeLod;
+            st.fades[go] = FadeInfo{pick.fade, pick.fadeMesh, pick.lod, pick.fadeLod};
+            ++st.frame.lodFading;
+        }
         const bool skinned = go->GetComponent<SkinnedMesh>() || go->GetComponent<Character>();
         const bool movingUv = mr->uvScroll.x != 0.0f || mr->uvScroll.y != 0.0f;
         const bool opaque = mr->color.a >= 0.999f;
@@ -232,6 +322,7 @@ const Frame& Build(const Scene& scene, const Mat4& vp, const Vec3& eye, int view
                       && mesh->TriangleCount() > 0 && mesh->TriangleCount() < 20000;
         c.dynamic = c.batchable && !go->isStatic;
         c.batchable = c.batchable && (go->isStatic ? StaticBatchingEnabled() : DynamicBatchingEnabled());
+        if (pick.fading) c.batchable = false;   // each half of a dissolve is drawn on its own
         c.key = MaterialKey(*mr);
         if (lod >= 0 && lod < 4) ++st.frame.lodCount[lod];
         st.visible.insert(go);
@@ -307,12 +398,22 @@ const Frame& Build(const Scene& scene, const Mat4& vp, const Vec3& eye, int view
         const Cand& c = cands[(std::size_t)i];
         Item it;
         it.go = c.go; it.mr = c.mr; it.mesh = c.mesh; it.model = c.model; it.lod = c.lod;
+        it.ditherFade = c.fade;
         st.frame.items.push_back(it);
+        if (c.fadeMesh) {
+            Item out = it;
+            out.mesh = c.fadeMesh;
+            out.lod = c.fadeLod;
+            out.ditherInvert = true;
+            out.fadeSecondary = true;
+            st.frame.items.push_back(out);
+        }
     }
     // Transparents after opaques so a blended surface is not covered by a later solid.
     std::stable_partition(st.frame.items.begin(), st.frame.items.end(), [](const Item& it) {
         return it.mr && it.mr->color.a >= 0.999f;
     });
+    for (const Item& it : st.frame.items) st.frame.lodTriangles += it.mesh ? (std::size_t)it.mesh->TriangleCount() : 0u;
     st.frame.ready = true;
     LastCullCounters().drawn = (int)st.frame.items.size();
     LastCullCounters().culled = st.frame.frustumCulled;

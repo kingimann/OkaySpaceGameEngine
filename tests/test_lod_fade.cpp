@@ -5,6 +5,7 @@
 #include <Okay.hpp>
 #include "okay/Core/DisplaySettings.hpp"
 #include "okay/Render/LodDither.hpp"
+#include <chrono>
 #include <cmath>
 #include <set>
 
@@ -241,6 +242,47 @@ int main() {
         CHECK(!SoftwareLodDither().Active());   // the band workers leave no dither behind
         visibility::LodOverlay() = false;
         visibility::LodClockOverride() = -1.0;
+    }
+    RUN_SUITE("dense scene: triangles and frame time with and without LOD");
+    {
+        // 196 spheres of 4,032 triangles in a 14 x 14 field, seen from one end (software renderer, 320 x 180).
+        Scene s;
+        Mesh ball = Mesh::Sphere(1.0f, 48);
+        std::vector<LODGroup*> groups;
+        for (int z = 0; z < 14; ++z)
+            for (int x = 0; x < 14; ++x) {
+                GameObject* go = s.CreateGameObject("B");
+                go->transform->localPosition = {(x - 6.5f) * 4.0f, 0.0f, -(float)z * 5.0f};
+                go->isStatic = true;
+                auto* mr = go->AddComponent<MeshRenderer>();
+                mr->mesh = ball;
+                auto* lod = go->AddComponent<LODGroup>();
+                lod->levels.resize(4);
+                const float d[4] = {12, 25, 45, 90}, r[4] = {1.0f, 0.35f, 0.12f, 0.04f};
+                for (int i = 0; i < 4; ++i) { lod->levels[(std::size_t)i].distance = d[i]; lod->levels[(std::size_t)i].ratio = r[i]; }
+                lod->cullDistance = 0.0f;
+                lod->fadeMode = LODGroup::FadeNone;
+                lod->RebuildFromRatios(ball);
+                groups.push_back(lod);
+            }
+        s.Start();
+        const Vec3 eye{0, 4, 14};
+        const Mat4 view = Mat4::LookAt(eye, {0, 0, -30}, {0, 1, 0});
+        const Mat4 vp = Mat4::Perspective(60.0f, 320.0f / 180.0f, 0.1f, 500.0f) * view;
+        Raster r; std::vector<std::uint32_t> down;
+        auto run = [&](bool lodOn, std::size_t& tris, double& ms) {
+            for (LODGroup* g : groups) { g->forceLevel = lodOn ? -1 : 0; g->lodState = -1; }
+            RenderMeshesSS(r, down, s, vp, eye, 320, 180, 1, nullptr);   // warm caches
+            tris = visibility::Current().lodTriangles;
+            const auto t0 = std::chrono::steady_clock::now();
+            for (int i = 0; i < 5; ++i) RenderMeshesSS(r, down, s, vp, eye, 320, 180, 1, nullptr);
+            ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / 5.0;
+        };
+        std::size_t trisOff = 0, trisOn = 0; double msOff = 0, msOn = 0;
+        run(false, trisOff, msOff);
+        run(true, trisOn, msOn);
+        std::printf("  without LOD: %zu triangles, %.1f ms a frame; with LOD: %zu triangles, %.1f ms a frame\n", trisOff, msOff, trisOn, msOn);
+        CHECK(trisOn * 3 < trisOff);   // far fewer triangles (frame time is printed, not checked: shared machine)
     }
     TEST_MAIN_RESULT();
 }

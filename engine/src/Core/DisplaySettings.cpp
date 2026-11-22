@@ -2,6 +2,7 @@
 #include "okay/Core/DisplayModes.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
+#include "okay/Render/Visibility.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -35,11 +36,12 @@ const DisplayResolution kStandard[] = {
 
 // The quality table. Medium is the shipped look (the renderer's own defaults: 2048 texel cascades,
 // 80 units, 3 cascades, softness 2.5); Low drops shadows and the expensive passes; High adds
-// per-pixel lighting, bloom and ambient occlusion with larger, longer shadows.
+// per-pixel lighting, bloom and ambient occlusion with larger, longer shadows. LOD bias: Low switches every
+// LOD Group to its cheaper levels at 0.6 of the authored distance, High keeps the detailed ones 1.5 times as far.
 const QualityPreset kPresets[DisplaySettings::kQualityLevels] = {
-    {"Low",    false, false, false, false, false, 1024,  40.0f, 1, 1.0f},
-    {"Medium", true,  false, false, false, true,  2048,  80.0f, 3, 2.5f},
-    {"High",   true,  true,  true,  true,  true,  4096, 120.0f, 4, 3.0f},
+    {"Low",    false, false, false, false, false, 1024,  40.0f, 1, 1.0f, 0.6f},
+    {"Medium", true,  false, false, false, true,  2048,  80.0f, 3, 2.5f, 1.0f},
+    {"High",   true,  true,  true,  true,  true,  4096, 120.0f, 4, 3.0f, 1.5f},
 };
 
 int ClampQuality(int q) { return std::clamp(q, 0, DisplaySettings::kQualityLevels - 1); }
@@ -458,6 +460,7 @@ void DisplaySettings::ApplyPreset(int quality) {
     ShadowDistance() = p.shadowDistance;
     ShadowCascades() = p.shadowCascades;
     ShadowSoftness() = p.shadowSoftness;
+    visibility::LodBias() = p.lodBias;
 }
 
 void DisplaySettings::ApplyQuality() {

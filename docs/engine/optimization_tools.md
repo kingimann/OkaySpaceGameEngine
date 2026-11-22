@@ -134,6 +134,40 @@ The `LODGroup` component (`Components/LODGroup`) holds the same numbers and
 asks `SelectLod` from the visibility pass. Level 0 is the Mesh Renderer mesh.
 Generate LODs fills the rest at 100/50/25/10 percent.
 
+### LOD in the renderers (2026-11-22)
+
+- **Cross-fade, no popping.** `LODGroup::fadeMode` is `FadeCrossFade` by default (`fadeDuration` 0.35 s;
+  Inspector "Transition" and "Fade seconds"; saved as `fade` / `fadeT` in the `lodgroup` record, older scenes
+  read as cross-fade). When the chosen level changes, the visibility pass (`Render/Visibility`) gives the
+  renderers two items for that object: the incoming level and the outgoing one (`Item::fadeSecondary`), with
+  the same `ditherFade` (0 to 1 over the fade) and opposite `ditherInvert`. Each draws only its half of a 4x4
+  ordered dither (`Render/LodDither.hpp`: B4 = 4 B2(low bits) + B2(high bits), B2(x, y) = (2x + 3y) mod 4), so
+  every pixel belongs to exactly one level and the change looks like a dissolve. Culling dissolves away the
+  same way. Software renderer: a per-thread `SoftwareLodDither()` state the four raster loops test; OpenGL: the
+  `uLodDither` uniform and `discard` on `gl_FragCoord`; Direct3D 11: `uPost.y` / `uPost.z` and `discard` on
+  `SV_POSITION` (compile-checked with MinGW only, never run); Direct3D 12 has no dither yet: it draws the
+  incoming level only (a plain switch, as before). The shadow pass keeps using the current level.
+  The fade clock is `visibility::LodClock()` (real seconds; tests set `LodClockOverride()`).
+- **LOD bias.** `visibility::LodBias()` divides the distance (distance mode) or multiplies the screen size
+  (screen-size mode). The quality presets set it: Low 0.6, Medium 1.0, High 1.5 (`QualityPreset::lodBias`);
+  `OKAY_LOD_BIAS` sets the starting value; the editor's Stats panel has a slider.
+- **Scene-view LOD colours.** `visibility::LodOverlay()` (Stats panel > "LOD colours") tints every LOD Group by
+  the level it draws: red 0, green 1, blue 2, yellow 3, magenta 4, cyan 5. During a fade both colours show,
+  dithered.
+- **Counters.** `Frame::lodTriangles` (triangles submitted, both halves of a fade), `Frame::lodFading`; the F3
+  overlay and the editor's Game view stats print a `lod:` line.
+- **LODs on import.** A model's import settings (Project panel > Import Settings > "Generate LODs"; keys
+  `generateLods`, `lodLevels` 2..6, `lodReduction` 0.05..0.95, `lodScreen` "0.5,0.2,...") make
+  `ImportModelScene` add a LOD Group to every unskinned mesh of 64 triangles or more
+  (`LODGroup::GenerateScreenSize`): level i keeps `lodReduction^i` of the triangles and is left below
+  `lodScreen[i]` of the view height (missing entries halve the one before, from 0.5); culled below a quarter
+  of the last hand-over. The keys are written only while the box is on, so other models keep their meta text.
+- **Shared simplification.** `LODGroup::RebuildFromRatios` simplifies each (mesh, ratio) once and copies the
+  result to every object that uses the same mesh (a field of 144 rocks simplifies the rock three times, not 432).
+- **Simplifier quality.** `SimplifyMesh` now keeps material slots (`Mesh::triSlot`) and vertex colours, and
+  treats the border between two materials or two face colours like a UV seam (it is not moved, and no
+  triangle reaches across it).
+
 ## 27.2 Occlusion culling
 
 ### OcclusionBuffer
@@ -286,6 +320,29 @@ for tiling), with `mipBias` and hysteresis (feed the last choice back in
 time, always the one with the lowest `importance * screenPixels / bytesSaved`,
 until it fits. Pinned textures stay at mip 0; if nothing more can be demoted the
 plan says `overBudget`. Resident bytes of a mip count the whole chain below it.
+
+### Asset streaming in a running game (2026-11-22)
+
+`Render/AssetStreaming` (namespace `okay::streaming`) and the **Asset Streaming** component
+(`Components/AssetStreamer`, Add Component > Rendering) put MipBudget to work; world and cell streaming
+(StreamingGrid, World Streamer) is a separate system and is not touched here.
+
+- **Texture mips**: see `docs/rendering/textures.md`, "Mip streaming".
+- **Meshes in the background**: `streaming::MeshAsyncMode()` 0 = never (the default; the editor, which may save
+  meshes back), 1 = when the scene has an Asset Streaming component with "Load meshes in the background" on
+  (the player sets this before it loads its scene), 2 = always (`OKAY_MESH_ASYNC=1`). Then the scene loader gives
+  every Mesh Renderer with a model file (`meshPath`, .obj / .okaymesh) a placeholder cube and reads the file on
+  `JobSystem::Global()`, one load per file; `streaming::Update` (or `ApplyMeshLoads`) swaps the mesh in and
+  rebuilds that object's LOD Group levels. The check-only first parse of a scene does not load meshes at all.
+- **Long sounds** stream by default: a file of 30 seconds or more (`AudioStreamThresholdSeconds()`,
+  `OKAY_AUDIO_STREAM_SECONDS`, 0 = never by length) is read while it plays instead of being decoded whole
+  (`AudioShouldStream` in `Audio/AudioLoad.hpp`, used by `AttachAudioFile` and `LoadSceneAudio`). The source's
+  Stream box or the import setting "Read it while it plays" always stream; the new import setting "Always load
+  the whole file" (`set loadMode memory`) never does. The default import setting ("decode", shown as
+  "Automatic") follows the length rule, so existing .okaymeta files keep their text.
+- **Numbers**: `streaming::GetStats()` / `OverlayLine()`; the editor's Stats panel > Streaming (budget bar, pending
+  loads) and the F3 overlay.
+- Example: `examples/streaming_assets` (written by `make_streaming_assets`, `examples/streaming_assets/make_scene.cpp`).
 
 ## Scene optimization report
 

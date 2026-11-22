@@ -37,6 +37,7 @@
 #include "okay/Core/Game.hpp"
 #include "okay/Core/AssetManager.hpp"   // CachedCount() for the crash report
 #include "okay/Render/TextureAsset.hpp"  // textures::Pump once a frame, hot reload, the texture rows of the Profiler
+#include "okay/Render/AssetStreaming.hpp"   // Stats panel > Streaming, Asset Streaming inspector
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "ContentEditors.hpp"          // Items, Loot & Recipes (items.okayitems, .okayloot, .okayrecipes)
 #include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
@@ -13081,6 +13082,42 @@ void DrawStats(EditorState& ed) {
                           "Turn off only to check whether culling hides something it shouldn't.");
     ImGui::SameLine();
     ImGui::TextDisabled("| skinning: %s", okay::SkinnedMesh::GpuSkinning() ? "GPU" : "CPU");
+    // LOD: the Scene view colour overlay, the bias the quality presets also set, and what the last view drew.
+    ImGui::Checkbox("LOD colours", &okay::visibility::LodOverlay());
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Tint every LOD Group by the level it draws: red LOD 0, green 1, blue 2, yellow 3,\n"
+                          "magenta 4, cyan 5. Objects without a LOD Group keep their colour.");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::SliderFloat("LOD bias", &okay::visibility::LodBias(), 0.25f, 4.0f, "%.2f");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Above 1 keeps detailed levels longer, below 1 switches to cheaper ones sooner.\n"
+                          "The quality presets set it too (Low 0.6, Medium 1, High 1.5).");
+    {
+        const okay::visibility::Frame& vf = okay::visibility::Current();
+        if (vf.ready) ImGui::TextDisabled("LOD: %zu triangles drawn, %d fading", vf.lodTriangles, vf.lodFading);
+    }
+    // Asset streaming: texture memory against its budget and what is still loading.
+    {
+        const okay::streaming::Stats ss = okay::streaming::GetStats();
+        if (ImGui::CollapsingHeader("Streaming")) {
+            bool texOn = okay::textures::Streaming();
+            if (ImGui::Checkbox("Stream texture mips", &texOn)) {
+                okay::textures::SetStreaming(texOn);
+                if (!texOn) okay::textures::InvalidateAll();   // whole pictures again
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Pictures load small and sharpen in the background as the camera comes close.\n"
+                                  "An Asset Streaming component turns this on while its scene plays.");
+            const float used = (float)ss.residentBytes / 1048576.0f, budget = (float)ss.budgetBytes / 1048576.0f;
+            ImGui::Text("Textures: %d streamed, %.1f MB of %.0f MB budget (full size %.1f MB)", ss.textures, used, budget, ss.fullBytes / 1048576.0);
+            ImGui::ProgressBar(budget > 0.0f ? std::min(1.0f, used / budget) : 0.0f, ImVec2(-1.0f, 0.0f), ss.overBudget ? "over budget" : "");
+            ImGui::Text("Pending: %d texture loads, %d meshes   Done: %llu loads, %llu evictions, %llu meshes",
+                        ss.textureLoadsPending, ss.meshesWaiting, (unsigned long long)ss.textureLoadsDone,
+                        (unsigned long long)ss.textureEvictions, (unsigned long long)ss.meshesLoaded);
+            if (ss.texturesOn) okay::streaming::Update(ed.scene());   // plan from the camera the views used last
+        }
+    }
     ImGui::Spacing();
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("Sky, lighting, post FX and debug view moved to the Lighting tab.");
@@ -40015,6 +40052,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = never stop drawing it, however far it is.");
             if (ImGui::Checkbox("Tint by level", &lod->debugTint)) ed.dirty = true;
             oked::FieldTip("Tint by level");
+            int fadeMode = lod->fadeMode;
+            const char* fades[] = {"Switch at once", "Cross-fade (dither)"};
+            if (ImGui::Combo("Transition", &fadeMode, fades, 2)) { lod->fadeMode = fadeMode; ed.dirty = true; }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Cross-fade: the new level dissolves in over the old one, so nothing pops.");
+            if (lod->fadeMode == LODGroup::FadeCrossFade && ImGui::DragFloat("Fade seconds", &lod->fadeDuration, 0.01f, 0.0f, 5.0f, "%.2f"))
+                ed.dirty = true;
             int force = lod->forceLevel + 1;
             const char* forces[] = {"Auto", "LOD 0", "LOD 1", "LOD 2", "LOD 3", "Culled"};
             if (ImGui::Combo("Force", &force, forces, 6)) { lod->forceLevel = force - 1; ed.dirty = true; }
@@ -40047,6 +40091,21 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SetTooltip("Four levels: 100%%, 50%%, 25%% and 10%% of the triangles,\n"
                                   "with distances taken from how much the shape changes.");
             if (ImGui::SmallButton("Remove##lod")) toRemove = lod;
+        }
+    }
+    if (auto* as = dynamic_cast<okay::AssetStreamer*>(curComp)) {
+        if (CompHeader("Asset Streaming", as, &toRemove)) {
+            if (ImGui::Checkbox("Stream texture mips", &as->streamTextures)) ed.dirty = true;
+            if (ImGui::DragInt("Start size", &as->startSize, 1.0f, 1, 16384, "%d px")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Longest side a picture is loaded at first.");
+            if (ImGui::DragFloat("Budget", &as->budgetMB, 1.0f, 0.0f, 65536.0f, "%.0f MB")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Texture memory to stay within. 0 = the texture budget (OKAY_TEXTURE_BUDGET_MB).");
+            if (ImGui::DragFloat("Upload per frame", &as->uploadMBPerFrame, 0.5f, 0.0f, 4096.0f, "%.1f MB")) ed.dirty = true;
+            if (ImGui::DragFloat("Mip bias", &as->mipBias, 0.05f, -4.0f, 8.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::Checkbox("Load meshes in the background", &as->backgroundMeshes)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In a game: model files are read on the job system; a cube shows until each is ready.\nThe editor always loads them at once.");
+            ImGui::TextDisabled("Works while the scene plays. Stats panel > Streaming shows the numbers.");
+            if (ImGui::SmallButton("Remove##ast")) toRemove = as;
         }
     }
     if (auto* occ = dynamic_cast<Occluder*>(curComp)) {
@@ -48756,6 +48815,7 @@ void DrawInspector(EditorState& ed) {
                 go->AddComponent<LODGroup>(); ed.view3D = true; ed.dirty = true;
             }
             if (item(!go->GetComponent<Occluder>(), "Occluder")) { go->AddComponent<Occluder>(); ed.dirty = true; }
+            if (item(!go->GetComponent<okay::AssetStreamer>(), "Asset Streaming")) { go->AddComponent<okay::AssetStreamer>(); ed.dirty = true; }
             if (item(!go->GetComponent<okay::MeshModifiers>(), "Modifiers (non-destructive)")) {
                 if (!go->GetComponent<MeshRenderer>()) go->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
                 go->AddComponent<okay::MeshModifiers>(); ed.view3D = true; ed.dirty = true;

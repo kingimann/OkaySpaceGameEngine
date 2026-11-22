@@ -16,6 +16,7 @@
 #include "okay/Render/Culling.hpp"
 #include "okay/Render/Visibility.hpp"
 #include "okay/Render/TriangleSpan.hpp"
+#include "okay/Render/LodDither.hpp"
 #include <unordered_set>
 #include "okay/Graphics/Image.hpp"
 #include "okay/Render/ProcTexture.hpp"
@@ -254,6 +255,7 @@ public:
         if (maxX >= width) maxX = width - 1;
         if (maxY >= height) maxY = height - 1;
         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+        const LodDitherState dith = SoftwareLodDither(); const bool dithOn = dith.Active();   // LOD cross-fade (LodDither.hpp)
 
         float area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
         if (area == 0.0f) return;
@@ -276,7 +278,7 @@ public:
                 if (w0 < b0 || w1 < b1 || w2 < b2) continue;
                 float d = (float)(w0 * d0 + w1 * d1 + w2 * d2);
                 std::size_t i = rowBase + x;
-                if (d > depth[i] + 1e-6f) { depth[i] = d; color[i] = abgr; }   // W-buffer: larger 1/w = nearer
+                if (d > depth[i] + 1e-6f && (!dithOn || dith.Keep(x, y))) { depth[i] = d; color[i] = abgr; }   // W-buffer: larger 1/w = nearer
             }
         }
     }
@@ -299,6 +301,7 @@ public:
         if (maxX >= width) maxX = width - 1;
         if (maxY >= height) maxY = height - 1;
         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+        const LodDitherState dith = SoftwareLodDither(); const bool dithOn = dith.Active();   // LOD cross-fade (LodDither.hpp)
         float area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
         if (area == 0.0f) return;
         float inv = 1.0f / area;
@@ -322,7 +325,7 @@ public:
                 if (w0 < b0 || w1 < b1 || w2 < b2) continue;   // top-left fill rule
                 float d = (float)(w0 * D[0] + w1 * D[1] + w2 * D[2]);
                 std::size_t i = row + x;
-                if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer; bias = first-drawn wins ties
+                if (d <= depth[i] + 1e-6f || (dithOn && !dith.Keep(x, y))) continue;   // W-buffer: larger 1/w = nearer; bias = first-drawn wins ties
                 float lr = (float)(w0 * LR[0] + w1 * LR[1] + w2 * LR[2]);
                 float lg = (float)(w0 * LG[0] + w1 * LG[1] + w2 * LG[2]);
                 float lb = (float)(w0 * LB[0] + w1 * LB[1] + w2 * LB[2]);
@@ -439,6 +442,7 @@ public:
         if (maxX >= width) maxX = width - 1;
         if (maxY >= height) maxY = height - 1;
         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+        const LodDitherState dith = SoftwareLodDither(); const bool dithOn = dith.Active();   // LOD cross-fade (LodDither.hpp)
         float area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
         if (area == 0.0f || mips.empty()) return;
         float inv = 1.0f / area;
@@ -461,7 +465,7 @@ public:
                 if (w0 < b0 || w1 < b1 || w2 < b2) continue;   // top-left fill rule
                 float d = (float)(w0 * D[0] + w1 * D[1] + w2 * D[2]);
                 std::size_t i = rowBase + x;
-                if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer
+                if (d <= depth[i] + 1e-6f || (dithOn && !dith.Keep(x, y))) continue;   // W-buffer: larger 1/w = nearer
                 float A = (float)(w0 * U[0] + w1 * U[1] + w2 * U[2]);
                 float Av = (float)(w0 * V[0] + w1 * V[1] + w2 * V[2]);
                 float iw = (float)(w0 * IW[0] + w1 * IW[1] + w2 * IW[2]);
@@ -522,6 +526,7 @@ public:
         if (maxX >= width) maxX = width - 1;
         if (maxY >= height) maxY = height - 1;
         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+        const LodDitherState dith = SoftwareLodDither(); const bool dithOn = dith.Active();   // LOD cross-fade (LodDither.hpp)
         float area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
         if (area == 0.0f) return;
         float inv = 1.0f / area;
@@ -562,7 +567,7 @@ public:
                 if (w0 < b0 || w1 < b1 || w2 < b2) continue;   // top-left fill rule
                 float d = (float)(w0 * D[0] + w1 * D[1] + w2 * D[2]);
                 std::size_t i = rowBase + x;
-                if (d <= depth[i] + 1e-6f) continue;   // W-buffer: larger 1/w = nearer
+                if (d <= depth[i] + 1e-6f || (dithOn && !dith.Keep(x, y))) continue;   // W-buffer: larger 1/w = nearer
                 // Perspective-correct interpolation of world normal + position
                 // (weight each vertex by 1/w). Affine interpolation is badly wrong
                 // for large triangles — e.g. a ground quad would sample shadows and
@@ -2052,6 +2057,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             oi.rowsKnown = true;
             oi.yRow0 = (int)std::floor(yLo) - 2;
             oi.yRow1 = (int)std::ceil(yHi) + 2;
+            float fadeF = 1.0f; int fadeA = -1, fadeB = -1;
+            if (vis.FadeFor(go, fadeF, fadeA, fadeB)) oi.rowsKnown = false;   // the outgoing LOD mesh has its own bounds
         }
         // Lights: a point, spot or area light whose range does not reach the box adds exactly nothing (see LightSubset).
         if (lightCullOn && !sceneLights.empty() && !(mr->unlit || mr->shader == MeshRenderer::Shader::Unlit)) {
@@ -2115,8 +2122,14 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const float scrollU = mr->uvScroll.x * Time::ElapsedTime();
         const float scrollV = mr->uvScroll.y * Time::ElapsedTime();
         Mat4 model = go->transform->LocalToWorldMatrix();
-        const Mesh* lodMesh = vis.MeshFor(go.get());
-        if (!lodMesh) { continue; }
+        const Mesh* lodMainMesh = vis.MeshFor(go.get());
+        if (!lodMainMesh) { continue; }
+        // A LOD Group changing level draws both levels, each through its half of the dither (LodDither.hpp).
+        float lodFade = 1.0f; int lodMainLevel = -1, lodFadeLevel = -1;
+        const Mesh* lodFadeMesh = vis.FadeFor(go.get(), lodFade, lodMainLevel, lodFadeLevel);
+        for (int lodPass = 0; lodPass < (lodFadeMesh ? 2 : 1); ++lodPass) {   // (body not re-indented)
+        SoftwareLodDither() = LodDitherState{lodFade, lodPass == 1};
+        const Mesh* lodMesh = lodPass == 0 ? lodMainMesh : lodFadeMesh;
         const Mesh& drawMesh = *lodMesh;
         const auto& v = drawMesh.vertices;
         const auto& t = drawMesh.triangles;
@@ -2207,7 +2220,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // Once per mesh. Doing this inside the triangle loop made a plain scene
         // about twice as slow (every band, every triangle, a component lookup).
         float lodR = 1, lodG = 1, lodB = 1;
-        if (auto* lg = go->GetComponent<LODGroup>()) lg->DebugTint(lg->activeLevel, lodR, lodG, lodB);
+        if (auto* lg = go->GetComponent<LODGroup>()) {
+            const int shownLevel = lodPass == 1 ? lodFadeLevel : (lodMainLevel >= 0 ? lodMainLevel : lg->activeLevel);
+            lg->DebugTint(shownLevel, lodR, lodG, lodB);
+        }
         Color shaded = mr->color;
         shaded.r *= lodR; shaded.g *= lodG; shaded.b *= lodB;
         // Per-pixel (Phong) shading for lit meshes that carry normals — smooth
@@ -2515,7 +2531,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                sx[2], sy[2], sd[2], abgr, bandY0, bandY1);
             }
         }
+        }   // lodPass
+        SoftwareLodDither() = LodDitherState{};
     }
+    SoftwareLodDither() = LodDitherState{};   // a `continue` inside a pass can skip the reset above
     };  // renderBand
     // Split the frame into horizontal bands across hardware threads.
     { OKAY_PROFILE("Render.Raster"); textures::ReadOnlyScope texturesReadOnly;   // the bands only read the textures loaded above

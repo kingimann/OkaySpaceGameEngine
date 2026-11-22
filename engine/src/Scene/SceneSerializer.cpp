@@ -229,6 +229,7 @@
 #include "okay/Scene/ComponentSerializer.hpp"
 #include <algorithm>
 #include <vector>
+#include "okay/Render/AssetStreaming.hpp"
 
 namespace okay {
 
@@ -237,6 +238,10 @@ namespace okay {
 static thread_local std::string g_loadingSceneDir;
 // The folder of the scene file loaded last: restoring a scene from text (Stop after Play, Undo) finds mesh files next to it again.
 static thread_local std::string g_lastSceneDir;
+// Model meshes of this parse load in the background (streaming::MeshAsyncLoading); the probe parse that only checks
+// the text does not load them at all then.
+static thread_local bool g_asyncMeshes = false;
+static thread_local bool g_probeParse = false;
 
 namespace detail {
 std::uint64_t ComponentRulesGeneration();        // GameObject.cpp
@@ -4734,7 +4739,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws; // optional .OBJ model path (quoted)
                     if (in.peek() == '"') {
                         mr->meshPath = ReadQuoted(in);
-                        if (!mr->meshPath.empty()) {
+                        if (!mr->meshPath.empty() && g_asyncMeshes) {
+                            // Asset streaming: a placeholder now, the file read on the JobSystem (AssetStreaming.hpp).
+                            if (!g_probeParse) streaming::LoadMeshInBackground(mr, mr->meshPath, g_loadingSceneDir);
+                        } else if (!mr->meshPath.empty()) {
                             // .okaymesh or .obj; an exported game finds the file next to its scene.
                             Mesh loaded; std::string tex, err;
                             if (modeling::LoadMeshAsset(mr->meshPath, loaded, &tex, &err, g_loadingSceneDir)) {
@@ -9590,9 +9598,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
         if (warnings) warnings->insert(warnings->end(), found.begin(), found.end());
         else for (const auto& w : found) std::cerr << "[scene] warning: " << w << "\n";
     };
+    // Background mesh loading: always (OKAY_MESH_ASYNC=1), or when the scene's Asset Streaming component asks for it
+    // and the host allows it (the player). The editor loads meshes at once (it may save them back).
+    const bool prevAsync = g_asyncMeshes;
+    struct RestoreAsync { bool v; ~RestoreAsync() { g_asyncMeshes = v; } } restoreAsync{prevAsync};
+    {
+        const int mode = streaming::MeshAsyncMode();
+        g_asyncMeshes = mode == 2 || (mode == 1 && streaming::SceneTextAsksForAsyncMeshes(text));
+    }
     if (clear) {
         {
             Scene probe("probe");
+            g_probeParse = true;
+            struct EndProbe { ~EndProbe() { g_probeParse = false; } } endProbe;
             if (!ParseCore(probe, text, true, nullptr, error, &found)) return false;
         }
         report();
@@ -10192,6 +10210,7 @@ void RegisterBuiltinComponentSerializers() {
         KvOut k{out};
         k.b("screen", lg->useScreenSize)("hyst", lg->hysteresis)("cullD", lg->cullDistance)
          ("cullS", lg->cullScreen)("force", lg->forceLevel).b("tint", lg->debugTint)
+         ("fade", lg->fadeMode)("fadeT", lg->fadeDuration)
          ("n", (int)lg->levels.size());
         const int n = std::min((int)lg->levels.size(), LODGroup::kMaxLevels);
         for (int i = 0; i < n; ++i) {
@@ -10210,7 +10229,11 @@ void RegisterBuiltinComponentSerializers() {
         k.b("screen", lg->useScreenSize); k.f("hyst", lg->hysteresis);
         k.f("cullD", lg->cullDistance); k.f("cullS", lg->cullScreen);
         k.i("force", force); lg->forceLevel = force;
-        k.b("tint", lg->debugTint); k.i("n", n);
+        k.b("tint", lg->debugTint);
+        k.i("fade", lg->fadeMode); k.f("fadeT", lg->fadeDuration);   // absent in older scenes: cross-fade, 0.35 s
+        if (lg->fadeMode != LODGroup::FadeNone) lg->fadeMode = LODGroup::FadeCrossFade;
+        if (!(lg->fadeDuration >= 0.0f && lg->fadeDuration <= 10.0f)) lg->fadeDuration = 0.35f;
+        k.i("n", n);
         if (n < 1) n = 1;
         if (n > LODGroup::kMaxLevels) n = LODGroup::kMaxLevels;
         lg->levels.assign((std::size_t)n, {});
@@ -10686,7 +10709,9 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(tbtn));
     // Last, so every record written before keeps its place. Saved from their PropertyRegistry entries, no code of their own (none of them was saved before).
-    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion"})
+    // AssetStreamer's `backgroundMeshes=1` is also what the player's loader looks for before it parses the objects
+    // (streaming::SceneTextAsksForAsyncMeshes): the generic record keeps every key on the record's one line.
+    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion", "AssetStreamer"})
         ComponentSerializerRegistry::RegisterFromProperties(type);
 }
 } // namespace detail

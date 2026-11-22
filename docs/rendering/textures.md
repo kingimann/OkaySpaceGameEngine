@@ -106,6 +106,33 @@ runs on the CPU at load; `glGenerateMipmap` was faster for big pictures.
   warning per crossing, the overlay line says `OVER BUDGET`, and the library lets go of the textures no renderer has
   drawn for 300 frames (`SetIdleFrames`), oldest first, until it is under. Textures in use are never dropped.
 
+## Mip streaming (2026-11-22)
+
+Off by default. `textures::SetStreaming(true)`, `OKAY_TEXTURE_STREAMING=1`, the editor's Stats panel >
+Streaming > "Stream texture mips", or an **Asset Streaming** component in the scene (while it plays) turn it on.
+
+- A picture file (mipmaps on, not `proc:` or `@`) is decoded and cut down to its first mip whose longest side is
+  at most `StreamStartSize()` (64 by default, the component's "Start size"). `TextureAsset::image` holds that
+  mip; `residentMip`, `fullWidth`, `fullHeight` say which. Renderers need no change: they upload `image` and its
+  chain as before, and a new serial makes them upload again.
+- `streaming::Update(scene)` (Render/AssetStreaming, once a frame; the component calls it) measures each
+  texture on screen (largest bounding-sphere diameter of a mesh renderer that uses it, by `tex::ProjectedPixels`,
+  times the material tiling), asks `optimize::PlanMips` for the mip each should keep (one texel per pixel,
+  hysteresis from the resident mip, the budget), evicts blurrier mips at once and queues sharper ones with
+  `textures::RequestMip`: a background decode on `JobSystem::Global()` (low priority), at most
+  `uploadMBPerFrame` of new pixels per frame (the most visible first; the first is always let through).
+  `textures::Pump` applies finished loads (`ApplyStreamLoads`).
+- One load per texture at a time; an eviction while a load runs marks it stale (its result is dropped).
+- The component's "Budget" (MB, 0 = the texture budget) is what `PlanMips` keeps to; the Stats panel shows
+  memory used against it, full-size memory, pending loads, loads done and evictions; F3 prints a
+  `streaming:` line.
+- When the component goes (Stop in the editor) streaming turns off and the streamed pictures are read again
+  whole (`textures::InvalidateAll`).
+- Limits: a sharper mip decodes the whole file again (PNG/JPEG have no mips on disk; a `.dds` with mips is
+  decoded whole too); the CPU keeps the resident mip (and the chain once a renderer asks for it); textures
+  that no mesh renderer uses go down to the smallest allowed mip; registered (`@`) and procedural pictures
+  never stream.
+
 ## What ran
 
 All on Linux, Release build, 2026-11-22, after merging `origin/main`:

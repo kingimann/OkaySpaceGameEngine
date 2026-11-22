@@ -28,6 +28,7 @@
 #include "okay/Core/SystemCost.hpp"       // F3 second page: ms per system
 #include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
 #include "okay/Render/TextureAsset.hpp"   // textures::Pump once a frame
+#include "okay/Render/AssetStreaming.hpp" // background meshes for scenes with an Asset Streaming component
 #include "okay/Core/GameLoop.hpp"        // the per-frame driver (clamp, smoothing, Time, update, quit)
 #include "okay/Net/DedicatedServer.hpp"
 #if !defined(_WIN32)
@@ -1576,6 +1577,9 @@ int main(int argc, char** argv) {
     okay::devlog::Start(devPanels, okay::devlog::LogPathFor(argv[0], baseDir), saveDir + "game.log",
                         cfg.title, cfg.version.empty() ? std::string() : cfg.version + " (build " + std::to_string(cfg.buildNumber) + ")", scenePath);
     okay::devlog::HitchWatch hitchWatch;
+    // Asset streaming: a scene with an Asset Streaming component ("Load meshes in the background") has its model files
+    // read on the job system behind placeholder cubes (OKAY_MESH_ASYNC=1 does it for every scene, =0 never).
+    if (!std::getenv("OKAY_MESH_ASYNC")) okay::streaming::SetMeshAsyncMode(1);
     if (!SceneSerializer::LoadFromFile(scene, scenePath, &err)) {
         pb->Log("Could not load " + scenePath + ": " + err);
         okay::Log::Error("[scene] could not load '", scenePath, "': ", err);

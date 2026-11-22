@@ -632,14 +632,36 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
             }
             ImGui::Checkbox("Import animations", &e.model.importAnimations);
             Hint("Off: no clips, rest pose.");
+            ImGui::Checkbox("Generate LODs", &e.model.generateLods);
+            Hint("Adds a LOD Group to each mesh: cheaper copies for far away, cross-faded.");
+            if (e.model.generateLods) {
+                ImGui::SetNextItemWidth(160);
+                ImGui::SliderInt("LOD levels", &e.model.lodLevels, 2, 6);
+                ImGui::SetNextItemWidth(160);
+                ImGui::SliderFloat("Keep per level", &e.model.lodReduction, 0.05f, 0.95f, "%.2f");
+                Hint("Each level keeps this share of the triangles of the one before.");
+                if (e.model.lodScreen.size() != static_cast<std::size_t>(e.model.lodLevels - 1)) {
+                    std::vector<float> fresh;
+                    float t = 0.5f;
+                    for (int i = 0; i + 1 < e.model.lodLevels; ++i) {
+                        fresh.push_back(i < static_cast<int>(e.model.lodScreen.size()) ? e.model.lodScreen[static_cast<std::size_t>(i)] : t);
+                        t = fresh.back() * 0.5f;
+                    }
+                    e.model.lodScreen = fresh;
+                }
+                for (std::size_t i = 0; i < e.model.lodScreen.size(); ++i) {
+                    ImGui::SetNextItemWidth(160);
+                    const std::string label = "Leave LOD " + std::to_string(i) + " below";
+                    ImGui::SliderFloat(label.c_str(), &e.model.lodScreen[i], 0.001f, 1.0f, "%.3f of the view");
+                }
+            }
             Hint("Used when the model is next added to a scene.");
             break;
         }
         case ok::AssetType::Audio: {
-            int mode = e.audio.loadMode == ok::AudioImportSettings::LoadMode::Stream ? 1 : 0;
-            if (Combo("Loading", mode, {"Load the whole file", "Read it while it plays"}))
-                e.audio.loadMode = mode == 1 ? ok::AudioImportSettings::LoadMode::Stream
-                                             : ok::AudioImportSettings::LoadMode::Decode;
+            int mode = static_cast<int>(e.audio.loadMode);
+            if (Combo("Loading", mode, {"Automatic (stream if 30 s or longer)", "Read it while it plays", "Always load the whole file"}))
+                e.audio.loadMode = static_cast<ok::AudioImportSettings::LoadMode>(mode);
             Hint("Read while it plays keeps a long file in a small fixed amount of memory.");
             ImGui::Checkbox("Mix down to one channel", &e.audio.forceMono);
             Hint("Left and right become a single channel. Off keeps the recording as it is.");

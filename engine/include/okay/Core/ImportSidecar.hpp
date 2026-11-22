@@ -18,6 +18,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace okay {
 
@@ -96,6 +97,11 @@ struct ModelImportOptions {
     int   normals = Import;
     float smoothingAngle = 60.0f;   ///< degrees, for Calculate
     bool  importAnimations = true;
+    /// Automatic LOD Group on every unskinned mesh (ModelImportSettings::generateLods and friends).
+    bool  generateLods = false;
+    int   lodLevels = 3;
+    float lodReduction = 0.5f;
+    std::vector<float> lodScreen;
 };
 
 inline ModelImportOptions ReadModelImportOptions(const std::string& modelPath) {
@@ -108,6 +114,21 @@ inline ModelImportOptions ReadModelImportOptions(const std::string& modelPath) {
     if (!a.empty()) { const float v = static_cast<float>(std::atof(a.c_str())); if (v >= 0.0f && v <= 180.0f) o.smoothingAngle = v; }
     const std::string ia = low(ReadImportSetting(modelPath, "model", "importAnimations"));
     if (ia == "0" || ia == "false" || ia == "off") o.importAnimations = false;
+    const std::string gl = low(ReadImportSetting(modelPath, "model", "generateLods"));
+    o.generateLods = gl == "1" || gl == "true" || gl == "on" || gl == "yes";
+    const std::string ll = ReadImportSetting(modelPath, "model", "lodLevels");
+    if (!ll.empty()) { const int v = std::atoi(ll.c_str()); o.lodLevels = v < 2 ? 2 : (v > 6 ? 6 : v); }
+    const std::string lr = ReadImportSetting(modelPath, "model", "lodReduction");
+    if (!lr.empty()) { const float v = static_cast<float>(std::atof(lr.c_str())); if (v >= 0.05f && v <= 0.95f) o.lodReduction = v; }
+    const std::string ls = ReadImportSetting(modelPath, "model", "lodScreen");
+    for (std::size_t at = 0; !ls.empty() && at <= ls.size();) {
+        const std::size_t comma = ls.find(',', at);
+        const std::string part = ls.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+        const float v = static_cast<float>(std::atof(part.c_str()));
+        if (v > 0.0f && v <= 1.0f) o.lodScreen.push_back(v);
+        if (comma == std::string::npos) break;
+        at = comma + 1;
+    }
     return o;
 }
 

@@ -259,6 +259,11 @@ const char* kFrag =
     "uniform sampler2D uTex; uniform float uUseTex;\n"
     "uniform float uShaderMode; uniform float uToonBands; uniform float uRimStr;\n"
     "uniform vec3 uRimColor; uniform vec3 uGradTop; uniform vec3 uGradBot;\n"
+    "uniform vec2 uLodDither;\n"     // LOD cross-fade: x = 0 off, 1 keep pixels below y, 2 keep the others (LodDither.hpp)
+    "float lodDitherThreshold(){\n"  // 4x4 ordered dither: 4 * B2(low bits) + B2(high bits), B2(x, y) = (2x + 3y) mod 4
+    "  vec2 p = mod(floor(gl_FragCoord.xy), 4.0); vec2 lo = mod(p, 2.0); vec2 hi = floor(p * 0.5);\n"
+    "  return (4.0 * mod(2.0 * lo.x + 3.0 * lo.y, 4.0) + mod(2.0 * hi.x + 3.0 * hi.y, 4.0) + 0.5) / 16.0;\n"
+    "}\n"
     "uniform float uShadowAlpha;\n"   // >=0: draw a flat translucent black (ground contact shadow)
     "uniform float uAlpha;\n"         // material opacity (1 = opaque); blended for water/glass
     "uniform int uLightCount;\n"      // multi-light: directional + point + spot from the scene
@@ -405,6 +410,7 @@ const char* kFrag =
     "  return 1.0 - info.y * (1.0 - s / 12.0);\n"
     "}\n"
     "void main(){\n"
+    "  if (uLodDither.x > 0.5) { bool low = lodDitherThreshold() < uLodDither.y; if (low == (uLodDither.x > 1.5)) discard; }\n"
     "  if (uShadowAlpha >= 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, uShadowAlpha); return; }\n"
     "  vec3 N = normalize(vN);\n"
     "  if (uHasNormal > 0.5) {\n"                                  // perturb N by the tangent-space normal map
@@ -712,6 +718,7 @@ bool GLRenderer::EnsureProgram() {
     m_uGradTop = g.GetUniformLocation(m_prog, "uGradTop");
     m_uGradBot = g.GetUniformLocation(m_prog, "uGradBot");
     m_uShadowAlpha = g.GetUniformLocation(m_prog, "uShadowAlpha");
+    m_uLodDither = g.GetUniformLocation(m_prog, "uLodDither");
     m_uAlpha = g.GetUniformLocation(m_prog, "uAlpha");
     m_uLightCount = g.GetUniformLocation(m_prog, "uLightCount");
     m_uLType   = g.GetUniformLocation(m_prog, "uLType");
@@ -2187,6 +2194,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     Vec3 lightTravel = SceneLight::Direction();   // direction light travels (for ground shadows)
     g.Uniform3f(m_uLightDir, toLight.x, toLight.y, toLight.z);
     g.Uniform1f(m_uShadowAlpha, -1.0f);           // normal (lit) draws; flipped on for the shadow pass
+    if (m_uLodDither >= 0) g.Uniform2f(m_uLodDither, 0.0f, 1.0f);   // no LOD dither unless an item asks for it
     g.Uniform1f(m_uAlpha, 1.0f);                   // opaque by default; set per material below
     g.Uniform3f(m_uLightColor, 0.85f, 0.85f, 0.85f);
     // Hemisphere/colored ambient from the scene's gathered lights (falls back to grey).
@@ -2400,6 +2408,8 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         float tintR = 1, tintG = 1, tintB = 1;
         if (it.lod >= 0) if (auto* lg = go->GetComponent<LODGroup>(); lg) lg->DebugTint(it.lod, tintR, tintG, tintB);
         g.Uniform3f(m_uColor, mr->color.r * tintR, mr->color.g * tintG, mr->color.b * tintB);
+        // LOD cross-fade: this item's half of the dissolve (0 = draw every pixel).
+        if (m_uLodDither >= 0) g.Uniform2f(m_uLodDither, it.Dithered() ? (it.ditherInvert ? 2.0f : 1.0f) : 0.0f, it.ditherFade);
         g.Uniform3f(m_uEmissive, mr->emissive.r, mr->emissive.g, mr->emissive.b);
         g.Uniform1f(m_uSpecular, unlit ? 0.0f : mr->specular);
         g.Uniform1f(m_uShininess, mr->shininess);
@@ -2577,6 +2587,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.Uniform1f(m_uShadowAlpha, -1.0f);
         }
     }
+    if (m_uLodDither >= 0) g.Uniform2f(m_uLodDither, 0.0f, 1.0f);   // later draws with this program are not dithered
 
     LastCullCounters().drawn = drawn;
     g.DisableVertexAttribArray(5); g.DisableVertexAttribArray(6);   // skin inputs off for the post passes

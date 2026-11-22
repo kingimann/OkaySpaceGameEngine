@@ -1582,6 +1582,8 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         std::memcpy(cb.model, model.m, sizeof(cb.model));
         float tintR = 1, tintG = 1, tintB = 1;
         if (it.lod >= 0) if (auto* lg = go->GetComponent<LODGroup>(); lg) lg->DebugTint(it.lod, tintR, tintG, tintB);
+        cb.post[1] = it.Dithered() ? (it.ditherInvert ? 2.0f : 1.0f) : 0.0f;   // LOD cross-fade (LodDither.hpp)
+        cb.post[2] = it.ditherFade;
         cb.color[0] = mr->color.r * tintR; cb.color[1] = mr->color.g * tintG; cb.color[2] = mr->color.b * tintB;
         cb.specular = unlit ? 0.0f : mr->specular;
         cb.emissive[0] = mr->emissive.r; cb.emissive[1] = mr->emissive.g; cb.emissive[2] = mr->emissive.b;

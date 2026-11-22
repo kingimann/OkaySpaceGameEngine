@@ -270,7 +270,7 @@ int main() {
         CHECK(a.IsStreaming());
         CHECK(AttachAudioFile(b, shortWav) == AudioAttach::Clip);
         // An explicit "Decode" import setting keeps the whole file in memory.
-        std::ofstream(longWav + ".okaymeta") << "importer audio 2\nset loadMode decode\n";
+        std::ofstream(longWav + ".okaymeta") << "importer audio 2\nset loadMode memory\n";
         AudioSource c;
         CHECK(AttachAudioFile(c, longWav) == AudioAttach::Clip);
         // The same rule when a scene loads.

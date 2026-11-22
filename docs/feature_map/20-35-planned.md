@@ -762,7 +762,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** LOD Group inspector (Add Component > Rendering) and distance rings in the Scene view
 - **Docs:** `docs/engine/optimization_tools.md`
 - **Tests:** `optimize_simplify`, `visibility_lod`
-- **Status:** Partial - `LODGroup` is a component with an Inspector, distances or screen size, Generate LODs and Scene-view rings. OpenGL, Direct3D 11, Direct3D 12 and the software renderer pick the level with `SelectLod`. The mip budget is still unused.
+- **Status:** Partial - `LODGroup` is a component with an Inspector, distances or screen size, Generate LODs and Scene-view rings. OpenGL, Direct3D 11, Direct3D 12 and the software renderer pick the level with `SelectLod`; levels cross-fade with a dither (not Direct3D 12), a LOD bias comes from the quality presets, Stats > "LOD colours" tints by level, model import can generate LODs (2.8.5). The mip budget drives texture mip streaming (2.13.9).
 - **Exists today:** A Mesh Renderer with an LOD Group switches meshes by distance or screen size in every backend. Hysteresis uses the last choice. Skinned meshes stay on the full mesh. Generate builds 100/50/25/10 percent levels.
 - **Work packages:**
   1. M - `LODGroup` component (levels, thresholds, fade) with serializer entry and Inspector. Depends on: #574 (on main).
@@ -770,7 +770,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   3. S - "Generate LODs" button on a MeshRenderer: ratios 100/50/25/10 percent through `GenerateLodChain`. Depends on: package 1.
   4. M - Scene view LOD preview: tint by level, force a level, show triangle savings. Depends on: package 2.
   5. S - LOD saving shown in the Stats panel and the optimization report (27.3). Depends on: package 2.
-- **Open:** simplifier ignores colour and material changes in its error; a mesh with `cornerUVs` is split into per-vertex UVs first; skinned meshes need skin data passed in by hand.
+- **Open:** colour and material borders are kept like seams but colours are not part of the error itself; a mesh with `cornerUVs` is split into per-vertex UVs first; skinned meshes need skin data passed in by hand (and get no LOD Group on import); Direct3D 12 has no LOD dither.
 - **Related:** 2.8, 3.3, 3.5, 27.3, 23.1
 - **Words:** LOD, level of detail, mesh simplify, decimate, LODGroup, switch distance, cross fade, GenerateLodChain, MeshSimplify
 - **Seen as:** frame rate drops with many high-poly objects far away; objects pop when they change detail

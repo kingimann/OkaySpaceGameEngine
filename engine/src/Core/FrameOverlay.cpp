@@ -2,6 +2,8 @@
 #include <chrono>
 #include "okay/Core/FrameOverlay.hpp"
 #include "okay/Render/TextureAsset.hpp"   // textures::OverlayLine
+#include "okay/Render/AssetStreaming.hpp"  // streaming::OverlayLine
+#include "okay/Render/Visibility.hpp"      // LOD counts for the overlay
 #include "okay/Core/Game.hpp"
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Core/Time.hpp"
@@ -91,6 +93,17 @@ std::vector<std::string> FrameOverlay::Lines(const GameLoop& loop) {
     std::vector<std::string> out = Format(loop.Stats().Snapshot(), StateOf(loop));
     if (!RendererName().empty()) out.push_back("renderer: " + RendererName());
     if (textures::GetStats().count > 0) out.push_back(textures::OverlayLine());   // the shared texture library: count, MB, budget
+    {   // asset streaming (texture mips, background meshes): only while it is on or still has work
+        const streaming::Stats ss = streaming::GetStats();
+        if (ss.texturesOn || ss.meshesWaiting > 0) out.push_back(streaming::OverlayLine());
+    }
+    {   // LOD: triangles the last view submitted, objects cross-fading, the quality preset's bias
+        const visibility::Frame& vf = visibility::Current();
+        if (vf.ready && (vf.lodCount[0] + vf.lodCount[1] + vf.lodCount[2] + vf.lodCount[3] + vf.lodCulled > 0))
+            out.push_back("lod: " + std::to_string((long long)vf.lodTriangles) + " triangles, levels " + std::to_string(vf.lodCount[0]) + "/" +
+                          std::to_string(vf.lodCount[1]) + "/" + std::to_string(vf.lodCount[2]) + "/" + std::to_string(vf.lodCount[3]) +
+                          ", " + std::to_string(vf.lodCulled) + " culled, " + std::to_string(vf.lodFading) + " fading, bias " + Num("%.2f", visibility::LodBias()));
+    }
     // Where the time goes in a voxel scene: only while a voxel terrain is running (it reported within the last second).
     const VoxelOverlayStats& v = Voxel();
     if (NowSeconds() - v.seenAt < 1.0) {

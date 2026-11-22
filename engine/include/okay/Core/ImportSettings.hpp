@@ -65,12 +65,23 @@ struct ModelImportSettings {
     Normals normals = Normals::Import;     ///< use the file's, compute smooth ones, or flat ones
     bool    importAnimations = true;
     float   smoothingAngle = 60.0f;        ///< degrees, for Normals::Calculate (0..180)
+    /// Automatic LOD: when on, every (unskinned) mesh of the model gets a LOD Group when it is brought into a
+    /// scene, with `lodLevels` levels (2..6), each keeping `lodReduction` (0.05..0.95) of the triangles of the one
+    /// before, switched at the screen sizes in `lodScreen` (fraction of the view height where level i is left;
+    /// missing entries halve the one before, starting at 0.5). The keys are only written while this is on.
+    bool    generateLods = false;
+    int     lodLevels = 3;
+    float   lodReduction = 0.5f;
+    std::vector<float> lodScreen;
 };
 
 /// Audio import settings.
 struct AudioImportSettings {
-    enum class LoadMode { Decode, Stream };
-    LoadMode loadMode = LoadMode::Decode;  ///< decode fully on load, or stream from disk while playing
+    /// Decode ("decode", the default): automatic, the whole file in memory unless it plays for 30 seconds or more
+    /// (AudioStreamThresholdSeconds, Audio/AudioLoad.hpp), then read while it plays. Stream: always read while it
+    /// plays. Memory ("memory"): always the whole file, however long.
+    enum class LoadMode { Decode, Stream, Memory };
+    LoadMode loadMode = LoadMode::Decode;
     bool     forceMono = false;
     float    quality = 0.7f;               ///< kept so older files still round-trip; audio is not re-encoded, so this is not applied
 };

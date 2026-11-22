@@ -222,6 +222,27 @@ int main() {
         CHECK(yWeak < yStiff - 0.05f);          // the torque cap lets it sag
     }
 
+    // ---- No invisible floor past an edge (review of #1138): a sphere sliding off a box falls at once.
+    //      Before: the last contact plane was kept while the casts missed, up to 1 m past the edge. ----
+    {
+        XpbdRagdoll x;
+        SimpleWorld w;
+        w.hasGround = false;
+        w.boxes.push_back({Vec3{-2.0f, -1.0f, -1.0f}, Vec3{0.0f, 0.0f, 1.0f}});
+        BodyDesc b; b.position = {-0.3f, 0.05f, 0}; b.mass = 1.0f; b.inertia = {0.001f, 0.001f, 0.001f};
+        b.spheres.push_back({Vec3::Zero, 0.05f});
+        const int i = x.AddBody(b);
+        x.SetState(i, {b.position, Quat::Identity, Vec3{1.0f, 0, 0}, Vec3::Zero});
+        float yAtHalfMetre = 9.0f;
+        for (int k = 0; k < 90; ++k) {
+            x.Step(1.0f / 60.0f, &w);
+            const BodyState st = x.State(i);
+            if (st.position.x > 0.5f && yAtHalfMetre > 8.0f) yAtHalfMetre = st.position.y;
+        }
+        std::cout << "  edge: height when 0.5 m past the edge " << yAtHalfMetre << "\n";
+        CHECK(yAtHalfMetre < -0.05f);                    // already falling (no floor out there)
+    }
+
     // ---- Standing: powered, no push, stays up on its own for 4 s ----
     {
         Sim s(RagdollMode::Powered);
@@ -349,6 +370,39 @@ int main() {
                       << s.c.Body(Hips).position.y << "\n";
         }
         CHECK(up == 4);
+    }
+
+    // ---- Draped over a ledge (review of #1138, pushes of 120..170 N s next to an edge): the get-up must
+    //      not lift the pelvis higher than standing on the surface under it, and it ends up standing.
+    //      Before: a foot touching the ledge top moved the ground up 1 m mid get-up and the helper
+    //      hoisted the body into the air. ----
+    {
+        int bad = 0, up = 0, cases = 0;
+        for (float edge : {1.0f, 1.6f}) for (float push : {120.0f, 135.0f, 150.0f, 170.0f}) {
+            Sim s;
+            s.world.groundY = -1.0f;                                       // the floor is 1 m below the ledge top
+            s.world.boxes.push_back({Vec3{-1.6f, -1.0f, -1.2f}, Vec3{edge, 0.0f, 1.2f}});
+            s.Run(0.2f);
+            s.c.Push(s.c.Body(Torso).position, Vec3{push, 0, 0});
+            float limit = 9.0f, worst = -9.0f;
+            bool wasGettingUp = false;
+            int i = 0;
+            for (; i < 1500 && !(s.c.State() == CharState::Animated && i > 30); ++i) {
+                s.Run(1.0f / 60.0f);
+                const bool gu = s.c.State() == CharState::GettingUp;
+                const Vec3 p = s.c.Body(Hips).position;
+                if (gu && !wasGettingUp) limit = (p.x > edge ? -1.0f : 0.0f) + s.c.StandingHeight() + 0.25f;
+                if (gu) worst = std::fmax(worst, p.y - limit);
+                wasGettingUp = gu;
+            }
+            ++cases;
+            bad += worst > 0.0f ? 1 : 0;
+            up += s.c.State() == CharState::Animated ? 1 : 0;
+            std::cout << "  draped: edge " << edge << " push " << push << ": " << S(s.c.State()) << " after " << i / 60.0f
+                      << " s, highest pelvis vs standing there " << (worst > -8.0f ? worst : 0.0f) << " m\n";
+        }
+        CHECK(bad == 0);
+        CHECK(up == cases);
     }
 
     // ---- Brace: falling forward, the hands reach the ground before the head ----
@@ -599,6 +653,105 @@ int main() {
         CHECK(!old->IsActive());                                  // the old ragdoll did not go limp too
         CHECK(ar->State() == CharState::Dead);
         CHECK(body->GetComponent<Character>()->enabled);          // nothing switched the animation off under it
+    }
+
+    // ---- Review of #1138: respawn, powered hand-over, remote copies, giving a Ragdoll back ----
+    {
+        auto makeBody = [](Scene& sc, const char* name, const Vec3& at) {
+            GameObject* b = sc.CreateGameObject(name);
+            b->transform->localPosition = at;
+            b->AddComponent<Character>()->Apply();
+            return b;
+        };
+        auto makeGround = [](Scene& sc) {
+            auto* g = sc.CreateGameObject("Ground");
+            g->transform->localPosition = {0, -0.5f, 0};
+            g->AddComponent<BoxCollider3D>()->size = {60, 1, 60};
+        };
+        auto run = [](Scene& sc, float sec) { for (float e = 0; e < sec - 1e-5f; e += 1.0f / 60.0f) sc.Update(1.0f / 60.0f); };
+
+        // Respawn: HealthStat moves the root to its start; the body comes back there, standing.
+        {
+            Scene sc{"respawn"};
+            makeGround(sc);
+            GameObject* body = makeBody(sc, "Body", Vec3{0, 0, 0});
+            auto* hp = body->AddComponent<HealthStat>();
+            hp->respawn = true;
+            hp->respawnDelay = 1000.0f;                       // only our Revive() brings it back
+            auto* ar = body->AddComponent<ActiveRagdoll>();
+            sc.Start();
+            run(sc, 0.3f);
+            body->transform->SetPosition(Vec3{6, 0, 0});      // walk away from the start...
+            run(sc, 0.2f);
+            hp->Damage(1000.0f, body->transform->Position() + Vec3{-3, 1.2f, 0});   // ...and die there
+            run(sc, 2.0f);
+            CHECK(ar->State() == CharState::Dead);
+            hp->Revive();                                     // respawn: back to the start
+            run(sc, 0.5f);
+            const Vec3 root = body->transform->Position();
+            std::cout << "  respawn: state " << ar->StateName() << " root " << root.x << ", " << root.z
+                      << " pelvis x " << ar->Core().Body(0).position.x << "\n";
+            CHECK(std::fabs(root.x) < 0.2f && std::fabs(root.z) < 0.2f);
+            CHECK(ar->State() == CharState::Animated);
+            CHECK(std::fabs(ar->Core().Body(0).position.x) < 0.5f);
+        }
+        // Powered mode: the movement controller stays on while it only balances.
+        {
+            Scene sc{"powered"};
+            makeGround(sc);
+            GameObject* body = makeBody(sc, "Body", Vec3{0, 0, 0});
+            auto* npc = body->AddComponent<NPCController>();
+            npc->behavior = (int)NPCController::Behavior::Idle;
+            auto* ar = body->AddComponent<ActiveRagdoll>();
+            ar->mode = 1;
+            sc.Start();
+            run(sc, 1.0f);
+            std::cout << "  powered: state " << ar->StateName() << " controller on " << npc->enabled << "\n";
+            CHECK(ar->State() == CharState::Balancing);
+            CHECK(npc->enabled);
+            ar->Trigger("knockdown");
+            run(sc, 0.3f);
+            CHECK(!npc->enabled);                             // down: handed over
+        }
+        // A remote copy (not owned here): the network moves it; the ragdoll never writes the root or
+        // switches its controller off.
+        {
+            Scene sc{"remote"};
+            makeGround(sc);
+            sc.CreateGameObject("Net")->AddComponent<NetworkManager>();
+            GameObject* body = makeBody(sc, "Remote", Vec3{0, 0, 0});
+            auto* no = body->AddComponent<NetworkObject>();
+            no->authority = NetworkObject::Authority::Manual;
+            no->owned = false;
+            auto* npc = body->AddComponent<NPCController>();
+            npc->behavior = (int)NPCController::Behavior::Idle;
+            auto* ar = body->AddComponent<ActiveRagdoll>();
+            sc.Start();
+            run(sc, 0.3f);
+            CHECK(!no->IsLocallyOwned());
+            const Vec3 root0 = body->transform->Position();
+            ar->Push(Vec3{0, 0, -400.0f});
+            run(sc, 4.0f);
+            const Vec3 root1 = body->transform->Position();
+            std::cout << "  remote: state " << ar->StateName() << " root moved " << Vec3::Distance(root0, root1)
+                      << " controller on " << npc->enabled << "\n";
+            CHECK(Vec3::Distance(root0, root1) < 1e-4f);
+            CHECK(npc->enabled);
+        }
+        // Switching the ActiveRagdoll off gives the Ragdoll it took over back.
+        {
+            Scene sc{"giveback"};
+            makeGround(sc);
+            GameObject* body = makeBody(sc, "Body", Vec3{0, 0, 0});
+            auto* old = body->AddComponent<Ragdoll>();
+            auto* ar = body->AddComponent<ActiveRagdoll>();
+            sc.Start();
+            run(sc, 0.2f);
+            CHECK(!old->enabled);
+            ar->enabled = false;
+            ar->OnDisable();
+            CHECK(old->enabled);
+        }
     }
 
     // ---- A broken skeleton in a scene: the component stays off, nothing crashes ----

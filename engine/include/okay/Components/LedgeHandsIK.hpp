@@ -12,6 +12,13 @@
 // Add it next to two LimbIK arm components, or leave leftArm / rightArm empty and
 // it uses a LimbIK already on each hand bone, or adds one from the humanoid bone map.
 // Runs just before LimbIK (order 104 < 105).
+// Saved in the scene file (record "ledgehandsik"): the settings, and each arm as the
+// id (GUID) of the object holding that LimbIK plus which LimbIK on it (0 = the first).
+// A loaded link is kept in leftArmLink / rightArmLink and turned back into the arm at
+// Start(); a link to an object outside this character (a copy of a character still names
+// the original's arms) is dropped, and autoWire then finds the copy's own arms.
+// Editor: Add Component > Animation > Ledge Hands IK. "Wire missing animation and IK"
+// (PlayerSetup) adds it to a player whose controller has Can Ledge Grab on.
 // Open: a ledge that moves or is destroyed mid-hang is not followed (the edge is a
 // stored point); an arm LimbIK removed with RemoveComponent (not by destroying its
 // object) is not noticed.
@@ -21,7 +28,9 @@
 #include "okay/Components/Traversal.hpp"
 #include "okay/Math/LedgeHands.hpp"
 #include "okay/Scene/Component.hpp"
+#include <string>
 #include <unordered_set>
+#include <vector>
 
 namespace okay {
 
@@ -36,9 +45,82 @@ public:
     float fadeTime = 0.2f;     ///< blend in / out
     bool  autoWire = true;     ///< find or add the two arms when none are set
 
+    /// An arm as a scene file names it: the object's id and which LimbIK on that object.
+    struct ArmLink {
+        std::string object;   ///< GameObject::Guid(); empty = none
+        int index = 0;        ///< among that object's LimbIK components, in order
+    };
+    /// Links read from a scene file and not yet resolved (Start() resolves them).
+    ArmLink leftArmLink, rightArmLink;
+
     bool Holding() const { return m_holding; }
 
-    void Start() override { if (autoWire) Wire(); }
+    void Start() override {
+        ResolveArmLinks();
+        if (autoWire) Wire();
+    }
+
+    /// The link to write for an arm: the arm itself when set, else a link still waiting
+    /// for Start() (a scene loaded and saved again in the editor keeps its links).
+    ArmLink LinkFor(int i) const {
+        const LimbIK* a = i == 0 ? leftArm : rightArm;
+        if (!a) return i == 0 ? leftArmLink : rightArmLink;
+        ArmLink l;
+        if (!a->gameObject) return l;
+        const std::vector<LimbIK*> all = a->gameObject->GetComponents<LimbIK>();
+        for (std::size_t k = 0; k < all.size(); ++k)
+            if (all[k] == a) { l.object = a->gameObject->Guid(); l.index = (int)k; break; }
+        return l;
+    }
+
+    /// Turn loaded links into arms. A link to an object that is gone, has no such LimbIK,
+    /// or is not this character or one of its children is dropped. Links are cleared either way.
+    void ResolveArmLinks() {
+        for (int i = 0; i < 2; ++i) {
+            ArmLink& l = i == 0 ? leftArmLink : rightArmLink;
+            LimbIK*& slot = Arm(i);
+            if (!slot && !l.object.empty() && gameObject && gameObject->scene()) {
+                GameObject* o = gameObject->scene()->FindByGuid(l.object);
+                if (o && o->IsSelfOrDescendantOf(gameObject)) {
+                    const std::vector<LimbIK*> all = o->GetComponents<LimbIK>();
+                    if (l.index >= 0 && l.index < (int)all.size()) slot = all[(std::size_t)l.index];
+                }
+            }
+            l = ArmLink{};
+        }
+    }
+
+    /// Find or add the two arms when they are not set: a LimbIK already on each hand bone
+    /// is reused, otherwise one is added (switched off) from the humanoid bone map of
+    /// `boneRoot` (this object when null). Returns true when both arms are set.
+    bool Wire(GameObject* boneRoot = nullptr) {
+        if (leftArm && rightArm) return true;
+        if (!gameObject) return false;
+        const humanoid::BoneMap m = humanoid::MapHumanoidBones(boneRoot ? boneRoot : gameObject);
+        const std::vector<LimbIK*> have = gameObject->GetComponentsInChildren<LimbIK>(true);
+        auto add = [&](LimbIK*& slot, int u, int lo, int e) {
+            if (slot) return;
+            GameObject* hand = m.Get(e);
+            if (!hand) return;
+            // A LimbIK already on this hand (set up by hand, or for a held object) is reused:
+            // two solvers on one arm would fight.
+            for (LimbIK* a : have)
+                if (a && (a->end == hand->transform || (!a->end && !a->endName.empty() && a->endName == hand->name))) {
+                    slot = a;
+                    return;
+                }
+            if (!m.Get(u) || !m.Get(lo)) return;
+            auto* a = gameObject->AddComponent<LimbIK>();
+            a->upper = m.Get(u)->transform; a->lower = m.Get(lo)->transform; a->end = hand->transform;
+            a->upperName = m.Get(u)->name; a->lowerName = m.Get(lo)->name; a->endName = hand->name;   // the scene file keeps names
+            a->ikActive = false; a->stretch = 0.1f;
+            a->poleMode = LimbIK::PoleMode::Character; a->pole = Vec3{0, -0.5f, -1.0f};
+            slot = a;
+        };
+        add(leftArm, humanoid::LUpperArm, humanoid::LForeArm, humanoid::LHand);
+        add(rightArm, humanoid::RUpperArm, humanoid::RForeArm, humanoid::RHand);
+        return leftArm && rightArm;
+    }
 
     void OnDisable() override { EndHold(true); }
     void OnDestroy() override { EndHold(true); }
@@ -172,31 +254,6 @@ private:
         if (!a->upper || !a->lower || !a->end) return 1e6f;
         return (a->lower->Position() - a->upper->Position()).Magnitude()
              + (a->end->Position() - a->lower->Position()).Magnitude();
-    }
-    void Wire() {
-        if (leftArm && rightArm) return;
-        const humanoid::BoneMap m = humanoid::MapHumanoidBones(gameObject);
-        const std::vector<LimbIK*> have = gameObject->GetComponentsInChildren<LimbIK>(true);
-        auto add = [&](LimbIK*& slot, int u, int lo, int e) {
-            if (slot) return;
-            GameObject* hand = m.Get(e);
-            if (!hand) return;
-            // A LimbIK already on this hand (set up by hand, or for a held object) is reused:
-            // two solvers on one arm would fight.
-            for (LimbIK* a : have)
-                if (a && (a->end == hand->transform || (!a->end && !a->endName.empty() && a->endName == hand->name))) {
-                    slot = a;
-                    return;
-                }
-            if (!m.Get(u) || !m.Get(lo)) return;
-            auto* a = gameObject->AddComponent<LimbIK>();
-            a->upper = m.Get(u)->transform; a->lower = m.Get(lo)->transform; a->end = hand->transform;
-            a->ikActive = false; a->stretch = 0.1f;
-            a->poleMode = LimbIK::PoleMode::Character; a->pole = Vec3{0, -0.5f, -1.0f};
-            slot = a;
-        };
-        add(leftArm, humanoid::LUpperArm, humanoid::LForeArm, humanoid::LHand);
-        add(rightArm, humanoid::RUpperArm, humanoid::RForeArm, humanoid::RHand);
     }
 };
 

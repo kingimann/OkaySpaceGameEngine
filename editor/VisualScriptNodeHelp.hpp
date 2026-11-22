@@ -431,7 +431,7 @@ inline const char* VsNodeHelpRaw(const char* type) {
         {"Dodge",          "Plays that clip and, on a first- or third-person controller, bursts that way. Spends stamina when a Stamina stat is present."},
         {"Vault",          "Probe ahead and vault a thin obstacle. Runs even when Can Vault is off."},
         {"Mantle",         "Probe ahead and mantle a low or high ledge. Runs even when Can Mantle is off."},
-        {"LedgeGrab",      "In the air, catch a high ledge and hang. Hands go onto the ledge (two arm LimbIKs) through the LedgeHandsIK component, which a game adds in code; no editor entry yet."},
+        {"LedgeGrab",      "In the air, catch a high ledge and hang. Hands go onto the ledge (two arm LimbIKs) through the Ledge Hands IK component: Add Component > Animation, or Wire missing animation and IK on the controller."},
         {"ClimbUp",        "Climb from a hang onto the lip remembered by the grab."},
         {"LetGo",          "Drop from a hang. Does not teleport."},
         {"IsHanging",      "True while hanging, grabbing a ledge, or shimmying."},

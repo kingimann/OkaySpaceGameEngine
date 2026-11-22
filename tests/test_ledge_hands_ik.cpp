@@ -46,6 +46,7 @@ static Rig MakeRig(Scene& sc, Vec3 at, bool addArms, GameObject* lHost = nullptr
     auto mk = [&](GameObject* host, GameObject* u, GameObject* lo, GameObject* e) {
         auto* a = (host ? host : r.hero)->AddComponent<LimbIK>();
         a->upper = u->transform; a->lower = lo->transform; a->end = e->transform;
+        a->upperName = u->name; a->lowerName = lo->name; a->endName = e->name;   // what a scene file keeps
         a->ikActive = false; a->stretch = 0.15f;
         a->poleMode = LimbIK::PoleMode::World; a->pole = Vec3{0, 0, 1};
         return a;

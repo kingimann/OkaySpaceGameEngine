@@ -44,7 +44,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Docs:** `docs/gameplay/making_a_game.md` (Crouch and prone), `docs/gameplay/animation.md` (Actions: dive, roll, vault)
 - **Tests:** `stance`, `stance_save`, `jump`, `stop_settle`, `run_feel`, `view_ground`, `player_fixes`, `player_deep`, `player_course`
 - **Status:** Works - stance, stance_save, jump and stop_settle exist; vault, dodge and dive default off by design
-- **Open:** old map: verify prone on first and third person; hands-on-ledge IK is the LedgeHandsIK component (code only, no editor entry or saved-scene support; a ledge destroyed or moved mid-hang is not followed); dive, hit, vault and emote actions are not sent to remote players (per docs, see 5.12)
+- **Open:** old map: verify prone on first and third person; hands-on-ledge IK is the LedgeHandsIK component (saved in scenes, Add Component > Animation, added by Wire missing animation and IK when Can Ledge Grab is on; editor entry and Windows not run; a ledge destroyed or moved mid-hang is not followed); dive, hit, vault and emote actions are not sent to remote players (per docs, see 5.12)
 - **Related:** 4.1, 5.12, 5.6, 5.9, 6.2
 - **Words:** crouch, prone, crawl, stance, step up, stairs, curb, slope limit, coyote, wall slide, slide, dodge, dive, vault, mantle, ledge, fall reset, swim
 - **Seen as:** the player cannot crouch or go prone; stands up inside low cover; snags on stairs or sills; falls through the floor forever; saved crouched player stands up inside a ceiling; slide or dodge does nothing

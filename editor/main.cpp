@@ -44017,7 +44017,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Can Mantle##fp", &fp->canMantle)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a low or high ledge and climb it. Off by default.");
             if (ImGui::Checkbox("Can Ledge Grab##fp", &fp->canLedgeGrab)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands go onto the ledge (two arm LimbIKs) through the LedgeHandsIK component, which a game adds in code; no editor entry yet.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands go onto the ledge (two arm LimbIKs) through the Ledge Hands IK component: Add Component > Animation, or Wire missing animation and IK on the controller.");
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##fp", &fp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -44319,7 +44319,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Can Mantle##tp", &tp->canMantle)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a low or high ledge and climb it. Off by default.");
             if (ImGui::Checkbox("Can Ledge Grab##tp", &tp->canLedgeGrab)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands go onto the ledge (two arm LimbIKs) through the LedgeHandsIK component, which a game adds in code; no editor entry yet.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands go onto the ledge (two arm LimbIKs) through the Ledge Hands IK component: Add Component > Animation, or Wire missing animation and IK on the controller.");
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##tp", &tp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -48780,6 +48780,13 @@ void DrawInspector(EditorState& ed) {
             }
             if (item(!go->GetComponent<LimbIK>(), "Limb IK (arm/leg reach + grab)")) { go->AddComponent<LimbIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<ChainIK>(), "Chain IK (FABRIK/CCD long chain)")) { go->AddComponent<ChainIK>(); ed.dirty = true; }
+            if (item(!go->GetComponent<LedgeHandsIK>(), "Ledge Hands IK (hands on the ledge while hanging)")) {
+                auto* lh = go->AddComponent<LedgeHandsIK>();
+                const bool armed = lh->Wire();   // reuses a Limb IK already on each hand, else adds one (off)
+                ConsoleLog(armed ? "Ledge Hands IK: linked both arm Limb IKs." :
+                           "Ledge Hands IK: no humanoid arms found under this object; add it to the character (the object with the controller).", armed ? 0 : 1);
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<FullBodyIK>(), "Full Body IK (hands, feet, head, body pull)")) {
                 auto* fb = go->AddComponent<FullBodyIK>();
                 int n = fb->MapBones(true);

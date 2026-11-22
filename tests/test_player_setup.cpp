@@ -137,6 +137,8 @@ int main() {
         CHECK(mine->weight == 0.6f);
         CHECK(lh->rightArm != nullptr && lh->rightArm != mine);
         CHECK(lh->rightArm && lh->rightArm->end == rHand->transform);
+        // The added arm names its bones too: a scene file keeps LimbIK bones by name.
+        CHECK(lh->rightArm && lh->rightArm->endName == rHand->name && !lh->rightArm->upperName.empty());
         const int limbs = (int)player->GetComponents<LimbIK>().size();
         CHECK(limbs == 2);
 

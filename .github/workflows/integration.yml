@@ -69,7 +69,7 @@ jobs:
             -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
-        run: cmake --build build -j
+        run: cmake --build build -j   # dup-allow: same Ubuntu configure/build/test steps as ci.yml's "Build & test (Ubuntu)" job, run on the merged tree; that job is not a reusable workflow
       - name: Test
         run: ctest --test-dir build --output-on-failure -j4 --timeout 300
       - name: Keep the report

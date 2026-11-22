@@ -162,6 +162,15 @@ void TouchRegistered(const std::string& name);
 /// when it cannot be loaded (that answer is remembered until the name is dropped, the file changes or InvalidateAll).
 /// Main thread only. Cheap: one hash lookup.
 const TextureAsset* ForRender(const std::string& name);
+/// While a ReadOnlyScope is alive (the software renderer's parallel band render), ForRender only looks names up: it
+/// loads nothing and changes nothing, so several threads may call it. A name not loaded yet gives null there.
+bool ReadOnly();
+struct ReadOnlyScope {
+    ReadOnlyScope();
+    ~ReadOnlyScope();
+    ReadOnlyScope(const ReadOnlyScope&) = delete;
+    ReadOnlyScope& operator=(const ReadOnlyScope&) = delete;
+};
 /// Let go of the library's own reference to a name (the asset lives on while other handles exist).
 void Drop(const std::string& name);
 /// Drop every file texture the library holds for the renderers, re-decode the ones still alive elsewhere, and keep

@@ -414,10 +414,20 @@ void TouchRegistered(const std::string& name) {
     if (it != L.registered.end()) it->second->Touch();
 }
 
+namespace { std::atomic<int> g_readOnly{0}; }
+bool ReadOnly() { return g_readOnly.load(std::memory_order_relaxed) > 0; }
+ReadOnlyScope::ReadOnlyScope() { g_readOnly.fetch_add(1, std::memory_order_relaxed); }
+ReadOnlyScope::~ReadOnlyScope() { g_readOnly.fetch_sub(1, std::memory_order_relaxed); }
+
 const TextureAsset* ForRender(const std::string& name) {
     if (name.empty()) return nullptr;
     Library& L = Lib();
     auto it = L.held.find(name);
+    if (ReadOnly()) {   // render threads: a pure lookup (the main thread loaded and resolved everything before)
+        if (it == L.held.end() || it->second.loading) return nullptr;
+        const TextureAsset* a = it->second.p.get();
+        return a && a->Valid() ? a : nullptr;
+    }
     if (it == L.held.end()) {
         EnsureLoader();
         Slot s;

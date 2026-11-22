@@ -910,7 +910,10 @@ inline void InvalidateAllTextureCaches() {
 inline const MipChain* GetCachedMips(const std::string& path) {
     const TextureAsset* a = textures::ForRender(path);
     auto& cache = MipCacheMap();
-    if (!a) { cache.erase(path); return nullptr; }
+    auto it = cache.find(path);
+    if (a && it != cache.end() && it->second.serial == a->serial && it->second.levels) return &it->second;
+    if (textures::ReadOnly()) return nullptr;   // the render bands (several threads) never change the cache
+    if (!a) { if (it != cache.end()) cache.erase(it); return nullptr; }
     MipChain& c = cache[path];
     if (c.serial != a->serial || !c.levels) {
         c.levels = a->SharedMips();
@@ -2515,7 +2518,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     }
     };  // renderBand
     // Split the frame into horizontal bands across hardware threads.
-    { OKAY_PROFILE("Render.Raster"); ParallelRows(0, r.height, [&](int ya, int yb) { renderBand(ya, yb - 1); }); }
+    { OKAY_PROFILE("Render.Raster"); textures::ReadOnlyScope texturesReadOnly;   // the bands only read the textures loaded above
+      ParallelRows(0, r.height, [&](int ya, int yb) { renderBand(ya, yb - 1); }); }
     OKAY_PROFILE("Render.Post");
     if ((SSAOEnabled() || rs.post.ssao) && !r.gvalid.empty()) {       // contact AO post-pass
         const float radSaved = SSAORadius(), strSaved = SSAOStrength();

@@ -279,6 +279,28 @@ int main() {
         CHECK(GetCachedTexture("@tex_asset_old") == nullptr);
     }
 
+    // --- Inside a ReadOnlyScope (the software renderer's parallel bands) a lookup loads and changes nothing.
+    {
+        const std::string p = d + "/ro.png";
+        CHECK(Solid(2, 2, 12, 0, 0).SavePNG(p));
+        {
+            textures::ReadOnlyScope ro;
+            CHECK(textures::ReadOnly());
+            CHECK(textures::ForRender(p) == nullptr);
+            CHECK(GetCachedMips(p) == nullptr);
+        }
+        CHECK(!textures::ReadOnly());
+        CHECK(!textures::IsHeld(p));
+        CHECK(GetCachedMips(p) != nullptr);                 // the main thread loads it
+        {
+            textures::ReadOnlyScope ro;
+            CHECK(Red(GetCachedTexture(p)) == 12);          // and then the bands see it
+            CHECK(GetCachedMips(p) != nullptr);
+        }
+        textures::Drop(p);
+        MipCacheMap().erase(p);
+    }
+
     // --- Procedural names load through the same path.
     {
         const TextureAsset* p = textures::ForRender("proc:checker");

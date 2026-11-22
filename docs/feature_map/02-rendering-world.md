@@ -140,7 +140,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 ### 2.7 Particles and lines
 - **What:** Particle emitters with gradients, curves, motion modules and presets, plus ribbon-style Line and Trail renderers for lasers, ropes, sword swipes and projectile tails.
 - **Parts:**
-  - 2.7.1 Particle emitter - `Components/ParticleSystem` - shapes (Point, Circle, Sphere, Box, Cone, Edge), emission rate, burst, duration and loop, lifetime, start velocity, gravity, damping, wind influence, ground plane with bounce
+  - 2.7.1 Particle emitter - `Components/ParticleSystem` - shapes (Point, Circle, Sphere, Box, Cone, Edge), emission rate, burst, duration and loop, lifetime, start velocity, gravity, damping, wind influence, ground plane with bounce, and Collide with Terrain (`collideTerrain`, `Components/ParticleSystem.cpp`): with collision on, particles land on every active Terrain (moved, turned or scaled), bounce off its slope and slide down it; saved as its own `particlesterrain` record; Inspector Collision section, property `collideTerrain`
   - 2.7.2 Particle looks - `Components/ParticleSystem` - colour gradient, size and speed curves, fade, rotation, billboard or stretch; presets Fire, Smoke, Sparks, Explosion, Rain, Snow, Magic, Dust
   - 2.7.3 Motion modules - `Components/ParticleSystem` - noise, orbit, vortex, inherited velocity, local space
   - 2.7.4 Line renderer - `Components/LineRenderer` - camera-facing or flat ribbons; points from the Inspector, a script or a Spline; stretch or tile texture

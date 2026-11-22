@@ -387,7 +387,7 @@ int main() {
         // Off again (or with collision off) the terrain is ignored.
         ps->collision = false;
         ps->Restart(); ps->Emit(1);
-        for (int i = 0; i < 120; ++i) ps->Update(1.0f / 60.0f);
+        for (int i = 0; i < 240; ++i) ps->Update(1.0f / 60.0f);   // 4 s: from 40 m it would be far below the hill top
         for (const auto& p : ps->Particles()) if (p.alive) y = p.position.y;
         CHECK(y < 0.0f);
         // Saved and loaded with the scene; scenes without it load with it off.

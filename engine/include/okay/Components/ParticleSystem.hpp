@@ -12,6 +12,16 @@
 
 namespace okay {
 
+class Terrain;
+
+/// A Terrain a particle system bounces off this frame (its matrices taken once per Update).
+struct ParticleGround {
+    const Terrain* terrain = nullptr;
+    Mat4  toLocal = Mat4::Identity();
+    Mat4  toWorld = Mat4::Identity();
+    float half = 0.0f;   ///< half the terrain's side, in its local units
+};
+
 /// A colour gradient of up to `kMaxStops` (time, colour) stops over a 0..1
 /// range, linearly blended (no separate alpha track).
 /// `count == 0` means "unused" (callers fall back to their start/end colours).
@@ -247,6 +257,10 @@ public:
     float bounce = 0.5f;                // restitution: 0 = stick, 1 = perfect bounce
     float collisionFriction = 0.1f;     // 0..1 tangential speed lost per bounce
     float collisionLifeLoss = 0.0f;     // 0..1 fraction of remaining life lost per bounce
+    /// With `collision` on, also bounce off every active Terrain in the scene: its heights and slopes, moved,
+    /// turned and scaled with its object. A particle that comes down on a hill stops or bounces there and slides
+    /// down the slope (Bounce, Friction and Life Loss as for the plane). Off by default.
+    bool  collideTerrain = false;
 
     std::uint64_t seed = 1234567u;
 
@@ -302,7 +316,7 @@ public:
         simulationSpace = SimulationSpace::World; inheritVelocity = 0.0f;
         noiseStrength = 0.0f; noiseFrequency = 1.0f; noiseScroll = 0.5f;
         orbitSpeed = 0.0f; orbitAxis = {0.0f, 1.0f, 0.0f}; vortexStrength = 0.0f; vortexPull = 0.0f;
-        collision = false;
+        collision = false; collideTerrain = false;
         auto& G = colorGradient;
         switch (which) {
             case Preset::Fire:   // rising tongues: white-hot core -> orange -> red smoke, flickering
@@ -489,6 +503,9 @@ public:
         const Vec3 wind = windField ? Vec3{0, 0, 0} : WindVector() * windInfluence;
         const bool windy = windField || wind.SqrMagnitude() > 1e-6f;
         const float windK = dt * 1.5f > 1.0f ? 1.0f : dt * 1.5f;
+        // Terrains to bounce off: their matrices are taken once per frame.
+        bool hitTerrain = false;
+        if (collision && collideTerrain) { GatherGround(); hitTerrain = !m_ground.empty(); }
         for (Particle& p : m_particles) {
             if (!p.alive) continue;
             p.life -= dt;
@@ -543,6 +560,20 @@ public:
                 p.velocity.x *= keep; p.velocity.z *= keep;
                 if (collisionLifeLoss > 0.0f) p.life -= p.maxLife * Mathf::Clamp01(collisionLifeLoss);
             }
+            // Terrain collision: lift the particle back onto the surface, take away the speed into the ground
+            // (keeping Bounce of it, pointing out) and lose Friction of the speed along the ground.
+            if (hitTerrain) {
+                Vec3 surf, nrm;
+                if (GroundHit(p.position, surf, nrm)) {
+                    p.position = surf;
+                    const float vn = Vec3::Dot(p.velocity, nrm);
+                    if (vn < 0.0f) {
+                        const Vec3 along = (p.velocity - nrm * vn) * (1.0f - Mathf::Clamp01(collisionFriction));
+                        p.velocity = along - nrm * (vn * Mathf::Clamp01(bounce));
+                        if (collisionLifeLoss > 0.0f) p.life -= p.maxLife * Mathf::Clamp01(collisionLifeLoss);
+                    }
+                }
+            }
             float t = 1.0f - Mathf::Clamp01(p.life / p.maxLife);   // 0 at birth -> 1 at death
             if (sizeOverLife) {
                 if (sizeCurve.Active()) p.size = p.size0 * sizeCurve.Evaluate(t);
@@ -581,6 +612,10 @@ public:
     }
 
 private:
+    /// Fill m_ground with the scene's active terrains (ParticleSystem.cpp).
+    void GatherGround();
+    /// The highest terrain surface above `pos` that `pos` is below: the world point on it and its unit normal.
+    bool GroundHit(const Vec3& pos, Vec3& surface, Vec3& normal) const;
     /// Make the pool match SafeMax(): grow with dead slots, or shrink (the particles beyond the new size go).
     void EnsurePool() {
         const std::size_t want = (std::size_t)SafeMax();
@@ -693,6 +728,7 @@ private:
     }
 
     std::vector<Particle> m_particles;
+    std::vector<ParticleGround> m_ground;   // terrains this frame (collideTerrain)
     bool m_playOnReuse = true, m_awake = false;   // `playing` as the object was made (a pool puts it back)
     float m_accum = 0.0f;
     float m_age = 0.0f;        // seconds into the current cycle

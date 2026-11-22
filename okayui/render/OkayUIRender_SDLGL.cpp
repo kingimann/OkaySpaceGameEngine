@@ -132,6 +132,9 @@ SdlGLHost::~SdlGLHost() {
 
 const HostFrame& SdlGLHost::Last() const { return m->last; }
 int SdlGLHost::Count() const { return (int)m->per.size(); }
+int SdlGLHost::ImageCount() const { return 0; }   // stub
+
+HostPath HostBackendFor(const char*, const char** why) { if (why) *why = "not written yet"; return HostPath::Sdl; }   // stub
 
 const HostFrame& SdlGLHost::EndFrameSdl(SDL_Renderer* r) {
     OkayUI::EndFrame(r);

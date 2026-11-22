@@ -33,7 +33,7 @@ namespace OkayUI {
 namespace render {
 
 /// Which renderer drew the last frame.
-enum class HostPath { None, OwnGL, Sdl };
+enum class HostPath { None, OwnGL, OwnD3D11, Sdl };
 
 struct HostFrame {
     HostPath    path = HostPath::None;
@@ -49,6 +49,8 @@ bool OwnRenderSwitchOn();
 /// The OpenGL flavour the own renderer would use with an SDL renderer called `driverName` (SDL_RendererInfo::name) whose context
 /// reports `glVersion` (glGetString(GL_VERSION)). False, with `why`, when it cannot (not a GL renderer, a context below 3.3 / ES 3.0).
 bool PickGLFlavor(const char* driverName, const char* glVersion, GLFlavor* flavor, const char** why);
+/// Which own backend can draw into an SDL renderer called `driverName` (stub: not written yet).
+HostPath HostBackendFor(const char* driverName, const char** why);
 
 class SdlGLHost {
 public:
@@ -68,6 +70,8 @@ public:
     void Forget(SDL_Renderer* r);
     /// How many renderers have own-renderer state (tests).
     int Count() const;
+    /// How many host images (SDL textures) the own renderer holds for all renderers (tests).
+    int ImageCount() const;
 
 private:
     struct Impl;

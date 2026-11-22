@@ -417,7 +417,7 @@ int main() {
         // the shader list: Toon shows the Cel Bands slider (the rows below move down)
         const float primY = r.res.mesh.primitive.y;
         r.Click(r.res.mesh.shader); r.Frame();
-        CHECK(r.res.mesh.listRows.size() == 9);
+        CHECK(r.res.mesh.listRows.size() == 10);   // nine built-in shaders plus Custom (.okayshader)
         r.Click(r.res.mesh.listRows[2]);   // Toon
         r.Frames(2);
         CHECK(r.O().mesh.shader == P::MeshShaderToon && r.res.mesh.primitive.y > primY + 30.0f);

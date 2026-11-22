@@ -10,6 +10,7 @@
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Core/Undo.hpp"
 #include "SceneUndo.hpp"
+#include "PropertyUndo.hpp"
 #include "ObjectRef.hpp"
 #include <memory>
 #include <string>
@@ -275,12 +276,12 @@ public:
     bool Redo();
     /// Load a scene text, keeping the same objects selected (by GUID) afterwards.
     void RestoreKeepingSelection(const std::string& snapshot);
-    bool CanUndo() const { return !m_playing && (m_pending.open || m_stack->CanUndo()); }
-    bool CanRedo() const { return !m_playing && !m_pending.open && m_stack->CanRedo(); }
-    int  UndoDepth() const { return (int)m_stack->UndoCount() + (m_pending.open ? 1 : 0); }   ///< steps available behind
-    int  RedoDepth() const { return m_pending.open ? 0 : (int)m_stack->RedoCount(); }          ///< steps available ahead
+    bool CanUndo() const { return !m_playing && (m_pending.Any() || m_stack->CanUndo()); }
+    bool CanRedo() const { return !m_playing && !m_pending.Any() && m_stack->CanRedo(); }
+    int  UndoDepth() const { return (int)m_stack->UndoCount() + (m_pending.Any() ? 1 : 0); }   ///< steps available behind
+    int  RedoDepth() const { return m_pending.Any() ? 0 : (int)m_stack->RedoCount(); }          ///< steps available ahead
     /// What Undo / Redo would do ("Delete Cube"); empty when nothing can be undone / redone.
-    std::string UndoName() const { return !CanUndo() ? std::string() : m_pending.open ? (m_pending.name.empty() ? std::string("Edit") : m_pending.name) : m_stack->NextUndoName(); }
+    std::string UndoName() const { return !CanUndo() ? std::string() : m_pending.Any() ? PendingName() : m_stack->NextUndoName(); }
     std::string RedoName() const { return CanRedo() ? m_stack->NextRedoName() : std::string(); }
     /// Step names, newest first (what Undo would undo first).
     std::vector<std::string> UndoNames(std::size_t max = 0) const;
@@ -290,6 +291,31 @@ public:
     const UndoStack& undoStack() const { return *m_stack; }
     /// Why the last Undo / Redo failed ("" when it did not).
     const std::string& UndoError() const { return m_stack->LastError(); }
+
+    // ---- Property undo (values written through PropertyRegistry; see PropertyUndo.hpp) -----------------------------
+    // The Inspector writes most component values through the property registry. Wrapping those writes in a PropertyEdit
+    // records them as a property step (object GUID, property path, value before and after) instead of a whole-scene text
+    // delta: Undo / Redo of it set the values back on the live objects and rebuild nothing, so GameObject* and Component*
+    // pointers stay valid. The writes of one field (`key`: which field on which objects) join one step until the field
+    // is let go (FinishPropertyEdit) or another field, a PushUndo, Undo, Redo or Save comes in between, so a drag over
+    // many frames is one step. Structural edits (add / remove objects or components, reparenting) and widgets that write
+    // fields directly keep using PushUndo and the scene delta; both kinds sit on the same stack in edit order.
+    // An edit nobody announced that happens while a property step is open becomes its own step, just before it.
+    // Nothing is recorded during Play or while undo is suppressed.
+    class PropertyEdit {
+    public:
+        PropertyEdit(EditorState& ed, const std::string& key);
+        ~PropertyEdit();
+        PropertyEdit(const PropertyEdit&) = delete;
+        PropertyEdit& operator=(const PropertyEdit&) = delete;
+    private:
+        EditorState& m_ed;
+        int m_hook = 0;
+    };
+    /// The field being edited was let go: the open property step is recorded now and the next write starts a new one.
+    void FinishPropertyEdit();
+    /// True while a property step is open (written, not yet recorded).
+    bool PropertyEditOpen() const { return !m_pending.props.empty(); }
 
     // ---- Prefab mode (see docs/engine/prefabs.md) ---------------------------------------------------
     // Open a .okayprefab in isolation: its contents become the scene being edited, the scene you were in
@@ -470,7 +496,15 @@ private:
         std::string name;
         SelectionRef sel;
         std::vector<std::unique_ptr<ICommand>> extras;   // already-applied edits of editor-side state that belong to the same step
+        std::string propKey;                       // the field an open property step belongs to (see PropertyEdit)
+        std::vector<PropertyEditEntry> props;      // its values: the first `before`, the latest `after` of each property
+        bool Any() const { return open || !props.empty(); }
     } m_pending;
+    std::shared_ptr<PropertyAccess> m_propAccess;
+    void NoteProperty(const PropertyChange& c);      // the hook a PropertyEdit installs
+    bool RecordPendingProperties(Pending& p);   // SyncHistory's part for an open property step
+    std::string PendingName() const;
+    std::string PropertyStepName(const std::vector<PropertyEditEntry>& props) const;
     // Prefab mode: the documents put aside under the open one (see OpenPrefab).
     struct PrefabSession { std::string path; std::string rootGuid; std::vector<std::string> saved; std::uint64_t disk = 0; bool overwriteArmed = false; };   ///< what the open document is (path "" = the scene) and the prefab files saved in it or in levels opened from it
     struct Level {

@@ -18,6 +18,7 @@
 #include "okay/Scene/PrefabTools.hpp"
 #include "okay/Scene/EnsureCamera.hpp"
 #include <map>
+#include <thread>
 #include <set>
 #include <filesystem>
 #include <fstream>
@@ -44,6 +45,12 @@ EditorState::EditorState() : m_scene("Untitled") {
     m_access = std::make_shared<SceneAccess>();
     m_access->capture = [this] { return SceneSerializer::Serialize(m_scene); };
     m_access->apply = [this](const std::string& text, const SelectionRef& sel) { return ApplySceneText(text, sel); };
+    m_propAccess = std::make_shared<PropertyAccess>();
+    m_propAccess->find = [this](const std::string& guid) { ObjectRef r; r.SetGuid(guid); return r.Get(m_scene); };
+    m_propAccess->changed = [this] {   // a property step was undone / redone: the scene text moved without a rebuild
+        m_known = SceneSerializer::Serialize(m_scene);
+        dirty = Fingerprint(m_known) != m_savedPrint;
+    };
     m_stack->SetMaxCommands(kMaxUndo);
     m_stack->SetMergeWindow(1.0f);   // the same field nudged again within a second is one step (see PushUndoText)
     // Online services are part of the engine: a Steam simulation backend by
@@ -178,6 +185,7 @@ bool EditorState::SyncHistory() {
     m_pending = Pending{};
     if (m_playing) return false;   // the running game is not part of the edit history
     std::string cur = SceneSerializer::Serialize(m_scene);
+    if (!p.props.empty() && RecordPendingProperties(p)) { m_known = std::move(cur); return true; }
     const bool changed = cur != m_known;
     if (!changed && p.extras.empty()) return false;
     const SelectionRef sel = p.open ? p.sel : SelectionRef{};
@@ -193,6 +201,74 @@ bool EditorState::SyncHistory() {
     }
     if (changed) m_known = std::move(cur);
     return true;
+}
+
+// An open property step becomes a PropertyEditCommand. What else changed since the last boundary (an edit nobody
+// announced) is found by putting the step's old values back for a moment and comparing that text with the last one;
+// it is recorded first, as a scene delta, so each command finds the scene in the state it expects. False (nothing
+// recorded) when the values ended where they began or an object of the step is gone: the caller then records the
+// whole change as one scene delta, as before.
+bool EditorState::RecordPendingProperties(Pending& p) {
+    std::vector<PropertyEditEntry> entries;
+    for (PropertyEditEntry& e : p.props) if (e.before != e.after) entries.push_back(std::move(e));
+    if (entries.empty() || !m_propAccess) return false;
+    if (!PropertyEditCommand::Write(entries, m_propAccess->find, false)) return false;
+    const std::string mid = SceneSerializer::Serialize(m_scene);
+    if (!PropertyEditCommand::Write(entries, m_propAccess->find, true)) return false;   // the same objects were just found: does not happen
+    const std::string label = PropertyStepName(entries);
+    if (mid != m_known) RecordStep(m_known, mid, p.open ? p.name : std::string(), p.open ? p.sel : SelectionRef{}, 0);
+    m_stack->Record(std::make_unique<PropertyEditCommand>(label, m_propAccess, std::move(entries)));
+    return true;
+}
+
+std::string EditorState::PendingName() const {
+    if (m_pending.open || m_pending.props.empty()) return m_pending.name.empty() ? std::string("Edit") : m_pending.name;
+    return PropertyStepName(m_pending.props);
+}
+
+// "Set Light.intensity on Lamp", "Set 2 Properties on 3 Objects".
+std::string EditorState::PropertyStepName(const std::vector<PropertyEditEntry>& props) const {
+    if (props.empty()) return "Edit";
+    std::vector<std::string> paths, guids;
+    for (const PropertyEditEntry& e : props) {
+        if (std::find(paths.begin(), paths.end(), e.path) == paths.end()) paths.push_back(e.path);
+        if (std::find(guids.begin(), guids.end(), e.guid) == guids.end()) guids.push_back(e.guid);
+    }
+    std::string what = paths.size() == 1 ? paths[0] : std::to_string(paths.size()) + " Properties";
+    std::string on;
+    if (guids.size() > 1) on = std::to_string(guids.size()) + " Objects";
+    else if (GameObject* go = m_propAccess ? m_propAccess->find(guids[0]) : nullptr) on = go->name;
+    return "Set " + what + (on.empty() ? std::string() : " on " + on);
+}
+
+void EditorState::NoteProperty(const PropertyChange& c) {
+    if (!c.object || c.object->transient || c.path.empty() || c.object->Guid().empty()) return;
+    const std::string& guid = c.object->Guid();
+    for (PropertyEditEntry& e : m_pending.props)
+        if (e.guid == guid && e.path == c.path) { e.after = c.newValue; return; }   // the same field again: one step
+    m_pending.props.push_back(PropertyEditEntry{guid, c.path, c.oldValue, c.newValue});
+}
+
+EditorState::PropertyEdit::PropertyEdit(EditorState& ed, const std::string& key) : m_ed(ed) {
+    if (ed.m_suppressUndo || ed.m_playing) return;
+    ++ed.m_undoSerial;   // the Inspector's EditUndo session sees that this edit has its own step
+    // An open PushUndo step, editor-side edits waiting, or another field's property step: they end here.
+    if (ed.m_pending.open || !ed.m_pending.extras.empty() || (!ed.m_pending.props.empty() && ed.m_pending.propKey != key))
+        ed.SyncHistory();
+    ed.m_pending.propKey = key;
+    EditorState* e = &ed;
+    const std::thread::id me = std::this_thread::get_id();   // hooks are global: only this thread's writes belong to the step
+    m_hook = PropertyRegistry::AddChangeHook([e, me](const PropertyChange& c) {
+        if (std::this_thread::get_id() == me) e->NoteProperty(c);
+    });
+}
+
+EditorState::PropertyEdit::~PropertyEdit() {
+    if (m_hook) PropertyRegistry::RemoveChangeHook(m_hook);
+}
+
+void EditorState::FinishPropertyEdit() {
+    if (!m_pending.props.empty()) SyncHistory();
 }
 
 void EditorState::CommitUndo() {
@@ -280,6 +356,7 @@ void EditorState::PushUndoText(std::string before, const std::string& name, std:
     if (m_suppressUndo || m_playing) return;
     ++m_undoSerial;
     if (!m_pending.extras.empty()) { SyncHistory(); return; }   // editor-side edits are waiting: they and this change share one step
+    if (!m_pending.props.empty()) SyncHistory();   // an open property step ends before this edit
     Pending p = std::move(m_pending);
     m_pending = Pending{};
     if (m_known != before) {   // something changed before the edit being recorded: a step of its own
@@ -314,7 +391,7 @@ bool EditorState::Redo() {
 
 std::vector<std::string> EditorState::UndoNames(std::size_t max) const {
     std::vector<std::string> v;
-    if (m_pending.open && !m_playing) v.push_back(m_pending.name.empty() ? std::string("Edit") : m_pending.name);
+    if (m_pending.Any() && !m_playing) v.push_back(PendingName());
     for (std::string& n : m_stack->UndoNames(max)) { if (max && v.size() >= max) break; v.push_back(std::move(n)); }
     return v;
 }

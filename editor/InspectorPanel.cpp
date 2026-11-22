@@ -98,6 +98,7 @@ void WatchEditUndo(okay::editor::EditorState& ed) {
         u.End(ed, lastActive);
     }
     if (u.IsOpen() && activeMine) lastActive = g.ActiveId;
+    if (!down && !activeMine) ed.FinishPropertyEdit();   // the field was let go: its property undo step is complete
 }
 
 // ---- Reference fields -----------------------------------------------------------------------------------
@@ -314,6 +315,25 @@ unsigned FloatRow(const char* id, float* v, int n, const std::vector<bool>& mixe
 
 } // namespace
 
+// The Inspector's registry writes, recorded as property undo steps (EditorState::PropertyEdit): undo sets the old value
+// back without rebuilding the scene. `key` names the field and the objects, so a drag of one field over many frames
+// is one step and another field starts a new one.
+static std::string FieldUndoKey(const std::vector<GameObject*>& targets, const std::string& typeName, int idx, const PropertyDesc& d) {
+    std::string key = ComponentPath(typeName, idx) + "." + d.name;
+    for (const GameObject* g : targets) if (g) key += "|" + g->Guid();
+    return key;
+}
+static int UndoableWriteField(okay::editor::EditorState& ed, const std::vector<GameObject*>& targets, const std::string& typeName, int idx,
+                              const PropertyDesc& d, const PropertyValue& value) {
+    okay::editor::EditorState::PropertyEdit edit(ed, FieldUndoKey(targets, typeName, idx, d));
+    return WriteField(targets, typeName, idx, d, value);
+}
+static int UndoableWriteFieldAxes(okay::editor::EditorState& ed, const std::vector<GameObject*>& targets, const std::string& typeName, int idx,
+                                  const PropertyDesc& d, const PropertyValue& value, unsigned axisMask) {
+    okay::editor::EditorState::PropertyEdit edit(ed, FieldUndoKey(targets, typeName, idx, d));
+    return WriteFieldAxes(targets, typeName, idx, d, value, axisMask);
+}
+
 // Draws one property of the component `typeName` (index `idx`) on all `targets`. True when something was written.
 static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameObject*>& targets,
                           const std::string& typeName, int idx, const PropertyDesc& d) {
@@ -331,7 +351,7 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
         case PropertyType::Bool: {
             bool b = st.value.AsBool();
             if (mixed) ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, true);
-            if (ImGui::Checkbox(label.c_str(), &b)) wrote = WriteField(targets, typeName, idx, d, PropertyValue::MakeBool(b)) > 0;
+            if (ImGui::Checkbox(label.c_str(), &b)) wrote = UndoableWriteField(ed, targets, typeName, idx, d, PropertyValue::MakeBool(b)) > 0;
             if (mixed) ImGui::PopItemFlag();
             if (*tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
             break;
@@ -340,7 +360,7 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
             int v = (int)st.value.AsInt();
             const int mn = d.hasRange ? (int)d.rangeMin : 0, mxv = d.hasRange ? (int)d.rangeMax : 0;
             if (ImGui::DragInt("##v", &v, d.step > 0.0 ? (float)d.step : 0.2f, mn, mxv, mixed ? "-" : "%d", d.hasRange ? ImGuiSliderFlags_AlwaysClamp : 0))
-                wrote = WriteField(targets, typeName, idx, d, PropertyValue::MakeInt(v)) > 0;
+                wrote = UndoableWriteField(ed, targets, typeName, idx, d, PropertyValue::MakeInt(v)) > 0;
             FieldLabel(label.c_str(), tip);
             break;
         }
@@ -348,7 +368,7 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
             float v = st.value.AsFloat();
             const float mn = d.hasRange ? (float)d.rangeMin : 0.0f, mxv = d.hasRange ? (float)d.rangeMax : 0.0f;
             if (ImGui::DragFloat("##v", &v, DragSpeed(d, v), mn, mxv, mixed ? "-" : "%.3f", d.hasRange ? ImGuiSliderFlags_AlwaysClamp : 0))
-                wrote = WriteField(targets, typeName, idx, d, PropertyValue::MakeFloat(v)) > 0;
+                wrote = UndoableWriteField(ed, targets, typeName, idx, d, PropertyValue::MakeFloat(v)) > 0;
             FieldLabel(label.c_str(), tip);
             break;
         }
@@ -358,7 +378,7 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
             bool edited;
             if (d.multiline) edited = ImGui::InputTextMultiline("##v", buf, sizeof(buf), ImVec2(ImGui::CalcItemWidth(), ImGui::GetTextLineHeight() * 4.0f));
             else { ImGui::SetNextItemWidth(ImGui::CalcItemWidth()); edited = ImGui::InputTextWithHint("##v", mixed ? "Mixed" : "", buf, sizeof(buf)); }
-            if (edited) wrote = WriteField(targets, typeName, idx, d, PropertyValue::MakeString(buf)) > 0;
+            if (edited) wrote = UndoableWriteField(ed, targets, typeName, idx, d, PropertyValue::MakeString(buf)) > 0;
             FieldLabel(label.c_str(), tip);
             break;
         }
@@ -376,7 +396,7 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
                 PropertyValue nv = d.type == PropertyType::Vec2 ? PropertyValue::MakeVec2({v[0], v[1]})
                                  : d.type == PropertyType::Vec3 ? PropertyValue::MakeVec3({v[0], v[1], v[2]})
                                  : PropertyValue::MakeVec4({v[0], v[1], v[2], v[3]});
-                wrote = WriteFieldAxes(targets, typeName, idx, d, nv, m) > 0;
+                wrote = UndoableWriteFieldAxes(ed, targets, typeName, idx, d, nv, m) > 0;
             }
             FieldLabel(label.c_str(), tip);
             break;
@@ -388,7 +408,7 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
             PropertyDesc dd = d; dd.hasRange = false; dd.step = 1.0;
             std::vector<bool> none(3, mixed);
             const unsigned m = FloatRow("q", v, 3, none, dd, tags);
-            if (m) wrote = WriteField(targets, typeName, idx, d, PropertyValue::MakeQuat(Quat::Euler(Vec3{v[0], v[1], v[2]}))) > 0;
+            if (m) wrote = UndoableWriteField(ed, targets, typeName, idx, d, PropertyValue::MakeQuat(Quat::Euler(Vec3{v[0], v[1], v[2]}))) > 0;
             FieldLabel(label.c_str(), tip);
             break;
         }
@@ -400,7 +420,7 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
                 unsigned m = 0;
                 const float old[4] = {c.r, c.g, c.b, c.a};
                 for (int i = 0; i < 4; ++i) if (f[i] != old[i]) m |= 1u << i;
-                wrote = WriteFieldAxes(targets, typeName, idx, d, PropertyValue::MakeColor(Color{f[0], f[1], f[2], f[3]}), m) > 0;
+                wrote = UndoableWriteFieldAxes(ed, targets, typeName, idx, d, PropertyValue::MakeColor(Color{f[0], f[1], f[2], f[3]}), m) > 0;
             }
             if (mixed && ImGui::IsItemHovered()) ImGui::SetTooltip("The selected objects differ. Changing one part sets it on all of them.");
             FieldLabel(label.c_str(), tip);
@@ -413,7 +433,7 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
             if (ImGui::BeginCombo("##v", preview)) {
                 for (int i = 0; i < (int)d.enumOptions.size(); ++i)
                     if (ImGui::Selectable(d.enumOptions[(std::size_t)i].c_str(), !mixed && i == cur))
-                        wrote = WriteField(targets, typeName, idx, d, PropertyValue::MakeEnum(i, d.enumOptions[(std::size_t)i])) > 0;
+                        wrote = UndoableWriteField(ed, targets, typeName, idx, d, PropertyValue::MakeEnum(i, d.enumOptions[(std::size_t)i])) > 0;
                 ImGui::EndCombo();
             }
             FieldLabel(label.c_str(), tip);
@@ -422,13 +442,13 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
         case PropertyType::AssetPath: {
             std::string p = st.value.AsString();
             if (AssetField(label.c_str(), p, d.assetKind.c_str(), ed.projectDir(), mixed, tip))
-                wrote = WriteField(targets, typeName, idx, d, PropertyValue::MakeAssetPath(p)) > 0;
+                wrote = UndoableWriteField(ed, targets, typeName, idx, d, PropertyValue::MakeAssetPath(p)) > 0;
             break;
         }
         case PropertyType::ObjectRef: {
             std::string g = st.value.AsString();
             if (ObjectField(label.c_str(), g, ed.scene(), mixed, tip))
-                wrote = WriteField(targets, typeName, idx, d, PropertyValue::MakeObjectRef(g)) > 0;
+                wrote = UndoableWriteField(ed, targets, typeName, idx, d, PropertyValue::MakeObjectRef(g)) > 0;
             break;
         }
         default: break;
@@ -556,22 +576,22 @@ static bool DrawFallbackOkayUI(okay::editor::EditorState& ed, const std::vector<
         const PropertyDesc* d = rowDesc[k];
         if (!d || !r.changed) continue;
         switch (d->type) {
-        case PropertyType::Bool: wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeBool(r.bv)) > 0; break;
-        case PropertyType::Int: wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeInt(r.iv)) > 0; break;
-        case PropertyType::Float: wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeFloat(r.fv[0])) > 0; break;
-        case PropertyType::String: wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeString(r.sv)) > 0; break;
-        case PropertyType::Vec2: wrote |= WriteFieldAxes(targets, typeName, idx, *d, PropertyValue::MakeVec2({r.fv[0], r.fv[1]}), r.axes) > 0; break;
-        case PropertyType::Vec3: wrote |= WriteFieldAxes(targets, typeName, idx, *d, PropertyValue::MakeVec3({r.fv[0], r.fv[1], r.fv[2]}), r.axes) > 0; break;
-        case PropertyType::Vec4: wrote |= WriteFieldAxes(targets, typeName, idx, *d, PropertyValue::MakeVec4({r.fv[0], r.fv[1], r.fv[2], r.fv[3]}), r.axes) > 0; break;
-        case PropertyType::Quat: wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeQuat(Quat::Euler(Vec3{r.fv[0], r.fv[1], r.fv[2]}))) > 0; break;
-        case PropertyType::Color: wrote |= WriteFieldAxes(targets, typeName, idx, *d, PropertyValue::MakeColor(Color{r.fv[0], r.fv[1], r.fv[2], r.fv[3]}), r.axes) > 0; break;
+        case PropertyType::Bool: wrote |= UndoableWriteField(ed, targets, typeName, idx, *d, PropertyValue::MakeBool(r.bv)) > 0; break;
+        case PropertyType::Int: wrote |= UndoableWriteField(ed, targets, typeName, idx, *d, PropertyValue::MakeInt(r.iv)) > 0; break;
+        case PropertyType::Float: wrote |= UndoableWriteField(ed, targets, typeName, idx, *d, PropertyValue::MakeFloat(r.fv[0])) > 0; break;
+        case PropertyType::String: wrote |= UndoableWriteField(ed, targets, typeName, idx, *d, PropertyValue::MakeString(r.sv)) > 0; break;
+        case PropertyType::Vec2: wrote |= UndoableWriteFieldAxes(ed, targets, typeName, idx, *d, PropertyValue::MakeVec2({r.fv[0], r.fv[1]}), r.axes) > 0; break;
+        case PropertyType::Vec3: wrote |= UndoableWriteFieldAxes(ed, targets, typeName, idx, *d, PropertyValue::MakeVec3({r.fv[0], r.fv[1], r.fv[2]}), r.axes) > 0; break;
+        case PropertyType::Vec4: wrote |= UndoableWriteFieldAxes(ed, targets, typeName, idx, *d, PropertyValue::MakeVec4({r.fv[0], r.fv[1], r.fv[2], r.fv[3]}), r.axes) > 0; break;
+        case PropertyType::Quat: wrote |= UndoableWriteField(ed, targets, typeName, idx, *d, PropertyValue::MakeQuat(Quat::Euler(Vec3{r.fv[0], r.fv[1], r.fv[2]}))) > 0; break;
+        case PropertyType::Color: wrote |= UndoableWriteFieldAxes(ed, targets, typeName, idx, *d, PropertyValue::MakeColor(Color{r.fv[0], r.fv[1], r.fv[2], r.fv[3]}), r.axes) > 0; break;
         case PropertyType::Enum: {
             const int e = r.iv;
-            if (e >= 0 && e < (int)d->enumOptions.size()) wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeEnum(e, d->enumOptions[(std::size_t)e])) > 0;
+            if (e >= 0 && e < (int)d->enumOptions.size()) wrote |= UndoableWriteField(ed, targets, typeName, idx, *d, PropertyValue::MakeEnum(e, d->enumOptions[(std::size_t)e])) > 0;
             break;
         }
-        case PropertyType::AssetPath: wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeAssetPath(r.sv)) > 0; break;
-        case PropertyType::ObjectRef: wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeObjectRef(*r.s)) > 0; break;
+        case PropertyType::AssetPath: wrote |= UndoableWriteField(ed, targets, typeName, idx, *d, PropertyValue::MakeAssetPath(r.sv)) > 0; break;
+        case PropertyType::ObjectRef: wrote |= UndoableWriteField(ed, targets, typeName, idx, *d, PropertyValue::MakeObjectRef(*r.s)) > 0; break;
         default: break;
         }
     }

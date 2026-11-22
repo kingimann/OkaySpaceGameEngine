@@ -12,6 +12,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include <string>
+#include <utility>
 
 namespace okay::editor {
 
@@ -23,6 +24,8 @@ public:
     /// Point at `go` (null clears). Objects with no GUID (none should exist) cannot be held and clear the reference.
     void Set(const GameObject* go) { m_guid = go ? go->Guid() : std::string(); }
     void Clear() { m_guid.clear(); }
+    /// Point at whatever object has this GUID (a GUID stored elsewhere, such as in an undo step).
+    void SetGuid(std::string guid) { m_guid = std::move(guid); }
     /// True when something was set (whether or not it still exists).
     bool IsSet() const { return !m_guid.empty(); }
     const std::string& Guid() const { return m_guid; }

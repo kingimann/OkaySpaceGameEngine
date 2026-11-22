@@ -3,6 +3,7 @@
 // value>` lines); the typed reading, migration and clamping are ImportSettings::FromPairs, shared with the editor.
 #include "okay/Core/ImportSidecar.hpp"
 #include "okay/Core/SaveData.hpp"
+#include "okay/Core/StringUtil.hpp"
 #include "okay/Debug/DebugUtil.hpp"
 
 #include <filesystem>
@@ -15,10 +16,7 @@ namespace {
 
 namespace fs = std::filesystem;
 
-std::string LowerAscii(std::string s) {
-    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return s;
-}
+using str::LowerAscii;
 
 // The block of `kind` in the meta text: its version and its `set` lines (values unescaped). A file may hold the
 // block more than once (hand edits): later lines win, as they always did.

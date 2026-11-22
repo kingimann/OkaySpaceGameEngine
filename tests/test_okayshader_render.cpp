@@ -41,6 +41,67 @@ template <class F> Raster RenderBall(F setup, int size = 64) {
     return r;
 }
 
+
+// Pixel of a world point under `vp` in a size x size picture.
+void Project(const Mat4& vp, const Vec3& p, int size, int& x, int& y) {
+    const Vec4 c = vp * Vec4{p, 1.0f};
+    x = (int)((c.x / c.w * 0.5f + 0.5f) * size);
+    y = (int)((1.0f - (c.y / c.w * 0.5f + 0.5f)) * size);
+}
+int Lum(const Raster& r, int x, int y) { const Rgb c = At(r, x, y); return (c.r + c.g + c.b) / 3; }
+
+// A grey ground, a sun at 45 degrees and a cube caster 1 unit up, seen from above; the caster's
+// renderer gets `setup`. Returns the ground brightness at the left and right halves of the
+// shadow and on open ground.
+struct ShadowProbe { int left, right, open, movedRight; };
+template <class F> ShadowProbe RenderShadow(F setup, Raster* out = nullptr) {
+    const int S = 96;
+    Scene scene("SHD"); scene.physicsEnabled = false;
+    scene.renderSettings.tonemap = false;
+    scene.renderSettings.skybox = false;
+    GameObject* lgo = scene.CreateGameObject("Sun");
+    auto* light = lgo->AddComponent<Light>();
+    light->type = Light::Type::Directional; light->intensity = 1.0f;
+    lgo->transform->localRotation = Quat::Euler(45, 0, 0);
+    GameObject* ground = scene.CreateGameObject("Ground");
+    auto* gm = ground->AddComponent<MeshRenderer>();
+    gm->mesh = Mesh::Plane(8.0f);
+    gm->color = Color::FromBytes(180, 180, 180);
+    gm->groundShadow = false;
+    GameObject* go = scene.CreateGameObject("Caster");
+    go->transform->localPosition = {0.0f, 1.0f, 0.0f};
+    auto* mr = go->AddComponent<MeshRenderer>();
+    mr->mesh = Mesh::Cube(0.8f);
+    mr->color = Color::FromBytes(90, 90, 200);
+    mr->groundShadow = false;
+    setup(*mr);
+    const Vec3 eye{0.0f, 7.0f, 0.01f};
+    const Mat4 vp = Mat4::Perspective(50.0f, 1.0f, 0.1f, 100.0f) * Mat4::LookAt(eye, {0.0f, 0.0f, 0.0f}, Vec3::Up);
+    Raster r; r.Resize(S, S); r.Clear(0xFF000000u);
+    RenderMeshes(r, scene, vp, eye);
+    // Where the caster's centre falls on the ground along the light.
+    const Vec3 f = lgo->transform->Forward();
+    const float t = 1.0f / -f.y;
+    const Vec3 c{f.x * t, 0.0f, f.z * t};
+    ShadowProbe p{};
+    int x, y;
+    Project(vp, {c.x - 0.22f, 0.0f, c.z}, S, x, y); p.left = Lum(r, x, y);
+    Project(vp, {c.x + 0.22f, 0.0f, c.z}, S, x, y); p.right = Lum(r, x, y);
+    Project(vp, {c.x + 1.2f, 0.0f, c.z}, S, x, y); p.movedRight = Lum(r, x, y);
+    Project(vp, {c.x - 2.5f, 0.0f, c.z}, S, x, y); p.open = Lum(r, x, y);
+    if (out) *out = r;
+    return p;
+}
+
+// Rows of the topmost and bottommost lit pixel and the number of lit pixels.
+struct Extent { int top = 9999, bottom = -1, count = 0, left = 9999, right = -1; };
+Extent LitExtent(const Raster& r) {
+    Extent e;
+    for (int y = 0; y < r.height; ++y)
+        for (int x = 0; x < r.width; ++x)
+            if (Lum(r, x, y) > 10) { e.top = std::min(e.top, y); e.bottom = std::max(e.bottom, y); e.left = std::min(e.left, x); e.right = std::max(e.right, x); ++e.count; }
+    return e;
+}
 } // namespace
 
 int main() {
@@ -161,6 +222,59 @@ int main() {
         CHECK(At(b, 32, 32).g == 255 && At(b, 32, 32).r == 0);
     }
 
+
+    // ---- a dissolved object casts a dissolved shadow ------------------------------------------------
+    {
+        WriteFile(dir + "/halfcut.okayshader", "surface { if (position.x < 0.0) { discard; } }");
+        const ShadowProbe std0 = RenderShadow([](MeshRenderer&) {});
+        const ShadowProbe cut = RenderShadow([&](MeshRenderer& mr) { mr.shader = MeshRenderer::Shader::Custom; mr.customShader = dir + "/halfcut.okayshader"; });
+        std::cout << "  shadow (left/right/open): Standard " << std0.left << "/" << std0.right << "/" << std0.open
+                  << ", half-discarded " << cut.left << "/" << cut.right << "/" << cut.open << "\n";
+        CHECK(std0.open > 60);
+        CHECK(std0.left < std0.open - 25 && std0.right < std0.open - 25);   // the whole cube shadows
+        CHECK(cut.right < cut.open - 25);                                  // the half that is left still does
+        CHECK(cut.left > cut.open - 8);                                    // the cut half casts nothing
+        // An alpha below one half cuts the shadow too (alpha cut-out).
+        WriteFile(dir + "/halfalpha.okayshader", "surface { alpha = position.x < 0.0 ? 0.2 : 1.0; }");
+        const ShadowProbe al = RenderShadow([&](MeshRenderer& mr) { mr.shader = MeshRenderer::Shader::Custom; mr.customShader = dir + "/halfalpha.okayshader"; });
+        std::cout << "  shadow, alpha 0.2 on the left half: " << al.left << "/" << al.right << "/" << al.open << "\n";
+        CHECK(al.right < al.open - 25);
+        CHECK(al.left > al.open - 8);
+    }
+
+    // ---- the vertex block moves the surface (software renderer) --------------------------------------
+    {
+        WriteFile(dir + "/white.okayshader", "mode unlit; surface { albedo = vec3(1.0); }");
+        WriteFile(dir + "/up.okayshader", "mode unlit; vertex { position.y += 0.15; } surface { albedo = vec3(1.0); }");
+        WriteFile(dir + "/grow.okayshader", "mode unlit; vertex { position += normal * 0.1; } surface { albedo = vec3(1.0); }");
+        WriteFile(dir + "/sway.okayshader", "mode unlit; vertex { position.x += sin(time) * 0.2; } surface { albedo = vec3(1.0); }");
+        auto custom = [&](const std::string& f) { return [&, f](MeshRenderer& mr) { mr.shader = MeshRenderer::Shader::Custom; mr.customShader = dir + "/" + f; }; };
+        Time::ResetForTesting();
+        const Extent base = LitExtent(RenderBall(custom("white.okayshader")));
+        const Extent up = LitExtent(RenderBall(custom("up.okayshader")));
+        const Extent grow = LitExtent(RenderBall(custom("grow.okayshader")));
+        const Extent sway0 = LitExtent(RenderBall(custom("sway.okayshader")));
+        for (int k = 0; k < 32; ++k) Time::Step(0.05f);   // 1.6 s: sin is near its peak
+        const Extent sway1 = LitExtent(RenderBall(custom("sway.okayshader")));
+        std::cout << "  vertex block: base top " << base.top << " count " << base.count << ", moved up top " << up.top
+                  << ", grown count " << grow.count << ", sway left " << sway0.left << " -> " << sway1.left << "\n";
+        CHECK(base.count > 500);
+        CHECK(up.top < base.top - 4 && up.bottom < base.bottom - 4);
+        CHECK(grow.count > base.count + 200);
+        CHECK(sway1.left > sway0.left + 4);
+        Time::ResetForTesting();
+    }
+
+    // ---- the vertex block moves the shadow as well --------------------------------------------------
+    {
+        WriteFile(dir + "/shift.okayshader", "vertex { position.x += 1.2; }");
+        const ShadowProbe moved = RenderShadow([&](MeshRenderer& mr) { mr.shader = MeshRenderer::Shader::Custom; mr.customShader = dir + "/shift.okayshader"; });
+        std::cout << "  shadow of a cube moved 1.2 to the right by its vertex block: at the old place " << moved.left << "/"
+                  << moved.right << ", at the new place " << moved.movedRight << ", open " << moved.open << "\n";
+        CHECK(moved.left > moved.open - 8);
+        CHECK(moved.movedRight < moved.open - 25);
+    }
+
     // ---- the shipped example scene loads and every custom object compiles and draws ------------------
     {
         const std::string scenePath = std::string(OKAY_SOURCE_DIR) + "/examples/shaders/shader_demo.okayscene";
@@ -174,7 +288,7 @@ int main() {
                 if (sf.compiled && sf.compiled->ok) ++compiled;
                 else std::cerr << "    " << mr->customShader << ": " << (sf.compiled ? sf.compiled->FirstError() : "?") << "\n";
             }
-        CHECK(custom >= 3);
+        CHECK(custom >= 5);
         CHECK(compiled == custom);
     }
     std::error_code ec;

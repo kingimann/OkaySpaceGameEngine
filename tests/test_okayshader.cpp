@@ -3,6 +3,7 @@
 #include "test_framework.hpp"
 #include "okay/Render/OkayShader.hpp"
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -364,10 +365,71 @@ int main() {
         CHECK(m.compiled && !m.compiled->ok && Has(m.compiled->FirstError(), "cannot read"));
     }
 
+    // ---- the vertex block: inputs, outputs, errors, GLSL / HLSL text and the CPU program ----------
+    {
+        const char* src =
+            "property float amp = 0.25;\n"
+            "vertex {\n"
+            "    position += normal * amp * sin(time + local.x * 2.0);\n"
+            "    position.y += uv.y * vcolor.r;\n"
+            "    normal = normalize(normal + vec3(0.0, 0.0, local.z));\n"
+            "}\n"
+            "surface { albedo = vec3(1.0); }\n";
+        Compiled c = Compile(src);
+        CHECK(c.ok);
+        if (!c.ok) std::cerr << "    " << c.FirstError("vertex") << "\n";
+        CHECK(c.hasVertex);
+        CHECK(c.cpuVertex != nullptr);
+        CHECK(Has(c.glslVertex, "void okayVertex("));
+        CHECK(Has(c.glslVertex, "uniform float okp_amp;"));
+        CHECK(Has(c.glslVertex, "uniform float uOkTime;"));
+        CHECK(!Has(c.glslVertex, "discard"));
+        CHECK(!Has(c.glsl, "okayVertex"));              // the fragment text has only the surface
+        CHECK(Has(c.hlslVertex, "void okayVertex("));
+        CHECK(Has(c.hlslVertex, "register(b4)"));
+        CHECK(Has(c.hlslVertex, "inout float3"));
+        // CPU: position starts at the world position, normal at the world normal.
+        VertexIn vi;
+        vi.local[0] = 0.5f; vi.local[1] = 0.0f; vi.local[2] = 0.0f;
+        vi.position[0] = 1.0f; vi.position[1] = 2.0f; vi.position[2] = 3.0f;
+        vi.normal[0] = 0.0f; vi.normal[1] = 1.0f; vi.normal[2] = 0.0f;
+        vi.uv[0] = 0.0f; vi.uv[1] = 0.5f;
+        vi.vcolor[0] = 0.4f;
+        vi.time = 0.25f;
+        std::vector<float> props = ResolveProperties(c, "amp=0.5");
+        VertexOut vo{};
+        if (c.cpuVertex) RunCpuVertex(*c.cpuVertex, vi, props.data(), vo);
+        const float wave = 0.5f * std::sin(0.25f + 0.5f * 2.0f);
+        CHECK_NEAR(vo.position[0], 1.0f, 1e-5f);
+        CHECK_NEAR(vo.position[1], 2.0f + wave + 0.5f * 0.4f, 1e-5f);
+        CHECK_NEAR(vo.position[2], 3.0f, 1e-5f);
+        CHECK_NEAR(vo.normal[1], 1.0f, 1e-5f);
+        // A file with only a vertex block is fine (the surface is the material as it is).
+        Compiled v2 = Compile("vertex { position.x += 1.0; }");
+        CHECK(v2.ok && v2.hasVertex && v2.cpu != nullptr);
+        Compiled none = Compile("surface { albedo = albedo; }");
+        CHECK(none.ok && !none.hasVertex && none.glslVertex.empty() && none.cpuVertex == nullptr);
+        // Errors.
+        CHECK(ErrAt("vertex {\n  discard;\n}", 2, 3, "only allowed in the surface block"));
+        CHECK(ErrAt("texture t;\nvertex { position = sample(t, uv).xyz; }", 2, 21, "only allowed in the surface block"));
+        CHECK(ErrAt("vertex { uv = vec2(0.0); }", 1, 10, "read-only"));
+        CHECK(ErrAt("vertex { albedo = vec3(0.0); }", 1, 10, "unknown name 'albedo'"));
+        CHECK(ErrAt("surface { albedo = local; }", 1, 20, "unknown name 'local'"));
+        CHECK(ErrAt("vertex { }\nvertex { }", 2, 1, "only one vertex block"));
+        CHECK(ErrAt("property float local = 1.0; vertex { }", 1, 16, "input or output"));
+        CHECK(ErrAt("shader \"x\";", 1, 12, "no surface or vertex block"));
+        // A vertex block keeps the hostile-input limits.
+        std::string deep = "vertex { position.x = ";
+        for (int i = 0; i < 3000; ++i) deep += "(";
+        Compiled d = Compile(deep);
+        CHECK(!d.ok);
+    }
+
     // ---- the shipped example shaders all compile ---------------------------------------------
     {
         const char* files[] = {"examples/shaders/lava.okayshader", "examples/shaders/dissolve.okayshader",
-                               "examples/shaders/rim_glow.okayshader"};
+                               "examples/shaders/rim_glow.okayshader", "examples/shaders/flag_wave.okayshader",
+                               "examples/shaders/wobble.okayshader"};
         for (const char* f : files) {
             std::ifstream in(std::string(OKAY_SOURCE_DIR) + "/" + f);
             CHECK(in.good());

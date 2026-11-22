@@ -56,6 +56,49 @@ void SaveSideBySide(const std::string& file, const Raster& a, const std::uint32_
     img.SavePNG(file);
 }
 
+
+// The shadow scene: a grey ground, a sun at 45 degrees and a cube caster 1 unit up drawn with
+// `shader`. Seen from above. Probe points: the left and right halves of the shadow, open ground.
+struct ShadowRun { int left = 0, right = 0, open = 0; };
+const Vec3 kShadowEye{0.0f, 7.0f, 0.01f};
+Mat4 ShadowVP() { return Mat4::Perspective(50.0f, 1.0f, 0.1f, 100.0f) * Mat4::LookAt(kShadowEye, {0.0f, 0.0f, 0.0f}, Vec3::Up); }
+void BuildShadowScene(Scene& scene, const std::string& shader) {
+    scene.physicsEnabled = false;
+    scene.renderSettings.tonemap = false;
+    scene.renderSettings.skybox = false;
+    GameObject* lgo = scene.CreateGameObject("Sun");
+    auto* light = lgo->AddComponent<Light>();
+    light->type = Light::Type::Directional; light->intensity = 1.0f;
+    lgo->transform->localRotation = Quat::Euler(45, 0, 0);
+    auto* gm = scene.CreateGameObject("Ground")->AddComponent<MeshRenderer>();
+    gm->mesh = Mesh::Plane(8.0f);
+    gm->color = Color::FromBytes(180, 180, 180);
+    gm->groundShadow = false;
+    GameObject* go = scene.CreateGameObject("Caster");
+    go->transform->localPosition = {0.0f, 1.0f, 0.0f};
+    auto* mr = go->AddComponent<MeshRenderer>();
+    mr->mesh = Mesh::Cube(0.8f);
+    mr->color = Color::FromBytes(90, 90, 200);
+    mr->groundShadow = false;
+    if (!shader.empty()) { mr->shader = MeshRenderer::Shader::Custom; mr->customShader = shader; }
+}
+int LumAt(const std::uint32_t* px, int w, int x, int y) {
+    const std::uint32_t c = px[(std::size_t)y * w + x];
+    return (int)((c & 0xFF) + ((c >> 8) & 0xFF) + ((c >> 16) & 0xFF)) / 3;
+}
+ShadowRun Probe(const Scene& scene, const std::uint32_t* px, int size) {
+    Vec3 f{0, -1, 0};
+    for (const auto& go : scene.Objects()) if (go->GetComponent<Light>()) f = go->transform->Forward();
+    const float t = 1.0f / -f.y;
+    const Vec3 c{f.x * t, 0.0f, f.z * t};
+    const Mat4 vp = ShadowVP();
+    auto at = [&](float dx) {
+        const Vec4 q = vp * Vec4{Vec3{c.x + dx, 0.0f, c.z}, 1.0f};
+        const int x = (int)((q.x / q.w * 0.5f + 0.5f) * size), y = (int)((1.0f - (q.y / q.w * 0.5f + 0.5f)) * size);
+        return LumAt(px, size, x, y);
+    };
+    return ShadowRun{at(-0.22f), at(0.22f), at(-2.5f)};
+}
 } // namespace
 
 int main() {
@@ -90,6 +133,10 @@ int main() {
         // back faces differently (their Standard lighting differs most there), hence the wide limit.
         {"dissolve", "@dissolve.okayshader", "cycle=0;amount=0.45", true, 0.30, 24.0, 0.0f},
         {"rim_glow", "@rim_glow.okayshader", "", true, 0.85, 10.0, 0.5f},
+        // Vertex blocks: the same moved vertices on both renderers (silhouette and colours).
+        {"vertex_wobble_unlit", "mode unlit; vertex { position += normal * (0.08 * sin(time * 3.0 + local.y * 12.0)); }"
+                                " surface { albedo = vec3(uv, 0.5); }", "", false, 0.85, 6.0, 0.7f},
+        {"vertex_wobble_lit", "@wobble.okayshader", "", true, 0.45, 16.0, 0.7f},
     };
     GLRenderer gl;
     for (const Case& c : cases) {
@@ -159,6 +206,81 @@ int main() {
             CHECK(sp != nullptr);
             CHECK(maxGl <= 1);
             CHECK(maxSw <= 1);
+        }
+    }
+    // A dissolved object casts a dissolved shadow, on both renderers; a vertex block moves the shadow.
+    {
+        const std::string cut = "okayshader_gl_cut.okayshader";
+        { std::ofstream f(cut); f << "surface { if (position.x < 0.0) { discard; } albedo = albedo; }"; }
+        oshader::LoadShaderFile(cut, 0);
+        Time::ResetForTesting();
+        for (const char* which : {"", "cut", "dissolve"}) {
+            const std::string sh = std::string(which) == "cut" ? cut : std::string(which) == "dissolve" ? src + "dissolve.okayshader" : std::string();
+            Scene scene("shadow");
+            BuildShadowScene(scene, sh);
+            if (std::string(which) == "dissolve")
+                for (const auto& go : scene.Objects()) if (auto* mr = go->GetComponent<MeshRenderer>(); mr && go->name == "Caster") mr->shaderParams = "cycle=0;amount=0.45";
+            Raster sw; sw.Resize(kSize, kSize); sw.Clear(0xFF000000u);
+            RenderMeshes(sw, scene, ShadowVP(), kShadowEye);
+            const std::uint32_t* px = gl.RenderToPixels(scene, ShadowVP(), kShadowEye, kSize, kSize, 1, 0.0f, 0.0f, 0.0f, 1.0f);
+            CHECK(px != nullptr);
+            if (!px) continue;
+            const ShadowRun a = Probe(scene, sw.color.data(), kSize), b = Probe(scene, px, kSize);
+            int magenta = 0;
+            for (int i = 0; i < kSize * kSize; ++i) if ((px[i] & 0xFFFFFF) == 0xFF00FF) ++magenta;
+            std::cout << "  shadow " << (which[0] ? which : "standard") << " (left/right/open): software " << a.left << "/" << a.right << "/" << a.open
+                      << ", OpenGL " << b.left << "/" << b.right << "/" << b.open << (magenta ? " (MAGENTA)" : "") << "\n";
+            CHECK(magenta == 0);
+            if (std::string(which).empty()) {
+                CHECK(a.left < a.open - 25 && a.right < a.open - 25);
+                CHECK(b.left < b.open - 25 && b.right < b.open - 25);
+            } else if (std::string(which) == "cut") {
+                CHECK(a.right < a.open - 25 && a.left > a.open - 8);
+                CHECK(b.right < b.open - 25 && b.left > b.open - 8);
+            }
+            if (shotDir) SaveSideBySide(std::string(shotDir) + "/shadow_" + (which[0] ? which : "standard") + ".png", sw, px);
+        }
+        std::remove(cut.c_str());
+    }
+    // The waving flag example: a grid on a pole, moved by flag_wave.okayshader on both renderers.
+    {
+        Time::ResetForTesting();
+        for (int k = 0; k < 14; ++k) Time::Step(0.05f);
+        Scene scene("flag");
+        scene.physicsEnabled = false;
+        scene.renderSettings.tonemap = false;
+        scene.renderSettings.skybox = false;
+        GameObject* lgo = scene.CreateGameObject("Sun");
+        auto* light = lgo->AddComponent<Light>();
+        light->type = Light::Type::Directional; light->intensity = 1.0f;
+        lgo->transform->localRotation = Quat::Euler(35, -25, 0);
+        GameObject* go = scene.CreateGameObject("Flag");
+        go->transform->localRotation = Quat::Euler(-90, 0, 0);   // the grid stands up, facing the camera
+        auto* mr = go->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Grid(2.0f, 1.2f, 32, 16);
+        mr->doubleSided = true;
+        mr->castShadows = false; mr->receiveShadows = false; mr->groundShadow = false;
+        mr->shader = MeshRenderer::Shader::Custom;
+        mr->customShader = src + "flag_wave.okayshader";
+        CHECK(oshader::LoadShaderFile(mr->customShader, 0).compiled->ok);
+        const Vec3 eye{0.0f, 0.2f, 2.6f};
+        const Mat4 vp = Mat4::Perspective(55.0f, 1.0f, 0.05f, 100.0f) * Mat4::LookAt(eye, {0, 0, 0}, Vec3::Up);
+        Raster sw; sw.Resize(kSize, kSize); sw.Clear(0xFF000000u);
+        RenderMeshes(sw, scene, vp, eye);
+        const std::uint32_t* px = gl.RenderToPixels(scene, vp, eye, kSize, kSize, 1, 0.0f, 0.0f, 0.0f, 1.0f);
+        CHECK(px != nullptr);
+        if (px) {
+            int both = 0, onlyOne = 0, magenta = 0;
+            for (int i = 0; i < kSize * kSize; ++i) {
+                const bool a = (sw.color[(std::size_t)i] & 0xFFFFFF) != 0, b = (px[i] & 0xFFFFFF) != 0;
+                if ((px[i] & 0xFFFFFF) == 0xFF00FF) ++magenta;
+                if (a && b) ++both; else if (a || b) ++onlyOne;
+            }
+            std::cout << "  flag: " << both << " pixels drawn by both, " << onlyOne << " by one only" << (magenta ? " (MAGENTA)" : "") << "\n";
+            CHECK(magenta == 0);
+            CHECK(both > kSize * kSize / 6);
+            CHECK(onlyOne < both / 8);   // the same moved silhouette
+            if (shotDir) SaveSideBySide(std::string(shotDir) + "/flag_wave.png", sw, px);
         }
     }
     // The shipped example scene on both renderers: every custom object compiles on the GPU (no magenta).

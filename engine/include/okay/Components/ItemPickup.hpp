@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Input/InputActions.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"

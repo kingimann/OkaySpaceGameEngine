@@ -305,6 +305,8 @@ public:
     /// changing size/resolution (the editor does this from the inspector).
     void Apply() {
         if (!gameObject) return;
+        // Detail from a hand-edited or damaged scene file: 0 or less divided by zero, a huge number asked for terabytes.
+        resolution = resolution < 1 ? 1 : (resolution > kMaxResolution ? kMaxResolution : resolution);
         BuildBase();
         auto* mr = gameObject->GetComponent<MeshRenderer>();
         if (!mr) mr = gameObject->AddComponent<MeshRenderer>();
@@ -340,6 +342,9 @@ private:
     Vec2  m_windDir{1.0f, 0.0f};
 
     int Dim() const { return resolution + 1; }
+public:
+    static constexpr int kMaxResolution = 1024;   ///< the most Detail a water grid can have (the Inspector stops at 128)
+private:
 
     void BuildBase() {
         m_dim = Dim();

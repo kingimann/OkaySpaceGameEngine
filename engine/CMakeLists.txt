@@ -172,6 +172,7 @@ add_library(okay_engine
     src/Components/Draggable.cpp
     src/Components/Terrain.cpp
     src/Components/Foliage.cpp
+    src/Components/ParticleSystem.cpp
     src/Components/Cable.cpp
     src/Components/Decal.cpp
     src/Components/VoxelTerrain.cpp

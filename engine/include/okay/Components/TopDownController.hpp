@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Input/InputActions.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -68,7 +69,7 @@ public:
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
         if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); return; }
 
-        Vec2 axis = Input::AxisWASD();
+        Vec2 axis = InputActions::ControlMove();   // the "Move" action once the player rebinds it
         Vec2 pad  = Input::GamepadAxis();
         if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) axis = pad;
         Quat basis = cameraRelative ? Quat::Euler(0, cameraYaw, 0) : Quat::Identity;
@@ -79,7 +80,7 @@ public:
         if (moving) { dir.x /= len; dir.z /= len; }
         stanceControl.ReadKeys();
         stanceControl.Step(gameObject, dt);
-        bool running = stanceControl.Stance() == 0 && sprintKey && Input::GetKey(sprintKey) && moving;
+        bool running = stanceControl.Stance() == 0 && InputActions::ControlKey("Sprint", sprintKey) && moving;
         float speed = stanceControl.Speed(running ? runSpeed : walkSpeed) * MoveSpeedScale(gameObject);
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;

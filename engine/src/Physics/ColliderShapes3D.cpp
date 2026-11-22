@@ -12,6 +12,40 @@
 
 namespace okay {
 
+namespace {
+// Limits that keep a typed-in or damaged list from eating memory or time.
+constexpr int kMaxCompoundParts = 1024;
+constexpr std::size_t kMaxHeights = 2049u * 2049u;        // 2049 x 2049 samples (a resolution-2048 Terrain)
+constexpr std::size_t kMaxHeightfieldTriangles = 500000;
+constexpr float kMaxCoord = 1.0e6f;                       // a point further than this is a typo, not a shape
+
+bool UsableNumber(float v) { return std::isfinite(v) && std::abs(v) <= kMaxCoord; }
+bool UsablePoint(const Vec3& v) { return UsableNumber(v.x) && UsableNumber(v.y) && UsableNumber(v.z); }
+// The heightfield's scale as every query uses it: not a number reads as 0, and it is kept within the coordinate limit.
+float SafeScale(float k) { return std::isfinite(k) ? std::clamp(k, -kMaxCoord, kMaxCoord) : 0.0f; }
+// A stored height (already within +-kMaxCoord) times the scale, kept within the coordinate limit.
+float ScaledHeight(float h, float scale) { return std::clamp(h * SafeScale(scale), -kMaxCoord, kMaxCoord); }
+}  // namespace
+
+// Keep at most `maxPoints` of the points that spread the cloud out the most (farthest-point sampling).
+std::vector<Vec3> ThinHullPoints(const std::vector<Vec3>& p, int maxPoints) {
+    if (maxPoints < 1) maxPoints = 1;
+    if (p.empty()) return p;
+    if ((int)p.size() <= maxPoints) return p;
+    std::vector<Vec3> keep; keep.push_back(p[0]);
+    std::vector<float> dist(p.size(), 1e30f);
+    while ((int)keep.size() < maxPoints) {
+        int far = 0; float fd = -1.0f;
+        for (std::size_t i = 0; i < p.size(); ++i) {
+            dist[i] = std::min(dist[i], (p[i] - keep.back()).SqrMagnitude());
+            if (dist[i] > fd) { fd = dist[i]; far = (int)i; }
+        }
+        if (fd <= 0.0f) break;
+        keep.push_back(p[(std::size_t)far]);
+    }
+    return keep;
+}
+
 namespace shape3d {
 
 Frame FrameOf(const Collider3D& c) {
@@ -110,7 +144,7 @@ std::vector<Vec3> PointsFromText(const std::string& s) {
     std::string cur;
     auto flush = [&]() {
         std::istringstream in(cur);
-        Vec3 v; if (in >> v.x >> v.y >> v.z) out.push_back(v);
+        Vec3 v; if (in >> v.x >> v.y >> v.z && UsablePoint(v) && out.size() < 4u * (std::size_t)kMaxHullPoints * 4u) out.push_back(v);
         cur.clear();
     };
     for (char ch : s) { if (ch == ';') flush(); else cur += ch; }
@@ -122,6 +156,9 @@ void ConvexHullCollider3D::Refresh() const {
     if (m_key == points && !m_pts.empty()) return;
     m_key = points;
     m_pts = PointsFromText(points);
+    if ((int)m_pts.size() > kMaxHullPoints) {                    // too many typed in: wrap them, then keep the spread-out corners
+        m_pts = ThinHullPoints(m_pts, kMaxHullPoints);           // (thin first: the wrap itself is slow on huge clouds)
+    }
     if (m_pts.empty()) {
         for (int i = 0; i < 8; ++i) m_pts.push_back({i & 1 ? 0.5f : -0.5f, i & 2 ? 0.5f : -0.5f, i & 4 ? 0.5f : -0.5f});
     }
@@ -135,29 +172,21 @@ const std::vector<Vec3>& ConvexHullCollider3D::Points() const { Refresh(); retur
 LocalShape3D ConvexHullCollider3D::Local() const { Refresh(); return m_shape; }
 
 void ConvexHullCollider3D::SetPoints(const std::vector<Vec3>& in, int maxPoints) {
-    std::vector<Vec3> p = in;
+    std::vector<Vec3> p;
+    for (const Vec3& v : in) if (UsablePoint(v)) p.push_back(v);
+    p = ThinHullPoints(p, kMaxHullPoints);                      // (thin first: the wrap itself is slow on huge clouds)
     Mesh h = Mesh::ConvexHull(p);
     if (h.vertices.size() >= 4) p = h.vertices;                 // only the corners matter
-    maxPoints = std::max(maxPoints, 4);
-    if ((int)p.size() > maxPoints) {                            // keep the points that spread the shape out the most
-        std::vector<Vec3> keep; keep.push_back(p[0]);
-        std::vector<float> dist(p.size(), 1e30f);
-        while ((int)keep.size() < maxPoints) {
-            int far = 0; float fd = -1.0f;
-            for (std::size_t i = 0; i < p.size(); ++i) {
-                dist[i] = std::min(dist[i], (p[i] - keep.back()).SqrMagnitude());
-                if (dist[i] > fd) { fd = dist[i]; far = (int)i; }
-            }
-            if (fd <= 0.0f) break;
-            keep.push_back(p[(std::size_t)far]);
-        }
-        p = keep;
-    }
+    maxPoints = std::min(std::max(maxPoints, 4), kMaxHullPoints);
+    p = ThinHullPoints(p, maxPoints);
     points = PointsToText(p);
     m_key.clear();
 }
 bool ConvexHullCollider3D::SetFromMesh(const Mesh& m, int maxPoints) {
-    Mesh h = Mesh::ConvexHull(m.vertices);
+    std::vector<Vec3> good;
+    for (const Vec3& v : m.vertices) if (UsablePoint(v)) good.push_back(v);
+    good = ThinHullPoints(good, kMaxHullPoints);
+    Mesh h = Mesh::ConvexHull(good);
     if (h.vertices.size() < 4) return false;
     SetPoints(h.vertices, maxPoints);
     return true;
@@ -207,9 +236,11 @@ void CompoundCollider3D::Refresh() const {
     std::string cur;
     auto flush = [&]() {
         std::istringstream in(cur); cur.clear();
+        if ((int)m_parts.size() >= kMaxCompoundParts) return;
         std::string kind; Part p; float a = 0.5f, b = 1.0f, c = 1.0f; int axis = 1;
         if (!(in >> kind >> p.pos.x >> p.pos.y >> p.pos.z >> p.euler.x >> p.euler.y >> p.euler.z)) return;
         in >> a >> b >> c >> axis;
+        if (!UsablePoint(p.pos) || !UsablePoint(p.euler) || !UsableNumber(a) || !UsableNumber(b) || !UsableNumber(c)) return;
         p.rot = Quat::Euler(p.euler);
         LocalShape3D& s = p.shape;
         axis = std::clamp(axis, 0, 2);
@@ -302,20 +333,23 @@ void HeightfieldCollider3D::Refresh() const {
     m_key = heights;
     m_h.clear();
     std::istringstream in(heights);
-    float v; while (in >> v) m_h.push_back(v);
+    float v;
+    while (m_h.size() < kMaxHeights && in >> v) m_h.push_back(std::isfinite(v) ? std::clamp(v, -kMaxCoord, kMaxCoord) : 0.0f);
     m_lo = 0.0f; m_hi = 0.0f;
     if (!m_h.empty()) { m_lo = *std::min_element(m_h.begin(), m_h.end()); m_hi = *std::max_element(m_h.begin(), m_h.end()); }
 }
 float HeightfieldCollider3D::HeightAt(int c, int r) const {
     Refresh();
-    c = std::clamp(c, 0, std::max(columns, 2) - 1); r = std::clamp(r, 0, std::max(rows, 2) - 1);
-    std::size_t i = (std::size_t)r * (std::size_t)std::max(columns, 2) + (std::size_t)c;
-    return i < m_h.size() ? m_h[i] * heightScale : 0.0f;
+    const int C = Cols(), R = Rows();
+    c = std::clamp(c, 0, C - 1); r = std::clamp(r, 0, R - 1);
+    std::size_t i = (std::size_t)r * (std::size_t)C + (std::size_t)c;
+    return i < m_h.size() ? ScaledHeight(m_h[i], heightScale) : 0.0f;
 }
 void HeightfieldCollider3D::SetHeights(int cols, int rws, const std::vector<float>& h) {
     columns = std::max(cols, 2); rows = std::max(rws, 2);
     std::ostringstream o; o << std::setprecision(9);
-    for (std::size_t i = 0; i < h.size(); ++i) o << (i ? " " : "") << h[i];
+    // A NaN or infinity is written as 0: as text ("nan", "inf") it would not read back and would cut off every later height.
+    for (std::size_t i = 0; i < h.size(); ++i) o << (i ? " " : "") << (std::isfinite(h[i]) ? h[i] : 0.0f);
     heights = o.str(); m_key.clear();
 }
 bool HeightfieldCollider3D::SetFromTerrain(const Terrain& t) {
@@ -327,12 +361,13 @@ bool HeightfieldCollider3D::SetFromTerrain(const Terrain& t) {
 }
 float HeightfieldCollider3D::Depth() const {
     Refresh();
-    return Mathf::Max(2.0f, (m_hi - m_lo) * Mathf::Abs(heightScale) + 2.0f * Mathf::Max(cellX, cellZ));
+    const float span = Mathf::Abs(ScaledHeight(m_hi, heightScale) - ScaledHeight(m_lo, heightScale));
+    return Mathf::Max(2.0f, span + 2.0f * Mathf::Max(CX(), CZ()));
 }
 bool HeightfieldCollider3D::LocalHeight(float x, float z, float& y) const {
-    const int C = std::max(columns, 2), R = std::max(rows, 2);
-    float fx = x / cellX + (C - 1) * 0.5f, fz = z / cellZ + (R - 1) * 0.5f;
-    if (fx < 0 || fz < 0 || fx > C - 1 || fz > R - 1) return false;
+    const int C = Cols(), R = Rows();
+    float fx = x / CX() + (C - 1) * 0.5f, fz = z / CZ() + (R - 1) * 0.5f;
+    if (!(fx >= 0.0f) || !(fz >= 0.0f) || !(fx <= C - 1) || !(fz <= R - 1)) return false;   // (also catches NaN)
     int i = std::min((int)fx, C - 2), j = std::min((int)fz, R - 2);
     float u = fx - i, v = fz - j;
     float h00 = HeightAt(i, j), h10 = HeightAt(i + 1, j), h01 = HeightAt(i, j + 1), h11 = HeightAt(i + 1, j + 1);
@@ -342,17 +377,18 @@ bool HeightfieldCollider3D::LocalHeight(float x, float z, float& y) const {
 }
 void HeightfieldCollider3D::CollectTriangles(const Vec3& mn, const Vec3& mx, std::vector<std::array<Vec3, 3>>& out) const {
     const Frame f = FrameOf(*this);
-    const int C = std::max(columns, 2), R = std::max(rows, 2);
+    const int C = Cols(), R = Rows();
     Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
     for (int k = 0; k < 8; ++k) {
         Vec3 l = ToLocalPoint(f, {k & 1 ? mx.x : mn.x, k & 2 ? mx.y : mn.y, k & 4 ? mx.z : mn.z});
         lo = Vec3::Min(lo, l); hi = Vec3::Max(hi, l);
     }
-    int i0 = std::max(0, (int)std::floor(lo.x / cellX + (C - 1) * 0.5f)), i1 = std::min(C - 2, (int)std::floor(hi.x / cellX + (C - 1) * 0.5f));
-    int j0 = std::max(0, (int)std::floor(lo.z / cellZ + (R - 1) * 0.5f)), j1 = std::min(R - 2, (int)std::floor(hi.z / cellZ + (R - 1) * 0.5f));
-    auto P = [&](int i, int j) { return ToWorldPoint(f, {(i - (C - 1) * 0.5f) * cellX, HeightAt(i, j), (j - (R - 1) * 0.5f) * cellZ}); };
+    int i0 = std::max(0, (int)std::floor(lo.x / CX() + (C - 1) * 0.5f)), i1 = std::min(C - 2, (int)std::floor(hi.x / CX() + (C - 1) * 0.5f));
+    int j0 = std::max(0, (int)std::floor(lo.z / CZ() + (R - 1) * 0.5f)), j1 = std::min(R - 2, (int)std::floor(hi.z / CZ() + (R - 1) * 0.5f));
+    auto P = [&](int i, int j) { return ToWorldPoint(f, {(i - (C - 1) * 0.5f) * CX(), HeightAt(i, j), (j - (R - 1) * 0.5f) * CZ()}); };
     for (int j = j0; j <= j1; ++j)
         for (int i = i0; i <= i1; ++i) {
+            if (out.size() >= kMaxHeightfieldTriangles) return;   // a box over a huge grid: stop, never fill memory
             out.push_back({P(i, j), P(i + 1, j), P(i, j + 1)});
             out.push_back({P(i + 1, j), P(i + 1, j + 1), P(i, j + 1)});
         }
@@ -360,10 +396,10 @@ void HeightfieldCollider3D::CollectTriangles(const Vec3& mn, const Vec3& mx, std
 void HeightfieldCollider3D::WorldAABB(Vec3& mn, Vec3& mx) const {
     Refresh();
     const Frame f = FrameOf(*this);
-    const int C = std::max(columns, 2), R = std::max(rows, 2);
-    float x1 = (C - 1) * 0.5f * cellX, z1 = (R - 1) * 0.5f * cellZ;
-    float y0 = std::min(m_lo, m_hi) * heightScale, y1 = std::max(m_lo, m_hi) * heightScale;
-    if (heightScale < 0) std::swap(y0, y1);
+    const int C = Cols(), R = Rows();
+    float x1 = (C - 1) * 0.5f * CX(), z1 = (R - 1) * 0.5f * CZ();
+    const float a = ScaledHeight(m_lo, heightScale), b = ScaledHeight(m_hi, heightScale);
+    float y0 = std::min(a, b), y1 = std::max(a, b);
     y0 -= Depth();
     mn = {1e30f, 1e30f, 1e30f}; mx = {-1e30f, -1e30f, -1e30f};
     for (int k = 0; k < 8; ++k) {
@@ -375,8 +411,8 @@ bool HeightfieldCollider3D::RayShape(const Vec3& o, const Vec3& d, float maxT, f
     Refresh();
     const Frame f = FrameOf(*this);
     Vec3 ol = ToLocalPoint(f, o), dl = ToLocalDir(f, d);
-    const int C = std::max(columns, 2), R = std::max(rows, 2);
-    float x1 = (C - 1) * 0.5f * cellX, z1 = (R - 1) * 0.5f * cellZ;
+    const int C = Cols(), R = Rows();
+    float x1 = (C - 1) * 0.5f * CX(), z1 = (R - 1) * 0.5f * CZ();
     // Clip the ray to the grid's footprint, then walk it in steps of half a cell looking for the surface.
     float t0 = 0.0f, t1 = maxT;
     const float oo[2] = {ol.x, ol.z}, dd[2] = {dl.x, dl.z}, hh[2] = {x1, z1};
@@ -391,17 +427,21 @@ bool HeightfieldCollider3D::RayShape(const Vec3& o, const Vec3& d, float maxT, f
     auto above = [&](float s) { Vec3 p = ol + dl * s; float y; if (!LocalHeight(p.x, p.z, y)) return true; hy = y; return p.y >= y; };
     if (!above(t0)) return false;                                        // starts below the surface: inside the solid
     float lenXZ = std::sqrt(dl.x * dl.x + dl.z * dl.z);
-    float step = lenXZ > 1e-9f ? 0.5f * std::min(cellX, cellZ) / lenXZ : (t1 - t0);
+    float step = lenXZ > 1e-9f ? 0.5f * std::min(CX(), CZ()) / lenXZ : (t1 - t0);
     step = std::max(step, (t1 - t0) / 20000.0f);
+    // A counted walk: far from the ray's start, adding one small step to a float position can leave it unchanged, so
+    // "s += step until s >= t1" could run forever. Step k is placed at t0 + k * step instead, and the last at t1.
+    const float ratio = (t1 - t0) / step;
+    const int nSteps = (std::isfinite(ratio) && ratio > 1.0f) ? (int)std::min(20001.0f, std::ceil(ratio)) : 1;
     float prev = t0;
-    for (float s = t0 + step;; s += step) {
-        bool last = s >= t1; if (last) s = t1;
+    for (int k = 1; k <= nSteps; ++k) {
+        const float s = (k == nSteps) ? t1 : std::min(t0 + (float)k * step, t1);
         if (!above(s)) {
             float a = prev, b = s;
             for (int it = 0; it < 24; ++it) { float m = 0.5f * (a + b); if (above(m)) a = m; else b = m; }
             t = b;
             Vec3 p = ol + dl * t;
-            float e = 0.25f * std::min(cellX, cellZ), hxm, hxp, hzm, hzp;
+            float e = 0.25f * std::min(CX(), CZ()), hxm, hxp, hzm, hzp;
             float cy;
             LocalHeight(p.x, p.z, cy);
             if (!LocalHeight(p.x - e, p.z, hxm)) hxm = cy;
@@ -412,7 +452,6 @@ bool HeightfieldCollider3D::RayShape(const Vec3& o, const Vec3& d, float maxT, f
             n = ToWorldNormal(f, nl);
             return t <= maxT;
         }
-        if (last) break;
         prev = s;
     }
     return false;

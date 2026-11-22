@@ -3406,6 +3406,15 @@ target_link_libraries(test_image_decoder PRIVATE okay::engine)
 add_test(NAME image_decoder COMMAND test_image_decoder)
 set_tests_properties(image_decoder PROPERTIES TIMEOUT 300)
 
+# Hostile-input + mutation fuzz of the image decoders (lying header fields, PNG with valid CRCs, decompression bombs, memory and time budgets).
+# Standalone: only the decoder sources, so it also builds under -fsanitize=address,undefined.
+add_executable(test_image_hostile test_image_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageWrite.cpp)
+target_include_directories(test_image_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_image_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME image_hostile COMMAND test_image_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(image_hostile PROPERTIES TIMEOUT 600)
+
 # shared/FileDialog: our own open / save / folder dialogs (replaced the vendored tinyfiledialogs): path and glob helpers,
 # argument lists for zenity / kdialog / osascript (no injection), result parsing, extension enforcing, the built-in browser's
 # model and queue, and a run through fake helper programs on PATH. No window.
@@ -3538,6 +3547,10 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     target_include_directories(test_platform_audio_pump PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src/Platform)
     target_compile_features(test_platform_audio_pump PRIVATE cxx_std_17)
     add_test(NAME platform_audio_pump COMMAND test_platform_audio_pump)
+    add_executable(test_platform_bmp_writer test_platform_bmp_writer.cpp)
+    target_include_directories(test_platform_bmp_writer PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+    target_compile_features(test_platform_bmp_writer PRIVATE cxx_std_17)
+    add_test(NAME platform_bmp_writer COMMAND test_platform_bmp_writer)
     add_executable(test_platform_win32_pure test_platform_win32_pure.cpp)
     target_include_directories(test_platform_win32_pure PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src/Platform)
     target_compile_features(test_platform_win32_pure PRIVATE cxx_std_17)
@@ -3796,6 +3809,7 @@ endif()
 add_executable(test_fbx_reader test_fbx_reader.cpp)
 target_link_libraries(test_fbx_reader PRIVATE okay::engine)
 target_compile_definitions(test_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_include_directories(test_fbx_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/third_party/ufbx)   # ufbx is the oracle for UV sets
 add_test(NAME fbx_reader COMMAND test_fbx_reader)
 
 # Hostile FBX files through the importer (ufbx default path and our reader): deep node chains, animation counts, the whole-file bake budget.
@@ -3811,6 +3825,32 @@ add_executable(test_fbx_hostile test_fbx_hostile.cpp
 target_include_directories(test_fbx_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_fbx_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
+# The animation keys our FBX reader makes at the file's own key times, against the curves (a 240 Hz bake), the old 30 Hz
+# clip and the file's key times; fixtures, plus the real files when OKAY_MODEL_CORPUS is set. Standalone, for sanitizers.
+# docs/content/model_readers.md (FBX part), "Animation keys".
+add_executable(test_fbx_file_keys test_fbx_file_keys.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxScene.cpp)
+target_include_directories(test_fbx_file_keys PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_fbx_file_keys PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME fbx_file_keys COMMAND test_fbx_file_keys)
+# The output-preserving fast paths of our FBX reader against the plain code they replaced, bit for bit, on random
+# inputs (white-box: compiles FbxScene.cpp and FbxReader.cpp itself, no engine library). docs/content/model_readers.md (FBX part).
+add_executable(test_fbx_exact test_fbx_exact.cpp test_fbx_exact_numbers.cpp)
+target_include_directories(test_fbx_exact PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Render)
+add_test(NAME fbx_exact COMMAND test_fbx_exact)
+# The exact decimal-to-double conversion used for ASCII numbers (engine/src/Render/DecimalToDouble.hpp) against strtod,
+# bit for bit, and its 5^q table re-derived with big integers. Standalone (header only). OKAY_DECIMAL_ITERS=100000000 for
+# the full run (docs/content/model_readers.md (FBX part), "Exact ASCII numbers").
+add_executable(test_decimal_to_double test_decimal_to_double.cpp)
+add_test(NAME decimal_to_double COMMAND test_decimal_to_double)
+set_tests_properties(decimal_to_double PROPERTIES TIMEOUT 300)
+# Not a test: speed and peak heap of our FBX reader against ufbx (docs/content/model_readers.md (FBX part), "Speed and memory").
+# Built, never run by ctest. Synthetic large inputs: python3 scripts/gen_fbx_bench.py <dir>.
+add_executable(bench_fbx_reader bench_fbx_reader.cpp)
+target_link_libraries(bench_fbx_reader PRIVATE okay::engine)
+target_include_directories(bench_fbx_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/third_party/ufbx)
+target_compile_definitions(bench_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 # The editor's layout maths (editor/EditorLayoutMath.hpp, UI-library free): overlay anchoring, label placement and crowd fading, Inspector density, toolbar planning, maximize bookkeeping, view preferences.
 add_executable(test_editor_layout test_editor_layout.cpp)
@@ -4710,6 +4750,10 @@ add_executable(test_vs_pan_model test_vs_pan_model.cpp)
 target_include_directories(test_vs_pan_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME vs_pan_model COMMAND test_vs_pan_model)
 
+# Collider shapes under bad input: NaN / huge numbers, flat or tiny hulls, empty or over-large compounds and grids, scale, order.
+add_executable(test_collider_hardening test_collider_hardening.cpp)
+target_link_libraries(test_collider_hardening PRIVATE okay::engine)
+add_test(NAME collider_hardening COMMAND test_collider_hardening)
 add_executable(test_anim_quat_slerp test_anim_quat_slerp.cpp)
 target_link_libraries(test_anim_quat_slerp PRIVATE okay::engine)
 add_test(NAME anim_quat_slerp COMMAND test_anim_quat_slerp)

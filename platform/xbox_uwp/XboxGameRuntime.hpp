@@ -12,6 +12,7 @@
 #include "XboxPaths.hpp"
 #include "XboxPendingSave.hpp"
 #include "XboxRecovery.hpp"
+#include "XboxSplash.hpp"
 #include "XboxSuspend.hpp"
 #include "XboxTextEntry.hpp"
 #include "XboxTitleSafe.hpp"
@@ -104,6 +105,7 @@ public:
         loop_.reset(new GameLoop(o));
         loop_->OnUpdate = [this](float dt) { if (scene_) scene_->Update(dt); };
         scene_->Start();
+        StartSplash();
         pads_.OpenAll();
         started_ = true;
         RestoreIfPending();
@@ -122,6 +124,7 @@ public:
     void FeedMouse(float x, float y, unsigned mask) { Input::FeedMouse(Vec2{x, y}, mask); }
     bool Frame(double realDeltaSeconds, std::vector<char>& keysDown) {
         if (!started_) return false;
+        TickSplash();
         if (pending_.HasPending()) { const PendingReport pr = pending_.RunFrame(); if (!pr.AllSaved()) Log::Warning("[xbox] save: ", pr.Summary()); }
         pads_.Feed(keysDown);
         Input::FeedKeys(keysDown);
@@ -134,6 +137,21 @@ public:
         StepTextEntry();
         return keepGoing;
     }
+    /// Splash / loading model (XboxSplash.hpp). Start() starts it; the shell calls OnFramePresented() after the first real Present;
+    /// Frame() ticks it. The shell reads SplashAlpha() (1 while showing, fading to 0) and SplashStalled() ("still loading" text); a stall
+    /// is also logged once. Drawing the splash itself is NOT done yet (the manifest's splash image is what the system shows).
+    /// `clockMs` replaces the steady clock (tests).
+    void StartSplash() { splash_.Start(SplashNow()); }
+    void TickSplash() {
+        splash_.Tick(SplashNow());
+        if (splash_.Stalled() && !stallLogged_) { stallLogged_ = true; Log::Warning("[xbox] splash: no frame presented yet, still loading"); }
+    }
+    void OnFramePresented() { splash_.OnFramePresented(); }
+    SplashState SplashStateNow() const { return splash_.State(); }
+    float SplashAlpha() const { return splash_.Alpha(); }
+    bool SplashStalled() const { return splash_.Stalled(); }
+    bool SplashVisible() const { return splash_.Visible(); }
+    std::function<std::uint64_t()> clockMs;
     /// The on-screen keyboard (XboxTextEntry.hpp): on where a pad is the keyboard (a console). `show(on, scope, text)` is the shell's.
     void EnableOnScreenKeyboard(bool on) { textEntry_.SetEnabled(on); }
     std::function<void(bool show, TextScope scope, const std::string& text)> onKeyboard;
@@ -250,6 +268,12 @@ private:
         if (c.releaseField && f) f->focused = false;   // the player closed the keyboard: the pad navigates the menu again
         if (c.kind != TextEntryCommand::None && onKeyboard) onKeyboard(c.kind == TextEntryCommand::Show, c.scope, f ? f->text : std::string());
     }
+    std::uint64_t SplashNow() const {
+        if (clockMs) return clockMs();
+        static const auto t0 = std::chrono::steady_clock::now();
+        return (std::uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    }
+    SplashModel splash_; bool stallLogged_ = false;
     SaveLayout layout_;
     PendingSaves pending_;
     TextEntry textEntry_;

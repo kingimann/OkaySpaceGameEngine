@@ -502,10 +502,11 @@ void Physics2D::Step(Scene& scene, float dt) {
         jobs.ParallelFor(0, nc, kBoundsGrain, [&](std::size_t b, std::size_t e) {
             for (std::size_t i = b; i < e; ++i) if (onWorkers[i]) bounds(i);
         });
+        for (std::size_t i = 0; i < nc; ++i) aliveSet.insert(colliders[i]);
     } else {
-        for (std::size_t i = 0; i < nc; ++i) bounds(i);
+        // The serial path is the old single loop, so it costs what it did before the job split.
+        for (std::size_t i = 0; i < nc; ++i) { bounds(i); aliveSet.insert(colliders[i]); }
     }
-    for (std::size_t i = 0; i < nc; ++i) aliveSet.insert(colliders[i]);
 
     // Broad phase: the pairs whose precomputed AABBs overlap (a NaN body, left out by `finite`, touches nothing), in
     // the order the old all-pairs loop visited them: the solver applies impulses in pair order. The sweep (see

@@ -122,7 +122,8 @@ public:
     void Start() override  { ResolveJoints(); Skin(); }
     // Skin last: after animation, crossfades, layers and IK have all posed the
     // bones (IK runs at order 100), so this frame's corrections reach the mesh.
-    int  ExecutionOrder() const override { return 200; }
+    static constexpr int kExecutionOrder = 200;
+    int  ExecutionOrder() const override { return kExecutionOrder; }
     void LateUpdate(float) override { Skin(); }
 
     /// Resolve joint Transforms by name (after a load, when the pointers are empty
@@ -241,8 +242,10 @@ public:
     }
 
     /// Below this many vertices in all the meshes of a batch the deform stays on the calling
-    /// thread (the job hand-off would cost more than it saves; see test_jobs_adoption bench).
-    static constexpr std::size_t kParallelSkinMinVertices = 4096;
+    /// thread (the job hand-off would cost more than it saves). Measured with 4 workers on a
+    /// quiet 4-core machine: at 4,096 vertices the pool was 15-40% slower than one thread, at
+    /// about 8,000 even, from 12,000 up 20-35% faster (200 x 2,000 vertices: about 3x faster).
+    static constexpr std::size_t kParallelSkinMinVertices = 8192;
 
     /// Skin several meshes, as Skin() on each in turn would, with the same bits: the pose
     /// checks and skin matrices on the calling thread, then the per-vertex deform spread

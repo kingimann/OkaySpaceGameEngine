@@ -46,6 +46,8 @@ EdgeList EdgeRing(const PolyMesh& pm, int a, int b);
 struct EdgeChain { std::vector<int> verts; bool closed = false; };
 std::vector<EdgeChain> OrderChains(const EdgeList& edges);
 
+/// The most cuts one LoopCut makes (more are clamped to this; the editor's wheel stops at 32).
+constexpr int kLoopCutMax = 64;
 /// Loop cut: cut the ring through a-b with `cuts` new edge loops, evenly
 /// spaced. With one cut, `position` (0..1) places it along the ring's edges
 /// (0.5 = middle). Returns the new loops' edges (empty if a-b isn't an edge).

@@ -689,5 +689,40 @@ int main() {
         CHECK(FillFaces(two, {{0, 1}, {1, 2}, {2, 3}, {20, 21}, {21, 22}, {22, 23}, {23, 20}}, &err) == 1);
     }
 
+    // ---- Round 3: hostile inputs the round-2 probe found and left (modeling_tab_audit.md) ----
+    // SplitEdge with t outside 0..1 put the new vertex beyond the edge; it now clamps to the edge.
+    {
+        PolyMesh g = Grid(1, 1);                                 // edge 0 (0,0,0) - 1 (1,0,0)
+        const int v = SplitEdge(g, 0, 1, 2.0f);
+        CHECK(v >= 0 && v < (int)g.verts.size() && g.verts[v].x >= 0.0f && g.verts[v].x <= 1.0f);
+        PolyMesh h = Grid(1, 1);
+        const int w = SplitEdge(h, 0, 1, -5.0f);
+        CHECK(w >= 0 && w < (int)h.verts.size() && h.verts[w].x >= 0.0f && h.verts[w].x <= 1.0f);
+        PolyMesh k = Grid(1, 1);
+        CHECK(SplitEdge(k, 0, 1, NAN) == -1 && k.verts.size() == 4);   // not a number: refused, as before
+    }
+    // LoopCut had no upper limit on the number of cuts (the editor capped it at 32; a script could ask for millions).
+    {
+        PolyMesh g = Grid(1, 3);                                 // a ring of 4 edges across 3 quads
+        const EdgeList made = LoopCut(g, 0, 1, 500);
+        CHECK(!made.empty());
+        CHECK((int)made.size() <= kLoopCutMax * 3);
+        CHECK(kLoopCutMax >= 32);                                // the editor's own cap still fits
+    }
+    // A knife cut between two points on the same edge reported one new edge but split no face.
+    {
+        PolyMesh q = Grid(1, 1);
+        const PolyMesh before = q;
+        std::string err;
+        const EdgeList cut = KnifeCut(q, {{0, 1, 0.25f}, {0, 1, 0.75f}}, &err);
+        CHECK(cut.empty());
+        CHECK(err.find("edge") != std::string::npos);
+        CHECK(q.verts.size() == before.verts.size() && q.faces.size() == before.faces.size());
+        // Corner to the next corner along an edge: also nothing to cut.
+        PolyMesh c = Grid(1, 1);
+        err.clear();
+        CHECK(KnifeCut(c, {{0, -1, 0}, {1, -1, 0}}, &err).empty() && !err.empty() && c.faces.size() == 1);
+    }
+
     TEST_MAIN_RESULT();
 }

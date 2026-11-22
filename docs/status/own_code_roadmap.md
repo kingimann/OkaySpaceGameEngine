@@ -73,6 +73,8 @@ Everything third-party that is in the build or in the shipped binaries, taken fr
 | **Platform APIs we only call** (OpenGL, GLX, X11, Win32, WinHTTP, BCrypt, `getrandom`, Direct3D 11/12; MinGW-w64, Emscripten, CMake as tools) | Not replaceable and not third-party code in the repo: they are the operating system and the toolchain | Used through our own backends. | None. | None. |
 | **Steamworks, Photon** | Not replaced (services) | Steamworks SDK (`OKAY_WITH_STEAM`) and Photon C++ SDK (`OKAY_WITH_PHOTON`) are optional and not in the repo; without them a no-op or in-memory service is used | Kept. We keep improving the interfaces. | None. |
 
+Image formats the removed stb_image read that ours did not (checked 2026-11-22): PNM (P1 to P6) is now ours, `okay::DecodePnm` in `Core/ImageDecode`, written from the Netpbm format description, hand-computed tests in `tests/test_image_pnm.cpp` (67 checks, also clean under ASan/UBSan), off by default (`DecodeImage` routes to it only with `OKAY_OWN_PNM=1`). Not done: Softimage PIC, PCX, ICO; nothing in the engine asks for them.
+
 Already replaced or removed, merged: tinyfiledialogs, stb_image_write, font8x8, dr_mp3, stb_vorbis, stb_image, stb_truetype, Lua, Mono. (Their code is gone. The last stb leftover, the font decompressor, is gone from the engine too; see the embedded-fonts row for the two legacy headers that remain for Dear ImGui.)
 
 ## Model readers: our own are the default (owner approval, 2026-11-17)

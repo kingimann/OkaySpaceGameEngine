@@ -3191,6 +3191,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Own NFF reader (side by side, off by default) (3.6.35)
 - Own OGRE XML mesh reader (side by side, off by default) (3.6.32)
 - Own PMX reader (side by side, off by default, unverified on real files) (3.6.41)
+- Own renderer in the host path (OpenGL and Direct3D 11) (40.3.6)
 - own stack (41.11)
 - Own STL and PLY readers, import seam (3.6.9)
 - Own Terragen reader (side by side, off by default) (3.6.37)

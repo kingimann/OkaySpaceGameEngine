@@ -63,9 +63,10 @@ using namespace okay;
 
 namespace {
 
+// (CheckpointTrigger, TimedDestroy and NetworkAvatarMotion are saved now, through their registry entries.)
 const std::set<std::string> kRuntimeOnly = {
-    "StatComponent", "TimedDestroy", "UIToastItem", "WeatherRig", "NetworkAvatarMotion",
-    "testing::EventProbe", "SettingsScreen", "SteamManager", "CheckpointTrigger"};
+    "StatComponent", "UIToastItem", "WeatherRig",
+    "testing::EventProbe", "SettingsScreen", "SteamManager"};
 
 // These adopt or rebuild something on the first load, then the text settles.
 const std::set<std::string> kChangesOnce = {

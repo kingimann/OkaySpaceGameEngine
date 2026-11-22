@@ -143,7 +143,22 @@ bool Renderer::SetImage(const void* key, int w, int h, const std::uint8_t* rgba,
     if (it != m_images.end()) { m_b.DestroyTexture(it->second.id); m_images.erase(it); }
     const TexId id = m_b.CreateTexture(w, h, linear, rgba);
     if (!id) return false;
-    m_images[key] = Img{ id, w, h };
+    m_images[key] = Img{ id, w, h, 0, linear };
+    return true;
+}
+
+bool Renderer::SetNativeImage(const void* key, std::uintptr_t native, int w, int h, bool linear) {
+    if (!key || !native || w <= 0 || h <= 0 || w > kMaxTexture || h > kMaxTexture) { RemoveImage(key); return false; }
+    auto it = m_images.find(key);
+    if (it != m_images.end()) {
+        const Img& im = it->second;
+        if (im.native == native && im.w == w && im.h == h && im.linear == linear) return true;   // the same texture: nothing to do
+        m_b.DestroyTexture(im.id);
+        m_images.erase(it);
+    }
+    const TexId id = m_b.WrapNativeTexture(native, w, h, linear);
+    if (!id) return false;
+    m_images[key] = Img{ id, w, h, native, linear };
     return true;
 }
 

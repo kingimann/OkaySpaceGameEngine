@@ -173,9 +173,11 @@ int VertexSlideRail(const PolyMesh& pm, const std::vector<Vec3>& pos, int v, con
 /// to 0.01..0.99) of the way along each edge leaving the loop on that side. The selected edges stay. Faces on both
 /// sides are split; a side with no face (a border) gets no loop. Returns the new edges, or empty with the reason.
 EdgeList OffsetEdgeLoops(PolyMesh& pm, const EdgeList& edges, float amount, std::string* error = nullptr);
-/// Rip: tear the surface open along the selected edges. The faces on the side `side` points to (object space, from
-/// the edges' middle) get new copies of the edges' vertices; an end of the edges inside the surface stays joined (the
-/// tear ends there), an end on the border is torn too. Returns the new vertices (the torn side's copies, ready to be
+/// Rip: tear the surface open along the selected edges. `side` (object space) goes from the middle of the edges to a
+/// point on the side to tear off (the editor: toward the mouse). For each connected run of edges, the faces on one side
+/// all the way along (so a closed loop tears off its inside or its outside) get new copies of the edges' vertices: the
+/// side whose faces are nearer that point, nearer edges counting more. An end of the edges inside the surface stays
+/// joined (the tear ends there), an end on the border is torn too. Returns the new vertices (the torn side's copies, ready to be
 /// moved), or empty with the reason in `error` (the mesh is then left as it was).
 std::vector<int> RipEdges(PolyMesh& pm, const EdgeList& edges, const Vec3& side, std::string* error = nullptr);
 /// Loop to Region: the faces inside a closed loop of edges: the smaller of the groups of faces the loop cuts the

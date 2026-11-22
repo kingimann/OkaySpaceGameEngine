@@ -1436,16 +1436,32 @@ std::vector<int> RipEdges(PolyMesh& pm, const EdgeList& edges, const Vec3& side,
     if (!std::isfinite(side.x + side.y + side.z)) return fail("Rip needs a direction for the side to tear off.");
     const std::set<std::pair<int, int>> cut = InteriorEdges(pm, edges);
     if (cut.empty()) return fail("Select edges with a face on both sides (inside the surface) to rip.");
-    // The torn side of each edge: of its two faces, the one whose middle lies further along `side`.
+    // The torn side: for each connected run of edges, the faces on one side all the way along (the faces that run the
+    // run's direction, or the others), so a closed loop tears off its inside or its outside, not a mix. The side whose
+    // faces are nearer the point `side` names (from the middle of all the edges) wins, nearer edges counting more.
     std::set<int> torn;
     {
         PolyTopology T(pm);
-        for (const auto& k : cut) {
-            const std::vector<int>& fs = T.FacesOf(k.first, k.second);
-            const Vec3 mid = (pm.verts[(std::size_t)k.first] + pm.verts[(std::size_t)k.second]) * 0.5f;
-            const float d0 = Vec3::Dot(FaceCentre(pm, pm.faces[(std::size_t)fs[0]]) - mid, side);
-            const float d1 = Vec3::Dot(FaceCentre(pm, pm.faces[(std::size_t)fs[1]]) - mid, side);
-            torn.insert(d1 > d0 ? fs[1] : fs[0]);
+        Vec3 mid{0, 0, 0};
+        for (const auto& k : cut) mid += pm.verts[(std::size_t)k.first] + pm.verts[(std::size_t)k.second];
+        mid = mid * (0.5f / (float)cut.size());
+        const Vec3 target = mid + side;
+        for (const EdgeChain& ch : OrderChains(EdgeList(cut.begin(), cut.end()))) {
+            const int m = (int)ch.verts.size();
+            std::vector<std::pair<int, int>> sides;   // (face running the chain's way, the other face)
+            float score = 0.0f;
+            for (int k = 0; k + 1 < m || (ch.closed && k < m); ++k) {
+                const int a = ch.verts[(std::size_t)k], b = ch.verts[(std::size_t)((k + 1) % m)];
+                const std::vector<int>& fs = T.FacesOf(a, b);
+                if (fs.size() != 2) continue;
+                const bool firstRuns = Runs(pm.faces[(std::size_t)fs[0]], a, b);
+                const int ff = firstRuns ? fs[0] : fs[1], of = firstRuns ? fs[1] : fs[0];
+                sides.push_back({ff, of});
+                const Vec3 em = (pm.verts[(std::size_t)a] + pm.verts[(std::size_t)b]) * 0.5f;
+                const float near = 1.0f / ((em - target).Magnitude() + 1e-4f);
+                score += near * ((FaceCentre(pm, pm.faces[(std::size_t)of]) - target).Magnitude() - (FaceCentre(pm, pm.faces[(std::size_t)ff]) - target).Magnitude());
+            }
+            for (const auto& sd : sides) torn.insert(score >= 0.0f ? sd.first : sd.second);
         }
     }
     std::set<int> vs;

@@ -182,6 +182,13 @@ std::string HumanBytes(std::uintmax_t b);   ///< "1.5 MB"
 std::vector<ExcludedFile> FindUnshipped(const std::string& projectDir, const std::vector<std::string>& shippedSources,
                                         const std::vector<std::string>& sceneSources);
 
+/// A scene (or prefab) as it ships. Every absolute path it names becomes the path its copy has in the data folder
+/// (DestinationFor: the file name), so the game looks inside its own folder and never at the folders of the computer
+/// that built it. That covers an asset the build copied by its file name and the file of a graph or script that is
+/// written into the scene (the editor stores those as absolute paths when a scene is opened from a project). The
+/// text of an embedded graph or script source is never changed. `changed` (optional) lists the paths rewritten.
+std::string ShippedSceneText(const std::string& sceneText, std::vector<std::string>* changed = nullptr);
+
 // ---- the export check ------------------------------------------------------------------------------
 
 /// What to check in a finished build. Only `outDir` is required; the rest narrows the check.

@@ -440,6 +440,29 @@ void TestExportCheck(const fs::path& tmp) {
     CHECK(!bp::CheckExport(in4).Ok());
 }
 
+// A shipped scene names no folder of the building computer: absolute paths become the copy's path in the data folder.
+void TestShippedSceneText() {
+    RUN_SUITE("shipped scene text");
+    const std::string in =
+        "gameobject \"A\"\n"
+        "  visualscript \"graph v1\n  node \\\"C:/Users/dev/keep.png\\\"\n\"\n"
+        "  visualscriptpath \"/home/dev/Proj/Assets/manager.okayvs\"\n"
+        "  sprite \"C:\\\\Users\\\\dev\\\\Proj\\\\Assets\\\\Tex\\\\grass.png\"\n"
+        "  audio \"Sounds/wind.wav\" 1\n"
+        "  script \"lua\" \"print('/home/dev/x.wav')\" \"/home/dev/Proj/Assets/Scripts/m.lua\" 0\n";
+    std::vector<std::string> changed;
+    const std::string out = bp::ShippedSceneText(in, &changed);
+    CHECK(out.find("visualscriptpath \"manager.okayvs\"") != std::string::npos);
+    CHECK(out.find("sprite \"grass.png\"") != std::string::npos);
+    CHECK(out.find("\"m.lua\" 0") != std::string::npos);
+    CHECK(out.find("audio \"Sounds/wind.wav\" 1") != std::string::npos);        // relative: as it was
+    CHECK(out.find("node \\\"C:/Users/dev/keep.png\\\"") != std::string::npos);  // inside an embedded graph: never changed
+    CHECK(out.find("print('/home/dev/x.wav')") != std::string::npos);          // inside a script's source: never changed
+    CHECK(out.find("/home/dev/Proj") == std::string::npos);
+    CHECK(changed.size() == 3);
+    CHECK(bp::ShippedSceneText("gameobject \"B\"\n  sprite \"a.png\"\n") == "gameobject \"B\"\n  sprite \"a.png\"\n");
+}
+
 int main() {
     std::error_code ec;
     const fs::path tmp = fs::temp_directory_path(ec) / ("okay_build_pipeline_" + std::to_string((long long)std::time(nullptr)));
@@ -454,6 +477,7 @@ int main() {
     TestZip(tmp);
     TestSettingsText();
     TestExportCheck(tmp);
+    TestShippedSceneText();
     fs::remove_all(tmp, ec);
     TEST_MAIN_RESULT();
 }

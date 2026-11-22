@@ -871,6 +871,11 @@ std::string LowerSlashes(std::string s) {
 }
 } // namespace
 
+std::string ShippedSceneText(const std::string& sceneText, std::vector<std::string>* changed) {
+    (void)changed;
+    return sceneText;
+}
+
 ExportCheckResult CheckExport(const ExportCheckInput& in) {
     ExportCheckResult r;
     std::error_code ec;

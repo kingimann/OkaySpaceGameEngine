@@ -267,11 +267,78 @@ static void MoreDefaults() {
     CHECK_NEAR(health->VM()->GetGlobal("hp").AsFloat(), 75.0f, 1e-6f);
 }
 
+// ---- generic classes and methods of the script's own ----
+static void Generics() {
+    const std::string src =
+        "using System.Collections.Generic;\n"
+        "public class Box<T> {\n"
+        "    public T value;\n"
+        "    public Box(T v) { value = v; }\n"
+        "    public T Get() => value;\n"
+        "}\n"
+        "public class Stack<T> {\n"
+        "    List<T> items = new List<T>();\n"
+        "    public int Count => items.Count;\n"
+        "    public void Push(T x) { items.Add(x); }\n"
+        "    public T Pop() { T x = items[items.Count - 1]; items.RemoveAt(items.Count - 1); return x; }\n"
+        "}\n"
+        "public class Pair<K, V> { public K key; public V val; public Pair(K k, V v) { key = k; val = v; } }\n"
+        "public class G : MonoBehaviour {\n"
+        "    public int a, c, d, n, z; public float zf; public string b, e;\n"
+        "    T First<T>(List<T> xs) { return xs[0]; }\n"
+        "    T Or<T>(T x, T y, bool pick) => pick ? x : y;\n"
+        "    T Zero<T>() => default(T);\n"
+        "    void Start() {\n"
+        "        Box<int> bi = new Box<int>(5); a = bi.Get();\n"
+        "        Box<string> bs = new Box<string>(\"hi\"); b = bs.value;\n"
+        "        Stack<int> st = new Stack<int>(); st.Push(1); st.Push(2); st.Push(3); c = st.Pop() + st.Pop(); n = st.Count;\n"
+        "        Pair<string, int> p = new Pair<string, int>(\"k\", 7); d = p.val; e = p.key;\n"
+        "        List<int> xs = new List<int> { 9, 8 }; a += First<int>(xs);\n"
+        "        Box<Box<int>> nested = new Box<Box<int>>(bi); c += nested.Get().Get();\n"
+        "        b += Or<string>(\"!\", \"?\", true);\n"
+        "        z = Zero<int>(); zf = Zero<float>() + 0.5f;\n"
+        "    }\n"
+        "}\n";
+    CHECK(Clean(src));
+    World w(src);
+    CHECK(w.loaded);
+    CHECK_NEAR(w.F("a"), 14.0f, 1e-6f);
+    CHECK(w.S("b") == "hi!");
+    CHECK_NEAR(w.F("c"), 10.0f, 1e-6f);
+    CHECK_NEAR(w.F("n"), 1.0f, 1e-6f);
+    CHECK_NEAR(w.F("d"), 7.0f, 1e-6f);
+    CHECK(w.S("e") == "k");
+    CHECK_NEAR(w.F("z"), 0.0f, 1e-6f);
+    CHECK_NEAR(w.F("zf"), 0.5f, 1e-6f);
+
+    // T Find<T>() over GetComponent<T>(), a constraint (read, not enforced)
+    const std::string finder =
+        "public class Finder : MonoBehaviour {\n"
+        "    public float hasTr, noRb;\n"
+        "    T Find<T>() where T : Component { return GetComponent<T>(); }\n"
+        "    void Start() { hasTr = Find<Transform>() != null ? 1 : 0; noRb = Find<Rigidbody>() == null ? 1 : 0; }\n"
+        "}\n";
+    CHECK(Clean(finder));
+    World wf(finder);
+    CHECK_NEAR(wf.F("hasTr"), 1.0f, 1e-6f);
+    CHECK_NEAR(wf.F("noRb"), 1.0f, 1e-6f);
+
+    // mistakes
+    CHECK(HasError("public class Box<T> { public T v; }\npublic class A : MonoBehaviour { Box b; void Start() { } }\n", "Box takes 1 type"));
+    CHECK(HasError("public class A : MonoBehaviour { T Id<T>(T x) => x; void Start() { int y = Id(3); } }\n", "generic"));
+    CHECK(HasError("public class Bad<T> { public int F(T x) { return x * 2; } }\n"
+                   "public class A : MonoBehaviour { void Start() { Bad<string> b = new Bad<string>(); b.F(\"s\"); } }\n", "string"));
+    // a generic type that grows without end stops with an error, not a hang
+    CHECK(HasError("public class Grow<T> { public Grow<Grow<T>> next; }\n"
+                   "public class A : MonoBehaviour { Grow<int> g; void Start() { } }\n", "Too many generic"));
+}
+
 int main() {
     RUN_SUITE("csharp_language");
     Structs();
     Quaternions();
     PlainStatics();
     MoreDefaults();
+    Generics();
     TEST_MAIN_RESULT();
 }

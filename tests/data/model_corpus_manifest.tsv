@@ -1,4 +1,4 @@
-# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X / AC3D / OGRE / XGL / IRR / NFF / Terragen / Q3D / LWS / OGRE binary / ZAE / .xml / LXO / glTF 1.0 / OpenGEX / MDL readers: what each reader gave on each file when this
+# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X / AC3D / OGRE / XGL / IRR / NFF / Terragen / Q3D / LWS / OGRE binary / ZAE / .xml / LXO / glTF 1.0 / OpenGEX / MDL / Q3BSP readers: what each reader gave on each file when this
 # manifest was written. The files are not in this repository (see docs/content/model_corpus.md): they come from the
 # test/models and test/models-nonbsd directories of an Assimp 5.4.3 source checkout; paths below are relative to
 # that checkout's "test" directory (OKAY_MODEL_CORPUS points at it). Tab separated:
@@ -529,3 +529,5 @@ mdl	models-nonbsd/MDL/IDPO (Quake1)/gijoe.mdl	ok	area=4004.0860	meshes=1	tris=40
 mdl	models-nonbsd/MDL/IDPO (Quake1)/steg.mdl	ok	area=10257.6374	meshes=1	tris=304	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-99.025,-0.266,-13.877,50.465,54.539,15.755	verts=348	tex=0	nodes=1	uv=1	nrm=1
 mdl	models-nonbsd/MDL/IDPO (Quake1)/tekmechbot.MDL	ok	area=3709.3253	meshes=1	tris=1702	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-9.536,-0.367,-5.348,21.371,34.657,21.497	verts=1468	tex=0	nodes=1	uv=1	nrm=1
 mdl	models-nonbsd/MDL/MDL7 (3DGS A7)/broadleavedtreeD.mdl	FAIL	MDL: 3D GameStudio MDL7 models are not supported by our reader (only the Quake 1 and Half-Life 1 MDL formats are)
+# q3bsp: own Quake III map reader, switched on for the run.
+q3bsp	models-nonbsd/PK3/SGDTT3.pk3	ok	area=59756202.3884	meshes=15	tris=1400	bones=0	skinned=0	clips=0	dur=0.000	mat=15	bbox=-1696.000,32.000,-1696.001,1248.000,2976.000,1248.000	verts=2084	tex=15	nodes=28	uv=1	nrm=1

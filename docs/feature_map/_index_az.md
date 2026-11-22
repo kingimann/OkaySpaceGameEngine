@@ -3195,6 +3195,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Own OGRE XML mesh reader (side by side, off by default) (3.6.32)
 - Own OpenGEX reader (side by side, off by default) (3.6.44)
 - Own PMX reader (side by side, off by default, unverified on real files) (3.6.41)
+- Own Quake III map reader (side by side, off by default) (3.6.46)
 - Own renderer in the host path (OpenGL and Direct3D 11) (40.3.6)
 - own stack (41.11)
 - Own STL and PLY readers, import seam (3.6.9)

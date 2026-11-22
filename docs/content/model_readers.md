@@ -39,6 +39,7 @@
 - [Our own OGRE mesh readers (`.mesh.xml` and binary `.mesh`)](#our-own-ogre-mesh-readers-meshxml-and-binary-mesh) (was `docs/own_ogre_reader.md`)
 - [Our own OpenGEX reader (`.ogex`)](#our-own-opengex-reader-ogex) (new on main 2026-11-22; was `docs/own_ogex_reader.md` on an unmerged branch)
 - [Our own PMX reader (`.pmx`)](#our-own-pmx-reader-pmx) (was `docs/own_pmx_reader.md`)
+- [Our own Quake III map reader (`.bsp`, `.pk3`)](#our-own-quake-iii-map-reader-bsp-pk3) (new on main 2026-11-22; was `docs/own_q3bsp_reader.md` on an unmerged branch)
 - [Our own Q3D reader (`.q3o` `.q3s`)](#our-own-q3d-reader-q3o-q3s) (was `docs/own_q3d_reader.md`)
 - [Our own RAW reader (`.raw`)](#our-own-raw-reader-raw) (was `docs/own_raw_reader.md`)
 - [Our own SIB reader (`.sib`): NOT WRITTEN](#our-own-sib-reader-sib-not-written) (was `docs/own_sib_reader.md`)
@@ -2266,6 +2267,72 @@ Real `.pmx` files (none here); PMX 2.1 soft bodies and the 2.1 joint types (not 
 ### Provenance (what this file was written from)
 
 `PmxReader.cpp` was written from scratch for this project from the **public PMX 2.0 / 2.1 file format description** (the header with its eight globals, the text type, the vertex, face, texture, material, bone and morph records and the index-size rules), as I know that description; **no network access was used and no file, document or source was opened while writing it**. **No importer source code, snippet or table of Assimp or of any other project was read, copied or ported**, and no sample file was read. The test files were written by hand from the structure above. Assimp was not run.
+
+## Our own Quake III map reader (`.bsp`, `.pk3`)
+
+*Written on branch `claude/own-readers-6` (2026-11-16), brought onto main on 2026-11-22 (branch `claude2/own-readers-last`).*
+
+Status: **side by side, off by default** (`OKAY_OWN_Q3BSP`, slot 42 of the table in `ModelImport.cpp`). Assimp (when built) is
+the fallback for a file ours refuses, and the reader when the switch is off.
+
+### What it is
+
+A Quake III Arena map is a BSP file (magic `IBSP`, version 46) of 17 lumps, normally shipped inside a `.pk3` (a zip) as
+`maps/<name>.bsp`. It holds render geometry (polygon faces, mesh faces, Bezier patches, billboards), textures by name, lightmaps,
+entity text, the BSP tree, visibility and collision brushes.
+
+| File | What |
+|---|---|
+| `engine/src/Render/Q3BspReader.cpp` | `okay::ReadQ3bspFile` / `okay::ReadQ3bspBuffer` (declared in `ModelData.hpp`) |
+| `engine/src/Render/ZipLite.hpp` | The zip reader (shared with 3MF, ZAE; stored and deflated entries, zip-bomb caps) |
+| `tests/test_q3bsp_reader.cpp`, `tests/q3bsp_fixtures.hpp` | Hand-computed checks on synthetic maps (`q3bsp_reader`) |
+| `tests/test_q3bsp_hostile.cpp` | Budgets, every aligned word at an extreme, mutation sweeps of the `.bsp` and the `.pk3`, and the real map when `OKAY_MODEL_CORPUS` is set (`q3bsp_hostile`) |
+| `tests/test_own_q3bsp_dispatch.cpp` | The seam routes `.bsp` and `.pk3`; `-DOKAY_OWN_Q3BSP=ON` really makes it the default (`own_q3bsp_dispatch`) |
+| `tests/test_own_q3bsp_samples.cpp`, `scripts/gen_q3bsp_samples.py`, `examples/own_readers/tiny_arena.bsp` / `.pk3` | The sample maps (written by our script: a room 512 units wide with a bump in the floor and a platform on node `model_1`) import through the seam (`own_q3bsp_samples`) |
+
+### What it reads
+
+- The 144-byte header (version 46 only; others are refused with their number) and the lump directory (every lump inside the
+  file, every record lump a whole number of records).
+- Textures (name, surface flags), vertexes (position, texture coordinate, normal), mesh vertexes, faces and models.
+- **One part per (model, texture).** Model 0 (the world) hangs on the root `Q3BSP`; every other model is a child node `model_N`.
+  A `.pk3` names the root `Q3BSP maps/<name>.bsp`; the first map by name is read (a note says when there are more).
+- Polygon (1) and mesh (3) faces: the triangles of their mesh-vertex list, two corners swapped (Quake III stores triangles
+  clockwise). Stored normals are used; a zero normal is replaced from the triangles around it. Zero-area triangles are dropped.
+- Patch (2) faces: the control grid (odd sizes, at least 3) cut into 3 x 3 biquadratic Bezier patches, each tessellated into
+  6 x 6 quads with analytic normals; the front side follows the stored normals.
+- Materials: one per texture used; in a `.pk3` the name gets the extension of the matching image entry. Pictures are not
+  extracted. Faces whose texture has the nodraw, hint or skip flag are left out. Billboards are not read.
+- Quake units are kept; the root turns Z-up into Y-up.
+
+Not read (noted on every import): lightmaps, vertex colours, entities, brushes and planes, the BSP tree, visibility, fog, shader
+scripts.
+
+### Budgets
+
+File 512 MB; 4,000,000 triangles and vertices built (a patch counts 72 and 49); 8,000,000 face visits over all models; 100,000
+parts; a patch grid at most 1025 points a side. Every count is checked against the bytes present before allocating.
+
+### Real files and checks
+
+The one real map in the Assimp 5.4.3 test folder, `models-nonbsd/PK3/SGDTT3.pk3` (`docs/content/model_corpus.md`): 17 textures,
+2,084 vertexes, 336 faces (312 polygons, 24 meshes, no patch), 28 models, 1,400 triangles, all stored clockwise against their
+stored normals, which is what the corner swap assumes. Ours reads the 1,400 triangles (row `q3bsp` of
+`tests/data/model_corpus_manifest.tsv`). Against Assimp (`bench_model_readers`, 2026-11-22): the same 1,400 triangles and 2,084
+vertices; 15 parts and 15 materials to Assimp's 18 and 18, 28 nodes (one per model) to its 19; the box is turned because ours
+makes Z-up into Y-up and Assimp does not. 0.84x Assimp's read time and 0.86x its peak (`docs/content/own_readers_speed.md`,
+row `q3bsp`).
+`q3bsp_hostile` under ASan, UBSan and float-cast-overflow (2026-11-22, `OKAY_READER_FUZZ_ITERS=40000`): synthetic sweeps
+(40,756 read, 47,112 refused), the `.pk3` sweep, and 10,000 mutations of the real 852,016-byte `.bsp` plus 256 of its prefixes;
+100,237 checks, 0 failures. Without sanitizers and with the default sweep (5,000 real-map mutations): 54,237 checks, 0 failures.
+
+### Provenance (rule 19a)
+
+Written from recalled knowledge of the public description of the format (the "Unofficial Quake 3 Map Specs": header, lump
+numbers, record sizes and field order, the four face types, patches as 3 x 3 biquadratic Bezier surfaces) and from general
+knowledge of Bezier surfaces; the real map's lumps were then read with our own script to check the numbers. No importer source of
+any other project was read, copied or ported. Unverified: maps with patches from a real game (the corpus map has none, so the
+tessellation is checked against the mathematics only), version 47 and other engines' BSP files (refused), a Windows run.
 
 ## Our own Q3D reader (`.q3o` `.q3s`)
 

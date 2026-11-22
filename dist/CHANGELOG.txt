@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.902.0
+  Fixes and faster model import
+  - FBX models import faster and use less memory, and every UV set is read.
+  - OGRE models (.mesh.xml) now find their skeleton file and animate.
+  - Fixed: objects switched off under a parent stay off when the parent is
+    switched back on.
+  - Fixed: lights under a switched-off parent now go dark.
+  - Fixed: resizing a terrain no longer stops sculpting from working.
+  - Fixed: animation clips played backwards once now end properly, and
+    particles can be replayed.
+  - Fixed: the editor could crash when closing.
+  - The new collider shapes are sturdier.
+
 v2.901.0
   Cameras and smoother animation
   - Camera zones: areas where the camera smoothly changes its view angle,

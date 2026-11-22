@@ -7,6 +7,7 @@
 #include "Win32Hid.hpp"
 #include "Win32Icon.hpp"
 #include "Win32Ime.hpp"
+#include "okay/Platform/Platform.hpp"
 #include "okay/Platform/WindowLogic.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -205,6 +206,53 @@ static void Ime() {
     Machine m3;
     m3.Start();
     CHECK(m3.Composition(kGcsCompStr, u"", 0).empty());
+    // Clause ranges (GCS_COMPCLAUSE: UTF-16 offsets, first 0, last = length) become code point boundaries.
+    {
+        Machine mc;
+        mc.Start();
+        const std::u16string comp = u"a\xD83D\xDE00" u"bc";            // 5 units, 4 code points
+        auto e = mc.Composition(kGcsCompStr | kGcsCursorPos | kGcsCompClause, comp, 1, {0, 3, 5});
+        CHECK(e.size() == 1 && e[0].clauses == std::vector<int>({0, 2, 4}) && e[0].cursor == 1);
+        e = mc.Composition(kGcsCompStr | kGcsCursorPos | kGcsCompClause, comp, 1, {0, 3, 5});   // identical: nothing new
+        CHECK(e.empty());
+        e = mc.Composition(kGcsCompStr | kGcsCursorPos | kGcsCompClause, comp, 1, {0, 1, 5});   // clause moved: new event
+        CHECK(e.size() == 1 && e[0].clauses == std::vector<int>({0, 1, 4}));
+        e = mc.Composition(kGcsCompStr | kGcsCursorPos, comp, 1, {0, 1, 5});                    // flag not set: no clauses
+        CHECK(e.size() == 1 && e[0].clauses.empty());
+        // Bad offsets (past the end, going backwards) are clamped and kept in order.
+        CHECK(ClausesFromUtf16(u"abc", {0, 9, 2}) == std::vector<int>({0, 3, 3}));
+        CHECK(ClausesFromUtf16(u"abc", {}).empty());
+        // The clause boundaries reach the application through Event::clauses (empty by default).
+        okay::platform::Event ev;
+        CHECK(ev.clauses.empty());
+        ev.type = okay::platform::EventType::TextEditing; ev.clauses = ClausesFromUtf16(u"abc", {0, 1, 3});
+        CHECK(ev.clauses == std::vector<int>({0, 1, 3}));
+    }
+    // Cancel: Escape in the IME ends the composition with an empty string and no result -> cleared once.
+    {
+        Machine mc;
+        mc.Start();
+        mc.Composition(kGcsCompStr, u"ka", 2);
+        auto e = mc.Composition(kGcsCompStr, u"", 0);                                // composition string emptied
+        CHECK(e.size() == 1 && e[0].text.empty() && e[0].clauses.empty());
+        CHECK(mc.End().empty());
+    }
+    // Focus loss while composing clears the text once and ends the composition; with nothing showing it does nothing.
+    {
+        Machine mc;
+        mc.Start();
+        mc.Composition(kGcsCompStr, u"ka", 2);
+        auto e = mc.FocusLost();
+        CHECK(e.size() == 1 && e[0].text.empty() && !mc.Active());
+        CHECK(mc.FocusLost().empty());
+        CHECK(mc.End().empty());
+        Machine idle;
+        CHECK(idle.FocusLost().empty());
+        // After focus returns a new composition starts clean.
+        mc.Start();
+        e = mc.Composition(kGcsCompStr, u"ka", 2);
+        CHECK(e.size() == 1 && e[0].text == "ka");
+    }
 }
 
 static std::vector<uint8_t> Bytes(std::initializer_list<int> l) { std::vector<uint8_t> v; for (int b : l) v.push_back((uint8_t)b); return v; }

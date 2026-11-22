@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Math/Curves.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -134,12 +135,9 @@ private:
         if (looped) { k = ((k % n) + n) % n; return waypoints[k]; }
         return waypoints[(int)Mathf::Clamp((float)k, 0.0f, (float)(n - 1))];
     }
+    /// Uniform Catmull-Rom through p1..p2: Math/Curves' CatmullRomUniform (the formula this rail always used, same bits).
     static Vec3 CatmullRom(const Vec3& p0, const Vec3& p1, const Vec3& p2, const Vec3& p3, float u) {
-        float u2 = u * u, u3 = u2 * u;
-        return 0.5f * ((2.0f * p1)
-                       + u  * (p2 - p0)
-                       + u2 * (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3)
-                       + u3 * (3.0f * p1 - 3.0f * p2 + p3 - p0));
+        return Curves::CatmullRomUniform(p0, p1, p2, p3, u);
     }
 };
 

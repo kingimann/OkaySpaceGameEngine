@@ -12,6 +12,7 @@
 #include "okay/Components/UIRawImage.hpp"
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Core/Clock.hpp"
+#include "okay/Math/Curves.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include <cmath>
@@ -893,9 +894,10 @@ std::shared_ptr<Tweener> Path(GameObject* go, std::vector<Vec3> points, float du
         const auto& P = *pts;
         if (type == PathType::CatmullRom) {
             const Vec3& p0 = P[std::max(0, i - 1)], &p1 = P[i], &p2 = P[i + 1], &p3 = P[std::min(segs, i + 2)];
-            const float s2 = s * s, s3 = s2 * s;
-            tr->localPosition = (p1 * 2.0f + (p2 - p0) * s + (p0 * 2.0f - p1 * 5.0f + p2 * 4.0f - p3) * s2
-                                 + (p1 * 3.0f - p0 - p2 * 3.0f + p3) * s3) * 0.5f;
+            // Math/Curves' uniform Catmull-Rom (the camera rail's formula). This path added the cubic's terms in another
+            // order before, so a point can differ in the last bit of a float (under 1e-5 of the point spread: test
+            // curve_formulas); the path is computed while playing and never saved.
+            tr->localPosition = Curves::CatmullRomUniform(p0, p1, p2, p3, s);
         } else {
             tr->localPosition = P[i] + (P[i + 1] - P[i]) * s;
         }

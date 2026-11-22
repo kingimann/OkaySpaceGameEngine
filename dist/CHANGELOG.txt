@@ -1,5 +1,22 @@
 OkaySpace Game Engine — Changelog
 
+v2.903.2
+  Console and ledge grab
+  - In-game console: press the ` key (the key left of 1) in a development
+    build, or start the game with --console or OKAY_CONSOLE=1. Type
+    commands with history and Tab to complete them. Settings you can change
+    while playing: game.speed, r.vsync, debug.show_fps, debug.profile, and
+    prof.save to save a profile. A shipped game keeps the console off.
+  - The editor's Console panel has the same command line.
+  - Ledge grab: the character's hands now go onto the ledge.
+  - Also in 2.903.1 (missing from its notes):
+    - Xbox: saves and settings are kept, the game saves properly before it
+      is suspended, rumble stops on suspend, pad battery level, the d-pad
+      reaches text fields, on-screen keyboard, and a message box with the
+      reason when the game fails to start.
+    - Try it (off by default): OKAY_PLATFORM_BACKEND=own runs the launcher
+      on our own window and drawing code instead of SDL.
+
 v2.903.1
   Fixes, custom shaders and a working release
   - 2.902.0 and 2.903.0 could not become the "latest" download because one

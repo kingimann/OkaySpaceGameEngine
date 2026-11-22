@@ -13019,7 +13019,7 @@ void DrawStats(EditorState& ed) {
     for (const auto& up : ed.scene().Objects()) {
         if (!up || !up->active) continue;
         if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->DisplayMesh().TriangleCount();
-        if (auto* ps = up->GetComponent<ParticleSystem>()) stParts += ps->AliveCount();
+        for (ParticleSystem* ps : up->GetComponents<ParticleSystem>()) stParts += ps->AliveCount();
     }
     struct StatRow { const char* name; int v; };
     const StatRow rows[] = {
@@ -48763,7 +48763,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Character>(), "Character")) { go->AddComponent<Character>()->Apply(); HumanoidLibrary::EnsureAnimator(go); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<TextRenderer>(), "Text")) { go->AddComponent<TextRenderer>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
-            if (item(!go->GetComponent<ParticleSystem>(), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
+            if (item(true, "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }   // more than one is fine (sparks + smoke)
             if (item(!go->GetComponent<TerrainDigger>(), "Terrain Digger")) { go->AddComponent<TerrainDigger>(); ed.dirty = true; }
             if (item(!go->GetComponent<VoxelTerrain>(), "Voxel Terrain (diggable)")) { auto* v = go->AddComponent<VoxelTerrain>(); v->Generate(0.5f, 6.0f, 0.0f, 1u); v->Apply(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<VoxelDigger>(), "Voxel Digger")) { go->AddComponent<VoxelDigger>(); ed.dirty = true; }
@@ -55753,7 +55753,7 @@ void DrawProfiler(EditorState& ed) {
     for (const auto& up : ed.scene().Objects()) {
         if (!up || !up->active) continue;
         if (auto* mr = up->GetComponent<okay::MeshRenderer>()) if (mr->enabled && !mr->wireframe) { ++objs; tris += mr->DisplayMesh().TriangleCount(); }
-        if (auto* ps = up->GetComponent<okay::ParticleSystem>()) parts += ps->AliveCount();
+        for (okay::ParticleSystem* ps : up->GetComponents<okay::ParticleSystem>()) parts += ps->AliveCount();
     }
     P.Stat3(objs, tris, parts);
 
@@ -58172,7 +58172,7 @@ int main(int argc, char** argv) {
             std::vector<okay::PauseMenu*> pauseMenus;
             for (const auto& up : ed.scene().Objects())
                 if (up) {
-                    if (auto* ps = up->GetComponent<okay::ParticleSystem>())
+                    for (okay::ParticleSystem* ps : up->GetComponents<okay::ParticleSystem>())   // every one on the object
                         if (ps->playing) ps->Update(pdt);
                     if (auto* ch = up->GetComponent<okay::Character>()) chars.push_back(ch);
                     if (auto* pm = up->GetComponent<okay::PauseMenu>()) pauseMenus.push_back(pm);

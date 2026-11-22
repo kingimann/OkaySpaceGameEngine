@@ -236,6 +236,7 @@ private:
         void SendVibration(const Vibration& v) override { if (target) target->SendVibration(v); }
         const char* Name() const override { return target ? target->Name() : "Xbox controller"; }
         bool HasTriggerMotors() const override { return target ? target->HasTriggerMotors() : true; }
+        bool ReadBattery(BatteryInfo& b) override { return target && target->ReadBattery(b); }
     };
     void Route(const std::vector<TouchEvent>& evs) {
         const SizePx sz = life_.Size(); const float w = sz.w > 0 ? (float)sz.w : 1.0f, h = sz.h > 0 ? (float)sz.h : 1.0f;
@@ -292,6 +293,8 @@ private:
             // the composition now, so nothing is stuck after resume.
             CancelTouches();
             if (comp_.Cancel() && textInput_) q_.push_back(Base(platform::EventType::TextEditing));
+            // Motors off before the save: Windows.Gaming.Input holds a vibration until it is changed, and nothing polls while suspended.
+            for (BackendPad* bp : pads_) bp->StopRumble();
             q_.push_back(Base(platform::EventType::WindowFocusLost));
             if (onSuspend) onSuspend();
             life_.SaveDone();

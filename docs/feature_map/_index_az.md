@@ -4871,6 +4871,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Survival zones (53.2.3)
 - Survival: stats, afflictions, zones (11.4)
 - SurvivalZone (44.4)
+- Suspend, settings, pads, typing (18.10.8)
 - suspension (4.5)
 - suspicion (39.12)
 - Suspicion model (39.12.5)

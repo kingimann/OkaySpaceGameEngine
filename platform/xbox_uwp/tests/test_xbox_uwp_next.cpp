@@ -54,6 +54,16 @@ int main(int argc, char** argv) {
         using namespace okay::xbox; PathRoots r; r.install = "C:/WindowsApps/pkg/"; r.local = "C:/Users/x/LocalState"; r.temp = "C:/Users/x/Temp";
         PathResult p = Resolve(r, PathArea::Logs, ""); CHECK(p.ok && p.writable && p.path.find("LocalState") != std::string::npos && p.path.find("WindowsApps") == std::string::npos);
     }
+    // 7. the on-screen failure message (before 2026-11-22 a failure only went to the log and the app closed without a word)
+    {
+        using okay::xbox::FailureText;
+        const std::string t = FailureText("No scene to start.", "C:/Users/x/LocalState/logs/okayspace.log");
+        CHECK(t.find("No scene to start.") != std::string::npos && t.find("C:/Users/x/LocalState/logs/okayspace.log") != std::string::npos);
+        CHECK(FailureText("", "").find("No reason was given") != std::string::npos && FailureText("x", "").find("no log file") != std::string::npos);
+        const std::string longErr(5000, 'e');
+        CHECK(FailureText(longErr, "p").size() < 1200);   // a huge reason is cut, the dialog stays readable
+        CHECK(FailureText(std::string("bad\0byte", 8), "p").find('\0') == std::string::npos);   // control bytes are not shown
+    }
     fs::remove_all(tmp, ec);
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp_next: all passed\n");

@@ -4875,3 +4875,7 @@ add_test(NAME grok_145_146_153_155 COMMAND test_grok_145_146_153_155)
 add_executable(test_controller_actions test_controller_actions.cpp)
 target_link_libraries(test_controller_actions PRIVATE okay::engine)
 add_test(NAME controller_actions COMMAND test_controller_actions)
+
+# Keep this last: label every test above module:<name> from the tests= patterns of engine/modules/*/module.okaymodule
+# (module:core when no module claims it). Run one module's tests with: ctest -L module:physics3d
+okay_modules_label_tests()

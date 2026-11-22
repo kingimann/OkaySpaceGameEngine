@@ -1,0 +1,15 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=scripting_visual
+title=Visual scripting
+area=Scripting
+description=Node graphs and their runtime component.
+default=on
+core=0
+requires=core,scripting_okayscript
+provides=IVisualScript
+components=VisualScriptComponent
+serializers=
+vs_group=all
+editor=Visual script window
+sources=include/okay/VisualScript/* src/VisualScript/* include/okay/Components/VisualScriptComponent.hpp src/Components/VisualScriptComponent.cpp
+tests=vs_* visualscript

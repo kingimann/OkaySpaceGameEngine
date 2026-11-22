@@ -812,3 +812,7 @@ target_sources(okay_engine PRIVATE
     src/Core/TimeSnapshot.cpp
     src/Core/LoopConsole.cpp
 )
+
+# Which module each engine file belongs to (engine/modules/*/module.okaymodule sources=). Keep this last: it reads the
+# whole source list. Writes okay_modules.tsv in the build folder; the build itself is unchanged.
+okay_modules_group(okay_engine)

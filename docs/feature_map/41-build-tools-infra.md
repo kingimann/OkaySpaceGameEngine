@@ -242,3 +242,19 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Words:** collaboration, claim, lane, duplicate, collision, branch lint, find existing, brief, how to try it check
 - **Seen as:** `WORK_BOARD.md` on the `work-board` branch, a red "Branch lint" check on a pushed branch, a red "PR hygiene" check on a PR
 - **Ask me like:** "how do the two Claudes avoid doing the same work?"
+
+### 41.13 Engine modules (stage 0: groups and test labels)
+- **What:** The engine split into 40 named modules on paper: each has a manifest saying what it requires and which engine files and tests are its own. The build groups the engine's files by module and labels every test with its module, without changing what is built. First step of the modular engine plan (`docs/design/modular_gameplay_contracts.md`, section 9, PR 1).
+- **Parts:**
+  - 41.13.1 Manifests - `engine/modules/<name>/module.okaymodule` - name, requires, sources (file patterns), tests (test name patterns), planned (files other branches are adding)
+  - 41.13.2 Build groups - `cmake/OkayModules.cmake` - `okay_modules_read`, `okay_add_module`, `okay_modules_group(okay_engine)` (writes `okay_modules.tsv`), configure fails on an unknown requirement or a cycle
+  - 41.13.3 Test labels - `okay_modules_label_tests` - every test gets `module:<name>` (or `module:core`); `ctest -L module:physics3d`
+- **Code:** `cmake/OkayModules.cmake`, `engine/modules/*/module.okaymodule`
+- **Docs:** `docs/engine/modular_engine.md`, `docs/design/modular_gameplay_contracts.md`, `docs/design/modular_status.md`
+- **Tests:** configure itself (a bad manifest fails it); the whole suite runs unchanged
+- **Status:** Partial - grouping and labels only; nothing is stripped yet
+- **Open:** the manifest parser and module registry (PR 2), the size report (PR 3), per-module libraries and stripping (stage 2)
+- **Related:** 41.1
+- **Words:** module, modular engine, manifest, okaymodule, module group, ctest label, strip
+- **Seen as:** `-- OkaySpace: 40 engine modules; ... files of okay_engine in modules` while configuring
+- **Ask me like:** "which tests belong to the physics module?"

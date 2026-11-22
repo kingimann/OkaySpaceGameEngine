@@ -6,6 +6,8 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | You see or say | Sub-area |
 |---|---|
 | (test build)" after a version | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
+| -- OkaySpace: 40 engine modules | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-and-test-labels) Engine modules (stage 0: groups and test labels) |
+| ... files of okay_engine in modules` while configuring | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-and-test-labels) Engine modules (stage 0: groups and test labels) |
 | 1 FPS with a large model | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | 1 item / 2 items" reads wrong | [1.8](01-core-scene.md#18-localization) Localization |
 | 2D enemies cut through walls or cannot find a route on a tilemap | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |

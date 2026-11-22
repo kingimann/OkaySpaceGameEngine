@@ -1,0 +1,15 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=vehicles
+title=Vehicles
+area=Gameplay
+description=Vehicle controllers and seats.
+default=on
+core=0
+requires=physics3d,interaction,health_damage,animation
+provides=IVehicle,ISeat
+components=Seat,VehicleController,VehicleController2D,VehicleSeat
+serializers=seat,vehicleseat
+vs_group=
+editor=
+sources=include/okay/Components/VehicleController.hpp include/okay/Components/VehicleController2D.hpp include/okay/Components/VehicleSeat.hpp include/okay/Components/Seat.hpp
+tests=vehicle* boat

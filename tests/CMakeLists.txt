@@ -2582,6 +2582,12 @@ add_executable(test_csharp_language test_csharp_language.cpp)
 target_link_libraries(test_csharp_language PRIVATE okay::engine)
 add_test(NAME csharp_language COMMAND test_csharp_language)
 
+# The OkayScript -> C# converter over every shipped old script (compiles; scenes behave the same).
+add_executable(test_csharp_convert test_csharp_convert.cpp)
+target_link_libraries(test_csharp_convert PRIVATE okay::engine)
+target_compile_definitions(test_csharp_convert PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME csharp_convert COMMAND test_csharp_convert)
+
 add_executable(test_vs_acceptance test_vs_acceptance.cpp)
 target_link_libraries(test_vs_acceptance PRIVATE okay::engine)
 add_test(NAME vs_acceptance COMMAND test_vs_acceptance)

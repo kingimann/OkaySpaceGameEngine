@@ -942,7 +942,7 @@ clip) is what those components read as their state weight. Scripts: `ik_enable(o
 
 ## Animating any object (the Animation tab)
 
-Select an object with an **Animator** (or press *Add Animator*) and open
+Select an object with a **Clip Player** (the simple keyframe player; before 2026-11 it was also shown as "Animator") (or press *Add Clip Player*) and open
 **Animation**. The tab docks under the Scene view and grows to a usable height
 the first time it opens.
 

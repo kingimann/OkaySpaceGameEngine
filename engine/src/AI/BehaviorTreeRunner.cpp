@@ -738,11 +738,12 @@ bool BehaviorTreeRunner::ResolveTarget(const std::string& spec, Vec3& pos, GameO
     return true;
 }
 
+// The health Condition reads HealthOf, like the Health Watcher: the holder DealDamage hurts (it used to read the NPC
+// Controller first, so a watcher and a "health below" test on the same NPC could disagree).
 float BehaviorTreeRunner::HealthFraction() const {
-    if (m_npc) return m_npc->maxHealth > 0.0f ? m_npc->health / m_npc->maxHealth : 1.0f;
-    if (auto* s = gameObject->GetComponent<SurvivalStats>()) return s->Fraction();
-    if (auto* h = gameObject->GetComponent<HealthStat>()) return h->maxHealth > 0.0f ? h->health / h->maxHealth : 1.0f;
-    return 1.0f;
+    float hp = 0.0f, max = 0.0f;
+    if (!HealthOf(gameObject, hp, max)) return 1.0f;
+    return max > 0.0f ? std::clamp(hp / max, 0.0f, 1.0f) : 1.0f;
 }
 
 bool BehaviorTreeRunner::Test(const BtNode& n) const {

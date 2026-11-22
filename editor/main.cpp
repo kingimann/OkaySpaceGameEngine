@@ -57936,19 +57936,10 @@ int main(int argc, char** argv) {
         if (n == "Rigidbody3D") return go->GetComponent<Rigidbody3D>() != nullptr;
         if (n == "Rigidbody2D") return go->GetComponent<Rigidbody2D>() != nullptr;
         if (n == "Rigidbody") return go->GetComponent<Rigidbody3D>() || go->GetComponent<Rigidbody2D>();
-        // "Animator" nodes drive the state graph (AnimStateMachine), which may sit on the imported model under the
-        // object (as EngineApi's Animator binding finds it); "ClipPlayer" is the simple keyframe Animator class.
-        switch (okay::editor::vsed::VsAnimComponentFor(id)) {
-            case okay::editor::vsed::VsAnimComponent::Graph: {
-                if (go->GetComponent<AnimStateMachine>()) return true;
-                if (go->scene())
-                    for (const auto& up : go->scene()->Objects())
-                        if (up && up->IsSelfOrDescendantOf(go) && up->GetComponent<AnimStateMachine>()) return true;
-                return false;
-            }
-            case okay::editor::vsed::VsAnimComponent::ClipPlayer: return go->GetComponent<Animator>() != nullptr;
-            default: break;
-        }
+        // The animation ids ("Animator", "AnimStateMachine", "ClipPlayer", "Character", "ModelAnimator") are checked
+        // where their nodes look at run time (editor/AnimComponentNames.hpp).
+        if (okay::editor::vsed::VsAnimComponentFor(id) != okay::editor::vsed::VsAnimComponent::None)
+            return okay::editor::vsed::VsAnimHas(go, okay::editor::vsed::VsAnimComponentFor(id));
         if (n == "NavMeshAgent") return go->GetComponent<NavMeshAgent>() != nullptr;
         if (n == "Inventory") return go->GetComponent<Inventory>() != nullptr;
         if (n == "Equipment") return go->GetComponent<Equipment>() != nullptr;
@@ -57975,10 +57966,10 @@ int main(int argc, char** argv) {
         auto add = [&](auto* p) { if (p) { ConsoleLog(std::string("Added ") + id); return true; } return false; };
         if (n == "Rigidbody3D" || n == "Rigidbody") return add(go->AddComponent<Rigidbody3D>());
         if (n == "Rigidbody2D") return add(go->AddComponent<Rigidbody2D>());
-        switch (okay::editor::vsed::VsAnimComponentFor(id)) {   // "Animator" is the state graph, as in the scripting API
-            case okay::editor::vsed::VsAnimComponent::Graph: return add(go->AddComponent<AnimStateMachine>());
-            case okay::editor::vsed::VsAnimComponent::ClipPlayer: return add(go->AddComponent<Animator>());
-            default: break;
+        if (okay::editor::vsed::VsAnimComponentFor(id) != okay::editor::vsed::VsAnimComponent::None) {   // AnimComponentNames.hpp
+            const bool ok = okay::editor::vsed::VsAnimAdd(go, okay::editor::vsed::VsAnimComponentFor(id));
+            if (ok) ConsoleLog(std::string("Added ") + id);
+            return ok;
         }
         if (n == "NavMeshAgent") return add(go->AddComponent<NavMeshAgent>());
         if (n == "Inventory") return add(go->AddComponent<Inventory>());

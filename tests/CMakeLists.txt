@@ -1873,6 +1873,13 @@ target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor 
 target_link_libraries(test_vs_node_docs PRIVATE okay::engine)
 add_test(NAME vs_node_docs COMMAND test_vs_node_docs)
 
+# The simple clip player is shown as "Clip Player", the state graph as "Animator" (#422 finding 8); saved scenes unchanged.
+add_executable(test_anim_component_names test_anim_component_names.cpp)
+target_include_directories(test_anim_component_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_anim_component_names PRIVATE okay::engine)
+target_compile_definitions(test_anim_component_names PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME anim_component_names COMMAND test_anim_component_names)
+
 add_executable(test_vs_guide test_vs_guide.cpp)
 target_include_directories(test_vs_guide PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_guide PRIVATE okay::engine)

@@ -165,5 +165,49 @@ int main() {
         CHECK(Same(before, after) || (before - after).Magnitude() < 1e-3f);
     }
 
+    // ---- Bug: three controllers ignored the load / encumbrance slow-down ---------------------------------------
+    // MoveSpeedScale (MoveSpeed.hpp) is the one factor every player controller multiplies its speed by; the
+    // Character Controller 3D, the Top Down Shooter and the 2.5D Platformer never read it, so an over-weight
+    // inventory (speed 0.4) did not slow them. Each runs 1.5 s holding D, once light and once over the limit.
+    {
+        auto run = [](int kind, bool heavy) {
+            Scene s("load");
+            s.physicsEnabled = true;
+            GameObject* g = s.CreateGameObject("Ground");
+            g->transform->SetPosition({0, -0.5f, 0});
+            g->AddComponent<BoxCollider3D>()->size = {400, 1, 40};
+            g->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+            GameObject* p = s.CreateGameObject("Player");
+            p->transform->SetPosition({0, 0.02f, 0});
+            p->AddComponent<Rigidbody3D>();
+            auto* col = p->AddComponent<BoxCollider3D>();
+            col->size = {0.6f, 1.8f, 0.6f};
+            col->offset = {0.0f, 0.9f, 0.0f};
+            if (kind == 0) p->AddComponent<CharacterController3D>();
+            if (kind == 1) { auto* t = p->AddComponent<TopDownShooterController>(); t->aimMode = (int)TopDownShooterController::AimMode::MoveDirection; }
+            if (kind == 2) p->AddComponent<Platformer25DController>();
+            if (heavy) {
+                auto* inv = p->AddComponent<Inventory>();
+                inv->weightLimit = 5.0f; inv->wornWeight = 10.0f;
+                inv->slowWhenOverWeight = true; inv->overWeightSpeed = 0.4f;
+            }
+            s.Start();
+            Input::FeedKeys({});
+            for (int i = 0; i < 30; ++i) s.Update(1.0f / 60.0f);   // settle on the ground
+            const float x0 = p->transform->Position().x;
+            for (int i = 0; i < 90; ++i) { Input::FeedKeys({'d'}); s.Update(1.0f / 60.0f); }
+            Input::FeedKeys({});
+            return std::fabs(p->transform->Position().x - x0);
+        };
+        const char* names[] = {"CharacterController3D", "TopDownShooterController", "Platformer25DController"};
+        for (int k = 0; k < 3; ++k) {
+            const float light = run(k, false), heavy = run(k, true);
+            std::printf("  %s: light %.2f m, over-weight %.2f m\n", names[k], light, heavy);
+            CHECK(light > 2.0f);
+            CHECK(heavy < light * 0.6f);
+            CHECK(heavy > light * 0.25f);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

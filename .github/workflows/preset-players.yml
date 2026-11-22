@@ -29,6 +29,7 @@ jobs:
       - uses: actions/checkout@v6
       - name: Tools
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev python3
+      # dup-allow-begin: the same SDL2 download as ci.yml; one workflow cannot run another's steps (a shared composite action would; not made for a never-run plan)
       - name: Fetch SDL2 (MinGW dev)
         run: |
           bash scripts/fetch-tarball.sh sdl2-mingw.tar.gz \
@@ -36,6 +37,7 @@ jobs:
             "https://www.libsdl.org/release/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
           mkdir -p sdl2-mingw && tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
           echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
+      # dup-allow-end
       - name: Module list of the preset (requirements added)
         run: echo "MODULES=$(python3 scripts/preset_modules.py ${{ matrix.preset }})" >> "$GITHUB_ENV"
       - name: Configure and build the player only

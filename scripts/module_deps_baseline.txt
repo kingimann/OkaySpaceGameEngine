@@ -547,6 +547,7 @@ src/Core/AssetDatabaseDeps.cpp -> save_games
 src/Core/AssetManager.cpp -> audio
 src/Core/AssetManager.cpp -> modeling
 src/Core/Backup.cpp -> save_games
+src/Core/ConsoleHost.cpp -> dev_diagnostics
 src/Core/Cvar.cpp -> save_games
 src/Core/DataAsset.cpp -> save_games
 src/Core/FrameRecord.cpp -> dev_diagnostics

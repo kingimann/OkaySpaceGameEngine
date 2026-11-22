@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace okay {
 namespace rec {
@@ -88,31 +89,43 @@ inline std::string ReadRecordLine(std::istream& in) {
     std::getline(in, line);
     return line;
 }
-struct KvIn {
+// The key=value pairs of one line ("a=1 name=\"x y\""). `readQuoted` reads a value that starts with a quote: the escapes
+// differ per file format (scene records here, dialogue and quest files in StoryKv.hpp), the pairs do not. A word without
+// '=' is skipped.
+inline std::unordered_map<std::string, std::string> ParseKvLine(const std::string& line, std::string (*readQuoted)(std::istream&)) {
     std::unordered_map<std::string, std::string> m;
-    explicit KvIn(std::istream& in) {
-        const std::string line = ReadRecordLine(in);
-        std::istringstream ls(line);
-        while (true) {
-            ls >> std::ws;
-            if (!ls || ls.peek() == EOF) break;
-            std::string k; char c;
-            while (ls.get(c) && c != '=' && !std::isspace((unsigned char)c)) k += c;
-            if (c != '=') continue;
-            if (ls.peek() == '"') m[k] = ReadQuoted(ls);
-            else { std::string v; ls >> v; m[k] = v; }
-        }
+    std::istringstream ls(line);
+    while (true) {
+        ls >> std::ws;
+        if (!ls || ls.peek() == EOF) break;
+        std::string k; char c = 0;
+        while (ls.get(c) && c != '=' && !std::isspace((unsigned char)c)) k += c;
+        if (c != '=') continue;
+        if (ls.peek() == '"') m[k] = readQuoted(ls);
+        else { std::string v; ls >> v; m[k] = v; }
     }
-    const std::string* find(const char* k) const { auto it = m.find(k); return it == m.end() ? nullptr : &it->second; }
-    void f(const char* k, float& v) const { if (auto* s = find(k)) v = std::strtof(s->c_str(), nullptr); }
-    void i(const char* k, int& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()); }
+    return m;
+}
+
+// The parsed pairs and typed reads of them; a missing key leaves the value as it was.
+struct KvMap {
+    std::unordered_map<std::string, std::string> m;
+    KvMap() = default;
+    explicit KvMap(std::unordered_map<std::string, std::string> pairs) : m(std::move(pairs)) {}
+    const std::string* find(const std::string& k) const { auto it = m.find(k); return it == m.end() ? nullptr : &it->second; }
+    void f(const std::string& k, float& v) const { if (auto* s = find(k)) v = std::strtof(s->c_str(), nullptr); }
+    void i(const std::string& k, int& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()); }
+    void b(const std::string& k, bool& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()) != 0; }
+    void str(const std::string& k, std::string& v) const { if (auto* s = find(k)) v = *s; }
+};
+
+struct KvIn : KvMap {
+    explicit KvIn(std::istream& in) : KvMap(ParseKvLine(ReadRecordLine(in), &ReadQuoted)) {}
     void u(const char* k, std::uint32_t& v) const { if (auto* s = find(k)) v = (std::uint32_t)std::strtoul(s->c_str(), nullptr, 10); }
-    void b(const char* k, bool& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()) != 0; }
     void key(const char* k, char& v) const { if (auto* s = find(k)) v = (char)std::atoi(s->c_str()); }
-    void str(const char* k, std::string& v) const { if (auto* s = find(k)) v = *s; }
     void col(const char* k, Color& c) const {
         std::string b = k;
-        f((b + "R").c_str(), c.r); f((b + "G").c_str(), c.g); f((b + "B").c_str(), c.b); f((b + "A").c_str(), c.a);
+        f(b + "R", c.r); f(b + "G", c.g); f(b + "B", c.b); f(b + "A", c.a);
     }
 };
 

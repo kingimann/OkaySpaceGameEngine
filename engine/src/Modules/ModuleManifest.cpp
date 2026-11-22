@@ -5,12 +5,14 @@
 namespace okay {
 
 namespace {
+// dup-allow-begin: the shared Trim (planned okay::str::Trim in Core/StringUtil.hpp, docs/engine/shared_code.md) is not on main yet; use it when it lands
 std::string Trim(const std::string& s) {
     size_t a = 0, b = s.size();
     while (a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\r')) ++a;
     while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t' || s[b - 1] == '\r')) --b;
     return s.substr(a, b - a);
 }
+// dup-allow-end
 bool IsOn(const std::string& v) { return v == "1" || v == "on" || v == "true" || v == "yes"; }
 } // namespace
 
@@ -21,6 +23,7 @@ bool ModuleManifest::ValidName(const std::string& name) {
     return true;
 }
 
+// dup-allow: the shared Split (planned okay::str::Split, Core/StringUtil.hpp) is not on main yet; switch to it when it lands
 std::vector<std::string> ModuleManifest::SplitList(const std::string& s, char sep) {
     std::vector<std::string> out;
     std::string cur;

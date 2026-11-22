@@ -2,6 +2,7 @@
 // key=value text lines for the dialogue and quest files: order-free, quoted
 // strings with \" \\ \n escapes, unknown keys skipped, so fields can be added
 // without breaking files an older build wrote.
+#include "okay/Scene/RecordIO.hpp"
 #include <cctype>
 #include <cstdlib>
 #include <sstream>
@@ -49,29 +50,9 @@ struct Out {
     std::string text() const { return o.str(); }
 };
 
-struct In {
-    std::unordered_map<std::string, std::string> m;
-    explicit In(const std::string& line) {
-        std::istringstream ls(line);
-        while (true) {
-            ls >> std::ws;
-            if (!ls || ls.peek() == EOF) break;
-            std::string k; char c = 0;
-            while (ls.get(c) && c != '=' && !std::isspace((unsigned char)c)) k += c;
-            if (c != '=') continue;
-            if (ls.peek() == '"') m[k] = ReadQuoted(ls);
-            else { std::string v; ls >> v; m[k] = v; }
-        }
-    }
-    const std::string* find(const char* k) const { auto it = m.find(k); return it == m.end() ? nullptr : &it->second; }
-    const std::string* find(const std::string& k) const { auto it = m.find(k); return it == m.end() ? nullptr : &it->second; }
-    void f(const char* k, float& v) const { if (auto* s = find(k)) v = std::strtof(s->c_str(), nullptr); }
-    void i(const char* k, int& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()); }
-    void b(const char* k, bool& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()) != 0; }
-    void str(const char* k, std::string& v) const { if (auto* s = find(k)) v = *s; }
-    void i(const std::string& k, int& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()); }
-    void b(const std::string& k, bool& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()) != 0; }
-    void str(const std::string& k, std::string& v) const { if (auto* s = find(k)) v = *s; }
+// The pairs and typed reads are the scene records' (okay/Scene/RecordIO.hpp); only the string escapes differ.
+struct In : rec::KvMap {
+    explicit In(const std::string& line) : rec::KvMap(rec::ParseKvLine(line, &ReadQuoted)) {}
 };
 
 /// The first word of a line and the rest after it.

@@ -63,7 +63,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Editor:** Script Editor language picker and New Script offer Lua; `.lua` files open in the Script Editor with Lua colours; Inspector shows the script table's fields; example scene `examples/lua/lua_scripts.okayscene`
 - **Docs:** `docs/scripting/lua.md` (supported language and library, binding rules, what each file was written from), `docs/scripting/scripting.md`
 - **Tests:** `lua_core` (standalone: conformance script `tests/lua/conformance.lua` written from the manual, syntax errors, budget, memory limit, host API, mutation fuzz; clean under ASan and UBSan), `lua_script` (game scripts driving GameObjects), `script_removed_langs`, `starter_script`, `examples_work`
-- **Status:** Partial - language, coroutines and libraries work and are tested; not in Lua: `__gc` finalizers, full ephemeron weak keys, yielding across pcall or a metamethod (a clear error), string.pack/unpack, binary chunks; the Script Editor has no Lua debugger
+- **Status:** Partial - language, coroutines and libraries work and are tested; not in Lua: `__gc` finalizers, full ephemeron weak keys, yielding across xpcall or a metamethod (a clear error; inside pcall it works), string.pack/unpack, binary chunks; the Script Editor has no Lua debugger
 - **Open:** the Lua parts above; a Lua visual-script node (UNFINISHED "text-script nodes"); nothing converts old C# scripts; editor build and screenshots unverified on Windows
 - **Related:** 13.4, 13.5, 13.6, 14.7
 - **Words:** Lua, lua script, .lua, okay::lua, Lua 5.4, coroutine, metatable, pcall, C#, Mono, csharp, removed language, language not supported, old project, script language dropdown

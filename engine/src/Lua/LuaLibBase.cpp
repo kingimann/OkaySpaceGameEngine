@@ -161,12 +161,6 @@ int InsertFirst(State& L, int firstResultIdx, const Value& first) {
     return co->top - firstResultIdx;
 }
 
-int B_pcall(State& L, int n) {
-    L.CheckAny(0, "pcall");
-    int func = L.Current()->top - n;
-    bool ok = L.PCall(n - 1, -1);
-    return InsertFirst(L, func, Value::Bool(ok));
-}
 
 int B_xpcall(State& L, int n) {
     if (n < 2) L.ArgError(1, "xpcall", "value expected");
@@ -730,6 +724,15 @@ Table* NewLib(State& L, const char* name) {
 
 } // namespace
 
+// pcall called from native code, or of a native function (a Lua function called from
+// Lua code runs inside the loop instead, so it can yield).
+int PCallNative(State& L, int n) {
+    L.CheckAny(0, "pcall");
+    int func = L.Current()->top - n;
+    bool ok = L.PCall(n - 1, -1);
+    return InsertFirst(L, func, Value::Bool(ok));
+}
+
 void OpenBase(State& L) {
     Table* g = L.Globals();
     L.SetGlobal("_G", Value::Obj(g));
@@ -738,7 +741,7 @@ void OpenBase(State& L) {
         {"print", B_print}, {"type", B_type}, {"tostring", B_tostring}, {"tonumber", B_tonumber},
         {"rawequal", B_rawequal}, {"rawlen", B_rawlen}, {"rawget", B_rawget}, {"rawset", B_rawset},
         {"setmetatable", B_setmetatable}, {"getmetatable", B_getmetatable}, {"assert", B_assert},
-        {"error", B_error}, {"pcall", B_pcall}, {"xpcall", B_xpcall}, {"select", B_select}, {"next", B_next},
+        {"error", B_error}, {"pcall", PCallNative}, {"xpcall", B_xpcall}, {"select", B_select}, {"next", B_next},
         {"pairs", B_pairs}, {"ipairs", B_ipairs}, {"load", B_load}, {"collectgarbage", B_collectgarbage},
     };
     for (const auto& f : fns) L.Register(g, f.n, f.f);

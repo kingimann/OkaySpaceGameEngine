@@ -164,6 +164,7 @@ struct Frame {
     int tbcMark = 0;  ///< coroutine tbc list size when the frame started
     bool entry = false;   ///< returning from it leaves the Execute call that started it
     bool tail = false;    ///< reached through a tail call
+    bool pcallMark = false;   ///< a pcall running inside the loop: the protected function's results come back here
 };
 
 enum class CoStatus : std::uint8_t { Suspended, Running, Normal, Dead };
@@ -336,6 +337,8 @@ public:
     Value CallMeta1(const Value& f, const Value& a);
     Value CallMeta2(const Value& f, const Value& a, const Value& b);
     bool Execute();   ///< run the current coroutine's top Lua frame until an entry frame returns (false) or it yields (true)
+    bool ExecuteLoop();
+    bool RecoverAtPcall(std::size_t entryIdx);
     void CallAt(int func, int nres);   ///< call stack[func] with args above it (native or Lua), running Lua to completion
     /// Close the to-be-closed variables at stack index >= level (err = the error, or nil).
     void CloseTbc(int level, const Value& err, bool withErr);

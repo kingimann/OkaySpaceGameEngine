@@ -1543,9 +1543,56 @@ bool State::ForLoop(int base, int a) {
     return true;
 }
 
+// pcall of a Lua function runs inside the loop (a marker frame, no C++ recursion), so a
+// coroutine can yield inside it. An error is caught here and handed to the nearest
+// marker of this Execute call; markers of outer calls are theirs.
 bool State::Execute() {
     Coroutine* const co = co_;
+    std::size_t entryIdx = co->frames.empty() ? 0 : co->frames.size() - 1;
+    while (entryIdx > 0 && !co->frames[entryIdx].entry) --entryIdx;
+    for (;;) {
+        try {
+            return ExecuteLoop();
+        } catch (const LuaError&) {
+            if (!RecoverAtPcall(entryIdx)) throw;
+        }
+    }
+}
+
+bool State::RecoverAtPcall(std::size_t entryIdx) {
+    Coroutine* co = co_;
+    // frames above a nested call's entry frame are left over from it (it did not catch)
+    std::size_t limit = co->frames.size();
+    for (std::size_t i = entryIdx + 1; i < co->frames.size(); ++i)
+        if (co->frames[i].entry) { limit = i; break; }
+    std::size_t idx = 0;
+    bool found = false;
+    for (std::size_t i = limit; i-- > entryIdx + 1;)
+        if (co->frames[i].pcallMark) { idx = i; found = true; break; }
+    if (!found) return false;
+    Frame m = co->frames[idx];
+    Value err = errorValue;
+    Unwind(idx, m.func + 1, err);   // drops the marker too; closes variables with the error
+    errorValue = Value();
+    CheckStack(2);
+    co->stack[(std::size_t)m.func] = Value::Bool(false);
+    co->stack[(std::size_t)(m.func + 1)] = err;
+    co->top = m.func + 2;
+    PostCall(m, m.func, 2);
+    return true;
+}
+
+bool State::ExecuteLoop() {
+    Coroutine* const co = co_;
 newframe:
+    if (co->frames.back().pcallMark) {
+        // the protected function returned: true and its results
+        Frame m = co->frames.back();
+        co->frames.pop_back();
+        co->stack[(std::size_t)m.func] = Value::Bool(true);
+        PostCall(m, m.func, co->top - m.func);
+        goto newframe;
+    }
     LClosure* cl = co->frames.back().cl;
     Proto* p = cl->p;
     const Instr* code = p->code.data();
@@ -1828,6 +1875,19 @@ newframe:
                         PushLuaFrame(func, nargs, in.c, false);
                         goto newframe;
                     }
+                    if (f.t == Type::NFunc && f.NFn()->fn == PCallNative && nargs >= 1 && S(func + 1).t == Type::LFunc) {
+                        if (co->frames.size() >= 200000) Error("stack overflow");
+                        Frame m;
+                        m.ncl = f.NFn();
+                        m.func = func;
+                        m.base = func + 1;
+                        m.nres = in.c;
+                        m.pcallMark = true;
+                        m.tbcMark = (int)co->tbc.size();
+                        co->frames.push_back(m);
+                        PushLuaFrame(func + 1, nargs - 1, -1, false);
+                        goto newframe;
+                    }
                     if (f.t == Type::NFunc) {
                         if (CallNative(func, nargs, in.c) == kYieldResult) {
                             co->yieldFunc = func;
@@ -1846,6 +1906,20 @@ newframe:
                 int nargs = in.b < 0 ? TOP - func - 1 : in.b;
                 TOP = func + 1 + nargs;
                 while (S(func).t != Type::LFunc && S(func).t != Type::NFunc) nargs = CallTM(func, nargs);
+                if (S(func).t == Type::NFunc && S(func).NFn()->fn == PCallNative && nargs >= 1 && S(func + 1).t == Type::LFunc) {
+                    // return pcall(f, ...): a protected call inside the loop; the RETURN after it returns the results
+                    if (co->frames.size() >= 200000) Error("stack overflow");
+                    Frame m;
+                    m.ncl = S(func).NFn();
+                    m.func = func;
+                    m.base = func + 1;
+                    m.nres = -1;
+                    m.pcallMark = true;
+                    m.tbcMark = (int)co->tbc.size();
+                    co->frames.push_back(m);
+                    PushLuaFrame(func + 1, nargs - 1, -1, false);
+                    goto newframe;
+                }
                 if (S(func).t == Type::NFunc) {
                     if (CallNative(func, nargs, -1) == kYieldResult) {
                         co->yieldFunc = func;

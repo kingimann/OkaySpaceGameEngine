@@ -41,9 +41,9 @@ present: `io`, `os.execute`, `os.exit`, `os.getenv`, `os.remove`, `package`, `de
 Not supported (documented differences):
 - `__gc` finalizers: ignored. Weak tables (`__mode` "k", "v", "kv") work, but weak keys are not full ephemerons
   (a value that refers to its own key keeps the entry alive); strings are never removed, as the manual says.
-- Yielding across `pcall`, `xpcall`, a metamethod, `table.sort`'s comparator or `string.gsub`'s function: raises
-  "attempt to yield across a C-call boundary" (like Lua 5.1). Yielding from Lua functions, `for` iterators and
-  `coroutine.wrap` generators works.
+- Yielding across `xpcall`, a metamethod, `table.sort`'s comparator or `string.gsub`'s function raises
+  "attempt to yield across a C-call boundary". Yielding inside `pcall` of a Lua function works (that pcall runs
+  inside the interpreter loop), and so do Lua functions, `for` iterators and `coroutine.wrap` generators.
 - Binary chunks: `load` refuses them.
 - String comparison is by bytes (the C locale), character classes are ASCII.
 

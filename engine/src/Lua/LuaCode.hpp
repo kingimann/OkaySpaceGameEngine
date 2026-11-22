@@ -105,6 +105,9 @@ std::string FormatFloat(double d);
 /// Hash used for strings.
 std::uint32_t HashBytes(const char* s, std::size_t n);
 
+/// The base library's pcall (the loop runs pcall of a Lua function itself, see State::Execute).
+int PCallNative(State& L, int nargs);
+
 /// Library openers (one per file).
 void OpenBase(State& L);
 void OpenString(State& L);

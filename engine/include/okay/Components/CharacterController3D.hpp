@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Input/InputActions.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -76,15 +77,17 @@ public:
     /// WASD, the sprint key and space, as this frame reads them.
     PlayerInput ReadLocalInput() override {
         PlayerInput in;
-        in.move = Input::AxisWASD();               // x = strafe, y = forward
-        if (sprintKey && Input::GetKey(sprintKey)) in.held |= PlayerInput::Sprint;
-        if (Input::GetKey(' ')) in.held |= PlayerInput::Jump;
-        if (Input::GetKeyDown(' ')) in.pressed |= PlayerInput::Jump;
+        // Move, sprint, jump and crouch read their named actions (default bindings = these keys), so a
+        // player's rebinding reaches them.
+        in.move = InputActions::ControlMove();     // x = strafe, y = forward
+        if (InputActions::ControlKey("Sprint", sprintKey)) in.held |= PlayerInput::Sprint;
+        if (InputActions::ControlKey("Jump", ' ')) in.held |= PlayerInput::Jump;
+        if (InputActions::ControlKeyDown("Jump", ' ')) in.pressed |= PlayerInput::Jump;
         const StanceControl& sc = stanceControl;
-        if (sc.crouchKey && Input::GetKey(sc.crouchKey))     in.held    |= PlayerInput::Crouch;
-        if (sc.crouchKey && Input::GetKeyDown(sc.crouchKey)) in.pressed |= PlayerInput::Crouch;
-        if (sc.proneKey && Input::GetKey(sc.proneKey))       in.held    |= PlayerInput::Prone;
-        if (sc.proneKey && Input::GetKeyDown(sc.proneKey))   in.pressed |= PlayerInput::Prone;
+        if (InputActions::ControlKey("Crouch", sc.crouchKey))     in.held    |= PlayerInput::Crouch;
+        if (InputActions::ControlKeyDown("Crouch", sc.crouchKey)) in.pressed |= PlayerInput::Crouch;
+        if (InputActions::ControlKey("Prone", sc.proneKey, 'z'))       in.held    |= PlayerInput::Prone;
+        if (InputActions::ControlKeyDown("Prone", sc.proneKey, 'z'))   in.pressed |= PlayerInput::Prone;
         return in;
     }
 

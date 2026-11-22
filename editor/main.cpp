@@ -61,6 +61,7 @@
 #include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
 #include "okay/Render/LightingPresets.hpp"
 #include "okay/Render/LightProbeBake.hpp"
+#include "okay/Render/GpuTexture.hpp"   // ShipCompressedCopy: a build ships the BC copy of `compress` pictures
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
@@ -4858,6 +4859,13 @@ std::string Build(EditorState& ed, const std::string& outDir,
             fs::path md = dst; md += ".okaymeta";
             fs::copy_file(ms, md, fs::copy_options::overwrite_existing, me);
             if (!me) why[relRoot(md)] = "import settings of " + a.dest;
+        }
+        {   // a picture set to `compress`: its BC copy ships beside it, so the game never encodes it at run time
+            std::string terr;
+            if (okay::gputex::ShipCompressedCopy(a.src, dst.string(), &terr))
+                why[relRoot(fs::u8path(okay::gputex::CompressedCachePath(dst.string())))] = "compressed GPU copy of " + a.dest;
+            else if (!terr.empty())
+                R.r.Warn("Couldn't make the compressed copy of " + a.dest + " (" + terr + "): the game makes it when it first draws it.");
         }
     }
     for (const bp::MissingAsset& m : walk.missing) {

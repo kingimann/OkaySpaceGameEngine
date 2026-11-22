@@ -114,6 +114,38 @@ SceneSerializer.cpp. A static initializer in a file nothing else references can 
 dropped by the linker, so prefer one of those two places. The record must stay on one
 line.
 
+### The generic record: a component saved from its registry entry
+
+A component with a `PropertyRegistry` entry (see [properties.md](properties.md)) needs no
+writer or reader of its own:
+
+```cpp
+ComponentSerializerRegistry::RegisterFromProperties("CheckpointTrigger");
+```
+
+saves each `CheckpointTrigger` as one record of named fields, built from the entry:
+
+```
+  checkpointtrigger checkpoint="gate 2" targetTag="Hero" radius=4.5 once=0 deferred=0 checkInterval=0.25
+```
+
+- Written: every authored property (not read-only, runtime-only, derived or structural), in
+  the entry's order. Numbers and switches as they are, everything else quoted (text, vectors
+  `"1 2 3"`, an enum as `"1 Point"`). `enabled` is kept by `compoff`, as for every component;
+  object references are left out (the object they name may load later).
+- Read: fields in any order. A key the entry does not know is skipped with a warning, a
+  missing key leaves the fresh component's default, and a value the property refuses keeps
+  the default with a warning. A quoted value may run over several lines (multi-line text).
+- Refused: a type with no entry, the object-level `GameObject` entry, a type that cannot be
+  added, and a record name the built-in chain already reads. Existing records are never taken
+  over, so old files load as before.
+- Built-in users: `checkpointtrigger`, `timeddestroy` and `netavatarmotion` (none of the three
+  was saved before).
+
+`tests/test_registry_serializer.cpp` round-trips every registered type through these fields,
+saves a component with no serializer code at all, and checks that a scene main wrote
+(`tests/golden/scene/registry_every_type_main.okayscene`) saves again byte for byte the same.
+
 ## What changed: scene serializer, fifth pass (1.3)
 
 Test: `component_order` (extended). Touched: `SceneSerializer.cpp` only in `WriteComponents` and the code beside it (about 90 lines:

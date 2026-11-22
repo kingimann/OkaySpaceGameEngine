@@ -8,6 +8,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Components/VehicleTuning.hpp"
@@ -122,9 +123,9 @@ public:
         float throttle = 0.0f, steer = 0.0f;
         bool handbrake = false;
         if (!unmanned) {
-            Vec2 axis = Input::AxisWASD();
+            const Vec2 axis = InputActions::ControlAxis("Throttle", "Brake", "SteerLeft", "SteerRight");
             throttle = axis.y; steer = axis.x;
-            handbrake = handbrakeKey && Input::GetKey(handbrakeKey);
+            handbrake = InputActions::ControlKey("Handbrake", handbrakeKey);
         }
 
         // Planar facing axes (flatten Y so slopes don't change the drive plane).
@@ -311,18 +312,24 @@ private:
         if (a <= deadZone) return 0.0f;
         return (v < 0 ? -1.0f : 1.0f) * (a - deadZone) / std::max(0.01f, 1.0f - deadZone);
     }
-    bool KeyHeld(char k, char arrow = 0) const { return Input::GetKey(k) || (arrow && Input::GetKey(arrow)); }
+    // A driving key and its arrow: the "Vehicle" action once the player rebinds it (InputActions::ControlKey).
+    static bool KeyHeld(const char* action, char k, char arrow = 0) {
+        return InputActions::ControlKey(action, k) || (arrow && InputActions::ControlKey(action, arrow));
+    }
+
     DriveInput ReadInput(float dt) {
         DriveInput in;
         if (m_scripted) return m_in;
-        in.throttle = KeyHeld(keyThrottle, keyThrottle == 'w' ? Input::KeyUp : 0) ? 1.0f : 0.0f;
-        in.brake = KeyHeld(keyBrake, keyBrake == 's' ? Input::KeyDown : 0) ? 1.0f : 0.0f;
+        // Driving keys read the "Vehicle" actions (Throttle, Brake, SteerLeft, SteerRight, Handbrake, Boost): these keys
+        // until the player rebinds them, then the new bindings.
+        in.throttle = KeyHeld("Throttle", keyThrottle, keyThrottle == 'w' ? Input::KeyUp : 0) ? 1.0f : 0.0f;
+        in.brake = KeyHeld("Brake", keyBrake, keyBrake == 's' ? Input::KeyDown : 0) ? 1.0f : 0.0f;
         float st = 0.0f;
-        if (KeyHeld(keySteerRight, keySteerRight == 'd' ? Input::KeyRight : 0)) st += 1.0f;
-        if (KeyHeld(keySteerLeft, keySteerLeft == 'a' ? Input::KeyLeft : 0)) st -= 1.0f;
+        if (KeyHeld("SteerRight", keySteerRight, keySteerRight == 'd' ? Input::KeyRight : 0)) st += 1.0f;
+        if (KeyHeld("SteerLeft", keySteerLeft, keySteerLeft == 'a' ? Input::KeyLeft : 0)) st -= 1.0f;
         in.steer = st;
-        in.handbrake = handbrakeKey && Input::GetKey(handbrakeKey);
-        in.boost = Input::GetKey(keyBoost);
+        in.handbrake = InputActions::ControlKey("Handbrake", handbrakeKey);
+        in.boost = InputActions::ControlKey("Boost", keyBoost);
         in.reverse = Input::GetKey(keyReverse);
         if (Input::GamepadConnected(0)) {   // gamepad: right trigger gas, left trigger brake / reverse, left stick steer
             const float rt = Dead(Input::GamepadTrigger(1)), lt = Dead(Input::GamepadTrigger(0));
@@ -371,13 +378,13 @@ private:
         // Buttons pressed once (not scripted: scripts call the functions).
         if (!m_scripted && !unmanned) {
             if (Input::GetKeyDown(keyRecover) || Input::GetGamepadButtonDown(padRecover)) Recover();
-            if (Input::GetKeyDown(keyLights) || Input::GetGamepadButtonDown(padLights)) SetLights(!m_lights);
-            m_horn = Input::GetKey(keyHorn) || Input::GetGamepadButton(padHorn);
+            if (InputActions::ControlKeyDown("Headlights", keyLights) || Input::GetGamepadButtonDown(padLights)) SetLights(!m_lights);
+            m_horn = InputActions::ControlKey("Horn", keyHorn) || Input::GetGamepadButton(padHorn);
             if (Input::GetKeyDown(keyCamera) || Input::GetGamepadButtonDown(padCamera)) m_view = (m_view + 1) % 4;
             m_lookBack = Input::GetKey(keyLookBack);
             if (gearbox != 0) {
-                if (Input::GetKeyDown(keyGearUp) || Input::GetGamepadButtonDown(padGearUp)) ShiftGear(+1);
-                if (Input::GetKeyDown(keyGearDown) || Input::GetGamepadButtonDown(padGearDown)) ShiftGear(-1);
+                if (InputActions::ControlKeyDown("GearUp", keyGearUp) || Input::GetGamepadButtonDown(padGearUp)) ShiftGear(+1);
+                if (InputActions::ControlKeyDown("GearDown", keyGearDown) || Input::GetGamepadButtonDown(padGearDown)) ShiftGear(-1);
             }
         }
 

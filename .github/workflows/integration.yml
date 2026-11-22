@@ -1,0 +1,82 @@
+# Integration check: all open pull requests merged TOGETHER on top of main, then built and tested.
+# Each PR's own CI only proves it works alone on main; this proves the open PRs work with each other
+# (owner, 2026-11-22: "Make sure all the systems work together, no duplicates").
+# scripts/integration_merge.py merges the open PRs in number order, skips and reports any that conflict, and says
+# whether a conflict is with main or with another open PR. Then the same build and tests as "Build & test (Ubuntu)"
+# run on the merged tree, plus the duplicate check over everything the open PRs add together.
+# Runs every night and by hand (Actions > Integration check > Run workflow). Nothing is pushed; the merged tree only
+# lives in the runner. Plain rules: docs/process/collaboration.md "Integration check".
+name: Integration check
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+    inputs:
+      drafts:
+        description: "Also merge draft PRs"
+        type: boolean
+        default: true
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: integration-check
+  cancel-in-progress: true
+jobs:
+  integrate:
+    name: All open PRs together (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Merge every open PR onto main
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DRAFTS: ${{ github.event_name == 'schedule' || inputs.drafts }}
+        run: |
+          git config user.email "integration@localhost"
+          git config user.name "integration check"
+          extra=""; [ "$DRAFTS" = "true" ] && extra="--drafts"
+          python3 scripts/integration_merge.py --open $extra
+          cat integration_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Duplicate check over everything the open PRs add together
+        if: always()
+        run: |
+          if [ -f scripts/dup_lint.py ]; then python3 scripts/dup_lint.py check --base origin/main --head HEAD; else echo "dup_lint.py not on main yet"; fi
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift || true
+      - name: Install toolchain
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .ccache
+          key: ccache-ubuntu-ci-integration-${{ github.sha }}
+          restore-keys: |
+            ccache-ubuntu-ci-
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j4 --timeout 300
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: integration-report
+          path: |
+            integration_report.md
+            integration_report.json

@@ -7377,6 +7377,38 @@ bool ColorEdit4(const char* label, float rgba[4], int flags) { return noteEdit(C
 bool ColorEdit3(const char* label, float rgb[3], int flags) { return noteEdit(ColorEdit3_raw(label, rgb, flags)); }
 bool ListBox(const char* label, int* current, const char* const* items, int count, int visibleRows) { return noteEdit(ListBox_raw(label, current, items, count, visibleRows)); }
 
+// ---- Text field callbacks (history and completion) -----------------------------------------------------------------------------
+// Written by us from the behaviour Dear ImGui documents for these flags: while the field has the keyboard, Up / Down call the
+// callback with EventFlag = InputText_CallbackHistory and EventKey = the arrow, and Tab calls it with InputText_CallbackCompletion.
+// The callback may rewrite the text with DeleteChars / InsertChars; the caret then goes to the end of the new text. Other callback
+// flags (resize, always, char filter) still do nothing. No code from any other project.
+static void runTextCallbacks(const char* label, char* buf, int cap, unsigned flags, InputTextCallback cb, void* userData) {
+    if (!cb || !buf || cap <= 0 || !g_lay.active || (flags & InputText_ReadOnly)) return;
+    const int id = hashLabel(label);
+    if (g_focus != id) return;
+    int ev = 0, key = 0;
+    if ((flags & InputText_CallbackHistory) && (g_in.up || g_in.down)) { ev = InputText_CallbackHistory; key = g_in.up ? KeyId_Up : KeyId_Down; }
+    else if ((flags & InputText_CallbackCompletion) && IsKeyPressed(KeyId_Tab, false)) { ev = InputText_CallbackCompletion; key = KeyId_Tab; }
+    if (!ev) return;
+    TextSlot* ts = textSlot(id);
+    InputTextCallbackData d;
+    d.EventFlag = ev; d.Flags = (int)flags; d.EventKey = key; d.UserData = userData;
+    d.Buf = buf; d.BufTextLen = cstrlen(buf); d.BufSize = cap;
+    d.CursorPos = ts->caret;
+    d.SelectionStart = ts->anchor < ts->caret ? ts->anchor : ts->caret;
+    d.SelectionEnd = ts->anchor < ts->caret ? ts->caret : ts->anchor;
+    cb(&d);
+    if (d.BufTextLen < 0) d.BufTextLen = 0;
+    if (d.BufTextLen > cap - 1) d.BufTextLen = cap - 1;
+    if (d.BufDirty) { buf[d.BufTextLen] = '\0'; ts->caret = ts->anchor = d.BufTextLen; ts->first = 0; }
+}
+bool InputTextWithHint(const char* l, const char* h, char* b, int c, unsigned f, InputTextCallback cb, void* ud) {
+    const bool r = InputTextWithHint(l, h, b, c, f); runTextCallbacks(l, b, c, f, cb, ud); return r;
+}
+bool InputText(const char* l, char* b, int c, unsigned f, InputTextCallback cb, void* ud) {
+    const bool r = InputText(l, b, c, f); runTextCallbacks(l, b, c, f, cb, ud); return r;
+}
+
 // ---- Formatted value fields, framed sliders and the search field (docs/own_ui_toolkit.md section 10) ---------------------------
 // Written from what Dear ImGui's documentation and the editor's panels show: a drag field is a frame with its value in the middle,
 // formatted with a printf format; a slider with a format is a frame with a grab block and the value in the middle; the editor's

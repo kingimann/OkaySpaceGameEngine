@@ -1,5 +1,6 @@
 # Live work board: rewrites WORK_BOARD.md on the bot branch `work-board` every 10 minutes from GitHub data (open PRs and
-# their CI state, recently merged PRs, claude/* and claude2/* branches, the latest comments on issue #422, the claims table
+# their CI state, recently merged PRs, the branches of all three lanes (claude/*, claude2/*, claude3/*; read from docs/lanes.json),
+# the latest comments on issue #422, the claims table
 # parsed from `Claim:`/`Release:` comments on #422 and the collision report from scripts/collision_check.py).
 # Read it at https://github.com/<owner>/<repo>/blob/work-board/WORK_BOARD.md
 # It only reads from GitHub and force-pushes one commit to the `work-board` branch (never main). The branch is
@@ -24,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0   # the collision report compares every claude/* and claude2/* branch with main
+          fetch-depth: 0   # every lane branch (claude/*, claude2/*, claude3/*) for the branch list and the collision report
       - name: Generate the board
         env:
           GITHUB_TOKEN: ${{ github.token }}

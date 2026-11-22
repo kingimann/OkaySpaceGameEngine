@@ -17,6 +17,8 @@
 #define RunAfterSavePrompt RunAfterSavePrompt_WM
 #define OpenScriptFileInEditorAt OpenScriptFileInEditorAt_WM
 #define ConsoleSetMirror ConsoleSetMirror_WM
+#define ConsoleRunLine ConsoleRunLine_WM        // the console command line (claude2/found-console): window mode keeps its own copy
+#define ConsoleAttachHost ConsoleAttachHost_WM
 #define g_consoleMirror g_consoleMirror_WM
 #define g_consoleCounts g_consoleCounts_WM
 #define ConsolePreferCategory ConsolePreferCategory_WM
@@ -95,6 +97,8 @@
 #undef RunAfterSavePrompt
 #undef OpenScriptFileInEditorAt
 #undef ConsoleSetMirror
+#undef ConsoleRunLine
+#undef ConsoleAttachHost
 #undef g_consoleMirror
 #undef g_consoleCounts
 #undef ConsolePreferCategory

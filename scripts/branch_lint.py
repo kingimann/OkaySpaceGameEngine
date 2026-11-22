@@ -5,7 +5,8 @@
   python3 scripts/branch_lint.py secrets  ...
   python3 scripts/branch_lint.py docs     ...
   python3 scripts/branch_lint.py binaries ...      (no built programs or big binary files in git)
-  python3 scripts/branch_lint.py all      ...      (includes + secrets + docs)
+  python3 scripts/branch_lint.py dups     ...      (scripts/dup_lint.py check: pasted code and new copies of shared helpers)
+  python3 scripts/branch_lint.py all      ...      (includes + secrets + binaries + docs + dups)
   python3 scripts/branch_lint.py mingw    ...      -fsyntax-only with the MinGW win32 compiler on the changed engine/ files
 
 includes: CLAUDE.md rule 21a. The Windows programs are cross-compiled with MinGW's "win32" thread model, which has no
@@ -22,10 +23,13 @@ binaries: fails when a branch ADDS or CHANGES a built program or library (.exe .
           (and say why in the PR) if a new asset type is really needed. Screenshots/pictures under docs/ or at the repo root are refused
           (owner rule, 2026-11-17: no screenshots in the repo); test fixtures under tests/, okayui/tests/, assets/, examples/ are fine.
 docs:     warns when engine/ editor/ launcher/ code changed and no docs/**/*.md changed (CLAUDE.md rule 5).
+dups:     runs scripts/dup_lint.py check (every language): a block pasted from elsewhere, or a new copy of a helper listed in
+          docs/engine/shared_code.md (FNV, CRC-32, Base64, Trim/Split, JSON escape ...), is an error; a near copy with renamed
+          names is a warning. `dup-allow: <reason>` on the line silences it. Plain rules: docs/process/no_duplicates.md.
 mingw:    compiles each changed header and source under engine/ with the MinGW cross compiler (MINGW_CXX, default
           x86_64-w64-mingw32-g++-win32, else x86_64-w64-mingw32-g++). Files that include SDL, imgui, GL, X11, sodium, curl
           or openssl headers are skipped (the SDK is not installed here) and listed. Errors are warnings, never fatal.
-Exit code 1 only for includes and secrets findings that are errors. Prints GitHub annotations (::error / ::warning).
+Exit code 1 only for includes, secrets, binaries and dups findings that are errors. Prints GitHub annotations (::error / ::warning).
 Standard library and git only.
 """
 import argparse, os, re, sys
@@ -214,7 +218,7 @@ def emit(findings, label):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("check", choices=["includes", "secrets", "docs", "binaries", "mingw", "all"])
+    ap.add_argument("check", choices=["includes", "secrets", "docs", "binaries", "dups", "mingw", "all"])
     ap.add_argument("--root", default=".")
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--head", default="HEAD")
@@ -234,6 +238,12 @@ def main():
     if a.check in ("docs", "all"):
         f = check_docs(root, a.base, a.head, a.rev); emit(f, "docs")
         print(f"docs: {len(f)} finding(s)", file=sys.stderr)
+    if a.check in ("dups", "all"):
+        import subprocess
+        rng = ["--base", f"{a.rev}^", "--head", a.rev] if a.rev else ["--base", a.base, "--head", a.head]
+        rc = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "dup_lint.py"), "check", "--root", root, *rng]).returncode
+        err += rc != 0
+        print(f"dups: {'errors found' if rc else 'clean'}", file=sys.stderr)
     if a.check == "mingw":
         f = check_mingw(root, a.base, a.head, a.rev); emit(f, "mingw")
     return 1 if err else 0

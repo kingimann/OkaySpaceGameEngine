@@ -1,5 +1,28 @@
 OkaySpace Game Engine — Changelog
 
+v2.903.1
+  Fixes, custom shaders and a working release
+  - 2.902.0 and 2.903.0 could not become the "latest" download because one
+    part of the release (the Linux game server) failed to build. Fixed, so
+    the updater offers this version.
+  - Custom shaders: write your own surface look in a small .okayshader
+    file and pick Shader > Custom on a material. Works in the software and
+    OpenGL renderers; Direct3D 11 is written but not yet tested on Windows.
+  - Controller: the B button no longer quits the game, unplugging a pad no
+    longer crashes, menus work with a pad only, and rumble stops properly.
+  - Cameras: the camera no longer sinks into basements, other players'
+    copies no longer move your camera, and dolly and fly-camera fixes.
+    Click-to-move can pick colliders and gives up when stuck; dolly carts
+    can move in metres per second, ping-pong and face along the path.
+  - Import: no crash on folders whose names look like model files, the
+    Scene view reloads pictures you change outside the editor, and a failed
+    import says why. Project upgrade writes a report of what changed.
+  - Health, survival stats, stats and NPCs now take damage the same way.
+  - Re-applying a prefab keeps objects you added to it. Localization can
+    import and export JSON with a preview. Spawner has a "Use Pool" box.
+  - Launcher: the Create page lists only your projects, not the backup
+    copies a project upgrade makes.
+
 v2.903.0
   Interact key and dialogue cameras
   - One Interact key (E, or X on a controller) for seats, item pickups,

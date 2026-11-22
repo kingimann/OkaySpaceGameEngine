@@ -176,6 +176,12 @@ then this file gets updated. Keep this file short and true.
     new name or as a "v2". If the old design truly cannot be improved, the new code replaces it in the same change and
     the old code is deleted; the two never ship side by side. Every claim and PR names what it improves
     ("Existing:" / "## Existing code"); a PR that adds a parallel system is not merged.
+    **Check before you make anything** (owner, 2026-11-22: "no duplicates, check before you make anything"): before
+    writing any new file, class, function, component, tool, script, doc or system, search for what already does that job:
+    `python3 scripts/find_existing.py <words>` (code, tests, examples, open branches), `docs/SYSTEMS.md` and the feature map,
+    `docs/engine/shared_code.md`, `docs/engine/code_index.md`, open PRs and claims on #422. Write what you found in the
+    claim ("Existing:") and the PR ("## Existing code"). If something exists, improve it; only if nothing does, make it.
+    This applies to agents, briefs and docs too, not only code.
 
 ## Machine and agents
 

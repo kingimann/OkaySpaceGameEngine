@@ -68,7 +68,7 @@ int main() {
     CHECK(Has(hlsl, "abs(d - uP7.x)"));
     CHECK(Has(hlsl, "0.0, 1.0)"));
 
-    std::string here = __FILE__;
+    std::string here = OKAY_TESTS_DIR "/test_dof_math.cpp";
     std::string root = here.substr(0, here.find_last_of("/\\") + 1) + "../engine/src/Render/";
     const std::string gl = Slurp(root + "GLRenderer.cpp");
     const std::string dx = Slurp(root + "D3D11Renderer.cpp") + Slurp(root + "../../include/okay/Render/D3D11Hlsl.hpp");   // HLSL text lives in D3D11Hlsl.hpp (moved out, same bytes)

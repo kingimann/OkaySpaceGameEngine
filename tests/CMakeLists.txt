@@ -8,6 +8,10 @@ foreach(_f FBX COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD
     endif()
 endforeach()
 
+# The tests folder as an absolute path, for tests that read source files next to them. __FILE__ is relative to the
+# build folder in some builds (the MinGW cross build gives "../tests/x.cpp"), so it cannot be used to find them.
+add_compile_definitions(OKAY_TESTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
 # The sandbox the file-writing tests run in (temp folder as working and save folder; guard against writes into the source tree)
 add_executable(test_sandbox test_sandbox.cpp)
 target_link_libraries(test_sandbox PRIVATE okay::engine)

@@ -1975,7 +1975,11 @@ struct Mesh {
         // (a multi-second freeze on real exported models).
         std::string data;
         {
+#ifdef _WIN32
+            std::FILE* fp = _wfopen(utf8::ToWide(path).c_str(), L"rb");   // a narrow fopen reads a UTF-8 path as ANSI there
+#else
             std::FILE* fp = std::fopen(path.c_str(), "rb");
+#endif
             if (!fp) { if (ok) *ok = false; return m; }
             std::fseek(fp, 0, SEEK_END); long sz = std::ftell(fp); std::fseek(fp, 0, SEEK_SET);
             if (sz > 0) {
@@ -2139,7 +2143,7 @@ struct Mesh {
         // whose faces name no coloured material gets no face colours at all (as before).
         if (!mtlPath.empty() && !mtlNames.empty()) {
             std::map<std::string, Color> kd; std::set<std::string> textured;
-            std::ifstream mf(mtlPath); std::string ml, cur;
+            std::ifstream mf(std::filesystem::u8path(mtlPath)); std::string ml, cur;
             while (mf && std::getline(mf, ml)) {
                 std::istringstream ms(ml); std::string mt; ms >> mt;
                 if (mt == "newmtl") { std::getline(ms, cur); std::size_t a = cur.find_first_not_of(" \t"); cur = a == std::string::npos ? std::string() : cur.substr(a);
@@ -2164,7 +2168,7 @@ struct Mesh {
             }
         }
         if (outTexture && !mtlPath.empty()) {                   // read .mtl for map_Kd
-            std::ifstream mf(mtlPath); std::string ml;
+            std::ifstream mf(std::filesystem::u8path(mtlPath)); std::string ml;
             while (mf && std::getline(mf, ml)) {
                 std::istringstream ms(ml); std::string mt; ms >> mt;
                 if (mt == "map_Kd") { std::string tex; std::getline(ms, tex);

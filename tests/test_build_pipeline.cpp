@@ -413,6 +413,26 @@ void TestExportCheck(const fs::path& tmp) {
     CHECK(r2.refsChecked == 1);
     CHECK(r2.Summary().find("all found") != std::string::npos);
 
+    // A graph or script source written over several lines (the editor writes them like that): its file is still not required,
+    // and paths inside the written source are not files the build must have.
+    const fs::path ml = tmp / "check" / "multiline";
+    Write(ml / "Game.exe", "MZ");
+    Write(ml / "Game_Data" / "game.okayconfig", "startup=game.okayscene\n");
+    Write(ml / "Game_Data" / "game.okayscene",
+          "gameobject \"A\"\n  visualscript \"graph v1\n  node 1 \\\"say\\\" \\\"inside.png\\\"\n\"\n  visualscriptpath \"manager.okayvs\"\n"
+          "  script \"lua\" \"-- line one\nprint(\\\"x.wav\\\")\n\" \"Scripts/m.lua\" 0\n"
+          "  visualscript \"\"\n  visualscriptpath \"gone.okayvs\"\n");
+    bp::ExportCheckInput in5; in5.outDir = ml.string(); in5.exeName = "Game.exe";
+    const bp::ExportCheckResult r5 = bp::CheckExport(in5);
+    auto err5 = [&](const std::string& part) { for (const auto& e : r5.errors) if (e.find(part) != std::string::npos) return true; return false; };
+    CHECK(!err5("manager.okayvs"));
+    CHECK(!err5("Scripts/m.lua"));
+    CHECK(!err5("inside.png"));
+    CHECK(!err5("x.wav"));
+    CHECK(err5("gone.okayvs"));
+    CHECK(r5.errors.size() == 1);
+    for (const auto& e : r5.errors) std::printf("    multiline: %s\n", e.c_str());
+
     // No config at all: an error, not a crash.
     bp::ExportCheckInput in3; in3.outDir = (tmp / "check").string();
     CHECK(!bp::CheckExport(in3).Ok());

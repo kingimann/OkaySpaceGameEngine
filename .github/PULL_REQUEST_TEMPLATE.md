@@ -2,6 +2,13 @@
 
 <!-- What does this change and why? -->
 
+## Existing code
+
+<!-- docs/process/no_duplicates.md: what existing code does this reuse or replace (names and files)?
+     Or: "none: searched code_index.md for <words>" (python3 scripts/gen_code_index.py --find <words>). -->
+
+-
+
 ## Changes
 
 -

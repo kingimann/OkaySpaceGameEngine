@@ -181,6 +181,37 @@ class DupLintTest(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("needs a reason", out)
 
+    # ---- new names that look like existing ones (warnings only)
+    def test_similar_new_name_warns(self):
+        base = {"engine/src/Damage.cpp": "bool HealthOf(GameObject* g, float& h, float& m) {\n  return false;\n}\n",
+                "engine/src/Json.cpp": "bool ParseJson(const std::string& s, Value& out) {\n  return true;\n}\n"}
+        code, out = self.run_case(base, {"engine/src/Mine.cpp": "float GetHealth(GameObject* g) {\n  return 1.0f;\n}\n"
+                                                                 "bool JsonParse(const std::string& s, Value& v) {\n  return true;\n}\n"})
+        self.assertEqual(code, 0, out)
+        self.assertIn("new name GetHealth looks like the existing HealthOf at engine/src/Damage.cpp:1", out)
+        self.assertIn("new name JsonParse looks like the existing ParseJson", out)
+        self.assertIn("did you mean to reuse".lower(), out.lower())
+
+    def test_get_set_pair_is_not_a_similar_name(self):
+        base = {"engine/src/Body.cpp": "float GetFriction(Body* b) {\n  return 0.0f;\n}\n"}
+        code, out = self.run_case(base, {"engine/src/Body2.cpp": "void SetFriction(Body* b, float f) {\n}\n"})
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("WARNING similar name", out)
+
+    # ---- retired (OKAY_DEPRECATED) names
+    def test_new_call_to_a_retired_name_fails(self):
+        base = {"engine/include/okay/Core/OldHash.hpp": "#pragma once\nOKAY_DEPRECATED(\"use StringId::HashOf\")\nunsigned OldHash(const char* s);\n",
+                "engine/src/A.cpp": "int a;\n"}
+        code, out = self.run_case(base, {"engine/src/A.cpp": "int a;\nunsigned h = OldHash(\"player\");\n"})
+        self.assertEqual(code, 1, out)
+        self.assertIn("OldHash was retired", out)
+
+    def test_marking_a_name_retired_in_the_same_branch_passes(self):
+        base = {"engine/include/okay/Core/OldHash.hpp": "#pragma once\nunsigned OldHash(const char* s);\n"}
+        code, out = self.run_case(base, {"engine/include/okay/Core/OldHash.hpp":
+                                         "#pragma once\nOKAY_DEPRECATED(\"use StringId::HashOf\")\nunsigned OldHash(const char* s);\n"})
+        self.assertEqual(code, 0, out)
+
     # ---- other languages and the shared-code list
     def test_pasted_shell_block_fails(self):
         sh = "".join(f"if [ -f \"$dir/file{i}.txt\" ]; then\n  cp \"$dir/file{i}.txt\" \"$out/\" || exit {i}\nfi\n" for i in range(8))
@@ -194,6 +225,56 @@ class DupLintTest(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("Math/Gone.hpp", out)
         self.assertNotIn("Base64.hpp", out.split("Math/Gone.hpp")[0][-300:])
+
+
+class CrossBranchTest(unittest.TestCase):
+    """collision_check's copy check between open branches (dup_lint.cross_branch)."""
+    def test_same_block_on_two_branches_and_similar_names(self):
+        sys.path.insert(0, os.path.dirname(TOOL))
+        import dup_lint as D
+        r = Repo({"engine/src/A.cpp": "int a;\n"})
+        try:
+            git(r.d, "checkout", "-q", "main"); git(r.d, "checkout", "-q", "-b", "one")
+            r.write("engine/src/One.cpp", BLOCK + "bool ParseJson(const char* s) {\n  return s != nullptr;\n}\n"); r.commit("one")
+            git(r.d, "checkout", "-q", "main"); git(r.d, "checkout", "-q", "-b", "two")
+            r.write("engine/src/Two.cpp", "// mine\n" + BLOCK + "bool JsonParse(const char* text) {\n  return text != nullptr;\n}\n"); r.commit("two")
+            res = D.cross_branch(r.d, "main", {"one": "one", "two": "two"})
+            self.assertEqual(len(res["clones"]), 1, res)
+            c = res["clones"][0]
+            self.assertEqual({c["a_file"], c["b_file"]}, {"engine/src/One.cpp", "engine/src/Two.cpp"})
+            self.assertTrue(any({n["a_name"], n["b_name"]} == {"ParseJson", "JsonParse"} for n in res["names"]), res["names"])
+            focus = D.cross_branch(r.d, "main", {"one": "one", "two": "two"}, focus="two")
+            self.assertEqual(len(focus["clones"]), 1, focus)
+        finally:
+            r.close()
+
+
+class CodeIndexTest(unittest.TestCase):
+    def test_public_names_only(self):
+        sys.path.insert(0, os.path.dirname(TOOL))
+        import gen_code_index as G
+        hdr = ("#pragma once\nnamespace okay {\n/// A thing that moves.\nclass Mover {\npublic:\n    void Step(float dt);\n};\n"
+               "class Forward;\n/// Clamp a speed.\ninline float ClampSpeed(float v) { return v; }\n"
+               "namespace detail {\nint Hidden();\n}\nstruct Pose { float x; };\n}\n")
+        got = {(k, n): (ln, d) for k, n, ln, d in G.entries("engine/include/okay/X/M.hpp", hdr)}
+        self.assertEqual(got.get(("class", "Mover")), (4, "A thing that moves."))
+        self.assertEqual(got.get(("function", "ClampSpeed")), (10, "Clamp a speed."))
+        self.assertIn(("struct", "Pose"), got)
+        self.assertNotIn(("function", "Step"), got)      # a method
+        self.assertNotIn(("function", "Hidden"), got)    # namespace detail
+        self.assertNotIn(("class", "Forward"), got)      # a forward declaration
+
+
+class PrBodyExistingTest(unittest.TestCase):
+    def test_existing_code_section(self):
+        sys.path.insert(0, os.path.dirname(TOOL))
+        import check_pr_body as PB
+        self.assertFalse(PB.check_existing("## How to try it\nsteps here\n", ["a.cpp"])[0])
+        self.assertFalse(PB.check_existing("## Existing code\n\n<!-- hint -->\n-\n", ["a.cpp"])[0])
+        self.assertFalse(PB.check_existing("## Existing code\nnone\n", ["a.cpp"])[0])
+        self.assertTrue(PB.check_existing("## Existing code\nnone: searched code_index.md for ragdoll, joint motor\n", ["a.cpp"])[0])
+        self.assertTrue(PB.check_existing("## Existing code\nReuses SolveTwoBoneIK (Math/TwoBoneIK.hpp); replaces the IK in HumanoidMotion.cpp\n", ["a.cpp"])[0])
+        self.assertTrue(PB.check_existing("## Existing code\nn/a\n", ["docs/x.md"])[0])
 
 
 if __name__ == "__main__":

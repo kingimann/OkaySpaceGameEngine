@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""PR hygiene (CLAUDE.md rule 4a): a PR body needs a 'How to try it' section with real content.
+"""PR hygiene: a PR body needs a 'How to try it' section (CLAUDE.md rule 4a) and an 'Existing code' section
+(docs/process/no_duplicates.md), both with real content.
 
   PR_BODY="$BODY" python3 scripts/check_pr_body.py [--files a b c | --base origin/main --head HEAD]
 
 Passes when the section exists and says something: steps, or for a change with nothing to run (docs only, tests only, CI)
 'Nothing to run: read <file>' or 'n/a, <why>'. Fails (exit 1) when the section is missing, empty, only a template
 comment, or just a dash. A docs-only change (every changed file under docs/ or a .md file) may use any non-empty text.
+
+'Existing code' lists what the PR reuses or replaces (names and files), or says
+'none: searched code_index.md for <words>' (which words you searched docs/engine/code_index.md for).
 Standard library only.
 """
 import argparse, os, re, subprocess, sys
@@ -45,6 +49,33 @@ def check(body, files=None):
     return True, "ok"
 
 
+EXISTING_RE = re.compile(r"^#{1,6}\s*Existing code\b.*$", re.I | re.M)
+
+
+def check_existing(body, files=None):
+    """The 'Existing code' section: what the PR reuses or replaces, or 'none: searched code_index.md for <words>'."""
+    m = EXISTING_RE.search(body or "")
+    if not m:
+        return False, ("the PR body has no '## Existing code' section. List the existing code this PR reuses or replaces "
+                       "(names and files), or write 'none: searched code_index.md for <words>' (docs/process/no_duplicates.md).")
+    rest = body[m.end():]
+    nxt = re.search(r"^#{1,6}\s+\S", rest, re.M)
+    t = meaningful(rest[:nxt.start()] if nxt else rest)
+    docs_only = bool(files) and all(f.startswith("docs/") or f.endswith(".md") for f in files)
+    if not t:
+        return False, "the 'Existing code' section is empty. Name what you reuse or replace, or 'none: searched code_index.md for <words>'."
+    if docs_only:
+        return True, "ok"
+    if re.match(r"(?i)\s*(none|nothing|n/?a|-)\b", t):
+        if not re.search(r"(?i)searched\b.*code_index(\.md)?\b.*\bfor\b\s*\S+", t):
+            return False, ("'Existing code' says none. Say what you searched: 'none: searched code_index.md for <words>' "
+                           "(python3 scripts/gen_code_index.py --find <words>).")
+        return True, "ok"
+    if len(re.findall(r"\w+", t)) < 2:
+        return False, "the 'Existing code' section is too short. Name the functions, classes or files this PR reuses or replaces."
+    return True, "ok"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--body-file")
@@ -57,7 +88,9 @@ def main():
         files = subprocess.run(["git", "diff", "--name-only", f"{a.base}...{a.head}"], stdout=subprocess.PIPE, text=True).stdout.split()
     ok, msg = check(body, files)
     print(("OK: " if ok else "::error title=PR needs a How to try it section::") + msg)
-    return 0 if ok else 1
+    ok2, msg2 = check_existing(body, files)
+    print(("OK: " if ok2 else "::error title=PR needs an Existing code section::") + msg2)
+    return 0 if ok and ok2 else 1
 
 
 if __name__ == "__main__":

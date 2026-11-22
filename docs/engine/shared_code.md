@@ -14,7 +14,8 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 
 ## Before you write a helper
 
-1. Search this table, then search the code (`git grep -n "Trim("`, `python3 scripts/find_existing.py <words>`).
+1. Search this table, then the [code index](code_index.md) (every public class and function, generated), then the
+   code: `python3 scripts/find_existing.py <words>` searches all three and lists names close to yours.
 2. Found it: call it. It does nearly what you need: extend the shared one (add a parameter or an overload) in the
    same PR, and update this table.
 3. Not found: write it once, in the right shared file (`Core/`, `Math/`, ...), add a row here, and use it from every
@@ -70,3 +71,5 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 - When a dedup lands, move the row from "planned" to the real file, and shrink the baseline:
   `python3 scripts/dup_lint.py scan --update-baseline`, then commit `scripts/dup_baseline.json`.
 - `dup_lint.py check` fails when a row (not marked planned) names a file that does not exist.
+- When a dedup replaces an old function, mark the old one `OKAY_DEPRECATED("use X")` (`Core/Deprecated.hpp`);
+  `dup_lint.py check` then fails any branch that adds a new use of it.

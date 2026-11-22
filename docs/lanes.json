@@ -203,6 +203,11 @@
       "regen": "python3 scripts/gen_vs_node_docs.py"
     },
     {
+      "file": "docs/engine/code_index.md",
+      "sources": ["engine/include/**", "shared/**", "okayui/include/**"],
+      "regen": "python3 scripts/gen_code_index.py"
+    },
+    {
       "file": "docs/WORK_BOARD.md",
       "sources": [
         "scripts/work_board.py"

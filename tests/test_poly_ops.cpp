@@ -838,6 +838,28 @@ int main() {
         // A tear that ends inside: only the middle vertex splits.
         PolyMesh in = Grid(4, 4);
         CHECK(RipEdges(in, {{11, 12}, {12, 13}}, Vec3{0, 0, 1}, &err).size() == 1 && in.Check().Valid() && ConsistentWinding(in));
+        // A closed loop tears off one whole side (seen in the editor: a loop round a patch tore a mix of inside and
+        // outside faces, because each edge picked its own side). Pointing outside tears the outside; inside, the inside.
+        for (int pass = 0; pass < 2; ++pass) {
+            PolyMesh lp = Grid(4, 4);
+            const std::vector<int> mid = {5, 6, 9, 10};
+            const EdgeList ring = RegionOutline(lp, mid);
+            const std::size_t nv0 = lp.verts.size();
+            const std::vector<int> made = RipEdges(lp, ring, pass == 0 ? Vec3{5, 0, 0} : Vec3{0.3f, 0, 0.2f}, &err);
+            CHECK(made.size() == 8 && lp.Check().Valid() && ConsistentWinding(lp));
+            bool innerNew = true, innerOld = true, outerTouchesInner = false;
+            std::set<int> innerVerts;
+            for (int f : mid) for (int v : lp.faces[f].verts) { innerVerts.insert(v); if (v >= (int)nv0) innerOld = false; }
+            for (int f : mid) for (int v : lp.faces[f].verts) if (v < (int)nv0 && v != 12) { /* corners on the loop */ }
+            for (int f = 0; f < (int)lp.faces.size(); ++f) {
+                if (std::find(mid.begin(), mid.end(), f) != mid.end()) continue;
+                for (int v : lp.faces[f].verts) if (innerVerts.count(v)) outerTouchesInner = true;
+            }
+            // the inside's loop corners: new vertices when the inside was torn
+            int innerNewCount = 0; for (int v : innerVerts) if (v >= (int)nv0) ++innerNewCount;
+            if (pass == 0) { CHECK(innerOld); } else { CHECK(innerNewCount == 8); innerNew = innerNewCount == 8; }
+            CHECK(!outerTouchesInner && innerNew);
+        }
         // Hostile: one edge inside (both ends stay joined), border edges only, not a number, nothing.
         PolyMesh h = Grid(4, 4); const std::size_t before = h.verts.size();
         err.clear(); CHECK(RipEdges(h, {{11, 12}}, Vec3{0, 0, 1}, &err).empty() && err.find("Nothing to rip") != std::string::npos && h.verts.size() == before);

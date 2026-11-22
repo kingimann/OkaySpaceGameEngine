@@ -3,6 +3,7 @@
 // helpers (unlisted tags, tag rename) and the validator's tag / layer findings.
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include "okay/Core/BuildConfigExtra.hpp"
 #include <cstdio>
 #include <fstream>
 #include <string>
@@ -270,6 +271,35 @@ int main() {
         CHECK(strict.ToString().find("Mystery") != std::string::npos);
         Tags::Add("Mystery");
         CHECK(SceneSerializer::Validate(text).Count(SceneIssue::Kind::UnknownTag) == 0);
+        ResetProject();
+    }
+
+    // The built game: the editor appends ProjectLists::Write() to game.okayconfig and the player hands each line to
+    // ProjectLists::ApplyLine before the extra-settings reader. The two sets of keys must not overlap.
+    RUN_SUITE("game.okayconfig carries the lists");
+    {
+        ResetProject();
+        Tags::Add("Coin"); Tags::Strict() = true; Layers::SetName(9, "Water2");
+        buildpipe::ExtraConfig extra; extra.timeScale = 0.5f; extra.particleCap = 300;
+        const std::string cfg = "width=1280\n" + buildpipe::WriteExtraConfig(extra) + ProjectLists::Write();
+        ResetProject();
+        buildpipe::ExtraConfig back;
+        int listLines = 0, extraLines = 0;
+        std::size_t at = 0;
+        while (at < cfg.size()) {   // the player's loop, minus its own keys
+            std::size_t nl = cfg.find('\n', at); if (nl == std::string::npos) nl = cfg.size();
+            const std::string line = cfg.substr(at, nl - at); at = nl + 1;
+            const std::size_t eq = line.find('='); if (eq == std::string::npos) continue;
+            const std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+            buildpipe::ExtraConfig probe;
+            const bool isList = ProjectLists::ApplyLine(k, v);
+            const bool isExtra = buildpipe::ApplyExtraKey(isList ? probe : back, k, v);
+            CHECK(!(isList && isExtra));   // no key is claimed by both
+            listLines += isList; extraLines += isExtra;
+        }
+        CHECK(listLines == 3 && extraLines == 2);
+        CHECK(Tags::Contains("Coin") && Tags::Strict() && Layers::NameToLayer("Water2") == 9);
+        CHECK(back.timeScale == 0.5f && back.particleCap == 300);
         ResetProject();
     }
 

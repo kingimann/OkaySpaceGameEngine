@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include "okay/Scene/BuiltinComponentRules.hpp"
+#include "okay/Components/UIInputValidator.hpp"
 #include <cstdio>
 #include <fstream>
 #include <string>
@@ -345,6 +347,74 @@ int main() {
         // A serialized scene with a rule type goes through the rules too.
         ComponentRules::Clear();
         CHECK(!ComponentRules::Any() && !ComponentRules::IsUnique(typeid(Solo)));
+    }
+
+    // ---- 8. The engine's own rules (RegisterBuiltinComponentRules: what the editor and the player call) ----
+    {
+        ComponentRules::Clear();
+        // A scene saved before the rules, with the joint's line BEFORE the body's (an old file, or one written by hand).
+        std::string oldText;
+        {
+            Scene sc("old");
+            GameObject* g = sc.CreateGameObject("Door");
+            g->AddComponent<Joint3D>();
+            g->AddComponent<Rigidbody3D>()->mass = 7.0f;
+            oldText = SceneSerializer::Serialize(sc);
+            const std::size_t rb = oldText.find("  rigidbody3d ");
+            const std::size_t jt = oldText.find("  joint3d ");
+            CHECK(rb != std::string::npos && jt != std::string::npos);
+            if (rb != std::string::npos && jt != std::string::npos && rb < jt) {   // put the body's line after the joint's
+                const std::size_t rbEnd = oldText.find('\n', rb) + 1;
+                const std::string rbLine = oldText.substr(rb, rbEnd - rb);
+                oldText.erase(rb, rbEnd - rb);
+                const std::size_t jt2 = oldText.find("  joint3d ");
+                oldText.insert(oldText.find('\n', jt2) + 1, rbLine);
+            }
+        }
+        RegisterBuiltinComponentRules();
+        RegisterBuiltinComponentRules();   // twice: nothing more
+        CHECK(ComponentRules::Any());
+        CHECK(ComponentRules::RequirementsOf(typeid(Joint3D)).size() == 1);
+        Scene sc("b");
+        GameObject* door = sc.CreateGameObject("Door");
+        auto* joint = door->AddComponent<Joint3D>();
+        CHECK(door->GetComponents<Rigidbody3D>().size() == 1);              // the body came first
+        CHECK(door->RequiredBy(door->GetComponent<Rigidbody3D>()) == joint); // and the editor may not remove it
+        CHECK(door->RequiredBy(joint) == nullptr);
+        GameObject* hinge2 = sc.CreateGameObject("Hinge2D");
+        hinge2->AddComponent<Joint2D>();
+        CHECK(hinge2->GetComponent<Rigidbody2D>() != nullptr);
+        GameObject* hull = sc.CreateGameObject("Hull");
+        hull->AddComponent<Buoyancy>();
+        hull->AddComponent<BoatController>();
+        CHECK(hull->GetComponents<Rigidbody3D>().size() == 1);
+        GameObject* field = sc.CreateGameObject("Field");
+        field->AddComponent<UIInputValidator>();
+        CHECK(field->GetComponent<UIInputField>() != nullptr);
+        // The loader keeps what the file says: the old file loads with ONE body that keeps its saved mass,
+        // and a file with a joint and no body stays without one (it does not start falling after an update).
+        Scene back("back");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(back, oldText, &err));
+        GameObject* od = back.Find("Door");
+        CHECK(od && od->GetComponents<Rigidbody3D>().size() == 1 && od->GetComponents<Joint3D>().size() == 1);
+        CHECK(od && od->GetComponent<Rigidbody3D>() && od->GetComponent<Rigidbody3D>()->mass == 7.0f);
+        {
+            ComponentRules::Clear();
+            Scene lone("lone");
+            lone.CreateGameObject("Anchor")->AddComponent<Joint3D>();
+            const std::string loneText = SceneSerializer::Serialize(lone);
+            RegisterBuiltinComponentRules();
+            Scene lb("lb");
+            CHECK(SceneSerializer::Deserialize(lb, loneText, &err));
+            GameObject* a = lb.Find("Anchor");
+            CHECK(a && a->GetComponent<Joint3D>() && a->GetComponent<Rigidbody3D>() == nullptr);
+            CHECK(ComponentRules::Any());   // the rules are back on after the load
+            GameObject* fresh = lb.CreateGameObject("Fresh");
+            fresh->AddComponent<Joint3D>();
+            CHECK(fresh->GetComponent<Rigidbody3D>() != nullptr);
+        }
+        ComponentRules::Clear();
     }
 
     TEST_MAIN_RESULT();

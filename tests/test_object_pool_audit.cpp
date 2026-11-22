@@ -3,6 +3,8 @@
 // `usePool`, the script calls pool_get / pool_release / pool_prewarm / pool_idle, and the pools scripts share.
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include "okay/Scripting/NextScriptVM.hpp"
+#include "okay/VisualScript/VsApi.hpp"
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -397,6 +399,46 @@ void TestEdges() {
 
 } // namespace
 
+// The same pool calls in the typed language's binding table, which also makes them visual-script nodes
+// (ObjectPool.Get/4, ObjectPool.Prewarm/2, ObjectPool.Idle/1, ObjectPool.Release/0).
+void TestBindingTable() {
+    RUN_SUITE("ObjectPool in the binding table: typed scripts and visual-script nodes");
+    const vs::VsApiEntry* get = vs::VsApiFind("ObjectPool.Get/4");
+    const vs::VsApiEntry* warm = vs::VsApiFind("ObjectPool.Prewarm/2");
+    const vs::VsApiEntry* idle = vs::VsApiFind("ObjectPool.Idle/1");
+    const vs::VsApiEntry* rel = vs::VsApiFind("ObjectPool.Release/0");
+    CHECK(get && get->exec && get->ins.size() == 4 && !get->hasTarget && get->outs.size() == 1);
+    CHECK(warm && warm->exec);
+    CHECK(idle && !idle->exec && idle->outs.size() == 1);   // a value node
+    CHECK(rel && rel->exec);
+    const std::string prefab = MakePrefab("test_pool_audit_typed.okayprefab", [](GameObject& g) { g.AddComponent<SpriteRenderer>(); });
+    Scene sc("t");
+    auto* s = sc.CreateGameObject("Gun")->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+    const std::string P = "\"" + prefab + "\"";
+    std::string err;
+    const bool ok = s->LoadSource("class T : Behaviour {\n"
+        "    public int warm; public int idle; public bool got; public float x;\n"
+        "    public void Warm() { warm = ObjectPool.Prewarm(" + P + ", 2); }\n"
+        "    public void Fire() { GameObject b = ObjectPool.Get(" + P + ", 4, 5, 6); got = b != null; x = b.transform.position.x; idle = ObjectPool.Idle(" + P + "); }\n"
+        "    public void Missing() { got = ObjectPool.Get(\"missing_prefab.okayprefab\", 0, 0, 0) != null; }\n"
+        "}\n", &err);
+    CHECK(ok);
+    if (!ok) { std::printf("  parse error: %s\n", err.c_str()); std::remove(prefab.c_str()); return; }
+    sc.Start();
+    sc.Update(0.016f);
+    s->VM()->CallEvent("Warm");
+    CHECK(s->VM()->GetGlobal("warm").AsFloat() == 2.0f);
+    s->VM()->CallEvent("Fire");
+    CHECK(s->VM()->GetGlobal("got").AsBool());
+    CHECK(std::fabs(s->VM()->GetGlobal("x").AsFloat() - 4.0f) < 1e-4f);
+    CHECK(s->VM()->GetGlobal("idle").AsFloat() == 1.0f);   // one of the two spares was taken
+    ObjectPool* pool = ObjectPool::ForPrefab(sc, prefab);
+    CHECK(pool && pool->ActiveCount() == 1 && pool->CreatedCount() == 2);
+    s->VM()->CallEvent("Missing");
+    CHECK(!s->VM()->GetGlobal("got").AsBool());
+    std::remove(prefab.c_str());
+}
+
 int main() {
     TestSavedScene();
     TestShrink();
@@ -405,6 +447,7 @@ int main() {
     TestSpawnerUsePool();
     TestScriptCalls();
     TestSharedPools();
+    TestBindingTable();
     TestEdges();
     TEST_MAIN_RESULT();
 }

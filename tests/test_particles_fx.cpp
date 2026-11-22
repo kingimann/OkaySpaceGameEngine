@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include "okay/Render/ParticleDrawList.hpp"
+#include "okay/Render/OcclusionOverlay.hpp"
 #include <sstream>
 
 using namespace okay;
@@ -328,6 +330,34 @@ int main() {
         CHECK(r2 && r2->simulationSpace == ParticleSystem::SimulationSpace::Local);
         CHECK(r2 && r2->colorGradient.count <= ParticleGradient::kMaxStops);
         CHECK(r2 && r2->noiseStrength == 2.0f);
+    }
+
+    // ---- Two Particle Systems on one object: both are drawn (the hosts used to take only the first) ----
+    {
+        Scene s("Two"); s.physicsEnabled = false;
+        GameObject* g = s.CreateGameObject("Fire");
+        auto* sparks = g->AddComponent<ParticleSystem>();
+        auto* smoke  = g->AddComponent<ParticleSystem>();
+        GameObject* other = s.CreateGameObject("Other");
+        auto* third = other->AddComponent<ParticleSystem>();
+        std::vector<ParticleSystem*> list;
+        CollectParticleSystemsToDraw(s.Objects(), list);
+        CHECK(list.size() == 3);
+        CHECK(list.size() == 3 && list[0] == sparks && list[1] == smoke && list[2] == third);   // scene order, then component order
+        list.clear();
+        CollectParticleSystemsToDraw(s.Objects(), list, [&](const GameObject* o) { return o == other; });
+        CHECK(list.size() == 2 && list[1] == smoke);   // the skip check hides a whole object
+        other->active = false; list.clear();
+        CollectParticleSystemsToDraw(s.Objects(), list);
+        CHECK(list.size() == 2);                       // inactive objects are left out
+        // The GPU hosts' depth pass for particles: live particles only in the SECOND system still count.
+        sparks->playing = false; sparks->emissionRate = 0.0f;
+        smoke->playing = false;  smoke->emissionRate = 0.0f;
+        s.Update(0.1f);
+        CHECK(!SceneHasOverlayNeedingDepth(s));
+        smoke->Emit(3); s.Update(0.01f);
+        CHECK(smoke->AliveCount() > 0 && sparks->AliveCount() == 0);
+        CHECK(SceneHasOverlayNeedingDepth(s));
     }
 
     TEST_MAIN_RESULT();

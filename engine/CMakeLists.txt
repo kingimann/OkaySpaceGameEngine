@@ -769,6 +769,7 @@ target_sources(okay_engine PRIVATE
 target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp)
 # Project tag list and layer names in the project settings file (docs/gameplay/cameras.md).
 target_sources(okay_engine PRIVATE src/Scene/ProjectLists.cpp)
+target_sources(okay_engine PRIVATE src/Scene/BuiltinComponentRules.cpp)
 # ---- Property reflection (docs/engine/properties.md) ----
 # PropertyValue / PropertyDesc, the registry with path access and change hook,
 # snapshot / diff / copy, and the built-in component registrations.

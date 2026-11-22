@@ -208,6 +208,55 @@ static void RandomApi() {
     CHECK(Errors(Diags("public class R : MonoBehaviour { void Start() { int n = Random.Range(0f, 1f); } }\n")) >= 1);
 }
 
+// Unity's collision messages: OnTriggerEnter(Collider other), OnCollisionEnter(Collision c)
+// and the 2D ones, with other.name / tag / gameObject / CompareTag. Private methods, as
+// a Unity user writes them, with no "never called" warning.
+static void CollisionMessages() {
+    const std::string src =
+        "public class Hit : MonoBehaviour {\n"
+        "    public int enters, exits, coins, hits, hits2d;\n"
+        "    public string lastName = \"\", lastHit = \"\";\n"
+        "    void OnTriggerEnter(Collider other) {\n"
+        "        enters++;\n"
+        "        lastName = other.name;\n"
+        "        if (other.CompareTag(\"Coin\")) coins++;\n"
+        "        if (other.gameObject.tag == \"Coin\") coins += 10;\n"
+        "    }\n"
+        "    void OnTriggerExit(Collider other) { exits++; }\n"
+        "    void OnCollisionEnter(Collision c) { hits++; lastHit = c.gameObject.name + \"@\" + c.transform.position.x; }\n"
+        "    void OnCollisionEnter2D(Collision2D c) { hits2d++; }\n"
+        "}\n";
+    auto d = Diags(src);
+    CHECK(Errors(d) == 0);
+    CHECK((int)d.size() == 0);   // no "never called" warnings
+    Dump(d);
+    World w(src);
+    CHECK(w.loaded);
+    GameObject* coin = w.scene.CreateGameObject("Coin1");
+    coin->tag = "Coin";
+    coin->transform->localPosition = {4.0f, 0.0f, 0.0f};
+    auto* box = coin->AddComponent<BoxCollider3D>();
+    w.sc->OnTriggerEnter3D(box);
+    w.sc->OnTriggerExit3D(box);
+    Collision3D c3; c3.gameObject = coin; c3.collider = box;
+    w.sc->OnCollisionEnter3D(c3);
+    Collision2D c2; c2.gameObject = coin;
+    w.sc->OnCollisionEnter2D(c2);
+    CHECK_NEAR(w.F("enters"), 1.0f, 1e-4f);
+    CHECK_NEAR(w.F("exits"), 1.0f, 1e-4f);
+    CHECK_NEAR(w.F("coins"), 11.0f, 1e-4f);
+    CHECK_NEAR(w.F("hits"), 1.0f, 1e-4f);
+    CHECK_NEAR(w.F("hits2d"), 1.0f, 1e-4f);
+    CHECK(w.sc->VM() && w.sc->VM()->GetGlobal("lastName").AsString() == "Coin1");
+    CHECK(w.sc->VM() && w.sc->VM()->GetGlobal("lastHit").AsString() == "Coin1@4");
+    // The old way still works: a public method without a parameter.
+    World w2("public class H : MonoBehaviour { public int n; public void OnTriggerEnter() { n++; } }\n");
+    w2.sc->OnTriggerEnter3D(box);
+    CHECK_NEAR(w2.F("n"), 1.0f, 1e-4f);
+    // A wrong parameter type is caught before the game runs.
+    CHECK(Errors(Diags("public class H : MonoBehaviour { void OnTriggerEnter(int x) { } }\n")) >= 1);
+}
+
 // An old scene that named "csharp" (the removed Mono backend) now loads and runs if the
 // script compiles, and shows the checker's errors if it does not.
 static void OldScenes() {
@@ -309,6 +358,7 @@ int main() {
     KeyCodes();
     Properties();
     RandomApi();
+    CollisionMessages();
     OldScenes();
     ExampleScene();
     TEST_MAIN_RESULT();

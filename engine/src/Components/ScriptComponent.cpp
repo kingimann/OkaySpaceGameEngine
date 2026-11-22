@@ -156,6 +156,11 @@ void ScriptComponent::OnDisable() {
     if (m_vm && m_started && ScriptsRun(gameObject)) m_vm->CallEvent("on_disable");
 }
 
+// Set while a 2D physics event is forwarded, so the typed language (C#) can call
+// OnCollisionEnter2D rather than OnCollisionEnter (scripts run on one thread).
+static bool s_fire2D = false;
+struct Fire2DScope { Fire2DScope() { s_fire2D = true; } ~Fire2DScope() { s_fire2D = false; } };
+
 void ScriptComponent::FireWithObject(const char* event, GameObject* other) {
     if (!m_vm || !ScriptsRun(gameObject)) return;
     // OkayScript gets a reference that carries the object's instance id (it still
@@ -169,7 +174,8 @@ void ScriptComponent::FireWithObject(const char* event, GameObject* other) {
     // The typed language (C#) gets the object itself: OnTriggerEnter(Collider other) reads
     // other.name / tag / gameObject; a string parameter still receives the name.
     const bool typed = NextScriptVM::IsTypedId(m_vm->Language());
-    m_vm->CallEventWith(event, (typed && other) ? vs::VsValue::Object(other->InstanceId()) : name);
+    m_vm->CallEventWith(typed && s_fire2D ? std::string(event) + "_2d" : std::string(event),
+                        (typed && other) ? vs::VsValue::Object(other->InstanceId()) : name);
 }
 // Contact details for the handler about to run: contact_point / contact_normal
 // (vectors), the same as contact_x/_y/_z and contact_nx/_ny/_nz numbers,
@@ -189,6 +195,7 @@ void ScriptComponent::SetContact(const Vec3& point, const Vec3& normal, float im
     m_vm->SetGlobal("other_tag", vs::VsValue(other ? other->tag : std::string()));
 }
 void ScriptComponent::FireOther(const char* event, Collider2D* c) {
+    Fire2DScope twoD;
     const TriggerContact2D* tc = Physics2D::CurrentTrigger();
     SetContact(tc ? Vec3{tc->point} : Vec3::Zero, tc ? Vec3{tc->normal} : Vec3::Zero, 0.0f,
                c ? c->gameObject : nullptr);
@@ -201,6 +208,7 @@ void ScriptComponent::FireOther(const char* event, Collider3D* c) {
     FireWithObject(event, c ? c->gameObject : nullptr);
 }
 void ScriptComponent::FireOther(const char* event, const Collision2D& c) {
+    Fire2DScope twoD;
     SetContact(Vec3{c.point}, Vec3{c.normal}, c.impactSpeed, c.gameObject);
     FireWithObject(event, c.gameObject);
 }

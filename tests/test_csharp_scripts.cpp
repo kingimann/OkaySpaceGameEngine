@@ -245,6 +245,7 @@ static void CollisionMessages() {
     w.sc->OnCollisionEnter3D(c3);
     Collision2D c2; c2.gameObject = coin;
     w.sc->OnCollisionEnter2D(c2);
+    for (auto& e : g_errs) std::printf("    error: %s\n", e.c_str());
     CHECK_NEAR(w.F("enters"), 1.0f, 1e-4f);
     CHECK_NEAR(w.F("exits"), 1.0f, 1e-4f);
     CHECK_NEAR(w.F("coins"), 11.0f, 1e-4f);
@@ -374,6 +375,11 @@ static std::string ReadText(const std::string& path) {
 // mover's Hops property through GetComponent<PlayerMover>()).
 static void ExampleScene() {
     const std::string dir = std::string(OKAY_SOURCE_DIR) + "/examples/csharp/";
+    {   // Scoreboard uses PlayerMover: the checker knows another script once it has loaded
+        auto vm = CreateScriptVM("csharp");
+        std::string e;
+        CHECK(vm && vm->Load(ReadText(dir + "PlayerMover.cs"), &e));
+    }
     for (const char* f : {"PlayerMover.cs", "Spinner.cs", "Scoreboard.cs"}) {
         const std::string text = ReadText(dir + f);
         CHECK(!text.empty());

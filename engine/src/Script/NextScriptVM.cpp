@@ -299,17 +299,21 @@ vs::VsValue NextScriptVM::CallEventArgs(const std::string& function, const std::
     if (!m_impl->inst) return {};
     int idx = m_impl->prog->MethodIndex(function);
     if (idx < 0 && (function.rfind("on_trigger_", 0) == 0 || function.rfind("on_collision_", 0) == 0)) {
-        // A collision message: on_trigger_enter reaches OnTriggerEnter (or OnTriggerEnter2D),
-        // private or public, with the other object as its argument.
+        // A collision message: on_trigger_enter reaches OnTriggerEnter, and the 2D event
+        // (on_trigger_enter_2d) OnTriggerEnter2D, else OnTriggerEnter; private or public,
+        // with the other object as its argument.
+        const bool twoD = function.size() > 3 && function.compare(function.size() - 3, 3, "_2d") == 0;
+        const std::string base = twoD ? function.substr(0, function.size() - 3) : function;
         std::string name;
         bool up = true;
-        for (char ch : function) {
+        for (char ch : base) {
             if (ch == '_') { up = true; continue; }
             name += up ? (char)std::toupper((unsigned char)ch) : ch;
             up = false;
         }
-        idx = m_impl->prog->MethodIndex(name);
-        if (idx < 0) idx = m_impl->prog->MethodIndex(name + "2D");
+        idx = twoD ? m_impl->prog->MethodIndex(name + "2D") : -1;
+        if (idx < 0) idx = m_impl->prog->MethodIndex(name);
+        if (idx < 0) { CallEvent(base); return {}; }
     }
     if (idx < 0) { CallEvent(function); return {}; }   // engine lifecycle names, or no such method
     const MethodDecl& m = m_impl->prog->Component()->methods[(std::size_t)idx];

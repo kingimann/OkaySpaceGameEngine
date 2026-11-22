@@ -159,6 +159,26 @@ int main() {
         ForgetDeleted(alphaScene, h, e);
         CHECK(!listed(ScanProjects(projects, h, e), "Alpha"));
     }
+    // A project upgrade leaves a full copy next to the project ("Delta (backup v2.900.0)", with the
+    // backup marker .okay/upgrade_backup.txt). The Create page lists projects only, not backups. A real
+    // project whose name happens to contain "(backup" has no marker and stays listed.
+    {
+        mk(projects / "Delta", "Delta");
+        const fs::path bak = projects / "Delta (backup v2.900.0)";
+        mk(bak, "Delta");
+        fs::create_directories(bak / ".okay");
+        std::ofstream(bak / ".okay" / "upgrade_backup.txt") << "okay-upgrade-backup 1\n";
+        mk(projects / "Notes (backup ideas)", "Notes (backup ideas)");
+        std::vector<std::string> h, e;
+        auto lb = ScanProjects(projects, h, e);
+        CHECK(listed(lb, "Delta"));
+        CHECK(!listed(lb, "Delta (backup v2.900.0)"));
+        CHECK(listed(lb, "Notes (backup ideas)"));
+        CHECK(IsUpgradeBackup(bak) && !IsUpgradeBackup(projects / "Delta"));
+        // opened from elsewhere and remembered as an extra: still not listed
+        std::vector<std::string> e2 = {(bak / "Assets" / "Delta.okayscene").string()};
+        CHECK(!listed(ScanProjects(projects, h, e2), "Delta (backup v2.900.0)"));
+    }
     fs::remove_all(base);
     TEST_MAIN_RESULT();
 }

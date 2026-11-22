@@ -19,6 +19,8 @@
 #include "XboxOwnHttp.hpp"
 #include "XboxTitleSafe.hpp"
 #include "XboxPadSync.hpp"
+#include "XboxSuspend.hpp"
+#include "XboxTextEntry.hpp"
 #include "okay/Core/Paths.hpp"
 #include <cmath>
 #include <filesystem>
@@ -29,6 +31,7 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include <stdexcept>
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++g_fail; } } while (0)
@@ -914,8 +917,134 @@ static void PadSyncTests() {
     g0.reset(); g1.reset(); Drain(b);
 }
 
+// ---- suspend: where saves and settings go, the time budget, the ordered flush (XboxSuspend.hpp) ----
+// Before: the runtime never set Save::SetBaseDir (a game's own save slots resolved into the read-only install folder), never loaded
+// or saved Prefs (settings were lost on every exit or suspend), and the shell passed a fixed 4500 ms instead of the real deadline.
+static void SuspendTests() {
+    using namespace okay::xbox;
+    { SaveLayout l = SaveLayoutFor("C:\\Users\\u\\AppData\\Local\\Packages\\Okay\\LocalState");
+      CHECK(l.saveBase == "C:/Users/u/AppData/Local/Packages/Okay/LocalState/saves/");
+      CHECK(l.prefsFile == "C:/Users/u/AppData/Local/Packages/Okay/LocalState/saves/game.okayprefs");
+      CHECK(l.suspendDir == "C:/Users/u/AppData/Local/Packages/Okay/LocalState/suspend");   // NOT inside saves/: the suspend slot must not show in the game's load menu
+      CHECK(l.Valid()); }
+    { SaveLayout l = SaveLayoutFor("/tmp/local/"); CHECK(l.saveBase == "/tmp/local/saves/" && l.suspendDir == "/tmp/local/suspend"); }
+    CHECK(!SaveLayoutFor("").Valid() && SaveLayoutFor("").prefsFile.empty());
+    // SuspendingOperation.Deadline and "now" are Windows DateTime values (100 ns ticks).
+    CHECK(SuspendRemainingMs(50000000LL + 10000000LL, 10000000LL) == 5000);   // 5 s left
+    CHECK(SuspendRemainingMs(10000000LL, 20000000LL) == 0);                    // already past
+    CHECK(SuspendRemainingMs(0, 20000000LL) == kSuspendFallbackMs);             // deadline unknown: the documented 5 s
+    CHECK(SuspendRemainingMs(10000000LL + 600000000LL, 10000000LL) == kSuspendMaxMs);   // never trust more than the cap
+    CHECK(FlushBudgetMs(5000) == 4000 && FlushBudgetMs(1500) == 500 && FlushBudgetMs(800) == 400 && FlushBudgetMs(0) == 0);   // 1 s kept back for the trim and the deferral
+    // The flush runs steps in order, each timed; once the budget is used up the rest are skipped (and said so); a throwing step is caught.
+    { std::uint64_t t = 0; std::vector<std::string> ran; SuspendFlush f;
+      f.Add("settings", [&](std::string&) { ran.push_back("settings"); t += 5; return true; });
+      f.Add("game state", [&](std::string& e) { ran.push_back("game state"); t += 30; e = "disk full"; return false; });
+      f.Add("boom", [&](std::string&) -> bool { ran.push_back("boom"); throw std::runtime_error("bad"); });
+      f.Add("slow", [&](std::string&) { ran.push_back("slow"); t += 1000; return true; });
+      f.Add("late", [&](std::string&) { ran.push_back("late"); return true; });
+      const SuspendReport r = f.Run([&] { return t; }, 500);
+      CHECK(ran.size() == 4 && ran[0] == "settings" && ran[3] == "slow");      // "late" starts after the budget: skipped
+      CHECK(r.steps.size() == 5 && r.steps[0].ok && r.steps[0].ms == 5 && !r.steps[1].ok && r.steps[1].error == "disk full");
+      CHECK(r.steps[2].ran && !r.steps[2].ok && r.steps[2].error.find("bad") != std::string::npos);
+      CHECK(!r.steps[4].ran && r.Skipped() == 1 && !r.AllOk() && r.totalMs == 1035);
+      const std::string s = r.Summary(); CHECK(s.find("settings ok") != std::string::npos && s.find("game state FAILED: disk full") != std::string::npos && s.find("late skipped") != std::string::npos); }
+    { SuspendFlush f; std::uint64_t t = 0; f.Add("a", [&](std::string&) { return true; }); const SuspendReport r = f.Run([&] { return t; }, 0);
+      CHECK(r.steps.size() == 1 && r.steps[0].ran && r.AllOk()); }   // the first step always runs, even with no budget: settings matter most
+    { SuspendFlush f; const SuspendReport r = f.Run(nullptr, 100); CHECK(r.steps.empty() && r.AllOk()); }
+    // Lifecycle: the deadline the shell computed is kept (overdue = 500 ms before it).
+    { Lifecycle l; l.Launched(); l.Suspending(1000, 2000); CHECK(!l.SuspendOverdue(2499) && l.SuspendOverdue(2500)); }
+}
+
+// ---- rumble stops at suspend; battery level from Windows.Gaming.Input BatteryReport ----
+// Before: a pad that was rumbling when the app was suspended kept its motors on (Windows.Gaming.Input holds a vibration until it is
+// changed, and a suspended app never polls to end it); PowerLevel() was always -1 (unknown) on the Xbox.
+namespace {
+struct BatPad : FakePad {
+    okay::xbox::BatteryInfo bat; int batReads = 0; bool hasBat = true;
+    bool ReadBattery(okay::xbox::BatteryInfo& o) override { ++batReads; o = bat; return hasBat; }
+};
+}
+static void PadPowerTests() {
+    using namespace okay::xbox; using namespace okay::platform;
+    // BatteryStatus: NotPresent 0, Discharging 1, Idle 2, Charging 3. Levels: -1 unknown, 0 empty, 1 low, 2 medium, 3 full, 4 wired.
+    BatteryInfo b; CHECK(PowerLevelFromBattery(b) == -1);
+    b.status = 0; CHECK(PowerLevelFromBattery(b) == 4);                                     // no battery: wired
+    b.status = 1; b.fullMwh = 1000; b.remainingMwh = 20; CHECK(PowerLevelFromBattery(b) == 0);   // 2%
+    b.remainingMwh = 100; CHECK(PowerLevelFromBattery(b) == 1);                          // 10%
+    b.remainingMwh = 500; CHECK(PowerLevelFromBattery(b) == 2);
+    b.remainingMwh = 800; CHECK(PowerLevelFromBattery(b) == 3);
+    b.remainingMwh = 5000; CHECK(PowerLevelFromBattery(b) == 3);                         // more than full: clamped
+    b.status = 3; b.remainingMwh = 300; CHECK(PowerLevelFromBattery(b) == 2);            // charging still reports its level
+    b.fullMwh = -1; CHECK(PowerLevelFromBattery(b) == -1);                                // capacity unknown (null in the report)
+    b.fullMwh = 0; CHECK(PowerLevelFromBattery(b) == -1);
+    b.fullMwh = 1000; b.remainingMwh = -1; CHECK(PowerLevelFromBattery(b) == -1);
+    b.status = 9; b.remainingMwh = 500; CHECK(PowerLevelFromBattery(b) == -1);
+    // UwpGamepad reads the battery on the first poll, then at most every kBatteryPollMs; disconnected = unknown.
+    { BatPad d; d.bat.status = 1; d.bat.fullMwh = 100; d.bat.remainingMwh = 90; UwpGamepad g(1, &d);
+      CHECK(g.PowerLevel() == -1); g.Poll(0); CHECK(g.PowerLevel() == 3 && d.batReads == 1);
+      d.bat.remainingMwh = 10; g.Poll(100); CHECK(g.PowerLevel() == 3 && d.batReads == 1);
+      g.Poll(kBatteryPollMs); CHECK(g.PowerLevel() == 1 && d.batReads == 2);
+      d.connected = false; g.Poll(kBatteryPollMs + 10); CHECK(g.PowerLevel() == -1);
+      d.connected = true; g.Poll(kBatteryPollMs + 20); CHECK(g.PowerLevel() == 1 && d.batReads == 3);   // back: read again at once
+      d.hasBat = false; g.Poll(3 * kBatteryPollMs); CHECK(g.PowerLevel() == -1); }
+    { FakePad d; UwpGamepad g(1, &d); g.Poll(0); CHECK(g.PowerLevel() == -1); }   // a device without a battery report
+    // StopRumble: motors off at once, the timer forgotten.
+    { FakePad d; UwpGamepad g(1, &d); g.Poll(0); g.Rumble(65535, 65535, 10000); g.RumbleTriggers(65535, 65535, 10000); g.Poll(10);
+      CHECK(!d.sent.empty() && !d.sent.back().Zero()); g.StopRumble(); CHECK(d.sent.back().Zero()); const size_t n = d.sent.size();
+      g.Poll(20); CHECK(d.sent.size() <= n + 1 && d.sent.back().Zero());
+      g.Rumble(65535, 0, 100); g.Poll(30); CHECK(d.sent.back().leftMotor == 1.0 && d.sent.back().leftTrigger == 0); }   // trigger motors do not come back
+    // Backend: suspending stops every open pad's rumble before the save runs.
+    { FakeUwpHost host; PathRoots roots; roots.install = "C:/x/"; roots.local = "/tmp/okay_xbox_power_local"; roots.temp = "/tmp/okay_xbox_power_temp";
+      UwpBackend be(&host, roots); be.Init(InitFlags()); be.Life().Launched();
+      auto g = be.OpenGamepad(0); CHECK(g); g->Rumble(65535, 65535, 60000); Drain(be);
+      CHECK(!host.pad.sent.empty() && !host.pad.sent.back().Zero());
+      bool zeroAtSave = false; be.onSuspend = [&] { zeroAtSave = host.pad.sent.back().Zero(); };
+      be.Life().Suspending(be.TicksMs(), 5000); Drain(be); CHECK(zeroAtSave && host.pad.sent.back().Zero());
+      // the battery reaches the platform pad through the backend (and through the hub's slot proxy)
+      BatPad bp; bp.bat.status = 0; be.EnableHub(2, 1000); CHECK(be.PadConnected("k", &bp) == 0); Drain(be);
+      auto h = be.OpenGamepad(0); Drain(be); CHECK(h && h->PowerLevel() == 4);
+      h.reset(); g.reset(); Drain(be); }
+}
+
+// ---- controller-only text entry: the on-screen keyboard follows the edited field (XboxTextEntry.hpp) ----
+static void TextEntryTests() {
+    using namespace okay::xbox;
+    int fieldA = 0, fieldB = 0;
+    { TextEntry te; te.SetEnabled(true);
+      CHECK(te.Frame(nullptr, TextScope::Default).kind == TextEntryCommand::None);
+      TextEntryCommand c = te.Frame(&fieldA, TextScope::Number); CHECK(c.kind == TextEntryCommand::Show && c.scope == TextScope::Number);
+      CHECK(te.Frame(&fieldA, TextScope::Number).kind == TextEntryCommand::None);              // shown once, not every frame
+      te.KeyboardShown(); CHECK(te.Showing());
+      c = te.Frame(&fieldB, TextScope::Password); CHECK(c.kind == TextEntryCommand::Show && c.scope == TextScope::Password);   // another field: re-shown for it
+      c = te.Frame(nullptr, TextScope::Default); CHECK(c.kind == TextEntryCommand::Hide && !c.releaseField);   // editing ended in the game: hide
+      CHECK(te.Frame(nullptr, TextScope::Default).kind == TextEntryCommand::None); }
+    // The player closes the keyboard (B on the keyboard) while the field still edits: the field lets go, so the pad navigates again.
+    { TextEntry te; te.SetEnabled(true); te.Frame(&fieldA, TextScope::Default); te.KeyboardShown(); te.KeyboardHidden();
+      TextEntryCommand c = te.Frame(&fieldA, TextScope::Default); CHECK(c.kind == TextEntryCommand::None && c.releaseField);
+      { const TextEntryCommand n = te.Frame(nullptr, TextScope::Default); CHECK(!n.releaseField && n.kind == TextEntryCommand::None); }   // once; the field let go, nothing to hide
+      CHECK(te.Frame(&fieldA, TextScope::Default).kind == TextEntryCommand::Show); }           // editing it again shows it again
+    // A Hiding without a Showing (TryShow refused, or a stray event) does not release the field.
+    { TextEntry te; te.SetEnabled(true); te.Frame(&fieldA, TextScope::Default); te.KeyboardHidden(); CHECK(!te.Frame(&fieldA, TextScope::Default).releaseField); }
+    // Off (a PC: a real keyboard is there): never shows. Turning it off while shown hides it.
+    { TextEntry te; CHECK(te.Frame(&fieldA, TextScope::Default).kind == TextEntryCommand::None);
+      te.SetEnabled(true); CHECK(te.Frame(&fieldA, TextScope::Default).kind == TextEntryCommand::Show); te.KeyboardShown();
+      te.SetEnabled(false); CHECK(te.Frame(&fieldA, TextScope::Default).kind == TextEntryCommand::Hide); }
+    // The text the keyboard edits (CoreTextEditContext ranges are UTF-16 code units).
+    { TextMirror m; m.Reset("héllo"); CHECK(m.Utf16Size() == 5 && m.Utf8() == "héllo");
+      CHECK(m.Replace(5, 5, u"!") && m.Utf8() == "héllo!");
+      CHECK(m.Replace(0, 1, u"H") && m.Utf8() == "Héllo!");
+      CHECK(m.Replace(4, 6, u"") && m.Utf8() == "Héll");                                       // delete a range (backspace)
+      CHECK(!m.Replace(9, 12, u"x") && m.Utf8() == "Héll");                                     // out of range: refused, unchanged
+      CHECK(m.Replace(3, 1, u"x") && m.Utf8() == "Hxl");                                        // a reversed range is put in order: [1, 3) "él" -> "x"
+      m.Reset("a\xF0\x9F\x98\x80" "b"); CHECK(m.Utf16Size() == 4);                              // an emoji is a surrogate pair
+      CHECK(m.Replace(3, 4, u"") && m.Utf8() == "a\xF0\x9F\x98\x80");
+      CHECK(m.Caret16() == 3);                                                                  // caret after the last edit
+      CHECK(Utf16ToUtf8(Utf8ToUtf16("z\xC3\xA9\xE2\x82\xAC")) == "z\xC3\xA9\xE2\x82\xAC");
+      CHECK(Utf8ToUtf16("\xFF").size() == 1); }                                                 // a bad byte becomes one U+FFFD, never a crash
+}
+
 int main() {
-    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests(); RecoveryTests(); HttpTests(); OwnHttpTests(); TitleSafeTests(); PadSyncTests();
+    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests(); RecoveryTests(); HttpTests(); OwnHttpTests(); TitleSafeTests(); PadSyncTests(); SuspendTests(); PadPowerTests(); TextEntryTests();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp_runtime: all passed\n");
     return 0;

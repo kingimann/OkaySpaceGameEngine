@@ -1707,6 +1707,7 @@ EngineApi Build() {
     // each is the key's text name, so Input.GetKey(KeyCode.W) is Input.GetKey("w").
     {
         ApiType k; k.name = "KeyCode"; k.isStatic = true;
+        k.scriptOnly = true;   // text scripts only: the visual-script key nodes already take key names (and "Get Up Arrow" broke the node-title rules)
         k.doc = "Key names for Input.GetKey, GetKeyDown and GetKeyUp: KeyCode.W is the same as \"w\".";
         auto add = [&](const std::string& n, const std::string& key) {
             k.staticProps.push_back(ro(n, tString, [key](const Value&, CallContext&) { return Value{key}; },

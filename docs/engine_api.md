@@ -584,62 +584,6 @@ Keyboard, mouse and gamepad.
 | `Input.PlayerScheme(player)` | `Input.PlayerScheme/1` | value | player (Number) | Result (Text) | The control scheme a local player is in now (Keyboard+Mouse, Gamepad ...); it follows the device used last when the player uses any device. |
 | `Input.Gesture(name)` | `Input.Gesture/1` | value | name (Text) | Result (Bool) | True on the frame a touch gesture happens. name is "tap", "double tap", "long press", "swipe", "swipe up", "swipe down", "swipe left", "swipe right", "pinch" or "rotate". |
 
-## KeyCode
-
-Key names for Input.GetKey, GetKeyDown and GetKeyUp: KeyCode.W is the same as "w".
-
-| In a script | Node | Kind | Inputs | Gives | What it does |
-|---|---|---|---|---|---|
-| `KeyCode.A` | `KeyCode.A` | value | - | A (Text) | The key "a". |
-| `KeyCode.B` | `KeyCode.B` | value | - | B (Text) | The key "b". |
-| `KeyCode.C` | `KeyCode.C` | value | - | C (Text) | The key "c". |
-| `KeyCode.D` | `KeyCode.D` | value | - | D (Text) | The key "d". |
-| `KeyCode.E` | `KeyCode.E` | value | - | E (Text) | The key "e". |
-| `KeyCode.F` | `KeyCode.F` | value | - | F (Text) | The key "f". |
-| `KeyCode.G` | `KeyCode.G` | value | - | G (Text) | The key "g". |
-| `KeyCode.H` | `KeyCode.H` | value | - | H (Text) | The key "h". |
-| `KeyCode.I` | `KeyCode.I` | value | - | I (Text) | The key "i". |
-| `KeyCode.J` | `KeyCode.J` | value | - | J (Text) | The key "j". |
-| `KeyCode.K` | `KeyCode.K` | value | - | K (Text) | The key "k". |
-| `KeyCode.L` | `KeyCode.L` | value | - | L (Text) | The key "l". |
-| `KeyCode.M` | `KeyCode.M` | value | - | M (Text) | The key "m". |
-| `KeyCode.N` | `KeyCode.N` | value | - | N (Text) | The key "n". |
-| `KeyCode.O` | `KeyCode.O` | value | - | O (Text) | The key "o". |
-| `KeyCode.P` | `KeyCode.P` | value | - | P (Text) | The key "p". |
-| `KeyCode.Q` | `KeyCode.Q` | value | - | Q (Text) | The key "q". |
-| `KeyCode.R` | `KeyCode.R` | value | - | R (Text) | The key "r". |
-| `KeyCode.S` | `KeyCode.S` | value | - | S (Text) | The key "s". |
-| `KeyCode.T` | `KeyCode.T` | value | - | T (Text) | The key "t". |
-| `KeyCode.U` | `KeyCode.U` | value | - | U (Text) | The key "u". |
-| `KeyCode.V` | `KeyCode.V` | value | - | V (Text) | The key "v". |
-| `KeyCode.W` | `KeyCode.W` | value | - | W (Text) | The key "w". |
-| `KeyCode.X` | `KeyCode.X` | value | - | X (Text) | The key "x". |
-| `KeyCode.Y` | `KeyCode.Y` | value | - | Y (Text) | The key "y". |
-| `KeyCode.Z` | `KeyCode.Z` | value | - | Z (Text) | The key "z". |
-| `KeyCode.Alpha0` | `KeyCode.Alpha0` | value | - | Alpha0 (Text) | The key "0". |
-| `KeyCode.Alpha1` | `KeyCode.Alpha1` | value | - | Alpha1 (Text) | The key "1". |
-| `KeyCode.Alpha2` | `KeyCode.Alpha2` | value | - | Alpha2 (Text) | The key "2". |
-| `KeyCode.Alpha3` | `KeyCode.Alpha3` | value | - | Alpha3 (Text) | The key "3". |
-| `KeyCode.Alpha4` | `KeyCode.Alpha4` | value | - | Alpha4 (Text) | The key "4". |
-| `KeyCode.Alpha5` | `KeyCode.Alpha5` | value | - | Alpha5 (Text) | The key "5". |
-| `KeyCode.Alpha6` | `KeyCode.Alpha6` | value | - | Alpha6 (Text) | The key "6". |
-| `KeyCode.Alpha7` | `KeyCode.Alpha7` | value | - | Alpha7 (Text) | The key "7". |
-| `KeyCode.Alpha8` | `KeyCode.Alpha8` | value | - | Alpha8 (Text) | The key "8". |
-| `KeyCode.Alpha9` | `KeyCode.Alpha9` | value | - | Alpha9 (Text) | The key "9". |
-| `KeyCode.Space` | `KeyCode.Space` | value | - | Space (Text) | The key "space". |
-| `KeyCode.Return` | `KeyCode.Return` | value | - | Return (Text) | The key "enter". |
-| `KeyCode.Escape` | `KeyCode.Escape` | value | - | Escape (Text) | The key "escape". |
-| `KeyCode.Tab` | `KeyCode.Tab` | value | - | Tab (Text) | The key "tab". |
-| `KeyCode.Backspace` | `KeyCode.Backspace` | value | - | Backspace (Text) | The key "backspace". |
-| `KeyCode.LeftShift` | `KeyCode.LeftShift` | value | - | LeftShift (Text) | The key "shift". |
-| `KeyCode.RightShift` | `KeyCode.RightShift` | value | - | RightShift (Text) | The key "shift". |
-| `KeyCode.LeftControl` | `KeyCode.LeftControl` | value | - | LeftControl (Text) | The key "ctrl". |
-| `KeyCode.RightControl` | `KeyCode.RightControl` | value | - | RightControl (Text) | The key "ctrl". |
-| `KeyCode.UpArrow` | `KeyCode.UpArrow` | value | - | UpArrow (Text) | The key "up". |
-| `KeyCode.DownArrow` | `KeyCode.DownArrow` | value | - | DownArrow (Text) | The key "down". |
-| `KeyCode.LeftArrow` | `KeyCode.LeftArrow` | value | - | LeftArrow (Text) | The key "left". |
-| `KeyCode.RightArrow` | `KeyCode.RightArrow` | value | - | RightArrow (Text) | The key "right". |
-
 ## Time
 
 Frame timing.

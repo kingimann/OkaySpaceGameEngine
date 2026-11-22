@@ -102,6 +102,7 @@ add_library(okay_engine
     src/Components/AntiCheatConfig.cpp
     src/Components/Ragdoll.cpp
     src/Components/ActiveRagdoll.cpp
+    src/Components/RagdollShared.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
     src/Net/NetBuildSync.cpp

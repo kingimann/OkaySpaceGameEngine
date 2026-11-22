@@ -1,16 +1,5 @@
 #include "okay/Components/Ragdoll.hpp"
-#include "okay/Components/AimIK.hpp"
-#include "okay/Components/AnimStateMachine.hpp"
-#include "okay/Components/Animator.hpp"
-#include "okay/Components/ChainIK.hpp"
 #include "okay/Components/DeathLock.hpp"
-#include "okay/Components/FootIK.hpp"
-#include "okay/Components/FullBodyIK.hpp"
-#include "okay/Components/HumanoidRetarget.hpp"
-#include "okay/Components/LimbIK.hpp"
-#include "okay/Components/LookAtIK.hpp"
-#include "okay/Components/ModelAnimator.hpp"
-#include "okay/Components/NPCController.hpp"
 #include <cmath>
 
 namespace okay {
@@ -37,20 +26,6 @@ constexpr int kChildBone[BoneCount] = {
     RShin, RFoot, -1,
 };
 
-template <typename T> bool Is(Component* c) { return dynamic_cast<T*>(c) != nullptr; }
-
-bool Animates(Component* c) {
-    return Is<Character>(c) || Is<Animator>(c) || Is<ModelAnimator>(c) || Is<AnimStateMachine>(c)
-        || Is<AimIK>(c) || Is<ChainIK>(c) || Is<FootIK>(c) || Is<FullBodyIK>(c) || Is<LimbIK>(c)
-        || Is<LookAtIK>(c) || Is<HumanoidRetarget>(c) || Is<IPlayerSim>(c) || Is<NPCController>(c)
-        || Is<Rigidbody3D>(c);
-}
-
-void CollectTree(Transform* t, std::vector<Transform*>& out) {
-    if (!t) return;
-    out.push_back(t);
-    for (Transform* c : t->Children()) CollectTree(c, out);
-}
 } // namespace
 
 bool Ragdoll::Build() {
@@ -61,18 +36,7 @@ bool Ragdoll::Build() {
     if (!gameObject) return false;
 
     Transform* bones[BoneCount] = {};
-    if (auto* ch = gameObject->GetComponent<Character>()) {
-        // The baked body is one mesh: split it into its part rig to move the bones.
-        if (!ch->driveExternal && !ch->PartsBuilt()) { ch->separateParts = true; ch->BuildParts(); }
-        for (int b = 0; b < BoneCount; ++b)
-            if (GameObject* g = ch->Part(b)) bones[b] = g->transform;
-    }
-    if (!bones[Hips] || !bones[Torso]) {
-        BoneMap map = MapHumanoidBones(gameObject);
-        if (!map.humanoid) return false;
-        for (int b = 0; b < BoneCount; ++b) bones[b] = map.bone[b] ? map.bone[b]->transform : nullptr;
-    }
-    for (int b = 0; b < BoneCount; ++b) if (!bones[b]) return false;
+    if (!ragdoll::FindBones(gameObject, bones)) return false;
 
     for (int b = 0; b < BoneCount; ++b) {
         m_boneParticle[b] = (int)m_p.size();
@@ -244,23 +208,9 @@ void Ragdoll::PoseBones() {
 }
 
 void Ragdoll::SetDriven(bool limp) {
-    if (limp) {
-        m_switched.clear();
-        std::vector<Transform*> tree;
-        CollectTree(gameObject ? gameObject->transform : nullptr, tree);
-        for (Transform* t : tree) {
-            if (!t->gameObject) continue;
-            for (Component* c : t->gameObject->GetComponents<Component>()) {
-                if (c == this || !c->enabled || !Animates(c)) continue;
-                if (auto* rb = dynamic_cast<Rigidbody3D*>(c)) rb->velocity = Vec3::Zero;
-                c->enabled = false;
-                m_switched.push_back(c);
-            }
-        }
-    } else {
-        for (Component* c : m_switched) c->enabled = true;
-        m_switched.clear();
-    }
+    // Animation, IK and movement on the body and below it go off while limp.
+    if (limp) { m_switched.clear(); ragdoll::SwitchOff(gameObject, this, ragdoll::kAllDrivers, true, m_switched); }
+    else ragdoll::SwitchBackOn(m_switched);
 }
 
 bool Ragdoll::Activate() {
@@ -324,40 +274,34 @@ bool Ragdoll::IsSettled(float speed) const {
 
 void Ragdoll::WatchHealth() {
     if (!gameObject) return;
-    // HealthStat, or a script die() on a body without one.
     auto* hp = gameObject->GetComponent<HealthStat>();
-    const bool dead = DeathLocksInput(gameObject);
-    if (dead && !m_wasDead && ragdollOnDeath && Activate()) {
-        Vec3 from;
-        Vec3 away = hp && hp->LastHitFrom(from) ? Vec3::ProjectOnPlane(m_p[Hips].pos - from, Vec3::Up) : Vec3::Zero;
+    Vec3 from;
+    bool hasFrom = false;
+    const ragdoll::HealthWatch::Event e = m_watch.Poll(gameObject, nullptr, &from, &hasFrom);
+    if (e == ragdoll::HealthWatch::Died && ragdollOnDeath && Activate()) {
+        Vec3 away = hasFrom ? Vec3::ProjectOnPlane(m_p[Hips].pos - from, Vec3::Up) : Vec3::Zero;
         if (away.SqrMagnitude() < 1e-6f)
             away = gameObject->transform ? gameObject->transform->Forward() * -1.0f : Vec3::Back;
         away = away.Normalized();
         for (Particle& p : m_p) p.prev = p.prev - away * (0.3f * deathImpulse * kStep);
         Hit(m_p[Torso].pos, away * deathImpulse);
-    } else if (!dead && m_wasDead && m_active) {
+    } else if (e == ragdoll::HealthWatch::Revived && m_active) {
         Deactivate();
-    } else if (hp && !dead && m_lastHealth >= 0.0f && hp->health < m_lastHealth - 1e-4f && !m_active) {
+    } else if (e == ragdoll::HealthWatch::Hurt && hp && !m_active) {
         int at = Torso;
         Vec3 dir = gameObject->transform ? gameObject->transform->Forward() * -1.0f : Vec3::Back;
-        Vec3 from;
-        if (hp->LastHitFrom(from) && m_built) {
+        if (hasFrom && m_built) {
             at = Nearest(from);
             dir = (m_p[at].pos - from).Normalized();
         }
         if (m_built || Build()) Hit(m_p[at].pos, dir * hitImpulse);
     }
-    m_wasDead = dead;
-    m_lastHealth = hp ? hp->health : -1.0f;
 }
 
 void Ragdoll::Start() {
     Build();
-    m_wasDead = DeathLocksInput(gameObject);
-    if (auto* hp = gameObject ? gameObject->GetComponent<HealthStat>() : nullptr) {
-        m_lastHealth = hp->health;
-        hp->keepBodyOnDeath = ragdollOnDeath;
-    }
+    m_watch.Begin(gameObject);
+    if (auto* hp = gameObject ? gameObject->GetComponent<HealthStat>() : nullptr) hp->keepBodyOnDeath = ragdollOnDeath;
 }
 
 void Ragdoll::Update(float) { WatchHealth(); }

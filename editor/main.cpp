@@ -35727,6 +35727,8 @@ static bool DrawRagdollWithOkayUI(EditorState& ed, Ragdoll* rd, okay::Component*
     InspFieldList L;
     L.rows.reserve(19);
     L.Note("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).", false, true);
+    if (rd->gameObject && rd->gameObject->GetComponent<ActiveRagdoll>())
+        L.Note("This object also has an Active Ragdoll: it takes over at Play and switches this Ragdoll off.", false, true);
     L.Section("Triggers");
     L.Check("Ragdoll On Death##rd", &rd->ragdollOnDeath);
     L.TipLookup();
@@ -44758,6 +44760,8 @@ void DrawInspector(EditorState& ed) {
     if (auto* rd = dynamic_cast<Ragdoll*>(curComp)) {
         if (CompHeader("Ragdoll", rd, &toRemove) && !(UseOkayUIInspector() && DrawRagdollWithOkayUI(ed, rd, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).");
+            if (rd->gameObject && rd->gameObject->GetComponent<ActiveRagdoll>())
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "This object also has an Active Ragdoll: it takes over at Play and switches this Ragdoll off.");
             SectionHeader("Triggers");
             if (ImGui::Checkbox("Ragdoll On Death##rd", &rd->ragdollOnDeath)) ed.dirty = true;
             oked::FieldTip("Ragdoll On Death##rd");

@@ -14,6 +14,7 @@
 // Written from published research only; see docs/gameplay/active_ragdoll.md
 // for what each part was written from. Not related to any commercial product.
 #include "okay/Animation/DynamicCharacter.hpp"
+#include "okay/Components/RagdollShared.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
 #include <functional>
@@ -113,10 +114,9 @@ private:
     bool  m_handedOver = false;
     std::vector<Component*> m_switched;
     dyn::CharState m_lastState = dyn::CharState::Animated;
-    bool  m_wasDead = false;
+    ragdoll::HealthWatch m_watch;     // death / revive / hits (shared with Ragdoll)
     bool  m_tookOver = false;
     float m_rootAboveGround = 0.0f;   // root height over the ground at build
-    float m_lastHealth = -1.0f;
 };
 
 } // namespace okay

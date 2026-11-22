@@ -2,16 +2,9 @@
 #include "okay/Components/ActiveRagdoll.hpp"
 #include "okay/Animation/HumanoidBones.hpp"
 #include "okay/Components/Character.hpp"
-#include "okay/Components/ClickToMoveController.hpp"
-#include "okay/Components/DeathLock.hpp"
-#include "okay/Components/FreeRoamController.hpp"
-#include "okay/Components/NPCController.hpp"
-#include "okay/Components/Platformer25DController.hpp"
+#include "okay/Components/Ragdoll.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
-#include "okay/Components/ThirdPersonShooterController.hpp"
-#include "okay/Components/TopDownController.hpp"
-#include "okay/Components/TopDownShooterController.hpp"
-#include "okay/Net/PlayerInput.hpp"
+#include "okay/Core/Log.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -24,15 +17,6 @@ namespace okay {
 
 namespace {
 using namespace humanoid;
-
-template <typename T> bool Is(Component* c) { return dynamic_cast<T*>(c) != nullptr; }
-
-// Movement that would fight the body while it is physical.
-bool Moves(Component* c) {
-    return Is<IPlayerSim>(c) || Is<NPCController>(c) || Is<ClickToMoveController>(c) || Is<FreeRoamController>(c)
-        || Is<Platformer25DController>(c) || Is<ThirdPersonShooterController>(c) || Is<TopDownController>(c)
-        || Is<TopDownShooterController>(c) || Is<Rigidbody3D>(c);
-}
 
 bool ArFinite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
 } // namespace
@@ -78,18 +62,8 @@ bool ActiveRagdoll::Build() {
     if (!gameObject || !gameObject->transform) return false;
     m_world.owner = this;
     Transform* bones[BoneCount] = {};
+    if (!ragdoll::FindBones(gameObject, bones)) return false;
     Character* ch = gameObject->GetComponent<Character>();
-    if (ch) {
-        if (!ch->driveExternal && !ch->PartsBuilt()) { ch->separateParts = true; ch->BuildParts(); }
-        for (int b = 0; b < BoneCount; ++b)
-            if (GameObject* g = ch->Part(b)) bones[b] = g->transform;
-    }
-    if (!bones[Hips] || !bones[Torso]) {
-        BoneMap map = MapHumanoidBones(gameObject);
-        if (!map.humanoid) return false;
-        for (int b = 0; b < BoneCount; ++b) bones[b] = map.bone[b] ? map.bone[b]->transform : nullptr;
-    }
-    for (int b = 0; b < BoneCount; ++b) if (!bones[b]) return false;
 
     dyn::RigInput rig;
     for (int b = 0; b < BoneCount; ++b) { rig.pos[b] = bones[b]->Position(); rig.rot[b] = bones[b]->Rotation(); }
@@ -128,12 +102,20 @@ bool ActiveRagdoll::Build() {
 }
 
 void ActiveRagdoll::Start() {
-    Build();
-    if (auto* hp = gameObject ? gameObject->GetComponent<HealthStat>() : nullptr) {
-        m_lastHealth = hp->health;
-        if (limpOnDeath) hp->keepBodyOnDeath = true;
+    // One ragdoll per body: an old-style Ragdoll here would react to the same
+    // death and switch the animation off under us. This one takes over.
+    if (auto* old = gameObject ? gameObject->GetComponent<Ragdoll>() : nullptr) {
+        if (old->enabled) {
+            if (old->IsActive()) old->Deactivate();
+            old->enabled = false;
+            m_tookOver = true;
+            Log::Info("ActiveRagdoll on '" + gameObject->name + "' takes over from its Ragdoll (the Ragdoll is switched off)");
+        }
     }
-    m_wasDead = DeathLocksInput(gameObject);
+    Build();
+    m_watch.Begin(gameObject);
+    if (auto* hp = gameObject ? gameObject->GetComponent<HealthStat>() : nullptr)
+        if (limpOnDeath) hp->keepBodyOnDeath = true;
 }
 
 void ActiveRagdoll::OnDisable() {
@@ -149,18 +131,9 @@ bool ActiveRagdoll::IsDown() const {
 void ActiveRagdoll::HandOver(bool physical) {
     if (!handOverControl && physical) return;
     if (physical == m_handedOver) return;
-    if (physical) {
-        m_switched.clear();
-        for (Component* c : gameObject->GetComponents<Component>()) {
-            if (c == this || !c->enabled || !Moves(c)) continue;
-            if (auto* rb = dynamic_cast<Rigidbody3D*>(c)) rb->velocity = Vec3::Zero;
-            c->enabled = false;
-            m_switched.push_back(c);
-        }
-    } else {
-        for (Component* c : m_switched) c->enabled = true;
-        m_switched.clear();
-    }
+    // Movement only: the animation keeps running, it is what the muscles follow.
+    if (physical) { m_switched.clear(); ragdoll::SwitchOff(gameObject, this, ragdoll::kMovement, false, m_switched); }
+    else ragdoll::SwitchBackOn(m_switched);
     m_handedOver = physical;
 }
 
@@ -245,24 +218,24 @@ void ActiveRagdoll::LateUpdate(float dt) {
 }
 
 void ActiveRagdoll::WatchHealth() {
-    auto* hp = gameObject->GetComponent<HealthStat>();
-    const bool dead = DeathLocksInput(gameObject);
-    if (dead && !m_wasDead && limpOnDeath) {
-        Vec3 from;
-        if (hp && hp->LastHitFrom(from)) {
+    float dmg = 0.0f;
+    Vec3 from;
+    bool hasFrom = false;
+    const ragdoll::HealthWatch::Event e = m_watch.Poll(gameObject, &dmg, &from, &hasFrom);
+    if (e == ragdoll::HealthWatch::Died && limpOnDeath) {
+        if (hasFrom) {
             const Vec3 chest = m_dc.Body(Torso).position;
             Vec3 away = chest - from;
             away.y = 0.0f;
             if (away.SqrMagnitude() > 1e-6f) m_dc.Push(chest, away.Normalized() * (0.6f * mass));
         }
         m_dc.Die();
-    } else if (!dead && m_wasDead && m_dc.Dead()) {
+    } else if (e == ragdoll::HealthWatch::Revived && m_dc.Dead()) {
         m_dc.Revive();
-    } else if (hp && !dead && reactToDamage && m_lastHealth >= 0.0f && hp->health < m_lastHealth - 1e-4f) {
-        const float dmg = m_lastHealth - hp->health;
-        Vec3 from, at = m_dc.Body(Torso).position;
+    } else if (e == ragdoll::HealthWatch::Hurt && reactToDamage) {
+        Vec3 at = m_dc.Body(Torso).position;
         Vec3 dir = gameObject->transform->Forward() * -1.0f;
-        if (hp->LastHitFrom(from)) {
+        if (hasFrom) {
             Vec3 hit;
             Vec3 d = at - from;
             if (d.SqrMagnitude() > 1e-8f) {
@@ -274,8 +247,6 @@ void ActiveRagdoll::WatchHealth() {
         const float imp = std::fmin(dmg * damageImpulse, 4.0f * mass);
         m_dc.Hit(at, dir * imp);
     }
-    m_wasDead = dead;
-    m_lastHealth = hp ? hp->health : -1.0f;
 }
 
 void ActiveRagdoll::Push(const Vec3& impulse) {

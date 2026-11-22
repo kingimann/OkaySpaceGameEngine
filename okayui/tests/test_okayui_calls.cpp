@@ -258,6 +258,7 @@ int main() {
         CHECK(a != nullptr && n == std::strlen(a) && UI::SaveIniSettingsToMemory() != nullptr);
         const std::string before = UI::DockSaveLayout();
         CHECK(before == a);
+        if (before != a) std::fprintf(stderr, "  layout text: [%s]\n  memory text: [%s]\n", before.c_str(), a);
         UI::LoadIniSettingsFromMemory(nullptr, 5);
         UI::LoadIniSettingsFromMemory("garbage that is not a layout", 0);
         CHECK(UI::DockSaveLayout() == before);

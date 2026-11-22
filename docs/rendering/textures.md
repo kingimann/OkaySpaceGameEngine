@@ -43,6 +43,12 @@ from its own `AssetManager`, `MemoryTracker` and `okay::tex` mip filters (`Textu
   compares each loaded file's time and size every 0.5 s, decodes a changed one on its worker thread, and moves the new
   pixels into the same asset. Handles stay valid; the serial changes; the renderers re-upload only that picture. A
   missing picture is looked for again every 120 frames while hot reload is on.
+- **A file changed on disk, seen by the Project panel.** `InvalidateTextureCacheForFile(file)`
+  (`Render/TextureCacheFiles`, header and editor hook from `claude2/upgrade-import`) calls `textures::ReloadFile`: every
+  name the file was drawn under (relative, "./" and ".." forms, absolute, another spelling) and every asset loaded from
+  it that other code holds is decoded again in place. So hot reload, Reload and the Project panel's reload are one path.
+- **Background loading.** `textures::SetAsyncLoading(true)` or `OKAY_TEXTURE_ASYNC=1`: `ForRender` starts the decode on
+  AssetManager's worker and returns null (the surface draws untextured) until it is done. Off by default.
 - **Changed settings.** The Inspector's Apply calls `InvalidateTextureCache(path)` (drop and re-decode that picture in
   place, so handles held elsewhere see it) and then `InvalidateAllTextureCaches()` (other names for the same file).
 - **Registered pictures** (`RegisterTexture`, `textures::Register`): held until `Unregister`. The terrain splat map is
@@ -102,13 +108,23 @@ runs on the CPU at load; `glGenerateMipmap` was faster for big pictures.
 
 ## What ran
 
-- `test_texture_asset` (Linux): handles, sharing, freeing to zero, hot reload of a rewritten PNG (pixels, serial, size
-  change and memory), settings parsing and range, Reload after a setting change, gamma-correct and linear mips, normal
-  map length, mipmaps off, registered pictures, procedural names, the budget trim, the compressed copy's format.
-- Existing texture tests re-run (see the branch report for numbers).
-- OpenGL: run on Mesa llvmpipe through EGL by the existing GL tests where noted in the report.
+All on Linux, Release build, 2026-11-22, after merging `origin/main`:
+
+- `texture_asset` 161 checks, 0 failures: handles, sharing, freeing to zero, hot reload of a rewritten PNG (pixels,
+  serial, size change and memory), settings parsing and range, Reload after a setting change, gamma-correct and linear
+  mips, normal-map length, mipmaps off, registered pictures, procedural names, the budget trim, the compressed copy's
+  format, background loading, the read-only scope, `InvalidateTextureCacheForFile`.
+- `gl_texture_asset` 31 checks, 0 failures, OpenGL on Mesa llvmpipe 25.2 through EGL: our chain uploaded (level 1 of a
+  colour checker reads 188, of a data checker 128), hot reload re-uploads under the new serial, anisotropy 4 read back
+  from GL, point filtering turns it off, freed copies leave `Textures (GPU)`.
+- Before (the old cache, measured with a probe against the old headers): level 1 of the checker read 128; a rewritten
+  file was never seen (`GetCachedTexture` kept the old pixels).
+- `import_settings_real`: three expectations changed from the old byte average to the gamma-correct value (0.5 to
+  0.735, 0.25 to 0.368, 0.5 to 0.735).
 - Direct3D 11 and Direct3D 12: compile-checked with MinGW (`x86_64-w64-mingw32-g++-win32 -fsyntax-only`); never run.
-- Editor Inspector and Profiler sections: see the branch report for whether the editor was built and looked at.
+- Editor: `ProjectPanelUI.cpp` (the Inspector section) syntax-checked; `editor/main.cpp` (Profiler section, per-frame
+  Pump) was not compiled: the compiler was killed for lack of memory twice on the shared build machine. Not looked at.
+- Player: the per-frame `Pump` line was not compiled (player not built).
 
 ## Not done
 

@@ -79,7 +79,9 @@ struct Result {
     bool rolledBack = false;          ///< every file the upgrade had already rewritten was put back
     std::string backupDir;            ///< the finished backup ("" if none was made)
     int scenes = 0, prefabs = 0;      ///< checked
-    int rewritten = 0;                ///< scene / prefab files that had to change
+    int rewritten = 0;                ///< scene / prefab / .okaymeta files that had to change
+    int metas = 0;                    ///< import settings files (.okaymeta) checked
+    int metasRewritten = 0;           ///< of those, how many were in an older layout and are rewritten
     std::uint64_t files = 0, bytes = 0;   ///< what the backup holds
     std::vector<std::string> changed; ///< project-relative paths written (scenes, prefabs, project.okayproj)
     std::vector<std::string> log;     ///< what the migration did, one line per step

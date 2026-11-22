@@ -85,6 +85,12 @@ until the first file is rewritten.
    registered `N -> N+1` steps, and the loader's own upgrades for old files), then a load of the result into a scratch scene. A file
    that is damaged, newer than this editor reads, or can't be loaded stops everything here, and so does a read-only file that would
    have to change. Nothing has been made or changed at this point.
+   Every **import settings file** (`.okaymeta`: an asset's GUID, tags and import settings) is checked too, with
+   `okay::UpgradeMetaText`: one in an older meta or settings layout (for example a texture's first layout, `filter nearest` and
+   `maxsize`) is rewritten in the current one, keeping the GUID, tags, stored hash and size and any line this editor does not know;
+   a value that can't be carried over is listed as a loss. A meta written by a newer editor, or one that can't be read, is left exactly
+   as it is with a warning (the asset database would not rewrite it either); a read-only one that would have to change stops the
+   upgrade like a scene. The report and the result window count them ("Upgraded 14 scenes, 3 prefabs, 20 import settings files").
 3. **Check the free space** for the copy (the project's size plus 16 MB) and that the backup place can be written.
 4. **Make the backup**: a full copy into the sibling folder `<Name> (backup v2.850.0)` (`(backup before v2.855.0)` when the old version is
    unknown; `... (2)`, `(3)` when the name is taken). It is built as `<name>.partial` and renamed only when it is whole, so a backup is
@@ -110,8 +116,8 @@ need a format bump and an opt-in; see [walk_vs_run.md](../gameplay/walk_vs_run.m
 
 Everything in the project folder, byte for byte, dates kept, empty folders too. Left out: `.okay/backups` (the restore copies), build
 output (a top-level `build` folder and the output folders named in Build Settings and its profiles, when they are inside the project),
-and version control folders (`.git`, `.svn`, `.hg`). Links are copied as links, never followed. The upgrade only ever writes scenes, prefabs
-and `project.okayproj`, so what the backup leaves out is never at risk. `<backup>/.okay/upgrade_backup.txt` records the version, the date, the
+and version control folders (`.git`, `.svn`, `.hg`). Links are copied as links, never followed. The upgrade only ever writes scenes, prefabs,
+`.okaymeta` files and `project.okayproj`, so what the backup leaves out is never at risk. `<backup>/.okay/upgrade_backup.txt` records the version, the date, the
 counts and the files the upgrade rewrote (with their size and a checksum); that is what Restore uses.
 
 The backup goes next to the project, so it needs the free space of a copy and a writable parent folder. Choosing another place is not offered

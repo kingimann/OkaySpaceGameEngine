@@ -1,4 +1,5 @@
 #include "okay/Core/AssetDatabase.hpp"
+#include "okay/Core/MetaUpgrade.hpp"
 #include "AssetDatabaseInternal.hpp"
 #include "okay/Core/AssetManager.hpp"
 #include "okay/Core/Log.hpp"
@@ -395,6 +396,59 @@ std::uint64_t AssetDatabase::HashFile(const std::string& absolutePath, std::int6
         h = savefmt::Fnv1a(reinterpret_cast<const char*>(&sz), sizeof(sz), h);
     }
     return h == 0 ? 1 : h;
+}
+
+// --- Upgrading one meta's text (the project upgrade) -------------------------------------------
+
+MetaUpgradeResult UpgradeMetaText(const std::string& assetPath, const std::string& text) {
+    MetaUpgradeResult r;
+    r.text = text;
+    const ParsedMeta pm = ParseMeta(text);
+    if (!pm.ok) { r.error = pm.error; return r; }
+    r.ok = true;
+    r.metaFrom = pm.version;
+    r.metaTo = pm.version;
+    const AssetType kind = AssetTypeFromPath(assetPath);
+    if (ImportSettings::HasSettings(kind)) r.kind = AssetTypeName(kind);
+    r.importerFrom = r.importerTo = pm.hasImporter ? pm.importerVersion : 0;
+    if (pm.newer) { r.newer = true; r.notes.push_back("written by a newer editor (okaymeta " + std::to_string(pm.version) + "): left as it is"); return r; }
+    bool rewrite = pm.version < AssetDatabase::kMetaVersion;
+    std::vector<std::string> notes;
+    ImportSettings settings = SettingsFrom(kind, pm, notes, rewrite);
+    const bool settingsNewer = pm.hasImporter && AssetTypeFromName(pm.importerKind) == kind &&
+                               pm.importerVersion > ImportSettings::CurrentVersion(kind);
+    if (settingsNewer) {   // the database will not rewrite these either
+        r.newer = true;
+        r.notes.push_back(std::string(AssetTypeName(kind)) + " settings written by a newer editor (layout " + std::to_string(pm.importerVersion) + "): left as they are");
+        return r;
+    }
+    for (const std::string& n : notes) {
+        r.notes.push_back(n);
+        if (n.find("bad value") != std::string::npos || n.find("reset") != std::string::npos || n.find("dropped") != std::string::npos) r.losses.push_back(n);
+    }
+    if (!rewrite) return r;
+    settings.Clamp();
+    std::ostringstream o;
+    o << "okaymeta " << AssetDatabase::kMetaVersion << "\n";
+    o << "guid " << pm.guid.ToString() << "\n";
+    o << "type " << (pm.type.empty() || ImportSettings::HasSettings(kind) ? std::string(AssetTypeName(kind)) : pm.type) << "\n";
+    if (pm.hasHash) o << "hash " << savefmt::Hex16(pm.hash) << "\n";
+    if (pm.size >= 0) o << "size " << pm.size << "\n";
+    for (const auto& l : pm.labels) o << "label " << savefmt::Escape(l) << "\n";
+    if (ImportSettings::HasSettings(kind) || !settings.extra.empty()) {
+        o << "importer " << AssetTypeName(kind) << " " << ImportSettings::CurrentVersion(kind) << "\n";
+        for (const auto& kv : settings.ToPairs()) o << "set " << kv.first << " " << savefmt::Escape(kv.second) << "\n";
+        r.importerTo = ImportSettings::CurrentVersion(kind);
+    }
+    for (const auto& u : pm.unknown) o << u << "\n";
+    r.metaTo = AssetDatabase::kMetaVersion;
+    r.text = o.str();
+    r.changed = r.text != text;
+    if (r.changed && r.importerFrom != r.importerTo && !r.kind.empty())
+        r.notes.insert(r.notes.begin(), "importer " + r.kind + " " + std::to_string(r.importerFrom) + " -> " + std::to_string(r.importerTo));
+    if (r.changed && r.metaFrom != r.metaTo)
+        r.notes.insert(r.notes.begin(), "okaymeta " + std::to_string(r.metaFrom) + " -> " + std::to_string(r.metaTo));
+    return r;
 }
 
 // --- Meta files ----------------------------------------------------------------------------

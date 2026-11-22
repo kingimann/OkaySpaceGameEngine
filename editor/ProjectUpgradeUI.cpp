@@ -186,7 +186,7 @@ void DrawGatePrompt() {
             Heading(("This project was made with " + pvLabel + ". This editor is v" + rv + ".").c_str(), ImVec4(1, 1, 1, 1));
             ImGui::TextDisabled("%s", FitEnd(pr.root, textW).c_str());
             ImGui::Dummy(ImVec2(0, 4));
-            ImGui::TextWrapped("Upgrading brings the project's scenes and prefabs up to date for v%s. A complete backup copy of the project is made "
+            ImGui::TextWrapped("Upgrading brings the project's scenes, prefabs and import settings files up to date for v%s. A complete backup copy of the project is made "
                                "first, next to it, so you can always go back.", rv.c_str());
             ImGui::Dummy(ImVec2(0, 2));
             ImGui::TextWrapped("Keeping %s does not touch the project at all: it opens with that version's editor instead.", okayver::LineLabel(pv).c_str());
@@ -253,7 +253,8 @@ void DrawGatePrompt() {
             const okayup::Result& r = pr.result;
             ImGui::TextDisabled(pr.backupOnly ? "BACKUP MADE" : "UPGRADED");
             if (pr.backupOnly) Heading("The backup is made. The project is opened as it is.", kGreen);
-            else Heading(("Upgraded " + Plural(r.scenes, "scene", "scenes") + ", " + Plural(r.prefabs, "prefab", "prefabs") + "; " +
+            else Heading(("Upgraded " + Plural(r.scenes, "scene", "scenes") + ", " + Plural(r.prefabs, "prefab", "prefabs") +
+                          (r.metas ? ", " + Plural(r.metas, "import settings file", "import settings files") : std::string()) + "; " +
                           (r.rewritten == 0 ? std::string("nothing needed rewriting") : Plural(r.rewritten, "file", "files") + " rewritten") + ".").c_str(), kGreen);
             ImGui::TextWrapped("Backup at %s", r.backupDir.c_str());
             ImGui::TextDisabled("%s in the backup: a complete copy of the project.", Plural((int)r.files, "file", "files").c_str());

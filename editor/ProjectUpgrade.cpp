@@ -12,6 +12,7 @@
 #include <sstream>
 
 #include "ProjectState.hpp"
+#include "okay/Core/MetaUpgrade.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneMigration.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
@@ -190,7 +191,7 @@ bool StampProject(const std::string& projectDir, const std::string& running, std
 const char* PhaseName(Phase p) {
     switch (p) {
         case Phase::Scanning: return "Looking through the project";
-        case Phase::Checking: return "Checking scenes and prefabs";
+        case Phase::Checking: return "Checking scenes, prefabs and import settings";
         case Phase::Space: return "Checking free space";
         case Phase::Backup: return "Making the backup";
         case Phase::Verify: return "Checking the backup";
@@ -248,8 +249,14 @@ std::string UpgradeReportText(const Options& opt, const Result& res, const std::
     t += "To:        v" + okayver::NormalizeVersion(opt.toVersion) + "\n";
     if (!when.empty()) t += "Made:      " + when + "\n";
     if (!res.backupDir.empty()) t += "Backup:    " + res.backupDir + " (a complete copy of the project before the upgrade)\n";
-    t += "\nChecked " + Count(res.scenes, "scene", "scenes") + " and " + Count(res.prefabs, "prefab", "prefabs") + "; " +
-         (res.rewritten == 0 ? std::string("no scene or prefab needed rewriting") : Count(res.rewritten, "file", "files") + " rewritten") + ".\n";
+    if (res.metas == 0)
+        t += "\nChecked " + Count(res.scenes, "scene", "scenes") + " and " + Count(res.prefabs, "prefab", "prefabs") + "; " +
+             (res.rewritten == 0 ? std::string("no scene or prefab needed rewriting") : Count(res.rewritten, "file", "files") + " rewritten") + ".\n";
+    else
+        t += "\nChecked " + Count(res.scenes, "scene", "scenes") + ", " + Count(res.prefabs, "prefab", "prefabs") + " and " +
+             Count(res.metas, "import settings file (.okaymeta)", "import settings files (.okaymeta)") + "; " +
+             (res.rewritten == 0 ? std::string("no file needed rewriting") : Count(res.rewritten, "file", "files") + " rewritten") +
+             (res.metasRewritten ? " (" + Count(res.metasRewritten, "import settings file", "import settings files") + " in an older layout)" : std::string()) + ".\n";
     t += "\nLost in the upgrade\n-------------------\n";
     if (res.losses.empty()) t += "Nothing. Every object and every record of every file is in the upgraded files.\n";
     for (const std::string& l : res.losses) t += "- " + l + "\n";
@@ -281,6 +288,7 @@ struct Entry {
     std::uint64_t size = 0;
     fs::file_time_type mtime{};
     bool isDir = false, isLink = false, isScene = false, isPrefab = false;
+    bool isMeta = false;              // an asset's .okaymeta (GUID, labels, import settings)
     std::uint64_t hash = 0;           // of the bytes the backup read
 };
 
@@ -496,6 +504,7 @@ struct UpgradeJob::Impl {
                 e.mtime = de.last_write_time(ec);
                 e.isScene = HasExt(nm, ".okayscene");
                 e.isPrefab = HasExt(nm, ".okayprefab");
+                e.isMeta = HasExt(nm, ".okaymeta");
                 entries.push_back(e);
             } else {
                 res.warnings.push_back("\"" + rel + "\" is not an ordinary file or folder: it is left out of the backup.");
@@ -512,7 +521,7 @@ struct UpgradeJob::Impl {
             if (e.isDir || e.isLink) continue;
             totalBytes += e.size;
             ++totalFiles;
-            if (opt.migrate && (e.isScene || e.isPrefab)) candidates.push_back(i);
+            if (opt.migrate && (e.isScene || e.isPrefab || e.isMeta)) candidates.push_back(i);
         }
         idx = 0;
         phase = opt.migrate ? Phase::Checking : Phase::Space;
@@ -531,6 +540,33 @@ struct UpgradeJob::Impl {
         return true;
     }
 
+    // An import settings file: an older layout is rewritten (the old one stays in the backup); a newer or unreadable one
+    // is left exactly as it is, with a warning, because the asset database would not rewrite it either.
+    void CheckMeta(const Entry& e, const fs::path& abs, const std::string& text) {
+        ++res.metas;
+        const std::string asset = e.rel.substr(0, e.rel.size() - 9);   // without ".okaymeta"
+        const okay::MetaUpgradeResult m = okay::UpgradeMetaText(asset, text);
+        if (!m.ok) {
+            res.warnings.push_back(e.rel + ": not a readable import settings file (" + m.error + "): left as it is.");
+            return;
+        }
+        if (m.newer) {
+            res.warnings.push_back(e.rel + ": written by a newer editor: left as it is.");
+            return;
+        }
+        if (!m.changed) return;
+        for (const std::string& l : m.notes) res.log.push_back(e.rel + ": " + l);
+        for (const std::string& l : m.losses) {
+            res.losses.push_back(e.rel + ": " + l);
+            res.warnings.push_back(e.rel + ": " + l + " (the old file is in the backup)");
+        }
+        if (ReadOnly(abs)) return Fail("\"" + e.rel + "\" is read-only, so it can't be upgraded. Make it writable and try again. Nothing was changed.");
+        Change c;
+        c.rel = e.rel; c.size = e.size; c.mtime = e.mtime; c.hash = HashText(text); c.text = m.text;
+        changes.push_back(std::move(c));
+        ++res.metasRewritten;
+    }
+
     void DoCheck() {
         if (idx < candidates.size()) {
             Entry& e = entries[candidates[idx++]];
@@ -539,6 +575,7 @@ struct UpgradeJob::Impl {
             std::string text;
             const fs::path abs = Abs(e.rel);
             if (!okayproj::ReadText(abs.string(), text)) return Fail("Couldn't read \"" + e.rel + "\".");
+            if (e.isMeta) return CheckMeta(e, abs, text);
             FileCheck fc = CheckSceneFile(text);
             if (!fc.ok && fc.loadFailed) return Fail("\"" + e.rel + "\" can't be loaded" + (fc.changed ? " after upgrading it" : "") + ": " + fc.error + ".");
             if (!fc.ok) return Fail("\"" + e.rel + "\" can't be upgraded: " + fc.error + ".");

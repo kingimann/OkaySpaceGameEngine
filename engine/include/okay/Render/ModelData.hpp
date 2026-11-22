@@ -8,7 +8,7 @@
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
 //   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF,
-//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML and binary, ZAE, XGL / ZGL, Irrlicht scene, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, OpenGEX, Quake 1 / Half-Life 1 MDL, PMX, LWS / MOT) are
+//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML and binary, ZAE, XGL / ZGL, Irrlicht scene, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, OpenGEX, Quake 1 / Half-Life 1 MDL, Quake III BSP, glTF 1.0, PMX, LWS / MOT) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -431,6 +431,10 @@ bool ReadOgexFile(const std::string& path, ImportedModel& out, std::string* err 
 /// and the Half-Life sequence group files are refused with a message that names them. `baseDir` ends with a slash or is empty.
 bool ReadMdlBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 bool ReadMdlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// Quake III Arena maps (`.bsp` version 46, or a `.pk3` zip holding maps/<name>.bsp): the render geometry of every model, one part per
+/// (model, texture); polygon and mesh faces by their mesh vertices, patches tessellated; lightmaps, entities, brushes are not read.
+bool ReadQ3bspFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadQ3bspBuffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {

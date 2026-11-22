@@ -309,6 +309,7 @@ add_library(okay_engine
     src/Render/Gltf1Reader.cpp
     src/Render/OgexReader.cpp
     src/Render/MdlReader.cpp
+    src/Render/Q3BspReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/Measure.cpp
     src/Modeling/SelectOps.cpp

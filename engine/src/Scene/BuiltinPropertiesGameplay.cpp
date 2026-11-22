@@ -7,6 +7,11 @@
 // Fields the scene file does not keep (runtime pointers, caches) are left out. See
 // docs/engine/properties.md.
 #include "BuiltinPropertiesShared.hpp"
+#include "okay/Components/Buildable.hpp"
+#include "okay/Components/NetworkAvatarMotion.hpp"
+#include "okay/Components/TilemapCollider2D.hpp"
+#include "okay/Core/GameSaves.hpp"
+#include "okay/Core/SaveFramework.hpp"
 #include "okay/Components/LocalPlayerInput.hpp"
 
 #include "okay/Components/CharacterController2D.hpp"
@@ -1405,8 +1410,74 @@ void RegisterRangedWeapon() {
     b.Commit();
 }
 
+// ---- Saved through the generic record (ComponentSerializerRegistry::RegisterFromProperties) ----------------
+// These had no scene record at all before: the generic path writes every authored property below as
+// `  <record> key=value ...` (see docs/engine/scene_serializer.md, "The generic record").
+
+// CheckpointTrigger (Core/SaveFramework.hpp)
+void RegisterCheckpointTrigger() {
+    PropertyBuilder<CheckpointTrigger> b("CheckpointTrigger", "checkpointtrigger", "Gameplay");
+    b.AddString("checkpoint", &CheckpointTrigger::checkpoint).Tooltip("The checkpoint name saved when it fires")
+     .AddString("targetTag", &CheckpointTrigger::targetTag).Tooltip("Objects with this tag set it off")
+     .AddFloat("radius", &CheckpointTrigger::radius).Range(0, kBig, 0.1).Tooltip("How close the target must come. 0 = trigger colliders only")
+     .AddBool("once", &CheckpointTrigger::once).Tooltip("Fire a single time per scene load")
+     .AddBool("deferred", &CheckpointTrigger::deferred).Tooltip("Save at the start of the next frame")
+     .AddFloat("checkInterval", &CheckpointTrigger::checkInterval).Range(0, 3600, 0.01).Tooltip("Seconds between distance checks")
+     .AddBool("triggered", &CheckpointTrigger::triggered).RuntimeOnly().Tooltip("It has fired (live state)");
+    b.Commit();
+}
+
+// TimedDestroy (Components/Destructible.hpp): removes its object after `life` seconds (debris pieces).
+void RegisterTimedDestroy() {
+    PropertyBuilder<TimedDestroy> b("TimedDestroy", "timeddestroy", "Effects");
+    b.AddFloat("life", &TimedDestroy::life).Range(0, kBig, 0.1).Tooltip("Seconds left before the object is removed");
+    b.Commit();
+}
+
+// NetworkAvatarMotion (Components/NetworkAvatarMotion.hpp): faces and animates a remote avatar from its movement.
+void RegisterNetworkAvatarMotion() {
+    PropertyBuilder<NetworkAvatarMotion> b("NetworkAvatarMotion", "netavatarmotion", "Networking");
+    b.AddFloat("turnSpeed", &NetworkAvatarMotion::turnSpeed).Range(0, kBig, 1).Tooltip("Degrees per second it turns to face where it goes. 0 = snap")
+     .AddFloat("moveEpsilon", &NetworkAvatarMotion::moveEpsilon).Range(0, 100, 0.01).Tooltip("Below this speed it counts as standing still")
+     .AddFloat("runSpeed", &NetworkAvatarMotion::runSpeed).Range(0, kBig, 0.1).Tooltip("At or above this speed the walk becomes a run");
+    b.Commit();
+}
+
+// ---- Saved by their own records in SceneSerializer.cpp -----------------------------------------------------
+
+// SaveConfig (`savesettings`): the scene's autosave settings. The record keeps 1..20 slots.
+void RegisterSaveConfig() {
+    PropertyBuilder<SaveConfig> b("SaveConfig", "savesettings", "Gameplay");
+    b.AddFloat("autosaveInterval", &SaveConfig::autosaveInterval).Range(0, kBig, 1).Tooltip("Seconds of play between autosaves. 0 = off")
+     .AddBool("autosaveOnSceneStart", &SaveConfig::autosaveOnSceneStart).Tooltip("Save when this scene starts")
+     .AddInt("autosaveSlots", &SaveConfig::autosaveSlots).Range(1, 20, 1).Tooltip("How many autosaves are kept");
+    b.Commit();
+}
+
+// Buildable (`buildable`): a piece players may edit in build mode.
+void RegisterBuildable() {
+    PropertyBuilder<Buildable> b("Buildable", "buildable", "Building");
+    b.AddInt("buildId", &Buildable::buildId).Range(0, 2147483647, 1).Tooltip("Stable id for links, undo and creations. 0 = not assigned yet")
+     .AddBool("editable", &Buildable::editable).Tooltip("Players may move, rotate, copy, delete and wire it")
+     .AddBool("placed", &Buildable::placed).Tooltip("A player placed it in build mode")
+     .AddAssetPath("prefab", &Buildable::prefab, "prefab").Tooltip("The palette prefab it was placed from (empty for level objects)");
+    b.Commit();
+}
+
+// TilemapCollider2D (`tilemapcollider`): builds colliders from the Tilemap on the same object. No fields of its own.
+void RegisterTilemapCollider2D() {
+    PropertyBuilder<TilemapCollider2D> b("TilemapCollider2D", "tilemapcollider", "Physics 2D");
+    b.Commit();
+}
+
 void RegisterGameplayProperties() {
     RegisterPlayerController();
+    RegisterCheckpointTrigger();
+    RegisterTimedDestroy();
+    RegisterNetworkAvatarMotion();
+    RegisterSaveConfig();
+    RegisterBuildable();
+    RegisterTilemapCollider2D();
     RegisterPlayerView();
     RegisterFirstPersonController();
     RegisterThirdPersonController();

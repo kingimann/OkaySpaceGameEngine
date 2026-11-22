@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Scripting/NextScriptVM.hpp"
+#include "okay/Scripting/CSharpAssist.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -333,6 +334,73 @@ static void Generics() {
                    "public class A : MonoBehaviour { Grow<int> g; void Start() { } }\n", "Too many generic"));
 }
 
+// ---- Script Editor help for C#: member lists and signature help from the binding table ----
+static bool HasMember(const std::vector<csharp::Member>& ms, const std::string& n, bool method) {
+    for (auto& m : ms) if (m.name == n && m.method == method) return true;
+    return false;
+}
+static void EditorHelp() {
+    const std::string src =
+        "using UnityEngine;\n"
+        "using System.Collections.Generic;\n"
+        "public class Enemy { public int hp; public Enemy(int hp = 10) { this.hp = hp; } public void Hit(int amount, string why) { } public static int Made; }\n"
+        "public class Mover : MonoBehaviour {\n"
+        "    public float speed = 5f;\n"
+        "    Rigidbody rb;\n"
+        "    List<Enemy> enemies = new List<Enemy>();\n"
+        "    int Twice(int x) => x * 2;\n"
+        "    void Update() {\n"
+        "        var e = new Enemy(3);\n"
+        "        string label = \"hi\";\n"
+        "        Quaternion q = transform.rotation;\n"
+        "    }\n"
+        "}\n";
+    CHECK(csharp::ReceiverType(src, "transform") == "Transform");
+    CHECK(csharp::ReceiverType(src, "transform.position") == "Vector3");
+    CHECK(csharp::ReceiverType(src, "rb") == "Rigidbody");
+    CHECK(csharp::ReceiverType(src, "e") == "Enemy");
+    CHECK(csharp::ReceiverType(src, "enemies[0]") == "Enemy");
+    CHECK(csharp::ReceiverType(src, "GetComponent<Rigidbody>()") == "Rigidbody");
+    CHECK(csharp::ReceiverType(src, "Mathf") == "static:Mathf");
+    CHECK(csharp::ReceiverType(src, "q") == "Quaternion");
+    CHECK(csharp::ReceiverType(src, "nothingHere").empty());
+
+    auto tr = csharp::MembersAfter(src, "transform");
+    CHECK(HasMember(tr, "position", false));
+    CHECK(HasMember(tr, "rotation", false));
+    CHECK(HasMember(tr, "Translate", true));
+    CHECK(HasMember(csharp::MembersAfter(src, "transform.position"), "normalized", false));
+    CHECK(HasMember(csharp::MembersAfter(src, "transform.position"), "x", false));
+    CHECK(HasMember(csharp::MembersAfter(src, "rb"), "AddForce", true));
+    CHECK(HasMember(csharp::MembersAfter(src, "Quaternion"), "Euler", true));
+    CHECK(HasMember(csharp::MembersAfter(src, "q"), "eulerAngles", false));
+    CHECK(HasMember(csharp::MembersAfter(src, "e"), "Hit", true));
+    CHECK(HasMember(csharp::MembersAfter(src, "Enemy"), "Made", false));
+    CHECK(!HasMember(csharp::MembersAfter(src, "e"), "Made", false));   // a static isn't on the object
+    CHECK(HasMember(csharp::MembersAfter(src, "label"), "Length", false));
+    CHECK(HasMember(csharp::MembersAfter(src, "enemies"), "Add", true));
+    CHECK(HasMember(csharp::MembersAfter(src, "this"), "Twice", true));
+
+    auto tl = csharp::SignaturesFor(src, "transform", "Translate");
+    CHECK(tl.size() == 2);   // Translate(Vector3) and Translate(float, float, float)
+    bool three = false;
+    for (auto& s : tl) if (s.params.size() == 3 && s.text.find("float x") != std::string::npos) three = true;
+    CHECK(three);
+    auto hit = csharp::SignaturesFor(src, "e", "Hit");
+    CHECK(hit.size() == 1 && hit[0].text == "void Hit(int amount, string why)");
+    auto own = csharp::SignaturesFor(src, "", "Twice");
+    CHECK(own.size() == 1 && own[0].params.size() == 1);
+    auto ctor = csharp::SignaturesFor(src, "", "Enemy");
+    CHECK(ctor.size() == 1 && ctor[0].text.find("new Enemy(int hp = ...)") == 0);
+    auto slerp = csharp::SignaturesFor(src, "Quaternion", "Slerp");
+    CHECK(slerp.size() == 1 && !slerp[0].doc.empty());
+
+    // the language box's names
+    CHECK(ScriptLanguageDisplayName("csharp") == "C#");
+    CHECK(ScriptLanguageDisplayName("cs") == "C#");
+    CHECK(ScriptLanguageDisplayName("okayscript") == "OkayScript (old)");
+}
+
 int main() {
     RUN_SUITE("csharp_language");
     Structs();
@@ -340,5 +408,6 @@ int main() {
     PlainStatics();
     MoreDefaults();
     Generics();
+    EditorHelp();
     TEST_MAIN_RESULT();
 }

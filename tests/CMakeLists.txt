@@ -1397,6 +1397,10 @@ add_test(NAME voxel_chunks COMMAND test_voxel_chunks)
 add_executable(test_curve_formulas test_curve_formulas.cpp)
 target_link_libraries(test_curve_formulas PRIVATE okay::engine)
 add_test(NAME curve_formulas COMMAND test_curve_formulas)
+# One Base64 (engine/include/okay/Core/Base64.hpp, #422 audit item 24): the same bytes as the copies it replaced.
+add_executable(test_base64 test_base64.cpp)
+target_link_libraries(test_base64 PRIVATE okay::engine)
+add_test(NAME base64 COMMAND test_base64)
 # The renderers' mesh-change hash (engine/include/okay/Render/MeshHash.hpp): every bit counts, and it is much faster.
 add_executable(test_mesh_hash test_mesh_hash.cpp)
 target_link_libraries(test_mesh_hash PRIVATE okay::engine)

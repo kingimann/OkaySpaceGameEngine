@@ -357,6 +357,30 @@ static void DefaultParams() {
     CHECK(Errors(Diags("public class D : MonoBehaviour { void F(int a = 1) { } void Start() { F(1, 2); } }\n")) >= 1);
 }
 
+// delegate declarations name a function type: public delegate void Died(int score);
+static void Delegates() {
+    const std::string src =
+        "public delegate int Combine(int a, int b);\n"
+        "public class G : MonoBehaviour {\n"
+        "    public delegate void Died(string who);\n"
+        "    public event Died OnDied;\n"
+        "    public int sum; public string who = \"\";\n"
+        "    void Start() {\n"
+        "        Combine add = (a, b) => a + b;\n"
+        "        sum = add(2, 3);\n"
+        "        OnDied += Note;\n"
+        "        OnDied?.Invoke(\"slime\");\n"
+        "    }\n"
+        "    void Note(string w) { who = w; }\n"
+        "}\n";
+    CHECK(Clean(src));
+    World w(src);
+    CHECK(w.loaded);
+    CHECK_NEAR(w.F("sum"), 5.0f, 1e-4f);
+    CHECK(w.sc->VM() && w.sc->VM()->GetGlobal("who").AsString() == "slime");
+    CHECK(Errors(Diags("public delegate void D(int a);\npublic class G : MonoBehaviour { void Start() { D d = (string s) => { }; } }\n")) >= 1);
+}
+
 // An old scene that named "csharp" (the removed Mono backend) now loads and runs if the
 // script compiles, and shows the checker's errors if it does not.
 static void OldScenes() {
@@ -466,6 +490,7 @@ int main() {
     CollisionMessages();
     StringMembers();
     DefaultParams();
+    Delegates();
     OldScenes();
     ExampleScene();
     TEST_MAIN_RESULT();

@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Input/InputActions.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -74,14 +75,15 @@ public:
     PlayerInput ReadLocalInput() override {
         PlayerInput in;
         // Input: keyboard axis, optionally overridden by a pushed gamepad stick.
-        in.move = Input::AxisWASD();
+        in.move = InputActions::ControlMove();
         if (useGamepad) {
             Vec2 pad = Input::GamepadAxis();
             if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) in.move = pad;
         }
-        if (sprintKey && Input::GetKey(sprintKey)) in.held |= PlayerInput::Sprint;
-        if (Input::GetKey(jumpKey) || Input::GetKey('w'))         in.held |= PlayerInput::Jump;
-        if (Input::GetKeyDown(jumpKey) || Input::GetKeyDown('w')) in.pressed |= PlayerInput::Jump;
+        // Sprint and jump read their named actions (default bindings = these keys); W also jumps, as before.
+        if (InputActions::ControlKey("Sprint", sprintKey)) in.held |= PlayerInput::Sprint;
+        if (InputActions::ControlKey("Jump", jumpKey) || Input::GetKey('w'))         in.held |= PlayerInput::Jump;
+        if (InputActions::ControlKeyDown("Jump", jumpKey) || Input::GetKeyDown('w')) in.pressed |= PlayerInput::Jump;
         return in;
     }
 

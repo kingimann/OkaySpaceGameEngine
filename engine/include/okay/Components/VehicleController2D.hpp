@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
@@ -39,8 +40,8 @@ public:
     void Update(float dt) override {
         if (!transform || dt <= 0.0f) return;
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
-        Vec2 axis = Input::AxisWASD();
-        bool handbrake = handbrakeKey && Input::GetKey(handbrakeKey);
+        Vec2 axis = InputActions::ControlAxis("Throttle", "Brake", "SteerLeft", "SteerRight");   // the "Vehicle" actions once rebound
+        bool handbrake = InputActions::ControlKey("Handbrake", handbrakeKey);
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody2D>() : nullptr;
         Vec2 vel = rb ? rb->velocity : m_kinematicVel;
 

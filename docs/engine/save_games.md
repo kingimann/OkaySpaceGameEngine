@@ -184,7 +184,7 @@ whole file and check it (use them for one slot, not a long list of big saves).
 Not changed: `SaveGame` and the save framework (`docs/engine/save_games.md`) are still two
 formats; a game picks one per slot name. The framework's `Saveable` component now has a scene-file
 record (`saveable`), and there is a no-code way to use it: see "Saving without code" in
-`docs/engine/save_games.md`. `CheckpointTrigger` still has no scene-file record.
+`docs/engine/save_games.md`. `CheckpointTrigger` is saved in the scene file through the generic property record (`checkpointtrigger`, `docs/engine/scene_serializer.md`).
 
 ## Save game framework
 

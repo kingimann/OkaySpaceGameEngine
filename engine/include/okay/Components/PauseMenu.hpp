@@ -95,9 +95,11 @@ public:
 
     void Update(float) override {
         if (!m_built) EnsureBuilt();
+        // Escape until the player rebinds "Pause"; then its bindings. Read past the menu's own Block context, which
+        // swallows every action while it is open, so the same key also closes it.
         // Controller-only players (an Xbox, a PC with just a pad): Start (Menu) on any pad toggles the menu like the toggle key,
         // and B closes an open menu. B never opens it: B is an ordinary game button.
-        if (Input::GetKeyDown(toggleKey) || AnyPadPressed(Input::PadStart)) Toggle();
+        if (InputActions::MenuKeyDown("Pause", toggleKey) || AnyPadPressed(Input::PadStart)) Toggle();
         else if (Game::Paused() && m_shown && AnyPadPressed(Input::PadB)) Resume();
         // Keep the overlay synced to the pause state (another source un-pausing also
         // closes it). Only touch it on a change so we don't fight other systems.

@@ -41,7 +41,7 @@ static FeatureSupport Expect(RenderFeature feature, RenderBackend backend) {
         {F::SceneSsao, B::Software, S::Yes}, {F::SceneSsao, B::OpenGL, S::Yes},
         {F::SceneSsao, B::Direct3D11, S::Yes}, {F::SceneSsao, B::Direct3D12, S::No},
 
-        {F::DepthOfField, B::Software, S::No}, {F::DepthOfField, B::OpenGL, S::Yes},
+        {F::DepthOfField, B::Software, S::Yes}, {F::DepthOfField, B::OpenGL, S::Yes},
         {F::DepthOfField, B::Direct3D11, S::Yes}, {F::DepthOfField, B::Direct3D12, S::No},
 
         {F::ProceduralSkyDetail, B::Software, S::No}, {F::ProceduralSkyDetail, B::OpenGL, S::Yes},
@@ -117,7 +117,8 @@ int main() {
                       "The Ambient occlusion switch under Rendering, and in Build Settings, is a separate switch.") == 0);
 
     CHECK(std::strcmp(FeatureGapNote(RenderFeature::DepthOfField),
-                      "Depth of field is not drawn on Direct3D 12 or the software renderer.") == 0);
+                      "Depth of field is not drawn on Direct3D 12. "
+                      "The software renderer draws it for perspective cameras only.") == 0);
 
     CHECK(std::strcmp(FeatureGapNote(RenderFeature::BuildBloom),
                       "Bloom in Build Settings and Rendering is not drawn on Direct3D 12. "

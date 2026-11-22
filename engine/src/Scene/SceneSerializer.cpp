@@ -238,6 +238,8 @@ static thread_local std::string g_loadingSceneDir;
 // The folder of the scene file loaded last: restoring a scene from text (Stop after Play, Undo) finds mesh files next to it again.
 static thread_local std::string g_lastSceneDir;
 
+std::string CurrentSceneLoadDirectory() { return g_loadingSceneDir.empty() ? g_lastSceneDir : g_loadingSceneDir; }
+
 namespace detail {
 std::uint64_t ComponentRulesGeneration();        // GameObject.cpp
 std::uint64_t ComponentSerializerGeneration();   // ComponentSerializer.cpp
@@ -1670,7 +1672,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "  worldstreamer " << ws->cellSize << " " << ws->loadRadius
             << " " << ws->unloadRadius << " " << (ws->onlyOnCellChange ? 1 : 0)
             << " " << Quote(ws->folder) << " " << Quote(ws->prefix)
-            << " " << Quote(ws->ext) << " " << Quote(ws->target) << "\n";
+            << " " << Quote(ws->ext) << " " << Quote(ws->target)
+            // Streaming settings (27.4), after the old fields so older builds still read the line.
+            << " " << (ws->backgroundLoading ? 1 : 0) << " " << ws->attachBudgetMs
+            << " " << ws->maxLoadsPerFrame << " " << ws->maxInFlight << " " << ws->viewDirectionWeight
+            << " " << ws->memoryBudgetMB << " " << (ws->rememberChanges ? 1 : 0)
+            << " " << (ws->followSources ? 1 : 0) << " " << (ws->debugOverlay ? 1 : 0)
+            << " " << ws->debugHeight << "\n";
     }
     for (auto* de : go->GetComponents<Destructible>()) {
         out << "  destructible " << Quote(de->blockTag) << " " << de->voxelSize
@@ -8252,6 +8260,33 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     ws->prefix = ReadQuoted(in);
                     ws->ext    = ReadQuoted(in);
                     ws->target = ReadQuoted(in);
+                    ws->sceneDir = g_loadingSceneDir;   // a relative cell folder is also looked for next to the scene
+                    {   // Streaming settings (27.4): optional, absent in files from older builds.
+                        auto numeric = [](std::istream& is) {
+                            is >> std::ws;
+                            const int c = is.peek();
+                            return c == '-' || c == '+' || c == '.' || std::isdigit(c);
+                        };
+                        int bg = 1, remember = 1, follow = 1, overlay = 0;
+                        if (numeric(in)) in >> bg;
+                        if (numeric(in)) in >> ws->attachBudgetMs;
+                        if (numeric(in)) in >> ws->maxLoadsPerFrame;
+                        if (numeric(in)) in >> ws->maxInFlight;
+                        if (numeric(in)) in >> ws->viewDirectionWeight;
+                        if (numeric(in)) in >> ws->memoryBudgetMB;
+                        if (numeric(in)) in >> remember;
+                        if (numeric(in)) in >> follow;
+                        if (numeric(in)) in >> overlay;
+                        if (numeric(in)) in >> ws->debugHeight;
+                        ws->backgroundLoading = bg != 0; ws->rememberChanges = remember != 0;
+                        ws->followSources = follow != 0; ws->debugOverlay = overlay != 0;
+                        if (!std::isfinite(ws->attachBudgetMs) || ws->attachBudgetMs < 0.05f) ws->attachBudgetMs = 2.0f;
+                        if (!std::isfinite(ws->viewDirectionWeight) || ws->viewDirectionWeight < 0.0f) ws->viewDirectionWeight = 0.5f;
+                        if (!std::isfinite(ws->memoryBudgetMB) || ws->memoryBudgetMB < 0.0f) ws->memoryBudgetMB = 0.0f;
+                        if (!std::isfinite(ws->debugHeight)) ws->debugHeight = 0.3f;
+                        if (ws->maxLoadsPerFrame < 0) ws->maxLoadsPerFrame = 0;
+                        if (ws->maxInFlight < 0) ws->maxInFlight = 0;
+                    }
                 } else if (field == "destructible") {
                     auto* de = go->AddComponent<Destructible>();
                     int collapse = 1;
@@ -10715,7 +10750,8 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(tbtn));
     // Last, so every record written before keeps its place. Saved from their PropertyRegistry entries, no code of their own (none of them was saved before).
-    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion"})
+    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion",
+                             "StreamingSource", "LevelStreamingVolume", "VoxelWorld", "PartitionLayer"})
         ComponentSerializerRegistry::RegisterFromProperties(type);
 }
 } // namespace detail

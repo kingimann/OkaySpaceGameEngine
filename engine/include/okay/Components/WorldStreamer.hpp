@@ -1,171 +1,120 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
-#include "okay/Scene/GameObject.hpp"
-#include "okay/Scene/Scene.hpp"
-#include "okay/Scene/Transform.hpp"
-#include "okay/Components/Camera.hpp"
-#include "okay/Core/SafeCast.hpp"
-#include "okay/Scene/SceneSerializer.hpp"
-#include "okay/Components/VoxelTerrain.hpp"
+#include "okay/Optimize/StreamingGrid.hpp"
+#include "okay/Scene/SceneStreamQueue.hpp"
 #include <cstdint>
 #include <map>
-#include <vector>
+#include <memory>
 #include <string>
-#include <cmath>
+#include <utility>
+#include <vector>
 
 namespace okay {
 
-/// World Partition / level streaming — "only load the map near the
-/// player" without the 32 GB RAM bill. The world is authored as a grid of cell
-/// files (one prefab per chunk, named "<prefix>_<x>_<z>.okayprefab" under
-/// `folder`). At runtime this watches a target (the main camera, or a named
-/// object) and keeps just the cells near it loaded: cells within `loadRadius`
-/// are instantiated, cells past `unloadRadius` are destroyed. The gap between
-/// the two radii is hysteresis so a player pacing a border doesn't thrash a
-/// chunk in and out every frame.
+class GameObject;
+
+/// World streaming / World Partition (feature map 2.6.6, 27.4): only the part of a big map near the
+/// player is in memory. The world is a grid of cell files on the XZ plane, one prefab per cell, named
+/// "<prefix>_<x>_<z>.okayprefab" under `folder` (the World Partition tool writes them; hand-made cells
+/// work the same). Each cell's objects already sit at their final world positions.
 ///
-/// Authoring model: each cell is a self-contained prefab whose objects already
-/// sit at their final world positions (the streamer does not move them). Bake a
-/// big map once into cell files, drop this on an empty object, point it at the
-/// folder, and huge worlds stream in around the player. Missing cell files are
-/// skipped silently, so a sparse / non-rectangular world just works.
-///
-/// Cells are addressed on the XZ plane (Y is "up"), matching the 3D world.
+/// How it streams (docs/engine/world_streaming.md):
+///   - The cells are found by scanning `folder` once at Start (Rescan() looks again). A relative folder is
+///     also looked for next to the scene file. Missing cells are simply not there (a sparse world works).
+///   - `Optimize/StreamingGrid` decides what to load: every cell within `loadRadius` cells of a source
+///     (square rings), unloaded only past `unloadRadius` (the gap is hysteresis, so pacing a border does not
+///     thrash), nearest first with a bonus for cells in front of the source, at most `maxLoadsPerFrame` new
+///     requests a frame and `maxInFlight` at once, and an optional memory budget (cell file sizes).
+///   - Sources: `target` (a named object, or the main camera when empty) and, with `followSources`, every
+///     enabled StreamingSource in the scene.
+///   - Loading never blocks a frame (`backgroundLoading`): the file is read and unpacked on the job system,
+///     then the objects are made a few per frame in `attachBudgetMs` of main-thread time.
+///   - `rememberChanges`: when a cell unloads, its objects as they are now (moved, damaged, removed) are kept in
+///     memory and come back the same when the cell loads again; off, changes are lost on unload. A cell whose
+///     voxel terrain was dug or built on stays loaded either way (the voxel field is saved quantized).
+///   - `debugOverlay` draws the grid over the world: green = loaded, yellow = loading, grey = on disk.
 class WorldStreamer : public Behaviour {
 public:
     float cellSize     = 50.0f;   ///< world units per cell edge (XZ)
-    int   loadRadius   = 2;       ///< load cells within this Chebyshev ring of the target's cell
+    int   loadRadius   = 2;       ///< load cells within this ring of a source's cell
     int   unloadRadius = 3;       ///< unload cells past this ring (>= loadRadius gives hysteresis)
     std::string folder = "cells/";///< directory the cell files live in (trailing slash optional)
-    std::string prefix = "cell";  ///< cell file base name; file = "<folder><prefix>_<x>_<z>.okayprefab"
+    std::string prefix = "cell";  ///< cell file base name; file = "<folder><prefix>_<x>_<z><ext>"
     std::string ext    = ".okayprefab"; ///< cell file extension
     std::string target;           ///< name of the object to follow; empty = the main camera
 
-    /// Re-evaluate the loaded set only when the target crosses into a new cell.
-    /// Turn off to force an evaluation on every Update (rarely needed).
+    /// Plan again only when a source enters a new cell or work is pending (a load in flight, a request held
+    /// back by a limit). Off: plan every frame.
     bool onlyOnCellChange = true;
 
-    void Start() override { Evaluate(true); }
+    // ---- streaming (saved as trailing fields of the `worldstreamer` record) --------------------------
+    bool  backgroundLoading = true;   ///< read cells on the job system and make them over several frames
+    float attachBudgetMs = 2.0f;      ///< main-thread milliseconds per frame for making streamed objects
+    int   maxLoadsPerFrame = 2;       ///< new cell requests per frame (0 = no limit)
+    int   maxInFlight = 4;            ///< cells loading at once (0 = no limit)
+    float viewDirectionWeight = 0.5f; ///< 0 = nearest first; higher = cells in front of a source first
+    float memoryBudgetMB = 0.0f;      ///< 0 = no limit; otherwise the cell files resident may not exceed this
+    bool  rememberChanges = true;     ///< keep each unloaded cell's objects as they were (see above)
+    bool  followSources = true;       ///< StreamingSource components also keep cells loaded
+    bool  debugOverlay = false;       ///< draw the cell grid coloured by state
+    float debugHeight = 0.3f;         ///< world height of the overlay
 
-    void Update(float /*dt*/) override {
-        Vec3 p;
-        if (!TargetPos(p)) return;
-        int cx = CellOf(p.x), cz = CellOf(p.z);
-        if (onlyOnCellChange && m_haveCell && cx == m_curX && cz == m_curZ) return;
-        Evaluate(false, cx, cz);
-    }
+    /// Folder of the scene file this streamer was loaded from (not saved): a relative `folder` is also
+    /// looked for there, so a scene opened from anywhere finds its cells.
+    std::string sceneDir;
 
-    void OnDestroy() override {
-        Scene* s = GetScene();
-        if (s) for (auto& kv : m_loaded) DestroyCell(*s, kv.second);
-        m_loaded.clear();
-    }
+    WorldStreamer();
+    ~WorldStreamer() override;
 
-    // ---- Introspection (used by the editor HUD and tests) -----------------
-    /// Cells currently resident, as (x,z) grid coordinates.
-    std::vector<std::pair<int,int>> LoadedCells() const {
-        std::vector<std::pair<int,int>> out; out.reserve(m_loaded.size());
-        for (auto& kv : m_loaded) out.push_back(kv.first);
-        return out;
-    }
-    std::size_t LoadedCount() const { return m_loaded.size(); }
-    bool IsCellLoaded(int x, int z) const { return m_loaded.count({x, z}) != 0; }
+    void Start() override;
+    void Update(float dt) override;
+    void OnDestroy() override;
 
-    /// The cell the target currently occupies (valid once it's been seen).
-    bool CurrentCell(int& x, int& z) const {
-        if (!m_haveCell) return false;
-        x = m_curX; z = m_curZ; return true;
-    }
+    // ---- Introspection (used by the editor, the overlay and tests) -------------------------------------
+    std::vector<std::pair<int,int>> LoadedCells() const;   ///< cells fully in the scene, as (x, z)
+    std::size_t LoadedCount() const;
+    bool IsCellLoaded(int x, int z) const;
+    bool IsCellLoading(int x, int z) const;
+    bool HasCellFile(int x, int z) const;                  ///< found by the last scan
+    int  CellFileCount() const;
+    /// Every cell file the last scan found, as (x, z) (Rescan() scans; the editor calls it for a selected streamer).
+    std::vector<std::pair<int,int>> CellFiles() const;
+    /// The cell a source occupies (the target, or the first StreamingSource), once one has been seen.
+    bool CurrentCell(int& x, int& z) const;
+    /// Path of the cell file for grid coords (x, z) as configured (before the scene-folder lookup).
+    std::string CellFile(int x, int z) const;
+    /// The folder actually scanned (after the scene-folder lookup).
+    std::string ResolvedFolder() const;
+    /// Top-level objects of a loaded cell.
+    std::vector<std::uint64_t> CellRoots(int x, int z) const;
+    /// A remembered copy of an unloaded cell exists.
+    bool HasSnapshot(int x, int z) const;
+    std::size_t SnapshotCount() const;
+    /// Drop every remembered copy: cells load from their files again.
+    void ForgetChanges();
 
-    /// Path of the cell file for grid coords (x, z).
-    std::string CellFile(int x, int z) const {
-        std::string f = folder;
-        if (!f.empty() && f.back() != '/' && f.back() != '\\') f += '/';
-        return f + prefix + "_" + std::to_string(x) + "_" + std::to_string(z) + ext;
-    }
+    /// Scan the folder again (new cell files), then plan.
+    void Rescan();
+    /// Plan and load every wanted cell now, blocking (the first frame, a teleport).
+    void SyncNow();
 
-    /// Force a re-evaluation right now (e.g. after teleporting the target).
-    void SyncNow() { Evaluate(true); }
+    struct Stats {
+        int cellFiles = 0, loaded = 0, loading = 0, wanted = 0, snapshots = 0;
+        std::uint64_t loadsRequested = 0, loadsFinished = 0, loadsFailed = 0, unloads = 0, plans = 0;
+        int sources = 0;
+        double readMs = 0.0;          ///< worker time spent reading cell files
+    };
+    Stats GetStats() const;
+    /// One line for a HUD or the log: "stream: 9 loaded, 2 loading, 25 files, 3 remembered".
+    std::string DebugText() const;
+    /// The places cells are kept loaded around this frame.
+    std::vector<optimize::StreamingViewer> Sources() const;
 
 private:
-    // A cell is held by instance id, not by pointer: a script or a network cleanup can destroy
-    // a streamed root at any time, and the id resolves to null once the object is gone.
-    // 0 = a cell with no file (recorded so it is not retried every frame).
-    std::map<std::pair<int,int>, std::uint64_t> m_loaded;
-
-    static void DestroyCell(Scene& s, std::uint64_t id) {
-        if (id == 0) return;
-        if (GameObject* go = GameObject::FromInstanceId(id)) s.Destroy(go);
-    }
-    int  m_curX = 0, m_curZ = 0;
-    bool m_haveCell = false;
-
-    int CellOf(float v) const {
-        if (cellSize <= 0.0f) return 0;
-        return SafeInt(std::floor(v / cellSize));
-    }
-
-    bool TargetPos(Vec3& out) const {
-        Scene* s = GetScene();
-        if (!s) return false;
-        Transform* t = nullptr;
-        if (!target.empty()) {
-            if (GameObject* go = s->Find(target)) t = go->transform;
-        } else if (s->mainCamera && s->mainCamera->gameObject) {
-            t = s->mainCamera->gameObject->transform;
-        }
-        if (!t) return false;
-        out = t->Position();
-        return true;
-    }
-
-    void Evaluate(bool force) {
-        Vec3 p;
-        if (!TargetPos(p)) return;
-        Evaluate(force, CellOf(p.x), CellOf(p.z));
-    }
-
-    void Evaluate(bool /*force*/, int cx, int cz) {
-        Scene* s = GetScene();
-        if (!s) return;
-        m_curX = cx; m_curZ = cz; m_haveCell = true;
-
-        // Unload anything beyond the unload ring (Chebyshev distance).
-        for (auto it = m_loaded.begin(); it != m_loaded.end(); ) {
-            int dx = std::abs(it->first.first - cx);
-            int dz = std::abs(it->first.second - cz);
-            if (std::max(dx, dz) > unloadRadius) {
-                // A cell whose voxel terrain was dug or built on stays: unloading it would throw the player's work away
-                // (the cell file is the authored one and is never written back).
-                if (it->second) {
-                    GameObject* root = GameObject::FromInstanceId(it->second);
-                    bool edited = false;
-                    if (root)
-                        for (VoxelTerrain* vt : root->GetComponentsInChildren<VoxelTerrain>(true))
-                            if (vt && vt->editCount > 0) { edited = true; break; }
-                    if (edited) { ++it; continue; }
-                }
-                DestroyCell(*s, it->second);
-                it = m_loaded.erase(it);
-            } else {
-                ++it;
-            }
-        }
-
-        // Load anything inside the load ring that isn't resident yet.
-        int r = loadRadius < 0 ? 0 : loadRadius;
-        for (int z = cz - r; z <= cz + r; ++z) {
-            for (int x = cx - r; x <= cx + r; ++x) {
-                auto key = std::make_pair(x, z);
-                if (m_loaded.count(key)) continue;
-                std::string err;
-                GameObject* root = SceneSerializer::InstantiateFromFile(*s, CellFile(x, z), &err);
-                // Record the slot even when the file is missing/empty (root ==
-                // nullptr) so we don't retry a non-existent cell every frame.
-                m_loaded[key] = root ? root->InstanceId() : 0;
-            }
-        }
-    }
+    struct Impl;
+    std::unique_ptr<Impl> m;
+    void Plan(bool force);
+    void EnsureSetup();
 };
 
 } // namespace okay

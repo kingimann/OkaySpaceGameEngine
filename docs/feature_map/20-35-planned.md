@@ -834,28 +834,34 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ### 27.4 Streaming
 - **What:** Keep only the parts of a big world near the player in memory, loading and unloading as they move.
 - **Parts:**
-  - 27.4.1 World streamer component - `Components/WorldStreamer` - grid of cell prefabs named `<prefix>_<x>_<z>.okayprefab`; loads cells within a ring of the camera or a named target, unloads past a larger ring (hysteresis)
-  - 27.4.2 Async scene loading - `Scene/SceneManager`, `Scene/Scene` - multi-frame loads with progress and additive load/unload by handle (merged in #570)
-  - 27.4.3 Asset manager async loads and hot reload - `Core/AssetManager` - background decode, `Pump`, progress (merged in #568, unused by the engine)
-  - 27.4.4 Streaming grid and mip budget (#574) - `Optimize/StreamingGrid`, `Optimize/MipBudget` - load decisions with budgets, priorities by view direction, cancel and retry
-- **Code:** `Components/WorldStreamer`, `Scene/SceneManager`, `Core/AssetManager`, `Optimize/StreamingGrid`, `Optimize/MipBudget`
-- **API:** `WorldStreamer` (cellSize, loadRadius, unloadRadius, folder, prefix), `SceneManager` async load; `StreamingGrid`, `PlanMips`
-- **Editor:** WorldStreamer Inspector section
-- **Docs:** `docs/engine/scene_management.md`, `docs/engine/asset_manager.md`; `docs/engine/optimization_tools.md`
-- **Tests:** `worldstreamer`, `scene_load_pool`, `assetmanager`; `optimize_streaming`
-- **Status:** Partial - cell streaming of prefabs works (cells are held by instance id, so a cell root destroyed by a script is skipped, not freed twice); `StreamingGrid` and `MipBudget` (budgeted, prioritised loads, #574, test `optimize_streaming`) are on main but `WorldStreamer` does not use them.
-- **Exists today:** `WorldStreamer` instantiates and destroys cell prefabs on the main thread. Cells must be authored by hand as separate prefab files. Missing cell files are skipped.
+  - 27.4.1 World streamer component - `Components/WorldStreamer` - cell prefabs `<prefix>_<x>_<z>.okayprefab` found by scanning the folder (also next to the scene file); planned by `StreamingGrid` in square rings with hysteresis around the target and every `StreamingSource`; read on the job system and made in a per-frame time budget; changed cells remembered on unload; a debug overlay of the cells
+  - 27.4.2 Async scene loading - `Scene/SceneManager`, `Scene/Scene` - multi-frame loads with progress and additive load/unload by handle (merged in #570); now also from a document read elsewhere (`BeginAsyncLoad(std::unique_ptr<SceneLoadJob>)`), with a time budget (`timeBudgetMs`) and `LoadedRoots`
+  - 27.4.3 Asset manager async loads and hot reload - `Core/AssetManager` - background decode, `Pump`, progress (merged in #568; meshes, textures and audio are the LOD and asset streaming work)
+  - 27.4.4 Streaming grid and mip budget (#574) - `Optimize/StreamingGrid`, `Optimize/MipBudget` - load decisions with budgets, priorities by view direction, cancel and retry; several viewers and a square (Chebyshev) distance
+  - 27.4.5 Background scene queue - `Scene/SceneStreamQueue` - read and unpack on `EngineJobs()`, make objects in a frame budget, release; shared by the streamers
+  - 27.4.6 World Partition - `Scene/WorldPartition`, `editor/StreamingTools` - split a scene into cells by bounds centre, always-loaded rules and the `PartitionLayer` override; writes the cells and a streaming scene, keeps the source, updates on a re-run; editor window with a grid preview
+  - 27.4.7 Level streaming - `Components/LevelStreaming` - `LoadLevelAsync` / `UnloadLevel` with LevelLoaded / LevelFailed / LevelUnloaded custom events, script functions, `LevelStreamingVolume` (enter, preload distance, unload margin, keep loaded)
+  - 27.4.8 Chunk streaming - `Optimize/ChunkStreamer`, `Components/VoxelWorld` - endless chunk registration, generation on workers, budgeted attach, edited chunks kept; the endless Voxel World uses it
+- **Code:** `Components/WorldStreamer`, `Components/StreamingSource`, `Components/LevelStreaming`, `Components/VoxelWorld`, `Scene/SceneStreamQueue`, `Scene/WorldPartition`, `Scene/SceneManager`, `Core/AssetManager`, `Optimize/StreamingGrid`, `Optimize/ChunkStreamer`, `Optimize/MipBudget`, `editor/StreamingTools.cpp`
+- **API:** `WorldStreamer` (cellSize, loadRadius, unloadRadius, folder, prefix, backgroundLoading, attachBudgetMs, rememberChanges, debugOverlay), `StreamingSource`, `PlanPartition`, `WritePartition`, `PartitionLayer`, `LevelStreaming::LoadLevelAsync`, `UnloadLevel`, `LevelStreamingVolume`, `ChunkStreamer`, `VoxelWorld`, `SceneStreamQueue`, `Scene::BeginAsyncLoad(job)`, `StreamingGrid::Update(viewers)`; scripts `load_level_async`, `unload_level`, `is_level_loaded`, `level_progress`
+- **Editor:** View > Editors & Tools > World Partition; Scene view overlays (partition grid, streamed cells by state, level volume boxes); World Streamer Inspector streaming rows; Add Component > Rendering > Streaming Source, Level Streaming Volume, Voxel World, Partition Layer (written, not compiled or clicked in this change)
+- **Docs:** `docs/engine/world_streaming.md`, `docs/engine/scene_management.md`, `docs/engine/asset_manager.md`; `docs/engine/optimization_tools.md`
+- **Tests:** `worldstreamer`, `world_streaming`, `world_partition`, `chunk_streaming`, `streaming_examples`, `scene_load_pool`, `assetmanager`; `optimize_streaming`
+- **Status:** Partial - world, level and chunk streaming and World Partition work and are tested headless on Linux (examples in `examples/streaming`, shipped by the Windows build script); the editor window was not built or clicked here; nothing was run on Windows.
+- **Exists today:** cells, levels and voxel chunks stream in without blocking a frame: files are read on workers and objects made in a time budget (open-world example: the most objects made in one frame and the worst frame time before and after are printed by `streaming_examples`). Cells are written by the World Partition tool or by hand.
 - **Work packages:**
-  1. M - Streamer uses `StreamingGrid` decisions and `AssetManager::LoadAsync` so a cell load never blocks a frame. Depends on: #574 (on main).
-  2. M - Editor "Split scene into cells" command that writes the cell prefabs (see 45 proposal). Depends on: nothing.
-  3. S - Debug overlay: grid cells coloured by state (unloaded, loading, loaded). Depends on: package 1.
-  4. M - Keep navmesh and physics broadphase consistent when cells load and unload. Depends on: package 1.
-  5. M - Mip streaming (`PlanMips`) tied to texture loads. Depends on: package 1.
-- **Open:** a loaded cell is created in one frame (hitch risk); saves do not know about unloaded cells (see 35.3); cells are on the XZ plane only.
+  1. Done - Streamer uses `StreamingGrid` decisions and loads on the job system.
+  2. Done - World Partition writes the cells (editor window; not compiled here).
+  3. Done - Debug overlay: cells coloured by state (in game and in the Scene view).
+  4. M - Keep navmesh and physics broadphase consistent when cells load and unload. Depends on: nothing.
+  5. M - Mip streaming (`PlanMips`) tied to texture loads (the LOD and asset streaming work).
+  6. M - Remembered cells and chunks in saved games (35.3).
+  7. S - Load Level / Unload Level visual-script nodes (graphs already hear LevelLoaded through On Custom Event).
+- **Open:** remembered cells and voxel chunks last for the session only; a cell's objects Awake and Start in the frame the last of them is made; destroying a big cell happens in one frame; cells are on the XZ plane only; the editor parts are unverified.
 - **Related:** 1.4, 2.6, 20.1, 45.1, 35.3
-- **Words:** streaming, world streamer, world partition, open world, cells, chunks, load radius, async load, mip streaming, StreamingGrid
+- **Words:** streaming, world streamer, world partition, open world, cells, chunks, load radius, async load, level streaming, LoadLevelAsync, streaming volume, chunk streaming, endless world, infinite voxel world, StreamingGrid
 - **Seen as:** hitch when walking into a new area; huge map uses too much memory; loading screen on every area change
-- **Ask me like:** "make the world streamer load cells without hitches"; "split my big scene into streaming cells"
+- **Ask me like:** "make the world streamer load cells without hitches"; "split my big scene into streaming cells"; "load the next corridor when the player walks in"
 
 ## 28. Version control integration (High)
 

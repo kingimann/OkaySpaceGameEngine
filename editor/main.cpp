@@ -52,6 +52,7 @@
 #include "okay/Core/BuildInfo.hpp"
 #include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
 #include <cstdio>
+#include "StreamingTools.hpp"          // World Partition window, streaming overlays and components
 #include "LevelTools.hpp"              // foliage brush, terrain layers, decals, cables, measuring, orthographic views
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "WindTools.hpp"               // wind: zones, arrows, inspector rows, menus, Lighting > Wind
@@ -5710,6 +5711,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Animator",      "Animator",                  &g_showAnimatorGraph, "Editors & Tools", PI_Animator},
         {"Timeline",      "Timeline",                  &g_showTimeline,      "Editors & Tools", PI_Animation},
         {"Navigation",    "Navigation",                &g_showNavigation,    "Editors & Tools", PI_Scene},
+        {"World Partition", "World Partition",         &oked::g_showWorldPartition, "Editors & Tools", PI_Scene},
         {"Dialogue",      "Dialogue",                  &g_showDialogue,      "Editors & Tools", PI_Nodes},
         {"Behavior Tree", "Behavior Tree###BehaviorTree", &g_showBehaviorTree, "Editors & Tools", PI_Nodes},
         {"Modeling",      "Modeling",                  &g_showModeling,      "Editors & Tools", PI_Modeling},
@@ -7288,7 +7290,7 @@ static bool* MenuFlag(const std::string& id) {
         {"panel.assetmanager", &g_showAssetManager}, {"panel.crashlog", &g_showCrashLog}, {"panel.audiomixer", &g_showAudioMixer}, {"panel.input", &g_showInputDebug},
         {"tool.visualscript", &g_showVisualScript}, {"tool.scripteditor", &g_showScriptEditor},
         {"tool.animation", &g_showAnimation}, {"tool.animator", &g_showAnimatorGraph}, {"tool.timeline", &g_showTimeline},
-        {"tool.navigation", &g_showNavigation}, {"tool.dialogue", &g_showDialogue}, {"tool.behaviortree", &g_showBehaviorTree},
+        {"tool.navigation", &g_showNavigation}, {"tool.worldpartition", &oked::g_showWorldPartition}, {"tool.dialogue", &g_showDialogue}, {"tool.behaviortree", &g_showBehaviorTree},
         {"tool.modeling", &g_showModeling}, {"tool.uveditor", &g_showUVEditor}, {"tool.spriteeditor", &g_showSpriteEditor},
         {"tool.uieditor", &g_showUIEditor}, {"tool.uigallery", &okay::editor::UIGalleryOpenFlag()}, {"tool.uitheme", &g_showUIThemer}, {"tool.items", &g_showItemDatabase},
         {"tool.weapons", &g_showWeapons}, {"tool.localization", &g_showLocalization}, {"tool.inputactions", &g_showInputActions}, {"view.uionly", &g_uiOnlyMode},
@@ -14300,6 +14302,8 @@ void DrawScriptDocs() {
         fapi("load_next_scene()", "load the next scene (wraps to the first)");
         fapi("load_scene_additive(\"n\"[, x, y, z])", "MERGE a scene into the running one at an offset (seamless worlds)");
         fapi("reload_scene()", "reload the active scene");
+        fapi("load_level_async(\"n\"[, x, y, z])", "STREAM a level in with no loading screen; OnEvent_LevelLoaded(name) runs when it is in");
+        fapi("unload_level(\"n\") / is_level_loaded(\"n\") / level_progress(\"n\")", "take a streamed level out; ask whether it is in");
         fapi("scene_count() / scene_index() / scene_name()", "query the build list");
     }
 
@@ -34694,6 +34698,21 @@ static bool DrawWorldStreamerWithOkayUI(EditorState& ed, WorldStreamer* ws, okay
     L.Text("Follow Object##ws", &ws->target);
     L.Tip("Name of the object to follow. Blank = the main camera.");
     L.Check("Only re-check on cell change##ws", &ws->onlyOnCellChange);
+    L.Check("Load in the background##ws", &ws->backgroundLoading);
+    L.Tip("Read cells on worker threads and make their objects over several frames (no hitch).");
+    L.Drag("Frame budget (ms)##ws", &ws->attachBudgetMs, 1, 0.05f, 0.05f, 50.0f);
+    L.Tip("Main-thread time per frame for making streamed objects.");
+    L.DragInt("New cells per frame##ws", &ws->maxLoadsPerFrame, 0.1f, 0, 64);
+    L.DragInt("Cells loading at once##ws", &ws->maxInFlight, 0.1f, 0, 64);
+    L.Drag("Look-ahead##ws", &ws->viewDirectionWeight, 1, 0.05f, 0.0f, 10.0f);
+    L.Tip("0 = nearest cells first; higher = cells in front of the player first.");
+    L.Drag("Memory budget (MB)##ws", &ws->memoryBudgetMB, 1, 1.0f, 0.0f, 65536.0f);
+    L.Tip("0 = no limit. Otherwise the cell files in memory stay under this size.");
+    L.Check("Remember changes##ws", &ws->rememberChanges);
+    L.Tip("Objects moved, broken or removed in a cell are the same when it streams back in (dug cells stay loaded).");
+    L.Check("Follow Streaming Sources##ws", &ws->followSources);
+    L.Check("Show cells in the game##ws", &ws->debugOverlay);
+    L.Tip("Draw the grid while playing: green = loaded, yellow = loading, grey = on disk.");
     { char t_[256]; std::snprintf(t_, sizeof t_, "Cells: %s%s_<x>_<z>%s  |  resident: %d", ws->folder.c_str(), ws->prefix.c_str(), ws->ext.c_str(), (int)ws->LoadedCount());
       L.Note(t_, true, true); }
     const int kRemove = L.SmallButton("Remove##ws");
@@ -39389,8 +39408,24 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Follow Object##ws", tbuf, sizeof(tbuf))) { ws->target = tbuf; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of the object to follow. Blank = the main camera.");
             ImGui::Checkbox("Only re-check on cell change##ws", &ws->onlyOnCellChange);
+            if (ImGui::Checkbox("Load in the background##ws", &ws->backgroundLoading)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Read cells on worker threads and make their objects over several frames (no hitch).");
+            if (ImGui::DragFloat("Frame budget (ms)##ws", &ws->attachBudgetMs, 0.05f, 0.05f, 50.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Main-thread time per frame for making streamed objects.");
+            if (ImGui::DragInt("New cells per frame##ws", &ws->maxLoadsPerFrame, 0.1f, 0, 64)) ed.dirty = true;
+            if (ImGui::DragInt("Cells loading at once##ws", &ws->maxInFlight, 0.1f, 0, 64)) ed.dirty = true;
+            if (ImGui::DragFloat("Look-ahead##ws", &ws->viewDirectionWeight, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = nearest cells first; higher = cells in front of the player first.");
+            if (ImGui::DragFloat("Memory budget (MB)##ws", &ws->memoryBudgetMB, 1.0f, 0.0f, 65536.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = no limit. Otherwise the cell files in memory stay under this size.");
+            if (ImGui::Checkbox("Remember changes##ws", &ws->rememberChanges)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Objects moved, broken or removed in a cell are the same when it streams back in (dug cells stay loaded).");
+            if (ImGui::Checkbox("Follow Streaming Sources##ws", &ws->followSources)) ed.dirty = true;
+            if (ImGui::Checkbox("Show cells in the game##ws", &ws->debugOverlay)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw the grid while playing: green = loaded, yellow = loading, grey = on disk.");
             ImGui::TextDisabled("Cells: %s%s_<x>_<z>%s  |  resident: %d",
                                 ws->folder.c_str(), ws->prefix.c_str(), ws->ext.c_str(), (int)ws->LoadedCount());
+            if (ed.isPlaying()) ImGui::TextDisabled("%s", ws->DebugText().c_str());
             if (ImGui::SmallButton("Remove##ws")) toRemove = ws;
         }
     }
@@ -48959,6 +48994,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Saveable>(), "Saveable (keep when saving)")) { go->AddComponent<Saveable>()->EnsureId(); ed.dirty = true; }
             if (item(!go->GetComponent<SaveConfig>(), "Save Settings (autosave)")) { go->AddComponent<SaveConfig>(); ed.dirty = true; }
             if (item(!go->GetComponent<WorldStreamer>(), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
+            oked::StreamingAddComponentItems(ed, go, item);   // Streaming Source, Level Streaming Volume, Voxel World, Partition Layer
             if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
             if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<DropZone>(), "Drop Zone (item)")) { go->AddComponent<DropZone>(); ed.dirty = true; }
@@ -52507,6 +52543,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                                     hovered && !g_uiHandled && !g_gizmoGrab, io))
             g_uiHandled = true;
         oked::DrawWindOverlay(ed, dl, vp, center, canvasSize, canvasPos);   // wind zones and arrows
+        oked::DrawStreamingOverlay(ed, dl, vp, center, canvasSize);          // partition grid, streamed cells, level volumes
     }
     // Skeleton overlay on top of the meshes (built with the gizmos above).
     if (!gameView) {
@@ -59140,6 +59177,7 @@ int main(int argc, char** argv) {
             WeaponEditorDevHooks(ed);   // OKAY_UI_WEAPONS / OKAY_UI_WEAPONS_FILE
             SplineDevHooks(ed);       // OKAY_UI_SPLINE / SPLINESEL / SPLINECAM
             LevelDevHooks(ed);        // OKAY_UI_LEVEL / LEVELTOOL / LEVELVIEW / LEVELSEL
+            oked::StreamingDevHooks(ed);   // OKAY_UI_PARTITION / STREAMSCENE / STREAMCAM
             // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
             // Animator and Animation windows while the game runs).
             if (std::getenv("OKAY_UI_PLAY") && s_focusFrames == 60 && !ed.isPlaying()) {
@@ -59700,6 +59738,7 @@ int main(int argc, char** argv) {
         DrawBoneMap(ed);
         { OKAY_PROFILE("UI.Timeline"); DrawTimeline(ed); }
         { OKAY_PROFILE("UI.Navigation"); DrawNavigationWindow(ed); }
+        { OKAY_PROFILE("UI.WorldPartition"); oked::DrawWorldPartitionWindow(ed); }
         { OKAY_PROFILE("UI.Dialogue"); DrawDialogueWindow(ed); }
         { OKAY_PROFILE("UI.BehaviorTree"); DrawBehaviorTreeWindow(ed); }
         { OKAY_PROFILE("UI.Localization"); LocalizationTick(ed); DrawLocalizationWindow(ed); }

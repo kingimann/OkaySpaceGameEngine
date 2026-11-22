@@ -10,6 +10,10 @@
 #include "okay/Components/Buildable.hpp"
 #include "okay/Components/NetworkAvatarMotion.hpp"
 #include "okay/Components/TilemapCollider2D.hpp"
+#include "okay/Components/LevelStreaming.hpp"
+#include "okay/Components/StreamingSource.hpp"
+#include "okay/Components/VoxelWorld.hpp"
+#include "okay/Scene/WorldPartition.hpp"
 #include "okay/Core/GameSaves.hpp"
 #include "okay/Core/SaveFramework.hpp"
 #include "okay/Components/LocalPlayerInput.hpp"
@@ -1470,7 +1474,59 @@ void RegisterTilemapCollider2D() {
     b.Commit();
 }
 
+// ---- Streaming (27.4): saved by the generic record (`streamingsource`, `levelstreamingvolume`, `voxelworld`,
+// `partitionlayer`); none of them was saved before.
+void RegisterStreamingSource() {
+    PropertyBuilder<StreamingSource> b("StreamingSource", "streamingsource", "World");
+    b.AddBool("useViewDirection", &StreamingSource::useViewDirection).Tooltip("Load what is in front of this object first");
+    b.Commit();
+}
+
+void RegisterLevelStreamingVolume() {
+    PropertyBuilder<LevelStreamingVolume> b("LevelStreamingVolume", "levelstreamingvolume", "World");
+    b.AddAssetPath("level", &LevelStreamingVolume::level, "scene").Tooltip("The scene streamed in (a build-list name or a path)")
+     .AddVec3("size", &LevelStreamingVolume::size).Tooltip("The box around this object that the player enters")
+     .AddFloat("preloadDistance", &LevelStreamingVolume::preloadDistance).Range(0, kBig, 0.5).Tooltip("Start loading this far before the box")
+     .AddFloat("unloadMargin", &LevelStreamingVolume::unloadMargin).Range(0, kBig, 0.5).Tooltip("Unload only once every player is this much farther away again")
+     .AddBool("keepLoaded", &LevelStreamingVolume::keepLoaded).Tooltip("Once loaded, never unload")
+     .AddVec3("offset", &LevelStreamingVolume::offset).Tooltip("Moves the level's objects by this much")
+     .AddString("target", &LevelStreamingVolume::target).Tooltip("Object that loads it; empty = the main camera")
+     .AddBool("followSources", &LevelStreamingVolume::followSources).Tooltip("Streaming Source objects load it too");
+    b.Commit();
+}
+
+void RegisterVoxelWorld() {
+    PropertyBuilder<VoxelWorld> b("VoxelWorld", "voxelworld", "World");
+    b.AddInt("chunkVoxels", &VoxelWorld::chunkVoxels).Range(2, 64, 1).Tooltip("Voxels along one chunk edge")
+     .AddInt("heightVoxels", &VoxelWorld::heightVoxels).Range(2, 256, 1).Tooltip("Voxels from the bottom of the world to the top")
+     .AddFloat("voxelSize", &VoxelWorld::voxelSize).Range(0.05, 100, 0.05).Tooltip("World units per voxel")
+     .AddFloat("viewDistance", &VoxelWorld::viewDistance).Range(0, kBig, 1).Tooltip("Chunks this close to the player are made")
+     .AddFloat("unloadDistance", &VoxelWorld::unloadDistance).Range(0, kBig, 1).Tooltip("Chunks farther than this go")
+     .AddInt("seed", &VoxelWorld::seed).Tooltip("Another number gives another world")
+     .AddFloat("groundHeight", &VoxelWorld::groundHeight).Range(-kBig, kBig, 0.5).Tooltip("Average height of the ground")
+     .AddFloat("hills", &VoxelWorld::hills).Range(0, kBig, 0.5).Tooltip("How far the ground rises and falls")
+     .AddFloat("featureSize", &VoxelWorld::featureSize).Range(1, kBig, 1).Tooltip("World units across a typical hill")
+     .AddFloat("caves", &VoxelWorld::caves).Range(0, 1, 0.05).Tooltip("0 = solid ground, 1 = many caves")
+     .AddInt("maxChunksPerFrame", &VoxelWorld::maxChunksPerFrame).Range(1, 64, 1).Tooltip("Chunks meshed per frame at most")
+     .AddFloat("meshBudgetMs", &VoxelWorld::meshBudgetMs).Range(0, 100, 0.5).Tooltip("Milliseconds per frame for meshing")
+     .AddBool("rememberEdits", &VoxelWorld::rememberEdits).Tooltip("Dug chunks keep their shape when they stream out and back in")
+     .AddString("target", &VoxelWorld::target).Tooltip("Object the world is made around; empty = the main camera")
+     .AddBool("followSources", &VoxelWorld::followSources).Tooltip("Streaming Source objects count too");
+    b.Commit();
+}
+
+void RegisterPartitionLayer() {
+    PropertyBuilder<PartitionLayer> b("PartitionLayer", "partitionlayer", "World");
+    b.AddEnum("mode", &PartitionLayer::mode, {"Auto", "AlwaysLoaded", "Streamed"})
+     .Tooltip("World Partition: Auto decides by what the object is; Always Loaded keeps it in the main scene; Streamed puts it in its cell");
+    b.Commit();
+}
+
 void RegisterGameplayProperties() {
+    RegisterStreamingSource();
+    RegisterLevelStreamingVolume();
+    RegisterVoxelWorld();
+    RegisterPartitionLayer();
     RegisterPlayerController();
     RegisterCheckpointTrigger();
     RegisterTimedDestroy();

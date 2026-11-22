@@ -3,6 +3,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -27,8 +28,15 @@ GameObject* Box(Scene& s, const std::string& name, Vec3 pos, Vec3 scale = Vec3{1
     return g;
 }
 
+/// Run frames until `done` or the limit. Each frame also lasts about a millisecond (a busy wait, no threads here), so
+/// reads on the job system's workers finish between frames as they would in a game.
 template <class F> int Until(Scene& s, F done, int limit = 600) {
-    for (int i = 0; i < limit; ++i) { if (done()) return i; s.Update(1.0f / 60.0f); }
+    for (int i = 0; i < limit; ++i) {
+        if (done()) return i;
+        s.Update(1.0f / 60.0f);
+        const auto t0 = std::chrono::steady_clock::now();
+        while (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() < 1.0) {}
+    }
     return limit;
 }
 

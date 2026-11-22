@@ -368,6 +368,7 @@ inline std::vector<Entry> ToolsSubmenu() {
     t.push_back(Toggle("tool.animator", "Animator (state graph)"));
     t.push_back(Toggle("tool.timeline", "Timeline (cutscenes)", "Author cutscene sequences: camera shots, object keys, animation and audio cues, events and subtitles on one timeline."));
     t.push_back(Toggle("tool.navigation", "Navigation", "Bake the scene's colliders into a navigation mesh NPCs and Nav Mesh Agents path over, and see it in the Scene view."));
+    t.push_back(Toggle("tool.worldpartition", "World Partition", "Split a big scene into a grid of streaming cells (the scene is kept); the new scene streams them in and out around the player."));
     t.push_back(Toggle("tool.dialogue", "Dialogue & Quests"));
     t.push_back(Toggle("tool.behaviortree", "Behavior Tree", "Author NPC AI as a behavior tree (.okaybt): patrol, perception, chase, attack, scripts; watch it run in Play."));
     t.push_back(Sep());

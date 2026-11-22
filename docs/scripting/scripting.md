@@ -1472,6 +1472,9 @@ editor; items fire `on_drag_start/on_drag/on_drop` and targets fire
 | `load_next_scene()` | Load the next scene (wraps to the first) |
 | `load_scene_additive("n"[, x, y, z])` | **Merge** another scene into the running one at an offset (seamless worlds — the current scene stays loaded) |
 | `reload_scene()` | Reload the active scene |
+| `load_level_async("n"[, x, y, z])` | **Stream** a level in next to this one with no loading screen (read on a worker, made a few objects per frame). This object then gets `OnEvent_LevelLoaded(name)` (or `OnEvent_LevelFailed`). Returns 1 when it is loading or already in |
+| `unload_level("n")` | Take a streamed level out again (`OnEvent_LevelUnloaded(name)` follows). 1 if it was streamed in |
+| `is_level_loaded("n")` / `level_progress("n")` | Is the streamed level in; 0, 0.5 (loading) or 1 |
 | `scene_count()` / `scene_index()` / `scene_name()` | Query the build list |
 
 #### Multiplayer (networking)

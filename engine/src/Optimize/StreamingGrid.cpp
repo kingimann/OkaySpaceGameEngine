@@ -2,6 +2,7 @@
 #include "okay/Optimize/StreamingGrid.hpp"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace okay::optimize {
 namespace {
@@ -80,40 +81,64 @@ float StreamingGrid::DistanceToCell(const Vec3& p, const CellCoord& c) const {
     const float dx = gap(p.x, c.x);
     const float dy = cfg_.plane == GridPlane::XZ ? 0.0f : gap(p.y, c.y);
     const float dz = cfg_.plane == GridPlane::XY ? 0.0f : gap(p.z, c.z);
+    if (cfg_.metric == CellDistance::Chebyshev) return std::max(dx, std::max(dy, dz));
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-StreamingFrame StreamingGrid::Update(const Vec3& pos, const Vec3& dirIn) {
+StreamingFrame StreamingGrid::Update(const Vec3& pos, const Vec3& dir) {
+    return Update(std::vector<StreamingViewer>{StreamingViewer{pos, dir}});
+}
+
+StreamingFrame StreamingGrid::Update(const std::vector<StreamingViewer>& viewersIn) {
     ++frame_;
     StreamingFrame out;
-    // Direction in the grid's active axes.
-    Vec3 dir = dirIn;
-    if (cfg_.plane == GridPlane::XZ) dir.y = 0.0f;
-    if (cfg_.plane == GridPlane::XY) dir.z = 0.0f;
-    const float dl = dir.Magnitude();
-    const bool haveDir = dl > 1e-6f;
-    if (haveDir) dir = dir * (1.0f / dl);
+    // Each viewer's direction in the grid's active axes, unit length (or zero).
+    struct View { Vec3 pos, dir; bool haveDir; };
+    std::vector<View> views;
+    views.reserve(viewersIn.size());
+    for (const StreamingViewer& v : viewersIn) {
+        View w{v.position, v.direction, false};
+        if (cfg_.plane == GridPlane::XZ) w.dir.y = 0.0f;
+        if (cfg_.plane == GridPlane::XY) w.dir.z = 0.0f;
+        const float dl = w.dir.Magnitude();
+        w.haveDir = dl > 1e-6f;
+        w.dir = w.haveDir ? w.dir * (1.0f / dl) : Vec3{0, 0, 0};
+        views.push_back(w);
+    }
+    const float kFar = std::numeric_limits<float>::max();
 
-    auto centre = [&](const CellCoord& c) {
+    auto centre = [&](const View& v, const CellCoord& c) {
         const float h = cfg_.cellSize * 0.5f;
-        return Vec3{c.x * cfg_.cellSize + h, cfg_.plane == GridPlane::XZ ? pos.y : c.y * cfg_.cellSize + h,
-                    cfg_.plane == GridPlane::XY ? pos.z : c.z * cfg_.cellSize + h};
+        return Vec3{c.x * cfg_.cellSize + h, cfg_.plane == GridPlane::XZ ? v.pos.y : c.y * cfg_.cellSize + h,
+                    cfg_.plane == GridPlane::XY ? v.pos.z : c.z * cfg_.cellSize + h};
     };
-    auto priority = [&](const CellCoord& c, float dist) {
-        if (dist <= 0.0f || !haveDir || cfg_.viewDirectionWeight <= 0.0f) return dist;
-        Vec3 to = centre(c) - pos;
+    // One viewer's rank for a cell: the distance, stretched for cells behind the viewer.
+    auto rank = [&](const View& v, const CellCoord& c, float dist) {
+        if (dist <= 0.0f || !v.haveDir || cfg_.viewDirectionWeight <= 0.0f) return dist;
+        Vec3 to = centre(v, c) - v.pos;
         if (cfg_.plane == GridPlane::XZ) to.y = 0.0f;
         if (cfg_.plane == GridPlane::XY) to.z = 0.0f;
         const float tl = to.Magnitude();
         if (tl < 1e-6f) return dist;
-        const float facing = Vec3::Dot(dir, to * (1.0f / tl));          // -1 behind .. 1 ahead
+        const float facing = Vec3::Dot(v.dir, to * (1.0f / tl));          // -1 behind .. 1 ahead
         return dist * (1.0f + cfg_.viewDirectionWeight * (1.0f - facing));
     };
+    // Distance to the nearest viewer, and the best rank any viewer gives.
+    auto nearest = [&](const CellCoord& c) {
+        float d = kFar;
+        for (const View& v : views) d = std::min(d, DistanceToCell(v.pos, c));
+        return d;
+    };
+    auto priority = [&](const CellCoord& c) {
+        float p = kFar;
+        for (const View& v : views) p = std::min(p, rank(v, c, DistanceToCell(v.pos, c)));
+        return p;
+    };
 
-    // 1. Unloads / cancels: active cells beyond the unload radius, farthest first.
+    // 1. Unloads / cancels: active cells beyond the unload radius of every viewer, farthest first.
     std::vector<std::pair<float, CellCoord>> outside;
     for (const CellCoord& c : active_) {
-        const float d = DistanceToCell(pos, c);
+        const float d = nearest(c);
         if (d > cfg_.unloadRadius) outside.emplace_back(d, c);
     }
     std::sort(outside.begin(), outside.end(), [](const auto& a, const auto& b) {
@@ -138,30 +163,37 @@ StreamingFrame StreamingGrid::Update(const Vec3& pos, const Vec3& dirIn) {
         }
     }
 
-    // 2. Wanted cells: inside the load radius, not loaded, not backing off.
+    // 2. Wanted cells: inside the load radius of some viewer, not loaded, not backing off.
     std::vector<Want> wants;
     int inRadius = 0;
     const int r = static_cast<int>(std::ceil(cfg_.loadRadius / cfg_.cellSize)) + 1;
     const int dims = cfg_.plane == GridPlane::XYZ ? 3 : 2;
     double boxCount = 1.0;
     for (int i = 0; i < dims; ++i) boxCount *= (2.0 * r + 1.0);
+    boxCount *= static_cast<double>(views.size());
     auto consider = [&](const CellCoord& c, const Cell& cell) {
-        const float d = DistanceToCell(pos, c);
+        const float d = nearest(c);
         if (d > cfg_.loadRadius) return;
         ++inRadius;
         if (cell.state != CellState::Unloaded || cell.retryAt > frame_) return;
-        wants.push_back({priority(c, d), c});
+        wants.push_back({priority(c), c});
     };
     if (boxCount < static_cast<double>(cells_.size())) {
-        const CellCoord o = CellOf(pos);
-        for (int x = o.x - r; x <= o.x + r; ++x)
-            for (int y = (cfg_.plane == GridPlane::XYZ || cfg_.plane == GridPlane::XY) ? o.y - r : 0;
-                 y <= ((cfg_.plane == GridPlane::XYZ || cfg_.plane == GridPlane::XY) ? o.y + r : 0); ++y)
-                for (int z = (cfg_.plane == GridPlane::XY) ? 0 : o.z - r; z <= ((cfg_.plane == GridPlane::XY) ? 0 : o.z + r); ++z) {
-                    const CellCoord c{x, y, z};
-                    auto it = cells_.find(c);
-                    if (it != cells_.end()) consider(c, it->second);
-                }
+        // Walk the box around each viewer; a cell two viewers share is looked at once.
+        std::set<CellCoord> seen;
+        const bool useY = cfg_.plane == GridPlane::XYZ || cfg_.plane == GridPlane::XY;
+        const bool useZ = cfg_.plane != GridPlane::XY;
+        for (const View& v : views) {
+            const CellCoord o = CellOf(v.pos);
+            for (int x = o.x - r; x <= o.x + r; ++x)
+                for (int y = useY ? o.y - r : 0; y <= (useY ? o.y + r : 0); ++y)
+                    for (int z = useZ ? o.z - r : 0; z <= (useZ ? o.z + r : 0); ++z) {
+                        const CellCoord c{x, y, z};
+                        auto it = cells_.find(c);
+                        if (it == cells_.end() || !seen.insert(c).second) continue;
+                        consider(c, it->second);
+                    }
+        }
     } else {
         for (const auto& kv : cells_) consider(kv.first, kv.second);
     }
@@ -193,9 +225,8 @@ StreamingFrame StreamingGrid::Update(const Vec3& pos, const Vec3& dirIn) {
             std::vector<Victim> evict;
             for (const CellCoord& a : active_) {
                 if (cells_[a].state != CellState::Loaded) continue;
-                const float d = DistanceToCell(pos, a);
-                const bool outsideRadius = d > cfg_.loadRadius;
-                const float pr = priority(a, d);
+                const bool outsideRadius = nearest(a) > cfg_.loadRadius;
+                const float pr = priority(a);
                 if (outsideRadius || pr > wants[i].priority) evict.push_back({outsideRadius, pr, a});
             }
             std::sort(evict.begin(), evict.end(), [](const Victim& a, const Victim& b) {

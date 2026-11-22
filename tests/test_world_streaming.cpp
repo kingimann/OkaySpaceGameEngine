@@ -46,11 +46,18 @@ void BakeCell(const std::string& dir, int x, int z, float cell, int extra) {
     SceneSerializer::SaveObjectToFile(*root, dir + "/cell_" + std::to_string(x) + "_" + std::to_string(z) + ".okayprefab");
 }
 
-void Frames(Scene& s, int n) { for (int i = 0; i < n; ++i) s.Update(1.0f / 60.0f); }
+/// A frame of a running game also takes time: wait about a millisecond (busy, no threads here), so a read on a
+/// worker has a chance to finish between frames as it would in a real game.
+void FrameTime() {
+    const auto t0 = std::chrono::steady_clock::now();
+    while (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() < 1.0) {}
+}
+
+void Frames(Scene& s, int n) { for (int i = 0; i < n; ++i) { s.Update(1.0f / 60.0f); FrameTime(); } }
 
 /// Run frames until `done` or the limit; returns the frames used.
 template <class F> int Until(Scene& s, F done, int limit = 600) {
-    for (int i = 0; i < limit; ++i) { if (done()) return i; s.Update(1.0f / 60.0f); }
+    for (int i = 0; i < limit; ++i) { if (done()) return i; s.Update(1.0f / 60.0f); FrameTime(); }
     return limit;
 }
 
@@ -168,6 +175,8 @@ int main() {
             return q.State(t1) == StreamLoadState::Loaded && q.State(bad) == StreamLoadState::Failed;
         });
         CHECK(frames < 600);
+        if (frames >= 600) std::printf("  queue states: t1 %d bad %d, live %d, reading %d waiting %d attaching %d\n", (int)q.State(t1), (int)q.State(bad), Live(s),
+                                       q.Stats().reading, q.Stats().waiting, q.Stats().attaching);
         CHECK(doneCalls == 1);
         CHECK(Live(s) == 41);
         CHECK(maxMade < 41);                    // never the whole cell in one frame
@@ -214,7 +223,7 @@ int main() {
         const int before = Live(scene);
         player->transform->localPosition = Vec3{kCell * 4 + 5.0f, 0.0f, kCell * 2 + 5.0f};
         scene.Update(0.016f);
-        CHECK(ws->IsCellLoading(5, 2) || ws->IsCellLoading(5, 1) || ws->IsCellLoading(5, 3));
+        CHECK(ws->GetStats().loading > 0);     // nearest first: the x = 4 column is asked for before x = 5
         CHECK(!ws->IsCellLoaded(5, 2));
         CHECK(Live(scene) - before < 41);      // the frame that asked made at most part of one cell
         int maxNew = 0, last = Live(scene);
@@ -328,7 +337,7 @@ int main() {
         auto* w3 = o ? o->GetComponent<WorldStreamer>() : nullptr;
         CHECK(w3 != nullptr);
         if (w3) {
-            CHECK_NEAR(w3->cellSize, 40.0f, 1e-5f);
+            CHECK_NEAR(w3->cellSize, 50.0f, 1e-5f);
             CHECK(w3->backgroundLoading && w3->rememberChanges && w3->followSources && !w3->debugOverlay);
             CHECK_NEAR(w3->attachBudgetMs, 2.0f, 1e-5f);
         }

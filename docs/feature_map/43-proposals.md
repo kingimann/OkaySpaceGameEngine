@@ -179,16 +179,16 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Parts:**
   - 45.1.1 Streamer component - `Components/WorldStreamer` - loads cells named `<prefix>_<x>_<z>.okayprefab` within a radius of the camera; hysteresis between load and unload radius
   - 45.1.2 Additive scene merge - `Scene/SceneSerializer` - `MergeFromText` with an offset places scene "chunks" side by side
-  - 45.1.3 Cell editor - `-` - not built (cells are written by hand today)
+  - 45.1.3 Cell editor - `Scene/WorldPartition`, `editor/StreamingTools` - World Partition window: split the open scene into cells by bounds centre (with always-loaded rules and a Partition Layer override), writes the cells and a streaming scene, keeps the source, updates on a re-run (27.4.6)
 - **Code:** `Components/WorldStreamer`, `Scene/SceneSerializer`
 - **API:** `WorldStreamer` (`cellSize`, `loadRadius`, `unloadRadius`, `folder`, `prefix`), `SyncNow`, `LoadedCells`
 - **Editor:** WorldStreamer Inspector section
 - **Docs:** `docs/engine/scene_management.md`
 - **Tests:** `worldstreamer`
-- **Status:** Partial - runtime streaming works; authoring is manual.
-- **Exists today:** The streamer, as above. It assumes each cell prefab already holds objects at final world positions.
+- **Status:** Partial - runtime streaming and the World Partition tool work (tested headless); the editor window is not compiled or clicked yet.
+- **Exists today:** The streamer and the World Partition tool, as above. Cell prefabs hold objects at their final world positions.
 - **Suggested priority:** Medium - open worlds are a stated goal of the terrain tools; this is the missing workflow.
-- **Open:** first step: "Split scene into cells" (grid size, object assignment by position, writes cell prefabs and a manifest) and a Scene view overlay of cell borders; overlaps 27.4 on the runtime side.
+- **Open:** editing the cells in place (load a cell into the open map, edit, write it back) and a manifest; see 27.4 for the runtime side.
 - **Related:** 27.4, 2.6, 29.1, 15.6
 - **Words:** world partition, cells, chunks, split scene, open world, streaming cells, world streamer, bake cells
 - **Seen as:** a huge map in one scene is slow to edit and load; cells have to be made by hand

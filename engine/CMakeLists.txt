@@ -337,6 +337,12 @@ add_library(okay_engine
     src/Optimize/PortalCells.cpp
     src/Optimize/BatchPlanner.cpp
     src/Optimize/StreamingGrid.cpp
+    src/Optimize/ChunkStreamer.cpp
+    src/Scene/SceneStreamQueue.cpp
+    src/Components/WorldStreamer.cpp
+    src/Components/LevelStreaming.cpp
+    src/Components/VoxelWorld.cpp
+    src/Scene/WorldPartition.cpp
     src/Optimize/MipBudget.cpp
     src/Texture/Texture.cpp
     src/Texture/Mip.cpp

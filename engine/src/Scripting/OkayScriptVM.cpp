@@ -173,6 +173,8 @@
 #include <vector>
 
 
+#include "okay/Components/LevelStreaming.hpp"   // load_level_async / unload_level
+#include "okay/Scene/SceneStreamQueue.hpp"     // CurrentSceneLoadDirectory
 #include "okay/Core/ScriptPaths.hpp"   // ScriptPathOk: the one gate for script-supplied file names
 
 namespace okay {
@@ -6966,6 +6968,34 @@ struct OkayScriptVM::Impl {
                 return Value{1.0f};
             }
             return Value{0.0f};
+        };
+        // Level streaming (27.4): bring a level in next to this one without a loading screen. It is read on a
+        // worker and made a few objects per frame; this object then gets the custom event "LevelLoaded" (or
+        // "LevelFailed"), so OnEvent_LevelLoaded(name) runs. load_level_async("Corridor_B", x, y, z) moves it.
+        // Returns 1 if it is loading (or already in).
+        b["load_level_async"] = [this](std::vector<Value>& a) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            if (!s || a.empty()) return Value{0.0f};
+            const std::string name = a[0].AsString();
+            if (SceneManager::IndexOf(name) < 0 && !ScriptPathOk(name, "load_level_async")) return Value{0.0f};
+            Vec3 off{0, 0, 0};
+            if (a.size() >= 4) off = {a[1].AsFloat(), a[2].AsFloat(), a[3].AsFloat()};
+            return Value{LevelStreaming::LoadLevelAsync(*s, name, off, {}, rt.host->gameObject,
+                                                        CurrentSceneLoadDirectory()) > 0 ? 1.0f : 0.0f};
+        };
+        // unload_level("Corridor_B"): take a streamed level out again ("LevelUnloaded" follows). 1 if it was in.
+        b["unload_level"] = [this](std::vector<Value>& a) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            if (!s || a.empty()) return Value{0.0f};
+            return Value{LevelStreaming::UnloadLevel(*s, a[0].AsString(), rt.host->gameObject) ? 1.0f : 0.0f};
+        };
+        b["is_level_loaded"] = [this](std::vector<Value>& a) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            return Value{s && !a.empty() && LevelStreaming::IsLevelLoaded(*s, a[0].AsString())};
+        };
+        b["level_progress"] = [this](std::vector<Value>& a) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            return Value{(s && !a.empty()) ? LevelStreaming::LevelProgress(*s, a[0].AsString()) : 0.0f};
         };
         b["reload_scene"] = [this](std::vector<Value>&) {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;

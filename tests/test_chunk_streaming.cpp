@@ -5,6 +5,7 @@
 #include "okay/Core/Jobs.hpp"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <string>
 
@@ -13,6 +14,13 @@ using namespace okay::optimize;
 
 namespace {
 struct Data { int x = 0, z = 0; int edits = 0; };
+/// One game frame: the scene update plus about 3 ms of waiting (a busy wait, no threads here), so chunks generated on
+/// the job system's workers arrive between frames as they would in a game running at a normal frame rate.
+void Frame(Scene& s) {
+    s.Update(1.0f / 60.0f);
+    const auto t0 = std::chrono::steady_clock::now();
+    while (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() < 3.0) {}
+}
 }
 
 int main() {
@@ -70,11 +78,15 @@ int main() {
         CHECK(cs.IsLoaded(CellCoord{100, 0, 0}) && !cs.IsLoaded(CellCoord{0, 0, 0}));
         CHECK(cs.HasSaved(CellCoord{1, 0, 0}) && cs.Stats().saved == 1);    // only the dug one was kept
         CHECK(cs.Stats().registered < 200);                                // far-behind chunks were forgotten
-        CHECK(cs.LoadedCount() == 21 && maxAttached <= 2);
+        // The 21 chunks within 20 of the viewer are in; a few just walked past stay until they are 30 away (hysteresis).
+        int near = 0;
+        for (int x = 98; x <= 102; ++x) for (int z = -2; z <= 2; ++z) if (cs.IsLoaded(CellCoord{x, 0, z})) ++near;
+        CHECK(near == 21 && cs.LoadedCount() >= 21 && cs.LoadedCount() <= 25 && maxAttached <= 2);
         // Walk back: the dug chunk returns as it was left, not generated again.
         const int genBefore = generatedOnWorker.load();
         for (int i = 0; i < 40; ++i) frame(Vec3{5, 0, 5});
-        CHECK(world.count(CellCoord{1, 0, 0}) && world[CellCoord{1, 0, 0}]->edits == 3);
+        const CellCoord dugChunk{1, 0, 0};
+        CHECK(world.count(dugChunk) && world[dugChunk]->edits == 3);
         CHECK(!cs.HasSaved(CellCoord{1, 0, 0}) && cs.Stats().restored == 1);
         CHECK(generatedOnWorker.load() - genBefore == 20);                 // 21 chunks, one restored
         // Flush: everything at once.
@@ -82,6 +94,8 @@ int main() {
         CHECK(world.empty() && cs.LoadedCount() == 0);
         cs.Flush({StreamingViewer{Vec3{-500, 0, -500}, Vec3{}}});
         CHECK(cs.LoadedCount() == 21);
+        if (cs.LoadedCount() != 21) std::printf("  flush: loaded %d registered %d ready %d generating %d\n", cs.LoadedCount(),
+                                                cs.Stats().registered, cs.Stats().ready, cs.Stats().generating);
         // A generator that throws is retried later, not a crash.
         ChunkStreamer bad(cfg);
         ChunkHooks bh = h;
@@ -149,16 +163,16 @@ int main() {
         for (int step = 0; step <= 30; ++step) {
             player->transform->localPosition = Vec3{8.0f + step * 10.0f, 20, 8};
             const int before = (int)vw->GetStats().attached;
-            s.Update(0.016f);
+            Frame(s);
             maxNew = std::max(maxNew, (int)vw->GetStats().attached - before);
         }
-        for (int i = 0; i < 60; ++i) s.Update(0.016f);
+        for (int i = 0; i < 60; ++i) Frame(s);
         CHECK(!vw->IsChunkLoaded(0, 0) && vw->IsChunkLoaded(19, 0));
         CHECK(vw->RememberedChunkCount() == 1);
         CHECK(maxNew <= 1);                               // one chunk meshed per frame at most
         player->transform->localPosition = Vec3{8, 20, 8};
-        for (int i = 0; i < 120 && !vw->IsChunkLoaded(0, 0); ++i) s.Update(0.016f);
-        for (int i = 0; i < 30; ++i) s.Update(0.016f);
+        for (int i = 0; i < 120 && !vw->IsChunkLoaded(0, 0); ++i) Frame(s);
+        for (int i = 0; i < 30; ++i) Frame(s);
         VoxelTerrain* back = vw->ChunkAt(Vec3{8, 0, 8});
         CHECK(back != nullptr);
         if (back) CHECK_NEAR(back->SampleDensity(Vec3{0, 10, 0}), dug, 1e-4f);

@@ -210,6 +210,8 @@ player
 security_paths
 shaders
 spatial_audio
+streaming
+streaming/open_world_cells
 texture
 touch_controls
 driving
@@ -258,6 +260,7 @@ cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/sr
 [ -s "$OUT_DIR/examples/water/lake.okayscene" ] || { echo "error: examples/water/lake.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/shaders/shader_demo.okayscene" ] || { echo "error: examples/shaders/shader_demo.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/ui_text/ui_text.okayscene" ] || { echo "error: examples/ui_text/ui_text.okayscene did not make it into the distribution" >&2; exit 1; }
+[ -s "$OUT_DIR/examples/streaming/open_world.okayscene" ] && [ -s "$OUT_DIR/examples/streaming/open_world_cells/cell_0_0.okayprefab" ] || { echo "error: examples/streaming (open world and its cells) did not make it into the distribution" >&2; exit 1; }
 
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
 # every exe that initializes Steam (the launcher at top, the tools in Tools/).

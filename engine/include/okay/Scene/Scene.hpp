@@ -195,6 +195,9 @@ public:
         bool  additive = false;
         Vec3  offset{0, 0, 0};          // additive: moves the new top-level objects
         int   objectsPerFrame = 64;    // GameObjects created per Update
+        /// > 0: keep making `objectsPerFrame`-sized batches each Update until this many milliseconds
+        /// are spent (at least one batch), so a streamed load uses a time budget rather than a count.
+        float timeBudgetMs = 0.0f;
         std::function<void(float)> onProgress;   // 0..1, after each step
         std::function<void(bool)>  onDone;       // once: true = loaded, false = failed / cancelled
     };
@@ -209,6 +212,11 @@ public:
     /// has then run). RequestLoad / RequestMerge are unchanged and still load in one go.
     int   BeginAsyncLoad(const std::string& path, AsyncLoadOptions opts);
     int   BeginAsyncLoad(const std::string& path) { return BeginAsyncLoad(path, AsyncLoadOptions()); }
+    /// The same with a document that was already read and unpacked (SceneLoadJob::OpenFile / OpenText),
+    /// for example on a worker of the job system, so the main thread only makes the objects. The job's
+    /// own `additive` flag and offset are used (opts.additive / opts.offset are ignored). Returns 0 (and
+    /// onDone(false)) for a null job.
+    int   BeginAsyncLoad(std::unique_ptr<SceneLoadJob> job, AsyncLoadOptions opts);
     bool  IsLoading(int handle) const;
     /// Finished without error (and not unloaded yet).
     bool  IsLoaded(int handle) const;
@@ -219,6 +227,9 @@ public:
     /// half way and remove what it made. False for an unknown handle. For a replacing
     /// (non-additive) load this does not bring the old scene back.
     bool  UnloadAdditive(int handle);
+    /// Instance ids of the top-level objects a finished load brought in (empty while it is still loading,
+    /// after it failed or was unloaded, or for an unknown handle).
+    std::vector<std::uint64_t> LoadedRoots(int handle) const;
 
     // ---- Queries -------------------------------------------------------
     GameObject* Find(const std::string& name) const;

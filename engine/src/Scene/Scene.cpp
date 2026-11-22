@@ -35,6 +35,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include <cmath>
 #include <algorithm>
+#include <chrono>
 #include <atomic>
 #include <functional>
 #include <iostream>
@@ -1562,6 +1563,15 @@ int Scene::BeginAsyncLoad(const std::string& path, AsyncLoadOptions opts) {
         if (opts.onDone) opts.onDone(false);
         return 0;
     }
+    return BeginAsyncLoad(std::move(job), std::move(opts));
+}
+
+int Scene::BeginAsyncLoad(std::unique_ptr<SceneLoadJob> job, AsyncLoadOptions opts) {
+    if (!job) {
+        if (opts.onDone) opts.onDone(false);
+        return 0;
+    }
+    opts.additive = job->Additive();
     if (!opts.additive) {
         // The last replacing request wins. A deferred load or text load still waiting is told it never ran, and a
         // replacing load still in flight is stopped (what it made is removed) before the new one clears the scene.
@@ -1613,6 +1623,12 @@ float Scene::LoadProgress(int handle) const {
     return r->job->Progress();
 }
 
+std::vector<std::uint64_t> Scene::LoadedRoots(int handle) const {
+    const LoadRecord* r = FindLoad(handle);
+    if (!r || !r->finished || !r->ok || !r->job) return {};
+    return r->job->RootIds();
+}
+
 void Scene::DestroyLoadedObjects(const std::vector<std::uint64_t>& ids) {
     for (std::uint64_t id : ids) {
         GameObject* go = GameObject::FromInstanceId(id);
@@ -1658,7 +1674,15 @@ void Scene::StepAsyncLoads() {
         }
         const std::size_t before = (first && !rec.opts.additive) ? 0 : m_pending.size();
         std::string err;
-        const bool ok = rec.job->Step(*this, rec.opts.objectsPerFrame, &err);
+        const auto t0 = std::chrono::steady_clock::now();
+        bool ok = rec.job->Step(*this, rec.opts.objectsPerFrame, &err);
+        if (ok && rec.opts.timeBudgetMs > 0.0f && !rec.job->Finished()) {
+            // A time budget: more batches while the frame's share lasts (the first batch always runs).
+            const double budget = (double)rec.opts.timeBudgetMs;
+            while (ok && !rec.job->Finished() &&
+                   std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() < budget)
+                ok = rec.job->Step(*this, rec.opts.objectsPerFrame, &err);
+        }
         // Hold what this step made until the whole scene is in: nothing Awakes against a
         // half-built hierarchy.
         const std::size_t from = std::min(before, m_pending.size());

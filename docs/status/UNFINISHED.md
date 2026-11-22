@@ -282,7 +282,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | [27.1](../feature_map/20-35-planned.md#271-lod-generation) | LOD generation | Partial | simplifier ignores colour and material changes in its error; a mesh with `cornerUVs` is split into per-vertex UVs first; skinned... |
 | [27.2](../feature_map/20-35-planned.md#272-occlusion-culling) | Occlusion culling | Partial | CPU rasteriser only (no GPU queries); conservative, so it may draw more than needed; no components yet. |
 | [27.3](../feature_map/20-35-planned.md#273-batching) | Batching | Partial | `isStatic` is only "a hint for tools"; merged meshes need a draw path in each renderer; skinned and transparent objects are never... |
-| [27.4](../feature_map/20-35-planned.md#274-streaming) | Streaming | Partial | a loaded cell is created in one frame (hitch risk); saves do not know about unloaded cells (see 35.3); cells are on the XZ plane... |
+| [27.4](../feature_map/20-35-planned.md#274-streaming) | Streaming | Partial | remembered cells and voxel chunks last for the session only (not in saves, 35.3); a cell Awakes in the frame its last object is made and is destroyed in one frame; navmesh and physics per cell; mip / mesh / audio streaming; Load Level visual-script nodes; the World Partition window and overlays are not compiled or clicked yet |
 
 ### 28. Version control integration (High)
 
@@ -370,7 +370,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 45. Open-world streaming and world partition
 
-| [45.1](../feature_map/43-proposals.md#451-cell-authoring-and-baking) | Cell authoring and baking | Partial | first step: "Split scene into cells" (grid size, object assignment by position, writes cell prefabs and a manifest) and a Scene... |
+| [45.1](../feature_map/43-proposals.md#451-cell-authoring-and-baking) | Cell authoring and baking | Partial | World Partition writes the cells (27.4.6); still open: editing a cell in place inside the open map and a manifest... |
 | [45.2](../feature_map/43-proposals.md#452-large-world-coordinates) | Large world coordinates | Planned | first step: measure where jitter starts in a test scene; then a floating-origin option that shifts the whole scene back when the... |
 | [45.3](../feature_map/43-proposals.md#453-streaming-aware-systems) | Streaming-aware systems | Planned | first step: per-cell navmesh bake stored with the cell and stitched at load; cell-level state records for saves. |
 | [45.4](../feature_map/43-proposals.md#454-distant-scenery) | Distant scenery | Planned | first step: merged low-detail meshes per cell ("hierarchical LOD") using the simplifier; billboard impostors for trees. |

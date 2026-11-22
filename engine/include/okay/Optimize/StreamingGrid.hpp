@@ -51,9 +51,23 @@ struct CellCoord {
 
 enum class CellState { Unloaded, Loading, Loaded };
 
+/// How far a viewer is from a cell (always to the cell's box, 0 inside).
+enum class CellDistance {
+    Euclidean,   ///< straight-line distance: round load areas
+    Chebyshev,   ///< the largest gap along one axis: square rings ("every cell within N cells")
+};
+
+/// One place the world is seen from (a player, a camera, a cutscene target). The grid keeps a cell
+/// loaded while any viewer is near it and ranks it by the viewer that wants it most.
+struct StreamingViewer {
+    Vec3 position;
+    Vec3 direction;   ///< any length; zero = no view-direction bonus for this viewer
+};
+
 struct StreamingConfig {
     float cellSize = 32.0f;
     GridPlane plane = GridPlane::XZ;
+    CellDistance metric = CellDistance::Euclidean;
     float loadRadius = 96.0f;
     float unloadRadius = 128.0f;          ///< raised to loadRadius if smaller
     int   maxLoadsPerFrame = 2;           ///< new load requests per Update (<= 0: unlimited)
@@ -110,6 +124,9 @@ public:
 
     /// Advance one frame for a viewer at `pos` looking along `dir` (any length; zero = no direction bonus).
     StreamingFrame Update(const Vec3& pos, const Vec3& dir);
+    /// Advance one frame for several viewers: a cell's distance is its distance to the nearest viewer and its
+    /// priority the best any viewer gives it. With no viewers nothing is wanted (every resident cell unloads).
+    StreamingFrame Update(const std::vector<StreamingViewer>& viewers);
 
     /// The asset manager finished loading a cell. False when the cell was not loading
     /// (it was cancelled or unregistered): the caller should drop what it loaded.

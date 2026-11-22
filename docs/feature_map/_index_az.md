@@ -3188,6 +3188,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Own MDC, HMP and CSM readers (side by side, off by default) (3.6.38)
 - Own NFF reader (side by side, off by default) (3.6.35)
 - Own OGRE XML mesh reader (side by side, off by default) (3.6.32)
+- Own OpenGL renderer in the host path (40.3.6)
 - Own PMX reader (side by side, off by default, unverified on real files) (3.6.41)
 - own stack (41.11)
 - Own STL and PLY readers, import seam (3.6.9)

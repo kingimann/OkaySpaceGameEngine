@@ -1,8 +1,8 @@
 #pragma once
 // OkayUI render interface: OkayUI's draw data on screen WITHOUT any Dear ImGui backend code.
 //
-// OWN CODE, OFF BY DEFAULT, wired nowhere (the editor and launcher still draw through Dear ImGui). See
-// docs/ui/own_ui_toolkit.md, "OkayUI render interface".
+// OWN CODE, OFF BY DEFAULT. The only host that uses it: the launcher's and editor's OkayUI screens with OKAY_UI_OWN_RENDER=1, through
+// OkayUIRenderSDL.hpp (the OpenGL backend inside SDL's OpenGL renderer). See docs/ui/own_ui_toolkit.md, section 7.
 //
 // Three layers:
 //

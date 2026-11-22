@@ -69,10 +69,11 @@ add_library(okay_ui_soft STATIC soft/OkayUI_Soft.cpp soft/OkayUI_SoftPainter.cpp
 target_include_directories(okay_ui_soft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/soft)
 target_link_libraries(okay_ui_soft PUBLIC okay_ui okay_ui_screens)
 
-# ---- Render interface and backends (OkayUIRender.hpp): own code, off by default, wired into nothing ----------------------
+# ---- Render interface and backends (OkayUIRender.hpp): own code, off by default ----------------------------------------
 # One interface from OkayUI's draw data to a backend, a validator for it, and the backends: software (the reference),
 # okay::platform::Painter, OpenGL 3.3 core / ES 3.0 (entry points through a get-proc function, no link-time GL), Direct3D 11
-# (Windows). The editor and launcher still draw through Dear ImGui; nothing links this yet except its tests.
+# (Windows), and SdlGLHost (OkayUIRender_SDLGL.cpp): the OpenGL backend inside SDL's OpenGL renderer, which the editor and launcher link
+# for their hosted OkayUI screens and use only with OKAY_UI_OWN_RENDER=1 (off by default).
 add_library(okay_ui_render STATIC render/OkayUIRender.cpp render/OkayUIRender_Soft.cpp render/OkayUIRender_Painter.cpp
             render/OkayUIRender_GL.cpp render/OkayUIRender_D3D11.cpp render/OkayUIRender_SDLGL.cpp)
 target_link_libraries(okay_ui_render PUBLIC okay_ui_soft)

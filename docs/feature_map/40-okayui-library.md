@@ -55,12 +55,13 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
   - 40.3.3 Direct3D 11 backend - `okayui/include/okay/UI/OkayUI_D3D11.hpp`, `okayui/src/OkayUI_D3D11.cpp` - `D3D11Backend::Init/Render/Shutdown`, compiled to nothing off Windows
   - 40.3.4 D3D11 demo - `okayui/d3d11_demo/main.cpp` - standalone Win32 + DX11 app, shipped in the Windows dist `Tools/` folder
   - 40.3.5 Build wiring - `okayui/CMakeLists.txt` - static lib `okay_ui` (alias `okay::ui`), built only when SDL2 is found, skipped on Emscripten/web; linked by editor, player and tests
-- **Code:** `okayui/include/okay/UI/OkayUI.hpp`, `okayui/include/okay/UI/OkayUI_D3D11.hpp`, `okayui/src/OkayUI.cpp`, `okayui/src/OkayUI_D3D11.cpp`, `okayui/d3d11_demo/main.cpp`, `okayui/CMakeLists.txt`, `scripts/build-windows-dist.sh`
-- **API:** `OkayUI::Input`, `BeginFrame`, `EndFrame`, `GetDrawData`, `DrawCmd`, `EndFrameData`, `OkayUI::D3D11Backend`, `OkayUI::soft::Render` (40.6)
+  - 40.3.6 Own OpenGL renderer in the host path - `okayui/include/okay/UI/OkayUIRenderSDL.hpp`, `okayui/render/OkayUIRender_SDLGL.cpp`, `shared/OkayUIFrame.hpp` - `SdlGLHost`: with `OKAY_UI_OWN_RENDER=1` (Settings > Experimental "OkayUI own renderer"; off by default) the launcher's and editor's OkayUI frame is drawn by OkayUI's own OpenGL backend into SDL's OpenGL renderer instead of `SDL_RenderGeometry`; any other SDL renderer (Windows' default Direct3D 11), a render target, or a frame with an SDL texture image keeps the old path
+- **Code:** `okayui/include/okay/UI/OkayUI.hpp`, `okayui/include/okay/UI/OkayUI_D3D11.hpp`, `okayui/src/OkayUI.cpp`, `okayui/src/OkayUI_D3D11.cpp`, `okayui/d3d11_demo/main.cpp`, `okayui/CMakeLists.txt`, `scripts/build-windows-dist.sh`, `okayui/include/okay/UI/OkayUIRenderSDL.hpp`, `okayui/render/OkayUIRender_SDLGL.cpp`, `shared/OkayUIFrame.hpp`
+- **API:** `OkayUI::Input`, `BeginFrame`, `EndFrame`, `DrawFinishedFrame`, `GetDrawData`, `DrawCmd`, `EndFrameData`, `OkayUI::D3D11Backend`, `OkayUI::soft::Render` (40.6), `OkayUI::render::SdlGLHost`, env `OKAY_UI_OWN_RENDER`
 - **Editor:** none (the editor links `okay_ui` with `OKAY_HAVE_OKAYUI=1`)
 - **Docs:** -
-- **Tests:** `okayui` (SDL software renderer), `okayui_soft` (the draw list through the CPU backend)
-- **Status:** Partial - SDL path and the software backend are tested; the D3D11 backend and demo compile only on Windows, so nothing here could verify them (not run in this survey)
+- **Tests:** `okayui` (SDL software renderer), `okayui_soft` (the draw list through the CPU backend), `okayui_render_sdlhost` (the host path with the own OpenGL renderer on SDL's OpenGL and OpenGL ES renderers, offscreen EGL on Mesa llvmpipe, against the software reference)
+- **Status:** Partial - SDL path and the software backend are tested; the own OpenGL renderer in the host path is tested headless on llvmpipe only (never on a real GPU, on Windows, or in a running editor or launcher); the D3D11 backend and demo compile only on Windows, so nothing here could verify them (not run in this survey)
 - **Open:** no test of the D3D11 path found, and it still draws only vertices and indices (no clip rectangles, no atlas texture: it should use `DrawCmd` like the SDL path); skipped in the web build (per `CMakeLists.txt` and `scripts/build-web.sh` comments)
 - **Related:** 40.1, 18.1, 18.2, 2.1
 - **Words:** SDL_Renderer, SDL_RenderGeometry, Direct3D 11, D3D11, DX11, okay_ui, okay::ui, draw data, EndFrame, demo, okayui_d3d11_demo

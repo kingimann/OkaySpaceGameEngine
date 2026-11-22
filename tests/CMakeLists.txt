@@ -1401,6 +1401,10 @@ add_test(NAME curve_formulas COMMAND test_curve_formulas)
 add_executable(test_base64 test_base64.cpp)
 target_link_libraries(test_base64 PRIVATE okay::engine)
 add_test(NAME base64 COMMAND test_base64)
+# One file size + time helper (engine/include/okay/Core/FileStamp.hpp, #422 audit item 26): the same answers as the three copies.
+add_executable(test_file_stamp test_file_stamp.cpp)
+target_link_libraries(test_file_stamp PRIVATE okay::engine)
+add_test(NAME file_stamp COMMAND test_file_stamp)
 # The renderers' mesh-change hash (engine/include/okay/Render/MeshHash.hpp): every bit counts, and it is much faster.
 add_executable(test_mesh_hash test_mesh_hash.cpp)
 target_link_libraries(test_mesh_hash PRIVATE okay::engine)

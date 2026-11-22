@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.903.0
+  Interact key and dialogue cameras
+  - One Interact key (E, or X on a controller) for seats, item pickups,
+    "hold to use" prompts, buttons, dialogue and visual-script interact
+    events. Changing the Interact binding changes it for all of them.
+  - First-person lean right is now X instead of E, so E is free for
+    Interact. Old scenes keep the lean key they saved.
+  - Someone who dies while sitting now gets up from the seat.
+  - Dialogue lines can switch to camera shots, and the camera returns when
+    the talk ends.
+
 v2.902.0
   Fixes and faster model import
   - FBX models import faster and use less memory, and every UV set is read.

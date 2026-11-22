@@ -13,6 +13,7 @@
 #include <winrt/Windows.Media.Devices.h>
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.System.h>
+#include <winrt/Windows.System.Profile.h>
 #include <winrt/Windows.UI.ViewManagement.h>
 
 #include <cstring>
@@ -77,6 +78,16 @@ struct GameApp : winrt::implements<GameApp, wac::IFrameworkViewSource, wac::IFra
             auto b = m_window.Bounds();
             bridge::Resized(m_engine, b.Width, b.Height, wgd::DisplayInformation::GetForCurrentView().LogicalDpi());
         };
+        // A game draws to the whole TV, not only the system's TV-safe area; the UI then keeps itself inside the title-safe area
+        // (XboxTitleSafe.hpp through bridge::ScreenBounds). SetDesiredBoundsMode returns false where it is refused.
+        {
+            bool full = false;
+            try { full = winrt::Windows::UI::ViewManagement::ApplicationView::GetForCurrentView().SetDesiredBoundsMode(winrt::Windows::UI::ViewManagement::ApplicationViewBoundsMode::UseCoreWindow); }
+            catch (...) { full = false; }
+            std::string family;
+            try { family = winrt::to_string(winrt::Windows::System::Profile::AnalyticsInfo::VersionInfo().DeviceFamily()); } catch (...) {}
+            bridge::ScreenBounds(m_engine, full, family);
+        }
         resize();
         w.SizeChanged([resize](auto&&, auto&&) { resize(); });
         w.VisibilityChanged([this](auto&&, wui::VisibilityChangedEventArgs const& a) { bridge::Visibility(m_engine, a.Visible()); });
@@ -93,7 +104,8 @@ struct GameApp : winrt::implements<GameApp, wac::IFrameworkViewSource, wac::IFra
         w.PointerPressed([this, scale](auto&&, wui::PointerEventArgs const& a) { auto p = a.CurrentPoint().Position(); bridge::PointerButton(m_engine, 1, true, scale(p.X), scale(p.Y)); });
         w.PointerReleased([this, scale](auto&&, wui::PointerEventArgs const& a) { auto p = a.CurrentPoint().Position(); bridge::PointerButton(m_engine, 1, false, scale(p.X), scale(p.Y)); });
         w.PointerWheelChanged([this](auto&&, wui::PointerEventArgs const& a) { bridge::Wheel(m_engine, a.CurrentPoint().Properties().MouseWheelDelta() / 120.0f); });
-        // B on the pad: the system's back request. Handled here (so the system does not close the app abruptly); the loop leaves cleanly.
+        // B on the pad: the system's back request. Marked handled (so the system does not close the app); the game gets a back press
+        // (closes a pause menu) and keeps running. Leaving is the game's Quit or closing the window.
         wui::SystemNavigationManager::GetForCurrentView().BackRequested([this](auto&&, wui::BackRequestedEventArgs const& a) { a.Handled(true); bridge::BackRequested(m_engine); });
     }
 

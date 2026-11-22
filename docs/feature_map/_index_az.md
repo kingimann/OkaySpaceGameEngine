@@ -877,6 +877,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Controller navigation (32.1)
 - Controller numbers (44.3.2)
 - controller shake (8.6)
+- Controller-only play (18.10.7)
 - controls menu (8.3)
 - controls screen (32.4)
 - Conventions (36.2.3)

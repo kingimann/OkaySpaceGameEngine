@@ -34,7 +34,10 @@ void Resized(Engine* e, float dipsW, float dipsH, float dpi);
 void Visibility(Engine* e, bool visible);
 void Activated(Engine* e, bool active);
 void Closed(Engine* e);
-void BackRequested(Engine* e);
+void BackRequested(Engine* e);   // a back press for the game (closes a pause menu), never an exit
+/// How the app is laid out: `fullScreen` = ApplicationViewBoundsMode.UseCoreWindow was accepted (the picture reaches the TV edges);
+/// `deviceFamily` = AnalyticsInfo.VersionInfo.DeviceFamily. Sets the title-safe insets the UI keeps to (XboxTitleSafe.hpp).
+void ScreenBounds(Engine* e, bool fullScreen, const std::string& deviceFamily);
 void Key(Engine* e, int virtualKey, bool down, bool repeat);
 void Text(Engine* e, const std::string& utf8);
 void PointerMove(Engine* e, int x, int y);
@@ -44,7 +47,7 @@ void Wheel(Engine* e, float notches);
 void Suspending(Engine* e, std::uint64_t deadlineMs);
 void Resuming(Engine* e);
 
-/// The game loop. Returns true when the game ended normally (quit / back); false with `err` set when it could not start or failed.
+/// The game loop. Returns true when the game ended normally (the game quit or the window closed); false with `err` set when it could not start or failed.
 bool Run(Engine* e, std::string& err);
 
 } // namespace okay_xbox_bridge

@@ -11,6 +11,10 @@
 #include "XboxGameConfig.hpp"
 #include "XboxPaths.hpp"
 #include "XboxRecovery.hpp"
+#include "XboxTitleSafe.hpp"
+#include "okay/Core/Game.hpp"
+#include "okay/Components/UINavigation.hpp"
+#include "okay/Components/UISafeArea.hpp"
 #include "okay/Core/SaveFramework.hpp"
 #include "okay/Core/DataPack.hpp"
 #include "okay/Core/GameLoop.hpp"
@@ -103,7 +107,28 @@ public:
         pads_.Feed(keysDown);
         Input::FeedKeys(keysDown);
         if (uiW_ > 0 && uiH_ > 0 && scene_) PrepareUi(*scene_, uiW_, uiH_);
-        return loop_->BeginFrame(realDeltaSeconds);
+        const bool keepGoing = loop_->BeginFrame(realDeltaSeconds);
+        // Controller-only menus: the d-pad (and arrows / WASD) move the focus between buttons, toggles, sliders, tabs...; A (Enter,
+        // Space) presses. The same call the desktop player makes each frame; before 2026-11-22 the Xbox app never made it, so a menu
+        // could only be used with a mouse, which a console does not have.
+        if (scene_) NavigateUI(*scene_);
+        return keepGoing;
+    }
+    /// A back request from the system (B on a console pad). While the game is paused it is an Escape tap, which closes a pause menu
+    /// (PauseMenu's toggle key). During play it does nothing here: B reaches the game as an ordinary pad button anyway, and B must not
+    /// open a menu or quit the game.
+    void BackPressed() { if (Game::Paused()) Input::FeedKeyTap((char)27); }
+    /// A key went down this frame (from the KeyDown event): a tap shorter than one frame still counts (Input::FeedKeyTap), as in the player.
+    void KeyTapped(platform::Backend& pb, platform::Key k) {
+        std::vector<char> tapped;
+        TapCharsForKey(k, [&](char c) { return KeyForLetter(pb, c); }, tapped);
+        for (char c : tapped) Input::FeedKeyTap(c);
+    }
+    /// Where the UI must stay on a TV (XboxTitleSafe.hpp): fills okay::UISafeInsets(), which UI Safe Area containers obey.
+    static void SetTitleSafe(const SafeInsets& in) {
+        const SafeInsets i = Clamped(in);
+        UISafeInsetFractions& f = UISafeInsets();
+        f.left = i.left; f.top = i.top; f.right = i.right; f.bottom = i.bottom;
     }
     void PadAdded(int deviceIndex) { pads_.Add(deviceIndex); }
     void PadRemoved(int instanceId) { pads_.Remove(instanceId); }

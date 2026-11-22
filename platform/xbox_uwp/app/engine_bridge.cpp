@@ -111,6 +111,13 @@ void Visibility(Engine* e, bool v) { if (e) e->backend->Life().VisibilityChanged
 void Activated(Engine* e, bool a) { if (e) e->backend->Life().Activated(a); }
 void Closed(Engine* e) { if (e) e->backend->Life().WindowClosed(); }
 void BackRequested(Engine* e) { if (e) e->backend->Life().BackRequested(); }
+void ScreenBounds(Engine* e, bool fullScreen, const std::string& family) {
+    if (!e) return;
+    const xb::SafeInsets i = xb::TitleSafeInsets(fullScreen ? xb::BoundsMode::FullScreen : xb::BoundsMode::SystemSafe, xb::IsXboxDeviceFamily(family));
+    xb::XboxGameRuntime::SetTitleSafe(i);
+    e->backend->Log("Xbox app: device family " + (family.empty() ? std::string("unknown") : family) + ", " + (fullScreen ? "full screen" : "system TV-safe layout") +
+                    ", UI title-safe inset " + std::to_string((int)(i.left * 100.0f + 0.5f)) + "% per edge.");
+}
 void Key(Engine* e, int vk, bool down, bool repeat) { if (e) e->backend->PushKey(vk, down, repeat); }
 void Text(Engine* e, const std::string& s) { if (e) e->backend->PushText(s); }
 void PointerMove(Engine* e, int x, int y) { if (e) e->backend->PushPointerMove(x, y); }
@@ -165,7 +172,9 @@ bool Run(Engine* e, std::string& err) {
             if (ev.type == okay::platform::EventType::Quit) quit = true;
             else if (ev.type == okay::platform::EventType::GamepadAdded) e->runtime.PadAdded(ev.deviceId);
             else if (ev.type == okay::platform::EventType::GamepadRemoved) e->runtime.PadRemoved(ev.deviceId);
+            else if (ev.type == okay::platform::EventType::KeyDown && !ev.repeat) e->runtime.KeyTapped(*e->backend, ev.key);   // a tap shorter than a frame still counts
         }
+        for (int n = e->backend->TakeBackPresses(); n > 0; --n) e->runtime.BackPressed();   // B on a console pad: closes a pause menu, never quits
         if (quit) break;
         xb::Lifecycle& life = e->backend->Life();
         if (!life.ShouldRender()) { if (e->host.cb.pump) e->host.cb.pump(e->host.cb.user, true); last = std::chrono::steady_clock::now(); continue; }

@@ -4768,3 +4768,7 @@ add_test(NAME controller_tuning COMMAND test_controller_tuning)
 add_executable(test_grok_145_146_153_155 test_grok_145_146_153_155.cpp)
 target_link_libraries(test_grok_145_146_153_155 PRIVATE okay::engine)
 add_test(NAME grok_145_146_153_155 COMMAND test_grok_145_146_153_155)
+# Foundation item 10: built-in controllers read named actions, so rebinding reaches them
+add_executable(test_controller_actions test_controller_actions.cpp)
+target_link_libraries(test_controller_actions PRIVATE okay::engine)
+add_test(NAME controller_actions COMMAND test_controller_actions)

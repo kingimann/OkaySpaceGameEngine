@@ -134,6 +134,11 @@ add_library(okay_engine
     src/Script/Interpreter.cpp
     src/Script/EngineApi.cpp
     src/Script/NextScriptVM.cpp
+    src/Lua/LuaCompiler.cpp
+    src/Lua/LuaState.cpp
+    src/Lua/LuaLibBase.cpp
+    src/Lua/LuaLibString.cpp
+    src/Lua/LuaLibTable.cpp
     src/Components/ScriptComponent.cpp
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp

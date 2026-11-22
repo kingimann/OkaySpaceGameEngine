@@ -6,6 +6,7 @@
 #include "okay/Render/SoftwareRenderer.hpp"
 #include "okay/Debug/MemoryTracker.hpp"
 #include "okay/Render/GpuTexture.hpp"
+#include "okay/Render/TextureCacheFiles.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -367,6 +368,49 @@ int main() {
         h.Reset();
         InvalidateAllTextureCaches();
         CHECK(!textures::Find(p).Valid());
+    }
+
+    // --- A file changed on disk, found by the Project panel (InvalidateTextureCacheForFile, from claude2/upgrade-import):
+    //     every name it was drawn under is read again, in place, and handles held elsewhere see it too.
+    {
+        fs::create_directories(dir / "Assets" / "Art");
+        const std::string abs = (dir / "Assets" / "Art" / "wall.png").generic_string();
+        CHECK(Solid(4, 4, 255, 0, 0).SavePNG(abs));
+        std::error_code cec;
+        const fs::path oldCwd = fs::current_path(cec);
+        fs::current_path(dir, cec);
+        const std::string rel = "Assets/Art/wall.png", dotRel = "./Assets/Art/../Art/wall.png";
+        CHECK(Red(GetCachedTexture(rel)) == 255);
+        CHECK(Red(GetCachedTexture(dotRel)) == 255);
+        CHECK(Red(GetCachedTexture(abs)) == 255);
+        CHECK(GetCachedMips(rel) != nullptr);
+        TextureHandle held = textures::Load(abs);
+        RegisterTexture("@keep", Image(2, 2));
+        CHECK(Solid(4, 4, 0, 255, 0).SavePNG(abs));                 // painted green in another program
+        CHECK(Red(GetCachedTexture(rel)) == 255);                   // not reloaded yet (hot reload is off)
+        const unsigned gen = TextureCacheGeneration();
+        CHECK(InvalidateTextureCacheForFile(abs) == 3);             // rel, dotRel and abs
+        CHECK(TextureCacheGeneration() != gen);
+        CHECK(Red(GetCachedTexture(rel)) == 0);
+        CHECK(Red(GetCachedTexture(dotRel)) == 0);
+        CHECK(Red(GetCachedTexture(abs)) == 0);
+        CHECK(Red(held.GetImage()) == 0);                           // the same asset, read again in place
+        const MipChain* mc = GetCachedMips(rel);
+        CHECK(mc && (*mc)[0].Data()[0] == 0);
+        CHECK(textures::ForRender("@keep") != nullptr);             // a registered picture has no file: kept
+        const std::string other = (dir / "Assets" / "Art" / "floor.png").generic_string();
+        CHECK(Solid(4, 4, 255, 0, 0).SavePNG(other));
+        CHECK(Red(GetCachedTexture(other)) == 255);
+        const unsigned gen2 = TextureCacheGeneration();
+        CHECK(InvalidateTextureCacheForFile((dir / "Assets" / "Art" / "nothing.png").generic_string()) == 0);
+        CHECK(TextureCacheGeneration() == gen2);
+        CHECK(InvalidateTextureCacheForFile(abs) == 3);
+        CHECK(textures::IsHeld(other));
+        CHECK(InvalidateTextureCacheForFile("") == 0);
+        fs::current_path(oldCwd, cec);
+        held.Reset();
+        textures::Unregister("@keep");
+        for (const std::string& n : {rel, dotRel, abs, other}) { textures::Drop(n); MipCacheMap().erase(n); }
     }
 
     textures::ResetForTests();

@@ -4,6 +4,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/ModelImportProblem.hpp"
+#include "okay/Graphics/TtfFont.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -47,6 +48,10 @@ int main() {
     CHECK(Fails(d.at("gone.glb"), "not there"));
     fs::create_directories(d.path / "folder.obj");
     CHECK(Fails(d.at("folder.obj"), "folder"));
+    for (const char* ext : {".fbx", ".glb", ".gltf", ".stl", ".ply", ".dae", ".3ds"}) {   // a folder with a model's name never crashes the import
+        fs::create_directories(d.path / (std::string("folder") + ext));
+        CHECK(Fails(d.at(std::string("folder") + ext), "folder"));
+    }
     Write(d.at("empty.fbx"), "");
     CHECK(Fails(d.at("empty.fbx"), "empty (0 bytes)"));
     Write(d.at("model.xyz"), "whatever");
@@ -103,6 +108,14 @@ int main() {
         bool ok = false;
         CHECK(ImportModelScene(s, d.at("tri.obj"), &ok) && ok);
         CHECK(Has(DescribeModelImportProblem(d.at("tri.obj")), "no object could be made"));
+    }
+    RUN_SUITE("a folder named like a font is refused, not a crash");
+    {
+        fs::create_directories(d.path / "folder.ttf");
+        TtfFont f;
+        CHECK(!f.LoadFromFile(d.at("folder.ttf")));
+        Write(d.at("empty.ttf"), "");
+        CHECK(!f.LoadFromFile(d.at("empty.ttf")));
     }
     TEST_MAIN_RESULT();
 }

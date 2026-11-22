@@ -59409,7 +59409,12 @@ int main(int argc, char** argv) {
             // OKAY_UI_IMPORT_ASYNC=model.obj: read it in the background like a double-click (screenshots of the import
             // window). OKAY_UI_REFRESH_FROM=other.obj with it: 120 frames in, that file is copied over the model and the
             // placed copy is refreshed, as the Project panel does for a changed file (screenshots of a refreshed model).
-            if (const char* ia = std::getenv("OKAY_UI_IMPORT_ASYNC"); ia && s_focusFrames == 31) {
+            // OKAY_UI_IMPORT_AT=<n>: start it n frames in instead (to catch the import window in a screenshot).
+            static int s_importFrames = 0;
+            ++s_importFrames;
+            const char* importAt = std::getenv("OKAY_UI_IMPORT_AT");
+            const int importFrame = importAt ? std::atoi(importAt) : 31;
+            if (const char* ia = std::getenv("OKAY_UI_IMPORT_ASYNC"); ia && s_importFrames == importFrame) {
                 const std::string path = ia;
                 StartModelPlacement(path, [path](EditorState& e, GameObject* r) {
                     ApplyModelImportScale(r, path);

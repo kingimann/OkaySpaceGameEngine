@@ -5366,6 +5366,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - vertex buffer (38.9)
 - vertex colour (3.8)
 - Vertex colours, creases, shrinkwrap, mesh library (3.5.15)
+- Vertex slide, offset loops, rip, edge split, sharp edges, loop to region (3.2.7)
 - vertex snap (44.1)
 - vibration (8.6)
 - Video playback (50.4)

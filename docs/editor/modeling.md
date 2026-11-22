@@ -210,7 +210,7 @@ With something selected, press **G** (move), **R** (rotate) or **S** (scale) wit
 
 | Key | What it does |
 |---|---|
-| **X** / **Y** / **Z** | Lock to that world axis (press again to unlock) |
+| **X** / **Y** / **Z** | Lock to that axis (press again to unlock): the world's axes, or the object's or the selection's (see **Axes** below) |
 | **Shift+X** / **Y** / **Z** | Lock to the plane of the other two axes |
 | Digits, **.**, **-**, Backspace | Type an exact value: a distance, an angle in degrees, or a scale factor |
 | **Ctrl** (or the Snap toggle) | Snap: moves to the grid size, rotations to the rotate-snap angle, scale to 0.1 steps |
@@ -218,7 +218,9 @@ With something selected, press **G** (move), **R** (rotate) or **S** (scale) wit
 | **Enter** or click | Confirm: one undo step |
 | **Esc** or right-click | Cancel: everything goes back exactly as it was |
 
-- **What it turns around:** rotate and scale work about the centre of the selection. With no axis lock, rotate turns about the view direction and scale is uniform.
+- **What it turns around:** rotate and scale work about the **Pivot** chosen on the Edit Mesh page (**.** in the 3D view cycles it): the centre of the selection, each separate part's own centre (Individual Origins), the last vertex picked (Active Vertex), or the **3D cursor**. With no axis lock, rotate turns about the view direction and scale is uniform.
+- **Axes (,):** which way X / Y / Z point. **Global**: the world's axes. **Local**: the object's own axes, so a turned object moves along its own length. **Normal**: Z points out of the selected faces (for edges and vertices, out of the faces around them), so **G** then **Z** pushes the selection straight out of the surface and **S** then **Shift+Z** scales it flat across the surface. **,** in the 3D view cycles them; the status line says which is in use. **E** (extrude and move) always moves along the faces' normal.
+- **The 3D cursor:** a red and white ring in the 3D view. **Shift+right-click** puts it on the surface under the mouse (or on the ground). **Cursor to Selected** and **Cursor to Origin** are on the Edit Mesh page and in Ctrl+K. With the pivot set to **3D Cursor**, R and S turn around it.
 - **Where a typed distance goes:** along the locked axis, or along X when nothing is locked.
 - **Other tools still apply:** **Soft Select** and **Symmetry X** work with G / R / S too.
 - **Status line:** the line at the bottom of the view shows the tool, the lock, the current value and the keys.
@@ -263,12 +265,19 @@ Enter or a click confirms; Esc or a right-click cancels. The **Edge loops** grou
 - **Bridge Edge Loops:** join two open borders with a band of quads, for example the ends of two tubes or the rims of two holes. Both need the same number of edges. In Face mode, select two groups of faces instead (for example the facing sides of two boxes): they are removed and the two holes are joined, so two boxes become one closed shape.
 - **Fill:** close a hole with one face across its rim. Select the rim with Alt+Click.
 - **Grid Fill:** close a hole with a grid of quads that blends its four sides. The rim needs an even number of edges; **span** sets how many quads run along the first side (0 = automatic).
-- **Merge at Center / Merge at First:** merge the selected vertices (or the corners of the selected edges or faces) into one, at their centre or at the first one you clicked. Faces that collapse are removed.
+- **Merge at Center / Merge at First / Merge at Last:** merge the selected vertices (or the corners of the selected edges or faces) into one, at their centre, at the first one you clicked or at the last one. Faces that collapse are removed.
+- **Vertex Slide (Shift+V):** slide the selected vertices along their edges. Move the mouse toward the edge to follow (it is drawn yellow); how far you move sets how far along it they go. Type a value from 0 to 1; Ctrl snaps to 0.1 steps. UVs move with the vertices, as for edge slide.
+- **Offset Loops (Ctrl+Shift+R):** add a new edge loop on each side of the selected edges, parallel to them. The slider sets how far along the edges beside the loop they go. The selected edges stay; a side with no faces (the border) gets no loop.
+- **Rip (V):** tear the surface open along the selected edges. The side the mouse is on comes away with new vertices, which are selected and start moving (Esc leaves them in place, still torn). An end of the edges inside the surface stays joined, so a tear needs two or more edges in a row, or edges that reach the border.
+- **Edge Split:** cut the surface apart along the selected edges: each side keeps its own corners, and the edges are marked sharp.
+- **Mark Sharp / Clear Sharp:** keep the shading hard across the selected edges, whatever their angle. Sharp edges are drawn cyan. The shading is rebuilt with them when you leave Edit Mesh (for a mesh that was smooth-shaded), and by **Shade Smooth** and **Auto Smooth** on the Change the shape page. They are saved with the scene and in **.okaymesh** files.
+- **Loop to Region:** select the faces inside the selected closed loop of edges (the smaller side).
 
 Limits:
 
 - **Bevel:** it needs edges with a face on both sides, running through vertices that have faces all the way round them. Where three or more bevels meet, the corner is closed with one face, not a rounded grid.
-- **Not here yet:** marking single edges sharp and an Edge Split tool. UV seams are here (see [UVs and seams](#uvs-and-seams)); for hard shading by angle use **Auto Smooth**.
+- **Sharp edges and Edge Split in Edit Mesh:** Edit Mesh keeps the mesh joined at every position while you work, so the hard shading shows after you leave it (Tab), and the two sides of an Edge Split or a Rip are joined again the next time you open Edit Mesh if you left them at the same place (the sharp marks stay). Move a torn side away to keep it apart.
+- **Knife:** a cut that only runs along an edge that is already there (two points on the same edge) is refused with a message; it splits nothing.
 - **Bridge:** each face group must be one connected patch without holes, the two groups must not touch, and both outlines need the same number of edges.
 - **Edge slide:** UVs move with the vertices. Each face keeps its own texture mapping, so the texture does not stretch and seams stay split. A face whose UVs are not a flat (affine) mapping can still shift a little.
 

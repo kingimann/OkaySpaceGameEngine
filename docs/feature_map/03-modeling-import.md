@@ -10,7 +10,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **What:** Blender-style mesh edit mode (Tab, G/R/S, axis lock, snapping, mirror) on the selected object's Mesh Renderer: Tab to enter, Vertex/Edge/Face selection, G/R/S modal transforms with axis locks, typed values and snapping, soft select, X symmetry and a set of face, edge and vertex tools. The mesh is kept welded while editing.
 - **Parts:**
   - 3.1.1 Edit mode, selection and polygon stats - `editor/main.cpp`, `Render/Mesh` - Tab or the Edit Mesh tick, Object/Edit header, keys 1/2/3, click, Shift, Alt-click loop, Ctrl+Alt ring, Ctrl+click shortest path (ShortestVertPath / ShortestFacePath), Grow/Shrink/Linked/Invert, Checker Deselect, Select Boundary Loop, Select Open / Non-Manifold Edges (PolyOps: CheckerVerts / CheckerFaces, RegionOutline, ProblemEdges), stats line
-  - 3.1.2 G/R/S modal transforms - `Modeling/EditTransform` - EditTransformSession, AxisLock (X/Y/Z, Shift = plane), NumericInput, Move/Rotate/ScaleMatrix, Ctrl snap, Esc restores exactly; pivot Median / Individual Origins / Active Vertex (EditPivot; Edit Mesh combo, `.` cycles); the move-handle drag uses the same session (soft select, symmetry X/Y/Z)
+  - 3.1.2 G/R/S modal transforms - `Modeling/EditTransform` - EditTransformSession, AxisLock (X/Y/Z, Shift = plane), NumericInput, Move/Rotate/ScaleMatrix, Ctrl snap, Esc restores exactly; pivot Median / Individual Origins / Active Vertex / 3D Cursor (EditPivot; Edit Mesh combo, `.` cycles; Shift+right-click places the cursor, Cursor to Selected / Origin); axes Global / Local / Normal for the X/Y/Z locks (EditOrient, OrientationAxes; Edit Mesh combo, `,` cycles; E moves along the normal); the move-handle drag uses the same session (soft select, symmetry X/Y/Z)
   - 3.1.3 Soft Select, Symmetry X and vertex snap - `Render/Mesh` - MoveVerticesSoft, SnapToGrid, hold V to snap to vertices
   - 3.1.4 Face tools - `Render/Mesh` - ExtrudeFaces, InsetFaces, SubdivideFaces, PokeFaces, Extrude/Inset Individual, DeleteFaces, FlipNormals (keeps flat or smooth shading), FlipFaces (selected faces only), OrientFacesOutward (Recalc Outside), DuplicateFaces, SeparateFaces
   - 3.1.5 Edge and vertex tools - `Render/Mesh` - CollapseEdges, SplitEdges, ExtrudeEdges, BevelVertices, SmoothVertices (Relax Sel), FlattenVertices, ShrinkFatten, SphereizeVertices, WeldVertices (Merge by Distance)
@@ -22,7 +22,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Docs:** `docs/editor/modeling.md`
 - **Tests:** `edit_transform`, `meshedit`, `polymesh`, `modeling`, `poly_ops`
 - **Status:** Works - four test suites cover the maths and mesh ops; I read the headers but not the editor key handling in main.cpp
-- **Open:** tools that rebuild triangles outside the polygon core (the classic Extrude) fall back to one UV per vertex where they touch (per docs); no per-edge Mark Sharp or Edge Split tool (UV seams exist, 3.4; Auto Smooth covers shading by angle); no local / normal transform orientation, 3D cursor pivot, rip, loop-to-region or vertex slide (audit: `docs/status/modeling_tab_audit.md`); Ctrl+click path, pivot modes and the handle-drag symmetry are tested headless but not tried in a running editor
+- **Open:** tools that rebuild triangles outside the polygon core (the classic Extrude) fall back to one UV per vertex where they touch (per docs); Edit Mesh welds by position on entry, so an Edge Split or Rip left in place joins again next time (sharp marks stay) and hard shading shows after leaving Edit Mesh; Normal axes' X is level with the world, not along an edge; grid snapping with Local / Normal axes rounds the world offset (audit: `docs/status/modeling_tab_audit.md`); the round-3 tools (axes, 3D cursor, sharp edges, vertex slide, offset loops, rip, merge at last, loop to region) are tested headless; see the audit for what was tried in a running editor
 - **Related:** 3.2, 3.4, 3.8, 15.9
 - **Words:** edit mode (Tab, G/R/S, axis lock, snapping, mirror), Edit Mesh, Tab, G R S, grab, rotate, scale, extrude, inset, poke, soft select, proportional editing, symmetry X, recalc normals, merge by distance, separate, duplicate faces
 - **Seen as:** pressing Tab over the 3D view does nothing; a tool is greyed out; faces look dark or inside out after a weld or mirror; Esc does not put the vertices back; a typed distance goes the wrong way
@@ -34,14 +34,15 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
   - 3.2.1 Loop and ring selection - `Modeling/PolyOps` - EdgeLoop, EdgeRing, OrderChains, PolyTopology; Alt-click loop, Ctrl+Alt-click ring, Select Loop/Ring buttons
   - 3.2.2 Loop cut and edge slide - `Modeling/PolyOps` - LoopCut (Ctrl+R preview, scroll for more cuts), EdgeSlide (G then G; per-corner UVs follow, seams stay split)
   - 3.2.3 Bevel - `Modeling/PolyOps` - BevelEdges (Ctrl+B), segments and profile; where three or more bevels meet the corner is closed with one face
-  - 3.2.4 Knife, split edge, connect - `Modeling/PolyOps` - KnifeCut (K), SplitEdge, SplitFace (Connect Verts)
-  - 3.2.5 Dissolve, merge, bridge and fill - `Modeling/PolyOps` - DissolveEdges, DissolveVerts, MergeVerts, BridgeEdgeLoops, BridgeFaces (two face groups: delete, then bridge; Face mode in the editor), FillFaces, GridFill, CompactVerts
+  - 3.2.4 Knife, split edge, connect - `Modeling/PolyOps` - KnifeCut (K; a cut that splits no face is refused), SplitEdge (t clamped to the edge), SplitFace (Connect Verts)
+  - 3.2.5 Dissolve, merge, bridge and fill - `Modeling/PolyOps` - DissolveEdges, DissolveVerts, MergeVerts, MergeVertsAt (Center / First / Last), BridgeEdgeLoops, BridgeFaces (two face groups: delete, then bridge; Face mode in the editor), FillFaces, GridFill, CompactVerts
+  - 3.2.7 Vertex slide, offset loops, rip, edge split, sharp edges, loop to region - `Modeling/PolyOps`, `Render/Mesh` - VertexSlide (Shift+V), OffsetEdgeLoops (Ctrl+Shift+R), RipEdges (V), EdgeSplit, Mesh::sharpEdges / SetSharp (Mark / Clear Sharp; Auto Smooth keeps them hard; saved as `meshsharp` and `.okaymesh` "sharp"), LoopToRegion
   - 3.2.6 Catmull-Clark subdivision - `Modeling/PolyOps` - CatmullClark(pm, levels) on real polygons (used by the Subdivision modifier)
 - **Code:** `Modeling/PolyOps`, `Modeling/PolyMesh`, `editor/main.cpp`
-- **API:** `EdgeLoop`, `EdgeRing`, `LoopCut`, `EdgeSlide`, `BevelEdges`, `KnifeCut`, `DissolveEdges`, `BridgeEdgeLoops`, `BridgeFaces`, `GridFill`, `CatmullClark`; keys Ctrl+R, Ctrl+B, K
+- **API:** `EdgeLoop`, `EdgeRing`, `LoopCut` (at most `kLoopCutMax` cuts), `EdgeSlide`, `VertexSlide`, `OffsetEdgeLoops`, `RipEdges`, `EdgeSplit`, `MergeVertsAt`, `LoopToRegion`, `BevelEdges`, `KnifeCut`, `DissolveEdges`, `BridgeEdgeLoops`, `BridgeFaces`, `GridFill`, `CatmullClark`; keys Ctrl+R, Ctrl+B, K, Shift+V, Ctrl+Shift+R, V
 - **Editor:** Modeling window > Edit Mesh > Edge loops group; Ctrl+R / Ctrl+B / K in the 3D view
 - **Docs:** `docs/editor/modeling.md`
-- **Tests:** `poly_ops`
+- **Tests:** `poly_ops`, `meshedit` (sharp edges)
 - **Status:** Works - poly_ops checks counts, closed shells and winding on real geometry; limits listed in Open
 - **Open:** Bevel needs edges with a face on both sides; Bridge face groups must each be one patch without holes, not touching, with outlines of the same edge count; Grid Fill needs an even number of rim edges (all per docs); edge slide UVs and Bridge in Face mode are tested in poly_ops but not tried in a running editor
 - **Related:** 3.1, 3.3, 3.4

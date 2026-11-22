@@ -3291,6 +3291,12 @@ add_test(NAME prefab_apply_revert COMMAND test_prefab_apply_revert)
 add_executable(test_property_registry test_property_registry.cpp)
 target_link_libraries(test_property_registry PRIVATE okay::engine)
 add_test(NAME property_registry COMMAND test_property_registry)
+# One registry drives serialization: coverage gate (every component class registered or a known gap that only
+# shrinks), the generic key=value record from a registry entry, and a scene main wrote re-saves byte for byte.
+add_executable(test_registry_serializer test_registry_serializer.cpp)
+target_link_libraries(test_registry_serializer PRIVATE okay::engine)
+target_compile_definitions(test_registry_serializer PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME registry_serializer COMMAND test_registry_serializer)
 # ---- Core runtime foundations (docs/engine/core_runtime.md) ----
 # Job system: pool, task graph, ParallelFor / ParallelReduce, cancellation, shutdown, main-thread queue.
 # Takes an optional repeat count: `test_jobs 20` runs the threaded suites 20 times to shake out races.

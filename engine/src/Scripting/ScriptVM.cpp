@@ -33,6 +33,7 @@ const char* ScriptLanguageForExtension(const std::string& ext) {
     for (char c : ext) e += (char)std::tolower((unsigned char)c);
     if (!e.empty() && e[0] != '.') e = "." + e;
     if (e == ".cs") return NextScriptVM::kCSharpLanguage;
+    if (e == ".lua") return LuaScriptVM::kLanguage;
     return "okayscript";
 }
 

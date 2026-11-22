@@ -3056,7 +3056,7 @@ static void OpenScriptFileInEditor(const std::string& path) {
     std::string ext;
     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    std::string lang = (ext == ".lua") ? "lua" : okay::ScriptLanguageForExtension(ext);   // .cs: C# on our typed language
+    std::string lang = okay::ScriptLanguageForExtension(ext);   // .cs: C#, .lua: Lua (both our own)
     auto sc = std::make_unique<okay::ScriptComponent>(lang);
     std::string err; sc->LoadFile(path, &err); sc->SetPath(path);
     okay::ScriptComponent* raw = sc.get();
@@ -4274,7 +4274,7 @@ static bool AttachScriptAsset(okay::editor::EditorState& ed, okay::GameObject* g
     std::string ext;
     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    if (ext == ".okay" || ext == ".cs") {
+    if (ext == ".okay" || ext == ".cs" || ext == ".lua") {
         ed.PushUndo();
         // Always a new component (objects can hold several, even the same script twice).
         auto* nsc = go->AddComponent<okay::ScriptComponent>(okay::ScriptLanguageForExtension(ext));
@@ -15885,6 +15885,14 @@ static const TextEditor::LanguageDefinition& LuaLangDef() {
             id.mDeclaration = okay::LuaScriptVM::CompletionDoc(name);
             if (id.mDeclaration.empty()) id.mDeclaration = "Lua name";
             d.mIdentifiers.insert(std::make_pair(name, id));
+            // the member part alone ("GetKey" of "Input.GetKey") also gets its doc on hover; the
+            // code widget prefers the qualified name when the word follows "Input."
+            const std::size_t dot = name.find('.');
+            if (dot != std::string::npos && !d.mIdentifiers.count(name.substr(dot + 1))) {
+                TextEditor::Identifier mid;
+                mid.mDeclaration = okay::LuaScriptVM::CompletionDoc(name.substr(dot + 1));
+                if (!mid.mDeclaration.empty()) d.mIdentifiers.insert(std::make_pair(name.substr(dot + 1), mid));
+            }
         }
         for (const char* t : {"GameObject", "Transform", "Vector3", "Input", "Time", "Debug", "Mathf", "Rigidbody"})
             d.mTypeNames.insert(t);

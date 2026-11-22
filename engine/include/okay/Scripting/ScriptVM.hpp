@@ -122,8 +122,8 @@ std::unique_ptr<IScriptVM> CreateScriptVM(const std::string& language);
 /// so a future removal has one place to report it.
 std::string RemovedScriptLanguageMessage(const std::string& language);
 
-/// The language id for a script file's extension (".cs" -> "csharp", ".okay" ->
-/// "okayscript"; case is ignored). Unknown extensions give "okayscript".
+/// The language id for a script file's extension (".cs" -> "csharp", ".lua" -> "lua",
+/// ".okay" -> "okayscript"; case is ignored). Unknown extensions give "okayscript".
 const char* ScriptLanguageForExtension(const std::string& ext);
 
 } // namespace okay

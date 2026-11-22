@@ -3,6 +3,7 @@
 #include <string>
 #include <regex>
 #include <cmath>
+#include <cctype>
 
 #include "TextEditor.h"
 
@@ -1092,10 +1093,27 @@ void TextEditor::Render()
 		// Draw a tooltip on known identifiers/preprocessor symbols
 		if (ImGui::IsMousePosValid())
 		{
-			auto id = GetWordAt(ScreenPosToCoordinates(ImGui::GetMousePos()));
+			const Coordinates hc = ScreenPosToCoordinates(ImGui::GetMousePos());
+			auto id = GetWordAt(hc);
 			if (!id.empty())
 			{
-				auto it = mLanguageDefinition.mIdentifiers.find(id);
+				auto it = mLanguageDefinition.mIdentifiers.end();
+				// "Type.member" / "obj:member": prefer the qualified name when the language lists it
+				// (Lua lists "Input.GetKey"; the word under the mouse is only "GetKey").
+				if (hc.mLine >= 0 && hc.mLine < (int)mLines.size())
+				{
+					const auto& line = mLines[hc.mLine];
+					int ws = GetCharacterIndex(FindWordStart(hc));
+					if (ws >= 2 && ws <= (int)line.size() && (line[ws - 1].mChar == '.' || line[ws - 1].mChar == ':'))
+					{
+						int ps = ws - 1;
+						while (ps > 0 && (std::isalnum((unsigned char)line[ps - 1].mChar) || line[ps - 1].mChar == '_')) --ps;
+						std::string prev;
+						for (int k = ps; k < ws - 1; ++k) prev.push_back(line[k].mChar);
+						if (!prev.empty()) it = mLanguageDefinition.mIdentifiers.find(prev + "." + id);
+					}
+				}
+				if (it == mLanguageDefinition.mIdentifiers.end()) it = mLanguageDefinition.mIdentifiers.find(id);
 				if (it != mLanguageDefinition.mIdentifiers.end())
 				{
 					ImGui::BeginTooltip();

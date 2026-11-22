@@ -612,6 +612,46 @@ The scripts and pictures are kept out of the repository.
    out (`down`, `move`, `up` with coordinates outside the window) under Xvfb; then a real-desktop try by the owner.
 Estimated size: medium to large; the unknown is (4).
 
+## Round 14 (branch `claude2/own-platform-launcher`): an own OpenGL painter, and the launcher on the own backend without SDL
+
+Written from the OpenGL 3.3 core / 3.0 and GLSL 1.30 / 3.30 specifications and our own software painter's rules; no SDL renderer, Dear ImGui
+backend or other project code was read or followed.
+
+* **`okay::platform::CreateGLPainter(window, backend, desc, err)`** (`engine/src/Platform/GLPainter.cpp`, `PainterKind::OpenGL`, `Name()` "opengl").
+  It creates the GL context of an own-backend window (3.3 core first; the backends fall back to the driver's legacy context; GL 3.0 is the
+  minimum), takes every entry point from `Backend::GLProcAddress` (no GL header, no link-time GL; GLX on Linux, WGL on Windows) and owns the
+  context. Every call becomes triangles in device pixels with the software painter's rounding (rectangles and Bresenham lines too, so the same
+  pixels are covered), batched until the texture, blend mode, clip or target changes. Blend: `SRC_ALPHA, ONE_MINUS_SRC_ALPHA` for colour and
+  `ONE, ONE_MINUS_SRC_ALPHA` for alpha (the software painter's `a + d(1 - a)`); "None" disables blending. Clip = scissor. Textures RGBA8,
+  nearest or linear, colour / alpha mod folded into the vertex colour, flips and rotation done on the CPU. Render targets are framebuffer objects
+  (drawn top-down, so `ReadPixels` of a target needs no flip; the window's rows are flipped). Present = `SwapBuffers`; with vsync asked and no
+  swap interval available it paces itself like the software painter. Each painter makes its own context current before it draws, so the
+  launcher's two windows work.
+* **Choice** (`shared/OwnPainter.hpp`): on the own backend the launcher's windows get the OpenGL painter; `OKAY_OWN_PAINTER=software` picks the
+  software painter; when GL cannot start (no GLX, GL older than 3.0, shaders refused) the software painter is used and the reason is printed.
+  The launcher asks for GL windows only on the own backend (`OwnWindowsWantGL`); the sdl2 path is unchanged. The `okay::pb` own-painter factory
+  now gets `CreateRenderer`'s `PainterDesc` (vsync). The editor still registers the software painter (not changed to GL: not built or run here).
+* **Test** `gl_painter` (Xvfb, Mesa llvmpipe): written first against a stub (1 check, 1 failure), then 55 checks, 0 failures. The same frame
+  (fills with and without blending, a float rectangle, outlines, lines, points, clip, scale 2, nearest and linear textures scaled / flipped /
+  rotated / tinted, a sub-rectangle update with its own pitch, indexed coloured and textured triangles, a texture drawn without blending, a
+  render target drawn into and from) on the GL painter and on the software painter: 144 of 76,800 pixels differ by more than 8 levels, mean 0.34.
+  The differences are texel-boundary ties of nearest sampling (a pixel centre exactly on a texel edge rounds to the other texel on the GPU).
+  Also kind and names, refusals, two painters on two windows, resize.
+* **The launcher, run (Xvfb, llvmpipe, 1280x800 screen).** `OKAY_PLATFORM_BACKEND=own` logs `own painter: opengl`, `platform backend: own`, the own
+  ImGui feed and the own ImGui renderer. Its first picture equals the default (SDL) run's but for 8 pixels (none by more than 1 percent); the
+  software painter's picture differs from both only by 1-level rounding (36,700 pixels, none by more than 1 percent). Real X input through
+  `xdotool` (not the scripted hook): typing into the search box, `ctrl+a` then typing, Backspace, clicks on the side menu, the wheel scrolling the
+  Settings page after a resize to 900x600, `ctrl+c` / `ctrl+v` in the search box: all worked. Fast key chords sent by `xdotool` within a few
+  milliseconds sometimes lost one step on both backends alike (the SDL run as often as the own run), so that is not counted as an own-backend bug.
+  With `SDL_VIDEODRIVER` and `SDL_AUDIODRIVER` set to drivers that do not exist the own run looks the same (one X connection, ours), and under
+  gdb `SDL_InitSubSystem`, `SDL_CreateWindow` and `SDL_CreateRenderer` were never reached in a 60 s run. Idle CPU on this loaded shared machine
+  was about the same for SDL, own + GL and own + software (3.5 cores of llvmpipe and other agents' load; not a usable speed measure).
+* **Not done / not verified:** Windows. `GLPainter.cpp` and `OwnPainter.hpp` compile with MinGW (`-fsyntax-only`), but Wine 9.0 on this machine
+  dies at start (`free(): invalid pointer`, even for `wine64 cmd /c echo`), so no Windows run of any kind; WGL (pixel format set once per window:
+  the painter's second context attempt cannot change it) and real drivers are unverified. A real GPU. The launcher's chat window on the own backend
+  (not opened). The editor on the GL painter. `_NET_WM_PID` is not set on own X11 windows (a tool that looks windows up by process finds none).
+  The Experimental switch stays Linux only.
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than

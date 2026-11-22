@@ -3,6 +3,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Components/MoveSpeed.hpp"   // MoveSpeedScale: load and encumbrance
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"   // spawn projectile prefabs
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -220,6 +221,7 @@ public:
         float speed = running ? runSpeed : walkSpeed;
         const bool backpedal = moving && Vec3::Dot(dir, m_aimDir) < -0.3f;
         if (backpedal) speed *= backpedalMultiplier;
+        speed *= MoveSpeedScale(gameObject);   // a heavy load or full bag slows it
         m_dashCd = Mathf::Max(0.0f, m_dashCd - dt);
         bool dashEnded = false;
         if (m_dash > 0.0f) {
@@ -404,7 +406,7 @@ private:
         if (fireMode == (int)FireMode::Hitscan) {
             RaycastHit3D hit = sc.physics3D().Raycast(sc, muzzle, d, range, gameObject);
             if (hit.hit) {
-                DamageGameObject(hit.gameObject, damage);
+                DamageGameObject(hit.gameObject, damage, gameObject);
                 if (hit.gameObject)
                     if (auto* rb = hit.gameObject->GetComponent<Rigidbody3D>()) rb->AddImpulse(d * impactForce);
             }

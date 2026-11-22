@@ -24,6 +24,7 @@ namespace okay { void RegisterPhysicsToyProperties(); }
 #include "okay/Components/Destructible.hpp"
 #include "okay/Components/Draggable.hpp"
 #include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/LedgeHandsIK.hpp"
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Components/GridPathAgent2D.hpp"
@@ -458,6 +459,9 @@ void RegisterClickToMoveController() {
      .AddBool("usePlayerHeight", &ClickToMoveController::usePlayerHeight).Tooltip("Pick on the plane at the player's current Y")
      .AddBool("usePathfinding", &ClickToMoveController::usePathfinding).Tooltip("Route around obstacles with the scene navigation")
      .AddFloat("repathInterval", &ClickToMoveController::repathInterval).Range(0, 3600, 0.05).Tooltip("Seconds between path re-plans")
+     .AddBool("pickColliders", &ClickToMoveController::pickColliders).Tooltip("A click lands on the floor, stair or platform under the pointer (solid, facing up); else the flat plane")
+     .AddBool("giveUpWhenStuck", &ClickToMoveController::giveUpWhenStuck).Tooltip("Stop walking when pressed against a wall instead of running on the spot")
+     .AddFloat("stuckTime", &ClickToMoveController::stuckTime).Range(0.05, 60, 0.05).Tooltip("Seconds of barely moving before giving up")
      .Section("Follow camera")
      .AddBool("followCamera", &ClickToMoveController::followCamera).Tooltip("Position the main Camera each frame")
      .AddFloat("cameraHeight", &ClickToMoveController::cameraHeight).Range(0, kBig, 0.05).Tooltip("Look target height above the player origin")
@@ -1411,6 +1415,18 @@ void RegisterRangedWeapon() {
     b.Commit();
 }
 
+// Ledge Hands IK (hands on the ledge while hanging). The two arm links are saved by the scene
+// file's own record and are not properties here: autoWire finds them on a humanoid.
+static void RegisterLedgeHandsIK() {
+    PropertyBuilder<LedgeHandsIK> b("LedgeHandsIK", "ledgehandsik", "Animation");
+    b.AddFloat("handSpread", &LedgeHandsIK::handSpread).Range(0, 2, 0.01).Tooltip("Each hand's distance from the centre, along the ledge (metres)")
+     .AddFloat("overEdge", &LedgeHandsIK::overEdge).Range(0, 1, 0.005).Tooltip("How far the fingers reach onto the top (metres)")
+     .AddFloat("fadeTime", &LedgeHandsIK::fadeTime).Range(0, 5, 0.01).Tooltip("Seconds to blend the arms in and out")
+     .AddFloat("setback", &LedgeHandsIK::setback).Range(0, 2, 0.01).Tooltip("Only for a hang with no stored edge: how far the body hangs out from the edge")
+     .AddBool("autoWire", &LedgeHandsIK::autoWire).Tooltip("Find or add the two arm Limb IKs from the humanoid bones when none are set");
+    b.Commit();
+}
+
 // ---- Saved through the generic record (ComponentSerializerRegistry::RegisterFromProperties) ----------------
 // These had no scene record at all before: the generic path writes every authored property below as
 // `  <record> key=value ...` (see docs/engine/scene_serializer.md, "The generic record").
@@ -1536,6 +1552,7 @@ void RegisterGameplayProperties() {
     RegisterPhysicsToyProperties();   // Physics Surface and the physics toys
     RegisterVolume();
     RegisterWind();
+    RegisterLedgeHandsIK();
     RegisterMusicPlayer();
     RegisterPlayerInput();
     RegisterCollectible();

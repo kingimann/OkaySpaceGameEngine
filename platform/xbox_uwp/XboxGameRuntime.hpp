@@ -11,8 +11,14 @@
 #include "XboxGameConfig.hpp"
 #include "XboxPaths.hpp"
 #include "XboxRecovery.hpp"
+#include "XboxSuspend.hpp"
+#include "XboxTextEntry.hpp"
 #include "XboxTitleSafe.hpp"
 #include "okay/Core/Game.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
+#include "okay/Core/Prefs.hpp"
+#include "okay/Core/SaveData.hpp"
+#include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UINavigation.hpp"
 #include "okay/Components/UISafeArea.hpp"
 #include "okay/Core/SaveFramework.hpp"
@@ -30,7 +36,9 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include <chrono>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <memory>
 #include <sstream>
@@ -74,6 +82,15 @@ public:
         cfg_ = ParseGameConfig(text);
         const std::string rel = ResolveStartupScene(cfg_, [&](const std::string& r) { std::error_code ec; return fs::is_regular_file(fs::u8path(dir_ + r), ec); });
         if (rel.empty()) { err = "No scene to start: Data/ has no game.okayscene and the config's startup scene is missing."; return false; }
+        // Where the game writes (the install folder is read-only): its save files and slots, and its settings, as the desktop player
+        // does with its per-user folder. Before 2026-11-22 neither was set here: slots resolved into the install folder and failed,
+        // and Prefs were never loaded or saved, so every setting was lost.
+        if (layout_.Valid()) {
+            std::error_code mk; std::filesystem::create_directories(std::filesystem::u8path(layout_.saveBase), mk);
+            Save::SetBaseDir(layout_.saveBase);
+            if (!Prefs::Load(layout_.prefsFile) && !Prefs::LastError().empty()) Log::Warning("[xbox] settings: ", Prefs::LastError());
+            Accessibility::Load();
+        }
         SceneManager::ClearScenes();
         for (const std::string& s : cfg_.scenes) SceneManager::AddScene(dir_ + s);
         if (cfg_.sawPhysics) Scene::SetProjectPhysicsRate(cfg_.physicsHz, cfg_.smoothPhysics);
@@ -112,12 +129,29 @@ public:
         // Space) presses. The same call the desktop player makes each frame; before 2026-11-22 the Xbox app never made it, so a menu
         // could only be used with a mouse, which a console does not have.
         if (scene_) NavigateUI(*scene_);
+        StepTextEntry();
         return keepGoing;
     }
+    /// The on-screen keyboard (XboxTextEntry.hpp): on where a pad is the keyboard (a console). `show(on, scope, text)` is the shell's.
+    void EnableOnScreenKeyboard(bool on) { textEntry_.SetEnabled(on); }
+    std::function<void(bool show, TextScope scope, const std::string& text)> onKeyboard;
+    void KeyboardShown() { textEntry_.KeyboardShown(); }
+    void KeyboardHidden() { textEntry_.KeyboardHidden(); }
+    /// The keyboard edited the text: the whole new value (UTF-8). The field applies its own length and content-type rules; the
+    /// return value is what it kept, so the shell can re-sync the keyboard when something was refused.
+    std::string KeyboardText(const std::string& utf8) {
+        UIInputField* f = EditingField();
+        if (!f) return std::string();
+        f->text.clear(); f->caret = -1; f->TypeText(utf8);
+        return f->text;
+    }
+    /// The keyboard's Enter / Done: the field submits (and stops editing, unless it is multi-line), as Enter on a keyboard does.
+    void KeyboardSubmit() { Input::FeedKeyTap('\r'); }
     /// A back request from the system (B on a console pad). While the game is paused it is an Escape tap, which closes a pause menu
     /// (PauseMenu's toggle key). During play it does nothing here: B reaches the game as an ordinary pad button anyway, and B must not
     /// open a menu or quit the game.
-    void BackPressed() { if (Game::Paused()) Input::FeedKeyTap((char)27); }
+    /// While a text field is being edited (keyboard closed already) B also stops the editing (Escape), paused or not.
+    void BackPressed() { if (Game::Paused() || EditingField()) Input::FeedKeyTap((char)27); }
     /// A key went down this frame (from the KeyDown event): a tap shorter than one frame still counts (Input::FeedKeyTap), as in the player.
     void KeyTapped(platform::Backend& pb, platform::Key k) {
         std::vector<char> tapped;
@@ -140,32 +174,74 @@ public:
         eye = cam->gameObject && cam->gameObject->transform ? cam->gameObject->transform->Position() : Vec3{0, 0, 0};
         return true;
     }
-    /// Where the suspend save and its marker go (ApplicationData.LocalFolder\saves, from XboxPaths). Set before Start().
-    void SetSaveDir(const std::string& dir) { saveDir_ = dir; }
+    /// ApplicationData.LocalFolder. Set before Start(): the game's saves and settings go under it (SaveLayoutFor), the suspend snapshot
+    /// and its marker in LocalFolder\suspend (not in the slot folder, so it never shows in the game's own load menu).
+    void SetLocalDir(const std::string& dir) { layout_ = SaveLayoutFor(dir); saveDir_ = layout_.suspendDir; }
+    const SaveLayout& Layout() const { return layout_; }
     /// Suspend: capture the scene with the engine's save framework (objects marked Saveable: transforms, components that save, inventories, stats...)
     /// into slot "xbox_suspend" in the save folder, then write a marker file. It runs before the system's suspend deadline (the shell calls it
     /// synchronously). Objects without a Saveable component are NOT saved: that is the framework's rule, a game must mark what matters.
-    void OnSuspend() {
+    /// `budgetMs` = what the shell's deadline leaves for saving (FlushBudgetMs). Settings first (small, matter most), then the game
+    /// state; the log line says what was saved, failed or skipped.
+    void OnSuspend(std::uint64_t budgetMs = 4000) {
         Log::Info("[xbox] suspending");
-        if (!scene_ || saveDir_.empty()) return;
-        namespace fs = std::filesystem; std::error_code ec; fs::create_directories(fs::u8path(saveDir_), ec);
-        SaveStore store(saveDir_);
-        SaveDocument doc = SaveSystem::CaptureScene(*scene_);
-        SaveSlotInfo meta; meta.slot = "xbox_suspend"; meta.label = "Saved when the app was suspended"; meta.scene = scene_->Name();
-        std::string err;
-        if (!store.Write("xbox_suspend", doc, meta, &err)) { Log::Warning("[xbox] suspend save failed: ", err); return; }
-        std::ofstream(fs::u8path(saveDir_ + "/xbox_suspend.marker"), std::ios::binary) << "1";
-        Log::Info("[xbox] suspend state saved");
+        SuspendFlush f;
+        if (layout_.Valid()) f.Add("settings", [this](std::string& err) { if (Prefs::Save(layout_.prefsFile)) return true; err = Prefs::LastError(); return false; });
+        if (scene_ && !saveDir_.empty()) f.Add("game state", [this](std::string& err) { return SaveSnapshot(err); });
+        const auto t0 = std::chrono::steady_clock::now();
+        const SuspendReport r = f.Run([t0] { return (std::uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count(); }, budgetMs);
+        if (r.AllOk()) Log::Info("[xbox] suspend: ", r.Summary()); else Log::Warning("[xbox] suspend: ", r.Summary());
+        lastSuspend_ = r;
     }
+    const SuspendReport& LastSuspend() const { return lastSuspend_; }
     /// Resume (the process was kept): the saved state is not needed any more, drop the marker. The scene never stopped existing, so nothing is reloaded.
     void OnResume() {
         Log::Info("[xbox] resumed");
         std::error_code ec; if (!saveDir_.empty()) std::filesystem::remove(std::filesystem::u8path(saveDir_ + "/xbox_suspend.marker"), ec);
     }
-    /// Clean exit: also drop the marker (an exit is not a suspended kill).
-    void OnExit() { OnResume(); }
+    /// Clean exit: write the settings and drop the marker (an exit is not a suspended kill).
+    void OnExit() {
+        if (layout_.Valid() && !Prefs::Save(layout_.prefsFile)) Log::Warning("[xbox] settings not saved at exit: ", Prefs::LastError());
+        OnResume();
+    }
 
 private:
+    // The suspend snapshot: the scene through the engine's save framework (objects marked Saveable) into slot "xbox_suspend" of the
+    // suspend folder, then the marker. Only objects marked Saveable are captured: the framework's rule.
+    bool SaveSnapshot(std::string& err) {
+        namespace fs = std::filesystem; std::error_code ec; fs::create_directories(fs::u8path(saveDir_), ec);
+        SaveStore store(saveDir_);
+        SaveDocument doc = SaveSystem::CaptureScene(*scene_);
+        SaveSlotInfo meta; meta.slot = "xbox_suspend"; meta.label = "Saved when the app was suspended"; meta.scene = scene_->Name();
+        if (!store.Write("xbox_suspend", doc, meta, &err)) return false;
+        std::ofstream m(fs::u8path(saveDir_ + "/xbox_suspend.marker"), std::ios::binary); m << "1"; m.flush();
+        if (!m) { err = "the marker file could not be written"; return false; }
+        return true;
+    }
+    // The UI Input Field being edited now (active, enabled, focused, shown), or null.
+    UIInputField* EditingField() const {
+        if (!scene_) return nullptr;
+        for (const auto& go : scene_->Objects()) {
+            if (!go || !go->active) continue;
+            UIInputField* in = go->GetComponent<UIInputField>();
+            if (in && in->enabled && in->focused && !UIHidden(go.get())) return in;
+        }
+        return nullptr;
+    }
+    void StepTextEntry() {
+        UIInputField* f = EditingField();
+        TextScope scope = TextScope::Default;
+        if (f) {
+            if (f->contentType == UIInputField::ContentType::Password) scope = TextScope::Password;
+            else if (f->contentType == UIInputField::ContentType::Integer || f->contentType == UIInputField::ContentType::Decimal) scope = TextScope::Number;
+        }
+        const TextEntryCommand c = textEntry_.Frame(f, scope);
+        if (c.releaseField && f) f->focused = false;   // the player closed the keyboard: the pad navigates the menu again
+        if (c.kind != TextEntryCommand::None && onKeyboard) onKeyboard(c.kind == TextEntryCommand::Show, c.scope, f ? f->text : std::string());
+    }
+    SaveLayout layout_;
+    TextEntry textEntry_;
+    SuspendReport lastSuspend_;
     // At start: if the marker is still there the last run ended while suspended; put the saved state back over the freshly loaded scene.
     void RestoreIfPending() {
         if (saveDir_.empty() || !scene_) return;

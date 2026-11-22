@@ -4,6 +4,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include <cstdio>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -397,6 +398,51 @@ void TestEdges() {
 
 } // namespace
 
+// The pool calls pass the same file gate as spawn: a script cannot reach a prefab outside the game folder
+// (here "../" from the game folder), so pool_get says false, pool_prewarm and pool_idle say 0, and no pool
+// is made for that file.
+void TestScriptPathGate() {
+    RUN_SUITE("script pool calls refuse prefab files outside the game folder");
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path home = fs::current_path();
+    const fs::path out = home / "pool_gate_out";
+    fs::create_directories(out / "game", ec);
+    {
+        Scene tmp("p");
+        GameObject* b = tmp.CreateGameObject("Bullet");
+        b->AddComponent<SpriteRenderer>();
+        CHECK(SceneSerializer::SaveObjectToFile(*b, (out / "outside.okayprefab").string()));
+    }
+    fs::current_path(out / "game", ec);
+    CHECK(!ec);
+    {
+        Scene sc("gate");
+        GameObject* g = sc.CreateGameObject("Gun");
+        auto* s = g->AddComponent<ScriptComponent>("okayscript");
+        CHECK(s->LoadSource(
+            "function go() {\n"
+            "  set(\"spawn\", spawn(\"../outside.okayprefab\", 0, 0));\n"
+            "  set(\"warm\", pool_prewarm(\"../outside.okayprefab\", 2));\n"
+            "  set(\"get\", pool_get(\"../outside.okayprefab\", 0, 0));\n"
+            "  set(\"idle\", pool_idle(\"../outside.okayprefab\"));\n"
+            "}\n"));
+        sc.Start();
+        sc.Update(0.016f);
+        CHECK(s->VM() != nullptr);
+        if (s->VM()) {
+            s->VM()->CallEvent("go");
+            CHECK(!s->Host().globals["spawn"].AsBool());          // the existing gate on spawn
+            CHECK(s->Host().globals["warm"].AsFloat() == 0.0f);
+            CHECK(!s->Host().globals["get"].AsBool());
+            CHECK(s->Host().globals["idle"].AsFloat() == 0.0f);
+        }
+        CHECK(sc.Objects().size() == 1);                           // only the gun: nothing was loaded
+    }
+    fs::current_path(home, ec);
+    fs::remove_all(out, ec);
+}
+
 int main() {
     TestSavedScene();
     TestShrink();
@@ -406,5 +452,6 @@ int main() {
     TestScriptCalls();
     TestSharedPools();
     TestEdges();
+    TestScriptPathGate();
     TEST_MAIN_RESULT();
 }

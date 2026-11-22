@@ -98,4 +98,46 @@ LocWindowPreview PreviewLocKey(const okay::StringTable& table, const std::string
 /// (the pseudo language, or a right-to-left one).
 bool LocWindowShowsPreview(const std::string& language);
 
+/// Which reader an import uses.
+enum class LocImportFormat { Csv, Json };
+
+/// ".json" (any case) reads as JSON, anything else as CSV.
+LocImportFormat LocImportFormatFor(const std::string& path);
+
+/// What an import from a file would do, worked out before the table changes: the window
+/// shows the summary and the changed cells and applies `after` only when the user agrees.
+struct LocImportPlan {
+    bool ok = false;
+    std::string error;                  ///< why the file could not be read (ok is false)
+    LocImportFormat format = LocImportFormat::Csv;
+    std::string language;               ///< a JSON file of one language: the language it was read as
+    int rows = 0;                       ///< rows (CSV) or keys (JSON) read
+    okay::StringTable after;            ///< the table with the import applied
+    okay::LocDiff diff;                 ///< what changes from the live table to `after`
+    std::vector<std::string> warnings;  ///< skipped rows and columns (JSON reader)
+    bool Changes() const { return ok && !diff.Empty(); }
+};
+
+/// Read `text` (a file's contents) on top of a copy of `live`. CSV goes through the same
+/// reader the window always used (StringTable::ImportCsv: key, note, a column per language).
+/// JSON takes both forms LocTable writes: the whole table, or one language's {"key": "text"},
+/// which is read as the language named by the file's stem (`fr.json` is French).
+/// `live` is not changed.
+LocImportPlan PlanLocImport(const okay::StringTable& live, const std::string& text, LocImportFormat format,
+                            const std::string& path);
+
+/// One line for the confirm step: "12 rows: 3 filled, 1 changed, 2 new keys" or
+/// "12 rows: nothing would change", or the error.
+std::string LocImportSummary(const LocImportPlan& plan);
+
+/// The cells and keys the import changes, one per line ("fr  menu.quit  filled"), at most
+/// `max` lines plus "and N more".
+std::vector<std::string> LocImportChangeLines(const LocImportPlan& plan, std::size_t max);
+
+/// The JSON Export JSON writes to `path`: when the file's stem is a language of the table
+/// (`fr.json`), that language alone as {"key": "text"} (LocTable::ToJsonFlat; a web translator's
+/// file, which Import reads back as that language); otherwise the whole table (LocTable::ToJson).
+/// `language` receives the language of a one-language file, else "".
+std::string LocExportJson(const okay::StringTable& table, const std::string& path, std::string* language = nullptr);
+
 } // namespace oked

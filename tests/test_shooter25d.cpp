@@ -147,8 +147,12 @@ int main() {
         Step(s, {}, 10);
         Step(s, {'d'}, 2);
         Step(s, {}, 30);
+        GameObject* shotBy = nullptr;
+        AddDamagedListener([&](const DamageEvent& e) { shotBy = e.source; });
         ts->Fire();
         CHECK_NEAR(hp->health, 90.0f, 0.01f);               // instant
+        CHECK(shotBy == p);                                 // the hit names the shooter as its source
+        ClearDamageListeners();
         CHECK_EQ(CountNamed(s, "Bullet"), 0);               // no projectile
         ts->Fire(); ts->Fire();
         CHECK_EQ(ts->ammo, 0);

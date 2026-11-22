@@ -55,7 +55,7 @@ bool StampProject(const std::string& projectDir, const std::string& running, std
 
 /// A hook for tests: called before each step that touches the disk with a stage name and what it is about; returning true
 /// makes that step fail as if the disk had refused. Stages: scan, analyze, space, backup-copy, backup-verify,
-/// backup-manifest, backup-rename, apply, stamp, restore.
+/// backup-manifest, backup-report, backup-rename, apply, stamp, restore.
 using FailHook = std::function<bool(const char* stage, const std::string& what)>;
 
 struct Options {
@@ -84,7 +84,31 @@ struct Result {
     std::vector<std::string> changed; ///< project-relative paths written (scenes, prefabs, project.okayproj)
     std::vector<std::string> log;     ///< what the migration did, one line per step
     std::vector<std::string> warnings;
+    std::vector<std::string> losses;  ///< "<file>: ..." for each thing an upgraded file no longer holds (also in warnings)
+    std::string reportPath;           ///< the upgrade report in the backup (<backup>/.okay/upgrade_report.txt), "" when none was written
 };
+
+/// What upgrading one scene or prefab file does, worked out without writing anything: the format steps
+/// (SceneMigration::MigrateThroughEngine), then the old and the new text are both loaded with the engine's loader and
+/// compared, so anything the new file would no longer hold is named in `losses` instead of going quietly.
+struct FileCheck {
+    bool ok = false;                  ///< false: the file can't be upgraded (`error` says why); nothing may be written
+    std::string error;
+    bool loadFailed = false;          ///< (with !ok) the steps worked but the result does not load
+    bool changed = false;             ///< the file has to be rewritten
+    std::string text;                 ///< the text to write (the input when nothing changes)
+    int fromVersion = 0, toVersion = 0;
+    int objectsBefore = 0, objectsAfter = 0;   ///< objects the loader makes from the old and from the new text
+    int unknownBefore = 0;            ///< records this version does not know, in the old text
+    int unknownKept = 0;              ///< of those, how many the new text still holds
+    std::vector<std::string> log;     ///< what the steps did
+    std::vector<std::string> losses;  ///< plain sentences, one per kind of loss; empty when nothing is lost
+};
+FileCheck CheckSceneFile(const std::string& text);
+
+/// The upgrade report as text (what UpgradeJob writes into the backup): versions, counts, the files rewritten, what each
+/// step did, and every warning and loss. `when` is the date line ("" leaves it out, for tests).
+std::string UpgradeReportText(const Options& opt, const Result& res, const std::string& when);
 
 enum class Phase { Scanning, Checking, Space, Backup, Verify, Applying, Done, Failed };
 const char* PhaseName(Phase p);

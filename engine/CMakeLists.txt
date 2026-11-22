@@ -75,6 +75,8 @@ add_library(okay_engine
     src/Input/TouchControls.cpp
     src/Core/DisplaySettings.cpp
     src/Core/DisplayModes.cpp
+    src/Render/TextureCacheFiles.cpp
+    src/Render/ModelImportProblem.cpp
     src/Render/ConsoleRenderer.cpp
     src/Render/GLRenderer.cpp
     src/Render/OkayShader.cpp
@@ -143,6 +145,7 @@ add_library(okay_engine
     src/Inventory/InventoryOps.cpp
     src/Combat/WeaponBook.cpp
     src/Components/MeleeAttacker.cpp
+    src/Components/Damage.cpp
     src/Components/RangedWeapon.cpp
     src/Inventory/ItemDatabase.cpp
     src/Inventory/LootTable.cpp
@@ -654,7 +657,7 @@ okay_add_platform_library()
 target_link_libraries(okay_engine PUBLIC okay_platform)
 # okay::platform::Painter (the 2D drawing surface of a window): the shared part and the sdl2 implementation.
 # The software implementation lives in okayui/soft (okay_ui_soft). Own code, not ready, off by default.
-target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/SdlPainter.cpp)
+target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/SdlPainter.cpp src/Platform/GLPainter.cpp)
 if(OKAY_PLATFORM_SDL_INCLUDES)
     target_include_directories(okay_engine PRIVATE ${OKAY_PLATFORM_SDL_INCLUDES})
 endif()
@@ -812,4 +815,5 @@ target_sources(okay_engine PRIVATE
     src/Core/FrameOverlay.cpp
     src/Core/TimeSnapshot.cpp
     src/Core/LoopConsole.cpp
+    src/Core/ConsoleHost.cpp
 )

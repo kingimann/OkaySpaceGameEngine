@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <string>
 
 using namespace okayuitest;
 namespace UI = OkayUI;
@@ -153,6 +154,50 @@ int main() {
         // hostile numbers
         const float nan = std::numeric_limits<float>::quiet_NaN();
         sim.Frame([&] { UI::SetNextWindowSizeConstraints(UI::Vec2{nan, nan}, UI::Vec2{nan, nan}); UI::Begin("n", 0, 0, 100, 100); UI::End(); });
+    }
+    {   // text field callbacks: Up / Down call the history callback, Tab the completion one, only while the field has the keyboard
+        Reset();
+        Sim sim(640, 480);
+        static char buf[64] = "ab";
+        static int calls = 0, lastFlag = 0, lastKey = 0;
+        calls = lastFlag = lastKey = 0;
+        auto cb = [](UI::InputTextCallbackData* d) -> int {
+            ++calls; lastFlag = d->EventFlag; lastKey = d->EventKey;
+            d->DeleteChars(0, d->BufTextLen);
+            d->InsertChars(0, d->EventFlag == UI::InputText_CallbackHistory ? (d->EventKey == UI::KeyId_Up ? "prev" : "next") : "done");
+            return 0;
+        };
+        const unsigned fl = UI::InputText_EnterReturnsTrue | UI::InputText_CallbackHistory | UI::InputText_CallbackCompletion;
+        bool focus = false;
+        auto ui = [&] {
+            UI::BareNextWindow();
+            if (UI::Begin("w", 10, 10, 300, 200)) {
+                if (focus) { UI::SetKeyboardFocusHere(); focus = false; }
+                UI::InputText("##cmd", buf, (int)sizeof buf, fl, cb);
+            }
+            UI::End();
+        };
+        sim.edge[Key_Up] = true;
+        sim.Frame(ui);
+        CHECK(calls == 0);                      // not focused: no callback
+        CHECK(std::string(buf) == "ab");
+        focus = true; sim.Frame(ui);            // give it the keyboard
+        sim.edge[Key_Up] = true; sim.Frame(ui);
+        CHECK(calls == 1 && lastFlag == UI::InputText_CallbackHistory && lastKey == UI::KeyId_Up);
+        CHECK(std::string(buf) == "prev");
+        sim.edge[Key_Down] = true; sim.Frame(ui);
+        CHECK(calls == 2 && lastKey == UI::KeyId_Down && std::string(buf) == "next");
+        sim.Hold(UI::KeyId_Tab, true); sim.Frame(ui);
+        CHECK(calls == 3 && lastFlag == UI::InputText_CallbackCompletion && lastKey == UI::KeyId_Tab && std::string(buf) == "done");
+        sim.Frame(ui);                          // Tab still held: one call per press
+        CHECK(calls == 3);
+        sim.Hold(UI::KeyId_Tab, false); sim.Frame(ui);
+        sim.text = "!"; sim.Frame(ui);          // the caret went to the end of the new text
+        CHECK(std::string(buf) == "done!");
+        sim.edge[Key_Up] = true;                // a field without the flags never calls it
+        char other[16] = "x";
+        sim.Frame([&] { UI::BareNextWindow(); if (UI::Begin("w", 10, 10, 300, 200)) UI::InputText("##cmd", other, (int)sizeof other, 0u, cb); UI::End(); });
+        CHECK(calls == 3);
     }
     TEST_MAIN_RESULT();
 }

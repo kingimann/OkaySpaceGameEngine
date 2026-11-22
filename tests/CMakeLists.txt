@@ -3557,6 +3557,12 @@ if(NOT WIN32 AND NOT EMSCRIPTEN AND TARGET okay_ui_soft AND CMAKE_SYSTEM_NAME ST
     add_test(NAME platform_painter_window
              COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_painter_window>)
     set_tests_properties(platform_painter_window PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+    # The OpenGL painter (engine/src/Platform/GLPainter.cpp) on an own-backend GL window against the software painter. Own code, off by default.
+    add_executable(test_gl_painter test_gl_painter.cpp)
+    target_link_libraries(test_gl_painter PRIVATE okay_ui_soft)
+    add_test(NAME gl_painter COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_gl_painter>)
+    set_tests_properties(gl_painter PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 endif()
 
 # The controller -> Input bridge (Input/PlatformGamepad.hpp) with a fake okay::platform::Gamepad.

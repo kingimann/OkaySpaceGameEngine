@@ -147,5 +147,23 @@ int main() {
         CHECK(m.name.empty());
     }
 
+    // --- FlipNormals keeps the shading: a flat (edit-mode) mesh stays flat --------
+    // Bug: FlipNormals always called ComputeSmoothNormals, so pressing Flip Normals in
+    // Edit Mesh (where the welded mesh is flat shaded, normals empty) turned a cube
+    // into a blobby smooth-shaded one.
+    {
+        Mesh m = Mesh::Cube();
+        m.WeldVertices();
+        m.normals.clear();                                   // flat, as in edit mode
+        m.FlipNormals();
+        CHECK(m.normals.empty());                            // still flat
+        Mesh s = Mesh::Sphere();
+        s.ComputeSmoothNormals();
+        const Vec3 n0 = s.normals[0];
+        s.FlipNormals();
+        CHECK(s.normals.size() == s.vertices.size());
+        CHECK((s.normals[0] + n0).Magnitude() < 1e-4f);      // smooth normals turn round with the faces
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -74,6 +74,8 @@ public:
     const char* StateName() const { return dyn::StateName(m_dc.State()); }
     bool  IsPhysical() const { return m_built && m_dc.State() != dyn::CharState::Animated; }
     bool  IsDown() const;
+    /// A Ragdoll on the same object was switched off when this one started.
+    bool  TookOverRagdoll() const { return m_tookOver; }
     dyn::DynamicCharacter& Core() { return m_dc; }
     const dyn::DynamicCharacter& Core() const { return m_dc; }
     Transform* BoneTransform(int bone) const { return bone >= 0 && bone < dyn::kBones ? m_bones[bone] : nullptr; }
@@ -112,6 +114,7 @@ private:
     std::vector<Component*> m_switched;
     dyn::CharState m_lastState = dyn::CharState::Animated;
     bool  m_wasDead = false;
+    bool  m_tookOver = false;
     float m_rootAboveGround = 0.0f;   // root height over the ground at build
     float m_lastHealth = -1.0f;
 };

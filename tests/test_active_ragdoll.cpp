@@ -509,6 +509,33 @@ int main() {
         CHECK(!ar->Shoot(chest + Vec3{5, 0, -5}, Vec3{0, 0, 1}, 20.0f));
     }
 
+    // ---- A Ragdoll and an ActiveRagdoll on one object: the ActiveRagdoll takes over, only one reacts ----
+    {
+        Scene sc{"ar3"};
+        auto* g = sc.CreateGameObject("Ground");
+        g->transform->localPosition = {0, -0.5f, 0};
+        g->AddComponent<BoxCollider3D>()->size = {40, 1, 40};
+        GameObject* body = sc.CreateGameObject("Body");
+        body->AddComponent<Character>()->Apply();
+        auto* hp = body->AddComponent<HealthStat>();
+        auto* old = body->AddComponent<Ragdoll>();
+        auto* ar = body->AddComponent<ActiveRagdoll>();
+        sc.Start();
+        for (int i = 0; i < 30; ++i) sc.Update(1.0f / 60.0f);
+        CHECK(ar->Ready());
+        CHECK(!old->enabled);                                     // switched off, with a log line
+        CHECK(ar->TookOverRagdoll());
+        hp->Damage(10.0f, body->transform->Position() + Vec3{-3, 1.2f, 0});
+        sc.Update(1.0f / 60.0f);
+        CHECK(!old->IsReacting());                                // only the ActiveRagdoll flinches
+        CHECK(ar->IsPhysical());
+        hp->Damage(1000.0f, body->transform->Position() + Vec3{-3, 1.2f, 0});
+        for (int i = 0; i < 60; ++i) sc.Update(1.0f / 60.0f);
+        CHECK(!old->IsActive());                                  // the old ragdoll did not go limp too
+        CHECK(ar->State() == CharState::Dead);
+        CHECK(body->GetComponent<Character>()->enabled);          // nothing switched the animation off under it
+    }
+
     // ---- A broken skeleton in a scene: the component stays off, nothing crashes ----
     {
         Scene sc{"ar2"};

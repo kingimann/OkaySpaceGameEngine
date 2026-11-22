@@ -148,5 +148,22 @@ int main() {
         CHECK_NEAR(dc->position, 0.5f, 1e-3f);
     }
 
+    // ---- Bug: the free-roam fly camera turned to the mirror of where it was placed -----------------------------
+    // Start() seeds yaw from the object's facing with atan2(f.x, -f.z); a turn of +Y degrees gives
+    // f = (-sin Y, 0, -cos Y), so that read back -Y and the first frame snapped a camera facing left to face right.
+    for (float yawDeg : {90.0f, 35.0f, -120.0f}) {
+        Scene s("free_roam_seed");
+        s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Fly Cam");
+        go->transform->localRotation = Quat::Euler(-20.0f, yawDeg, 0.0f);
+        const Vec3 before = go->transform->localRotation * Vec3{0, 0, -1};
+        go->AddComponent<FreeRoamController>();
+        Input::FeedKeys({});
+        s.Start();
+        s.Update(1.0f / 60.0f);
+        const Vec3 after = go->transform->localRotation * Vec3{0, 0, -1};
+        CHECK(Same(before, after) || (before - after).Magnitude() < 1e-3f);
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -111,7 +111,7 @@ inline const VsPaletteCategory kPaletteCategories[] = {
     {"Gamepad & Controls", "Movement axes, the gamepad, named actions and rebinding keys, local players and the controllers they use.", "Input"},
     // ---- Online
     {"Multiplayer",     "Host or join, browse servers, matchmaking, messages, synced objects, players and matches.", "Online"},
-    {"Steam",           "Steam achievements, stats, lobbies, friends, cloud files and the workshop.", "Online"},
+    {"Steam",           "Steam achievements, stats, lobbies, friends, cloud files and the workshop, and the Store Kit calls that work on every store.", "Online"},
     {"Server Security", "Anti-cheat: validate what clients send, rate limits, kicks and budgets.", "Online"},
     {"Accounts & Online Saves", "Log in, cloud saves, leaderboards and PlayFab.", "Online"},
     // ---- Debugging

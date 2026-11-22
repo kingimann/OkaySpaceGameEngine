@@ -928,6 +928,10 @@ inline const VsRule kBuiltinRules[] = {
     {"net_set", "Multiplayer", "Synced Objects & Variables"}, {"net_get", "Multiplayer", "Synced Objects & Variables"},
     {"net_teleport", "Multiplayer", "Synced Objects & Variables"},
     {"net_set_pawn", "Multiplayer", "Synced Objects & Variables"}, {"net_*", "Multiplayer", "Players & Matches"},
+    // The Store Kit (Steam, Epic or the local store; docs/release/store_kit.md).
+    {"Achievements.*", "Steam", "Achievements & Stats"}, {"Stats.*", "Steam", "Achievements & Stats"},
+    {"Leaderboards.*", "Steam", "Achievements & Stats"}, {"CloudSave.*", "Steam", "Cloud & Workshop"},
+    {"Presence.*", "Steam", "Lobbies & Friends"}, {"Store.*", "Steam", "Lobbies & Friends"},
     {"steam_achievement_*", "Steam", "Achievements & Stats"}, {"steam_unlock", "Steam", "Achievements & Stats"},
     {"steam_is_unlocked", "Steam", "Achievements & Stats"}, {"steam_clear", "Steam", "Achievements & Stats"},
     {"steam_progress", "Steam", "Achievements & Stats"}, {"steam_get_stat*", "Steam", "Achievements & Stats"},

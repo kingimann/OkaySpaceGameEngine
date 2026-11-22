@@ -3291,12 +3291,24 @@ add_test(NAME prefab_apply_revert COMMAND test_prefab_apply_revert)
 add_executable(test_property_registry test_property_registry.cpp)
 target_link_libraries(test_property_registry PRIVATE okay::engine)
 add_test(NAME property_registry COMMAND test_property_registry)
+# One registry drives serialization: coverage gate (every component class registered or a known gap that only
+# shrinks), the generic key=value record from a registry entry, and a scene main wrote re-saves byte for byte.
+add_executable(test_registry_serializer test_registry_serializer.cpp)
+target_link_libraries(test_registry_serializer PRIVATE okay::engine)
+target_compile_definitions(test_registry_serializer PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME registry_serializer COMMAND test_registry_serializer)
 # ---- Core runtime foundations (docs/engine/core_runtime.md) ----
 # Job system: pool, task graph, ParallelFor / ParallelReduce, cancellation, shutdown, main-thread queue.
 # Takes an optional repeat count: `test_jobs 20` runs the threaded suites 20 times to shake out races.
 add_executable(test_jobs test_jobs.cpp)
 target_link_libraries(test_jobs PRIVATE okay::engine)
 add_test(NAME jobs COMMAND test_jobs 3)
+
+# The engine's own work on the job system (physics bounds, skinning, asset loads, navmesh bakes):
+# 0 and 4 workers give bit-identical results. `test_jobs_adoption bench 2000` prints step times.
+add_executable(test_jobs_adoption test_jobs_adoption.cpp)
+target_link_libraries(test_jobs_adoption PRIVATE okay::engine)
+add_test(NAME jobs_adoption COMMAND test_jobs_adoption)
 
 # FrameArena, PoolAllocator, SlotMap / Handle, StringId.
 add_executable(test_arena_handles test_arena_handles.cpp)
@@ -4733,12 +4745,17 @@ add_executable(test_wind test_wind.cpp)
 target_link_libraries(test_wind PRIVATE okay::engine)
 add_test(NAME wind COMMAND test_wind)
 # okay::tex, our own texture library (docs/rendering/own_texture_library.md). Pure CPU, deterministic.
-foreach(_t IN ITEMS mip atlas convert bc dds_stream)
+foreach(_t IN ITEMS mip atlas convert bc dds_stream dds_load)
     add_executable(test_tex_${_t} test_tex_${_t}.cpp)
     target_link_libraries(test_tex_${_t} PRIVATE okay::engine)
     add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()
+# The OpenGL renderer uploading .dds files and compressed import copies, on Mesa llvmpipe through EGL (SKIPPED without one).
+add_executable(test_gl_dds_upload test_gl_dds_upload.cpp)
+target_link_libraries(test_gl_dds_upload PRIVATE okay::engine ${CMAKE_DL_LIBS})
+add_test(NAME gl_dds_upload COMMAND test_gl_dds_upload WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(gl_dds_upload PROPERTIES TIMEOUT 240)
 
 # Colliders behave as the shapes they are (not boxes): Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield, 2D polygon / capsule / composite.
 add_executable(test_collider_shapes test_collider_shapes.cpp)

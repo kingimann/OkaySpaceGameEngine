@@ -107,9 +107,26 @@ public:
         m_tex[id] = t;
         return id;
     }
+    TexId WrapNativeTexture(std::uintptr_t native, int w, int h, bool linear) override {
+        // The host's ID3D11Texture2D: a shader resource view of our own on it, the texture itself held (AddRef) and never changed.
+        ID3D11Texture2D* t = (ID3D11Texture2D*)native;
+        if (!t || w <= 0 || h <= 0) return 0;
+        D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof td); t->GetDesc(&td);
+        if (!(td.BindFlags & D3D11_BIND_SHADER_RESOURCE) || td.SampleDesc.Count != 1 || td.ArraySize != 1) return 0;
+        ID3D11Device* owner = nullptr; t->GetDevice(&owner);
+        const bool sameDevice = owner == m_dev;
+        Rel(owner);
+        if (!sameDevice) return 0;
+        Tex x; x.linear = linear; x.wrapped = true; x.w = (int)td.Width; x.h = (int)td.Height;
+        if (FAILED(m_dev->CreateShaderResourceView(t, nullptr, &x.srv))) return 0;
+        t->AddRef(); x.tex = t;
+        const TexId id = ++m_next;
+        m_tex[id] = x;
+        return id;
+    }
     bool UpdateTexture(TexId id, int w, int h, const std::uint8_t* rgba) override {
         auto it = m_tex.find(id);
-        if (it == m_tex.end() || !rgba) return false;
+        if (it == m_tex.end() || !rgba || it->second.wrapped) return false;
         Tex& t = it->second;
         if (t.w == w && t.h == h) {
             m_ctx->UpdateSubresource(t.tex, 0, nullptr, rgba, (UINT)w * 4, 0);
@@ -251,7 +268,7 @@ public:
     }
 
 private:
-    struct Tex { ID3D11Texture2D* tex = nullptr; ID3D11ShaderResourceView* srv = nullptr; int w = 0, h = 0; bool linear = false; };
+    struct Tex { ID3D11Texture2D* tex = nullptr; ID3D11ShaderResourceView* srv = nullptr; int w = 0, h = 0; bool linear = false; bool wrapped = false; };
     static void Fail(ID3DBlob* eb, const char* what, std::string* err) {
         if (err) *err = std::string(what) + ": " + (eb ? (const char*)eb->GetBufferPointer() : "compile failed");
         Rel(eb);

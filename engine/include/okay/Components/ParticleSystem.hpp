@@ -414,7 +414,7 @@ public:
     }
 
     void Update(float dt) override {
-        if (m_particles.empty()) m_particles.assign(SafeMax(), Particle{});
+        EnsurePool();   // Max Particles (or the game's particle limit) changed since the pool was made
 
         // Track the emitter's motion: its velocity (for inheritVelocity) and, in
         // Local space, carry live particles along by this frame's move + turn.
@@ -455,10 +455,17 @@ public:
             }
         }
 
-        // Steady-rate emission.
+        // Steady-rate emission. At most the free slots are filled in one frame, and what a full pool could not take is
+        // dropped instead of banked, so an enormous or infinite rate fills the pool once and returns.
         if (emitting && emissionRate > 0.0f) {
-            m_accum += emissionRate * dt;
-            while (m_accum >= 1.0f) { m_accum -= 1.0f; Emit(); }
+            m_accum += emissionRate * (dt > 0.0f ? dt : 0.0f);
+            if (!(m_accum < 1.0e9f)) m_accum = 1.0e9f;   // also catches inf and NaN
+            const int want = (int)m_accum;
+            if (want > 0) {
+                const int made = Emit(want);
+                m_accum -= (float)want;
+                if (made < want) m_accum = 0.0f;   // the pool is full
+            }
         }
 
         // Integrate.
@@ -563,21 +570,35 @@ public:
     }
     const std::vector<Particle>& Particles() const { return m_particles; }
 
-    /// Spawn a burst of `count` particles immediately.
-    void Emit(int count) { for (int i = 0; i < count; ++i) Emit(); }
+    /// Spawn a burst of up to `count` particles immediately (no more than the pool has free slots).
+    /// Returns how many were made. One walk over the pool, however large `count` is.
+    int Emit(int count) {
+        EnsurePool();
+        int made = 0;
+        std::size_t slot = 0;
+        while (made < count && EmitFrom(slot)) { ++made; ++slot; }
+        return made;
+    }
 
 private:
-    void Emit() {
-        // Find a free slot (reuse dead particles).
-        for (Particle& p : m_particles) {
-            if (p.alive) continue;
+    /// Make the pool match SafeMax(): grow with dead slots, or shrink (the particles beyond the new size go).
+    void EnsurePool() {
+        const std::size_t want = (std::size_t)SafeMax();
+        if (m_particles.size() != want) m_particles.resize(want, Particle{});
+    }
+    /// Spawn one particle into the first free slot at or after `slot` (updated to the slot used). False when full.
+    bool EmitFrom(std::size_t& slot) {
+        while (slot < m_particles.size() && m_particles[slot].alive) ++slot;
+        if (slot >= m_particles.size()) return false;
+        {
+            Particle& p = m_particles[slot];
             p.alive = true;
             p.maxLife = p.life = startLifetime + (startLifetimeRandom > 0.0f
                                   ? m_rng.Range(-startLifetimeRandom, startLifetimeRandom) : 0.0f);
-            if (p.life < 0.01f) p.life = p.maxLife = 0.01f;
+            if (!(p.life >= 0.01f)) p.life = p.maxLife = 0.01f;   // also a NaN lifetime: it would never die
             p.size0 = p.size = startSize + (startSizeRandom > 0.0f
                                ? m_rng.Range(-startSizeRandom, startSizeRandom) : 0.0f);
-            if (p.size0 < 0.0f) p.size0 = p.size = 0.0f;
+            if (!(p.size0 >= 0.0f)) p.size0 = p.size = 0.0f;     // negative or NaN
             p.rotation = startRotation + (startRotationRandom > 0.0f
                          ? m_rng.Range(-startRotationRandom, startRotationRandom) : 0.0f);
             p.angularVel = rotationSpeed + (rotationSpeedRandom > 0.0f
@@ -638,8 +659,8 @@ private:
 
             p.position = origin + off;
             p.velocity = vel;
-            return;
         }
+        return true;
     }
 
     static float VLen(const Vec3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }

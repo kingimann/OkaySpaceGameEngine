@@ -126,15 +126,11 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.6.6 World streaming - `Components/WorldStreamer` - cell prefabs `<prefix>_<x>_<z>.okayprefab` loaded within a radius and unloaded past a larger one (hysteresis)
   - 2.6.7 Tilemap - `Components/Tilemap`, `Components/TilemapCollider2D` - integer tile grid with cell/world conversion; static box colliders merged per row
 - **Code:** `Components/Terrain`, `Components/TerrainDigger`, `Components/VoxelTerrain`, `Components/VoxelDigger`, `Components/Water`, `Environment/WaterWaves`, `Environment/WaterShading`, `Components/Buoyancy`, `Components/WorldStreamer`, `Components/Tilemap`, `Components/TilemapCollider2D`
-  - 2.6.9 Buoyancy - `Components/Buoyancy` - sample points across the hull, Archimedes push per point, drag per hull direction against the moving water, angular damping, splash events, runs in FixedUpdate; crates float at the right draft, heavy things sink
-  - 2.6.6 World streaming - `Components/WorldStreamer` - cell prefabs `<prefix>_<x>_<z>.okayprefab` loaded within a radius and unloaded past a larger one (hysteresis)
-  - 2.6.7 Tilemap - `Components/Tilemap`, `Components/TilemapCollider2D` - integer tile grid with cell/world conversion; static box colliders merged per row
-- **Code:** `Components/Terrain`, `Components/TerrainDigger`, `Components/VoxelTerrain`, `Components/VoxelDigger`, `Components/Water`, `Environment/WaterWaves`, `Components/Buoyancy`, `Components/WorldStreamer`, `Components/Tilemap`, `Components/TilemapCollider2D`
 - **API:** `Terrain::RaiseAt`, `Terrain::Erode`, `VoxelTerrain::Dig`, `TerrainDigger`, `Water`, `WorldStreamer`, `Tilemap`, `TilemapCollider2D`
 - **Editor:** GameObject > 3D Object > Terrain, Voxel Terrain (caves), Water and GameObject > 2D Object > Tilemap; their Inspector sections and the Terrain sculpt tools (editor/main.cpp)
 - **Docs:** `docs/rendering/terrain_water.md`, `docs/rendering/terrain_water.md`
-- **Tests:** `boat`, `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`
-- **Status:** Works - read the headers of every component above; `terrain` also covers water, flashlight and the sandbox template
+- **Tests:** `boat`, `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`, `world_edges`
+- **Status:** Works - read the headers of every component above; `terrain` also covers water, flashlight and the sandbox template; `world_edges` covers the edge of a raised terrain (normals and slope one cell from the edge used to read height 0 past the grid, so bodies slid and plants were refused there; now one-sided at the edge), terrain size 0 (no NaN), Foliage Scatter leaning with Align to Surface like the brush, and a water Detail from a damaged scene file (limited to 1..1024 instead of crashing the load)
 - **Open:** vegetation and detail painting, procedural scatter and a proper sculpting UI are area 29; streaming is by prefab cell files baked by hand, not by the `Optimize/StreamingGrid` planner of #574 (area 27)
 - **Related:** 2.2, 2.4, 6.2, 27, 29, 1.6
 - **Words:** Terrain, heightmap, sculpt, brush, erosion, VoxelTerrain, marching cubes, cave, dig, TerrainDigger, VoxelDigger, Water, ocean, lake, buoyancy, WorldStreamer, world partition, streaming, Tilemap, tile
@@ -154,8 +150,8 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **API:** `ParticleSystem`, `ParticleSystem::ApplyPreset`, `ParticleGradient`, `ParticleCurve`, `LineRenderer`, `TrailRenderer`, `BuildRibbon`, script `emit`
 - **Editor:** Particle System, Line Renderer and Trail Renderer inspector sections (editor/main.cpp); spline-driven lines in 2.11
 - **Docs:** `docs/rendering/particles.md`, `docs/engine/splines.md` (lines and trails), `docs/rendering/rendering.md` (weather)
-- **Tests:** `particles_fx`, `particles_serialize`, `particles_tilemap`
-- **Status:** Works - read the `ParticleSystem.hpp` fields and `LineRenderer.hpp` header; tests cover gradients, curves, presets and scene round trips
+- **Tests:** `particles_fx`, `particles_serialize`, `particles_tilemap`, `world_edges`
+- **Status:** Works - read the `ParticleSystem.hpp` fields and `LineRenderer.hpp` header; tests cover gradients, curves, presets and scene round trips; `world_edges` covers Max Particles changed while it runs (the pool now follows it; before, it kept the size it had at the start), a burst far larger than the pool (one walk over the pool, was 26 s for 100 million), an infinite or enormous emission rate (filled the pool once and returns; an infinite rate used to hang the frame) and a NaN lifetime or size (such particles used to live forever)
 - **Open:** particles are CPU billboards drawn by the host, not GPU particles; lines and trails are unlit and cast no shadows; one Line and one Trail renderer per object
 - **Related:** 2.4, 2.11, 38.10, 11.7
 - **Words:** particles, ParticleSystem, emitter, burst, gradient, trail, TrailRenderer, LineRenderer, laser, rope, ribbon, fire, smoke, sparks, explosion, rain, lines, trails

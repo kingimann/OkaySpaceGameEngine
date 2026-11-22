@@ -1065,6 +1065,12 @@ target_include_directories(test_project_panel_db PRIVATE ${PROJECT_SOURCE_DIR}/e
 target_link_libraries(test_project_panel_db PRIVATE okay::engine)
 add_test(NAME project_panel_db COMMAND test_project_panel_db)
 
+# A picture changed on disk or reimported is shown changed in the Scene view: InvalidateTextureCacheForFile drops every cache key that names the file (relative, ./, absolute), and Browser::TakeChangedFiles hands out the files a scan found changed plus every hand reimport, once each.
+add_executable(test_texture_reimport test_texture_reimport.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
+target_include_directories(test_texture_reimport PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_texture_reimport PRIVATE okay::engine)
+add_test(NAME texture_reimport COMMAND test_texture_reimport)
+
 # The Project panel's right-click menus (editor/ProjectContextModel.hpp, header-only, no ImGui, no engine): order, labels and plurals of the item, folder, tree, favourites and empty-space menus, what is greyed and why, no doubled separators, Copy Text, Assets-relative paths, the file types that run code (never offered to the system's open, and .js is not a text file), a folder that is gone, the path text helpers (Outermost, NearestFolder), the Move to... rule, Set as Start Scene, dates and the Properties rows.
 add_executable(test_project_context_model test_project_context_model.cpp)
 target_compile_features(test_project_context_model PRIVATE cxx_std_17)

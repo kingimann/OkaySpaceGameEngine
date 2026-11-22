@@ -330,6 +330,27 @@ int main() {
         CHECK(s.c.State() == CharState::Animated);
     }
 
+    // ---- Off a ledge: wherever it ends up (on the ground, or hanging over the edge), it gets up again.
+    //      Seen in the example scene: a body draped over the edge with a hand twitching never counted as
+    //      "still" and lay there for ever. ----
+    {
+        int up = 0;
+        const float edges[4] = {0.3f, 0.6f, 0.9f, 1.2f};
+        for (float edge : edges) {
+            Sim s;
+            s.world.groundY = -1.0f;                                       // the floor is 1 m below the ledge
+            s.world.boxes.push_back({Vec3{-3.0f, -1.0f, -3.0f}, Vec3{edge, 0.0f, 3.0f}});
+            s.Run(0.2f);
+            s.c.Push(s.c.Body(Torso).position, Vec3{220.0f, 0, 0});
+            int i = 0;
+            for (; i < 1200 && !(s.c.State() == CharState::Animated && i > 30); ++i) s.Run(1.0f / 60.0f);
+            up += s.c.State() == CharState::Animated ? 1 : 0;
+            std::cout << "  ledge at " << edge << " m: " << S(s.c.State()) << " after " << i / 60.0f << " s, pelvis y "
+                      << s.c.Body(Hips).position.y << "\n";
+        }
+        CHECK(up == 4);
+    }
+
     // ---- Brace: falling forward, the hands reach the ground before the head ----
     {
         Sim s;

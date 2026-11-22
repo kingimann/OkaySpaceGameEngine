@@ -492,7 +492,11 @@ public:
         const CharState s = c.State();
         if (s == CharState::Down) {
             if (!enabled || c.Dead() || c.mode == RagdollMode::Limp) { still = 0.0f; return; }
-            still = c.MaxSpeed() < 0.35f ? still + h : 0.0f;
+            // Still = the body as a whole has stopped. A limb can twitch for ever on an edge (seen with
+            // a body draped over a ledge), so the centre of mass decides, and after 4 s it tries anyway.
+            still = Flat(c.CentreOfMassVelocity()).Magnitude() < 0.25f && std::fabs(c.CentreOfMassVelocity().y) < 0.25f
+                ? still + h : 0.0f;
+            if (c.StateTime() > 4.0f) still = Mathf::Max(still, c.tuning.getUpDelay + h);
             if ((c.tuning.autoGetUp || requested) && (still > c.tuning.getUpDelay || (requested && still > 0.2f))) {
                 requested = false;
                 Begin(c);
@@ -559,7 +563,11 @@ public:
         c.Physics()->AddForce(Hips, Vec3::Up * (0.5f * M * 9.81f * help));
         if (u >= 1.0f) {
             c.Physics()->ClearHelpers();
-            const bool up = c.PelvisHeight() > 0.82f * H && c.TorsoLean() < 25.0f;
+            // Up only counts on its feet: the helper can lift a body hung over an edge to standing
+            // height with nothing under it (seen in the example: it then stood in the air).
+            Vec3 fl, fr;
+            const bool feet = c.FootSupport(0, fl) || c.FootSupport(1, fr);
+            const bool up = feet && c.PelvisHeight() > 0.82f * H && c.TorsoLean() < 25.0f;
             if (up) {
                 tries = 0;
                 c.ChangeState(c.mode == RagdollMode::Powered ? CharState::Balancing : CharState::Blending);

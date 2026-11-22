@@ -87,6 +87,10 @@ visual-script node `Fn.<name>` (Character Actions > Stances & Ragdoll). C++: `Ac
   ask for 3 of 4 pushes between 60 and 75 N s and a grip in at least 1 of 5 shoves toward the wall.
 - Muscle limits are real since 2026-11-22: the drive's torque cap (and its damping) is in N m
   (XPBD multipliers are positional, torque = lambda / h^2); before, the cap was 720 times too loose.
+- Get-up starts when the body as a whole is still (centre of mass), or after 4 s down; it only counts as
+  up when a foot is on the ground (found in the example's frames: a body draped over the ledge never
+  counted as still, and once lifted by the helper stood in the air beyond the edge; now it drops off and
+  gets up below).
 - On the blocky Character a push from the front of 30 N s can already need several steps (its foot
   has a short heel); the example's J and L pushes are 30 N s.
 

@@ -297,6 +297,7 @@ public:
     std::size_t memoryLimit = 256u << 20;   ///< bytes
     std::size_t MemoryInUse() const { return bytes_; }
     void CollectGarbage();
+    void* userData = nullptr;   ///< for the host (the engine binding keeps its context here)
     /// Where print() output goes (default: stdout).
     std::function<void(const std::string&)> printSink;
 

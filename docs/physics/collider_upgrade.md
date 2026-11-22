@@ -46,3 +46,8 @@ quadric ray tests, solid-body inertia of primitives). No code from any other eng
 - The Improved solver gives one contact point per generic pair (not a manifold), except where the old code already did.
 - Heightfield contacts ignore hits whose normal is far from the triangle's own up normal (cell-seam ghosts); a steep ridge seen from the side can lose a contact.
 - 2D concave polygons are cut into triangles (ear clipping); an outline that crosses itself is not cut.
+- Limits that keep bad or huge input from eating memory or time: a Convex Hull keeps at most 4,096 points (a bigger
+  cloud is thinned by farthest-point sampling, so a saved hull with more points loads as a slightly smaller shape); a
+  dynamic Mesh collider thins its mesh the same way before wrapping it; a Compound holds at most 1,024 parts; a
+  Heightfield grid is at most 2,049 x 2,049 samples (a resolution-2048 Terrain); heights and the height scale are kept
+  within +-1,000,000 m, and NaN or infinity reads as 0.

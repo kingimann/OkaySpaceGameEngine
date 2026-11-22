@@ -58141,6 +58141,8 @@ int main(int argc, char** argv) {
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
     g_previewEd = &ed;
+    // The Console panel's command line: standard cvars, the Play loop's time.* commands, `--cvar NAME=VALUE`.
+    const std::unique_ptr<okay::LoopConsole> consoleCmds = oked::ConsoleAttachHost(ed.playLoop(), argc, argv);
     // The project's own files follow the project: leaving one saves its settings and build settings,
     // entering one reads that project's (or the defaults), so nothing leaks from one project into the next.
     EditorState::onProjectChanged = [&ed](const std::string& oldDir, const std::string& newDir) {

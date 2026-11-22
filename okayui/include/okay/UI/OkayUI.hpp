@@ -218,8 +218,11 @@ enum InputTextFlags {
     InputText_Password         = 8,   // shows one '*' per byte of text; copy and cut are off
     InputText_CharsNoBlank     = 16,  // typed spaces and tabs are dropped (paste is not filtered)
     InputText_CharsDecimal     = 32,  // only 0-9 . - + * / are typed (paste is not filtered)
-    // Accepted for ported code, no effect here: multi-line Enter handling, resize / always callbacks (there are no callbacks), Tab typing.
+    // Accepted for ported code, no effect here: multi-line Enter handling, resize / always callbacks, Tab typing.
     InputText_CtrlEnterForNewLine = 64, InputText_CallbackResize = 128, InputText_CallbackAlways = 256, InputText_AllowTabInput = 512,
+    // Real, with the callback overloads of InputText / InputTextWithHint (OkayUICompat.hpp): Up / Down call it while the field
+    // has the keyboard (EventKey = KeyId_Up / KeyId_Down), Tab calls it for completion (EventKey = KeyId_Tab).
+    InputText_CallbackHistory = 1024, InputText_CallbackCompletion = 2048,
 };
 bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, unsigned flags = 0);
 

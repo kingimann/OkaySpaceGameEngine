@@ -946,13 +946,9 @@ void TextEditor::Render()
 				const bool isWarn = errorIt->second.compare(0, sizeof(kWarn) - 1, kWarn) == 0;
 				const char* msg = errorIt->second.c_str() + (isWarn ? sizeof(kWarn) - 1 : 0);
 				drawList->AddRectFilled(start, end, isWarn ? IM_COL32(200, 150, 40, 55) : mPalette[(int)PaletteIndex::ErrorMarker]);
-				{
-					const float lx = TextDistanceToLineStart(Coordinates(lineNo, GetLineMaxColumn(lineNo)));
-					std::string shown = msg;
-					if (shown.size() > 72) { shown.resize(69); shown += "..."; }
-					drawList->AddText(ImVec2(lineStartScreenPos.x + mTextStart + lx + 28.0f, lineStartScreenPos.y),
-						isWarn ? IM_COL32(214, 176, 96, 235) : IM_COL32(230, 140, 128, 245), shown.c_str());
-				}
+				// The message text after the code is drawn by the Script Editor's own overlay (editor/main.cpp,
+				// "Inline diagnostics"), once per line for every language. Drawing it here too put a second copy,
+				// a few pixels apart, on top of it (the jumbled text seen on Lua tabs).
 
 				if (ImGui::IsMouseHoveringRect(lineStartScreenPos, end))
 				{

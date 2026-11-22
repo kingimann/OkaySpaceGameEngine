@@ -323,6 +323,9 @@ return C
         CHECK(LuaScriptVM::CompletionDoc("Update").find("every frame") != std::string::npos);
         CHECK(LuaScriptVM::CompletionDoc("Vector3").find("engine type Vector3") == 0);
         CHECK(LuaScriptVM::CompletionDoc("nothingHere").empty());
+        // hover on the member part of "Input.GetKey" / "Time.deltaTime" (the editor's word is the bare name)
+        CHECK(LuaScriptVM::CompletionDoc("GetKey").find("Input.GetKey(key: string) -> boolean") == 0);
+        CHECK(LuaScriptVM::CompletionDoc("deltaTime").find("Time.deltaTime") == 0);
         std::vector<std::string> words = LuaScriptVM::CompletionNames();
         CHECK(has(words, "function") && has(words, "Input.GetKey") && has(words, "Update"));
         std::vector<LuaScriptVM::Setting> st = LuaScriptVM::Settings(

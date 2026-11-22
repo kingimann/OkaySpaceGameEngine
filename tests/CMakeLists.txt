@@ -993,6 +993,11 @@ add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --wa
 
 # Physics broad phase: the sort-and-sweep pair finder gives the brute force pair list in the same order, and whole 2D and 3D
 # physics scenes move bit-for-bit the same with either one (docs/engine/perf_log.md)
+# Our own physics core (okay::physcore, docs/physics/physics_core.md): links only that small library, not the engine.
+add_executable(test_physcore_tree test_physcore_tree.cpp)
+target_link_libraries(test_physcore_tree PRIVATE okay::physcore)
+add_test(NAME physcore_tree COMMAND test_physcore_tree)
+
 add_executable(test_broadphase test_broadphase.cpp)
 target_link_libraries(test_broadphase PRIVATE okay::engine)
 add_test(NAME broadphase COMMAND test_broadphase)

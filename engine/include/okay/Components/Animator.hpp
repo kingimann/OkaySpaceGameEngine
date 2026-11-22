@@ -10,8 +10,9 @@
 namespace okay {
 
 /// Plays an AnimationClip and drives its GameObject's Transform from the clip's
-/// tracks ("position.x/y/z", "rotation.z", "scale.x/y/z"). A lightweight
-/// counterpart to Animator.
+/// tracks ("position.x/y/z", "rotation.z", "scale.x/y/z"). The editor shows it as
+/// "Clip Player"; "Animator" in the editor and the scripting API is the state graph
+/// (AnimStateMachine). The class name and the scene token stay, so saved files load.
 class Animator : public Behaviour {
 public:
     AnimationClip clip;

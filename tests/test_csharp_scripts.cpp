@@ -260,6 +260,53 @@ static void CollisionMessages() {
     CHECK(Errors(Diags("public class H : MonoBehaviour { void OnTriggerEnter(int x) { } }\n")) >= 1);
 }
 
+// Text members C# scripts use: Length, ToUpper / ToLower, Contains, StartsWith, EndsWith,
+// IndexOf, Substring, Replace, Trim, Split; ToString() on numbers and true/false.
+static void StringMembers() {
+    const std::string src =
+        "public class S : MonoBehaviour {\n"
+        "    public string up, low, sub, sub2, rep, trimmed, joined, num;\n"
+        "    public int len, idx, parts;\n"
+        "    public bool has, starts, ends;\n"
+        "    void Start() {\n"
+        "        string s = \"  Hello World  \";\n"
+        "        trimmed = s.Trim();\n"
+        "        len = trimmed.Length;\n"
+        "        up = trimmed.ToUpper(); low = trimmed.ToLower();\n"
+        "        has = trimmed.Contains(\"lo W\"); starts = trimmed.StartsWith(\"He\"); ends = trimmed.EndsWith(\"x\");\n"
+        "        idx = trimmed.IndexOf(\"World\");\n"
+        "        sub = trimmed.Substring(6); sub2 = trimmed.Substring(0, 5);\n"
+        "        rep = trimmed.Replace(\"World\", \"There\");\n"
+        "        string[] bits = \"a,b,c\".Split(',');\n"
+        "        parts = bits.Length; joined = bits[2];\n"
+        "        int score = 42; float t = 1.5f; bool ok = true;\n"
+        "        num = score.ToString() + \"/\" + t.ToString() + \"/\" + ok.ToString();\n"
+        "    }\n"
+        "}\n";
+    CHECK(Clean(src));
+    World w(src);
+    CHECK(w.loaded);
+    auto S = [&](const char* n) { return w.sc->VM() ? w.sc->VM()->GetGlobal(n).AsString() : std::string(); };
+    CHECK(S("trimmed") == "Hello World");
+    CHECK_NEAR(w.F("len"), 11.0f, 1e-4f);
+    CHECK(S("up") == "HELLO WORLD");
+    CHECK(S("low") == "hello world");
+    CHECK(w.sc->VM() && w.sc->VM()->GetGlobal("has").AsBool());
+    CHECK(w.sc->VM() && w.sc->VM()->GetGlobal("starts").AsBool());
+    CHECK(w.sc->VM() && !w.sc->VM()->GetGlobal("ends").AsBool());
+    CHECK_NEAR(w.F("idx"), 6.0f, 1e-4f);
+    CHECK(S("sub") == "World");
+    CHECK(S("sub2") == "Hello");
+    CHECK(S("rep") == "Hello There");
+    CHECK_NEAR(w.F("parts"), 3.0f, 1e-4f);
+    CHECK(S("joined") == "c");
+    CHECK(S("num") == "42/1.5/True");
+    // Out of range is a runtime error with the line, not a crash.
+    World bad("public class S : MonoBehaviour { public string r; void Start() { r = \"abc\".Substring(5); } }\n");
+    CHECK(!bad.loaded || (bad.sc->VM() && bad.sc->VM()->GetGlobal("r").AsString().empty()));
+    CHECK(Errors(Diags("public class S : MonoBehaviour { void Start() { int n = \"abc\".Lenght; } }\n")) >= 1);
+}
+
 // An old scene that named "csharp" (the removed Mono backend) now loads and runs if the
 // script compiles, and shows the checker's errors if it does not.
 static void OldScenes() {
@@ -362,6 +409,7 @@ int main() {
     Properties();
     RandomApi();
     CollisionMessages();
+    StringMembers();
     OldScenes();
     ExampleScene();
     TEST_MAIN_RESULT();

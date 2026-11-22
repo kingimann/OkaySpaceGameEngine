@@ -149,6 +149,12 @@ TextureHandle Find(const std::string& path);
 /// setting or a reimport. False when nothing is loaded under that name or the new decode failed (the old pixels stay).
 bool Reload(const std::string& path);
 
+/// A file changed on disk (or was reimported): every texture loaded from it, under whatever name (relative, "./" and
+/// ".." forms, other separators, absolute, another spelling of the same file), is decoded again in place, so handles and
+/// renderers see the new pixels. Returns how many names the renderers' cache holds for it ("@" and "proc:" names are
+/// never touched). InvalidateTextureCacheForFile (TextureCacheFiles.hpp) is the editor's way in.
+int ReloadFile(const std::string& file);
+
 /// An in-memory picture under a name (conventionally "@..."), held by the library until Unregister. Registering the
 /// same name again replaces the pixels in the same asset (new serial).
 TextureHandle Register(const std::string& name, Image img);

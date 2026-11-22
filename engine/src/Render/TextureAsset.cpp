@@ -17,7 +17,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -380,6 +382,69 @@ bool Reload(const std::string& path) {
     live = std::move(fresh);
     ++Lib().reloads;
     return true;
+}
+
+namespace {
+namespace fs = std::filesystem;
+bool NotAFile(const std::string& key) { return key.empty() || key[0] == '@' || key.rfind("proc:", 0) == 0; }
+// Absolute and lexically normal, with '/' separators (lower case on Windows, where names are not case sensitive).
+std::string CanonFile(const std::string& p) {
+    std::error_code ec;
+    fs::path a = fs::u8path(p);
+    if (a.is_relative()) a = fs::absolute(a, ec);
+    std::string out = a.lexically_normal().generic_u8string();
+#ifdef _WIN32
+    for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+#endif
+    while (out.size() > 1 && out.back() == '/') out.pop_back();
+    return out;
+}
+std::string LastPart(const std::string& canon) {
+    const std::size_t slash = canon.find_last_of('/');
+    return slash == std::string::npos ? canon : canon.substr(slash + 1);
+}
+// Lexically first; another spelling (a link, a short name) is asked of the file system only when the file names agree.
+bool SameFile(const std::string& key, const std::string& want, const std::string& wantName, const std::string& file) {
+    const std::string k = CanonFile(key);
+    if (k == want) return true;
+    if (LastPart(k) != wantName) return false;
+    std::error_code ec;
+    return fs::equivalent(fs::u8path(key), fs::u8path(file), ec) && !ec;
+}
+} // namespace
+
+int ReloadFile(const std::string& file) {
+    if (NotAFile(file)) return 0;
+    Library& L = Lib();
+    const std::string want = CanonFile(file), wantName = LastPart(want);
+    int names = 0;
+    std::vector<std::shared_ptr<TextureAsset>> assets;
+    auto add = [&](const std::shared_ptr<TextureAsset>& p) {
+        if (p && !p->registered && std::find(assets.begin(), assets.end(), p) == assets.end()) assets.push_back(p);
+    };
+    for (auto it = L.held.begin(); it != L.held.end();) {
+        if (NotAFile(it->first) || !SameFile(it->first, want, wantName, file)) { ++it; continue; }
+        ++names;
+        if (it->second.p) { add(it->second.p); ++it; }
+        else it = L.held.erase(it);   // a failed load: look for the file again on the next draw
+    }
+    // Assets loaded from it that only other code holds (a TextureHandle outside the renderers).
+    std::vector<std::string> livePaths;
+    {
+        debugutil::SpinGuard g(g_liveLock);
+        for (const TextureAsset* a : Live()) if (!a->registered && !NotAFile(a->path)) livePaths.push_back(a->path);
+    }
+    for (const std::string& lp : livePaths)
+        if (SameFile(lp, want, wantName, file)) add(TextureLibraryAccess::Ptr(Find(lp)));
+    for (const auto& p : assets) {
+        std::string err;
+        TextureAsset fresh;
+        if (!DecodeInto(p->path, fresh, err)) { Log::Warning("[texture] reload of '", p->path, "' failed: ", err, "; keeping the old pixels"); continue; }
+        *p = std::move(fresh);
+        ++L.reloads;
+    }
+    if (names > 0 || !assets.empty()) ++L.generation;
+    return names;
 }
 
 TextureHandle Register(const std::string& name, Image img) {

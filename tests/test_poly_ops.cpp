@@ -668,5 +668,26 @@ int main() {
         CHECK(ProblemEdges(PolyMesh{}, true, true).empty());
     }
 
+    // ---- Fill refuses a chain of vertices in a straight line ----
+    // Bug: Fill on three border edges along one side of a grid (vertices 0-1-2-3, all on a line) made a
+    // four-corner face with no area: invisible, no usable normal, and it closed nothing.
+    {
+        PolyMesh g = Grid(3, 3);
+        const std::size_t before = g.faces.size();
+        std::string err;
+        CHECK(FillFaces(g, {{0, 1}, {1, 2}, {2, 3}}, &err) == 0);
+        CHECK(g.faces.size() == before);
+        CHECK(err.find("straight line") != std::string::npos);
+        // A real corner (two sides of the grid) still fills: 0-1-2-3 then up the side to 7.
+        PolyMesh c = Grid(3, 3);
+        err.clear();
+        CHECK(FillFaces(c, {{0, 1}, {1, 2}, {2, 3}, {3, 7}}, &err) == 1);
+        CHECK(c.faces.size() == before + 1);
+        // A collinear chain next to a good loop: the good one is filled, the flat one skipped.
+        PolyMesh two = Grid(3, 3); AddTube(two, 5, 6);
+        err.clear();
+        CHECK(FillFaces(two, {{0, 1}, {1, 2}, {2, 3}, {20, 21}, {21, 22}, {22, 23}, {23, 20}}, &err) == 1);
+    }
+
     TEST_MAIN_RESULT();
 }

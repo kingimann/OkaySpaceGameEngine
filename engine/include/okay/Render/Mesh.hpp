@@ -3628,7 +3628,10 @@ public:
     }
 
     /// Reverse the winding of every triangle (swap the 2nd and 3rd index) so all
-    /// faces point the other way, then recompute normals.
+    /// faces point the other way. The shading is kept: a flat mesh (no normals, as
+    /// in Edit Mesh) stays flat, and stored normals (smooth or auto smooth) turn
+    /// round with the faces. (It used to always compute smooth normals, so Flip
+    /// Normals in Edit Mesh rounded off a box.)
     void FlipNormals() {
         AttrGuard attrGuard_(*this);
         const bool cuv = HasCornerUVs();
@@ -3637,7 +3640,30 @@ public:
             if (cuv) std::swap(cornerUVs[i + 1], cornerUVs[i + 2]);
         }
         name = "";
-        ComputeSmoothNormals();
+        for (Vec3& n : normals) n = n * -1.0f;
+    }
+
+    /// Reverse the winding of just the listed triangles (repeats and bad numbers are
+    /// ignored). Corner UVs follow their corners; stored normals are recomputed
+    /// (a flat mesh stays flat). Returns how many triangles were flipped.
+    int FlipFaces(const std::vector<int>& tris) {
+        AttrGuard attrGuard_(*this);
+        const int nt = (int)triangles.size() / 3;
+        const bool cuv = HasCornerUVs();
+        std::vector<char> done((std::size_t)std::max(nt, 0), 0);
+        int n = 0;
+        for (int t : tris) {
+            if (t < 0 || t >= nt || done[(std::size_t)t]) continue;
+            done[(std::size_t)t] = 1;
+            std::swap(triangles[(std::size_t)t * 3 + 1], triangles[(std::size_t)t * 3 + 2]);
+            if (cuv) std::swap(cornerUVs[(std::size_t)t * 3 + 1], cornerUVs[(std::size_t)t * 3 + 2]);
+            ++n;
+        }
+        if (n == 0) return 0;
+        name = "";
+        if (n == nt) for (Vec3& v : normals) v = v * -1.0f;
+        else RefreshNormals();
+        return n;
     }
 
     /// Make every face's winding coherent with its neighbors and point each closed

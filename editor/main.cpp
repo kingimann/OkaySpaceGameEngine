@@ -59057,10 +59057,19 @@ int main(int argc, char** argv) {
                 g_showScriptEditor = true; g_scriptDockReq = 1;
                 if (sn[0] == '2') g_seNewReq = true;
             }
-            if (std::getenv("OKAY_UI_SCRIPT") && s_focusFrames == 42)
+            // OKAY_UI_SCRIPT=1: an OkayScript starter on the selection; =cs: a C# starter;
+            // =csbad: a C# script with a mistake (the checker's error shows inline).
+            if (const char* us = std::getenv("OKAY_UI_SCRIPT"); us && s_focusFrames == 42)
                 if (GameObject* g = ed.selected()) {
-                    auto* scr = g->AddComponent<ScriptComponent>();
-                    std::string src = extide::StarterScriptNamed("okayscript", "Player");
+                    const bool cs = std::strncmp(us, "cs", 2) == 0;
+                    auto* scr = g->AddComponent<ScriptComponent>(cs ? "csharp" : "okayscript");
+                    std::string src = extide::StarterScriptNamed(cs ? "csharp" : "okayscript", "Player");
+                    if (std::strcmp(us, "csbad") == 0)
+                        src = "using UnityEngine;\n\npublic class Player : MonoBehaviour\n{\n    [SerializeField] private float speed = 5f;\n"
+                              "    public int Score { get; private set; }\n\n    void Update()\n    {\n"
+                              "        transform.position += new Vector3(1, 0, 0) * sped * Time.deltaTime;\n"
+                              "        if (Input.GetKeyDown(KeyCode.Space)) Score++;\n    }\n}\n";
+                    if (std::getenv("OKAY_UI_SCRIPTDOCS")) g_showScriptDocs = true;
                     scr->SetSource(src); scr->LoadSource(src);
                     g_showScriptEditor = true; ImGui::SetWindowFocus("Script Editor");
                     g_scriptDockReq = 1;   // its own large window

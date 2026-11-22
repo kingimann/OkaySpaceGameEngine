@@ -11,6 +11,8 @@
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
+#include "okay/Render/TextureCacheFiles.hpp"   // InvalidateTextureCacheForFile: a changed picture is shown changed
+#include "okay/Render/ModelImportProblem.hpp"   // DescribeModelImportProblem: why a model did not import
 #include "OwnSwitches.hpp"   // the table of own replacements that can be switched on (View > Rendering & Performance)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/online/crash_reports.md)
@@ -91,6 +93,7 @@
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
 #include "okay/Render/RendererFeatures.hpp"  // which lighting / post / fog / sky switches each renderer draws
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
+#include "okay/Render/OkayShader.hpp"   // Custom shader fields (our own .okayshader language)
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
@@ -9194,6 +9197,11 @@ static void QueueCharacterModel(GameObject* go, const std::string& path) {
     sPendingCharacterModels.push_back({go, path});
 }
 
+// The Console line for a model that did not import: what was tried and why it failed, in plain words.
+static std::string ModelImportFailLine(const std::string& what, const std::string& path) {
+    return what + " failed: " + std::filesystem::u8path(path).filename().u8string() + ": " + okay::DescribeModelImportProblem(path) + " (" + path + ")";
+}
+
 // Editor wrapper over okay::AttachCharacterModel: undo, selection, console log.
 static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, const std::string& path) {
     if (!target) return;
@@ -9201,8 +9209,7 @@ static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, cons
     std::string log;
     GameObject* root = okay::AttachCharacterModel(ed.scene(), target, path, &log);
     if (!root) {
-        ConsoleLog("Character model import failed: " + path +
-                   (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
+        ConsoleLog(ModelImportFailLine("Character model import", path), 2);
         return;
     }
     ed.Select(target); ed.dirty = true;
@@ -10997,6 +11004,12 @@ void DrawProject(EditorState& ed) {
     g_projectSelected = selected;
     if (!pb.Indexed() && !ed.projectDir().empty() && fs::is_directory(root, ec)) pb.Sync();   // first look at the project: index the assets once
     pb.Poll(okay::platform::TicksMs32());   // keep the database fresh without a thread: an incremental scan when due (waits at least 2 s and 30x as long as the last scan took)
+    // A picture changed in another program, given new import settings, or reimported by hand: the Scene view shows the new
+    // one now (before, only the panel's thumbnail was made again and the renderer kept the old pixels until a restart).
+    for (const std::string& f : pb.TakeChangedFiles()) {
+        if (okay::AssetTypeFromPath(f) != okay::AssetType::Texture) continue;
+        if (okay::InvalidateTextureCacheForFile(f) > 0) ConsoleLog("Reloaded the picture " + fs::u8path(f).filename().u8string() + " in the Scene view");
+    }
     // Let OS file-drops land in the folder we're browsing (falls back to Assets root).
     g_assetImportDir = fs::is_directory(dir, ec) ? dir.string() : root.string();
 
@@ -11930,7 +11943,7 @@ void DrawProject(EditorState& ed) {
                 ed.Select(r); ed.dirty = true;
                 ConsoleLog("Imported " + full);
                 LogModelReport(ed, r);
-            } else ConsoleLog("Model import failed: " + full, 2);
+            } else ConsoleLog(ModelImportFailLine("Model import", full), 2);
         }
     };
 
@@ -19069,7 +19082,7 @@ void DrawFileDialogs(EditorState& ed) {
                         ed.camTarget = (lo + hi) * 0.5f;
                         ed.camDist = std::fmax(1.0f, ext * 1.8f);
                     }
-                } else ConsoleLog("Import failed: couldn't read " + src, 2);
+                } else ConsoleLog(ModelImportFailLine("Import", src), 2);
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
@@ -21218,8 +21231,7 @@ static GameObject* HierInstantiateAsset(EditorState& ed, const std::string& path
         if (ok && placed) ApplyModelImportScale(placed, path);
         if (!ok || !placed) {
             placed = nullptr;
-            ConsoleLog("Model import failed: " + path +
-                       (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
+            ConsoleLog(ModelImportFailLine("Model import", path), 2);
         }
     } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
         placed = ed.CreateSprite(std::filesystem::path(path).stem().string());   // takes its own undo step
@@ -27933,6 +27945,61 @@ static bool IKJointLimitUI(const char* label, IKJointLimit& l) {
         ImGui::Unindent();
     }
     ImGui::PopID();
+    return ch;
+}
+
+static bool AcceptAssetPathField(std::string& field);
+
+// The Mesh Renderer's Custom shader fields: the .okayshader file, whether it compiled (the first
+// error with its line and column when not), and one control per declared property and texture.
+// The values live in MeshRenderer::shaderParams as text, so a property the file no longer has is
+// kept (and ignored) instead of lost. The renderers reload the file by themselves when it changes.
+static bool DrawCustomShaderFields(MeshRenderer& mr) {
+    bool ch = false;
+    char path[260];
+    std::strncpy(path, mr.customShader.c_str(), sizeof(path) - 1);
+    path[sizeof(path) - 1] = '\0';
+    if (ImGui::InputText("Shader File##mesh", path, sizeof(path))) { mr.customShader = path; ch = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("An .okayshader file: a surface block that sets albedo, emission, alpha,\nnormal, metallic, specular and shininess. Edits reload by themselves.\nExamples: examples/shaders/lava.okayshader, dissolve.okayshader, rim_glow.okayshader");
+    if (AcceptAssetPathField(mr.customShader)) ch = true;
+    if (mr.customShader.empty()) { ImGui::TextDisabled("Pick an .okayshader file (drawn magenta until then)."); return ch; }
+    const oshader::ShaderFile sf = oshader::LoadShaderFile(mr.customShader);
+    const oshader::Compiled* c = sf.compiled.get();
+    if (!c || !c->ok) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.7f, 1.0f));
+        ImGui::TextWrapped("%s", c ? c->FirstError(mr.customShader).c_str() : "cannot read the shader file");
+        ImGui::PopStyleColor();
+        ImGui::TextDisabled("Drawn magenta until the file compiles; save it and it reloads.");
+        return ch;
+    }
+    ImGui::TextDisabled("%s%s", c->name.empty() ? "Compiled" : c->name.c_str(), c->unlit ? "  (unlit)" : "");
+    const std::vector<float> vals = oshader::ResolveProperties(*c, mr.shaderParams);
+    for (std::size_t i = 0; i < c->props.size(); ++i) {
+        const oshader::Property& p = c->props[i];
+        float v[4] = {vals[i * 4], vals[i * 4 + 1], vals[i * 4 + 2], vals[i * 4 + 3]};
+        const std::string label = p.name + "##okp";
+        const int w = oshader::Width(p.type);
+        bool edited = false;
+        if (p.isColor) edited = ImGui::ColorEdit3(label.c_str(), v, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+        else if (w == 1 && p.hasRange) edited = ImGui::SliderFloat(label.c_str(), v, p.minV, p.maxV);
+        else if (w == 1) edited = ImGui::DragFloat(label.c_str(), v, 0.01f);
+        else if (w == 2) edited = ImGui::DragFloat2(label.c_str(), v, 0.01f);
+        else if (w == 3) edited = ImGui::DragFloat3(label.c_str(), v, 0.01f);
+        else edited = ImGui::DragFloat4(label.c_str(), v, 0.01f);
+        if (edited) { mr.shaderParams = oshader::SetParam(mr.shaderParams, p.name, v, w); ch = true; }
+    }
+    for (std::size_t t = 0; t < c->textures.size(); ++t) {
+        const std::string key = "tex:" + c->textures[t].name;
+        std::string pic = oshader::GetTextParam(mr.shaderParams, key);
+        char buf[260];
+        std::strncpy(buf, pic.c_str(), sizeof(buf) - 1);
+        buf[sizeof(buf) - 1] = '\0';
+        const std::string label = c->textures[t].name + "##okt";
+        if (ImGui::InputText(label.c_str(), buf, sizeof(buf))) { pic = buf; mr.shaderParams = oshader::SetTextParam(mr.shaderParams, key, pic); ch = true; }
+        if (ImGui::IsItemHovered() && !c->textures[t].defaultPath.empty()) ImGui::SetTooltip("Empty: %s", c->textures[t].defaultPath.c_str());
+        if (AcceptAssetPathField(pic)) { mr.shaderParams = oshader::SetTextParam(mr.shaderParams, key, pic); ch = true; }
+    }
+    if (!mr.shaderParams.empty() && ImGui::SmallButton("Reset Properties##okp")) { mr.shaderParams.clear(); ch = true; }
     return ch;
 }
 
@@ -36147,7 +36214,7 @@ static bool DrawTeleporterWithOkayUI(EditorState& ed, Teleporter* tp, okay::Comp
 static bool DrawDollyCartWithOkayUI(EditorState& ed, DollyCart* dc, okay::Component*& toRemove) {
     using namespace okaypanels;
     InspFieldList L;
-    L.rows.reserve(9);
+    L.rows.reserve(12);
     L.Text("Path##dc", &dc->path);
     L.TipLookup();
     L.Slider("Position##dc", &dc->position, 0.0f, 1.0f);
@@ -36156,6 +36223,12 @@ static bool DrawDollyCartWithOkayUI(EditorState& ed, DollyCart* dc, okay::Compon
     L.TipLookup();
     L.Check("Auto Move##dc", &dc->autoMove);
     L.TipLookup();
+    L.Check("Speed In Metres##dc", &dc->speedInMetres);
+    L.Tip("Speed is metres per second along the rail (else path fractions per second)");
+    L.Check("Ping Pong##dc", &dc->pingPong);
+    L.Tip("On an open path, turn round at each end instead of stopping");
+    L.Check("Face Along Path##dc", &dc->orientToPath);
+    L.Tip("Turn the object to face the way it travels along the rail");
     const int kRemove = L.SmallButton("Remove##dc");
     if (!DrawRowsOkayUI(dc, "##okayui_dollycart", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -37525,8 +37598,8 @@ void DrawInspector(EditorState& ed) {
             // Unlit flag into the selector; the renderer treats Unlit-shader == unlit.
             int sh = (int)mr->shader;
             if (mr->unlit && mr->shader == MeshRenderer::Shader::Standard) sh = 1;  // legacy unlit flag
-            const char* shaders[] = {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet"};
-            if (ImGui::Combo("Shader##mesh", &sh, shaders, 9)) {
+            const char* shaders[] = {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet", "Custom"};
+            if (ImGui::Combo("Shader##mesh", &sh, shaders, 10)) {
                 mr->shader = (MeshRenderer::Shader)sh;
                 mr->unlit = (mr->shader == MeshRenderer::Shader::Unlit);  // keep legacy flag in sync
                 ed.dirty = true;
@@ -37547,6 +37620,8 @@ void DrawInspector(EditorState& ed) {
             // Fresnel (rim-glow shell): the rim controls below tune the edge glow.
             if (mr->shader == MeshRenderer::Shader::Fresnel)
                 ImGui::TextDisabled("Edge glow uses the Rim settings below.");
+            // Custom: an .okayshader file (our own shader language) and its properties.
+            if (mr->shader == MeshRenderer::Shader::Custom && DrawCustomShaderFields(*mr)) ed.dirty = true;
             // Rim (Fresnel) backlight — a per-material glow, great with Toon.
             if (ImGui::SliderFloat("Rim##mesh", &mr->rimStrength, 0.0f, 2.0f)) ed.dirty = true;
             oked::FieldTip("Rim##mesh");
@@ -43908,6 +43983,11 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Start Delay##spwn");
             if (ImGui::Checkbox("Hide Template##spwn", &c->deactivateTemplate)) ed.dirty = true;
             oked::FieldTip("Hide Template##spwn");
+            if (ImGui::Checkbox("Use Pool##spwn", &c->usePool)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Reuse finished copies instead of making new ones. A copy that ends with a Lifetime,\n"
+                                  "a Projectile 3D or pool_release() goes back to this spawner's pool and the next spawn\n"
+                                  "takes it again, reset to a fresh copy of the template. Good for bullets, sparks and pickups.");
             ImGui::SeparatorText("Waves");
             if (ImGui::DragInt("Count Per Wave##spwn", &c->count, 0.1f, 1, 200)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawns per wave. 1 = classic steady drip (no waves).");
@@ -43921,6 +44001,9 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("%s — wave %d done, %d alive, %d spawned",
                                     c->Running() ? "Running" : "Stopped",
                                     c->WavesDone(), c->AliveCount(), c->Spawned());
+            if (ed.isPlaying() && c->Pool())
+                ImGui::TextDisabled("Pool: %d made, %d reused, %d waiting",
+                                    c->Pool()->CreatedCount(), c->Pool()->ReuseCount(), c->Pool()->IdleCount());
             if (ImGui::SmallButton("Remove##spwn")) toRemove = c;
         }
     }
@@ -44163,7 +44246,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Can Mantle##fp", &fp->canMantle)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a low or high ledge and climb it. Off by default.");
             if (ImGui::Checkbox("Can Ledge Grab##fp", &fp->canLedgeGrab)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands-on-ledge IK is not wired.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands go onto the ledge (two arm LimbIKs) through the Ledge Hands IK component: Add Component > Animation, or Wire missing animation and IK on the controller.");
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##fp", &fp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -44465,7 +44548,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Can Mantle##tp", &tp->canMantle)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a low or high ledge and climb it. Off by default.");
             if (ImGui::Checkbox("Can Ledge Grab##tp", &tp->canLedgeGrab)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands-on-ledge IK is not wired.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands go onto the ledge (two arm LimbIKs) through the Ledge Hands IK component: Add Component > Animation, or Wire missing animation and IK on the controller.");
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##tp", &tp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -45259,6 +45342,14 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Foot IK##ctm");
             if (ImGui::Checkbox("Pathfinding##ctm", &cm->usePathfinding)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clicks behind walls walk AROUND them (grid A*), Diablo-style.");
+            if (ImGui::Checkbox("Pick Colliders##ctm", &cm->pickColliders)) ed.dirty = true;
+            oked::FieldTip("Pick Colliders##ctm");
+            if (ImGui::Checkbox("Give Up When Stuck##ctm", &cm->giveUpWhenStuck)) ed.dirty = true;
+            oked::FieldTip("Give Up When Stuck##ctm");
+            if (cm->giveUpWhenStuck) {
+                if (ImGui::DragFloat("Stuck Time##ctm", &cm->stuckTime, 0.05f, 0.1f, 10.0f)) ed.dirty = true;
+                oked::FieldTip("Stuck Time##ctm");
+            }
             if (ImGui::Checkbox("Use Player Height##ctm", &cm->usePlayerHeight)) ed.dirty = true;
             oked::FieldTip("Use Player Height##ctm");
             if (!cm->usePlayerHeight) {
@@ -46151,6 +46242,12 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Speed##dc");
             if (ImGui::Checkbox("Auto Move##dc", &dc->autoMove)) ed.dirty = true;
             oked::FieldTip("Auto Move##dc");
+            if (ImGui::Checkbox("Speed In Metres##dc", &dc->speedInMetres)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed is metres per second along the rail (else path fractions per second)");
+            if (ImGui::Checkbox("Ping Pong##dc", &dc->pingPong)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On an open path, turn round at each end instead of stopping");
+            if (ImGui::Checkbox("Face Along Path##dc", &dc->orientToPath)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the object to face the way it travels along the rail");
             if (ImGui::SmallButton("Remove##dc")) toRemove = dc;
         }
     }
@@ -48926,6 +49023,13 @@ void DrawInspector(EditorState& ed) {
             }
             if (item(!go->GetComponent<LimbIK>(), "Limb IK (arm/leg reach + grab)")) { go->AddComponent<LimbIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<ChainIK>(), "Chain IK (FABRIK/CCD long chain)")) { go->AddComponent<ChainIK>(); ed.dirty = true; }
+            if (item(!go->GetComponent<LedgeHandsIK>(), "Ledge Hands IK (hands on the ledge while hanging)")) {
+                auto* lh = go->AddComponent<LedgeHandsIK>();
+                const bool armed = lh->Wire();   // reuses a Limb IK already on each hand, else adds one (off)
+                ConsoleLog(armed ? "Ledge Hands IK: linked both arm Limb IKs." :
+                           "Ledge Hands IK: no humanoid arms found under this object; add it to the character (the object with the controller).", armed ? 0 : 1);
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<FullBodyIK>(), "Full Body IK (hands, feet, head, body pull)")) {
                 auto* fb = go->AddComponent<FullBodyIK>();
                 int n = fb->MapBones(true);
@@ -55410,8 +55514,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 placed = okay::ImportModelScene(ed.scene(), path, &ok);
                 if (ok && placed) ApplyModelImportScale(placed, path);
                 if (!ok || !placed)
-                    ConsoleLog("Model import failed: " + path +
-                               (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
+                    ConsoleLog(ModelImportFailLine("Model import", path), 2);
             }
             if (placed) {
                 placed->transform->SetPosition(drop);
@@ -57698,7 +57801,7 @@ int main(int argc, char** argv) {
     else SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
 #endif
 #ifdef OKAY_HAVE_OKAYUI
-    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w) { return OkayUI::soft::CreateWindowPainter(w); });   // the software painter, for own-backend windows
+    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w, const okay::platform::PainterDesc& d) { return OkayUI::soft::CreateWindowPainter(w, d); });   // the software painter, for own-backend windows
 #endif
     // An accelerated renderer (the driver the hint chose), else one with the default driver, else any (software). The painter owns it.
     SDL_Renderer* renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true);
@@ -58045,6 +58148,8 @@ int main(int argc, char** argv) {
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
     g_previewEd = &ed;
+    // The Console panel's command line: standard cvars, the Play loop's time.* commands, `--cvar NAME=VALUE`.
+    const std::unique_ptr<okay::LoopConsole> consoleCmds = oked::ConsoleAttachHost(ed.playLoop(), argc, argv);
     // The project's own files follow the project: leaving one saves its settings and build settings,
     // entering one reads that project's (or the defaults), so nothing leaks from one project into the next.
     EditorState::onProjectChanged = [&ed](const std::string& oldDir, const std::string& newDir) {
@@ -59077,7 +59182,7 @@ int main(int argc, char** argv) {
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
-            LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY
+            LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY / OKAY_UI_LOCIMPORT
             ContentEditorsDevHooks(ed); // OKAY_UI_CONTENT / OKAY_UI_CONTENT_TAB / OKAY_UI_CONTENT_DIR
             WeaponEditorDevHooks(ed);   // OKAY_UI_WEAPONS / OKAY_UI_WEAPONS_FILE
             SplineDevHooks(ed);       // OKAY_UI_SPLINE / SPLINESEL / SPLINECAM

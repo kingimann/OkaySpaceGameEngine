@@ -258,7 +258,21 @@ void DrawGatePrompt() {
             ImGui::TextWrapped("Backup at %s", r.backupDir.c_str());
             ImGui::TextDisabled("%s in the backup: a complete copy of the project.", Plural((int)r.files, "file", "files").c_str());
             if (!pr.backupOnly) ImGui::TextDisabled("The project is now marked as made with v%s.", rv.c_str());
+            if (!pr.backupOnly) {
+                if (r.losses.empty()) ImGui::TextColored(kGreen, "Nothing was lost: every object and record is in the upgraded files.");
+                else ImGui::TextColored(kAmber, "%s", (Plural((int)r.losses.size(), "thing", "things") + " could not be kept. They are listed below and in the report.").c_str());
+            }
             for (const std::string& w : r.warnings) { ImGui::TextColored(kAmber, "%s", FitEnd(w, textW).c_str()); }
+            if (!pr.backupOnly && (!r.changed.empty() || !r.log.empty())) {
+                // What changed, file by file: the same lines as the report the backup holds.
+                if (ImGui::CollapsingHeader(("What changed (" + Plural((int)r.changed.size(), "file", "files") + ")").c_str())) {
+                    ImGui::BeginChild("##upchanges", ImVec2(0, 160), true);
+                    for (const std::string& c : r.changed) ImGui::TextUnformatted(("Rewritten: " + c).c_str());
+                    for (const std::string& l : r.log) ImGui::TextWrapped("%s", l.c_str());
+                    ImGui::EndChild();
+                }
+            }
+            if (!r.reportPath.empty()) ImGui::TextDisabled("%s", ("Report: " + FitEnd(r.reportPath, textW - 60.0f)).c_str());
             ImGui::Dummy(ImVec2(0, 8));
             if (Btn("Open project", first, true)) g_gate.Answer(Choice::Continue);
             if (Btn("Open backup folder", first)) OpenFolder(r.backupDir);

@@ -120,9 +120,25 @@ def clean_sha(text):
     return t if re.match(r"^[0-9a-f]+$", t) else None
 
 
+# The Claudes' branch folders, longest first. Read from docs/lanes.json (the "lanes" map) when this runs from a checkout; the
+# fixed list is the fallback. shared/TestBuild.hpp DisplayBranch() has the same list (scripts/tests/test_collab.py checks both).
+LANE_PREFIXES_FALLBACK = ("claude2/", "claude3/", "claude/")
+
+
+def lane_prefixes():
+    try:
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "lanes.json"), encoding="utf-8") as f:
+            got = [v["prefix"] for v in json.load(f).get("lanes", {}).values() if isinstance(v, dict) and v.get("prefix")]
+        if got:
+            return tuple(sorted(set(got), key=len, reverse=True))
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return LANE_PREFIXES_FALLBACK
+
+
 def display_branch(branch):
-    """The agents' 'claude/' and 'claude2/' folders are dropped: 'claude/walk-vs-run' -> 'walk-vs-run'."""
-    for prefix in ("claude2/", "claude/"):
+    """The Claudes' branch folders ('claude/', 'claude2/', 'claude3/') are dropped: 'claude/walk-vs-run' -> 'walk-vs-run'."""
+    for prefix in lane_prefixes():
         if branch.startswith(prefix) and len(branch) > len(prefix):
             return branch[len(prefix):]
     return branch
@@ -448,6 +464,7 @@ def _self_test():
     ok(clean_sha("ABC1234") == "abc1234" and clean_sha("abc123") is None and clean_sha("abc123g") is None and clean_sha("a" * 41) is None, "sha")
     ok(title("claude/walk-vs-run", "abc1234def") == "Test build of walk-vs-run (abc1234)", "title")
     ok(title("claude2/x", "ABC1234") == "Test build of x (abc1234)" and title("main", c) == "Test build of main (0123456)", "title forms")
+    ok(title("claude3/x", "ABC1234") == "Test build of x (abc1234)" and display_branch("claude3/") == "claude3/", "claude3 branches")
     ok(title("claude/", "abc1234") == "Test build (abc1234)" and title("bad branch!", "zzz") == "Test build" and title("claude/walk", "") == "Test build of walk", "title leaves out what is unusable")
 
     # ---- merge

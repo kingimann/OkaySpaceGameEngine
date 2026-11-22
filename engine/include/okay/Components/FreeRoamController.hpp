@@ -41,7 +41,8 @@ public:
         // Seed the angles from the object's current rotation so it doesn't snap.
         if (transform) {
             Vec3 f = transform->localRotation * Vec3{0, 0, -1};
-            yaw   = Mathf::Atan2(f.x, -f.z) * Mathf::Rad2Deg;
+            // A turn of +yaw about Y faces (-sin yaw, 0, -cos yaw), so yaw = atan2(-f.x, -f.z).
+            yaw   = Mathf::Atan2(-f.x, -f.z) * Mathf::Rad2Deg;
             pitch = Mathf::Atan2(f.y, std::sqrt(f.x * f.x + f.z * f.z)) * Mathf::Rad2Deg;
         }
         if (lockCursor) Cursor::Capture(true);

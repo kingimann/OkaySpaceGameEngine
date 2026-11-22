@@ -10,6 +10,8 @@
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/Damage.hpp"
+#include <vector>
 #include <cmath>
 #include <functional>
 #include <string>
@@ -120,6 +122,9 @@ public:
     bool  playDeathAnim = true;   // play Death and stay active until it settles
     bool  keepBodyOnDeath = false; // runtime: a Ragdoll shows the death, so the body stays
     bool  playHitAnim = false;    // light flinch when Damage was given a source. Off so games don't change.
+    bool  keepActiveOnDeath = false; // "Nothing" on death: the object just stays as it is (no disable, no destroy)
+    /// Per-kind resistance, indexed by DamageType: 0 = none, 0.5 = half damage, 1 = immune, -1 = double damage.
+    float typeResistance[kDamageTypeCount] = {};
 
     bool  dead = false, lowHealth = false;
 
@@ -159,10 +164,27 @@ public:
         lowHealth = health <= lowThreshold;
         Publish();
     }
-    void Damage(float amount) { hasLastHit = false; ApplyDamage(amount); }
+    void Damage(float amount) { hasLastHit = false; ApplyDamage(DamageEvent::Make(amount)); }
     /// `fromWorld` is where the hit came from. Death falls away from it.
     void Damage(float amount, const Vec3& fromWorld) {
-        lastHitFrom = fromWorld; hasLastHit = true; ApplyDamage(amount);
+        lastHitFrom = fromWorld; hasLastHit = true; ApplyDamage(DamageEvent::From(amount, fromWorld, DamageType::Generic));
+    }
+    /// The full form: type, source and hit point travel with the hit and reach the listeners.
+    /// Returns true if the hit took health (false when dead, immune, dodged or nothing was left).
+    bool Damage(const DamageEvent& ev) {
+        if (ev.hasHitPoint) { lastHitFrom = ev.hitPoint; hasLastHit = true; } else hasLastHit = false;
+        return ApplyDamage(ev);
+    }
+    /// Kill outright (ignores armor, resistance, god mode and i-frames, like the script die()).
+    /// Tells the listeners with the health that was left as the damage. No effect if already dead.
+    void Kill(GameObject* source = nullptr) {
+        if (dead) return;
+        DamageEvent ev = DamageEvent::Make(health > 0.0f ? health : 0.0f, DamageType::Generic, source);
+        ev.target = gameObject; ev.dealt = ev.amount; ev.killed = true;
+        hasLastHit = false;
+        m_lastEvent = ev;
+        NotifyDamaged(ev);
+        OnDeath();
     }
     /// Script die(): kill without another damage calculation. Replays the anim
     /// if this body is already dead.
@@ -173,30 +195,79 @@ public:
             if (playDeathAnim) HumanoidActions::PlayDeath(gameObject, hasLastHit ? &lastHitFrom : nullptr);
             return;
         }
+        m_lastEvent = FreshDeathEvent(health);
         OnDeath();
     }
+    /// What happens when health reaches zero, in one plain choice.
+    enum class DeathAction { Nothing, Destroy, Disable, Respawn, PlayAnimation };
+    DeathAction GetDeathAction() const {
+        if (respawn) return DeathAction::Respawn;
+        if (destroyOnDeath) return DeathAction::Destroy;
+        if (keepActiveOnDeath) return DeathAction::Nothing;
+        return playDeathAnim ? DeathAction::PlayAnimation : DeathAction::Disable;
+    }
+    void SetDeathAction(DeathAction a) {
+        respawn = (a == DeathAction::Respawn);
+        destroyOnDeath = (a == DeathAction::Destroy);
+        keepActiveOnDeath = (a == DeathAction::Nothing);
+        playDeathAnim = (a == DeathAction::PlayAnimation || a == DeathAction::Respawn || a == DeathAction::Destroy);
+    }
+    /// Resistance to one kind of damage (see typeResistance).
+    float ResistanceTo(DamageType t) const { int i = (int)t; return (i >= 0 && i < kDamageTypeCount) ? typeResistance[i] : 0.0f; }
+    void  SetResistance(DamageType t, float r) {
+        int i = (int)t;
+        if (i >= 0 && i < kDamageTypeCount && std::isfinite(r)) typeResistance[i] = Mathf::Clamp(r, -1.0f, 1.0f);
+    }
+    /// Problems with the settings, in plain words (empty when all is well).
+    std::vector<std::string> Validate() const {
+        std::vector<std::string> w;
+        if (!(maxHealth > 0.0f) || !std::isfinite(maxHealth)) w.push_back("Max Health must be above 0, or this dies at once.");
+        if (health > maxHealth + Mathf::Max(0.0f, overhealMax)) w.push_back("Health is above Max Health.");
+        if (lowThreshold > maxHealth) w.push_back("Low Health Level is above Max Health, so it always counts as low.");
+        if (regenPerSecond < 0.0f) w.push_back("Regeneration is negative; use 0 for none.");
+        if (respawn && respawnDelay < 0.0f) w.push_back("Respawn Delay is negative.");
+        if (respawn && destroyOnDeath) w.push_back("Respawn and Destroy are both on; Respawn wins.");
+        return w;
+    }
+    /// The last hit this holder took (type, source, amount really dealt), for listeners that ask later.
+    const DamageEvent& LastEvent() const { return m_lastEvent; }
     void OnAnimationEvent(const std::string& name) override {
         if (name == "death_settled") FinishDeathPose();
     }
 
-    void ApplyDamage(float amount) {
-        if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return;
-        if (HumanoidActions::DodgeIFrames(gameObject)) return;
+    void ApplyDamage(float amount) { ApplyDamage(DamageEvent::Make(amount)); }
+    bool ApplyDamage(DamageEvent ev) {
+        const float amount = SaneDamage(ev.amount);
+        if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return false;
+        if (HumanoidActions::DodgeIFrames(gameObject)) return false;
+        const float typeRes = ResistanceTo(ev.type);
+        if (typeRes >= 1.0f) return false;   // immune to this kind: no i-frames, regen delay, listeners or flinch
         float dmg = Mathf::Max(0.0f, amount - (armor + equipArmor));
         dmg *= (1.0f - Mathf::Clamp01(resistance));
+        dmg *= (1.0f - typeRes);
         if (dmg < minDamage) dmg = Mathf::Min(minDamage, amount);   // mitigation never fully nullifies a hit
+        const float before = health;
         health -= dmg;
         m_timer = regenDelay;
         m_iframes = invincibleTime;
+        ev.target = gameObject; ev.amount = amount;
+        ev.dealt = Mathf::Max(0.0f, before - Mathf::Max(0.0f, health));
+        ev.killed = health <= 0.0f;
+        m_lastEvent = ev;
+        NotifyDamaged(ev);
         if (health <= 0.0f) OnDeath();
         else if (playHitAnim && hasLastHit)
             HumanoidActions::HitReact(gameObject, HumanoidActions::HitDirFromWorld(gameObject, lastHitFrom), false);
         Publish();
+        return true;
     }
     void Heal(float a) {
+        a = SaneHeal(a);
         if (dead || a <= 0.0f) return;
+        const float before = health;
         health = Mathf::Min(maxHealth + Mathf::Max(0.0f, overhealMax), health + a);
         Publish();
+        if (health > before) NotifyHealed(gameObject, health - before);
     }
     void AddArmor(float a) { armor += a; }
     void Revive()          { Respawn(); }
@@ -204,8 +275,9 @@ public:
     /// the rest were applied on the server, which validated the hit).
     void SetHealthFromServer(float h) {
         if (dead || !std::isfinite(h)) return;
+        const float before = health;
         health = Mathf::Min(maxHealth + Mathf::Max(0.0f, overhealMax), h);
-        if (health <= 0.0f) { OnDeath(); m_awaitServerRespawn = true; }
+        if (health <= 0.0f) { m_lastEvent = FreshDeathEvent(before); OnDeath(); m_awaitServerRespawn = true; }
         Publish();
     }
     /// Multiplayer: the server respawned this object with `h` health (where it now stands is
@@ -223,19 +295,32 @@ public:
     void DieFromServer(bool hasFrom, const Vec3& from) {
         if (dead) return;
         if (hasFrom) { lastHitFrom = from; hasLastHit = true; } else hasLastHit = false;
+        m_lastEvent = FreshDeathEvent(health);
         OnDeath();
         m_awaitServerRespawn = true;
         Publish();
     }
     void SetGodMode(bool on) { godMode = on; }
+    /// A destroyed object is never handed to listeners as the killer (LastEvent stays safe to read).
+    void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
+        if (m_lastEvent.source && dying.count(m_lastEvent.source)) m_lastEvent.source = nullptr;
+    }
 
 private:
+    /// A death with no hit behind it (the server's word, a script die()): no source, no stale killer.
+    DamageEvent FreshDeathEvent(float healthLeft) const {
+        DamageEvent e = DamageEvent::Make(healthLeft > 0.0f ? healthLeft : 0.0f);
+        e.target = gameObject; e.dealt = e.amount; e.killed = true;
+        return e;
+    }
     void OnDeath() {
         health = 0.0f; dead = true;
         NetNoteDeath(gameObject, hasLastHit, lastHitFrom);
         m_settled = false; m_deathAge = 0.0f; m_deathPlayed = false; m_waitDeath = false;
         Broadcast("died");
         if (auto& hook = HealthDeathHook()) hook(gameObject);
+        m_lastEvent.target = gameObject; m_lastEvent.killed = true;
+        NotifyDeath(m_lastEvent);
         if (gameObject) { if (auto* au = gameObject->GetComponent<AudioSource>()) au->Play(); }
         if (playDeathAnim)
             m_deathPlayed = HumanoidActions::PlayDeath(gameObject, hasLastHit ? &lastHitFrom : nullptr);
@@ -249,7 +334,7 @@ private:
             m_waitDeath = true;   // shrink the capsule once the pose settles; stay in DeadHold
         } else if (destroyOnDeath && gameObject && gameObject->scene()) {
             gameObject->scene()->Destroy(gameObject);
-        } else if (gameObject) {
+        } else if (gameObject && !keepActiveOnDeath) {
             gameObject->active = false;
         }
     }
@@ -265,6 +350,7 @@ private:
     }
     void Respawn(bool moveToStart = true) {
         dead = false; health = maxHealth; m_timer = 0.0f; m_iframes = 0.0f; m_respawnTimer = 0.0f;
+        m_lastEvent = DamageEvent{};   // a new life: the last killer is forgotten
         m_awaitServerRespawn = false;
         m_deathPlayed = false; m_settled = false; m_waitDeath = false; m_deathAge = 0.0f;
         HumanoidActions::RestoreDeadBody(gameObject, m_deathShape);
@@ -287,6 +373,7 @@ private:
     bool  m_deathPlayed = false, m_settled = false, m_waitDeath = false;
     float m_deathAge = 0.0f;
     HumanoidActions::DeadShape m_deathShape;
+    DamageEvent m_lastEvent;
 };
 
 /// Hunger that drains over time (faster while sprinting); empty -> `starving`. When
@@ -322,7 +409,7 @@ public:
         if (hunger > maxHunger) hunger = Mathf::Max(maxHunger, hunger - drainPerSecond * dt); // bleed off the overeat buffer
         starving = hunger <= 0.0f; low = hunger <= lowThreshold;
         if (starving && starveDamage > 0.0f && gameObject)
-            if (auto* hp = gameObject->GetComponent<HealthStat>()) hp->Damage(starveDamage * dt);
+            if (auto* hp = gameObject->GetComponent<HealthStat>()) hp->Damage(DamageEvent::Make(starveDamage * dt, DamageType::Hunger));
         Signal(starving, m_starv, "starving");
         Publish();
     }
@@ -361,7 +448,7 @@ public:
         if (thirst > maxThirst) thirst = Mathf::Max(maxThirst, thirst - drainPerSecond * dt);
         dehydrated = thirst <= 0.0f; low = thirst <= lowThreshold;
         if (dehydrated && dehydrateDamage > 0.0f && gameObject)
-            if (auto* hp = gameObject->GetComponent<HealthStat>()) hp->Damage(dehydrateDamage * dt);
+            if (auto* hp = gameObject->GetComponent<HealthStat>()) hp->Damage(DamageEvent::Make(dehydrateDamage * dt, DamageType::Thirst));
         Signal(dehydrated, m_dehy, "dehydrated");
         Publish();
     }
@@ -449,7 +536,7 @@ public:
         else           oxygen = Mathf::Min(maxOxygen, oxygen + refillPerSecond * dt);
         outOfAir = oxygen <= 0.0f; low = oxygen <= lowThreshold;
         if (outOfAir && drownDamage > 0.0f && gameObject)
-            if (auto* hp = gameObject->GetComponent<HealthStat>()) hp->Damage(drownDamage * dt);
+            if (auto* hp = gameObject->GetComponent<HealthStat>()) hp->Damage(DamageEvent::Make(drownDamage * dt, DamageType::Drowning));
         Signal(outOfAir, m_drown, "drowning");
         Publish();
     }
@@ -482,7 +569,7 @@ public:
         warmth = Mathf::Clamp(warmth, 0.0f, maxWarmth);
         freezing = warmth <= 0.0f; low = warmth <= lowThreshold;
         if (freezing && freezeDamage > 0.0f && gameObject)
-            if (auto* hp = gameObject->GetComponent<HealthStat>()) hp->Damage(freezeDamage * dt);
+            if (auto* hp = gameObject->GetComponent<HealthStat>()) hp->Damage(DamageEvent::Make(freezeDamage * dt, DamageType::Cold));
         Signal(freezing, m_freeze, "freezing");
         Publish();
     }
@@ -519,7 +606,7 @@ public:
         energy = Mathf::Clamp(energy, 0.0f, maxEnergy);
         exhausted = energy <= 0.0f; tired = energy <= tiredThreshold;
         if (exhausted && exhaustDamage > 0.0f && gameObject)
-            if (auto* hp = gameObject->GetComponent<HealthStat>()) hp->Damage(exhaustDamage * dt);
+            if (auto* hp = gameObject->GetComponent<HealthStat>()) hp->Damage(DamageEvent::Make(exhaustDamage * dt, DamageType::Exhaustion));
         Signal(exhausted, m_exh, "exhausted");
         Publish();
     }
@@ -552,7 +639,7 @@ public:
         sanity = Mathf::Clamp(sanity, 0.0f, maxSanity);
         insane = sanity <= 0.0f; low = sanity <= lowThreshold;
         if (insane && insaneDamage > 0.0f && gameObject)
-            if (auto* hp = gameObject->GetComponent<HealthStat>()) hp->Damage(insaneDamage * dt);
+            if (auto* hp = gameObject->GetComponent<HealthStat>()) hp->Damage(DamageEvent::Make(insaneDamage * dt, DamageType::Madness));
         Signal(insane, m_insane, "insane");
         Publish();
     }

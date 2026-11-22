@@ -208,6 +208,8 @@ typedef int ImGuiInputTextFlags;
 constexpr auto ImGuiInputTextFlags_AllowTabInput = OkayUI::InputText_AllowTabInput;
 constexpr auto ImGuiInputTextFlags_AutoSelectAll = OkayUI::InputText_AutoSelectAll;
 constexpr auto ImGuiInputTextFlags_CallbackAlways = OkayUI::InputText_CallbackAlways;
+constexpr auto ImGuiInputTextFlags_CallbackCompletion = OkayUI::InputText_CallbackCompletion;
+constexpr auto ImGuiInputTextFlags_CallbackHistory = OkayUI::InputText_CallbackHistory;
 constexpr auto ImGuiInputTextFlags_CallbackResize = OkayUI::InputText_CallbackResize;
 constexpr auto ImGuiInputTextFlags_CharsDecimal = OkayUI::InputText_CharsDecimal;
 constexpr auto ImGuiInputTextFlags_CharsNoBlank = OkayUI::InputText_CharsNoBlank;

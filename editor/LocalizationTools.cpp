@@ -1,6 +1,7 @@
 #include "LocalizationTools.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <set>
 
 namespace oked {
@@ -169,6 +170,105 @@ LocWindowModel BuildLocWindowModel(const okay::StringTable& table, const LocWind
                               model.grid.rows.end());
     }
     return model;
+}
+
+namespace {
+std::string FileStem(const std::string& path) {
+    std::string stem = path;
+    const std::size_t slash = stem.find_last_of("/\\");
+    if (slash != std::string::npos) stem = stem.substr(slash + 1);
+    const std::size_t dot = stem.find_last_of('.');
+    if (dot != std::string::npos && dot > 0) stem = stem.substr(0, dot);
+    return stem;
+}
+} // namespace
+
+LocImportFormat LocImportFormatFor(const std::string& path) {
+    std::string ext;
+    const std::size_t dot = path.find_last_of('.');
+    const std::size_t slash = path.find_last_of("/\\");
+    if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) ext = path.substr(dot + 1);
+    for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+    return ext == "json" ? LocImportFormat::Json : LocImportFormat::Csv;
+}
+
+LocImportPlan PlanLocImport(const okay::StringTable& live, const std::string& text, LocImportFormat format,
+                            const std::string& path) {
+    LocImportPlan plan;
+    plan.format = format;
+    if (format == LocImportFormat::Csv) {
+        plan.after = live;
+        std::string err;
+        if (!plan.after.ImportCsv(text, &err, &plan.rows)) { plan.error = err.empty() ? "not a translation sheet" : err; return plan; }
+    } else {
+        // Whole-table JSON first; a flat one answers that it needs a language, then it is read as the file's stem.
+        okay::LocTable work(live);
+        okay::LocImportResult r = work.ImportJson(text);
+        if (!r.ok && r.error.find("say which language") != std::string::npos) {
+            const std::string stem = FileStem(path);
+            if (stem.empty()) { plan.error = r.error; return plan; }
+            work = okay::LocTable(live);
+            okay::LocImportOptions options;
+            options.language = stem;
+            r = work.ImportJson(text, options);
+            plan.language = stem;
+        }
+        if (!r.ok) { plan.error = r.error.empty() ? "not a translation file" : r.error; return plan; }
+        plan.rows = r.rows;
+        plan.warnings = r.warnings;
+        plan.after = std::move(work.table);
+    }
+    plan.diff = okay::LocDiffTables(live, plan.after);
+    plan.ok = true;
+    return plan;
+}
+
+std::string LocImportSummary(const LocImportPlan& plan) {
+    if (!plan.ok) return "Can't import: " + plan.error;
+    std::string s = std::to_string(plan.rows) + (plan.format == LocImportFormat::Json ? " keys" : " rows");
+    if (!plan.language.empty()) s += " of " + plan.language;
+    if (plan.diff.Empty()) return s + ": nothing would change";
+    std::string parts;
+    auto add = [&](std::size_t n, const char* what) {
+        if (n == 0) return;
+        parts += (parts.empty() ? ": " : ", ") + std::to_string(n) + " " + what;
+    };
+    add(plan.diff.filled.size(), "filled");
+    add(plan.diff.changed.size(), "changed");
+    add(plan.diff.addedKeys.size(), plan.diff.addedKeys.size() == 1 ? "new key" : "new keys");
+    add(plan.diff.addedLanguages.size(), plan.diff.addedLanguages.size() == 1 ? "new language" : "new languages");
+    add(plan.diff.cleared.size(), "cleared");
+    add((std::size_t)plan.diff.notesChanged, plan.diff.notesChanged == 1 ? "note" : "notes");
+    if (!plan.warnings.empty()) parts += " (" + std::to_string(plan.warnings.size()) + " skipped)";
+    return s + parts;
+}
+
+std::vector<std::string> LocImportChangeLines(const LocImportPlan& plan, std::size_t max) {
+    std::vector<std::string> all;
+    if (!plan.ok) return all;
+    for (const std::string& l : plan.diff.addedLanguages) all.push_back(l + "  (new language)");
+    for (const std::string& k : plan.diff.addedKeys) all.push_back(k + "  (new key)");
+    for (const auto& c : plan.diff.changed) all.push_back(c.second + "  " + c.first + "  changed");
+    for (const auto& c : plan.diff.cleared) all.push_back(c.second + "  " + c.first + "  cleared");
+    for (const auto& c : plan.diff.filled) all.push_back(c.second + "  " + c.first + "  filled");
+    if (all.size() > max) {
+        const std::size_t more = all.size() - max;
+        all.resize(max);
+        all.push_back("and " + std::to_string(more) + " more");
+    }
+    return all;
+}
+
+
+std::string LocExportJson(const okay::StringTable& table, const std::string& path, std::string* language) {
+    const okay::LocTable lt(table);
+    const std::string stem = FileStem(path);
+    if (language) language->clear();
+    if (!stem.empty() && table.FindLanguage(stem)) {
+        if (language) *language = stem;
+        return lt.ToJsonFlat(stem);
+    }
+    return lt.ToJson();
 }
 
 } // namespace oked

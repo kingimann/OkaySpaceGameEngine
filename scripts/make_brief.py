@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Builds an agent brief from docs/process/agent_brief_template.md with the CURRENT rules pasted in full.
 
-  python3 scripts/make_brief.py --goal "..." --lane claude2 --branch claude2/x --files "engine/src/UI/**" \
+  python3 scripts/make_brief.py --goal "..." --lane claude3 --branch claude3/x --files "engine/src/UI/**" \
       [--keywords "tween position"] [--read docs/a.md ...] [--test-first name] [--with-branch origin/claude/owner-rule2]
   python3 scripts/make_brief.py --rules-only [--with-branch B ...]      just the rules text
 
+--lane is any lane in docs/lanes.json (coordinator, claude2, claude3); --branch defaults to that lane's prefix.
 The rules are `CLAUDE.md` from origin/main (so a stale checkout does not matter). Each --with-branch adds the rules that exist
 in that branch's CLAUDE.md but not on main yet (rules PRs that are not merged), so an agent never starts without them.
 Standard library and git only.
@@ -45,8 +46,9 @@ def rules_text(root, base="origin/main", extra_branches=()):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--goal", default="<goal>"); ap.add_argument("--lane", default="claude2", choices=["claude2", "coordinator"])
-    ap.add_argument("--branch", default="claude2/<name>"); ap.add_argument("--files", default="<globs>")
+    known = L.lane_names()   # the lanes of docs/lanes.json in this checkout
+    ap.add_argument("--goal", default="<goal>"); ap.add_argument("--lane", default="claude2", choices=known)
+    ap.add_argument("--branch", default=None, help="default: the lane's prefix + <name>"); ap.add_argument("--files", default="<globs>")
     ap.add_argument("--keywords", default=None); ap.add_argument("--test-first", default="<test name>")
     ap.add_argument("--read", nargs="*", default=[]); ap.add_argument("--offlimits", default=None)
     ap.add_argument("--with-branch", action="append", default=[]); ap.add_argument("--rules-only", action="store_true")
@@ -58,11 +60,23 @@ def main():
         print(rules); return 0
     tpl = open(os.path.join(root, "docs", "process", "agent_brief_template.md"), encoding="utf-8").read()
     tpl = tpl.split("<!-- BRIEF START: everything from here down is sent to the agent -->", 1)[-1].lstrip("\n")
-    other = "coordinator" if a.lane == "claude2" else "claude2"
-    who = "Claude 2 (branches `claude2/*`, issue #422)" if a.lane == "claude2" else "an agent of the coordinator (branches `claude/*`)"
     lanes = L.load_lanes(root)
-    own = [g for r in lanes["rules"] if r["owner"] == other for g in r["globs"]][:14]
-    vals = {"GOAL": a.goal, "WHO": who, "BRANCH": a.branch, "KEYWORDS": a.keywords or a.goal, "FILES": a.files, "TESTFIRST": a.test_first,
+    if a.lane not in L.lane_names(lanes):
+        ap.error(f"--lane {a.lane} is not in {root}/docs/lanes.json")
+    prefix = L.lane_prefixes(lanes)[a.lane]
+    branch = a.branch or prefix + "<name>"
+    name = L.lane_display(a.lane, lanes)
+    who = (f"an agent of the coordinator (branches `{prefix}*`)" if a.lane == "coordinator"
+           else f"{name} (branches `{prefix}*`, issue #{L.CLAIM_ISSUE})")
+    # off limits: a few globs of every other lane (the full list is docs/lanes.json)
+    # (a glob that contains this lane's own paths, such as engine/src/Platform/** around Platform/Steam, is left out)
+    mine = [g for r in lanes["rules"] if r["owner"] == a.lane for g in L.rule_globs(r)]
+    own = []
+    for other in L.lane_names(lanes):
+        if other == a.lane: continue
+        theirs = [g for r in lanes["rules"] if r["owner"] == other for g in L.rule_globs(r)]
+        own += [g for g in theirs if not any(L.globs_overlap(g, m) for m in mine)][:8]
+    vals = {"GOAL": a.goal, "WHO": who, "BRANCH": branch, "KEYWORDS": a.keywords or a.goal, "FILES": a.files, "TESTFIRST": a.test_first,
             "READ": "\n".join(f"- `{p}`" for p in a.read + ["CLAUDE.md", "docs/process/collaboration.md", "docs/lanes.json", "docs/process/review_log.md", "docs/FEATURE_MAP.md"]),
             "OFFLIMITS": a.offlimits or ", ".join(f"`{g}`" for g in own) + " ...",
             "DATE": datetime.date.today().isoformat(), "RULES": rules}

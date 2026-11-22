@@ -497,7 +497,8 @@ struct DamageNode : VsNode {
     int Exec(NodeGraph& g, VsContext& ctx) override {
         GameObject* o = GpPin(this, 1, g, ctx, false, "a target");
         if (HealthStat* h = GpHealth(this, o, g, ctx))
-            h->Damage(std::max(0.0f, In(0, g, ctx, VsValue{10.0f}).AsFloat()));
+            h->Damage(DamageEvent::Make(std::max(0.0f, In(0, g, ctx, VsValue{10.0f}).AsFloat()),
+                                        DamageType::Generic, ctx.gameObject));
         return 0;
     }
 };
@@ -565,7 +566,7 @@ struct ShootNode : VsNode {
         RaycastHit3D h = s->physics3D().Raycast(*s, ctx.transform->Position(), ctx.transform->Forward(), dist, ctx.gameObject);
         if (!h.hit || !h.gameObject) return 0;
         hit = true; id = h.gameObject->InstanceId();
-        if (auto* hp = h.gameObject->GetComponent<HealthStat>()) hp->Damage(dmg, ctx.transform->Position());
+        if (auto* hp = h.gameObject->GetComponent<HealthStat>()) hp->Damage(DamageEvent::From(dmg, ctx.transform->Position(), DamageType::Physical, ctx.gameObject));
         return 0;
     }
 };

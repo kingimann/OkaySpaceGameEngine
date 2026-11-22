@@ -352,10 +352,7 @@ D3D12_CPU_DESCRIPTOR_HANDLE D3D12Renderer::Impl::TextureFor(const std::string& n
     std::size_t gpuBytes = 0;
     if (asset && asset->Valid() && slot.ptr) {
         std::vector<Image> built;
-        const std::vector<Image>* levels = nullptr;
-        if (!asset->settings.mipmaps) { built.push_back(asset->image); levels = &built; }
-        else if (asset->MipsBuilt()) levels = &asset->Mips();
-        else { built = BuildMipChain(asset->image, asset->settings); levels = &built; }
+        const std::vector<Image>* levels = &asset->UploadLevels(built);
         const UINT n = (UINT)levels->size();
         const UINT iw = (UINT)asset->Width(), ih = (UINT)asset->Height();
         D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;

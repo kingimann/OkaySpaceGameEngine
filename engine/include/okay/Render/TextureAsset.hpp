@@ -102,6 +102,9 @@ public:
     /// The same chain as a shared pointer, so a renderer can keep it while the asset rebuilds or reloads.
     std::shared_ptr<const std::vector<Image>> SharedMips() const;
     bool MipsBuilt() const { return m_mips && m_mipsSerial == serial; }
+    /// The levels a renderer uploads: just level 0 when `settings.mipmaps` is off, the kept chain when it is already
+    /// built, otherwise a chain built into `scratch` and not kept. The reference lives as long as `scratch` and the asset.
+    const std::vector<Image>& UploadLevels(std::vector<Image>& scratch) const;
     int  MipLevels() const { return MipsBuilt() ? static_cast<int>(m_mips->size()) : 1; }
     /// CPU bytes held: the base level plus the mip chain when built.
     std::size_t Bytes() const;

@@ -1099,10 +1099,7 @@ ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& nam
     if (!srv && asset && asset->Valid()) {
         // Our own mip chain (gamma-correct box or Kaiser, renormalised normal maps), the same levels every renderer uses.
         std::vector<Image> built;
-        const std::vector<Image>* levels = nullptr;
-        if (!asset->settings.mipmaps) { built.push_back(asset->image); levels = &built; }
-        else if (asset->MipsBuilt()) levels = &asset->Mips();
-        else { built = BuildMipChain(asset->image, asset->settings); levels = &built; }
+        const std::vector<Image>* levels = &asset->UploadLevels(built);
         D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
         td.Width = asset->Width(); td.Height = asset->Height(); td.MipLevels = (UINT)levels->size(); td.ArraySize = 1;
         td.Format = DXGI_FORMAT_R8G8B8A8_UNORM; td.SampleDesc.Count = 1;

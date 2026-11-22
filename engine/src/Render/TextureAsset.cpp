@@ -184,6 +184,13 @@ const std::vector<Image>& TextureAsset::Mips() const {
     return *m_mips;
 }
 
+const std::vector<Image>& TextureAsset::UploadLevels(std::vector<Image>& scratch) const {
+    if (!settings.mipmaps) { scratch.clear(); scratch.push_back(image); return scratch; }
+    if (MipsBuilt()) return *m_mips;
+    scratch = BuildMipChain(image, settings);
+    return scratch;
+}
+
 std::shared_ptr<const std::vector<Image>> TextureAsset::SharedMips() const {
     Mips();
     return m_mips;

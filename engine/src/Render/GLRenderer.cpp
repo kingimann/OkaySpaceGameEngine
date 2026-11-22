@@ -1839,10 +1839,7 @@ unsigned int GLRenderer::TextureFor(const std::string& name) {
             // Our own chain (gamma-correct box or Kaiser, renormalised normal maps): the same levels the software
             // renderer samples, instead of glGenerateMipmap's driver-chosen filter on gamma-encoded bytes.
             std::vector<Image> built;
-            const std::vector<Image>* levels = nullptr;
-            if (!ts.mipmaps) { built.push_back(asset->image); levels = &built; }
-            else if (asset->MipsBuilt()) levels = &asset->Mips();
-            else { built = BuildMipChain(asset->image, asset->settings); levels = &built; }
+            const std::vector<Image>* levels = &asset->UploadLevels(built);
             g.GenTextures(1, &tex);
             g.BindTexture(GL_TEXTURE_2D, tex);
             for (std::size_t l = 0; l < levels->size(); ++l) {

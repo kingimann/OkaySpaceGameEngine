@@ -6,7 +6,7 @@
 // uploads the new pixels under a new serial, the per-texture anisotropy reaches GL, and a texture the library lets go
 // of leaves GL memory too (MemoryTracker "Textures (GPU)").
 #include "test_framework.hpp"
-#include "../okayui/tests/RenderGLContext.hpp"
+#include "gl_readback_setup.hpp"
 
 #include "okay/Render/GLRenderer.hpp"
 #include "okay/Render/TextureAsset.hpp"
@@ -20,17 +20,10 @@
 #include <thread>
 
 using namespace okay;
+using namespace glread;
 namespace fs = std::filesystem;
 
 namespace {
-gltest::Context* g_ctx = nullptr;
-void* Proc(const char* n) { return g_ctx ? g_ctx->Proc(n) : nullptr; }
-void (*glBindTexture_)(unsigned, unsigned) = nullptr;
-void (*glGetTexImage_)(unsigned, int, unsigned, unsigned, void*) = nullptr;
-void (*glGetTexLevelParameteriv_)(unsigned, int, unsigned, int*) = nullptr;
-void (*glGetTexParameterfv_)(unsigned, unsigned, float*) = nullptr;
-void (*glPixelStorei_)(unsigned, int) = nullptr;
-unsigned (*glGetError_)() = nullptr;
 
 Image Checker(int n) {
     Image im(n, n);
@@ -72,18 +65,8 @@ std::int64_t GpuCount() {
 
 int main() {
     RUN_SUITE("gl texture asset (EGL, Mesa)");
-    gltest::Context ctx; std::string why;
-    if (!ctx.Create(false, &why)) { std::cout << "  SKIPPED: " << why << "\n"; TEST_MAIN_RESULT(); }
-    g_ctx = &ctx;
-    std::cout << "  context: " << ctx.Info() << "\n";
-    CHECK(GLRenderer::LoadGL(&Proc));
-    glBindTexture_ = (decltype(glBindTexture_))Proc("glBindTexture");
-    glGetTexImage_ = (decltype(glGetTexImage_))Proc("glGetTexImage");
-    glGetTexLevelParameteriv_ = (decltype(glGetTexLevelParameteriv_))Proc("glGetTexLevelParameteriv");
-    glGetTexParameterfv_ = (decltype(glGetTexParameterfv_))Proc("glGetTexParameterfv");
-    glPixelStorei_ = (decltype(glPixelStorei_))Proc("glPixelStorei");
-    glGetError_ = (decltype(glGetError_))Proc("glGetError");
-    if (!glBindTexture_ || !glGetTexImage_ || !glGetTexLevelParameteriv_ || !glPixelStorei_) { std::cout << "  SKIPPED: no glGetTexImage\n"; TEST_MAIN_RESULT(); }
+    gltest::Context ctx;
+    if (!glread::Open(ctx)) TEST_MAIN_RESULT();
 
     textures::ResetForTests();
     fs::create_directories("gl_texasset");

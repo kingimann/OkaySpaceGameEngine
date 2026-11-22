@@ -97,8 +97,12 @@ void Coroutines() {
     Expect("local p = coroutine.wrap(function() for _, w in ipairs({'a', 'b', 'c'}) do coroutine.yield(w) end end) "
            "local r = {} for w in p do r[#r + 1] = w end print(table.concat(r, ','))",
            "a,b,c");
-    // yielding inside a metamethod or pcall is reported, not undefined (documented limit)
-    Expect("local co = coroutine.create(function() local t = setmetatable({}, {__index = function() coroutine.yield() end}) return t.x end) "
+    // yielding inside a Lua __index metamethod works (it runs inside the interpreter loop)
+    Expect("local co = coroutine.create(function() local t = setmetatable({}, {__index = function(_, k) return coroutine.yield(k) end}) return t.x end) "
+           "print(coroutine.resume(co)) print(coroutine.resume(co, 5))",
+           "true\tx\ntrue\t5");
+    // yielding inside a metamethod a native calls (tostring -> __tostring) is still reported
+    Expect("local co = coroutine.create(function() return tostring(setmetatable({}, {__tostring = function() coroutine.yield() end})) end) "
            "local ok, e = coroutine.resume(co) print(ok, e:find('C%-call boundary') ~= nil)",
            "false\ttrue");
 }

@@ -15,7 +15,6 @@ struct ParseError {
 // so, rather than syntax that is silently skipped.
 const std::unordered_map<std::string, const char*>& NotYet() {
     static const std::unordered_map<std::string, const char*> m = {
-        {"struct", "structs aren't supported yet"},
         {"readonly", "readonly isn't supported yet: use const for a value that never changes"},
         {"sealed", "sealed isn't supported"},
         {"internal", "internal isn't supported: members are private unless marked public (or protected)"},
@@ -63,6 +62,19 @@ public:
                 if (IsDelegateAhead()) { sawDecl = true; Delegate(); continue; }
                 sawDecl = true;
                 ClassDecl c = Class();
+                if (!c.typeParams.empty()) {   // class Box<T>: kept as tokens, made per use (InstantiateGenerics)
+                    GenericTemplate g;
+                    g.name = c.name;
+                    g.params = c.typeParams;
+                    g.loc = c.loc;
+                    g.tokens.assign(toks_.begin() + (std::ptrdiff_t)start, toks_.begin() + (std::ptrdiff_t)pos_);
+                    g.headerFrom = headerFrom_ - start;
+                    g.headerTo = headerTo_ - start;
+                    for (const auto& other : prog_.genericClasses)
+                        if (other.name == g.name) Error(g.loc, "'" + g.name + "' is declared twice");
+                    prog_.genericClasses.push_back(std::move(g));
+                    continue;
+                }
                 prog_.classes.push_back(std::move(c));
             } catch (const ParseError& e) {
                 Error(e.loc, e.msg);
@@ -71,10 +83,63 @@ public:
         }
     }
 
+    // One class, or one member of `c`, from tokens (a generic's, its types filled in).
+    bool ClassOnly(ClassDecl& out) {
+        const std::size_t before = prog_.diags.size();
+        try { out = Class(); } catch (const ParseError& e) { Error(e.loc, e.msg); return false; }
+        return prog_.diags.size() == before;
+    }
+    bool MemberOnly(ClassDecl& c) {
+        const std::size_t before = prog_.diags.size();
+        try { Member(c, 0); } catch (const ParseError& e) { Error(e.loc, e.msg); return false; }
+        return prog_.diags.size() == before;
+    }
+
 private:
     const std::vector<Token>& toks_;
     Program& prog_;
     std::size_t pos_ = 0;
+    std::size_t headerFrom_ = 0, headerTo_ = 0;   ///< the last class's <T, ...> (token positions)
+
+    // <A, B>( after a name: the offset just past '>' when a type argument list starts here
+    // and a '(' follows it (ECMA-334 6.2.5: that is what makes it type arguments), else 0.
+    std::size_t TypeArgsEndAhead() const {
+        if (!Is(T::Lt)) return 0;
+        int depth = 0;
+        for (std::size_t o = 0; o < 256; ++o) {
+            const T k = Peek(o).type;
+            if (k == T::Lt) ++depth;
+            else if (k == T::Gt) { if (--depth == 0) return Is(T::LParen, o + 1) ? o + 1 : 0; }
+            else if (!(k == T::Ident || k == T::KwInt || k == T::KwFloat || k == T::KwBool || k == T::KwString ||
+                       k == T::Comma || k == T::LBracket || k == T::RBracket)) return 0;
+        }
+        return 0;
+    }
+    void TypeArgList(Expr& c) {
+        Expect(T::Lt, "'<'");
+        do { c.typeArgs.push_back(Type(false)); } while (Match(T::Comma));
+        Expect(T::Gt, "'>'");
+        c.typeArg = c.typeArgs[0];
+    }
+    // <T, U> after a declaration's name: the type parameters (ECMA-334 15.2.3).
+    std::vector<std::string> TypeParams() {
+        std::vector<std::string> ps;
+        Expect(T::Lt, "'<'");
+        do {
+            const Token& t = Expect(T::Ident, "a type parameter name, like T");
+            for (const auto& p : ps) if (p == t.text) throw ParseError{t.loc, "Two type parameters are called '" + t.text + "'"};
+            ps.push_back(t.text);
+        } while (Match(T::Comma));
+        Expect(T::Gt, "'>'");
+        return ps;
+    }
+    // `where T : ...` clauses (constraints): read and not enforced.
+    void SkipWhere() {
+        while (IsWord("where") && Is(T::Ident, 1)) {
+            ++pos_;
+            while (!Is(T::LBrace) && !Is(T::Arrow) && !Is(T::Semicolon) && !Is(T::End) && !IsWord("where")) ++pos_;
+        }
+    }
 
     const Token& Peek(std::size_t o = 0) const {
         std::size_t i = pos_ + o;
@@ -215,6 +280,7 @@ private:
             if (Match(T::KwPublic) || Match(T::KwPrivate)) continue;
             if (IsWord("abstract")) { c.isAbstract = true; ++pos_; continue; }
             if (prog_.csharp && (IsWord("sealed") || IsWord("internal"))) { ++pos_; continue; }   // no effect on a script
+            if (prog_.csharp && IsWord("readonly") && IsWord("struct", 1)) { ++pos_; continue; }   // readonly struct: accepted, not enforced
             break;
         }
         RejectNotYet();
@@ -223,6 +289,10 @@ private:
             if (c.isAbstract) throw ParseError{Peek().loc, "An interface is already abstract: delete `abstract`"};
             c.isInterface = true;
             ++pos_;
+        } else if (IsWord("struct") && Is(T::Ident, 1)) {   // ECMA-334 16: a value type
+            if (c.isAbstract) throw ParseError{Peek().loc, "A struct can't be abstract"};
+            c.isStruct = true;
+            ++pos_;
         } else if (!Is(T::KwClass)) {
             throw ParseError{Peek().loc, "Expected a class here: class Name : Behaviour { ... }"};
         } else {
@@ -230,17 +300,24 @@ private:
         }
         c.loc = Peek().loc;
         c.name = Expect(T::Ident, c.isInterface ? "the interface name" : "the class name").text;
+        if (Is(T::Lt)) {   // class Box<T>
+            headerFrom_ = pos_;
+            c.typeParams = TypeParams();
+            headerTo_ = pos_;
+        }
         if (Match(T::Colon)) {
             do {
                 c.baseLocs.push_back(Peek().loc);
                 c.bases.push_back(Expect(T::Ident, "what the class extends (Behaviour, a class or an interface)").text);
                 if (prog_.csharp && c.bases.back() == "MonoBehaviour") c.bases.back() = "Behaviour";   // Unity's name for it
+                if (Is(T::Lt)) throw ParseError{Peek().loc, "Extending a generic class or interface (" + c.bases.back() + "<...>) isn't supported yet"};
             } while (Match(T::Comma));
         }
+        SkipWhere();
         Expect(T::LBrace, "'{'");
         while (!Is(T::RBrace) && !Is(T::End)) {
             std::size_t start = pos_;
-            try { if (c.isInterface) InterfaceMember(c); else Member(c); }
+            try { if (c.isInterface) InterfaceMember(c); else Member(c, start); }
             catch (const ParseError& e) {
                 Error(e.loc, e.msg);
                 if (e.tooDeep) pos_ = start;   // skip the whole member, not just the innermost statement
@@ -325,7 +402,7 @@ private:
         c.methods.push_back(std::move(m));
     }
 
-    void Member(ClassDecl& c) {
+    void Member(ClassDecl& c, std::size_t start) {
         std::vector<Attribute> attrs = Attributes();
         bool isPublic = false, isProtected = false, isConst = false, isStatic = false, isEvent = false;
         bool isVirtual = false, isOverride = false, isAbstract = false;
@@ -369,6 +446,14 @@ private:
         else type = Type(false);
         SrcLoc nameLoc = Peek().loc;
         std::string name = Expect(T::Ident, "a name").text;
+        std::vector<std::string> typeParams;
+        std::size_t hFrom = 0, hTo = 0;
+        if (Is(T::Lt) && !isCtor) {   // T Find<T>(...): a generic method
+            hFrom = pos_;
+            typeParams = TypeParams();
+            hTo = pos_;
+            if (!Is(T::LParen)) throw ParseError{nameLoc, "Only classes and methods can have <T>: " + name + "<...>(...)"};
+        }
         if (Is(T::LParen)) {
             if (isConst) throw ParseError{nameLoc, "Methods can't be const"};
             if (isEvent) throw ParseError{eventLoc, "Only fields can be events: event Action<int> Damaged;"};
@@ -386,19 +471,29 @@ private:
                 m.hasBaseCall = true;
                 m.baseArgs = Args();
             }
+            SkipWhere();
             if (isAbstract) {
                 if (Is(T::LBrace)) throw ParseError{Peek().loc, "An abstract method has no body: end it with ';' (or remove `abstract`)"};
                 Expect(T::Semicolon, "';' after an abstract method");
                 c.methods.push_back(std::move(m));
                 return;
             }
-            if (Is(T::Arrow)) {   // void Jump() => rb.AddForce(...);   int Twice(int x) => x * 2;
-                m.body = ArrowBody(type.name == "void" || isCtor);
-                c.methods.push_back(std::move(m));
+            if (Is(T::Arrow)) m.body = ArrowBody(type.name == "void" || isCtor);   // void Jump() => rb.AddForce(...);
+            else {
+                if (Is(T::Assign) || Is(T::Semicolon)) throw ParseError{Peek().loc, "Expected the method body { ... }"};
+                m.body = Block();
+            }
+            if (!typeParams.empty()) {   // kept as tokens, made per use (InstantiateGenerics)
+                GenericTemplate g;
+                g.name = name;
+                g.params = typeParams;
+                g.loc = nameLoc;
+                g.tokens.assign(toks_.begin() + (std::ptrdiff_t)start, toks_.begin() + (std::ptrdiff_t)pos_);
+                g.headerFrom = hFrom - start;
+                g.headerTo = hTo - start;
+                c.genericMethods.push_back(std::move(g));
                 return;
             }
-            if (Is(T::Assign) || IsWord("where") || Is(T::Semicolon)) throw ParseError{Peek().loc, "Expected the method body { ... }"};
-            m.body = Block();
             c.methods.push_back(std::move(m));
             return;
         }
@@ -948,7 +1043,6 @@ private:
         Expect(T::RParen, "')'");
         return a;
     }
-    bool IsGenericCallAhead() const { return Is(T::Lt) && Is(T::Ident, 1) && Is(T::Gt, 2) && Is(T::LParen, 3); }
     ExprPtr Postfix() {
         ExprPtr e = Primary();
         // With ?. in the chain, the whole chain gives null when a ?. finds null.
@@ -965,10 +1059,10 @@ private:
                 ++pos_;
                 SrcLoc l = Peek().loc;
                 std::string name = Expect(T::Ident, "a member name after '.'").text;
-                if (IsGenericCallAhead() || Is(T::LParen)) {
+                if (TypeArgsEndAhead() || Is(T::LParen)) {
                     auto c = Make(EK::Call, l);
                     c->name = name; c->object = std::move(e);
-                    if (IsGenericCallAhead()) { ++pos_; c->typeArg = Type(false); Expect(T::Gt, "'>'"); }
+                    if (Is(T::Lt)) TypeArgList(*c);
                     c->args = Args();
                     c->nullCond = q;
                     e = std::move(c);
@@ -1124,10 +1218,17 @@ private:
             }
             case T::Ident: {
                 ++pos_;
-                if (IsGenericCallAhead()) {
+                if (t.text == "default" && Is(T::LParen)) {   // default(T)
+                    auto d = Make(EK::DefaultOf, l);
+                    ++pos_;
+                    d->typeArg = Type(false);
+                    Expect(T::RParen, "')'");
+                    return d;
+                }
+                if (TypeArgsEndAhead()) {
                     auto c = Make(EK::Call, l);
                     c->name = t.text;
-                    ++pos_; c->typeArg = Type(false); Expect(T::Gt, "'>'");
+                    TypeArgList(*c);
                     c->args = Args();
                     return c;
                 }
@@ -1155,6 +1256,16 @@ private:
 void Parse(const std::vector<Token>& toks, Program& out) {
     Parser p(toks, out);
     p.File();
+}
+
+bool ParseClassTokens(const std::vector<Token>& toks, Program& prog, ClassDecl& out) {
+    Parser p(toks, prog);
+    return p.ClassOnly(out);
+}
+
+bool ParseMemberTokens(const std::vector<Token>& toks, Program& prog, ClassDecl& c) {
+    Parser p(toks, prog);
+    return p.MemberOnly(c);
 }
 
 } // namespace okay::script

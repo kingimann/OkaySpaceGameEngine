@@ -12,6 +12,7 @@
 // uses the registry to resolve members and the editor uses it for autocomplete,
 // so a name that autocompletes is a name that runs.
 // ---------------------------------------------------------------------------
+#include "okay/Math/Quat.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Scripting/ScriptVM.hpp"   // ScriptDiagnostic
 #include <cstdint>
@@ -28,6 +29,12 @@ namespace okay {
 class GameObject;
 class Scene;
 class Component;
+}
+
+namespace okay {
+/// Exactly the same four numbers (std::variant's == needs one for Value). Scripts compare
+/// rotations with Equal, which asks for the same rotation instead.
+inline bool operator==(const Quat& a, const Quat& b) { return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w; }
 }
 
 namespace okay::script {
@@ -55,6 +62,7 @@ enum class TK : std::uint8_t {
     Wait,     ///< WaitForSeconds and the like: id = WaitKind
     Script,   ///< another script's Behaviour class (Health h = GetComponent<Health>()): id = ScriptClassId
     Lambda,   ///< a lambda whose Func / Action type comes from where it's used (checker only)
+    Quaternion, ///< a rotation (x, y, z, w), a value type like Vector3
 };
 struct Type {
     TK  kind = TK::Error;
@@ -94,7 +102,7 @@ using CellRef = std::shared_ptr<Cell>;
 using CoRef = std::shared_ptr<CoState>;
 using WaitRef = std::shared_ptr<WaitObj>;
 /// CellRef only appears in a method's local slots (a local that a lambda captured); reading the local gives what's inside.
-using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef, ArrayRef, ObjPtr, DictRef, FuncRef, CellRef, CoRef, WaitRef>;
+using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef, ArrayRef, ObjPtr, DictRef, FuncRef, CellRef, CoRef, WaitRef, Quat>;
 /// A T[], a List<T> or a KeyValuePair (items = key, value) at runtime. Arrays
 /// and lists are references: copies share the items.
 struct ArrayObj {
@@ -118,6 +126,7 @@ struct ScriptObj {
     int cls = -1;                ///< Program::classes index
     std::string className;       ///< printed when the object is turned into text
     std::vector<Value> fields;
+    bool isStruct = false;       ///< a struct value: copied (CopyValue) whenever it is assigned, passed or stored
     ~ScriptObj();                ///< frees long chains (linked lists) without deep recursion
 };
 
@@ -179,6 +188,8 @@ struct CoState {
 };
 
 std::string ValueToString(const Value& v);
+/// A struct value is copied (deeply: structs inside it too); anything else is returned as it is.
+Value CopyValue(const Value& v);
 
 /// A runtime failure inside a script (destroyed object, division by zero, ...),
 /// reported with the line it happened on.
@@ -201,6 +212,10 @@ struct CallContext {
     float deltaTime = 0.0f;
     float fixedDeltaTime = 0.02f;
     SrcLoc loc;
+    /// For OkayScript.Call (scripts converted from the old language): the host the script
+    /// runs on, and where the old VM that runs its not-yet-mapped built-ins is kept.
+    ScriptHost* host = nullptr;
+    std::shared_ptr<IScriptVM>* legacy = nullptr;
 };
 
 struct ApiProperty {
@@ -209,6 +224,7 @@ struct ApiProperty {
     std::function<Value(const Value& self, CallContext&)> get;
     std::function<void(const Value& self, const Value& v, CallContext&)> set;   ///< empty = read-only
     std::string doc;
+    bool scriptOnly = false;   ///< text scripts only: no visual-script node (its type has no wire, e.g. Quaternion)
 };
 struct ApiMethod {
     std::string name;
@@ -223,6 +239,7 @@ struct ApiMethod {
     /// No side effects (maths, queries): the visual-script node generated from it
     /// is a value node instead of a step in the flow.
     bool pure = false;
+    bool scriptOnly = false;   ///< text scripts only: no visual-script node
 };
 struct ApiType {
     std::string name;
@@ -242,7 +259,7 @@ struct ApiType {
 /// The engine binding registry (built once).
 struct EngineApi {
     std::vector<ApiType> types;
-    int gameObject = -1, transform = -1, vector3 = -1, rigidbody = -1;
+    int gameObject = -1, transform = -1, vector3 = -1, rigidbody = -1, quaternion = -1;
     int Find(const std::string& name) const;
     static const EngineApi& Get();
 };
@@ -298,6 +315,7 @@ enum class EK : std::uint8_t {
     Is,            ///< lhs is T: typeArg = T
     As,            ///< lhs as T: typeArg = T
     Lambda,        ///< x => ..., (a, b) => { ... }: `lambda` holds the parameters and body
+    DefaultOf,     ///< default(T): typeArg = T; the value a variable of type T starts with
 };
 
 struct Expr;
@@ -325,6 +343,7 @@ enum class Bind : std::uint8_t {
     ScriptSelf /*h.gameObject / h.transform: slot 0 / 1*/,
     BaseMethod /*base.M(): slot = method, member = the class that has it*/,
     BaseCtor /*: base(...) of a constructor: slot = the base class, member = its constructor (-1 = none)*/,
+    ClassStatic /*C.M(...) / M() of a static method of a plain class: slot = the method, member = the class that has it*/,
 };
 /// Methods of List<T> and Dictionary<K, V> (Bind::CollMethod's member).
 enum class CollOp : std::uint8_t {
@@ -348,6 +367,7 @@ struct Expr {
     ExprPtr object;                 ///< Member/Call receiver (null = unqualified)
     std::vector<ExprPtr> args;
     TypeRef typeArg;                ///< GetComponent<T>, new T, (T)cast
+    std::vector<TypeRef> typeArgs;  ///< a call's <A, B> (typeArg is the first): Find<int>(...) of a generic method
     // Operators
     T op = T::End;                  ///< Unary/Binary/Assign/IncDec operator
     bool prefix = false;            ///< IncDec
@@ -412,6 +432,17 @@ struct Stmt {
 
 struct Attribute { std::string name; std::vector<ExprPtr> args; SrcLoc loc; };
 
+/// A generic class or method as written (ECMA-334 15.3.2 type parameters, 15.6.1 generic
+/// methods): its tokens are kept, and each use with real types (Box<int>, Find<Health>())
+/// parses them again with the type parameters replaced, as a class or method of its own.
+struct GenericTemplate {
+    std::string name;                    ///< Box, Find
+    std::vector<std::string> params;     ///< T, K, V
+    std::vector<Token> tokens;           ///< the whole declaration
+    std::size_t headerFrom = 0, headerTo = 0;   ///< the <T, ...> after the name, in tokens
+    SrcLoc loc;
+};
+
 struct FieldDecl {
     std::vector<Attribute> attrs;
     bool isPublic = false, isProtected = false, isConst = false, isStatic = false;   ///< static: one value shared by every object running the script
@@ -423,6 +454,7 @@ struct FieldDecl {
     // checked
     Type resolved;
     int index = -1;       ///< slot in an object's fields: the classes it extends come first
+    int staticSlot = -1;  ///< static (and a plain class's const) fields: slot in the StaticStore
     bool promote = false;
     bool read = false;
 };
@@ -496,11 +528,14 @@ struct ClassDecl {
     std::vector<std::string> bases;   ///< after ':': Behaviour, or a class and / or interfaces
     std::vector<SrcLoc> baseLocs;
     bool isAbstract = false, isInterface = false;
+    bool isStruct = false;           ///< `struct`: a value type (copied when assigned, passed or stored; never null)
     bool builtin = false;            ///< Exception, which every script has
     SrcLoc loc;
     std::vector<FieldDecl> fields;
     std::vector<MethodDecl> methods;
     std::vector<PropDecl> props;     ///< properties with code (their accessors are in methods)
+    std::vector<GenericTemplate> genericMethods;   ///< T Find<T>(): made per type list when used
+    std::vector<std::string> typeParams;  ///< parsing only: class Box<T>'s T (the class is then a template)
     // checked
     int baseClass = -1;              ///< the class it extends
     std::vector<int> interfaces;     ///< the interfaces it names
@@ -531,6 +566,7 @@ struct Program {
     /// means Behaviour and the C# modifiers private / readonly / sealed / internal are accepted.
     bool csharp = false;
     std::vector<ClassDecl> classes;
+    std::vector<GenericTemplate> genericClasses;   ///< class Box<T>: made per type list when used (Box<int>)
     std::vector<EnumDecl> enums;   ///< every enum in the file (top level or inside a class)
     std::vector<Type> arrays;      ///< element type of each array type (Type{Array, i})
     /// List / Dictionary / KeyValuePair types: their type arguments.
@@ -541,6 +577,7 @@ struct Program {
     std::vector<FuncSig> funcs;
     std::vector<std::string> methodNames;   ///< every method name in the file (MethodDecl::nameId)
     int component = -1;            ///< the class that is the component
+    int staticCount = 0;           ///< slots a StaticStore needs (static fields of every class, plain classes' consts)
     int exceptionClass = -1;       ///< Exception (built in, or the script's own class of that name)
     /// Type names the checker couldn't find: maybe a script that hasn't loaded yet.
     std::vector<std::string> unknownTypes;
@@ -562,6 +599,13 @@ struct Program {
 std::shared_ptr<Program> Compile(const std::string& src, bool csharp = false);
 /// Parser entry (used by Compile).
 void Parse(const std::vector<Token>& toks, Program& out);
+/// Parse one class (a generic one's tokens with its types filled in) into `out`; false on errors.
+bool ParseClassTokens(const std::vector<Token>& toks, Program& prog, ClassDecl& out);
+/// Parse one member (a generic method's tokens with its types filled in) into class `c`.
+bool ParseMemberTokens(const std::vector<Token>& toks, Program& prog, ClassDecl& c);
+/// Make the generic classes and methods the program uses, for the types it uses them
+/// with (Box<int> becomes the class "Box<int>"), and point every use at them.
+void InstantiateGenerics(Program& prog);
 /// Checker entry (used by Compile).
 void Check(Program& prog);
 
@@ -579,7 +623,10 @@ const char* WaitTypeName(int kind);
 /// (numbers, text, Vector3, engine objects, other scripts, coroutines).
 struct ScriptView {
     struct Field { std::string name; TypeRef type; SrcLoc loc; };
-    struct Method { std::string name; std::vector<TypeRef> params; TypeRef ret; };
+    struct Method {
+        std::string name; std::vector<TypeRef> params; TypeRef ret;
+        std::vector<std::shared_ptr<Expr>> defs;   ///< per parameter: its `= value` (null: none), as written
+    };
     std::string name;
     std::vector<Field> fields;
     std::vector<Method> methods;

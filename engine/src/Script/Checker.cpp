@@ -29,7 +29,7 @@ std::string TypeName(const Type& t) {
     switch (t.kind) {
         case TK::Void: return "void"; case TK::Null: return "null"; case TK::Bool: return "bool";
         case TK::Int: return "int"; case TK::Float: return "float"; case TK::String: return "string";
-        case TK::Vector3: return "Vector3"; case TK::Any: return "any value";
+        case TK::Vector3: return "Vector3"; case TK::Quaternion: return "Quaternion"; case TK::Any: return "any value";
         case TK::Enum: return "enum"; case TK::Array: return "array";
         case TK::Object: {
             const auto& api = EngineApi::Get();
@@ -162,6 +162,7 @@ public:
                 const std::string& n = c.bases[b];
                 const SrcLoc l = c.baseLocs[b];
                 if (n == "Behaviour") {
+                    if (c.isStruct) { Error(l, "A struct can't be a Behaviour script: write class " + c.name + " : MonoBehaviour"); continue; }
                     if (c.isInterface || c.isAbstract) Error(l, std::string(c.isInterface ? "An interface" : "An abstract class") + " can't extend Behaviour");
                     else if (b != 0) Error(l, "Behaviour comes first: class " + c.name + " : Behaviour");
                     else if (comp < 0) comp = (int)i;
@@ -176,6 +177,8 @@ public:
                     continue;
                 }
                 const ClassDecl& k = prog_.classes[(std::size_t)bi];
+                if (k.isStruct) { Error(l, n + " is a struct: nothing can extend a struct"); continue; }
+                if (c.isStruct && !k.isInterface) { Error(l, "A struct can't extend a class (it can implement interfaces): " + n + " is a class"); continue; }
                 if (bi == (int)i) Error(l, "A class can't extend itself");
                 else if (k.isInterface) c.interfaces.push_back(bi);
                 else if (c.isInterface) Error(l, "An interface can only extend interfaces: " + n + " is a class");
@@ -206,10 +209,13 @@ public:
         // Every class's members first, so code can use fields and call methods in any order.
         for (ClassDecl& c : prog_.classes) { cls_ = &c; DeclareMembers(c); }
         for (std::size_t i = 0; i < prog_.classes.size(); ++i) Layout((int)i);
+        AssignStaticSlots();
+        CheckStructCycles();
         for (ClassDecl& c : prog_.classes) { cls_ = &c; CheckInheritance(c); }
+        // Every class's fields before any method, so a method can use another class's consts.
+        for (ClassDecl& c : prog_.classes) { cls_ = &c; for (FieldDecl& f : c.fields) CheckField(f); }
         for (ClassDecl& c : prog_.classes) {
             cls_ = &c;
-            for (FieldDecl& f : c.fields) CheckField(f);
             for (MethodDecl& m : c.methods) if (m.body) CheckMethod(m);
         }
         BuildDispatch();
@@ -331,6 +337,44 @@ private:
         for (FieldDecl& f : c.fields) f.index = at++;
         c.fieldCount = at;
     }
+    // Static fields (every class) and a plain class's consts live in the StaticStore:
+    // the Behaviour class's at their field index, the others after them.
+    std::vector<FieldDecl*> staticDecl_;   ///< by static slot
+    void AssignStaticSlots() {
+        const ClassDecl& comp = Cls(prog_.component);
+        int next = (int)comp.fields.size();
+        staticDecl_.assign((std::size_t)next, nullptr);
+        for (std::size_t i = 0; i < comp.fields.size(); ++i) {
+            FieldDecl& f = Cls(prog_.component).fields[i];
+            if (f.isStatic) { f.staticSlot = (int)i; staticDecl_[i] = &f; }
+        }
+        for (std::size_t k = 0; k < prog_.classes.size(); ++k) {
+            if ((int)k == prog_.component) continue;
+            for (FieldDecl& f : Cls((int)k).fields)
+                if (f.isStatic || f.isConst) { f.staticSlot = next++; staticDecl_.push_back(&f); }
+        }
+        prog_.staticCount = next;
+    }
+    // A struct holds its fields' values, so one can't hold itself (directly or through other structs).
+    void CheckStructCycles() {
+        for (std::size_t i = 0; i < prog_.classes.size(); ++i) {
+            if (!Cls((int)i).isStruct) continue;
+            std::vector<int> todo = {(int)i};
+            std::vector<char> seen(prog_.classes.size(), 0);
+            bool cycle = false;
+            while (!todo.empty() && !cycle) {
+                const int k = todo.back();
+                todo.pop_back();
+                for (const FieldDecl& f : Cls(k).fields) {
+                    if (f.isStatic || f.isConst || f.resolved.kind != TK::Class || !Cls(f.resolved.id).isStruct) continue;
+                    if (f.resolved.id == (int)i) { cycle = true; break; }
+                    if (!seen[(std::size_t)f.resolved.id]) { seen[(std::size_t)f.resolved.id] = 1; todo.push_back(f.resolved.id); }
+                }
+            }
+            if (cycle) Error(Cls((int)i).loc, "The struct " + Cls((int)i).name + " ends up holding itself: a struct can't have a field of its own type (use a class)");
+        }
+    }
+    bool IsStruct(const Type& t) const { return t.kind == TK::Class && t.id >= 0 && prog_.classes[(std::size_t)t.id].isStruct; }
     int NameId(const std::string& n) {
         auto& names = prog_.methodNames;
         for (std::size_t i = 0; i < names.size(); ++i) if (names[i] == n) return (int)i;
@@ -479,6 +523,26 @@ private:
         if (!ArgsFit(e, *m)) return;
         e.bind = Bind::ObjMethod; e.slot = m->nameId; e.member = k; e.type = m->retType;
     }
+    // C.M(...) (or M() inside C) of a static method of plain class k, its arguments already checked.
+    void CallStatic(Expr& e, int k, bool qualified) {
+        int owner = -1, index = -1;
+        MethodDecl* m = FindMethod(k, e.name, &owner, &index);
+        if (!m || m->isCtor) {
+            std::vector<std::string> opts;
+            for (auto& x : Cls(k).methods) if (x.isStatic) opts.push_back(x.name);
+            Error(e.loc, Cls(k).name + " has no static method '" + e.name + "'" + Suggest(e.name, opts));
+            return;
+        }
+        if (!m->isStatic) {
+            Error(e.loc, "'" + e.name + "' isn't static: call it on a " + Cls(k).name + " object" + (qualified ? " (new " + Cls(k).name + "(...))" : ""));
+            return;
+        }
+        if (!CanUse(owner, m->isPublic, m->isProtected)) { Error(e.loc, NotUsable(e.name, owner)); return; }
+        if (m != method_) m->called = true;
+        if (!ArgsFit(e, *m)) return;
+        e.object.reset();
+        e.bind = Bind::ClassStatic; e.slot = index; e.member = owner; e.type = m->retType;
+    }
     // base.M(...): the method of the class this one extends, not this class's override.
     void CheckBaseCall(Expr& e) {
         for (auto& a : e.args) CheckExpr(*a);
@@ -568,9 +632,19 @@ private:
         return false;
     }
     bool HasCtor(int k) { for (auto& m : Cls(k).methods) if (m.isCtor) return true; return false; }
-    int CtorWith(int k, std::size_t params) {
+    // The constructor of class k that takes `params` values (+ 1; 0 is "none"). With
+    // `defaults`, also one that takes more whose extra parameters all have default values.
+    int CtorWith(int k, std::size_t params, bool defaults = false) {
         for (std::size_t i = 0; i < Cls(k).methods.size(); ++i)
-            if (Cls(k).methods[i].isCtor && Cls(k).methods[i].params.size() == params) return (int)i + 1;   // + 1: 0 is "none"
+            if (Cls(k).methods[i].isCtor && Cls(k).methods[i].params.size() == params) return (int)i + 1;
+        if (defaults)
+            for (std::size_t i = 0; i < Cls(k).methods.size(); ++i) {
+                const MethodDecl& m = Cls(k).methods[i];
+                if (!m.isCtor || m.params.size() < params) continue;
+                bool ok = true;
+                for (std::size_t j = params; j < m.params.size(); ++j) if (!m.params[j].hasDefault) ok = false;
+                if (ok) return (int)i + 1;
+            }
         return 0;
     }
     // Which method each class's objects run for each name: the most derived body.
@@ -597,8 +671,6 @@ private:
             FieldDecl& f = c.fields[i];
             if (!names.insert(f.name).second) Error(f.loc, "'" + f.name + "' is declared twice");
             if (comp && IsSelfMemberName(f.name)) Error(f.loc, "'" + f.name + "' is already the object's own " + f.name + ": pick another name");
-            if (!comp && f.isStatic) Error(f.loc, "static members only work in the Behaviour class for now");
-            if (!comp && f.isConst) Error(f.loc, "const only works in the Behaviour class for now");
             f.resolved = ResolveType(f.type, false);
             if (f.isEvent && f.resolved.kind != TK::Func && f.resolved.kind != TK::Error)
                 Error(f.loc, "An event holds functions: event Action " + f.name + "; or event Action<int> " + f.name + ";");
@@ -615,7 +687,6 @@ private:
                 continue;
             }
             m.nameId = NameId(m.name);
-            if (!comp && m.isStatic) Error(m.loc, "static members only work in the Behaviour class for now");
             if (!names.insert(m.name).second) Error(m.loc, "'" + m.name + "' is declared twice (methods can't share a name yet)");
             m.retType = m.ret.name == "void" ? Type::Of(TK::Void) : ResolveType(m.ret, false);
             m.isCoroutine = m.retType.kind == TK::Routine;
@@ -631,7 +702,6 @@ private:
                 continue;
             }
             seen = true;
-            if (m.isCtor) { Error(p.def->loc, "Default values on constructors aren't supported yet: add a second constructor"); continue; }
             if (p.resolved.kind == TK::Error) continue;
             inFieldInit_ = true;
             scopes_.clear();
@@ -726,10 +796,13 @@ private:
             case EK::FloatLit: r = Value{e.fval}; break;
             case EK::StringLit: r = Value{e.sval}; break;
             case EK::BoolLit: r = Value{e.bval}; break;
-            case EK::Member: if (e.bind == Bind::EnumValue) r = Value{e.ival}; break;
-            case EK::Name:
-                if (e.bind == Bind::Field) {
+            case EK::Member: case EK::Name:
+                if (e.bind == Bind::EnumValue) r = Value{e.ival};
+                else if (e.bind == Bind::Field && e.kind == EK::Name) {
                     const FieldDecl& f = FieldAt(e.slot);
+                    if (f.isConst && f.init) r = Fold(*f.init);
+                } else if (e.bind == Bind::StaticField && e.slot >= 0 && e.slot < (int)staticDecl_.size() && staticDecl_[(std::size_t)e.slot]) {
+                    const FieldDecl& f = *staticDecl_[(std::size_t)e.slot];   // C.K: another class's const
                     if (f.isConst && f.init) r = Fold(*f.init);
                 }
                 break;
@@ -810,6 +883,7 @@ private:
         if (t.name == "bool") return Type::Of(TK::Bool);
         if (t.name == "string") return Type::Of(TK::String);
         if (t.name == "Vector3") return Type::Of(TK::Vector3);
+        if (t.name == "Quaternion") return Type::Of(TK::Quaternion);
         if (t.name == "IEnumerator") return Type::Of(TK::Routine);
         if (t.name == "Coroutine") return Type::Of(TK::Coroutine);
         if (int w = WaitKindOf(t.name); w >= 0) return Type{TK::Wait, w};
@@ -857,7 +931,7 @@ private:
             if (t.args.size() != 2) { Error(t.loc, t.name + " takes two types: " + t.name + "<string, int>"); return Type{}; }
             Type k = ResolveType(t.args[0], false), v = ResolveType(t.args[1], false);
             if (k.kind == TK::Error || v.kind == TK::Error) return Type{};
-            if (!IsKeyType(k)) {
+            if (!IsKeyType(k) || IsStruct(k)) {
                 Error(t.args[0].loc, "A Dictionary key must be an int, string, bool, enum or object, not " + TypeName(k));
                 return Type{};
             }
@@ -936,6 +1010,8 @@ private:
     }
     std::string ConvertError(const Type& from, const Type& to, const std::string& what) {
         if (from.kind == TK::Void) return what + " doesn't produce a value";
+        if (from.kind == TK::Null && (IsStruct(to) || to.kind == TK::Quaternion || to.kind == TK::Vector3))
+            return what + " can't be null: " + TypeName(to) + " is a value (a struct), not a reference";
         if (from.kind == TK::Float && to.kind == TK::Int)
             return what + " is a float but needs an int: write (int)(...) to drop the decimals";
         if (to.kind == TK::String) return what + " is " + TypeName(from) + ", not text: join it into text with \"\" + value";
@@ -1069,7 +1145,7 @@ private:
             return;
         }
         const int b = cls_->baseClass;
-        const int ctor = CtorWith(b, m.baseArgs.size()) - 1;
+        const int ctor = CtorWith(b, m.baseArgs.size(), true) - 1;
         if (ctor < 0 && (HasCtor(b) || !m.baseArgs.empty())) {
             Error(m.hasBaseCall ? m.baseLoc : m.loc, Cls(b).name + " has no constructor that takes " + Values(m.baseArgs.size()) +
                                                      (m.hasBaseCall ? std::string() : ": call base(...) with what it needs"));
@@ -1083,6 +1159,7 @@ private:
             MethodDecl& bc = Cls(b).methods[(std::size_t)ctor];
             if (!CanUse(b, bc.isPublic, bc.isProtected)) { Error(call->loc, Cls(b).name + "'s constructor is private: make it protected or public"); return; }
             bc.called = true;
+            for (std::size_t i = m.baseArgs.size(); i < bc.params.size(); ++i) m.baseArgs.push_back(DefaultArg(bc.params[i], m.baseLoc));
             for (std::size_t i = 0; i < m.baseArgs.size(); ++i) Expect(*m.baseArgs[i], bc.params[i].resolved, bc.params[i].name);
         }
         call->args = std::move(m.baseArgs);
@@ -1203,7 +1280,8 @@ private:
                     Error(s.expr->loc, s.expr->name + "() makes a coroutine but doesn't run it: StartCoroutine(" + s.expr->name + "())");
                     return true;
                 }
-                if (k != EK::Assign && k != EK::IncDec && k != EK::Call && !(k == EK::NullCond && s.expr->lhs->kind == EK::Call))
+                if (k != EK::Assign && k != EK::IncDec && k != EK::Call && !(k == EK::New && s.expr->bind == Bind::NewObject) &&   // new C(); runs its constructor (ECMA-334 13.7)
+                    !(k == EK::NullCond && s.expr->lhs->kind == EK::Call))
                     Error(s.expr->loc, "This line does nothing: it works out a value but doesn't use it");
                 return true;
             }
@@ -1505,6 +1583,7 @@ private:
             case EK::NullLit: e.type = Type::Of(TK::Null); return;
             case EK::This:
                 if (InComponent()) { Error(e.loc, "`this` on its own isn't a value here: use this.field or this.Method()"); return; }
+                if (method_ && method_->isStatic) { Error(e.loc, "A static method has no `this`: it runs without an object"); return; }
                 if (inFieldInit_) { Error(e.loc, "A field's starting value can't use `this`"); return; }
                 UsesSelf();
                 e.type = Type{TK::Class, ClassId()};
@@ -1559,6 +1638,12 @@ private:
                 Error(e.loc, "{ ... } only works right after `=` in a declaration: write new int[] { ... }");
                 return;
             case EK::Is: case EK::As: CheckTypeTest(e); return;
+            case EK::DefaultOf: {   // default(T): what a T variable starts as
+                const Type t = ResolveType(e.typeArg, false);
+                if (t.kind == TK::Error) return;
+                e.type = t;
+                return;
+            }
             case EK::Lambda:   // its type comes from where it goes (Expect)
                 e.type = Type::Of(TK::Lambda);
                 pending_.push_back(&e);
@@ -1764,6 +1849,7 @@ private:
             if (!f.isStatic && !f.isConst && RejectInStatic(e.name, e.loc)) return true;
             f.read = true;
             if (!f.isStatic && !f.isConst) UsesSelf();
+            if (f.staticSlot >= 0) { e.bind = Bind::StaticField; e.slot = f.staticSlot; e.type = f.resolved; return true; }
             e.bind = f.isStatic ? Bind::StaticField : Bind::Field; e.slot = fi; e.type = f.resolved;
             return true;
         }
@@ -1810,7 +1896,8 @@ private:
 
     // Resolve `obj` as a member receiver: a static type, `this`, or a value.
     // Returns: 0 = value, 1 = static type (id in typeId), 2 = this, 3 = enum (id in typeId),
-    // 4 = the script's own class (T.staticMember), -1 = error.
+    // 4 = the script's own class (T.staticMember), 5 = another class of the script (C.staticMember,
+    // id in typeId), -1 = error.
     int Receiver(Expr& obj, int& typeId) {
         if (obj.kind == EK::Name && obj.name == "base" && !FindLocal("base") && !InComponent() && cls_->baseClass >= 0)
             obj.kind = EK::This;   // base.field is the same field as this.field
@@ -1821,6 +1908,7 @@ private:
         }
         if (IsOwnClass(obj)) return 4;
         if (obj.kind == EK::Name && !FindLocal(obj.name) && FieldIndex(obj.name) < 0 && !IsSelfMemberName(obj.name)) {
+            if (int ci = ClassIndex(obj.name); ci >= 0 && ci != prog_.component) { typeId = ci; return 5; }   // C.staticMember
             if (int ei = EnumIndex(obj.name); ei >= 0) { typeId = ei; return 3; }
             int ti = api_.Find(obj.name);
             if (ti >= 0) { obj.bind = Bind::StaticType; obj.slot = ti; obj.isStaticRecv = true; typeId = ti; return 1; }
@@ -1854,6 +1942,25 @@ private:
             if (PropGetOwn(e)) return;
             if (HasMethod(e.name)) { Error(e.loc, "'" + e.name + "' is a method: call it with " + e.name + "()"); return; }
             Error(e.loc, cls_->name + " has no '" + e.name + "'" + Suggest(e.name, Names(cls_->fields)));
+            return;
+        }
+        if (r == 5) {   // C.field: a static field or const of another class
+            int owner = -1;
+            if (FieldDecl* f = FindField(typeId, e.name, &owner)) {
+                if (!f->isStatic && !f->isConst) {
+                    Error(e.loc, "'" + e.name + "' isn't static: each " + Cls(typeId).name + " has its own. Make one (new " + Cls(typeId).name + "(...)) and use that");
+                    return;
+                }
+                if (!CanUse(owner, f->isPublic, f->isProtected)) { Error(e.loc, NotUsable(e.name, owner)); return; }
+                f->read = true;
+                e.object.reset();
+                e.bind = Bind::StaticField; e.slot = f->staticSlot; e.type = f->resolved;
+                return;
+            }
+            if (FindMethod(typeId, e.name)) { Error(e.loc, "'" + e.name + "' is a method: call it with " + e.name + "(...)"); return; }
+            std::vector<std::string> opts;
+            for (auto& f : Cls(typeId).fields) if (f.isStatic || f.isConst) opts.push_back(f.name);
+            Error(e.loc, Cls(typeId).name + " has no static '" + e.name + "'" + Suggest(e.name, opts));
             return;
         }
         if (r == 3) {
@@ -1919,6 +2026,18 @@ private:
             std::vector<std::string> opts = {"x", "y", "z"};
             for (auto& p : t.props) opts.push_back(p.name);
             Error(e.loc, "Vector3 has no '" + e.name + "'" + Suggest(e.name, opts));
+            return;
+        }
+        if (ot.kind == TK::Quaternion && api_.quaternion >= 0) {
+            if (e.name == "x" || e.name == "y" || e.name == "z" || e.name == "w") {
+                e.bind = Bind::VecField; e.member = e.name == "w" ? 3 : e.name[0] - 'x'; e.type = Type::Of(TK::Float); return;
+            }
+            const ApiType& t = api_.types[(std::size_t)api_.quaternion];
+            for (std::size_t i = 0; i < t.props.size(); ++i)
+                if (t.props[i].name == e.name) { e.bind = Bind::ApiProp; e.slot = api_.quaternion; e.member = (int)i; e.type = t.props[i].type; return; }
+            std::vector<std::string> opts = {"x", "y", "z", "w"};
+            for (auto& p : t.props) opts.push_back(p.name);
+            Error(e.loc, "Quaternion has no '" + e.name + "'" + Suggest(e.name, opts));
             return;
         }
         if (ot.kind == TK::Object) {
@@ -2078,6 +2197,8 @@ private:
             }
             if (!InComponent() && HasMethod(e.name)) {   // a plain class's method (maybe one it extends): run as the object's class has it
                 for (auto& a : e.args) CheckExpr(*a);
+                if (MethodDecl* sm = FindMethod(ClassId(), e.name); sm && sm->isStatic) { CallStatic(e, ClassId(), false); return; }
+                if (RejectInStatic(e.name, e.loc)) return;
                 if (viaClass) { Error(e.loc, "'" + e.name + "' isn't static: call it without " + cls_->name + "."); return; }
                 auto self = std::make_unique<Expr>();
                 self->kind = EK::This; self->loc = e.loc; self->type = Type{TK::Class, ClassId()};
@@ -2134,6 +2255,7 @@ private:
         }
         for (auto& a : e.args) CheckExpr(*a);
         if (r < 0 || BadNullCond(e, r)) return;
+        if (r == 5) { CallStatic(e, typeId, true); return; }
         if (r == 3) { Error(e.loc, prog_.enums[(std::size_t)typeId].name + " has no method '" + e.name + "'"); return; }
         if (r == 1) {
             const ApiType& t = api_.types[(std::size_t)typeId];
@@ -2160,7 +2282,7 @@ private:
         if (ot.kind == TK::Class) { CallClassMethod(e, ot.id); return; }
         if (ot.kind == TK::Script) { CheckScriptCall(e, ot); return; }
         if (e.name == "ToString" && e.args.empty() &&
-            (ot.kind == TK::Int || ot.kind == TK::Float || ot.kind == TK::Bool || ot.kind == TK::String || ot.kind == TK::Enum || ot.kind == TK::Vector3)) {
+            (ot.kind == TK::Int || ot.kind == TK::Float || ot.kind == TK::Bool || ot.kind == TK::String || ot.kind == TK::Enum || ot.kind == TK::Vector3 || ot.kind == TK::Quaternion)) {
             // x.ToString(): the same text as "" + x
             auto empty = NewExpr(EK::StringLit, e.loc);
             empty->type = Type::Of(TK::String);
@@ -2249,8 +2371,8 @@ private:
                     if (f.isPublic && !f.isStatic && !f.isConst && !f.isEvent) v->fields.push_back({f.name, f.type, f.loc});
                 for (const MethodDecl& m : c.methods) {
                     if (!m.isPublic || m.isStatic || m.isCtor) continue;
-                    ScriptView::Method sm{m.name, {}, m.ret};
-                    for (const Param& p : m.params) sm.params.push_back(p.type);
+                    ScriptView::Method sm{m.name, {}, m.ret, {}};
+                    for (const Param& p : m.params) { sm.params.push_back(p.type); sm.defs.push_back(p.def); }
                     v->methods.push_back(std::move(sm));
                 }
                 ownView_ = std::move(v);
@@ -2269,6 +2391,7 @@ private:
         if (t.name == "bool") return Type::Of(TK::Bool);
         if (t.name == "string") return Type::Of(TK::String);
         if (t.name == "Vector3") return Type::Of(TK::Vector3);
+        if (t.name == "Quaternion") return Type::Of(TK::Quaternion);
         if (t.name == "IEnumerator") return Type::Of(TK::Routine);
         if (t.name == "Coroutine") return Type::Of(TK::Coroutine);
         const int id = api_.Find(t.name);
@@ -2301,6 +2424,23 @@ private:
         for (const auto& f : v->fields) opts.push_back(f.name);
         Error(e.loc, cls + " has no public '" + e.name + "'" + Suggest(e.name, opts));
     }
+    // A copy of a default value written in another script, if it's a plain literal
+    // (a number, maybe negative, text, true / false or null); null otherwise.
+    static ExprPtr CloneLiteral(const Expr& d, SrcLoc at) {
+        auto x = NewExpr(d.kind, at);
+        switch (d.kind) {
+            case EK::IntLit: x->ival = d.ival; return x;
+            case EK::FloatLit: x->fval = d.fval; return x;
+            case EK::StringLit: x->sval = d.sval; return x;
+            case EK::BoolLit: x->bval = d.bval; return x;
+            case EK::NullLit: return x;
+            case EK::Unary:
+                if (d.op == T::Minus && d.lhs && d.lhs->kind == EK::IntLit) { x->kind = EK::IntLit; x->ival = (std::int32_t)(0u - (std::uint32_t)d.lhs->ival); return x; }
+                if (d.op == T::Minus && d.lhs && d.lhs->kind == EK::FloatLit) { x->kind = EK::FloatLit; x->fval = -d.lhs->fval; return x; }
+                return nullptr;
+            default: return nullptr;
+        }
+    }
     // h.TakeDamage(10): a public method of another script.
     void CheckScriptCall(Expr& e, const Type& ot) {
         const std::string& cls = ScriptClassName(ot.id);
@@ -2316,6 +2456,12 @@ private:
             }
             const Type ret = ForeignType(m.ret, why);
             if (ret.kind == TK::Error) { Error(e.loc, cls + "." + e.name + "() can't be called from another script: it gives " + why); return; }
+            for (std::size_t i = e.args.size(); i < ps.size() && i < m.defs.size() && m.defs[i]; ++i) {   // left-out values with defaults
+                ExprPtr d = CloneLiteral(*m.defs[i], e.loc);
+                if (!d) { Error(e.loc, e.name + "()'s default for its value " + std::to_string(i + 1) + " isn't a plain number, text or true/false, so pass it from here"); return; }
+                CheckExpr(*d);
+                e.args.push_back(std::move(d));
+            }
             if (e.args.size() != ps.size()) { Error(e.loc, e.name + "() takes " + Values(ps.size()) + ", not " + std::to_string(e.args.size())); return; }
             for (std::size_t i = 0; i < ps.size(); ++i) Expect(*e.args[i], ps[i], "Value " + std::to_string(i + 1));
             e.bind = Bind::ScriptMethod; e.type = ret;
@@ -2489,6 +2635,12 @@ private:
             e.bind = Bind::NewWait; e.member = w; e.type = Type{TK::Wait, w};
             return;
         }
+        if (e.typeArg.name == "Quaternion") {   // new Quaternion(x, y, z, w): the four parts as they are
+            if (e.args.size() != 0 && e.args.size() != 4) { Error(e.loc, "new Quaternion takes (x, y, z, w); use Quaternion.Euler(x, y, z) for angles"); return; }
+            for (auto& a : e.args) Expect(*a, Type::Of(TK::Float), "A Quaternion part");
+            e.type = Type::Of(TK::Quaternion);
+            return;
+        }
         if (e.typeArg.name != "Vector3") {
             if (api_.Find(e.typeArg.name) >= 0 || e.typeArg.name == "GameObject")
                 Error(e.loc, "'new " + e.typeArg.name + "' isn't supported: only new Vector3(x, y, z) for now");
@@ -2508,11 +2660,11 @@ private:
         ClassDecl& k = prog_.classes[(std::size_t)ci];
         if (k.isInterface) { Error(e.loc, k.name + " is an interface: make one of the classes that implement it"); return; }
         if (k.isAbstract) { Error(e.loc, k.name + " is abstract: make one of the classes that extend it"); return; }
-        int ctor = -1;
         bool any = false;
-        for (std::size_t i = 0; i < k.methods.size(); ++i)
-            if (k.methods[i].isCtor) { any = true; if (k.methods[i].params.size() == e.args.size()) ctor = (int)i; }
-        if (ctor < 0 && (any || !e.args.empty())) {
+        for (const MethodDecl& m : k.methods) if (m.isCtor) any = true;
+        int ctor = CtorWith(ci, e.args.size(), true) - 1;
+        // new S() of a struct always works: every field at its default (ECMA-334 16.4.9)
+        if (ctor < 0 && (k.isStruct ? !e.args.empty() : (any || !e.args.empty()))) {
             Error(e.loc, k.name + " has no constructor that takes " + Values(e.args.size()));
             return;
         }
@@ -2520,7 +2672,7 @@ private:
             MethodDecl& m = k.methods[(std::size_t)ctor];
             if (!CanUse(ci, m.isPublic, m.isProtected)) { Error(e.loc, k.name + "'s constructor is private: make it public to use it here"); return; }
             m.called = true;
-            for (std::size_t i = 0; i < e.args.size(); ++i) Expect(*e.args[i], m.params[i].resolved, m.params[i].name);
+            if (!ArgsFit(e, m)) return;   // left-out values with defaults are filled in
         }
         e.bind = Bind::NewObject; e.slot = ci; e.member = ctor; e.type = Type{TK::Class, ci};
     }
@@ -2559,7 +2711,8 @@ private:
         e.type = e.kind == EK::Is ? Type::Of(TK::Bool) : t;
     }
 
-    static bool CanBeNull(const Type& t) {
+    bool CanBeNull(const Type& t) const {
+        if (IsStruct(t)) return false;   // a struct is a value
         return t.kind == TK::Object || t.kind == TK::Array || t.kind == TK::Class || t.kind == TK::List || t.kind == TK::Dict ||
                t.kind == TK::Func || t.kind == TK::Routine || t.kind == TK::Coroutine || t.kind == TK::Wait || t.kind == TK::Script;
     }
@@ -2609,6 +2762,7 @@ private:
                 break;
             case T::Star:
                 if (a.IsNumeric() && b.IsNumeric()) { numeric(); return; }
+                if (a.kind == TK::Quaternion && (b.kind == TK::Quaternion || b.kind == TK::Vector3)) { e.type = b; return; }   // turn by both / turn the vector
                 if (a.kind == TK::Vector3 && b.IsNumeric()) { e.type = a; e.promoteR = b.kind == TK::Int; return; }
                 if (a.IsNumeric() && b.kind == TK::Vector3) { e.type = b; e.promoteL = a.kind == TK::Int; return; }
                 break;
@@ -2625,10 +2779,14 @@ private:
                 break;
             case T::EqEq: case T::NotEq:
                 e.type = Type::Of(TK::Bool);
+                if (IsStruct(a) || IsStruct(b)) {
+                    Error(e.loc, "A struct has no " + op + " (ECMA-334: only if the struct defines one): compare its fields");
+                    return;
+                }
                 if (a.IsNumeric() && b.IsNumeric()) {
                     e.promoteL = a.kind == TK::Int && b.kind == TK::Float; e.promoteR = b.kind == TK::Int && a.kind == TK::Float; return;
                 }
-                if (a == b && (a.kind == TK::Bool || a.kind == TK::String || a.kind == TK::Vector3 || a.kind == TK::Enum)) return;
+                if (a == b && (a.kind == TK::Bool || a.kind == TK::String || a.kind == TK::Vector3 || a.kind == TK::Quaternion || a.kind == TK::Enum)) return;
                 // Arrays, lists, dictionaries and class objects compare as references (or with null).
                 if (a.kind != TK::Object && b.kind != TK::Object && (CanBeNull(a) || CanBeNull(b)) &&
                     (a == b || a.kind == TK::Null || b.kind == TK::Null || (a.kind == TK::Class && b.kind == TK::Class && MayBeSame(a.id, b.id))))
@@ -2654,7 +2812,12 @@ private:
     bool Assignable(Expr& e) {
         if (e.kind == EK::Index) return true;
         switch (e.bind) {
-            case Bind::StaticField: case Bind::ScriptField: return true;
+            case Bind::ScriptField: return true;
+            case Bind::StaticField: {
+                const FieldDecl* f = e.slot >= 0 && e.slot < (int)staticDecl_.size() ? staticDecl_[(std::size_t)e.slot] : nullptr;
+                if (f && f->isConst) { Error(e.loc, "'" + f->name + "' is const, so it can't change"); return false; }
+                return true;
+            }
             case Bind::ObjField: {
                 FieldDecl* f = FindField(e.object->type.id, e.name);
                 if (f && IsBuiltinField(*f) && !cls_->builtin) { Error(e.loc, "'" + e.name + "' can only be read"); return false; }
@@ -2739,7 +2902,10 @@ private:
                 ok = (lt.kind == TK::String) || (lt.IsNumeric() && rt.IsNumeric()) || (lt.kind == TK::Vector3 && rt.kind == TK::Vector3);
                 break;
             case T::MinusEq: ok = (lt.IsNumeric() && rt.IsNumeric()) || (lt.kind == TK::Vector3 && rt.kind == TK::Vector3); break;
-            case T::StarEq: case T::SlashEq: ok = (lt.IsNumeric() && rt.IsNumeric()) || (lt.kind == TK::Vector3 && rt.IsNumeric()); break;
+            case T::StarEq: case T::SlashEq:
+                ok = (lt.IsNumeric() && rt.IsNumeric()) || (lt.kind == TK::Vector3 && rt.IsNumeric()) ||
+                     (e.op == T::StarEq && lt.kind == TK::Quaternion && rt.kind == TK::Quaternion);
+                break;
             case T::PercentEq: ok = lt.IsNumeric() && rt.IsNumeric(); break;
             default: break;
         }
@@ -2837,8 +3003,18 @@ std::shared_ptr<Program> Compile(const std::string& src, bool csharp) {
     p->csharp = csharp;
     std::vector<Token> toks = Lex(src, p->diags);
     Parse(toks, *p);
+    InstantiateGenerics(*p);
     AddBuiltins(*p);
     Check(*p);
+    // A generic used with two types reports a mistake in its code twice: keep one.
+    std::vector<ScriptDiagnostic> unique;
+    for (const ScriptDiagnostic& d : p->diags) {
+        bool dup = false;
+        for (const ScriptDiagnostic& u : unique)
+            if (u.line == d.line && u.column == d.column && u.severity == d.severity && u.message == d.message) { dup = true; break; }
+        if (!dup) unique.push_back(d);
+    }
+    p->diags = std::move(unique);
     return p;
 }
 

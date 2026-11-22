@@ -92,6 +92,7 @@ const Built& Data() {
                 const bool isStatic = pass == 1;
                 const std::string prefix = isStatic ? t.name : recv;
                 for (const ApiProperty& p : isStatic ? t.staticProps : t.props) {
+                    if (p.scriptOnly) continue;
                     VsApiEntry g;
                     g.type = t.name + "." + p.name; g.member = p.name;
                     g.title = t.name + "." + p.name; g.doc = p.doc;
@@ -112,6 +113,7 @@ const Built& Data() {
                     add(s, bs, isStatic);
                 }
                 for (const ApiMethod& m : isStatic ? t.staticMethods : t.methods) {
+                    if (m.scriptOnly) continue;
                     VsApiEntry e;
                     e.type = t.name + "." + m.name + "/" + std::to_string(m.params.size());
                     // Two overloads with the same number of parameters (layer name

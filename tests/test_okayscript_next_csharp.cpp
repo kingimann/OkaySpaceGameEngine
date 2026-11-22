@@ -787,7 +787,7 @@ static void Classes() {
         CHECK(Has(d, 0, "'secret' is private to Bag: make it public to use it here", 17, 21));
         CHECK(Has(d, 0, "'Hidden' is private to Bag: make it public to use it here", 18, 11));
         CHECK(Has(d, 0, "'transform' only exists in the Behaviour class: Bag isn't on an object", 5, 26));
-        CHECK(Has(d, 0, "static members only work in the Behaviour class for now", 6, 16));
+        CHECK(!Has(d, 0, "static members only work in the Behaviour class for now"));   // plain classes have statics now (csharp_language)
         CHECK(Has(d, 0, "A constructor can't return a value", 7, 25));
         CHECK(Has(d, 0, "Bag already has a constructor that takes 1 value", 8, 12));
         CHECK(Has(d, 0, "A class extends one class, named first: Bag is a class", 11, 21));

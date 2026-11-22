@@ -20,6 +20,9 @@ struct NextScriptVM::Impl {
     bool pending = false;
     bool finalCompile = false;   ///< the scene has started: report unknown types instead of waiting
     std::vector<std::pair<std::string, vs::VsValue>> pendingFields;   ///< Inspector values until then
+    /// The old OkayScript VM that runs the built-ins a converted script still calls
+    /// through OkayScript.Call (made on first use, bound to the same host).
+    std::shared_ptr<IScriptVM> legacy;
 };
 
 void NextScriptVM::ForgetSceneStatics(const Scene* scene) { script::ForgetSceneStatics(scene); }
@@ -136,6 +139,8 @@ void NextScriptVM::Bind(ScriptHost* host) {
     if (m_impl->inst && host) {
         m_impl->inst->Context().self = host->gameObject;
         m_impl->inst->Context().component = host->component;
+        m_impl->inst->Context().host = host;
+        m_impl->inst->Context().legacy = &m_impl->legacy;
         if (host->gameObject && host->gameObject->scene()) {
             try {
                 m_impl->inst->AttachStatics(SceneStatics(host->gameObject->scene(), m_impl->source));
@@ -237,6 +242,7 @@ vs::VsValue ToVs(const Value& v) {
     if (auto* f = std::get_if<float>(&v)) return vs::VsValue{*f};
     if (auto* s = std::get_if<std::string>(&v)) return vs::VsValue{*s};
     if (auto* p = std::get_if<Vec3>(&v)) return vs::VsValue{*p};
+    if (auto* q = std::get_if<Quat>(&v)) return vs::VsValue{q->ToEuler()};   // a rotation shows as its angles (the Inspector)
     // An object (GameObject / Transform / component) is its object.
     if (auto* o = std::get_if<ObjRef>(&v)) return vs::VsValue::Object(o->go);
     return vs::VsValue{};
@@ -265,6 +271,7 @@ bool FromVs(const vs::VsValue& v, const Type& t, const std::string& param, Value
             return true;
         }
         case TK::Vector3: if (!v.IsVec3()) return wrong("a Vector3"); out = Value{v.AsVec3()}; return true;
+        case TK::Quaternion: if (!v.IsVec3()) return wrong("angles (a Vector3)"); out = Value{Quat::Euler(v.AsVec3())}; return true;
         case TK::Object:   // GameObject or a component: the object's id, resolved where it's used
             if (!v.IsObject()) return wrong("an object");
             out = v.AsObjectId() ? Value{ObjRef{v.AsObjectId(), t.id}} : Value{};
@@ -281,6 +288,7 @@ Value DefaultOf(const Type& t) {
         case TK::Float: return Value{0.0f};
         case TK::String: return Value{std::string()};
         case TK::Vector3: return Value{Vec3::Zero};
+        case TK::Quaternion: return Value{Quat::Identity};
         default: return Value{};
     }
 }

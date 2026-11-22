@@ -4739,6 +4739,11 @@ add_executable(test_texture_asset test_texture_asset.cpp)
 target_link_libraries(test_texture_asset PRIVATE okay::engine)
 add_test(NAME texture_asset COMMAND test_texture_asset)
 set_tests_properties(texture_asset PROPERTIES TIMEOUT 240)
+# The OpenGL renderer drawing from the shared texture asset: our own mip chain, hot reload re-upload, anisotropy, freeing (Mesa llvmpipe through EGL; SKIPPED without one).
+add_executable(test_gl_texture_asset test_gl_texture_asset.cpp)
+target_link_libraries(test_gl_texture_asset PRIVATE okay::engine ${CMAKE_DL_LIBS})
+add_test(NAME gl_texture_asset COMMAND test_gl_texture_asset WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(gl_texture_asset PROPERTIES TIMEOUT 240)
 
 # Colliders behave as the shapes they are (not boxes): Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield, 2D polygon / capsule / composite.
 add_executable(test_collider_shapes test_collider_shapes.cpp)

@@ -382,7 +382,7 @@ do
   check("unpack multi", a == 7 and b == "hey" and c == 9 and nextpos == 2 + 4 + 1 + 1)
   check("unpack pos", string.unpack("<i2", "\0\0\5\0", 3) == 5 and string.unpack("<i2", "\0\0\5\0", -2) == 5)
   check("unpack short", not pcall(string.unpack, "i4", "abc") and not pcall(string.unpack, "i1", "a", 5))
-  check("pack method", ("<I2"):pack(258) == "\2\1" and ("\2\1"):unpack("<I2") == 258)
+  check("pack method", ("<I2"):pack(258) == "\2\1" and ("<I2"):unpack("\2\1") == 258)
   check("pack spaces", string.pack(" < i1 ", 3) == "\3")
   check("pack integer floats", string.pack("i1", 3.0) == "\3" and not pcall(string.pack, "i1", 3.5))
 end

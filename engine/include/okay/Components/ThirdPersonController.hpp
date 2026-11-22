@@ -388,7 +388,7 @@ public:
             // (every use prompt, pickup and bag) for who that is, twice a frame.
             if (!OldPlayerPath() && !Input::GetKey(k) && !Input::GetKeyDown(k)) return;
             if ((bit == PlayerInput::LeanLeft || bit == PlayerInput::LeanRight) &&
-                LeanKeyTaken(gameObject ? gameObject->scene() : nullptr, k)) return;   // a use or bag press, not a lean
+                LeanKeyTaken(gameObject ? gameObject->scene() : nullptr, k, gameObject)) return;   // a use or bag press, not a lean
             if (Input::GetKey(k))     in.held |= bit;
             if (Input::GetKeyDown(k)) in.pressed |= bit;
         };

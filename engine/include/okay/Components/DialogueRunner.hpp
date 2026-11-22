@@ -10,11 +10,16 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Math/Quat.hpp"
+#include "okay/Math/Vec3.hpp"
 #include <functional>
 #include <string>
 #include <vector>
 
 namespace okay {
+
+class CinemachineBrain;
+class VirtualCamera;
 
 class DialogueRunner final : public Behaviour {
 public:
@@ -31,6 +36,17 @@ public:
     bool  canCancel = true;             ///< Escape ends the conversation
     int   startNode = -1;               ///< the node to start at (-1 = the graph's start)
     std::string playerName;             ///< who talks (empty = the player: tag "Player" or the camera's subject)
+
+    /// A camera shot for one line: when the line with this node id starts, the main camera's brain
+    /// blends to the virtual camera with this object name; when the conversation ends it goes back
+    /// to what it showed before. Lines without a shot keep the shot that is on. Saved in the scene record.
+    struct CameraShotEntry { int node = -1; std::string camera; };
+    std::vector<CameraShotEntry> cameraShots;
+    float shotBlend = -1.0f;            ///< blend seconds into a line's shot (< 0 = the shot's own time)
+    /// Set (or clear, with "") the shot of line `nodeId`.
+    void SetCameraShot(int nodeId, const std::string& camera);
+    /// The shot of line `nodeId`, "" when it has none.
+    std::string CameraShot(int nodeId) const;
 
     /// What the box shows: the speaker, the whole line and the part typed so far,
     /// the portrait path, and the visible choices at a choice node.
@@ -108,6 +124,9 @@ private:
 
     void Present();
     void Ended();
+    void StartShot();                  ///< the current line's camera shot, if it has one
+    void EndShot();                    ///< back to the shot from before the conversation
+    CinemachineBrain* MainBrain();       ///< the main camera's brain; adds one for the talk when it has none
     void HandleInput();
     void DrawUI();
     void SetPrompt(const std::string& text);
@@ -123,6 +142,15 @@ private:
     int   m_lineId = -1;
     bool  m_wasActive = false;
     std::string m_promptShown;
+    bool m_shotOn = false;              ///< a line's shot is forced on the brain
+    VirtualCamera* m_shotBefore = nullptr;   ///< what the brain had forced before (checked before use)
+    // A camera that had no brain: the runner adds one for the talk and takes it away again at the end, putting the
+    // camera back as it was (its own pose and lens), so whatever drove it before (a controller, a script) has it again.
+    CinemachineBrain* m_ownBrain = nullptr;  ///< the brain this runner added (compared by address, never read)
+    GameObject* m_ownBrainOn = nullptr;      ///< the camera object it was added to (checked before use)
+    Vec3  m_camPos{};
+    Quat  m_camRot = Quat::Identity;
+    float m_camFov = 60.0f, m_camOrtho = 5.0f;
 };
 
 /// True while a built-in story overlay on `go` owns the pointer (a running dialogue

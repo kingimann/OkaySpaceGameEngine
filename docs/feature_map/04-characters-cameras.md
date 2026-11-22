@@ -10,7 +10,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **What:** One component, Player Controller, makes a first- or third-person character (View = First, Third or Both). Its View setting says which views exist (First only, Third only, or Both with a toggle key and a blended camera). The movement and camera code lives in parts it adds and removes itself.
 - **Parts:**
   - 4.1.1 Player Controller wrapper - `Components/PlayerController` - ViewMode First/Third/Both, SetViewMode, Add, Adopt (wraps old scenes' separate controllers), CurrentView; script set_view/get_view
-  - 4.1.2 First-person movement part - `Components/FirstPersonController` - walk/run, jump, crouch/prone, lean (Q/E), slide, dodge, dive, vault, swim, view bob, right-mouse zoom, IK look
+  - 4.1.2 First-person movement part - `Components/FirstPersonController` - walk/run, jump, crouch/prone, lean (Q/X; E is Interact), slide, dodge, dive, vault, swim, view bob, right-mouse zoom, IK look
   - 4.1.3 Third-person movement part - `Components/ThirdPersonController` - same movement set plus the orbit camera, aim, shoulder offset and spring arm (4.6)
   - 4.1.4 View toggle and camera blend - `Components/PlayerView` - V or gamepad Back, Switch Blend Time, Easing, Snap, Eye Offset, Third Person Distance, head and neck hidden near the eyes
   - 4.1.5 Shared feel pieces - `Components/ControllerFeel` - AnimLink (feeds Animator parameters), FovKick, Landing, LookSmoother, FollowPivot, SpringArm
@@ -162,14 +162,15 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.8.6 Camera rig layer - `Components/VirtualCamera`, `Components/CameraMath` - Camera Rig styles (Follow, Orbit, Look At), spring damping (frame-rate independent, no overshoot), screen dead zone and soft zone, look ahead, target groups (frame several objects, step back to fit), wall collision (sphere sweep, triggers and chosen layers ignored), see-through blockers, a shot's own blend time and style
   - 4.8.7 Blends and priority - `Components/CinemachineBrain` - Cut, Linear, Ease In and Out, Ease In, Ease Out and a custom curve; the shot being left keeps moving during a blend, an interrupted blend starts from the picture on screen (no pop), `ForceLive` cuts to a named shot until released
   - 4.8.9 Camera zones and presets - `Components/CameraZone`, `Components/VirtualCamera` - a box that blends a rig's field of view, offset and snappiness across its edge (priority, per-shot filter); `ApplyPreset`: Platformer, Top-down, Third person, First person, Racing, Cinematic
+  - 4.8.10 Dialogue camera shots - `Components/DialogueRunner` - a per-line Camera shots list (node number and virtual camera name): the brain blends to it when the line starts and goes back to the shot it had when the conversation ends; a main camera with no brain gets one for the talk only, and at the end it is removed and the camera is put back as it was (a cut), so its controller drives it again; Shot blend seconds; saved in the scene record
   - 4.8.8 2D rigs - `Components/VirtualCamera`, `Components/CameraRoom` - flat 2D camera with zones, confine to the picture edges, Camera Room boxes the view is held in, sliding to the next room
 - **Code:** `Components/VirtualCamera`, `Components/CinemachineBrain`, `Components/CameraMath`, `Components/CameraCollision`, `Components/CameraRoom`, `Components/CameraZone`, `Components/DollyPath`, `Components/Camera`, `Scene/EnsureCamera`
 - **API:** `VirtualCamera::priority`, `BindingMode`, `AddImpulse`, `CinemachineBrain::blendTime`, `LiveCamera()`, `DollyPath`, `DollyCart`, `Scene::CameraStack()`, `Camera::ClearPlan`, `VirtualCamera::ApplyStyle`, `DampingMode`, `groupTargets`, `CameraRoom`, `cam::BlendStyle`, `CinemachineBrain::ForceLive`; scripts `Camera.BlendTo`, `Camera.SetTarget`, `Camera.AddToGroup`, `Camera.RemoveFromGroup`
 - **Editor:** Inspector panels for Virtual Camera (Camera Rig, Framing, Group, 2D camera, Walls sections), Cinemachine Brain (blend style and curve), Camera Room, Dolly Path, Dolly Cart; Add Component "Camera Rig" and "Camera Room"; GameObject > Camera > Camera Rig: Follow / Orbit / Look At and Camera Room; Scene view gizmo (frustum, dead and soft zone, wall probe, group circle, room boxes); Camera Preview for a selected rig
 - **Docs:** `docs/gameplay/cameras.md`, `docs/gameplay/cameras.md` (Cameras), `docs/engine/splines.md`, `docs/gameplay/cutscenes.md`
-- **Tests:** `cinemachine`, `layers_tags_cameras`, `scene_cameras`, `camera_cine`, `camera_math`, `camera_rig`, `camera_robust`, `char_cam_fixes`
+- **Tests:** `cinemachine`, `layers_tags_cameras`, `scene_cameras`, `camera_cine`, `camera_math`, `camera_rig`, `camera_robust`, `char_cam_fixes`, `interact_seat_dialogue`
 - **Status:** Works - cinemachine, scene_cameras and layers_tags_cameras tests exist; the depth rule for the main camera landed in #570
-- **Open:** the shot now really faces its Look At target (before the camera upgrade it aimed the opposite way: the vcam rotated +Z to the target but a camera looks down -Z); no dialogue hook exists, scripts call `Camera.BlendTo` from a dialogue event; the camera upgrade was checked headless only (`docs/gameplay/cameras.md`); the player and editor still draw only the main camera; looping their render path over `CameraStack()` with ClearPlan, viewport rect and culling mask is not done (per docs/gameplay/cameras.md)
+- **Open:** the shot now really faces its Look At target (before the camera upgrade it aimed the opposite way: the vcam rotated +Z to the target but a camera looks down -Z); the dialogue camera shot is per Dialogue Runner (node number), not stored in the .okaydialog graph itself, and the Dialogue window does not show it; the camera upgrade was checked headless only (`docs/gameplay/cameras.md`); the player and editor still draw only the main camera; looping their render path over `CameraStack()` with ClearPlan, viewport rect and culling mask is not done (per docs/gameplay/cameras.md)
 - **Related:** 4.10, 10.1, 2.7, 1.3
 - **Words:** virtual camera, vcam, Cinemachine, brain, priority, dolly, track, rail, Follow, LookAt, confiner, Dutch, camera stack, depth, main camera, shot
 - **Seen as:** camera cuts instead of blending; the wrong camera is live; two cameras fight for main; a scene has no camera and renders black; the camera leaves the level
@@ -217,17 +218,18 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Ask me like:** "shake the camera on landing"; "zoom the 2D camera smoothly to a target"
 
 ### 4.11 Seats and sitting
-- **What:** A place to sit: the nearest local player presses E to be moved onto the seat point, the Animator plays the sit-down, loop and stand-up clips, and moving or jumping stands up.
+- **What:** A place to sit: the nearest local player presses Interact (E or pad X by default, the shared rebindable action) to be moved onto the seat point, the Animator plays the sit-down, loop and stand-up clips, and moving or jumping stands up.
 - **Parts:**
   - 4.11.1 Seat component - `Components/Seat` - seatHeight (0.45), sitPoint, facing, type (chair, ground, bench), exitPoint, useRadius, prompt, Claim and Release
+  - 4.11.3 Shared Interact action - `Input/GameInput`, `Input/InputActions` - InteractPressed, UseKeyDown, UseKeyName: seats, dialogue, pickups, hold-to-drop and visual-script interact events read the one "Interact" action; a component key left on E follows a rebinding, any other key stays its own; first-person lean-right moved from E to X (old scenes keep a saved E, and a seat or pickup in range of that player, or the seat that player sits on, still takes that press; in build mode its keys, X delete included, are not leans); death on a seat puts the body at the exit point; a seated body that is destroyed is let go of the same frame; in build mode a logic Button ignores every controller button (pad X turns pieces), E still presses it
   - 4.11.2 Sit actions and scripts - `Animation/HumanoidActions` - sit(), stand_up(), is_sitting(), interact(), seat_prompt(); clips in 5.12
-- **Code:** `Components/Seat`, `Animation/HumanoidActions`
+- **Code:** `Components/Seat`, `Animation/HumanoidActions`, `Input/GameInput`
 - **API:** `Seat`, scripts `sit()`, `sit("Chair")`, `stand_up()`, `is_sitting()`, `interact()`, `seat_prompt()`; visual scripts Sit, Stand Up, Is Sitting, Interact, Seat Prompt
 - **Editor:** Seat inspector panel
 - **Docs:** `docs/gameplay/animation.md` (Actions: sitting)
-- **Tests:** `ik_state_weight`
+- **Tests:** `ik_state_weight`, `interact_seat_dialogue`
 - **Status:** Works - per docs and the action framework test in ik_state_weight (sit then stand); I read Seat.hpp
-- **Open:** there is no shared interact key (first-person lean-right is also E); death does not teleport to the exit point
+- **Open:** vehicle seats, chests and crafting stations still read their own raw keys (vehicle seats are owned by the vehicle work); third-person and shooter lean-right are still E (a seat or pickup in range takes that press); an on-screen touch Interact button is not read by the shared helper; checked headless only
 - **Related:** 5.12, 4.1
 - **Words:** seat, sit, chair, bench, stand up, interact, sit down, exit point
 - **Seen as:** the player sits and also leans; the chair pose floats above the seat; cannot stand up

@@ -269,8 +269,8 @@ public:
         {
             float target = 0.0f;
             const Scene* ls = gameObject ? gameObject->scene() : nullptr;
-            if (leanLeftKey  && Input::GetKey(leanLeftKey)  && !LeanKeyTaken(ls, leanLeftKey))  target -= 1.0f;
-            if (leanRightKey && Input::GetKey(leanRightKey) && !LeanKeyTaken(ls, leanRightKey)) target += 1.0f;
+            if (leanLeftKey  && Input::GetKey(leanLeftKey)  && !LeanKeyTaken(ls, leanLeftKey, gameObject))  target -= 1.0f;
+            if (leanRightKey && Input::GetKey(leanRightKey) && !LeanKeyTaken(ls, leanRightKey, gameObject)) target += 1.0f;
             float lt = leanSpeed > 0.0f ? (1.0f - std::exp(-leanSpeed * dt)) : 1.0f;
             m_lean += (target - m_lean) * lt;
         }

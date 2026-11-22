@@ -7,6 +7,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 ## 1. Core & scene
 
 ### 1.1 Loop and time
+- **System:** Game Loop and Time - Runs the game frame by frame and keeps the clock: frame time, time speed, pause and quit.
 - **What:** The game loop and the global clock: how a frame starts, how long it lasted, how fast time runs, whether the game is paused or asked to quit, plus the seedable random generator, UTF-8 helpers, timers you poll and the save snapshot of the clocks. Three passes are on main: #579 (one frame driver, `GameLoop`, named clocks, hit stop, pause and quit reasons, random extras), #581 (frame stepping, capture, recording, statistics) and #585 (the player on `GameLoop`, cooldowns, clock ramps, time snapshot, loop console).
 - **Parts:**
   - 1.1.1 Main loop - `Core/Application` - `Application::Run` is a thin loop on `GameLoop`; the terminal is closed by a destructor so a throwing component no longer leaves it raw; `Config::maxDelta`, `fixedStep`, `maxFixedSteps`, `catchExceptions`, `app.loop()`, `ExitCode()`; `Config::pacing` is `Pacing::Sleep` (default) or `Pacing::Limiter` (uses `FrameLimiter`, 1.18.7); options set on `loop()` before `Run` (capture, frame budget, statistics window) now stand; defaults to the console renderer (`sandbox/main.cpp`); the player and the editor's Play mode each run their own `GameLoop` (1.1.6)
@@ -38,6 +39,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Pause freezes the timers but my menu animation should keep running, which time do I use?"; "Add a seeded random so the loot rolls are the same on every run"; "Freeze the game for 80 ms when the player is hit"; "Give the weapon a 0.25 s cooldown"; "Switch the editor's Play mode to GameLoop"
 
 ### 1.2 Timers and tweens
+- **System:** Timers and Tweens - Does something after a delay or every few seconds, and slides a value smoothly from one number to another.
 - **What:** Do something after a delay, every N seconds, or animate a value over time with easing, from C++, scripts or the Inspector; timers can follow a named clock and die with the object they act on, eases can be written as text, any property can be tweened and springs follow a moving target.
 - **Parts:**
   - 1.2.1 Scene scheduler - `Core/Scheduler` - `Invoke`, `InvokeRepeating`, `Tween(duration, onUpdate, onComplete)`; options for unscaled time, tag, owner, clock and object; Cancel, CancelByTag/Owner/Object, SetPaused, SetPausedByTag/Owner, SetInterval, Remaining, CountByTag; safe to call from inside a callback; elapsed time kept in double; a backlog runs at most `kMaxCatchUp` (4096) times per update; a throwing callback drops only its own task (the first exception is rethrown after the update)
@@ -65,6 +67,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Make the door slide open over half a second with an ease-out"; "Cancel every timer tagged `wave` when the player dies"; "Tween this light's intensity by name"; "Make the menu slide ignore the pause"
 
 ### 1.3 Scene graph
+- **System:** Scenes and Objects - Holds every object in a level with its position, parent and parts, runs their start and update steps, and checks a level for mistakes.
 - **What:** The object model: a Scene owns GameObjects, each with a Transform and components; layers and tags classify them and a layer matrix decides which colliders interact. Deep hierarchies (a 100000-deep parent chain), the Transform and spawn API, and the project tag and layer lists were hardened and extended in #586.
 - **Parts:**
   - 1.3.1 Scene container - `Scene/Scene` - create, find, instantiate, destroy objects; sibling order; `FindObjectsOfType`; `Instantiate` overloads (position and rotation, parent, `worldPositionStays`), `Duplicate` (same parent and local pose, `UniqueName` "Cube (1)"), `DestroyImmediate`, `WorldBounds(go, includeChildren)`, `FindGameObjectsWithName/OnLayer`, `CountWithTag/OnLayer`, `UnlistedTags`, `ReplaceTag`; per-scene `renderSettings`, physics worlds, `fixedTimeStep`, `mainCamera`, scheduler and tween manager
@@ -88,6 +91,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Stop layer 3 colliding with layer 4"; "Why does `SetParent` change the child's local position?"; "Name layer 8 Enemy and save it with the project"; "Duplicate the selected child under the same parent"
 
 ### 1.4 Scene lifecycle
+- **System:** Scenes and Objects
 - **What:** What happens when objects are created, switched on and off, destroyed and when scenes are loaded, replaced, added next to each other or streamed in over several frames.
 - **Parts:**
   - 1.4.1 Start and enable events - `Scene/Scene`, `Scene/Component` - Start waits until a component is enabled on an active object; OnEnable/OnDisable alternate and are delivered at the start of the next frame
@@ -110,6 +114,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Load Level2 in the background and show progress, then switch"; "Keep the music player alive across scenes"
 
 ### 1.5 Scene serializer
+- **System:** Scene Files - Writes a level to a readable text file and reads it back, and copies or merges objects.
 - **What:** Reads and writes the human-readable `okayscene` text format (version 3), clones objects, merges scenes and records what a round trip keeps.
 - **Parts:**
   - 1.5.1 Save and load - `Scene/SceneSerializer` - `Serialize`, `SaveToFile`, `Deserialize`, `LoadFromFile`; `kSceneFormatVersion = 3`; packed (obfuscated) files are unpacked on read
@@ -135,6 +140,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Add my new component to the scene file without touching the big chain"; "Keep two colliders on one object through save and load"
 
 ### 1.6 Prefabs and templates
+- **System:** Prefabs - Saves an object as a reusable file you can place many times; changing the file changes every copy.
 - **What:** Reusable objects saved as `.okayprefab` files and the starter worlds, players and UI screens the editor creates from templates.
 - **Parts:**
   - 1.6.1 Prefab files - `Scene/SceneSerializer` - `SaveObjectToFile`, `InstantiateFromFile`, `Instantiate`; an instance remembers `prefabSource`
@@ -162,6 +168,9 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Re-apply the prefab but keep this instance's colour"; "Add a Wave Shooter template next to Platformer"
 
 ### 1.7 Saves and prefs
+- **System:**
+  - Save Games - Saves a player's progress in named slots (with checkpoints, versions and checksums) and remembers settings between runs. Code: `Core/SaveFramework`, `Core/SaveFrameworkScene`, `Core/SaveFrameworkSync`, `Core/GameSaves`, `Core/SaveData`, `Core/Prefs`
+  - Whole-Scene Save - The older save slots that capture the whole scene into a `.okaygame` file - being merged into Save Games (PR #1132) Code: `Core/SaveGame`, `Components/AutoSave`
 - **What:** Player progress and settings on disk: whole-game save slots, an Easy-Save-style typed key/value store, and a simple preferences bag.
 - **Parts:**
   - 1.7.1 Save slots - `Core/SaveGame` - `SaveGame::Save/Load/LoadNow/List/Info/Delete`, versioned and checksummed `<slot>.okaygame`, `.bak` fallback, migration hook, size caps
@@ -182,6 +191,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Show a load menu listing every slot with its play time"; "Keep unlocks across slots"
 
 ### 1.8 Localization
+- **System:** Localization - Shows the game's text in the player's language, with tools to edit, import and preview translations.
 - **What:** Player-facing text in several languages: a string table, language choice, fallbacks, `{0}`/`{name}` and plural formatting, and scene text that follows the language.
 - **Parts:**
   - 1.8.1 String table - `Core/Localization` - `StringTable` keys by languages with translator notes, `.okayloc` and CSV formats, completion per language
@@ -203,6 +213,9 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Add Polish plural rules"; "Why does the Japanese menu show squares?"
 
 ### 1.9 Events and ECS
+- **System:**
+  - ECS World - A second, data-only object store for very many simple things, mirrored into the scene and the network - duplicate of Scenes and Objects (kept on purpose: opt-in, mirrors objects through `SceneBridge`; no merge planned) Code: `ECS/World`, `ECS/Systems`, `ECS/SceneBridge`, `ECS/NetWorld`, `ECS/NetWorldSync`
+  - Core Utilities Code: `Core/EventBus`
 - **What:** A typed publish/subscribe event bus and a small data-oriented ECS that lives beside the GameObject scene, with a bridge that draws ECS entities as GameObjects and a networked world.
 - **Parts:**
   - 1.9.1 Event bus - `Core/EventBus` - `Subscribe<E>`, `Publish`, scoped subscription handle; safe when handlers subscribe, unsubscribe or publish during a publish
@@ -225,6 +238,9 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Use the ECS for 5000 bullets and draw them through the bridge"; "Send only changed components to clients"
 
 ### 1.10 Logging and profiling
+- **System:**
+  - Logging - Writes messages for developers (info, warnings, errors) to log files and shows them in the editor Console and diagnostics panels. Code: `Core/Log`, `editor/ConsolePanel.*`, `Debug/ConsoleModel`, `Debug/DebugUtil`, `Debug/Debug`
+  - Profiler - Measures where each frame's time and memory go, on the CPU and the GPU, so slow parts can be found. Code: `Core/Profiler`, `Debug/FrameHistory`, `Debug/GpuTimer`, `Debug/RenderStats`, `Debug/MemoryTracker`, `Debug/MemoryHooks`, `Debug/DrawCallRecorder`, `Debug/DebugStatsOverlay`
 - **What:** Messages for developers (levels, categories, file output) and a frame profiler with a scrubbable history and trace export.
 - **Parts:**
   - 1.10.1 Log - `Core/Log` - Trace/Info/Warning/Error, per-category levels, `Log::Configure("info,net=trace")` and `$OKAY_LOG`, timestamps, thread-safe lines, `Log::sink` hook
@@ -246,6 +262,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Turn on trace logging for net only"; "Export the last 240 frames to chrome://tracing"
 
 ### 1.11 Asset manager
+- **System:** Asset Manager - Loads each file from disk once, shares it, loads in the background and reloads it when the file changes.
 - **What:** A central registry for files loaded from disk: typed handles with reference counts, one cache key per file, background loading and hot reload.
 - **Parts:**
   - 1.11.1 Handles and caching - `Core/AssetManager` - `AssetHandle<T>`, `Get<T>(path)`, weak cache freed with the last handle, failed loads never cached
@@ -267,6 +284,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Load the boss music in the background and tell me when it is ready"; "Reload textures when I save them"
 
 ### 1.12 Asset database
+- **System:** Asset Database - Gives every asset a permanent ID, remembers its import settings and what uses what, and makes its thumbnail.
 - **What:** The data layer an asset browser sits on: stable GUIDs in `.okaymeta` files (or in memory for an asset that has none yet), move tracking, a dependency graph, typed import settings, thumbnails and a search query. The Project panel is built on it.
 - **Parts:**
   - 1.12.1 GUIDs and meta files - `Core/AssetDatabase` - `Scan`, `Guid`, `.okaymeta` sidecars, `MoveAsset`, rename and duplicate handling, orphan reports, labels; `ScanOptions::indexUnmetaed` (index assets that have no meta in memory, write nothing), `EnsureMeta`, `Folders()` (every folder walked, empty ones too), `Revision()` (moves only when the index changed)
@@ -289,6 +307,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "List every asset nothing references"; "Which scenes use `hero.png`?"
 
 ### 1.13 Object pooling
+- **System:** Core Utilities
 - **What:** Reuse spawned objects (bullets, sparks, pickups) instead of creating and destroying them each time.
 - **Parts:**
   - 1.13.1 Pool source - `Scene/ObjectPool` - `SetPrefabFile` or `SetTemplate` captured once; the template can be destroyed afterwards
@@ -307,6 +326,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Pool 64 bullets and reset their velocity on reuse"
 
 ### 1.14 Data assets and data packs
+- **System:** Data Assets - Small data files for game content (stats, tables), packed and lightly scrambled in shipped games.
 - **What:** Small data files for game content (`.okaydata` fields) and light obfuscation of shipped data so players cannot casually read or edit it.
 - **Parts:**
   - 1.14.1 Data asset - `Core/DataAsset` - ordered key/value fields saved as `.okaydata`, cached load with `Reload/Invalidate`, read from OkayScript (`data_num`, `data_str`)
@@ -324,6 +344,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Store enemy stats in a data asset"; "Pack the scene so players can't edit it"
 
 ### 1.15 Display settings
+- **System:** Display Settings - The window mode, monitor, resolution, refresh rate, vsync and quality preset a player can choose.
 - **What:** The Settings screen's window mode, monitor, resolution, refresh rate, vsync and the Low/Medium/High quality preset.
 - **Parts:**
   - 1.15.1 Settings values - `Core/DisplaySettings` - window mode, resolution, refresh, monitor, VSync, Quality (0-2), `Generation()` bumps on every Set so hosts know to apply; stored in Prefs as `video.*`
@@ -342,6 +363,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Add a Ultra quality level with soft shadows"
 
 ### 1.16 Localization tools
+- **System:** Localization
 - **What:** The editor side of localization: the string-table grid, CSV import and export, language preview, pseudo-localization and finding where a key is used.
 - **Parts:**
   - 1.16.1 Localization window - `editor/LocalizationWindow.*` - grid of keys by languages, inline edit with undo, completion bars, search and missing/unused filters, Find in Scene
@@ -363,6 +385,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Export the table to CSV for the translator"; "Show me every key missing in French"
 
 ### 1.17 Scene hierarchy, search and validation
+- **System:** Scenes and Objects
 - **What:** Hierarchy-aware active state, finding objects by path or by component in children, a native fixed-step hook, load errors, and a validator that reports missing assets, unknown components and broken links. Merged in #575 (2.850.0). The scene diff, merge and migration libraries behind it are in 1.5.
 - **Parts:**
   - 1.17.1 Hierarchy-aware active - `Scene/GameObject`, `Scene/Scene` - `GameObject::ActiveInHierarchy()` is true only when the object and every parent are active; Update, LateUpdate, Render, collider auto-fit, 2D picking, all four renderers and both physics worlds skip a child of an inactive parent, and OnDisable/OnEnable follow
@@ -384,6 +407,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Validate this scene before the build"; "Find the object at Level/Arena/Enemy"
 
 ### 1.18 Core runtime utilities
+- **System:** Core Utilities - Small shared helpers used everywhere: command line, console variables, paths, jobs on several threads, events, object pools and IDs.
 - **What:** Small building blocks the rest of the engine and a game's own code lean on, with no scene or renderer needed: command-line parsing, console variables and commands, paths, build info, stopwatch, state machine, a job system, memory arenas and pools, generational handles, hashed string ids and frame pacing helpers. Merged in #571 (2.849.0) and #578 (2.850.0).
 - **Parts:**
   - 1.18.1 CLI, console and cvars - `Core/CommandLine`, `Core/Console`, `Core/Cvar`, `Core/DebugOverlay` - (#571) `CommandLine` flag and value parser (the player uses it, `player/main.cpp`); typed console variables (`Cvars::Int/Bool`, range, persistence, `OnChange`) and a command registry (`Console::Register/Execute`, history, completion); `DebugOverlay` builds the FPS and object-count lines, switched by the `debug.overlay` cvar; `Core/ConsoleHost` (the typed line with history and Tab completion, `--cvar NAME=VALUE`, the standard cvars `game.speed`, `r.vsync`, `debug.show_fps`, `debug.profile` and the `prof.save` / `prof.sections` commands) is what the hosts call: the player's backquote console (development builds, `--console` or `OKAY_CONSOLE=1`; drawn over the frame, runs `LoopConsole` on the run's GameLoop; without it a shipped game ignores `--cvar` with one warning; `r.vsync` is for the run only, never saved) and the editor Console panel's command line (Dear ImGui panel only; the Play loop's `time.*` commands)
@@ -406,6 +430,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Add a `--windowed` flag to the player"; "Run the particle update on all cores with ParallelFor"; "Cap the frame rate with the FrameLimiter"
 
 ### 1.19 Property reflection
+- **System:** Property Registry - Lets tools read, change and watch any component setting by its name; undo, live editing and saving use it.
 - **What:** A property registry so tools, undo and live editing can read, write and watch a component's fields by name (`Light.intensity`) without knowing its C++ type. Merged in #578 (2.850.0).
 - **Parts:**
   - 1.19.1 Values and descriptors - `Scene/Properties` - `PropertyValue` (Bool, Int, Float, String, Vec2, Vec3, Vec4, Quat, Color, Enum, AssetPath, ObjectRef) with an exact text round trip; `PropertyDesc` with range, enum options, tooltip, group and flags (ReadOnly, RuntimeOnly, Derived, Structural); a refused value leaves the component untouched
@@ -427,6 +452,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Register my component's fields once and get an Inspector for free"; "Set Light.intensity by name from a script"
 
 ### 1.20 Asset thumbnails
+- **System:** Asset Database
 - **What:** A cache that returns a small picture for any asset, so an asset browser can show a grid; edited files never show a stale picture.
 - **Parts:**
   - 1.20.1 Cache layers - `Core/ThumbnailCache` - least-recently-used memory layer (`maxEntries`, `maxBytes`) and an optional folder of PNGs keyed by GUID, content hash, size and a tag; `Invalidate`, `Clear`, `ClearDisk`, `GetStats`

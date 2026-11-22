@@ -7,6 +7,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 ## 15. Editor
 
 ### 15.1 Hierarchy
+- **System:** Editor
 - **What:** The tree of every object in the scene with search, drag and drop re-parenting, rename, and a large right-click menu.
 - **Parts:**
   - 15.1.1 Tree, search and selection - `editor/main.cpp` (`DrawHierarchy` ~17259-18391) - rows with icons, expand and collapse, multi-select, flat search list that matches name or type ("camera", "light", "ui")
@@ -30,6 +31,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Ask me like:** "work on 15.1.1, hide and lock toggles in the Hierarchy"; "Paste as Child puts the object at the wrong place"
 
 ### 15.2 Inspector, Add Component menu, Character Model panel
+- **System:** Editor
 - **What:** The panel that edits the selected object: name, tag, static flag, and one collapsible card per component, an Add Component menu with search, and the character model setup panel.
 - **Parts:**
   - 15.2.1 Inspector shell - `editor/main.cpp` (`DrawInspector` ~27452-37264) - object header, per-component cards, enable checkbox, Remove, multi-edit
@@ -56,6 +58,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Ask me like:** "work on 15.2.4, add Foot IK weights to the Inspector"; "Add Component should show recently used components"
 
 ### 15.3 Scene and Game views, gizmos, spline tools
+- **System:** Editor
 - **What:** The two views of the world: the Scene view (2D and 3D editing, selection, gizmos, overlays) and the Game view (what the player sees, with resolution and phone presets), plus the spline editing overlay.
 - **Parts:**
   - 15.3.1 Scene view shell and toolbar - `editor/main.cpp` (`DrawViewport` ~41508-42171) - 2D/3D switch, UI-only toggle, tool icons, global/local, snap, frame selected, isolate, "..." menu, Overlays menu
@@ -84,6 +87,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Ask me like:** "work on 15.3.4, a pivot-to-centre toggle for the gizmo"; "the Game view stats overlay is wrong"
 
 ### 15.4 Project panel and asset manager
+- **System:** Project Panel - The editor's file browser for the project's assets.
 - **What:** The file browser of the project's Assets folder (folders, thumbnails, smart filters, search, color labels, drag and drop into the scene) and a window that imports marketplace downloads into the project.
 - **Parts:**
   - 15.4.1 Project panel - `editor/main.cpp` (`DrawProject`), `editor/ProjectBrowser.*` - folder tree, list and grid, search (`t:model`, `ext:png`, `l:tag`, `is:unused`, `is:broken`, `uses:`, `deps:`), smart filters (All Models, Recently Changed, Unused Assets), multi-select; the listing, counts, folders and dependency lookups come from `AssetDatabase`
@@ -108,6 +112,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Ask me like:** "work on 15.4.1, show GUIDs and dependencies in the Project panel"; "unused assets list is wrong"
 
 ### 15.5 Animator, Animation tab, Timeline
+- **System:** Animation
 - **What:** The animation tools: the Animator state-machine graph, the Animation tab (clips, dope sheet, curves, record), the cutscene Timeline, and the first-person hands preview. Owned by Grok's animation sessions; describe, do not edit.
 - **Parts:**
   - 15.5.1 Animator window - `editor/AnimatorWindow.*` - state graph canvas, transitions, parameters, layers with bone masks, problems list, live state in Play
@@ -130,6 +135,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Ask me like:** "work on 15.5.4, add an audio waveform to the Timeline"; "which file has the Animator window"
 
 ### 15.6 Navigation, Behavior Tree, Dialogue, Localization, Modeling windows
+- **System:** Editor
 - **What:** The editor windows for world-building and content systems: navigation bake, behavior trees, dialogue and quests, the string table, and the 3D modeling and UV tools.
 - **Parts:**
   - 15.6.1 Navigation window - `editor/NavigationWindow.*` - bake settings, Bake and Clear with progress, Scene overlays (polygons, agent paths), send-agent mode, inspectors and Add Component rows for NavMesh components, bake before Play
@@ -151,6 +157,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Ask me like:** "work on 15.6.4, missing-key report in the Localization window"; "the behavior tree window does not show the live node"
 
 ### 15.7 Build Settings
+- **System:** Build Settings - The editor's Build Settings and Scene Manager: which scenes go into a game and where it is exported to.
 - **What:** File > Build Settings (Ctrl+B): export the current scenes as a standalone game for Windows, Web, Android or a dedicated server, with named build profiles.
 - **Parts:**
   - 15.7.1 Build Settings dialog - `editor/main.cpp` (~15948-16650) - name, output folder, platform buttons, scenes list, Build and Build and Run, checks every visual script first and stops on errors
@@ -173,6 +180,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Ask me like:** "work on 15.7.2, only copy used assets"; "the web export is missing my fonts"
 
 ### 15.8 Plugin system and Plugins menu
+- **System:** Editor Plugins - Lets people add their own panels, menu commands and nodes to the editor.
 - **What:** Editor plugins written in OkayScript: a file in `<project>/EditorPlugins/` or the editor's `plugins/` folder can add a panel, a menu command, and react to selection, through an `editor_*` API.
 - **Parts:**
   - 15.8.1 Plugin host - `editor/main.cpp` (~7936-8288) - plugin list, loading, hot reload on save, `// @name` headers, enable and disable, plugin panel bridge
@@ -193,6 +201,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Ask me like:** "work on 15.8.2, add editor_find_by_tag"; "my plugin shows an error in the menu"
 
 ### 15.9 Layout, undo, autosave
+- **System:** Undo and Recovery - Undo and redo, autosave, crash recovery, backups and saved window layouts in the editor.
 - **What:** The editor's state and shell behaviours: panel tabs and layouts, undo and redo, autosave with a recovery prompt, and the non-GUI editor model.
 - **Parts:**
   - 15.9.1 Editor model - `editor/EditorState.*` - scene, selection, create helpers, Play and Stop with snapshot restore, editor camera; free of ImGui so tests can use it
@@ -216,6 +225,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Ask me like:** "work on 15.9.2, per-object undo commands so Undo does not rebuild the scene"; "layouts reset after restart"
 
 ### 15.10 Splitting `editor/main.cpp` into panel files (~45k lines)
+- **System:** Editor
 - **What:** The ongoing move of panels out of the huge `main.cpp` into their own files with small headers, so each can be edited and reviewed alone.
 - **Parts:**
   - 15.10.1 Split out so far (windows and panels) - `editor/AnimatorWindow.*`, `editor/BehaviorTreeWindow.*`, `editor/ConsolePanel.*`, `editor/DialogueWindow.*`, `editor/FpHandsWindow.*`, `editor/LocalizationWindow.*`, `editor/NavigationWindow.*`, `editor/NetSimPanel.*`, `editor/SceneManagerPanel.*`, `editor/TimelineWindow.*`
@@ -236,6 +246,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Ask me like:** "work on 15.10.4, split the Project panel out of main.cpp"; "which parts of main.cpp are still unsplit"
 
 ### 15.11 Console and diagnostics panels
+- **System:** Logging
 - **What:** The panels that show what the editor and game are doing: the Console log, Crash Log, Stats, Profiler, History, the Net panel and the live variable watch.
 - **Parts:**
   - 15.11.1 Console - `editor/ConsolePanel.*` - draws `ConsoleModel::Rows()`; severity filters with counts, a category dropdown, search, a visible Collapse toggle (remembered in `okay_settings.txt`) that merges identical level + category + message into one row with an `x37` count and the newest time, details, Error Pause, Open Script, tab badge
@@ -261,6 +272,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Ask me like:** "work on 15.11.8, add a project rule to Problems"; "clicking a warning should open the script"
 
 ### 15.12 Scene Manager panel
+- **System:** Build Settings
 - **What:** The project's scene list, file actions and the build order that Build Settings uses.
 - **Parts:**
   - 15.12.1 Scene list and actions - `editor/SceneManagerPanel.*` - scenes of the project with thumbnails and file actions
@@ -278,6 +290,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Ask me like:** "work on 15.12.2, drag to reorder the build list"
 
 ### 15.13 Content editors and tool windows
+- **System:** Editor
 - **What:** Smaller editors for assets and data: sprites, materials, data assets, items, save files, audio mixer and the UI theme window.
 - **Parts:**
   - 15.13.1 Sprite Editor - `editor/main.cpp` (`DrawSpriteEditor` ~42208-42417) - pixel paint, shapes, flood fill
@@ -301,6 +314,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Ask me like:** "work on 15.13.2, material preview sphere"; "the Save Manager cannot edit nested values"
 
 ### 15.14 Scene settings, project settings and help windows
+- **System:** Editor
 - **What:** Windows that configure the scene and project, show services status, and explain the editor: Lighting (scene settings), Project Settings, Services, Keyboard Shortcuts, About, update and quit prompts.
 - **Parts:**
   - 15.14.1 Lighting window - `editor/main.cpp` (`DrawSceneSettings` ~10495-10800, look sections ~10359) - Environment (sky and light), Rendering (lighting and post FX), Debug View, Lightmap Baking and the scene UI font; the sky, fog, weather and post-processing sections
@@ -321,6 +335,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Ask me like:** "work on 15.14.2, add a physics defaults section to Project Settings"
 
 ### 15.15 Editor shell, startup and lifecycle
+- **System:** Editor - The editor program: Hierarchy, Inspector, Scene and Game views, menus, content windows, settings and help.
 - **What:** What runs around the panels: the main loop, menu and toolbar, dock space, the launcher handshake, single-instance guard, multi-window support, the self-updater and the headless selftest.
 - **Parts:**
   - 15.15.1 Menu and toolbar - `editor/MenuBarModel.hpp` (the menus as data), `editor/MenuEntriesUI.hpp` (the ImGui drawer), `editor/main.cpp` (`DrawMainMenus`, `RunMenuAction`, `DrawCreateSlot`; `DrawMenuAndToolbar`, `DrawDockSpace`) - File, Edit, GameObject, View, Plugins, Help menus (`docs/editor/editor_menus.md`); Play, Stop, Step (advance one frame) and Build buttons

@@ -2882,7 +2882,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << cm->cameraDamping
             << " " << cm->arriveRadius                       // extended (back-compatible trailing field)
             << " " << (cm->footIK ? 1 : 0) << " " << (cm->showCursor ? 1 : 0)
-            << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval << "\n";
+            << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval;
+        // extended (back-compatible trailing fields): click on colliders, give up when stuck. Written only when one differs
+        // from its default, so a scene saved before they existed saves byte for byte the same (registry_serializer).
+        if (!cm->pickColliders || !cm->giveUpWhenStuck || cm->stuckTime != 1.0f)
+            out << " " << (cm->pickColliders ? 1 : 0) << " " << (cm->giveUpWhenStuck ? 1 : 0) << " " << cm->stuckTime;
+        out << "\n";
     }
     for (auto* ft : go->GetComponents<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -3067,7 +3072,11 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     for (auto* dc : go->GetComponents<DollyCart>()) {
         out << "  dollycart " << Quote(dc->path) << " " << dc->position << " "
-            << dc->speed << " " << (dc->autoMove ? 1 : 0) << "\n";
+            << dc->speed << " " << (dc->autoMove ? 1 : 0);
+        // extended (trailing): only when one is on, so older scenes save byte for byte the same (registry_serializer)
+        if (dc->speedInMetres || dc->pingPong || dc->orientToPath)
+            out << " " << (dc->speedInMetres ? 1 : 0) << " " << (dc->pingPong ? 1 : 0) << " " << (dc->orientToPath ? 1 : 0);
+        out << "\n";
     }
     for (auto* tr : go->GetComponents<TextRenderer>()) {
         out << "  text " << Quote(tr->text) << " "
@@ -6101,6 +6110,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         in >> std::ws; if (std::isdigit(in.peek())) { int sc = 1; in >> sc; cm->showCursor = (sc != 0); }
                         in >> std::ws; if (std::isdigit(in.peek())) { int pf = 1; in >> pf; cm->usePathfinding = (pf != 0); }
                         if (LooksNumeric(in)) in >> cm->repathInterval;
+                        // click on colliders, give up when stuck (added later; older scenes keep the defaults)
+                        in >> std::ws; if (std::isdigit(in.peek())) { int pc = 1; in >> pc; cm->pickColliders = (pc != 0); }
+                        in >> std::ws; if (std::isdigit(in.peek())) { int gu = 1; in >> gu; cm->giveUpWhenStuck = (gu != 0); }
+                        if (LooksNumeric(in)) in >> cm->stuckTime;
                     }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
@@ -7478,6 +7491,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int am = 1;
                     in >> dc->position >> dc->speed >> am;
                     dc->autoMove = (am != 0);
+                    // metres per second, ping-pong, face along the path (added later; older scenes keep the defaults)
+                    in >> std::ws; if (std::isdigit(in.peek())) { int v = 0; in >> v; dc->speedInMetres = (v != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int v = 0; in >> v; dc->pingPong = (v != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int v = 0; in >> v; dc->orientToPath = (v != 0); }
                 } else if (field == "cmbrain") {
                     auto* cb = go->AddComponent<CinemachineBrain>();
                     in >> cb->blendTime;

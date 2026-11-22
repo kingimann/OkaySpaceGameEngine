@@ -4749,6 +4749,12 @@ target_link_libraries(test_camera_rig PRIVATE okay::engine)
 target_compile_definitions(test_camera_rig PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME camera_rig COMMAND test_camera_rig)
 
+# Area 4 fixes (claude2/area4-chars-2): click-to-move camera below y = 0, remote copies leave the main camera alone,
+# the dolly cart's position, ends, facing and metre speed, click-to-move ground picking and giving up when stuck.
+add_executable(test_char_cam_fixes test_char_cam_fixes.cpp)
+target_link_libraries(test_char_cam_fixes PRIVATE okay::engine)
+add_test(NAME char_cam_fixes COMMAND test_char_cam_fixes)
+
 # Water visuals: shading maths, ring grid, depth colour, foam, ripples, splashes, underwater, presets, pictures (docs/rendering/terrain_water.md).
 add_executable(test_water_visuals test_water_visuals.cpp)
 target_link_libraries(test_water_visuals PRIVATE okay::engine)

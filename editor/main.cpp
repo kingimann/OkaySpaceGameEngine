@@ -36203,7 +36203,7 @@ static bool DrawTeleporterWithOkayUI(EditorState& ed, Teleporter* tp, okay::Comp
 static bool DrawDollyCartWithOkayUI(EditorState& ed, DollyCart* dc, okay::Component*& toRemove) {
     using namespace okaypanels;
     InspFieldList L;
-    L.rows.reserve(9);
+    L.rows.reserve(12);
     L.Text("Path##dc", &dc->path);
     L.TipLookup();
     L.Slider("Position##dc", &dc->position, 0.0f, 1.0f);
@@ -36212,6 +36212,12 @@ static bool DrawDollyCartWithOkayUI(EditorState& ed, DollyCart* dc, okay::Compon
     L.TipLookup();
     L.Check("Auto Move##dc", &dc->autoMove);
     L.TipLookup();
+    L.Check("Speed In Metres##dc", &dc->speedInMetres);
+    L.Tip("Speed is metres per second along the rail (else path fractions per second)");
+    L.Check("Ping Pong##dc", &dc->pingPong);
+    L.Tip("On an open path, turn round at each end instead of stopping");
+    L.Check("Face Along Path##dc", &dc->orientToPath);
+    L.Tip("Turn the object to face the way it travels along the rail");
     const int kRemove = L.SmallButton("Remove##dc");
     if (!DrawRowsOkayUI(dc, "##okayui_dollycart", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -45317,6 +45323,14 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Foot IK##ctm");
             if (ImGui::Checkbox("Pathfinding##ctm", &cm->usePathfinding)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clicks behind walls walk AROUND them (grid A*), Diablo-style.");
+            if (ImGui::Checkbox("Pick Colliders##ctm", &cm->pickColliders)) ed.dirty = true;
+            oked::FieldTip("Pick Colliders##ctm");
+            if (ImGui::Checkbox("Give Up When Stuck##ctm", &cm->giveUpWhenStuck)) ed.dirty = true;
+            oked::FieldTip("Give Up When Stuck##ctm");
+            if (cm->giveUpWhenStuck) {
+                if (ImGui::DragFloat("Stuck Time##ctm", &cm->stuckTime, 0.05f, 0.1f, 10.0f)) ed.dirty = true;
+                oked::FieldTip("Stuck Time##ctm");
+            }
             if (ImGui::Checkbox("Use Player Height##ctm", &cm->usePlayerHeight)) ed.dirty = true;
             oked::FieldTip("Use Player Height##ctm");
             if (!cm->usePlayerHeight) {
@@ -46209,6 +46223,12 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Speed##dc");
             if (ImGui::Checkbox("Auto Move##dc", &dc->autoMove)) ed.dirty = true;
             oked::FieldTip("Auto Move##dc");
+            if (ImGui::Checkbox("Speed In Metres##dc", &dc->speedInMetres)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed is metres per second along the rail (else path fractions per second)");
+            if (ImGui::Checkbox("Ping Pong##dc", &dc->pingPong)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On an open path, turn round at each end instead of stopping");
+            if (ImGui::Checkbox("Face Along Path##dc", &dc->orientToPath)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the object to face the way it travels along the rail");
             if (ImGui::SmallButton("Remove##dc")) toRemove = dc;
         }
     }

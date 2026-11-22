@@ -2474,6 +2474,12 @@ Status: **no reader**. Slot 32 of the table in `ModelImport.cpp` is reserved for
 
 Why: SIB is the binary file of the Silo modeller (Nevercenter). The search for a public description of its structure found only that it exists (the binary twin of the ASCII `.sia`); no field list, no chunk list, no sample file (the only one, `heffalump.sib`, is in Assimp's test tree, not here). The rule for this work is to write from a format description or from our own analysis of sample files only, never from another importer's source. With neither a description nor a sample, a reader would be invented, so none was written. To go on: a published description, or the sample file to analyse (then `ModelData`, budgets and tests as for `docs/content/model_readers.md`).
 
+**2026-11-22.** A sample file was later found in Assimp's test tree (`models/SIB/heffalump.sib`, released into the public domain by
+its author), and a reader worked out from that one file was written on branch `claude/own-readers-6` (unmerged). It was
+**not** brought onto main with the glTF 1.0, OpenGEX, MDL and Q3BSP readers: the rule for this work is to write a reader from a
+public specification, and SIB has none, so a reader from one sample would be a guess at every file but that one. `.sib` stays with
+Assimp.
+
 ## Our own SMD reader (`.smd`)
 
 *Was `docs/own_smd_reader.md` until 2026-11-20.*

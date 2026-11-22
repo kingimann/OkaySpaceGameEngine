@@ -53241,6 +53241,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 o.softRadius = g_meshSoftSel ? g_meshSoftRadius : 0.0f;
                 o.mirrorX = g_meshSymX; o.mirrorY = g_meshSymY; o.mirrorZ = g_meshSymZ;
                 o.pivot = (mdl::EditPivot)std::clamp(g_mePivot, 0, 2);
+                if (g_meshSelMode == 1) o.faces = &g_meshSelFaces;        // Individual Origins: parts joined only through the picked faces
+                else if (g_meshSelMode == 2) o.edges = &g_meshSelEdges;   // ... or the picked edges
                 // The active vertex: the last vertex picked (or the end of the last edge, or a corner of the last face).
                 o.activeVertex = g_meshSelMode == 0 ? (g_meshSelVerts.empty() ? -1 : g_meshSelVerts.back())
                                : g_meshSelMode == 2 ? (g_meshSelEdges.empty() ? -1 : g_meshSelEdges.back().second)
@@ -53256,7 +53258,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             auto statusLine = [&](const std::string& line, const char* help) {
                 ImVec2 ts = ImGui::CalcTextSize(line.c_str()), hs = ImGui::CalcTextSize(help);
                 float w = std::max(ts.x, hs.x) + 20.0f, lh = ImGui::GetTextLineHeight();
-                ImVec2 p0(canvasPos.x + (canvasSize.x - w) * 0.5f, canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);
+                ImVec2 p0(std::max(canvasPos.x + 4.0f, canvasPos.x + (canvasSize.x - w) * 0.5f), canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);   // a narrow view: keep the start (tool, value) in sight, the help runs off the right
                 dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + lh * 2.0f + 14.0f), IM_COL32(20, 22, 28, 215), 5.0f);
                 dl->AddText(ImVec2(p0.x + 10, p0.y + 5), IM_COL32(255, 200, 90, 255), line.c_str());
                 dl->AddText(ImVec2(p0.x + 10, p0.y + 8 + lh), IM_COL32(190, 195, 205, 255), help);
@@ -53946,7 +53948,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     const char* help = "X / Y / Z lock an axis, Shift+X/Y/Z a plane  -  type a value  -  Ctrl snaps  -  Enter or click to confirm, Esc or right-click to cancel";
                     ImVec2 ts = ImGui::CalcTextSize(line.c_str()), hs = ImGui::CalcTextSize(help);
                     float w = std::max(ts.x, hs.x) + 20.0f, lh = ImGui::GetTextLineHeight();
-                    ImVec2 p0(canvasPos.x + (canvasSize.x - w) * 0.5f, canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);
+                    ImVec2 p0(std::max(canvasPos.x + 4.0f, canvasPos.x + (canvasSize.x - w) * 0.5f), canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);   // a narrow view: keep the start (tool, value) in sight, the help runs off the right
                     dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + lh * 2.0f + 14.0f), IM_COL32(20, 22, 28, 215), 5.0f);
                     dl->AddText(ImVec2(p0.x + 10, p0.y + 5), IM_COL32(255, 200, 90, 255), line.c_str());
                     dl->AddText(ImVec2(p0.x + 10, p0.y + 8 + lh), IM_COL32(190, 195, 205, 255), help);

@@ -220,13 +220,33 @@ void EditTransformSession::Begin(Mesh& mesh, EditXform kind, const std::vector<i
         auto root = [&](int v) { while (parent[v] != v) v = parent[v] = parent[parent[v]]; return v; };
         auto join = [&](int a, int b) { a = root(a); b = root(b); if (a != b) parent[std::max(a, b)] = std::min(a, b); };
         const std::size_t nt = mesh.triangles.size() / 3;
-        for (std::size_t t = 0; t < nt; ++t)
+        auto joinTri = [&](std::size_t t) {
             for (int k = 0; k < 3; ++k) {
                 const int a = mesh.triangles[t * 3 + k], b = mesh.triangles[t * 3 + (k + 1) % 3];
                 if (a >= 0 && b >= 0 && a < n && b < n && isSel[a] && isSel[b]) join(a, b);
             }
+        };
+        // Face mode: only the selected triangles' edges join; Edge mode: only the selected edges; else any
+        // edge between two selected vertices (Vertex mode).
+        std::vector<char> pinned(n, 0);   // vertices the face / edge list touches: only those join by position
+        if (opt.faces) {
+            for (int t : *opt.faces) {
+                if (t < 0 || (std::size_t)t >= nt) continue;
+                joinTri((std::size_t)t);
+                for (int k = 0; k < 3; ++k) { const int v = mesh.triangles[(std::size_t)t * 3 + k]; if (v >= 0 && v < n) pinned[v] = 1; }
+            }
+        } else if (opt.edges) {
+            for (const auto& e : *opt.edges)
+                if (e.first >= 0 && e.second >= 0 && e.first < n && e.second < n && isSel[e.first] && isSel[e.second]) {
+                    join(e.first, e.second); pinned[e.first] = pinned[e.second] = 1;
+                }
+        } else {
+            for (std::size_t t = 0; t < nt; ++t) joinTri(t);
+        }
+        const bool anyList = opt.faces || opt.edges;
         std::map<std::tuple<long, long, long>, int> at;
         for (int v : anchorIds) {
+            if (anyList && !pinned[v]) continue;
             const Vec3& p = mesh.vertices[v];
             if (!std::isfinite(p.x + p.y + p.z)) continue;
             const auto key = std::make_tuple((long)std::lround(p.x * 1e5f), (long)std::lround(p.y * 1e5f), (long)std::lround(p.z * 1e5f));

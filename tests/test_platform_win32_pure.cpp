@@ -8,6 +8,7 @@
 #include "Win32Icon.hpp"
 #include "Win32Ime.hpp"
 #include "Win32XInput.hpp"
+#include "Win32Messages.hpp"
 #include "okay/Platform/Platform.hpp"
 #include "okay/Platform/WindowLogic.hpp"
 #include <cstdio>
@@ -452,8 +453,39 @@ static void XInputSlots() {
     CHECK(lo == 0 && hi == 0);
 }
 
+// Mouse click counting and the system-menu keys (Win32Messages.hpp). Before: every MouseButtonDown said clicks = 1 (no
+// double-click on the own Windows backend), and Alt or F10 alone put the window into menu mode (the next key, e.g. Space,
+// opened the system menu and the game stopped), and Alt+letter beeped.
+static void Win32Msgs() {
+    using namespace win32msg;
+    ClickCounter c;
+    CHECK(c.Down(1, 100, 100, 1000, 500, 4, 4) == 1);
+    CHECK(c.Up(1) == 1);
+    CHECK(c.Down(1, 101, 99, 1300, 500, 4, 4) == 2);          // inside the time and the 4 x 4 box: a double-click
+    CHECK(c.Up(1) == 2);
+    CHECK(c.Down(1, 102, 100, 1700, 500, 4, 4) == 3);         // triple (box and time from the last click)
+    CHECK(c.Down(1, 102, 100, 2300, 500, 4, 4) == 1);         // too late
+    CHECK(c.Down(1, 106, 100, 2400, 500, 4, 4) == 1);         // too far (more than half the box sideways)
+    CHECK(c.Down(3, 106, 100, 2500, 500, 4, 4) == 1);         // another button starts again
+    CHECK(c.Up(1) == 1);                                      // the up of a button that is not the counted one
+    CHECK(c.Down(3, 106, 102, 2600, 500, 4, 4) == 2);
+    // The message clock is 32 bits and wraps after 49.7 days.
+    ClickCounter w;
+    CHECK(w.Down(1, 0, 0, 0xFFFFFF00u, 500, 4, 4) == 1 && w.Down(1, 0, 0, 0x00000010u, 500, 4, 4) == 2);
+    // A zero or silly double-click time from the system: 500 ms.
+    ClickCounter z;
+    CHECK(z.Down(1, 0, 0, 0, 0, 4, 4) == 1 && z.Down(1, 0, 0, 400, 0, 4, 4) == 2);
+
+    // WM_SYSCOMMAND SC_KEYMENU (0xF100, low 4 bits are the system's): swallowed for Alt or F10 alone (lParam 0) and
+    // Alt+letter; Alt+Space (lParam ' ') still opens the window menu. Other system commands pass.
+    CHECK(SwallowSysCommand(0xF100, 0) && SwallowSysCommand(0xF102, 0) && SwallowSysCommand(0xF100, 'f'));
+    CHECK(!SwallowSysCommand(0xF100, ' ') && !SwallowSysCommand(0xF060 /* SC_CLOSE */, 0) && !SwallowSysCommand(0xF020 /* SC_MINIMIZE */, 0));
+    // WM_MENUCHAR: MNC_CLOSE in the high word (no beep for Alt+key with no menu).
+    CHECK(MenuCharReply() == (1 << 16));
+}
+
 int main() {
-    Display(); Icon(); Ime(); Hid(); HidP(); PadMapT(); WindowLogic(); XInputSlots();
+    Display(); Icon(); Ime(); Hid(); HidP(); PadMapT(); WindowLogic(); XInputSlots(); Win32Msgs();
     std::printf("platform_win32_pure: %d checks, %d failed\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

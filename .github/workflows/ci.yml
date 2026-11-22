@@ -307,9 +307,11 @@ jobs:
           OKAYUI_TESTS="test_okayui_fuzz test_okayui_codeedit_fuzz test_okayui_dock_fuzz test_okayui_windows_fuzz"
           TESTS="$TESTS $OKAYUI_TESTS"
           echo "OKAYUI_TESTS=$OKAYUI_TESTS" >> "$GITHUB_ENV"
-          # The experimental Xbox UWP backend (OKAY_BUILD_XBOX_UWP=ON above; no other job turns it on). Only the touch and text
-          # composition test: it does not link the engine (about 10 s to build), and its pointer and caret maths should be sanitized.
-          XBOX_TESTS="test_xbox_uwp_touch"
+          # The experimental Xbox UWP backend (OKAY_BUILD_XBOX_UWP=ON above; no other job turns it on). Only tests that do not link
+          # the engine (each about 10 to 25 s to build): touch and text composition, the runtime pieces (lifecycle with the back
+          # button, title-safe area, pads, paths, audio, backend over a fake host, HTTP) and pad hot-plug slots. Before 2026-11-22
+          # only the touch test ran anywhere in CI.
+          XBOX_TESTS="test_xbox_uwp_touch test_xbox_uwp_runtime test_xbox_uwp_padhub"
           TESTS="$TESTS $XBOX_TESTS"
           echo "XBOX_TESTS=$XBOX_TESTS" >> "$GITHUB_ENV"
           echo "SAN_TESTS=$TESTS" >> "$GITHUB_ENV"

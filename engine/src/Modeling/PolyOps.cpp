@@ -299,7 +299,7 @@ std::vector<EdgeChain> OrderChains(const EdgeList& edges) {
 // ---------------------------------------------------------------------------
 EdgeList LoopCut(PolyMesh& pm, int a, int b, int cuts, float position) {
     if (!std::isfinite(position)) return {};
-    if (cuts < 1) cuts = 1;
+    cuts = std::clamp(cuts, 1, kLoopCutMax);   // a script asking for millions would run out of memory
     PolyTopology T(pm);
     const Ring r = RingWalk(pm, T, a, b);
     if (r.edges.empty() || r.quads.empty()) return {};
@@ -677,6 +677,7 @@ int BridgeFaces(PolyMesh& pm, const std::vector<int>& faces, std::string* error)
 // ---------------------------------------------------------------------------
 int SplitEdge(PolyMesh& pm, int a, int b, float t) {
     if (!std::isfinite(t)) return -1;
+    t = std::clamp(t, 0.0f, 1.0f);   // outside 0..1 the new vertex would sit beyond the edge
     bool any = false;
     for (const PolyFace& f : pm.faces) if (Runs(f, a, b) || Runs(f, b, a)) any = true;
     if (!any) return -1;
@@ -770,6 +771,7 @@ EdgeList KnifeCut(PolyMesh& pm, const std::vector<KnifePoint>& points, std::stri
         vs.push_back(made);
     }
     EdgeList cut;
+    bool splitAny = false;   // a cut that only runs along edges already there splits nothing
     for (std::size_t k = 0; k + 1 < vs.size(); ++k) {
         const int u = vs[k], v = vs[k + 1];
         if (u == v) continue;
@@ -781,7 +783,10 @@ EdgeList KnifeCut(PolyMesh& pm, const std::vector<KnifePoint>& points, std::stri
         if (face < 0) return fail("Knife points " + std::to_string(k + 1) + " and " + std::to_string(k + 2) + " aren't on the same face.");
         if (SplitFace(work, face, u, v) < 0) return fail("Couldn't split a face for the knife.");
         cut.push_back({u, v});
+        splitAny = true;
     }
+    if (!splitAny)
+        return fail("The knife cut runs only along an edge that is already there (for example two points on the same edge), so no face was split. Put the points on different edges of a face.");
     pm = std::move(work);
     return cut;
 }

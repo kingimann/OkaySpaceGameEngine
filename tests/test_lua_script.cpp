@@ -326,6 +326,9 @@ return C
         // hover on the member part of "Input.GetKey" / "Time.deltaTime" (the editor's word is the bare name)
         CHECK(LuaScriptVM::CompletionDoc("GetKey").find("Input.GetKey(key: string) -> boolean") == 0);
         CHECK(LuaScriptVM::CompletionDoc("deltaTime").find("Time.deltaTime") == 0);
+        // a .lua file attached to an object (New Script with "Also attach", drag and drop) is a Lua script
+        CHECK(std::string(ScriptLanguageForExtension(".lua")) == "lua");
+        CHECK(std::string(ScriptLanguageForExtension(".LUA")) == "lua");
         std::vector<std::string> words = LuaScriptVM::CompletionNames();
         CHECK(has(words, "function") && has(words, "Input.GetKey") && has(words, "Update"));
         std::vector<LuaScriptVM::Setting> st = LuaScriptVM::Settings(

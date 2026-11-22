@@ -301,5 +301,72 @@ int main() {
         TraverseJobs().clear(); HangPoints().clear(); HangGravity().clear();
     }
 
+    // ---- saved in the scene file: every setting and both arm links come back
+    {
+        Scene s;
+        GameObject* lHost = s.CreateGameObject("LeftArmIK");
+        Rig r = MakeRig(s, {0, 0, 0}, true, lHost, nullptr);   // la on lHost, ra on the hero
+        lHost->transform->SetParent(r.hero->transform, false);
+        // A second LimbIK on the hero with the right arm's bones: the link must name which one.
+        auto* ra = r.hero->AddComponent<LimbIK>();
+        ra->upper = r.ra->upper; ra->lower = r.ra->lower; ra->end = r.ra->end;
+        auto* lh = r.hero->AddComponent<LedgeHandsIK>();
+        lh->autoWire = false; lh->leftArm = r.la; lh->rightArm = ra;
+        lh->setback = 0.31f; lh->handSpread = 0.17f; lh->overEdge = 0.08f; lh->fadeTime = 0.35f;
+        const std::string text = SceneSerializer::Serialize(s);
+        CHECK(text.find("ledgehandsik") != std::string::npos);
+
+        Scene back;
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(back, text, &err));
+        GameObject* hero = nullptr; GameObject* host = nullptr;
+        for (const auto& o : back.Objects()) {
+            if (o->name == "Hero" && o->GetComponent<LedgeHandsIK>()) hero = o.get();
+            if (o->name == "LeftArmIK") host = o.get();
+        }
+        CHECK(hero != nullptr && host != nullptr);
+        if (hero && host) {
+            auto* l2 = hero->GetComponent<LedgeHandsIK>();
+            CHECK(!l2->autoWire);
+            CHECK_NEAR(l2->setback, 0.31f, 1e-6); CHECK_NEAR(l2->handSpread, 0.17f, 1e-6);
+            CHECK_NEAR(l2->overEdge, 0.08f, 1e-6); CHECK_NEAR(l2->fadeTime, 0.35f, 1e-6);
+            // Saved again before Play (the editor does that): the links are still written.
+            CHECK(SceneSerializer::Serialize(back) == text);
+            l2->Start();
+            const auto heroArms = hero->GetComponents<LimbIK>();
+            const auto hostArms = host->GetComponents<LimbIK>();
+            CHECK(heroArms.size() == 2 && hostArms.size() == 1);
+            if (heroArms.size() == 2 && hostArms.size() == 1) {
+                CHECK(l2->leftArm == hostArms[0]);
+                CHECK(l2->rightArm == heroArms[1]);
+            }
+        }
+        // A scene without the component writes no such record (old scenes stay as they were).
+        Scene plain;
+        MakeRig(plain, {0, 0, 0}, true);
+        CHECK(SceneSerializer::Serialize(plain).find("ledgehandsik") == std::string::npos);
+    }
+
+    // ---- a copy of the character does not keep holding the original's arms: it finds its own
+    {
+        Scene s;
+        Rig r = MakeRig(s, {0, 0, 0}, true);
+        auto* lh = r.hero->AddComponent<LedgeHandsIK>();
+        lh->leftArm = r.la; lh->rightArm = r.ra;   // autoWire on (the default)
+        GameObject* copy = SceneSerializer::InstantiateFromText(s, SceneSerializer::SerializeObject(*r.hero));
+        CHECK(copy != nullptr && copy != r.hero);
+        if (copy) {
+            auto* c = copy->GetComponent<LedgeHandsIK>();
+            CHECK(c != nullptr);
+            if (c) {
+                c->Start();
+                CHECK(c->leftArm != r.la && c->rightArm != r.ra);
+                const auto own = copy->GetComponents<LimbIK>();
+                CHECK(own.size() == 2);
+                if (own.size() == 2) { CHECK(c->leftArm == own[0]); CHECK(c->rightArm == own[1]); }
+            }
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

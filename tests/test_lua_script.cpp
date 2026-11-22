@@ -46,6 +46,15 @@ int main() {
         if (l >= Log::Level::Error) g_errs.push_back(m); else g_logs.push_back(m);
     };
 
+    // 0. Lua's own library tables keep their Lua meaning next to the engine API (the typed
+    //    language's "string" / "int" / "float" value types are not Lua globals).
+    {
+        World w("ok = string.format('%d-%s', 7, string.upper('x')) == '7-X' and math.floor(2.5) == 2 and type(table.concat) == 'function'");
+        CHECK(w.loaded);
+        CHECK(w.Get("ok").AsBool());
+        CHECK(LuaScriptVM::CompletionDoc("string.Format").empty());
+    }
+
     // 1. A table script: settings, Start, Update moving the transform with dt.
     {
         World w(R"LUA(

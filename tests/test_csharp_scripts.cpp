@@ -66,7 +66,7 @@ static void LanguageIds() {
         CHECK(RemovedScriptLanguageMessage(id).empty());
     }
     CHECK(CreateScriptVM(NextScriptVM::kLanguage) != nullptr);   // the old id keeps working
-    CHECK(!RemovedScriptLanguageMessage("lua").empty());         // Lua is a separate piece of work
+    CHECK(RemovedScriptLanguageMessage("lua").empty());          // Lua runs on our own interpreter (lua_script)
     CHECK(std::string(ScriptLanguageForExtension(".cs")) == "csharp");
     CHECK(std::string(ScriptLanguageForExtension(".CS")) == "csharp");
     CHECK(std::string(ScriptLanguageForExtension(".okay")) == "okayscript");

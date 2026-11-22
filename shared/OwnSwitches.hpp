@@ -41,6 +41,7 @@ struct Item {
 inline const std::vector<Item>& Items() {
     static const std::vector<Item> t = {
         {"okayui",   "OkayUI screens",        "Draw the screens that have an OkayUI version (What's New, the editor Console) with our own toolkit instead of Dear ImGui.", "OKAY_UI_BACKEND",      "okayui", kNeedsOkayUi},
+        {"inspector", "OkayUI Inspector",     "Draw the Inspector's component bodies with our own toolkit (a preview). Needs \"OkayUI screens\" on too; any body that has no OkayUI version, or a newer Dear ImGui one, stays Dear ImGui.", "OKAY_UI_INSPECTOR", "1", kNeedsOkayUi},
         {"wav",      "Our own WAV reader",    "Read .wav sound files with our own decoder instead of the built-in one.",                                                      "OKAY_OWN_WAV",         "1",      kNone},
         {"http",     "Our own web client",    "Download and check for updates with our own HTTP client instead of curl (Linux builds only; Windows already uses WinHTTP).",   "OKAY_OWN_HTTP",        "1",      kNotWindows},
         {"platform", "Our own window layer",  "Open windows and read the keyboard and mouse with our own okay::platform backend instead of SDL (Linux only).",               "OKAY_PLATFORM_BACKEND", "own",   kNotWindows},

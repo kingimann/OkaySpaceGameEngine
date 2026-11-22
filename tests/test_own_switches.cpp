@@ -27,6 +27,11 @@ static void own_switches_real_table_is_sane() {
         seen.push_back(i.id);
     }
     CHECK(Find("wav", Items()) != nullptr);
+    {   // the OkayUI Inspector item: off unless chosen, sets OKAY_UI_INSPECTOR=1, hidden where OkayUI is not built in
+        const Item* in = Find("inspector", Items());
+        CHECK(in != nullptr && std::string(in->env) == "OKAY_UI_INSPECTOR" && std::string(in->value) == "1" && (in->needs & kNeedsOkayUi));
+        CHECK(!Has(Parse("", Items()), "inspector"));
+    }
 }
 
 static void own_switches_parse_serialize() {

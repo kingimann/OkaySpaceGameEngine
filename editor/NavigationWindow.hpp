@@ -7,6 +7,7 @@
 #include <functional>
 
 namespace okay { class Component; class GameObject; struct Mat4; }
+namespace okaypanels { struct InspFieldList; }
 
 namespace oked {
 
@@ -27,6 +28,14 @@ void DrawNavigationOverlay(okay::editor::EditorState& ed, ImDrawList* dl, const 
 using CompHeaderFn = bool (*)(const char*, okay::Component*, okay::Component**, bool);
 void DrawNavigationInspector(okay::editor::EditorState& ed, okay::GameObject* go, okay::Component* comp,
                              okay::Component*& toRemove, CompHeaderFn header);
+
+// The Nav Mesh Agent's body as OkayUI field rows (the Inspector, stage 4; docs/own_ui_toolkit.md section 17): main.cpp registers what
+// draws a body's rows (its DrawRowsOkayUI, behind the preview switch); null or false: Dear ImGui's body is drawn.
+using NavRowsDrawFn = bool (*)(okay::Component* comp, const char* id, okaypanels::InspFieldList& rows);
+void SetNavRowsDrawer(NavRowsDrawFn draw);
+// The same drawer for the bodies of other files (stage 8: Behavior Tree Runner, First Person Hands): false when it is not set or the
+// preview switch is off (Dear ImGui's body is drawn then).
+bool InspectorRowsOkayUI(okay::Component* comp, const char* id, okaypanels::InspFieldList& rows);
 
 // The Add Component rows (Gameplay). `item(absent, label)` is the menu's row widget.
 void NavigationAddComponentItems(okay::editor::EditorState& ed, okay::GameObject* go,

@@ -40,8 +40,8 @@ public:
             break;
         }
         case SDL_MOUSEBUTTONDOWN:   // a press and release that both arrive before one frame must still show as one pressed frame
-            if (e.button.button == SDL_BUTTON_LEFT) m_leftTap = true;
-            else if (e.button.button == SDL_BUTTON_RIGHT) m_rightTap = true;
+            if (e.button.button == SDL_BUTTON_LEFT) ++m_leftTaps;
+            else if (e.button.button == SDL_BUTTON_RIGHT) ++m_rightTaps;
             break;
         case SDL_MOUSEWHEEL: {
             float y = (float)e.wheel.y;
@@ -102,8 +102,8 @@ public:
             break;
         }
         case EventType::MouseButtonDown:
-            if (e.button == okay::platform::MouseLeft) m_leftTap = true;
-            else if (e.button == okay::platform::MouseRight) m_rightTap = true;
+            if (e.button == okay::platform::MouseLeft) ++m_leftTaps;
+            else if (e.button == okay::platform::MouseRight) ++m_rightTaps;
             break;
         case EventType::MouseWheel:
             m_wheel += e.wheelY;   // already "up = +y" whatever the OS scrolling setting is (the SDL path undoes SDL's flip to get the same)
@@ -153,7 +153,7 @@ public:
     OkayUI::Input Build(float mouseX, float mouseY, bool leftDown, bool rightDown, bool blocked, bool deliverKeys) {
         OkayUI::Input in;
         in.mouseX = mouseX; in.mouseY = mouseY;
-        in.mouseDown = leftDown || m_leftTap; in.rightDown = rightDown || m_rightTap; in.blocked = blocked;
+        in.mouseDown = Button(leftDown, m_leftTaps, m_leftShown); in.rightDown = Button(rightDown, m_rightTaps, m_rightShown); in.blocked = blocked;
         in.wheel = m_wheel;
         if (deliverKeys) {
             std::memcpy(m_out, m_text, sizeof(m_out));
@@ -168,7 +168,6 @@ public:
         m_up = m_down = m_copy = m_cut = m_paste = false;
         m_text[0] = 0;
         m_wheel = 0.0f;
-        m_leftTap = m_rightTap = false;
         m_back = m_del = m_left = m_right = m_home = m_end = m_enter = m_escape = m_selectAll = false;
         return in;
     }
@@ -234,31 +233,63 @@ private:
     char  m_text[64] = {0};
     char  m_out[64] = {0};
     float m_wheel = 0.0f;
-    bool  m_leftTap = false, m_rightTap = false;   // a button went down since the last frame (even if it is already up again)
+    // Presses of a button not yet shown to OkayUI (each one must reach it as an up-then-down edge, even when two arrive between two
+    // frames: a fast double click at a low frame rate), and whether the last frame showed the button down.
+    int   m_leftTaps = 0, m_rightTaps = 0;
+    bool  m_leftShown = false, m_rightShown = false;
+    /// One button's state for the frame: a press not yet shown is shown down, but only after a frame that showed it up (so it is an
+    /// edge); with no press waiting it is the button as it is now.
+    static bool Button(bool held, int& taps, bool& shown) {
+        bool down;
+        if (taps > 0) {
+            if (shown) down = false;            // shown down last frame: one frame up first, so this press is a new edge
+            else { down = true; --taps; }
+        } else down = held;
+        shown = down;
+        return down;
+    }
     bool  m_back = false, m_del = false, m_left = false, m_right = false, m_home = false, m_end = false;
     bool  m_enter = false, m_escape = false, m_selectAll = false, m_shift = false;
 };
 
-/// The rectangle a hosted screen occupies inside an ImGui window, remembered from one frame to the next (the OkayUI frame
-/// starts before the panels are submitted, so the mouse decision uses last frame's rectangle: one frame of latency).
+/// The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
+/// before the panels are submitted, so the mouse decision uses last frame's rectangles: one frame of latency). Several screens
+/// can be hosted in one frame (a page and the notifications panel floating over it): each Offer adds one rectangle, up to
+/// kMax; the set offered in a frame replaces the set of the frame before.
 class Region {
 public:
-    /// Called by the hosted panel each frame it draws: `rect` is its screen rectangle, `hovered` ImGui's answer to "is the
+    static constexpr int kMax = 8;
+    /// Called by a hosted panel each frame it draws: `rect` is its screen rectangle, `hovered` ImGui's answer to "is the
     /// mouse over my placeholder item and not covered by another window or popup" (ImGui::IsItemHovered).
-    void Offer(float x, float y, float w, float h, bool hovered) {
-        m_x = x; m_y = y; m_w = w; m_h = h; m_hovered = hovered; m_age = 0; m_valid = true;
+    /// `overlay`: a popup, menu list or dropdown OkayUI draws over everything (the host keeps a press there from ImGui too).
+    void Offer(float x, float y, float w, float h, bool hovered, bool overlay = false) {
+        int pick = -1;
+        for (int i = 0; i < kMax && pick < 0; ++i)   // the same rectangle offered again this frame: the newest answer wins
+            if (m_r[i].valid && m_r[i].age == 0 && m_r[i].x == x && m_r[i].y == y && m_r[i].w == w && m_r[i].h == h) pick = i;
+        for (int i = 0; i < kMax && pick < 0; ++i) if (!m_r[i].valid || m_r[i].age > 0) pick = i;   // a slot not offered this frame yet
+        if (pick < 0) return;                                                                      // more than kMax in one frame: ignored
+        m_r[pick] = Rect{x, y, w, h, hovered, true, 0, overlay};
     }
-    /// Start of the next frame: a region that was not offered last frame (panel closed, another page showing) is dropped.
-    void NextFrame() { if (m_valid && ++m_age > 1) m_valid = false; }
-    /// True when the mouse (x, y) is over a region whose panel was visible and not covered last frame.
+    /// Start of the next frame: a rectangle that was not offered last frame (panel closed, another page showing) is dropped.
+    void NextFrame() { for (Rect& r : m_r) if (r.valid && ++r.age > 1) r.valid = false; }
+    /// True when the mouse (x, y) is over a rectangle whose panel was visible and not covered last frame.
     bool Owns(float x, float y) const {
-        return m_valid && m_hovered && x >= m_x && y >= m_y && x < m_x + m_w && y < m_y + m_h;
+        for (const Rect& r : m_r)
+            if (r.valid && r.hovered && x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h) return true;
+        return false;
     }
-    bool Valid() const { return m_valid; }
+    /// True when the mouse is over an overlay offered last frame: a press or the wheel there is OkayUI's alone.
+    bool OwnsOverlay(float x, float y) const {
+        for (const Rect& r : m_r)
+            if (r.valid && r.overlay && x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h) return true;
+        return false;
+    }
+    bool Valid() const { return Count() > 0; }
+    /// How many rectangles are remembered.
+    int Count() const { int n = 0; for (const Rect& r : m_r) n += r.valid ? 1 : 0; return n; }
 private:
-    float m_x = 0, m_y = 0, m_w = 0, m_h = 0;
-    bool  m_hovered = false, m_valid = false;
-    int   m_age = 0;
+    struct Rect { float x = 0, y = 0, w = 0, h = 0; bool hovered = false, valid = false; int age = 0; bool overlay = false; };
+    Rect m_r[kMax];
 };
 
 /// Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).

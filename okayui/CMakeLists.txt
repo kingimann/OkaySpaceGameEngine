@@ -37,9 +37,9 @@ add_library(okay::ui ALIAS okay_ui)
 
 # The real screens the launcher and the editor host as the opt-in OkayUI backend (What's New, Console). Plain functions
 # over OkayUI and the engine's console model; no SDL and no Dear ImGui in them, so the headless tests drive them as is.
-add_library(okay_ui_screens STATIC screens/OkayUIScreens.cpp screens/OkayUIPanels.cpp)
+add_library(okay_ui_screens STATIC screens/OkayUIScreens.cpp screens/OkayUIPanels.cpp screens/OkayUIEditorPanels.cpp)
 target_include_directories(okay_ui_screens PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/screens)
-target_include_directories(okay_ui_screens PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared)   # ConsoleScriptLink.hpp
+target_include_directories(okay_ui_screens PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../shared)    # ConsoleScriptLink.hpp, EditorPanelModels.hpp (in the public header)
 target_link_libraries(okay_ui_screens PUBLIC okay_ui)
 add_library(okay::ui_screens ALIAS okay_ui_screens)
 
@@ -80,7 +80,7 @@ target_link_libraries(okay_ui_render PUBLIC okay_ui_soft)
 if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
 
     # What the tests need: the shared test framework header and the committed golden images.
-    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_bench okayui_screens okayui_host okayui_compat okayui_scopes okayui_internals okayui_dockbuilder okayui_panels okayui_itemedit okayui_calls okayui_names okayui_host_platform okayui_docknodes okayui_channels okayui_host_shapes okayui_fonts okayui_frameloop okayui_dockaware okayui_imvector okayui_numfmt)
+    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_bench okayui_screens okayui_host okayui_compat okayui_scopes okayui_internals okayui_dockbuilder okayui_panels okayui_itemedit okayui_calls okayui_names okayui_host_platform okayui_docknodes okayui_channels okayui_host_shapes okayui_fonts okayui_frameloop okayui_dockaware okayui_imvector okayui_numfmt okayui_editor_panels okayui_hierarchy okayui_inspector okayui_imcompat)
         add_executable(test_${t} tests/test_${t}.cpp)
         target_link_libraries(test_${t} PRIVATE okay_ui_render)
         target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)

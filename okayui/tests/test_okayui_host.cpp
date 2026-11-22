@@ -62,6 +62,28 @@ int main() {
         SDL_Event m = d; m.button.button = SDL_BUTTON_MIDDLE; c.Feed(m);      // other buttons are not OkayUI's
         CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
     }
+    {   // two clicks between two frames (a fast double click at a low frame rate): two presses, each an up-then-down edge
+        InputCollector c;
+        SDL_Event d; std::memset(&d, 0, sizeof(d)); d.type = SDL_MOUSEBUTTONDOWN; d.button.button = SDL_BUTTON_LEFT;
+        SDL_Event u = d; u.type = SDL_MOUSEBUTTONUP;
+        c.Feed(d); c.Feed(u); c.Feed(d); c.Feed(u);
+        CHECK(c.Build(5, 5, false, false, false, false).mouseDown);
+        CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
+        CHECK(c.Build(5, 5, false, false, false, false).mouseDown);
+        CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
+        // a second click arriving in the frame after the first was shown: the button is shown up once in between
+        c.Feed(d); c.Feed(u);
+        CHECK(c.Build(5, 5, false, false, false, false).mouseDown);
+        c.Feed(d); c.Feed(u);
+        CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
+        CHECK(c.Build(5, 5, false, false, false, false).mouseDown);
+        // a press held across frames (a drag) stays down
+        c.Feed(d);
+        CHECK(!c.Build(5, 5, true, false, false, false).mouseDown);   // the last frame showed it down: up once first
+        CHECK(c.Build(5, 5, true, false, false, false).mouseDown);
+        CHECK(c.Build(5, 5, true, false, false, false).mouseDown);
+        CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
+    }
     {   // keys are dropped, not kept, when OkayUI may not have them: nothing arrives a frame late
         InputCollector c;
         c.Feed(Text("x")); c.Feed(Key(SDLK_BACKSPACE));
@@ -175,6 +197,30 @@ int main() {
         CHECK(r.Owns(150, 120));
         r.NextFrame();                                         // ...but a panel that was not drawn again is dropped
         CHECK(!r.Owns(150, 120) && !r.Valid());
+    }
+    {   // several hosted rectangles in one frame (a page and the notifications panel over it): each owns its own area
+        Region r;
+        r.Offer(0, 0, 400, 300, false);                        // the page, covered here by the panel's ImGui window
+        r.Offer(250, 50, 200, 200, true);                      // the panel
+        CHECK(r.Count() == 2);
+        CHECK(r.Owns(300, 100) && !r.Owns(100, 100));          // inside the panel: owned; the covered page: not
+        r.NextFrame();
+        r.Offer(0, 0, 400, 300, true);                         // panel closed: only the page is offered now
+        CHECK(r.Owns(100, 100));
+        r.NextFrame();
+        CHECK(r.Count() == 1 && r.Owns(100, 100) && !r.Owns(440, 240));   // the panel's rectangle went with its frame
+        r.NextFrame();
+        CHECK(r.Count() == 0 && !r.Owns(100, 100));
+        for (int i = 0; i < Region::kMax + 3; ++i) r.Offer((float)i * 10, 0, 5, 5, true);   // more than it holds: the rest are ignored
+        CHECK(r.Count() == Region::kMax && r.Owns(1, 1) && !r.Owns((Region::kMax + 1) * 10.0f + 1, 1));
+    }
+    {   // an open menu offered as an overlay: the host keeps a press there from ImGui (OwnsOverlay); the panel itself is not an overlay
+        Region r;
+        r.Offer(0, 0, 300, 600, true);                         // the Hierarchy panel
+        r.Offer(250, 100, 260, 700, true, true);               // its menu, hanging out over the Scene view
+        CHECK(r.Owns(400, 300) && r.OwnsOverlay(400, 300) && !r.OwnsOverlay(100, 50) && r.Owns(100, 50));
+        r.NextFrame(); r.NextFrame();                          // the menu closed: no longer kept from ImGui
+        CHECK(!r.OwnsOverlay(400, 300));
     }
     {   // end to end through OkayUI: typed text from SDL events edits a focused field; a blocked frame does not click
         okayuitest::Reset();

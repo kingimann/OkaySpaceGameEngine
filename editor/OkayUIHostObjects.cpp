@@ -42,6 +42,21 @@
 #define AccentToggleButton AccentToggleButton_WO
 #define AccentCol AccentCol_WO
 #define TipButton TipButton_WO
+// The Inspector's OkayUI-part helpers in InspectorPanel.cpp (the hosted OkayUI Inspector), renamed like the rest.
+#define ComponentValueMenuEntries ComponentValueMenuEntries_WO
+#define FieldHooksFor FieldHooksFor_WO
+#define MarkPrefabOverrides MarkPrefabOverrides_WO
+#define MixedNoteText MixedNoteText_WO
+#define PrefabComponentMenuEntries PrefabComponentMenuEntries_WO
+#define PrefabFieldOverridden PrefabFieldOverridden_WO
+#define RequestComponentValues RequestComponentValues_WO
+#define RunPrefabComponentMenu RunPrefabComponentMenu_WO
+#define RunPrefabFieldMenu RunPrefabFieldMenu_WO
+// The hosted OkayUI Inspector parts (OKAY_UI_BACKEND=okayui inside the Dear ImGui editor) have no meaning here, where the whole window is
+// OkayUI's: InspectorPanel.cpp's calls to them answer "not hosted" (the definitions are after the includes).
+#define UseOkayUIInspector UseOkayUIInspector_WO
+#define OkayUIHasKeyboard OkayUIHasKeyboard_WO
+#define DrawFieldListOkayUI DrawFieldListOkayUI_WO
 
 #include "DialogService.hpp"
 #include "EditorState.hpp"
@@ -106,6 +121,24 @@
 #undef AccentToggleButton
 #undef AccentCol
 #undef TipButton
+#undef ComponentValueMenuEntries
+#undef FieldHooksFor
+#undef MarkPrefabOverrides
+#undef MixedNoteText
+#undef PrefabComponentMenuEntries
+#undef PrefabFieldOverridden
+#undef RequestComponentValues
+#undef RunPrefabComponentMenu
+#undef RunPrefabFieldMenu
+#undef UseOkayUIInspector
+#undef OkayUIHasKeyboard
+#undef DrawFieldListOkayUI
+
+namespace oked {
+bool UseOkayUIInspector_WO() { return false; }
+bool OkayUIHasKeyboard_WO() { return false; }
+bool DrawFieldListOkayUI_WO(const char*, okaypanels::InspFieldList&) { return false; }
+} // namespace oked
 
 namespace oked {
 namespace wm {

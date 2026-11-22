@@ -10715,7 +10715,7 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(tbtn));
     // Last, so every record written before keeps its place. Saved from their PropertyRegistry entries, no code of their own (none of them was saved before).
-    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion"})
+    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion", "ActiveRagdoll"})
         ComponentSerializerRegistry::RegisterFromProperties(type);
 }
 } // namespace detail

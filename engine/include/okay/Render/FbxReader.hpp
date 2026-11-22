@@ -91,11 +91,15 @@ struct Prop {
     /// Document::numbers for an ASCII one); 0 when the array is a view into the parsed bytes. (In the padding after `type`.)
     std::uint32_t own = 0;
     union {                        ///< read the member the type says (or Num(), s()): they share their bytes (24 bytes a property)
-        std::int64_t i = 0;        ///< Y C I L
+        std::int64_t i;            ///< Y C I L (set to 0 by the constructor below)
         double d;                  ///< F D
         Array arr;                 ///< 'a': numeric arrays (f d l i b c)
         std::string_view sv;       ///< S R: written by the readers; read it through s()
     };
+    /// A user-provided constructor: GCC 11 deletes the implicit one for a union holding members with non-trivial
+    /// default constructors (Array, string_view) even when another member has a default initializer (the release
+    /// workflow's Linux game server job builds with GCC 11 on ubuntu-22.04).
+    Prop() : i(0) {}
     /// S R (raw bytes for R): a view into the parsed bytes; empty for every other type.
     std::string_view s() const { return (type == 'S' || type == 'R') ? sv : std::string_view(); }
     bool IsNumber() const { return type == 'Y' || type == 'C' || type == 'I' || type == 'L' || type == 'F' || type == 'D'; }

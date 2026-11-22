@@ -80,4 +80,17 @@ private:
     std::uint64_t max_ = 512 * 1024, written_ = 0;
 };
 
+/// The text of the message box the app shows before it closes after a failure (app/engine_shell.hpp, Windows.UI.Popups.MessageDialog):
+/// the reason (cut at 600 characters, control bytes dropped) and where the log file is.
+inline std::string FailureText(const std::string& reason, const std::string& logPath) {
+    std::string r;
+    for (char c : reason) { if ((unsigned char)c < 32 && c != '\n') continue; r += c; }
+    if (r.size() > 600) { std::size_t cut = 600; while (cut > 0 && ((unsigned char)r[cut] & 0xC0) == 0x80) --cut; r = r.substr(0, cut) + "..."; }
+    if (r.empty()) r = "No reason was given.";
+    std::string t = "The game could not start, or it stopped because of an error.\n\n" + r + "\n\n";
+    if (logPath.empty()) t += "There is no log file (its folder could not be written).";
+    else t += "The log file has the details: " + logPath + "\n(Device Portal: the app's files, LocalState > logs.)";
+    return t;
 }
+
+} // namespace okay::xbox

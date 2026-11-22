@@ -381,9 +381,9 @@ ac	models/AC/closedLine.ac	FAIL	AC3D: no polygons in the file (only lines, point
 ac	models/AC/nosurfaces.ac	FAIL	AC3D: no polygons in the file (only lines, points or empty objects)
 ac	models/AC/openLine.ac	FAIL	AC3D: no polygons in the file (only lines, points or empty objects)
 ac	models/AC/sample_subdiv.ac	ok	area=12.9811	meshes=1	tris=245760	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.622,-0.571,-1.601,0.782,0.770,1.394	verts=122882	tex=0	nodes=3	uv=0	nrm=1
-# ogre: own OGRE XML mesh reader (.mesh.xml only; the .material scripts next to each file give the textures)
-ogre	models-nonbsd/Ogre/OgreSDK/fish.mesh.xml	ok	area=34.8947	meshes=1	tris=815	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.964,-1.552,-2.213,3.406,1.525,1.237	verts=530	tex=1	nodes=1	uv=1	nrm=1
-ogre	models-nonbsd/Ogre/OgreSDK/ninja.mesh.xml	ok	area=25219.6177	meshes=2	tris=1008	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-30.535,0.141,-83.136,30.535,191.790,14.357	verts=842	tex=1	nodes=1	uv=1	nrm=1
+# ogre: own OGRE XML mesh reader (.mesh.xml only; the .material scripts next to each file give the textures, the .skeleton.xml it links to skins fish and ninja)
+ogre	models-nonbsd/Ogre/OgreSDK/fish.mesh.xml	ok	area=34.8947	meshes=1	tris=815	bones=5	skinned=1	clips=1	dur=2.000	mat=1	bbox=-3.964,-1.552,-2.213,3.406,1.525,1.237	verts=530	tex=1	nodes=6	uv=1	nrm=1
+ogre	models-nonbsd/Ogre/OgreSDK/ninja.mesh.xml	ok	area=25219.6177	meshes=2	tris=1008	bones=28	skinned=2	clips=20	dur=4.083	mat=1	bbox=-30.535,0.141,-83.136,30.535,191.790,14.357	verts=842	tex=1	nodes=29	uv=1	nrm=1
 ogre	models-nonbsd/Ogre/OgreSDK/razor.mesh.xml	ok	area=29764.2994	meshes=1	tris=468	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-86.484,-13.859,-76.180,74.155,28.651,76.513	verts=588	tex=1	nodes=1	uv=1	nrm=1
 ogre	models/Ogre/TheThing/Mesh.mesh.xml	ok	area=1.3468	meshes=1	tris=2656	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=0.007,0.023,0.012,0.995,0.481,0.469	verts=1406	tex=1	nodes=1	uv=1	nrm=1
 # xgl: own XGL / ZGL reader
@@ -454,8 +454,9 @@ lws	models/LWS/move_xz_spline.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinn
 lws	models/LWS/move_xz_stepped.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=2.967	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
 lws	models/LWS/move_y_pre_ofrep_post_osc.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=1.700	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
 lws	models-nonbsd/LWS/QuickDraw v.2.2.lws	ok	area=230.2034	meshes=31	tris=22144	bones=0	skinned=0	clips=1	dur=1.000	mat=31	bbox=-2.358,-0.097,-3.647,2.358,4.607,6.791	verts=16864	tex=0	nodes=45	uv=0	nrm=1
-ogrebin	models-nonbsd/Ogre/OgreSDK/fish.mesh	ok	area=34.8947	meshes=1	tris=815	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.964,-1.552,-2.213,3.406,1.525,1.237	verts=530	tex=1	nodes=1	uv=1	nrm=1
-ogrebin	models-nonbsd/Ogre/OgreSDK/ninja.mesh	ok	area=25219.6201	meshes=2	tris=1008	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-30.534,0.141,-83.136,30.534,191.790,14.357	verts=842	tex=1	nodes=1	uv=1	nrm=1
+# ogrebin: own OGRE binary mesh reader (.mesh; skinned against the linked .skeleton.xml since 2026-11-21: the same bones, skins and clips as the XML twins)
+ogrebin	models-nonbsd/Ogre/OgreSDK/fish.mesh	ok	area=34.8947	meshes=1	tris=815	bones=5	skinned=1	clips=1	dur=2.000	mat=1	bbox=-3.964,-1.552,-2.213,3.406,1.525,1.237	verts=530	tex=1	nodes=6	uv=1	nrm=1
+ogrebin	models-nonbsd/Ogre/OgreSDK/ninja.mesh	ok	area=25219.6201	meshes=2	tris=1008	bones=28	skinned=2	clips=20	dur=4.083	mat=1	bbox=-30.534,0.141,-83.136,30.534,191.790,14.357	verts=842	tex=1	nodes=29	uv=1	nrm=1
 ogrebin	models-nonbsd/Ogre/OgreSDK/razor.mesh	ok	area=29764.2994	meshes=1	tris=468	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-86.484,-13.859,-76.180,74.155,28.651,76.513	verts=588	tex=1	nodes=1	uv=1	nrm=1
 zae	models/Collada/duck.zae	ok	area=7.0254	meshes=1	tris=4212	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.693,0.099,-0.613,0.962,1.640,0.539	verts=2399	tex=1	nodes=4	uv=1	nrm=1
 zae	models/Collada/duck_nomanifest.zae	ok	area=7.0254	meshes=1	tris=4212	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.693,0.099,-0.613,0.962,1.640,0.539	verts=2399	tex=1	nodes=4	uv=1	nrm=1

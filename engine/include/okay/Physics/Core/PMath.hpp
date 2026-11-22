@@ -133,7 +133,7 @@ struct M33 {
     M33 operator*(float s) const { M33 r; for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) r.m[i][j] = m[i][j] * s; return r; }
     M33 Transposed() const { M33 r; for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) r.m[i][j] = m[j][i]; return r; }
     V3 Col(int c) const { return {m[0][c], m[1][c], m[2][c]}; }
-    float Det() const {
+    float Det() const {   // dup-allow: physics core has no engine dependency (3x3 determinant)
         return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
                m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
     }

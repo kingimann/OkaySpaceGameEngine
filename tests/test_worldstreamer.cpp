@@ -52,9 +52,10 @@ int main() {
         CHECK(cx == 2 && cz == 2);
         for (int z = 1; z <= 3; ++z)
             for (int x = 1; x <= 3; ++x)
-                CHECK(ws->IsCellLoaded(x, z));     // every cell in the ring is tracked
-        // The actual prefab instantiated for present cells; (1,1) is a recorded
-        // miss (tracked so we don't retry every frame) but spawned nothing.
+                CHECK(ws->IsCellLoaded(x, z) == !(x == 1 && z == 1));   // every cell file in the ring
+        // The cells are found by scanning the folder, so the hole (1,1) is not a cell at all
+        // (nothing is tried, every frame or ever).
+        CHECK(!ws->HasCellFile(1, 1) && ws->HasCellFile(2, 2) && ws->CellFileCount() == 35);
         CHECK(scene.Find("cell_2_2") != nullptr);
         CHECK(scene.Find("cell_1_1") == nullptr);
         // Far cell never touched.
@@ -66,7 +67,7 @@ int main() {
     //     and are dropped; the new column (5,*) streams in.
     {
         player->transform->localPosition = Vec3{kCell * 4 + 5.0f, 0.0f, kCell * 2 + 5.0f};  // cell (4,2)
-        ws->Update(0.016f);
+        ws->SyncNow();   // a teleport: load what is wanted now (an ordinary Update streams it over frames, see world_streaming)
         int cx = 0, cz = 0; ws->CurrentCell(cx, cz);
         CHECK(cx == 4 && cz == 2);
 
@@ -122,7 +123,7 @@ int main() {
         scene.Update(0.016f);                            // ... and enough more retirements free the oldest shells
         CHECK(scene.Find("cell_4_2") == nullptr);
         player->transform->localPosition = Vec3{kCell * 5 + 5.0f, 0.0f, kCell * 5 + 5.0f};  // cell (5,5): (4,2) is now out of range
-        ws->Update(0.016f);                              // unload pass reaches the freed cell
+        ws->SyncNow();                                   // unload pass reaches the freed cell
         CHECK(!ws->IsCellLoaded(4, 2));
         scene.Update(0.016f);
         CHECK(ws->IsCellLoaded(5, 5));

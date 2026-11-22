@@ -1,12 +1,17 @@
-# Branch lint: cheap checks on every push to claude/** and claude2/** (not the full CI; about 1 to 5 minutes).
+# Branch lint: cheap checks on every push to a Claude lane branch (claude/**, claude2/**, claude3/**; the lanes are in
+# docs/lanes.json) and on every pull request from any other branch or fork (john/*, Grok's branches, outside forks), so
+# those get the same checks. Not the full CI; about 1 to 5 minutes.
 # Plain rules: docs/process/collaboration.md. Scripts: scripts/branch_lint.py, bug_patterns.py, collision_check.py.
-#   fatal:      forbidden thread includes in Windows code (rule 21a), secrets, a push into the other lane's open claim
+#   fatal:      forbidden thread includes in Windows code (rule 21a), secrets, a push into another lane's open claim
 #   warnings:   no docs changed, feature map not regenerated, MinGW syntax check, bug-class patterns
 # Each warning shows as an annotation on the commit and in the job summary; nothing is commented on any issue or PR.
+# A lane branch of this repo is checked on push only (its pull request would run the same checks twice).
+# When a lane is added to docs/lanes.json, add its prefix to the two lists below (scripts/tests/test_collab.py checks it).
 name: Branch lint
 on:
   push:
-    branches: ['claude/**', 'claude2/**']
+    branches: ['claude/**', 'claude2/**', 'claude3/**']
+  pull_request:
 permissions:
   contents: read
   issues: read
@@ -16,39 +21,51 @@ concurrency:
   cancel-in-progress: true
 jobs:
   lint:
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      !(startsWith(github.head_ref, 'claude/') || startsWith(github.head_ref, 'claude2/') || startsWith(github.head_ref, 'claude3/'))
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    env:
+      # what the branch is compared with: main for a push, the pull request's target for a pull request
+      BASE: origin/${{ github.base_ref || 'main' }}
+      BASE_REF: ${{ github.base_ref || 'main' }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Make sure origin/main is there
-        run: git fetch --quiet origin main:refs/remotes/origin/main || true
+      - name: Make sure the base branch is there
+        run: |
+          git fetch --quiet origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}" || true
+          git fetch --quiet origin main:refs/remotes/origin/main || true
 
       - name: "Windows build rule 21a: no thread or mutex use in Windows code (fatal)"
-        run: python3 scripts/branch_lint.py includes --base origin/main --head HEAD
+        run: python3 scripts/branch_lint.py includes --base "$BASE" --head HEAD
 
       - name: "Secrets (fatal)"
         if: always()
-        run: python3 scripts/branch_lint.py secrets --base origin/main --head HEAD
+        run: python3 scripts/branch_lint.py secrets --base "$BASE" --head HEAD
 
       - name: "No built programs or big binary files in git (fatal)"
         if: always()
-        run: python3 scripts/branch_lint.py binaries --base origin/main --head HEAD
+        run: python3 scripts/branch_lint.py binaries --base "$BASE" --head HEAD
 
+      # Claims live on issue #422 and name branches of this repo, so a fork's pull request has none to check.
       - name: "Claims: do not push into another lane's open claim (fatal)"
-        if: always()
+        if: always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           rc=0
-          python3 scripts/collision_check.py --branch "${GITHUB_REF_NAME}" > collision.md || rc=$?
+          python3 scripts/collision_check.py --base "$BASE" --branch "${BRANCH}" > collision.md || rc=$?
           cat collision.md >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
       - name: "Docs changed with the code (warning)"
         if: always()
-        run: python3 scripts/branch_lint.py docs --base origin/main --head HEAD
+        run: python3 scripts/branch_lint.py docs --base "$BASE" --head HEAD
 
       - name: "Feature map regenerated (warning)"
         if: always()
@@ -66,13 +83,13 @@ jobs:
 
       - name: "Bug-class patterns (warning)"
         if: always()
-        run: python3 scripts/bug_patterns.py --base origin/main --head HEAD --github | tee bug_patterns.txt
+        run: python3 scripts/bug_patterns.py --base "$BASE" --head HEAD --github | tee bug_patterns.txt
 
       - name: "Are engine files changed? (decides whether to install MinGW)"
         if: always()
         id: eng
         run: |
-          n=$(git diff --name-only origin/main...HEAD -- 'engine/**.hpp' 'engine/**.h' 'engine/**.cpp' | wc -l)
+          n=$(git diff --name-only "$BASE"...HEAD -- 'engine/**.hpp' 'engine/**.h' 'engine/**.cpp' | wc -l)
           echo "count=$n" >> "$GITHUB_OUTPUT"
 
       - name: Install the MinGW compiler (same way as release.yml, only when engine files changed)
@@ -87,4 +104,4 @@ jobs:
       - name: "MinGW -fsyntax-only on changed engine files (warning)"
         if: always() && steps.eng.outputs.count != '0'
         continue-on-error: true
-        run: python3 scripts/branch_lint.py mingw --base origin/main --head HEAD
+        run: python3 scripts/branch_lint.py mingw --base "$BASE" --head HEAD

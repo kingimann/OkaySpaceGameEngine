@@ -6,7 +6,7 @@
 
 Searches, for the keywords: the feature map (docs/FEATURE_MAP.md and docs/feature_map/*.md), docs/status/UNFINISHED.md and
 docs/status/unfinished_engine.md, the titles of docs/**/*.md, class/component/node/function names under engine/ editor/ launcher/
-shared/ okayui/ tests/ (git grep), example scenes, test names, and the open claude/* and claude2/* branches (names and
+shared/ okayui/ tests/ (git grep), example scenes, test names, and the open lane branches (claude/*, claude2/*, claude3/*: docs/lanes.json) (names and
 the files they change against origin/main), plus open PR titles and Claim comments on issue #422 when GitHub answers.
 It prints a ranked "Existing:" report. Paste the short "Existing:" block at the end into your Claim comment.
 Standard library and git only. Nothing is changed. Written for this repo (plain regex and git grep).

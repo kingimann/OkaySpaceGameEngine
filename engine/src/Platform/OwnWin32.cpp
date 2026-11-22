@@ -14,6 +14,7 @@
 #include "Win32Icon.hpp"
 #include "Win32Ime.hpp"
 #include "Win32XInput.hpp"
+#include "Win32Messages.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -735,12 +736,21 @@ public:
                      : (m == WM_MBUTTONDOWN || m == WM_MBUTTONUP) ? MouseMiddle
                      : (m == WM_RBUTTONDOWN || m == WM_RBUTTONUP) ? MouseRight
                      : (HIWORD(wp) == XBUTTON1 ? MouseX1 : MouseX2);
-            e.x = (short)LOWORD(lp); e.y = (short)HIWORD(lp); e.clicks = 1;
-            if (down) SetCapture(h); else ReleaseCapture();
+            e.x = (short)LOWORD(lp); e.y = (short)HIWORD(lp);
+            // 1 single, 2 double, 3 triple: counted with the system's double-click time and box (Win32Messages.hpp).
+            e.clicks = down ? b->m_clicks.Down(e.button, e.x, e.y, (uint32_t)GetMessageTime(), (uint32_t)GetDoubleClickTime(),
+                                              GetSystemMetrics(SM_CXDOUBLECLK), GetSystemMetrics(SM_CYDOUBLECLK))
+                            : b->m_clicks.Up(e.button);
+            if (down) SetCapture(h);
+            else if (!(wp & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON | MK_XBUTTON1 | MK_XBUTTON2))) ReleaseCapture();   // keep the capture while another button is held
             b->m_pending.push_back(e);
             return (m == WM_XBUTTONDOWN || m == WM_XBUTTONUP) ? TRUE : 0;
         }
         case WM_LBUTTONDBLCLK: return 0;
+        case WM_SYSCOMMAND:   // Alt or F10 alone, Alt+letter: no menu mode (it stole the next key); Alt+Space keeps the window menu
+            if (win32msg::SwallowSysCommand((uint64_t)wp, (int64_t)lp)) return 0;
+            break;
+        case WM_MENUCHAR: return (LRESULT)win32msg::MenuCharReply();   // Alt+key with no menu: no beep
         case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL: {
             e.type = EventType::MouseWheel;
             const float notches = (float)(short)HIWORD(wp) / (float)WHEEL_DELTA;
@@ -851,6 +861,7 @@ private:
         return m_xslots.SlotOfIndex(index);
     }
     win32xi::SlotTracker m_xslots;
+    win32msg::ClickCounter m_clicks;
     win32xi::RumbleTimer m_rumble;
     typedef DWORD (WINAPI *GetStateFn)(DWORD, XINPUT_STATE*);
     typedef DWORD (WINAPI *SetStateFn)(DWORD, XINPUT_VIBRATION*);

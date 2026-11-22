@@ -272,9 +272,9 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 26. Shader & material editor (High)
 
-| [26.1](../feature_map/20-35-planned.md#261-visual-shader-graphs) | Visual shader graphs | Planned | four renderers (software, GL, D3D11, D3D12) must stay consistent; D3D12 has normal, gloss and AO maps too (corrected 2026-11-20: older text here said it had none, which is **outdated**; `engine/src/Render/D3D12Renderer.cpp` binds `normalMap`, `specularMap` as gloss and `aoMap`, see docs/rendering/rendering.md). |
+| [26.1](../feature_map/20-35-planned.md#261-visual-shader-graphs) | Visual shader graphs | Planned | no graph editor or graph file yet; the language a graph will compile to (`.okayshader`, 26.3) exists, so the GLSL / HLSL / CPU backends are reused. |
 | [26.2](../feature_map/20-35-planned.md#262-material-editor) | Material editor | Partial | preview is not what the renderer draws; materials are copied into the renderer (`ApplyTo`), not referenced, so editing the file... |
-| [26.3](../feature_map/20-35-planned.md#263-custom-shaders) | Custom shaders | Planned | D3D12 is "v1" and opt-in; shader hot reload would need 34.3. |
+| [26.3](../feature_map/20-35-planned.md#263-custom-shaders) | Custom shaders | Partial | `.okayshader` works on software and OpenGL; Direct3D 11 written but unverified on Windows; Direct3D 12 and Xbox draw Custom as Standard / magenta; shadows ignore discard. |
 | [26.4](../feature_map/20-35-planned.md#264-pbr) | PBR | Partial | four renderers to keep equal; D3D12 lacks maps; the software renderer is the reference. |
 
 ### 27. Optimization tools (High)

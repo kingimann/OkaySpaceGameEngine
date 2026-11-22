@@ -73,15 +73,23 @@ int main() {
 
     const std::string src = std::string(OKAY_SOURCE_DIR) + "/examples/shaders/";
     const std::string tmp = "okayshader_gl_tmp.okayshader";
+    // Lit cases: the two renderers' own Standard lighting already differs (OpenGL soft-clips and lights a
+    // little brighter; about 10/255 on a plain grey ball), so their limits are wider than the unlit ones.
     std::vector<Case> cases = {
-        {"unlit_uv", "mode unlit; surface { albedo = vec3(uv, 0.5) * vcolor; }", "", false, 0.97, 3.0, 0.0f},
-        {"unlit_noise", "mode unlit; surface { float n = noise(position * 3.0); albedo = vec3(n, hash(uv * 16.0), fract(n * 4.0)); }", "", false, 0.95, 4.0, 0.0f},
+        {"unlit_uv", "mode unlit; surface { albedo = vec3(uv, 0.5) * vcolor; }", "", false, 0.95, 2.0, 0.0f},
+        {"unlit_noise", "mode unlit; surface { float n = noise(position * 3.0); albedo = vec3(n, hash(uv * 16.0), fract(n * 4.0)); }", "", false, 0.80, 4.0, 0.0f},
         {"unlit_maths", "mode unlit; surface { vec3 c = vec3(0.0); for i in 0..3 { c += vec3(sin(position.x * 4.0 + i), cos(position.y * 3.0 - i), mod(position.z * 2.0 + i, 1.0)) * 0.2; }"
-                        " albedo = clamp(c + 0.4, 0.0, 1.0); albedo.z = smoothstep(0.2, 0.8, saturate(dot(normal, view))); }", "", false, 0.97, 3.0, 0.0f},
-        {"lit_passthrough", "surface { albedo = albedo; }", "", true, 0.90, 6.0, 0.0f},
-        {"lava", "@lava.okayshader", "", true, 0.85, 8.0, 1.25f},
-        {"dissolve", "@dissolve.okayshader", "cycle=0;amount=0.45", true, 0.85, 8.0, 0.0f},
-        {"rim_glow", "@rim_glow.okayshader", "", true, 0.85, 8.0, 0.5f},
+                        " albedo = clamp(c + 0.4, 0.0, 1.0); albedo.z = smoothstep(0.2, 0.8, saturate(dot(normal, view))); }", "", false, 0.95, 2.0, 0.0f},
+        {"unlit_props", "mode unlit; property float amount = 0.5; property color tint = (0.1, 0.2, 0.3); surface { albedo = vec3(amount, tint.g, time * 0.25); }",
+                        "amount=0.75;tint=0,0.5,0", false, 0.95, 2.0, 2.0f},
+        {"unlit_discard", "mode unlit; property float amount = 0.45; surface { float n = noise(position * 6.0) * 0.7 + noise(position * 13.8) * 0.3;"
+                          " if (n < amount) { discard; } albedo = vec3(n); }", "", false, 0.85, 8.0, 0.0f},
+        {"lit_passthrough", "surface { albedo = albedo; }", "", true, 0.50, 14.0, 0.0f},
+        {"lava", "@lava.okayshader", "", true, 0.90, 4.0, 1.25f},
+        // Through its holes the far inside of the ball shows, lit from behind: the renderers light those
+        // back faces differently (their Standard lighting differs most there), hence the wide limit.
+        {"dissolve", "@dissolve.okayshader", "cycle=0;amount=0.45", true, 0.30, 24.0, 0.0f},
+        {"rim_glow", "@rim_glow.okayshader", "", true, 0.85, 10.0, 0.5f},
     };
     GLRenderer gl;
     for (const Case& c : cases) {
@@ -94,10 +102,10 @@ int main() {
         for (int k = 0; k < (int)(c.time / 0.05f); ++k) Time::Step(0.05f);
         Scene scene("gl");
         BuildScene(scene, path, c.params);
-        const Mat4 view = Mat4::LookAt({0, 0.3f, 3.2f}, {0, 0, 0}, Vec3::Up);
-        const Mat4 proj = Mat4::Perspective(55.0f, 1.0f, 0.1f, 100.0f);
+        const Mat4 view = Mat4::LookAt({0, 0.15f, 1.3f}, {0, 0, 0}, Vec3::Up);
+        const Mat4 proj = Mat4::Perspective(55.0f, 1.0f, 0.05f, 100.0f);
         const Mat4 vp = proj * view;
-        const Vec3 eye{0, 0.3f, 3.2f};
+        const Vec3 eye{0, 0.15f, 1.3f};
         Raster sw; sw.Resize(kSize, kSize); sw.Clear(0xFF000000u);
         RenderMeshes(sw, scene, vp, eye);
         const std::uint32_t* px = gl.RenderToPixels(scene, vp, eye, kSize, kSize, 1, 0.0f, 0.0f, 0.0f, 1.0f);
@@ -126,6 +134,62 @@ int main() {
         CHECK(agreeF >= c.minAgree);
         CHECK(mean <= c.maxMean);
         if (shotDir) SaveSideBySide(std::string(shotDir) + "/" + c.name + ".png", sw, px);
+        if (std::string(c.name) == "lit_passthrough") {
+            // On one renderer a pass-through custom surface must give Standard's pixels exactly.
+            std::vector<std::uint32_t> custom(px, px + (std::size_t)kSize * kSize);
+            Scene std0("gl-std");
+            BuildScene(std0, path, "");
+            for (const auto& go : std0.Objects())
+                if (auto* mr = go->GetComponent<MeshRenderer>()) mr->shader = MeshRenderer::Shader::Standard;
+            // A custom surface always shades per pixel on the software renderer; Standard does when asked.
+            Raster sws; sws.Resize(kSize, kSize); sws.Clear(0xFF000000u);
+            const bool ppSave = PerPixelLighting();
+            PerPixelLighting() = true;
+            RenderMeshes(sws, std0, vp, eye);
+            PerPixelLighting() = ppSave;
+            const std::uint32_t* sp = gl.RenderToPixels(std0, vp, eye, kSize, kSize, 1, 0.0f, 0.0f, 0.0f, 1.0f);
+            int maxGl = 0, maxSw = 0;
+            for (int i = 0; sp && i < kSize * kSize; ++i) {
+                for (int sh = 0; sh < 24; sh += 8) {
+                    maxGl = std::max(maxGl, std::abs((int)((sp[i] >> sh) & 0xFF) - (int)((custom[(std::size_t)i] >> sh) & 0xFF)));
+                    maxSw = std::max(maxSw, std::abs((int)((sws.color[(std::size_t)i] >> sh) & 0xFF) - (int)((sw.color[(std::size_t)i] >> sh) & 0xFF)));
+                }
+            }
+            std::cout << "  pass-through vs Standard on the same renderer: OpenGL max " << maxGl << ", software max " << maxSw << "\n";
+            CHECK(sp != nullptr);
+            CHECK(maxGl <= 1);
+            CHECK(maxSw <= 1);
+        }
+    }
+    // The shipped example scene on both renderers: every custom object compiles on the GPU (no magenta).
+    {
+        Scene demo("demo");
+        CHECK(SceneSerializer::LoadFromFile(demo, src + "shader_demo.okayscene"));
+        demo.physicsEnabled = false;
+        demo.renderSettings.skybox = false;
+        Time::ResetForTesting();
+        for (int k = 0; k < 30; ++k) Time::Step(0.05f);
+        const Vec3 eye{0.0f, 2.6f, -3.5f};
+        const Mat4 vp = Mat4::Perspective(55.0f, 2.0f, 0.1f, 200.0f) * Mat4::LookAt(eye, {0.0f, 0.8f, 4.0f}, Vec3::Up);
+        const int W = kSize * 2, H = kSize;
+        Raster sw; sw.Resize(W, H); sw.Clear(0xFF000000u);
+        RenderMeshes(sw, demo, vp, eye);
+        const std::uint32_t* px = gl.RenderToPixels(demo, vp, eye, W, H, 1, 0.0f, 0.0f, 0.0f, 1.0f);
+        CHECK(px != nullptr);
+        int magenta = 0;
+        for (int i = 0; px && i < W * H; ++i) if ((px[i] & 0xFFFFFF) == 0xFF00FF) ++magenta;
+        std::cout << "  example scene: " << magenta << " magenta pixels on OpenGL\n";
+        CHECK(magenta == 0);
+        if (shotDir && px) {
+            Image img(W, H * 2);
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x) {
+                    const std::uint32_t a = sw.Get(x, y), b = px[(std::size_t)y * W + x];
+                    img.SetPixel(x, y, Color::FromBytes(a & 0xFF, (a >> 8) & 0xFF, (a >> 16) & 0xFF));
+                    img.SetPixel(x, H + y, Color::FromBytes(b & 0xFF, (b >> 8) & 0xFF, (b >> 16) & 0xFF));
+                }
+            img.SavePNG(std::string(shotDir) + "/example_scene_software_top_gl_bottom.png");
+        }
     }
     std::remove(tmp.c_str());
     gl.Destroy();

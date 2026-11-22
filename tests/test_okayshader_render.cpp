@@ -23,6 +23,7 @@ Rgb At(const Raster& r, int x, int y) {
 // A lit sphere in front of the camera, drawn with `setup` applied to its renderer.
 template <class F> Raster RenderBall(F setup, int size = 64) {
     Scene scene("SH"); scene.physicsEnabled = false;
+    scene.renderSettings.tonemap = false;   // exact colours: no filmic curve on top
     GameObject* lgo = scene.CreateGameObject("Sun");
     auto* light = lgo->AddComponent<Light>();
     light->type = Light::Type::Directional; light->intensity = 1.0f;
@@ -34,9 +35,9 @@ template <class F> Raster RenderBall(F setup, int size = 64) {
     mr->specular = 0.3f; mr->shininess = 24.0f;
     setup(*mr);
     Raster r; r.Resize(size, size); r.Clear(0xFF000000u);
-    Mat4 view = Mat4::LookAt({0, 0, 4}, {0, 0, 0}, Vec3::Up);
-    Mat4 proj = Mat4::Perspective(60.0f, 1.0f, 0.1f, 100.0f);
-    RenderMeshes(r, scene, proj * view, {0, 0, 4});
+    Mat4 view = Mat4::LookAt({0, 0, 1.2f}, {0, 0, 0}, Vec3::Up);   // the ball fills most of the picture
+    Mat4 proj = Mat4::Perspective(60.0f, 1.0f, 0.05f, 100.0f);
+    RenderMeshes(r, scene, proj * view, {0, 0, 1.2f});
     return r;
 }
 

@@ -586,6 +586,7 @@ private:
         ExpectP(";", "after the assignment");
         Stmt& st = stmts[(std::size_t)id];
         st.sym = s; st.expr = e; st.op = op.text;
+        if (sy.kind == SymKind::Output && std::string(kOutputs[sy.index].name) == "alpha") m_out.writesAlpha = true;
         return id;
     }
 

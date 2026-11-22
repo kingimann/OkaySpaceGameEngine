@@ -208,6 +208,7 @@ physics_materials
 physics2d
 player
 security_paths
+shaders
 spatial_audio
 texture
 touch_controls
@@ -255,6 +256,7 @@ cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/sr
 [ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/boat/boat_lake.okayscene" ] || { echo "error: examples/boat/boat_lake.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/water/lake.okayscene" ] || { echo "error: examples/water/lake.okayscene did not make it into the distribution" >&2; exit 1; }
+[ -s "$OUT_DIR/examples/shaders/shader_demo.okayscene" ] || { echo "error: examples/shaders/shader_demo.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/ui_text/ui_text.okayscene" ] || { echo "error: examples/ui_text/ui_text.okayscene did not make it into the distribution" >&2; exit 1; }
 
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
@@ -292,6 +294,9 @@ examples/ example scenes to try: in the editor use File > Open and pick
                         and 2x; Lighting > UI Font > UI Quality switches the old look back on).
                         examples\wind\wind.okayscene (trees, grass, a flag and leaves in the
                         wind, a box the gusts push, and a wind sound).
+                        examples\shaders\shader_demo.okayscene (custom .okayshader
+                        surfaces: lava, dissolve, rim glow; edit a .okayshader
+                        file and the object updates).
                         More in docs/try_it.md.
 
 Each .exe needs SDL2.dll in its own folder — that's why one sits beside the

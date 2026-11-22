@@ -234,6 +234,31 @@ private:
     void BindSkin(const SkinnedMesh* skin, const Mesh& mesh, MeshVB* mv, int uSkin, int uBones);
     std::vector<std::array<int, 3>> m_slotRanges;         // filled by BuildExpandedVerts when it grouped the triangles by material slot
     void BuildExpandedVerts(const Mesh& mesh, bool groupBySlot = false);   // fill m_verts (14 floats/vertex)
+
+    // ---- Custom (.okayshader) surfaces: one program per shader file -----------------------------
+    // The program is the main mesh shader with the generated okaySurface() spliced in (OKAY_SURFACE).
+    // While a custom object draws, its per-object uniform locations are swapped into the m_u* members
+    // (so the draw code above sets them unchanged), and the frame's uniforms are copied over from
+    // m_prog once per frame.
+    struct CustomGL {
+        unsigned int prog = 0;
+        std::uint64_t generation = 0;
+        bool failed = false, unlit = false, writesAlpha = false;
+        std::vector<int> locs;                     // per-object uniforms (kObjUniforms order)
+        int uTime = -1;
+        std::vector<int> uProps;                   // one per property
+        std::vector<std::string> texNames;         // unused (kept for the slot count)
+        int texCount = 0;
+        struct Copy { int from = -1, to = -1; unsigned type = 0; };
+        std::vector<Copy> frameCopies;             // m_prog -> prog, everything not per-object
+        unsigned syncedFrame = ~0u;
+    };
+    std::unordered_map<std::string, CustomGL> m_custom;   // key: shader path
+    unsigned int m_whiteTex = 0;                          // 1x1 white: an unbound custom texture
+    CustomGL* EnsureCustomProgram(const std::string& path);
+    void BeginCustom(CustomGL& cp, const MeshRenderer& mr);
+    void EndCustom(CustomGL& cp);
+    void SwapObjectLocations(CustomGL& cp);
 };
 
 } // namespace okay

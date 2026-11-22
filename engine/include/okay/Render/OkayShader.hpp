@@ -80,6 +80,7 @@ struct Compiled {
     std::string name;                 ///< from `shader "Name";` (else empty)
     bool unlit = false;               ///< `mode unlit;`: no lighting, colour = albedo + emission
     bool usesDiscard = false;
+    bool writesAlpha = false;         ///< assigns `alpha`: the renderers then blend it like a see-through material
     std::vector<Property> props;
     std::vector<TextureSlot> textures;
     /// GLSL 1.20-compatible text: the uniforms (okp_<name>, okt_<name>, uOkTime)

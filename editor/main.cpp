@@ -90,6 +90,7 @@
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
 #include "okay/Render/RendererFeatures.hpp"  // which lighting / post / fog / sky switches each renderer draws
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
+#include "okay/Render/OkayShader.hpp"   // Custom shader fields (our own .okayshader language)
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
@@ -27844,6 +27845,61 @@ static bool IKJointLimitUI(const char* label, IKJointLimit& l) {
     return ch;
 }
 
+static bool AcceptAssetPathField(std::string& field);
+
+// The Mesh Renderer's Custom shader fields: the .okayshader file, whether it compiled (the first
+// error with its line and column when not), and one control per declared property and texture.
+// The values live in MeshRenderer::shaderParams as text, so a property the file no longer has is
+// kept (and ignored) instead of lost. The renderers reload the file by themselves when it changes.
+static bool DrawCustomShaderFields(MeshRenderer& mr) {
+    bool ch = false;
+    char path[260];
+    std::strncpy(path, mr.customShader.c_str(), sizeof(path) - 1);
+    path[sizeof(path) - 1] = '\0';
+    if (ImGui::InputText("Shader File##mesh", path, sizeof(path))) { mr.customShader = path; ch = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("An .okayshader file: a surface block that sets albedo, emission, alpha,\nnormal, metallic, specular and shininess. Edits reload by themselves.\nExamples: examples/shaders/lava.okayshader, dissolve.okayshader, rim_glow.okayshader");
+    if (AcceptAssetPathField(mr.customShader)) ch = true;
+    if (mr.customShader.empty()) { ImGui::TextDisabled("Pick an .okayshader file (drawn magenta until then)."); return ch; }
+    const oshader::ShaderFile sf = oshader::LoadShaderFile(mr.customShader);
+    const oshader::Compiled* c = sf.compiled.get();
+    if (!c || !c->ok) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.7f, 1.0f));
+        ImGui::TextWrapped("%s", c ? c->FirstError(mr.customShader).c_str() : "cannot read the shader file");
+        ImGui::PopStyleColor();
+        ImGui::TextDisabled("Drawn magenta until the file compiles; save it and it reloads.");
+        return ch;
+    }
+    ImGui::TextDisabled("%s%s", c->name.empty() ? "Compiled" : c->name.c_str(), c->unlit ? "  (unlit)" : "");
+    const std::vector<float> vals = oshader::ResolveProperties(*c, mr.shaderParams);
+    for (std::size_t i = 0; i < c->props.size(); ++i) {
+        const oshader::Property& p = c->props[i];
+        float v[4] = {vals[i * 4], vals[i * 4 + 1], vals[i * 4 + 2], vals[i * 4 + 3]};
+        const std::string label = p.name + "##okp";
+        const int w = oshader::Width(p.type);
+        bool edited = false;
+        if (p.isColor) edited = ImGui::ColorEdit3(label.c_str(), v, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+        else if (w == 1 && p.hasRange) edited = ImGui::SliderFloat(label.c_str(), v, p.minV, p.maxV);
+        else if (w == 1) edited = ImGui::DragFloat(label.c_str(), v, 0.01f);
+        else if (w == 2) edited = ImGui::DragFloat2(label.c_str(), v, 0.01f);
+        else if (w == 3) edited = ImGui::DragFloat3(label.c_str(), v, 0.01f);
+        else edited = ImGui::DragFloat4(label.c_str(), v, 0.01f);
+        if (edited) { mr.shaderParams = oshader::SetParam(mr.shaderParams, p.name, v, w); ch = true; }
+    }
+    for (std::size_t t = 0; t < c->textures.size(); ++t) {
+        const std::string key = "tex:" + c->textures[t].name;
+        std::string pic = oshader::GetTextParam(mr.shaderParams, key);
+        char buf[260];
+        std::strncpy(buf, pic.c_str(), sizeof(buf) - 1);
+        buf[sizeof(buf) - 1] = '\0';
+        const std::string label = c->textures[t].name + "##okt";
+        if (ImGui::InputText(label.c_str(), buf, sizeof(buf))) { pic = buf; mr.shaderParams = oshader::SetTextParam(mr.shaderParams, key, pic); ch = true; }
+        if (ImGui::IsItemHovered() && !c->textures[t].defaultPath.empty()) ImGui::SetTooltip("Empty: %s", c->textures[t].defaultPath.c_str());
+        if (AcceptAssetPathField(pic)) { mr.shaderParams = oshader::SetTextParam(mr.shaderParams, key, pic); ch = true; }
+    }
+    if (!mr.shaderParams.empty() && ImGui::SmallButton("Reset Properties##okp")) { mr.shaderParams.clear(); ch = true; }
+    return ch;
+}
+
 // If an asset is dropped on the previous widget, set `field` to its path.
 static bool AcceptAssetPathField(std::string& field) {
     bool changed = oked::AssetPathPicker(field);   // "..." handle + right-click: choose from project, clear
@@ -37391,8 +37447,8 @@ void DrawInspector(EditorState& ed) {
             // Unlit flag into the selector; the renderer treats Unlit-shader == unlit.
             int sh = (int)mr->shader;
             if (mr->unlit && mr->shader == MeshRenderer::Shader::Standard) sh = 1;  // legacy unlit flag
-            const char* shaders[] = {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet"};
-            if (ImGui::Combo("Shader##mesh", &sh, shaders, 9)) {
+            const char* shaders[] = {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet", "Custom"};
+            if (ImGui::Combo("Shader##mesh", &sh, shaders, 10)) {
                 mr->shader = (MeshRenderer::Shader)sh;
                 mr->unlit = (mr->shader == MeshRenderer::Shader::Unlit);  // keep legacy flag in sync
                 ed.dirty = true;
@@ -37413,6 +37469,8 @@ void DrawInspector(EditorState& ed) {
             // Fresnel (rim-glow shell): the rim controls below tune the edge glow.
             if (mr->shader == MeshRenderer::Shader::Fresnel)
                 ImGui::TextDisabled("Edge glow uses the Rim settings below.");
+            // Custom: an .okayshader file (our own shader language) and its properties.
+            if (mr->shader == MeshRenderer::Shader::Custom && DrawCustomShaderFields(*mr)) ed.dirty = true;
             // Rim (Fresnel) backlight — a per-material glow, great with Toon.
             if (ImGui::SliderFloat("Rim##mesh", &mr->rimStrength, 0.0f, 2.0f)) ed.dirty = true;
             oked::FieldTip("Rim##mesh");

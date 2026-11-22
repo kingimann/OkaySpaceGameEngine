@@ -1054,6 +1054,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << "  shader " << (int)mr->shader << " " << mr->toonBands
                 << " " << mr->gradientTop.r << " " << mr->gradientTop.g << " " << mr->gradientTop.b
                 << " " << mr->gradientBottom.r << " " << mr->gradientBottom.g << " " << mr->gradientBottom.b << "\n";
+        // Custom shader file + its property values (separate record so older scenes still load).
+        if (!mr->customShader.empty() || !mr->shaderParams.empty())
+            out << "  customshader " << Quote(mr->customShader) << " " << Quote(mr->shaderParams) << "\n";
         // Per-material rim (Fresnel) backlight (separate record).
         if (mr->rimStrength > 0.0f)
             out << "  rim " << mr->rimStrength << " " << mr->rimPower << " "
@@ -5412,6 +5415,23 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             in >> mr->gradientTop.r >> mr->gradientTop.g >> mr->gradientTop.b
                                >> mr->gradientBottom.r >> mr->gradientBottom.g >> mr->gradientBottom.b;
                         }
+                    }
+                } else if (field == "customshader") {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
+                        in >> std::ws;
+                        std::string p = in.peek() == '"' ? ReadQuoted(in) : std::string();
+                        // A path written next to the scene ("lava.okayshader") is found in the scene's folder.
+                        if (!p.empty()) {
+                            const std::filesystem::path pp(p);
+                            std::error_code ec;
+                            if (!pp.is_absolute() && !g_loadingSceneDir.empty() && !std::filesystem::exists(pp, ec)) {
+                                const std::filesystem::path alt = std::filesystem::path(g_loadingSceneDir) / pp;
+                                if (std::filesystem::exists(alt, ec)) p = alt.string();
+                            }
+                        }
+                        mr->customShader = p;
+                        in >> std::ws;
+                        if (in.peek() == '"') mr->shaderParams = ReadQuoted(in);
                     }
                 } else if (field == "rim") {
                     if (auto* mr = LastOf(go->GetComponents<MeshRenderer>()))

@@ -95,7 +95,7 @@ const std::unordered_set<std::string>& KnownObjectKeys() {
     "jumppad", "layer", "lifetime", "light", "limbik", "linerenderer", "loadingscreen",
     "loc", "locked", "logicsource", "logictarget", "lookatik", "lootsource", "material",
     "melee", "mesh", "meshcollider3d", "meshcolors", "meshenabled", "meshgeo", "meshpoly",
-    "mrmap", "emissivemap",
+    "mrmap", "emissivemap", "customshader",
     "meshseams", "meshshade", "meshshadows", "meshuv", "meshvar", "minimap", "minimapblip",
     "mod", "modelanim", "modelanimair", "modelanimblend", "modelanimcubic", "modelanimdir", "modelanimdrive",
     "modelanimevents", "modelanimlegs", "modelanimroot", "modelanimsmooth", "modelanimstance", "modelanimstride", "modstack",

@@ -1,7 +1,8 @@
 #pragma once
 // Friendly names for visual-script nodes. The file token stays in the registry;
 // this table is the title, the pins, and the old words search still matches.
-// Rules: docs/visual_scripting_naming.md.
+// Rules: docs/visual_scripting_naming.md. This is the ONLY title table: VisualScriptPlain.hpp's VsPlainTitleFor holds
+// only fallbacks for nodes not listed here (it used to keep a second list, kVsPlainRenames, that overrode this one).
 #include "VisualScriptNodeDocs.hpp"   // VsLower
 #include <cctype>
 #include <cstring>
@@ -105,15 +106,18 @@ inline const VsName kVsNames[] = {
     {"OnGlobalVarChanged", VsNameKind::Event, "On Game Value Changed", "On Global Var Changed", "var variable global", nullptr, 0, kPinValuePrevious, 2},
     // Flow. oldTitle is the previous palette title, including the unit in brackets.
     {"Branch",        VsNameKind::Action, "If Then Else",           "Branch",            "if condition choose decide", kPinCondition, 1, nullptr, 0},
-    {"Sequence",      VsNameKind::Action, "Do These in Order",            "Sequence",          "one after another then steps", nullptr, 0, nullptr, 0},
+    {"Sequence",      VsNameKind::Action, "Do These in Order",            "Sequence",          "one after another then steps Do in Order", nullptr, 0, nullptr, 0},
+    // Const is the typed-in value node (the token stays "Const" in saved graphs); its plain title moved here from
+    // VisualScriptPlain.hpp's old kVsPlainRenames table, and "Fixed Value" (its previous plain title) stays a search word.
+    {"Const",         VsNameKind::Calculation, "Type in a Value",       "Const",             "Fixed Value constant number typed value", nullptr, 0, nullptr, 0},
     {"Once",          VsNameKind::Action, "Run Once",               "Once",              "", nullptr, 0, nullptr, 0},
-    {"Timer",         VsNameKind::Action, "Repeat Every Few Seconds",          "Every (s)",         "Timer seconds", nullptr, 0, nullptr, 0},
-    {"Wait",          VsNameKind::Action, "Wait the First Time Only",              "Wait (s)",          "Wait seconds", nullptr, 0, nullptr, 0},
-    {"Delay",         VsNameKind::Action, "Wait Then Continue",           "Delay (s)",         "Delay pause seconds", nullptr, 0, nullptr, 0},
+    {"Timer",         VsNameKind::Action, "Repeat Every Few Seconds",          "Every (s)",         "Timer seconds Every Seconds", nullptr, 0, nullptr, 0},
+    {"Wait",          VsNameKind::Action, "Wait the First Time Only",              "Wait (s)",          "Wait seconds Wait Once", nullptr, 0, nullptr, 0},
+    {"Delay",         VsNameKind::Action, "Wait Then Continue",           "Delay (s)",         "Delay pause seconds Wait Seconds", nullptr, 0, nullptr, 0},
     {"Cooldown",      VsNameKind::Action, "Limit How Often",               "Cooldown (s)",      "seconds", nullptr, 0, nullptr, 0},
     {"ForLoop",       VsNameKind::Action, "Repeat Counting",               "For Loop",          "", nullptr, 0, nullptr, 0},
     {"Repeat",        VsNameKind::Action, "Repeat",                 "Repeat N",          "count", nullptr, 0, nullptr, 0},
-    {"FlipFlop",      VsNameKind::Action, "Switch Between Two Paths",              "Flip-Flop",         "A B toggle", nullptr, 0, nullptr, 0},
+    {"FlipFlop",      VsNameKind::Action, "Switch Between Two Paths",              "Flip-Flop",         "A B toggle Flip Flop", nullptr, 0, nullptr, 0},
     {"Gate",          VsNameKind::Action, "Open or Close the Way",                   "Gate",              "", nullptr, 0, nullptr, 0},
     {"DoN",           VsNameKind::Action, "Run a Number of Times", "Do N Times",        "DoN limit", nullptr, 0, nullptr, 0},
     {"SwitchInt",     VsNameKind::Action, "Switch Number",          "Switch (int)",      "switch int case", nullptr, 0, nullptr, 0},

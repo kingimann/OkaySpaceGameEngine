@@ -623,6 +623,10 @@ target_include_directories(test_lua_core PRIVATE ${PROJECT_SOURCE_DIR}/engine/in
 target_compile_definitions(test_lua_core PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME lua_core COMMAND test_lua_core)
 set_tests_properties(lua_core PROPERTIES TIMEOUT 600)
+# Lua game scripts (language "lua") on okay::lua driving GameObjects through the shared engine binding table.
+add_executable(test_lua_script test_lua_script.cpp)
+target_link_libraries(test_lua_script PRIVATE okay::engine)
+add_test(NAME lua_script COMMAND test_lua_script)
 
 add_executable(test_follow test_follow.cpp)
 target_link_libraries(test_follow PRIVATE okay::engine)

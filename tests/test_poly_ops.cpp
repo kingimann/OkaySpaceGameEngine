@@ -212,6 +212,57 @@ int main() {
         CHECK(allMoved);
     }
 
+    // ---- Edge slide carries the UVs along (per corner, seams stay split) ----
+    {
+        // A 2 x 2 grid of unit quads, textured in four islands: u = x / 2 (+5 right of x = 1),
+        // v = z / 2 (+3 above z = 1). The lines x = 1 and z = 1 are seams, so the middle vertex
+        // (1, 1) has four different UVs, one in each face.
+        PolyMesh g = Grid(2, 2);
+        auto uvAt = [](int face, const Vec3& p) {
+            const int fx = face % 2, fz = face / 2;           // Grid() makes faces row by row
+            return Vec2{p.x * 0.5f + (fx ? 5.0f : 0.0f), p.z * 0.5f + (fz ? 3.0f : 0.0f)};
+        };
+        for (int f = 0; f < (int)g.faces.size(); ++f)
+            for (int v : g.faces[f].verts) g.faces[f].uvs.push_back(uvAt(f, g.verts[v]));
+        g.SetSeam(1, 4, true); g.SetSeam(4, 7, true); g.SetSeam(3, 4, true); g.SetSeam(4, 5, true);
+        const EdgeList line = EdgeLoop(g, 3, 4);              // (0,1)-(1,1)-(2,1)
+        const std::vector<Vec3> gs = g.verts;
+        CHECK(EdgeSlide(g, line, 0.5f, &gs) == 3);
+        // Which way it went: half-way to z = 0 or to z = 2.
+        const float z = g.verts[4].z;
+        CHECK(Near(z, 0.5f) || Near(z, 1.5f));
+        // Every corner's UV is its face's island mapping at the corner's new position.
+        auto uvsFollow = [&](const PolyMesh& pm) {
+            float worst = 0;
+            for (int f = 0; f < (int)pm.faces.size(); ++f)
+                for (int i = 0; i < pm.faces[f].Size(); ++i) {
+                    const Vec2 want = uvAt(f, pm.verts[pm.faces[f].verts[i]]), got = pm.faces[f].uvs[i];
+                    worst = std::fmax(worst, std::fabs(want.x - got.x) + std::fabs(want.y - got.y));
+                }
+            return worst;
+        };
+        const float err = uvsFollow(g);
+        CHECK(err < 1e-5f);
+        if (err >= 1e-5f) std::cerr << "  edge slide UV error " << err << "\n";
+        // By hand for the middle vertex, if it slid down to z = 0.5: lower-left face (0, 0.25),
+        // lower-right (5.5, 0.25), upper-left (0.5, 3.25), upper-right (5.5, 3.25) - still four UVs.
+        std::set<std::pair<int, int>> mid;
+        for (const PolyFace& f : g.faces)
+            for (int i = 0; i < f.Size(); ++i)
+                if (f.verts[i] == 4) mid.insert({(int)std::lround(f.uvs[i].x * 100), (int)std::lround(f.uvs[i].y * 100)});
+        if (Near(z, 0.5f)) CHECK(mid == (std::set<std::pair<int, int>>{{50, 25}, {550, 25}, {50, 325}, {550, 325}}));
+        else CHECK(mid == (std::set<std::pair<int, int>>{{50, 75}, {550, 75}, {50, 375}, {550, 375}}));
+        // Sliding again from the same start (interactive use) gives the same answer, not a sum.
+        CHECK(EdgeSlide(g, line, 0.25f, &gs) == 3);
+        CHECK(uvsFollow(g) < 1e-5f);
+        CHECK(EdgeSlide(g, line, 0.0f, &gs) == 3);
+        CHECK(uvsFollow(g) < 1e-5f && Near(g.verts[4].z, 1.0f));
+        // A mesh without UVs still slides (and gets none).
+        PolyMesh plain = Grid(2, 2);
+        const std::vector<Vec3> ps = plain.verts;
+        CHECK(EdgeSlide(plain, line, 0.5f, &ps) == 3 && plain.faces[0].uvs.empty());
+    }
+
     // ---- Dissolve ----
     {
         PolyMesh g = Grid(2, 1);                               // two quads side by side
@@ -263,6 +314,89 @@ int main() {
         CHECK(BridgeEdgeLoops(bad, one, &err) == 0 && !err.empty());
         PolyMesh c = Cube();
         CHECK(BridgeEdgeLoops(c, {{0, 1}}, &err) == 0 && err.find("border") != std::string::npos);
+    }
+
+    // ---- Bridge two face groups: the faces are removed, then their rims are bridged ----
+    {
+        // Two unit cubes side by side along x (gap 1): A at x -0.5..0.5, B at x 1.5..2.5.
+        PolyMesh pm = Cube();
+        PolyMesh b = Cube();
+        const int off = (int)pm.verts.size();
+        for (Vec3 p : b.verts) pm.verts.push_back(p + Vec3{2, 0, 0});
+        for (PolyFace f : b.faces) { for (int& v : f.verts) v += off; pm.faces.push_back(f); }
+        auto faceAtX = [&](float x) {
+            for (int f = 0; f < (int)pm.faces.size(); ++f) {
+                bool all = true;
+                for (int v : pm.faces[f].verts) if (!Near(pm.verts[v].x, x)) all = false;
+                if (all) return f;
+            }
+            return -1;
+        };
+        const int fa = faceAtX(0.5f), fb = faceAtX(1.5f);    // the two facing faces
+        CHECK(fa >= 0 && fb >= 0);
+        std::string err;
+        // 12 faces - 2 removed + 4 bridge quads = 14; 16 vertices; 12 + 12 + 4 = 28 edges;
+        // V - E + F = 16 - 28 + 14 = 2: one closed shell.
+        CHECK(BridgeFaces(pm, {fa, fb}, &err) == 4);
+        if (!err.empty()) std::cerr << "  bridge faces: " << err << "\n";
+        CHECK(pm.faces.size() == 14 && pm.verts.size() == 16 && UsedVerts(pm) == 16);
+        CHECK(pm.Edges().size() == 28 && pm.EulerCharacteristic() == 2);
+        CHECK(pm.Check().Closed() && pm.Check().Valid() && ConsistentWinding(pm));
+        // The faces at x = 0.5 and x = 1.5 are gone; the new ones run straight along x.
+        CHECK(faceAtX(0.5f) < 0 && faceAtX(1.5f) < 0);
+        bool straight = true;
+        for (int f = 10; f < 14; ++f)
+            for (int i = 0; i < 4; ++i) {
+                const Vec3 p = pm.verts[pm.faces[f].verts[i]], q = pm.verts[pm.faces[f].verts[(i + 1) % 4]];
+                if (!(Near(p.y, q.y) && Near(p.z, q.z)) && !Near(p.x, q.x)) straight = false;
+            }
+        CHECK(straight);
+        // Outward: every new face's normal points away from the x axis through the shell.
+        bool outward = true;
+        for (int f = 10; f < 14; ++f) {
+            Vec3 c{0, 0, 0};
+            for (int v : pm.faces[f].verts) c += pm.verts[v];
+            c = c * 0.25f;
+            if (Vec3::Dot(pm.FaceNormal(f), Vec3{0, c.y, c.z}) <= 0) outward = false;
+        }
+        CHECK(outward);
+
+        // Groups of more than one face: two 1 x 2 strips (the facing sides of two boxes cut in half).
+        PolyMesh two = Cube();
+        LoopCut(two, FindVert(two, {-0.5f, -0.5f, -0.5f}), FindVert(two, {-0.5f, 0.5f, -0.5f}));   // cut around y
+        PolyMesh other = two;
+        const int off2 = (int)two.verts.size();
+        for (Vec3 p : other.verts) two.verts.push_back(p + Vec3{2, 0, 0});
+        for (PolyFace f : other.faces) { for (int& v : f.verts) v += off2; two.faces.push_back(f); }
+        std::vector<int> sel;
+        for (int f = 0; f < (int)two.faces.size(); ++f) {
+            bool a = true, bb = true;
+            for (int v : two.faces[f].verts) { if (!Near(two.verts[v].x, 0.5f)) a = false; if (!Near(two.verts[v].x, 1.5f)) bb = false; }
+            if (a || bb) sel.push_back(f);
+        }
+        CHECK(sel.size() == 4);
+        const std::size_t before = two.faces.size();
+        CHECK(BridgeFaces(two, sel, &err) == 6);               // a rim of 6 edges on each side
+        CHECK(two.faces.size() == before - 4 + 6 && two.Check().Closed() && ConsistentWinding(two) && two.EulerCharacteristic() == 2);
+
+        // Refusals leave the mesh exactly as it was.
+        PolyMesh c = Cube();
+        const PolyMesh c0 = c;
+        err.clear();
+        CHECK(BridgeFaces(c, {0}, &err) == 0 && !err.empty());                // one group only
+        CHECK(c.faces.size() == c0.faces.size());
+        err.clear();
+        int adjA = -1, adjB = -1;                                          // two faces sharing an edge
+        for (int f = 0; f < 6 && adjB < 0; ++f) for (int g2 = f + 1; g2 < 6 && adjB < 0; ++g2) {
+            int shared = 0;
+            for (int v : c.faces[f].verts) for (int w : c.faces[g2].verts) if (v == w) ++shared;
+            if (shared == 2) { adjA = f; adjB = g2; }
+        }
+        CHECK(BridgeFaces(c, {adjA, adjB}, &err) == 0 && !err.empty());       // they touch: one group
+        CHECK(c.faces.size() == 6 && c.Check().Closed());
+        err.clear();
+        CHECK(BridgeFaces(c, {0, 99}, &err) == 0 && !err.empty());            // a face that doesn't exist
+        CHECK(c.faces.size() == 6);
     }
 
     // ---- Bevel ----
@@ -450,6 +584,109 @@ int main() {
         CHECK(same && !made.empty());
         PolyMesh again = PolyMesh::FromMesh(back, {false, true, 1.0f});
         CHECK(again.CountFaces(4) == 10);                        // all quads, straight back
+    }
+
+    // ---- Selection helpers: shortest path, checker deselect, region outline, problem edges ----
+    {
+        PolyMesh g = Grid(4, 4);                                 // vertex (x, z) = z * 5 + x, face (x, z) = z * 4 + x
+        // Along the bottom row: 0 -> 4 is the straight run of 5 vertices.
+        std::vector<int> p = ShortestVertPath(g, 0, 4);
+        CHECK(p.size() == 5 && p.front() == 0 && p.back() == 4);
+        bool row = true; for (int v : p) if (g.verts[v].z != 0.0f) row = false;
+        CHECK(row);
+        // Corner to corner: 8 unit steps (no diagonals in a quad grid), every step an edge.
+        p = ShortestVertPath(g, 0, 24);
+        CHECK(p.size() == 9);
+        PolyTopology T(g);
+        bool edges = true; for (std::size_t i = 1; i < p.size(); ++i) if (!T.IsEdge(p[i - 1], p[i])) edges = false;
+        CHECK(edges);
+        CHECK(ShortestVertPath(g, 7, 7) == std::vector<int>{7});
+        // Hostile: out of range, negative, a vertex no face uses, two separate parts.
+        CHECK(ShortestVertPath(g, 0, 99).empty());
+        CHECK(ShortestVertPath(g, -1, 3).empty());
+        PolyMesh lone = g; lone.verts.push_back({9, 9, 9});
+        CHECK(ShortestVertPath(lone, 0, 25).empty());
+        PolyMesh two = Grid(1, 1); AddTube(two, 5, 6);           // a quad and a tube that never touch
+        CHECK(ShortestVertPath(two, 0, 6).empty());
+        CHECK(ShortestVertPath(PolyMesh{}, 0, 0).empty());
+
+        // Faces: (0,0) -> (3,0) is the 4 faces of the bottom row; (0,0) -> (3,3) is 7 faces.
+        std::vector<int> fp = ShortestFacePath(g, 0, 3);
+        CHECK(fp == (std::vector<int>{0, 1, 2, 3}));
+        fp = ShortestFacePath(g, 0, 15);
+        CHECK(fp.size() == 7 && fp.front() == 0 && fp.back() == 15);
+        CHECK(ShortestFacePath(g, 5, 5) == std::vector<int>{5});
+        CHECK(ShortestFacePath(g, 0, 16).empty() && ShortestFacePath(g, -2, 0).empty());
+        CHECK(ShortestFacePath(two, 0, 1).empty());              // the quad and the tube are not joined
+        PolyMesh bad = g; bad.faces[1].verts = {0, 0, 1};        // a face with a repeated corner is still walked round
+        CHECK(!ShortestFacePath(bad, 0, 3).empty());
+        PolyMesh oob = g; oob.faces[1].verts[2] = 999;           // a face naming a missing vertex is skipped, never read
+        CHECK(ShortestFacePath(oob, 0, 1).empty());
+        CHECK(ShortestVertPath(oob, 0, 4).size() >= 5);
+
+        // Checker: a 4x4 block of faces comes back as a checkerboard of 8.
+        std::vector<int> all; for (int f = 0; f < 16; ++f) all.push_back(f);
+        std::vector<int> ck = CheckerFaces(g, all);
+        CHECK(ck.size() == 8);
+        bool board = true; for (int f : ck) if (((f % 4) + (f / 4)) % 2 != 0) board = false;
+        CHECK(board);
+        // Starting from another face flips which squares stay.
+        std::vector<int> fromOne = all; std::swap(fromOne[0], fromOne[1]);
+        ck = CheckerFaces(g, fromOne);
+        board = ck.size() == 8; for (int f : ck) if (((f % 4) + (f / 4)) % 2 != 1) board = false;
+        CHECK(board);
+        // Vertices: the 5 of the bottom row keep 0, 2, 4.
+        CHECK(CheckerVerts(g, {0, 1, 2, 3, 4}) == (std::vector<int>{0, 2, 4}));
+        // Two separate selected vertices each keep themselves (each part starts its own walk).
+        CHECK(CheckerVerts(g, {0, 24}) == (std::vector<int>{0, 24}));
+        // Hostile: empty, repeats, out of range.
+        CHECK(CheckerFaces(g, {}).empty());
+        CHECK(CheckerFaces(g, {0, 0, 0, -1, 99}) == std::vector<int>{0});
+        CHECK(CheckerVerts(g, {3, 3, 999}) == std::vector<int>{3});
+
+        // Region outline: the middle 2x2 block of faces has an 8-edge outline, one closed loop.
+        const std::vector<int> mid = {5, 6, 9, 10};
+        EdgeList ol = RegionOutline(g, mid);
+        CHECK(ol.size() == 8);
+        const std::vector<EdgeChain> ch = OrderChains(ol);
+        CHECK(ch.size() == 1 && ch[0].closed);
+        // Directions follow the faces: no directed edge twice, so the loop runs one way round.
+        std::set<std::pair<int, int>> dir(ol.begin(), ol.end());
+        CHECK(dir.size() == 8);
+        CHECK(RegionOutline(g, {}).empty() && RegionOutline(g, {-1, 77}).empty());
+        CHECK(RegionOutline(g, {5, 5}).size() == 4);             // a repeated face counts once
+
+        // Problem edges: a closed cube has none; the grid has 16 border edges; a fin makes a non-manifold edge.
+        CHECK(ProblemEdges(Cube(), true, true).empty());
+        CHECK(ProblemEdges(g, true, false).size() == 16);
+        CHECK(ProblemEdges(g, false, true).empty());
+        PolyMesh fin = Grid(2, 1);                               // two quads sharing edge 1-4; add a third face on it
+        fin.verts.push_back({1, 1, 0}); fin.verts.push_back({1, 1, 1});
+        PolyFace third; third.verts = {1, 4, 7, 6}; fin.faces.push_back(third);
+        const EdgeList nm = ProblemEdges(fin, false, true);
+        CHECK(nm.size() == 1 && nm[0] == std::make_pair(1, 4));
+        CHECK(ProblemEdges(PolyMesh{}, true, true).empty());
+    }
+
+    // ---- Fill refuses a chain of vertices in a straight line ----
+    // Bug: Fill on three border edges along one side of a grid (vertices 0-1-2-3, all on a line) made a
+    // four-corner face with no area: invisible, no usable normal, and it closed nothing.
+    {
+        PolyMesh g = Grid(3, 3);
+        const std::size_t before = g.faces.size();
+        std::string err;
+        CHECK(FillFaces(g, {{0, 1}, {1, 2}, {2, 3}}, &err) == 0);
+        CHECK(g.faces.size() == before);
+        CHECK(err.find("straight line") != std::string::npos);
+        // A real corner (two sides of the grid) still fills: 0-1-2-3 then up the side to 7.
+        PolyMesh c = Grid(3, 3);
+        err.clear();
+        CHECK(FillFaces(c, {{0, 1}, {1, 2}, {2, 3}, {3, 7}}, &err) == 1);
+        CHECK(c.faces.size() == before + 1);
+        // A collinear chain next to a good loop: the good one is filled, the flat one skipped.
+        PolyMesh two = Grid(3, 3); AddTube(two, 5, 6);
+        err.clear();
+        CHECK(FillFaces(two, {{0, 1}, {1, 2}, {2, 3}, {20, 21}, {21, 22}, {22, 23}, {23, 20}}, &err) == 1);
     }
 
     TEST_MAIN_RESULT();

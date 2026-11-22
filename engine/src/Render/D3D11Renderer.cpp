@@ -10,6 +10,7 @@
 #include "okay/Components/LODGroup.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shared texture cache
+#include "okay/Render/GpuTexture.hpp"         // .dds / compressed import copies: BC blocks uploaded as they are
 #include "okay/Render/ShadowSetup.hpp"
 #include "okay/Render/D3D11Layout.hpp"
 #include "okay/Render/PostQualityMath.hpp"   // shared bloom soft knee + AO power (UNVERIFIED on a GPU)
@@ -210,6 +211,7 @@ struct D3D11Renderer::Impl {
     // shaders and half-resolution targets, built on first use, so a failure here
     // only turns SSAO off. UNVERIFIED on a real GPU.
     ID3D11PixelShader *psAoDepth = nullptr, *psAo = nullptr, *psAoMul = nullptr, *psDof = nullptr;
+    ID3D11PixelShader *psDofCopy = nullptr, *psDofBlur = nullptr;   // depth of field: premultiplied blurred copy
     bool ssaoTried = false, ssaoReady = false;
     struct SsaoSet {
         int w = 0, h = 0; DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -557,7 +559,10 @@ bool D3D11Renderer::Impl::EnsureSsaoShaders() {
         return ok;
     };
     ssaoReady = ps("PSAoDepth", psAoDepth) && ps("PSAo", psAo) && ps("PSAoMul", psAoMul) && vsDepth && layoutDepth;
-    if (ssaoReady) ps("PSDof", psDof);   // separate: a depth of field compile failure must not cost ambient occlusion
+    if (ssaoReady && !(ps("PSDof", psDof) && ps("PSDofCopy", psDofCopy) && ps("PSDofBlur", psDofBlur))) {
+        // separate: a depth of field compile failure must not cost ambient occlusion
+        for (ID3D11PixelShader** s : {&psDof, &psDofCopy, &psDofBlur}) if (*s) { (*s)->Release(); *s = nullptr; }
+    }
     if (!ssaoReady) Log::Warning("[d3d11] ambient occlusion unavailable on this device");
     return ssaoReady;
 }
@@ -942,6 +947,41 @@ D3D11Renderer::Impl::MeshVB* D3D11Renderer::Impl::EnsureMeshVB(const Mesh& mesh,
     return &e;
 }
 
+// A planned .dds texture (gputex::PlanUpload) as one Direct3D 11 texture with all its levels. BC1-BC5 are sampled by every
+// Direct3D 11 GPU (feature level 10 and up), so the blocks go up as they are; DXGI numbers from the DXGI_FORMAT list.
+static ID3D11ShaderResourceView* UploadDdsPlan(ID3D11Device* dev, const gputex::Plan& p) {
+    if (p.levels.empty()) return nullptr;
+    DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
+    UINT blockBytes = 0;
+    if (p.compressed) {
+        switch (p.source) {
+            case tex::DdsFormat::BC1: fmt = DXGI_FORMAT_BC1_UNORM; blockBytes = 8; break;
+            case tex::DdsFormat::BC2: fmt = DXGI_FORMAT_BC2_UNORM; blockBytes = 16; break;
+            case tex::DdsFormat::BC3: fmt = DXGI_FORMAT_BC3_UNORM; blockBytes = 16; break;
+            case tex::DdsFormat::BC4: fmt = DXGI_FORMAT_BC4_UNORM; blockBytes = 8; break;
+            case tex::DdsFormat::BC5: fmt = DXGI_FORMAT_BC5_UNORM; blockBytes = 16; break;
+            default: return nullptr;
+        }
+    }
+    D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
+    td.Width = (UINT)p.levels[0].width; td.Height = (UINT)p.levels[0].height; td.MipLevels = (UINT)p.levels.size(); td.ArraySize = 1;
+    td.Format = fmt; td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_IMMUTABLE; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    std::vector<D3D11_SUBRESOURCE_DATA> sr(p.levels.size());
+    for (std::size_t l = 0; l < p.levels.size(); ++l) {
+        std::memset(&sr[l], 0, sizeof(sr[l]));
+        sr[l].pSysMem = p.levels[l].bytes.data();
+        sr[l].SysMemPitch = p.compressed ? (UINT)((p.levels[l].width + 3) / 4) * blockBytes : (UINT)p.levels[l].width * 4;
+    }
+    ID3D11Texture2D* t = nullptr;
+    ID3D11ShaderResourceView* srv = nullptr;
+    if (SUCCEEDED(dev->CreateTexture2D(&td, sr.data(), &t)) && t) {
+        dev->CreateShaderResourceView(t, nullptr, &srv);
+        t->Release();
+    }
+    return srv;
+}
+
 ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& name) {
     if (name.empty()) return nullptr;
     if (texGen != TextureCacheGeneration()) {   // a picture was reimported / its import settings changed
@@ -953,7 +993,16 @@ ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& nam
     auto it = texCache.find(name);
     if (it != texCache.end()) return it->second;
     ID3D11ShaderResourceView* srv = nullptr;
-    Image* img = GetCachedTexture(name);
+    // A .dds file, or the compressed import copy of a picture set to `compress`: its own levels, BC blocks kept
+    // compressed (a top level that is not a multiple of 4 is decoded on the CPU). Anything else: the RGBA8 picture.
+    {
+        tex::DdsImage dds;
+        gputex::Plan plan;
+        gputex::Caps caps; caps.s3tc = caps.rgtc = true;
+        if (gputex::Source(name, &dds, nullptr) && gputex::PlanUpload(std::move(dds), caps, &plan)) srv = UploadDdsPlan(dev, plan);
+        if (srv) Log::Info("[d3d11] texture '", name, "': ", tex::DdsFormatName(plan.source), plan.compressed ? " kept compressed" : " uploaded as RGBA8", " (", plan.levels.size(), " levels)");
+    }
+    Image* img = srv ? nullptr : GetCachedTexture(name);
     if (img && img->Width() > 0) {
         D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
         td.Width = img->Width(); td.Height = img->Height(); td.MipLevels = 1; td.ArraySize = 1;
@@ -1765,12 +1814,12 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         //    the distance from the focus plane, read from the AO depth image.
         if (dofOn) {
             pc.texel[0] = 1.0f / (float)w; pc.texel[1] = 1.0f / (float)h; pc.thresh = 0.0f; pc.radius = 1.0f;
-            pass(p->psDown, bA.rtv, bA.w, bA.h, cur, nullptr, nullptr);
+            pass(p->psDofCopy, bA.rtv, bA.w, bA.h, cur, nullptr, nullptr);   // premultiplied: the sky's alpha 0 survives
             for (int it = 0; it < 2; ++it) {
                 pc.dir[0] = 1.0f / (float)bA.w; pc.dir[1] = 0.0f;
-                pass(p->psBlur, bB.rtv, bB.w, bB.h, bA.srv, nullptr, nullptr);
+                pass(p->psDofBlur, bB.rtv, bB.w, bB.h, bA.srv, nullptr, nullptr);
                 pc.dir[0] = 0.0f; pc.dir[1] = 1.0f / (float)bA.h;
-                pass(p->psBlur, bA.rtv, bA.w, bA.h, bB.srv, nullptr, nullptr);
+                pass(p->psDofBlur, bA.rtv, bA.w, bA.h, bB.srv, nullptr, nullptr);
             }
             pc.texel[0] = 1.0f / (float)aoSet->depth.w; pc.texel[1] = 1.0f / (float)aoSet->depth.h;
             pc.p7[0] = ps.dofFocus; pc.p7[1] = ps.dofRange; pc.p7[2] = ssao::kFar;
@@ -1920,7 +1969,7 @@ void D3D11Renderer::Destroy() {
     if (p->cookieTex) p->cookieTex->Release();
     if (p->depthOff) p->depthOff->Release();
     if (p->vsQuad) p->vsQuad->Release();
-    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa, p->psAoDepth, p->psAo, p->psAoMul, p->psDof}) if (s) s->Release();
+    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa, p->psAoDepth, p->psAo, p->psAoMul, p->psDof, p->psDofCopy, p->psDofBlur}) if (s) s->Release();
     for (auto& t : p->ssaoSets) t.Release();
     p->ssaoSets.clear();
     if (p->depthPlanar) p->depthPlanar->Release();

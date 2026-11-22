@@ -200,6 +200,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
   - 18.10.4 Build and sign script - `scripts/build-xbox-uwp.ps1` - builds the app and packer, packs, test certificate, SignTool; never run
   - 18.10.5 UWP app shell - `platform/xbox_uwp/app/` - CoreApplication, suspend and resume, D3D11 swap chain triangle, Windows.Gaming.Input; never compiled
   - 18.10.6 Editor entry - `editor/main.cpp` (`OKAY_XBOX_UWP`) - File > Build Settings > Xbox (exp.): SDK list, limits text, identity preview, Export through the existing `ExportForPlatform`
+  - 18.10.7 Controller-only play - `XboxLifecycle.hpp`, `XboxUwpBackend.hpp`, `XboxTitleSafe.hpp`, `XboxGameRuntime.hpp` - B is a back press (closes a pause menu, never quits), d-pad menu navigation (`NavigateUI`), title-safe insets on a full-screen TV fill `UISafeInsets`; pure parts tested in `xbox_uwp_runtime`, the WinRT lines uncompiled
 - **Code:** `platform/xbox_uwp/`, `scripts/xbox-check-sdk.ps1`, `scripts/build-xbox-uwp.ps1`, `editor/main.cpp`, `CMakeLists.txt` (`OKAY_BUILD_XBOX_UWP`, OFF)
 - **API:** `okay::xbox::EvaluateSdk`, `okay::xbox::GenerateManifest`, `okay::xbox::WritePackage`, `okay::xbox::appx::Pack`, `okay::xbox::appx::Verify`, `okay-appx pack|verify`
 - **Editor:** File > Build Settings > Xbox (exp.)

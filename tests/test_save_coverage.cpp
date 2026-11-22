@@ -132,17 +132,16 @@ int main() {
 
     // Types that are never authored in a scene file, so a scene without them is complete:
     //   StatComponent          the base class of the stat components (Health, Hunger, ...), which are saved
-    //   TimedDestroy           the timer Destructible adds to its own debris
     //   UIToastItem            one toast row the UIToast component builds while it plays
     //   WeatherRig             the particle rig the scene's weather settings make (those settings are saved)
-    //   NetworkAvatarMotion    the motion driver NetworkPlayerSpawner puts on each avatar it spawns
     //   testing::EventProbe    a test helper (okay/Testing/PlayTest.hpp)
     //   SettingsScreen         rebuilt on its own: SettingsScreen::Ensure binds the "Settings" panel when Play starts
     //   SteamManager           added by game code at startup (docs/release/steam_release.md), not a scene object
-    //   CheckpointTrigger      the Save Framework's: added by game code, saved by the framework (docs/engine/save_games.md)
     //   (Saveable and SaveConfig are saved in the scene file: the no-code save route, docs/engine/save_games.md)
-    const std::set<std::string> kRuntimeOnly = {"StatComponent", "TimedDestroy", "UIToastItem", "WeatherRig", "NetworkAvatarMotion",
-                                                "testing::EventProbe", "SettingsScreen", "SteamManager", "CheckpointTrigger"};
+    //   (TimedDestroy, NetworkAvatarMotion and CheckpointTrigger are saved through the generic property record now,
+    //    ComponentSerializerRegistry::RegisterFromProperties, docs/engine/scene_serializer.md)
+    const std::set<std::string> kRuntimeOnly = {"StatComponent", "UIToastItem", "WeatherRig",
+                                                "testing::EventProbe", "SettingsScreen", "SteamManager"};
     for (const auto& n : dropped) CHECK(kRuntimeOnly.count(n) != 0);
     for (const auto& n : kRuntimeOnly) CHECK(std::find(dropped.begin(), dropped.end(), n) != dropped.end());   // keep this list honest: remove a type once it is saved
     CHECK(notSwitchable.empty());

@@ -9,6 +9,9 @@
 #include "okay/Render/LocalShadowMath.hpp"
 #include "okay/Render/ShadowMath.hpp"
 #include "okay/Render/Atmosphere.hpp"
+#include "okay/Render/DofMath.hpp"
+#include "okay/Render/SsaoMath.hpp"
+#include "okay/Render/PostQualityMath.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -19,6 +22,9 @@
 #include <unordered_set>
 #include "okay/Graphics/Image.hpp"
 #include "okay/Render/ProcTexture.hpp"
+#include "okay/Texture/Dds.hpp"         // .dds pictures: read and decoded on the CPU (okay::tex)
+#include "okay/Core/Log.hpp"
+#include <cstring>
 #include "okay/Core/Profiler.hpp"
 #include "okay/Core/Time.hpp"
 #include <algorithm>
@@ -839,6 +845,22 @@ inline void RegisterTexture(const std::string& name, Image img) {
     TextureCacheMap()[name] = std::move(img);
 }
 
+// A .dds picture as RGBA8: its top level, block formats decoded on the CPU (okay::tex::DecodeBc). The software renderer
+// and the Direct3D renderers draw .dds files this way; the OpenGL renderer uploads them compressed when it can.
+inline bool LoadDdsImage(const std::string& path, Image& img) {
+    tex::DdsImage d;
+    std::string why;
+    std::vector<std::uint8_t> rgba;
+    if (!tex::ReadDdsFile(path, &d, &why) || !tex::DdsLevelToRGBA8(d, 0, &rgba)) {
+        Log::Warning("[asset] cannot load image '", path, "': ", why.empty() ? std::string("decode failed") : why);
+        img = Image();
+        return false;
+    }
+    img = Image(d.width, d.height);
+    std::memcpy(img.Data(), rgba.data(), rgba.size());
+    return true;
+}
+
 inline Image* GetCachedTexture(const std::string& path) {
     auto& cache = TextureCacheMap();
     auto it = cache.find(path);
@@ -846,6 +868,8 @@ inline Image* GetCachedTexture(const std::string& path) {
         Image img;
         if (path.rfind("proc:", 0) == 0)
             img = GenerateProcTexture(path);   // built-in procedural (no file)
+        else if (tex::IsDdsPath(path))
+            LoadDdsImage(path, img);
         else
             img.Load(path);                    // leaves the image empty on failure
         ApplyTextureImportSettings(path, img);   // the asset's own "largest side", if it has one
@@ -1542,6 +1566,7 @@ inline void LocalShadowFactors(const Vec3& wpos, const Vec3& n, float* perLight)
 inline bool&  SSAOEnabled()  { static bool v = false; return v; }     // off by default (perf); opt-in
 inline float& SSAORadius()   { static float v = 0.45f; return v; }  // world units
 inline float& SSAOStrength() { static float v = 0.6f; return v; }
+inline float& SSAOPower()    { static float v = 1.0f; return v; }   // occlusion ^ power (PostQualityMath.hpp AoCurve); 1 = unchanged
 
 /// Darken creases/contacts using the per-pixel world position + normal G-buffer:
 /// sample a hemisphere around each pixel and count how many samples are occluded
@@ -1617,6 +1642,7 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
         });
     }
     // Bilinear-upsample the half-res AO and modulate the full-res color.
+    const float aoPower = SSAOPower();
     ParallelRows(0, H, [&](int ya, int yb) {
         for (int y = ya; y < yb; ++y) {
         float fy = y * 0.5f; int y0 = (int)fy; float ay = fy - y0; int y1 = y0 + 1;
@@ -1629,6 +1655,7 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
             float a00 = ao[(std::size_t)y0 * hw + x0], a10 = ao[(std::size_t)y0 * hw + x1];
             float a01 = ao[(std::size_t)y1 * hw + x0], a11 = ao[(std::size_t)y1 * hw + x1];
             float a = (a00 + (a10 - a00) * ax) + ((a01 + (a11 - a01) * ax) - (a00 + (a10 - a00) * ax)) * ay;
+            a = postq::AoCurve(a, aoPower);
             std::uint32_t v = r.color[i];
             std::uint32_t R = (std::uint32_t)((v & 0xFF) * a), G = (std::uint32_t)(((v >> 8) & 0xFF) * a), Bc = (std::uint32_t)(((v >> 16) & 0xFF) * a);
             r.color[i] = (0xFFu << 24) | (Bc << 16) | (G << 8) | R;
@@ -1828,8 +1855,8 @@ inline void ApplyColorGrade(Raster& r) {
 /// saturation, contrast, lift / gamma / gain, the vignette (with its smoothness), bloom and FXAA.
 /// Same maths as the OpenGL "uber" pass (kUberFrag), but on 8-bit colour: the software renderer shades
 /// in display space and has no HDR buffer, so the curves act on 0..1 values (the process-wide switches
-/// behave exactly as before). NOT supported on the CPU: SSAO from the scene, depth of field (see
-/// docs/rendering/rendering.md).
+/// behave exactly as before). The scene's ambient occlusion (ApplySSAO with the scene's radius and
+/// intensity) and depth of field (ApplySceneDof) are separate passes in RenderMeshes.
 struct ScenePostPlan {
     int   tonemap = 1;           // 0 none, 1 ACES, 2 Filmic
     float exposure = 1.0f;
@@ -1904,6 +1931,161 @@ inline void ApplyScenePost(Raster& r, const ScenePostPlan& p) {
             }
             auto cl = [](float f) { return (std::uint32_t)((f < 0 ? 0 : (f > 1 ? 1 : f)) * 255.0f + 0.5f); };
             r.color[i] = (a << 24) | (cl(c.z) << 16) | (cl(c.y) << 8) | cl(c.x);
+        }
+    });
+}
+
+// ---- Depth of field (the scene's Post-processing switch), on the CPU ---------
+// The software version of the GPU pass (DofMath.hpp holds the shared focus maths): a half-
+// resolution copy of the finished frame is blurred by two rounds of a 9-tap binomial filter
+// (weights 1 8 28 56 70 56 28 8 1, / 256: row 8 of Pascal's triangle, a close match to a
+// gaussian), then mixed back in by each pixel's circle of confusion. The distance is the one
+// the GPU depth image holds (straight-line distance from the eye, / ssao::kFar, so anything past
+// 150 units counts as sky). It comes from the W-buffer (depth = 1 / view depth) times the length
+// of the pixel's ray per unit of view depth (DofRayScale), which is why it needs a perspective
+// camera: with an orthographic one every pixel has the same W and the pass is skipped
+// (DofPerspective). The blur works on premultiplied colour (colour times coverage), so a
+// far object fades softly into the empty sky without a dark fringe, and a pixel nothing covered
+// (alpha 0, where the host paints its sky) stays transparent.
+
+/// True when `vp` is a perspective projection (clip w depends on the position), so the
+/// software W-buffer holds a real distance.
+inline bool DofPerspective(const Mat4& vp) {
+    return std::fabs(vp.at(0, 3)) + std::fabs(vp.at(1, 3)) + std::fabs(vp.at(2, 3)) > 1e-6f;
+}
+/// World distance the depth of field uses for one W-buffer value (1 / view depth; 0 = nothing drawn).
+/// `rayScale` is the eye distance per unit of view depth along the pixel's ray (1 at the centre).
+inline float DofPixelDistance(float invW, float rayScale = 1.0f) {
+    float dn = invW > 0.0f ? (rayScale / invW) / ssao::kFar : 1.0f;
+    if (dn > 1.0f) dn = 1.0f;
+    return dof::Distance(dn, ssao::kFar);
+}
+/// The ray through a point of the screen (NDC x, y, y up) as an affine function of x and y, for
+/// DofRayScale: points at one NDC depth lie on one view-depth plane, so the ray between two such
+/// planes is affine in x and y.
+struct DofRays {
+    Vec3 c, ax, ay;   // ray(x, y) = c + ax * x + ay * y
+    Vec3 wrow;        // clip w = dot(wrow, P) + const
+};
+inline DofRays DofRaysFor(const Mat4& vp) {
+    const Mat4 inv = vp.Inverse();
+    auto ray = [&](float x, float y) { return inv.MultiplyPoint({x, y, 0.5f}) - inv.MultiplyPoint({x, y, -0.5f}); };
+    DofRays d;
+    d.c = ray(0.0f, 0.0f);
+    d.ax = ray(1.0f, 0.0f) - d.c;
+    d.ay = ray(0.0f, 1.0f) - d.c;
+    d.wrow = {vp.at(0, 3), vp.at(1, 3), vp.at(2, 3)};
+    return d;
+}
+/// Eye distance per unit of view depth along the ray at NDC (x, y): 1 / cos(angle off the view axis).
+inline float DofRayScale(const DofRays& d, float x, float y) {
+    const Vec3 r = d.c + d.ax * x + d.ay * y;
+    const float len = r.Magnitude(), dw = std::fabs(Vec3::Dot(d.wrow, r));
+    return dw > 1e-9f ? len / dw : 1.0f;
+}
+/// Blur the frame where it is out of focus. `focus` and `range` are post.dofFocus / post.dofRange;
+/// `vp` is the view-projection the frame was drawn with (a perspective one, DofPerspective).
+inline void ApplySceneDof(Raster& r, float focus, float range, const Mat4& vp) {
+    const int W = r.width, H = r.height;
+    if (W < 4 || H < 4 || r.depth.size() != (std::size_t)W * H || !DofPerspective(vp)) return;
+    // Circle of confusion per pixel; nothing to do when the whole frame is in focus.
+    static std::vector<float> coc;
+    coc.assign((std::size_t)W * H, 0.0f);
+    const DofRays rays = DofRaysFor(vp);
+    bool any = false;
+    for (int y = 0; y < H; ++y) {
+        const float ny = 1.0f - (y + 0.5f) * 2.0f / H;
+        for (int x = 0; x < W; ++x) {
+            const std::size_t i = (std::size_t)y * W + x;
+            const float nx = (x + 0.5f) * 2.0f / W - 1.0f;
+            coc[i] = dof::Coc(DofPixelDistance(r.depth[i], DofRayScale(rays, nx, ny)), focus, range);
+            any = any || coc[i] > 0.0f;
+        }
+    }
+    if (!any) return;
+    // 1) Half-resolution premultiplied copy (2 x 2 box average; the last row / column repeats on odd sizes).
+    const int hw = (W + 1) / 2, hh = (H + 1) / 2;
+    static std::vector<float> half, tmp;
+    half.assign((std::size_t)hw * hh * 4, 0.0f); tmp.assign(half.size(), 0.0f);
+    ParallelRows(0, hh, [&](int ya, int yb) {
+        for (int y = ya; y < yb; ++y)
+        for (int x = 0; x < hw; ++x) {
+            float acc[4] = {0, 0, 0, 0};
+            for (int k = 0; k < 4; ++k) {
+                int sx = x * 2 + (k & 1), sy = y * 2 + (k >> 1);
+                if (sx >= W) sx = W - 1;
+                if (sy >= H) sy = H - 1;
+                const std::uint32_t v = r.color[(std::size_t)sy * W + sx];
+                const float a = (float)(v >> 24) / 255.0f;
+                acc[0] += (float)(v & 0xFF) / 255.0f * a;
+                acc[1] += (float)((v >> 8) & 0xFF) / 255.0f * a;
+                acc[2] += (float)((v >> 16) & 0xFF) / 255.0f * a;
+                acc[3] += a;
+            }
+            float* o = &half[((std::size_t)y * hw + x) * 4];
+            for (int c = 0; c < 4; ++c) o[c] = acc[c] * 0.25f;
+        }
+    });
+    // 2) Two rounds of the separable 9-tap binomial blur (edges clamp).
+    static const float kW[9] = {1 / 256.0f, 8 / 256.0f, 28 / 256.0f, 56 / 256.0f, 70 / 256.0f,
+                                56 / 256.0f, 28 / 256.0f, 8 / 256.0f, 1 / 256.0f};
+    for (int round = 0; round < 2; ++round) {
+        ParallelRows(0, hh, [&](int ya, int yb) {           // horizontal: half -> tmp
+            for (int y = ya; y < yb; ++y)
+            for (int x = 0; x < hw; ++x) {
+                float acc[4] = {0, 0, 0, 0};
+                for (int t = -4; t <= 4; ++t) {
+                    int xx = x + t; xx = xx < 0 ? 0 : (xx >= hw ? hw - 1 : xx);
+                    const float* s = &half[((std::size_t)y * hw + xx) * 4];
+                    for (int c = 0; c < 4; ++c) acc[c] += s[c] * kW[t + 4];
+                }
+                float* o = &tmp[((std::size_t)y * hw + x) * 4];
+                for (int c = 0; c < 4; ++c) o[c] = acc[c];
+            }
+        });
+        ParallelRows(0, hh, [&](int ya, int yb) {           // vertical: tmp -> half
+            for (int y = ya; y < yb; ++y)
+            for (int x = 0; x < hw; ++x) {
+                float acc[4] = {0, 0, 0, 0};
+                for (int t = -4; t <= 4; ++t) {
+                    int yy = y + t; yy = yy < 0 ? 0 : (yy >= hh ? hh - 1 : yy);
+                    const float* s = &tmp[((std::size_t)yy * hw + x) * 4];
+                    for (int c = 0; c < 4; ++c) acc[c] += s[c] * kW[t + 4];
+                }
+                float* o = &half[((std::size_t)y * hw + x) * 4];
+                for (int c = 0; c < 4; ++c) o[c] = acc[c];
+            }
+        });
+    }
+    // 3) Mix: bilinear sample of the blurred copy, blended in premultiplied space by the circle of confusion.
+    ParallelRows(0, H, [&](int ya, int yb) {
+        for (int y = ya; y < yb; ++y) {
+            float fy = (y + 0.5f) * 0.5f - 0.5f; int y0 = (int)std::floor(fy); const float ay = fy - y0;
+            int y1 = y0 + 1; y0 = y0 < 0 ? 0 : (y0 >= hh ? hh - 1 : y0); y1 = y1 < 0 ? 0 : (y1 >= hh ? hh - 1 : y1);
+            for (int x = 0; x < W; ++x) {
+                const std::size_t i = (std::size_t)y * W + x;
+                const float k = coc[i];
+                if (k <= 0.0f) continue;                    // in focus: the pixel is left exactly as it was
+                float fx = (x + 0.5f) * 0.5f - 0.5f; int x0 = (int)std::floor(fx); const float ax = fx - x0;
+                int x1 = x0 + 1; x0 = x0 < 0 ? 0 : (x0 >= hw ? hw - 1 : x0); x1 = x1 < 0 ? 0 : (x1 >= hw ? hw - 1 : x1);
+                const float* p00 = &half[((std::size_t)y0 * hw + x0) * 4];
+                const float* p10 = &half[((std::size_t)y0 * hw + x1) * 4];
+                const float* p01 = &half[((std::size_t)y1 * hw + x0) * 4];
+                const float* p11 = &half[((std::size_t)y1 * hw + x1) * 4];
+                const std::uint32_t v = r.color[i];
+                const float a = (float)(v >> 24) / 255.0f;
+                const float sharp[4] = {(float)(v & 0xFF) / 255.0f * a, (float)((v >> 8) & 0xFF) / 255.0f * a,
+                                        (float)((v >> 16) & 0xFF) / 255.0f * a, a};
+                float o[4];
+                for (int c = 0; c < 4; ++c) {
+                    const float top = p00[c] + (p10[c] - p00[c]) * ax, bot = p01[c] + (p11[c] - p01[c]) * ax;
+                    o[c] = dof::Mix(sharp[c], top + (bot - top) * ay, k);
+                }
+                const float oa = o[3] < 0.0f ? 0.0f : (o[3] > 1.0f ? 1.0f : o[3]);
+                const float inv = oa > 1e-4f ? 1.0f / oa : 0.0f;
+                auto cl = [](float f) { return (std::uint32_t)((f < 0 ? 0 : (f > 1 ? 1 : f)) * 255.0f + 0.5f); };
+                r.color[i] = (cl(oa) << 24) | (cl(o[2] * inv) << 16) | (cl(o[1] * inv) << 8) | cl(o[0] * inv);
+            }
         }
     });
 }
@@ -2517,13 +2699,14 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     { OKAY_PROFILE("Render.Raster"); ParallelRows(0, r.height, [&](int ya, int yb) { renderBand(ya, yb - 1); }); }
     OKAY_PROFILE("Render.Post");
     if ((SSAOEnabled() || rs.post.ssao) && !r.gvalid.empty()) {       // contact AO post-pass
-        const float radSaved = SSAORadius(), strSaved = SSAOStrength();
-        if (rs.post.ssao) {   // the scene's own switch carries its radius and intensity (Lighting window > Post-processing)
+        const float radSaved = SSAORadius(), strSaved = SSAOStrength(), powSaved = SSAOPower();
+        if (rs.post.ssao) {   // the scene's own switch carries its radius, intensity and power (Lighting window > Post-processing)
             SSAORadius() = rs.post.ssaoRadius;
             SSAOStrength() = std::fmin(1.0f, std::fmax(0.0f, rs.post.ssaoIntensity * 0.6f));
+            SSAOPower() = rs.post.ssaoPower;
         }
         ApplySSAO(r, vp, eye);
-        SSAORadius() = radSaved; SSAOStrength() = strSaved;
+        SSAORadius() = radSaved; SSAOStrength() = strSaved; SSAOPower() = powSaved;
     }
     if (rs.post.bloom && !BloomEnabled()) {                          // the scene's own Bloom switch
         BloomEnabled() = true;
@@ -2536,6 +2719,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     const ScenePostPlan postPlan = PlanScenePost(rs);
     ApplyScenePost(r, postPlan);                                     // scene exposure, tonemap, grade, vignette
     ApplyColorGrade(r);                                              // process-wide brightness/contrast/sat/vignette/gamma
+    if (rs.post.dof) ApplySceneDof(r, rs.post.dofFocus, rs.post.dofRange, vp);   // the scene's Depth of field (perspective cameras)
     if (rs.post.fxaa && !FXAAEnabled()) { FXAAEnabled() = true; ApplyFXAA(r); FXAAEnabled() = false; }
     else ApplyFXAA(r);                                               // edge anti-aliasing
     PostVignetteHandled() = postPlan.vignette > 0.0f;                // the host skips its own overlay

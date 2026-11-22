@@ -139,6 +139,9 @@ typedef void   (*PFNGenTextures)(GLsizei, GLuint*);
 typedef void   (*PFNBindTexture)(GLenum, GLuint);
 typedef void   (*PFNTexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*);
 typedef void   (*PFNTexParameteri)(GLenum, GLenum, GLint);
+typedef void   (*PFNCompressedTexImage2D)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLint, GLsizei, const void*);
+typedef const GLubyte* (*PFNGetString)(GLenum);
+typedef const GLubyte* (*PFNGetStringi)(GLenum, GLuint);
 typedef void   (*PFNDeleteTextures)(GLsizei, const GLuint*);
 typedef void   (*PFNViewport)(GLint, GLint, GLsizei, GLsizei);
 typedef void   (*PFNClearColor)(GLfloat, GLfloat, GLfloat, GLfloat);
@@ -193,6 +196,8 @@ struct GL {
     PFNGenVertexArrays GenVertexArrays; PFNBindVertexArray BindVertexArray;
     PFNDeleteVertexArrays DeleteVertexArrays;
     PFNDrawBuffer DrawBuffer; PFNReadBuffer ReadBuffer;
+    // optional: block-compressed textures (.dds) and the extension list that says which formats the GPU takes
+    PFNCompressedTexImage2D CompressedTexImage2D = nullptr; PFNGetString GetString = nullptr; PFNGetStringi GetStringi = nullptr;
     bool ok = false;
 };
 GL g;   // resolved entry points
@@ -653,6 +658,10 @@ bool GLRenderer::LoadGL(GLGetProc gp) {
     // Optional: GPU skinning (bone matrices as a vec4 uniform array).
     load(g.Uniform4fv, gp, "glUniform4fv");
     load(g.GetIntegerv, gp, "glGetIntegerv");
+    // Optional: compressed (.dds) uploads. Without them every .dds is decoded on the CPU and uploaded as RGBA8.
+    load(g.CompressedTexImage2D, gp, "glCompressedTexImage2D");
+    load(g.GetString, gp, "glGetString");
+    load(g.GetStringi, gp, "glGetStringi");
     g.ok = r;
     if (!r) Log::Error("[gl] required OpenGL entry points missing — using software renderer");
     return r;
@@ -1245,7 +1254,11 @@ const char* kFxaaFrag =
     "}\n";
 
 // Depth of field: blend toward the blurred frame by how far the pixel's linear
-// depth (the SSAO depth pass) sits outside the focus range.
+// depth (the SSAO depth pass) sits outside the focus range. The blurred copy is
+// premultiplied (colour times coverage, kDofCopyFrag + kDofBlurFrag) and the mix
+// happens premultiplied too, so an empty pixel (alpha 0, where the host paints its
+// sky) stays empty and a far object fades into the sky without a dark fringe.
+// Before, the copy and blur wrote alpha 1, which turned the sky an opaque dark blur.
 const char* kDofFrag =
     "#version 120\n"
     "uniform sampler2D uSrc; uniform sampler2D uBlur; uniform sampler2D uDepth;\n"
@@ -1254,7 +1267,24 @@ const char* kDofFrag =
     "  vec4 t = texture2D(uDepth, vUV); float dn = t.r + t.g / 255.0;\n"
     "  float d = dn >= 0.995 ? uFar * 4.0 : dn * uFar;\n"                           // background: far away
     "  float coc = clamp((abs(d - uFocus) - uRange * 0.5) / max(uRange, 1e-3), 0.0, 1.0);\n"
-    "  gl_FragColor = mix(texture2D(uSrc, vUV), texture2D(uBlur, vUV), coc);\n"
+    "  vec4 s = texture2D(uSrc, vUV);\n"
+    "  vec4 p = mix(vec4(s.rgb * s.a, s.a), texture2D(uBlur, vUV), coc);\n"         // premultiplied mix
+    "  gl_FragColor = vec4(p.a > 1e-4 ? p.rgb / p.a : vec3(0.0), p.a);\n"
+    "}\n";
+// The depth of field's blurred copy: the display image premultiplied by its coverage ...
+const char* kDofCopyFrag =
+    "#version 120\n"
+    "uniform sampler2D uSrc; varying vec2 vUV;\n"
+    "void main(){ vec4 c = texture2D(uSrc, vUV); gl_FragColor = vec4(c.rgb * c.a, c.a); }\n";
+// ... blurred with the same 9-tap gaussian as kBlurFrag, alpha included.
+const char* kDofBlurFrag =
+    "#version 120\n"
+    "uniform sampler2D uSrc; uniform vec2 uDir; varying vec2 vUV;\n"
+    "void main(){\n"
+    "  vec4 s = texture2D(uSrc, vUV) * 0.227027;\n"
+    "  s += (texture2D(uSrc, vUV + uDir * 1.384615) + texture2D(uSrc, vUV - uDir * 1.384615)) * 0.316216;\n"
+    "  s += (texture2D(uSrc, vUV + uDir * 3.230769) + texture2D(uSrc, vUV - uDir * 3.230769)) * 0.070270;\n"
+    "  gl_FragColor = s;\n"
     "}\n";
 
 GLuint buildQuadProgram(const char* fragSrc) {
@@ -1325,7 +1355,7 @@ bool GLRenderer::EnsureSkyProgram() {
 }
 
 bool GLRenderer::EnsurePostChain() {
-    if (m_uberProg && m_fxaaProg && m_dofProg && m_downProg) return true;
+    if (m_uberProg && m_fxaaProg && m_dofProg && m_dofCopyProg && m_dofBlurProg && m_downProg) return true;
     if (!EnsurePostProgs()) return false;   // the shared blur / add programs + the quad
     if (!m_uberProg) {
         m_uberProg = buildQuadProgram(kUberFrag);
@@ -1350,6 +1380,16 @@ bool GLRenderer::EnsurePostChain() {
         auto u = [&](const char* n) { return g.GetUniformLocation(m_dofProg, n); };
         m_udfSrc = u("uSrc"); m_udfBlur = u("uBlur"); m_udfDepth = u("uDepth");
         m_udfFocus = u("uFocus"); m_udfRange = u("uRange"); m_udfFar = u("uFar");
+    }
+    if (!m_dofCopyProg) {
+        m_dofCopyProg = buildQuadProgram(kDofCopyFrag);
+        if (!m_dofCopyProg) return false;
+        m_udcSrc = g.GetUniformLocation(m_dofCopyProg, "uSrc");
+    }
+    if (!m_dofBlurProg) {
+        m_dofBlurProg = buildQuadProgram(kDofBlurFrag);
+        if (!m_dofBlurProg) return false;
+        m_udbSrc = g.GetUniformLocation(m_dofBlurProg, "uSrc"); m_udbDir = g.GetUniformLocation(m_dofBlurProg, "uDir");
     }
     if (!m_downProg) {
         m_downProg = buildQuadProgram(kDownFrag);
@@ -1558,28 +1598,37 @@ unsigned int GLRenderer::TextureFor(const std::string& name) {
         for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
         m_texCache.clear();
         m_texInfo.clear();
+        m_uploadInfo.clear();
         m_texGen = TextureCacheGeneration();
     }
     auto it = m_texCache.find(name);
     if (it != m_texCache.end()) return it->second;
-    unsigned int tex = 0;
-    Image* img = GetCachedTexture(name);
-    if (img && img->Width() > 0) {
-        g.GenTextures(1, &tex);
-        g.BindTexture(GL_TEXTURE_2D, tex);
-        g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img->Width(), img->Height(), 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, img->Data());
-        // The picture's own Filter / Wrap / Mipmaps import settings (defaults: repeat, trilinear, mipmapped).
-        const TextureSampling ts = TextureImportSampling(name);
+    // The picture's own Filter / Wrap / Mipmaps import settings (defaults: repeat, trilinear, mipmapped).
+    TextureSampling ts = TextureImportSampling(name);
+    TextureUploadInfo info;
+    // A .dds file, or the compressed import copy of a picture set to `compress`: its own levels, kept compressed when
+    // the GPU takes the format (see GpuTexture.hpp). Anything else goes the ordinary RGBA8 way below, as before.
+    unsigned int tex = UploadDdsTexture(name, ts, info);
+    Image* img = tex ? nullptr : GetCachedTexture(name);
+    if (tex || (img && img->Width() > 0)) {
+        if (!tex) {
+            g.GenTextures(1, &tex);
+            g.BindTexture(GL_TEXTURE_2D, tex);
+            g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img->Width(), img->Height(), 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, img->Data());
+            info.glFormat = GL_RGBA8;
+            if (!g.GenerateMipmap) ts.mipmaps = false;   // no way to build them: sample level 0 only
+            else if (ts.mipmaps) g.GenerateMipmap(GL_TEXTURE_2D);
+        }
         m_texInfo[tex] = ts;
+        m_uploadInfo[name] = info;
         const int wrapMode = ts.wrap == TextureSampling::Clamp ? GL_CLAMP_TO_EDGE
                            : ts.wrap == TextureSampling::Mirror ? 0x8370 /*GL_MIRRORED_REPEAT*/ : GL_REPEAT;
         g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
         g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
         const bool point = ts.filter == TextureSampling::Point;
         g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, point ? 0x2600 /*GL_NEAREST*/ : GL_LINEAR);
-        if (g.GenerateMipmap && ts.mipmaps) {
-            g.GenerateMipmap(GL_TEXTURE_2D);
+        if (ts.mipmaps) {
             const int minF = point ? 0x2700 /*GL_NEAREST_MIPMAP_NEAREST*/
                            : ts.filter == TextureSampling::Bilinear ? 0x2701 /*GL_LINEAR_MIPMAP_NEAREST*/
                                                                     : GL_LINEAR_MIPMAP_LINEAR;
@@ -1593,6 +1642,97 @@ unsigned int GLRenderer::TextureFor(const std::string& name) {
     }
     m_texCache[name] = tex;
     return tex;
+}
+
+gputex::Caps GLRenderer::QueryTextureCaps() {
+    std::vector<std::string> ext;
+    const char* version = g.GetString ? reinterpret_cast<const char*>(g.GetString(GL_VERSION)) : nullptr;
+    GLint n = 0;
+    if (g.GetStringi && g.GetIntegerv) g.GetIntegerv(0x821D /*GL_NUM_EXTENSIONS*/, &n);
+    if (n > 0 && n < 100000) {
+        for (GLint i = 0; i < n; ++i) {
+            const GLubyte* s = g.GetStringi(GL_EXTENSIONS, GLuint(i));
+            if (s) ext.emplace_back(reinterpret_cast<const char*>(s));
+        }
+    } else if (g.GetString) {   // GL 2.1: one space-separated string (a core profile refuses this; the list stays empty)
+        const GLubyte* s = g.GetString(GL_EXTENSIONS);
+        std::string all = s ? reinterpret_cast<const char*>(s) : "";
+        std::size_t p = 0;
+        while (p < all.size()) {
+            std::size_t q = all.find(' ', p);
+            if (q == std::string::npos) q = all.size();
+            if (q > p) ext.push_back(all.substr(p, q - p));
+            p = q + 1;
+        }
+    }
+    if (g.GetError) for (int i = 0; i < 16 && g.GetError() != 0; ++i) {}
+    return gputex::CapsFrom(version, ext);
+}
+
+const GLRenderer::TextureUploadInfo* GLRenderer::UploadInfo(const std::string& name) const {
+    auto it = m_uploadInfo.find(name);
+    return it == m_uploadInfo.end() ? nullptr : &it->second;
+}
+
+// Upload a plan's levels; 0 (nothing left behind) when GL reports an error.
+static unsigned int UploadPlanLevels(const gputex::Plan& p) {
+    if (p.levels.empty() || (p.compressed && !g.CompressedTexImage2D)) return 0;
+    for (int i = 0; i < 16 && g.GetError() != 0; ++i) {}   // start from a clean error state
+    GLuint t = 0;
+    g.GenTextures(1, &t);
+    g.BindTexture(GL_TEXTURE_2D, t);
+    for (std::size_t l = 0; l < p.levels.size(); ++l) {
+        const gputex::Level& lv = p.levels[l];
+        if (p.compressed)
+            g.CompressedTexImage2D(GL_TEXTURE_2D, GLint(l), GLenum(p.glFormat), lv.width, lv.height, 0, GLsizei(lv.bytes.size()), lv.bytes.data());
+        else
+            g.TexImage2D(GL_TEXTURE_2D, GLint(l), GL_RGBA8, lv.width, lv.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, lv.bytes.data());
+    }
+    g.TexParameteri(GL_TEXTURE_2D, 0x813C /*GL_TEXTURE_BASE_LEVEL*/, 0);
+    g.TexParameteri(GL_TEXTURE_2D, 0x813D /*GL_TEXTURE_MAX_LEVEL*/, GLint(p.levels.size()) - 1);   // a short chain is complete
+    if (g.GetError() != 0) { g.DeleteTextures(1, &t); return 0; }
+    return t;
+}
+
+unsigned int GLRenderer::UploadDdsTexture(const std::string& name, TextureSampling& ts, TextureUploadInfo& info) {
+    tex::DdsImage dds;
+    std::string why;
+    if (!gputex::Source(name, &dds, &why)) {
+        if (!why.empty()) Log::Warning("[gl] texture '", name, "': ", why, "; using the picture itself");
+        return 0;
+    }
+    if (!m_texCapsKnown) { m_texCaps = QueryTextureCaps(); m_texCapsKnown = true; }
+    gputex::Caps caps = m_texCaps;
+    bool forcedOff = false;
+    if (const char* off = std::getenv("OKAY_GL_NO_COMPRESSED")) if (off[0] == '1') { caps = gputex::Caps(); forcedOff = true; }
+    const tex::DdsFormat fmt = dds.format;
+    gputex::Plan plan;
+    if (!gputex::PlanUpload(std::move(dds), caps, &plan)) return 0;
+    if (forcedOff && !plan.compressed && !plan.note.empty() && plan.note.find("multiple of 4") == std::string::npos)
+        plan.note = "OKAY_GL_NO_COMPRESSED=1; decoded on the CPU";
+    unsigned int t = UploadPlanLevels(plan);
+    if (!t && plan.compressed) {   // the driver refused the compressed data after all: decode it on the CPU
+        tex::DdsImage again;
+        if (gputex::Source(name, &again, nullptr) && gputex::PlanUpload(std::move(again), gputex::Caps(), &plan)) {
+            plan.note = "the driver refused the compressed upload; decoded on the CPU";
+            t = UploadPlanLevels(plan);
+        }
+    }
+    if (!t) return 0;
+    info.fromDds = true;
+    info.compressed = plan.compressed;
+    info.glFormat = plan.glFormat;
+    info.levels = int(plan.levels.size());
+    info.note = plan.note;
+    if (plan.levels.size() == 1 && ts.mipmaps) {
+        if (!plan.compressed && g.GenerateMipmap) {   // one RGBA8 level: GL builds the rest, as for a PNG
+            g.TexParameteri(GL_TEXTURE_2D, 0x813D /*GL_TEXTURE_MAX_LEVEL*/, 1000);
+            g.GenerateMipmap(GL_TEXTURE_2D);
+        } else ts.mipmaps = false;                    // compressed without levels: sample level 0 only
+    }
+    Log::Info("[gl] texture '", name, "': ", tex::DdsFormatName(fmt), plan.compressed ? " kept compressed on the GPU" : " uploaded as RGBA8",
+              " (", info.levels, info.levels == 1 ? " level)" : " levels)", info.note.empty() ? "" : "; ", info.note);
+    return t;
 }
 
 // ---- Per-mesh vertex-buffer cache -------------------------------------------
@@ -2553,15 +2693,14 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         // 4) Depth of field: a blurred copy (half res, two blur rounds) mixed in
         //    by the distance from the focus plane.
         if (dofOn) {
-            quadPass(m_addProg, m_bloomFboA, m_bloomW, m_bloomH, cur, m_uaSrc);
-            g.Uniform1f(m_uaStrength, 1.0f);
+            quadPass(m_dofCopyProg, m_bloomFboA, m_bloomW, m_bloomH, cur, m_udcSrc);   // premultiplied half-res copy
             DrawQuad();
             for (int it = 0; it < 2; ++it) {
-                quadPass(m_blurProg, m_bloomFboB, m_bloomW, m_bloomH, m_bloomTexA, m_ublSrc);
-                g.Uniform2f(m_ublDir, 1.0f / (float)m_bloomW, 0.0f);
+                quadPass(m_dofBlurProg, m_bloomFboB, m_bloomW, m_bloomH, m_bloomTexA, m_udbSrc);
+                g.Uniform2f(m_udbDir, 1.0f / (float)m_bloomW, 0.0f);
                 DrawQuad();
-                quadPass(m_blurProg, m_bloomFboA, m_bloomW, m_bloomH, m_bloomTexB, m_ublSrc);
-                g.Uniform2f(m_ublDir, 0.0f, 1.0f / (float)m_bloomH);
+                quadPass(m_dofBlurProg, m_bloomFboA, m_bloomW, m_bloomH, m_bloomTexB, m_udbSrc);
+                g.Uniform2f(m_udbDir, 0.0f, 1.0f / (float)m_bloomH);
                 DrawQuad();
             }
             unsigned int dst = nextTarget();
@@ -2674,6 +2813,8 @@ void GLRenderer::Destroy() {
     for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
     m_texCache.clear();
     m_texInfo.clear();
+    m_uploadInfo.clear();
+    m_texCapsKnown = false;
     for (auto& kv : m_meshVB) if (kv.second.vbo) g.DeleteBuffers(1, &kv.second.vbo);
     m_meshVB.clear();
     if (m_vbo) { g.DeleteBuffers(1, &m_vbo); m_vbo = 0; }
@@ -2687,6 +2828,8 @@ void GLRenderer::Destroy() {
     if (m_uberProg) { g.DeleteProgram(m_uberProg); m_uberProg = 0; }
     if (m_fxaaProg) { g.DeleteProgram(m_fxaaProg); m_fxaaProg = 0; }
     if (m_dofProg) { g.DeleteProgram(m_dofProg); m_dofProg = 0; }
+    if (m_dofCopyProg) { g.DeleteProgram(m_dofCopyProg); m_dofCopyProg = 0; }
+    if (m_dofBlurProg) { g.DeleteProgram(m_dofBlurProg); m_dofBlurProg = 0; }
     if (m_downProg) { g.DeleteProgram(m_downProg); m_downProg = 0; }
     if (m_ssaoDepthProg) { g.DeleteProgram(m_ssaoDepthProg); m_ssaoDepthProg = 0; }
     if (m_ssaoProg) { g.DeleteProgram(m_ssaoProg); m_ssaoProg = 0; }

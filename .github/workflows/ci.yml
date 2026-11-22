@@ -307,9 +307,11 @@ jobs:
           OKAYUI_TESTS="test_okayui_fuzz test_okayui_codeedit_fuzz test_okayui_dock_fuzz test_okayui_windows_fuzz"
           TESTS="$TESTS $OKAYUI_TESTS"
           echo "OKAYUI_TESTS=$OKAYUI_TESTS" >> "$GITHUB_ENV"
-          # The experimental Xbox UWP backend (OKAY_BUILD_XBOX_UWP=ON above; no other job turns it on). Only the touch and text
-          # composition test: it does not link the engine (about 10 s to build), and its pointer and caret maths should be sanitized.
-          XBOX_TESTS="test_xbox_uwp_touch"
+          # The experimental Xbox UWP backend (OKAY_BUILD_XBOX_UWP=ON above; no other job turns it on). Only tests that do not link
+          # the engine (each about 10 to 25 s to build): touch and text composition, the runtime pieces (lifecycle with the back
+          # button, title-safe area, pads, paths, audio, backend over a fake host, HTTP) and pad hot-plug slots. Before 2026-11-22
+          # only the touch test ran anywhere in CI.
+          XBOX_TESTS="test_xbox_uwp_touch test_xbox_uwp_runtime test_xbox_uwp_padhub"
           TESTS="$TESTS $XBOX_TESTS"
           echo "XBOX_TESTS=$XBOX_TESTS" >> "$GITHUB_ENV"
           echo "SAN_TESTS=$TESTS" >> "$GITHUB_ENV"
@@ -571,7 +573,7 @@ jobs:
   windows-cross:
     name: Cross-compile Windows build (MinGW)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90   # a cold compiler cache (main's CI not finished, so no fresh cache) took over 60 min twice on 2026-11-22 (#1104, #1106); warm runs take 22-34 min
     env:
       SDL2_VERSION: 2.30.9
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -664,11 +666,12 @@ jobs:
             -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
             -DOKAY_SODIUM_PREFIX="$OKAY_SODIUM_MINGW_PREFIX"
           cmake --build build-win-tests -j --target test_vs_acceptance test_vs_debug test_game_fiber \
-            test_polymesh test_mesh_asset test_poly_ops
+            test_polymesh test_mesh_asset test_poly_ops test_okayui_render_sdlhost
           mkdir -p win-tests
           cp build-win-tests/tests/test_vs_acceptance.exe build-win-tests/tests/test_vs_debug.exe \
              build-win-tests/tests/test_game_fiber.exe build-win-tests/tests/test_polymesh.exe \
              build-win-tests/tests/test_mesh_asset.exe build-win-tests/tests/test_poly_ops.exe \
+             build-win-tests/okayui/test_okayui_render_sdlhost.exe \
              "$SDL2_MINGW_PREFIX/bin/SDL2.dll" win-tests/
 
       - name: Upload Windows build
@@ -710,7 +713,9 @@ jobs:
         shell: pwsh
         run: |
           $failed = @()
-          foreach ($t in "test_vs_acceptance", "test_vs_debug", "test_game_fiber", "test_polymesh", "test_mesh_asset", "test_poly_ops") {
+          # test_okayui_render_sdlhost: OkayUI's own Direct3D 11 renderer inside SDL's direct3d11 renderer (OKAY_UI_OWN_RENDER), on the
+          # runner's Direct3D 11 device (no GPU: Windows' software adapter); it says SKIPPED for a renderer SDL cannot make here.
+          foreach ($t in "test_vs_acceptance", "test_vs_debug", "test_game_fiber", "test_polymesh", "test_mesh_asset", "test_poly_ops", "test_okayui_render_sdlhost") {
             Write-Host "== $t"
             & "winbuild/win-tests/$t.exe"
             if ($LASTEXITCODE -ne 0) { $failed += $t }

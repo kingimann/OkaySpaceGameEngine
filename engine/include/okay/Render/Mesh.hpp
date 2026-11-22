@@ -1978,6 +1978,9 @@ struct Mesh {
             std::FILE* fp = std::fopen(path.c_str(), "rb");
             if (!fp) { if (ok) *ok = false; return m; }
             std::fseek(fp, 0, SEEK_END); long sz = std::ftell(fp); std::fseek(fp, 0, SEEK_SET);
+            // A folder opens on some systems and reports a huge size (LONG_MAX on Linux): refuse it, and anything over
+            // 2 GB, instead of asking for that much memory (std::length_error ended the editor).
+            if (sz < 0 || sz >= 0x7fffffffL) { std::fclose(fp); if (ok) *ok = false; return m; }
             if (sz > 0) {
                 data.resize((std::size_t)sz);
                 if (std::fread(&data[0], 1, (std::size_t)sz, fp) != (std::size_t)sz) {

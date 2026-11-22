@@ -220,7 +220,7 @@ int main() {
                 for (const auto& o : b.Objects()) if (auto* c = o->GetComponent<Water>()) lw = c;
                 CHECK(lw != nullptr);
                 if (lw) {
-                    CHECK(lw->resolution >= 1 && lw->resolution <= 2048);
+                    CHECK(lw->resolution >= 1 && lw->resolution <= 1024);
                     CHECK(lw->LastVertexCount() >= 0);
                     auto* mr = lw->gameObject->GetComponent<MeshRenderer>();
                     bool finite = mr != nullptr;

@@ -3193,6 +3193,10 @@ add_test(NAME lod_fade COMMAND test_lod_fade)
 add_executable(test_lod_import test_lod_import.cpp)
 target_link_libraries(test_lod_import PRIVATE okay::engine)
 add_test(NAME lod_import COMMAND test_lod_import)
+# MeshSimplify keeps material slots, face colours and vertex colours (and their borders) for LOD levels.
+add_executable(test_simplify_quality test_simplify_quality.cpp)
+target_link_libraries(test_simplify_quality PRIVATE okay::engine)
+add_test(NAME simplify_quality COMMAND test_simplify_quality)
 # Asset streaming: texture mips on the job system under a budget, meshes in the background, long sounds streamed.
 add_executable(test_asset_streaming test_asset_streaming.cpp)
 target_link_libraries(test_asset_streaming PRIVATE okay::engine)

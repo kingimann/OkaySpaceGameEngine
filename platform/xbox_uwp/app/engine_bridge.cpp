@@ -11,6 +11,7 @@
 #include "XboxRecovery.hpp"
 #include "XboxSoftPainter.hpp"
 #include "XboxPresent.hpp"
+#include "XboxPadSync.hpp"
 #include "XboxUwpBackend.hpp"
 #include "XboxWasapi.hpp"
 #include "okay/Core/Paths.hpp"
@@ -40,6 +41,19 @@ struct BridgePad : xb::PadDevice {
     void SendVibration(const xb::Vibration& v) override { if (cb && cb->padVibrate) cb->padVibrate(cb->user, index, v.leftMotor, v.rightMotor, v.leftTrigger, v.rightTrigger); }
 };
 
+// One pad, found by its stable key (the shell's padReadKey / padVibrateKey). Owned by XboxPadSync, freed only after the backend let go.
+struct KeyedPad : xb::PadDevice {
+    const ShellCallbacks* cb = nullptr; std::string key;
+    bool Read(xb::PadReading& o) override {
+        PadReadingPod p;
+        if (!cb || !cb->padReadKey || !cb->padReadKey(cb->user, key, &p)) return false;
+        o.buttons = p.buttons; o.leftTrigger = p.leftTrigger; o.rightTrigger = p.rightTrigger;
+        o.leftX = p.leftX; o.leftY = p.leftY; o.rightX = p.rightX; o.rightY = p.rightY;
+        return true;
+    }
+    void SendVibration(const xb::Vibration& v) override { if (cb && cb->padVibrateKey) cb->padVibrateKey(cb->user, key, v.leftMotor, v.rightMotor, v.leftTrigger, v.rightTrigger); }
+};
+
 struct BridgeHost : xb::UwpHost {
     ShellCallbacks cb;
     std::vector<std::unique_ptr<BridgePad>> pads;
@@ -48,7 +62,9 @@ struct BridgeHost : xb::UwpHost {
     void PumpEvents() override { if (cb.pump) cb.pump(cb.user, false); }
     int PadCount() override {
         const int n = cb.padCount ? cb.padCount(cb.user) : 0;
-        if ((int)pads.size() != n) { pads.clear(); for (int i = 0; i < n; ++i) { auto p = std::make_unique<BridgePad>(); p->cb = &cb; p->index = i; pads.push_back(std::move(p)); } }
+        // Grow only: an open pad keeps a pointer to its BridgePad, so none is ever freed while the engine runs (before, all were
+        // deleted whenever the count changed: a use after free on the next poll). The keyed path (XboxPadSync) is the one to use.
+        while ((int)pads.size() < n) { auto p = std::make_unique<BridgePad>(); p->cb = &cb; p->index = (int)pads.size(); pads.push_back(std::move(p)); }
         return n;
     }
     xb::PadDevice* Pad(int i) override { return i >= 0 && i < (int)pads.size() ? pads[(std::size_t)i].get() : nullptr; }
@@ -76,7 +92,22 @@ struct Engine {
     xb::OverlayState overlayState;
     xb::DeviceRecovery recovery;      // GPU device loss: rebuild with backoff, give up after a few tries
     xb::FileLog log;                  // LocalState\\logs\\okayspace.log: what the owner reads from the Device Portal
+    xb::PadSync padSync;              // pads by stable key -> hub slots (when the shell gives padKeys)
 };
+
+namespace {
+// The pads connected now, from the shell, into the hub (once a frame, on the UI thread). No-op without padKeys.
+void SyncPads(Engine* e) {
+    if (!e->host.cb.padKeys) return;
+    std::vector<std::string> keys;
+    e->host.cb.padKeys(e->host.cb.user, &keys);
+    const ShellCallbacks* cb = &e->host.cb;
+    const int joined = e->padSync.Sync(*e->backend, keys, [cb](const std::string& k) {
+        std::unique_ptr<KeyedPad> p(new KeyedPad()); p->cb = cb; p->key = k; return std::unique_ptr<xb::PadDevice>(p.release());
+    });
+    if (joined > 0) e->backend->Log("Xbox app: " + std::to_string(joined) + " controller(s) joined; " + std::to_string(e->padSync.Count()) + " connected.");
+}
+} // namespace
 
 Engine* Create(const ShellCallbacks& cb, const std::string& installDir, const std::string& localDir, const std::string& tempDir) {
     std::unique_ptr<Engine> e(new Engine());
@@ -99,12 +130,13 @@ Engine* Create(const ShellCallbacks& cb, const std::string& installDir, const st
     }
     xb::InstallBackend(e->backend.get());
     e->backend->Init(okay::platform::InitFlags());
+    if (cb.padKeys) e->backend->EnableHub(8, 10000);   // player slots that survive a short disconnect (XboxPadHub.hpp)
     return e.release();
 }
 
 void Log(Engine* e, const std::string& line) { if (e) e->backend->Log(line); }
 
-void Destroy(Engine* e) { if (!e) return; xb::InstallBackend(nullptr); okay::Paths::SetEnvOverride(nullptr); delete e; }
+void Destroy(Engine* e) { if (!e) return; e->padSync.Clear(*e->backend); xb::InstallBackend(nullptr); okay::Paths::SetEnvOverride(nullptr); delete e; }
 
 void Resized(Engine* e, float w, float h, float dpi) { if (e) e->backend->Life().Resized(w, h, dpi); }
 void Visibility(Engine* e, bool v) { if (e) e->backend->Life().VisibilityChanged(v); }
@@ -160,6 +192,7 @@ bool Run(Engine* e, std::string& err) {
     if (!buildGpu()) return fail("The Direct3D 11 renderer or the swap chain could not start (see the log). package\\Shaders must hold shaders.manifest and the .cso files.");
     e->runtime.SetSaveDir(e->roots.local + "/saves");
     e->backend->Log("Xbox app: shaders from " + e->roots.install + "Shaders; saves in " + e->roots.local + "/saves; game data in " + e->roots.install + "Data; pads connected: " + std::to_string(e->host.PadCount()));
+    SyncPads(e);   // pads already plugged in get their slots before the game opens them (PadSet::OpenAll)
     std::string rerr;
     if (!e->runtime.Start(e->roots.install + "Data", rerr)) return fail(rerr);
     e->backend->onSuspend = [e] { e->runtime.OnSuspend(); };
@@ -167,6 +200,7 @@ bool Run(Engine* e, std::string& err) {
     auto last = std::chrono::steady_clock::now();
     bool quit = false, lostReported = false;
     while (!quit) {
+        SyncPads(e);
         okay::platform::Event ev;
         while (e->backend->PollEvent(ev)) {
             if (ev.type == okay::platform::EventType::Quit) quit = true;

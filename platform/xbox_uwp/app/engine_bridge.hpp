@@ -5,6 +5,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace okay_xbox_bridge {
 
@@ -19,6 +20,11 @@ struct ShellCallbacks {
     bool (*padRead)(void* user, int index, PadReadingPod* out) = nullptr;
     void (*padVibrate)(void* user, int index, double left, double right, double leftTrigger, double rightTrigger) = nullptr;
     int (*audioDeviceId)(void* user, wchar_t* buffer, int capacity) = nullptr;   // writes the default render device id, returns its length (0 = none)
+    // Pads by a stable key (RawGameController.NonRoamableId). When padKeys is set the engine uses these instead of the index ones above:
+    // each frame it asks for the connected keys (XboxPadSync.hpp), so pads keep their player slot when another pad comes or goes.
+    void (*padKeys)(void* user, std::vector<std::string>* out) = nullptr;
+    bool (*padReadKey)(void* user, const std::string& key, PadReadingPod* out) = nullptr;
+    void (*padVibrateKey)(void* user, const std::string& key, double left, double right, double leftTrigger, double rightTrigger) = nullptr;
 };
 
 struct Engine;   // opaque

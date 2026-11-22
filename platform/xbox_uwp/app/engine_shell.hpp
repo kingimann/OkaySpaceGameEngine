@@ -17,6 +17,9 @@
 #include <winrt/Windows.UI.ViewManagement.h>
 
 #include <cstring>
+#include <string>
+#include <utility>
+#include <vector>
 #include <exception>
 
 namespace okay_xbox_app {
@@ -62,6 +65,34 @@ struct GameApp : winrt::implements<GameApp, wac::IFrameworkViewSource, wac::IFra
             if (i < 0 || static_cast<uint32_t>(i) >= pads.Size()) return;
             wgi::GamepadVibration v{l, r, lt, rt};
             pads.GetAt(static_cast<uint32_t>(i)).Vibration(v);
+        };
+        // Pads by a stable key: RawGameController.NonRoamableId (the same pad keeps its key across a reconnect). The list is
+        // re-read once a frame on this (UI) thread from Gamepad::Gamepads(); the engine keeps player slots by key (XboxPadSync.hpp).
+        cb.padKeys = [](void* u, std::vector<std::string>* out) {
+            auto* self = static_cast<GameApp*>(u);
+            self->m_padCache.clear();
+            for (wgi::Gamepad const& g : wgi::Gamepad::Gamepads()) {
+                std::string key;
+                try { if (auto raw = wgi::RawGameController::FromGameController(g)) key = winrt::to_string(raw.NonRoamableId()); } catch (...) {}
+                if (key.empty()) continue;   // no stable id: skipped rather than guessed
+                self->m_padCache.emplace_back(key, g);
+                out->push_back(key);
+            }
+        };
+        cb.padReadKey = [](void* u, const std::string& key, bridge::PadReadingPod* o) -> bool {
+            for (auto const& kv : static_cast<GameApp*>(u)->m_padCache) {
+                if (kv.first != key) continue;
+                const wgi::GamepadReading r = kv.second.GetCurrentReading();
+                o->buttons = static_cast<std::uint32_t>(r.Buttons);
+                o->leftTrigger = r.LeftTrigger; o->rightTrigger = r.RightTrigger;
+                o->leftX = r.LeftThumbstickX; o->leftY = r.LeftThumbstickY; o->rightX = r.RightThumbstickX; o->rightY = r.RightThumbstickY;
+                return true;
+            }
+            return false;
+        };
+        cb.padVibrateKey = [](void* u, const std::string& key, double l, double r, double lt, double rt) {
+            for (auto const& kv : static_cast<GameApp*>(u)->m_padCache)
+                if (kv.first == key) { wgi::GamepadVibration v{l, r, lt, rt}; kv.second.Vibration(v); return; }
         };
         cb.audioDeviceId = [](void*, wchar_t* buf, int cap) -> int {
             const winrt::hstring id = winrt::Windows::Media::Devices::MediaDevice::GetDefaultAudioRenderId(winrt::Windows::Media::Devices::AudioDeviceRole::Default);
@@ -130,6 +161,7 @@ private:
     void OnResuming(wf::IInspectable const&, wf::IInspectable const&) { if (m_engine) { bridge::Log(m_engine, "Xbox app: resumed."); bridge::Resuming(m_engine); } }
 
     wui::CoreWindow m_window{nullptr};
+    std::vector<std::pair<std::string, wgi::Gamepad>> m_padCache;   // refreshed by padKeys once a frame (UI thread only)
     bridge::Engine* m_engine = nullptr;
     winrt::event_token m_susp{}, m_res{};
 };

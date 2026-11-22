@@ -16,9 +16,10 @@ struct LifecyclePending {
     bool saveState = false;   // suspend started: write the game's state NOW, then call SaveDone()
     bool trimGpu = false;     // call IDXGIDevice3::Trim and release what can be rebuilt
     bool resumed = false;     // coming back: re-check the device, reload what was released
-    bool exitRequested = false;   // back / close: leave the game loop (the backend turns this into a Quit event once)
+    bool exitRequested = false;   // window closed: leave the game loop (the backend turns this into a Quit event once)
+    bool back = false;            // back request (B on a console pad): a back press for the game, never an exit by itself
     bool resized = false;     // Size() changed
-    bool Any() const { return saveState || trimGpu || resumed || exitRequested || resized; }
+    bool Any() const { return saveState || trimGpu || resumed || exitRequested || resized || back; }
 };
 
 class Lifecycle {
@@ -63,8 +64,11 @@ public:
         phase_ = visible_ ? AppPhase::Active : AppPhase::Hidden;
         p_.resumed = true;
     }
-    /// SystemNavigationManager.BackRequested (the B button on a console pad). Marks the event handled so the system does not close us.
-    void BackRequested() { if (phase_ != AppPhase::Closing) p_.exitRequested = true; }
+    /// SystemNavigationManager.BackRequested (the B button on a console pad). The glue marks the event handled so the system does not
+    /// close us. It is a back press the game may use (close a menu), not an exit: B is also an ordinary game button, and before
+    /// 2026-11-22 every B press closed the game. Leaving goes through the game (a pause menu's Quit) or closing the window.
+    /// Ignored while suspended or closing.
+    void BackRequested() { if (phase_ != AppPhase::Closing && phase_ != AppPhase::Suspended) p_.back = true; }
     void WindowClosed() { phase_ = AppPhase::Closing; p_.exitRequested = true; }
     /// What changed since the last call (cleared).
     LifecyclePending Take() { LifecyclePending t = p_; p_ = LifecyclePending(); return t; }

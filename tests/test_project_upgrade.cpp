@@ -6,6 +6,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Scene/SceneMigration.hpp"
+#include "okay/Core/MetaUpgrade.hpp"
 #include "../editor/ProjectUpgrade.hpp"
 #include "../editor/ProjectState.hpp"
 
@@ -1119,6 +1120,94 @@ int main() {
         fake.log = {"Assets/a.okayscene: okayscene 1 -> 2 (character-animator): applied"};
         const std::string t = UpgradeReportText(o, fake, "");
         CHECK(Has(t, "Checked 2 scenes and 0 prefabs; 1 file rewritten.") && !Has(t, "Made:") && !Has(t, "Warnings"));
+    }
+
+    RUN_SUITE("import settings files (.okaymeta): one file's upgrade (UpgradeMetaText)");
+    {
+        const std::string guid = "guid 0123456789abcdef0123456789abcdef\n";
+        // A texture meta in the first settings layout: the old words for the filter and the old key for the largest side.
+        const std::string old = "okaymeta 1\n" + guid + "type texture\nsize 12\nlabel hero\nimporter texture 1\nset filter nearest\nset maxsize 512\n# a note\n";
+        MetaUpgradeResult m = UpgradeMetaText("Assets/a.png", old);
+        CHECK(m.ok && m.changed && !m.newer);
+        CHECK(m.kind == "texture" && m.importerFrom == 1 && m.importerTo == 2);
+        CHECK(Has(m.text, "importer texture 2") && Has(m.text, "set filter point") && Has(m.text, "set maxSize 512"));
+        CHECK(Has(m.text, "0123456789abcdef0123456789abcdef") && Has(m.text, "label hero") && Has(m.text, "size 12") && Has(m.text, "# a note"));
+        CHECK(!Has(m.text, "set maxsize") && m.losses.empty());
+        MetaUpgradeResult again = UpgradeMetaText("Assets/a.png", m.text);
+        CHECK(again.ok && !again.changed && again.text == m.text);              // stable: a second upgrade changes nothing
+        // The current layout is left byte for byte as it is.
+        MetaUpgradeResult cur = UpgradeMetaText("Assets/b.png", "okaymeta 1\n" + guid + "type texture\nimporter texture 2\nset filter bilinear\n");
+        CHECK(cur.ok && !cur.changed);
+        // A model meta (layout 1 is current) and a meta of a file with no settings: nothing to do.
+        CHECK(!UpgradeMetaText("Assets/m.glb", "okaymeta 1\n" + guid + "type model\nimporter model 1\nset scale 2\n").changed);
+        CHECK(!UpgradeMetaText("Assets/s.okayscene", "okaymeta 1\n" + guid + "type scene\nlabel x\n").changed);
+        // A newer editor's meta, and a broken one: left alone, said why.
+        MetaUpgradeResult newer = UpgradeMetaText("Assets/c.png", "okaymeta 7\n" + guid + "type texture\nimporter texture 9\nset glow 1\n");
+        CHECK(newer.ok && newer.newer && !newer.changed);
+        MetaUpgradeResult broken = UpgradeMetaText("Assets/d.png", "okaymeta 1\ntype texture\n");
+        CHECK(!broken.ok && !broken.error.empty());
+        // A bad value cannot be carried over: it is named as a loss.
+        MetaUpgradeResult bad = UpgradeMetaText("Assets/e.png", "okaymeta 1\n" + guid + "type texture\nimporter texture 1\nset filter fuzzy\n");
+        CHECK(bad.ok && bad.changed && bad.losses.size() == 1 && Has(bad.losses[0], "fuzzy"));
+    }
+
+    RUN_SUITE("import settings files (.okaymeta) are upgraded with the project: backed up, rewritten, in the report, restorable");
+    {
+        TempDir td;
+        Proj p(td.path, 64 * 1024);
+        const std::string guid = "guid 00000000000000000000000000000abc\n";
+        const std::string oldMeta = "okaymeta 1\n" + guid + "type texture\nimporter texture 1\nset filter nearest\nset maxsize 256\n";
+        const std::string curMeta = "okaymeta 1\nguid 00000000000000000000000000000abd\ntype texture\nimporter texture 2\nset filter bilinear\n";
+        const std::string newMeta = "okaymeta 3\nguid 00000000000000000000000000000abe\ntype texture\n";
+        WriteFile(p.root / "Assets" / "Textures" / "pic.png.okaymeta", oldMeta);
+        WriteFile(p.root / "Assets" / "Textures" / "cur.png", "x");
+        WriteFile(p.root / "Assets" / "Textures" / "cur.png.okaymeta", curMeta);
+        WriteFile(p.root / "Assets" / "Textures" / "new.png", "x");
+        WriteFile(p.root / "Assets" / "Textures" / "new.png.okaymeta", newMeta);
+        WriteFile(p.root / "Assets" / "Textures" / "junk.png.okaymeta", "not a meta at all\n");
+        UpgradeJob j(p.Opts("2.850.0"));
+        j.Run();
+        const Result& r = j.result();
+        CHECK(r.ok);
+        CHECK(r.metas == 4 && r.metasRewritten == 1);
+        const std::string metaRel = "Assets/Textures/pic.png.okaymeta";
+        CHECK(std::find(r.changed.begin(), r.changed.end(), metaRel) != r.changed.end());
+        CHECK(std::find(r.changed.begin(), r.changed.end(), std::string("Assets/Textures/cur.png.okaymeta")) == r.changed.end());
+        const std::string now = ReadFile(p.root / "Assets" / "Textures" / "pic.png.okaymeta");
+        CHECK(Has(now, "importer texture 2") && Has(now, "set filter point") && Has(now, "set maxSize 256"));
+        CHECK(ReadFile(p.root / "Assets" / "Textures" / "cur.png.okaymeta") == curMeta);   // current: untouched
+        CHECK(ReadFile(p.root / "Assets" / "Textures" / "new.png.okaymeta") == newMeta);   // newer: untouched
+        CHECK(ReadFile(p.root / "Assets" / "Textures" / "junk.png.okaymeta") == "not a meta at all\n");
+        CHECK(ReadFile(fs::path(r.backupDir) / "Assets" / "Textures" / "pic.png.okaymeta") == oldMeta);   // the old one is in the backup
+        bool warnNewer = false, warnJunk = false;
+        for (const std::string& w : r.warnings) {
+            if (Has(w, "new.png.okaymeta") && Has(w, "newer")) warnNewer = true;
+            if (Has(w, "junk.png.okaymeta") && Has(w, "left as it is")) warnJunk = true;
+        }
+        CHECK(warnNewer && warnJunk);
+        const std::string rep = ReadFile(r.reportPath);
+        CHECK(Has(rep, "- " + metaRel) && Has(rep, "importer texture 1 -> 2") && Has(rep, "4 import settings files"));
+        // Restore puts the old meta back.
+        const std::vector<BackupInfo> list = ListBackups(p.root.string());
+        CHECK(list.size() == 1);
+        if (list.size() == 1) {
+            const RestoreResult rr = RestoreBackup(list[0], p.root.string());
+            CHECK(rr.ok);
+            CHECK(ReadFile(p.root / "Assets" / "Textures" / "pic.png.okaymeta") == oldMeta);
+        }
+        // A read-only old meta stops the upgrade before anything is written.
+        TempDir t2;
+        Proj q(t2.path, 64 * 1024);
+        const fs::path ro = q.root / "Assets" / "Textures" / "pic.png.okaymeta";
+        WriteFile(ro, oldMeta);
+        std::error_code ec;
+        fs::permissions(ro, fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write, fs::perm_options::remove, ec);
+        const Tree before = Snap(q.root);
+        UpgradeJob j2(q.Opts("2.850.0"));
+        j2.Run();
+        CHECK(!j2.result().ok && Has(j2.result().error, "pic.png.okaymeta") && Has(j2.result().error, "read-only"));
+        CHECK(Snap(q.root) == before);
+        fs::permissions(ro, fs::perms::owner_write, fs::perm_options::add, ec);
     }
 
     RUN_SUITE("corpus: every scene and prefab this repository ships, old formats included, upgrades with nothing lost");

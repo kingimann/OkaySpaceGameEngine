@@ -4,6 +4,9 @@
 #include "test_framework.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -152,6 +155,28 @@ int main() {
             const bool ok = ReadOgreSkeletonXml(good.substr(0, n), t, &e);
             CHECK(ok || (!e.empty() && t.nodes.empty() && t.clips.empty()));
         }
+    }
+    {   // the file reader finds the linked skeleton next to the mesh, whether the link names "x.skeleton" (the .xml is added)
+        // or already the XML file itself, "x.skeleton.xml" (what OgreXMLConverter writes into a .mesh.xml; the real fish and
+        // ninja .mesh.xml files in Assimp's test folder link that way)
+        std::error_code ec;
+        std::filesystem::create_directories("ogre_skeleton_tmp", ec);
+        { std::ofstream f("ogre_skeleton_tmp/x.skeleton.xml", std::ios::binary); f << kSkeleton; }
+        { std::ofstream f("ogre_skeleton_tmp/a.mesh.xml", std::ios::binary); f << MeshXml(); }
+        std::string withXml = MeshXml();
+        const std::string from = "<skeletonlink name=\"x.skeleton\"/>";
+        withXml.replace(withXml.find(from), from.size(), "<skeletonlink name=\"x.skeleton.xml\"/>");
+        { std::ofstream f("ogre_skeleton_tmp/b.mesh.xml", std::ios::binary); f << withXml; }
+        ImportedModel a, b; std::string err;
+        CHECK(ReadOgreXmlFile("ogre_skeleton_tmp/a.mesh.xml", a, &err) && a.parts.size() == 1 && a.parts[0].bones.size() == 6 && a.clips.size() == 1);
+        CHECK(ReadOgreXmlFile("ogre_skeleton_tmp/b.mesh.xml", b, &err) && b.parts.size() == 1 && b.parts[0].bones.size() == 6 && b.clips.size() == 1);
+        CHECK(!HasNote(b, "not read: the mesh is imported at its bind pose"));
+        std::remove("ogre_skeleton_tmp/x.skeleton.xml");
+        // the skeleton gone: both stay rigid, with the note that names the link
+        CHECK(ReadOgreXmlFile("ogre_skeleton_tmp/b.mesh.xml", b, &err) && b.parts[0].bones.empty() && HasNote(b, "skeleton 'x.skeleton.xml'"));
+        std::remove("ogre_skeleton_tmp/a.mesh.xml");
+        std::remove("ogre_skeleton_tmp/b.mesh.xml");
+        std::filesystem::remove("ogre_skeleton_tmp", ec);
     }
     TEST_MAIN_RESULT();
 }

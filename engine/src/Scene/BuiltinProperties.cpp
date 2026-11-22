@@ -474,36 +474,36 @@ void RegisterColliders2D() {
 void RegisterColliders3D() {
     {
         PropertyBuilder<BoxCollider3D> b("BoxCollider3D", "boxcollider3d", "Physics 3D");
-        b.AddVec3("size", &BoxCollider3D::size).Range(0, kBig, 0.1);
+        b.AddVec3("size", &BoxCollider3D::size).Range(0, kBig, 0.1).Tooltip("Width, height and depth in metres (default 1 x 1 x 1)");
         Collider3DCommon(b);
         b.Commit();
     }
     {
         PropertyBuilder<SphereCollider3D> b("SphereCollider3D", "spherecollider3d", "Physics 3D");
-        b.AddFloat("radius", &SphereCollider3D::radius).Range(0, kBig, 0.05);
+        b.AddFloat("radius", &SphereCollider3D::radius).Range(0, kBig, 0.05).Tooltip("Ball radius in metres (default 0.5)");
         Collider3DCommon(b);
         b.Commit();
     }
     {
         PropertyBuilder<CapsuleCollider3D> b("CapsuleCollider3D", "capsulecollider3d", "Physics 3D");
-        b.AddFloat("radius", &CapsuleCollider3D::radius).Range(0, kBig, 0.05)
-         .AddFloat("height", &CapsuleCollider3D::height).Range(0, kBig, 0.1).Tooltip("Tip to tip")
+        b.AddFloat("radius", &CapsuleCollider3D::radius).Range(0, kBig, 0.05).Tooltip("Width of the round ends, in metres")
+         .AddFloat("height", &CapsuleCollider3D::height).Range(0, kBig, 0.1).Tooltip("Tip to tip, in metres")
          .AddEnum("axis", &CapsuleCollider3D::axis, {"X", "Y", "Z"}).Tooltip("The long axis");
         Collider3DCommon(b);
         b.Commit();
     }
     {
         PropertyBuilder<CylinderCollider3D> b("CylinderCollider3D", "cylindercollider3d", "Physics 3D");
-        b.AddFloat("radius", &CylinderCollider3D::radius).Range(0, kBig, 0.05)
-         .AddFloat("height", &CylinderCollider3D::height).Range(0, kBig, 0.1)
+        b.AddFloat("radius", &CylinderCollider3D::radius).Range(0, kBig, 0.05).Tooltip("Radius of the round side, in metres")
+         .AddFloat("height", &CylinderCollider3D::height).Range(0, kBig, 0.1).Tooltip("Flat end to flat end, in metres")
          .AddEnum("axis", &CylinderCollider3D::axis, {"X", "Y", "Z"}).Tooltip("The long axis");
         Collider3DCommon(b);
         b.Commit();
     }
     {
         PropertyBuilder<ConeCollider3D> b("ConeCollider3D", "conecollider3d", "Physics 3D");
-        b.AddFloat("radius", &ConeCollider3D::radius).Range(0, kBig, 0.05).Tooltip("How wide the round base is")
-         .AddFloat("height", &ConeCollider3D::height).Range(0, kBig, 0.1).Tooltip("Base to tip")
+        b.AddFloat("radius", &ConeCollider3D::radius).Range(0, kBig, 0.05).Tooltip("How wide the round base is, in metres (default 0.5)")
+         .AddFloat("height", &ConeCollider3D::height).Range(0, kBig, 0.1).Tooltip("Base to tip, in metres (default 1)")
          .AddEnum("axis", &ConeCollider3D::axis, {"X", "Y", "Z"}).Tooltip("Which way the tip points (the positive side of this axis)");
         Collider3DCommon(b);
         b.Commit();
@@ -527,12 +527,12 @@ void RegisterColliders3D() {
     }
     {
         PropertyBuilder<HeightfieldCollider3D> b("HeightfieldCollider3D", "heightfieldcollider3d", "Physics 3D");
-        b.AddInt("columns", &HeightfieldCollider3D::columns).Range(2, 2048, 1).Tooltip("Height samples along X")
-         .AddInt("rows", &HeightfieldCollider3D::rows).Range(2, 2048, 1).Tooltip("Height samples along Z")
-         .AddFloat("cellX", &HeightfieldCollider3D::cellX).Range(0.01, kBig, 0.1).Tooltip("Metres between samples along X")
-         .AddFloat("cellZ", &HeightfieldCollider3D::cellZ).Range(0.01, kBig, 0.1).Tooltip("Metres between samples along Z")
-         .AddFloat("heightScale", &HeightfieldCollider3D::heightScale).Range(-kBig, kBig, 0.05).Tooltip("Multiplies every height")
-         .AddString("heights", &HeightfieldCollider3D::heights).Tooltip("columns x rows heights, row after row");
+        b.AddInt("columns", &HeightfieldCollider3D::columns).Range(2, 2048, 1).Tooltip("Height samples along X, 2 to 2048 (default 2)")
+         .AddInt("rows", &HeightfieldCollider3D::rows).Range(2, 2048, 1).Tooltip("Height samples along Z, 2 to 2048 (default 2)")
+         .AddFloat("cellX", &HeightfieldCollider3D::cellX).Range(0.01, kBig, 0.1).Tooltip("Metres between samples along X (default 1)")
+         .AddFloat("cellZ", &HeightfieldCollider3D::cellZ).Range(0.01, kBig, 0.1).Tooltip("Metres between samples along Z (default 1)")
+         .AddFloat("heightScale", &HeightfieldCollider3D::heightScale).Range(-kBig, kBig, 0.05).Tooltip("Multiplies every height, a plain number (default 1)")
+         .AddString("heights", &HeightfieldCollider3D::heights).Tooltip("columns x rows heights in metres, row after row, at most 4 million numbers");
         Collider3DCommon(b);
         b.Commit();
     }

@@ -40,7 +40,7 @@ In order of how often Unity-style scripts need them (rule 24: a failing test fir
 
 1. `Quaternion` (and `transform.rotation`), `Vector2`, `Color` (`Random.Range` / `value` / `InitState` done).
 2. `struct` value types (copy semantics), then generic methods and classes of the script's own.
-3. `delegate` declarations; `params`; named arguments (default parameter values done, except on constructors).
+3. `params`; named arguments (`delegate` declarations and default parameter values done, except on constructors).
 4. `static` and `const` in plain classes; nested classes; `readonly` enforced.
 5. Instantiate / prefabs, tags and layers, physics queries (`Physics.Raycast`), collision messages with
    `Collision` / `Collider` arguments, `OnTriggerEnter(Collider other)`.

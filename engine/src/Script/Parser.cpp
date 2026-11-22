@@ -21,7 +21,6 @@ const std::unordered_map<std::string, const char*>& NotYet() {
         {"internal", "internal isn't supported: members are private unless marked public (or protected)"},
         {"async", "async isn't supported"},
         {"await", "await isn't supported"},
-        {"delegate", "delegate types aren't supported: use Func<...> or Action<...>"},
         {"partial", "partial classes aren't supported"},
         {"lock", "lock isn't supported"},
         {"goto", "goto isn't supported"},
@@ -61,6 +60,7 @@ public:
                 }
                 if (Is(T::RBrace) && nsDepth > 0) { ++pos_; --nsDepth; continue; }
                 if (IsEnumAhead()) { sawDecl = true; Enum(); continue; }
+                if (IsDelegateAhead()) { sawDecl = true; Delegate(); continue; }
                 sawDecl = true;
                 ClassDecl c = Class();
                 prog_.classes.push_back(std::move(c));
@@ -146,6 +146,26 @@ private:
         std::size_t o = 0;
         while (Is(T::KwPublic, o) || Is(T::KwPrivate, o)) ++o;
         return IsWord("enum", o) && Is(T::Ident, o + 1);
+    }
+    // [public] delegate R Name(params);
+    bool IsDelegateAhead() const {
+        std::size_t o = 0;
+        while (Is(T::KwPublic, o) || Is(T::KwPrivate, o) || IsWord("internal", o) || IsWord("protected", o)) ++o;
+        return IsWord("delegate", o);
+    }
+    void Delegate() {
+        while (Is(T::KwPublic) || Is(T::KwPrivate) || IsWord("internal") || IsWord("protected")) ++pos_;
+        ++pos_;   // delegate
+        DelegateDecl d;
+        d.ret = Type(false);
+        d.loc = Peek().loc;
+        d.name = Expect(T::Ident, "the delegate's name").text;
+        for (Param& p : Params()) {
+            if (p.def) throw ParseError{p.loc, "A delegate's parameters can't have default values"};
+            d.params.push_back(p.type);
+        }
+        Expect(T::Semicolon, "';'");
+        prog_.delegates.push_back(std::move(d));
     }
     void Enum() {
         while (Match(T::KwPublic) || Match(T::KwPrivate)) {}
@@ -327,6 +347,11 @@ private:
             if (IsWord("static")) { isStatic = true; staticLoc = Peek().loc; ++pos_; continue; }
             if (IsWord("event") && IsTypeStart(1)) { isEvent = true; eventLoc = Peek().loc; ++pos_; continue; }
             break;
+        }
+        if (IsWord("delegate") && IsTypeStart(1)) {   // a delegate type declared inside the class
+            if (!attrs.empty()) Error(attrs[0].loc, "Attributes only work on fields");
+            Delegate();
+            return;
         }
         if (IsWord("enum") && Is(T::Ident, 1)) {
             if (isConst) throw ParseError{Peek().loc, "An enum can't be const (its values already are)"};

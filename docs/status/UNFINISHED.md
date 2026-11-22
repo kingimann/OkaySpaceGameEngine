@@ -209,7 +209,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 13. Scripting
 
-| [13.2](../feature_map/13-scripting.md#132-c-style-language-core) | C#-style language core | Partial | missing C#: struct, Quaternion, own generics, delegate declarations (migration plan stage 2)... |
+| [13.2](../feature_map/13-scripting.md#132-c-style-language-core) | C#-style language core | Partial | missing C#: struct, Quaternion, own generics, static in plain classes (migration plan stage 2)... |
 | [13.8](../feature_map/13-scripting.md#138-c-scripts-on-our-own-typed-language) | C# scripts on our own typed language | Partial | C# default for new scripts is the owner's call (setting in place); converter OkayScript to C#; C# target for the graph preview (docs/scripting/migration_plan.md)... |
 
 ### 15. Editor

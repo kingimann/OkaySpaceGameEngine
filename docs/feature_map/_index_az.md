@@ -1117,6 +1117,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - DejaVu (37.4)
 - DejaVu Sans (42.7)
 - delay (1.2)
+- Delegate declarations (13.8.12)
 - delete account (17.2)
 - Delete my account (17.2.8)
 - delete project (17.12)

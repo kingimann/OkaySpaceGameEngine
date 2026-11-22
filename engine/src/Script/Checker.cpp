@@ -817,6 +817,18 @@ private:
         if (t.name == "double") { Error(t.loc, "Use float for decimal numbers (double isn't supported)"); return Type{}; }
         if (t.name == "void") { Error(t.loc, "void isn't a type a value can have"); return Type{}; }
         if (int ei = EnumIndex(t.name); ei >= 0) return Type{TK::Enum, ei};
+        for (const DelegateDecl& d : prog_.delegates)
+            if (d.name == t.name) {   // a delegate: the function type it names
+                std::vector<Type> ps;
+                for (const TypeRef& p : d.params) {
+                    Type pt = ResolveType(p, false);
+                    if (pt.kind == TK::Error) return pt;
+                    ps.push_back(pt);
+                }
+                Type r = d.ret.name == "void" ? Type::Of(TK::Void) : ResolveType(d.ret, false);
+                if (r.kind == TK::Error) return r;
+                return prog_.FuncOf(ps, r);
+            }
         if (int ci = ClassIndex(t.name); ci >= 0) {
             if (ci == prog_.component) return Type{TK::Script, ScriptClassId(t.name)};   // another object's copy of this script
             return Type{TK::Class, ci};

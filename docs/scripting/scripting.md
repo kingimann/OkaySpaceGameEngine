@@ -1438,6 +1438,10 @@ C# mode adds, on top of everything above:
   then `Hit()`, `Hit(3)`. Defaults must be fixed values (numbers, text,
   true/false, null, an enum value) at the end of the list; not on
   constructors yet. Works in `okayscript-next` too.
+- `delegate` declarations (at the top of the file or in a class) name a
+  function type: `public delegate void Died(string who);` is `Action<string>`,
+  `delegate int Combine(int a, int b);` is `Func<int, int, int>`. Use them for
+  fields, events (`public event Died OnDied;`), variables and parameters.
 - `Random.Range(0, 3)` (a whole number, 3 left out), `Random.Range(-1f, 1f)`,
   `Random.value` and `Random.InitState(seed)` (these work in `okayscript-next`
   too: the binding table is shared).

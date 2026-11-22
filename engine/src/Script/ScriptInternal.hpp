@@ -522,7 +522,11 @@ std::shared_ptr<StaticStore> SceneStatics(const Scene* scene, const std::string&
 void ForgetSceneStatics(const Scene* scene);
 
 /// A checked, runnable script.
+/// `delegate R Name(T a, U b);`: a name for the function type Func<T, U, R> (Action when R is void).
+struct DelegateDecl { std::string name; TypeRef ret; std::vector<TypeRef> params; SrcLoc loc; };
+
 struct Program {
+    std::vector<DelegateDecl> delegates;
     /// C# mode (language "csharp"): `using` lines and namespaces are allowed, MonoBehaviour
     /// means Behaviour and the C# modifiers private / readonly / sealed / internal are accepted.
     bool csharp = false;

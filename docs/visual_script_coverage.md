@@ -34,10 +34,13 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1549 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1568 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
+| `Achievements.IsUnlocked` | `Fn.Achievements.IsUnlocked` |
+| `Achievements.Progress` | `Fn.Achievements.Progress` |
+| `Achievements.Unlock` | `Fn.Achievements.Unlock` |
 | `AddComponent` | `Fn.AddComponent` |
 | `Application.Quit` | `Fn.Application.Quit` |
 | `ApplyUITheme` | `Fn.ApplyUITheme` |
@@ -51,6 +54,10 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `Camera.SetTarget` | `Fn.Camera.SetTarget` |
 | `Camera.Shake` | `Fn.Camera.Shake` |
 | `CancelInvoke` | `Fn.CancelInvoke` |
+| `CloudSave.Delete` | `Fn.CloudSave.Delete` |
+| `CloudSave.Has` | `Fn.CloudSave.Has` |
+| `CloudSave.Read` | `Fn.CloudSave.Read` |
+| `CloudSave.Write` | `Fn.CloudSave.Write` |
 | `Color` | `Fn.Color` |
 | `Color.Lerp` | `Fn.Color.Lerp` |
 | `CompareTag` | `Fn.CompareTag` |
@@ -83,6 +90,8 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `Instantiate` | `Fn.Instantiate` |
 | `Invoke` | `Fn.Invoke` |
 | `InvokeRepeating` | `Fn.InvokeRepeating` |
+| `Leaderboards.Submit` | `Fn.Leaderboards.Submit` |
+| `Leaderboards.Top` | `Fn.Leaderboards.Top` |
 | `Mathf.Abs` | `Fn.Mathf.Abs` |
 | `Mathf.Acos` | `Fn.Mathf.Acos` |
 | `Mathf.Approximately` | `Fn.Mathf.Approximately` |
@@ -125,6 +134,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `Physics2D.OverlapBox` | `Fn.Physics2D.OverlapBox` |
 | `Physics2D.OverlapCapsule` | `Fn.Physics2D.OverlapCapsule` |
 | `Physics2D.Raycast` | `Fn.Physics2D.Raycast` |
+| `Presence.Set` | `Fn.Presence.Set` |
 | `Quaternion.Euler` | `Fn.Quaternion.Euler` |
 | `Random.Range` | `Fn.Random.Range` |
 | `Rigidbody2D.AddExplosionForce` | `Fn.Rigidbody2D.AddExplosionForce` |
@@ -132,8 +142,17 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `SetUITheme` | `Fn.SetUITheme` |
 | `SetView` | `Fn.SetView` |
 | `StartCoroutine` | `Fn.StartCoroutine` |
+| `Stats.Add` | `Fn.Stats.Add` |
+| `Stats.Get` | `Fn.Stats.Get` |
+| `Stats.Set` | `Fn.Stats.Set` |
+| `Stats.Store` | `Fn.Stats.Store` |
 | `StopAllCoroutines` | `Fn.StopAllCoroutines` |
 | `StopCoroutine` | `Fn.StopCoroutine` |
+| `Store.IsOnline` | `Fn.Store.IsOnline` |
+| `Store.Name` | `Fn.Store.Name` |
+| `Store.Overlay` | `Fn.Store.Overlay` |
+| `Store.OwnsGame` | `Fn.Store.OwnsGame` |
+| `Store.UserName` | `Fn.Store.UserName` |
 | `String.Format` | `Fn.String.Format` |
 | `String.IsNullOrEmpty` | `Fn.String.IsNullOrEmpty` |
 | `String.Join` | `Fn.String.Join` |

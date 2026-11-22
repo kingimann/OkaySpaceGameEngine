@@ -1,0 +1,52 @@
+okayscene 3
+name "Store Kit"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "bbb5c6f4e9d0c24e2db76c328e25c44e"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Store Kit Demo"
+  guid "e34457da951a066c00f8e3787a78e6b4"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "// Store Kit demo: the same calls work on Steam, the Epic Games Store and with no store.
+// With no store (this scene) everything is kept in the game's save folder, so it works without any account.
+// Keys: 1 unlock an achievement, 2 add a coin, 3 submit a score, 4 save to the cloud, 5 read the save back.
+var msg = \"\"
+function start() {
+  Achievements.Unlock(\"first_launch\")
+  Stats.Add(\"launches\", 1)
+  Stats.Store()
+  msg = \"Achievement first_launch unlocked. Press 1 to 5.\"
+}
+function update(dt) {
+  if (key_down(\"1\")) { Achievements.Unlock(\"pressed_one\"); msg = \"Achievement pressed_one unlocked\" }
+  if (key_down(\"2\")) { Stats.Add(\"coins\", 1); Stats.Store(); msg = \"Coins: \" + Stats.Get(\"coins\") }
+  if (key_down(\"3\")) { Leaderboards.Submit(\"high\", Stats.Get(\"coins\") * 100); msg = \"Score sent to the high board\" }
+  if (key_down(\"4\")) { CloudSave.Write(\"slot1\", \"coins=\" + Stats.Get(\"coins\")); msg = \"Saved slot1\" }
+  if (key_down(\"5\")) { msg = \"slot1 holds: \" + CloudSave.Read(\"slot1\") }
+  set_text(\"Store: \" + Store.Name() + \"   player: \" + Store.UserName() + \"   launches: \" + Stats.Get(\"launches\") + \"   coins: \" + Stats.Get(\"coins\") + \"\\n\" + msg)
+}
+" "" 0
+  text "Store Kit demo" 1 1 1 1 0.1 1 24 24 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  comporder "TextRenderer" "ScriptComponent"
+end
+gameobject 2 "Visual Script Achievement"
+  guid "cfc55ad0ed475b9dddf8eafc12fa5335"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  visualscript "node 1 OnStart
+entry OnStart 1
+node 2 SteamUnlock visual_script_achievement
+exec 1 0 2
+"
+end

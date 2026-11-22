@@ -223,7 +223,10 @@ int main() {
         CHECK(epic.unlocked.count("first_win") && epic.unlocked.count("collector"));
         // Epic stats are sent as amounts: Set sends the value (for latest / largest / smallest stats), Add sends the change (sum stats).
         CHECK(svc->GetStat("kills") == 5);
-        CHECK(epic.ingested.size() == 2 && epic.ingested[0].second == 3 && epic.ingested[1].second == 2);
+        std::vector<std::int32_t> kills;
+        for (const auto& in : epic.ingested) if (in.first == "kills") kills.push_back(in.second);
+        CHECK(kills.size() == 2 && kills[0] == 3 && kills[1] == 2);
+        CHECK(epic.stats["high"] == 900);   // an Epic leaderboard is a stat: the score goes to it
         CHECK(epic.files["save1"] == "level=4" && svc->CloudRead("save1") == "level=4");
         CHECK(epic.presence.find("In the Arena") != std::string::npos);
         svc->Tick();

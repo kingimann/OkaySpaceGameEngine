@@ -14,6 +14,7 @@
 
 #include <winrt/Windows.Devices.Power.h>
 #include <winrt/Windows.System.Power.h>
+#include <winrt/Windows.UI.Popups.h>
 #include <winrt/Windows.UI.Text.Core.h>
 
 #include <winrt/Windows.Graphics.Display.h>
@@ -170,7 +171,10 @@ struct GameApp : winrt::implements<GameApp, wac::IFrameworkViewSource, wac::IFra
         try { ok = bridge::Run(m_engine, err); }   // on failure the engine side has logged `err` into the log file
         catch (const std::exception& ex) { bridge::Log(m_engine, std::string("Xbox app: the game stopped with an exception: ") + ex.what()); }
         catch (...) { bridge::Log(m_engine, "Xbox app: the game stopped with an unknown exception."); }
-        if (!ok) bridge::Log(m_engine, "Xbox app: exiting after a failure" + (err.empty() ? std::string() : ": " + err));
+        if (!ok) {
+            bridge::Log(m_engine, "Xbox app: exiting after a failure" + (err.empty() ? std::string() : ": " + err));
+            ShowFailure(err);   // before 2026-11-22 the app just closed; the reason was only in the log file
+        }
         wac::CoreApplication::Exit();
     }
 
@@ -185,6 +189,16 @@ private:
         deferral.Complete();   // Microsoft: complete within the deadline or the app is terminated
     }
     void OnResuming(wf::IInspectable const&, wf::IInspectable const&) { if (m_engine) { bridge::Log(m_engine, "Xbox app: resumed."); bridge::Resuming(m_engine); } }
+
+    // A message box with the reason and where the log is, then wait (keep pumping events) until the player closes it. A failure of
+    // the dialog itself is ignored: the reason is in the log anyway.
+    void ShowFailure(const std::string& reason) {
+        try {
+            winrt::Windows::UI::Popups::MessageDialog dlg(winrt::to_hstring(bridge::FailureMessage(m_engine, reason)), L"OkaySpace");
+            auto op = dlg.ShowAsync();
+            while (op.Status() == wf::AsyncStatus::Started) m_window.Dispatcher().ProcessEvents(wui::CoreProcessEventsOption::ProcessOneAndAllPending);
+        } catch (...) {}
+    }
 
     // ---- the on-screen keyboard: a CoreTextEditContext we drive by hand (no XAML text box in a CoreWindow game) ----
     void SetUpTextEntry() {

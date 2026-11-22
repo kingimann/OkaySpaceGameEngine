@@ -151,6 +151,7 @@ Engine* Create(const ShellCallbacks& cb, const std::string& installDir, const st
 }
 
 void Log(Engine* e, const std::string& line) { if (e) e->backend->Log(line); }
+std::string FailureMessage(Engine* e, const std::string& reason) { return xb::FailureText(reason, e && e->log.IsOpen() ? e->log.Path() : std::string()); }
 
 void Destroy(Engine* e) { if (!e) return; okay::Log::sink = nullptr; e->padSync.Clear(*e->backend); xb::InstallBackend(nullptr); okay::Paths::SetEnvOverride(nullptr); delete e; }
 

@@ -41,6 +41,8 @@ Engine* Create(const ShellCallbacks& cb, const std::string& installDir, const st
 void Destroy(Engine* e);
 /// One line into the log file (LocalState\\logs\\okayspace.log) and the in-memory log. The shell uses it for failures it catches.
 void Log(Engine* e, const std::string& line);
+/// The text for the message box the shell shows before closing after a failure: the reason and where the log file is (XboxLog.hpp).
+std::string FailureMessage(Engine* e, const std::string& reason);
 
 // CoreWindow / CoreApplication events, forwarded by the shell.
 void Resized(Engine* e, float dipsW, float dipsH, float dpi);

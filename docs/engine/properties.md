@@ -317,6 +317,9 @@ has `enabled`.
 | Destructible, Draggable, DropZone, Flashlight | 15, 10, 2, 7 | |
 | Joint2D, Joint3D | 16, 17 | `mode` (Distance, Spring, Pin, Hinge); the motor spins either way. A 3D hinge stops when `useLimits` is on (`minAngle` / `maxAngle`, degrees from the start pose) |
 | DayNightCycle, Water | 16, 16 | `DayNightCycle.time` is 0..24 hours; `Water.color` is red, green and blue (its alpha is `opacity`) |
+| CheckpointTrigger, TimedDestroy, NetworkAvatarMotion | 8, 2, 4 | saved by the generic record (`checkpointtrigger`, `timeddestroy`, `netavatarmotion`; see [scene_serializer.md](scene_serializer.md#the-generic-record-a-component-saved-from-its-registry-entry)); none was saved before. `CheckpointTrigger.triggered` is runtime-only |
+| SaveConfig, Buildable, TilemapCollider2D | 4, 5, 1 | their own records (`savesettings`, `buildable`, `tilemapcollider`) |
+| EventSystem, UIMask, UISafeArea, UIDocument | 1, 2, 5, 2 | their own records; `UIDocument.markup` is multi-line text |
 
 How the new types are described, so a tool can rely on it:
 
@@ -357,6 +360,16 @@ and colour picker, the minimap (markers are lists), `PauseMenu`, `HoldPrompt`, `
 `ItemPickup`, inventory, crafting, dialogue, quest and survival components, terrain, voxel and spline
 components, ragdoll, the tilemap, and the sequence and cinematic components. Animation and IK components
 are left to the animation work. They can all register themselves with the builder.
+
+## Coverage gate
+
+`tests/test_registry_serializer.cpp` reads every header under `engine/include`, finds each class
+that derives from `Component`, and fails when one has no entry here, unless it is listed in
+`tests/registry_known_gaps.inc` (125 names). That list only shrinks: a name in it that is
+registered, or no longer a class, fails the test too. Ten shared base classes (`Collider2D`,
+`StatComponent`, `UIHudBase`, ...) are never added on their own and are not counted. The same
+test round-trips every registered type through the generic `key=value` record
+(`ComponentSerializerRegistry::WritePropertyFields` / `ReadPropertyFields`).
 
 ## What the tests check
 

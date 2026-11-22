@@ -9,6 +9,7 @@ struct State {
     std::string path;
     bool haveAsset = false;
     std::size_t cursor[PlayerInputManager::kMaxPlayers] = {};
+    unsigned linkedSerial = 0;   ///< the player-0 join InputActions was last linked to
 };
 State& S() { static State s; return s; }
 void EnsureAsset() { State& s = S(); if (!s.haveAsset) { s.players.SetAsset(DefaultInputAsset()); s.haveAsset = true; } }
@@ -40,6 +41,7 @@ ActionSet* InputRuntime::Set(int player) {
     EnsureAsset();
     State& s = S();
     if (s.players.Count() == 0 && player == 0) s.players.Join(JoinDevice::Any);
+    LinkedSet();
     return s.players.Player(player);
 }
 bool InputRuntime::PopEvent(int player, std::string& out) {
@@ -55,6 +57,7 @@ bool InputRuntime::PopEvent(int player, std::string& out) {
 void InputRuntime::Update(float dt) {
     State& s = S();
     if (s.players.Count() == 0) return;
+    LinkedSet();
     s.players.Update(dt);
     for (std::size_t& c : s.cursor) c = 0;
 }
@@ -83,7 +86,15 @@ bool InputRuntime::ResetBinding(int player, const std::string& action, int bindi
 void InputRuntime::SaveOverrides(int player) {
     if (!Set(player)) return;
     S().players.SaveOverrides(player);
-    if (player == 0) InputActions::Save();
+    if (player == 0) InputActions::SaveWithStore();
+}
+ActionSet* InputRuntime::LinkedSet() {
+    State& s = S();
+    ActionSet* p = s.players.Player(0);
+    if (!p) return nullptr;
+    const unsigned serial = s.players.Serial(0);
+    if (serial != s.linkedSerial) { s.linkedSerial = serial; InputActions::LinkJoined(*p); }
+    return p;
 }
 int InputRuntime::JoinNamed(const std::string& d) {
     EnsureAsset();

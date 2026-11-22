@@ -100,27 +100,31 @@ int main() {
         CHECK(InputActions::Find("Crouch")->bindings[1].ToString() == "pad:b");
     }
 
-    // ---- 5. Old saves: an "input.<action>" pref from an earlier version loads into both (one-time import) ----
+    // ---- 5. Old saves: an "input.<action>" pref from an earlier version loads into both. Load itself writes nothing; the
+    //         link (and its one-time import) happens when player 0 joins, when the asset in use is known ----
     {
         Fresh();
         Prefs::SetString("input.jump", "key:x;pad:b");          // the format every earlier version wrote
         Prefs::SetString("input.move", "keys:i,k,j,l;keys:up,down,left,right;stick:left;dpad");
         InputActions::Load();
         CHECK(InputActions::Find("Jump")->bindings[0].ToString() == "key:x");
-        CHECK(Prefs::Has("inputov.player0"));
+        CHECK(!Prefs::Has("inputov.player0"));
         CHECK(InputRuntime::Set(0) && SetPart(0, "Jump", 0, 0) == "key:x" && SetPart(0, "Jump", 1, 0) == "pad:b");
         CHECK(SetPart(0, "Move", 0, 0) == "key:i" && SetPart(0, "Move", 0, 3) == "key:l");
-        // a typed-only rebind saved by an earlier version (inputov.player0) reaches InputActions at load
+        CHECK(Prefs::Has("inputov.player0"));
+        // a typed-only rebind saved by an earlier version (inputov.player0) reaches InputActions when player 0 joins
         Fresh();
         Prefs::SetString("inputov.player0", "ov Reload 0 key:g\n");
         InputActions::Load();
-        CHECK(InputActions::Find("Reload")->bindings[0].ToString() == "key:g");
-        // both saved and disagreeing (the bug this fixes): the typed layer's override wins, then both match
+        CHECK(InputActions::Find("Reload")->bindings[0].ToString() == "key:r");
+        CHECK(InputRuntime::Set(0) && InputActions::Find("Reload")->bindings[0].ToString() == "key:g");
+        // both saved and disagreeing (the bug this fixes): the typed layer's saved override wins in both readers
         Fresh();
         Prefs::SetString("input.reload", "key:t;pad:y");
         Prefs::SetString("inputov.player0", "ov Reload 0 key:g\n");
         InputActions::Load();
-        CHECK(InputActions::Find("Reload")->bindings[0].ToString() == "key:g" && Prefs::GetString("input.reload") == "key:g;pad:y");
+        CHECK(InputRuntime::Set(0) && InputActions::Find("Reload")->bindings[0].ToString() == "key:g" && SetPart(0, "Reload", 0, 0) == "key:g");
+        CHECK(Prefs::GetString("input.reload") == "key:t;pad:y" && Prefs::GetString("inputov.player0") == "ov Reload 0 key:g\n");   // nothing rewritten
     }
 
     // ---- 6. Actions the asset does not have (Vehicle, a game's own) stay InputActions-only, as before ----

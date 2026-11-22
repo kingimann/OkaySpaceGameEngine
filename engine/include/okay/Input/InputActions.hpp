@@ -52,9 +52,12 @@ struct InputBinding {
 /// table is the text-binding facade the built-in controllers read. An action that the first local player's ActionSet
 /// (InputRuntime player 0, "the default ActionSet") also has, with the same authored bindings as this action's defaults
 /// (Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact, Reload, Inventory and Pause with the shipped asset), is linked:
-/// binding i here is binding i there. A rebind on either side (Rebind, the Controls screen, RemapBind, a profile, an "ia:"
-/// Keybind field, ia_rebind) changes both, and is saved as that player's overrides (Prefs "inputov.player0"). The older
-/// Prefs layout "input.<action>" is still written for every action, read at start and imported once into the overrides.
+/// binding i here is binding i there. Linking starts when player 0 joins (the asset in use is known then): its saved typed
+/// rebinds come here and this table's saved rebinds ("input.<action>") go there. After that a rebind on either side
+/// (Rebind, the Controls screen, RemapBind, a profile, an "ia:" Keybind field, ia_rebind) changes both. A binding whose
+/// value one side cannot hold (a pad button inside the Move keys, a lone key for Look) is left alone on both sides, and a
+/// rebind that would give the typed layer a clash this table does not have (Controls screen Unbind) is not mirrored.
+/// Each layer saves as before: "input.<action>" here, "inputov.player0" there (only the mirrored lines are touched).
 /// Actions the ActionSet does not have (Dig, Prone, the Vehicle keys, a game's own) live only here, as before.
 class InputActions {
 public:
@@ -248,14 +251,18 @@ public:
     /// Put one action (or every action, with "") back to its defaults.
     static void Reset(const std::string& name = "");
 
-    /// Read / write the player's rebinding from / to Prefs. Load reads "input.<action>" and then the default ActionSet's
-    /// saved overrides ("inputov.player0", which win where both are set), then saves, so both layouts agree. Save writes
-    /// "input.<action>" and the linked actions' overrides of the default ActionSet (the live one when player 0 has joined).
+    /// Read / write the player's rebinding from / to Prefs ("input.<action>"). Load touches nothing else. Save also mirrors
+    /// the linked actions into the live default ActionSet (once player 0 has joined) and saves just those override lines.
     static void Load();
     static void Save();
-    /// Copy the current bindings of every linked action of `set` (the default ActionSet) into this table. In memory only:
-    /// Save writes them. InputRuntime::Rebind / ResetBinding call it for player 0.
+    /// Copy the current bindings of every linked action of `set` (the default ActionSet) into this table, skipping a value
+    /// this table would refuse (a lone key for Look, a pad button inside the Move keys). In memory only, and not written to
+    /// "input.<action>" until the typed layer saves (SaveWithStore). InputRuntime::Rebind / ResetBinding call it for player 0.
     static void SyncFrom(const ActionSet& set);
+    /// Player 0 joined with `set`: its saved typed rebinds come here, this table's rebinds go there (InputRuntime calls it).
+    static void LinkJoined(ActionSet& set);
+    /// Player 0's typed overrides were saved: save this table too, typed rebinds pulled by SyncFrom included.
+    static void SaveWithStore();
     /// Back to the built-in default set (tests, new game).
     static void Restore();
 

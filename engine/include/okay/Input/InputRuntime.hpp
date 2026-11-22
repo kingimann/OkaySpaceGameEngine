@@ -29,6 +29,8 @@ public:
     static bool ResetBinding(int player, const std::string& action = "", int binding = -1);
     /// Save `player`'s overrides (Prefs "inputov.player<N>"); for player 0 InputActions is saved too, so both layouts agree.
     static void SaveOverrides(int player);
+    /// Player 0's ActionSet when one has joined (linked to InputActions on first sight of each join), else nullptr. Never joins.
+    static ActionSet* LinkedSet();
     static void Reset();                              ///< forget players and asset (tests)
     /// Join from a word: "keyboard", "pad0".."pad3", "any". Returns the player index or -1.
     static int JoinNamed(const std::string& device);

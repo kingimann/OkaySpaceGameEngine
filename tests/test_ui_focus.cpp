@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <string>
+#include <vector>
 
 using namespace okay;
 
@@ -188,20 +189,20 @@ int main() {
         CHECK(!loaded.Find("Off")->GetComponent<UIInputField>()->focusable);
         CHECK(loaded.Find("Off")->GetComponent<UIInputField>()->multiline);
         CHECK(loaded.Find("On")->GetComponent<UIInputField>()->focusable);
-        // The field is written only when off: the default field's line ends with the multiline number (the pre-change text), the off one
-        // has one more trailing 0. Old scenes (no field) are exactly the default line.
-        std::string old; std::size_t pos = 0; int cut = 0, defaultLines = 0;
-        while (pos < text.size()) {
-            std::size_t e = text.find('\n', pos); if (e == std::string::npos) e = text.size();
-            std::string line = text.substr(pos, e - pos);
-            if (line.find("  uiinput ") == 0) {
-                if (line.size() > 4 && line.compare(line.size() - 4, 4, " 1 0") == 0) { line.erase(line.find_last_of(' ')); ++cut; }   // multiline 1, focusable 0
-                else { CHECK(line.compare(line.size() - 2, 2, " 0") == 0); ++defaultLines; }   // multiline 0, nothing after it
-            }
-            old += line + "\n"; pos = e + 1;
+        // The field is written only when off: the default field's line is the pre-change text, the off one has exactly one more
+        // trailing number (a 0). Count the numbers on each line (no text has spaces here), so a value that happens to end in
+        // "1 0" cannot be mistaken for the flag. Old scenes (no field) are exactly the default line.
+        auto countTokens = [](const std::string& l) { std::size_t n = 0; bool in = false; for (char c : l) { if (c == ' ') in = false; else if (!in) { in = true; ++n; } } return n; };
+        std::vector<std::string> lines; { std::size_t pos = 0; while (pos < text.size()) { std::size_t e = text.find('\n', pos); if (e == std::string::npos) e = text.size(); lines.push_back(text.substr(pos, e - pos)); pos = e + 1; } }
+        int inputLines = 0; std::size_t minTok = 0, maxTok = 0;
+        for (const auto& l : lines) if (l.find("  uiinput ") == 0) { ++inputLines; const std::size_t t = countTokens(l); if (minTok == 0 || t < minTok) minTok = t; if (t > maxTok) maxTok = t; }
+        CHECK(inputLines == 2);
+        CHECK(maxTok == minTok + 1);   // exactly one extra number on the off field, none on the default field
+        std::string old;   // the same scene text as an older build wrote it: the flag removed from the off field
+        for (std::string l : lines) {
+            if (l.find("  uiinput ") == 0 && countTokens(l) == maxTok) { CHECK(l.compare(l.size() - 2, 2, " 0") == 0); l.erase(l.find_last_of(' ')); }
+            old += l + "\n";
         }
-        CHECK(cut == 1);
-        CHECK(defaultLines == 1);
         Scene oldLoaded("OL");
         CHECK(SceneSerializer::Deserialize(oldLoaded, old));
         CHECK(oldLoaded.Find("Off")->GetComponent<UIInputField>()->multiline);

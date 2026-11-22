@@ -1077,6 +1077,11 @@ add_executable(test_model_refresh test_model_refresh.cpp)
 target_link_libraries(test_model_refresh PRIVATE okay::engine)
 add_test(NAME model_refresh COMMAND test_model_refresh)
 
+# A big model is read without freezing the editor: ModelImportTask reads it on a JobSystem worker into a private scene; Scene::AdoptFrom moves the finished model into the open scene without copying it; cancel, failure text, inline (0 workers) and timing against a synchronous import.
+add_executable(test_model_import_async test_model_import_async.cpp)
+target_link_libraries(test_model_import_async PRIVATE okay::engine)
+add_test(NAME model_import_async COMMAND test_model_import_async)
+
 # Why a model did not import, in plain words (DescribeModelImportProblem): missing, folder, empty, unknown extension, a picture renamed to .glb, text in a .glb, glTF 1, cut-off files, broken JSON, not an FBX, the seam reader's own error.
 add_executable(test_model_import_problem test_model_import_problem.cpp)
 target_link_libraries(test_model_import_problem PRIVATE okay::engine)

@@ -55,12 +55,19 @@ def main_targets(root, base="origin/main"):
 _anc = {}
 
 
-def is_stacked(root, A, B):
-    """True when one branch tip is an ancestor of the other (a stack, not a collision)."""
-    k = (A["sha"], B["sha"])
+def is_stacked(root, A, B, base="origin/main"):
+    """True when one branch is built on the other (a stack, not a collision): one tip is an ancestor of the other, or
+    the two share commits that are not on `base` yet (b was built on an earlier commit of a, then a moved on)."""
+    k = (A["sha"], B["sha"], base)
     if k not in _anc:
-        _anc[k] = any(subprocess.run(["git", "-C", root, "merge-base", "--is-ancestor", x["sha"], y["sha"]],
-                                     stderr=subprocess.DEVNULL).returncode == 0 for x, y in ((A, B), (B, A)))
+        def ok(*args):
+            return subprocess.run(["git", "-C", root, *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).returncode == 0
+        stacked = any(ok("merge-base", "--is-ancestor", x["sha"], y["sha"]) for x, y in ((A, B), (B, A)))
+        if not stacked:
+            mb = subprocess.run(["git", "-C", root, "merge-base", A["sha"], B["sha"]], stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True).stdout.strip()
+            stacked = bool(mb) and not ok("merge-base", "--is-ancestor", mb, base)
+        _anc[k] = stacked
     return _anc[k]
 
 
@@ -127,7 +134,7 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
     for a, b in itertools.combinations(names, 2):
         if focus and focus not in (a, b): continue
         A, B = info[a], info[b]
-        if is_stacked(root, A, B):
+        if is_stacked(root, A, B, base):
             continue  # one branch was built on the other: they merge in order, no conflict
         common = sorted(set(A["files"]) & set(B["files"]))
         if not common: continue
@@ -229,7 +236,7 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
     # 8. copies between open branches
     if copies and len(live) > 1 and (not focus or focus in live):
         refs = {n: "origin/" + n for n in live}
-        st = lambda a, b: is_stacked(root, live[a], live[b])
+        st = lambda a, b: is_stacked(root, live[a], live[b], base)
         rep.update({"cross_" + k: v for k, v in D.cross_branch(root, base, refs, focus, jobs=min(4, os.cpu_count() or 1), stacked=st).items()})
     return rep
 

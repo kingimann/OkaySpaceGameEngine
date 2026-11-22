@@ -460,7 +460,7 @@ int main() {
         std::cout << "  scene: height " << ar->Core().Height() << " pelvis " << ar->Core().StandingHeight()
                   << " ground " << ar->Core().GroundY() << "\n";
         // A shove: physical, the controller handed over, then back to the animation and the controller.
-        ar->Push(Vec3{0, 0, 40.0f});
+        ar->Push(Vec3{0, 0, -35.0f});   // the blocky Character faces -Z: a push from behind
         run(1.0f / 60.0f);
         CHECK(ar->IsPhysical());
         CHECK(!npc->enabled);
@@ -556,7 +556,11 @@ int main() {
             const Vec3 o{0, 2.6f, 6.5f};
             const Vec3 at = d->transform->Position() + Vec3{0, 1.35f, 0};
             CHECK(ar->Shoot(o, at - o, 30.0f));
-            run(3.0f);
+            t = 0.0f;
+            run(0.2f);
+            while (t < 12.0f && ar->State() != CharState::Animated) { run(1.0f / 60.0f); t += 1.0f / 60.0f; }
+            CHECK(ar->State() == CharState::Animated);
+            run(0.5f);
             // O: a hard shove to the right, off the ledge onto the ground, and up again down there.
             const int fallsBefore = ar->Core().Falls();
             ar->Push(Vec3{170, 0, 0});

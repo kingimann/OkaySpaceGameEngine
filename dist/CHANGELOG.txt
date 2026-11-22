@@ -10,6 +10,9 @@ v2.903.0
   - Someone who dies while sitting now gets up from the seat.
   - Dialogue lines can switch to camera shots, and the camera returns when
     the talk ends.
+  - Fixed: a fast object made of several collider shapes could fall
+    through thin floors, and the same 3D scene could play out slightly
+    differently from one run to the next.
 
 v2.902.0
   Fixes and faster model import

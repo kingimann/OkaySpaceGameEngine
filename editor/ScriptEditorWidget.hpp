@@ -22,6 +22,11 @@
 #include "OkayUIHost.hpp"
 #endif
 
+/// True while an OkayUI script editor has the keyboard (set by ScriptEditorWidget::Render). editor/main.cpp turns Dear ImGui's
+/// keyboard navigation off for the next frame while it is true: otherwise Space and Enter typed into the code also press
+/// whichever ImGui button has the navigation focus (the "Scripts" button opened the script list while typing a space).
+inline bool g_scriptCodeOwnsKeys = false;
+
 class ScriptEditorWidget {
 public:
     using Coordinates   = TextEditor::Coordinates;
@@ -85,23 +90,40 @@ public:
 
     /// Draw it. `size` as ImGui: <= 0 means "what is left, plus this".
     void Render(const char* id, const ImVec2& size = ImVec2(), bool border = false) {
-        if (!Okay()) { imgui_.Render(id, size, border); return; }
+        if (!Okay()) { g_scriptCodeOwnsKeys = false; imgui_.Render(id, size, border); return; }
 #ifdef OKAY_HAVE_OKAYUI
         ImVec2 a = ImGui::GetContentRegionAvail();
         a.x = size.x > 0.0f ? size.x : a.x + size.x;
         a.y = size.y > 0.0f ? size.y : a.y + size.y;
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
-        const ImVec2 vp = ImGui::GetMainViewport()->Pos;       // ImGui's desktop pixels to OkayUI's main-window ones (multi-viewports)
-        const ImVec2 p(ImGui::GetCursorScreenPos().x - vp.x, ImGui::GetCursorScreenPos().y - vp.y);
+        // OkayUI draws and reads the mouse in the editor window's own pixels; Dear ImGui's screen positions are desktop positions
+        // with the multi-window viewports on, so take the window's place on the desktop off (as the Console does). Without this
+        // the code was drawn that far down and to the right of its rectangle, over the Inspector and the status line.
+        const ImVec2 vp = ImGui::GetWindowViewport()->Pos;
+        const ImVec2 sp = ImGui::GetCursorScreenPos();
+        const ImVec2 p(sp.x - vp.x, sp.y - vp.y);
+        okay_.SetScreenOffset(vp.x, vp.y);                      // the geometry calls answer in ImGui's coordinates again
         ImGui::InvisibleButton(id, a);                          // the rectangle: an ImGui item, so ImGui does not scroll under it
         ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
         oked::OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+        // The code font: the embedded JetBrains Mono at the size the script editor pushed for the ImGui editor (its zoom and the
+        // UI scale), so both editors show the same text. Without it the code used the proportional UI font and drifted off its cells.
+        okay_.UseCodeFont(ImGui::GetFontSize());
         OkayUI::PushTextScale(oked::g_uiScale);
         OkayUI::BareNextWindow();
         if (OkayUI::Begin(id, p.x, p.y, a.x, a.y)) okay_.Edit().Draw("##codeedit", a.x, a.y);
         OkayUI::End();
         OkayUI::PopTextScale();
         okayFocused_ = okay_.Edit().Focused();
+        // A mouse press: inside the code, the script editor's ImGui window takes the focus too (its shortcuts, not the scene's:
+        // Ctrl+D duplicated the selected object while typing); anywhere else, the code gives up the keyboard.
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            const ImVec2 m = ImGui::GetIO().MousePos;
+            const bool inside = m.x >= sp.x && m.x < sp.x + a.x && m.y >= sp.y && m.y < sp.y + a.y;
+            if (inside) { if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) ImGui::SetWindowFocus(); }
+            else if (okayFocused_) { OkayUI::SetKeyboardFocusId(0); okayFocused_ = false; }
+        }
+        g_scriptCodeOwnsKeys = okayFocused_;
 #endif
     }
 

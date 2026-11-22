@@ -164,5 +164,5 @@ Looked at and found fine: the command-line forms above (empty and null arguments
 value too big for an int), `SlotMap` generations, `StringId` collision handling, `FrameLimiter` and `FrameTimer` with
 bad clocks, `Stopwatch` with a source that goes backwards. Not done: `Cvars` and `Console` are main-thread only by
 design (no lock was added); a cvar name with a space or a leading `#` cannot survive the settings file (the console
-cannot type one either); there is still no in-game console window (the editor's Console panel and a game's own UI call
-`Console::Execute`).
+cannot type one either). The hosts now call it through `Core/ConsoleHost`: the player's backquote console (development
+builds, `--console` or `OKAY_CONSOLE=1`) and the editor Console panel's command line, both with `--cvar NAME=VALUE`.

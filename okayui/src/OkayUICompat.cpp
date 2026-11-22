@@ -382,8 +382,7 @@ void InputTextCallbackData::InsertChars(int pos, const char* text, const char* e
     for (int i = BufTextLen; i >= pos; --i) Buf[i + n] = Buf[i];
     std::memcpy(Buf + pos, text, (std::size_t)n); BufTextLen += n; BufDirty = true;
 }
-bool InputTextWithHint(const char* l, const char* h, char* b, int c, unsigned f, InputTextCallback, void*) { return InputTextWithHint(l, h, b, c, f); }
-bool InputText(const char* l, char* b, int c, unsigned f, InputTextCallback, void*) { return InputText(l, b, c, f); }
+// InputText / InputTextWithHint with a callback: defined in OkayUI.cpp (they need the text field state).
 bool IsWindowDocked() { const CurrentWindow w = GetCurrentWindow(); return w.valid && IsWindowDocked(w.title); }
 WindowInfo::operator WindowRef*() const { return found ? FindWindowRefByName(Name) : nullptr; }
 bool InvisibleButton(const char* id, Vec2 size, int) { return InvisibleButton(id, size.x, size.y); }

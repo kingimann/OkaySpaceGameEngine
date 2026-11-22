@@ -24,7 +24,7 @@ namespace okay::lua {
 const char* const kTMNames[TM_COUNT] = {
     "__index", "__newindex", "__call", "__add", "__sub", "__mul", "__mod", "__pow", "__div", "__idiv",
     "__band", "__bor", "__bxor", "__shl", "__shr", "__unm", "__bnot", "__len", "__concat", "__eq",
-    "__lt", "__le", "__close", "__tostring", "__name", "__metatable", "__pairs", "__mode"};
+    "__lt", "__le", "__close", "__tostring", "__name", "__metatable", "__pairs", "__mode", "__gc"};
 
 namespace {
 constexpr int kMaxStack = 1'000'000;
@@ -401,60 +401,93 @@ void State::CollectGarbage() {
     MarkValue(errorValue, gray);
     for (auto* v : tempRoots)
         for (const Value& x : *v) MarkValue(x, gray);
-    while (!gray.empty()) {
-        GcObj* o = gray.back();
-        gray.pop_back();
-        switch (o->type) {
-            case Type::Table: {
-                Table* t = static_cast<Table*>(o);
-                Mark(t->meta, gray);
-                // weak tables (manual 2.5.4): a weak part does not keep its objects alive.
-                // Strings count as values here (never removed). Weak keys are not full
-                // ephemerons: a value that refers to its own key keeps the entry.
-                bool weakK = false, weakV = false;
-                if (t->meta) {
-                    Value mode = t->meta->GetStr(tmName[TM_MODE]);
-                    if (mode.IsString()) {
-                        weakK = mode.Str()->s.find('k') != std::string::npos;
-                        weakV = mode.Str()->s.find('v') != std::string::npos;
+    for (GcObj* o : toFinalize_) Mark(o, gray);   // finalizers not run yet
+    auto propagate = [&]() {
+        while (!gray.empty()) {
+            GcObj* o = gray.back();
+            gray.pop_back();
+            switch (o->type) {
+                case Type::Table: {
+                    Table* t = static_cast<Table*>(o);
+                    Mark(t->meta, gray);
+                    // weak tables (manual 2.5.4): a weak part does not keep its objects alive.
+                    // Strings count as values here (never removed). Weak keys are not full
+                    // ephemerons: a value that refers to its own key keeps the entry.
+                    bool weakK = false, weakV = false;
+                    if (t->meta) {
+                        Value mode = t->meta->GetStr(tmName[TM_MODE]);
+                        if (mode.IsString()) {
+                            weakK = mode.Str()->s.find('k') != std::string::npos;
+                            weakV = mode.Str()->s.find('v') != std::string::npos;
+                        }
                     }
+                    if (weakK || weakV) weakTables.push_back(t);
+                    for (const Value& v : t->arr) if (!weakV || !IsWeakRef(v)) MarkValue(v, gray);
+                    for (const Table::Node& n : t->node) {
+                        if (n.v.IsNil()) continue;   // cleared entries keep their key only as a marker
+                        if (!weakK || !IsWeakRef(n.k)) MarkValue(n.k, gray);
+                        if (!weakV || !IsWeakRef(n.v)) MarkValue(n.v, gray);
+                    }
+                    break;
                 }
-                if (weakK || weakV) weakTables.push_back(t);
-                for (const Value& v : t->arr) if (!weakV || !IsWeakRef(v)) MarkValue(v, gray);
-                for (const Table::Node& n : t->node) {
-                    if (n.v.IsNil()) continue;   // cleared entries keep their key only as a marker
-                    if (!weakK || !IsWeakRef(n.k)) MarkValue(n.k, gray);
-                    if (!weakV || !IsWeakRef(n.v)) MarkValue(n.v, gray);
+                case Type::LFunc: {
+                    LClosure* c = static_cast<LClosure*>(o);
+                    Mark(c->p, gray);
+                    for (Box* b : c->up) Mark(b, gray);
+                    break;
                 }
-                break;
+                case Type::NFunc:
+                    for (const Value& v : static_cast<NClosure*>(o)->up) MarkValue(v, gray);
+                    break;
+                case Type::Box: MarkValue(static_cast<Box*>(o)->v, gray); break;
+                case Type::Proto: {
+                    Proto* p = static_cast<Proto*>(o);
+                    for (const Value& v : p->k) MarkValue(v, gray);
+                    for (Proto* c : p->protos) Mark(c, gray);
+                    break;
+                }
+                case Type::Thread: {
+                    Coroutine* c = static_cast<Coroutine*>(o);
+                    for (int i = 0; i < c->top && i < (int)c->stack.size(); ++i) MarkValue(c->stack[(std::size_t)i], gray);
+                    for (const Frame& f : c->frames) { Mark(f.cl, gray); Mark(f.ncl, gray); }
+                    MarkValue(c->fn, gray);
+                    MarkValue(c->err, gray);
+                    break;
+                }
+                case Type::Userdata: Mark(static_cast<UData*>(o)->meta, gray); break;
+                default: break;
             }
-            case Type::LFunc: {
-                LClosure* c = static_cast<LClosure*>(o);
-                Mark(c->p, gray);
-                for (Box* b : c->up) Mark(b, gray);
-                break;
-            }
-            case Type::NFunc:
-                for (const Value& v : static_cast<NClosure*>(o)->up) MarkValue(v, gray);
-                break;
-            case Type::Box: MarkValue(static_cast<Box*>(o)->v, gray); break;
-            case Type::Proto: {
-                Proto* p = static_cast<Proto*>(o);
-                for (const Value& v : p->k) MarkValue(v, gray);
-                for (Proto* c : p->protos) Mark(c, gray);
-                break;
-            }
-            case Type::Thread: {
-                Coroutine* c = static_cast<Coroutine*>(o);
-                for (int i = 0; i < c->top && i < (int)c->stack.size(); ++i) MarkValue(c->stack[(std::size_t)i], gray);
-                for (const Frame& f : c->frames) { Mark(f.cl, gray); Mark(f.ncl, gray); }
-                MarkValue(c->fn, gray);
-                MarkValue(c->err, gray);
-                break;
-            }
-            case Type::Userdata: Mark(static_cast<UData*>(o)->meta, gray); break;
-            default: break;
         }
+    };
+    propagate();
+    // finalizers (manual 2.5.3): objects marked for finalization that nothing reaches are
+    // queued (reverse order of marking), their weak-value entries are cleared, then they
+    // are kept alive (resurrected) for this cycle so their finalizer can see them.
+    std::vector<GcObj*> found;
+    {
+        std::vector<GcObj*> keep;
+        keep.reserve(finObjs_.size());
+        for (std::size_t i = finObjs_.size(); i-- > 0;) {
+            GcObj* o = finObjs_[i];
+            if (o->marked) keep.push_back(o);
+            else found.push_back(o);
+        }
+        std::reverse(keep.begin(), keep.end());
+        finObjs_.swap(keep);
+    }
+    if (!found.empty()) {
+        for (Table* t : weakTables) {
+            for (Value& v : t->arr)
+                if (IsWeakRef(v) && !v.o->marked) v = Value();
+            for (Table::Node& n : t->node)
+                if (!n.v.IsNil() && IsWeakRef(n.v) && !n.v.o->marked) n.v = Value();
+        }
+        for (GcObj* o : found) {
+            o->fin = false;
+            Mark(o, gray);
+            toFinalize_.push_back(o);
+        }
+        propagate();
     }
     // weak tables: drop entries whose weak key or value is about to be freed
     for (Table* t : weakTables) {
@@ -479,6 +512,48 @@ void State::CollectGarbage() {
     Sweep();
     gcThreshold_ = std::max<std::size_t>(bytes_ * 2, 1u << 20);
     if (bytes_ > memoryLimit) throw LuaFatal{"not enough memory (script memory limit reached)"};
+    if (!toFinalize_.empty()) RunFinalizers();
+}
+
+void State::MarkForFinalization(GcObj* o) {
+    if (!o || o->fin) return;
+    o->fin = true;
+    finObjs_.push_back(o);
+}
+
+// Run queued __gc metamethods (manual 2.5.3). Called at the end of a collection, which
+// only happens at safe points (between instructions, or collectgarbage()). A finalizer
+// can not yield; an error in one is reported to printSink as a warning and does not
+// stop the program (the manual's "warning" behaviour). The run budget still applies.
+void State::RunFinalizers() {
+    if (runningFinalizers_) return;   // a collection inside a finalizer: the outer loop drains the queue
+    runningFinalizers_ = true;
+    struct Reset { bool& b; ~Reset() { b = false; } } reset{runningFinalizers_};
+    std::size_t next = 0;
+    while (next < toFinalize_.size()) {
+        GcObj* o = toFinalize_[next++];
+        Value v = Value::Obj(o);
+        Value tm = GetTM(v, TM_GC);
+        if (!tm.IsFunction()) continue;
+        Coroutine* co = co_;
+        std::size_t nframes = co->frames.size();
+        CheckStack(3);
+        int func = co->top;
+        co->stack[(std::size_t)co->top++] = tm;
+        co->stack[(std::size_t)co->top++] = v;
+        // the object is on the stack now (rooted); drop it from the queue
+        toFinalize_.erase(toFinalize_.begin() + (std::ptrdiff_t)(next - 1));
+        --next;
+        try {
+            CallAt(func, 0);
+            co->top = func;
+        } catch (const LuaError&) {
+            Value err = errorValue;
+            Unwind(nframes, func, err);
+            errorValue = Value();
+            if (printSink) printSink("warning: error in __gc metamethod (" + ToStringBasic(err) + ")");
+        }
+    }
 }
 
 void State::Sweep() {

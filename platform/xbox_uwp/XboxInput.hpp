@@ -100,6 +100,26 @@ private:
     Vibration cur_; std::uint64_t until_ = 0; bool changed_ = false, active_ = false;
 };
 
+/// Windows.Gaming.Input BatteryReport (IGameControllerBatteryInfo.TryGetBatteryReport), copied by the glue. Status is
+/// Windows.System.Power.BatteryStatus (NotPresent 0, Discharging 1, Idle 2, Charging 3; -1 = no report). The capacities are nullable in
+/// the report: -1 = not given.
+struct BatteryInfo { int status = -1; long long remainingMwh = -1, fullMwh = -1; };
+
+/// The platform's PowerLevel scale: -1 unknown, 0 empty, 1 low, 2 medium, 3 full, 4 wired (no battery). Our thresholds on
+/// remaining / full-charge capacity: under 5% empty, under 25% low, under 75% medium, else full. A charging pad reports its level.
+inline int PowerLevelFromBattery(const BatteryInfo& b) {
+    if (b.status == 0) return 4;
+    if (b.status < 1 || b.status > 3) return -1;
+    if (b.fullMwh <= 0 || b.remainingMwh < 0) return -1;
+    double f = (double)b.remainingMwh / (double)b.fullMwh;
+    if (f > 1.0) f = 1.0;
+    if (f < 0.05) return 0;
+    if (f < 0.25) return 1;
+    if (f < 0.75) return 2;
+    return 3;
+}
+constexpr std::uint64_t kBatteryPollMs = 5000;   // a battery report is not free; the level changes slowly
+
 /// What the glue provides for one pad: its latest reading and a way to send vibration (Windows.Gaming.Input.Gamepad::Vibration).
 struct PadDevice {
     virtual ~PadDevice() = default;
@@ -107,6 +127,8 @@ struct PadDevice {
     virtual void SendVibration(const Vibration& v) = 0;
     virtual const char* Name() const { return "Xbox controller"; }
     virtual bool HasTriggerMotors() const { return true; }
+    /// The pad's battery report; false = none (the default).
+    virtual bool ReadBattery(BatteryInfo&) { return false; }
 };
 
 /// platform::Gamepad over a PadDevice. Call Poll(nowMs) once per frame (reads the pad, ends expired vibration); Axis()/Button() then
@@ -120,7 +142,20 @@ public:
         if (dev_ && dev_->Read(r)) { st_ = MapReading(r, cfg_); connected_ = true; } else { st_ = PadState(); connected_ = false; }
         Vibration v; if (vib_.Update(nowMs, v) && dev_) dev_->SendVibration(v);
         now_ = nowMs;
+        // Battery: on the first poll (and the first after a reconnect), then every kBatteryPollMs.
+        if (!connected_) { power_ = -1; batteryDue_ = true; }
+        else if (batteryDue_ || nowMs >= nextBattery_) {
+            BatteryInfo b; power_ = dev_->ReadBattery(b) ? PowerLevelFromBattery(b) : -1;
+            batteryDue_ = false; nextBattery_ = nowMs + kBatteryPollMs;
+        }
     }
+    /// Motors off now (the app is being suspended: a held vibration would keep going while nothing polls). Trigger motors too.
+    void StopRumble() {
+        vib_.Stop(); trigL_ = trigR_ = 0;
+        Vibration off; vib_.Update(now_, off);   // consume the change: the zero is sent here, not again on the next poll
+        if (dev_) dev_->SendVibration(Vibration());
+    }
+    int PowerLevel() const override { return power_; }
     bool Connected() const { return connected_; }
     int InstanceId() const override { return id_; }
     const char* Name() const override { return dev_ ? dev_->Name() : "Xbox controller"; }
@@ -139,6 +174,7 @@ public:
     std::uint16_t VendorId() const override { return 0x045E; }   // Microsoft's USB vendor id
 private:
     int id_; PadDevice* dev_; PadConfig cfg_; PadState st_; VibrationTimer vib_; bool connected_ = false; std::uint64_t now_ = 0; double trigL_ = 0, trigR_ = 0;
+    int power_ = -1; bool batteryDue_ = true; std::uint64_t nextBattery_ = 0;
 };
 
 // ---- keyboard: Windows.System.VirtualKey -> platform::Key --------------------------------------------------------------------- // lint-allow: secret (a divider line, not a secret)

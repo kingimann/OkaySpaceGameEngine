@@ -1021,8 +1021,7 @@ static void TextEntryTests() {
     // The player closes the keyboard (B on the keyboard) while the field still edits: the field lets go, so the pad navigates again.
     { TextEntry te; te.SetEnabled(true); te.Frame(&fieldA, TextScope::Default); te.KeyboardShown(); te.KeyboardHidden();
       TextEntryCommand c = te.Frame(&fieldA, TextScope::Default); CHECK(c.kind == TextEntryCommand::None && c.releaseField);
-      CHECK(!te.Frame(&fieldA, TextScope::Default).releaseField);                               // once
-      CHECK(te.Frame(nullptr, TextScope::Default).kind == TextEntryCommand::None);
+      { const TextEntryCommand n = te.Frame(nullptr, TextScope::Default); CHECK(!n.releaseField && n.kind == TextEntryCommand::None); }   // once; the field let go, nothing to hide
       CHECK(te.Frame(&fieldA, TextScope::Default).kind == TextEntryCommand::Show); }           // editing it again shows it again
     // A Hiding without a Showing (TryShow refused, or a stray event) does not release the field.
     { TextEntry te; te.SetEnabled(true); te.Frame(&fieldA, TextScope::Default); te.KeyboardHidden(); CHECK(!te.Frame(&fieldA, TextScope::Default).releaseField); }
@@ -1036,7 +1035,7 @@ static void TextEntryTests() {
       CHECK(m.Replace(0, 1, u"H") && m.Utf8() == "Héllo!");
       CHECK(m.Replace(4, 6, u"") && m.Utf8() == "Héll");                                       // delete a range (backspace)
       CHECK(!m.Replace(9, 12, u"x") && m.Utf8() == "Héll");                                     // out of range: refused, unchanged
-      CHECK(m.Replace(3, 1, u"x") && m.Utf8() == "Hélx");                                       // a reversed range is put in order (1..3)
+      CHECK(m.Replace(3, 1, u"x") && m.Utf8() == "Hxl");                                        // a reversed range is put in order: [1, 3) "él" -> "x"
       m.Reset("a\xF0\x9F\x98\x80" "b"); CHECK(m.Utf16Size() == 4);                              // an emoji is a surrogate pair
       CHECK(m.Replace(3, 4, u"") && m.Utf8() == "a\xF0\x9F\x98\x80");
       CHECK(m.Caret16() == 3);                                                                  // caret after the last edit

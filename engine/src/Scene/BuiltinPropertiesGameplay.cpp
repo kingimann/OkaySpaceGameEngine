@@ -1086,7 +1086,7 @@ void RegisterJoint2D() {
 // Joint3D
 void RegisterJoint3D() {
     PropertyBuilder<Joint3D> b("Joint3D", "joint3d", "Physics 3D");
-    b.AddEnum("mode", &Joint3D::mode, {"Distance", "Spring", "Pin", "Hinge", "Slider"}).Tooltip("Movement style")
+    b.AddEnum("mode", &Joint3D::mode, {"Distance", "Spring", "Pin", "Hinge", "Slider", "Ball", "ConeTwist"}).Tooltip("Movement style")
      .AddString("connectedBody", &Joint3D::connectedBody).Tooltip("Name of the other body (empty = world anchor)")
      .AddVec3("anchor", &Joint3D::anchor).Range(-kBig, kBig, 0.1).Tooltip("World anchor point when there's no connected body")
      .AddFloat("distance", &Joint3D::distance).Range(0, kBig, 0.05).Tooltip("Rest length (Distance / Spring)")
@@ -1102,7 +1102,17 @@ void RegisterJoint3D() {
      .AddFloat("maxMotorTorque", &Joint3D::maxMotorTorque).Range(0, kBig, 0.1).Tooltip("Torque the motor can apply to reach it")
      .AddBool("useLimits", &Joint3D::useLimits).Tooltip("Clamp the hinge angle to [minAngle, maxAngle]")
      .AddFloat("minAngle", &Joint3D::minAngle).Range(-360, 360, 1).Tooltip("Lower limit (deg, relative to the start angle)")
-     .AddFloat("maxAngle", &Joint3D::maxAngle).Range(-360, 360, 1).Tooltip("Upper limit (deg, relative to the start angle)");
+     .AddFloat("maxAngle", &Joint3D::maxAngle).Range(-360, 360, 1).Tooltip("Upper limit (deg, relative to the start angle)")
+     .Section("Ball / Cone twist")
+     .AddFloat("swingLimit1", &Joint3D::swingLimit1).Range(0, 180, 1).Tooltip("Cone: swing allowed about the first axis across the twist axis (deg)")
+     .AddFloat("swingLimit2", &Joint3D::swingLimit2).Range(0, 180, 1).Tooltip("Cone: swing allowed about the second axis (deg)")
+     .AddBool("useDrive", &Joint3D::useDrive).Tooltip("Pull toward driveTarget like a damped spring (a powered joint)")
+     .AddVec3("driveTarget", &Joint3D::driveTarget).Range(-360, 360, 1).Tooltip("Target turn from the start pose (Euler degrees)")
+     .AddFloat("driveStiffness", &Joint3D::driveStiffness).Range(0, kBig, 1).Tooltip("N*m per radian (used when the frequency is 0)")
+     .AddFloat("driveDamping", &Joint3D::driveDamping).Range(0, kBig, 0.1).Tooltip("N*m per radian per second")
+     .AddFloat("driveFrequency", &Joint3D::driveFrequency).Range(0, 60, 0.1).Tooltip("Hz; stiffness from the limb's inertia")
+     .AddFloat("driveDampingRatio", &Joint3D::driveDampingRatio).Range(0, 10, 0.05).Tooltip("1 = critically damped")
+     .AddFloat("driveMaxTorque", &Joint3D::driveMaxTorque).Range(0, kBig, 1).Tooltip("Most torque the drive may use (N*m)");
     b.Commit();
 }
 

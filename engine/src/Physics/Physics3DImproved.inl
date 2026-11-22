@@ -536,19 +536,14 @@ struct Physics3D::Solver {
 };
 
 Physics3D::Physics3D() { for (int i = 0; i < 32; ++i) m_layerMask[i] = 0xFFFFFFFFu; }
-Physics3D::~Physics3D() = default;
-
-void Physics3D::Clear() {
-    m_contacts.clear(); m_meshContacts.clear(); m_restContacts.clear();
-    m_solver.reset();   // its remembered pushes point at colliders about to be freed
-}
+// (~Physics3D and Clear are in Physics3DEngine.inl, where the Engine quality's state is a complete type)
 
 Vec3 Collider3D::WorldCenter() const {
     Vec3 p = transform ? transform->Position() : Vec3::Zero;
     if (offset.x == 0.0f && offset.y == 0.0f && offset.z == 0.0f) return p;
     if (transform && gameObject) {
         if (const Scene* sc = gameObject->scene()) {
-            if (sc->physics3D().quality == PhysicsQuality::Improved) {
+            if (sc->physics3D().quality != PhysicsQuality::Classic) {   // (Improved and Engine)
                 const Vec3 s = transform->LossyScale();
                 return p + transform->Rotation() * Vec3{offset.x * s.x, offset.y * s.y, offset.z * s.z};
             }

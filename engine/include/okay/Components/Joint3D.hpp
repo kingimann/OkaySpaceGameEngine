@@ -9,6 +9,16 @@
 //                limits (degrees from the pose at the start) clamped with
 //                Math/JointLimit.hpp, so a door or lever stops instead of spinning
 //                a full circle. Limits are off until `useLimits` is set.
+//   * Ball     — pin a point, free to turn every way (a shoulder, a chain link). Optional drive.
+//   * ConeTwist — a ball joint whose swing stays inside a cone (swingLimit1 / swingLimit2 degrees about the
+//                two axes across `axis`) and whose twist about `axis` stays in [minAngle, maxAngle] when
+//                `useLimits` is set. Optional drive. Made for ragdolls (hips, shoulders, neck).
+//   Drive (Ball and ConeTwist): `useDrive` pulls the body toward `driveTarget` (degrees, the turn from its
+//   start pose relative to the other body) like a damped spring, never with more than driveMaxTorque: a
+//   powered ragdoll joint (active ragdolls set driveTarget every frame from an animation pose).
+//   Ball and ConeTwist pivot about `anchor` (a world point at the start), with or without a connected body.
+//   Ball and ConeTwist are solved fully in the Engine physics quality (our own engine core); Classic and
+//   Improved keep the distance between the two points only.
 //
 // Put it on the dynamic body. Leave `connectedBody` empty to anchor to a fixed world
 // point (`anchor`); set it to another object's name to link two bodies.
@@ -23,7 +33,7 @@ namespace okay {
 
 class Joint3D : public Component {
 public:
-    enum class Mode { Distance, Spring, Pin, Hinge, Slider };
+    enum class Mode { Distance, Spring, Pin, Hinge, Slider, Ball, ConeTwist };
 
     int   mode = (int)Mode::Distance;
     std::string connectedBody;        ///< name of the other body (empty = world anchor)
@@ -44,6 +54,17 @@ public:
     bool  useLimits = false;          ///< clamp the hinge angle to [minAngle, maxAngle]
     float minAngle = -45.0f;          ///< lower limit (deg, relative to the start angle); Slider: metres of travel from the start position
     float maxAngle = 45.0f;           ///< upper limit (deg, relative to the start angle); Slider: metres of travel from the start position
+
+    // ---- Ball / ConeTwist (Engine quality) ----
+    float swingLimit1 = 45.0f;        ///< ConeTwist: how far the body may swing about the first axis across `axis` (deg)
+    float swingLimit2 = 45.0f;        ///< ConeTwist: ... about the second axis across `axis` (deg)
+    bool  useDrive = false;           ///< pull toward driveTarget (a powered joint)
+    Vec3  driveTarget{0, 0, 0};       ///< target turn from the start pose, Euler degrees (x = twist about `axis`)
+    float driveStiffness = 0.0f;      ///< N*m per radian (0 with a frequency set: use the frequency)
+    float driveDamping = 0.0f;        ///< N*m per radian per second
+    float driveFrequency = 4.0f;      ///< Hz; > 0 = stiffness and damping from frequency and damping ratio (scales with the limb)
+    float driveDampingRatio = 1.0f;   ///< 1 = critically damped
+    float driveMaxTorque = 1000.0f;   ///< the most torque the drive may use (N*m)
 
     // ---- runtime: the partner found by name, remembered until the scene's objects change (not saved) ----
     struct PartnerCache {               ///< (a copy of a joint starts with nothing remembered)

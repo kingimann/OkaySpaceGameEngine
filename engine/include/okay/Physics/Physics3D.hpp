@@ -18,6 +18,8 @@ class Collider3D;
 class Terrain;
 class Rigidbody3D;
 class GameObject;
+class Joint3D;
+namespace phys { class World; }
 
 /// Data passed to OnCollision3D callbacks describing a contact with another
 /// object.
@@ -190,6 +192,15 @@ public:
 
     void Clear();   // forget every remembered contact (the scene is being cleared; Physics3DImproved.inl)
 
+    // ---- Engine quality: our own physics engine core (okay::phys::World; docs/physics/physics_core.md) ----
+    /// The engine world that runs the scene in Engine quality (made on the first Engine step; nullptr before that or in
+    /// Classic / Improved). For advanced use, such as an active ragdoll that sets joint drive targets directly.
+    phys::World* EngineWorld();
+    /// The engine body of a Rigidbody3D (0xFFFFFFFF when it has none yet).
+    std::uint32_t EngineBody(const Rigidbody3D* rb) const;
+    /// The engine joint of a Joint3D (0xFFFFFFFF when it has none).
+    std::uint32_t EngineJoint(const Joint3D* j) const;
+
     /// The trigger overlap being reported, valid only inside an OnTrigger*3D
     /// callback (nullptr elsewhere) — lets scripts ask "where did it enter?".
     static const TriggerContact3D* CurrentTrigger();
@@ -217,6 +228,9 @@ private:
     std::uint64_t m_restStep = 0;
     PhysicsStepStats m_stats;
     std::unique_ptr<Solver> m_solver;   // the Improved contact solver's memory between steps (Physics3DImproved.inl)
+    struct EngineBridge;                // the Engine quality's world and the scene <-> world maps (Physics3DEngine.inl)
+    std::unique_ptr<EngineBridge> m_engine;
+    void StepEngine(Scene& scene, float dt);
     std::uint32_t  m_layerMask[32];     // layer collision matrix (bit b of a)
     std::vector<PhysicsDebugRay3D>     m_debugRays;      // this frame (debug view only)
     std::vector<PhysicsDebugContact3D> m_debugContacts;

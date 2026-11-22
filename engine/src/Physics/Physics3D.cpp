@@ -10,6 +10,7 @@
 #include "okay/Physics/ColliderShapes3D.hpp"
 #include "okay/Physics/ConvexContact.hpp"
 #include "okay/Physics/TriMesh.hpp"
+#include "okay/Physics/Core/World.hpp"
 #include "okay/Core/Jobs.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Components/Joint3D.hpp"
@@ -860,6 +861,7 @@ bool BoundsAreReadOnly(const Collider3D& c) {
 
 void Physics3D::Step(Scene& scene, float dt) {
     if (dt <= 0.0f) return;
+    if (quality == PhysicsQuality::Engine) { StepEngine(scene, dt); return; }   // our own engine core (Physics3DEngine.inl)
     if (quality == PhysicsQuality::Improved && dt > kMaxSolveSlice * 1.001f) {
         const int n = (int)std::ceil(dt / kMaxSolveSlice - 0.001f);
         for (int i = 0; i < n; ++i) StepSlice(scene, dt / (float)n);
@@ -2601,3 +2603,5 @@ Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore,
 }
 
 } // namespace okay
+
+#include "Physics3DEngine.inl"   // the Engine quality: our own physics engine core runs the scene

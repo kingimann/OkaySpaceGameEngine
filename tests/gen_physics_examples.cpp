@@ -2,6 +2,9 @@
 //   examples/physics_toys/physics_toys.okayscene        every physics toy in a small playground
 //   examples/physics_materials/physics_materials.okayscene   a ramp and a drop pad for every Physics Material preset
 //   examples/physics/physics_upgrade.okayscene          domino chain, tower of 10, wrecking ball, ramps, moving platform with a character
+//   examples/physics_engine/physics_engine.okayscene    Engine quality (our own engine core): tower, pyramid, ragdoll-like chains
+//                                                       with cone-twist joints and drives, a powered arm, fast shots at a thin wall
+//   examples/physics_engine/physics_engine_5k.okayscene Engine quality: 5,000 bodies poured into a pit
 // usage: gen_physics_examples <examples folder>
 #include <Okay.hpp>
 #include "okay/Components/PhysicsToyPresets.hpp"
@@ -149,6 +152,98 @@ int main(int argc, char** argv) {
         Label(s, "5  MOVING PLATFORM: walk onto it with the character", V(58, 6, 0));
         { GameObject* p = MovingPlatformPreset(s, V(54, 0.3f, 0)); p->GetComponent<MovingPlatform>()->offset2 = V(10, 0, 0); p->GetComponent<MovingPlatform>()->speed = 1.5f; }
         WriteScene(s, root / "physics" / "physics_upgrade.okayscene");
+    }
+
+    {   // ---- physics_engine: the Engine quality (our own engine core, docs/physics/physics_core.md)
+        Scene s; Basics(s, "Physics engine", V(0, 1, 20));
+        s.physics3D().quality = PhysicsQuality::Engine;
+        Label(s, "ENGINE QUALITY: our own physics engine core (Project Settings > Physics > Physics quality)", V(0, 14, 0));
+        Label(s, "1  TOWER of twelve crates and a PYRAMID of 36: they stand and fall asleep", V(-30, 13, 0));
+        for (int i = 0; i < 12; ++i) Piece(s, "Tower crate", V(-34, 0.5f + i, 0), Vec3::One, Color::FromBytes((unsigned char)(170 + (i % 2) * 40), 120, 80), false, true, 1.0f);
+        for (int row = 0; row < 8; ++row)
+            for (int i = 0; i < 8 - row; ++i)
+                Piece(s, "Pyramid crate", V(-30.0f + (float)i * 1.02f + (float)row * 0.51f, 0.5f + (float)row, 0), Vec3::One, Color::FromBytes(200, (unsigned char)(120 + row * 12), 90), false, true, 1.0f);
+        Label(s, "2  CHAINS of limbs on cone-twist joints (a ragdoll's joints): they swing and stay attached", V(-6, 13, 0));
+        for (int c = 0; c < 3; ++c) {
+            std::string prev;
+            for (int i = 0; i < 6; ++i) {
+                GameObject* g = s.CreateGameObject(UniqueName(s, "Limb"));
+                g->transform->localPosition = V(-10.0f + (float)c * 3.0f + (float)(i + 1) * 0.6f, 10.0f, (float)c);
+                g->transform->localRotation = Quat::Euler(0, 0, 90);
+                auto* mr = g->AddComponent<MeshRenderer>(); mr->mesh = Mesh::Cube(1.0f); mr->color = Color::FromBytes(90, 160, 230);
+                g->transform->localScale = V(0.15f, 0.6f, 0.15f);
+                auto* cc = g->AddComponent<CapsuleCollider3D>(); cc->radius = 0.5f; cc->height = 1.0f;
+                auto* rb = g->AddComponent<Rigidbody3D>(); rb->freezeRotation = false; rb->mass = 2.0f;
+                auto* j = g->AddComponent<Joint3D>();
+                j->mode = (int)Joint3D::Mode::ConeTwist;
+                j->connectedBody = prev;
+                j->anchor = V(-10.0f + (float)c * 3.0f + 0.3f + (float)i * 0.6f, 10.0f, (float)c);   // the near end of this limb
+                j->axis = V(1, 0, 0);
+                j->swingLimit1 = j->swingLimit2 = 35.0f;
+                j->useLimits = true; j->minAngle = -20; j->maxAngle = 20;
+                j->useDrive = c == 2; j->driveFrequency = 2.0f; j->driveMaxTorque = 60.0f;   // the third chain is powered: it holds itself out
+                prev = g->name;
+            }
+        }
+        Label(s, "3  POWERED ARM: a ball joint with a drive holds a 5 kg arm level", V(8, 9, 0));
+        {
+            GameObject* post = Piece(s, "Arm post", V(8, 2.5f, 0), V(0.4f, 5, 0.4f), Color::FromBytes(120, 120, 130));
+            (void)post;
+            GameObject* arm = s.CreateGameObject("Powered arm");
+            arm->transform->localPosition = V(9.0f, 5.2f, 0);
+            arm->transform->localScale = V(2.0f, 0.2f, 0.2f);
+            auto* mr = arm->AddComponent<MeshRenderer>(); mr->mesh = Mesh::Cube(1.0f); mr->color = Color::FromBytes(240, 200, 80);
+            arm->AddComponent<BoxCollider3D>()->size = Vec3::One;
+            auto* rb = arm->AddComponent<Rigidbody3D>(); rb->freezeRotation = false; rb->mass = 5.0f;
+            auto* j = arm->AddComponent<Joint3D>();
+            j->mode = (int)Joint3D::Mode::Ball; j->anchor = V(8.0f, 5.2f, 0);
+            j->useDrive = true; j->driveFrequency = 3.0f; j->driveDampingRatio = 1.0f; j->driveMaxTorque = 300.0f;
+        }
+        Label(s, "4  FAST SHOTS: 60 m/s balls never pass the 4 cm wall", V(22, 9, 0));
+        {
+            GameObject* wall = Piece(s, "Thin wall", V(30, 3, 0), V(0.04f, 6, 8), Color::FromBytes(200, 200, 220));
+            (void)wall;
+            for (int i = 0; i < 6; ++i) {
+                GameObject* b = Piece(s, "Shot", V(16, 1.0f + (float)i * 0.8f, -2.0f + (float)(i % 3) * 2.0f), Vec3::One * 0.15f, Color::FromBytes(255, 80, 80), true, true, 0.2f);
+                b->GetComponent<Rigidbody3D>()->velocity = V(60, 2, 0);
+            }
+        }
+        Label(s, "5  SHAPES: capsule, cylinder, cone, hull and compound bodies settle", V(40, 6, 0));
+        for (int i = 0; i < 5; ++i) {
+            GameObject* g = s.CreateGameObject(UniqueName(s, "Shape"));
+            g->transform->localPosition = V(36.0f + (float)i * 2.0f, 3.0f, 0);
+            g->transform->localRotation = Quat::Euler(10.0f * (float)i, 20.0f, 15.0f);
+            auto* mr = g->AddComponent<MeshRenderer>(); mr->color = Color::FromBytes(120, 220, 140);
+            switch (i) {
+                case 0: { mr->mesh = Mesh::Capsule(0.3f, 1.2f); auto* c = g->AddComponent<CapsuleCollider3D>(); c->radius = 0.3f; c->height = 1.2f; break; }
+                case 1: { mr->mesh = Mesh::Cylinder(0.4f, 0.6f); auto* c = g->AddComponent<CylinderCollider3D>(); c->radius = 0.4f; c->height = 0.6f; break; }
+                case 2: { mr->mesh = Mesh::Cube(0.8f); auto* c = g->AddComponent<ConeCollider3D>(); c->radius = 0.5f; c->height = 0.8f; break; }
+                case 3: { mr->mesh = Mesh::Cube(0.8f); auto* c = g->AddComponent<ConvexHullCollider3D>(); c->SetFromMesh(Mesh::Cube(0.8f)); break; }
+                default: { mr->mesh = Mesh::Cube(0.8f); auto* c = g->AddComponent<CompoundCollider3D>(); c->AddBox({0, 0, 0}, {1.0f, 0.2f, 1.0f}); c->AddSphere({0, 0.3f, 0}, 0.25f); break; }
+            }
+            auto* rb = g->AddComponent<Rigidbody3D>(); rb->freezeRotation = false;
+        }
+        WriteScene(s, root / "physics_engine" / "physics_engine.okayscene");
+    }
+
+    {   // ---- physics_engine_5k: 5,000 bodies poured into a pit (Engine quality)
+        Scene s; Basics(s, "Physics engine 5k", V(0, 1, 40), false);
+        s.physics3D().quality = PhysicsQuality::Engine;
+        GameObject* cam = s.CreateGameObject("Camera");
+        cam->transform->localPosition = V(0, 30, 45);
+        cam->transform->localRotation = Quat::Euler(30, 180, 0);
+        cam->AddComponent<Camera>();
+        Label(s, "5,000 BODIES in the Engine physics quality (islands solved on every core)", V(0, 40, 0));
+        for (int w = 0; w < 4; ++w) {   // the pit walls
+            const float a = (float)w * 1.5707963f;
+            Piece(s, "Pit wall", V(14.0f * std::sin(a), 4.0f, 14.0f * std::cos(a)), V(w % 2 ? 1.0f : 29.0f, 8.0f, w % 2 ? 29.0f : 1.0f), Color::FromBytes(110, 110, 120));
+        }
+        for (int i = 0; i < 5000; ++i) {
+            const int layer = i / 400, cell = i % 400;
+            Piece(s, i % 2 ? "Ball" : "Crate", V(-11.4f + (float)(cell % 20) * 1.2f, 2.0f + (float)layer * 1.2f, -11.4f + (float)(cell / 20) * 1.2f),
+                  Vec3::One * 0.8f, Color::FromBytes((unsigned char)(100 + (i * 37) % 155), (unsigned char)(100 + (i * 91) % 155), 200), i % 2 == 1, true, 1.0f);
+        }
+        WriteScene(s, root / "physics_engine" / "physics_engine_5k.okayscene");
     }
     return 0;
 }

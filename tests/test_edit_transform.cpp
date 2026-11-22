@@ -3,6 +3,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Modeling/EditTransform.hpp"
+#include <algorithm>
 #include <cmath>
 
 using namespace okay;
@@ -318,6 +319,44 @@ int main() {
             w.Apply(m, ScaleMatrix(w.PivotWorld(), AxisLock{}, 2.0f));
             CHECK(Near(m.vertices[0], Vec3{-4, 0, -1}) && Near(m.vertices[6], Vec3{4, 0, 1}));
         }
+    }
+
+    // ---- Individual Origins in Face / Edge mode: parts are joined only through the selected faces / edges ----
+    // Bug: parts were joined by any edge between two selected vertices, so two faces with one unselected face
+    // between them (whose side edges have both ends selected) scaled as one part about their common centre.
+    {
+        Mesh strip;                                              // three unit quads in a row along x, welded
+        for (int x = 0; x <= 3; ++x) { strip.vertices.push_back({(float)x, 0, 0}); strip.vertices.push_back({(float)x, 0, 1}); }
+        for (int q = 0; q < 3; ++q) { const int a = q * 2; strip.triangles.insert(strip.triangles.end(), {a, a + 1, a + 3, a, a + 3, a + 2}); }
+        const std::vector<int> tris = {0, 1, 4, 5};              // quads 0 and 2; quad 1 between them is not selected
+        std::vector<int> verts;
+        for (int t : tris) for (int k = 0; k < 3; ++k) {
+            const int v = strip.triangles[(std::size_t)t * 3 + k];
+            if (std::find(verts.begin(), verts.end(), v) == verts.end()) verts.push_back(v);
+        }
+        EditTransformOptions o; o.pivot = EditPivot::Individual; o.faces = &tris;
+        EditTransformSession s; s.Begin(strip, EditXform::Scale, verts, Mat4::Identity(), o);
+        s.Apply(strip, ScaleMatrix(s.PivotWorld(), AxisLock{}, 0.5f));
+        CHECK(Near(strip.vertices[0], Vec3{0.25f, 0, 0.25f}));  // quad 0 about (0.5, 0, 0.5)
+        CHECK(Near(strip.vertices[7], Vec3{2.75f, 0, 0.75f}));  // quad 2 about (2.5, 0, 0.5)
+        // Edge mode: two separate selected edges (x = 0 and x = 3) scale about their own middles.
+        Mesh e2 = strip; s.Cancel(e2);
+        Mesh e3;
+        for (int x = 0; x <= 3; ++x) { e3.vertices.push_back({(float)x, 0, 0}); e3.vertices.push_back({(float)x, 0, 1}); }
+        for (int q = 0; q < 3; ++q) { const int a = q * 2; e3.triangles.insert(e3.triangles.end(), {a, a + 1, a + 3, a, a + 3, a + 2}); }
+        const std::vector<std::pair<int, int>> edges = {{0, 1}, {6, 7}};
+        EditTransformOptions oe; oe.pivot = EditPivot::Individual; oe.edges = &edges;
+        EditTransformSession se; se.Begin(e3, EditXform::Scale, {0, 1, 6, 7}, Mat4::Identity(), oe);
+        se.Apply(e3, ScaleMatrix(se.PivotWorld(), AxisLock{}, 0.5f));
+        CHECK(Near(e3.vertices[0], Vec3{0, 0, 0.25f}) && Near(e3.vertices[7], Vec3{3, 0, 0.75f}));
+        // Hostile: face and edge lists naming triangles / vertices that do not exist are ignored.
+        const std::vector<int> badTris = {-1, 99};
+        const std::vector<std::pair<int, int>> badEdges = {{-1, 0}, {0, 999}};
+        EditTransformOptions ob; ob.pivot = EditPivot::Individual; ob.faces = &badTris; ob.edges = &badEdges;
+        Mesh e4 = e3; EditTransformSession sb; sb.Begin(e4, EditXform::Scale, {0, 1}, Mat4::Identity(), ob);
+        sb.Apply(e4, ScaleMatrix(sb.PivotWorld(), AxisLock{}, 2.0f));
+        bool finite = true; for (const Vec3& v : e4.vertices) if (!std::isfinite(v.x + v.y + v.z)) finite = false;
+        CHECK(finite);
     }
 
     TEST_MAIN_RESULT();

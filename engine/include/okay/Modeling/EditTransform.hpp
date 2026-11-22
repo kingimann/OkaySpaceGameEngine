@@ -13,6 +13,7 @@
 #include "okay/Math/Ray.hpp"
 #include "okay/Render/Mesh.hpp"
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace okay::modeling {
@@ -88,6 +89,11 @@ struct EditTransformOptions {
     bool  mirrorZ = false;     ///< ... across local z = 0 (with two or three on, the partners across each plane and across their combinations move too)
     EditPivot pivot = EditPivot::Median;
     int   activeVertex = -1;   ///< Active pivot: this vertex (must be in the selection; otherwise the median is used)
+    /// Individual Origins in Face mode: the selected triangles. Parts are then joined only through these
+    /// triangles' edges (and shared positions), not through edges of unselected faces between them.
+    const std::vector<int>* faces = nullptr;
+    /// ... in Edge mode: the selected edges (vertex pairs); parts are joined only through these.
+    const std::vector<std::pair<int, int>>* edges = nullptr;
 };
 
 class EditTransformSession {

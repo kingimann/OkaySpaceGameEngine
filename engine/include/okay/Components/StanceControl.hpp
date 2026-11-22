@@ -6,6 +6,7 @@
 // Animator follow over the body's stance change times (see Stance.hpp).
 // Deterministic: the keys and dt only.
 // ---------------------------------------------------------------------------
+#include "okay/Input/InputActions.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/StepUp.hpp"
 #include "okay/Input/Input.hpp"
@@ -56,8 +57,8 @@ struct StanceControl {
         const bool saved = toggle;
         if (!toggle && (Accessibility::ToggleFor("Crouch") || Accessibility::ToggleFor("Prone")))
             toggle = true;
-        Keys(crouchKey && Input::GetKeyDown(crouchKey), crouchKey && Input::GetKey(crouchKey),
-             proneKey && Input::GetKeyDown(proneKey), proneKey && Input::GetKey(proneKey));
+        Keys(InputActions::ControlKeyDown("Crouch", crouchKey), InputActions::ControlKey("Crouch", crouchKey),
+             InputActions::ControlKeyDown("Prone", proneKey, 'z'), InputActions::ControlKey("Prone", proneKey, 'z'));
         toggle = saved;
     }
     /// Settle the stance asked for (headroom permitting) and ease the body there.

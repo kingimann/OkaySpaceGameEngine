@@ -2,12 +2,13 @@
 
 > **What this is:** how a game made with OkaySpace is set up and uploaded for the Epic Games Store.
 >
-> **Status:** Settings, checks, the BuildPatchTool upload script, the launcher's arguments and the Epic simulation are
-> written and tested on Linux. The game's real connection to Epic Online Services (login, achievements, stats, player
-> data storage, presence) is **not written yet**: an Epic build runs with the simulation. Nothing was run against
-> Epic's servers or on Windows.
+> **Status:** Settings, checks, the BuildPatchTool upload script, the launcher's arguments and the game's connection
+> to Epic Online Services (login, achievements, stats, Player Data Storage, presence, the friends overlay) are written.
+> The connection loads the EOS SDK library you copy from your own SDK and was tested on Linux against a stand-in
+> library we wrote. Nothing was run against the real SDK, Epic's servers or on Windows, and the shapes of the EOS
+> records were written from memory of Epic's documentation (store_kit.md, "Unconfirmed details").
 >
-> **Last checked:** 2026-11-22 (branch `claude2/steam-epic-stores`).
+> **Last checked:** 2026-11-22 (branch `claude2/steam-epic-stores-2`).
 
 We never ship, commit or download Epic's SDK or BuildPatchTool. You get them from the Epic Developer Portal yourself.
 
@@ -46,13 +47,32 @@ Set `BPT` to BuildPatchTool's path if it is not on `PATH` and not set on the Sto
 The launcher starts the game with `-AUTH_PASSWORD=<exchange code> -AUTH_TYPE=exchangecode -epicapp=... -epicenv=...
 -EpicPortal -epicusername=... -epicuserid=... -epiclocale=...`. The player reads these (`okay::ParseEpicLaunchArgs`);
 the exchange code is never logged (`okay::RedactEpicArgs`). Scripts use the Store Kit calls (`store_kit.md`).
-`OKAY_EOS_DEV_AUTH=host:port|credential` is read for the EOS developer login tool (used once the real connection exists).
+
+When the game starts it loads `EOSSDK-Win64-Shipping.dll` from beside the game (the build copies it from your SDK
+folder), creates the EOS platform with the four ids and the client secret, and logs in: first the Epic account
+(`EOS_Auth_Login` with the exchange code), then the game services (`EOS_Connect_Login` with the account's id token; the
+first time a player plays, `EOS_Connect_CreateUser` makes their product user). After that it reads the player's
+achievements, stats and the list of cloud files (and fetches the files, so `CloudSave.Read` has them), and sends
+whatever the game did before the login finished. Everything runs from the game's per-frame tick.
+
+- Achievements: `EOS_Achievements_UnlockAchievements`. Define them in the portal with the same ids.
+- Stats: `Stats.Add` sends the change, `Stats.Set` sends the value (`EOS_Stats_IngestStat`); how a stat adds up (sum,
+  largest, latest, smallest) is set per stat in the portal. After each send the totals are read back.
+- Cloud saves: Player Data Storage, written and read in 4096-byte pieces. Files are encrypted with a key made from the
+  product and deployment ids (the same for every copy of the game, so saves stay readable after updates).
+- Presence: one line of rich text (`Presence.Set("status", "In the Arena")`), at most 255 bytes.
+- `Store.Overlay(...)` opens the friends overlay.
+
+Without the DLL, the client secret or a launcher login, the game runs with the simulation and logs one line.
+To test without the launcher, run Epic's Developer Authentication Tool and set `OKAY_EOS_DEV_AUTH=host:port|credential`
+before starting the game; the credential name is never logged.
 
 ## Not done
 
-- The real EOS connection (platform, login with the exchange code, achievements, stats, player data storage,
-  presence, the overlay). It is planned as a run-time load of the developer's `EOSSDK-Win64-Shipping.dll` behind
-  `IEpicService`, like Steam's. Until then `Epic::Get()` is the simulation.
-- Leaderboards on Epic (they are built on stats in the portal; the facade sends the score to a stat of the board's name).
+- Leaderboards on Epic (they are built on stats in the portal; the facade sends the score to a stat of the board's name;
+  `Leaderboards.Top` shows only the player's own best).
+- The player's Epic display name comes from the launcher's `-epicusername`, not from Epic's user info service.
+- Achievement progress on Epic: achievements built on stats unlock on Epic's side; `Achievements.Progress` only unlocks
+  a plain achievement when it is complete.
 - Any check of the ids against Epic's web services.
-- Never run on Windows, never uploaded.
+- Never run on Windows or against the real EOS SDK, never uploaded.

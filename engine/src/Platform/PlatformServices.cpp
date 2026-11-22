@@ -333,8 +333,11 @@ void PlatformServices::Configure(const StoreSettings& settings) {
     Settings() = settings;
     if (settings.steamAppId) Steam::SetAppId(settings.steamAppId);
     Steam::SetRelaunchCheck(settings.steamRelaunch);
-    // A Steam build talks to Steam through the developer's own steam_api64.dll beside the game (the Store Kit).
-    Steam::EnableRuntimeLibrary(settings.store == StoreKind::Steam);
+    // A Steam build talks to Steam through the developer's own steam_api64.dll beside the game, an Epic build to Epic
+    // through the developer's own EOSSDK-Win64-Shipping.dll (the Store Kit). OKAY_STORE picks the store for testing.
+    const StoreKind k = Choose(settings.store, std::getenv("OKAY_STORE"));
+    Steam::EnableRuntimeLibrary(k == StoreKind::Steam);
+    Epic::EnableRuntimeLibrary(k == StoreKind::Epic);
     EpicConfig ec = Epic::Config();
     if (!settings.epicProductId.empty()) ec.productId = settings.epicProductId;
     if (!settings.epicSandboxId.empty()) ec.sandboxId = settings.epicSandboxId;

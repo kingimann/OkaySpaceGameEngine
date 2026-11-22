@@ -1428,6 +1428,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Epic (18.12)
 - Epic Games Store (18.12)
 - Epic seam (18.12.5)
+- Epic through the developer's library (18.12.9)
 - equipment (11.1, 11.1.5, 30.3)
 - erase trees (29.2)
 - erosion (2.6, 29.1, 29.3)

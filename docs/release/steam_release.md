@@ -88,5 +88,10 @@ DLL, or when Steam is not running, the game logs one line and uses the simulatio
 Stores page: it lists every achievement id and stat name your scripts use that the app does not define. The key is
 only read from the environment and sent in a request header.
 
-Not done for games: Steam leaderboards through the run-time library (scores are kept for the session), Workshop and
-lobbies through it, a check of depot ids, anything run on Windows or against the real Steam client.
+**Leaderboards:** `Leaderboards.Submit("high", 1200)` finds the board (or makes it on first use: higher scores first,
+shown as numbers; a board you set up in the partner site keeps its own settings) and sends the score, keeping the
+player's best. `Leaderboards.Top("high", 10)` starts a download the first time and returns the rows a moment later.
+The result records were written from memory of Valve's documentation and are unconfirmed (store_kit.md).
+
+Not done for games: Workshop and lobbies through the run-time library, a check of depot ids, anything run on Windows or
+against the real Steam client (only a stand-in library was used).

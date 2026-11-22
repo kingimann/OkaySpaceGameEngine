@@ -6,23 +6,22 @@
 // SteamAPI_Steam<Interface>_v<NNN> and the methods SteamAPI_I<Interface>_<Method>(self, ...). The getters carry a
 // version number that changes between SDK releases, so we look for the newest one the library has.
 //
+// Leaderboards are asynchronous: FindOrCreateLeaderboard, UploadLeaderboardScore and DownloadLeaderboardEntries each
+// return a call handle, and the result is collected with ISteamUtils::IsAPICallCompleted / GetAPICallResult from
+// RunCallbacks (the Store Kit's per-frame tick). The result records are in SteamFlat.hpp (with what is unconfirmed).
+//
 // Our own code from Valve's public documentation of those functions; no SDK header or sample is used. The Steam
 // client's own protocol is private and is not touched: everything goes through the developer's library.
 #include "okay/Platform/Steam/SteamService.hpp"
 #include "okay/Core/Log.hpp"
 
+#include "SteamFlat.hpp"
+#include "../RuntimeLibrary.hpp"
+
 #include <cstdint>
 #include <cstdio>
+#include <map>
 #include <string>
-
-#if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
 
 namespace okay {
 
@@ -38,31 +37,7 @@ const char* DefaultSteamLibraryName() {
 
 namespace {
 
-// ---- a loaded library -----------------------------------------------------------------------------------------
-class Library {
-public:
-    bool Open(const std::string& path) {
-#if defined(_WIN32)
-        m_h = (void*)LoadLibraryA(path.c_str());
-#else
-        m_h = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
-#endif
-        return m_h != nullptr;
-    }
-    void* Find(const char* name) const {
-        if (!m_h) return nullptr;
-#if defined(_WIN32)
-        return (void*)GetProcAddress((HMODULE)m_h, name);
-#else
-        return dlsym(m_h, name);
-#endif
-    }
-    ~Library() {
-        // Kept loaded for the life of the process: Steam's library must not be unloaded while its threads run.
-    }
-private:
-    void* m_h = nullptr;
-};
+using Library = detail::RuntimeLibrary;
 
 // The function shapes (all C calling convention on x64).
 using FnInitFlat      = int (*)(char* errMsg1024);           // 0 = OK
@@ -87,8 +62,17 @@ using FnSelfU32       = bool (*)(void*, std::uint32_t);
 using FnFileWrite     = bool (*)(void*, const char*, const void*, std::int32_t);
 using FnFileRead      = std::int32_t (*)(void*, const char*, void*, std::int32_t);
 using FnFileSize      = std::int32_t (*)(void*, const char*);
+using FnFileCount     = std::int32_t (*)(void*);
+using FnFileNameSize  = const char* (*)(void*, int, std::int32_t*);
+using FnFindBoard     = steamflat::APICall (*)(void*, const char*, int, int);
+using FnUploadScore   = steamflat::APICall (*)(void*, steamflat::LeaderboardHandle, int, std::int32_t, const std::int32_t*, int);
+using FnDownload      = steamflat::APICall (*)(void*, steamflat::LeaderboardHandle, int, int, int);
+using FnGetEntry      = bool (*)(void*, steamflat::EntriesHandle, int, steamflat::LeaderboardEntry*, std::int32_t*, int);
+using FnPersonaOf     = const char* (*)(void*, std::uint64_t);
+using FnCallDone      = bool (*)(void*, steamflat::APICall, bool*);
+using FnCallResult    = bool (*)(void*, steamflat::APICall, void*, int, int, bool*);
 
-template <class F> F Get(const Library& lib, const char* name) { return reinterpret_cast<F>(lib.Find(name)); }
+template <class F> F Get(const Library& lib, const char* name) { return lib.Get<F>(name); }
 
 // The newest "SteamAPI_Steam<Interface>_v<NNN>" the library exports.
 FnGetter FindGetter(const Library& lib, const char* iface) {
@@ -137,6 +121,16 @@ public:
         fileExists = Get<FnSelfStr>(m_lib, "SteamAPI_ISteamRemoteStorage_FileExists");
         fileSize = Get<FnFileSize>(m_lib, "SteamAPI_ISteamRemoteStorage_GetFileSize");
         fileDelete = Get<FnSelfStr>(m_lib, "SteamAPI_ISteamRemoteStorage_FileDelete");
+        fileCount = Get<FnFileCount>(m_lib, "SteamAPI_ISteamRemoteStorage_GetFileCount");
+        fileNameSize = Get<FnFileNameSize>(m_lib, "SteamAPI_ISteamRemoteStorage_GetFileNameAndSize");
+        getUtils = FindGetter(m_lib, "Utils");
+        findBoard = Get<FnFindBoard>(m_lib, "SteamAPI_ISteamUserStats_FindOrCreateLeaderboard");
+        uploadScore = Get<FnUploadScore>(m_lib, "SteamAPI_ISteamUserStats_UploadLeaderboardScore");
+        downloadEntries = Get<FnDownload>(m_lib, "SteamAPI_ISteamUserStats_DownloadLeaderboardEntries");
+        getEntry = Get<FnGetEntry>(m_lib, "SteamAPI_ISteamUserStats_GetDownloadedLeaderboardEntry");
+        personaOf = Get<FnPersonaOf>(m_lib, "SteamAPI_ISteamFriends_GetFriendPersonaName");
+        callDone = Get<FnCallDone>(m_lib, "SteamAPI_ISteamUtils_IsAPICallCompleted");
+        callResult = Get<FnCallResult>(m_lib, "SteamAPI_ISteamUtils_GetAPICallResult");
         // The minimum: start, pump, stop, and achievements.
         return (initFlat || init) && shutdown && runCallbacks && getUserStats && setAch && getAch && storeStats;
     }
@@ -157,12 +151,17 @@ public:
         m_user = getUser ? getUser() : nullptr;
         m_apps = getApps ? getApps() : nullptr;
         m_remote = getRemote ? getRemote() : nullptr;
+        m_utils = getUtils ? getUtils() : nullptr;
         if (requestStats && m_stats) requestStats(m_stats);
         OKAY_INFO("Steam: connected through the game's ", DefaultSteamLibraryName(), " (Store Kit)");
         return true;
     }
-    void Shutdown() override { if (m_ready) { shutdown(); m_ready = false; } }
-    void RunCallbacks() override { if (m_ready) runCallbacks(); }
+    void Shutdown() override { if (m_ready) { shutdown(); m_ready = false; } m_boards.clear(); }
+    void RunCallbacks() override {
+        if (!m_ready) return;
+        runCallbacks();
+        PumpLeaderboards();
+    }
     bool IsAvailable() const override { return m_ready; }
     bool WantsRelaunch() const override { return m_relaunch; }
     const char* BackendName() const override { return "steam-runtime"; }
@@ -212,6 +211,39 @@ public:
     }
     bool CloudHasFile(const std::string& f) const override { return m_ready && m_remote && fileExists && fileExists(m_remote, f.c_str()); }
     bool CloudDelete(const std::string& f) override { return m_ready && m_remote && fileDelete && fileDelete(m_remote, f.c_str()); }
+    std::vector<std::string> CloudFiles() const override {
+        std::vector<std::string> out;
+        if (!m_ready || !m_remote || !fileCount || !fileNameSize) return out;
+        const std::int32_t n = fileCount(m_remote);
+        for (std::int32_t i = 0; i < n; ++i) {
+            std::int32_t size = 0;
+            const char* name = fileNameSize(m_remote, i, &size);
+            if (name && name[0]) out.emplace_back(name);
+        }
+        return out;
+    }
+
+    // ---- Leaderboards (asynchronous; see PumpLeaderboards) ------------------------------------------------------
+    bool UploadLeaderboardScore(const std::string& board, std::int32_t score) override {
+        if (!LeaderboardsReady() || board.empty() || board.size() > 128 || !uploadScore) return false;
+        Board& b = m_boards[board];
+        if (b.missing) return false;
+        if (!b.hasPending || score > b.pending) b.pending = score;   // only the best of a burst is sent
+        b.hasPending = true;
+        Find(board, b);
+        return true;
+    }
+    std::vector<LeaderboardEntry> DownloadLeaderboardTop(const std::string& board, int count) const override {
+        std::vector<LeaderboardEntry> out;
+        if (!LeaderboardsReady() || board.empty() || board.size() > 128 || count <= 0 || !downloadEntries || !getEntry) return out;
+        if (count > 100) count = 100;
+        Board& b = m_boards[board];
+        if (count > b.wantCount) { b.wantCount = count; b.stale = true; }   // more rows than we have: download again
+        if (!b.haveRows) b.stale = true;
+        Find(board, b);
+        for (const LeaderboardEntry& e : b.rows) { if ((int)out.size() >= count) break; out.push_back(e); }
+        return out;
+    }
 
     int FriendCount() const override { return (m_ready && m_friends && friendCount) ? friendCount(m_friends, 0x04 /* immediate friends */) : 0; }
     void ActivateOverlay(const std::string& page) override {
@@ -228,7 +260,89 @@ public:
     }
 
 private:
+    // One leaderboard as this session knows it.
+    struct Board {
+        steamflat::LeaderboardHandle handle = 0;
+        steamflat::APICall finding = 0, uploading = 0, downloading = 0;
+        bool missing = false, hasPending = false, stale = false, haveRows = false;
+        std::int32_t pending = 0;
+        int wantCount = 0;
+        std::vector<LeaderboardEntry> rows;
+    };
+    bool LeaderboardsReady() const { return m_ready && m_stats && m_utils && findBoard && callDone && callResult; }
+    void Find(const std::string& name, Board& b) const {
+        if (b.handle || b.finding || b.missing) return;
+        // A board the game names is made on first use (higher scores first, shown as numbers); one already set up in
+        // the Steamworks partner site keeps its own settings.
+        b.finding = findBoard(m_stats, name.c_str(), steamflat::kSortDescending, steamflat::kDisplayNumeric);
+        if (!b.finding) { b.missing = true; OKAY_WARN("Steam: leaderboard '", name, "' could not be looked up"); }
+    }
+    // Collect a finished call's result. 1 = got it, 0 = still running, -1 = failed.
+    template <class T> int Collect(steamflat::APICall call, int kind, T& out) const {
+        bool failed = false;
+        if (!callDone(m_utils, call, &failed)) return failed ? -1 : 0;
+        if (failed) return -1;
+        failed = false;
+        if (!callResult(m_utils, call, &out, (int)sizeof(T), kind, &failed) || failed) return -1;
+        return 1;
+    }
+    void PumpLeaderboards() {
+        if (!LeaderboardsReady()) return;
+        for (auto& kv : m_boards) {
+            Board& b = kv.second;
+            if (b.finding) {
+                steamflat::LeaderboardFindResult r{};
+                const int got = Collect(b.finding, steamflat::kLeaderboardFindResult, r);
+                if (got != 0) {
+                    b.finding = 0;
+                    if (got > 0 && r.found && r.board) b.handle = r.board;
+                    else { b.missing = true; OKAY_WARN("Steam: leaderboard '", kv.first, "' was not found"); }
+                }
+            }
+            if (!b.handle) continue;
+            if (b.uploading) {
+                steamflat::LeaderboardScoreUploaded r{};
+                const int got = Collect(b.uploading, steamflat::kLeaderboardScoreUploaded, r);
+                if (got != 0) {
+                    b.uploading = 0;
+                    if (got > 0 && r.success) { if (r.changed) b.stale = true; }
+                    else OKAY_WARN("Steam: sending a score to '", kv.first, "' failed");
+                }
+            }
+            if (b.hasPending && !b.uploading && uploadScore) {
+                b.uploading = uploadScore(m_stats, b.handle, steamflat::kUploadKeepBest, b.pending, nullptr, 0);
+                b.hasPending = false;
+            }
+            if (b.downloading) {
+                steamflat::LeaderboardScoresDownloaded r{};
+                const int got = Collect(b.downloading, steamflat::kLeaderboardScoresDownloaded, r);
+                if (got != 0) {
+                    b.downloading = 0;
+                    if (got > 0) {
+                        b.rows.clear();
+                        for (std::int32_t i = 0; i < r.count && i < 100; ++i) {
+                            steamflat::LeaderboardEntry e{};
+                            if (!getEntry(m_stats, r.entries, i, &e, nullptr, 0)) continue;
+                            const char* n = (m_friends && personaOf) ? personaOf(m_friends, e.steamId) : nullptr;
+                            b.rows.push_back({n && n[0] ? std::string(n) : std::string("Player"), e.score, e.globalRank});
+                        }
+                        b.haveRows = true;
+                    }
+                }
+            }
+            if (b.stale && b.wantCount > 0 && !b.downloading && !b.uploading && !b.hasPending) {
+                b.downloading = downloadEntries(m_stats, b.handle, steamflat::kRequestGlobal, 1, b.wantCount);
+                b.stale = false;
+            }
+        }
+    }
+
     Library m_lib;
+    mutable std::map<std::string, Board> m_boards;
+    void* m_utils = nullptr;
+    FnGetter getUtils = nullptr; FnFileCount fileCount = nullptr; FnFileNameSize fileNameSize = nullptr;
+    FnFindBoard findBoard = nullptr; FnUploadScore uploadScore = nullptr; FnDownload downloadEntries = nullptr;
+    FnGetEntry getEntry = nullptr; FnPersonaOf personaOf = nullptr; FnCallDone callDone = nullptr; FnCallResult callResult = nullptr;
     bool m_ready = false, m_relaunch = false;
     void *m_stats = nullptr, *m_friends = nullptr, *m_user = nullptr, *m_apps = nullptr, *m_remote = nullptr;
     FnInitFlat initFlat = nullptr; FnInit init = nullptr; FnVoid shutdown = nullptr, runCallbacks = nullptr; FnRestart restart = nullptr;

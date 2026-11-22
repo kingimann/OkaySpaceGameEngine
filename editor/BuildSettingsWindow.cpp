@@ -219,8 +219,14 @@ bool DrawBuildPageExtra(BuildWindowCtx& c, int page) {
                                                                   : "upload.bat reads the BuildPatchTool secret from EPIC_BPT_CLIENT_SECRET when you run it.");
             ImGui::TextColored(kInfo, "Build writes: StoreUpload/epic/upload.bat, ignore.txt%s",
                                b.epicSdkPath[0] ? ", EOSSDK-Win64-Shipping.dll" : "");
-            ImGui::TextColored(kWarn, "The game's Epic connection is not written yet: Epic builds run with the Epic simulation\n"
-                                      "(achievements, stats, saves and presence in memory). The upload script works today. See docs/release/epic_release.md.");
+            ImGui::TextWrapped("The game reaches Epic through the EOSSDK-Win64-Shipping.dll the build copies from your SDK folder (the Store Kit "
+                               "loads it when the game starts). It logs in with the Epic launcher's exchange code, then sends achievements, stats, "
+                               "cloud saves (Player Data Storage) and presence. Without the DLL, the secret or a launcher login, the game keeps "
+                               "working with a simulation. To test without the launcher, run the EOS Developer Authentication Tool and set "
+                               "OKAY_EOS_DEV_AUTH=host:port|credential before starting the game.");
+            if (!b.epicSdkPath[0])
+                ImGui::TextColored(kWarn, "No EOS SDK folder: copy EOSSDK-Win64-Shipping.dll beside the game yourself, or it runs with the simulation.");
+            ImGui::TextColored(kInfo, "Tested only against a stand-in library so far, never against Epic's servers. See docs/release/epic_release.md.");
         }
         return true;
     }

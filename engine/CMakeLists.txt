@@ -205,6 +205,7 @@ add_library(okay_engine
     src/Platform/Steam/SteamWebApi.cpp
     src/Platform/Epic/EpicLaunchArgs.cpp
     src/Platform/Epic/NullEpicService.cpp
+    src/Platform/Epic/DynamicEpicService.cpp
     src/Platform/Epic/Epic.cpp
     src/Platform/PlatformServices.cpp
     src/Platform/StoreExport.cpp

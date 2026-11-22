@@ -260,7 +260,7 @@ Enter or a click confirms; Esc or a right-click cancels. The **Edge loops** grou
 - **Dissolve Edges:** remove edges, merging the faces on either side. Vertices left in the middle of a straight side go too.
 - **Dissolve Verts:** remove vertices, merging the faces around each one.
 - **Connect Verts:** split the face two selected vertices share with a new edge.
-- **Bridge Edge Loops:** join two open borders with a band of quads, for example the ends of two tubes or the rims of two holes. Both need the same number of edges.
+- **Bridge Edge Loops:** join two open borders with a band of quads, for example the ends of two tubes or the rims of two holes. Both need the same number of edges. In Face mode, select two groups of faces instead (for example the facing sides of two boxes): they are removed and the two holes are joined, so two boxes become one closed shape.
 - **Fill:** close a hole with one face across its rim. Select the rim with Alt+Click.
 - **Grid Fill:** close a hole with a grid of quads that blends its four sides. The rim needs an even number of edges; **span** sets how many quads run along the first side (0 = automatic).
 - **Merge at Center / Merge at First:** merge the selected vertices (or the corners of the selected edges or faces) into one, at their centre or at the first one you clicked. Faces that collapse are removed.
@@ -268,9 +268,9 @@ Enter or a click confirms; Esc or a right-click cancels. The **Edge loops** grou
 Limits:
 
 - **Bevel:** it needs edges with a face on both sides, running through vertices that have faces all the way round them. Where three or more bevels meet, the corner is closed with one face, not a rounded grid.
-- **Not here yet:** seams, sharp edges and edge split. These need the drawn mesh to split vertices that the editable mesh keeps joined, so they come with the UV milestone.
-- **Bridge:** works on open borders only. It doesn't remove faces first.
-- **Edge slide:** UVs aren't adjusted, so a textured surface stretches with it.
+- **Not here yet:** marking single edges sharp and an Edge Split tool. UV seams are here (see [UVs and seams](#uvs-and-seams)); for hard shading by angle use **Auto Smooth**.
+- **Bridge:** each face group must be one connected patch without holes, the two groups must not touch, and both outlines need the same number of edges.
+- **Edge slide:** UVs move with the vertices. Each face keeps its own texture mapping, so the texture does not stretch and seams stay split. A face whose UVs are not a flat (affine) mapping can still shift a little.
 
 ##### How the polygons are kept
 
@@ -380,12 +380,14 @@ Tick **Sculpt Brush** and drag directly on the mesh:
 
 - **Grab** — push along the drag direction.
 - **Inflate** — puff along vertex normals.
-- **Smooth** — relax toward the local average.
+- **Smooth** — relax each vertex toward the average of the vertices it shares an edge with (a flat surface stays put).
 - **Flatten** — press the region onto its own average plane (hard surfaces,
   plateaus).
 - **Pinch** — gather vertices toward the brush centre (sharpen creases).
 
-Radius and strength are adjustable; Symmetry X applies to sculpting too.
+Radius and strength are adjustable; Symmetry X applies to sculpting too (the mirrored
+stroke is made in the same pass, so vertices near the middle are not moved twice).
+The brush strength falls off smoothly from the centre to the radius.
 Subdivide first if the mesh is too coarse for the detail you want.
 
 #### Paint
@@ -395,7 +397,8 @@ color, radius, and blend, then drag over the mesh. **Fill Sel** bucket-fills
 the selected faces, **Clear Paint** removes all face colors. Painted colors
 multiply with the material color, save with the scene, and work on
 primitives without turning them into custom geometry (Symmetry X mirrors
-paint strokes too).
+paint strokes too). A quad or n-gon is painted as one face: the brush measures
+to its centre and all its triangles get the same colour.
 
 #### Model faster: toolbar, right-click, Ctrl+K, repeat, recipes (Edit Mesh)
 

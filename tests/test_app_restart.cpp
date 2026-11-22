@@ -674,7 +674,9 @@ int main(int argc, char** argv) {
             req.replaceBackup = backup;
             req.stateFile = state;
             req.expectVersion = "9.9.9";
-            req.confirmMs = 400;
+            // Long enough for a slow CI machine to start the child: 400 ms failed the "good" scenario on windows-latest
+            // (2026-11-22, #1119: "did not confirm within 0 s"). The "slow" scenario, which never confirms, waits all of it.
+            req.confirmMs = 5000;
             req.logFile = log;
             req.workingDirectory = dir;
             req.arguments = {"--restart-child", result.string(), up.string(), lock.string()};

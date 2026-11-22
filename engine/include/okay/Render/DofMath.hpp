@@ -9,9 +9,12 @@
 //   1. Depth: the half-resolution depth pass the ambient occlusion already uses
 //      (view depth / far, far = 150 world units; see SsaoMath.hpp).
 //   2. Blur: a half-resolution copy of the finished frame, two rounds of the
-//      9-tap gaussian.
+//      9-tap gaussian. (The software renderer, SoftwareRenderer.hpp ApplySceneDof,
+//      uses its own 9-tap binomial and the same focus maths.)
 //   3. Mix: out = mix(sharp, blurred, coc), where coc (0..1) says how far the
-//      pixel's distance is outside the focus range:
+//      pixel's distance is outside the focus range. The blurred copy and the mix
+//      are premultiplied by the frame's coverage (alpha), so a pixel nothing
+//      covered (where the host paints its sky) stays transparent:
 //          coc = clamp((|d - focus| - range / 2) / range, 0, 1)
 //      Pixels with depth >= 0.995 are sky: treated as 4 x far away.
 //
@@ -22,6 +25,7 @@
 // The constants are macros so the C++ and the HLSL string (OKAY_DOF_HLSL, pasted
 // into the Direct3D 11 shader source) are built from the same literals.
 // test_dof_math.cpp checks both and reads the GL and D3D11 sources as text.
+// PSDofCopy and PSDofBlur make the premultiplied blurred copy (PSDown / PSBlur write alpha 1).
 // The HLSL expects uTex (t0 = sharp frame), uNormalTex (t1 = blurred frame),
 // uSpecTex (t2 = R32F depth / far, half res), uSampClamp, uTexelDir (xy = 1 / depth
 // size) and uP7 (x = focus, y = range, z = far), plus the PSQuad struct.
@@ -73,5 +77,20 @@ inline float Mix(float sharp, float blurred, float coc) { return sharp + (blurre
     "  float dn = uSpecTex.Load(int3(q, 0)).r;\n" \
     "  float d = dn >= " OKAY_DOF_STR(OKAY_DOF_BACKGROUND) " ? uP7.z * " OKAY_DOF_STR(OKAY_DOF_SKY_MUL) " : dn * uP7.z;\n" \
     "  float coc = clamp((abs(d - uP7.x) - uP7.y * " OKAY_DOF_STR(OKAY_DOF_HALF) ") / max(uP7.y, " OKAY_DOF_STR(OKAY_DOF_MIN_RANGE) "), 0.0, 1.0);\n" \
-    "  return lerp(uTex.Sample(uSampClamp, i.uv), uNormalTex.Sample(uSampClamp, i.uv), coc);\n" \
+    "  float4 s = uTex.Sample(uSampClamp, i.uv);\n" \
+    "  float4 p = lerp(float4(s.rgb * s.a, s.a), uNormalTex.Sample(uSampClamp, i.uv), coc);\n" /* premultiplied mix */ \
+    "  return float4(p.a > 1e-4 ? p.rgb / p.a : float3(0.0, 0.0, 0.0), p.a);\n" \
+    "}\n" \
+    "float4 premulTap(float2 uv){ float4 c = uTex.Sample(uSampClamp, uv); return float4(c.rgb * c.a, c.a); }\n" \
+    "float4 PSDofCopy(PSQuad i) : SV_TARGET {\n"            /* half-res premultiplied copy (uTexelDir.xy = full-res texel) */ \
+    "  float2 o = uTexelDir.xy;\n" \
+    "  return (premulTap(i.uv + float2(-o.x, -o.y)) + premulTap(i.uv + float2(o.x, -o.y)) +\n" \
+    "          premulTap(i.uv + float2(-o.x, o.y)) + premulTap(i.uv + float2(o.x, o.y))) * 0.25;\n" \
+    "}\n" \
+    "float4 PSDofBlur(PSQuad i) : SV_TARGET {\n"            /* PSBlur with alpha (uTexelDir.zw = direction) */ \
+    "  float2 d = uTexelDir.zw;\n" \
+    "  float4 s = uTex.Sample(uSampClamp, i.uv) * 0.227027;\n" \
+    "  s += (uTex.Sample(uSampClamp, i.uv + d * 1.384615) + uTex.Sample(uSampClamp, i.uv - d * 1.384615)) * 0.316216;\n" \
+    "  s += (uTex.Sample(uSampClamp, i.uv + d * 3.230769) + uTex.Sample(uSampClamp, i.uv - d * 3.230769)) * 0.070270;\n" \
+    "  return s;\n" \
     "}\n"

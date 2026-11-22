@@ -56,6 +56,9 @@ EdgeList LoopCut(PolyMesh& pm, int a, int b, int cuts = 1, float position = 0.5f
 /// neighbour on the left of the loop's direction, -1 = to the right).
 /// `from`, if given, holds the positions to slide from (for interactive use);
 /// otherwise the current positions are used. Returns how many vertices moved.
+/// UVs follow: each face that uses a moved vertex keeps its own texture mapping,
+/// so the corner's UV moves along the rail edge's UVs by the same fraction, and a
+/// seam (different UVs on either side of a corner) stays split.
 int EdgeSlide(PolyMesh& pm, const EdgeList& loop, float amount, const std::vector<Vec3>* from = nullptr);
 
 /// Dissolve edges: merge the two faces on each edge into one (border edges are
@@ -69,6 +72,12 @@ int DissolveVerts(PolyMesh& pm, const std::vector<int>& verts);
 /// tubes) with a band of quads. The loops need the same number of edges.
 /// Returns the number of faces made, or 0 with the reason in `error`.
 int BridgeEdgeLoops(PolyMesh& pm, const EdgeList& edges, std::string* error = nullptr);
+/// Bridge two groups of faces (for example the facing sides of two boxes): the
+/// faces are deleted, then the two outlines they leave are bridged as above. Each
+/// group must be connected, the groups must not touch, each outline must be one
+/// loop and both need the same number of edges. Returns the number of faces made,
+/// or 0 with the reason in `error` (the mesh is then left as it was).
+int BridgeFaces(PolyMesh& pm, const std::vector<int>& faces, std::string* error = nullptr);
 
 /// Bevel edges to the given width: each edge becomes a strip of `segments`
 /// faces (1 = a flat chamfer). `profile` shapes a multi-segment bevel: 0.5 is
@@ -93,7 +102,8 @@ EdgeList KnifeCut(PolyMesh& pm, const std::vector<KnifePoint>& points, std::stri
 
 /// Fill: make a face from each selected loop of border edges (a hole's rim), or
 /// from a single open chain of 3+ vertices. Faces it makes run the opposite way
-/// to their neighbours (consistent normals). Returns how many faces were made.
+/// to their neighbours (consistent normals). A chain whose vertices lie on one
+/// straight line is skipped (the face would have no area). Returns how many faces were made.
 int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error = nullptr);
 /// Grid fill: close a hole whose rim is one loop of an even number of edges
 /// with a grid of quads (shaped to blend the four sides). `span` is the number
@@ -132,5 +142,30 @@ int SpinEdges(PolyMesh& pm, const EdgeList& edges, const Vec3& center, const Vec
 /// slots carry over. Returns the faces made, or 0 with the reason in `error`.
 int ExtrudeAlongPath(PolyMesh& pm, const std::vector<int>& faces, const std::vector<Vec3>& path,
                      std::string* error = nullptr);
+
+// ---- Selection helpers (the editor's Ctrl+click path, Checker Deselect, Select Boundary Loop,
+// Select Open / Non-Manifold Edges). Written from the plain graph algorithms (Dijkstra's shortest
+// path, breadth-first search); they only read the mesh. Bad indices give an empty result.
+
+/// Shortest path between two vertices along the mesh's edges, by edge length. Returns the vertices
+/// in order from `from` to `to` ({from} when they are the same), or empty when either is not used by
+/// a face or no edges join them.
+std::vector<int> ShortestVertPath(const PolyMesh& pm, int from, int to);
+/// Shortest path between two faces through faces that share an edge, by the distance between face
+/// centres. Returns the faces in order ({from} when the same), or empty.
+std::vector<int> ShortestFacePath(const PolyMesh& pm, int from, int to);
+/// Checker deselect: keep every other element of the selection. Each connected part of the selection
+/// (vertices joined by an edge, faces sharing an edge) is walked breadth-first from the first of its
+/// elements in the list, and the elements an even number of steps away are kept (a selected grid of
+/// quads comes back as a checkerboard). Duplicates and bad indices are dropped; the order of the
+/// input is kept.
+std::vector<int> CheckerVerts(const PolyMesh& pm, const std::vector<int>& verts);
+std::vector<int> CheckerFaces(const PolyMesh& pm, const std::vector<int>& faces);
+/// The outline of a group of faces: every edge used by exactly one of them (Select Boundary Loop).
+/// Edges come out as (a, b) in the direction the face runs them.
+EdgeList RegionOutline(const PolyMesh& pm, const std::vector<int>& faces);
+/// Edges with a face on one side only (`borders`) and / or used by three or more faces
+/// (`nonManifold`): what to look at before a bevel, a bridge or an export. Sorted, a < b.
+EdgeList ProblemEdges(const PolyMesh& pm, bool borders, bool nonManifold);
 
 } // namespace okay::modeling

@@ -2879,9 +2879,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << cm->cameraDamping
             << " " << cm->arriveRadius                       // extended (back-compatible trailing field)
             << " " << (cm->footIK ? 1 : 0) << " " << (cm->showCursor ? 1 : 0)
-            << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval
-            // extended (back-compatible trailing fields): click on colliders, give up when stuck
-            << " " << (cm->pickColliders ? 1 : 0) << " " << (cm->giveUpWhenStuck ? 1 : 0) << " " << cm->stuckTime << "\n";
+            << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval;
+        // extended (back-compatible trailing fields): click on colliders, give up when stuck. Written only when one differs
+        // from its default, so a scene saved before they existed saves byte for byte the same (registry_serializer).
+        if (!cm->pickColliders || !cm->giveUpWhenStuck || cm->stuckTime != 1.0f)
+            out << " " << (cm->pickColliders ? 1 : 0) << " " << (cm->giveUpWhenStuck ? 1 : 0) << " " << cm->stuckTime;
+        out << "\n";
     }
     for (auto* ft : go->GetComponents<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -3066,9 +3069,11 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     for (auto* dc : go->GetComponents<DollyCart>()) {
         out << "  dollycart " << Quote(dc->path) << " " << dc->position << " "
-            << dc->speed << " " << (dc->autoMove ? 1 : 0)
-            << " " << (dc->speedInMetres ? 1 : 0) << " " << (dc->pingPong ? 1 : 0)   // extended (trailing)
-            << " " << (dc->orientToPath ? 1 : 0) << "\n";
+            << dc->speed << " " << (dc->autoMove ? 1 : 0);
+        // extended (trailing): only when one is on, so older scenes save byte for byte the same (registry_serializer)
+        if (dc->speedInMetres || dc->pingPong || dc->orientToPath)
+            out << " " << (dc->speedInMetres ? 1 : 0) << " " << (dc->pingPong ? 1 : 0) << " " << (dc->orientToPath ? 1 : 0);
+        out << "\n";
     }
     for (auto* tr : go->GetComponents<TextRenderer>()) {
         out << "  text " << Quote(tr->text) << " "

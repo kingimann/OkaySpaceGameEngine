@@ -610,6 +610,13 @@ static void BackendTests() {
       CHECK(TicksMs() <= b.TicksMs() + 5); okay::platform::Log("through the registry"); CHECK(!b.LogLines().empty() && b.LogLines().back() == "through the registry");
       BackendKind k; CHECK(ParseBackendName("own", k) && k == BackendKind::Own && !ParseBackendName("x", k) && !ParseBackendName(nullptr, k)); InstallBackend(nullptr); CHECK(Default() == nullptr); }
     b.SetClipboardText("clip"); CHECK(b.GetClipboardText() == "clip");
+    { // a system clipboard installed on the backend: copy reaches it, text copied elsewhere arrives without blocking
+      struct Sys : okay::xbox::ClipboardHost { std::string sys, snap; bool fl = false, rdy = false;
+        bool Write(const std::string& t) override { sys = t; return true; } bool StartRead() override { snap = sys; fl = true; return true; }
+        bool TakeRead(std::string& t) override { if (fl && rdy) { fl = rdy = false; t = snap; return true; } return false; } } sys;
+      b.SetClipboardHost(&sys); b.SetClipboardText("to system"); CHECK(sys.sys == "to system" && b.GetClipboardText() == "to system");
+      sys.sys = "from outside"; sys.rdy = true; b.GetClipboardText(); sys.rdy = true; CHECK(b.GetClipboardText() == "from outside");
+      b.SetClipboardHost(nullptr); }
     b.ShowErrorBox("T", "x", nullptr); CHECK(!b.LogLines().empty());
     CHECK(b.PerfFrequency() == 1000000000ull); b.DelayMs(10);
     std::filesystem::remove_all(roots.local);

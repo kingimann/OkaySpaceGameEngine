@@ -24,7 +24,8 @@ public:
 
 class UwpClipboard final : public okay::Clipboard {
 public:
-    explicit UwpClipboard(ClipboardHost* host) : host_(host) {}
+    explicit UwpClipboard(ClipboardHost* host = nullptr) : host_(host) {}
+    void SetHost(ClipboardHost* host) { host_ = host; }
 
     std::string GetText() const override {
         if (host_) {

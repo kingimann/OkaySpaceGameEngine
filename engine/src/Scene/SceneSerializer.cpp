@@ -3722,6 +3722,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "\n";
         // How much the scene's wind carries the particles (own record; 1 = the default).
         if (ps->windInfluence != 1.0f) out << "  particleswind " << ps->windInfluence << "\n";
+        // Collide with Terrain (own record, written only when on; older files and readers do without it).
+        if (ps->collideTerrain) out << "  particlesterrain 1\n";
     }
     // Sequence player (cutscenes). key=value record; the playback state is not saved.
     for (auto* sp : go->GetComponents<SequencePlayer>()) {   // every instance
@@ -4107,9 +4109,11 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
             out << "sky " << rs.skyHorizonPos << " " << (rs.skySun ? 1 : 0) << " "
                 << rs.skySunX << " " << rs.skySunY << " " << rs.skySunSize << " "
                 << rs.skySunColor.r << " " << rs.skySunColor.g << " " << rs.skySunColor.b << "\n";
-        // Star field (separate append-only record so older engines still load the scene).
-        if (rs.skyStars)
-            out << "skystars 1 " << rs.skyStarDensity << " " << rs.skyStarBright << "\n";
+        // Star field (separate append-only record so older engines still load the scene). Also written with the
+        // overlay off when the density or brightness changed: the Procedural sky draws its night stars with them.
+        const Scene::RenderSettings starDefaults;
+        if (rs.skyStars || rs.skyStarDensity != starDefaults.skyStarDensity || rs.skyStarBright != starDefaults.skyStarBright)
+            out << "skystars " << (rs.skyStars ? 1 : 0) << " " << rs.skyStarDensity << " " << rs.skyStarBright << "\n";
         if (rs.ambientMode != Scene::RenderSettings::AmbientHemisphere || rs.ambientSkyTint != 0.7f)
             out << "ambientmode " << rs.ambientMode << " " << rs.ambientSkyTint << "\n";
         if (!rs.autoBrightness) out << "lightunits 0\n";
@@ -9103,6 +9107,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             }
                         }
                     }
+                } else if (field == "particlesterrain") {
+                    auto* ps = LastOf(go->GetComponents<ParticleSystem>());   // the one the `particles` record above made
+                    if (!ps) ps = go->AddComponent<ParticleSystem>();
+                    int on = 0; in >> on;
+                    ps->collideTerrain = (on != 0);
                 } else if (field == "particleswind") {
                     auto* ps = LastOf(go->GetComponents<ParticleSystem>());   // the one the `particles` record above made
                     if (!ps) ps = go->AddComponent<ParticleSystem>();

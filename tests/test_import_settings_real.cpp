@@ -275,6 +275,24 @@ int main() {
         fs::remove(mdl + ".okaymeta");
         CHECK(ModelImportScale(mdl) == 1.0f);                        // removed: back to the default
     }
+    // Older key names under a current (v2) header: the loaders understood them before the one-reader change, so
+    // they still do (texture `filter nearest`, `mips 0`; audio `stream 1`, `mono 1`).
+    RUN_SUITE("older key names under a v2 header still count");
+    {
+        Dir d;
+        const std::string near2 = MakePng(d, "near2.png", "importer texture 2\nset filter nearest\n");
+        const std::string mips2 = MakePng(d, "mips2.png", "importer texture 2\nset mips 0\n");
+        CHECK(TextureImportSampling(near2).filter == TextureSampling::Point);
+        CHECK(!TextureImportSampling(mips2).mipmaps);
+        const std::string st = d.at("st.wav"), mo = d.at("mo.wav");
+        Write(st + ".okaymeta", "okaymeta 1\ntype audio\nimporter audio 2\nset stream 1\n");
+        Write(mo + ".okaymeta", "okaymeta 1\ntype audio\nimporter audio 2\nset mono 1\n");
+        CHECK(ReadAudioImportOptions(st).stream && !ReadAudioImportOptions(st).forceMono);
+        CHECK(ReadAudioImportOptions(mo).forceMono && !ReadAudioImportOptions(mo).stream);
+        // A current key wins over an older one in the same block.
+        const std::string both = MakePng(d, "both.png", "importer texture 2\nset mipmaps 1\nset mips 0\n");
+        CHECK(TextureImportSampling(both).mipmaps);
+    }
 
     TEST_MAIN_RESULT();
 }

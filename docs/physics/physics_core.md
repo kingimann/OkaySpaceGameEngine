@@ -51,19 +51,54 @@ Classic and Improved stay as they were (old scenes play exactly as before). Engi
 | Triggers | sensors: OnTriggerEnter3D / Stay / Exit (tag and layer filters kept) |
 | Layers | the scene's layer matrix decides every pair |
 | Joint3D Distance, Spring, Pin, Hinge, Slider | engine Distance (rod or spring in N/m), Fixed, Hinge (limits, motor), Slider (limits, motor) |
-| Joint3D Ball, ConeTwist (new) | engine Ball and ConeTwist with `anchor` as the world pivot, swing cone (`swingLimit1`, `swingLimit2`), twist limits (`minAngle`, `maxAngle`), and a drive (`useDrive`, `driveTarget` Euler degrees, stiffness and damping or frequency and damping ratio, `driveMaxTorque`). In Classic and Improved these two modes only keep the distance between the two points. |
+| Joint3D Ball, ConeTwist (new) | engine Ball and ConeTwist with `anchor` as the world pivot, swing cone (`swingLimit1`, `swingLimit2`), twist limits (`minAngle`, `maxAngle`), and a drive (`useDrive`, `driveTarget` Euler degrees, `driveStiffness` and `driveDamping` or `driveFrequency` and `driveDampingRatio`, `driveMaxTorque`). These drive field names are kept stable: the active ragdoll moves onto them. **In Classic and Improved these two modes are only a distance rod between the two points** (the Inspector says so and the Console warns once per joint). |
 | Events | OnCollisionEnter3D / Stay / Exit with normal, point, penetration and impact speed |
-| Queries | Raycast, shape casts and overlaps still use the scene's colliders directly (they see the same poses) |
+| Queries | Raycast, shape casts and overlaps are `Physics3D`'s own, the same code in every quality (the core keeps no second ray or sweep code; it only has an overlap test built on its contact code) |
 | Advanced | `Physics3D::EngineWorld()`, `EngineBody(rb)`, `EngineJoint(j)` reach the engine world (e.g. an active ragdoll setting drive targets every frame) |
 
 What is different from Improved: friction combines as the square root of the two values and bounciness as the larger
 one (the per-collider combine modes are not read yet); a terrain raises no collision callbacks (as before); voxel
 terrains are not in the Engine world yet.
 
+## Memory
+
+* A static Mesh collider's triangles live once per mesh asset: one `TriMeshSource` (the triangles, 36 bytes each, plus
+  a tree node of about 48 bytes per triangle, so about 84 bytes per triangle) shared by every collider using that mesh;
+  each collider adds only a small scaled view (`ScaledTriangleSource`). The scene's own `MeshCollider3D` keeps its
+  `TriMesh` for queries, so a static mesh is held twice while Engine runs (once for queries, once for contacts) until
+  the old query code is retired.
+* Height fields and terrains are copied as a grid of floats (4 bytes per sample), never as triangles.
+* Convex hulls are taken as the collider already built them (`HullData::FromTriangles`), not wrapped again.
+
+## What this replaces (once Engine is the default)
+
+Engine is the seam of `docs/own_code_roadmap.md`: when the owner approves making it the default for new scenes, the old
+copies below are deleted one release later. Until then both exist on purpose.
+
+| Part | Engine core | Old copy it retires |
+| --- | --- | --- |
+| Broad phase | `Core/DynamicTree` | `Physics/Broadphase.hpp` (sort and sweep) for 3D (2D keeps it) |
+| Convex distance and depth | `Core/Collide` (GJK, EPA) | `Physics/ConvexContact.hpp` (GJK/EPA for the Improved step) |
+| Box contacts | `Core/Collide` (box SAT + clipping) | `Physics/BoxManifold.hpp` |
+| Contact solver | `Core/Solver.cpp` | `Physics/ContactSolver.hpp`, the solver in `Physics/Physics3DImproved.inl` and the Classic pair loop in `Physics/Physics3D.cpp` |
+| Islands and sleeping | `Core/World.cpp` | group sleeping in `Physics/Physics3DImproved.inl`, rest contacts in `Physics/Physics3D.cpp` |
+| Fast bodies | speculative contacts in `Core/World.cpp` | the sweep CCD (`SweepBody`, `SweepBodyBy`, tunnelled-floor catch) in `Physics/Physics3D.cpp` |
+| Swing / twist, joint limits | `Core/Joint.cpp` | `Math/JointLimit.hpp` (`ClampHingeRotation`) |
+| Joint3D solving | `Core/Joint.cpp` | the joint pass in `Physics3D::StepSlice` (`Physics/Physics3D.cpp`) |
+| Mass and inertia | `Core/Shape.cpp` | `ComputeMassProps` in `Physics/Physics3DImproved.inl`, `InvInertia` in `Physics/Physics3D.cpp` |
+
+`Core/PMath.hpp` is a deliberate small copy of vector / quaternion / matrix maths: it keeps the core free of any
+engine dependency (it builds and tests alone in seconds) and keeps every operation that bit-identical results depend
+on in one place. It stays.
+
 ## Numbers (measured on the shared Linux build machine; machine was loaded by other builds)
 
 * Broad phase alone (`physcore_tree`), a tenth of the boxes moving per step: 1,000 boxes 0.04 ms vs 1.05 ms for
   sort-and-sweep from scratch; 5,000: 1.2 vs 10.5 ms; 20,000: 7.9 vs 101.7 ms.
+* In a scene (`physics_engine_mode`, 400 to 3,000 mixed bodies incl. compounds, -O1 build, loaded machine): 1,000
+  bodies 19 ms per frame in Engine against about 3,100 ms in Improved; 3,000 bodies 108 ms against about 1,900 ms.
+  (Improved is this slow on this mixed scene with compound bodies; the 400-body determinism scene of
+  `physics3d_determinism` is the usual Improved reference.)
 * Whole world (`physcore_world`, boxes and balls falling into piles, serial): 1,000 bodies 4 to 6 ms per step, 5,000
   bodies 12 to 22 ms per step.
 * 10-box stack: the top box ends within 1 micrometre of its start sideways and the stack sleeps after about a second;
@@ -79,7 +114,8 @@ and floor kind, save and load, determinism with 0 and 3 job workers, timing agai
 
 ## Not done yet
 
-* Engine-quality scene queries through the engine tree (today the scene's own query code runs).
+* Engine-quality scene queries through the engine tree (today `Physics3D`'s own query code runs; the core keeps no
+  second ray code). Doing it needs the tree to follow bodies that scripts move between steps.
 * Per-collider friction / bounce combine modes; voxel terrain; mesh-mesh pairs (static meshes only meet convex shapes).
 * A dedicated configurable 6-DOF Joint3D mode in the editor (the core's SixDof joint is reachable from code).
 * Flipping new scenes to Engine by default (owner's decision, CLAUDE.md 17: after the criteria are met).

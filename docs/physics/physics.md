@@ -14,6 +14,7 @@
 - [Physics toys: ready-made physics, no code](#physics-toys-ready-made-physics-no-code) (was `docs/physics_toys.md`)
 - [Ragdolls and hit reactions](#ragdolls-and-hit-reactions) (was `docs/ragdolls.md`)
 - [Physics audit and plan](#physics-audit-and-plan) (was `docs/physics_plan.md`)
+- [The Engine quality: our own physics engine](#the-engine-quality-our-own-physics-engine) (details in `physics_core.md`)
 
 ## Physics: quality, materials, joints, debris, hinges, mesh colliders, 2D casts, and step rate
 
@@ -737,3 +738,31 @@ bounds-before-overlap reorder, which `perf-pass-1` also touches). `Physics2D.cpp
 * Not verified: Windows, a real window, a real GPU, the feel in a real game, the new Inspector rows and menu items (`editor/main.cpp` passes `g++ -fsyntax-only` with 0 errors; the editor was not linked
   or opened), and the exit-order fix against the old code.
 * `DebrisPool` is not used by the voxel terrain yet: the voxel agent decides how to call it (`DebrisPool pool(scene); pool.Spawn(...); pool.Update(dt);`).
+
+## The Engine quality: our own physics engine
+
+Project Settings > Physics > "Physics quality of the open scene" has a third choice, **Engine** (3D). It runs the scene
+on our own physics engine core instead of the Classic or Improved step. Classic and Improved are unchanged.
+
+What you get in Engine:
+
+- **Many bodies.** Touching pairs are found with a tree, so only bodies that moved are looked at; groups of touching
+  bodies are solved on every CPU core with exactly the same result as on one core.
+- **Steady stacks.** The contact points of each resting face are solved together, so towers and pyramids stand still and
+  fall asleep.
+- **Nothing tunnels.** A fast body is stopped before it reaches a wall, without ticking Continuous Collision.
+- **Every shape:** box, sphere, capsule, cylinder, cone, convex hull, compound, plane, mesh collider (static), height
+  field and terrain.
+- **Joints:** Distance, Spring, Pin, Hinge and Slider as before, plus **Ball** and **Cone Twist** for ragdolls. Both turn
+  about **Anchor** (a world point). Cone Twist keeps the swing inside **Swing Limit 1 / 2** and the twist inside Min /
+  Max Twist. **Use Drive** pulls the body toward **Drive Target** (degrees from its start pose) like a damped spring:
+  **Drive Frequency** (Hz) and **Drive Damping Ratio** (1 = no overshoot), or **Drive Stiffness** and **Drive Damping**
+  when the frequency is 0; **Drive Max Torque** caps it. Scripts set Drive Target every frame for an active ragdoll.
+  In Classic and Improved, Ball and Cone Twist are only a distance rod (the Console says so once).
+- Callbacks (OnCollisionEnter3D / Stay / Exit, OnTriggerEnter3D / Stay / Exit), layers, trigger filters, teleports and
+  set velocities work as in the other qualities. Raycasts and shape casts are the same code in every quality.
+
+Not yet in Engine: the per-collider friction / bounce combine modes (friction combines as the square root of the two,
+bounce as the larger), voxel terrain. Examples: `examples/physics_engine/physics_engine.okayscene` and
+`physics_engine_5k.okayscene` (try it: pe1). How it works and what it was written from: [physics_core.md](physics_core.md).
+

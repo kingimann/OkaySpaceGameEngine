@@ -251,11 +251,12 @@ where the files live and how they are wired. Nobody is touching it now apart fro
   - 41.13.3 Test labels - `okay_modules_label_tests` - every test gets `module:<name>` (or `module:core`); `ctest -L module:physics3d`
   - 41.13.4 Module list at run time - `Modules/ModuleManifest`, `Modules/ModuleRegistry` - the manifests embedded by `okay_modules_generate` (`modules_enabled.cpp`), `ModuleRegistry::Get()`, `Validate`, `DependencyOrder`, register hooks (`ModuleContext`); the player logs `[okay] modules: 40 modules, 40 on`
   - 41.13.5 Dependency check - `scripts/check_modules.py` - forbidden includes between modules, manifest problems, the umbrella header; 801 known includes in `scripts/module_deps_baseline.txt` (shrink only); report mode in CI
+  - 41.13.6 Size per module - `scripts/module_sizes.py` - bytes of the player per module from the linker map (`-DOKAY_LINK_MAP=ON` writes `bin/okay-player.map`), table or `module_sizes.json`
 - **Code:** `cmake/OkayModules.cmake`, `engine/modules/*/module.okaymodule`, `engine/include/okay/Modules/ModuleManifest.hpp`, `engine/include/okay/Modules/ModuleRegistry.hpp`, `scripts/check_modules.py`
 - **Docs:** `docs/engine/modular_engine.md`, `docs/design/modular_gameplay_contracts.md`, `docs/design/modular_status.md`
-- **Tests:** configure itself (a bad manifest fails it); `modules` (parser, registry, the generated list); `check_modules_script` (`tests/scripts/test_check_modules.py`, the check on a made-up tree)
+- **Tests:** configure itself (a bad manifest fails it); `modules` (parser, registry, the generated list); `check_modules_script` (`tests/scripts/test_check_modules.py`, the check on a made-up tree); `module_sizes_script` (`tests/scripts/test_module_sizes.py`, a made-up linker map)
 - **Status:** Partial - grouping and labels only; nothing is stripped yet
-- **Open:** the size report (PR 3), the registries that let a module register its own records, functions and nodes (stage 1), per-module libraries and stripping (stage 2); the check becomes blocking in PR 14
+- **Open:** the Build report's Modules table (editor), the registries that let a module register its own records, functions and nodes (stage 1), per-module libraries and stripping (stage 2); the check becomes blocking in PR 14
 - **Related:** 41.1
 - **Words:** module, modular engine, manifest, okaymodule, module group, ctest label, strip
 - **Seen as:** `-- OkaySpace: 40 engine modules; ... files of okay_engine in modules` while configuring; `[okay] modules: 40 modules, 40 on` in the player log; a "Modules" warning on a pushed branch

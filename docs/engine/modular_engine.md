@@ -27,6 +27,14 @@ Design, plan and decisions: `../design/modular_gameplay_contracts.md` (sections 
   renderer name every component) are listed in `scripts/module_deps_baseline.txt`; a new one is reported. The list may
   only shrink: `--update-baseline` is for after a fix. CI runs it in report mode (a warning); design PR 14 makes it blocking.
 
+## Stage 0, PR 3: bytes per module in the player
+- Configure with `-DOKAY_LINK_MAP=ON` (GNU linkers): the player writes `bin/okay-player.map` next to itself.
+- `python3 scripts/module_sizes.py <build folder> <build folder>/bin/okay-player.map [--json module_sizes.json]` gives each
+  module the bytes of the sections the linker kept from its engine files (`okay_modules.tsv` says which file is whose).
+  Header-only components count in the .cpp files that include them, so a module whose code is in headers looks small.
+- Not done: the Build report's "Modules" table in the editor (Build Game is moving to `editor/BuildGame.cpp`, PR #1141; it
+  should read `module_sizes.json` there), MinGW/Windows maps (not tried), the editor's map.
+
 ## Manifest keys
 `name`, `title`, `area`, `description`, `default`, `core`, `requires` (comma separated), `provides`, `components`,
 `serializers` (scene records), `vs_group`, `editor`, `sources` (space separated file patterns), `tests` (space separated test

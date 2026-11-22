@@ -4506,6 +4506,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Site generator and hosting (57.1.3)
 - site_bans (17.9)
 - Sitting, swimming, emotes (5.12.6)
+- Size per module (41.13.6)
 - Sized buttons, `SameLine(offset, spacing)`, printf-style `Text` family, `BeginPopupContextItem()` (40.9.6)
 - skating feet (16.8)
 - Skeletal and frame events (43.3.3)

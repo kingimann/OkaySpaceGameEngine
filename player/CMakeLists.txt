@@ -41,6 +41,9 @@ endif()
 
 add_executable(okay-player main.cpp ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp)
 target_link_libraries(okay-player PRIVATE okay::engine ${OKAY_PLAYER_SDL_LIB})
+if(OKAY_LINK_MAP AND NOT MSVC)   # per-module size report: scripts/module_sizes.py <build> bin/okay-player.map
+    target_link_options(okay-player PRIVATE "LINKER:-Map=$<TARGET_FILE:okay-player>.map")
+endif()
 okay_win_version(okay-player "OkaySpace Player" "OkaySpacePlayer.exe")
 target_include_directories(okay-player PRIVATE ${SDL2_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/shared)
 # OkayUI in the runtime: games can render the immediate-mode toolkit (and the F1

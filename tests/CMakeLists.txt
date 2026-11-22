@@ -4885,6 +4885,9 @@ find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME check_modules_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_check_modules.py
              ${PROJECT_SOURCE_DIR}/scripts/check_modules.py)
+    # scripts/module_sizes.py (bytes of each module in a linked program) on a made-up linker map.
+    add_test(NAME module_sizes_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_module_sizes.py
+             ${PROJECT_SOURCE_DIR}/scripts/module_sizes.py)
 endif()
 
 # Keep this last: label every test above module:<name> from the tests= patterns of engine/modules/*/module.okaymodule

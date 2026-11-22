@@ -150,6 +150,7 @@ int main() {
         g.Update(0.016f);
         CHECK(Game::Paused());                                   // Start opens it
         CHECK(g.Find("PauseMenu UI") && g.Find("PauseMenu UI")->active);
+        Input::FeedGamepadAt(0, {}, start);                      // the host feeds the pads every frame: still held
         g.Update(0.016f);
         CHECK(Game::Paused());                                   // held, not pressed again: stays open
         Input::FeedGamepadAt(0, {}, 0);

@@ -58,6 +58,9 @@ int ApplyDrop(okay::Scene& scene, const std::vector<okay::GameObject*>& dragged,
               okay::GameObject* target, DropWhere where, const DropHooks& hooks = {});
 /// Position of `go` in the hierarchy as drawn (depth first, roots in scene order).
 std::vector<okay::GameObject*> HierarchyOrder(okay::Scene& scene);
+/// The Hierarchy eye, the Inspector's Active box and H / Alt+H all switch an object on or off through this.
+/// It sets only that object's own flag: children follow it through ActiveInHierarchy() and keep their own flags.
+void SetObjectActive(okay::GameObject* go, bool on);
 
 // ---- Editing a property on several objects -------------------------------------------
 /// One property read across `objs` (each addressed by component type name and the n-th component of it).

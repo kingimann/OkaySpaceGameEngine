@@ -11,6 +11,7 @@
 #include "XboxAudio.hpp"
 #include "XboxUwpBackend.hpp"
 #include "UwpPlatform.hpp"
+#include "tests/FakeCaptureHost.hpp"
 #include "XboxUwpAudit.hpp"
 #include "XboxGameConfig.hpp"
 #include "XboxOverlayMath.hpp"
@@ -524,19 +525,8 @@ static void AudioTests() {
 // ---- the UWP backend with a fake host ----
 // UwpPlatform.cpp (linked into this test) provides the base-class defaults and the registry, as it does in the UWP engine target.
 namespace {
-struct FakeMic : okay::xbox::CaptureHost {
-    okay::xbox::CaptureFormat fmt{48000, 1, true, 32}; bool declared = true; okay::xbox::MicConsent consent = okay::xbox::MicConsent::Allowed; bool startOk = true;
-    std::vector<std::string> names{"Headset", "Room mic"}; int starts = 0, stops = 0, lastIndex = -1; okay::xbox::UwpCaptureDevice* dev = nullptr;
-    int DeviceCount() override { return (int)names.size(); }
-    std::string DeviceName(int i) override { return names[(size_t)i]; }
-    bool Format(int, okay::xbox::CaptureFormat& o) override { o = fmt; return true; }
-    bool CapabilityDeclared() override { return declared; }
-    okay::xbox::MicConsent Consent() override { return consent; }
-    bool Start(okay::xbox::UwpCaptureDevice* d, int i, std::string& e) override { if (!startOk) { e = "prompt refused"; return false; } ++starts; lastIndex = i; dev = d; return true; }
-    void Stop(okay::xbox::UwpCaptureDevice*) override { ++stops; dev = nullptr; }
-};
 struct FakeUwpHost : okay::xbox::UwpHost {
-    FakeMic mic; bool hasMic = false; std::string lang = "en-US";
+    FakeCaptureHost mic; bool hasMic = false; std::string lang = "en-US";
     okay::xbox::CaptureHost* Capture() override { return hasMic ? &mic : nullptr; }
     std::string InputLanguage() override { return lang; }
     int pumps = 0; std::function<void()> onPump; FakePad pad; int pads = 1; FakeAudioHost audio; bool hasAudio = true; std::string title;
@@ -609,7 +599,7 @@ static void BackendTests() {
     { AudioSpec want; want.freq = 48000; want.channels = 2; AudioSpec got; auto a = b.OpenAudio(want, false, nullptr, &got); CHECK(a && host.audio.started && got.freq == 48000 && b.AudioDeviceCount(false) == 1); }
     CHECK(b.OpenAudio(AudioSpec(), true, nullptr, nullptr) == nullptr && b.LastError().find("capture") != std::string::npos && b.AudioDeviceCount(true) == 0);   // host without a microphone
     // microphone through the backend: permission, device list, open by name, close
-    { host.hasMic = true; FakeMic& m = host.mic;
+    { host.hasMic = true; FakeCaptureHost& m = host.mic;
       CHECK(b.AudioDeviceCount(true) == 2 && b.AudioDeviceName(1, true) == "Room mic" && b.AudioDeviceName(2, true).empty() && b.AudioDeviceName(0, true) == "Headset");
       AudioSpec w; w.freq = 48000; w.channels = 1; w.format = SampleFormat::S16; AudioSpec got;
       m.declared = false; CHECK(b.OpenAudio(w, true, nullptr, &got) == nullptr && b.LastError().find("manifest") != std::string::npos && m.starts == 0);

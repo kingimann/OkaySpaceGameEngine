@@ -1006,6 +1006,9 @@ add_test(NAME physcore_world COMMAND test_physcore_world)
 add_executable(test_physics_engine_mode test_physics_engine_mode.cpp)
 target_link_libraries(test_physics_engine_mode PRIVATE okay::engine)
 add_test(NAME physics_engine_mode COMMAND test_physics_engine_mode)
+# Writes the physics example scenes (not a test; build by hand: ninja gen_physics_examples, run with the examples folder).
+add_executable(gen_physics_examples EXCLUDE_FROM_ALL gen_physics_examples.cpp)
+target_link_libraries(gen_physics_examples PRIVATE okay::engine)
 
 add_executable(test_broadphase test_broadphase.cpp)
 target_link_libraries(test_broadphase PRIVATE okay::engine)

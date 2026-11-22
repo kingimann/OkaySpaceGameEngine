@@ -1799,11 +1799,18 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (j->breakable ? 1 : 0) << " " << j->breakForce
             << " " << j->axis.x << " " << j->axis.y << " " << j->axis.z     // hinge (trailing)
             << " " << (j->useMotor ? 1 : 0) << " " << j->motorSpeed << " " << j->maxMotorTorque
-            << " " << (j->useLimits ? 1 : 0) << " " << j->minAngle << " " << j->maxAngle
-            << " " << j->swingLimit1 << " " << j->swingLimit2 << " " << (j->useDrive ? 1 : 0)   // ball / cone twist (trailing)
-            << " " << j->driveTarget.x << " " << j->driveTarget.y << " " << j->driveTarget.z
-            << " " << j->driveStiffness << " " << j->driveDamping << " " << j->driveFrequency
-            << " " << j->driveDampingRatio << " " << j->driveMaxTorque << "\n";
+            << " " << (j->useLimits ? 1 : 0) << " " << j->minAngle << " " << j->maxAngle;
+        {   // ball / cone twist fields (trailing), written only when one differs from the default: old scenes save as before
+            const Joint3D d;
+            if (j->swingLimit1 != d.swingLimit1 || j->swingLimit2 != d.swingLimit2 || j->useDrive != d.useDrive ||
+                !(j->driveTarget == d.driveTarget) || j->driveStiffness != d.driveStiffness || j->driveDamping != d.driveDamping ||
+                j->driveFrequency != d.driveFrequency || j->driveDampingRatio != d.driveDampingRatio || j->driveMaxTorque != d.driveMaxTorque)
+                out << " " << j->swingLimit1 << " " << j->swingLimit2 << " " << (j->useDrive ? 1 : 0)
+                    << " " << j->driveTarget.x << " " << j->driveTarget.y << " " << j->driveTarget.z
+                    << " " << j->driveStiffness << " " << j->driveDamping << " " << j->driveFrequency
+                    << " " << j->driveDampingRatio << " " << j->driveMaxTorque;
+        }
+        out << "\n";
     }
     for (auto* j : go->GetComponents<Joint2D>()) {   // every instance: a chain link holds two joints
         out << "  joint2d " << j->mode << " " << Quote(j->connectedBody)

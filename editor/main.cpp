@@ -34506,7 +34506,8 @@ static bool DrawJoint3DWithOkayUI(EditorState& ed, Joint3D* jt, okay::Component*
     }
     const bool hinge = jt->mode == (int)Joint3D::Mode::Hinge, slider = jt->mode == (int)Joint3D::Mode::Slider;
     if (ball || cone) {
-        L.Note("Ball and Cone Twist are solved fully in the Engine physics quality (Project Settings > Physics). Needs Freeze Rotation OFF.", false, true);
+        L.Note("Ball and Cone Twist turn, limit and drive only in the Engine physics quality (Project Settings > Physics). "
+               "In Classic and Improved they are only a distance rod between the two points. Needs Freeze Rotation OFF.", false, true);
         if (cone) {
             kAxis = L.Drag("Twist Axis##jtc", ax, 3, 0.05f); L.Tip("The bone's long axis (world space, taken when Play starts).");
             L.Drag("Swing Limit 1 (deg)##jtc", &jt->swingLimit1, 1, 1.0f, 0.0f, 180.0f); L.TipLookup();

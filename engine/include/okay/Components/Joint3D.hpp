@@ -77,6 +77,7 @@ public:
 
     // ---- runtime (set by Physics3D on the first solve) ----
     bool  initialized = false;
+    bool  m_warnedQuality = false;    ///< runtime: the "Ball / Cone Twist need the Engine quality" warning was logged
     Vec3  pinOffset{0, 0, 0};         ///< A_pos - B_pos captured at init (Pin)
     float restLen = 1.0f;             ///< resolved rest length used by the solver
     Vec3  hingeLever{0, 0, 0};        ///< world lever COM_A -> pivot at init (Hinge)

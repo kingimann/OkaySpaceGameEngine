@@ -10,6 +10,7 @@
 //  - determinism: the same scene twice, and with 0 or 3 job workers, gives the same bits;
 //  - timing (printed): Improved and Engine at 1,000 and 3,000 bodies.
 #include "test_framework.hpp"
+#include "physics_test_scenes.hpp"
 #include <Okay.hpp>
 #include "okay/Physics/ColliderShapes3D.hpp"
 #include "okay/Physics/Core/World.hpp"
@@ -58,37 +59,8 @@ GameObject* Crate(Scene& s, const std::string& name, const Vec3& p, float size =
 void Run(Scene& s, float seconds) { const int n = (int)std::lround(seconds / kDt); for (int i = 0; i < n; ++i) s.Update(kDt); }
 double NowMs() { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
-template <class T> void Put(std::vector<unsigned char>& out, const T& v) {
-    const unsigned char* p = reinterpret_cast<const unsigned char*>(&v);
-    out.insert(out.end(), p, p + sizeof(T));
-}
-
-void BuildMixed(Scene& s, int bodies) {
-    s.physics3D().quality = PhysicsQuality::Engine;
-    Floor(s);
-    const int side = (int)std::ceil(std::sqrt((double)bodies / 4.0));
-    for (int i = 0; i < bodies; ++i) {
-        GameObject* g = s.CreateGameObject("B" + std::to_string(i));
-        const int layer = i / (side * side), cell = i % (side * side);
-        g->transform->localPosition = {(float)(cell % side) * 1.05f - side * 0.5f + 0.07f * (float)(i % 3), 0.6f + (float)layer * 1.1f,
-                                       (float)(cell / side) * 1.05f - side * 0.5f};
-        g->transform->localRotation = Quat::Euler(0.0f, (float)(i * 13 % 90), (float)(i * 7 % 20));
-        switch (i % 5) {
-            case 0: g->AddComponent<BoxCollider3D>()->size = {0.9f, 0.9f, 0.9f}; break;
-            case 1: g->AddComponent<SphereCollider3D>()->radius = 0.45f; break;
-            case 2: { auto* c = g->AddComponent<CapsuleCollider3D>(); c->radius = 0.3f; c->height = 1.0f; break; }
-            case 3: { auto* c = g->AddComponent<CylinderCollider3D>(); c->radius = 0.4f; c->height = 0.8f; break; }
-            default: {
-                auto* c = g->AddComponent<CompoundCollider3D>();
-                c->AddBox({0, 0, 0}, {0.8f, 0.3f, 0.8f});
-                c->AddSphere({0, 0.3f, 0}, 0.25f);
-                break;
-            }
-        }
-        auto* rb = Body(g);
-        rb->velocity = {0.1f * (float)(i % 7) - 0.3f, 0.0f, 0.05f * (float)(i % 5)};
-    }
-}
+void BuildMixed(Scene& s, int bodies) { okaytest::BuildMixedBodies(s, bodies, PhysicsQuality::Engine, true); }
+using okaytest::PutBytes;
 
 std::vector<unsigned char> RunMixed(JobSystem* js, int bodies, int frames) {
     if (js) SetEngineJobs(js);
@@ -99,9 +71,9 @@ std::vector<unsigned char> RunMixed(JobSystem* js, int bodies, int frames) {
         s.Start();
         for (int f = 0; f < frames; ++f) s.Update(kDt);
         for (const auto& go : s.Objects()) {
-            Put(out, go->transform->localPosition);
-            Put(out, go->transform->localRotation);
-            if (auto* rb = go->GetComponent<Rigidbody3D>()) { Put(out, rb->velocity); Put(out, rb->angularVelocity); Put(out, rb->sleeping); }
+            PutBytes(out, go->transform->localPosition);
+            PutBytes(out, go->transform->localRotation);
+            if (auto* rb = go->GetComponent<Rigidbody3D>()) { PutBytes(out, rb->velocity); PutBytes(out, rb->angularVelocity); PutBytes(out, rb->sleeping); }
         }
     }
     if (js) SetEngineJobs(nullptr);

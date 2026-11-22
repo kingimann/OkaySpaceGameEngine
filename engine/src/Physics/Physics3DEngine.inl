@@ -51,33 +51,40 @@ void PieceOfLocal(const LocalShape3D& s, const shape3d::Frame& f, std::vector<En
         }
         case K::Cylinder: out.push_back({phys::Shape::Cylinder(s.radius * perp, s.height * along * 0.5f), axial}); break;
         case K::Cone: out.push_back({phys::Shape::Cone(s.radius * perp, s.height * along * 0.5f), axial}); break;
-        case K::Hull: {
+        case K::Hull: {   // the collider already wrapped its points (Mesh::ConvexHull): take its triangles as they are
             std::vector<phys::V3> pts;
             pts.reserve(s.pts.size());
             for (const Vec3& p : s.pts) pts.push_back(phys::V3{p.x * sc.x, p.y * sc.y, p.z * sc.z});
-            out.push_back({phys::Shape::Hull(pts), base});
+            out.push_back({phys::Shape::Hull(phys::HullData::FromTriangles(pts, s.tris)), base});
             break;
         }
     }
 }
 
-// Triangles of a static mesh collider, in world space (the shape frame is the world: its body sits at the origin).
-std::shared_ptr<phys::TriangleSource> MeshSourceOf(MeshCollider3D* mc) {
+// One triangle tree per mesh asset (its triangles in the mesh's own space), shared by every collider that uses it; each
+// collider sees it through its own scale (ScaledTriangleSource) and is placed by its position and rotation. The cache
+// holds weak references: a tree goes when the last collider using it goes.
+using MeshCache = std::unordered_map<std::uint64_t, std::weak_ptr<const phys::TriMeshSource>>;
+std::shared_ptr<phys::TriangleSource> MeshSourceOf(MeshCollider3D* mc, MeshCache& cache) {
     if (!mc->HasTriangles()) return nullptr;
     const TriMesh& tm = mc->Tris();
-    const Mat4 M = mc->WorldMatrix();
     std::vector<phys::Tri3> tris;
     tris.reserve((std::size_t)tm.TriangleCount());
+    std::uint64_t key = phys::kHashSeed;
     for (int i = 0; i < tm.TriangleCount(); ++i) {
         Vec3 a, b, c;
         tm.Triangle(i, a, b, c);
-        tris.push_back({P3(M.MultiplyPoint(a)), P3(M.MultiplyPoint(b)), P3(M.MultiplyPoint(c))});
+        tris.push_back({P3(a), P3(b), P3(c)});
+        key = phys::HashBytes(key, &tris.back(), sizeof(phys::Tri3));
     }
-    return std::make_shared<phys::TriMeshSource>(std::move(tris));
+    std::shared_ptr<const phys::TriMeshSource> base = cache[key].lock();
+    if (!base) { base = std::make_shared<phys::TriMeshSource>(std::move(tris)); cache[key] = base; }
+    const Vec3 s = mc->transform ? mc->transform->LossyScale() : Vec3::One;
+    return std::make_shared<phys::ScaledTriangleSource>(base, phys::V3{s.x, s.y, s.z});
 }
 
 // The pieces a collider is made of, in world space. Returns false when the collider has no shape the engine can use.
-bool PiecesOfCollider(Collider3D* c, bool dynamicBody, std::vector<EnginePiece>& out) {
+bool PiecesOfCollider(Collider3D* c, bool dynamicBody, std::vector<EnginePiece>& out, MeshCache& meshCache) {
     using S = Collider3D::Shape;
     const Quat rot = c->transform ? c->transform->Rotation() : Quat::Identity;
     switch (c->shape()) {
@@ -136,12 +143,13 @@ bool PiecesOfCollider(Collider3D* c, bool dynamicBody, std::vector<EnginePiece>&
                     const Vec3 w = M.MultiplyPoint(v) - ctr;
                     pts.push_back(P3(rot.Inverse() * w));
                 }
-                out.push_back({phys::Shape::Hull(pts), phys::Xf{P3(ctr), PQ(rot)}});
+                out.push_back({phys::Shape::Hull(phys::HullData::FromTriangles(pts, hull.triangles)), phys::Xf{P3(ctr), PQ(rot)}});
                 return true;
             }
-            auto src = MeshSourceOf(mc);
+            auto src = MeshSourceOf(mc, meshCache);
             if (!src) return false;
-            out.push_back({phys::Shape::Mesh(src), phys::Xf{}});
+            const Vec3 at = c->transform ? c->transform->Position() : Vec3::Zero;
+            out.push_back({phys::Shape::Mesh(src), phys::Xf{P3(at), PQ(rot)}});
             return true;
         }
     }
@@ -163,12 +171,13 @@ bool PieceOfTerrain(Terrain* t, EnginePiece& out) {
     return true;
 }
 
-std::uint64_t Mix(std::uint64_t h, const void* p, std::size_t n) {
-    const unsigned char* c = static_cast<const unsigned char*>(p);
-    for (std::size_t i = 0; i < n; ++i) { h ^= c[i]; h *= 1099511628211ULL; }
-    return h;
-}
+std::uint64_t Mix(std::uint64_t h, const void* p, std::size_t n) { return phys::HashBytes(h, p, n); }
 template <class T> std::uint64_t MixV(std::uint64_t h, const T& v) { return Mix(h, &v, sizeof(T)); }
+// A scale read back from a turning body's matrix wobbles in its last bits: compare it to 1 part in 100,000.
+Vec3 Quantized(const Vec3& v) {
+    auto q = [](float x) { return std::round(x * 100000.0f); };
+    return {q(v.x), q(v.y), q(v.z)};
+}
 // Big height data: every byte up to 1 MB, beyond that 65,536 evenly spread samples (a 2049 x 2049 terrain would
 // otherwise cost 16 MB of hashing every step; an edit that touches none of the samples is then picked up late).
 std::uint64_t MixBig(std::uint64_t h, const void* p, std::size_t n) {
@@ -183,11 +192,11 @@ std::uint64_t MixBig(std::uint64_t h, const void* p, std::size_t n) {
 // What a collider looks like (shape kind and sizes, scale, offset, trigger, layer, material), without building it.
 std::uint64_t ColliderSig(Collider3D* c, const Rigidbody3D* body) {
     using S = Collider3D::Shape;
-    std::uint64_t h = 1469598103934665603ULL;
+    std::uint64_t h = phys::kHashSeed;
     h = MixV(h, (int)c->shape());
     h = MixV(h, c->offset); h = MixV(h, c->isTrigger); h = MixV(h, c->layer);
     h = MixV(h, c->friction); h = MixV(h, c->bounciness);
-    if (c->transform) h = MixV(h, c->transform->LossyScale());
+    if (c->transform) h = MixV(h, Quantized(c->transform->LossyScale()));
     if (body) { h = MixV(h, body->friction); h = MixV(h, body->bounciness); h = MixV(h, body->rollingResistance); h = MixV(h, (int)body->bodyType); }
     switch (c->shape()) {
         case S::Box: h = MixV(h, static_cast<BoxCollider3D*>(c)->size); break;
@@ -218,9 +227,7 @@ std::uint64_t ColliderSig(Collider3D* c, const Rigidbody3D* body) {
         }
         case S::Mesh: {
             auto* mc = static_cast<MeshCollider3D*>(c);
-            h = MixV(h, mc->BuildCount());
-            const Mat4 M = mc->WorldMatrix();
-            h = Mix(h, &M, sizeof(Mat4));
+            h = MixV(h, mc->BuildCount());   // (its pose is not part of it: a moved static mesh is moved, not rebuilt)
             break;
         }
         case S::Plane: break;
@@ -229,9 +236,9 @@ std::uint64_t ColliderSig(Collider3D* c, const Rigidbody3D* body) {
 }
 
 std::uint64_t TerrainSig(Terrain* t) {
-    std::uint64_t h = 1469598103934665603ULL;
+    std::uint64_t h = phys::kHashSeed;
     h = MixV(h, t->resolution); h = MixV(h, t->size);
-    if (t->transform) h = MixV(h, t->transform->LossyScale());
+    if (t->transform) h = MixV(h, Quantized(t->transform->LossyScale()));
     if (!t->heights.empty()) h = MixBig(h, t->heights.data(), t->heights.size() * sizeof(float));
     return h;
 }
@@ -269,6 +276,7 @@ struct Physics3D::EngineBridge {
     std::unordered_map<const Terrain*, ColRec> terrains;
     std::unordered_map<const Joint3D*, JointRec> joints;
     std::vector<Collider3D*> back;                        // ColliderId -> its component (nullptr: a terrain)
+    MeshCache meshCache;                                  // one triangle tree per mesh asset
     std::vector<std::uint64_t> touching;                  // pair keys touching after the last step (sorted)
     std::unordered_map<std::uint64_t, std::pair<Collider3D*, Collider3D*>> touchingPair;
 
@@ -398,16 +406,18 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         // a collider under a body is placed relative to it; a static one keeps its own world pose
         Vec3 relPos{0, 0, 0};
         Quat relRot = Quat::Identity;
-        if (onBody) {
+        if (onBody && c->transform != rb->transform) {   // (a collider on the body's own object sits at the body origin)
             const Quat br = rb->transform->Rotation();
             relPos = br.Inverse() * (c->transform->Position() - rb->transform->Position());
             relRot = br.Inverse() * c->transform->Rotation();
         }
         const bool fresh = it == E.colliders.end();
         bool rebuild = fresh || it->second.sig != sig || it->second.body != (onBody ? rb : nullptr);
-        if (!rebuild && onBody && (!(it->second.pos == relPos) || !(it->second.rot.x == relRot.x && it->second.rot.y == relRot.y &&
-                                                                   it->second.rot.z == relRot.z && it->second.rot.w == relRot.w)))
-            rebuild = true;   // moved inside its body (a child collider)
+        if (!rebuild && onBody) {   // moved inside its body (a child collider); small rounding as the body turns is not a move
+            const Quat& o = it->second.rot;
+            const float dq = std::fabs(o.x - relRot.x) + std::fabs(o.y - relRot.y) + std::fabs(o.z - relRot.z) + std::fabs(o.w - relRot.w);
+            if ((it->second.pos - relPos).SqrMagnitude() > 1e-8f || dq > 1e-5f) rebuild = true;
+        }
         if (!rebuild) {
             it->second.seen = true;
             if (!onBody && it->second.ownStatic) {   // a static collider moved by game code: move its body
@@ -430,7 +440,7 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         }
         if (!fresh) { E.Unmap(it->second); E.colliders.erase(it); }
         pieces.clear();
-        if (!PiecesOfCollider(c, onBody && rb->bodyType == Rigidbody3D::BodyType::Dynamic, pieces)) continue;
+        if (!PiecesOfCollider(c, onBody && rb->bodyType == Rigidbody3D::BodyType::Dynamic, pieces, E.meshCache)) continue;
         EngineBridge::ColRec r;
         r.sig = sig;
         r.body = onBody ? rb : nullptr;
@@ -519,7 +529,7 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         auto partnerIt = rbB ? E.bodies.find(rbB) : E.bodies.end();
         const phys::BodyId other = partnerIt != E.bodies.end() ? partnerIt->second.id : phys::kInvalidId;
         const Joint3D::Mode mode = (Joint3D::Mode)j->mode;
-        std::uint64_t sig = 1469598103934665603ULL;
+        std::uint64_t sig = phys::kHashSeed;
         sig = MixV(sig, j->mode); sig = MixV(sig, partner); sig = MixV(sig, other); sig = MixV(sig, j->axis);
         sig = MixV(sig, j->distance); sig = MixV(sig, j->autoConfigure); sig = MixV(sig, j->anchor);
         auto it = E.joints.find(j);
@@ -797,17 +807,7 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         if (gone.Gone(a) || gone.Gone(b)) continue;
         if (E.colliders.find(a) == E.colliders.end() || E.colliders.find(b) == E.colliders.end()) continue;   // removed
         if (!Alive(a) || !Alive(b)) continue;
-        if (a->isTrigger || b->isTrigger) {
-            const Vec3 mid = (a->WorldCenter() + b->WorldCenter()) * 0.5f;
-            const Vec3 n = (b->WorldCenter() - a->WorldCenter()).Normalized();
-            DispatchTrigger(a, &Component::OnTriggerExit3D, b, mid, n, gone);
-            if (!gone.Gone(a) && !gone.Gone(b)) DispatchTrigger(b, &Component::OnTriggerExit3D, a, mid, -n, gone);
-        } else {
-            Collision3D forA = MakeCollision(b, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero, a);
-            Collision3D forB = MakeCollision(a, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero, b);
-            DispatchCollision(a->gameObject, &Component::OnCollisionExit3D, forA, gone);
-            if (!gone.Gone(a) && !gone.Gone(b)) DispatchCollision(b->gameObject, &Component::OnCollisionExit3D, forB, gone);
-        }
+        DispatchExit(a, b, gone);
     }
     E.touching = now;
     // forget pairs that are no longer touching (keys of pairs still touching are kept)

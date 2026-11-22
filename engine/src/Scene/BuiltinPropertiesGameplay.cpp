@@ -1086,7 +1086,7 @@ void RegisterJoint2D() {
 // Joint3D
 void RegisterJoint3D() {
     PropertyBuilder<Joint3D> b("Joint3D", "joint3d", "Physics 3D");
-    b.AddEnum("mode", &Joint3D::mode, {"Distance", "Spring", "Pin", "Hinge", "Slider", "Ball", "ConeTwist"}).Tooltip("Movement style")
+    b.AddEnum("mode", &Joint3D::mode, {"Distance", "Spring", "Pin", "Hinge", "Slider", "Ball", "ConeTwist"}).Tooltip("Movement style (Ball and ConeTwist turn, limit and drive only in the Engine physics quality; elsewhere they are a distance rod)")
      .AddString("connectedBody", &Joint3D::connectedBody).Tooltip("Name of the other body (empty = world anchor)")
      .AddVec3("anchor", &Joint3D::anchor).Range(-kBig, kBig, 0.1).Tooltip("World anchor point when there's no connected body")
      .AddFloat("distance", &Joint3D::distance).Range(0, kBig, 0.05).Tooltip("Rest length (Distance / Spring)")

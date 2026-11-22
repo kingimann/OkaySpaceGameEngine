@@ -652,6 +652,25 @@ Collision3D MakeCollision(Collider3D* other, const Vec3& n, float pen, const Vec
 }
 
 // Does trigger collider `trig` react to `other`? (its tag / layer filter)
+// Two colliders stopped touching: OnTriggerExit3D (at the midpoint of their centres) or OnCollisionExit3D, to both.
+// (Shared by every physics quality.)
+void DispatchExit(Collider3D* a, Collider3D* b, const Scene::RemovalWatch& gone) {
+    if (a->isTrigger || b->isTrigger) {
+        // No overlap any more: report the midpoint between the two centres.
+        Vec3 mid = (a->WorldCenter() + b->WorldCenter()) * 0.5f;
+        Vec3 n = (b->WorldCenter() - a->WorldCenter()).Normalized();
+        DispatchTrigger(a, &Component::OnTriggerExit3D, b, mid, n, gone);
+        if (!gone.Gone(a) && !gone.Gone(b))
+            DispatchTrigger(b, &Component::OnTriggerExit3D, a, mid, -n, gone);
+    } else {
+        Collision3D forA = MakeCollision(b, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero, a);
+        Collision3D forB = MakeCollision(a, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero, b);
+        DispatchCollision(a->gameObject, &Component::OnCollisionExit3D, forA, gone);
+        if (!gone.Gone(a) && !gone.Gone(b))
+            DispatchCollision(b->gameObject, &Component::OnCollisionExit3D, forB, gone);
+    }
+}
+
 bool TriggerAccepts(const Collider3D* trig, const Collider3D* other) {
     if (!trig->isTrigger) return true;
     if (!trig->triggerTag.empty() && (!other->gameObject || other->gameObject->tag != trig->triggerTag))
@@ -1247,20 +1266,7 @@ void Physics3D::StepSlice(Scene& scene, float dt) {
         }
         if (!aliveSet.count(a) || !aliveSet.count(b)) continue;
         if (gone.Gone(a) || gone.Gone(b)) continue;
-        if (a->isTrigger || b->isTrigger) {
-            // No overlap any more: report the midpoint between the two centres.
-            Vec3 mid = (a->WorldCenter() + b->WorldCenter()) * 0.5f;
-            Vec3 n = (b->WorldCenter() - a->WorldCenter()).Normalized();
-            DispatchTrigger(a, &Component::OnTriggerExit3D, b, mid, n, gone);
-            if (!gone.Gone(a) && !gone.Gone(b))
-                DispatchTrigger(b, &Component::OnTriggerExit3D, a, mid, -n, gone);
-        } else {
-            Collision3D forA = MakeCollision(b, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero, a);
-            Collision3D forB = MakeCollision(a, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero, b);
-            DispatchCollision(a->gameObject, &Component::OnCollisionExit3D, forA, gone);
-            if (!gone.Gone(a) && !gone.Gone(b))
-                DispatchCollision(b->gameObject, &Component::OnCollisionExit3D, forB, gone);
-        }
+        DispatchExit(a, b, gone);
     }
 
     // Drop pairs whose collider a callback removed, so no freed pointer is kept.
@@ -1631,6 +1637,11 @@ void Physics3D::StepSlice(Scene& scene, float dt) {
         float imSum = imA + imB;
         if (imSum <= 0.0f) continue;
         Joint3D::Mode m = (Joint3D::Mode)j->mode;
+        if ((m == Joint3D::Mode::Ball || m == Joint3D::Mode::ConeTwist) && !j->m_warnedQuality) {
+            j->m_warnedQuality = true;   // (once per joint: these modes are only a distance rod outside the Engine quality)
+            Log::Warning("Joint3D on '", j->gameObject->name, "': Ball and Cone Twist turn, limit and drive only in the Engine physics "
+                         "quality (Project Settings > Physics > Physics quality); in Classic and Improved they keep the distance only");
+        }
 
         if (m == Joint3D::Mode::Pin) {
             Vec3 target = pb + j->pinOffset;

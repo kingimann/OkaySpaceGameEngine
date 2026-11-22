@@ -471,6 +471,18 @@ struct EnumDecl {
     }
 };
 
+/// A property with code (`T Name => expr;`, `T Name { get { ... } set { ... } }`):
+/// its accessors are the methods get_Name() and set_Name(T value), and the checker
+/// turns `Name`, `obj.Name` and `Name = v` into calls of them. An auto-property
+/// (`{ get; set; }`) is simply a field and has no PropDecl.
+struct PropDecl {
+    std::string name;
+    TypeRef type;
+    SrcLoc loc;
+    bool hasGet = false, hasSet = false;
+    bool isPublic = false, isProtected = false, isStatic = false;
+};
+
 struct ClassDecl {
     std::string name;
     std::vector<std::string> bases;   ///< after ':': Behaviour, or a class and / or interfaces
@@ -480,6 +492,7 @@ struct ClassDecl {
     SrcLoc loc;
     std::vector<FieldDecl> fields;
     std::vector<MethodDecl> methods;
+    std::vector<PropDecl> props;     ///< properties with code (their accessors are in methods)
     // checked
     int baseClass = -1;              ///< the class it extends
     std::vector<int> interfaces;     ///< the interfaces it names
@@ -502,6 +515,9 @@ void ForgetSceneStatics(const Scene* scene);
 
 /// A checked, runnable script.
 struct Program {
+    /// C# mode (language "csharp"): `using` lines and namespaces are allowed, MonoBehaviour
+    /// means Behaviour and the C# modifiers private / readonly / sealed / internal are accepted.
+    bool csharp = false;
     std::vector<ClassDecl> classes;
     std::vector<EnumDecl> enums;   ///< every enum in the file (top level or inside a class)
     std::vector<Type> arrays;      ///< element type of each array type (Type{Array, i})
@@ -531,7 +547,7 @@ struct Program {
 };
 
 /// Parse + check `src`. The program is runnable only if it has no errors.
-std::shared_ptr<Program> Compile(const std::string& src);
+std::shared_ptr<Program> Compile(const std::string& src, bool csharp = false);
 /// Parser entry (used by Compile).
 void Parse(const std::vector<Token>& toks, Program& out);
 /// Checker entry (used by Compile).
@@ -558,7 +574,7 @@ struct ScriptView {
 };
 /// Remember the Behaviour class of `source` (by its name) for other scripts. Sources
 /// that don't parse are ignored. Every typed script registers itself when it loads.
-void RegisterScriptSource(const std::string& source);
+void RegisterScriptSource(const std::string& source, bool csharp = false);
 /// The view of the script class `name`, or null if no script with it has been seen.
 std::shared_ptr<const ScriptView> FindScriptView(const std::string& name);
 /// A process-wide number for a script class name (stable while the program runs).

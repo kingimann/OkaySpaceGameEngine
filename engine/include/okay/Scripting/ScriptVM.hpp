@@ -107,16 +107,18 @@ public:
     virtual std::vector<std::string> GlobalNames() const { return {}; }
 };
 
-/// Names of the script backends in this build: "okayscript" (our own VM).
+/// Names of the script backends in this build: "okayscript" (our own VM) and
+/// "csharp" (C#, run by our own typed language; "cs" is accepted as the same id).
 std::vector<std::string> AvailableScriptLanguages();
 
 /// Create a VM for the given language, or nullptr if unsupported in this build.
 std::unique_ptr<IScriptVM> CreateScriptVM(const std::string& language);
 
-/// Old scenes and projects may still name the removed third-party backends
-/// ("lua", "csharp"/"cs"). Returns a clear "no longer supported" message for those
-/// language names, or an empty string for any other name. Loading such a script
-/// fails with this message instead of failing silently.
+/// Old scenes and projects may still name the removed third-party Lua backend
+/// ("lua"). Returns a clear "no longer supported" message for that language name,
+/// or an empty string for any other name. Loading such a script fails with this
+/// message instead of failing silently. ("csharp"/"cs" were removed with Mono and
+/// now run on our own typed language, so they are no longer in this list.)
 std::string RemovedScriptLanguageMessage(const std::string& language);
 
 /// The language id for a script file's extension (".cs" -> "csharp", ".okay" ->

@@ -5,6 +5,8 @@
 #include "okay/Testing/SceneValidator.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -208,6 +210,64 @@ static void OldScenes() {
     for (const auto& i : rep.issues) std::printf("    validator: %s: %s\n", i.code.c_str(), i.message.c_str());
 }
 
+#ifndef OKAY_SOURCE_DIR
+#define OKAY_SOURCE_DIR "."
+#endif
+static std::string ReadText(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    std::ostringstream ss; ss << f.rdbuf();
+    return ss.str();
+}
+
+// examples/csharp: the shipped C# example scene loads, every script compiles without
+// errors, and playing it runs them (the spinner turns, the scoreboard reads the
+// mover's Hops property through GetComponent<PlayerMover>()).
+static void ExampleScene() {
+    const std::string dir = std::string(OKAY_SOURCE_DIR) + "/examples/csharp/";
+    for (const char* f : {"PlayerMover.cs", "Spinner.cs", "Scoreboard.cs"}) {
+        const std::string text = ReadText(dir + f);
+        CHECK(!text.empty());
+        auto d = Diags(text);
+        CHECK(Errors(d) == 0);
+        int warnings = (int)d.size() - Errors(d);
+        CHECK(warnings == 0);
+        if (!d.empty()) { std::printf("  %s:\n", f); Dump(d); }
+    }
+    Scene scene("Example");
+    std::string err;
+    const std::string text = ReadText(dir + "csharp_playground.okayscene");
+    CHECK(!text.empty());
+    CHECK(SceneSerializer::Deserialize(scene, text, &err));
+    if (!err.empty()) std::printf("    scene: %s\n", err.c_str());
+    GameObject* spinner = scene.Find("Spinner");
+    GameObject* player = scene.Find("Player");
+    CHECK(spinner != nullptr);
+    CHECK(player != nullptr);
+    if (!spinner || !player) return;
+    CHECK(player->GetComponents<ScriptComponent>().size() == 2);
+    for (auto* sc : player->GetComponents<ScriptComponent>()) CHECK(sc->Language() == "csharp");
+    std::vector<std::string> logs;
+    g_errs.clear();
+    Log::sink = [&](Log::Level l, const std::string& m) {
+        if (l >= Log::Level::Error) g_errs.push_back(m); else logs.push_back(m);
+    };
+    scene.Start();
+    for (int i = 0; i < 200; ++i) scene.Update(kDt);   // a little over three seconds
+    CHECK(g_errs.empty());
+    for (auto& e : g_errs) std::printf("    error: %s\n", e.c_str());
+    bool hello = false, score = false;
+    for (auto& l : logs) {
+        if (l.find("C# playground") != std::string::npos) hello = true;
+        if (l.find("Score 0, best 0: no hops yet") != std::string::npos) score = true;
+    }
+    CHECK(hello);
+    CHECK(score);
+    auto* spin = spinner->GetComponent<ScriptComponent>();
+    CHECK(spin && spin->VM());
+    if (spin && spin->VM()) CHECK(spin->VM()->GetGlobal("turned").AsFloat() > 200.0f);   // 90 degrees a second, ~3.3 s
+    Log::sink = [&](Log::Level l, const std::string& m) { if (l >= Log::Level::Error) g_errs.push_back(m); };
+}
+
 int main() {
     RUN_SUITE("csharp_scripts");
     Log::sink = [&](Log::Level l, const std::string& m) { if (l >= Log::Level::Error) g_errs.push_back(m); };
@@ -216,5 +276,6 @@ int main() {
     KeyCodes();
     Properties();
     OldScenes();
+    ExampleScene();
     TEST_MAIN_RESULT();
 }

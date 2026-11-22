@@ -25,6 +25,7 @@ struct NextScriptVM::Impl {
 void NextScriptVM::ForgetSceneStatics(const Scene* scene) { script::ForgetSceneStatics(scene); }
 
 NextScriptVM::NextScriptVM() : m_impl(std::make_unique<Impl>()) {}
+NextScriptVM::NextScriptVM(const std::string& language) : m_impl(std::make_unique<Impl>()), m_csharp(IsCSharpId(language)) {}
 NextScriptVM::~NextScriptVM() = default;
 
 std::vector<std::string> NextScriptVM::BuiltinNames() const {
@@ -38,6 +39,7 @@ std::vector<std::string> NextScriptVM::BuiltinNames() const {
     }
     for (const auto& l : LifecycleMethods()) names.insert(l.name);
     for (const char* n : {"gameObject", "transform", "enabled", "GetComponent", "Destroy", "Behaviour"}) names.insert(n);
+    if (m_csharp) names.insert("MonoBehaviour");
     return {names.begin(), names.end()};
 }
 
@@ -65,10 +67,10 @@ bool OnlyUnknownTypes(const Program& p) {
 } // namespace
 
 bool NextScriptVM::Load(const std::string& source, std::string* error) {
-    RegisterScriptSource(source);   // so other scripts can use this one
+    RegisterScriptSource(source, m_csharp);   // so other scripts can use this one
     m_impl->pending = false;
     m_impl->pendingFields.clear();
-    auto prog = Compile(source);
+    auto prog = Compile(source, m_csharp);
     if (!prog->ok() && !m_impl->finalCompile && OnlyUnknownTypes(*prog)) {   // check again once the scene's other scripts are loaded
         m_impl->source = source;
         m_impl->prog.reset();
@@ -96,14 +98,14 @@ bool NextScriptVM::Load(const std::string& source, std::string* error) {
 }
 
 bool NextScriptVM::Validate(const std::string& source, std::string* error) {
-    auto prog = Compile(source);
+    auto prog = Compile(source, m_csharp);
     if (prog->ok()) return true;
     if (error) *error = FirstError(*prog);
     return false;
 }
 
 std::vector<ScriptDiagnostic> NextScriptVM::ValidateAll(const std::string& source) {
-    return Compile(source)->diags;
+    return Compile(source, m_csharp)->diags;
 }
 
 // A script that waited for others: compile it now. False (and logged) if it still fails.
@@ -352,7 +354,7 @@ Instance* FindScriptInstance(GameObject* go, const std::string& name) {
     if (!go) return nullptr;
     for (const auto& c : go->Components()) {
         auto* sc = dynamic_cast<ScriptComponent*>(c.get());
-        if (!sc || sc->Language() != NextScriptVM::kLanguage) continue;
+        if (!sc || !NextScriptVM::IsTypedId(sc->Language())) continue;
         auto* vm = dynamic_cast<NextScriptVM*>(sc->VM());
         if (!vm || !vm->FinishPending() || !vm->m_impl->inst) continue;
         Instance* inst = vm->m_impl->inst.get();

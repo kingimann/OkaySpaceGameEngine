@@ -35,24 +35,33 @@ public:
 
     void File() {
         int nsDepth = 0;
+        bool sawDecl = false;   // a class or enum has been read (C# using directives come before them)
         while (!Is(T::End)) {
             std::size_t start = pos_;
             try {
                 if (IsWord("using")) {
-                    Error(Peek().loc, "`using` isn't needed in OkayScript: every engine type is already available. Delete this line");
-                    while (!Is(T::Semicolon) && !Is(T::End)) ++pos_;
+                    // C# (ECMA-334 using directives): `using A.B;`, `using static A.B;`, `using X = A.B;`
+                    // at the top of the file name namespaces; every engine type is already
+                    // available, so they are read and skipped.
+                    if (!prog_.csharp)
+                        Error(Peek().loc, "`using` isn't needed in OkayScript: every engine type is already available. Delete this line");
+                    else if (sawDecl)
+                        Error(Peek().loc, "`using` lines go at the top of the file, before the first class");
+                    while (!Is(T::Semicolon) && !Is(T::End) && !Is(T::LBrace)) ++pos_;
                     Match(T::Semicolon);
                     continue;
                 }
                 if (IsWord("namespace")) {
-                    Error(Peek().loc, "`namespace` isn't needed in OkayScript. Delete it (and its braces), keep what's inside");
+                    if (!prog_.csharp)
+                        Error(Peek().loc, "`namespace` isn't needed in OkayScript. Delete it (and its braces), keep what's inside");
                     ++pos_;
                     while (Is(T::Ident) || Is(T::Dot)) ++pos_;
                     if (Match(T::LBrace)) ++nsDepth; else Match(T::Semicolon);
                     continue;
                 }
                 if (Is(T::RBrace) && nsDepth > 0) { ++pos_; --nsDepth; continue; }
-                if (IsEnumAhead()) { Enum(); continue; }
+                if (IsEnumAhead()) { sawDecl = true; Enum(); continue; }
+                sawDecl = true;
                 ClassDecl c = Class();
                 prog_.classes.push_back(std::move(c));
             } catch (const ParseError& e) {
@@ -183,6 +192,7 @@ private:
         for (;;) {
             if (Match(T::KwPublic) || Match(T::KwPrivate)) continue;
             if (IsWord("abstract")) { c.isAbstract = true; ++pos_; continue; }
+            if (prog_.csharp && (IsWord("sealed") || IsWord("internal"))) { ++pos_; continue; }   // no effect on a script
             break;
         }
         RejectNotYet();
@@ -202,6 +212,7 @@ private:
             do {
                 c.baseLocs.push_back(Peek().loc);
                 c.bases.push_back(Expect(T::Ident, "what the class extends (Behaviour, a class or an interface)").text);
+                if (prog_.csharp && c.bases.back() == "MonoBehaviour") c.bases.back() = "Behaviour";   // Unity's name for it
             } while (Match(T::Comma));
         }
         Expect(T::LBrace, "'{'");
@@ -304,9 +315,12 @@ private:
             if (IsWord("override")) { isOverride = true; modLoc = Peek().loc; ++pos_; continue; }
             if (IsWord("abstract")) { isAbstract = true; modLoc = Peek().loc; ++pos_; continue; }
             if (Is(T::KwPrivate)) {
-                Error(Peek().loc, "`private` is already the default (only `public` fields show in the Inspector). Delete it");
+                if (!prog_.csharp)   // in C# writing private is normal
+                    Error(Peek().loc, "`private` is already the default (only `public` fields show in the Inspector). Delete it");
                 ++pos_; continue;
             }
+            if (prog_.csharp && IsWord("internal")) { isPublic = true; ++pos_; continue; }   // one script: internal is the same as public
+            if (prog_.csharp && (IsWord("readonly") || IsWord("sealed")) && IsTypeStart(1)) { ++pos_; continue; }   // accepted, not enforced
             if (Match(T::KwConst)) { isConst = true; continue; }
             if (IsWord("static")) { isStatic = true; staticLoc = Peek().loc; ++pos_; continue; }
             if (IsWord("event") && IsTypeStart(1)) { isEvent = true; eventLoc = Peek().loc; ++pos_; continue; }
@@ -351,13 +365,24 @@ private:
                 c.methods.push_back(std::move(m));
                 return;
             }
+            if (Is(T::Arrow)) {   // void Jump() => rb.AddForce(...);   int Twice(int x) => x * 2;
+                m.body = ArrowBody(type.name == "void" || isCtor);
+                c.methods.push_back(std::move(m));
+                return;
+            }
             if (Is(T::Assign) || IsWord("where") || Is(T::Semicolon)) throw ParseError{Peek().loc, "Expected the method body { ... }"};
             m.body = Block();
             c.methods.push_back(std::move(m));
             return;
         }
+        if (Is(T::LBrace) || Is(T::Arrow)) {
+            if (isVirtual || isOverride || isAbstract) throw ParseError{modLoc, "Properties can't be virtual, override or abstract yet: use methods"};
+            if (isConst || isEvent) throw ParseError{nameLoc, "A property can't be const or an event"};
+            if (type.name == "void") throw ParseError{type.loc, "A property can't be void"};
+            Property(c, std::move(attrs), type, name, nameLoc, isPublic, isProtected, isStatic);
+            return;
+        }
         if (isVirtual || isOverride || isAbstract) throw ParseError{modLoc, "Only methods can be virtual, override or abstract"};
-        if (Is(T::LBrace)) throw ParseError{Peek().loc, "Properties ({ get; set; }) aren't supported yet: use a field"};
         if (type.name == "void") throw ParseError{type.loc, "A field can't be void"};
         for (;;) {
             FieldDecl f;
@@ -373,6 +398,86 @@ private:
             name = Expect(T::Ident, "a name").text;
         }
         Expect(T::Semicolon, "';'");
+    }
+
+    // `=> expr;` as a body: { return expr; }, or { expr; } when nothing is returned.
+    std::unique_ptr<Stmt> ArrowBody(bool isVoid) {
+        const SrcLoc at = Peek().loc;
+        Expect(T::Arrow, "'=>'");
+        auto st = std::make_unique<Stmt>();
+        st->loc = Peek().loc;
+        st->kind = isVoid ? SK::Expr : SK::Return;
+        st->expr = Expression();
+        Expect(T::Semicolon, "';'");
+        auto b = std::make_unique<Stmt>();
+        b->kind = SK::Block;
+        b->loc = at;
+        b->body.push_back(std::move(st));
+        return b;
+    }
+
+    // Properties (ECMA-334 property declarations), after the type and name:
+    //   T Name => expr;                          a get-only property with code
+    //   T Name { get { ... } set { ... } }       accessors with code (=> expr; works for either)
+    //   T Name { get; set; } [= value;]          an auto-property: simply a field
+    // `private set;` / `init;` are accepted (an auto-property's setter is not restricted).
+    void Property(ClassDecl& c, std::vector<Attribute> attrs, const TypeRef& type, const std::string& name, SrcLoc nameLoc,
+                  bool isPublic, bool isProtected, bool isStatic) {
+        PropDecl pd;
+        pd.name = name; pd.type = type; pd.loc = nameLoc;
+        pd.isPublic = isPublic; pd.isProtected = isProtected; pd.isStatic = isStatic;
+        auto accessor = [&](bool get, std::unique_ptr<Stmt> body) {
+            MethodDecl m;
+            m.isPublic = isPublic; m.isProtected = isProtected; m.isStatic = isStatic;
+            m.loc = nameLoc;
+            m.called = true;   // used through the property; never "never called"
+            if (get) { m.ret = type; m.name = "get_" + name; }
+            else {
+                m.ret.name = "void"; m.ret.loc = nameLoc; m.name = "set_" + name;
+                Param p; p.type = type; p.name = "value"; p.loc = nameLoc;
+                m.params.push_back(std::move(p));
+            }
+            m.body = std::move(body);
+            c.methods.push_back(std::move(m));
+        };
+        if (Is(T::Arrow)) {
+            pd.hasGet = true;
+            accessor(true, ArrowBody(false));
+            c.props.push_back(std::move(pd));
+            return;
+        }
+        Expect(T::LBrace, "'{'");
+        int autoCount = 0, bodyCount = 0;
+        while (!Is(T::RBrace) && !Is(T::End)) {
+            while (Is(T::KwPublic) || Is(T::KwPrivate) || IsWord("protected") || IsWord("internal")) ++pos_;
+            const SrcLoc at = Peek().loc;
+            bool get;
+            if (IsWord("get")) get = true;
+            else if (IsWord("set") || IsWord("init")) get = false;
+            else throw ParseError{at, "Expected get or set in the property '" + name + "'"};
+            ++pos_;
+            if ((get && pd.hasGet) || (!get && pd.hasSet)) throw ParseError{at, std::string("The property '") + name + "' already has a " + (get ? "get" : "set")};
+            (get ? pd.hasGet : pd.hasSet) = true;
+            if (Match(T::Semicolon)) { ++autoCount; continue; }
+            ++bodyCount;
+            accessor(get, Is(T::Arrow) ? ArrowBody(!get) : Block());
+        }
+        Expect(T::RBrace, "'}' to close the property");
+        if (!pd.hasGet) throw ParseError{nameLoc, "The property '" + name + "' needs a get"};
+        if (autoCount > 0 && bodyCount > 0)
+            throw ParseError{nameLoc, "The property '" + name + "' mixes get; with code: give both get and set code, or neither"};
+        if (bodyCount == 0) {   // auto-property: a field
+            FieldDecl f;
+            f.attrs = std::move(attrs);
+            f.isPublic = isPublic; f.isProtected = isProtected; f.isStatic = isStatic;
+            f.type = type; f.name = name; f.loc = nameLoc;
+            if (Match(T::Assign)) { f.init = Initializer(); Expect(T::Semicolon, "';'"); }
+            c.fields.push_back(std::move(f));
+            return;
+        }
+        if (!attrs.empty()) Error(attrs[0].loc, "Attributes only work on fields");
+        if (Is(T::Assign)) throw ParseError{Peek().loc, "Only an auto-property ({ get; set; }) can have a starting value"};
+        c.props.push_back(std::move(pd));
     }
 
     // ---- Statements ----

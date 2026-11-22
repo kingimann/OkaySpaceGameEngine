@@ -18,8 +18,9 @@ std::vector<std::string>& ClassNames() {
 }
 } // namespace
 
-void RegisterScriptSource(const std::string& source) {
+void RegisterScriptSource(const std::string& source, bool csharp) {
     Program p;
+    p.csharp = csharp;
     std::vector<ScriptDiagnostic> ignored;
     Parse(Lex(source, ignored), p);
     for (const ClassDecl& c : p.classes) {

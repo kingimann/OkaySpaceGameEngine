@@ -2574,6 +2574,7 @@ add_test(NAME okayscript_next_csharp COMMAND test_okayscript_next_csharp)
 
 add_executable(test_csharp_scripts test_csharp_scripts.cpp)
 target_link_libraries(test_csharp_scripts PRIVATE okay::engine)
+target_compile_definitions(test_csharp_scripts PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME csharp_scripts COMMAND test_csharp_scripts)
 
 add_executable(test_vs_acceptance test_vs_acceptance.cpp)

@@ -1449,6 +1449,23 @@ EngineApi Build() {
             "True once a touch screen has been used or reported."));
         api.types.push_back(std::move(in));
     }
+    // ---- KeyCode ----
+    // C# scripts name keys as KeyCode.W, KeyCode.Space (the names a Unity user types);
+    // each is the key's text name, so Input.GetKey(KeyCode.W) is Input.GetKey("w").
+    {
+        ApiType k; k.name = "KeyCode"; k.isStatic = true;
+        k.doc = "Key names for Input.GetKey, GetKeyDown and GetKeyUp: KeyCode.W is the same as \"w\".";
+        auto add = [&](const std::string& n, const std::string& key) {
+            k.staticProps.push_back(ro(n, tString, [key](const Value&, CallContext&) { return Value{key}; },
+                                       "The key \"" + key + "\"."));
+        };
+        for (char c = 'A'; c <= 'Z'; ++c) add(std::string(1, c), std::string(1, (char)(c - 'A' + 'a')));
+        for (char c = '0'; c <= '9'; ++c) add(std::string("Alpha") + c, std::string(1, c));
+        add("Space", "space"); add("Return", "enter"); add("Escape", "escape"); add("Tab", "tab"); add("Backspace", "backspace");
+        add("LeftShift", "shift"); add("RightShift", "shift"); add("LeftControl", "ctrl"); add("RightControl", "ctrl");
+        add("UpArrow", "up"); add("DownArrow", "down"); add("LeftArrow", "left"); add("RightArrow", "right");
+        api.types.push_back(std::move(k));
+    }
     // ---- Time ----
     {
         ApiType t; t.name = "Time"; t.isStatic = true; t.doc = "Frame timing.";

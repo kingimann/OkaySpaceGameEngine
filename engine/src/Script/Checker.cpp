@@ -357,6 +357,102 @@ private:
             if (Cls(k).isA[c] && Cls((int)c).isInterface) if (MethodDecl* m = in((int)c)) return m;
         return nullptr;
     }
+    // A property with code named `n` in class k or a class it extends.
+    PropDecl* FindProp(int k, const std::string& n, int* owner = nullptr) {
+        for (int c = k; c >= 0; c = Cls(c).baseClass)
+            for (PropDecl& p : Cls(c).props)
+                if (p.name == n) { if (owner) *owner = c; return &p; }
+        return nullptr;
+    }
+    // `Name` / `this.Name` / `T.Name` read as a property of the current class: becomes get_Name().
+    bool PropGetOwn(Expr& e) {
+        int owner = -1;
+        PropDecl* p = FindProp(ClassId(), e.name, &owner);
+        if (!p) return false;
+        if (!CanUse(owner, p->isPublic, p->isProtected)) { Error(e.loc, NotUsable(e.name, owner)); return true; }
+        e.kind = EK::Call; e.name = "get_" + e.name; e.args.clear(); e.object.reset();
+        CheckCall(e);
+        return true;
+    }
+    static ExprPtr NewExpr(EK k, SrcLoc l) { auto x = std::make_unique<Expr>(); x->kind = k; x->loc = l; return x; }
+    // `Name = v`, `Name += v`, `Name++` (also on this.Name and obj.Name with obj a local or
+    // field of a class) on a property with code: becomes set_Name(v) / set_Name(get_Name() + v).
+    bool PropSet(Expr& e) {
+        if (!e.lhs) return false;
+        Expr& t = *e.lhs;
+        int k = -1;
+        const Expr* recvName = nullptr;   // obj in obj.Name (null: the current object or class)
+        if (t.kind == EK::Name) {
+            if (FindLocal(t.name) || FindField(ClassId(), t.name)) return false;
+            k = ClassId();
+        } else if (t.kind == EK::Member && t.object && !t.nullCond) {
+            if (t.object->kind == EK::This) k = ClassId();
+            else if (t.object->kind == EK::Name) {
+                const std::string& on = t.object->name;
+                if (LocalVar* v = FindLocal(on)) { if (v->type.kind == TK::Class) { k = v->type.id; recvName = t.object.get(); } }
+                else if (FieldDecl* f = FindField(ClassId(), on)) { if (f->resolved.kind == TK::Class) { k = f->resolved.id; recvName = t.object.get(); } }
+                else if (on == cls_->name) k = ClassId();
+            }
+        }
+        if (k < 0) return false;
+        int owner = -1;
+        PropDecl* p = FindProp(k, t.name, &owner);
+        if (!p) return false;
+        if (!CanUse(owner, p->isPublic, p->isProtected)) { Error(t.loc, NotUsable(t.name, owner)); return true; }
+        if (!p->hasSet) {
+            if (e.rhs) CheckExpr(*e.rhs);
+            Error(t.loc, "'" + p->name + "' can't be set: the property only has a get");
+            return true;
+        }
+        auto recv = [&]() -> ExprPtr {
+            if (!recvName) return nullptr;
+            auto r = NewExpr(EK::Name, recvName->loc);
+            r->name = recvName->name;
+            return r;
+        };
+        auto getter = [&]() {
+            auto g = NewExpr(EK::Call, t.loc);
+            g->name = "get_" + p->name;
+            g->object = recv();
+            return g;
+        };
+        ExprPtr value;
+        if (e.kind == EK::Assign && e.op == T::Assign) {
+            value = std::move(e.rhs);
+        } else {
+            T bop = T::End;
+            if (e.kind == EK::IncDec) bop = e.op == T::PlusPlus ? T::Plus : T::Minus;
+            else switch (e.op) {
+                case T::PlusEq: bop = T::Plus; break;
+                case T::MinusEq: bop = T::Minus; break;
+                case T::StarEq: bop = T::Star; break;
+                case T::SlashEq: bop = T::Slash; break;
+                case T::PercentEq: bop = T::Percent; break;
+                default: break;
+            }
+            if (bop == T::End) {
+                if (e.rhs) CheckExpr(*e.rhs);
+                Error(e.loc, std::string("Can't use ") + TokenName(e.op) + " on the property '" + p->name + "'");
+                return true;
+            }
+            auto bin = NewExpr(EK::Binary, e.loc);
+            bin->op = bop;
+            bin->lhs = getter();
+            if (e.kind == EK::IncDec) { bin->rhs = NewExpr(EK::IntLit, e.loc); bin->rhs->ival = 1; }
+            else bin->rhs = std::move(e.rhs);
+            value = std::move(bin);
+        }
+        ExprPtr r = recv();
+        e.kind = EK::Call;
+        e.name = "set_" + p->name;
+        e.lhs.reset(); e.rhs.reset(); e.op = T::End; e.prefix = false;
+        e.args.clear();
+        e.args.push_back(std::move(value));
+        e.object = std::move(r);
+        CheckCall(e);
+        return true;
+    }
+
     // Members of class `owner` the code being checked can use.
     bool CanUse(int owner, bool isPublic, bool isProtected) const {
         return isPublic || owner == ClassId() || (isProtected && IsA(ClassId(), owner));
@@ -799,7 +895,13 @@ private:
                 if (a.args.size() != 2) Error(a.loc, "[Range(min, max)] needs two numbers");
                 if (!f.resolved.IsNumeric() && f.resolved.kind != TK::Error) Error(a.loc, "[Range] only works on int or float fields");
             } else if (a.name == "SerializeField") {
-                if (f.isPublic) Error(a.loc, "[SerializeField] does nothing on a public field (it's already in the Inspector). Delete it");
+                if (f.isPublic) {
+                    if (prog_.csharp) Warning(a.loc, "[SerializeField] does nothing on a public field (it's already in the Inspector)");
+                    else Error(a.loc, "[SerializeField] does nothing on a public field (it's already in the Inspector). Delete it");
+                }
+            } else if (prog_.csharp) {   // [HideInInspector], [Space], [TextArea], ...: a C# file may carry them
+                Warning(a.loc, "[" + a.name + "] has no effect here. Fields use [Header], [Tooltip], [Range] and [SerializeField]");
+                continue;
             } else {
                 Error(a.loc, "[" + a.name + "] isn't an attribute OkayScript uses. Fields can have [Header], [Tooltip], [Range] and [SerializeField]");
                 continue;
@@ -807,7 +909,7 @@ private:
             if (a.name != "SerializeField" && !f.isPublic && !HasAttr(f, "SerializeField"))
                 Error(a.loc, "[" + a.name + "] only shows in the Inspector for public fields: make '" + f.name + "' public or delete it");
         }
-        if (f.isConst && f.isPublic) Error(f.loc, "A const can't be public: the Inspector can't change it. Remove `public`");
+        if (f.isConst && f.isPublic && !prog_.csharp) Error(f.loc, "A const can't be public: the Inspector can't change it. Remove `public`");
         if (f.init) {
             inFieldInit_ = true;
             scopes_.clear();
@@ -1607,6 +1709,7 @@ private:
             v->used = true; e.bind = v->captured ? Bind::Captured : Bind::Local; e.slot = v->slot; e.type = v->type; return;
         }
         if (BindOwnMember(e)) return;
+        if (PropGetOwn(e)) return;
         if (HasMethod(e.name)) {   // a method used as a function (Died += OnDied): Expect turns it into one
             e.type = Type::Of(TK::Lambda);
             pending_.push_back(&e);
@@ -1662,11 +1765,12 @@ private:
             int fi = FieldIndex(e.name);
             const FieldDecl* f = fi >= 0 ? &cls_->fields[(std::size_t)fi] : nullptr;
             if (f && !f->isStatic && !f->isConst) { Error(e.loc, "'" + e.name + "' isn't static: use it without " + cls_->name + "."); return; }
-            if (!f && !HasMethod(e.name)) { Error(e.loc, cls_->name + " has no '" + e.name + "'"); return; }
+            if (!f && !HasMethod(e.name) && !FindProp(ClassId(), e.name)) { Error(e.loc, cls_->name + " has no '" + e.name + "'"); return; }
         }
         if (r == 2 || r == 4) {   // this.x, T.x: a member, never a local of the same name
             e.object.reset();
             if (BindOwnMember(e)) return;
+            if (PropGetOwn(e)) return;
             if (HasMethod(e.name)) { Error(e.loc, "'" + e.name + "' is a method: call it with " + e.name + "()"); return; }
             Error(e.loc, cls_->name + " has no '" + e.name + "'" + Suggest(e.name, Names(cls_->fields)));
             return;
@@ -1705,6 +1809,12 @@ private:
                 if (f->isEvent && owner != ClassId() && !allowEvent) { Error(e.loc, EventOutside(*f, Cls(owner))); return; }
                 f->read = true;
                 e.bind = Bind::ObjField; e.slot = f->index; e.type = f->resolved;
+                return;
+            }
+            if (PropDecl* p = FindProp(ot.id, e.name, &owner)) {   // obj.Name: obj.get_Name()
+                if (!CanUse(owner, p->isPublic, p->isProtected)) { Error(e.loc, NotUsable(e.name, owner)); return; }
+                e.kind = EK::Call; e.name = "get_" + e.name; e.args.clear();
+                CallClassMethod(e, ot.id);
                 return;
             }
             if (FindMethod(ot.id, e.name)) { Error(e.loc, e.name + " is a method: call it with " + e.name + "(...)"); return; }
@@ -2465,6 +2575,7 @@ private:
     }
 
     void CheckAssign(Expr& e) {
+        if (PropSet(e)) return;
         // A plain `x = ...` writes x without reading it, so it doesn't count as a use.
         LocalVar* lv = nullptr; FieldDecl* fd = nullptr;
         bool wasUsed = false;
@@ -2512,6 +2623,7 @@ private:
     }
 
     void CheckIncDec(Expr& e) {
+        if (PropSet(e)) return;
         CheckExpr(*e.lhs);
         if (e.lhs->type.kind == TK::Error) return;
         if (!e.lhs->type.IsNumeric()) { Error(e.loc, std::string(TokenName(e.op)) + " needs a number, not " + TypeName(e.lhs->type)); return; }
@@ -2592,8 +2704,9 @@ static void AddBuiltins(Program& p) {
     }
 }
 
-std::shared_ptr<Program> Compile(const std::string& src) {
+std::shared_ptr<Program> Compile(const std::string& src, bool csharp) {
     auto p = std::make_shared<Program>();
+    p->csharp = csharp;
     std::vector<Token> toks = Lex(src, p->diags);
     Parse(toks, *p);
     AddBuiltins(*p);

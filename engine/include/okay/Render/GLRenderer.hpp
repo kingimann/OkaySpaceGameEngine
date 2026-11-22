@@ -147,6 +147,8 @@ private:
         m_uuVignette = -1, m_uuVignetteSmooth = -1, m_uuAspect = -1;
     int m_ufSrc = -1, m_ufTexel = -1;                                   // FXAA
     int m_udfSrc = -1, m_udfBlur = -1, m_udfDepth = -1, m_udfFocus = -1, m_udfRange = -1, m_udfFar = -1;   // DoF
+    unsigned int m_dofCopyProg = 0, m_dofBlurProg = 0;                 // DoF: premultiplied copy + blur (alpha kept)
+    int m_udcSrc = -1, m_udbSrc = -1, m_udbDir = -1;
     int m_udnSrc = -1, m_udnTexel = -1, m_udnThresh = -1, m_udnRadius = -1, m_udnSoft = -1;                                 // downsample
     unsigned int m_outFbo = 0, m_outTex = 0;                            // RGBA8 result of the chain
     unsigned int m_pingFbo[2] = {0, 0}, m_pingTex[2] = {0, 0};          // full-res RGBA8 pair (DoF / FXAA)

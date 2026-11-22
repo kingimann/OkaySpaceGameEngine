@@ -4097,9 +4097,11 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
             out << "sky " << rs.skyHorizonPos << " " << (rs.skySun ? 1 : 0) << " "
                 << rs.skySunX << " " << rs.skySunY << " " << rs.skySunSize << " "
                 << rs.skySunColor.r << " " << rs.skySunColor.g << " " << rs.skySunColor.b << "\n";
-        // Star field (separate append-only record so older engines still load the scene).
-        if (rs.skyStars)
-            out << "skystars 1 " << rs.skyStarDensity << " " << rs.skyStarBright << "\n";
+        // Star field (separate append-only record so older engines still load the scene). Also written with the
+        // overlay off when the density or brightness changed: the Procedural sky draws its night stars with them.
+        const Scene::RenderSettings starDefaults;
+        if (rs.skyStars || rs.skyStarDensity != starDefaults.skyStarDensity || rs.skyStarBright != starDefaults.skyStarBright)
+            out << "skystars " << (rs.skyStars ? 1 : 0) << " " << rs.skyStarDensity << " " << rs.skyStarBright << "\n";
         if (rs.ambientMode != Scene::RenderSettings::AmbientHemisphere || rs.ambientSkyTint != 0.7f)
             out << "ambientmode " << rs.ambientMode << " " << rs.ambientSkyTint << "\n";
         if (!rs.autoBrightness) out << "lightunits 0\n";

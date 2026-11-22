@@ -250,6 +250,29 @@ const char* kVert =
     "  vWorld = (uModel * vec4(P,1.0)).xyz;\n"
     "  vUV = aUV * uTiling + uTexOffset;\n"
     "  vCol = aColor;\n"
+    // Custom (.okayshader) vertex block: moves the world position and normal (OkayShader.hpp);
+    // uOkVP is the camera's (or in the shadow pass the light's) view-projection.
+    "#ifdef OKAY_VERTEX\n"
+    "  { vec3 okW = vWorld; vec3 okN = vN; float okL = length(okN); okN = okL > 1e-12 ? okN / okL : vec3(0.0, 1.0, 0.0);\n"
+    "    okayVertex(vUV, P, aColor, uOkTime, okW, okN);\n"
+    "    vWorld = okW; vN = okN; gl_Position = uOkVP * vec4(okW, 1.0); }\n"
+    "#endif\n"
+    "}\n";
+
+// Shadow-map pass of a Custom shader that cuts its shadow: runs the surface (the generated
+// okaySurface() is spliced in before main) and drops a texel it discards or makes see-through.
+// The vertex shader is the custom kVert, so a vertex block moves the shadow too.
+const char* kCustomDepthFrag =
+    "#version 120\n"
+    "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol; varying vec3 vTan;\n"
+    "uniform vec3 uColor; uniform vec3 uEmissive; uniform float uAlpha;\n"
+    "uniform float uMetallic; uniform float uSpecular; uniform float uShininess;\n"
+    "void main(){\n"
+    "#ifdef OKAY_CUT\n"
+    "  vec3 N = vN; float l = length(N); N = l > 1e-12 ? N / l : vec3(0.0, 1.0, 0.0);\n"   // no eye here: view = the normal
+    "  OkaySurface s = okaySurface(vUV, vWorld, N, vCol, uOkTime, uColor * vCol, uEmissive, uAlpha, N, uMetallic, uSpecular, uShininess);\n"
+    "  if (s.alpha < 0.5) discard;\n"
+    "#endif\n"
     "}\n";
 
 const char* kFrag =
@@ -829,6 +852,7 @@ GLRenderer::CustomGL* GLRenderer::EnsureCustomProgram(const std::string& path) {
     CustomGL& cp = m_custom[path];
     if (cp.generation == sf.generation && (cp.prog || cp.failed)) return cp.failed ? nullptr : &cp;
     if (cp.prog) { g.DeleteProgram(cp.prog); cp.prog = 0; }
+    if (cp.depthProg) { g.DeleteProgram(cp.depthProg); cp.depthProg = 0; }
     cp = CustomGL{};
     cp.generation = sf.generation;
     const oshader::Compiled* c = sf.compiled.get();
@@ -842,7 +866,13 @@ GLRenderer::CustomGL* GLRenderer::EnsureCustomProgram(const std::string& path) {
     const std::size_t at = frag.find("void main(){");
     if (at == std::string::npos) { cp.failed = true; return nullptr; }
     frag.insert(at, "#define OKAY_SURFACE 1\n" + c->glsl);
-    GLuint vs = compile(GL_VERTEX_SHADER, kVert), fs = compile(GL_FRAGMENT_SHADER, frag.c_str());
+    std::string vert = kVert;   // with a vertex block: the generated okayVertex() before main() (OKAY_VERTEX)
+    if (c->hasVertex) {
+        const std::size_t vat = vert.find("void main(){");
+        if (vat == std::string::npos) { cp.failed = true; return nullptr; }
+        vert.insert(vat, "#define OKAY_VERTEX 1\nuniform mat4 uOkVP;\n" + c->glslVertex);
+    }
+    GLuint vs = compile(GL_VERTEX_SHADER, vert.c_str()), fs = compile(GL_FRAGMENT_SHADER, frag.c_str());
     if (!vs || !fs) {
         if (vs) g.DeleteShader(vs);
         if (fs) g.DeleteShader(fs);
@@ -868,6 +898,9 @@ GLRenderer::CustomGL* GLRenderer::EnsureCustomProgram(const std::string& path) {
 #undef OKAY_OBJ_LOC
     cp.unlit = c->unlit;
     cp.writesAlpha = c->writesAlpha;
+    cp.hasVertex = c->hasVertex;
+    cp.cutsShadow = c->CutsShadow();
+    cp.uOkVP = g.GetUniformLocation(cp.prog, "uOkVP");
     cp.uTime = g.GetUniformLocation(cp.prog, "uOkTime");
     for (const oshader::Property& pr : c->props) cp.uProps.push_back(g.GetUniformLocation(cp.prog, ("okp_" + pr.name).c_str()));
     cp.texCount = (int)c->textures.size();
@@ -884,7 +917,7 @@ GLRenderer::CustomGL* GLRenderer::EnsureCustomProgram(const std::string& path) {
         g.GetActiveUniform(cp.prog, (GLuint)u, sizeof(name), &len, &size, &type, name);
         std::string base(name, (std::size_t)(len > 0 ? len : 0));
         if (base.size() > 3 && base.compare(base.size() - 3, 3, "[0]") == 0) base.resize(base.size() - 3);
-        if (base.rfind("okp_", 0) == 0 || base.rfind("okt_", 0) == 0 || base == "uOkTime") continue;
+        if (base.rfind("okp_", 0) == 0 || base.rfind("okt_", 0) == 0 || base.rfind("uOk", 0) == 0) continue;
         bool perObject = false;
 #define OKAY_OBJ_NAME(m, n) if (base == n) perObject = true;
         OKAY_OBJ_UNIFORMS(OKAY_OBJ_NAME)
@@ -899,8 +932,79 @@ GLRenderer::CustomGL* GLRenderer::EnsureCustomProgram(const std::string& path) {
             if (cc.from >= 0 && cc.to >= 0) cp.frameCopies.push_back(cc);
         }
     }
+    // The shadow-map variant (when the shader moves vertices or cuts its surface). Without it the
+    // object casts through the plain depth program (its whole, unmoved shadow), as before.
+    if ((cp.hasVertex || cp.cutsShadow) && !BuildCustomDepth(cp, vert, *c))
+        Log::Warning("[gl] custom shader ", path, ": shadow variant did not build; it casts its plain shadow");
     g.UseProgram(m_prog);
     return &cp;
+}
+
+bool GLRenderer::BuildCustomDepth(CustomGL& cp, const std::string& vert, const oshader::Compiled& c) {
+    std::string frag = kCustomDepthFrag;
+    const std::size_t at = frag.find("void main(){");
+    if (at == std::string::npos) return false;
+    frag.insert(at, std::string(c.CutsShadow() ? "#define OKAY_CUT 1\n" : "") + c.glsl);
+    GLuint vs = compile(GL_VERTEX_SHADER, vert.c_str()), fs = compile(GL_FRAGMENT_SHADER, frag.c_str());
+    if (!vs || !fs) { if (vs) g.DeleteShader(vs); if (fs) g.DeleteShader(fs); return false; }
+    cp.depthProg = g.CreateProgram();
+    g.AttachShader(cp.depthProg, vs); g.AttachShader(cp.depthProg, fs);
+    const char* attrs[] = {"aPos", "aNormal", "aUV", "aColor", "aTan", "aJoints", "aWeights"};
+    for (int i = 0; i < 7; ++i) g.BindAttribLocation(cp.depthProg, (GLuint)i, attrs[i]);
+    g.LinkProgram(cp.depthProg);
+    GLint ok = 0; g.GetProgramiv(cp.depthProg, GL_LINK_STATUS, &ok);
+    g.DeleteShader(vs); g.DeleteShader(fs);
+    if (!ok) { g.DeleteProgram(cp.depthProg); cp.depthProg = 0; return false; }
+    const GLuint pr = cp.depthProg;
+    cp.dMVP = g.GetUniformLocation(pr, "uMVP"); cp.dModel = g.GetUniformLocation(pr, "uModel"); cp.dOkVP = g.GetUniformLocation(pr, "uOkVP");
+    cp.dTiling = g.GetUniformLocation(pr, "uTiling"); cp.dTexOffset = g.GetUniformLocation(pr, "uTexOffset");
+    cp.dColor = g.GetUniformLocation(pr, "uColor"); cp.dEmissive = g.GetUniformLocation(pr, "uEmissive"); cp.dAlpha = g.GetUniformLocation(pr, "uAlpha");
+    cp.dMetallic = g.GetUniformLocation(pr, "uMetallic"); cp.dSpecular = g.GetUniformLocation(pr, "uSpecular");
+    cp.dShininess = g.GetUniformLocation(pr, "uShininess"); cp.dTime = g.GetUniformLocation(pr, "uOkTime");
+    cp.dSkin = g.GetUniformLocation(pr, "uSkin"); cp.dBones = g.GetUniformLocation(pr, "uBones");
+    cp.dProps.clear();
+    for (const oshader::Property& p : c.props) cp.dProps.push_back(g.GetUniformLocation(pr, ("okp_" + p.name).c_str()));
+    g.UseProgram(pr);
+    for (std::size_t i = 0; i < c.textures.size(); ++i) {
+        const GLint l = g.GetUniformLocation(pr, ("okt_" + c.textures[i].name).c_str());
+        if (l >= 0) g.Uniform1i(l, oshader::kFirstTextureUnit + (int)i);
+    }
+    return true;
+}
+
+static std::uint64_t MeshKey(const SkinnedMesh* skin);   // defined with the mesh cache below
+
+// One shadow caster through its custom shadow variant. The depth program is bound again afterwards.
+bool GLRenderer::DrawCustomDepth(CustomGL& cp, const MeshRenderer& mr, const Mesh& mesh, const SkinnedMesh* skin,
+                                 const Mat4& lightVP, const Mat4& model) {
+    MeshVB* mv = EnsureMeshVB(mesh, MeshKey(skin));
+    if (!mv || !cp.depthProg) return false;
+    g.UseProgram(cp.depthProg);
+    const Mat4 mvp = lightVP * model;
+    g.UniformMatrix4fv(cp.dMVP, 1, GL_FALSE, mvp.m);
+    g.UniformMatrix4fv(cp.dModel, 1, GL_FALSE, model.m);
+    if (cp.dOkVP >= 0) g.UniformMatrix4fv(cp.dOkVP, 1, GL_FALSE, lightVP.m);
+    g.Uniform2f(cp.dTiling, mr.tiling.x, mr.tiling.y);
+    g.Uniform2f(cp.dTexOffset, mr.texOffset.x, mr.texOffset.y);
+    g.Uniform3f(cp.dColor, mr.color.r, mr.color.g, mr.color.b);
+    g.Uniform3f(cp.dEmissive, mr.emissive.r, mr.emissive.g, mr.emissive.b);
+    g.Uniform1f(cp.dAlpha, mr.color.a);
+    g.Uniform1f(cp.dMetallic, mr.metallic);
+    g.Uniform1f(cp.dSpecular, mr.specular);
+    g.Uniform1f(cp.dShininess, mr.shininess);
+    BindCustomValues(cp, mr, cp.dTime, cp.dProps);
+    g.BindBuffer(GL_ARRAY_BUFFER, mv->vbo);
+    const GLsizei stride = 14 * sizeof(float);
+    g.EnableVertexAttribArray(0); g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (const void*)0);
+    g.EnableVertexAttribArray(1); g.VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (const void*)(3 * sizeof(float)));
+    g.EnableVertexAttribArray(2); g.VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (const void*)(6 * sizeof(float)));
+    g.EnableVertexAttribArray(3); g.VertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, stride, (const void*)(8 * sizeof(float)));
+    BindSkin(skin, mesh, mv, cp.dSkin, cp.dBones);
+    g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)mv->vertCount);
+    g.DisableVertexAttribArray(1); g.DisableVertexAttribArray(2); g.DisableVertexAttribArray(3);
+    g.DisableVertexAttribArray(5); g.DisableVertexAttribArray(6);
+    g.UseProgram(m_depthProg);
+    return true;
 }
 
 void GLRenderer::SwapObjectLocations(CustomGL& cp) {
@@ -910,7 +1014,7 @@ void GLRenderer::SwapObjectLocations(CustomGL& cp) {
 #undef OKAY_OBJ_SWAP
 }
 
-void GLRenderer::BeginCustom(CustomGL& cp, const MeshRenderer& mr) {
+void GLRenderer::BeginCustom(CustomGL& cp, const MeshRenderer& mr, const Mat4& vp) {
     g.UseProgram(cp.prog);
     if (cp.syncedFrame != m_frame) {   // the frame's lights, shadows, fog and sky, from the main program
         cp.syncedFrame = m_frame;
@@ -930,12 +1034,18 @@ void GLRenderer::BeginCustom(CustomGL& cp, const MeshRenderer& mr) {
     }
     SwapObjectLocations(cp);
     g.Uniform1f(m_uShadowAlpha, -1.0f);   // the lit draw (the main program has it set once per frame)
+    if (cp.uOkVP >= 0) g.UniformMatrix4fv(cp.uOkVP, 1, GL_FALSE, vp.m);
+    BindCustomValues(cp, mr, cp.uTime, cp.uProps);
+}
+
+// Time, the material's property values and the shader's pictures, for the bound custom program.
+void GLRenderer::BindCustomValues(CustomGL& cp, const MeshRenderer& mr, int uTime, const std::vector<int>& uProps) {
     const oshader::ShaderFile sf = oshader::LoadShaderFile(mr.customShader);
-    if (cp.uTime >= 0) g.Uniform1f(cp.uTime, Time::ElapsedTime());
+    if (uTime >= 0) g.Uniform1f(uTime, Time::ElapsedTime());
     if (sf.compiled && sf.compiled->ok && sf.generation == cp.generation) {
         const std::vector<float> v = oshader::ResolveProperties(*sf.compiled, mr.shaderParams);
-        for (std::size_t i = 0; i < cp.uProps.size() && i < sf.compiled->props.size(); ++i) {
-            const GLint l = cp.uProps[i];
+        for (std::size_t i = 0; i < uProps.size() && i < sf.compiled->props.size(); ++i) {
+            const GLint l = uProps[i];
             if (l < 0) continue;
             const float* p = &v[i * 4];
             switch (oshader::Width(sf.compiled->props[i].type)) {
@@ -2030,11 +2140,19 @@ void GLRenderer::DrawShadowCasters(const Scene& scene, const Mat4& lightVP, cons
             if (ObjectWorldSphere(go, mr, c, r) && !CasterInLightRange(*local, c, r)) continue;
         }
         Mat4 dmvp = lightVP * go->transform->LocalToWorldMatrix();
+        const bool deformed = go->GetComponent<Character>() != nullptr;
+        // A Custom shader with a vertex block or a cut-away surface casts through its own shadow variant.
+        if (mr->shader == MeshRenderer::Shader::Custom && !deformed) {
+            CustomGL* cp = EnsureCustomProgram(mr->customShader);   // (binds the main program at the end)
+            g.UseProgram(m_depthProg);
+            if (cp && cp->depthProg &&
+                DrawCustomDepth(*cp, *mr, mesh, go->GetComponent<SkinnedMesh>(), lightVP, go->transform->LocalToWorldMatrix()))
+                continue;
+        }
         g.UniformMatrix4fv(m_uDepthMVP, 1, GL_FALSE, dmvp.m);
         // Static meshes: draw positions straight from the cached interleaved
         // buffer (stride 14). Per-frame-deformed meshes rebuild dynamically.
         // Skinned meshes are cached too, keyed on SkinnedMesh::version.
-        const bool deformed = go->GetComponent<Character>() != nullptr;
         if (!deformed) {
             const auto* skin = go->GetComponent<SkinnedMesh>();
             MeshVB* mv = EnsureMeshVB(mesh, MeshKey(skin));
@@ -2431,7 +2549,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
 
         Mat4 model = it.model;
         Mat4 mvp = vp * model;
-        if (cust) BeginCustom(*cust, *mr);
+        if (cust) BeginCustom(*cust, *mr, vp);
         g.UniformMatrix4fv(m_uMVP, 1, GL_FALSE, mvp.m);
         g.UniformMatrix4fv(m_uModel, 1, GL_FALSE, model.m);
         bool unlit = cust ? cust->unlit : (custBad || mr->unlit || mr->shader == MeshRenderer::Shader::Unlit);
@@ -2883,7 +3001,7 @@ void GLRenderer::Destroy() {
     m_texInfo.clear();
     for (auto& kv : m_meshVB) if (kv.second.vbo) g.DeleteBuffers(1, &kv.second.vbo);
     m_meshVB.clear();
-    for (auto& kv : m_custom) if (kv.second.prog) g.DeleteProgram(kv.second.prog);
+    for (auto& kv : m_custom) { if (kv.second.prog) g.DeleteProgram(kv.second.prog); if (kv.second.depthProg) g.DeleteProgram(kv.second.depthProg); }
     m_custom.clear();
     if (m_whiteTex) { g.DeleteTextures(1, &m_whiteTex); m_whiteTex = 0; }
     if (m_vbo) { g.DeleteBuffers(1, &m_vbo); m_vbo = 0; }

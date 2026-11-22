@@ -153,14 +153,14 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
   - 38.8.3 Shader modes - `Components/MeshRenderer` - `Standard`, `Unlit`, `Toon`, `Gradient`, `Fresnel`, `Iridescent`, `Hologram`, `Posterize`, `Velvet` selected by a uniform (see 2.2.2)
   - 38.8.4 CPU mirrors - `Render/Atmosphere`, `Render/Lighting` - sky palette, fog factor, tonemap curves and light attenuation are written once on the CPU and mirrored in the shaders so values agree
   - 38.8.5 Shadow plan - `Render/ShadowSetup` - the cascade and tile layout both GPU backends consume
-  - 38.8.6 Custom shaders - planned (area 26): there are no shader files, no shader graph and no hook for user shaders
+  - 38.8.6 Custom shaders - `Render/OkayShader` - user `.okayshader` files (area 26.3): the main mesh shaders are compiled again with `OKAY_SURFACE` / `OKAY_VERTEX` and the generated code spliced in, plus a shadow-map variant; no shader graph yet
 - **Code:** `Render/ShadowSetup`, `Render/Atmosphere`, `Render/Lighting`, `Render/GLRenderer`, `Render/D3D11Renderer`
 - **API:** `MeshRenderer::Shader`, `PlanShadows`, `FogFactor`, `LightAttenuation`
 - **Editor:** Mesh Renderer shader dropdown; Lighting panel; no shader editor
 - **Docs:** `docs/rendering/lighting.md` ("How it works")
 - **Tests:** `shaders`, `light_shadows`, `post_sky`, `lighting`
 - **Status:** Works - read the shader sources and uniform lists; the `shaders` test covers only the Material side
-- **Open:** every lighting or fog change must be repeated in GLSL, HLSL (twice) and the software renderer; custom shaders, a shader graph and a PBR model are area 26; no shader compile-error surface beyond the log
+- **Open:** every lighting or fog change must be repeated in GLSL, HLSL (twice) and the software renderer; a shader graph and a PBR model are area 26; custom shader errors show in the Inspector and the log (26.3)
 - **Related:** 26, 2.2, 2.3, 2.4, 2.5, 38.9
 - **Words:** shader, GLSL, HLSL, uniform, shader mode, toon, hologram, fresnel, material shader, shader graph, custom shader, d3dcompiler
 - **Seen as:** a shader mode looks different between OpenGL and Direct3D; a new light feature works on one backend only

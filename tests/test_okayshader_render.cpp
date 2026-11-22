@@ -5,6 +5,7 @@
 #include <Okay.hpp>
 #include "okay/Render/OkayShader.hpp"
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <string>
 
@@ -55,7 +56,7 @@ int Lum(const Raster& r, int x, int y) { const Rgb c = At(r, x, y); return (c.r 
 // shadow and on open ground.
 struct ShadowProbe { int left, right, open, movedRight; };
 template <class F> ShadowProbe RenderShadow(F setup, Raster* out = nullptr) {
-    const int S = 96;
+    const int S = 160;
     Scene scene("SHD"); scene.physicsEnabled = false;
     scene.renderSettings.tonemap = false;
     scene.renderSettings.skybox = false;
@@ -75,9 +76,10 @@ template <class F> ShadowProbe RenderShadow(F setup, Raster* out = nullptr) {
     mr->color = Color::FromBytes(90, 90, 200);
     mr->groundShadow = false;
     setup(*mr);
-    const Vec3 eye{0.0f, 7.0f, 0.01f};
-    const Mat4 vp = Mat4::Perspective(50.0f, 1.0f, 0.1f, 100.0f) * Mat4::LookAt(eye, {0.0f, 0.0f, 0.0f}, Vec3::Up);
+    const Vec3 eye{0.0f, 6.0f, 4.0f};
+    const Mat4 vp = Mat4::Perspective(50.0f, 1.0f, 0.1f, 100.0f) * Mat4::LookAt(eye, {0.0f, 0.0f, 0.6f}, Vec3::Up);
     Raster r; r.Resize(S, S); r.Clear(0xFF000000u);
+    ApplySceneLight(scene);   // the scene's Light components become the frame's lights (the game loop does this)
     RenderMeshes(r, scene, vp, eye);
     // Where the caster's centre falls on the ground along the light.
     const Vec3 f = lgo->transform->Forward();
@@ -89,6 +91,13 @@ template <class F> ShadowProbe RenderShadow(F setup, Raster* out = nullptr) {
     Project(vp, {c.x + 0.22f, 0.0f, c.z}, S, x, y); p.right = Lum(r, x, y);
     Project(vp, {c.x + 1.2f, 0.0f, c.z}, S, x, y); p.movedRight = Lum(r, x, y);
     Project(vp, {c.x - 2.5f, 0.0f, c.z}, S, x, y); p.open = Lum(r, x, y);
+    if (const char* shot = std::getenv("OKAY_SHOT_DIR")) {   // a look at the scene (debugging)
+        static int n = 0;
+        Image img(S, S);
+        for (int yy = 0; yy < S; ++yy) for (int xx = 0; xx < S; ++xx) { const Rgb q = At(r, xx, yy); img.SetPixel(xx, yy, Color::FromBytes(q.r, q.g, q.b)); }
+        img.SavePNG(std::string(shot) + "/render_shadow_" + std::to_string(n++) + ".png");
+        std::cout << "  light forward " << f.x << " " << f.y << " " << f.z << ", SceneLight " << SceneLight::Direction().x << " " << SceneLight::Direction().y << " " << SceneLight::Direction().z << "\n";
+    }
     if (out) *out = r;
     return p;
 }

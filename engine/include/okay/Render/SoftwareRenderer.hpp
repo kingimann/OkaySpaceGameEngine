@@ -27,6 +27,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <map>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -996,6 +998,288 @@ inline const MipChain* GetCachedMips(const std::string& path) {
     return (!it->second.empty() && it->second[0].Width() > 0) ? &it->second : nullptr;
 }
 
+// ---- Custom (.okayshader) vertex blocks and shadow cut-outs (software renderer) ---------------
+// A shader's vertex block moves the mesh's vertices: the moved copy is made here, once per object
+// and frame on the main thread (cached on the object, the source mesh, the time, the transform and
+// the material values), and both the colour pass and the shadow-map passes draw it. A surface that
+// discards or sets alpha also runs in the shadow-map passes, per texel: a texel it discards (or
+// whose alpha is below oshader::kShadowAlphaCut) casts no shadow. The GPU renderers do the same in
+// their shaders (GLRenderer.cpp, D3D11Renderer.cpp); docs/rendering/shaders.md.
+namespace customsw {
+
+struct DisplacedEntry {
+    Mesh mesh;
+    std::uint64_t generation = 0;
+    float time = -1.0e30f;
+    float model[16] = {0};
+    std::string params;
+    double checksum = 0.0;
+    std::size_t vertexCount = 0;
+    unsigned lastFrame = 0;
+};
+inline std::map<std::pair<const void*, const void*>, DisplacedEntry>& DisplacedCache() {
+    static std::map<std::pair<const void*, const void*>, DisplacedEntry> m;
+    return m;
+}
+inline unsigned& DisplacedFrame() { static unsigned f = 0; return f; }
+/// Start of a software frame: forget moved meshes not used for a while (objects that went away).
+/// Pointers handed out by DisplacedMesh stay valid until the next call.
+inline void BeginFrame() {
+    const unsigned now = ++DisplacedFrame();
+    auto& m = DisplacedCache();
+    if (m.size() < 64) return;
+    for (auto it = m.begin(); it != m.end();) { if (now - it->second.lastFrame > 120u) it = m.erase(it); else ++it; }
+}
+
+/// Per-vertex normals of `m` (its own, or the area-weighted face normals) and its UVs (its own,
+/// or box-projected from the dominant normal axis the way the GPU renderers project a mesh
+/// without UVs).
+inline void VertexNormalsAndUVs(const Mesh& m, std::vector<Vec3>& nrm, std::vector<Vec2>& uv) {
+    const std::size_t n = m.vertices.size();
+    if (m.HasNormals()) nrm = m.normals;
+    else {
+        nrm.assign(n, Vec3{0, 0, 0});
+        const auto& T = m.triangles;
+        for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+            const int a = T[i], b = T[i + 1], c = T[i + 2];
+            if (a < 0 || b < 0 || c < 0 || (std::size_t)a >= n || (std::size_t)b >= n || (std::size_t)c >= n) continue;
+            const Vec3 f = Vec3::Cross(m.vertices[b] - m.vertices[a], m.vertices[c] - m.vertices[a]);
+            nrm[a] = nrm[a] + f; nrm[b] = nrm[b] + f; nrm[c] = nrm[c] + f;
+        }
+        for (Vec3& v : nrm) { const float l = v.Magnitude(); v = l > 1e-12f ? v * (1.0f / l) : Vec3{0, 1, 0}; }
+    }
+    if (m.uvs.size() == n) { uv = m.uvs; return; }
+    uv.resize(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        const Vec3& p = m.vertices[i];
+        const float ax = std::fabs(nrm[i].x), ay = std::fabs(nrm[i].y), az = std::fabs(nrm[i].z);
+        if (ax >= ay && ax >= az) uv[i] = Vec2{p.z + 0.5f, p.y + 0.5f};
+        else if (ay >= ax && ay >= az) uv[i] = Vec2{p.x + 0.5f, p.z + 0.5f};
+        else uv[i] = Vec2{p.x + 0.5f, p.y + 0.5f};
+    }
+}
+
+/// The mesh `src` of `go` as its Custom shader's vertex block moves it this frame (in the object's
+/// own space, with the block's normals and the source's UVs), or `src` itself when the object has
+/// no vertex block. Main thread only.
+inline const Mesh* DisplacedMesh(const GameObject* go, const MeshRenderer* mr, const Mesh* src) {
+    if (!go || !mr || !src || mr->shader != MeshRenderer::Shader::Custom || src->vertices.empty() || !go->transform) return src;
+    const oshader::ShaderFile sf = oshader::LoadShaderFile(mr->customShader);
+    const oshader::Compiled* c = sf.compiled.get();
+    if (!c || !c->ok || !c->cpuVertex) return src;
+    const Mat4 model = go->transform->LocalToWorldMatrix();
+    const float time = Time::ElapsedTime();
+    double sum = 0.0;
+    for (const Vec3& p : src->vertices) sum += (double)p.x + 3.0 * (double)p.y + 7.0 * (double)p.z;
+    DisplacedEntry& e = DisplacedCache()[{static_cast<const void*>(go), static_cast<const void*>(src)}];
+    e.lastFrame = DisplacedFrame();
+    if (e.generation == sf.generation && e.time == time && std::memcmp(e.model, model.m, sizeof e.model) == 0 &&
+        e.params == mr->shaderParams && e.checksum == sum && e.vertexCount == src->vertices.size())
+        return &e.mesh;
+    e.generation = sf.generation; e.time = time; std::memcpy(e.model, model.m, sizeof e.model);
+    e.params = mr->shaderParams; e.checksum = sum; e.vertexCount = src->vertices.size();
+    e.mesh = *src;
+    std::vector<Vec3> nrm; std::vector<Vec2> uv;
+    VertexNormalsAndUVs(*src, nrm, uv);
+    e.mesh.uvs = uv;   // the texture mapping stays where it was before the move
+    e.mesh.normals.resize(src->vertices.size());
+    const std::vector<float> props = oshader::ResolveProperties(*c, mr->shaderParams);
+    const Mat4 inv = model.Inverse();
+    // World normal = the inverse-transpose basis (as RenderMeshes' xformNormal); back to the object's
+    // space with the model's transpose, which that same transform turns back into the world normal.
+    const Vec3 ax = model.MultiplyVector({1, 0, 0}), ay = model.MultiplyVector({0, 1, 0}), az = model.MultiplyVector({0, 0, 1});
+    const Vec3 nx = Vec3::Cross(ay, az), ny = Vec3::Cross(az, ax), nz = Vec3::Cross(ax, ay);
+    const float scrollU = mr->uvScroll.x * time, scrollV = mr->uvScroll.y * time;
+    const bool vcols = src->HasVertexColors();
+    for (std::size_t i = 0; i < src->vertices.size(); ++i) {
+        const Vec3& p = src->vertices[i];
+        const Vec3& n0 = nrm[i];
+        const Vec3 wp = model.MultiplyPoint(p);
+        Vec3 wn{nx.x * n0.x + ny.x * n0.y + nz.x * n0.z, nx.y * n0.x + ny.y * n0.y + nz.y * n0.z, nx.z * n0.x + ny.z * n0.y + nz.z * n0.z};
+        { const float l = wn.Magnitude(); wn = l > 1e-12f ? wn * (1.0f / l) : Vec3{0, 1, 0}; }
+        oshader::VertexIn vi;
+        vi.uv[0] = uv[i].x * mr->tiling.x + scrollU; vi.uv[1] = uv[i].y * mr->tiling.y + scrollV;
+        vi.local[0] = p.x; vi.local[1] = p.y; vi.local[2] = p.z;
+        if (vcols) { const Color& vc = src->vertexColors[i]; vi.vcolor[0] = vc.r; vi.vcolor[1] = vc.g; vi.vcolor[2] = vc.b; }
+        vi.time = time;
+        vi.position[0] = wp.x; vi.position[1] = wp.y; vi.position[2] = wp.z;
+        vi.normal[0] = wn.x; vi.normal[1] = wn.y; vi.normal[2] = wn.z;
+        oshader::VertexOut vo;
+        oshader::RunCpuVertex(*c->cpuVertex, vi, props.data(), vo);
+        Vec3 op{vo.position[0], vo.position[1], vo.position[2]};
+        if (!std::isfinite(op.x + op.y + op.z)) op = wp;
+        Vec3 on{vo.normal[0], vo.normal[1], vo.normal[2]};
+        const float ol = on.Magnitude();
+        on = (ol > 1e-12f && std::isfinite(ol)) ? on * (1.0f / ol) : wn;
+        e.mesh.vertices[i] = inv.MultiplyPoint(op);
+        Vec3 lo{Vec3::Dot(ax, on), Vec3::Dot(ay, on), Vec3::Dot(az, on)};
+        const float ll = lo.Magnitude();
+        e.mesh.normals[i] = ll > 1e-12f ? lo * (1.0f / ll) : n0;
+    }
+    return &e.mesh;
+}
+
+/// A Custom surface that can cut away parts of a shadow (discard or alpha), ready to be asked per
+/// shadow-map texel. Prepare() fails (and the caster draws its whole shadow) for any other object.
+struct ShadowCut {
+    std::shared_ptr<const oshader::Compiled> compiled;
+    std::vector<float> props;
+    CustomSurface cs;
+    std::vector<Vec3> wpos, wnrm;
+    std::vector<Vec2> uv;
+    const Mesh* mesh = nullptr;
+    Color base{1, 1, 1, 1};
+    float emission[3] = {0, 0, 0};
+    float metallic = 0.0f, specular = 0.0f, shininess = 16.0f;
+
+    bool Prepare(const GameObject* go, const MeshRenderer* mr, const Mesh* m) {
+        if (!go || !mr || !m || mr->shader != MeshRenderer::Shader::Custom || m->vertices.empty() || !go->transform) return false;
+        const oshader::ShaderFile sf = oshader::LoadShaderFile(mr->customShader);
+        if (!sf.compiled || !sf.compiled->ok || !sf.compiled->cpu || !sf.compiled->CutsShadow()) return false;
+        compiled = sf.compiled;
+        props = oshader::ResolveProperties(*compiled, mr->shaderParams);
+        cs.prog = compiled->cpu.get();
+        cs.props = props.data();
+        cs.time = Time::ElapsedTime();
+        for (int t = 0; t < (int)compiled->textures.size() && t < oshader::kMaxTextures; ++t) {
+            const std::string pic = oshader::ResolveTexture(*compiled, t, mr->shaderParams);
+            cs.tex[t] = pic.empty() ? nullptr : GetCachedMips(pic);
+        }
+        mesh = m;
+        std::vector<Vec3> nrm;
+        VertexNormalsAndUVs(*m, nrm, uv);
+        const Mat4 model = go->transform->LocalToWorldMatrix();
+        const Vec3 ax = model.MultiplyVector({1, 0, 0}), ay = model.MultiplyVector({0, 1, 0}), az = model.MultiplyVector({0, 0, 1});
+        const Vec3 nx = Vec3::Cross(ay, az), ny = Vec3::Cross(az, ax), nz = Vec3::Cross(ax, ay);
+        const float scrollU = mr->uvScroll.x * cs.time, scrollV = mr->uvScroll.y * cs.time;
+        wpos.resize(m->vertices.size()); wnrm.resize(m->vertices.size());
+        for (std::size_t i = 0; i < m->vertices.size(); ++i) {
+            wpos[i] = model.MultiplyPoint(m->vertices[i]);
+            const Vec3& n0 = nrm[i];
+            Vec3 wn{nx.x * n0.x + ny.x * n0.y + nz.x * n0.z, nx.y * n0.x + ny.y * n0.y + nz.y * n0.z, nx.z * n0.x + ny.z * n0.y + nz.z * n0.z};
+            const float l = wn.Magnitude();
+            wnrm[i] = l > 1e-12f ? wn * (1.0f / l) : Vec3{0, 1, 0};
+            uv[i] = Vec2{uv[i].x * mr->tiling.x + scrollU, uv[i].y * mr->tiling.y + scrollV};
+        }
+        base = mr->color;
+        emission[0] = mr->emissive.r; emission[1] = mr->emissive.g; emission[2] = mr->emissive.b;
+        metallic = mr->metallic; specular = mr->specular; shininess = mr->shininess;
+        return true;
+    }
+    /// Does the texel at barycentric weights (b0, b1, b2) of triangle (i0, i1, i2) cast a shadow?
+    /// The surface sees the interpolated uv, position, normal and vertex colour; `view` is the
+    /// surface normal there (there is no eye in a shadow map) and albedo is the material colour.
+    bool Keep(int i0, int i1, int i2, float b0, float b1, float b2) const {
+        oshader::SurfaceIn si;
+        const Vec2 u = uv[i0] * b0 + uv[i1] * b1 + uv[i2] * b2;
+        const Vec3 p = wpos[i0] * b0 + wpos[i1] * b1 + wpos[i2] * b2;
+        Vec3 n = wnrm[i0] * b0 + wnrm[i1] * b1 + wnrm[i2] * b2;
+        { const float l = n.Magnitude(); n = l > 1e-12f ? n * (1.0f / l) : Vec3{0, 1, 0}; }
+        si.uv[0] = u.x; si.uv[1] = u.y;
+        si.position[0] = p.x; si.position[1] = p.y; si.position[2] = p.z;
+        si.normal[0] = si.view[0] = n.x; si.normal[1] = si.view[1] = n.y; si.normal[2] = si.view[2] = n.z;
+        float vr = 1.0f, vg = 1.0f, vb = 1.0f;
+        if (mesh->HasVertexColors()) {
+            const Color& c0 = mesh->vertexColors[i0]; const Color& c1 = mesh->vertexColors[i1]; const Color& c2 = mesh->vertexColors[i2];
+            vr = c0.r * b0 + c1.r * b1 + c2.r * b2; vg = c0.g * b0 + c1.g * b1 + c2.g * b2; vb = c0.b * b0 + c1.b * b1 + c2.b * b2;
+        }
+        si.vcolor[0] = vr; si.vcolor[1] = vg; si.vcolor[2] = vb;
+        si.time = cs.time;
+        si.albedo[0] = base.r * vr; si.albedo[1] = base.g * vg; si.albedo[2] = base.b * vb;
+        si.emission[0] = emission[0]; si.emission[1] = emission[1]; si.emission[2] = emission[2];
+        si.alpha = base.a; si.metallic = metallic; si.specular = specular; si.shininess = shininess;
+        oshader::SurfaceOut so;
+        oshader::RunCpu(*cs.prog, si, cs.props, &CustomSurface::Sample, &cs, so);
+        return !so.discard && so.alpha >= oshader::kShadowAlphaCut;
+    }
+};
+
+/// RasterDepthTriangle (TriangleSpan.hpp) with a per-texel question: `keep(b0, b1, b2)` gets the
+/// texel's barycentric weights (an orthographic map: screen weights are the surface's weights).
+template <class Keep>
+inline void RasterDepthTriangleCut(float* depth, int S, const float sx[3], const float sy[3], const float sz[3], const Keep& keep) {
+    int minx = (int)std::floor(std::fmin(sx[0], std::fmin(sx[1], sx[2])));
+    int maxx = (int)std::ceil (std::fmax(sx[0], std::fmax(sx[1], sx[2])));
+    int miny = (int)std::floor(std::fmin(sy[0], std::fmin(sy[1], sy[2])));
+    int maxy = (int)std::ceil (std::fmax(sy[0], std::fmax(sy[1], sy[2])));
+    minx = std::max(minx, 0); miny = std::max(miny, 0);
+    maxx = std::min(maxx, S - 1); maxy = std::min(maxy, S - 1);
+    const float area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);
+    if (area == 0.0f) return;
+    const float inv = 1.0f / area;
+    for (int y = miny; y <= maxy; ++y)
+        for (int x = minx; x <= maxx; ++x) {
+            const float px = x + 0.5f, py = y + 0.5f;
+            const float w0 = ((sx[1] - px) * (sy[2] - py) - (sx[2] - px) * (sy[1] - py)) * inv;
+            const float w1 = ((sx[2] - px) * (sy[0] - py) - (sx[0] - px) * (sy[2] - py)) * inv;
+            const float w2 = 1.0f - w0 - w1;
+            if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+            const float z = w0 * sz[0] + w1 * sz[1] + w2 * sz[2];
+            float& dref = depth[(std::size_t)y * S + x];
+            if (z < dref && keep(w0, w1, w2)) dref = z;
+        }
+}
+
+/// RasterLocalDepth (below) with a per-texel question, for spot / point / area light tiles: the
+/// triangle is cut against the near plane carrying each corner's weights of the original triangle,
+/// and the weights are interpolated perspective-correctly per texel.
+template <class Keep>
+inline void RasterLocalDepthCut(std::vector<float>& depth, int S, const Vec4 in[3], float nearZ, const Keep& keep) {
+    Vec4 poly[4]; float bw[4][3]; int n = 0;
+    const float id[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    for (int i = 0; i < 3; ++i) {
+        const int j = (i + 1) % 3;
+        const Vec4& a = in[i]; const Vec4& b = in[j];
+        const float da = a.w - nearZ, db = b.w - nearZ;
+        if (da >= 0.0f && n < 4) { poly[n] = a; for (int k = 0; k < 3; ++k) bw[n][k] = id[i][k]; ++n; }
+        if ((da >= 0.0f) != (db >= 0.0f) && n < 4) {
+            const float t = da / (da - db);
+            poly[n] = Vec4{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, nearZ};
+            for (int k = 0; k < 3; ++k) bw[n][k] = id[i][k] + (id[j][k] - id[i][k]) * t;
+            ++n;
+        }
+    }
+    if (n < 3) return;
+    for (int j = 1; j + 1 < n; ++j) {
+        const int ix[3] = {0, j, j + 1};
+        float sx[3], sy[3], iw[3];
+        for (int k = 0; k < 3; ++k) {
+            iw[k] = 1.0f / poly[ix[k]].w;
+            sx[k] = (poly[ix[k]].x * iw[k] * 0.5f + 0.5f) * S;
+            sy[k] = (1.0f - (poly[ix[k]].y * iw[k] * 0.5f + 0.5f)) * S;
+        }
+        const float area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);
+        if (area == 0.0f) continue;
+        const float inv = 1.0f / area;
+        int minx = (int)std::floor(std::fmin(sx[0], std::fmin(sx[1], sx[2])));
+        int maxx = (int)std::ceil (std::fmax(sx[0], std::fmax(sx[1], sx[2])));
+        int miny = (int)std::floor(std::fmin(sy[0], std::fmin(sy[1], sy[2])));
+        int maxy = (int)std::ceil (std::fmax(sy[0], std::fmax(sy[1], sy[2])));
+        minx = std::max(minx, 0); miny = std::max(miny, 0);
+        maxx = std::min(maxx, S - 1); maxy = std::min(maxy, S - 1);
+        for (int y = miny; y <= maxy; ++y)
+            for (int x = minx; x <= maxx; ++x) {
+                const float px = x + 0.5f, py = y + 0.5f;
+                const float w0 = ((sx[1] - px) * (sy[2] - py) - (sx[2] - px) * (sy[1] - py)) * inv;
+                const float w1 = ((sx[2] - px) * (sy[0] - py) - (sx[0] - px) * (sy[2] - py)) * inv;
+                const float w2 = 1.0f - w0 - w1;
+                const float e = -1e-4f;
+                if (w0 < e || w1 < e || w2 < e) continue;
+                const float ivw = w0 * iw[0] + w1 * iw[1] + w2 * iw[2];
+                if (ivw <= 0.0f) continue;
+                const float d = 1.0f / ivw;
+                float& dref = depth[(std::size_t)y * S + x];
+                if (d >= dref) continue;
+                const float p0 = w0 * iw[0] / ivw, p1 = w1 * iw[1] / ivw, p2 = w2 * iw[2] / ivw;
+                const float b0 = p0 * bw[ix[0]][0] + p1 * bw[ix[1]][0] + p2 * bw[ix[2]][0];
+                const float b1 = p0 * bw[ix[0]][1] + p1 * bw[ix[1]][1] + p2 * bw[ix[2]][1];
+                if (keep(b0, b1, 1.0f - b0 - b1)) dref = d;
+            }
+    }
+}
+
+} // namespace customsw
+
 /// Per-pixel (Phong) lighting toggle. On by default for quality (smooth shading
 /// + correct specular on every pixel); turn off to fall back to faster per-vertex
 /// (Gouraud) shading on very large scenes.
@@ -1066,8 +1350,10 @@ inline void RenderCascadeDepth(const Scene& scene, ShadowCascade& cas, bool cull
             if (qx * qx + qy * qy + qz * qz > cr2) continue;
         }
         Mat4 mvp = cas.viewProj * model;
-        const Mesh* shMesh = visibility::Current().ShadowMesh(go.get(), mr);
+        const Mesh* shMesh = customsw::DisplacedMesh(go.get(), mr, visibility::Current().ShadowMesh(go.get(), mr));   // a vertex block moves the shadow too
         if (!shMesh) continue;
+        customsw::ShadowCut cut;
+        const bool cutOn = cut.Prepare(go.get(), mr, shMesh);   // a discarding / see-through Custom surface cuts its shadow
         const auto& V = shMesh->vertices; const auto& T = shMesh->triangles;
         for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
             float sxv[3], syv[3], szv[3]; bool ok = true;
@@ -1080,6 +1366,12 @@ inline void RenderCascadeDepth(const Scene& scene, ShadowCascade& cas, bool cull
                 szv[k] = c.z * iw;
             }
             if (!ok) continue;
+            if (cutOn) {
+                const int i0 = T[i], i1 = T[i + 1], i2 = T[i + 2];
+                customsw::RasterDepthTriangleCut(cas.depth.data(), S, sxv, syv, szv,
+                                                 [&](float b0, float b1, float b2) { return cut.Keep(i0, i1, i2, b0, b1, b2); });
+                continue;
+            }
             RasterDepthTriangle(cas.depth.data(), S, sxv, syv, szv);   // (TriangleSpan.hpp: the same per texel test, only texels that can be covered)
         }
     }
@@ -1533,8 +1825,10 @@ inline void RenderLocalShadowMaps(const Scene& scene, const Mat4& camVp, const V
         if (!go || go->firstPersonOnly) continue;
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || !go->ActiveInHierarchy() || !mr->enabled || mr->wireframe || !mr->castShadows) continue;
-        const Mesh* shMesh = visibility::Current().ShadowMesh(go.get(), mr);
+        const Mesh* shMesh = customsw::DisplacedMesh(go.get(), mr, visibility::Current().ShadowMesh(go.get(), mr));   // a vertex block moves the shadow too
         if (!shMesh || shMesh->vertices.empty()) continue;
+        customsw::ShadowCut cut;
+        const bool cutOn = cut.Prepare(go.get(), mr, shMesh);   // a discarding / see-through Custom surface cuts its shadow
         Mat4 model = go->transform->LocalToWorldMatrix();
         Vec3 blo, bhi; mr->DisplayMesh().Bounds(blo, bhi);
         Vec3 wlo{1e30f, 1e30f, 1e30f}, whi{-1e30f, -1e30f, -1e30f};
@@ -1557,6 +1851,12 @@ inline void RenderLocalShadowMaps(const Scene& scene, const Mat4& camVp, const V
                 for (std::size_t v = 0; v < V.size(); ++v) clip[v] = mvp * Vec4{V[v], 1.0f};
                 for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
                     const Vec4 tri[3] = {clip[T[i]], clip[T[i + 1]], clip[T[i + 2]]};
+                    if (cutOn) {
+                        const int i0 = T[i], i1 = T[i + 1], i2 = T[i + 2];
+                        customsw::RasterLocalDepthCut(m.depth[f], S, tri, m.view.nearZ,
+                                                      [&](float b0, float b1, float b2) { return cut.Keep(i0, i1, i2, b0, b1, b2); });
+                        continue;
+                    }
                     detail::RasterLocalDepth(m.depth[f], S, tri, m.view.nearZ);
                 }
             }
@@ -2058,6 +2358,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     const visibility::Frame& vis = *visPtr;
     {
         OKAY_PROFILE("Render.ShadowMaps");
+        customsw::BeginFrame();            // moved (vertex block) meshes of objects that went away are dropped
         RenderShadowMap(scene, vp, eye);   // depth-from-light pre-pass for cast shadows
         RenderLocalShadowMaps(scene, vp, eye);   // spot / point / area light shadow maps
     }
@@ -2094,7 +2395,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // safe as a still one), the bounding box in the world: its eight corners give the rows it can reach, and its distance
     // to each light says whether the light can reach it.
     auto meshReach = [&](const GameObject* go, const MeshRenderer* mr, ObjInfo& oi) {
-        const Mesh* dm = vis.MeshFor(go);
+        const Mesh* dm = customsw::DisplacedMesh(go, mr, vis.MeshFor(go));   // where a vertex block moved it
         if (!dm || dm->vertices.empty() || !go->transform) return;
         const std::vector<Vec3>& vs = dm->vertices;
         Vec3 lo = vs[0], hi = vs[0];
@@ -2154,6 +2455,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         std::shared_ptr<const oshader::Compiled> compiled;   // keeps the program alive for the frame
         std::vector<float> props;
         CustomSurface cs;
+        const Mesh* moved = nullptr;   // the mesh as its vertex block moves it (customsw::DisplacedMesh), or null
         bool ok = false;
     };
     std::vector<CustomBind> customBind(sceneObjs.size());
@@ -2187,6 +2489,11 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     const std::string pic = oshader::ResolveTexture(*sf.compiled, t, mr->shaderParams);
                     cb.cs.tex[t] = pic.empty() ? nullptr : GetCachedMips(pic);
                 }
+                if (sf.compiled->hasVertex) {
+                    const Mesh* src = vis.MeshFor(go.get());
+                    const Mesh* mv = customsw::DisplacedMesh(go.get(), mr, src);
+                    if (mv != src) cb.moved = mv;
+                }
                 cb.ok = true;
             }
         }
@@ -2219,6 +2526,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         Mat4 model = go->transform->LocalToWorldMatrix();
         const Mesh* lodMesh = vis.MeshFor(go.get());
         if (!lodMesh) { continue; }
+        if (customOk && cbind.moved) lodMesh = cbind.moved;   // moved by the shader's vertex block (made before the bands)
         const Mesh& drawMesh = *lodMesh;
         const auto& v = drawMesh.vertices;
         const auto& t = drawMesh.triangles;

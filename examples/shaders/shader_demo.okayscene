@@ -65,3 +65,31 @@ gameobject 6 "Main Camera"
   transform 0 2.6 -3.5 0 0.994029 0.109116785 0 1 1 1
   camera 1 5 62 0.06 0.07 0.1 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
+gameobject 7 "Flag (vertex block)"
+  guid "3f1c2b7e9a4d4e0f8b6a5c2d1e0f9a71"
+  active 1
+  parent -1
+  transform -1.6 2.35 7.2 -0.70710677 0 0 0.70710677 0.2 0.2 0.12
+  mesh "Grid" 1 1 1 1 0 "" 1
+  material 0 0 0 0 16 0 "" 1 1
+  shader 9 3 0.47058824 0.7058824 1 0.078431375 0.11764706 0.23529412
+  customshader "flag_wave.okayshader" "poleX=-5;waves=0.7;amplitude=0.7;stripes=0.3"
+end
+gameobject 8 "Flag pole"
+  guid "5d2e8c1a7b3f4a6e9c0d1b2a3f4e5d62"
+  active 1
+  parent -1
+  transform -2.62 1.4 7.2 0 0 0 1 0.06 3 0.06
+  mesh "Cylinder" 0.55 0.5 0.45 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 9 "Wobble ball (vertex block)"
+  guid "8e4a1f6b2c9d4b7a8e3f0a1b2c3d4e83"
+  active 1
+  parent -1
+  transform 2.2 0.9 7.4 0 0 0 1 1.2 1.2 1.2
+  mesh "Sphere" 1 1 1 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  shader 9 3 0.47058824 0.7058824 1 0.078431375 0.11764706 0.23529412
+  customshader "wobble.okayshader" ""
+end

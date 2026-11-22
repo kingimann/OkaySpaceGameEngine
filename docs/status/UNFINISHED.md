@@ -274,7 +274,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | [26.1](../feature_map/20-35-planned.md#261-visual-shader-graphs) | Visual shader graphs | Planned | no graph editor or graph file yet; the language a graph will compile to (`.okayshader`, 26.3) exists, so the GLSL / HLSL / CPU backends are reused. |
 | [26.2](../feature_map/20-35-planned.md#262-material-editor) | Material editor | Partial | preview is not what the renderer draws; materials are copied into the renderer (`ApplyTo`), not referenced, so editing the file... |
-| [26.3](../feature_map/20-35-planned.md#263-custom-shaders) | Custom shaders | Partial | `.okayshader` works on software and OpenGL; Direct3D 11 written but unverified on Windows; Direct3D 12 and Xbox draw Custom as Standard / magenta; shadows ignore discard. |
+| [26.3](../feature_map/20-35-planned.md#263-custom-shaders) | Custom shaders | Partial | `.okayshader` (surface and vertex blocks, shadow cut-outs) works on software and OpenGL; Direct3D 11 written but unverified on Windows (HLSL checked by glslang only); Direct3D 12 written but unverified (no custom shadows); Xbox draws magenta; no tangent input or vertex-to-surface values yet. |
 | [26.4](../feature_map/20-35-planned.md#264-pbr) | PBR | Partial | four renderers to keep equal; D3D12 lacks maps; the software renderer is the reference. |
 
 ### 27. Optimization tools (High)

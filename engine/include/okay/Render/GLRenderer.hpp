@@ -37,6 +37,7 @@
 namespace okay {
 
 class SkinnedMesh;
+namespace oshader { struct Compiled; }
 
 class GLRenderer {
 public:
@@ -252,11 +253,23 @@ private:
         struct Copy { int from = -1, to = -1; unsigned type = 0; };
         std::vector<Copy> frameCopies;             // m_prog -> prog, everything not per-object
         unsigned syncedFrame = ~0u;
+        bool hasVertex = false, cutsShadow = false;
+        int uOkVP = -1;                            // the vertex block's view-projection (it moves world positions)
+        // Shadow-map variant (vertex block and/or a surface that discards or sets alpha): the same
+        // vertex shader, and a fragment shader that only runs the surface to drop cut-away texels.
+        unsigned int depthProg = 0;
+        int dMVP = -1, dModel = -1, dOkVP = -1, dTiling = -1, dTexOffset = -1, dColor = -1, dEmissive = -1, dAlpha = -1;
+        int dMetallic = -1, dSpecular = -1, dShininess = -1, dTime = -1, dSkin = -1, dBones = -1;
+        std::vector<int> dProps;
     };
     std::unordered_map<std::string, CustomGL> m_custom;   // key: shader path
     unsigned int m_whiteTex = 0;                          // 1x1 white: an unbound custom texture
     CustomGL* EnsureCustomProgram(const std::string& path);
-    void BeginCustom(CustomGL& cp, const MeshRenderer& mr);
+    void BeginCustom(CustomGL& cp, const MeshRenderer& mr, const Mat4& vp);
+    void BindCustomValues(CustomGL& cp, const MeshRenderer& mr, int uTime, const std::vector<int>& uProps);
+    bool BuildCustomDepth(CustomGL& cp, const std::string& vert, const oshader::Compiled& c);
+    bool DrawCustomDepth(CustomGL& cp, const MeshRenderer& mr, const Mesh& mesh, const SkinnedMesh* skin,
+                         const Mat4& lightVP, const Mat4& model);
     void EndCustom(CustomGL& cp);
     void SwapObjectLocations(CustomGL& cp);
 };

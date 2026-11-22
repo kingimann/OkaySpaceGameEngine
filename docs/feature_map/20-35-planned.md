@@ -702,25 +702,27 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Parts:**
   - 26.3.1 Built-in shader styles - `Components/MeshRenderer`, `Render/SoftwareRenderer`, `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer` - Standard, Unlit, Toon, Gradient, Fresnel, Iridescent, Hologram, Posterize, Velvet (and Custom, below)
   - 26.3.2 Renderer shader sources - `Render/GLRenderer` (GLSL 120 strings), `Render/D3D11Renderer` and `Render/D3D12Renderer` (HLSL strings compiled at startup)
-  - 26.3.3 User shader files - `Render/OkayShader` - our own `.okayshader` surface language (lexer, parser, type checker with line:col errors, GLSL / HLSL / CPU backends); Shader = Custom on the Mesh Renderer and in `.okaymat`; properties and textures in the Inspector; magenta error material; hot reload every 250 ms; examples in `examples/shaders`
+  - 26.3.3 User shader files - `Render/OkayShader` - our own `.okayshader` language (lexer, parser, type checker with line:col errors, GLSL / HLSL / CPU backends): a surface block and an optional vertex block (moves world position and normal); Shader = Custom on the Mesh Renderer and in `.okaymat`; properties and textures in the Inspector and the Material window; magenta error material; hot reload every 250 ms; examples in `examples/shaders`
+  - 26.3.4 Custom shaders in shadows - `Render/SoftwareRenderer` (`customsw`), `Render/GLRenderer`, `Render/D3D11Renderer` - the vertex block moves the shadow; a surface that discards or sets alpha cuts the shadow per texel (alpha below one half casts nothing)
 - **Code:** `Components/MeshRenderer`, `Render/OkayShader`, `Render/SoftwareRenderer`, `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer`
-- **API:** `MeshRenderer::shader` (enum `Shader`), `MeshRenderer::customShader`, `MeshRenderer::shaderParams`, `oshader::Compile`, `oshader::LoadShaderFile`, `oshader::RunCpu`
-- **Editor:** MeshRenderer inspector "Shader" selector; Shader = Custom shows Shader File, the compile result and one control per property and texture
+- **API:** `MeshRenderer::shader` (enum `Shader`), `MeshRenderer::customShader`, `MeshRenderer::shaderParams`, `oshader::Compile`, `oshader::LoadShaderFile`, `oshader::RunCpu`, `oshader::RunCpuVertex`, `D3D11CustomPixelSource` / `D3D11CustomVertexSource` / `D3D11CustomDepthSource`
+- **Editor:** MeshRenderer inspector "Shader" selector; Shader = Custom shows Shader File, the compile result and one control per property and texture; the Material window (`.okaymat`) has the same Shader selector and Custom fields
 - **Docs:** `docs/rendering/rendering.md`, `docs/rendering/shaders.md`
 - **Tests:** `shaders`, `software_renderer`, `okayshader`, `okayshader_render`, `okayshader_gl`
-- **Status:** Partial - custom surface shaders work on the software and OpenGL renderers (tested against each other on Mesa llvmpipe); Direct3D 11 is written but unverified on Windows; Direct3D 12 draws Custom as Standard.
-- **Exists today:** The nine built-in styles, plus Custom: an `.okayshader` file whose surface block feeds the renderer's own lighting. One source becomes GLSL, HLSL and a CPU register program; example scene `examples/shaders/shader_demo.okayscene`.
+- **Status:** Partial - custom surface and vertex blocks work on the software and OpenGL renderers, in the colour pass and the shadow maps (tested against each other on Mesa llvmpipe); Direct3D 11 is written but unverified on Windows (its HLSL variants pass glslang's HLSL front end only); Direct3D 12 custom shaders are written but unverified (colour pass only).
+- **Exists today:** The nine built-in styles, plus Custom: an `.okayshader` file whose surface block feeds the renderer's own lighting and whose optional vertex block moves the mesh (waving flag, wobble). One source becomes GLSL, HLSL and a CPU register program; a dissolved object casts a dissolved shadow; example scene `examples/shaders/shader_demo.okayscene`.
 - **Work packages:**
   1. M - Shader style table shared by all renderers so a new built-in style is one entry plus per-renderer code. Depends on: nothing.
   2. - Done 2026-11-22: custom shader asset (`.okayshader`), compiled to GLSL and HLSL.
   3. - Done 2026-11-22: the software renderer runs it on the CPU (same results as OpenGL within a tolerance).
   4. - Done 2026-11-22: errors logged with file:line:col (Console) and shown in the Inspector.
   5. M - Run the Direct3D 11 path on Windows (D3DCompile of the custom variant, a real GPU) and fix what it finds. Depends on: a Windows machine.
-  6. M - Direct3D 12 custom variant (root signature slot for b4 and t9-t12). Depends on: package 5.
-  7. S - Custom surfaces in the shadow-map pass (dissolve holes in shadows) and a vertex stage (wobble). Depends on: nothing.
-- **Open:** D3D11 custom shaders never compiled by D3DCompile or run on a GPU (written and syntax-checked against the MinGW headers only); D3D12 and Xbox (no run-time compiler) do not run them; shadows ignore discard.
+  6. M - Direct3D 12: run the custom pipelines (written 2026-11-22, compile-checked only) on Windows, and add the custom shadow-map pipeline. Depends on: package 5.
+  7. - Done 2026-11-22: custom surfaces in the shadow-map passes (discard / alpha cut) and a vertex block, on software, OpenGL and Direct3D 11 (unverified).
+  8. S - A `tangent` vertex input (so a vertex block can tilt the lighting normal of a waving flag) and varyings from the vertex block to the surface block. Depends on: nothing.
+- **Open:** D3D11 custom shaders never compiled by D3DCompile or run on a GPU (C++ syntax-checked against the MinGW headers; HLSL variants compiled by glslang only); D3D12 written but never run and without custom shadows; Xbox (no run-time compiler) does not run them; GPU-skinned meshes on D3D11 skip the vertex block; the SSAO depth pass and culling use the unmoved mesh.
 - **Related:** 2.1, 26.1, 34.3
-- **Words:** custom shader, shader file, okayshader, surface shader, shader language, GLSL, HLSL, shader style, Toon, Hologram, Iridescent, MeshRenderer.shader, magenta material, hot reload
+- **Words:** custom shader, shader file, okayshader, surface shader, vertex shader, vertex block, waving flag, wobble, dissolve shadow, alpha cut-out, shader language, GLSL, HLSL, shader style, Toon, Hologram, Iridescent, MeshRenderer.shader, magenta material, hot reload
 - **Seen as:** a style looks different between renderers; no way to add my own look
 - **Ask me like:** "add a Dissolve shader style to all four renderers"
 

@@ -60,8 +60,8 @@ void SaveSideBySide(const std::string& file, const Raster& a, const std::uint32_
 // The shadow scene: a grey ground, a sun at 45 degrees and a cube caster 1 unit up drawn with
 // `shader`. Seen from above. Probe points: the left and right halves of the shadow, open ground.
 struct ShadowRun { int left = 0, right = 0, open = 0; };
-const Vec3 kShadowEye{0.0f, 7.0f, 0.01f};
-Mat4 ShadowVP() { return Mat4::Perspective(50.0f, 1.0f, 0.1f, 100.0f) * Mat4::LookAt(kShadowEye, {0.0f, 0.0f, 0.0f}, Vec3::Up); }
+const Vec3 kShadowEye{0.0f, 6.0f, 4.0f};
+Mat4 ShadowVP() { return Mat4::Perspective(50.0f, 1.0f, 0.1f, 100.0f) * Mat4::LookAt(kShadowEye, {0.0f, 0.0f, 0.6f}, Vec3::Up); }
 void BuildShadowScene(Scene& scene, const std::string& shader) {
     scene.physicsEnabled = false;
     scene.renderSettings.tonemap = false;
@@ -221,6 +221,7 @@ int main() {
             if (std::string(which) == "dissolve")
                 for (const auto& go : scene.Objects()) if (auto* mr = go->GetComponent<MeshRenderer>(); mr && go->name == "Caster") mr->shaderParams = "cycle=0;amount=0.45";
             Raster sw; sw.Resize(kSize, kSize); sw.Clear(0xFF000000u);
+            ApplySceneLight(scene);   // the scene's Light components become the frame's lights
             RenderMeshes(sw, scene, ShadowVP(), kShadowEye);
             const std::uint32_t* px = gl.RenderToPixels(scene, ShadowVP(), kShadowEye, kSize, kSize, 1, 0.0f, 0.0f, 0.0f, 1.0f);
             CHECK(px != nullptr);
@@ -255,7 +256,7 @@ int main() {
         light->type = Light::Type::Directional; light->intensity = 1.0f;
         lgo->transform->localRotation = Quat::Euler(35, -25, 0);
         GameObject* go = scene.CreateGameObject("Flag");
-        go->transform->localRotation = Quat::Euler(-90, 0, 0);   // the grid stands up, facing the camera
+        go->transform->localRotation = Quat::Euler(90, 0, 0);   // the grid stands up, its front (+y) towards the camera
         auto* mr = go->AddComponent<MeshRenderer>();
         mr->mesh = Mesh::Grid(2.0f, 1.2f, 32, 16);
         mr->doubleSided = true;
@@ -263,7 +264,7 @@ int main() {
         mr->shader = MeshRenderer::Shader::Custom;
         mr->customShader = src + "flag_wave.okayshader";
         CHECK(oshader::LoadShaderFile(mr->customShader, 0).compiled->ok);
-        const Vec3 eye{0.0f, 0.2f, 2.6f};
+        const Vec3 eye{1.5f, 0.3f, 2.2f};   // from the side, so the wave shows in the outline
         const Mat4 vp = Mat4::Perspective(55.0f, 1.0f, 0.05f, 100.0f) * Mat4::LookAt(eye, {0, 0, 0}, Vec3::Up);
         Raster sw; sw.Resize(kSize, kSize); sw.Clear(0xFF000000u);
         RenderMeshes(sw, scene, vp, eye);

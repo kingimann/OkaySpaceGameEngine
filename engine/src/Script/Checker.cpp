@@ -840,6 +840,29 @@ private:
             if (m.retType.kind != TK::Void) Error(m.loc, m.name + "() must be void: the engine ignores anything it returns");
             if (!m.params.empty()) Error(m.loc, m.name + "() takes no parameters (the engine calls it " + lc[i].when + ")");
         }
+        // Collision messages (the C# names; 2D ones too): the engine calls them, private or
+        // public, with the other object as a Collider / Collision, a GameObject, its name, or nothing.
+        static const char* kMessages[] = {"OnTriggerEnter", "OnTriggerStay", "OnTriggerExit",
+                                          "OnCollisionEnter", "OnCollisionStay", "OnCollisionExit"};
+        for (const char* msg : kMessages) {
+            const std::string base = msg;
+            if (m.name != base && m.name != base + "2D") continue;
+            const bool trigger = base.rfind("OnTrigger", 0) == 0;
+            const std::string want = std::string(trigger ? "Collider" : "Collision") + (m.name.size() > base.size() ? "2D" : "");
+            m.called = true;
+            if (m.isStatic) Error(m.loc, m.name + "() can't be static: the engine calls it on each object");
+            if (m.retType.kind != TK::Void) Error(m.loc, m.name + "() must be void: the engine ignores anything it returns");
+            if (m.params.size() > 1) { Error(m.loc, m.name + "() takes (" + want + " other) or nothing"); continue; }
+            if (m.params.size() == 1) {
+                const Type& t = m.params[0].resolved;
+                bool ok = t.kind == TK::String || t.kind == TK::Error;
+                if (t.kind == TK::Object) {
+                    const std::string& tn = api_.types[(std::size_t)t.id].name;
+                    ok = t.id == api_.gameObject || tn == "Collider" || tn == "Collision" || tn == "Collider2D" || tn == "Collision2D";
+                }
+                if (!ok) Error(m.params[0].loc, m.name + "() takes (" + want + " other) or nothing, not " + TypeName(t));
+            }
+        }
     }
 
     // ---- Conversions ----

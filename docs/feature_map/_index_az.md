@@ -767,6 +767,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Collision layers and trigger filters (6.7)
 - collision mask (6.7)
 - collision matrix (1.3)
+- Collision messages (13.8.9)
 - collision mode (3.10)
 - collision preset (1.3)
 - Color (2.1, 36.1)

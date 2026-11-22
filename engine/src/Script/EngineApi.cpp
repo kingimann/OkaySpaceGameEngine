@@ -203,6 +203,13 @@ EngineApi Build() {
         g.props.push_back(ro("transform", tTr,
             [trIdx](const Value& s, CallContext& c) { return MakeRef(Resolve(std::get<ObjRef>(s), c.loc), trIdx); },
             "The object's Transform (position, rotation, scale)."));
+        {
+            ApiMethod ct = method("CompareTag", {tString}, {"tag"}, tBool,
+                [](const Value& s, std::vector<Value>& a, CallContext& c) { return Value{Resolve(std::get<ObjRef>(s), c.loc)->CompareTag(S(a[0]))}; },
+                "True when the object has this tag.");
+            ct.pure = true;
+            g.methods.push_back(std::move(ct));
+        }
         g.staticMethods.push_back(method("Find", {tString}, {"name"}, tGO,
             [goIdx](const Value&, std::vector<Value>& a, CallContext& c) {
                 Scene* sc = c.self ? c.self->scene() : nullptr;
@@ -1449,6 +1456,28 @@ EngineApi Build() {
             [](const Value&, CallContext&) { return Value{Input::TouchScreen()}; },
             "True once a touch screen has been used or reported."));
         api.types.push_back(std::move(in));
+    }
+    // ---- Collider / Collision (and the 2D names) ----
+    // What C# collision messages receive: OnTriggerEnter(Collider other),
+    // OnCollisionEnter(Collision c), OnTriggerEnter2D(Collider2D other), ... Each is a
+    // reference to the OTHER object, with the members scripts use most.
+    for (const char* tn : {"Collider", "Collision", "Collider2D", "Collision2D"}) {
+        ApiType k; k.name = tn;
+        k.doc = std::string(tn) + " given to a collision message: the other object.";
+        k.props.push_back(ro("gameObject", tGO,
+            [goIdx](const Value& s, CallContext& c) { return MakeRef(Resolve(std::get<ObjRef>(s), c.loc), goIdx); }, "The other object."));
+        k.props.push_back(ro("transform", tTr,
+            [trIdx](const Value& s, CallContext& c) { return MakeRef(Resolve(std::get<ObjRef>(s), c.loc), trIdx); }, "The other object's Transform."));
+        k.props.push_back(ro("name", tString,
+            [](const Value& s, CallContext& c) { return Value{Resolve(std::get<ObjRef>(s), c.loc)->name}; }, "The other object's name."));
+        k.props.push_back(ro("tag", tString,
+            [](const Value& s, CallContext& c) { return Value{Resolve(std::get<ObjRef>(s), c.loc)->tag}; }, "The other object's tag."));
+        ApiMethod ct = method("CompareTag", {tString}, {"tag"}, tBool,
+            [](const Value& s, std::vector<Value>& a, CallContext& c) { return Value{Resolve(std::get<ObjRef>(s), c.loc)->CompareTag(S(a[0]))}; },
+            "True when the other object has this tag.");
+        ct.pure = true;
+        k.methods.push_back(std::move(ct));
+        api.types.push_back(std::move(k));
     }
     // ---- KeyCode ----
     // C# scripts name keys as KeyCode.W, KeyCode.Space (the names a Unity user types);

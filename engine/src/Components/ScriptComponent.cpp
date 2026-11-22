@@ -1,4 +1,5 @@
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Scripting/NextScriptVM.hpp"
 #include "okay/Debug/ConsoleModel.hpp"
 #include "okay/Testing/ObjectPath.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -165,7 +166,10 @@ void ScriptComponent::FireWithObject(const char* event, GameObject* other) {
     vs::VsValue name = (okay && other) ? vs::VsValue::Object(other->InstanceId())
                                        : vs::VsValue(other ? other->name : std::string());
     m_vm->SetGlobal("other", name);
-    m_vm->CallEventWith(event, name);
+    // The typed language (C#) gets the object itself: OnTriggerEnter(Collider other) reads
+    // other.name / tag / gameObject; a string parameter still receives the name.
+    const bool typed = NextScriptVM::IsTypedId(m_vm->Language());
+    m_vm->CallEventWith(event, (typed && other) ? vs::VsValue::Object(other->InstanceId()) : name);
 }
 // Contact details for the handler about to run: contact_point / contact_normal
 // (vectors), the same as contact_x/_y/_z and contact_nx/_ny/_nz numbers,

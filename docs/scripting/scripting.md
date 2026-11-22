@@ -1418,6 +1418,13 @@ C# mode adds, on top of everything above:
   error.
 - `KeyCode.W`, `KeyCode.Space`, `KeyCode.LeftShift`, ... for `Input.GetKey`,
   `GetKeyDown`, `GetKeyUp` (each is the key's name: `KeyCode.W` is `"w"`).
+- Collision messages, private or public: `OnTriggerEnter(Collider other)`,
+  `OnTriggerStay`, `OnTriggerExit`, `OnCollisionEnter(Collision c)`,
+  `OnCollisionStay`, `OnCollisionExit` and the `2D` ones (`Collider2D`,
+  `Collision2D`). The argument is the other object: `other.name`, `other.tag`,
+  `other.gameObject`, `other.transform`, `other.CompareTag("Coin")`. The
+  parameter can also be a `GameObject`, a `string` (its name) or left out.
+  `gameObject.CompareTag(tag)` works too.
 - `Random.Range(0, 3)` (a whole number, 3 left out), `Random.Range(-1f, 1f)`,
   `Random.value` and `Random.InitState(seed)` (these work in `okayscript-next`
   too: the binding table is shared).

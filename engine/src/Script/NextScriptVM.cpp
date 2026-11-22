@@ -297,7 +297,20 @@ bool NextScriptVM::HasEvent(const std::string& function) const {
 vs::VsValue NextScriptVM::CallEventArgs(const std::string& function, const std::vector<vs::VsValue>& given,
                                         std::string* error) {
     if (!m_impl->inst) return {};
-    const int idx = m_impl->prog->MethodIndex(function);
+    int idx = m_impl->prog->MethodIndex(function);
+    if (idx < 0 && (function.rfind("on_trigger_", 0) == 0 || function.rfind("on_collision_", 0) == 0)) {
+        // A collision message: on_trigger_enter reaches OnTriggerEnter (or OnTriggerEnter2D),
+        // private or public, with the other object as its argument.
+        std::string name;
+        bool up = true;
+        for (char ch : function) {
+            if (ch == '_') { up = true; continue; }
+            name += up ? (char)std::toupper((unsigned char)ch) : ch;
+            up = false;
+        }
+        idx = m_impl->prog->MethodIndex(name);
+        if (idx < 0) idx = m_impl->prog->MethodIndex(name + "2D");
+    }
     if (idx < 0) { CallEvent(function); return {}; }   // engine lifecycle names, or no such method
     const MethodDecl& m = m_impl->prog->Component()->methods[(std::size_t)idx];
     auto fail = [&](const std::string& msg) {
@@ -313,7 +326,13 @@ vs::VsValue NextScriptVM::CallEventArgs(const std::string& function, const std::
         if (i >= given.size()) { args.push_back(DefaultOf(m.params[i].resolved)); continue; }
         Value v;
         std::string why;
-        if (!FromVs(given[i], m.params[i].resolved, m.params[i].name, v, why)) { fail(function + "(): " + why); return {}; }
+        vs::VsValue g = given[i];
+        // An object given where text is wanted (OnTriggerEnter(string other)): its name.
+        if (g.IsObject() && m.params[i].resolved.kind == TK::String) {
+            const GameObject* o = g.AsObjectId() ? GameObject::FromInstanceId(g.AsObjectId()) : nullptr;
+            g = vs::VsValue{o ? o->name : std::string()};
+        }
+        if (!FromVs(g, m.params[i].resolved, m.params[i].name, v, why)) { fail(function + "(): " + why); return {}; }
         args.push_back(std::move(v));
     }
     CallContext& c = m_impl->inst->Context();

@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
+#include <cstdio>
 
 namespace fs = std::filesystem;
 namespace bp = okay::buildpipe;
@@ -281,6 +283,31 @@ void TestReport() {
     CHECK(bp::HumanBytes(0) == "0 B" && bp::HumanBytes(1536) == "1.5 KB" && bp::HumanBytes(3u << 20) == "3.0 MB");
 }
 
+// The bytes of a zip with every entry's DOS time and date zeroed (WriteZip stamps the current local time), so two
+// archives written at different moments can be compared byte for byte.
+std::string ZipBytesNoTime(const fs::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    std::string b((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    auto u16 = [&](std::size_t i) { return (std::size_t)(unsigned char)b[i] | ((std::size_t)(unsigned char)b[i + 1] << 8); };
+    auto u32 = [&](std::size_t i) { return u16(i) | (u16(i + 2) << 16); };
+    for (std::size_t i = 0; i + 30 <= b.size(); ) {
+        const std::size_t sig = u32(i);
+        if (sig == 0x04034b50) {                       // local header: time/date at +10, sizes at +18, name at +26
+            for (int k = 10; k < 14; ++k) b[i + k] = 0;
+            i += 30 + u16(i + 26) + u16(i + 28) + u32(i + 18);
+        } else if (sig == 0x02014b50) {                // central entry: time/date at +12
+            for (int k = 12; k < 16; ++k) b[i + k] = 0;
+            i += 46 + u16(i + 28) + u16(i + 30) + u16(i + 32);
+        } else break;
+    }
+    return b;
+}
+std::uint64_t Fnv64(const std::string& s) {
+    std::uint64_t h = 1469598103934665603ull;
+    for (unsigned char c : s) { h ^= c; h *= 1099511628211ull; }
+    return h;
+}
+
 void TestZip(const fs::path& tmp) {
     RUN_SUITE("zip archive");
     const fs::path src = tmp / "zipsrc";
@@ -319,6 +346,48 @@ void TestZip(const fs::path& tmp) {
     CHECK(bp::WriteZip((src2 / "self.zip").string(), src2.string(), true, nullptr, &err));
     std::vector<bp::ZipEntry> es3;
     CHECK(bp::ReadZipDirectory((src2 / "self.zip").string(), es3, &err) && es3.size() == 5);
+
+    // ---- one zip writer (#422 finding 11): WriteZip packs a folder through WriteZipEntries -------------------------------
+    {
+        // WriteZip's bytes are the same as before the split (time and date aside): these hashes were measured on the
+        // writer as it was, before WriteZipEntries existed.
+        const std::uint64_t hStored = Fnv64(ZipBytesNoTime(tmp / "stored.zip")), hPacked = Fnv64(ZipBytesNoTime(tmp / "packed.zip"));
+        std::printf("  zip bytes (no time): stored %016llx packed %016llx\n", (unsigned long long)hStored, (unsigned long long)hPacked);
+        CHECK(hStored == 0x8be018ac06387f21ull);
+        CHECK(hPacked == 0xe93a665d620e0176ull);
+
+        // The same files handed over in memory, in the same (sorted) order, give the same bytes.
+        std::vector<bp::ZipInput> in;
+        for (const auto& e : es) {
+            bp::ZipInput z; z.name = e.name;
+            std::ifstream f(src / fs::u8path(e.name), std::ios::binary);
+            z.data.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            in.push_back(z);
+        }
+        bp::ZipStats ms;
+        CHECK(bp::WriteZipEntries((tmp / "mem.zip").string(), in, true, &ms, &err));
+        CHECK(ms.files == packed.files && ms.stored == packed.stored && ms.packed == packed.packed);
+        CHECK(ZipBytesNoTime(tmp / "mem.zip") == ZipBytesNoTime(tmp / "packed.zip"));
+
+        // Entries keep the order they are given (a package format such as OPC wants a fixed part order), and an entry
+        // may name a file on disk instead of carrying its bytes.
+        std::vector<bp::ZipInput> order(3);
+        order[0].name = "z_first.xml"; order[0].data = "<first/>";
+        order[1].name = "a_second.bin"; order[1].sourcePath = (src / "Game.exe").string();
+        order[2].name = "[Content_Types].xml"; order[2].data = std::string(300, 'c');
+        CHECK(bp::WriteZipEntries((tmp / "order.zip").string(), order, false, nullptr, &err));
+        std::vector<bp::ZipEntry> oe;
+        CHECK(bp::ReadZipDirectory((tmp / "order.zip").string(), oe, &err) && oe.size() == 3);
+        if (oe.size() == 3) {
+            CHECK(oe[0].name == "z_first.xml" && oe[1].name == "a_second.bin" && oe[2].name == "[Content_Types].xml");
+            CHECK(oe[1].size == 5000 && oe[0].method == 0 && oe[2].method == 0);   // stored when not compressing
+        }
+        // A missing source file fails and leaves no archive; an empty name is refused.
+        std::vector<bp::ZipInput> bad(1); bad[0].name = "x"; bad[0].sourcePath = (tmp / "no-such-file").string();
+        CHECK(!bp::WriteZipEntries((tmp / "bad.zip").string(), bad, false, nullptr, &err) && !err.empty() && !fs::exists(tmp / "bad.zip"));
+        std::vector<bp::ZipInput> noname(1); noname[0].data = "x";
+        CHECK(!bp::WriteZipEntries((tmp / "noname.zip").string(), noname, false, nullptr, &err) && !err.empty());
+    }
 
     // Failures say why and leave no half-written archive.
     CHECK(!bp::WriteZip((tmp / "no.zip").string(), (tmp / "missing-folder").string(), true, nullptr, &err) && !err.empty());

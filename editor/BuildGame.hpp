@@ -94,6 +94,7 @@ struct BuildReport {
 };
 
 inline std::string HumanBytes(std::uintmax_t b) {
+    // dup-allow: moved verbatim from editor/main.cpp by the split; the two HumanBytes differ in output ("512.0 B" vs "512 B") and are merged in a follow-up dedup
     char s[32]; double v = (double)b; const char* u = "B";
     if (v >= 1024.0 * 1024 * 1024) { v /= 1024.0 * 1024 * 1024; u = "GB"; }
     else if (v >= 1024.0 * 1024)   { v /= 1024.0 * 1024;        u = "MB"; }

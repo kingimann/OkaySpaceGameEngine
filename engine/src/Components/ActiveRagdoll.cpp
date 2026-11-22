@@ -2,6 +2,7 @@
 #include "okay/Components/ActiveRagdoll.hpp"
 #include "okay/Animation/HumanoidBones.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/NetworkObject.hpp"
 #include "okay/Components/Ragdoll.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Core/Log.hpp"
@@ -22,26 +23,8 @@ bool ArFinite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) &
 } // namespace
 
 bool ActiveRagdoll::SceneWorld::Cast(const Vec3& from, const Vec3& to, Vec3& point, Vec3& normal) const {
-    if (!owner || !owner->gameObject) return false;
-    Scene* sc = owner->gameObject->scene();
-    if (!sc) return false;
-    Vec3 d = to - from;
-    const float len = d.Magnitude();
-    if (len < 1e-6f || !std::isfinite(len)) return false;
-    d = d * (1.0f / len);
-    for (const RaycastHit3D& h : sc->physics3D().RaycastAll(*sc, from, d, len, nullptr, Physics3D::kAllLayers, false)) {
-        if (h.gameObject && owner->Owns(h.gameObject)) continue;
-        point = h.point;
-        normal = h.normal;
-        return true;
-    }
-    return false;
-}
-
-bool ActiveRagdoll::Owns(const GameObject* go) const {
-    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
-        if (gameObject && t == gameObject->transform) return true;
-    return false;
+    // One nearest-hit query per cast (it was RaycastAll: a scan and a sort per sphere).
+    return owner && ragdoll::CastIgnoringSelf(owner->gameObject, from, to, point, normal);
 }
 
 void ActiveRagdoll::ApplyTuning() {
@@ -101,25 +84,42 @@ bool ActiveRagdoll::Build() {
     return true;
 }
 
-void ActiveRagdoll::Start() {
+void ActiveRagdoll::TakeOverRagdoll() {
     // One ragdoll per body: an old-style Ragdoll here would react to the same
     // death and switch the animation off under us. This one takes over.
-    if (auto* old = gameObject ? gameObject->GetComponent<Ragdoll>() : nullptr) {
-        if (old->enabled) {
-            if (old->IsActive()) old->Deactivate();
-            old->enabled = false;
-            m_tookOver = true;
-            Log::Info("ActiveRagdoll on '" + gameObject->name + "' takes over from its Ragdoll (the Ragdoll is switched off)");
-        }
-    }
+    auto* old = gameObject ? gameObject->GetComponent<Ragdoll>() : nullptr;
+    if (!old || !old->enabled) return;
+    if (old->IsActive()) old->Deactivate();
+    old->enabled = false;
+    m_tookOver = true;
+    Log::Info("ActiveRagdoll on '" + gameObject->name + "' takes over from its Ragdoll (the Ragdoll is switched off)");
+}
+
+void ActiveRagdoll::Start() {
+    TakeOverRagdoll();
     Build();
     m_watch.Begin(gameObject);
     if (auto* hp = gameObject ? gameObject->GetComponent<HealthStat>() : nullptr)
         if (limpOnDeath) hp->keepBodyOnDeath = true;
+    if (gameObject && gameObject->transform) m_lastRoot = gameObject->transform->Position();
+}
+
+void ActiveRagdoll::OnEnable() {
+    if (m_built) TakeOverRagdoll();
 }
 
 void ActiveRagdoll::OnDisable() {
     if (m_handedOver) HandOver(false);
+    // Give the Ragdoll we switched off back.
+    if (m_tookOver) {
+        if (auto* old = gameObject ? gameObject->GetComponent<Ragdoll>() : nullptr) old->enabled = true;
+        m_tookOver = false;
+    }
+}
+
+bool ActiveRagdoll::Remote() const {
+    auto* no = gameObject ? gameObject->GetComponent<NetworkObject>() : nullptr;
+    return no && !no->IsLocallyOwned();
 }
 
 bool ActiveRagdoll::IsDown() const {
@@ -129,7 +129,7 @@ bool ActiveRagdoll::IsDown() const {
 }
 
 void ActiveRagdoll::HandOver(bool physical) {
-    if (!handOverControl && physical) return;
+    if ((!handOverControl || Remote()) && physical) return;
     if (physical == m_handedOver) return;
     // Movement only: the animation keeps running, it is what the muscles follow.
     if (physical) { m_switched.clear(); ragdoll::SwitchOff(gameObject, this, ragdoll::kMovement, false, m_switched); }
@@ -174,9 +174,13 @@ void ActiveRagdoll::LateUpdate(float dt) {
     ApplyTuning();
     WatchHealth();
     Transform* root = gameObject->transform;
+    // A copy another peer owns: the network places its root and runs its
+    // controllers; the body is still shown physically, the root is never written.
+    const bool remote = Remote();
     Vec3 delta, fwd;
     float ground = 0.0f;
-    if (m_dc.RootMoveWanted(delta, fwd, &ground)) {
+    if (remote && m_dc.RootMoveWanted(delta, fwd, &ground)) m_dc.RootMoved();
+    if (!remote && m_dc.RootMoveWanted(delta, fwd, &ground)) {
         // Put the root under the body (on the ground it stands on now) before
         // the animation is read again.
         if (ArFinite(delta)) {
@@ -205,8 +209,13 @@ void ActiveRagdoll::LateUpdate(float dt) {
         m_lastState = s;
         if (onStateChanged) onStateChanged(was, s);
     }
-    HandOver(s != dyn::CharState::Animated && s != dyn::CharState::Blending);
-    if (rootFollows && (s == dyn::CharState::Down || s == dyn::CharState::GettingUp || s == dyn::CharState::Dead)) {
+    // Reactive: the controller is off whenever the body is physical. Powered: the body is always
+    // physical, so the controller stays on while it only balances and goes off once it is down.
+    const bool down = s == dyn::CharState::Falling || s == dyn::CharState::Down || s == dyn::CharState::GettingUp
+        || s == dyn::CharState::Dead;
+    const bool physical = s != dyn::CharState::Animated && s != dyn::CharState::Blending;
+    HandOver(m_dc.mode == dyn::RagdollMode::Powered ? down : physical);
+    if (!remote && rootFollows && (s == dyn::CharState::Down || s == dyn::CharState::GettingUp || s == dyn::CharState::Dead)) {
         // Keep the object (camera targets, name tags) over the body; the
         // physics pose is written in world space below, so it does not move.
         const Vec3 hips = m_dc.Body(Hips).position;
@@ -215,6 +224,7 @@ void ActiveRagdoll::LateUpdate(float dt) {
     }
     if (m_dc.PhysicsWeight() > 0.0f) WritePose();
     else m_wrote = false;
+    m_lastRoot = root->Position();
 }
 
 void ActiveRagdoll::WatchHealth() {
@@ -231,7 +241,11 @@ void ActiveRagdoll::WatchHealth() {
         }
         m_dc.Die();
     } else if (e == ragdoll::HealthWatch::Revived && m_dc.Dead()) {
-        m_dc.Revive();
+        // A respawn moved the object (HealthStat::Respawn): come back there, standing, like
+        // the Ragdoll does. A revive in place gets up from the floor.
+        const Vec3 now = gameObject->transform->Position();
+        if (Vec3::Distance(now, m_lastRoot) > 0.5f) m_dc.SnapToAnimation();
+        else m_dc.Revive();
     } else if (e == ragdoll::HealthWatch::Hurt && reactToDamage) {
         Vec3 at = m_dc.Body(Torso).position;
         Vec3 dir = gameObject->transform->Forward() * -1.0f;

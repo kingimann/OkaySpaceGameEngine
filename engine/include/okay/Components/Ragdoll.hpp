@@ -91,7 +91,6 @@ private:
     void Rub(Particle& p) const;
     void PoseBones();
     void SetDriven(bool limp);
-    bool Owns(const GameObject* go) const;
     int  Nearest(const Vec3& point) const;
     void WatchHealth();
 

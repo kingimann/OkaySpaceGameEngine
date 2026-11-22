@@ -118,28 +118,17 @@ void Ragdoll::SampleBones(bool keepVelocity) {
     }
 }
 
-bool Ragdoll::Owns(const GameObject* go) const {
-    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
-        if (gameObject && t == gameObject->transform) return true;
-    return false;
-}
-
 void Ragdoll::Collide(Particle& p, const Vec3& from) {
     p.contact = false;
-    Scene* sc = gameObject ? gameObject->scene() : nullptr;
-    if (!sc) return;
     // Cast a little below the move too, so a body resting on a floor keeps its contact.
     Vec3 d = p.pos - from;
     float len = d.Magnitude();
     d = len > 1e-6f ? d * (1.0f / len) : Vec3::Down;
-    for (const RaycastHit3D& h : sc->physics3D().RaycastAll(*sc, from, d, len + radius * 1.5f, nullptr,
-                                                             Physics3D::kAllLayers, false)) {
-        if (h.gameObject && Owns(h.gameObject)) continue;
-        p.contact = true;
-        p.planePoint = h.point;
-        p.planeNormal = h.normal;
-        return;
-    }
+    Vec3 point, normal;
+    if (!ragdoll::CastIgnoringSelf(gameObject, from, from + d * (len + radius * 1.5f), point, normal)) return;
+    p.contact = true;
+    p.planePoint = point;
+    p.planeNormal = normal;
 }
 
 void Ragdoll::Push(Particle& p) const {

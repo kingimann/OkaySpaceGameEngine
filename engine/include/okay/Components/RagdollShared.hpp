@@ -31,6 +31,11 @@ void SwitchOff(GameObject* root, const Component* self, unsigned kinds, bool who
 /// Switch back on what SwitchOff switched off, and clear the list.
 void SwitchBackOn(std::vector<Component*>& switched);
 
+/// First surface along from -> to, skipping `self` and everything below it
+/// (Physics3D::Raycast under an IgnoreHierarchy; triggers do not count).
+bool CastIgnoringSelf(GameObject* self, const Vec3& from, const Vec3& to, Vec3& point, Vec3& normal,
+                      GameObject** hitObject = nullptr);
+
 /// The 15 humanoid bones under `go`. The blocky Character is split into its
 /// part rig first if it is not yet. False if any bone is missing.
 bool FindBones(GameObject* go, Transform* out[humanoid::BoneCount]);

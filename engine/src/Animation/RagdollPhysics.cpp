@@ -8,6 +8,7 @@
 #include "okay/Animation/RagdollPhysics.hpp"
 #include "okay/Math/JointLimit.hpp"   // TwistAbout: the swing / twist split shared with the IK limits
 #include "okay/Math/Mathf.hpp"
+#include "okay/Physics/ShapeKernel3D.hpp"   // LocalShape3D::Ray: the shared ray test
 #include <cmath>
 
 namespace okay {
@@ -53,22 +54,14 @@ bool SimpleWorld::Cast(const Vec3& from, const Vec3& to, Vec3& point, Vec3& norm
         if (t >= 0.0f && t <= 1.0f) { best = t; normal = Vec3::Up; }
     }
     for (const Box& b : boxes) {
-        // Slab test; only a segment that starts outside the box can hit a face.
-        float t0 = 0.0f, t1 = 1.0f; int axis = -1; float sgn = 0.0f;
-        bool miss = false;
-        for (int a = 0; a < 3 && !miss; ++a) {
-            const float o = from[a], dd = d[a], lo = b.min[a], hi = b.max[a];
-            if (std::fabs(dd) < 1e-12f) { if (o < lo || o > hi) miss = true; continue; }
-            float ta = (lo - o) / dd, tb = (hi - o) / dd;
-            float s = -1.0f;
-            if (ta > tb) { const float t = ta; ta = tb; tb = t; s = 1.0f; }
-            if (ta > t0) { t0 = ta; axis = a; sgn = s; }
-            if (tb < t1) t1 = tb;
-            if (t0 > t1) miss = true;
-        }
-        if (miss || axis < 0 || t0 >= best) continue;
-        best = t0;
-        normal = Vec3::Zero; normal[axis] = sgn;
+        // The shared ray-box test (Physics/ShapeKernel3D); a segment that starts inside never hits.
+        LocalShape3D box;
+        box.kind = LocalShape3D::Kind::Box;
+        box.half = (b.max - b.min) * 0.5f;
+        float t; Vec3 n;
+        if (!box.Ray(from - (b.min + b.max) * 0.5f, d, 1.0f, t, n) || t >= best) continue;
+        best = t;
+        normal = n;
     }
     if (best > 1.0f) return false;
     point = from + d * best;
@@ -271,14 +264,14 @@ void XpbdRagdoll::FindContacts(float dt, const ContactWorld* world) {
             Vec3 p, n;
             bool hit = world->Cast(c0 - dir * (0.5f * s.radius), c0 + move + dir * (s.radius + skin), p, n);
             if (!hit) hit = world->Cast(c0 + Vec3::Up * s.radius, c0 + Vec3::Down * (s.radius + skin + 0.02f), p, n);
+            // A deep overlap starts both casts inside the collider, which then miss:
+            // look again from well above. Nothing under it = no surface (the old
+            // code kept the last plane, an invisible floor up to 1 m past an edge).
+            if (!hit) hit = world->Cast(c0 + Vec3::Up * (s.radius + 0.6f), c0 + Vec3::Down * (s.radius + skin), p, n);
             if (hit && RpFinite(p) && RpFinite(n) && n.SqrMagnitude() > 1e-8f) {
                 s.hasPlane = true; s.planePoint = p; s.planeNormal = n.Normalized();
-            } else if (s.hasPlane) {
-                // Keep the last surface while the sphere is still near it (a deep
-                // overlap starts the cast inside the collider, which then misses).
-                const float off = Vec3::Dot(c0 - s.planePoint, s.planeNormal);
-                const Vec3 along = Vec3::ProjectOnPlane(c0 - s.planePoint, s.planeNormal);
-                if (off > s.radius + 0.1f || off < -0.5f || along.Magnitude() > 1.0f) s.hasPlane = false;
+            } else {
+                s.hasPlane = false;
             }
         }
     }
@@ -478,11 +471,12 @@ int XpbdRagdoll::SphereCount(int body) const {
     return body >= 0 && body < (int)m_bodies.size() ? (int)m_bodies[body].spheres.size() : 0;
 }
 
-bool XpbdRagdoll::SphereTouching(int body, int sphere, Vec3* worldCentre) const {
+bool XpbdRagdoll::SphereTouching(int body, int sphere, Vec3* worldCentre, Vec3* normal) const {
     if (body < 0 || body >= (int)m_bodies.size()) return false;
     const Body& b = m_bodies[body];
     if (sphere < 0 || sphere >= (int)b.spheres.size()) return false;
     if (worldCentre) *worldCentre = b.x + b.q * b.spheres[sphere].local;
+    if (normal) *normal = b.spheres[sphere].hasPlane ? b.spheres[sphere].planeNormal : Vec3::Up;
     return b.spheres[sphere].touching;
 }
 

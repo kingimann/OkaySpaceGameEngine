@@ -21,7 +21,10 @@
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/TopDownShooterController.hpp"
 #include "okay/Net/PlayerInput.hpp"
+#include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Scene/Scene.hpp"
+#include <cmath>
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 
@@ -70,6 +73,22 @@ void SwitchOff(GameObject* root, const Component* self, unsigned kinds, bool who
 void SwitchBackOn(std::vector<Component*>& switched) {
     for (Component* c : switched) c->enabled = true;
     switched.clear();
+}
+
+bool CastIgnoringSelf(GameObject* self, const Vec3& from, const Vec3& to, Vec3& point, Vec3& normal, GameObject** hitObject) {
+    Scene* sc = self ? self->scene() : nullptr;
+    if (!sc) return false;
+    Vec3 d = to - from;
+    const float len = d.Magnitude();
+    if (!(len > 1e-6f) || !std::isfinite(len)) return false;
+    d = d * (1.0f / len);
+    Physics3D::IgnoreHierarchy own(self);
+    const RaycastHit3D h = sc->physics3D().Raycast(*sc, from, d, len, nullptr, Physics3D::kAllLayers, false);
+    if (!h.hit) return false;
+    point = h.point;
+    normal = h.normal;
+    if (hitObject) *hitObject = h.gameObject;
+    return true;
 }
 
 bool FindBones(GameObject* go, Transform* out[humanoid::BoneCount]) {

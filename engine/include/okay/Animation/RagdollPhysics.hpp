@@ -15,9 +15,10 @@
 // corrections with generalized inverse masses, compliance = 1 / stiffness,
 // velocity pass for damping), plus the swing / twist split of a joint rotation
 // that is standard in the robotics and animation literature.
-// When the scene physics gains 6-DOF joints with spherical drives (branch
-// claude2/own-physics-engine), a second implementation can build Rigidbody3D
-// bodies and those joints instead; the controller does not change.
+// XpbdRagdoll is a stop-gap and a copy of what the physics core does: once the
+// core's Ball / ConeTwist Joint3D drives land (claude2/physics-no-classic), a
+// backend on them replaces it and XpbdRagdoll is deleted (docs/status/UNFINISHED.md).
+// Build nothing new on it.
 //
 // The world is reached only through ContactWorld::Cast (a segment query), so
 // the layer has no Scene dependency and runs in plain unit tests.
@@ -38,8 +39,7 @@ public:
 };
 
 /// A flat ground at `groundY` plus optional axis-aligned boxes (a ledge, a
-/// wall). Used by the tests and as the component's fallback when a scene has
-/// no colliders under the character.
+/// wall). Used by the unit tests (the component always asks the scene).
 class SimpleWorld : public ContactWorld {
 public:
     struct Box { Vec3 min, max; };
@@ -126,7 +126,7 @@ public:
     /// Contacts after the last Step.
     virtual bool  BodyTouching(int body) const = 0;
     virtual int   SphereCount(int body) const = 0;
-    virtual bool  SphereTouching(int body, int sphere, Vec3* worldCentre = nullptr) const = 0;
+    virtual bool  SphereTouching(int body, int sphere, Vec3* worldCentre = nullptr, Vec3* normal = nullptr) const = 0;
     /// Number of times a non-finite state was caught and reset.
     virtual int   Resets() const = 0;
 };
@@ -160,7 +160,7 @@ public:
     void  Step(float dt, const ContactWorld* world) override;
     bool  BodyTouching(int body) const override;
     int   SphereCount(int body) const override;
-    bool  SphereTouching(int body, int sphere, Vec3* worldCentre) const override;
+    bool  SphereTouching(int body, int sphere, Vec3* worldCentre, Vec3* normal) const override;
     int   Resets() const override { return m_resets; }
 
     /// Joint geometry for tests: the gap between the two anchor points (m).

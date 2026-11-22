@@ -130,6 +130,9 @@ public:
     void GetUp();
     void Die();
     void Revive();
+    /// Back to the animation at once, where the animation now stands (a respawn
+    /// that moved the object). Clears death, grips and helpers.
+    void SnapToAnimation();
     void SetMode(RagdollMode m);
 
     // ---- State ----
@@ -233,6 +236,9 @@ private:
     float m_mass = 70.0f, m_height = 1.8f, m_groundY = 0.0f, m_groundNow = 0.0f, m_footCentreH = 0.0f;
     float m_rootGround = 0.0f;
     void  TrackGround();
+    void  TrackSupport();
+    int   m_footHold[2][4] = {};      // steps each foot sphere still counts as support
+    Vec3  m_footPt[2][4];
     float m_pelvisH0 = 1.0f, m_comH0 = 1.0f;
     int   m_falls = 0, m_getUps = 0;
     float m_lastRecovery = -1.0f;

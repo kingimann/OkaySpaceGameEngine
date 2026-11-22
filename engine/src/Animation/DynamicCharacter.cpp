@@ -2,6 +2,7 @@
 #include "okay/Animation/DynamicCharacter.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Math/TwoBoneIK.hpp"
+#include "okay/Physics/ShapeKernel3D.hpp"   // LocalShape3D::Ray: the shared ray test
 #include <cmath>
 
 namespace okay {
@@ -320,6 +321,7 @@ public:
         }
         const bool calm = out <= 0.0f && Flat(vel).Magnitude() < 0.35f && c.TorsoLean() < 15.0f;
         c.m_stableTime = calm ? c.m_stableTime + h : 0.0f;
+        if (c.m_stableTime > 0.3f) c.m_steps = 0;      // caught: the step budget is for one stumble
         if (c.m_stableTime > 0.45f && c.StateTime() > 0.4f && c.mode != RagdollMode::Powered)
             c.ChangeState(CharState::Blending);
         else if (c.m_stableTime > 0.45f && c.mode == RagdollMode::Powered)
@@ -472,8 +474,10 @@ public:
     Vec3  fwd, startXZ;
     Quat  pelvis0, torso0;
     float h0 = 0.0f;
-    int   tries = 0;
+    float ground0 = 0.0f;   // the floor under the pelvis when the get-up started (fixed for the get-up)
+    int   tries = 0;        // failed get-ups in a row; after kMaxTries it waits for GetUp()
     bool  requested = false;
+    static constexpr int kMaxTries = 3;
 
     struct Key { float s, h, pelvisPitch, torsoPitch; Vec3 thigh, shin, upper, fore; };
 
@@ -484,7 +488,13 @@ public:
         fwd = SafeNorm(Flat(c.m_faceDown ? axis : axis * -1.0f), c.AnimForward());
         startXZ = Vec3{p.position.x, 0.0f, p.position.z};
         pelvis0 = p.rotation; torso0 = t.rotation;
-        h0 = c.PelvisHeight();
+        // The floor under the pelvis, read once: a foot touching a ledge top during the
+        // get-up must not move it (it used to, and the helper then hoisted the body up).
+        ground0 = c.GroundY();
+        Vec3 hp, hn;
+        if (c.World() && c.World()->Cast(p.position + Vec3::Up * 0.3f, p.position + Vec3::Down * 4.0f, hp, hn) && hn.y > 0.7f)
+            ground0 = hp.y;
+        h0 = p.position.y - ground0;
         c.ChangeState(CharState::GettingUp);
     }
 
@@ -497,13 +507,15 @@ public:
             still = Flat(c.CentreOfMassVelocity()).Magnitude() < 0.25f && std::fabs(c.CentreOfMassVelocity().y) < 0.25f
                 ? still + h : 0.0f;
             if (c.StateTime() > 4.0f) still = Mathf::Max(still, c.tuning.getUpDelay + h);
-            if ((c.tuning.autoGetUp || requested) && (still > c.tuning.getUpDelay || (requested && still > 0.2f))) {
+            const bool autoOk = c.tuning.autoGetUp && tries < kMaxTries;   // after 3 failures it waits to be asked
+            if ((autoOk || requested) && (still > c.tuning.getUpDelay || (requested && still > 0.2f))) {
+                if (requested) tries = 0;
                 requested = false;
                 Begin(c);
             }
             return;
         }
-        if (s != CharState::GettingUp) { still = 0.0f; return; }
+        if (s != CharState::GettingUp) { still = 0.0f; if (s == CharState::Animated) tries = 0; return; }
         const float T = Mathf::Max(0.5f, c.tuning.getUpTime);
         const float u = c.StateTime() / T;
         const float H = c.StandingHeight();
@@ -554,7 +566,7 @@ public:
         f.want[Torso] = torsoWant; f.has[Torso] = true;
         f.want[Head] = c.HeadingPose(Head, fwd); f.has[Head] = true;
         const float M = c.TotalMass(), help = Mathf::Max(0.0f, c.tuning.helperForce);
-        const Vec3 target{startXZ.x, c.GroundY() + height, startXZ.z};
+        const Vec3 target{startXZ.x, ground0 + height, startXZ.z};
         const BodyState p = c.Body(Hips);
         // Hold the pelvis over its start point but let it settle where the legs put it.
         const Vec3 aim{Mathf::Lerp(p.position.x, target.x, 0.3f), target.y, Mathf::Lerp(p.position.z, target.z, 0.3f)};
@@ -803,6 +815,7 @@ void DynamicCharacter::StartPhysics() {
     m_groundNow = Mathf::Min(m_animX[LFoot].y, m_animX[RFoot].y) - m_footCentreH;
     for (int b = 1; b < kBones; ++b) m_relDrive[b] = m_relAnim[b];
     m_haveDrive = true;
+    for (auto& side : m_footHold) for (int& hold : side) hold = 0;
     m_disturbedAt = m_clock;
     m_steps = 0;
     m_stableTime = 0.0f;
@@ -910,16 +923,18 @@ void DynamicCharacter::FixedStep(float h) {
     m_phys->SetJointFriction(friction);
     m_phys->Step(h, m_world);
     TrackGround();
+    TrackSupport();
 }
 
 void DynamicCharacter::TrackGround() {
     // The lowest point of anything touching, feet first.
+    // Only surfaces that face up count as ground (a hand on a wall is not).
     float lo = 1e30f;
     for (int b = 0; b < kBones; ++b) {
         const float r = (b == LFoot || b == RFoot) ? m_footR : m_radius[b];
         for (int i = 0; i < m_phys->SphereCount(b); ++i) {
-            Vec3 c;
-            if (m_phys->SphereTouching(b, i, &c)) lo = Mathf::Min(lo, c.y - r);
+            Vec3 c, n;
+            if (m_phys->SphereTouching(b, i, &c, &n) && n.y > 0.7f) lo = Mathf::Min(lo, c.y - r);
         }
     }
     if (lo < 1e29f && Fin(lo)) m_groundNow = lo;
@@ -1094,13 +1109,16 @@ void DynamicCharacter::FlatFoot(Frame& f, int side) const {
     f.has[ft] = true;
 }
 
+// Foot support is held for a few steps after a sphere loses contact: a standing foot that bobs
+// by a millimetre (heel and toe flickering) must not look like a lifted foot, or the capture
+// point "leaves" the feet for one frame and a needless step starts (seen with other compiler
+// rounding: a 35 N s push stepped six times and fell).
+constexpr int kSupportHold = 4;
+
 bool DynamicCharacter::FootSupport(int side, Vec3& centre) const {
-    const int ft = side == 0 ? LFoot : RFoot;
     Vec3 sum; int n = 0;
-    for (int i = 0; i < m_phys->SphereCount(ft); ++i) {
-        Vec3 c;
-        if (m_phys->SphereTouching(ft, i, &c)) { sum += c; ++n; }
-    }
+    for (int i = 0; i < 4; ++i)
+        if (m_footHold[side][i] > 0) { sum += m_footPt[side][i]; ++n; }
     if (n == 0) return false;
     centre = sum * (1.0f / (float)n);
     return true;
@@ -1108,12 +1126,25 @@ bool DynamicCharacter::FootSupport(int side, Vec3& centre) const {
 
 int DynamicCharacter::SupportPoints(Vec3* pts, int maxPts) const {
     int n = 0;
-    for (int ft : {LFoot, RFoot})
-        for (int i = 0; i < m_phys->SphereCount(ft) && n < maxPts; ++i) {
-            Vec3 c;
-            if (m_phys->SphereTouching(ft, i, &c)) pts[n++] = c;
-        }
+    for (int side = 0; side < 2; ++side)
+        for (int i = 0; i < 4 && n < maxPts; ++i)
+            if (m_footHold[side][i] > 0) pts[n++] = m_footPt[side][i];
     return n;
+}
+
+void DynamicCharacter::TrackSupport() {
+    for (int side = 0; side < 2; ++side) {
+        const int ft = side == 0 ? LFoot : RFoot;
+        for (int i = 0; i < 4; ++i) {
+            Vec3 c;
+            if (i < m_phys->SphereCount(ft) && m_phys->SphereTouching(ft, i, &c)) {
+                m_footHold[side][i] = kSupportHold;
+                m_footPt[side][i] = c;
+            } else if (m_footHold[side][i] > 0) {
+                --m_footHold[side][i];
+            }
+        }
+    }
 }
 
 int DynamicCharacter::NearestBody(const Vec3& p) const {
@@ -1220,6 +1251,17 @@ void DynamicCharacter::Revive() {
     static_cast<GetUpModule*>(m_mod[5].get())->requested = true;
 }
 
+void DynamicCharacter::SnapToAnimation() {
+    if (!m_built) return;
+    m_dead = false;
+    if (m_grabBody >= 0) { m_phys->ClearPin(m_grabBody); m_grabBody = -1; }
+    m_phys->ClearHelpers();
+    m_rootMove = false;
+    m_haveAnim = false;                 // the next pose is the new start: no speed from the jump
+    for (int b = 0; b < kBones; ++b) m_relax[b] = 0.0f;
+    ChangeState(CharState::Animated);
+}
+
 void DynamicCharacter::SetMode(RagdollMode m) {
     mode = m;
     if (!m_built) return;
@@ -1234,36 +1276,18 @@ int DynamicCharacter::Raycast(const Vec3& origin, const Vec3& dir, float maxDist
     if (!m_built || !Fin(origin) || !Fin(dir) || !Fin(maxDist)) return -1;
     const Vec3 d = SafeNorm(dir, Vec3::Forward);
     int best = -1; float bt = maxDist;
-    auto sphere = [&](const Vec3& c, float r, float& t) {
-        const Vec3 m = origin - c;
-        const float b = Vec3::Dot(m, d), cc = Vec3::Dot(m, m) - r * r;
-        if (cc > 0.0f && b > 0.0f) return false;
-        const float disc = b * b - cc;
-        if (disc < 0.0f) return false;
-        t = Mathf::Max(0.0f, -b - std::sqrt(disc));
-        return true;
-    };
     for (int b = 0; b < kBones; ++b) {
+        // Each body is a capsule along its local +Y: the shared ray-capsule test (Physics/ShapeKernel3D),
+        // in the body's frame.
         const BodyState s = Body(b);
-        const Vec3 u = s.rotation * Vec3::Up;
-        const Vec3 a = s.position - u * m_half[b];
-        const float L = 2.0f * m_half[b], r = m_radius[b];
-        float t;
-        // Cylinder part.
-        const Vec3 m = origin - a;
-        const Vec3 mp = m - u * Vec3::Dot(m, u), dp = d - u * Vec3::Dot(d, u);
-        const float A = Vec3::Dot(dp, dp), B = 2.0f * Vec3::Dot(mp, dp), C = Vec3::Dot(mp, mp) - r * r;
-        if (A > 1e-9f) {
-            const float disc = B * B - 4.0f * A * C;
-            if (disc >= 0.0f) {
-                t = (-B - std::sqrt(disc)) / (2.0f * A);
-                if (t < 0.0f && C < 0.0f) t = 0.0f;
-                const float along = Vec3::Dot(m + d * t, u);
-                if (t >= 0.0f && t < bt && along >= 0.0f && along <= L) { bt = t; best = b; }
-            }
-        }
-        if (sphere(a, r, t) && t < bt) { bt = t; best = b; }
-        if (sphere(a + u * L, r, t) && t < bt) { bt = t; best = b; }
+        LocalShape3D cap;
+        cap.kind = LocalShape3D::Kind::Capsule;
+        cap.axis = 1;
+        cap.radius = m_radius[b];
+        cap.height = 2.0f * (m_half[b] + m_radius[b]);
+        const Quat inv = s.rotation.Inverse();
+        float t; Vec3 n;
+        if (cap.Ray(inv * (origin - s.position), inv * d, bt, t, n) && t < bt) { bt = t; best = b; }
     }
     if (best >= 0 && hitPoint) *hitPoint = origin + d * bt;
     return best;

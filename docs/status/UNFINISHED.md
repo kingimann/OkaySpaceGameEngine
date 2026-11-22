@@ -152,7 +152,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ## Planned work from the to-do list
 
-- ActiveRagdoll on the physics core joints (after own-physics-engine merges): a `CoreRagdollPhysics` backend behind `dyn::RagdollPhysics` using ConeTwist / Ball `Joint3D` drives (same fields as `dyn::JointDrive`), then make it the default and keep `XpbdRagdoll` as the fallback; plan in [active_ragdoll.md](../gameplay/active_ragdoll.md#the-physics-seam-and-the-plan-for-the-physics-core)
+- ActiveRagdoll on the physics core joints (after own-physics-engine / physics-no-classic lands): `XpbdRagdoll` is a second rigid-body and joint solver (a copy) and will be deleted; ActiveRagdoll moves onto the core's Ball / ConeTwist `Joint3D` drives through a `CoreRagdollPhysics` backend behind `dyn::RagdollPhysics` (same fields as `dyn::JointDrive`). Nothing new is built on `XpbdRagdoll` meanwhile. Plan in [active_ragdoll.md](../gameplay/active_ragdoll.md#the-physics-seam-and-the-plan-for-the-physics-core). Also not done: ragdoll poses are not sent over the network
 - Active Ragdoll, our own dynamic character (first version 2026-11-22, branch `claude2/active-ragdoll`, [active_ragdoll.md](../gameplay/active_ragdoll.md)): limbs collide only with static colliders and terrain (no limb-to-limb or dynamic-body collisions until the new physics core's driven joints are behind `dyn::RagdollPhysics`); no walking while physical; get-up uses a helper force; stairs, slopes and imported rigs untested; never run on Windows or seen in the editor window
 - Admin: create test servers without a game (not started: "test server" needs a definition from the owner; see unfinished_launcher.md)
 - Improve the editor Plugins menu

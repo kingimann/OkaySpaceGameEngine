@@ -72,7 +72,7 @@ visual-script node `Fn.<name>` (Character Actions > Stances & Ragdoll). C++: `Ac
 
 - Standing powered for 4 s: pelvis within 1 % of its standing height, torso lean under 1 degree.
 - A 35 N s push at the chest (0.5 m/s): stays up, back to the animation after 0.87 s (recovery time).
-- 35 and 50 N s pushes in all four directions: no fall. 60 to 75 N s forward: stays up in 3 of 4 (up to
+- 35 and 50 N s pushes in all four directions: no fall. 55 to 90 N s forward: stays up in 5 of 7 (up to
   5 steps). 200 N s (2.9 m/s) in all four directions: falls every time and gets up again every time. Between about 70 and 200 N s it depends on
   the direction (sideways falls come sooner: the stepping foot may not cross the other).
 - Get-up from lying face up and face down: up and back to the animation in about 3.5 s
@@ -82,11 +82,22 @@ visual-script node `Fn.<name>` (Character Actions > Stances & Ragdoll). C++: `Ac
 - Hostile input (NaN and infinite pushes, 1e12 N s, NaN poses, negative and 10 s frames, zero and
   negative mass, a broken skeleton): stays finite, joints apart by under 4 mm, no reset needed.
 - The same scripted sequence (push, shot, blast) run twice gives bit-identical bodies.
+- CI (another machine and compiler) gave different answers on borderline pushes. Found and fixed:
+  a standing foot that bobs a millimetre made heel and toe contacts flicker, the capture point "left"
+  the feet for one frame, and a 35 N s backward push stepped six times and fell. Foot support is now
+  held for 4 steps after contact is lost, and the step budget refills once it stands calmly. The core
+  tests pass built with g++ and clang++, -O2 and -O3, with and without fused multiply-add. The tests
+  now assert properties (35 N s never falls, 200 N s always falls and gets up, a step can catch it,
+  every push ends standing, the hand reaches the wall) and print the borderline counts.
 - Balance near the edge is chaotic: a change in rounding (for example moving the leg IK onto the
   shared two-bone solve) can turn one 70 N s push from "stays up" into "falls". The tests therefore
-  ask for 3 of 4 pushes between 60 and 75 N s and a grip in at least 1 of 5 shoves toward the wall.
+  print how many of 7 pushes between 55 and 90 N s it stands through and how often it grips.
 - Muscle limits are real since 2026-11-22: the drive's torque cap (and its damping) is in N m
   (XPBD multipliers are positional, torque = lambda / h^2); before, the cap was 720 times too loose.
+- Review of #1138 (fixed, each with a test): draped over a ledge the get-up hoisted the pelvis up to 1 m
+  too high (a foot on the ledge moved the "ground"; a remembered contact plane was an invisible floor
+  up to 1 m past an edge); a respawn was undone; Powered mode never gave control back; a remote copy
+  moved its own root.
 - Get-up starts when the body as a whole is still (centre of mass), or after 4 s down; it only counts as
   up when a foot is on the ground (found in the example's frames: a body draped over the ledge never
   counted as still, and once lifted by the helper stood in the air beyond the edge; now it drops off and
@@ -102,22 +113,41 @@ field the drive of the scene physics' Ball / ConeTwist `Joint3D` on branch `clau
 (`useDrive`, `driveTarget` = the turn from the build pose, `driveStiffness`, `driveDamping`,
 `driveFrequency`, `driveDampingRatio`, `driveMaxTorque`), so the two speak the same language.
 
-The plan (one joint solver in the engine):
-1. When `claude2/own-physics-engine` has merged, write `CoreRagdollPhysics : RagdollPhysics`: one
-   `Rigidbody3D` + `CapsuleCollider3D` per bone on hidden child objects, one ConeTwist `Joint3D` per
-   joint (knees and elbows Hinge), `SetDrive` copying `JointDrive` into the joint's drive fields
-   (`driveTarget = target.ToEuler()`), contacts read from the body's collision callbacks.
-2. Switch `DynamicCharacter`'s backend with one line (`m_phys.reset(new CoreRagdollPhysics(scene))`),
-   behind a component setting first, off by default.
-3. Run `active_ragdoll` on both backends; when the core passes, make it the default and keep
-   `XpbdRagdoll` only as the fallback for scenes without the core (and for the unit tests that run
-   without a Scene).
+**`XpbdRagdoll` is a second rigid-body and joint solver, a copy, and it will be deleted.** The engine is
+getting one physics path: the new core's joints become the only joint solver (branch
+`claude2/physics-no-classic`). Nothing new is built on `XpbdRagdoll`. The next step, once that branch lands:
+1. Write `CoreRagdollPhysics : RagdollPhysics`: one `Rigidbody3D` + `CapsuleCollider3D` per bone on hidden
+   child objects, one ConeTwist `Joint3D` per joint (knees and elbows Hinge), `SetDrive` copying
+   `JointDrive` into the joint's drive fields (`driveTarget = target.ToEuler()`), contacts from the bodies'
+   collision callbacks.
+2. Switch `DynamicCharacter` to it (one line: `m_phys.reset(new CoreRagdollPhysics(scene))`) and run
+   `active_ragdoll` on it.
+3. Delete `XpbdRagdoll` (and `SimpleWorld`, which only feeds it in the unit tests; those tests move to a
+   scene).
 4. What it needs from the core: drives that honour the max torque including damping, a hinge with
    limits, collision filtering between neighbouring limbs, an impulse at a point, per-body contact
-   flags, a world-anchored soft spring (get-up helper) and a soft point pin (grab), bit-identical
-   stepping.
+   flags with normals, a world-anchored soft spring (get-up helper) and a soft point pin (grab),
+   bit-identical stepping.
 
 Tracked in `docs/status/UNFINISHED.md` ("ActiveRagdoll on the physics core joints").
+
+## Control, respawn and multiplayer
+
+- **Hand-over.** Reactive mode: the movement controllers on the object are off whenever the body is
+  physical (stumbling, falling, down, getting up) and back on when it blends into the animation.
+  Powered mode: the body is always physical, so the controllers stay on while it only balances and go
+  off only while it falls, lies down or gets up.
+- **Respawn.** When a HealthStat respawn moves the object (`Respawn`/`Revive` with Respawn on), the body
+  comes back standing in the animation at the new spot (`DynamicCharacter::SnapToAnimation`), like the
+  Ragdoll. A revive in place gets up from the floor.
+- **Get-up tries.** A get-up that ends without a foot on the ground counts as failed; after 3 failures
+  in a row it stops trying by itself and waits for `GetUp()` (`active_ragdoll("getup")`). The floor
+  height for a get-up is read once when it starts (a cast under the pelvis), and only upward-facing
+  contacts count as ground.
+- **Multiplayer.** A copy that another peer owns (`NetworkObject::IsLocallyOwned()` false) never writes
+  its root and never switches its controllers: the network places it. Its body is still simulated and
+  shown on this machine from the pushes and hits it gets here, so two machines can show a slightly
+  different fall. Ragdoll poses are not sent over the network (not done).
 
 ## One ragdoll per body, shared parts
 
@@ -128,8 +158,12 @@ revive and hits from a HealthStat). A limp `Ragdoll` switches off both kinds on 
 `ActiveRagdoll` switches off movement only, because its muscles follow the animation. Since this
 change a limp `Ragdoll` also switches off Click To Move, Free Roam, 2.5D platformer, Top Down and
 both shooter controllers (before, only `IPlayerSim` controllers and NPCs; a Click To Move controller
-kept steering a limp body). If an object has both, the ActiveRagdoll takes over at Start: it switches
-the Ragdoll off and logs it, and the Ragdoll's Inspector says so. The leg IK uses the shared
+kept steering a limp body; a controller with a follow camera also stops moving that camera while the
+body is limp). If an object has both, the ActiveRagdoll takes over at Start: it switches
+the Ragdoll off and logs it, and the Ragdoll's Inspector says so; switching the ActiveRagdoll off (or
+removing it) switches the Ragdoll back on. Both components cast through `ragdoll::CastIgnoringSelf`
+(one nearest-hit `Physics3D::Raycast` under an `IgnoreHierarchy`), and the ray tests against boxes and
+body capsules use `LocalShape3D::Ray` (Physics/ShapeKernel3D). The leg IK uses the shared
 `Math/TwoBoneIK` solve and the twist limit the shared `Math/JointLimit` `TwistAbout`.
 
 ## Sources

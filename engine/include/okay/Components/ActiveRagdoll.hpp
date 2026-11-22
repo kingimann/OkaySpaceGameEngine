@@ -86,6 +86,7 @@ public:
 
     void Start() override;
     void LateUpdate(float dt) override;
+    void OnEnable() override;
     void OnDisable() override;
     int  ExecutionOrder() const override { return 920; }   // after animation, IK and the Ragdoll
 
@@ -95,7 +96,8 @@ private:
     void WritePose();
     void HandOver(bool physical);
     void WatchHealth();
-    bool Owns(const GameObject* go) const;
+    void TakeOverRagdoll();
+    bool Remote() const;              // a copy another peer owns (NetworkObject)
 
     struct SceneWorld : dyn::ContactWorld {
         const ActiveRagdoll* owner = nullptr;
@@ -116,6 +118,7 @@ private:
     dyn::CharState m_lastState = dyn::CharState::Animated;
     ragdoll::HealthWatch m_watch;     // death / revive / hits (shared with Ragdoll)
     bool  m_tookOver = false;
+    Vec3  m_lastRoot;                 // root at the end of last frame (to see a respawn jump)
     float m_rootAboveGround = 0.0f;   // root height over the ground at build
 };
 

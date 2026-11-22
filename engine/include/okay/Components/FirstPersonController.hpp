@@ -134,7 +134,7 @@ public:
 
     // ---- Lean (peek around corners) ----
     char  leanLeftKey  = 'q';           // 0 = disabled
-    char  leanRightKey = 'e';           // 0 = disabled
+    char  leanRightKey = 'x';           // 0 = disabled. Was E; E is the shared Interact key now (scenes that saved E keep it)
     float leanAngle  = 14.0f;           // camera roll while leaning (degrees)
     float leanOffset = 0.35f;           // sideways camera shift while leaning (units)
     float leanSpeed  = 10.0f;           // how fast the lean eases in/out
@@ -376,7 +376,7 @@ public:
             // (every use prompt, pickup and bag) for who that is, twice a frame.
             if (!OldPlayerPath() && !Input::GetKey(k) && !Input::GetKeyDown(k)) return;
             if ((bit == PlayerInput::LeanLeft || bit == PlayerInput::LeanRight) &&
-                LeanKeyTaken(gameObject ? gameObject->scene() : nullptr, k)) return;   // a use or bag press, not a lean
+                LeanKeyTaken(gameObject ? gameObject->scene() : nullptr, k, gameObject)) return;   // a use or bag press, not a lean
             if (Input::GetKey(k))     in.held |= bit;
             if (Input::GetKeyDown(k)) in.pressed |= bit;
         };

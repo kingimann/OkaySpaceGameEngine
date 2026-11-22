@@ -139,6 +139,9 @@ typedef void   (*PFNGenTextures)(GLsizei, GLuint*);
 typedef void   (*PFNBindTexture)(GLenum, GLuint);
 typedef void   (*PFNTexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*);
 typedef void   (*PFNTexParameteri)(GLenum, GLenum, GLint);
+typedef void   (*PFNCompressedTexImage2D)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLint, GLsizei, const void*);
+typedef const GLubyte* (*PFNGetString)(GLenum);
+typedef const GLubyte* (*PFNGetStringi)(GLenum, GLuint);
 typedef void   (*PFNDeleteTextures)(GLsizei, const GLuint*);
 typedef void   (*PFNViewport)(GLint, GLint, GLsizei, GLsizei);
 typedef void   (*PFNClearColor)(GLfloat, GLfloat, GLfloat, GLfloat);
@@ -193,6 +196,8 @@ struct GL {
     PFNGenVertexArrays GenVertexArrays; PFNBindVertexArray BindVertexArray;
     PFNDeleteVertexArrays DeleteVertexArrays;
     PFNDrawBuffer DrawBuffer; PFNReadBuffer ReadBuffer;
+    // optional: block-compressed textures (.dds) and the extension list that says which formats the GPU takes
+    PFNCompressedTexImage2D CompressedTexImage2D = nullptr; PFNGetString GetString = nullptr; PFNGetStringi GetStringi = nullptr;
     bool ok = false;
 };
 GL g;   // resolved entry points
@@ -653,6 +658,10 @@ bool GLRenderer::LoadGL(GLGetProc gp) {
     // Optional: GPU skinning (bone matrices as a vec4 uniform array).
     load(g.Uniform4fv, gp, "glUniform4fv");
     load(g.GetIntegerv, gp, "glGetIntegerv");
+    // Optional: compressed (.dds) uploads. Without them every .dds is decoded on the CPU and uploaded as RGBA8.
+    load(g.CompressedTexImage2D, gp, "glCompressedTexImage2D");
+    load(g.GetString, gp, "glGetString");
+    load(g.GetStringi, gp, "glGetStringi");
     g.ok = r;
     if (!r) Log::Error("[gl] required OpenGL entry points missing — using software renderer");
     return r;
@@ -1558,28 +1567,37 @@ unsigned int GLRenderer::TextureFor(const std::string& name) {
         for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
         m_texCache.clear();
         m_texInfo.clear();
+        m_uploadInfo.clear();
         m_texGen = TextureCacheGeneration();
     }
     auto it = m_texCache.find(name);
     if (it != m_texCache.end()) return it->second;
-    unsigned int tex = 0;
-    Image* img = GetCachedTexture(name);
-    if (img && img->Width() > 0) {
-        g.GenTextures(1, &tex);
-        g.BindTexture(GL_TEXTURE_2D, tex);
-        g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img->Width(), img->Height(), 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, img->Data());
-        // The picture's own Filter / Wrap / Mipmaps import settings (defaults: repeat, trilinear, mipmapped).
-        const TextureSampling ts = TextureImportSampling(name);
+    // The picture's own Filter / Wrap / Mipmaps import settings (defaults: repeat, trilinear, mipmapped).
+    TextureSampling ts = TextureImportSampling(name);
+    TextureUploadInfo info;
+    // A .dds file, or the compressed import copy of a picture set to `compress`: its own levels, kept compressed when
+    // the GPU takes the format (see GpuTexture.hpp). Anything else goes the ordinary RGBA8 way below, as before.
+    unsigned int tex = UploadDdsTexture(name, ts, info);
+    Image* img = tex ? nullptr : GetCachedTexture(name);
+    if (tex || (img && img->Width() > 0)) {
+        if (!tex) {
+            g.GenTextures(1, &tex);
+            g.BindTexture(GL_TEXTURE_2D, tex);
+            g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img->Width(), img->Height(), 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, img->Data());
+            info.glFormat = GL_RGBA8;
+            if (!g.GenerateMipmap) ts.mipmaps = false;   // no way to build them: sample level 0 only
+            else if (ts.mipmaps) g.GenerateMipmap(GL_TEXTURE_2D);
+        }
         m_texInfo[tex] = ts;
+        m_uploadInfo[name] = info;
         const int wrapMode = ts.wrap == TextureSampling::Clamp ? GL_CLAMP_TO_EDGE
                            : ts.wrap == TextureSampling::Mirror ? 0x8370 /*GL_MIRRORED_REPEAT*/ : GL_REPEAT;
         g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
         g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
         const bool point = ts.filter == TextureSampling::Point;
         g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, point ? 0x2600 /*GL_NEAREST*/ : GL_LINEAR);
-        if (g.GenerateMipmap && ts.mipmaps) {
-            g.GenerateMipmap(GL_TEXTURE_2D);
+        if (ts.mipmaps) {
             const int minF = point ? 0x2700 /*GL_NEAREST_MIPMAP_NEAREST*/
                            : ts.filter == TextureSampling::Bilinear ? 0x2701 /*GL_LINEAR_MIPMAP_NEAREST*/
                                                                     : GL_LINEAR_MIPMAP_LINEAR;
@@ -1593,6 +1611,97 @@ unsigned int GLRenderer::TextureFor(const std::string& name) {
     }
     m_texCache[name] = tex;
     return tex;
+}
+
+gputex::Caps GLRenderer::QueryTextureCaps() {
+    std::vector<std::string> ext;
+    const char* version = g.GetString ? reinterpret_cast<const char*>(g.GetString(GL_VERSION)) : nullptr;
+    GLint n = 0;
+    if (g.GetStringi && g.GetIntegerv) g.GetIntegerv(0x821D /*GL_NUM_EXTENSIONS*/, &n);
+    if (n > 0 && n < 100000) {
+        for (GLint i = 0; i < n; ++i) {
+            const GLubyte* s = g.GetStringi(GL_EXTENSIONS, GLuint(i));
+            if (s) ext.emplace_back(reinterpret_cast<const char*>(s));
+        }
+    } else if (g.GetString) {   // GL 2.1: one space-separated string (a core profile refuses this; the list stays empty)
+        const GLubyte* s = g.GetString(GL_EXTENSIONS);
+        std::string all = s ? reinterpret_cast<const char*>(s) : "";
+        std::size_t p = 0;
+        while (p < all.size()) {
+            std::size_t q = all.find(' ', p);
+            if (q == std::string::npos) q = all.size();
+            if (q > p) ext.push_back(all.substr(p, q - p));
+            p = q + 1;
+        }
+    }
+    if (g.GetError) for (int i = 0; i < 16 && g.GetError() != 0; ++i) {}
+    return gputex::CapsFrom(version, ext);
+}
+
+const GLRenderer::TextureUploadInfo* GLRenderer::UploadInfo(const std::string& name) const {
+    auto it = m_uploadInfo.find(name);
+    return it == m_uploadInfo.end() ? nullptr : &it->second;
+}
+
+// Upload a plan's levels; 0 (nothing left behind) when GL reports an error.
+static unsigned int UploadPlanLevels(const gputex::Plan& p) {
+    if (p.levels.empty() || (p.compressed && !g.CompressedTexImage2D)) return 0;
+    for (int i = 0; i < 16 && g.GetError() != 0; ++i) {}   // start from a clean error state
+    GLuint t = 0;
+    g.GenTextures(1, &t);
+    g.BindTexture(GL_TEXTURE_2D, t);
+    for (std::size_t l = 0; l < p.levels.size(); ++l) {
+        const gputex::Level& lv = p.levels[l];
+        if (p.compressed)
+            g.CompressedTexImage2D(GL_TEXTURE_2D, GLint(l), GLenum(p.glFormat), lv.width, lv.height, 0, GLsizei(lv.bytes.size()), lv.bytes.data());
+        else
+            g.TexImage2D(GL_TEXTURE_2D, GLint(l), GL_RGBA8, lv.width, lv.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, lv.bytes.data());
+    }
+    g.TexParameteri(GL_TEXTURE_2D, 0x813C /*GL_TEXTURE_BASE_LEVEL*/, 0);
+    g.TexParameteri(GL_TEXTURE_2D, 0x813D /*GL_TEXTURE_MAX_LEVEL*/, GLint(p.levels.size()) - 1);   // a short chain is complete
+    if (g.GetError() != 0) { g.DeleteTextures(1, &t); return 0; }
+    return t;
+}
+
+unsigned int GLRenderer::UploadDdsTexture(const std::string& name, TextureSampling& ts, TextureUploadInfo& info) {
+    tex::DdsImage dds;
+    std::string why;
+    if (!gputex::Source(name, &dds, &why)) {
+        if (!why.empty()) Log::Warning("[gl] texture '", name, "': ", why, "; using the picture itself");
+        return 0;
+    }
+    if (!m_texCapsKnown) { m_texCaps = QueryTextureCaps(); m_texCapsKnown = true; }
+    gputex::Caps caps = m_texCaps;
+    bool forcedOff = false;
+    if (const char* off = std::getenv("OKAY_GL_NO_COMPRESSED")) if (off[0] == '1') { caps = gputex::Caps(); forcedOff = true; }
+    const tex::DdsFormat fmt = dds.format;
+    gputex::Plan plan;
+    if (!gputex::PlanUpload(std::move(dds), caps, &plan)) return 0;
+    if (forcedOff && !plan.compressed && !plan.note.empty() && plan.note.find("multiple of 4") == std::string::npos)
+        plan.note = "OKAY_GL_NO_COMPRESSED=1; decoded on the CPU";
+    unsigned int t = UploadPlanLevels(plan);
+    if (!t && plan.compressed) {   // the driver refused the compressed data after all: decode it on the CPU
+        tex::DdsImage again;
+        if (gputex::Source(name, &again, nullptr) && gputex::PlanUpload(std::move(again), gputex::Caps(), &plan)) {
+            plan.note = "the driver refused the compressed upload; decoded on the CPU";
+            t = UploadPlanLevels(plan);
+        }
+    }
+    if (!t) return 0;
+    info.fromDds = true;
+    info.compressed = plan.compressed;
+    info.glFormat = plan.glFormat;
+    info.levels = int(plan.levels.size());
+    info.note = plan.note;
+    if (plan.levels.size() == 1 && ts.mipmaps) {
+        if (!plan.compressed && g.GenerateMipmap) {   // one RGBA8 level: GL builds the rest, as for a PNG
+            g.TexParameteri(GL_TEXTURE_2D, 0x813D /*GL_TEXTURE_MAX_LEVEL*/, 1000);
+            g.GenerateMipmap(GL_TEXTURE_2D);
+        } else ts.mipmaps = false;                    // compressed without levels: sample level 0 only
+    }
+    Log::Info("[gl] texture '", name, "': ", tex::DdsFormatName(fmt), plan.compressed ? " kept compressed on the GPU" : " uploaded as RGBA8",
+              " (", info.levels, info.levels == 1 ? " level)" : " levels)", info.note.empty() ? "" : "; ", info.note);
+    return t;
 }
 
 // ---- Per-mesh vertex-buffer cache -------------------------------------------
@@ -2674,6 +2783,8 @@ void GLRenderer::Destroy() {
     for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
     m_texCache.clear();
     m_texInfo.clear();
+    m_uploadInfo.clear();
+    m_texCapsKnown = false;
     for (auto& kv : m_meshVB) if (kv.second.vbo) g.DeleteBuffers(1, &kv.second.vbo);
     m_meshVB.clear();
     if (m_vbo) { g.DeleteBuffers(1, &m_vbo); m_vbo = 0; }

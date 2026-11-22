@@ -1,6 +1,8 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/PrefabTools.hpp"
 #include "okay/Scene/SceneText.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"
+#include <iterator>
 #include "okay/Core/TolerantNumbers.hpp"
 #include <cerrno>
 #include <iostream>
@@ -9431,7 +9433,13 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "override") {
                     GameObject::PrefabOverride ov; in >> ov.object; ov.line = ReadQuoted(in);
                     if (in && ov.object >= 0 && !ov.line.empty()) go->prefabOverrides.push_back(ov);
-                } else if (auto reg = ComponentSerializerRegistry::Find(field)) {
+                } else if (auto reg = ComponentSerializerRegistry::Find(field); reg && reg->readWithNotes) {
+                    // A component that registered itself and reports what it skipped (the generic record).
+                    std::istringstream ls(ReadRecordLine(in));
+                    std::vector<std::string> notes;
+                    reg->readWithNotes(*go, ls, notes);
+                    for (const auto& n : notes) warn(n + " on object " + std::to_string(idx));
+                } else if (reg) {
                     // A component that registered itself (no branch in this chain).
                     std::string rest; std::getline(in, rest);
                     std::istringstream ls(rest);
@@ -9951,6 +9959,77 @@ bool SceneSerializer::MergeFromFile(Scene& scene, const std::string& path, const
     return MergeFromText(scene, text, offset, addedRoots, error, warnings);
 }
 
+
+// ---- The generic path: a component saved from its PropertyRegistry entry ------------------------------------
+// ComponentSerializerRegistry::RegisterFromProperties (ComponentSerializer.cpp) builds a record from these two. The
+// format is the key=value form the newer records already use (see KvOut): `  <record> key=value key="text" ...`.
+// Written from docs/engine/properties.md (the value text forms) and the scene format notes in
+// docs/engine/scene_serializer.md; no code from elsewhere.
+namespace {
+// Saved: what a person sets (not read-only, runtime-only, derived or structural). `enabled` is kept by the
+// `compoff` record for every component, and an object reference is left out: the object it names may load later.
+bool GenericSaved(const PropertyDesc& d) {
+    if (d.IsReadOnly() || d.IsRuntimeOnly() || d.IsDerived() || (d.flags & PropertyFlag::Structural) != 0) return false;
+    if (d.name == "enabled" || d.type == PropertyType::ObjectRef) return false;
+    return d.name.find_first_of("=\"") == std::string::npos;   // the key must be one token
+}
+// Read: the saved ones, plus `enabled` when a hand-written record carries it.
+bool GenericRead(const PropertyDesc& d) {
+    return GenericSaved(d) || (d.name == "enabled" && !d.IsReadOnly());
+}
+} // namespace
+
+void ComponentSerializerRegistry::WritePropertyFields(const Component& c, const ComponentTypeInfo& info, std::ostream& out) {
+    for (const PropertyDesc& d : info.properties) {
+        if (!GenericSaved(d)) continue;
+        const PropertyValue v = d.Get(c);
+        if (!v.IsValid()) continue;
+        out << ' ' << d.name << '=';
+        // Numbers and switches as they are; everything that may hold a space (text, vectors, "1 Point") quoted.
+        if (v.Type() == PropertyType::Bool || v.Type() == PropertyType::Int || v.Type() == PropertyType::Float) out << v.ToString();
+        else out << Quote(v.ToString());
+    }
+}
+
+int ComponentSerializerRegistry::ReadPropertyFields(Component& c, const ComponentTypeInfo& info, std::istream& in,
+                                                     std::vector<std::string>* notes) {
+    auto note = [&](const std::string& n) { if (notes) notes->push_back(n); };
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::istringstream ls(text);
+    // key -> value text, by property; a key given twice keeps the last one
+    std::unordered_map<const PropertyDesc*, std::string> given;
+    while (true) {
+        ls >> std::ws;
+        if (!ls || ls.peek() == EOF) break;
+        std::string key;
+        char ch = 0;
+        while (ls.get(ch) && ch != '=' && !std::isspace((unsigned char)ch)) key += ch;
+        if (ch != '=') {
+            if (!key.empty()) note("skipped '" + key + "' (no '=')");
+            continue;
+        }
+        std::string value;
+        if (ls.peek() == '"') value = ReadQuoted(ls);
+        else ls >> value;
+        const PropertyDesc* d = info.Find(key);
+        if (!d || !GenericRead(*d)) { note("skipped unknown field '" + key + "'"); continue; }
+        given[d] = value;
+    }
+    // Apply in the entry's order, whatever order the file had, so a setter that looks at another field sees the
+    // same thing every time.
+    int set = 0;
+    for (const PropertyDesc& d : info.properties) {
+        auto it = given.find(&d);
+        if (it == given.end()) continue;
+        PropertyValue v;
+        if (!d.ParseText(it->second, v) || !d.Set(c, v)) {
+            note("kept the default of '" + d.name + "': could not use '" + it->second + "'");
+            continue;
+        }
+        ++set;
+    }
+    return set;
+}
 
 // ---- Components that use the registry ------------------------------------
 namespace detail {
@@ -10618,6 +10697,9 @@ void RegisterBuiltinComponentSerializers() {
         k.col("c", b->color); k.col("p", b->pressedColor); k.col("t", b->textColor);
     };
     ComponentSerializerRegistry::Register(std::move(tbtn));
+    // Last, so every record written before keeps its place. Saved from their PropertyRegistry entries, no code of their own (none of them was saved before).
+    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion"})
+        ComponentSerializerRegistry::RegisterFromProperties(type);
 }
 } // namespace detail
 

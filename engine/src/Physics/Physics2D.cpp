@@ -6,6 +6,7 @@
 #include "okay/Physics/ColliderShapes2D.hpp"
 #include "okay/Physics/ConvexContact2D.hpp"
 #include "okay/Components/Joint2D.hpp"
+#include "okay/Core/Jobs.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/ComponentCache.hpp"
 #include "okay/Scene/NearestLookup.hpp"
@@ -15,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <typeinfo>
 #include <vector>
 #include <unordered_set>
 
@@ -387,6 +389,22 @@ bool TriggerAccepts(const Collider2D* trig, const Collider2D* other) {
 
 #include "Physics2DImproved.inl"   // the Improved step (iterated contacts, sleeping groups)
 
+namespace {
+// The per-collider bounding-box pass runs on EngineJobs() once a scene has this many
+// colliders; below it the job hand-off costs more than it saves (measured with
+// `test_jobs_adoption bench`). Each chunk is kBoundsGrain colliders.
+constexpr std::size_t kParallelBoundsMin = 256;
+constexpr std::size_t kBoundsGrain = 64;
+
+// Collider types whose WorldAABB only reads (their transform chain, their own fields and
+// the scene's quality). Composite colliders (and any type added later) are done on the calling thread.
+bool BoundsAreReadOnly(const Collider2D& c) {
+    const std::type_info& t = typeid(c);
+    return t == typeid(BoxCollider2D) || t == typeid(CircleCollider2D) || t == typeid(CapsuleCollider2D) ||
+           t == typeid(PolygonCollider2D) || t == typeid(EdgeCollider2D);
+}
+} // namespace
+
 void Physics2D::Step(Scene& scene, float dt) {
     if (dt <= 0.0f) return;
 
@@ -459,13 +477,35 @@ void Physics2D::Step(Scene& scene, float dt) {
     std::vector<char> finite(nc, 1);
     std::unordered_set<Collider2D*> aliveSet;
     aliveSet.reserve(nc * 2 + 1);
-    for (std::size_t i = 0; i < nc; ++i) {
+    auto bounds = [&](std::size_t i) {   // writes only slot i
         colliders[i]->WorldAABB(aabbMin[i], aabbMax[i]);
-        aliveSet.insert(colliders[i]);
         const Rigidbody2D* r = colliders[i]->gameObject->GetComponent<Rigidbody2D>();
         finite[i] = std::isfinite(aabbMin[i].x) && std::isfinite(aabbMin[i].y) &&
                     std::isfinite(aabbMax[i].x) && std::isfinite(aabbMax[i].y) &&
                     (!r || (std::isfinite(r->velocity.x) && std::isfinite(r->velocity.y) && std::isfinite(r->angularVelocity)));
+    };
+    JobSystem& jobs = EngineJobs();
+    if (nc >= kParallelBoundsMin && jobs.WorkerCount() > 0) {
+        // On the calling thread first: the colliders not known to be read-only, and every world-matrix
+        // cache brought up to date (reading a stale one rebuilds it, and parents are shared). Then the
+        // rest only read, so they can run on any thread; each writes its own slots, so the result is
+        // the same bits whatever the worker count.
+        std::vector<char> onWorkers(nc, 0);
+        for (std::size_t i = 0; i < nc; ++i) {
+            if (BoundsAreReadOnly(*colliders[i])) {
+                onWorkers[i] = 1;
+                if (colliders[i]->transform) colliders[i]->transform->WorldVersion();
+            } else {
+                bounds(i);
+            }
+        }
+        jobs.ParallelFor(0, nc, kBoundsGrain, [&](std::size_t b, std::size_t e) {
+            for (std::size_t i = b; i < e; ++i) if (onWorkers[i]) bounds(i);
+        });
+        for (std::size_t i = 0; i < nc; ++i) aliveSet.insert(colliders[i]);
+    } else {
+        // The serial path is the old single loop, so it costs what it did before the job split.
+        for (std::size_t i = 0; i < nc; ++i) { bounds(i); aliveSet.insert(colliders[i]); }
     }
 
     // Broad phase: the pairs whose precomputed AABBs overlap (a NaN body, left out by `finite`, touches nothing), in

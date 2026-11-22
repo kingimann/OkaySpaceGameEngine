@@ -829,30 +829,40 @@ bool ReadMaybePacked(const fs::path& p, std::string& out) {
     out = okay::DataPack::Unpack(ss.str(), &ok);
     return ok;
 }
-// The quoted value at the start of the line holding `pos` after the line's first word, e.g. the source of
-// `visualscript "<graph>"` or `script "cs" "<source>" ...` (the second quoted value for a script line).
-bool LineCarriesItsOwnSource(const std::string& text, std::size_t lineBegin, std::size_t lineEnd) {
-    const std::string line = text.substr(lineBegin, lineEnd - lineBegin);
-    std::size_t i = line.find_first_not_of(" \t");
-    if (i == std::string::npos) return false;
-    std::size_t w = line.find_first_of(" \t", i);
-    const std::string head = line.substr(i, w == std::string::npos ? std::string::npos : w - i);
-    int skip = head == "visualscript" ? 0 : head == "script" ? 1 : -1;
-    if (skip < 0 || w == std::string::npos) return false;
-    std::size_t q = w;
-    for (int n = 0; n <= skip; ++n) {
-        q = line.find('"', q);
+// A scene line is one statement, but a quoted value (an embedded graph, a script's source) may run over many lines:
+// split the text at newlines that are outside quotes ("\\" and "\"" are escapes inside quotes). Returns the start
+// offset of each statement.
+std::vector<std::size_t> StatementStarts(const std::string& t) {
+    std::vector<std::size_t> starts{0};
+    bool inQuote = false;
+    for (std::size_t i = 0; i < t.size(); ++i) {
+        const char c = t[i];
+        if (inQuote) { if (c == '\\') ++i; else if (c == '"') inQuote = false; continue; }
+        if (c == '"') inQuote = true;
+        else if (c == '\n' && i + 1 < t.size()) starts.push_back(i + 1);
+    }
+    return starts;
+}
+// The statement's first word, and whether it carries its own source: `visualscript "<graph>"` or
+// `script "<lang>" "<source>" ...` with a non-empty graph or source.
+std::string StatementHead(const std::string& st) {
+    const std::size_t i = st.find_first_not_of(" \t");
+    if (i == std::string::npos) return std::string();
+    const std::size_t w = st.find_first_of(" \t\r\n", i);
+    return st.substr(i, w == std::string::npos ? std::string::npos : w - i);
+}
+bool CarriesItsOwnSource(const std::string& st) {
+    const std::string head = StatementHead(st);
+    const int want = head == "visualscript" ? 0 : head == "script" ? 1 : -1;   // which quoted value is the source
+    if (want < 0) return false;
+    std::size_t q = st.find(head) + head.size();
+    for (int n = 0; ; ++n) {
+        q = st.find('"', q);
         if (q == std::string::npos) return false;
-        if (n == skip) return q + 1 < line.size() && line[q + 1] != '"';   // a non-empty quoted value
-        // skip this quoted value (escapes: \" inside)
-        for (++q; q < line.size() && line[q] != '"'; ++q) if (line[q] == '\\') ++q;
+        if (n == want) return q + 1 < st.size() && st[q + 1] != '"';
+        for (++q; q < st.size() && st[q] != '"'; ++q) if (st[q] == '\\') ++q;   // skip this quoted value
         ++q;
     }
-    return false;
-}
-void LineBounds(const std::string& t, std::size_t pos, std::size_t& b, std::size_t& e) {
-    b = t.rfind('\n', pos == 0 ? 0 : pos - 1); b = (b == std::string::npos || pos == 0) ? 0 : b + 1;
-    e = t.find('\n', pos); if (e == std::string::npos) e = t.size();
 }
 std::string LowerSlashes(std::string s) {
     for (char& c : s) c = c == '\\' ? '/' : (char)std::tolower((unsigned char)c);
@@ -916,17 +926,22 @@ ExportCheckResult CheckExport(const ExportCheckInput& in) {
         const bool isScene = ExtOf(file.filename().string()) == "okayscene";
         if (isScene) ++r.scenesChecked;
         const std::string who = Generic(file.lexically_relative(data));
+        const std::vector<std::size_t> starts = StatementStarts(text);
+        auto statement = [&](std::size_t k) {
+            const std::size_t e = k + 1 < starts.size() ? starts[k + 1] : text.size();
+            return text.substr(starts[k], e - starts[k]);
+        };
         for (const FoundRef& f : ExtractSceneRefs(text)) {
             const std::string& ref = f.path;
             if (ref.empty() || ref[0] == '@' || ref == "-" || ref.find("://") != std::string::npos || ref.rfind("proc:", 0) == 0) continue;
-            std::size_t lb = 0, le = 0;
-            LineBounds(text, f.begin, lb, le);
-            const std::string ext = ExtOf(ref);
-            if (ext == "okayvs") {   // `visualscriptpath`: the graph on the line above is the one the game runs
-                std::size_t pb = 0, pe = 0;
-                if (lb > 0) { LineBounds(text, lb - 1, pb, pe); if (LineCarriesItsOwnSource(text, pb, pe)) continue; }
+            const std::size_t k = (std::size_t)(std::upper_bound(starts.begin(), starts.end(), f.begin) - starts.begin()) - 1;
+            const std::string st = statement(k);
+            const std::string head = StatementHead(st);
+            if (head == "visualscript" || head == "script") {
+                if (CarriesItsOwnSource(st)) continue;   // its source is written in the scene (and a path inside that text is not a file)
+            } else if (head == "visualscriptpath") {
+                if (k > 0 && StatementHead(statement(k - 1)) == "visualscript" && CarriesItsOwnSource(statement(k - 1))) continue;   // the graph above is written in
             }
-            if (LineCarriesItsOwnSource(text, lb, le)) continue;   // a script line with its source written in
             ++r.refsChecked;
             if (IsAbsolutePath(ref)) {
                 if (reported.insert("abs|" + ref).second)

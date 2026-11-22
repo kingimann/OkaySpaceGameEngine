@@ -1,6 +1,7 @@
 #pragma once
 // Checks shared by the tests of the import seam's own-reader routing (test_own_dispatch_e4, test_own_q3bsp_dispatch) and
-// of the compile-time defaults (test_own_e4_default, test_own_gltf1_default): set and clear environment variables, write a
+// of the compile-time defaults (test_own_e4_default, test_own_gltf1_default); the flatten check is also used by
+// test_own_dispatch_c, _d, _e, _e3 and _e5: set and clear environment variables, write a
 // fixture to disk, and the usual "the seam reads it with our reader and gets what the reader gives directly" checks.
 // Written for this engine.
 #include "test_framework.hpp"
@@ -61,6 +62,14 @@ inline void CheckEnvSwitch(const std::string& path, const char* ext, const char*
     SetEnv(env, "0");
     CHECK(EffectiveImportBackend(ext) != ImportBackend::Own);
     UnsetEnv(env);
+}
+
+/// Flatten: `path` read with our reader and flatten on gives one root node, no clips, no skins and `tris` triangles.
+inline void CheckFlattened(const std::string& path, std::size_t tris) {
+    using namespace okay;
+    ImportedModel f; std::string err;
+    CHECK(ImportModelData(path, f, ImportBackend::Own, true, &err) && f.nodes.size() == 1 && f.clips.empty() && fx::TriCount(f) == tris);
+    for (const ImportedPart& p : f.parts) CHECK(p.bones.empty() && p.node == 0);
 }
 
 /// True when `ext` is in ImportableExtensions().

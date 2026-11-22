@@ -55,9 +55,7 @@ int main() {
         seam::CheckSeamMatchesDirect(path, c.file, c.ext, c.direct, c.tris, true);
         std::string err;
         // flatten: one root node, no skins and no clips, same geometry
-        ImportedModel f;
-        CHECK(ImportModelData(path, f, ImportBackend::Own, true, &err) && f.nodes.size() == 1 && f.clips.empty() && fx::TriCount(f) == c.tris);
-        for (const ImportedPart& p : f.parts) CHECK(p.bones.empty() && p.node == 0);
+        seam::CheckFlattened(path, c.tris);
         CHECK(seam::Listed(c.ext));
         // the format-specific variable decides when nothing was chosen at run time
         seam::CheckEnvSwitch(path, c.ext, c.env);

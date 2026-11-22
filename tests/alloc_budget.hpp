@@ -14,6 +14,7 @@
 #include <new>
 #include <string>
 
+// dup-allow-begin: this is the shared counting allocator; 16 older tests (test_pmxlws_hostile, test_image_hostile, test_batchd_budget, ...) still carry their own variants and move onto it in a follow-up dedup
 inline std::atomic<std::size_t> g_live{0}, g_peak{0};
 
 inline void* CountedAlloc(std::size_t n) {
@@ -41,6 +42,7 @@ void operator delete(void* p) noexcept { CountedFree(p); }
 void operator delete[](void* p) noexcept { CountedFree(p); }
 void operator delete(void* p, std::size_t) noexcept { CountedFree(p); }
 void operator delete[](void* p, std::size_t) noexcept { CountedFree(p); }
+// dup-allow-end
 
 namespace budget {
 

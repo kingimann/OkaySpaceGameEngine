@@ -23,7 +23,7 @@ Design, plan and decisions: `../design/modular_gameplay_contracts.md` (sections 
 - The player logs `[okay] modules: 40 modules, 40 on` at start.
 - `scripts/check_modules.py` (the dependency check): a file of module A may include a header of B only if B is A, core,
   or in A's requirements; core includes no module; no requirement cycles; manifest patterns, components and records
-  exist; engine code does not include `Okay.hpp`. Today's 801 forbidden includes (the serializer, the script VM and the
+  exist; engine code does not include `Okay.hpp`. Today's ~800 forbidden includes (the serializer, the script VM and the
   renderer name every component) are listed in `scripts/module_deps_baseline.txt`; a new one is reported. The list may
   only shrink: `--update-baseline` is for after a fix. CI runs it in report mode (a warning); design PR 14 makes it blocking.
 

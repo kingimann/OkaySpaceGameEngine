@@ -114,6 +114,9 @@ include/okay/Components/InventoryUI.hpp -> scripting_okayscript
 include/okay/Components/ItemPickup.hpp -> inventory
 include/okay/Components/ItemPickup.hpp -> physics2d
 include/okay/Components/ItemPickup.hpp -> physics3d
+include/okay/Components/LedgeHandsIK.hpp -> animation
+include/okay/Components/LedgeHandsIK.hpp -> character_controllers
+include/okay/Components/LedgeHandsIK.hpp -> ik
 include/okay/Components/LimbIK.hpp -> dev_diagnostics
 include/okay/Components/LineRenderer.hpp -> particles
 include/okay/Components/LoadingScreen.hpp -> localization_tools
@@ -422,6 +425,7 @@ src/Animation/HumanoidActions.cpp -> health_damage
 src/Animation/HumanoidActions.cpp -> networking
 src/Animation/HumanoidActions.cpp -> physics3d
 src/Animation/HumanoidActions.cpp -> vehicles
+src/Animation/PlayerSetup.cpp -> character_controllers
 src/Animation/PlayerSetup.cpp -> ik
 src/Animation/PlayerSetup.cpp -> model_import
 src/Audio/AudioDecode.cpp -> dev_diagnostics
@@ -549,6 +553,7 @@ src/Core/AssetDatabaseDeps.cpp -> save_games
 src/Core/AssetManager.cpp -> audio
 src/Core/AssetManager.cpp -> modeling
 src/Core/Backup.cpp -> save_games
+src/Core/ConsoleHost.cpp -> dev_diagnostics
 src/Core/Cvar.cpp -> save_games
 src/Core/DataAsset.cpp -> save_games
 src/Core/FrameRecord.cpp -> dev_diagnostics

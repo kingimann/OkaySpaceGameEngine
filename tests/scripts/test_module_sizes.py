@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """scripts/module_sizes.py on a made-up GNU ld map and okay_modules.tsv. Usage: test_module_sizes.py <module_sizes.py>"""
-import json, os, subprocess, sys, tempfile
+import os, subprocess, sys, tempfile
 
 SCRIPT = os.path.abspath(sys.argv[1])
 MAP = """Archive member included to satisfy reference by file (symbol)
@@ -38,22 +38,27 @@ fails = 0
 with tempfile.TemporaryDirectory() as d:
     open(os.path.join(d, 'okay_modules.tsv'), 'w').write(TSV)
     open(os.path.join(d, 'p.map'), 'w').write(MAP)
-    out = os.path.join(d, 'sizes.json')
-    p = subprocess.run([sys.executable, '-I', SCRIPT, d, os.path.join(d, 'p.map'), '--json', out],
+    out = os.path.join(d, 'module_sizes.txt')
+    p = subprocess.run([sys.executable, '-I', SCRIPT, d, os.path.join(d, 'p.map'), '--out', out],
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if p.returncode != 0:
         print(p.stdout); sys.exit(1)
-    got = json.load(open(out))
+    got = {'bytes': {l.split('\t')[0]: int(l.split('\t')[1]) for l in open(out).read().splitlines()}}
     want = {'physics3d': 0x240, 'health_damage': 0x88, '(same file name)': 0x10, 'core': 0x20, 'program': 0x100,
             'library: libSDL2.a': 0x30}
     for k, v in want.items():
         if got['bytes'].get(k) != v:
             fails += 1
             print('FAIL: %s is %r, want %r' % (k, got['bytes'].get(k), v))
-    if got['bss'].get('physics3d') != 0x20:
-        fails += 1; print('FAIL: bss %r' % got['bss'])
-    if got['total'] != sum(want.values()):
-        fails += 1; print('FAIL: total %r' % got['total'])
+    if sum(got['bytes'].values()) != sum(want.values()):
+        fails += 1; print('FAIL: total %r' % sum(got['bytes'].values()))
+    if '| physics3d | 576 | ' not in p.stdout or '| 32 |' not in p.stdout:
+        fails += 1; print('FAIL: .bss column\n' + p.stdout)
+    # a missing map never fails (the build calls this after every link)
+    q = subprocess.run([sys.executable, '-I', SCRIPT, d, os.path.join(d, 'nothere.map'), '--out', out],
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if q.returncode != 0 or open(out).read() != '':
+        fails += 1; print('FAIL: missing map: ' + q.stdout)
     if '| physics3d | 576 |' not in p.stdout:
         fails += 1; print('FAIL: table\n' + p.stdout)
 print('module_sizes fixture: ' + ('OK' if not fails else '%d failure(s)' % fails))

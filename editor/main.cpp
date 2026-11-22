@@ -5102,6 +5102,10 @@ std::string Build(EditorState& ed, const std::string& outDir,
         }
     }
     rp.Finish();
+    {   // the engine modules in the player, with their sizes from module_sizes.txt beside it (docs/engine/modular_engine.md)
+        const std::string pl = FindPlayer();
+        rp.AddModules(pl.empty() ? std::string() : (fs::path(pl).parent_path() / "module_sizes.txt").string());
+    }
     rp.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 
     // 4) The archive: a zip of the finished build (Zip layout keeps only the zip; "also zip" keeps both).
@@ -20009,6 +20013,21 @@ void DrawFileDialogs(EditorState& ed) {
                             ImGui::TableNextColumn(); ImGui::Text(".%s", row.ext.c_str());
                             ImGui::TableNextColumn(); ImGui::Text("%d", row.count);
                             ImGui::TableNextColumn(); ImGui::TextUnformatted(bp::HumanBytes(row.bytes).c_str());
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndTabItem();
+                }
+                if (!RP.modules.empty() && ImGui::BeginTabItem("Modules")) {   // the engine modules in the player (docs/engine/modular_engine.md)
+                    ImGui::TextDisabled("Every module ships in this version; leaving modules out comes later.");
+                    if (ImGui::BeginTable("bymodule", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(460, 200))) {
+                        ImGui::TableSetupColumn("Module", ImGuiTableColumnFlags_WidthStretch, 3.0f); ImGui::TableSetupColumn("Shipped"); ImGui::TableSetupColumn("Size");
+                        ImGui::TableHeadersRow();
+                        for (const auto& m : RP.modules) {
+                            ImGui::TableNextRow();
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(m.title.c_str());
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(m.shipped ? "yes" : "no");
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(RP.moduleSizesKnown ? bp::HumanBytes(m.bytes).c_str() : "-");
                         }
                         ImGui::EndTable();
                     }

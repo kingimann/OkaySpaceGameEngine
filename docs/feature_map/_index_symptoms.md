@@ -176,6 +176,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a moderation action is refused | [17.9](17-launcher-platform.md#179-admin) Admin |
 | a modified pack fails its checksum | [39.10](39-security-anticheat.md#3910-data-packs-and-obfuscation) Data packs and obfuscation |
 | a modifier shows red text and is skipped | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
+| a Modules tab in Build Game's report | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
 | a nameplate does not follow its object | [12.6](12-ingame-ui.md#126-world-space-ui) World-space UI |
 | a new account on the same PC still banned | [39.6](39-security-anticheat.md#396-reports-bans-appeals-and-the-hardware-hash) Reports, bans, appeals and the hardware hash |
 | a new feature works in one language and not the other | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |

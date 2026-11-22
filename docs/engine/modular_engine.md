@@ -27,13 +27,15 @@ Design, plan and decisions: `../design/modular_gameplay_contracts.md` (sections 
   renderer name every component) are listed in `scripts/module_deps_baseline.txt`; a new one is reported. The list may
   only shrink: `--update-baseline` is for after a fix. CI runs it in report mode (a warning); design PR 14 makes it blocking.
 
-## Stage 0, PR 3: bytes per module in the player
-- Configure with `-DOKAY_LINK_MAP=ON` (GNU linkers): the player writes `bin/okay-player.map` next to itself.
-- `python3 scripts/module_sizes.py <build folder> <build folder>/bin/okay-player.map [--json module_sizes.json]` gives each
-  module the bytes of the sections the linker kept from its engine files (`okay_modules.tsv` says which file is whose).
-  Header-only components count in the .cpp files that include them, so a module whose code is in headers looks small.
-- Not done: the Build report's "Modules" table in the editor (Build Game is moving to `editor/BuildGame.cpp`, PR #1141; it
-  should read `module_sizes.json` there), MinGW/Windows maps (not tried), the editor's map.
+## Stage 0, PR 3: bytes of the player per module, in the Build report
+- Every GNU-linker build of the player (Linux, and the MinGW build of the Windows release) writes `maps/okay-player.map`
+  in the build folder (not shipped). After the link, `scripts/module_sizes.py` turns it into `module_sizes.txt` beside the
+  player ("name<TAB>bytes": each module's share of the sections the linker kept from its engine files, `okay_modules.tsv`
+  says which file is whose; plus `program` and the outside libraries). The Windows zip ships it in `Tools/`.
+- Build Game's report (`buildpipe::Report::AddModules`) lists the modules in the player, largest first: in the Build
+  Result window's "Modules" tab and in `.okay/build_report.txt`. Every module ships in this version.
+- Header-only components count in the .cpp files that include them, so a module whose code is in headers looks small.
+- Not checked yet: a real MinGW map (the parser was tested on a Linux map and a made-up one).
 
 ## Manifest keys
 `name`, `title`, `area`, `description`, `default`, `core`, `requires` (comma separated), `provides`, `components`,

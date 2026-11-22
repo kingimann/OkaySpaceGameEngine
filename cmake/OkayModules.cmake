@@ -18,9 +18,6 @@
 #
 # Written for this repository from the design document; no outside code.
 
-# A linker map next to the player, for the per-module size report (python3 scripts/module_sizes.py <build> <map>).
-option(OKAY_LINK_MAP "Write bin/okay-player.map (GNU linkers) for scripts/module_sizes.py" OFF)
-
 # A file pattern ("src/Render/*Reader.cpp") or a test pattern ("net_*") as a regular expression.
 function(_okay_glob_regex pattern any out)
     string(REGEX REPLACE "([][.+?^$(){}|\\\\])" "\\\\\\1" _r "${pattern}")

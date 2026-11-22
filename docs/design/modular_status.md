@@ -7,8 +7,8 @@ being landed first, in small branches made from main; everything after it waits 
 | Stage | PR (section 9) | What | State on the branch | Landing branch |
 |---|---|---|---|---|
 | 0 | 1 | Module groups in the engine build, `module:<name>` test labels, one linked result | Branch has `cmake/OkayModules.cmake` that also strips `compile=` files | `claude2/modular-s0-build`: grouping and labels only, no behaviour change |
-| 0 | 2 | `ModuleManifest`, `ModuleRegistry`/`ModuleContext`, generated `modules_enabled.cpp`, `check_modules.py` report with a shrink-only baseline | Done on the branch, with `OKAY_MODULES`, register hooks and about 740 baseline entries | `claude2/modular-s0-manifest`: parser, registry (only what stage 0 uses), generated list, check in CI report mode, 801 baseline entries |
-| 0 | 3 | Per-module size report (`module_sizes.json`, Build report table) | `scripts/module_sizes.py` counts object sizes per module; no link map, no Build report table | `claude2/modular-s0-sizes`: link map (`OKAY_LINK_MAP`) and bytes per module of the player; no Build report table yet |
+| 0 | 2 | `ModuleManifest`, `ModuleRegistry`/`ModuleContext`, generated `modules_enabled.cpp`, `check_modules.py` report with a shrink-only baseline | Done on the branch, with `OKAY_MODULES`, register hooks and about 740 baseline entries | `claude2/modular-s0-manifest`: parser, registry (only what stage 0 uses), generated list, check in CI report mode, about 800 baseline entries |
+| 0 | 3 | Per-module size report (`module_sizes.json`, Build report table) | `scripts/module_sizes.py` counts object sizes per module; no link map, no Build report table | `claude2/modular-s0-sizes`: every player build writes a link map and `module_sizes.txt`; Build Game's report has a Modules tab |
 | 1 | 4-6 | Scene records through `ComponentSerializerRegistry`, module by module | Started: `daynight`, `ragdoll`, `nav*`, `hitzones`, `interactable` records live in their modules | - |
 | 1 | 7 | Property tables per module | Started: DayNightCycle's table is registered by sky_weather | - |
 | 1 | 8 | `ScriptApiRegistry` | Started: `time_of_day`, `ragdoll`, `ragdoll_push`, `is_ragdoll` | - |

@@ -2,11 +2,13 @@
 """How many bytes of a linked program each engine module is (design PR 3, docs/engine/modular_engine.md).
 
   scripts/module_sizes.py BUILD_DIR MAP_FILE              markdown table
-  scripts/module_sizes.py BUILD_DIR MAP_FILE --json OUT   also writes module_sizes.json to OUT
+  scripts/module_sizes.py BUILD_DIR MAP_FILE --out FILE   also writes FILE: one "name<TAB>bytes" line per part (the
+                                                          player's build writes bin/module_sizes.txt this way; the
+                                                          editor's Build report reads it, okay/Core/BuildPipeline.hpp)
 
 BUILD_DIR is a configured build folder (it has okay_modules.tsv, "module<TAB>engine file", written by
-cmake/OkayModules.cmake). MAP_FILE is the GNU linker map of the program: configure with -DOKAY_LINK_MAP=ON and the
-player writes bin/okay-player.map next to itself.
+cmake/OkayModules.cmake). MAP_FILE is the GNU linker map of the program: every GNU-linker build of the player writes
+maps/okay-player.map in the build folder (player/CMakeLists.txt).
 
 How it counts: every input section the linker kept (after the line "Linker script and memory map") is given to the
 object file it came from. An object of the engine library (libokay_engine.a(Name.cpp.o)) goes to the module that owns
@@ -15,7 +17,7 @@ Name.cpp; when two engine files in different folders share that name and differe
 sections, notes and comments are not counted; .bss is counted separately because it takes no room in the file.
 Written for this repository from the GNU ld map format (the "Linker script and memory map" listing); stdlib only.
 """
-import json, os, re, sys
+import os, re, sys
 
 SKIP = ('.debug', '.comment', '.note', '.gnu.build.attributes', '.stab')
 # " .text._ZN4okay3Foo  0x0000000000401000       0x2c engine/libokay_engine.a(Foo.cpp.o)" (name and numbers may sit on
@@ -85,17 +87,24 @@ def sizes(map_text, by_name):
 
 def main():
     args = [a for a in sys.argv[1:]]
-    json_out = None
-    if '--json' in args:
-        i = args.index('--json')
-        json_out = args[i + 1]
+    out_file = None
+    if '--out' in args:
+        i = args.index('--out')
+        out_file = args[i + 1]
         del args[i:i + 2]
     if len(args) != 2:
         print(__doc__)
         return 2
-    by_name = read_owners(args[0])
-    with open(args[1], encoding='utf-8', errors='replace') as f:
-        file_bytes, bss = sizes(f.read(), by_name)
+    try:
+        by_name = read_owners(args[0])
+        with open(args[1], encoding='utf-8', errors='replace') as f:
+            file_bytes, bss = sizes(f.read(), by_name)
+    except OSError as e:
+        # never fail the build over the report: write an empty file and say why
+        print('module_sizes: ' + str(e))
+        if out_file:
+            open(out_file, 'w', encoding='utf-8').close()
+        return 0
     total = sum(file_bytes.values()) or 1
     rows = sorted(set(file_bytes) | set(bss), key=lambda k: -file_bytes.get(k, 0))
     print('| Part | Bytes in the file | % | .bss |')
@@ -103,11 +112,10 @@ def main():
     for k in rows:
         print(f'| {k} | {file_bytes.get(k, 0)} | {100.0 * file_bytes.get(k, 0) / total:.1f}% | {bss.get(k, 0)} |')
     print(f'| **total** | {sum(file_bytes.values())} | | {sum(bss.values())} |')
-    if json_out:
-        with open(json_out, 'w', encoding='utf-8') as f:
-            json.dump({'map': os.path.basename(args[1]), 'bytes': file_bytes, 'bss': bss,
-                       'total': sum(file_bytes.values())}, f, indent=1, sort_keys=True)
-            f.write('\n')
+    if out_file:
+        with open(out_file, 'w', encoding='utf-8', newline='\n') as f:
+            for k in rows:
+                f.write('%s\t%d\n' % (k, file_bytes.get(k, 0)))
     return 0
 
 

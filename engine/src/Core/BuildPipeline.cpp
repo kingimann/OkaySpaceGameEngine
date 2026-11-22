@@ -1,11 +1,13 @@
 #include "okay/Core/BuildPipeline.hpp"
 #include "okay/Core/AssetDatabase.hpp"
 #include "okay/Core/ImageWrite.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -618,6 +620,31 @@ void Report::Finish() {
     for (const ExcludedFile& e : excluded) excludedBytes += e.bytes;
     valid = true;
 }
+void Report::AddModules(const std::string& sizesFile) {
+    modules.clear();
+    std::map<std::string, std::uintmax_t> bytes;
+    moduleSizesKnown = false;
+    if (!sizesFile.empty()) {
+        std::ifstream in(sizesFile, std::ios::binary);
+        std::string line;
+        while (std::getline(in, line)) {
+            const std::size_t tab = line.find('\t');
+            if (tab == std::string::npos) continue;
+            bytes[line.substr(0, tab)] = (std::uintmax_t)std::strtoull(line.c_str() + tab + 1, nullptr, 10);
+            moduleSizesKnown = true;
+        }
+    }
+    for (const ModuleRegistry::Info& m : ModuleRegistry::Get().All()) {
+        ModuleRow r;
+        r.name = m.manifest.name; r.title = m.manifest.title; r.shipped = m.enabled;
+        auto it = bytes.find(r.name);
+        if (it != bytes.end()) r.bytes = it->second;
+        modules.push_back(r);
+    }
+    std::stable_sort(modules.begin(), modules.end(), [](const ModuleRow& a, const ModuleRow& b) {
+        return a.bytes != b.bytes ? a.bytes > b.bytes : a.name < b.name; });
+}
+
 std::vector<Report::TypeRow> Report::ByExtension() const {
     std::map<std::string, TypeRow> m;
     for (const ReportFile& f : files) {
@@ -661,6 +688,15 @@ std::string Report::ToText(std::size_t maxRows) const {
     for (const ExcludedFile& e : excluded) {
         if (maxRows && n++ >= maxRows) { o << "  ... " << (excluded.size() - maxRows) << " more\n"; break; }
         o << "  " << HumanBytes(e.bytes) << "  " << e.path << "  (" << e.reason << ")\n";
+    }
+    if (!modules.empty()) {
+        int shipped = 0;
+        for (const ModuleRow& m : modules) shipped += m.shipped ? 1 : 0;
+        o << "\nModules in the player: " << shipped << " of " << modules.size() << " (no module is left out yet)"
+          << (moduleSizesKnown ? "" : "; sizes unknown (module_sizes.txt not found beside the player)") << "\n";
+        for (const ModuleRow& m : modules)
+            o << "  " << (m.shipped ? "shipped " : "left out ") << (moduleSizesKnown ? HumanBytes(m.bytes) : std::string("-"))
+              << "  " << m.title << " (" << m.name << ")\n";
     }
     o << "\nWarnings: " << warnings.size() << "\n";
     for (const std::string& w : warnings) o << "  " << w << "\n";

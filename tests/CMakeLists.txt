@@ -1393,6 +1393,10 @@ add_test(NAME voxel_bughunt COMMAND test_voxel_bughunt)
 add_executable(test_voxel_chunks test_voxel_chunks.cpp)
 target_link_libraries(test_voxel_chunks PRIVATE okay::engine)
 add_test(NAME voxel_chunks COMMAND test_voxel_chunks)
+# One set of curve formulas (Math/Curves) for Spline, Modeling/Curve, DollyPath and the DOTween path (#422 finding 6): same bits.
+add_executable(test_curve_formulas test_curve_formulas.cpp)
+target_link_libraries(test_curve_formulas PRIVATE okay::engine)
+add_test(NAME curve_formulas COMMAND test_curve_formulas)
 # The renderers' mesh-change hash (engine/include/okay/Render/MeshHash.hpp): every bit counts, and it is much faster.
 add_executable(test_mesh_hash test_mesh_hash.cpp)
 target_link_libraries(test_mesh_hash PRIVATE okay::engine)

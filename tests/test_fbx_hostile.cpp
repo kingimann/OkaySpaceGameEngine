@@ -36,8 +36,8 @@ static fbx::BuildOptions Tight() {   // tiny limits: a hostile file may not make
     return o;
 }
 static bool Load(const Bytes& b, const fbx::BuildOptions& o = Tight(), std::string* err = nullptr) {
-    fbx::Scene s;
-    return fbx::LoadMemory(b.data(), b.size(), s, err, o);
+    fbx::Scene s;   // the reader, then the import steps: the triangulation of its polygons and the clips' keys
+    return fbx::LoadMemory(b.data(), b.size(), s, err, o) && fbx::BuildParts(s, err, o.limits) && fbx::BuildClips(s, err);
 }
 
 static Bytes Header(std::uint32_t version = 7400) {
@@ -263,7 +263,7 @@ static void Hierarchies() {
         t += "\n  }\n }\n Model: 1, \"Model::A\", \"Mesh\" {\n }\n}\nConnections: {\n C: \"OO\",2,1\n C: \"OO\",1,0\n}\n";
         const auto t0 = std::chrono::steady_clock::now();
         fbx::BuildOptions o = fbx::BuildOptions();
-        CHECK(fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), s, &err, o));
+        CHECK(fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), s, &err, o) && fbx::BuildParts(s, &err));
         CHECK(!s.meshes.empty() && s.meshes[0].triangleCount() == (std::uint32_t)(n - 2));
         CHECK(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - t0).count() < 20);
     }
@@ -279,7 +279,7 @@ static void Hierarchies() {
     {
         const std::string t = "Objects: {\n Geometry: 2, \"Geometry::G\", \"Mesh\" {\n  Vertices: *9 { a: 0,0,0,1,0,0,0,1,0 }\n  PolygonVertexIndex: *6 { a: 0,1,-3,0,1,-9999 }\n }\n"
                               " Model: 1, \"Model::A\", \"Mesh\" {\n }\n}\nConnections: {\n C: \"OO\",2,1\n C: \"OO\",1,0\n}\n";
-        CHECK(fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), s, &err));
+        CHECK(fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), s, &err) && fbx::BuildParts(s, &err));
         CHECK(!s.meshes.empty() && s.meshes[0].triangleCount() == 1);
     }
 }
@@ -303,7 +303,8 @@ static std::string AnimText(int stacks, int layers, int keys, double spanSec, in
 }
 static bool LoadText(const std::string& t, const fbx::BuildOptions& o, std::string* err, fbx::Scene* out = nullptr) {
     fbx::Scene s;
-    const bool ok = fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), out ? *out : s, err, o);
+    fbx::Scene& r = out ? *out : s;   // the reader, then the import steps (triangles, the clips' keys)
+    const bool ok = fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), r, err, o) && fbx::BuildParts(r, err, o.limits) && fbx::BuildClips(r, err);
     return ok;
 }
 
@@ -331,8 +332,13 @@ static void AnimationBudgets() {
     // aggregate bake budget: every stack alone is within the per-clip cap, together they are not
     {
         fbx::BuildOptions o = Tight(); o.limits.maxBakedSamples = 20000; o.limits.maxTotalBakedSamples = 100000; o.limits.maxAnimStacks = 1000;
-        fbx::Scene s; CHECK(LoadText(AnimText(3, 1, 2, 1000.0), o, &err, &s) && s.clips.size() == 3);   // 3 x 20000 samples: inside 100000
+        // The budget is charged at the fixed-rate sample count whichever way keys are made (BuildOptions::fileKeys).
+        // At 30 Hz the clip is capped at maxBakedSamples; with the file's own keys this one has a few keys.
+        fbx::BuildOptions o30 = o; o30.fileKeys = false;
+        fbx::Scene s; CHECK(LoadText(AnimText(3, 1, 2, 1000.0), o30, &err, &s) && s.clips.size() == 3);   // 3 x 20000 samples: inside 100000
         CHECK(s.clips.size() == 3 && s.clips[0].nodes.size() == 1 && s.clips[0].nodes[0].translation.size() == 20000);
+        fbx::Scene sk; CHECK(LoadText(AnimText(3, 1, 2, 1000.0), o, &err, &sk) && sk.clips.size() == 3);
+        CHECK(sk.clips.size() == 3 && sk.clips[0].nodes.size() == 1 && sk.clips[0].nodes[0].translation.size() >= 2 && sk.clips[0].nodes[0].translation.size() < 20000);
         err.clear(); CHECK(!LoadText(AnimText(50, 1, 2, 1000.0), o, &err)); CHECK(err.find("bake budget") != std::string::npos);
         // with the shipped limits: 128 takes of a long clip would be 128 x 20000 evaluations = 2.6M (inside 4M), so it loads...
         fbx::Scene big; CHECK(LoadText(AnimText((int)def.limits.maxAnimStacks, 1, 2, 1000.0), def, &err, &big) && big.clips.size() == def.limits.maxAnimStacks);

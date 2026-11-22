@@ -235,7 +235,7 @@ jobs:
   sanitizers:
     name: Scripting and robustness tests (ASan + UBSan)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75   # was 45: a cold-cache run on a pull request needs 41-45 min and was cancelled at the limit (PR #1088)
     env:
       ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
@@ -281,7 +281,7 @@ jobs:
           cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug "-DCMAKE_CXX_FLAGS_DEBUG=-g1 -gz" \
             "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--compress-debug-sections=zlib" \
             -DOKAY_SANITIZE=address,undefined,float-cast-overflow -DOKAY_BUILD_TESTS=ON \
-            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF \
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF -DOKAY_BUILD_XBOX_UWP=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       # Every test_script_* target is picked up from tests/CMakeLists.txt, so new
@@ -307,6 +307,11 @@ jobs:
           OKAYUI_TESTS="test_okayui_fuzz test_okayui_codeedit_fuzz test_okayui_dock_fuzz test_okayui_windows_fuzz"
           TESTS="$TESTS $OKAYUI_TESTS"
           echo "OKAYUI_TESTS=$OKAYUI_TESTS" >> "$GITHUB_ENV"
+          # The experimental Xbox UWP backend (OKAY_BUILD_XBOX_UWP=ON above; no other job turns it on). Only the touch and text
+          # composition test: it does not link the engine (about 10 s to build), and its pointer and caret maths should be sanitized.
+          XBOX_TESTS="test_xbox_uwp_touch"
+          TESTS="$TESTS $XBOX_TESTS"
+          echo "XBOX_TESTS=$XBOX_TESTS" >> "$GITHUB_ENV"
           echo "SAN_TESTS=$TESTS" >> "$GITHUB_ENV"
           echo "$TESTS"
 
@@ -335,7 +340,7 @@ jobs:
         run: |
           failed=""
           for t in $SAN_TESTS; do
-            case " $OKAYUI_TESTS " in *" $t "*) continue;; esac
+            case " $OKAYUI_TESTS $XBOX_TESTS " in *" $t "*) continue;; esac
             echo "== $t"
             "./$t" || failed="$failed $t"
           done
@@ -343,6 +348,11 @@ jobs:
           for t in $OKAYUI_TESTS; do
             echo "== $t"
             (cd "$GITHUB_WORKSPACE" && SDL_VIDEODRIVER=dummy "build-asan/okayui/$t") || failed="$failed $t"
+          done
+          # The Xbox UWP tests live in build-asan/platform/xbox_uwp.
+          for t in $XBOX_TESTS; do
+            echo "== $t"
+            "$GITHUB_WORKSPACE/build-asan/platform/xbox_uwp/$t" || failed="$failed $t"
           done
           if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
 
@@ -399,10 +409,15 @@ jobs:
       - name: Build
         run: |
           cmake --build build-assimp -j --target test_model_readers test_model_readers_fuzz test_collada_reader \
-            test_model_import_rig test_gltf_import test_fbx_reader test_glb_container
+            test_model_import_rig test_gltf_import test_fbx_reader test_glb_container test_model_corpus
 
       - name: Test
         run: ctest --test-dir build-assimp --output-on-failure -R '^(model_readers|model_readers_fuzz|collada_reader|model_import_rig|gltf_import|fbx_reader|glb_container)$'
+
+      # The real-file corpus (docs/content/model_corpus.md): every row of tests/data/model_corpus_manifest.tsv re-read from
+      # the test folder of the Assimp checkout above, so a reader change that alters a real file's counts fails here.
+      - name: Test the real-file corpus
+        run: OKAY_MODEL_CORPUS="$HOME/assimp-src/test" ctest --test-dir build-assimp --output-on-failure -R '^model_corpus$'
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
       # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").

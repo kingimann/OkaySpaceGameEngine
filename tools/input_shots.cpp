@@ -5,6 +5,7 @@
 // local-players screen, drawn with ImGui from the same engine data. Not part of the CMake build; see tools/input_shots.sh.
 // Written for this repository (Dear ImGui's public API only).
 #include <SDL.h>
+#include "okay/Platform/BmpWriter.hpp"
 #include <imgui.h>
 #include "imgui_impl_sdlrenderer2.h"
 #include "InputActionsWindow.hpp"
@@ -91,7 +92,7 @@ static void Capture(const std::string& name, const std::function<void()>& body, 
         SDL_RenderPresent(g_renderer);
     }
     const std::string bmp = g_out + "/" + name + ".bmp", png = g_out + "/" + name + ".png";
-    SDL_SaveBMP(g_surface, bmp.c_str());
+    okay::platform::WriteBmp32Bgra(bmp.c_str(), g_surface->pixels, g_surface->w, g_surface->h, g_surface->pitch);
     const std::string cmd = "convert '" + bmp + "' '" + png + "' && rm -f '" + bmp + "'";
     if (std::system(cmd.c_str()) != 0) std::printf("convert failed for %s\n", bmp.c_str());
     std::printf("wrote %s\n", png.c_str());

@@ -800,7 +800,7 @@ bool Terrain::RemoveLayer(int i) {
     const int L = (int)layers.size();
     if (L == 0) {
         splat.clear();
-        TextureCacheMap().erase(splatName_);
+        textures::Unregister(splatName_);   // the renderers let go of the splat picture
         MipCacheMap().erase(splatName_);
         ++TextureCacheGeneration();
     } else {
@@ -904,9 +904,8 @@ void Terrain::FillLayer(int i) {
 
 const Image* Terrain::SplatImage() const {
     if (layers.empty()) return nullptr;
-    auto& cache = TextureCacheMap();
-    auto it = cache.find(splatName_);
-    return it == cache.end() ? nullptr : &it->second;
+    const TextureHandle h = textures::Find(splatName_);
+    return h.Valid() ? h.GetImage() : nullptr;
 }
 
 void Terrain::BakeSplat() {
@@ -923,7 +922,7 @@ void Terrain::BakeRect(int x0, int y0, int x1, int y1) {
     if (splat.size() != n * L) ResetSplat();
     splatResolution = std::min(4096, std::max(64, splatResolution));
     const int res = splatResolution;
-    Image& img = TextureCacheMap()[splatName_];
+    Image& img = textures::RegisteredImage(splatName_);   // painted in place; PublishSplat tells the renderers
     if (img.Width() != res || img.Height() != res || splatSized_ != res) {
         img = Image(res, res);               // a new size, or the layers changed: bake everything
         splatSized_ = res;
@@ -966,8 +965,7 @@ void Terrain::BakeRect(int x0, int y0, int x1, int y1) {
 
 void Terrain::PublishSplat() {
     if (layers.empty()) return;
-    MipCacheMap().erase(splatName_);   // the software renderer rebuilds its mip chain from the new pixels
-    ++TextureCacheGeneration();        // the GPU renderers re-upload
+    textures::TouchRegistered(splatName_);   // a new serial: every renderer rebuilds its mips / re-uploads this one picture
 }
 
 namespace {

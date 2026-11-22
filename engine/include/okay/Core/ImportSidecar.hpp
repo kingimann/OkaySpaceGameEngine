@@ -3,7 +3,8 @@
 // them. Header only, no asset database needed: a missing or unreadable meta means "no settings".
 //   * texture `maxSize`: the longest side a texture is loaded at (0 = no limit). Used by the software renderer's
 //     texture cache, so the editor and a built game agree.
-//   * texture `filter` / `wrap` / `mipmaps`: how the software renderer and the OpenGL renderer sample the picture.
+//   * texture `filter` / `wrap` / `mipmaps` / `anisotropy`: how the renderers sample the picture. The full set of texture
+//     settings, texture-only keys included, is read in one pass by ReadTextureSettings (okay/Render/TextureAsset.hpp).
 //   * model `scale`: multiplies the size of a model added to a scene from the editor.
 //   * model `normals` / `smoothingAngle` / `importAnimations`: applied when a model is brought into a scene
 //     (see ModelImport.cpp, which reads them through ReadModelImportOptions below).
@@ -64,6 +65,7 @@ struct TextureSampling {
     int  filter = Trilinear;
     int  wrap = Repeat;
     bool mipmaps = true;
+    int  anisotropy = 8;   ///< 1 = off, 2..16 (texture-only key `anisotropy`; used with Trilinear only)
 };
 
 inline TextureSampling TextureImportSampling(const std::string& imagePath) {
@@ -82,6 +84,9 @@ inline TextureSampling TextureImportSampling(const std::string& imagePath) {
     if (m.empty()) m = ReadImportSetting(imagePath, "texture", "mips");
     m = low(m);
     if (m == "0" || m == "false" || m == "off") t.mipmaps = false;
+    const std::string a = ReadImportSetting(imagePath, "texture", "anisotropy");
+    if (!a.empty()) { const int n = std::atoi(a.c_str()); t.anisotropy = n < 1 ? 1 : n > 16 ? 16 : n; }
+    if (t.filter != TextureSampling::Trilinear) t.anisotropy = 1;   // anisotropic filtering goes with trilinear
     return t;
 }
 

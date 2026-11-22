@@ -13,6 +13,7 @@
 #include "okay/Components/Character.hpp"
 #include <utility>
 #include "okay/Core/Log.hpp"
+#include "okay/Debug/MemoryTracker.hpp"   // "Textures (GPU)": bytes of uploaded textures
 
 #if defined(_WIN32)
 // The Windows SDK's GL/gl.h (MSVC) needs WINGDIAPI/APIENTRY from windows.h first; MinGW's does not.
@@ -1558,39 +1559,85 @@ bool GLRenderer::EnsureTargets(int w, int h, int samples, bool hdr) {
     return false;
 }
 
-// Upload (once) a material texture by name and cache its GL object. Shares the
-// software renderer's image cache via GetCachedTexture, so the same files/registered
-// images appear. Returns 0 (cached) when the texture is missing, so we don't retry.
+// GL memory of uploaded textures, for the Profiler and the F3 numbers (MemoryTracker "Textures (GPU)").
+static int GpuTextureCategory() { static const int id = MemoryTracker::Global().Category("Textures (GPU)"); return id; }
+
+void GLRenderer::FreeTexture(const std::string& name) {
+    auto it = m_texCache.find(name);
+    if (it == m_texCache.end()) return;
+    if (it->second) { g.DeleteTextures(1, &it->second); m_texInfo.erase(it->second); }
+    auto ui = m_uploadInfo.find(name);
+    if (ui != m_uploadInfo.end()) {
+        if (ui->second.gpuBytes) MemoryTracker::Global().Remove(GpuTextureCategory(), std::int64_t(ui->second.gpuBytes), 1);
+        m_uploadInfo.erase(ui);
+    }
+    m_texCache.erase(it);
+}
+
+// The GL texture for a material texture name. The pixels come from the shared texture library (textures::ForRender,
+// TextureAsset.hpp), so every renderer draws the same decode; this keeps only the GL object, and uploads again when the
+// asset's serial changes (hot reload, reimport, a painted terrain splat). Returns 0 when the texture is missing.
 unsigned int GLRenderer::TextureFor(const std::string& name) {
     if (name.empty()) return 0;
-    if (m_texGen != TextureCacheGeneration()) {   // a picture was reimported / its import settings changed
-        for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
-        m_texCache.clear();
-        m_texInfo.clear();
-        m_uploadInfo.clear();
+    if (m_texGen != TextureCacheGeneration() || m_texLibGen != textures::Generation()) {
+        // The library let go of some names (Drop, InvalidateAll, a budget trim): free our copies of those.
+        std::vector<std::string> gone;
+        for (const auto& kv : m_texCache) if (!textures::IsHeld(kv.first)) gone.push_back(kv.first);
+        for (const std::string& n : gone) FreeTexture(n);
         m_texGen = TextureCacheGeneration();
+        m_texLibGen = textures::Generation();
     }
+    const TextureAsset* asset = textures::ForRender(name);
+    const std::uint64_t serial = asset ? asset->serial : 0;
     auto it = m_texCache.find(name);
-    if (it != m_texCache.end()) return it->second;
-    // The picture's own Filter / Wrap / Mipmaps import settings (defaults: repeat, trilinear, mipmapped).
-    TextureSampling ts = TextureImportSampling(name);
+    if (it != m_texCache.end()) {
+        auto ui = m_uploadInfo.find(name);
+        const std::uint64_t had = ui != m_uploadInfo.end() ? ui->second.serial : 0;
+        if (had == serial) return it->second;
+        FreeTexture(name);   // a new version of the picture: upload it again
+    }
+    // The picture's own Filter / Wrap / Mipmaps / anisotropy import settings (defaults: repeat, trilinear, mipmapped).
+    TextureSampling ts = asset ? TextureSamplingOf(*asset) : TextureSampling();
     TextureUploadInfo info;
-    // A .dds file, or the compressed import copy of a picture set to `compress`: its own levels, kept compressed when
-    // the GPU takes the format (see GpuTexture.hpp). Anything else goes the ordinary RGBA8 way below, as before.
-    unsigned int tex = UploadDdsTexture(name, ts, info);
-    Image* img = tex ? nullptr : GetCachedTexture(name);
-    if (tex || (img && img->Width() > 0)) {
-        if (!tex) {
+    info.serial = serial;
+    unsigned int tex = 0;
+    if (asset) {
+        // A .dds file, or the compressed import copy of a picture set to `compress`: its own levels, kept compressed when
+        // the GPU takes the format (see GpuTexture.hpp). Anything else: the asset's RGBA8 pixels and our own mip chain.
+        tex = UploadDdsTexture(name, ts, info);
+        if (tex) {
+            info.uploadedLevels = info.levels;
+            for (int l = 0; l < info.levels; ++l) {   // estimate: block formats are 4 or 8 bits per texel
+                const int w = std::max(1, asset->Width() >> l), h = std::max(1, asset->Height() >> l);
+                const std::size_t texels = std::size_t((w + 3) / 4 * 4) * std::size_t((h + 3) / 4 * 4);
+                info.gpuBytes += info.compressed ? (info.glFormat == gputex::kGlCompressedRgbaS3tcDxt1 || info.glFormat == gputex::kGlCompressedRedRgtc1 ? texels / 2 : texels)
+                                                 : std::size_t(w) * h * 4;
+            }
+        } else if (asset->Valid()) {
+            // Our own chain (gamma-correct box or Kaiser, renormalised normal maps): the same levels the software
+            // renderer samples, instead of glGenerateMipmap's driver-chosen filter on gamma-encoded bytes.
+            std::vector<Image> built;
+            const std::vector<Image>* levels = nullptr;
+            if (!ts.mipmaps) { built.push_back(asset->image); levels = &built; }
+            else if (asset->MipsBuilt()) levels = &asset->Mips();
+            else { built = BuildMipChain(asset->image, asset->settings); levels = &built; }
             g.GenTextures(1, &tex);
             g.BindTexture(GL_TEXTURE_2D, tex);
-            g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img->Width(), img->Height(), 0,
-                         GL_RGBA, GL_UNSIGNED_BYTE, img->Data());
+            for (std::size_t l = 0; l < levels->size(); ++l) {
+                const Image& lv = (*levels)[l];
+                g.TexImage2D(GL_TEXTURE_2D, GLint(l), GL_RGBA8, lv.Width(), lv.Height(), 0, GL_RGBA, GL_UNSIGNED_BYTE, lv.Data());
+                info.gpuBytes += lv.Pixels().size();
+            }
+            g.TexParameteri(GL_TEXTURE_2D, 0x813C /*GL_TEXTURE_BASE_LEVEL*/, 0);
+            g.TexParameteri(GL_TEXTURE_2D, 0x813D /*GL_TEXTURE_MAX_LEVEL*/, GLint(levels->size()) - 1);
             info.glFormat = GL_RGBA8;
-            if (!g.GenerateMipmap) ts.mipmaps = false;   // no way to build them: sample level 0 only
-            else if (ts.mipmaps) g.GenerateMipmap(GL_TEXTURE_2D);
+            info.uploadedLevels = int(levels->size());
+            if (levels->size() < 2) ts.mipmaps = false;
         }
+    }
+    if (tex) {
+        info.anisotropy = ts.anisotropy;
         m_texInfo[tex] = ts;
-        m_uploadInfo[name] = info;
         const int wrapMode = ts.wrap == TextureSampling::Clamp ? GL_CLAMP_TO_EDGE
                            : ts.wrap == TextureSampling::Mirror ? 0x8370 /*GL_MIRRORED_REPEAT*/ : GL_REPEAT;
         g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
@@ -1602,13 +1649,19 @@ unsigned int GLRenderer::TextureFor(const std::string& name) {
                            : ts.filter == TextureSampling::Bilinear ? 0x2701 /*GL_LINEAR_MIPMAP_NEAREST*/
                                                                     : GL_LINEAR_MIPMAP_LINEAR;
             g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minF);
-            // Anisotropic filtering: keeps textured floors/terrain sharp at grazing
-            // angles instead of blurring into the distance (no-op if unsupported).
-            if (!point) g.TexParameteri(GL_TEXTURE_2D, 0x84FE /*GL_TEXTURE_MAX_ANISOTROPY_EXT*/, 8);
         } else {
             g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, point ? 0x2600 : GL_LINEAR);
         }
+        // Anisotropic filtering (the picture's `anisotropy` setting, 8 by default): keeps textured floors and terrain
+        // sharp at grazing angles. GL_TEXTURE_MAX_ANISOTROPY (EXT_texture_filter_anisotropic, core in 4.6); a driver
+        // without it ignores the call, and the error it raises is cleared so later checks are not confused.
+        if (!point && ts.anisotropy > 1) {
+            g.TexParameteri(GL_TEXTURE_2D, 0x84FE /*GL_TEXTURE_MAX_ANISOTROPY*/, ts.anisotropy);
+            if (g.GetError) for (int i = 0; i < 4 && g.GetError() != 0; ++i) {}
+        }
+        if (info.gpuBytes) MemoryTracker::Global().Add(GpuTextureCategory(), std::int64_t(info.gpuBytes), 1);
     }
+    m_uploadInfo[name] = info;
     m_texCache[name] = tex;
     return tex;
 }
@@ -2781,6 +2834,7 @@ void GLRenderer::Destroy() {
     DestroySsao();
     DestroyPostTargets();
     for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
+    for (auto& kv : m_uploadInfo) if (kv.second.gpuBytes) MemoryTracker::Global().Remove(GpuTextureCategory(), std::int64_t(kv.second.gpuBytes), 1);
     m_texCache.clear();
     m_texInfo.clear();
     m_uploadInfo.clear();

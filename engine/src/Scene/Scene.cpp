@@ -116,6 +116,42 @@ std::string Scene::UniqueName(const std::string& base, const Transform* parent) 
     }
 }
 
+// Moving a finished subtree between scenes: the objects keep their addresses, ids and components, so a model read on a
+// worker into a private scene joins the open scene without being copied through text.
+GameObject* Scene::AdoptFrom(Scene& from, GameObject* root) {
+    if (&from == this || !root || root->scene() != &from || root->IsDestroyed() || !root->transform) return nullptr;
+    if (from.IsUpdating()) return nullptr;   // its lists are being walked
+    from.FlushDestroyed();                   // what it threw away goes first, so nothing dead comes along
+    if (root->IsDestroyed()) return nullptr;
+    if (root->transform->Parent()) root->transform->SetParent(nullptr, /*worldPositionStays=*/true);
+    std::unordered_set<const GameObject*> moving;
+    for (const auto& up : from.m_objects)
+        if (up && up->IsSelfOrDescendantOf(root)) moving.insert(up.get());
+    for (auto it = from.m_objects.begin(); it != from.m_objects.end();) {   // keep their order
+        if (moving.count(it->get())) {
+            (*it)->m_scene = this;
+            m_objects.push_back(std::move(*it));
+            it = from.m_objects.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    auto ours = [&](const Component* c) { return c && c->gameObject && moving.count(c->gameObject); };
+    for (auto& c : from.m_pending) if (ours(c)) { m_pending.push_back(c); c = nullptr; }
+    for (auto& c : from.m_active) if (ours(c)) {   // already awake there (a scene that was updated): keep running here
+        m_active.push_back(c);
+        if (c->ExecutionOrder() != 0) m_hasOrdered = true;
+        c = nullptr;
+    }
+    from.m_pending.erase(std::remove(from.m_pending.begin(), from.m_pending.end(), nullptr), from.m_pending.end());
+    if (from.mainCamera && ours(from.mainCamera)) from.mainCamera = nullptr;
+    if (from.m_mouseHover && moving.count(from.m_mouseHover)) from.m_mouseHover = nullptr;
+    if (from.m_mousePress && moving.count(from.m_mousePress)) from.m_mousePress = nullptr;
+    ++from.m_structureVersion; ++from.m_componentVersion;
+    ++m_structureVersion; ++m_componentVersion;
+    return root;
+}
+
 GameObject* Scene::Duplicate(const GameObject& original) {
     if (original.IsDestroyed() || !original.transform) return nullptr;
     Transform* parent = original.transform->Parent();

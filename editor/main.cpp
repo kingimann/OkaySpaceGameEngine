@@ -12,6 +12,11 @@
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
 #include "okay/Render/TextureCacheFiles.hpp"   // InvalidateTextureCacheForFile: a changed picture is shown changed
+#include "okay/Render/AssetRefresh.hpp"        // RefreshModelsForFile / RefreshAudioForFile: placed models and loaded sounds follow their files
+#include "okay/Components/ModelSource.hpp"
+#include "okay/Render/ModelImportAsync.hpp"     // ModelImportTask: models read on a worker, the editor keeps drawing
+#include "okay/Core/Jobs.hpp"
+#include "okay/Debug/DebugUtil.hpp"            // SpinLock for log lines that arrive from a worker
 #include "okay/Render/ModelImportProblem.hpp"   // DescribeModelImportProblem: why a model did not import
 #include "OwnSwitches.hpp"   // the table of own replacements that can be switched on (View > Rendering & Performance)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
@@ -8929,9 +8934,12 @@ static okaypb::ctx::State& ProjectCtxState(const std::string& key, const std::fu
     return s_state;
 }
 // A model's "Scale" import setting (Project panel > Import Settings): multiplies its size when it is added to a scene.
+// The placed model also remembers its file (Model Source), so a changed file, a reimport or new import settings
+// refresh it in place (okay::RefreshModelsForFile, called from the Project panel's changed-files loop).
 static void ApplyModelImportScale(GameObject* root, const std::string& path) {
     const float s = okay::ModelImportScale(path);
     if (root && root->transform && s != 1.0f) root->transform->localScale = root->transform->localScale * s;
+    okay::MarkModelSource(root, path, s);
 }   // after a rename / move / undo: labels, the open scene
 static std::string NativePath(const std::string& p) { return std::filesystem::path(std::filesystem::u8path(p)).make_preferred().string(); }
 
@@ -9032,11 +9040,10 @@ static void OpenModelFileDialog(const char* title, bool multi, okay::filedialog:
 }
 // Pre-import `path` into a scratch scene and open the Import Model settings
 // dialog on what was found.
-static void ScanModelForImport(const std::string& path) {
+// What the scan found in a model already read into `tmp` (null `r`: it did not import), then the dialog opens.
+static void ScanModelFromScene(const std::string& path, okay::Scene& tmp, GameObject* r) {
     ImportScan sc; sc.path = path;
-    okay::Scene tmp; tmp.physicsEnabled = false;
-    bool ok = false;
-    if (GameObject* r = okay::ImportModelScene(tmp, path, &ok); r && ok) {
+    if (r) {
         sc.ok = true;
         sc.rep = okay::AnalyzeModel(tmp, r);
         sc.humanoid = okay::CountHumanoidBones(tmp, r);
@@ -9058,6 +9065,105 @@ static void ScanModelForImport(const std::string& path) {
     g_importResize = sc.height > 0.0f && (sc.height > 20.0f || sc.height < 0.05f);
     g_importHeight = sc.humanoid >= 8 ? 1.8f : 1.0f;
     g_showImportObj = true;
+}
+// The scan on the main thread (the OKAY_UI_IMPORTDLG screenshot hook wants the dialog on a known frame).
+static void ScanModelForImportNow(const std::string& path) {
+    okay::Scene tmp; tmp.physicsEnabled = false;
+    bool ok = false;
+    GameObject* r = okay::ImportModelScene(tmp, path, &ok);
+    ScanModelFromScene(path, tmp, r && ok ? r : nullptr);
+}
+
+// ---- Log lines from workers ----------------------------------------------------
+static okay::debugutil::SpinLock g_offThreadLogLock;
+static std::vector<std::pair<std::string, int>> g_offThreadLog;
+static void QueueOffThreadLog(const std::string& msg, int level) {
+    okay::debugutil::SpinGuard g(g_offThreadLogLock);
+    if (g_offThreadLog.size() < 2000) g_offThreadLog.emplace_back(msg, level);   // a runaway worker cannot fill memory
+}
+static void DrainOffThreadLog() {
+    std::vector<std::pair<std::string, int>> lines;
+    { okay::debugutil::SpinGuard g(g_offThreadLogLock); lines.swap(g_offThreadLog); }
+    for (auto& l : lines) ConsoleLog(l.first, l.second);
+}
+
+// ---- Reading models in the background ----------------------------------------
+// A model is read on a JobSystem worker (okay::ModelImportTask) so a big file does not freeze the editor: a small
+// window shows the file, the stage, the time so far and a Cancel button, and the model joins the scene (one undo step)
+// when it is read. One model at a time. The GPU upload stays where it was: the renderer uploads on first draw.
+static okay::ModelImportTask g_modelTask;
+static std::function<void(EditorState&, GameObject*)> g_modelTaskPlace;   // what to do with it once it is in the scene
+static bool g_modelTaskIsScan = false;                                   // a scan for the Import Model dialog
+static std::string ModelImportFailLine(const std::string& what, const std::string& path);
+static bool ModelTaskRefuseBusy() {
+    if (!g_modelTask.Busy()) return false;
+    ConsoleLog("Still reading " + std::filesystem::u8path(g_modelTask.Path()).filename().u8string() +
+               ": wait for it to finish or press Cancel in the import window.", 1);
+    return true;
+}
+// Read `path` in the background, then call `place` with the model already in the scene (undo step taken).
+static bool StartModelPlacement(const std::string& path, std::function<void(EditorState&, GameObject*)> place) {
+    if (ModelTaskRefuseBusy()) return false;
+    if (!g_modelTask.Start(path)) return false;
+    g_modelTaskPlace = std::move(place);
+    g_modelTaskIsScan = false;
+    return true;
+}
+static void ScanModelForImport(const std::string& path) {   // the Import Model dialog opens when the scan is read
+    if (ModelTaskRefuseBusy()) return;
+    if (!g_modelTask.Start(path)) return;
+    g_modelTaskPlace = nullptr;
+    g_modelTaskIsScan = true;
+}
+// Once a frame: hand a finished model over, and show the import window while one is being read.
+static void PumpModelTask(EditorState& ed) {
+    DrainOffThreadLog();
+    if (!g_modelTask.Busy()) return;
+    if (g_modelTask.Finished()) {
+        const std::string path = g_modelTask.Path();
+        std::unique_ptr<okay::Scene> from;
+        GameObject* root = nullptr;
+        bool failed = false;
+        g_modelTask.TakeResult(from, root, &failed);
+        if (g_modelTaskIsScan) {
+            if (from) ScanModelFromScene(path, *from, failed ? nullptr : root);
+            return;
+        }
+        if (failed || !from || !root) { ConsoleLog(ModelImportFailLine("Model import", path), 2); return; }
+        ed.PushUndo();
+        GameObject* placed = ed.scene().AdoptFrom(*from, root);
+        if (!placed) { ConsoleLog("Model import failed: " + path + ": it could not be moved into the scene", 2); return; }
+        auto place = std::move(g_modelTaskPlace);
+        g_modelTaskPlace = nullptr;
+        if (place) place(ed, placed);
+        return;
+    }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y - 60.0f), ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(0.92f);
+    if (ImGui::Begin("Importing a model##modeltask", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoDocking)) {
+        const std::string name = std::filesystem::u8path(g_modelTask.Path()).filename().u8string();
+        ImGui::Text("%s %s", g_modelTaskIsScan ? "Looking at" : "Importing", name.c_str());
+        char line[160];
+        std::snprintf(line, sizeof(line), "%s... %.1f s", g_modelTask.StageText(), g_modelTask.ElapsedSeconds());
+        ImGui::TextDisabled("%s", line);
+        // The readers do not report how far they are, so while the file is read the bar sweeps instead of filling.
+        float frac = g_modelTask.Progress();
+        if (g_modelTask.CurrentStage() == okay::ModelImportTask::Stage::Reading) {
+            const double t = g_modelTask.ElapsedSeconds();
+            frac = 0.15f + 0.8f * static_cast<float>(1.0 - 1.0 / (1.0 + t * 0.35));   // creeps toward 95%, never claims done
+        }
+        ImGui::ProgressBar(frac, ImVec2(300.0f, 0.0f), "");
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel##modeltask")) {
+            ConsoleLog("Stopped importing " + name + " (the editor no longer waits for it)");
+            g_modelTask.Cancel();
+            g_modelTaskPlace = nullptr;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop waiting for this model. Nothing is added to the scene.");
+    }
+    ImGui::End();
 }
 static void PickAndImportModel() {
     OpenModelFileDialog("Import model", false, [](const std::vector<std::string>& v) { if (!v.empty()) ScanModelForImport(v[0]); });
@@ -10913,9 +11019,27 @@ void DrawProject(EditorState& ed) {
     pb.Poll(okay::platform::TicksMs32());   // keep the database fresh without a thread: an incremental scan when due (waits at least 2 s and 30x as long as the last scan took)
     // A picture changed in another program, given new import settings, or reimported by hand: the Scene view shows the new
     // one now (before, only the panel's thumbnail was made again and the renderer kept the old pixels until a restart).
+    // Models and sounds already in the scene follow their files too: a placed model is refreshed in place (new meshes,
+    // parts and import settings; its objects, transforms, your children and materials stay) as one undo step, and an
+    // Audio Source that loaded the sound loads it again. Not while playing: Stop brings the edit-time scene back.
     for (const std::string& f : pb.TakeChangedFiles()) {
-        if (okay::AssetTypeFromPath(f) != okay::AssetType::Texture) continue;
-        if (okay::InvalidateTextureCacheForFile(f) > 0) ConsoleLog("Reloaded the picture " + fs::u8path(f).filename().u8string() + " in the Scene view");
+        const okay::AssetType kind = okay::AssetTypeFromPath(f);
+        const std::string shortName = fs::u8path(f).filename().u8string();
+        if (kind == okay::AssetType::Texture) {
+            if (okay::InvalidateTextureCacheForFile(f) > 0) ConsoleLog("Reloaded the picture " + shortName + " in the Scene view");
+        } else if (kind == okay::AssetType::Model && !ed.isPlaying()) {
+            bool placed = false;
+            for (const auto& up : ed.scene().Objects())
+                if (auto* ms = up ? up->GetComponent<okay::ModelSource>() : nullptr; ms && okay::SameAssetFile(ms->path, f)) { placed = true; break; }
+            if (!placed) continue;
+            ed.PushUndo();
+            const okay::ModelRefreshReport rep = okay::RefreshModelsForFile(ed.scene(), f);
+            if (rep.instances > 0) ed.dirty = true;
+            ConsoleLog(rep.Summary() + " (" + shortName + ")", rep.failed.empty() ? 0 : 1);
+        } else if (kind == okay::AssetType::Audio && !ed.isPlaying()) {
+            if (const int n = okay::RefreshAudioForFile(ed.scene(), f); n > 0)
+                ConsoleLog("Reloaded the sound " + shortName + " on " + std::to_string(n) + (n == 1 ? " Audio Source" : " Audio Sources"));
+        }
     }
     // Let OS file-drops land in the folder we're browsing (falls back to Assets root).
     g_assetImportDir = fs::is_directory(dir, ec) ? dir.string() : root.string();
@@ -11841,16 +11965,15 @@ void DrawProject(EditorState& ed) {
             }
         } else if (const char* k = ImportKindLabel(ext); k && std::strcmp(k, "model") == 0) {
             // Double-click a model: import it into the scene (hierarchy, textures,
-            // rig + clips, size normalization — same path as drag-drop).
-            ed.PushUndo();
-            bool okm = false;
-            if (GameObject* r = okay::ImportModelScene(ed.scene(), full, &okm); r && okm) {
+            // rig + clips, size normalization — same path as drag-drop). Read in the
+            // background; it appears when read (PumpModelTask).
+            StartModelPlacement(full, [full](EditorState& e, GameObject* r) {
                 ApplyModelImportScale(r, full);
-                r->transform->SetPosition(ed.camTarget);
-                ed.Select(r); ed.dirty = true;
+                r->transform->SetPosition(e.camTarget);
+                e.Select(r); e.dirty = true;
                 ConsoleLog("Imported " + full);
-                LogModelReport(ed, r);
-            } else ConsoleLog(ModelImportFailLine("Model import", full), 2);
+                LogModelReport(e, r);
+            });
         }
     };
 
@@ -18954,27 +19077,26 @@ void DrawFileDialogs(EditorState& ed) {
                         if (!copied.empty()) src = copied;
                     }
                 }
-                bool okl = false;
-                ed.PushUndo();
-                GameObject* root = okay::ImportModelScene(ed.scene(), src, &okl);
-                if (okl && root) {
+                // Read in the background (PumpModelTask); the choices made here are kept for when it is in.
+                const int mode = g_importMode; const bool resize = g_importResize; const float height = g_importHeight;
+                StartModelPlacement(src, [src, mode, resize, height](EditorState& ed, GameObject* root) {
                     ApplyModelImportScale(root, src);
                     // Drop it where the Scene view is looking, standing on the ground plane.
                     root->transform->SetPosition({ed.camTarget.x, 0.0f, ed.camTarget.z});
                     Vec3 lo, hi;
-                    if (g_importResize && okay::ModelBounds(ed.scene(), root, lo, hi) && hi.y - lo.y > 1e-5f)
-                        root->transform->localScale = root->transform->localScale * (g_importHeight / (hi.y - lo.y));
+                    if (resize && okay::ModelBounds(ed.scene(), root, lo, hi) && hi.y - lo.y > 1e-5f)
+                        root->transform->localScale = root->transform->localScale * (height / (hi.y - lo.y));
                     if (okay::ModelBounds(ed.scene(), root, lo, hi))   // feet on y = 0
                         root->transform->SetPosition(root->transform->Position() + Vec3{0.0f, -lo.y, 0.0f});
                     ed.Select(root); ed.view3D = true; ed.dirty = true;
                     ConsoleLog("Imported " + fs::path(src).filename().string());
-                    if (g_importMode == 1) {
+                    if (mode == 1) {
                         std::string log;
                         okay::EnableBuiltinAnimations(ed.scene(), root, &log);
                         ConsoleLog(log + " - press Play to see it move");
-                    } else if (g_importMode == 2) {
+                    } else if (mode == 2) {
                         RigModelHumanoid(ed, root);
-                    } else if (g_importMode == 3) {
+                    } else if (mode == 3) {
                         OpenBoneMap(root, nullptr);
                     }
                     LogModelReport(ed, root);
@@ -18985,7 +19107,7 @@ void DrawFileDialogs(EditorState& ed) {
                         ed.camTarget = (lo + hi) * 0.5f;
                         ed.camDist = std::fmax(1.0f, ext * 1.8f);
                     }
-                } else ConsoleLog(ModelImportFailLine("Import", src), 2);
+                });
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
@@ -55206,12 +55328,14 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             } else if (const char* kind = ImportKindLabel(ext); kind && std::strcmp(kind, "model") == 0) {
                 // Any importable model format (.obj/.fbx/.gltf/.dae/...): full scene
                 // import — multi-node hierarchies, textures, auto size normalization.
-                ed.PushUndo();
-                bool ok = false;
-                placed = okay::ImportModelScene(ed.scene(), path, &ok);
-                if (ok && placed) ApplyModelImportScale(placed, path);
-                if (!ok || !placed)
-                    ConsoleLog(ModelImportFailLine("Model import", path), 2);
+                // Read in the background; placed at the drop point when read (PumpModelTask).
+                StartModelPlacement(path, [path, drop](EditorState& e, GameObject* m) {
+                    ApplyModelImportScale(m, path);
+                    m->transform->SetPosition(drop);
+                    e.Select(m); e.dirty = true;
+                    ConsoleLog("Placed " + m->name);
+                    LogModelReport(e, m);
+                });
             }
             if (placed) {
                 placed->transform->SetPosition(drop);
@@ -57889,8 +58013,12 @@ int main(int argc, char** argv) {
 
     // Route engine logs (and script print/log/debug output) into the Console
     // with the matching severity.
+    // A line logged on a worker (a model read in the background) waits in a queue and is shown on the main thread at
+    // the next frame (DrainOffThreadLog): the Console is not safe to touch from two threads.
+    okay::JobSystem::Global().AdoptMainThread();
     Log::sink = [](Log::Level lvl, const std::string& msg) {
         int level = lvl == Log::Level::Error ? 2 : lvl == Log::Level::Warning ? 1 : 0;
+        if (!okay::JobSystem::Global().IsMainThread()) { QueueOffThreadLog(msg, level); return; }
         ConsoleLog(msg, level);
     };
 
@@ -59277,7 +59405,26 @@ int main(int argc, char** argv) {
             }
             // OKAY_UI_IMPORTDLG=model.glb: the Import Model settings dialog on that file
             // (what the OS file picker hands it).
-            if (const char* idl = std::getenv("OKAY_UI_IMPORTDLG"); idl && s_focusFrames == 31) ScanModelForImport(idl);
+            if (const char* idl = std::getenv("OKAY_UI_IMPORTDLG"); idl && s_focusFrames == 31) ScanModelForImportNow(idl);
+            // OKAY_UI_IMPORT_ASYNC=model.obj: read it in the background like a double-click (screenshots of the import
+            // window). OKAY_UI_REFRESH_FROM=other.obj with it: 120 frames in, that file is copied over the model and the
+            // placed copy is refreshed, as the Project panel does for a changed file (screenshots of a refreshed model).
+            if (const char* ia = std::getenv("OKAY_UI_IMPORT_ASYNC"); ia && s_focusFrames == 31) {
+                const std::string path = ia;
+                StartModelPlacement(path, [path](EditorState& e, GameObject* r) {
+                    ApplyModelImportScale(r, path);
+                    r->transform->SetPosition(e.camTarget);
+                    e.Select(r); e.view3D = true; e.dirty = true;
+                    ConsoleLog("Imported " + path);
+                });
+            }
+            static int s_refreshFrames = 0;   // (s_focusFrames stops at 90)
+            if (const char* rf = std::getenv("OKAY_UI_REFRESH_FROM"); rf && std::getenv("OKAY_UI_IMPORT_ASYNC") && ++s_refreshFrames == 120) {
+                std::error_code cec;
+                std::filesystem::copy_file(rf, std::getenv("OKAY_UI_IMPORT_ASYNC"), std::filesystem::copy_options::overwrite_existing, cec);
+                const okay::ModelRefreshReport rep = okay::RefreshModelsForFile(ed.scene(), std::getenv("OKAY_UI_IMPORT_ASYNC"));
+                ConsoleLog(rep.Summary());
+            }
             // OKAY_UI_IMPORT=model.glb: import it and select it (screenshots of rigs).
             if (const char* imp = std::getenv("OKAY_UI_IMPORT"); imp && s_focusFrames == 31) {
                 bool okm = false;
@@ -59411,6 +59558,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.ContentEditors"); DrawContentEditors(ed); }
         { OKAY_PROFILE("UI.Weapons"); if (g_showWeapons) DrawWeaponEditor(ed); }
         { OKAY_PROFILE("UI.Project"); if (g_showProject)   DrawProject(ed); }
+        { OKAY_PROFILE("UI.ModelImport"); PumpModelTask(ed); }   // a model read in the background joins the scene
         // Make Playable Character is queued from the Project panel, which draws
         // after the Inspector. A drop onto a player is queued from the Hierarchy,
         // which draws before it; the Inspector apply already ran that one when

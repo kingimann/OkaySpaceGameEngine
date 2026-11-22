@@ -583,7 +583,7 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
             }
             ImGui::Checkbox("Import animations", &e.model.importAnimations);
             Hint("Off: no clips, rest pose.");
-            Hint("Used when the model is next added to a scene.");
+            Hint("Apply also updates copies already in the open scene (your positions, materials and added objects stay).");
             break;
         }
         case ok::AssetType::Audio: {
@@ -594,7 +594,7 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
             Hint("Read while it plays keeps a long file in a small fixed amount of memory.");
             ImGui::Checkbox("Mix down to one channel", &e.audio.forceMono);
             Hint("Left and right become a single channel. Off keeps the recording as it is.");
-            Hint("Used the next time the file is loaded.");
+            Hint("Apply reloads it on Audio Sources that already have it loaded.");
             break;
         }
         default: return false;

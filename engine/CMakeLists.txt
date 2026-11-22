@@ -76,6 +76,8 @@ add_library(okay_engine
     src/Core/DisplaySettings.cpp
     src/Core/DisplayModes.cpp
     src/Render/TextureCacheFiles.cpp
+    src/Render/AssetRefresh.cpp
+    src/Render/ModelImportAsync.cpp
     src/Render/ModelImportProblem.cpp
     src/Render/ConsoleRenderer.cpp
     src/Render/GLRenderer.cpp

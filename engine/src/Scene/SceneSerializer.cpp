@@ -9929,6 +9929,7 @@ void RegisterBuiltinComponentSerializers() {
     RegisterPhysicsToySerializers();
     RegisterColliderShape2DSerializers(); // Composite 2D collider
     RegisterColliderShapeSerializers();   // Cone, Convex Hull, Plane, Compound, Heightfield colliders
+    RegisterModelSourceSerializer();      // the file a placed model came from (Render/AssetRefresh.cpp)
     ComponentSerializerRegistry::Entry trail;
     trail.name = "trailrenderer";
     trail.write = [](const GameObject& go, std::ostream& out) {

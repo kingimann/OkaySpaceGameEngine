@@ -110,6 +110,12 @@ public:
     /// pose, placed right after it among its siblings, named with UniqueName so "Crate" becomes
     /// "Crate (1)". nullptr when the original is destroyed.
     GameObject* Duplicate(const GameObject& original);
+    /// Move `root` and everything under it out of `from` (another scene) into this one: the same objects and
+    /// components, nothing copied, so it is quick for a big model. Components that had not woken up yet in `from`
+    /// wake up here. Meant for a scene built on a worker and never updated (a model read in the background, see
+    /// okay/Render/ModelImportAsync.hpp). Returns `root`, now a top-level object here, or nullptr (nothing moved)
+    /// when it is not a live object of `from` or `from` is this scene.
+    GameObject* AdoptFrom(Scene& from, GameObject* root);
     /// `base` if no sibling already has that name, else "base (1)", "base (2)" ... (the first
     /// free number; a trailing " (n)" on `base` counts from its stem, so "Crate (1)" gives
     /// "Crate (2)"). Siblings are the children of `parent`, or the root objects when it is

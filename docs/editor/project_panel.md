@@ -58,12 +58,30 @@ The Project panel is the editor's asset browser: a folder tree on the left, the 
   the code stay; one flag, `kShowTextureSamplerSettings` in `ProjectPanelUI.cpp`, shows them again).
   Models: **Scale** and **Normals** (from the file, calculated with a **Smoothing angle**, or flat) and **Import
   animations** (off drops the clips and leaves the rest pose). Models apply when the model is added to a scene (rigged
-  parts keep the file's normals); parts already in a scene are not changed. **Apply** reloads the picture right away
-  and redraws a model's preview. Not offered because nothing reads them: sRGB, Compress, and the audio options. The
+  parts keep the file's normals), and **Apply** also refreshes every copy already in the open scene, as a changed file
+  or a **Reimport** does (see "Live reload" below). **Apply** reloads the picture right away and redraws a model's
+  preview. Not offered because nothing reads them: sRGB, Compress, and the audio options. The
   same box is available to other windows as `oked::projectpanel::DrawImportSettings`.
 - **Favourites.** Right-click a file or folder > Add to Favourites. Starred items show a star and are listed under
   FAVOURITES on the left. They are kept in the project (`.okay/favourites.txt`) and follow renames and moves.
 - **Reimport** reads a file again after you changed it in another program.
+- **Live reload.** A file changed in another program (seen by the next scan, 2 s or more), a **Reimport** and new import
+  settings all update what the open scene already shows. Pictures are drawn again. A model placed from the file is
+  refreshed in place (`okay::RefreshModelsForFile`, one undo step, a Console line such as "Refreshed 1 placed model: 3
+  meshes updated, 1 part added"): its meshes, skin and animation clips come from the file again and new import
+  settings apply; kept are every object (same object, so references to it hold), the position, rotation and size of
+  the top object and of every part, objects you added under it, and each part's material (colour, textures, shader).
+  A part the file gained is added; a part it lost is removed and anything you put under that part moves up. A part
+  you renamed counts as yours and stays. The placed model's top object carries a **Model Source** component that names
+  the file. Models placed before this version have none: place them again, or add the file's path to a Model
+  Source by hand (every object whose name path the file has then counts as a part, and nothing is removed). Audio Sources that
+  already loaded a changed sound load it again. Nothing is refreshed while playing.
+- **Big models do not freeze the editor.** Double-clicking a model, dropping it in the Scene view and the Import Model
+  dialog read the file on a worker thread (`okay::ModelImportTask`): a small window at the bottom shows the file, the
+  stage, the seconds so far and a **Cancel** button, and the model appears when it is read. The bar sweeps instead of
+  filling because the readers do not report how far they are. Cancel stops waiting at once; the reading itself
+  finishes in the background and is thrown away. One model at a time. Dragging a model onto the Hierarchy still reads
+  it on the main thread.
 - **Keyboard.** Arrow keys move the selection (Shift adds), Enter opens, Backspace goes up a folder, Home and End jump,
   Ctrl+A selects all, F5 refreshes. After you click in the folder tree, Up and Down walk the folders, Right opens a folder (then
   steps into it) and Left closes it (then goes up).

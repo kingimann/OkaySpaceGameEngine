@@ -15,6 +15,7 @@
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/DebrisEmitter.hpp"
 namespace okay { void RegisterPhysicsToyProperties(); }
+namespace okay { namespace detail { void RegisterModelSourceProperties(); } }   // the placed model's file link (Render/AssetRefresh.cpp)
 #include "okay/Components/Destructible.hpp"
 #include "okay/Components/Draggable.hpp"
 #include "okay/Components/FirstPersonController.hpp"
@@ -1428,6 +1429,7 @@ void RegisterGameplayProperties() {
     RegisterSpawner();
     RegisterDebrisEmitter();
     RegisterPhysicsToyProperties();   // Physics Surface and the physics toys
+    detail::RegisterModelSourceProperties();   // Model Source: the file a placed model came from
     RegisterVolume();
     RegisterWind();
     RegisterMusicPlayer();

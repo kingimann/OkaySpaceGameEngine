@@ -4,6 +4,8 @@
 #include "XboxSplash.hpp"
 #include "XboxKeyLayout.hpp"
 #include "XboxClipboard.hpp"
+#include "XboxCapture.hpp"
+#include <cstring>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -162,7 +164,118 @@ static void ClipboardTests() {
     }
 }
 
+// ---- microphone capture (XboxCapture.hpp): permission, format conversion, queue, silence ----
+namespace {
+struct FakeCapHost : okay::xbox::CaptureHost {
+    okay::xbox::CaptureFormat fmt; bool declared = true; okay::xbox::MicConsent consent = okay::xbox::MicConsent::Allowed;
+    bool startOk = true; int starts = 0, stops = 0; std::vector<std::string> names{"Headset", "Kinect"};
+    int DeviceCount() override { return (int)names.size(); }
+    std::string DeviceName(int i) override { return names[(size_t)i]; }
+    bool Format(int, okay::xbox::CaptureFormat& o) override { o = fmt; return true; }
+    bool CapabilityDeclared() override { return declared; }
+    okay::xbox::MicConsent Consent() override { return consent; }
+    bool Start(okay::xbox::UwpCaptureDevice*, int, std::string& e) override { if (!startOk) { e = "the user said no"; return false; } ++starts; return true; }
+    void Stop(okay::xbox::UwpCaptureDevice*) override { ++stops; }
+};
+std::vector<std::int16_t> ReadS16(okay::xbox::UwpCaptureDevice& d) {
+    std::vector<std::int16_t> v(d.QueuedBytes() / 2); const std::uint32_t n = d.Dequeue(v.data(), (std::uint32_t)v.size() * 2); v.resize(n / 2); return v;
+}
+}
+static void CaptureTests() {
+    using namespace okay::xbox;
+    // permission: needs the capability AND not-denied consent
+    CHECK(EvaluateMicPermission(false, MicConsent::Allowed).state == MicPermission::Denied);
+    CHECK(EvaluateMicPermission(false, MicConsent::Allowed).reason.find("manifest") != std::string::npos);
+    CHECK(EvaluateMicPermission(true, MicConsent::Denied).state == MicPermission::Denied);
+    CHECK(EvaluateMicPermission(true, MicConsent::Denied).reason.find("privacy") != std::string::npos);
+    CHECK(EvaluateMicPermission(true, MicConsent::Allowed).state == MicPermission::Granted);
+    CHECK(EvaluateMicPermission(true, MicConsent::Unknown).state == MicPermission::Unknown);
+    CHECK(SupportedCaptureFormat({48000, 2, true, 32}) && SupportedCaptureFormat({16000, 1, false, 16}) && !SupportedCaptureFormat({48000, 2, false, 24}) && !SupportedCaptureFormat({48000, 9, true, 32}) && !SupportedCaptureFormat({100, 1, true, 32}));
+    okay::platform::AudioSpec want; want.freq = 48000; want.channels = 1; want.format = okay::platform::SampleFormat::S16;
+    { // same rate, float stereo -> S16 mono: average of the channels, hand-computed (0.5 and -0.25 -> 0.125 -> 4096 by F32ToS16 = 0.125 * 32767 rounded)
+        FakeCapHost h; h.fmt = {48000, 2, true, 32};
+        UwpCaptureDevice d(want, h.fmt, &h, 0); std::string err; CHECK(d.Begin(err) && h.starts == 1);
+        const float in[] = {0.5f, -0.25f, 0.5f, -0.25f, 0.5f, -0.25f};
+        d.Deliver(in, sizeof(in), false);
+        CHECK(d.QueuedBytes() == 0);                                       // paused (devices start paused): nothing recorded
+        d.Pause(false); d.Deliver(in, sizeof(in), false);
+        std::vector<std::int16_t> v = ReadS16(d);
+        CHECK(v.size() == 2 && v[0] == 4096 && v[1] == 4096);              // 3 frames in, one held back for the interpolator
+        d.Deliver(in, sizeof(in), false); v = ReadS16(d); CHECK(v.size() == 3);   // the held frame comes out with the next chunk: no frame lost
+    }
+    { // S16 mono 16 kHz in -> S16 mono 48 kHz out: 3x frames, linear ramp, state kept between chunks
+        FakeCapHost h; h.fmt = {16000, 1, false, 16};
+        UwpCaptureDevice d(want, h.fmt, &h, 0); d.Pause(false);
+        const std::int16_t a[] = {0, 3000, 6000};
+        d.Deliver(a, sizeof(a), false);
+        std::vector<std::int16_t> v = ReadS16(d);
+        CHECK(v.size() == 6);                                              // two source intervals -> 6 output frames
+        CHECK(v[0] == 0 && v[1] == 1000 && v[2] == 2000 && v[3] == 3000 && v[4] == 4000 && v[5] == 5000);
+        const std::int16_t b[] = {9000};
+        d.Deliver(b, sizeof(b), false); v = ReadS16(d);
+        CHECK(v.size() == 3 && v[0] == 6000 && v[1] == 7000 && v[2] == 8000);   // continues across the chunk boundary
+    }
+    { // 48 kHz -> 16 kHz: every third frame
+        okay::platform::AudioSpec w2 = want; w2.freq = 16000; FakeCapHost h; h.fmt = {48000, 1, false, 16};
+        UwpCaptureDevice d(w2, h.fmt, &h, 0); d.Pause(false);
+        std::int16_t in[10]; for (int i = 0; i < 10; ++i) in[i] = (std::int16_t)(i * 100);
+        d.Deliver(in, sizeof(in), false);
+        std::vector<std::int16_t> v = ReadS16(d);
+        CHECK(v.size() == 3 && v[0] == 0 && v[1] == 300 && v[2] == 600);
+    }
+    { // F32 spec, mono device to stereo spec; a partial trailing frame is ignored
+        okay::platform::AudioSpec w2; w2.freq = 48000; w2.channels = 2; w2.format = okay::platform::SampleFormat::F32;
+        FakeCapHost h; h.fmt = {48000, 1, true, 32};
+        UwpCaptureDevice d(w2, h.fmt, &h, 0); d.Pause(false);
+        const float in[] = {0.25f, 0.5f, 0.75f};
+        d.Deliver(in, sizeof(in) - 2, false);                              // 2 whole frames and 2 stray bytes
+        float out[8]; const std::uint32_t n = d.Dequeue(out, sizeof(out));
+        CHECK(n == 8 && out[0] == 0.25f && out[1] == 0.25f);               // 2 frames in, 1 out (one held back): mono -> both channels
+    }
+    { // silent flag -> zeros of the same length; NaN -> 0
+        FakeCapHost h; h.fmt = {48000, 1, true, 32};
+        UwpCaptureDevice d(want, h.fmt, &h, 0); d.Pause(false);
+        const float in[] = {0.9f, 0.9f, 0.9f};
+        d.Deliver(in, sizeof(in), true); std::vector<std::int16_t> v = ReadS16(d);
+        CHECK(v.size() == 2 && v[0] == 0 && v[1] == 0);
+        const float nan[] = {std::nanf(""), std::nanf(""), 0.0f};
+        d.Deliver(nan, sizeof(nan), false); v = ReadS16(d); CHECK(v.size() >= 1 && v[0] == 0);
+    }
+    { // underrun: Dequeue returns only what is there, DequeueFilled pads with silence and counts it
+        FakeCapHost h; h.fmt = {48000, 1, false, 16};
+        UwpCaptureDevice d(want, h.fmt, &h, 0); d.Pause(false);
+        const std::int16_t in[] = {1000, 1000, 1000}; d.Deliver(in, sizeof(in), false);     // 2 frames queued (4 bytes)
+        std::int16_t out[4] = {7, 7, 7, 7};
+        CHECK(d.DequeueFilled(out, 8) == 4 && out[0] == 1000 && out[1] == 1000 && out[2] == 0 && out[3] == 0 && d.UnderrunBytes() == 4);
+        CHECK(d.Dequeue(out, 8) == 0);
+    }
+    { // callback mode gets the converted bytes; the queue stays empty
+        struct Sink { static void Cb(void* u, std::uint8_t*, int len) { *static_cast<int*>(u) += len; } };
+        int got = 0; okay::platform::AudioSpec w2 = want; w2.callback = &Sink::Cb; w2.user = &got;
+        FakeCapHost h; h.fmt = {48000, 1, false, 16};
+        UwpCaptureDevice d(w2, h.fmt, &h, 0); d.Pause(false);
+        const std::int16_t in[] = {1, 2, 3, 4, 5}; d.Deliver(in, sizeof(in), false);
+        CHECK(got == 8 && d.QueuedBytes() == 0);
+    }
+    { // the queue is capped by the engine's DeliverCapture (oldest dropped): a long recording never grows without bound
+        FakeCapHost h; h.fmt = {48000, 1, false, 16};
+        UwpCaptureDevice d(want, h.fmt, &h, 0); d.Pause(false);
+        std::vector<std::int16_t> big(300000, 5); for (int i = 0; i < 4; ++i) d.Deliver(big.data(), (std::uint32_t)(big.size() * 2), false);
+        CHECK(d.QueuedBytes() <= (1u << 20));
+        d.ClearQueued(); CHECK(d.QueuedBytes() == 0);
+    }
+    { // closing stops the host exactly once; a refused start gives no device state to stop
+        FakeCapHost h; h.fmt = {48000, 1, false, 16};
+        { UwpCaptureDevice d(want, h.fmt, &h, 0); std::string e; CHECK(d.Begin(e)); }
+        CHECK(h.starts == 1 && h.stops == 1);
+        h.startOk = false;
+        { UwpCaptureDevice d(want, h.fmt, &h, 0); std::string e; CHECK(!d.Begin(e) && e == "the user said no"); }
+        CHECK(h.stops == 1);
+    }
+}
+
 int main() {
+    CaptureTests();
     PendingTests(); SplashTests(); LayoutTests(); ClipboardTests();
     if (g_fail) { std::printf("test_xbox_uwp_pieces: %d FAILED\n", g_fail); return 1; }
     std::printf("test_xbox_uwp_pieces: all passed\n");

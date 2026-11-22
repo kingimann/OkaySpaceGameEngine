@@ -40,7 +40,7 @@ from any other tool.
 """
 import argparse, bisect, json, multiprocessing, os, re, subprocess, sys, time
 from array import array
-from collections import defaultdict
+from collections import Counter, defaultdict
 from itertools import accumulate, compress, count, repeat
 from operator import eq, mod, not_, rshift, xor
 
@@ -375,19 +375,38 @@ def read_blob(root, rev, path):
         return None
 
 
+MOVED_MIN_CHARS = 12  # shorter lines are too common to prove a move
+
+
 def added_line_map(root, base, head):
-    """{path: set(line numbers added at head)} from `git diff base...head`."""
-    out = git(root, "diff", "-U0", "--no-renames", "--no-color", "--diff-filter=AM", f"{base}...{head}")
+    """{path: set(line numbers added at head)} from `git diff base...head`.
+
+    Moved code is not added code: a line whose text (spaces ignored) the same branch deletes somewhere else is left out,
+    so a pure move (cut from one file, pasted into another, as the editor split does) is never reported as a new copy.
+    Short lines ("}", "return x;") are always counted, so a move cannot hide a real paste around it."""
+    out = git(root, "diff", "-U0", "--no-renames", "--no-color", "--diff-filter=AMD", f"{base}...{head}")
     added, cur, ln = defaultdict(set), None, 0
+    plus, removed = [], Counter()
     for line in out.splitlines():
         if line.startswith("+++ "):
             cur = line[6:] if line.startswith("+++ b/") else None
+        elif line.startswith("--- "):
+            continue
         elif line.startswith("@@"):
             m = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)", line)
             ln = int(m.group(1)) if m else 0
         elif line.startswith("+") and cur:
-            added[cur].add(ln)
+            plus.append((cur, ln, "".join(line[1:].split())))
             ln += 1
+        elif line.startswith("-"):
+            key = "".join(line[1:].split())
+            if len(key) >= MOVED_MIN_CHARS:
+                removed[key] += 1
+    for path, n, key in plus:
+        if len(key) >= MOVED_MIN_CHARS and removed[key] > 0:
+            removed[key] -= 1  # each deleted line can explain one moved line
+            continue
+        added[path].add(n)
     return added
 
 

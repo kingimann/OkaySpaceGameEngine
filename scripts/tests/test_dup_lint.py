@@ -227,6 +227,20 @@ class DupLintTest(unittest.TestCase):
         self.assertNotIn("Base64.hpp", out.split("Math/Gone.hpp")[0][-300:])
 
 
+    def test_moved_code_is_not_a_new_copy(self):
+        """A pure move (code cut from one file and pasted into another in the same branch) adds no copy, even when main
+        already has an older copy elsewhere (found on #1141, the editor split)."""
+        r = Repo({"editor/main.cpp": "int before;\n" + BLOCK + "int after;\n", "engine/src/Old.cpp": "#include \"o.hpp\"\n" + BLOCK})
+        try:
+            r.write("editor/main.cpp", "int before;\nint after;\n")
+            r.write("editor/Moved.cpp", "#include \"m.hpp\"\n" + BLOCK)
+            r.commit("move")
+            code, out = r.check()
+            self.assertEqual(code, 0, out)
+            self.assertNotIn("copy-paste (pasted)", out)
+        finally:
+            r.close()
+
 class CrossBranchTest(unittest.TestCase):
     """collision_check's copy check between open branches (dup_lint.cross_branch)."""
     def test_same_block_on_two_branches_and_similar_names(self):
@@ -262,6 +276,19 @@ class CrossBranchTest(unittest.TestCase):
         finally:
             r.close()
 
+
+    def test_two_branches_moving_the_same_old_code_are_not_a_collision(self):
+        sys.path.insert(0, os.path.dirname(TOOL))
+        import dup_lint as D
+        r = Repo({"editor/main.cpp": "int before;\n" + BLOCK + "int after;\n"})
+        try:
+            for br, dest in (("one", "editor/A.cpp"), ("two", "editor/B.hpp")):
+                git(r.d, "checkout", "-q", "main"); git(r.d, "checkout", "-q", "-b", br)
+                r.write("editor/main.cpp", "int before;\nint after;\n"); r.write(dest, "// moved\n" + BLOCK); r.commit(br)
+            res = D.cross_branch(r.d, "main", {"one": "one", "two": "two"})
+            self.assertEqual(res["clones"], [], res)
+        finally:
+            r.close()
 
 class CodeIndexTest(unittest.TestCase):
     def test_public_names_only(self):

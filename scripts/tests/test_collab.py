@@ -315,10 +315,13 @@ class ThreeLanes(unittest.TestCase):
 
     def test_workflows_name_every_lane(self):
         wf = open(os.path.join(ROOT, ".github", "workflows", "branch-lint.yml"), encoding="utf-8").read()
+        every_branch = "branches: ['**']" in wf   # pushes to every branch (the duplicate guard's trigger) cover every lane
         for lane, prefix in L.lane_prefixes(self.lanes).items():
-            self.assertIn(f"'{prefix}**'", wf, f"branch-lint.yml must run on pushes to {prefix}** ({lane})")
-            self.assertIn(f"startsWith(github.head_ref, '{prefix}')", wf, f"branch-lint.yml must skip the pull request of a {prefix} branch")
-        self.assertRegex(wf, r"(?m)^  pull_request:")   # every other branch and fork is checked on its pull request
+            if not every_branch:
+                self.assertIn(f"'{prefix}**'", wf, f"branch-lint.yml must run on pushes to {prefix}** ({lane})")
+            # the claims step (claims on #422 are for lane branches) must run for every lane
+            self.assertIn(f"startsWith(github.ref, 'refs/heads/{prefix}')", wf, f"branch-lint.yml claims step must cover {prefix} branches")
+        self.assertRegex(wf, r"(?m)^  pull_request:")   # forks are checked on their pull request
 
     def test_display_branch_drops_every_lane_prefix(self):
         import dev_index as DI

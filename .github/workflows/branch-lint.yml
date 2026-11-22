@@ -1,16 +1,18 @@
-# Branch lint: cheap checks on every push to a Claude lane branch (claude/**, claude2/**, claude3/**; the lanes are in
-# docs/lanes.json) and on every pull request from any other branch or fork (john/*, Grok's branches, outside forks), so
-# those get the same checks. Not the full CI; about 1 to 5 minutes.
-# Plain rules: docs/process/collaboration.md. Scripts: scripts/branch_lint.py, bug_patterns.py, collision_check.py.
-#   fatal:      forbidden thread includes in Windows code (rule 21a), secrets, a push into another lane's open claim
+# Branch lint: cheap checks (not the full CI; about 1 to 5 minutes) on every push to every branch of this repository
+# (claude/**, claude2/**, claude3/**, john/**, any other contributor's branch, and main itself), and on pull requests from forks
+# (a pull request from a branch of this repository is already covered by the push run on the same commit).
+# On main the checks look at what the push brought in (the commit before the push ... the new head), so a copy that
+# lands some other way is caught at once.
+# Plain rules: docs/process/collaboration.md, docs/process/no_duplicates.md.
+# Scripts: scripts/branch_lint.py, bug_patterns.py, collision_check.py, dup_lint.py.
+#   fatal:      forbidden thread includes in Windows code (rule 21a), secrets, a push into another lane's open claim,
+#               pasted code or a new copy of a shared helper (dup_lint.py, every language)
 #   warnings:   no docs changed, feature map not regenerated, MinGW syntax check, bug-class patterns
 # Each warning shows as an annotation on the commit and in the job summary; nothing is commented on any issue or PR.
-# A lane branch of this repo is checked on push only (its pull request would run the same checks twice).
-# When a lane is added to docs/lanes.json, add its prefix to the two lists below (scripts/tests/test_collab.py checks it).
 name: Branch lint
 on:
   push:
-    branches: ['claude/**', 'claude2/**', 'claude3/**']
+    branches: ['**']
   pull_request:
 permissions:
   contents: read
@@ -18,27 +20,31 @@ permissions:
   pull-requests: read
 concurrency:
   group: branch-lint-${{ github.ref }}
-  cancel-in-progress: true
+  # never cancel a run on main: every push to main must be checked
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   lint:
-    if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.head.repo.full_name != github.repository ||
-      !(startsWith(github.head_ref, 'claude/') || startsWith(github.head_ref, 'claude2/') || startsWith(github.head_ref, 'claude3/'))
+    # pull requests: only from forks (a branch of this repository already ran on push)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 12
-    env:
-      # what the branch is compared with: main for a push, the pull request's target for a pull request
-      BASE: origin/${{ github.base_ref || 'main' }}
-      BASE_REF: ${{ github.base_ref || 'main' }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Make sure the base branch is there
+      - name: Make sure origin/main is there
+        run: git fetch --quiet origin main:refs/remotes/origin/main || true
+      - name: Pick what to compare against
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
-          git fetch --quiet origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}" || true
-          git fetch --quiet origin main:refs/remotes/origin/main || true
+          base=origin/main
+          if [ "${GITHUB_EVENT_NAME}" = push ] && [ "${GITHUB_REF}" = refs/heads/main ]; then
+            # main: check what this push brought in
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then base="$BEFORE"; else base=HEAD^; fi
+          fi
+          echo "BASE=$base" >> "$GITHUB_ENV"
+          echo "comparing $base...HEAD"
 
       - name: "Windows build rule 21a: no thread or mutex use in Windows code (fatal)"
         run: python3 scripts/branch_lint.py includes --base "$BASE" --head HEAD
@@ -51,15 +57,18 @@ jobs:
         if: always()
         run: python3 scripts/branch_lint.py binaries --base "$BASE" --head HEAD
 
-      # Claims live on issue #422 and name branches of this repo, so a fork's pull request has none to check.
+      - name: "Duplicate code: pasted blocks and new copies of shared helpers, every language (fatal)"
+        if: always()
+        run: python3 scripts/dup_lint.py check --base "$BASE" --head HEAD
+
       - name: "Claims: do not push into another lane's open claim (fatal)"
-        if: always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        # the lane claims on issue #422 are for the lane branches only (docs/lanes.json: claude/**, claude2/**, claude3/**)
+        if: always() && (startsWith(github.ref, 'refs/heads/claude/') || startsWith(github.ref, 'refs/heads/claude2/') || startsWith(github.ref, 'refs/heads/claude3/'))
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           rc=0
-          python3 scripts/collision_check.py --base "$BASE" --branch "${BRANCH}" > collision.md || rc=$?
+          python3 scripts/collision_check.py --branch "${GITHUB_REF_NAME}" > collision.md || rc=$?
           cat collision.md >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
@@ -72,6 +81,13 @@ jobs:
         run: |
           if ! python3 scripts/gen_feature_map.py --check; then
             echo "::warning title=Feature map::docs/FEATURE_MAP.md is out of date. Run: python3 scripts/gen_feature_map.py (rule 5). If main changed the map after you branched, merge main first."
+          fi
+
+      - name: "Code index regenerated (warning)"
+        if: always()
+        run: |
+          if ! python3 scripts/gen_code_index.py --check; then
+            echo "::warning title=Code index::docs/engine/code_index.md is out of date. Run: python3 scripts/gen_code_index.py (docs/process/no_duplicates.md). If main changed it after you branched, merge main first."
           fi
 
       - name: "UI catalogue regenerated (warning)"
@@ -92,8 +108,8 @@ jobs:
           n=$(git diff --name-only "$BASE"...HEAD -- 'engine/**.hpp' 'engine/**.h' 'engine/**.cpp' | wc -l)
           echo "count=$n" >> "$GITHUB_OUTPUT"
 
-      - name: Install the MinGW compiler (same way as release.yml, only when engine files changed)
-        if: always() && steps.eng.outputs.count != '0'
+      - name: Install the MinGW compiler (same way as release.yml, only when engine files changed; not on main)
+        if: always() && steps.eng.outputs.count != '0' && github.ref != 'refs/heads/main'
         continue-on-error: true
         timeout-minutes: 8
         run: |
@@ -102,6 +118,6 @@ jobs:
           sudo apt-get $APT install -y --no-install-recommends g++-mingw-w64-x86-64 mingw-w64-x86-64-dev
 
       - name: "MinGW -fsyntax-only on changed engine files (warning)"
-        if: always() && steps.eng.outputs.count != '0'
+        if: always() && steps.eng.outputs.count != '0' && github.ref != 'refs/heads/main'
         continue-on-error: true
         run: python3 scripts/branch_lint.py mingw --base "$BASE" --head HEAD

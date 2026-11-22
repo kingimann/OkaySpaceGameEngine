@@ -36,6 +36,7 @@ if(OKAY_PYTHON)
     find_program(OKAY_GIT NAMES git)
     if(OKAY_GIT)
         add_test(NAME collab_scripts COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_collab.py)
+        add_test(NAME dup_lint_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_dup_lint.py)
     endif()
 endif()
 

@@ -535,6 +535,8 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
             Hint("What is drawn past the picture's edge.");
             ImGui::Checkbox("Mipmaps", &e.texture.mipmaps);
             Hint("Smaller copies for far away. Off: always full size.");
+            ImGui::Checkbox("Compress on the GPU", &e.texture.compress);
+            Hint("OpenGL keeps a BC1/BC3 copy (less video memory, slightly softer). Kept in .okaycache next to the picture.");
             Hint("Applies in the editor view and OpenGL / software games.");
             }
             // Texture tools (our own library, okay::tex): write a .dds with mipmaps, uncompressed or block compressed,

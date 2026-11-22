@@ -2,17 +2,17 @@
 // Central, opt-in asset registry: typed handles, one cache entry per canonical file
 // path, reference counting, per-type loaders, background loading finished on the
 // main thread, hot reload and a usage report. See docs/engine/asset_manager.md.
+// Background decodes run as jobs on EngineJobs() (okay/Core/Jobs.hpp). The lock lives
+// in AssetManager.cpp: no <mutex> / <thread> in this header (MinGW "win32" threads).
+#include "okay/Core/Jobs.hpp"
 #include <atomic>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <functional>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <thread>
 #include <typeindex>
 #include <utility>
 #include <vector>
@@ -134,8 +134,9 @@ public:
     AssetHandle<T> Find(const std::string& path) {
         return AssetHandle<T>(FindEntry(std::type_index(typeid(T)), path));
     }
-    /// Starts a background decode and returns at once. The handle is Loading() until
-    /// the worker finishes (it may turn Ready before the next Pump); `done` always runs
+    /// Starts a background decode (a job on EngineJobs()) and returns at once; with an
+    /// inline JobSystem(0) the decode finishes before it returns. The handle is Loading() until
+    /// the decode finishes (it may turn Ready before the next Pump); `done` always runs
     /// from Pump() on the main thread, with the ready handle and an empty error, or an
     /// empty handle and the error text. A sync Get of the same file waits for the decode.
     template <class T>
@@ -159,7 +160,7 @@ public:
     // --- Hot reload ---------------------------------------------------------------
     /// Off by default. When on, Pump() compares each loaded file's modification time
     /// and size (at most every `intervalSeconds`) and re-decodes changed files on the
-    /// worker thread. The new data is moved into the existing object, so handles stay
+    /// job system. The new data is moved into the existing object, so handles stay
     /// valid; code reading the asset should run on the thread that calls Pump().
     void SetHotReload(bool enabled, double intervalSeconds = 0.5);
     /// Called from Pump() after an asset was reloaded in place.
@@ -191,20 +192,22 @@ private:
     EntryPtr AcquireAsync(std::type_index t, const std::string& path,
                           std::function<void(const EntryPtr&, const std::string&)> cb);
     EntryPtr FindEntry(std::type_index t, const std::string& path);
-    void StartWorkerLocked();
+    bool NeedDrainLocked();   // true (and marks a drain as running) when queued work has no drain job yet
+    void KickDrain();         // call without the lock: submits the drain job when one is needed
     void FinishFailedLocked(const EntryPtr& e);
-    void WorkerMain();
+    void DrainQueue();        // the job body: decodes queued work one file at a time, in order
     bool LoaderFor(std::type_index t, LoaderRec& out) const;   // locks
     void CompleteLocked(const EntryPtr& e, const LoaderRec& rec, std::shared_ptr<void> data);
 
-    mutable std::mutex m_mutex;
-    std::condition_variable m_entryCv;    // an entry left Loading
-    std::condition_variable m_jobCv;      // worker wake-up
+    struct Sync;                          // the mutex and the "an entry left Loading" condition (AssetManager.cpp)
+    std::unique_ptr<Sync> m_sync;
     std::map<std::type_index, LoaderRec> m_loaders;
     std::map<Key, std::weak_ptr<assets_detail::Entry>> m_cache;
     std::deque<Job> m_jobs;
     std::deque<Done> m_done;
-    std::thread m_worker;
+    struct Drain { JobSystem* sys = nullptr; JobHandle job; };
+    std::vector<Drain> m_drains;          // drain jobs not known to be finished (the destructor waits for them)
+    bool m_draining = false;              // a drain job is queued or running
     bool m_stop = false;
     int m_batchSubmitted = 0, m_batchFinished = 0;
     bool m_hot = false;

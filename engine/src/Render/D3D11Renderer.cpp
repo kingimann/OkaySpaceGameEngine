@@ -211,6 +211,7 @@ struct D3D11Renderer::Impl {
     // shaders and half-resolution targets, built on first use, so a failure here
     // only turns SSAO off. UNVERIFIED on a real GPU.
     ID3D11PixelShader *psAoDepth = nullptr, *psAo = nullptr, *psAoMul = nullptr, *psDof = nullptr;
+    ID3D11PixelShader *psDofCopy = nullptr, *psDofBlur = nullptr;   // depth of field: premultiplied blurred copy
     bool ssaoTried = false, ssaoReady = false;
     struct SsaoSet {
         int w = 0, h = 0; DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -558,7 +559,10 @@ bool D3D11Renderer::Impl::EnsureSsaoShaders() {
         return ok;
     };
     ssaoReady = ps("PSAoDepth", psAoDepth) && ps("PSAo", psAo) && ps("PSAoMul", psAoMul) && vsDepth && layoutDepth;
-    if (ssaoReady) ps("PSDof", psDof);   // separate: a depth of field compile failure must not cost ambient occlusion
+    if (ssaoReady && !(ps("PSDof", psDof) && ps("PSDofCopy", psDofCopy) && ps("PSDofBlur", psDofBlur))) {
+        // separate: a depth of field compile failure must not cost ambient occlusion
+        for (ID3D11PixelShader** s : {&psDof, &psDofCopy, &psDofBlur}) if (*s) { (*s)->Release(); *s = nullptr; }
+    }
     if (!ssaoReady) Log::Warning("[d3d11] ambient occlusion unavailable on this device");
     return ssaoReady;
 }
@@ -1810,12 +1814,12 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         //    the distance from the focus plane, read from the AO depth image.
         if (dofOn) {
             pc.texel[0] = 1.0f / (float)w; pc.texel[1] = 1.0f / (float)h; pc.thresh = 0.0f; pc.radius = 1.0f;
-            pass(p->psDown, bA.rtv, bA.w, bA.h, cur, nullptr, nullptr);
+            pass(p->psDofCopy, bA.rtv, bA.w, bA.h, cur, nullptr, nullptr);   // premultiplied: the sky's alpha 0 survives
             for (int it = 0; it < 2; ++it) {
                 pc.dir[0] = 1.0f / (float)bA.w; pc.dir[1] = 0.0f;
-                pass(p->psBlur, bB.rtv, bB.w, bB.h, bA.srv, nullptr, nullptr);
+                pass(p->psDofBlur, bB.rtv, bB.w, bB.h, bA.srv, nullptr, nullptr);
                 pc.dir[0] = 0.0f; pc.dir[1] = 1.0f / (float)bA.h;
-                pass(p->psBlur, bA.rtv, bA.w, bA.h, bB.srv, nullptr, nullptr);
+                pass(p->psDofBlur, bA.rtv, bA.w, bA.h, bB.srv, nullptr, nullptr);
             }
             pc.texel[0] = 1.0f / (float)aoSet->depth.w; pc.texel[1] = 1.0f / (float)aoSet->depth.h;
             pc.p7[0] = ps.dofFocus; pc.p7[1] = ps.dofRange; pc.p7[2] = ssao::kFar;
@@ -1965,7 +1969,7 @@ void D3D11Renderer::Destroy() {
     if (p->cookieTex) p->cookieTex->Release();
     if (p->depthOff) p->depthOff->Release();
     if (p->vsQuad) p->vsQuad->Release();
-    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa, p->psAoDepth, p->psAo, p->psAoMul, p->psDof}) if (s) s->Release();
+    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa, p->psAoDepth, p->psAo, p->psAoMul, p->psDof, p->psDofCopy, p->psDofBlur}) if (s) s->Release();
     for (auto& t : p->ssaoSets) t.Release();
     p->ssaoSets.clear();
     if (p->depthPlanar) p->depthPlanar->Release();

@@ -864,6 +864,49 @@ bool InputActions::ApplyPreset(const std::string& preset) {
     return true;
 }
 
+namespace {
+bool SameBinding(const InputBinding& a, const InputBinding& b) {
+    if (a.kind != b.kind || a.code != b.code || a.player != b.player) return false;
+    for (int i = 0; i < 4; ++i) if (a.keys[i] != b.keys[i]) return false;
+    return true;
+}
+// The action follows its bindings instead of the controller's key: it was rebound and the key is one of
+// the action's default bindings of that kind (the designer did not pick a key of their own).
+bool FollowsAction(const std::string& action, InputBinding::Kind kind, int code) {
+    const InputActions::Action* a = InputActions::Find(action);
+    if (!a || !InputActions::Rebound(action)) return false;
+    for (const InputBinding& d : a->defaults) if (d.kind == kind && d.code == code) return true;
+    return false;
+}
+} // namespace
+
+bool InputActions::Rebound(const std::string& name) {
+    const Action* a = Find(name);
+    if (!a) return false;
+    if (a->bindings.size() != a->defaults.size()) return true;
+    for (std::size_t i = 0; i < a->bindings.size(); ++i) if (!SameBinding(a->bindings[i], a->defaults[i])) return true;
+    return false;
+}
+bool InputActions::ControlKey(const std::string& action, char key) {
+    if (!key) return false;
+    return FollowsAction(action, InputBinding::Kind::Key, (unsigned char)key) ? Get(action) : Input::GetKey(key);
+}
+bool InputActions::ControlKeyDown(const std::string& action, char key) {
+    if (!key) return false;
+    return FollowsAction(action, InputBinding::Kind::Key, (unsigned char)key) ? Down(action) : Input::GetKeyDown(key);
+}
+bool InputActions::ControlMouse(const std::string& action, int button) {
+    if (button < 0) return false;
+    return FollowsAction(action, InputBinding::Kind::Mouse, button) ? Get(action) : Input::GetMouseButton(button);
+}
+bool InputActions::ControlMouseDown(const std::string& action, int button) {
+    if (button < 0) return false;
+    return FollowsAction(action, InputBinding::Kind::Mouse, button) ? Down(action) : Input::GetMouseButtonDown(button);
+}
+Vec2 InputActions::ControlMove() {
+    return Rebound("Move") ? Vector("Move") : Input::AxisWASD();
+}
+
 void InputActions::Restore() { Stack().clear(); g_now = 0.0; g_clockSeen = false; DefineDefaults(); }
 
 } // namespace okay

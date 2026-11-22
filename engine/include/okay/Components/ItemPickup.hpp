@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Input/InputActions.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -74,7 +75,7 @@ public:
         const Vec3 d = p - me;
         const float dist = d.Magnitude();
         if (autoRadius > 0.0f && dist <= autoRadius) { Give(player); return; }
-        if (interactKey && dist <= interactRange && Input::GetKeyDown(interactKey) && !InteractBlocked()
+        if (interactKey && dist <= interactRange && InputActions::ControlKeyDown("Interact", interactKey) && !InteractBlocked()
             && NearestHold(player, dist)) {
             auto* hands = holdInHands ? player->GetComponent<ProceduralObjectHolding>() : nullptr;
             if (hands && hands->Pickup(gameObject)) {

@@ -198,6 +198,24 @@ public:
     /// "right" keeps everything on the right half (I J K L and the numpad side).
     static bool ApplyPreset(const std::string& preset);
 
+    // ---- Built-in controllers (first / third person, character, top-down, weapons, pickups).
+    // Each keeps its own key field (sprintKey, crouchKey, fireButton ...). While the player has
+    // not rebound the matching action, these read exactly that key, as before. Once the action
+    // is rebound (Controls screen, Rebind, a profile or preset), a field still set to the
+    // action's default key follows the action instead, so the new binding reaches the
+    // controller and the old key stops working. A field a designer set to some other key stays
+    // that key. Reading the action needs Tick to have run this frame (the player and editor do).
+    /// The player's bindings for the action differ from its defaults.
+    static bool Rebound(const std::string& name);
+    /// `key` held / pressed this frame, or the action's, as described above. 0 = never.
+    static bool ControlKey(const std::string& action, char key);
+    static bool ControlKeyDown(const std::string& action, char key);
+    /// The same for a mouse button (0 left, 1 right, 2 middle). Negative = never.
+    static bool ControlMouse(const std::string& action, int button);
+    static bool ControlMouseDown(const std::string& action, int button);
+    /// Input::AxisWASD until "Move" is rebound, then the "Move" action's vector.
+    static Vec2 ControlMove();
+
     /// The binding a rebind for that device would change, or nullptr.
     static const InputBinding* Current(const std::string& name, bool gamepad);
     /// Put one action (or every action, with "") back to its defaults.

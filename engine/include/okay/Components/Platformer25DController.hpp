@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Input/InputActions.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -199,9 +200,9 @@ public:
         m_padY = ui ? 0.0f : pad.y;
         const bool upPressed = !ui && ((layerBackKey && Input::GetKeyDown(layerBackKey)) || padUp || Input::GetGamepadButtonDown(8));
         const bool downPressed = !ui && ((layerFrontKey && Input::GetKeyDown(layerFrontKey)) || padDown || Input::GetGamepadButtonDown(9));
-        const bool jumpDown = !ui && ((jumpKey && Input::GetKeyDown(jumpKey)) ||
+        const bool jumpDown = !ui && (InputActions::ControlKeyDown("Jump", jumpKey) ||
                                       (jumpGamepadButton >= 0 && Input::GetGamepadButtonDown(jumpGamepadButton)));
-        const bool jumpHeld = !ui && ((jumpKey && Input::GetKey(jumpKey)) ||
+        const bool jumpHeld = !ui && (InputActions::ControlKey("Jump", jumpKey) ||
                                       (jumpGamepadButton >= 0 && Input::GetGamepadButton(jumpGamepadButton)));
 
         // ---- Climbing onto a ledge: a short scripted move, then back to normal ----
@@ -257,7 +258,7 @@ public:
         else m_jumpBuf = Mathf::Max(0.0f, m_jumpBuf - dt);
 
         const bool padRun = padMove && Mathf::Abs(pad.x) >= stickRunThreshold;
-        bool running = m_stance == Stance::Stand && ((sprintKey && Input::GetKey(sprintKey)) || padRun) && moving && !m_grabbed;
+        bool running = m_stance == Stance::Stand && (InputActions::ControlKey("Sprint", sprintKey) || padRun) && moving && !m_grabbed;
         // An analog stick walks at the speed it's pushed; keys walk at full speed.
         // The speed cap follows the body from one stance's to the next.
         float speed = StanceValue(m_stanceLevel, running ? runSpeed : walkSpeed, crouchSpeed, proneSpeed) *
@@ -397,14 +398,14 @@ private:
     void UpdateStance(float dt, bool ui) {
         // (Typing into UI keeps the stance as it is.)
         if (!ui && toggleStance) {
-            if (crouchKey && Input::GetKeyDown(crouchKey))
+            if (InputActions::ControlKeyDown("Crouch", crouchKey))
                 m_wantStance = (m_wantStance == Stance::Crouch) ? Stance::Stand : Stance::Crouch;
             if (allowProne && proneKey && Input::GetKeyDown(proneKey))
                 m_wantStance = (m_wantStance == Stance::Prone) ? Stance::Stand : Stance::Prone;
         } else if (!ui) {
             // Held keys win; with none held you're in the stance the gamepad last set.
             if (allowProne && proneKey && Input::GetKey(proneKey))  { m_wantStance = Stance::Prone;  m_padWant = Stance::Stand; }
-            else if (crouchKey && Input::GetKey(crouchKey))         { m_wantStance = Stance::Crouch; m_padWant = Stance::Stand; }
+            else if (InputActions::ControlKey("Crouch", crouchKey))         { m_wantStance = Stance::Crouch; m_padWant = Stance::Stand; }
             else                                                      m_wantStance = m_padWant;
         }
         // Gamepad: tap the stance button to crouch / stand up, hold it to drop prone.

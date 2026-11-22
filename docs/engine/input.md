@@ -26,8 +26,10 @@ Not a guide. Where things are and what is missing; the details are in the header
 - Playground station H (Controller) in `examples/input/input_playground.okayscene`; `examples/input/default.okayinput` equals the default asset (a test checks it).
 - Tests: `controller_mapping`, `action_set`, `action_phases`, `input_asset`, `input_script_api`, `action_editor`, `local_player_input`, `controls_screen`, `input_autoload`, `input_playground`, plus the older input suites.
 
+- Built-in controllers on actions: `InputActions::Rebound`, `ControlKey`, `ControlKeyDown`, `ControlMouse`, `ControlMouseDown`, `ControlMove`. A controller's key field reads that key until the player rebinds the matching action ("Jump", "Sprint", "Crouch", "Move", "Aim", "Fire", "Reload", "Interact"); then a field still on the action's default key follows the action (all its bindings, pads too) and the old key stops. A field set to another key stays that key. Used by First / Third Person, Character Controller 2D / 3D, Top Down (3D and 2D), Third Person Shooter, Top Down Shooter, Platformer 2.5D, `StanceControl`, Ranged Weapon, Melee Attacker, Item Pickup and Vehicle Seat. Test `controller_actions`.
+
 ### What is missing
-See the Input row in `docs/status/UNFINISHED.md`: the exported player does not load a project `input.okayinput` yet (the editor's Play does: `InputRuntime::UseProjectAsset`), touch leaf inputs, per-binding interactions, adaptive triggers / HD haptics. Everything was only run with fake devices; the ImGui drawing was never run in a real editor window; nothing on Windows.
+Controllers still on raw keys: Vehicle Controller (throttle, steer, gears, horn), Pause Menu (its Block context would swallow a rebound Pause), Free Roam, builders, diggers other than VoxelDigger, UI widgets. Lean and prone keys have no action yet. See also the Input row in `docs/status/UNFINISHED.md`: the exported player does not load a project `input.okayinput` yet (the editor's Play does: `InputRuntime::UseProjectAsset`), touch leaf inputs, per-binding interactions, adaptive triggers / HD haptics. Everything was only run with fake devices; the ImGui drawing was never run in a real editor window; nothing on Windows.
 
 ### Pictures
 Not stored in the repository. `tools/input_shots.sh <imgui folder> [output folder]` draws them headless with ImGui (output defaults to `$OKAY_SHOT_DIR`).

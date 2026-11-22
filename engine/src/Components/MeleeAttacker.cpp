@@ -5,6 +5,7 @@
 #include "okay/Components/Stats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalStats.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <algorithm>
 #include <cmath>
@@ -169,7 +170,7 @@ void MeleeAttacker::Update(float dt) {
     if (!IsLocallyControlled(gameObject)) return;
     if (GameInputBlocked(gameObject ? gameObject->scene() : nullptr)) return;
     const bool pressed = (attackKey && Input::GetKeyDown(attackKey)) ||
-                         (useMouse && Input::GetMouseButtonDown(0));
+                         (useMouse && InputActions::ControlMouseDown("Fire", 0));   // the "Fire" action once rebound
     if (pressed && Ready()) Swing();
 }
 

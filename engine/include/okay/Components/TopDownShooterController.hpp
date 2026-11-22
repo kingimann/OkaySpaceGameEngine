@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Input/InputActions.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -183,7 +184,7 @@ public:
         const bool uiBlocked = Input::UICaptured();
 
         // ---- Move input ----
-        Vec2 axis = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();
+        Vec2 axis = uiBlocked ? Vec2{0, 0} : InputActions::ControlMove();
         Vec2 pad = uiBlocked ? Vec2{0, 0} : Input::GamepadAxis();
         if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) { axis = pad; m_padActive = true; }
         Vec2 mp = Input::MousePosition();
@@ -215,7 +216,7 @@ public:
         }
         m_haveAim = m_haveAim || aimed;
         // ---- Dash ----
-        bool running = sprintKey && Input::GetKey(sprintKey) && moving;
+        bool running = InputActions::ControlKey("Sprint", sprintKey) && moving;
         float speed = running ? runSpeed : walkSpeed;
         const bool backpedal = moving && Vec3::Dot(dir, m_aimDir) < -0.3f;
         if (backpedal) speed *= backpedalMultiplier;
@@ -280,13 +281,13 @@ public:
             m_reload -= dt;
             if (m_reload <= 0.0f) { m_reload = 0.0f; ammo = magazineSize; CallScript("on_reloaded"); }
         }
-        if (!uiBlocked && reloadKey && Input::GetKeyDown(reloadKey)) Reload();
+        if (!uiBlocked && InputActions::ControlKeyDown("Reload", reloadKey)) Reload();
         m_fireCd = Mathf::Max(0.0f, m_fireCd - dt);
-        bool held = !uiBlocked && ((fireButton >= 0 && Input::GetMouseButton(fireButton)) ||
-                                   (fireKey && Input::GetKey(fireKey)) ||
+        bool held = !uiBlocked && (InputActions::ControlMouse("Fire", fireButton) ||
+                                   InputActions::ControlKey("Fire", fireKey) ||
                                    (fireGamepadButton >= 0 && Input::GetGamepadButton(fireGamepadButton)));
-        bool pressed = !uiBlocked && ((fireButton >= 0 && Input::GetMouseButtonDown(fireButton)) ||
-                                      (fireKey && Input::GetKeyDown(fireKey)) ||
+        bool pressed = !uiBlocked && (InputActions::ControlMouseDown("Fire", fireButton) ||
+                                      InputActions::ControlKeyDown("Fire", fireKey) ||
                                       (fireGamepadButton >= 0 && Input::GetGamepadButtonDown(fireGamepadButton)));
         // A Ranged Weapon on this object is the gun. This controller keeps moving and aiming.
         if (!gameObject->GetComponent<RangedWeapon>() &&

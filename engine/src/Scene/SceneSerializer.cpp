@@ -3256,7 +3256,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             // extended (back-compatible trailing fields): shape + corner + focus ring
             << " " << (int)in->shape << " " << in->cornerRadius << " " << in->borderWidth << " "
             << in->borderColor.r << " " << in->borderColor.g << " " << in->borderColor.b << " " << in->borderColor.a
-            << " " << (in->multiline ? 1 : 0) << "\n";   // grok/ui-controls
+            << " " << (in->multiline ? 1 : 0)   // grok/ui-controls
+            << " " << (in->focusable ? 1 : 0) << "\n";   // pad / keyboard menu navigation (absent in older scenes = on)
     }
     for (auto* tb : go->GetComponents<UITabs>()) {
         out << "  uitabs " << tb->position.x << " " << tb->position.y << " "
@@ -8357,6 +8358,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                     in >> std::ws; // grok/ui-controls: optional multiline
                     if (std::isdigit(in.peek())) { int ml = 0; in >> ml; inp->multiline = (ml != 0); }
+                    in >> std::ws; // optional focusable (older scenes: stays on)
+                    if (std::isdigit(in.peek())) { int fo = 1; in >> fo; inp->focusable = (fo != 0); }
                 } else if (field == "uitabs") {
                     auto* tb = go->AddComponent<UITabs>();
                     int an = 0, sp = 0, it = 1; std::size_t count = 0;

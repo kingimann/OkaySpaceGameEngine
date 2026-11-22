@@ -177,6 +177,32 @@ int main() {
         CHECK(back->focusPulse == th->focusPulse);
     }
 
+    {   // An Input Field's focusable flag is saved in scenes (it was not before 2026-11-22). Old scene text without the flag loads as focusable.
+        Scene s("fsave");
+        s.physicsEnabled = false;
+        auto* off = s.CreateGameObject("Off")->AddComponent<UIInputField>(); off->focusable = false; off->multiline = true;
+        s.CreateGameObject("On")->AddComponent<UIInputField>();
+        const std::string text = SceneSerializer::Serialize(s);
+        Scene loaded("FL");
+        CHECK(SceneSerializer::Deserialize(loaded, text));
+        CHECK(!loaded.Find("Off")->GetComponent<UIInputField>()->focusable);
+        CHECK(loaded.Find("Off")->GetComponent<UIInputField>()->multiline);
+        CHECK(loaded.Find("On")->GetComponent<UIInputField>()->focusable);
+        // Old format: drop the trailing focusable number from every uiinput line.
+        std::string old; std::size_t pos = 0; int cut = 0;
+        while (pos < text.size()) {
+            std::size_t e = text.find('\n', pos); if (e == std::string::npos) e = text.size();
+            std::string line = text.substr(pos, e - pos);
+            if (line.find("  uiinput ") == 0) { line.erase(line.find_last_of(' ')); ++cut; }
+            old += line + "\n"; pos = e + 1;
+        }
+        CHECK(cut == 2);
+        Scene oldLoaded("OL");
+        CHECK(SceneSerializer::Deserialize(oldLoaded, old));
+        CHECK(oldLoaded.Find("Off")->GetComponent<UIInputField>()->multiline);
+        CHECK(oldLoaded.Find("Off")->GetComponent<UIInputField>()->focusable);   // default for a scene saved before the flag existed
+    }
+
     {   // Text script and visual script set focus, show the ring, and scroll the widget into view.
         Scene s("script");
         s.physicsEnabled = false;

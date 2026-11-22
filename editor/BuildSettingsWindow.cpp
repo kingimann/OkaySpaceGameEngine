@@ -150,7 +150,7 @@ bool DrawBuildPageExtra(BuildWindowCtx& c, int page) {
             namespace fs = std::filesystem;
             std::error_code ec;
             std::string rel;
-            if (c.dir && c.dir[0]) { fs::path r = fs::relative(fs::path(c.dir), fs::path(c.projectDir), ec); if (!ec) rel = r.generic_string(); }
+            if (c.dir && c.dir[0]) { fs::path r = fs::relative(fs::path(ResolveOutputDir(c.dir, c.projectDir)), fs::path(c.projectDir), ec); if (!ec) rel = r.generic_string(); }
             std::string existing; okayproj::ReadText((fs::path(c.projectDir) / ".gitignore").string(), existing);
             int added = 0;
             const std::string merged = MergeIgnore(existing, IgnoreLines(rel), &added);
@@ -237,13 +237,19 @@ void DrawBuildPageMore(BuildWindowCtx& c, int page) {
 
 bool DrawBuildSummary(BuildWindowCtx& c) {
     BuildSettings& b = *c.settings;
-    SummaryInput si; si.s = b; si.productName = c.name ? c.name : ""; si.outputDir = c.dir ? c.dir : ""; si.platform = c.platform; si.enabledScenes = c.enabledScenes;
+    SummaryInput si; si.s = b; si.productName = c.name ? c.name : ""; si.outputDir = ResolveOutputDir(c.dir ? c.dir : "", c.projectDir); si.platform = c.platform; si.enabledScenes = c.enabledScenes;
     si.lastBytes = LastGoodSize(History(c.projectDir)); si.estimateBytes = c.estimateBytes;
-    ValidateInput vi; vi.s = b; vi.productName = si.productName; vi.outputDir = si.outputDir; vi.platform = c.platform; vi.enabledScenes = c.enabledScenes; vi.openSceneSaved = c.openSceneSaved;
-    {
-        std::error_code ec;
-        vi.iconMissing = b.icon[0] && !std::filesystem::exists(std::filesystem::path(b.icon), ec) && !std::filesystem::exists(std::filesystem::path(c.projectDir) / std::filesystem::path(b.icon), ec);
-        vi.splashMissing = b.splash[0] && !std::filesystem::exists(std::filesystem::path(b.splash), ec) && !std::filesystem::exists(std::filesystem::path(c.projectDir) / std::filesystem::path(b.splash), ec);
+    ValidateInput vi; vi.s = b; vi.productName = si.productName; vi.outputDir = c.dir ? c.dir : ""; vi.platform = c.platform; vi.enabledScenes = c.enabledScenes; vi.openSceneSaved = c.openSceneSaved;
+    {   // asked of the disk when the paths change and once a second, not every frame
+        static std::string s_key; static double s_at = -10.0; static bool s_icon = false, s_splash = false;
+        const std::string key = std::string(b.icon) + "|" + b.splash + "|" + c.projectDir;
+        if (key != s_key || ImGui::GetTime() - s_at > 1.0) {
+            std::error_code ec;
+            s_icon = b.icon[0] && !std::filesystem::exists(std::filesystem::path(b.icon), ec) && !std::filesystem::exists(std::filesystem::path(c.projectDir) / std::filesystem::path(b.icon), ec);
+            s_splash = b.splash[0] && !std::filesystem::exists(std::filesystem::path(b.splash), ec) && !std::filesystem::exists(std::filesystem::path(c.projectDir) / std::filesystem::path(b.splash), ec);
+            s_key = key; s_at = ImGui::GetTime();
+        }
+        vi.iconMissing = s_icon; vi.splashMissing = s_splash;
     }
     std::vector<Issue> issues = Validate(vi);
     const bool errors = HasErrors(issues);
@@ -303,11 +309,12 @@ void DrawBuildProfileExtras(BuildWindowCtx& c, std::vector<BuildProfile>& profil
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(c.projectDir.empty());
-    if (ImGui::SmallButton("Load file...")) ImGui::OpenPopup("##loadokaybuild");
+    static std::vector<std::string> s_profileFiles;   // listed when the menu opens, not every frame it is open
+    if (ImGui::SmallButton("Load file...")) { s_profileFiles = ListProfileFiles(c.projectDir); ImGui::OpenPopup("##loadokaybuild"); }
     ImGui::EndDisabled();
     Tip("Pick a .okaybuild file from the project's BuildProfiles folder.");
     if (ImGui::BeginPopup("##loadokaybuild")) {
-        const std::vector<std::string> files = ListProfileFiles(c.projectDir);
+        const std::vector<std::string>& files = s_profileFiles;
         if (files.empty()) ImGui::TextDisabled("No .okaybuild files in BuildProfiles yet.");
         for (const std::string& f : files) {
             if (ImGui::Selectable(f.c_str())) {

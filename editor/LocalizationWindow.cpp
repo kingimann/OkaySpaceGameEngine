@@ -1096,11 +1096,12 @@ void MergeLocalizationFonts(float sizePx) {
     }
 }
 
-void CopyLocalizationFiles(EditorState& ed, const std::string& dataDir) {
-    StringTable t = Localization::Table();
+std::string LocalizationTablePathForBuild(const EditorState& ed) { return TablePath(ed); }
+
+void CopyLocalizationTo(StringTable t, const std::string& table, const std::string& dataDir, std::vector<std::string>* warnings) {
     if (t.Empty()) return;
+    auto warn = [&](const std::string& w) { if (warnings) warnings->push_back(w); };
     const fs::path data = fs::u8path(dataDir);
-    const std::string table = TablePath(ed);
     const fs::path tableDir = table.empty() ? fs::path() : fs::u8path(table).parent_path();
     for (LocLanguage& l : t.languages) {   // each language's font ships beside the table
         if (l.font.empty()) continue;
@@ -1109,13 +1110,19 @@ void CopyLocalizationFiles(EditorState& ed, const std::string& dataDir) {
         fs::path rel = font.is_relative() ? font.lexically_normal() : font.filename();
         if (std::find(rel.begin(), rel.end(), fs::path("..")) != rel.end()) rel = font.filename();   // never outside the build
         std::error_code fe;
-        if (!fs::exists(src, fe)) { ConsoleLog("Build: the " + l.code + " font " + l.font + " is missing", 1); continue; }
+        if (!fs::exists(src, fe)) { warn("The " + l.code + " font " + l.font + " is missing."); continue; }
         fs::create_directories((data / rel).parent_path(), fe);
         fs::copy_file(src, data / rel, fs::copy_options::overwrite_existing, fe);
-        if (fe) ConsoleLog("Build: couldn't copy " + l.font + " (" + fe.message() + ")", 1);
+        if (fe) warn("Couldn't copy " + l.font + " (" + fe.message() + ").");
         l.font = rel.generic_u8string();
     }
-    if (!t.Save((data / "strings.okayloc").u8string())) ConsoleLog("Build: couldn't write strings.okayloc", 2);
+    if (!t.Save((data / "strings.okayloc").u8string())) warn("Couldn't write strings.okayloc.");
+}
+
+void CopyLocalizationFiles(EditorState& ed, const std::string& dataDir) {
+    std::vector<std::string> w;
+    CopyLocalizationTo(Localization::Table(), TablePath(ed), dataDir, &w);
+    for (const std::string& line : w) ConsoleLog("Build: " + line, 1);
 }
 
 void LocalizationDevHooks(EditorState& ed) {

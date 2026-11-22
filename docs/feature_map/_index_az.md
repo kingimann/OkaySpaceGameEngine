@@ -296,6 +296,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Backends (5.1.5)
 - Backends and frame loop (40.3)
 - background (37.2)
+- Background build and export check (18.6.11)
 - backpack (4.9, 11.1)
 - backpedal (5.3)
 - backtrace (48.1)

@@ -119,7 +119,43 @@ OkayEngine --build-game <scene> <out-dir> [--name GAME] [--layout folder|compact
 ```
 
 It starts from the project's saved Build Settings (when the scene is inside a project) and the flags override them for that
-one build; it never changes the saved settings. Exit status 0 means the build (or dry run) finished.
+one build; it never changes the saved settings. Exit status 0 means the build (or dry run) finished and the export check
+found no problem; the check's line and each problem are printed.
+
+## Building in the background, the output folder and the export check (2026-11-22)
+
+Owner report (Windows release, 2026-11-22): "very laggy, glitchy and it didn't export properly". What changed:
+
+- **The build runs off the main thread.** Build, Build & Run and Dry Run first read what they need from the editor on
+  the main thread (`builder::PrepareBuild`: the open scene as text with the files it uses, every other built scene's
+  file list, the string table, the physics settings). The rest (`builder::RunPreparedBuild`: copying, the player
+  download if needed, compressed texture copies, the report, the zip, the export check) runs on a worker thread
+  (`shared/OkayThreads.hpp`, no `<thread>`, rule 21a). A **Building** window shows the step, a progress bar (the asset
+  copy counts file by file), the time and **Cancel**; the editor keeps drawing. Cancel stops after the current file and
+  says the folder is incomplete. Quitting the editor cancels and waits. Server, Web, Android and Xbox exports still run
+  on the main thread. `OkayEngine --build-game` runs the same two halves on one thread.
+- **A relative output folder is inside the project.** The default `build/MyGame` was resolved against the editor
+  process's working folder; started from the launcher on Windows that is the install folder, so the game was written
+  somewhere nobody looks (`bsm::ResolveOutputDir`, test `build_settings` "output folder"). The Output page shows the full
+  path under the box, the summary and the result say where it went, and **Open folder** opens it.
+- **The export check.** After every build (and dry run) `buildpipe::CheckExport` reads the finished folder the way the
+  player will: its data folder (`FindDataDir`), `game.okayconfig` (packed or not), the start scene and every `scene=`,
+  the icon / splash / boot logo it names, and every file each shipped scene and prefab names, looked up as data folder +
+  the path as written. A visual-script or script file whose graph or source is written in the scene is not required. It
+  also checks the program and (Windows) `SDL2.dll` beside it, and warns when a shipped text file names a folder of the
+  building computer (project, editor). Problems are listed in red in Build Result, in the Console, in the Advanced page's
+  log and in `.okay/build_report.txt`; the build counts as failed in the history, and `--build-game` exits with 1.
+- **The scene file in the build** is written as it is: no `.savetmp` / `.bak` beside it (the editor's safe-save of a
+  project scene made `game.okayscene.bak` appear in builds made without "Clean output folder").
+- **Per-frame disk work removed from the window**: the Scenes page asked the disk up to three times per listed scene
+  every frame (exists, and "is this the open scene" with two more exists and an equivalent), the summary asked four more
+  times for the icon and splash, and the "Load file..." menu listed the BuildProfiles folder every frame while open. Now
+  they are asked when the list or path changes and once a second.
+- **Glitches**: Width / Height were clamped to 320 x 240 while being typed (so typing a new size jumped); the clamp now
+  waits until the box is left. The Resolution and Quality preset boxes showed the last preset picked, even after the
+  size or the toggles were changed; they now show the preset that matches, or Custom.
+- Build commands (Advanced page) run with `cd <project> &&` in the shell instead of changing the editor's own working
+  folder, which a worker thread must not do.
 
 ## Audit (before this work) and what changed
 

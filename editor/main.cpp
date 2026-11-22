@@ -977,6 +977,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #  include <sys/file.h>   // flock() for the single-instance lock
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait, swap, relaunch once
+#include "OkayThreads.hpp"  // the Build window runs the export on a worker thread (rule 21a: no <thread>)
 #include "UpdaterCore.hpp"   // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/release/updater.md)
 #include "TestBuild.hpp"   // a test build says so in its version label (docs/release/release_channels.md "Test builds")
 #include "ProjectUpgradeUI.hpp"   // the project version question and File > Project Upgrade...
@@ -4639,20 +4640,82 @@ inline std::string HumanBytes(std::uintmax_t b) {
     std::snprintf(s, sizeof(s), "%.1f %s", v, u); return std::string(s);
 }
 
+// What a build needs from the editor. PrepareBuild reads it on the main thread (the open scene as text and the
+// files it uses, the other scenes' file lists, the string table); RunPreparedBuild then touches only files and this
+// struct, so the Build window can run it on a worker thread while the editor keeps drawing.
+struct PreparedScene { bool loaded = false; std::string error; std::vector<std::string> assets; };
+struct Prepared {
+    std::string projectDir, openPath;
+    std::string openSceneText;                       // the open scene, unsaved edits included
+    std::vector<std::string> openSceneAssets;        // SceneSerializer::CollectAssetPaths of it
+    std::map<std::string, PreparedScene> others;     // every other scene the build ships, by its path as listed
+    std::vector<std::string> allProjectScenes;       // "Include all project scenes" with no list
+    float physicsHz = 50.0f; bool smoothPhysics = true;
+    okay::StringTable locTable; std::string locTablePath;
+};
+
+// Build progress, shared with the window: the worker writes, the window reads; Cancel sets `cancel`.
+enum BuildStage { kStageStart = 0, kStageScenes, kStageAssets, kStageRuntime, kStageExtras, kStageReport, kStageArchive, kStageCheck, kStageDone, kStageCount };
+inline const char* BuildStageText(int s) {
+    static const char* t[kStageCount] = {"Starting", "Writing the scenes", "Copying the assets", "Copying the game program", "Icon, strings and StreamingAssets",
+                                         "Writing the report", "Packing the archive", "Checking the export", "Finished"};
+    return s >= 0 && s < kStageCount ? t[s] : "";
+}
+struct Progress {
+    std::atomic<int> cancel{0}, stage{0}, done{0}, total{0};
+};
+
+Prepared PrepareBuild(EditorState& ed, const Options& opt) {
+    Prepared P;
+    P.projectDir = ed.projectDir(); P.openPath = ed.path();
+    P.openSceneText = SceneSerializer::Serialize(ed.scene());
+    P.openSceneAssets = SceneSerializer::CollectAssetPaths(ed.scene());
+    P.physicsHz = g_project.physicsHz; P.smoothPhysics = g_project.smoothPhysics;
+    P.locTable = Localization::Table(); P.locTablePath = LocalizationTablePathForBuild(ed);
+    auto load = [&](const std::string& path) {
+        if (P.others.count(path)) return;
+        PreparedScene ps; Scene sc("build");
+        ps.loaded = SceneSerializer::LoadFromFile(sc, path, &ps.error);
+        if (ps.loaded) ps.assets = SceneSerializer::CollectAssetPaths(sc);
+        P.others[path] = std::move(ps);
+    };
+    std::error_code ec;
+    if (!opt.sceneList.empty()) {
+        for (const std::string& sp : opt.sceneList) {
+            const bool isOpen = !P.openPath.empty() && fs::exists(fs::path(sp), ec) && fs::equivalent(fs::path(sp), fs::path(P.openPath), ec);
+            if (!isOpen) load(sp);
+        }
+    } else if (opt.includeAllProjectScenes && !P.projectDir.empty()) {
+        const fs::path assets = fs::path(P.projectDir) / "Assets";
+        if (fs::exists(assets, ec))
+            for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
+                if (!e.is_regular_file() || e.path().extension() != ".okayscene" || e.path().filename() == "game.okayscene") continue;
+                P.allProjectScenes.push_back(e.path().string());
+                load(e.path().string());
+            }
+    }
+    return P;
+}
+
 // Build the game into outDir (docs/release/build_pipeline.md). Returns a human-readable status string; if `report`
 // is non-null it is filled with the full build report (files by size and type, what was left out and why,
 // warnings, time). With opt.dryRun nothing is written to outDir: the build runs in a scratch folder that is
 // deleted again, so the report is exact without leaving files behind.
-std::string Build(EditorState& ed, const std::string& outDir,
-                  const std::string& gameName, const Options& opt = {}, BuildReport* report = nullptr) {
+// RunPreparedBuild touches no editor state: `P` carries what it needs. `prog` (optional) reports progress and is
+// polled for Cancel between files.
+std::string RunPreparedBuild(const Prepared& P, const std::string& outDir,
+                  const std::string& gameName, const Options& opt = {}, BuildReport* report = nullptr, Progress* prog = nullptr) {
     namespace bp = okay::buildpipe;
     const auto t0 = std::chrono::steady_clock::now();
     BuildReport localRep;
     BuildReport& R = report ? *report : localRep;
     R = BuildReport{};
-    // A build ships the scene you edited. While Play runs, the scene in memory is the running game (moved,
-    // spawned, scripted), so stop Play first: Stop restores the edited scene.
-    if (ed.isPlaying()) { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }
+    auto stage = [&](int st, int total = 0) { if (prog) { prog->stage = st; prog->done = 0; prog->total = total; } };
+    auto cancelled = [&]() { return prog && prog->cancel.load() != 0; };
+    auto stopNow = [&](const std::string& where) {
+        R.r.cancelled = true; R.r.valid = false; R.ok = false;
+        return "Build cancelled " + where + ". The output folder " + outDir + " is incomplete: build again before you use it.";
+    };
     std::error_code ec;
     fs::path dir = fs::weakly_canonical(fs::path(outDir), ec);
     if (dir.empty()) dir = fs::path(outDir);
@@ -4664,7 +4727,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         fs::path home;
         if (const char* h = std::getenv("HOME")) home = h;
         else if (const char* up = std::getenv("USERPROFILE")) home = up;
-        fs::path proj = ed.projectDir().empty() ? fs::path() : fs::weakly_canonical(fs::path(ed.projectDir()), ec);
+        fs::path proj = P.projectDir.empty() ? fs::path() : fs::weakly_canonical(fs::path(P.projectDir), ec);
         if (dir == dir.root_path()) return "Refusing to build into a filesystem root. Pick a dedicated build folder.";
         if (!home.empty() && fs::weakly_canonical(home, ec) == dir)
             return "Refusing to build into your home folder. Pick a dedicated build folder.";
@@ -4675,11 +4738,11 @@ std::string Build(EditorState& ed, const std::string& outDir,
     // Build Settings > Advanced: the command to run BEFORE the build. Only when "Allow build commands" is on, never in a
     // dry run. A command that fails (a non-zero exit code) stops the build before anything is written.
     oked::bsm::CommandVars cmdVars;
-    cmdVars.output = dir.string(); cmdVars.name = gameName; cmdVars.version = opt.version; cmdVars.build = std::to_string(opt.buildNumber); cmdVars.project = ed.projectDir();
+    cmdVars.output = dir.string(); cmdVars.name = gameName; cmdVars.version = opt.version; cmdVars.build = std::to_string(opt.buildNumber); cmdVars.project = P.projectDir;
     {
         const std::string pre = oked::bsm::CommandToRun(opt.preCommand, opt.allowCommands, opt.dryRun, cmdVars);
         if (!pre.empty()) {
-            const int rc = oked::bsm::RunCommandLine(pre, ed.projectDir());
+            const int rc = oked::bsm::RunCommandLine(pre, P.projectDir);
             if (rc != 0) return "The command before the build failed (exit code " + std::to_string(rc) + "): " + pre + ". Nothing was built.";
         }
     }
@@ -4744,7 +4807,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
     // 1) Scenes In Build, in order: the first is the startup scene (written as game.okayscene); the open
     // scene is written from memory so unsaved edits ship. With no list, the open scene alone is the game
     // (plus, optionally, every project scene). Every scene is also read for the assets it uses.
-    struct SceneEntry { fs::path src; std::string fn; bool isOpen = false; std::unique_ptr<Scene> loaded; };
+    struct SceneEntry { fs::path src; std::string fn; bool isOpen = false; };
     std::vector<SceneEntry> built;
     std::vector<std::string> sceneFiles;                    // filenames placed in the data folder
     auto uniqueName = [&](const fs::path& src, bool first) {
@@ -4759,40 +4822,41 @@ std::string Build(EditorState& ed, const std::string& outDir,
             SceneEntry se;
             se.src = fs::path(opt.sceneList[i]);
             se.fn = uniqueName(se.src, i == 0);
-            se.isOpen = !ed.path().empty() && fs::exists(se.src, pe) && fs::equivalent(se.src, fs::path(ed.path()), pe);
+            se.isOpen = !P.openPath.empty() && fs::exists(se.src, pe) && fs::equivalent(se.src, fs::path(P.openPath), pe);
             sceneFiles.push_back(se.fn);
             built.push_back(std::move(se));
         }
     } else {
         SceneEntry se;
-        se.src = fs::path(ed.path());
+        se.src = fs::path(P.openPath);
         se.fn = "game.okayscene"; se.isOpen = true;
         sceneFiles.push_back(se.fn);
         built.push_back(std::move(se));
-        if (opt.includeAllProjectScenes && !ed.projectDir().empty()) {
-            fs::path assets = fs::path(ed.projectDir()) / "Assets";
-            if (fs::exists(assets, ec))
-                for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
-                    if (!e.is_regular_file() || e.path().extension() != ".okayscene") continue;
-                    if (e.path().filename() == "game.okayscene") continue;
+        if (opt.includeAllProjectScenes && !P.projectDir.empty()) {
+            for (const std::string& sp : P.allProjectScenes) {
                     SceneEntry xe;
-                    xe.src = e.path(); xe.fn = e.path().filename().string();
+                    xe.src = fs::path(sp); xe.fn = xe.src.filename().string();
                     sceneFiles.push_back(xe.fn);
                     built.push_back(std::move(xe));
                 }
         }
     }
+    stage(kStageScenes, (int)built.size());
     int sceneCount = 0;
     std::vector<bp::AssetRef> roots;
     std::vector<std::string> sceneSources;   // the scene files, and files embedded in them (accounted for, not shipped on their own)
     for (SceneEntry& se : built) {
         const std::string label = se.src.empty() ? std::string("the open scene") : "scene " + se.src.stem().string();
         if (se.isOpen) {
-            if (!SceneSerializer::SaveToFile(ed.scene(), (data / se.fn).string())) return "Failed to write " + se.fn + ".";
-            for (const std::string& a : SceneSerializer::CollectAssetPaths(ed.scene())) roots.push_back({a, se.src.string()});
+            {   // written as it is (no .savetmp / .bak beside it: those belong to the project, not the game)
+                std::ofstream sf((data / se.fn), std::ios::binary | std::ios::trunc);
+                sf.write(P.openSceneText.data(), (std::streamsize)P.openSceneText.size());
+                if (!sf.good()) return "Failed to write " + se.fn + ".";
+            }
+            for (const std::string& a : P.openSceneAssets) roots.push_back({a, se.src.string()});
             // Its visual-script graphs are embedded in the scene file just written: they need not ship.
-            for (const std::string& g : bp::ScriptRefsInSceneText(SceneSerializer::Serialize(ed.scene()))) {
-                bp::WalkSettings gs; gs.projectDir = ed.projectDir();
+            for (const std::string& g : bp::ScriptRefsInSceneText(P.openSceneText)) {
+                bp::WalkSettings gs; gs.projectDir = P.projectDir;
                 const std::string gsrc = bp::ResolveAssetFile(g, se.src.parent_path().string(), gs);
                 if (!gsrc.empty()) sceneSources.push_back(gsrc);
             }
@@ -4801,11 +4865,10 @@ std::string Build(EditorState& ed, const std::string& outDir,
             if (pe) return "Couldn't copy the scene " + se.src.string() + " (" + pe.message() + ").";
             { std::ifstream sf(se.src, std::ios::binary); std::ostringstream sb; sb << sf.rdbuf();   // a scene copied as a file still reads its graphs from their files
               for (const std::string& g : bp::ScriptRefsInSceneText(okay::DataPack::Unpack(sb.str()))) roots.push_back({g, se.src.string()}); }
-            se.loaded = std::make_unique<Scene>("build");
-            std::string lerr;
-            if (SceneSerializer::LoadFromFile(*se.loaded, se.src.string(), &lerr))
-                for (const std::string& a : SceneSerializer::CollectAssetPaths(*se.loaded)) roots.push_back({a, se.src.string()});
-            else R.r.Warn("Couldn't read " + se.src.string() + " to list its assets (" + lerr + "): its assets are not shipped.");
+            const auto pit = P.others.find(se.src.string());
+            if (pit != P.others.end() && pit->second.loaded)
+                for (const std::string& a : pit->second.assets) roots.push_back({a, se.src.string()});
+            else R.r.Warn("Couldn't read " + se.src.string() + " to list its assets (" + (pit == P.others.end() ? std::string("not prepared") : pit->second.error) + "): its assets are not shipped.");
         }
         if (!se.src.empty()) sceneSources.push_back(se.src.string());
         why[relRoot(data / se.fn)] = label + (sceneCount == 0 ? " (starts the game)" : "");
@@ -4814,17 +4877,17 @@ std::string Build(EditorState& ed, const std::string& outDir,
 
     // 2) The dependency walk: the assets those scenes use, and what those assets use in turn.
     bp::WalkSettings ws;
-    ws.projectDir = ed.projectDir();
+    ws.projectDir = P.projectDir;
     for (const SceneEntry& se : built) if (!se.src.empty()) ws.searchDirs.push_back(se.src.parent_path().string());
     bp::WalkResult walk = bp::WalkAssets(roots, ws);
     std::vector<std::string> shippedSources;
     std::uintmax_t unusedShipped = 0; int unusedShippedCount = 0;
-    if (!opt.stripAssets && !ed.projectDir().empty()) {
+    if (!opt.stripAssets && !P.projectDir.empty()) {
         std::set<std::string> have;
         for (const bp::ShippedAsset& a : walk.assets) { std::error_code e; have.insert(fs::weakly_canonical(fs::path(a.src), e).generic_string()); }
         std::set<std::string> sceneKeys;
         for (const std::string& s : sceneSources) { std::error_code e; sceneKeys.insert(fs::weakly_canonical(fs::path(s), e).generic_string()); }
-        for (const bp::ProjectAsset& pa : bp::ListProjectAssets(ed.projectDir())) {
+        for (const bp::ProjectAsset& pa : bp::ListProjectAssets(P.projectDir)) {
             std::error_code e;
             const std::string key = fs::weakly_canonical(fs::path(pa.src), e).generic_string();
             if (pa.editorOnly || pa.scene || have.count(key) || sceneKeys.count(key)) continue;
@@ -4844,7 +4907,11 @@ std::string Build(EditorState& ed, const std::string& outDir,
     }
     int copied = 0;
     std::uintmax_t assetBytes = 0;
+    if (cancelled()) return stopNow("after the scenes");
+    stage(kStageAssets, (int)walk.assets.size());
     for (const bp::ShippedAsset& a : walk.assets) {
+        if (cancelled()) return stopNow("while copying the assets");
+        if (prog) ++prog->done;
         const fs::path dst = data / fs::u8path(a.dest);
         std::error_code aec;
         if (dst.has_parent_path()) fs::create_directories(dst.parent_path(), aec);
@@ -4899,8 +4966,8 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "volume=" << opt.masterVolume << "\n";
         cf << "show_fps=" << (opt.showFps ? 1 : 0) << "\n";
         cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
-        cf << "physics_hz=" << g_project.physicsHz << "\n";
-        cf << "physics_smooth=" << (g_project.smoothPhysics ? 1 : 0) << "\n";
+        cf << "physics_hz=" << P.physicsHz << "\n";
+        cf << "physics_smooth=" << (P.smoothPhysics ? 1 : 0) << "\n";
         cf << "lock_cursor=" << (opt.lockCursor ? 1 : 0) << "\n";
         cf << "cursor_lock=" << (opt.cursorLockMode == 2 ? "confined" : opt.cursorLockMode == 1 ? "locked" : "none") << "\n";
         cf << "perpixel=" << (opt.perPixelLighting ? 1 : 0) << "\n";
@@ -4960,6 +5027,8 @@ std::string Build(EditorState& ed, const std::string& outDir,
 
     // 3) Copy the player runtime, renamed to <Game>.exe. If it isn't beside the
     // editor, fetch it from the releases bucket so the build is self-contained.
+    if (cancelled()) return stopNow("after the assets");
+    stage(kStageRuntime);
     std::string fetchNote;
     std::string player = EnsurePlayer(&fetchNote);
     const std::string exeName = plan.exeName;
@@ -5016,6 +5085,8 @@ std::string Build(EditorState& ed, const std::string& outDir,
         }
     }
 
+    if (cancelled()) return stopNow("after the game program");
+    stage(kStageExtras);
     // Window icon, startup splash and boot logo: beside the config in the data folder.
     auto putPresentation = [&](const std::string& path, const char* what) {
         if (path.empty()) return;
@@ -5028,12 +5099,12 @@ std::string Build(EditorState& ed, const std::string& outDir,
     putPresentation(opt.iconPath, "window icon");
     putPresentation(opt.splashImage, "startup splash");
     putPresentation(opt.bootLogo, "boot logo");
-    CopyLocalizationFiles(ed, data.u8string());   // strings.okayloc and its languages' fonts
+    { std::vector<std::string> lw; CopyLocalizationTo(P.locTable, P.locTablePath, data.u8string(), &lw); for (const std::string& w : lw) R.r.Warn(w); }   // strings.okayloc and its languages' fonts
 
     // StreamingAssets/: the project's StreamingAssets folder, copied as it is (no stripping, no renaming), for
     // files the game opens by name at run time (Paths::StreamingAssetsDir).
     int streaming = 0;
-    for (const auto& sf : bp::ListStreamingAssets(ed.projectDir())) {
+    for (const auto& sf : bp::ListStreamingAssets(P.projectDir)) {
         const fs::path dst = data / "StreamingAssets" / fs::u8path(sf.first);
         std::error_code se;
         fs::create_directories(dst.parent_path(), se);
@@ -5071,6 +5142,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         why[relRoot(data / "build.json")] = "build info";
     }
 
+    stage(kStageReport);
     // The report: every file in the build, then what was left out and why.
     bp::Report& rp = R.r;
     rp.dryRun = opt.dryRun;
@@ -5087,10 +5159,10 @@ std::string Build(EditorState& ed, const std::string& outDir,
         }
         for (const auto& v : virtualFiles) rp.AddFile(v.first, v.second, why[v.first]);
     }
-    if (opt.stripAssets && !ed.projectDir().empty()) {
+    if (opt.stripAssets && !P.projectDir.empty()) {
         std::set<std::pair<std::string, std::uintmax_t>> present;
         for (const bp::ReportFile& f : rp.files) present.insert({fs::path(f.path).filename().string(), f.bytes});
-        for (const bp::ExcludedFile& x : bp::FindUnshipped(ed.projectDir(), shippedSources, sceneSources)) {
+        for (const bp::ExcludedFile& x : bp::FindUnshipped(P.projectDir, shippedSources, sceneSources)) {
             const std::string fn = fs::path(x.path).filename().string();
             if (present.count({fn, x.bytes}) || fn == "strings.okayloc") continue;   // shipped another way (icon, fonts, string table)
             rp.AddExcluded(x.path, x.bytes, x.reason);
@@ -5099,11 +5171,33 @@ std::string Build(EditorState& ed, const std::string& outDir,
         }
     }
     rp.Finish();
+
+    // The export check: read the finished folder the way the player will and list what it cannot find
+    // (start scene, scene list, the files each scene and prefab names, the program and SDL2 beside it, paths
+    // of this computer in shipped files). Runs before the zip, so a Zip build is checked too.
+    if (cancelled()) return stopNow("before the export check");
+    stage(kStageCheck);
+    {
+        bp::ExportCheckInput ci;
+        ci.outDir = root.string();
+        if (!opt.dryRun) {
+            ci.exeName = exeName;
+#if defined(_WIN32)
+            ci.requiredLibs = {"SDL2.dll"};
+#endif
+        }
+        if (!P.projectDir.empty()) ci.devPaths.push_back(fs::weakly_canonical(fs::path(P.projectDir), ec).generic_string());
+        if (!updater::SelfPath().empty()) ci.devPaths.push_back(fs::path(updater::SelfPath()).parent_path().generic_string());
+        const bp::ExportCheckResult chk = bp::CheckExport(ci);
+        rp.checked = true; rp.checkErrors = chk.errors; rp.checkSummary = chk.Summary();
+        for (const std::string& w : chk.warnings) rp.Warn("Export check: " + w);
+    }
     rp.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 
     // 4) The archive: a zip of the finished build (Zip layout keeps only the zip; "also zip" keeps both).
     std::string zipNote;
     if (wantZip && !opt.dryRun) {
+        stage(kStageArchive);
         fs::path zipPath = plan.makeZip ? dir / plan.zipName
                                          : dir.parent_path() / (bp::ExpandPattern(opt.archiveName, li.tokens) + ".zip");
         bp::ZipStats zs; std::string zerr;
@@ -5122,10 +5216,10 @@ std::string Build(EditorState& ed, const std::string& outDir,
     if (zipOnly && !opt.dryRun) { std::error_code se; fs::remove_all(root, se); }
 
     // The same report as a file beside the project's other editor state (never inside the game).
-    if (!ed.projectDir().empty()) {
+    if (!P.projectDir.empty()) {
         std::error_code we;
-        fs::create_directories(fs::path(ed.projectDir()) / ".okay", we);
-        std::ofstream rf((fs::path(ed.projectDir()) / ".okay" / "build_report.txt").string(), std::ios::binary);
+        fs::create_directories(fs::path(P.projectDir) / ".okay", we);
+        std::ofstream rf((fs::path(P.projectDir) / ".okay" / "build_report.txt").string(), std::ios::binary);
         rf << rp.ToText();
     }
 
@@ -5158,15 +5252,27 @@ std::string Build(EditorState& ed, const std::string& outDir,
     }
     if (!rp.excluded.empty()) msg += "  " + std::to_string(rp.excluded.size()) + " unused project file(s) left out (" + human(rp.excludedBytes) + ").";
     if (R.missing) msg += "  WARNING: " + std::to_string(R.missing) + " referenced asset(s) not found and not copied.";
+    if (!rp.checkErrors.empty()) msg += "  EXPORT CHECK FAILED: " + std::to_string(rp.checkErrors.size()) + " problem(s), the first: " + rp.checkErrors.front();
     if (!integrity.message.empty()) msg += "  (" + integrity.message + ")";
     {   // Build Settings > Advanced: the command to run AFTER a good build (it cannot undo the build, so a failure is only reported)
         const std::string post = oked::bsm::CommandToRun(opt.postCommand, opt.allowCommands, opt.dryRun, cmdVars);
         if (!post.empty()) {
-            const int rc = oked::bsm::RunCommandLine(post, ed.projectDir());
+            const int rc = oked::bsm::RunCommandLine(post, P.projectDir);
             msg += rc == 0 ? "  (ran your command after the build)" : "  WARNING: your command after the build failed (exit code " + std::to_string(rc) + ").";
         }
     }
+    stage(kStageDone);
     return msg;
+}
+
+// The whole build on the calling thread (the command line, the server export, tests).
+std::string Build(EditorState& ed, const std::string& outDir,
+                  const std::string& gameName, const Options& opt = {}, BuildReport* report = nullptr) {
+    // A build ships the scene you edited. While Play runs, the scene in memory is the running game (moved,
+    // spawned, scripted), so stop Play first: Stop restores the edited scene.
+    if (ed.isPlaying()) { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }
+    const Prepared P = PrepareBuild(ed, opt);
+    return RunPreparedBuild(P, outDir, gameName, opt, report);
 }
 
 // The Build Settings as the builder's options (the Build Settings window and `--build-game` both use this).
@@ -18920,6 +19026,155 @@ void HandleShortcuts(EditorState& ed) {
     }
 }
 
+// ---- The desktop build as a background job ----------------------------------------------------------------------
+// The Build button reads the editor on this thread (PrepareBuild: the open scene as text, the other scenes' file
+// lists), then copies, checks and zips on a worker thread (RunPreparedBuild touches only files). A "Building" window
+// shows the step, a progress bar and Cancel while the editor keeps drawing; when the worker ends, FinishBuildJob does
+// the rest here (Console, history, build number, open folder, Build & Run) and opens Build Result.
+struct BuildJob {
+    builder::Prepared prepared;
+    builder::Options opt;
+    std::string outDir, name;
+    bool dry = false, run = false;
+    builder::Progress prog;
+    builder::BuildReport rep;
+    std::string status;
+    std::atomic<int> finished{0};
+    okay::thr::Thread* thread = nullptr;
+    double startedAt = 0.0;
+};
+static std::unique_ptr<BuildJob> g_buildJob;
+static bool g_openBuildProgress = false;
+static std::string g_buildResultDir;   // the folder the last build went to (resolved), for "Open folder"
+
+static std::string ResolvedBuildDir(const EditorState& ed) { return oked::bsm::ResolveOutputDir(g_buildDirBuf, ed.projectDir()); }
+
+static int BuildJobMain(void* data) {
+    BuildJob* j = static_cast<BuildJob*>(data);
+    j->status = builder::RunPreparedBuild(j->prepared, j->outDir, j->name, j->opt, &j->rep, &j->prog);
+    j->finished = 1;
+    return 0;
+}
+
+static bool BuildJobRunning() { return g_buildJob != nullptr; }
+
+// Start a desktop build (or dry run). False when one is already running or the thread could not start (then it runs here).
+static bool StartBuildJob(EditorState& ed, const builder::Options& o, bool run) {
+    if (g_buildJob) return false;
+    if (ed.isPlaying()) { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }   // ship the edited scene, not the running game
+    auto j = std::make_unique<BuildJob>();
+    j->opt = o; j->dry = o.dryRun; j->run = run;
+    j->outDir = ResolvedBuildDir(ed); j->name = g_buildNameBuf;
+    j->prepared = builder::PrepareBuild(ed, o);
+    j->startedAt = ImGui::GetTime();
+    g_buildResultDir = j->outDir;
+    BuildJob* raw = j.get();
+    g_buildJob = std::move(j);
+    raw->thread = okay::thr::CreateThread(&BuildJobMain, "build", raw);
+    if (!raw->thread) BuildJobMain(raw);   // no thread: build here (the old way)
+    g_openBuildProgress = true;
+    return true;
+}
+
+// Stop a running build and wait for it (quitting the editor).
+static void AbortBuildJob() {
+    if (!g_buildJob) return;
+    g_buildJob->prog.cancel = 1;
+    if (g_buildJob->thread) okay::thr::WaitThread(g_buildJob->thread, nullptr);
+    g_buildJob.reset();
+}
+
+static void FinishBuildJob(EditorState& ed) {
+    BuildJob& j = *g_buildJob;
+    if (j.thread) { okay::thr::WaitThread(j.thread, nullptr); j.thread = nullptr; }
+    g_buildReport = std::move(j.rep);
+    g_buildStatus = j.status;
+    g_openBuildResult = true;
+    const bool wasDry = j.dry, doRun = j.run, cancelled = g_buildReport.r.cancelled;
+    const okay::buildpipe::Report& RP = g_buildReport.r;
+    ConsoleLog(std::string(wasDry ? "Build Game (dry run): " : "Build Game: ") + g_buildStatus, cancelled || !g_buildReport.ok ? 2 : RP.checkErrors.empty() ? 0 : 2);
+    if (RP.checked) {
+        ConsoleLog(RP.checkSummary, RP.checkErrors.empty() ? 0 : 2);
+        for (const std::string& e : RP.checkErrors) ConsoleLog("Export check: " + e, 2);
+    }
+    if (wasDry && g_buildReport.ok) g_buildDryBytes = RP.total;
+    {   // Build Settings > Advanced > Last build log
+        std::vector<std::string> lw;
+        for (const std::string& e : RP.checkErrors) lw.push_back("Error: export check: " + e);
+        for (const std::string& w : RP.warnings) lw.push_back(w);
+        oked::SetBuildLog(g_buildStatus, lw);
+    }
+    if (!wasDry && !cancelled) {   // the build history list
+        oked::BuildWindowCtx hc;
+        hc.settings = &g_build; hc.platform = 0; hc.projectDir = ed.projectDir();
+        std::vector<char> dirBuf(j.outDir.begin(), j.outDir.end()); dirBuf.push_back('\0');
+        hc.dir = dirBuf.data(); hc.dirCap = dirBuf.size();
+        oked::RecordBuildInHistory(hc, g_build.buildNumber, RP.total, g_buildReport.ok && RP.checkErrors.empty());
+    }
+    // A finished real build counts the build number up, so the next one is told apart from this one.
+    if (g_buildReport.ok && !wasDry && g_build.autoBuildNumber) ++g_build.buildNumber;
+    if (g_buildProfileSel >= 0 && g_buildProfileSel < (int)g_buildProfiles.size()) {   // remember the settings used
+        BuildProfile& p = g_buildProfiles[g_buildProfileSel];
+        p.settings = g_build; p.productName = g_buildNameBuf;
+        p.outputDir = g_buildDirBuf; p.platform = g_buildPlatform;
+        SaveBuildProfiles(ed);
+    }
+    SaveBuildLive(ed);
+    if (g_buildReport.ok && !wasDry) {   // post-build actions: a dry run writes nothing, so nothing to open or run
+        namespace fs = std::filesystem;
+        std::error_code pec;
+        const fs::path outDir(j.outDir);
+        if (RP.archiveBytes) ConsoleLog("Archive -> " + RP.archivePath);
+        for (const std::string& w : RP.warnings) ConsoleLog("Build warning: " + w, 1);
+        if (doRun && g_build.layout != 2) {
+            const std::string safe = okay::buildpipe::FileSafeName(j.name, "Game");
+            fs::path exe = outDir / (safe + ".exe");
+            if (!fs::exists(exe, pec)) exe = outDir / safe;  // native/no-ext
+            if (fs::exists(exe, pec)) { updater::Relaunch(exe.string()); ConsoleLog("Launched " + exe.string()); }
+            else ConsoleLog("Build & Run: couldn't find the built executable to launch.");
+        } else if (doRun) {
+            ConsoleLog("Build & Run: the Zip layout has no exe to run; unpack the archive, or pick the Folder layout.", 1);
+            if (g_build.openFolderAfter) extide::RevealInFiles(j.outDir);
+        } else if (g_build.openFolderAfter) {
+            extide::RevealInFiles(j.outDir);
+        }
+    }
+    g_buildJob.reset();
+}
+
+// The "Building" window: the step, a bar, the time, Cancel. Called every frame from DrawFileDialogs.
+static void DrawBuildProgress(EditorState& ed) {
+    if (!g_buildJob) return;
+    if (g_buildJob->finished.load() && !ImGui::IsPopupOpen("Building###buildprog")) { FinishBuildJob(ed); return; }
+    if (g_openBuildProgress) { ImGui::OpenPopup("Building###buildprog"); g_openBuildProgress = false; }
+    const ImVec2 c = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Building###buildprog", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        BuildJob& j = *g_buildJob;
+        if (j.finished.load()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); FinishBuildJob(ed); return; }
+        const int st = j.prog.stage.load(), done = j.prog.done.load(), total = j.prog.total.load();
+        ImGui::Text("%s '%s'", j.dry ? "Dry run of" : "Building", j.name.c_str());
+        ImGui::TextDisabled("to %s", j.outDir.c_str());
+        ImGui::Spacing();
+        // Each step is an equal slice of the bar; the asset copy fills its slice file by file.
+        float frac = (float)st / (float)(builder::kStageCount - 1);
+        if (total > 0) frac += std::min(1.0f, (float)done / (float)total) / (float)(builder::kStageCount - 1);
+        char label[160];
+        if (total > 0) std::snprintf(label, sizeof label, "%s  %d / %d", builder::BuildStageText(st), std::min(done, total), total);
+        else std::snprintf(label, sizeof label, "%s", builder::BuildStageText(st));
+        ImGui::ProgressBar(std::min(1.0f, frac), ImVec2(-1, 0), label);
+        ImGui::TextDisabled("%.1f s. The editor stays usable behind this window; the scene is not changed by the build.", ImGui::GetTime() - j.startedAt);
+        ImGui::Spacing();
+        const bool cancelling = j.prog.cancel.load() != 0;
+        ImGui::BeginDisabled(cancelling);
+        if (ImGui::Button(cancelling ? "Cancelling..." : "Cancel", ImVec2(120, 0))) j.prog.cancel = 1;
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Stop after the file being copied now. The output folder is then incomplete.");
+        ImGui::EndPopup();
+    }
+}
+
 void DrawFileDialogs(EditorState& ed) {
     if (g_showOpen)   { ImGui::OpenPopup("Open Scene");    g_showOpen = false; }
     if (g_showSaveAs) { ImGui::OpenPopup("Save Scene As"); g_showSaveAs = false; }
@@ -19187,6 +19442,7 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::EndPopup();
     }
 
+    if (g_showBuildGame && BuildJobRunning()) { g_showBuildGame = false; g_openBuildProgress = true; }   // a build is running: show it
     if (g_showBuildGame) {
         ImGui::OpenPopup("Build Settings"); g_showBuildGame = false;
         // Load this project's saved build profiles the first time the dialog opens.
@@ -19201,7 +19457,7 @@ void DrawFileDialogs(EditorState& ed) {
         bctx.platform = g_buildPlatform; bctx.projectDir = ed.projectDir(); bctx.openSceneSaved = !ed.path().empty();
         for (const BuildScene& bs : g_build.scenes) if (bs.on) ++bctx.enabledScenes;
         bctx.estimateBytes = g_buildDryBytes;
-        bctx.openFolder = [](const std::string& p) { extide::RevealInFiles(p); };
+        bctx.openFolder = [&ed](const std::string& p) { extide::RevealInFiles(oked::bsm::ResolveOutputDir(p, ed.projectDir())); };
         if (g_buildPlatform == 3) ImGui::TextDisabled("Export a dedicated server:  the game with no window, plus server.cfg and deploy scripts");
         else ImGui::TextDisabled("Export a standalone game:  <Name>.exe + <Name>_Data/ (scenes, only the assets they use, StreamingAssets, build.json)");
         ImGui::Spacing();
@@ -19273,9 +19529,11 @@ void DrawFileDialogs(EditorState& ed) {
             oked::DrawBuildProfileExtras(bctx, g_buildProfiles, g_buildProfileSel, [&] { SaveBuildProfiles(ed); });   // Debug/Release start, duplicate, .okaybuild files
         }
         ImGui::Separator();
-        if (g_build.width  < 320) g_build.width  = 320;
-        if (g_build.height < 240) g_build.height = 240;
-        if (g_build.fpsCap < 0)   g_build.fpsCap = 0;
+        if (!ImGui::IsAnyItemActive()) {   // not while a box is being typed in: "1920" starts as "1", which is not clamped to 320 under the cursor
+            if (g_build.width  < 320) g_build.width  = 320;
+            if (g_build.height < 240) g_build.height = 240;
+            if (g_build.fpsCap < 0)   g_build.fpsCap = 0;
+        }
 
 #if defined(OKAY_XBOX_UWP)
         if (g_xboxRunner) g_xboxRunner->Tick();   // keep the one-click Xbox build moving whichever page is shown
@@ -19340,6 +19598,23 @@ void DrawFileDialogs(EditorState& ed) {
                 std::error_code e;
                 return a == b || (fs::exists(a, e) && fs::exists(b, e) && fs::equivalent(a, b, e));
             };
+            // Whether each listed file exists and which one is open: asked of the disk when the list or the open scene
+            // changes, and once a second (a deleted file still shows as missing), not three times per row every frame.
+            struct SceneRow { std::string path; bool exists = false, open = false; };
+            static std::vector<SceneRow> s_rows; static std::string s_rowsOpen; static double s_rowsAt = -10.0;
+            {
+                bool stale = s_rows.size() != L.size() || s_rowsOpen != ed.path() || ImGui::GetTime() - s_rowsAt > 1.0;
+                for (std::size_t i = 0; !stale && i < L.size(); ++i) stale = s_rows[i].path != L[i].path;
+                if (stale) {
+                    s_rows.assign(L.size(), SceneRow{}); s_rowsOpen = ed.path(); s_rowsAt = ImGui::GetTime();
+                    for (std::size_t i = 0; i < L.size(); ++i) {
+                        std::error_code e;
+                        s_rows[i].path = L[i].path;
+                        s_rows[i].exists = fs::exists(fs::path(L[i].path), e);
+                        s_rows[i].open = !ed.path().empty() && samePath(L[i].path, ed.path());
+                    }
+                }
+            }
             SectionHeader("Scenes In Build");
             ImGui::TextDisabled("Ticked scenes ship in this order. #0 is where the game starts; the others load with\n"
                                 "load_scene(\"Name\") or load_scene_index(n). The open scene ships with unsaved edits.");
@@ -19352,8 +19627,7 @@ void DrawFileDialogs(EditorState& ed) {
                 if (L[i].on) ImGui::Text("#%d", shown++); else ImGui::TextDisabled(" - ");
                 ImGui::SameLine(80);
                 const fs::path sp(L[i].path);
-                std::error_code e;
-                const bool exists = fs::exists(sp, e);
+                const bool exists = s_rows[(std::size_t)i].exists;
                 if (exists) ImGui::TextUnformatted(sp.stem().string().c_str());
                 else ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1), "%s (missing)", sp.stem().string().c_str());
                 if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {   // drag a scene's name up or down the list
@@ -19366,7 +19640,7 @@ void DrawFileDialogs(EditorState& ed) {
                     ImGui::EndDragDropTarget();
                 }
                 if (ImGui::IsItemHovered() && !ImGui::IsMouseDown(0)) ImGui::SetTooltip("%s\n(drag to reorder)", L[i].path.c_str());
-                if (!ed.path().empty() && samePath(L[i].path, ed.path())) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f, 0.80f, 1.0f, 1), "(open)"); }
+                if (s_rows[(std::size_t)i].open) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f, 0.80f, 1.0f, 1), "(open)"); }
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - 92);
                 ImGui::BeginDisabled(i == 0);
                 if (ImGui::ArrowButton("##up", ImGuiDir_Up)) { move = i; moveDir = -1; }
@@ -19387,7 +19661,7 @@ void DrawFileDialogs(EditorState& ed) {
             ImGui::Spacing();
             const bool haveOpen = !ed.path().empty();
             bool openListed = false;
-            for (const auto& sc : L) if (haveOpen && samePath(sc.path, ed.path())) openListed = true;
+            for (const SceneRow& r : s_rows) if (haveOpen && r.open) openListed = true;
             ImGui::BeginDisabled(!haveOpen || openListed);
             if (ImGui::Button("Add Open Scene")) L.push_back(BuildScene{ed.path(), true});
             ImGui::EndDisabled();
@@ -19538,6 +19812,8 @@ void DrawFileDialogs(EditorState& ed) {
                     PickFolderInto("Choose the build output folder", g_buildDirBuf, g_buildDirBuf, sizeof(g_buildDirBuf));
                 }
                 ImGui::SameLine(0, 6); ImGui::TextUnformatted("Output folder");
+                if (const std::string rd = ResolvedBuildDir(ed); rd != g_buildDirBuf)   // a relative folder is inside the project
+                    ImGui::TextDisabled("= %s", rd.c_str());
                 const auto pngFilt = okay::filedialog::Filters("PNG image", {"*.png"});
                 ImGui::SetNextItemWidth(388); ImGui::InputText("##bicon", g_build.icon, sizeof(g_build.icon));
                 ImGui::SameLine(0, 4);
@@ -19570,10 +19846,13 @@ void DrawFileDialogs(EditorState& ed) {
                 const float numW = ImGui::CalcTextSize("000000").x + ImGui::GetStyle().FramePadding.x * 2.0f;   // five digits at any text size
                 ImGui::SetNextItemWidth(numW); ImGui::InputInt("Width",  &g_build.width, 0); ImGui::SameLine();
                 ImGui::SetNextItemWidth(numW); ImGui::InputInt("Height", &g_build.height, 0);
-                const char* presets[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "960 x 600", "800 x 600"};
-                static int presetSel = 0; ImGui::SetNextItemWidth(180);
-                if (ImGui::Combo("Resolution preset", &presetSel, presets, IM_ARRAYSIZE(presets))) {
-                    const int dims[][2] = {{1280,720},{1920,1080},{2560,1440},{960,600},{800,600}};
+                // The preset shown is the one the size matches (Custom otherwise), not the last one picked.
+                const char* presets[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "960 x 600", "800 x 600", "Custom"};
+                const int dims[][2] = {{1280,720},{1920,1080},{2560,1440},{960,600},{800,600}};
+                int presetSel = 5;
+                for (int pi = 0; pi < 5; ++pi) if (dims[pi][0] == g_build.width && dims[pi][1] == g_build.height) presetSel = pi;
+                ImGui::SetNextItemWidth(180);
+                if (ImGui::Combo("Resolution preset", &presetSel, presets, IM_ARRAYSIZE(presets)) && presetSel < 5) {
                     g_build.width = dims[presetSel][0]; g_build.height = dims[presetSel][1];
                 }
                 ImGui::Spacing();
@@ -19613,7 +19892,16 @@ void DrawFileDialogs(EditorState& ed) {
             if (s_buildSec == 3) {
                 ImGui::Spacing();
                 const char* qnames[] = {"Custom", "Low", "Medium", "High", "Ultra"};
-                static int q = 0; ImGui::SetNextItemWidth(180);
+                // Shows the preset the toggles below match (Custom when they match none), not the last one picked.
+                int q = 0;
+                {
+                    const bool tg[4][5] = {{false, false, false, false, false}, {true, false, false, false, true}, {true, true, true, false, true}, {true, true, true, true, true}};
+                    const int aa[4] = {1, 1, 1, 2};
+                    for (int qi = 0; qi < 4; ++qi)
+                        if (g_build.gpuRenderer && g_build.perPixelLighting == tg[qi][0] && g_build.shadows == tg[qi][1] && g_build.bloom == tg[qi][2] &&
+                            g_build.ssao == tg[qi][3] && g_build.fxaa == tg[qi][4] && g_build.antialias == aa[qi]) q = qi + 1;
+                }
+                ImGui::SetNextItemWidth(180);
                 if (ImGui::Combo("Quality preset", &q, qnames, 5) && q > 0) {
                     auto set = [&](bool ppl, bool sh, bool bl, bool ao, bool fx, int aa) {
                         g_build.perPixelLighting = ppl; g_build.shadows = sh; g_build.bloom = bl;
@@ -19860,7 +20148,8 @@ void DrawFileDialogs(EditorState& ed) {
             sv.auth = g_build.srvAuth; sv.advertise = g_build.srvAdvertise;
             sv.maxSpeed = g_build.srvMaxSpeed; sv.rateLimit = g_build.srvRateLimit; sv.kickAfter = g_build.srvKickAfter;
             g_buildReport = builder::BuildReport{};
-            g_buildStatus = builder::BuildServer(ed, g_buildDirBuf, g_buildNameBuf, so, sv, &g_buildReport);
+            g_buildResultDir = ResolvedBuildDir(ed);
+            g_buildStatus = builder::BuildServer(ed, g_buildResultDir, g_buildNameBuf, so, sv, &g_buildReport);
             g_openBuildResult = true;
             ConsoleLog("Build Server: " + g_buildStatus);
             if (g_buildProfileSel >= 0 && g_buildProfileSel < (int)g_buildProfiles.size()) {
@@ -19868,14 +20157,15 @@ void DrawFileDialogs(EditorState& ed) {
                 p.settings = g_build; p.productName = g_buildNameBuf; p.outputDir = g_buildDirBuf; p.platform = g_buildPlatform;
                 SaveBuildProfiles(ed);
             }
-            if (g_buildReport.valid && g_build.openFolderAfter) extide::RevealInFiles(g_buildDirBuf);
+            if (g_buildReport.valid && g_build.openFolderAfter) extide::RevealInFiles(g_buildResultDir);
             ImGui::CloseCurrentPopup();
           } else if (g_buildPlatform != 0) {
             builder::Options wo;
             wo.company = g_build.company; wo.version = g_build.version;
             wo.width = g_build.width; wo.height = g_build.height; wo.bundleId = g_build.bundleId; wo.iconPath = g_build.icon;
             g_buildReport = builder::BuildReport{};
-            g_buildStatus = builder::ExportForPlatform(ed, g_buildDirBuf, g_buildNameBuf, wo, g_buildPlatform);
+            g_buildResultDir = ResolvedBuildDir(ed);
+            g_buildStatus = builder::ExportForPlatform(ed, g_buildResultDir, g_buildNameBuf, wo, g_buildPlatform);
             ConsoleLog("Export (" + std::string(plats[g_buildPlatform]) + "): " + g_buildStatus);
 #if defined(OKAY_XBOX_UWP)
             if (g_buildPlatform == 4) {   // one click: SDK check, export, compile, shaders, pack, sign, (install). The popup stays open and shows the log.
@@ -19884,11 +20174,11 @@ void DrawFileDialogs(EditorState& ed) {
                 const xb::ManifestOptions xm = xb::ManifestFrom(xi);
                 xb::PlanInputs pi; pi.sdk = xb::CachedSdkReport(); pi.fs = xb::RealFs();
                 g_xboxSourceRoot = xb::FindSourceRoot(pi.fs, OkayExeDir(), std::getenv("OKAY_SOURCE_ROOT") ? std::getenv("OKAY_SOURCE_ROOT") : "");
-                pi.sourceRoot = g_xboxSourceRoot; pi.exportDir = g_buildDirBuf; pi.subject = xm.publisher; pi.installOnThisPc = g_xboxInstall; pi.engineMode = g_xboxEngineMode;
-                pi.appxPath = (std::filesystem::path(g_buildDirBuf) / (xm.identityName + "_" + xb::NormalizeVersion(xm.version) + "_x64.appx")).string();
+                pi.sourceRoot = g_xboxSourceRoot; pi.exportDir = g_buildResultDir; pi.subject = xm.publisher; pi.installOnThisPc = g_xboxInstall; pi.engineMode = g_xboxEngineMode;
+                pi.appxPath = (std::filesystem::path(g_buildResultDir) / (xm.identityName + "_" + xb::NormalizeVersion(xm.version) + "_x64.appx")).string();
                 g_xboxAppx = pi.appxPath; g_xboxSignerLabel = xb::SignerLabel(pi.signer);
                 xb::BuildHostConfig hc; hc.sdkAvailable = pi.sdk.available; hc.exportOk = g_xboxExportOk; hc.exportMessage = g_buildStatus;
-                hc.exportWarnings = g_xboxExportWarnings; hc.exportDir = g_buildDirBuf; hc.appxPath = pi.appxPath; hc.configuration = pi.configuration;
+                hc.exportWarnings = g_xboxExportWarnings; hc.exportDir = g_buildResultDir; hc.appxPath = pi.appxPath; hc.configuration = pi.configuration;
 #if defined(_WIN32)
                 hc.spawn = xb::SpawnWindowsProcess;
 #endif
@@ -19911,55 +20201,38 @@ void DrawFileDialogs(EditorState& ed) {
           } else {
             builder::Options o = builder::OptionsFromSettings(g_build, g_project);
             o.dryRun = g_buildDryRun;
-            g_buildReport = builder::BuildReport{};
-            g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o, &g_buildReport);
-            g_openBuildResult = true;
-            ConsoleLog(std::string(g_buildDryRun ? "Build Game (dry run): " : "Build Game: ") + g_buildStatus);
-            const bool wasDry = g_buildDryRun;
             g_buildDryRun = false;
-            if (wasDry && g_buildReport.ok) g_buildDryBytes = g_buildReport.r.total;
-            { std::vector<std::string> lw; for (const std::string& w : g_buildReport.r.warnings) lw.push_back(w); oked::SetBuildLog(g_buildStatus, lw); }   // Build Settings > Advanced > Last build log
-            // A finished real build counts the build number up, so the next one is told apart from this one.
-            if (!wasDry) oked::RecordBuildInHistory(bctx, g_build.buildNumber, g_buildReport.r.total, g_buildReport.ok);   // the build history list
-            if (g_buildReport.ok && !wasDry && g_build.autoBuildNumber) ++g_build.buildNumber;
-            // Remember the settings used for next time (so they survive restarts).
-            if (g_buildProfileSel >= 0 && g_buildProfileSel < (int)g_buildProfiles.size()) {
-                BuildProfile& p = g_buildProfiles[g_buildProfileSel];
-                p.settings = g_build; p.productName = g_buildNameBuf;
-                p.outputDir = g_buildDirBuf; p.platform = g_buildPlatform;
-                SaveBuildProfiles(ed);
-            }
-            SaveBuildLive(ed);
-            // Post-build actions (only when the build actually succeeded; a dry run writes nothing, so nothing to open or run).
-            if (g_buildReport.ok && !wasDry) {
-                namespace fs = std::filesystem;
-                std::error_code pec;
-                fs::path outDir(g_buildDirBuf);
-                if (g_buildReport.r.archiveBytes) ConsoleLog("Archive -> " + g_buildReport.r.archivePath);
-                for (const std::string& w : g_buildReport.r.warnings) ConsoleLog("Build warning: " + w, 1);
-                if (doRun && g_build.layout != 2) {
-                    // Launch the freshly built game (exe at the output root, named like the data folder).
-                    const std::string safe = okay::buildpipe::FileSafeName(g_buildNameBuf, "Game");
-                    fs::path exe = outDir / (safe + ".exe");
-                    if (!fs::exists(exe, pec)) exe = outDir / safe;  // native/no-ext
-                    if (fs::exists(exe, pec)) { updater::Relaunch(exe.string()); ConsoleLog("Launched " + exe.string()); }
-                    else ConsoleLog("Build & Run: couldn't find the built executable to launch.");
-                } else if (doRun) {
-                    ConsoleLog("Build & Run: the Zip layout has no exe to run; unpack the archive, or pick the Folder layout.", 1);
-                    if (g_build.openFolderAfter) extide::RevealInFiles(g_buildDirBuf);
-                } else if (g_build.openFolderAfter) {
-                    extide::RevealInFiles(g_buildDirBuf);
-                }
-            }
+            g_buildReport = builder::BuildReport{};
+            if (!StartBuildJob(ed, o, doRun)) ConsoleLog("A build is already running.", 1);
             ImGui::CloseCurrentPopup();
           }   // end desktop branch
         }     // end Build/Export button
         ImGui::EndPopup();
     }
 
+    DrawBuildProgress(ed);   // the running build's window (and its finish)
     if (g_openBuildResult) { ImGui::OpenPopup("Build Result"); g_openBuildResult = false; }
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Build Result", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        {   // One coloured line first: did it work?
+            const okay::buildpipe::Report& H = g_buildReport.r;
+            const bool desktop = g_buildPlatform == 0;   // the other exports fill no report
+            if (H.cancelled) ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1), "Cancelled. The output folder is incomplete.");
+            else if (!desktop) {}
+            else if (!g_buildReport.ok) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1), "The build failed.");
+            else if (!H.checkErrors.empty()) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1), "Built, but the export check found %d problem%s: the game will not work as it is.", (int)H.checkErrors.size(), H.checkErrors.size() == 1 ? "" : "s");
+            else if (H.dryRun) ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.5f, 1), "Dry run finished. Nothing was written.");
+            else ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.5f, 1), "Build succeeded%s.", H.checked ? " and passed the export check" : "");
+            if (!g_buildResultDir.empty() && !H.dryRun) ImGui::TextDisabled("Folder: %s", g_buildResultDir.c_str());
+            if (!H.checkErrors.empty()) {
+                ImGui::BeginChild("##chkerr", ImVec2(460, std::min(160.0f, 8.0f + 36.0f * (float)H.checkErrors.size())), ImGuiChildFlags_Borders);
+                ImGui::PushTextWrapPos(440.0f);
+                for (const std::string& e : H.checkErrors) ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.5f, 1), "%s", e.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::EndChild();
+            }
+            ImGui::Spacing();
+        }
         ImGui::PushTextWrapPos(460.0f);
         ImGui::TextUnformatted(g_buildStatus.c_str());
         ImGui::PopTextWrapPos();
@@ -20097,8 +20370,15 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::Separator();
         if (ImGui::Button("OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::SameLine();
-        if (ImGui::Button("Show in Explorer", ImVec2(150, 0)) && g_buildDirBuf[0])
-            extide::RevealInFiles(g_buildDirBuf);
+        {
+            namespace fs = std::filesystem;
+            std::error_code oe;
+            const std::string where = !g_buildReport.r.archivePath.empty() && !fs::is_directory(fs::path(g_buildResultDir), oe) ? fs::path(g_buildReport.r.archivePath).parent_path().string() : g_buildResultDir;
+            ImGui::BeginDisabled(where.empty() || g_buildReport.r.dryRun);
+            if (ImGui::Button("Open folder", ImVec2(150, 0))) extide::RevealInFiles(where);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", g_buildReport.r.dryRun ? "A dry run writes nothing." : where.c_str());
+        }
         ImGui::EndPopup();
     }
 }
@@ -57546,9 +57826,13 @@ static int RunBuildGameCli(int argc, char** argv) {
     if (rep.ok && rep.r.valid) {
         if (dry) std::fprintf(stdout, "%s", rep.r.ToText().c_str());
         else for (const std::string& w : rep.r.warnings) std::fprintf(stdout, "warning: %s\n", w.c_str());
+        if (rep.r.checked) {   // the export check: problems make the command fail, so a script notices a broken export
+            std::fprintf(rep.r.checkErrors.empty() ? stdout : stderr, "%s\n", rep.r.checkSummary.c_str());
+            for (const std::string& e : rep.r.checkErrors) std::fprintf(stderr, "export check: %s\n", e.c_str());
+        }
         if (!reportFile.empty()) { std::ofstream rf(reportFile, std::ios::binary); rf << rep.r.ToText(); }
     }
-    return rep.ok ? 0 : 1;
+    return rep.ok && rep.r.checkErrors.empty() ? 0 : 1;
 }
 
 // What the crash report says about the open scene and the editor mode; refreshed a few times a second from the main loop (a handful
@@ -59842,6 +60126,7 @@ int main(int argc, char** argv) {
 
         if (updater::pendingQuit) running = false; // auto-update relaunched
     }
+    AbortBuildJob();   // quitting while a build runs: stop it and wait for its thread
     DocRecovery().EndSession(true);   // clean exit: the user saved or chose not to
     FinishFrozenTick();   // quitting while frozen at a breakpoint: let that frame end first
     SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window

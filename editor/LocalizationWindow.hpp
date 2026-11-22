@@ -9,7 +9,7 @@
 #include "EditorState.hpp"
 #include <string>
 
-namespace okay { class Component; class GameObject; struct LocalizedText; }
+namespace okay { class Component; class GameObject; struct LocalizedText; class StringTable; }
 
 namespace oked {
 
@@ -61,6 +61,11 @@ void MergeLocalizationFonts(float sizePx);
 // Build Game: copy the string table and the fonts its languages name into the
 // build's Data folder (keeping their paths relative to the table).
 void CopyLocalizationFiles(okay::editor::EditorState& ed, const std::string& dataDir);
+// The same in two halves, so a build can run off the editor's main thread: LocalizationTablePathForBuild reads the
+// editor (main thread); CopyLocalizationTo touches only files and the table copy it is given, and returns its
+// warnings instead of writing to the Console.
+std::string LocalizationTablePathForBuild(const okay::editor::EditorState& ed);
+void CopyLocalizationTo(okay::StringTable table, const std::string& tablePath, const std::string& dataDir, std::vector<std::string>* warnings);
 
 // Dev screenshot hooks: OKAY_UI_LOC=1 opens the window, OKAY_UI_LANG=<code>
 // previews that language (qps-ploc = pseudo-localized), OKAY_UI_LOCKEY=<key>

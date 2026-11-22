@@ -1506,4 +1506,168 @@ int ExtrudeAlongPath(PolyMesh& pm, const std::vector<int>& faces, const std::vec
     return made + (int)sel.size();
 }
 
+// ---- Selection helpers -------------------------------------------------------------
+namespace {
+// Vertex -> (neighbour, edge length) for every edge of a valid face.
+std::vector<std::vector<std::pair<int, float>>> EdgeGraph(const PolyMesh& pm) {
+    const int nv = (int)pm.verts.size();
+    std::vector<std::vector<std::pair<int, float>>> g((std::size_t)nv);
+    std::set<std::pair<int, int>> seen;
+    for (const PolyFace& f : pm.faces) {
+        const int n = f.Size();
+        for (int i = 0; i < n; ++i) {
+            const int a = f.verts[(std::size_t)i], b = f.verts[(std::size_t)((i + 1) % n)];
+            if (a < 0 || b < 0 || a >= nv || b >= nv || a == b || !seen.insert(Key(a, b)).second) continue;
+            float d = (pm.verts[(std::size_t)a] - pm.verts[(std::size_t)b]).Magnitude();
+            if (!std::isfinite(d)) d = 1e30f;
+            g[(std::size_t)a].push_back({b, d});
+            g[(std::size_t)b].push_back({a, d});
+        }
+    }
+    return g;
+}
+bool FaceOk(const PolyMesh& pm, int f) {
+    if (f < 0 || f >= (int)pm.faces.size() || pm.faces[(std::size_t)f].Size() < 3) return false;
+    for (int v : pm.faces[(std::size_t)f].verts) if (v < 0 || v >= (int)pm.verts.size()) return false;
+    return true;
+}
+// Face -> faces sharing an edge with it (valid faces only).
+std::vector<std::vector<int>> FaceGraph(const PolyMesh& pm) {
+    std::map<std::pair<int, int>, std::vector<int>> byEdge;
+    for (int f = 0; f < (int)pm.faces.size(); ++f) {
+        if (!FaceOk(pm, f)) continue;
+        const PolyFace& F = pm.faces[(std::size_t)f];
+        for (int i = 0; i < F.Size(); ++i) {
+            const int a = F.verts[(std::size_t)i], b = F.verts[(std::size_t)((i + 1) % F.Size())];
+            if (a != b) byEdge[Key(a, b)].push_back(f);
+        }
+    }
+    std::vector<std::vector<int>> g(pm.faces.size());
+    for (const auto& e : byEdge)
+        for (int x : e.second) for (int y : e.second)
+            if (x != y && std::find(g[(std::size_t)x].begin(), g[(std::size_t)x].end(), y) == g[(std::size_t)x].end()) g[(std::size_t)x].push_back(y);
+    return g;
+}
+// Dijkstra on an adjacency list with weights; returns the node path from s to t, or empty.
+std::vector<int> Dijkstra(const std::vector<std::vector<std::pair<int, float>>>& g, int s, int t) {
+    const int n = (int)g.size();
+    std::vector<double> dist((std::size_t)n, 1e300);
+    std::vector<int> prev((std::size_t)n, -1);
+    using Item = std::pair<double, int>;
+    std::vector<Item> heap;   // min-heap through std::greater
+    dist[(std::size_t)s] = 0.0;
+    heap.push_back({0.0, s});
+    while (!heap.empty()) {
+        std::pop_heap(heap.begin(), heap.end(), std::greater<Item>());
+        const Item cur = heap.back(); heap.pop_back();
+        if (cur.first > dist[(std::size_t)cur.second]) continue;
+        if (cur.second == t) break;
+        for (const auto& e : g[(std::size_t)cur.second]) {
+            const double nd = cur.first + (double)e.second;
+            if (nd < dist[(std::size_t)e.first]) {
+                dist[(std::size_t)e.first] = nd; prev[(std::size_t)e.first] = cur.second;
+                heap.push_back({nd, e.first}); std::push_heap(heap.begin(), heap.end(), std::greater<Item>());
+            }
+        }
+    }
+    if (s != t && prev[(std::size_t)t] < 0) return {};
+    std::vector<int> path;
+    for (int v = t; v != -1; v = (v == s ? -1 : prev[(std::size_t)v])) path.push_back(v);
+    std::reverse(path.begin(), path.end());
+    return path;
+}
+// Keep the selected nodes an even number of steps from the first of each connected part.
+std::vector<int> Checker(const std::vector<std::vector<int>>& g, const std::vector<int>& sel, int n) {
+    std::vector<char> in((std::size_t)n, 0);
+    std::vector<int> list;
+    for (int x : sel) if (x >= 0 && x < n && !in[(std::size_t)x]) { in[(std::size_t)x] = 1; list.push_back(x); }
+    std::vector<int> depth((std::size_t)n, -1);
+    for (int seed : list) {
+        if (depth[(std::size_t)seed] >= 0) continue;
+        std::vector<int> queue{seed};
+        depth[(std::size_t)seed] = 0;
+        for (std::size_t q = 0; q < queue.size(); ++q) {
+            const int x = queue[q];
+            for (int y : g[(std::size_t)x])
+                if (in[(std::size_t)y] && depth[(std::size_t)y] < 0) { depth[(std::size_t)y] = depth[(std::size_t)x] + 1; queue.push_back(y); }
+        }
+    }
+    std::vector<int> out;
+    for (int x : list) if (depth[(std::size_t)x] % 2 == 0) out.push_back(x);
+    return out;
+}
+} // namespace
+
+std::vector<int> ShortestVertPath(const PolyMesh& pm, int from, int to) {
+    const auto g = EdgeGraph(pm);
+    const int nv = (int)g.size();
+    if (from < 0 || to < 0 || from >= nv || to >= nv || g[(std::size_t)from].empty() || g[(std::size_t)to].empty()) return {};
+    return Dijkstra(g, from, to);
+}
+
+std::vector<int> ShortestFacePath(const PolyMesh& pm, int from, int to) {
+    if (!FaceOk(pm, from) || !FaceOk(pm, to)) return {};
+    const auto adj = FaceGraph(pm);
+    std::vector<Vec3> centre(pm.faces.size(), Vec3{0, 0, 0});
+    for (int f = 0; f < (int)pm.faces.size(); ++f) {
+        if (!FaceOk(pm, f)) continue;
+        Vec3 c{0, 0, 0};
+        for (int v : pm.faces[(std::size_t)f].verts) c += pm.verts[(std::size_t)v];
+        centre[(std::size_t)f] = c * (1.0f / (float)pm.faces[(std::size_t)f].Size());
+    }
+    std::vector<std::vector<std::pair<int, float>>> g(pm.faces.size());
+    for (std::size_t f = 0; f < adj.size(); ++f)
+        for (int h : adj[f]) {
+            float d = (centre[f] - centre[(std::size_t)h]).Magnitude();
+            if (!std::isfinite(d)) d = 1e30f;
+            g[f].push_back({h, d});
+        }
+    return Dijkstra(g, from, to);
+}
+
+std::vector<int> CheckerVerts(const PolyMesh& pm, const std::vector<int>& verts) {
+    const auto eg = EdgeGraph(pm);
+    std::vector<std::vector<int>> g(eg.size());
+    for (std::size_t v = 0; v < eg.size(); ++v) for (const auto& e : eg[v]) g[v].push_back(e.first);
+    return Checker(g, verts, (int)pm.verts.size());
+}
+
+std::vector<int> CheckerFaces(const PolyMesh& pm, const std::vector<int>& faces) {
+    std::vector<int> ok;
+    for (int f : faces) if (FaceOk(pm, f)) ok.push_back(f);
+    return Checker(FaceGraph(pm), ok, (int)pm.faces.size());
+}
+
+EdgeList RegionOutline(const PolyMesh& pm, const std::vector<int>& faces) {
+    std::set<int> sel;
+    for (int f : faces) if (FaceOk(pm, f)) sel.insert(f);
+    std::map<std::pair<int, int>, int> uses;
+    for (int f : sel) {
+        const PolyFace& F = pm.faces[(std::size_t)f];
+        for (int i = 0; i < F.Size(); ++i) {
+            const int a = F.verts[(std::size_t)i], b = F.verts[(std::size_t)((i + 1) % F.Size())];
+            if (a != b) ++uses[Key(a, b)];
+        }
+    }
+    EdgeList out;
+    for (int f : sel) {
+        const PolyFace& F = pm.faces[(std::size_t)f];
+        for (int i = 0; i < F.Size(); ++i) {
+            const int a = F.verts[(std::size_t)i], b = F.verts[(std::size_t)((i + 1) % F.Size())];
+            if (a != b && uses[Key(a, b)] == 1) out.push_back({a, b});
+        }
+    }
+    return out;
+}
+
+EdgeList ProblemEdges(const PolyMesh& pm, bool borders, bool nonManifold) {
+    EdgeList out;
+    for (const PolyMesh::Edge& e : pm.Edges()) {
+        if (e.a < 0 || e.b < 0 || e.a >= (int)pm.verts.size() || e.b >= (int)pm.verts.size()) continue;
+        if ((borders && e.faceCount == 1) || (nonManifold && e.faceCount >= 3)) out.push_back({e.a, e.b});
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 } // namespace okay::modeling

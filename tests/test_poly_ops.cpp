@@ -586,5 +586,87 @@ int main() {
         CHECK(again.CountFaces(4) == 10);                        // all quads, straight back
     }
 
+    // ---- Selection helpers: shortest path, checker deselect, region outline, problem edges ----
+    {
+        PolyMesh g = Grid(4, 4);                                 // vertex (x, z) = z * 5 + x, face (x, z) = z * 4 + x
+        // Along the bottom row: 0 -> 4 is the straight run of 5 vertices.
+        std::vector<int> p = ShortestVertPath(g, 0, 4);
+        CHECK(p.size() == 5 && p.front() == 0 && p.back() == 4);
+        bool row = true; for (int v : p) if (g.verts[v].z != 0.0f) row = false;
+        CHECK(row);
+        // Corner to corner: 8 unit steps (no diagonals in a quad grid), every step an edge.
+        p = ShortestVertPath(g, 0, 24);
+        CHECK(p.size() == 9);
+        PolyTopology T(g);
+        bool edges = true; for (std::size_t i = 1; i < p.size(); ++i) if (!T.IsEdge(p[i - 1], p[i])) edges = false;
+        CHECK(edges);
+        CHECK(ShortestVertPath(g, 7, 7) == std::vector<int>{7});
+        // Hostile: out of range, negative, a vertex no face uses, two separate parts.
+        CHECK(ShortestVertPath(g, 0, 99).empty());
+        CHECK(ShortestVertPath(g, -1, 3).empty());
+        PolyMesh lone = g; lone.verts.push_back({9, 9, 9});
+        CHECK(ShortestVertPath(lone, 0, 25).empty());
+        PolyMesh two = Grid(1, 1); AddTube(two, 5, 6);           // a quad and a tube that never touch
+        CHECK(ShortestVertPath(two, 0, 6).empty());
+        CHECK(ShortestVertPath(PolyMesh{}, 0, 0).empty());
+
+        // Faces: (0,0) -> (3,0) is the 4 faces of the bottom row; (0,0) -> (3,3) is 7 faces.
+        std::vector<int> fp = ShortestFacePath(g, 0, 3);
+        CHECK(fp == (std::vector<int>{0, 1, 2, 3}));
+        fp = ShortestFacePath(g, 0, 15);
+        CHECK(fp.size() == 7 && fp.front() == 0 && fp.back() == 15);
+        CHECK(ShortestFacePath(g, 5, 5) == std::vector<int>{5});
+        CHECK(ShortestFacePath(g, 0, 16).empty() && ShortestFacePath(g, -2, 0).empty());
+        CHECK(ShortestFacePath(two, 0, 1).empty());              // the quad and the tube are not joined
+        PolyMesh bad = g; bad.faces[1].verts = {0, 0, 1};        // a face with a repeated corner is still walked round
+        CHECK(!ShortestFacePath(bad, 0, 3).empty());
+        PolyMesh oob = g; oob.faces[1].verts[2] = 999;           // a face naming a missing vertex is skipped, never read
+        CHECK(ShortestFacePath(oob, 0, 1).empty());
+        CHECK(ShortestVertPath(oob, 0, 4).size() >= 5);
+
+        // Checker: a 4x4 block of faces comes back as a checkerboard of 8.
+        std::vector<int> all; for (int f = 0; f < 16; ++f) all.push_back(f);
+        std::vector<int> ck = CheckerFaces(g, all);
+        CHECK(ck.size() == 8);
+        bool board = true; for (int f : ck) if (((f % 4) + (f / 4)) % 2 != 0) board = false;
+        CHECK(board);
+        // Starting from another face flips which squares stay.
+        std::vector<int> fromOne = all; std::swap(fromOne[0], fromOne[1]);
+        ck = CheckerFaces(g, fromOne);
+        board = ck.size() == 8; for (int f : ck) if (((f % 4) + (f / 4)) % 2 != 1) board = false;
+        CHECK(board);
+        // Vertices: the 5 of the bottom row keep 0, 2, 4.
+        CHECK(CheckerVerts(g, {0, 1, 2, 3, 4}) == (std::vector<int>{0, 2, 4}));
+        // Two separate selected vertices each keep themselves (each part starts its own walk).
+        CHECK(CheckerVerts(g, {0, 24}) == (std::vector<int>{0, 24}));
+        // Hostile: empty, repeats, out of range.
+        CHECK(CheckerFaces(g, {}).empty());
+        CHECK(CheckerFaces(g, {0, 0, 0, -1, 99}) == std::vector<int>{0});
+        CHECK(CheckerVerts(g, {3, 3, 999}) == std::vector<int>{3});
+
+        // Region outline: the middle 2x2 block of faces has an 8-edge outline, one closed loop.
+        const std::vector<int> mid = {5, 6, 9, 10};
+        EdgeList ol = RegionOutline(g, mid);
+        CHECK(ol.size() == 8);
+        const std::vector<EdgeChain> ch = OrderChains(ol);
+        CHECK(ch.size() == 1 && ch[0].closed);
+        // Directions follow the faces: no directed edge twice, so the loop runs one way round.
+        std::set<std::pair<int, int>> dir(ol.begin(), ol.end());
+        CHECK(dir.size() == 8);
+        CHECK(RegionOutline(g, {}).empty() && RegionOutline(g, {-1, 77}).empty());
+        CHECK(RegionOutline(g, {5, 5}).size() == 4);             // a repeated face counts once
+
+        // Problem edges: a closed cube has none; the grid has 16 border edges; a fin makes a non-manifold edge.
+        CHECK(ProblemEdges(Cube(), true, true).empty());
+        CHECK(ProblemEdges(g, true, false).size() == 16);
+        CHECK(ProblemEdges(g, false, true).empty());
+        PolyMesh fin = Grid(2, 1);                               // two quads sharing edge 1-4; add a third face on it
+        fin.verts.push_back({1, 1, 0}); fin.verts.push_back({1, 1, 1});
+        PolyFace third; third.verts = {1, 4, 7, 6}; fin.faces.push_back(third);
+        const EdgeList nm = ProblemEdges(fin, false, true);
+        CHECK(nm.size() == 1 && nm[0] == std::make_pair(1, 4));
+        CHECK(ProblemEdges(PolyMesh{}, true, true).empty());
+    }
+
     TEST_MAIN_RESULT();
 }

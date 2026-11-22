@@ -142,4 +142,29 @@ int SpinEdges(PolyMesh& pm, const EdgeList& edges, const Vec3& center, const Vec
 int ExtrudeAlongPath(PolyMesh& pm, const std::vector<int>& faces, const std::vector<Vec3>& path,
                      std::string* error = nullptr);
 
+// ---- Selection helpers (the editor's Ctrl+click path, Checker Deselect, Select Boundary Loop,
+// Select Open / Non-Manifold Edges). Written from the plain graph algorithms (Dijkstra's shortest
+// path, breadth-first search); they only read the mesh. Bad indices give an empty result.
+
+/// Shortest path between two vertices along the mesh's edges, by edge length. Returns the vertices
+/// in order from `from` to `to` ({from} when they are the same), or empty when either is not used by
+/// a face or no edges join them.
+std::vector<int> ShortestVertPath(const PolyMesh& pm, int from, int to);
+/// Shortest path between two faces through faces that share an edge, by the distance between face
+/// centres. Returns the faces in order ({from} when the same), or empty.
+std::vector<int> ShortestFacePath(const PolyMesh& pm, int from, int to);
+/// Checker deselect: keep every other element of the selection. Each connected part of the selection
+/// (vertices joined by an edge, faces sharing an edge) is walked breadth-first from the first of its
+/// elements in the list, and the elements an even number of steps away are kept (a selected grid of
+/// quads comes back as a checkerboard). Duplicates and bad indices are dropped; the order of the
+/// input is kept.
+std::vector<int> CheckerVerts(const PolyMesh& pm, const std::vector<int>& verts);
+std::vector<int> CheckerFaces(const PolyMesh& pm, const std::vector<int>& faces);
+/// The outline of a group of faces: every edge used by exactly one of them (Select Boundary Loop).
+/// Edges come out as (a, b) in the direction the face runs them.
+EdgeList RegionOutline(const PolyMesh& pm, const std::vector<int>& faces);
+/// Edges with a face on one side only (`borders`) and / or used by three or more faces
+/// (`nonManifold`): what to look at before a bevel, a bridge or an export. Sorted, a < b.
+EdgeList ProblemEdges(const PolyMesh& pm, bool borders, bool nonManifold);
+
 } // namespace okay::modeling

@@ -29,6 +29,15 @@ std::string AssetPath(const std::string& p) {
     return (fs::u8path(base) / fs::u8path(p)).u8string();
 }
 
+// The lean of a copy planted on ground with world normal `n`: 0 = straight up .. 1 = fully with the ground.
+void LeanWith(FoliageInstance& in, const Mat4& worldToLocal, const Vec3& n, float align) {
+    if (!(align > 0.0f)) return;
+    if (align > 1.0f) align = 1.0f;
+    const Vec3 ln = worldToLocal.MultiplyVector(n).Normalized();
+    const Vec3 u = (Vec3{0, 1, 0} * (1.0f - align) + ln * align).Normalized();
+    in.leanX = u.x; in.leanZ = u.z;
+}
+
 Quat RotationOf(const FoliageInstance& in) {
     Quat yaw = Quat::AngleAxis(in.yaw, Vec3{0, 1, 0});
     if (in.leanX == 0.0f && in.leanZ == 0.0f) return yaw;
@@ -353,12 +362,7 @@ int Foliage::Paint(float wx, float wz, const Surface& ground) {
         in.yaw = randomYaw ? rng.Range(0.0f, 360.0f) : 0.0f;
         in.scale = (maxScale > minScale) ? rng.Range(minScale, maxScale) : minScale;
         in.variant = rng.Range(0, (int)shapes_.size());
-        if (alignToSurface > 0.0f) {
-            const Vec3 ln = inv.MultiplyVector(n).Normalized();
-            Vec3 u = Vec3{0, 1, 0} * (1.0f - alignToSurface) + ln * alignToSurface;
-            u = u.Normalized();
-            in.leanX = u.x; in.leanZ = u.z;
-        }
+        LeanWith(in, inv, n, alignToSurface);
         instances.push_back(in);
         const long long key = KeyOf(lp);
         index_[key].push_back((int)instances.size() - 1);
@@ -431,6 +435,7 @@ int Foliage::ScatterOnTerrain(const Terrain& t, int count, std::uint32_t scatter
         in.yaw = randomYaw ? rng.Range(0.0f, 360.0f) : 0.0f;
         in.scale = (maxScale > minScale) ? rng.Range(minScale, maxScale) : minScale;
         in.variant = rng.Range(0, (int)shapes_.size());
+        LeanWith(in, inv, n, alignToSurface);   // Scatter leans with the ground like the paint brush does
         instances.push_back(in);
         index_[KeyOf(in.position)].push_back((int)instances.size() - 1);
         Touch(KeyOf(in.position));

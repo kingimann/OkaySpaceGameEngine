@@ -173,6 +173,7 @@ add_library(okay_engine
     src/Components/Draggable.cpp
     src/Components/Terrain.cpp
     src/Components/Foliage.cpp
+    src/Components/ParticleSystem.cpp
     src/Components/Cable.cpp
     src/Components/Decal.cpp
     src/Components/VoxelTerrain.cpp
@@ -345,6 +346,7 @@ add_library(okay_engine
     src/Texture/Dds.cpp
     src/Texture/Stream.cpp
     src/Texture/Export.cpp
+    src/Render/GpuTexture.cpp
     src/Optimize/SceneOptimizationReport.cpp
     src/Testing/TestRegistry.cpp
     src/Testing/PlayTest.cpp

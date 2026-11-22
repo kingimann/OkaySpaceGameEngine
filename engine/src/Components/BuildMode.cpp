@@ -5,6 +5,7 @@
 #include "okay/Components/Buildable.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/Canvas.hpp"
@@ -375,10 +376,11 @@ void LogicSource::Update(float dt) {
         case Kind::Relay: break;
         case Kind::Button: {
             Scene* s = GetScene();
-            const bool key = pressKey && Input::GetKeyDown(pressKey);
-            // The pad's X also turns pieces in build mode, so it only presses outside it.
-            const bool pad = pressPadButton >= 0 && Input::GetGamepadButtonDown(pressPadButton) &&
-                             !(s && AnyBuildModeActive(*s));
+            // The pad's X also turns pieces in build mode, so no controller button presses it there: neither its
+            // own pad button nor the Interact action's (E follows the shared action, which is also pad X).
+            const bool building = s && AnyBuildModeActive(*s);
+            const bool key = UseKeyDown(pressKey, /*pads=*/!building);
+            const bool pad = pressPadButton >= 0 && !building && Input::GetGamepadButtonDown(pressPadButton);
             if ((key || pad) && AimedAt()) Press();
             if (!toggle && m_out) { m_timer -= dt; if (m_timer <= 0.0f) m_out = false; }
             break;

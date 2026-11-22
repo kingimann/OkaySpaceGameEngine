@@ -639,7 +639,8 @@ void RegisterParticleSystem() {
      .AddFloat("collisionY", &PS::collisionY).Range(-kBig, kBig, 0.1)
      .AddFloat("bounce", &PS::bounce).Range(0, 1, 0.01)
      .AddFloat("collisionFriction", &PS::collisionFriction).Range(0, 1, 0.01)
-     .AddFloat("collisionLifeLoss", &PS::collisionLifeLoss).Range(0, 1, 0.01);
+     .AddFloat("collisionLifeLoss", &PS::collisionLifeLoss).Range(0, 1, 0.01)
+     .AddBool("collideTerrain", &PS::collideTerrain).Tooltip("With collision on, also bounce off every Terrain in the scene (hills and slopes)");
     b.Commit();
 }
 

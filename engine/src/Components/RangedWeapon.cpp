@@ -5,6 +5,7 @@
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/GameInput.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Physics/Physics3D.hpp"
@@ -169,9 +170,10 @@ void RangedWeapon::Update(float dt) {
     if (!IsLocallyControlled(gameObject)) return;
     if (GameInputBlocked(gameObject ? gameObject->scene() : nullptr)) return;
     if (Input::UICaptured()) return;
-    if (reloadKey && Input::GetKeyDown(reloadKey)) Reload();
-    const bool mouse = fireButton >= 0 && Input::GetMouseButton(fireButton);
-    const bool key = fireKey && Input::GetKey(fireKey);
+    // "Reload" and "Fire" actions: these keys until the player rebinds them, then the new bindings.
+    if (InputActions::ControlKeyDown("Reload", reloadKey)) Reload();
+    const bool mouse = InputActions::ControlMouse("Fire", fireButton);
+    const bool key = InputActions::ControlKey("Fire", fireKey);
     if (mouse || key) Fire();
 }
 

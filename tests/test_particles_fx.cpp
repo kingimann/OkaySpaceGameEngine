@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include <sstream>
+#include "okay/Components/Terrain.hpp"
 
 using namespace okay;
 
@@ -328,6 +329,80 @@ int main() {
         CHECK(r2 && r2->simulationSpace == ParticleSystem::SimulationSpace::Local);
         CHECK(r2 && r2->colorGradient.count <= ParticleGradient::kMaxStops);
         CHECK(r2 && r2->noiseStrength == 2.0f);
+    }
+
+    // ---- Collide with Terrain: particles land on hills and roll down slopes ----
+    {
+        Scene scene("TerrainHit"); scene.physicsEnabled = false;
+        auto* tg = scene.CreateGameObject("Ground");
+        auto* terr = tg->AddComponent<Terrain>();
+        terr->Resize(32); terr->size = 40.0f; terr->Flatten(5.0f); terr->Apply();
+        auto* eg = scene.CreateGameObject("Sparks");
+        eg->transform->SetPosition({0.0f, 10.0f, 0.0f});
+        auto* ps = eg->AddComponent<ParticleSystem>();
+        scene.Update(0.0f);
+        ps->emissionRate = 0.0f; ps->startLifetime = 20.0f; ps->velocityRandom = 0.0f; ps->speedRandom = 0.0f;
+        ps->startVelocity = {0.0f, 0.0f, 0.0f}; ps->gravity = {0.0f, -9.8f, 0.0f}; ps->windInfluence = 0.0f;
+        ps->collision = true; ps->collisionY = 0.0f; ps->bounce = 0.0f;
+        CHECK(!ps->collideTerrain);   // off by default: old scenes behave as before
+        // Plane only: it falls through the hill to the plane at y = 0.
+        ps->Emit(1);
+        for (int i = 0; i < 120; ++i) ps->Update(1.0f / 60.0f);
+        float y = -99.0f;
+        for (const auto& p : ps->Particles()) if (p.alive) y = p.position.y;
+        CHECK_NEAR(y, 0.0f, 0.05f);
+        // With Collide with Terrain it stops on the terrain top at y = 5.
+        ps->Restart(); ps->collideTerrain = true;
+        ps->Emit(1);
+        for (int i = 0; i < 120; ++i) ps->Update(1.0f / 60.0f);
+        for (const auto& p : ps->Particles()) if (p.alive) y = p.position.y;
+        CHECK_NEAR(y, 5.0f, 0.05f);
+        // A moved and scaled terrain: its top is at 2 + 5 * 2 = 12.
+        tg->transform->SetPosition({0.0f, 2.0f, 0.0f});
+        tg->transform->SetScale({1.0f, 2.0f, 1.0f});
+        eg->transform->SetPosition({0.0f, 20.0f, 0.0f});
+        ps->Restart(); ps->Emit(1);
+        for (int i = 0; i < 180; ++i) ps->Update(1.0f / 60.0f);
+        for (const auto& p : ps->Particles()) if (p.alive) y = p.position.y;
+        CHECK_NEAR(y, 12.0f, 0.05f);
+        // A slope rising to +X: a particle that lands on it slides off down to -X and keeps to the surface.
+        tg->transform->SetPosition({0.0f, 0.0f, 0.0f});
+        tg->transform->SetScale({1.0f, 1.0f, 1.0f});
+        for (int z = 0; z < terr->Dim(); ++z)
+            for (int x = 0; x < terr->Dim(); ++x) terr->SetHeight(x, z, 10.0f + x * terr->CellSize() * 0.5f);   // 10 at -X .. 30 at +X
+        ps->bounce = 0.2f; ps->collisionFriction = 0.0f;
+        eg->transform->SetPosition({5.0f, 40.0f, 0.0f});
+        ps->Restart(); ps->Emit(1);
+        float x = 5.0f; bool above = true;
+        for (int i = 0; i < 240; ++i) {
+            ps->Update(1.0f / 60.0f);
+            for (const auto& p : ps->Particles())
+                if (p.alive) {
+                    x = p.position.x;
+                    if (std::fabs(p.position.x) < 19.0f && p.position.y < terr->SampleHeight(p.position.x, p.position.z) - 0.01f) above = false;
+                }
+        }
+        CHECK(x < 4.0f);   // it moved downhill
+        CHECK(above);      // and never sank into the ground
+        // Off again (or with collision off) the terrain is ignored.
+        ps->collision = false;
+        ps->Restart(); ps->Emit(1);
+        for (int i = 0; i < 240; ++i) ps->Update(1.0f / 60.0f);   // 4 s: from 40 m it would be far below the hill top
+        for (const auto& p : ps->Particles()) if (p.alive) y = p.position.y;
+        CHECK(y < 0.0f);
+        // Saved and loaded with the scene; scenes without it load with it off.
+        ps->collision = true;
+        const std::string text = SceneSerializer::Serialize(scene);
+        CHECK(text.find("particlesterrain 1") != std::string::npos);
+        Scene loaded("L"); std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* r = loaded.Find("Sparks") ? loaded.Find("Sparks")->GetComponent<ParticleSystem>() : nullptr;
+        CHECK(r && r->collideTerrain && r->collision);
+        ps->collideTerrain = false;
+        CHECK(SceneSerializer::Serialize(scene).find("particlesterrain") == std::string::npos);
+        // A preset starts from a clean slate.
+        ps->collideTerrain = true; ps->ApplyPreset(ParticleSystem::Preset::Sparks);
+        CHECK(!ps->collideTerrain);
     }
 
     TEST_MAIN_RESULT();

@@ -44,10 +44,10 @@ What the scene's Post-processing section actually draws:
 
 | | OpenGL | Direct3D 11 | Direct3D 12 | Software |
 |---|---|---|---|---|
-| Linear lighting, exposure, tonemap, bloom, colour grading, FXAA | yes | yes | no | no |
+| Linear lighting, exposure, tonemap, bloom, colour grading, FXAA | yes | yes | no | exposure, tonemap, bloom, grading and FXAA yes (8-bit, no linear lighting) |
 | Vignette amount | yes | yes | yes | yes |
-| Ambient occlusion in this section | yes | yes (new, unrun on a GPU) | no | no |
-| Depth of field | yes | yes (new, unrun on a GPU) | no | no |
+| Ambient occlusion in this section | yes | yes (new, unrun on a GPU) | no | yes (its own CPU algorithm) |
+| Depth of field | yes | yes (new, unrun on a GPU) | no | yes (perspective cameras only) |
 
 Fog is drawn on all four. The vignette amount is an overlay when the post chain
 itself does not run, so it still shows on Direct3D 12 and the software renderer.
@@ -79,7 +79,7 @@ SSAO → bloom → exposure / tonemap / grading / vignette → depth of field �
 | **Vignette** | Darkens the edges and corners, with a **Smoothness** for how far in it reaches. 0 = off. The post chain draws it when it runs; otherwise it is an overlay that looks the same on every renderer. |
 | **Anti-aliasing (FXAA)** | A luma-driven edge filter on the finished frame. |
 | **Ambient Occlusion (SSAO)** | Darkens creases and contact points: **Radius** (world units), **Intensity** and **Power** (1 = as before; higher keeps only deep creases dark, lower spreads a lighter shadow). OpenGL, and Direct3D 11 (new, unrun on a GPU). |
-| **Depth of Field** | Blurs outside the **Focus Range** either side of the **Focus Distance**. OpenGL, and Direct3D 11 (new, unrun on a GPU). Off unless the switch is on. |
+| **Depth of Field** | Blurs outside the **Focus Range** either side of the **Focus Distance**. OpenGL, the software renderer (perspective cameras), and Direct3D 11 (new, unrun on a GPU). Off unless the switch is on. A pixel nothing covers stays transparent, so the sky behind the frame shows through. |
 
 A lightning strike (see Weather) spikes the exposure for a few frames, so a
 storm blinks even with every other effect off.
@@ -205,12 +205,12 @@ The machine-readable version of the "ignored switch" part is `engine/include/oka
 | Sun shadows | Done | Done | Done | Done | Software: `RenderShadowMap` + `ShadowFactor`, drawn by default (the per-pixel path is chosen automatically while a shadow map exists); GL/D3D11: `PlanShadows` (`ShadowSetup.hpp`); D3D12: `ComputeDirectionalShadowVP` |
 | Sun shadow cascades | Done | Done | Done | Missing | Software: `ShadowCascades()`; GL/D3D11: `PlanShadows`; D3D12 draws one map and reads only `ShadowDistance` |
 | Spot, point and area light shadows | Done | Done | Done | Missing | Software: `RenderLocalShadowMaps` + `LocalShadowFactor` (same automatic per-pixel path); GL: `localShadow` in `kFrag`; D3D11: `localShadow` in `kHLSL`; D3D12: `lsh = 1.0` for every non-sun light |
-| Ambient occlusion (SSAO) | Partial | Done | Partial | Missing | Software: `ApplySSAO` (process switch only, the scene's SSAO switch is not read; a different algorithm); GL: `kSsaoFrag`, `computeAo`; D3D11: `PSAo` pass added in this change (UNVERIFIED); D3D12: no code |
+| Ambient occlusion (SSAO) | Partial | Done | Partial | Missing | Software: `ApplySSAO` (the process switch, or the scene's SSAO switch with its radius, intensity and AO Power; a different algorithm); GL: `kSsaoFrag`, `computeAo`; D3D11: `PSAo` pass added in this change (UNVERIFIED); D3D12: no code |
 | Tonemap and exposure | Done | Done | Done | Missing | Software: `ApplyScenePost` (scene exposure, curve and tonemap switch, plus the process switch); GL: `kUberFrag`; D3D11: `PSUber`; D3D12: none |
 | Bloom | Done | Done | Done | Missing | Software: `ApplyBloom`, run when the scene's Bloom or the process switch is on (the scene's threshold is clamped to 0.95: no HDR); GL: `kBrightFrag` + `kBlurFrag`; D3D11: `PSDown` + `PSBlur`; D3D12: none |
 | Vignette | Done | Done | Done | Partial | GL/D3D11: in the uber pass, with smoothness. Software: `ApplyScenePost`, same maths and smoothness, sets `PostVignetteHandled` so the host skips its overlay. D3D12: the host paints the amount; smoothness is ignored |
 | Colour grading | Done | Done | Done | Missing | Software: `ApplyScenePost` (temperature, tint, saturation, contrast, lift/gamma/gain) and `ApplyColorGrade` (process switch); GL: `kUberFrag`; D3D11: `PSUber`; D3D12: none |
-| Depth of field | Missing | Done | Partial | Missing | GL: `kDofFrag`; D3D11: `PSDof` (shared maths in `DofMath.hpp`, compile-checked, UNVERIFIED on a GPU); the others: no code |
+| Depth of field | Done | Done | Partial | Missing | Software: `ApplySceneDof` (perspective cameras; own 9-tap binomial blur, same focus maths, `tests/test_software_scene_post.cpp`); GL: `kDofFrag` with the premultiplied `kDofCopyFrag` / `kDofBlurFrag` (`tests/test_gl_post_alpha.cpp` on Mesa under Xvfb); D3D11: `PSDof`, `PSDofCopy`, `PSDofBlur` (shared maths in `DofMath.hpp`, compile-checked, UNVERIFIED on a GPU); D3D12: no code |
 | Anti-aliasing (FXAA) | Done | Done | Done | Missing | Software: `ApplyFXAA` (scene's FXAA switch or the process switch; a different, cheaper algorithm); GL: `kFxaaFrag`; D3D11: `PSFxaa`; D3D12: none |
 | MSAA | Missing | Done | Done | Done | GL: `EnsureTargets(samples)`; D3D11: `EnsureTargets` clamps to what the device supports; D3D12: `Impl::msaa` picks up to 4x. Software has no MSAA |
 | Fog | Done | Done | Done | Done | Software: `FogFactor` in `RenderMeshes`; GL and D3D11/D3D12 HLSL: same maths in the mesh shader |
@@ -223,16 +223,17 @@ The machine-readable version of the "ignored switch" part is `engine/include/oka
 ### Notes that matter
 
 - **Software shadows now work by default.** Shadows are only sampled on the per-pixel lighting path, and `PerPixelLighting()` is still off by default. So a new switch, `ShadowsUsePerPixel()` (default **on**), makes a mesh that receives shadows take the per-pixel path while the frame has a shadow map (a sun or a spot/point light that casts, with Shadows on). With no shadow-casting light, nothing changes and the cheap path stays. To go back: set `ShadowsUsePerPixel()` to false (the per-vertex frame, no shadows) or turn Shadows off. I picked this over drawing shadows on the vertex path because vertex shading cannot show a shadow edge smaller than a triangle (a big floor would be wrong), and the per-pixel code is already tested. Cost, measured here (4 core CPU shared with other jobs, 640x360, 41 meshes, one sun shadow, `tests/test_software_default_shadows.cpp`): about 38 to 42 ms per frame against 31 ms per vertex without shadows (1.2 to 1.3 times). Not measured: a big imported model, or a weak CPU.
-- **Software now reads the scene's Post-processing section** for the parts that are cheap on a CPU: exposure, the tonemap curve (None, ACES, Filmic) and the scene's Tonemap switch, colour grading (temperature, tint, saturation, contrast, lift, gamma, gain), the vignette with its smoothness, Bloom and FXAA (`PlanScenePost`, `ApplyScenePost`). Fog was already read. The frame is 8-bit and shaded in display space, so these curves act on 0..1 values and will not match the GPU pixel for pixel (no HDR, no linear lighting). **Still not read by software:** the scene's Ambient Occlusion switch (only the process switch works) and Depth of field. Depth of field was **not attempted**: it needs a per-pixel depth blur and the software depth buffer is held at the supersampled size; it is left for a later change.
+- **Software now reads the scene's Post-processing section** for the parts that are cheap on a CPU: exposure, the tonemap curve (None, ACES, Filmic) and the scene's Tonemap switch, colour grading (temperature, tint, saturation, contrast, lift, gamma, gain), the vignette with its smoothness, Bloom and FXAA (`PlanScenePost`, `ApplyScenePost`). Fog was already read. The frame is 8-bit and shaded in display space, so these curves act on 0..1 values and will not match the GPU pixel for pixel (no HDR, no linear lighting). The scene's Ambient Occlusion switch is read too (lighting change #1022). **Depth of field** was added later (2026-11, `ApplySceneDof`): a half-resolution premultiplied copy, two rounds of a 9-tap binomial blur, mixed back by the same circle of confusion as the GPU (`DofMath.hpp`). The distance is the straight-line eye distance, like the GPU depth image: the W-buffer gives view depth and `DofRayScale` turns it into distance along the pixel's ray. It needs a perspective camera: an orthographic one has the same W everywhere, so the pass is skipped. It runs at the supersampled size when supersampling is on.
 - **Ambient occlusion has no normals** (the same on OpenGL and the new Direct3D 11 pass): it compares depths only, so a floor seen at a slant darkens a little by itself. The unit test measures about 0.72 on open floor against 0.69 in a box crease. Radius and Intensity control how strong it looks.
 - **Direct3D 11 is now level with OpenGL on ambient occlusion, on paper.** The pass was added in this change. It compiles under MinGW. It has never run on a GPU. Treat it as UNVERIFIED until someone with Windows looks at a frame. It runs only when the post chain runs and an Ambient Occlusion switch is on (the scene's post.ssao, or the Build Settings switch).
 - **Direct3D 12 is a preview.** No post-processing, one sun shadow map, no spot or point shadows, CPU skinning. Build Settings now says so.
-- **Depth of field** is OpenGL, plus a new Direct3D 11 pass (`DofMath.hpp`) that compiles under MinGW and has never run on a GPU. It reuses the ambient occlusion depth image, so turning it on without ambient occlusion still runs the half-resolution depth pass. Software depth of field was skipped on purpose (see above).
+- **Depth of field** is OpenGL, the software renderer, plus a Direct3D 11 pass (`DofMath.hpp`) that compiles under MinGW and has never run on a GPU. On the GPU it reuses the ambient occlusion depth image, so turning it on without ambient occlusion still runs the half-resolution depth pass.
+- **Fixed (2026-11): depth of field turned the background black on OpenGL and Direct3D 11 when the GPU sky pass is off.** The editor and the player render with a transparent clear. When the GPU does not draw the sky (a camera that clears to a solid colour, Sky off, an orthographic camera in the player, the Scene view's sky toggle off) they paint the background behind the frame. The blurred copy was written with alpha 1, so every out-of-focus empty pixel became an opaque black blur over that background. With the GPU sky pass on (the usual Game view) the sky is part of the frame and was not affected. The copy and the blur now carry the coverage premultiplied, and the mix is premultiplied: an empty pixel stays empty and a far object fades softly into the sky. OpenGL is checked by `tests/test_gl_post_alpha.cpp` (Mesa software GL under Xvfb; it failed before the fix with the empty corner at alpha 255, black). The Direct3D 11 change is the same maths, compile-checked only, UNVERIFIED.
 - **Every GPU frame is read back** to the CPU. That is a cost per frame. The profiler's "GPU ms" is CPU wall time.
 
 ### Who is behind on what
 
-- Software is behind OpenGL on: depth of field, the scene's SSAO switch, MSAA, GPU skinning, the sky disc and clouds. It is ahead on one thing: it is the only one with automated pixel tests.
+- Software is behind OpenGL on: MSAA, GPU skinning, the sky disc and clouds, depth of field with an orthographic camera, Bloom Softness. It is ahead on one thing: it is the only one with automated pixel tests.
 - OpenGL is the reference for the GPU side. It misses nothing in the table except real swap-chain presentation.
 - Direct3D 11 is level with OpenGL on paper (its new ambient occlusion and depth of field passes are unrun).
 - Direct3D 12 is behind on almost everything after the mesh pass. Do not ship a game on it expecting the D3D11 look.
@@ -280,4 +281,4 @@ What cannot be done here: compile the HLSL (`D3DCompile` is Windows only), run D
 1. Put the new D3D11 ambient occlusion and depth of field in front of a real Windows GPU and fix what the first frame shows.
 2. Direct3D 12 post chain: steps 2 to 6 of the plan above, or park D3D12 for good and say so.
 3. Software: the scene's Ambient Occlusion switch, and a cheap depth of field (a depth-driven blur on the downsampled frame).
-4. Still open on GL and D3D11, in order of value: shadow cascade blending (visible seam between cascades), auto-exposure, screen-space contact shadows. The software renderer and Direct3D 12 ignore Bloom Softness and AO Power.
+4. Still open on GL and D3D11, in order of value: shadow cascade blending (visible seam between cascades), auto-exposure, screen-space contact shadows. Direct3D 12 ignores Bloom Softness and AO Power; the software renderer ignores Bloom Softness.

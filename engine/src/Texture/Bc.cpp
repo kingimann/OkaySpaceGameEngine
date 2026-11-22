@@ -8,12 +8,12 @@
 
 namespace okay::tex {
 
-int BcBlockBytes(BcFormat f) { return (f == BcFormat::BC1 || f == BcFormat::BC4) ? 8 : 16; }
+int BcBlockBytes(BcFormat f) { return (f == BcFormat::BC1 || f == BcFormat::BC4) ? 8 : 16; }   // BC2 / BC3 / BC5: 16
 
 float BcBytesPerPixel(BcFormat f) { return BcBlockBytes(f) / 16.0f; }
 
 const char* BcName(BcFormat f) {
-    switch (f) { case BcFormat::BC1: return "bc1"; case BcFormat::BC3: return "bc3"; case BcFormat::BC4: return "bc4"; case BcFormat::BC5: return "bc5"; }
+    switch (f) { case BcFormat::BC1: return "bc1"; case BcFormat::BC2: return "bc2"; case BcFormat::BC3: return "bc3"; case BcFormat::BC4: return "bc4"; case BcFormat::BC5: return "bc5"; }
     return "?";
 }
 
@@ -21,7 +21,7 @@ bool ParseBcFormat(const char* name, BcFormat* out) {
     if (!name) return false;
     std::string n;
     for (const char* p = name; *p; ++p) n += char(std::tolower(static_cast<unsigned char>(*p)));
-    static const BcFormat all[] = {BcFormat::BC1, BcFormat::BC3, BcFormat::BC4, BcFormat::BC5};
+    static const BcFormat all[] = {BcFormat::BC1, BcFormat::BC2, BcFormat::BC3, BcFormat::BC4, BcFormat::BC5};
     for (BcFormat f : all) if (n == BcName(f)) { if (out) *out = f; return true; }
     return false;
 }
@@ -44,11 +44,12 @@ Rgb Expand565(unsigned c) {
     return {int((r << 3) | (r >> 2)), int((g << 2) | (g >> 4)), int((b << 3) | (b >> 2))};
 }
 
-// The decoder's palette; `transparent` is set when index 3 means "no colour".
-void Bc1Palette(unsigned c0, unsigned c1, Rgb pal[4], bool* transparent) {
+// The decoder's palette; `transparent` is set when index 3 means "no colour". `forceFour`: the colour half of a BC2 /
+// BC3 block, which always uses the four colour palette.
+void Bc1Palette(unsigned c0, unsigned c1, Rgb pal[4], bool* transparent, bool forceFour = false) {
     Rgb a = Expand565(c0), b = Expand565(c1);
     pal[0] = a; pal[1] = b;
-    if (c0 > c1) {
+    if (c0 > c1 || forceFour) {
         pal[2] = {(2 * a.r + b.r) / 3, (2 * a.g + b.g) / 3, (2 * a.b + b.b) / 3};
         pal[3] = {(a.r + 2 * b.r) / 3, (a.g + 2 * b.g) / 3, (a.b + 2 * b.b) / 3};
         *transparent = false;
@@ -129,16 +130,25 @@ bool Bc1Refine(const Block1& B, const Cand& cur, bool threeColor, double* e0, do
 
 } // namespace
 
-void DecodeBc1Block(const std::uint8_t in[8], std::uint8_t rgba[64]) {
+namespace {
+void DecodeColor(const std::uint8_t in[8], std::uint8_t rgba[64], bool forceFour) {
     unsigned c0 = in[0] | (unsigned(in[1]) << 8), c1 = in[2] | (unsigned(in[3]) << 8);
     Rgb pal[4]; bool tr;
-    Bc1Palette(c0, c1, pal, &tr);
+    Bc1Palette(c0, c1, pal, &tr, forceFour);
     std::uint32_t bits = in[4] | (std::uint32_t(in[5]) << 8) | (std::uint32_t(in[6]) << 16) | (std::uint32_t(in[7]) << 24);
     for (int i = 0; i < 16; ++i) {
         unsigned k = (bits >> (2 * i)) & 3u;
         rgba[i * 4 + 0] = std::uint8_t(pal[k].r); rgba[i * 4 + 1] = std::uint8_t(pal[k].g); rgba[i * 4 + 2] = std::uint8_t(pal[k].b);
         rgba[i * 4 + 3] = (tr && k == 3) ? 0 : 255;
     }
+}
+} // namespace
+
+void DecodeBc1Block(const std::uint8_t in[8], std::uint8_t rgba[64]) { DecodeColor(in, rgba, false); }
+void DecodeBcColorBlock(const std::uint8_t in[8], std::uint8_t rgba[64]) { DecodeColor(in, rgba, true); }
+
+void DecodeBc2AlphaBlock(const std::uint8_t in[8], std::uint8_t a[16]) {
+    for (int i = 0; i < 16; ++i) a[i] = std::uint8_t(((in[i / 2] >> ((i & 1) * 4)) & 15) * 17);
 }
 
 void EncodeBc1Block(const std::uint8_t rgba[64], std::uint8_t out[8], const BcEncodeOptions& opt) {
@@ -379,6 +389,12 @@ std::vector<std::uint8_t> EncodeBc(const std::uint8_t* rgba, int w, int h, BcFor
             std::uint8_t v[16];
             switch (f) {
                 case BcFormat::BC1: EncodeBc1Block(blk, o, opt); break;
+                case BcFormat::BC2:
+                    for (int i = 0; i < 16; i += 2) {
+                        auto q = [&](int t) { return unsigned((blk[t * 4 + 3] * 15 + 127) / 255); };
+                        o[i / 2] = std::uint8_t(q(i) | (q(i + 1) << 4));
+                    }
+                    EncodeBc1Block(blk, o + 8, BcEncodeOptions{opt.quality, 0}); break;
                 case BcFormat::BC3: chan(3, v); EncodeBc4Block(v, o, opt); EncodeBc1Block(blk, o + 8, BcEncodeOptions{opt.quality, 0}); break;
                 case BcFormat::BC4: chan(0, v); EncodeBc4Block(v, o, opt); break;
                 case BcFormat::BC5: chan(0, v); EncodeBc4Block(v, o, opt); chan(1, v); EncodeBc4Block(v, o + 8, opt); break;
@@ -402,7 +418,8 @@ std::vector<std::uint8_t> DecodeBc(const std::uint8_t* data, std::size_t size, i
             std::uint8_t a[16], b[16];
             switch (f) {
                 case BcFormat::BC1: DecodeBc1Block(in, blk); break;
-                case BcFormat::BC3: DecodeBc1Block(in + 8, blk); DecodeBc4Block(in, a); for (int i = 0; i < 16; ++i) blk[i * 4 + 3] = a[i]; break;
+                case BcFormat::BC2: DecodeBcColorBlock(in + 8, blk); DecodeBc2AlphaBlock(in, a); for (int i = 0; i < 16; ++i) blk[i * 4 + 3] = a[i]; break;
+                case BcFormat::BC3: DecodeBcColorBlock(in + 8, blk); DecodeBc4Block(in, a); for (int i = 0; i < 16; ++i) blk[i * 4 + 3] = a[i]; break;
                 case BcFormat::BC4: DecodeBc4Block(in, a); for (int i = 0; i < 16; ++i) { blk[i*4] = a[i]; blk[i*4+1] = 0; blk[i*4+2] = 0; blk[i*4+3] = 255; } break;
                 case BcFormat::BC5: DecodeBc4Block(in, a); DecodeBc4Block(in + 8, b);
                     for (int i = 0; i < 16; ++i) { blk[i*4] = a[i]; blk[i*4+1] = b[i]; blk[i*4+2] = 0; blk[i*4+3] = 255; } break;

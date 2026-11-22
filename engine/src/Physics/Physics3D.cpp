@@ -10,6 +10,7 @@
 #include "okay/Physics/ColliderShapes3D.hpp"
 #include "okay/Physics/ConvexContact.hpp"
 #include "okay/Physics/TriMesh.hpp"
+#include "okay/Core/Jobs.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Components/Joint3D.hpp"
 #include "okay/Math/JointLimit.hpp"
@@ -27,6 +28,7 @@
 #include <cmath>
 #include <functional>
 #include <iterator>
+#include <typeinfo>
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
@@ -273,7 +275,27 @@ Vec3 SupportBase(Collider3D* col, const Vec3& dir) {
         Vec3 end = Vec3::Dot(dir, b - a) >= 0.0f ? b : a;
         return end + d * c->WorldRadius();
     }
-    return OBB3Support(MakeOBB3(static_cast<BoxCollider3D*>(col)), dir);
+    if (col->shape() == Collider3D::Shape::Box) return OBB3Support(MakeOBB3(static_cast<BoxCollider3D*>(col)), dir);
+    // Every other shape must not be read as a box: a Compound's part text sits where a box keeps its size, so the
+    // "size" was a heap address and the answer changed from run to run (the floor rescue then moved compound bodies
+    // differently each run, and a fast compound fell through thin floors).
+    if (col->shape() == Collider3D::Shape::Compound) {   // the furthest point of any part
+        auto* cc = static_cast<CompoundCollider3D*>(col);
+        const int n = cc->PartCount();
+        if (n == 0) return col->WorldCenter();
+        Vec3 best = cc->PartSupport(0, dir);
+        float bestD = Vec3::Dot(best, dir);
+        for (int i = 1; i < n; ++i) {
+            const Vec3 p = cc->PartSupport(i, dir);
+            const float pd = Vec3::Dot(p, dir);
+            if (pd > bestD) { bestD = pd; best = p; }
+        }
+        return best;
+    }
+    // Plane, Heightfield, a triangle mesh without a hull: the corner of the world bounding box furthest along dir.
+    Vec3 mn, mx;
+    col->WorldAABB(mn, mx);
+    return {dir.x >= 0.0f ? mx.x : mn.x, dir.y >= 0.0f ? mx.y : mn.y, dir.z >= 0.0f ? mx.z : mn.z};
 }
 // The same, grown by the collider's contact offset (a skin).
 Vec3 SupportOf(Collider3D* col, const Vec3& dir) {
@@ -819,6 +841,23 @@ void Physics3D::BeginDebugFrame() {
     MeshCollider3D::AdvanceEpoch();   // mesh colliders re-check their mesh data this frame
 }
 
+namespace {
+// The per-collider bounding-box pass runs on EngineJobs() once a scene has this many
+// colliders; below it the job hand-off costs more than it saves (measured with
+// `test_jobs_adoption bench`). Each chunk is kBoundsGrain colliders.
+constexpr std::size_t kParallelBoundsMin = 256;
+constexpr std::size_t kBoundsGrain = 64;
+
+// Collider types whose WorldAABB only reads (their transform chain, their own fields and
+// the scene's quality). Mesh, convex hull, compound and heightfield colliders keep parsed
+// or built data in mutable caches, so they are done on the calling thread.
+bool BoundsAreReadOnly(const Collider3D& c) {
+    const std::type_info& t = typeid(c);
+    return t == typeid(BoxCollider3D) || t == typeid(SphereCollider3D) || t == typeid(CapsuleCollider3D) ||
+           t == typeid(CylinderCollider3D) || t == typeid(ConeCollider3D) || t == typeid(PlaneCollider3D);
+}
+} // namespace
+
 void Physics3D::Step(Scene& scene, float dt) {
     if (dt <= 0.0f) return;
     if (quality == PhysicsQuality::Improved && dt > kMaxSolveSlice * 1.001f) {
@@ -923,12 +962,34 @@ void Physics3D::StepSlice(Scene& scene, float dt) {
     std::unordered_set<Collider3D*> aliveSet;
     aliveSet.reserve(nc * 2 + 1);
     auto fin3 = [](const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); };
-    for (std::size_t i = 0; i < nc; ++i) {
+    auto bounds = [&](std::size_t i) {   // writes only slot i
         colliders[i]->WorldAABB(aabbMin[i], aabbMax[i]);
-        aliveSet.insert(colliders[i]);
         const Rigidbody3D* r = colliders[i]->gameObject->GetComponent<Rigidbody3D>();
         finite[i] = fin3(aabbMin[i]) && fin3(aabbMax[i]) &&
                     (!r || (fin3(r->velocity) && fin3(r->angularVelocity)));
+    };
+    JobSystem& jobs = EngineJobs();
+    if (nc >= kParallelBoundsMin && jobs.WorkerCount() > 0) {
+        // On the calling thread first: the colliders with caches of their own, and every world-matrix
+        // cache brought up to date (reading a stale one rebuilds it, and parents are shared). After
+        // that the read-only colliders only read, so they can run on any thread; each writes its
+        // own slots, so the result is the same bits whatever the worker count.
+        std::vector<char> onWorkers(nc, 0);
+        for (std::size_t i = 0; i < nc; ++i) {
+            if (BoundsAreReadOnly(*colliders[i])) {
+                onWorkers[i] = 1;
+                if (colliders[i]->transform) colliders[i]->transform->WorldVersion();
+            } else {
+                bounds(i);
+            }
+        }
+        jobs.ParallelFor(0, nc, kBoundsGrain, [&](std::size_t b, std::size_t e) {
+            for (std::size_t i = b; i < e; ++i) if (onWorkers[i]) bounds(i);
+        });
+        for (std::size_t i = 0; i < nc; ++i) aliveSet.insert(colliders[i]);
+    } else {
+        // The serial path is the old single loop, so it costs what it did before the job split.
+        for (std::size_t i = 0; i < nc; ++i) { bounds(i); aliveSet.insert(colliders[i]); }
     }
 
     // Broad phase: the pairs whose precomputed AABBs overlap (a NaN body, left out by `finite`, touches nothing), in

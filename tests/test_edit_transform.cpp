@@ -359,5 +359,95 @@ int main() {
         CHECK(finite);
     }
 
+    // ---- Round 3: transform orientation (Global / Local / Normal) ----
+    {
+        auto ortho = [](const OrientAxes& a) {
+            for (int i = 0; i < 3; ++i) {
+                if (std::fabs(a[i].Magnitude() - 1.0f) > 1e-4f) return false;
+                for (int j = i + 1; j < 3; ++j) if (std::fabs(Vec3::Dot(a[i], a[j])) > 1e-4f) return false;
+            }
+            return Near(Vec3::Cross(a[0], a[1]), a[2]);   // right-handed
+        };
+        Mesh cube = Mesh::Cube(1.0f);
+        const OrientAxes g = OrientationAxes(cube, {0}, Mat4::Identity(), EditOrient::Global);
+        CHECK(Near(g[0], Vec3{1, 0, 0}) && Near(g[1], Vec3{0, 1, 0}) && Near(g[2], Vec3{0, 0, 1}));
+        CHECK(std::string(EditOrientName(EditOrient::Normal)) == "Normal");
+        // Local: the object's rotation (90 degrees about Y turns X to -Z).
+        const Mat4 rotY = Mat4::Rotate(Quat::AngleAxis(90.0f, Vec3{0, 1, 0}));
+        const OrientAxes l = OrientationAxes(cube, {0}, rotY, EditOrient::Local);
+        CHECK(ortho(l) && Near(l[0], rotY.MultiplyVector(Vec3{1, 0, 0})) && Near(l[1], Vec3{0, 1, 0}));
+        // A scaled, rotated object: still unit axes at right angles.
+        const OrientAxes ls = OrientationAxes(cube, {0}, Mat4::TRS(Vec3{5, 0, 0}, Quat::AngleAxis(30.0f, Vec3{0, 0, 1}), Vec3{3, 1, 0.5f}), EditOrient::Local);
+        CHECK(ortho(ls));
+        // Normal, Face mode: the top face's two triangles (6 and 7) give Z = up.
+        const std::vector<int> top = {6, 7};
+        const OrientAxes n = OrientationAxes(cube, {}, Mat4::Identity(), EditOrient::Normal, &top);
+        CHECK(ortho(n) && Near(n[2], Vec3{0, 1, 0}));
+        // Normal from the four top vertices (the side faces' normals cancel out).
+        Mesh welded = Mesh::Cube(1.0f); welded.WeldVertices();
+        const OrientAxes nv = OrientationAxes(welded, TopVerts(welded), Mat4::Identity(), EditOrient::Normal);
+        CHECK(ortho(nv) && Near(nv[2], Vec3{0, 1, 0}));
+        // On a rotated object the normal turns with it (90 degrees about Z: up becomes -X).
+        const Mat4 rotZ = Mat4::Rotate(Quat::AngleAxis(90.0f, Vec3{0, 0, 1}));
+        const OrientAxes nr = OrientationAxes(cube, {}, rotZ, EditOrient::Normal, &top);
+        CHECK(Near(nr[2], Vec3{-1, 0, 0}));
+        // Hostile: no selection, bad indices, a zero-area face, a broken matrix: the world axes.
+        CHECK(Near(OrientationAxes(cube, {}, Mat4::Identity(), EditOrient::Normal)[2], Vec3{0, 0, 1}));
+        const std::vector<int> badTris = {-3, 999};
+        CHECK(Near(OrientationAxes(cube, {-1, 500}, Mat4::Identity(), EditOrient::Normal, &badTris)[0], Vec3{1, 0, 0}));
+        Mesh flat; flat.vertices = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}}; flat.triangles = {0, 1, 2};
+        CHECK(Near(OrientationAxes(flat, {0, 1, 2}, Mat4::Identity(), EditOrient::Normal)[2], Vec3{0, 0, 1}));
+        Mat4 nanM = Mat4::Identity(); nanM.at(0, 0) = NAN;
+        CHECK(ortho(OrientationAxes(cube, {}, nanM, EditOrient::Local)) && ortho(OrientationAxes(cube, {}, nanM, EditOrient::Normal, &top)));
+
+        // Move locked to X goes along the orientation's X.
+        OrientAxes d45;
+        d45.axis[0] = Vec3{1, 1, 0}.Normalized(); d45.axis[1] = Vec3{-1, 1, 0}.Normalized(); d45.axis[2] = Vec3{0, 0, 1};
+        AxisLock lx; lx.Press(0, false);
+        CHECK(Near(MoveMatrix(Vec3{1, 0, 0}, lx, d45).MultiplyPoint(Vec3{0, 0, 0}), Vec3{0.5f, 0.5f, 0}));
+        AxisLock pz; pz.Press(2, true);   // the XY plane of the orientation
+        CHECK(Near(MoveMatrix(Vec3{1, 2, 3}, pz, d45).MultiplyPoint(Vec3{0, 0, 0}), Vec3{1, 2, 0}));
+        // The world-axis versions are unchanged.
+        CHECK(Near(MoveMatrix(Vec3{1, 2, 3}, lx).MultiplyPoint(Vec3{0, 0, 0}), Vec3{1, 0, 0}));
+        // Scale X by 2 along the orientation's X: a point on that axis doubles, a point on its Y stays.
+        const Mat4 S = ScaleMatrix(Vec3{0, 0, 0}, lx, 2.0f, d45);
+        CHECK(Near(S.MultiplyPoint(d45[0]), d45[0] * 2.0f) && Near(S.MultiplyPoint(d45[1]), d45[1]));
+        CHECK(Near(ScaleMatrix(Vec3{1, 1, 1}, AxisLock{}, 3.0f, d45).MultiplyPoint(Vec3{2, 1, 1}), Vec3{4, 1, 1}));   // free: uniform
+        // Mouse rays: locked to the orientation's X, the move stays on that axis; locked to a plane, it has no part along the normal.
+        const Ray r0{Vec3{0, 0, 10}, Vec3{0, 0, -1}}, r1{Vec3{1, 0.2f, 10}, Vec3{0, 0, -1}};
+        const Vec3 mx = MoveFromRays(lx, Vec3{0, 0, 0}, Vec3{0, 0, -1}, r0, r1, d45);
+        CHECK(std::fabs(Vec3::Dot(mx, d45[1])) < 1e-4f && std::fabs(Vec3::Dot(mx, d45[2])) < 1e-4f && mx.Magnitude() > 0.1f);
+        AxisLock px; px.Press(0, true);   // plane across the orientation's X
+        const Ray s0{Vec3{10, 0, 0}, Vec3{-1, 0, 0}}, s1{Vec3{10, 1, 1}, Vec3{-1, 0, 0}};
+        const Vec3 mp = MoveFromRays(px, Vec3{0, 0, 0}, Vec3{-1, 0, 0}, s0, s1, d45);
+        CHECK(std::fabs(Vec3::Dot(mp, d45[0])) < 1e-4f && mp.Magnitude() > 0.1f);
+        CHECK(Near(MoveFromRays(lx, Vec3{0, 0, 0}, Vec3{0, 0, -1}, r0, r1, OrientAxes{}), MoveFromRays(lx, Vec3{0, 0, 0}, Vec3{0, 0, -1}, r0, r1)));
+    }
+
+    // ---- Round 3: the 3D cursor as the pivot ----
+    {
+        Mesh m = Mesh::Cube(1.0f); m.WeldVertices();
+        std::vector<int> all; for (int i = 0; i < (int)m.vertices.size(); ++i) all.push_back(i);
+        const Mesh before = m;
+        EditTransformOptions o; o.pivot = EditPivot::Cursor; o.cursorWorld = Vec3{10, 0, 0};
+        EditTransformSession s; s.Begin(m, EditXform::Scale, all, Mat4::Identity(), o);
+        CHECK(Near(s.PivotWorld(), Vec3{10, 0, 0}));
+        s.Apply(m, ScaleMatrix(s.PivotWorld(), AxisLock{}, 2.0f));
+        bool ok = true;
+        for (int i = 0; i < (int)m.vertices.size(); ++i) if (!Near(m.vertices[i], (before.vertices[i] - Vec3{10, 0, 0}) * 2.0f + Vec3{10, 0, 0})) ok = false;
+        CHECK(ok);
+        s.Cancel(m);
+        // On a moved object the cursor stays where it is in the world.
+        EditTransformSession s2; s2.Begin(m, EditXform::Rotate, all, Mat4::Translate(Vec3{0, 5, 0}), o);
+        CHECK(Near(s2.PivotWorld(), Vec3{10, 0, 0}));
+        s2.Cancel(m);
+        CHECK(std::string(EditPivotName(EditPivot::Cursor)) == "3D Cursor");
+        // Hostile: a cursor that is not a number falls back to the selection's centre.
+        EditTransformOptions bad; bad.pivot = EditPivot::Cursor; bad.cursorWorld = Vec3{NAN, 0, 0};
+        EditTransformSession s3; s3.Begin(m, EditXform::Scale, all, Mat4::Identity(), bad);
+        CHECK(Near(s3.PivotWorld(), Vec3{0, 0, 0}));
+        s3.Cancel(m);
+    }
+
     TEST_MAIN_RESULT();
 }

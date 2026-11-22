@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include <cmath>
 #include <vector>
 
 using namespace okay;
@@ -187,6 +188,87 @@ int main() {
         CHECK(m.triangles == before);                        // twice is back to the start
         CHECK(m.FlipFaces({}) == 0);
         Mesh e; CHECK(e.FlipFaces({0}) == 0);                // empty mesh
+    }
+
+    // ---- Round 3: Mark Sharp keeps hard edges through Auto Smooth ----
+    {
+        // A flat 2x2 grid of quads (as triangles): Auto Smooth shares every vertex (9).
+        auto grid = [] {
+            Mesh m;
+            for (int z = 0; z <= 2; ++z) for (int x = 0; x <= 2; ++x) m.vertices.push_back({(float)x, 0, (float)z});
+            auto id = [](int x, int z) { return z * 3 + x; };
+            for (int z = 0; z < 2; ++z) for (int x = 0; x < 2; ++x)
+                m.triangles.insert(m.triangles.end(), {id(x, z), id(x, z + 1), id(x + 1, z + 1), id(x, z), id(x + 1, z + 1), id(x + 1, z)});
+            return m;
+        };
+        Mesh plain = grid();
+        plain.ComputeAutoSmoothNormals(30.0f);
+        CHECK(plain.vertices.size() == 9);
+        // The middle column of edges (1-4, 4-7) marked sharp: the three vertices on it split in two (12).
+        Mesh sharp = grid();
+        sharp.SetSharp(1, 4, true); sharp.SetSharp(7, 4, true);
+        CHECK(sharp.IsSharp(4, 1) && sharp.sharpEdges.size() == 2);
+        sharp.SetSharp(4, 7, true);                          // marking again changes nothing
+        CHECK(sharp.sharpEdges.size() == 2);
+        sharp.ComputeAutoSmoothNormals(30.0f);
+        CHECK(sharp.vertices.size() == 12);
+        // After the rebuild the marks point at vertices at the same places as before.
+        bool placed = sharp.sharpEdges.size() == 2;
+        for (const auto& e : sharp.sharpEdges)
+            if (std::fabs(sharp.vertices[e.first].x - 1.0f) > 1e-5f || std::fabs(sharp.vertices[e.second].x - 1.0f) > 1e-5f) placed = false;
+        CHECK(placed);
+        // Running Auto Smooth again (as loading a scene does) keeps the split.
+        sharp.ComputeAutoSmoothNormals(30.0f);
+        CHECK(sharp.vertices.size() == 12);
+        // One sharp edge ending inside: only its border end splits (10).
+        Mesh half = grid();
+        half.SetSharp(1, 4, true);
+        half.ComputeAutoSmoothNormals(30.0f);
+        CHECK(half.vertices.size() == 10);
+        // Hostile marks (not edges, out of range, a vertex with itself) change nothing.
+        Mesh junk = grid();
+        junk.SetSharp(0, 8, true); junk.SetSharp(-1, 2, true); junk.SetSharp(3, 3, true);
+        junk.sharpEdges.push_back({2, 500});
+        junk.ComputeAutoSmoothNormals(30.0f);
+        CHECK(junk.vertices.size() == 9);
+        // Clearing a mark.
+        Mesh clr = grid(); clr.SetSharp(1, 4, true); clr.SetSharp(4, 1, false);
+        CHECK(clr.sharpEdges.empty());
+
+        // Welding follows the marks to the kept vertices.
+        Mesh w = grid();
+        w.vertices.push_back(w.vertices[4]);                 // vertex 9: a copy of 4
+        for (int k = 0; k < 6; ++k) if (w.triangles[k] == 4) w.triangles[k] = 9;
+        w.SetSharp(9, 1, true);
+        w.WeldVertices();
+        CHECK(w.vertices.size() == 9 && w.sharpEdges.size() == 1 && w.IsSharp(1, 4));
+
+        // Saved with the scene and read back (before the shading is rebuilt on load, so the split survives).
+        Scene scene("s");
+        auto* mr = scene.CreateGameObject("G")->AddComponent<MeshRenderer>();
+        mr->mesh = grid(); mr->mesh.name = "";
+        mr->mesh.SetSharp(1, 4, true); mr->mesh.SetSharp(4, 7, true);
+        mr->mesh.ComputeAutoSmoothNormals(30.0f);
+        const std::string text = SceneSerializer::Serialize(scene);
+        CHECK(text.find("meshsharp 2") != std::string::npos);
+        Scene back("b"); std::string err;
+        CHECK(SceneSerializer::Deserialize(back, text, &err));
+        const Mesh& lm = back.Find("G")->GetComponent<MeshRenderer>()->mesh;
+        CHECK(lm.sharpEdges.size() == 2 && lm.vertices.size() == 12 && lm.HasNormals());
+    }
+    // Auto Smooth used to leave UV seams, creases and bevel weights pointing at the old vertex numbers.
+    {
+        Mesh c = Mesh::Cube(1.0f);
+        c.WeldVertices();
+        const Vec3 pa = c.vertices[0], pb = c.vertices[1];
+        c.seams = {{0, 1}};
+        c.SetCrease(0, 1, 2.0f);
+        c.ComputeAutoSmoothNormals(30.0f);
+        CHECK(c.vertices.size() == 24);
+        CHECK(c.seams.size() == 1 && c.creases.size() == 1);
+        auto at = [&](int v, const Vec3& p) { return v >= 0 && v < (int)c.vertices.size() && (c.vertices[v] - p).SqrMagnitude() < 1e-10f; };
+        CHECK((at(c.seams[0].first, pa) && at(c.seams[0].second, pb)) || (at(c.seams[0].first, pb) && at(c.seams[0].second, pa)));
+        CHECK((at(c.creases[0].a, pa) && at(c.creases[0].b, pb)) || (at(c.creases[0].a, pb) && at(c.creases[0].b, pa)));
     }
 
     TEST_MAIN_RESULT();

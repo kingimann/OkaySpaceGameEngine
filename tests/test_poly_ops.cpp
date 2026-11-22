@@ -724,5 +724,168 @@ int main() {
         CHECK(KnifeCut(c, {{0, -1, 0}, {1, -1, 0}}, &err).empty() && !err.empty() && c.faces.size() == 1);
     }
 
+    // ---- Round 3 tools ----
+    // Give every corner the UV of its position (x / 4, z / 4), so a tool's UVs can be checked against where corners are.
+    auto planarUVs = [](PolyMesh& pm) {
+        for (PolyFace& f : pm.faces) { f.uvs.clear(); for (int v : f.verts) f.uvs.push_back(Vec2{pm.verts[v].x * 0.25f, pm.verts[v].z * 0.25f}); }
+    };
+    auto uvsMatchPositions = [](const PolyMesh& pm) {
+        for (const PolyFace& f : pm.faces) {
+            if (f.uvs.size() != f.verts.size()) return false;
+            for (std::size_t i = 0; i < f.verts.size(); ++i) {
+                const Vec3& p = pm.verts[f.verts[i]];
+                if (!Near(f.uvs[i].x, p.x * 0.25f, 1e-3f) || !Near(f.uvs[i].y, p.z * 0.25f, 1e-3f)) return false;
+            }
+        }
+        return true;
+    };
+    // Edge Split: the outline of the cube's top face splits it off (one copy per corner) and marks the edges sharp.
+    {
+        PolyMesh c = Cube();
+        int topF = -1;
+        for (int f = 0; f < (int)c.faces.size(); ++f) if (c.FaceNormal(f).y > 0.9f) topF = f;
+        CHECK(topF >= 0);
+        const EdgeList ol = RegionOutline(c, {topF});
+        CHECK(EdgeSplit(c, ol) == 4);
+        CHECK(c.verts.size() == 12 && c.faces.size() == 6 && c.Check().boundaryEdges == 8 && c.Check().Valid() && ConsistentWinding(c));
+        CHECK(c.sharp.size() == 8);
+        bool marked = true; for (const auto& e : ol) if (!c.IsSharp(e.first, e.second)) marked = false;
+        CHECK(marked);
+        // Through a Mesh: the sharp marks go to Mesh::sharpEdges and come back.
+        const Mesh m = c.ToMesh(nullptr, false);
+        CHECK(m.sharpEdges.size() == 8 && PolyMesh::FromMesh(m, {false, true, 1.0f}).sharp.size() == 8);
+        // Saved and read back as a .okaymesh.
+        PolyMesh back;
+        CHECK(PolyMesh::Parse(c.Serialize(), back) && back.sharp.size() == 8);
+        // One edge alone splits nothing (its ends stay joined round the other side) but is marked sharp.
+        PolyMesh one = Cube();
+        const auto e0 = one.Edges()[0];
+        CHECK(EdgeSplit(one, {{e0.a, e0.b}}) == 0 && one.verts.size() == 8 && one.IsSharp(e0.a, e0.b));
+        // Hostile: nothing, bad numbers, border edges (one face only).
+        PolyMesh g = Grid(2, 2);
+        CHECK(EdgeSplit(g, {}) == 0 && EdgeSplit(g, {{-1, 3}, {2, 2}, {0, 999}}) == 0 && EdgeSplit(g, {{0, 1}, {1, 2}}) == 0);
+        CHECK(g.verts.size() == 9 && g.sharp.empty());
+        // UVs stay with their faces.
+        PolyMesh gu = Grid(2, 2); planarUVs(gu);
+        CHECK(EdgeSplit(gu, {{1, 4}, {4, 7}}) == 3 && uvsMatchPositions(gu) && gu.Check().Valid());
+    }
+    // Vertex Slide: the middle vertex of a 2x2 grid slides along the edge pointing most nearly the way asked.
+    {
+        PolyMesh g = Grid(2, 2); planarUVs(g);   // vertex 4 at (1, 0, 1)
+        const std::vector<Vec3> start = g.verts;
+        CHECK(VertexSlide(g, {4}, Vec3{1, 0, 0.1f}, 0.5f, &start) == 1);
+        CHECK(Near(g.verts[4].x, 1.5f) && Near(g.verts[4].z, 1.0f) && uvsMatchPositions(g));
+        // Interactive: again from the same start replaces the last slide.
+        CHECK(VertexSlide(g, {4}, Vec3{1, 0, 0}, 0.25f, &start) == 1 && Near(g.verts[4].x, 1.25f) && uvsMatchPositions(g));
+        // More than 1 stops at the neighbour.
+        CHECK(VertexSlide(g, {4}, Vec3{0, 0, -1}, 5.0f, &start) == 1 && Near(g.verts[4].z, 0.0f) && Near(g.verts[4].x, 1.0f));
+        // Hostile: not a number, no direction, bad indices, a short start list.
+        PolyMesh h = Grid(2, 2); const PolyMesh hb = h;
+        CHECK(VertexSlide(h, {4}, Vec3{1, 0, 0}, NAN) == 0 && VertexSlide(h, {4}, Vec3{0, 0, 0}, 0.5f) == 0);
+        CHECK(VertexSlide(h, {4}, Vec3{NAN, 0, 0}, 0.5f) == 0 && VertexSlide(h, {-1, 99}, Vec3{1, 0, 0}, 0.5f) == 0);
+        const std::vector<Vec3> shortList(2);
+        CHECK(VertexSlide(h, {4}, Vec3{1, 0, 0}, 0.5f, &shortList) == 0);
+        bool same = true; for (std::size_t i = 0; i < h.verts.size(); ++i) if ((h.verts[i] - hb.verts[i]).SqrMagnitude() > 0) same = false;
+        CHECK(same);
+        // Two picked neighbours do not slide onto each other: 3's only edge toward +X goes to 4 (picked), so it stays.
+        PolyMesh two = Grid(2, 2);
+        CHECK(VertexSlide(two, {3, 4}, Vec3{1, 0, 0}, 1.0f) == 1 && Near(two.verts[3].x, 0.0f) && Near(two.verts[4].x, 2.0f));
+    }
+    // Offset Edge Loops: the edge between two stacked quads gets a parallel loop on each side.
+    {
+        PolyMesh g = Grid(1, 2); planarUVs(g);   // edge 2-3 at z = 1
+        std::string err;
+        const EdgeList made = OffsetEdgeLoops(g, {{2, 3}}, 0.25f, &err);
+        CHECK(made.size() == 2 && g.faces.size() == 4 && g.verts.size() == 10 && g.Check().Valid() && ConsistentWinding(g));
+        bool zs = true; std::set<int> zSeen;
+        for (const auto& e : made) {
+            const float z0 = g.verts[e.first].z, z1 = g.verts[e.second].z;
+            if (!Near(z0, z1)) zs = false;
+            zSeen.insert((int)std::lround(z0 * 100));
+        }
+        CHECK(zs && zSeen == (std::set<int>{75, 125}));
+        CHECK(uvsMatchPositions(g));
+        // Three edges in a row across a 3x2 grid: six new edges, every face of both rows split.
+        PolyMesh r = Grid(3, 2);
+        CHECK(OffsetEdgeLoops(r, {{4, 5}, {5, 6}, {6, 7}}, 0.3f, &err).size() == 6 && r.faces.size() == 12 && r.Check().Valid() && ConsistentWinding(r));
+        // A border edge: only the side with a face.
+        PolyMesh b = Grid(1, 1);
+        CHECK(OffsetEdgeLoops(b, {{0, 1}}, 0.5f, &err).size() == 1 && b.faces.size() == 2);
+        // Hostile: not a number, nothing picked, an amount past the ends (clamped), an edge joining two picked edges.
+        PolyMesh h = Grid(1, 2); const std::size_t nv = h.verts.size();
+        err.clear(); CHECK(OffsetEdgeLoops(h, {{2, 3}}, NAN, &err).empty() && !err.empty() && h.verts.size() == nv);
+        err.clear(); CHECK(OffsetEdgeLoops(h, {}, 0.3f, &err).empty() && !err.empty());
+        err.clear(); CHECK(OffsetEdgeLoops(h, {{-1, 2}, {0, 99}}, 0.3f, &err).empty() && !err.empty());
+        CHECK(OffsetEdgeLoops(h, {{2, 3}}, 9.0f, &err).size() == 2 && h.Check().Valid());
+        PolyMesh rung = Grid(1, 1);   // edges 0-1 and 2-3 both picked: the sides 0-2 and 1-3 join them
+        CHECK(OffsetEdgeLoops(rung, {{0, 1}, {2, 3}}, 0.3f, &err).size() == 2 && rung.faces.size() == 3 && rung.Check().Valid());
+        PolyMesh wide = Grid(1, 1);
+        err.clear(); CHECK(OffsetEdgeLoops(wide, {{0, 1}, {2, 3}}, 0.6f, &err).empty() && err.find("0.5") != std::string::npos && wide.faces.size() == 1);
+    }
+    // Rip: tear a 2x2 grid open along its middle column of edges; the +X side gets new vertices.
+    {
+        PolyMesh g = Grid(2, 2); planarUVs(g);
+        std::string err;
+        const std::vector<int> nv = RipEdges(g, {{1, 4}, {4, 7}}, Vec3{1, 0, 0}, &err);
+        CHECK(nv.size() == 3 && g.verts.size() == 12 && g.Check().boundaryEdges == 12 && g.Check().Valid() && ConsistentWinding(g));
+        // The new vertices sit where 1, 4, 7 were, and only faces on the +X side use them.
+        bool rightSide = true;
+        for (const PolyFace& f : g.faces) {
+            float cx = 0; for (int v : f.verts) cx += g.verts[v].x; cx /= (float)f.Size();
+            for (int v : f.verts) if (std::find(nv.begin(), nv.end(), v) != nv.end() && cx < 1.0f) rightSide = false;
+        }
+        CHECK(rightSide && uvsMatchPositions(g));
+        // A tear that ends inside: only the middle vertex splits.
+        PolyMesh in = Grid(4, 4);
+        CHECK(RipEdges(in, {{11, 12}, {12, 13}}, Vec3{0, 0, 1}, &err).size() == 1 && in.Check().Valid() && ConsistentWinding(in));
+        // Hostile: one edge inside (both ends stay joined), border edges only, not a number, nothing.
+        PolyMesh h = Grid(4, 4); const std::size_t before = h.verts.size();
+        err.clear(); CHECK(RipEdges(h, {{11, 12}}, Vec3{0, 0, 1}, &err).empty() && err.find("Nothing to rip") != std::string::npos && h.verts.size() == before);
+        err.clear(); CHECK(RipEdges(h, {{0, 1}}, Vec3{0, 0, 1}, &err).empty() && !err.empty());
+        err.clear(); CHECK(RipEdges(h, {{11, 12}, {12, 13}}, Vec3{NAN, 0, 0}, &err).empty() && !err.empty() && h.verts.size() == before);
+        err.clear(); CHECK(RipEdges(h, {}, Vec3{1, 0, 0}, &err).empty() && RipEdges(h, {{-4, 2}, {3, 3}}, Vec3{1, 0, 0}, &err).empty());
+    }
+    // Merge at First / Last / Center.
+    {
+        PolyMesh g = Grid(2, 1);   // 0 (0,0) 1 (1,0) 2 (2,0) / 3 4 5 at z = 1
+        CHECK(MergeVertsAt(g, {0, 1}, MergeAt::Last) == 1);
+        CHECK(Near(g.verts[1].x, 1.0f) && UsedVerts(g) == 5 && g.Check().Valid());
+        bool zeroGone = true; for (const PolyFace& f : g.faces) for (int v : f.verts) if (v == 0) zeroGone = false;
+        CHECK(zeroGone);
+        PolyMesh h = Grid(2, 1);
+        CHECK(MergeVertsAt(h, {0, 1}, MergeAt::First) == 1 && Near(h.verts[0].x, 0.0f));
+        PolyMesh c = Grid(2, 1);
+        CHECK(MergeVertsAt(c, {0, 1}, MergeAt::Center) == 1 && Near(c.verts[0].x, 0.5f));
+        // Hostile: repeats, bad numbers, one vertex.
+        PolyMesh b = Grid(2, 1);
+        CHECK(MergeVertsAt(b, {7, 7, -1}, MergeAt::Last) == 0 && MergeVertsAt(b, {1, 1}, MergeAt::Last) == 0 && MergeVertsAt(b, {}, MergeAt::First) == 0);
+        CHECK(MergeVertsAt(b, {-1, 2, 99, 1}, MergeAt::Last) == 1 && Near(b.verts[1].x, 1.0f));
+    }
+    // Loop to Region: the faces inside a closed loop.
+    {
+        PolyMesh g = Grid(4, 4);
+        const std::vector<int> mid = {5, 6, 9, 10};
+        CHECK(LoopToRegion(g, RegionOutline(g, mid)) == mid);
+        CHECK(LoopToRegion(g, {{0, 1}, {1, 2}}).empty());       // an open line cuts nothing off
+        PolyMesh c = Cube();
+        int topF = -1; for (int f = 0; f < (int)c.faces.size(); ++f) if (c.FaceNormal(f).y > 0.9f) topF = f;
+        CHECK(LoopToRegion(c, RegionOutline(c, {topF})) == std::vector<int>{topF});
+        CHECK(LoopToRegion(g, {}).empty() && LoopToRegion(g, {{-1, 5}, {3, 3}, {0, 999}}).empty());
+    }
+    // SplitEdge carries a sharp mark onto both halves (as it does a seam).
+    {
+        PolyMesh g = Grid(1, 1);
+        g.SetSharp(0, 1, true);
+        const int v = SplitEdge(g, 0, 1, 0.5f);
+        CHECK(v >= 0 && !g.IsSharp(0, 1) && g.IsSharp(0, v) && g.IsSharp(v, 1));
+        PolyMesh dropped = Grid(1, 1);   // CompactVerts renumbers them
+        dropped.SetSharp(2, 3, true);
+        dropped.verts.insert(dropped.verts.begin(), Vec3{9, 9, 9});
+        for (PolyFace& f : dropped.faces) for (int& w : f.verts) ++w;
+        dropped.sharp = {{3, 4}};
+        CompactVerts(dropped);
+        CHECK(dropped.sharp.size() == 1 && dropped.sharp[0] == std::make_pair(2, 3));
+    }
+
     TEST_MAIN_RESULT();
 }

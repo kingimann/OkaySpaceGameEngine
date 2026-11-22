@@ -1,0 +1,21 @@
+// Scrolling lava: two layers of noise drift at different speeds; the hot
+// cracks glow (emission) and the cooled crust stays dark and rough.
+shader "Lava";
+
+property float speed = 0.25 range(0, 2);
+property float scale = 5.0 range(0.5, 12);
+property color hot = (1.0, 0.45, 0.05);
+property color crust = (0.12, 0.03, 0.02);
+property float glow = 1.5 range(0, 6);
+
+surface {
+    vec2 p = uv * scale;
+    float a = noise(p + vec2(0.0, time * speed));
+    float b = noise(p * 2.1 - vec2(time * speed * 0.6, 0.0));
+    float n = a * 0.65 + b * 0.35;
+    float heat = smoothstep(0.5, 0.8, n);
+    albedo = mix(crust, hot, heat);
+    emission = hot * (heat * heat * glow);
+    specular = 0.1;
+    shininess = 8.0;
+}

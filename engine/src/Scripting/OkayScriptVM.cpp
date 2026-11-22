@@ -4533,12 +4533,19 @@ struct OkayScriptVM::Impl {
             return Value{std::string{}};
         };
         // RPG / survival stats on a named object: hurt("Orc", 12) (defense-mitigated,
-        // fires on_death), heal, add_xp (fires on_level_up), get_hp/get_max_hp. Work on a
-        // Stats or a SurvivalStats component, whichever the object has.
+        // fires on_death), heal, add_xp (fires on_level_up), get_hp/get_max_hp.
+        // The order is the one scripts always had: a Stats component first, then SurvivalStats;
+        // only an object with neither goes on to a Health Stat or an NPC (the one damage path).
         b["hurt"] = [sceneOf](std::vector<Value>& a) -> Value {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
-                if (auto* st = g->GetComponent<Stats>()) { st->TakeDamage(a[1].AsFloat()); return Value{true}; }
-                if (auto* sv = g->GetComponent<SurvivalStats>()) { sv->Damage(a[1].AsFloat()); return Value{true}; }
+                // hurt("Orc", 12) or hurt("Orc", 12, "Fire"): the optional third word is the damage kind.
+                DamageType ty = DamageType::Generic;
+                if (a.size() >= 3 && a[2].IsString()) DamageTypeFromName(a[2].AsString(), ty);
+                const DamageEvent ev = DamageEvent::Make(a[1].AsFloat(), ty);
+                if (auto* st = g->GetComponent<Stats>()) { st->TakeDamage(ev); return Value{true}; }
+                if (auto* sv = g->GetComponent<SurvivalStats>()) { sv->Damage(ev); return Value{true}; }
+                float hh = 0.0f, mm = 0.0f;
+                if (HealthOf(g, hh, mm)) { DealDamage(g, ev); return Value{true}; }
             }
             return Value{false};
         };
@@ -4546,6 +4553,8 @@ struct OkayScriptVM::Impl {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
                 if (auto* st = g->GetComponent<Stats>()) { st->Heal(a[1].AsFloat()); return Value{true}; }
                 if (auto* sv = g->GetComponent<SurvivalStats>()) { sv->Heal(a[1].AsFloat()); return Value{true}; }
+                float hh = 0.0f, mm = 0.0f;
+                if (HealthOf(g, hh, mm)) { HealObject(g, a[1].AsFloat()); return Value{true}; }
             }
             return Value{false};
         };
@@ -4558,6 +4567,8 @@ struct OkayScriptVM::Impl {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
                 if (auto* st = g->GetComponent<Stats>()) return Value{st->health};
                 if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->health};
+                float hh = 0.0f, mm = 0.0f;
+                if (HealthOf(g, hh, mm)) return Value{hh};
             }
             return Value{0.0f};
         };
@@ -4565,6 +4576,8 @@ struct OkayScriptVM::Impl {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
                 if (auto* st = g->GetComponent<Stats>()) return Value{st->maxHealth};
                 if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->maxHealth};
+                float hh = 0.0f, mm = 0.0f;
+                if (HealthOf(g, hh, mm)) return Value{mm};
             }
             return Value{0.0f};
         };
@@ -7229,6 +7242,7 @@ struct OkayScriptVM::Impl {
                 if (GameObject* g = me && me->scene() ? ResolveObject(me->scene(), a[0]) : nullptr) {
                     if (auto* st = g->GetComponent<Stats>()) return Value{st->IsDead() ? 1.0f : 0.0f};
                     if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->dead ? 1.0f : 0.0f};
+                    return Value{IsObjectDead(g) ? 1.0f : 0.0f};
                 }
                 return Value{0.0f};
             }

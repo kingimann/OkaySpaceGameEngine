@@ -14,12 +14,12 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.1.3 Third-person movement part - `Components/ThirdPersonController` - same movement set plus the orbit camera, aim, shoulder offset and spring arm (4.6)
   - 4.1.4 View toggle and camera blend - `Components/PlayerView` - V or gamepad Back, Switch Blend Time, Easing, Snap, Eye Offset, Third Person Distance, head and neck hidden near the eyes
   - 4.1.5 Shared feel pieces - `Components/ControllerFeel` - AnimLink (feeds Animator parameters), FovKick, Landing, LookSmoother, FollowPivot, SpringArm
-  - 4.1.6 Move-speed and death hooks - `Components/MoveSpeed`, `Components/DeathLock` - one MoveSpeedScale for load and encumbrance slow-downs; a dead body reads no move input
+  - 4.1.6 Move-speed and death hooks - `Components/MoveSpeed`, `Components/DeathLock` - one MoveSpeedScale for load and encumbrance slow-downs (read by the first- and third-person parts, the third-person and top-down shooters, top-down, click-to-move, the 2.5D platformer and Character Controller 3D; the last three skipped it until `char_cam_fixes`); a dead body reads no move input
 - **Code:** `Components/PlayerController`, `Components/PlayerView`, `Components/FirstPersonController`, `Components/ThirdPersonController`, `Components/ControllerFeel`, `Components/MoveSpeed`, `Components/DeathLock`, `editor/main.cpp`
 - **API:** `PlayerController`, `PlayerView`, `FirstPersonController`, `ThirdPersonController`, `MoveSpeedScale`; scripts `set_view(0|1)`, `get_view()`, `SetViewMode(0|1|2)`; Add Component > Gameplay > Player Controller
 - **Editor:** Player Controller panel in the Inspector (View selector, Both section, movement, jump, sprint, crouch, prone, lean, slide, dodge, vault, foot IK, eye, orbit, Set Character Model...)
 - **Docs:** `docs/gameplay/making_a_game.md` (The Player Controller, Controller movement extras)
-- **Tests:** `player_controller`, `view_upgrade`, `player`, `player_fixes`, `view_ground`, `run_feel`, `mp_controllers`, `net_player_spawn`, `net_auth_move`, `net_predict`, `death_lock`
+- **Tests:** `player_controller`, `view_upgrade`, `player`, `player_fixes`, `view_ground`, `run_feel`, `mp_controllers`, `net_player_spawn`, `net_auth_move`, `net_predict`, `death_lock`, `char_cam_fixes`
 - **Status:** Works - player_controller, view_upgrade and player tests cover the View modes, toggle and old-scene loading; I read PlayerController and PlayerView headers, not the full controllers
 - **Open:** #554 landed on 2026-11-10: the controller panel's animation setup status, and the head and walk jitter work, are on main (tests `test_anim_jitter`, `test_head_stability`; IK follows the state's weight); the turning-character stutter (render interpolation cancelled by `RestorePose` when game code changes `localRotation`) is fixed and covered by `turn_interpolation` (a bare Scene with a turning body) and by `controller_interpolation` (the real ThirdPersonController with a rigged character, walking in circles under 50 Hz physics with smoothing on, drawn at 30, 60 and 144 fps: the drawn root moved evenly to within 2 mm per frame and the camera to within 1 mm of the straight walk; one rig, one turn rate, headless, no screen); a scene saved with the Player Controller records cannot be opened by a build from before that change (per docs)
 - **Related:** 4.2, 4.6, 4.7, 5.1, 5.6, 5.9, 16.8
@@ -61,7 +61,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **API:** `CharacterController2D::Mode`, `TopDownController2D`, `Platformer25DController`; script events `on_jump`, `on_land`, `on_layer`, `on_grab`, `on_release`, `on_climb`
 - **Editor:** Inspector panels per controller; GameObject > Player > Top Down (2D), 2.5D Platformer (LittleBigPlanet)
 - **Docs:** `docs/gameplay/shooter_and_25d_controllers.md`
-- **Tests:** `charctrl`, `shooter25d`, `spriteanim`
+- **Tests:** `charctrl`, `shooter25d`, `spriteanim`, `char_cam_fixes`
 - **Status:** Works - charctrl covers 2D top-down, platformer, 3D and rotating platforms; shooter25d covers the 2.5D controller (layers, jump, grab, saves)
 - **Open:** old map: improve the 2.5D controller (no specifics recorded); the 2.5D controller keeps its own ledge motion and only sets the `hanging` animation bool
 - **Related:** 4.4, 5.10, 6.1, 6.2
@@ -75,17 +75,17 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.4.1 Third-person shooter - `Components/ThirdPersonShooterController` - look, right-mouse aim, left-mouse fire, cursor lock, lean
   - 4.4.2 Top-down shooter - `Components/TopDownShooterController` - mouse aim, bullets, projectile prefab or hitscan, pellets, ammo and reload, dash, kicking follow camera
   - 4.4.3 Top-down (3D) - `Components/TopDownController` - world- or camera-relative move, fixed-angle follow camera
-  - 4.4.4 Click to move - `Components/ClickToMoveController` - MoveTo, walks to the click point, trailing camera, expanding click marker
-  - 4.4.5 Free roam fly camera - `Components/FreeRoamController` - WASD along the view, Space/Ctrl or E/Q up and down, sprint
+  - 4.4.4 Click to move - `Components/ClickToMoveController` - MoveTo, walks to the click point, trailing camera, expanding click marker; Pick Colliders (a click lands on the solid, up-facing floor, stair or platform under the pointer, else the flat plane; the player's own body is passed through); Give Up When Stuck (stops after Stuck Time, 1 s, of barely moving against a wall; `GaveUp()`)
+  - 4.4.5 Free roam fly camera - `Components/FreeRoamController` - WASD along the view, Space/Ctrl or E/Q up and down, sprint; keeps the facing it was placed with (the yaw was read back mirrored before `char_cam_fixes`)
   - 4.4.6 Character Controller 3D - `Components/CharacterController3D` - plain WASD controller on a Rigidbody3D (or Transform), sprint, momentum, optional animation and foot IK
   - 4.4.7 Crosshair reticle - `Components/Crosshair` - centre-screen reticle with ticks, dot and outline
 - **Code:** `Components/ThirdPersonShooterController`, `Components/TopDownShooterController`, `Components/TopDownController`, `Components/ClickToMoveController`, `Components/FreeRoamController`, `Components/CharacterController3D`, `Components/Crosshair`
 - **API:** `TopDownShooterController`, `ClickToMoveController::MoveTo`, `FreeRoamController`; script events `on_fire`, `on_reload`, `on_reloaded`, `on_empty`, `on_dash`
 - **Editor:** Inspector panels per controller; GameObject > Player > Third Person Shooter, Top Down (3D), Top Down Shooter (3D), Click To Move
 - **Docs:** `docs/gameplay/shooter_and_25d_controllers.md`, `docs/gameplay/making_a_game.md`
-- **Tests:** `shooter25d`, `clicktomove`, `player`, `mp_controllers`, `charctrl`
+- **Tests:** `shooter25d`, `clicktomove`, `player`, `mp_controllers`, `charctrl`, `char_cam_fixes`
 - **Status:** Works - shooter25d, clicktomove and player tests exist; Projectile 3D is in 6.6
-- **Open:** none recorded; the fall-back for animation is the shared Character locomotion (5.3, 4.9)
+- **Open:** the fall-back for animation is the shared Character locomotion (5.3, 4.9); fixed in `char_cam_fixes`: a remote copy of a Top Down, Click To Move or Third Person Shooter player no longer moves this machine's main camera (a hand-built networked scene; the spawner already strips these from copies), and the click-to-move camera follows a player below y = 0 (its floor clearance used y = 0); click-to-move ground picking and giving up were checked headless only, not by clicking in the editor
 - **Related:** 4.1, 4.3, 6.6, 8.1
 - **Words:** third-person shooter, top-down shooter, twin-stick, click to move, RuneScape, free roam, fly camera, crosshair, dash, reload, ammo
 - **Seen as:** aim cursor offset from the crosshair; the shooter gets stuck on stairs; fire key fires while typing in a field; click-to-move walks through walls; the fly camera is too fast
@@ -156,7 +156,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Parts:**
   - 4.8.1 Virtual camera - `Components/VirtualCamera` - priority, Follow and LookAt by name, binding mode (World Space or Lock To Target), damping, dead zone, field of view, Dutch angle, confiner box, handheld shake, AddImpulse
   - 4.8.2 Cinemachine brain - `Components/CinemachineBrain` - on the real camera: picks the live vcam by priority, eases pose and FOV over blendTime (0 = cut), ease in/out
-  - 4.8.3 Dolly path and cart - `Components/DollyPath` - Catmull-Rom waypoints (open or looped), DollyCart rides it; Tracked Dolly vcam
+  - 4.8.3 Dolly path and cart - `Components/DollyPath` - Catmull-Rom waypoints (open or looped), DollyCart rides it; Tracked Dolly vcam; path Length, DistanceAt, PositionAtDistance, EvaluateTangent; cart Speed In Metres (metres per second, one pace on uneven waypoints), Ping Pong (turns round at an open path's ends), Face Along Path (turns to the way it travels); the cart's stored position stays on the path (it ran past 1 on an open path, so a reversed cart sat still)
   - 4.8.4 Camera stack - `Components/Camera`, `Scene/EnsureCamera` - Scene::CameraStack sorted by depth, ClearPlan (Skybox, SolidColor, DepthOnly, DontClear), depth decides the main camera (#570), EnsureSceneCamera guarantees one camera
   - 4.8.5 Cutscene camera shots - `Components/SequencePlayer` (owned by 10.1) - the Sequence camera track drives the main camera and hands it back at the end; the brain now steps aside while a sequence plays and blends back when it ends
   - 4.8.6 Camera rig layer - `Components/VirtualCamera`, `Components/CameraMath` - Camera Rig styles (Follow, Orbit, Look At), spring damping (frame-rate independent, no overshoot), screen dead zone and soft zone, look ahead, target groups (frame several objects, step back to fit), wall collision (sphere sweep, triggers and chosen layers ignored), see-through blockers, a shot's own blend time and style
@@ -168,7 +168,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **API:** `VirtualCamera::priority`, `BindingMode`, `AddImpulse`, `CinemachineBrain::blendTime`, `LiveCamera()`, `DollyPath`, `DollyCart`, `Scene::CameraStack()`, `Camera::ClearPlan`, `VirtualCamera::ApplyStyle`, `DampingMode`, `groupTargets`, `CameraRoom`, `cam::BlendStyle`, `CinemachineBrain::ForceLive`; scripts `Camera.BlendTo`, `Camera.SetTarget`, `Camera.AddToGroup`, `Camera.RemoveFromGroup`
 - **Editor:** Inspector panels for Virtual Camera (Camera Rig, Framing, Group, 2D camera, Walls sections), Cinemachine Brain (blend style and curve), Camera Room, Dolly Path, Dolly Cart; Add Component "Camera Rig" and "Camera Room"; GameObject > Camera > Camera Rig: Follow / Orbit / Look At and Camera Room; Scene view gizmo (frustum, dead and soft zone, wall probe, group circle, room boxes); Camera Preview for a selected rig
 - **Docs:** `docs/gameplay/cameras.md`, `docs/gameplay/cameras.md` (Cameras), `docs/engine/splines.md`, `docs/gameplay/cutscenes.md`
-- **Tests:** `cinemachine`, `layers_tags_cameras`, `scene_cameras`, `camera_cine`, `camera_math`, `camera_rig`, `camera_robust`, `interact_seat_dialogue`
+- **Tests:** `cinemachine`, `layers_tags_cameras`, `scene_cameras`, `camera_cine`, `camera_math`, `camera_rig`, `camera_robust`, `char_cam_fixes`, `interact_seat_dialogue`
 - **Status:** Works - cinemachine, scene_cameras and layers_tags_cameras tests exist; the depth rule for the main camera landed in #570
 - **Open:** the shot now really faces its Look At target (before the camera upgrade it aimed the opposite way: the vcam rotated +Z to the target but a camera looks down -Z); the dialogue camera shot is per Dialogue Runner (node number), not stored in the .okaydialog graph itself, and the Dialogue window does not show it; the camera upgrade was checked headless only (`docs/gameplay/cameras.md`); the player and editor still draw only the main camera; looping their render path over `CameraStack()` with ClearPlan, viewport rect and culling mask is not done (per docs/gameplay/cameras.md)
 - **Related:** 4.10, 10.1, 2.7, 1.3

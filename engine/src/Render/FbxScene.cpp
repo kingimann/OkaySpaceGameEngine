@@ -2264,6 +2264,10 @@ bool LoadMemory(const std::uint8_t* data, std::size_t size, Scene& out, std::str
 }
 
 bool LoadFile(const std::string& path, Scene& out, std::string* err, const BuildOptions& opt) {
+    {   // a folder opens as a stream on some systems and reports a huge size: the resize below threw std::bad_alloc
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(std::filesystem::u8path(path), ec)) { if (err) *err = "not a file: " + path; return false; }
+    }
     std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
     if (!f) { if (err) *err = "cannot open " + path; return false; }
     // One read of the whole file at its size (a byte-by-byte stream iterator grew the buffer by doubling, slowly), into

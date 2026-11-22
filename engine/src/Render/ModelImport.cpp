@@ -141,7 +141,15 @@ static void NormalizeImportedClips(GameObject* root) {
 }
 
 
+// Only an ordinary file can be a model. A folder named "x.glb" or "x.obj" opens as a stream on some systems and reports a
+// huge size or throws on the first read (std::length_error, std::bad_alloc, std::ios_base::failure ended the editor).
+static bool IsModelFile(const std::string& path) {
+    std::error_code ec;
+    return !path.empty() && std::filesystem::is_regular_file(std::filesystem::u8path(path), ec);
+}
+
 Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
+    if (!IsModelFile(path)) { if (ok) *ok = false; return Mesh(); }
     std::string p = Lower(path);
     if (EndsWith(p, ".obj") && EffectiveImportBackend(".obj") != ImportBackend::Assimp) {
         g_readBy = "the own OBJ reader";
@@ -2574,6 +2582,11 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
     // One line per import, so the Console shows which reader read the file (an OKAY_OWN_<FMT> switch at work, or Assimp)
     // and how long it took: "model import 'x.lxo': read by the own LXO reader in 1.20 ms (whole import 3.40 ms)".
     g_readBy.clear(); g_readMs = -1.0;
+    if (!IsModelFile(path)) {
+        Log::Error("model import '", path, "': not a file (missing, or a folder)");
+        if (ok) *ok = false;
+        return nullptr;
+    }
     const auto t0 = std::chrono::steady_clock::now();
     GameObject* root = ImportModelSceneRaw(scene, path, ok);
     {

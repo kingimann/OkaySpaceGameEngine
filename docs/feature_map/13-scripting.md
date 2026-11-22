@@ -2,7 +2,7 @@
 
 Text scripting for games and for the editor: the default OkayScript language (one big VM with several hundred built-in functions), a newer typed C#-style language that is checked before it runs, the Script component that runs them, and the Script Editor.
 Covers `engine/include/okay/Scripting/*`, `engine/include/okay/Script/*`, `engine/src/Scripting/*`, `engine/src/Script/*` (about 11.3k + 7.1k lines), `Components/ScriptComponent`, `docs/scripting*.md` and the Script Editor inside `editor/main.cpp` (about 3k lines plus completion and docs windows).
-Two OkayScript languages exist side by side: id `okayscript` (old VM, the default) and `okayscript-next` (typed, `class Name : Behaviour`); the typed language is being grown to replace the old one, with several branches not on main yet.
+Two OkayScript languages exist side by side: id `okayscript` (old VM) and `okayscript-next` (typed, `class Name : Behaviour`); the typed language also runs C# (id `csharp` / `cs`, `.cs` files, C# mode) and is being grown to replace the old one (plan: `docs/scripting/migration_plan.md`).
 
 ## 13. Scripting
 
@@ -41,25 +41,25 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **API:** `NextScriptVM::kLanguage` (`okayscript-next`), `NextScriptVM::ForgetSceneStatics`, `LastError`, `ErrorCount`; script syntax `class Name : Behaviour { public float speed; void Update() {...} }`
 - **Editor:** the Script Editor runs this checker for scripts whose language is `okayscript-next` (inline errors and warnings with columns)
 - **Docs:** `docs/scripting/scripting.md` (partly describes both languages), `docs/engine_api.md`
-- **Tests:** `okayscript_next`, `okayscript_next_csharp`
-- **Status:** Partial - on main: classes, enums, switch, arrays, foreach, statics, interpolation, `??` and `?.`, List and Dictionary, lambdas, events (`+=` and `-=` on functions, methods as functions), interfaces, inheritance, `is` / `as` and casts, try / catch / finally with throw and Exception, coroutines, scripts using each other and `GetComponent<MyScript>()`
-- **Open:** in flight (branches, no PR, 2026-11-14): claude/next-event-args; `AvailableScriptLanguages()` lacks `okayscript-next` so New Script cannot pick it (possible gap); replacing the old VM is not done
+- **Tests:** `okayscript_next`, `okayscript_next_csharp`, `csharp_scripts`
+- **Status:** Partial - classes, enums, switch, arrays, foreach, statics, interpolation, `??` and `?.`, List and Dictionary, lambdas, events (`+=` and `-=` on functions, methods as functions), interfaces, inheritance, `is` / `as` and casts, try / catch / finally with throw and Exception, coroutines, scripts using each other and `GetComponent<MyScript>()` (the five claude/csharp-* branches merged on claude2/csharp-scripting); properties (auto, `=>`, get / set code) and `=>` method bodies; C# mode (13.8)
+- **Open:** missing C#: struct, Quaternion, Random, own generics, delegate declarations, default parameters, static / const in plain classes, string members (list and order in `docs/scripting/migration_plan.md` stage 2); claude/next-event-args does not exist on origin; replacing the old VM is not done (migration plan stages 3-6)
 - **Related:** 13.1, 13.6, 13.5, 14.7
 - **Words:** okayscript-next, typed OkayScript, new OkayScript, class Behaviour, checker, interpreter, C# parity, lambdas, LINQ, statics, NextScriptVM
 - **Seen as:** a script is rejected with "isn't supported yet"; a new feature works in one language and not the other; "A script needs a class"; errors point at the wrong column
 - **Ask me like:** "work on 13.2.2, add try/catch to the typed language"; "which branch has coroutines for the new OkayScript"
 
 ### 13.3 Removed Lua and C# (Mono) backends
-- **What:** The optional third-party Lua and Mono C# backends were removed (our own scripting languages replace them). An old scene or project whose script names language `lua`, `csharp` or `cs` still loads; the script just does not run, and loading it reports "script language 'lua' is no longer supported" (Console, scene validator, project diagnostics).
+- **What:** The optional third-party Lua and Mono C# backends were removed (our own scripting languages replace them). An old scene or project whose script names language `lua` still loads; the script just does not run, and loading it reports "script language 'lua' is no longer supported" (Console, scene validator, project diagnostics). `csharp` / `cs` are no longer removed: they run on our own typed language (13.8) if the script compiles, else the checker's error is shown.
 - **Parts:**
-  - 13.3.1 Removed-language message - `Scripting/ScriptVM` - `RemovedScriptLanguageMessage(lang)` gives the clear text for `lua`, `csharp`, `cs`; used by `ScriptComponent::LoadSource` and the scene validator
+  - 13.3.1 Removed-language message - `Scripting/ScriptVM` - `RemovedScriptLanguageMessage(lang)` gives the clear text for `lua`; used by `ScriptComponent::LoadSource` and the scene validator
 - **Code:** `Scripting/ScriptVM`, `Components/ScriptComponent`
-- **API:** `CreateScriptVM(lang)` (returns null for the removed names), `RemovedScriptLanguageMessage()`, `AvailableScriptLanguages()`
-- **Editor:** `.lua` and `.cs` files still show as scripts in the Project Browser; opening one loads it with the "no longer supported" message
+- **API:** `CreateScriptVM(lang)` (returns null for `lua`), `RemovedScriptLanguageMessage()`, `AvailableScriptLanguages()`
+- **Editor:** `.lua` files still show as scripts in the Project Browser; opening one loads it with the "no longer supported" message (`.cs` files open as C#, 13.8)
 - **Docs:** `docs/scripting/scripting.md`
 - **Tests:** `script_removed_langs`
 - **Status:** Works
-- **Open:** a future Lua-style, JS-style and Python-style text language on our own VM (see UNFINISHED.md) is planned; nothing converts old Lua or C# scripts
+- **Open:** our own Lua is separate work (claude2/lua-scripting); nothing converts old Lua scripts
 - **Related:** 13.4, 13.5
 - **Words:** Lua, C#, Mono, mcs, csharp, lua backend, removed language, language not supported, old project, script language dropdown
 - **Seen as:** a Lua or C# script does nothing; the Console says the script language is no longer supported; an old scene loads but its script is silent
@@ -71,7 +71,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
   - 13.4.1 VM interface and factory - `Scripting/ScriptVM` - `IScriptVM`, `ScriptHost`, `ScriptDiagnostic`, `CreateScriptVM`, `AvailableScriptLanguages`
   - 13.4.2 Script component - `Components/ScriptComponent` - language, source or file path, Reload, lifecycle forwarding, serialized per-instance field overrides
   - 13.4.3 Public fields in the Inspector - `editor/main.cpp` (`ParseScriptFields` ~25567-25708, Script header ~31140) - reads `public` fields and `[Header]`, `[Tooltip]`, `[Range]` from the source
-  - 13.4.4 Starter scripts - `Scripting/StarterScripts` - what a new empty script starts as, per language
+  - 13.4.4 Starter scripts - `Scripting/StarterScripts` - what a new empty script starts as, per language (C#: `public class NewScript : MonoBehaviour` with Start and Update)
   - 13.4.5 Script UI bridge - `Scripting/ScriptUI`, `shared/OkayScriptUIBridge.hpp` - `ui_*` builtins forward to a host toolkit (OkayUI); see 40.4
 - **Code:** `Scripting/ScriptVM`, `Components/ScriptComponent`, `Scripting/StarterScripts`, `Scripting/ScriptUI`, `shared/OkayScriptUIBridge.hpp`
 - **API:** `ScriptComponent::LoadSource/LoadFile/Reload/Source/fields`, `SetScriptUI`, `ScriptUIBridge`, `StarterScriptSource(lang)`
@@ -104,7 +104,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Docs:** `docs/editor/editor.md` (Script Editor), `docs/scripting/scripting.md`
 - **Tests:** `editor` (selftest covers ScriptText outline, identifier search and the lint), `starter_script`
 - **Status:** Works - features are present as menu items and code per the editor source; no separate unit tests except the selftest
-- **Open:** earlier map: "meaningful syntax only; classes and templates for New Script" (open); no step debugger for text scripts (only the visual-script debugger, 14.5); the 2.7k-line window lives in `main.cpp` (15.10). Script compile errors and missing script files are also rows in the project Problems panel (15.11.8), separate from this window's own Problems list
+- **Open:** New Script offers C# (default for new scripts, setting `newscriptcsharp`, the dialog's Language box) and OkayScript; C# tabs get errors from the C# checker and autocomplete from the binding table, and the Scripting Reference has a C# section (all unverified in a real Windows editor; see 13.8); signature help and member completion are still fed by the old VM's tables; no step debugger for text scripts (only the visual-script debugger, 14.5); the 2.7k-line window lives in `main.cpp` (15.10). Script compile errors and missing script files are also rows in the project Problems panel (15.11.8), separate from this window's own Problems list
 - **Related:** 13.1, 13.2, 13.4, 15.10, 15.8
 - **Words:** script editor, code editor, autocomplete, red squiggles, problems, rename symbol, format document, find in files, go to definition, outline, snippets, external IDE, VS Code, live sync, syntax highlighting
 - **Seen as:** red squiggles are wrong or missing; autocomplete does not offer a function; Rename misses a usage; Format changes code; a save in the external IDE does not reload; typing lags in a big script
@@ -151,3 +151,25 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Words:** builtin, built-in function, scripting reference, walk, spin, follow, tween_move, prefs_get, save_game, raycast, net_send, steam_unlock, nav_path, music_play, ui_set_text
 - **Seen as:** "unknown function"; a function behaves differently than the reference says; a function exists in OkayScript but not in a graph node or the typed API
 - **Ask me like:** "work on 13.7.6, add a capsule cast"; "list the built-ins for camera shake"
+
+### 13.8 C# scripts on our own typed language
+- **What:** `.cs` files and the language ids `csharp` / `cs` run on the typed language (13.2) in C# mode, so a Unity-style C# script (using lines, a namespace, `public class X : MonoBehaviour`, `[SerializeField] private`, properties, `KeyCode.W`) runs unchanged. Our own C#, written from the ECMA-334 specification; no Mono, .NET or other C# library. New scripts are C# by default (a setting).
+- **Parts:**
+  - 13.8.1 Language ids and file extension - `Scripting/ScriptVM` - `CreateScriptVM("csharp"/"cs")`, `AvailableScriptLanguages()` lists `csharp`, `ScriptLanguageForExtension(".cs")`
+  - 13.8.2 C# mode - `engine/src/Script/Parser.cpp`, `Checker.cpp` (`Program::csharp`) - using directives, namespaces (block and file-scoped), MonoBehaviour, private / readonly / sealed / internal, public const, unknown attributes as warnings
+  - 13.8.3 Properties and => bodies - `engine/src/Script/Parser.cpp` (`Property`, `ArrowBody`), `Checker.cpp` (`PropGetOwn`, `PropSet`) - auto-properties are fields; code properties are get_X / set_X methods the checker calls
+  - 13.8.4 KeyCode - `engine/src/Script/EngineApi.cpp` - static string properties (A-Z, Alpha0-9, Space, Return, Escape, Tab, Backspace, shifts, controls, arrows)
+  - 13.8.5 C# starter script - `Scripting/StarterScripts` - `using UnityEngine; public class NewScript : MonoBehaviour { Start, Update }`
+  - 13.8.6 Editor - `editor/main.cpp` - New Script Language box (setting `newscriptcsharp`, C# default), `.cs` open / drop / attach as C#, C# checker diagnostics, `CSharpCompletions()` from the binding table, Scripting Reference "C# (new scripts)" section with the API list (`VsApiReference`)
+  - 13.8.7 Example - `examples/csharp/` - `csharp_playground.okayscene` with PlayerMover.cs (move, hop coroutine, property), Spinner.cs, Scoreboard.cs (interface, List, foreach, switch, GetComponent<PlayerMover>()); shipped by `scripts/build-windows-dist.sh`
+- **Code:** `Scripting/ScriptVM`, `Scripting/NextScriptVM`, `engine/src/Script/*`, `Scripting/StarterScripts`, `editor/main.cpp`
+- **API:** `NextScriptVM::kCSharpLanguage`, `NextScriptVM(const std::string& language)`, `IsCSharpId`, `IsTypedId`, `ScriptLanguageForExtension`, `script::Compile(src, csharp)`
+- **Editor:** Script Editor > File > New Script (Language: C# / OkayScript (old)); Project > Create > Script; drag a `.cs` onto an object; Help > Scripting Reference > C# (new scripts)
+- **Docs:** `docs/scripting/scripting.md` ("C# scripts (.cs)", "Properties and => bodies"), `docs/scripting/migration_plan.md`
+- **Tests:** `csharp_scripts`, `script_removed_langs`, `starter_script`, `okayscript_next_csharp`
+- **Status:** Partial - the language core runs C# files; the gaps of 13.2 apply
+- **Open:** making C# the default for new scripts is the owner's call (setting in place, default C#); editor parts not seen in a real Windows editor; signature help / member lists are the old VM's; converter from old OkayScript to C# and the C# target of the graph preview (14.8) are planned in `docs/scripting/migration_plan.md`
+- **Related:** 13.2, 13.3, 13.5, 13.6, 14.8
+- **Words:** C#, csharp, .cs, Unity script, MonoBehaviour, using, namespace, SerializeField, property, get set, KeyCode, new script language, default language
+- **Seen as:** a `.cs` script reports an error; `using` or `namespace` is rejected; New Script makes the wrong kind of file; an old C# scene's script does not run
+- **Ask me like:** "work on 13.8, add Quaternion for C# scripts"; "make new scripts OkayScript again"

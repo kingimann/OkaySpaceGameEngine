@@ -1373,6 +1373,75 @@ foreach (var s in scores) total += s;
 foreach (float w in new int[] { 1, 2 }) Debug.Log(w / 2);   // ints convert to float
 ```
 
+#### Properties and => bodies
+
+A property looks like a field from outside and can run code when it is read or
+set. An auto-property (`{ get; set; }`) is simply a field; a property with code
+becomes the methods `get_Name()` / `set_Name(value)`, which reading and writing
+the property call.
+
+```csharp
+public int Score { get; private set; }          // a field others read
+public float Health { get; set; } = 10f;        // with a starting value
+public bool Alive => hp > 0;                    // worked out when read
+public float Speed {
+    get { return speed; }
+    set { speed = Mathf.Clamp(value, 0f, 5f); }
+}
+int Twice(int x) => x * 2;                       // a method with a => body
+```
+
+- `Speed = 9`, `Speed += 1`, `Speed++` call the setter (with the getter for the
+  old value). Setting a property that only has a `get` is an error.
+- `private set` / `init` on an auto-property are accepted but not enforced.
+- Properties can't be `virtual` or in an interface yet, and don't show in the
+  Inspector.
+
+### C# scripts (.cs)
+
+Language id `csharp` (also `cs`) and `.cs` files run on this same typed
+language in **C# mode**, so the C# a Unity user writes runs unchanged. New
+scripts are C# by default (the "Language" box in the Script Editor's New
+Script dialog; the choice is remembered in `okay_settings.txt` as
+`newscriptcsharp`). Existing scripts keep their language. This is our own C#,
+written from the ECMA-334 C# specification: no Mono or .NET is used.
+
+C# mode adds, on top of everything above:
+
+- `using A.B;` lines (also `using static`, `using X = A.B;`) at the top of the
+  file; they are read and skipped, since every engine type is available.
+- `namespace A.B { ... }` and the file-scoped `namespace A.B;`.
+- `MonoBehaviour` as the name of `Behaviour`.
+- `private`, `readonly`, `sealed` and `internal` modifiers (accepted; `readonly`
+  is not enforced, `internal` means `public`), `public const`.
+- Unknown field attributes such as `[HideInInspector]` are a warning, not an
+  error.
+- `KeyCode.W`, `KeyCode.Space`, `KeyCode.LeftShift`, ... for `Input.GetKey`,
+  `GetKeyDown`, `GetKeyUp` (each is the key's name: `KeyCode.W` is `"w"`).
+
+```csharp
+using UnityEngine;
+
+namespace MyGame
+{
+    public class Mover : MonoBehaviour
+    {
+        [SerializeField] private float speed = 6f;
+
+        void Update()
+        {
+            transform.position += new Vector3(1, 0, 0) * speed * Time.deltaTime;
+            if (Input.GetKeyDown(KeyCode.Space)) Debug.Log("jump");
+        }
+    }
+}
+```
+
+An old scene that named the removed Mono backend (`csharp` / `cs`) now runs
+its script if it compiles; if not, the Console and the scene validator show the
+checker's error with its line. Example scene: `examples/csharp/csharp_playground.okayscene`.
+The plan for retiring the old OkayScript VM is in [migration_plan.md](migration_plan.md).
+
 ### Other backends
 
 OkayScript is the engine's text scripting language, alongside a

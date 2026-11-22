@@ -117,12 +117,16 @@ then this file gets updated. Keep this file short and true.
 
 ## Third-party code and "build everything ourselves"
 
-17. **The goal is to write every part ourselves, even if it takes time.** Follow `docs/status/own_code_roadmap.md`: a
-    seam, then our own backend OFF by default, then the criteria, then flip the default only with the owner's
-    approval, then delete the old code one release later. Do not drop a format or feature just because it is
-    hard: write the replacement.
+17. **The goal is to write every part ourselves, even if it takes time, and nothing is off by default.** (Owner rule,
+    2026-11-22: "I don't want anything off by default anymore", and "you're improving the engine, not making copies".)
+    Follow `docs/status/own_code_roadmap.md`, but a replacement is not parked behind an off switch: build it, test it
+    against the old one until it gives the same or better results, then make it THE path in the same change and delete
+    the old code (rule 19c: no second copy kept "just in case"). New features ship on. The switches that are off today
+    are being turned on one by one, each with its tests; one that cannot be turned on safely yet is finished first, not
+    left off. Do not drop a format or feature just because it is hard: write the replacement. Cryptography is the one
+    exception (rule 18).
 18. **Cryptography cannot be replaced on our word.** It needs an outside review first. The owner has decided not to hire a reviewer (2026-11-14), so libsodium stays the default in every release and `okay::crypto` stays off by default. AI reviews (an internal agent, a second AI such as Grok through the `claude/crypto-review-grok` branch) are extra assurance and are reported as "not independently reviewed"; they do not unlock the switch. Releases refuse own-crypto builds.
-19. Do not switch to an own version until you are sure it is finished. Say honestly how close each one is.
+19. Do not switch to an own version until its tests show it is finished; finish it rather than leave it off. Say honestly how close each one is.
 
 19a. **Code: write everything yourself. Assets and data: only with permission.**
     - **Code.** Do not copy, port, translate or closely follow code, shader text, comments or tests from any other

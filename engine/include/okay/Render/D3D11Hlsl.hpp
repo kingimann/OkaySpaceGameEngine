@@ -8,6 +8,7 @@
 #include "okay/Render/D3DPostHLSL.hpp"
 #include "okay/Render/DofMath.hpp"
 #include "okay/Render/SsaoMath.hpp"
+#include <string>
 
 namespace okay {
 
@@ -208,6 +209,13 @@ inline const char* D3D11HlslSource() {
     "  o.world = mul(uModel, float4(i.pos,1.0)).xyz;\n"
     "  o.uv = i.uv * uTiling + uPbr2.zw;\n"
     "  o.col = i.col;\n"
+    // Custom (.okayshader) vertex block (OKAY_VERTEX only in a custom variant; uOkVP in b5): moves the
+    // world position and normal, then projects with the camera's (or the light's) view-projection.
+    "#ifdef OKAY_VERTEX\n"
+    "  { float3 okW = o.world; float3 okN = o.nrm; float okL = length(okN); okN = okL > 1e-12 ? okN / okL : float3(0,1,0);\n"
+    "    okayVertex(o.uv, i.pos, i.col, uOkTimeV.x, okW, okN);\n"
+    "    o.world = okW; o.nrm = okN; float4 okC = mul(uOkVP, float4(okW, 1.0)); okC.z = (okC.z + okC.w) * 0.5; o.pos = okC; }\n"
+    "#endif\n"
     "  return o;\n"
     "}\n"
     // ---- GPU skinning: up to 256 joints as 3x4 affine rows (b1) ----
@@ -487,6 +495,42 @@ inline const char* D3D11HlslSource() {
     // Depth of field (DofMath.hpp): mixes the sharp and blurred frame by distance from focus.
     OKAY_DOF_HLSL;
   return kText;
+}
+
+// ---- Custom (.okayshader) variants of the mesh shader text ---------------------------------------
+// The renderer compiles these at run time (D3D11Renderer.cpp); tests and the offline HLSL check
+// build the very same text. Each returns an empty string if the base text lost its insertion point.
+
+/// PSMain with the generated okaySurface() (oshader::Compiled::hlsl) spliced in (OKAY_SURFACE).
+inline std::string D3D11CustomPixelSource(const std::string& surfaceHlsl) {
+    std::string src = D3D11HlslSource();
+    const std::size_t at = src.find("float4 PSMain(");
+    if (at == std::string::npos) return std::string();
+    src.insert(at, "#define OKAY_SURFACE 1\n" + surfaceHlsl);
+    return src;
+}
+/// VSMain with the generated okayVertex() (Compiled::hlslVertex) and the view-projection in b`reg` (OKAY_VERTEX).
+inline std::string D3D11CustomVertexSource(const std::string& vertexHlsl, int reg) {
+    std::string src = D3D11HlslSource();
+    const std::size_t at = src.find("PSIn VSMain(");
+    if (at == std::string::npos) return std::string();
+    src.insert(at, "#define OKAY_VERTEX 1\ncbuffer OkayVertex : register(b" + std::to_string(reg) + ") { float4x4 uOkVP; };\n" + vertexHlsl);
+    return src;
+}
+/// The shadow-map pixel shader PSCustomDepth: runs the surface and drops a texel it discards or whose
+/// alpha is below one half (no eye in a shadow map: `view` is the surface normal).
+inline std::string D3D11CustomDepthSource(const std::string& surfaceHlsl) {
+    std::string src = D3D11HlslSource();
+    const std::size_t at = src.find("float4 PSMain(");
+    if (at == std::string::npos) return std::string();
+    src.insert(at, "#define OKAY_SURFACE 1\n" + surfaceHlsl +
+        "float4 PSCustomDepth(PSIn i):SV_TARGET {\n"
+        "  float3 N = i.nrm; float l = length(N); N = l > 1e-12 ? N / l : float3(0,1,0);\n"
+        "  OkaySurface s = okaySurface(i.uv, i.world, N, i.col, uOkTimeV.x, uColor * i.col, uEmissive, uAlpha, N, uPbr.x, uSpecular, uShininess);\n"
+        "  if (s.alpha < 0.5) discard;\n"
+        "  return float4(0, 0, 0, 0);\n"
+        "}\n");
+    return src;
 }
 
 } // namespace okay

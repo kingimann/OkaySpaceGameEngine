@@ -2,6 +2,8 @@
 // material property text. Hostile inputs and a mutation fuzz must give errors, never crashes.
 #include "test_framework.hpp"
 #include "okay/Render/OkayShader.hpp"
+#include "okay/Render/D3D11Hlsl.hpp"
+#include <cstdlib>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -426,17 +428,34 @@ int main() {
     }
 
     // ---- the shipped example shaders all compile ---------------------------------------------
+    // OKAY_HLSL_DUMP=<folder>: also write the Direct3D 11 variants of each (the text the renderer
+    // hands D3DCompile) there, for an offline HLSL compiler (docs/rendering/shaders.md).
     {
         const char* files[] = {"examples/shaders/lava.okayshader", "examples/shaders/dissolve.okayshader",
                                "examples/shaders/rim_glow.okayshader", "examples/shaders/flag_wave.okayshader",
                                "examples/shaders/wobble.okayshader"};
+        const char* dump = std::getenv("OKAY_HLSL_DUMP");
         for (const char* f : files) {
             std::ifstream in(std::string(OKAY_SOURCE_DIR) + "/" + f);
             CHECK(in.good());
             std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
             Compiled c = Compile(src);
             CHECK(c.ok);
-            if (!c.ok) std::cerr << "    " << c.FirstError(f) << "\n";
+            if (!c.ok) { std::cerr << "    " << c.FirstError(f) << "\n"; continue; }
+            const std::string ps = okay::D3D11CustomPixelSource(c.hlsl), ds = okay::D3D11CustomDepthSource(c.hlsl);
+            const std::string vs = c.hasVertex ? okay::D3D11CustomVertexSource(c.hlslVertex, kHlslVertexRegister) : std::string();
+            CHECK(!ps.empty() && ps.find("#define OKAY_SURFACE 1") < ps.find("float4 PSMain("));
+            CHECK(!ds.empty() && Has(ds, "float4 PSCustomDepth(PSIn i)"));
+            if (c.hasVertex) CHECK(!vs.empty() && vs.find("void okayVertex(") < vs.find("PSIn VSMain(") && Has(vs, "register(b5)"));
+            if (dump) {
+                std::string base = std::string(dump) + "/" + std::string(f).substr(std::string(f).rfind('/') + 1);
+                base = base.substr(0, base.size() - std::string(".okayshader").size());
+                std::ofstream(base + ".ps.hlsl") << ps;
+                std::ofstream(base + ".depth.hlsl") << ds;
+                if (c.hasVertex) std::ofstream(base + ".vs.hlsl") << vs;
+                std::ofstream(base + ".surface.txt") << c.hlsl;   // the generated parts alone (the Direct3D 12 text splices them too)
+                if (c.hasVertex) std::ofstream(base + ".vertex.txt") << c.hlslVertex;
+            }
         }
     }
     TEST_MAIN_RESULT();

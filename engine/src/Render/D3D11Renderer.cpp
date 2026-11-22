@@ -303,7 +303,16 @@ struct D3D11Renderer::Impl {
     // Custom (.okayshader) surfaces: PSMain compiled again with the generated okaySurface() spliced in
     // (OKAY_SURFACE), one pixel shader per shader file; properties + time in b4, pictures from t9.
     // UNVERIFIED on Windows: written and syntax-checked with the MinGW headers only.
-    struct CustomPS { ID3D11PixelShader* ps = nullptr; std::uint64_t generation = 0; bool failed = false, unlit = false, writesAlpha = false; };
+    // A vertex block adds a VSMain variant (OKAY_VERTEX, view-projection in b5); a vertex block or a
+    // cut-away surface adds the shadow variant: that VS (or the plain VSMain) and PSCustomDepth,
+    // which drops the texels the surface discards or makes see-through.
+    struct CustomPS {
+        ID3D11PixelShader* ps = nullptr; std::uint64_t generation = 0; bool failed = false, unlit = false, writesAlpha = false;
+        ID3D11VertexShader* vs = nullptr;          // null without a vertex block
+        ID3D11PixelShader* psDepth = nullptr;      // null when the surface cuts nothing
+        bool hasVertex = false, cutsShadow = false;
+    };
+    ID3D11Buffer* customVCB = nullptr;                     // b5: float4x4 view-projection for the vertex variant
     std::unordered_map<std::string, CustomPS> customPs;
     ID3D11Buffer* customCB = nullptr;                      // float4 time + one float4 per property
     ID3D11Texture2D* whiteTex = nullptr; ID3D11ShaderResourceView* whiteSrv = nullptr;   // an unbound custom picture
@@ -317,6 +326,8 @@ D3D11Renderer::Impl::CustomPS* D3D11Renderer::Impl::EnsureCustomPS(const std::st
     CustomPS& cp = customPs[path];
     if (cp.generation == sf.generation && (cp.ps || cp.failed)) return cp.failed ? nullptr : &cp;
     if (cp.ps) { cp.ps->Release(); cp.ps = nullptr; }
+    if (cp.vs) { cp.vs->Release(); cp.vs = nullptr; }
+    if (cp.psDepth) { cp.psDepth->Release(); cp.psDepth = nullptr; }
     cp = CustomPS{};
     cp.generation = sf.generation;
     const oshader::Compiled* c = sf.compiled.get();
@@ -326,10 +337,8 @@ D3D11Renderer::Impl::CustomPS* D3D11Renderer::Impl::EnsureCustomPS(const std::st
     cp.failed = true;
     return nullptr;
 #else
-    std::string src = kHLSL;
-    const std::size_t at = src.find("float4 PSMain(");
-    if (at == std::string::npos) { cp.failed = true; return nullptr; }
-    src.insert(at, "#define OKAY_SURFACE 1\n" + c->hlsl);
+    const std::string src = D3D11CustomPixelSource(c->hlsl);
+    if (src.empty()) { cp.failed = true; return nullptr; }
     ID3DBlob* blob = nullptr; ID3DBlob* err = nullptr;
     if (FAILED(D3DCompile(src.c_str(), (SIZE_T)src.size(), "okaycustom", nullptr, nullptr, "PSMain", "ps_4_0", 0, 0, &blob, &err))) {
         Log::Error("[d3d11] custom shader ", path, " did not compile: ", err ? (const char*)err->GetBufferPointer() : "?");
@@ -359,6 +368,44 @@ D3D11Renderer::Impl::CustomPS* D3D11Renderer::Impl::EnsureCustomPS(const std::st
     if (!cp.ps || !customCB) { if (cp.ps) cp.ps->Release(); cp.ps = nullptr; cp.failed = true; return nullptr; }
     cp.unlit = c->unlit;
     cp.writesAlpha = c->writesAlpha;
+    cp.hasVertex = c->hasVertex;
+    cp.cutsShadow = c->CutsShadow();
+    auto compileVariant = [&](const std::string& text, const char* entry, const char* profile) -> ID3DBlob* {
+        ID3DBlob* b = nullptr; ID3DBlob* e = nullptr;
+        if (FAILED(D3DCompile(text.c_str(), (SIZE_T)text.size(), "okaycustom", nullptr, nullptr, entry, profile, 0, 0, &b, &e))) {
+            Log::Error("[d3d11] custom shader ", path, " (", entry, ") did not compile: ", e ? (const char*)e->GetBufferPointer() : "?");
+            if (e) e->Release();
+            if (b) b->Release();
+            return nullptr;
+        }
+        if (e) e->Release();
+        return b;
+    };
+    if (c->hasVertex) {   // the vertex block: VSMain again with okayVertex() and the b5 view-projection
+        const std::string vsrc = D3D11CustomVertexSource(c->hlslVertex, oshader::kHlslVertexRegister);
+        if (!vsrc.empty()) {
+            if (ID3DBlob* vb = compileVariant(vsrc, "VSMain", "vs_4_0")) {
+                dev->CreateVertexShader(vb->GetBufferPointer(), vb->GetBufferSize(), nullptr, &cp.vs);
+                vb->Release();
+            }
+        }
+        if (!customVCB) {
+            D3D11_BUFFER_DESC bd; std::memset(&bd, 0, sizeof(bd));
+            bd.ByteWidth = 64; bd.Usage = D3D11_USAGE_DYNAMIC;
+            bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER; bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            if (FAILED(dev->CreateBuffer(&bd, nullptr, &customVCB))) customVCB = nullptr;
+        }
+        if (!cp.vs || !customVCB) { if (cp.vs) cp.vs->Release(); cp.vs = nullptr; Log::Error("[d3d11] custom shader ", path, ": vertex block not used"); }
+    }
+    if (cp.cutsShadow) {   // the shadow variant's pixel shader
+        const std::string dsrc = D3D11CustomDepthSource(c->hlsl);
+        if (!dsrc.empty()) {
+            if (ID3DBlob* pb = compileVariant(dsrc, "PSCustomDepth", "ps_4_0")) {
+                dev->CreatePixelShader(pb->GetBufferPointer(), pb->GetBufferSize(), nullptr, &cp.psDepth);
+                pb->Release();
+            }
+        }
+    }
     return &cp;
 #endif
 }
@@ -1219,6 +1266,62 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             // buffer (stride 14). Per-frame-deformed meshes stream position-only.
             const bool deformed = go->GetComponent<Character>() != nullptr;
             const auto* skinD = go->GetComponent<SkinnedMesh>();
+            // A Custom shader with a vertex block or a cut-away surface casts through its shadow variant
+            // (the full vertex layout, its VS or the plain VSMain, and PSCustomDepth when it cuts).
+            if (!forView && !deformed && !p->CanGpuSkin(skinD) && mr->shader == MeshRenderer::Shader::Custom) {
+                Impl::CustomPS* cp = p->EnsureCustomPS(mr->customShader);
+                if (cp && ((cp->vs && p->customVCB) || cp->psDepth)) {
+                    Impl::MeshVB* mv = p->EnsureMeshVB(mesh, skinD ? skinD->version : 0);
+                    if (!mv) continue;
+                    const Mat4 model = go->transform->LocalToWorldMatrix();
+                    std::memcpy(dcb.model, model.m, sizeof(dcb.model));
+                    dcb.tiling[0] = mr->tiling.x; dcb.tiling[1] = mr->tiling.y;
+                    dcb.pbr2[2] = mr->texOffset.x; dcb.pbr2[3] = mr->texOffset.y;
+                    dcb.color[0] = mr->color.r; dcb.color[1] = mr->color.g; dcb.color[2] = mr->color.b;
+                    dcb.emissive[0] = mr->emissive.r; dcb.emissive[1] = mr->emissive.g; dcb.emissive[2] = mr->emissive.b;
+                    dcb.alpha = mr->color.a; dcb.pbr[0] = mr->metallic; dcb.specular = mr->specular; dcb.shininess = mr->shininess;
+                    if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &dms))) {
+                        std::memcpy(dms.pData, &dcb, sizeof(dcb)); c->Unmap(p->cb, 0);
+                    }
+                    float cdata[4 * (1 + oshader::kMaxProperties)];
+                    std::memset(cdata, 0, sizeof(cdata));
+                    cdata[0] = Time::ElapsedTime();
+                    const oshader::ShaderFile sf = oshader::LoadShaderFile(mr->customShader);
+                    if (sf.compiled && sf.compiled->ok) {
+                        const std::vector<float> v = oshader::ResolveProperties(*sf.compiled, mr->shaderParams);
+                        std::memcpy(cdata + 4, v.data(), sizeof(float) * std::min<std::size_t>(v.size(), 4 * oshader::kMaxProperties));
+                        for (int t = 0; t < (int)sf.compiled->textures.size() && t < oshader::kMaxTextures; ++t) {
+                            const std::string pic = oshader::ResolveTexture(*sf.compiled, t, mr->shaderParams);
+                            ID3D11ShaderResourceView* ts = pic.empty() ? nullptr : p->TextureFor(pic);
+                            if (!ts) ts = p->whiteSrv;
+                            c->PSSetShaderResources((UINT)(oshader::kFirstTextureUnit + t), 1, &ts);
+                        }
+                    }
+                    if (SUCCEEDED(c->Map(p->customCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &dms))) {
+                        std::memcpy(dms.pData, cdata, sizeof(cdata)); c->Unmap(p->customCB, 0);
+                    }
+                    c->VSSetConstantBuffers((UINT)oshader::kHlslPropRegister, 1, &p->customCB);
+                    c->PSSetConstantBuffers((UINT)oshader::kHlslPropRegister, 1, &p->customCB);
+                    c->PSSetConstantBuffers(0, 1, &p->cb);
+                    if (cp->vs && p->customVCB) {
+                        if (SUCCEEDED(c->Map(p->customVCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &dms))) {
+                            std::memcpy(dms.pData, lightVP.m, sizeof(float) * 16); c->Unmap(p->customVCB, 0);
+                        }
+                        c->VSSetConstantBuffers((UINT)oshader::kHlslVertexRegister, 1, &p->customVCB);
+                    }
+                    c->IASetInputLayout(p->layout);
+                    c->VSSetShader((cp->vs && p->customVCB) ? cp->vs : p->vs, nullptr, 0);
+                    c->PSSetShader(cp->psDepth, nullptr, 0);   // null when it cuts nothing: depth only
+                    if (cp->psDepth) c->PSSetSamplers(0, 1, &p->samp);
+                    UINT ds = 14 * sizeof(float), doff = 0;
+                    c->IASetVertexBuffers(0, 1, &mv->vbuf, &ds, &doff);
+                    c->Draw((UINT)mv->vertCount, 0);
+                    c->IASetInputLayout(p->layoutDepth);
+                    c->VSSetShader(p->vsDepth, nullptr, 0);
+                    c->PSSetShader(nullptr, nullptr, 0);
+                    continue;
+                }
+            }
             if (!deformed && p->CanGpuSkin(skinD) && p->vsDepthSkin && p->layoutDepthSkin) {
                 Impl::MeshVB* mv = p->EnsureMeshVB(skinD->bind, 0, false);
                 Impl::SkinVB* sv = mv ? p->EnsureSkinVB(*skinD) : nullptr;
@@ -1638,6 +1741,14 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
                 std::memcpy(ms.pData, cdata, sizeof(cdata)); c->Unmap(p->customCB, 0);
             }
             c->PSSetConstantBuffers((UINT)oshader::kHlslPropRegister, 1, &p->customCB);
+            if (cust->vs && !svb) {   // the vertex block (not for meshes skinned on the GPU: those keep their skinning shader)
+                c->VSSetShader(cust->vs, nullptr, 0);
+                c->VSSetConstantBuffers((UINT)oshader::kHlslPropRegister, 1, &p->customCB);
+                if (SUCCEEDED(c->Map(p->customVCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
+                    std::memcpy(ms.pData, vp.m, sizeof(float) * 16); c->Unmap(p->customVCB, 0);
+                }
+                c->VSSetConstantBuffers((UINT)oshader::kHlslVertexRegister, 1, &p->customVCB);
+            }
         }
         if (srv) c->PSSetShaderResources(0, 1, &srv);
         if (nsrv) c->PSSetShaderResources(1, 1, &nsrv);   // normal/bump map on t1
@@ -1727,6 +1838,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         }
         if (svb) { c->IASetInputLayout(p->layout); c->VSSetShader(p->vs, nullptr, 0); }
         if (cust) c->PSSetShader(p->ps, nullptr, 0);
+        if (cust && cust->vs && !svb) c->VSSetShader(p->vs, nullptr, 0);
     }
     LastCullCounters().drawn = drawnN;
 
@@ -2003,7 +2115,12 @@ void D3D11Renderer::Destroy() {
     for (auto& kv : p->texCache) if (kv.second) kv.second->Release();
     p->texCache.clear();
     p->texSampling.clear();
-    for (auto& kv : p->customPs) if (kv.second.ps) kv.second.ps->Release();
+    for (auto& kv : p->customPs) {
+        if (kv.second.ps) kv.second.ps->Release();
+        if (kv.second.vs) kv.second.vs->Release();
+        if (kv.second.psDepth) kv.second.psDepth->Release();
+    }
+    if (p->customVCB) { p->customVCB->Release(); p->customVCB = nullptr; }
     p->customPs.clear();
     if (p->customCB) { p->customCB->Release(); p->customCB = nullptr; }
     if (p->whiteSrv) { p->whiteSrv->Release(); p->whiteSrv = nullptr; }

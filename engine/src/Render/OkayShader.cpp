@@ -187,7 +187,7 @@ private:
 // =====================================================================================
 // Syntax tree (node pools: no deep destructor recursion)
 // =====================================================================================
-enum class SymKind : std::uint8_t { Input, Output, Property, Texture, Local, LoopVar };
+enum class SymKind : std::uint8_t { Input, Output, Property, Texture, Local, LoopVar, VInput, VOutput };
 struct Symbol {
     std::string name;
     SymKind kind = SymKind::Local;
@@ -195,6 +195,7 @@ struct Symbol {
     int index = 0;      // input/output id, property / texture index, local id
     int slot = -1;      // CPU register
     int depth = 0;      // scope depth (locals)
+    std::uint8_t stage = 0;   // 0 = any block, 1 = surface block only, 2 = vertex block only
 };
 
 // Fixed inputs and outputs, in CPU slot order.
@@ -212,6 +213,15 @@ constexpr int kInputSlots = 12;    // 2+3+3+3+1
 constexpr int kOutputSlots = 13;   // 3+3+1+3+1+1+1
 int InputSlot(int i) { static const int s[] = {0, 2, 5, 8, 11}; return s[i]; }
 int OutputSlot(int i) { static const int s[] = {12, 15, 18, 19, 22, 23, 24}; return s[i]; }
+// The vertex block's inputs and outputs. They reuse the surface register layout (uv, local in the
+// position slot, vcolor, time; position in the albedo slot, normal in the normal slot), so one
+// register file and one interpreter serve both blocks.
+const Fixed kVInputs[] = {
+    {"uv", Type::Vec2, "ok_uv"}, {"local", Type::Vec3, "ok_local"}, {"vcolor", Type::Vec3, "ok_vcol"}, {"time", Type::Float, "ok_time"},
+};
+const Fixed kVOutputs[] = { {"position", Type::Vec3, "ok_vpos"}, {"normal", Type::Vec3, "ok_vnrm"} };
+int VInputSlot(int i) { static const int s[] = {0, 2, 8, 11}; return s[i]; }
+int VOutputSlot(int i) { static const int s[] = {12, 19}; return s[i]; }
 
 enum class Bi : std::uint8_t {
     None,
@@ -279,14 +289,17 @@ struct Stmt {
 class Parser {
 public:
     Parser(const std::vector<Token>& toks, Compiled& out) : m_t(toks), m_out(out) {
-        for (int i = 0; i < 5; ++i) AddSym(kInputs[i].name, SymKind::Input, kInputs[i].type, i);
-        for (int i = 0; i < 7; ++i) AddSym(kOutputs[i].name, SymKind::Output, kOutputs[i].type, i);
+        for (int i = 0; i < 5; ++i) syms[(std::size_t)AddSym(kInputs[i].name, SymKind::Input, kInputs[i].type, i)].stage = 1;
+        for (int i = 0; i < 7; ++i) syms[(std::size_t)AddSym(kOutputs[i].name, SymKind::Output, kOutputs[i].type, i)].stage = 1;
+        for (int i = 0; i < 4; ++i) syms[(std::size_t)AddSym(kVInputs[i].name, SymKind::VInput, kVInputs[i].type, i)].stage = 2;
+        for (int i = 0; i < 2; ++i) syms[(std::size_t)AddSym(kVOutputs[i].name, SymKind::VOutput, kVOutputs[i].type, i)].stage = 2;
     }
 
     std::vector<Node> nodes;
     std::vector<Stmt> stmts;
     std::vector<Symbol> syms;
     int body = -1;                 // the surface block statement
+    int vbody = -1;                // the vertex block statement
     std::vector<Diagnostic> errs;  // type errors (parsing continues after them)
 
     void ParseFile() {
@@ -320,12 +333,21 @@ public:
                 if (body >= 0) Error(t, "only one surface block is allowed");
                 Next();
                 if (!IsP("{")) Error(Peek(), "expected '{' after surface");
+                m_stage = 1;
                 body = ParseBlock();
+                m_stage = 0;
+            } else if (IsWord("vertex")) {
+                if (vbody >= 0) Error(t, "only one vertex block is allowed");
+                Next();
+                if (!IsP("{")) Error(Peek(), "expected '{' after vertex");
+                m_stage = 2;
+                vbody = ParseBlock();
+                m_stage = 0;
             } else {
-                Error(t, "expected shader, mode, property, texture or surface, found " + Describe(t));
+                Error(t, "expected shader, mode, property, texture, vertex or surface, found " + Describe(t));
             }
         }
-        if (body < 0) Error(Peek(), "the file has no surface block");
+        if (body < 0 && vbody < 0) Error(Peek(), "the file has no surface or vertex block");
     }
 
 private:
@@ -335,6 +357,7 @@ private:
     int m_depth = 0;
     int m_scope = 0;
     long m_loopProduct = 1;
+    int m_stage = 0;               // the block being parsed: 0 none, 1 surface, 2 vertex
 
     // ---- tokens ----
     const Token& Peek(int k = 0) const { std::size_t i = m_p + k; return i < m_t.size() ? m_t[i] : m_t.back(); }
@@ -382,8 +405,10 @@ private:
         return (int)syms.size() - 1;
     }
     int Lookup(const std::string& n) const {
-        for (int i = (int)syms.size() - 1; i >= 0; --i)
+        for (int i = (int)syms.size() - 1; i >= 0; --i) {
+            if (m_stage != 0 && syms[i].stage != 0 && syms[i].stage != m_stage) continue;   // the other block's inputs / outputs
             if (syms[i].name == n && syms[i].depth >= 0) return i;
+        }
         return -1;
     }
     static bool IsTypeWord(const std::string& w) {
@@ -403,6 +428,7 @@ private:
         if (s >= 0) {
             const SymKind k = syms[s].kind;
             if (k == SymKind::Input || k == SymKind::Output) Error(n, "'" + n.text + "' is a surface input or output and cannot be declared");
+            if (k == SymKind::VInput || k == SymKind::VOutput) Error(n, "'" + n.text + "' is a vertex input or output and cannot be declared");
             Error(n, "'" + n.text + "' is already declared");
         }
     }
@@ -498,6 +524,7 @@ private:
             if (t.text == "if") return ParseIf();
             if (t.text == "for") return ParseFor();
             if (t.text == "discard") {
+                if (m_stage == 2) Error(t, "discard is only allowed in the surface block");
                 Next();
                 ExpectP(";", "after discard");
                 m_out.usesDiscard = true;
@@ -556,7 +583,7 @@ private:
         const int s = Lookup(n.text);
         if (s < 0) Error(n, "unknown name '" + n.text + "'");
         const Symbol& sy = syms[(std::size_t)s];
-        if (sy.kind == SymKind::Input || sy.kind == SymKind::Property || sy.kind == SymKind::LoopVar || sy.kind == SymKind::Texture)
+        if (sy.kind == SymKind::Input || sy.kind == SymKind::VInput || sy.kind == SymKind::Property || sy.kind == SymKind::LoopVar || sy.kind == SymKind::Texture)
             Error(n, "'" + n.text + "' is read-only");
         const int id = NewStmt(SK::Assign, n);
         Type target = sy.type;
@@ -839,6 +866,7 @@ private:
             return id;
         }
         const BiInfo* bi = FindBuiltin(fn.text);
+        if (bi && bi->id == Bi::Sample && m_stage == 2) Error(fn, "sample() is only allowed in the surface block");
         std::vector<int> args = ParseArgs();
         if (!bi) {
             TypeError(fn.line, fn.col, "unknown function '" + fn.text + "'");
@@ -921,40 +949,30 @@ class Emitter {
 public:
     Emitter(const Parser& p, const Compiled& c, bool hlsl) : P(p), C(c), H(hlsl) {}
 
+    // The fragment-stage text: uniforms, helpers and okaySurface(...).
     std::string Run() {
-        std::string o;
-        o += "// generated from an .okayshader file\n";
-        if (H) {
-            o += "cbuffer OkayCustom : register(b" + std::to_string(kHlslPropRegister) + ") {\n  float4 uOkTimeV;\n";
-            for (std::size_t i = 0; i < C.props.size(); ++i) o += "  float4 okp_" + C.props[i].name + "V;\n";
-            o += "};\n";
-            o += "static float uOkTime;\n";
-            for (std::size_t i = 0; i < C.props.size(); ++i)
-                o += "static " + Ty(C.props[i].type) + " okp_" + C.props[i].name + ";\n";
-            for (std::size_t i = 0; i < C.textures.size(); ++i)
-                o += "Texture2D okt_" + C.textures[i].name + " : register(t" + std::to_string(kFirstTextureUnit + (int)i) + ");\n";
-        } else {
-            o += "uniform float uOkTime;\n";
-            for (const Property& p : C.props) o += "uniform " + Ty(p.type) + " okp_" + p.name + ";\n";
-            for (const TextureSlot& t : C.textures) o += "uniform sampler2D okt_" + t.name + ";\n";
-        }
-        o += Helpers();
+        std::string o = Header(true);
         o += "struct OkaySurface { " + Ty(Type::Vec3) + " albedo; " + Ty(Type::Vec3) + " emission; float alpha; " + Ty(Type::Vec3) +
              " normal; float metallic; float specular; float shininess; };\n";
         const std::string v2 = Ty(Type::Vec2), v3 = Ty(Type::Vec3);
         o += "OkaySurface okaySurface(" + v2 + " ok_uv, " + v3 + " ok_pos, " + v3 + " ok_view, " + v3 + " ok_vcol, float ok_time, " +
              v3 + " i_albedo, " + v3 + " i_emission, float i_alpha, " + v3 + " i_normal, float i_metallic, float i_specular, float i_shininess) {\n";
-        if (H) {   // unpack the property block
-            o += "  uOkTime = uOkTimeV.x;\n";
-            for (const Property& p : C.props) {
-                static const char* sw[] = {"", ".x", ".xy", ".xyz", ".xyzw"};
-                o += "  okp_" + p.name + " = okp_" + p.name + "V" + sw[Width(p.type)] + ";\n";
-            }
-        }
+        Unpack(o);
         o += "  OkaySurface s;\n  s.albedo = i_albedo; s.emission = i_emission; s.alpha = i_alpha; s.normal = i_normal;\n"
              "  s.metallic = i_metallic; s.specular = i_specular; s.shininess = i_shininess;\n";
         if (P.body >= 0) for (int st : P.stmts[(std::size_t)P.body].list) Stmt(st, 1, o);
         o += "  return s;\n}\n";
+        return o;
+    }
+    // The vertex-stage text: uniforms, helpers and okayVertex(...) (no textures: sample() is not allowed there).
+    std::string RunVertex() {
+        std::string o = Header(false);
+        const std::string v2 = Ty(Type::Vec2), v3 = Ty(Type::Vec3);
+        o += "void okayVertex(" + v2 + " ok_uv, " + v3 + " ok_local, " + v3 + " ok_vcol, float ok_time, inout " + v3 + " ok_vpos, inout " +
+             v3 + " ok_vnrm) {\n";
+        Unpack(o);
+        if (P.vbody >= 0) for (int st : P.stmts[(std::size_t)P.vbody].list) Stmt(st, 1, o);
+        o += "}\n";
         return o;
     }
 
@@ -964,6 +982,35 @@ private:
     bool H;
     int m_loop = 0;
 
+    std::string Header(bool textures) const {
+        std::string o;
+        o += "// generated from an .okayshader file\n";
+        if (H) {
+            o += "cbuffer OkayCustom : register(b" + std::to_string(kHlslPropRegister) + ") {\n  float4 uOkTimeV;\n";
+            for (std::size_t i = 0; i < C.props.size(); ++i) o += "  float4 okp_" + C.props[i].name + "V;\n";
+            o += "};\n";
+            o += "static float uOkTime;\n";
+            for (std::size_t i = 0; i < C.props.size(); ++i)
+                o += "static " + Ty(C.props[i].type) + " okp_" + C.props[i].name + ";\n";
+            if (textures)
+                for (std::size_t i = 0; i < C.textures.size(); ++i)
+                    o += "Texture2D okt_" + C.textures[i].name + " : register(t" + std::to_string(kFirstTextureUnit + (int)i) + ");\n";
+        } else {
+            o += "uniform float uOkTime;\n";
+            for (const Property& p : C.props) o += "uniform " + Ty(p.type) + " okp_" + p.name + ";\n";
+            if (textures) for (const TextureSlot& t : C.textures) o += "uniform sampler2D okt_" + t.name + ";\n";
+        }
+        o += Helpers();
+        return o;
+    }
+    void Unpack(std::string& o) const {
+        if (!H) return;   // HLSL: unpack the property block
+        o += "  uOkTime = uOkTimeV.x;\n";
+        for (const Property& p : C.props) {
+            static const char* sw[] = {"", ".x", ".xy", ".xyz", ".xyzw"};
+            o += "  okp_" + p.name + " = okp_" + p.name + "V" + sw[Width(p.type)] + ";\n";
+        }
+    }
     std::string Ty(Type t) const {
         switch (t) {
             case Type::Bool: return "bool";
@@ -1016,6 +1063,8 @@ private:
         switch (sy.kind) {
             case SymKind::Input: return kInputs[sy.index].glsl;
             case SymKind::Output: return kOutputs[sy.index].glsl;
+            case SymKind::VInput: return kVInputs[sy.index].glsl;
+            case SymKind::VOutput: return kVOutputs[sy.index].glsl;
             case SymKind::Property: return "okp_" + sy.name;
             case SymKind::Texture: return "okt_" + sy.name;
             default: return "l_" + sy.name;
@@ -1188,14 +1237,14 @@ constexpr std::uint16_t kConstFlag = 0x8000;
 class CpuGen {
 public:
     CpuGen(Parser& p, const Compiled& c) : P(p), C(c) {}
-    std::shared_ptr<CpuProgram> Run(std::vector<Diagnostic>& errs) {
+    std::shared_ptr<CpuProgram> Run(std::vector<Diagnostic>& errs, int block) {
         auto prog = std::make_shared<CpuProgram>();
         m_prog = prog.get();
         m_top = kInputSlots + kOutputSlots + 4 * (int)C.props.size();
         m_peak = m_top;
         prog->propCount = (int)C.props.size();
         try {
-            if (P.body >= 0) Stmt(P.body);
+            if (block >= 0) Stmt(block);
         } catch (const Fail&) {
             errs.push_back(m_err);
             return nullptr;
@@ -1244,6 +1293,8 @@ private:
         switch (sy.kind) {
             case SymKind::Input: return InputSlot(sy.index);
             case SymKind::Output: return OutputSlot(sy.index);
+            case SymKind::VInput: return VInputSlot(sy.index);
+            case SymKind::VOutput: return VOutputSlot(sy.index);
             case SymKind::Property: return kInputSlots + kOutputSlots + 4 * sy.index;
             default: return sy.slot;
         }
@@ -1455,8 +1506,17 @@ Compiled Compile(const std::string& source) {
     }
     CpuGen gen(p, out);
     std::vector<Diagnostic> cerr;
-    std::shared_ptr<CpuProgram> cpu = gen.Run(cerr);
+    std::shared_ptr<CpuProgram> cpu = gen.Run(cerr, p.body);
     if (!cpu) { out.errors = cerr; out.props.clear(); out.textures.clear(); return out; }
+    if (p.vbody >= 0) {
+        CpuGen vgen(p, out);
+        std::shared_ptr<CpuProgram> vcpu = vgen.Run(cerr, p.vbody);
+        if (!vcpu) { out.errors = cerr; out.props.clear(); out.textures.clear(); return out; }
+        out.cpuVertex = vcpu;
+        out.hasVertex = true;
+        out.glslVertex = Emitter(p, out, false).RunVertex();
+        out.hlslVertex = Emitter(p, out, true).RunVertex();
+    }
     out.cpu = cpu;
     out.glsl = Emitter(p, out, false).Run();
     out.hlsl = Emitter(p, out, true).Run();
@@ -1465,6 +1525,27 @@ Compiled Compile(const std::string& source) {
 }
 
 int CpuInstructionCount(const CpuProgram& prog) { return (int)prog.code.size(); }
+
+namespace {
+// The interpreter: runs `prog` on the register file `r` (inputs and outputs already in place).
+// Returns true when the program discarded.
+bool Exec(const CpuProgram& prog, float* r, const float* props, SampleFn sample, const void* ctx);
+} // namespace
+
+void RunCpuVertex(const CpuProgram& prog, const VertexIn& in, const float* props, VertexOut& out) {
+    float R[kMaxRegs + kMaxConsts];
+    float* r = R;
+    for (int i = 0; i < kInputSlots + kOutputSlots; ++i) r[i] = 0.0f;
+    std::memcpy(r + 0, in.uv, sizeof(float) * 2);
+    std::memcpy(r + 2, in.local, sizeof(float) * 3);
+    std::memcpy(r + 8, in.vcolor, sizeof(float) * 3);
+    r[11] = in.time;
+    std::memcpy(r + 12, in.position, sizeof(float) * 3);
+    std::memcpy(r + 19, in.normal, sizeof(float) * 3);
+    Exec(prog, r, props, nullptr, nullptr);
+    std::memcpy(out.position, r + 12, sizeof(float) * 3);
+    std::memcpy(out.normal, r + 19, sizeof(float) * 3);
+}
 
 void RunCpu(const CpuProgram& prog, const SurfaceIn& in, const float* props, SampleFn sample, const void* ctx, SurfaceOut& out) {
     float R[kMaxRegs + kMaxConsts];
@@ -1479,10 +1560,20 @@ void RunCpu(const CpuProgram& prog, const SurfaceIn& in, const float* props, Sam
     r[18] = in.alpha;
     std::memcpy(r + 19, in.normal, sizeof(float) * 3);
     r[22] = in.metallic; r[23] = in.specular; r[24] = in.shininess;
+    out.discard = Exec(prog, r, props, sample, ctx);
+    std::memcpy(out.albedo, r + 12, sizeof(float) * 3);
+    std::memcpy(out.emission, r + 15, sizeof(float) * 3);
+    out.alpha = r[18];
+    std::memcpy(out.normal, r + 19, sizeof(float) * 3);
+    out.metallic = r[22]; out.specular = r[23]; out.shininess = r[24];
+}
+
+namespace {
+bool Exec(const CpuProgram& prog, float* r, const float* props, SampleFn sample, const void* ctx) {
+    bool discarded = false;
     if (prog.propCount > 0 && props) std::memcpy(r + kInputSlots + kOutputSlots, props, sizeof(float) * 4 * (std::size_t)prog.propCount);
     else for (int i = 0; i < 4 * prog.propCount; ++i) r[kInputSlots + kOutputSlots + i] = 0.0f;
     if (!prog.consts.empty()) std::memcpy(r + prog.constBase, prog.consts.data(), sizeof(float) * prog.consts.size());
-    out.discard = false;
     const Ins* code = prog.code.data();
     const std::size_t codeN = prog.code.size();
     std::size_t pc = 0;
@@ -1587,7 +1678,7 @@ void RunCpu(const CpuProgram& prog, const SurfaceIn& in, const float* props, Sam
             }
             case Op::Jmp: pc = I.d; break;
             case Op::Jz: if (A[0] == 0.0f) pc = I.d; break;
-            case Op::Discard: out.discard = true; pc = codeN; break;
+            case Op::Discard: discarded = true; pc = codeN; break;
             case Op::End: pc = codeN; break;
         }
 #undef OK_EACH
@@ -1595,12 +1686,9 @@ void RunCpu(const CpuProgram& prog, const SurfaceIn& in, const float* props, Sam
 #undef b_
 #undef c_
     }
-    std::memcpy(out.albedo, r + 12, sizeof(float) * 3);
-    std::memcpy(out.emission, r + 15, sizeof(float) * 3);
-    out.alpha = r[18];
-    std::memcpy(out.normal, r + 19, sizeof(float) * 3);
-    out.metallic = r[22]; out.specular = r[23]; out.shininess = r[24];
+    return discarded;
 }
+} // namespace
 
 // =====================================================================================
 // Material property text: "name=1,2,3;tex:slot=path". ';' and '%' in values are written %3B / %25.

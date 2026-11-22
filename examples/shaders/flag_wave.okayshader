@@ -1,0 +1,28 @@
+// Flag wave: a cloth flag on a pole. The vertex block moves every vertex along
+// its normal with a travelling sine wave; the edge at the pole stays still and
+// the free end moves most. Use it on a Grid mesh with enough columns, Double-
+// sided on. Set poleX to the grid's left edge in its own units (-1 for a grid
+// 2 wide, -5 for the default 10-wide Grid) and amplitude / waves to match.
+// The lighting keeps the flat normal (there is no tangent input yet), so the
+// wave shows in the outline and in the stripes bending with the cloth.
+shader "Flag wave";
+
+property float amplitude = 0.12 range(0, 1);
+property float speed = 4.0 range(0, 12);
+property float waves = 3.0 range(0.1, 8);
+property float poleX = -1.0;
+property float stripes = 2.5 range(0.1, 10);
+property color stripeA = (0.85, 0.12, 0.15);
+property color stripeB = (0.95, 0.93, 0.88);
+
+vertex {
+    float k = clamp((local.x - poleX) / (2.0 * abs(poleX) + 0.0001), 0.0, 1.0);   // 0 at the pole, 1 at the free end
+    float ph = local.x * waves - time * speed;
+    position += normal * (sin(ph) * amplitude * k);
+    position += normal * (sin(local.z * waves * 2.3 + time * speed * 0.7) * amplitude * 0.25 * k);   // a small ripple across
+}
+
+surface {
+    albedo = mix(stripeA, stripeB, step(0.5, fract(uv.y * stripes)));
+    specular = 0.15;
+}

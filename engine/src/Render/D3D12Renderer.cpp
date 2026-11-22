@@ -18,6 +18,8 @@
 #include "okay/Components/LODGroup.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Time.hpp"
+#include "okay/Render/OkayShader.hpp"   // Custom (.okayshader) surfaces and vertex blocks
 
 #include <d3d12.h>
 #include <dxgi1_4.h>
@@ -98,10 +100,17 @@ const char* kHLSL12 =
     "  o.world = mul(uModel, float4(i.pos,1.0)).xyz;\n"
     "  o.uv = i.uv * uTiling + uPbr2.zw;\n"
     "  o.col = i.col;\n"
+    // Custom (.okayshader) vertex block (OKAY_VERTEX only in a custom variant; uOkVP in b5), as on D3D11.
+    "#ifdef OKAY_VERTEX\n"
+    "  { float3 okW = o.world; float3 okN = o.nrm; float okL = length(okN); okN = okL > 1e-12 ? okN / okL : float3(0,1,0);\n"
+    "    okayVertex(o.uv, i.pos, i.col, uOkTimeV.x, okW, okN);\n"
+    "    o.world = okW; o.nrm = okN; float4 okC = mul(uOkVP, float4(okW, 1.0)); okC.z = (okC.z + okC.w) * 0.5; o.pos = okC; }\n"
+    "#endif\n"
     "  return o;\n"
     "}\n"
     "float4 PSMain(PSIn i):SV_TARGET {\n"
     "  if (uShadowAlpha >= 0.0) return float4(0,0,0,uShadowAlpha);\n"
+    "  float gAlpha = uAlpha;\n"                                       // opacity (a Custom surface may change it)
     "  float3 N = normalize(i.nrm);\n"
     "  if (uHasNormal > 0.5) {\n"
     "    float3 tn = uNormalTex.Sample(uSamp, i.uv).rgb * 2.0 - 1.0;\n"
@@ -130,6 +139,12 @@ const char* kHLSL12 =
     "  if (uShaderMode > 6.5) base = floor(base * 5.0) / 5.0;\n"
     "  float3 emis = uEmissive;\n"
     "  if (uLightCount.z > 0.5) emis *= uEmisTex.Sample(uSamp, i.uv).rgb;\n"
+    // Custom (.okayshader) surface (OKAY_SURFACE only in a custom variant; OkayShader.hpp).
+    "#ifdef OKAY_SURFACE\n"
+    "  OkaySurface okS = okaySurface(i.uv, i.world, Vv, i.col, uOkTimeV.x, base, emis, uAlpha, N, uPbr.x, uSpecular, uShininess);\n"
+    "  base = okS.albedo; emis = okS.emission; gAlpha = okS.alpha;\n"
+    "  if (dot(okS.normal, okS.normal) > 1e-12) N = normalize(okS.normal);\n"
+    "#endif\n"
     "  float shiny = uShininess; float metalK = uPbr.x; float specK = uSpecular;\n"
     "  if (uLightCount.y > 0.5) {\n"
     "    float4 mr = uMrTex.Sample(uSamp, i.uv);\n"
@@ -139,7 +154,10 @@ const char* kHLSL12 =
     "    shiny = 4.0 + (1.0 - rough) * 124.0;\n"
     "    specK *= clamp(1.0 - rough, 0.04, 1.0);\n"
     "  }\n"
-    "  if (uUnlit > 0.5) return float4(base + emis, uAlpha);\n"
+    "#ifdef OKAY_SURFACE\n"
+    "  metalK = okS.metallic; specK = okS.specular; shiny = okS.shininess;\n"
+    "#endif\n"
+    "  if (uUnlit > 0.5) return float4(base + emis, gAlpha);\n"
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  float3 amb = uAmbient * lerp(0.55, 1.15, saturate(N.y * 0.5 + 0.5));\n"
     "  float3 lit = amb; float spec = 0.0;\n"
@@ -148,7 +166,7 @@ const char* kHLSL12 =
     "  if (lc < 1) {\n"
     "    float ndl = max(dot(N, uLightDir), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
     "    lit += uLightColor * ndl * sh;\n"
-    "    if (uSpecular > 0.0) { float3 H = normalize(uLightDir + Vv);\n"
+    "    if (specK > 0.0) { float3 H = normalize(uLightDir + Vv);\n"
     "      spec = pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * sh; }\n"
     "  } else {\n"
     "    for (int li = 0; li < 16; li++) { if (li >= lc) break;\n"
@@ -164,7 +182,7 @@ const char* kHLSL12 =
     "      float lsh = (d0.w < 0.5) ? sh : 1.0;\n"               // cast shadows apply to the sun only
     "      float ndl = max(dot(N, ld), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
     "      lit += d2.xyz * ndl * at * lsh;\n"
-    "      if (uSpecular > 0.0) { float3 H = normalize(ld + Vv);\n"
+    "      if (specK > 0.0) { float3 H = normalize(ld + Vv);\n"
     "        spec += pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * at * lsh; }\n"
     "    }\n"
     "  }\n"
@@ -203,7 +221,7 @@ const char* kHLSL12 =
     "           ff = 1.0 - exp(-uFogCol.w * fd * 0.5 * (te + tw)); }\n"
     "    col = lerp(col, uFogCol.xyz, ff);\n"
     "  }\n"
-    "  return float4(col, uAlpha);\n"
+    "  return float4(col, gAlpha);\n"
     "}\n";
 
 // Exact mirror of the D3D11 constant buffer.
@@ -233,6 +251,24 @@ struct CB {
 };
 
 inline UINT Align(UINT v, UINT a) { return (v + a - 1) & ~(a - 1); }
+
+// The mesh vertex layout (14 floats: position, normal, uv, colour, tangent).
+const D3D12_INPUT_ELEMENT_DESC kMeshLayout[5] = {
+    {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 44, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+};
+
+// kHLSL12 with a custom shader's generated code spliced in before `marker` (Custom shaders).
+std::string SpliceHlsl12(const char* marker, const std::string& text) {
+    std::string src = kHLSL12;
+    const std::size_t at = src.find(marker);
+    if (at == std::string::npos) return std::string();
+    src.insert(at, text);
+    return src;
+}
 
 template <typename T> void Release(T*& p) { if (p) { p->Release(); p = nullptr; } }
 
@@ -288,6 +324,19 @@ struct D3D12Renderer::Impl {
     std::vector<float> verts;
     std::vector<std::uint32_t> pixels;
 
+    // Custom (.okayshader) shaders: PSMain (and, with a vertex block, VSMain) compiled again with the
+    // generated code spliced in, and two pipeline states per shader file (opaque, blended). Root
+    // parameters 2 / 3 / 4 = b4 (time + properties), b5 (the vertex block's view-projection), t9..t12.
+    // UNVERIFIED: compile-checked against the MinGW headers only; never run.
+    struct CustomPso {
+        ID3D12PipelineState* opaque = nullptr; ID3D12PipelineState* blend = nullptr;
+        std::uint64_t generation = 0; bool failed = false, writesAlpha = false, unlit = false;
+    };
+    std::unordered_map<std::string, CustomPso> customPso;
+    std::vector<char> vsCode;                      // the plain VSMain bytecode (custom pipelines without a vertex block)
+    CustomPso* EnsureCustomPso(const std::string& path);
+    bool MeshPsoDesc(D3D12_GRAPHICS_PIPELINE_STATE_DESC& pso, bool blend) const;
+
     bool EnsureTargets(int W, int H);
     void DestroyTargets();
     D3D12_CPU_DESCRIPTOR_HANDLE TextureFor(const std::string& name);   // -> staging SRV handle
@@ -312,6 +361,73 @@ void D3D12Renderer::Impl::WaitGPU() {
         fence->SetEventOnCompletion(v, fenceEvent);
         WaitForSingleObject(fenceEvent, INFINITE);
     }
+}
+
+// The mesh pipeline description (no shaders): the same states the opaque / blended pipelines use.
+bool D3D12Renderer::Impl::MeshPsoDesc(D3D12_GRAPHICS_PIPELINE_STATE_DESC& pso, bool blend) const {
+    pso = D3D12_GRAPHICS_PIPELINE_STATE_DESC{};
+    pso.pRootSignature = rootSig;
+    pso.InputLayout = {kMeshLayout, 5};
+    pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    pso.NumRenderTargets = 1; pso.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    pso.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    pso.SampleDesc.Count = msaa; pso.SampleMask = 0xFFFFFFFF;
+    pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    pso.RasterizerState.DepthClipEnable = TRUE;
+    pso.DepthStencilState.DepthEnable = TRUE;
+    pso.DepthStencilState.DepthWriteMask = blend ? D3D12_DEPTH_WRITE_MASK_ZERO : D3D12_DEPTH_WRITE_MASK_ALL;
+    pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    for (int i = 0; i < 8; ++i) pso.BlendState.RenderTarget[i].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    if (blend) {
+        D3D12_RENDER_TARGET_BLEND_DESC& b = pso.BlendState.RenderTarget[0];
+        b.BlendEnable = TRUE;
+        b.SrcBlend = D3D12_BLEND_SRC_ALPHA; b.DestBlend = D3D12_BLEND_INV_SRC_ALPHA; b.BlendOp = D3D12_BLEND_OP_ADD;
+        b.SrcBlendAlpha = D3D12_BLEND_ONE; b.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA; b.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    }
+    return rootSig != nullptr;
+}
+
+// The pipelines of one custom shader file, built again when the file changes (the GPU is idle
+// between frames: RenderToPixels waits for it, so the old pipelines can go at once).
+D3D12Renderer::Impl::CustomPso* D3D12Renderer::Impl::EnsureCustomPso(const std::string& path) {
+    const oshader::ShaderFile sf = oshader::LoadShaderFile(path);
+    CustomPso& cp = customPso[path];
+    if (cp.generation == sf.generation && (cp.opaque || cp.failed)) return cp.failed ? nullptr : &cp;
+    Release(cp.opaque); Release(cp.blend);
+    cp = CustomPso{};
+    cp.generation = sf.generation;
+    const oshader::Compiled* c = sf.compiled.get();
+    if (!c || !c->ok || vsCode.empty()) { cp.failed = true; return nullptr; }
+    auto compile = [&](const std::string& text, const char* entry, const char* profile) -> ID3DBlob* {
+        if (text.empty()) return nullptr;
+        ID3DBlob* b = nullptr; ID3DBlob* e = nullptr;
+        if (FAILED(D3DCompile(text.c_str(), (SIZE_T)text.size(), "okaycustom12", nullptr, nullptr, entry, profile, 0, 0, &b, &e))) {
+            Log::Error("[d3d12] custom shader ", path, " (", entry, ") did not compile: ", e ? (const char*)e->GetBufferPointer() : "?");
+            Release(e); Release(b);
+            return nullptr;
+        }
+        Release(e);
+        return b;
+    };
+    ID3DBlob* ps = compile(SpliceHlsl12("float4 PSMain(", "#define OKAY_SURFACE 1\n" + c->hlsl), "PSMain", "ps_5_1");
+    ID3DBlob* vs = c->hasVertex
+        ? compile(SpliceHlsl12("PSIn VSMain(", "#define OKAY_VERTEX 1\ncbuffer OkayVertex : register(b" +
+                               std::to_string(oshader::kHlslVertexRegister) + ") { float4x4 uOkVP; };\n" + c->hlslVertex), "VSMain", "vs_5_1")
+        : nullptr;
+    if (!ps || (c->hasVertex && !vs)) { Release(ps); Release(vs); cp.failed = true; return nullptr; }
+    for (int blend = 0; blend < 2; ++blend) {
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC d;
+        MeshPsoDesc(d, blend != 0);
+        d.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+        d.VS = vs ? D3D12_SHADER_BYTECODE{vs->GetBufferPointer(), vs->GetBufferSize()} : D3D12_SHADER_BYTECODE{vsCode.data(), vsCode.size()};
+        dev->CreateGraphicsPipelineState(&d, IID_ID3D12PipelineState, (void**)(blend ? &cp.blend : &cp.opaque));
+    }
+    Release(ps); Release(vs);
+    if (!cp.opaque || !cp.blend) { Release(cp.opaque); Release(cp.blend); cp.failed = true; Log::Error("[d3d12] custom shader ", path, ": pipeline failed"); return nullptr; }
+    cp.writesAlpha = c->writesAlpha;
+    cp.unlit = c->unlit;
+    return &cp;
 }
 
 // Create / upload a texture once and return its (staging-heap) SRV handle. Failures
@@ -407,7 +523,12 @@ bool D3D12Renderer::Init() {
     srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     srvRange.NumDescriptors = 7; srvRange.BaseShaderRegister = 0;   // t0..t3 material, t4 shadow, t5 MR, t6 emissive
     srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-    D3D12_ROOT_PARAMETER params[2]{};
+    // Custom (.okayshader) shaders add b4 (time + properties), b5 (vertex view-projection) and t9..t12.
+    D3D12_DESCRIPTOR_RANGE customRange{};
+    customRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    customRange.NumDescriptors = (UINT)oshader::kMaxTextures; customRange.BaseShaderRegister = (UINT)oshader::kFirstTextureUnit;
+    customRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    D3D12_ROOT_PARAMETER params[5]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[0].Descriptor.ShaderRegister = 0;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -415,6 +536,16 @@ bool D3D12Renderer::Init() {
     params[1].DescriptorTable.NumDescriptorRanges = 1;
     params[1].DescriptorTable.pDescriptorRanges = &srvRange;
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[2].Descriptor.ShaderRegister = (UINT)oshader::kHlslPropRegister;
+    params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[3].Descriptor.ShaderRegister = (UINT)oshader::kHlslVertexRegister;
+    params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[4].DescriptorTable.NumDescriptorRanges = 1;
+    params[4].DescriptorTable.pDescriptorRanges = &customRange;
+    params[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_STATIC_SAMPLER_DESC samps[2]{};
     samps[0].Filter = D3D12_FILTER_ANISOTROPIC; samps[0].MaxAnisotropy = 8;
     samps[0].AddressU = samps[0].AddressV = samps[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -425,7 +556,7 @@ bool D3D12Renderer::Init() {
     samps[1].MaxLOD = D3D12_FLOAT32_MAX; samps[1].ShaderRegister = 1;
     samps[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_ROOT_SIGNATURE_DESC rs{};
-    rs.NumParameters = 2; rs.pParameters = params;
+    rs.NumParameters = 5; rs.pParameters = params;
     rs.NumStaticSamplers = 2; rs.pStaticSamplers = samps;
     rs.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
     ID3DBlob* rsb = nullptr; ID3DBlob* rerr = nullptr;
@@ -447,13 +578,8 @@ bool D3D12Renderer::Init() {
         Log::Error("[d3d12] shader compile failed"); Destroy(); return false;
     }
 
-    D3D12_INPUT_ELEMENT_DESC il[] = {
-        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        {"NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        {"COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        {"TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 44, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-    };
+    p->vsCode.assign((const char*)vsb->GetBufferPointer(), (const char*)vsb->GetBufferPointer() + vsb->GetBufferSize());
+    const D3D12_INPUT_ELEMENT_DESC* il = kMeshLayout;
     // Pick the highest MSAA level (up to 4x) the device supports for BOTH the colour
     // and depth formats; fall back to 1 (no MSAA) when unsupported.
     p->msaa = 1;
@@ -917,26 +1043,33 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
         Mat4 mvp = vp * model;
         std::memcpy(cb.mvp, mvp.m, sizeof(cb.mvp));
         std::memcpy(cb.model, model.m, sizeof(cb.model));
-        bool unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
+        // Custom (.okayshader): its own pipelines, or the magenta error material when it does not compile.
+        Impl::CustomPso* cust = nullptr;
+        bool custBad = false;
+        if (mr->shader == MeshRenderer::Shader::Custom) { cust = p->EnsureCustomPso(mr->customShader); custBad = cust == nullptr; }
+        bool unlit = cust ? cust->unlit : (custBad || mr->unlit || mr->shader == MeshRenderer::Shader::Unlit);
         float tintR = 1, tintG = 1, tintB = 1;
         if (it.lod >= 0) if (auto* lg = go->GetComponent<LODGroup>(); lg) lg->DebugTint(it.lod, tintR, tintG, tintB);
         cb.color[0]=mr->color.r * tintR; cb.color[1]=mr->color.g * tintG; cb.color[2]=mr->color.b * tintB;
+        if (custBad) { cb.color[0] = oshader::kErrorColor[0]; cb.color[1] = oshader::kErrorColor[1]; cb.color[2] = oshader::kErrorColor[2]; }
         cb.specular = unlit ? 0.0f : mr->specular; cb.shininess = mr->shininess;
         cb.emissive[0]=mr->emissive.r; cb.emissive[1]=mr->emissive.g; cb.emissive[2]=mr->emissive.b;
+        if (custBad) cb.emissive[0] = cb.emissive[1] = cb.emissive[2] = 0.0f;
         cb.lightDir[0]=toLight.x; cb.lightDir[1]=toLight.y; cb.lightDir[2]=toLight.z;
         cb.unlit = unlit ? 1.0f : 0.0f;
         cb.lightColor[0]=0.85f; cb.lightColor[1]=0.85f; cb.lightColor[2]=0.85f;
         ID3D12Resource* dummy = nullptr; (void)dummy;
-        std::string baseTex = mr->texture;
+        std::string baseTex = custBad ? std::string() : mr->texture;
         cb.useTex = baseTex.empty() ? 0.0f : 1.0f;
         cb.ambient[0]=amb.x; cb.ambient[1]=amb.y; cb.ambient[2]=amb.z;
         cb.hasNormal = mr->normalMap.empty() ? 0.0f : 1.0f;
         cb.eye[0]=eye.x; cb.eye[1]=eye.y; cb.eye[2]=eye.z;
         cb.normalStrength = mr->normalStrength;
         cb.tiling[0]=baseTex.empty()?1.0f:mr->tiling.x; cb.tiling[1]=baseTex.empty()?1.0f:mr->tiling.y;
-        cb.shadowAlpha = -1.0f; cb.alpha = mr->color.a;
+        cb.shadowAlpha = -1.0f; cb.alpha = custBad ? 1.0f : mr->color.a;
         cb.rimColor[0]=mr->rimColor.r; cb.rimColor[1]=mr->rimColor.g; cb.rimColor[2]=mr->rimColor.b;
-        cb.shaderMode = mr->shader == MeshRenderer::Shader::Custom ? 0.0f : (float)(int)mr->shader;   // Custom (.okayshader): not on D3D12 yet, drawn as Standard cb.toonBands = (float)mr->toonBands; cb.rimStr = mr->rimStrength;
+        cb.shaderMode = mr->shader == MeshRenderer::Shader::Custom ? 0.0f : (float)(int)mr->shader;   // a Custom object has no built-in style
+        cb.toonBands = (float)mr->toonBands; cb.rimStr = mr->rimStrength;
         cb.gradTop[0]=mr->gradientTop.r; cb.gradTop[1]=mr->gradientTop.g; cb.gradTop[2]=mr->gradientTop.b;
         cb.gradBot[0]=mr->gradientBottom.r; cb.gradBot[1]=mr->gradientBottom.g; cb.gradBot[2]=mr->gradientBottom.b;
         cb.pbr[0]= unlit?0.0f:mr->metallic; cb.pbr[1]= unlit?0.0f:mr->reflectivity;
@@ -965,6 +1098,7 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
         CB pcb = cb;
         pcb.useTex = pic.empty() ? 0.0f : 1.0f;
         pcb.tiling[0] = pic.empty() ? 1.0f : mr->tiling.x; pcb.tiling[1] = pic.empty() ? 1.0f : mr->tiling.y;
+        if (cust) { pcb.tiling[0] = mr->tiling.x; pcb.tiling[1] = mr->tiling.y; }   // a custom surface's uv is tiled with or without a picture
         UINT cbOff = p->cbNext;
         std::memcpy(p->cbPtr + cbOff, &pcb, sizeof(pcb));
         p->cbNext += p->cbStride;
@@ -991,7 +1125,35 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
         };
         bindPicture(baseTex);
 
-        p->list->SetPipelineState(mr->color.a < 0.999f ? p->psoBlend : p->psoOpaque);
+        bool customBlend = false;
+        if (cust && p->cbNext + 2 * p->cbStride <= p->cbCap && p->srvRingNext + (UINT)oshader::kMaxTextures <= p->srvRingCap) {
+            // b4: time + the material's property values; b5: the camera's view-projection; t9..t12: its pictures.
+            float cdata[4 * (1 + oshader::kMaxProperties)];
+            std::memset(cdata, 0, sizeof(cdata));
+            cdata[0] = Time::ElapsedTime();
+            D3D12_CPU_DESCRIPTOR_HANDLE pics[oshader::kMaxTextures] = {p->whiteSrv, p->whiteSrv, p->whiteSrv, p->whiteSrv};
+            const oshader::ShaderFile sf = oshader::LoadShaderFile(mr->customShader);
+            if (sf.compiled && sf.compiled->ok) {
+                const std::vector<float> v = oshader::ResolveProperties(*sf.compiled, mr->shaderParams);
+                std::memcpy(cdata + 4, v.data(), sizeof(float) * std::min<std::size_t>(v.size(), 4 * oshader::kMaxProperties));
+                for (int t = 0; t < (int)sf.compiled->textures.size() && t < oshader::kMaxTextures; ++t)
+                    pics[t] = p->TextureFor(oshader::ResolveTexture(*sf.compiled, t, mr->shaderParams));
+            }
+            UINT off4 = p->cbNext; std::memcpy(p->cbPtr + off4, cdata, sizeof(cdata)); p->cbNext += p->cbStride;
+            UINT off5 = p->cbNext; std::memcpy(p->cbPtr + off5, vp.m, sizeof(float) * 16); p->cbNext += p->cbStride;
+            p->list->SetGraphicsRootConstantBufferView(2, cbBase + off4);
+            p->list->SetGraphicsRootConstantBufferView(3, cbBase + off5);
+            const UINT ring = p->srvRingNext; p->srvRingNext += (UINT)oshader::kMaxTextures;
+            for (int t = 0; t < oshader::kMaxTextures; ++t) {
+                D3D12_CPU_DESCRIPTOR_HANDLE d = srvCpu0; d.ptr += (size_t)(ring + t) * p->srvInc;
+                p->dev->CopyDescriptorsSimple(1, d, pics[t], D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            }
+            D3D12_GPU_DESCRIPTOR_HANDLE ct = srvGpu0; ct.ptr += (UINT64)ring * p->srvInc;
+            p->list->SetGraphicsRootDescriptorTable(4, ct);
+            customBlend = mr->color.a < 0.999f || cust->writesAlpha;
+            p->list->SetPipelineState(customBlend ? cust->blend : cust->opaque);
+        } else
+        p->list->SetPipelineState((!custBad && mr->color.a < 0.999f) ? p->psoBlend : p->psoOpaque);
         bool slotDraw = false;
         if (!slotRanges.empty()) for (const std::string& st : mr->slotTextures) if (!st.empty()) slotDraw = true;
         if (slotDraw) {
@@ -1079,6 +1241,8 @@ void D3D12Renderer::Destroy() {
     Release(p->shadowTex);
     p->DestroyTargets();
     Release(p->srvHeap); Release(p->srvStage); Release(p->rtvHeap); Release(p->dsvHeap);
+    for (auto& kv : p->customPso) { Release(kv.second.opaque); Release(kv.second.blend); }
+    p->customPso.clear();
     Release(p->psoOpaque); Release(p->psoBlend); Release(p->psoDepth); Release(p->rootSig);
     Release(p->list); Release(p->alloc); Release(p->fence); Release(p->queue); Release(p->dev);
     if (p->fenceEvent) { CloseHandle(p->fenceEvent); p->fenceEvent = nullptr; }

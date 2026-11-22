@@ -2,12 +2,17 @@
 // ---------------------------------------------------------------------------
 // OkayShader: the engine's own small surface-shader language (.okayshader files).
 //
-// A shader file declares a few properties and textures and one `surface { ... }`
-// block. The block reads the surface inputs (uv, position, view, normal, vcolor,
-// time) and writes the surface outputs (albedo, emission, alpha, normal,
-// metallic, specular, shininess). The renderers keep their own lighting: the
-// surface block only decides what goes INTO it, so every renderer lights a
-// custom surface exactly like a Standard one.
+// A shader file declares a few properties and textures, an optional
+// `vertex { ... }` block and a `surface { ... }` block. The vertex block reads the
+// vertex inputs (uv, local, vcolor, time) and moves `position` / `normal` (world
+// space) before the triangle is drawn: a waving flag, a wobble. The surface block
+// reads the surface inputs (uv, position, view, normal, vcolor, time) and writes
+// the surface outputs (albedo, emission, alpha, normal, metallic, specular,
+// shininess). The renderers keep their own lighting: the surface block only
+// decides what goes INTO it, so every renderer lights a custom surface exactly
+// like a Standard one. The shadow-map pass runs both blocks too: a moved vertex
+// moves its shadow, and a discarded pixel (or one with alpha below one half)
+// casts no shadow.
 //
 //   shader "Lava";
 //   property float speed = 0.3 range(0, 2);
@@ -91,6 +96,18 @@ struct Compiled {
     /// `OkaySurface okaySurface(...)`.
     std::string hlsl;
     std::shared_ptr<const CpuProgram> cpu;
+    // ---- the optional vertex block ----
+    bool hasVertex = false;
+    /// GLSL 1.20 vertex-stage text: the uniforms (okp_<name>, uOkTime), the helpers and
+    /// `void okayVertex(vec2 uv, vec3 local, vec3 vcolor, float time, inout vec3 position, inout vec3 normal)`.
+    /// Empty without a vertex block.
+    std::string glslVertex;
+    /// HLSL SM4 vertex-stage text: cbuffer OkayCustom : register(b4) and the same okayVertex(...).
+    std::string hlslVertex;
+    std::shared_ptr<const CpuProgram> cpuVertex;   ///< null without a vertex block
+    /// The surface can remove parts of the object (discard, or an alpha below kShadowAlphaCut): the
+    /// shadow-map pass then runs it per texel, so a dissolved object casts a dissolved shadow.
+    bool CutsShadow() const { return usesDiscard || writesAlpha; }
     /// First error as "file:line:col: error: ..." (empty when ok).
     std::string FirstError(const std::string& file = std::string()) const;
 };
@@ -104,6 +121,10 @@ constexpr int kMaxTextures = 4;
 constexpr int kMaxProperties = 32;
 /// HLSL constant buffer register of the property block.
 constexpr int kHlslPropRegister = 4;
+/// HLSL constant buffer register of the vertex variant's view-projection (Direct3D 11 / 12).
+constexpr int kHlslVertexRegister = 5;
+/// In the shadow-map pass a texel whose surface alpha is below this casts no shadow.
+constexpr float kShadowAlphaCut = 0.5f;
 
 // ---- Running a shader on the CPU (software renderer) -------------------------
 
@@ -131,6 +152,19 @@ using SampleFn = void (*)(const void* ctx, int slot, float u, float v, float rgb
 /// (see ResolveProperties). Thread-safe: the program is read-only.
 void RunCpu(const CpuProgram& prog, const SurfaceIn& in, const float* props,
             SampleFn sample, const void* sampleCtx, SurfaceOut& out);
+/// One vertex for the vertex block. position and normal are world space (the normal is unit
+/// length); local is the mesh's own position; uv is the mesh UV times the material tiling.
+struct VertexIn {
+    float uv[2] = {0, 0};
+    float local[3] = {0, 0, 0};
+    float vcolor[3] = {1, 1, 1};
+    float time = 0.0f;
+    float position[3] = {0, 0, 0};
+    float normal[3] = {0, 1, 0};
+};
+struct VertexOut { float position[3], normal[3]; };   ///< normal not renormalised (the renderers do it)
+/// Run the vertex block (`prog` = Compiled::cpuVertex) for one vertex. Thread-safe.
+void RunCpuVertex(const CpuProgram& prog, const VertexIn& in, const float* props, VertexOut& out);
 /// The CPU program's size (instructions), for tests.
 int CpuInstructionCount(const CpuProgram& prog);
 

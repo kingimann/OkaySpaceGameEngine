@@ -14,6 +14,22 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+
+// setenv and unsetenv are POSIX; Windows (MinGW and MSVC) has _putenv_s, and an empty value removes the variable.
+static void SetEnvVar(const char* k, const char* v) {
+#ifdef _WIN32
+    _putenv_s(k, v);
+#else
+    setenv(k, v, 1);
+#endif
+}
+static void UnsetEnvVar(const char* k) {
+#ifdef _WIN32
+    _putenv_s(k, "");
+#else
+    unsetenv(k);
+#endif
+}
 #include <cstring>
 #include <fstream>
 #include <initializer_list>
@@ -366,7 +382,7 @@ int main() {
     // ---- 9. PNM (P1..P6, our own decoder, OKAY_OWN_PNM=1): truncations, lying headers, comment storms, garbage ----
     {
         const char* oldEnv = std::getenv("OKAY_OWN_PNM"); const std::string saved = oldEnv ? oldEnv : ""; const bool had = oldEnv != nullptr;
-        setenv("OKAY_OWN_PNM", "1", 1);
+        SetEnvVar("OKAY_OWN_PNM", "1");
         long n = 0;
         // One input through DecodeImage / GetImageInfo (Try), and through DecodePnm directly; both must agree on success.
         // lowMem: the header lies about the size, so the decoder must fail before it allocates anything big.
@@ -514,7 +530,7 @@ int main() {
             TryPnm(s, -1, false);
         }
         std::printf("  pnm: %ld inputs\n", n);
-        if (had) setenv("OKAY_OWN_PNM", saved.c_str(), 1); else unsetenv("OKAY_OWN_PNM");
+        if (had) SetEnvVar("OKAY_OWN_PNM", saved.c_str()); else UnsetEnvVar("OKAY_OWN_PNM");
     }
 
     std::printf("  worst: peak %zu KiB above the input, %.2f s for one input\n", g_worstPeak / 1024, g_worstTime);

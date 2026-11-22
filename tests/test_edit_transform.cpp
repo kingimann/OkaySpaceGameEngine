@@ -219,5 +219,106 @@ int main() {
         CHECK(std::fabs(lo.x + 1.0f) < 1e-4f && std::fabs(hi.x - 1.0f) < 1e-4f);
     }
 
+    // ---- Pivot: Individual Origins and Active Vertex ----
+    {
+        // Two separate unit quads on y = 0, centred at x = -3 and x = +3.
+        auto twoQuads = [] {
+            Mesh m;
+            const float cs[2] = {-3.0f, 3.0f};
+            for (float cx : cs) {
+                const int b = (int)m.vertices.size();
+                m.vertices.push_back({cx - 0.5f, 0, -0.5f}); m.vertices.push_back({cx - 0.5f, 0, 0.5f});
+                m.vertices.push_back({cx + 0.5f, 0, 0.5f}); m.vertices.push_back({cx + 0.5f, 0, -0.5f});
+                m.triangles.insert(m.triangles.end(), {b, b + 1, b + 2, b, b + 2, b + 3});
+            }
+            return m;
+        };
+        const std::vector<int> all = {0, 1, 2, 3, 4, 5, 6, 7};
+        // Median: scaling both by 2 about the common centre pushes the quads apart (centres to -6 / +6).
+        {
+            Mesh m = twoQuads();
+            EditTransformSession s; s.Begin(m, EditXform::Scale, all, Mat4::Identity());
+            CHECK(Near(s.PivotWorld(), Vec3{0, 0, 0}));
+            s.Apply(m, ScaleMatrix(s.PivotWorld(), AxisLock{}, 2.0f));
+            CHECK(Near(m.vertices[0], Vec3{-7, 0, -1}));
+        }
+        // Individual Origins: each quad grows about its own centre and stays where it was.
+        {
+            Mesh m = twoQuads();
+            EditTransformOptions o; o.pivot = EditPivot::Individual;
+            EditTransformSession s; s.Begin(m, EditXform::Scale, all, Mat4::Identity(), o);
+            s.Apply(m, ScaleMatrix(s.PivotWorld(), AxisLock{}, 2.0f));
+            CHECK(Near(m.vertices[0], Vec3{-4, 0, -1}));
+            CHECK(Near(m.vertices[2], Vec3{-2, 0, 1}));
+            CHECK(Near(m.vertices[4], Vec3{2, 0, -1}));
+            CHECK(Near(m.vertices[6], Vec3{4, 0, 1}));
+            // Rotate 90 degrees about Y: each quad turns in place (its corners stay on its own circle).
+            Mesh r = twoQuads();
+            EditTransformSession t; t.Begin(r, EditXform::Rotate, all, Mat4::Identity(), o);
+            t.Apply(r, RotateMatrix(t.PivotWorld(), Vec3{0, 1, 0}, 90.0f));
+            Vec3 c0{0, 0, 0}, c1{0, 0, 0};
+            for (int i = 0; i < 4; ++i) { c0 += r.vertices[i]; c1 += r.vertices[4 + i]; }
+            CHECK(Near(c0 * 0.25f, Vec3{-3, 0, 0}) && Near(c1 * 0.25f, Vec3{3, 0, 0}));
+            CHECK(std::fabs((r.vertices[0] - Vec3{-3, 0, 0}).Magnitude() - std::sqrt(0.5f)) < 1e-4f);
+            // Move is the same for every group; Cancel puts everything back exactly.
+            Mesh mv = twoQuads();
+            EditTransformSession u; u.Begin(mv, EditXform::Move, all, Mat4::Identity(), o);
+            u.Apply(mv, MoveMatrix(Vec3{0, 1, 0}, AxisLock{}));
+            CHECK(Near(mv.vertices[0], Vec3{-3.5f, 1, -0.5f}) && Near(mv.vertices[7], Vec3{3.5f, 1, -0.5f}));
+            u.Cancel(mv);
+            CHECK(Near(mv.vertices[0], Vec3{-3.5f, 0, -0.5f}));
+        }
+        // Individual Origins on an unwelded mesh: corners at the same place count as joined, so a
+        // primitive cube (24 vertices, one face each) scales as one part, not six.
+        {
+            Mesh c = Mesh::Cube(1.0f);
+            std::vector<int> every; for (int i = 0; i < (int)c.vertices.size(); ++i) every.push_back(i);
+            EditTransformOptions o; o.pivot = EditPivot::Individual;
+            EditTransformSession s; s.Begin(c, EditXform::Scale, every, Mat4::Identity(), o);
+            s.Apply(c, ScaleMatrix(s.PivotWorld(), AxisLock{}, 2.0f));
+            Vec3 lo, hi; c.Bounds(lo, hi);
+            CHECK(Near(lo, Vec3{-1, -1, -1}) && Near(hi, Vec3{1, 1, 1}));
+        }
+        // Active Vertex: everything turns about that vertex, which stays put.
+        {
+            Mesh m = twoQuads();
+            EditTransformOptions o; o.pivot = EditPivot::Active; o.activeVertex = 2;
+            EditTransformSession s; s.Begin(m, EditXform::Scale, all, Mat4::Identity(), o);
+            CHECK(Near(s.PivotWorld(), Vec3{-2.5f, 0, 0.5f}));
+            s.Apply(m, ScaleMatrix(s.PivotWorld(), AxisLock{}, 3.0f));
+            CHECK(Near(m.vertices[2], Vec3{-2.5f, 0, 0.5f}));
+            CHECK(Near(m.vertices[0], Vec3{-2.5f - 3.0f, 0, 0.5f - 3.0f}));
+            // An active vertex that is not selected, or does not exist, falls back to the median.
+            Mesh n = twoQuads();
+            EditTransformOptions bad; bad.pivot = EditPivot::Active; bad.activeVertex = 99;
+            EditTransformSession t; t.Begin(n, EditXform::Scale, {0, 1, 2, 3}, Mat4::Identity(), bad);
+            CHECK(Near(t.PivotWorld(), Vec3{-3, 0, 0}));
+            bad.activeVertex = 5;                                // exists, but not in the selection
+            t.Begin(n, EditXform::Scale, {0, 1, 2, 3}, Mat4::Identity(), bad);
+            CHECK(Near(t.PivotWorld(), Vec3{-3, 0, 0}));
+        }
+        // Individual Origins with X symmetry: the mirrored partner turns about its own mirrored centre.
+        {
+            Mesh m = twoQuads();                                 // quad 1 is quad 0 mirrored across x = 0
+            EditTransformOptions o; o.pivot = EditPivot::Individual; o.mirrorX = true;
+            EditTransformSession s; s.Begin(m, EditXform::Scale, {0, 1, 2, 3}, Mat4::Identity(), o);
+            CHECK(s.MovedCount() == 8);
+            s.Apply(m, ScaleMatrix(s.PivotWorld(), AxisLock{}, 2.0f));
+            CHECK(Near(m.vertices[0], Vec3{-4, 0, -1}));
+            CHECK(Near(m.vertices[7], Vec3{4, 0, -1}));       // partner of vertex 0 (x mirrored)
+        }
+        // Hostile: empty selection does nothing; a world transform with Individual Origins keeps groups in local space.
+        {
+            Mesh m = twoQuads();
+            EditTransformOptions o; o.pivot = EditPivot::Individual;
+            EditTransformSession s; s.Begin(m, EditXform::Scale, {}, Mat4::Identity(), o);
+            CHECK(!s.Active());
+            const Mat4 toWorld = Mat4::Translate(Vec3{10, 0, 0}) * Mat4::Scale(Vec3{2, 2, 2});
+            EditTransformSession w; w.Begin(m, EditXform::Scale, all, toWorld, o);
+            w.Apply(m, ScaleMatrix(w.PivotWorld(), AxisLock{}, 2.0f));
+            CHECK(Near(m.vertices[0], Vec3{-4, 0, -1}) && Near(m.vertices[6], Vec3{4, 0, 1}));
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

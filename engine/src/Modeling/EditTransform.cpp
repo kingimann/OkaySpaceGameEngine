@@ -19,6 +19,15 @@ const char* EditXformName(EditXform k) {
     return "";
 }
 
+const char* EditPivotName(EditPivot p) {
+    switch (p) {
+        case EditPivot::Median:     return "Median Point";
+        case EditPivot::Individual: return "Individual Origins";
+        case EditPivot::Active:     return "Active Vertex";
+    }
+    return "";
+}
+
 void AxisLock::Press(int a, bool shift) {
     if (a < 0 || a > 2) return;
     if (axis == a && plane == shift) { axis = -1; plane = false; return; }   // same key again: free
@@ -131,7 +140,8 @@ void EditTransformSession::Begin(Mesh& mesh, EditXform kind, const std::vector<i
     lock = AxisLock{};
     typed.Clear();
     accumulatedDegrees = 0.0f;
-    m_verts.clear(); m_orig.clear(); m_weight.clear(); m_mirror.clear();
+    m_verts.clear(); m_orig.clear(); m_weight.clear(); m_mirror.clear(); m_group.clear(); m_groupPivot.clear();
+    std::vector<int> source;   // per moved vertex: the selected vertex whose part it follows
     m_name = mesh.name;
     m_normals = mesh.normals;
 
@@ -139,29 +149,33 @@ void EditTransformSession::Begin(Mesh& mesh, EditXform kind, const std::vector<i
     std::vector<char> isSel(n, 0);
     for (int v : selected) if (v >= 0 && v < n) isSel[v] = 1;
     std::unordered_map<int, std::size_t> slot;   // vertex -> index in m_verts
-    auto add = [&](int v, float w, int mirrored) {
+    auto add = [&](int v, float w, int mirrored, int src) {
         auto it = slot.find(v);
         if (it != slot.end()) {   // already moved: keep the strongest pull
-            if (w > m_weight[it->second]) { m_weight[it->second] = w; m_mirror[it->second] = mirrored; }
+            if (w > m_weight[it->second]) { m_weight[it->second] = w; m_mirror[it->second] = mirrored; source[it->second] = src; }
             return;
         }
         slot[v] = m_verts.size();
-        m_verts.push_back(v); m_orig.push_back(mesh.vertices[v]); m_weight.push_back(w); m_mirror.push_back((char)mirrored);
+        m_verts.push_back(v); m_orig.push_back(mesh.vertices[v]); m_weight.push_back(w); m_mirror.push_back((char)mirrored); source.push_back(src);
     };
     std::vector<Vec3> anchors;
-    for (int v = 0; v < n; ++v) if (isSel[v]) { add(v, 1.0f, 0); anchors.push_back(mesh.vertices[v]); }
+    std::vector<int> anchorIds;
+    for (int v = 0; v < n; ++v) if (isSel[v]) { add(v, 1.0f, 0, v); anchors.push_back(mesh.vertices[v]); anchorIds.push_back(v); }
 
     // Soft selection: every other vertex within the radius, smoothstep falloff
     // by distance to the nearest selected vertex (as Move Soft does).
     if (opt.softRadius > 1e-6f && !anchors.empty()) {
         for (int v = 0; v < n; ++v) {
             if (isSel[v]) continue;
-            float best = 1e30f;
-            for (const Vec3& a : anchors) best = std::min(best, (mesh.vertices[v] - a).SqrMagnitude());
+            float best = 1e30f; int near = anchorIds[0];
+            for (std::size_t k = 0; k < anchors.size(); ++k) {
+                const float d2 = (mesh.vertices[v] - anchors[k]).SqrMagnitude();
+                if (d2 < best) { best = d2; near = anchorIds[k]; }
+            }
             const float d = std::sqrt(best);
             if (d >= opt.softRadius) continue;
             const float t = 1.0f - d / opt.softRadius;
-            add(v, t * t * (3.0f - 2.0f * t), 0);
+            add(v, t * t * (3.0f - 2.0f * t), 0, near);
         }
     }
     // Symmetry: each moved vertex's partner across the enabled planes (and across combinations of them) gets the
@@ -185,7 +199,7 @@ void EditTransformSession::Begin(Mesh& mesh, EditXform kind, const std::vector<i
                 auto it = where.find(qk(want));
                 if (it == where.end()) continue;
                 for (int w : it->second)
-                    if (w != m_verts[i] && (mesh.vertices[w] - want).SqrMagnitude() < 1e-8f && !isSel[w]) add(w, m_weight[i], mask);
+                    if (w != m_verts[i] && (mesh.vertices[w] - want).SqrMagnitude() < 1e-8f && !isSel[w]) add(w, m_weight[i], mask, source[i]);
             }
         }
     }
@@ -193,7 +207,47 @@ void EditTransformSession::Begin(Mesh& mesh, EditXform kind, const std::vector<i
     Vec3 c{0, 0, 0};
     for (int v : selected) if (v >= 0 && v < n) c = c + mesh.vertices[v];
     const int sc = (int)anchors.size();
-    m_pivotWorld = toWorld.MultiplyPoint(sc > 0 ? c * (1.0f / (float)sc) : Vec3{0, 0, 0});
+    m_pivotLocal = sc > 0 ? c * (1.0f / (float)sc) : Vec3{0, 0, 0};
+    if (opt.pivot == EditPivot::Active && opt.activeVertex >= 0 && opt.activeVertex < n && isSel[opt.activeVertex])
+        m_pivotLocal = mesh.vertices[opt.activeVertex];
+    m_pivotWorld = toWorld.MultiplyPoint(m_pivotLocal);
+
+    // Individual Origins: split the selection into parts (joined by a triangle edge between two selected
+    // vertices, or by sitting at the same place, so an unwelded mesh's split corners stay together).
+    if (opt.pivot == EditPivot::Individual && sc > 0) {
+        std::vector<int> parent(n);
+        for (int v = 0; v < n; ++v) parent[v] = v;
+        auto root = [&](int v) { while (parent[v] != v) v = parent[v] = parent[parent[v]]; return v; };
+        auto join = [&](int a, int b) { a = root(a); b = root(b); if (a != b) parent[std::max(a, b)] = std::min(a, b); };
+        const std::size_t nt = mesh.triangles.size() / 3;
+        for (std::size_t t = 0; t < nt; ++t)
+            for (int k = 0; k < 3; ++k) {
+                const int a = mesh.triangles[t * 3 + k], b = mesh.triangles[t * 3 + (k + 1) % 3];
+                if (a >= 0 && b >= 0 && a < n && b < n && isSel[a] && isSel[b]) join(a, b);
+            }
+        std::map<std::tuple<long, long, long>, int> at;
+        for (int v : anchorIds) {
+            const Vec3& p = mesh.vertices[v];
+            if (!std::isfinite(p.x + p.y + p.z)) continue;
+            const auto key = std::make_tuple((long)std::lround(p.x * 1e5f), (long)std::lround(p.y * 1e5f), (long)std::lround(p.z * 1e5f));
+            auto it = at.find(key);
+            if (it == at.end()) at.emplace(key, v); else join(v, it->second);
+        }
+        std::unordered_map<int, int> groupOf;   // root -> group number
+        std::vector<Vec3> sum; std::vector<int> count;
+        for (int v : anchorIds) {
+            const int r = root(v);
+            auto it = groupOf.find(r);
+            if (it == groupOf.end()) { it = groupOf.emplace(r, (int)sum.size()).first; sum.push_back(Vec3{0, 0, 0}); count.push_back(0); }
+            sum[it->second] = sum[it->second] + mesh.vertices[v]; ++count[it->second];
+        }
+        for (std::size_t g = 0; g < sum.size(); ++g) m_groupPivot.push_back(sum[g] * (1.0f / (float)count[g]));
+        m_group.assign(m_verts.size(), -1);
+        for (std::size_t i = 0; i < m_verts.size(); ++i) {
+            const int src = source[i];
+            if (src >= 0 && src < n && isSel[src]) m_group[i] = groupOf[root(src)];
+        }
+    }
     m_active = !m_verts.empty();
 }
 
@@ -205,11 +259,23 @@ void EditTransformSession::Apply(Mesh& mesh, const Mat4& world) {
         const Mat4 S = Mat4::Scale(Vec3{(mask & 1) ? -1.0f : 1.0f, (mask & 2) ? -1.0f : 1.0f, (mask & 4) ? -1.0f : 1.0f});
         mirrored[mask] = S * local * S;
     }
+    // Individual Origins: the same move carried from the shared pivot onto each part's own centre.
+    std::vector<Mat4> perGroup;
+    for (const Vec3& pg : m_groupPivot) perGroup.push_back(Mat4::Translate(pg - m_pivotLocal) * local * Mat4::Translate(m_pivotLocal - pg));
     for (std::size_t i = 0; i < m_verts.size(); ++i) {
         const int v = m_verts[i];
         if (v < 0 || v >= (int)mesh.vertices.size()) continue;
         const Vec3 o = m_orig[i];
-        const Vec3 moved = (m_mirror[i] ? mirrored[(int)m_mirror[i] & 7] : local).MultiplyPoint(o);
+        const int g = i < m_group.size() ? m_group[i] : -1;
+        Mat4 L = g >= 0 && g < (int)perGroup.size() ? perGroup[(std::size_t)g] : local;
+        if (m_mirror[i]) {
+            const int mask = (int)m_mirror[i] & 7;
+            if (g >= 0) {
+                const Mat4 S = Mat4::Scale(Vec3{(mask & 1) ? -1.0f : 1.0f, (mask & 2) ? -1.0f : 1.0f, (mask & 4) ? -1.0f : 1.0f});
+                L = S * L * S;
+            } else L = mirrored[mask];
+        }
+        const Vec3 moved = L.MultiplyPoint(o);
         mesh.vertices[v] = o + (moved - o) * m_weight[i];
     }
     mesh.name = "";

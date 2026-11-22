@@ -75,11 +75,19 @@ float ScreenAngleDelta(float pivotX, float pivotY, float fromX, float fromY, flo
 /// (the selection, plus the soft-selection falloff and the X-symmetry
 /// partners); Apply() sets them from those remembered positions; Cancel() puts
 /// them back.
+/// What Rotate and Scale turn around. Median: the centre of the whole selection. Individual: each
+/// connected part of the selection (vertices joined by an edge or sitting at the same place) turns
+/// about its own centre, so several faces each grow or spin in place. Active: the last vertex picked.
+enum class EditPivot { Median, Individual, Active };
+const char* EditPivotName(EditPivot p);
+
 struct EditTransformOptions {
     float softRadius = 0.0f;   ///< proportional editing radius (0 = off)
     bool  mirrorX = false;     ///< also move each vertex's partner across local x = 0, mirrored
     bool  mirrorY = false;     ///< ... across local y = 0
     bool  mirrorZ = false;     ///< ... across local z = 0 (with two or three on, the partners across each plane and across their combinations move too)
+    EditPivot pivot = EditPivot::Median;
+    int   activeVertex = -1;   ///< Active pivot: this vertex (must be in the selection; otherwise the median is used)
 };
 
 class EditTransformSession {
@@ -89,7 +97,9 @@ public:
     void Begin(Mesh& mesh, EditXform kind, const std::vector<int>& selected, const Mat4& toWorld, const Options& opt = Options());
     bool Active() const { return m_active; }
     EditXform Kind() const { return m_kind; }
-    /// The selection's centre in world space (what Rotate / Scale turn around).
+    /// What Rotate / Scale turn around, in world space: the selection's centre, or the active vertex.
+    /// Pass matrices built about this point to Apply; with Individual Origins Apply moves them onto
+    /// each part's own centre.
     Vec3 PivotWorld() const { return m_pivotWorld; }
     /// Move every remembered vertex by the world-space matrix `world`.
     void Apply(Mesh& mesh, const Mat4& world);
@@ -113,6 +123,9 @@ private:
     std::vector<int>   m_verts;    // every vertex this session moves
     std::vector<Vec3>  m_orig;     // its position at Begin
     std::vector<float> m_weight;   // 1 for the selection, falloff for soft-selected
+    std::vector<int>   m_group;    // Individual Origins: the selection part each moved vertex follows (-1 = the shared pivot)
+    std::vector<Vec3>  m_groupPivot;   // ...each part's centre (local space)
+    Vec3               m_pivotLocal;   // PivotWorld in the mesh's own space
     std::vector<char>  m_mirror;   // 0 = moved itself; else a mask (1 = x, 2 = y, 4 = z) of the planes its partner is reflected across
     std::string        m_name;     // the mesh's primitive name and normals at Begin
     std::vector<Vec3>  m_normals;  // (Apply clears both; Cancel puts them back)

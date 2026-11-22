@@ -104,6 +104,9 @@ OkayUI::Vec2 ScriptEditorCodeEdit::ContentOrigin() const {
     return OkayUI::Vec2{p.x - ed_.GutterWidth() + offX_, p.y + offY_};
 }
 
+void ScriptEditorCodeEdit::SetLanguage(const LanguageWords&) {}
+void ScriptEditorCodeEdit::SetPaletteFromImGui(const unsigned*, int) {}
+
 const OkayUI::Font* ScriptEditorCodeEdit::CodeFont() {
     // Decoded once: the bytes must outlive the font (AddFontTtf keys its glyph cache on them). 16 px is the size the Dear ImGui
     // script editor shows at 100%; UseCodeFont scales it to the size asked for.

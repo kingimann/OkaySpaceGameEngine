@@ -3,6 +3,7 @@
 #include "test_framework.hpp"
 #include "OkayUIHost.hpp"
 #include "okay/UI/OkayUICodeEdit.hpp"
+#include <cstdio>
 #include "OkayUITestKit.hpp"
 
 #include <cstring>
@@ -184,6 +185,57 @@ int main() {
         CHECK(ed.Caret().line == 0 && ed.Caret().col == 0);
         tap(SDLK_TAB);
         CHECK(ed.Line(0) == "    one twotwo");
+    }
+    {   // input method (IME) composition through the collector: SDL_TEXTEDITING and the seam's TextEditing event give the preedit to a
+        // focused CodeEdit every frame until it is cleared; the finished text arrives as typed text (SDL_TEXTINPUT)
+        okayuitest::Reset();
+        okayuitest::Sim sim(400, 200);
+        UI::CodeEdit ed;
+        ed.SetText("ab");
+        InputCollector c;
+        auto frame = [&]() {
+            UI::BeginFrame(c.Build(0, 0, false, false, false, true));
+            UI::BareNextWindow();
+            if (UI::Begin("ce", 0, 0, 400, 200)) ed.Draw("##ce", 400, 200);
+            UI::End();
+            UI::EndFrameData();
+        };
+        frame(); ed.Focus(); frame();
+        ed.SetCaret(UI::CodePos{0, 1});
+        SDL_Event e{};
+        e.type = SDL_TEXTEDITING;
+        std::snprintf(e.edit.text, sizeof e.edit.text, "%s", "\xe3\x81\x8b");   // a kana being composed
+        e.edit.start = 1; e.edit.length = 0;
+        c.Feed(e);
+        frame();
+        CHECK(ed.Composing());
+        CHECK(ed.Line(0) == "ab");                         // the preedit is shown, not inserted
+        frame();
+        CHECK(ed.Composing());                             // a state: still composing on the next frame
+        CHECK(ed.ImeCompositionRect().w > 0.0f);           // where the host puts the candidate window
+        e.edit.text[0] = 0; c.Feed(e);                     // the input method clears the preedit...
+        SDL_Event t{}; t.type = SDL_TEXTINPUT;
+        std::snprintf(t.text.text, sizeof t.text.text, "%s", "\xe3\x81\x8b");
+        c.Feed(t);                                         // ...and sends the finished text
+        frame();
+        CHECK(!ed.Composing());
+        CHECK(ed.Line(0) == "a\xe3\x81\x8b" "b");
+        // the seam's event the same way (the editor feeds okay::platform events)
+        okay::platform::Event pe; pe.type = okay::platform::EventType::TextEditing; pe.text = "xy"; pe.x = 1;
+        c.Feed(pe);
+        frame();
+        CHECK(ed.Composing());
+        pe.text.clear(); c.Feed(pe);
+        frame();
+        CHECK(!ed.Composing() && ed.Line(0) == "a\xe3\x81\x8b" "b");   // cleared without a commit: cancelled, the text is untouched
+        // without the keyboard (deliverKeys false) no preedit reaches OkayUI
+        pe.text = "zz"; c.Feed(pe);
+        UI::BeginFrame(c.Build(0, 0, false, false, false, false));
+        UI::BareNextWindow();
+        if (UI::Begin("ce", 0, 0, 400, 200)) ed.Draw("##ce", 400, 200);
+        UI::End();
+        UI::EndFrameData();
+        CHECK(!ed.Composing());
     }
     {   // the hosted region: owns the mouse only inside the rectangle, only while ImGui said it is hovered, and only for one more frame
         Region r;

@@ -7634,3 +7634,12 @@ bool SearchField(const char* id, const char* hint, char* buf, int cap, float wid
 
 
 } // namespace OkayUI
+
+// ---- Capture (OkayUICapture.hpp): stub, the test comes first ----------------------------------------------------------------
+#include "okay/UI/OkayUICapture.hpp"
+namespace OkayUI {
+void BeginCapture() {}
+void EndCapture(CapturedGeometry& out) { out.Clear(); }
+bool Capturing() { return false; }
+bool GetTexturePixels(const void*, TexturePixels&) { return false; }
+} // namespace OkayUI

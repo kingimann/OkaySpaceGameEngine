@@ -37412,6 +37412,8 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Friction##ps");
                 if (ImGui::SliderFloat("Life Loss##ps", &ps->collisionLifeLoss, 0.0f, 1.0f)) ed.dirty = true;
                 oked::FieldTip("Life Loss##ps");
+                if (ImGui::Checkbox("Collide with Terrain##ps", &ps->collideTerrain)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also land on every Terrain in the scene: particles stop or bounce on hills and slide down slopes.");
             }
 
             // ---- Bursts & duration ----

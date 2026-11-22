@@ -1445,7 +1445,11 @@ const char* kFxaaFrag =
     "}\n";
 
 // Depth of field: blend toward the blurred frame by how far the pixel's linear
-// depth (the SSAO depth pass) sits outside the focus range.
+// depth (the SSAO depth pass) sits outside the focus range. The blurred copy is
+// premultiplied (colour times coverage, kDofCopyFrag + kDofBlurFrag) and the mix
+// happens premultiplied too, so an empty pixel (alpha 0, where the host paints its
+// sky) stays empty and a far object fades into the sky without a dark fringe.
+// Before, the copy and blur wrote alpha 1, which turned the sky an opaque dark blur.
 const char* kDofFrag =
     "#version 120\n"
     "uniform sampler2D uSrc; uniform sampler2D uBlur; uniform sampler2D uDepth;\n"
@@ -1454,7 +1458,24 @@ const char* kDofFrag =
     "  vec4 t = texture2D(uDepth, vUV); float dn = t.r + t.g / 255.0;\n"
     "  float d = dn >= 0.995 ? uFar * 4.0 : dn * uFar;\n"                           // background: far away
     "  float coc = clamp((abs(d - uFocus) - uRange * 0.5) / max(uRange, 1e-3), 0.0, 1.0);\n"
-    "  gl_FragColor = mix(texture2D(uSrc, vUV), texture2D(uBlur, vUV), coc);\n"
+    "  vec4 s = texture2D(uSrc, vUV);\n"
+    "  vec4 p = mix(vec4(s.rgb * s.a, s.a), texture2D(uBlur, vUV), coc);\n"         // premultiplied mix
+    "  gl_FragColor = vec4(p.a > 1e-4 ? p.rgb / p.a : vec3(0.0), p.a);\n"
+    "}\n";
+// The depth of field's blurred copy: the display image premultiplied by its coverage ...
+const char* kDofCopyFrag =
+    "#version 120\n"
+    "uniform sampler2D uSrc; varying vec2 vUV;\n"
+    "void main(){ vec4 c = texture2D(uSrc, vUV); gl_FragColor = vec4(c.rgb * c.a, c.a); }\n";
+// ... blurred with the same 9-tap gaussian as kBlurFrag, alpha included.
+const char* kDofBlurFrag =
+    "#version 120\n"
+    "uniform sampler2D uSrc; uniform vec2 uDir; varying vec2 vUV;\n"
+    "void main(){\n"
+    "  vec4 s = texture2D(uSrc, vUV) * 0.227027;\n"
+    "  s += (texture2D(uSrc, vUV + uDir * 1.384615) + texture2D(uSrc, vUV - uDir * 1.384615)) * 0.316216;\n"
+    "  s += (texture2D(uSrc, vUV + uDir * 3.230769) + texture2D(uSrc, vUV - uDir * 3.230769)) * 0.070270;\n"
+    "  gl_FragColor = s;\n"
     "}\n";
 
 GLuint buildQuadProgram(const char* fragSrc) {
@@ -1525,7 +1546,7 @@ bool GLRenderer::EnsureSkyProgram() {
 }
 
 bool GLRenderer::EnsurePostChain() {
-    if (m_uberProg && m_fxaaProg && m_dofProg && m_downProg) return true;
+    if (m_uberProg && m_fxaaProg && m_dofProg && m_dofCopyProg && m_dofBlurProg && m_downProg) return true;
     if (!EnsurePostProgs()) return false;   // the shared blur / add programs + the quad
     if (!m_uberProg) {
         m_uberProg = buildQuadProgram(kUberFrag);
@@ -1550,6 +1571,16 @@ bool GLRenderer::EnsurePostChain() {
         auto u = [&](const char* n) { return g.GetUniformLocation(m_dofProg, n); };
         m_udfSrc = u("uSrc"); m_udfBlur = u("uBlur"); m_udfDepth = u("uDepth");
         m_udfFocus = u("uFocus"); m_udfRange = u("uRange"); m_udfFar = u("uFar");
+    }
+    if (!m_dofCopyProg) {
+        m_dofCopyProg = buildQuadProgram(kDofCopyFrag);
+        if (!m_dofCopyProg) return false;
+        m_udcSrc = g.GetUniformLocation(m_dofCopyProg, "uSrc");
+    }
+    if (!m_dofBlurProg) {
+        m_dofBlurProg = buildQuadProgram(kDofBlurFrag);
+        if (!m_dofBlurProg) return false;
+        m_udbSrc = g.GetUniformLocation(m_dofBlurProg, "uSrc"); m_udbDir = g.GetUniformLocation(m_dofBlurProg, "uDir");
     }
     if (!m_downProg) {
         m_downProg = buildQuadProgram(kDownFrag);
@@ -2869,15 +2900,14 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         // 4) Depth of field: a blurred copy (half res, two blur rounds) mixed in
         //    by the distance from the focus plane.
         if (dofOn) {
-            quadPass(m_addProg, m_bloomFboA, m_bloomW, m_bloomH, cur, m_uaSrc);
-            g.Uniform1f(m_uaStrength, 1.0f);
+            quadPass(m_dofCopyProg, m_bloomFboA, m_bloomW, m_bloomH, cur, m_udcSrc);   // premultiplied half-res copy
             DrawQuad();
             for (int it = 0; it < 2; ++it) {
-                quadPass(m_blurProg, m_bloomFboB, m_bloomW, m_bloomH, m_bloomTexA, m_ublSrc);
-                g.Uniform2f(m_ublDir, 1.0f / (float)m_bloomW, 0.0f);
+                quadPass(m_dofBlurProg, m_bloomFboB, m_bloomW, m_bloomH, m_bloomTexA, m_udbSrc);
+                g.Uniform2f(m_udbDir, 1.0f / (float)m_bloomW, 0.0f);
                 DrawQuad();
-                quadPass(m_blurProg, m_bloomFboA, m_bloomW, m_bloomH, m_bloomTexB, m_ublSrc);
-                g.Uniform2f(m_ublDir, 0.0f, 1.0f / (float)m_bloomH);
+                quadPass(m_dofBlurProg, m_bloomFboA, m_bloomW, m_bloomH, m_bloomTexB, m_udbSrc);
+                g.Uniform2f(m_udbDir, 0.0f, 1.0f / (float)m_bloomH);
                 DrawQuad();
             }
             unsigned int dst = nextTarget();
@@ -3008,6 +3038,8 @@ void GLRenderer::Destroy() {
     if (m_uberProg) { g.DeleteProgram(m_uberProg); m_uberProg = 0; }
     if (m_fxaaProg) { g.DeleteProgram(m_fxaaProg); m_fxaaProg = 0; }
     if (m_dofProg) { g.DeleteProgram(m_dofProg); m_dofProg = 0; }
+    if (m_dofCopyProg) { g.DeleteProgram(m_dofCopyProg); m_dofCopyProg = 0; }
+    if (m_dofBlurProg) { g.DeleteProgram(m_dofBlurProg); m_dofBlurProg = 0; }
     if (m_downProg) { g.DeleteProgram(m_downProg); m_downProg = 0; }
     if (m_ssaoDepthProg) { g.DeleteProgram(m_ssaoDepthProg); m_ssaoDepthProg = 0; }
     if (m_ssaoProg) { g.DeleteProgram(m_ssaoProg); m_ssaoProg = 0; }

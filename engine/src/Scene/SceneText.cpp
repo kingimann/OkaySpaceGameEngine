@@ -103,7 +103,7 @@ const std::unordered_set<std::string>& KnownObjectKeys() {
     "mover", "music", "navagent", "navlink", "navmod", "navobstacle", "navsurface", "netinventory", "netobject",
     "netprefab", "netsync", "nettransform", "netvalidator", "network", "normalmap", "npc",
     "npcstance", "npcwp", "npspawner", "objholding", "outline", "override", "p25ctrl",
-    "parent", "particles", "particlesfx", "particleswind", "pausemenu", "pcfirst", "pcfirstfeel",
+    "parent", "particles", "particlesfx", "particlesterrain", "particleswind", "pausemenu", "pcfirst", "pcfirstfeel",
     "pcfirststance", "pcthird", "pcthirdfeel", "pcthirdstance", "playercontroller", "playerview", "polygoncollider2d",
     "posecap", "prefab", "proj3d", "questlog", "questlogdef", "questtrigger", "ragdoll",
     "reflect", "rigidbody2d", "rigidbody3d", "rim", "rootmotion", "saveable", "savesettings", "script", "scriptfields",

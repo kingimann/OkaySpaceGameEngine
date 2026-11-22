@@ -235,7 +235,7 @@ jobs:
   sanitizers:
     name: Scripting and robustness tests (ASan + UBSan)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75   # was 45: a cold-cache run on a pull request needs 41-45 min and was cancelled at the limit (PR #1088)
     env:
       ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1

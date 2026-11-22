@@ -147,6 +147,11 @@ add_executable(test_physics3d test_physics3d.cpp)
 target_link_libraries(test_physics3d PRIVATE okay::engine)
 add_test(NAME physics3d COMMAND test_physics3d)
 
+# Classic and Improved 3D physics give bit-identical results for the same scene, wherever the heap puts the objects
+add_executable(test_physics3d_determinism test_physics3d_determinism.cpp)
+target_link_libraries(test_physics3d_determinism PRIVATE okay::engine)
+add_test(NAME physics3d_determinism COMMAND test_physics3d_determinism)
+
 # MeshCollider3D: real triangle-mesh collision (BVH): rays, overlaps, casts, bodies, edits, perf
 add_executable(test_meshcollider3d test_meshcollider3d.cpp)
 target_link_libraries(test_meshcollider3d PRIVATE okay::engine)
@@ -2900,6 +2905,11 @@ add_test(NAME navmesh_carving COMMAND test_navmesh_carving)
 add_executable(test_dialogue test_dialogue.cpp)
 target_link_libraries(test_dialogue PRIVATE okay::engine)
 add_test(NAME dialogue COMMAND test_dialogue)
+# Shared Interact action (seat, dialogue, pickups; lean-right off E), death on a seat goes to the exit point,
+# per-line dialogue camera shots (blend in on the line, back at the end, scene record)
+add_executable(test_interact_seat_dialogue test_interact_seat_dialogue.cpp)
+target_link_libraries(test_interact_seat_dialogue PRIVATE okay::engine)
+add_test(NAME interact_seat_dialogue COMMAND test_interact_seat_dialogue)
 
 # Quests: objectives from every source, prerequisites, rewards once, scene + save-game round trips
 add_executable(test_quests test_quests.cpp)
@@ -3403,6 +3413,15 @@ target_compile_definitions(test_image_decoder PRIVATE OKAY_SOURCE_DIR="${PROJECT
 target_link_libraries(test_image_decoder PRIVATE okay::engine)
 add_test(NAME image_decoder COMMAND test_image_decoder)
 set_tests_properties(image_decoder PROPERTIES TIMEOUT 300)
+
+# Hostile-input + mutation fuzz of the image decoders (lying header fields, PNG with valid CRCs, decompression bombs, memory and time budgets).
+# Standalone: only the decoder sources, so it also builds under -fsanitize=address,undefined.
+add_executable(test_image_hostile test_image_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageWrite.cpp)
+target_include_directories(test_image_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_image_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME image_hostile COMMAND test_image_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(image_hostile PROPERTIES TIMEOUT 600)
 
 # shared/FileDialog: our own open / save / folder dialogs (replaced the vendored tinyfiledialogs): path and glob helpers,
 # argument lists for zenity / kdialog / osascript (no injection), result parsing, extension enforcing, the built-in browser's

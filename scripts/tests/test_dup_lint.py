@@ -248,6 +248,20 @@ class CrossBranchTest(unittest.TestCase):
         finally:
             r.close()
 
+    def test_root_level_file_on_a_branch_with_a_slash(self):
+        """Bug found by CI on 2026-11-22: a branch named like claude2/release-x that changes a root-level code file
+        (CMakeLists.txt) crashed cross_branch, because the "branch\0path" key was read as the path."""
+        sys.path.insert(0, os.path.dirname(TOOL))
+        import dup_lint as D
+        r = Repo({"CMakeLists.txt": "project(x)\n", "engine/src/A.cpp": "int a;\n"})
+        try:
+            git(r.d, "checkout", "-q", "main"); git(r.d, "checkout", "-q", "-b", "claude2/release-x")
+            r.write("CMakeLists.txt", "project(x)\nset(V 2)\n"); r.commit("bump")
+            res = D.cross_branch(r.d, "main", {"claude2/release-x": "claude2/release-x"}, focus="claude2/release-x")
+            self.assertEqual(res["clones"], [], res)
+        finally:
+            r.close()
+
 
 class CodeIndexTest(unittest.TestCase):
     def test_public_names_only(self):

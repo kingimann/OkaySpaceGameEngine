@@ -192,7 +192,8 @@ H_ID, H_NUM = hash("$"), hash("0")
 
 
 def lang_of(path):
-    base = path.rsplit("/", 1)[-1]
+    # cross_branch keys are "<branch>\0<path>": the branch name may hold "/" too, so read only the path part
+    base = path.rsplit("\0", 1)[-1].rsplit("/", 1)[-1]
     if base in NAMED:
         return NAMED[base]
     ext = os.path.splitext(base)[1].lower()

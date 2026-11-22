@@ -3193,6 +3193,11 @@ add_test(NAME lod_fade COMMAND test_lod_fade)
 add_executable(test_lod_import test_lod_import.cpp)
 target_link_libraries(test_lod_import PRIVATE okay::engine)
 add_test(NAME lod_import COMMAND test_lod_import)
+# Asset streaming: texture mips on the job system under a budget, meshes in the background, long sounds streamed.
+add_executable(test_asset_streaming test_asset_streaming.cpp)
+target_link_libraries(test_asset_streaming PRIVATE okay::engine)
+add_test(NAME asset_streaming COMMAND test_asset_streaming)
+set_tests_properties(asset_streaming PROPERTIES TIMEOUT 240)
 
 add_executable(test_gltf_pbr_maps test_gltf_pbr_maps.cpp)
 target_link_libraries(test_gltf_pbr_maps PRIVATE okay::engine)

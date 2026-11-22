@@ -682,7 +682,6 @@ bool AlreadyCompressed(const std::string& rel) {
 } // namespace
 
 bool WriteZip(const std::string& zipPath, const std::string& rootDir, bool compress, ZipStats* stats, std::string* error) {
-    auto fail = [&](const std::string& m) { if (error) *error = m; std::error_code ec; fs::remove(fs::u8path(zipPath), ec); return false; };
     const fs::path root = fs::u8path(rootDir);
     std::error_code ec;
     if (!fs::is_directory(root, ec)) { if (error) *error = "not a folder: " + rootDir; return false; }
@@ -695,6 +694,16 @@ bool WriteZip(const std::string& zipPath, const std::string& rootDir, bool compr
         list.emplace_back(Generic(it->path().lexically_relative(root)), it->path());
     }
     std::sort(list.begin(), list.end());
+    std::vector<ZipInput> entries;
+    entries.reserve(list.size());
+    for (const auto& f : list) { ZipInput z; z.name = f.first; z.sourcePath = f.second.u8string(); entries.push_back(std::move(z)); }
+    return WriteZipEntries(zipPath, entries, compress, stats, error);
+}
+
+bool WriteZipEntries(const std::string& zipPath, const std::vector<ZipInput>& entries, bool compress, ZipStats* stats, std::string* error) {
+    auto fail = [&](const std::string& m) { if (error) *error = m; std::error_code ec; fs::remove(fs::u8path(zipPath), ec); return false; };
+    for (const ZipInput& e : entries)
+        if (e.name.empty()) { if (error) *error = "a zip entry has no name"; return false; }
     std::ofstream out(fs::u8path(zipPath), std::ios::binary | std::ios::trunc);
     if (!out) return fail("cannot write " + zipPath);
 
@@ -708,20 +717,25 @@ bool WriteZip(const std::string& zipPath, const std::string& rootDir, bool compr
     std::vector<Central> dir;
     std::uint64_t pos = 0;
     ZipStats st;
-    for (const auto& f : list) {
-        std::ifstream in(f.second, std::ios::binary);
-        std::ostringstream buf; buf << in.rdbuf();
-        const std::string data = buf.str();
+    for (const ZipInput& f : entries) {
+        std::string read;
+        if (!f.sourcePath.empty()) {
+            std::ifstream in(fs::u8path(f.sourcePath), std::ios::binary);
+            if (!in) return fail("cannot read " + f.sourcePath);
+            std::ostringstream buf; buf << in.rdbuf();
+            read = buf.str();
+        }
+        const std::string& data = f.sourcePath.empty() ? f.data : read;
         if ((std::uint64_t)data.size() >= 0xFFFFFFFFull || pos >= 0xF0000000ull) return fail("archive too large for the zip format (4 GB)");
         const std::uint8_t* d = (const std::uint8_t*)data.data();
         Central c;
-        c.name = f.first;
+        c.name = f.name;
         c.crc = ImageWrite::Crc32(d, data.size());
         c.usize = (std::uint32_t)data.size();
         c.offset = (std::uint32_t)pos;
         c.method = 0;
         std::vector<std::uint8_t> packed;
-        if (compress && !data.empty() && !AlreadyCompressed(f.first)) {
+        if (compress && !data.empty() && !AlreadyCompressed(f.name)) {
             packed = ImageWrite::Deflate(d, data.size());
             if (!packed.empty() && packed.size() < data.size()) c.method = 8;
         }

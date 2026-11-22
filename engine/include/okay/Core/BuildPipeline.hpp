@@ -185,6 +185,15 @@ struct ZipStats { int files = 0; std::uintmax_t stored = 0, packed = 0; };
 /// same folder gives the same archive). `compress` deflates files that benefit (already-compressed types such
 /// as .png .ogg .zip are stored). False with `error` set on failure; a partial file is removed.
 bool WriteZip(const std::string& zipPath, const std::string& rootDir, bool compress, ZipStats* stats = nullptr, std::string* error = nullptr);
+/// One file for WriteZipEntries: its name inside the archive ('/' separators) and either its bytes (`data`) or, when
+/// `sourcePath` is set, a file on disk read when its turn comes (so a large build is never all in memory at once).
+struct ZipInput { std::string name; std::string data; std::string sourcePath; };
+/// The engine's one zip writer (WriteZip packs a folder through it): the entries in the order given (package formats
+/// such as OPC want a fixed part order), UTF-8 names, deflated when `compress` and it helps (already-compressed types
+/// are stored), else stored. False with `error` set on failure (an empty name, a missing source file, over 4 GB); a
+/// partial file is removed.
+bool WriteZipEntries(const std::string& zipPath, const std::vector<ZipInput>& entries, bool compress, ZipStats* stats = nullptr,
+                     std::string* error = nullptr);
 struct ZipEntry { std::string name; int method = 0; std::uint32_t crc = 0; std::uint64_t packed = 0, size = 0; };
 /// The central directory of a zip (what `unzip -l` lists).
 bool ReadZipDirectory(const std::string& zipPath, std::vector<ZipEntry>& out, std::string* error = nullptr);

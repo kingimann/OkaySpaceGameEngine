@@ -352,7 +352,7 @@ namespace detail {
 void RegisterModelSourceProperties() {
     PropertyBuilder<ModelSource> b("ModelSource", "modelsource", "Rendering", /*withEnabled=*/false);
     b.AddAssetPath("path", &ModelSource::path, "model").Tooltip("The model file this object was placed from. When the file changes, is reimported or gets new import settings, the model here is brought up to date: its meshes and animation clips come from the file again; its objects, their positions, your material changes and objects you added under it stay")
-     .AddFloat("appliedScale", &ModelSource::appliedScale).Hidden();
+     .AddFloat("appliedScale", &ModelSource::appliedScale).Range(0.0001, 10000).Hidden();
     b.Commit();
 }
 

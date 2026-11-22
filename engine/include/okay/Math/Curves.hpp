@@ -52,6 +52,17 @@ struct Curves {
         return HermiteTangent(p1, (p2 - p0) * tension, p2, (p3 - p1) * tension, t);
     }
 
+    /// Uniform Catmull-Rom (tension 0.5) as the expanded cubic: 0.5 * (2 p1 + (p2 - p0) u + (2 p0 - 5 p1 + 4 p2 - p3) u^2
+    /// + (3 p1 - 3 p2 + p3 - p0) u^3). The same curve as CatmullRom(.., 0.5f) above, but written in this order it gives the
+    /// exact bits the camera rail (DollyPath) always computed, so a rail keeps its path to the last bit.
+    template <class V> static V CatmullRomUniform(const V& p0, const V& p1, const V& p2, const V& p3, float u) {
+        const float u2 = u * u, u3 = u2 * u;
+        return (p1 * 2.0f
+                + (p2 - p0) * u
+                + (p0 * 2.0f - p1 * 5.0f + p2 * 4.0f - p3) * u2
+                + (p1 * 3.0f - p2 * 3.0f + p3 - p0) * u3) * 0.5f;
+    }
+
     // ---- Arc length ----
     /// Length of the polyline through `segments` samples of f(t) on [t0, t1]
     /// (f: float -> V). Converges from below; 32 is plenty for smooth curves.

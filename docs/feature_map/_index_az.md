@@ -2936,6 +2936,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Never give a server the service key (39.11.2)
 - new OkayScript (13.2)
 - new project (17.12, 25.1)
+- New Project modules (41.13.8)
 - new script (13.4)
 - new version (17.1)
 - newer version (35.4)

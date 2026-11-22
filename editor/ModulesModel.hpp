@@ -45,6 +45,16 @@ inline const std::vector<Preset>& Presets() {
     return p;
 }
 
+/// The preset a project template starts with (the person can change it in the New Project form). Only templates whose
+/// scene is known to fit a smaller preset get one; every other template starts with every module, so nothing its scene
+/// uses is ever turned off.
+inline std::string PresetForTemplate(const std::string& title) {
+    if (title == "2D Scene") return "2d";
+    if (title == "First and Third Person" || title == "Third Person Shooter") return "3d_action";
+    if (title == "Sandbox") return "survival";
+    return "full";
+}
+
 /// One line of the checklist.
 struct Row {
     std::string name, title, area, description;

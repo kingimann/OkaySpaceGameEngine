@@ -256,6 +256,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
   - 41.13.5 Dependency check - `scripts/check_modules.py` - forbidden includes between modules, manifest problems, the umbrella header; about 800 known includes in `scripts/module_deps_baseline.txt` (shrink only); report mode in CI
   - 41.13.6 Size per module - `scripts/module_sizes.py` - bytes of the player per module from the linker map (`maps/okay-player.map`), written to `module_sizes.txt` beside the player after every link; Build Game's report has a Modules tab (`buildpipe::Report::AddModules`)
   - 41.13.7 Project Settings > Modules - `editor/ModulesModel.hpp`, `editor/ModulesPanelUI.hpp` - presets and a tick per module, requirements added and kept, what the open scene uses; saved as `modules=` in project.okayproj; the Build report marks modules that are off and warns when the scene uses one (every module still ships)
+  - 41.13.8 New Project modules - `editor/ModulesPanelUI.hpp` `DrawNewProjectModules`, `PresetForTemplate` - a folded Modules line in the New Project form; a few templates start with a smaller preset, the rest with every module
 - **Code:** `cmake/OkayModules.cmake`, `engine/modules/*/module.okaymodule`, `engine/include/okay/Modules/ModuleManifest.hpp`, `engine/include/okay/Modules/ModuleRegistry.hpp`, `scripts/check_modules.py`
 - **Docs:** `docs/engine/modular_engine.md`, `docs/design/modular_gameplay_contracts.md`, `docs/design/modular_status.md`
 - **Tests:** configure itself (a bad manifest fails it); `modules` (parser, registry, the generated list); `check_modules_script` (`tests/scripts/test_check_modules.py`, the check on a made-up tree); `module_sizes_script` (`tests/scripts/test_module_sizes.py`, a made-up linker map); `build_pipeline` (the report's Modules section); `modules_model` (the settings page's model and the project file line)
@@ -263,5 +264,5 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Open:** the registries that let a module register its own records, functions and nodes (stage 1), per-module libraries and stripping (stage 2); the check becomes blocking in PR 14
 - **Related:** 41.1
 - **Words:** module, modular engine, manifest, okaymodule, module group, ctest label, strip
-- **Seen as:** `-- OkaySpace: 40 engine modules; ... files of okay_engine in modules` while configuring; `[okay] modules: 40 modules, 40 on` in the player log; a Modules tab in Build Game's report; Edit > Project Settings > Modules; a "Modules" warning on a pushed branch
+- **Seen as:** `-- OkaySpace: 40 engine modules; ... files of okay_engine in modules` while configuring; `[okay] modules: 40 modules, 40 on` in the player log; a Modules tab in Build Game's report; Edit > Project Settings > Modules; the Modules line in File > New Project; a "Modules" warning on a pushed branch
 - **Ask me like:** "which tests belong to the physics module?"

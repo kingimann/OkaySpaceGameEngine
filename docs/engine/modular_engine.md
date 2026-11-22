@@ -46,6 +46,13 @@ Design, plan and decisions: `../design/modular_gameplay_contracts.md` (sections 
   scene uses one. In this version the player still contains every module: leaving code out needs stage 1 and 2.
 - Code: `editor/ModulesModel.hpp` (no drawing; test `modules_model`), `editor/ModulesPanelUI.hpp` (drawing).
 
+## Stage 3, step 2: modules in the New Project form
+- File > New Project (and the project chooser): under the template list, a folded "Modules: N of 40 modules are on
+  (preset)" line opens the same presets and ticks. The 2D Scene template starts with the 2D set, First and Third Person
+  and Third Person Shooter with 3D action, Sandbox with Survival, every other template with every module (so nothing its
+  scene uses is off). The choice is saved as `modules=` in the new project.okayproj. A project made by the launcher's
+  Create page gets every module.
+
 ## Manifest keys
 `name`, `title`, `area`, `description`, `default`, `core`, `requires` (comma separated), `provides`, `components`,
 `serializers` (scene records), `vs_group`, `editor`, `sources` (space separated file patterns), `tests` (space separated test

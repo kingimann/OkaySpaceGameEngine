@@ -1,6 +1,6 @@
 #pragma once
 // Drawing of the module checklist and the preset buttons (Dear ImGui), over ModulesModel.hpp: Edit > Project Settings >
-// Modules (DrawModulesSettings), and later the New Project form. Written for this repository.
+// Modules (DrawModulesSettings) and the New Project form (DrawNewProjectModules). Written for this repository.
 #include "ModulesModel.hpp"
 #include <imgui.h>
 #include <cstdio>
@@ -130,6 +130,35 @@ inline bool DrawModulesSettings(std::string& modules, const okay::Scene& scene, 
     if (modules.empty() && !changed) ImGui::TextDisabled("Every module is on.");
     if (changed) modules = sel.ToText();
     return changed;
+}
+
+/// The "Modules" part of the New Project form. `modules` is what the new project will save ("" = every module);
+/// a new template picks its preset (PresetForTemplate) until the person changes something (`touched`).
+/// `matchedTpl` remembers which template the modules were last matched to. Folded by default: one line says
+/// which preset is chosen.
+inline void DrawNewProjectModules(std::string& modules, bool& touched, int& matchedTpl, int tpl, const std::string& tplTitle,
+                                  std::string& note) {
+    if (matchedTpl != tpl) {
+        matchedTpl = tpl;
+        if (!touched) {
+            Selection pick(ModuleRegistry::Get());
+            pick.ApplyPreset(PresetForTemplate(tplTitle));
+            modules = pick.ToText();
+        }
+    }
+    Selection sel(ModuleRegistry::Get(), modules);
+    const std::string summary = SummaryText(sel, sel.Rows().size());
+    if (ImGui::TreeNode("##npmods", "Modules: %s", summary.c_str())) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Which parts of the engine the game uses (Project Settings > Modules changes it later). Every module "
+                            "is still inside the built game in this version.");
+        ImGui::PopTextWrapPos();
+        bool changed = DrawPresetButtons(sel);
+        changed |= DrawChecklist(sel, nullptr, note, 120.0f);
+        if (!note.empty()) WrappedColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), note);
+        if (changed) { modules = sel.ToText(); touched = true; }
+        ImGui::TreePop();
+    }
 }
 
 } // namespace okaymod

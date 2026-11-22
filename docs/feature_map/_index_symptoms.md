@@ -1081,6 +1081,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the mobile build has no project to open | [37.5](37-platform-windowing.md#375-web-and-mobile-shims) Web and mobile shims |
 | the model pops at the screen edge | [5.5](05-animation-ik.md#55-root-motion-and-skinning) Root motion and skinning |
 | the model stays upright while the collider crouches | [5.3](05-animation-ik.md#53-model-clip-player-and-locomotion) Model clip player and locomotion |
+| the Modules line in File > New Project | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
 | the mouse is stuck in Play | [15.3](15-editor.md#153-scene-and-game-views-gizmos-spline-tools) Scene and Game views, gizmos, spline tools |
 | the mouse stays captured after alt-tab | [37.2](37-platform-windowing.md#372-focus-cursor-and-clipboard) Focus, cursor and clipboard |
 | the navmesh does not bake or shows wrong polygons | [15.6](15-editor.md#156-navigation-behavior-tree-dialogue-localization-modeling-windows) Navigation, Behavior Tree, Dialogue, Localization, Modeling windows |

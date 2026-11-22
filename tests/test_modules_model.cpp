@@ -88,6 +88,18 @@ int main() {
         CHECK(old.modules.empty());
     }
 
+    // ---- the preset each New Project template starts with is a real preset; unknown templates get every module
+    {
+        for (const auto& t : okayproj::Templates()) {
+            const std::string id = PresetForTemplate(t.title);
+            Selection sel(reg, "");
+            CHECK(sel.ApplyPreset(id));
+        }
+        CHECK(PresetForTemplate("2D Scene") == "2d" && PresetForTemplate("Something New") == "full");
+        Selection two(reg, ""); two.ApplyPreset(PresetForTemplate("2D Scene"));
+        CHECK(two.IsOn("physics2d") && !two.ToText().empty());
+    }
+
     // ---- what the open scene uses
     {
         okay::Scene s("T");

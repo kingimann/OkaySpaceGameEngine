@@ -1,5 +1,6 @@
 #pragma once
 #include <functional>
+#include <string>
 #include "okay/Platform/Epic/EpicService.hpp"
 
 namespace okay {
@@ -16,6 +17,9 @@ public:
     /// The settings used when the service is first created. Call before the first Get(); ignored afterwards.
     static void Configure(const EpicConfig& config);
     static const EpicConfig& Config();
+    /// Load the developer's EOS SDK library at run time (the Store Kit; on for Epic builds). Call before the first
+    /// Get(). Without the library the simulation is used and one line is logged. "" = the default name.
+    static void EnableRuntimeLibrary(bool on, const std::string& libraryPath = std::string());
     /// Replace how the service is made (tests). nullptr restores the default.
     static void SetFactory(std::function<std::unique_ptr<IEpicService>()> factory);
 };

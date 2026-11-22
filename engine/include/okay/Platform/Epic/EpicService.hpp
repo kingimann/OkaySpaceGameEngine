@@ -2,9 +2,10 @@
 // Epic Online Services (EOS) seam for games sold on the Epic Games Store.
 //
 // The engine always builds and links a simulation backend (NullEpicService) so a game can be written and tested
-// against this interface with no SDK. Building with -DOKAY_WITH_EOS=ON and -DEOS_SDK_PATH=<the SDK the game
-// developer downloaded from Epic> swaps in the real backend (EosService.cpp). We never ship, commit or download
-// Epic's SDK ourselves (docs/release/epic_release.md).
+// against this interface with no SDK. An Epic build of a game (Build Settings > Stores) loads the EOS SDK library
+// the game developer copied from their own SDK (EOSSDK-Win64-Shipping.dll beside the game) at run time and talks
+// to Epic through its documented plain C functions (DynamicEpicService.cpp, the Store Kit). We never ship, commit or
+// download Epic's SDK ourselves (docs/release/epic_release.md).
 //
 // Written from Epic's public EOS documentation (platform, auth, connect, achievements, stats, player data
 // storage, presence); no Epic sample code was used.
@@ -48,6 +49,9 @@ struct EpicConfig {
     /// The game client's secret. It is never stored in project files: the editor reads it from the environment
     /// variable OKAY_EOS_CLIENT_SECRET at build time and writes it (packed) into the built game only.
     std::string clientSecret;
+    /// Player Data Storage's file encryption key: 64 hex digits. Empty = made from the product and deployment ids
+    /// (the same for every player of the game, so saves stay readable after an update).
+    std::string encryptionKey;
     /// Optional EOS Developer Authentication Tool login for testing without the launcher: "host:port|credential".
     std::string devAuth;
     EpicLaunchArgs launch;
@@ -107,8 +111,16 @@ public:
     virtual void ShowFriends() {}
 };
 
-/// The best Epic backend this build has: the real one with OKAY_WITH_EOS, otherwise the simulation.
+/// The best Epic backend this build has without a run-time library: the simulation.
 std::unique_ptr<IEpicService> CreateEpicService();
+/// "EOSSDK-Win64-Shipping.dll" on Windows (libEOSSDK-Linux-Shipping.so, libEOSSDK-Mac-Shipping.dylib elsewhere).
+const char* DefaultEosLibraryName();
+/// The Store Kit's real Epic backend: loads the developer's EOS SDK library (`libraryPath`, or the default name
+/// beside the game) and calls its documented C functions. nullptr when the library is missing or lacks the
+/// functions it needs. Initialize() then creates the EOS platform; Login() uses the launcher's exchange code.
+std::unique_ptr<IEpicService> CreateDynamicEpicService(const std::string& libraryPath = std::string());
+/// The encryption key used when EpicConfig::encryptionKey is empty: 64 hex digits made from the ids.
+std::string DeriveEosEncryptionKey(const std::string& productId, const std::string& deploymentId);
 /// Always the simulation (used as the fallback when the real platform cannot start).
 std::unique_ptr<IEpicService> CreateNullEpicService();
 

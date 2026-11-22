@@ -13,6 +13,12 @@ std::function<std::unique_ptr<IEpicService>()>& Factory() { static std::function
 
 void Epic::Configure(const EpicConfig& config) { if (!Service()) ConfigRef() = config; }
 const EpicConfig& Epic::Config() { return ConfigRef(); }
+// Not written yet (the failing tests come first).
+void Epic::EnableRuntimeLibrary(bool, const std::string&) {}
+const char* DefaultEosLibraryName() { return "EOSSDK-Win64-Shipping.dll"; }
+std::unique_ptr<IEpicService> CreateDynamicEpicService(const std::string&) { return nullptr; }
+std::string DeriveEosEncryptionKey(const std::string&, const std::string&) { return {}; }
+
 void Epic::SetFactory(std::function<std::unique_ptr<IEpicService>()> factory) { Factory() = std::move(factory); }
 bool Epic::Exists() { return Service() != nullptr; }
 

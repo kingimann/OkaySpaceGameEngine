@@ -690,10 +690,11 @@ target_link_libraries(test_steam_script PRIVATE okay::engine)
 add_test(NAME steam_script COMMAND test_steam_script)
 
 add_library(fake_steam_api SHARED fake_steam_api.cpp)   # a stand-in Steam library for the Store Kit's run-time backend
+add_library(fake_eos_sdk SHARED fake_eos_sdk.cpp)       # a stand-in EOS SDK library for the Store Kit's run-time Epic backend
 add_executable(test_stores test_stores.cpp)
-target_link_libraries(test_stores PRIVATE okay::engine)
-add_dependencies(test_stores fake_steam_api)
-target_compile_definitions(test_stores PRIVATE FAKE_STEAM_LIB="$<TARGET_FILE:fake_steam_api>" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_link_libraries(test_stores PRIVATE okay::engine ${CMAKE_DL_LIBS})
+add_dependencies(test_stores fake_steam_api fake_eos_sdk)
+target_compile_definitions(test_stores PRIVATE FAKE_STEAM_LIB="$<TARGET_FILE:fake_steam_api>" FAKE_EOS_LIB="$<TARGET_FILE:fake_eos_sdk>" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME stores COMMAND test_stores)
 
 add_executable(test_net_rooms test_net_rooms.cpp)

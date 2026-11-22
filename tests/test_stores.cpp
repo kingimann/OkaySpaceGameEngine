@@ -17,6 +17,19 @@
 #include <set>
 #include <sstream>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#undef DeleteFile
+#else
+#include <dlfcn.h>
+#endif
+
 using namespace okay;
 namespace fs = std::filesystem;
 
@@ -25,6 +38,17 @@ namespace {
 std::string Slurp(const fs::path& p) {
     std::ifstream f(p, std::ios::binary);
     std::stringstream ss; ss << f.rdbuf(); return ss.str();
+}
+
+// A function of a stand-in store library (the test reads back what reached it).
+template <class F> F FakeFn(const char* lib, const char* name) {
+#if defined(_WIN32)
+    HMODULE h = LoadLibraryA(lib);
+    return h ? reinterpret_cast<F>(reinterpret_cast<void*>(GetProcAddress(h, name))) : nullptr;
+#else
+    void* h = dlopen(lib, RTLD_NOW | RTLD_LOCAL);
+    return h ? reinterpret_cast<F>(dlsym(h, name)) : nullptr;
+#endif
 }
 
 // A fake Steam that records what reached it.
@@ -142,7 +166,16 @@ const char* kStoreKitGraph =
     "node 1 OnStart\n"
     "entry OnStart 1\n"
     "node 2 SteamUnlock visual_script_achievement\n"
-    "exec 1 0 2\n";
+    "exec 1 0 2\n"
+    "node 3 StoreStatAdd visual_script_runs\n"
+    "default 3 0 1\n"
+    "exec 2 0 3\n"
+    "node 4 CloudSaveWrite visual_script_slot\n"
+    "default 4 0 \"saved by a visual script\"\n"
+    "exec 3 0 4\n"
+    "node 5 StorePresence status\n"
+    "default 5 0 \"Trying the Store Kit\"\n"
+    "exec 4 0 5\n";
 
 void BuildStoreKitExample(Scene& s) {
     GameObject* cam = s.CreateGameObject("Main Camera");
@@ -435,6 +468,251 @@ int main() {
     }
 #endif
 
+#if defined(FAKE_STEAM_LIB)
+    {
+        RUN_SUITE("Store Kit: Steam leaderboards and the cloud file list through the developer's library (stand-in)");
+        using SeedFn = void (*)(const char*, std::uint64_t, std::int32_t);
+        using ScoreFn = std::int32_t (*)(const char*, std::uint64_t);
+        using OpenFn = int (*)();
+        auto seed = FakeFn<SeedFn>(FAKE_STEAM_LIB, "FakeSteam_SeedScore");
+        auto score = FakeFn<ScoreFn>(FAKE_STEAM_LIB, "FakeSteam_Score");
+        auto open = FakeFn<OpenFn>(FAKE_STEAM_LIB, "FakeSteam_OpenCalls");
+        CHECK(seed && score && open);
+        auto svc = CreateDynamicSteamService(FAKE_STEAM_LIB);
+        CHECK(svc != nullptr);
+        if (svc && seed && score && open) {
+            SteamConfig cfg; cfg.appId = 2468;
+            CHECK(svc->Initialize(cfg));
+            const std::uint64_t me = 76561197960287930ull;
+            seed("arena", 1001, 5000); seed("arena", 1002, 300);
+            // A score is sent once the board is found; both are asynchronous and finish in RunCallbacks.
+            CHECK(svc->UploadLeaderboardScore("arena", 1200));
+            CHECK(score("arena", me) == -1);           // nothing reached the board before the callbacks ran
+            for (int i = 0; i < 6; ++i) svc->RunCallbacks();
+            CHECK(score("arena", me) == 1200);
+            CHECK(svc->UploadLeaderboardScore("arena", 900));   // lower: the board keeps the best
+            for (int i = 0; i < 6; ++i) svc->RunCallbacks();
+            CHECK(score("arena", me) == 1200);
+            // The top rows: the first ask starts a download, the rows arrive with the callbacks.
+            (void)svc->DownloadLeaderboardTop("arena", 2);
+            for (int i = 0; i < 6; ++i) svc->RunCallbacks();
+            auto top = svc->DownloadLeaderboardTop("arena", 2);
+            CHECK(top.size() == 2);
+            if (top.size() == 2) {
+                CHECK(top[0].score == 5000 && top[0].rank == 1 && top[0].name == "Player1");
+                CHECK(top[1].score == 1200 && top[1].rank == 2 && top[1].name == "FakeSteamUser");
+            }
+            CHECK(svc->DownloadLeaderboardTop("arena", 3).size() == 2);   // what is known while a bigger list loads
+            for (int i = 0; i < 6; ++i) svc->RunCallbacks();
+            CHECK(svc->DownloadLeaderboardTop("arena", 3).size() == 3);
+            CHECK(svc->DownloadLeaderboardTop("", 3).empty());
+            // Through the facade: Leaderboards.Submit then Leaderboards.Top show the downloaded rows.
+            auto store = MakeSteamStoreServices(*svc);
+            CHECK(store->SubmitScore("arena", 7000));
+            for (int i = 0; i < 6; ++i) store->Tick();
+            (void)store->TopScores("arena", 5);
+            for (int i = 0; i < 6; ++i) store->Tick();
+            auto rows = store->TopScores("arena", 5);
+            CHECK(rows.size() == 3 && !rows.empty() && rows[0].score == 7000 && rows[0].name == "FakeSteamUser");
+            CHECK(open() == 0);                        // every call result was collected
+            // Steam Cloud: the list of files.
+            CHECK(svc->CloudWrite("a.sav", "1") && svc->CloudWrite("b.sav", "22"));
+            auto files = svc->CloudFiles();
+            CHECK(files.size() == 2 && files[0] == "a.sav" && files[1] == "b.sav");
+            CHECK(svc->CloudDelete("a.sav") && svc->CloudDelete("b.sav"));
+            svc->Shutdown();
+        }
+    }
+#endif
+#if defined(FAKE_EOS_LIB)
+    {
+        RUN_SUITE("Store Kit: the developer's EOS SDK library loaded at run time (a stand-in library)");
+        using VoidFn = void (*)();
+        using BoolFn = void (*)(bool);
+        using SeedAchFn = void (*)(const char*);
+        using SeedStatFn = void (*)(const char*, std::int32_t);
+        using SeedFileFn = void (*)(const char*, const char*, std::int32_t);
+        using HasFn = bool (*)(const char*);
+        using StatFn = std::int32_t (*)(const char*);
+        using StrFn = const char* (*)();
+        using StrArgFn = const char* (*)(const char*);
+        using IntFn = std::int32_t (*)();
+        const char* L = FAKE_EOS_LIB;
+        auto reset = FakeFn<VoidFn>(L, "FakeEos_Reset");
+        auto failAuth = FakeFn<BoolFn>(L, "FakeEos_FailAuth");
+        auto seedAch = FakeFn<SeedAchFn>(L, "FakeEos_SeedAchievement");
+        auto seedStat = FakeFn<SeedStatFn>(L, "FakeEos_SeedStat");
+        auto seedFile = FakeFn<SeedFileFn>(L, "FakeEos_SeedFile");
+        auto hasAch = FakeFn<HasFn>(L, "FakeEos_HasAchievement");
+        auto stat = FakeFn<StatFn>(L, "FakeEos_Stat");
+        auto hasFile = FakeFn<HasFn>(L, "FakeEos_HasFile");
+        auto fileSize = FakeFn<StatFn>(L, "FakeEos_FileSize");
+        auto file = FakeFn<StrArgFn>(L, "FakeEos_File");
+        auto presence = FakeFn<StrFn>(L, "FakeEos_Presence");
+        auto presenceStatus = FakeFn<IntFn>(L, "FakeEos_PresenceStatus");
+        auto loginType = FakeFn<IntFn>(L, "FakeEos_LoginType");
+        auto connectType = FakeFn<IntFn>(L, "FakeEos_ConnectType");
+        auto loginId = FakeFn<StrFn>(L, "FakeEos_LoginId");
+        auto loginToken = FakeFn<StrFn>(L, "FakeEos_LoginToken");
+        auto productId = FakeFn<StrFn>(L, "FakeEos_ProductId");
+        auto clientSecret = FakeFn<StrFn>(L, "FakeEos_ClientSecret");
+        auto encKey = FakeFn<StrFn>(L, "FakeEos_EncryptionKey");
+        auto createUsers = FakeFn<IntFn>(L, "FakeEos_CreateUsers");
+        auto friendsShown = FakeFn<IntFn>(L, "FakeEos_FriendsShown");
+        auto releases = FakeFn<IntFn>(L, "FakeEos_Releases");
+        auto platformUp = FakeFn<IntFn>(L, "FakeEos_PlatformUp");
+        CHECK(reset && failAuth && seedAch && seedStat && seedFile && hasAch && stat && hasFile && fileSize && file && presence &&
+              presenceStatus && loginType && connectType && loginId && loginToken && productId && clientSecret && encKey &&
+              createUsers && friendsShown && releases && platformUp);
+        CHECK(CreateDynamicEpicService((fs::temp_directory_path() / "no_such_EOSSDK.so").string()) == nullptr);
+        CHECK(std::string(DefaultEosLibraryName()).find("EOSSDK") != std::string::npos);
+        // The derived encryption key: 64 hex digits, the same every run, different per game.
+        const std::string k1 = DeriveEosEncryptionKey("prod1", "dep1");
+        CHECK(k1.size() == 64 && k1.find_first_not_of("0123456789ABCDEF") == std::string::npos);
+        CHECK(k1 == DeriveEosEncryptionKey("prod1", "dep1") && k1 != DeriveEosEncryptionKey("prod2", "dep1"));
+
+        // Everything the service logs, to prove no secret reaches a log.
+        std::string logged;
+        Log::sink = [&](Log::Level, const std::string& m) { logged += m + "\n"; };
+        const std::string kCode = "ExchangeCode-77aa", kClientSecret = "eos-client-secret-55";
+        EpicConfig ec;
+        ec.productId = "prod1"; ec.sandboxId = "sand1"; ec.deploymentId = "dep1"; ec.clientId = "client1";
+        ec.clientSecret = kClientSecret;
+        ec.launch.exchangeCode = kCode; ec.launch.userName = "EpicPlayer"; ec.launch.fromLauncher = true;
+        auto svc = CreateDynamicEpicService(L);
+        CHECK(svc != nullptr);
+        if (svc && reset) {
+            reset();
+            seedAch("ACH_OLD"); seedStat("coins", 5); seedFile("slot0", "old save", 8);
+            CHECK(svc->Initialize(ec));
+            CHECK(svc->IsAvailable() && std::string(svc->BackendName()) == "eos-runtime");
+            CHECK(std::string(productId()) == "prod1" && std::string(clientSecret()) == kClientSecret);
+            CHECK(std::string(encKey()) == k1);
+            CHECK(svc->LoginState() == EpicLoginState::LoggedOut && svc->AccountId().empty());
+            // Calls made before the login finishes wait for it.
+            CHECK(svc->UnlockAchievement("ACH_EARLY"));
+            svc->SetPresence("In the Menu");
+            CHECK(svc->Login());
+            CHECK(svc->LoginState() == EpicLoginState::Pending);
+            CHECK(loginType() == 1 && std::string(loginToken()) == kCode);   // the launcher's exchange code
+            for (int i = 0; i < 12 && svc->LoginState() == EpicLoginState::Pending; ++i) svc->Tick();
+            CHECK(svc->LoginState() == EpicLoginState::LoggedIn);
+            CHECK(connectType() == 16 && createUsers() == 1);   // Epic id token; first time: a product user is made
+            CHECK(svc->AccountId() == "0123456789abcdef0123456789abcdef");
+            CHECK(svc->DisplayName() == "EpicPlayer");
+            for (int i = 0; i < 6; ++i) svc->Tick();
+            // What the server had, and what waited for the login.
+            CHECK(svc->IsAchievementUnlocked("ACH_OLD") && !svc->IsAchievementUnlocked("ACH_LOCKED_A"));
+            CHECK(hasAch("ACH_EARLY") && svc->IsAchievementUnlocked("ACH_EARLY"));
+            CHECK(svc->GetStat("coins") == 5);
+            CHECK(svc->HasFile("slot0") && svc->ReadFile("slot0") == "old save");   // fetched after the login
+            CHECK(std::string(presence()) == "In the Menu" && presenceStatus() == 1);
+            // Achievements, stats.
+            CHECK(svc->UnlockAchievement("ACH_WIN"));
+            CHECK(svc->IsAchievementUnlocked("ACH_WIN"));    // at once, for the game
+            CHECK(svc->IngestStat("coins", 3));
+            for (int i = 0; i < 6; ++i) svc->Tick();
+            CHECK(hasAch("ACH_WIN") && stat("coins") == 8);
+            CHECK(svc->GetStat("coins") == 8);                // read back from the server after the ingest
+            CHECK(!svc->UnlockAchievement("") && !svc->IngestStat("", 1));
+            // Cloud saves: a file bigger than one chunk, with a zero byte in it.
+            std::string big(9000, 'x'); big[4] = '\0'; big[8999] = 'z';
+            CHECK(svc->WriteFile("slot1", big));
+            CHECK(svc->HasFile("slot1") && svc->ReadFile("slot1") == big);   // at once, from this session
+            for (int i = 0; i < 6; ++i) svc->Tick();
+            CHECK(hasFile("slot1") && fileSize("slot1") == 9000 && file("slot1")[8999] == 'z');
+            // A file that appeared on the server later: the first read asks for it, later reads have it.
+            seedFile("late", "from another PC", 15);
+            CHECK(svc->ReadFile("late").empty());
+            for (int i = 0; i < 6; ++i) svc->Tick();
+            CHECK(svc->HasFile("late") && svc->ReadFile("late") == "from another PC");
+            CHECK(svc->ReadFile("missing").empty());
+            for (int i = 0; i < 6; ++i) svc->Tick();
+            CHECK(!svc->HasFile("missing") && svc->ReadFile("missing").empty());
+            CHECK(svc->DeleteFile("slot1") && !svc->HasFile("slot1"));
+            for (int i = 0; i < 6; ++i) svc->Tick();
+            CHECK(!hasFile("slot1"));
+            // Presence and the overlay.
+            svc->SetPresence("In the Arena");
+            for (int i = 0; i < 4; ++i) svc->Tick();
+            CHECK(std::string(presence()) == "In the Arena" && svc->Presence() == "In the Arena");
+            svc->SetPresence(std::string(400, 'p'));    // EOS takes at most 255 characters
+            for (int i = 0; i < 4; ++i) svc->Tick();
+            CHECK(std::string(presence()).size() == 255);
+            svc->ShowFriends();
+            CHECK(friendsShown() == 1);
+            // Through the facade, the way a game uses it.
+            auto store = MakeEpicStoreServices(*svc);
+            CHECK(store->UnlockAchievement("ACH_FACADE"));
+            store->AddStat("coins", 2);
+            CHECK(store->CloudWrite("slot2", "hp=3"));
+            store->SetPresence("status", "Racing");
+            for (int i = 0; i < 6; ++i) store->Tick();
+            CHECK(hasAch("ACH_FACADE") && stat("coins") == 10 && std::string(file("slot2")) == "hp=3");
+            CHECK(std::string(presence()) == "Racing");
+            const int before = releases();
+            svc->Shutdown();
+            CHECK(!svc->IsAvailable() && releases() == before + 1 && !platformUp());
+            svc->Shutdown();                                  // twice is harmless
+            CHECK(releases() == before + 1);
+        }
+        // The developer login tool (no launcher), and a failed login.
+        auto dev = CreateDynamicEpicService(L);
+        if (dev && reset) {
+            reset();
+            EpicConfig dc = ec; dc.launch = EpicLaunchArgs(); dc.devAuth = "localhost:6547|mycred";
+            CHECK(dev->Initialize(dc));
+            CHECK(dev->Login());
+            CHECK(loginType() == 4 && std::string(loginId()) == "localhost:6547" && std::string(loginToken()) == "mycred");
+            for (int i = 0; i < 12; ++i) dev->Tick();
+            CHECK(dev->LoginState() == EpicLoginState::LoggedIn);
+            dev->Shutdown();
+            reset(); failAuth(true);
+            auto bad = CreateDynamicEpicService(L);
+            CHECK(bad && bad->Initialize(ec) && bad->Login());
+            for (int i = 0; bad && i < 6; ++i) bad->Tick();
+            CHECK(bad && bad->LoginState() == EpicLoginState::Failed);
+            if (bad) bad->Shutdown();
+            failAuth(false);
+            // Nothing to log in with.
+            auto none = CreateDynamicEpicService(L);
+            EpicConfig nc = ec; nc.launch = EpicLaunchArgs();
+            CHECK(none && none->Initialize(nc) && !none->Login());
+            if (none) none->Shutdown();
+            // No client secret: the platform cannot start.
+            auto nosecret = CreateDynamicEpicService(L);
+            EpicConfig sc = ec; sc.clientSecret.clear();
+            CHECK(nosecret && !nosecret->Initialize(sc));
+        }
+        Log::sink = nullptr;
+        CHECK(!logged.empty());
+        CHECK(logged.find(kCode) == std::string::npos && logged.find(kClientSecret) == std::string::npos);
+        CHECK(logged.find("mycred") == std::string::npos);
+
+        // The Epic accessor: off by default, the library when an Epic build asks for it, the simulation when missing.
+        Epic::Shutdown();
+        Epic::SetFactory(nullptr);
+        Epic::EnableRuntimeLibrary(false);
+        Epic::Configure(ec);
+        CHECK(std::string(Epic::Get().BackendName()) == "null");
+        Epic::Shutdown();
+        Epic::EnableRuntimeLibrary(true, L);
+        if (reset) reset();
+        CHECK(std::string(Epic::Get().BackendName()) == "eos-runtime");
+        Epic::Shutdown();
+        Epic::EnableRuntimeLibrary(true, (fs::temp_directory_path() / "no_such_EOSSDK.so").string());
+        CHECK(std::string(Epic::Get().BackendName()) == "null");
+        Epic::Shutdown();
+        // An Epic build (PlatformServices::Configure) turns the library on; other stores leave it off.
+        StoreSettings es; es.store = StoreKind::Epic; es.epicProductId = "prod1";
+        PlatformServices::Configure(es);
+        CHECK(std::string(Epic::Get().BackendName()) == "null");   // the default name is not beside this test
+        Epic::Shutdown();
+        StoreSettings ns;
+        PlatformServices::Configure(ns);
+        Epic::EnableRuntimeLibrary(false);
+    }
+#endif
     {
         RUN_SUITE("Steam Web API check: schema, ids used in scripts, key only in a header");
         namespace sw = okay::steamweb;
@@ -479,6 +757,41 @@ int main() {
         CHECK(sw::FetchSchema(2468, "", fake).error.find("STEAM_WEB_API_KEY") != std::string::npos);
     }
 
+
+    {
+        RUN_SUITE("Store Kit visual script nodes: stats, cloud saves and presence");
+        FakeSteam steam;
+        PlatformServices::Set(MakeSteamStoreServices(steam));
+        Scene s("VS");
+        s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Graph");
+        auto* vc = go->AddComponent<VisualScriptComponent>();
+        std::string err;
+        const char* graph =
+            "node 1 OnStart\nentry OnStart 1\n"
+            "node 2 StoreStatSet gems\ndefault 2 0 4\nexec 1 0 2\n"
+            "node 3 StoreStatAdd gems\ndefault 3 0 3\nexec 2 0 3\n"
+            "node 4 StoreStatGet gems\nnode 5 SetVar gems\nexec 3 0 5\ndata 5 0 4 0\n"
+            "node 6 CloudSaveWrite slotA\ndefault 6 0 \"hello there\"\nexec 5 0 6\n"
+            "node 7 CloudSaveRead slotA\nnode 8 SetVar text\nexec 6 0 8\ndata 8 0 7 0\n"
+            "node 9 CloudSaveHas slotA\nnode 10 SetVar has\nexec 8 0 10\ndata 10 0 9 0\n"
+            "node 11 CloudSaveDelete slotA\nexec 10 0 11\n"
+            "node 12 CloudSaveHas slotA\nnode 13 SetVar hasAfter\nexec 11 0 13\ndata 13 0 12 0\n"
+            "node 14 StorePresence status\ndefault 14 0 \"In the Arena\"\nexec 13 0 14\n"
+            "node 15 CloudSaveWrite \"\"\nexec 14 0 15\n";   // no file name: nothing is written
+        CHECK(vc->LoadFromText(graph, &err));
+        if (!err.empty()) std::cerr << "    " << err << "\n";
+        s.Start();
+        s.Update(0.016f);
+        CHECK(steam.statsInt["gems"] == 7);
+        CHECK_NEAR(vc->GetVariable("gems").AsFloat(), 7.0f, 0.001f);
+        CHECK(vc->GetVariable("text").AsString() == "hello there");
+        CHECK(vc->GetVariable("has").AsBool());
+        CHECK(!vc->GetVariable("hasAfter").AsBool());
+        CHECK(steam.cloud.count("slotA") == 0 && steam.cloud.count("") == 0);
+        CHECK(steam.presence["status"] == "In the Arena");
+        PlatformServices::Set(nullptr);
+    }
     {
         RUN_SUITE("example scene examples/store_kit/store_kit.okayscene plays with the local store");
         const std::string path = std::string(OKAY_SOURCE_DIR) + "/examples/store_kit/store_kit.okayscene";
@@ -506,6 +819,8 @@ int main() {
         CHECK(PlatformServices::Get().IsAchievementUnlocked("first_launch"));
         CHECK(PlatformServices::Get().IsAchievementUnlocked("visual_script_achievement"));
         CHECK(PlatformServices::Get().GetStat("launches") == 1);
+        CHECK(PlatformServices::Get().GetStat("visual_script_runs") == 1);                       // the dedicated nodes
+        CHECK(PlatformServices::Get().CloudRead("visual_script_slot") == "saved by a visual script");
         GameObject* demo = s.Find("Store Kit Demo");
         CHECK(demo != nullptr);
         if (demo) if (auto* t = demo->GetComponent<TextRenderer>()) {

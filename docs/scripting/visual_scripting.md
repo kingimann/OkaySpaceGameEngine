@@ -87,6 +87,10 @@ peers, at this object's position), `NetDespawn` (in0=sync id), `NetReady` (in0=b
 **Actions — Steam**: `SteamUnlock <achievement>`, `SteamSetStat <name>` (in0=value),
 `SteamStore`, `SteamLeaderboard <board>` (in0=score)
 
+**Actions — Store Kit** (Steam, Epic or the local store, `docs/release/store_kit.md`): `StoreStatSet <stat>` (in0=value),
+`StoreStatAdd <stat>` (in0=amount, unwired 1), `CloudSaveWrite <file>` (in0=text), `CloudSaveDelete <file>`,
+`StorePresence <key>` (in0=text). Value nodes: `StoreStatGet <stat>`, `CloudSaveRead <file>`, `CloudSaveHas <file>`
+
 **Actions — audio & physics**: `PlaySound` (play this object's AudioSource),
 `AddForce` (in0=x, in1=y), `AddImpulse` (in0=x, in1=y — jumps/knockback),
 `SetVelocity` (in0=x, in1=y) — all on the sibling Rigidbody2D
@@ -1544,3 +1548,11 @@ Script-binding nodes are the generated list in [engine_api.md](../engine_api.md)
 - **Set Steam Stat** (`SteamSetStat`) — in Value; setting: stat
 - **Store Stats** (`SteamStore`)
 - **Submit Score** (`SteamLeaderboard`) — in Score; setting: leaderboard
+- **Set Store Stat** (`StoreStatSet`) — in Value; setting: stat
+- **Add To Store Stat** (`StoreStatAdd`) — in Amount (unwired: 1); setting: stat
+- **Get Store Stat** (`StoreStatGet`) — out Value; setting: stat
+- **Cloud Save Write** (`CloudSaveWrite`) — in Text; setting: file name
+- **Cloud Save Read** (`CloudSaveRead`) — out Text; setting: file name
+- **Cloud Save Exists** (`CloudSaveHas`) — out Bool; setting: file name
+- **Cloud Save Delete** (`CloudSaveDelete`) — setting: file name
+- **Set Presence** (`StorePresence`) — in Text; setting: key

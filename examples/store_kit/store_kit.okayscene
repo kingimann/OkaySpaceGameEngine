@@ -6,14 +6,14 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "bbb5c6f4e9d0c24e2db76c328e25c44e"
+  guid "33adc9030a8744bd47c134d6aaa116fa"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Store Kit Demo"
-  guid "e34457da951a066c00f8e3787a78e6b4"
+  guid "0064c9a294b0017875e4438d7e3f6bf9"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
@@ -40,7 +40,7 @@ function update(dt) {
   comporder "TextRenderer" "ScriptComponent"
 end
 gameobject 2 "Visual Script Achievement"
-  guid "cfc55ad0ed475b9dddf8eafc12fa5335"
+  guid "d01da66ebf067e09956a9edcabde4736"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
@@ -48,5 +48,14 @@ gameobject 2 "Visual Script Achievement"
 entry OnStart 1
 node 2 SteamUnlock visual_script_achievement
 exec 1 0 2
+node 3 StoreStatAdd visual_script_runs
+default 3 0 1
+exec 2 0 3
+node 4 CloudSaveWrite visual_script_slot
+default 4 0 \"saved by a visual script\"
+exec 3 0 4
+node 5 StorePresence status
+default 5 0 \"Trying the Store Kit\"
+exec 4 0 5
 "
 end

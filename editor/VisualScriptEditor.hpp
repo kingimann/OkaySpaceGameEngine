@@ -646,6 +646,15 @@ inline const std::vector<VsDef>& Registry() {
         {"SteamSetStat",   "Set Steam Stat", CAT_NET, true, {""}, {"Value"}, {}, 1, "stat"},
         {"SteamStore",     "Store Stats",    CAT_NET, true, {""}, {}, {}, 0, nullptr},
         {"SteamLeaderboard","Submit Score",  CAT_NET, true, {""}, {"Score"}, {}, 1, "leaderboard"},
+        // The Store Kit: the same on Steam, the Epic Games Store and with no store (docs/release/store_kit.md).
+        {"StoreStatSet",   "Set Store Stat", CAT_NET, true, {""}, {"Value"}, {}, 1, "stat"},
+        {"StoreStatAdd",   "Add To Store Stat", CAT_NET, true, {""}, {"Amount"}, {}, 1, "stat"},
+        {"StoreStatGet",   "Get Store Stat", CAT_NET, false, {}, {}, {"Value"}, 1, "stat"},
+        {"CloudSaveWrite", "Cloud Save Write", CAT_NET, true, {""}, {"Text"}, {}, 1, "file name"},
+        {"CloudSaveRead",  "Cloud Save Read", CAT_NET, false, {}, {}, {"Text"}, 1, "file name"},
+        {"CloudSaveHas",   "Cloud Save Exists", CAT_NET, false, {}, {}, {"Bool"}, 1, "file name"},
+        {"CloudSaveDelete","Cloud Save Delete", CAT_NET, true, {""}, {}, {}, 1, "file name"},
+        {"StorePresence",  "Set Presence",   CAT_NET, true, {""}, {"Text"}, {}, 1, "key"},
         // ---- Fourth wave ----
         // Events: keys, timers, custom events between objects, exits, hover.
         {"OnKey",           "On Key Pressed",   CAT_EVENT, false, {""}, {}, {}, 1, "key"},
@@ -2237,6 +2246,11 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="SteamSetStat")  out += ind + "steam_set_stat(" + q(arg("stat")) + ", " + in(0) + ")\n";
     else if (t=="SteamStore")    out += ind + "steam_store()\n";
     else if (t=="SteamLeaderboard") out += ind + "Leaderboards.Submit(" + q(arg("")) + ", " + in(0) + ")\n";
+    else if (t=="StoreStatSet")  out += ind + "Stats.Set(" + q(arg("stat")) + ", " + in(0) + ")\n";
+    else if (t=="StoreStatAdd")  out += ind + "Stats.Add(" + q(arg("stat")) + ", " + in(0, "1") + ")\n";
+    else if (t=="CloudSaveWrite") out += ind + "CloudSave.Write(" + q(arg("slot1")) + ", str(" + in(0, "\"\"") + "))\n";
+    else if (t=="CloudSaveDelete") out += ind + "CloudSave.Delete(" + q(arg("slot1")) + ")\n";
+    else if (t=="StorePresence") out += ind + "Presence.Set(" + q(arg("status")) + ", str(" + in(0, "\"\"") + "))\n";
     else if (t=="SendEvent")     out += ind + "send_event(" + in(0, "\"self\"") + ", " + q(arg("Event")) + ", " + in(1, "0") + ")\n";
     else if (t=="BroadcastEvent")out += ind + "broadcast_event(" + q(arg("Event")) + ", " + in(0, "0") + ")\n";
     else if (t=="SetObjectVar")  out += ind + "set_object_var(" + in(0, "\"self\"") + ", " + q(arg("hp")) + ", " + in(1, "0") + ")\n";

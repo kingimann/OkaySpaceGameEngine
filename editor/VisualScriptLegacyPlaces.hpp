@@ -298,6 +298,8 @@ inline VsPlace VsLegacyPlaceForNode(const char* type) {
     // Online
     if (VsPre(type, "Net") || VsPre(type, "SyncVar") || VsPre(type, "Steam") || VsIs(type, "RejectRpc") ||
         VsIs(type, "RejectHit") || VsIs(type, "ServerBudget")) return VsAt("Online");
+    // The Store Kit's nodes (added after the split) sit with the Steam ones.
+    if (VsPre(type, "StoreStat") || VsPre(type, "CloudSave") || VsIs(type, "StorePresence")) return VsAt("Online");
     // Scene
     if (VsIs(type, "SetWeather") || VsIs(type, "SetFog") || VsIs(type, "SetPostEffect")) return VsAt("Scene", "Atmosphere");
     if (VsIs(type, "LoadScene") || VsIs(type, "PauseGame") || VsIs(type, "QuitGame")) return VsAt("Scene");

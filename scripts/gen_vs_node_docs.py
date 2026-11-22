@@ -144,6 +144,7 @@ FALLBACK = {
     ("ShowCursor", "Visible"): "true (cursor shown)",
     ("ChanceBranch", "Chance"): "0.5 (a coin flip)",
     ("EveryN", "N"): "2",
+    ("StoreStatAdd", "Amount"): "1",
     ("Remap", "In Max"): "1",
     ("Remap", "Out Max"): "1",
     ("SmoothStep", "Edge1"): "1",

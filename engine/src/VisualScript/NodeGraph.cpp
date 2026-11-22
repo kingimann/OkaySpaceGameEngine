@@ -660,6 +660,15 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "SteamSetStat")     { if (!need(1)) return nullptr; return std::make_unique<SteamSetStatNode>(args[0]); }
     if (type == "SteamStore")       return std::make_unique<SteamStoreNode>();
     if (type == "SteamLeaderboard") { if (!need(1)) return nullptr; return std::make_unique<SteamLeaderboardNode>(args[0]); }
+    // The Store Kit (Steam, Epic or the local store). An empty name is allowed and does nothing (cloud files).
+    if (type == "StoreStatSet")   { if (!need(1)) return nullptr; return std::make_unique<StoreStatSetNode>(args[0]); }
+    if (type == "StoreStatAdd")   { if (!need(1)) return nullptr; return std::make_unique<StoreStatAddNode>(args[0]); }
+    if (type == "StoreStatGet")   { if (!need(1)) return nullptr; return std::make_unique<StoreStatGetNode>(args[0]); }
+    if (type == "CloudSaveWrite") return std::make_unique<CloudSaveWriteNode>(args.empty() ? std::string() : args[0]);
+    if (type == "CloudSaveRead")  return std::make_unique<CloudSaveReadNode>(args.empty() ? std::string() : args[0]);
+    if (type == "CloudSaveHas")   return std::make_unique<CloudSaveHasNode>(args.empty() ? std::string() : args[0]);
+    if (type == "CloudSaveDelete") return std::make_unique<CloudSaveDeleteNode>(args.empty() ? std::string() : args[0]);
+    if (type == "StorePresence")  { if (!need(1)) return nullptr; return std::make_unique<StorePresenceNode>(args[0]); }
     // Audio / physics / tween.
     if (type == "PlaySound")   return std::make_unique<PlaySoundNode>();
     if (type == "AddForce")    return std::make_unique<AddForceNode>();

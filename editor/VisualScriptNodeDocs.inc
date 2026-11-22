@@ -14781,6 +14781,135 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "StoreStatSet";
+        d.title = "Set Store Stat";
+        d.description = "Sets a whole-number stat on the game's store (Steam, Epic, or kept locally). Stats.Set in a script.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Put Set Store Stat after an event such as On Start or On Update, and wire a value into Value.";
+        d.related = "";
+        d.keywords = "set store stat";
+        d.setting = "stat. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Store Stat runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Store Stat finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Value", "Number", "The value being stored, sent or tested. It is a Number. Unwired, this is 0.", "0"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "StoreStatAdd";
+        d.title = "Add To Store Stat";
+        d.description = "Adds to a whole-number stat on the game's store (Steam, Epic, or kept locally). Unwired, it adds 1.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Put Add To Store Stat after an event such as On Start or On Update, and wire a value into Amount.";
+        d.related = "";
+        d.keywords = "add to store stat";
+        d.setting = "stat. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Add To Store Stat runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Add To Store Stat finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Amount", "Number", "How much to add. Negative numbers subtract. It is a Number. Unwired, this is 1.", "1"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "StoreStatGet";
+        d.title = "Get Store Stat";
+        d.description = "Reads a whole-number stat from the game's store (Steam, Epic, or kept locally).";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Get Store Stat's Value output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get store stat";
+        d.setting = "stat. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Value", "Number", "The value that was read. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "CloudSaveWrite";
+        d.title = "Cloud Save Write";
+        d.description = "Saves text as a cloud file (Steam Cloud, Epic Player Data Storage, or the save folder with no store).";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Put Cloud Save Write after an event such as On Start or On Update, and wire a value into Text.";
+        d.related = "";
+        d.keywords = "cloud save write";
+        d.setting = "file name. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Cloud Save Write runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Cloud Save Write finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Text", "Text", "The text to read or change. It is a Text. Unwired, this is empty text.", "empty text"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "CloudSaveRead";
+        d.title = "Cloud Save Read";
+        d.description = "The text of a cloud file, or empty when there is none. On Epic a file from another computer arrives a moment after login.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Cloud Save Read's Text output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "cloud save read";
+        d.setting = "file name. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Text", "Text", "The text result. It is a Text. Wire it into an input that expects a Text.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "CloudSaveHas";
+        d.title = "Cloud Save Exists";
+        d.description = "True when a cloud file with this name exists.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Cloud Save Exists's Bool output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "cloud save exists";
+        d.setting = "file name. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Bool", "Bool", "True or false. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "CloudSaveDelete";
+        d.title = "Cloud Save Delete";
+        d.description = "Cloud Save Delete — Deletes a cloud file.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Put Cloud Save Delete on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "cloud save delete";
+        d.setting = "file name. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Cloud Save Delete runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Cloud Save Delete finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "StorePresence";
+        d.title = "Set Presence";
+        d.description = "Sets what friends see on the store (Steam rich presence, Epic presence text). Ignored with no store.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Put Set Presence after an event such as On Start or On Update, and wire a value into Text.";
+        d.related = "";
+        d.keywords = "set presence";
+        d.setting = "key. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Presence runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Presence finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Text", "Text", "The text to read or change. It is a Text. Unwired, this is empty text.", "empty text"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "OnKey";
         d.title = "On Key Pressed";
         d.description = "Runs once when the chosen key is pressed.";

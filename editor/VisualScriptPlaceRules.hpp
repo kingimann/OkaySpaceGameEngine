@@ -477,6 +477,10 @@ inline const VsRule kNodeRules[] = {
     {"SteamIsUnlocked", "Steam", "Achievements & Stats"}, {"SteamUnlock", "Steam", "Achievements & Stats"},
     {"SteamGetStat", "Steam", "Achievements & Stats"}, {"SteamSetStat", "Steam", "Achievements & Stats"},
     {"SteamStore", "Steam", "Achievements & Stats"}, {"SteamLeaderboard", "Steam", "Achievements & Stats"},
+    {"StoreStatSet", "Steam", "Achievements & Stats"}, {"StoreStatAdd", "Steam", "Achievements & Stats"},
+    {"StoreStatGet", "Steam", "Achievements & Stats"}, {"CloudSaveWrite", "Steam", "Cloud & Workshop"},
+    {"CloudSaveRead", "Steam", "Cloud & Workshop"}, {"CloudSaveHas", "Steam", "Cloud & Workshop"},
+    {"CloudSaveDelete", "Steam", "Cloud & Workshop"}, {"StorePresence", "Steam", "Lobbies & Friends"},
     {"GlIsCameraZoomedIn", "Camera", "Zoom & Shake"}, {"SetProgress", "Bars & Layout", "Progress Bars"},
 };
 

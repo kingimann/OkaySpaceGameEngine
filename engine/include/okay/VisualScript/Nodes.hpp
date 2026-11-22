@@ -894,6 +894,63 @@ struct SteamLeaderboardNode : VsNode {
     int Exec(NodeGraph& g, VsContext& ctx) override { okay::PlatformServices::Get().SubmitScore(board, (std::int32_t)In(0, g, ctx).AsFloat()); return 0; }
 };
 
+// ---- Store Kit: stats, cloud saves and presence on the game's store (Steam, Epic, or kept locally) ----------
+// The same calls as the Stats.*, CloudSave.* and Presence.Set script functions (okay/Platform/PlatformServices.hpp).
+inline std::int32_t VsStoreInt(float f) {
+    if (!(f == f)) return 0;                       // NaN
+    if (f > 2000000000.0f) return 2000000000;
+    if (f < -2000000000.0f) return -2000000000;
+    return (std::int32_t)(f < 0 ? f - 0.5f : f + 0.5f);
+}
+struct StoreStatSetNode : VsNode {
+    std::string name;
+    explicit StoreStatSetNode(std::string n) : name(std::move(n)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { okay::PlatformServices::Get().SetStat(name, VsStoreInt(In(0, g, ctx).AsFloat())); return 0; }
+};
+struct StoreStatAddNode : VsNode {
+    std::string name;
+    explicit StoreStatAddNode(std::string n) : name(std::move(n)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { okay::PlatformServices::Get().AddStat(name, VsStoreInt(In(0, g, ctx, VsValue{1.0f}).AsFloat())); return 0; }
+};
+struct StoreStatGetNode : VsNode {
+    std::string name;
+    explicit StoreStatGetNode(std::string n) : name(std::move(n)) {}
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return VsValue{(float)okay::PlatformServices::Get().GetStat(name)}; }
+};
+struct CloudSaveWriteNode : VsNode {
+    std::string file;
+    explicit CloudSaveWriteNode(std::string f) : file(std::move(f)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (!file.empty()) okay::PlatformServices::Get().CloudWrite(file, In(0, g, ctx).AsString());
+        return 0;
+    }
+};
+struct CloudSaveReadNode : VsNode {
+    std::string file;
+    explicit CloudSaveReadNode(std::string f) : file(std::move(f)) {}
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return VsValue{file.empty() ? std::string() : okay::PlatformServices::Get().CloudRead(file)}; }
+};
+struct CloudSaveHasNode : VsNode {
+    std::string file;
+    explicit CloudSaveHasNode(std::string f) : file(std::move(f)) {}
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return VsValue{!file.empty() && okay::PlatformServices::Get().CloudHas(file)}; }
+};
+struct CloudSaveDeleteNode : VsNode {
+    std::string file;
+    explicit CloudSaveDeleteNode(std::string f) : file(std::move(f)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext&) override { if (!file.empty()) okay::PlatformServices::Get().CloudDelete(file); return 0; }
+};
+struct StorePresenceNode : VsNode {
+    std::string key;
+    explicit StorePresenceNode(std::string k) : key(std::move(k)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { okay::PlatformServices::Get().SetPresence(key, In(0, g, ctx).AsString()); return 0; }
+};
+
 // ---- Audio ------------------------------------------------------------
 // Play the AudioSource on this object (sound effects, one-shots).
 struct PlaySoundNode : VsNode {

@@ -7374,6 +7374,24 @@ static void DrawExampleMenuItems(EditorState& ed) {
         }
         if (lit.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The lighting examples (examples/lighting) were not found next to the editor.");
     }
+    // Store Kit: achievements, stats, leaderboards, cloud saves and presence with no store (docs/release/store_kit.md).
+    {
+        namespace fs = std::filesystem;
+        const std::vector<std::string> kit = okay::editor::ExampleScenes("store_kit");
+        if (ImGui::BeginMenu("Store Kit (achievements, stats, cloud saves)", !kit.empty())) {
+            ImGui::TextDisabled("Press Play, then keys 1 to 5. Works with no store; File > Build Settings > Stores picks one.");
+            for (const std::string& p : kit) {
+                const std::string name = fs::path(p).stem().string();
+                if (ImGui::MenuItem(name.c_str())) {
+                    std::string err;
+                    if (ed.Load(p, &err)) { ConsoleLog("Opened " + p + ". Press Play, then keys 1 to 5."); AddRecent(p); }
+                    else { ConsoleLog("Open failed: " + err, 2); ShowErrorPopup("Couldn't open the example", p + "\n" + err); }
+                }
+            }
+            ImGui::EndMenu();
+        }
+        if (kit.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The Store Kit example (examples/store_kit) was not found next to the editor.");
+    }
 }
 
 static void DrawAutosaveMenuItems() {

@@ -29,6 +29,8 @@ add_library(okay::crypto ALIAS okay_crypto)
 # Written only from papers and textbooks (each file says which). okay_engine links it PUBLIC.
 add_library(okay_physcore STATIC
     src/Physics/Core/DynamicTree.cpp
+    src/Physics/Core/Shape.cpp
+    src/Physics/Core/Collide.cpp
 )
 target_include_directories(okay_physcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(okay_physcore PUBLIC cxx_std_17)

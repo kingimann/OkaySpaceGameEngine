@@ -272,16 +272,17 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.12.1 GUIDs and meta files - `Core/AssetDatabase` - `Scan`, `Guid`, `.okaymeta` sidecars, `MoveAsset`, rename and duplicate handling, orphan reports, labels; `ScanOptions::indexUnmetaed` (index assets that have no meta in memory, write nothing), `EnsureMeta`, `Folders()` (every folder walked, empty ones too), `Revision()` (moves only when the index changed)
   - 1.12.2 Dependency graph - `Core/AssetDatabaseDeps` - extractors for scenes, prefabs, materials and text assets; `DependenciesOf`, `UsedBy`, `BuildClosure`, `FindUnused`, `FindMissing`, `FixStaleReferences`
   - 1.12.3 Import settings - `Core/ImportSettings` - typed texture, model and audio settings with versions and migration; reimport signal
+  - 1.12.4 Live picture reload - `Render/TextureCacheFiles`, `editor/ProjectBrowser` - `Browser::TakeChangedFiles` (files the scan saw change on disk, new import settings, every hand Reimport) and `InvalidateTextureCacheForFile` (every texture-cache key that names the file, relative or absolute): a picture repainted in another program or reimported is shown changed in the Scene view within one poll, with a Console line
   - 1.12.4 Thumbnails - see 1.20 (`Core/ThumbnailCache` is its own sub-area)
   - 1.12.5 Search and paging - `Core/AssetDatabaseSearch` - filter, sort and page query with per-type counts
   - 1.12.6 Shared helpers - `Core/AssetDatabaseInternal` - private utilities used by the three database sources
-- **Code:** `Core/AssetDatabase`, `Core/AssetDatabaseDeps`, `Core/AssetDatabaseSearch`, `Core/AssetDatabaseInternal`, `Core/ImportSettings`
+- **Code:** `Core/AssetDatabase`, `Core/AssetDatabaseDeps`, `Core/AssetDatabaseSearch`, `Core/AssetDatabaseInternal`, `Core/ImportSettings`, `Render/TextureCacheFiles`
 - **API:** `AssetDatabase::Scan`, `AssetDatabase::BuildClosurePaths`, `AssetDatabase::Search`, `Guid`, `ImportSettings`
 - **Editor:** Project panel (`editor/ProjectBrowser.*`: listing, search, filters, counts, folder tree, info strip, Find References, Show Dependencies, tags, broken-reference badge, Broken References list with Fix)
 - **Docs:** `docs/engine/asset_database.md`, `docs/editor/project_panel.md`
-- **Tests:** `asset_database`, `project_panel`, `project_panel_db`
+- **Tests:** `asset_database`, `project_panel`, `project_panel_db`, `texture_reimport`
 - **Status:** Partial - the Project panel reads the listing, search, dependency graph, labels and import settings from it; no importer reads `srgb`, `compress` or the audio settings, scenes still store paths, the build/export code does not call it
-- **Open:** importers reading the remaining settings; GUID references inside scene files (the panel rewrites paths on rename and move); build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no operating-system file watcher (the panel polls the incremental scan every 2 s or more); an asset has a `.okaymeta` only after it is given a tag or import settings, so its GUID is session-long until then
+- **Open:** importers reading the remaining settings; GUID references inside scene files (the panel rewrites paths on rename and move); build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no operating-system file watcher (the panel polls the incremental scan every 2 s or more, and a changed picture reloads on that poll); a changed model file is not reloaded into the open scene (only pictures are; audio was not checked); an asset has a `.okaymeta` only after it is given a tag or import settings, so its GUID is session-long until then
 - **Related:** 1.11, 1.20, 20, 15.4, 18.1
 - **Words:** AssetDatabase, GUID, meta file, okaymeta, dependency, import settings, unused assets, missing assets, asset browser, reference, closure
 - **Seen as:** moving a file in the project loses its texture in scenes; the build ships unused files or misses one; a Project panel row without a type or a wrong Used By count

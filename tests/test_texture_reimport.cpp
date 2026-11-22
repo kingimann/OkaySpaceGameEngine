@@ -8,6 +8,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/SoftwareRenderer.hpp"
+#include "okay/Render/TextureCacheFiles.hpp"
 #include "../editor/ProjectBrowser.hpp"
 
 #include <algorithm>

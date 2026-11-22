@@ -3,6 +3,9 @@
 #include "VisualScriptNodeDocs.hpp"
 #include "okay/Components/Animator.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
+#include "okay/Components/AnimControl.hpp"
+#include "okay/Components/Character.hpp"
+#include "okay/Components/ModelAnimator.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/VisualScript/VsApi.hpp"
@@ -34,7 +37,7 @@ int main() {
 
     // ---- which component a visual-script component id means ---------------------------------------------------------
     CHECK(VsAnimComponentFor("Animator") == VsAnimComponent::Graph);         // the "Animator" nodes drive the graph
-    CHECK(VsAnimComponentFor("AnimStateMachine") == VsAnimComponent::Graph);
+    CHECK(VsAnimComponentFor("AnimStateMachine") == VsAnimComponent::GraphNearby);   // the Anim* nodes (see below)
     CHECK(VsAnimComponentFor("ClipPlayer") == VsAnimComponent::ClipPlayer);
     CHECK(VsAnimComponentFor("Clip Player") == VsAnimComponent::ClipPlayer);
     CHECK(VsAnimComponentFor("Rigidbody") == VsAnimComponent::None);
@@ -60,7 +63,8 @@ int main() {
     CHECK(src.find("\"Animator (keyframes)\"") == std::string::npos);
     CHECK(src.find("\"Clip Player (keyframes)\"") != std::string::npos);
     CHECK(src.find("if (n == \"Animator\") return add(go->AddComponent<Animator>());") == std::string::npos);
-    CHECK(src.find("okay::editor::vsed::VsAnimComponentFor(id)") != std::string::npos);
+    CHECK(src.find("VsAnimHas(go, okay::editor::vsed::VsAnimComponentFor(id))") != std::string::npos);
+    CHECK(src.find("VsAnimAdd(go, okay::editor::vsed::VsAnimComponentFor(id))") != std::string::npos);
     const std::string widgets = ReadFile(std::string(OKAY_SOURCE_DIR) + "/editor/EditorWidgets.cpp");
     CHECK(widgets.find("has(\"Clip Player\")") != std::string::npos);   // keeps the animation colour and glyph
 
@@ -84,6 +88,47 @@ int main() {
         CHECK(b && b->GetComponent<AnimStateMachine>() == nullptr);   // loads as the clip player, not the graph
         if (ba) { CHECK(ba->clip.name == "Bounce"); CHECK_NEAR(ba->speed, 1.5f, 1e-6); }
         CHECK(SceneSerializer::Serialize(back) == text);
+    }
+
+    // ---- review of #1140: each component id is checked where its nodes look, and the fix-it makes the node work ----
+    {
+        CHECK(VsAnimComponentFor("AnimStateMachine") == VsAnimComponent::GraphNearby);   // the Anim* nodes
+        CHECK(VsAnimComponentFor("Character") == VsAnimComponent::Character);            // Play Clip
+        CHECK(VsAnimComponentFor("ModelAnimator") == VsAnimComponent::ModelAnimator);
+        // Play Clip plays through a Character or a Model Animator (PlayClipFrom), never through the state graph
+        const VsNodeDoc* pc = VsNodeDocFor("PlayClip");
+        CHECK(pc && pc->component == "Character|ModelAnimator");
+        CHECK(pc && pc->requirements.find("Character") != std::string::npos && pc->requirements.find("Model Animator") != std::string::npos);
+
+        Scene s;
+        GameObject* parent = s.CreateGameObject("Parent");
+        GameObject* hero = s.CreateGameObject("Hero");
+        hero->transform->SetParent(parent->transform);
+        GameObject* model = s.CreateGameObject("Model");
+        model->transform->SetParent(hero->transform);
+        model->AddComponent<AnimStateMachine>();                    // a state graph on a child only
+        // a state machine on a child does not make Play Clip work, so it must not count for it
+        CHECK(!VsAnimHas(hero, VsAnimComponent::Character) && !VsAnimHas(hero, VsAnimComponent::ModelAnimator));
+        bool warned = false;
+        CHECK(!PlayClipFrom(hero, "Wave", warned));
+        // the "Animator" API nodes find the graph on the object or below it (EngineApi's Animator binding) ...
+        CHECK(VsAnimHas(hero, VsAnimComponent::Graph));
+        // ... the Anim* nodes on the object, a child or a parent (FindAnimComponent), as their docs say
+        CHECK(VsAnimHas(hero, VsAnimComponent::GraphNearby));
+        GameObject* rider = s.CreateGameObject("Rider");
+        rider->transform->SetParent(model->transform);               // the graph is on its parent
+        CHECK(VsAnimHas(rider, VsAnimComponent::GraphNearby));
+        CHECK(!VsAnimHas(rider, VsAnimComponent::Graph));            // the API binding does not look up
+        // pressing Play Clip's fix-it (the first id, Character) makes the node play
+        CHECK(VsAnimAdd(hero, VsAnimComponent::Character));
+        CHECK(VsAnimHas(hero, VsAnimComponent::Character));
+        warned = false;
+        CHECK(PlayClipFrom(hero, "Wave", warned));                    // a Character's built-in animation
+        // the docs of the Anim* nodes match what is checked
+        for (const char* t : {"AnimTrigger", "AnimSetFloat", "AnimSetBool", "AnimState"}) {
+            const VsNodeDoc* d = VsNodeDocFor(t);
+            CHECK(d && d->component == "AnimStateMachine" && d->requirements.find("a child or a parent") != std::string::npos);
+        }
     }
 
     TEST_MAIN_RESULT();

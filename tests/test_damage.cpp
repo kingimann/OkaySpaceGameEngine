@@ -609,5 +609,32 @@ int main() {
         CHECK(HealthOf(lone, h, m) && std::fabs(h - 12.0f) < 1e-4f && std::fabs(m - 30.0f) < 1e-4f);
     }
 
+    // --- the BT "health" Condition reads the same holder as the Health Watcher (review of #1140) ------------------------
+    // HealthFraction() (the Condition with kind "health") still read the NPC Controller first while the watcher read
+    // HealthOf: an NPC at 20% on its Health Stat wrote healthPct 0.2 while "health < 0.5" said no.
+    {
+        Scene s("health-condition");
+        s.physicsEnabled = false;
+        GameObject* g = s.CreateGameObject("Guard");
+        auto* npc = g->AddComponent<NPCController>(); npc->maxHealth = 30.0f; npc->health = 30.0f;
+        auto* hs = g->AddComponent<HealthStat>(); hs->maxHealth = 80.0f; hs->health = 80.0f;
+        auto* r = g->AddComponent<BehaviorTreeRunner>();
+        r->runOnStart = false;
+        auto t = std::make_shared<BehaviorTree>();
+        const int root = t->AddNode(BtNodeType::Sequence, -1);
+        const int w = t->AddNode(BtNodeType::HealthWatcher, root); t->Find(w)->Set("interval", 0.0f);
+        const int c = t->AddNode(BtNodeType::Condition, root);
+        t->Find(c)->Set("kind", "health"); t->Find(c)->Set("fraction", 0.5f);
+        r->SetTree(t);
+        s.Start(); r->Run();
+        s.Update(0.1f);
+        CHECK(r->LastResult() == BtStatus::Failure);              // full health: not below half
+        CHECK(DealDamage(g, 64.0f));                               // the Health Stat takes it: 16 of 80 = 20%
+        CHECK_NEAR(hs->health, 16.0f, 1e-3f);
+        for (int i = 0; i < 3; ++i) s.Update(0.1f);
+        CHECK_NEAR(r->blackboard.GetNumber("healthPct", -1.0f), 0.2f, 1e-3f);
+        CHECK(r->LastResult() == BtStatus::Success);              // and the Condition agrees: below half
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -9,10 +9,10 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 ### 3.1 Edit mode
 - **What:** Blender-style mesh edit mode (Tab, G/R/S, axis lock, snapping, mirror) on the selected object's Mesh Renderer: Tab to enter, Vertex/Edge/Face selection, G/R/S modal transforms with axis locks, typed values and snapping, soft select, X symmetry and a set of face, edge and vertex tools. The mesh is kept welded while editing.
 - **Parts:**
-  - 3.1.1 Edit mode, selection and polygon stats - `editor/main.cpp`, `Render/Mesh` - Tab or the Edit Mesh tick, Object/Edit header, keys 1/2/3, click, Shift, Alt-click loop, Ctrl+Alt ring, Grow/Shrink/Linked/Invert, stats line
-  - 3.1.2 G/R/S modal transforms - `Modeling/EditTransform` - EditTransformSession, AxisLock (X/Y/Z, Shift = plane), NumericInput, Move/Rotate/ScaleMatrix, Ctrl snap, Esc restores exactly
+  - 3.1.1 Edit mode, selection and polygon stats - `editor/main.cpp`, `Render/Mesh` - Tab or the Edit Mesh tick, Object/Edit header, keys 1/2/3, click, Shift, Alt-click loop, Ctrl+Alt ring, Ctrl+click shortest path (ShortestVertPath / ShortestFacePath), Grow/Shrink/Linked/Invert, Checker Deselect, Select Boundary Loop, Select Open / Non-Manifold Edges (PolyOps: CheckerVerts / CheckerFaces, RegionOutline, ProblemEdges), stats line
+  - 3.1.2 G/R/S modal transforms - `Modeling/EditTransform` - EditTransformSession, AxisLock (X/Y/Z, Shift = plane), NumericInput, Move/Rotate/ScaleMatrix, Ctrl snap, Esc restores exactly; pivot Median / Individual Origins / Active Vertex (EditPivot; Edit Mesh combo, `.` cycles); the move-handle drag uses the same session (soft select, symmetry X/Y/Z)
   - 3.1.3 Soft Select, Symmetry X and vertex snap - `Render/Mesh` - MoveVerticesSoft, SnapToGrid, hold V to snap to vertices
-  - 3.1.4 Face tools - `Render/Mesh` - ExtrudeFaces, InsetFaces, SubdivideFaces, PokeFaces, Extrude/Inset Individual, DeleteFaces, FlipNormals, OrientFacesOutward (Recalc Outside), DuplicateFaces, SeparateFaces
+  - 3.1.4 Face tools - `Render/Mesh` - ExtrudeFaces, InsetFaces, SubdivideFaces, PokeFaces, Extrude/Inset Individual, DeleteFaces, FlipNormals (keeps flat or smooth shading), FlipFaces (selected faces only), OrientFacesOutward (Recalc Outside), DuplicateFaces, SeparateFaces
   - 3.1.5 Edge and vertex tools - `Render/Mesh` - CollapseEdges, SplitEdges, ExtrudeEdges, BevelVertices, SmoothVertices (Relax Sel), FlattenVertices, ShrinkFatten, SphereizeVertices, WeldVertices (Merge by Distance)
   - 3.1.6 Polygon mesh core - `Modeling/PolyMesh` - quads and n-gons with per-corner UVs, face colour and material slot; FromMesh/ToMesh, Check report, Euler characteristic
   - 3.1.7 Edit-session undo - `editor/main.cpp` - Ctrl+Z steps through single mesh edits; leaving edit mode makes the whole session one scene undo step (per docs)
@@ -20,9 +20,9 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **API:** `EditTransformSession`, `AxisLock`, `NumericInput`, `PolyMesh::FromMesh/ToMesh`, `Mesh::ExtrudeFaces`, `InsetFaces`, `OrientFacesOutward`; keys Tab, G, R, S, X/Y/Z, Ctrl+Z
 - **Editor:** Modeling window (View > Editors & Tools > Modeling), the 3D view's Object/Edit header and status line, Edit Mesh section
 - **Docs:** `docs/editor/modeling.md`
-- **Tests:** `edit_transform`, `meshedit`, `polymesh`, `modeling`
+- **Tests:** `edit_transform`, `meshedit`, `polymesh`, `modeling`, `poly_ops`
 - **Status:** Works - four test suites cover the maths and mesh ops; I read the headers but not the editor key handling in main.cpp
-- **Open:** tools that rebuild triangles outside the polygon core (the classic Extrude) fall back to one UV per vertex where they touch (per docs); no per-edge Mark Sharp or Edge Split tool (UV seams exist, 3.4; Auto Smooth covers shading by angle)
+- **Open:** tools that rebuild triangles outside the polygon core (the classic Extrude) fall back to one UV per vertex where they touch (per docs); no per-edge Mark Sharp or Edge Split tool (UV seams exist, 3.4; Auto Smooth covers shading by angle); no local / normal transform orientation, 3D cursor pivot, rip, loop-to-region or vertex slide (audit: `docs/status/modeling_tab_audit.md`); Ctrl+click path, pivot modes and the handle-drag symmetry are tested headless but not tried in a running editor
 - **Related:** 3.2, 3.4, 3.8, 15.9
 - **Words:** edit mode (Tab, G/R/S, axis lock, snapping, mirror), Edit Mesh, Tab, G R S, grab, rotate, scale, extrude, inset, poke, soft select, proportional editing, symmetry X, recalc normals, merge by distance, separate, duplicate faces
 - **Seen as:** pressing Tab over the 3D view does nothing; a tool is greyed out; faces look dark or inside out after a weld or mirror; Esc does not put the vertices back; a typed distance goes the wrong way

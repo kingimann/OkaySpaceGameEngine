@@ -253,7 +253,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
   - 41.13.2 Build groups - `cmake/OkayModules.cmake` - `okay_modules_read`, `okay_add_module`, `okay_modules_group(okay_engine)` (writes `okay_modules.tsv`), configure fails on an unknown requirement or a cycle
   - 41.13.3 Test labels - `okay_modules_label_tests` - every test gets `module:<name>` (or `module:core`); `ctest -L module:physics3d`
   - 41.13.4 Module list at run time - `Modules/ModuleManifest`, `Modules/ModuleRegistry` - the manifests embedded by `okay_modules_generate` (`modules_enabled.cpp`), `ModuleRegistry::Get()`, `Validate`, `DependencyOrder`, register hooks (`ModuleContext`); the player logs `[okay] modules: 40 modules, 40 on`
-  - 41.13.5 Dependency check - `scripts/check_modules.py` - forbidden includes between modules, manifest problems, the umbrella header; 801 known includes in `scripts/module_deps_baseline.txt` (shrink only); report mode in CI
+  - 41.13.5 Dependency check - `scripts/check_modules.py` - forbidden includes between modules, manifest problems, the umbrella header; about 800 known includes in `scripts/module_deps_baseline.txt` (shrink only); report mode in CI
 - **Code:** `cmake/OkayModules.cmake`, `engine/modules/*/module.okaymodule`, `engine/include/okay/Modules/ModuleManifest.hpp`, `engine/include/okay/Modules/ModuleRegistry.hpp`, `scripts/check_modules.py`
 - **Docs:** `docs/engine/modular_engine.md`, `docs/design/modular_gameplay_contracts.md`, `docs/design/modular_status.md`
 - **Tests:** configure itself (a bad manifest fails it); `modules` (parser, registry, the generated list); `check_modules_script` (`tests/scripts/test_check_modules.py`, the check on a made-up tree)

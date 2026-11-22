@@ -175,6 +175,7 @@ public:
     // Rotate with a middle-mouse drag (or the rotate keys), zoom with the wheel.
     void LateUpdate(float dt) override {
         if (!followCamera || !transform || !gameObject || !gameObject->scene()) return;
+        if (!IsLocallyControlled(gameObject)) return;   // a remote copy never moves this machine's camera
         Scene* sc = gameObject->scene();
         if (!sc->mainCamera || !sc->mainCamera->transform) return;
         Transform* cam = sc->mainCamera->transform;
@@ -209,8 +210,9 @@ public:
 
         // Never let the follow camera dip to or below the floor: from under (or
         // grazing) the ground plane you'd see it edge-on, or — since the floor is a
-        // single-sided plane — not at all. Keep a small clearance above it.
-        float floorY = usePlayerHeight ? 0.0f : groundY;
+        // single-sided plane — not at all. Keep a small clearance above it. With Use Player Height the floor is
+        // the one the player stands on (it was y = 0, which pinned the camera far above a player below the origin).
+        float floorY = usePlayerHeight ? transform->Position().y : groundY;
         if (m_camPos.y < floorY + 0.5f) m_camPos.y = floorY + 0.5f;
 
         cam->SetPosition(m_camPos);

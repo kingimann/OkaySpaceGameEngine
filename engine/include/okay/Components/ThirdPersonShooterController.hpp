@@ -307,6 +307,7 @@ public:
 
     void LateUpdate(float dt) override {
         if (!transform || !gameObject) return;
+        if (!IsLocallyControlled(gameObject)) return;   // a remote copy never moves this machine's camera
         Scene* sc = gameObject->scene();
         if (!sc || !sc->mainCamera || !sc->mainCamera->transform) return;
         Transform* cam = sc->mainCamera->transform;

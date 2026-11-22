@@ -3,6 +3,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Components/MoveSpeed.hpp"   // MoveSpeedScale: load and encumbrance
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/GroundGrip.hpp"
 #include "okay/Input/Input.hpp"
@@ -100,7 +101,8 @@ public:
         stanceControl.Step(gameObject, dt);
         const bool standing = stanceControl.Stance() == 0;
         bool running = standing && sprintKey && in.Held(PlayerInput::Sprint);
-        float spd = stanceControl.Speed(running ? runSpeed : speed);   // eases between the stances' caps
+        float spd = stanceControl.Speed(running ? runSpeed : speed)   // eases between the stances' caps
+                    * MoveSpeedScale(gameObject);                      // a heavy load or full bag slows it
         // Normalize diagonal input so W+D isn't ~41% faster than W alone (magnitude √2).
         float alen = Mathf::Sqrt(axis.x * axis.x + axis.y * axis.y);
         if (alen > 1.0f) { axis.x /= alen; axis.y /= alen; }

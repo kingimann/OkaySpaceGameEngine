@@ -97,16 +97,16 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **What:** Screen effects on the finished frame: exposure, tonemap, bloom, colour grading, vignette, anti-aliasing, ambient occlusion and depth of field, with a software fallback for some.
 - **Parts:**
   - 2.5.1 Settings and chain order - `Scene/Scene` (PostSettings), `Render/Atmosphere` - exposure, tonemap (None, ACES, Filmic), bloom, grading (temperature, tint, saturation, contrast, lift/gamma/gain), vignette; chain: SSAO, bloom, exposure/tonemap/grade/vignette, depth of field, FXAA, in an HDR target
-  - 2.5.2 GPU chain - `Render/GLRenderer`, `Render/D3D11Renderer` - OpenGL runs every effect; Direct3D 11 has bloom, tonemap, grading, vignette, FXAA, an SSAO pass and a depth of field pass (the last two compile-checked only, UNVERIFIED on a GPU); Bloom Softness and Ambient Occlusion Power (`Render/PostQualityMath.hpp`) are shared by OpenGL and Direct3D 11 (CPU-tested maths, shaders unrun); Direct3D 12 has none (see 38)
-  - 2.5.3 Software passes - `Render/SoftwareRenderer` - its own CPU SSAO, bloom, tonemap, colour grade, vignette and FXAA with process-wide switches, row-parallel
+  - 2.5.2 GPU chain - `Render/GLRenderer`, `Render/D3D11Renderer` - OpenGL runs every effect; Direct3D 11 has bloom, tonemap, grading, vignette, FXAA, an SSAO pass and a depth of field pass (the last two compile-checked only, UNVERIFIED on a GPU); depth of field keeps the frame's coverage (premultiplied blur), so the background the host paints (sky pass off: solid-colour camera, Sky off) shows through out-of-focus empty pixels instead of an opaque black blur (OpenGL checked on Mesa under Xvfb by `gl_post_alpha`, Direct3D 11 compile-checked); Bloom Softness and Ambient Occlusion Power (`Render/PostQualityMath.hpp`) are shared by OpenGL and Direct3D 11 (CPU-tested maths, shaders unrun); Direct3D 12 has none (see 38)
+  - 2.5.3 Software passes - `Render/SoftwareRenderer` - its own CPU SSAO, bloom, tonemap, colour grade, vignette and FXAA (scene switches and the process-wide ones), and the scene's depth of field (`ApplySceneDof`: half-res premultiplied 9-tap binomial blur, the shared focus maths of `DofMath.hpp`, straight-line eye distance from the W-buffer; perspective cameras only) and AO Power (`SSAOPower`), row-parallel
   - 2.5.4 Quality presets - `Core/DisplaySettings` - Low/Medium/High flips shadows, bloom, SSAO, FXAA and per-pixel lighting, and sets shadow map resolution, cascade count and shadow distance (Low 512/1/40 m, Medium 1024/2/60 m, High 2048/3/80 m)
 - **Code:** `Render/Atmosphere`, `Render/SoftwareRenderer`, `Scene/Scene`, `Core/DisplaySettings`
 - **API:** `Scene::RenderSettings::PostSettings`, `PostActive`, `TonemapACES`, `ExposureScale`, `BloomEnabled()`, `SSAOEnabled()`, script `post_set`
 - **Editor:** View > Lighting panel: Post-processing section and Look Preset; "Rendering (Lighting & Post FX)" holds the editor's own process-wide switches
 - **Docs:** `docs/rendering/rendering.md`
-- **Tests:** `post_sky`, `dof_math`, `post_quality_math`, `ssao_math`
+- **Tests:** `post_sky`, `dof_math`, `post_quality_math`, `ssao_math`, `software_scene_post`, `gl_post_alpha`
 - **Status:** Works - read `Atmosphere.hpp`, the post fields of `Scene.hpp` and the effect counts in the backends; settings round-trip per `post_sky`
-- **Open:** SSAO and depth of field on Direct3D 11 have never run on a GPU; Direct3D 12 and software differ in what they apply; the Lighting window, Build Settings and the Light Inspector name the switches a renderer ignores (`docs/rendering/rendering.md`); FXAA and per-pixel lighting switches only affect software; no motion blur, lens flare or colour LUT
+- **Open:** SSAO and depth of field on Direct3D 11 have never run on a GPU; Direct3D 12 has no post chain, and software skips depth of field with an orthographic camera and ignores Bloom Softness; the Lighting window, Build Settings and the Light Inspector name the switches a renderer ignores (`docs/rendering/rendering.md`); FXAA and per-pixel lighting switches only affect software; no motion blur, lens flare or colour LUT
 - **Related:** 2.4, 1.15, 38.2, 38.3, 38.5, 26
 - **Words:** post-processing, post FX, bloom, tonemap, ACES, exposure, colour grading, vignette, FXAA, SSAO, ambient occlusion, depth of field, DoF, HDR, look preset
 - **Seen as:** bloom or occlusion missing on one renderer; the frame looks washed out or too contrasty; vignette drawn twice; effects change between editor and player
@@ -126,15 +126,11 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.6.6 World streaming - `Components/WorldStreamer` - cell prefabs `<prefix>_<x>_<z>.okayprefab` loaded within a radius and unloaded past a larger one (hysteresis)
   - 2.6.7 Tilemap - `Components/Tilemap`, `Components/TilemapCollider2D` - integer tile grid with cell/world conversion; static box colliders merged per row
 - **Code:** `Components/Terrain`, `Components/TerrainDigger`, `Components/VoxelTerrain`, `Components/VoxelDigger`, `Components/Water`, `Environment/WaterWaves`, `Environment/WaterShading`, `Components/Buoyancy`, `Components/WorldStreamer`, `Components/Tilemap`, `Components/TilemapCollider2D`
-  - 2.6.9 Buoyancy - `Components/Buoyancy` - sample points across the hull, Archimedes push per point, drag per hull direction against the moving water, angular damping, splash events, runs in FixedUpdate; crates float at the right draft, heavy things sink
-  - 2.6.6 World streaming - `Components/WorldStreamer` - cell prefabs `<prefix>_<x>_<z>.okayprefab` loaded within a radius and unloaded past a larger one (hysteresis)
-  - 2.6.7 Tilemap - `Components/Tilemap`, `Components/TilemapCollider2D` - integer tile grid with cell/world conversion; static box colliders merged per row
-- **Code:** `Components/Terrain`, `Components/TerrainDigger`, `Components/VoxelTerrain`, `Components/VoxelDigger`, `Components/Water`, `Environment/WaterWaves`, `Components/Buoyancy`, `Components/WorldStreamer`, `Components/Tilemap`, `Components/TilemapCollider2D`
 - **API:** `Terrain::RaiseAt`, `Terrain::Erode`, `VoxelTerrain::Dig`, `TerrainDigger`, `Water`, `WorldStreamer`, `Tilemap`, `TilemapCollider2D`
 - **Editor:** GameObject > 3D Object > Terrain, Voxel Terrain (caves), Water and GameObject > 2D Object > Tilemap; their Inspector sections and the Terrain sculpt tools (editor/main.cpp)
 - **Docs:** `docs/rendering/terrain_water.md`, `docs/rendering/terrain_water.md`
-- **Tests:** `boat`, `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`
-- **Status:** Works - read the headers of every component above; `terrain` also covers water, flashlight and the sandbox template
+- **Tests:** `boat`, `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`, `world_edges`
+- **Status:** Works - read the headers of every component above; `terrain` also covers water, flashlight and the sandbox template; `world_edges` covers the edge of a raised terrain (normals and slope one cell from the edge used to read height 0 past the grid, so bodies slid and plants were refused there; now one-sided at the edge), terrain size 0 (no NaN), Foliage Scatter leaning with Align to Surface like the brush, and a water Detail from a damaged scene file (limited to 1..1024 instead of crashing the load)
 - **Open:** vegetation and detail painting, procedural scatter and a proper sculpting UI are area 29; streaming is by prefab cell files baked by hand, not by the `Optimize/StreamingGrid` planner of #574 (area 27)
 - **Related:** 2.2, 2.4, 6.2, 27, 29, 1.6
 - **Words:** Terrain, heightmap, sculpt, brush, erosion, VoxelTerrain, marching cubes, cave, dig, TerrainDigger, VoxelDigger, Water, ocean, lake, buoyancy, WorldStreamer, world partition, streaming, Tilemap, tile
@@ -144,7 +140,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 ### 2.7 Particles and lines
 - **What:** Particle emitters with gradients, curves, motion modules and presets, plus ribbon-style Line and Trail renderers for lasers, ropes, sword swipes and projectile tails.
 - **Parts:**
-  - 2.7.1 Particle emitter - `Components/ParticleSystem` - shapes (Point, Circle, Sphere, Box, Cone, Edge), emission rate, burst, duration and loop, lifetime, start velocity, gravity, damping, wind influence, ground plane with bounce
+  - 2.7.1 Particle emitter - `Components/ParticleSystem` - shapes (Point, Circle, Sphere, Box, Cone, Edge), emission rate, burst, duration and loop, lifetime, start velocity, gravity, damping, wind influence, ground plane with bounce, and Collide with Terrain (`collideTerrain`, `Components/ParticleSystem.cpp`): with collision on, particles land on every active Terrain (moved, turned or scaled), bounce off its slope and slide down it; saved as its own `particlesterrain` record; Inspector Collision section (editor syntax-checked only, not run), property `collideTerrain`; one point test per particle per frame, so a very fast particle can pass through a thin ridge
   - 2.7.2 Particle looks - `Components/ParticleSystem` - colour gradient, size and speed curves, fade, rotation, billboard or stretch; presets Fire, Smoke, Sparks, Explosion, Rain, Snow, Magic, Dust
   - 2.7.3 Motion modules - `Components/ParticleSystem` - noise, orbit, vortex, inherited velocity, local space
   - 2.7.4 Line renderer - `Components/LineRenderer` - camera-facing or flat ribbons; points from the Inspector, a script or a Spline; stretch or tile texture
@@ -154,9 +150,9 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **API:** `ParticleSystem`, `ParticleSystem::ApplyPreset`, `ParticleGradient`, `ParticleCurve`, `LineRenderer`, `TrailRenderer`, `BuildRibbon`, script `emit`
 - **Editor:** Particle System, Line Renderer and Trail Renderer inspector sections (editor/main.cpp); spline-driven lines in 2.11
 - **Docs:** `docs/rendering/particles.md`, `docs/engine/splines.md` (lines and trails), `docs/rendering/rendering.md` (weather)
-- **Tests:** `particles_fx`, `particles_serialize`, `particles_tilemap`
-- **Status:** Works - read the `ParticleSystem.hpp` fields and `LineRenderer.hpp` header; tests cover gradients, curves, presets and scene round trips
-- **Open:** particles are CPU billboards drawn by the host, not GPU particles; lines and trails are unlit and cast no shadows; one Line and one Trail renderer per object
+- **Tests:** `particles_fx`, `particles_serialize`, `particles_tilemap`, `world_edges`
+- **Status:** Works - read the `ParticleSystem.hpp` fields and `LineRenderer.hpp` header; tests cover gradients, curves, presets and scene round trips; `world_edges` covers Max Particles changed while it runs (the pool now follows it; before, it kept the size it had at the start), a burst far larger than the pool (one walk over the pool, was 26 s for 100 million), an infinite or enormous emission rate (filled the pool once and returns; an infinite rate used to hang the frame) and a NaN lifetime or size (such particles used to live forever)
+- **Open:** particles are CPU billboards drawn by the host, not GPU particles; lines and trails are unlit and cast no shadows; one Line and one Trail renderer per object; an object with two Particle Systems (a scene file or a script can make one; Add Component allows one) saves and simulates both, but the editor and the player draw only the first (`GetComponent` in the four draw loops of `editor/main.cpp` and `player/main.cpp`); particles do not collide with meshes, colliders or water
 - **Related:** 2.4, 2.11, 38.10, 11.7
 - **Words:** particles, ParticleSystem, emitter, burst, gradient, trail, TrailRenderer, LineRenderer, laser, rope, ribbon, fire, smoke, sparks, explosion, rain, lines, trails
 - **Seen as:** particles show through walls in the editor; a trail looks flat or jagged; an explosion preset is too slow; too many particles tank the frame rate

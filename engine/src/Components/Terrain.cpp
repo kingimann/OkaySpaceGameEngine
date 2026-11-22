@@ -270,7 +270,13 @@ void Terrain::Generate(int type, float amplitude, float frequency, int octaves, 
 
 float Terrain::SampleHeight(float localX, float localZ) const {
     float cell = CellSize(), half = size * 0.5f;
+    if (!(cell > 1e-8f) || heights.empty()) return heights.empty() ? 0.0f : GetHeight(0, 0);   // size 0 (or NaN)
     float gx = (localX + half) / cell, gz = (localZ + half) / cell;
+    // Points just past the edge read the edge row, not height 0 beyond the grid (that made the last cell slope down
+    // to 0: wrong normals for bodies and plants at the edge of a raised terrain).
+    const float gmax = (float)resolution;
+    gx = gx < 0.0f ? 0.0f : (gx > gmax ? gmax : gx);
+    gz = gz < 0.0f ? 0.0f : (gz > gmax ? gmax : gz);
     int x0 = (int)std::floor(gx), z0 = (int)std::floor(gz);
     float fx = gx - x0, fz = gz - z0;
     float h00 = GetHeight(x0, z0), h10 = GetHeight(x0 + 1, z0);
@@ -439,11 +445,18 @@ void Terrain::ErodeAt(float localX, float localZ, float radius, float amount) {
 }
 
 Vec3 Terrain::NormalAt(float localX, float localZ) const {
-    float e = CellSize();
-    float hl = SampleHeight(localX - e, localZ), hr = SampleHeight(localX + e, localZ);
-    float hd = SampleHeight(localX, localZ - e), hu = SampleHeight(localX, localZ + e);
-    // Central differences -> surface normal (Y up).
-    Vec3 n{(hl - hr), 2.0f * e, (hd - hu)};
+    const float e = CellSize(), half = size * 0.5f;
+    if (!(e > 1e-8f)) return Vec3{0, 1, 0};
+    // Central differences inside the terrain; at the edge the sample that would fall outside is taken on the edge
+    // and the step is shortened to match (a one-sided difference), so the slope there is the real one.
+    auto clampIn = [half](float v) { return v < -half ? -half : (v > half ? half : v); };
+    const float xl = clampIn(localX - e), xr = clampIn(localX + e);
+    const float zd = clampIn(localZ - e), zu = clampIn(localZ + e);
+    const float sx = xr - xl > 1e-8f ? xr - xl : 2.0f * e, sz = zu - zd > 1e-8f ? zu - zd : 2.0f * e;
+    float hl = SampleHeight(xl, localZ), hr = SampleHeight(xr, localZ);
+    float hd = SampleHeight(localX, zd), hu = SampleHeight(localX, zu);
+    // Surface normal (Y up) from the slope in x and z.
+    Vec3 n{-(hr - hl) / sx, 1.0f, -(hu - hd) / sz};
     float m = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
     return m > 1e-6f ? Vec3{n.x / m, n.y / m, n.z / m} : Vec3{0, 1, 0};
 }

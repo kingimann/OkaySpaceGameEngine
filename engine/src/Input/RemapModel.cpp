@@ -105,8 +105,11 @@ std::vector<RemapConflict> RemapConflicts(const std::string& action, const std::
     const InputBinding nb = InputBinding::Parse(bindingText);
     if (nb.kind == InputBinding::Kind::None) return out;
     const std::string self = Lower(action);
+    const InputActions::Action* me = InputActions::Find(action);
+    const std::string myContext = me ? Lower(me->context) : std::string();
     for (const InputActions::Action& a : InputActions::All()) {
         const bool same = Lower(a.name) == self;
+        if (!same && Lower(a.context) != myContext) continue;   // another context: the key may mean both
         const InputBinding* slot = same ? SlotIn(a.bindings, nb.IsGamepad()) : nullptr;
         for (const InputBinding& b : a.bindings) {
             if (same) {
@@ -139,6 +142,7 @@ std::vector<RemapDuplicate> RemapAllConflicts(const RemapOptions& o) {
     for (const InputActions::Action& a : InputActions::All()) if (!Listed(o.hidden, a.name)) list.push_back(&a);
     for (std::size_t i = 0; i < list.size(); ++i)
         for (std::size_t j = i + 1; j < list.size(); ++j) {
+            if (Lower(list[i]->context) != Lower(list[j]->context)) continue;   // different contexts never clash
             bool found = false;
             for (const InputBinding& x : list[i]->bindings) {
                 for (const InputBinding& y : list[j]->bindings)

@@ -6,6 +6,9 @@
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/LookAtIK.hpp"
+#include "okay/Components/LedgeHandsIK.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Animation/HumanoidBones.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/ModelImport.hpp"
@@ -96,6 +99,53 @@ int main() {
         CHECK(foot->weight == 0.25f);
         CHECK(look->weight == 0.4f);
         CHECK((int)player->GetComponents<FootIK>().size() == feet);
+    }
+
+    // Ledge grab on: the step adds Ledge Hands IK and links it to the two hand LimbIKs
+    // (reusing one already on a hand). Ledge grab off: nothing is added.
+    {
+        Scene scene;
+        scene.physicsEnabled = false;
+        GameObject* player = MakePlayableCharacter(scene, righarness::RigPath("mixamo_t_noclips.glb"), nullptr);
+        CHECK(player != nullptr);
+        if (!player) TEST_MAIN_RESULT();
+        auto* tp = player->GetComponent<ThirdPersonController>();
+        CHECK(tp != nullptr);
+        if (!tp) TEST_MAIN_RESULT();
+        tp->canLedgeGrab = false;
+        WirePlayerAnimation(scene, player);
+        CHECK(!player->GetComponent<LedgeHandsIK>());
+
+        GameObject* model = FindCharacterModelRoot(scene, player);
+        const humanoid::BoneMap bm = humanoid::MapHumanoidBones(model);
+        GameObject* lHand = bm.Get(humanoid::LHand);
+        GameObject* rHand = bm.Get(humanoid::RHand);
+        CHECK(lHand && rHand);
+        if (!lHand || !rHand) TEST_MAIN_RESULT();
+        // A LimbIK the user already put on the left hand (for holding things).
+        auto* mine = player->AddComponent<LimbIK>();
+        mine->upper = bm.Get(humanoid::LUpperArm)->transform; mine->lower = bm.Get(humanoid::LForeArm)->transform;
+        mine->end = lHand->transform; mine->weight = 0.6f;
+
+        tp->canLedgeGrab = true;
+        std::string msg = WirePlayerAnimation(scene, player);
+        CHECK(msg.find("Ledge Hands IK") != std::string::npos);
+        auto* lh = player->GetComponent<LedgeHandsIK>();
+        CHECK(lh != nullptr);
+        if (!lh) TEST_MAIN_RESULT();
+        CHECK(lh->leftArm == mine);
+        CHECK(mine->weight == 0.6f);
+        CHECK(lh->rightArm != nullptr && lh->rightArm != mine);
+        CHECK(lh->rightArm && lh->rightArm->end == rHand->transform);
+        // The added arm names its bones too: a scene file keeps LimbIK bones by name.
+        CHECK(lh->rightArm && lh->rightArm->endName == rHand->name && !lh->rightArm->upperName.empty());
+        const int limbs = (int)player->GetComponents<LimbIK>().size();
+        CHECK(limbs == 2);
+
+        std::string again = WirePlayerAnimation(scene, player);
+        CHECK((int)player->GetComponents<LedgeHandsIK>().size() == 1);
+        CHECK((int)player->GetComponents<LimbIK>().size() == limbs);
+        CHECK(player->GetComponent<LedgeHandsIK>() == lh);
     }
 
     TEST_MAIN_RESULT();

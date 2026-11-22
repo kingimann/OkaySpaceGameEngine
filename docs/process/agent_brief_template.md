@@ -1,6 +1,6 @@
 # Agent brief template
 
-Every agent (a coordinator agent or Claude 2 starting a piece of work) starts from this brief. It exists because
+Every agent (a coordinator agent, Claude 2 or Claude 3 starting a piece of work) starts from this brief. It exists because
 `CLAUDE.md` only changes when a rules PR merges, so an agent started today can miss a rule that is agreed but not merged
 yet. The brief therefore carries the rules **pasted in full**, never "see CLAUDE.md".
 
@@ -38,7 +38,7 @@ Windows release.
    build a second copy (past duplicates: two tween nodes, two SHA-256, two inflate, two vehicle seats).
 2. Post the claim on issue #422, one comment:
    `Claim: {{BRANCH}}` then `Existing: ... / Gap: ... / Files: {{FILES}} / Test-first: {{TESTFIRST}} / Try-it: <scene or steps>`.
-   Files owned by the other lane, or overlapping an open claim, are refused until the other side releases or says
+   Files owned by another lane, or overlapping an open claim, are refused until that lane releases or says
    `Agree: {{BRANCH}}`. Claims expire after 24 hours without a push. Say `Release: {{BRANCH}}` when you stop.
 3. Write the failing test first and show its failure (rule 4a material comes with the change, see section 6).
 
@@ -48,7 +48,7 @@ Windows release.
 
 ## 4. Off limits
 
-- Files and folders of the other lane (see `docs/lanes.json`): {{OFFLIMITS}}
+- Files and folders of the other lanes (see `docs/lanes.json`): {{OFFLIMITS}}
 - Shared files need a handshake (one claim at a time): `engine/src/Scene/SceneSerializer.cpp`, `tests/CMakeLists.txt`,
   `docs/FEATURE_MAP.md` and `docs/feature_map/*` (generated: edit the pages, run `python3 scripts/gen_feature_map.py`),
   `CLAUDE.md`, `engine/src/Scripting/OkayScriptVM.cpp`, `examples/visual_script/playground/coverage.okayvs`.
@@ -105,7 +105,7 @@ Post one comment on issue #422 (Claude 2) or reply to the coordinator, in plain 
 - **Tests and results** (names, counts, the exact command, pass/fail). The failing-first output.
 - **How to try it** (steps, scene, what you should see; screenshots).
 - **What is unverified** and **what is not done**. Never write "done", "ready" or "green" for something that is not.
-- `Usage: about N% left` (Claude 2, rule 25) and `Release: {{BRANCH}}` if you are finished.
+- `Usage: about N% left` (Claude 2 and Claude 3, rule 25) and `Release: {{BRANCH}}` if you are finished.
 
 ## 9. The rules (pasted in full, current as of {{DATE}})
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Writes the live work board (Markdown) from GitHub data: open PRs with their CI state, recently merged PRs, the
-claude/* and claude2/* branches with their last commit, and the latest comments on the coordination issue #422.
+branches of every lane (claude/*, claude2/*, claude3/*: the prefixes in docs/lanes.json) with their last commit, and the latest
+comments on the coordination issue #422.
 
 Standard library only. Uses GITHUB_TOKEN from the environment when present (a higher rate limit), otherwise works
 unauthenticated for a few calls. Usage: python3 scripts/work_board.py [--repo owner/name] [--out file]
@@ -76,19 +77,41 @@ def main():
     for p in merged:
         out.append(f"| [#{p['number']}]({p['html_url']}) | {esc(p['title'])[:90]} | {ago(p['merged_at'])} |")
     out.append("")
-    br = [b for b in api("/branches?per_page=100", repo) if b["name"].startswith(("claude/", "claude2/"))]
+    import collab_lib as L
+    lanes = L.default_lanes()   # docs/lanes.json of this checkout
+    prefixes = L.lane_prefixes(lanes)
     rows = []
-    for b in br:
-        try:
-            cm = api(f"/commits/{b['commit']['sha']}", repo)
-            rows.append((cm["commit"]["committer"]["date"], b["name"], cm["commit"]["message"].splitlines()[0], b["commit"]["sha"][:7]))
-        except Exception:
-            rows.append(("", b["name"], "", b["commit"]["sha"][:7]))
+    # The workflow checks out the full history, so the branch dates and subjects come from git (no API call per branch).
+    root = L.repo_root(os.path.dirname(os.path.abspath(__file__)))
+    fmt = "%(refname:short)\t%(objectname:short=7)\t%(committerdate:iso-strict)\t%(contents:subject)"
+    for line in L.git(root, "for-each-ref", f"--format={fmt}", "refs/remotes/origin").splitlines():
+        parts = line.split("\t", 3)
+        if len(parts) < 4: continue
+        n = parts[0][len("origin/"):] if parts[0].startswith("origin/") else parts[0]
+        if L.lane_of_branch(n, lanes):
+            d = parts[2]
+            try:
+                d = datetime.datetime.fromisoformat(d).astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            except ValueError:
+                d = ""
+            rows.append((d, n, parts[3], parts[1]))
+    if not rows:   # no remote refs here: ask GitHub (every page; it lists branches by name, so claude3/* comes last)
+        for b in L.gh_pages("/branches", repo, 15):
+            if not L.lane_of_branch(b["name"], lanes): continue
+            try:
+                cm = api(f"/commits/{b['commit']['sha']}", repo)
+                rows.append((cm["commit"]["committer"]["date"], b["name"], cm["commit"]["message"].splitlines()[0], b["commit"]["sha"][:7]))
+            except Exception:
+                rows.append(("", b["name"], "", b["commit"]["sha"][:7]))
     rows.sort(reverse=True)
-    out += [f"## Branches by `claude/*` (main session and its agents) and `claude2/*` (second Claude), newest first", "",
-            "| Branch | Last commit | Head | When |", "|---|---|---|---|"]
+    who = ", ".join(f"`{p}*` ({L.lane_display(k, lanes)})" for k, p in prefixes.items())
+    out += [f"## Branches of every lane: {who}, newest first", "",
+            "| Lane | Count |", "|---|---|"]
+    for k, p in prefixes.items():
+        out.append(f"| {L.lane_display(k, lanes)} (`{p}*`) | {sum(1 for r in rows if L.lane_of_branch(r[1], lanes) == k)} |")
+    out += ["", "| Branch | Lane | Last commit | Head | When |", "|---|---|---|---|---|"]
     for d, n, m, s in rows[:40]:
-        out.append(f"| `{n}` | {esc(m)[:80]} | `{s}` | {ago(d)} |")
+        out.append(f"| `{n}` | {L.lane_display(L.lane_of_branch(n, lanes), lanes)} | {esc(m)[:80]} | `{s}` | {ago(d)} |")
     out.append("")
     try:
         cs = api("/issues/422/comments?per_page=100", repo)

@@ -397,6 +397,43 @@ int main() {
         CHECK_NEAR(sc.t, 4.25, 0.01);
     }
 
+    RUN_SUITE("physcore world: a triangle mesh floor (boxes rest, a ball rolls across edges without bumps, rays hit it)");
+    {
+        World w;
+        std::vector<Tri3> tris;
+        for (int i = -10; i < 10; ++i)
+            for (int k = -10; k < 10; ++k) {
+                const V3 a{(float)i, 0, (float)k}, b{(float)i + 1, 0, (float)k}, c{(float)i + 1, 0, (float)k + 1}, d{(float)i, 0, (float)k + 1};
+                tris.push_back({a, c, b});
+                tris.push_back({a, d, c});
+            }
+        BodyDef gd; gd.type = BodyType::Static;
+        const BodyId g = w.CreateBody(gd);
+        ColliderDef gc; gc.shape = Shape::Mesh(std::make_shared<TriMeshSource>(tris));
+        w.AddCollider(g, gc);
+        std::vector<BodyId> boxes;
+        for (int i = 0; i < 5; ++i) boxes.push_back(Box(w, V3{-6.0f + (float)i * 2.6f, 1.0f + (float)i * 0.3f, -4.0f}, V3{0.5f, 0.5f, 0.5f}, 0.6f, Q::AxisAngle(V3{0, 1, 0}, 0.3f * (float)i)));
+        BodyDef rd; rd.position = V3{-8.0f, 0.5f, 3.3f}; rd.linearVelocity = V3{5, 0, 0}; rd.angularVelocity = V3{0, 0, -10};
+        const BodyId ball = w.CreateBody(rd);
+        ColliderDef bc; bc.shape = Shape::Sphere(0.5f);
+        w.AddCollider(ball, bc);
+        float hiBall = 0.0f, loBall = 10.0f;
+        for (int i = 0; i < 180; ++i) {
+            w.Step(kDt);
+            if (i > 10 && i < 150) { hiBall = std::max(hiBall, w.GetPosition(ball).y); loBall = std::min(loBall, w.GetPosition(ball).y); }
+        }
+        bool rest = true;
+        for (BodyId b : boxes) rest = rest && std::fabs(w.GetPosition(b).y - 0.5f) < 0.01f;
+        std::cout << "  ball height range on the mesh " << loBall << " .. " << hiBall << ", travelled to x " << w.GetPosition(ball).x << "\n";
+        CHECK(rest);
+        CHECK(hiBall - loBall < 0.01f);
+        CHECK(w.GetPosition(ball).x > 0.0f);
+        const RayHit h = w.RayCast(V3{0.3f, 5, 0.7f}, V3{0, -1, 0}, 10.0f);
+        CHECK(h.hit && h.body == g);
+        CHECK_NEAR(h.t, 5.0, 1e-4);
+        CHECK_NEAR(h.normal.y, 1.0, 1e-5);
+    }
+
     RUN_SUITE("physcore world: timing");
     for (int n : {1000, 5000}) {
         World w;

@@ -10,15 +10,15 @@
 
 namespace okay {
 
-struct FileStamp {
+struct FileStat {   // (not "FileStamp": AudioDecode and NavMeshSurface keep local helpers of that name)
     bool          sizeOk = false;   ///< `size` was read
     bool          timeOk = false;   ///< `time` was read
     std::uintmax_t size = 0;        ///< bytes (0 when not read)
     std::int64_t   time = 0;        ///< last write time in the file clock's ticks (0 when not read)
 };
 
-inline FileStamp StampOf(const std::string& utf8Path) {
-    FileStamp s;
+inline FileStat StampOf(const std::string& utf8Path) {
+    FileStat s;
     std::error_code ec;
     const std::filesystem::path p = std::filesystem::u8path(utf8Path);
     const std::uintmax_t sz = std::filesystem::file_size(p, ec);

@@ -4,6 +4,7 @@
 // incrementally through VorbisStream); MP3 through Mp3Decoder.cpp; FLAC through
 // FlacDecoder.cpp.
 #include "okay/Audio/AudioClip.hpp"
+#include "okay/Core/FileStamp.hpp"
 #include "okay/Audio/FlacDecoder.hpp"
 #include "okay/Audio/Mp3Decoder.hpp"
 #include "okay/Audio/VorbisDecoder.hpp"
@@ -138,12 +139,10 @@ std::string CacheName(const std::string& path) {   // one key for "a/./b.wav", "
     const auto p = std::filesystem::weakly_canonical(std::filesystem::u8path(path), ec);
     return ec ? path : p.generic_u8string();
 }
+// Size and time of the file, 0 for a piece that cannot be read (okay/Core/FileStamp.hpp).
 void FileStamp(const std::string& path, std::uintmax_t& size, std::int64_t& time) {
-    std::error_code ec;
-    const auto fp = std::filesystem::u8path(path);
-    size = std::filesystem::file_size(fp, ec); if (ec) size = 0;
-    const auto t = std::filesystem::last_write_time(fp, ec);
-    time = ec ? 0 : (std::int64_t)t.time_since_epoch().count();
+    const auto s = okay::StampOf(path);   // (auto: this function shares the struct's name)
+    size = s.size; time = s.time;
 }
 std::size_t EntryBytes(const CacheEntry& e) { return e.clip ? e.clip->samples.size() * sizeof(float) : 0; }
 }  // namespace

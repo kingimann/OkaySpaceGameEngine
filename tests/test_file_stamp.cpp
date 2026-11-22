@@ -41,17 +41,17 @@ bool OldAsset(const std::string& path, std::int64_t& stamp, std::int64_t& size) 
 }
 // ---- the callers' rules on top of StampOf (as written in the three sources) -----------------------------------------
 void NewAudio(const std::string& path, std::uintmax_t& size, std::int64_t& time) {
-    const FileStamp s = StampOf(path);
+    const FileStat s = StampOf(path);
     size = s.size; time = s.time;
 }
 bool NewNav(const std::string& path, std::uintmax_t& size, std::int64_t& time) {
-    const FileStamp s = StampOf(path);
+    const FileStat s = StampOf(path);
     if (!s.sizeOk || !s.timeOk) return false;
     size = s.size; time = s.time;
     return true;
 }
 bool NewAsset(const std::string& path, std::int64_t& stamp, std::int64_t& size) {
-    const FileStamp s = StampOf(path);
+    const FileStat s = StampOf(path);
     if (!s.timeOk) return false;
     stamp = s.time;
     size = s.sizeOk ? (std::int64_t)s.size : -1;
@@ -90,9 +90,9 @@ int main() {
     }
     std::printf("  same answers: %d of %d\n", same, total);
     CHECK(same == total);
-    const FileStamp f = StampOf((dir / "a.bin").u8string());
+    const FileStat f = StampOf((dir / "a.bin").u8string());
     CHECK(f.sizeOk && f.timeOk && f.size == 1234u);
-    const FileStamp m = StampOf((dir / "missing.wav").u8string());
+    const FileStat m = StampOf((dir / "missing.wav").u8string());
     CHECK(!m.sizeOk && !m.timeOk && m.size == 0 && m.time == 0);
     fs::remove_all(dir, ec);
     TEST_MAIN_RESULT();

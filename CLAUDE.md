@@ -166,6 +166,13 @@ then this file gets updated. Keep this file short and true.
     helper fails. A real need for a copy is marked `dup-allow: <reason>` on the line and explained in the PR. When a dedup
     lands, shrink the baseline with `--update-baseline` in the same PR; the baseline may only go down.
 
+19d. **Improve and add on; never make a second copy.** (Owner rule, 2026-11-22: "you're improving and adding on, not
+    making a second copy. Make that a rule.") When something already exists (a system, a component, a backend, a
+    tool, a helper), make it better and extend it in place. Do not build a new one beside it, behind a switch, under a
+    new name or as a "v2". If the old design truly cannot be improved, the new code replaces it in the same change and
+    the old code is deleted; the two never ship side by side. Every claim and PR names what it improves
+    ("Existing:" / "## Existing code"); a PR that adds a parallel system is not merged.
+
 ## Machine and agents
 
 20. **Disk is tight.** Run `df -h /` before big builds, stop at under 5 GB free, build with `ninja -j2` and only

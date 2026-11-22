@@ -13865,8 +13865,11 @@ void DrawScriptDocs() {
         ImGui::BulletText("classes, inheritance, interfaces, is / as, events, lambdas, Func / Action, LINQ-style methods");
         ImGui::BulletText("coroutines: IEnumerator, yield return new WaitForSeconds(t), StartCoroutine");
         ImGui::BulletText("GetComponent<T>() for engine components and your own scripts; KeyCode.W style keys");
+        ImGui::BulletText("OnTriggerEnter(Collider other), OnCollisionEnter(Collision c) and the 2D ones");
+        ImGui::BulletText("text members (Length, Substring, Split, ...), ToString(), int.Parse, Random.Range");
+        ImGui::BulletText("delegate declarations, default parameter values");
         SectionHeader("Not yet");
-        ImGui::TextWrapped("structs, generics of your own, Quaternion, delegates declared with `delegate`, async. "
+        ImGui::TextWrapped("structs, generics of your own, Quaternion, async, static members in plain classes. "
             "Using one gives a clear error with its line.");
         SectionHeader("Engine API for C#");
         ImGui::TextWrapped("Every type and member a C# script can use (the same table the checker, autocomplete "

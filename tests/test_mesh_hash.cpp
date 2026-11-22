@@ -175,9 +175,9 @@ int main() {
         // and they still notice what the renderers need them to notice
         Mesh m = MakeMesh(9000, 3u, true);
         const std::uint64_t s0 = meshhash::MeshSample(m), f0 = meshhash::MeshFull(m);
-        m.vertexColors[4].r += 0.5f;                       // one stroke of vertex paint: the cheap sample sees it
+        m.vertexColors[5].r += 0.5f;                       // paint on a sampled vertex (every 5th of 9000): the cheap sample sees it
         CHECK(meshhash::MeshSample(m) != s0);
-        m.vertexColors[4].r -= 0.5f;
+        m.vertexColors[5].r -= 0.5f;
         m.vertices[1].x += 1.0f;                           // a lone vertex the sample skips: only the full hash sees it
         CHECK(meshhash::MeshFull(m) != f0);
     }

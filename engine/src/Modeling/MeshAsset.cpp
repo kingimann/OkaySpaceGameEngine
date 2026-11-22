@@ -72,6 +72,7 @@ std::uint64_t GeometryHash(const Mesh& mesh) {
     if (!mesh.polyFace.empty()) mix(mesh.polyFace.data(), mesh.polyFace.size() * sizeof(int));
     if (!mesh.cornerUVs.empty()) mix(mesh.cornerUVs.data(), mesh.cornerUVs.size() * sizeof(Vec2));
     for (const auto& sm : mesh.seams) { const int ab[2] = {sm.first, sm.second}; mix(ab, sizeof ab); }
+    for (const auto& se : mesh.sharpEdges) { const int ab[2] = {se.first, -1 - se.second}; mix(ab, sizeof ab); }   // (negated: not the same as a seam)
     if (!mesh.hiddenPos.empty()) mix(mesh.hiddenPos.data(), mesh.hiddenPos.size() * sizeof(Vec3));
     if (!mesh.hiddenUV.empty()) mix(mesh.hiddenUV.data(), mesh.hiddenUV.size() * sizeof(Vec2));
     if (!mesh.hiddenSlot.empty()) mix(mesh.hiddenSlot.data(), mesh.hiddenSlot.size() * sizeof(int));

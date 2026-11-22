@@ -90,8 +90,8 @@ int BridgeFaces(PolyMesh& pm, const std::vector<int>& faces, std::string* error 
 int BevelEdges(PolyMesh& pm, const EdgeList& edges, float width, std::string* error = nullptr,
                int segments = 1, float profile = 0.5f);
 
-/// Split the edge a-b at t (0 = a, 1 = b): a new vertex is added to every face
-/// using it. Returns the new vertex, or -1.
+/// Split the edge a-b at t (0 = a, 1 = b; clamped to 0..1, so the new vertex is always on the edge): a new
+/// vertex is added to every face using it. Returns the new vertex, or -1 (t not a number, a-b not an edge).
 int SplitEdge(PolyMesh& pm, int a, int b, float t);
 /// Split face f along a new edge between its corners u and v (which must not
 /// already be neighbours). Returns the new face, or -1.
@@ -99,6 +99,9 @@ int SplitFace(PolyMesh& pm, int f, int u, int v);
 /// Knife: a cut through a sequence of points, each on an edge (a, b, t) or a
 /// vertex (b < 0). Consecutive points must share a face, which is split
 /// between them. Returns the new edges, or empty with the reason in `error`.
+/// A cut that splits no face at all (every step runs along an edge that is
+/// already there, such as two points on the same edge) is refused with that
+/// reason and leaves the mesh unchanged.
 struct KnifePoint { int a = -1, b = -1; float t = 0; };
 EdgeList KnifeCut(PolyMesh& pm, const std::vector<KnifePoint>& points, std::string* error = nullptr);
 
@@ -116,6 +119,11 @@ int GridFill(PolyMesh& pm, const EdgeList& edges, int span = 0, std::string* err
 /// Merge vertices into one at `at` (faces that collapse are removed). The first
 /// vertex in the list is the one kept. Returns how many vertices were merged away.
 int MergeVerts(PolyMesh& pm, const std::vector<int>& verts, const Vec3& at);
+/// Where MergeVertsAt puts the merged vertex: the centre of the vertices, the first one picked, the last one picked.
+enum class MergeAt { Center, First, Last };
+/// Merge the vertices (in the order they were picked) into one. The vertex kept is the one at that place (the first
+/// for Center), so its number survives. Bad indices and repeats are ignored. Returns how many were merged away.
+int MergeVertsAt(PolyMesh& pm, const std::vector<int>& verts, MergeAt where);
 
 /// Drop vertices no face uses. Returns old index -> new index (-1 = removed),
 /// for remapping a selection.
@@ -144,6 +152,35 @@ int SpinEdges(PolyMesh& pm, const EdgeList& edges, const Vec3& center, const Vec
 /// slots carry over. Returns the faces made, or 0 with the reason in `error`.
 int ExtrudeAlongPath(PolyMesh& pm, const std::vector<int>& faces, const std::vector<Vec3>& path,
                      std::string* error = nullptr);
+
+// ---- Round 3 tools (Edge Split, Vertex Slide, Offset Edge Loops, Rip, Loop to Region). Written from the plain
+// description of what each tool does to the faces; they keep the numbering of existing vertices (new ones are appended)
+// and give new corners UVs from the face they sit in.
+
+/// Edge Split: the faces on either side of each edge stop sharing it: every vertex of the edges gets one copy per fan of
+/// faces the edges cut apart around it (an edge whose end is inside the surface splits that end only when another split
+/// edge also ends there). Corner UVs stay with their faces. The edges (and their copies) are marked sharp, so the hard
+/// shading also survives a later weld. Border edges are skipped. Returns the number of vertex copies made.
+int EdgeSplit(PolyMesh& pm, const EdgeList& edges);
+/// Vertex Slide: move each vertex along one of its edges, the one pointing most nearly along `dir` (object space; an
+/// edge to another vertex in the list is not used). `amount` 0..1 is the fraction of that edge (clamped). `from`, if
+/// given, holds the positions to slide from (for interactive use). UVs follow as in EdgeSlide. Returns how many moved.
+int VertexSlide(PolyMesh& pm, const std::vector<int>& verts, const Vec3& dir, float amount, const std::vector<Vec3>* from = nullptr);
+/// The neighbour VertexSlide moves vertex v toward for direction `dir` (judged from `pos`, the positions to slide from),
+/// or -1 when no edge points that way. The editor uses it to turn the mouse into an amount.
+int VertexSlideRail(const PolyMesh& pm, const std::vector<Vec3>& pos, int v, const std::vector<int>& verts, const Vec3& dir);
+/// Offset Edge Loops: a new edge loop on each side of the selected edges, parallel to them, `amount` (0..1, clamped
+/// to 0.01..0.99) of the way along each edge leaving the loop on that side. The selected edges stay. Faces on both
+/// sides are split; a side with no face (a border) gets no loop. Returns the new edges, or empty with the reason.
+EdgeList OffsetEdgeLoops(PolyMesh& pm, const EdgeList& edges, float amount, std::string* error = nullptr);
+/// Rip: tear the surface open along the selected edges. The faces on the side `side` points to (object space, from
+/// the edges' middle) get new copies of the edges' vertices; an end of the edges inside the surface stays joined (the
+/// tear ends there), an end on the border is torn too. Returns the new vertices (the torn side's copies, ready to be
+/// moved), or empty with the reason in `error` (the mesh is then left as it was).
+std::vector<int> RipEdges(PolyMesh& pm, const EdgeList& edges, const Vec3& side, std::string* error = nullptr);
+/// Loop to Region: the faces inside a closed loop of edges: the smaller of the groups of faces the loop cuts the
+/// surface into (by face count) among those that touch the loop. Empty when the edges cut nothing off (an open line).
+std::vector<int> LoopToRegion(const PolyMesh& pm, const EdgeList& loop);
 
 // ---- Selection helpers (the editor's Ctrl+click path, Checker Deselect, Select Boundary Loop,
 // Select Open / Non-Manifold Edges). Written from the plain graph algorithms (Dijkstra's shortest

@@ -62,12 +62,32 @@ Mat4 RotateMatrix(const Vec3& pivot, const Vec3& axisDir, float degrees);
 /// Scale by `factor` about `pivot` along the axes `lock` allows (free = uniform).
 Mat4 ScaleMatrix(const Vec3& pivot, const AxisLock& lock, float factor);
 
+// ---- Transform orientation: which way X / Y / Z point for the axis locks ----
+/// Global: the world axes. Local: the object's own axes (its rotation). Normal: Z along the selection's average
+/// normal (faces: their normals; edges and vertices: the faces around them), X and Y across it.
+enum class EditOrient { Global, Local, Normal };
+const char* EditOrientName(EditOrient o);
+/// Three unit axes in world space, at right angles, right-handed.
+struct OrientAxes {
+    Vec3 axis[3] = {Vec3{1, 0, 0}, Vec3{0, 1, 0}, Vec3{0, 0, 1}};
+    const Vec3& operator[](int i) const { return axis[i < 0 ? 0 : (i > 2 ? 2 : i)]; }
+};
+/// The axes for `o`. `faces` (triangle numbers), when given and not empty, are the selected faces for Normal. Anything
+/// that gives no direction (no faces, a zero normal, a broken matrix) falls back to the world axes.
+OrientAxes OrientationAxes(const Mesh& mesh, const std::vector<int>& selected, const Mat4& toWorld, EditOrient o,
+                           const std::vector<int>* faces = nullptr);
+/// The matrices above with the locks along `axes` instead of the world axes.
+Mat4 MoveMatrix(const Vec3& offset, const AxisLock& lock, const OrientAxes& axes);
+Mat4 ScaleMatrix(const Vec3& pivot, const AxisLock& lock, float factor, const OrientAxes& axes);
+
 // ---- Mouse -> transform amount (the editor passes its camera rays) --------
 using Ray = okay::Ray;   // shared type from Math/Ray.hpp (fields: origin, direction)
 /// How far the mouse moved the pivot, from the ray at the start of the drag to
 /// the ray now: along the locked axis, in the locked plane, or (free) in the
 /// plane facing the camera (`viewDir` points from the camera into the scene).
 Vec3 MoveFromRays(const AxisLock& lock, const Vec3& pivot, const Vec3& viewDir, const Ray& start, const Ray& now);
+/// The same with the lock along `axes`.
+Vec3 MoveFromRays(const AxisLock& lock, const Vec3& pivot, const Vec3& viewDir, const Ray& start, const Ray& now, const OrientAxes& axes);
 /// Signed angle in degrees swept by the mouse around the pivot on screen
 /// (screen y points down), wrapped to [-180, 180).
 float ScreenAngleDelta(float pivotX, float pivotY, float fromX, float fromY, float toX, float toY);
@@ -79,7 +99,8 @@ float ScreenAngleDelta(float pivotX, float pivotY, float fromX, float fromY, flo
 /// What Rotate and Scale turn around. Median: the centre of the whole selection. Individual: each
 /// connected part of the selection (vertices joined by an edge or sitting at the same place) turns
 /// about its own centre, so several faces each grow or spin in place. Active: the last vertex picked.
-enum class EditPivot { Median, Individual, Active };
+/// Cursor: the 3D cursor (a point the editor places, EditTransformOptions::cursorWorld).
+enum class EditPivot { Median, Individual, Active, Cursor };
 const char* EditPivotName(EditPivot p);
 
 struct EditTransformOptions {
@@ -89,6 +110,7 @@ struct EditTransformOptions {
     bool  mirrorZ = false;     ///< ... across local z = 0 (with two or three on, the partners across each plane and across their combinations move too)
     EditPivot pivot = EditPivot::Median;
     int   activeVertex = -1;   ///< Active pivot: this vertex (must be in the selection; otherwise the median is used)
+    Vec3  cursorWorld{0, 0, 0};   ///< Cursor pivot: the 3D cursor, in world space
     /// Individual Origins in Face mode: the selected triangles. Parts are then joined only through these
     /// triangles' edges (and shared positions), not through edges of unselected faces between them.
     const std::vector<int>* faces = nullptr;

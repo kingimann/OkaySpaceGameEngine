@@ -206,6 +206,18 @@ void PolyMesh::SetSeam(int a, int b, bool on) {
     else if (!on && it != seams.end()) seams.erase(it);
 }
 
+bool PolyMesh::IsSharp(int a, int b) const {
+    return std::find(sharp.begin(), sharp.end(), Key(a, b)) != sharp.end();
+}
+
+void PolyMesh::SetSharp(int a, int b, bool on) {
+    if (a == b || a < 0 || b < 0) return;
+    const auto k = Key(a, b);
+    auto it = std::find(sharp.begin(), sharp.end(), k);
+    if (on && it == sharp.end()) sharp.push_back(k);
+    else if (!on && it != sharp.end()) sharp.erase(it);
+}
+
 float PolyMesh::CreaseOf(int a, int b) const {
     if (a > b) std::swap(a, b);
     for (const EdgeCrease& c : creases) if (c.a == a && c.b == b) return c.w;
@@ -269,6 +281,8 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::v
     }
     for (const auto& e : mesh.seams)
         if (e.first >= 0 && e.second >= 0 && e.first < nv && e.second < nv) pm.SetSeam(remap[e.first], remap[e.second], true);
+    for (const auto& e : mesh.sharpEdges)
+        if (e.first >= 0 && e.second >= 0 && e.first < nv && e.second < nv) pm.SetSharp(remap[e.first], remap[e.second], true);
     for (const EdgeCrease& c : mesh.bevelWeights)
         if (c.a >= 0 && c.b >= 0 && c.a < nv && c.b < nv && remap[c.a] != remap[c.b]) pm.SetBevelWeight(remap[c.a], remap[c.b], std::max(c.w, pm.BevelWeightOf(remap[c.a], remap[c.b])));
     for (const EdgeCrease& c : mesh.creases)
@@ -507,6 +521,12 @@ Mesh PolyMesh::ToMesh(std::vector<int>* triFace, bool splitSeams) const {
             for (std::size_t c = 0; c < f.verts.size(); ++c) edges.insert(Key(f.verts[c], f.verts[(c + 1) % f.verts.size()]));
         for (const auto& e : seams) if (edges.count(Key(e.first, e.second))) m.seams.push_back(Key(e.first, e.second));
     }
+    if (!sharp.empty()) {                                 // sharp edges that are still edges of some face
+        std::set<std::pair<int, int>> edges;
+        for (const PolyFace& f : faces)
+            for (std::size_t c = 0; c < f.verts.size(); ++c) edges.insert(Key(f.verts[c], f.verts[(c + 1) % f.verts.size()]));
+        for (const auto& e : sharp) if (edges.count(Key(e.first, e.second))) m.sharpEdges.push_back(Key(e.first, e.second));
+    }
     if (!creases.empty() || !bevelWeights.empty()) {      // creases and bevel weights that are still edges of some face
         std::set<std::pair<int, int>> edgeSet;
         for (const PolyFace& f : faces) for (std::size_t c = 0; c < f.verts.size(); ++c) edgeSet.insert(Key(f.verts[c], f.verts[(c + 1) % f.verts.size()]));
@@ -551,6 +571,7 @@ std::string PolyMesh::Serialize() const {
     for (const EdgeCrease& c : bevelWeights) { o += "bevelw "; in(c.a); o += ' '; in(c.b); o += ' '; fl(c.w); o += '\n'; }
     for (const EdgeCrease& c : creases) { o += "crease "; in(c.a); o += ' '; in(c.b); o += ' '; fl(c.w); o += '\n'; }
     for (const auto& e : seams) { o += "seam "; in(e.first); o += ' '; in(e.second); o += '\n'; }
+    for (const auto& e : sharp) { o += "sharp "; in(e.first); o += ' '; in(e.second); o += '\n'; }
     return o;
 }
 
@@ -636,6 +657,10 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
             int a = -1, b = -1;
             if (!(ls >> a >> b)) return fail(lineNo, "a seam needs two vertex numbers");
             pm.SetSeam(a, b, true);
+        } else if (tag == "sharp") {
+            int a = -1, b = -1;
+            if (!(ls >> a >> b)) return fail(lineNo, "a sharp edge needs two vertex numbers");
+            pm.SetSharp(a, b, true);
         } else return fail(lineNo, "unknown record '" + tag + "'");
     }
     if (!header) return fail(lineNo, "empty file");
@@ -653,6 +678,9 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
     for (const auto& e : pm.seams)
         if (e.second >= (int)pm.verts.size())
             return fail(lineNo, "a seam uses vertex " + std::to_string(e.second) + ", which doesn't exist");
+    for (const auto& e : pm.sharp)
+        if (e.second >= (int)pm.verts.size())
+            return fail(lineNo, "a sharp edge uses vertex " + std::to_string(e.second) + ", which doesn't exist");
     out = std::move(pm);
     return true;
 }

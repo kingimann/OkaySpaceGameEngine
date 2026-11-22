@@ -51,6 +51,11 @@ public:
     std::vector<std::pair<int, int>> seams;
     /// Subdivision creases (see EdgeCrease): saved as "crease a b w" lines.
     std::vector<EdgeCrease> creases;
+    /// Edges marked sharp (a < b; see Mesh::sharpEdges): saved as "sharp a b" lines.
+    std::vector<std::pair<int, int>> sharp;
+    bool IsSharp(int a, int b) const;
+    /// Mark (on) or clear an edge as sharp.
+    void SetSharp(int a, int b, bool on);
     /// Bevel weights (see Mesh::bevelWeights): saved as "bevelw a b w" lines.
     std::vector<EdgeCrease> bevelWeights;
     float BevelWeightOf(int a, int b) const;

@@ -54,6 +54,9 @@ struct Mesh {
     std::vector<EdgeCrease> bevelWeights; // per-edge bevel weights (0..1, scaling the Bevel modifier's width when it is set to use weights)
     std::vector<EdgeCrease> creases; // subdivision creases (vertex pairs + sharpness); the Subdivision modifier keeps those edges sharp.
                                   // A pair that isn't an edge of the mesh is ignored.
+    std::vector<std::pair<int, int>> sharpEdges; // edges marked sharp (Mark Sharp; vertex pairs, a < b): Auto Smooth keeps the
+                                  // shading hard across them whatever the angle. Matched by position, so the copies a
+                                  // seam or a smoothing split makes of a vertex count too. A pair that isn't an edge is ignored.
     std::vector<Color> vertexColors; // optional per-vertex colours (parallel to vertices); the renderers blend them smoothly
                                   // across each face and multiply them with the face colour and material colour.
                                   // Ignored when its size doesn't match the vertex count.
@@ -91,6 +94,18 @@ struct Mesh {
         for (std::size_t i = 0; i < creases.size(); ++i)
             if (creases[i].a == a && creases[i].b == b) { if (w > 0.0f) creases[i].w = std::min(w, 10.0f); else creases.erase(creases.begin() + i); return; }
         if (w > 0.0f) creases.push_back({a, b, std::min(w, 10.0f)});
+    }
+    /// Mark (on) or clear the edge between vertices a and b as sharp (see sharpEdges).
+    void SetSharp(int a, int b, bool on) {
+        if (a == b || a < 0 || b < 0) return;
+        if (a > b) std::swap(a, b);
+        auto it = std::find(sharpEdges.begin(), sharpEdges.end(), std::make_pair(a, b));
+        if (on && it == sharpEdges.end()) sharpEdges.push_back({a, b});
+        else if (!on && it != sharpEdges.end()) sharpEdges.erase(it);
+    }
+    bool IsSharp(int a, int b) const {
+        if (a > b) std::swap(a, b);
+        return std::find(sharpEdges.begin(), sharpEdges.end(), std::make_pair(a, b)) != sharpEdges.end();
     }
     bool HasVertexColors() const { return !vertexColors.empty() && vertexColors.size() == vertices.size(); }
     /// Colour of corner vertex `v` (white without vertex colours).
@@ -643,24 +658,37 @@ struct Mesh {
         for (int t = 0; t < nt; ++t)
             for (int k = 0; k < 3; ++k)
                 corners[rep[triangles[t * 3 + k]]].push_back({t, k});
+        // Edges marked sharp, by position (the two ends' representatives), so every copy of a vertex counts.
+        std::set<std::pair<int, int>> sharpRep;
+        for (const auto& e : sharpEdges)
+            if (e.first >= 0 && e.second >= 0 && e.first < (int)vertices.size() && e.second < (int)vertices.size()) {
+                const int ra = rep[e.first], rb = rep[e.second];
+                if (ra != rb) sharpRep.insert({std::min(ra, rb), std::max(ra, rb)});
+            }
+        std::vector<char> touchesSharp(vertices.size(), 0);
+        for (const auto& e : sharpRep) { touchesSharp[e.first] = 1; touchesSharp[e.second] = 1; }
         Mesh out;
+        const bool hadVC = HasVertexColors();
+        std::vector<Color> outVC;
         out.triangles.assign(triangles.size(), 0);
         out.vertices.reserve(vertices.size() + vertices.size() / 4);
         out.normals.reserve(vertices.size() + vertices.size() / 4);
-        for (auto& cvv : corners) {
+        for (std::size_t rv = 0; rv < corners.size(); ++rv) {
+            auto& cvv = corners[rv];
             if (cvv.empty()) continue;
             struct { std::vector<std::pair<int, int>>& second; } cv{cvv};
             // Greedy smoothing groups at this vertex: a corner joins the first group
             // whose average normal is within the angle of its face's normal.
             std::vector<Vec3> gSum;
             std::vector<std::vector<std::pair<int, int>>> gMembers;
+            std::vector<std::vector<float>> gSign;   // per member: +1, or -1 when it joined flipped
             for (auto& tk : cv.second) {
                 int t = tk.first, gi = -1;
                 float sign = 1.0f;
                 if (fdeg[t]) {
                     // No orientation of its own: ride along with the first group.
-                    if (gSum.empty()) { gSum.push_back({0, 0, 0}); gMembers.emplace_back(); }
-                    gMembers[0].push_back(tk);
+                    if (gSum.empty()) { gSum.push_back({0, 0, 0}); gMembers.emplace_back(); gSign.emplace_back(); }
+                    gMembers[0].push_back(tk); gSign[0].push_back(0.0f);
                     continue;
                 }
                 for (int g = 0; g < (int)gSum.size(); ++g) {
@@ -674,9 +702,54 @@ struct Mesh {
                     if (d >= cosT)       { gi = g; sign =  1.0f; break; }
                     else if (-d >= cosT) { gi = g; sign = -1.0f; break; }
                 }
-                if (gi < 0) { gSum.push_back({0, 0, 0}); gMembers.emplace_back(); gi = (int)gSum.size() - 1; }
+                if (gi < 0) { gSum.push_back({0, 0, 0}); gMembers.emplace_back(); gSign.emplace_back(); gi = (int)gSum.size() - 1; }
                 gSum[gi] += fn[t] * sign;
-                gMembers[gi].push_back(tk);
+                gMembers[gi].push_back(tk); gSign[gi].push_back(sign);
+            }
+            // Sharp edges: a group is split into the parts that stay joined across faces sharing an edge at this
+            // vertex that is not marked sharp (a fan cut by one sharp edge on each side falls in two).
+            if (touchesSharp[rv]) {
+                const std::size_t ng = gMembers.size();
+                for (std::size_t g = 0; g < ng; ++g) {
+                    const std::size_t nm = gMembers[g].size();
+                    if (nm < 2) continue;
+                    std::vector<int> par(nm);
+                    for (std::size_t i = 0; i < nm; ++i) par[i] = (int)i;
+                    auto root = [&](int i) { while (par[(std::size_t)i] != i) i = par[(std::size_t)i] = par[(std::size_t)par[(std::size_t)i]]; return i; };
+                    auto others = [&](std::size_t i, int& o1, int& o2) {   // the other two corners' representatives
+                        const int t = gMembers[g][i].first, k = gMembers[g][i].second;
+                        o1 = rep[triangles[t * 3 + (k + 1) % 3]]; o2 = rep[triangles[t * 3 + (k + 2) % 3]];
+                    };
+                    for (std::size_t i = 0; i < nm; ++i) {
+                        int a1, a2; others(i, a1, a2);
+                        for (std::size_t j = i + 1; j < nm; ++j) {
+                            int b1, b2; others(j, b1, b2);
+                            for (int w : {a1, a2}) {
+                                if (w != b1 && w != b2) continue;
+                                const std::pair<int, int> key{std::min((int)rv, w), std::max((int)rv, w)};
+                                if (sharpRep.count(key)) continue;
+                                const int ri = root((int)i), rj = root((int)j);
+                                if (ri != rj) par[(std::size_t)std::max(ri, rj)] = std::min(ri, rj);
+                            }
+                        }
+                    }
+                    std::map<int, std::size_t> partOf;   // root -> group index (the first part keeps g)
+                    std::vector<std::pair<int, int>> keep; std::vector<float> keepSign; Vec3 keepSum{0, 0, 0};
+                    for (std::size_t i = 0; i < nm; ++i) {
+                        const int r = root((int)i);
+                        const std::pair<int, int> tk = gMembers[g][i];
+                        const float sg = gSign[g][i];
+                        const Vec3 add = sg == 0.0f ? Vec3{0, 0, 0} : fn[tk.first] * sg;
+                        if (r == root(0)) { keep.push_back(tk); keepSign.push_back(sg); keepSum += add; continue; }
+                        auto it = partOf.find(r);
+                        if (it == partOf.end()) {
+                            it = partOf.emplace(r, gMembers.size()).first;
+                            gSum.push_back({0, 0, 0}); gMembers.emplace_back(); gSign.emplace_back();
+                        }
+                        gMembers[it->second].push_back(tk); gSign[it->second].push_back(sg); gSum[it->second] += add;
+                    }
+                    gMembers[g] = std::move(keep); gSign[g] = std::move(keepSign); gSum[g] = keepSum;
+                }
             }
             for (int g = 0; g < (int)gSum.size(); ++g) {
                 Vec3 n = gSum[g]; float m = n.Magnitude();
@@ -699,16 +772,43 @@ struct Mesh {
                         out.vertices.push_back(sp);
                         out.normals.push_back(n);
                         if (hasUV) out.uvs.push_back(uvs[src]);
+                        if (hadVC) outVC.push_back(vertexColors[(std::size_t)src]);   // vertex colours follow their copies
                         made.push_back({ux, uy, sp, vi});
                     }
                     out.triangles[tk.first * 3 + tk.second] = vi;
                 }
             }
         }
+        // The vertices were renumbered: edge lists (seams, creases, bevel weights, sharp edges) follow each old vertex to its
+        // first copy (lists are matched by position wherever copies matter, so one copy is enough; before this they kept the
+        // old numbers and pointed at unrelated vertices).
+        std::vector<int> firstCopy(vertices.size(), -1);
+        for (std::size_t i = 0; i < triangles.size(); ++i) {
+            const int o = triangles[i];
+            if (o >= 0 && o < (int)firstCopy.size() && (firstCopy[(std::size_t)o] < 0 || out.triangles[i] < firstCopy[(std::size_t)o])) firstCopy[(std::size_t)o] = out.triangles[i];
+        }
+        auto mapPair = [&](int& a, int& b) {
+            if (a < 0 || b < 0 || a >= (int)firstCopy.size() || b >= (int)firstCopy.size()) return false;
+            a = firstCopy[(std::size_t)a]; b = firstCopy[(std::size_t)b];
+            if (a < 0 || b < 0 || a == b) return false;
+            if (a > b) std::swap(a, b);
+            return true;
+        };
+        for (std::vector<std::pair<int, int>>* list : {&seams, &sharpEdges}) {
+            std::vector<std::pair<int, int>> kept;
+            for (auto e : *list) if (mapPair(e.first, e.second) && std::find(kept.begin(), kept.end(), e) == kept.end()) kept.push_back(e);
+            *list = std::move(kept);
+        }
+        for (std::vector<EdgeCrease>* list : {&creases, &bevelWeights}) {
+            std::vector<EdgeCrease> kept;
+            for (EdgeCrease c : *list) if (mapPair(c.a, c.b)) kept.push_back(c);
+            *list = std::move(kept);
+        }
         vertices = std::move(out.vertices);
         normals  = std::move(out.normals);
         triangles = std::move(out.triangles);
         if (hasUV) uvs = std::move(out.uvs); else uvs.clear();
+        if (hadVC) vertexColors = std::move(outVC);
         autoSmoothAngle = angleDeg;   // triColors are per-face and index-stable: keep
         name = "";
     }
@@ -2658,6 +2758,7 @@ public:
         for (const auto& sm : copy.seams) seams.push_back({sm.first + base, sm.second + base});
         for (const EdgeCrease& c : copy.creases) creases.push_back({c.a + base, c.b + base, c.w});
         for (const EdgeCrease& c : copy.bevelWeights) bevelWeights.push_back({c.a + base, c.b + base, c.w});
+        for (const auto& se : copy.sharpEdges) sharpEdges.push_back({se.first + base, se.second + base});
         normals.clear();
         name = "";
         if (weld) WeldVertices();
@@ -2980,6 +3081,15 @@ public:
             if (std::find(sm.begin(), sm.end(), std::make_pair(a, b)) == sm.end()) sm.push_back({a, b});
         }
         seams = std::move(sm);
+        std::vector<std::pair<int, int>> sh;                 // sharp edges follow their vertices the same way
+        for (const auto& e : sharpEdges) {
+            if (e.first < 0 || e.second < 0 || e.first >= (int)remap.size() || e.second >= (int)remap.size()) continue;
+            int a = remap[e.first], b = remap[e.second];
+            if (a == b) continue;
+            if (a > b) std::swap(a, b);
+            if (std::find(sh.begin(), sh.end(), std::make_pair(a, b)) == sh.end()) sh.push_back({a, b});
+        }
+        sharpEdges = std::move(sh);
         for (std::vector<EdgeCrease>* list : {&creases, &bevelWeights}) {   // creases and bevel weights follow their vertices the same way
             std::vector<EdgeCrease> cr;
             for (const EdgeCrease& c : *list) {

@@ -951,6 +951,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                 for (const auto& e : gm.seams) out << " " << e.first << " " << e.second;
                 out << "\n";
             }
+            // Edges marked sharp (vertex pairs), before meshshade: rebuilding Auto Smooth on load needs them.
+            if (!gm.sharpEdges.empty()) {
+                out << "  meshsharp " << gm.sharpEdges.size();
+                for (const auto& e : gm.sharpEdges) out << " " << e.first << " " << e.second;
+                out << "\n";
+            }
             // Shading mode: meshgeo loads flat by default; remember when the user
             // chose Shade Smooth (1) or Auto Smooth by angle (2 <angle>) so it
             // survives save/load (optional record).
@@ -4818,6 +4824,17 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         int a = -1, b = -1; in >> a >> b;
                         if (a >= 0 && b >= 0 && a < (int)mr->mesh.vertices.size() && b < (int)mr->mesh.vertices.size() && a != b)
                             mr->mesh.seams.push_back({std::min(a, b), std::max(a, b)});
+                    }
+                } else if (field == "meshsharp") {
+                    // Sharp edges of meshgeo geometry (optional record; Auto Smooth keeps them hard).
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int sc = 0; in >> sc;
+                    if (!in || sc < 0 || !countOk(sc, 4)) return bad("meshsharp: bad count");
+                    mr->mesh.sharpEdges.clear();
+                    for (int i = 0; i < sc && in; ++i) {
+                        int a = -1, b = -1; in >> a >> b;
+                        if (a >= 0 && b >= 0 && a < (int)mr->mesh.vertices.size() && b < (int)mr->mesh.vertices.size() && a != b) mr->mesh.SetSharp(a, b, true);
                     }
                 } else if (field == "meshshade") {
                     // Optional: restore smooth (1) or angle-based auto-smooth (2)

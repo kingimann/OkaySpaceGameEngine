@@ -367,6 +367,53 @@ EdgeList LoopCut(PolyMesh& pm, int a, int b, int cuts, float position) {
     return made;
 }
 
+namespace {
+// UVs. Inside one face the texture is (close to) an affine map of the surface, so a
+// corner that moves by d changes its UV by d read through that map. The map is taken
+// from the corner and two other corners of the same face (its two neighbours when they
+// make a proper triangle, which includes the rail, so a slide toward the rail moves the
+// UV exactly that fraction toward the rail's UV). Faces on the far side of the loop get
+// the same displacement through their own map. Every face uses only its own corner UVs,
+// so a seam stays split. Read against the current positions, so calling again from the
+// same start (interactive use) replaces the last slide instead of adding to it.
+// (Used by EdgeSlide and VertexSlide: `target` is where each vertex goes, `moved` marks the ones that move.)
+void FollowUVs(PolyMesh& pm, const std::vector<Vec3>& target, const std::vector<char>& moved) {
+    for (PolyFace& f : pm.faces) {
+        if (!HasUV(f)) continue;
+        const int n = f.Size();
+        std::vector<Vec2> nuv = f.uvs;
+        for (int i = 0; i < n; ++i) {
+            const int v = f.verts[i];
+            if (v < 0 || v >= (int)moved.size() || !moved[v]) continue;
+            const Vec3 d = target[v] - pm.verts[v];
+            if (d.SqrMagnitude() <= 0.0f) continue;
+            const Vec3 p0 = pm.verts[v];
+            // Solve d = a*e1 + b*e2 (least squares in the triangle's plane) for corners j, k.
+            auto solve = [&](int j, int k, Vec2& out) {
+                const Vec3 e1 = pm.verts[f.verts[j]] - p0, e2 = pm.verts[f.verts[k]] - p0;
+                const float a11 = Vec3::Dot(e1, e1), a12 = Vec3::Dot(e1, e2), a22 = Vec3::Dot(e2, e2);
+                const float det = a11 * a22 - a12 * a12;
+                if (!(det > 1e-6f * a11 * a22) || !std::isfinite(det)) return false;   // (nearly) a straight line
+                const float b1 = Vec3::Dot(d, e1), b2 = Vec3::Dot(d, e2);
+                const float a = (b1 * a22 - b2 * a12) / det, b = (a11 * b2 - a12 * b1) / det;
+                const Vec2 u0 = f.uvs[i], u1 = f.uvs[j], u2 = f.uvs[k];
+                out = Vec2{u0.x + a * (u1.x - u0.x) + b * (u2.x - u0.x), u0.y + a * (u1.y - u0.y) + b * (u2.y - u0.y)};
+                return std::isfinite(out.x) && std::isfinite(out.y);
+            };
+            Vec2 uv;
+            bool ok = solve((i + 1) % n, (i + n - 1) % n, uv);
+            // A straight corner (an n-gon with a vertex in the middle of a side): use the
+            // best-shaped triangle with any two other corners.
+            for (int j = 0; j < n && !ok; ++j)
+                for (int k = j + 1; k < n && !ok; ++k)
+                    if (j != i && k != i) ok = solve(j, k, uv);
+            if (ok) nuv[i] = uv;
+        }
+        f.uvs = std::move(nuv);
+    }
+}
+} // namespace
+
 // ---------------------------------------------------------------------------
 int EdgeSlide(PolyMesh& pm, const EdgeList& loop, float amount, const std::vector<Vec3>* from) {
     if (!std::isfinite(amount)) return 0;
@@ -404,47 +451,7 @@ int EdgeSlide(PolyMesh& pm, const EdgeList& loop, float amount, const std::vecto
     std::vector<Vec3> target = pm.verts;
     std::vector<char> moved(pm.verts.size(), 0);
     for (const Move& mv : moves) { target[mv.v] = Lerp3(start[mv.v], start[mv.rail], t); moved[mv.v] = 1; }
-    // UVs. Inside one face the texture is (close to) an affine map of the surface, so a
-    // corner that moves by d changes its UV by d read through that map. The map is taken
-    // from the corner and two other corners of the same face (its two neighbours when they
-    // make a proper triangle, which includes the rail, so a slide toward the rail moves the
-    // UV exactly that fraction toward the rail's UV). Faces on the far side of the loop get
-    // the same displacement through their own map. Every face uses only its own corner UVs,
-    // so a seam stays split. Read against the current positions, so calling again from the
-    // same start (interactive use) replaces the last slide instead of adding to it.
-    for (PolyFace& f : pm.faces) {
-        if (!HasUV(f)) continue;
-        const int n = f.Size();
-        std::vector<Vec2> nuv = f.uvs;
-        for (int i = 0; i < n; ++i) {
-            const int v = f.verts[i];
-            if (v < 0 || v >= (int)moved.size() || !moved[v]) continue;
-            const Vec3 d = target[v] - pm.verts[v];
-            if (d.SqrMagnitude() <= 0.0f) continue;
-            const Vec3 p0 = pm.verts[v];
-            // Solve d = a*e1 + b*e2 (least squares in the triangle's plane) for corners j, k.
-            auto solve = [&](int j, int k, Vec2& out) {
-                const Vec3 e1 = pm.verts[f.verts[j]] - p0, e2 = pm.verts[f.verts[k]] - p0;
-                const float a11 = Vec3::Dot(e1, e1), a12 = Vec3::Dot(e1, e2), a22 = Vec3::Dot(e2, e2);
-                const float det = a11 * a22 - a12 * a12;
-                if (!(det > 1e-6f * a11 * a22) || !std::isfinite(det)) return false;   // (nearly) a straight line
-                const float b1 = Vec3::Dot(d, e1), b2 = Vec3::Dot(d, e2);
-                const float a = (b1 * a22 - b2 * a12) / det, b = (a11 * b2 - a12 * b1) / det;
-                const Vec2 u0 = f.uvs[i], u1 = f.uvs[j], u2 = f.uvs[k];
-                out = Vec2{u0.x + a * (u1.x - u0.x) + b * (u2.x - u0.x), u0.y + a * (u1.y - u0.y) + b * (u2.y - u0.y)};
-                return std::isfinite(out.x) && std::isfinite(out.y);
-            };
-            Vec2 uv;
-            bool ok = solve((i + 1) % n, (i + n - 1) % n, uv);
-            // A straight corner (an n-gon with a vertex in the middle of a side): use the
-            // best-shaped triangle with any two other corners.
-            for (int j = 0; j < n && !ok; ++j)
-                for (int k = j + 1; k < n && !ok; ++k)
-                    if (j != i && k != i) ok = solve(j, k, uv);
-            if (ok) nuv[i] = uv;
-        }
-        f.uvs = std::move(nuv);
-    }
+    FollowUVs(pm, target, moved);
     for (const Move& mv : moves) pm.verts[mv.v] = target[mv.v];
     return (int)moves.size();
 }
@@ -690,6 +697,7 @@ int SplitEdge(PolyMesh& pm, int a, int b, float t) {
         pm.vertColors.push_back(Color{ca.r + (cb.r - ca.r) * t, ca.g + (cb.g - ca.g) * t, ca.b + (cb.b - ca.b) * t, ca.a + (cb.a - ca.a) * t});
     }
     if (pm.IsSeam(a, b)) { pm.SetSeam(a, b, false); pm.SetSeam(a, nv, true); pm.SetSeam(nv, b, true); }
+    if (pm.IsSharp(a, b)) { pm.SetSharp(a, b, false); pm.SetSharp(a, nv, true); pm.SetSharp(nv, b, true); }
     for (PolyFace& f : pm.faces) {
         const bool ab = Runs(f, a, b), ba = Runs(f, b, a);
         if (!ab && !ba) continue;
@@ -1219,6 +1227,13 @@ std::vector<int> CompactVerts(PolyMesh& pm) {
         if (a >= 0 && b >= 0 && a != b) seams.push_back(a < b ? std::make_pair(a, b) : std::make_pair(b, a));
     }
     pm.seams = std::move(seams);
+    std::vector<std::pair<int, int>> sharp;   // sharp edges follow their vertices the same way
+    for (const auto& e : pm.sharp) {
+        if (e.first < 0 || e.second < 0 || e.first >= (int)remap.size() || e.second >= (int)remap.size()) continue;
+        const int a = remap[e.first], b = remap[e.second];
+        if (a >= 0 && b >= 0 && a != b) sharp.push_back(a < b ? std::make_pair(a, b) : std::make_pair(b, a));
+    }
+    pm.sharp = std::move(sharp);
     for (std::vector<EdgeCrease>* list : {&pm.creases, &pm.bevelWeights}) {
         std::vector<EdgeCrease> cr;
         for (const EdgeCrease& c : *list) {
@@ -1229,6 +1244,288 @@ std::vector<int> CompactVerts(PolyMesh& pm) {
         *list = std::move(cr);
     }
     return remap;
+}
+
+// ---- Round 3 tools ----------------------------------------------------------------
+namespace {
+// The faces around vertex v, split into fans: two faces are in the same fan when they share an edge v-w that is not
+// in `cut`. Each fan lists face numbers.
+std::vector<std::vector<int>> FansAround(const PolyMesh& pm, int v, const std::set<std::pair<int, int>>& cut) {
+    std::vector<int> fs;
+    for (int f = 0; f < (int)pm.faces.size(); ++f) if (CornerIn(pm.faces[(std::size_t)f], v) >= 0) fs.push_back(f);
+    const int n = (int)fs.size();
+    std::vector<int> par(n);
+    for (int i = 0; i < n; ++i) par[i] = i;
+    auto root = [&](int i) { while (par[i] != i) i = par[i] = par[par[i]]; return i; };
+    for (int i = 0; i < n; ++i) {
+        const PolyFace& A = pm.faces[(std::size_t)fs[i]];
+        for (int w : {Prev(A, v), Next(A, v)}) {
+            if (w < 0 || cut.count(Key(v, w))) continue;
+            for (int j = i + 1; j < n; ++j) {
+                const PolyFace& B = pm.faces[(std::size_t)fs[j]];
+                if (Runs(B, v, w) || Runs(B, w, v)) { const int a = root(i), b = root(j); if (a != b) par[std::max(a, b)] = std::min(a, b); }
+            }
+        }
+    }
+    std::vector<std::vector<int>> fans;
+    std::map<int, std::size_t> at;
+    for (int i = 0; i < n; ++i) {
+        const int r = root(i);
+        auto it = at.find(r);
+        if (it == at.end()) { it = at.emplace(r, fans.size()).first; fans.emplace_back(); }
+        fans[it->second].push_back(fs[i]);
+    }
+    return fans;
+}
+// A copy of vertex v (position and colour) for the faces in `fan`, which then use it instead of v. Returns the copy.
+int CopyVertexFor(PolyMesh& pm, int v, const std::vector<int>& fan) {
+    const int nv = (int)pm.verts.size();
+    pm.verts.push_back(pm.verts[(std::size_t)v]);
+    if (!pm.vertColors.empty()) {
+        pm.vertColors.resize((std::size_t)nv, Color{1, 1, 1, 1});
+        pm.vertColors.push_back(v < (int)pm.vertColors.size() ? pm.vertColors[(std::size_t)v] : Color{1, 1, 1, 1});
+    }
+    for (int f : fan) for (int& c : pm.faces[(std::size_t)f].verts) if (c == v) c = nv;
+    return nv;
+}
+// The edges given that have exactly two faces (inside the surface), as sorted keys.
+std::set<std::pair<int, int>> InteriorEdges(const PolyMesh& pm, const EdgeList& edges) {
+    PolyTopology T(pm);
+    std::set<std::pair<int, int>> out;
+    for (const auto& e : ValidEdges(pm, edges)) if (T.FacesOf(e.first, e.second).size() == 2) out.insert(Key(e.first, e.second));
+    return out;
+}
+Vec3 FaceCentre(const PolyMesh& pm, const PolyFace& f) {
+    Vec3 c{0, 0, 0};
+    for (int v : f.verts) c += pm.verts[(std::size_t)v];
+    return f.verts.empty() ? c : c * (1.0f / (float)f.verts.size());
+}
+} // namespace
+
+int EdgeSplit(PolyMesh& pm, const EdgeList& edges) {
+    const std::set<std::pair<int, int>> cut = InteriorEdges(pm, edges);
+    if (cut.empty()) return 0;
+    // The two faces of each edge, to find the edge's corners again after the split.
+    std::vector<std::pair<std::pair<int, int>, int>> sides;   // (edge, face)
+    {
+        PolyTopology T(pm);
+        for (const auto& k : cut) for (int f : T.FacesOf(k.first, k.second)) sides.push_back({k, f});
+    }
+    std::set<int> vs;
+    for (const auto& k : cut) { vs.insert(k.first); vs.insert(k.second); }
+    std::map<std::pair<int, int>, int> idIn;   // (face, original vertex) -> the vertex that face now uses
+    int made = 0;
+    for (int v : vs) {
+        const std::vector<std::vector<int>> fans = FansAround(pm, v, cut);
+        for (std::size_t i = 1; i < fans.size(); ++i) {
+            const int c = CopyVertexFor(pm, v, fans[i]);
+            for (int f : fans[i]) idIn[{f, v}] = c;
+            ++made;
+        }
+    }
+    auto id = [&](int f, int v) { auto it = idIn.find({f, v}); return it == idIn.end() ? v : it->second; };
+    for (const auto& s : sides) pm.SetSharp(id(s.second, s.first.first), id(s.second, s.first.second), true);
+    return made;
+}
+
+int VertexSlideRail(const PolyMesh& pm, const std::vector<Vec3>& pos, int v, const std::vector<int>& verts, const Vec3& dir) {
+    const int nv = (int)pm.verts.size();
+    if (v < 0 || v >= nv || (int)pos.size() < nv || !std::isfinite(dir.x + dir.y + dir.z) || dir.SqrMagnitude() < 1e-20f) return -1;
+    const Vec3 d = dir.Normalized();
+    std::set<int> sel(verts.begin(), verts.end());
+    std::set<int> nbs;
+    for (const PolyFace& f : pm.faces) if (CornerIn(f, v) >= 0) { nbs.insert(Prev(f, v)); nbs.insert(Next(f, v)); }
+    int rail = -1; float best = 1e-4f;
+    for (int nb : nbs) {
+        if (nb < 0 || nb >= nv || nb == v || sel.count(nb)) continue;
+        const Vec3 e = pos[(std::size_t)nb] - pos[(std::size_t)v];
+        const float len = e.Magnitude();
+        if (!(len > 1e-9f)) continue;
+        const float c = Vec3::Dot(e * (1.0f / len), d);
+        if (c > best) { best = c; rail = nb; }
+    }
+    return rail;
+}
+
+int VertexSlide(PolyMesh& pm, const std::vector<int>& verts, const Vec3& dir, float amount, const std::vector<Vec3>* from) {
+    if (!std::isfinite(amount) || !std::isfinite(dir.x + dir.y + dir.z) || dir.SqrMagnitude() < 1e-20f) return 0;
+    const std::vector<Vec3> start = from ? *from : pm.verts;
+    if (start.size() < pm.verts.size()) return 0;
+    const float t = std::clamp(amount, 0.0f, 1.0f);
+    const int nv = (int)pm.verts.size();
+    std::vector<int> picked;
+    for (int v : verts) if (v >= 0 && v < nv) picked.push_back(v);
+    std::vector<Vec3> target = pm.verts;
+    std::vector<char> moved(nv, 0);
+    int count = 0;
+    for (int v : picked) {
+        if (moved[(std::size_t)v]) continue;
+        const int rail = VertexSlideRail(pm, start, v, picked, dir);
+        target[(std::size_t)v] = rail >= 0 ? Lerp3(start[(std::size_t)v], start[(std::size_t)rail], t) : start[(std::size_t)v];
+        moved[(std::size_t)v] = 1;
+        if (rail >= 0) ++count;
+    }
+    FollowUVs(pm, target, moved);
+    for (int v = 0; v < nv; ++v) if (moved[(std::size_t)v]) pm.verts[(std::size_t)v] = target[(std::size_t)v];
+    return count;
+}
+
+EdgeList OffsetEdgeLoops(PolyMesh& pm, const EdgeList& edgesIn, float amount, std::string* error) {
+    auto fail = [&](const std::string& why) { if (error) *error = why; return EdgeList{}; };
+    if (!std::isfinite(amount)) return fail("The offset is not a number.");
+    const float t = std::clamp(amount, 0.01f, 0.99f);
+    std::set<std::pair<int, int>> loop;
+    {
+        PolyTopology T(pm);
+        for (const auto& e : ValidEdges(pm, edgesIn)) if (T.IsEdge(e.first, e.second)) loop.insert(Key(e.first, e.second));
+    }
+    if (loop.empty()) return fail("Select the edges to offset first.");
+    PolyMesh work = pm;
+    // The faces along the loop, each written so it runs p -> q.
+    std::vector<std::pair<int, int>> runs;   // (p, q)
+    for (const PolyFace& f : work.faces)
+        for (int i = 0; i < f.Size(); ++i) {
+            const int p = f.verts[(std::size_t)i], q = f.verts[(std::size_t)((i + 1) % f.Size())];
+            if (loop.count(Key(p, q)) && f.Size() >= 3) runs.push_back({p, q});
+        }
+    // The rails to split: from a loop vertex along the face's next edge away from the loop.
+    std::set<std::pair<int, int>> rails;     // directed (from loop vertex, to)
+    for (const auto& r : runs) {
+        int fi = -1;
+        for (int f = 0; f < (int)work.faces.size() && fi < 0; ++f) if (Runs(work.faces[(std::size_t)f], r.first, r.second)) fi = f;
+        if (fi < 0) continue;
+        const PolyFace& F = work.faces[(std::size_t)fi];
+        const int rp = Prev(F, r.first), rq = Next(F, r.second);
+        if (rp >= 0 && rp != r.second && !loop.count(Key(r.first, rp))) rails.insert({r.first, rp});
+        if (rq >= 0 && rq != r.first && !loop.count(Key(r.second, rq))) rails.insert({r.second, rq});
+    }
+    for (const auto& r : rails)
+        if (rails.count({r.second, r.first}) && t >= 0.5f)
+            return fail("An edge joins two of the selected edges' corners: an offset of 0.5 or more would cross over. Use less than 0.5.");
+    std::set<int> fresh;                     // the vertices the splits made
+    std::map<std::pair<int, int>, int> made; // directed rail -> its new vertex
+    for (const auto& r : rails) {
+        const int a = r.first, b = r.second;
+        auto back = made.find({b, a});
+        int nvx;
+        if (back == made.end()) nvx = SplitEdge(work, a, b, t);
+        else nvx = SplitEdge(work, a, back->second, t / (1.0f - t));   // the far end was split first: cut the piece nearer a
+        if (nvx < 0) return fail("An edge next to the loop could not be split.");
+        made[r] = nvx;
+        fresh.insert(nvx);
+    }
+    EdgeList out;
+    for (const auto& r : runs) {
+        int fi = -1;
+        for (int f = 0; f < (int)work.faces.size() && fi < 0; ++f) if (Runs(work.faces[(std::size_t)f], r.first, r.second)) fi = f;
+        if (fi < 0) continue;
+        const PolyFace& F = work.faces[(std::size_t)fi];
+        int np = Prev(F, r.first), nq = Next(F, r.second);
+        if (!fresh.count(np)) np = r.first;
+        if (!fresh.count(nq)) nq = r.second;
+        if (np == r.first && nq == r.second) continue;
+        if (SplitFace(work, fi, np, nq) >= 0) out.push_back({np, nq});
+    }
+    if (out.empty()) return fail("Nothing to offset: the selected edges have no faces beside them to cut.");
+    pm = std::move(work);
+    return out;
+}
+
+std::vector<int> RipEdges(PolyMesh& pm, const EdgeList& edges, const Vec3& side, std::string* error) {
+    auto fail = [&](const std::string& why) { if (error) *error = why; return std::vector<int>{}; };
+    if (!std::isfinite(side.x + side.y + side.z)) return fail("Rip needs a direction for the side to tear off.");
+    const std::set<std::pair<int, int>> cut = InteriorEdges(pm, edges);
+    if (cut.empty()) return fail("Select edges with a face on both sides (inside the surface) to rip.");
+    // The torn side of each edge: of its two faces, the one whose middle lies further along `side`.
+    std::set<int> torn;
+    {
+        PolyTopology T(pm);
+        for (const auto& k : cut) {
+            const std::vector<int>& fs = T.FacesOf(k.first, k.second);
+            const Vec3 mid = (pm.verts[(std::size_t)k.first] + pm.verts[(std::size_t)k.second]) * 0.5f;
+            const float d0 = Vec3::Dot(FaceCentre(pm, pm.faces[(std::size_t)fs[0]]) - mid, side);
+            const float d1 = Vec3::Dot(FaceCentre(pm, pm.faces[(std::size_t)fs[1]]) - mid, side);
+            torn.insert(d1 > d0 ? fs[1] : fs[0]);
+        }
+    }
+    std::set<int> vs;
+    for (const auto& k : cut) { vs.insert(k.first); vs.insert(k.second); }
+    PolyMesh work = pm;
+    std::vector<int> out;
+    for (int v : vs) {
+        const std::vector<std::vector<int>> fans = FansAround(work, v, cut);
+        if (fans.size() < 2) continue;   // the tear ends here
+        std::vector<char> isTorn(fans.size(), 0);
+        bool anyKept = false;
+        for (std::size_t i = 0; i < fans.size(); ++i) {
+            for (int f : fans[i]) if (torn.count(f)) isTorn[i] = 1;
+            if (!isTorn[i]) anyKept = true;
+        }
+        for (std::size_t i = 0; i < fans.size(); ++i) {
+            if (!isTorn[i]) continue;
+            if (!anyKept) { anyKept = true; continue; }   // every fan is on the torn side: the first keeps the vertex
+            out.push_back(CopyVertexFor(work, v, fans[i]));
+        }
+    }
+    if (out.empty()) return fail("Nothing to rip: both ends of the edges are inside the surface. Select two or more edges in a row, or edges that reach the border.");
+    pm = std::move(work);
+    return out;
+}
+
+int MergeVertsAt(PolyMesh& pm, const std::vector<int>& verts, MergeAt where) {
+    std::vector<int> clean;
+    std::set<int> seen;
+    for (int v : verts) if (v >= 0 && v < (int)pm.verts.size() && seen.insert(v).second) clean.push_back(v);
+    if (clean.size() < 2) return 0;
+    Vec3 at = pm.verts[(std::size_t)clean.front()];
+    if (where == MergeAt::Center) {
+        Vec3 c{0, 0, 0};
+        for (int v : clean) c += pm.verts[(std::size_t)v];
+        at = c * (1.0f / (float)clean.size());
+    } else if (where == MergeAt::Last) {
+        at = pm.verts[(std::size_t)clean.back()];
+        std::rotate(clean.begin(), clean.end() - 1, clean.end());   // the last one picked is the one kept
+    }
+    return MergeVerts(pm, clean, at);
+}
+
+std::vector<int> LoopToRegion(const PolyMesh& pm, const EdgeList& loop) {
+    std::set<std::pair<int, int>> cut;
+    for (const auto& e : ValidEdges(pm, loop)) cut.insert(Key(e.first, e.second));
+    if (cut.empty()) return {};
+    const int nf = (int)pm.faces.size();
+    std::map<std::pair<int, int>, std::vector<int>> edgeFaces;
+    for (int f = 0; f < nf; ++f) {
+        const PolyFace& F = pm.faces[(std::size_t)f];
+        for (int i = 0; i < F.Size(); ++i) edgeFaces[Key(F.verts[(std::size_t)i], F.verts[(std::size_t)((i + 1) % F.Size())])].push_back(f);
+    }
+    std::vector<int> comp(nf, -1);
+    std::vector<int> size;
+    for (int s = 0; s < nf; ++s) {
+        if (comp[s] >= 0) continue;
+        const int c = (int)size.size();
+        size.push_back(0);
+        std::vector<int> stack{s};
+        comp[s] = c;
+        while (!stack.empty()) {
+            const int f = stack.back(); stack.pop_back();
+            ++size[(std::size_t)c];
+            const PolyFace& F = pm.faces[(std::size_t)f];
+            for (int i = 0; i < F.Size(); ++i) {
+                const auto k = Key(F.verts[(std::size_t)i], F.verts[(std::size_t)((i + 1) % F.Size())]);
+                if (cut.count(k)) continue;
+                for (int g : edgeFaces[k]) if (comp[(std::size_t)g] < 0) { comp[(std::size_t)g] = c; stack.push_back(g); }
+            }
+        }
+    }
+    std::set<int> touching;
+    for (const auto& k : cut) { auto it = edgeFaces.find(k); if (it != edgeFaces.end()) for (int f : it->second) touching.insert(comp[(std::size_t)f]); }
+    if (touching.size() < 2) return {};
+    int best = -1;
+    for (int c : touching) if (best < 0 || size[(std::size_t)c] < size[(std::size_t)best]) best = c;
+    std::vector<int> out;
+    for (int f = 0; f < nf; ++f) if (comp[(std::size_t)f] == best) out.push_back(f);
+    return out;
 }
 
 // ---- Catmull-Clark --------------------------------------------------------------

@@ -24,6 +24,7 @@ const char* EditPivotName(EditPivot p) {
         case EditPivot::Median:     return "Median Point";
         case EditPivot::Individual: return "Individual Origins";
         case EditPivot::Active:     return "Active Vertex";
+        case EditPivot::Cursor:     return "3D Cursor";
     }
     return "";
 }
@@ -87,6 +88,91 @@ Mat4 ScaleMatrix(const Vec3& pivot, const AxisLock& lock, float factor) {
     return Mat4::Translate(pivot) * Mat4::Scale(s) * Mat4::Translate(pivot * -1.0f);
 }
 
+const char* EditOrientName(EditOrient o) {
+    switch (o) {
+        case EditOrient::Global: return "Global";
+        case EditOrient::Local:  return "Local";
+        case EditOrient::Normal: return "Normal";
+    }
+    return "";
+}
+
+namespace {
+bool Finite3(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+// Right-handed axes with Z along `z` (unit): X across it, level with the world where it can be.
+OrientAxes AxesAroundZ(const Vec3& z) {
+    OrientAxes o;
+    const Vec3 ref = std::fabs(z.y) > 0.99f ? Vec3{0, 0, -1} : Vec3{0, 1, 0};
+    Vec3 x = Vec3::Cross(ref, z);
+    const float m = x.Magnitude();
+    if (!(m > 1e-6f)) return o;
+    x = x * (1.0f / m);
+    o.axis[0] = x;
+    o.axis[1] = Vec3::Cross(z, x);
+    o.axis[2] = z;
+    return o;
+}
+} // namespace
+
+OrientAxes OrientationAxes(const Mesh& mesh, const std::vector<int>& selected, const Mat4& toWorld, EditOrient o,
+                           const std::vector<int>* faces) {
+    OrientAxes world;
+    if (o == EditOrient::Global) return world;
+    if (o == EditOrient::Local) {
+        // The object's axes, straightened to right angles (Gram-Schmidt) in case of a skewed parent scale.
+        Vec3 x = toWorld.MultiplyVector(Vec3{1, 0, 0}), y = toWorld.MultiplyVector(Vec3{0, 1, 0});
+        if (!Finite3(x) || !Finite3(y) || x.SqrMagnitude() < 1e-20f) return world;
+        x = x.Normalized();
+        y = y - x * Vec3::Dot(y, x);
+        if (y.SqrMagnitude() < 1e-20f) return world;
+        y = y.Normalized();
+        OrientAxes a;
+        a.axis[0] = x; a.axis[1] = y; a.axis[2] = Vec3::Cross(x, y);
+        return a;
+    }
+    // Normal: area-weighted face normals, in the mesh's own space.
+    const int n = (int)mesh.vertices.size();
+    const int nt = mesh.TriangleCount();
+    Vec3 sum{0, 0, 0};
+    auto addTri = [&](int t) {
+        const int a = mesh.triangles[(std::size_t)t * 3], b = mesh.triangles[(std::size_t)t * 3 + 1], c = mesh.triangles[(std::size_t)t * 3 + 2];
+        if (a < 0 || b < 0 || c < 0 || a >= n || b >= n || c >= n) return;
+        const Vec3 fn = Vec3::Cross(mesh.vertices[(std::size_t)b] - mesh.vertices[(std::size_t)a], mesh.vertices[(std::size_t)c] - mesh.vertices[(std::size_t)a]);
+        if (Finite3(fn)) sum += fn;
+    };
+    if (faces && !faces->empty()) {
+        for (int t : *faces) if (t >= 0 && t < nt) addTri(t);
+    } else {
+        // Edges and vertices: the faces with two or more selected corners (around an edge), else any selected corner.
+        std::vector<char> sel(n, 0);
+        for (int v : selected) if (v >= 0 && v < n) sel[(std::size_t)v] = 1;
+        for (int need = 2; need >= 1 && sum.SqrMagnitude() < 1e-20f; --need)
+            for (int t = 0; t < nt; ++t) {
+                int k = 0;
+                for (int c = 0; c < 3; ++c) { const int v = mesh.triangles[(std::size_t)t * 3 + c]; if (v >= 0 && v < n && sel[(std::size_t)v]) ++k; }
+                if (k >= need) addTri(t);
+            }
+    }
+    if (!(sum.SqrMagnitude() > 1e-20f)) return world;
+    // Normals go to world space through the inverse transpose (so a stretched object still gets a true normal).
+    Vec3 wn = toWorld.Inverse().Transpose().MultiplyVector(sum);
+    if (!Finite3(wn) || !(wn.SqrMagnitude() > 1e-20f)) return world;
+    return AxesAroundZ(wn.Normalized());
+}
+
+Mat4 MoveMatrix(const Vec3& offset, const AxisLock& lock, const OrientAxes& axes) {
+    Vec3 o{0, 0, 0};
+    for (int i = 0; i < 3; ++i) if (lock.Allows(i)) o += axes[i] * Vec3::Dot(offset, axes[i]);
+    return Mat4::Translate(o);
+}
+
+Mat4 ScaleMatrix(const Vec3& pivot, const AxisLock& lock, float factor, const OrientAxes& axes) {
+    Mat4 R;   // columns: the axes
+    for (int c = 0; c < 3; ++c) { R.at(c, 0) = axes[c].x; R.at(c, 1) = axes[c].y; R.at(c, 2) = axes[c].z; }
+    const Vec3 s{lock.Allows(0) ? factor : 1.0f, lock.Allows(1) ? factor : 1.0f, lock.Allows(2) ? factor : 1.0f};
+    return Mat4::Translate(pivot) * R * Mat4::Scale(s) * R.Transpose() * Mat4::Translate(pivot * -1.0f);
+}
+
 namespace {
 bool RayPlane(const Ray& r, const Vec3& p, const Vec3& n, Vec3& hit) {
     const float d = Vec3::Dot(r.direction, n);
@@ -109,17 +195,21 @@ Vec3 Unit(int a) { return Vec3{a == 0 ? 1.0f : 0.0f, a == 1 ? 1.0f : 0.0f, a == 
 } // namespace
 
 Vec3 MoveFromRays(const AxisLock& lock, const Vec3& pivot, const Vec3& viewDir, const Ray& start, const Ray& now) {
+    return MoveFromRays(lock, pivot, viewDir, start, now, OrientAxes{});
+}
+
+Vec3 MoveFromRays(const AxisLock& lock, const Vec3& pivot, const Vec3& viewDir, const Ray& start, const Ray& now, const OrientAxes& axes) {
     if (!lock.Free() && !lock.plane) {
-        const Vec3 ax = Unit(lock.axis);
+        const Vec3 ax = axes[lock.axis];
         float s0 = 0.0f, s1 = 0.0f;
         if (!RayLineParam(start, pivot, ax, s0) || !RayLineParam(now, pivot, ax, s1)) return Vec3{0, 0, 0};
         return ax * (s1 - s0);
     }
-    const Vec3 n = lock.Free() ? viewDir : Unit(lock.axis);
+    const Vec3 n = lock.Free() ? viewDir : axes[lock.axis];
     Vec3 h0, h1;
     if (!RayPlane(start, pivot, n, h0) || !RayPlane(now, pivot, n, h1)) return Vec3{0, 0, 0};
     Vec3 d = h1 - h0;
-    if (!lock.Free()) (&d.x)[lock.axis] = 0.0f;
+    if (!lock.Free()) d = d - n * Vec3::Dot(d, n);   // stay in the plane across the locked axis
     return d;
 }
 
@@ -211,6 +301,10 @@ void EditTransformSession::Begin(Mesh& mesh, EditXform kind, const std::vector<i
     if (opt.pivot == EditPivot::Active && opt.activeVertex >= 0 && opt.activeVertex < n && isSel[opt.activeVertex])
         m_pivotLocal = mesh.vertices[opt.activeVertex];
     m_pivotWorld = toWorld.MultiplyPoint(m_pivotLocal);
+    if (opt.pivot == EditPivot::Cursor && Finite3(opt.cursorWorld)) {   // the 3D cursor stays where it is in the world
+        const Vec3 local = m_toLocal.MultiplyPoint(opt.cursorWorld);
+        if (Finite3(local)) { m_pivotWorld = opt.cursorWorld; m_pivotLocal = local; }
+    }
 
     // Individual Origins: split the selection into parts (joined by a triangle edge between two selected
     // vertices, or by sitting at the same place, so an unwelded mesh's split corners stay together).

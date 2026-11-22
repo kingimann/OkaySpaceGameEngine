@@ -58,6 +58,10 @@ then this file gets updated. Keep this file short and true.
    the exact head sha. (The owner said on 2026-11-15: "stop merging PRs with problems". Before that this rule let
    PRs merge without the Ubuntu job, and PRs #842 to #856 merged with the `player` test red.) A docs-only change
    whose only jobs are docs checks may merge once those are green.
+   **Nothing is held** (owner, 2026-11-22: "I don't want anything to be held. I want to be able to test everything."): a PR
+   whose CI is fully green is merged at once and goes into the next release, so the owner can test it. Extra reviews run
+   while CI runs, not after it; a review finding is fixed in a follow-up PR unless it can lose player data or crash,
+   in which case it is fixed in the PR before merging. Drafts are only for work that does not build yet.
 7. **Never merge a red PR, and never just retry it.** Read the failing job's log, find the cause and fix it in
    the code. A re-run is only for a job that was cancelled by a runner shutdown, and if the same job keeps
    dying, find out why (this is how the WebGL job got its cache and timeout).

@@ -3,6 +3,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Components/MoveSpeed.hpp"   // MoveSpeedScale: load and encumbrance
 #include "okay/Scene/Scene.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
@@ -263,6 +264,7 @@ public:
         // The speed cap follows the body from one stance's to the next.
         float speed = StanceValue(m_stanceLevel, running ? runSpeed : walkSpeed, crouchSpeed, proneSpeed) *
                       (m_grabbed ? grabPullSpeed : 1.0f);
+        speed *= MoveSpeedScale(gameObject);   // a heavy load or full bag slows it
         const float targetZ = LayerZ(layer);
 
         if (rb) {

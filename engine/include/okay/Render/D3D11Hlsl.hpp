@@ -235,6 +235,7 @@ inline const char* D3D11HlslSource() {
     "}\n"
     "float4 PSMain(PSIn i):SV_TARGET {\n"
     "  if (uShadowAlpha >= 0.0) return float4(0,0,0,uShadowAlpha);\n"   // flat ground contact shadow
+    "  float gAlpha = uAlpha;\n"                                       // opacity (a Custom surface may change it)
     "  float3 N = normalize(i.nrm);\n"
     "  if (uHasNormal > 0.5) {\n"                                       // perturb N by the tangent-space normal map
     "    float3 tn = uNormalTex.Sample(uSamp, i.uv).rgb * 2.0 - 1.0;\n"
@@ -261,12 +262,22 @@ inline const char* D3D11HlslSource() {
     "  bool holo = uShaderMode > 5.5 && uShaderMode < 6.5;\n"   // Hologram
     "  if (holo) base *= 0.18 * (0.55 + 0.45 * sin(i.world.y * 40.0));\n"
     "  if (uShaderMode > 6.5) base = floor(base * 5.0) / 5.0;\n"  // Posterize (retro banding)
+    // Custom (.okayshader) surface (OKAY_SURFACE is defined only for a custom variant; see OkayShader.hpp).
+    "#ifdef OKAY_SURFACE\n"
+    "  float3 okE = uEmissive; if (uLightCount.z > 0.5) okE *= uEmisTex.Sample(uSamp, i.uv).rgb;\n"
+    "  OkaySurface okS = okaySurface(i.uv, i.world, Vv, i.col, uOkTimeV.x, base, okE, uAlpha, N, uPbr.x, uSpecular, uShininess);\n"
+    "  base = okS.albedo; gAlpha = okS.alpha;\n"
+    "  if (dot(okS.normal, okS.normal) > 1e-12) N = normalize(okS.normal);\n"
+    "#endif\n"
     // Filmic mode (uFogCol.w): gamma-correct pipeline — decode sRGB albedo/emissive
     // to linear, light in linear, ACES + sRGB-encode at the end (matches GL).
     "  bool lin = uFogCol.w > 0.5;\n"
     "  if (lin) base = pow(max(base, 0.0), 2.2);\n"
     "  float3 emis = uEmissive;\n"
     "  if (uLightCount.z > 0.5) emis *= uEmisTex.Sample(uSamp, i.uv).rgb;\n"
+    "#ifdef OKAY_SURFACE\n"
+    "  emis = okS.emission;\n"
+    "#endif\n"
     "  if (lin) emis = pow(max(emis, 0.0), 2.2);\n"
     "  float shiny = uShininess; float metalK = uPbr.x; float specK = uSpecular;\n"
     "  if (uLightCount.y > 0.5) {\n"
@@ -277,9 +288,12 @@ inline const char* D3D11HlslSource() {
     "    shiny = 4.0 + (1.0 - rough) * 124.0;\n"
     "    specK *= clamp(1.0 - rough, 0.04, 1.0);\n"
     "  }\n"
+    "#ifdef OKAY_SURFACE\n"
+    "  metalK = okS.metallic; specK = okS.specular; shiny = okS.shininess;\n"
+    "#endif\n"
     "  if (uUnlit > 0.5) { float3 uc = base + emis;\n"            // decode+encode cancel: unlit unchanged
     "    if (lin) uc = pow(max(uc, 0.0), 1.0/2.2);\n"
-    "    return float4(uc, uAlpha); }\n"
+    "    return float4(uc, gAlpha); }\n"
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  float3 amb = lerp(uAmbGround.xyz, uAmbSky.xyz, saturate(N.y * 0.5 + 0.5));\n"  // scene Ambient Mode
     "  float3 lit = amb; float3 spec = float3(0,0,0);\n"
@@ -292,7 +306,7 @@ inline const char* D3D11HlslSource() {
     "  if (lc < 1) {\n"                                          // fallback: global directional
     "    float ndl = max(dot(N, uLightDir), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
     "    lit += uLightColor * ndl * sh;\n"
-    "    if (uSpecular > 0.0) { float3 H = normalize(uLightDir + Vv);\n"
+    "    if (specK > 0.0) { float3 H = normalize(uLightDir + Vv);\n"
     "      spec = pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * sh; }\n"
     "  } else {\n"
     "    [loop] for (int li = 0; li < 16; li++) { if (li >= lc) break;\n"   // directional + point + spot + area
@@ -320,7 +334,7 @@ inline const char* D3D11HlslSource() {
     "      if (d0.w < 0.5) { if (abs((float)li - uShadow2.x) < 0.5) lsh = sh; }\n"   // only the main sun has cascades
     "      else if (recv && uLShadow[li].x > -0.5) lsh = localShadow(li, d1.xyz, d0.w, i.world, Ns, ld, dist);\n"
     "      lit += d2.xyz * ndl * at * lsh;\n"
-    "      if (uSpecular > 0.0) { float3 H = normalize(ld + Vv);\n"   // highlights take the light's colour + intensity
+    "      if (specK > 0.0) { float3 H = normalize(ld + Vv);\n"   // highlights take the light's colour + intensity
     "        spec += d2.xyz * (pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * at * lsh); }\n"
     "    }\n"
     "  }\n"
@@ -367,7 +381,7 @@ inline const char* D3D11HlslSource() {
     // the post chain running the colour stays linear: the chain exposes, tonemaps
     // and encodes it.
     "  if (lin && uPost.x < 0.5) { col = aces(col); col = pow(max(col, 0.0), 1.0/2.2); }\n"
-    "  return float4(col, uAlpha);\n"
+    "  return float4(col, gAlpha);\n"
     "}\n"
     // ---- Procedural sky + the post chain (mirrors the GLSL in GLRenderer.cpp) ----
     "cbuffer PC : register(b3) {\n"

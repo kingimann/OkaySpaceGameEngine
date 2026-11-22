@@ -1056,6 +1056,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << "  shader " << (int)mr->shader << " " << mr->toonBands
                 << " " << mr->gradientTop.r << " " << mr->gradientTop.g << " " << mr->gradientTop.b
                 << " " << mr->gradientBottom.r << " " << mr->gradientBottom.g << " " << mr->gradientBottom.b << "\n";
+        // Custom shader file + its property values (separate record so older scenes still load).
+        if (!mr->customShader.empty() || !mr->shaderParams.empty())
+            out << "  customshader " << Quote(mr->customShader) << " " << Quote(mr->shaderParams) << "\n";
         // Per-material rim (Fresnel) backlight (separate record).
         if (mr->rimStrength > 0.0f)
             out << "  rim " << mr->rimStrength << " " << mr->rimPower << " "
@@ -2409,7 +2412,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << c->invincibleTime << " " << c->overhealMax << " " << c->overhealDecay
             << " " << (c->destroyOnDeath ? 1 : 0) << " " << (c->respawn ? 1 : 0)
             << " " << c->respawnDelay << " " << c->lives
-            << " " << (c->playDeathAnim ? 1 : 0) << " " << (c->playHitAnim ? 1 : 0) << "\n";
+            << " " << (c->playDeathAnim ? 1 : 0) << " " << (c->playHitAnim ? 1 : 0)
+            << " " << (c->keepActiveOnDeath ? 1 : 0) << " " << kDamageTypeCount;   // then one resistance per damage kind
+        for (int i = 0; i < kDamageTypeCount; ++i) out << " " << c->typeResistance[i];
+        out << "\n";
     }
     for (auto* c : go->GetComponents<Seat>()) {
         out << "  seat " << c->seatHeight << " "
@@ -2879,7 +2885,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << cm->cameraDamping
             << " " << cm->arriveRadius                       // extended (back-compatible trailing field)
             << " " << (cm->footIK ? 1 : 0) << " " << (cm->showCursor ? 1 : 0)
-            << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval << "\n";
+            << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval;
+        // extended (back-compatible trailing fields): click on colliders, give up when stuck. Written only when one differs
+        // from its default, so a scene saved before they existed saves byte for byte the same (registry_serializer).
+        if (!cm->pickColliders || !cm->giveUpWhenStuck || cm->stuckTime != 1.0f)
+            out << " " << (cm->pickColliders ? 1 : 0) << " " << (cm->giveUpWhenStuck ? 1 : 0) << " " << cm->stuckTime;
+        out << "\n";
     }
     for (auto* ft : go->GetComponents<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -3064,7 +3075,11 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     for (auto* dc : go->GetComponents<DollyCart>()) {
         out << "  dollycart " << Quote(dc->path) << " " << dc->position << " "
-            << dc->speed << " " << (dc->autoMove ? 1 : 0) << "\n";
+            << dc->speed << " " << (dc->autoMove ? 1 : 0);
+        // extended (trailing): only when one is on, so older scenes save byte for byte the same (registry_serializer)
+        if (dc->speedInMetres || dc->pingPong || dc->orientToPath)
+            out << " " << (dc->speedInMetres ? 1 : 0) << " " << (dc->pingPong ? 1 : 0) << " " << (dc->orientToPath ? 1 : 0);
+        out << "\n";
     }
     for (auto* tr : go->GetComponents<TextRenderer>()) {
         out << "  text " << Quote(tr->text) << " "
@@ -5427,6 +5442,23 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                                >> mr->gradientBottom.r >> mr->gradientBottom.g >> mr->gradientBottom.b;
                         }
                     }
+                } else if (field == "customshader") {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
+                        in >> std::ws;
+                        std::string p = in.peek() == '"' ? ReadQuoted(in) : std::string();
+                        // A path written next to the scene ("lava.okayshader") is found in the scene's folder.
+                        if (!p.empty()) {
+                            const std::filesystem::path pp(p);
+                            std::error_code ec;
+                            if (!pp.is_absolute() && !g_loadingSceneDir.empty() && !std::filesystem::exists(pp, ec)) {
+                                const std::filesystem::path alt = std::filesystem::path(g_loadingSceneDir) / pp;
+                                if (std::filesystem::exists(alt, ec)) p = alt.string();
+                            }
+                        }
+                        mr->customShader = p;
+                        in >> std::ws;
+                        if (in.peek() == '"') mr->shaderParams = ReadQuoted(in);
+                    }
                 } else if (field == "rim") {
                     if (auto* mr = LastOf(go->GetComponents<MeshRenderer>()))
                         in >> mr->rimStrength >> mr->rimPower
@@ -6081,6 +6113,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         in >> std::ws; if (std::isdigit(in.peek())) { int sc = 1; in >> sc; cm->showCursor = (sc != 0); }
                         in >> std::ws; if (std::isdigit(in.peek())) { int pf = 1; in >> pf; cm->usePathfinding = (pf != 0); }
                         if (LooksNumeric(in)) in >> cm->repathInterval;
+                        // click on colliders, give up when stuck (added later; older scenes keep the defaults)
+                        in >> std::ws; if (std::isdigit(in.peek())) { int pc = 1; in >> pc; cm->pickColliders = (pc != 0); }
+                        in >> std::ws; if (std::isdigit(in.peek())) { int gu = 1; in >> gu; cm->giveUpWhenStuck = (gu != 0); }
+                        if (LooksNumeric(in)) in >> cm->stuckTime;
                     }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
@@ -6562,6 +6598,22 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws;   // optional: light hit flinch (defaults off)
                     if (std::isdigit(in.peek())) {
                         int pha = 0; in >> pha; c->playHitAnim = (pha != 0);
+                    }
+                    in >> std::ws;   // optional: "Nothing" on death, then one resistance per damage kind
+                    if (std::isdigit(in.peek())) {
+                        // Read only the rest of this record's line, so a wrong or hostile count can neither
+                        // loop for long nor eat the next record. At most 64 kinds; stop at the first bad value.
+                        std::string rest; std::getline(in, rest);
+                        std::istringstream ls(rest);
+                        int ka = 0, n = 0;
+                        if (ls >> ka) c->keepActiveOnDeath = (ka != 0);
+                        if ((ls >> n) && n > 0 && n <= 64) {
+                            for (int i = 0; i < n; ++i) {
+                                float r = 0.0f;
+                                if (!(ls >> r)) break;
+                                if (i < kDamageTypeCount && std::isfinite(r)) c->typeResistance[i] = Mathf::Clamp(r, -1.0f, 1.0f);
+                            }
+                        }
                     }
                 } else if (field == "seat") {
                     auto* c = go->AddComponent<Seat>();
@@ -7458,6 +7510,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int am = 1;
                     in >> dc->position >> dc->speed >> am;
                     dc->autoMove = (am != 0);
+                    // metres per second, ping-pong, face along the path (added later; older scenes keep the defaults)
+                    in >> std::ws; if (std::isdigit(in.peek())) { int v = 0; in >> v; dc->speedInMetres = (v != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int v = 0; in >> v; dc->pingPong = (v != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int v = 0; in >> v; dc->orientToPath = (v != 0); }
                 } else if (field == "cmbrain") {
                     auto* cb = go->AddComponent<CinemachineBrain>();
                     in >> cb->blendTime;

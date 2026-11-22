@@ -24,6 +24,7 @@
 #include "okay/Render/ProcTexture.hpp"
 #include "okay/Render/TextureAsset.hpp"   // the shared texture library every renderer draws from
 #include <memory>
+#include "okay/Render/OkayShader.hpp"
 #include "okay/Texture/Dds.hpp"         // .dds pictures: read and decoded on the CPU (okay::tex)
 #include "okay/Core/Log.hpp"
 #include <cstring>
@@ -176,6 +177,25 @@ struct MipChain {
     std::size_t size() const { return levels ? levels->size() : 0; }
     bool empty() const { return size() == 0; }
     const Image& operator[](std::size_t i) const { return (*levels)[i]; }
+};
+
+/// A Custom (.okayshader) surface for TrianglePhong: the CPU program, the material's property values,
+/// its textures and the time. The program runs per pixel before lighting, like the GPU renderers' copy.
+struct CustomSurface {
+    const oshader::CpuProgram* prog = nullptr;
+    const float* props = nullptr;
+    const MipChain* tex[oshader::kMaxTextures] = {nullptr, nullptr, nullptr, nullptr};
+    float time = 0.0f;
+    bool unlit = false;
+    // Texture lookup for oshader::RunCpu (bilinear on the top level, wrapped; white when unbound).
+    static void Sample(const void* ctx, int slot, float u, float v, float rgba[4]) {
+        const CustomSurface* cs = static_cast<const CustomSurface*>(ctx);
+        const MipChain* m = (slot >= 0 && slot < oshader::kMaxTextures) ? cs->tex[slot] : nullptr;
+        if (!m || m->empty() || (*m)[0].Width() <= 0) { rgba[0] = rgba[1] = rgba[2] = rgba[3] = 1.0f; return; }
+        u -= std::floor(u); v -= std::floor(v);
+        const Color c = (*m)[0].Sample(u, v);
+        rgba[0] = c.r; rgba[1] = c.g; rgba[2] = c.b; rgba[3] = c.a;
+    }
 };
 
 class Raster {
@@ -515,7 +535,8 @@ public:
                        int shaderMode = 0, const float* gradTop = nullptr, const float* gradBot = nullptr,
                        const MipChain* aoMips = nullptr, float aoStrength = 1.0f,
                        bool receiveShadows = true, const LightSubset* lightSubset = nullptr,
-                       const float* vcol = nullptr) {   // vcol: r g b of each corner's vertex colour (9 floats), or null
+                       const float* vcol = nullptr,     // vcol: r g b of each corner's vertex colour (9 floats), or null
+                       const CustomSurface* custom = nullptr) {   // a Custom (.okayshader) surface, or null
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -603,6 +624,59 @@ public:
                 Vec3 wpos{a0 * WXa[0] + a1 * WXa[1] + a2 * WXa[2],
                           a0 * WYa[0] + a1 * WYa[1] + a2 * WYa[2],
                           a0 * WZa[0] + a1 * WZa[1] + a2 * WZa[2]};
+                // Custom (.okayshader) surface: run the CPU program on the same inputs the GPU
+                // shaders give it (uv, position, view, normal, vertex colour, time, material defaults).
+                oshader::SurfaceOut cso;
+                const bool haveCs = custom && custom->prog;
+                if (haveCs) {
+                    oshader::SurfaceIn si;
+                    const float iwc = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
+                    const float uc = iwc != 0.0f ? (float)((w0 * U[0] + w1 * U[1] + w2 * U[2]) / iwc) : 0.0f;
+                    const float vc = iwc != 0.0f ? (float)((w0 * V[0] + w1 * V[1] + w2 * V[2]) / iwc) : 0.0f;
+                    si.uv[0] = uc; si.uv[1] = vc;
+                    si.position[0] = wpos.x; si.position[1] = wpos.y; si.position[2] = wpos.z;
+                    const Vec3 ve = (eye - wpos).Normalized();
+                    si.view[0] = ve.x; si.view[1] = ve.y; si.view[2] = ve.z;
+                    si.normal[0] = n.x; si.normal[1] = n.y; si.normal[2] = n.z;
+                    float vr = 1.0f, vg = 1.0f, vb = 1.0f;
+                    if (vcol) { vr = a0 * vcol[0] + a1 * vcol[3] + a2 * vcol[6]; vg = a0 * vcol[1] + a1 * vcol[4] + a2 * vcol[7]; vb = a0 * vcol[2] + a1 * vcol[5] + a2 * vcol[8]; }
+                    si.vcolor[0] = vr; si.vcolor[1] = vg; si.vcolor[2] = vb;
+                    si.time = custom->time;
+                    float ar = base.r, ag = base.g, ab = base.b;
+                    if (textured && iwc != 0.0f) {
+                        const Color tc = SampleMips(*mips, uc, vc, PixelLod(uc * iwc, vc * iwc, iwc, lg2, tw, th));
+                        ar = tc.r * tint.r; ag = tc.g * tint.g; ab = tc.b * tint.b;
+                    }
+                    si.albedo[0] = ar * vr; si.albedo[1] = ag * vg; si.albedo[2] = ab * vb;
+                    si.emission[0] = er; si.emission[1] = eg; si.emission[2] = eb;
+                    si.alpha = base.a; si.metallic = metallic; si.specular = specularK; si.shininess = shininess;
+                    oshader::RunCpu(*custom->prog, si, custom->props, &CustomSurface::Sample, custom, cso);
+                    if (cso.discard) continue;
+                    const Vec3 cn{cso.normal[0], cso.normal[1], cso.normal[2]};
+                    const float cl = cn.Magnitude();
+                    if (cl > 1e-6f && std::isfinite(cl)) n = cn * (1.0f / cl);
+                    if (custom->unlit) {   // no lighting and no fog, like the GPU shaders' unlit path
+                        float cr = cso.albedo[0] + cso.emission[0], cg = cso.albedo[1] + cso.emission[1], cb = cso.albedo[2] + cso.emission[2];
+                        if (cso.alpha < 0.999f) {
+                            const std::uint32_t dst = color[i];
+                            const float a = cso.alpha < 0.0f ? 0.0f : cso.alpha, ia = 1.0f - a;
+                            cr = cr * a + (float)(dst & 0xFF) / 255.0f * ia;
+                            cg = cg * a + (float)((dst >> 8) & 0xFF) / 255.0f * ia;
+                            cb = cb * a + (float)((dst >> 16) & 0xFF) / 255.0f * ia;
+                            color[i] = PackRGB(cr, cg, cb);
+                        } else {
+                            depth[i] = d;
+                            color[i] = PackRGB(cr, cg, cb);
+                            if (!gvalid.empty()) { gpos[i] = wpos; gnrm[i] = n; gvalid[i] = 1; }
+                        }
+                        continue;
+                    }
+                }
+                const float pxSpecK = haveCs ? cso.specular : specularK;
+                const float pxShine = haveCs ? cso.shininess : shininess;
+                const float pxMetal = haveCs ? cso.metallic : metallic;
+                const float pxEr = haveCs ? cso.emission[0] : er, pxEg = haveCs ? cso.emission[1] : eg, pxEb = haveCs ? cso.emission[2] : eb;
+                const float pxAlpha = haveCs ? cso.alpha : base.a;
                 // Spot / point / area shadows: every light gets its own 0..1 factor
                 // (the sun's comes from its cascades), so a lamp's shadow does not
                 // darken the sun and the other way round. Off = the original path.
@@ -673,11 +747,11 @@ public:
                 // each tinted by its own color and attenuation; the sun's part is
                 // shadowed. Scaled by the material strength and the gloss map.
                 Vec3 spec{0, 0, 0};
-                if (specularK > 0.0f) {
+                if (pxSpecK > 0.0f) {
                     Vec3 toEye = (eye - wpos).Normalized();
-                    spec = lightSubset ? SpecularSubset(wpos, n, toEye, shininess, sh, perLightSh ? lightSh : nullptr, *lightSubset)
-                                       : SceneLights::SpecularN(wpos, n, toEye, shininess, sh, perLightSh ? lightSh : nullptr);
-                    float ks = specularK * gloss;
+                    spec = lightSubset ? SpecularSubset(wpos, n, toEye, pxShine, sh, perLightSh ? lightSh : nullptr, *lightSubset)
+                                       : SceneLights::SpecularN(wpos, n, toEye, pxShine, sh, perLightSh ? lightSh : nullptr);
+                    float ks = pxSpecK * gloss;
                     spec.x *= ks; spec.y *= ks; spec.z *= ks;
                     // Toon: collapse the highlight to a single hard glint (on/off).
                     if (toonBands > 0) {
@@ -747,7 +821,9 @@ public:
                 // both their specular highlight and their environment reflection by
                 // the albedo color (so gold reflects gold). Dielectrics keep a white
                 // highlight/reflection. f0* = lerp(white, albedo, metallic).
-                float metal = metallic < 0 ? 0 : (metallic > 1 ? 1 : metallic);
+                // A Custom surface's albedo replaces the base colour worked out above.
+                if (haveCs) { br = cso.albedo[0]; bg = cso.albedo[1]; bb2 = cso.albedo[2]; }
+                float metal = pxMetal < 0 ? 0 : (pxMetal > 1 ? 1 : pxMetal);
                 float diff  = 1.0f - 0.9f * metal;                 // metals kill diffuse
                 float f0r = 1.0f + (br  - 1.0f) * metal;
                 float f0g = 1.0f + (bg  - 1.0f) * metal;
@@ -780,9 +856,9 @@ public:
                     float m = fp * useRim;
                     mrimR = m * rimR; mrimG = m * rimG; mrimB = m * rimB;
                 }
-                float cr = br * lit.x * diff + spec.x * f0r + rim * lit.x + mrimR + er;
-                float cg = bg * lit.y * diff + spec.y * f0g + rim * lit.y + mrimG + eg;
-                float cb = bb2 * lit.z * diff + spec.z * f0b + rim * lit.z + mrimB + eb;
+                float cr = br * lit.x * diff + spec.x * f0r + rim * lit.x + mrimR + pxEr;
+                float cg = bg * lit.y * diff + spec.y * f0g + rim * lit.y + mrimG + pxEg;
+                float cb = bb2 * lit.z * diff + spec.z * f0b + rim * lit.z + mrimB + pxEb;
                 // Velvet shader: a soft fuzzy sheen that brightens grazing angles
                 // (backscatter), lit by the scene — cloth / peach-skin look.
                 if (shaderMode == 8) {
@@ -819,9 +895,9 @@ public:
                 // already in the buffer instead of overwriting it, and does NOT write
                 // depth — so geometry behind shows through. (Order transparent meshes
                 // after opaque ones — they draw in scene order.)
-                if (base.a < 0.999f) {
+                if (pxAlpha < 0.999f) {
                     std::uint32_t dst = color[i];
-                    float a = base.a, ia = 1.0f - a;
+                    float a = pxAlpha < 0.0f ? 0.0f : pxAlpha, ia = 1.0f - a;
                     cr = cr * a + (float)(dst & 0xFF)        / 255.0f * ia;
                     cg = cg * a + (float)((dst >> 8) & 0xFF) / 255.0f * ia;
                     cb = cb * a + (float)((dst >> 16) & 0xFF)/ 255.0f * ia;
@@ -2237,6 +2313,15 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         }
     };
     int swDrawn = 0;
+    // Custom (.okayshader) surfaces, resolved here (the file cache and the texture caches are not
+    // touched from the band threads): the compiled shader, the material's values, its pictures.
+    struct CustomBind {
+        std::shared_ptr<const oshader::Compiled> compiled;   // keeps the program alive for the frame
+        std::vector<float> props;
+        CustomSurface cs;
+        bool ok = false;
+    };
+    std::vector<CustomBind> customBind(sceneObjs.size());
     {
     OKAY_PROFILE("Render.Prewarm");
     for (std::size_t oi = 0; oi < sceneObjs.size(); ++oi) {
@@ -2253,6 +2338,23 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         if (!mr->metallicRoughnessMap.empty()) GetCachedMips(mr->metallicRoughnessMap);
         if (!mr->emissiveMap.empty()) GetCachedMips(mr->emissiveMap);
         if (!mr->matcap.empty() && !mr->unlit && mr->shader != MeshRenderer::Shader::Unlit) GetCachedTexture(mr->matcap);
+        if (mr->shader == MeshRenderer::Shader::Custom) {
+            CustomBind& cb = customBind[oi];
+            const oshader::ShaderFile sf = oshader::LoadShaderFile(mr->customShader);
+            if (sf.compiled && sf.compiled->ok && sf.compiled->cpu) {
+                cb.compiled = sf.compiled;
+                cb.props = oshader::ResolveProperties(*sf.compiled, mr->shaderParams);
+                cb.cs.prog = sf.compiled->cpu.get();
+                cb.cs.props = cb.props.data();
+                cb.cs.time = Time::ElapsedTime();
+                cb.cs.unlit = sf.compiled->unlit;
+                for (int t = 0; t < (int)sf.compiled->textures.size() && t < oshader::kMaxTextures; ++t) {
+                    const std::string pic = oshader::ResolveTexture(*sf.compiled, t, mr->shaderParams);
+                    cb.cs.tex[t] = pic.empty() ? nullptr : GetCachedMips(pic);
+                }
+                cb.ok = true;
+            }
+        }
         if (bandSkipOn || lightCullOn) meshReach(go.get(), mr, objInfo[oi]);
     }
     }
@@ -2269,8 +2371,12 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer culling mask
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || !go->ActiveInHierarchy() || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines
-        // The Unlit shader is equivalent to the unlit flag for the renderer.
-        const bool unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
+        // The Unlit shader is equivalent to the unlit flag for the renderer. A Custom shader that
+        // does not compile draws flat magenta (the error material); one that does lights itself.
+        const CustomBind& cbind = customBind[objIndex];
+        const bool customOk = mr->shader == MeshRenderer::Shader::Custom && cbind.ok;
+        const bool customBad = mr->shader == MeshRenderer::Shader::Custom && !cbind.ok;
+        const bool unlit = !customOk && (mr->unlit || mr->shader == MeshRenderer::Shader::Unlit || customBad);
         // Scrolling-UV offset (animated textures): advance the texture coordinates by
         // the scroll speed * elapsed time. Added after tiling, like offset.
         const float scrollU = mr->uvScroll.x * Time::ElapsedTime();
@@ -2283,7 +2389,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const auto& t = drawMesh.triangles;
         const bool hasUV = drawMesh.uvs.size() == v.size();
         const bool faceCols = drawMesh.HasFaceColors();   // per-triangle colors?
-        const MipChain* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
+        const MipChain* tex = (mr->texture.empty() || customBad) ? nullptr : GetCachedMips(mr->texture);
         // Per-slot pictures: triangles whose material slot has a texture use it instead of the object's own.
         std::vector<const MipChain*> slotTex;
         if (drawMesh.HasSlots() && !mr->slotTextures.empty())
@@ -2293,7 +2399,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const MipChain* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
         const MipChain* specMips = mr->specularMap.empty() ? nullptr : GetCachedMips(mr->specularMap);
         const MipChain* aoMips = mr->aoMap.empty() ? nullptr : GetCachedMips(mr->aoMap);
-        Image* mcap = (mr->matcap.empty() || unlit) ? nullptr : GetCachedTexture(mr->matcap);
+        Image* mcap = (mr->matcap.empty() || unlit || customOk) ? nullptr : GetCachedTexture(mr->matcap);
         // Matcap shading needs per-vertex normals; fall back if the mesh has none.
         const bool useMatcap = mcap && drawMesh.HasNormals();
         // Smooth (Gouraud) shading when the mesh carries per-vertex normals and
@@ -2370,6 +2476,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         float lodR = 1, lodG = 1, lodB = 1;
         if (auto* lg = go->GetComponent<LODGroup>()) lg->DebugTint(lg->activeLevel, lodR, lodG, lodB);
         Color shaded = mr->color;
+        if (customBad) shaded = Color{oshader::kErrorColor[0], oshader::kErrorColor[1], oshader::kErrorColor[2], 1.0f};
         shaded.r *= lodR; shaded.g *= lodG; shaded.b *= lodB;
         // Per-pixel (Phong) shading for lit meshes that carry normals — smooth
         // surfaces + correct specular, textured or not. Matcap/unlit meshes
@@ -2388,6 +2495,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                || mr->shader == MeshRenderer::Shader::Hologram
                                || mr->shader == MeshRenderer::Shader::Posterize
                                || mr->shader == MeshRenderer::Shader::Velvet
+                               || customOk
                                || mr->rimStrength > 0.0f || mr->triplanar
                                || (ShadowsUsePerPixel() && mr->receiveShadows
                                    && (Shadows().enabled || LocalShadowsActive())))
@@ -2422,7 +2530,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             // that face away from the camera — typically ~half the triangles of a
             // closed mesh, for free. Double-sided meshes (planes, billboards) keep
             // both faces and flip the normal so the lit side always shows.
-            if (facing < 0.0f) {
+            // A Custom shader that discards shows the far inside of the mesh through its holes, as the GPU
+            // renderers do (they do not cull back faces): those faces keep their outward normal.
+            const bool seeInside = facing < 0.0f && !mr->doubleSided && customOk && cbind.compiled->usesDiscard;
+            if (facing < 0.0f && !seeInside) {
                 if (!mr->doubleSided) continue;
                 normal = normal * -1.0f;
             }
@@ -2500,7 +2611,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 Vec3 nk = drawMesh.HasNormals()
                               ? xformNormal(drawMesh.normals[idx[k]]).Normalized()
                               : normal;
-                if (facing < 0.0f) nk = nk * -1.0f;
+                if (facing < 0.0f && !seeInside) nk = nk * -1.0f;
 
                 // Per-vertex light color (Gouraud) from that normal; used by the
                 // matcap and Gouraud paths. Per-pixel (Phong) shading uses nk + the
@@ -2656,7 +2767,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     mr->triplanar, mr->tiling.x, mr->tiling.y,
                                     bandY0, bandY1, shaderMode, gradTopC, gradBotC,
                                     aoMips, mr->aoStrength, mr->receiveShadows, lightSubset,
-                                    drawMesh.HasVertexColors() ? vc9 : nullptr);
+                                    drawMesh.HasVertexColors() ? vc9 : nullptr,
+                                    customOk ? &cbind.cs : nullptr);
                 } else if (triTex) {
                     float lr[3] = {tri[0]->lr * tri[0]->vr, tri[1]->lr * tri[1]->vr, tri[2]->lr * tri[2]->vr};
                     float lg[3] = {tri[0]->lg * tri[0]->vg, tri[1]->lg * tri[1]->vg, tri[2]->lg * tri[2]->vg};

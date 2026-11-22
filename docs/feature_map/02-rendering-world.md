@@ -30,20 +30,21 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **What:** How a surface looks: reusable material presets, the Mesh Renderer component the backends read, procedural textures, and the mesh geometry with its primitives and loaders.
 - **Parts:**
   - 2.2.1 Material asset - `Render/Material` - `.okaymat` preset (colour, emissive, specular, shininess, unlit, double-sided, texture, tiling, shader and toon bands, rim, outline, UV scroll, triplanar); `FromRenderer` and `ApplyTo`
-  - 2.2.2 Mesh Renderer component - `Components/MeshRenderer` - the live fields the renderers read: shader mode (Standard, Unlit, Toon, Gradient, Fresnel, Iridescent, Hologram, Posterize, Velvet), normal, specular and AO maps, metallic, reflectivity, shadows, ground shadow, outline, wireframe, texture filter
+  - 2.2.2 Mesh Renderer component - `Components/MeshRenderer` - the live fields the renderers read: shader mode (Standard, Unlit, Toon, Gradient, Fresnel, Iridescent, Hologram, Posterize, Velvet, Custom), normal, specular and AO maps, metallic, reflectivity, shadows, ground shadow, outline, wireframe, texture filter
+  - 2.2.7 Custom surface shaders - `Render/OkayShader` - our own `.okayshader` language: properties, textures and a `surface` block compiled to GLSL, HLSL and a CPU register program; Shader = Custom on the Mesh Renderer, magenta when it does not compile, reloads when the file changes; see 26.3 and `docs/rendering/shaders.md`
   - 2.2.3 Procedural textures - `Render/ProcTexture` - `proc:checker`, `grid`, `brick`, `wood`, `stone`, `tiles`, `marble`, `metal`, `noise`, `grass`, `sand`, `lava`; 256x256, tileable, deterministic, usable anywhere a texture path goes
   - 2.2.4 Mesh geometry - `Render/Mesh` - indexed triangle mesh with optional normals, UVs and per-face colours; primitives (Cube, Sphere, Cylinder, Cone, Torus, TorusKnot, Tube, Capsule, Icosphere...), prop library (Tree, House, Campfire, Bench...), `FromName`
   - 2.2.5 Mesh operations - `Render/Mesh` - smooth normals, UV projections, Combine, Weld, Subdivide, extrude, inset, Boolean, ConvexHull, Decimate, OBJ load and save; shared with the modeling windows (3.1-3.5)
   - 2.2.6 Model loaders - `Render/Gltf`, `Render/ModelImport` - glTF and GLB, OBJ, STL, PLY, FBX built in, many more formats through optional Assimp; base colour, normal, occlusion, packed metallic-roughness (green roughness, blue metallic) and emissive textures land on the MeshRenderer; detail and tests in 3.6
-- **Code:** `Render/Material`, `Render/ProcTexture`, `Render/Mesh`, `Render/Gltf`, `Render/ModelImport`, `Components/MeshRenderer`
-- **API:** `Material`, `Material::ApplyTo`, `MeshRenderer`, `Mesh::Cube`, `Mesh::FromName`, `GenerateProcTexture`, `ImportModel`, `proc:wood`
+- **Code:** `Render/Material`, `Render/ProcTexture`, `Render/Mesh`, `Render/Gltf`, `Render/ModelImport`, `Components/MeshRenderer`, `Render/OkayShader`
+- **API:** `Material`, `Material::ApplyTo`, `MeshRenderer`, `oshader::Compile`, `oshader::LoadShaderFile`, `Mesh::Cube`, `Mesh::FromName`, `GenerateProcTexture`, `ImportModel`, `proc:wood`
 - **Editor:** Mesh Renderer inspector section and material ball preview (editor/main.cpp); Project panel materials; Modeling window (3.1)
-- **Docs:** `docs/rendering/rendering.md`, `docs/editor/modeling.md`
-- **Tests:** `material`, `shaders`, `mesh3d`, `mesh_variant_hash`, `3d`, `gltf_pbr_maps`
+- **Docs:** `docs/rendering/rendering.md`, `docs/rendering/shaders.md`, `docs/editor/modeling.md`
+- **Tests:** `material`, `shaders`, `okayshader`, `okayshader_render`, `okayshader_gl`, `mesh3d`, `mesh_variant_hash`, `3d`, `gltf_pbr_maps`
 - **Status:** Works - read `Material.hpp`, `ProcTexture.hpp`, headers of `Mesh`, `Gltf`, `ModelImport`; tests cover round trips and primitive geometry
-- **Open:** material editor window with live preview, visual shader graph, custom shader files and a full energy-conserving PBR model are area 26; `Mesh.hpp` is one 4k-line header mixing primitives, props, OBJ and editing ops
+- **Open:** material editor window with live preview, visual shader graph and a full energy-conserving PBR model are area 26; custom shader files work on software and OpenGL, are unverified on Direct3D 11 and draw as Standard on Direct3D 12 (26.3); `Mesh.hpp` is one 4k-line header mixing primitives, props, OBJ and editing ops
 - **Related:** 2.1, 3.5, 3.6, 26, 38.8
-- **Words:** Material, okaymat, MeshRenderer, shader, toon, rim light, outline, triplanar, normal map, procedural texture, proc:, Mesh, primitive, OBJ, glTF, FBX, Assimp, materials, textures
+- **Words:** Material, okaymat, MeshRenderer, shader, custom shader, okayshader, toon, rim light, outline, triplanar, normal map, procedural texture, proc:, Mesh, primitive, OBJ, glTF, FBX, Assimp, materials, textures
 - **Seen as:** model dark, inside out or without textures; a material change does not show; texture tiles wrong; a primitive has the wrong winding
 - **Ask me like:** "Add a Cartoon rim-light variant of the Toon shader"; "Make a brick wall without a texture file"
 

@@ -130,6 +130,7 @@ add_library(okay_engine
     src/Scripting/ScriptVM.cpp
     src/Script/Lexer.cpp
     src/Script/Generics.cpp
+    src/Script/CSharpAssist.cpp
     src/Script/Parser.cpp
     src/Script/Checker.cpp
     src/Script/Interpreter.cpp

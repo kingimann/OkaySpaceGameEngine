@@ -35,4 +35,12 @@ const char* ScriptLanguageForExtension(const std::string& ext) {
     return "okayscript";
 }
 
+std::string ScriptLanguageDisplayName(const std::string& language) {
+    if (NextScriptVM::IsCSharpId(language)) return "C#";
+    if (language == "okayscript" || language.empty()) return "OkayScript (old)";
+    if (language == NextScriptVM::kLanguage) return "Typed OkayScript";
+    if (language == "lua") return "Lua";
+    return language;
+}
+
 } // namespace okay

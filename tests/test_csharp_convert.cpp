@@ -3,6 +3,7 @@
 #include "okay/Scripting/NextScriptVM.hpp"
 #include "okay/Scripting/ScriptConvert.hpp"
 #include <algorithm>
+#include <cstdlib>
 #include <cstdio>
 #include <fstream>
 #include <regex>
@@ -173,6 +174,7 @@ static std::string Strip(const std::string& saved) {
             continue;
         }
         if (t.rfind("scriptfields", 0) == 0 || t.rfind("scriptvar", 0) == 0) continue;
+        if (t.rfind("guid ", 0) == 0) continue;   // objects made while playing get new random ids
         out += line + "\n";
     }
     return out;
@@ -199,6 +201,7 @@ static std::string Play(const std::string& text, bool convert, const char* rel) 
             scripts.push_back({sc, src});
             if (convert) {
                 auto r = ConvertOkayScriptToCSharp(src, "Converted");
+                if (std::getenv("OKAY_CONVERT_DUMP")) std::printf("  --- %s / %s:\n%s\n", rel, go->name.c_str(), r.csharp.c_str());
                 sc->SetLanguage("csharp");
                 if (!sc->LoadSource(r.csharp, &err)) std::printf("    %s: converted script on %s didn't load: %s\n", rel, go->name.c_str(), err.c_str());
             }

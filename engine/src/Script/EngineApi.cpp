@@ -221,6 +221,17 @@ EngineApi Build() {
                 Scene* sc = c.self ? c.self->scene() : nullptr;
                 return sc ? MakeRef(sc->Find(S(a[0])), goIdx) : Value{};
             }, "The first active object with this name, or null if there is none."));
+        {
+            ApiMethod fi = method("FindIncludingInactive", {tString}, {"name"}, tGO,
+                [goIdx](const Value&, std::vector<Value>& a, CallContext& c) {
+                    Scene* sc = c.self ? c.self->scene() : nullptr;
+                    if (!sc) return Value{};
+                    for (const auto& up : sc->Objects()) if (up && up->name == S(a[0])) return MakeRef(up.get(), goIdx);
+                    return MakeRef(sc->Find(S(a[0])), goIdx);
+                }, "The first object with this name, switched on or off, or null.");
+            fi.scriptOnly = true;
+            g.staticMethods.push_back(std::move(fi));
+        }
         g.staticMethods.push_back(method("FindWithTag", {tString}, {"tag"}, tGO,
             [goIdx](const Value&, std::vector<Value>& a, CallContext& c) {
                 Scene* sc = c.self ? c.self->scene() : nullptr;
@@ -326,6 +337,15 @@ EngineApi Build() {
             [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Vec3::MoveTowards(V(a[0]), V(a[1]), F(a[2]))}; },
             "Step from current toward target, moving at most maxDistance."));
     }
+    // ---- ForceMode (text scripts only): the numbers Rigidbody.AddForce / AddTorque take ----
+    {
+        ApiType fm; fm.name = "ForceMode"; fm.isStatic = true; fm.scriptOnly = true;
+        fm.doc = "How a force is applied: Force (over the step, by mass), Acceleration, Impulse (at once, by mass), VelocityChange.";
+        const char* names[] = {"Force", "Acceleration", "Impulse", "VelocityChange"};
+        for (int i = 0; i < 4; ++i)
+            fm.staticProps.push_back(ro(names[i], tInt, [i](const Value&, CallContext&) { return Value{(std::int32_t)i}; }, std::string("ForceMode.") + names[i]));
+        api.types.push_back(std::move(fm));
+    }
     // ---- Quaternion (text scripts only) ----
     // A rotation, built on the engine's own Quat (okay/Math/Quat.hpp). Euler angles follow
     // the engine's order (Z, then X, then Y), the same as transform.eulerAngles.
@@ -411,6 +431,41 @@ EngineApi Build() {
             [](const Value& s, const Value& v, CallContext& c) {
                 Body(s, c)->bodyType = std::get<bool>(v) ? Rigidbody3D::BodyType::Kinematic : Rigidbody3D::BodyType::Dynamic;
             }, "When true, forces and gravity don't move it; only scripts do."));
+        {   // C# names the old language also has: useGravity, AddForce / AddTorque with a ForceMode (text scripts only for now)
+            ApiProperty ug = prop("useGravity", tBool,
+                [](const Value& s, CallContext& c) { return Value{Body(s, c)->gravityScale != 0.0f}; },
+                [](const Value& s, const Value& v, CallContext& c) {
+                    Rigidbody3D* b = Body(s, c);
+                    if (!std::get<bool>(v)) b->gravityScale = 0.0f;
+                    else if (b->gravityScale == 0.0f) b->gravityScale = 1.0f;
+                    b->WakeUp();
+                }, "Whether gravity pulls it (off sets gravityScale to 0; on sets it back to 1 if it was 0).");
+            ug.scriptOnly = true;
+            r.props.push_back(std::move(ug));
+            auto modeOf = [](const Value& v) {
+                const int md = I(v);
+                return md == 1 ? ForceMode::Acceleration : md == 2 ? ForceMode::Impulse : md == 3 ? ForceMode::VelocityChange : ForceMode::Force;
+            };
+            ApiMethod af = method("AddForce", {tVec, tInt}, {"force", "mode"}, tVoid,
+                [modeOf](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddForce(V(a[0]), modeOf(a[1])); return Value{}; },
+                "Push it with a ForceMode: Force, Acceleration, Impulse or VelocityChange.");
+            af.scriptOnly = true;
+            r.methods.push_back(std::move(af));
+            ApiMethod at = method("AddTorque", {tVec, tInt}, {"torque", "mode"}, tVoid,
+                [modeOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                    Rigidbody3D* b = Body(s, c);
+                    const ForceMode md = modeOf(a[1]);
+                    const Vec3 tq = V(a[0]);
+                    const float step = Time::FixedDeltaTime() > 0.0f ? Time::FixedDeltaTime() : 1.0f / 60.0f;
+                    if (md == ForceMode::Force) b->AddTorque(tq);
+                    else if (md == ForceMode::Impulse) b->AddTorque(tq * (1.0f / step));
+                    else if (md == ForceMode::Acceleration) { b->angularVelocity = b->angularVelocity + tq * step; b->WakeUp(); }
+                    else { b->angularVelocity = b->angularVelocity + tq; b->WakeUp(); }
+                    return Value{};
+                }, "Twist it with a ForceMode (Acceleration and VelocityChange change the spin at once, in radians per second).");
+            at.scriptOnly = true;
+            r.methods.push_back(std::move(at));
+        }
         r.methods.push_back(method("AddForce", {tVec}, {"force"}, tVoid,
             [](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddForce(V(a[0])); return Value{}; },
             "Push it, over the next physics step (heavier bodies move less)."));
@@ -1754,9 +1809,9 @@ EngineApi Build() {
     {
         ApiType ok; ok.name = "OkayScript"; ok.isStatic = true; ok.scriptOnly = true;
         ok.doc = "Runs a built-in of the old OkayScript language by name (converted scripts use it until the built-in has a C# binding).";
-        enum class Want { Nothing, Number, Text, Bool };
-        auto bridge = [](Want want) {
-            return [want](const Value&, std::vector<Value>& a, CallContext& c) -> Value {
+        enum class Want { Nothing, Number, Text, Bool, Object };
+        auto bridge = [goIdx](Want want) {
+            return [want, goIdx](const Value&, std::vector<Value>& a, CallContext& c) -> Value {
                 if (!c.legacy) throw RuntimeError("OkayScript." + std::string(want == Want::Nothing ? "Call" : "...") + " only works in a script on an object", c.loc);
                 if (!*c.legacy) {
                     std::shared_ptr<IScriptVM> vm(CreateScriptVM("okayscript").release());
@@ -1786,6 +1841,10 @@ EngineApi Build() {
                     case Want::Number: return Value{r.AsFloat()};
                     case Want::Text: return Value{r.AsString()};
                     case Want::Bool: return Value{r.AsBool()};
+                    case Want::Object: {   // an object reference (or null)
+                        GameObject* g = r.IsObject() && r.AsObjectId() ? GameObject::FromInstanceId(r.AsObjectId()) : nullptr;
+                        return g ? MakeRef(g, goIdx) : Value{};
+                    }
                     default: return Value{};
                 }
             };
@@ -1795,6 +1854,7 @@ EngineApi Build() {
             {"Number", Want::Number, tFloat, "Run an old built-in and use its result as a number."},
             {"Text", Want::Text, tString, "Run an old built-in and use its result as text."},
             {"Bool", Want::Bool, tBool, "Run an old built-in and use its result as true/false."},
+            {"Object", Want::Object, tGO, "Run an old built-in and use its result as an object (or null)."},
         };
         for (const auto& k : kinds)
             for (int n = 0; n <= 8; ++n) {

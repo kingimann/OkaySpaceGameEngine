@@ -3,6 +3,8 @@
 #include "okay/Scene/UIStyleLib.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
+#include "okay/Scripting/ScriptConvert.hpp"
+#include "okay/Scripting/CSharpAssist.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/Ragdoll.hpp"
@@ -3707,6 +3709,8 @@ private:
     std::string m_fnName;
     std::unordered_map<std::string, double> m_enumValues;   // "State.Run" -> 1
 };
+
+#include "OkayScriptToCSharp.inl"   // the converter to C#: it walks the syntax tree above
 
 } // namespace
 
@@ -12214,6 +12218,36 @@ std::vector<std::string> OkayScriptVM::GlobalNames() const {
 
 void OkayScriptVM::SetGlobal(const std::string& name, const vs::VsValue& v) {
     m_impl->rt.SetGlobalChecked(name, v);
+}
+
+OkayScriptConversion ConvertOkayScriptToCSharp(const std::string& source, const std::string& className) {
+    OkayScriptConversion r;
+    try {
+        Lexer lex(source);
+        Parser parser(lex.Scan());
+        std::unordered_map<std::string, FunctionDecl> funcs;
+        std::vector<StmtPtr> top = parser.ParseProgram(funcs);
+        if (!parser.TakeClasses().empty())
+            r.notes.push_back("The script's own classes aren't converted yet: copy them over by hand (C# classes work the same way)");
+        std::string name = className.empty() ? std::string("ConvertedScript") : className;
+        for (char& c : name) if (!std::isalnum((unsigned char)c) && c != '_') c = '_';
+        if (std::isdigit((unsigned char)name[0])) name = "_" + name;
+        CSharpConverter conv(funcs, top, source);
+        std::vector<std::string> notes;
+        r.csharp = conv.Run(name, notes, r.bridged);
+        r.notes.insert(r.notes.end(), notes.begin(), notes.end());
+        if (!r.bridged.empty()) {
+            std::string list;
+            for (const auto& b : r.bridged) list += (list.empty() ? "" : ", ") + b;
+            r.notes.push_back("These built-ins have no C# binding yet and still run through the old language (OkayScript.Call): " + list);
+        }
+        r.ok = true;
+    } catch (const ScriptError& e) {
+        r.error = std::string("The old script has a mistake, so it can't be converted: ") + e.what();
+    } catch (const std::exception& e) {
+        r.error = std::string("Couldn't convert: ") + e.what();
+    }
+    return r;
 }
 
 } // namespace okay

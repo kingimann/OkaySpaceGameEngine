@@ -19,6 +19,16 @@ static SDL_Event Key(SDL_Keycode k, Uint16 mod = 0, bool down = true, bool repea
 }
 static SDL_Event Wheel(int y, Uint32 dir = SDL_MOUSEWHEEL_NORMAL) { SDL_Event e; std::memset(&e, 0, sizeof(e)); e.type = SDL_MOUSEWHEEL; e.wheel.y = y; e.wheel.direction = dir; return e; }
 
+// One frame of a 400x200 window holding only the CodeEdit `ed`, fed from the collector `c`. `keys` is whether OkayUI may
+// have the keyboard this frame (Build's last argument).
+static void CodeEditFrame(UI::CodeEdit& ed, InputCollector& c, bool keys = true) {
+    UI::BeginFrame(c.Build(0, 0, false, false, false, keys));
+    UI::BareNextWindow();
+    if (UI::Begin("ce", 0, 0, 400, 200)) ed.Draw("##ce", 400, 200);
+    UI::End();
+    UI::EndFrameData();
+}
+
 int main() {
     RUN_SUITE("okayui host");
     {   // text and every key edge reach the input when keys are delivered; the state is one-shot
@@ -153,13 +163,7 @@ int main() {
         UI::CodeEdit ed;
         ed.SetText("one two\nthree");
         InputCollector c;
-        auto frame = [&]() {
-            UI::BeginFrame(c.Build(0, 0, false, false, false, true));
-            UI::BareNextWindow();
-            if (UI::Begin("ce", 0, 0, 400, 200)) ed.Draw("##ce", 400, 200);
-            UI::End();
-            UI::EndFrameData();
-        };
+        auto frame = [&]() { CodeEditFrame(ed, c); };
         frame(); ed.Focus(); frame();
         // One key per frame, then its release (what a person's keyboard does): the keys of a frame are applied in a fixed order.
         auto tap = [&](SDL_Keycode k, Uint16 mod = 0) { c.Feed(Key(k, mod)); frame(); c.Feed(Key(k, 0, false)); frame(); };
@@ -193,13 +197,7 @@ int main() {
         UI::CodeEdit ed;
         ed.SetText("ab");
         InputCollector c;
-        auto frame = [&]() {
-            UI::BeginFrame(c.Build(0, 0, false, false, false, true));
-            UI::BareNextWindow();
-            if (UI::Begin("ce", 0, 0, 400, 200)) ed.Draw("##ce", 400, 200);
-            UI::End();
-            UI::EndFrameData();
-        };
+        auto frame = [&]() { CodeEditFrame(ed, c); };
         frame(); ed.Focus(); frame();
         ed.SetCaret(UI::CodePos{0, 1});
         SDL_Event e{};
@@ -230,11 +228,7 @@ int main() {
         CHECK(!ed.Composing() && ed.Line(0) == "a\xe3\x81\x8b" "b");   // cleared without a commit: cancelled, the text is untouched
         // without the keyboard (deliverKeys false) no preedit reaches OkayUI
         pe.text = "zz"; c.Feed(pe);
-        UI::BeginFrame(c.Build(0, 0, false, false, false, false));
-        UI::BareNextWindow();
-        if (UI::Begin("ce", 0, 0, 400, 200)) ed.Draw("##ce", 400, 200);
-        UI::End();
-        UI::EndFrameData();
+        CodeEditFrame(ed, c, false);
         CHECK(!ed.Composing());
     }
     {   // the hosted region: owns the mouse only inside the rectangle, only while ImGui said it is hovered, and only for one more frame

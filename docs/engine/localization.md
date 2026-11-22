@@ -159,18 +159,37 @@ key, a column for its note and one per language.
 The toolbar's language menu (beside **Build**) switches the preview language of
 the Scene and Game views, and of Play.
 
-#### CSV for translators
+#### CSV and JSON for translators
 
 **Export CSV...** writes the table as a spreadsheet: a header row
 `key,note,en,fr,ja` and a row per key, UTF-8 with a byte order mark so
-spreadsheet programs keep accents. **Import CSV...** reads one back: the header
-row names the columns (`key`, `note` and language codes, in any order),
-separated by commas, semicolons or tabs. Fields with separators, quotes or line
-breaks are quoted, with `""` for a quote. Importing adds new keys and languages
-and replaces the texts it has; an empty cell keeps the text the table has. The
-status line says what the import did (filled, changed, new keys). A column
-headed `FR` or `pt_br` fills the table's `fr` or `pt-BR` instead of adding a second
-language, and the spreadsheet's "Unicode text" (UTF-16, tab separated) imports too.
+spreadsheet programs keep accents. **Export JSON...** writes the whole table as
+one JSON file (`LocTable::ToJson`: languages, default, and per key its note and
+texts); a file named after one of the table's languages (`fr.json`) gets that
+language alone as `{"key": "text"}` (`LocTable::ToJsonFlat`), the form web
+translation tools use.
+
+**Import...** reads a CSV or a JSON file back (the file's extension picks the
+reader). A CSV's header row names the columns (`key`, `note` and language codes,
+in any order), separated by commas, semicolons or tabs. Fields with separators,
+quotes or line breaks are quoted, with `""` for a quote. A column headed `FR` or
+`pt_br` fills the table's `fr` or `pt-BR` instead of adding a second language, and
+the spreadsheet's "Unicode text" (UTF-16, tab separated) imports too. A JSON file
+is either the whole table (as Export JSON writes it) or one language as
+`{"key": "text"}` (nested objects join their keys with `.`); a one-language file is
+read as the language its name says (`fr.json` is French, `pt-BR.json` Brazilian
+Portuguese).
+
+Before anything changes, an **Import Translations** box shows what the file
+would do: how many rows or keys it read, how many texts it fills, changes and
+clears, the new keys and languages, and a list of each changed cell
+(`fr  menu.quit  filled`). **Import** applies it (one undo step, Ctrl+Z in the
+window takes it back); **Cancel** leaves the table alone. A file that would change
+nothing shows that and cannot be applied; a file that cannot be read says why in
+the Console. Importing adds new keys and languages and replaces the texts it has;
+an empty cell keeps the text the table has. The plan is
+`PlanLocImport` / `LocImportSummary` / `LocImportChangeLines` in
+`editor/LocalizationTools` (test `loc_window`).
 
 ### Localized texts in the scene
 

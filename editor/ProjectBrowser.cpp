@@ -878,8 +878,24 @@ bool Browser::Reimport(const std::string& path) {
     const std::string p = Norm(path);
     if (const okay::AssetRecord* rec = m_db.Find(m_db.ToProjectPath(p))) m_db.RefreshFile(rec->path);
     ForgetThumb(p);
+    m_changedFiles.push_back(p);
     ++m_revision;
     return true;
+}
+
+std::vector<std::string> Browser::TakeChangedFiles() {
+    std::vector<std::string> all;
+    for (const okay::ReimportEvent& ev : m_db.TakeReimports())   // a file that only appeared has nothing loaded to replace
+        if (ev.reason != okay::ReimportEvent::Reason::Added) all.push_back(AbsOf(ev.path));
+    all.insert(all.end(), m_changedFiles.begin(), m_changedFiles.end());
+    m_changedFiles.clear();
+    std::vector<std::string> out;
+    std::set<std::string> seen;
+    for (std::string& f : all) {
+        f = Norm(f);
+        if (seen.insert(f).second) out.push_back(std::move(f));
+    }
+    return out;
 }
 
 int Browser::ReimportFolder(const std::string& path) {
@@ -895,6 +911,7 @@ int Browser::ReimportFolder(const std::string& path) {
     for (const std::string& f : files) {
         if (const okay::AssetRecord* rec = m_db.Find(m_db.ToProjectPath(f))) m_db.RefreshFile(rec->path);
         ForgetThumb(f);
+        m_changedFiles.push_back(f);
         ++n;
     }
     if (n > 0) ++m_revision;

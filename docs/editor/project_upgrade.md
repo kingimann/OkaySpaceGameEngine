@@ -90,6 +90,7 @@ until the first file is rewritten.
    unknown; `... (2)`, `(3)` when the name is taken). It is built as `<name>.partial` and renamed only when it is whole, so a backup is
    either complete or not there. The copy is **verified**: every file's size, the number of items, and the content of the files that
    will be rewritten; a file that changes while it is being copied stops the upgrade.
+   The launcher's Create page does not list these backup folders as projects: it skips any folder holding the backup marker `.okay/upgrade_backup.txt` (`okayproj::IsUpgradeBackup`, `shared/ProjectList.hpp`). To use a backup, open it from its folder.
 5. **Rewrite only what changes**: a scene or prefab that is already current is not touched (not even its date); one that needs it is
    written back as canonical text, one file at a time, each whole-or-nothing. A file may not have changed since step 2.
 6. **Stamp** `engine_version` last.

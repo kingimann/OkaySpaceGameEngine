@@ -3,7 +3,10 @@
 #include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/FootIK.hpp"
+#include "okay/Components/LedgeHandsIK.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -18,6 +21,13 @@ bool HasBaseAnimator(GameObject* player) {
     if (!player) return false;
     for (AnimStateMachine* sm : player->GetComponents<AnimStateMachine>())
         if (sm->layer == 0) return true;
+    return false;
+}
+
+// A controller on the player that catches ledges (Can Ledge Grab on).
+bool GrabsLedges(GameObject* player) {
+    if (auto* tp = player->GetComponent<ThirdPersonController>()) if (tp->canLedgeGrab) return true;
+    if (auto* fp = player->GetComponent<FirstPersonController>()) if (fp->canLedgeGrab) return true;
     return false;
 }
 
@@ -55,7 +65,7 @@ std::string WirePlayerAnimation(Scene& scene, GameObject* player) {
     const PlayerAnimStatus st = InspectPlayerAnimation(scene, player);
     // Components that were already there stay. Only add what is missing, and
     // never rewrite a weight or a chain the user set.
-    bool addedFoot = false, addedLook = false, addedAnim = false;
+    bool addedFoot = false, addedLook = false, addedAnim = false, addedLedge = false;
     if (st.bones >= 8 && st.legs && !player->GetComponent<FootIK>()) {
         FootIK* fik = player->AddComponent<FootIK>();
         fik->useRaycast = true;
@@ -96,6 +106,21 @@ std::string WirePlayerAnimation(Scene& scene, GameObject* player) {
         addedAnim = true;
     }
 
+    // Hands on the ledge while hanging: only for a controller that grabs ledges and a rig
+    // with both arms. A LimbIK already on a hand is reused (Wire); the rest are added off.
+    const bool ledge = GrabsLedges(player);
+    bool ledgeArms = false;
+    if (st.bones >= 8 && ledge && !player->GetComponent<LedgeHandsIK>()) {
+        const humanoid::BoneMap bm = humanoid::MapHumanoidBones(model);
+        ledgeArms = bm.Get(humanoid::LUpperArm) && bm.Get(humanoid::LForeArm) && bm.Get(humanoid::LHand) &&
+                    bm.Get(humanoid::RUpperArm) && bm.Get(humanoid::RForeArm) && bm.Get(humanoid::RHand);
+        if (ledgeArms) {
+            LedgeHandsIK* lh = player->AddComponent<LedgeHandsIK>();
+            lh->Wire(model);
+            addedLedge = true;
+        }
+    }
+
     std::string msg = fix;
     msg += " Rig " + std::to_string(st.bones) + "/" + std::to_string(humanoid::BoneCount) + ".";
     if (st.bones < 8) {
@@ -103,7 +128,7 @@ std::string WirePlayerAnimation(Scene& scene, GameObject* player) {
                "Right-click the model and choose Map Humanoid Bones or Rig Model (Humanoid).";
         return msg;
     }
-    if (addedFoot || addedLook || addedAnim) {
+    if (addedFoot || addedLook || addedAnim || addedLedge) {
         msg += " Added";
         bool any = false;
         auto add = [&](bool on, const char* name) {
@@ -115,6 +140,7 @@ std::string WirePlayerAnimation(Scene& scene, GameObject* player) {
         add(addedFoot, "Foot IK");
         add(addedLook, "Look-At");
         add(addedAnim, "the default Animator");
+        add(addedLedge, "Ledge Hands IK");
         msg += ".";
     }
     std::string kept;
@@ -125,6 +151,8 @@ std::string WirePlayerAnimation(Scene& scene, GameObject* player) {
         msg += " Left " + kept + " as they were (weights, chains and the state graph are unchanged).";
     if (!st.legs) msg += " No two-legged chain, so Foot IK was not added.";
     if (!st.head) msg += " No head bone, so Look-At was not added.";
+    if (ledge && !addedLedge && player->GetComponent<LedgeHandsIK>()) msg += " Left Ledge Hands IK as it was.";
+    else if (ledge && !addedLedge) msg += " No two-armed chain, so Ledge Hands IK was not added.";
     return msg;
 }
 

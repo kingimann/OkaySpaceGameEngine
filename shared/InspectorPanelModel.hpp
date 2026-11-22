@@ -265,7 +265,8 @@ inline void InspCellWidths(float full, int n, float spacing, float* out) {
 // slots with their pickers and thumbnails, the maps, the mesh tools and the material preset) stays the editor's Dear ImGui code
 // under it in this stage: those are asset fields (drop targets, the project picker, thumbnails) that the next stage ports.
 
-inline const char* const kMeshShaderNames[9] = {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet"};
+inline const char* const kMeshShaderNames[10] = {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet", "Custom"};
+constexpr int kMeshShaderCount = 10;
 enum MeshShader : int { MeshShaderStandard = 0, MeshShaderUnlit, MeshShaderToon, MeshShaderGradient, MeshShaderFresnel };
 inline const char* const kMeshPrimitiveNames[23] = {"Cube", "Pyramid", "Wedge", "Quad", "Plane", "Sphere", "Cylinder", "Cone", "Tube", "Torus",
                                                     "TorusKnot", "Capsule", "Icosphere", "Grid", "Hemisphere", "Stairs", "Gear", "Prism",

@@ -29,6 +29,8 @@ struct Material {
     /// Shading model + cel-band count for the Toon shader.
     MeshRenderer::Shader shader = MeshRenderer::Shader::Standard;
     int                  toonBands = 3;
+    /// Custom shader (shader == Custom): the .okayshader file and its property values (MeshRenderer::shaderParams).
+    std::string customShader, shaderParams;
 
     /// Per-material rim (Fresnel) backlight and inverted-hull silhouette outline.
     float rimStrength = 0.0f, rimPower = 3.0f;
@@ -49,6 +51,7 @@ struct Material {
         m.unlit = mr.unlit; m.doubleSided = mr.doubleSided;
         m.texture = mr.texture; m.tiling = mr.tiling;
         m.shader = mr.shader; m.toonBands = mr.toonBands;
+        m.customShader = mr.customShader; m.shaderParams = mr.shaderParams;
         m.rimStrength = mr.rimStrength; m.rimPower = mr.rimPower; m.rimColor = mr.rimColor;
         m.outline = mr.outline; m.outlineColor = mr.outlineColor; m.outlineWidth = mr.outlineWidth;
         m.uvScroll = mr.uvScroll; m.triplanar = mr.triplanar;
@@ -61,6 +64,7 @@ struct Material {
         mr.unlit = unlit; mr.doubleSided = doubleSided;
         mr.texture = texture; mr.tiling = tiling;
         mr.shader = shader; mr.toonBands = toonBands;
+        mr.customShader = customShader; mr.shaderParams = shaderParams;
         mr.rimStrength = rimStrength; mr.rimPower = rimPower; mr.rimColor = rimColor;
         mr.outline = outline; mr.outlineColor = outlineColor; mr.outlineWidth = outlineWidth;
         mr.uvScroll = uvScroll; mr.triplanar = triplanar;
@@ -81,6 +85,9 @@ struct Material {
           << outlineColor.r << " " << outlineColor.g << " " << outlineColor.b << "\n"
           << "uvanim " << uvScroll.x << " " << uvScroll.y << " " << (triplanar ? 1 : 0) << "\n"
           << "texture " << TexturePathText(texture) << "\n";
+        // Custom shader (written only when set, so older engines read the rest unchanged).
+        if (!customShader.empty()) o << "customshader " << TexturePathText(customShader) << "\n";
+        if (!shaderParams.empty()) o << "shaderparams " << TexturePathText(shaderParams) << "\n";
         return o.str();
     }
     /// The texture path as the `texture` line writes it. "-" is no texture. A plain path is written as it is
@@ -142,6 +149,11 @@ struct Material {
                 m.texture = TexturePathFromText(line.substr(at + 7));
                 continue;
             }
+            if (key == "customshader" || key == "shaderparams") {
+                const std::string rest = line.substr(line.find(key) + key.size());
+                (key == "customshader" ? m.customShader : m.shaderParams) = TexturePathFromText(rest);
+                continue;
+            }
             std::vector<std::string> v;
             for (std::string t; ls >> t;) v.push_back(t);
             // Field i of this line as a finite float into `dst`; anything else keeps `dst` and is counted.
@@ -166,7 +178,7 @@ struct Material {
                 int s = (int)m.shader;
                 n(0, s);
                 // An id this build does not know (a damaged file, or a newer shader) draws as Standard.
-                if (s < 0 || s > (int)MeshRenderer::Shader::Velvet) { ++bad; s = (int)MeshRenderer::Shader::Standard; }
+                if (s < 0 || s > (int)MeshRenderer::Shader::Custom) { ++bad; s = (int)MeshRenderer::Shader::Standard; }
                 m.shader = (MeshRenderer::Shader)s;
                 n(1, m.toonBands);
             }

@@ -166,6 +166,8 @@ struct Frame {
     bool entry = false;   ///< returning from it leaves the Execute call that started it
     bool tail = false;    ///< reached through a tail call
     bool pcallMark = false;   ///< a pcall running inside the loop: the protected function's results come back here
+    bool xpcallMark = false;  ///< with pcallMark: an xpcall; the message handler is in stack[func]
+    std::uint8_t post = 0;    ///< a metamethod run inside the loop: 1 = its result becomes a boolean, 2 = the negated boolean
 };
 
 enum class CoStatus : std::uint8_t { Suspended, Running, Normal, Dead };
@@ -341,6 +343,17 @@ public:
     bool ExecuteLoop();
     bool RecoverAtPcall(std::size_t entryIdx);
     void CallAt(int func, int nres);   ///< call stack[func] with args above it (native or Lua), running Lua to completion
+    /// __index without calling a Lua function: true with `out` set when resolved (a native handler is
+    /// called); false when the chain ends at a Lua function: call fn(self, key) (the loop does it in place).
+    bool IndexStep(const Value& obj, const Value& key, Value& out, Value& fn, Value& self);
+    /// __newindex the same way: true when done; false: call fn(self, key, v).
+    bool NewIndexStep(const Value& obj, const Value& key, const Value& v, Value& fn, Value& self);
+    /// The Lua function metamethod an arithmetic or bitwise operation would call, or nil (numbers, or a native one).
+    Value ArithLuaTM(int op, const Value& a, const Value& b);
+    /// Run Lua function `f` with `nargs` arguments as a frame of the loop; its results (nres) land at `dst`.
+    void PushMetaFrame(int dst, const Value& f, const Value* args, int nargs, int nres, std::uint8_t post);
+    /// xpcall(f, msgh, ...) of a Lua function as a marker frame of the loop (stack[func] = xpcall).
+    void PushXPcallMarker(int func, int nargs, int nres);
     /// Close the to-be-closed variables at stack index >= level (err = the error, or nil).
     void CloseTbc(int level, const Value& err, bool withErr);
     LClosure* NewLClosure(Proto* p);

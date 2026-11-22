@@ -107,6 +107,8 @@ std::uint32_t HashBytes(const char* s, std::size_t n);
 
 /// The base library's pcall (the loop runs pcall of a Lua function itself, see State::Execute).
 int PCallNative(State& L, int nargs);
+/// The base library's xpcall (the loop runs xpcall of a Lua function itself, like pcall).
+int XPCallNative(State& L, int nargs);
 
 /// Library openers (one per file).
 void OpenBase(State& L);

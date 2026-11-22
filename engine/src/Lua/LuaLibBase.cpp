@@ -728,6 +728,10 @@ Table* NewLib(State& L, const char* name) {
 
 // pcall called from native code, or of a native function (a Lua function called from
 // Lua code runs inside the loop instead, so it can yield).
+// xpcall's function value: the loop recognises it and runs xpcall of a Lua function itself
+// (a marker frame, so a coroutine can yield inside it); other calls come here.
+int XPCallNative(State& L, int n) { return B_xpcall(L, n); }
+
 int PCallNative(State& L, int n) {
     L.CheckAny(0, "pcall");
     int func = L.Current()->top - n;
@@ -743,7 +747,7 @@ void OpenBase(State& L) {
         {"print", B_print}, {"type", B_type}, {"tostring", B_tostring}, {"tonumber", B_tonumber},
         {"rawequal", B_rawequal}, {"rawlen", B_rawlen}, {"rawget", B_rawget}, {"rawset", B_rawset},
         {"setmetatable", B_setmetatable}, {"getmetatable", B_getmetatable}, {"assert", B_assert},
-        {"error", B_error}, {"pcall", PCallNative}, {"xpcall", B_xpcall}, {"select", B_select}, {"next", B_next},
+        {"error", B_error}, {"pcall", PCallNative}, {"xpcall", XPCallNative}, {"select", B_select}, {"next", B_next},
         {"pairs", B_pairs}, {"ipairs", B_ipairs}, {"load", B_load}, {"collectgarbage", B_collectgarbage},
     };
     for (const auto& f : fns) L.Register(g, f.n, f.f);

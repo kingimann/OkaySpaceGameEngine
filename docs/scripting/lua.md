@@ -13,9 +13,9 @@ other Lua implementation was used, ported or followed (CLAUDE.md rule 19a). Per 
 | `engine/include/okay/Lua/Lua.hpp` | manual 2.1 (values and types), 2.4 (metatables), 2.6 (coroutines); our own object layout |
 | `engine/src/Lua/LuaCode.hpp` | our own bytecode design: a stack machine whose bottom slots are the locals |
 | `engine/src/Lua/LuaCompiler.cpp` | manual 3.1 (lexical conventions), 3.2-3.5 (variables, statements, expressions, scoping), 3.4.8 (precedence), 9 (complete syntax); the "expression descriptor" technique of one-pass compilers |
-| `engine/src/Lua/LuaState.cpp` | manual 2.1, 2.4, 2.5 (we do a plain stop-the-world mark and sweep; 2.5.4 weak tables), 2.6, 3.3.5 (for loops), 3.3.8 (to-be-closed variables), 3.4.1-3.4.4 and 3.4.7 (arithmetic, conversions, comparisons, length); open-addressing hash tables; FNV-1a string hash |
+| `engine/src/Lua/LuaState.cpp` | manual 2.1, 2.4, 2.5 (we do a plain stop-the-world mark and sweep; 2.5.3 finalizers; 2.5.4 weak tables), 2.6, 3.3.5 (for loops), 3.3.8 (to-be-closed variables), 3.4.1-3.4.4 and 3.4.7 (arithmetic, conversions, comparisons, length); open-addressing hash tables; FNV-1a string hash |
 | `engine/src/Lua/LuaLibBase.cpp` | manual 6.1 (basic functions), 6.2 (coroutine), 6.7 (math), 6.9 (os, safe part only); xoshiro256** and splitmix64 from their published algorithm descriptions |
-| `engine/src/Lua/LuaLibString.cpp` | manual 6.4 and 6.4.1 (string functions and patterns); our own backtracking matcher |
+| `engine/src/Lua/LuaLibString.cpp` | manual 6.4, 6.4.1 (string functions and patterns) and 6.4.2 (pack format strings); our own backtracking matcher and format reader |
 | `engine/src/Lua/LuaLibTable.cpp` | manual 6.6 (table functions); our own quicksort |
 | `engine/src/Lua/LuaLibUtf8.cpp` | manual 6.5 (UTF-8 support) and the UTF-8 encoding rules |
 | `engine/src/Lua/LuaScriptVM.cpp` | the engine's `IScriptVM` interface and the typed-language binding table (`engine/src/Script/EngineApi.cpp`) |
@@ -30,20 +30,31 @@ Supported: the whole Lua 5.4 syntax (locals, `<const>`, `<close>`, multiple assi
 closures, numeric and generic `for`, `goto` and labels, integer and float subtypes with `//` and the 5.4 conversion
 rules, all string escapes, long strings and comments), metatables with `__index`, `__newindex`, `__call`, the
 arithmetic and bitwise events, `__eq`, `__lt`, `__le`, `__len`, `__concat`, `__unm`, `__close`, `__tostring`, `__name`,
-`__metatable`, `__pairs`, `__mode`; coroutines (`create`, `resume`, `yield`, `status`, `wrap`, `isyieldable`, `running`,
+`__metatable`, `__pairs`, `__mode`, `__gc`; coroutines (`create`, `resume`, `yield`, `status`, `wrap`, `isyieldable`, `running`,
 `close`); `error`, `pcall`, `xpcall` with "chunk:line:" positions and variable names ("attempt to index a nil value
 (global 'foo')"); `load` for text chunks (with an environment).
 
-Libraries (sandboxed): base (no `dofile`, `loadfile`, `require`), `string` (all functions but `pack`, `unpack`,
-`packsize`, `dump`), `table`, `math`, `coroutine`, `utf8`, `os.clock`, `os.time`, `os.date`, `os.difftime`. Not
+Libraries (sandboxed): base (no `dofile`, `loadfile`, `require`), `string` (all functions but `dump`; `pack`,
+`unpack` and `packsize` follow manual 6.4.2 with this build's sizes: int 4, long / integer / size_t 8, float 4,
+double 8, native order little-endian, native maximum alignment 8), `table`, `math`, `coroutine`, `utf8`, `os.clock`, `os.time`, `os.date`, `os.difftime`. Not
 present: `io`, `os.execute`, `os.exit`, `os.getenv`, `os.remove`, `package`, `debug`.
 
 Not supported (documented differences):
-- `__gc` finalizers: ignored. Weak tables (`__mode` "k", "v", "kv") work, but weak keys are not full ephemerons
-  (a value that refers to its own key keeps the entry alive); strings are never removed, as the manual says.
-- Yielding across `xpcall`, a metamethod, `table.sort`'s comparator or `string.gsub`'s function raises
-  "attempt to yield across a C-call boundary". Yielding inside `pcall` of a Lua function works (that pcall runs
-  inside the interpreter loop), and so do Lua functions, `for` iterators and `coroutine.wrap` generators.
+- `__gc` finalizers (manual 2.5.3) work for tables: `setmetatable` with a `__gc` field marks the table; when nothing
+  reaches it any more, a collection clears its weak-value entries, keeps it alive for that cycle and calls `__gc`
+  once, in reverse order of marking, at the end of the collection (a safe point). A finalizer may resurrect its
+  object. An error in a finalizer prints "warning: error in __gc metamethod (...)" and does not stop the script. Not
+  done: finalizers are not called when the State is destroyed (the manual calls them at `lua_close`), and engine
+  userdata have no finalizers.
+- Weak tables (`__mode` "k", "v", "kv") work, but weak keys are not full ephemerons (a value that refers to its own
+  key keeps the entry alive); strings are never removed, as the manual says.
+- Yielding works inside `pcall` and `xpcall` of a Lua function, and inside Lua metamethods for `__index`,
+  `__newindex`, the arithmetic and bitwise events, `__unm`, `__bnot`, `__len`, `__eq`, `__lt`, `__le` and `__concat`
+  of two values (these run as frames of the interpreter loop, no C++ recursion). Still "attempt to yield across a
+  C-call boundary": a metamethod or callback a library function calls (`tostring` -> `__tostring`, `pairs` ->
+  `__pairs`, `table.sort`'s comparator, `string.gsub`'s function), `__close`, `__gc`, a method lookup through
+  `__index` (`obj:m()`), a `__concat` in a chain of three or more values (`a .. b .. c`), and a native (engine)
+  metamethod.
 - Binary chunks: `load` refuses them.
 - String comparison is by bytes (the C locale), character classes are ASCII.
 

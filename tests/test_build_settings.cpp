@@ -205,6 +205,17 @@ int main() {
         CHECK(RunCommandLine("exit 3", "") == 3);
         const fs::path before = fs::current_path();
         CHECK(RunCommandLine("exit 0", fs::temp_directory_path().string()) == 0 && fs::current_path() == before);   // the folder is put back
+#if !defined(_WIN32)
+        {   // the command runs in the folder it is given, and the editor's folder never changes
+            const fs::path wd = fs::temp_directory_path() / "okay bs cmd's dir";
+            fs::create_directories(wd);
+            { std::ofstream(wd / "marker.txt") << "x"; }
+            CHECK(RunCommandLine("test -f marker.txt", wd.string()) == 0);
+            CHECK(RunCommandLine("test -f marker.txt", "") != 0 || fs::exists(before / "marker.txt"));
+            CHECK(fs::current_path() == before);
+            fs::remove_all(wd);
+        }
+#endif
     }
     {
         RUN_SUITE("output folder: a relative folder is inside the project");

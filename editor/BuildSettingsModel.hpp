@@ -557,14 +557,20 @@ inline std::string ExpandCommand(const std::string& cmd, const CommandVars& v) {
     return out;
 }
 /// Run a command line through the shell, in `workDir` when given. Returns the program's exit code (-1 if it could not start).
+/// The shell changes folder itself ("cd ... &&"): the editor's own working folder is never changed, so a build running on
+/// a worker thread cannot make the main thread's relative paths point somewhere else for a moment.
+inline std::string CommandInFolder(const std::string& cmd, const std::string& workDir) {
+    if (workDir.empty()) return cmd;
+#if defined(_WIN32)
+    return "cd /d \"" + workDir + "\" && " + cmd;
+#else
+    std::string q = "'";
+    for (char c : workDir) { if (c == '\'') q += "'\\''"; else q += c; }
+    return "cd " + q + "' && " + cmd;
+#endif
+}
 inline int RunCommandLine(const std::string& cmd, const std::string& workDir) {
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    const fs::path old = fs::current_path(ec);
-    bool moved = false;
-    if (!workDir.empty()) { fs::current_path(fs::path(workDir), ec); moved = !ec; }
-    const int raw = std::system(cmd.c_str());
-    if (moved) { std::error_code e2; fs::current_path(old, e2); }
+    const int raw = std::system(CommandInFolder(cmd, workDir).c_str());
     if (raw == -1) return -1;
 #if defined(_WIN32)
     return raw;
@@ -698,8 +704,11 @@ inline bool LoadProfileFile(const std::string& projectDir, const std::string& fi
 /// under whatever folder the editor process happened to start in (on Windows that is the install folder).
 /// An absolute folder, or no project, is used as written.
 inline std::string ResolveOutputDir(const std::string& dir, const std::string& projectDir) {
-    (void)projectDir;
-    return dir;
+    namespace fs = std::filesystem;
+    if (dir.empty() || projectDir.empty()) return dir;
+    const fs::path d = fs::u8path(dir);
+    if (d.is_absolute() || d.has_root_name() || d.has_root_directory()) return dir;
+    return (fs::u8path(projectDir) / d).lexically_normal().u8string();
 }
 
 }  // namespace oked::bsm

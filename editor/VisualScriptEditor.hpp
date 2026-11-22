@@ -1901,7 +1901,7 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "NetMatchStarted") return "net_match_started()";
     if (t == "NetAllReady")   return "net_all_ready()";
     if (t == "SteamName")     return "steam_name()";
-    if (t == "SteamIsUnlocked") return "steam_is_unlocked(" + q(lit("")) + ")";
+    if (t == "SteamIsUnlocked") return "Achievements.IsUnlocked(" + q(lit("")) + ")";
     if (t == "SteamGetStat")  return "steam_get_stat(" + q(lit("stat")) + ")";
     // ---- Fourth wave ----
     auto In = [&](int p, const char* d) { return VsInput(g, nodeId, p, d); };
@@ -2233,10 +2233,10 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="NetDespawn")    out += ind + "net_despawn(" + in(0, "\"\"") + ")\n";
     else if (t=="NetReady")      out += ind + "net_ready(" + in(0, "true") + ")\n";
     else if (t=="NetStartMatch") out += ind + "net_start_match()\n";
-    else if (t=="SteamUnlock")   out += ind + "steam_unlock(" + q(arg("")) + ")\n";
+    else if (t=="SteamUnlock")   out += ind + "Achievements.Unlock(" + q(arg("")) + ")\n";
     else if (t=="SteamSetStat")  out += ind + "steam_set_stat(" + q(arg("stat")) + ", " + in(0) + ")\n";
     else if (t=="SteamStore")    out += ind + "steam_store()\n";
-    else if (t=="SteamLeaderboard") out += ind + "steam_leaderboard(" + q(arg("")) + ", " + in(0) + ")\n";
+    else if (t=="SteamLeaderboard") out += ind + "Leaderboards.Submit(" + q(arg("")) + ", " + in(0) + ")\n";
     else if (t=="SendEvent")     out += ind + "send_event(" + in(0, "\"self\"") + ", " + q(arg("Event")) + ", " + in(1, "0") + ")\n";
     else if (t=="BroadcastEvent")out += ind + "broadcast_event(" + q(arg("Event")) + ", " + in(0, "0") + ")\n";
     else if (t=="SetObjectVar")  out += ind + "set_object_var(" + in(0, "\"self\"") + ", " + q(arg("hp")) + ", " + in(1, "0") + ")\n";

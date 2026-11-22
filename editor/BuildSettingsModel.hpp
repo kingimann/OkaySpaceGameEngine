@@ -25,16 +25,17 @@
 #include <sys/wait.h>
 #endif
 #include "okay/Core/BuildConfigExtra.hpp"
+#include "okay/Platform/StoreExport.hpp"
 #include "ProjectState.hpp"
 
 namespace oked::bsm {
 
 // ---- pages -------------------------------------------------------------------------------------------------
 // The ids are the ones the window already used (kBuildSecs in main.cpp), plus two new pages at the end.
-enum Page { kScenes = 0, kPlayer = 1, kDisplay = 2, kGraphics = 3, kAudioInput = 4, kOutput = 5, kServer = 6, kXbox = 7, kGame = 8, kAdvanced = 9, kPageCount = 10 };
+enum Page { kScenes = 0, kPlayer = 1, kDisplay = 2, kGraphics = 3, kAudioInput = 4, kOutput = 5, kServer = 6, kXbox = 7, kGame = 8, kAdvanced = 9, kStores = 10, kPageCount = 11 };
 
 inline const char* PageName(int p) {
-    static const char* n[kPageCount] = {"Scenes", "Player", "Display", "Graphics", "Audio & Input", "Output", "Server", "Xbox", "Game", "Advanced"};
+    static const char* n[kPageCount] = {"Scenes", "Player", "Display", "Graphics", "Audio & Input", "Output", "Server", "Xbox", "Game", "Advanced", "Stores"};
     return p >= 0 && p < kPageCount ? n[p] : "";
 }
 inline const char* PageTip(int p) {
@@ -48,7 +49,8 @@ inline const char* PageTip(int p) {
         "Name, port, players, password, public listing and anti-cheat (written to server.cfg).",
         "Xbox One Developer Mode package (experimental).",
         "How the game runs: speed, starting language and volumes, logging, environment variables.",
-        "Commands before and after the build, version control file, build history."};
+        "Commands before and after the build, version control file, build history.",
+        "Release on Steam or the Epic Games Store: the game's store ids, the SDK folders and the upload files."};
     return p >= 0 && p < kPageCount ? t[p] : "";
 }
 /// platform: 0 Desktop, 1 Web, 2 Android, 3 Server, 4 Xbox. The order is the order of the left list.
@@ -56,7 +58,7 @@ inline std::vector<int> PagesFor(int platform) {
     switch (platform) {
         case 3: return {kScenes, kServer, kOutput};
         case 4: return {kScenes, kPlayer, kXbox};
-        case 0: return {kScenes, kPlayer, kDisplay, kGraphics, kAudioInput, kGame, kOutput, kAdvanced};
+        case 0: return {kScenes, kPlayer, kDisplay, kGraphics, kAudioInput, kGame, kOutput, kStores, kAdvanced};
         default: return {kScenes, kPlayer, kDisplay, kGraphics, kAudioInput, kOutput};
     }
 }
@@ -175,6 +177,21 @@ inline const std::vector<SettingInfo>& Registry() {
         OKAY_BS_FIELD("Allow build commands", kAdvanced, "safety scripts run", allowBuildCommands),
         OKAY_BS_FIELD("Command before the build", kAdvanced, "pre-build script", preBuildCommand),
         OKAY_BS_FIELD("Command after the build", kAdvanced, "post-build script upload", postBuildCommand),
+        OKAY_BS_FIELD("Store", kStores, "steam epic games store release publish sell", storeTarget),
+        OKAY_BS_FIELD("Steam app id", kStores, "steamworks appid", steamAppId),
+        OKAY_BS_FIELD("Steam depot id", kStores, "steamworks steampipe depot", steamDepotId),
+        OKAY_BS_FIELD("Steamworks SDK folder", kStores, "steam sdk steam_api64.dll", steamSdkPath),
+        OKAY_BS_FIELD("Steam branch to set live", kStores, "steampipe beta default setlive", steamBranch),
+        OKAY_BS_FIELD("Steam build description", kStores, "steampipe builds page", steamBuildDesc),
+        OKAY_BS_FIELD("Epic product id", kStores, "eos epic games store", epicProductId),
+        OKAY_BS_FIELD("Epic sandbox id", kStores, "eos epic games store", epicSandboxId),
+        OKAY_BS_FIELD("Epic deployment id", kStores, "eos epic games store", epicDeploymentId),
+        OKAY_BS_FIELD("Epic client id", kStores, "eos epic games store credentials", epicClientId),
+        OKAY_BS_FIELD("Epic organization id", kStores, "eos epic buildpatchtool upload", epicOrgId),
+        OKAY_BS_FIELD("Epic artifact id", kStores, "eos epic buildpatchtool upload", epicArtifactId),
+        OKAY_BS_FIELD("BuildPatchTool client id", kStores, "eos epic buildpatchtool upload bpt", epicBptClientId),
+        OKAY_BS_FIELD("BuildPatchTool program", kStores, "eos epic buildpatchtool upload bpt exe", epicBptPath),
+        OKAY_BS_FIELD("EOS SDK folder", kStores, "epic eos sdk dll", epicSdkPath),
     };
     return r;
 }
@@ -355,6 +372,8 @@ inline std::vector<std::string> BuildSummary(const SummaryInput& in) {
         if (s.defaultLanguage[0]) L.push_back(std::string("The first time it runs, the game uses the language \"") + s.defaultLanguage + "\".");
         if (s.logToFile || s.logLevel[0]) L.push_back(std::string("The game writes ") + (s.logToFile ? "a log file (game.log) in its save folder" : "log messages") + (s.logLevel[0] ? std::string(" with detail level ") + s.logLevel : std::string()) + ".");
         if (s.envVars[0]) L.push_back("It sets environment variables before it starts.");
+        if (s.storeTarget == 1) L.push_back("It is a Steam build for app " + std::to_string(s.steamAppId) + ": the upload files for steamcmd go in StoreUpload/steam" + (s.developmentBuild ? ", and steam_appid.txt lets it start without Steam." : "."));
+        else if (s.storeTarget == 2) L.push_back("It is an Epic Games Store build: the BuildPatchTool upload script goes in StoreUpload/epic. The EOS client secret comes from OKAY_EOS_CLIENT_SECRET.");
         if (s.allowBuildCommands && (s.preBuildCommand[0] || s.postBuildCommand[0])) {
             if (s.preBuildCommand[0]) L.push_back("Before building it runs your command: " + std::string(s.preBuildCommand));
             if (s.postBuildCommand[0]) L.push_back("After a good build it runs your command: " + std::string(s.postBuildCommand));
@@ -399,6 +418,20 @@ inline bool LooksLikeVersion(const char* v) {
     }
     return digit && dots >= 1 && dots <= 3;
 }
+/// The Stores page as the store export's settings (the build fills in the folder, exe, version and build number).
+inline okay::stores::ExportInput StoreExportFrom(const BuildSettings& s) {
+    okay::stores::ExportInput ex;
+    ex.store = (okay::StoreKind)std::max(0, std::min(2, s.storeTarget));
+    ex.steam.appId = (std::uint32_t)std::max(0, s.steamAppId);
+    ex.steam.depotId = (std::uint32_t)std::max(0, s.steamDepotId);
+    ex.steam.sdkPath = s.steamSdkPath; ex.steam.branch = s.steamBranch; ex.steam.description = s.steamBuildDesc;
+    ex.epic.productId = s.epicProductId; ex.epic.sandboxId = s.epicSandboxId; ex.epic.deploymentId = s.epicDeploymentId;
+    ex.epic.clientId = s.epicClientId; ex.epic.organizationId = s.epicOrgId; ex.epic.artifactId = s.epicArtifactId;
+    ex.epic.bptClientId = s.epicBptClientId; ex.epic.bptPath = s.epicBptPath; ex.epic.sdkPath = s.epicSdkPath;
+    ex.developmentBuild = s.developmentBuild;
+    ex.version = s.version; ex.buildNumber = s.buildNumber;
+    return ex;
+}
 inline std::vector<Issue> Validate(const ValidateInput& in) {
     const BuildSettings& s = in.s;
     std::vector<Issue> v;
@@ -427,6 +460,14 @@ inline std::vector<Issue> Validate(const ValidateInput& in) {
     if ((s.preBuildCommand[0] || s.postBuildCommand[0]) && !s.allowBuildCommands)
         add(Severity::Info, kAdvanced, "You wrote build commands but \"Allow build commands\" is off, so they will not run.");
     if (s.developmentBuild && s.encryptData) add(Severity::Info, kOutput, "A development build with encrypted data is hard to debug. Consider turning one off.");
+    if (in.platform == 0 && s.storeTarget != 0) {
+        okay::stores::ExportInput ex = StoreExportFrom(s);
+        ex.buildDir = "build"; ex.exeName = "game.exe";   // the real ones are only known during the build
+        std::vector<std::string> warn;
+        for (const std::string& e : okay::stores::Validate(ex, &warn)) add(Severity::Error, kStores, e);
+        for (const std::string& w : warn) add(Severity::Warning, kStores, w);
+        if (s.layout == 2) add(Severity::Warning, kStores, "The Zip layout keeps no folder, so no store upload files are written. Use the Folder layout for a store build.");
+    }
     return v;
 }
 /// Apply one Fix. Returns false if there was nothing to fix.

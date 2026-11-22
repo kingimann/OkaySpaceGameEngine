@@ -49,6 +49,11 @@ struct ExportInput {
     bool        developmentBuild = false;
     SteamExport steam;
     EpicExport  epic;
+    /// Which files to write: the runtime files that belong to the game (steam_appid.txt, the SDK DLL, the packed
+    /// Epic secret) and/or the StoreUpload folder. Build writes the runtime part before it lists, hashes and zips the
+    /// game, and the upload part after, so the upload folder is never inside the game's zip or file list.
+    bool        writeRuntime = true;
+    bool        writeUpload = true;
     /// How to read an environment variable (tests replace it). Default: std::getenv.
     std::function<std::string(const char*)> getEnv;
 };

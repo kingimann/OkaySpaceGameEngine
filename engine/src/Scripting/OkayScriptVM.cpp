@@ -78,6 +78,7 @@
 #include "okay/Components/NetworkObject.hpp"
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
+#include "okay/Platform/PlatformServices.hpp"
 #include "okay/Platform/PlayFab/PlayFab.hpp"
 #include "okay/Platform/Account/Account.hpp"
 #include "okay/Components/UIImage.hpp"
@@ -8508,6 +8509,44 @@ struct OkayScriptVM::Impl {
         b["steam_workshop_path"] = [](std::vector<Value>& a) {
             return Value{a.empty() ? std::string{} : Steam::Get().WorkshopItemPath((std::uint64_t)a[0].AsFloat())};
         };
+        // ---- Platform services: the store this game build is for (Steam, Epic or none) ----
+        // The same script works on every store (okay/Platform/PlatformServices.hpp).
+        auto S0 = [](std::vector<Value>& a, std::size_t i) { return a.size() > i ? a[i].AsString() : std::string(); };
+        auto I0 = [](std::vector<Value>& a, std::size_t i) { return a.size() > i ? SafeInt(a[i].AsFloat()) : 0; };
+        b["Achievements.Unlock"] = [S0](std::vector<Value>& a) {
+            const bool ok = PlatformServices::Get().UnlockAchievement(S0(a, 0));
+            PlatformServices::Get().StoreStats();
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["Achievements.IsUnlocked"] = [S0](std::vector<Value>& a) { return Value{PlatformServices::Get().IsAchievementUnlocked(S0(a, 0)) ? 1.0f : 0.0f}; };
+        b["Achievements.Progress"] = [S0, I0](std::vector<Value>& a) {
+            const int cur = I0(a, 1), max = I0(a, 2);
+            PlatformServices::Get().AchievementProgress(S0(a, 0), (std::uint32_t)std::max(0, cur), (std::uint32_t)std::max(0, max));
+            return Value{};
+        };
+        b["Stats.Set"] = [S0, I0](std::vector<Value>& a) { PlatformServices::Get().SetStat(S0(a, 0), I0(a, 1)); return Value{}; };
+        b["Stats.Add"] = [S0, I0](std::vector<Value>& a) { return Value{(float)PlatformServices::Get().AddStat(S0(a, 0), a.size() > 1 ? I0(a, 1) : 1)}; };
+        b["Stats.Get"] = [S0](std::vector<Value>& a) { return Value{(float)PlatformServices::Get().GetStat(S0(a, 0))}; };
+        b["Stats.Store"] = [](std::vector<Value>&) { return Value{PlatformServices::Get().StoreStats() ? 1.0f : 0.0f}; };
+        b["Leaderboards.Submit"] = [S0, I0](std::vector<Value>& a) { return Value{PlatformServices::Get().SubmitScore(S0(a, 0), I0(a, 1)) ? 1.0f : 0.0f}; };
+        // "rank,name,score" rows, highest first (the same shape as steam_leaderboard_top).
+        b["Leaderboards.Top"] = [S0, I0](std::vector<Value>& a) {
+            Value v = Value::MakeArray();
+            if (auto arr = v.AsArray())
+                for (const StoreScore& e : PlatformServices::Get().TopScores(S0(a, 0), a.size() > 1 ? I0(a, 1) : 10))
+                    arr->push_back(Value{std::to_string(e.rank) + "," + e.name + "," + std::to_string(e.score)});
+            return v;
+        };
+        b["CloudSave.Write"] = [S0](std::vector<Value>& a) { return Value{PlatformServices::Get().CloudWrite(S0(a, 0), S0(a, 1)) ? 1.0f : 0.0f}; };
+        b["CloudSave.Read"] = [S0](std::vector<Value>& a) { return Value{PlatformServices::Get().CloudRead(S0(a, 0))}; };
+        b["CloudSave.Has"] = [S0](std::vector<Value>& a) { return Value{PlatformServices::Get().CloudHas(S0(a, 0)) ? 1.0f : 0.0f}; };
+        b["CloudSave.Delete"] = [S0](std::vector<Value>& a) { return Value{PlatformServices::Get().CloudDelete(S0(a, 0)) ? 1.0f : 0.0f}; };
+        b["Presence.Set"] = [S0](std::vector<Value>& a) { PlatformServices::Get().SetPresence(S0(a, 0), S0(a, 1)); return Value{}; };
+        b["Store.Name"] = [](std::vector<Value>&) { return Value{std::string(StoreKindName(PlatformServices::Get().Kind()))}; };
+        b["Store.UserName"] = [](std::vector<Value>&) { return Value{PlatformServices::Get().UserName()}; };
+        b["Store.IsOnline"] = [](std::vector<Value>&) { return Value{PlatformServices::Get().IsAvailable() ? 1.0f : 0.0f}; };
+        b["Store.OwnsGame"] = [](std::vector<Value>&) { return Value{PlatformServices::Get().OwnsGame() ? 1.0f : 0.0f}; };
+        b["Store.Overlay"] = [S0](std::vector<Value>& a) { PlatformServices::Get().ShowOverlay(S0(a, 0)); return Value{}; };
         // Integer stats (kills, wins, ...). Floats lose precision past 2^24, so
         // counters that climb high belong here rather than in steam_*_stat.
         b["steam_set_stat_int"] = [](std::vector<Value>& a) {

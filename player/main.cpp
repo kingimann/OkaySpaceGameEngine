@@ -63,6 +63,10 @@
 #endif
 #include "DevLog.hpp"             // development-build log file (used with or without OkayUI)
 #include "okay/Core/BuildInfo.hpp"
+#include "okay/Platform/PlatformServices.hpp"   // store builds: Steam / Epic / none (Build Settings > Stores)
+#include "okay/Platform/StoreExport.hpp"
+#include "okay/Platform/Steam/Steam.hpp"
+#include "okay/Platform/Epic/Epic.hpp"
 #include "GameContent.hpp"         // optional downloaded game content (off unless a content URL is configured; docs/release/content_delivery.md)
 #include "GameContentValidators.hpp"  // graph / script checks for downloaded scripts
 
@@ -1352,6 +1356,7 @@ int main(int argc, char** argv) {
         bool smoothPhysics = true;
         bool sawPhysics = false;
         okay::buildpipe::ExtraConfig extra;   // Build Settings > Game (docs/editor/build_settings_upgrade.md)
+        okay::StoreSettings store;            // Build Settings > Stores: store=steam|epic and the store ids
     } cfg;
     {
         // Read the whole config and transparently decode it if it was obfuscated at
@@ -1428,6 +1433,7 @@ int main(int argc, char** argv) {
                 cfg.smoothPhysics = std::atoi(v.c_str()) != 0;
                 cfg.sawPhysics = true;
             }
+            else if (okay::ApplyStoreKey(cfg.store, k, v)) {}       // store, steam_app_id, epic_product_id ...
             else okay::buildpipe::ApplyExtraKey(cfg.extra, k, v);   // time_scale, music_volume, log_level, env ...
         }
     }
@@ -1454,6 +1460,32 @@ int main(int argc, char** argv) {
     if (!cfg.extra.logLevel.empty()) okay::Log::Configure(cfg.extra.logLevel);
     if (!cfg.extra.logFile.empty()) okay::Log::OpenFile(saveDir + cfg.extra.logFile);
     if (!cfg.extra.description.empty()) pb->Log("game: " + cfg.title + " - " + cfg.extra.description);
+
+    // Store build (Build Settings > Stores, docs/release/steam_release.md and epic_release.md): the game's own Steam
+    // app id and EOS ids from game.okayconfig, the Epic launcher's login arguments, and the packed EOS client secret.
+    // OKAY_STORE=steam|epic|none overrides the store for testing. With no store nothing starts here.
+    // No store (or a store build run without its store): achievements, stats, best scores and cloud saves are kept in
+    // the save folder, so the game behaves the same and can be tested without a store account.
+    okay::PlatformServices::SetLocalFolder(saveDir + (saveDir.empty() || saveDir.back() == '/' || saveDir.back() == '\\' ? "" : "/") + "store");
+    {
+        const char* envStore = std::getenv("OKAY_STORE");
+        if (cfg.store.store != okay::StoreKind::None || (envStore && envStore[0])) {
+            okay::EpicConfig ec = okay::Epic::Config();
+            ec.productName = cfg.title.empty() ? std::string("OkaySpace Game") : cfg.title;
+            ec.launch = okay::ParseEpicLaunchArgs(argc, argv);   // the login code is never logged
+            ec.clientSecret = okay::stores::ReadEpicSecretFile(baseDir);
+            if (const char* dev = std::getenv("OKAY_EOS_DEV_AUTH")) ec.devAuth = dev;
+            okay::Epic::Configure(ec);
+            okay::PlatformServices::Configure(cfg.store);
+            okay::IStoreServices& store = okay::PlatformServices::Get();   // starts the store (Steam init, Epic login)
+            if (okay::Steam::RelaunchRequested()) {
+                pb->Log("store: Steam is starting the game through the Steam client; this copy exits");
+                pb->Shutdown();
+                return 0;
+            }
+            pb->Log(std::string("store: ") + okay::StoreKindName(store.Kind()) + (store.IsAvailable() ? " (connected)" : " (simulation: nothing reaches the store)"));
+        }
+    }
 
     // Optional downloaded content (docs/release/content_delivery.md): OFF unless a content URL is set (content.okayconfig beside the game, or the
     // environment variable OKAY_CONTENT_URL). With no URL nothing below does anything and the game is exactly as before. With one, the game
@@ -1967,6 +1999,8 @@ int main(int argc, char** argv) {
     okayac::RuntimeGuard acGuard(acMode, okayac::SystemGuardProbes(acRoot, acHaveManifest ? &acManifest : nullptr), acLog);
     auto frame = [&]() {
         Uint64 fStart = okay::platform::PerfCounter();
+        okay::Steam::RunCallbacks();   // store callbacks (each does nothing until its service exists)
+        okay::Epic::Tick();
         Input::ClearTypedText();                 // collect this frame's typed chars
 #ifdef OKAY_HAVE_OKAYUI
         g_uiText[0] = '\0'; g_uiBack = false; g_uiWheel = 0.0f;
@@ -3005,6 +3039,9 @@ int main(int argc, char** argv) {
     }
 
     AudioMixer::SaveSettings();
+    okay::PlatformServices::Shutdown();   // the store services last: Steam's StoreStats / the simulation's save, EOS release
+    okay::Epic::Shutdown();
+    okay::Steam::Shutdown();
     okay::devlog::Stop();
     Prefs::Save(prefsPath); // persist any prefs the game set this session
 

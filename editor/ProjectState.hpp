@@ -136,6 +136,23 @@ struct BuildSettings {
     float gamepadDeadzone = 0.18f;         // stick dead zone
     int   sampleRate = 0;                  // 0 = 44100
     char  excludeList[1024] = "";          // project files left out of the build: "Assets/a.png;Assets/Old/" (a trailing / is a whole folder)
+    // ---- Stores (Build Settings > Stores; okay/Platform/StoreExport.hpp). No secret is ever kept here: the EOS client
+    // secret and the BuildPatchTool secret are read from environment variables at build / upload time. ----
+    int   storeTarget = 0;                 // 0 none, 1 Steam, 2 Epic Games Store
+    int   steamAppId = 0;                  // the game's own Steam app id
+    int   steamDepotId = 0;                // its Windows depot (0 = app id + 1)
+    char  steamSdkPath[260] = "";          // the Steamworks SDK folder the developer downloaded (steam_api64.dll is copied from it)
+    char  steamBranch[64] = "";            // set the upload live on this branch ("" = upload only)
+    char  steamBuildDesc[128] = "";        // the Steamworks Builds page description ("" = name, version, build)
+    char  epicProductId[64] = "";          // EOS product id (Developer Portal > Product Settings)
+    char  epicSandboxId[64] = "";
+    char  epicDeploymentId[64] = "";
+    char  epicClientId[64] = "";           // the game client's id (its secret comes from OKAY_EOS_CLIENT_SECRET)
+    char  epicOrgId[64] = "";              // BuildPatchTool: organization id
+    char  epicArtifactId[64] = "";         // BuildPatchTool: artifact id
+    char  epicBptClientId[64] = "";        // BuildPatchTool's own client id (its secret comes from EPIC_BPT_CLIENT_SECRET)
+    char  epicBptPath[260] = "";           // BuildPatchTool.exe ("" = on PATH)
+    char  epicSdkPath[260] = "";           // the EOS SDK folder (EOSSDK-Win64-Shipping.dll is copied from it)
 };
 // ---- Build profiles -------------
 // Persist the full Build Settings under named profiles in the project's
@@ -229,6 +246,14 @@ inline void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "renderer=" << b.renderer << "\n" << "particleCap=" << b.particleCap << "\n";
     o << "gamepadDeadzone=" << FloatText(b.gamepadDeadzone) << "\n" << "sampleRate=" << b.sampleRate << "\n";
     o << "exclude=" << EscapeProfileValue(b.excludeList) << "\n";
+    o << "storeTarget=" << b.storeTarget << "\n" << "steamAppId=" << b.steamAppId << "\n" << "steamDepotId=" << b.steamDepotId << "\n";
+    o << "steamSdk=" << EscapeProfileValue(b.steamSdkPath) << "\n" << "steamBranch=" << EscapeProfileValue(b.steamBranch) << "\n";
+    o << "steamDesc=" << EscapeProfileValue(b.steamBuildDesc) << "\n";
+    o << "epicProduct=" << EscapeProfileValue(b.epicProductId) << "\n" << "epicSandbox=" << EscapeProfileValue(b.epicSandboxId) << "\n";
+    o << "epicDeployment=" << EscapeProfileValue(b.epicDeploymentId) << "\n" << "epicClient=" << EscapeProfileValue(b.epicClientId) << "\n";
+    o << "epicOrg=" << EscapeProfileValue(b.epicOrgId) << "\n" << "epicArtifact=" << EscapeProfileValue(b.epicArtifactId) << "\n";
+    o << "epicBptClient=" << EscapeProfileValue(b.epicBptClientId) << "\n" << "epicBpt=" << EscapeProfileValue(b.epicBptPath) << "\n";
+    o << "epicSdk=" << EscapeProfileValue(b.epicSdkPath) << "\n";
     for (const BuildScene& sc : b.scenes) o << "scene=" << (sc.on ? 1 : 0) << "|" << EscapeProfileValue(sc.path) << "\n";
 }
 
@@ -329,6 +354,21 @@ inline void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "gamepadDeadzone") b.gamepadDeadzone = F();
     else if (k == "sampleRate") b.sampleRate = I();
     else if (k == "exclude")   S(b.excludeList, sizeof(b.excludeList));
+    else if (k == "storeTarget") b.storeTarget = std::max(0, std::min(2, I()));
+    else if (k == "steamAppId") b.steamAppId = std::max(0, I());
+    else if (k == "steamDepotId") b.steamDepotId = std::max(0, I());
+    else if (k == "steamSdk")  S(b.steamSdkPath, sizeof(b.steamSdkPath));
+    else if (k == "steamBranch") S(b.steamBranch, sizeof(b.steamBranch));
+    else if (k == "steamDesc") S(b.steamBuildDesc, sizeof(b.steamBuildDesc));
+    else if (k == "epicProduct") S(b.epicProductId, sizeof(b.epicProductId));
+    else if (k == "epicSandbox") S(b.epicSandboxId, sizeof(b.epicSandboxId));
+    else if (k == "epicDeployment") S(b.epicDeploymentId, sizeof(b.epicDeploymentId));
+    else if (k == "epicClient") S(b.epicClientId, sizeof(b.epicClientId));
+    else if (k == "epicOrg")   S(b.epicOrgId, sizeof(b.epicOrgId));
+    else if (k == "epicArtifact") S(b.epicArtifactId, sizeof(b.epicArtifactId));
+    else if (k == "epicBptClient") S(b.epicBptClientId, sizeof(b.epicBptClientId));
+    else if (k == "epicBpt")   S(b.epicBptPath, sizeof(b.epicBptPath));
+    else if (k == "epicSdk")   S(b.epicSdkPath, sizeof(b.epicSdkPath));
 }
 
 

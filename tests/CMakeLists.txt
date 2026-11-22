@@ -689,8 +689,11 @@ add_executable(test_steam_script test_steam_script.cpp)
 target_link_libraries(test_steam_script PRIVATE okay::engine)
 add_test(NAME steam_script COMMAND test_steam_script)
 
+add_library(fake_steam_api SHARED fake_steam_api.cpp)   # a stand-in Steam library for the Store Kit's run-time backend
 add_executable(test_stores test_stores.cpp)
 target_link_libraries(test_stores PRIVATE okay::engine)
+add_dependencies(test_stores fake_steam_api)
+target_compile_definitions(test_stores PRIVATE FAKE_STEAM_LIB="$<TARGET_FILE:fake_steam_api>" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME stores COMMAND test_stores)
 
 add_executable(test_net_rooms test_net_rooms.cpp)

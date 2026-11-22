@@ -10,6 +10,7 @@
 
 #include "steam/steam_api.h"
 
+#include <deque>
 #include <unordered_map>
 
 namespace okay {
@@ -22,6 +23,7 @@ public:
     bool Initialize(const SteamConfig& config) override {
         if (!config.skipRelaunchCheck && SteamAPI_RestartAppIfNecessary(config.appId)) {
             OKAY_INFO("Steam: relaunching through the Steam client");
+            m_relaunch = true;
             return false;
         }
         if (!SteamAPI_Init()) {
@@ -43,6 +45,7 @@ public:
     }
 
     bool IsAvailable() const override { return m_ready; }
+    bool WantsRelaunch() const override { return m_relaunch; }
     const char* BackendName() const override { return "steamworks"; }
 
     std::string UserName() const override {
@@ -81,6 +84,69 @@ public:
     }
     bool StoreStats() override {
         return m_ready && SteamUserStats() && SteamUserStats()->StoreStats();
+    }
+
+    void IndicateAchievementProgress(const std::string& id, std::uint32_t current, std::uint32_t max) override {
+        if (m_ready && SteamUserStats()) SteamUserStats()->IndicateAchievementProgress(id.c_str(), current, max);
+    }
+    void SetStatInt(const std::string& name, int value) override {
+        if (m_ready && SteamUserStats()) SteamUserStats()->SetStat(name.c_str(), (int32)value);
+    }
+    int GetStatInt(const std::string& name) const override {
+        int32 v = 0;
+        if (m_ready && SteamUserStats()) SteamUserStats()->GetStat(name.c_str(), &v);
+        return (int)v;
+    }
+    int AchievementCount() const override {
+        return (m_ready && SteamUserStats()) ? (int)SteamUserStats()->GetNumAchievements() : 0;
+    }
+    std::string AchievementName(int index) const override {
+        if (!m_ready || !SteamUserStats() || index < 0) return {};
+        const char* n = SteamUserStats()->GetAchievementName((uint32)index);
+        return n ? std::string(n) : std::string();
+    }
+
+    // ---- Leaderboards (ISteamUserStats; asynchronous) --------------------
+    // A submitted score waits in a queue: the board is looked up (or created) once, then the score is uploaded
+    // keeping the player's best. Results arrive through RunCallbacks.
+    bool UploadLeaderboardScore(const std::string& board, std::int32_t score) override {
+        if (!m_ready || !SteamUserStats() || board.empty()) return false;
+        auto it = m_boards.find(board);
+        if (it != m_boards.end()) { UploadTo(it->second, score); return true; }
+        m_pendingScores.push_back({board, score});
+        StartNextFind();
+        return true;
+    }
+
+    // ---- Friends / overlay / apps (ISteamFriends, ISteamApps) ------------
+    int FriendCount() const override {
+        return (m_ready && SteamFriends()) ? SteamFriends()->GetFriendCount(k_EFriendFlagImmediate) : 0;
+    }
+    std::string FriendName(int index) const override {
+        if (!m_ready || !SteamFriends() || index < 0 || index >= FriendCount()) return {};
+        const char* n = SteamFriends()->GetFriendPersonaName(SteamFriends()->GetFriendByIndex(index, k_EFriendFlagImmediate));
+        return n ? std::string(n) : std::string();
+    }
+    std::uint64_t FriendId(int index) const override {
+        if (!m_ready || !SteamFriends() || index < 0 || index >= FriendCount()) return 0;
+        return SteamFriends()->GetFriendByIndex(index, k_EFriendFlagImmediate).ConvertToUint64();
+    }
+    bool InviteFriend(std::uint64_t friendId) override {
+        return m_ready && SteamFriends() && SteamFriends()->InviteUserToGame(CSteamID((uint64)friendId), "");
+    }
+    void ActivateOverlay(const std::string& page) override {
+        if (m_ready && SteamFriends()) SteamFriends()->ActivateGameOverlay(page.empty() ? "Friends" : page.c_str());
+    }
+    bool IsDlcInstalled(std::uint32_t dlcAppId) const override {
+        return m_ready && SteamApps() && SteamApps()->BIsDlcInstalled((AppId_t)dlcAppId);
+    }
+    bool OwnsApp(std::uint32_t appId) const override {
+        return m_ready && SteamApps() && SteamApps()->BIsSubscribedApp((AppId_t)appId);
+    }
+    std::string Language() const override {
+        if (!m_ready || !SteamApps()) return "english";
+        const char* l = SteamApps()->GetCurrentGameLanguage();
+        return l && l[0] ? std::string(l) : std::string("english");
     }
 
     void SetRichPresence(const std::string& key, const std::string& value) override {
@@ -168,14 +234,48 @@ public:
     }
 
 private:
+    void UploadTo(SteamLeaderboard_t handle, std::int32_t score) {
+        SteamUserStats()->UploadLeaderboardScore(handle, k_ELeaderboardUploadScoreMethodKeepBest, (int32)score, nullptr, 0);
+    }
+    void StartNextFind() {
+        if (m_finding || m_pendingScores.empty() || !SteamUserStats()) return;
+        m_finding = true;
+        const SteamAPICall_t call = SteamUserStats()->FindOrCreateLeaderboard(m_pendingScores.front().board.c_str(),
+                                                                             k_ELeaderboardSortMethodDescending,
+                                                                             k_ELeaderboardDisplayTypeNumeric);
+        m_findResult.Set(call, this, &SteamworksService::OnFindLeaderboard);
+    }
+    void OnFindLeaderboard(LeaderboardFindResult_t* result, bool ioFailure) {
+        m_finding = false;
+        if (m_pendingScores.empty()) return;
+        const PendingScore first = m_pendingScores.front();
+        if (ioFailure || !result || !result->m_bLeaderboardFound) {
+            OKAY_WARN("Steam: leaderboard '", first.board, "' could not be found or created");
+            m_pendingScores.pop_front();
+        } else {
+            m_boards[first.board] = result->m_hSteamLeaderboard;
+            // Every queued score for this board goes now.
+            for (auto it = m_pendingScores.begin(); it != m_pendingScores.end();) {
+                if (it->board == first.board) { UploadTo(result->m_hSteamLeaderboard, it->score); it = m_pendingScores.erase(it); }
+                else ++it;
+            }
+        }
+        StartNextFind();
+    }
+
+    struct PendingScore { std::string board; std::int32_t score = 0; };
     bool m_ready = false;
+    bool m_relaunch = false;
+    bool m_finding = false;
+    std::deque<PendingScore> m_pendingScores;
+    std::unordered_map<std::string, SteamLeaderboard_t> m_boards;
+    CCallResult<SteamworksService, LeaderboardFindResult_t> m_findResult;
 };
 
 std::unique_ptr<ISteamService> CreateSteamService() {
-    auto svc = std::make_unique<SteamworksService>();
-    // The caller still must Initialize(); but if Steam isn't present at all we
-    // hand back the simulation so the game keeps working.
-    return svc;
+    // The caller still must Initialize(). If that fails (no Steam client), the Steam accessor
+    // (Steam.cpp) swaps in the simulation so the game keeps working.
+    return std::make_unique<SteamworksService>();
 }
 
 } // namespace okay

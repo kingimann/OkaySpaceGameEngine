@@ -34,16 +34,16 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "Branch";
-        d.title = "Branch";
+        d.title = "If Then Else";
         d.description = "Goes out True or False depending on the condition wired into Condition.";
         d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
         d.component = "";
         d.example = "Wire a Key Held into Condition. Wire the True pin into the step that should run while the key is down.";
         d.related = "Compare, Check, Gate, Select";
-        d.keywords = "branch, if, condition, true false";
+        d.keywords = "if then else, if, condition, true false";
         d.setting = "";
         d.settingDefault = "";
-        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Branch runs when a wire reaches this pin.", ""});
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. If Then Else runs when a wire reaches this pin.", ""});
         d.pins.push_back({false, true, "True", "Flow", "The flow continues out of True. Wire this to the step that should run for that case.", ""});
         d.pins.push_back({false, true, "False", "Flow", "The flow continues out of False. Wire this to the step that should run for that case.", ""});
         d.pins.push_back({true, false, "Condition", "Bool", "The condition. True and false take different paths. It is a Bool. Unwired, this is false.", "false"});
@@ -52,16 +52,16 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "Sequence";
-        d.title = "Sequence";
+        d.title = "Do These in Order";
         d.description = "Runs First, then Second, in that order, every time it runs.";
         d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
         d.component = "";
-        d.example = "Put Sequence on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.example = "Put Do These in Order on the flow after an event such as On Start. The chain runs when that event fires.";
         d.related = "";
-        d.keywords = "sequence";
+        d.keywords = "do these in order";
         d.setting = "";
         d.settingDefault = "";
-        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Sequence runs when a wire reaches this pin.", ""});
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Do These in Order runs when a wire reaches this pin.", ""});
         d.pins.push_back({false, true, "First", "Flow", "The flow continues out of 0. Wire this to the step that should run for that case.", ""});
         d.pins.push_back({false, true, "Second", "Flow", "The flow continues out of 1. Wire this to the step that should run for that case.", ""});
         add(std::move(d));
@@ -86,17 +86,17 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "Timer";
-        d.title = "Every Seconds";
+        d.title = "Repeat Every Few Seconds";
         d.description = "Every Seconds. Lets the flow through at most once each interval. Put it under On Every Frame so an action repeats. A long frame keeps the leftover time, so the next one is not late.";
         d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
         d.component = "";
-        d.example = "Put Every Seconds on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.example = "Put Repeat Every Few Seconds on the flow after an event such as On Start. The chain runs when that event fires.";
         d.related = "";
-        d.keywords = "every seconds";
+        d.keywords = "repeat every few seconds";
         d.setting = "seconds. The value typed into the node.";
         d.settingDefault = "1";
-        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Every Seconds runs when a wire reaches this pin.", ""});
-        d.pins.push_back({false, true, "", "Flow", "After Every Seconds finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Repeat Every Few Seconds runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Repeat Every Few Seconds finishes, the flow continues from here to the next step.", ""});
         add(std::move(d));
     }
     {
@@ -1001,17 +1001,17 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "Wait";
-        d.title = "Wait Once";
+        d.title = "Wait the First Time Only";
         d.description = "Wait Once. The first time, pauses until the seconds have passed, then lets the flow through every time after that.";
         d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
         d.component = "";
-        d.example = "Put Wait Once on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.example = "Put Wait the First Time Only on the flow after an event such as On Start. The chain runs when that event fires.";
         d.related = "";
-        d.keywords = "wait once";
+        d.keywords = "wait the first time only";
         d.setting = "seconds. The value typed into the node.";
         d.settingDefault = "1";
-        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Wait Once runs when a wire reaches this pin.", ""});
-        d.pins.push_back({false, true, "", "Flow", "After Wait Once finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Wait the First Time Only runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Wait the First Time Only finishes, the flow continues from here to the next step.", ""});
         add(std::move(d));
     }
     {
@@ -2062,17 +2062,17 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "Cooldown";
-        d.title = "Cooldown";
+        d.title = "Limit How Often";
         d.description = "Lets the flow through, then blocks it for the seconds you set. Stops an attack or a jump being spammed.";
         d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
         d.component = "";
-        d.example = "Put Cooldown on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.example = "Put Limit How Often on the flow after an event such as On Start. The chain runs when that event fires.";
         d.related = "";
-        d.keywords = "cooldown";
+        d.keywords = "limit how often";
         d.setting = "seconds. The value typed into the node.";
         d.settingDefault = "1";
-        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Cooldown runs when a wire reaches this pin.", ""});
-        d.pins.push_back({false, true, "", "Flow", "After Cooldown finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Limit How Often runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Limit How Often finishes, the flow continues from here to the next step.", ""});
         add(std::move(d));
     }
     {
@@ -2291,17 +2291,17 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         d.type = "GridMoveTo";
         d.title = "Walk the Grid";
         d.description = "Sends this object's Grid Path Agent walking to the cell that contains world point X, Y.";
-        d.requirements = "Needs a Grid Path Agent on this object (or on Target), and a tilemap in the scene. Runs in Play mode.";
-        d.component = "GridPathAgent2D";
-        d.example = "Put Walk the Grid after On Start, and type the world point into X and Y.";
-        d.related = "Stop Grid Walk, Grid Arrived";
-        d.keywords = "grid path, tilemap, walk";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Walk the Grid after an event such as On Start or On Update, and wire a value into X.";
+        d.related = "";
+        d.keywords = "walk the grid";
         d.setting = "";
         d.settingDefault = "";
         d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Walk the Grid runs when a wire reaches this pin.", ""});
         d.pins.push_back({false, true, "", "Flow", "After Walk the Grid finishes, the flow continues from here to the next step.", ""});
-        d.pins.push_back({true, false, "X", "Number", "World X of the point to walk to. It is a Number. Unwired, this is 0.", "0"});
-        d.pins.push_back({true, false, "Y", "Number", "World Y of the point to walk to. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "X", "Number", "The X part, in world units. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Y", "Number", "The Y part, in world units. It is a Number. Unwired, this is 0.", "0"});
         d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
         add(std::move(d));
     }
@@ -2310,11 +2310,11 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         d.type = "GridStop";
         d.title = "Stop Grid Walk";
         d.description = "Stops this object's Grid Path Agent where it is and drops the path.";
-        d.requirements = "Needs a Grid Path Agent on this object (or on Target). Runs in Play mode.";
-        d.component = "GridPathAgent2D";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
         d.example = "Put Stop Grid Walk on the flow after an event such as On Start. The chain runs when that event fires.";
-        d.related = "Walk the Grid";
-        d.keywords = "grid stop, path";
+        d.related = "";
+        d.keywords = "stop grid walk";
         d.setting = "";
         d.settingDefault = "";
         d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Stop Grid Walk runs when a wire reaches this pin.", ""});
@@ -2327,15 +2327,15 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         d.type = "GridArrived";
         d.title = "Grid Arrived";
         d.description = "True once the Grid Path Agent reached its last cell.";
-        d.requirements = "Needs a Grid Path Agent on this object (or on Target). False when there is none.";
-        d.component = "GridPathAgent2D";
-        d.example = "Wire Grid Arrived's Arrived output into a Branch, to do something when the walk finishes.";
-        d.related = "Walk the Grid";
-        d.keywords = "grid arrived, path done";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Grid Arrived's Arrived output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "grid arrived";
         d.setting = "";
         d.settingDefault = "";
         d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
-        d.pins.push_back({false, false, "Arrived", "Bool", "True once the last cell was reached. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        d.pins.push_back({false, false, "Arrived", "Bool", "What Grid Arrived produces on Arrived. It is a Bool. Wire it into an input that expects a Bool.", ""});
         add(std::move(d));
     }
     {
@@ -13293,16 +13293,16 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "ForLoop";
-        d.title = "For Loop";
+        d.title = "Repeat Counting";
         d.description = "Runs Body once for every number from First to Last (Index is the current number), then runs Done.";
         d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
         d.component = "";
-        d.example = "Put For Loop after an event such as On Start or On Update, and wire a value into First.";
+        d.example = "Put Repeat Counting after an event such as On Start or On Update, and wire a value into First.";
         d.related = "Repeat N, While, For Each, Break";
-        d.keywords = "for loop";
+        d.keywords = "repeat counting";
         d.setting = "";
         d.settingDefault = "";
-        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. For Loop runs when a wire reaches this pin.", ""});
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Repeat Counting runs when a wire reaches this pin.", ""});
         d.pins.push_back({false, true, "Body", "Flow", "The flow continues out of Body. Wire this to the step that should run for that case.", ""});
         d.pins.push_back({false, true, "Done", "Flow", "The flow continues out of Done. Wire this to the step that should run for that case.", ""});
         d.pins.push_back({true, false, "First", "Number", "The first number of the loop, included. It is a Number. Unwired, this is 0.", "0"});
@@ -13329,16 +13329,16 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "FlipFlop";
-        d.title = "Flip Flop";
+        d.title = "Switch Between Two Paths";
         d.description = "Alternates between First and Second each time it runs.";
         d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
         d.component = "";
-        d.example = "Put Flip Flop on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.example = "Put Switch Between Two Paths on the flow after an event such as On Start. The chain runs when that event fires.";
         d.related = "";
-        d.keywords = "flip flop";
+        d.keywords = "switch between two paths";
         d.setting = "";
         d.settingDefault = "";
-        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Flip Flop runs when a wire reaches this pin.", ""});
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Switch Between Two Paths runs when a wire reaches this pin.", ""});
         d.pins.push_back({false, true, "First", "Flow", "The flow continues out of A. Wire this to the step that should run for that case.", ""});
         d.pins.push_back({false, true, "Second", "Flow", "The flow continues out of B. Wire this to the step that should run for that case.", ""});
         add(std::move(d));
@@ -13346,17 +13346,17 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "Gate";
-        d.title = "Gate";
+        d.title = "Open or Close the Way";
         d.description = "Lets the flow through only while Open is true. A value that is not a real number stays shut.";
         d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
         d.component = "";
-        d.example = "Put Gate after an event such as On Start or On Update, and wire a value into Open.";
+        d.example = "Put Open or Close the Way after an event such as On Start or On Update, and wire a value into Open.";
         d.related = "";
-        d.keywords = "gate";
+        d.keywords = "open or close the way";
         d.setting = "";
         d.settingDefault = "";
-        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Gate runs when a wire reaches this pin.", ""});
-        d.pins.push_back({false, true, "", "Flow", "After Gate finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Open or Close the Way runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Open or Close the Way finishes, the flow continues from here to the next step.", ""});
         d.pins.push_back({true, false, "Open", "Bool", "When this is false the flow stops here. It is a Bool. Unwired, this is true (the flow passes).", "true (the flow passes)"});
         add(std::move(d));
     }
@@ -14702,7 +14702,7 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         VsNodeDoc d;
         d.type = "SteamUnlock";
         d.title = "Unlock Achievement";
-        d.description = "Unlocks a Steam achievement.";
+        d.description = "Unlocks an achievement on the game's store (Steam, Epic, or saved locally with no store).";
         d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
         d.component = "";
         d.example = "Put Unlock Achievement on the flow after an event such as On Start. The chain runs when that event fires.";
@@ -14766,7 +14766,7 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         VsNodeDoc d;
         d.type = "SteamLeaderboard";
         d.title = "Submit Score";
-        d.description = "Submits a score to a Steam leaderboard.";
+        d.description = "Submits a score to a leaderboard on the game's store (Steam, Epic, or kept locally).";
         d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
         d.component = "";
         d.example = "Put Submit Score after an event such as On Start or On Update, and wire a value into Score.";
@@ -15072,17 +15072,17 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "Delay";
-        d.title = "Wait Seconds";
+        d.title = "Wait Then Continue";
         d.description = "Wait Seconds. Pauses this chain for the seconds you set, then carries on. Reaching it again waits again.";
         d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
         d.component = "";
-        d.example = "Put Wait Seconds on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.example = "Put Wait Then Continue on the flow after an event such as On Start. The chain runs when that event fires.";
         d.related = "";
-        d.keywords = "wait seconds";
+        d.keywords = "wait then continue";
         d.setting = "seconds. The value typed into the node.";
         d.settingDefault = "1";
-        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Wait Seconds runs when a wire reaches this pin.", ""});
-        d.pins.push_back({false, true, "", "Flow", "After Wait Seconds finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Wait Then Continue runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Wait Then Continue finishes, the flow continues from here to the next step.", ""});
         add(std::move(d));
     }
     {
@@ -16888,16 +16888,16 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "FunctionStart";
-        d.title = "Define Function";
+        d.title = "Define Named Action";
         d.description = "The start of a function you can call from Call Function. Name it in the node.";
         d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
         d.component = "";
-        d.example = "Drop Define Function into the graph and wire it the way its pins describe.";
+        d.example = "Drop Define Named Action into the graph and wire it the way its pins describe.";
         d.related = "";
-        d.keywords = "define function";
+        d.keywords = "define named action";
         d.setting = "Name(a: Number) -> out: Number. The value typed into the node.";
         d.settingDefault = "";
-        d.pins.push_back({false, true, "", "Flow", "After Define Function finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Define Named Action finishes, the flow continues from here to the next step.", ""});
         add(std::move(d));
     }
     {
@@ -16918,17 +16918,17 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "CallFunction";
-        d.title = "Call Function";
+        d.title = "Run Named Action";
         d.description = "Runs a function in this graph by name, then carries on.";
         d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
         d.component = "";
-        d.example = "Put Call Function on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.example = "Put Run Named Action on the flow after an event such as On Start. The chain runs when that event fires.";
         d.related = "Function, Return, Set Local";
-        d.keywords = "call function";
+        d.keywords = "run named action";
         d.setting = "Which function, chosen from the functions in this graph.. Which function, chosen from the functions in this graph.";
         d.settingDefault = "";
-        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Call Function runs when a wire reaches this pin.", ""});
-        d.pins.push_back({false, true, "", "Flow", "After Call Function finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Run Named Action runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Run Named Action finishes, the flow continues from here to the next step.", ""});
         add(std::move(d));
     }
     {
@@ -17024,31 +17024,31 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "Break";
-        d.title = "Break Loop";
+        d.title = "Stop Repeating";
         d.description = "Leaves the loop whose Body this is; the loop goes on to Done.";
         d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
         d.component = "";
-        d.example = "Put Break Loop on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.example = "Put Stop Repeating on the flow after an event such as On Start. The chain runs when that event fires.";
         d.related = "";
-        d.keywords = "break loop";
+        d.keywords = "stop repeating";
         d.setting = "";
         d.settingDefault = "";
-        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Break Loop runs when a wire reaches this pin.", ""});
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Stop Repeating runs when a wire reaches this pin.", ""});
         add(std::move(d));
     }
     {
         VsNodeDoc d;
         d.type = "Continue";
-        d.title = "Continue Loop";
+        d.title = "Next Repeat";
         d.description = "Skips the rest of this run of a loop's Body; the loop goes on to the next item.";
         d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
         d.component = "";
-        d.example = "Put Continue Loop on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.example = "Put Next Repeat on the flow after an event such as On Start. The chain runs when that event fires.";
         d.related = "";
-        d.keywords = "continue loop";
+        d.keywords = "next repeat";
         d.setting = "";
         d.settingDefault = "";
-        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Continue Loop runs when a wire reaches this pin.", ""});
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Next Repeat runs when a wire reaches this pin.", ""});
         add(std::move(d));
     }
     {

@@ -209,6 +209,7 @@ physics2d
 player
 security_paths
 spatial_audio
+store_kit
 texture
 touch_controls
 driving

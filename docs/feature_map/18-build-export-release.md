@@ -165,7 +165,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Docs:** `docs/release/steam_release.md`, `steam/README.md`
 - **Tests:** none
 - **Status:** Basic - scripts and docs exist; no CI job, nothing automated
-- **Open:** needs a Steamworks builder account and Valve's one-time review before the first public release; the GitHub release does not build the real Steamworks backend (17.10)
+- **Open:** needs a Steamworks builder account and Valve's one-time review before the first public release; the GitHub release does not build the real Steamworks backend (17.10); games made with OkaySpace are released through Build Settings > Stores (18.12)
 - **Related:** 17.10, 18.1, 41.7
 - **Words:** Steam, SteamPipe, steamcmd, depot, app build, setlive, Steamworks, upload.sh, 1172560, auto-update
 - **Seen as:** Steam players don't get an update (not set live); steamcmd asks for Steam Guard
@@ -232,3 +232,26 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Words:** content delivery, downloadable content, DLC, content update, asset bundle, patch, manifest, content.manifest, okay-content, overlay, content.okayconfig, OKAY_CONTENT_URL, publish-content, game content, models textures scripts download
 - **Seen as:** the owner wants new models, maps or scripts in a shipped game without a new build; a game shows old content after a publish; "content refused: not signed"
 - **Ask me like:** "how do I ship a new map without rebuilding the game?", "can the Xbox app download scripts?", "why was my content update refused?"
+
+### 18.12 Store Kit: a game on Steam or the Epic Games Store
+- **What:** One script API (achievements, stats, leaderboards, cloud saves, presence, overlay, ownership) that goes to Steam, the Epic Games Store or a local store in the game's save folder, plus Build Settings > Stores, which writes everything needed to upload the game (SteamPipe files and a steamcmd script; a BuildPatchTool script). Game developers never code against Valve's or Epic's SDK; we never ship either SDK.
+- **Parts:**
+  - 18.12.1 Facade - `engine/include/okay/Platform/PlatformServices.hpp`, `engine/src/Platform/PlatformServices.cpp` - `IStoreServices`, adapters over `ISteamService` and `IEpicService`, the local store (`store_local.txt`, `cloud/`), `PlatformServices::Configure/Get/Tick/Shutdown`, `OKAY_STORE` override, the `store=` lines of `game.okayconfig`
+  - 18.12.2 Script calls - `engine/src/Scripting/OkayScriptVM.cpp` - `Achievements.Unlock/IsUnlocked/Progress`, `Stats.Set/Add/Get/Store`, `Leaderboards.Submit/Top`, `CloudSave.Write/Read/Has/Delete`, `Presence.Set`, `Store.Name/UserName/IsOnline/OwnsGame/Overlay`; the Visual Script nodes Unlock Achievement, Achievement Unlocked, Submit Score and Store Stats route through it
+  - 18.12.3 Steam through the developer's library - `engine/src/Platform/Steam/DynamicSteamService.cpp` - loads `steam_api64.dll` at run time (newest interface version), off unless the game is a Steam build; falls back to the simulation (`Steam::Get`), relaunch through Steam for shipping builds
+  - 18.12.4 Steam Web API check - `engine/include/okay/Platform/Steam/SteamWebApi.hpp` - GetSchemaForGame over our own HTTP code, key from `STEAM_WEB_API_KEY` in a header only, compares with the ids the project's scripts use
+  - 18.12.5 Epic seam - `engine/include/okay/Platform/Epic/EpicService.hpp`, `Epic.hpp`, `engine/src/Platform/Epic/` - `IEpicService`, the simulation, `Epic::Get` with fallback, the launcher's arguments (`ParseEpicLaunchArgs`, `RedactEpicArgs`)
+  - 18.12.6 Upload files - `engine/include/okay/Platform/StoreExport.hpp`, `engine/src/Platform/StoreExport.cpp` - checks, `steam_appid.txt` (development builds only), SDK DLL copy, packed EOS client secret from `OKAY_EOS_CLIENT_SECRET`, `StoreUpload/steam/*.vdf`, `upload.bat`, `upload.sh`, `StoreUpload/epic/upload.bat`, `ignore.txt`, README
+  - 18.12.7 Editor and player - `editor/BuildSettingsModel.hpp` (Stores page, registry, checks, summary), `editor/BuildSettingsWindow.cpp` (drawing, Check them on Steam), `editor/ProjectState.hpp` (saved settings, no secret fields), `editor/main.cpp` (`builder::Build`), `player/main.cpp` (configure, tick, shut down)
+  - 18.12.8 Example - `examples/store_kit/store_kit.okayscene` - keys 1 to 5 with the local store
+- **Code:** see Parts
+- **API:** `okay::PlatformServices`, `okay::IStoreServices`, `okay::MakeNoStoreServices`, `okay::CreateDynamicSteamService`, `okay::Steam::EnableRuntimeLibrary`, `okay::Epic`, `okay::ParseEpicLaunchArgs`, `okay::stores::WriteStoreFiles`, `okay::steamweb::FetchSchema`, `OKAY_STORE`, `OKAY_EOS_CLIENT_SECRET`, `EPIC_BPT_CLIENT_SECRET`, `STEAM_WEB_API_KEY`, `OKAY_EOS_DEV_AUTH`
+- **Editor:** File > Build Settings > Stores
+- **Docs:** `docs/release/store_kit.md`, `docs/release/steam_release.md` (Releasing YOUR game), `docs/release/epic_release.md`
+- **Tests:** `stores`, `build_settings`
+- **Status:** Basic - written and tested on Linux; Steam's run-time library tested against a stand-in library; the Epic connection is the simulation only
+- **Open:** the real Epic connection (run-time load of the EOS library) is not written; Steam leaderboards, Workshop and lobbies through the run-time library; Epic web checks; Visual Script nodes for stats, cloud saves and presence; never run on Windows, with the Steam client, steamcmd or BuildPatchTool; the Stores page never opened in a window
+- **Related:** 18.6, 18.8, 16, 17.10
+- **Words:** Steam, Epic, Epic Games Store, EOS, store kit, platform services, achievements, stats, leaderboards, cloud save, presence, overlay, steam_appid.txt, steam_api64.dll, SteamPipe, VDF, steamcmd, BuildPatchTool, publish, release on Steam
+- **Seen as:** the owner wants to sell a game on Steam or Epic; "Steam client not available; using the simulation"; a store build without upload files; a missing app id on the Stores page
+- **Ask me like:** "how do I put my game on Steam?", "make an Epic upload script", "why don't my achievements show on Steam?"

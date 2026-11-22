@@ -58,3 +58,35 @@ steam_appid.txt              # optional for release (Steam injects the id)
 - The same pattern applies to **PlayFab** (LiveOps, leaderboards) and
   **multiplayer** (`NetworkManager`), which are also part of the engine and
   surfaced in the editor's **Services** panel.
+
+## Releasing YOUR game on Steam (Build Settings > Stores)
+
+The sections above publish the OkaySpace program itself (app 1172560). For a game made with OkaySpace:
+
+1. Download the Steamworks SDK yourself from partner.steamgames.com (we never ship it).
+2. File > Build Settings > **Stores** > Steam: your game's **app id**, its **depot id** (empty = app id + 1), the
+   **Steamworks SDK folder**, optionally a **branch to set live** (empty = upload only, the safe choice) and a build
+   description.
+3. Build. Into the build folder go:
+   - `steam_api64.dll` from `<SDK>/redistributable_bin/win64` (only when the SDK folder is set);
+   - `steam_appid.txt` with your app id, **only in a development build** (it lets the game start without Steam
+     launching it; a shipping build removes it, so Steam starts the game and the player asks Steam to relaunch it
+     when it was started directly);
+   - `StoreUpload/steam/app_build_<app>.vdf`, `depot_build_<depot>.vdf` (every file of the build except
+     `StoreUpload\*`, `steam_appid.txt` and `*.pdb`), `upload.bat`, `upload.sh`, and `StoreUpload/README.txt`;
+   - `store=steam` and `steam_app_id=<app>` in the game's `game.okayconfig`.
+4. Upload: `set STEAM_USER=<your build account>` then `StoreUpload\steam\upload.bat`. steamcmd asks for the password
+   and Steam Guard code itself; nothing secret is stored. `STEAMCMD` overrides the steamcmd path. Then set the build
+   live on the Steamworks Builds page.
+
+The game reaches Steam through that `steam_api64.dll`: the Store Kit (`store_kit.md`) loads it when the game starts
+and calls its documented flat C functions; neither the engine nor your game is compiled against the SDK. Without the
+DLL, or when Steam is not running, the game logs one line and uses the simulation. Building the engine with
+`-DOKAY_WITH_STEAM=ON` (section 2) still works and takes priority.
+
+**Check your ids:** set `STEAM_WEB_API_KEY` to your publisher Web API key and press *Check them on Steam* on the
+Stores page: it lists every achievement id and stat name your scripts use that the app does not define. The key is
+only read from the environment and sent in a request header.
+
+Not done for games: Steam leaderboards through the run-time library (scores are kept for the session), Workshop and
+lobbies through it, a check of depot ids, anything run on Windows or against the real Steam client.

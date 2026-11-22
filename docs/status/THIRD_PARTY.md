@@ -75,6 +75,7 @@ installer and the release archives carry that file, as the OFL requires the noti
 ## Services we keep (optional integrations, not bundled)
 
 - **Steamworks SDK** (`OKAY_WITH_STEAM`): Valve's SDK is proprietary and is not in this repository. Without it, a no-op Steam service is used.
+- **Steamworks SDK and Epic Online Services SDK for games made with OkaySpace** (Build Settings > Stores, `docs/release/store_kit.md`): supplied by the game developer, never shipped, committed or downloaded by us. The build copies `steam_api64.dll` / `EOSSDK-Win64-Shipping.dll` only from the SDK folder the developer sets; the Store Kit loads `steam_api64.dll` at run time behind our own interface (our own code from Valve's public flat-function documentation). No SDK header or code is in this repository.
 - **Photon Realtime** (`OKAY_WITH_PHOTON`): needs the Photon C++ SDK. It is an extension point only; see [net_providers.md](../online/net_providers.md).
 
 ## Tools and services

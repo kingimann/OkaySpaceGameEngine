@@ -1,5 +1,5 @@
 #pragma once
-// Platform services: one set of calls for achievements, stats, leaderboards, cloud saves and presence that goes to
+// The OkaySpace Store Kit (platform services): one set of calls for achievements, stats, leaderboards, cloud saves and presence that goes to
 // whichever store this build of the game is for: Steam, the Epic Games Store, or none (an in-memory record, for
 // builds sold elsewhere and for testing). A game script calls Achievements.Unlock("first_win") and never needs to
 // know which store it runs on.
@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace okay {
 
@@ -34,6 +35,13 @@ bool ApplyStoreKey(StoreSettings& s, const std::string& key, const std::string& 
 /// The lines for game.okayconfig; "" when the store is None (old games read the same config as before).
 std::string WriteStoreConfig(const StoreSettings& s);
 
+/// One row of a leaderboard.
+struct StoreScore {
+    std::string  name;
+    std::int32_t score = 0;
+    int          rank = 0;   // 1 = top
+};
+
 /// The calls every store offers. Stats are whole numbers (Epic has only those).
 class IStoreServices {
 public:
@@ -55,6 +63,11 @@ public:
     virtual bool         StoreStats() = 0;
 
     virtual bool SubmitScore(const std::string& board, std::int32_t score) = 0;
+    /// The best `count` scores of a board, highest first (what this session knows; the real stores fill it in
+    /// after a download, the local store keeps the player's own best).
+    virtual std::vector<StoreScore> TopScores(const std::string& board, int count) const = 0;
+    /// True when the player owns this game on the store (always true with no store).
+    virtual bool OwnsGame() const = 0;
 
     virtual bool        CloudWrite(const std::string& file, const std::string& data) = 0;
     virtual std::string CloudRead(const std::string& file) const = 0;
@@ -71,7 +84,9 @@ public:
 /// Adapters over the store services (exposed so tests can wrap fakes).
 std::unique_ptr<IStoreServices> MakeSteamStoreServices(ISteamService& steam);
 std::unique_ptr<IStoreServices> MakeEpicStoreServices(IEpicService& epic);
-std::unique_ptr<IStoreServices> MakeNoStoreServices();
+/// No store: everything kept in memory, or, with a folder, saved there as plain files (achievements, stats, best
+/// scores in store_local.txt; cloud saves under cloud/) so a game without a store still keeps them between runs.
+std::unique_ptr<IStoreServices> MakeNoStoreServices(const std::string& folder = std::string());
 
 /// The process-wide facade the player, scripts and visual scripts use.
 class PlatformServices {
@@ -86,6 +101,8 @@ public:
     static void Tick();
     /// Shut the services down and forget them (the next Get() makes them again).
     static void Shutdown();
+    /// Where the no-store services save (the player passes its save folder + "store/"). Call before Get().
+    static void SetLocalFolder(const std::string& folder);
     /// The store to use: OKAY_STORE in the environment wins over the configured one.
     static StoreKind Choose(StoreKind configured, const char* envValue);
 };

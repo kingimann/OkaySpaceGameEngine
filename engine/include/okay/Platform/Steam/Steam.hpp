@@ -28,7 +28,12 @@ public:
     /// When true (a shipped store build), the real backend asks Steam to relaunch the game through the Steam
     /// client if it was started directly (SteamAPI_RestartAppIfNecessary). Call before the first Get().
     static void SetRelaunchCheck(bool on);
+    /// True when Steam asked to relaunch the game through the Steam client (the game should quit at once).
+    static bool RelaunchRequested();
 
+    /// Let the service load the developer-supplied Steam library at run time (the Store Kit; a Steam store build turns
+    /// this on). Off by default. `libraryPath` "" = the default name. Call before the first Get().
+    static void EnableRuntimeLibrary(bool on, const std::string& libraryPath = std::string());
     /// Replace how the service is made (tests). nullptr restores the default (CreateSteamService).
     static void SetFactory(std::function<std::unique_ptr<ISteamService>()> factory);
 };

@@ -201,6 +201,13 @@ add_library(okay_engine
     src/Components/QuestLog.cpp
     src/Platform/Steam/NullSteamService.cpp
     src/Platform/Steam/Steam.cpp
+    src/Platform/Steam/DynamicSteamService.cpp
+    src/Platform/Steam/SteamWebApi.cpp
+    src/Platform/Epic/EpicLaunchArgs.cpp
+    src/Platform/Epic/NullEpicService.cpp
+    src/Platform/Epic/Epic.cpp
+    src/Platform/PlatformServices.cpp
+    src/Platform/StoreExport.cpp
     src/Components/SteamManager.cpp
     src/Platform/Account/Account.cpp
     src/Physics/Physics2D.cpp

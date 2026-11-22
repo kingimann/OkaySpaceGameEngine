@@ -166,6 +166,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a message arrives twice or not at all | [16.11](16-networking.md#1611-rpc-syncvars-spawning-and-chat) RPC, SyncVars, spawning and chat |
 | a message with braces vanishes | [17.4](17-launcher-platform.md#174-chat-dms-groups-voice-notes-calls-polls-gifs-emoji) Chat: DMs, groups, voice notes, calls, polls, GIFs, emoji |
 | a minimap camera draws over the main view or replaces it | [2.10](02-rendering-world.md#210-cameras-and-the-camera-stack) Cameras and the camera stack |
+| a missing app id on the Stores page | [18.12](18-build-export-release.md#1812-store-kit-a-game-on-steam-or-the-epic-games-store) Store Kit: a game on Steam or the Epic Games Store |
 | a missing-tools message | [18.10](18-build-export-release.md#1810-xbox-one-export-experimental-developer-mode-uwp) Xbox One export (experimental, Developer Mode, UWP) |
 | a model faces backwards | [36.2](36-math-geometry.md#362-quaternions-and-matrices) Quaternions and matrices |
 | a model made here still edits like any mesh | [3.11](03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) Guided creation (templates, parts, safe regeneration) |
@@ -282,6 +283,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a state or transition cannot be created | [15.5](15-editor.md#155-animator-animation-tab-timeline) Animator, Animation tab, Timeline |
 | a state shows a warning glyph | [5.1](05-animation-ik.md#51-animator-and-state-machines) Animator and state machines |
 | a statue or car cannot break | [52.4](43-proposals.md#524-destruction) Destruction |
+| a store build without upload files | [18.12](18-build-export-release.md#1812-store-kit-a-game-on-steam-or-the-epic-games-store) Store Kit: a game on Steam or the Epic Games Store |
 | a stranger can't take over a code | [39.8](39-security-anticheat.md#398-relay-hardening) Relay hardening |
 | a style looks different between renderers | [26.3](20-35-planned.md#263-custom-shaders) Custom shaders |
 | a subtitle never appears | [10.1](10-story-cinematics.md#101-cutscene-sequences-and-sequence-player) Cutscene sequences and Sequence Player |
@@ -906,6 +908,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | Start runs before the object is ready | [1.4](01-core-scene.md#14-scene-lifecycle) Scene lifecycle |
 | stats differ from the build | [15.11](15-editor.md#1511-console-and-diagnostics-panels) Console and diagnostics panels |
 | stats not updating after a match | [16.9](16-networking.md#169-match-results-stats-and-leaderboards) Match results, stats and leaderboards |
+| Steam client not available | [18.12](18-build-export-release.md#1812-store-kit-a-game-on-steam-or-the-epic-games-store) Store Kit: a game on Steam or the Epic Games Store |
 | Steam not running" falls back silently | [17.10](17-launcher-platform.md#1710-steam-and-playfab) Steam and PlayFab |
 | Steam overlay missing | [17.10](17-launcher-platform.md#1710-steam-and-playfab) Steam and PlayFab |
 | Steam players don't get an update (not set live) | [18.8](18-build-export-release.md#188-steam-release-steampipe) Steam release (SteamPipe) |
@@ -1086,6 +1089,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the Open button does nothing | [37.3](37-platform-windowing.md#373-file-dialogs) File dialogs |
 | the own backend cannot open a display | [17.17](17-launcher-platform.md#1717-platform-layer-okayplatform-and-the-own-backend) Platform layer (`okay::platform`) and the own backend |
 | the owner wants new models, maps or scripts in a shipped game without a new build | [18.11](18-build-export-release.md#1811-downloadable-game-content-content-delivery) Downloadable game content (content delivery) |
+| the owner wants to sell a game on Steam or Epic | [18.12](18-build-export-release.md#1812-store-kit-a-game-on-steam-or-the-epic-games-store) Store Kit: a game on Steam or the Epic Games Store |
 | the owner wants to try the game on an Xbox One | [18.10](18-build-export-release.md#1810-xbox-one-export-experimental-developer-mode-uwp) Xbox One export (experimental, Developer Mode, UWP) |
 | the owner wants to try unmerged work without waiting for a release | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | the pad does nothing in the editor Play view | [8.2](08-input.md#82-gamepad-sdl) Gamepad (SDL) |
@@ -1232,6 +1236,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | update downloaded from a tampered server is refused | [17.11](17-launcher-platform.md#1711-security-plan-sec1) Security plan SEC1 |
 | update signature check: OFF" in About | [17.11](17-launcher-platform.md#1711-security-plan-sec1) Security plan SEC1 |
 | updating a pack overwrites my edits | [25.4](20-35-planned.md#254-dependency-management) Dependency management |
+| using the simulation | [18.12](18-build-export-release.md#1812-store-kit-a-game-on-steam-or-the-epic-games-store) Store Kit: a game on Steam or the Epic Games Store |
 | using the software renderer briefly | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |
 | V does not switch view or the camera pops | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
 | values reset after editing | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |

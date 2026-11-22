@@ -2,6 +2,7 @@
 // Advanced pages, the summary and checks, the profile extras and the history. The logic is BuildSettingsModel.hpp.
 #include "BuildSettingsWindow.hpp"
 #include "ConsolePanel.hpp"   // ConsoleLog
+#include "okay/Platform/Steam/SteamWebApi.hpp"   // Stores page: check the ids scripts use against the Steam app
 
 #include <algorithm>
 #include <cstdio>
@@ -129,6 +130,98 @@ bool DrawBuildPageExtra(BuildWindowCtx& c, int page) {
         Tip("Written into the game's config and its start-up log line.");
         Text("Environment variables##env", b.envVars, "NAME=VALUE;OTHER=VALUE", 420);
         Tip("Set before the game starts, separated by semicolons. Variables that change which programs or libraries load (PATH, LD_PRELOAD ...) are refused.");
+        return true;
+    }
+    if (page == kStores) {
+        Header("Which store is this build for?");
+        {
+            static const char* names[] = {"None (no store)", "Steam", "Epic Games Store"};
+            b.storeTarget = std::max(0, std::min(2, b.storeTarget));
+            ImGui::SetNextItemWidth(220);
+            ImGui::Combo("Store", &b.storeTarget, names, 3);
+            Tip("The game's achievements, stats, cloud saves and presence go to this store. Scripts use\n"
+                "Achievements.Unlock(\"id\"), Stats.Add, CloudSave.Write and Presence.Set, which work the same on every store.\n"
+                "None keeps them in memory (for builds sold elsewhere).");
+        }
+        ImGui::TextWrapped("OkaySpace never ships Valve's or Epic's SDK. You download the SDK yourself and set its folder here; the build "
+                           "copies its runtime DLL next to your game and writes the upload files. Your game never calls the SDK: the "
+                           "Store Kit does. With no store, achievements, stats, scores and cloud saves are kept in the game's save folder.");
+        auto envState = [](const char* name) { const char* v = std::getenv(name); return v && v[0]; };
+        if (b.storeTarget == 1) {
+            Header("Steam");
+            ImGui::SetNextItemWidth(160); ImGui::InputInt("App id##steam", &b.steamAppId, 0);
+            b.steamAppId = std::max(0, b.steamAppId);
+            Tip("Your game's own app id (Steamworks > App Admin). 480 is only Valve's test app.");
+            ImGui::SetNextItemWidth(160); ImGui::InputInt("Depot id##steam", &b.steamDepotId, 0);
+            b.steamDepotId = std::max(0, b.steamDepotId);
+            Tip("The Windows depot the build goes into. 0 uses the app id + 1, Steam's usual first depot.");
+            Text("Steamworks SDK folder##steam", b.steamSdkPath, "for example C:/sdk/steamworks_sdk", 420);
+            Tip("The folder you unzipped Valve's SDK into. steam_api64.dll is copied from redistributable_bin/win64,\nand upload.bat uses its tools/ContentBuilder/builder/steamcmd.exe.");
+            Text("Branch to set live##steam", b.steamBranch, "empty = upload only (safest)", 220);
+            Tip("Empty: upload only, then set the build live on the Steamworks Builds page.\nA branch name (for example beta) sets it live on that branch after the upload.");
+            Text("Build description##steam", b.steamBuildDesc, "empty = name, version and build number", 420);
+            ImGui::Spacing();
+            ImGui::TextColored(kInfo, "Build writes: StoreUpload/steam/app_build_%d.vdf, depot_build_%d.vdf, upload.bat, upload.sh%s%s",
+                               b.steamAppId, b.steamDepotId ? b.steamDepotId : b.steamAppId + 1,
+                               b.developmentBuild ? ", steam_appid.txt (development build)" : "",
+                               b.steamSdkPath[0] ? ", steam_api64.dll" : "");
+            ImGui::TextWrapped("The game reaches Steam through the steam_api64.dll the build copies from your SDK folder (the Store Kit loads it "
+                               "when the game starts). Without it, or when Steam is not running, the game keeps working with a simulation.");
+            Header("Check against Steam");
+            {
+                static std::vector<std::string> s_used, s_stats, s_result;
+                static std::string s_for;
+                if (s_for != c.projectDir) { s_used.clear(); s_stats.clear(); s_result.clear(); okay::steamweb::ScanProject(c.projectDir, s_used, s_stats); s_for = c.projectDir; }
+                if (ImGui::Button("Rescan scripts")) { s_used.clear(); s_stats.clear(); okay::steamweb::ScanProject(c.projectDir, s_used, s_stats); }
+                Tip("Lists the achievement ids and stat names your scripts and visual scripts use.");
+                ImGui::SameLine();
+                const bool haveKey = envState(okay::steamweb::KeyEnv());
+                ImGui::BeginDisabled(!haveKey || b.steamAppId <= 0);
+                if (ImGui::Button("Check them on Steam")) {
+                    const char* key = std::getenv(okay::steamweb::KeyEnv());
+                    const okay::steamweb::Schema sc = okay::steamweb::FetchSchemaOnline((std::uint32_t)b.steamAppId, key ? key : "");
+                    s_result.clear();
+                    if (!sc.ok) s_result.push_back(sc.error);
+                    else {
+                        s_result = okay::steamweb::Compare(sc, s_used, s_stats);
+                        if (s_result.empty()) s_result.push_back("All good: every id your scripts use is defined on Steam for " + sc.gameName + ".");
+                    }
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip(haveKey ? "Asks Steam which achievements and stats app %d defines, and compares them with your scripts."
+                                              : "Set the environment variable STEAM_WEB_API_KEY to your publisher Web API key first.\nIt is only read from the environment, sent in a request header, and never saved.", b.steamAppId);
+                ImGui::TextDisabled("Used in scripts: %d achievement(s), %d stat(s)", (int)s_used.size(), (int)s_stats.size());
+                std::string list;
+                for (const std::string& a : s_used) list += (list.empty() ? "" : ", ") + a;
+                if (!list.empty()) ImGui::TextWrapped("Achievements: %s", list.c_str());
+                for (const std::string& r : s_result) ImGui::TextColored(r.rfind("All good", 0) == 0 ? ImVec4(0.5f, 0.9f, 0.55f, 1) : kWarn, "%s", r.c_str());
+            }
+        } else if (b.storeTarget == 2) {
+            Header("Epic Online Services (the game)");
+            Text("Product id##epic", b.epicProductId, "Developer Portal > Product Settings", 300);
+            Text("Sandbox id##epic", b.epicSandboxId, "", 300);
+            Text("Deployment id##epic", b.epicDeploymentId, "", 300);
+            Text("Client id##epic", b.epicClientId, "the game client's id", 300);
+            ImGui::TextWrapped("The client SECRET is never saved in the project. Set the environment variable OKAY_EOS_CLIENT_SECRET "
+                               "before you build; the build packs it into the game.");
+            ImGui::TextColored(envState("OKAY_EOS_CLIENT_SECRET") ? ImVec4(0.5f, 0.9f, 0.55f, 1) : kWarn,
+                               envState("OKAY_EOS_CLIENT_SECRET") ? "OKAY_EOS_CLIENT_SECRET is set." : "OKAY_EOS_CLIENT_SECRET is not set.");
+            Text("EOS SDK folder##epic", b.epicSdkPath, "for example C:/sdk/EOS-SDK", 420);
+            Tip("The folder you unzipped Epic's SDK into. EOSSDK-Win64-Shipping.dll is copied from SDK/Bin.");
+            Header("Upload (BuildPatchTool)");
+            Text("Organization id##epic", b.epicOrgId, "", 300);
+            Text("Artifact id##epic", b.epicArtifactId, "", 300);
+            Text("BuildPatchTool client id##epic", b.epicBptClientId, "", 300);
+            Text("BuildPatchTool.exe##epic", b.epicBptPath, "empty = on PATH", 420);
+            ImGui::TextColored(envState("EPIC_BPT_CLIENT_SECRET") ? ImVec4(0.5f, 0.9f, 0.55f, 1) : kInfo,
+                               envState("EPIC_BPT_CLIENT_SECRET") ? "EPIC_BPT_CLIENT_SECRET is set (upload.bat reads it by name)."
+                                                                  : "upload.bat reads the BuildPatchTool secret from EPIC_BPT_CLIENT_SECRET when you run it.");
+            ImGui::TextColored(kInfo, "Build writes: StoreUpload/epic/upload.bat, ignore.txt%s",
+                               b.epicSdkPath[0] ? ", EOSSDK-Win64-Shipping.dll" : "");
+            ImGui::TextColored(kWarn, "The game's Epic connection is not written yet: Epic builds run with the Epic simulation\n"
+                                      "(achievements, stats, saves and presence in memory). The upload script works today. See docs/release/epic_release.md.");
+        }
         return true;
     }
     if (page == kAdvanced) {

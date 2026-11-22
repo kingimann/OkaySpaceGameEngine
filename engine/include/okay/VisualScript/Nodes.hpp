@@ -9,6 +9,7 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/NetworkObject.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
+#include "okay/Platform/PlatformServices.hpp"   // the Store Kit: achievements and scores go to the game's store
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -862,7 +863,7 @@ struct SteamNameNode : VsNode {
 struct SteamUnlockedNode : VsNode {
     std::string id;
     explicit SteamUnlockedNode(std::string i) : id(std::move(i)) {}
-    VsValue Eval(int, NodeGraph&, VsContext&) override { return okay::Steam::Get().IsAchievementUnlocked(id); }
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return okay::PlatformServices::Get().IsAchievementUnlocked(id); }
 };
 struct SteamGetStatNode : VsNode {
     std::string name;
@@ -873,7 +874,8 @@ struct SteamUnlockNode : VsNode {
     std::string id;
     explicit SteamUnlockNode(std::string i) : id(std::move(i)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext&) override { okay::Steam::Get().UnlockAchievement(id); okay::Steam::Get().StoreStats(); return 0; }
+    // The Store Kit: Steam, Epic or the local store, whichever this build of the game is for.
+    int Exec(NodeGraph&, VsContext&) override { okay::PlatformServices::Get().UnlockAchievement(id); okay::PlatformServices::Get().StoreStats(); return 0; }
 };
 struct SteamSetStatNode : VsNode {
     std::string name;
@@ -883,13 +885,13 @@ struct SteamSetStatNode : VsNode {
 };
 struct SteamStoreNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext&) override { okay::Steam::Get().StoreStats(); return 0; }
+    int Exec(NodeGraph&, VsContext&) override { okay::Steam::Get().StoreStats(); okay::PlatformServices::Get().StoreStats(); return 0; }
 };
 struct SteamLeaderboardNode : VsNode {
     std::string board;
     explicit SteamLeaderboardNode(std::string b) : board(std::move(b)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { okay::Steam::Get().UploadLeaderboardScore(board, (std::int32_t)In(0, g, ctx).AsFloat()); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { okay::PlatformServices::Get().SubmitScore(board, (std::int32_t)In(0, g, ctx).AsFloat()); return 0; }
 };
 
 // ---- Audio ------------------------------------------------------------

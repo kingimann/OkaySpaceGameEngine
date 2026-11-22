@@ -4486,6 +4486,7 @@ struct Options {
     std::string excludeList;                // Build Settings > Output > Files left out of the build ("Assets/a.png;Assets/Old/")
     bool allowCommands = false;             // Build Settings > Advanced: run the two commands below (off = never)
     std::string preCommand, postCommand;    // run before the build (a failure stops it) / after a good build
+    okay::stores::ExportInput store;        // Build Settings > Stores: Steam / Epic ids, SDK folders (no secret; okay/Platform/StoreExport.hpp)
     // ---- Player presentation ----
     std::string iconPath;      // window icon PNG (copied into the build)
     std::string bundleId = "com.okayspace.game";
@@ -4858,6 +4859,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "boot_bar=" << (opt.bootBar ? 1 : 0) << "\n";
         cf << "startup=game.okayscene\n";
         cf << okay::buildpipe::WriteExtraConfig(opt.extra);   // nothing at the defaults, so old projects build the same config
+        cf << okay::WriteStoreConfig(okay::stores::SettingsFor(opt.store));   // store=steam|epic and the store ids (nothing for no store)
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
         if (opt.antiCheat) cf << "anticheat=" << okayac::ModeName((okayac::Mode)opt.antiCheat) << "\n";
         settingsText = cf.str();
@@ -4958,6 +4960,25 @@ std::string Build(EditorState& ed, const std::string& outDir,
         why[relRoot(dst)] = "StreamingAssets (copied as it is)"; ++streaming;
     }
 
+    // Build Settings > Stores: the files that belong to the game itself (steam_appid.txt in a development build, the
+    // SDK's DLL from the developer's SDK folder, the packed EOS client secret from OKAY_EOS_CLIENT_SECRET). Written
+    // before the file list, the hashes and the zip, so they are part of the game. The upload folder comes after.
+    okay::stores::ExportInput storeIn = opt.store;
+    storeIn.buildDir = root.string(); storeIn.dataDir = data.string(); storeIn.exeName = exeName; storeIn.gameName = gameName;
+    storeIn.version = opt.version; storeIn.buildNumber = opt.buildNumber; storeIn.developmentBuild = opt.developmentBuild;
+    std::set<std::string> storeNotes;
+    if (storeIn.store != okay::StoreKind::None && opt.dryRun) {
+        std::vector<std::string> warn;
+        for (const std::string& e : okay::stores::Validate(storeIn, &warn)) storeNotes.insert(e);
+        for (const std::string& w : warn) storeNotes.insert(w);
+    } else if (!opt.dryRun) {
+        storeIn.writeRuntime = true; storeIn.writeUpload = false;
+        const okay::stores::ExportResult sr = okay::stores::WriteStoreFiles(storeIn);
+        for (const std::string& e : sr.errors) storeNotes.insert(e);
+        for (const std::string& w : sr.warnings) storeNotes.insert(w);
+        for (const std::string& f : sr.written) why[f] = "store runtime file (Build Settings > Stores)";
+    }
+
     // Data/manifest.json: every shipped file's SHA-256, signed when a key is set up
     // (shared/AntiCheatIntegrity.hpp). Only written (and only needed) when anti-cheat is on.
     okayac::BuildManifestResult integrity;
@@ -5037,6 +5058,21 @@ std::string Build(EditorState& ed, const std::string& outDir,
     }
     if (zipOnly && !opt.dryRun) { std::error_code se; fs::remove_all(root, se); }
 
+    // Build Settings > Stores: the upload folder (StoreUpload/: SteamPipe VDF files and a steamcmd script, or a
+    // BuildPatchTool script), after the zip so it is never inside the game. It needs a folder to sit in.
+    std::string storeNote;
+    if (storeIn.store != okay::StoreKind::None && !opt.dryRun) {
+        if (zipOnly) storeNotes.insert("No store upload files were written: the Zip layout keeps no folder. Use the Folder layout for a store build.");
+        else {
+            storeIn.buildDir = dir.string(); storeIn.writeRuntime = false; storeIn.writeUpload = true;
+            const okay::stores::ExportResult sr = okay::stores::WriteStoreFiles(storeIn);
+            for (const std::string& e : sr.errors) storeNotes.insert(e);
+            for (const std::string& w : sr.warnings) storeNotes.insert(w);
+            if (sr.ok) storeNote = std::string("  (") + (storeIn.store == okay::StoreKind::Steam ? "Steam" : "Epic") + " upload files in " + okay::stores::UploadFolderName() + "/)";
+        }
+    }
+    for (const std::string& n : storeNotes) rp.Warn(n);
+
     // The same report as a file beside the project's other editor state (never inside the game).
     if (!ed.projectDir().empty()) {
         std::error_code we;
@@ -5071,6 +5107,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         if (copied) msg += "  (" + std::to_string(copied) + " asset(s), " + human(assetBytes) + ")";
         if (streaming) msg += "  (" + std::to_string(streaming) + " StreamingAssets file(s))";
         msg += zipNote;
+        msg += storeNote;
     }
     if (!rp.excluded.empty()) msg += "  " + std::to_string(rp.excluded.size()) + " unused project file(s) left out (" + human(rp.excludedBytes) + ").";
     if (R.missing) msg += "  WARNING: " + std::to_string(R.missing) + " referenced asset(s) not found and not copied.";
@@ -5123,6 +5160,7 @@ Options OptionsFromSettings(const BuildSettings& g, const ProjectSettings& pr) {
     o.buildNumber = g.buildNumber; o.archiveName = g.archiveName;
     o.extra = oked::bsm::ExtraFrom(g); o.excludeList = g.excludeList;
     o.allowCommands = g.allowBuildCommands; o.preCommand = g.preBuildCommand; o.postCommand = g.postBuildCommand;
+    o.store = oked::bsm::StoreExportFrom(g);
     return o;
 }
 

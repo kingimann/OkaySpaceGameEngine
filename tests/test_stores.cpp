@@ -8,6 +8,7 @@
 #include "okay/Platform/Epic/Epic.hpp"
 #include "okay/Platform/PlatformServices.hpp"
 #include "okay/Platform/StoreExport.hpp"
+#include "okay/Platform/Steam/SteamWebApi.hpp"
 #include "okay/Core/DataPack.hpp"
 
 #include <filesystem>
@@ -114,6 +115,50 @@ void PlayRound(IStoreServices& s) {
 }
 
 }  // namespace
+
+
+// The shipped example examples/store_kit/store_kit.okayscene is made by this function: run test_stores with
+// OKAY_WRITE_STORE_KIT_EXAMPLE=<path> to write it again. Without it the test reads the committed file.
+const char* kStoreKitScript =
+    "// Store Kit demo: the same calls work on Steam, the Epic Games Store and with no store.\n"
+    "// With no store (this scene) everything is kept in the game's save folder, so it works without any account.\n"
+    "// Keys: 1 unlock an achievement, 2 add a coin, 3 submit a score, 4 save to the cloud, 5 read the save back.\n"
+    "var msg = \"\"\n"
+    "function start() {\n"
+    "  Achievements.Unlock(\"first_launch\")\n"
+    "  Stats.Add(\"launches\", 1)\n"
+    "  Stats.Store()\n"
+    "  msg = \"Achievement first_launch unlocked. Press 1 to 5.\"\n"
+    "}\n"
+    "function update(dt) {\n"
+    "  if (key_down(\"1\")) { Achievements.Unlock(\"pressed_one\"); msg = \"Achievement pressed_one unlocked\" }\n"
+    "  if (key_down(\"2\")) { Stats.Add(\"coins\", 1); Stats.Store(); msg = \"Coins: \" + Stats.Get(\"coins\") }\n"
+    "  if (key_down(\"3\")) { Leaderboards.Submit(\"high\", Stats.Get(\"coins\") * 100); msg = \"Score sent to the high board\" }\n"
+    "  if (key_down(\"4\")) { CloudSave.Write(\"slot1\", \"coins=\" + Stats.Get(\"coins\")); msg = \"Saved slot1\" }\n"
+    "  if (key_down(\"5\")) { msg = \"slot1 holds: \" + CloudSave.Read(\"slot1\") }\n"
+    "  set_text(\"Store: \" + Store.Name() + \"   player: \" + Store.UserName() + \"   launches: \" + Stats.Get(\"launches\") + \"   coins: \" + Stats.Get(\"coins\") + \"\\n\" + msg)\n"
+    "}\n";
+const char* kStoreKitGraph =
+    "node 1 OnStart\n"
+    "entry OnStart 1\n"
+    "node 2 SteamUnlock visual_script_achievement\n"
+    "exec 1 0 2\n";
+
+void BuildStoreKitExample(Scene& s) {
+    GameObject* cam = s.CreateGameObject("Main Camera");
+    cam->AddComponent<Camera>();
+    GameObject* ui = s.CreateGameObject("Store Kit Demo");
+    auto* t = ui->AddComponent<TextRenderer>();
+    t->text = "Store Kit demo";
+    t->screenSpace = true;
+    t->screenPos = Vec2{24.0f, 24.0f};
+    auto* sc = ui->AddComponent<ScriptComponent>("okayscript");
+    sc->LoadSource(kStoreKitScript);
+    GameObject* vs = s.CreateGameObject("Visual Script Achievement");
+    auto* v = vs->AddComponent<VisualScriptComponent>();
+    std::string err;
+    v->LoadFromText(kStoreKitGraph, &err);
+}
 
 int main() {
     {
@@ -290,6 +335,9 @@ int main() {
         sc->LoadSource(
             "var store = \"\";\n"
             "var had = 0;\n"
+            "var top = 0;\n"
+            "var owns = 0;\n"
+            "var who = \"\";\n"
             "function start() {\n"
             "  Achievements.Unlock(\"first_win\");\n"
             "  had = Achievements.IsUnlocked(\"first_win\");\n"
@@ -297,10 +345,13 @@ int main() {
             "  Stats.Set(\"level\", 4);\n"
             "  Stats.Add(\"coins\", 10);\n"
             "  Stats.Store();\n"
-            "  Leaderboard.Submit(\"high\", 1200);\n"
+            "  Leaderboards.Submit(\"high\", 1200);\n"
+            "  top = Leaderboards.Top(\"high\", 5);\n"
+            "  owns = Store.OwnsGame();\n"
+            "  who = Store.UserName();\n"
             "  CloudSave.Write(\"slot1\", \"hp=3\");\n"
             "  Presence.Set(\"status\", \"Boss fight\");\n"
-            "  store = Platform.Store();\n"
+            "  store = Store.Name();\n"
             "}\n");
         s.Start();
         s.Update(0.016f);
@@ -310,7 +361,159 @@ int main() {
         CHECK(scriptEpic.presence.find("Boss fight") != std::string::npos);
         CHECK(sc->VM()->GetGlobal("store").AsString() == "epic");
         CHECK(sc->VM()->GetGlobal("had").AsFloat() == 1.0f);
+        CHECK(sc->VM()->GetGlobal("owns").AsFloat() == 1.0f);
+        CHECK(sc->VM()->GetGlobal("who").AsString() == "EpicPlayer");
         PlatformServices::Shutdown();
+    }
+
+    {
+        RUN_SUITE("local store (no store): saved between runs in a folder");
+        const fs::path dir = fs::temp_directory_path() / "okay_store_local_test";
+        std::error_code e2; fs::remove_all(dir, e2);
+        {
+            auto a = MakeNoStoreServices(dir.string());
+            PlayRound(*a);
+            a->SubmitScore("high", 400);   // lower than 900: the best stays
+            a->CloudWrite("../escape", "x");   // a name cannot leave the folder
+            a->Shutdown();
+        }
+        auto b = MakeNoStoreServices(dir.string());
+        CHECK(b->IsAchievementUnlocked("first_win") && b->IsAchievementUnlocked("collector"));
+        CHECK(b->GetStat("kills") == 5);
+        CHECK(b->CloudRead("save1") == "level=4");
+        CHECK(b->OwnsGame());
+        const auto top = b->TopScores("high", 10);
+        CHECK(top.size() == 1 && top[0].score == 900 && top[0].rank == 1);
+        CHECK(!fs::exists(dir.parent_path() / "escape"));
+        CHECK(b->CloudRead("../escape") == "x");   // still readable by its own name
+        fs::remove_all(dir, e2);
+    }
+#if defined(FAKE_STEAM_LIB)
+    {
+        RUN_SUITE("Store Kit: the developer's Steam library loaded at run time (a stand-in library)");
+        CHECK(CreateDynamicSteamService((fs::temp_directory_path() / "no_such_steam_api.so").string()) == nullptr);
+        auto svc = CreateDynamicSteamService(FAKE_STEAM_LIB);
+        CHECK(svc != nullptr);
+        if (svc) {
+            SteamConfig cfg; cfg.appId = 2468;
+            CHECK(svc->Initialize(cfg));
+            CHECK(svc->IsAvailable() && std::string(svc->BackendName()) == "steam-runtime");
+            CHECK(svc->UserName() == "FakeSteamUser" && svc->UserId() == 76561197960287930ull);
+            CHECK(svc->UnlockAchievement("ACH_WIN") && svc->IsAchievementUnlocked("ACH_WIN") && !svc->IsAchievementUnlocked("ACH_X"));
+            svc->SetStatInt("kills", 7);
+            CHECK(svc->GetStatInt("kills") == 7);
+            CHECK(svc->CloudWrite("s.sav", std::string("a\0b", 3)) && svc->CloudRead("s.sav") == std::string("a\0b", 3));
+            CHECK(svc->CloudDelete("s.sav") && !svc->CloudHasFile("s.sav"));
+            CHECK(svc->OwnsApp(2468) && !svc->OwnsApp(1));
+            CHECK(svc->Language() == "german");
+            // Through the facade, the way a game uses it.
+            auto store = MakeSteamStoreServices(*svc);
+            store->ShowOverlay("achievements");
+            store->SetPresence("status", "Racing");
+            store->Tick();
+            store->Tick();
+            svc->Shutdown();
+            CHECK(!svc->IsAvailable());
+        }
+        // The restart check: the library says "relaunch" for app 999, and the accessor reports it.
+        Steam::Shutdown();
+        Steam::SetAppId(999); Steam::SetRelaunchCheck(true);
+        Steam::EnableRuntimeLibrary(true, FAKE_STEAM_LIB);
+        CHECK(std::string(Steam::Get().BackendName()) == "null");   // the simulation keeps the game alive ...
+        CHECK(Steam::RelaunchRequested());                          // ... and the player is told to quit
+        Steam::Shutdown();
+        Steam::SetAppId(2468); Steam::SetRelaunchCheck(false);
+        CHECK(std::string(Steam::Get().BackendName()) == "steam-runtime");
+        Steam::Shutdown();
+        Steam::EnableRuntimeLibrary(false);
+        Steam::SetAppId(480);
+        CHECK(std::string(Steam::Get().BackendName()) == "null");   // off by default
+        Steam::Shutdown();
+    }
+#endif
+
+    {
+        RUN_SUITE("Steam Web API check: schema, ids used in scripts, key only in a header");
+        namespace sw = okay::steamweb;
+        const std::string body = R"({"game":{"gameName":"Moon Hop","gameVersion":"3","availableGameStats":{
+            "stats":[{"name":"kills","defaultvalue":0,"displayName":"Kills"},{"name":"coins","defaultvalue":0,"displayName":""}],
+            "achievements":[{"name":"ACH_WIN","defaultvalue":0,"displayName":"Winner \"one\"","hidden":0,"description":"a, b","icon":"x","icongray":"y"},
+                            {"name":"ACH_COLLECT","defaultvalue":0,"displayName":"C","hidden":1,"description":"","icon":"","icongray":""}]}}})";
+        const sw::Schema sc = sw::ParseSchema(body);
+        CHECK(sc.ok && sc.gameName == "Moon Hop");
+        CHECK(sc.achievements.size() == 2 && sc.achievements[0] == "ACH_WIN" && sc.achievements[1] == "ACH_COLLECT");
+        CHECK(sc.stats.size() == 2 && sc.stats[1] == "coins");
+        CHECK(!sw::ParseSchema("{\"game\":{").ok);
+        CHECK(!sw::ParseSchema("{}").ok);
+        CHECK(sw::ParseSchema(R"({"game":{}})").ok);   // an app with nothing defined yet
+
+        const std::string script = "function win() { Achievements.Unlock(\"ACH_WIN\"); steam_unlock(\"ACH_TYPO\");\n"
+                                   "  Stats.Add(\"coins\", 1); steam_set_stat_int(\"deaths\", 1); Achievements.Unlock(\"ACH_WIN\"); }\n"
+                                   "node 4 SteamUnlock ACH_COLLECT\n";
+        const auto ach = sw::FindAchievementIds(script);
+        CHECK(ach.size() == 3);
+        const auto st = sw::FindStatNames(script);
+        CHECK(st.size() == 2);
+        const auto problems = sw::Compare(sc, ach, st);
+        CHECK(problems.size() == 2);
+        std::string all; for (auto& p : problems) all += p + "\n";
+        CHECK(all.find("ACH_TYPO") != std::string::npos && all.find("deaths") != std::string::npos);
+
+        const std::string key = "PUBLISHERKEY-1234";
+        std::string seenUrl; std::vector<std::string> seenHeaders;
+        auto fake = [&](const std::string& url, const std::vector<std::string>& h, int* status, std::string* out) {
+            seenUrl = url; seenHeaders = h; *status = 200; *out = body; return true;
+        };
+        const sw::Schema got = sw::FetchSchema(2468, key, fake);
+        CHECK(got.ok && got.achievements.size() == 2);
+        CHECK(seenUrl.find("appid=2468") != std::string::npos && seenUrl.find(key) == std::string::npos);
+        bool inHeader = false; for (auto& h : seenHeaders) if (h == "x-webapi-key: " + key) inHeader = true;
+        CHECK(inHeader);
+        auto refuse = [&](const std::string&, const std::vector<std::string>&, int* status, std::string* out) { *status = 403; *out = "no"; return true; };
+        const sw::Schema bad = sw::FetchSchema(2468, key, refuse);
+        CHECK(!bad.ok && bad.error.find("403") != std::string::npos && bad.error.find(key) == std::string::npos);
+        CHECK(!sw::FetchSchema(2468, "", fake).ok);
+        CHECK(sw::FetchSchema(2468, "", fake).error.find("STEAM_WEB_API_KEY") != std::string::npos);
+    }
+
+    {
+        RUN_SUITE("example scene examples/store_kit/store_kit.okayscene plays with the local store");
+        const std::string path = std::string(OKAY_SOURCE_DIR) + "/examples/store_kit/store_kit.okayscene";
+        if (const char* out = std::getenv("OKAY_WRITE_STORE_KIT_EXAMPLE")) {
+            Scene w("Store Kit");
+            BuildStoreKitExample(w);
+            std::string err;
+            CHECK(SceneSerializer::SaveToFile(w, out, &err));
+            std::printf("  wrote %s %s\n", out, err.c_str());
+        }
+        const fs::path dir = fs::temp_directory_path() / "okay_store_kit_example";
+        std::error_code e3; fs::remove_all(dir, e3);
+        PlatformServices::Shutdown();
+        PlatformServices::SetLocalFolder(dir.string());
+        PlatformServices::Configure(StoreSettings{});
+        Scene s("Store Kit");
+        std::string err;
+        CHECK(SceneSerializer::LoadFromFile(s, path, &err));
+        if (!err.empty()) std::cerr << "    " << err << "\n";
+        s.physicsEnabled = false;
+        s.Start();
+        s.Update(0.016f);
+        s.Update(0.016f);
+        CHECK(PlatformServices::Get().Kind() == StoreKind::None);
+        CHECK(PlatformServices::Get().IsAchievementUnlocked("first_launch"));
+        CHECK(PlatformServices::Get().IsAchievementUnlocked("visual_script_achievement"));
+        CHECK(PlatformServices::Get().GetStat("launches") == 1);
+        GameObject* demo = s.Find("Store Kit Demo");
+        CHECK(demo != nullptr);
+        if (demo) if (auto* t = demo->GetComponent<TextRenderer>()) {
+            CHECK(t->text.find("Store: none") != std::string::npos);
+            CHECK(t->text.find("first_launch") != std::string::npos);
+        }
+        PlatformServices::Shutdown();
+        // Kept in the folder: a second run sees it.
+        CHECK(MakeNoStoreServices(dir.string())->IsAchievementUnlocked("first_launch"));
+        PlatformServices::SetLocalFolder("");
+        fs::remove_all(dir, e3);
     }
 
     // ---- export files -----------------------------------------------------------------------------------------

@@ -68,6 +68,9 @@ public:
     virtual bool IsAvailable() const = 0;
     /// Identifier of the active backend ("steamworks" or "null").
     virtual const char* BackendName() const = 0;
+    /// True when Initialize failed because Steam is relaunching the game through the Steam client
+    /// (SteamAPI_RestartAppIfNecessary); the game should then quit at once.
+    virtual bool WantsRelaunch() const { return false; }
 
     // ---- Identity ------------------------------------------------------
     virtual std::string   UserName() const = 0;
@@ -196,5 +199,15 @@ public:
 /// backend when compiled with OKAY_WITH_STEAM and Steam is running, otherwise a
 /// simulation backend that records calls in memory (handy for development).
 std::unique_ptr<ISteamService> CreateSteamService();
+
+/// The Store Kit's run-time Steam backend: loads the Steam client library the game developer ships beside the game
+/// (steam_api64.dll on Windows, libsteam_api.so on Linux; copied from their own Steamworks SDK folder by Build) and
+/// calls its documented flat C functions through our own interface, so neither the engine nor the game is compiled
+/// against the SDK. `libraryPath` "" = the default name in the normal library search (beside the exe first).
+/// Returns nullptr when the library is absent or lacks the functions we need. Leaderboards are not reached through
+/// it (they need the SDK's call results); the facade keeps those locally.
+std::unique_ptr<ISteamService> CreateDynamicSteamService(const std::string& libraryPath = std::string());
+/// "steam_api64.dll" / "libsteam_api.so" / "libsteam_api.dylib".
+const char* DefaultSteamLibraryName();
 
 } // namespace okay

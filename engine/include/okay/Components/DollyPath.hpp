@@ -5,6 +5,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
+#include <cmath>
 #include <vector>
 #include <string>
 
@@ -59,6 +60,70 @@ public:
         return best;
     }
 
+    /// World-space direction of travel at t (unit length; zero for a path with fewer than two distinct points).
+    /// Taken from a short step along the curve, so it follows the object's scale and rotation too.
+    Vec3 EvaluateTangent(float t) const {
+        if (waypoints.size() < 2) return Vec3::Zero;
+        const float h = 1e-3f;
+        float a = t - h, b = t + h;
+        if (!looped) { a = Mathf::Clamp01(a); b = Mathf::Clamp01(b); }
+        Vec3 d = EvaluatePosition(b) - EvaluatePosition(a);
+        float m = d.Magnitude();
+        return m > 1e-7f ? d * (1.0f / m) : Vec3::Zero;
+    }
+
+    /// World length of the whole path, summed over `samples` straight pieces.
+    float Length(int samples = 128) const {
+        if (waypoints.size() < 2 || samples < 1) return 0.0f;
+        float len = 0.0f;
+        Vec3 prev = EvaluatePosition(0.0f);
+        for (int k = 1; k <= samples; ++k) {
+            Vec3 p = EvaluatePosition((float)k / samples);
+            len += (p - prev).Magnitude();
+            prev = p;
+        }
+        return len;
+    }
+
+    /// Metres along the path to the normalized position t (t is wrapped or clamped first).
+    float DistanceAt(float t, int samples = 128) const {
+        if (waypoints.size() < 2 || samples < 1) return 0.0f;
+        t = Normalize(t);
+        float len = 0.0f;
+        Vec3 prev = EvaluatePosition(0.0f);
+        for (int k = 1; k <= samples; ++k) {
+            float tk = (float)k / samples;
+            if (tk >= t) { len += (EvaluatePosition(t) - prev).Magnitude(); break; }
+            Vec3 p = EvaluatePosition(tk);
+            len += (p - prev).Magnitude();
+            prev = p;
+        }
+        return len;
+    }
+
+    /// The normalized position `metres` along the path (wrapped round a loop, clamped to the ends otherwise).
+    float PositionAtDistance(float metres, int samples = 128) const {
+        if (waypoints.size() < 2 || samples < 1) return 0.0f;
+        const float total = Length(samples);
+        if (total <= 1e-6f) return 0.0f;
+        if (looped) { metres = std::fmod(metres, total); if (metres < 0.0f) metres += total; }
+        else if (metres <= 0.0f) return 0.0f;
+        else if (metres >= total) return 1.0f;
+        float len = 0.0f;
+        Vec3 prev = EvaluatePosition(0.0f);
+        for (int k = 1; k <= samples; ++k) {
+            Vec3 p = EvaluatePosition((float)k / samples);
+            float piece = (p - prev).Magnitude();
+            if (len + piece >= metres) {
+                float u = piece > 1e-7f ? (metres - len) / piece : 0.0f;
+                return ((float)(k - 1) + u) / samples;
+            }
+            len += piece;
+            prev = p;
+        }
+        return looped ? 0.0f : 1.0f;
+    }
+
 private:
     Vec3 ToWorld(const Vec3& local) const {
         return transform ? transform->TransformPoint(local) : local;
@@ -85,8 +150,17 @@ class DollyCart : public Behaviour {
 public:
     std::string path;        ///< name of the GameObject holding the DollyPath
     float position = 0.0f;   ///< normalized position along the path (0..1)
-    float speed = 0.1f;      ///< path fractions per second (when autoMove)
+    float speed = 0.1f;      ///< path fractions per second (when autoMove), or metres per second with speedInMetres
     bool  autoMove = true;   ///< advance automatically each frame
+    /// Speed is metres per second along the rail, so the cart keeps one pace where the waypoints bunch up.
+    bool  speedInMetres = false;
+    /// On an open path, turn round at each end instead of stopping there (a looped path always goes round).
+    bool  pingPong = false;
+    /// Turn the object to face the way it travels (its -Z, the way a camera looks, along the rail).
+    bool  orientToPath = false;
+
+    /// +1 going forward, -1 coming back after a ping-pong turn.
+    float Direction() const { return m_dir; }
 
     void Update(float dt) override {
         Scene* s = GetScene();
@@ -94,8 +168,45 @@ public:
         GameObject* pg = path.empty() ? nullptr : s->Find(path);
         DollyPath* dp = pg ? pg->GetComponent<DollyPath>() : nullptr;
         if (!dp) return;
-        if (autoMove) position += speed * dt;
+        if (!std::isfinite(position)) position = 0.0f;
+        if (autoMove && std::isfinite(dt) && std::isfinite(speed)) Advance(*dp, speed * m_dir * dt);
+        // The stored position stays on the path: wrapped round a loop, clamped to an open path's ends (it used to
+        // grow without limit, so a reversed cart sat still while the number came back down to 1).
+        position = dp->Normalize(position);
         transform->SetPosition(dp->EvaluatePosition(position));
+        if (orientToPath) {
+            Vec3 tan = dp->EvaluateTangent(position);
+            const float travel = (autoMove && speed != 0.0f) ? (speed * m_dir < 0.0f ? -1.0f : 1.0f) : 1.0f;
+            if (tan.SqrMagnitude() > 0.5f && std::fabs(tan.y) < 0.999f) transform->SetRotation(Quat::LookRotation(tan * -travel));
+        }
+    }
+
+private:
+    float m_dir = 1.0f;
+
+    void Advance(const DollyPath& dp, float step) {
+        // Work in metres along the rail (speedInMetres) or in path fractions; `span` is the length of the domain.
+        float span = 1.0f, at = position;
+        if (speedInMetres) {
+            span = dp.Length();
+            if (span <= 1e-6f) return;
+            at = dp.DistanceAt(position);
+        }
+        float next = at + step;
+        if (pingPong && !dp.looped) {
+            // Fold the overshoot back from the end it crossed and turn round (twice for a step past both ends).
+            for (int i = 0; i < 4 && (next > span || next < 0.0f); ++i) {
+                if (next > span) next = 2.0f * span - next; else next = -next;
+                m_dir = -m_dir;
+            }
+            next = Mathf::Clamp(next, 0.0f, span);
+        }
+        if (speedInMetres) {
+            // Clamp an open path's ends here; a loop wraps inside PositionAtDistance.
+            if (!dp.looped) next = Mathf::Clamp(next, 0.0f, span);
+            next = dp.PositionAtDistance(next);
+        }
+        position = next;
     }
 };
 

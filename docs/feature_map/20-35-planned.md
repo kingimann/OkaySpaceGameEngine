@@ -603,19 +603,22 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 25.3.2 Save and import-settings migrations - `Core/SaveGame`, `Core/ImportSettings` - `SaveGame::SetMigration(fromVersion, fn)`; import settings upgrade old layouts on read
   - 25.3.3 Version helpers - `Core/BuildInfo` - `CompareVersions`, `IsCompatible`, `Version()` (merged in #571)
   - 25.3.4 Scene migration steps (#578) - `Scene/SceneMigration` - `MigrateToCurrent(text)` runs registered `N -> N+1` steps on the scene text and writes canonical text, `Register(step)`, `Describe()`, `MigrateThroughEngine` for upgrades that need component classes; a newer or damaged file comes back untouched
-- **Code:** `Scene/SceneSerializer`, `Core/SaveGame`, `Core/ImportSettings`, `Core/BuildInfo`, `Scene/SceneMigration`
-- **API:** `SceneSerializer::kSceneFormatVersion`, `SaveGame::SetMigration`, `BuildInfo::IsCompatible`, `SceneMigration::MigrateToCurrent`, `SceneMigration::Register`
-- **Editor:** none
+  - 25.3.5 Project upgrade - `editor/ProjectUpgrade`, `editor/ProjectUpgradeUI`, `shared/ProjectVersion` - `engine_version` stamp in `project.okayproj`, the question on open (older / unknown / newer), a verified full backup, all-or-nothing rewrite of scenes and prefabs, Restore (`docs/editor/project_upgrade.md`)
+  - 25.3.6 Upgrade report and loss check - `editor/ProjectUpgrade` - `CheckSceneFile` loads the old and the upgraded text and names anything the new file no longer holds (objects, records this version does not know beyond the loader's 256-per-object / 64 KB limits); `<backup>/.okay/upgrade_report.txt` lists versions, files rewritten, every step and every loss; the result window shows "Nothing was lost" or the losses, and a "What changed" list
+  - 25.3.7 Old-file corpus - `tests/test_project_upgrade.cpp`, `tests/data/upgrade_corpus` - every `.okayscene` / `.okayprefab` the repository ships (format 1 files written by older editors among them) plus hand-made version 2, newer-records and future files: each must upgrade, load, lose nothing and be stable on a second upgrade; the future file must be refused
+- **Code:** `Scene/SceneSerializer`, `Core/SaveGame`, `Core/ImportSettings`, `Core/BuildInfo`, `Scene/SceneMigration`, `editor/ProjectUpgrade`, `editor/ProjectUpgradeUI`, `shared/ProjectVersion`
+- **API:** `SceneSerializer::kSceneFormatVersion`, `SaveGame::SetMigration`, `BuildInfo::IsCompatible`, `SceneMigration::MigrateToCurrent`, `SceneMigration::Register`, `okayup::UpgradeJob`, `okayup::CheckSceneFile`, `okayup::UpgradeReportText`
+- **Editor:** the version question when a project is opened; File > Project Upgrade... (upgrade again, Restore a backup); example `examples/old_project`
 - **Docs:** `docs/engine/scene_serializer.md`, `docs/engine/core_tools.md`, `docs/engine/scene_diff_merge.md`
-- **Tests:** `scene_safe_load`, `structure_version`, `core_audit`, `scene_migration`
-- **Status:** Partial - forward compatibility plus a scene text migration library (#578) exist; the two built-in steps (1 to 2, 2 to 3) only raise the number when nothing needs the engine, and no editor dialog or version stamp uses it.
-- **Exists today:** Old scenes keep loading because the loader ignores what it does not know and defaults what is missing; nothing in the editor rewrites an old scene or tells the user it was made by an older build; `SceneMigration` can, but nothing calls it.
+- **Tests:** `scene_safe_load`, `structure_version`, `core_audit`, `scene_migration`, `project_upgrade`, `project_version`
+- **Status:** Partial - the project upgrade (stamp, question, backup, rewrite, report, restore) is built and tested headless; the windows were not run on Windows; `.okaymeta` import settings and other data files are upgraded on read only (not by the project upgrade, which rewrites scenes, prefabs and `project.okayproj`).
+- **Exists today:** An old project asks before it is touched, is backed up, upgraded file by file with a report of what changed and what could not be kept, and can be restored from File > Project Upgrade....
 - **Work packages:**
   1. S - Stamp scenes and `project.okayproj` with the engine version that wrote them. Depends on: nothing.
   2. S - Register a step (and a hand-written old-format fixture in `scene_migration`) whenever `kSceneFormatVersion` is bumped; the registry already exists. Depends on: #578 (on main).
   3. M - "Upgrade project" dialog: back up first (22.4), migrate scenes and prefabs, list what changed. Depends on: #578 (on main, `SceneMigration`), 22.4 package 1.
   4. S - Warn when a scene was saved by a newer build and would lose data on save. Depends on: package 1.
-- **Open:** no policy yet on how long old formats stay readable; `MigrateThroughEngine` drops records this build does not know and gives id-less objects new ids, so it is only for files from older builds.
+- **Open:** no policy yet on how long old formats stay readable; `MigrateThroughEngine` keeps records this build does not know only up to the loader's limits (256 per object, 64 KB each; a loss beyond that is now named in the report, not prevented) and gives id-less objects new ids, so it is only for files from older builds; the backup cannot be put in another folder; the result window was not run on a screen.
 - **Related:** 1.5, 20.4, 28.2, 35.4
 - **Words:** migration, upgrade project, scene version, format version, old project, forward compatible, SetMigration, IsCompatible
 - **Seen as:** old project opens with missing pieces; a newer scene loses data in an older editor
@@ -651,18 +654,18 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** Build a surface look by connecting nodes (textures, colours, maths, time) instead of writing shader code.
 - **Parts:**
   - 26.1.1 Node graph editor (for gameplay logic, reusable canvas) - `editor/VisualScriptEditor.hpp`, `VisualScript/NodeGraph` - not a shader editor today
-  - 26.1.2 Shader graph - `-` - not built
+  - 26.1.2 Shader graph - `-` - not built; the target it will compile to exists: the `.okayshader` surface language (26.3), whose surface block is a list of definitions and output assignments, the shape a graph produces
 - **Code:** `editor/VisualScriptEditor.hpp`, `VisualScript/NodeGraph`
 - **API:** none yet
 - **Editor:** none yet
 - **Docs:** `docs/scripting/visual_scripting.md` (logic graphs)
-- **Tests:** none
+- **Tests:** none (the language it targets: `okayshader`)
 - **Status:** Planned - no shader graph data model exists.
-- **Exists today:** Only the logic graph editor, which could supply the canvas. All shading is hard-coded in each renderer.
+- **Exists today:** The logic graph editor, which could supply the canvas, and (since 2026-11-22) the text surface language of 26.3 with its GLSL, HLSL and CPU backends, which a graph can compile to. `.okayshader` is now the text language's file name; a graph needs its own file type.
 - **Work packages:**
-  1. M - Shader graph file format `.okayshader` (nodes, pins, outputs albedo, emissive, alpha, normal). Depends on: nothing.
-  2. L - CPU evaluator in the software renderer as the reference. Depends on: package 1.
-  3. L - Generate GLSL and HLSL snippets inserted into the standard shaders (GL, D3D11). Depends on: package 2.
+  1. M - Shader graph file format (nodes, pins, outputs albedo, emission, alpha, normal), saved as its own file type. Depends on: nothing.
+  2. S - Compile a graph to an `.okayshader` surface block (one local per node, then output assignments); the CPU evaluator and the GLSL / HLSL backends of 26.3 are reused. Depends on: package 1, 26.3.
+  3. - Done by 26.3: GLSL and HLSL inserted into the standard shaders (GL; D3D11 unverified).
   4. M - Editor window reusing the node canvas, with a live preview. Depends on: package 1, 26.2 package 2.
   5. M - A material can point at a shader graph asset. Depends on: package 1, 26.2.
 - **Open:** four renderers (software, GL, D3D11, D3D12) must stay consistent; D3D12 has normal, gloss and AO maps too (corrected 2026-11-20: older text here said it had none, which is **outdated**; `engine/src/Render/D3D12Renderer.cpp` binds `normalMap`, `specularMap` as gloss and `aoMap`, see docs/rendering/rendering.md).
@@ -700,24 +703,27 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ### 26.3 Custom shaders
 - **What:** Use your own shader code or graph on a material, on every renderer.
 - **Parts:**
-  - 26.3.1 Built-in shader styles - `Components/MeshRenderer`, `Render/SoftwareRenderer`, `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer` - Standard, Unlit, Toon, Gradient, Fresnel, Iridescent, Hologram, Posterize, Velvet
+  - 26.3.1 Built-in shader styles - `Components/MeshRenderer`, `Render/SoftwareRenderer`, `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer` - Standard, Unlit, Toon, Gradient, Fresnel, Iridescent, Hologram, Posterize, Velvet (and Custom, below)
   - 26.3.2 Renderer shader sources - `Render/GLRenderer` (GLSL 120 strings), `Render/D3D11Renderer` and `Render/D3D12Renderer` (HLSL strings compiled at startup)
-  - 26.3.3 User shader files - `-` - not built
-- **Code:** `Components/MeshRenderer`, `Render/SoftwareRenderer`, `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer`
-- **API:** `MeshRenderer::shader` (enum `Shader`)
-- **Editor:** MeshRenderer inspector "Shader" selector
-- **Docs:** `docs/rendering/rendering.md`
-- **Tests:** `shaders`, `software_renderer`
-- **Status:** Planned - user-supplied shaders do not exist; the nine built-in styles are fixed per renderer (see 26.4 for the lighting model).
-- **Exists today:** A closed set of styles, each implemented once per renderer. Adding one means editing four renderers.
+  - 26.3.3 User shader files - `Render/OkayShader` - our own `.okayshader` surface language (lexer, parser, type checker with line:col errors, GLSL / HLSL / CPU backends); Shader = Custom on the Mesh Renderer and in `.okaymat`; properties and textures in the Inspector; magenta error material; hot reload every 250 ms; examples in `examples/shaders`
+- **Code:** `Components/MeshRenderer`, `Render/OkayShader`, `Render/SoftwareRenderer`, `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer`
+- **API:** `MeshRenderer::shader` (enum `Shader`), `MeshRenderer::customShader`, `MeshRenderer::shaderParams`, `oshader::Compile`, `oshader::LoadShaderFile`, `oshader::RunCpu`
+- **Editor:** MeshRenderer inspector "Shader" selector; Shader = Custom shows Shader File, the compile result and one control per property and texture
+- **Docs:** `docs/rendering/rendering.md`, `docs/rendering/shaders.md`
+- **Tests:** `shaders`, `software_renderer`, `okayshader`, `okayshader_render`, `okayshader_gl`
+- **Status:** Partial - custom surface shaders work on the software and OpenGL renderers (tested against each other on Mesa llvmpipe); Direct3D 11 is written but unverified on Windows; Direct3D 12 draws Custom as Standard.
+- **Exists today:** The nine built-in styles, plus Custom: an `.okayshader` file whose surface block feeds the renderer's own lighting. One source becomes GLSL, HLSL and a CPU register program; example scene `examples/shaders/shader_demo.okayscene`.
 - **Work packages:**
   1. M - Shader style table shared by all renderers so a new built-in style is one entry plus per-renderer code. Depends on: nothing.
-  2. L - Custom shader asset: fragment snippet in a small portable subset, compiled to GLSL and HLSL. Depends on: 26.1 package 3.
-  3. M - Software renderer fallback: run the snippet on the CPU or fall back to Standard with a warning. Depends on: package 2.
-  4. S - Shader compile errors shown in the Console with file and line (23.4). Depends on: package 2.
-- **Open:** D3D12 is "v1" and opt-in; shader hot reload would need 34.3.
+  2. - Done 2026-11-22: custom shader asset (`.okayshader`), compiled to GLSL and HLSL.
+  3. - Done 2026-11-22: the software renderer runs it on the CPU (same results as OpenGL within a tolerance).
+  4. - Done 2026-11-22: errors logged with file:line:col (Console) and shown in the Inspector.
+  5. M - Run the Direct3D 11 path on Windows (D3DCompile of the custom variant, a real GPU) and fix what it finds. Depends on: a Windows machine.
+  6. M - Direct3D 12 custom variant (root signature slot for b4 and t9-t12). Depends on: package 5.
+  7. S - Custom surfaces in the shadow-map pass (dissolve holes in shadows) and a vertex stage (wobble). Depends on: nothing.
+- **Open:** D3D11 custom shaders never compiled by D3DCompile or run on a GPU (written and syntax-checked against the MinGW headers only); D3D12 and Xbox (no run-time compiler) do not run them; shadows ignore discard.
 - **Related:** 2.1, 26.1, 34.3
-- **Words:** custom shader, shader file, GLSL, HLSL, shader style, Toon, Hologram, Iridescent, MeshRenderer.shader
+- **Words:** custom shader, shader file, okayshader, surface shader, shader language, GLSL, HLSL, shader style, Toon, Hologram, Iridescent, MeshRenderer.shader, magenta material, hot reload
 - **Seen as:** a style looks different between renderers; no way to add my own look
 - **Ask me like:** "add a Dissolve shader style to all four renderers"
 

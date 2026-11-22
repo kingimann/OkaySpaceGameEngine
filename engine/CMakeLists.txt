@@ -75,8 +75,11 @@ add_library(okay_engine
     src/Input/TouchControls.cpp
     src/Core/DisplaySettings.cpp
     src/Core/DisplayModes.cpp
+    src/Render/TextureCacheFiles.cpp
+    src/Render/ModelImportProblem.cpp
     src/Render/ConsoleRenderer.cpp
     src/Render/GLRenderer.cpp
+    src/Render/OkayShader.cpp
     src/Render/D3D11Renderer.cpp
     src/Render/D3D12Renderer.cpp
     src/Scene/Component.cpp
@@ -140,6 +143,7 @@ add_library(okay_engine
     src/Inventory/InventoryOps.cpp
     src/Combat/WeaponBook.cpp
     src/Components/MeleeAttacker.cpp
+    src/Components/Damage.cpp
     src/Components/RangedWeapon.cpp
     src/Inventory/ItemDatabase.cpp
     src/Inventory/LootTable.cpp

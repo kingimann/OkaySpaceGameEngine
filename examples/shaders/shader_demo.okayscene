@@ -1,0 +1,67 @@
+okayscene 3
+name "Custom shaders"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+gameobject 0 "Ground"
+  guid "6696f56e902c532d8f242b9871678945"
+  active 1
+  parent -1
+  transform 0 -0.5 4 0 0 0 1 16 1 12
+  mesh "Cube" 0.35 0.37 0.4 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 1 "Lava ball"
+  guid "0b97f8d0f23abba18d6fa7d24b4a1cd4"
+  active 1
+  parent -1
+  transform -3 1 4 0 0 0 1 1.6 1.6 1.6
+  mesh "Sphere" 1 1 1 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  shader 9 3 0.47058824 0.7058824 1 0.078431375 0.11764706 0.23529412
+  customshader "lava.okayshader" ""
+end
+gameobject 2 "Dissolve ball"
+  guid "9bee968b3eece67cb6fa11bb70c709d5"
+  active 1
+  parent -1
+  transform 0 1 4 0 0 0 1 1.6 1.6 1.6
+  mesh "Sphere" 0.85 0.8 0.75 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  shader 9 3 0.47058824 0.7058824 1 0.078431375 0.11764706 0.23529412
+  customshader "dissolve.okayshader" ""
+end
+gameobject 3 "Rim glow ball"
+  guid "0bb10b9659cf5d790b1cd83d1401b2c1"
+  active 1
+  parent -1
+  transform 3 1 4 0 0 0 1 1.6 1.6 1.6
+  mesh "Sphere" 0.15 0.2 0.35 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  shader 9 3 0.47058824 0.7058824 1 0.078431375 0.11764706 0.23529412
+  customshader "rim_glow.okayshader" "rimColor=1,0.35,0.9;pulse=3"
+end
+gameobject 4 "Lava floor tile"
+  guid "67bd095ace38d54e55d24486b2ec5b2d"
+  active 1
+  parent -1
+  transform 0 0.02 7.5 0 0 0 1 8 0.04 2
+  mesh "Cube" 1 1 1 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  shader 9 3 0.47058824 0.7058824 1 0.078431375 0.11764706 0.23529412
+  customshader "lava.okayshader" "speed=0.6;scale=6"
+end
+gameobject 5 "Lighting: Sun"
+  guid "a49d20cfeed4aa37fc33a1412adf7b9e"
+  active 1
+  parent -1
+  transform 0 10 0 0.42343402 0.23262502 -0.113458805 0.86816835 1 1 1
+  light 1 1 1 1 0.3 1.15 0 10 45 0.5 1 5600 1 1 1 0
+  lightx 0.45 0 0 4 0 ""
+end
+gameobject 6 "Main Camera"
+  guid "bf8a16c31c413b7fccff35708f14ae60"
+  active 1
+  parent -1
+  transform 0 2.6 -3.5 0 0.994029 0.109116785 0 1 1 1
+  camera 1 5 62 0.06 0.07 0.1 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end

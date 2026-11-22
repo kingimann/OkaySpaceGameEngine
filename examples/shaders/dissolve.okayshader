@@ -1,0 +1,24 @@
+// Dissolve: noise decides which parts of the surface are already gone
+// (discarded); a thin band at the edge of the hole glows. The amount cycles
+// with time so the effect plays on its own; set "cycle" to 0 and drive
+// "amount" yourself for a one-off dissolve.
+shader "Dissolve";
+
+property float amount = 0.5 range(0, 1);
+property float cycle = 0.35 range(0, 2);
+property float edge = 0.06 range(0, 0.3);
+property color edgeColor = (0.3, 0.8, 1.0);
+property float scale = 6.0 range(1, 32);
+
+surface {
+    float t = amount;
+    if (cycle > 0.0) {
+        t = 0.5 + 0.5 * sin(time * cycle * 6.2831853);
+    }
+    float n = noise(position * scale) * 0.7 + noise(position * scale * 2.3) * 0.3;
+    if (n < t) {
+        discard;
+    }
+    float band = 1.0 - smoothstep(0.0, edge, n - t);
+    emission = edgeColor * band * 3.0;
+}

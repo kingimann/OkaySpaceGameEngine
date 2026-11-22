@@ -52,6 +52,7 @@ inline bool InvokeNativeUIAction(GameObject* go, const std::string& fn, float ar
         if (fn == "Heal")     { c->Heal(arg);     return true; }
         if (fn == "AddArmor") { c->AddArmor(arg); return true; }
         if (fn == "Revive")   { c->Revive();      return true; }
+        if (fn == "Kill")     { c->Kill();        return true; }
     }
     if (auto* c = go->GetComponent<HungerStat>()) {
         if (fn == "Eat")          { c->Eat(arg);        return true; }
@@ -175,7 +176,7 @@ inline std::vector<std::string> NativeUIActionNames(GameObject* go) {
     if (go->GetComponent<SurvivalStats>())
         add({"Eat", "Drink", "Heal", "Damage", "Breathe", "Warm", "AddArmor",
              "Revive", "SetSprinting", "SetSubmerged", "SetCold"});
-    if (go->GetComponent<HealthStat>())      add({"Heal", "Damage", "AddArmor", "Revive"});
+    if (go->GetComponent<HealthStat>())      add({"Heal", "Damage", "AddArmor", "Revive", "Kill"});
     if (go->GetComponent<HungerStat>())      add({"Eat", "SetSprinting"});
     if (go->GetComponent<ThirstStat>())      add({"Drink", "SetSprinting"});
     if (go->GetComponent<StaminaStat>())     add({"TryJump", "SetSprinting"});

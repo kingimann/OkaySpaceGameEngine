@@ -1325,7 +1325,7 @@ MeshRendererIntent DrawMeshRendererBodyImGui(MeshRendererModel& m, const PanelVi
     if (!stats.empty()) ImGui::TextDisabled("%s", stats.c_str());
     if (ImGui::ColorEdit4("Color##mesh", v.color)) ch = true;
     if (ImGui::Checkbox("Wireframe", &v.wireframe)) ch = true;
-    if (ImGui::Combo("Shader##mesh", &v.shader, kMeshShaderNames, 9)) { ch = true; in.shaderChanged = true; }
+    if (ImGui::Combo("Shader##mesh", &v.shader, kMeshShaderNames, kMeshShaderCount)) { ch = true; in.shaderChanged = true; }
     if (v.shader == MeshShaderToon && ImGui::SliderInt("Cel Bands##mesh", &v.toonBands, 2, 6)) ch = true;
     if (v.shader == MeshShaderGradient) {
         if (ImGui::ColorEdit3("Gradient Top##mesh", v.gradientTop)) ch = true;

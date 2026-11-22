@@ -936,7 +936,7 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
         cb.tiling[0]=baseTex.empty()?1.0f:mr->tiling.x; cb.tiling[1]=baseTex.empty()?1.0f:mr->tiling.y;
         cb.shadowAlpha = -1.0f; cb.alpha = mr->color.a;
         cb.rimColor[0]=mr->rimColor.r; cb.rimColor[1]=mr->rimColor.g; cb.rimColor[2]=mr->rimColor.b;
-        cb.shaderMode = (float)(int)mr->shader; cb.toonBands = (float)mr->toonBands; cb.rimStr = mr->rimStrength;
+        cb.shaderMode = mr->shader == MeshRenderer::Shader::Custom ? 0.0f : (float)(int)mr->shader;   // Custom (.okayshader): not on D3D12 yet, drawn as Standard cb.toonBands = (float)mr->toonBands; cb.rimStr = mr->rimStrength;
         cb.gradTop[0]=mr->gradientTop.r; cb.gradTop[1]=mr->gradientTop.g; cb.gradTop[2]=mr->gradientTop.b;
         cb.gradBot[0]=mr->gradientBottom.r; cb.gradBot[1]=mr->gradientBottom.g; cb.gradBot[2]=mr->gradientBottom.b;
         cb.pbr[0]= unlit?0.0f:mr->metallic; cb.pbr[1]= unlit?0.0f:mr->reflectivity;

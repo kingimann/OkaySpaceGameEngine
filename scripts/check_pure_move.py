@@ -6,7 +6,7 @@ lines, blank lines and comments) are allowed on top of that.
 Used for the editor/main.cpp split (docs/editor/main_split_plan.md). Standard library only; git is used to read the
 base version of each file.
 
-    python3 scripts/check_pure_move.py --base origin/main --source editor/main.cpp \
+    python3 scripts/check_pure_move.py --base $(git merge-base HEAD origin/main) --source editor/main.cpp \
         --dest editor/BuildGame.hpp --dest editor/BuildGame.cpp --dest editor/MainShared.hpp \
         --rules docs/editor/moves/01_build_game.rules
 

@@ -145,11 +145,12 @@ Things that look harmless and are not:
 4. **`git diff` is a pure move**, checked by `scripts/check_pure_move.py` (standard library only; its test is
    `tests/scripts/test_check_pure_move.py`):
    ```
-   python3 scripts/check_pure_move.py --base origin/main --source editor/main.cpp \
+   python3 scripts/check_pure_move.py --base $(git merge-base HEAD origin/main) --source editor/main.cpp \
        --dest editor/<Feature>.hpp --dest editor/<Feature>.cpp --dest editor/MainShared.hpp \
        --rules docs/editor/main_split/NN_<feature>.rules
    ```
-   It matches the lines removed from `main.cpp` against the lines added to the destination files in order (so a
+   `--base` is the commit the branch started from (the merge base), not today's `main`: once `main` moves on, its own
+   edits would show up as differences. It matches the lines removed from `main.cpp` against the lines added to the destination files in order (so a
    reordered line fails), and fails on anything left over unless it is scaffolding (blank lines, `//` comments,
    `#pragma once`, `#include`, namespace lines) or listed in the rules file (`change: old ==> new`, `add: regex`,
    `drop: regex`). A change rule that matches nothing also fails, so the rules stay exact.
@@ -177,4 +178,4 @@ instead of a slow drift.
 
 | Move | Branch | What | Result |
 |---|---|---|---|
-| 1 | `claude2/editor-split-1` | `namespace builder` (main.cpp 4469-5613, 1,145 lines) → `editor/BuildGame.hpp` (types, `HumanBytes`, declarations) and `editor/BuildGame.cpp`; 7 declarations added to `MainShared.hpp` (updater, `g_project`, the Xbox export result). Rules: `docs/editor/main_split/01_build_game.rules`. | `check_pure_move.py`: PURE MOVE (1,146 lines removed, 1,144 back unchanged, 2 default-argument edits). Build and test results are in the PR. |
+| 1 | `claude2/editor-split-1` | `namespace builder` (main.cpp 4469-5613, 1,145 lines) → `editor/BuildGame.hpp` (types, `HumanBytes`, declarations) and `editor/BuildGame.cpp`; 7 declarations added to `MainShared.hpp` (updater, `g_project`, the Xbox export result). Rules: `docs/editor/main_split/01_build_game.rules`. | `check_pure_move.py`: PURE MOVE (1,146 lines removed: 1,144 back unchanged and in order, 2 default-argument edits, the rest blank). Linux, 2026-11-22: editor built (Debug `-O0 -g0`; `main.cpp` alone with `ninja -j1`, about 5.7 GB peak), `--selftest` OK, `tests/export/verify.sh` and `verify_layout.sh` pass. Same-input comparison against an editor linked from `origin/main`'s `main.cpp`: `--build-game` in the folder, compact and zip layouts and the dedicated-server export (`OKAY_UI_BUILDSERVER`, under Xvfb) give identical files once the random object GUIDs, the build date and the output path are taken out. Not verified: the Windows build (left to the CI cross-compile), the `OKAY_XBOX_UWP` branch (no build compiles it), Web / Android export. |

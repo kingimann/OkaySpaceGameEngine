@@ -1,6 +1,6 @@
 # Move 1 of the editor/main.cpp split (docs/editor/main_split_plan.md): namespace builder -> editor/BuildGame.hpp/.cpp.
 # Check it with:
-#   python3 scripts/check_pure_move.py --base <commit before the move> --source editor/main.cpp \
+#   python3 scripts/check_pure_move.py --base 61332f077 --source editor/main.cpp \
 #       --dest editor/BuildGame.hpp --dest editor/BuildGame.cpp --dest editor/MainShared.hpp \
 #       --rules docs/editor/main_split/01_build_game.rules
 

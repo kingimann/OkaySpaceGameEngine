@@ -1911,7 +1911,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - grid layout (12.1)
 - grid level (43.1)
 - grid pathfinding (9.3)
-- Grid pathfinding (older) (9.3)
+- Grid pathfinding (part of Navigation) (9.3)
 - grid snap (44.1, 44.1.2)
 - grip (4.5, 5.9)
 - Ground sense, slope hold, wall slide, stair snap, platform speed on a jump, player numbers (F3) (4.2.8)

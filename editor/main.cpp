@@ -49239,14 +49239,11 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Spawner>(), "Spawner")) { go->AddComponent<Spawner>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { ed.PushUndo(); go->AddComponent<ClickToMoveController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<GridPathAgent2D>(), "Grid Path Agent (2D)")) { go->AddComponent<GridPathAgent2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<GridCostLayer>(), "Grid Movement Costs")) { go->AddComponent<GridCostLayer>(); ed.dirty = true; }
-            if (item(!go->GetComponent<GridObstacle2D>(), "Grid Obstacle (2D)")) { go->AddComponent<GridObstacle2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }
             if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
             if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
             if (item(!go->GetComponent<SequencePlayer>(), "Sequence Player (cutscene)")) { go->AddComponent<SequencePlayer>(); ed.dirty = true; }
-            NavigationAddComponentItems(ed, go, item);   // Nav Mesh Surface / Agent / Obstacle
+            NavigationAddComponentItems(ed, go, item);   // Nav Mesh Surface / Agent / Obstacle, and the 2D grid agent, costs and obstacle
             // Dialogue and quests (View > Editors & Tools > Dialogue & Quests edits the files).
             if (item(!go->GetComponent<DialogueRunner>(), "Dialogue Runner (talk with E)")) { ed.PushUndo(); go->AddComponent<DialogueRunner>(); ed.dirty = true; }
             if (item(!go->GetComponent<QuestLog>(), "Quest Log (one per scene)")) { ed.PushUndo(); go->AddComponent<QuestLog>(); ed.dirty = true; }

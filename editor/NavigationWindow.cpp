@@ -9,6 +9,9 @@
 #include "okay/AI/NavMesh.hpp"
 #include "okay/AI/Navigation.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
+#include "okay/Components/GridCostLayer.hpp"
+#include "okay/Components/GridObstacle2D.hpp"
+#include "okay/Components/GridPathAgent2D.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
@@ -829,6 +832,16 @@ void NavigationAddComponentItems(EditorState& ed, GameObject* go, const std::fun
         ed.PushUndo();
         AddObstacleTo(go);
         ed.dirty = true;
+    }
+    // 2D grid navigation: the same system on a tilemap (Navigation::GridPath, one shared A*).
+    if (item(!go->GetComponent<GridPathAgent2D>(), "Grid Path Agent (2D)")) {
+        ed.PushUndo(); go->AddComponent<GridPathAgent2D>(); ed.dirty = true;
+    }
+    if (item(!go->GetComponent<GridCostLayer>(), "Grid Movement Costs")) {
+        ed.PushUndo(); go->AddComponent<GridCostLayer>(); ed.dirty = true;
+    }
+    if (item(!go->GetComponent<GridObstacle2D>(), "Grid Obstacle (2D)")) {
+        ed.PushUndo(); go->AddComponent<GridObstacle2D>(); ed.dirty = true;
     }
 }
 

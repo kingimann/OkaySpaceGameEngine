@@ -1431,6 +1431,9 @@ C# mode adds, on top of everything above:
   `bool`, enums and `Vector3` (the same text as `"" + x`). A character literal
   such as `','` is a one-letter text (there is no `char` type). These work in
   `okayscript-next` too.
+- `int.Parse("42")`, `float.Parse("2.5")` (text that isn't a number is an
+  error with its line), `int.MaxValue` / `MinValue`, `float.MaxValue` /
+  `MinValue`, `string.IsNullOrEmpty(s)`.
 - `Random.Range(0, 3)` (a whole number, 3 left out), `Random.Range(-1f, 1f)`,
   `Random.value` and `Random.InitState(seed)` (these work in `okayscript-next`
   too: the binding table is shared).

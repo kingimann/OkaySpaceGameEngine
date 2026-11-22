@@ -1111,7 +1111,12 @@ private:
                 return e;
             }
             case T::KwInt: case T::KwFloat: case T::KwBool: case T::KwString: {
-                // int.Parse etc. would go here; not supported yet.
+                if (Is(T::Dot, 1)) {   // int.Parse(...), int.MaxValue, string.IsNullOrEmpty(...): the type's static members
+                    ++pos_;
+                    auto e = Make(EK::Name, l);
+                    e->name = t.type == T::KwInt ? "int" : t.type == T::KwFloat ? "float" : t.type == T::KwBool ? "bool" : "string";
+                    return e;
+                }
                 throw ParseError{l, "'" + t.text + "' can't be used as a value here"};
             }
             default:

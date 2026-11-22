@@ -44,7 +44,7 @@ In order of how often Unity-style scripts need them (rule 24: a failing test fir
 4. `static` and `const` in plain classes; nested classes; `readonly` enforced.
 5. Instantiate / prefabs, tags and layers, physics queries (`Physics.Raycast`), collision messages with
    `Collision` / `Collider` arguments, `OnTriggerEnter(Collider other)`.
-6. Text: `ToString("F2")`, `int.Parse`, `string.Join` (`Length`, `Substring`, `Split`, `ToString()` and friends done).
+6. Text: `ToString("F2")`, `string.Join`, `int.TryParse` (`int.Parse`, `float.Parse`, `Length`, `Substring`, `Split`, `ToString()` and friends done).
 7. `get` / `set` on interfaces, `virtual` properties, indexers.
 
 Each gap closed is listed in `docs/scripting/scripting.md` ("C# features") and feature-map row 13.2.

@@ -3,6 +3,10 @@
 // resolves names against this table and the editor's autocomplete lists it.
 #include "ScriptInternal.hpp"
 #include "okay/Core/Random.hpp"
+#include <cerrno>
+#include <cstdlib>
+#include <limits>
+#include <cstdint>
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -1540,7 +1544,41 @@ EngineApi Build() {
             list->typeName = "string[]";
             for (auto& p : parts) list->items.push_back(Value{p});
             return Value{list}; }, "The pieces between each separator.");
+        st.staticMethods.push_back(method("IsNullOrEmpty", {tString}, {"text"}, tBool,
+            [](const Value&, std::vector<Value>& a, CallContext&) {
+                const std::string* p = std::get_if<std::string>(&a[0]);
+                return Value{!p || p->empty()}; }, "True when the text is empty (or null)."));
         api.types.push_back(std::move(st));
+    }
+    // int.Parse / float.Parse and the number limits (C# names; script-only).
+    {
+        ApiType it; it.name = "int"; it.isStatic = true; it.scriptOnly = true; it.doc = "Whole numbers.";
+        it.staticMethods.push_back(method("Parse", {tString}, {"text"}, tInt,
+            [](const Value&, std::vector<Value>& a, CallContext& c) {
+                const std::string& t = S(a[0]);
+                char* end = nullptr;
+                errno = 0;
+                const long long v = std::strtoll(t.c_str(), &end, 10);
+                while (end && (*end == ' ' || *end == '\t')) ++end;
+                if (t.empty() || !end || *end != '\0' || errno == ERANGE || v < INT32_MIN || v > INT32_MAX)
+                    throw RuntimeError("int.Parse: \"" + t + "\" isn't a whole number", c.loc);
+                return Value{(std::int32_t)v}; }, "The whole number written in the text (an error if it isn't one)."));
+        it.staticProps.push_back(ro("MaxValue", tInt, [](const Value&, CallContext&) { return Value{(std::int32_t)INT32_MAX}; }, "The largest int."));
+        it.staticProps.push_back(ro("MinValue", tInt, [](const Value&, CallContext&) { return Value{(std::int32_t)INT32_MIN}; }, "The smallest int."));
+        api.types.push_back(std::move(it));
+        ApiType ft; ft.name = "float"; ft.isStatic = true; ft.scriptOnly = true; ft.doc = "Decimal numbers.";
+        ft.staticMethods.push_back(method("Parse", {tString}, {"text"}, tFloat,
+            [](const Value&, std::vector<Value>& a, CallContext& c) {
+                const std::string& t = S(a[0]);
+                char* end = nullptr;
+                const float v = std::strtof(t.c_str(), &end);
+                while (end && (*end == ' ' || *end == '\t')) ++end;
+                if (t.empty() || !end || *end != '\0' || !std::isfinite(v))
+                    throw RuntimeError("float.Parse: \"" + t + "\" isn't a number", c.loc);
+                return Value{v}; }, "The number written in the text (an error if it isn't one)."));
+        ft.staticProps.push_back(ro("MaxValue", tFloat, [](const Value&, CallContext&) { return Value{std::numeric_limits<float>::max()}; }, "The largest float."));
+        ft.staticProps.push_back(ro("MinValue", tFloat, [](const Value&, CallContext&) { return Value{-std::numeric_limits<float>::max()}; }, "The smallest float."));
+        api.types.push_back(std::move(ft));
     }
     // ---- KeyCode ----
     // C# scripts name keys as KeyCode.W, KeyCode.Space (the names a Unity user types);

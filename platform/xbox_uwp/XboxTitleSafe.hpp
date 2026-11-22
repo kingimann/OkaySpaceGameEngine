@@ -7,8 +7,10 @@
 // picture does not reach the screen edges and nothing has to be added. A game wants the whole screen, so the app shell asks for
 // ApplicationViewBoundsMode.UseCoreWindow (BoundsMode::FullScreen); then the 3D view fills the TV and the UI must keep itself inside
 // the safe area: Microsoft's "Designing for Xbox and TV" page gives 48 effective pixels left and right and 27 top and bottom of the
-// 960 x 540 effective screen, which is 5% of each side. Those numbers are FROM MEMORY of that page: check them. On a PC (device
-// family other than Windows.Xbox) there is no overscan and the insets are zero.
+// 960 x 540 effective screen, which is 5% of each side. Checked 2026-11-22: a web search showed Microsoft's Windows developer blog
+// ("Tailoring your app for Xbox and the TV") giving 48 px from the sides and 27 px from the top and bottom in effective pixels; the
+// Learn page itself could not be fetched from this machine. (Xbox GDK titles use a different, larger title-safe area: not UWP, not
+// used here.) On a PC (device family other than Windows.Xbox) there is no overscan and the insets are zero.
 // Written from Microsoft's documentation of ApplicationView.SetDesiredBoundsMode, ApplicationViewBoundsMode and
 // AnalyticsInfo.VersionInfo.DeviceFamily, and the design page above. Our own code. UNVERIFIED on a console.
 #include <string>

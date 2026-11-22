@@ -310,6 +310,10 @@ add_library(okay_engine
     src/Render/RawReader.cpp
     src/Render/PmxReader.cpp
     src/Render/LwsReader.cpp
+    src/Render/Gltf1Reader.cpp
+    src/Render/OgexReader.cpp
+    src/Render/MdlReader.cpp
+    src/Render/Q3BspReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/Measure.cpp
     src/Modeling/SelectOps.cpp
@@ -653,7 +657,7 @@ okay_add_platform_library()
 target_link_libraries(okay_engine PUBLIC okay_platform)
 # okay::platform::Painter (the 2D drawing surface of a window): the shared part and the sdl2 implementation.
 # The software implementation lives in okayui/soft (okay_ui_soft). Own code, not ready, off by default.
-target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/SdlPainter.cpp)
+target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/SdlPainter.cpp src/Platform/GLPainter.cpp)
 if(OKAY_PLATFORM_SDL_INCLUDES)
     target_include_directories(okay_engine PRIVATE ${OKAY_PLATFORM_SDL_INCLUDES})
 endif()
@@ -751,7 +755,7 @@ foreach(_line IN LISTS _okay_own_opts)
         message(FATAL_ERROR "OKAY_OWN_${_name} is an option in CMakeLists.txt but is in no foreach(_fmt ...) list of engine/CMakeLists.txt and has no OKAY_OWN_${_name}_DEFAULT definition: its default would never be applied")
     endif()
 endforeach()
-foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB NDO PMX LWS OGREBIN ZAE XML LXO)
+foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB NDO PMX LWS OGREBIN ZAE XML LXO GLTF1 OPENGEX MDL Q3BSP)
     if(OKAY_OWN_${_fmt})
         set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")
@@ -811,4 +815,5 @@ target_sources(okay_engine PRIVATE
     src/Core/FrameOverlay.cpp
     src/Core/TimeSnapshot.cpp
     src/Core/LoopConsole.cpp
+    src/Core/ConsoleHost.cpp
 )

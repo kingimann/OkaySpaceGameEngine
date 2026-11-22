@@ -45,7 +45,7 @@ inline const std::vector<Item>& Items() {
         {"ownrender", "OkayUI own renderer",  "Draw the OkayUI screens with OkayUI's own renderer instead of SDL's geometry calls: Direct3D 11 where the window uses SDL's Direct3D 11 renderer (the Windows default), OpenGL where it uses SDL's OpenGL renderer. Any other frame draws as before.", "OKAY_UI_OWN_RENDER", "1", kNeedsOkayUi},
         {"wav",      "Our own WAV reader",    "Read .wav sound files with our own decoder instead of the built-in one.",                                                      "OKAY_OWN_WAV",         "1",      kNone},
         {"http",     "Our own web client",    "Download and check for updates with our own HTTP client instead of curl (Linux builds only; Windows already uses WinHTTP).",   "OKAY_OWN_HTTP",        "1",      kNotWindows},
-        {"platform", "Our own window layer",  "Open windows and read the keyboard and mouse with our own okay::platform backend instead of SDL (Linux only).",               "OKAY_PLATFORM_BACKEND", "own",   kNotWindows},
+        {"platform", "Our own window layer",  "Open windows, read the keyboard and mouse and draw with our own okay::platform backend and OpenGL painter instead of SDL (Linux only; OKAY_OWN_PAINTER=software uses the CPU painter).",               "OKAY_PLATFORM_BACKEND", "own",   kNotWindows},
     };
     return t;
 }

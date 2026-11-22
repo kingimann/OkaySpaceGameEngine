@@ -12,6 +12,8 @@ namespace {
 
 WindowMode g_mode = WindowMode::Windowed;
 bool g_vsync = true;
+bool g_vsyncRunOnly = false;   // SetVSyncForThisRun is in force: Save writes g_vsyncSaved, not g_vsync
+bool g_vsyncSaved = true;
 int  g_quality = 2;
 bool g_qualityChosen = false;
 DisplayResolution g_resolution;       // 0 x 0 = none chosen
@@ -425,10 +427,18 @@ void DisplaySettings::TickTrial(float dt) {
 // ---- VSync and quality ------------------------------------------------------------------
 bool DisplaySettings::VSync() { return g_vsync; }
 void DisplaySettings::SetVSync(bool on) {
-    if (g_vsync == on) return;
+    const bool wasRunOnly = g_vsyncRunOnly;
+    g_vsyncRunOnly = false;   // the player's own choice: saved, and it ends a run-only value
+    if (g_vsync == on && !wasRunOnly) return;
     g_vsync = on;
     ++g_generation;
     Save();
+}
+void DisplaySettings::SetVSyncForThisRun(bool on) {
+    if (!g_vsyncRunOnly) { g_vsyncSaved = g_vsync; g_vsyncRunOnly = true; }
+    if (g_vsync == on) return;
+    g_vsync = on;
+    ++g_generation;   // applied like any change, but Save keeps writing the player's saved choice
 }
 
 int  DisplaySettings::Quality() { return g_quality; }
@@ -478,6 +488,7 @@ void DisplaySettings::Load() {
     }
     if (haveMode) g_mode = mode;
     g_vsync = Prefs::GetInt("video.vsync", g_vsync ? 1 : 0) != 0;
+    g_vsyncRunOnly = false;
     if (Prefs::Has("video.quality")) {
         g_quality = ClampQuality(Prefs::GetInt("video.quality", g_quality));
         g_qualityChosen = true;
@@ -505,7 +516,7 @@ void DisplaySettings::Load() {
 void DisplaySettings::Save() {
     Prefs::SetInt("video.fullscreen", g_mode != WindowMode::Windowed ? 1 : 0);   // older readers
     Prefs::SetString("video.windowmode", ModeName(g_mode));
-    Prefs::SetInt("video.vsync", g_vsync ? 1 : 0);
+    Prefs::SetInt("video.vsync", (g_vsyncRunOnly ? g_vsyncSaved : g_vsync) ? 1 : 0);
     if (g_qualityChosen) Prefs::SetInt("video.quality", g_quality);
     if (g_resolution.Valid()) {
         Prefs::SetInt("video.width", g_resolution.width);
@@ -566,6 +577,7 @@ std::string DisplaySettings::Summary() {
 void DisplaySettings::ResetToDefaults() {
     g_mode = WindowMode::Windowed;
     g_vsync = true;
+    g_vsyncRunOnly = false;
     g_quality = 2;
     g_qualityChosen = false;
     g_resolution = DisplayResolution{};

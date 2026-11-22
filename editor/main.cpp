@@ -43983,6 +43983,11 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Start Delay##spwn");
             if (ImGui::Checkbox("Hide Template##spwn", &c->deactivateTemplate)) ed.dirty = true;
             oked::FieldTip("Hide Template##spwn");
+            if (ImGui::Checkbox("Use Pool##spwn", &c->usePool)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Reuse finished copies instead of making new ones. A copy that ends with a Lifetime,\n"
+                                  "a Projectile 3D or pool_release() goes back to this spawner's pool and the next spawn\n"
+                                  "takes it again, reset to a fresh copy of the template. Good for bullets, sparks and pickups.");
             ImGui::SeparatorText("Waves");
             if (ImGui::DragInt("Count Per Wave##spwn", &c->count, 0.1f, 1, 200)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawns per wave. 1 = classic steady drip (no waves).");
@@ -43996,6 +44001,9 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("%s — wave %d done, %d alive, %d spawned",
                                     c->Running() ? "Running" : "Stopped",
                                     c->WavesDone(), c->AliveCount(), c->Spawned());
+            if (ed.isPlaying() && c->Pool())
+                ImGui::TextDisabled("Pool: %d made, %d reused, %d waiting",
+                                    c->Pool()->CreatedCount(), c->Pool()->ReuseCount(), c->Pool()->IdleCount());
             if (ImGui::SmallButton("Remove##spwn")) toRemove = c;
         }
     }
@@ -44238,7 +44246,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Can Mantle##fp", &fp->canMantle)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a low or high ledge and climb it. Off by default.");
             if (ImGui::Checkbox("Can Ledge Grab##fp", &fp->canLedgeGrab)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands-on-ledge IK is not wired.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands go onto the ledge (two arm LimbIKs) through the Ledge Hands IK component: Add Component > Animation, or Wire missing animation and IK on the controller.");
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##fp", &fp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -44540,7 +44548,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Can Mantle##tp", &tp->canMantle)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a low or high ledge and climb it. Off by default.");
             if (ImGui::Checkbox("Can Ledge Grab##tp", &tp->canLedgeGrab)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands-on-ledge IK is not wired.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands go onto the ledge (two arm LimbIKs) through the Ledge Hands IK component: Add Component > Animation, or Wire missing animation and IK on the controller.");
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##tp", &tp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -49015,6 +49023,13 @@ void DrawInspector(EditorState& ed) {
             }
             if (item(!go->GetComponent<LimbIK>(), "Limb IK (arm/leg reach + grab)")) { go->AddComponent<LimbIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<ChainIK>(), "Chain IK (FABRIK/CCD long chain)")) { go->AddComponent<ChainIK>(); ed.dirty = true; }
+            if (item(!go->GetComponent<LedgeHandsIK>(), "Ledge Hands IK (hands on the ledge while hanging)")) {
+                auto* lh = go->AddComponent<LedgeHandsIK>();
+                const bool armed = lh->Wire();   // reuses a Limb IK already on each hand, else adds one (off)
+                ConsoleLog(armed ? "Ledge Hands IK: linked both arm Limb IKs." :
+                           "Ledge Hands IK: no humanoid arms found under this object; add it to the character (the object with the controller).", armed ? 0 : 1);
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<FullBodyIK>(), "Full Body IK (hands, feet, head, body pull)")) {
                 auto* fb = go->AddComponent<FullBodyIK>();
                 int n = fb->MapBones(true);
@@ -57786,7 +57801,7 @@ int main(int argc, char** argv) {
     else SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
 #endif
 #ifdef OKAY_HAVE_OKAYUI
-    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w) { return OkayUI::soft::CreateWindowPainter(w); });   // the software painter, for own-backend windows
+    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w, const okay::platform::PainterDesc& d) { return OkayUI::soft::CreateWindowPainter(w, d); });   // the software painter, for own-backend windows
 #endif
     // An accelerated renderer (the driver the hint chose), else one with the default driver, else any (software). The painter owns it.
     SDL_Renderer* renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true);
@@ -58133,6 +58148,8 @@ int main(int argc, char** argv) {
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
     g_previewEd = &ed;
+    // The Console panel's command line: standard cvars, the Play loop's time.* commands, `--cvar NAME=VALUE`.
+    const std::unique_ptr<okay::LoopConsole> consoleCmds = oked::ConsoleAttachHost(ed.playLoop(), argc, argv);
     // The project's own files follow the project: leaving one saves its settings and build settings,
     // entering one reads that project's (or the defaults), so nothing leaks from one project into the next.
     EditorState::onProjectChanged = [&ed](const std::string& oldDir, const std::string& newDir) {
@@ -59165,7 +59182,7 @@ int main(int argc, char** argv) {
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
-            LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY
+            LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY / OKAY_UI_LOCIMPORT
             ContentEditorsDevHooks(ed); // OKAY_UI_CONTENT / OKAY_UI_CONTENT_TAB / OKAY_UI_CONTENT_DIR
             WeaponEditorDevHooks(ed);   // OKAY_UI_WEAPONS / OKAY_UI_WEAPONS_FILE
             SplineDevHooks(ed);       // OKAY_UI_SPLINE / SPLINESEL / SPLINECAM

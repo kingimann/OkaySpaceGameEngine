@@ -187,6 +187,7 @@
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/HumanoidRetarget.hpp"
 #include "okay/Components/LimbIK.hpp"
+#include "okay/Components/LedgeHandsIK.hpp"
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/IKTarget.hpp"
@@ -10446,6 +10447,33 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(wsw));
 
+    // Hands on the ledge while hanging (LedgeHandsIK). Each arm is the GUID of the object holding that LimbIK
+    // and which LimbIK on it; the component turns the link back into the arm at Start().
+    ComponentSerializerRegistry::Entry lhik;
+    lhik.name = "ledgehandsik";
+    lhik.write = [](const GameObject& go, std::ostream& out) {
+        for (const LedgeHandsIK* h : go.GetComponents<LedgeHandsIK>()) {
+            out << "  ledgehandsik";
+            KvOut k{out};
+            k("setback", h->setback)("spread", h->handSpread)("over", h->overEdge)("fade", h->fadeTime).b("auto", h->autoWire);
+            const LedgeHandsIK::ArmLink l = h->LinkFor(0), r = h->LinkFor(1);
+            if (!l.object.empty()) k.str("left", l.object)("lefti", l.index);
+            if (!r.object.empty()) k.str("right", r.object)("righti", r.index);
+            out << "\n";
+        }
+    };
+    lhik.read = [](GameObject& go, std::istream& in) {
+        auto* h = go.AddComponent<LedgeHandsIK>();
+        KvIn k(in);
+        k.f("setback", h->setback); k.f("spread", h->handSpread); k.f("over", h->overEdge); k.f("fade", h->fadeTime);
+        k.b("auto", h->autoWire);
+        auto fin = [](float& v, float d) { if (!std::isfinite(v) || v < 0.0f) v = d; };
+        fin(h->setback, 0.25f); fin(h->handSpread, 0.22f); fin(h->overEdge, 0.05f); fin(h->fadeTime, 0.2f);
+        k.str("left", h->leftArmLink.object); k.i("lefti", h->leftArmLink.index);
+        k.str("right", h->rightArmLink.object); k.i("righti", h->rightArmLink.index);
+    };
+    ComponentSerializerRegistry::Register(std::move(lhik));
+
     ComponentSerializerRegistry::Entry wam;
     wam.name = "windambience";
     wam.write = [](const GameObject& go, std::ostream& out) {
@@ -10859,15 +10887,6 @@ std::string SpliceOverrides(const std::string& prefabText, const std::vector<Gam
     return JoinObjects(preamble, objs);
 }
 
-void CollectSubtree(GameObject* go, std::vector<GameObject*>& out) {   // depth first, siblings in order; a stack so a deep hierarchy cannot overflow
-    std::vector<GameObject*> stack{go};
-    while (!stack.empty()) {
-        GameObject* g = stack.back(); stack.pop_back();
-        out.push_back(g);
-        const auto& kids = g->transform->Children();
-        for (std::size_t i = kids.size(); i-- > 0;) stack.push_back(kids[i]->gameObject);
-    }
-}
 } // namespace
 
 bool SceneSerializer::CapturePrefabOverrides(GameObject& instanceRoot, std::string* error) {
@@ -10930,28 +10949,10 @@ GameObject* SceneSerializer::InstantiatePrefab(Scene& scene, const std::string& 
 GameObject* SceneSerializer::ReapplyPrefab(Scene& scene, GameObject& instanceRoot, std::string* error,
                                            std::vector<std::string>* warnings) {
     if (instanceRoot.prefabSource.empty()) { if (error) *error = "object is not a prefab instance"; return nullptr; }
-    if (PrefabTools::FileUsesPrefabStructure(instanceRoot.prefabSource)) return PrefabTools::Reapply(scene, instanceRoot, error, warnings);
-    GameObject* fresh = InstantiatePrefab(scene, instanceRoot.prefabSource, instanceRoot.prefabOverrides, error, warnings);
-    if (!fresh) return nullptr;   // nothing was added, the instance is as it was
-    // The new instance takes the old one's place: same name, parent, sibling slot, and
-    // the same persistent ids object for object (so references by id stay valid).
-    fresh->name = instanceRoot.name;
-    std::vector<GameObject*> oldSub, newSub;
-    CollectSubtree(&instanceRoot, oldSub);
-    CollectSubtree(fresh, newSub);
-    for (std::size_t i = 0; i < oldSub.size() && i < newSub.size(); ++i)
-        if (oldSub[i]->name == newSub[i]->name || i == 0) newSub[i]->SetGuid(oldSub[i]->Guid());
-    Transform* par = instanceRoot.transform->Parent();
-    if (par) {
-        int slot = 0;
-        for (std::size_t i = 0; i < par->Children().size(); ++i) if (par->Children()[i] == instanceRoot.transform) slot = (int)i;
-        fresh->transform->SetParent(par, /*worldPositionStays=*/false);
-        // Slot `slot` of the list that still holds the old instance is the old one's place.
-        Transform* before = (std::size_t)slot < par->Children().size() ? par->Children()[(std::size_t)slot] : nullptr;
-        if (before && before != fresh->transform) par->ReorderChild(fresh->transform, before, /*after=*/false);
-    }
-    scene.Destroy(&instanceRoot);   // like any Destroy: removed at the end of the frame
-    return fresh;
+    // Every prefab file, plain, nested or variant, is rebuilt by PrefabTools::Reapply: it keeps the instance's
+    // name, place and ids, and moves objects added under the instance onto the rebuilt one. (The plain path
+    // used to build a fresh copy here and lost those added objects.)
+    return PrefabTools::Reapply(scene, instanceRoot, error, warnings);
 }
 
 // ---- Validation ---------------------------------------------------------

@@ -1,8 +1,21 @@
 {
-  "_comment": "Who owns which paths. Rules are checked top to bottom, the first match wins. owner is claude2, coordinator, shared (needs a handshake: one claim at a time, both lanes agree) or open (either lane may claim it). Read by scripts/collab_lib.py. Plain rules: docs/process/collaboration.md. Roles (owner, 2026-11-15): Claude 2 = bug fixes + third-party replacement; coordinator = unfinished features. A claim marked 'Kind: bug' with a Test-first line may touch any file (see docs/process/collaboration.md).",
+  "_comment": "Who owns which paths, for the three Claudes (owner 2026-11-22). 'lanes' names each lane and its branch prefix; every script reads the lanes from here (scripts/collab_lib.py), so a lane is added by adding it here. Rules are checked top to bottom, the first match wins. owner is a lane name, 'shared' (one claim at a time; every lane that touches it agrees) or 'open' (any lane may claim it). A file owned by lane X and touched by a branch of lane Y needs 'Agree: <branch>' from X, unless the claim is 'Kind: bug' with a Test-first line. 'globs' must each match a file in git; 'planned' globs (files that do not exist yet) count the same but are not checked against git. The split below is the owner's default, written by the coordinator on 2026-11-22; the owner can change it. Merging: any Claude merges its own lane's PRs once they pass CLAUDE.md rule 6; only the coordinator merges the release PR and runs release.yml. Plain rules: docs/process/collaboration.md.",
   "lanes": {
-    "claude2": "Claude 2 (branches claude2/*): bug fixes (any file, with a failing test and a claim marked Kind: bug) and our own replacements for third-party code: model and image readers, WAV and audio decoders, HTTP, crypto, the platform layer, okayui, the text editor, ufbx and Assimp replacements.",
-    "coordinator": "The coordinator session and its agents (branches claude/*): unfinished features (gameplay, in-game UI, editor, rendering, visual scripting, inventory, vehicles, launcher) and releases, CI and packaging, reviews."
+    "coordinator": {
+      "prefix": "claude/",
+      "name": "Coordinator",
+      "description": "The coordinator session and its agents (branches claude/*): unfinished features (gameplay, in-game UI, editor features, rendering, visual scripting, inventory, vehicles, launcher); the Xbox UWP port and our own replacements for third-party code (crypto, the platform layer, model and image readers, WAV and audio decoders, HTTP, okayui, the text editor; handed over from Claude 2 on 2026-11-22); releases (only the coordinator dispatches release.yml), CI and packaging; reviews."
+    },
+    "claude2": {
+      "prefix": "claude2/",
+      "name": "Claude 2",
+      "description": "Claude 2 (branches claude2/*): bug fixes (any file, with a failing test and a claim marked Kind: bug); physics (engine Physics folders, Ragdoll, ActiveRagdoll, Joint3D); removing duplicate code and the duplicate guard (scripts/dup_lint.py, docs/engine/shared_code.md); the editor main.cpp split."
+    },
+    "claude3": {
+      "prefix": "claude3/",
+      "name": "Claude 3",
+      "description": "Claude 3 (branches claude3/*): the Build window and game export (BuildPipeline, Build Settings); world, level and chunk streaming, World Partition, LOD and asset streaming (WorldStreamer, Optimize/StreamingGrid); the Steam/Epic Store Kit (Platform/Steam, Platform/Epic, PlatformServices, StoreExport); C# and Lua scripting in the script editor."
+    }
   },
   "rules": [
     {
@@ -37,17 +50,122 @@
       ]
     },
     {
+      "owner": "claude3",
+      "why": "Build window and export, streaming and LOD, Store Kit, C# and Lua (owner default 2026-11-22)",
+      "globs": [
+        "engine/include/okay/Core/BuildPipeline.hpp",
+        "engine/src/Core/BuildPipeline.cpp",
+        "editor/BuildSettings*",
+        "tests/test_build_pipeline.cpp",
+        "tests/test_build_settings.cpp",
+        "docs/release/build_pipeline.md",
+        "docs/editor/build_settings_upgrade.md",
+        "engine/include/okay/Components/WorldStreamer.hpp",
+        "engine/include/okay/Optimize/StreamingGrid.hpp",
+        "engine/src/Optimize/StreamingGrid.cpp",
+        "engine/include/okay/Components/LODGroup.hpp",
+        "engine/src/Components/LODGroup.cpp",
+        "engine/include/okay/Optimize/LodGroup.hpp",
+        "engine/src/Optimize/LodGroup.cpp",
+        "tests/test_worldstreamer.cpp",
+        "tests/test_optimize_streaming.cpp",
+        "tests/test_visibility_lod.cpp",
+        "engine/include/okay/Platform/Steam/**",
+        "engine/src/Platform/Steam/**",
+        "tests/*csharp*"
+      ],
+      "planned": [
+        "engine/src/Components/WorldStreamer.cpp",
+        "engine/include/okay/Components/LevelStreaming.hpp",
+        "engine/src/Components/LevelStreaming.cpp",
+        "engine/include/okay/Components/StreamingSource.hpp",
+        "engine/include/okay/Optimize/ChunkStreamer.hpp",
+        "engine/src/Optimize/ChunkStreamer.cpp",
+        "engine/include/okay/Scene/SceneStreamQueue.hpp",
+        "engine/src/Scene/SceneStreamQueue.cpp",
+        "engine/include/okay/Scene/WorldPartition.hpp",
+        "engine/src/Scene/WorldPartition.cpp",
+        "editor/StreamingTools.*",
+        "engine/include/okay/Components/AssetStreamer.hpp",
+        "engine/src/Components/AssetStreamer.cpp",
+        "engine/include/okay/Render/AssetStreaming.hpp",
+        "engine/src/Render/AssetStreaming.cpp",
+        "engine/include/okay/Render/LodDither.hpp",
+        "tests/test_*streaming*",
+        "tests/test_world_partition.cpp",
+        "tests/test_lod_*",
+        "docs/engine/world_streaming.md",
+        "examples/streaming/**",
+        "examples/streaming_assets/**",
+        "engine/include/okay/Platform/Epic/**",
+        "engine/src/Platform/Epic/**",
+        "engine/include/okay/Platform/PlatformServices.hpp",
+        "engine/src/Platform/PlatformServices.cpp",
+        "engine/include/okay/Platform/StoreExport.hpp",
+        "engine/src/Platform/StoreExport.cpp",
+        "tests/test_stores.cpp",
+        "tests/fake_steam_api.cpp",
+        "tests/fake_eos_sdk.cpp",
+        "docs/release/store_kit.md",
+        "docs/release/epic_release.md",
+        "examples/store_kit/**",
+        "engine/include/okay/Lua/**",
+        "engine/src/Lua/**",
+        "engine/include/okay/Scripting/CSharpAssist.hpp",
+        "engine/src/Script/CSharpAssist.cpp",
+        "engine/include/okay/Scripting/ScriptConvert.hpp",
+        "engine/src/Scripting/OkayScriptToCSharp.inl",
+        "tests/test_lua_*",
+        "tests/lua/**",
+        "examples/lua/**",
+        "examples/csharp/**",
+        "docs/scripting/lua.md"
+      ]
+    },
+    {
       "owner": "claude2",
-      "why": "bug fixes and third-party replacement (owner 2026-11-15)",
+      "why": "physics, removing duplicate code, the editor main.cpp split (owner default 2026-11-22); bug fixes may touch any file",
+      "globs": [
+        "engine/include/okay/Physics/**",
+        "engine/src/Physics/**",
+        "engine/include/okay/Components/Ragdoll.hpp",
+        "engine/src/Components/Ragdoll.cpp",
+        "engine/include/okay/Components/Joint3D.hpp",
+        "tests/test_ragdoll.cpp",
+        "tests/test_physics*",
+        "docs/physics/**",
+        "examples/physics*/**",
+        "editor/MainShared.hpp"
+      ],
+      "planned": [
+        "engine/include/okay/Components/ActiveRagdoll.hpp",
+        "engine/src/Components/ActiveRagdoll.cpp",
+        "engine/include/okay/Animation/RagdollPhysics.hpp",
+        "engine/src/Animation/RagdollPhysics.cpp",
+        "engine/include/okay/Animation/DynamicCharacter.hpp",
+        "engine/src/Animation/DynamicCharacter.cpp",
+        "engine/src/Components/Joint3D.cpp",
+        "tests/test_active_ragdoll.cpp",
+        "tests/test_joint*",
+        "docs/gameplay/active_ragdoll.md",
+        "examples/active_ragdoll/**",
+        "scripts/dup_lint.py",
+        "scripts/dup_baseline.json",
+        "scripts/tests/test_dup_lint.py",
+        "docs/engine/shared_code.md",
+        "docs/process/no_duplicates.md"
+      ]
+    },
+    {
+      "owner": "coordinator",
+      "why": "third-party replacement and the Xbox UWP port (handed over from Claude 2 to the coordinator, 2026-11-22)",
       "globs": [
         "engine/include/okay/Crypto/**",
         "engine/src/Crypto/**",
         "engine/include/okay/Platform/**",
         "engine/src/Platform/**",
         "engine/include/okay/Net/*Crypto*",
-        "engine/src/Net/*Crypto*",
         "engine/include/okay/Net/SecureChannel*",
-        "engine/src/Net/SecureChannel*",
         "engine/third_party/**",
         "engine/include/okay/Render/*Reader*.hpp",
         "engine/include/okay/Render/ModelImport.hpp",
@@ -64,8 +182,6 @@
         "shared/*Crypto*",
         "shared/*Wav*",
         "shared/Okf*",
-        "shared/*Sha*",
-        "shared/SecureChannel*",
         "shared/*Own*",
         "okayui/**",
         "editor/ScriptEditorCodeEdit.*",
@@ -86,7 +202,14 @@
         "tests/*platform*",
         "tests/*own_*",
         "tests/*inflate*",
-        "tests/*png_hint*"
+        "tests/*png_hint*",
+        "platform/xbox_uwp/**"
+      ],
+      "planned": [
+        "engine/src/Net/*Crypto*",
+        "engine/src/Net/SecureChannel*",
+        "shared/*Sha*",
+        "shared/SecureChannel*"
       ]
     },
     {
@@ -104,7 +227,6 @@
         "tools/**",
         "launcher/**",
         "player/**",
-        "review/**",
         "docs/process/review_log.md",
         "docs/status/work_board.md",
         "docs/WORK_BOARD.md",
@@ -113,8 +235,11 @@
         "docs/process/agent_brief_template.md",
         "docs/release/build_pipeline.md",
         "docs/**/launcher*.md",
-        "tests/*release*",
         "tests/*versions*"
+      ],
+      "planned": [
+        "review/**",
+        "tests/*release*"
       ]
     },
     {
@@ -201,6 +326,11 @@
         "engine/include/okay/VisualScript/**"
       ],
       "regen": "python3 scripts/gen_vs_node_docs.py"
+    },
+    {
+      "file": "docs/engine/code_index.md",
+      "sources": ["engine/include/**", "shared/**", "okayui/include/**"],
+      "regen": "python3 scripts/gen_code_index.py"
     },
     {
       "file": "docs/WORK_BOARD.md",

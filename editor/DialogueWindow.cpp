@@ -1834,6 +1834,36 @@ void DialogueRunnerInspector(EditorState& ed, DialogueRunner& dr) {
     Tip("-1 uses the graph's start node.");
     if (TextEdit("Player##drpl", dr.playerName, "(empty = the player)")) ed.dirty = true;
     if (ImGui::IsItemActivated()) ed.PushUndo();
+    if (ImGui::TreeNode("Camera shots##drcs")) {
+        Tip("A line can cut or blend to a Virtual Camera: type the line's node number and the camera object's name. "
+            "The shot comes on when that line starts and the camera goes back when the conversation ends.");
+        int remove = -1;
+        for (std::size_t i = 0; i < dr.cameraShots.size(); ++i) {
+            ImGui::PushID((int)i);
+            ImGui::SetNextItemWidth(70);
+            if (ImGui::DragInt("##node", &dr.cameraShots[i].node, 0.2f, 0, 9999, "#%d")) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(160);
+            if (TextEdit("##cam", dr.cameraShots[i].camera, "Virtual camera name")) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x")) remove = (int)i;
+            ImGui::PopID();
+        }
+        if (remove >= 0) { ed.PushUndo(); dr.cameraShots.erase(dr.cameraShots.begin() + remove); ed.dirty = true; }
+        if (ImGui::SmallButton("Add shot##drcsa")) {
+            ed.PushUndo();
+            int next = 0;
+            for (const auto& e : dr.cameraShots) next = std::max(next, e.node + 1);
+            dr.cameraShots.push_back({next, std::string()});
+            ed.dirty = true;
+        }
+        if (ImGui::DragFloat("Shot blend (s)##drcsb", &dr.shotBlend, 0.05f, -1.0f, 30.0f, "%.2f")) ed.dirty = true;
+        if (ImGui::IsItemActivated()) ed.PushUndo();
+        Tip("-1 uses each shot's own blend time; 0 cuts.");
+        ImGui::TreePop();
+    }
     if (ed.isPlaying()) {
         ImGui::Separator();
         if (dr.IsActive()) {

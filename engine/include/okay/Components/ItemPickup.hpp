@@ -13,6 +13,7 @@
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Render/Mesh.hpp"
@@ -74,7 +75,7 @@ public:
         const Vec3 d = p - me;
         const float dist = d.Magnitude();
         if (autoRadius > 0.0f && dist <= autoRadius) { Give(player); return; }
-        if (interactKey && dist <= interactRange && Input::GetKeyDown(interactKey) && !InteractBlocked()
+        if (interactKey && dist <= interactRange && UseKeyDown(interactKey) && !InteractBlocked()
             && NearestHold(player, dist)) {
             auto* hands = holdInHands ? player->GetComponent<ProceduralObjectHolding>() : nullptr;
             if (hands && hands->Pickup(gameObject)) {

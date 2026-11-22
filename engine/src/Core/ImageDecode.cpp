@@ -16,7 +16,10 @@ namespace okay {
 namespace {
 
 constexpr std::size_t kMaxPixelBytes = std::size_t(1) << 31;   // 2 GiB of RGBA at most
-constexpr std::size_t kMaxAnimationBytes = std::size_t(512) << 20;   // all GIF frames together
+// Everything DecodeGifFrames holds at once: all frames, plus the canvas, the background copy and the per-pixel history.
+// The frame count is known before decoding (a quick walk over the blocks), so the frames buffer is sized once and never
+// grows; this number is the real live peak, not just the frame data.
+constexpr std::size_t kMaxAnimationBytes = std::size_t(512) << 20;
 
 bool Fail(std::string& err, const char* msg) { if (err.empty()) err = msg; return false; }
 
@@ -760,15 +763,19 @@ struct GifReader {
         got = false;
         const std::size_t pcount = static_cast<std::size_t>(w) * h;
         if (frameNo == 0) {
-            canvas.assign(pcount * 4, 0);
-            background.assign(pcount * 4, 0);
+            canvas.assign(pcount * 4, 0);   // `background` is first needed by the second frame (set from the canvas below)
             history.assign(pcount, 0);
-        } else {
+        } else if (!canvas.empty()) {   // empty: DecodeGifFrames took the only frame and only the trailer may follow
             // Disposal of the previous frame. Methods 2 (restore to background) and 3 (restore to
             // previous) both put back what was on the canvas before that frame was drawn, which is
-            // exactly what `background` holds. (Method 1 and 0 leave the pixels in place.)
+            // exactly what `background` holds (still empty after the first frame: that canvas started
+            // all zero). (Method 1 and 0 leave the pixels in place.)
             if (prevDispose == 2 || prevDispose == 3) {
-                for (std::size_t i = 0; i < pcount; ++i) if (history[i]) std::memcpy(&canvas[i * 4], &background[i * 4], 4);
+                for (std::size_t i = 0; i < pcount; ++i) {
+                    if (!history[i]) continue;
+                    if (background.empty()) std::memset(&canvas[i * 4], 0, 4);
+                    else std::memcpy(&canvas[i * 4], &background[i * 4], 4);
+                }
             }
             background = canvas;
         }
@@ -824,6 +831,7 @@ struct GifReader {
                 blob.insert(blob.end(), d + r.p, d + r.p + len);
                 r.p += static_cast<std::size_t>(len);
             }
+            if (canvas.size() != pcount * 4) return Fail(err, "corrupt GIF frame count");
             if (!Lzw(blob, minCode, pal, fx, fy, fw, fh, (lflags & 0x40) != 0)) return false;
             if (frameNo == 0 && bgIndex > 0) {
                 for (std::size_t i = 0; i < pcount; ++i) {
@@ -842,6 +850,32 @@ struct GifReader {
         }
     }
     int frameDelay = 0;
+
+    // Counts the image descriptors after the header without decoding anything: extension and image data sub-blocks are
+    // skipped by their lengths (GIF89a block layout). Stops at the trailer, at an unknown block or at the end of the data;
+    // a file that stops early fails later in NextFrame, so the count is an upper bound for any file that decodes.
+    std::size_t CountFrames() const {
+        Rd s(d, n);
+        s.p = r.p;
+        std::size_t count = 0;
+        auto subBlocks = [&s]() { for (;;) { const std::size_t len = s.U8(); if (!s.ok || len == 0 || !s.Skip(len)) return; } };
+        for (;;) {
+            const std::uint32_t tag = s.U8();
+            if (!s.ok || tag == 0x3B) break;
+            if (tag == 0x21) { s.U8(); subBlocks(); }
+            else if (tag == 0x2C) {
+                if (!s.Skip(8)) break;
+                const std::uint32_t lflags = s.U8();
+                if (lflags & 0x80) s.Skip(static_cast<std::size_t>(2u << (lflags & 7)) * 3);
+                s.U8();   // LZW minimum code size
+                subBlocks();
+                if (!s.ok) break;
+                ++count;
+            } else break;
+            if (!s.ok) break;
+        }
+        return count;
+    }
 
     bool Lzw(const std::vector<std::uint8_t>& blob, int minCode, const std::uint8_t (*pal)[3], int fx, int fy, int fw, int fh, bool interlaced) {
         const int clear = 1 << minCode, eoi = clear + 1;
@@ -944,14 +978,26 @@ bool DecodeGifFrames(const std::uint8_t* data, std::size_t size, DecodedAnimatio
     if (ok && !SizePlausible(g.w, g.h, size)) ok = Fail(err, "GIF header claims more pixels than the file can hold");
     if (ok) {
         const std::size_t frameBytes = static_cast<std::size_t>(g.w) * g.h * 4;
+        const std::size_t count = g.CountFrames();
+        // Bytes all frames take, and the live peak: the frames plus the canvas, the background copy (from the second frame
+        // on) and the history (one byte per pixel). A single frame is moved out of the canvas, so it costs nothing extra.
+        const unsigned long long total = static_cast<unsigned long long>(count) * frameBytes;
+        const unsigned long long peak = count <= 1 ? frameBytes + frameBytes / 4
+                                                   : total + 2ULL * frameBytes + frameBytes / 4;
+        // The same plausibility rule as SizePlausible, for the whole animation: a frame may be one pixel on a big canvas,
+        // so a few KB could otherwise claim hundreds of MB of composited frames.
+        if (total > (64ULL << 20) && total / 4096ULL > size) ok = Fail(err, "GIF animation claims more pixels than the file can hold");
+        else if (peak > kMaxAnimationBytes) ok = Fail(err, "GIF animation too large");
         std::vector<std::uint8_t> frames;
         std::vector<int> delays;
-        for (;;) {
+        if (ok && count > 1) { frames.reserve(static_cast<std::size_t>(total)); delays.reserve(count); }
+        while (ok) {
             bool got = false;
             if (!g.NextFrame(got)) { ok = false; break; }
             if (!got) break;
-            if ((delays.size() + 1) * frameBytes > kMaxAnimationBytes) { ok = Fail(err, "GIF animation too large"); break; }
-            frames.insert(frames.end(), g.canvas.begin(), g.canvas.end());
+            if (delays.size() + 1 > count) { ok = Fail(err, "corrupt GIF frame count"); break; }   // never grow past the reserve
+            if (count == 1) frames = std::move(g.canvas);
+            else frames.insert(frames.end(), g.canvas.begin(), g.canvas.end());
             delays.push_back(g.frameDelay);
         }
         if (ok && delays.empty()) ok = Fail(err, "GIF has no frames");

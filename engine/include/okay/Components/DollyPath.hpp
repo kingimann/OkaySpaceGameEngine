@@ -185,21 +185,26 @@ private:
     float m_dir = 1.0f;
 
     void Advance(const DollyPath& dp, float step) {
-        float next;
+        // Work in metres along the rail (speedInMetres) or in path fractions; `span` is the length of the domain.
+        float span = 1.0f, at = position;
         if (speedInMetres) {
-            const float total = dp.Length();
-            if (total <= 1e-6f) return;
-            next = position + step / total;   // metres as a fraction of the whole rail
-        } else {
-            next = position + step;
+            span = dp.Length();
+            if (span <= 1e-6f) return;
+            at = dp.DistanceAt(position);
         }
+        float next = at + step;
         if (pingPong && !dp.looped) {
             // Fold the overshoot back from the end it crossed and turn round (twice for a step past both ends).
-            for (int i = 0; i < 4 && (next > 1.0f || next < 0.0f); ++i) {
-                if (next > 1.0f) next = 2.0f - next; else next = -next;
+            for (int i = 0; i < 4 && (next > span || next < 0.0f); ++i) {
+                if (next > span) next = 2.0f * span - next; else next = -next;
                 m_dir = -m_dir;
             }
-            next = Mathf::Clamp01(next);
+            next = Mathf::Clamp(next, 0.0f, span);
+        }
+        if (speedInMetres) {
+            // Clamp an open path's ends here; a loop wraps inside PositionAtDistance.
+            if (!dp.looped) next = Mathf::Clamp(next, 0.0f, span);
+            next = dp.PositionAtDistance(next);
         }
         position = next;
     }

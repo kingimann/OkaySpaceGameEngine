@@ -129,7 +129,7 @@ int main() {
         dc->speed = -0.5f;
         for (int i = 0; i < 30; ++i) s.Update(1.0f / 60.0f);    // 0.5 s back: 1 - 0.25
         CHECK_NEAR(dc->position, 0.75f, 1e-3f);
-        CHECK_NEAR(cartGo->transform->Position().x, 7.5f, 0.05f);
+        CHECK_NEAR(cartGo->transform->Position().x, dp->EvaluatePosition(0.75f).x, 1e-3f);   // where 0.75 is on the curve
     }
     // A looped path keeps the stored position in [0, 1).
     {
@@ -206,6 +206,207 @@ int main() {
             CHECK(light > 2.0f);
             CHECK(heavy < light * 0.6f);
             CHECK(heavy > light * 0.25f);
+        }
+    }
+
+    // ==== Features ================================================================================================
+
+    // ---- Dolly path length and metres <-> position --------------------------------------------------------------
+    {
+        Scene s("dolly_len");
+        GameObject* pathGo = s.CreateGameObject("Rail");
+        auto* dp = pathGo->AddComponent<DollyPath>();
+        // Bunched at the start: half the path (in t) is the first 2 m, the other half 8 m. (With {0, 1, 10} the curve
+        // itself runs backwards past 0 near the start, so its length is not 10; this one only moves forward.)
+        dp->waypoints = {{0, 0, 0}, {2, 0, 0}, {10, 0, 0}};
+        CHECK_NEAR(dp->Length(), 10.0f, 0.05f);
+        const float t = dp->PositionAtDistance(4.0f);
+        CHECK_NEAR(dp->EvaluatePosition(t).x, 4.0f, 0.05f);
+        CHECK_NEAR(dp->DistanceAt(t), 4.0f, 0.05f);
+        CHECK_NEAR(dp->PositionAtDistance(-3.0f), 0.0f, 1e-6f);   // clamped on an open path
+        CHECK_NEAR(dp->PositionAtDistance(30.0f), 1.0f, 1e-6f);
+        const Vec3 tan = dp->EvaluateTangent(0.5f);
+        CHECK_NEAR(tan.x, 1.0f, 1e-3f);
+    }
+
+    // ---- Dolly cart: metres per second keep one pace on uneven waypoints ----------------------------------------
+    {
+        Scene s("dolly_metres");
+        s.physicsEnabled = false;
+        GameObject* pathGo = s.CreateGameObject("Rail");
+        pathGo->AddComponent<DollyPath>()->waypoints = {{0, 0, 0}, {2, 0, 0}, {10, 0, 0}};
+        GameObject* cartGo = s.CreateGameObject("Cart");
+        auto* dc = cartGo->AddComponent<DollyCart>();
+        dc->path = "Rail"; dc->speed = 2.0f; dc->speedInMetres = true;
+        s.Start();
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);     // 1 s at 2 m/s
+        CHECK_NEAR(cartGo->transform->Position().x, 2.0f, 0.1f);
+        for (int i = 0; i < 120; ++i) s.Update(1.0f / 60.0f);    // 2 s more: 6 m
+        CHECK_NEAR(cartGo->transform->Position().x, 6.0f, 0.1f);
+    }
+
+    // ---- Dolly cart: ping-pong turns round at the ends; face along the path follows the travel -----------------
+    {
+        Scene s("dolly_pingpong");
+        s.physicsEnabled = false;
+        GameObject* pathGo = s.CreateGameObject("Rail");
+        pathGo->AddComponent<DollyPath>()->waypoints = {{0, 0, 0}, {10, 0, 0}};
+        GameObject* cartGo = s.CreateGameObject("Cart");
+        auto* dc = cartGo->AddComponent<DollyCart>();
+        dc->path = "Rail"; dc->speed = 0.5f; dc->pingPong = true; dc->orientToPath = true;
+        s.Start();
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);     // 1 s: 0.5, going out
+        Vec3 fwd = cartGo->transform->Rotation() * Vec3{0, 0, -1};
+        CHECK_NEAR(fwd.x, 1.0f, 1e-2f);                           // faces +X, the way it travels
+        CHECK(dc->Direction() > 0.0f);
+        for (int i = 0; i < 120; ++i) s.Update(1.0f / 60.0f);    // 2 s more: out to 1 and back to 0.5
+        CHECK_NEAR(dc->position, 0.5f, 1e-2f);
+        CHECK(dc->Direction() < 0.0f);
+        CHECK_NEAR(cartGo->transform->Position().x, 5.0f, 0.1f);
+        fwd = cartGo->transform->Rotation() * Vec3{0, 0, -1};
+        CHECK_NEAR(fwd.x, -1.0f, 1e-2f);                          // turned round
+        for (int i = 0; i < 90; ++i) s.Update(1.0f / 60.0f);     // 1.5 s more: to 0 and out to 0.25
+        CHECK_NEAR(dc->position, 0.25f, 1e-2f);
+        CHECK(dc->Direction() > 0.0f);
+    }
+
+    // ---- Saves keep the new dolly cart and click-to-move settings ----------------------------------------------
+    {
+        Scene s("save_new");
+        s.physicsEnabled = false;
+        auto* dc = s.CreateGameObject("Cart")->AddComponent<DollyCart>();
+        dc->path = "Rail"; dc->speedInMetres = true; dc->pingPong = true; dc->orientToPath = true;
+        auto* cm = s.CreateGameObject("P")->AddComponent<ClickToMoveController>();
+        cm->pickColliders = false; cm->giveUpWhenStuck = false; cm->stuckTime = 2.5f;
+        const std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("load_new");
+        SceneSerializer::Deserialize(s2, txt);
+        auto* dc2 = s2.Find("Cart") ? s2.Find("Cart")->GetComponent<DollyCart>() : nullptr;
+        auto* cm2 = s2.Find("P") ? s2.Find("P")->GetComponent<ClickToMoveController>() : nullptr;
+        CHECK(dc2 && cm2);
+        if (dc2) { CHECK(dc2->speedInMetres); CHECK(dc2->pingPong); CHECK(dc2->orientToPath); CHECK(dc2->path == "Rail"); }
+        if (cm2) { CHECK(!cm2->pickColliders); CHECK(!cm2->giveUpWhenStuck); CHECK_NEAR(cm2->stuckTime, 2.5f, 1e-4f); }
+        // An older record without the trailing fields keeps the defaults.
+        // The record is cut back to its first four fields (path, position, speed, auto move).
+        std::string oldTxt = txt;
+        {
+            const size_t at = oldTxt.find("  dollycart ");
+            CHECK(at != std::string::npos);
+            const size_t eol = oldTxt.find('\n', at);
+            oldTxt.replace(at, eol - at, "  dollycart \"Rail\" 0.25 0.1 1");
+        }
+        Scene s3("old");
+        SceneSerializer::Deserialize(s3, oldTxt);
+        auto* dc3 = s3.Find("Cart") ? s3.Find("Cart")->GetComponent<DollyCart>() : nullptr;
+        CHECK(dc3 != nullptr);
+        if (dc3) { CHECK(!dc3->speedInMetres); CHECK(!dc3->pingPong); CHECK(!dc3->orientToPath); CHECK_NEAR(dc3->position, 0.25f, 1e-5f); }
+    }
+
+    // ---- Click to move: a click lands on the raised floor under the pointer -------------------------------------
+    // A camera 10 m up looking straight down at x = 5; the screen centre's ray goes straight down onto a 1 m high
+    // platform there. The flat plane at the player's feet would say y = 0; the platform top is y = 1.
+    {
+        auto clickCentre = [](bool pickColliders, bool playerUnderPointer) {
+            Scene s("ctm_pick");
+            s.physicsEnabled = true;
+            GameObject* camGo = s.CreateGameObject("Main Camera");
+            s.mainCamera = camGo->AddComponent<Camera>();
+            camGo->transform->SetPosition({5, 10, 0});
+            camGo->transform->localRotation = Quat::Euler(-90.0f, 0.0f, 0.0f);
+            if (!playerUnderPointer) {
+                GameObject* plat = s.CreateGameObject("Platform");
+                plat->transform->SetPosition({5, 0.5f, 0});
+                plat->AddComponent<BoxCollider3D>()->size = {2, 1, 2};
+            }
+            GameObject* p = s.CreateGameObject("Player");
+            // Under the pointer: a wide body 0.4 m off the click point, so the ray hits its top and the walk is real.
+            p->transform->SetPosition(playerUnderPointer ? Vec3{5.4f, 0, 0} : Vec3{-5, 0, 0});
+            auto* body = p->AddComponent<BoxCollider3D>();
+            body->size = {1.2f, 1.8f, 1.2f}; body->offset = {0, 0.9f, 0};
+            auto* cm = p->AddComponent<ClickToMoveController>();
+            cm->followCamera = false; cm->pickColliders = pickColliders; cm->clickMarker = false;
+            s.Start();
+            const Vec2 centre{UICanvas::Width() * 0.5f, UICanvas::Height() * 0.5f};
+            Input::FeedMouse(centre, 0u);
+            Input::FeedMouse(centre, 1u);                         // left button goes down this frame
+            s.Update(1.0f / 60.0f);
+            Input::FeedMouse(centre, 0u);
+            return cm->HasDestination() || cm->GaveUp() ? cm->Destination() : Vec3{-99, -99, -99};
+        };
+        Vec3 d = clickCentre(true, false);
+        CHECK_NEAR(d.y, 1.0f, 0.02f);
+        CHECK_NEAR(d.x, 5.0f, 0.05f);
+        d = clickCentre(false, false);                            // the old flat plane, when switched off
+        CHECK_NEAR(d.y, 0.0f, 0.02f);
+        d = clickCentre(true, true);                              // the player's own head is not ground
+        CHECK_NEAR(d.y, 0.0f, 0.02f);
+    }
+
+    // ---- Click to move: walking into a wall gives up instead of running on the spot ------------------------------
+    {
+        // Open floor: arrives (8 m at 4 m/s, easing over the last 1.2 m), not a give-up.
+        {
+            float t = 0.0f;
+            bool arrived = false, gaveUp = true;
+            {
+                Scene s("ctm_open");
+                s.physicsEnabled = true;
+                GameObject* p = s.CreateGameObject("Player");
+                auto* cm = p->AddComponent<ClickToMoveController>();
+                cm->followCamera = false; cm->usePathfinding = false;
+                s.Start();
+                cm->MoveTo({8, 0, 0});
+                int i = 0;
+                for (; i < 360 && cm->HasDestination(); ++i) s.Update(1.0f / 60.0f);
+                t = i / 60.0f; arrived = !cm->HasDestination(); gaveUp = cm->GaveUp();
+                CHECK_NEAR(p->transform->Position().x, 8.0f, 0.2f);
+            }
+            CHECK(arrived);
+            CHECK(!gaveUp);
+            CHECK(t < 3.5f);
+        }
+        // A wall across the way: the body is held at the wall and the walk ends about a second later.
+        {
+            Scene s("ctm_wall");
+            s.physicsEnabled = true;
+            GameObject* w = s.CreateGameObject("Wall");
+            w->transform->SetPosition({3, 1, 0});
+            w->AddComponent<BoxCollider3D>()->size = {1, 2, 20};
+            GameObject* p = s.CreateGameObject("Player");
+            auto* body = p->AddComponent<BoxCollider3D>();
+            body->size = {0.6f, 1.8f, 0.6f}; body->offset = {0, 0.9f, 0};
+            auto* cm = p->AddComponent<ClickToMoveController>();
+            cm->followCamera = false; cm->usePathfinding = false;
+            s.Start();
+            cm->MoveTo({8, 0, 0});
+            int i = 0;
+            for (; i < 360 && cm->HasDestination(); ++i) s.Update(1.0f / 60.0f);
+            std::printf("  wall: stopped after %.2f s at x = %.2f\n", i / 60.0f, p->transform->Position().x);
+            CHECK(!cm->HasDestination());
+            CHECK(cm->GaveUp());
+            CHECK(p->transform->Position().x < 3.0f);               // never went through
+            CHECK(i / 60.0f < 3.0f);
+            // A new order clears the flag.
+            cm->MoveTo({0, 0, 0});
+            CHECK(!cm->GaveUp());
+        }
+        // Switched off: still pushing at the wall after 6 s (the old behaviour, kept as an option).
+        {
+            Scene s("ctm_wall_off");
+            s.physicsEnabled = true;
+            GameObject* w = s.CreateGameObject("Wall");
+            w->transform->SetPosition({3, 1, 0});
+            w->AddComponent<BoxCollider3D>()->size = {1, 2, 20};
+            GameObject* p = s.CreateGameObject("Player");
+            auto* body = p->AddComponent<BoxCollider3D>();
+            body->size = {0.6f, 1.8f, 0.6f}; body->offset = {0, 0.9f, 0};
+            auto* cm = p->AddComponent<ClickToMoveController>();
+            cm->followCamera = false; cm->usePathfinding = false; cm->giveUpWhenStuck = false;
+            s.Start();
+            cm->MoveTo({8, 0, 0});
+            for (int i = 0; i < 360; ++i) s.Update(1.0f / 60.0f);
+            CHECK(cm->HasDestination());
+            CHECK(!cm->GaveUp());
         }
     }
 

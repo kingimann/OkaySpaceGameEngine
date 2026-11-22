@@ -3363,12 +3363,15 @@ float g_insetAmt    = 0.2f;
 int   g_meEditAxis  = -1;             // axis being dragged: 0=X 1=Y 2=Z, -1 = none
 bool  g_meEditGrab  = false;          // an edit-mode move handle is held
 Vec3  g_meEditRaw{0, 0, 0};           // accumulated drag in LOCAL space (pre-apply)
+okay::modeling::EditTransformSession g_meHandle;   // the move-handle drag: the same session G uses (soft select, symmetry X / Y / Z)
+Vec3  g_meHandleOff{0, 0, 0};         // ...and how far the handle has been dragged (world space)
 bool  g_meshSculpt  = false;          // sculpt brush active (instead of select/move)
 int   g_sculptMode  = 0;              // 0 Grab, 1 Inflate, 2 Smooth
 float g_sculptRadius = 0.5f, g_sculptStrength = 0.08f;
 bool  g_meshSymX    = false;          // X symmetry: mirror every edit across local X=0
 bool  g_meshSymY    = false;          // ... across local Y=0 (G / R / S)
 bool  g_meshSymZ    = false;          // ... across local Z=0 (G / R / S)
+int   g_mePivot     = 0;              // what R / S turn around: okay::modeling::EditPivot (0 Median, 1 Individual Origins, 2 Active Vertex); '.' cycles it
 bool  g_paintVertex = false;          // the paint brush paints smooth per-vertex colours instead of whole faces
 float g_paintHardness = 0.3f;         // vertex paint: 0 = soft falloff all the way, near 1 = solid centre
 bool  g_meshXray    = false;          // box / circle / lasso select picks through the mesh
@@ -3753,6 +3756,61 @@ static void WorldRange(const GameObject* go, int axis, float& lo, float& hi, boo
         if (!ok) { lo = hi = c; ok = true; } else { lo = std::min(lo, c); hi = std::max(hi, c); }
     }
 }
+// ---- Selection tools on the polygons (okay/Modeling/PolyOps.hpp, tested in poly_ops) ----
+// The polygons the selected triangles belong to, in the order first picked.
+static std::vector<int> SelectedPolys(Mesh& m) {
+    EditPoly(m);
+    std::vector<int> out;
+    if ((int)m.polyFace.size() != m.TriangleCount()) return out;
+    std::set<int> seen;
+    for (int t : g_meshSelFaces) if (t >= 0 && t < m.TriangleCount() && seen.insert(m.polyFace[t]).second) out.push_back(m.polyFace[t]);
+    return out;
+}
+static std::vector<int> TrisOfPolys(const Mesh& m, const std::vector<int>& polys) {
+    std::vector<int> out;
+    if ((int)m.polyFace.size() != m.TriangleCount()) return out;
+    std::map<int, int> rank;
+    for (int i = 0; i < (int)polys.size(); ++i) rank.emplace(polys[i], i);
+    std::vector<std::pair<int, int>> tagged;
+    for (int t = 0; t < m.TriangleCount(); ++t) { auto it = rank.find(m.polyFace[t]); if (it != rank.end()) tagged.push_back({it->second, t}); }
+    std::stable_sort(tagged.begin(), tagged.end(), [](const std::pair<int, int>& a, const std::pair<int, int>& b) { return a.first < b.first; });
+    for (const auto& x : tagged) out.push_back(x.second);
+    return out;
+}
+// Checker Deselect: keep every other vertex or face of the selection, walking out from the first one picked.
+static bool CheckerDeselectNow(Mesh& m) {
+    if (g_meshSelMode == 0 && !g_meshSelVerts.empty()) { g_meshSelVerts = okay::modeling::CheckerVerts(EditPoly(m), g_meshSelVerts); return true; }
+    if (g_meshSelMode == 1 && !g_meshSelFaces.empty()) {
+        const std::vector<int> polys = SelectedPolys(m);
+        if (polys.empty()) return false;
+        g_meshSelFaces = TrisOfPolys(m, okay::modeling::CheckerFaces(EditPoly(m), polys));
+        return true;
+    }
+    return false;
+}
+// Select Boundary Loop: the outline of the selected faces becomes an edge selection (Edge mode).
+static int SelectBoundaryLoopNow(Mesh& m) {
+    const std::vector<int> polys = SelectedPolys(m);
+    if (polys.empty()) return 0;
+    const okay::modeling::EdgeList ol = okay::modeling::RegionOutline(EditPoly(m), polys);
+    if (ol.empty()) return 0;
+    g_meshSelEdges = ol; g_meshSelVerts.clear(); g_meshSelFaces.clear();
+    g_meshSelMode = 2;
+    return (int)ol.size();
+}
+// Select the open (border) and / or non-manifold edges of the whole mesh (Edge mode).
+static int SelectProblemEdgesNow(Mesh& m, bool borders, bool nonManifold) {
+    const okay::modeling::EdgeList es = okay::modeling::ProblemEdges(EditPoly(m), borders, nonManifold);
+    g_meshSelEdges = es; g_meshSelVerts.clear(); g_meshSelFaces.clear();
+    g_meshSelMode = 2;
+    return (int)es.size();
+}
+// Flip Normals: the selected faces in Face mode, else the whole mesh.
+static void FlipNormalsNow(Mesh& m) {
+    if (g_meshSelMode == 1 && !g_meshSelFaces.empty()) m.FlipFaces(g_meshSelFaces);
+    else m.FlipNormals();
+}
+
 static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
     namespace pmo = okay::modeling;
     std::vector<ModelCmd> v;
@@ -3776,6 +3834,26 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         else for (int i = 0; i < mr->mesh.TriangleCount(); ++i) g_meshSelFaces.push_back(i);
     });
     add("Select None", "", "Select", "Clear the selection.", true, "", clearSel);
+    add("Select Shortest Path", "Ctrl+click", "Select", "Ctrl+click a vertex, edge or face in the 3D view: the shortest path from the last one you picked is added.", true, "", [] {
+        ConsoleLog("Select Shortest Path: Ctrl+click a vertex, edge or face in the 3D view; the path from the last one picked is added");
+    });
+    add("Checker Deselect", "", "Select", "Keep every other vertex or face of the selection (a checkerboard on a grid of faces).",
+        (g_meshSelMode == 0 && anyVerts) || (g_meshSelMode == 1 && anyFaces), "Select vertices (key 1) or faces (key 3) first.", [mr] { CheckerDeselectNow(mr->mesh); });
+    add("Select Boundary Loop", "", "Select", "Select the outline of the selected faces as edges (Edge mode).", anyFaces, needFaces, [mr] {
+        const int n = SelectBoundaryLoopNow(mr->mesh);
+        ConsoleLog("Select Boundary Loop: " + std::to_string(n) + " edges");
+    });
+    add("Select Open Edges", "", "Select", "Select every edge with a face on one side only: the rims of holes (Edge mode).", true, "", [mr] {
+        const int n = SelectProblemEdgesNow(mr->mesh, true, false);
+        ConsoleLog(n ? "Selected " + std::to_string(n) + " open edges" : std::string("No open edges: the mesh is closed"));
+    });
+    add("Select Non-Manifold Edges", "", "Select", "Select edges shared by three or more faces (they break bevel, bridge, booleans and export).", true, "", [mr] {
+        const int n = SelectProblemEdgesNow(mr->mesh, false, true);
+        ConsoleLog(n ? "Selected " + std::to_string(n) + " non-manifold edges" : std::string("No non-manifold edges"));
+    });
+    add("Pivot: Median Point", ".", "Select", "R and S turn around the centre of the whole selection.", true, "", [] { g_mePivot = 0; });
+    add("Pivot: Individual Origins", ".", "Select", "R and S turn each separate part of the selection around its own centre (grow several faces in place).", true, "", [] { g_mePivot = 1; });
+    add("Pivot: Active Vertex", ".", "Select", "R and S turn around the last vertex you picked.", true, "", [] { g_mePivot = 2; });
     add("Grow Selection", "", "Select", "Add everything touching the selection (faces or vertices).", g_meshSelMode == 1 ? anyFaces : (g_meshSelMode == 0 && anyVerts), "Select some faces (key 3) or vertices (key 1) first.", [mr] {
         if (g_meshSelMode == 1) g_meshSelFaces = pmo::GrowFaces(mr->mesh, g_meshSelFaces);
         else g_meshSelVerts = mr->mesh.GrownVertexSelection(g_meshSelVerts);
@@ -3850,7 +3928,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
     add("Poke Faces", "", "Edit", "Fan each selected face from a centre point.", anyFaces, needFaces, edit([](Mesh& m) { m.PokeFaces(g_meshSelFaces, 0.15f); g_meshSelFaces.clear(); }));
     add("Delete Faces", "", "Edit", "Remove the selected faces (leaves a hole).", anyFaces, needFaces, edit([](Mesh& m) { m.DeleteFaces(g_meshSelFaces); g_meshSelFaces.clear(); }));
     add("Duplicate Faces", "", "Edit", "Copy the selected faces in place; the copies stay selected.", anyFaces, needFaces, edit([](Mesh& m) { g_meshSelFaces = m.DuplicateFaces(g_meshSelFaces); g_meshSelVerts.clear(); g_meshSelEdges.clear(); }));
-    add("Flip Normals", "", "Edit", "Turn every face the other way round.", true, "", edit([](Mesh& m) { m.FlipNormals(); }));
+    add("Flip Normals", "", "Edit", "Turn the selected faces the other way round (Face mode), or every face when none are selected.", true, "", edit([](Mesh& m) { FlipNormalsNow(m); }));
     add("Recalculate Normals Outside", "", "Edit", "Make every face point outward (fixes dark or inside-out faces).", true, "", edit([](Mesh& m) { m.OrientFacesOutward(); }));
     add("Merge by Distance", "", "Edit", "Join vertices that sit on top of each other.", true, "", edit([clearSel](Mesh& m) { m.WeldVertices(); g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear(); }));
     add("Repair Mesh", "", "Edit", "Merge doubles, drop collapsed triangles, cap holes, point faces outward.", true, "", [&ed, mr] {
@@ -30006,6 +30084,27 @@ void DrawModeling(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select everything that ISN'T selected (works in all three modes).");
             if (g_meshSelMode == 2)
                 ImGui::TextDisabled("Alt+Click an edge to select its whole loop.");
+            ImGui::TextDisabled("Ctrl+Click adds the shortest path from the last one picked.");
+            if (ToolButton("Checker##me", (g_meshSelMode == 0 && !g_meshSelVerts.empty()) || (g_meshSelMode == 1 && !g_meshSelFaces.empty()),
+                           "Select vertices (key 1) or faces (key 3) first.", true))
+                CheckerDeselectNow(mr->mesh);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Checker Deselect: keep every other vertex or face of the selection.");
+            ImGui::SameLine();
+            if (ToolButton("Boundary Loop##me", !g_meshSelFaces.empty(), kNeedFaces, true))
+                ConsoleLog("Select Boundary Loop: " + std::to_string(SelectBoundaryLoopNow(mr->mesh)) + " edges");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select the outline of the selected faces as edges (Edge mode).");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Open Edges##me")) {
+                const int n = SelectProblemEdgesNow(mr->mesh, true, false);
+                ConsoleLog(n ? "Selected " + std::to_string(n) + " open edges" : std::string("No open edges: the mesh is closed"));
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select every edge with a face on one side only (the rims of holes).");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Non-Manifold##me")) {
+                const int n = SelectProblemEdgesNow(mr->mesh, false, true);
+                ConsoleLog(n ? "Selected " + std::to_string(n) + " non-manifold edges" : std::string("No non-manifold edges"));
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select edges shared by three or more faces (they break bevel, bridge, booleans and export).");
 
             ImGui::Checkbox("Symmetry X##me", &g_meshSymX);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror every move and sculpt stroke across the local X = 0 plane (edit half, get both).");
@@ -30026,6 +30125,13 @@ void DrawModeling(EditorState& ed) {
             if (g_meshSoftSel) {
                 ImGui::SameLine(); ImGui::SetNextItemWidth(90);
                 ImGui::DragFloat("##softr", &g_meshSoftRadius, 0.01f, 0.02f, 20.0f, "r %.2f");
+            }
+            {
+                static const char* kPivots[] = {"Median Point", "Individual Origins", "Active Vertex"};
+                ImGui::SetNextItemWidth(150);
+                g_mePivot = std::clamp(g_mePivot, 0, 2);
+                ImGui::Combo("Pivot (.)##mepivot", &g_mePivot, kPivots, 3);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("What R (rotate) and S (scale) turn around: the centre of the selection, each separate part's own centre\n(several faces grow or spin in place), or the last vertex you picked. Press . in the 3D view to cycle.");
             }
 
             SectionHeader("Faces");
@@ -30073,7 +30179,8 @@ void DrawModeling(EditorState& ed) {
                 EditUndoPoint(ed, mr); mr->mesh.DeleteFaces(g_meshSelFaces); g_meshSelFaces.clear(); ed.dirty = true;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Flip Normals##me")) { EditUndoPoint(ed, mr); mr->mesh.FlipNormals(); ed.dirty = true; }
+            if (ImGui::Button("Flip Normals##me")) { EditUndoPoint(ed, mr); FlipNormalsNow(mr->mesh); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the selected faces the other way round (Face mode), or every face when none are selected.");
             ImGui::SameLine();
             if (ImGui::Button("Recalc Outside##me")) {
                 EditUndoPoint(ed, mr); int n = mr->mesh.OrientFacesOutward();
@@ -52948,6 +53055,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (ImGui::IsKeyPressed(ImGuiKey_1, false)) g_meshSelMode = 0;
             if (ImGui::IsKeyPressed(ImGuiKey_2, false)) g_meshSelMode = 2;
             if (ImGui::IsKeyPressed(ImGuiKey_3, false)) g_meshSelMode = 1;
+            if (ImGui::IsKeyPressed(ImGuiKey_Period, false)) {   // '.' cycles what R / S turn around
+                g_mePivot = (std::clamp(g_mePivot, 0, 2) + 1) % 3;
+                ConsoleLog(std::string("Pivot: ") + okay::modeling::EditPivotName((okay::modeling::EditPivot)g_mePivot));
+            }
         }
         struct Pill { const char* label; bool on; int id; };
         std::vector<Pill> pills = {{"Object", !(g_meshEdit && g_meshEditObj == mo), 0}, {"Edit", g_meshEdit && g_meshEditObj == mo, 1}};
@@ -53129,6 +53240,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 mdl::EditTransformOptions o;
                 o.softRadius = g_meshSoftSel ? g_meshSoftRadius : 0.0f;
                 o.mirrorX = g_meshSymX; o.mirrorY = g_meshSymY; o.mirrorZ = g_meshSymZ;
+                o.pivot = (mdl::EditPivot)std::clamp(g_mePivot, 0, 2);
+                // The active vertex: the last vertex picked (or the end of the last edge, or a corner of the last face).
+                o.activeVertex = g_meshSelMode == 0 ? (g_meshSelVerts.empty() ? -1 : g_meshSelVerts.back())
+                               : g_meshSelMode == 2 ? (g_meshSelEdges.empty() ? -1 : g_meshSelEdges.back().second)
+                               : (!g_meshSelFaces.empty() && g_meshSelFaces.back() >= 0 && g_meshSelFaces.back() < mesh.TriangleCount() ? mesh.triangles[(std::size_t)g_meshSelFaces.back() * 3] : -1);
                 g_meModal.Begin(mesh, kind, affected, M, o);
                 if (!g_meModal.Active()) return;
                 g_meModalObj = meo; g_meModalObjGuid = meo ? meo->Guid() : std::string();
@@ -53824,6 +53940,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 {
                     std::string line = std::string(mdl::EditXformName(g_meModal.Kind()));
                     if (!lock.Free()) line += "  along " + lock.Label();
+                    if (g_mePivot != 0 && g_meModal.Kind() != mdl::EditXform::Move) line += std::string("  about ") + mdl::EditPivotName((mdl::EditPivot)std::clamp(g_mePivot, 0, 2));
                     line += "   " + (typed ? std::string("typed ") + g_meModal.typed.Text() : readout);
                     if (snap) line += g_snapTarget > 0 && g_meModal.Kind() == mdl::EditXform::Move ? std::string("   (snapping to ") + mdl::SnapTargetName((mdl::SnapTarget)g_snapTarget) + ")" : std::string("   (snapping)");
                     const char* help = "X / Y / Z lock an axis, Shift+X/Y/Z a plane  -  type a value  -  Ctrl snaps  -  Enter or click to confirm, Esc or right-click to cancel";
@@ -53875,9 +53992,16 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (oOk && hovered && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 float best = 10.0f; int pick = -1;
                 for (int i = 0; i < 3; ++i) if (tipOk[i]) { float d = SegDistPx(io.MousePos, so, tip[i]); if (d < best) { best = d; pick = i; } }
-                if (pick >= 0) { EditUndoPoint(ed, meo->GetComponent<MeshRenderer>()); g_meEditGrab = true; g_meEditAxis = pick; grabbedHandle = true; g_uiHandled = true; }
+                if (pick >= 0) {
+                    EditUndoPoint(ed, meo->GetComponent<MeshRenderer>()); g_meEditGrab = true; g_meEditAxis = pick; grabbedHandle = true; g_uiHandled = true;
+                    okay::modeling::EditTransformOptions ho;
+                    ho.softRadius = g_meshSoftSel ? g_meshSoftRadius : 0.0f;
+                    ho.mirrorX = g_meshSymX; ho.mirrorY = g_meshSymY; ho.mirrorZ = g_meshSymZ;
+                    g_meHandle.Begin(mesh, okay::modeling::EditXform::Move, affected, M, ho);
+                    g_meHandleOff = Vec3{0, 0, 0};
+                }
             }
-            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_meEditGrab = false; g_meEditAxis = -1; }
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_meEditGrab = false; g_meEditAxis = -1; g_meHandle.Confirm(); }
             // Drag the grabbed axis: project mouse motion onto it, move the selection.
             if (g_meEditGrab && g_meEditAxis >= 0 && oOk && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
                 int i = g_meEditAxis;
@@ -53886,29 +54010,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (slen > 1e-3f) {
                     float along = (io.MouseDelta.x * sdir.x + io.MouseDelta.y * sdir.y) / slen;
                     float amt = along * (L / slen);             // screen px -> world units
-                    Vec3 localDelta = Minv.MultiplyVector(axisW[i] * amt);
-                    // Live X symmetry: find the -X counterparts BEFORE moving (matched
-                    // against the pre-move positions), then give them the mirrored delta.
-                    std::vector<int> mirror;
-                    if (g_meshSymX) {
-                        for (int v : affected) {
-                            if (v < 0 || v >= (int)mesh.vertices.size()) continue;
-                            Vec3 want{-mesh.vertices[v].x, mesh.vertices[v].y, mesh.vertices[v].z};
-                            for (int w = 0; w < (int)mesh.vertices.size(); ++w) {
-                                Vec3 d = mesh.vertices[w] - want;
-                                if (d.x*d.x + d.y*d.y + d.z*d.z < 1e-6f && w != v &&
-                                    std::find(affected.begin(), affected.end(), w) == affected.end())
-                                    mirror.push_back(w);
-                            }
-                        }
-                    }
-                    if (g_meshSoftSel) mesh.MoveVerticesSoft(affected, localDelta, g_meshSoftRadius);
-                    else               mesh.MoveVertices(affected, localDelta);
-                    if (!mirror.empty()) {
-                        Vec3 md{-localDelta.x, localDelta.y, localDelta.z};
-                        if (g_meshSoftSel) mesh.MoveVerticesSoft(mirror, md, g_meshSoftRadius);
-                        else               mesh.MoveVertices(mirror, md);
-                    }
+                    // The drag goes through the same session as G, so Soft Select and Symmetry X / Y / Z
+                    // all apply. (It used to mirror across X only, and searched every vertex for each moved
+                    // vertex's partner on every frame, which froze big meshes.)
+                    g_meHandleOff += axisW[i] * amt;
+                    if (g_meHandle.Active()) g_meHandle.Apply(mesh, Mat4::Translate(g_meHandleOff));
                     mesh.normals.clear();        // keep flat (faceted) shading while editing
                     ed.dirty = true;
                 }
@@ -53924,11 +54030,21 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         float dx = sp.x - io.MousePos.x, dy = sp.y - io.MousePos.y, d = dx*dx + dy*dy;
                         if (d < best) { best = d; pv = i; }
                     }
+                    if (io.KeyCtrl && !io.KeyAlt && pv >= 0 && !g_meshSelVerts.empty()) {
+                        // Ctrl+click: add the shortest path along the edges from the last vertex picked.
+                        const std::vector<int> path = okay::modeling::ShortestVertPath(EditPoly(mesh), g_meshSelVerts.back(), pv);
+                        for (int v : path)
+                            if (std::find(g_meshSelVerts.begin(), g_meshSelVerts.end(), v) == g_meshSelVerts.end()) g_meshSelVerts.push_back(v);
+                        g_meshSelVerts.erase(std::remove(g_meshSelVerts.begin(), g_meshSelVerts.end(), pv), g_meshSelVerts.end());
+                        g_meshSelVerts.push_back(pv);   // the clicked one is the active vertex now
+                        if (path.empty()) ConsoleLog("No path along the edges joins those two vertices (separate parts)", 1);
+                    } else {
                     if (!add) g_meshSelVerts.clear();
                     if (pv >= 0) {
                         auto it = std::find(g_meshSelVerts.begin(), g_meshSelVerts.end(), pv);
                         if (it != g_meshSelVerts.end()) { if (add) g_meshSelVerts.erase(it); }
                         else g_meshSelVerts.push_back(pv);
+                    }
                     }
                 } else if (g_meshSelMode == 2) {
                     // Pick the nearest polygon edge by screen distance to its segment.
@@ -53939,8 +54055,27 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         float d = SegDistPx(io.MousePos, a, b);
                         if (d < best) { best = d; pe = e; }
                     }
-                    if (!add) g_meshSelEdges.clear();
-                    if (pe.first >= 0) {
+                    const bool pathClick = io.KeyCtrl && !io.KeyAlt && pe.first >= 0 && !g_meshSelEdges.empty();
+                    if (!add && !pathClick) g_meshSelEdges.clear();
+                    if (pathClick) {
+                        // Ctrl+click: join the last edge picked to this one by the shortest path along the edges.
+                        const okay::modeling::PolyMesh& pm = EditPoly(mesh);
+                        const std::pair<int, int> last = g_meshSelEdges.back();
+                        std::vector<int> best;
+                        for (int a : {last.first, last.second}) for (int b : {pe.first, pe.second}) {
+                            std::vector<int> p = okay::modeling::ShortestVertPath(pm, a, b);
+                            if (!p.empty() && (best.empty() || p.size() < best.size())) best = std::move(p);
+                        }
+                        auto addEdge = [&](int a, int b) {
+                            for (const auto& s : g_meshSelEdges) if ((s.first == a && s.second == b) || (s.first == b && s.second == a)) return;
+                            g_meshSelEdges.push_back({a, b});
+                        };
+                        for (std::size_t i = 1; i < best.size(); ++i) addEdge(best[i - 1], best[i]);
+                        g_meshSelEdges.erase(std::remove_if(g_meshSelEdges.begin(), g_meshSelEdges.end(), [&](const std::pair<int, int>& s) {
+                            return (s.first == pe.first && s.second == pe.second) || (s.first == pe.second && s.second == pe.first); }), g_meshSelEdges.end());
+                        g_meshSelEdges.push_back(pe);   // the clicked edge is the last one picked
+                        if (best.empty()) ConsoleLog("No path along the edges joins those two edges (separate parts)", 1);
+                    } else if (pe.first >= 0) {
                         if (io.KeyAlt || ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {   // double-click does the same as Alt+click
                             // Alt+Click: the edge loop through this edge (across 4-way
                             // vertices); Ctrl+Alt+Click: the ring of edges across the
@@ -54007,7 +54142,26 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         }
                         return -1;
                     };
-                    if (!add) g_meshSelFaces.clear();
+                    EditPoly(mesh);
+                    const bool polysKnown = (int)mesh.polyFace.size() == mesh.TriangleCount();
+                    const int lastTri = g_meshSelFaces.empty() ? -1 : g_meshSelFaces.back();
+                    if (io.KeyCtrl && !io.KeyAlt && pf >= 0 && polysKnown && lastTri >= 0 && lastTri < mesh.TriangleCount()) {
+                        // Ctrl+click: the shortest path of faces from the last face picked to this one.
+                        const std::vector<int> path = okay::modeling::ShortestFacePath(EditPoly(mesh), mesh.polyFace[lastTri], mesh.polyFace[pf]);
+                        std::set<int> want(path.begin(), path.end());
+                        std::set<int> have(g_meshSelFaces.begin(), g_meshSelFaces.end());
+                        std::vector<int> clickedTris;
+                        for (int t = 0; t < mesh.TriangleCount(); ++t) {
+                            if (mesh.polyFace[t] == mesh.polyFace[pf]) { clickedTris.push_back(t); continue; }
+                            if (want.count(mesh.polyFace[t]) && !have.count(t)) g_meshSelFaces.push_back(t);
+                        }
+                        for (int t : clickedTris) {   // the clicked face goes last: it is the one the next Ctrl+click starts from
+                            g_meshSelFaces.erase(std::remove(g_meshSelFaces.begin(), g_meshSelFaces.end(), t), g_meshSelFaces.end());
+                            g_meshSelFaces.push_back(t);
+                        }
+                        if (path.empty()) ConsoleLog("No path of faces joins those two faces (separate parts)", 1);
+                        pf = -1;   // handled
+                    } else if (!add) g_meshSelFaces.clear();
                     if (pf >= 0) {
                         auto toggleFace = [&](int fc) {
                             if (fc < 0 || fc >= mesh.TriangleCount()) return;

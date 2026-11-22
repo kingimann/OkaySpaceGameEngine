@@ -1072,6 +1072,11 @@ target_include_directories(test_texture_reimport PRIVATE ${PROJECT_SOURCE_DIR}/e
 target_link_libraries(test_texture_reimport PRIVATE okay::engine)
 add_test(NAME texture_reimport COMMAND test_texture_reimport)
 
+# Models and sounds already in the open scene follow their files: a placed model is refreshed in place when its file changes, is reimported or gets new import settings (geometry, parts added and removed, Scale / Normals / Import animations), keeping its objects, transforms, your children and your materials; Audio Sources that loaded a changed sound load it again.
+add_executable(test_model_refresh test_model_refresh.cpp)
+target_link_libraries(test_model_refresh PRIVATE okay::engine)
+add_test(NAME model_refresh COMMAND test_model_refresh)
+
 # Why a model did not import, in plain words (DescribeModelImportProblem): missing, folder, empty, unknown extension, a picture renamed to .glb, text in a .glb, glTF 1, cut-off files, broken JSON, not an FBX, the seam reader's own error.
 add_executable(test_model_import_problem test_model_import_problem.cpp)
 target_link_libraries(test_model_import_problem PRIVATE okay::engine)

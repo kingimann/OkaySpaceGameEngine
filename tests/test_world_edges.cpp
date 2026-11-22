@@ -171,8 +171,8 @@ int main() {
         GameObject* g = s.CreateGameObject("Grass");
         auto* f = g->AddComponent<Foliage>();
         f->mesh = "Bush"; f->variants = 1;
-        f->radius = 1.0f; f->density = 2.0f; f->spacing = 0.0f; f->maxSlope = 10.0f;
-        const int n = f->Paint(19.2f, 0.0f, Foliage::TerrainSurface(*t));   // a brush on the last cell
+        f->radius = 0.5f; f->density = 8.0f; f->spacing = 0.0f; f->maxSlope = 10.0f;
+        const int n = f->Paint(19.45f, 0.0f, Foliage::TerrainSurface(*t));   // a brush inside the last cell
         CHECK(n >= 3);
     }
 

@@ -58,12 +58,14 @@ namespace {
 
 LuaScriptVM::Impl& Ctx(State& L) { return *static_cast<LuaScriptVM::Impl*>(L.userData); }
 const sc::EngineApi& Api() { return sc::EngineApi::Get(); }
-// Types Lua does not see: the typed language's own value types (scriptOnly: string, int, float, ...)
-// and anything named like a Lua library table, which must keep its Lua meaning.
+// Types Lua does not see: the typed language's own value types (C# keywords: string, int,
+// float, ...) and anything named like a Lua library table, which must keep its Lua meaning.
+// (scriptOnly types such as KeyCode and Quaternion are text-script bindings: Lua keeps them.)
 bool LuaHidden(const sc::ApiType& t) {
-    if (t.name.empty() || t.scriptOnly) return true;
-    for (const char* lib : {"string", "table", "math", "os", "coroutine", "utf8", "io", "debug", "package"})
-        if (t.name == lib) return true;
+    if (t.name.empty()) return true;
+    for (const char* n : {"string", "int", "float", "double", "bool", "object", "char", "long", "table", "math", "os",
+                          "coroutine", "utf8", "io", "debug", "package"})
+        if (t.name == n) return true;
     return false;
 }
 // EngineApi::Find for Lua: -1 for a hidden type.

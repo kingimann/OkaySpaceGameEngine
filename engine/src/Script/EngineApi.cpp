@@ -22,6 +22,7 @@
 #include "okay/Core/Localization.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Math/Quat.hpp"
+#include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/PlayerController.hpp"
@@ -98,6 +99,7 @@ float F(const Value& v) {
 std::int32_t I(const Value& v) { if (auto* i = std::get_if<std::int32_t>(&v)) return *i; return (std::int32_t)F(v); }
 const std::string& S(const Value& v) { static const std::string e; auto* s = std::get_if<std::string>(&v); return s ? *s : e; }
 Vec3 V(const Value& v) { if (auto* x = std::get_if<Vec3>(&v)) return *x; return Vec3::Zero; }
+Quat Q(const Value& v) { if (auto* x = std::get_if<Quat>(&v)) return *x; return Quat::Identity; }
 
 // The component of type T on the object a script call is made on, or a plain-English error (slice 2 UI parts).
 template <class T> T* UiComp(const Value& self, CallContext& c, const char* nice) {
@@ -219,6 +221,17 @@ EngineApi Build() {
                 Scene* sc = c.self ? c.self->scene() : nullptr;
                 return sc ? MakeRef(sc->Find(S(a[0])), goIdx) : Value{};
             }, "The first active object with this name, or null if there is none."));
+        {
+            ApiMethod fi = method("FindIncludingInactive", {tString}, {"name"}, tGO,
+                [goIdx](const Value&, std::vector<Value>& a, CallContext& c) {
+                    Scene* sc = c.self ? c.self->scene() : nullptr;
+                    if (!sc) return Value{};
+                    for (const auto& up : sc->Objects()) if (up && up->name == S(a[0])) return MakeRef(up.get(), goIdx);
+                    return MakeRef(sc->Find(S(a[0])), goIdx);
+                }, "The first object with this name, switched on or off, or null.");
+            fi.scriptOnly = true;
+            g.staticMethods.push_back(std::move(fi));
+        }
         g.staticMethods.push_back(method("FindWithTag", {tString}, {"tag"}, tGO,
             [goIdx](const Value&, std::vector<Value>& a, CallContext& c) {
                 Scene* sc = c.self ? c.self->scene() : nullptr;
@@ -279,6 +292,19 @@ EngineApi Build() {
                 if (d.Magnitude() > 1e-6f) tr->SetRotation(Quat::LookRotation(d));
                 return Value{};
             }, "Turn so forward points at a world position."));
+        // Text scripts only (a visual-script wire has no rotation type): the rotation as a Quaternion.
+        ApiProperty rot = prop("rotation", Type::Of(TK::Quaternion),
+            [](const Value& s, CallContext& c) { return Value{SelfTransform(s, c)->Rotation()}; },
+            [](const Value& s, const Value& v, CallContext& c) { SelfTransform(s, c)->SetRotation(Q(v).Normalized()); },
+            "Rotation in the world, as a Quaternion.");
+        rot.scriptOnly = true;
+        t.props.push_back(std::move(rot));
+        ApiProperty lrot = prop("localRotation", Type::Of(TK::Quaternion),
+            [](const Value& s, CallContext& c) { return Value{SelfTransform(s, c)->localRotation}; },
+            [](const Value& s, const Value& v, CallContext& c) { SelfTransform(s, c)->localRotation = Q(v).Normalized(); },
+            "Rotation relative to the parent, as a Quaternion.");
+        lrot.scriptOnly = true;
+        t.props.push_back(std::move(lrot));
     }
     {
         ApiType& v = api.types[(std::size_t)api.vector3];
@@ -310,6 +336,67 @@ EngineApi Build() {
         v.staticMethods.push_back(method("MoveTowards", {tVec, tVec, tFloat}, {"current", "target", "maxDistance"}, tVec,
             [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Vec3::MoveTowards(V(a[0]), V(a[1]), F(a[2]))}; },
             "Step from current toward target, moving at most maxDistance."));
+    }
+    // ---- ForceMode (text scripts only): the numbers Rigidbody.AddForce / AddTorque take ----
+    {
+        ApiType fm; fm.name = "ForceMode"; fm.isStatic = true; fm.scriptOnly = true;
+        fm.doc = "How a force is applied: Force (over the step, by mass), Acceleration, Impulse (at once, by mass), VelocityChange.";
+        const char* names[] = {"Force", "Acceleration", "Impulse", "VelocityChange"};
+        for (int i = 0; i < 4; ++i)
+            fm.staticProps.push_back(ro(names[i], tInt, [i](const Value&, CallContext&) { return Value{(std::int32_t)i}; }, std::string("ForceMode.") + names[i]));
+        api.types.push_back(std::move(fm));
+    }
+    // ---- Quaternion (text scripts only) ----
+    // A rotation, built on the engine's own Quat (okay/Math/Quat.hpp). Euler angles follow
+    // the engine's order (Z, then X, then Y), the same as transform.eulerAngles.
+    {
+        api.quaternion = (int)api.types.size();
+        ApiType q; q.name = "Quaternion"; q.isValueType = true; q.scriptOnly = true;
+        q.doc = "A rotation. Combine two with a * b (b first, then a); turn a vector with q * v.";
+        const Type tQ = Type::Of(TK::Quaternion);
+        q.props.push_back(ro("eulerAngles", tVec, [](const Value& s, CallContext&) { return Value{Q(s).ToEuler()}; },
+            "The rotation as X / Y / Z angles in degrees."));
+        q.props.push_back(ro("normalized", tQ, [](const Value& s, CallContext&) { return Value{Q(s).Normalized()}; },
+            "The same rotation with length 1."));
+        q.staticProps.push_back(ro("identity", tQ, [](const Value&, CallContext&) { return Value{Quat::Identity}; }, "No rotation."));
+        auto pureStatic = [&](ApiMethod m) { m.pure = true; q.staticMethods.push_back(std::move(m)); };
+        pureStatic(method("Euler", {tFloat, tFloat, tFloat}, {"x", "y", "z"}, tQ,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Quat::Euler(F(a[0]), F(a[1]), F(a[2]))}; },
+            "The rotation of X / Y / Z angles in degrees."));
+        pureStatic(method("Euler", {tVec}, {"angles"}, tQ,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Quat::Euler(V(a[0]))}; },
+            "The rotation of X / Y / Z angles in degrees."));
+        pureStatic(method("AngleAxis", {tFloat, tVec}, {"angle", "axis"}, tQ,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Quat::AngleAxis(F(a[0]), V(a[1]))}; },
+            "Turn by angle degrees around axis."));
+        pureStatic(method("LookRotation", {tVec}, {"forward"}, tQ,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Quat::LookRotation(V(a[0]))}; },
+            "The rotation that faces forward (with up as up)."));
+        pureStatic(method("LookRotation", {tVec, tVec}, {"forward", "up"}, tQ,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Quat::LookRotation(V(a[0]), V(a[1]))}; },
+            "The rotation that faces forward with this up."));
+        pureStatic(method("FromToRotation", {tVec, tVec}, {"from", "to"}, tQ,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Quat::FromToRotation(V(a[0]), V(a[1]))}; },
+            "The shortest turn from one direction to another."));
+        pureStatic(method("Slerp", {tQ, tQ, tFloat}, {"a", "b", "t"}, tQ,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Quat::Slerp(Q(a[0]), Q(a[1]), F(a[2]))}; },
+            "Turn smoothly from a (t = 0) to b (t = 1)."));
+        pureStatic(method("Lerp", {tQ, tQ, tFloat}, {"a", "b", "t"}, tQ,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Quat::Lerp(Q(a[0]), Q(a[1]), F(a[2]))}; },
+            "Blend from a (t = 0) to b (t = 1), faster than Slerp."));
+        pureStatic(method("RotateTowards", {tQ, tQ, tFloat}, {"from", "to", "maxDegrees"}, tQ,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Quat::RotateTowards(Q(a[0]), Q(a[1]), F(a[2]))}; },
+            "Turn from toward to by at most maxDegrees."));
+        pureStatic(method("Angle", {tQ, tQ}, {"a", "b"}, tFloat,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Quat::Angle(Q(a[0]), Q(a[1]))}; },
+            "The angle between two rotations, in degrees."));
+        pureStatic(method("Inverse", {tQ}, {"rotation"}, tQ,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Q(a[0]).Inverse()}; },
+            "The opposite rotation."));
+        pureStatic(method("Dot", {tQ, tQ}, {"a", "b"}, tFloat,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Quat::Dot(Q(a[0]), Q(a[1]))}; },
+            "Dot product of two rotations."));
+        api.types.push_back(std::move(q));
     }
     // ---- Rigidbody ----
     {
@@ -344,6 +431,41 @@ EngineApi Build() {
             [](const Value& s, const Value& v, CallContext& c) {
                 Body(s, c)->bodyType = std::get<bool>(v) ? Rigidbody3D::BodyType::Kinematic : Rigidbody3D::BodyType::Dynamic;
             }, "When true, forces and gravity don't move it; only scripts do."));
+        {   // C# names the old language also has: useGravity, AddForce / AddTorque with a ForceMode (text scripts only for now)
+            ApiProperty ug = prop("useGravity", tBool,
+                [](const Value& s, CallContext& c) { return Value{Body(s, c)->gravityScale != 0.0f}; },
+                [](const Value& s, const Value& v, CallContext& c) {
+                    Rigidbody3D* b = Body(s, c);
+                    if (!std::get<bool>(v)) b->gravityScale = 0.0f;
+                    else if (b->gravityScale == 0.0f) b->gravityScale = 1.0f;
+                    b->WakeUp();
+                }, "Whether gravity pulls it (off sets gravityScale to 0; on sets it back to 1 if it was 0).");
+            ug.scriptOnly = true;
+            r.props.push_back(std::move(ug));
+            auto modeOf = [](const Value& v) {
+                const int md = I(v);
+                return md == 1 ? ForceMode::Acceleration : md == 2 ? ForceMode::Impulse : md == 3 ? ForceMode::VelocityChange : ForceMode::Force;
+            };
+            ApiMethod af = method("AddForce", {tVec, tInt}, {"force", "mode"}, tVoid,
+                [modeOf](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddForce(V(a[0]), modeOf(a[1])); return Value{}; },
+                "Push it with a ForceMode: Force, Acceleration, Impulse or VelocityChange.");
+            af.scriptOnly = true;
+            r.methods.push_back(std::move(af));
+            ApiMethod at = method("AddTorque", {tVec, tInt}, {"torque", "mode"}, tVoid,
+                [modeOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                    Rigidbody3D* b = Body(s, c);
+                    const ForceMode md = modeOf(a[1]);
+                    const Vec3 tq = V(a[0]);
+                    const float step = Time::FixedDeltaTime() > 0.0f ? Time::FixedDeltaTime() : 1.0f / 60.0f;
+                    if (md == ForceMode::Force) b->AddTorque(tq);
+                    else if (md == ForceMode::Impulse) b->AddTorque(tq * (1.0f / step));
+                    else if (md == ForceMode::Acceleration) { b->angularVelocity = b->angularVelocity + tq * step; b->WakeUp(); }
+                    else { b->angularVelocity = b->angularVelocity + tq; b->WakeUp(); }
+                    return Value{};
+                }, "Twist it with a ForceMode (Acceleration and VelocityChange change the spin at once, in radians per second).");
+            at.scriptOnly = true;
+            r.methods.push_back(std::move(at));
+        }
         r.methods.push_back(method("AddForce", {tVec}, {"force"}, tVoid,
             [](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddForce(V(a[0])); return Value{}; },
             "Push it, over the next physics step (heavier bodies move less)."));
@@ -1585,6 +1707,7 @@ EngineApi Build() {
     // each is the key's text name, so Input.GetKey(KeyCode.W) is Input.GetKey("w").
     {
         ApiType k; k.name = "KeyCode"; k.isStatic = true;
+        k.scriptOnly = true;   // text scripts only: the visual-script key nodes already take key names (and "Get Up Arrow" broke the node-title rules)
         k.doc = "Key names for Input.GetKey, GetKeyDown and GetKeyUp: KeyCode.W is the same as \"w\".";
         auto add = [&](const std::string& n, const std::string& key) {
             k.staticProps.push_back(ro(n, tString, [key](const Value&, CallContext&) { return Value{key}; },
@@ -1676,6 +1799,74 @@ EngineApi Build() {
             [](const Value&, std::vector<Value>& a, CallContext&) { Time::RampTimeScale(F(a[0]), F(a[1])); return Value{}; },
             "Ease Time.timeScale to a new value over some real seconds, in a straight line."));
         api.types.push_back(std::move(t));
+    }
+    // ---- OkayScript (text scripts only): the old language's built-ins ----
+    // A script converted from OkayScript (Script Editor > File > Convert to C#) calls the
+    // built-ins that have no C# binding yet through these, by name. Each runs the old
+    // VM's own built-in (OkayScriptVM::CallBuiltin) on the same object, so the converted
+    // script behaves as the old one did; every such call is listed in the converter's
+    // report as a binding still to write. Call gives nothing; Number / Text / Bool give
+    // the built-in's result as that type.
+    {
+        ApiType ok; ok.name = "OkayScript"; ok.isStatic = true; ok.scriptOnly = true;
+        ok.doc = "Runs a built-in of the old OkayScript language by name (converted scripts use it until the built-in has a C# binding).";
+        enum class Want { Nothing, Number, Text, Bool, Object };
+        auto bridge = [goIdx](Want want) {
+            return [want, goIdx](const Value&, std::vector<Value>& a, CallContext& c) -> Value {
+                if (!c.legacy) throw RuntimeError("OkayScript." + std::string(want == Want::Nothing ? "Call" : "...") + " only works in a script on an object", c.loc);
+                if (!*c.legacy) {
+                    std::shared_ptr<IScriptVM> vm(CreateScriptVM("okayscript").release());
+                    if (!vm) throw RuntimeError("The old OkayScript language isn't in this build", c.loc);
+                    vm->Load("");
+                    if (c.host) vm->Bind(c.host);
+                    *c.legacy = std::move(vm);
+                }
+                auto* old = dynamic_cast<OkayScriptVM*>(c.legacy->get());
+                if (!old) throw RuntimeError("The old OkayScript language isn't in this build", c.loc);
+                const std::string name = S(a[0]);
+                std::vector<vs::VsValue> args;
+                for (std::size_t i = 1; i < a.size(); ++i) {
+                    const Value& v = a[i];
+                    if (auto* b = std::get_if<bool>(&v)) args.emplace_back(*b);
+                    else if (auto* n = std::get_if<std::int32_t>(&v)) args.emplace_back((float)*n);
+                    else if (auto* f = std::get_if<float>(&v)) args.emplace_back(*f);
+                    else if (auto* t = std::get_if<std::string>(&v)) args.emplace_back(*t);
+                    else if (auto* x = std::get_if<Vec3>(&v)) args.emplace_back(*x);
+                    else if (auto* r = std::get_if<ObjRef>(&v)) args.push_back(vs::VsValue::Object(r->go));
+                    else args.emplace_back();
+                }
+                std::string err;
+                vs::VsValue r = old->CallBuiltin(name, std::move(args), &err);
+                if (!err.empty()) throw RuntimeError(err, c.loc);
+                switch (want) {
+                    case Want::Number: return Value{r.AsFloat()};
+                    case Want::Text: return Value{r.AsString()};
+                    case Want::Bool: return Value{r.AsBool()};
+                    case Want::Object: {   // an object reference (or null)
+                        GameObject* g = r.IsObject() && r.AsObjectId() ? GameObject::FromInstanceId(r.AsObjectId()) : nullptr;
+                        return g ? MakeRef(g, goIdx) : Value{};
+                    }
+                    default: return Value{};
+                }
+            };
+        };
+        const struct { const char* name; Want want; Type ret; const char* doc; } kinds[] = {
+            {"Call", Want::Nothing, tVoid, "Run an old built-in for what it does."},
+            {"Number", Want::Number, tFloat, "Run an old built-in and use its result as a number."},
+            {"Text", Want::Text, tString, "Run an old built-in and use its result as text."},
+            {"Bool", Want::Bool, tBool, "Run an old built-in and use its result as true/false."},
+            {"Object", Want::Object, tGO, "Run an old built-in and use its result as an object (or null)."},
+        };
+        for (const auto& k : kinds)
+            for (int n = 0; n <= 8; ++n) {
+                std::vector<Type> ps = {tString};
+                std::vector<std::string> names = {"builtin"};
+                for (int i = 0; i < n; ++i) { ps.push_back(tAny); names.push_back("arg" + std::to_string(i + 1)); }
+                ApiMethod m = method(k.name, ps, names, k.ret, bridge(k.want), k.doc);
+                m.scriptOnly = true;
+                ok.staticMethods.push_back(std::move(m));
+            }
+        api.types.push_back(std::move(ok));
     }
     // ---- Debug ----
     {

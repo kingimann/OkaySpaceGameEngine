@@ -38,8 +38,21 @@ std::string ValueToString(const Value& v) {
         std::string operator()(const CellRef& c) const { return c ? std::visit(*this, c->v) : "null"; }
         std::string operator()(const CoRef& c) const { return c && c->method ? c->method->name + "()" : "null"; }
         std::string operator()(const WaitRef& w) const { return w ? WaitTypeName((int)w->kind) : "null"; }
+        std::string operator()(const Quat& q) const { return "(" + (*this)(q.x) + ", " + (*this)(q.y) + ", " + (*this)(q.z) + ", " + (*this)(q.w) + ")"; }
     };
     return std::visit(V{}, v);
+}
+
+Value CopyValue(const Value& v) {
+    const ObjPtr* o = std::get_if<ObjPtr>(&v);
+    if (!o || !*o || !(*o)->isStruct) return v;
+    auto c = std::make_shared<ScriptObj>();
+    c->cls = (*o)->cls;
+    c->className = (*o)->className;
+    c->isStruct = true;
+    c->fields.reserve((*o)->fields.size());
+    for (const Value& f : (*o)->fields) c->fields.push_back(CopyValue(f));   // a struct can't hold itself, so this ends
+    return Value{std::move(c)};
 }
 
 namespace {
@@ -115,8 +128,24 @@ Value DefaultFor(const Type& t) {
         case TK::Float: return Value{0.0f};
         case TK::String: return Value{std::string()};
         case TK::Vector3: return Value{Vec3::Zero};
+        case TK::Quaternion: return Value{Quat::Identity};
         default: return Value{};
     }
+}
+// The value a variable of type `t` starts with: a struct is one with every field at
+// its default (ECMA-334 16.4.5), anything else as DefaultFor.
+Value DefaultValue(const Program& p, const Type& t, int depth = 0) {
+    if (t.kind != TK::Class || t.id < 0 || t.id >= (int)p.classes.size() || !p.classes[(std::size_t)t.id].isStruct || depth > 64)
+        return DefaultFor(t);
+    const ClassDecl& k = p.classes[(std::size_t)t.id];
+    auto o = std::make_shared<ScriptObj>();
+    o->cls = t.id;
+    o->className = k.name;
+    o->isStruct = true;
+    o->fields.resize((std::size_t)k.fieldCount);
+    for (const FieldDecl& f : k.fields)
+        if (f.index >= 0) o->fields[(std::size_t)f.index] = DefaultValue(p, f.resolved, depth + 1);
+    return Value{std::move(o)};
 }
 
 // The most items one array can hold, so a bad length is an error instead of
@@ -173,7 +202,7 @@ public:
         if (m.isCoroutine) return MakeCoroutine(m, args);
         DepthGuard depth(m.name + "()", m.loc);
         std::vector<Value> frame((std::size_t)std::max(m.localCount, (int)m.params.size()));
-        for (std::size_t i = 0; i < m.params.size() && i < args.size(); ++i) frame[i] = args[i];
+        for (std::size_t i = 0; i < m.params.size() && i < args.size(); ++i) frame[i] = CopyValue(args[i]);
         std::vector<Value>* saved = locals_;
         const FuncObj* savedFn = fn_;
         locals_ = &frame;
@@ -200,7 +229,7 @@ public:
         co->self = this_;
         co->cls = cls_;
         co->locals.resize((std::size_t)std::max(m.localCount, (int)m.params.size()));
-        for (std::size_t i = 0; i < m.params.size() && i < args.size(); ++i) co->locals[i] = args[i];
+        for (std::size_t i = 0; i < m.params.size() && i < args.size(); ++i) co->locals[i] = CopyValue(args[i]);
         co->stack.push_back(CoFrame{m.body.get(), &m.body->body});
         return Value{std::move(co)};
     }
@@ -398,7 +427,7 @@ private:
         }
         const ArrayRef& arr = std::get<ArrayRef>(c);
         if (i >= arr->items.size()) return false;
-        out = arr->items[i];
+        out = CopyValue(arr->items[i]);
         if (d.promote) if (auto* n = std::get_if<std::int32_t>(&out)) out = Value{(float)*n};
         return true;
     }
@@ -407,7 +436,7 @@ private:
         const LambdaDecl& L = *f.decl;
         DepthGuard depth("This lambda", loc);
         std::vector<Value> frame((std::size_t)std::max(L.localCount, (int)L.params.size()));
-        for (std::size_t i = 0; i < L.params.size() && i < args.size(); ++i) frame[i] = args[i];
+        for (std::size_t i = 0; i < L.params.size() && i < args.size(); ++i) frame[i] = CopyValue(args[i]);
         std::vector<Value>* self = self_;
         std::vector<Value>* locals = locals_;
         const FuncObj* fn = fn_;
@@ -481,7 +510,7 @@ private:
         ex->cls = prog_.exceptionClass;
         ex->className = k.name;
         ex->fields.resize((std::size_t)k.fieldCount);
-        for (const FieldDecl& f : k.fields) ex->fields[(std::size_t)f.index] = f.name == "Message" ? Value{std::string(err.what())} : DefaultFor(f.resolved);
+        for (const FieldDecl& f : k.fields) ex->fields[(std::size_t)f.index] = f.name == "Message" ? Value{std::string(err.what())} : DefaultValue(prog_, f.resolved);
         return ex;
     }
     Flow RunTry(const Stmt& s) {
@@ -526,7 +555,7 @@ private:
             case SK::Expr: Eval(*s.expr); return Flow::Normal;
             case SK::Local:
                 for (const LocalDecl& d : s.locals)
-                    (*locals_)[(std::size_t)d.slot] = d.init ? Eval(*d.init) : DefaultFor(d.resolved);
+                    (*locals_)[(std::size_t)d.slot] = d.init ? CopyValue(Eval(*d.init)) : DefaultValue(prog_, d.resolved);
                 return Flow::Normal;
             case SK::If:
                 if (AsB(Eval(*s.expr))) return Run(*s.then);
@@ -559,7 +588,7 @@ private:
                 return Flow::Normal;
             }
             case SK::Return:
-                retVal_ = s.expr ? Eval(*s.expr) : Value{};
+                retVal_ = s.expr ? CopyValue(Eval(*s.expr)) : Value{};
                 return Flow::Return;
             case SK::Break: return Flow::Break;
             case SK::Try: return RunTry(s);
@@ -591,7 +620,7 @@ private:
                 const std::uint32_t version = arr->version;
                 for (std::size_t i = 0; i < arr->items.size(); ++i) {
                     if (arr->version != version) throw RuntimeError("The " + arr->typeName + " was changed during foreach", s.loc);
-                    Value item = arr->items[i];
+                    Value item = CopyValue(arr->items[i]);
                     if (d.promote) if (auto* n = std::get_if<std::int32_t>(&item)) item = Value{(float)*n};
                     (*locals_)[(std::size_t)d.slot] = std::move(item);
                     Flow f = Run(*s.loopBody);
@@ -646,6 +675,7 @@ private:
         return it == d.index.end() ? nullptr : &d.entries[it->second].second;
     }
     static void DictSet(DictObj& d, const Value& key, Value v) {
+        v = CopyValue(v);
         if (Value* slot = DictFind(d, key)) { *slot = std::move(v); return; }
         d.index[key] = d.entries.size();
         d.entries.emplace_back(key, std::move(v));
@@ -718,7 +748,7 @@ private:
                     return Value{};
                 case CollOp::DictGetValueOrDefault: {
                     if (Value* v = DictFind(d, a[0])) return *v;
-                    return a.size() > 1 ? a[1] : DefaultFor(prog_.generics[(std::size_t)e.object->type.id].b);
+                    return a.size() > 1 ? a[1] : DefaultValue(prog_, prog_.generics[(std::size_t)e.object->type.id].b);
                 }
                 default: return Value{};
             }
@@ -730,17 +760,17 @@ private:
             return -1;
         };
         switch (op) {
-            case CollOp::ListAdd: l.items.push_back(a[0]); ++l.version; return Value{};
+            case CollOp::ListAdd: l.items.push_back(CopyValue(a[0])); ++l.version; return Value{};
             case CollOp::ListAddRange: {
                 const std::vector<Value> more = std::get<ArrayRef>(a[0])->items;   // a copy: xs.AddRange(xs) doubles it
-                l.items.insert(l.items.end(), more.begin(), more.end());
+                for (const Value& x : more) l.items.push_back(CopyValue(x));
                 ++l.version;
                 return Value{};
             }
             case CollOp::ListInsert: {
                 const std::int32_t i = AsI(a[0]);
                 if (i < 0 || (std::size_t)i > l.items.size()) throw OutsideList(i, l, false, e.loc);
-                l.items.insert(l.items.begin() + i, a[1]);
+                l.items.insert(l.items.begin() + i, CopyValue(a[1]));
                 ++l.version;
                 return Value{};
             }
@@ -838,7 +868,7 @@ private:
                     const Value& x = items[last ? items.size() - 1 - k : k];
                     if (!fn || test(x)) return x;
                 }
-                if (op == CollOp::FirstOrDefault || op == CollOp::LastOrDefault) return DefaultFor(elem);
+                if (op == CollOp::FirstOrDefault || op == CollOp::LastOrDefault) return DefaultValue(prog_, elem);
                 throw RuntimeError(std::string(last ? "Last()" : "First()") + " found nothing" + (fn ? " that matches" : "") + " in this " + l.typeName, e.loc);
             }
             case CollOp::Any:
@@ -884,7 +914,7 @@ private:
             case CollOp::ToList: return newList(items);
             case CollOp::Find:
                 for (const Value& x : items) if (test(x)) return x;
-                return DefaultFor(elem);
+                return DefaultValue(prog_, elem);
             case CollOp::FindIndex:
                 for (std::size_t i = 0; i < items.size(); ++i) if (test(items[i])) return Value{(std::int32_t)i};
                 return Value{std::int32_t{-1}};
@@ -936,7 +966,7 @@ private:
         DepthGuard depth(c.name, loc);
         As(o, k, [&] {
             for (const FieldDecl& f : c.fields)
-                if (f.init) o->fields[(std::size_t)f.index] = Eval(*f.init);
+                if (f.init && !f.isStatic && f.staticSlot < 0) o->fields[(std::size_t)f.index] = CopyValue(Eval(*f.init));
             if (ctor >= 0) CallMethod(ctor, args);
             else if (c.baseClass >= 0) {
                 std::vector<Value> none;
@@ -961,9 +991,10 @@ private:
         auto o = std::make_shared<ScriptObj>();
         o->cls = e.slot;
         o->className = k.name;
+        o->isStruct = k.isStruct;
         o->fields.resize((std::size_t)k.fieldCount);
         for (int c = e.slot; c >= 0; c = prog_.classes[(std::size_t)c].baseClass)
-            for (const FieldDecl& f : prog_.classes[(std::size_t)c].fields) o->fields[(std::size_t)f.index] = DefaultFor(f.resolved);
+            for (const FieldDecl& f : prog_.classes[(std::size_t)c].fields) o->fields[(std::size_t)f.index] = DefaultValue(prog_, f.resolved);
         Construct(o, e.slot, e.member, args, e.loc);
         return Value{std::move(o)};
     }
@@ -980,8 +1011,8 @@ private:
                 throw RuntimeError("An array of " + std::to_string(n) + " items is too big (the most is " + std::to_string(kMaxArrayLength) + ")", e.loc);
         }
         arr->items.reserve((std::size_t)n);
-        for (auto& a : e.args) arr->items.push_back(Eval(*a));
-        while ((std::int64_t)arr->items.size() < n) arr->items.push_back(DefaultFor(elem));
+        for (auto& a : e.args) arr->items.push_back(CopyValue(Eval(*a)));
+        while ((std::int64_t)arr->items.size() < n) arr->items.push_back(DefaultValue(prog_, elem));
         return Value{std::move(arr)};
     }
 
@@ -1053,11 +1084,12 @@ private:
                     }
                     auto l = std::make_shared<ArrayObj>();
                     l->typeName = prog_.NameOf(e.type);
-                    for (auto& a : e.args) l->items.push_back(Eval(*a));
+                    for (auto& a : e.args) l->items.push_back(CopyValue(Eval(*a)));
                     return Value{std::move(l)};
                 }
-                float c[3] = {0, 0, 0};
-                for (std::size_t i = 0; i < e.args.size(); ++i) c[i] = AsF(Eval(*e.args[i]));
+                float c[4] = {0, 0, 0, 0};
+                for (std::size_t i = 0; i < e.args.size() && i < 4; ++i) c[i] = AsF(Eval(*e.args[i]));
+                if (e.type.kind == TK::Quaternion) return Value{Quat{c[0], c[1], c[2], c[3]}};
                 return Value{Vec3{c[0], c[1], c[2]}};
             }
             case EK::Unary: {
@@ -1107,6 +1139,7 @@ private:
                 try { return Eval(*e.lhs); } catch (const NullSkip&) { return Value{}; }
             case EK::NewArray: case EK::ArrayLit: return MakeArray(e);
             case EK::Lambda: return MakeLambda(e);
+            case EK::DefaultOf: return DefaultValue(prog_, e.type);
             case EK::Is: case EK::As: {
                 const Value a = Eval(*e.lhs);
                 const ObjPtr* o = std::get_if<ObjPtr>(&a);
@@ -1175,7 +1208,9 @@ private:
                 if (e.slot == 2) return Value{ctx_.component ? ctx_.component->enabled : true};
                 return SelfRef(e.slot);
             case Bind::VecField: {
-                Vec3 v = AsV(Eval(*e.object));
+                const Value o = Eval(*e.object);
+                if (auto* q = std::get_if<Quat>(&o)) return Value{e.member == 0 ? q->x : e.member == 1 ? q->y : e.member == 2 ? q->z : q->w};
+                Vec3 v = AsV(o);
                 return Value{e.member == 0 ? v.x : e.member == 1 ? v.y : v.z};
             }
             case Bind::ApiProp: {
@@ -1210,7 +1245,14 @@ private:
                 if (e.slot == 2 && ctx_.component) ctx_.component->enabled = AsB(v);
                 return;
             case Bind::VecField: {
-                Vec3 p = AsV(Load(*e.object));
+                const Value cur = Load(*e.object);
+                if (auto* q = std::get_if<Quat>(&cur)) {
+                    Quat r = *q;
+                    (e.member == 0 ? r.x : e.member == 1 ? r.y : e.member == 2 ? r.z : r.w) = AsF(v);
+                    Store(*e.object, Value{r});
+                    return;
+                }
+                Vec3 p = AsV(cur);
                 float f = AsF(v);
                 (e.member == 0 ? p.x : e.member == 1 ? p.y : p.z) = f;
                 Store(*e.object, Value{p});
@@ -1234,6 +1276,12 @@ private:
     Value Arith(T op, const Value& a, const Value& b, const Type& type, bool pl, bool pr, SrcLoc loc) {
         if (type.kind == TK::Func) return CombineFuncs(op, a, b);
         if (type.kind == TK::String) return Value{ValueToString(a) + ValueToString(b)};
+        if (op == T::Star) {   // rotations: q * q turns by both (b first, then a); q * v turns the vector
+            if (auto* qa = std::get_if<Quat>(&a)) {
+                if (auto* qb = std::get_if<Quat>(&b)) return Value{*qa * *qb};
+                return Value{*qa * AsV(b)};
+            }
+        }
         if (type.kind == TK::Vector3) {
             const bool av = std::holds_alternative<Vec3>(a), bv = std::holds_alternative<Vec3>(b);
             switch (op) {
@@ -1331,6 +1379,15 @@ private:
         if (auto* r = std::get_if<ObjRef>(&a)) return *r == std::get<ObjRef>(b);
         if (auto* v = std::get_if<Vec3>(&a)) { Vec3 w = std::get<Vec3>(b); return v->x == w.x && v->y == w.y && v->z == w.z; }
         if (auto* f = std::get_if<FuncRef>(&a)) return SameFunc(*f, std::get<FuncRef>(b));
+        if (auto* q = std::get_if<Quat>(&a)) return std::fabs(Quat::Dot(*q, std::get<Quat>(b))) > 1.0f - 1e-6f;   // the same rotation
+        if (auto* o = std::get_if<ObjPtr>(&a)) {   // structs: field by field (List.Contains, IndexOf, Remove)
+            const ObjPtr& p = std::get<ObjPtr>(b);
+            if (*o && p && (*o)->isStruct && p->isStruct && (*o)->cls == p->cls) {
+                for (std::size_t i = 0; i < (*o)->fields.size() && i < p->fields.size(); ++i)
+                    if (!Equal((*o)->fields[i], p->fields[i])) return false;
+                return true;
+            }
+        }
         return a == b;
     }
 
@@ -1382,12 +1439,12 @@ private:
         if (IsPlace(*e.lhs)) {   // a[i] = v, o.f += v: the array and index (or object) first, once
             Place pl = PlaceOf(*e.lhs);
             Value rhs = Eval(*e.rhs);
-            Value v = e.op == T::Assign ? rhs : Arith(CompoundOp(e.op), *pl.v, rhs, e.lhs->type, false, false, e.loc);
+            Value v = e.op == T::Assign ? CopyValue(rhs) : Arith(CompoundOp(e.op), *pl.v, rhs, e.lhs->type, false, false, e.loc);
             *pl.v = v;
             return v;
         }
         if (e.op == T::Assign) {
-            Value v = Eval(*e.rhs);
+            Value v = CopyValue(Eval(*e.rhs));
             Store(*e.lhs, v);
             return v;
         }
@@ -1436,6 +1493,20 @@ private:
                 for (auto& a : e.args) args.push_back(Eval(*a));
                 const ObjPtr self = this_;   // a copy: As() swaps this_ out
                 return As(self, e.member, [&] { return CallMethod(e.slot, args); });
+            }
+            case Bind::ClassStatic: {   // a plain class's static method: no object
+                std::vector<Value> args;
+                args.reserve(e.args.size());
+                for (auto& a : e.args) args.push_back(Eval(*a));
+                const int cls = cls_;
+                ObjPtr saved = std::move(this_);
+                cls_ = e.member;
+                this_.reset();
+                Value r;
+                try { r = CallMethod(e.slot, args); } catch (...) { cls_ = cls; this_ = std::move(saved); throw; }
+                cls_ = cls;
+                this_ = std::move(saved);
+                return r;
             }
             case Bind::BaseCtor: {
                 std::vector<Value> args;
@@ -1526,7 +1597,7 @@ Instance::Instance(std::shared_ptr<Program> prog, GameObject* self)
     const ClassDecl* c = prog_->Component();
     if (c) {
         fields_.resize(c->fields.size());
-        for (std::size_t i = 0; i < c->fields.size(); ++i) fields_[i] = DefaultFor(c->fields[i].resolved);
+        for (std::size_t i = 0; i < c->fields.size(); ++i) fields_[i] = DefaultValue(*prog_, c->fields[i].resolved);
     }
 }
 
@@ -1546,10 +1617,18 @@ void Instance::InitStatics() {
     statics_->ready = true;
     const ClassDecl* c = prog_->Component();
     statics_->values.clear();
-    for (const FieldDecl& f : c->fields) statics_->values.push_back(DefaultFor(f.resolved));
+    statics_->values.resize((std::size_t)std::max(prog_->staticCount, (int)c->fields.size()));
+    for (std::size_t i = 0; i < c->fields.size(); ++i) statics_->values[i] = DefaultValue(*prog_, c->fields[i].resolved);
+    for (const ClassDecl& k : prog_->classes)   // plain classes' static fields and consts
+        if (&k != c) for (const FieldDecl& f : k.fields)
+            if (f.staticSlot >= 0 && f.staticSlot < (int)statics_->values.size()) statics_->values[(std::size_t)f.staticSlot] = DefaultValue(*prog_, f.resolved);
     Exec ex(*prog_, fields_, ctx_, *this);
     for (std::size_t i = 0; i < c->fields.size(); ++i)
-        if (c->fields[i].init && c->fields[i].isStatic) statics_->values[i] = ex.EvalStandalone(*c->fields[i].init);
+        if (c->fields[i].init && c->fields[i].isStatic) statics_->values[i] = CopyValue(ex.EvalStandalone(*c->fields[i].init));
+    for (const ClassDecl& k : prog_->classes)
+        if (&k != c) for (const FieldDecl& f : k.fields)
+            if (f.init && f.staticSlot >= 0 && f.staticSlot < (int)statics_->values.size())
+                statics_->values[(std::size_t)f.staticSlot] = CopyValue(ex.EvalStandalone(*f.init));
 }
 
 void Instance::AttachStatics(std::shared_ptr<StaticStore> store) {
@@ -1634,6 +1713,11 @@ bool Instance::SetField(const std::string& name, const Value& v) {
         if (k == TK::Float) {
             if (auto* x = std::get_if<std::int32_t>(&v)) { fields_[i] = Value{(float)*x}; return true; }
             if (std::holds_alternative<float>(v)) { fields_[i] = v; return true; }
+            return false;
+        }
+        if (k == TK::Quaternion) {   // the Inspector gives a rotation as its angles
+            if (auto* e = std::get_if<Vec3>(&v)) { fields_[i] = Value{Quat::Euler(*e)}; return true; }
+            if (std::holds_alternative<Quat>(v)) { fields_[i] = v; return true; }
             return false;
         }
         if ((k == TK::Bool && std::holds_alternative<bool>(v)) || (k == TK::String && std::holds_alternative<std::string>(v)) ||

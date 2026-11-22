@@ -53,6 +53,7 @@ int main() {
         CHECK(w.loaded);
         CHECK(w.Get("ok").AsBool());
         CHECK(LuaScriptVM::CompletionDoc("string.Format").empty());
+        CHECK(!LuaScriptVM::CompletionDoc("KeyCode.Space").empty());   // text-script-only bindings stay in Lua
     }
 
     // 1. A table script: settings, Start, Update moving the transform with dt.

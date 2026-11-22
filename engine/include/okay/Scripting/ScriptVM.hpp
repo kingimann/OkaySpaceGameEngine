@@ -126,4 +126,9 @@ std::string RemovedScriptLanguageMessage(const std::string& language);
 /// ".okay" -> "okayscript"; case is ignored). Unknown extensions give "okayscript".
 const char* ScriptLanguageForExtension(const std::string& ext);
 
+/// How a language id reads for a person (the Script Editor's language box): "csharp" /
+/// "cs" -> "C#", "okayscript" -> "OkayScript (old)", "okayscript-next" -> "Typed
+/// OkayScript", "lua" -> "Lua"; anything else is shown as it is.
+std::string ScriptLanguageDisplayName(const std::string& language);
+
 } // namespace okay

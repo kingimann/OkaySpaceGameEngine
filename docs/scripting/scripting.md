@@ -1436,8 +1436,11 @@ C# mode adds, on top of everything above:
   `MinValue`, `string.IsNullOrEmpty(s)`.
 - Default parameter values: `void Hit(int amount = 1, string why = "bump")`,
   then `Hit()`, `Hit(3)`. Defaults must be fixed values (numbers, text,
-  true/false, null, an enum value) at the end of the list; not on
-  constructors yet. Works in `okayscript-next` too.
+  true/false, null, an enum value) at the end of the list. They work on
+  constructors too (`public Enemy(int hp = 10)`, also through `: base(...)`),
+  and on another script's public methods (`h.Damage()` when `Health` has
+  `Damage(int amount = 5)`; there the default must be a plain number, text,
+  true/false or null). Works in `okayscript-next` too.
 - `delegate` declarations (at the top of the file or in a class) name a
   function type: `public delegate void Died(string who);` is `Action<string>`,
   `delegate int Combine(int a, int b);` is `Func<int, int, int>`. Use them for
@@ -1445,6 +1448,104 @@ C# mode adds, on top of everything above:
 - `Random.Range(0, 3)` (a whole number, 3 left out), `Random.Range(-1f, 1f)`,
   `Random.value` and `Random.InitState(seed)` (these work in `okayscript-next`
   too: the binding table is shared).
+
+#### struct (value types)
+
+`struct` declares a value type (ECMA-334 section 16): assigning it, passing it
+to a method, returning it or putting it in an array, List or Dictionary makes a
+copy, so changing the copy never changes the original.
+
+```csharp
+public struct Point {
+    public float x, y;
+    public Point(float x, float y) { this.x = x; this.y = y; }
+    public float Len() => Mathf.Sqrt(x * x + y * y);
+}
+Point a = new Point(3, 4);
+Point b = a; b.x = 10;     // a.x is still 3
+Point z = new Point();     // all fields 0: new S() always works
+```
+
+- A struct field, array item or local starts as all zeroes, never null.
+- A method changes the variable it is called on (`p.Grow()`); array items are
+  changed in place (`pts[0].x = 2`). (In C# `list[0].x = 2` is an error;
+  here it changes the list's own copy.)
+- `List.Contains` / `IndexOf` / `Remove` compare structs field by field.
+- Errors: a struct can't be null, has no `==` (compare its fields), can't
+  extend a class (it can implement interfaces), and can't hold a field of its
+  own type.
+
+#### Quaternion and transform.rotation
+
+`Quaternion` is a rotation (a value type like `Vector3`), on the engine's own
+`Quat`. Euler angles use the engine's order (Z, then X, then Y), the same as
+`transform.eulerAngles`, and come back in -180..180.
+
+```csharp
+transform.rotation = Quaternion.Euler(0, 90, 0);
+Vector3 ahead = transform.rotation * Vector3.forward;   // turn a vector
+transform.rotation *= Quaternion.Euler(0, 90 * Time.deltaTime, 0);   // b first, then a
+Quaternion look = Quaternion.LookRotation(target - transform.position);
+transform.rotation = Quaternion.Slerp(transform.rotation, look, 5f * Time.deltaTime);
+```
+
+- Members: `Quaternion.identity`, `Euler(x, y, z)` / `Euler(v)`, `AngleAxis`,
+  `LookRotation(forward[, up])`, `FromToRotation`, `Slerp`, `Lerp`,
+  `RotateTowards`, `Angle`, `Inverse`, `Dot`; `q.eulerAngles`, `q.normalized`,
+  `q.x` / `y` / `z` / `w`; `new Quaternion(x, y, z, w)`.
+- `q * q`, `q * v`, `*=`, and `==` (true for the same rotation).
+- `transform.rotation` / `localRotation` read and write it. A public
+  `Quaternion` field shows in the Inspector as its angles.
+- Text scripts only: visual-script wires have no rotation type, so these
+  have no nodes.
+
+#### static and const in any class
+
+Plain classes have `static` fields and methods and `const` values too, shared
+by the whole scene (as the Behaviour class's statics are):
+
+```csharp
+public class Counter {
+    public static int made;
+    public const int Max = 3;
+    public Counter() { made++; }
+    public static int Twice(int x) => x * 2;
+}
+// elsewhere:  new Counter(); int n = Counter.made; int t = Counter.Twice(4);
+```
+
+A static method has no `this` and can't use the object's own fields. A
+`const` can't be changed. `new Counter();` on its own line runs the
+constructor.
+
+#### Generic classes and methods
+
+A script's own classes and methods can take types (ECMA-334 sections 15.3.2,
+15.6.1):
+
+```csharp
+public class Stack<T> {
+    List<T> items = new List<T>();
+    public void Push(T x) { items.Add(x); }
+    public T Pop() { T x = items[items.Count - 1]; items.RemoveAt(items.Count - 1); return x; }
+}
+public class Pair<K, V> { public K key; public V val; }
+T Find<T>() where T : Component { return GetComponent<T>(); }
+T Zero<T>() => default(T);
+// Stack<int> s = new Stack<int>();   Rigidbody rb = Find<Rigidbody>();
+```
+
+How it works: each use with real types (`Stack<int>`) makes its own copy of the
+class with the types filled in, checked like any other class. What follows:
+
+- A generic method needs its types written at the call: `Find<Rigidbody>()`,
+  not `Find()` (the error says so).
+- `where` constraints are read but not enforced: the filled-in code is checked
+  instead, so `Bad<string>` reports what doesn't work for `string`.
+- A generic class or method is checked when it is used; one nobody uses isn't.
+- A class can't extend a generic class yet (`class A : Base<int>`).
+- `default(T)` gives what a `T` variable starts as (0, false, "", null, or a
+  struct with every field 0).
 
 ```csharp
 using UnityEngine;
@@ -1468,6 +1569,42 @@ An old scene that named the removed Mono backend (`csharp` / `cs`) now runs
 its script if it compiles; if not, the Console and the scene validator show the
 checker's error with its line. Example scene: `examples/csharp/csharp_playground.okayscene`.
 The plan for retiring the old OkayScript VM is in [migration_plan.md](migration_plan.md).
+
+#### Script Editor help for C#
+
+In a C# tab, the member list after `x.` and the signature help inside `f(`
+come from the binding table and the script's own classes
+(`okay/Scripting/CSharpAssist.hpp`), so what is offered is what compiles:
+`transform.` lists Transform's members (`position`, `rotation`,
+`Translate(`...), `rb.` a Rigidbody's, `Quaternion.` the static ones, `e.` an
+`Enemy`'s fields and methods. Signature help shows every overload (two for
+`transform.Translate(`) with the parameter the caret is on picked out, and the
+binding's one-line description. The language box in the editor's toolbar
+shows "C#" or "OkayScript (old)".
+
+#### Converting an old OkayScript script (File > Convert to C#...)
+
+The Script Editor's File > Convert to C#... (OkayScript tabs only) shows the C#
+the converter makes, whether it compiles, and a list of what it couldn't map;
+"Write and open" writes `Name.cs` next to the old script (the old file is not
+changed) and, if the box is ticked, switches the object's Script component to
+it. The converter (`ConvertOkayScriptToCSharp`, `okay/Scripting/ScriptConvert.hpp`)
+works over the old VM's syntax tree:
+
+- Globals become public fields; their type comes from how they are used (the old
+  language has one number type, so numbers are `float`).
+- `start()` / `update(dt)` become `Start()` / `Update()` (`dt` is
+  `Time.deltaTime`); other functions become public methods with the same name,
+  so UI buttons and events still find them.
+- Top-level lines that aren't plain declarations run once in `Awake()`.
+- A built-in with a C# binding of the very same meaning becomes that call
+  (`sin` -> `Mathf.Sin`, `print("text")` -> `Debug.Log`); every other built-in
+  is called by name through `OkayScript.Call` / `Number` / `Text` / `Bool`, which
+  runs the old built-in on the same object, so the converted script does exactly
+  what the old one did. The report lists those built-ins: each is a C# binding
+  still to write.
+- Not converted yet (listed in the report when met): the script's own classes,
+  coroutines (`yield`), lambdas, subscribing a function to an event.
 
 ### Other backends
 

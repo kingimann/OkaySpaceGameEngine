@@ -774,6 +774,8 @@ int main(int argc, char** argv) {
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scripting/StarterScripts.hpp"
 #include "okay/Lua/LuaScriptVM.hpp"          // Lua scripts: colours, checks and autocomplete (our own interpreter)
+#include "okay/Scripting/CSharpAssist.hpp"   // C# member lists / signature help
+#include "okay/Scripting/ScriptConvert.hpp"   // File > Convert to C#
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
@@ -16036,6 +16038,8 @@ static std::vector<std::pair<int, std::string>> ScriptOutline(const std::string&
 static bool g_seNewReq = false;
 // Requests from Search Everywhere to the editor's own tools (consumed next frame).
 static bool g_seSearchReq = false, g_seGotoReq = false, g_seFindReq = false, g_sePaletteReq = false;
+static bool g_seConvertReq = false;   // File > Convert to C#... (also OKAY_UI_SCRIPTCONVERT=1)
+static int g_seCaretReqLine = 0, g_seCaretReqCol = 0;   // OKAY_UI_SCRIPTCARET=line:col: put the caret there and focus the code (screenshots)
 static void ScriptEditorNewScriptPopup(EditorState& ed) {
     static char name[96] = "NewScript";
     static bool attach = false;
@@ -16492,6 +16496,11 @@ void DrawScriptEditor(EditorState& ed) {
                 if (ImGui::MenuItem("Reload from Disk", nullptr, false, !sc->Path().empty())) rqReload = true;
                 if (ImGui::MenuItem("Open in External IDE")) rqIde = true;
                 ImGui::MenuItem("Live Sync External Edits", nullptr, &s_liveSync);
+                if (ImGui::MenuItem("Convert to C#...", nullptr, false, sc->Language() == "okayscript")) g_seConvertReq = true;
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip(sc->Language() == "okayscript" ? "Make a C# copy of this OkayScript script (Name.cs next to it).\nThe original isn't changed."
+                                                                     : "Only for OkayScript (old) scripts: this one is already %s.",
+                                      ScriptLanguageDisplayName(sc->Language()).c_str());
                 ImGui::Separator();
                 if (ImGui::MenuItem("Switch Script...", "Ctrl+E")) rqSwitch = true;
                 if (ImGui::MenuItem(s_isDocked ? "Float Window" : "Dock Window")) g_scriptDockReq = s_isDocked ? 1 : 2;
@@ -16578,6 +16587,92 @@ void DrawScriptEditor(EditorState& ed) {
         if (g_seGotoReq)    { g_seGotoReq = false; rqGoto = true; }
         if (g_seFindReq)    { g_seFindReq = false; s_showFind = true; }
         if (g_sePaletteReq) { g_sePaletteReq = false; s_palReq = true; }
+        // ---- File > Convert to C#...: a preview of the C# the converter makes, what it
+        // couldn't map, then Name.cs written next to the old script and opened. ----
+        {
+            static okay::OkayScriptConversion s_conv;
+            static std::string s_convPath, s_convText;
+            static bool s_convSwitch = true;
+            if (g_seConvertReq) {
+                g_seConvertReq = false;
+                namespace fs = std::filesystem;
+                fs::path old = filePath();
+                std::string stem = old.stem().string();
+                std::string cls;
+                bool up = true;
+                for (char ch : stem) {   // "camera_follow" -> "CameraFollow": a C# class name
+                    if (!std::isalnum((unsigned char)ch)) { up = true; continue; }
+                    cls += up ? (char)std::toupper((unsigned char)ch) : ch;
+                    up = false;
+                }
+                if (cls.empty() || std::isdigit((unsigned char)cls[0])) cls = "Converted" + cls;
+                fs::path dir = old.has_parent_path() ? old.parent_path()
+                             : (ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets") / "Scripts";
+                s_convPath = (dir / (cls + ".cs")).string();
+                s_conv = okay::ConvertOkayScriptToCSharp(buf.data(), cls);
+                s_convText = s_conv.csharp;
+                s_convSwitch = go != nullptr;
+                ImGui::OpenPopup("Convert to C# (preview)###convertcs");
+            }
+            ImGui::SetNextWindowSize(ImVec2(760, 600), ImGuiCond_Appearing);
+            if (ImGui::BeginPopupModal("Convert to C# (preview)###convertcs", nullptr)) {
+                if (!s_conv.ok) {
+                    ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", s_conv.error.c_str());
+                    if (ImGui::Button("Close", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+                } else {
+                    ImGui::TextDisabled("A C# copy of this script. The OkayScript file is not changed.");
+                    ImGui::Text("Writes  %s", s_convPath.c_str());
+                    std::error_code eec;
+                    if (std::filesystem::exists(s_convPath, eec))
+                        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "That file exists: it will be replaced.");
+                    const auto d = okay::CreateScriptVM("csharp")->ValidateAll(s_convText);
+                    int errs = 0;
+                    for (const auto& x : d) if (x.severity == 0) ++errs;
+                    if (errs == 0) ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.50f, 1.0f), "Compiles as C# with no errors.");
+                    else ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%d C# error(s): fix them after opening (they show in Problems).", errs);
+                    ImGui::Separator();
+                    const float lineH = ImGui::GetTextLineHeightWithSpacing();
+                    const float notesH = s_conv.notes.empty() ? 0.0f : std::min(lineH * 7.0f, lineH * (1.5f + 2.2f * (float)s_conv.notes.size()));
+                    const float buttonsH = lineH * 2.0f + ImGui::GetFrameHeightWithSpacing() * 2.0f;
+                    ImGui::InputTextMultiline("##convcs", s_convText.data(), s_convText.size() + 1,
+                                              ImVec2(-1, std::max(lineH * 6.0f, ImGui::GetContentRegionAvail().y - notesH - buttonsH)),
+                                              ImGuiInputTextFlags_ReadOnly);
+                    if (!s_conv.notes.empty()) {
+                        ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.40f, 1.0f), "Not converted / to check (%d):", (int)s_conv.notes.size());
+                        ImGui::BeginChild("##convnotes", ImVec2(-1, notesH - lineH), true);
+                        ImGui::PushTextWrapPos(0.0f);
+                        for (const auto& n : s_conv.notes) { ImGui::Bullet(); ImGui::SameLine(); ImGui::TextWrapped("%s", n.c_str()); }
+                        ImGui::PopTextWrapPos();
+                        ImGui::EndChild();
+                    }
+                    if (go) ImGui::Checkbox(("Switch " + go->name + "'s Script component to the C# file").c_str(), &s_convSwitch);
+                    if (ImGui::Button("Write and open", ImVec2(160, 0))) {
+                        std::error_code mec;
+                        std::filesystem::create_directories(std::filesystem::path(s_convPath).parent_path(), mec);
+                        if (extide::WriteFile(s_convPath, s_convText)) {
+                            ConsoleLog("Converted to C#: " + s_convPath);
+                            for (const auto& n : s_conv.notes) ConsoleLog("  convert: " + n, 1);
+                            if (go && s_convSwitch) {
+                                sc->SetLanguage("csharp");
+                                sc->SetPath(s_convPath);
+                                sc->SetSource(s_convText);
+                                SetCodeBuffer(sc, s_convText);
+                                g_scriptSaved[sc] = s_convText;
+                                std::string le; sc->LoadSource(s_convText, &le);
+                                if (!le.empty()) ConsoleLog("C# error: " + le, 2);
+                            } else {
+                                OpenScriptFileInEditor(s_convPath);
+                            }
+                            ed.dirty = true;
+                        } else ConsoleLog("Couldn't write " + s_convPath, 2);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+        }
         if (rqReload) {
             std::string src = extide::ReadFile(sc->Path());
             if (src.empty()) SetCodeBuffer(sc, src); else caret.replaceAll = src;   // undoable
@@ -17076,11 +17171,15 @@ void DrawScriptEditor(EditorState& ed) {
         // Language picker (only backends this build supports).
         static std::vector<std::string> avail = AvailableScriptLanguages();
         if (avail.size() > 1) {
+            // Shown by name ("C#", "OkayScript (old)"), not by id.
+            static std::vector<std::string> names;
+            if (names.empty()) for (auto& s : avail) names.push_back(ScriptLanguageDisplayName(s));
             std::vector<const char*> items; items.reserve(avail.size());
-            for (auto& s : avail) items.push_back(s.c_str());
+            for (auto& s : names) items.push_back(s.c_str());
             int li = 0;
-            for (int i = 0; i < (int)avail.size(); ++i) if (avail[i] == sc->Language()) li = i;
-            ImGui::SetNextItemWidth(110);
+            for (int i = 0; i < (int)avail.size(); ++i)
+                if (avail[i] == sc->Language() || (okay::NextScriptVM::IsCSharpId(sc->Language()) && okay::NextScriptVM::IsCSharpId(avail[i]))) li = i;
+            ImGui::SetNextItemWidth(140);
             if (ImGui::Combo("##lang", &li, items.data(), (int)items.size())) {
                 std::string oldLang = sc->Language(), newLang = avail[li];
                 sc->SetLanguage(newLang);
@@ -17737,6 +17836,11 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::SetKeyOwner(ImGuiKey_Escape, codeKeys);
             ImGui::SetKeyOwner(ImGuiKey_Tab, codeKeys);
         }
+        if (g_seCaretReqLine > 0) {   // OKAY_UI_SCRIPTCARET: the caret there, the code focused (typed screenshots)
+            te.SetCursorPosition(ScriptEditorWidget::Coordinates(g_seCaretReqLine - 1, std::max(0, g_seCaretReqCol - 1)));
+            ImGui::SetNextWindowFocus();
+            g_seCaretReqLine = 0;
+        }
         if (g_codeFont) ImGui::PushFont(g_codeFont, kCodeFontDispPx * s_zoom);
         te.Render("##code", ImVec2(showMap ? -(mmW + 6.0f) : 0.0f, av.y), true);
         if (g_codeFont) ImGui::PopFont();
@@ -18172,10 +18276,23 @@ void DrawScriptEditor(EditorState& ed) {
             }
             static const std::vector<std::string> s_noMembers;
             const std::vector<std::string>* membersP = luaScript ? &s_noMembers : &ScriptMembers(receiver);
+            const bool csTab = okay::NextScriptVM::IsTypedId(sc->Language());
             if (luaScript) {
                 if (!recvExpr.empty()) csMembers = okay::LuaScriptVM::CompletionMembers(recvExpr);
                 membersP = &csMembers;
-            } else if (membersP->empty() || recvExpr.find('.') != std::string::npos || recvExpr.find('<') != std::string::npos) {
+            } else if (csTab && !recvExpr.empty()) {
+                // C#: what the receiver really has, from the binding table and the script's own classes.
+                static std::size_t s_mlHash = 0;
+                static std::string s_mlRecv;
+                static std::vector<std::string> s_mlNames;
+                const std::size_t h = std::hash<std::string>{}(std::string(t, (std::size_t)ws));
+                if (h != s_mlHash || recvExpr != s_mlRecv) {
+                    s_mlHash = h; s_mlRecv = recvExpr; s_mlNames.clear();
+                    for (const auto& m : okay::csharp::MembersAfter(std::string(t), recvExpr)) s_mlNames.push_back(m.method ? m.name + "(" : m.name);
+                }
+                if (!s_mlNames.empty()) { csMembers = s_mlNames; membersP = &csMembers; }
+            }
+            if (membersP != &csMembers && (membersP->empty() || recvExpr.find('.') != std::string::npos || recvExpr.find('<') != std::string::npos)) {
                 csMembers = CsMembersFor(std::string(t), recvExpr);
                 if (!csMembers.empty()) membersP = &csMembers;
             }
@@ -18232,6 +18349,80 @@ void DrawScriptEditor(EditorState& ed) {
                     int we = callAt, wsb = callAt;
                     while (wsb > 0 && isWord(t[wsb - 1])) --wsb;
                     std::string fn(t + wsb, t + we);
+                    // C#: every way to call it (overloads), from the binding table / the script, with
+                    // the parameter the caret is on picked out.
+                    if (okay::NextScriptVM::IsTypedId(sc->Language()) && !fn.empty()) {
+                        std::string recv;
+                        if (wsb > 0 && t[wsb - 1] == '.') {   // the expression before the '.'
+                            int es = wsb - 1;
+                            while (es > 0) {
+                                char c = t[es - 1];
+                                if (isWord(c) || c == '.') { --es; continue; }
+                                if (c == ')' || c == ']' || c == '>') {
+                                    char open = c == ')' ? '(' : (c == ']' ? '[' : '<');
+                                    int dd = 0, k = es - 1;
+                                    for (; k >= 0; --k) { if (t[k] == c) ++dd; else if (t[k] == open && --dd == 0) break; }
+                                    if (k < 0) break;
+                                    es = k; continue;
+                                }
+                                break;
+                            }
+                            recv.assign(t + es, t + (wsb - 1));
+                        }
+                        int argIndex = 0, dd = 0;
+                        for (int k = callAt + 1; k < p; ++k) {
+                            if (t[k] == '(' || t[k] == '[' || t[k] == '{') ++dd;
+                            else if (t[k] == ')' || t[k] == ']' || t[k] == '}') --dd;
+                            else if (t[k] == ',' && dd == 0) ++argIndex;
+                        }
+                        static std::size_t s_shHash = 0;
+                        static std::string s_shKey;
+                        static std::vector<okay::csharp::Signature> s_sigs;
+                        const std::size_t h = std::hash<std::string>{}(std::string(t, (std::size_t)wsb));
+                        if (h != s_shHash || recv + "|" + fn != s_shKey) {
+                            s_shHash = h; s_shKey = recv + "|" + fn;
+                            s_sigs = okay::csharp::SignaturesFor(std::string(t), recv, fn);
+                        }
+                        if (!s_sigs.empty()) {
+                            ImVec2 hp = te.CaretScreenPosBelow();
+                            const float rows = (float)std::min<std::size_t>(s_sigs.size(), 4) + 1.4f;
+                            ImGui::SetNextWindowPos(ImVec2(hp.x, hp.y - ImGui::GetTextLineHeightWithSpacing() * (rows + 1.0f)));
+                            ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(34, 34, 40, 245));
+                            if (ImGui::Begin("##sighelp", nullptr,
+                                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
+                                    ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                                    ImGuiWindowFlags_NoSavedSettings)) {
+                                ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+                                const std::string* doc = nullptr;
+                                for (std::size_t si = 0; si < s_sigs.size() && si < 4; ++si) {
+                                    const auto& sg = s_sigs[si];
+                                    const bool fits = argIndex < (int)sg.params.size() || (sg.params.empty() && argIndex == 0);
+                                    // the signature, with the parameter the caret is on in a brighter colour
+                                    std::string head = sg.text.substr(0, sg.text.find('(') + 1);
+                                    ImGui::TextColored(fits ? ImVec4(0.85f, 0.88f, 0.70f, 1.0f) : ImVec4(0.55f, 0.56f, 0.50f, 1.0f), "%s", head.c_str());
+                                    for (std::size_t pi = 0; pi < sg.params.size(); ++pi) {
+                                        ImGui::SameLine(0, 0);
+                                        const bool on = fits && (int)pi == argIndex;
+                                        ImGui::TextColored(on ? ImVec4(1.0f, 0.80f, 0.35f, 1.0f) : ImVec4(0.75f, 0.78f, 0.66f, 1.0f),
+                                                           "%s%s", sg.params[pi].c_str(), pi + 1 < sg.params.size() ? ", " : "");
+                                    }
+                                    ImGui::SameLine(0, 0);
+                                    ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.70f, 1.0f), ")");
+                                    if (fits && !doc && !sg.doc.empty()) doc = &sg.doc;
+                                }
+                                if (s_sigs.size() > 4) ImGui::TextDisabled("+%d more", (int)s_sigs.size() - 4);
+                                if (doc) {
+                                    ImGui::PushTextWrapPos(380.0f);
+                                    ImGui::TextDisabled("%s", doc->c_str());
+                                    ImGui::PopTextWrapPos();
+                                }
+                            }
+                            ImGui::End();
+                            ImGui::PopStyleColor();
+                        }
+                        fn.clear();   // done: the old language's table below is for OkayScript
+                    }
                     const std::string* sg = fn.empty() ? nullptr : ScriptSignature(fn);
                     if (sg) {
                         ImVec2 hp = te.CaretScreenPosBelow();
@@ -18664,7 +18855,8 @@ void DrawScriptEditor(EditorState& ed) {
         }
 
         // --- Status bar (VS Code-style) --------------------------------------
-        const char* langLbl = sc->Language() == "okayscript" ? "C# (OkayScript)" : sc->Language().c_str();
+        const std::string langName = ScriptLanguageDisplayName(sc->Language());
+        const char* langLbl = langName.c_str();
         char selInfo[32] = "";
         if (caret.selLen > 0) std::snprintf(selInfo, sizeof(selInfo), " (%d sel)", caret.selLen);
         ImGui::TextDisabled("%s    Ln %d, Col %d%s    %d lines    Spaces    %d%%", langLbl,
@@ -59206,12 +59398,30 @@ int main(int argc, char** argv) {
                             src = "local Player = { speed = 5 }\n\nfunction Player:Update(dt)\n"
                                   "    if Input.GetKeyy(\"space\") then\n        self.transform:Translate(0, self.speed * dt, 0)\n"
                                   "    end\n    local broken = = 1\nend\n\nreturn Player\n";
+                        if (mode == "old") {   // an old OkayScript script (examples/camera/camera_2d_rooms) to convert
+                            scr->SetLanguage("okayscript");
+                            src = "// Walk with W A S D. The camera holds each room and slides to the next when you cross over.\n"
+                                  "var speed = 9\n"
+                                  "function update(dt) {\n"
+                                  "  var s = speed * dt\n"
+                                  "  if (key(\"w\")) { set_y(pos_y() + s) }\n"
+                                  "  if (key(\"s\")) { set_y(pos_y() - s) }\n"
+                                  "  if (key(\"a\")) { set_x(pos_x() - s) }\n"
+                                  "  if (key(\"d\")) { set_x(pos_x() + s) }\n"
+                                  "}\n"
+                                  "function on_click() { print(\"room \" + floor(pos_x() / 10)); }\n";
+                            if (std::getenv("OKAY_UI_SCRIPTCONVERT")) g_seConvertReq = true;
+                        }
+                        if (mode == "cssig" || mode == "csmembers")   // a call / a '.' half typed (help shots)
+                            src = "using UnityEngine;\n\npublic class Player : MonoBehaviour\n{\n    Rigidbody rb;\n\n    void Update()\n    {\n"
+                                  "        transform.Translate(1," + std::string(mode == "cssig" ? "" : "0, 0);\n        rb") + "\n    }\n}\n";
                         if (mode == "csbad")
                             src = "using UnityEngine;\n\npublic class Player : MonoBehaviour\n{\n    [SerializeField] private float speed = 5f;\n"
                                   "    public int Score { get; private set; }\n\n    void Update()\n    {\n"
                                   "        transform.position += new Vector3(1, 0, 0) * sped * Time.deltaTime;\n"
                                   "        if (Input.GetKeyDown(KeyCode.Space)) Score++;\n    }\n}\n";
                         if (std::getenv("OKAY_UI_SCRIPTDOCS")) g_showScriptDocs = true;
+                        if (const char* cc = std::getenv("OKAY_UI_SCRIPTCARET")) std::sscanf(cc, "%d:%d", &g_seCaretReqLine, &g_seCaretReqCol);
                         scr->SetSource(src); scr->LoadSource(src);
                     }
                     g_showScriptEditor = true; ImGui::SetWindowFocus("Script Editor");
@@ -59824,7 +60034,8 @@ int main(int argc, char** argv) {
 #endif
         if (const char* shot = std::getenv("OKAY_UI_SHOT")) {
             static int shotFrames = 0;
-            if (++shotFrames == 160 && shot[0]) {
+            static const int shotAt = std::getenv("OKAY_UI_SHOT_FRAME") ? std::max(1, std::atoi(std::getenv("OKAY_UI_SHOT_FRAME"))) : 160;   // later, for OKAY_UI_TYPE
+            if (++shotFrames == shotAt && shot[0]) {
                 int sw = 0, sh = 0;
                 {
                     std::vector<std::uint8_t> px;

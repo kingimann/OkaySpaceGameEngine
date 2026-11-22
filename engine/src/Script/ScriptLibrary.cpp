@@ -34,7 +34,7 @@ void RegisterScriptSource(const std::string& source, bool csharp) {
             ScriptView::Method sm;
             sm.name = m.name;
             sm.ret = m.ret;
-            for (const Param& prm : m.params) sm.params.push_back(prm.type);
+            for (const Param& prm : m.params) { sm.params.push_back(prm.type); sm.defs.push_back(prm.def); }
             v->methods.push_back(std::move(sm));
         }
         ScriptClassId(c.name);

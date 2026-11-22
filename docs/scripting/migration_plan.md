@@ -38,10 +38,14 @@ flip the default with approval, delete one release later).
 
 In order of how often Unity-style scripts need them (rule 24: a failing test first for each):
 
-1. `Quaternion` (and `transform.rotation`), `Vector2`, `Color` (`Random.Range` / `value` / `InitState` done).
-2. `struct` value types (copy semantics), then generic methods and classes of the script's own.
-3. `params`; named arguments (`delegate` declarations and default parameter values done, except on constructors).
-4. `static` and `const` in plain classes; nested classes; `readonly` enforced.
+1. `Vector2`, `Color` (`Quaternion` and `transform.rotation` / `localRotation` done on `claude2/csharp-scripting-2`;
+   `Random.Range` / `value` / `InitState` done).
+2. Done on `claude2/csharp-scripting-2`: `struct` value types (copy semantics), generic classes and methods of the
+   script's own (by expansion; a generic method needs its types written at the call; `where` not enforced; a class
+   can't extend a generic class yet).
+3. `params`; named arguments (`delegate` declarations and default parameter values done, also on constructors and
+   across scripts).
+4. Nested classes; `readonly` enforced (`static` and `const` in plain classes done).
 5. Instantiate / prefabs, tags and layers, physics queries (`Physics.Raycast`), collision messages with
    `Collision` / `Collider` arguments, `OnTriggerEnter(Collider other)`.
 6. Text: `ToString("F2")`, `string.Join`, `int.TryParse` (`int.Parse`, `float.Parse`, `Length`, `Substring`, `Split`, `ToString()` and friends done).
@@ -50,6 +54,16 @@ In order of how often Unity-style scripts need them (rule 24: a failing test fir
 Each gap closed is listed in `docs/scripting/scripting.md` ("C# features") and feature-map row 13.2.
 
 ### Stage 3: the converter, old OkayScript to C#
+
+**State (claude2/csharp-scripting-2):** done as below, with one change of plan: a built-in with no exact C#
+binding is not left as a `// TODO` call but runs through `OkayScript.Call` / `Number` / `Text` / `Bool` (a
+binding that calls the old VM's built-in by name on the same object), so a converted script behaves the same
+today. The report (`OkayScriptConversion::bridged`) lists those built-ins: they are the binding table's to-do
+list, and the old VM can't be deleted (stage 6) while any converted script still calls one. Test
+`csharp_convert`: all 61 shipped old scripts (59 in 11 example scenes, 2 editor plugins) convert and compile in
+C# mode; the 11 scenes give the same saved scene after the same keys and UI events with their scripts converted.
+Mapped so far: `sin`, `cos`, `abs`, `floor`, `min`, `max`, `time`, `print` of text. Not converted yet: a script's
+own classes, coroutines, lambdas, event subscriptions (reported as notes).
 
 A tool that turns an `.okay` script into a `.cs` file (it does not change the original):
 
@@ -64,8 +78,9 @@ A tool that turns an `.okay` script into a `.cs` file (it does not change the or
     compiles and the user sees what is left.
   - The table doubles as the to-do list for the binding table: a built-in that cannot be mapped is a missing
     API, added to `EngineApi.cpp` (and so to the visual-script nodes too).
-- Editor: Script Editor "File > Convert to C#..." writes `Name.cs` beside `Name.okay`, opens it, shows the notes
-  in the Problems list, and offers to switch the Script component to the new file.
+- Editor: Script Editor "File > Convert to C#..." shows a preview (the C#, whether it compiles, the notes), writes
+  `Name.cs` beside `Name.okay`, logs the notes to the Console, and switches the Script component to the new file
+  (a box, ticked by default) or opens it in a new tab.
 - Tests: every `.okay` script in `examples/` and the starter templates converts, compiles in C# mode with no
   errors, and behaves the same in a short headless run (positions, logged lines) as the original.
 

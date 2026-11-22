@@ -166,6 +166,84 @@ int main() {
         CHECK(!Prefs::Has("inputov.player0") && !Prefs::Has("input.jump"));
     }
 
+    // ==== Review of PR #1139: each block failed on 2957a101d ====
+    // ---- 8. A Move part rebound to something InputActions cannot hold stays in the typed store (not undone, not erased) ----
+    {
+        Fresh();
+        CHECK(InputRuntime::Rebind(0, "Move", 0, 0, "pad:y"));
+        CHECK(InputActions::Find("Move")->bindings[0].ToString() == "keys:w,s,a,d");   // InputActions keeps its four keys
+        InputRuntime::SaveOverrides(0);
+        CHECK(SetPart(0, "Move", 0, 0) == "pad:y");
+        CHECK(Prefs::GetString("inputov.player0").find("ov Move 0 pad:y,key:s,key:a,key:d") != std::string::npos);
+        // an old save with such a part survives the start-up Load and a join
+        Fresh();
+        Prefs::SetString("inputov.player0", "ov Move 0 mouse:middle,key:s,key:a,key:d\n");
+        InputActions::Load();
+        CHECK(Prefs::GetString("inputov.player0") == "ov Move 0 mouse:middle,key:s,key:a,key:d\n");
+        CHECK(InputRuntime::Set(0) && SetPart(0, "Move", 0, 0) == "mouse:middle");
+        CHECK(Prefs::GetString("inputov.player0") == "ov Move 0 mouse:middle,key:s,key:a,key:d\n");
+        CHECK(InputActions::Find("Move")->bindings[0].ToString() == "keys:w,s,a,d");
+    }
+
+    // ---- 9. A custom .okayinput: nothing is read or written against the built-in asset before the real one is in use ----
+    {
+        // 9a. overrides made against a custom asset (Jump: pad first, key second) do not rewrite InputActions' keyboard Jump
+        Fresh();
+        Prefs::SetString("inputov.player0", "ov Jump 0 pad:x\n");
+        InputActions::Load();
+        CHECK(InputActions::Find("Jump")->bindings[0].ToString() == "key:space");
+        ActionSet custom;
+        CHECK(ParseInputAsset("okayinput 1\naction Jump button\n  bind single pad:a\n  bind single key:space\naction Dash button\n  bind single key:q\n", custom));
+        InputRuntime::Players().SetAsset(custom);
+        CHECK(InputRuntime::Set(0) && SetPart(0, "Jump", 0, 0) == "pad:x");
+        CHECK(InputActions::Find("Jump")->bindings[0].ToString() == "key:space" && InputActions::Find("Jump")->bindings[1].ToString() == "pad:a");
+        // 9b. first launch: a line for an action only the custom asset has is kept, also when an old input.<action> exists
+        Fresh();
+        Prefs::SetString("inputov.player0", "ov Dash 0 key:v\n");
+        Prefs::SetString("input.jump", "key:x;pad:a");
+        InputActions::Load();
+        CHECK(Prefs::GetString("inputov.player0").find("ov Dash 0 key:v") != std::string::npos);
+        InputActions::Rebind("Fire", "key:f");                                       // no player yet: nothing written to the typed store
+        CHECK(Prefs::GetString("inputov.player0") == "ov Dash 0 key:v\n");
+    }
+
+    // ---- 10. An unrelated InputActions rebind does not save player 0's pending (unsaved) typed rebinds ----
+    {
+        Fresh();
+        CHECK(InputRuntime::Rebind(0, "Crouch", 0, 0, "key:c"));                    // pending: no ia_save yet
+        CHECK(RemapBind("Fire", "key:f").ok);
+        const std::string ov = Prefs::GetString("inputov.player0");
+        CHECK(ov.find("ov Crouch") == std::string::npos && ov.find("ov Fire 0 key:f") != std::string::npos);
+        CHECK(!Prefs::Has("input.crouch"));                                          // nor through the old layout
+        CHECK(SetPart(0, "Crouch", 0, 0) == "key:c");                                // still pending in memory
+    }
+
+    // ---- 11. Controls screen Unbind: the typed layer gets no conflict the player did not make ----
+    {
+        Fresh();
+        ActionSet* set = InputRuntime::Set(0);
+        RemapBind("Jump", "key:e", RemapResolve::Unbind);
+        CHECK(InputActions::Find("Jump")->bindings[0].ToString() == "key:e");
+        CHECK(set && set->Conflicts("Jump", 0, 0, SetPart(0, "Jump", 0, 0)).empty());
+        CHECK(set && set->Conflicts("Interact", 0, 0, SetPart(0, "Interact", 0, 0)).empty());
+        // a swap is mirrored whole (both sides at once)
+        Fresh();
+        set = InputRuntime::Set(0);
+        CHECK(RemapBind("Jump", "key:e", RemapResolve::Swap).ok);
+        CHECK(SetPart(0, "Jump", 0, 0) == "key:e" && SetPart(0, "Interact", 0, 0) == "key:space");
+    }
+
+    // ---- 12. A direction action is never synced to a lone key or button (mouse look keeps working) ----
+    {
+        Fresh();
+        CHECK(InputRuntime::Rebind(0, "Look", 0, 0, "key:q"));
+        CHECK(InputActions::Find("Look")->bindings[0].ToString() == "mouse:delta");
+        CHECK(InputRuntime::Rebind(0, "Move", 2, 0, "pad:y"));
+        CHECK(InputActions::Find("Move")->bindings[2].ToString() == "stick:left");
+        InputRuntime::SaveOverrides(0);
+        CHECK(SetPart(0, "Look", 0, 0) == "key:q" && InputActions::Find("Look")->bindings[0].ToString() == "mouse:delta");
+    }
+
     Prefs::Clear(); InputRuntime::Reset(); InputActions::Restore(); Input::FeedKeys({});
     TEST_MAIN_RESULT();
 }

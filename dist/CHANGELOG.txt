@@ -13,6 +13,8 @@ v2.903.0
   - Fixed: a fast object made of several collider shapes could fall
     through thin floors, and the same 3D scene could play out slightly
     differently from one run to the next.
+  - .dds texture files and compressed imported textures now load on the
+    GPU (OpenGL and Direct3D 11), and BC3-compressed colours are correct.
 
 v2.902.0
   Fixes and faster model import

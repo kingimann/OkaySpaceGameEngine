@@ -60,6 +60,16 @@ slide keeps UVs, Bridge on faces). Nothing here was tried on Windows or with a r
 | 2 | Fill on border edges that run in a straight line (three edges along one side of a plane) made a four-corner face with no area: invisible, no usable normal, closed nothing | `FillFaces` made a face from any open chain of 3+ border vertices | a chain whose area is nothing next to its perimeter is skipped; with nothing else to fill, Fill says the vertices are in a straight line | `poly_ops`: "Fill refuses a chain of vertices in a straight line" (177 checks, 4 failures before; 0 after) |
 | 3 | Dragging a move handle (the coloured axis arrows) in Edit Mesh mirrored across X only, even with Symmetry Y or Z on; on a big mesh with many vertices selected it froze (for each moved vertex it searched every vertex for its partner, every frame) | its own copy of the move code | the drag now runs through `EditTransformSession` (the same code as G: soft select, symmetry X / Y / Z, partners found once at the start) | editor-only wiring; the session it uses is covered by `edit_transform` (no new failing test: the editor window cannot be driven headless) |
 
+Found while trying the new tools in the editor (Xvfb run, Linux, software drawing) and fixed before this branch was offered:
+
+- Individual Origins first joined parts through any edge between two selected vertices, so in Face mode two faces with an
+  unselected face between them scaled as one part. Parts are now joined only through the selected faces (Face mode) or the
+  selected edges (Edge mode) and positions they share. Test: `edit_transform` "Individual Origins in Face / Edge mode" (104
+  checks, 2 failures before; 0 after). Faces that touch only at a corner (a checkerboard) still share that vertex, so they are
+  one part: select faces that do not touch to grow each in place.
+- The G / R / S status line was centred even when wider than the 3D view, so its start (tool name and value) was cut off on
+  the left in a narrow view. It now starts at the view's left edge (editor only, seen on the screenshots).
+
 Found by the hostile-input probe and left as they are (not reachable from the editor, or by design): `SplitEdge` with t outside 0..1
 puts the new vertex beyond the edge (the editor only splits at the middle); `LoopCut` has no upper limit on `cuts` (the editor caps it
 at 32); a knife cut between two points on the same edge reports one new edge but splits no face; `MergeVerts` on two opposite

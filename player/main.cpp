@@ -63,6 +63,7 @@
 #endif
 #include "DevLog.hpp"             // development-build log file (used with or without OkayUI)
 #include "okay/Core/BuildInfo.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
 #include "GameContent.hpp"         // optional downloaded game content (off unless a content URL is configured; docs/release/content_delivery.md)
 #include "GameContentValidators.hpp"  // graph / script checks for downloaded scripts
 
@@ -1137,6 +1138,7 @@ static std::string ResolveGameBaseDir(const char* argv0) {
 
 int main(int argc, char** argv) {
     okay::ownstack::Startup("none");   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
+    okay::Log::Info("[okay] modules: ", okay::ModuleRegistry::Get().Summary());   // engine modules in this player (docs/engine/modular_engine.md)
     // The window, events, input and GL context go through okay::platform (SDL2 is the default
     // backend; see docs/platform/platform_layer.md). The 2D drawing below still needs an SDL window.
     okay::platform::Backend* pb = okay::platform::Default();

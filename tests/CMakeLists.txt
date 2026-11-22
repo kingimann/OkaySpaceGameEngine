@@ -4876,6 +4876,17 @@ add_executable(test_controller_actions test_controller_actions.cpp)
 target_link_libraries(test_controller_actions PRIVATE okay::engine)
 add_test(NAME controller_actions COMMAND test_controller_actions)
 
+# Engine modules (docs/engine/modular_engine.md): the manifest parser, the module registry and the list the build generated.
+add_executable(test_modules test_modules.cpp)
+target_link_libraries(test_modules PRIVATE okay::engine)
+add_test(NAME modules COMMAND test_modules)
+# scripts/check_modules.py (the module dependency check) on a made-up tree.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME check_modules_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_check_modules.py
+             ${PROJECT_SOURCE_DIR}/scripts/check_modules.py)
+endif()
+
 # Keep this last: label every test above module:<name> from the tests= patterns of engine/modules/*/module.okaymodule
 # (module:core when no module claims it). Run one module's tests with: ctest -L module:physics3d
 okay_modules_label_tests()

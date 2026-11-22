@@ -613,15 +613,20 @@ void World::Step(float dt) {
         } else {
             e.point = (w.colliders[cp.a].box.Center() + w.colliders[cp.b].box.Center()) * 0.5f;
         }
+        const V3 vrel = (w.bodies[bb].v + Cross(w.bodies[bb].w, e.point - w.bodies[bb].com)) -
+                        (w.bodies[ba].v + Cross(w.bodies[ba].w, e.point - w.bodies[ba].com));
+        const float closing = std::max(0.0f, -Dot(vrel, cp.normal));
         if (cp.touching && !cp.wasTouching) {
-            const V3 vrel = (w.bodies[bb].v + Cross(w.bodies[bb].w, e.point - w.bodies[bb].com)) -
-                            (w.bodies[ba].v + Cross(w.bodies[ba].w, e.point - w.bodies[ba].com));
-            cp.approach = std::max(0.0f, -Dot(vrel, cp.normal));
+            // a speculative contact stops a fast body exactly at the surface one step before it "touches": the impact
+            // speed is the fastest closing speed seen on the way in
+            cp.approach = std::max(closing, cp.preApproach);
+            cp.preApproach = 0.0f;
             e.approachSpeed = cp.approach;
             m_begin.push_back(e);
         } else if (!cp.touching && cp.wasTouching) {
             m_end.push_back(e);
         }
+        if (!cp.touching) cp.preApproach = cp.count > 0 ? std::max(cp.preApproach, closing) : 0.0f;
         if (!cp.alive) w.contactIndex.erase(cp.key);
     }
     const double t2 = NowMs();
@@ -631,6 +636,7 @@ void World::Step(float dt) {
     const std::size_t nb = w.bodies.size();
     std::vector<int> parent(nb);
     for (std::size_t i = 0; i < nb; ++i) parent[i] = (int)i;
+    // dup-allow: physics core has no engine dependency (a plain union-find, as in the Improved step's sleeping groups)
     auto find = [&](int x) { while (parent[(std::size_t)x] != x) { parent[(std::size_t)x] = parent[(std::size_t)parent[(std::size_t)x]]; x = parent[(std::size_t)x]; } return x; };
     auto unite = [&](int x, int y) { x = find(x); y = find(y); if (x == y) return; if (x < y) parent[(std::size_t)y] = x; else parent[(std::size_t)x] = y; };
     auto isDyn = [&](BodyId b) { return b != kInvalidId && w.bodies[b].alive && w.bodies[b].type == BodyType::Dynamic; };
@@ -831,150 +837,7 @@ bool World::GetManifold(ColliderId a, ColliderId b, Manifold& out) const {
     return true;
 }
 
-// ---- queries -------------------------------------------------------------------------------------------------------------
-namespace {
-// Exact ray against a shape in its own frame (unit direction). Analytic for sphere, box, capsule and plane; the others by
-// conservative advancement with GJK (a point moved along the ray until it reaches the surface: B. Mirtich, "Impulse-based
-// dynamic simulation of rigid body systems", PhD thesis 1996, ch. 3; Ericson 9.5 for the distance).
-bool RayShape(const Shape& s, const V3& o, const V3& d, float maxT, float& tOut, V3& nOut) {
-    switch (s.type) {
-        case ShapeType::Sphere: {
-            const float b = Dot(o, d), c = LenSq(o) - s.radius * s.radius;
-            if (c > 0.0f && b > 0.0f) return false;
-            const float disc = b * b - c;
-            if (disc < 0.0f) return false;
-            float t = -b - std::sqrt(disc);
-            if (t < 0.0f) t = 0.0f;
-            if (t > maxT) return false;
-            tOut = t; nOut = Normalize(o + d * t, -d);
-            return true;
-        }
-        case ShapeType::Box: {
-            float t0 = 0.0f, t1 = maxT; int axis = -1; float sgn = 1.0f;
-            for (int k = 0; k < 3; ++k) {
-                const float h = s.halfExtents[k];
-                if (std::fabs(d[k]) < 1e-12f) { if (o[k] < -h || o[k] > h) return false; continue; }
-                const float inv = 1.0f / d[k];
-                float a = (-h - o[k]) * inv, b = (h - o[k]) * inv;
-                float sg = -1.0f;
-                if (a > b) { std::swap(a, b); sg = 1.0f; }
-                if (a > t0) { t0 = a; axis = k; sgn = sg; }
-                if (b < t1) t1 = b;
-                if (t0 > t1) return false;
-            }
-            tOut = t0;
-            nOut = V3{};
-            if (axis >= 0) nOut[axis] = sgn; else nOut = -d;   // started inside
-            return true;
-        }
-        case ShapeType::Mesh: {   // ray against each triangle near the ray (T. Moller and B. Trumbore, "Fast, minimum storage
-                                  // ray-triangle intersection", J. Graphics Tools 1997)
-            if (!s.mesh) return false;
-            const float reach = std::min(maxT, 1e6f);
-            Aabb box{Min(o, o + d * reach), Max(o, o + d * reach)};
-            std::vector<Tri3> tris;
-            // long rays: walk the ray in pieces so the triangle list stays short
-            const int pieces = std::max(1, std::min(64, (int)(reach / 16.0f)));
-            bool hit = false;
-            float best = maxT;
-            for (int pc = 0; pc < pieces && !hit; ++pc) {
-                const float t0 = reach * (float)pc / (float)pieces, t1 = reach * (float)(pc + 1) / (float)pieces;
-                box = Aabb{Min(o + d * t0, o + d * t1), Max(o + d * t0, o + d * t1)}.Grown(1e-4f);
-                tris.clear();
-                s.mesh->Collect(box, tris);
-                for (const Tri3& t : tris) {
-                    const V3 e1 = t.b - t.a, e2 = t.c - t.a;
-                    const V3 pv = Cross(d, e2);
-                    const float det = Dot(e1, pv);
-                    if (std::fabs(det) < 1e-12f) continue;
-                    const float inv = 1.0f / det;
-                    const V3 tv = o - t.a;
-                    const float u = Dot(tv, pv) * inv;
-                    if (u < 0.0f || u > 1.0f) continue;
-                    const V3 qv = Cross(tv, e1);
-                    const float v = Dot(d, qv) * inv;
-                    if (v < 0.0f || u + v > 1.0f) continue;
-                    const float tt = Dot(e2, qv) * inv;
-                    if (tt < 0.0f || tt > best) continue;
-                    best = tt;
-                    V3 n = Normalize(Cross(e1, e2));
-                    if (Dot(n, d) > 0.0f) n = -n;
-                    nOut = n;
-                    hit = true;
-                }
-            }
-            if (hit) tOut = best;
-            return hit;
-        }
-        case ShapeType::Plane: {
-            const float den = Dot(s.planeNormal, d);
-            const float h = Dot(s.planeNormal, o) - s.planeOffset;
-            if (h <= 0.0f) { tOut = 0.0f; nOut = s.planeNormal; return true; }
-            if (den >= 0.0f) return false;
-            const float t = -h / den;
-            if (t > maxT) return false;
-            tOut = t; nOut = s.planeNormal;
-            return true;
-        }
-        default: break;
-    }
-    // conservative advancement: march the point by its distance to the shape
-    const Shape pt = Shape::Sphere(0.0f);
-    float t = 0.0f;
-    const float r = s.CoreRadius();
-    for (int it = 0; it < 64; ++it) {
-        const V3 p = o + d * t;
-        const DistanceResult g = GjkDistance(s, Xf{}, pt, Xf{p, Q{}});
-        if (g.overlap) {
-            if (it == 0) { tOut = 0.0f; nOut = -d; return true; }
-            break;
-        }
-        const float dist = g.distance - r;
-        if (dist < 1e-4f) {
-            tOut = t;
-            nOut = Normalize(p - g.pA, -d);
-            return true;
-        }
-        const float closing = -Dot(d, g.normal);   // normal points from the shape to the point
-        (void)closing;
-        const float along = Dot(d, -Normalize(p - g.pA, -d));
-        if (along <= 1e-6f) return false;           // moving away or parallel
-        t += dist / along * 0.999f + 1e-6f;
-        if (t > maxT) return false;
-    }
-    tOut = t; nOut = -d;
-    return t <= maxT;
-}
-} // namespace
-
-RayHit World::RayCast(const V3& origin, const V3& dirIn, float maxDistance, std::uint32_t layerMask, bool hitSensors,
-                      const std::function<bool(ColliderId)>& filter) const {
-    RayHit best;
-    const V3 dir = Normalize(dirIn, V3{});
-    if (LenSq(dir) == 0.0f || !(maxDistance > 0.0f) || !Finite(origin)) return best;
-    float maxT = std::min(maxDistance, 1e7f);
-    m_tree.RayCast(origin, dir, maxT, [&](int proxy, float clip) {
-        const ColliderId c = (ColliderId)m_tree.User(proxy);
-        const ColliderData& cd = m->colliders[c];
-        if (!cd.alive) return clip;
-        if (cd.def.sensor && !hitSensors) return clip;
-        if (!((layerMask >> (cd.def.layer & 31)) & 1u)) return clip;
-        if (filter && !filter(c)) return clip;
-        const Xf x = m->bodies[cd.body].xf * cd.def.local;
-        float t; V3 n;
-        if (!RayShape(cd.def.shape, x.ApplyInv(origin), InvRotate(x.q, dir), clip, t, n)) return clip;
-        if (best.hit && t >= best.t) return clip;
-        best.hit = true;
-        best.t = t;
-        best.collider = c;
-        best.body = cd.body;
-        best.point = origin + dir * t;
-        best.normal = Rotate(x.q, n);
-        return t;
-    });
-    return best;
-}
-
+// ---- queries (scene rays and sweeps stay in Physics3D: one ray and sweep code for every quality) ----
 std::vector<ColliderId> World::Overlap(const Shape& shape, const Xf& xf, std::uint32_t layerMask, bool hitSensors,
                                        const std::function<bool(ColliderId)>& filter) const {
     std::vector<ColliderId> out;
@@ -998,73 +861,9 @@ std::vector<ColliderId> World::Overlap(const Shape& shape, const Xf& xf, std::ui
     return out;
 }
 
-RayHit World::ShapeCast(const Shape& shape, const Xf& xf, const V3& dirIn, float maxDistance, std::uint32_t layerMask,
-                        bool hitSensors, const std::function<bool(ColliderId)>& filter) const {
-    RayHit best;
-    const V3 dir = Normalize(dirIn, V3{});
-    if (LenSq(dir) == 0.0f || !(maxDistance > 0.0f)) return best;
-    Aabb sweep = shape.Bounds(xf);
-    const Aabb end = shape.Bounds(Xf{xf.p + dir * maxDistance, xf.q});
-    sweep = Aabb::Union(sweep, end);
-    float bestT = maxDistance;
-    m_tree.Query(sweep, [&](int proxy) {
-        const ColliderId c = (ColliderId)m_tree.User(proxy);
-        const ColliderData& cd = m->colliders[c];
-        if (!cd.alive || (cd.def.sensor && !hitSensors)) return true;
-        if (!((layerMask >> (cd.def.layer & 31)) & 1u)) return true;
-        if (filter && !filter(c)) return true;
-        const Xf xo = m->bodies[cd.body].xf * cd.def.local;
-        const float rr = shape.CoreRadius() + cd.def.shape.CoreRadius();
-        float t = 0.0f;
-        for (int it = 0; it < 64; ++it) {   // conservative advancement of the moving shape
-            const Xf xm{xf.p + dir * t, xf.q};
-            if (cd.def.shape.type == ShapeType::Plane || cd.def.shape.type == ShapeType::Mesh) {
-                Manifold mm;
-                const float far = bestT - t + 1.0f;
-                if (!Collide(cd.def.shape, xo, shape, xm, far, mm)) return true;
-                float minSep = 1e30f;
-                for (int k = 0; k < mm.count; ++k) minSep = std::min(minSep, mm.pts[k].separation);
-                const float along = -Dot(dir, mm.normal);
-                if (minSep <= 1e-4f) {
-                    if (t < bestT || !best.hit) { bestT = t; best.hit = true; best.t = t; best.collider = c; best.body = cd.body; best.normal = mm.normal; best.point = mm.pts[0].pA; }
-                    return true;
-                }
-                if (along <= 1e-6f) return true;
-                t += minSep / along;
-                if (t > bestT) return true;
-                continue;
-            }
-            const DistanceResult g = GjkDistance(cd.def.shape, xo, shape, xm);
-            if (g.overlap) {
-                if (it == 0) { if (!best.hit || 0.0f < bestT) { bestT = 0.0f; best.hit = true; best.t = 0.0f; best.collider = c; best.body = cd.body; best.normal = -dir; best.point = xm.p; } }
-                else if (t < bestT || !best.hit) { bestT = t; best.hit = true; best.t = t; best.collider = c; best.body = cd.body; best.normal = -dir; best.point = xm.p; }
-                return true;
-            }
-            const float dist = g.distance - rr;
-            if (dist < 1e-4f) {
-                if (t < bestT || !best.hit) {
-                    bestT = t; best.hit = true; best.t = t; best.collider = c; best.body = cd.body;
-                    best.normal = g.normal;   // from the hit collider toward the moving shape
-                    best.point = g.pA + g.normal * cd.def.shape.CoreRadius();
-                }
-                return true;
-            }
-            const float along = -Dot(dir, g.normal);
-            if (along <= 1e-6f) return true;
-            t += dist / along;
-            if (t > bestT) return true;
-        }
-        return true;
-    });
-    return best;
-}
-
 std::uint64_t World::StateHash() const {
-    std::uint64_t h = 1469598103934665603ULL;
-    auto mix = [&](const void* p, std::size_t n) {
-        const unsigned char* c = (const unsigned char*)p;
-        for (std::size_t i = 0; i < n; ++i) { h ^= c[i]; h *= 1099511628211ULL; }
-    };
+    std::uint64_t h = kHashSeed;
+    auto mix = [&](const void* p, std::size_t n) { h = HashBytes(h, p, n); };
     for (const BodyData& b : m->bodies) {
         if (!b.alive) continue;
         mix(&b.xf.p, sizeof(V3)); mix(&b.xf.q, sizeof(Q)); mix(&b.v, sizeof(V3)); mix(&b.w, sizeof(V3));

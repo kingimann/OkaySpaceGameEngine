@@ -8,6 +8,7 @@
 //  - Manifolds: box on box (4 points, normal up), sphere on a face (1), capsule lying on a box (2), cylinder standing
 //    on a plane (4), cone on its side (2), two capsules side by side (2), speculative points for separated shapes.
 #include "test_framework.hpp"
+#include "physcore_test_rng.hpp"
 #include "okay/Physics/Core/Collide.hpp"
 
 #include <cmath>
@@ -18,13 +19,7 @@
 using namespace okay::phys;
 
 namespace {
-struct Lcg {
-    std::uint64_t s;
-    explicit Lcg(std::uint64_t seed) : s(seed) {}
-    std::uint32_t Next() { s = s * 6364136223846793005ULL + 1442695040888963407ULL; return (std::uint32_t)(s >> 33); }
-    float Unit() { return (float)(Next() & 0xFFFFFF) / 16777216.0f; }
-    float Range(float a, float b) { return a + (b - a) * Unit(); }
-};
+using Lcg = okaytest::CoreRng;
 constexpr float kPi = 3.14159265358979f;
 
 Q RandomRot(Lcg& r) {
@@ -76,6 +71,29 @@ int main() {
         CHECK(flat->volume > 0.0f && flat->tris.size() >= 4);
         const auto one = HullData::Build({V3{2, 2, 2}});
         CHECK(one->volume > 0.0f && one->verts.size() == 8);
+        // a hull that is already built is taken as it is (no second wrap): same volume and planes, triangles faced outward
+        std::vector<V3> cv;
+        for (int i = 0; i < 8; ++i) cv.push_back(V3{(i & 1) ? 1.f : -1.f, (i & 2) ? 1.f : -1.f, (i & 4) ? 1.f : -1.f});
+        std::vector<int> ct;
+        for (const auto& t : h->tris) {   // the triangles of the hull above, some turned inward on purpose
+            int a = -1, b = -1, c = -1;
+            for (int i = 0; i < 8; ++i) { if (cv[i] == h->verts[t.a]) a = i; if (cv[i] == h->verts[t.b]) b = i; if (cv[i] == h->verts[t.c]) c = i; }
+            if (ct.size() % 6 == 0) std::swap(b, c);
+            ct.push_back(a); ct.push_back(b); ct.push_back(c);
+        }
+        const auto pre = HullData::FromTriangles(cv, ct);
+        CHECK(pre->verts.size() == 8 && pre->tris.size() == 12);
+        CHECK_NEAR(pre->volume, 8.0, 1e-4);
+        bool outward = true;
+        for (const auto& t : pre->tris) outward = outward && t.d > 0.99f;
+        CHECK(outward);
+        // a scaled view of one triangle list
+        auto base = std::make_shared<TriMeshSource>(std::vector<Tri3>{{V3{0, 0, 0}, V3{1, 0, 0}, V3{0, 0, 1}}});
+        ScaledTriangleSource big(base, V3{10, 1, -10});
+        std::vector<Tri3> got;
+        big.Collect(Aabb{V3{5, -1, -5}, V3{6, 1, -4}}, got);
+        CHECK(got.size() == 1 && got[0].b.x == 10.0f && got[0].c.z == -10.0f);
+        CHECK(big.Bounds().lo.z == -10.0f && big.Bounds().hi.x == 10.0f);
     }
 
     RUN_SUITE("physcore mass: closed forms against fine hulls");

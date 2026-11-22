@@ -130,14 +130,6 @@ struct JointDef {
 /// Slider: linear X free; ConeTwist: twist and swing limited; Distance and SixDof: as given).
 void SetupJoint(JointDef& d);
 
-struct RayHit {
-    bool hit = false;
-    ColliderId collider = kInvalidId;
-    BodyId body = kInvalidId;
-    V3 point, normal;
-    float t = 0.0f;                     // distance along the (unit) direction
-};
-
 struct ContactEvent {
     ColliderId a = kInvalidId, b = kInvalidId;
     BodyId bodyA = kInvalidId, bodyB = kInvalidId;
@@ -261,18 +253,10 @@ public:
     bool GetManifold(ColliderId a, ColliderId b, Manifold& out) const;
 
     // ---- queries ----
-    /// Nearest hit along a ray (dir need not be unit; t is in units of |dir|-normalised distance). The filter, when
-    /// set, returns false to skip a collider. Sensors are skipped unless `hitSensors`.
-    RayHit RayCast(const V3& origin, const V3& dir, float maxDistance, std::uint32_t layerMask = 0xFFFFFFFFu,
-                   bool hitSensors = false, const std::function<bool(ColliderId)>& filter = nullptr) const;
+    // (Rays and sweeps for game code are Physics3D::Raycast / SphereCast / ...: one query code for every quality.)
     /// Every collider overlapping `shape` at `xf`.
     std::vector<ColliderId> Overlap(const Shape& shape, const Xf& xf, std::uint32_t layerMask = 0xFFFFFFFFu,
                                     bool hitSensors = false, const std::function<bool(ColliderId)>& filter = nullptr) const;
-    /// First collider `shape` touches when moved from xf along dir (unit) up to maxDistance (conservative advancement).
-    RayHit ShapeCast(const Shape& shape, const Xf& xf, const V3& dir, float maxDistance,
-                     std::uint32_t layerMask = 0xFFFFFFFFu, bool hitSensors = false,
-                     const std::function<bool(ColliderId)>& filter = nullptr) const;
-
     /// A hash of every body's pose and velocity bits (for determinism tests).
     std::uint64_t StateHash() const;
     const DynamicTree& Tree() const { return m_tree; }

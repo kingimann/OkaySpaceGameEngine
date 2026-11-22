@@ -67,6 +67,26 @@ void TriMeshSource::Collect(const Aabb& box, std::vector<Tri3>& out) const {
     m_tree->tree.Query(box, [&](int p) { out.push_back(m_tris[(std::size_t)m_tree->tree.User(p)]); return true; });
 }
 
+ScaledTriangleSource::ScaledTriangleSource(std::shared_ptr<const TriangleSource> base, const V3& scale)
+    : m_base(std::move(base)), m_scale(scale) {
+    for (int k = 0; k < 3; ++k) {
+        if (std::fabs(m_scale[k]) < 1e-6f) m_scale[k] = m_scale[k] < 0.0f ? -1e-6f : 1e-6f;
+        m_inv[k] = 1.0f / m_scale[k];
+    }
+    const Aabb b = m_base ? m_base->Bounds() : Aabb{};
+    const V3 p = Mul(b.lo, m_scale), q = Mul(b.hi, m_scale);
+    m_bounds = Aabb{Min(p, q), Max(p, q)};
+}
+void ScaledTriangleSource::Collect(const Aabb& box, std::vector<Tri3>& out) const {
+    if (!m_base) return;
+    const V3 p = Mul(box.lo, m_inv), q = Mul(box.hi, m_inv);
+    const std::size_t first = out.size();
+    m_base->Collect(Aabb{Min(p, q), Max(p, q)}, out);
+    for (std::size_t i = first; i < out.size(); ++i) {
+        out[i].a = Mul(out[i].a, m_scale); out[i].b = Mul(out[i].b, m_scale); out[i].c = Mul(out[i].c, m_scale);
+    }
+}
+
 HeightGridSource::HeightGridSource(int cols, int rows, float x0, float z0, float cx, float cz, std::vector<float> heights)
     : m_cols(std::max(cols, 2)), m_rows(std::max(rows, 2)), m_x0(x0), m_z0(z0), m_cx(std::max(cx, 1e-6f)), m_cz(std::max(cz, 1e-6f)),
       m_h(std::move(heights)) {
@@ -211,6 +231,39 @@ std::shared_ptr<HullData> HullData::Build(const std::vector<V3>& input) {
     V3 m1;
     for (const Tri& tr : out->tris) {
         const V3 a = out->verts[tr.a] - c0, b = out->verts[tr.b] - c0, c = out->verts[tr.c] - c0;
+        const float v6 = Dot(a, Cross(b, c));
+        vol += v6;
+        m1 += (a + b + c) * (v6 * 0.25f);
+    }
+    out->volume = vol / 6.0f;
+    out->centroid = vol > 0.0f ? c0 + m1 * (1.0f / vol) : c0;
+    return out;
+}
+
+std::shared_ptr<HullData> HullData::FromTriangles(const std::vector<V3>& verts, const std::vector<int>& tris) {
+    if (verts.size() < 4 || tris.size() < 12 || verts.size() > 65535) return Build(verts);
+    auto out = std::make_shared<HullData>();
+    out->verts = verts;
+    V3 c0;
+    for (const V3& v : verts) c0 += v;
+    c0 *= 1.0f / (float)verts.size();
+    for (std::size_t i = 0; i + 2 < tris.size(); i += 3) {
+        int a = tris[i], b = tris[i + 1], c = tris[i + 2];
+        if (a < 0 || b < 0 || c < 0 || (std::size_t)a >= verts.size() || (std::size_t)b >= verts.size() || (std::size_t)c >= verts.size()) return Build(verts);
+        V3 n = Cross(verts[(std::size_t)b] - verts[(std::size_t)a], verts[(std::size_t)c] - verts[(std::size_t)a]);
+        if (!(LenSq(n) > 1e-24f)) continue;   // a sliver: no plane
+        if (Dot(n, verts[(std::size_t)a] - c0) < 0.0f) { std::swap(b, c); n = -n; }
+        Tri t;
+        t.a = (std::uint16_t)a; t.b = (std::uint16_t)b; t.c = (std::uint16_t)c;
+        t.n = Normalize(n);
+        t.d = Dot(t.n, verts[(std::size_t)a]);
+        out->tris.push_back(t);
+    }
+    if (out->tris.size() < 4) return Build(verts);
+    float vol = 0.0f;
+    V3 m1;
+    for (const Tri& tr : out->tris) {
+        const V3 a = verts[tr.a] - c0, b = verts[tr.b] - c0, c = verts[tr.c] - c0;
         const float v6 = Dot(a, Cross(b, c));
         vol += v6;
         m1 += (a + b + c) * (v6 * 0.25f);

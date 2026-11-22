@@ -63,6 +63,7 @@ struct ContactPair {
     ContactPointState pts[4];
     float friction = 0.5f, restitution = 0.0f, rolling = 0.0f;
     float approach = 0.0f;            // closing speed when it began
+    float preApproach = 0.0f;         // fastest closing speed seen while still apart but within reach (speculative)
 };
 
 struct JointData {

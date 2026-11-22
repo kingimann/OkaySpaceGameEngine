@@ -6,6 +6,7 @@
 //  - Timing (printed, not checked): pairs per step with sort-and-sweep from scratch versus the incremental tree, for
 //    1,000 / 5,000 / 20,000 boxes where a tenth of them move each step.
 #include "test_framework.hpp"
+#include "physcore_test_rng.hpp"
 #include "okay/Physics/Core/DynamicTree.hpp"
 #include "okay/Physics/Broadphase.hpp"
 
@@ -20,13 +21,7 @@
 using namespace okay::phys;
 
 namespace {
-struct Lcg {
-    std::uint64_t s;
-    explicit Lcg(std::uint64_t seed) : s(seed) {}
-    std::uint32_t Next() { s = s * 6364136223846793005ULL + 1442695040888963407ULL; return (std::uint32_t)(s >> 33); }
-    float Unit() { return (float)(Next() & 0xFFFFFF) / 16777216.0f; }
-    float Range(float a, float b) { return a + (b - a) * Unit(); }
-};
+using Lcg = okaytest::CoreRng;
 
 Aabb RandomBox(Lcg& r, float extent) {
     const V3 c{r.Range(-extent, extent), r.Range(-extent, extent), r.Range(-extent, extent)};

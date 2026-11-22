@@ -42,6 +42,19 @@ public:
     virtual Aabb Bounds() const = 0;
 };
 
+/// Another source seen through a per-axis scale (one mesh asset shared by many scaled instances: the triangles and
+/// their tree are kept once, each instance only scales what it collects).
+class ScaledTriangleSource : public TriangleSource {
+public:
+    ScaledTriangleSource(std::shared_ptr<const TriangleSource> base, const V3& scale);
+    void Collect(const Aabb& box, std::vector<Tri3>& out) const override;
+    Aabb Bounds() const override { return m_bounds; }
+private:
+    std::shared_ptr<const TriangleSource> m_base;
+    V3 m_scale, m_inv;
+    Aabb m_bounds;
+};
+
 /// A regular grid of heights (a height field or a terrain): vertex (i, j) sits at (x0 + i * cx, h[j * cols + i], z0 + j * cz)
 /// in the shape frame; each cell is two triangles. Nothing is built: Collect walks only the cells under the box.
 class HeightGridSource : public TriangleSource {
@@ -83,6 +96,9 @@ struct HullData {
     /// Build from points. Fewer than 4 points, or all on one plane / line, is grown into a thin solid so it still
     /// collides. Points are capped at kMaxInput (extra ones are ignored after the first kMaxInput).
     static std::shared_ptr<HullData> Build(const std::vector<V3>& points);
+    /// Take a hull that is already built (its corners and triangles, three indices each) without wrapping it again;
+    /// triangles are turned to face outward. Falls back to Build when there are too few triangles.
+    static std::shared_ptr<HullData> FromTriangles(const std::vector<V3>& verts, const std::vector<int>& tris);
     static constexpr std::size_t kMaxInput = 4096;
 };
 
@@ -110,6 +126,7 @@ public:
     static Shape Cylinder(float r, float halfH) { Shape s; s.type = ShapeType::Cylinder; s.radius = r; s.halfHeight = halfH; return s; }
     static Shape Cone(float r, float halfH) { Shape s; s.type = ShapeType::Cone; s.radius = r; s.halfHeight = halfH; return s; }
     static Shape Hull(const std::vector<V3>& pts) { Shape s; s.type = ShapeType::Hull; s.radius = 0.0f; s.hull = HullData::Build(pts); return s; }
+    static Shape Hull(std::shared_ptr<const HullData> h) { Shape s; s.type = ShapeType::Hull; s.radius = 0.0f; s.hull = std::move(h); return s; }
     static Shape Triangle(const V3& a, const V3& b, const V3& c) { Shape s; s.type = ShapeType::Triangle; s.radius = 0.0f; s.tri[0] = a; s.tri[1] = b; s.tri[2] = c; return s; }
     static Shape Plane(const V3& n, float offset) { Shape s; s.type = ShapeType::Plane; s.radius = 0.0f; s.planeNormal = Normalize(n); s.planeOffset = offset; return s; }
     static Shape Mesh(std::shared_ptr<const TriangleSource> src) { Shape s; s.type = ShapeType::Mesh; s.radius = 0.0f; s.mesh = std::move(src); return s; }

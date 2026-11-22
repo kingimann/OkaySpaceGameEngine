@@ -7,7 +7,7 @@
 //  - joints: pendulum length, hinge limits and motor speed, slider limits, fixed weld, cone limit, rope, a 20-link
 //    chain, and an orientation drive that holds an arm level against gravity (powered ragdoll joint);
 //  - determinism: the same scene twice, and solved with islands in a scrambled order, gives the same bits;
-//  - queries: ray, overlap and shape cast;
+//  - the overlap query;
 //  - timing (printed): 1,000 and 5,000 bodies.
 #include "test_framework.hpp"
 #include "okay/Physics/Core/World.hpp"
@@ -401,33 +401,20 @@ int main() {
         CHECK(a == c);
     }
 
-    RUN_SUITE("physcore world: queries");
+    RUN_SUITE("physcore world: overlap query");
     {
         World w;
         Ground(w);
-        const BodyId b = Box(w, V3{0, 0.5f, 5}, V3{0.5f, 0.5f, 0.5f});
         const BodyId s = Ball(w, V3{3, 0.5f, 0}, 0.5f);
         w.Step(kDt);
-        RayHit h = w.RayCast(V3{0, 0.5f, 0}, V3{0, 0, 1}, 100.0f);
-        CHECK(h.hit && h.body == b);
-        CHECK_NEAR(h.t, 4.5, 1e-3);
-        CHECK_NEAR(h.normal.z, -1.0, 1e-4);
-        h = w.RayCast(V3{0, 0.5f, 0}, V3{1, 0, 0}, 100.0f);
-        CHECK(h.hit && h.body == s);
-        CHECK_NEAR(h.t, 2.5, 2e-3);
-        h = w.RayCast(V3{0, 5, 0}, V3{0, -1, 0}, 100.0f);
-        CHECK(h.hit && h.t > 4.9f && h.t < 5.01f);
         const auto over = w.Overlap(Shape::Sphere(1.0f), Xf{V3{3, 0.5f, 0.8f}, Q{}});
         bool hasBall = false;
         for (ColliderId c : over) hasBall = hasBall || w.ColliderBody(c) == s;
         CHECK(hasBall);
-        RayHit sc = w.ShapeCast(Shape::Sphere(0.25f), Xf{V3{0, 0.5f, 0}, Q{}}, V3{0, 0, 1}, 20.0f, 0xFFFFFFFFu, false,
-                                [&](ColliderId c) { return w.GetType(w.ColliderBody(c)) != BodyType::Static; });
-        CHECK(sc.hit && sc.body == b);
-        CHECK_NEAR(sc.t, 4.25, 0.01);
+        CHECK(w.Overlap(Shape::Sphere(0.2f), Xf{V3{10, 3, 10}, Q{}}).empty());
     }
 
-    RUN_SUITE("physcore world: a triangle mesh floor (boxes rest, a ball rolls across edges without bumps, rays hit it)");
+    RUN_SUITE("physcore world: a triangle mesh floor (boxes rest, a ball rolls across edges without bumps, rays are Physics3D's)");
     {
         World w;
         std::vector<Tri3> tris;
@@ -458,10 +445,6 @@ int main() {
         CHECK(rest);
         CHECK(hiBall - loBall < 0.01f);
         CHECK(w.GetPosition(ball).x > 0.0f);
-        const RayHit h = w.RayCast(V3{0.3f, 5, 0.7f}, V3{0, -1, 0}, 10.0f);
-        CHECK(h.hit && h.body == g);
-        CHECK_NEAR(h.t, 5.0, 1e-4);
-        CHECK_NEAR(h.normal.y, 1.0, 1e-5);
     }
 
     RUN_SUITE("physcore world: timing");

@@ -503,6 +503,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Built-in action clips (5.12)
 - built-in animation (5.4)
 - Built-in browser (37.3.3)
+- Built-in controllers on actions (8.3.8)
 - built-in function (13.7)
 - Built-in function library (13.7)
 - Built-in node factory (24.3.1)

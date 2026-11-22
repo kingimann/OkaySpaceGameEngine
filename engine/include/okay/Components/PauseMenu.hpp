@@ -95,7 +95,9 @@ public:
 
     void Update(float) override {
         if (!m_built) EnsureBuilt();
-        if (Input::GetKeyDown(toggleKey)) Toggle();
+        // Escape until the player rebinds "Pause"; then its bindings. Read past the menu's own Block context, which
+        // swallows every action while it is open, so the same key also closes it.
+        if (InputActions::MenuKeyDown("Pause", toggleKey)) Toggle();
         // Keep the overlay synced to the pause state (another source un-pausing also
         // closes it). Only touch it on a change so we don't fight other systems.
         bool paused = Game::Paused();

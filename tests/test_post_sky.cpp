@@ -430,5 +430,35 @@ int main() {
         CHECK(cam->clearFlags == Camera::ClearFlags::SolidColor);
     }
 
+    // ---- The Night preset's stars: reset by Default, and kept by a save / load ------
+    // Night sets the star density and brightness that the Procedural sky draws, even
+    // with the separate "Star field" (skyStars) overlay off.
+    {
+        RS d;
+        RS rs;
+        CHECK(ApplyLookPreset(rs, "Night"));
+        CHECK(!rs.skyStars);
+        CHECK(rs.skyStarDensity != d.skyStarDensity);
+        // Default must put the stars back too (it used to keep Night's density).
+        CHECK(ApplyLookPreset(rs, "Default"));
+        CHECK_NEAR(rs.skyStarDensity, d.skyStarDensity, 1e-6f);
+        CHECK_NEAR(rs.skyStarBright, d.skyStarBright, 1e-6f);
+
+        Scene s("night");
+        CHECK(ApplyLookPreset(s.renderSettings, "Night"));
+        s.renderSettings.skyStarBright = 0.6f;
+        const float want = s.renderSettings.skyStarDensity;
+        const std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("loaded");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(s2, txt, &err));
+        CHECK_NEAR(s2.renderSettings.skyStarDensity, want, 1e-5f);    // used to come back as 0.5
+        CHECK_NEAR(s2.renderSettings.skyStarBright, 0.6f, 1e-5f);
+        CHECK(!s2.renderSettings.skyStars);                             // the overlay stays off
+        // An untouched scene still writes no star record.
+        Scene plain("plain");
+        CHECK(SceneSerializer::Serialize(plain).find("skystars") == std::string::npos);
+    }
+
     TEST_MAIN_RESULT();
 }

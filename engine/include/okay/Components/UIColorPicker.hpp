@@ -11,7 +11,7 @@
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIAppParts.hpp"
-#include "okay/Render/ColorHSV.hpp"
+#include "okay/Math/ColorSpace.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
@@ -57,12 +57,12 @@ public:
     int Count() const { return (int)swatches.size(); }
     int Value() const { return value; }
     Color Current() const {
-        if (useCustom) return colorhsv::ToColor(hue, sat, val, alpha);
+        if (useCustom) return ColorSpace::FromHsv(hue, sat, val, alpha);
         if (value >= 0 && value < Count()) return swatches[(std::size_t)value];
         return Color::White;
     }
     /// "#RRGGBB" ("#RRGGBBAA" when see-through) of the colour now.
-    std::string Hex() const { return colorhsv::Hex(Current()); }
+    std::string Hex() const { const Color c = Current(); return ColorSpace::ToHex(c, c.a < 0.999f); }
     /// Make a colour of your own from hue (degrees), saturation, value and alpha (0 to 1). Runs on_change.
     void SetHSVA(float h, float s, float v, float a) {
         hue = std::fmod(std::fmod(h, 360.0f) + 360.0f, 360.0f);
@@ -74,7 +74,7 @@ public:
         FireChange();
     }
     /// Make the colour of your own from a colour (the same as SetHSVA with its parts).
-    void SetColor(const Color& c) { const colorhsv::HSV h = colorhsv::FromRGB(c.r, c.g, c.b); SetHSVA(h.h, h.s, h.v, c.a); }
+    void SetColor(const Color& c) { const Hsv h = ColorSpace::ToHsv(c); SetHSVA(h.h, h.s, h.v, c.a); }
     void SetAdvanced(bool on) { advanced = on; Ensure(); Place(); }
     void SetSwatchSize(float px) { swatch = px < 16.0f ? 16.0f : px; }
     void SetGap(float g) { gap = g < 0.0f ? 0.0f : g; }
@@ -246,7 +246,7 @@ private:
         const bool changed = i != value || useCustom;
         value = i;
         useCustom = false;
-        { const Color c = swatches[(std::size_t)i]; const colorhsv::HSV h = colorhsv::FromRGB(c.r, c.g, c.b); hue = h.h; sat = h.s; val = h.v; alpha = c.a; }
+        { const Color c = swatches[(std::size_t)i]; const Hsv h = ColorSpace::ToHsv(c); hue = h.h; sat = h.s; val = h.v; alpha = c.a; }
         Place();
         if (!gameObject) return;
         auto* sc = gameObject->GetComponent<ScriptComponent>();

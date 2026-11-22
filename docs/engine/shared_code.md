@@ -56,6 +56,9 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Two-bone IK | `Math/TwoBoneIK.hpp` | `okay::SolveTwoBoneIK`, `SolveTwoBoneIKSoft` | `SolveTwoBoneIK(root, upper, lower, target, pole, mid, end);` |
 | Swing and twist split, joint limits | `Math/JointLimit.hpp` | `okay::TwistAbout` | `float deg; Quat twist = TwistAbout(q, axis, deg);` |
 | Convex contact (GJK, EPA) | `Physics/ConvexContact.hpp` | `okay::ConvexContact`, `convex_detail::Epa` | `ConvexHit hit = ConvexContact(supportA, supportB);` |
+| Word wrap (Game UI and OkayUI) | `UI/TextWrap.hpp` | `okay::textwrap::Greedy`, `textwrap::Options` (`collapseSpaces`, `tabsSeparate`) | `textwrap::Greedy(text, maxW, [&](const std::string& s){ return Measure(s); }, lines);` |
+| Tooltip placement (Game UI and OkayUI) | `UI/TooltipPlace.hpp` | `okay::PlaceTooltip`, `TooltipPlaceStyle` | `TooltipBox b = PlaceTooltip(mx, my, w, h, 0, 0, screenW, screenH);` |
+| HSV, HSL and hex colours (Game UI, OkayUI, tools) | `Math/ColorSpace.hpp` | `okay::ColorSpace` (`ToHsv`, `FromHsv`, `ToHex`, `ParseHex`) | `Color c = ColorSpace::FromHsv(120.0f, 1.0f, 1.0f);` |
 | Ray against a triangle mesh | `Physics/TriMesh.hpp` | `okay::TriMesh::Raycast`, `TriMesh::RayLocal` | `mesh.Raycast(origin, dir, 100.0f, t, normal);` |
 | Save games | `Core/GameSaves.hpp` and `Core/SaveFramework.hpp` | `okay::GameSaves` (`Save`, `Load`, `AutoSave`), `Saveable`, `SaveWriter`, `SaveReader`, `SaveSystem` | `GameSaves::Save(scene, "slot1");` |
 | Input actions | `Input/ActionSet.hpp` | `okay::ActionSet` (`Pressed`, `Axis`), `ActionMap`, `BindingSpec` | `if (actions.Pressed("Jump")) ...` |

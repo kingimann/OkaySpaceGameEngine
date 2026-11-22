@@ -7,7 +7,7 @@
 #include "okay/Components/UIColorPicker.hpp"
 #include "okay/Components/NativeUIActions.hpp"
 #include "okay/Components/UIVars.hpp"
-#include "okay/Render/ColorHSV.hpp"
+#include "okay/Math/ColorSpace.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include <cmath>
 #include <cstdio>
@@ -75,7 +75,11 @@ int main() {
 
     // ===== Colour maths ===========================================================================================
     {
-        using namespace colorhsv;
+        // The Game UI colour picker and OkayUI both use okay::ColorSpace (the old colorhsv copy is gone).
+        auto FromRGB = [](float r, float g, float b) { return ColorSpace::ToHsv(Color(r, g, b, 1.0f)); };
+        auto ToColor = [](float h, float s, float v) { return ColorSpace::FromHsv(h, s, v); };
+        auto Hex = [](const Color& c) { return ColorSpace::ToHex(c, c.a < 0.999f); };
+        using HSV = Hsv;
         const HSV red = FromRGB(1, 0, 0);
         CHECK_NEAR(red.h, 0.0f, 1e-4); CHECK_NEAR(red.s, 1.0f, 1e-4); CHECK_NEAR(red.v, 1.0f, 1e-4);
         const HSV green = FromRGB(0, 1, 0); CHECK_NEAR(green.h, 120.0f, 1e-3);
@@ -617,7 +621,7 @@ int main() {
         CHECK(!cp->advanced && !cp->useCustom);
         CHECK(ChildCount(g) == cp->Count() + 1);                      // swatches and the preview chip only
         CHECK_NEAR(cp->Current().r, cp->swatches[0].r, 1e-5);
-        CHECK(cp->Hex() == colorhsv::Hex(cp->swatches[0]));
+        CHECK(cp->Hex() == ColorSpace::ToHex(cp->swatches[0], cp->swatches[0].a < 0.999f));
         auto* sc = g->AddComponent<ScriptComponent>("okayscript");
         CHECK(sc->LoadSource("function on_change() { set_x(3); }"));
         cp->SetAdvanced(true);
@@ -643,7 +647,7 @@ int main() {
         // a click on a swatch goes back to the swatches and loads its numbers
         cp->SetValue(2);
         CHECK(!cp->useCustom && cp->value == 2);
-        const colorhsv::HSV want = colorhsv::FromRGB(cp->swatches[2].r, cp->swatches[2].g, cp->swatches[2].b);
+        const Hsv want = ColorSpace::ToHsv(cp->swatches[2]);
         CHECK_NEAR(cp->hue, want.h, 1e-3); CHECK_NEAR(cp->sat, want.s, 1e-4);
         s.Update(0.016f);
         CHECK_NEAR(sq->hue, want.h, 1e-3);

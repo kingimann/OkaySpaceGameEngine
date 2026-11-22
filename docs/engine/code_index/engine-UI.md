@@ -2,7 +2,7 @@
 
 # Code index: engine-UI
 
-Back to the [code index](../code_index.md). 16 headers, 77 names.
+Back to the [code index](../code_index.md). 17 headers, 79 names.
 
 ## `engine/include/okay/UI/FocusGraph.hpp`
 
@@ -25,9 +25,14 @@ Back to the [code index](../code_index.md). 16 headers, 77 names.
 - `RichRun` struct, line 222: A piece of one line of rich text drawn in one style. A space joins the run it sits in.
 - `RichTextRuns` function, line 234: Split rich text into runs of one style, line by line, so a host without its own rich-text drawing (the
 
+## `engine/include/okay/UI/TextWrap.hpp`
+
+- `Options` struct, line 11
+
 ## `engine/include/okay/UI/TooltipPlace.hpp`
 
 - `TooltipBox` struct, line 6
+- `TooltipPlaceStyle` struct, line 10: The few numbers that make one UI's tooltips look like its own. Game UI uses the defaults; OkayUI (the editor and
 
 ## `engine/include/okay/UI/UIAppPartsDraw.hpp`
 

@@ -6,6 +6,9 @@
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIInternals.hpp"
 #include "okay/UI/OkayUICompat.hpp"   // BeginTooltip, GetStyle, ListClipper (defined here: they need the private layout state)
+#include "okay/UI/TooltipPlace.hpp"   // okay::PlaceTooltip: the one tooltip placement (Game UI uses it too)
+#include "okay/UI/TextWrap.hpp"   // okay::textwrap::Greedy: the one word wrap (Game UI uses it too)
+#include "okay/Math/ColorSpace.hpp"   // okay::ColorSpace: the one HSV conversion (Game UI uses it too)
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
 #include "okay/Graphics/TtfFont.hpp" // fallback fonts for characters the atlas lacks
@@ -2219,32 +2222,19 @@ Color32 ColorConvertFloat4ToU32(Vec4 v) {
     auto b = [](float f) { return (unsigned)(clamp01(f) * 255.0f + 0.5f); };
     return RGBA(b(v.x), b(v.y), b(v.z), b(v.w));
 }
+// Hue here is 0..1 (Dear ImGui's convention); okay::ColorSpace works in degrees.
 void ColorConvertRGBtoHSV(float r, float g, float b, float* h, float* s, float* v) {
-    r = clamp01(r); g = clamp01(g); b = clamp01(b);
-    const float mx = std::max(r, std::max(g, b)), mn = std::min(r, std::min(g, b)), d = mx - mn;
-    float hh = 0.0f;
-    if (d > 1e-9f) {
-        if (mx == r) hh = (g - b) / d + (g < b ? 6.0f : 0.0f);
-        else if (mx == g) hh = (b - r) / d + 2.0f;
-        else hh = (r - g) / d + 4.0f;
-        hh /= 6.0f;
-    }
-    if (h) *h = hh;
-    if (s) *s = mx > 1e-9f ? d / mx : 0.0f;
-    if (v) *v = mx;
+    const okay::Hsv o = okay::ColorSpace::ToHsv(okay::Color(clamp01(r), clamp01(g), clamp01(b), 1.0f));
+    if (h) *h = o.h / 360.0f;
+    if (s) *s = o.s;
+    if (v) *v = o.v;
 }
 void ColorConvertHSVtoRGB(float h, float s, float v, float* r, float* g, float* b) {
     if (!std::isfinite(h)) h = 0.0f;
-    h = h - std::floor(h); s = clamp01(s); v = clamp01(v);
-    const float hh = h * 6.0f;
-    const int i = (int)hh % 6;
-    const float f = hh - std::floor(hh), p = v * (1.0f - s), q = v * (1.0f - s * f), t = v * (1.0f - s * (1.0f - f));
-    float R = v, G = t, B = p;
-    switch (i) { case 0: R = v; G = t; B = p; break; case 1: R = q; G = v; B = p; break; case 2: R = p; G = v; B = t; break;
-                 case 3: R = p; G = q; B = v; break; case 4: R = t; G = p; B = v; break; default: R = v; G = p; B = q; break; }
-    if (r) *r = R;
-    if (g) *g = G;
-    if (b) *b = B;
+    const okay::Color c = okay::ColorSpace::FromHsv((h - std::floor(h)) * 360.0f, clamp01(s), clamp01(v));
+    if (r) *r = c.r;
+    if (g) *g = c.g;
+    if (b) *b = c.b;
 }
 
 namespace { float g_userSavedScale = 0.0f; }   // textScale before a user font set its own (0: none active)
@@ -3199,8 +3189,7 @@ struct ParaLines {
 // the lines of one paragraph are one text line apart (no item spacing between them), and the lines after the first fill the width
 // from the left edge (`maxRest`) even when the first one began after another item on its line.
 void wrapLines(const char* text, float maxW, const unsigned char* col, float maxRest = -1.0f) {
-    char line[512]; int n = 0;
-    const char* p = text;
+    char line[512];
     const bool imguiRows = g_textRowH > 0.0f;
     bool first = true;
     ParaLines para(col);   // OkayUI's own rows: the lines of a paragraph one text pitch apart (main's ParaLines)
@@ -3248,23 +3237,13 @@ void wrapLines(const char* text, float maxW, const unsigned char* col, float max
             if (k > 0 && !std::strstr(text, "  ") && text[0] != ' ' && text[k - 1] != ' ') { textLine(line, col); return; }
         }
     }
-    while (*p) {
-        const char* wordEnd = p;
-        while (*wordEnd && *wordEnd != ' ' && *wordEnd != '\n') ++wordEnd;
-        const int wl = (int)(wordEnd - p);
-        char trial[512]; int tn = 0;
-        for (int i = 0; i < n && tn < 500; ++i) trial[tn++] = line[i];
-        if (n > 0 && tn < 500) trial[tn++] = ' ';
-        for (int i = 0; i < wl && tn < 500; ++i) trial[tn++] = p[i];
-        trial[tn] = 0;
-        if (n > 0 && labelW(trial) > maxW) { line[n] = 0; emit(line); n = 0; continue; }
-        for (int i = 0; i < tn && i < 500; ++i) line[i] = trial[i];
-        n = tn < 500 ? tn : 500;
-        p = wordEnd;
-        if (*p == '\n') { line[n] = 0; emit(line); n = 0; ++p; }
-        else if (*p == ' ') ++p;
-    }
-    if (n > 0) { line[n] = 0; emit(line); }
+    // Every other line goes through the shared greedy wrap (okay/UI/TextWrap.hpp, also Game UI's): spaces kept while
+    // the line fits, '\n' always breaks.
+    okay::textwrap::Options keep;
+    keep.collapseSpaces = false;
+    std::vector<std::string> lines;
+    okay::textwrap::Greedy(text, maxW, [](const std::string& l) { return labelW(l.c_str()); }, lines, keep);
+    for (const std::string& l : lines) emit(l.c_str());
     para.Done();
 }
 
@@ -4147,9 +4126,15 @@ void paintTooltipBox(const char* text) {
     }
     const float pad = g_look ? 8.0f : 6.0f;
     const float bw = tw + pad * 2.0f, bh = th * (float)lines + lineGap * (float)(lines - 1) + pad * 2.0f;
-    float bx = g_in.mouseX + 14.0f, by = g_in.mouseY + 14.0f;
-    if (g_in.displayW > 0.0f && bx + bw > g_in.displayW - 2.0f) bx = std::max(2.0f, g_in.mouseX - 10.0f - bw);   // flip to the left of the cursor
-    if (g_in.displayH > 0.0f && by + bh > g_in.displayH - 2.0f) by = std::max(2.0f, g_in.mouseY - 10.0f - bh);   // and above it
+    // Placed by the same rule as Game UI's tooltips (okay/UI/TooltipPlace.hpp): right of and below the cursor, flipped
+    // left / up when it would leave the window. An unknown window size (0) never flips.
+    okay::TooltipPlaceStyle tipStyle;
+    tipStyle.offset = 14.0f; tipStyle.flipGap = 10.0f; tipStyle.pad = 2.0f; tipStyle.shrink = false;
+    const float big = 1e30f;
+    const okay::TooltipBox placed = okay::PlaceTooltip(g_in.mouseX, g_in.mouseY, bw, bh, 0.0f, 0.0f,
+                                                       g_in.displayW > 0.0f ? g_in.displayW : big,
+                                                       g_in.displayH > 0.0f ? g_in.displayH : big, tipStyle);
+    const float bx = placed.x, by = placed.y;
     g_toOverlay = true;
     if (g_look) {
         const unsigned char tip[4] = {38, 42, 51, 250};

@@ -874,6 +874,11 @@ target_compile_definitions(test_ui_library2_example PRIVATE OKAY_SOURCE_DIR="${P
 add_test(NAME ui_library2_example COMMAND test_ui_library2_example)
 
 # UI library slice 3: app parts (menu bar, toolbar, tree view, data table, wizard, form group) and the colour picker's advanced mode
+# Code Game UI and OkayUI share (word wrap, tooltip placement, HSV): header-only, no engine library needed.
+add_executable(test_ui_shared_code test_ui_shared_code.cpp)
+target_include_directories(test_ui_shared_code PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME ui_shared_code COMMAND test_ui_shared_code)
+
 add_executable(test_ui_library3 test_ui_library3.cpp)
 target_link_libraries(test_ui_library3 PRIVATE okay::engine)
 add_test(NAME ui_library3 COMMAND test_ui_library3)

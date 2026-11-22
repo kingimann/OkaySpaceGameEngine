@@ -5,6 +5,7 @@
 #include "okay/Components/UIGameHud.hpp"
 #include "okay/Inventory/ItemPresentation.hpp"
 #include "okay/Graphics/Font.hpp"
+#include "okay/UI/TextWrap.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -219,17 +220,7 @@ void DrawCompass(Painter& p, UICompass* w, const Vec2& o, const Vec2& sz, float 
 // ---- item tooltip card ----
 std::vector<std::string> Wrap(const std::string& text, float width, float px) {
     std::vector<std::string> out;
-    std::string line, word;
-    auto flushWord = [&]() {
-        if (word.empty()) return;
-        const std::string trial = line.empty() ? word : line + " " + word;
-        if (!line.empty() && UITextW(trial, px) > width) { out.push_back(line); line = word; }
-        else line = trial;
-        word.clear();
-    };
-    for (char c : text) { if (c == ' ') flushWord(); else word += c; }
-    flushWord();
-    if (!line.empty()) out.push_back(line);
+    textwrap::Greedy(text, width, [px](const std::string& t) { return UITextW(t, px); }, out);
     if (out.empty()) out.push_back("");
     return out;
 }

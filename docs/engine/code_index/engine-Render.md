@@ -2,7 +2,7 @@
 
 # Code index: engine-Render
 
-Back to the [code index](../code_index.md). 48 headers, 414 names.
+Back to the [code index](../code_index.md). 47 headers, 420 names.
 
 ## `engine/include/okay/Render/AmfReader.hpp`
 
@@ -45,13 +45,6 @@ Back to the [code index](../code_index.md). 48 headers, 414 names.
 ## `engine/include/okay/Render/Color.hpp`
 
 - `Color` struct, line 9: RGBA color with components in the [0, 1] range, like 'Color'.
-
-## `engine/include/okay/Render/ColorHSV.hpp`
-
-- `HSV` struct, line 12
-- `FromRGB` function, line 15: RGB (0..1 each) to hue (degrees), saturation and value.
-- `ToColor` function, line 33: Hue (degrees, wraps), saturation and value (0..1) to RGB with alpha 'a'.
-- `Hex` function, line 54: "#RRGGBB", or "#RRGGBBAA" when the colour is not fully opaque.
 
 ## `engine/include/okay/Render/ConsoleRenderer.hpp`
 
@@ -321,13 +314,23 @@ Back to the [code index](../code_index.md). 48 headers, 414 names.
 - `RawFileUnsafeForAssimp` function, line 395: True when Assimp 5.4.3's RAW importer would build a broken node list for this file (two or more groups with triangles, which
 - `ReadPmxFile` function, line 396
 - `ReadLwsFile` function, line 398: 'path' is a .lws scene or a .mot motion file.
-- `ImportBackend` enum, line 402
-- `HasOwnReader` function, line 413: True when 'ext' (".stl", any case) has one of our own readers.
-- `SetImportBackend` function, line 417: Choose the backend for one extension (".stl"), or for every format with
-- `EffectiveImportBackend` function, line 420: The backend a read of 'ext' will actually use right now, after defaults and
-- `RunReaderGuarded` function, line 425: Runs one reader step and turns a thrown std::bad_alloc, std::length_error or any other std::exception into a refusal
-- `MergeModelMeshes` function, line 438: One merged Mesh from an ImportedModel (parts concatenated, node transforms
-- `BuildSceneFromModel` function, line 444: Build the model as a node hierarchy in 'scene' (MeshRenderers, SkinnedMesh
+- `ReadGltf1Buffer` function, line 406: glTF 1.0 ('.gltf' with asset.version 1.x, or the binary KHR_binary_glTF form): the default scene's node tree (matrix or
+- `ReadGltf1File` function, line 407
+- `IsGltf1` function, line 409: True for the first bytes of a binary glTF 1.0 file ("glTF" then version 1). A JSON .gltf is told by its asset.version.
+- `GltfFileIsVersion1` function, line 412: True when the file at 'path' is glTF 1.0: a binary version-1 header, or JSON whose asset.version starts with "1" (or,
+- `ReadOgexBuffer` function, line 423: OpenGEX (.ogex, Open Game Engine Exchange, written in OpenDDL text; UTF-8 or UTF-16 with a byte order mark): the node tree
+- `ReadOgexFile` function, line 424
+- `ReadMdlBuffer` function, line 432: MDL (.mdl), two of the formats that use the extension: the Quake 1 model ("IDPO", version 6: the first frame of the vertex
+- `ReadMdlFile` function, line 433
+- `ReadQ3bspFile` function, line 436: Quake III Arena maps ('.bsp' version 46, or a '.pk3' zip holding maps/<name>.bsp): the render geometry of every model, one part per
+- `ReadQ3bspBuffer` function, line 437
+- `ImportBackend` enum, line 440
+- `HasOwnReader` function, line 451: True when 'ext' (".stl", any case) has one of our own readers.
+- `SetImportBackend` function, line 455: Choose the backend for one extension (".stl"), or for every format with
+- `EffectiveImportBackend` function, line 458: The backend a read of 'ext' will actually use right now, after defaults and
+- `RunReaderGuarded` function, line 463: Runs one reader step and turns a thrown std::bad_alloc, std::length_error or any other std::exception into a refusal
+- `MergeModelMeshes` function, line 476: One merged Mesh from an ImportedModel (parts concatenated, node transforms
+- `BuildSceneFromModel` function, line 482: Build the model as a node hierarchy in 'scene' (MeshRenderers, SkinnedMesh
 
 ## `engine/include/okay/Render/ModelImport.hpp`
 

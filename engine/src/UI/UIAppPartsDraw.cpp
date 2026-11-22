@@ -5,7 +5,7 @@
 #include "okay/UI/UIRenderer.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/UIAppParts.hpp"
-#include "okay/Render/ColorHSV.hpp"
+#include "okay/Math/ColorSpace.hpp"
 #include "okay/Graphics/Font.hpp"
 #include <algorithm>
 #include <cmath>
@@ -273,7 +273,7 @@ void DrawSquare(Painter& p, UIColorSquare* w, const Vec2& o, const Vec2& sz, flo
         for (int c = 0; c < cols; ++c) {
             const float h = (((float)c + 0.5f) / (float)cols) * 360.0f;
             const float s = 1.0f - (((float)r + 0.5f) / (float)rows);
-            const RGBA col = Ink(colorhsv::ToColor(h, s, w->brightness), op);
+            const RGBA col = Ink(ColorSpace::FromHsv(h, s, w->brightness), op);
             p.SetDrawColor(col.r, col.g, col.b, col.a);
             const int x0 = (int)(o.x + (float)c * cw), y0 = (int)(o.y + (float)r * ch);
             const int x1 = (int)(o.x + (float)(c + 1) * cw + 0.999f), y1 = (int)(o.y + (float)(r + 1) * ch + 0.999f);

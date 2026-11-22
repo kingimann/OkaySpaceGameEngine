@@ -9,6 +9,7 @@
 #include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Core/Utf8.hpp"
 #include "okay/UI/RichText.hpp"
+#include "okay/UI/TextWrap.hpp"
 #include <string>
 #include <cmath>
 #include <cctype>
@@ -231,20 +232,17 @@ public:
     /// Word-wrap `s` so no line exceeds `maxChars` glyphs (existing '\n' kept;
     /// a single word longer than the limit overflows rather than splitting).
     static std::string WrapTo(const std::string& s, int maxChars) {
-        std::string out, word; int lineLen = 0;
-        auto flush = [&]() {
-            if (word.empty()) return;
-            const int wl = (int)utf8::Length(word);   // characters, not bytes
-            if (lineLen > 0 && lineLen + 1 + wl > maxChars) { out += '\n'; lineLen = 0; }
-            else if (lineLen > 0) { out += ' '; ++lineLen; }
-            out += word; lineLen += wl; word.clear();
-        };
-        for (char c : s) {
-            if (c == '\n') { flush(); out += '\n'; lineLen = 0; }
-            else if (c == ' ' || c == '\t') flush();
-            else word += c;
+        textwrap::Options opt;
+        opt.tabsSeparate = true;
+        std::vector<std::string> lines;
+        const bool endsAtNewline = textwrap::Greedy(
+            s, (float)maxChars, [](const std::string& t) { return (float)utf8::Length(t); }, lines, opt);   // characters, not bytes
+        std::string out;
+        for (std::size_t i = 0; i < lines.size(); ++i) {
+            if (i) out += '\n';
+            out += lines[i];
         }
-        flush();
+        if (endsAtNewline) out += '\n';
         return out;
     }
 

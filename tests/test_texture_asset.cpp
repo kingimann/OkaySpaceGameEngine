@@ -5,6 +5,7 @@
 #include "okay/Render/TextureAsset.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
 #include "okay/Debug/MemoryTracker.hpp"
+#include "okay/Render/GpuTexture.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -167,6 +168,28 @@ int main() {
         CHECK(TextureImportSampling(png).anisotropy == 2);
         WriteMeta(png, "set filter point\nset anisotropy 16\n");
         CHECK(TextureImportSampling(png).anisotropy == 1);   // point filtering never asks for anisotropy
+    }
+
+    // --- The compressed GPU copy follows the picture's compression format and normal-map settings.
+    {
+        const std::string png = d + "/bc.png";
+        CHECK(Solid(8, 8, 90, 120, 200).SavePNG(png));   // opaque: auto picks BC1
+        WriteMeta(png, "set compress 1\n");
+        tex::DdsImage dds;
+        CHECK(gputex::Source(png, &dds));
+        CHECK(dds.format == tex::DdsFormat::BC1);
+        WriteMeta(png, "set compress 1\nset compression bc3\n");   // asked for BC3: BC3 even though it is opaque
+        CHECK(gputex::Source(png, &dds));
+        CHECK(dds.format == tex::DdsFormat::BC3);
+        WriteMeta(png, "set compress 1\nset srgb 0\nset normalMap 1\n");   // a normal map: auto picks BC5
+        CHECK(gputex::Source(png, &dds));
+        CHECK(dds.format == tex::DdsFormat::BC5);
+        WriteMeta(png, "set compress 1\nset compression bc4\n");
+        CHECK(gputex::Source(png, &dds));
+        CHECK(dds.format == tex::DdsFormat::BC4);
+        WriteMeta(png, "set compress 1\nset mipmaps 0\n");
+        CHECK(gputex::Source(png, &dds));
+        CHECK(dds.mips.size() == 1);
     }
 
     // --- Reload after an import setting changed: the same asset, the new size.

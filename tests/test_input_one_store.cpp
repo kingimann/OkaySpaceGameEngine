@@ -7,6 +7,7 @@
 #include "okay/Core/Prefs.hpp"
 #include "okay/Input/RemapModel.hpp"
 #include "okay/Scene/UIGallery.hpp"
+#include "okay/Components/TextRenderer.hpp"
 
 using namespace okay;
 
@@ -85,6 +86,20 @@ int main() {
         CHECK(!Prefs::Has("input.jump"));
     }
 
+    // ---- 4. Script API: ia_rebind on player 0 reaches InputActions (in memory; ia_save writes it) ----
+    {
+        Fresh();
+        CHECK(InputRuntime::JoinNamed("keyboard") == 0 && InputRuntime::JoinNamed("pad1") == 1);
+        CHECK(InputRuntime::Rebind(0, "Crouch", 0, 0, "key:c"));
+        CHECK(InputActions::Find("Crouch")->bindings[0].ToString() == "key:c");
+        CHECK(!Prefs::Has("input.crouch") && !Prefs::Has("inputov.player0"));       // not saved until asked
+        InputRuntime::SaveOverrides(0);
+        CHECK(Prefs::GetString("input.crouch") == "key:c;pad:b" && Prefs::Has("inputov.player0"));
+        // another player's rebinding stays theirs
+        CHECK(InputRuntime::Rebind(1, "Crouch", 1, 0, "pad:y"));
+        CHECK(InputActions::Find("Crouch")->bindings[1].ToString() == "pad:b");
+    }
+
     // ---- 5. Old saves: an "input.<action>" pref from an earlier version loads into both (one-time import) ----
     {
         Fresh();
@@ -119,6 +134,36 @@ int main() {
         InputRuntime::Players().SetAsset(custom);
         CHECK(InputActions::Rebind("Jump", "key:u"));
         CHECK(InputRuntime::Set(0) && SetPart(0, "Jump", 0, 0) == "key:f");
+    }
+
+    // ---- 7. The script names keep their old results: ia_rebind true / false as before, nothing saved until ia_save,
+    //         ia_reset_bindings puts the asset back; player 0's changes now also reach InputActions ----
+    {
+        Fresh();
+        Scene scene("script"); scene.physicsEnabled = false;
+        GameObject* g = scene.CreateGameObject("T");
+        g->AddComponent<TextRenderer>();
+        auto* sc = g->AddComponent<ScriptComponent>();
+        std::string err;
+        CHECK(sc->LoadSource(R"(function update(dt) {
+  if (key_down("r")) { set_text("rebind " + ia_rebind("Jump", 0, 0, "key:j") + " " + ia_rebind("Nope", 0, 0, "key:j") + " " + ia_rebind("Jump", 9, 0, "key:j") + " " + ia_rebind("Jump", 0, 0, "not_a_key")); }
+  if (key_down("v")) { ia_save(); }
+  if (key_down("z")) { ia_reset_bindings(); }
+})", &err));
+        scene.Start();
+        auto step = [&](std::vector<char> keys) { Frame(keys); scene.Update(0.016f); };
+        step({}); step({'r'});
+        TextRenderer* t = g->GetComponent<TextRenderer>();
+        CHECK(t && t->text == "rebind true false false false");
+        CHECK(SetPart(0, "Jump", 0, 0) == "key:j" && InputActions::Find("Jump")->bindings[0].ToString() == "key:j");
+        CHECK(!Prefs::Has("inputov.player0") && !Prefs::Has("input.jump"));
+        step({}); step({'v'});
+        CHECK(Prefs::Has("inputov.player0") && Prefs::GetString("input.jump") == "key:j;pad:a");
+        step({}); step({'z'});
+        CHECK(SetPart(0, "Jump", 0, 0) == "key:space" && InputActions::Find("Jump")->bindings[0].ToString() == "key:space");
+        CHECK(Prefs::Has("inputov.player0"));                                         // reset alone does not save, as before
+        step({}); step({'v'});
+        CHECK(!Prefs::Has("inputov.player0") && !Prefs::Has("input.jump"));
     }
 
     Prefs::Clear(); InputRuntime::Reset(); InputActions::Restore(); Input::FeedKeys({});

@@ -6,6 +6,8 @@
 
 namespace okay {
 
+class ActionSet;
+
 /// One input a game action listens to, written as text so it saves and shows
 /// easily:
 ///   key:space   key:w   key:shift      a keyboard key (Input::KeyFromName names)
@@ -45,7 +47,15 @@ struct InputBinding {
 /// keys, so players can rebind them and play on a keyboard or a controller.
 /// Each action has a list of bindings; it is down while any of them is. The
 /// defaults cover a typical action game; games add their own with Define.
-/// A player's rebinding is kept in Prefs ("input.<action>") and loaded at start.
+///
+/// One rebinding store: the typed layer (ActionSet, the .okayinput asset, InputRuntime) is the canonical one, and this
+/// table is the text-binding facade the built-in controllers read. An action that the first local player's ActionSet
+/// (InputRuntime player 0, "the default ActionSet") also has, with the same authored bindings as this action's defaults
+/// (Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact, Reload, Inventory and Pause with the shipped asset), is linked:
+/// binding i here is binding i there. A rebind on either side (Rebind, the Controls screen, RemapBind, a profile, an "ia:"
+/// Keybind field, ia_rebind) changes both, and is saved as that player's overrides (Prefs "inputov.player0"). The older
+/// Prefs layout "input.<action>" is still written for every action, read at start and imported once into the overrides.
+/// Actions the ActionSet does not have (Dig, Prone, the Vehicle keys, a game's own) live only here, as before.
 class InputActions {
 public:
     struct Action {
@@ -238,9 +248,14 @@ public:
     /// Put one action (or every action, with "") back to its defaults.
     static void Reset(const std::string& name = "");
 
-    /// Read / write the player's rebinding from / to Prefs.
+    /// Read / write the player's rebinding from / to Prefs. Load reads "input.<action>" and then the default ActionSet's
+    /// saved overrides ("inputov.player0", which win where both are set), then saves, so both layouts agree. Save writes
+    /// "input.<action>" and the linked actions' overrides of the default ActionSet (the live one when player 0 has joined).
     static void Load();
     static void Save();
+    /// Copy the current bindings of every linked action of `set` (the default ActionSet) into this table. In memory only:
+    /// Save writes them. InputRuntime::Rebind / ResetBinding call it for player 0.
+    static void SyncFrom(const ActionSet& set);
     /// Back to the built-in default set (tests, new game).
     static void Restore();
 

@@ -66,6 +66,25 @@ bool InputRuntime::UseProjectAsset(const std::string& projectDir) {
     return f.good() && LoadAsset(path);
 }
 void InputRuntime::Reset() { S() = State{}; }
+bool InputRuntime::Rebind(int player, const std::string& action, int binding, int part, const std::string& path) {
+    ActionSet* s = Set(player);
+    if (!s || !s->Rebind(action, binding, part, path)) return false;
+    if (player == 0) InputActions::SyncFrom(*s);
+    return true;
+}
+bool InputRuntime::ResetBinding(int player, const std::string& action, int binding) {
+    ActionSet* s = Set(player);
+    if (!s) return false;
+    bool ok = true;
+    if (action.empty()) s->ResetOverrides(); else ok = s->ResetOverride(action, binding);
+    if (ok && player == 0) InputActions::SyncFrom(*s);
+    return ok;
+}
+void InputRuntime::SaveOverrides(int player) {
+    if (!Set(player)) return;
+    S().players.SaveOverrides(player);
+    if (player == 0) InputActions::Save();
+}
 int InputRuntime::JoinNamed(const std::string& d) {
     EnsureAsset();
     PlayerInputManager& p = S().players;

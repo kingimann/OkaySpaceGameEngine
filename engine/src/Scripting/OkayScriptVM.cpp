@@ -4214,8 +4214,8 @@ struct OkayScriptVM::Impl {
         b["ia_scheme"] = [iaPlayer](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 0)); return Value{s ? s->Scheme() : std::string()}; };
         b["ia_set_scheme"] = [iaName, iaPlayer](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 1)); return Value{s && s->SetScheme(iaName(a))}; };
         b["ia_rebind"] = [iaPlayer](std::vector<Value>& a) {
-            ActionSet* s = InputRuntime::Set(iaPlayer(a, 4));
-            return Value{s && a.size() > 3 && s->Rebind(a[0].AsString(), SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()), a[3].AsString())};
+            InputRuntime::Set(iaPlayer(a, 4));   // as before: the first read joins a player even when the call is short of arguments
+            return Value{a.size() > 3 && InputRuntime::Rebind(iaPlayer(a, 4), a[0].AsString(), SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()), a[3].AsString())};
         };
         b["ia_conflicts"] = [iaPlayer](std::vector<Value>& a) {
             ActionSet* s = InputRuntime::Set(iaPlayer(a, 4));
@@ -4223,8 +4223,8 @@ struct OkayScriptVM::Impl {
             if (s && a.size() > 3) for (const std::string& c : s->Conflicts(a[0].AsString(), SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()), a[3].AsString())) { if (!out.empty()) out += ", "; out += c; }
             return Value{out};
         };
-        b["ia_reset_bindings"] = [iaPlayer](std::vector<Value>& a) { if (ActionSet* s = InputRuntime::Set(iaPlayer(a, 0))) s->ResetOverrides(); return Value{}; };
-        b["ia_save"] = [iaPlayer](std::vector<Value>& a) { InputRuntime::Set(iaPlayer(a, 0)); InputRuntime::Players().SaveOverrides(iaPlayer(a, 0)); return Value{}; };
+        b["ia_reset_bindings"] = [iaPlayer](std::vector<Value>& a) { InputRuntime::ResetBinding(iaPlayer(a, 0)); return Value{}; };
+        b["ia_save"] = [iaPlayer](std::vector<Value>& a) { InputRuntime::SaveOverrides(iaPlayer(a, 0)); return Value{}; };
         b["ia_label"] = [iaName, iaPlayer](std::vector<Value>& a) {   // the first active binding of the action as the player reads it ("Cross", "Space", "W A S D")
             ActionSet* s = InputRuntime::Set(iaPlayer(a, 1));
             const ActionDef* d = s ? s->Find(iaName(a)) : nullptr;

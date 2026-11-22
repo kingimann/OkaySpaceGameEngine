@@ -1,5 +1,6 @@
 #include "okay/Input/InputActions.hpp"
 #include "okay/Input/InputRuntime.hpp"
+#include "okay/Input/ActionSet.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputRecorder.hpp"
@@ -132,10 +133,111 @@ void EnsureDefaults() {
     if (!done) { done = true; DefineDefaults(); }
 }
 
-// The player's saved bindings for `a`, if any, over its defaults.
+// ---- One store with the typed layer ----------------------------------------------------------------------------------
+// Binding i of an action here is binding i of the same-named action in the default ActionSet (InputRuntime player 0)
+// when that action's authored bindings are exactly this action's defaults: a four-key direction is a vector2 composite of
+// the same four keys, anything else a single binding with the same input. Written for this engine (duplicate audit #422).
+bool g_storeBusy = false;   // a push or pull is running: do not start another
+
+std::vector<std::string> PartsOf(const InputBinding& b) {
+    if (b.kind != InputBinding::Kind::Keys4) return {b.ToString()};
+    std::vector<std::string> parts;
+    for (char k : b.keys) { InputBinding one; one.kind = InputBinding::Kind::Key; one.code = (unsigned char)k; parts.push_back(one.ToString()); }
+    return parts;
+}
+bool SameParts(const std::vector<std::string>& a, const std::vector<std::string>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (InputBinding::Parse(a[i]).ToString() != InputBinding::Parse(b[i]).ToString()) return false;
+    return true;
+}
+const std::vector<std::string>& Authored(const BindingSpec& s) { return s.original.empty() ? s.parts : s.original; }
+bool ShapeFits(const InputBinding& b, const BindingSpec& s) {
+    return b.kind == InputBinding::Kind::Keys4 ? (s.kind == BindingSpec::Kind::Vector2 && s.parts.size() == 4)
+                                               : (s.kind == BindingSpec::Kind::Single && s.parts.size() == 1);
+}
+bool Linked(const InputActions::Action& a, const ActionDef& d) {
+    if (a.defaults.empty() || a.defaults.size() != d.bindings.size() || a.bindings.size() < d.bindings.size()) return false;
+    for (std::size_t i = 0; i < d.bindings.size(); ++i)
+        if (!ShapeFits(a.defaults[i], d.bindings[i]) || !SameParts(PartsOf(a.defaults[i]), Authored(d.bindings[i]))) return false;
+    return true;
+}
+// An ActionSet binding's parts as one InputBinding; Kind::None when they cannot be one.
+InputBinding FromParts(BindingSpec::Kind kind, const std::vector<std::string>& parts) {
+    if (kind == BindingSpec::Kind::Single && parts.size() == 1) return InputBinding::Parse(parts[0]);
+    InputBinding b;
+    if (kind != BindingSpec::Kind::Vector2 || parts.size() != 4) return b;
+    for (std::size_t j = 0; j < 4; ++j) {
+        const InputBinding k = InputBinding::Parse(parts[j]);
+        if (k.kind != InputBinding::Kind::Key || k.code <= 0 || k.code > 255) return InputBinding{};
+        b.keys[j] = (char)k.code;
+    }
+    b.kind = InputBinding::Kind::Keys4;
+    return b;
+}
+// This action's bindings into the ActionSet. A binding whose shape no longer fits (Move's keys replaced by mouse:delta)
+// is left as it was there. True when something changed.
+bool PushAction(const InputActions::Action& a, const ActionDef& d, ActionSet& set) {
+    bool changed = false;
+    for (std::size_t i = 0; i < d.bindings.size(); ++i) {
+        const BindingSpec& s = d.bindings[i];
+        if (!ShapeFits(a.bindings[i], s)) continue;
+        const std::vector<std::string> want = PartsOf(a.bindings[i]);
+        if (SameParts(want, s.parts)) continue;
+        if (SameParts(want, Authored(s))) { changed |= set.ResetOverride(d.name, (int)i); continue; }
+        const std::vector<std::string> now = s.parts;   // Rebind changes s
+        for (std::size_t k = 0; k < want.size(); ++k)
+            if (InputBinding::Parse(now[k]).ToString() != InputBinding::Parse(want[k]).ToString())
+                changed |= set.Rebind(d.name, (int)i, (int)k, want[k]);
+    }
+    return changed;
+}
+// Every linked action into the default ActionSet: the live one when player 0 has joined, else the asset with the saved
+// overrides (so the player who joins later loads them). Saved as player 0's overrides when anything changed.
+void PushToStore() {
+    if (g_storeBusy) return;
+    g_storeBusy = true;
+    PlayerInputManager& pm = InputRuntime::Players();
+    ActionSet temp;
+    ActionSet* set = pm.Player(0);
+    if (!set) { temp = pm.Asset(); temp.LoadOverrides("player0"); set = &temp; }
+    bool changed = false;
+    for (const InputActions::Action& a : Actions())
+        if (const ActionDef* d = set->Find(a.name))
+            if (Linked(a, *d)) changed |= PushAction(a, *d, *set);
+    if (changed) set->SaveOverrides("player0");
+    g_storeBusy = false;
+}
+// The saved overrides of the default ActionSet ("inputov.player0", lines "ov <action> <binding> <parts>") for `a`.
+void ApplyStoreOverrides(InputActions::Action& a) {
+    if (g_storeBusy || !Prefs::Has("inputov.player0")) return;
+    g_storeBusy = true;
+    const ActionDef* d = InputRuntime::Players().Asset().Find(a.name);
+    if (d && Linked(a, *d)) {
+        const std::string text = Prefs::GetString("inputov.player0");
+        std::size_t i = 0;
+        while (i < text.size()) {
+            std::size_t e = text.find('\n', i); if (e == std::string::npos) e = text.size();
+            const std::string line = text.substr(i, e - i);
+            i = e + 1;
+            const std::size_t s1 = line.rfind("ov ", 0) == 0 ? line.find(' ', 3) : std::string::npos;
+            const std::size_t s2 = s1 == std::string::npos ? s1 : line.find(' ', s1 + 1);
+            if (s2 == std::string::npos || line.substr(3, s1 - 3) != a.name) continue;
+            const int bi = std::atoi(line.substr(s1 + 1, s2 - s1 - 1).c_str());
+            if (bi < 0 || bi >= (int)d->bindings.size()) continue;
+            std::vector<std::string> parts;
+            for (std::size_t j = s2 + 1; j <= line.size();) { std::size_t c = line.find(',', j); if (c == std::string::npos) c = line.size(); parts.push_back(line.substr(j, c - j)); j = c + 1; }
+            const InputBinding nb = FromParts(d->bindings[(std::size_t)bi].kind, parts);
+            if (nb.kind != InputBinding::Kind::None && ShapeFits(nb, d->bindings[(std::size_t)bi])) a.bindings[(std::size_t)bi] = nb;
+        }
+    }
+    g_storeBusy = false;
+}
+
+// The player's saved bindings for `a`, if any, over its defaults ("input.<action>", then the default ActionSet's overrides).
 void ApplySaved(InputActions::Action& a) {
     const std::string key = "input." + Lower(a.name);
-    if (!Prefs::Has(key)) return;
+    if (!Prefs::Has(key)) { ApplyStoreOverrides(a); return; }
     const std::string saved = Prefs::GetString(key);
     std::vector<InputBinding> list;
     std::size_t start = 0;
@@ -146,6 +248,7 @@ void ApplySaved(InputActions::Action& a) {
             start = i + 1;
         }
     if (!list.empty()) a.bindings = list;
+    ApplyStoreOverrides(a);   // the typed layer's saved rebinding wins where both have one
 }
 
 // "dead;curve;sensitivity;invertX;invertY", kept only when it differs from neutral.
@@ -808,11 +911,28 @@ void InputActions::Reset(const std::string& name) {
             a.bindings = a.defaults;
             Prefs::Delete("input." + Lower(a.name));
         }
+    PushToStore();
 }
 
 void InputActions::Load() {
     EnsureDefaults();
     for (Action& a : Actions()) { ApplySaved(a); ApplySavedResponse(a); }
+    Save();   // one-time import: an older "input.<action>" reaches the default ActionSet's overrides, and the other way round
+}
+
+void InputActions::SyncFrom(const ActionSet& set) {
+    EnsureDefaults();
+    if (g_storeBusy) return;
+    for (Action& a : Actions()) {
+        const ActionDef* d = set.Find(a.name);
+        if (!d || !Linked(a, *d)) continue;
+        for (std::size_t i = 0; i < d->bindings.size(); ++i) {
+            const BindingSpec& s = d->bindings[i];
+            if (!ShapeFits(a.bindings[i], s)) continue;   // changed here into a shape the ActionSet cannot hold: this side wins
+            const InputBinding nb = FromParts(s.kind, s.parts);
+            if (nb.kind != InputBinding::Kind::None) a.bindings[i] = nb;
+        }
+    }
 }
 
 void InputActions::Save() {
@@ -823,6 +943,7 @@ void InputActions::Save() {
         if (now == Joined(a.defaults)) Prefs::Delete(key);   // only what the player changed
         else Prefs::SetString(key, now);
     }
+    PushToStore();
 }
 
 std::string InputActions::ExportBindings() {

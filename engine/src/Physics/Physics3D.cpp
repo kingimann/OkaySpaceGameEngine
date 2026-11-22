@@ -275,7 +275,27 @@ Vec3 SupportBase(Collider3D* col, const Vec3& dir) {
         Vec3 end = Vec3::Dot(dir, b - a) >= 0.0f ? b : a;
         return end + d * c->WorldRadius();
     }
-    return OBB3Support(MakeOBB3(static_cast<BoxCollider3D*>(col)), dir);
+    if (col->shape() == Collider3D::Shape::Box) return OBB3Support(MakeOBB3(static_cast<BoxCollider3D*>(col)), dir);
+    // Every other shape must not be read as a box: a Compound's part text sits where a box keeps its size, so the
+    // "size" was a heap address and the answer changed from run to run (the floor rescue then moved compound bodies
+    // differently each run, and a fast compound fell through thin floors).
+    if (col->shape() == Collider3D::Shape::Compound) {   // the furthest point of any part
+        auto* cc = static_cast<CompoundCollider3D*>(col);
+        const int n = cc->PartCount();
+        if (n == 0) return col->WorldCenter();
+        Vec3 best = cc->PartSupport(0, dir);
+        float bestD = Vec3::Dot(best, dir);
+        for (int i = 1; i < n; ++i) {
+            const Vec3 p = cc->PartSupport(i, dir);
+            const float pd = Vec3::Dot(p, dir);
+            if (pd > bestD) { bestD = pd; best = p; }
+        }
+        return best;
+    }
+    // Plane, Heightfield, a triangle mesh without a hull: the corner of the world bounding box furthest along dir.
+    Vec3 mn, mx;
+    col->WorldAABB(mn, mx);
+    return {dir.x >= 0.0f ? mx.x : mn.x, dir.y >= 0.0f ? mx.y : mn.y, dir.z >= 0.0f ? mx.z : mn.z};
 }
 // The same, grown by the collider's contact offset (a skin).
 Vec3 SupportOf(Collider3D* col, const Vec3& dir) {

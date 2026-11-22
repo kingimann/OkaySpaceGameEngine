@@ -4,11 +4,17 @@
 #include "PainterBridge.hpp"
 #include "okay/UI/OkayUI.hpp"
 #include "OkayUI_SoftPainter.hpp"
+#include "okay/UI/OkayUIRenderSDL.hpp"
 
 #include <memory>
 #include <unordered_map>
 
 namespace okay::pb {
+
+/// OkayUI's own renderer state for the app's SDL renderers (OKAY_UI_OWN_RENDER, OkayUIRenderSDL.hpp).
+inline OkayUI::render::SdlGLHost& OkayUIHostState() { static auto* h = new OkayUI::render::SdlGLHost(); return *h; }
+/// Which renderer drew the last OkayUI frame and why (tests, the About line).
+inline const OkayUI::render::HostFrame& OkayUILastFrame() { return OkayUIHostState().Last(); }
 
 inline void OkayUIEndFrame(SDL_Renderer* r) {
     okay::platform::Painter* p = For(r);

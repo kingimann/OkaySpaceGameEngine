@@ -373,10 +373,10 @@ public:
         in.move = uiBlocked ? Vec2{0, 0} : InputActions::ControlMove();   // freeze while a bag is open
         // Jump, sprint and crouch read their named actions, so a player's rebinding reaches them; with the
         // default bindings they are exactly Space, sprintKey and crouchKey (InputActions::ControlKey).
-        auto key = [&](const char* action, char k, std::uint32_t bit) {
+        auto key = [&](const char* action, char k, std::uint32_t bit, char stock = 0) {
             if (!k) return;
-            const bool held = action ? InputActions::ControlKey(action, k) : Input::GetKey(k);
-            const bool down = action ? InputActions::ControlKeyDown(action, k) : Input::GetKeyDown(k);
+            const bool held = action ? InputActions::ControlKey(action, k, stock) : Input::GetKey(k);
+            const bool down = action ? InputActions::ControlKeyDown(action, k, stock) : Input::GetKeyDown(k);
             // A key that is neither down nor just pressed sets no bit, whoever owns it: do not search the scene
             // (every use prompt, pickup and bag) for who that is, twice a frame.
             if (!OldPlayerPath() && !held && !down) return;
@@ -388,10 +388,10 @@ public:
         key("Jump", ' ', PlayerInput::Jump);
         key("Sprint", sprintKey, PlayerInput::Sprint);
         key("Crouch", crouchKey, PlayerInput::Crouch);
-        key(nullptr, proneKey, PlayerInput::Prone);
+        key("Prone", proneKey, PlayerInput::Prone, 'z');
         m_dodgeEdge = dodge.canDodge && dodge.key && Input::GetKeyDown(dodge.key);
-        key(nullptr, leanLeftKey, PlayerInput::LeanLeft);
-        key(nullptr, leanRightKey, PlayerInput::LeanRight);
+        key("LeanLeft", leanLeftKey, PlayerInput::LeanLeft, 'q');
+        key("LeanRight", leanRightKey, PlayerInput::LeanRight, 'e');   // stock keys: the actions start unbound
         if (stanceGamepadButton >= 0 && Input::GetGamepadButton(stanceGamepadButton)) in.held |= PlayerInput::StanceButton;
         return in;
     }

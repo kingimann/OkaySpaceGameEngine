@@ -226,7 +226,7 @@ public:
             m_dash -= dt;
             if (m_dash <= 0.0f) { EndDash(); dashEnded = true; }
         } else if (!uiBlocked && m_dashCd <= 0.0f && dashTime > 0.0f &&
-                   ((dashKey && Input::GetKeyDown(dashKey)) ||
+                   (InputActions::ControlKeyDown("Dash", dashKey, ' ') ||
                     (dashGamepadButton >= 0 && Input::GetGamepadButtonDown(dashGamepadButton)))) {
             m_dashDir = moving ? dir : m_aimDir;
             m_dash = dashTime; m_dashCd = dashTime + dashCooldown;   // the cooldown starts when the dash ends

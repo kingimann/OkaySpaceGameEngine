@@ -208,8 +208,25 @@ public:
     /// The player's bindings for the action differ from its defaults.
     static bool Rebound(const std::string& name);
     /// `key` held / pressed this frame, or the action's, as described above. 0 = never.
-    static bool ControlKey(const std::string& action, char key);
-    static bool ControlKeyDown(const std::string& action, char key);
+    /// `stockKey` is the controller's own shipped key for an action that starts with no default binding of its own
+    /// (Prone, LeanLeft, LeanRight, Dash: their keys are shared with Interact and Jump or often taken by a game's own actions). Once that action is bound, a field still
+    /// on `stockKey` follows it too.
+    /// An action in a context that is not pushed (the "Vehicle" driving actions) is read straight from its bindings.
+    static bool ControlKey(const std::string& action, char key, char stockKey = 0);
+    static bool ControlKeyDown(const std::string& action, char key, char stockKey = 0);
+    /// One key of a four-key direction (part 0 up, 1 down, 2 left, 3 right), pressed this frame: `key` until the
+    /// action is rebound; then, if `key` is that part of one of its default four-key bindings, the same part of its
+    /// current four-key bindings (the 2.5D platformer's layer keys follow "Move" up and down).
+    static bool ControlDirKeyDown(const std::string& action, int part, char key);
+    /// ControlKeyDown for the key that opens and closes a menu: read straight from the devices, so it still works
+    /// while that menu's own Block context swallows every action (the Pause Menu and "Pause").
+    static bool MenuKeyDown(const std::string& action, char key);
+    /// Input::AxisWASD until one of the four button actions is rebound; then y = up - down, x = right - left from
+    /// those actions (the Vehicle Controller's Throttle, Brake, SteerLeft, SteerRight).
+    static Vec2 ControlAxis(const std::string& up, const std::string& down, const std::string& left, const std::string& right);
+    /// The action's bindings read straight from the devices this frame, ignoring contexts and Tick.
+    static bool DirectHeld(const std::string& name);
+    static bool DirectDown(const std::string& name);
     /// The same for a mouse button (0 left, 1 right, 2 middle). Negative = never.
     static bool ControlMouse(const std::string& action, int button);
     static bool ControlMouseDown(const std::string& action, int button);

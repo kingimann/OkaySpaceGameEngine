@@ -58,7 +58,7 @@ struct StanceControl {
         if (!toggle && (Accessibility::ToggleFor("Crouch") || Accessibility::ToggleFor("Prone")))
             toggle = true;
         Keys(InputActions::ControlKeyDown("Crouch", crouchKey), InputActions::ControlKey("Crouch", crouchKey),
-             proneKey && Input::GetKeyDown(proneKey), proneKey && Input::GetKey(proneKey));
+             InputActions::ControlKeyDown("Prone", proneKey, 'z'), InputActions::ControlKey("Prone", proneKey, 'z'));
         toggle = saved;
     }
     /// Settle the stance asked for (headroom permitting) and ease the body there.

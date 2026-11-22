@@ -86,8 +86,8 @@ public:
         const StanceControl& sc = stanceControl;
         if (InputActions::ControlKey("Crouch", sc.crouchKey))     in.held    |= PlayerInput::Crouch;
         if (InputActions::ControlKeyDown("Crouch", sc.crouchKey)) in.pressed |= PlayerInput::Crouch;
-        if (sc.proneKey && Input::GetKey(sc.proneKey))       in.held    |= PlayerInput::Prone;
-        if (sc.proneKey && Input::GetKeyDown(sc.proneKey))   in.pressed |= PlayerInput::Prone;
+        if (InputActions::ControlKey("Prone", sc.proneKey, 'z'))       in.held    |= PlayerInput::Prone;
+        if (InputActions::ControlKeyDown("Prone", sc.proneKey, 'z'))   in.pressed |= PlayerInput::Prone;
         return in;
     }
 

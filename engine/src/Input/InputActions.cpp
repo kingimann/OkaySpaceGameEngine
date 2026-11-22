@@ -104,6 +104,27 @@ void DefineDefaults() {
     InputActions::Define("HotbarPrev", {"pad:lb"});
     InputActions::Define("Inventory", {"key:tab", "pad:back"});
     InputActions::Define("Pause", {"key:escape", "pad:start"});
+    // Built-in controllers' extra keys (prone, lean, dash). They start with no binding of their own: their stock keys
+    // (Z, Q, E, Space) are shared with Interact and Jump, or are keys games often give their own actions, and the
+    // Controls screen would report those as clashes. The controllers keep their stock keys until the player binds
+    // these (ControlKey's stockKey).
+    InputActions::Define("Prone", {});
+    InputActions::Define("LeanLeft", {});
+    InputActions::Define("LeanRight", {});
+    InputActions::Define("Dash", {});
+    // Vehicle Controller driving keys, in the "Vehicle" context: a key may drive and walk (W is Throttle and Move), and
+    // the Controls screen reports a shared key only inside one context. While "Vehicle" is not pushed the controller
+    // reads them straight from their bindings. Keyboard only: the controller's own pad fields stay as they are.
+    InputActions::DefineIn("Vehicle", "Throttle", {"key:w", "key:up"});
+    InputActions::DefineIn("Vehicle", "Brake", {"key:s", "key:down"});
+    InputActions::DefineIn("Vehicle", "SteerLeft", {"key:a", "key:left"});
+    InputActions::DefineIn("Vehicle", "SteerRight", {"key:d", "key:right"});
+    InputActions::DefineIn("Vehicle", "Handbrake", {"key:space"});
+    InputActions::DefineIn("Vehicle", "Boost", {"key:shift"});
+    InputActions::DefineIn("Vehicle", "GearUp", {"key:x"});
+    InputActions::DefineIn("Vehicle", "GearDown", {"key:z"});
+    InputActions::DefineIn("Vehicle", "Horn", {"key:h"});
+    InputActions::DefineIn("Vehicle", "Headlights", {"key:l"});
 }
 
 void EnsureDefaults() {
@@ -872,11 +893,44 @@ bool SameBinding(const InputBinding& a, const InputBinding& b) {
 }
 // The action follows its bindings instead of the controller's key: it was rebound and the key is one of
 // the action's default bindings of that kind (the designer did not pick a key of their own).
-bool FollowsAction(const std::string& action, InputBinding::Kind kind, int code) {
+bool FollowsAction(const std::string& action, InputBinding::Kind kind, int code, int stock = 0) {
     const InputActions::Action* a = InputActions::Find(action);
     if (!a || !InputActions::Rebound(action)) return false;
+    if (kind == InputBinding::Kind::Key && stock != 0 && code == stock) return true;
     for (const InputBinding& d : a->defaults) if (d.kind == kind && d.code == code) return true;
     return false;
+}
+// Tick samples it: a base action, or one whose context is pushed. Anything else is read from the devices.
+bool Live(const InputActions::Action& a) { return a.context.empty() || InputActions::ContextActive(a.context); }
+bool ActionHeld(const std::string& name) {
+    const InputActions::Action* a = InputActions::Find(name);
+    if (!a) return false;
+    return Live(*a) ? InputActions::Get(name) : InputActions::DirectHeld(name);
+}
+bool ActionDown(const std::string& name) {
+    const InputActions::Action* a = InputActions::Find(name);
+    if (!a) return false;
+    return Live(*a) ? InputActions::Down(name) : InputActions::DirectDown(name);
+}
+// Pressed this frame, from the device's own edge.
+bool BindingDown(const InputBinding& b) {
+    using K = InputBinding::Kind;
+    switch (b.kind) {
+        case K::Key: return Input::GetKeyDown((char)b.code);
+        case K::Mouse: return Input::GetMouseButtonDown(b.code);
+        case K::PadButton: return Input::GetGamepadButtonDown(b.code, b.player);
+        case K::Wheel: return b.Value() > 0.0f;   // one notch is already one frame
+        case K::Chord: {
+            bool any = false;
+            for (char k : b.keys) {
+                if (!k) break;
+                if (!Input::GetKey(k)) return false;
+                if (Input::GetKeyDown(k)) any = true;
+            }
+            return any;
+        }
+        default: return false;   // a direction is not a button
+    }
 }
 } // namespace
 
@@ -887,21 +941,58 @@ bool InputActions::Rebound(const std::string& name) {
     for (std::size_t i = 0; i < a->bindings.size(); ++i) if (!SameBinding(a->bindings[i], a->defaults[i])) return true;
     return false;
 }
-bool InputActions::ControlKey(const std::string& action, char key) {
+bool InputActions::ControlKey(const std::string& action, char key, char stockKey) {
     if (!key) return false;
-    return FollowsAction(action, InputBinding::Kind::Key, (unsigned char)key) ? Get(action) : Input::GetKey(key);
+    return FollowsAction(action, InputBinding::Kind::Key, (unsigned char)key, (unsigned char)stockKey) ? ActionHeld(action) : Input::GetKey(key);
 }
-bool InputActions::ControlKeyDown(const std::string& action, char key) {
+bool InputActions::ControlKeyDown(const std::string& action, char key, char stockKey) {
     if (!key) return false;
-    return FollowsAction(action, InputBinding::Kind::Key, (unsigned char)key) ? Down(action) : Input::GetKeyDown(key);
+    return FollowsAction(action, InputBinding::Kind::Key, (unsigned char)key, (unsigned char)stockKey) ? ActionDown(action) : Input::GetKeyDown(key);
 }
 bool InputActions::ControlMouse(const std::string& action, int button) {
     if (button < 0) return false;
-    return FollowsAction(action, InputBinding::Kind::Mouse, button) ? Get(action) : Input::GetMouseButton(button);
+    return FollowsAction(action, InputBinding::Kind::Mouse, button) ? ActionHeld(action) : Input::GetMouseButton(button);
 }
 bool InputActions::ControlMouseDown(const std::string& action, int button) {
     if (button < 0) return false;
-    return FollowsAction(action, InputBinding::Kind::Mouse, button) ? Down(action) : Input::GetMouseButtonDown(button);
+    return FollowsAction(action, InputBinding::Kind::Mouse, button) ? ActionDown(action) : Input::GetMouseButtonDown(button);
+}
+bool InputActions::ControlDirKeyDown(const std::string& action, int part, char key) {
+    if (!key || part < 0 || part > 3) return false;
+    const Action* a = Find(action);
+    if (!a || !Rebound(action)) return Input::GetKeyDown(key);
+    bool isDefault = false;
+    for (const InputBinding& d : a->defaults)
+        if (d.kind == InputBinding::Kind::Keys4 && d.keys[part] == key) isDefault = true;
+    if (!isDefault) return Input::GetKeyDown(key);   // the designer's own key
+    if (Input::TextFocused()) return false;
+    for (const InputBinding& b : a->bindings)
+        if (b.kind == InputBinding::Kind::Keys4 && b.keys[part] && Input::GetKeyDown(b.keys[part])) return true;
+    return false;
+}
+Vec2 InputActions::ControlAxis(const std::string& up, const std::string& down, const std::string& left, const std::string& right) {
+    if (!Rebound(up) && !Rebound(down) && !Rebound(left) && !Rebound(right)) return Input::AxisWASD();
+    if (Input::TextFocused()) return {0.0f, 0.0f};
+    Vec2 v;
+    v.y = (ActionHeld(up) ? 1.0f : 0.0f) - (ActionHeld(down) ? 1.0f : 0.0f);
+    v.x = (ActionHeld(right) ? 1.0f : 0.0f) - (ActionHeld(left) ? 1.0f : 0.0f);
+    return v;
+}
+bool InputActions::MenuKeyDown(const std::string& action, char key) {
+    if (!key) return false;
+    return FollowsAction(action, InputBinding::Kind::Key, (unsigned char)key) ? DirectDown(action) : Input::GetKeyDown(key);
+}
+bool InputActions::DirectHeld(const std::string& name) {
+    const Action* a = Find(name);
+    if (!a) return false;
+    for (const InputBinding& b : a->bindings) if (!b.IsDirection() && b.Value() >= a->threshold) return true;
+    return false;
+}
+bool InputActions::DirectDown(const std::string& name) {
+    const Action* a = Find(name);
+    if (!a) return false;
+    for (const InputBinding& b : a->bindings) if (BindingDown(b)) return true;
+    return false;
 }
 Vec2 InputActions::ControlMove() {
     return Rebound("Move") ? Vector("Move") : Input::AxisWASD();

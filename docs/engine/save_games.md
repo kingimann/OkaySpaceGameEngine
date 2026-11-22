@@ -37,8 +37,29 @@ same store the save framework below uses (SaveGame is its "whole scene" mode,
 `game_slot_exists`, Continue, the autosave ring and the Save Slots screen, and a
 slot saved with `game_save` is seen by `has_save` and `save_slots`. Saves written
 before 2026-11-22 are `saves/<slot>.okaygame` files: they still load, list and
-count for Continue (`SaveSlotInfo::legacyFile`), and the next save to that slot
-writes the `.okayslot` file and removes the old one. A
+count for Continue (`SaveSlotInfo::legacyFile`). The next save to that slot
+writes the `.okayslot` file, keeps the old save as `<slot>.okayslot.bak` and removes
+the `.okaygame` file.
+
+The SaveGame names (`has_save`, `save_valid`, `save_slots`, `save_label`,
+`load_game`, `delete_save`, `SaveGame::List/Exists/Check/Load`) see only
+whole-scene slots (`SaveSlotInfo::wholeScene`) and older `.okaygame` slots, as
+before: a framework slot of Saveable objects (the autosave ring, a quick save, a
+`checkpoint_*` slot) is "No save" to them. `game_*`, Continue and the Save Slots
+screen see every slot. A game's `SetDataVersion` and migration steps never run on
+whole-scene slots, `SaveGame::SetLimits` changes only SaveGame's caps, and
+`play_time()` is SaveGame's own clock (a checkpoint restore or `game_load` of a
+Saveable slot does not change it).
+
+**Two saves under one name.** If a slot has both a `<slot>.okaygame` and a
+`<slot>.okayslot` file (the two older systems both used the name, or an older
+release wrote `.okaygame` after a newer one wrote `.okayslot`), they are two
+different saves and neither is hidden or deleted. The first time the store looks
+at that slot, the one saved earlier moves to the free name `<slot>_old_save`
+(then `_old_save_2`, ...) with its label and time unchanged, and the move is
+written to the log. So after going back to an older release and saving there,
+the slot shows that newer `.okaygame` save and the earlier `.okayslot` one is
+`<slot>_old_save`. A
 slot name uses letters, digits, `-` and `_` (up to 64): `1`, `quick`, `autosave`,
 `chapter_2`. Names Windows treats as devices (`con`, `prn`, `aux`, `nul`, `com1`-`com9`,
 `lpt1`-`lpt9`, any case) are refused, so a save works the same on every platform.

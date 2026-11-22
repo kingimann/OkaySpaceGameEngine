@@ -324,6 +324,11 @@ private:
     void RetireLegacy(const std::string& slot);
     /// Rewrite an older .okaygame slot as an .okayslot file (same header values), for Copy / Rename / UpdateInfo.
     bool UpgradeLegacy(const std::string& slot, std::string* error);
+    /// A slot with both an .okayslot and an .okaygame file holds two saves: the one saved earlier moves to the
+    /// free name <slot>_old_save (_2, ...), label and time unchanged, and the move is logged. Never deletes.
+    void SeparateTwinSaves(const std::string& slot) const;
+    /// Before a new file replaces `slot`: separate a twin, and keep an older .okaygame save as <slot>.okayslot.bak.
+    void PrepareOverwrite(const std::string& slot);
     bool Migrate(SaveDocument& doc, int from, SaveLoadReport* report, std::string* error) const;
 };
 

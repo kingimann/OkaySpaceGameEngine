@@ -62,7 +62,9 @@ ImportSidecar ReadUncached(const std::string& metaPath, AssetType kind) {
     if (!ParseBlock(in, AssetTypeName(kind), version, raw)) return sc;
     sc.found = true;
     sc.settings = ImportSettings::FromPairs(kind, version, raw);
-    sc.pairs = version < ImportSettings::CurrentVersion(kind) ? ImportSettings::Migrate(kind, version, raw) : raw;
+    const int current = ImportSettings::CurrentVersion(kind);
+    sc.pairs = version < current ? ImportSettings::Migrate(kind, version, raw)
+             : version == current ? ImportSettings::AcceptOlderKeys(kind, raw) : raw;
     return sc;
 }
 

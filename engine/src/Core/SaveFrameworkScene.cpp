@@ -951,9 +951,9 @@ bool SaveManager::Load(Scene& scene, const std::string& slot, const SaveLoadOpti
             if (!wholescene::Check(whole, &cerr)) return fail("Slot \"" + slot + "\": " + cerr);
             const SaveLoadOptions copy = options;
             auto shared = std::make_shared<SaveDocument>(std::move(doc));
-            wholescene::ApplyDeferred(scene, std::move(whole), options.apply.restorePlayTime, [copy, shared, info]() {
-                if (copy.onLoaded) copy.onLoaded(*shared, info);
-                if (copy.onDone) copy.onDone(true, std::string());
+            wholescene::ApplyDeferred(scene, std::move(whole), options.apply.restorePlayTime, [copy, shared, info, slot](bool ok) {
+                if (ok && copy.onLoaded) copy.onLoaded(*shared, info);
+                if (copy.onDone) copy.onDone(ok, ok ? std::string() : "the load of slot \"" + slot + "\" was replaced by another load, or its saved scene did not load");
             });
             if (error) *error = rerr;   // "" unless the backup was used
             return true;

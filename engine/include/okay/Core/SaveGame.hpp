@@ -35,6 +35,9 @@ struct SaveSlotInfo {
     /// lists and counts for Continue like any slot; `version` is then its old format number (1 or 2). The next
     /// save to the slot writes the current .okayslot file and retires it.
     bool        legacyFile = false;
+    /// A whole-scene save (SaveGame, save_game, AutoSave, or an older .okaygame file). The SaveGame names
+    /// (has_save, save_slots, load_game, ...) see only these; GameSaves and Continue see every slot.
+    bool        wholeScene = false;
 };
 
 /// What a game attaches to a slot beyond the scene, for a load menu to show.
@@ -57,7 +60,10 @@ struct SaveOptions {
 ///
 /// Slots live in the framework's store (GameSaves::Manager().Store(), by default Save::BaseDir()/saves):
 /// one <slot>.okayslot file per slot, the same files `game_save`, Continue, the autosave ring and the Save
-/// Slots screen use, so a slot saved here is seen there and the other way round. Slot names are letters,
+/// Slots screen use, so a slot saved here is seen there (Continue, game_* calls). The SaveGame names see only
+/// whole-scene slots (SaveSlotInfo::wholeScene): a framework slot of Saveable objects (an autosave ring, a quick
+/// save, a checkpoint) is "No save" to them, as before. A game's SetDataVersion / migrations never run on
+/// whole-scene slots, and SetLimits changes only SaveGame's caps. Slot names are letters,
 /// digits, '-' and '_' (up to 64, and not a Windows device name such as "con" or "nul2"). Each file carries a
 /// version and checksums; the previous good save is kept as <slot>.okayslot.bak and used if the main file is
 /// damaged. A slot saved by a newer build is listed (flagged `incompatible`), never loaded, and is kept as
@@ -65,7 +71,9 @@ struct SaveOptions {
 ///
 /// Older saves: SaveGame used to write <slot>.okaygame files. They still load, list and count for Continue
 /// (SaveSlotInfo::legacyFile); SetMigration and SetLimits apply to them. The next save to that slot writes the
-/// .okayslot file and removes the old one.
+/// .okayslot file and keeps the old save as <slot>.okayslot.bak. If a slot has both files (two different saves
+/// from the two older systems, or a .okaygame written after going back to an older release), neither is hidden:
+/// the one saved earlier moves to the free name <slot>_old_save (_old_save_2, ...) with its label and time.
 /// Use from the game's main thread (the play-time counter and migrations are not guarded).
 class SaveGame {
 public:
@@ -130,8 +138,8 @@ public:
     static std::string SlotPath(const std::string& slot);
     /// Where an older save of the slot lives (<slot>.okaygame beside the store's files).
     static std::string LegacySlotPath(const std::string& slot);
-    /// Seconds played this run, plus the play time of the save it was loaded from (SaveSystem::PlayTime: one
-    /// clock for every save).
+    /// Seconds played this run, plus the play time of the whole-scene save it was loaded from. SaveGame's own
+    /// clock: framework loads (checkpoints, game_load of a Saveable slot) use SaveSystem::PlayTime and leave it alone.
     static float PlayTime();
 };
 
@@ -153,7 +161,9 @@ bool Check(const State& state, std::string* error);
 /// Replace the scene with the saved one now (Deserialize, Start), then put the state back. False with a reason.
 bool ApplyNow(Scene& scene, const State& state, bool restorePlayTime, std::string* error);
 /// The same at the end of the frame (Scene::RequestLoadText, safe from scripts); `after` runs once it is back.
-void ApplyDeferred(Scene& scene, State state, bool restorePlayTime, std::function<void()> after);
+/// `done` runs exactly once: done(true) after the state is back, done(false) when the load was replaced by
+/// another one in the same frame or the saved scene text did not load.
+void ApplyDeferred(Scene& scene, State state, bool restorePlayTime, std::function<void(bool ok)> done);
 
 enum class LegacyStatus { Ok, Missing, Damaged, Newer };
 /// Read an older .okaygame file at `path` whole (format, checksum, SetMigration steps, SetLimits), falling back

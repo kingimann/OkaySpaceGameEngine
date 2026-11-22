@@ -17,6 +17,7 @@
 #include "XboxRecovery.hpp"
 #include "XboxHttp.hpp"
 #include "XboxOwnHttp.hpp"
+#include "XboxTitleSafe.hpp"
 #include "okay/Core/Paths.hpp"
 #include <cmath>
 #include <filesystem>
@@ -334,10 +335,13 @@ static void LifecycleTests() {
     l.Resuming(); CHECK(l.Phase() == AppPhase::Hidden); { LifecyclePending p = l.Take(); CHECK(p.resumed && !p.saveState); }
     l.Resuming(); CHECK(!l.Take().Any());                             // Resuming without Suspending is ignored
     l.VisibilityChanged(true);
-    // back button: exit request, not a state change by itself
-    l.BackRequested(); CHECK(l.Take().exitRequested); CHECK(l.Phase() == AppPhase::Active);
+    // back request (B on a console pad, Backspace or the back gesture): reported to the game as a back press, NOT an exit.
+    // Before 2026-11-22 it was an exit request, so pressing B anywhere in a game (B is a normal game button) closed the game.
+    l.BackRequested(); { LifecyclePending p = l.Take(); CHECK(p.back && !p.exitRequested && p.Any()); } CHECK(l.Phase() == AppPhase::Active);
     l.WindowClosed(); CHECK(l.Phase() == AppPhase::Closing && l.Take().exitRequested && !l.ShouldRunLogic());
     l.BackRequested(); CHECK(!l.Take().Any()); l.Suspending(5, 5000); CHECK(!l.Take().Any());
+    // no back press while suspended (the game is not running)
+    { Lifecycle s; s.Launched(); s.Suspending(0); s.Take(); s.BackRequested(); CHECK(!s.Take().back); s.Resuming(); s.BackRequested(); CHECK(s.Take().back); }
     // a suspend that arrives while hidden still saves
     Lifecycle h; h.Launched(); h.VisibilityChanged(false); h.Suspending(0); CHECK(h.Take().saveState);
 }
@@ -587,12 +591,16 @@ static void BackendTests() {
     { AudioSpec want; want.freq = 48000; want.channels = 2; AudioSpec got; auto a = b.OpenAudio(want, false, nullptr, &got); CHECK(a && host.audio.started && got.freq == 48000 && b.AudioDeviceCount(false) == 1); }
     CHECK(b.OpenAudio(AudioSpec(), true, nullptr, nullptr) == nullptr && b.LastError().find("capture") != std::string::npos);
     host.hasAudio = false; CHECK(b.OpenAudio(AudioSpec(), false, nullptr, nullptr) == nullptr && b.AudioDeviceCount(false) == 0); host.hasAudio = true;
-    // lifecycle through events: suspend saves BEFORE the focus event is handled, resume comes back, B / back gives exactly one Quit
+    // lifecycle through events: suspend saves BEFORE the focus event is handled, resume comes back, B / back is a back press (no Quit),
+    // closing the window gives exactly one Quit
     int saved = 0, resumed = 0; b.onSuspend = [&] { ++saved; }; b.onResume = [&] { ++resumed; };
     b.Life().Suspending(b.TicksMs()); { auto ev = Drain(b); CHECK(saved == 1); bool lost = false; for (auto& e : ev) if (e.type == EventType::WindowFocusLost) lost = true; CHECK(lost); CHECK(b.Life().SuspendReady()); }
     b.Life().Resuming(); { auto ev = Drain(b); CHECK(resumed == 1); bool gained = false; for (auto& e : ev) if (e.type == EventType::WindowFocusGained) gained = true; CHECK(gained); }
-    b.Life().BackRequested(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 1); }
-    b.Life().BackRequested(); b.Life().WindowClosed(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 0); }   // already sent
+    CHECK(b.TakeBackPresses() == 0);
+    b.Life().BackRequested(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 0); }
+    b.Life().BackRequested(); Drain(b); CHECK(b.TakeBackPresses() == 2 && b.TakeBackPresses() == 0);   // counted, taken once
+    b.Life().WindowClosed(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 1); }
+    b.Life().BackRequested(); b.Life().WindowClosed(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 0); CHECK(b.TakeBackPresses() == 0); }   // already sent
     { using namespace okay::platform; CHECK(Default() == nullptr && Get(BackendKind::Own) == nullptr);
       InstallBackend(&b); CHECK(Default() == &b && Get(BackendKind::Own) == &b && Get(BackendKind::Sdl2) == nullptr && IsCompiledIn(BackendKind::Own) && !IsCompiledIn(BackendKind::Sdl2) && DefaultKind() == BackendKind::Own);
       CHECK(TicksMs() <= b.TicksMs() + 5); okay::platform::Log("through the registry"); CHECK(!b.LogLines().empty() && b.LogLines().back() == "through the registry");
@@ -840,8 +848,28 @@ static void OwnHttpTests() {
     { MemDialer d; d.reply = "HTTP/1.1 302 Found\r\nLocation: https://cdn.example.com/z\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"; on::OwnHttpClient c(d); h::Request r; r.url = "http://lan.example/a"; h::Sink s; h::ClientResult cr = c.Send(r, s); CHECK(!cr.reached && d.dials == 1); }
 }
 
+// ---- title-safe area (XboxTitleSafe.hpp) ----
+static void TitleSafeTests() {
+    using namespace okay::xbox;
+    // The system default on a console keeps the app inside the TV-safe area already: nothing to add.
+    { SafeInsets i = TitleSafeInsets(BoundsMode::SystemSafe, true); CHECK(i.left == 0 && i.top == 0 && i.right == 0 && i.bottom == 0 && i.Zero()); }
+    // Drawn to the whole TV (UseCoreWindow): 5% on every edge (48 x 27 of 960 x 540 effective pixels).
+    { SafeInsets i = TitleSafeInsets(BoundsMode::FullScreen, true); CHECK(i.left == 0.05f && i.right == 0.05f && i.top == 0.05f && i.bottom == 0.05f && !i.Zero()); }
+    // A PC (desktop window, no TV overscan): nothing.
+    CHECK(TitleSafeInsets(BoundsMode::FullScreen, false).Zero() && TitleSafeInsets(BoundsMode::SystemSafe, false).Zero());
+    // Pixel rectangle on a 1920 x 1080 back buffer: 96 px left and right, 54 px top and bottom.
+    { SafeRect r = TitleSafeRect(1920, 1080, TitleSafeInsets(BoundsMode::FullScreen, true)); CHECK(r.x == 96 && r.y == 54 && r.w == 1728 && r.h == 972); }
+    { SafeRect r = TitleSafeRect(3840, 2160, TitleSafeInsets(BoundsMode::FullScreen, true)); CHECK(r.x == 192 && r.y == 108 && r.w == 3456 && r.h == 1944); }
+    { SafeRect r = TitleSafeRect(1280, 720, SafeInsets()); CHECK(r.x == 0 && r.y == 0 && r.w == 1280 && r.h == 720); }
+    { SafeRect r = TitleSafeRect(0, -5, TitleSafeInsets(BoundsMode::FullScreen, true)); CHECK(r.w == 0 && r.h == 0); }
+    // Device family string (AnalyticsInfo.VersionInfo.DeviceFamily): only "Windows.Xbox" is a console.
+    CHECK(IsXboxDeviceFamily("Windows.Xbox") && !IsXboxDeviceFamily("Windows.Desktop") && !IsXboxDeviceFamily("") && !IsXboxDeviceFamily("windows.xboxfoo") && IsXboxDeviceFamily("windows.xbox"));
+    // Hostile fractions are clamped: never negative, never more than 25% of a side.
+    { SafeInsets i; i.left = -1; i.right = 3; i.top = 0.1f; i.bottom = 0.0f / 0.0f; const SafeInsets c = Clamped(i); CHECK(c.left == 0 && c.right == 0.25f && c.top == 0.1f && c.bottom == 0); }
+}
+
 int main() {
-    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests(); RecoveryTests(); HttpTests(); OwnHttpTests();
+    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests(); RecoveryTests(); HttpTests(); OwnHttpTests(); TitleSafeTests();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp_runtime: all passed\n");
     return 0;

@@ -401,7 +401,51 @@ int EdgeSlide(PolyMesh& pm, const EdgeList& loop, float amount, const std::vecto
             if (rail >= 0 && !onLoop.count(rail)) moves.push_back({v, rail});
         }
     }
-    for (const Move& mv : moves) pm.verts[mv.v] = Lerp3(start[mv.v], start[mv.rail], t);
+    std::vector<Vec3> target = pm.verts;
+    std::vector<char> moved(pm.verts.size(), 0);
+    for (const Move& mv : moves) { target[mv.v] = Lerp3(start[mv.v], start[mv.rail], t); moved[mv.v] = 1; }
+    // UVs. Inside one face the texture is (close to) an affine map of the surface, so a
+    // corner that moves by d changes its UV by d read through that map. The map is taken
+    // from the corner and two other corners of the same face (its two neighbours when they
+    // make a proper triangle, which includes the rail, so a slide toward the rail moves the
+    // UV exactly that fraction toward the rail's UV). Faces on the far side of the loop get
+    // the same displacement through their own map. Every face uses only its own corner UVs,
+    // so a seam stays split. Read against the current positions, so calling again from the
+    // same start (interactive use) replaces the last slide instead of adding to it.
+    for (PolyFace& f : pm.faces) {
+        if (!HasUV(f)) continue;
+        const int n = f.Size();
+        std::vector<Vec2> nuv = f.uvs;
+        for (int i = 0; i < n; ++i) {
+            const int v = f.verts[i];
+            if (v < 0 || v >= (int)moved.size() || !moved[v]) continue;
+            const Vec3 d = target[v] - pm.verts[v];
+            if (d.SqrMagnitude() <= 0.0f) continue;
+            const Vec3 p0 = pm.verts[v];
+            // Solve d = a*e1 + b*e2 (least squares in the triangle's plane) for corners j, k.
+            auto solve = [&](int j, int k, Vec2& out) {
+                const Vec3 e1 = pm.verts[f.verts[j]] - p0, e2 = pm.verts[f.verts[k]] - p0;
+                const float a11 = Vec3::Dot(e1, e1), a12 = Vec3::Dot(e1, e2), a22 = Vec3::Dot(e2, e2);
+                const float det = a11 * a22 - a12 * a12;
+                if (!(det > 1e-6f * a11 * a22) || !std::isfinite(det)) return false;   // (nearly) a straight line
+                const float b1 = Vec3::Dot(d, e1), b2 = Vec3::Dot(d, e2);
+                const float a = (b1 * a22 - b2 * a12) / det, b = (a11 * b2 - a12 * b1) / det;
+                const Vec2 u0 = f.uvs[i], u1 = f.uvs[j], u2 = f.uvs[k];
+                out = Vec2{u0.x + a * (u1.x - u0.x) + b * (u2.x - u0.x), u0.y + a * (u1.y - u0.y) + b * (u2.y - u0.y)};
+                return std::isfinite(out.x) && std::isfinite(out.y);
+            };
+            Vec2 uv;
+            bool ok = solve((i + 1) % n, (i + n - 1) % n, uv);
+            // A straight corner (an n-gon with a vertex in the middle of a side): use the
+            // best-shaped triangle with any two other corners.
+            for (int j = 0; j < n && !ok; ++j)
+                for (int k = j + 1; k < n && !ok; ++k)
+                    if (j != i && k != i) ok = solve(j, k, uv);
+            if (ok) nuv[i] = uv;
+        }
+        f.uvs = std::move(nuv);
+    }
+    for (const Move& mv : moves) pm.verts[mv.v] = target[mv.v];
     return (int)moves.size();
 }
 
@@ -572,6 +616,62 @@ int BridgeEdgeLoops(PolyMesh& pm, const EdgeList& edges, std::string* error) {
         pm.faces.push_back(f);
     }
     return faces;
+}
+
+// ---------------------------------------------------------------------------
+int BridgeFaces(PolyMesh& pm, const std::vector<int>& faces, std::string* error) {
+    auto fail = [&](const char* why) { if (error) *error = why; return 0; };
+    std::set<int> sel;
+    for (int f : faces) {
+        if (f < 0 || f >= (int)pm.faces.size()) return fail("A selected face does not exist (select the faces again).");
+        sel.insert(f);
+    }
+    if (sel.size() < 2) return fail("Select two groups of faces to bridge, one on each side (for example two facing faces).");
+    // Group the selected faces by shared edges (a small union-find).
+    const std::vector<int> list(sel.begin(), sel.end());
+    std::map<int, int> slot;
+    for (int i = 0; i < (int)list.size(); ++i) slot[list[i]] = i;
+    std::vector<int> parent(list.size());
+    for (int i = 0; i < (int)parent.size(); ++i) parent[i] = i;
+    auto root = [&](int i) { while (parent[i] != i) i = parent[i] = parent[parent[i]]; return i; };
+    std::map<std::pair<int, int>, std::vector<int>> edgeFaces;   // selected faces on each edge
+    for (int f : list) {
+        const PolyFace& F = pm.faces[f];
+        for (int i = 0; i < F.Size(); ++i) edgeFaces[Key(F.verts[i], F.verts[(i + 1) % F.Size()])].push_back(f);
+    }
+    for (const auto& ef : edgeFaces)
+        for (std::size_t k = 1; k < ef.second.size(); ++k) parent[root(slot[ef.second[k]])] = root(slot[ef.second[0]]);
+    std::map<int, int> groupOf;   // root -> 0 / 1
+    for (int i = 0; i < (int)list.size(); ++i) {
+        const int r = root(i);
+        if (!groupOf.count(r)) groupOf.emplace(r, (int)groupOf.size());
+    }
+    if (groupOf.size() != 2) return fail("Select exactly two separate groups of faces (the two groups must not share an edge).");
+    // Each group's outline: its edges used by just one of its faces, in the direction its face runs them.
+    EdgeList rims;
+    for (int g = 0; g < 2; ++g) {
+        EdgeList rim;
+        for (int f : list) {
+            if (groupOf[root(slot[f])] != g) continue;
+            const PolyFace& F = pm.faces[f];
+            for (int i = 0; i < F.Size(); ++i) {
+                const int u = F.verts[i], v = F.verts[(i + 1) % F.Size()];
+                int inGroup = 0;
+                for (int h : edgeFaces[Key(u, v)]) if (groupOf[root(slot[h])] == g) ++inGroup;
+                if (inGroup == 1) rim.push_back({u, v});
+            }
+        }
+        const std::vector<EdgeChain> chains = OrderChains(rim);
+        if (chains.size() != 1 || !chains[0].closed)
+            return fail("Each group of faces needs one outline (a group with a hole in it, or faces joined only at a corner, can't be bridged).");
+        rims.insert(rims.end(), rim.begin(), rim.end());
+    }
+    // Delete the faces, then bridge the two holes they leave. Any refusal puts everything back.
+    const PolyMesh keep = pm;
+    for (auto it = sel.rbegin(); it != sel.rend(); ++it) pm.faces.erase(pm.faces.begin() + *it);
+    const int made = BridgeEdgeLoops(pm, rims, error);
+    if (made <= 0) { pm = keep; return 0; }
+    return made;
 }
 
 // ---------------------------------------------------------------------------
@@ -973,6 +1073,7 @@ int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error) {
     const bool uv = MeshHasUV(pm);
     const int facesBefore = (int)pm.faces.size();
     int made = 0;
+    bool flat = false;
     for (EdgeChain& c : chains) {
         if (c.verts.size() < 3) continue;
         bool allBorder = true;
@@ -981,6 +1082,16 @@ int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error) {
             if (T.FacesOf(a, b).size() >= 2) allBorder = false;
         }
         if (!allBorder) continue;   // filling across faces that are already there would double them up
+        // A chain whose vertices lie on one straight line would make a face with no area (invisible, no normal):
+        // compare the polygon's area (half the length of the sum of edge cross products) with its perimeter squared.
+        Vec3 twiceArea{0, 0, 0};
+        float perimeter = 0.0f;
+        for (std::size_t i = 0; i < c.verts.size(); ++i) {
+            const Vec3 p = pm.verts[(std::size_t)c.verts[i]], q = pm.verts[(std::size_t)c.verts[(i + 1) % c.verts.size()]];
+            twiceArea += Vec3::Cross(p, q);
+            perimeter += (q - p).Magnitude();
+        }
+        if (!(twiceArea.Magnitude() > 1e-6f * perimeter * perimeter)) { flat = true; continue; }
         OrientAgainstNeighbours(pm, c.verts);
         PolyFace f;
         f.verts = c.verts;
@@ -989,6 +1100,7 @@ int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error) {
         pm.faces.push_back(f);
         ++made;
     }
+    if (!made && flat) return fail("Those vertices are in a straight line, so the face would have no area: select edges that go round a corner or a hole.");
     if (!made) return fail("Fill needs edges on an open border (the rim of a hole), not edges between two faces.");
     return made;
 }
@@ -1404,6 +1516,170 @@ int ExtrudeAlongPath(PolyMesh& pm, const std::vector<int>& faces, const std::vec
         F.uvs.clear();                                  // stretched caps keep no stale UVs
     }
     return made + (int)sel.size();
+}
+
+// ---- Selection helpers -------------------------------------------------------------
+namespace {
+// Vertex -> (neighbour, edge length) for every edge of a valid face.
+std::vector<std::vector<std::pair<int, float>>> EdgeGraph(const PolyMesh& pm) {
+    const int nv = (int)pm.verts.size();
+    std::vector<std::vector<std::pair<int, float>>> g((std::size_t)nv);
+    std::set<std::pair<int, int>> seen;
+    for (const PolyFace& f : pm.faces) {
+        const int n = f.Size();
+        for (int i = 0; i < n; ++i) {
+            const int a = f.verts[(std::size_t)i], b = f.verts[(std::size_t)((i + 1) % n)];
+            if (a < 0 || b < 0 || a >= nv || b >= nv || a == b || !seen.insert(Key(a, b)).second) continue;
+            float d = (pm.verts[(std::size_t)a] - pm.verts[(std::size_t)b]).Magnitude();
+            if (!std::isfinite(d)) d = 1e30f;
+            g[(std::size_t)a].push_back({b, d});
+            g[(std::size_t)b].push_back({a, d});
+        }
+    }
+    return g;
+}
+bool FaceOk(const PolyMesh& pm, int f) {
+    if (f < 0 || f >= (int)pm.faces.size() || pm.faces[(std::size_t)f].Size() < 3) return false;
+    for (int v : pm.faces[(std::size_t)f].verts) if (v < 0 || v >= (int)pm.verts.size()) return false;
+    return true;
+}
+// Face -> faces sharing an edge with it (valid faces only).
+std::vector<std::vector<int>> FaceGraph(const PolyMesh& pm) {
+    std::map<std::pair<int, int>, std::vector<int>> byEdge;
+    for (int f = 0; f < (int)pm.faces.size(); ++f) {
+        if (!FaceOk(pm, f)) continue;
+        const PolyFace& F = pm.faces[(std::size_t)f];
+        for (int i = 0; i < F.Size(); ++i) {
+            const int a = F.verts[(std::size_t)i], b = F.verts[(std::size_t)((i + 1) % F.Size())];
+            if (a != b) byEdge[Key(a, b)].push_back(f);
+        }
+    }
+    std::vector<std::vector<int>> g(pm.faces.size());
+    for (const auto& e : byEdge)
+        for (int x : e.second) for (int y : e.second)
+            if (x != y && std::find(g[(std::size_t)x].begin(), g[(std::size_t)x].end(), y) == g[(std::size_t)x].end()) g[(std::size_t)x].push_back(y);
+    return g;
+}
+// Dijkstra on an adjacency list with weights; returns the node path from s to t, or empty.
+std::vector<int> Dijkstra(const std::vector<std::vector<std::pair<int, float>>>& g, int s, int t) {
+    const int n = (int)g.size();
+    std::vector<double> dist((std::size_t)n, 1e300);
+    std::vector<int> prev((std::size_t)n, -1);
+    using Item = std::pair<double, int>;
+    std::vector<Item> heap;   // min-heap through std::greater
+    dist[(std::size_t)s] = 0.0;
+    heap.push_back({0.0, s});
+    while (!heap.empty()) {
+        std::pop_heap(heap.begin(), heap.end(), std::greater<Item>());
+        const Item cur = heap.back(); heap.pop_back();
+        if (cur.first > dist[(std::size_t)cur.second]) continue;
+        if (cur.second == t) break;
+        for (const auto& e : g[(std::size_t)cur.second]) {
+            const double nd = cur.first + (double)e.second;
+            if (nd < dist[(std::size_t)e.first]) {
+                dist[(std::size_t)e.first] = nd; prev[(std::size_t)e.first] = cur.second;
+                heap.push_back({nd, e.first}); std::push_heap(heap.begin(), heap.end(), std::greater<Item>());
+            }
+        }
+    }
+    if (s != t && prev[(std::size_t)t] < 0) return {};
+    std::vector<int> path;
+    for (int v = t; v != -1; v = (v == s ? -1 : prev[(std::size_t)v])) path.push_back(v);
+    std::reverse(path.begin(), path.end());
+    return path;
+}
+// Keep the selected nodes an even number of steps from the first of each connected part.
+std::vector<int> Checker(const std::vector<std::vector<int>>& g, const std::vector<int>& sel, int n) {
+    std::vector<char> in((std::size_t)n, 0);
+    std::vector<int> list;
+    for (int x : sel) if (x >= 0 && x < n && !in[(std::size_t)x]) { in[(std::size_t)x] = 1; list.push_back(x); }
+    std::vector<int> depth((std::size_t)n, -1);
+    for (int seed : list) {
+        if (depth[(std::size_t)seed] >= 0) continue;
+        std::vector<int> queue{seed};
+        depth[(std::size_t)seed] = 0;
+        for (std::size_t q = 0; q < queue.size(); ++q) {
+            const int x = queue[q];
+            for (int y : g[(std::size_t)x])
+                if (in[(std::size_t)y] && depth[(std::size_t)y] < 0) { depth[(std::size_t)y] = depth[(std::size_t)x] + 1; queue.push_back(y); }
+        }
+    }
+    std::vector<int> out;
+    for (int x : list) if (depth[(std::size_t)x] % 2 == 0) out.push_back(x);
+    return out;
+}
+} // namespace
+
+std::vector<int> ShortestVertPath(const PolyMesh& pm, int from, int to) {
+    const auto g = EdgeGraph(pm);
+    const int nv = (int)g.size();
+    if (from < 0 || to < 0 || from >= nv || to >= nv || g[(std::size_t)from].empty() || g[(std::size_t)to].empty()) return {};
+    return Dijkstra(g, from, to);
+}
+
+std::vector<int> ShortestFacePath(const PolyMesh& pm, int from, int to) {
+    if (!FaceOk(pm, from) || !FaceOk(pm, to)) return {};
+    const auto adj = FaceGraph(pm);
+    std::vector<Vec3> centre(pm.faces.size(), Vec3{0, 0, 0});
+    for (int f = 0; f < (int)pm.faces.size(); ++f) {
+        if (!FaceOk(pm, f)) continue;
+        Vec3 c{0, 0, 0};
+        for (int v : pm.faces[(std::size_t)f].verts) c += pm.verts[(std::size_t)v];
+        centre[(std::size_t)f] = c * (1.0f / (float)pm.faces[(std::size_t)f].Size());
+    }
+    std::vector<std::vector<std::pair<int, float>>> g(pm.faces.size());
+    for (std::size_t f = 0; f < adj.size(); ++f)
+        for (int h : adj[f]) {
+            float d = (centre[f] - centre[(std::size_t)h]).Magnitude();
+            if (!std::isfinite(d)) d = 1e30f;
+            g[f].push_back({h, d});
+        }
+    return Dijkstra(g, from, to);
+}
+
+std::vector<int> CheckerVerts(const PolyMesh& pm, const std::vector<int>& verts) {
+    const auto eg = EdgeGraph(pm);
+    std::vector<std::vector<int>> g(eg.size());
+    for (std::size_t v = 0; v < eg.size(); ++v) for (const auto& e : eg[v]) g[v].push_back(e.first);
+    return Checker(g, verts, (int)pm.verts.size());
+}
+
+std::vector<int> CheckerFaces(const PolyMesh& pm, const std::vector<int>& faces) {
+    std::vector<int> ok;
+    for (int f : faces) if (FaceOk(pm, f)) ok.push_back(f);
+    return Checker(FaceGraph(pm), ok, (int)pm.faces.size());
+}
+
+EdgeList RegionOutline(const PolyMesh& pm, const std::vector<int>& faces) {
+    std::set<int> sel;
+    for (int f : faces) if (FaceOk(pm, f)) sel.insert(f);
+    std::map<std::pair<int, int>, int> uses;
+    for (int f : sel) {
+        const PolyFace& F = pm.faces[(std::size_t)f];
+        for (int i = 0; i < F.Size(); ++i) {
+            const int a = F.verts[(std::size_t)i], b = F.verts[(std::size_t)((i + 1) % F.Size())];
+            if (a != b) ++uses[Key(a, b)];
+        }
+    }
+    EdgeList out;
+    for (int f : sel) {
+        const PolyFace& F = pm.faces[(std::size_t)f];
+        for (int i = 0; i < F.Size(); ++i) {
+            const int a = F.verts[(std::size_t)i], b = F.verts[(std::size_t)((i + 1) % F.Size())];
+            if (a != b && uses[Key(a, b)] == 1) out.push_back({a, b});
+        }
+    }
+    return out;
+}
+
+EdgeList ProblemEdges(const PolyMesh& pm, bool borders, bool nonManifold) {
+    EdgeList out;
+    for (const PolyMesh::Edge& e : pm.Edges()) {
+        if (e.a < 0 || e.b < 0 || e.a >= (int)pm.verts.size() || e.b >= (int)pm.verts.size()) continue;
+        if ((borders && e.faceCount == 1) || (nonManifold && e.faceCount >= 3)) out.push_back({e.a, e.b});
+    }
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 } // namespace okay::modeling

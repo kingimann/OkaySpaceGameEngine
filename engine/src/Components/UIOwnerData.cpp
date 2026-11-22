@@ -21,6 +21,9 @@ bool HasOwnerData(const GameObject* g) {
     return g->GetComponent<HealthStat>() || g->GetComponent<Stats>() || g->GetComponent<SurvivalStats>() ||
            g->GetComponent<NPCController>() || g->GetComponent<Character>();
 }
+// Health and its maximum: HealthOf (Damage.hpp), the holder DealDamage hurts, so the bar moves with the hits. (This
+// used to check RPG Stats before Survival Stats, the other way round from the damage; #422 audit item 21.)
+bool Health(const GameObject* o, float& hp, float& maxHp) { return HealthOf(const_cast<GameObject*>(o), hp, maxHp); }
 } // namespace
 
 GameObject* Find(const GameObject* ui) {
@@ -53,7 +56,7 @@ bool Lookup(const GameObject* ui, const std::string& key, std::string& text, flo
         return false;
     }
     float hp = 0.0f, maxHp = 0.0f;
-    if (!HealthOf(o, hp, maxHp)) return false;   // the one health lookup (Damage.hpp), same order as a hit
+    if (!Health(o, hp, maxHp)) return false;
     if (k == "health") return num(hp);
     if (k == "maxHealth") return num(maxHp);
     const float frac = maxHp > 0.0f ? Mathf::Clamp01(hp / maxHp) : 0.0f;

@@ -3,13 +3,13 @@
 #include "okay/AI/NavMesh.hpp"
 #include "okay/AI/Navigation.hpp"
 #include "okay/AI/Perception.hpp"
+#include "okay/Components/Damage.hpp"
 #include "okay/Audio/AudioLoad.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/AnimControl.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/Character.hpp"
-#include "okay/Components/Damage.hpp"
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/MeleeAttacker.hpp"
 #include "okay/Components/NPCController.hpp"
@@ -546,8 +546,10 @@ void BehaviorTreeRunner::RunService(int idx, float elapsed) {
         if (!sk.empty()) blackboard.Set(sk, BtValue::Bool(noticed));
         if (m_npc) m_npc->SetAlert(noticed);
     } else if (n.type == BtNodeType::HealthWatcher) {
+        // HealthOf (Damage.hpp): the holder DealDamage hurts. This used to read the NPC Controller first and skip RPG
+        // Stats, so an NPC with a Health Stat watched a number the hits never changed (#422 audit item 21).
         float hp = 0.0f, max = 0.0f;
-        if (!HealthOf(gameObject, hp, max)) return;   // the one health lookup (Damage.hpp), same order as a hit
+        if (!HealthOf(gameObject, hp, max)) return;
         const float pct = max > 0.0f ? std::clamp(hp / max, 0.0f, 1.0f) : 1.0f;
         if (const std::string k = n.Str("healthKey"); !k.empty()) blackboard.Set(k, BtValue::Number(hp));
         if (const std::string k = n.Str("pctKey"); !k.empty()) blackboard.Set(k, BtValue::Number(pct));

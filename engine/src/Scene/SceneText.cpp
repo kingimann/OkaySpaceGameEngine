@@ -1,4 +1,5 @@
 #include "okay/Scene/SceneText.hpp"
+#include "SceneTextDetail.hpp"
 #include "okay/Scene/ComponentSerializer.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 
@@ -242,6 +243,10 @@ bool SceneText::IsValidGuid(const std::string& g) {
         if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || c == '-')) return false;
     return true;
 }
+
+namespace scenetext {
+bool IsBuiltinObjectRecord(const std::string& key) { return KnownObjectKeys().count(key) != 0; }
+} // namespace scenetext
 
 bool SceneText::IsKnownRecord(const std::string& key) {
     if (KnownObjectKeys().count(key)) return true;

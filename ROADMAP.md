@@ -10,6 +10,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.902.0 | Own FBX reader faster than ufbx with every UV set; OGRE XML meshes find their skeleton and binary .skeleton reader (off by default); fixes: children switched off stay off, lights under a switched-off parent go dark, terrain resize keeps sculpting, reversed one-shot clips end, particles replay; editor exit crash fixed; collider hardening; Xbox touch and text input (experimental) |
 | 2.901.0 | Camera zones (blend view angle, offset and smoothing by area) and six one-click camera presets; camera follow starts on its target and guards against bad numbers; smoother, even rotations between animation keyframes (glTF-correct slerp) |
 | 2.900.0 | Character controller stops the same at any frame rate, with Simple and Advanced tuning; walk and run animation knee snap fixed; inventory item wear and repair; GameObject > UI menu: 12 plain entries plus More; okay_run headless scene runner for checks |
 | 2.899.0 | Save shortcut tests; code editor line commands (toggle comment, duplicate, move lines); Xbox packer limit and gamepad hot-plug (experimental, off by default); two-ended number slider in our own UI; own BMP writer; OGRE binary meshes skinned to their XML skeleton |

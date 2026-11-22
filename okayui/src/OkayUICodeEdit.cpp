@@ -1111,8 +1111,15 @@ void CodeEdit::handleKeys(bool& changed) {
     if (in.del) { DeleteForward(ctrl); any = true; }
     if (in.left) { Move(ctrl ? CodeMove_WordLeft : CodeMove_Left, shift); any = true; }
     if (in.right) { Move(ctrl ? CodeMove_WordRight : CodeMove_Right, shift); any = true; }
-    if (in.up) { Move(CodeMove_Up, shift); any = true; }
-    if (in.down) { Move(CodeMove_Down, shift); any = true; }
+    // Alt+Up and Alt+Down move the lines (the caret goes with them) instead of moving the caret.
+    const bool moveLines = lineKeys_ && io.keyAlt && !ctrl;
+    if (in.up) { if (moveLines) MoveLines(true); else Move(CodeMove_Up, shift); any = true; }
+    if (in.down) { if (moveLines) MoveLines(false); else Move(CodeMove_Down, shift); any = true; }
+    if (lineKeys_ && ctrl && !io.keyAlt) {
+        if (!shift && IsKeyPressed(KeyId_Slash)) { ToggleLineComment(); any = true; }
+        if (!shift && IsKeyPressed(KeyId_D)) { DuplicateLines(); any = true; }
+        if (shift && IsKeyPressed(KeyId_K)) { DeleteLines(); any = true; }
+    }
     if (in.home) { Move(ctrl ? CodeMove_DocStart : CodeMove_LineStart, shift); any = true; }
     if (in.end) { Move(ctrl ? CodeMove_DocEnd : CodeMove_LineEnd, shift); any = true; }
     if (IsKeyPressed(KeyId_PageUp)) { Move(CodeMove_PageUp, shift); any = true; }
@@ -1181,6 +1188,20 @@ void CodeEdit::handleMouse(const Rect& item, int wid, bool hovered) {
 }
 
 bool CodeEdit::Draw(const char* id, float w, float h) {
+    if (!font_) return drawImpl(id, w, h);
+    // The code font for this Draw only: SetFont makes the text scale the font's own size, PushTextScale takes it to fontPx_;
+    // both are put back so the rest of the window keeps its font.
+    const Font* prev = GetFont();
+    OkayUI::SetFont(font_);   // (qualified: CodeEdit::SetFont is the member)
+    const bool scaled = fontPx_ > 0.0f && font_->px > 0.0f;
+    if (scaled) PushTextScale(fontPx_ / font_->px);
+    const bool changed = drawImpl(id, w, h);
+    if (scaled) PopTextScale();
+    OkayUI::SetFont(prev);
+    return changed;
+}
+
+bool CodeEdit::drawImpl(const char* id, float w, float h) {
     const unsigned v0 = version_;
     const Vec2 avail = GetContentRegionAvail();
     if (w <= 0.0f) w = avail.x;

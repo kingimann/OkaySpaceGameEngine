@@ -23,6 +23,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Core/ImportSidecar.hpp"   // TextureSampling
+#include "okay/Render/GpuTexture.hpp"     // gputex::Caps: block-compressed (.dds) uploads
 #include "okay/Math/Mat4.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
@@ -70,6 +71,23 @@ public:
 
     /// Free all GL objects (call with the context current).
     void Destroy();
+
+    /// How one texture name went to the GPU (for tools, tests and the log).
+    struct TextureUploadInfo {
+        bool fromDds = false;      ///< a .dds file, or the compressed import copy of a picture set to `compress`
+        bool compressed = false;   ///< kept block-compressed on the GPU (glCompressedTexImage2D)
+        unsigned glFormat = 0;     ///< the GL internal format
+        int levels = 0;            ///< mip levels uploaded from the file (0: the ordinary RGBA8 path)
+        std::string note;          ///< why a compressed file was decoded on the CPU, when it was
+    };
+    /// The GL texture for a material texture name, uploaded on first use like a draw does (0 when it cannot be
+    /// loaded). A GL context must be current.
+    unsigned int TextureId(const std::string& name) { return TextureFor(name); }
+    /// How that texture was uploaded; null until TextureId or a draw used it.
+    const TextureUploadInfo* UploadInfo(const std::string& name) const;
+    /// The current context's compressed texture support, from GL_VERSION and the extension list. Needs LoadGL.
+    /// The environment variable OKAY_GL_NO_COMPRESSED=1 makes the renderer ignore it (every .dds decoded on the CPU).
+    static gputex::Caps QueryTextureCaps();
 
 private:
     bool EnsureProgram();
@@ -204,6 +222,10 @@ private:
     std::unordered_map<unsigned int, TextureSampling> m_texInfo;   // GL texture -> its import Filter / Wrap / Mipmaps
     unsigned m_texGen = 0;   // TextureCacheGeneration() the cache above was built for
     unsigned int TextureFor(const std::string& name);   // upload-on-first-use
+    unsigned int UploadDdsTexture(const std::string& name, TextureSampling& ts, TextureUploadInfo& info);   // .dds / compressed copy; 0 = not one
+    std::unordered_map<std::string, TextureUploadInfo> m_uploadInfo;   // texture name -> how it was uploaded
+    gputex::Caps m_texCaps;
+    bool m_texCapsKnown = false;
 
     // Per-mesh vertex-buffer cache: static geometry (imported OBJ/glTF models,
     // primitives) is expanded + uploaded ONCE and redrawn from GPU memory, instead

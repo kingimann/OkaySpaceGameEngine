@@ -10,6 +10,7 @@
 #include "okay/Components/LODGroup.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shared texture cache
+#include "okay/Render/GpuTexture.hpp"         // .dds / compressed import copies: BC blocks uploaded as they are
 #include "okay/Render/ShadowSetup.hpp"
 #include "okay/Render/D3D11Layout.hpp"
 #include "okay/Render/PostQualityMath.hpp"   // shared bloom soft knee + AO power (UNVERIFIED on a GPU)
@@ -946,6 +947,41 @@ D3D11Renderer::Impl::MeshVB* D3D11Renderer::Impl::EnsureMeshVB(const Mesh& mesh,
     return &e;
 }
 
+// A planned .dds texture (gputex::PlanUpload) as one Direct3D 11 texture with all its levels. BC1-BC5 are sampled by every
+// Direct3D 11 GPU (feature level 10 and up), so the blocks go up as they are; DXGI numbers from the DXGI_FORMAT list.
+static ID3D11ShaderResourceView* UploadDdsPlan(ID3D11Device* dev, const gputex::Plan& p) {
+    if (p.levels.empty()) return nullptr;
+    DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
+    UINT blockBytes = 0;
+    if (p.compressed) {
+        switch (p.source) {
+            case tex::DdsFormat::BC1: fmt = DXGI_FORMAT_BC1_UNORM; blockBytes = 8; break;
+            case tex::DdsFormat::BC2: fmt = DXGI_FORMAT_BC2_UNORM; blockBytes = 16; break;
+            case tex::DdsFormat::BC3: fmt = DXGI_FORMAT_BC3_UNORM; blockBytes = 16; break;
+            case tex::DdsFormat::BC4: fmt = DXGI_FORMAT_BC4_UNORM; blockBytes = 8; break;
+            case tex::DdsFormat::BC5: fmt = DXGI_FORMAT_BC5_UNORM; blockBytes = 16; break;
+            default: return nullptr;
+        }
+    }
+    D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
+    td.Width = (UINT)p.levels[0].width; td.Height = (UINT)p.levels[0].height; td.MipLevels = (UINT)p.levels.size(); td.ArraySize = 1;
+    td.Format = fmt; td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_IMMUTABLE; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    std::vector<D3D11_SUBRESOURCE_DATA> sr(p.levels.size());
+    for (std::size_t l = 0; l < p.levels.size(); ++l) {
+        std::memset(&sr[l], 0, sizeof(sr[l]));
+        sr[l].pSysMem = p.levels[l].bytes.data();
+        sr[l].SysMemPitch = p.compressed ? (UINT)((p.levels[l].width + 3) / 4) * blockBytes : (UINT)p.levels[l].width * 4;
+    }
+    ID3D11Texture2D* t = nullptr;
+    ID3D11ShaderResourceView* srv = nullptr;
+    if (SUCCEEDED(dev->CreateTexture2D(&td, sr.data(), &t)) && t) {
+        dev->CreateShaderResourceView(t, nullptr, &srv);
+        t->Release();
+    }
+    return srv;
+}
+
 ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& name) {
     if (name.empty()) return nullptr;
     if (texGen != TextureCacheGeneration()) {   // a picture was reimported / its import settings changed
@@ -957,7 +993,16 @@ ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& nam
     auto it = texCache.find(name);
     if (it != texCache.end()) return it->second;
     ID3D11ShaderResourceView* srv = nullptr;
-    Image* img = GetCachedTexture(name);
+    // A .dds file, or the compressed import copy of a picture set to `compress`: its own levels, BC blocks kept
+    // compressed (a top level that is not a multiple of 4 is decoded on the CPU). Anything else: the RGBA8 picture.
+    {
+        tex::DdsImage dds;
+        gputex::Plan plan;
+        gputex::Caps caps; caps.s3tc = caps.rgtc = true;
+        if (gputex::Source(name, &dds, nullptr) && gputex::PlanUpload(std::move(dds), caps, &plan)) srv = UploadDdsPlan(dev, plan);
+        if (srv) Log::Info("[d3d11] texture '", name, "': ", tex::DdsFormatName(plan.source), plan.compressed ? " kept compressed" : " uploaded as RGBA8", " (", plan.levels.size(), " levels)");
+    }
+    Image* img = srv ? nullptr : GetCachedTexture(name);
     if (img && img->Width() > 0) {
         D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
         td.Width = img->Width(); td.Height = img->Height(); td.MipLevels = 1; td.ArraySize = 1;

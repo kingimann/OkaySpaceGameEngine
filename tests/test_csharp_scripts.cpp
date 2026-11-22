@@ -326,6 +326,37 @@ static void StringMembers() {
     CHECK(Errors(Diags("public class S : MonoBehaviour { void Start() { int n = \"abc\".Lenght; } }\n")) >= 1);
 }
 
+// Default parameter values: void Hit(int amount = 1, string why = "bump").
+static void DefaultParams() {
+    const std::string src =
+        "public enum Kind { Small, Big }\n"
+        "public class Counter { public int total; public void Add(int n = 1) { total += n; } }\n"
+        "public class D : MonoBehaviour {\n"
+        "    public int hp = 10; public string last = \"\"; public float scaled; public int kind, viaObj;\n"
+        "    void Hit(int amount = 1, string why = \"bump\") { hp -= amount; last = why; }\n"
+        "    float Scale(float x, float by = 2f) => x * by;\n"
+        "    int KindOf(Kind k = Kind.Big) => (int)k;\n"
+        "    void Start() {\n"
+        "        Hit(); Hit(3); Hit(2, \"spikes\");\n"
+        "        scaled = Scale(1.5f);\n"
+        "        kind = KindOf();\n"
+        "        Counter c = new Counter(); c.Add(); c.Add(5); viaObj = c.total;\n"
+        "    }\n"
+        "}\n";
+    CHECK(Clean(src));
+    World w(src);
+    CHECK(w.loaded);
+    CHECK_NEAR(w.F("hp"), 4.0f, 1e-4f);
+    CHECK(w.sc->VM() && w.sc->VM()->GetGlobal("last").AsString() == "spikes");
+    CHECK_NEAR(w.F("scaled"), 3.0f, 1e-4f);
+    CHECK_NEAR(w.F("kind"), 1.0f, 1e-4f);
+    CHECK_NEAR(w.F("viaObj"), 6.0f, 1e-4f);
+    // A default before a parameter without one, or a value worked out while playing, is an error.
+    CHECK(Errors(Diags("public class D : MonoBehaviour { void F(int a = 1, int b) { } }\n")) >= 1);
+    CHECK(Errors(Diags("public class D : MonoBehaviour { int x; void F(int a = x) { } }\n")) >= 1);
+    CHECK(Errors(Diags("public class D : MonoBehaviour { void F(int a = 1) { } void Start() { F(1, 2); } }\n")) >= 1);
+}
+
 // An old scene that named "csharp" (the removed Mono backend) now loads and runs if the
 // script compiles, and shows the checker's errors if it does not.
 static void OldScenes() {
@@ -434,6 +465,7 @@ int main() {
     RandomApi();
     CollisionMessages();
     StringMembers();
+    DefaultParams();
     OldScenes();
     ExampleScene();
     TEST_MAIN_RESULT();

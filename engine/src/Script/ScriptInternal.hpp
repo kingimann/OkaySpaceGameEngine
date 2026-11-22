@@ -50,6 +50,10 @@ enum class TK : std::uint8_t {
     Dict,     ///< Dictionary<K, V>: id = Program::generics index (a = K, b = V)
     Pair,     ///< KeyValuePair<K, V> (foreach over a dictionary): id as Dict
     Func,     ///< Func<..., R> / Action<...>: id = Program::funcs index
+    Routine,  ///< IEnumerator: what calling a coroutine method gives (StartCoroutine runs it)
+    Coroutine,///< what StartCoroutine gives (to stop it, or to wait for it)
+    Wait,     ///< WaitForSeconds and the like: id = WaitKind
+    Script,   ///< another script's Behaviour class (Health h = GetComponent<Health>()): id = ScriptClassId
     Lambda,   ///< a lambda whose Func / Action type comes from where it's used (checker only)
 };
 struct Type {
@@ -80,13 +84,17 @@ struct ScriptObj;
 struct DictObj;
 struct FuncObj;
 struct Cell;
+struct CoState;
+struct WaitObj;
 using ArrayRef = std::shared_ptr<ArrayObj>;
 using ObjPtr = std::shared_ptr<ScriptObj>;
 using DictRef = std::shared_ptr<DictObj>;
 using FuncRef = std::shared_ptr<FuncObj>;
 using CellRef = std::shared_ptr<Cell>;
+using CoRef = std::shared_ptr<CoState>;
+using WaitRef = std::shared_ptr<WaitObj>;
 /// CellRef only appears in a method's local slots (a local that a lambda captured); reading the local gives what's inside.
-using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef, ArrayRef, ObjPtr, DictRef, FuncRef, CellRef>;
+using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef, ArrayRef, ObjPtr, DictRef, FuncRef, CellRef, CoRef, WaitRef>;
 /// A T[], a List<T> or a KeyValuePair (items = key, value) at runtime. Arrays
 /// and lists are references: copies share the items.
 struct ArrayObj {
@@ -129,6 +137,45 @@ struct FuncObj {
     ObjPtr self;                           ///< made inside a plain class's method: that object
     int cls = -1;
     std::string typeName;
+    /// a += b: the functions it calls, in order (decl is null). Never nested.
+    std::vector<FuncRef> list;
+};
+
+/// What `yield return` waits for (WaitForSeconds, WaitUntil, ...).
+enum class WaitKind : std::uint8_t { Seconds, Until, While, EndOfFrame, FixedUpdate };
+struct WaitObj {
+    WaitKind kind = WaitKind::EndOfFrame;
+    float seconds = 0.0f;
+    FuncRef cond;                       ///< WaitUntil / WaitWhile
+};
+struct Stmt;
+/// Where a coroutine is in one of its statements (a block, loop or switch it's inside).
+struct CoFrame {
+    const Stmt* s = nullptr;
+    const std::vector<std::unique_ptr<Stmt>>* list = nullptr;   ///< the statements a block or switch section runs
+    std::size_t pc = 0;                 ///< the next statement in `list`, or a foreach's item index
+    int phase = 0;                      ///< loops: 0 = check / start, 1 = the body just ended
+    Value coll;                         ///< foreach: the collection
+    std::uint32_t version = 0;
+};
+struct MethodDecl;
+/// A coroutine: made by calling an IEnumerator method, run by StartCoroutine,
+/// paused at each yield and resumed by the frame loop.
+struct CoState {
+    const MethodDecl* method = nullptr;
+    std::shared_ptr<const Program> prog;
+    Instance* inst = nullptr;           ///< the script object running it; only used while `alive` holds
+    std::weak_ptr<char> alive;
+    ObjPtr self;                        ///< an IEnumerator method of a plain class: that object
+    int cls = -1;
+    std::vector<Value> locals;
+    std::vector<CoFrame> stack;
+    bool started = false, done = false;
+    // what it waits for before going on
+    float wait = 0.0f;
+    WaitRef until;
+    CoRef waitFor;
+    std::uint64_t stamp = 0;            ///< the frame tick it paused in (it resumes from the next one)
 };
 
 std::string ValueToString(const Value& v);
@@ -137,7 +184,13 @@ std::string ValueToString(const Value& v);
 /// reported with the line it happened on.
 struct RuntimeError : std::runtime_error {
     SrcLoc loc;
-    RuntimeError(const std::string& m, SrcLoc l) : std::runtime_error(m), loc(l) {}
+    bool fatal = false;   ///< an endless loop or recursion: catch can't stop it
+    RuntimeError(const std::string& m, SrcLoc l, bool isFatal = false) : std::runtime_error(m), loc(l), fatal(isFatal) {}
+};
+/// A script's `throw`: the Exception object. Uncaught, it's reported like any runtime error.
+struct ScriptThrow : RuntimeError {
+    ObjPtr ex;
+    ScriptThrow(const std::string& m, SrcLoc l, ObjPtr e) : RuntimeError(m, l), ex(std::move(e)) {}
 };
 
 // ---- Engine bindings -------------------------------------------------------
@@ -239,6 +292,8 @@ enum class EK : std::uint8_t {
     Format,        ///< {value:F2} in $"...": lhs = the number, sval = "F2", ival = decimals (checked)
     NullCond,      ///< a chain with ?. in it: lhs = the chain, null if a ?. found null; name = what was null
     ArrayLit,      ///< { a, b } after `T[] x =`: the type comes from the declaration
+    Is,            ///< lhs is T: typeArg = T
+    As,            ///< lhs as T: typeArg = T
     Lambda,        ///< x => ..., (a, b) => { ... }: `lambda` holds the parameters and body
 };
 
@@ -257,8 +312,16 @@ enum class Bind : std::uint8_t {
     Captured /*a variable of the method around a lambda: slot = capture index*/,
     Invoke /*f(x), f.Invoke(x): object = the function*/,
     NewCollection /*new List<int>(), new Dictionary<K, V>(); args = { ... } items*/,
-    ObjField /*obj.field: slot = field*/, ObjMethod /*obj.M(): slot = method, member = class*/,
+    ObjField /*obj.field: slot = field (in the object's fields, bases first)*/,
+    ObjMethod /*obj.M(), and M() inside a plain class: slot = the method's name id, run as the object's own class has it*/,
     NewObject /*new Node(): slot = class, member = constructor (-1 = none)*/,
+    NewWait /*new WaitForSeconds(t), ...: member = WaitKind*/,
+    StartCoroutine, StopCoroutine, StopAllCoroutines,
+    GetScript /*GetComponent<Health>(): slot = ScriptClassId; object = the GameObject or component (null = this object)*/,
+    ScriptField /*h.hp: name = the field*/, ScriptMethod /*h.TakeDamage(10): name = the method*/,
+    ScriptSelf /*h.gameObject / h.transform: slot 0 / 1*/,
+    BaseMethod /*base.M(): slot = method, member = the class that has it*/,
+    BaseCtor /*: base(...) of a constructor: slot = the base class, member = its constructor (-1 = none)*/,
 };
 /// Methods of List<T> and Dictionary<K, V> (Bind::CollMethod's member).
 enum class CollOp : std::uint8_t {
@@ -300,7 +363,7 @@ struct Expr {
     std::unique_ptr<LambdaDecl> lambda;   ///< Lambda
 };
 
-enum class SK : std::uint8_t { Block, Expr, Local, If, While, For, Return, Break, Continue, Switch, Foreach, DoWhile };
+enum class SK : std::uint8_t { Block, Expr, Local, If, While, For, Return, Break, Continue, Switch, Foreach, DoWhile, Try, Throw, Yield };
 struct Stmt;
 using StmtPtr = std::unique_ptr<Stmt>;
 struct LocalDecl { TypeRef type; std::string name; SrcLoc loc; ExprPtr init; int slot = -1; Type resolved; bool promote = false; };
@@ -312,6 +375,17 @@ struct SwitchSection {
     SrcLoc loc, defaultLoc;
     std::vector<StmtPtr> body;
     std::vector<Value> values;          ///< checked: the labels' constant values
+};
+/// catch (T name) { ... } of a try: T and name are optional.
+struct CatchClause {
+    TypeRef type;
+    bool typed = false;
+    std::string name;
+    SrcLoc loc, nameLoc;
+    StmtPtr body;
+    // checked
+    Type resolved;                      ///< the Exception class it catches
+    int slot = -1;                      ///< the variable's local slot, -1 = none
 };
 struct Stmt {
     SK kind;
@@ -326,20 +400,26 @@ struct Stmt {
     bool promoteReturn = false;
     std::vector<SwitchSection> sections; ///< Switch (expr = the value switched on)
     // Foreach: locals[0] is the loop variable, expr the array.
+    std::vector<CatchClause> catches;   ///< Try (then = the try block)
+    StmtPtr finallyBody;                ///< Try
+    // Throw: expr = the exception (null: `throw;` again in a catch).
+    bool yieldBreak = false;            ///< Yield: `yield break;` (else `yield return expr;`)
+    bool hasYield = false;              ///< checked: a yield is inside (a coroutine runs it step by step)
 };
 
 struct Attribute { std::string name; std::vector<ExprPtr> args; SrcLoc loc; };
 
 struct FieldDecl {
     std::vector<Attribute> attrs;
-    bool isPublic = false, isConst = false, isStatic = false;   ///< static: one value shared by every object running the script
+    bool isPublic = false, isProtected = false, isConst = false, isStatic = false;   ///< static: one value shared by every object running the script
+    bool isEvent = false;   ///< outside its class it can only be added to (+=) or removed from (-=)
     TypeRef type;
     std::string name;
     SrcLoc loc;
     ExprPtr init;
     // checked
     Type resolved;
-    int index = -1;
+    int index = -1;       ///< slot in an object's fields: the classes it extends come first
     bool promote = false;
     bool read = false;
 };
@@ -355,10 +435,16 @@ struct LambdaDecl {
     /// slot of the code around it (>= 0), or that code's own capture -1 - i.
     std::vector<int> captureFrom;
     bool usesSelf = false;          ///< uses the object's fields, methods or `this`
+    /// Made from a method's name (Died += OnDied): that method, so -= OnDied finds it.
+    int method = -1;
 };
 struct MethodDecl {
-    bool isPublic = false, isStatic = false;   ///< static: can't use the object's own fields, methods or members
+    bool isPublic = false, isProtected = false, isStatic = false;   ///< static: can't use the object's own fields, methods or members
     bool isCtor = false;                       ///< a plain class's constructor (name = the class)
+    bool isVirtual = false, isOverride = false, isAbstract = false;   ///< abstract (and interface) methods have no body
+    std::vector<ExprPtr> baseArgs;             ///< a constructor's : base(...)
+    bool hasBaseCall = false;
+    SrcLoc baseLoc;
     TypeRef ret;
     std::string name;
     SrcLoc loc;
@@ -369,6 +455,9 @@ struct MethodDecl {
     int localCount = 0;
     bool called = false;
     int lifecycle = -1;   ///< index into the lifecycle table, -1 = an ordinary method
+    int nameId = -1;      ///< Program::methodNames index (dispatch by name)
+    bool isCoroutine = false;   ///< returns IEnumerator: calling it makes a coroutine, StartCoroutine runs it
+    ExprPtr baseCall;     ///< constructor of a class that extends another: the base constructor call (Bind::BaseCtor)
 };
 struct EnumMember { std::string name; SrcLoc loc; ExprPtr value; std::int32_t v = 0; };
 struct EnumDecl {
@@ -383,10 +472,21 @@ struct EnumDecl {
 };
 
 struct ClassDecl {
-    std::string name, base;
-    SrcLoc loc, baseLoc;
+    std::string name;
+    std::vector<std::string> bases;   ///< after ':': Behaviour, or a class and / or interfaces
+    std::vector<SrcLoc> baseLocs;
+    bool isAbstract = false, isInterface = false;
+    bool builtin = false;            ///< Exception, which every script has
+    SrcLoc loc;
     std::vector<FieldDecl> fields;
     std::vector<MethodDecl> methods;
+    // checked
+    int baseClass = -1;              ///< the class it extends
+    std::vector<int> interfaces;     ///< the interfaces it names
+    int fieldCount = 0;              ///< fields of an object of this class, the bases' included
+    std::vector<char> isA;           ///< by class index: this class is (extends or implements) that one
+    /// By method name id: the class and method an object of this class runs ({-1, -1}: none).
+    std::vector<std::pair<int, int>> dispatch;
 };
 
 /// `static` fields' values: one set shared by every object running the same
@@ -411,7 +511,11 @@ struct Program {
     /// Func / Action types: parameter types and result (void for an Action).
     struct FuncSig { std::vector<Type> params; Type ret; };
     std::vector<FuncSig> funcs;
+    std::vector<std::string> methodNames;   ///< every method name in the file (MethodDecl::nameId)
     int component = -1;            ///< the class that is the component
+    int exceptionClass = -1;       ///< Exception (built in, or the script's own class of that name)
+    /// Type names the checker couldn't find: maybe a script that hasn't loaded yet.
+    std::vector<std::string> unknownTypes;
     std::vector<ScriptDiagnostic> diags;
     bool ok() const;
     const ClassDecl* Component() const { return component >= 0 ? &classes[(std::size_t)component] : nullptr; }
@@ -438,6 +542,32 @@ struct Lifecycle { const char* name; const char* when; };
 const std::vector<Lifecycle>& LifecycleMethods();
 
 std::string TypeName(const Type& t);
+const char* WaitTypeName(int kind);
+
+// ---- Scripts using each other (GetComponent<Health>()) ----------------------
+/// What other scripts can use of a script's Behaviour class: its public fields
+/// and methods. Their types are written as in the source and resolved by the
+/// script using them; only values that mean the same in every script cross
+/// (numbers, text, Vector3, engine objects, other scripts, coroutines).
+struct ScriptView {
+    struct Field { std::string name; TypeRef type; SrcLoc loc; };
+    struct Method { std::string name; std::vector<TypeRef> params; TypeRef ret; };
+    std::string name;
+    std::vector<Field> fields;
+    std::vector<Method> methods;
+};
+/// Remember the Behaviour class of `source` (by its name) for other scripts. Sources
+/// that don't parse are ignored. Every typed script registers itself when it loads.
+void RegisterScriptSource(const std::string& source);
+/// The view of the script class `name`, or null if no script with it has been seen.
+std::shared_ptr<const ScriptView> FindScriptView(const std::string& name);
+/// A process-wide number for a script class name (stable while the program runs).
+int ScriptClassId(const std::string& name);
+const std::string& ScriptClassName(int id);
+/// ObjRef::type for a reference to the script `id` on an object (engine types are >= 0).
+inline int ScriptRefType(int id) { return -1000 - id; }
+/// The running script of class `name` on `go`, or null (defined next to the VM).
+Instance* FindScriptInstance(GameObject* go, const std::string& name);
 
 // ---- Running ---------------------------------------------------------------
 /// One running instance of a component class.
@@ -461,6 +591,11 @@ public:
     std::weak_ptr<char> AliveToken() const { return alive_; }
     std::vector<Value>& Fields() { return fields_; }
     std::vector<Value>& Statics() { return statics_->values; }
+    /// Coroutines StartCoroutine started; the frame loop resumes them (TickCoroutines).
+    std::vector<CoRef> coroutines;
+    std::uint64_t ticks = 0;      ///< TickCoroutines calls so far
+    /// Resume the coroutines whose wait is over (once a frame, after Update). Throws RuntimeError.
+    void TickCoroutines(float dt);
     /// Statements executed in the current callback (a guard against endless loops).
     std::uint64_t steps = 0;
     std::uint64_t stepLimit = 50'000'000;

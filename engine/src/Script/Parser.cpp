@@ -15,22 +15,13 @@ struct ParseError {
 // so, rather than syntax that is silently skipped.
 const std::unordered_map<std::string, const char*>& NotYet() {
     static const std::unordered_map<std::string, const char*> m = {
-        {"try", "try / catch isn't supported yet"},
-        {"throw", "throw isn't supported yet"},
         {"struct", "structs aren't supported yet"},
-        {"interface", "interfaces aren't supported yet"},
         {"readonly", "readonly isn't supported yet: use const for a value that never changes"},
-        {"override", "override isn't supported: scripts don't inherit from each other yet"},
-        {"virtual", "virtual isn't supported: scripts don't inherit from each other yet"},
-        {"abstract", "abstract isn't supported"},
         {"sealed", "sealed isn't supported"},
-        {"protected", "protected isn't supported: members are private unless marked public"},
-        {"internal", "internal isn't supported: members are private unless marked public"},
+        {"internal", "internal isn't supported: members are private unless marked public (or protected)"},
         {"async", "async isn't supported"},
         {"await", "await isn't supported"},
-        {"yield", "coroutines (yield) aren't supported yet"},
-        {"delegate", "delegates aren't supported"},
-        {"event", "events aren't supported yet"},
+        {"delegate", "delegate types aren't supported: use Func<...> or Action<...>"},
         {"partial", "partial classes aren't supported"},
         {"lock", "lock isn't supported"},
         {"goto", "goto isn't supported"},
@@ -188,23 +179,35 @@ private:
 
     ClassDecl Class() {
         Attributes();
-        while (Match(T::KwPublic) || Match(T::KwPrivate)) {}
+        ClassDecl c;
+        for (;;) {
+            if (Match(T::KwPublic) || Match(T::KwPrivate)) continue;
+            if (IsWord("abstract")) { c.isAbstract = true; ++pos_; continue; }
+            break;
+        }
         RejectNotYet();
         if (IsWord("static")) throw ParseError{Peek().loc, "A script class can't be static: it's a component on each object"};
-        if (!Is(T::KwClass)) throw ParseError{Peek().loc, "Expected a class here: class Name : Behaviour { ... }"};
-        ClassDecl c;
-        Expect(T::KwClass, "class");
+        if (IsWord("interface") && Is(T::Ident, 1)) {
+            if (c.isAbstract) throw ParseError{Peek().loc, "An interface is already abstract: delete `abstract`"};
+            c.isInterface = true;
+            ++pos_;
+        } else if (!Is(T::KwClass)) {
+            throw ParseError{Peek().loc, "Expected a class here: class Name : Behaviour { ... }"};
+        } else {
+            ++pos_;
+        }
         c.loc = Peek().loc;
-        c.name = Expect(T::Ident, "the class name").text;
+        c.name = Expect(T::Ident, c.isInterface ? "the interface name" : "the class name").text;
         if (Match(T::Colon)) {
-            c.baseLoc = Peek().loc;
-            c.base = Expect(T::Ident, "the base class (Behaviour)").text;
-            if (Is(T::Comma)) throw ParseError{Peek().loc, "A class can only extend one thing (Behaviour)"};
+            do {
+                c.baseLocs.push_back(Peek().loc);
+                c.bases.push_back(Expect(T::Ident, "what the class extends (Behaviour, a class or an interface)").text);
+            } while (Match(T::Comma));
         }
         Expect(T::LBrace, "'{'");
         while (!Is(T::RBrace) && !Is(T::End)) {
             std::size_t start = pos_;
-            try { Member(c); }
+            try { if (c.isInterface) InterfaceMember(c); else Member(c); }
             catch (const ParseError& e) {
                 Error(e.loc, e.msg);
                 if (e.tooDeep) pos_ = start;   // skip the whole member, not just the innermost statement
@@ -255,18 +258,58 @@ private:
         return t;
     }
 
+    std::vector<Param> Params() {
+        std::vector<Param> ps;
+        Expect(T::LParen, "'('");
+        if (!Is(T::RParen)) {
+            do {
+                Param p;
+                p.type = Type(false);
+                p.loc = Peek().loc;
+                p.name = Expect(T::Ident, "a parameter name").text;
+                if (Is(T::Assign)) throw ParseError{Peek().loc, "Default parameter values aren't supported yet"};
+                ps.push_back(std::move(p));
+            } while (Match(T::Comma));
+        }
+        Expect(T::RParen, "')'");
+        return ps;
+    }
+
+    // interface IDamageable { void TakeDamage(int amount); }: methods without bodies.
+    void InterfaceMember(ClassDecl& c) {
+        if (Is(T::KwPublic)) throw ParseError{Peek().loc, "An interface's methods are already public: delete `public`"};
+        RejectNotYet();
+        MethodDecl m;
+        m.isPublic = true;
+        m.isAbstract = true;
+        m.ret = Type(false);
+        m.loc = Peek().loc;
+        m.name = Expect(T::Ident, "a method name").text;
+        if (!Is(T::LParen)) throw ParseError{m.loc, "An interface only has methods, like void " + m.name + "();"};
+        m.params = Params();
+        if (Is(T::LBrace)) throw ParseError{Peek().loc, "An interface's method has no body: end it with ';' and write the body in each class"};
+        Expect(T::Semicolon, "';'");
+        c.methods.push_back(std::move(m));
+    }
+
     void Member(ClassDecl& c) {
         std::vector<Attribute> attrs = Attributes();
-        bool isPublic = false, isConst = false, isStatic = false;
-        SrcLoc staticLoc;
+        bool isPublic = false, isProtected = false, isConst = false, isStatic = false, isEvent = false;
+        bool isVirtual = false, isOverride = false, isAbstract = false;
+        SrcLoc staticLoc, eventLoc, modLoc;
         for (;;) {
             if (Match(T::KwPublic)) { isPublic = true; continue; }
+            if (IsWord("protected")) { isProtected = true; ++pos_; continue; }
+            if (IsWord("virtual")) { isVirtual = true; modLoc = Peek().loc; ++pos_; continue; }
+            if (IsWord("override")) { isOverride = true; modLoc = Peek().loc; ++pos_; continue; }
+            if (IsWord("abstract")) { isAbstract = true; modLoc = Peek().loc; ++pos_; continue; }
             if (Is(T::KwPrivate)) {
                 Error(Peek().loc, "`private` is already the default (only `public` fields show in the Inspector). Delete it");
                 ++pos_; continue;
             }
             if (Match(T::KwConst)) { isConst = true; continue; }
             if (IsWord("static")) { isStatic = true; staticLoc = Peek().loc; ++pos_; continue; }
+            if (IsWord("event") && IsTypeStart(1)) { isEvent = true; eventLoc = Peek().loc; ++pos_; continue; }
             break;
         }
         if (IsWord("enum") && Is(T::Ident, 1)) {
@@ -287,32 +330,41 @@ private:
         std::string name = Expect(T::Ident, "a name").text;
         if (Is(T::LParen)) {
             if (isConst) throw ParseError{nameLoc, "Methods can't be const"};
+            if (isEvent) throw ParseError{eventLoc, "Only fields can be events: event Action<int> Damaged;"};
             if (!attrs.empty()) Error(attrs[0].loc, "Attributes only work on fields");
             MethodDecl m;
-            m.isPublic = isPublic; m.isStatic = isStatic; m.isCtor = isCtor; m.ret = type; m.name = name; m.loc = nameLoc;
-            Expect(T::LParen, "'('");
-            if (!Is(T::RParen)) {
-                do {
-                    Param p;
-                    p.type = Type(false);
-                    p.loc = Peek().loc;
-                    p.name = Expect(T::Ident, "a parameter name").text;
-                    if (Is(T::Assign)) throw ParseError{Peek().loc, "Default parameter values aren't supported yet"};
-                    m.params.push_back(std::move(p));
-                } while (Match(T::Comma));
+            m.isPublic = isPublic; m.isProtected = isProtected; m.isStatic = isStatic; m.isCtor = isCtor; m.ret = type; m.name = name; m.loc = nameLoc;
+            m.isVirtual = isVirtual; m.isOverride = isOverride; m.isAbstract = isAbstract;
+            if (isCtor && (isVirtual || isOverride || isAbstract)) throw ParseError{modLoc, "A constructor can't be virtual, override or abstract"};
+            m.params = Params();
+            if (isCtor && Match(T::Colon)) {   // Boss(int hp) : base(hp) { }
+                m.baseLoc = Peek().loc;
+                if (IsWord("this")) throw ParseError{m.baseLoc, ": this(...) isn't supported: put the shared set-up in a method"};
+                if (!IsWord("base")) throw ParseError{m.baseLoc, "Expected base(...) after ':'"};
+                ++pos_;
+                m.hasBaseCall = true;
+                m.baseArgs = Args();
             }
-            Expect(T::RParen, "')'");
-            if (Is(T::Assign) || IsWord("where")) throw ParseError{Peek().loc, "Expected the method body { ... }"};
+            if (isAbstract) {
+                if (Is(T::LBrace)) throw ParseError{Peek().loc, "An abstract method has no body: end it with ';' (or remove `abstract`)"};
+                Expect(T::Semicolon, "';' after an abstract method");
+                c.methods.push_back(std::move(m));
+                return;
+            }
+            if (Is(T::Assign) || IsWord("where") || Is(T::Semicolon)) throw ParseError{Peek().loc, "Expected the method body { ... }"};
             m.body = Block();
             c.methods.push_back(std::move(m));
             return;
         }
+        if (isVirtual || isOverride || isAbstract) throw ParseError{modLoc, "Only methods can be virtual, override or abstract"};
         if (Is(T::LBrace)) throw ParseError{Peek().loc, "Properties ({ get; set; }) aren't supported yet: use a field"};
         if (type.name == "void") throw ParseError{type.loc, "A field can't be void"};
         for (;;) {
             FieldDecl f;
             f.attrs = std::move(attrs); attrs.clear();
             f.isPublic = isPublic; f.isConst = isConst; f.isStatic = isStatic && !isConst; f.type = type; f.name = name; f.loc = nameLoc;
+            f.isEvent = isEvent;
+            f.isProtected = isProtected;
             if (Match(T::Assign)) f.init = Initializer();
             else if (isConst) throw ParseError{nameLoc, "A const needs a value: const " + type.name + " " + name + " = ...;"};
             c.fields.push_back(std::move(f));
@@ -453,6 +505,23 @@ private:
             s->loopBody = Statement();
             return s;
         }
+        if (IsWord("try") && Is(T::LBrace, 1)) return Try();
+        if (IsWord("yield") && (Is(T::KwReturn, 1) || Is(T::KwBreak, 1))) {   // yield return x; / yield break;
+            auto s = std::make_unique<Stmt>(); s->kind = SK::Yield; s->loc = loc;
+            ++pos_;
+            if (Match(T::KwBreak)) s->yieldBreak = true;
+            else { ++pos_; s->expr = Expression(); }
+            Expect(T::Semicolon, "';'");
+            return s;
+        }
+        if (IsWord("catch") || IsWord("finally")) throw ParseError{loc, "This " + Peek().text + " has no try before it"};
+        if (IsWord("throw")) {   // throw new X(...); or throw; inside a catch
+            ++pos_;
+            auto s = std::make_unique<Stmt>(); s->kind = SK::Throw; s->loc = loc;
+            if (!Is(T::Semicolon)) s->expr = Expression();
+            Expect(T::Semicolon, "';'");
+            return s;
+        }
         if (Match(T::KwReturn)) {
             auto s = std::make_unique<Stmt>(); s->kind = SK::Return; s->loc = loc;
             if (!Is(T::Semicolon)) s->expr = Expression();
@@ -483,6 +552,32 @@ private:
             default: return true;
         }
     }
+    // try { } catch (T e) { } ... finally { }
+    std::unique_ptr<Stmt> Try() {
+        auto s = std::make_unique<Stmt>();
+        s->kind = SK::Try;
+        s->loc = Peek().loc;
+        ++pos_;
+        s->then = Block();
+        while (IsWord("catch")) {
+            CatchClause c;
+            c.loc = Peek().loc;
+            ++pos_;
+            if (Match(T::LParen)) {
+                c.typed = true;
+                c.type = Type(false);
+                if (Is(T::Ident)) { c.nameLoc = Peek().loc; c.name = Peek().text; ++pos_; }
+                Expect(T::RParen, "')'");
+            }
+            if (IsWord("when")) throw ParseError{Peek().loc, "catch ... when isn't supported: use an if inside the catch (and throw; to pass it on)"};
+            c.body = Block();
+            s->catches.push_back(std::move(c));
+        }
+        if (IsWord("finally")) { ++pos_; s->finallyBody = Block(); }
+        if (s->catches.empty() && !s->finallyBody) throw ParseError{s->loc, "A try needs a catch or a finally after it"};
+        return s;
+    }
+
     bool IsCaseLabel() const { return IsWord("case") || (IsWord("default") && Is(T::Colon, 1)); }
     // switch (x) { case 1: case 2: ... break; default: ... break; }
     std::unique_ptr<Stmt> Switch() {
@@ -652,6 +747,17 @@ private:
     ExprPtr Binary(int minPrec) {
         ExprPtr lhs = Unary();
         for (;;) {
+            if ((IsWord("is") || IsWord("as")) && minPrec <= 4) {   // x is Boss, x as Boss: as tight as < and >
+                if (++operators_ > kMaxOperators)
+                    throw ParseError{Peek().loc, "This expression is too long (more than " + std::to_string(kMaxOperators) + " operators): split it up"};
+                auto e = Make(IsWord("is") ? EK::Is : EK::As, Peek().loc);
+                ++pos_;
+                e->typeArg = Type(false);
+                if (Is(T::Ident)) throw ParseError{Peek().loc, "`is` with a name (x is T t) isn't supported: write T t = x as T; then check t != null"};
+                e->lhs = std::move(lhs);
+                lhs = std::move(e);
+                continue;
+            }
             int p = Prec(Peek().type);
             if (p < 0 || p <= minPrec - 1 || p < minPrec) break;
             if (++operators_ > kMaxOperators)

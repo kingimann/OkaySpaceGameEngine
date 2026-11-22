@@ -129,3 +129,24 @@ gameobject 6 "Label"
   text "LUA SCRIPTS: red spins, blue moves with W A S D and jumps with Space, green bobs (a coroutine)" 1 1 1 1 2 1 0 0 4 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 318 28 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
   worldui3d 100 1 1 1
 end
+gameobject 7 "Rules"
+  guid "f2909e96eb8a498fd7d79babf6170ee5"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "lua" "-- Rules: no mesh, only settings. Change them in the Inspector; Start prints them to the Console.
+local Rules = {
+    title = \"Lua demo\",
+    lives = 3,
+    startPosition = Vector3.new(0, 0.5, 2),
+    hardMode = false,
+}
+
+function Rules:Start()
+    print(string.format(\"%s: %d lives, start at %s, hard mode %s\",
+        self.title, self.lives, tostring(self.startPosition), tostring(self.hardMode)))
+end
+
+return Rules
+" "" 0
+end

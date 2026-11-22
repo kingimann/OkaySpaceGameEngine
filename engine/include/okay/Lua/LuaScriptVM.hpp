@@ -63,6 +63,9 @@ public:
     /// What can follow `receiver.` or `receiver:` (the text before the dot, e.g.
     /// "Input", "self.transform", "string"), for member autocomplete. Empty when unknown.
     static std::vector<std::string> CompletionMembers(const std::string& receiver);
+    /// A one-line description of a completion name for hover tooltips ("Input.GetKey(key: string) -> boolean: ..."),
+    /// or "" when there is nothing to say.
+    static std::string CompletionDoc(const std::string& name);
     /// Warnings a syntax check can not see: an engine name that does not exist
     /// (Input.GetKeyy) and a handler that is never called (function M:Updte).
     static std::vector<ScriptDiagnostic> Lint(const std::string& source);

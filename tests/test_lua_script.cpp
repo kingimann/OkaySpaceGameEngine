@@ -318,6 +318,11 @@ return C
         m = LuaScriptVM::CompletionMembers("Vector3");
         CHECK(has(m, "new") && has(m, "Distance") && has(m, "up"));
         CHECK(LuaScriptVM::CompletionMembers("nothingKnown").empty());
+        CHECK(LuaScriptVM::CompletionDoc("Input.GetKey").find("Input.GetKey(key: string) -> boolean") == 0);
+        CHECK(LuaScriptVM::CompletionDoc("Translate").find("Transform:Translate(") == 0);
+        CHECK(LuaScriptVM::CompletionDoc("Update").find("every frame") != std::string::npos);
+        CHECK(LuaScriptVM::CompletionDoc("Vector3").find("engine type Vector3") == 0);
+        CHECK(LuaScriptVM::CompletionDoc("nothingHere").empty());
         std::vector<std::string> words = LuaScriptVM::CompletionNames();
         CHECK(has(words, "function") && has(words, "Input.GetKey") && has(words, "Update"));
         std::vector<LuaScriptVM::Setting> st = LuaScriptVM::Settings(

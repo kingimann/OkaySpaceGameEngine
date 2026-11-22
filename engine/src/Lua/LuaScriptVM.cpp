@@ -787,6 +787,54 @@ std::vector<LintTok> LintTokens(const std::string& s) {
 }
 } // namespace
 
+namespace {
+std::string Signature(const std::string& owner, const char* sep, const sc::ApiMethod& m) {
+    std::string sg = owner + sep + m.name + "(";
+    for (std::size_t i = 0; i < m.params.size(); ++i)
+        sg += (i ? ", " : "") + (i < m.paramNames.size() ? m.paramNames[i] + ": " : std::string()) + TypeWord(m.params[i]);
+    sg += ")";
+    if (m.ret.kind != sc::TK::Void) sg += " -> " + TypeWord(m.ret);
+    return sg;
+}
+} // namespace
+
+std::string LuaScriptVM::CompletionDoc(const std::string& name) {
+    for (const char* k : kLuaKeywords) if (name == k) return "Lua keyword";
+    for (const auto& lib : kLibMembers) if (name == lib[0]) return std::string("Lua library ") + lib[0] + ": " + lib[1];
+    static const struct { const char* n; const char* d; } kHandlerDocs[] = {
+        {"Awake", "called once when the scene starts, before Start"}, {"Start", "called once before the first Update"},
+        {"Update", "called every frame: Update(dt), dt = seconds since the last frame"},
+        {"LateUpdate", "called every frame after every Update"}, {"FixedUpdate", "called 50 times a second: FixedUpdate(dt)"},
+        {"OnEnable", "called when the object is switched on"}, {"OnDisable", "called when the object is switched off"},
+        {"OnDestroy", "called when the object is destroyed"}, {"OnTriggerEnter", "OnTriggerEnter(other): another object entered this trigger"},
+        {"OnTriggerExit", "OnTriggerExit(other): another object left this trigger"},
+        {"OnCollisionEnter", "OnCollisionEnter(other): this object hit another one"},
+        {"GetComponent", "GetComponent(\"Rigidbody\") or obj:GetComponent(\"Rigidbody\"): a component of the object, or nil"},
+        {"Destroy", "Destroy(obj): removes an object from the scene"},
+        {"self", "the script table (self.gameObject, self.transform and your settings)"},
+    };
+    for (const auto& h : kHandlerDocs) if (name == h.n) return h.d;
+    const auto& api = Api();
+    std::size_t dot = name.find('.');
+    if (dot != std::string::npos) {   // Type.member
+        int idx = api.Find(name.substr(0, dot));
+        if (idx < 0) return "";
+        const sc::ApiType& t = api.types[(std::size_t)idx];
+        const std::string m = name.substr(dot + 1);
+        for (const auto& p : t.staticProps) if (p.name == m) return t.name + "." + p.name + ": " + TypeWord(p.type) + ". " + p.doc;
+        for (const auto& f : t.staticMethods) if (f.name == m) return Signature(t.name, ".", f) + ". " + f.doc;
+        if (idx == api.vector3 && m == "new") return "Vector3.new(x, y, z): a new Vector3 (also Vector3(x, y, z))";
+        return "";
+    }
+    int idx = api.Find(name);
+    if (idx >= 0) return "engine type " + name + ": " + api.types[(std::size_t)idx].doc;
+    for (const sc::ApiType& t : api.types) {
+        for (const auto& p : t.props) if (p.name == name) return t.name + "." + p.name + ": " + TypeWord(p.type) + ". " + p.doc;
+        for (const auto& f : t.methods) if (f.name == name) return Signature(t.name, ":", f) + ". " + f.doc;
+    }
+    return "";
+}
+
 std::vector<std::string> LuaScriptVM::CompletionMembers(const std::string& receiver) {
     std::string last = receiver;
     std::size_t d = last.find_last_of(".:");

@@ -15784,7 +15784,8 @@ static const TextEditor::LanguageDefinition& LuaLangDef() {
         for (const auto& name : okay::LuaScriptVM::CompletionNames()) {
             if (d.mKeywords.count(name)) continue;
             TextEditor::Identifier id;
-            id.mDeclaration = "Lua / engine name";
+            id.mDeclaration = okay::LuaScriptVM::CompletionDoc(name);
+            if (id.mDeclaration.empty()) id.mDeclaration = "Lua name";
             d.mIdentifiers.insert(std::make_pair(name, id));
         }
         for (const char* t : {"GameObject", "Transform", "Vector3", "Input", "Time", "Debug", "Mathf", "Rigidbody"})

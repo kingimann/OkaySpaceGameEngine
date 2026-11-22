@@ -3371,7 +3371,12 @@ float g_sculptRadius = 0.5f, g_sculptStrength = 0.08f;
 bool  g_meshSymX    = false;          // X symmetry: mirror every edit across local X=0
 bool  g_meshSymY    = false;          // ... across local Y=0 (G / R / S)
 bool  g_meshSymZ    = false;          // ... across local Z=0 (G / R / S)
-int   g_mePivot     = 0;              // what R / S turn around: okay::modeling::EditPivot (0 Median, 1 Individual Origins, 2 Active Vertex); '.' cycles it
+int   g_mePivot     = 0;              // what R / S turn around: okay::modeling::EditPivot (0 Median, 1 Individual Origins, 2 Active Vertex, 3 3D Cursor); '.' cycles it
+int   g_meOrient    = 0;              // which way X / Y / Z point for G / R / S locks: okay::modeling::EditOrient (0 Global, 1 Local, 2 Normal); ',' cycles it
+Vec3  g_cursor3D{0, 0, 0};            // the 3D cursor (world space): Shift+right-click in Edit Mesh places it; a pivot for R / S
+float g_offsetLoopAmt = 0.25f;        // Offset Edge Loops: how far along the edges beside the loop (0..1)
+float g_meshEditEntryAngle = 0.0f;    // the Auto Smooth angle the mesh had when Edit Mesh opened (the weld for editing forgets it)
+bool  g_meshEditEntrySmooth = false;  // ... and whether it was smooth-shaded at all
 bool  g_paintVertex = false;          // the paint brush paints smooth per-vertex colours instead of whole faces
 float g_paintHardness = 0.3f;         // vertex paint: 0 = soft falloff all the way, near 1 = solid centre
 bool  g_meshXray    = false;          // box / circle / lasso select picks through the mesh
@@ -3390,7 +3395,7 @@ float g_paintRadius = 0.5f, g_paintBlend = 0.8f;
 // G / R / S in edit mode (Blender-style modal transforms, see okay/Modeling/EditTransform.hpp).
 // Edge-loop tools that take over the 3D view until confirmed or cancelled
 // (one at a time, alongside the G / R / S transform session below).
-enum class PolyTool { None, LoopCut, Slide, Bevel, Knife };
+enum class PolyTool { None, LoopCut, Slide, Bevel, Knife, VertexSlide };
 PolyTool g_ptool = PolyTool::None;
 int   g_loopCuts = 1;                          // loop cut: number of cuts (mouse wheel)
 okay::modeling::EdgeList g_slideLoop;          // edge slide: the loop being slid...
@@ -3399,6 +3404,7 @@ okay::modeling::PolyMesh g_slidePoly;          // its topology
 std::vector<int> g_slideTriFace;               // ...the polygon each triangle of the mesh belongs to
 std::vector<Vec2> g_slideUVFrom, g_slideCornerUVFrom;   // ...and the UVs before the slide (per vertex, per corner)
 bool  g_slideAfterCut = false;                 // the slide finishing a loop cut (one undo step for both)
+std::vector<int> g_vslideVerts;                // vertex slide: the vertices sliding (it shares the slide's start state above)
 ImVec2 g_ptoolMouse0;                          // the mouse when the tool started
 Mesh  g_bevelStart;                            // bevel: the mesh before it, re-beveled live
 std::vector<int> g_bevelSelVerts, g_bevelSelFaces;   // ...and the selection then
@@ -3412,6 +3418,7 @@ okay::modeling::NumericInput g_ptoolTyped;     // a typed amount / width
 std::vector<okay::modeling::KnifePoint> g_knifePts;
 std::vector<Vec3> g_knifePos;                  // the knife points (object space), for drawing
 okay::modeling::EditTransformSession g_meModal;
+okay::modeling::OrientAxes g_meModalAxes;      // which way the session's X / Y / Z locks point (world space; see g_meOrient)
 GameObject* g_meModalObj = nullptr;   // the object whose mesh the session is moving
 std::string g_meModalObjGuid;         // its GUID (see LiveAs)
 ImVec2 g_meModalMouse0{0, 0}, g_meModalPrevMouse{0, 0};
@@ -3695,7 +3702,7 @@ static void EndPolyTool(bool keep) {
         mr->mesh = g_bevelStart;
         g_meshSelVerts = g_bevelSelVerts; g_meshSelFaces = g_bevelSelFaces; g_meshSelEdges = g_bevelSelEdges;
     }
-    if (g_ptool == PolyTool::Slide && mr && !keep && g_slideFrom.size() == mr->mesh.vertices.size()) {
+    if ((g_ptool == PolyTool::Slide || g_ptool == PolyTool::VertexSlide) && mr && !keep && g_slideFrom.size() == mr->mesh.vertices.size()) {
         mr->mesh.vertices = g_slideFrom;
         mr->mesh.uvs = g_slideUVFrom;
         mr->mesh.cornerUVs = g_slideCornerUVFrom;
@@ -3705,6 +3712,7 @@ static void EndPolyTool(bool keep) {
     g_knifePts.clear(); g_knifePos.clear();
     g_slideLoop.clear(); g_slideFrom.clear(); g_slideTriFace.clear(); g_slideUVFrom.clear(); g_slideCornerUVFrom.clear();
     g_slideAfterCut = false;
+    g_vslideVerts.clear();
 }
 
 // ---- Every modeling command in one list: the toolbar, the right-click menu, the Ctrl+K palette and
@@ -3811,6 +3819,114 @@ static void FlipNormalsNow(Mesh& m) {
     else m.FlipNormals();
 }
 
+// ---- Round 3 tools (okay/Modeling/PolyOps.hpp and EditTransform.hpp, tested in poly_ops / edit_transform / meshedit): one
+// function each, shared by the Edit Mesh buttons, the Ctrl+K list and the 3D view keys. Each mesh change is one undo step. ----
+// The vertices of the selection in the order picked: the picked vertices, or the corners of the picked edges / faces.
+static std::vector<int> SelectedVertsInOrder(const Mesh& m) {
+    std::vector<int> out;
+    std::set<int> seen;
+    auto add = [&](int v) { if (v >= 0 && v < (int)m.vertices.size() && seen.insert(v).second) out.push_back(v); };
+    if (g_meshSelMode == 0) for (int v : g_meshSelVerts) add(v);
+    else if (g_meshSelMode == 2) for (const auto& e : g_meshSelEdges) { add(e.first); add(e.second); }
+    else for (int f : g_meshSelFaces) if (f >= 0 && f < m.TriangleCount()) for (int k = 0; k < 3; ++k) add(m.triangles[(std::size_t)f * 3 + k]);
+    return out;
+}
+// Merge at Center / First / Last: the vertices of the selection into one.
+static bool MergeSelectedNow(EditorState& ed, MeshRenderer* mr, okay::modeling::MergeAt where) {
+    const std::vector<int> verts = SelectedVertsInOrder(mr->mesh);
+    if (verts.size() < 2) { ConsoleLog("Merge: select two or more vertices (or edges / faces) first", 1); return false; }
+    const int kept = where == okay::modeling::MergeAt::Last ? verts.back() : verts.front();
+    int n = 0;
+    const bool ok = ApplyPoly(ed, mr, [&](okay::modeling::PolyMesh& p) {
+        n = okay::modeling::MergeVertsAt(p, verts, where);
+        g_meshSelVerts = {kept}; g_meshSelEdges.clear(); g_meshSelMode = 0;
+        return n > 0; });
+    if (ok) ConsoleLog("Merged " + std::to_string(n + 1) + " vertices into one" + (where == okay::modeling::MergeAt::Last ? " (at the last picked)" : where == okay::modeling::MergeAt::First ? " (at the first picked)" : " (at their centre)"));
+    return ok;
+}
+// Mark Sharp / Clear Sharp on the selected edges (Auto Smooth keeps them hard; drawn cyan).
+static int MarkSharpNow(EditorState& ed, MeshRenderer* mr, bool on) {
+    const okay::modeling::EdgeList edges = SelectedPolyEdges(mr->mesh);
+    if (edges.empty()) { ConsoleLog(std::string(on ? "Mark Sharp" : "Clear Sharp") + ": select edges first (Edge mode, key 2)", 1); return 0; }
+    int n = 0;
+    for (const auto& e : edges) if (mr->mesh.IsSharp(e.first, e.second) != on) ++n;
+    if (n == 0) { ConsoleLog(on ? "Mark Sharp: those edges are sharp already" : "Clear Sharp: none of those edges is sharp"); return 0; }
+    EditUndoPoint(ed, mr);
+    for (const auto& e : edges) mr->mesh.SetSharp(e.first, e.second, on);
+    ed.dirty = true;
+    ConsoleLog(std::string(on ? "Marked " : "Cleared ") + std::to_string(n) + " sharp edge" + (n == 1 ? "" : "s") +
+               (on ? " (shading stays hard there: it is rebuilt when you leave Edit Mesh, and by Shade Smooth / Auto Smooth)" : ""));
+    return n;
+}
+// Edge Split: the faces on either side of the selected edges stop sharing them (and the edges are marked sharp).
+static bool EdgeSplitNow(EditorState& ed, MeshRenderer* mr) {
+    const okay::modeling::EdgeList edges = SelectedPolyEdges(mr->mesh);
+    int n = 0;
+    const bool ok = !edges.empty() && ApplyPoly(ed, mr, [&](okay::modeling::PolyMesh& p) {
+        const std::size_t before = p.sharp.size();
+        n = okay::modeling::EdgeSplit(p, edges);
+        return n > 0 || p.sharp.size() != before; });
+    if (ok) ConsoleLog("Edge Split: " + std::to_string(n) + " vertex cop" + (n == 1 ? "y" : "ies") + " made, the edges are marked sharp");
+    else ConsoleLog("Edge Split: select edges with a face on both sides (Edge mode, key 2)", 1);
+    return ok;
+}
+// Offset Edge Loops: a parallel loop on each side of the selected edges.
+static bool OffsetLoopsNow(EditorState& ed, MeshRenderer* mr) {
+    const okay::modeling::EdgeList edges = SelectedPolyEdges(mr->mesh);
+    std::string err = "select edges first (Edge mode, key 2)";
+    okay::modeling::EdgeList made;
+    const bool ok = !edges.empty() && ApplyPoly(ed, mr, [&](okay::modeling::PolyMesh& p) {
+        made = okay::modeling::OffsetEdgeLoops(p, edges, g_offsetLoopAmt, &err);
+        if (made.empty()) return false;
+        g_meshSelEdges = made; g_meshSelVerts.clear(); g_meshSelMode = 2;
+        return true; });
+    ConsoleLog(ok ? "Offset Edge Loops: " + std::to_string(made.size()) + " new edge(s)" : "Offset Edge Loops: " + err, ok ? 0 : 1);
+    return ok;
+}
+// Rip: tear the surface open along the selected edges; the side toward where the mouse last pointed in the 3D view comes
+// away (its new vertices are selected and a move starts, as V does in other modellers).
+static bool RipNow(EditorState& ed, MeshRenderer* mr) {
+    const okay::modeling::EdgeList edges = SelectedPolyEdges(mr->mesh);
+    if (edges.empty()) { ConsoleLog("Rip: select edges first (Edge mode, key 2, or two or more joined vertices)", 1); return false; }
+    const Mat4 M = mr->gameObject->transform->LocalToWorldMatrix();
+    Vec3 c{0, 0, 0};
+    for (const auto& e : edges) c += mr->mesh.vertices[(std::size_t)e.first] + mr->mesh.vertices[(std::size_t)e.second];
+    c = c * (0.5f / (float)edges.size());
+    const Vec3 cw = M.MultiplyPoint(c);
+    const Vec3 d = g_cursorDir.SqrMagnitude() > 1e-12f ? g_cursorDir.Normalized() : Vec3{0, 0, -1};
+    const Vec3 near = g_cursorOrigin + d * Vec3::Dot(cw - g_cursorOrigin, d);   // the mouse ray's closest point to the edges
+    Vec3 side = M.Inverse().MultiplyVector(near - cw);
+    if (!(side.SqrMagnitude() > 1e-12f)) side = Vec3{1, 0, 0};
+    std::string err;
+    std::vector<int> made;
+    const bool ok = ApplyPoly(ed, mr, [&](okay::modeling::PolyMesh& p) {
+        made = okay::modeling::RipEdges(p, edges, side, &err);
+        if (made.empty()) return false;
+        g_meshSelVerts = made; g_meshSelEdges.clear(); g_meshSelMode = 0;
+        return true; });
+    if (ok) { ConsoleLog("Rip: " + std::to_string(made.size()) + " vertex(es) torn off; move them now (Esc leaves them in place)"); g_pendingMove = 1; }
+    else ConsoleLog("Rip: " + err, 1);
+    return ok;
+}
+// Loop to Region: select the faces inside the selected closed loop of edges.
+static int LoopToRegionNow(Mesh& m) {
+    const std::vector<int> faces = okay::modeling::LoopToRegion(EditPoly(m), SelectedPolyEdges(m));
+    if (faces.empty()) { ConsoleLog("Loop to Region: select a closed loop of edges that cuts part of the surface off (Alt+click a loop)", 1); return 0; }
+    g_meshSelFaces = TrisOfPolys(m, faces); g_meshSelVerts.clear(); g_meshSelEdges.clear(); g_meshSelMode = 1;
+    ConsoleLog("Loop to Region: " + std::to_string(faces.size()) + " face(s) inside the loop");
+    return (int)faces.size();
+}
+// The 3D cursor to the middle of the selection.
+static bool CursorToSelectedNow(MeshRenderer* mr) {
+    const std::vector<int> verts = SelectedVertsInOrder(mr->mesh);
+    if (verts.empty()) { ConsoleLog("Cursor to Selected: select something first", 1); return false; }
+    Vec3 c{0, 0, 0};
+    for (int v : verts) c += mr->mesh.vertices[(std::size_t)v];
+    g_cursor3D = mr->gameObject->transform->LocalToWorldMatrix().MultiplyPoint(c * (1.0f / (float)verts.size()));
+    ConsoleLog("3D cursor moved to the selection");
+    return true;
+}
+
 static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
     namespace pmo = okay::modeling;
     std::vector<ModelCmd> v;
@@ -3854,6 +3970,13 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
     add("Pivot: Median Point", ".", "Select", "R and S turn around the centre of the whole selection.", true, "", [] { g_mePivot = 0; });
     add("Pivot: Individual Origins", ".", "Select", "R and S turn each separate part of the selection around its own centre (grow several faces in place).", true, "", [] { g_mePivot = 1; });
     add("Pivot: Active Vertex", ".", "Select", "R and S turn around the last vertex you picked.", true, "", [] { g_mePivot = 2; });
+    add("Pivot: 3D Cursor", ".", "Select", "R and S turn around the 3D cursor (Shift+right-click in the 3D view places it).", true, "", [] { g_mePivot = 3; });
+    add("Cursor to Selected", "", "Select", "Put the 3D cursor in the middle of the selection.", anyVerts || anyFaces || !g_meshSelEdges.empty(), "Select something first.", [mr] { CursorToSelectedNow(mr); });
+    add("Cursor to World Origin", "", "Select", "Put the 3D cursor back at the world's centre (0, 0, 0).", true, "", [] { g_cursor3D = Vec3{0, 0, 0}; });
+    add("Orientation: Global", ",", "Select", "X / Y / Z during G / R / S lock to the world's axes.", true, "", [] { g_meOrient = 0; });
+    add("Orientation: Local", ",", "Select", "X / Y / Z during G / R / S lock to the object's own axes (it may be turned).", true, "", [] { g_meOrient = 1; });
+    add("Orientation: Normal", ",", "Select", "X / Y / Z during G / R / S lock to the selection: Z points out of the faces (G then Z pushes along the normal).", true, "", [] { g_meOrient = 2; });
+    add("Select Loop to Region", "", "Select", "Select the faces inside the selected closed loop of edges (the smaller side).", anyEdges, needEdges, [mr] { LoopToRegionNow(mr->mesh); });
     add("Grow Selection", "", "Select", "Add everything touching the selection (faces or vertices).", g_meshSelMode == 1 ? anyFaces : (g_meshSelMode == 0 && anyVerts), "Select some faces (key 3) or vertices (key 1) first.", [mr] {
         if (g_meshSelMode == 1) g_meshSelFaces = pmo::GrowFaces(mr->mesh, g_meshSelFaces);
         else g_meshSelVerts = mr->mesh.GrownVertexSelection(g_meshSelVerts);
@@ -3897,6 +4020,15 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         });
         ConsoleLog(ok ? "Quad Remesh: " + std::to_string(before) + " triangles -> " + std::to_string(rep.outputQuads) + " quads, " + std::to_string(rep.outputTriangles) + " triangles left" : "Quad Remesh: " + rep.error);
     });
+    add("Mark Sharp", "", "Edit", "Keep the shading hard across the selected edges, whatever their angle (drawn cyan; shows when you leave Edit Mesh, or with Shade Smooth / Auto Smooth).", anyEdges, needEdges, [&ed, mr] { MarkSharpNow(ed, mr, true); });
+    add("Clear Sharp", "", "Edit", "Let the shading blend across the selected edges again.", anyEdges, needEdges, [&ed, mr] { MarkSharpNow(ed, mr, false); });
+    add("Edge Split", "", "Edit", "Cut the surface apart along the selected edges (each side keeps its own corners) and mark them sharp.", anyEdges, needEdges, [&ed, mr] { EdgeSplitNow(ed, mr); });
+    add("Vertex Slide", "Shift+V", "Edit", "Slide the selected vertices along their edges: move the mouse toward the edge to follow, click to confirm.", anyVerts || anyEdges || anyFaces, "Select vertices first (Vertex mode, key 1).", [] { EndPolyTool(true); g_ptool = PolyTool::VertexSlide; });
+    add("Offset Edge Loops", "Ctrl+Shift+R", "Edit", "Add a new edge loop on each side of the selected edges, parallel to them (distance set in Fix the surface).", anyEdges, needEdges, [&ed, mr] { OffsetLoopsNow(ed, mr); });
+    add("Rip", "V", "Edit", "Tear the surface open along the selected edges; the side the mouse is on comes away and starts moving.", anyEdges, needEdges, [&ed, mr] { RipNow(ed, mr); });
+    add("Merge at Center", "", "Edit", "Merge the selected vertices into one, at their centre.", anyVerts || anyEdges || anyFaces, "Select two or more vertices first.", [&ed, mr] { MergeSelectedNow(ed, mr, okay::modeling::MergeAt::Center); });
+    add("Merge at First", "", "Edit", "Merge the selected vertices into the first one you picked.", anyVerts || anyEdges || anyFaces, "Select two or more vertices first.", [&ed, mr] { MergeSelectedNow(ed, mr, okay::modeling::MergeAt::First); });
+    add("Merge at Last", "", "Edit", "Merge the selected vertices into the last one you picked.", anyVerts || anyEdges || anyFaces, "Select two or more vertices first.", [&ed, mr] { MergeSelectedNow(ed, mr, okay::modeling::MergeAt::Last); });
     add("Set Bevel Weight on Selected Edges", "", "Edit", "Mark the selected edges for the Bevel modifier's 'Use edge weights' option (weight set in Fix the surface: 1 = full width).", anyEdges, needEdges, [&ed, mr] {
         const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
         EditUndoPoint(ed, mr);
@@ -4228,14 +4360,21 @@ static void SetMeshEditMode(EditorState& ed, GameObject* go, bool on) {
         const bool alive = LiveAs(ed.scene(), g_meshEditObj, g_meshEditObjGuid);
         if (alive) MeshUndoCommit(ed);
         // Back to the drawable form: split at the UV seams (vertex numbers kept).
-        if (auto* emr = alive ? g_meshEditObj->GetComponent<MeshRenderer>() : nullptr)
+        if (auto* emr = alive ? g_meshEditObj->GetComponent<MeshRenderer>() : nullptr) {
             if (emr->mesh.HasCornerUVs()) emr->mesh = emr->mesh.SplitCornerUVs();
+            // The weld for editing turned Auto Smooth into plain smooth (and moves drop the normals): a mesh that came in
+            // smooth with an Auto Smooth angle or edges marked sharp gets that shading back, sharp edges hard.
+            if (g_meshEditEntrySmooth && (g_meshEditEntryAngle > 0.0f || !emr->mesh.sharpEdges.empty()))
+                emr->mesh.ComputeAutoSmoothNormals(g_meshEditEntryAngle > 0.0f ? g_meshEditEntryAngle : 180.0f);
+        }
     }
     g_meshUndo.clear(); g_meshRedo.clear(); g_meshEditStartSet = false;
     MeshRenderer* mr = go ? go->GetComponent<MeshRenderer>() : nullptr;
     if (on && mr) {
         g_meshEditStart = mr->mesh;   // before the weld, so undoing the session gives back the original
         g_meshEditStartSet = true;
+        g_meshEditEntrySmooth = mr->mesh.HasNormals();
+        g_meshEditEntryAngle = mr->mesh.HasNormals() ? mr->mesh.autoSmoothAngle : 0.0f;
         // Weld first so a primitive (24-vert cube) becomes clean shared
         // topology (8 verts), then moving a vertex moves the whole corner. The
         // UVs move onto the triangle corners first, so UV seams survive the weld.
@@ -29578,7 +29717,9 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::Button("Snap Grid##model")) ModelOp(ed, mr, "Snap Grid", [&](Mesh& m) { m.SnapToGrid(s_snapAll); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Quantize every vertex to this grid step — crisp low-poly look, modular kit alignment.");
         SectionHeader("Shading");
-        if (ImGui::Button("Shade Smooth##model")) ModelOp(ed, mr, "Shade Smooth", [&](Mesh& m) { m.ComputeSmoothNormals(); });
+        if (ImGui::Button("Shade Smooth##model")) ModelOp(ed, mr, "Shade Smooth", [&](Mesh& m) {
+            // Edges marked sharp stay hard (that needs split vertices, so not while Edit Mesh keeps this mesh welded).
+            if (!m.sharpEdges.empty() && !(g_meshEdit && EditedRenderer() == mr)) m.ComputeAutoSmoothNormals(180.0f); else m.ComputeSmoothNormals(); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blend lighting across faces (organic shapes). Saved with the scene.");
         ImGui::SameLine();
         if (ImGui::Button("Flat##shade")) ModelOp(ed, mr, "Shade Flat", [&](Mesh& m) { m.normals.clear(); m.autoSmoothAngle = 0.0f; });
@@ -30131,11 +30272,22 @@ void DrawModeling(EditorState& ed) {
                 ImGui::DragFloat("##softr", &g_meshSoftRadius, 0.01f, 0.02f, 20.0f, "r %.2f");
             }
             {
-                static const char* kPivots[] = {"Median Point", "Individual Origins", "Active Vertex"};
+                static const char* kPivots[] = {"Median Point", "Individual Origins", "Active Vertex", "3D Cursor"};
                 ImGui::SetNextItemWidth(150);
-                g_mePivot = std::clamp(g_mePivot, 0, 2);
-                ImGui::Combo("Pivot (.)##mepivot", &g_mePivot, kPivots, 3);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("What R (rotate) and S (scale) turn around: the centre of the selection, each separate part's own centre\n(several faces grow or spin in place), or the last vertex you picked. Press . in the 3D view to cycle.");
+                g_mePivot = std::clamp(g_mePivot, 0, 3);
+                ImGui::Combo("Pivot (.)##mepivot", &g_mePivot, kPivots, 4);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("What R (rotate) and S (scale) turn around: the centre of the selection, each separate part's own centre\n(several faces grow or spin in place), the last vertex you picked, or the 3D cursor. Press . in the 3D view to cycle.");
+                static const char* kOrients[] = {"Global", "Local", "Normal"};
+                ImGui::SameLine(); ImGui::SetNextItemWidth(100);
+                g_meOrient = std::clamp(g_meOrient, 0, 2);
+                ImGui::Combo("Axes (,)##meorient", &g_meOrient, kOrients, 3);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which way X / Y / Z point when you lock an axis during G / R / S: the world's axes, the object's own axes,\nor the selection's (Z out of the faces: G Z pushes along the normal). Press , in the 3D view to cycle.");
+                if (ToolButton("Cursor to Selected##me", !SelectedVertsInOrder(mr->mesh).empty(), kNeedVerts)) CursorToSelectedNow(mr);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put the 3D cursor (the red and white ring) in the middle of the selection.\nShift+right-click in the 3D view places it on the surface.");
+                ImGui::SameLine();
+                if (ToolButton("Cursor to Origin##me", true, "")) g_cursor3D = Vec3{0, 0, 0};
+                ImGui::SameLine();
+                ImGui::TextDisabled("cursor %.2f %.2f %.2f", g_cursor3D.x, g_cursor3D.y, g_cursor3D.z);
             }
 
             SectionHeader("Faces");
@@ -30620,33 +30772,41 @@ void DrawModeling(EditorState& ed) {
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close a hole with a grid of quads that blends its four sides (the rim needs an even number of edges).");
                 ImGui::SameLine();
-                // The vertices to merge: the selected ones (in the order clicked), or the
-                // corners of the selected edges / faces.
-                std::vector<int> mergeV;
-                if (g_meshSelMode == 0) mergeV = g_meshSelVerts;
-                else {
-                    std::set<int> seen;
-                    auto add = [&](int v) { if (v >= 0 && v < (int)mr->mesh.vertices.size() && seen.insert(v).second) mergeV.push_back(v); };
-                    if (g_meshSelMode == 2) for (const auto& e : g_meshSelEdges) { add(e.first); add(e.second); }
-                    else for (int f : g_meshSelFaces) if (f >= 0 && f < mr->mesh.TriangleCount()) for (int k = 0; k < 3; ++k) add(mr->mesh.triangles[f * 3 + k]);
-                }
+                const std::size_t mergeCount = SelectedVertsInOrder(mr->mesh).size();
                 const char* kNeedTwo = "Select two or more vertices (or edges / faces) to merge.";
-                auto merge = [&](bool atFirst) {
-                    Vec3 c{0, 0, 0};
-                    for (int v : mergeV) c += mr->mesh.vertices[v];
-                    const Vec3 at = atFirst ? mr->mesh.vertices[mergeV[0]] : c * (1.0f / (float)mergeV.size());
-                    int n = 0;
-                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) {
-                            n = pmo::MergeVerts(p, mergeV, at);
-                            g_meshSelVerts = {mergeV[0]}; g_meshSelEdges.clear(); g_meshSelMode = 0;
-                            return n > 0; }))
-                        ConsoleLog("Merged " + std::to_string(n + 1) + " vertices into one");
-                };
-                if (ToolButton("Merge at Center##me", mergeV.size() >= 2, kNeedTwo)) merge(false);
+                if (ToolButton("Merge at Center##me", mergeCount >= 2, kNeedTwo)) MergeSelectedNow(ed, mr, pmo::MergeAt::Center);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Merge the selected vertices into one, at their centre.");
                 ImGui::SameLine();
-                if (ToolButton("Merge at First##me", mergeV.size() >= 2, kNeedTwo)) merge(true);
+                if (ToolButton("Merge at First##me", mergeCount >= 2, kNeedTwo)) MergeSelectedNow(ed, mr, pmo::MergeAt::First);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Merge the selected vertices into the first one you selected.");
+                ImGui::SameLine();
+                if (ToolButton("Merge at Last##me", mergeCount >= 2, kNeedTwo)) MergeSelectedNow(ed, mr, pmo::MergeAt::Last);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Merge the selected vertices into the last one you selected.");
+
+                // Round 3: vertex slide, offset loops, rip, edge split, sharp edges, loop to region.
+                const bool haveVerts = !SelectedVertsInOrder(mr->mesh).empty();
+                if (ToolButton("Vertex Slide##me", haveVerts, kNeedVerts)) { EndPolyTool(true); g_ptool = PolyTool::VertexSlide; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slide the selected vertices along their edges: move the mouse in the 3D view toward the edge to follow,\nclick to confirm. In the 3D view: Shift+V.");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(90);
+                ImGui::SliderFloat("##offloop", &g_offsetLoopAmt, 0.01f, 0.99f, "at %.2f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Offset Edge Loops: how far along the edges beside the loop the new loops go (0.5 = halfway)");
+                ImGui::SameLine();
+                if (ToolButton("Offset Loops##me", haveEdges, kNeedSomeEdges)) OffsetLoopsNow(ed, mr);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a new edge loop on each side of the selected edges, parallel to them.\nIn the 3D view: Ctrl+Shift+R.");
+                ImGui::SameLine();
+                if (ToolButton("Rip##me", haveEdges, kNeedSomeEdges)) RipNow(ed, mr);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tear the surface open along the selected edges; the side the mouse was last on in the 3D view comes away.\nIn the 3D view: V (then move the torn side).");
+                if (ToolButton("Edge Split##me", haveEdges, kNeedSomeEdges)) EdgeSplitNow(ed, mr);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut the surface apart along the selected edges (each side keeps its own corners) and mark them sharp.");
+                ImGui::SameLine();
+                if (ToolButton("Mark Sharp##me", haveEdges, kNeedSomeEdges)) MarkSharpNow(ed, mr, true);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep the shading hard across the selected edges whatever their angle (drawn cyan).\nThe shading is rebuilt when you leave Edit Mesh, and by Shade Smooth / Auto Smooth.");
+                ImGui::SameLine();
+                if (ToolButton("Clear Sharp##me", haveEdges, kNeedSomeEdges)) MarkSharpNow(ed, mr, false);
+                ImGui::SameLine();
+                if (ToolButton("Loop to Region##me", haveEdges, kNeedSomeEdges)) LoopToRegionNow(mr->mesh);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select the faces inside the selected closed loop of edges.");
             }
             if (ToolButton("Separate##me", !g_meshSelFaces.empty(), kNeedFaces)) {
                 EditUndoPoint(ed, mr);
@@ -53060,8 +53220,12 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (ImGui::IsKeyPressed(ImGuiKey_2, false)) g_meshSelMode = 2;
             if (ImGui::IsKeyPressed(ImGuiKey_3, false)) g_meshSelMode = 1;
             if (ImGui::IsKeyPressed(ImGuiKey_Period, false)) {   // '.' cycles what R / S turn around
-                g_mePivot = (std::clamp(g_mePivot, 0, 2) + 1) % 3;
+                g_mePivot = (std::clamp(g_mePivot, 0, 3) + 1) % 4;
                 ConsoleLog(std::string("Pivot: ") + okay::modeling::EditPivotName((okay::modeling::EditPivot)g_mePivot));
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Comma, false)) {    // ',' cycles which way X / Y / Z point for G / R / S
+                g_meOrient = (std::clamp(g_meOrient, 0, 2) + 1) % 3;
+                ConsoleLog(std::string("Axes: ") + okay::modeling::EditOrientName((okay::modeling::EditOrient)g_meOrient));
             }
         }
         struct Pill { const char* label; bool on; int id; };
@@ -53142,6 +53306,27 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 // creases are pink, bevel weights are green (an edge with both is pink with a green core)
                 dl->AddLine(a, b, cr ? IM_COL32(235, 90, 200, 235) : bw ? IM_COL32(70, 220, 120, 235) : IM_COL32(150, 172, 205, 150), (cr || bw) ? 2.5f : 1.0f);
                 if (cr && bw) dl->AddLine(a, b, IM_COL32(70, 220, 120, 235), 1.0f);
+            }
+        }
+        // Sharp edges, in cyan (Mark Sharp: Auto Smooth keeps the shading hard there).
+        for (const auto& e : mesh.sharpEdges) {
+            if (e.first < 0 || e.second < 0 || e.first >= (int)mesh.vertices.size() || e.second >= (int)mesh.vertices.size()) continue;
+            ImVec2 a, b;
+            if (vScreen(e.first, a) && vScreen(e.second, b)) dl->AddLine(a, b, IM_COL32(60, 220, 235, 235), 2.5f);
+        }
+        // The 3D cursor: a red and white ring with a cross (Shift+right-click places it; pivot "3D Cursor").
+        {
+            ImVec2 cs;
+            if (toScreen(vp * Vec4{g_cursor3D, 1}, cs)) {
+                for (int k = 0; k < 8; ++k) {
+                    const float a0 = k * 0.785398f, a1 = (k + 1) * 0.785398f;
+                    dl->AddLine(ImVec2(cs.x + 9.0f * std::cos(a0), cs.y + 9.0f * std::sin(a0)), ImVec2(cs.x + 9.0f * std::cos(a1), cs.y + 9.0f * std::sin(a1)),
+                                (k & 1) ? IM_COL32(255, 255, 255, 235) : IM_COL32(230, 50, 50, 235), 2.0f);
+                }
+                dl->AddLine(ImVec2(cs.x - 14, cs.y), ImVec2(cs.x - 4, cs.y), IM_COL32(20, 20, 20, 220), 1.5f);
+                dl->AddLine(ImVec2(cs.x + 4, cs.y), ImVec2(cs.x + 14, cs.y), IM_COL32(20, 20, 20, 220), 1.5f);
+                dl->AddLine(ImVec2(cs.x, cs.y - 14), ImVec2(cs.x, cs.y - 4), IM_COL32(20, 20, 20, 220), 1.5f);
+                dl->AddLine(ImVec2(cs.x, cs.y + 4), ImVec2(cs.x, cs.y + 14), IM_COL32(20, 20, 20, 220), 1.5f);
             }
         }
         // UV seams, in red (Modeling > Edit Mesh > UVs & Seams).
@@ -53244,7 +53429,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 mdl::EditTransformOptions o;
                 o.softRadius = g_meshSoftSel ? g_meshSoftRadius : 0.0f;
                 o.mirrorX = g_meshSymX; o.mirrorY = g_meshSymY; o.mirrorZ = g_meshSymZ;
-                o.pivot = (mdl::EditPivot)std::clamp(g_mePivot, 0, 2);
+                o.pivot = (mdl::EditPivot)std::clamp(g_mePivot, 0, 3);
+                o.cursorWorld = g_cursor3D;
                 if (g_meshSelMode == 1) o.faces = &g_meshSelFaces;        // Individual Origins: parts joined only through the picked faces
                 else if (g_meshSelMode == 2) o.edges = &g_meshSelEdges;   // ... or the picked edges
                 // The active vertex: the last vertex picked (or the end of the last edge, or a corner of the last face).
@@ -53253,6 +53439,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                                : (!g_meshSelFaces.empty() && g_meshSelFaces.back() >= 0 && g_meshSelFaces.back() < mesh.TriangleCount() ? mesh.triangles[(std::size_t)g_meshSelFaces.back() * 3] : -1);
                 g_meModal.Begin(mesh, kind, affected, M, o);
                 if (!g_meModal.Active()) return;
+                g_meModalAxes = mdl::OrientationAxes(mesh, affected, M, (mdl::EditOrient)std::clamp(g_meOrient, 0, 2), g_meshSelMode == 1 ? &g_meshSelFaces : nullptr);
                 g_meModalObj = meo; g_meModalObjGuid = meo ? meo->Guid() : std::string();
                 g_meModalMouse0 = g_meModalPrevMouse = io.MousePos;
                 g_meModalRay0 = mouseRay(io.MousePos);
@@ -53333,6 +53520,68 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (toolKeys && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R, false)) { g_ptool = PolyTool::LoopCut; g_uiHandled = true; }
             else if (toolKeys && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B, false)) startBevel();
             else if (toolKeys && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K, false)) { g_ptool = PolyTool::Knife; g_knifePts.clear(); g_knifePos.clear(); }
+            else if (toolKeys && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V, false)) { RipNow(ed, emr); g_uiHandled = true; }
+            {   // Shift+V vertex slide, Ctrl+Shift+R offset edge loops
+                const bool shiftKeys = hovered && !io.WantTextInput && !g_meModal.Active() && g_ptool == PolyTool::None && io.KeyShift && !io.KeyAlt;
+                if (shiftKeys && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V, false)) g_ptool = PolyTool::VertexSlide;
+                else if (shiftKeys && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R, false)) { OffsetLoopsNow(ed, emr); g_uiHandled = true; }
+            }
+            // Vertex slide: the vertices to slide and where they start (shares the edge slide's start state).
+            auto startVertexSlide = [&]() {
+                const std::vector<int> vs = SelectedVertsInOrder(mesh);
+                if (vs.empty()) { ConsoleLog("Vertex slide: select vertices first (Vertex mode, key 1)", 1); g_ptool = PolyTool::None; return; }
+                g_vslideVerts = vs;
+                g_slideLoop.clear();
+                g_slideFrom = mesh.vertices;
+                g_slidePoly = okay::modeling::PolyMesh::FromMesh(mesh, {false, true, 1.0f}, &g_slideTriFace);
+                g_slideUVFrom = mesh.uvs;
+                g_slideCornerUVFrom = mesh.cornerUVs;
+                g_slideAfterCut = false;
+                g_ptoolMouse0 = io.MousePos;
+                g_ptoolTyped.Clear();
+                g_ptool = PolyTool::VertexSlide;
+            };
+            if (g_ptool == PolyTool::VertexSlide && g_slideFrom.empty() && hovered) startVertexSlide();
+            if (g_ptool == PolyTool::VertexSlide && !g_slideFrom.empty() && g_slideFrom.size() != mesh.vertices.size()) EndPolyTool(true);
+            // A slide's polygons back onto the mesh: positions, and each corner's UV from its face (seams stay split).
+            auto slideResultToMesh = [&](const okay::modeling::PolyMesh& pm) {
+                for (std::size_t i = 0; i < pm.verts.size() && i < mesh.vertices.size(); ++i) mesh.vertices[i] = pm.verts[i];
+                if ((int)g_slideTriFace.size() == mesh.TriangleCount()) {
+                    const bool perCorner = g_slideCornerUVFrom.size() == mesh.triangles.size() && !g_slideCornerUVFrom.empty();
+                    const bool perVertex = g_slideUVFrom.size() == mesh.vertices.size() && !g_slideUVFrom.empty();
+                    for (int t = 0; t < mesh.TriangleCount() && (perCorner || perVertex); ++t) {
+                        const int f = g_slideTriFace[(std::size_t)t];
+                        if (f < 0 || f >= (int)pm.faces.size() || pm.faces[(std::size_t)f].uvs.size() != pm.faces[(std::size_t)f].verts.size()) continue;
+                        const okay::modeling::PolyFace& F = pm.faces[(std::size_t)f];
+                        for (int k = 0; k < 3; ++k) {
+                            const int v = mesh.triangles[(std::size_t)t * 3 + k];
+                            for (int c = 0; c < F.Size(); ++c)
+                                if (F.verts[(std::size_t)c] == v) {
+                                    if (perCorner) mesh.cornerUVs[(std::size_t)t * 3 + k] = F.uvs[(std::size_t)c];
+                                    else if (v >= 0 && v < (int)mesh.uvs.size()) mesh.uvs[(std::size_t)v] = F.uvs[(std::size_t)c];
+                                    break;
+                                }
+                        }
+                    }
+                }
+                mesh.normals.clear();
+                ed.dirty = true;
+            };
+            // Confirm a slide (edge or vertex) as its own undo step.
+            auto confirmSlide = [&]() {
+                if (!g_slideAfterCut) {   // its own undo step (after a loop cut, the cut's step covers both)
+                    const std::vector<Vec3> result = mesh.vertices;
+                    const std::vector<Vec2> resultUV = mesh.uvs, resultCornerUV = mesh.cornerUVs;
+                    mesh.vertices = g_slideFrom;
+                    mesh.uvs = g_slideUVFrom;
+                    mesh.cornerUVs = g_slideCornerUVFrom;
+                    EditUndoPoint(ed, emr);
+                    mesh.vertices = result;
+                    mesh.uvs = resultUV;
+                    mesh.cornerUVs = resultCornerUV;
+                }
+                EndPolyTool(true);
+            };
             // A tool started from the Edit Mesh page waits for the mouse to come to the view.
             if (g_ptool == PolyTool::Slide && g_slideFrom.empty() && hovered) startSlide(SelectedPolyEdges(mesh), false);
             if (g_ptool == PolyTool::Bevel && g_bevelEdges.empty() && hovered) startBevel();
@@ -53413,46 +53662,55 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 okay::modeling::PolyMesh pm = g_slidePoly;
                 pm.verts = g_slideFrom;
                 okay::modeling::EdgeSlide(pm, g_slideLoop, amount, &g_slideFrom);
-                for (std::size_t i = 0; i < pm.verts.size() && i < mesh.vertices.size(); ++i) mesh.vertices[i] = pm.verts[i];
-                // The UVs slide with the vertices (each face keeps its own mapping, seams stay split).
-                if ((int)g_slideTriFace.size() == mesh.TriangleCount()) {
-                    const bool perCorner = g_slideCornerUVFrom.size() == mesh.triangles.size() && !g_slideCornerUVFrom.empty();
-                    const bool perVertex = g_slideUVFrom.size() == mesh.vertices.size() && !g_slideUVFrom.empty();
-                    for (int t = 0; t < mesh.TriangleCount() && (perCorner || perVertex); ++t) {
-                        const int f = g_slideTriFace[(std::size_t)t];
-                        if (f < 0 || f >= (int)pm.faces.size() || pm.faces[(std::size_t)f].uvs.size() != pm.faces[(std::size_t)f].verts.size()) continue;
-                        const okay::modeling::PolyFace& F = pm.faces[(std::size_t)f];
-                        for (int k = 0; k < 3; ++k) {
-                            const int v = mesh.triangles[(std::size_t)t * 3 + k];
-                            for (int c = 0; c < F.Size(); ++c)
-                                if (F.verts[(std::size_t)c] == v) {
-                                    if (perCorner) mesh.cornerUVs[(std::size_t)t * 3 + k] = F.uvs[(std::size_t)c];
-                                    else if (v >= 0 && v < (int)mesh.uvs.size()) mesh.uvs[(std::size_t)v] = F.uvs[(std::size_t)c];
-                                    break;
-                                }
-                        }
-                    }
-                }
-                mesh.normals.clear();
-                ed.dirty = true;
+                slideResultToMesh(pm);   // the UVs slide with the vertices (each face keeps its own mapping, seams stay split)
                 char buf[160];
                 std::snprintf(buf, sizeof(buf), "Edge slide %.3f%s", amount, g_ptoolTyped.Active() ? ("  typed " + g_ptoolTyped.Text()).c_str() : "");
                 statusLine(buf, "Move the mouse along the edges  -  type a value (-1 to 1)  -  Ctrl snaps  -  Enter or click to confirm, Esc or right-click to cancel");
                 if (cancelKey) EndPolyTool(false);
-                else if (confirmKey || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
-                    if (!g_slideAfterCut) {   // its own undo step (after a loop cut, the cut's step covers both)
-                        const std::vector<Vec3> result = mesh.vertices;
-                        const std::vector<Vec2> resultUV = mesh.uvs, resultCornerUV = mesh.cornerUVs;
-                        mesh.vertices = g_slideFrom;
-                        mesh.uvs = g_slideUVFrom;
-                        mesh.cornerUVs = g_slideCornerUVFrom;
-                        EditUndoPoint(ed, emr);
-                        mesh.vertices = result;
-                        mesh.uvs = resultUV;
-                        mesh.cornerUVs = resultCornerUV;
+                else if (confirmKey || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))) confirmSlide();
+                g_uiHandled = true;
+            } else if (g_ptool == PolyTool::VertexSlide && !g_slideFrom.empty() && !g_vslideVerts.empty()) {
+                typeInto(g_ptoolTyped);
+                // The mouse's move on the plane through the vertices facing the camera, in the mesh's own space: its
+                // direction picks the edge each vertex follows, its length along that edge the amount.
+                Vec3 c{0, 0, 0};
+                for (int v : g_vslideVerts) c += g_slideFrom[(std::size_t)v];
+                c = c * (1.0f / (float)g_vslideVerts.size());
+                const Vec3 cw = M.MultiplyPoint(c);
+                const Vec3 pn = (eye - cw).SqrMagnitude() > 1e-12f ? (eye - cw).Normalized() : Vec3{0, 0, 1};
+                auto onPlane = [&](ImVec2 mp, Vec3& hit) {
+                    const mdl::Ray r = mouseRay(mp);
+                    const float dn = Vec3::Dot(r.direction, pn);
+                    if (std::fabs(dn) < 1e-6f) return false;
+                    hit = r.origin + r.direction * (Vec3::Dot(cw - r.origin, pn) / dn);
+                    return true;
+                };
+                Vec3 h0, h1, dirL{0, 0, 0};
+                if (onPlane(g_ptoolMouse0, h0) && onPlane(io.MousePos, h1)) dirL = Minv.MultiplyVector(h1 - h0);
+                const int v0 = g_vslideVerts[0];
+                const int rail = okay::modeling::VertexSlideRail(g_slidePoly, g_slideFrom, v0, g_vslideVerts, dirL);
+                float amount = 0.0f;
+                if (rail >= 0) {
+                    const Vec3 e = g_slideFrom[(std::size_t)rail] - g_slideFrom[(std::size_t)v0];
+                    const float e2 = Vec3::Dot(e, e);
+                    if (g_ptoolTyped.Active()) amount = std::clamp(g_ptoolTyped.Value(0.0f), 0.0f, 1.0f);
+                    else if (e2 > 1e-12f) {
+                        amount = std::clamp(Vec3::Dot(dirL, e) / e2, 0.0f, 1.0f);
+                        if (g_snap || io.KeyCtrl) amount = okay::modeling::SnapTo(amount, 0.1f);
                     }
-                    EndPolyTool(true);
+                    ImVec2 a, b;   // the edge the first vertex follows
+                    if (toScreen(vp * Vec4{M.MultiplyPoint(g_slideFrom[(std::size_t)v0]), 1}, a) && toScreen(vp * Vec4{M.MultiplyPoint(g_slideFrom[(std::size_t)rail]), 1}, b))
+                        dl->AddLine(a, b, IM_COL32(255, 220, 60, 255), 2.5f);
                 }
+                okay::modeling::PolyMesh pm = g_slidePoly;
+                pm.verts = g_slideFrom;
+                okay::modeling::VertexSlide(pm, g_vslideVerts, dirL, amount, &g_slideFrom);
+                slideResultToMesh(pm);
+                char buf[160];
+                std::snprintf(buf, sizeof(buf), "Vertex slide %.3f%s%s", amount, g_ptoolTyped.Active() ? ("  typed " + g_ptoolTyped.Text()).c_str() : "", rail < 0 ? "   (move toward an edge)" : "");
+                statusLine(buf, "Move the mouse toward the edge to follow  -  type a value (0 to 1)  -  Ctrl snaps  -  Enter or click to confirm, Esc or right-click to cancel");
+                if (cancelKey) EndPolyTool(false);
+                else if (confirmKey || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))) confirmSlide();
                 g_uiHandled = true;
             } else if (g_ptool == PolyTool::Bevel) {
                 typeInto(g_ptoolTyped);
@@ -53678,12 +53936,12 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 // Shift+D / E asked for a move to start: begin it now that the new selection is in place.
                 if (g_pendingMove && idle && !affected.empty()) {
                     beginModal(mdl::EditXform::Move);
-                    if (g_pendingMove == 2 && g_meModal.Active()) {       // E: slide along the selection's normal when that is (nearly) a world axis
+                    if (g_pendingMove == 2 && g_meModal.Active()) {       // E: slide along the selection's normal (the Normal axes' Z, whatever way it points)
                         Vec3 n{0, 0, 0};
                         for (int t : g_meshSelFaces) if (t >= 0 && t < mesh.TriangleCount()) n += M.MultiplyVector(mesh.FaceNormal(t));
                         if (n.SqrMagnitude() > 1e-12f) {
-                            n = n.Normalized();
-                            for (int a = 0; a < 3; ++a) if (std::fabs((&n.x)[a]) > 0.95f) g_meModal.lock.axis = a;
+                            g_meModalAxes = mdl::OrientationAxes(mesh, affected, M, mdl::EditOrient::Normal, &g_meshSelFaces);
+                            g_meModal.lock.axis = 2; g_meModal.lock.plane = false;
                         }
                     }
                     g_pendingMove = 0;
@@ -53738,8 +53996,19 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     }
                 }
                 // Right-click (a click, not a drag, which orbits the camera): the tools that fit the selection.
-                if (idle && hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).x * ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).x +
-                        ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).y * ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).y < 16.0f)
+                const bool rightClick = idle && hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).x * ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).x +
+                        ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).y * ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).y < 16.0f;
+                if (rightClick && io.KeyShift) {
+                    // Shift+right-click: the 3D cursor goes where the mouse points on this mesh, else on the ground (y = 0),
+                    // else a little in front of the camera.
+                    const mdl::Ray r = mouseRay(io.MousePos);
+                    const okay::modeling::RayHit h = okay::modeling::RayMeshHit(mesh, Minv.MultiplyPoint(r.origin), Minv.MultiplyVector(r.direction));
+                    if (h.found) g_cursor3D = M.MultiplyPoint(h.point);
+                    else if (std::fabs(r.direction.y) > 1e-5f && -r.origin.y / r.direction.y > 0.0f) g_cursor3D = r.origin + r.direction * (-r.origin.y / r.direction.y);
+                    else g_cursor3D = r.origin + r.direction * std::max(1.0f, ed.camDist);
+                    ConsoleLog("3D cursor placed (pivot \"3D Cursor\" turns R / S around it)");
+                    g_uiHandled = true;
+                } else if (rightClick)
                     ImGui::OpenPopup("##meshctx");
                 if (ImGui::BeginPopup("##meshctx")) {
                     const char* modeName = g_meshSelMode == 0 ? "Vertices" : g_meshSelMode == 2 ? "Edges" : "Faces";
@@ -53870,15 +54139,15 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                             // A typed distance goes along the locked axis (X when free,
                             // the first axis of a locked plane).
                             int a = lock.Free() ? 0 : lock.plane ? (lock.axis == 0 ? 1 : 0) : lock.axis;
-                            off = Vec3{0, 0, 0}; (&off.x)[a] = g_meModal.typed.Value(0.0f);
+                            off = g_meModalAxes[a] * g_meModal.typed.Value(0.0f);   // along the chosen axes (Global, Local or Normal)
                             W = Mat4::Translate(off);
                         } else {
-                            off = mdl::MoveFromRays(lock, pivot, viewDir, g_meModalRay0, rayNow);
+                            off = mdl::MoveFromRays(lock, pivot, viewDir, g_meModalRay0, rayNow, g_meModalAxes);
                             bool stuck = false;
                             if (snap && g_snapTarget > 0) {
                                 // Stick the selection's centre to the nearest vertex / edge / face of this mesh.
                                 const float reach = std::max(0.001f, ed.camDist * g_snapRadiusPct * 0.01f);
-                                const Vec3 want = Minv.MultiplyPoint(mdl::MoveMatrix(off, lock).MultiplyPoint(pivot));
+                                const Vec3 want = Minv.MultiplyPoint(mdl::MoveMatrix(off, lock, g_meModalAxes).MultiplyPoint(pivot));
                                 const float scl = std::max(1e-4f, M.MultiplyVector({1, 0, 0}).Magnitude());
                                 const mdl::SnapHit hit = mdl::SnapToGeometry(mesh, want, (mdl::SnapTarget)g_snapTarget, reach / scl, affected);
                                 if (hit.found) {
@@ -53889,7 +54158,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                                 }
                             }
                             if (snap && !stuck && g_snapTarget == 0) { off.x = mdl::SnapTo(off.x, g_snapSize); off.y = mdl::SnapTo(off.y, g_snapSize); off.z = mdl::SnapTo(off.z, g_snapSize); }
-                            W = mdl::MoveMatrix(off, lock);
+                            W = mdl::MoveMatrix(off, lock, g_meModalAxes);
                         }
                         std::snprintf(buf, sizeof(buf), "D: %.3f  %.3f  %.3f", off.x, off.y, off.z);
                         readout = buf;
@@ -53904,7 +54173,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         Vec3 toCam = (eye - pivot).Normalized();
                         Vec3 ax = toCam;
                         if (!lock.Free()) {
-                            ax = Vec3{lock.axis == 0 ? 1.0f : 0.0f, lock.axis == 1 ? 1.0f : 0.0f, lock.axis == 2 ? 1.0f : 0.0f};
+                            ax = g_meModalAxes[lock.axis];
                             if (!typed && Vec3::Dot(ax, toCam) < 0.0f) ax = ax * -1.0f;
                         }
                         W = mdl::RotateMatrix(pivot, ax, deg);
@@ -53921,7 +54190,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                             f = d0 > 4.0f ? d1 / d0 : 1.0f;
                             if (snap) f = mdl::SnapTo(f, 0.1f);
                         }
-                        W = mdl::ScaleMatrix(pivot, lock, f);
+                        W = mdl::ScaleMatrix(pivot, lock, f, g_meModalAxes);
                         std::snprintf(buf, sizeof(buf), "Scale %.3f", f);
                         readout = buf;
                         break;
@@ -53934,7 +54203,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 // The locked axis through the pivot, and a line from the pivot to the mouse.
                 if (!lock.Free() && !lock.plane) {
                     ImU32 axc[3] = {IM_COL32(230, 80, 80, 220), IM_COL32(90, 210, 100, 220), IM_COL32(90, 150, 240, 220)};
-                    Vec3 ax{lock.axis == 0 ? 1.0f : 0.0f, lock.axis == 1 ? 1.0f : 0.0f, lock.axis == 2 ? 1.0f : 0.0f};
+                    const Vec3 ax = g_meModalAxes[lock.axis];
                     ImVec2 a, b;
                     if (toScreen(vp * Vec4{pivot - ax * 1000.0f, 1}, a) && toScreen(vp * Vec4{pivot + ax * 1000.0f, 1}, b))
                         dl->AddLine(a, b, axc[lock.axis], 1.5f);
@@ -53945,8 +54214,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 // Status line: what's happening and how to steer it.
                 {
                     std::string line = std::string(mdl::EditXformName(g_meModal.Kind()));
-                    if (!lock.Free()) line += "  along " + lock.Label();
-                    if (g_mePivot != 0 && g_meModal.Kind() != mdl::EditXform::Move) line += std::string("  about ") + mdl::EditPivotName((mdl::EditPivot)std::clamp(g_mePivot, 0, 2));
+                    if (!lock.Free()) line += "  along " + lock.Label() + (g_meOrient != 0 ? std::string(" (") + mdl::EditOrientName((mdl::EditOrient)std::clamp(g_meOrient, 0, 2)) + ")" : std::string());
+                    if (g_mePivot != 0 && g_meModal.Kind() != mdl::EditXform::Move) line += std::string("  about ") + mdl::EditPivotName((mdl::EditPivot)std::clamp(g_mePivot, 0, 3));
                     line += "   " + (typed ? std::string("typed ") + g_meModal.typed.Text() : readout);
                     if (snap) line += g_snapTarget > 0 && g_meModal.Kind() == mdl::EditXform::Move ? std::string("   (snapping to ") + mdl::SnapTargetName((mdl::SnapTarget)g_snapTarget) + ")" : std::string("   (snapping)");
                     const char* help = "X / Y / Z lock an axis, Shift+X/Y/Z a plane  -  type a value  -  Ctrl snaps  -  Enter or click to confirm, Esc or right-click to cancel";

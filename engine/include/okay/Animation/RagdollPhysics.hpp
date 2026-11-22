@@ -75,6 +75,22 @@ struct JointDesc {
 
 struct BodyState { Vec3 position; Quat rotation; Vec3 velocity, angularVelocity; };
 
+/// A powered joint, field for field the drive of the scene physics' Ball and
+/// ConeTwist Joint3D (branch claude2/own-physics-engine: useDrive, driveTarget,
+/// driveStiffness, driveDamping, driveFrequency, driveDampingRatio,
+/// driveMaxTorque), so a backend on that joint is a one-to-one copy:
+///  - target: the turn from the build pose, child relative to parent (Joint3D
+///    takes it as Euler degrees, x = twist; `target.ToEuler()`);
+///  - stiffness in N m / rad and damping in N m s / rad, or, when stiffness is
+///    0 and frequency > 0, both from frequency (Hz) and dampingRatio (scaled
+///    to the limb's inertia); damping 0 with a stiffness = from dampingRatio;
+///  - maxTorque in N m (0 = no cap): a strong push overcomes the muscle.
+struct JointDrive {
+    bool  useDrive = false;
+    Quat  target = Quat::Identity;
+    float stiffness = 0.0f, damping = 0.0f, frequency = 0.0f, dampingRatio = 1.0f, maxTorque = 0.0f;
+};
+
 /// What the controller needs from a physics engine. Keep it this small.
 class RagdollPhysics {
 public:
@@ -84,10 +100,8 @@ public:
     virtual int   AddJoint(const JointDesc& d) = 0;
     virtual int   BodyCount() const = 0;
     virtual int   JointCount() const = 0;
-    /// Drive: rotate the child toward `relTarget` (child frame in parent frame).
-    /// stiffness in N m / rad (0 = no drive), dampingRatio ~1 critical,
-    /// maxTorque in N m (0 = no cap): a strong push overcomes the muscle.
-    virtual void  SetDrive(int joint, const Quat& relTarget, float stiffness, float dampingRatio, float maxTorque = 0.0f) = 0;
+    /// Joint drive (a powered joint; see JointDrive).
+    virtual void  SetDrive(int joint, const JointDrive& drive) = 0;
     /// Extra damping on every joint (limp bodies stop wobbling), 0..1 per second.
     virtual void  SetJointFriction(float perSecond) = 0;
     virtual void  SetState(int body, const BodyState& s) = 0;
@@ -130,7 +144,7 @@ public:
     int   AddJoint(const JointDesc& d) override;
     int   BodyCount() const override { return (int)m_bodies.size(); }
     int   JointCount() const override { return (int)m_joints.size(); }
-    void  SetDrive(int joint, const Quat& relTarget, float stiffness, float dampingRatio, float maxTorque = 0.0f) override;
+    void  SetDrive(int joint, const JointDrive& drive) override;
     void  SetJointFriction(float perSecond) override { m_jointFriction = perSecond < 0.0f ? 0.0f : perSecond; }
     void  SetState(int body, const BodyState& s) override;
     BodyState State(int body) const override;
@@ -179,7 +193,7 @@ private:
         Vec3 hingeP, hingeC;            // hinge axis in each frame
         Vec3 refP;                      // child +Y at build, for the hinge angle, parent frame
         float hingeMin, hingeMax;
-        Quat target; float stiffness = 0.0f, damping = 1.0f, maxTorque = 0.0f;
+        JointDrive drive;
     };
 
     Vec3 InvIWorld(const Body& b, const Vec3& v) const;
@@ -190,6 +204,7 @@ private:
     void  AngularVelocity(Body* a, Body* b, const Vec3& dw);
     void  FindContacts(float dt, const ContactWorld* world);
     void  SolveJoint(Joint& j, float h);
+    float DriveStiffness(const Joint& j, const Body* P, const Body* C) const;
     void  SolveContacts(float h);
     void  Sanitise();
 

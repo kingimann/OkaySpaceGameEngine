@@ -4457,6 +4457,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Shared pickers and fields (15.2.7)
 - Shared pieces (40.5.3)
 - Shared plumbing (5.6.5)
+- Shared ragdoll parts (5.8.8)
 - Shared shading maths (2.3.2)
 - Shared timeline widgets (15.5.5)
 - shatter (6.6, 52.4)

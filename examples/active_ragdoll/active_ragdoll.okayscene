@@ -6,21 +6,21 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Sun"
-  guid "4c4a3c7ee0adfbde89db533a2d0749f5"
+  guid "2488490d78c5eb73cb4e5289d31b3b73"
   active 1
   parent -1
   transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
   light 1 1 1 1 0.3 1.1 0 10 45 0.5 0 6500 1 1 1 0
 end
 gameobject 1 "Main Camera"
-  guid "dee1ff1eb7623c4c6372546a3e641193"
+  guid "47ef7924a1f8cfca37706590a28c8c6d"
   active 1
   parent -1
   transform 0 2.6 6.5 -0.104528464 -0 -0 0.9945219 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 2 "Ground"
-  guid "424357e8fdddda240a6110316eaaa1c5"
+  guid "7e5c1bae025a60f3d9be4e60f8d02cc8"
   active 1
   parent -1
   transform 0 -0.5 0 0 0 0 1 40 1 40
@@ -29,7 +29,7 @@ gameobject 2 "Ground"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 3 "Platform (the ledge is on the right)"
-  guid "a566cb87cb38af95dd560d7e9f426f2d"
+  guid "30fd6f3c175f443a6422f7e7dfac5575"
   active 1
   parent -1
   transform 0 0.5 0 0 0 0 1 3.2 1 2.4
@@ -38,7 +38,7 @@ gameobject 3 "Platform (the ledge is on the right)"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 4 "Wall (it can grab this)"
-  guid "bf020566939d8bfbf95b16d5c9b3bf1d"
+  guid "6b6d95f047c33c1ff94fefdd43c77a1b"
   active 1
   parent -1
   transform -1 2 0 0 0 0 1 0.3 2 2.4
@@ -47,7 +47,7 @@ gameobject 4 "Wall (it can grab this)"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 5 "Dummy"
-  guid "cc9e609e42ca17314a30cfca5270bb67"
+  guid "a58a3f0821fc71b7621b6bcbb442ab29"
   active 1
   parent -1
   transform 0 1 0 0 1 0 -4.371139e-08 1 1 1
@@ -58,8 +58,8 @@ gameobject 5 "Dummy"
 var shots = 0
 var powered = 0
 function update(dt) {
-  if (key_down(\"j\")) { active_ragdoll_push(-40, 0, 0) }
-  if (key_down(\"l\")) { active_ragdoll_push(40, 0, 0) }
+  if (key_down(\"j\")) { active_ragdoll_push(-30, 0, 0) }
+  if (key_down(\"l\")) { active_ragdoll_push(30, 0, 0) }
   if (key_down(\"u\")) { active_ragdoll_push(-110, 0, 0) }
   if (key_down(\"o\")) { active_ragdoll_push(170, 0, 0) }
   if (key_down(\"i\")) { active_ragdoll_push(0, 0, -45) }

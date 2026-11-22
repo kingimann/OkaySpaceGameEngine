@@ -6,6 +6,7 @@
 // derives the velocities from the pose change, then runs a velocity pass for
 // damping. Compliance (1 / stiffness) turns a joint drive into a PD spring.
 #include "okay/Animation/RagdollPhysics.hpp"
+#include "okay/Math/JointLimit.hpp"   // TwistAbout: the swing / twist split shared with the IK limits
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -13,9 +14,9 @@ namespace okay {
 namespace dyn {
 
 namespace {
-bool Finite(float f) { return std::isfinite(f); }
-bool Finite(const Vec3& v) { return Finite(v.x) && Finite(v.y) && Finite(v.z); }
-bool Finite(const Quat& q) { return Finite(q.x) && Finite(q.y) && Finite(q.z) && Finite(q.w); }
+bool RpFinite(float f) { return std::isfinite(f); }
+bool RpFinite(const Vec3& v) { return RpFinite(v.x) && RpFinite(v.y) && RpFinite(v.z); }
+bool RpFinite(const Quat& q) { return RpFinite(q.x) && RpFinite(q.y) && RpFinite(q.z) && RpFinite(q.w); }
 
 // q + 0.5 * (rot, 0) * q, renormalised: turn q by the small rotation vector `rot`.
 Quat Turn(const Quat& q, const Vec3& rot, float sign = 1.0f) {
@@ -79,17 +80,17 @@ void XpbdRagdoll::Clear() { m_bodies.clear(); m_joints.clear(); m_resets = 0; }
 
 int XpbdRagdoll::AddBody(const BodyDesc& d) {
     Body b;
-    b.x = b.px = Finite(d.position) ? d.position : Vec3::Zero;
-    b.q = b.pq = Finite(d.rotation) && d.rotation.Magnitude() > 1e-6f ? d.rotation.Normalized() : Quat::Identity;
-    b.mass = Finite(d.mass) && d.mass > 1e-3f ? d.mass : 1e-3f;
+    b.x = b.px = RpFinite(d.position) ? d.position : Vec3::Zero;
+    b.q = b.pq = RpFinite(d.rotation) && d.rotation.Magnitude() > 1e-6f ? d.rotation.Normalized() : Quat::Identity;
+    b.mass = RpFinite(d.mass) && d.mass > 1e-3f ? d.mass : 1e-3f;
     b.invMass = 1.0f / b.mass;
     for (int a = 0; a < 3; ++a) {
-        const float I = Finite(d.inertia[a]) && d.inertia[a] > 1e-6f ? d.inertia[a] : 1e-6f;
+        const float I = RpFinite(d.inertia[a]) && d.inertia[a] > 1e-6f ? d.inertia[a] : 1e-6f;
         b.invI[a] = 1.0f / I;
     }
-    b.friction = Finite(d.friction) ? Mathf::Clamp(d.friction, 0.0f, 2.0f) : 0.7f;
+    b.friction = RpFinite(d.friction) ? Mathf::Clamp(d.friction, 0.0f, 2.0f) : 0.7f;
     for (const ContactSphere& s : d.spheres) {
-        if (!Finite(s.local) || !Finite(s.radius) || s.radius <= 0.0f) continue;
+        if (!RpFinite(s.local) || !RpFinite(s.radius) || s.radius <= 0.0f) continue;
         Sphere sp; sp.local = s.local; sp.radius = s.radius;
         b.spheres.push_back(sp);
     }
@@ -105,42 +106,45 @@ int XpbdRagdoll::AddJoint(const JointDesc& d) {
     const Body& C = m_bodies[d.child];
     Joint j;
     j.p = d.parent; j.c = d.child;
-    const Vec3 anchor = Finite(d.anchor) ? d.anchor : C.x;
+    const Vec3 anchor = RpFinite(d.anchor) ? d.anchor : C.x;
     j.rp = P.q.Inverse() * (anchor - P.x);
     j.rc = C.q.Inverse() * (anchor - C.x);
     j.rest = (P.q.Inverse() * C.q).Normalized();
     j.axisInParent = P.q.Inverse() * (C.q * Vec3::Up);
     j.hinge = d.hinge;
-    j.swing = Finite(d.swing) ? Mathf::Clamp(d.swing, 0.0f, Mathf::PI) : 1.0f;
-    j.twist = Finite(d.twist) ? Mathf::Clamp(d.twist, 0.0f, Mathf::PI) : 0.5f;
-    Vec3 ax = Finite(d.hingeAxis) && d.hingeAxis.SqrMagnitude() > 1e-8f ? d.hingeAxis.Normalized() : Vec3::Right;
+    j.swing = RpFinite(d.swing) ? Mathf::Clamp(d.swing, 0.0f, Mathf::PI) : 1.0f;
+    j.twist = RpFinite(d.twist) ? Mathf::Clamp(d.twist, 0.0f, Mathf::PI) : 0.5f;
+    Vec3 ax = RpFinite(d.hingeAxis) && d.hingeAxis.SqrMagnitude() > 1e-8f ? d.hingeAxis.Normalized() : Vec3::Right;
     j.hingeP = P.q.Inverse() * ax;
     j.hingeC = C.q.Inverse() * ax;
     j.refP = j.axisInParent;
-    j.hingeMin = Finite(d.hingeMin) ? d.hingeMin : 0.0f;
-    j.hingeMax = Finite(d.hingeMax) ? d.hingeMax : 2.0f;
+    j.hingeMin = RpFinite(d.hingeMin) ? d.hingeMin : 0.0f;
+    j.hingeMax = RpFinite(d.hingeMax) ? d.hingeMax : 2.0f;
     if (j.hingeMax < j.hingeMin) { const float t = j.hingeMin; j.hingeMin = j.hingeMax; j.hingeMax = t; }
-    j.target = j.rest;
     m_joints.push_back(j);
     return (int)m_joints.size() - 1;
 }
 
-void XpbdRagdoll::SetDrive(int joint, const Quat& relTarget, float stiffness, float dampingRatio, float maxTorque) {
+void XpbdRagdoll::SetDrive(int joint, const JointDrive& d) {
     if (joint < 0 || joint >= (int)m_joints.size()) return;
-    Joint& j = m_joints[joint];
-    if (Finite(relTarget) && relTarget.Magnitude() > 1e-6f) j.target = relTarget.Normalized();
-    j.stiffness = Finite(stiffness) ? Mathf::Clamp(stiffness, 0.0f, 1e7f) : 0.0f;
-    j.damping = Finite(dampingRatio) ? Mathf::Clamp(dampingRatio, 0.0f, 10.0f) : 1.0f;
-    j.maxTorque = Finite(maxTorque) ? Mathf::Clamp(maxTorque, 0.0f, 1e7f) : 0.0f;
+    JointDrive& j = m_joints[joint].drive;
+    j.useDrive = d.useDrive;
+    if (RpFinite(d.target) && d.target.Magnitude() > 1e-6f) j.target = d.target.Normalized();
+    auto clampF = [](float v, float hi, float fallback) { return RpFinite(v) ? Mathf::Clamp(v, 0.0f, hi) : fallback; };
+    j.stiffness = clampF(d.stiffness, 1e7f, 0.0f);
+    j.damping = clampF(d.damping, 1e7f, 0.0f);
+    j.frequency = clampF(d.frequency, 1000.0f, 0.0f);
+    j.dampingRatio = clampF(d.dampingRatio, 10.0f, 1.0f);
+    j.maxTorque = clampF(d.maxTorque, 1e7f, 0.0f);
 }
 
 void XpbdRagdoll::SetState(int body, const BodyState& s) {
     if (body < 0 || body >= (int)m_bodies.size()) return;
     Body& b = m_bodies[body];
-    if (Finite(s.position)) b.x = s.position;
-    if (Finite(s.rotation) && s.rotation.Magnitude() > 1e-6f) b.q = s.rotation.Normalized();
-    b.v = Finite(s.velocity) ? Vec3::ClampMagnitude(s.velocity, maxSpeed) : Vec3::Zero;
-    b.w = Finite(s.angularVelocity) ? Vec3::ClampMagnitude(s.angularVelocity, maxSpin) : Vec3::Zero;
+    if (RpFinite(s.position)) b.x = s.position;
+    if (RpFinite(s.rotation) && s.rotation.Magnitude() > 1e-6f) b.q = s.rotation.Normalized();
+    b.v = RpFinite(s.velocity) ? Vec3::ClampMagnitude(s.velocity, maxSpeed) : Vec3::Zero;
+    b.w = RpFinite(s.angularVelocity) ? Vec3::ClampMagnitude(s.angularVelocity, maxSpin) : Vec3::Zero;
     b.px = b.x; b.pq = b.q;
     for (Sphere& sp : b.spheres) { sp.hasPlane = false; sp.touching = false; }
     b.good = {b.x, b.q, b.v, b.w};
@@ -190,7 +194,8 @@ void XpbdRagdoll::Angular(Body* a, Body* b, const Vec3& rot, float alpha, float 
     const float w = GenInvInertia(a, n) + GenInvInertia(b, n) + alpha / (h * h);
     if (w < 1e-12f) return;
     float lambda = th / w;                          // angular impulse of this correction (N m s)
-    if (maxTorque > 0.0f) lambda = Mathf::Min(lambda, maxTorque * h);
+    // XPBD multipliers are positional: torque = lambda / h^2 (Mueller et al. 2020, section 3.3).
+    if (maxTorque > 0.0f) lambda = Mathf::Min(lambda, maxTorque * h * h);
     const Vec3 L = n * lambda;
     if (a) a->q = Turn(a->q, InvIWorld(*a, L));
     if (b) b->q = Turn(b->q, InvIWorld(*b, L), -1.0f);
@@ -208,26 +213,26 @@ void XpbdRagdoll::AngularVelocity(Body* a, Body* b, const Vec3& dw) {
 }
 
 void XpbdRagdoll::ApplyImpulse(int body, const Vec3& impulse, const Vec3& atPoint) {
-    if (body < 0 || body >= (int)m_bodies.size() || !Finite(impulse)) return;
+    if (body < 0 || body >= (int)m_bodies.size() || !RpFinite(impulse)) return;
     Body& b = m_bodies[body];
     const Vec3 J = Vec3::ClampMagnitude(impulse, b.mass * maxSpeed);
-    const Vec3 r = Finite(atPoint) ? Vec3::ClampMagnitude(atPoint - b.x, 2.0f) : Vec3::Zero;
+    const Vec3 r = RpFinite(atPoint) ? Vec3::ClampMagnitude(atPoint - b.x, 2.0f) : Vec3::Zero;
     b.v = Vec3::ClampMagnitude(b.v + J * b.invMass, maxSpeed);
     b.w = Vec3::ClampMagnitude(b.w + InvIWorld(b, Vec3::Cross(r, J)), maxSpin);
 }
 
 void XpbdRagdoll::AddForce(int body, const Vec3& f) {
-    if (body < 0 || body >= (int)m_bodies.size() || !Finite(f)) return;
+    if (body < 0 || body >= (int)m_bodies.size() || !RpFinite(f)) return;
     m_bodies[body].force += f;
 }
 
 void XpbdRagdoll::AddTorque(int body, const Vec3& t) {
-    if (body < 0 || body >= (int)m_bodies.size() || !Finite(t)) return;
+    if (body < 0 || body >= (int)m_bodies.size() || !RpFinite(t)) return;
     m_bodies[body].torque += t;
 }
 
 void XpbdRagdoll::SetPin(int body, const Vec3& localPoint, const Vec3& worldPoint, float stiffness) {
-    if (body < 0 || body >= (int)m_bodies.size() || !Finite(localPoint) || !Finite(worldPoint) || !Finite(stiffness)) return;
+    if (body < 0 || body >= (int)m_bodies.size() || !RpFinite(localPoint) || !RpFinite(worldPoint) || !RpFinite(stiffness)) return;
     Body& b = m_bodies[body];
     b.pinned = stiffness > 0.0f;
     b.pinLocal = localPoint; b.pinWorld = worldPoint; b.pinK = Mathf::Min(stiffness, 1e7f);
@@ -240,11 +245,11 @@ void XpbdRagdoll::ClearPin(int body) {
 void XpbdRagdoll::SetHelper(int body, const Vec3& pos, float posK, const Quat& rot, float rotK, float damping) {
     if (body < 0 || body >= (int)m_bodies.size()) return;
     Body& b = m_bodies[body];
-    b.helpXK = Finite(pos) && Finite(posK) ? Mathf::Clamp(posK, 0.0f, 1e7f) : 0.0f;
-    b.helpQK = Finite(rot) && rot.Magnitude() > 1e-6f && Finite(rotK) ? Mathf::Clamp(rotK, 0.0f, 1e7f) : 0.0f;
-    b.helpX = Finite(pos) ? pos : b.x;
+    b.helpXK = RpFinite(pos) && RpFinite(posK) ? Mathf::Clamp(posK, 0.0f, 1e7f) : 0.0f;
+    b.helpQK = RpFinite(rot) && rot.Magnitude() > 1e-6f && RpFinite(rotK) ? Mathf::Clamp(rotK, 0.0f, 1e7f) : 0.0f;
+    b.helpX = RpFinite(pos) ? pos : b.x;
     b.helpQ = b.helpQK > 0.0f ? rot.Normalized() : Quat::Identity;
-    b.helpDamp = Finite(damping) ? Mathf::Clamp(damping, 0.0f, 1000.0f) : 0.0f;
+    b.helpDamp = RpFinite(damping) ? Mathf::Clamp(damping, 0.0f, 1000.0f) : 0.0f;
 }
 
 void XpbdRagdoll::ClearHelpers() {
@@ -266,7 +271,7 @@ void XpbdRagdoll::FindContacts(float dt, const ContactWorld* world) {
             Vec3 p, n;
             bool hit = world->Cast(c0 - dir * (0.5f * s.radius), c0 + move + dir * (s.radius + skin), p, n);
             if (!hit) hit = world->Cast(c0 + Vec3::Up * s.radius, c0 + Vec3::Down * (s.radius + skin + 0.02f), p, n);
-            if (hit && Finite(p) && Finite(n) && n.SqrMagnitude() > 1e-8f) {
+            if (hit && RpFinite(p) && RpFinite(n) && n.SqrMagnitude() > 1e-8f) {
                 s.hasPlane = true; s.planePoint = p; s.planeNormal = n.Normalized();
             } else if (s.hasPlane) {
                 // Keep the last surface while the sphere is still near it (a deep
@@ -279,13 +284,26 @@ void XpbdRagdoll::FindContacts(float dt, const ContactWorld* world) {
     }
 }
 
+float XpbdRagdoll::DriveStiffness(const Joint& j, const Body* P, const Body* C) const {
+    if (!j.drive.useDrive) return 0.0f;
+    if (j.drive.stiffness > 0.0f) return j.drive.stiffness;
+    if (j.drive.frequency <= 0.0f) return 0.0f;
+    // From a frequency: k = I (2 pi f)^2 with I the joint's inertia about the
+    // child's long axis' normal (both bodies, as the solver sees them).
+    const Vec3 n = (C->q * Vec3::Right).Normalized();
+    const float w = GenInvInertia(C, n) + GenInvInertia(P, n);
+    const float om = 2.0f * Mathf::PI * j.drive.frequency;
+    return w > 1e-9f ? om * om / w : 0.0f;
+}
+
 void XpbdRagdoll::SolveJoint(Joint& j, float h) {
     Body* P = &m_bodies[j.p];
     Body* C = &m_bodies[j.c];
     // Drive first, so the hard constraints below have the last word.
-    if (j.stiffness > 0.0f) {
-        const Quat want = (P->q * j.target).Normalized();
-        Angular(C, P, RotVec(want * C->q.Inverse()), 1.0f / j.stiffness, h, j.maxTorque);
+    const float k = DriveStiffness(j, P, C);
+    if (k > 0.0f) {
+        const Quat want = (P->q * j.rest * j.drive.target).Normalized();
+        Angular(C, P, RotVec(want * C->q.Inverse()), 1.0f / k, h, j.drive.maxTorque);
     }
     if (j.hinge) {
         const Vec3 ap = P->q * j.hingeP, ac = C->q * j.hingeC;
@@ -307,7 +325,10 @@ void XpbdRagdoll::SolveJoint(Joint& j, float h) {
             if (n.SqrMagnitude() > 1e-12f) Angular(C, P, n.Normalized() * (ang - j.swing), 0.0f, h);
         }
         Quat d = j.rest.Inverse() * (P->q.Inverse() * C->q);
-        const float tw = WrapPi(2.0f * std::atan2(d.y, d.w));
+        if (d.w < 0.0f) d = Quat{-d.x, -d.y, -d.z, -d.w};
+        float twDeg = 0.0f;
+        TwistAbout(d, Vec3::Up, twDeg);
+        const float tw = WrapPi(twDeg * Mathf::Deg2Rad);
         const float lim = Mathf::Clamp(tw, -j.twist, j.twist);
         if (lim != tw) Angular(C, P, (C->q * Vec3::Up) * (lim - tw), 0.0f, h);
     }
@@ -350,7 +371,7 @@ void XpbdRagdoll::SolveContacts(float h) {
 void XpbdRagdoll::Sanitise() {
     bool ok = true;
     for (const Body& b : m_bodies)
-        if (!Finite(b.x) || !Finite(b.q) || !Finite(b.v) || !Finite(b.w)) { ok = false; break; }
+        if (!RpFinite(b.x) || !RpFinite(b.q) || !RpFinite(b.v) || !RpFinite(b.w)) { ok = false; break; }
     if (!ok) {
         ++m_resets;
         for (Body& b : m_bodies) {
@@ -364,12 +385,12 @@ void XpbdRagdoll::Sanitise() {
 }
 
 void XpbdRagdoll::Step(float dt, const ContactWorld* world) {
-    if (m_bodies.empty() || !Finite(dt) || dt <= 0.0f) return;
+    if (m_bodies.empty() || !RpFinite(dt) || dt <= 0.0f) return;
     dt = Mathf::Min(dt, 0.1f);
     FindContacts(dt, world);
     const int n = substeps < 1 ? 1 : (substeps > 64 ? 64 : substeps);
     const float h = dt / (float)n;
-    const Vec3 g = Finite(gravity) ? gravity : Vec3::Zero;
+    const Vec3 g = RpFinite(gravity) ? gravity : Vec3::Zero;
     for (int sub = 0; sub < n; ++sub) {
         for (Body& b : m_bodies) {
             b.px = b.x; b.pq = b.q;
@@ -406,11 +427,20 @@ void XpbdRagdoll::Step(float dt, const ContactWorld* world) {
             const float wsum = GenInvInertia(C, nn) + GenInvInertia(P, nn);
             if (wsum < 1e-12f) continue;
             float f = Mathf::Min(1.0f, m_jointFriction * h);
-            if (j.stiffness > 0.0f) {
-                const float d = 2.0f * j.damping * std::sqrt(j.stiffness / wsum);
+            const float k = DriveStiffness(j, P, C);
+            if (j.drive.useDrive && (k > 0.0f || j.drive.damping > 0.0f)) {
+                const float d = j.drive.damping > 0.0f ? j.drive.damping : 2.0f * j.drive.dampingRatio * std::sqrt(k / wsum);
                 f = Mathf::Min(1.0f, f + d * h * wsum);
             }
-            if (f > 0.0f) AngularVelocity(C, P, rel * (-f));
+            if (f > 0.0f) {
+                Vec3 dw = rel * (-f);
+                // The drive's damping counts toward its torque cap too (Joint3D: never more than driveMaxTorque).
+                if (j.drive.useDrive && j.drive.maxTorque > 0.0f) {
+                    const float impulse = dw.Magnitude() / wsum, cap = j.drive.maxTorque * h;
+                    if (impulse > cap) dw = dw * (cap / impulse);
+                }
+                AngularVelocity(C, P, dw);
+            }
         }
         for (Body& b : m_bodies) {
             if (b.helpDamp <= 0.0f) continue;

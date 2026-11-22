@@ -72,32 +72,61 @@ visual-script node `Fn.<name>` (Character Actions > Stances & Ragdoll). C++: `Ac
 
 - Standing powered for 4 s: pelvis within 1 % of its standing height, torso lean under 1 degree.
 - A 35 N s push at the chest (0.5 m/s): stays up, back to the animation after 0.87 s (recovery time).
-- 35 and 50 N s pushes in all four directions: no fall (0 to 3 steps). 70 N s forward: two steps, no fall.
-  200 N s (2.9 m/s) in all four directions: falls every time. Between about 70 and 200 N s it depends on
+- 35 and 50 N s pushes in all four directions: no fall. 60 to 75 N s forward: stays up in 3 of 4 (up to
+  5 steps). 200 N s (2.9 m/s) in all four directions: falls every time and gets up again every time. Between about 70 and 200 N s it depends on
   the direction (sideways falls come sooner: the stepping foot may not cross the other).
 - Get-up from lying face up and face down: up and back to the animation in about 3.5 s
   (0.8 s still, 2.2 s get-up, 0.35 s blend).
-- Falling forward the hands touch the ground before the head (0.65 s against 0.72 s); falling
-  backwards both hands come within 0.22 m of the head.
+- Falling forward the hands touch the ground before the head (0.62 s against 0.65 s); falling
+  backwards both hands come within 0.25 m of the head (standing they hang 0.85 m away).
 - Hostile input (NaN and infinite pushes, 1e12 N s, NaN poses, negative and 10 s frames, zero and
   negative mass, a broken skeleton): stays finite, joints apart by under 4 mm, no reset needed.
 - The same scripted sequence (push, shot, blast) run twice gives bit-identical bodies.
+- Balance near the edge is chaotic: a change in rounding (for example moving the leg IK onto the
+  shared two-bone solve) can turn one 70 N s push from "stays up" into "falls". The tests therefore
+  ask for 3 of 4 pushes between 60 and 75 N s and a grip in at least 1 of 5 shoves toward the wall.
+- Muscle limits are real since 2026-11-22: the drive's torque cap (and its damping) is in N m
+  (XPBD multipliers are positional, torque = lambda / h^2); before, the cap was 720 times too loose.
+- On the blocky Character a push from the front of 30 N s can already need several steps (its foot
+  has a short heel); the example's J and L pushes are 30 N s.
 
-## The physics seam (for the new physics core)
+## The physics seam and the plan for the physics core
 
-The controller only uses `dyn::RagdollPhysics`: add bodies and joints, `SetDrive(joint,
-target, stiffness, dampingRatio)`, impulses, forces, a pin, a helper spring, `Step`, poses and
-contact flags. When the scene physics (branch `claude2/own-physics-engine`) has merged, a second
-implementation can build `Rigidbody3D` bodies with its joints so ragdoll limbs also hit and are
-hit by other dynamic bodies. What it needs from that core:
+The controller only uses `dyn::RagdollPhysics`: add bodies and joints, `SetDrive(joint, JointDrive)`,
+impulses, forces, a pin, a helper spring, `Step`, poses and contact flags. `JointDrive` is field for
+field the drive of the scene physics' Ball / ConeTwist `Joint3D` on branch `claude2/own-physics-engine`
+(`useDrive`, `driveTarget` = the turn from the build pose, `driveStiffness`, `driveDamping`,
+`driveFrequency`, `driveDampingRatio`, `driveMaxTorque`), so the two speak the same language.
 
-- a 6-DOF or cone-twist joint with a **spherical drive**: target rotation (child in parent frame),
-  stiffness, damping, and a maximum torque;
-- a hinge with angle limits (knees, elbows), swing and twist limits on the ball joints;
-- collision filtering so a ragdoll's own limbs ignore each other next to a joint;
-- an impulse at a world point; per-body contact flags (which spheres or shapes touch);
-- a world-anchored soft spring (position and rotation) for the get-up helper, and a soft point pin;
-- bit-identical stepping for the same inputs (our determinism test does this today).
+The plan (one joint solver in the engine):
+1. When `claude2/own-physics-engine` has merged, write `CoreRagdollPhysics : RagdollPhysics`: one
+   `Rigidbody3D` + `CapsuleCollider3D` per bone on hidden child objects, one ConeTwist `Joint3D` per
+   joint (knees and elbows Hinge), `SetDrive` copying `JointDrive` into the joint's drive fields
+   (`driveTarget = target.ToEuler()`), contacts read from the body's collision callbacks.
+2. Switch `DynamicCharacter`'s backend with one line (`m_phys.reset(new CoreRagdollPhysics(scene))`),
+   behind a component setting first, off by default.
+3. Run `active_ragdoll` on both backends; when the core passes, make it the default and keep
+   `XpbdRagdoll` only as the fallback for scenes without the core (and for the unit tests that run
+   without a Scene).
+4. What it needs from the core: drives that honour the max torque including damping, a hinge with
+   limits, collision filtering between neighbouring limbs, an impulse at a point, per-body contact
+   flags, a world-anchored soft spring (get-up helper) and a soft point pin (grab), bit-identical
+   stepping.
+
+Tracked in `docs/status/UNFINISHED.md` ("ActiveRagdoll on the physics core joints").
+
+## One ragdoll per body, shared parts
+
+`Components/RagdollShared` holds what `Ragdoll` and `ActiveRagdoll` share: finding the 15 bones
+(`FindBones`), the one list of components that drive a body (`DriverKind`: animation and IK, or
+movement controllers and Rigidbody3D) with `SwitchOff` / `SwitchBackOn`, and `HealthWatch` (death,
+revive and hits from a HealthStat). A limp `Ragdoll` switches off both kinds on the whole body; the
+`ActiveRagdoll` switches off movement only, because its muscles follow the animation. Since this
+change a limp `Ragdoll` also switches off Click To Move, Free Roam, 2.5D platformer, Top Down and
+both shooter controllers (before, only `IPlayerSim` controllers and NPCs; a Click To Move controller
+kept steering a limp body). If an object has both, the ActiveRagdoll takes over at Start: it switches
+the Ragdoll off and logs it, and the Ragdoll's Inspector says so. The leg IK uses the shared
+`Math/TwoBoneIK` solve and the twist limit the shared `Math/JointLimit` `TwistAbout`.
 
 ## Sources
 

@@ -1,6 +1,7 @@
 // DynamicCharacter - see the header for what it is and what it was written from.
 #include "okay/Animation/DynamicCharacter.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Math/TwoBoneIK.hpp"
 #include <cmath>
 
 namespace okay {
@@ -376,7 +377,7 @@ public:
                 // The hand grips wherever it meets the surface (it may have slid
                 // along it on the way), not only at the aimed point.
                 const float gap = Vec3::Dot(tip - p, nrm);
-                if (gap < 0.08f * c.Height() / 1.8f && Vec3::Distance(tip, point) < 0.8f * reach) {
+                if (gap < 0.08f * c.Height() / 1.8f && Vec3::Distance(tip, sh) <= 1.1f * reach && tip.y > sh.y - 0.6f * reach) {   // a hand hanging at the hip does not hold anyone up
                     point = tip - nrm * gap + nrm * c.BodyRadius(u + 2);
                     c.m_grabBody = u + 2;
                     c.Physics()->SetPin(u + 2, Vec3::Up * c.BodyHalfLength(u + 2), point,
@@ -728,7 +729,8 @@ bool DynamicCharacter::Build(const RigInput& rig) {
         m_animV[b] = m_animW[b] = Vec3::Zero;
         m_relax[b] = 0.0f;
     }
-    for (int b = 1; b < kBones; ++b) m_relAnim[b] = (m_bindQ[kParent[b]].Inverse() * m_bindQ[b]).Normalized();
+    for (int b = 1; b < kBones; ++b) m_relAnim[b] = m_relBind[b] = (m_bindQ[kParent[b]].Inverse() * m_bindQ[b]).Normalized();
+    m_relBind[Hips] = Quat::Identity;
     m_chestFwdLocal = m_bindQ[Torso].Inverse() * fwd;
     m_pelvisH0 = centre[Hips].y - m_groundY;
     m_groundNow = m_groundY;
@@ -933,7 +935,13 @@ void DynamicCharacter::ApplyDrives(const Frame& f) {
         const float s = Mathf::Max(0.0f, f.str[b]);
         const float k = Mathf::Max(0.0f, tuning.stiffnessPerKg) * m_support[b] * s;
         const float cap = (Mathf::Max(0.0f, tuning.torquePerKg) * m_support[b] + 15.0f) * Mathf::Min(s, 2.0f);
-        m_phys->SetDrive(m_joint[b], rel, Fin(k) ? k : 0.0f, tuning.dampingRatio, Fin(cap) ? Mathf::Max(cap, 1e-3f) : 0.0f);
+        JointDrive d;
+        d.useDrive = true;
+        d.target = (m_relBind[b].Inverse() * rel).Normalized();   // the turn from the build pose
+        d.stiffness = Fin(k) ? k : 0.0f;
+        d.dampingRatio = tuning.dampingRatio;
+        d.maxTorque = Fin(cap) ? Mathf::Max(cap, 1e-3f) : 0.0f;
+        m_phys->SetDrive(m_joint[b], d);
     }
     m_haveDrive = true;
     // The pelvis has no parent joint: when a behaviour wants it turned, the
@@ -1055,15 +1063,15 @@ void DynamicCharacter::LegIK(Frame& f, int side, const Vec3& hip, const Vec3& an
     const int th = side == 0 ? LThigh : RThigh, sh = th + 1;
     const float L1 = m_segLen[th], L2 = m_segLen[sh];
     if (L1 <= 0.0f || L2 <= 0.0f || !Fin(hip) || !Fin(ankle)) return;
+    // Knees bend forward: the pole is the heading (the shared two-bone solve, Math/TwoBoneIK).
+    // Keep the knee a hair bent (0.999 of full reach) so it never locks on its hinge stop.
     const Vec3 d = ankle - hip;
-    const float dist = Mathf::Clamp(d.Magnitude(), 0.05f * (L1 + L2), (L1 + L2) * 0.999f);
-    const Vec3 dn = SafeNorm(d, Vec3::Down);
-    const float a = (L1 * L1 - L2 * L2 + dist * dist) / (2.0f * dist);
-    const float hk = std::sqrt(Mathf::Max(0.0f, L1 * L1 - a * a));
-    Vec3 pole = fwd - dn * Vec3::Dot(fwd, dn);
-    pole = SafeNorm(pole, Lateral(side));
-    const Vec3 knee = hip + dn * a + pole * hk;
-    const Vec3 ank = hip + dn * dist;
+    const float dist = d.Magnitude();
+    const float want = Mathf::Clamp(dist, 0.05f * (L1 + L2), 0.999f * (L1 + L2));
+    const Vec3 target = hip + SafeNorm(d, Vec3::Down) * want;
+    const Vec3 pole = SafeNorm(fwd - SafeNorm(d, Vec3::Down) * Vec3::Dot(fwd, SafeNorm(d, Vec3::Down)), Lateral(side));
+    Vec3 knee, ank;
+    SolveTwoBoneIK(hip, L1, L2, target, pole, knee, ank);
     f.want[th] = Aim(th, knee - hip, fwd); f.has[th] = true;
     f.want[sh] = Aim(sh, ank - knee, fwd); f.has[sh] = true;
 }

@@ -57,7 +57,7 @@ struct Tuning {
     float strength = 1.0f;            // all drives
     float spineStrength = 1.0f, neckStrength = 1.0f, armStrength = 1.0f, legStrength = 1.0f;
     float stiffnessPerKg = 60.0f;     // N m / rad per kg the joint carries
-    float torquePerKg = 6.0f;         // muscle limit, N m per kg the joint carries (plus 15 N m)
+    float torquePerKg = 14.0f;         // muscle limit, N m per kg the joint carries (plus 15 N m)
     float targetSpeed = 720.0f;       // degrees per second a drive target may move (no snapping)
     float dampingRatio = 1.0f;
     float balanceForce = 0.35f;       // virtual-force cap, fraction of body weight
@@ -260,6 +260,7 @@ private:
     Quat  m_animPrevQ[kBones];
     bool  m_haveAnimPrev = false;
     Quat  m_relAnim[kBones];
+    Quat  m_relBind[kBones];          // child in parent at build (the drives' zero)
     Quat  m_relDrive[kBones];         // last drive target, for the target speed limit
     bool  m_haveDrive = false;
     // Shown pose when blending back.

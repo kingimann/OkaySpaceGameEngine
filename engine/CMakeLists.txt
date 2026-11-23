@@ -186,8 +186,22 @@ add_library(okay_engine
     src/Script/Lexer.cpp
     src/Script/Parser.cpp
     src/Script/Checker.cpp
+    src/Script/CheckerOperators.cpp
+    src/Script/CheckerCalls.cpp
+    src/Script/CheckerStatements.cpp
+    src/Script/CheckerTypes.cpp
+    src/Script/CheckerExpressions.cpp
     src/Script/Interpreter.cpp
     src/Script/EngineApi.cpp
+    src/Script/EngineApi_Math.cpp
+    src/Script/EngineApi_Animation.cpp
+    src/Script/EngineApi_Curves.cpp
+    src/Script/EngineApi_Story.cpp
+    src/Script/EngineApi_World.cpp
+    src/Script/EngineApi_Runtime.cpp
+    src/Script/EngineApi_Input.cpp
+    src/Script/EngineApi_Ui.cpp
+    src/Script/EngineApi_Core.cpp
     src/Script/NextScriptVM.cpp
     src/Components/ScriptComponent.cpp
     src/Components/AnimControl.cpp

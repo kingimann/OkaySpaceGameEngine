@@ -1,0 +1,14 @@
+// <cstring> for okay-cc: the string functions of lib/str.c and lib/mem.c in namespace std
+// (ISO/IEC 14882 [cstring.syn], ISO C 7.24). Our own header; gcc keeps its own.
+#pragma once
+namespace std {
+typedef unsigned long size_t;
+extern "C" {
+size_t strlen(const char *s);
+int strcmp(const char *a, const char *b);
+char *strcpy(char *dst, const char *src);
+char *strcat(char *dst, const char *src);
+void *memcpy(void *dst, const void *src, size_t n);
+void *memset(void *dst, int c, size_t n);
+}
+}  // namespace std

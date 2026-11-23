@@ -242,16 +242,18 @@ then this file gets updated. Keep this file short and true.
     "unconfirmed". Every bug goes to Claude 2 (a bug fix may touch any file, with a failing test and a claim marked
     `Kind: bug`); the coordinator's agents fix a bug only inside a feature branch they are finishing.
     Cryptography findings follow rule 18 as well.
-24a. **Exception: Grok may write our own build tool and our own compiler (owner 2026-11-17: "Yes please", then "start
-    building our own MSVC and Clang too ... we are not replacing them any time soon, its so i have something to do").**
-    Only in `tools/okaybuild/` (build tool, `docs/platform/own_build_plan.md`), `tools/okaycc/` (our own Clang-style compiler,
-    `docs/platform/own_compiler_plan.md`) and `tools/okayms/` (our own MSVC-style compiler, linker and Windows toolchain,
-    `docs/platform/own_msvc_plan.md`), on `grok/*` branches it pushes itself, never on main. Everything else in rule 24 still
-    holds for the rest of the repository, and rule 18 still holds (no cryptography). The code must be its own, written
-    from language standards, object-file and CPU manuals and general compiler ideas, with no code taken from CMake,
-    Ninja, GCC, Clang/LLVM, MSVC, tcc or any other project (rule 19a). Both stay OFF: not in CMake, CI or releases, and
-    nothing in the engine depends on them, until the owner says so. The coordinator's agents run the tests, read the
-    result, and open and merge the PR.
+24a. **Our own build tool and compilers are third-party work for the coordinator (owner 2026-11-23: "i want you to build
+    our own tool and compliers", "thats what third parties is"; first allowed for Grok on 2026-11-17).** They replace
+    CMake/Ninja, GCC/Clang and MSVC. Only in `tools/okaybuild/` (`docs/platform/own_build_plan.md`), `tools/okaycc/`
+    (`docs/platform/own_compiler_plan.md`) and `tools/okayms/` (`docs/platform/own_msvc_plan.md`), on `claude/*` branches.
+    Rule 18 holds (no cryptography). The code must be our own, written from language standards, object-file and CPU
+    manuals and general compiler ideas, with no code taken from CMake, Ninja, GCC, Clang/LLVM, MSVC, tcc or any other
+    project (rule 19a). They stay out of CMake, CI and releases, and nothing in the engine depends on them, until the
+    owner says so.
+24d. **Grok has its own lane (owner 2026-11-23: "agree with grok on 422").** Grok works on `grok/*` branches on feature-map
+    areas 1 to 4 (core and scene, rendering and world, modeling and import, characters and cameras): improvements, new
+    features and bug fixes (`Kind: bug` with a failing test first). It claims each piece on #422 like the Claudes
+    (rule 26). Files another lane owns or has an open claim on need an `Agree:` reply. The lane is in `docs/lanes.json`.
 24b. **Exception: experimental Xbox One export through Microsoft's public Windows SDK and UWP tools (owner 2026-11-18:
     "For Xbox I'll allow it").** The Windows SDK, Visual Studio UWP tools, MakeAppx and SignTool are build tools the owner
     installs on their own PC; nothing from them is copied into the repository or shipped. Only the public SDK: no GDKX

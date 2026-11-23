@@ -99,10 +99,11 @@ public:
         return pos;
     }
     T *insert(T *pos, const T &v) {
+        T keep = v;  // v may be an element of this vector: copy it before anything moves or is freed
         unsigned long at = (unsigned long)(pos - data_);
-        push_back(v);
+        push_back(keep);
         for (unsigned long i = size_ - 1; i > at; --i) data_[i] = data_[i - 1];
-        data_[at] = v;
+        data_[at] = keep;
         return data_ + at;
     }
 

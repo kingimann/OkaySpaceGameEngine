@@ -53,8 +53,17 @@ inline double ceil(double x) {
     return t == 0 && x < 0 ? -0.0 : t;
 }
 inline float ceil(float x) { return (float)ceil((double)x); }
-inline double fmin(double a, double b) { return b < a ? b : a; }
-inline double fmax(double a, double b) { return a < b ? b : a; }
+// A NaN argument is treated as missing data: the other one is returned (ISO C 7.12.12.2, F.10.9.2).
+inline double fmin(double a, double b) {
+    if (!(a == a)) return b;
+    if (!(b == b)) return a;
+    return b < a ? b : a;
+}
+inline double fmax(double a, double b) {
+    if (!(a == a)) return b;
+    if (!(b == b)) return a;
+    return a < b ? b : a;
+}
 inline bool isfinite(double x) { return x - x == 0; }
 inline bool isfinite(float x) { return x - x == 0; }
 inline bool isinf(double x) { return x == x && !(x - x == 0); }

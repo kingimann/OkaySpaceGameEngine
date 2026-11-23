@@ -23,7 +23,7 @@ page is about the guard that stops new ones.
    file:line and the first line of its doc comment, one page per folder. Search it before you write anything:
    `python3 scripts/find_existing.py <words>` (it now also searches the code index, the shared-code list and names
    that are nearly equal to your words joined into one name) or `python3 scripts/gen_code_index.py --find <words>`.
-   Branch-lint warns when the index is out of date; regenerate it with `python3 scripts/gen_code_index.py`.
+   It is rebuilt on main after every merge (`.github/workflows/regen-docs.yml`); branches do not commit it.
 6. **Similar names** (warning): `dup_lint.py check` warns when a branch adds a class or free function whose name is
    equal or nearly equal to an existing one: the same ignoring case and `_`, the same words in another order
    (`ParseJson` / `JsonParse` / `parse_json`; `HealthOf` / `GetHealth`), or one letter apart (two for long names).
@@ -129,7 +129,7 @@ python3 scripts/dup_lint.py scan --update-baseline      # rewrite the baseline (
 python3 scripts/branch_lint.py dups                     # the same check through branch_lint
 bash scripts/install_hooks.sh                           # optional pre-push hook for this clone
 python3 scripts/find_existing.py <words>                # before you start: code index, shared code, similar names, branches
-python3 scripts/gen_code_index.py                       # regenerate docs/engine/code_index.md (--check, --find <words>)
+python3 scripts/gen_code_index.py --find <words>        # search the code index (main rebuilds docs/engine/code_index.md)
 python3 scripts/collision_check.py --branch <branch>    # copies and similar names between open branches
 python3 scripts/tests/test_dup_lint.py                  # the check's own tests (also ctest: dup_lint_script)
 ```

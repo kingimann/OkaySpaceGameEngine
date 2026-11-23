@@ -13,6 +13,11 @@ sub-areas, plus the duplicates found).
   python3 scripts/gen_feature_map.py            rewrite docs/FEATURE_MAP.md
   python3 scripts/gen_feature_map.py --check    exit 1 if docs/FEATURE_MAP.md is out of date
   python3 scripts/gen_feature_map.py --strict   also exit 1 on format warnings
+  python3 scripts/gen_feature_map.py --validate check the hand-written pages only (exit 1 on any format problem, such
+                                                as a missing What/Code/Status/Words line or a bad System line); writes
+                                                nothing and does not compare the generated files. This is what PRs and
+                                                scripts/precheck.sh run: the generated files are rebuilt on main by
+                                                .github/workflows/regen-docs.yml, so PRs do not commit them.
 Page format: docs/feature_map/README.md
 """
 import argparse, glob, os, re, sys
@@ -228,7 +233,7 @@ def build_systems(root, areas, problems, link):
              'Engine headers are under `engine/include/okay/`, their code under `engine/src/`.',
              '- **Feature map** links every sub-area that is part of it; the first one is the one that describes it.',
              '- To name or change a system, edit the `- **System:**` line of a sub-area in `docs/feature_map/` '
-             '(format in `docs/feature_map/README.md`), then run `python3 scripts/gen_feature_map.py`.', '']
+             '(format in `docs/feature_map/README.md`), check it with `python3 scripts/gen_feature_map.py --validate`; this page is rebuilt on main after the merge.', '']
     byarea = {}
     for name in order:
         byarea.setdefault(systems[name]['home'][0]['num'], []).append(systems[name])
@@ -316,8 +321,10 @@ def build(root):
     def link(sid, page, title):
         return f"[{sid}](feature_map/{page}#{slug(sid + ' ' + title)})"
 
-    hdr = open(os.path.join(root, 'docs', 'feature_map', '_header.md'), encoding='utf-8').read().rstrip('\n')
-    ftr = open(os.path.join(root, 'docs', 'feature_map', '_footer.md'), encoding='utf-8').read().strip('\n')
+    with open(os.path.join(root, 'docs', 'feature_map', '_header.md'), encoding='utf-8') as f:
+        hdr = f.read().rstrip('\n')
+    with open(os.path.join(root, 'docs', 'feature_map', '_footer.md'), encoding='utf-8') as f:
+        ftr = f.read().strip('\n')
     # No counts here: a count changes with every pull request and made this file conflict on every merge.
     hdr = hdr.replace('{{STATS}}', 'every area, sub-area and numbered part')
     out = [hdr, '', '## Areas', '', '| # | Area | Sub-areas |', '|---|---|---|']
@@ -400,11 +407,19 @@ def main():
     ap.add_argument('--root', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
     ap.add_argument('--check', action='store_true')
     ap.add_argument('--strict', action='store_true')
+    ap.add_argument('--validate', action='store_true')
     a = ap.parse_args()
     root = os.path.abspath(a.root)
     outputs, problems, (na, ns, npart, nsys) = build(root)
     for p in problems:
-        print('warning:', p, file=sys.stderr)
+        print('error:' if a.validate else 'warning:', p, file=sys.stderr)
+    if a.validate:
+        if problems:
+            print(f'{len(problems)} problem(s) in docs/feature_map/*.md: fix the pages (format: docs/feature_map/README.md)',
+                  file=sys.stderr)
+            return 1
+        print(f'pages valid ({na} areas, {ns} sub-areas, {npart} parts, {nsys} systems)')
+        return 0
     stale = []
     for rel, text in outputs.items():
         target = os.path.join(root, rel)

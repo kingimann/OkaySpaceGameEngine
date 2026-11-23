@@ -115,8 +115,8 @@ Four places, and the test fails until they agree:
    how to drive it). A new family of game gets its own `Drive...` function there. A template with no row fails.
 
 Then `ctest -R templates_work` must pass. If the template belongs on the Templates page cards, add it to the quick list in
-`launcher/main.cpp` too (the test checks the title). Update `docs/try_it.md` (how to try it) and run
-`python3 scripts/gen_feature_map.py`.
+`launcher/main.cpp` too (the test checks the title). Update the feature map page and check it with
+`python3 scripts/gen_feature_map.py --validate` (the generated `docs/FEATURE_MAP.md` is rebuilt on main).
 
 ## Add an example scene
 

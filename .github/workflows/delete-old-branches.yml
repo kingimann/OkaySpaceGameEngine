@@ -1,0 +1,40 @@
+# Deletes the old branches listed in docs/process/old_branches.txt (CLAUDE.md rule 10: two branches per Claude).
+# Every listed branch is kept by the branch claude2/archive first (its commits have the old tips as parents; names and
+# shas are in the commit messages, restore one with: git branch <name> <sha>). Run by hand: Actions > Delete old
+# branches > Run workflow, type DELETE. Safe by construction: a branch is skipped when it is main, the head of an open
+# pull request, or has a tip that claude2/archive does not contain (new work was pushed after it was archived).
+name: Delete old branches
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type DELETE to delete the listed branches"
+        required: true
+permissions:
+  contents: write
+  pull-requests: read
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm == 'DELETE'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Delete the listed branches that are safely archived
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --quiet origin '+refs/heads/*:refs/remotes/origin/*'
+          gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" --paginate --jq '.[].head.ref' > open.txt
+          deleted=0; kept=0; gone=0
+          while read -r b; do
+            [ -z "$b" ] && continue
+            case "$b" in main|claude2/archive) kept=$((kept+1)); echo "keep $b (protected)"; continue;; esac
+            if ! git rev-parse -q --verify "refs/remotes/origin/$b" >/dev/null; then gone=$((gone+1)); continue; fi
+            if grep -qx -F "$b" open.txt; then kept=$((kept+1)); echo "keep $b (open pull request)"; continue; fi
+            if ! git merge-base --is-ancestor "refs/remotes/origin/$b" refs/remotes/origin/claude2/archive; then
+              kept=$((kept+1)); echo "keep $b (new commits since it was archived)"; continue; fi
+            if git push --quiet origin --delete "$b"; then deleted=$((deleted+1)); else kept=$((kept+1)); echo "could not delete $b"; fi
+          done < docs/process/old_branches.txt
+          echo "Deleted $deleted, kept $kept, already gone $gone." | tee -a "$GITHUB_STEP_SUMMARY"

@@ -262,6 +262,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Ask me like:** "how do the three Claudes avoid doing the same work?"
 
 ### 41.13 Engine modules (stage 0: groups, test labels, module list, dependency check)
+- **System:** Build System
 - **What:** The engine split into 40 named modules on paper: each has a manifest saying what it requires and which engine files and tests are its own. The build groups the engine's files by module and labels every test with its module, without changing what is built. First step of the modular engine plan (`docs/design/modular_gameplay_contracts.md`, section 9, PR 1).
 - **Parts:**
   - 41.13.1 Manifests - `engine/modules/<name>/module.okaymodule` - name, requires, sources (file patterns), tests (test name patterns), planned (files other branches are adding)

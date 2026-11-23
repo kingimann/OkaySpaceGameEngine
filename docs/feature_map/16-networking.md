@@ -10,6 +10,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 ## 16. Networking & multiplayer
 
 ### 16.1 Transport, sealed channels, packets
+- **System:** Networking - Sends game state between players over the internet: packets, sync, prediction, remote calls and networked players.
 - **What:** The UDP layer under all multiplayer: sockets, byte packets that are split when large, authenticated encryption with libsodium (or, opt-in and unreviewed, our own okay::crypto), and two per-channel delivery modes on top of plain UDP (reliable ordered, and unreliable where only the newest counts).
 - **Parts:**
   - 16.1.1 UDP socket and endpoints - `Net/UdpSocket` - non-blocking UDP, an `Endpoint` (IPv4 address and port) that can key a table, wait-until-readable for the relay loop
@@ -33,6 +34,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Ask me like:** "make this event reliable and ordered but let position updates drop", "why does the join say encryption required?"
 
 ### 16.2 Server authority, prediction, lag compensation
+- **System:** Networking
 - **What:** How the server stays in charge of movement: the move-speed check, a fixed network tick, movement run from the player's inputs on the server, the client predicting its own player and being corrected, other players shown from an interpolation buffer, and shots checked against where things were when the shooter fired.
 - **Parts:**
   - 16.2.1 Move check and corrections - `Net/NetworkManager` - `maxMoveSpeed` snaps a too-fast client back, `ServerTeleport` for legit jumps, `kickAfterViolations`, `PeerViolations`, `Corrections`
@@ -56,25 +58,28 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Ask me like:** "turn on server-authoritative movement for my shooter", "other players jitter at 100 ms ping, check the interpolation buffer"
 
 ### 16.3 Snapshots and sync, interest
-- **What:** How object state reaches other peers: the drop-in Network Sync component, shared ids and variables, quantized binary delta snapshots and culling by distance.
+- **System:** Networking
+- **What:** How object state reaches other peers: the drop-in Network Sync component, shared ids and variables, quantized binary delta snapshots, culling by distance, and an ECS world with replication built in.
 - **Parts:**
   - 16.3.1 Network Sync - `Components/NetworkSync` - put it on any object and its position and rotation replicate; authority Host, Mine or Manual; same `netId` on every peer; "Players can claim it" for shared objects like a ball
   - 16.3.2 NetworkObject, NetworkTransform, SyncVar - `Components/NetworkObject` - shared id plus owner, named RPCs "<netId>/<name>", a one-string synced field; sits on the same NetworkManager calls
   - 16.3.3 Binary delta snapshots - `Net/NetDelta` - poses in millimetres, quaternions in 15 bits per component, sent as changes from the baseline the receiver acknowledged; `binarySnapshots` is on by default
   - 16.3.4 Interest management - `Net/NetworkManager` - `interestRadius` sends a client only peers and owned objects near its avatar (grid cell plus radius); 0 = everyone in the room
-- **Code:** `Components/NetworkSync`, `Components/NetworkObject`, `Net/NetDelta`
-- **API:** `NetworkSync` (component), `NetworkObject`, `NetworkTransform`, `SyncVar`, `NetworkManager::RegisterSync`, `syncRate`, `binarySnapshots`, `interestRadius`
+  - 16.3.5 ECS replication - `ECS/NetWorld`, `ECS/NetWorldSync` - an ECS `World` with networking built in, and a `WorldReplicator`
+- **Code:** `Components/NetworkSync`, `Components/NetworkObject`, `Net/NetDelta`, `ECS/NetWorld`, `ECS/NetWorldSync`
+- **API:** `NetworkSync` (component), `NetworkObject`, `NetworkTransform`, `SyncVar`, `NetworkManager::RegisterSync`, `syncRate`, `binarySnapshots`, `interestRadius`, `ecs::NetWorld`, `WorldReplicator`
 - **Editor:** Inspector: Network Sync (authority, id, claimable), Add Component menu; Net panel shows bytes per object (16.13); `interestRadius` has no inspector field
 - **Docs:** `docs/online/multiplayer.md`
-- **Tests:** `net_sync`, `net_aoi`, `net_interp`, `net_anim_actions`
+- **Tests:** `net_sync`, `net_aoi`, `net_interp`, `net_anim_actions`, `ecs`, `ecs_commands`
 - **Status:** Works - transform replication, interest culling and the delta path are exercised by `net_sync`, `net_aoi`, `net_interp`; read `SendSnap` and `OnSnapDelta` in NetworkManager.cpp
-- **Open:** the old map listed "Delta snapshots" as open, but they exist and are on by default; no test names `NetDelta` or `QPose` directly; the separate ECS world with its own replication (`ECS/NetWorld`) was removed on 2026-11-22 because nothing used it: `NetworkSync` is the one replication path
+- **Open:** the old map listed "Delta snapshots" as open, but they exist and are on by default; no test names `NetDelta` or `QPose` directly; PR #571 (merged after this map was started) gave `ECS/NetWorld.hpp` delta snapshots against the newest acknowledged tick, a command buffer and `docs/engine/ecs.md`; the header's top comment still says "full-state snapshots", and the `ecs_commands` test covers the new code
 - **Related:** 16.2, 16.8, 1.9, 16.13
-- **Words:** NetworkSync, netId, authority, snapshot, delta snapshot, quantized, baseline, ack, interest management, area of interest, culling, syncRate, replicate, SyncVar, claimable
+- **Words:** NetworkSync, netId, authority, snapshot, delta snapshot, quantized, baseline, ack, interest management, area of interest, culling, syncRate, NetWorld, WorldReplicator, replicate, SyncVar, claimable
 - **Seen as:** an object moves on the host but not on clients; two players see different object positions; too much bandwidth with many objects; a far-away player still pops in; a shared ball is owned by nobody
 - **Ask me like:** "make this platform move the same on every client", "only send players who are within 50 units"
 
 ### 16.4 Matchmaking, queues, server browser, join links
+- **System:** Matchmaking and Lobbies - Finding and joining games, rooms and lobbies, match flow, results and leaderboards.
 - **What:** Finding and joining a game: one-string join links, asking a server who it is without joining, the server browser (internet list, friends, LAN, pings), listing servers in Supabase, and "Find match" queues that put players in a match by game, mode, skill and region.
 - **Parts:**
   - 16.4.1 Join links - `Net/JoinLink` - `okay://join?game=...&addr=...` or relay plus code, with room, name and optional password; shared by launcher, chat invites and presence
@@ -96,6 +101,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Ask me like:** "add a Find match button for 4-player deathmatch", "why doesn't my LAN server show in the browser?"
 
 ### 16.5 Dedicated server, export, relay
+- **System:** Dedicated Server - Runs a game with no window as the server everyone connects to, and exports it.
 - **What:** Running any game as a headless authoritative server (no window, GPU or audio) with the same player executable, configured by flags, `server.cfg` or environment variables, with sign-in checks that never stall the tick. Exporting it is 18.7; the relay is 16.14.
 - **Parts:**
   - 16.5.1 Headless run loop - `Net/DedicatedServer`, `Core/TickPacer` - `RunDedicatedServer(scene, opts)` steps the scene at a fixed tick (one tick of `Time::Step(1 / tickRate)` per tick, never by the real elapsed time; the pacing arithmetic is `TickPacer`, #581), logs joins and a status line, stops on Ctrl+C or SIGTERM; exit code 2 = could not open the port; it still calls `Game::Reset()` at start (line 548), which keeps a script's time scale (see 1.1)
@@ -116,6 +122,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Ask me like:** "start my game as a dedicated server with anti-cheat on", "list my server in the browser"
 
 ### 16.6 Anti-cheat (server side)
+- **System:** Server Anti-Cheat - The server checks what players send, spots cheaters, and handles reports and bans.
 - **What:** The opt-in checks the server makes on everything a client sends: who may move or spawn what, SyncVar and RPC limits, hit claims, the clock heartbeat and join tickets. The full cross-cutting picture (client integrity, bans, keys) is area 39.
 - **Parts:**
   - 16.6.1 Rules, violations and kicks - `Net/AntiCheat` - `AntiCheatSettings` (parsed from `.okayac`), refusal counts, kick after N in a minute, rejoin cooldown that doubles up to an hour, budgets that survive a reconnect for 5 minutes
@@ -138,6 +145,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Ask me like:** "limit my rifle to 10 shots then a reload", "why was the player kicked for forged syncvar?"
 
 ### 16.7 Voice chat server
+- **System:** Voice Chat - Voice calls between friends, groups and server voice rooms.
 - **What:** Voice calls (friend calls, group calls, server voice rooms) from the launcher. Audio goes peer to the relay to the peers over UDP, encrypted with a room key, so nobody opens ports. The "server" is the relay program.
 - **Parts:**
   - 16.7.1 Voice engine - `launcher/VoiceChat.hpp` - 16 kHz mono capture, 20 ms frames, voice-activity gate, IMA ADPCM (about 64 kbit/s), ChaCha20 with the room key, per-speaker jitter buffer and mixer; classes `Session`, `MicTest`; no echo cancellation
@@ -157,6 +165,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Ask me like:** "add push-to-talk to calls", "set up my own voice server"
 
 ### 16.8 Network player spawning and avatar motion
+- **System:** Networking
 - **What:** Drop-in networked players: clone a player template into one local player and into stripped-down remote copies that turn and animate from the movement the network already replicates.
 - **Parts:**
   - 16.8.1 Network Player Spawner - `Components/NetworkPlayerSpawner` - template (inactive object or prefab) becomes the local player (controllers, camera, hand) and a proxy for every remote peer, no input or camera on proxies
@@ -177,6 +186,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Ask me like:** "show other players as my character model", "other players' feet slide"
 
 ### 16.9 Match results, stats and leaderboards
+- **System:** Matchmaking and Lobbies
 - **What:** When a match ends, the server reports who played, scores and who won; the database keeps per-game stats that feed leaderboards and "Recently played with".
 - **Parts:**
   - 16.9.1 Match report - `Net/MatchResults` - `MatchPlayer` rows (account id, score, place), the report JSON, time played; `BeginMatch` and `EndMatch` on NetworkManager keep the match clock
@@ -196,6 +206,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Ask me like:** "report scores when my round ends", "show the top 10 by wins"
 
 ### 16.10 Provider seams: Photon transport and online-services backend
+- **System:** Networking
 - **What:** Two plug-in points so the engine isn't tied to its own stack: `INetBackend` for online services (sign-in, cloud saves, leaderboards) and `INetTransport` for the realtime link. Native is the default; PlayFab and Photon are opt-in.
 - **Parts:**
   - 16.10.1 Services interface and Native provider - `Net/NetBackend` - `INetBackend`, `NetBackend` facade, Native forwards to `okay::Account` and `Matchmaking`
@@ -214,6 +225,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Ask me like:** "switch my game to Photon rooms", "log players in with PlayFab"
 
 ### 16.11 RPC, SyncVars, spawning and chat
+- **System:** Networking
 - **What:** The messaging API games build on: send to everyone or one peer, reliable and ordered variants, named remote calls, server-owned shared variables, replicated spawns and a chat log.
 - **Parts:**
   - 16.11.1 Messages - `Net/NetworkManager` - `Send`, `SendTo` (channel plus string), `SendReliable` (resend until ack; de-dup window of 4096)
@@ -233,6 +245,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Ask me like:** "sync the round timer to all players", "send a private message to one player"
 
 ### 16.12 Rooms, lobby and match flow
+- **System:** Matchmaking and Lobbies
 - **What:** Several independent matches on one server (rooms), ready-up, starting a match for a room, scores and the roster everyone sees.
 - **Parts:**
   - 16.12.1 Rooms - `Net/NetworkManager` - `SetRoom`, `startRoom`: peers only see avatars and broadcast messages from their own room
@@ -252,6 +265,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Ask me like:** "make a lobby where the host starts the match when all are ready"
 
 ### 16.13 Network simulator and traffic panel
+- **System:** Networking
 - **What:** Fake bad network in the editor (delay, jitter, loss, duplicates) and per-object traffic counters, so lag handling can be tried without a bad connection.
 - **Parts:**
   - 16.13.1 Simulator - `Net/NetSim` - `SimSettings` applied to the socket send and receive; off by default so packets go straight to the socket
@@ -270,6 +284,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Ask me like:** "turn on 120 ms lag with 5 percent loss in the editor"
 
 ### 16.14 Relay server (NAT traversal)
+- **System:** Relay - A small server that connects players behind home routers to each other.
 - **What:** A small program players behind home routers meet at: both connect out to it, share a code, and it forwards datagrams by slot without reading them. It is exposed to the internet, so it caps and trusts nothing. Also carries voice (16.7).
 - **Parts:**
   - 16.14.1 Relay protocol - `Net/RelayProtocol` - outer frames Hello (0x90), Welcome, Data, Bye, Refused; versions 1 to 4 (4 adds the welcome nonce); little-endian throughout; the relay strips its header so inner messages are untouched

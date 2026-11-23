@@ -1,7 +1,7 @@
 // Speed and memory of our own model readers (the ones behind the ImportModelData seam: Collada, 3DS, BVH, OFF, SMD,
 // MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender, MD2, MD3, IrrMesh, B3D, X, AC3D, OGRE XML, XGL, Irr scene, NFF,
-// Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, PMX, LWS, and OBJ / STL / PLY) against Assimp, on the same files.
-// FBX has its own bench (bench_fbx_reader, ufbx is its other side); glTF does not go through this seam.
+// Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, PMX, LWS, glTF 1.0, and OBJ / STL / PLY) against Assimp, on the same files.
+// FBX has its own bench (bench_fbx_reader, ufbx is its other side); glTF 2.0 does not go through this seam (glTF 1.0 does: "gltf1").
 //
 // Build with -DOKAY_USE_ASSIMP=ON (without Assimp only our side is measured). Not run by ctest: it prints numbers.
 //
@@ -161,11 +161,13 @@ std::string FormatOf(const fs::path& p) {
     const std::string name = Lower(p.filename().string());
     if (name.size() >= 9 && name.compare(name.size() - 9, 9, ".mesh.xml") == 0) return "ogre";
     const std::string ext = Lower(p.extension().string());
-    if (ext.size() < 2 || ext == ".fbx" || ext == ".gltf" || ext == ".glb") return std::string();
+    // glTF 2.0 does not go through this seam; glTF 1.0 does (our own glTF 1.0 reader, slot 41, against Assimp's glTF importer)
+    if (ext == ".gltf" || ext == ".glb") return GltfFileIsVersion1(p.string()) ? "gltf1" : std::string();
+    if (ext.size() < 2 || ext == ".fbx") return std::string();
     if (!HasOwnReader(ext)) return std::string();
     // one row per reader: the extensions one reader takes share a key
     static const char* const kSame[][2] = {{".acc", "ac"}, {".ac3d", "ac"}, {".md5mesh", "md5"}, {".md5anim", "md5"}, {".q3o", "q3d"},
-                                           {".q3s", "q3d"}, {".zgl", "xgl"}, {".enff", "nff"}, {".mot", "lws"}};
+                                           {".q3s", "q3d"}, {".zgl", "xgl"}, {".enff", "nff"}, {".mot", "lws"}, {".bsp", "q3bsp"}, {".pk3", "q3bsp"}};
     for (const auto& k : kSame) if (ext == k[0]) return k[1];
     return ext.substr(1);
 }
@@ -491,11 +493,15 @@ int main(int argc, char** argv) {
         ++g.files;
         if (r.own.ok && !r.assimp.ok) ++g.ownOnly;
         if (!r.own.ok && r.assimp.ok) ++g.assimpOnly;
-        if (!(r.own.ok && r.assimp.ok && r.impOwn.ok && r.impAssimp.ok)) continue;
+        // glTF 1.0: the engine's scene import never hands a .gltf / .glb to Assimp (it refuses glTF 1.0 when our reader is off), so
+        // "import, Assimp" always fails; that format is compared on the read alone (its import columns stay 0).
+        const bool readOnly = r.format == "gltf1";
+        if (!(r.own.ok && r.assimp.ok && (readOnly || (r.impOwn.ok && r.impAssimp.ok)))) continue;
         ++g.both;
-        g.o += r.own.ms; g.a += r.assimp.ms; g.io += r.impOwn.ms; g.ia += r.impAssimp.ms;
+        g.o += r.own.ms; g.a += r.assimp.ms;
+        if (!readOnly) { g.io += r.impOwn.ms; g.ia += r.impAssimp.ms; }
         g.po = std::max(g.po, r.own.peak); g.pa = std::max(g.pa, r.assimp.peak); g.so += r.own.peak; g.sa += r.assimp.peak;
-        g.ipo = std::max(g.ipo, r.impOwn.peak); g.ipa = std::max(g.ipa, r.impAssimp.peak); g.iso += r.impOwn.peak; g.isa += r.impAssimp.peak;
+        if (!readOnly) { g.ipo = std::max(g.ipo, r.impOwn.peak); g.ipa = std::max(g.ipa, r.impAssimp.peak); g.iso += r.impOwn.peak; g.isa += r.impAssimp.peak; }
         if (r.own.ms > r.assimp.ms) ++g.slower;
         if (r.own.peak > r.assimp.peak) ++g.heavier;
     }

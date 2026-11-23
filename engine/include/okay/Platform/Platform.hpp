@@ -93,7 +93,7 @@ enum class EventType {
     GamepadRemoved,    // deviceId = Gamepad::InstanceId()
     FingerDown, FingerMotion, FingerUp,   // touch: fingerId, fx, fy (0..1 of the window). sdl2 and the Xbox UWP backend (UNVERIFIED there); own desktop never fires them
     WindowDpiChanged,  // x = the window's new DPI (96 = 100 percent); the window has already been resized to the OS's suggestion. own Windows only
-    TextEditing,       // input method composition: text = UTF-8 being composed ("" = cleared), x = caret in code points. own Windows and the Xbox UWP backend (UNVERIFIED there)
+    TextEditing,       // input method composition: text = UTF-8 being composed ("" = cleared), x = caret in code points. sdl2 (SDL_TEXTEDITING), own Windows and the Xbox UWP backend (UNVERIFIED there)
     RenderTargetsReset,   // the graphics device lost its render-target contents: draw them again. sdl2 only (own never fires it)
     RenderDeviceReset,    // the graphics device was lost and made again: every texture must be re-created. sdl2 only
     Other,             // an event the seam has no type for. Only the sdl2 backend, and only after ReportUnmappedEvents(true); `native` has it

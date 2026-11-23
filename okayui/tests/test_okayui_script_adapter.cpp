@@ -121,7 +121,7 @@ int main() {
         s.SetText("a\nb\nc");
         s.SetErrorMarkers({{1, "first"}, {3, "third"}, {0, "ignored"}, {-4, "ignored"}});
         const auto& m = s.Edit().Markers();
-        CHECK(m.size() == 2 && m[0].line == 0 && m[0].message == "first" && m[1].line == 2 && m[1].message == "third");
+        CHECK(m.size() == 2 && m[0].line == 0 && m[0].message == "Error at line 1: first" && m[1].line == 2 && m[1].message == "Error at line 3: third");
         s.SetBreakpoints({3, 1, 0, -2});
         CHECK((s.Edit().Breakpoints() == std::vector<int>{0, 2}));
         CHECK(s.Edit().HasBreakpoint(0) && s.Edit().HasBreakpoint(2) && !s.Edit().HasBreakpoint(1));
@@ -234,6 +234,65 @@ int main() {
         r.sim.Move(p.x + cell * 0.2f, p.y + r.se.RowHeight() * 0.5f); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
         CHECK(r.se.GetCursorPosition() == Coord(2, 2));
         UI::UseLauncherLook(false);
+    }
+    {   // the script's language from the Dear ImGui editor's words: a Lua-like one with "--" and "--[[ ]]" comments
+        ScriptEditorCodeEdit s;
+        LanguageWords w;
+        w.keywords = {"local", "function", "end"};
+        w.types = {"Vector3"};
+        w.known = {"print", "Vector3"};
+        w.lineComments = {"--"};
+        w.blockStart = "--[["; w.blockEnd = "]]";
+        s.SetLanguage(w);
+        s.SetText("local x = print(1) -- note\nprint\n--[[ block\nstill ]] local y = Vector3\na.print = 1\n");
+        std::vector<UI::CodeToken> t;
+        auto colorAt = [&](int line, int col) { s.Edit().LineTokens(line, t); for (const UI::CodeToken& k : t) if (col >= k.start && col < k.end) return (int)k.color; return (int)UI::CodeColor_Default; };
+        CHECK(colorAt(0, 0) == UI::CodeColor_Keyword);
+        CHECK(colorAt(0, 10) == UI::CodeColor_Function);                 // print( : the call colour, as the ImGui editor
+        CHECK(colorAt(0, 22) == UI::CodeColor_Comment);                  // -- note
+        CHECK(colorAt(1, 0) == UI::CodeColor_Known);                     // a bare built-in
+        CHECK(colorAt(2, 4) == UI::CodeColor_Comment && colorAt(3, 2) == UI::CodeColor_Comment);   // the block comment spans lines
+        CHECK(colorAt(3, 9) == UI::CodeColor_Keyword);                   // after its end: code again
+        CHECK(colorAt(3, 19) == UI::CodeColor_Type);                     // a type before a known name
+        CHECK(colorAt(4, 2) == UI::CodeColor_Member);
+        s.SetColorizerEnable(false);
+        CHECK(colorAt(0, 0) == UI::CodeColor_Default);
+        s.SetColorizerEnable(true);                                      // back on: the same language, not OkayScript
+        CHECK(colorAt(0, 22) == UI::CodeColor_Comment && colorAt(0, 0) == UI::CodeColor_Keyword);
+        s.SetUserTypes({"Enemy"});                                       // the script's own classes on top of its language
+        s.SetText("Enemy e; -- x");
+        CHECK(colorAt(0, 0) == UI::CodeColor_Type && colorAt(0, 10) == UI::CodeColor_Comment);
+    }
+    {   // the Dear ImGui editor's palette
+        ScriptEditorCodeEdit s;
+        unsigned pal[kImGuiPaletteSize];
+        for (int i = 0; i < kImGuiPaletteSize; ++i) pal[i] = 0xff000000u | (unsigned)(i + 1);
+        s.SetPaletteFromImGui(pal, kImGuiPaletteSize);
+        const UI::CodePalette& p = s.Edit().Palette();
+        CHECK(p.text[UI::CodeColor_Default] == pal[0] && p.text[UI::CodeColor_Keyword] == pal[1] && p.text[UI::CodeColor_Number] == pal[2]);
+        CHECK(p.text[UI::CodeColor_String] == pal[3] && p.text[UI::CodeColor_Char] == pal[4] && p.text[UI::CodeColor_Punct] == pal[5]);
+        CHECK(p.text[UI::CodeColor_Preproc] == pal[6] && p.text[UI::CodeColor_Known] == pal[8] && p.text[UI::CodeColor_Comment] == pal[10]);
+        CHECK(p.text[UI::CodeColor_Type] == pal[21] && p.text[UI::CodeColor_Function] == pal[22] && p.text[UI::CodeColor_Member] == pal[23]);
+        CHECK(p.background == pal[12] && p.gutter == pal[12] && p.caret == pal[13] && p.selection == pal[14] && p.errorLine == pal[15]);
+        CHECK(p.breakpointLine == pal[16] && p.lineNumber == pal[17] && p.currentLine == pal[18] && p.currentLineInactive == pal[19]);
+        CHECK(p.currentLineEdge == pal[20]);
+        const UI::CodePalette before = s.Edit().Palette();
+        s.SetPaletteFromImGui(pal, 5);                                   // too short: ignored
+        CHECK(s.Edit().Palette().background == before.background);
+        s.SetPaletteFromImGui(nullptr, kImGuiPaletteSize);
+        CHECK(s.Edit().Palette().background == before.background);
+    }
+    {   // markers: "warning: " messages are amber, the tooltip names the line like the ImGui editor's
+        ScriptEditorCodeEdit s;
+        s.SetText("a\nb\nc\n");
+        s.SetErrorMarkers({{2, "unknown name 'b'"}, {3, "warning: unused variable"}});
+        const auto& m = s.Edit().Markers();
+        CHECK(m.size() == 2);
+        if (m.size() == 2) {
+            CHECK(m[0].line == 1 && m[0].lineColor == 0 && m[0].message == "Error at line 2: unknown name 'b'");
+            CHECK(m[1].line == 2 && m[1].lineColor == UI::RGBA(200, 150, 40, 55) && m[1].color == UI::RGBA(230, 190, 70));
+            CHECK(m[1].message == "Warning at line 3: unused variable");
+        }
     }
     TEST_MAIN_RESULT();
 }

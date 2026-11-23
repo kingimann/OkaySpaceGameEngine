@@ -101,6 +101,8 @@ struct BindingSpec {
 /// "single", "vector2", "vector3", "axis", "chord" (the asset file and the "ovlist" override line).
 const char* BindingKindName(BindingSpec::Kind k);
 bool ParseBindingKind(const std::string& s, BindingSpec::Kind& k);
+/// "" and "Gameplay" (any case) are the base map: always on, what InputActions calls the base context.
+bool IsBaseMapName(const std::string& map);
 /// A 0..1 reading through a response (InputActions::ShapeValue: for drawing the curve).
 float ShapeResponse(float in, const InputActions::Response& r);
 

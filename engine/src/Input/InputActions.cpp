@@ -11,6 +11,7 @@
 #include "okay/Input/InputDebug.hpp"
 #include "okay/Input/Haptics.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/StringUtil.hpp"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -227,7 +228,7 @@ bool g_legacy = std::getenv("OKAY_OLD_INPUT") != nullptr && std::getenv("OKAY_OL
 bool g_clockSeen = false;
 std::chrono::steady_clock::time_point g_lastClock;
 
-bool IsBase(const std::string& c) { return c.empty() || Lower(c) == "gameplay"; }
+bool IsBase(const std::string& c) { return IsBaseMapName(c); }
 
 // What code asked for: the built-in defaults and every Define / DefineIn / SetContext / SetThreshold / SetPerPlayer, kept so
 // a table built again (another asset, a new play session) and every player that joins gets them too.
@@ -538,12 +539,7 @@ bool InputActions::Has(const std::string& name) { return Def(name) != nullptr; }
 const std::vector<InputActions::Action>& InputActions::All() { return ViewList(); }
 InputActions::Action* InputActions::Find(const std::string& name) {
     std::vector<Action>& list = ViewList();
-    for (Action& a : list) {
-        if (a.name.size() != name.size()) continue;
-        bool same = true;
-        for (std::size_t i = 0; i < name.size() && same; ++i) same = std::tolower((unsigned char)a.name[i]) == std::tolower((unsigned char)name[i]);
-        if (same) return &a;
-    }
+    for (Action& a : list) if (str::EqualsNoCaseAscii(a.name, name)) return &a;
     return nullptr;
 }
 

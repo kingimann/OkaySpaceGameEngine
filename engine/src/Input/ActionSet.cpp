@@ -3,6 +3,7 @@
 #include "okay/Input/ActionSet.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
+#include "okay/Core/StringUtil.hpp"
 #include <cctype>
 #include <algorithm>
 #include <cmath>
@@ -371,19 +372,6 @@ void Build(const BindingSpec& b) {
     for (const std::string& p : b.parts) b.leaves.push_back(InputBinding::Parse(p));
     b.built = true;
 }
-bool IsBaseMap(const std::string& m) {
-    if (m.empty()) return true;
-    if (m.size() != 8) return false;
-    const char* g = "gameplay";
-    for (std::size_t i = 0; i < 8; ++i) if (std::tolower((unsigned char)m[i]) != g[i]) return false;
-    return true;
-}
-bool SameNoCase(const std::string& a, const std::string& b) {
-    if (a.size() != b.size()) return false;
-    for (std::size_t i = 0; i < a.size(); ++i) if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i])) return false;
-    return true;
-}
-std::string LowerName(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
 // The player's response as processors (the same maths as authored ones), after the action's own processors.
 void ApplyResponse(const InputActions::Response& r, InputValue& v, bool button, float dt) {
     if (r.deadzone == 0.0f && r.curve == 1.0f && r.sensitivity == 1.0f && !r.invertX && !r.invertY) return;
@@ -402,6 +390,8 @@ float ShapeResponse(float in, const InputActions::Response& r) {
     ApplyResponse(r, v, false, 0.0f);
     return v.x;
 }
+
+bool IsBaseMapName(const std::string& m) { return m.empty() || str::EqualsNoCaseAscii(m, "gameplay"); }
 
 float ActionDef::Magnitude() const { return type == ValueType::Button || type == ValueType::Axis1D ? std::fabs(value.x) : value.Length(); }
 float ActionDef::PrevMagnitude() const { return type == ValueType::Button || type == ValueType::Axis1D ? std::fabs(prevValue.x) : prevValue.Length(); }
@@ -595,12 +585,11 @@ ActionDef* ActionSet::FindNoCase(const std::string& name) { return const_cast<Ac
 const ActionDef* ActionSet::FindNoCase(const std::string& name) const {
     if (m_indexRev != m_revision || m_indexSize != m_actions.size()) {
         m_index.clear();
-        for (std::size_t i = 0; i < m_actions.size(); ++i) m_index.emplace_back(LowerName(m_actions[i].name), i);
+        for (std::size_t i = 0; i < m_actions.size(); ++i) m_index.emplace_back(str::LowerAscii(m_actions[i].name), i);
         std::sort(m_index.begin(), m_index.end());
         m_indexRev = m_revision; m_indexSize = m_actions.size();
     }
-    std::string n = name;
-    for (char& c : n) c = (char)std::tolower((unsigned char)c);
+    const std::string n = str::LowerAscii(name);
     auto it = std::lower_bound(m_index.begin(), m_index.end(), n, [](const std::pair<std::string, std::size_t>& e, const std::string& k) { return e.first < k; });
     if (it == m_index.end() || it->first != n || it->second >= m_actions.size()) return nullptr;
     return &m_actions[it->second];
@@ -608,7 +597,7 @@ const ActionDef* ActionSet::FindNoCase(const std::string& name) const {
 
 void ActionSet::PushMap(const std::string& map, bool consume, bool block) {
     ActionMap* m = nullptr;
-    for (ActionMap& e : m_maps) if (SameNoCase(e.name, map)) m = &e;
+    for (ActionMap& e : m_maps) if (str::EqualsNoCaseAscii(e.name, map)) m = &e;
     bool added = false;
     if (!m) { m = &AddMap(map, 0, false, false); added = true; }
     Pushed saved{m->name, m->priority, m->consume, m->block, m->enabled, added};
@@ -621,7 +610,7 @@ void ActionSet::PushMap(const std::string& map, bool consume, bool block) {
 }
 void ActionSet::PopMap(const std::string& map) {
     for (auto it = m_pushed.begin(); it != m_pushed.end(); ++it) {
-        if (!SameNoCase(it->name, map)) continue;
+        if (!str::EqualsNoCaseAscii(it->name, map)) continue;
         for (ActionMap& e : m_maps)
             if (e.name == it->name) { e.priority = it->priority; e.consume = it->consume; e.block = it->block; e.enabled = it->enabled; }
         m_pushed.erase(it);
@@ -631,7 +620,7 @@ void ActionSet::PopMap(const std::string& map) {
 bool ActionSet::Consumed(const InputBinding& leaf) const {
     bool hit = false;
     for (const ActionMap& m : m_maps) {
-        if (!m.enabled || m.priority <= 0 || IsBaseMap(m.name)) continue;
+        if (!m.enabled || m.priority <= 0 || IsBaseMapName(m.name)) continue;
         if (m.block) return true;
         if (!m.consume) continue;
         for (const ActionDef& a : m_actions) {

@@ -14,4 +14,16 @@ inline std::string LowerAscii(std::string s) {
     return s;
 }
 
+// ASCII-only case-blind compare: "Jump" equals "jUMP" (no copy, no allocation).
+inline bool EqualsNoCaseAscii(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        char x = a[i], y = b[i];
+        if (x >= 'A' && x <= 'Z') x = static_cast<char>(x - 'A' + 'a');
+        if (y >= 'A' && y <= 'Z') y = static_cast<char>(y - 'A' + 'a');
+        if (x != y) return false;
+    }
+    return true;
+}
+
 }  // namespace okay::str

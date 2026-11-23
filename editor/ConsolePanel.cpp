@@ -225,7 +225,8 @@ void DrawConsoleOkayUI(const char* title) {
     g_model.SetPauseOnError(g_errorPause);
     if (g_model.ConsumePauseRequest()) g_paused = true;
     if (g_preferPending) { g_okayView.preferCategory = g_preferCategory; g_preferPending = false; }
-    if (ImGui::Begin(title, &g_showConsole, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+    if (ImGui::Begin(title, &g_showConsole, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse) &&
+        !okayuihost::HiddenInImGui(ImGui::GetCurrentWindow())) {   // a frame ImGui keeps hidden (a tab about to come to the front): nothing shows
         const ImVec2 p = okayuihost::ToMainWindowPixels(ImGui::GetCursorScreenPos());   // OkayUI's pixels, not ImGui's desktop ones
         ImVec2 a = ImGui::GetContentRegionAvail();
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);

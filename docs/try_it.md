@@ -126,6 +126,7 @@ release job or the installer build for this change.
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 12b | OkayUI Crash Log (visible rows only) and Audio Mixer (meter tooltip), off by default | `OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`, editor View menu | Headless tests and images only; never run in the Windows editor |
 | 12c | OkayUI DockBuilder, SetNextWindowDockID, Shortcut and eleven small calls (library only, nothing uses them yet) | none in the Windows release; headless tests only: `ctest -R "okayui_dockbuilder|okayui_internals"` | **Cannot be tried in the Windows release yet**; Linux headless tests only |
+| 12d | OkayUI Inspector stays in its own tab (no longer drawn over the Hierarchy) | Editor: Settings > Experimental, turn on "OkayUI screens" and "OkayUI Inspector", restart, select an object, click the Hierarchy tab; steps in section 12d | Fixed on branch `claude2/okayui-inspector-tabs`; headless tests on Linux only, never run in the Windows editor |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
 | 15b | Blender reader applies Mirror and Subdivision Surface modifiers (off by default, like the reader) | `OKAY_OWN_BLEND=1`, `examples\own_readers\mirror_subdiv_box.blend` | Tests only (Linux); not run in a Windows editor |
@@ -2861,6 +2862,26 @@ window by title, the drag-and-drop payload, and the state store.
 
 **Not verified:** nothing here was run in the Windows editor or launcher, and the preset call sequence was copied by hand from the
 editor source, not run through it. See `docs/ui/own_ui_toolkit.md` section 6.9.
+
+### 12d. OkayUI Inspector: only in its own tab
+
+The bug (v2.903.1.3, every Experimental item on): with the Inspector and the Hierarchy as two tabs of the right dock and the Hierarchy
+tab picked, the OkayUI Inspector was still painted on top of the Hierarchy: the selected object's component bar (its fold arrow, enable
+box and name), the "+ Add Component" button over that name, and the Tag / Layer / Save as Prefab row. The Hierarchy's search box and
+scene line were hidden under it.
+
+Steps:
+
+1. Start `OkayEngine.exe`, open Settings > Experimental and turn on **OkayUI screens** and **OkayUI Inspector**. Restart the editor
+   when it asks.
+2. Open any scene and select an object that has components (the Player of a new First Person project, for example).
+3. Click the **Hierarchy** tab in the right dock. Expected: only the Hierarchy shows, with its search box and scene line at the top;
+   nothing of the Inspector is drawn and clicks there go to the Hierarchy.
+4. Click the **Inspector** tab. Expected: the object card at the top with the whole name visible (Static and Lock right of it, or on
+   the line below when the panel is narrow), the components under it, and "+ Add Component" at the bottom, under the last component.
+5. Drag the Hierarchy tab out beside the Inspector (side by side). Expected: both panels draw, each in its own area.
+
+Status: headless tests on Linux only (`ctest -R "okayui_host_layering|okayui_inspector$"`); never run in the Windows editor.
 
 ### 13. Own cryptography
 

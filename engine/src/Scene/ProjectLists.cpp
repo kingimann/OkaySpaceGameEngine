@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
 namespace okay {
 
@@ -88,7 +89,7 @@ bool ProjectLists::Save(const std::string& path) {
     std::filesystem::rename(tmp, path, ec);
     if (ec) {   // cross-device or a locked target: copy over it
         std::error_code ce;
-        std::filesystem::copy_file(tmp, path, std::filesystem::copy_options::overwrite_existing, ce);
+        okay::CopyFileOver(tmp, path, ce);
         std::filesystem::remove(tmp, ec);
         return !ce;
     }

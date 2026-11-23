@@ -62,6 +62,7 @@ inline void Flash(SDL_Window* w, okay::platform::FlashMode m) { if (auto s = oka
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/NativeFetch.hpp"   // own HTTP client in front of curl for downloads, size probes and previews (only with OKAY_OWN_HTTP)
 #include "okay/Platform/Account/AccountData.hpp"   // Account > Your data: export my data, delete my account
+#include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 #include "okay/Platform/Achievements.hpp"
 #include "okay/Platform/Friends.hpp"
 #include "okay/Platform/Workshop.hpp"
@@ -1986,7 +1987,7 @@ std::string InstallToCommunity(const std::string& src) {
         for (int n = 2; fsy::exists(sub, ec); ++n) sub = CommunityDir() / (s.stem().string() + " " + std::to_string(n));
         fsy::create_directories(sub, ec);
         dest = sub / s.filename();
-        fsy::copy_file(s, dest, fsy::copy_options::overwrite_existing, ec);
+        okay::CopyFileOver(s, dest, ec);
     }
     return ec ? std::string{} : dest.string();
 }

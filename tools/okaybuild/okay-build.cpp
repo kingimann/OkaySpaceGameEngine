@@ -52,6 +52,7 @@
 
 namespace fs = std::filesystem;
 #include "cmake_reader.hpp"
+#include "../../engine/include/okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW); header only
 using std::string;
 using std::string_view;
 using std::vector;
@@ -1578,7 +1579,7 @@ static std::atomic<int> gRemoteSeq{0};
 static bool copyEntryDir(const string& from, const string& to) { // to must not exist; built as to.tmpPID_N then renamed
     std::error_code ec; string tmp = to + ".tmp" + std::to_string(nowNs()) + "_" + std::to_string(gRemoteSeq++);
     fs::remove_all(tmp, ec); fs::create_directories(tmp, ec);
-    for (const char* f : {"obj", "dep", "meta"}) { if (fs::exists(from + "/" + f, ec)) { fs::copy_file(from + "/" + f, tmp + "/" + f, fs::copy_options::overwrite_existing, ec); if (ec) { fs::remove_all(tmp, ec); return false; } } }
+    for (const char* f : {"obj", "dep", "meta"}) { if (fs::exists(from + "/" + f, ec)) { okay::CopyFileOver(from + "/" + f, tmp + "/" + f, ec); if (ec) { fs::remove_all(tmp, ec); return false; } } }
     fs::rename(tmp, to, ec); if (ec) { fs::remove_all(tmp, ec); return fs::exists(to); }
     return true;
 }
@@ -1602,7 +1603,7 @@ static string slurpBin(const string& p) { std::ifstream f(p, std::ios::binary); 
 // Put the object into an entry folder, compressed when asked. Returns false on failure.
 static bool cachePutObj(const string& from, const string& dir, bool& packed) {
     std::error_code ec; packed = false;
-    if (!gCacheCompress) { fs::copy_file(from, dir + "/obj", fs::copy_options::overwrite_existing, ec); return !ec; }
+    if (!gCacheCompress) { okay::CopyFileOver(from, dir + "/obj", ec); return !ec; }
     string z = lzPack(slurpBin(from)); packed = true;
     std::ofstream f(dir + "/obj", std::ios::binary | std::ios::trunc); f.write(z.data(), (std::streamsize)z.size()); return (bool)f;
 }
@@ -1611,7 +1612,7 @@ static bool cacheGetObj(const string& dir, const string& dest) {
     std::ifstream in(dir + "/meta"); string l; bool packed = false;
     for (int k = 0; k < 5 && std::getline(in, l); ++k) if (k == 4) packed = l == "lz";
     std::error_code ec;
-    if (!packed) { fs::copy_file(dir + "/obj", dest, fs::copy_options::overwrite_existing, ec); return !ec; }
+    if (!packed) { okay::CopyFileOver(dir + "/obj", dest, ec); return !ec; }
     string raw; if (!lzUnpack(slurpBin(dir + "/obj"), raw)) return false;
     std::ofstream f(dest, std::ios::binary | std::ios::trunc); f.write(raw.data(), (std::streamsize)raw.size()); return (bool)f;
 }
@@ -1629,7 +1630,7 @@ static int lookupCache(const Action& a, string& key, string& errOut) {
     if (!cacheEntryOk(key, !a.depfile.empty()) && !pullRemote(key, !a.depfile.empty())) return 0;
     std::error_code ec;
     if (!cacheGetObj(dir, a.output)) { std::error_code rm; fs::remove_all(dir, rm); return 0; } // a damaged entry is a miss and is removed
-    if (!a.depfile.empty()) { fs::copy_file(dir + "/dep", a.depfile, fs::copy_options::overwrite_existing, ec); if (ec) { errOut += "okay-build: cache depfile copy failed\n"; return -1; } }
+    if (!a.depfile.empty()) { okay::CopyFileOver(dir + "/dep", a.depfile, ec); if (ec) { errOut += "okay-build: cache depfile copy failed\n"; return -1; } }
     rememberCache(key);
     return 1;
 }
@@ -1650,7 +1651,7 @@ static void storeCache(const Action& a, const string& key) {
     bool packed = false;
     if (!cachePutObj(a.output, tmp, packed)) { fs::remove_all(tmp, ec); return; }
     long long depSize = -1;
-    if (!a.depfile.empty() && fs::is_regular_file(a.depfile)) { fs::copy_file(a.depfile, tmp + "/dep", fs::copy_options::overwrite_existing, ec); if (!ec) depSize = fileSizeOf(tmp + "/dep"); }
+    if (!a.depfile.empty() && fs::is_regular_file(a.depfile)) { okay::CopyFileOver(a.depfile, tmp + "/dep", ec); if (!ec) depSize = fileSizeOf(tmp + "/dep"); }
     { std::ofstream m(tmp + "/meta", std::ios::trunc); m << "okaybuild-cache 2\n" << key << "\n" << fileSizeOf(tmp + "/obj") << "\n" << depSize << "\n" << (packed ? "lz\n" : ""); }
     fs::remove_all(dir, ec);
     fs::rename(tmp, dir, ec);
@@ -1833,7 +1834,7 @@ static void archiveReport() {
     string dir = under(".okaybuild/reports");
     fs::create_directories(dir);
     int seq = 1; { std::ifstream in(dir + "/seq"); if (in) in >> seq; if (seq < 1) seq = 1; }
-    fs::copy_file(under(".okaybuild/report"), dir + "/" + std::to_string(seq) + ".txt", fs::copy_options::overwrite_existing);
+    okay::CopyFileOver(under(".okaybuild/report"), dir + "/" + std::to_string(seq) + ".txt");
     { std::ofstream o(dir + "/seq", std::ios::trunc); o << (seq + 1) << "\n"; }
     vector<int> ids;
     for (auto& e : fs::directory_iterator(dir)) {
@@ -1982,7 +1983,7 @@ static int lookupImported(const Action& a, string& key, string& errOut) {
     if (!cacheEntryOk(key, !depfile.empty()) && !pullRemote(key, !depfile.empty())) return 0;
     std::error_code ec;
     if (!cacheGetObj(dir, dest)) { std::error_code rm; fs::remove_all(dir, rm); return 0; }
-    if (!depfile.empty()) fs::copy_file(dir + "/dep", depfile, fs::copy_options::overwrite_existing, ec);
+    if (!depfile.empty()) okay::CopyFileOver(dir + "/dep", depfile, ec);
     rememberCache(key);
     return 1;
 }
@@ -2591,7 +2592,7 @@ static void copyTreeFiles(const fs::path& from, const fs::path& to, const string
         fs::path rel = fs::relative(e.path(), from);
         fs::path dest = to / rel;
         fs::create_directories(dest.parent_path());
-        fs::copy_file(e.path(), dest, fs::copy_options::overwrite_existing);
+        okay::CopyFileOver(e.path(), dest);
         string shown = prefix.empty() ? rel.generic_string() : prefix + "/" + rel.generic_string();
         listed.push_back(shown);
     }
@@ -2607,7 +2608,7 @@ static int packageDist(const Manifest& m) {
     auto fileTo = [&](const string& src, const string& dest) {
         if (!fs::is_regular_file(src)) throw Fail("dist is missing '" + src + "'");
         fs::create_directories(fs::path(dest).parent_path());
-        fs::copy_file(src, dest, fs::copy_options::overwrite_existing);
+        okay::CopyFileOver(src, dest);
     };
     string dllName = fs::path(d.dll).filename().generic_string();
     fileTo(d.launcher, root + "/" + fs::path(d.launcher).filename().generic_string());
@@ -2645,12 +2646,12 @@ static int cmdPackage(Manifest& m, const vector<string>& want, const Opts& o) {
         string exeName = (t && !t->outName.empty() ? t->outName : n) + m.tc.exe;
         string root = "dist/" + n;
         std::error_code ec; fs::remove_all(root, ec); fs::create_directories(root);
-        fs::copy_file(under(m.outdir + "/" + exeName), root + "/" + exeName, fs::copy_options::overwrite_existing);
+        okay::CopyFileOver(under(m.outdir + "/" + exeName), root + "/" + exeName);
         vector<string> listed{exeName};
         for (auto& r : t->runtime) {
             if (!fs::is_regular_file(r)) throw Fail("runtime file '" + r + "' does not exist");
             string base = fs::path(r).filename().generic_string();
-            fs::copy_file(r, root + "/" + base, fs::copy_options::overwrite_existing);
+            okay::CopyFileOver(r, root + "/" + base);
             listed.push_back(base);
         }
         for (auto& a : t->assets) {

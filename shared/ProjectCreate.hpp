@@ -22,6 +22,7 @@
 #include <string>
 #include <system_error>
 #include <vector>
+#include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
 namespace okayproj {
 namespace fs = std::filesystem;
@@ -371,7 +372,7 @@ inline bool WriteTextAtomic(const std::string& path, const std::string& text, st
     fs::rename(tmp, target, ec);
     if (ec) {   // some platforms won't rename over an existing file: replace it by copying
         std::error_code ce;
-        fs::copy_file(tmp, target, fs::copy_options::overwrite_existing, ce);
+        okay::CopyFileOver(tmp, target, ce);
         std::error_code rc;
         fs::remove(tmp, rc);
         if (ce) return fail("Couldn't replace \"" + path + "\": " + ce.message());

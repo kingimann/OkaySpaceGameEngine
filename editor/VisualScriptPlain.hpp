@@ -74,30 +74,13 @@ inline std::string VsPlainText(const std::string& in, bool titleCase = false) {
     return out;
 }
 
-/// A plain title for a node whose title still made a beginner stop. `oldTitle` stays a search word and is shown in
-/// the help card ("also called ..."); the type (the name written into a saved graph) is not changed, so every
-/// saved graph loads exactly as before.
-struct VsPlainRename { const char* type; const char* title; const char* oldTitle; };
-inline const VsPlainRename kVsPlainRenames[] = {
-    {"Timer",    "Repeat Every Few Seconds", "Every Seconds"},
-    {"Wait",     "Wait the First Time Only", "Wait Once"},
-    {"Delay",    "Wait Then Continue",         "Wait Seconds"},
-    {"Cooldown", "Limit How Often",         "Cooldown"},
-    {"FlipFlop", "Switch Between Two Paths", "Flip Flop"},
-    {"Gate",     "Open or Close the Way",    "Gate"},
-    {"Sequence", "Do These in Order",        "Do in Order"},
-    {"Const",    "Type in a Value",          "Fixed Value"},
-};
-
-inline const VsPlainRename* VsPlainRenameFor(const char* type) {
-    if (!type) return nullptr;
-    for (const VsPlainRename& r : kVsPlainRenames) if (std::strcmp(r.type, type) == 0) return &r;
-    return nullptr;
-}
+// The plain titles of the most confusing nodes (Timer, Wait, Delay, Cooldown, FlipFlop, Gate, Sequence, Const) and their
+// older names as search words live in the one title table, kVsNames in VisualScriptNames.hpp. (They used to be in a
+// second table here, kVsPlainRenames, that overrode it; Grok's #422 finding 14.) The node type, the name written into
+// a saved graph, never changes, so every saved graph loads exactly as before.
 
 // Hand-picked display names. Anything not here that still has a banned word goes through VsPlainText.
 inline const char* VsPlainTitleFor(const char* type) {
-    if (const VsPlainRename* r = VsPlainRenameFor(type)) return r->title;
     static const std::unordered_map<std::string, const char*> t = {
         // The Starter blocks: the names a beginner searches for.
         {"Translate", "Move Object"}, {"Rotate", "Turn Object"}, {"Print", "Say Text"}, {"SetText", "Show Text"},
@@ -105,7 +88,7 @@ inline const char* VsPlainTitleFor(const char* type) {
         {"Key", "Is Key Held Down"}, {"ShowUI", "Show Screen Item"}, {"DeltaTime", "Get Frame Time"},
         {"ScoreAdd", "Change Score by"}, {"Compare", "Compare Numbers"}, {"RandomRange", "Random Number Between"},
         {"Add", "Add Numbers"}, {"Sub", "Subtract Numbers"}, {"Mul", "Multiply Numbers"}, {"Div", "Divide Numbers"},
-        {"Const", "Fixed Value"}, {"Lerp", "Blend Between"}, {"InverseLerp", "How Far Between"},
+        {"Lerp", "Blend Between"}, {"InverseLerp", "How Far Between"},
         {"MakeVec3", "Make Position"}, {"VecX", "Get Position Left-Right"}, {"VecY", "Get Position Up-Down"},
         {"VecZ", "Get Position Forward-Back"}, {"Vec3Add", "Add Positions"}, {"Vec3Sub", "Subtract Positions"},
         {"Vec3Scale", "Stretch Position"}, {"Vec3Length", "Get Distance From Zero"},

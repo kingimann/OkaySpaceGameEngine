@@ -1,0 +1,17 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=save_games
+title=Save games
+area=Gameplay
+description=Save framework, game saves, auto save.
+default=on
+core=0
+requires=core
+provides=ISave
+components=AutoSave
+serializers=autosave
+vs_group=
+editor=
+# SaveGame is being merged into GameSaves (claude2/dedup-saves, #1132): the globs below cover both files, so this module wraps
+# whichever single store is left. The module does not change save code.
+sources=include/okay/Core/Save* src/Core/Save* include/okay/Core/GameSaves.hpp src/Core/GameSaves.cpp include/okay/Components/AutoSave.hpp
+tests=save_* savedata durable_saves

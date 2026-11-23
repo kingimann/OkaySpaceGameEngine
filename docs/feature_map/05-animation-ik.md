@@ -8,6 +8,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 
 ### 5.1 Animator and state machines
 - **System:** Animation - Plays and blends animation clips with a state machine, shares humanoid animations between models, and gives scripts control.
+  Home: `engine/include/okay/Animation/`, `engine/include/okay/Components/Animator.hpp`. Entry: `engine/include/okay/Components/Animator.hpp`. Also called: Animator, AnimStateMachine, ModelAnimator, animation clips, retargeting.
 - **What:** The Animator is a state machine: states name a clip or a blend tree, transitions fire on parameters, clip end or exit time, layers play on part of the skeleton. The same machine plays through an imported model's Model Animator or the blocky Character's own clips.
 - **Parts:**
   - 5.1.1 States, transitions, conditions - `Components/AnimStateMachine` - OnClipEnd, Float >/<, Bool, Trigger, Always, Int ==/!=; extra conditions all must pass; exit time, Any State, interruption modes, priority, mute, Start at, Keep phase
@@ -70,7 +71,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Docs:** `docs/gameplay/animation.md` (Imported model animations, Mixed animation, Air states, Crouch and prone, Which components do I edit)
 - **Tests:** `mixamo_locomotion`, `strafe_blend`, `clip_graph`, `anim_playback`, `imported_glitches`, `rig_sweep`, `footik_drift`
 - **Status:** Works - mixamo_locomotion (580 lines), strafe_blend and clip_graph cover slots, stride matching and strafe blends; strafe clips landed in #537
-- **Open:** in flight in #554 (Grok): the slot editor under Model Animator > Locomotion (Fill empty slots from names, Use, Preview) and its docs; "two components named Animator": confirmed in main.cpp, the Animator state machine and the keyframe Animator inspectors both use the header "Animator"
+- **Open:** in flight in #554 (Grok): the slot editor under Model Animator > Locomotion (Fill empty slots from names, Use, Preview) and its docs; "two components named Animator": fixed 2026-11-22 (#422 finding 8): the keyframe clip player (class `Animator`, scene token `animator`, both unchanged) is shown as "Clip Player" in the Inspector, Add Component and the timeline panel; the state machine keeps "Animator"; each visual-script component id is checked where its nodes look at run time and its fix-it adds what makes the node work: the "Animator" API nodes get a state graph (on the object or under it), the Anim* nodes find one on the object, a child or a parent, and Play Clip asks for a Character or a Model Animator and its button adds a Character, which plays its built-in animations at once (`editor/AnimComponentNames.hpp`, `anim_component_names` test; the button was wrong before this: it added the clip player, then for a while the state graph, neither of which Play Clip uses)
 - **Related:** 5.1, 5.4, 4.2, 3.7
 - **Words:** Model Animator, ModelAnimator, locomotion, idle fallback, idle walk run, stride match, strafe, backpedal, Mixamo clips, crossfade, blend time, slots, Fix animations
 - **Seen as:** walking animation feels off, feet slide or the wrong speed; walk-only file has no idle; the model stays upright while the collider crouches; jump plays when stepping off a curb; imported character is in a T-pose
@@ -121,6 +122,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 
 ### 5.6 Foot, limb and chain IK
 - **System:** Inverse Kinematics - Bends bones so feet stand on the ground, hands reach and hold things, and heads look at targets.
+  Home: `engine/include/okay/Components/FootIK.hpp`, `engine/include/okay/Math/IKMath.hpp`. Entry: `engine/include/okay/Components/LimbIK.hpp`. Also called: IK, FootIK, LimbIK, ChainIK, LookAtIK, FullBodyIK, TwoBoneIK. Fix: The IK maths moves from Math/ to Animation/ (architecture.md).
 - **What:** Solvers that bend bones so a foot, hand or chain tip reaches a goal, run after all animation each frame: feet planted on slopes and steps, one arm or leg reaching a target, and long chains (tails, tentacles, spider legs).
 - **Parts:**
   - 5.6.1 Foot IK - `Components/FootIK` - raycast per foot, two-bone leg solve, Adjust Pelvis, Plant Down, Align To Slope, Toe & Heel rays, foot lock, smoothing; wires itself on the blocky Character
@@ -167,6 +169,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 
 ### 5.8 Ragdolls and hit reactions
 - **System:** Ragdolls - Makes a character go limp when it dies or flinch when it is hit.
+  Home: `engine/include/okay/Components/Ragdoll.hpp`. Entry: `engine/include/okay/Components/Ragdoll.hpp`. Also called: Ragdoll, ActiveRagdoll, hit reactions.
 - **What:** A humanoid goes limp on death or flinches on a hit that does not kill it. The ragdoll is a particle simulation over the 15 humanoid bones, not rigid bodies and joints.
 - **Parts:**
   - 5.8.1 Verlet ragdoll - `Components/Ragdoll` - particles per bone plus tips, distance constraints, torso brace, elbow and knee minimum reach, ray collisions against 3D colliders and terrain, 60 Hz after animation and IK (order 900)

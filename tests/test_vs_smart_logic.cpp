@@ -255,7 +255,7 @@ int main() {
     {
         Scene s; s.physicsEnabled = false;
         GameObject* post = s.CreateGameObject("Post");
-        post->transform->SetPosition({0, 0, 2});
+        post->transform->SetPosition({0, 0, -2});   // in front: an unrotated object faces -Z
         auto* v = Attach(s, "Eye",
             "node 1 OnStart\nentry OnStart 1\n"
             "node 2 FindObject Post\nnode 3 InCone\ndefault 3 1 50\n"

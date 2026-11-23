@@ -801,10 +801,10 @@ Back to the [code index](../code_index.md). 67 headers, 965 names.
 
 ## `shared/OkfDecode.hpp`
 
-- `Crc32` function, line 38
-- `Base64Decode` function, line 52: Base64 (RFC 4648) of the concatenated lines -> bytes. False on any character outside the alphabet, on misplaced or
-- `Unpack` function, line 84: The OKF1 blob -> the raw bytes.
-- `DecodeLines` function, line 137: The whole thing: the string-literal lines of an embedded asset -> the raw bytes.
+- `Crc32` function, line 40
+- `Base64Decode` function, line 54: Base64 (RFC 4648) of the concatenated lines -> bytes: okay/Core/Base64.hpp's strict padded decoder. False on any
+- `Unpack` function, line 61: The OKF1 blob -> the raw bytes.
+- `DecodeLines` function, line 114: The whole thing: the string-literal lines of an embedded asset -> the raw bytes.
 
 ## `shared/OwnPainter.hpp`
 

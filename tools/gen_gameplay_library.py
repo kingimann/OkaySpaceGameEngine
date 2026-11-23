@@ -71,9 +71,9 @@ def movement():
         check="CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.Magnitude(), 0.0f, 0.001f);")
     add("GlMoveForward", "Move Forward", *M, "Basic", "Moves this object along the way it faces, Speed units each second.",
         [N("Speed", "1.0f"), O()], [],
-        "if (o && o->transform) o->transform->SetPosition(o->transform->Position() + o->transform->Forward() * (n0 * ctx.deltaTime));",
+        "if (o && o->transform) o->transform->SetPosition(o->transform->Position() + VsFacing(o->transform) * (n0 * ctx.deltaTime));",
         reg="CAT_XFORM", exec_=True, defaults=["4", None], update=True, dt=0.5,
-        check="{ Vec3 d = me->transform->Position(); Vec3 f = me->transform->Forward(); CHECK_NEAR(d.x, f.x * 2.0f, 0.02f); CHECK_NEAR(d.z, f.z * 2.0f, 0.02f); }",
+        check="{ Vec3 d = me->transform->Position(); Vec3 f = vs::VsFacing(me->transform); CHECK_NEAR(d.x, f.x * 2.0f, 0.02f); CHECK_NEAR(d.z, f.z * 2.0f, 0.02f); }",
         demo="movement")
     add("GlMoveSideways", "Move Sideways", *M, "Basic", "Moves this object to its right (negative Speed goes left), Speed units each second.",
         [N("Speed", "1.0f"), O()], [],
@@ -87,9 +87,9 @@ def movement():
         check="CHECK_NEAR(std::fabs(me->transform->EulerAngles().y), 45.0f, 0.5f);", demo="movement")
     add("GlFaceDirection", "Face Direction", "Movement", "Turn", "Intermediate", "Turns this object flat to look along Right and Forward.",
         [N("Right"), N("Forward"), O()], [],
-        "if (o && o->transform && (n0 != 0.0f || n1 != 0.0f)) o->transform->LookAtYaw(o->transform->Position() + Vec3(n0, 0.0f, n1));",
+        "if (o && o->transform && (n0 != 0.0f || n1 != 0.0f)) VsFaceAlongFlat(*o->transform, Vec3(n0, 0.0f, n1));",
         reg="CAT_XFORM", exec_=True, defaults=["1", "0", None],
-        check="CHECK_NEAR(me->transform->Forward().x, 1.0f, 0.02f);")
+        check="CHECK_NEAR(vs::VsFacing(me->transform).x, 1.0f, 0.02f);")
     add("GlKeepInsideBox", "Keep Inside Box", *M, "Intermediate", "Pushes this object back inside a box on the ground plane.",
         [N("Left Edge", "-1.0f"), N("Right Edge", "1.0f"), N("Back Edge", "-1.0f"), N("Front Edge", "1.0f"), O()], [],
         "if (o && o->transform) { Vec3 p = o->transform->Position(); p.x = std::min(std::max(p.x, std::min(n0, n1)), std::max(n0, n1));"
@@ -150,7 +150,7 @@ def health():
         check="CHECK_NEAR(me->GetComponent<HealthStat>()->health, 100.0f, 0.01f);")
     add("GlKill", "Kill", *H, "Basic", "Takes all the health away, whatever the armor.",
         [O()], [],
-        "if (HealthStat* h = GpHealth(this, o, g, ctx)) if (!h->IsDead()) h->Damage(h->health + h->armor + h->maxHealth + 1000.0f);",
+        "if (HealthStat* h = GpHealth(this, o, g, ctx)) h->Kill(ctx.gameObject);",
         reg="CAT_ACTION", exec_=True, setup=hp + " me->GetComponent<HealthStat>()->playDeathAnim = false;",
         check="CHECK(me->GetComponent<HealthStat>()->IsDead());")
     add("GlSetInvincible", "Set Invincible", *H, "Intermediate", "While on, no damage gets through.",
@@ -162,7 +162,7 @@ def health():
         reg="CAT_LOGIC", setup=hp + " me->GetComponent<HealthStat>()->godMode = true;", expect=True, etype="b")
     add("GlDamageOverTime", "Damage Over Time", *H, "Intermediate", "Hurts a little each frame: Per Second times the frame time. Put it under On Every Frame.",
         [N("Per Second", "5.0f"), O()], [],
-        "if (HealthStat* h = GpHealth(this, o, g, ctx)) h->Damage(std::max(0.0f, n0) * ctx.deltaTime);",
+        "if (HealthStat* h = GpHealth(this, o, g, ctx)) h->Damage(DamageEvent::Make(std::max(0.0f, n0) * ctx.deltaTime, DamageType::Generic, ctx.gameObject));",
         reg="CAT_ACTION", exec_=True, defaults=["10", None], update=True, dt=0.5, setup=hp,
         check="CHECK_NEAR(me->GetComponent<HealthStat>()->health, 95.0f, 0.05f);", demo="health")
     add("GlHealOverTime", "Heal Over Time", *H, "Intermediate", "Heals a little each frame: Per Second times the frame time. Put it under On Every Frame.",
@@ -433,7 +433,7 @@ inline float GlAngleTo(GameObject* looker, GameObject* target) {{
     const float len = d.Magnitude();
     if (len < 1e-5f) return 0.0f;
     d = d * (1.0f / len);
-    const Vec3 f = looker->transform->Forward();
+    const Vec3 f = VsFacing(looker->transform);   // its -Z, the way Look At turns it
     float c = f.x * d.x + f.y * d.y + f.z * d.z;
     c = std::min(std::max(c, -1.0f), 1.0f);
     return std::acos(c) * 57.2957795f;
@@ -787,6 +787,7 @@ def write_tests():
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
+#include "okay/VisualScript/VsFacing.hpp"
 #include <cmath>
 #include <cstdio>
 #include <fstream>

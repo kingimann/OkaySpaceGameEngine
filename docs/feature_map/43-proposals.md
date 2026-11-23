@@ -95,6 +95,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 
 ### 44.1 Blockout and grid placement
 - **System:** Level Design Tools - Grey-box shapes on a grid, a prefab brush and measuring tools for laying out levels.
+  Home: `editor/LevelTools.cpp`, `engine/include/okay/Components/BlockBuilder.hpp`. Entry: `editor/LevelTools.hpp`. Also called: grey-box, blockout, prefab brush, BlockBuilder.
 - **What:** Build rough level layouts fast from simple shapes on a grid with consistent units, then replace them with real art.
 - **Parts:**
   - 44.1.1 Primitives - `Render/Mesh`, `editor/main.cpp` - GameObject menu cubes, planes, spheres, cylinders and more with `Mesh::FromName`
@@ -184,6 +185,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 
 ### 45.1 Cell authoring and baking
 - **System:** World Streaming - Splits a big world into cells that load and unload as the player moves (mostly planned).
+  Home: `engine/include/okay/Components/WorldStreamer.hpp`, `engine/include/okay/Optimize/StreamingGrid.hpp`, `engine/include/okay/Texture/Stream.hpp`, `engine/include/okay/Audio/AudioStream.hpp`. Entry: `engine/include/okay/Components/WorldStreamer.hpp`. Also called: WorldStreamer, World Partition, level streaming, chunk streaming, StreamingGrid. Fix: One okay/World folder (architecture.md): WorldStreamer, StreamingGrid, Texture/Stream, Audio/AudioStream.
 - **What:** Split one big scene into streaming cells and manage them, so open worlds can be edited as one map.
 - **Parts:**
   - 45.1.1 Streamer component - `Components/WorldStreamer` - loads cells named `<prefix>_<x>_<z>.okayprefab` within a radius of the camera; hysteresis between load and unload radius
@@ -268,6 +270,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 
 ### 46.1 Input recording and playback
 - **System:** Replays - Records a play session and plays it back, including killcams (planned).
+  Home: `engine/include/okay/Core/FrameRecord.hpp`. Entry: `engine/include/okay/Core/FrameRecord.hpp`. Also called: replay, killcam, FrameRecord, recording.
 - **What:** Record a play session as the inputs players gave, and play it back to watch it again, test it or share it.
 - **Parts:**
   - 46.1.1 Per-tick input structure - `Net/PlayerInput` - `PlayerInput` and `IPlayerSim`: a controller that reads input in one place and moves only through `Simulate(input, dt)`
@@ -332,6 +335,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 
 ### 47.1 Mod loader and content overrides
 - **System:** Mods - Lets players add or replace game content from a Mods folder (planned).
+  Home: `engine/include/okay/Core/DataPack.hpp`. Entry: `engine/include/okay/Core/DataPack.hpp`. Also called: mod support, Mods folder, modding.
 - **What:** Let players add or replace game content (items, scenes, art, scripts) from a Mods folder without editing the game.
 - **Parts:**
   - 47.1.1 Data-driven content - `Inventory/ItemDatabase`, `Core/DataAsset` - items, recipes and loot tables are text files the game loads; `.okaydata` assets
@@ -484,6 +488,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 
 ### 49.1 Cloud saves
 - **System:** Cloud Services - Cloud saves, online leaderboards and settings changed from a server.
+  Home: `engine/include/okay/Platform/PlayFab/`, `engine/include/okay/Platform/Steam/`. Entry: `engine/include/okay/Platform/PlayFab/PlayFab.hpp`. Also called: cloud saves, PlayFab, leaderboards, remote config.
 - **What:** Keep a player's saves in the cloud so progress follows them between machines.
 - **Parts:**
   - 49.1.1 Steam Cloud calls - `Platform/Steam/SteamService` - `CloudWrite`, `CloudRead`, `CloudHasFile`, `CloudDelete`, `CloudFiles` (default implementations do nothing); script `steam_cloud_write`, `steam_cloud_read`
@@ -570,6 +575,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 
 ### 50.1 Screenshots
 - **System:** Screenshots and Video - Screenshots, photo mode and video recording and playback.
+  Home: `engine/include/okay/Core/ImageWrite.hpp`. Entry: `engine/include/okay/Core/ImageWrite.hpp`. Also called: screenshot, photo mode, video recording.
 - **What:** Save a picture of the game or editor view with one key, at a chosen size.
 - **Parts:**
   - 50.1.1 Image saving - `Graphics/Image` - `Image::SavePNG`
@@ -909,6 +915,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 
 ### 54.1 Debug draw API
 - **System:** Debug Draw and Dev Console - Lines and shapes drawn to show what the game is thinking, component gizmos, and an in-game console for commands.
+  Home: `engine/include/okay/Debug/`, `engine/include/okay/Core/DebugOverlay.hpp`. Entry: `engine/include/okay/Debug/Debug.hpp`. Also called: debug draw, gizmos, dev console, cheats, DebugOverlay. Fix: Move Core/DebugOverlay.hpp into Debug/ with a forwarding header.
 - **What:** Draw lines, boxes, spheres and text in the world from code or scripts for a moment, to see what the game is thinking.
 - **Parts:**
   - 54.1.1 Physics debug records - `Physics/PhysicsDebug` - the physics step records contacts and query rays for the editor overlay when `Collect()` is on
@@ -1206,6 +1213,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 
 ### 58.1 Performance budgets
 - **System:** Performance Checks - Frame-time and size budgets, benchmark scenes and build-size reports.
+  Home: `engine/include/okay/Optimize/SceneOptimizationReport.hpp`. Entry: `engine/include/okay/Optimize/SceneOptimizationReport.hpp`. Also called: perf budgets, benchmarks, build size report.
 - **What:** Written limits (frame time, draw calls, memory, triangles) per scene or system, checked automatically.
 - **Parts:**
   - 58.1.1 Optimization report thresholds (#574) - `Optimize/SceneOptimizationReport` - `OptSettings` with a draw call budget, texture memory budget and similar limits

@@ -8,6 +8,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 
 ### 2.1 Renderers
 - **System:** Renderer - Picks the drawing backend (OpenGL, Direct3D, software) and gets each finished frame onto the screen.
+  Home: `engine/include/okay/Render/`, `engine/src/Render/`. Entry: `engine/include/okay/Render/Renderer.hpp`. Also called: renderer interface, rendering, backend selection, present.
 - **What:** The common face of rendering: the small `IRenderer` interface, the colour type, the console renderer, and the map of which backend draws a frame. The backends themselves (OpenGL, Direct3D 11 and 12, software, web) now live in area 38 so each can be targeted.
 - **Parts:**
   - 2.1.1 Renderer interface - `Render/Renderer` - `IRenderer` (BeginFrame, EndFrame, SetCamera, DrawQuad, GetViewport) and `Viewport`; only `ConsoleRenderer` implements it and `SpriteRenderer::OnRender` is the only caller of `DrawQuad`
@@ -29,6 +30,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 
 ### 2.2 Materials and textures
 - **System:** Materials and Textures - How a surface looks: colour, roughness and shine, the pictures on it, and texture mipmaps, atlases and compression.
+  Home: `engine/include/okay/Render/`, `engine/include/okay/Texture/`. Entry: `engine/include/okay/Render/Material.hpp`. Also called: Material, PBR, texture library, mipmaps, atlases, texture compression. Fix: Texture/ is the texture library and Render/Material the surface; write that split into architecture.md, or move Texture/ under Render/.
 - **What:** How a surface looks: reusable material presets, the Mesh Renderer component the backends read, procedural textures, and the mesh geometry with its primitives and loaders.
 - **Parts:**
   - 2.2.1 Material asset - `Render/Material` - `.okaymat` preset (colour, emissive, specular, shininess, unlit, double-sided, texture, tiling, shader and toon bands, rim, outline, UV scroll, triplanar); `FromRenderer` and `ApplyTo`
@@ -52,6 +54,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 
 ### 2.3 Lighting and shadows
 - **System:** Lighting and Shadows - Sun, point, spot and area lights, the shadows they cast, and baked lighting.
+  Home: `engine/include/okay/Render/`. Entry: `engine/include/okay/Render/Lighting.hpp`. Also called: lights, shadows, lightmaps, light probes, baked lighting.
 - **What:** Lights (sun, point, spot, area), how every renderer shades with them, cascaded and local shadows, baked per-face lighting, and a 24-hour day/night cycle.
 - **Parts:**
   - 2.3.1 Light component - `Components/Light` - Directional, Point, Spot, Area; colour or Kelvin temperature, intensity, range, linear or inverse-square falloff, spot angle and softness, flicker, shadow strength and bias; `ApplySceneLight` fills `SceneLights`
@@ -75,6 +78,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 
 ### 2.4 Sky, fog and weather
 - **System:** Sky, Weather and Time of Day - The sky, sun, stars, clouds and fog, rain and snow, and a day-night cycle that games can react to.
+  Home: `engine/include/okay/Environment/`. Entry: `engine/include/okay/Environment/Weather.hpp`. Also called: Atmosphere, sky, fog, day-night cycle, Wind.
 - **What:** The atmosphere of a scene: a gradient or sun-driven procedural sky with stars and clouds, three fog modes, rain, snow and storms with gusts and lightning, and the global wind particles and water follow.
 - **Parts:**
   - 2.4.1 Scene render settings - `Scene/Scene` (RenderSettings) - sky mode and colours, sun disc, stars, ambient mode, fog, post and weather, all saved with the scene
@@ -100,6 +104,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 
 ### 2.5 Post-processing
 - **System:** Post-Processing - Screen effects on the finished picture: bloom, colour grading, depth of field, anti-aliasing and more.
+  Home: `engine/include/okay/Render/`. Entry: `engine/include/okay/Render/Atmosphere.hpp`. Also called: post effects, bloom, color grading, depth of field, anti-aliasing.
 - **What:** Screen effects on the finished frame: exposure, tonemap, bloom, colour grading, vignette, anti-aliasing, ambient occlusion and depth of field, with a software fallback for some.
 - **Parts:**
   - 2.5.1 Settings and chain order - `Scene/Scene` (PostSettings), `Render/Atmosphere` - exposure, tonemap (None, ACES, Filmic), bloom, grading (temperature, tint, saturation, contrast, lift/gamma/gain), vignette; chain: SSAO, bloom, exposure/tonemap/grade/vignette, depth of field, FXAA, in an HDR target
@@ -120,6 +125,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 
 ### 2.6 Terrain and water
 - **System:** Terrain and Water - Landscapes you can sculpt, paint and dig, plants and decals on them, and animated water.
+  Home: `engine/include/okay/Components/Terrain.hpp`, `engine/include/okay/Components/Water.hpp`. Entry: `engine/include/okay/Components/Terrain.hpp`. Also called: Terrain, VoxelTerrain, Water, foliage, vegetation.
 - **What:** World-building components: sculptable heightmap terrain, cave-capable voxel terrain, runtime digging, animated water with buoyancy, world streaming by cells, and 2D tilemaps.
 - **Parts:**
   - 2.6.1 Heightmap terrain - `Components/Terrain` - square height grid, brushes (raise, smooth, flatten, noise, erode), generators, hydraulic and thermal erosion, terrace, heightmap PNG import and export; builds the sibling MeshRenderer's mesh
@@ -146,6 +152,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 
 ### 2.7 Particles and lines
 - **System:** Particles - Smoke, fire, sparks and trails made of many small moving pictures.
+  Home: `engine/include/okay/Components/ParticleSystem.hpp`, `engine/include/okay/Components/LineRenderer.hpp`. Entry: `engine/include/okay/Components/ParticleSystem.hpp`. Also called: ParticleSystem, VFX, trails, LineRenderer.
 - **What:** Particle emitters with gradients, curves, motion modules and presets, plus ribbon-style Line and Trail renderers for lasers, ropes, sword swipes and projectile tails.
 - **Parts:**
   - 2.7.1 Particle emitter - `Components/ParticleSystem` - shapes (Point, Circle, Sphere, Box, Cone, Edge), emission rate, burst, duration and loop, lifetime, start velocity, gravity, damping, wind influence, ground plane with bounce, and Collide with Terrain (`collideTerrain`, `Components/ParticleSystem.cpp`): with collision on, particles land on every active Terrain (moved, turned or scaled), bounce off its slope and slide down it; saved as its own `particlesterrain` record; Inspector Collision section (editor syntax-checked only, not run), property `collideTerrain`; one point test per particle per frame, so a very fast particle can pass through a thin ridge
@@ -168,6 +175,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 
 ### 2.8 Culling and skinning
 - **System:** Culling and LOD - Skips drawing what the camera cannot see and draws simpler versions of far-away things, so big scenes stay fast.
+  Home: `engine/include/okay/Optimize/`. Entry: `engine/include/okay/Optimize/LodGroup.hpp`. Also called: LOD, LODGroup, occlusion culling, batching, MeshSimplify.
 - **What:** Skip what the camera cannot see before any draw work, and let the GPU deform skinned characters when it can.
 - **Parts:**
   - 2.8.1 Frustum culling - `Render/Culling` - `Frustum`, a world bounding sphere per object (cached local bounds for static meshes, bone positions for skinned ones), `CulledByFrustum`
@@ -188,6 +196,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 
 ### 2.9 Fonts and images
 - **System:** Fonts and Images - Loads pictures and fonts and turns text into letters on screen, falling back to system fonts for other alphabets.
+  Home: `engine/include/okay/Graphics/`, `engine/src/Graphics/`. Entry: `engine/include/okay/Graphics/Font.hpp`. Also called: Font, TtfFont, Image, system fonts, font fallback.
 - **What:** The CPU side of text and pictures: the built-in 8x8 font, TrueType fonts baked into glyph atlases, the compiled-in UI font, the RGBA image buffer, and the world and screen text component.
 - **Parts:**
   - 2.9.1 Bitmap font - `Graphics/Font` - `Font8x8` built-in hand-drawn 8x8 monochrome ASCII glyphs (printable 32-126), `Pixel`, `MeasureWidth`
@@ -210,6 +219,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 
 ### 2.10 Cameras and the camera stack
 - **System:** Cameras - The cameras that film the scene: lens, shake and zoom, follow cameras for first and third person, and shot cameras that blend between views.
+  Home: `engine/include/okay/Components/Camera.hpp`. Entry: `engine/include/okay/Components/Camera.hpp`. Also called: Camera, camera stack, virtual cameras, Cinemachine, camera shake.
 - **What:** The Camera component (lens, viewport, culling mask, clear mode, framing effects), how a scene picks its main camera, and the camera stack that several cameras can form.
 - **Parts:**
   - 2.10.1 Camera component - `Components/Camera` - orthographic or perspective, field of view (vertical or horizontal), physical lens (focal length, sensor), near and far, viewport rect, culling mask, clear flags, depth
@@ -231,6 +241,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 
 ### 2.11 Splines and spline tools
 - **System:** Splines - Curves you draw in the scene that objects follow and that meshes, lines and rows of objects are built along.
+  Home: `engine/include/okay/Components/Spline.hpp`, `engine/include/okay/Components/SplineMesh.hpp`. Entry: `engine/include/okay/Components/Spline.hpp`. Also called: Spline, SplineMesh, curves, spline paths.
 - **What:** A curve you draw in the Scene view that followers, meshes, instancers and lines build on, with the editor overlay for editing it.
 - **Parts:**
   - 2.11.1 Spline curve - `Components/Spline` - cubic Bezier or Catmull-Rom, open or closed, per-point roll and width/height scale, arc-length table, rotation-minimising frames
@@ -252,6 +263,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 
 ### 2.12 Sprites and sprite animation
 - **System:** Sprites and Tilemaps - Flat 2D pictures in the world, sprite sheets cut into frames, flip-book animation and levels painted from tiles.
+  Home: `engine/include/okay/Components/SpriteRenderer.hpp`, `engine/include/okay/Components/Tilemap.hpp`. Entry: `engine/include/okay/Components/SpriteRenderer.hpp`. Also called: SpriteRenderer, SpriteAnimator, Tilemap, 2D sprites, sprite sheets.
 - **What:** The 2D drawing components: textured, tinted, sorted sprites and flip-book animation from frame lists or sprite-sheet rows.
 - **Parts:**
   - 2.12.1 Sprite renderer - `Components/SpriteRenderer` - size, colour, texture, sub-region (`uvMin`, `uvMax`), sorting layer and order, flipX and flipY, smooth or pixel filter, console glyph

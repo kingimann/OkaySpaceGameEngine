@@ -123,6 +123,12 @@ add_library(okay_engine
     src/Components/RagdollShared.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
+    # NetworkManager's other parts (batch N1, docs/engine/modularization_plan.md): sync and messages,
+    # server authority (lag compensation, anti-cheat checks, movement), the server tick and the client tick.
+    src/Net/NetworkManagerSync.cpp
+    src/Net/NetworkManagerAuthority.cpp
+    src/Net/NetworkManagerServer.cpp
+    src/Net/NetworkManagerClient.cpp
     src/Net/NetBuildSync.cpp
     src/Net/NetQuestSync.cpp
     src/Net/NetDelta.cpp
@@ -446,7 +452,8 @@ set_source_files_properties(src/Core/BuildInfo.cpp PROPERTIES COMPILE_DEFINITION
 # files anti-cheat kicks with #270's request builder (shared/AntiCheatBackend.hpp);
 # the relay makes its hello cookies with HmacSha256 (shared/AntiCheatChecks.hpp).
 set_source_files_properties(src/Net/NetworkManager.cpp src/Net/ClockCheck.cpp src/Net/DedicatedServer.cpp
-                            src/Net/RelayServer.cpp PROPERTIES
+                            src/Net/RelayServer.cpp src/Net/NetworkManagerSync.cpp src/Net/NetworkManagerAuthority.cpp
+                            src/Net/NetworkManagerServer.cpp src/Net/NetworkManagerClient.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 
 target_compile_features(okay_engine PUBLIC cxx_std_17)
@@ -840,3 +847,17 @@ target_sources(okay_engine PRIVATE
     src/Core/LoopConsole.cpp
     src/Core/ConsoleHost.cpp
 )
+
+# The module list the engine knows at run time (okay/Modules/ModuleRegistry.hpp): the manifests embedded as text by
+# cmake/OkayModules.cmake, plus the manifest parser and the registry. Every module is on in this stage.
+okay_modules_generate("${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp")
+get_property(_okay_mod_register GLOBAL PROPERTY OKAY_MODULE_REGISTER_SOURCES)
+target_sources(okay_engine PRIVATE
+    src/Modules/ModuleManifest.cpp
+    src/Modules/ModuleRegistry.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp"
+    ${_okay_mod_register})
+
+# Which module each engine file belongs to (engine/modules/*/module.okaymodule sources=). Keep this last: it reads the
+# whole source list. Writes okay_modules.tsv in the build folder; the build itself is unchanged.
+okay_modules_group(okay_engine)

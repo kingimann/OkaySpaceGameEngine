@@ -48,7 +48,7 @@ end
 gameobject 5 "Gun"
   active 1
   parent -1
-  transform 0 0.6 -3.5 0 0 0 1 0.4 0.3 1.1
+  transform 0 0.6 -3.5 0 1 0 0 0.4 0.3 1.1
     mesh "Cube" 0.25 0.28 0.32 1 0 "" 0
     material 0 0 0 0 8 1 "" 1 1
     visualscript ""

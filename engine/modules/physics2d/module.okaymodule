@@ -1,0 +1,15 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=physics2d
+title=2D physics
+area=Physics
+description=2D rigid bodies, colliders, joints, tilemap colliders.
+default=on
+core=0
+requires=core
+provides=IPhysics2D
+components=GridObstacle2D,Joint2D,TilemapCollider2D
+serializers=joint2d
+vs_group=physics
+editor=
+sources=include/okay/Physics/Physics2D.hpp include/okay/Physics/Collider2D.hpp include/okay/Physics/Rigidbody2D.hpp src/Physics/Physics2D.cpp include/okay/Components/Joint2D.hpp include/okay/Components/TilemapCollider2D.hpp include/okay/Components/GridObstacle2D.hpp
+tests=physics2d_casts hinge2d angular2d tilemap_collision

@@ -4612,12 +4612,18 @@ static void LoadNewsHistory() {
         if (ln[0] == 'v') g_newsHistory.push_back({ln.substr(2), {}});
         else if (ln[0] == 'l' && !g_newsHistory.empty()) g_newsHistory.back().lines.push_back(ln.substr(2));
     }
+    // Test builds are not releases: an older launcher recorded them here (v2.903.1.3 ...), so drop them on load.
+    const std::size_t before = g_newsHistory.size();
+    g_newsHistory.erase(std::remove_if(g_newsHistory.begin(), g_newsHistory.end(), [](const NewsRelease& r) {
+        return okay::testbuild::IsTestVersion(r.ver.size() > 1 && r.ver[0] == 'v' ? r.ver.substr(1) : r.ver); }), g_newsHistory.end());
+    if (g_newsHistory.size() != before) SaveNewsHistory();
 }
 // Record the latest fetched notes (GetNews) in the history. Cheap when nothing changed.
 static void SyncNewsHistory() {
     std::string ver, lines;
     GetNews(ver, lines);
     if (ver.empty() || lines.empty()) return;
+    if (okay::testbuild::IsTestVersion(ver.size() > 1 && ver[0] == 'v' ? ver.substr(1) : ver)) return;   // test builds are not releases
     std::vector<std::string> ls;
     for (std::size_t s = 0; s < lines.size();) {
         std::size_t e = lines.find('\n', s); if (e == std::string::npos) e = lines.size();

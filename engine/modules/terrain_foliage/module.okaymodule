@@ -1,0 +1,15 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=terrain_foliage
+title=Terrain and foliage
+area=World
+description=Terrain, voxel terrain, digging, foliage, world streaming.
+default=on
+core=0
+requires=physics3d
+provides=
+components=Foliage,Terrain,TerrainDigger,VoxelDigger,VoxelTerrain,WorldStreamer
+serializers=terrain,terraindigger,voxeldigger,voxelterrain,worldstreamer
+vs_group=
+editor=
+sources=include/okay/Components/Terrain.hpp include/okay/Components/TerrainDigger.hpp include/okay/Components/VoxelTerrain.hpp include/okay/Components/VoxelDigger.hpp include/okay/Components/Foliage.hpp include/okay/Components/WorldStreamer.hpp src/Components/Terrain.cpp src/Components/VoxelTerrain.cpp src/Components/VoxelEdit.cpp src/Components/VoxelFluid.cpp src/Components/Foliage.cpp
+tests=terrain* foliage voxel* worldstreamer

@@ -2599,6 +2599,18 @@ inline std::string CompileToOkayScript(const VsEditGraph& g, std::vector<okay::v
     return fin;
 }
 
+/// What the Problems button lists: the graph checker's findings only. Nodes the OkayScript preview cannot write are
+/// not problems with the graph (it still runs in the game), so they go to `exportOut` for the Script preview and are
+/// never shown as red errors in Problems or on the nodes.
+inline std::vector<okay::vs::VsIssue> VsCheckGraph(const VsEditGraph& g, const std::string& text, const std::string& baseDir,
+                                                   std::vector<okay::vs::VsIssue>* exportOut = nullptr) {
+    std::vector<okay::vs::VsIssue> issues = okay::vs::ValidateGraphText(text, baseDir);
+    std::vector<okay::vs::VsIssue> exp;
+    CompileToOkayScript(g, &exp);
+    if (exportOut) *exportOut = std::move(exp);
+    return issues;
+}
+
 // ---- Interaction state -----------------------------------------------------
 struct VsEditState {
     VsEditGraph g;
@@ -2670,6 +2682,7 @@ struct VsEditState {
     bool   needsEvent = false;   // nodes but no event node: hint on the canvas
     // The graph checker's findings for the graph on screen (recomputed when it changes).
     std::string checkedText; std::vector<okay::vs::VsIssue> issues;
+    std::vector<okay::vs::VsIssue> exportIssues;   // nodes the OkayScript preview cannot write (not graph problems)
     bool   showIssues = false;
     std::string refuseMsg; float refuseTime = 0.0f;   // why a wire was refused (shown a few seconds)
     // Text last saved (or the text a new graph was created with). Dirty is true
@@ -3160,6 +3173,17 @@ inline std::string VsSelectionText(const VsEditGraph& g, const std::set<int>& se
     for (const auto& n : g.nodes) if (sel.count(n.id)) part.nodes.push_back(n);
     for (const auto& l : g.execLinks) if (sel.count(l.from) && sel.count(l.to)) part.execLinks.push_back(l);
     for (const auto& l : g.dataLinks) if (sel.count(l.consumer) && sel.count(l.producer)) part.dataLinks.push_back(l);
+    // The variables these nodes name (Get Var total, Set Var boss ...) and the record types those variables use go
+    // along, so the pasted nodes still know their variable in another graph.
+    std::set<std::string> names;
+    for (const auto& n : part.nodes) if (!n.arg.empty()) names.insert(n.arg);
+    std::set<std::string> types;
+    for (const auto& v : g.vars) if (names.count(v.name)) { part.vars.push_back(v); types.insert(v.type); }
+    for (const auto& st : g.structs) {
+        bool used = types.count(st.name) > 0;
+        for (const auto& t : types) if (t.find("<" + st.name + ">") != std::string::npos) used = true;
+        if (used) part.structs.push_back(st);
+    }
     return "# OkayVS clipboard\n" + part.toText();
 }
 // Paste OkayVS text into the graph with fresh ids, its top-left at (wx, wy)
@@ -3239,6 +3263,12 @@ inline std::set<int> VsPasteText(VsEditGraph& g, const std::string& text, float 
         for (const auto& e : g.vars) if (e.name == v.name) have = true;
         if (!have) g.vars.push_back(v);
     }
+    for (const auto& st : part.structs) {
+        bool have = false;
+        for (const auto& e : g.structs) if (e.name == st.name) have = true;
+        if (!have) g.structs.push_back(st);
+    }
+    if (!part.vars.empty() || !part.structs.empty()) g.declsChanged();
     for (auto c : part.comments) { c.x = c.x - minX + wx; c.y = c.y - minY + wy; g.comments.push_back(c); }
     g.dirty = true;
     return made;
@@ -4085,13 +4115,7 @@ inline void Draw(EditorState& ed, bool* open) {
     {
         std::string now = g.toText();
         if (now != st.checkedText) {
-            st.issues = okay::vs::ValidateGraphText(now, ed.projectDir());
-            std::vector<okay::vs::VsIssue> exp;
-            CompileToOkayScript(g, &exp);
-            if (!exp.empty()) {
-                st.issues.insert(st.issues.end(), exp.begin(), exp.end());
-                st.showIssues = true;
-            }
+            st.issues = VsCheckGraph(g, now, ed.projectDir(), &st.exportIssues);
             st.checkedText = std::move(now);
         }
     }
@@ -5983,8 +6007,7 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::SameLine();
         ImGui::BeginChild("vsscript", ImVec2(0, 0), true);
         std::vector<const okay::vs::VsIssue*> blocked;
-        for (const auto& is : st.issues)
-            if (is.severity == 0 && is.message.rfind("Cannot export node ", 0) == 0) blocked.push_back(&is);
+        for (const auto& is : st.exportIssues) blocked.push_back(&is);
         if (!blocked.empty()) {
             ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.40f, 1.0f), "This graph cannot be exported.");
             ImGui::TextWrapped("These nodes have no script. The export stops instead of skipping them.");

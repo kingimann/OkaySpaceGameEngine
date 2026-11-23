@@ -314,10 +314,6 @@ inline void VsFillFriendlyPins(const okay::vs::VsApiEntry& e,
 // Old titles and raw identifiers. The palette searches this as well as the title.
 inline std::string VsNodeSearchText(const char* type) {
     std::string s = VsSearchKeywords(type);
-    if (const VsPlainRename* r = VsPlainRenameFor(type)) {   // a renamed node is still found by its old name
-        if (!s.empty()) s += ' ';
-        s += r->oldTitle;
-    }
     if (type && std::strncmp(type, "Fn.", 3) == 0) {
         if (!s.empty()) s += ' ';
         s += type + 3;

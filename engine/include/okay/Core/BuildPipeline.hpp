@@ -157,12 +157,23 @@ struct Report {
     bool archiveCompressed = false;
     double seconds = 0.0;
     int missingAssets = 0;
+    /// The engine modules in the shipped player (docs/engine/modular_engine.md). Every module ships in this version (no
+    /// module is stripped yet); `bytes` is that module's share of the player, 0 when the size file was not found.
+    /// `projectOn` is false for a module the project turned off in Project Settings > Modules (it still ships until
+    /// modules can be left out of the player).
+    struct ModuleRow { std::string name, title; bool shipped = true; bool projectOn = true; std::uintmax_t bytes = 0; };
+    std::vector<ModuleRow> modules;
+    bool moduleSizesKnown = false;
 
     void AddFile(const std::string& path, std::uintmax_t bytes, const std::string& reason = std::string());
     void AddExcluded(const std::string& path, std::uintmax_t bytes, const std::string& reason);
     void Warn(const std::string& text) { warnings.push_back(text); }
     /// Sort and total. Call once after the last AddFile.
     void Finish();
+    /// Fill `modules` from the build's module list (ModuleRegistry) and, when `sizesFile` exists, each module's bytes from
+    /// it ("name<TAB>bytes" lines, written beside the player by scripts/module_sizes.py). Rows are largest first.
+    /// `projectModules` is the project's module list (project.okayproj modules=, "" = every module).
+    void AddModules(const std::string& sizesFile, const std::string& projectModules = std::string());
     /// (extension, bytes, count) rows, largest first; files without one are "(none)".
     struct TypeRow { std::string ext; std::uintmax_t bytes = 0; int count = 0; };
     std::vector<TypeRow> ByExtension() const;
@@ -185,6 +196,15 @@ struct ZipStats { int files = 0; std::uintmax_t stored = 0, packed = 0; };
 /// same folder gives the same archive). `compress` deflates files that benefit (already-compressed types such
 /// as .png .ogg .zip are stored). False with `error` set on failure; a partial file is removed.
 bool WriteZip(const std::string& zipPath, const std::string& rootDir, bool compress, ZipStats* stats = nullptr, std::string* error = nullptr);
+/// One file for WriteZipEntries: its name inside the archive ('/' separators) and either its bytes (`data`) or, when
+/// `sourcePath` is set, a file on disk read when its turn comes (so a large build is never all in memory at once).
+struct ZipInput { std::string name; std::string data; std::string sourcePath; };
+/// The engine's one zip writer (WriteZip packs a folder through it): the entries in the order given (package formats
+/// such as OPC want a fixed part order), UTF-8 names, deflated when `compress` and it helps (already-compressed types
+/// are stored), else stored. False with `error` set on failure (an empty name, a missing source file, over 4 GB); a
+/// partial file is removed.
+bool WriteZipEntries(const std::string& zipPath, const std::vector<ZipInput>& entries, bool compress, ZipStats* stats = nullptr,
+                     std::string* error = nullptr);
 struct ZipEntry { std::string name; int method = 0; std::uint32_t crc = 0; std::uint64_t packed = 0, size = 0; };
 /// The central directory of a zip (what `unzip -l` lists).
 bool ReadZipDirectory(const std::string& zipPath, std::vector<ZipEntry>& out, std::string* error = nullptr);

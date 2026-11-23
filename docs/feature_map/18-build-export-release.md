@@ -10,6 +10,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 
 ### 18.1 Windows build and installer
 - **System:** Windows Build and Installer - Builds the Windows programs (launcher, editor, player, relay) and the installer and zip.
+  Home: `scripts/build-windows-dist.sh`, `scripts/okayspace-installer.nsi`. Entry: `scripts/build-windows-dist.sh`. Also called: installer, NSIS, Windows zip, build-windows-dist.
 - **What:** Cross-compiles the whole Windows distribution (launcher, editor, player, relay and `SDL2.dll`) from Linux with MinGW-w64 and wraps it in a one-click installer that installs or updates in place.
 - **Parts:**
   - 18.1.1 Distribution build script - `scripts/build-windows-dist.sh` - configures with the MinGW toolchain, builds launcher, editor, player (Assimp on), copies the layout into `build-win-dist/`; env `SDL2_MINGW_PREFIX` (required), `OKAY_SODIUM_MINGW_PREFIX`, `OKAY_AC_TRUSTED_KEYS`, `OKAY_STEAM_APP_ID` (default 1172560), `STEAMWORKS_SDK_PATH`, `OKAY_IMGUI_SRC`, `JOBS`
@@ -32,6 +33,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 
 ### 18.2 Web and mobile export
 - **System:** Web, Mobile and Console Export - Runs games in a web browser, on phones, and (experimental, off by default) on an Xbox in Developer Mode.
+  Home: `platform/`. Entry: `scripts/build-web.sh`. Also called: WebGL, Emscripten, Android, iOS, Xbox, UWP.
 - **What:** Putting a game in a browser (WebAssembly through Emscripten) or on a phone. Web has a real build script and a CI job; Android and iOS are a data export plus instructions.
 - **Parts:**
   - 18.2.1 Web build script - `scripts/build-web.sh` - `emcmake` builds the player without libsodium and Assimp (none for WebAssembly), outputs `build-web/web/okay-player.html`, `.js`, `.wasm`; an optional scene argument is preloaded as `game.okayscene`; serve over HTTP
@@ -52,6 +54,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 
 ### 18.3 CI jobs
 - **System:** CI - The automatic checks GitHub runs on every change (build, tests, linters).
+  Home: `.github/workflows/`. Entry: `.github/workflows/ci.yml`. Also called: GitHub Actions, workflows, checks.
 - **What:** The five GitHub Actions jobs in `.github/workflows/ci.yml` that every pull request must pass (and every push to main runs). A new push to a PR cancels that PR's older run.
 - **Parts:**
   - 18.3.1 Build & test (Ubuntu) - `.github/workflows/ci.yml` - installs cmake, g++, ninja, libsdl2-dev; Release build and the whole `ctest`; also builds the player, builds the editor and launcher and runs `OkayEngine --selftest` headless, then exports a game and runs `tests/export/verify.sh`
@@ -74,6 +77,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 
 ### 18.4 Release workflow
 - **System:** Release Pipeline - Turns a version number into a published release, and publishes test builds.
+  Home: `.github/workflows/release.yml`. Entry: `.github/workflows/release.yml`. Also called: release.yml, releases, publish, CHANGELOG.
 - **What:** `.github/workflows/release.yml` turns a version into a GitHub Release (and, when a secret exists, an update on Supabase) plus the Linux game server. A release PR bumps the version first.
 - **Parts:**
   - 18.4.1 Trigger and version - `.github/workflows/release.yml` - runs on a `v*` tag or "Run workflow"; the version is read from `build-win-dist/VERSION.txt`, which comes from `CMakeLists.txt`; a release PR ("Release 2.849.0", #573; "Release 2.851.0", #583; "Release 2.852.0", #588 in draft) bumps `project(VERSION)`, adds a `ROADMAP.md` row and a `dist/CHANGELOG.txt` entry
@@ -117,6 +121,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 
 ### 18.6 Desktop game export (Build Game) and the export check
 - **System:** Game Export - Turns a project into a game folder you can ship (`<Game>.exe`), checks it, and lets shipped games download signed content updates.
+  Home: `editor/BuildGame.cpp`, `engine/include/okay/Core/BuildPipeline.hpp`. Entry: `editor/BuildGame.hpp`. Also called: Build Game, BuildPipeline, export game, content updates.
 - **What:** Turning the open project into a shippable game folder (`<Game>.exe`, `SDL2.dll`, a `<Game>_Data/` folder with the scenes, config, `build.json`, only the assets the scenes use and the project's StreamingAssets; or the older compact `Data/` layout; or one zip), with a report of what went in and what was left out, a dry run, and the CI checks that export a small game and run it.
 - **Parts:**
   - 18.6.1 Build - `editor/BuildGame.cpp` (`builder::Build`; types and declarations in `editor/BuildGame.hpp`) - refuses dangerous folders (a drive root, home, the project), cleans only files it writes, scenes in build order, `game.okayconfig`, player copied as `<Game>.exe`, SDL2, the dependency walk's assets, StreamingAssets, icon, splash, localization, `build.json`, the report, the archive; `Data/manifest.json` only with anti-cheat
@@ -124,7 +129,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
   - 18.6.3 Command line - `editor/main.cpp` (`RunBuildGameCli`) - `OkayEngine --build-game SCENE OUT_DIR [--name GAME] [--layout folder|compact|zip] [--dry-run] [--report FILE] [--no-strip] [--no-compress] [--zip] [--version V] [--build-number N] [--archive-name PATTERN] [--dev]`, starting from the project's saved Build Settings
   - 18.6.4 Optional data obfuscation - `Core/DataPack` - scenes and config packed so they can't be read in a text editor (39.10)
   - 18.6.5 Export check - `tests/export/verify.sh`, `tests/export/verify.ps1` - exports `vs_export.okayscene` with the editor's real Build, runs it headless and requires the output to equal `expected.txt`; assets `tests/export/*.okayvs`, `Tower.okaymesh`
-  - 18.6.6 Build pipeline logic - `engine/include/okay/Core/BuildPipeline.hpp`, `engine/src/Core/BuildPipeline.cpp` - layout planner, the player's `FindDataDir`, the dependency walk (asset stripping), `build.json`, the report, the zip writer and reader
+  - 18.6.6 Build pipeline logic - `engine/include/okay/Core/BuildPipeline.hpp`, `engine/src/Core/BuildPipeline.cpp` - layout planner, the player's `FindDataDir`, the dependency walk (asset stripping), `build.json`, the report, the zip writer and reader (one writer, `WriteZipEntries`, for files in memory or on disk in a fixed order; `WriteZip` packs a folder through it with the same bytes as before, test `build_pipeline`; #422 finding 11: the Xbox package writer in `platform/xbox_uwp` keeps its own for now, that lane is not ours)
   - 18.6.7 Layout check - `tests/export/verify_layout.sh` - exports a project with an unused asset and StreamingAssets, checks the Folder, flat (old), Compact, no-strip, Zip and dry-run outputs, and runs the player from the Folder, flat and Compact layouts
   - 18.6.8 Build report - `editor/main.cpp` (Build Result window), `.okay/build_report.txt` - by kind, by type, files with why, left out with reason, warnings, time, archive size
   - 18.6.9 Player build info - `player/main.cpp` - `--build-info`, the development overlay and log line, `Paths::StreamingAssetsDir`

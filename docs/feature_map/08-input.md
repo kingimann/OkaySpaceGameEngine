@@ -11,6 +11,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 
 ### 8.1 Keyboard and mouse
 - **System:** Input - The engine's one input system: reads the keyboard, mouse, gamepads and touch, turns them into named actions the player can rebind (one action table, one rebinding store, for one or several local players), and plays controller rumble.
+  Home: `engine/include/okay/Input/`, `engine/src/Input/`. Entry: `engine/include/okay/Input/Input.hpp`. Also called: keyboard, mouse, gamepad, GameInput, PlatformGamepad, rumble.
 - **What:** Polled key and mouse-button state (held, pressed this frame, released this frame), mouse position, delta and wheel, typed text, and a WASD and arrows axis, all fed by the host each frame.
 - **Parts:**
   - 8.1.1 Keys - `Input/Input` - `GetKey`, `GetKeyDown`, `GetKeyUp`, `AnyKey`, `FirstKeyDown`, `KeyFromName`, `KeyName`; one `char` per key, synthetic codes for Shift, Ctrl and arrows
@@ -51,7 +52,8 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "add a dead zone setting for the right stick"; "support two controllers for couch co-op"
 
 ### 8.3 Input actions and rebinding UI
-- **System:** Input
+- **System:** Input Actions - Named actions such as Jump and Fire that work with any key or button, can be rebound by the player, and support several local players (one action table, one rebinding store).
+  Home: `engine/include/okay/Input/`, `engine/src/Input/`. Entry: `engine/include/okay/Input/ActionSet.hpp`. Also called: ActionSet, InputAsset, PlayerInput, InputActions, rebinding.
 - **What:** Named actions ("Jump", "Move", "Fire") that read keys, mouse and controller together, with text bindings, a direction type for sticks and WASD, and player rebinding saved in Prefs.
 - **Parts:**
   - 8.3.1 Bindings - `Input/InputActions` - `InputBinding` text forms `key:`, `mouse:`, `pad:`, `keys:w,s,a,d`, `stick:`, `dpad`, `mouse:delta` with display labels

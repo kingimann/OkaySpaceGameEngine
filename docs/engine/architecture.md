@@ -8,6 +8,7 @@
 > yet: the plan's section 1 lists every place where it does not, and the batches in section 3 fix them one at a time.
 >
 > **Last checked:** 2026-11-23 against `origin/main` at `bc5629ee8`.
+> The naming section (systems) was added 2026-11-23 with the registry fields in `docs/SYSTEMS.md`.
 
 ## The big picture
 
@@ -88,6 +89,57 @@ group passes about 10 files it gets its own folder (`editor/VisualScript/` is th
 files today).
 
 ## Naming
+
+### Systems: one name, one home (CLAUDE.md rule 19e)
+
+The registry of systems is [docs/SYSTEMS.md](../SYSTEMS.md), generated from the `System:` lines of the feature map
+(format in [feature_map/README.md](../feature_map/README.md)). Each system has one official name, one home folder,
+one entry file, one doc and one owner lane, and lists every old and other name under "Also called", so a search for an
+old name (`python3 scripts/find_existing.py own UI`) lands on the system that has it now.
+
+- **One plain name per system**, in plain words: "Physics", "Input", "Input Actions", "UI toolkit (OkayUI)", "Game UI",
+  "Platform Layer". "Okay" only where the code already uses it (OkayUI, OkayScript).
+- **No "Own", "New", "Improved", "Classic", "V2" or "2"** (and no "Next" meaning a newer version) in a system, file,
+  folder, class, enum value or switch name. When our code replaces a third-party part, ours IS the system and gets
+  the plain name; the third-party part gets the qualifier while it lasts (`BackendKind::Sdl2`, `ImportBackend::Assimp`).
+  When a better version of our own code is written, it replaces the old one in the same change (rule 19d), so there
+  is never a "Classic" and an "Improved" to tell apart.
+- **One home.** New code for a system goes in its Home folder. An editor window for it (`editor/`) and its components
+  (`okay/Components/`) are its tool side and gameplay side, not a second home. A system whose code sits in two homes
+  is listed under "Still duplicated" in the registry with its fix.
+- **Frozen names stay** (section 1.9 of the plan: script API, scene and prefab keys, component class names, file
+  formats, command-line flags, env vars, CMake options). They are listed as aliases of the system; a new clear name
+  can be added beside one only with the owner's approval.
+- **The tools enforce it.** `scripts/dup_lint.py check` (CI, `scripts/precheck.sh`) refuses a new file or folder named
+  with a banned word, and a new top-level folder or a new folder under `engine/include/okay/`, `engine/src/` or
+  `editor/` that no system's `Home:` names; a new class or function with a banned word is a warning;
+  `scripts/gen_feature_map.py` warns about a system with no Home or Entry, a missing path, a name two systems share
+  and a system name with a banned word.
+
+### Names that break the rule today
+
+Not renamed in this change: each rename is its own batch (plan section 6.3), after the open PRs that touch the file
+have merged. Frozen names are kept as aliases and only listed.
+
+| Today | Kind | Proposed name | Notes |
+|---|---|---|---|
+| `PhysicsQuality::Classic` / `::Improved`, editor labels "Classic" / "Improved" (Project Settings, Physics) | enum, UI label | one physics step, no quality choice | PR #1160 (`claude2/physics-no-classic`) removes Classic; the scene key `physicsquality` is frozen and still read |
+| `engine/src/Physics/Physics2DImproved.inl`, `Physics3DImproved.inl` | files | `Physics2DStep.inl`, `Physics3DStep.inl` | after #1160 merges (Claude 2) |
+| `engine/include/okay/Platform/OwnHttp.hpp`, `OwnHttpDownload.hpp`, `OwnHttpInflate.hpp`, `OwnHttpNet.hpp`; `struct OwnDownloadSpec`, `OwnDownloadResult` | files, types | `Http.hpp`, `HttpDownload.hpp`, `HttpInflate.hpp`, `HttpNet.hpp`; `DownloadSpec`, `DownloadResult` | curl is the qualified one while it lasts; `OKAY_OWN_HTTP` (CMake, env) frozen alias |
+| `engine/src/Platform/OwnWin32*.cpp`, `OwnLinux*.cpp`, `OwnLinux.hpp`; `BackendKind::Own`; `class OwnBackend` | files, enum, class | `Win32Platform*.cpp`, `LinuxPlatform*.cpp`; `BackendKind::Native`; `NativeBackend` | `BackendKind::Sdl2` keeps its qualifier; `OKAY_PLATFORM_BACKEND=own`, `OKAY_PLATFORM_DEFAULT_OWN` frozen aliases |
+| `shared/OwnPainter.hpp`, `enum class OwnPainterPick` | file, enum | `shared/PainterPick.hpp`, `PainterPick` | `OKAY_OWN_PAINTER` env frozen alias |
+| `engine/include/okay/Scripting/NextScriptVM.hpp`, `engine/src/Script/NextScriptVM.cpp`, `class NextScriptVM` | files, class | `TypedScriptVM` (system: Typed OkayScript) | after PR #1159 (one binding table) merges |
+| `ImportBackend::Own` | enum value | `ImportBackend::Native` (third-party: `::Assimp`, `::Ufbx`) | `OKAY_OWN_<FORMAT>` and `OKAY_PREFER_OWN_READERS` CMake options frozen aliases |
+| `shared/RobotoFontOwn.h`, `shared/JetBrainsMonoFontOwn.h` | generated files | `RobotoFontOkf.h`, `JetBrainsMonoFontOkf.h` (the OKF container they hold) | change `scripts/gen_embedded_fonts.py` with them |
+| `editor/ProjectNewAssets.hpp` | file | `ProjectCreateMenu.hpp` | "New" here is the menu's name; low priority |
+| `examples/own_readers/`, `examples/own_wav/`, `scripts/own_http_bench.py`, `platform/xbox_uwp/XboxOwnHttp.hpp`, `platform/xbox_uwp/engine/uwp_own_readers.cmake` | folders, files | `examples/model_readers/`, `examples/wav/`, `scripts/http_bench.py`, `XboxHttp.hpp`, `uwp_model_readers.cmake` | the dist script and tests that name them change with them |
+| `shared/OwnStack.hpp`, `shared/OwnSwitches.hpp`, `OKAY_OWN_STACK`, `scripts/check_release_own_stack.sh` | files, CMake option | system renamed **Replacement Switch** in the registry; files are deleted when the last replacement is the default (rule 17) | `OKAY_OWN_STACK` frozen alias |
+| `OKAY_OWN_CRYPTO`, `OKAY_XBOX_OWN_CRYPTO`, "own crypto" | CMake options | stay | rule 18: libsodium stays the default until an outside review, so ours is the qualified one here |
+| `OKAY_UI_OWN_RENDER`, `OKAY_CLASSIC_UI` | env vars | stay (frozen); docs say "OkayUI renderer" and "Dear ImGui look" | aliases of OkayUI |
+| Doc wording "own UI", "okayui host", "own platform", "own readers", "own core", "Own X" | prose | the official system names (OkayUI, Platform Layer, Model Import, Physics) | fix as docs are touched; the registry lists them as aliases so searches still land |
+| System "Own-Stack Switch" | registry name | **Replacement Switch** (done in this change; old name kept as alias) | - |
+
+### Code names
 
 The naming rule (types, functions, members, constants, files) and the list of names that may not change without
 the owner's approval are in [modularization_plan.md](modularization_plan.md), section 6.

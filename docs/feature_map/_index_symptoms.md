@@ -6,10 +6,14 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | You see or say | Sub-area |
 |---|---|
 | (test build)" after a version | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
+| -- OkaySpace: 40 engine modules | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
+| ... files of okay_engine in modules` while configuring | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
 | 1 FPS with a large model | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | 1 item / 2 items" reads wrong | [1.8](01-core-scene.md#18-localization) Localization |
 | 2D enemies cut through walls or cannot find a route on a tilemap | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |
 | 3D looks different in the editor and the player | [2.1](02-rendering-world.md#21-renderers) Renderers |
+| [okay] modules: 40 modules, 40 on` in the player log | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
+| a "Modules" warning on a pushed branch | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
 | a "Test build of ..." message in the launcher | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | a .dae/.3ds file will not import without Assimp | [3.6](03-modeling-import.md#36-model-import) Model import |
 | a 10,000-row list is slow | [40.8](40-okayui-library.md#408-porting-helpers-tooltip-scope-style-fields-mapping-layer-list-clipper) Porting helpers: tooltip scope, style fields, mapping layer, list clipper |
@@ -120,7 +124,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a grenade does not push crates | [6.8](06-physics.md#68-forces-explosions-and-body-push-out) Forces, explosions and body push-out |
 | a gunshot cuts off the previous one | [7.3](07-audio.md#73-audio-sources-and-music-player) Audio sources and music player |
 | a hand snaps to a new target | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
-| a handler still runs after it unsubscribed | [1.9](01-core-scene.md#19-events-and-ecs) Events and ECS |
+| a handler still runs after it unsubscribed | [1.9](01-core-scene.md#19-event-bus) Event bus |
 | a hat floats | [30.3](20-35-planned.md#303-clothing) Clothing |
 | a health bar does not follow hp | [12.13](12-ingame-ui.md#1213-data-binding-ui-animation-and-script-control) Data binding, UI animation and script control |
 | a hitch when a big file loads | [1.11](01-core-scene.md#111-asset-manager) Asset manager |
@@ -173,6 +177,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a moderation action is refused | [17.9](17-launcher-platform.md#179-admin) Admin |
 | a modified pack fails its checksum | [39.10](39-security-anticheat.md#3910-data-packs-and-obfuscation) Data packs and obfuscation |
 | a modifier shows red text and is skipped | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
+| a Modules tab in Build Game's report | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
 | a nameplate does not follow its object | [12.6](12-ingame-ui.md#126-world-space-ui) World-space UI |
 | a new account on the same PC still banned | [39.6](39-security-anticheat.md#396-reports-bans-appeals-and-the-hardware-hash) Reports, bans, appeals and the hardware hash |
 | a new feature works in one language and not the other | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
@@ -354,7 +359,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an API member exists in the script but not as a node | [14.7](14-visual-scripting.md#147-engine-api-nodes) Engine API nodes |
 | an API node is missing from the palette | [13.6](13-scripting.md#136-engine-api-and-generated-docs) Engine API and generated docs |
 | an asset does not show or has the wrong icon | [15.4](15-editor.md#154-project-panel-and-asset-manager) Project panel and asset manager |
-| an ECS unit does not show on screen | [1.9](01-core-scene.md#19-events-and-ecs) Events and ECS |
 | an edited file does not show until restart | [1.11](01-core-scene.md#111-asset-manager) Asset manager |
 | an edited mesh reverts after reopening the scene | [3.5](03-modeling-import.md#35-mesh-assets-and-primitives) Mesh assets and primitives |
 | an edited mesh updates a moment late | [38.9](38-render-backends.md#389-gpu-resources) GPU resources |
@@ -513,6 +517,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | each component needs hand-written Inspector and serializer code | [1.19](01-core-scene.md#119-property-reflection) Property reflection |
 | eating an item does nothing | [11.4](11-gameplay-systems.md#114-survival-stats-afflictions-zones) Survival: stats, afflictions, zones |
 | echo in the call | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
+| Edit > Project Settings > Modules | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
 | edited a material and objects did not change | [26.2](20-35-planned.md#262-material-editor) Material editor |
 | editing a part prefab does not update the big one | [21.2](20-35-planned.md#212-nested-prefabs) Nested prefabs |
 | editor closed by itself and I want my scene back | [22.3](20-35-planned.md#223-crash-recovery) Crash recovery |
@@ -983,7 +988,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the character walking looks like running | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | the chest dips when reaching just past the hand | [5.7](05-animation-ik.md#57-look-at-aim-and-full-body-ik) Look-at, aim and full-body IK |
 | the chest shows items to players who are not near | [11.8](11-gameplay-systems.md#118-server-authoritative-inventory) Server-authoritative inventory |
-| the client's ECS world differs from the server's | [1.9](01-core-scene.md#19-events-and-ecs) Events and ECS |
 | the clip plays too fast or does not loop | [5.2](05-animation-ik.md#52-clips-and-curves) Clips and curves |
 | the collider ignores the modified mesh | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
 | the Console is flooded by one repeated line | [15.11](15-editor.md#1511-console-and-diagnostics-panels) Console and diagnostics panels |
@@ -1076,6 +1080,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the mobile build has no project to open | [37.5](37-platform-windowing.md#375-web-and-mobile-shims) Web and mobile shims |
 | the model pops at the screen edge | [5.5](05-animation-ik.md#55-root-motion-and-skinning) Root motion and skinning |
 | the model stays upright while the collider crouches | [5.3](05-animation-ik.md#53-model-clip-player-and-locomotion) Model clip player and locomotion |
+| the Modules line in File > New Project | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
 | the mouse is stuck in Play | [15.3](15-editor.md#153-scene-and-game-views-gizmos-spline-tools) Scene and Game views, gizmos, spline tools |
 | the mouse stays captured after alt-tab | [37.2](37-platform-windowing.md#372-focus-cursor-and-clipboard) Focus, cursor and clipboard |
 | the navmesh does not bake or shows wrong polygons | [15.6](15-editor.md#156-navigation-behavior-tree-dialogue-localization-modeling-windows) Navigation, Behavior Tree, Dialogue, Localization, Modeling windows |

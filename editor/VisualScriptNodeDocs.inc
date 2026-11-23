@@ -14235,7 +14235,7 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         VsNodeDoc d;
         d.type = "ForwardVector";
         d.title = "Forward Vector";
-        d.description = "The direction this object is facing.";
+        d.description = "The direction this object is facing: its -Z axis, the way Look At turns it (cameras and characters face -Z too).";
         d.requirements = "No extra component is required. It reads this object's Transform (or Target).";
         d.component = "";
         d.example = "Wire Forward Vector's Vec3 output into another node's input. It has no flow of its own.";
@@ -14413,8 +14413,8 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         d.type = "PlayClip";
         d.title = "Play Clip";
         d.description = "Plays an animation clip by name on this object's character or model.";
-        d.requirements = "Needs an Animator on this object (or on Target) that has the named clip. Runs in Play mode.";
-        d.component = "Animator";
+        d.requirements = "Needs a Character or a Model Animator on this object, a child or a parent (or on Target) with the named clip; a Character also plays its built-in animations (Idle, Walk, Run, Jump, Wave, Point ...). Runs in Play mode.";
+        d.component = "Character|ModelAnimator";
         d.example = "Put Play Clip on the flow after an event such as On Start. The chain runs when that event fires.";
         d.related = "";
         d.keywords = "play clip";

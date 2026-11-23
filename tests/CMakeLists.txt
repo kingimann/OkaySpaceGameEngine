@@ -1,3 +1,29 @@
+# Every test in this folder gets the ctest label module:<name> from the tests= patterns of engine/modules/*/module.okaymodule
+# (module:core when no module claims it): run one module's tests with  ctest -L module:physics3d . Deferred to the end of
+# this file, so tests added anywhere below are labelled (cmake/OkayModules.cmake). Needs CMake 3.19; older ones skip it.
+if(COMMAND okay_modules_label_tests AND NOT CMAKE_VERSION VERSION_LESS 3.19)
+    cmake_language(DEFER CALL okay_modules_label_tests)
+endif()
+
+# Engine modules (docs/engine/modular_engine.md): the manifest parser, the module registry and the list the build generated.
+add_executable(test_modules test_modules.cpp)
+target_link_libraries(test_modules PRIVATE okay::engine)
+add_test(NAME modules COMMAND test_modules)
+# Project Settings > Modules: the model behind the page (editor/ModulesModel.hpp) and the project file line, no drawing.
+add_executable(test_modules_model test_modules_model.cpp)
+target_link_libraries(test_modules_model PRIVATE okay::engine)
+target_include_directories(test_modules_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+add_test(NAME modules_model COMMAND test_modules_model)
+# scripts/check_modules.py (the module dependency check) on a made-up tree.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME check_modules_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_check_modules.py
+             ${PROJECT_SOURCE_DIR}/scripts/check_modules.py)
+    # scripts/module_sizes.py (bytes of each module in a linked program) on a made-up linker map.
+    add_test(NAME module_sizes_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_module_sizes.py
+             ${PROJECT_SOURCE_DIR}/scripts/module_sizes.py)
+endif()
+
 # Our own model readers are the default since 2026-11-17 (owner approval). Tests that check "what a build does with nothing set"
 # get OKAY_EXPECT_OWN_READERS when every model reader option is ON (the default; NDO is a seam and stays OFF, so it is not listed).
 set(_okay_all_readers_on TRUE)
@@ -1432,6 +1458,18 @@ add_test(NAME voxel_bughunt COMMAND test_voxel_bughunt)
 add_executable(test_voxel_chunks test_voxel_chunks.cpp)
 target_link_libraries(test_voxel_chunks PRIVATE okay::engine)
 add_test(NAME voxel_chunks COMMAND test_voxel_chunks)
+# One set of curve formulas (Math/Curves) for Spline, Modeling/Curve, DollyPath and the DOTween path (#422 finding 6): same bits.
+add_executable(test_curve_formulas test_curve_formulas.cpp)
+target_link_libraries(test_curve_formulas PRIVATE okay::engine)
+add_test(NAME curve_formulas COMMAND test_curve_formulas)
+# One Base64 (engine/include/okay/Core/Base64.hpp, #422 audit item 24): the same bytes as the copies it replaced.
+add_executable(test_base64 test_base64.cpp)
+target_link_libraries(test_base64 PRIVATE okay::engine)
+add_test(NAME base64 COMMAND test_base64)
+# One file size + time helper (engine/include/okay/Core/FileStamp.hpp, #422 audit item 26): the same answers as the three copies.
+add_executable(test_file_stamp test_file_stamp.cpp)
+target_link_libraries(test_file_stamp PRIVATE okay::engine)
+add_test(NAME file_stamp COMMAND test_file_stamp)
 # The renderers' mesh-change hash (engine/include/okay/Render/MeshHash.hpp): every bit counts, and it is much faster.
 add_executable(test_mesh_hash test_mesh_hash.cpp)
 target_link_libraries(test_mesh_hash PRIVATE okay::engine)
@@ -1917,6 +1955,13 @@ add_executable(test_vs_node_docs test_vs_node_docs.cpp)
 target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_node_docs PRIVATE okay::engine)
 add_test(NAME vs_node_docs COMMAND test_vs_node_docs)
+
+# The simple clip player is shown as "Clip Player", the state graph as "Animator" (#422 finding 8); saved scenes unchanged.
+add_executable(test_anim_component_names test_anim_component_names.cpp)
+target_include_directories(test_anim_component_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_anim_component_names PRIVATE okay::engine)
+target_compile_definitions(test_anim_component_names PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME anim_component_names COMMAND test_anim_component_names)
 
 add_executable(test_vs_guide test_vs_guide.cpp)
 target_include_directories(test_vs_guide PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
@@ -4954,6 +4999,9 @@ add_test(NAME grok_145_146_153_155 COMMAND test_grok_145_146_153_155)
 add_executable(test_controller_actions test_controller_actions.cpp)
 target_link_libraries(test_controller_actions PRIVATE okay::engine)
 add_test(NAME controller_actions COMMAND test_controller_actions)
+add_executable(test_controller_feel2 test_controller_feel2.cpp)
+target_link_libraries(test_controller_feel2 PRIVATE okay::engine)
+add_test(NAME controller_feel2 COMMAND test_controller_feel2)
 
 # One rebinding store for InputActions and the typed ActionSet (duplicate audit #422, item 2).
 add_executable(test_input_one_store test_input_one_store.cpp)
@@ -5045,6 +5093,11 @@ target_link_libraries(test_own_q3bsp_samples PRIVATE okay::engine)
 target_compile_definitions(test_own_q3bsp_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME own_q3bsp_samples COMMAND test_own_q3bsp_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
+add_executable(test_vs_editor_bugs test_vs_editor_bugs.cpp)
+target_include_directories(test_vs_editor_bugs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_editor_bugs PRIVATE okay::engine)
+target_compile_definitions(test_vs_editor_bugs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_editor_bugs COMMAND test_vs_editor_bugs)
 # One hostile-input battery over all six late own readers (glTF 1.0, OpenGEX, MDL, Q3BSP, IQM, COB): every truncation, every 32-bit word set to lying
 # values, bit flips, overlapping blocks, garbage with and without magic, deep nesting; time and counted-memory limits (tests/test_own_readers_sweep.cpp).
 add_executable(test_own_readers_sweep test_own_readers_sweep.cpp)
@@ -5059,3 +5112,9 @@ target_include_directories(test_vs_node_values PRIVATE ${CMAKE_SOURCE_DIR}/edito
 target_link_libraries(test_vs_node_values PRIVATE okay::engine)
 target_compile_definitions(test_vs_node_values PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_node_values COMMAND test_vs_node_values)
+
+# Nodes that use "the way this object faces" agree with Look At (-Z, the camera / controller convention).
+add_executable(test_vs_facing test_vs_facing.cpp)
+target_link_libraries(test_vs_facing PRIVATE okay::engine)
+target_compile_definitions(test_vs_facing PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_facing COMMAND test_vs_facing)

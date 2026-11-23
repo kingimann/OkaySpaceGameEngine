@@ -4,7 +4,9 @@
   python3 scripts/find_existing.py vehicle seat
   python3 scripts/find_existing.py "tween position" sha256 --offline
 
-Searches, for the keywords: the feature map (docs/FEATURE_MAP.md and docs/feature_map/*.md), docs/status/UNFINISHED.md and
+Searches first the system registry (docs/SYSTEMS.md: every system's official name and its old and other names,
+from the feature map's System lines, scripts/gen_feature_map.py) and prints each matching system with its home folder,
+entry file, doc and owner lane: if one does the job, add on to it. Then, for the keywords: the feature map (docs/FEATURE_MAP.md and docs/feature_map/*.md), docs/status/UNFINISHED.md and
 docs/status/unfinished_engine.md, the titles of docs/**/*.md, class/component/node/function names under engine/ editor/ launcher/
 shared/ okayui/ tests/ (git grep), example scenes, test names, and the open lane branches (claude/*, claude2/*, claude3/*: docs/lanes.json) (names and
 the files they change against origin/main), plus open PR titles and Claim comments on issue #422 when GitHub answers.
@@ -60,6 +62,36 @@ def all_in(text, toks):
 def n_in(text, toks):
     low = text.lower()
     return sum(1 for t in toks if re.search(tok_regex(t), low))
+
+
+# ---------------------------------------------------------------- the system registry
+
+def registry_hits(root, toks, limit=5):
+    """Systems whose official name or one of its old/other names holds every keyword (best), or whose name and
+    one-line job together do. Each hit: name, matched (the name that matched), home, entry, doc, lane, desc, subs."""
+    try:
+        import gen_feature_map as G
+        systems = G.registry(root)
+    except Exception:
+        return []
+    res = []
+    for e in systems:
+        names = [e["name"]] + e["aliases"]
+        joined = "".join(stem(t) for t in toks)
+        exact = [n for n in names if re.sub(r"[^a-z0-9]", "", n.lower()) in (joined, joined + "s")]
+        whole = [n for n in names if all_in(re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", n), toks)]
+        if exact:
+            score, matched = 100 + (5 if exact[0] == e["name"] else 0), exact[0]
+        elif whole:
+            score, matched = 80 + (5 if whole[0] == e["name"] else 0), whole[0]
+        elif all_in(e["name"] + " " + e["desc"], toks):
+            score, matched = 40, e["name"]
+        else:
+            continue
+        res.append({"score": score, "name": e["name"], "matched": matched, "home": e["home"], "entry": e["entry"],
+                    "doc": e["doc"], "lane": e["lane"], "desc": e["desc"], "subs": [s["id"] for _, s in e["subs"]],
+                    "dup": e["dup"][1] if e["dup"] else "", "homes": len(e["homes"])})
+    return sorted(res, key=lambda r: -r["score"])[:limit]
 
 
 # ---------------------------------------------------------------- doc sources
@@ -275,7 +307,7 @@ def build(root, words, offline=False, repo=L.REPO_DEFAULT, days=21):
     prs, claims, merged = ({}, [], set()) if offline else github_bits(repo, toks)
     pr_match = {b: t for b, t in prs.items()}
     idents, tests, examples = code_search(root, toks)
-    return {"keywords": toks, "feature_map": feature_map(root, toks)[:8], "unfinished": unfinished(root, toks), "docs": doc_titles(root, toks),
+    return {"keywords": toks, "systems": registry_hits(root, toks), "feature_map": feature_map(root, toks)[:8], "unfinished": unfinished(root, toks), "docs": doc_titles(root, toks),
             "identifiers": idents, "declarations": declarations(root, toks) if len(toks) == 1 else [],
             "tests_files": tests.most_common(8), "test_names": test_names(root, toks), "examples": examples.most_common(8),
             "branches": branch_hits(root, toks, days, merged, pr_match), "open_prs": [(b, t) for b, t in prs.items() if n_in(b.replace("-", " ") + " " + t, toks) == len(toks)],
@@ -286,7 +318,17 @@ def build(root, words, offline=False, repo=L.REPO_DEFAULT, days=21):
 def render(r):
     toks = " ".join(r["keywords"])
     o = [f"# Existing: {toks}", ""]
-    o.append("## Feature map (docs/FEATURE_MAP.md and docs/feature_map/*.md)")
+    o.append("## Systems (docs/SYSTEMS.md, the one list): if one does the job, add on to it")
+    for y in r.get("systems", []):
+        alias = f" (also called {y['matched']})" if y["matched"] != y["name"] else ""
+        o.append(f"- **{y['name']}**{alias}: {y['desc'][:160]}")
+        o.append(f"  - Home: {', '.join(y['home']) or '-'}; entry: {y['entry'] or '-'}; doc: {y['doc'] or '-'}; lane: {y['lane']}; "
+                 f"feature map: {', '.join(y['subs'][:6])}")
+        if y["dup"] or y["homes"] > 1:
+            o.append("  - Still duplicated: read its row in docs/SYSTEMS.md before you touch it")
+    if not r.get("systems"):
+        o.append("- no system has this name or old name (a new system needs a registry entry: docs/feature_map/README.md)")
+    o += ["", "## Feature map (docs/FEATURE_MAP.md and docs/feature_map/*.md)"]
     if r["feature_map"]:
         for f in r["feature_map"]:
             o.append(f"- **{f['id']} {f['title']}** ({f['file']}) - {f['status'][:60] or 'status n/a'}")
@@ -329,6 +371,7 @@ def render(r):
         o += ["", "(offline: open PR titles and claims were not checked)"]
     # paste-ready
     bits = []
+    if r.get("systems"): bits.append("system " + ", ".join(f"{y['name']} ({y['entry'] or (y['home'] or ['-'])[0]})" for y in r["systems"][:2]))
     if r["feature_map"]: bits.append("map " + ", ".join(f"{f['id']} {f['title']}" for f in r["feature_map"][:3]))
     if r["identifiers"]: bits.append("code " + ", ".join(f"`{e['name']}`" for e in r["identifiers"][:4]))
     if r.get("near_names"): bits.append("similar names " + ", ".join(f"`{n['name']}`" for n in r["near_names"][:3]))

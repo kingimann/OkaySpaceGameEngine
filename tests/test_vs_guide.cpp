@@ -172,17 +172,33 @@ int main() {
         okay::Log::sink = sink;
     }
 
-    // ---- renamed nodes: new plain title, old name still searchable, type (and so saved graphs) unchanged ---
-    for (const VsPlainRename& r : kVsPlainRenames) {
+    // ---- renamed nodes: new plain title, old names still searchable, type (and so saved graphs) unchanged ---
+    // The titles come from ONE table, kVsNames in VisualScriptNames.hpp (Grok's #422 finding 14: VisualScriptPlain.hpp
+    // used to keep a second table, kVsPlainRenames, that overrode it). Each older name a person might type is still a
+    // search word: the palette title from before ("Every (s)") and the plain-words title from before ("Every Seconds").
+    struct Renamed { const char* type; const char* title; const char* oldNames[2]; };
+    const Renamed renamed[] = {
+        {"Timer",    "Repeat Every Few Seconds", {"Every (s)", "Every Seconds"}},
+        {"Wait",     "Wait the First Time Only", {"Wait (s)", "Wait Once"}},
+        {"Delay",    "Wait Then Continue",       {"Delay (s)", "Wait Seconds"}},
+        {"Cooldown", "Limit How Often",          {"Cooldown (s)", "Cooldown"}},
+        {"FlipFlop", "Switch Between Two Paths", {"Flip-Flop", "Flip Flop"}},
+        {"Gate",     "Open or Close the Way",    {"Gate", "Gate"}},
+        {"Sequence", "Do These in Order",        {"Sequence", "Do in Order"}},
+        {"Const",    "Type in a Value",          {"Const", "Fixed Value"}},
+    };
+    for (const Renamed& r : renamed) {
         const VsDef* d = Find(r.type);
         CHECK(d != nullptr);
         if (!d) continue;
         CHECK(std::strcmp(d->title, r.title) == 0);
+        const VsName* n = FindVsName(r.type);                     // the title lives in the one table
+        CHECK(n != nullptr && std::strcmp(n->title, r.title) == 0);
         CHECK(Banned(r.title).empty());
-        CHECK(VsLower(VsNodeSearchText(r.type)).find(VsLower(r.oldTitle)) != std::string::npos);
+        for (const char* old : r.oldNames)
+            CHECK(VsLower(VsNodeSearchText(r.type)).find(VsLower(old)) != std::string::npos);
         CHECK(std::strcmp(d->type, r.type) == 0);
     }
-    CHECK(sizeof kVsPlainRenames / sizeof kVsPlainRenames[0] >= 5);
     {   // a graph saved before the rename loads, and writes back the same node types
         const std::string old = "node 1 OnStart\npos 1 0 0\nnode 2 Delay 2\npos 2 200 0\nnode 3 Print\npos 3 400 0\nexec 1 0 2\nexec 2 0 3\n";
         VsEditGraph g;

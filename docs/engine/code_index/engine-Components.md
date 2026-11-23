@@ -53,7 +53,7 @@ Back to the [code index](../code_index.md). 262 headers, 741 names.
 
 ## `engine/include/okay/Components/Animator.hpp`
 
-- `Animator` class, line 15: Plays an AnimationClip and drives its GameObject's Transform from the clip's
+- `Animator` class, line 16: Plays an AnimationClip and drives its GameObject's Transform from the clip's
 
 ## `engine/include/okay/Components/AntiCheatConfig.hpp`
 
@@ -239,7 +239,7 @@ Back to the [code index](../code_index.md). 262 headers, 741 names.
 
 ## `engine/include/okay/Components/ControllerTuning.hpp`
 
-- `ControllerTuning` struct, line 28
+- `ControllerTuning` struct, line 32
 
 ## `engine/include/okay/Components/Crafting.hpp`
 
@@ -340,8 +340,8 @@ Back to the [code index](../code_index.md). 262 headers, 741 names.
 
 ## `engine/include/okay/Components/DollyPath.hpp`
 
-- `DollyPath` class, line 18: A smooth camera rail — Cinemachine's CinemachinePath/SmoothPath. Holds an
-- `DollyCart` class, line 149: Drives any GameObject along a DollyPath at a speed — Cinemachine's Dolly Cart.
+- `DollyPath` class, line 19: A smooth camera rail — Cinemachine's CinemachinePath/SmoothPath. Holds an
+- `DollyCart` class, line 147: Drives any GameObject along a DollyPath at a speed — Cinemachine's Dolly Cart.
 
 ## `engine/include/okay/Components/Draggable.hpp`
 

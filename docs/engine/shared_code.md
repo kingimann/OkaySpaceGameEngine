@@ -54,7 +54,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Messages to ActionLists | planned one broadcast helper next to `Components/ActionList.hpp` (dedup in progress). Do not write another `FindObjectsOfType<ActionList>` + `ReceiveMessage` loop | `ActionList::ReceiveMessage` | planned |
 | String helpers (Trim, Split, ToLower) | planned `Core/StringUtil.hpp` (dedup in progress) | planned `okay::str::Trim`, `Split`, `ToLower` | planned |
 | Two-bone IK | `Math/TwoBoneIK.hpp` | `okay::SolveTwoBoneIK`, `SolveTwoBoneIKSoft` | `SolveTwoBoneIK(root, upper, lower, target, pole, mid, end);` |
-| Swing and twist split, joint limits | `Math/JointLimit.hpp` | `okay::TwistAbout` | `float deg; Quat twist = TwistAbout(q, axis, deg);` |
+| Swing and twist split, joint limits | `Animation/JointLimit.hpp` | `okay::TwistAbout` | `float deg; Quat twist = TwistAbout(q, axis, deg);` |
 | Convex contact (GJK, EPA) | `Physics/ConvexContact.hpp` | `okay::ConvexContact`, `convex_detail::Epa` | `ConvexHit hit = ConvexContact(supportA, supportB);` |
 | Grid A* (2D grids, tilemaps, the 3D probe grid) | `AI/GridAStar.hpp`, called through `AI/Navigation.hpp` | `okay::gridastar::Search`, `DenseStore`, `SparseStore`, `GridCell`; `Navigation::GridPath`, `Navigation::TilemapPath` | `auto path = Navigation::GridPath(walkable, w, h, 0, 0, 9, 8, true);` |
 | Ray against a triangle mesh | `Physics/TriMesh.hpp` | `okay::TriMesh::Raycast`, `TriMesh::RayLocal` | `mesh.Raycast(origin, dir, 100.0f, t, normal);` |

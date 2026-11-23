@@ -372,7 +372,7 @@ inline const char* VsNodeHelpRaw(const char* type) {
         {"GetPosition",    "This object's position as a vector."},
         {"GetRotation",    "This object's rotation as X, Y, Z angles in degrees."},
         {"GetScale",       "This object's scale as a vector."},
-        {"ForwardVector",  "The direction this object is facing."},
+        {"ForwardVector",  "The direction this object is facing: its -Z axis, the way Look At turns it (cameras and characters face -Z too)."},
         {"RightVector",    "The direction to this object's right."},
         {"UpVector",       "The direction above this object."},
         {"Translate",      "Moves this object by X, Y, Z from where it is now."},

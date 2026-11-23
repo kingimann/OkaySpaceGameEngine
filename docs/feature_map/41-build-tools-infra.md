@@ -9,6 +9,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 
 ### 41.1 CMake project layout and options
 - **System:** Build System - The CMake project, build scripts, small generator tools and pinned dependency versions that build everything.
+  Home: `cmake/`. Entry: `CMakeLists.txt`. Also called: CMake, build scripts, toolchain.
 - **What:** One CMake project builds everything: the engine library, the unit tests, the launcher, the player, the editor, the relay, the sandbox and examples, and the developer tools. Options turn parts on or off; defaults suit a plain developer build.
 - **Parts:**
   - 41.1.1 Root options - `CMakeLists.txt` - `OKAY_BUILD_SANDBOX` (on), `OKAY_BUILD_TESTS` (on), `OKAY_BUILD_LAUNCHER` (on), `OKAY_BUILD_EDITOR` (off), `OKAY_BUILD_PLAYER` (off), `OKAY_USE_SODIUM` (on), `OKAY_USE_ASSIMP` (off), `OKAY_PREFER_OWN_READERS` (off; with Assimp, STL/PLY read with our own readers first), `OKAY_OWN_COLLADA` (off; read `.dae` with our own reader first), `OKAY_OWN_3DS` (off; same for `.3ds`), `OKAY_OWN_BVH` (off; same for `.bvh`), `OKAY_BUILD_TOOLS` (off), `OKAY_SANITIZE`; C++17; `-Wall -Wextra -Wpedantic`
@@ -112,6 +113,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 
 ### 41.6 Supabase functions and SQL schema
 - **System:** Online Backend - The Supabase database tables and server functions behind accounts, chat, forums and updates.
+  Home: `supabase/`, `docs/sql/`. Entry: `supabase/functions/session-ticket/index.ts`. Also called: Supabase, database, SQL schema, edge functions. Fix: SQL schema in docs/sql/ and server functions in supabase/: move the schema under supabase/ (scripts and tests that read docs/sql/ change with it).
 - **What:** The server side of the online platform. SQL files run by hand in the Supabase SQL editor, plus one Edge function. There is no migration runner: each file is idempotent and says which files must have run first.
 - **Parts:**
   - 41.6.1 Edge function - `supabase/functions/session-ticket/index.ts` - issues session tickets (39.3), with `ticket.ts`, `make_key.ts` and `ticket_test.ts`
@@ -213,7 +215,8 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Ask me like:** "which ImGui commit do we pin and where?"
 
 ### 41.11 Own-stack dogfood switch and startup line
-- **System:** Own-Stack Switch - One switch that runs the engine with all our own replacements for third-party code turned on, to try them.
+- **System:** Replacement Switch - One switch that runs the engine with all our own replacements for third-party code turned on, to try them.
+  Home: `shared/OwnStack.hpp`, `shared/OwnSwitches.hpp`. Entry: `shared/OwnStack.hpp`. Also called: Own-Stack Switch, OKAY_OWN_STACK, own stack, dogfood switch, OwnSwitches.
 - **What:** One switch builds and runs the engine with every own replacement we can safely try (own model readers, own HTTP client, own platform backend on Linux, OkayUI), and each program logs one line saying which parts are ours and which are third-party. Cryptography is never part of it.
 - **Parts:**
   - 41.11.1 Build switch - `CMakeLists.txt` - `-DOKAY_OWN_STACK=ON` sets every `OKAY_OWN_<FMT>` option and `OKAY_OWN_FBX`, `OKAY_OWN_HTTP` (default on at run time), the own platform backend as the default on Linux, and OkayUI as the launcher and editor default; `-DOKAY_OWN_STACK_CRYPTO_TEST=ON` (test builds only) adds `OKAY_OWN_CRYPTO`
@@ -238,7 +241,9 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 ### 41.12 Collaboration tooling (lanes, claims, find-existing, collision check, branch lint)
 - **System:**
   - Collaboration Tools - Scripts that keep the three Claudes from doing the same work twice: lanes, claims, find-existing and branch lint. Code: `scripts/collab_lib.py`, `scripts/find_existing.py`, `scripts/collision_check.py`, `scripts/branch_lint.py`, `scripts/make_brief.py`, `scripts/work_board.py`, `.github/workflows/branch-lint.yml`
+    Home: `scripts/collab_lib.py`, `scripts/find_existing.py`, `scripts/collision_check.py`, `scripts/branch_lint.py`. Entry: `scripts/collab_lib.py`. Also called: lanes, claims, find_existing, collision check, branch lint.
   - Duplicate Guard - Finds pasted code and new copies of shared helpers and fails CI when it finds them (`scripts/dup_lint.py`). Code: `scripts/dup_lint.py`, `scripts/dup_baseline.json`, `scripts/install_hooks.sh`, `.github/workflows/dup-scan.yml`, `docs/engine/shared_code.md`
+    Home: `scripts/dup_lint.py`. Entry: `scripts/dup_lint.py`. Also called: dup_lint, duplicate check, copy-paste check.
 - **What:** The working agreement between the three Claudes (coordinator `claude/*`, Claude 2 `claude2/*`, Claude 3 `claude3/*`), made automatic: a lanes table with each lane's branch prefix, one claim format on issue #422, a search for what already exists, a collision report over all open branches, cheap checks on every branch push, a "How to try it" check on PRs and a brief builder that pastes the current rules into every agent brief.
 - **Parts:**
   - 41.12.1 Agreement and lanes - `docs/process/collaboration.md`, `docs/lanes.json`, `docs/process/agent_brief_template.md`, `docs/process/claude3_start.md` - who owns which paths, the claim protocol, who merges and who releases, hand-over, the readiness checklist, the weekly dedupe audit
@@ -251,12 +256,35 @@ where the files live and how they are wired. Nobody is touching it now apart fro
   - 41.12.8 Code index - `scripts/gen_code_index.py`, `docs/engine/code_index.md` - every public class, struct, enum and free function in the public headers with file:line and its doc line, one page per folder; searched by `find_existing.py`; rebuilt on main by `regen-docs.yml`
   - 41.12.10 Generated docs rebuilt on main - `.github/workflows/regen-docs.yml`, `scripts/precheck.sh` (`--list-generated`, `--regen-generated`, `--restore-generated`) - after every push to main the feature map outputs, the code index and `docs/try_it.md` are regenerated and committed back with `[skip ci]` (one run at a time, only the listed paths, starts again from the new main once if main moved), so PRs never commit them and never conflict in them
   - 41.12.9 PR body "Existing code" - `scripts/check_pr_body.py`, `.github/workflows/pr-hygiene.yml`, `.github/PULL_REQUEST_TEMPLATE.md` - a PR names the code it reuses or replaces, or what it searched
-- **Code:** `scripts/collab_lib.py`, `scripts/find_existing.py`, `scripts/collision_check.py`, `scripts/branch_lint.py`, `scripts/bug_patterns.py`, `scripts/check_pr_body.py`, `scripts/make_brief.py`, `scripts/work_board.py`, `scripts/dup_lint.py`, `scripts/install_hooks.sh`, `scripts/gen_code_index.py`, `.github/workflows/branch-lint.yml`, `.github/workflows/regen-docs.yml`, `scripts/precheck.sh`, `.github/workflows/dup-scan.yml`, `.github/workflows/pr-hygiene.yml`, `.github/workflows/pr-hygiene.yml`, `.github/workflows/work-board.yml`
+  - 41.12.11 System registry and names (rule 19e) - `scripts/gen_feature_map.py`, `docs/SYSTEMS.md`, `scripts/find_existing.py`, `scripts/dup_lint.py` - every system's Home, Entry, Doc, lane and old names ("Also called") from the System lines; find_existing searches names and old names first; dup_lint refuses new files and folders named Own/New/Improved/Classic/V2 and new system folders with no registry Home; the "Still duplicated" table
+- **Code:** `scripts/collab_lib.py`, `scripts/find_existing.py`, `scripts/collision_check.py`, `scripts/branch_lint.py`, `scripts/bug_patterns.py`, `scripts/check_pr_body.py`, `scripts/make_brief.py`, `scripts/work_board.py`, `scripts/dup_lint.py`, `scripts/install_hooks.sh`, `scripts/gen_code_index.py`, `.github/workflows/branch-lint.yml`, `.github/workflows/dup-scan.yml`, `.github/workflows/pr-hygiene.yml`, `.github/workflows/pr-hygiene.yml`, `.github/workflows/work-board.yml`, `.github/workflows/regen-docs.yml`, `scripts/precheck.sh`
 - **Docs:** `docs/process/collaboration.md`, `docs/process/agent_brief_template.md`, `docs/process/review_log.md`, `docs/process/no_duplicates.md`, `docs/engine/shared_code.md`
 - **Tests:** `collab_scripts` (`scripts/tests/test_collab.py`: throw-away git repos, no GitHub), `dup_lint_script` (`scripts/tests/test_dup_lint.py`), `precheck_generated` (`scripts/tests/test_precheck_generated.py`: precheck's generated-docs options and the regen-docs.yml commit-back step against a throw-away bare repository)
 - **Status:** Works - the scripts and their tests were run on Linux against the real repo; the two new workflows have not run on GitHub yet
 - **Open:** heuristics can give false positives (see the "false positives" notes in `docs/process/collaboration.md`); the weekly dedupe audit and the answers to claims are by hand
 - **Related:** 41.1, 41.8
-- **Words:** collaboration, claim, lane, duplicate, collision, branch lint, regen docs, generated docs, restore generated, find existing, brief, how to try it check, copy paste, clone detection, dup lint, shared code
+- **Words:** collaboration, claim, lane, duplicate, collision, branch lint, find existing, brief, how to try it check, copy paste, clone detection, dup lint, shared code, system registry, system names, aliases, also called, still duplicated, banned qualifier, regen docs, generated docs, restore generated
 - **Seen as:** `WORK_BOARD.md` on the `work-board` branch, a red "Branch lint" check on a pushed branch, a red "PR hygiene" check on a PR
 - **Ask me like:** "how do the three Claudes avoid doing the same work?"
+
+### 41.13 Engine modules (stage 0: groups, test labels, module list, dependency check)
+- **System:** Build System
+- **What:** The engine split into 40 named modules on paper: each has a manifest saying what it requires and which engine files and tests are its own. The build groups the engine's files by module and labels every test with its module, without changing what is built. First step of the modular engine plan (`docs/design/modular_gameplay_contracts.md`, section 9, PR 1).
+- **Parts:**
+  - 41.13.1 Manifests - `engine/modules/<name>/module.okaymodule` - name, requires, sources (file patterns), tests (test name patterns), planned (files other branches are adding)
+  - 41.13.2 Build groups - `cmake/OkayModules.cmake` - `okay_modules_read`, `okay_add_module`, `okay_modules_group(okay_engine)` (writes `okay_modules.tsv`), configure fails on an unknown requirement or a cycle
+  - 41.13.3 Test labels - `okay_modules_label_tests` - every test gets `module:<name>` (or `module:core`); `ctest -L module:physics3d`
+  - 41.13.4 Module list at run time - `Modules/ModuleManifest`, `Modules/ModuleRegistry` - the manifests embedded by `okay_modules_generate` (`modules_enabled.cpp`), `ModuleRegistry::Get()`, `Validate`, `DependencyOrder`, register hooks (`ModuleContext`); the player logs `[okay] modules: 40 modules, 40 on`
+  - 41.13.5 Dependency check - `scripts/check_modules.py` - forbidden includes between modules, manifest problems, the umbrella header; about 800 known includes in `scripts/module_deps_baseline.txt` (shrink only); report mode in CI
+  - 41.13.6 Size per module - `scripts/module_sizes.py` - bytes of the player per module from the linker map (`maps/okay-player.map`), written to `module_sizes.txt` beside the player after every link; Build Game's report has a Modules tab (`buildpipe::Report::AddModules`)
+  - 41.13.7 Project Settings > Modules - `editor/ModulesModel.hpp`, `editor/ModulesPanelUI.hpp` - presets and a tick per module, requirements added and kept, what the open scene uses; saved as `modules=` in project.okayproj; the Build report marks modules that are off and warns when the scene uses one (every module still ships)
+  - 41.13.8 New Project modules - `editor/ModulesPanelUI.hpp` `DrawNewProjectModules`, `PresetForTemplate` - a folded Modules line in the New Project form; a few templates start with a smaller preset, the rest with every module
+- **Code:** `cmake/OkayModules.cmake`, `engine/modules/*/module.okaymodule`, `engine/include/okay/Modules/ModuleManifest.hpp`, `engine/include/okay/Modules/ModuleRegistry.hpp`, `scripts/check_modules.py`
+- **Docs:** `docs/engine/modular_engine.md`, `docs/design/modular_gameplay_contracts.md`, `docs/design/modular_status.md`
+- **Tests:** configure itself (a bad manifest fails it); `modules` (parser, registry, the generated list); `check_modules_script` (`tests/scripts/test_check_modules.py`, the check on a made-up tree); `module_sizes_script` (`tests/scripts/test_module_sizes.py`, a made-up linker map); `build_pipeline` (the report's Modules section); `modules_model` (the settings page's model and the project file line)
+- **Status:** Partial - grouping and labels only; nothing is stripped yet
+- **Open:** the registries that let a module register its own records, functions and nodes (stage 1), per-module libraries and stripping (stage 2); the check becomes blocking in PR 14
+- **Related:** 41.1
+- **Words:** module, modular engine, manifest, okaymodule, module group, ctest label, strip
+- **Seen as:** `-- OkaySpace: 40 engine modules; ... files of okay_engine in modules` while configuring; `[okay] modules: 40 modules, 40 on` in the player log; a Modules tab in Build Game's report; Edit > Project Settings > Modules; the Modules line in File > New Project; a "Modules" warning on a pushed branch
+- **Ask me like:** "which tests belong to the physics module?"

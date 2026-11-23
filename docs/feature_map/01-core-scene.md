@@ -8,6 +8,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 
 ### 1.1 Loop and time
 - **System:** Game Loop and Time - Runs the game frame by frame and keeps the clock: frame time, time speed, pause and quit.
+  Home: `engine/include/okay/Core/`. Entry: `engine/include/okay/Core/GameLoop.hpp`. Also called: Application, game loop, Time, delta time, time scale.
 - **What:** The game loop and the global clock: how a frame starts, how long it lasted, how fast time runs, whether the game is paused or asked to quit, plus the seedable random generator, UTF-8 helpers, timers you poll and the save snapshot of the clocks. Three passes are on main: #579 (one frame driver, `GameLoop`, named clocks, hit stop, pause and quit reasons, random extras), #581 (frame stepping, capture, recording, statistics) and #585 (the player on `GameLoop`, cooldowns, clock ramps, time snapshot, loop console).
 - **Parts:**
   - 1.1.1 Main loop - `Core/Application` - `Application::Run` is a thin loop on `GameLoop`; the terminal is closed by a destructor so a throwing component no longer leaves it raw; `Config::maxDelta`, `fixedStep`, `maxFixedSteps`, `catchExceptions`, `app.loop()`, `ExitCode()`; `Config::pacing` is `Pacing::Sleep` (default) or `Pacing::Limiter` (uses `FrameLimiter`, 1.18.7); options set on `loop()` before `Run` (capture, frame budget, statistics window) now stand; defaults to the console renderer (`sandbox/main.cpp`); the player and the editor's Play mode each run their own `GameLoop` (1.1.6)
@@ -40,6 +41,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 
 ### 1.2 Timers and tweens
 - **System:** Timers and Tweens - Does something after a delay or every few seconds, and slides a value smoothly from one number to another.
+  Home: `engine/include/okay/Core/`. Entry: `engine/include/okay/Core/Tween.hpp`. Also called: Scheduler, Tween, TweenAnimation, Countdown, easing.
 - **What:** Do something after a delay, every N seconds, or animate a value over time with easing, from C++, scripts or the Inspector; timers can follow a named clock and die with the object they act on, eases can be written as text, any property can be tweened and springs follow a moving target.
 - **Parts:**
   - 1.2.1 Scene scheduler - `Core/Scheduler` - `Invoke`, `InvokeRepeating`, `Tween(duration, onUpdate, onComplete)`; options for unscaled time, tag, owner, clock and object; Cancel, CancelByTag/Owner/Object, SetPaused, SetPausedByTag/Owner, SetInterval, Remaining, CountByTag; safe to call from inside a callback; elapsed time kept in double; a backlog runs at most `kMaxCatchUp` (4096) times per update; a throwing callback drops only its own task (the first exception is rethrown after the update)
@@ -68,6 +70,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 
 ### 1.3 Scene graph
 - **System:** Scenes and Objects - Holds every object in a level with its position, parent and parts, runs their start and update steps, and checks a level for mistakes.
+  Home: `engine/include/okay/Scene/`, `engine/src/Scene/`. Entry: `engine/include/okay/Scene/Scene.hpp`. Also called: scene graph, GameObject, Transform, Component, scene hierarchy.
 - **What:** The object model: a Scene owns GameObjects, each with a Transform and components; layers and tags classify them and a layer matrix decides which colliders interact. Deep hierarchies (a 100000-deep parent chain), the Transform and spawn API, and the project tag and layer lists were hardened and extended in #586.
 - **Parts:**
   - 1.3.1 Scene container - `Scene/Scene` - create, find, instantiate, destroy objects; sibling order; `FindObjectsOfType`; `Instantiate` overloads (position and rotation, parent, `worldPositionStays`), `Duplicate` (same parent and local pose, `UniqueName` "Cube (1)"), `DestroyImmediate`, `WorldBounds(go, includeChildren)`, `FindGameObjectsWithName/OnLayer`, `CountWithTag/OnLayer`, `UnlistedTags`, `ReplaceTag`; per-scene `renderSettings`, physics worlds, `fixedTimeStep`, `mainCamera`, scheduler and tween manager
@@ -115,6 +118,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 
 ### 1.5 Scene serializer
 - **System:** Scene Files - Writes a level to a readable text file and reads it back, and copies or merges objects.
+  Home: `engine/include/okay/Scene/`, `engine/src/Scene/`. Entry: `engine/include/okay/Scene/SceneSerializer.hpp`. Also called: SceneSerializer, scene serializer, .okayscene, scene text format.
 - **What:** Reads and writes the human-readable `okayscene` text format (version 3), clones objects, merges scenes and records what a round trip keeps.
 - **Parts:**
   - 1.5.1 Save and load - `Scene/SceneSerializer` - `Serialize`, `SaveToFile`, `Deserialize`, `LoadFromFile`; `kSceneFormatVersion = 3`; packed (obfuscated) files are unpacked on read
@@ -141,6 +145,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 
 ### 1.6 Prefabs and templates
 - **System:** Prefabs - Saves an object as a reusable file you can place many times; changing the file changes every copy.
+  Home: `engine/include/okay/Scene/`. Entry: `engine/include/okay/Scene/SceneTemplates.hpp`. Also called: scene templates, prefab variants, nested prefabs.
 - **What:** Reusable objects saved as `.okayprefab` files and the starter worlds, players and UI screens the editor creates from templates.
 - **Parts:**
   - 1.6.1 Prefab files - `Scene/SceneSerializer` - `SaveObjectToFile`, `InstantiateFromFile`, `Instantiate`; an instance remembers `prefabSource`
@@ -170,7 +175,9 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 ### 1.7 Saves and prefs
 - **System:**
   - Save Games - Saves a player's progress in named slots (with checkpoints, versions and checksums) and remembers settings between runs. Code: `Core/SaveFramework`, `Core/SaveFrameworkScene`, `Core/SaveFrameworkSync`, `Core/GameSaves`, `Core/SaveData`, `Core/Prefs`
+    Home: `engine/include/okay/Core/`, `engine/src/Core/`. Entry: `engine/include/okay/Core/SaveFramework.hpp`. Also called: SaveFramework, save slots, GameSaves, Prefs, PlayerPrefs, checkpoints.
   - Whole-Scene Save - The older save slots that capture the whole scene into a `.okaygame` file - being merged into Save Games (PR #1132) Code: `Core/SaveGame`, `Components/AutoSave`
+    Home: `engine/include/okay/Core/SaveGame.hpp`, `engine/include/okay/Components/AutoSave.hpp`. Entry: `engine/include/okay/Core/SaveGame.hpp`. Also called: SaveGame, AutoSave, .okaygame, old save system. Fix: After the merge, delete `Core/SaveGame.hpp` and `AutoSave`.
 - **What:** Player progress and settings on disk: whole-game save slots, an Easy-Save-style typed key/value store, and a simple preferences bag.
 - **Parts:**
   - 1.7.1 Save slots - `Core/SaveGame` - `SaveGame::Save/Load/LoadNow/List/Info/Delete`: the save framework's whole-scene mode, `<slot>.okayslot` in the framework's store (one store since 2026-11-22, Grok #422 item 1); older `<slot>.okaygame` files still load, list and count for Continue; `.bak` fallback, migration hook, size caps
@@ -192,6 +199,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 
 ### 1.8 Localization
 - **System:** Localization - Shows the game's text in the player's language, with tools to edit, import and preview translations.
+  Home: `engine/include/okay/Core/`. Entry: `engine/include/okay/Core/Localization.hpp`. Also called: translations, LocTable, i18n, languages.
 - **What:** Player-facing text in several languages: a string table, language choice, fallbacks, `{0}`/`{name}` and plural formatting, and scene text that follows the language.
 - **Parts:**
   - 1.8.1 String table - `Core/Localization` - `StringTable` keys by languages with translator notes, `.okayloc` and CSV formats, completion per language
@@ -212,35 +220,31 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Seen as:** "1 item / 2 items" reads wrong; some letters show as boxes; text stays in the old language after switching; a key name shows instead of text
 - **Ask me like:** "Add Polish plural rules"; "Why does the Japanese menu show squares?"
 
-### 1.9 Events and ECS
+### 1.9 Event bus
 - **System:**
-  - ECS World - A second, data-only object store for very many simple things, mirrored into the scene and the network - duplicate of Scenes and Objects (kept on purpose: opt-in, mirrors objects through `SceneBridge`; no merge planned) Code: `ECS/World`, `ECS/Systems`, `ECS/SceneBridge`, `ECS/NetWorld`, `ECS/NetWorldSync`
   - Core Utilities Code: `Core/EventBus`
-- **What:** A typed publish/subscribe event bus and a small data-oriented ECS that lives beside the GameObject scene, with a bridge that draws ECS entities as GameObjects and a networked world.
+- **What:** A typed publish/subscribe event bus. (The second, data-only object store, the ECS World, was removed in #1156: nothing used it; the scene's GameObjects are the one object store.)
 - **Parts:**
   - 1.9.1 Event bus - `Core/EventBus` - `Subscribe<E>`, `Publish`, scoped subscription handle; safe when handlers subscribe, unsubscribe or publish during a publish
-  - 1.9.2 ECS world - `ECS/World` - entities as ids, sparse-set component pools, `each<A, B>` queries, add/get/remove
-  - 1.9.3 System scheduler - `ECS/Systems` - named systems run in order each tick, can be toggled
-  - 1.9.4 Scene bridge - `ECS/SceneBridge` - `EcsTransform` entities mirrored to GameObjects created by your factory, with interpolation
-  - 1.9.5 Networked ECS - `ECS/NetWorld`, `ECS/NetWorldSync` - register replicated component types, `snapshot()/apply()`, `WorldReplicator` broadcast/listen over the NetworkManager RPC channel (see 16.3); delta snapshots with acknowledgements and a linear-time apply (#571)
-  - 1.9.6 Command buffer and safe iteration - `ECS/World` - (#571) `world.commands()` records create, destroy, add, set and remove during `each` and `flush()` applies them in order; destroying inside `each` is safe
-  - 1.9.7 Event bus extras - `Core/EventBus` - (#571) priorities, `SubscribeOnce`, scoped `Listen`, `Queue` and `Flush`
-- **Code:** `Core/EventBus`, `ECS/World`, `ECS/Systems`, `ECS/SceneBridge`, `ECS/NetWorld`, `ECS/NetWorldSync`
-- **API:** `EventBus::Subscribe`, `EventBus::Publish`, `ecs::World`, `ecs::SystemScheduler`, `ecs::SceneBridge`, `ecs::NetWorld`, `ecs::WorldReplicator`
+  - 1.9.2 Event bus extras - `Core/EventBus` - (#571) priorities, `SubscribeOnce`, scoped `Listen`, `Queue` and `Flush`
+- **Code:** `Core/EventBus`
+- **API:** `EventBus::Subscribe`, `EventBus::Publish`
 - **Editor:** none
 - **Docs:** -
-- **Tests:** `eventbus`, `ecs`, `core_audit`, `ecs_commands`
-- **Status:** Works - read the headers; `eventbus` and `ecs` tests are thorough, but it is opt-in library code: nothing in the engine, editor or player uses `EventBus` or the ECS (grep finds no consumer)
-- **Open:** the old note that `SceneBridge` keeps raw `GameObject*` is out of date: it keeps instance ids and re-creates a lost object (`respawnLost`, re-checked 2026-11-22 in `ECS/SceneBridge.hpp`); #571 added the command buffer, safe `World::each`, delta snapshots with ack and the `EventBus` extras (docs `docs/engine/ecs.md`, `docs/engine/core_tools.md`)
-- **Related:** 16.3, 1.3
-- **Words:** EventBus, event, publish, subscribe, ECS, entity, component pool, World, system, SceneBridge, NetWorld, snapshot, replication, event bus, command buffer, delta snapshot, ack, SubscribeOnce, event priority
-- **Seen as:** a handler still runs after it unsubscribed; an ECS unit does not show on screen; the client's ECS world differs from the server's
-- **Ask me like:** "Use the ECS for 5000 bullets and draw them through the bridge"; "Send only changed components to clients"
+- **Tests:** `eventbus`, `core_audit`
+- **Status:** Works - read `Core/EventBus.hpp`; the `eventbus` test is thorough, but it is opt-in library code: nothing in the engine, editor or player uses `EventBus` yet
+- **Open:** no engine system publishes on it yet
+- **Related:** 1.3
+- **Words:** EventBus, event, publish, subscribe, event bus, SubscribeOnce, event priority, ECS (removed), entity component system (removed), NetWorld (removed), SceneBridge (removed)
+- **Seen as:** a handler still runs after it unsubscribed
+- **Ask me like:** "Send a 'player died' event to every listener"
 
 ### 1.10 Logging and profiling
 - **System:**
   - Logging - Writes messages for developers (info, warnings, errors) to log files and shows them in the editor Console and diagnostics panels. Code: `Core/Log`, `editor/ConsolePanel.*`, `Debug/ConsoleModel`, `Debug/DebugUtil`, `Debug/Debug`
+    Home: `engine/include/okay/Core/Log.hpp`. Entry: `engine/include/okay/Core/Log.hpp`. Also called: Log, console log, DevLog, diagnostics.
   - Profiler - Measures where each frame's time and memory go, on the CPU and the GPU, so slow parts can be found. Code: `Core/Profiler`, `Debug/FrameHistory`, `Debug/GpuTimer`, `Debug/RenderStats`, `Debug/MemoryTracker`, `Debug/MemoryHooks`, `Debug/DrawCallRecorder`, `Debug/DebugStatsOverlay`
+    Home: `engine/include/okay/Debug/`. Entry: `engine/include/okay/Core/Profiler.hpp`. Also called: profiler markers, GpuTimer, MemoryTracker, frame debugger.
 - **What:** Messages for developers (levels, categories, file output) and a frame profiler with a scrubbable history and trace export.
 - **Parts:**
   - 1.10.1 Log - `Core/Log` - Trace/Info/Warning/Error, per-category levels, `Log::Configure("info,net=trace")` and `$OKAY_LOG`, timestamps, thread-safe lines, `Log::sink` hook
@@ -263,13 +267,14 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 
 ### 1.11 Asset manager
 - **System:** Asset Manager - Loads each file from disk once, shares it, loads in the background and reloads it when the file changes.
+  Home: `engine/include/okay/Core/AssetManager.hpp`. Entry: `engine/include/okay/Core/AssetManager.hpp`. Also called: AssetManager, hot reload, asset loading.
 - **What:** A central registry for files loaded from disk: typed handles with reference counts, one cache key per file, background loading and hot reload.
 - **Parts:**
   - 1.11.1 Handles and caching - `Core/AssetManager` - `AssetHandle<T>`, `Get<T>(path)`, weak cache freed with the last handle, failed loads never cached
   - 1.11.2 Path normalization - `Core/AssetManager` - `AssetManager::Normalize` makes one key per file (slashes, `.` and `..`, case folded on Windows only)
   - 1.11.3 Loaders - `Core/AssetManager` - `RegisterLoader<T>`; defaults for Image, AudioClip, Mesh, DataAsset and Material on `Instance()`
   - 1.11.4 Async loading - `Core/AssetManager` - `LoadAsync` on one worker thread, callbacks from `Pump()` on the main thread, `Progress()`, duplicate requests share one decode
-  - 1.11.5 Hot reload - `Core/AssetManager` - `SetHotReload` compares mtime and size in `Pump()` and re-decodes in place so handles stay valid
+  - 1.11.5 Hot reload - `Core/AssetManager` - `SetHotReload` compares mtime and size (`Core/FileStamp`, shared with the audio clip cache and the baked nav mesh check, #422 audit item 26) in `Pump()` and re-decodes in place so handles stay valid
   - 1.11.6 Report - `Core/AssetManager` - `Report()` lists every cached asset with type, bytes, refcount and reload count
 - **Code:** `Core/AssetManager`
 - **API:** `AssetManager::Instance`, `AssetHandle<T>`, `AssetManager::LoadAsync`, `AssetManager::Pump`, `SetHotReload`, `Report`
@@ -285,6 +290,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 
 ### 1.12 Asset database
 - **System:** Asset Database - Gives every asset a permanent ID, remembers its import settings and what uses what, and makes its thumbnail.
+  Home: `engine/include/okay/Core/`, `engine/src/Core/`. Entry: `engine/include/okay/Core/AssetDatabase.hpp`. Also called: AssetDatabase, GUIDs, import settings, thumbnails.
 - **What:** The data layer an asset browser sits on: stable GUIDs in `.okaymeta` files (or in memory for an asset that has none yet), move tracking, a dependency graph, typed import settings, thumbnails and a search query. The Project panel is built on it.
 - **Parts:**
   - 1.12.1 GUIDs and meta files - `Core/AssetDatabase` - `Scan`, `Guid`, `.okaymeta` sidecars, `MoveAsset`, rename and duplicate handling, orphan reports, labels; `ScanOptions::indexUnmetaed` (index assets that have no meta in memory, write nothing), `EnsureMeta`, `Folders()` (every folder walked, empty ones too), `Revision()` (moves only when the index changed)
@@ -319,7 +325,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Docs:** `docs/engine/scene_management.md`
 - **Tests:** `scene_load_pool`, `object_pool_audit`
 - **Status:** Works - merged in #570; the Spawner's `usePool` (Inspector **Use Pool**, added 2026-11-22: the field was saved but had no Inspector box), `Lifetime`, `Projectile3D` and `DebrisPool` use it, and scripts have `pool_get`, `pool_release`, `pool_prewarm` and `pool_idle`. Fixed 2026-11-22: the script `pool_*` calls skipped the file gate `spawn` uses, so a script could load a prefab from outside the game folder (test `object_pool_audit`, suite "script pool calls refuse prefab files outside the game folder")
-- **Open:** resetting Rigidbody velocities is each component's job (`OnPoolReuse`); no visual-script nodes for the pool calls
+- **Open:** resetting Rigidbody velocities is each component's job (`OnPoolReuse`); the visual-script Pool Get / Pool Release nodes (`VisualScript/NodesGameplay.hpp`) keep their own static list of released objects instead of `ObjectPool::ForPrefab` (#422 audit item 22, reviewed 2026-11-22, left as they are for now): moving them would change what a graph sees: Pool Release takes any object (not only pooled ones) and Pool Get hands it back the same frame, untouched, while `ObjectPool` reuses only its own objects, from the next frame, reset to the template and hidden from saves while idle. The list holds only instance ids (a stale one is skipped), so the cost of never clearing it is a few bytes per released object
 - **Related:** 1.4, 11.6
 - **Words:** ObjectPool, pool, pooling, Get, Release, Prewarm, bullet pool, reuse, object pool
 - **Seen as:** a frame hitch when many bullets spawn; a reused bullet keeps its old speed or state
@@ -327,6 +333,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 
 ### 1.14 Data assets and data packs
 - **System:** Data Assets - Small data files for game content (stats, tables), packed and lightly scrambled in shipped games.
+  Home: `engine/include/okay/Core/DataAsset.hpp`, `engine/include/okay/Core/DataPack.hpp`. Entry: `engine/include/okay/Core/DataAsset.hpp`. Also called: DataAsset, DataPack, data packs, scriptable objects.
 - **What:** Small data files for game content (`.okaydata` fields) and light obfuscation of shipped data so players cannot casually read or edit it.
 - **Parts:**
   - 1.14.1 Data asset - `Core/DataAsset` - ordered key/value fields saved as `.okaydata`, cached load with `Reload/Invalidate`, read from OkayScript (`data_num`, `data_str`)
@@ -345,6 +352,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 
 ### 1.15 Display settings
 - **System:** Display Settings - The window mode, monitor, resolution, refresh rate, vsync and quality preset a player can choose.
+  Home: `engine/include/okay/Core/DisplaySettings.hpp`, `engine/include/okay/Core/DisplayModes.hpp`. Entry: `engine/include/okay/Core/DisplaySettings.hpp`. Also called: DisplaySettings, resolution, fullscreen, vsync, quality preset.
 - **What:** The Settings screen's window mode, monitor, resolution, refresh rate, vsync and the Low/Medium/High quality preset.
 - **Parts:**
   - 1.15.1 Settings values - `Core/DisplaySettings` - window mode, resolution, refresh, monitor, VSync, Quality (0-2), `Generation()` bumps on every Set so hosts know to apply; stored in Prefs as `video.*`
@@ -408,6 +416,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 
 ### 1.18 Core runtime utilities
 - **System:** Core Utilities - Small shared helpers used everywhere: command line, console variables, paths, jobs on several threads, events, object pools and IDs.
+  Home: `engine/include/okay/Core/`, `engine/src/Core/`. Entry: `engine/include/okay/Core/CommandLine.hpp`. Also called: Cvar, console variables, Jobs, EventBus, ObjectPool, StringUtil, Paths.
 - **What:** Small building blocks the rest of the engine and a game's own code lean on, with no scene or renderer needed: command-line parsing, console variables and commands, paths, build info, stopwatch, state machine, a job system, memory arenas and pools, generational handles, hashed string ids and frame pacing helpers. Merged in #571 (2.849.0) and #578 (2.850.0).
 - **Parts:**
   - 1.18.1 CLI, console and cvars - `Core/CommandLine`, `Core/Console`, `Core/Cvar`, `Core/DebugOverlay` - (#571) `CommandLine` flag and value parser (the player uses it, `player/main.cpp`); typed console variables (`Cvars::Int/Bool`, range, persistence, `OnChange`) and a command registry (`Console::Register/Execute`, history, completion); `DebugOverlay` builds the FPS and object-count lines, switched by the `debug.overlay` cvar; `Core/ConsoleHost` (the typed line with history and Tab completion, `--cvar NAME=VALUE`, the standard cvars `game.speed`, `r.vsync`, `debug.show_fps`, `debug.profile` and the `prof.save` / `prof.sections` commands) is what the hosts call: the player's backquote console (development builds, `--console` or `OKAY_CONSOLE=1`; drawn over the frame, runs `LoopConsole` on the run's GameLoop; without it a shipped game ignores `--cvar` with one warning; `r.vsync` is for the run only, never saved) and the editor Console panel's command line (Dear ImGui panel only; the Play loop's `time.*` commands)
@@ -431,6 +440,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 
 ### 1.19 Property reflection
 - **System:** Property Registry - Lets tools read, change and watch any component setting by its name; undo, live editing and saving use it.
+  Home: `engine/include/okay/Scene/`, `engine/src/Scene/`. Entry: `engine/include/okay/Scene/PropertyRegistry.hpp`. Also called: properties, reflection, PropertyBuilder.
 - **What:** A property registry so tools, undo and live editing can read, write and watch a component's fields by name (`Light.intensity`) without knowing its C++ type. Merged in #578 (2.850.0).
 - **Parts:**
   - 1.19.1 Values and descriptors - `Scene/Properties` - `PropertyValue` (Bool, Int, Float, String, Vec2, Vec3, Vec4, Quat, Color, Enum, AssetPath, ObjectRef) with an exact text round trip; `PropertyDesc` with range, enum options, tooltip, group and flags (ReadOnly, RuntimeOnly, Derived, Structural); a refused value leaves the component untouched

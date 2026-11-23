@@ -1,4 +1,5 @@
 #include "okay/Core/AssetManager.hpp"
+#include "okay/Core/FileStamp.hpp"
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Graphics/Image.hpp"
@@ -48,14 +49,13 @@ std::int64_t NowNs() {
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-// Modification time and size of a file; false if it can't be read.
+// Modification time and size of a file (size -1 when only the time can be read); false without a time
+// (okay/Core/FileStamp.hpp).
 bool StatFile(const std::string& path, std::int64_t& stamp, std::int64_t& size) {
-    std::error_code ec;
-    auto t = std::filesystem::last_write_time(std::filesystem::u8path(path), ec);
-    if (ec) return false;
-    auto sz = std::filesystem::file_size(std::filesystem::u8path(path), ec);
-    stamp = static_cast<std::int64_t>(t.time_since_epoch().count());
-    size = ec ? -1 : static_cast<std::int64_t>(sz);
+    const auto s = StampOf(path);
+    if (!s.timeOk) return false;
+    stamp = s.time;
+    size = s.sizeOk ? static_cast<std::int64_t>(s.size) : -1;
     return true;
 }
 

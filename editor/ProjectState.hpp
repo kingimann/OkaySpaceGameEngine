@@ -416,6 +416,9 @@ struct ProjectSettings {
     bool  splashAccentOverride = false;
     float splashAccent[3] = {0.235f, 0.475f, 0.800f};
     bool  splashShowBar   = true;
+    /// Engine modules this project uses, comma separated (ModulesModel.hpp, Project Settings > Modules). Empty = every
+    /// module, which is what a project made before modules has; nothing is written to the file then.
+    std::string modules;
 };
 
 /// The text of project.okayproj for `s`, then `lists`: the tag list and layer names lines (ProjectLists::Write()).
@@ -433,6 +436,7 @@ inline std::string WriteProjectSettings(const ProjectSettings& s, const std::str
     f << "physics_smooth=" << (s.smoothPhysics ? 1 : 0) << "\n";
     f << "ambient=" << FloatText(s.ambient) << "\n";
     f << "skybox=" << (s.skybox ? 1 : 0) << "\n";
+    if (!s.modules.empty()) f << "modules=" << s.modules << "\n";
     f << "splash_logo=" << s.splashLogo << "\n";
     f << "splash_bar=" << (s.splashShowBar ? 1 : 0) << "\n";
     f << "splash_accent_on=" << (s.splashAccentOverride ? 1 : 0) << "\n";
@@ -514,6 +518,7 @@ inline bool ApplyProjectSettingLine(ProjectSettings& s, const std::string& k, co
     else if (k == "physics_hz") floats(&s.physicsHz, 1, kProjectMinHz, kProjectMaxHz);
     else if (k == "physics_smooth") s.smoothPhysics = std::atoi(v.c_str()) != 0;
     else if (k == "ambient") floats(&s.ambient, 1, 0.0f, 1.0f);
+    else if (k == "modules") s.modules = v;
     else if (k == "skybox")  s.skybox = std::atoi(v.c_str()) != 0;
     else if (k == "splash_logo") std::snprintf(s.splashLogo, sizeof(s.splashLogo), "%s", v.c_str());
     else if (k == "splash_bar") s.splashShowBar = std::atoi(v.c_str()) != 0;

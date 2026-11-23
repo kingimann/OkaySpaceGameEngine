@@ -60,6 +60,11 @@ files=(
     # read-only context for the protocol questions; these do not build outside the full repository
     engine/include/okay/Net/NetworkManager.hpp
     engine/src/Net/NetworkManager.cpp
+    engine/src/Net/NetworkManagerInternal.hpp
+    engine/src/Net/NetworkManagerSync.cpp
+    engine/src/Net/NetworkManagerAuthority.cpp
+    engine/src/Net/NetworkManagerServer.cpp
+    engine/src/Net/NetworkManagerClient.cpp
     engine/src/Net/RelayServer.cpp
     # the other crypto code in the tree (section 1, second table); read-only, not built here
     # (shared/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto now; the TweetNaCl-derived port is deleted)

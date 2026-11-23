@@ -1,9 +1,10 @@
 // Headless pictures for the guided modeling docs (a picture folder given on the command line; pictures are no longer stored in the repo). A tiny software rasteriser of our own
-// (z-buffer, flat shading, face colours) and a minimal PNG writer, so no window or GPU is needed. These are
+// (z-buffer, flat shading, face colours) and the engine's PNG writer, so no window or GPU is needed. These are
 // renders of the generated meshes, not screenshots of the editor.
 //   guided_pictures <picture folder> [<example folder>]
 // With the second folder it also writes the shipped example (examples/modeling): one .okaymesh and .okayguided per fence
 // style and a scene that uses them, all made by this code.
+#include "okay/Core/ImageWrite.hpp"
 #include "okay/Modeling/Guided.hpp"
 #include <algorithm>
 #include <cmath>
@@ -29,43 +30,9 @@ struct Img {
     void Clear(uint8_t r, uint8_t g, uint8_t b) { for (size_t i = 0; i < px.size(); i += 3) { px[i] = r; px[i + 1] = g; px[i + 2] = b; } std::fill(z.begin(), z.end(), 1e30f); }
 };
 
-uint32_t Crc(const uint8_t* d, size_t n, uint32_t c = 0xffffffffu) {
-    static uint32_t t[256];
-    static bool init = false;
-    if (!init) { for (uint32_t i = 0; i < 256; ++i) { uint32_t x = i; for (int k = 0; k < 8; ++k) x = x & 1 ? 0xedb88320u ^ (x >> 1) : x >> 1; t[i] = x; } init = true; }
-    for (size_t i = 0; i < n; ++i) c = t[(c ^ d[i]) & 255] ^ (c >> 8);
-    return c;
-}
-void Put32(std::vector<uint8_t>& v, uint32_t x) { for (int s = 24; s >= 0; s -= 8) v.push_back((uint8_t)(x >> s)); }
-void Chunk(std::vector<uint8_t>& out, const char* type, const std::vector<uint8_t>& data) {
-    Put32(out, (uint32_t)data.size());
-    std::vector<uint8_t> body(type, type + 4);
-    body.insert(body.end(), data.begin(), data.end());
-    out.insert(out.end(), body.begin(), body.end());
-    Put32(out, Crc(body.data(), body.size()) ^ 0xffffffffu);
-}
-bool WritePng(const std::string& path, const Img& im) {
-    std::vector<uint8_t> raw;
-    for (int y = 0; y < im.h; ++y) { raw.push_back(0); raw.insert(raw.end(), im.px.begin() + (size_t)y * im.w * 3, im.px.begin() + (size_t)(y + 1) * im.w * 3); }
-    std::vector<uint8_t> z = {0x78, 0x01};   // zlib header, stored blocks
-    for (size_t p = 0; p < raw.size();) {
-        const size_t n = std::min<size_t>(65535, raw.size() - p);
-        z.push_back(p + n >= raw.size() ? 1 : 0);
-        z.push_back(n & 255); z.push_back(n >> 8); z.push_back(~n & 255); z.push_back((~n >> 8) & 255);
-        z.insert(z.end(), raw.begin() + p, raw.begin() + p + n);
-        p += n;
-    }
-    uint32_t a = 1, b = 0;
-    for (uint8_t c : raw) { a = (a + c) % 65521; b = (b + a) % 65521; }
-    Put32(z, (b << 16) | a);
-    std::vector<uint8_t> out = {0x89, 'P', 'N', 'G', 13, 10, 26, 10}, ihdr;
-    Put32(ihdr, im.w); Put32(ihdr, im.h);
-    ihdr.insert(ihdr.end(), {8, 2, 0, 0, 0});
-    Chunk(out, "IHDR", ihdr); Chunk(out, "IDAT", z); Chunk(out, "IEND", {});
-    std::ofstream f(path, std::ios::binary);
-    f.write((const char*)out.data(), (std::streamsize)out.size());
-    return f.good();
-}
+// The engine's PNG writer (okay/Core/ImageWrite.hpp: CRC, zlib and DEFLATE of our own). This tool used to carry its
+// own minimal writer (stored blocks); the pictures have the same pixels, only smaller files (#422 audit item 30).
+bool WritePng(const std::string& path, const Img& im) { return ImageWrite::WritePNG(path, im.w, im.h, 3, im.px.data()); }
 
 static bool g_edges = false;   // draw triangle edges (the detail pictures)
 struct Cam { Vec3 eye, target; float fov = 0.9f; };

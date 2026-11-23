@@ -1,4 +1,5 @@
 #include "okay/Net/SessionTicket.hpp"
+#include "okay/Core/Base64.hpp"
 #include "okay/Net/SecureChannel.hpp"
 #include <charconv>
 
@@ -6,7 +7,6 @@ namespace okay::net {
 
 namespace {
 constexpr const char* kPrefix = "okt1.";
-const char* kB64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 #ifdef OKAY_NET_CRYPTO
 bool ParseInt64(const std::string& v, std::int64_t& out) {
@@ -18,40 +18,14 @@ bool ParseInt64(const std::string& v, std::int64_t& out) {
 bool Fail(std::string* error, const char* why) { if (error) *error = why; return false; }
 } // namespace
 
+// RFC 4648 section 5 (URL-safe alphabet), no padding, through okay/Core/Base64.hpp. Decoding is strict: no stray
+// character, and the unused low bits of the last character must be zero (one canonical spelling per ticket).
 std::string SessionTicket::Base64UrlEncode(const std::vector<std::uint8_t>& b) {
-    std::string o;
-    std::size_t i = 0;
-    for (; i + 2 < b.size(); i += 3) {
-        const unsigned v = (b[i] << 16) | (b[i + 1] << 8) | b[i + 2];
-        o += kB64[(v >> 18) & 63]; o += kB64[(v >> 12) & 63]; o += kB64[(v >> 6) & 63]; o += kB64[v & 63];
-    }
-    if (b.size() - i == 1) {
-        const unsigned v = b[i] << 16;
-        o += kB64[(v >> 18) & 63]; o += kB64[(v >> 12) & 63];
-    } else if (b.size() - i == 2) {
-        const unsigned v = (b[i] << 16) | (b[i + 1] << 8);
-        o += kB64[(v >> 18) & 63]; o += kB64[(v >> 12) & 63]; o += kB64[(v >> 6) & 63];
-    }
-    return o;
+    return base64::Encode(b, base64::Alphabet::Url, false);
 }
 
 bool SessionTicket::Base64UrlDecode(const std::string& t, std::vector<std::uint8_t>& out) {
-    out.clear();
-    if (t.size() % 4 == 1) return false;
-    unsigned acc = 0; int bits = 0;
-    for (char c : t) {
-        int v;
-        if (c >= 'A' && c <= 'Z') v = c - 'A';
-        else if (c >= 'a' && c <= 'z') v = c - 'a' + 26;
-        else if (c >= '0' && c <= '9') v = c - '0' + 52;
-        else if (c == '-') v = 62;
-        else if (c == '_') v = 63;
-        else return false;
-        acc = (acc << 6) | (unsigned)v; bits += 6;
-        if (bits >= 8) { bits -= 8; out.push_back(static_cast<std::uint8_t>((acc >> bits) & 0xFF)); }
-    }
-    // Leftover bits must be zero (one canonical spelling per ticket).
-    return (acc & ((1u << bits) - 1)) == 0;
+    return base64::DecodeUnpadded(t, out, base64::Alphabet::Url);
 }
 
 bool SessionTicket::Verify(const std::string& ticket, const std::vector<std::uint8_t>& publicKey,

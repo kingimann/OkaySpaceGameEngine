@@ -4,6 +4,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Math/Curves.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <algorithm>
 #include <cmath>
@@ -15,14 +16,9 @@ namespace {
 
 using Mode = SplinePoint::Mode;
 
-Vec3 Bez(const Vec3* c, float u) {
-    const float v = 1.0f - u;
-    return c[0] * (v * v * v) + c[1] * (3.0f * v * v * u) + c[2] * (3.0f * v * u * u) + c[3] * (u * u * u);
-}
-Vec3 BezD(const Vec3* c, float u) {
-    const float v = 1.0f - u;
-    return (c[1] - c[0]) * (3.0f * v * v) + (c[2] - c[1]) * (6.0f * v * u) + (c[3] - c[2]) * (3.0f * u * u);
-}
+// The cubic Bezier and its tangent come from Math/Curves (the same formula, bit for bit: test curve_formulas).
+Vec3 Bez(const Vec3* c, float u) { return Curves::CubicBezier(c[0], c[1], c[2], c[3], u); }
+Vec3 BezD(const Vec3* c, float u) { return Curves::CubicBezierTangent(c[0], c[1], c[2], c[3], u); }
 Vec3 Unit(const Vec3& v, const Vec3& fallback) {
     const float m = v.Magnitude();
     return m > 1e-8f ? v * (1.0f / m) : fallback;

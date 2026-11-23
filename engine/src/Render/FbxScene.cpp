@@ -2,6 +2,7 @@
 // materials, baked animation). See FbxReader.hpp and docs/content/model_readers.md.
 // Written from the public description of the FBX object model; no third-party code.
 #include "okay/Core/SafeCast.hpp"
+#include "okay/Core/Base64.hpp"
 #include "okay/Render/FbxReader.hpp"
 #include "okay/Core/ThirdParty.hpp"
 
@@ -341,45 +342,11 @@ struct Obj {
 };
 struct Conn { Id child, parent; std::string_view prop; bool propLink; };
 
-// Base64 to bytes (RFC 4648 alphabet), straight into `out`. Characters outside the alphabet ('=', line ends, anything)
-// are skipped and the bits of the rest are taken in order, 8 at a time; a tail of fewer than 8 bits is dropped. Four
-// alphabet characters in a row (the usual case) give their three bytes at once: the same bytes the bit-by-bit rule
-// gives, since a group starts with no bits left over.
-struct Base64Table {
-    signed char t[256];
-    Base64Table() : t{} {
-        for (int c = 0; c < 256; ++c) t[c] = -1;
-        const char* a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        for (int i = 0; i < 64; ++i) t[(unsigned char)a[i]] = (signed char)i;
-    }
-};
+// Base64 to bytes (RFC 4648 alphabet), replacing `out`: okay/Core/Base64.hpp's lenient decoder (characters outside the
+// alphabet, '=' and line ends included, are skipped; four alphabet characters in a row go through its fast path).
 void Base64Decode(std::string_view in, std::vector<std::uint8_t>& out) {
-    static const Base64Table kTab;
-    const signed char* tab = kTab.t;
-    const unsigned char* p = (const unsigned char*)in.data();
-    const std::size_t n = in.size();
-    out.resize(n / 4 * 3 + 3);   // the most it can produce (every character in the alphabet), trimmed at the end
-    std::uint8_t* o = out.data();
-    std::size_t w = 0;
-    unsigned acc = 0; int bits = 0;
-    std::size_t i = 0;
-    while (i < n) {
-        if (bits == 0) {
-            while (n - i >= 4) {
-                const int a = tab[p[i]], b = tab[p[i + 1]], c = tab[p[i + 2]], d = tab[p[i + 3]];
-                if ((a | b | c | d) < 0) break;
-                const std::uint32_t v = ((std::uint32_t)a << 18) | ((std::uint32_t)b << 12) | ((std::uint32_t)c << 6) | (std::uint32_t)d;
-                o[w] = (std::uint8_t)(v >> 16); o[w + 1] = (std::uint8_t)(v >> 8); o[w + 2] = (std::uint8_t)v;
-                w += 3; i += 4;
-            }
-            if (i >= n) break;
-        }
-        const int t = tab[p[i++]];
-        if (t < 0) continue;
-        acc = (acc << 6) | (unsigned)t; bits += 6;
-        if (bits >= 8) { bits -= 8; o[w++] = (std::uint8_t)((acc >> bits) & 0xFF); }
-    }
-    out.resize(w);
+    out.clear();
+    base64::DecodeLenient(in.data(), in.size(), out);
 }
 
 // ---------------------------------------------------------------------------

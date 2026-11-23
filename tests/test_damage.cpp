@@ -1,6 +1,9 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Components/Seat.hpp"
+#include "okay/AI/BehaviorTree.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
+#include "okay/Components/UIOwnerData.hpp"
 #include <cmath>
 #include <limits>
 #include <string>
@@ -545,6 +548,92 @@ int main() {
         auto* sv2 = q2 ? q2->GetComponent<SurvivalStats>() : nullptr;
         CHECK(sv2 != nullptr);
         if (sv2) { CHECK_NEAR(sv2->armor, 4.0f, 1e-4f); CHECK_NEAR(sv2->resistance, 0.2f, 1e-4f); CHECK_NEAR(sv2->invincibleTime, 0.3f, 1e-4f); }
+    }
+
+    // --- one "health of this object" (#422 audit item 21) -------------------------------------------------------------
+    // A health bar (UI `owner.health`) and a Behavior Tree's Health Watcher used to look for health in their own orders
+    // (UI: Health Stat, RPG Stats, Survival Stats, NPC; the watcher: NPC, Survival Stats, Health Stat, and never RPG
+    // Stats). DealDamage hurts the FIRST holder in HealthOf's order (Health Stat, Survival Stats, RPG Stats, NPC), so on
+    // an object with two holders the bar or the watcher showed a number that the hits never changed. Both now use
+    // HealthOf, so they show the holder that takes the damage.
+    {
+        Scene s("health-of");
+        s.physicsEnabled = false;
+        // RPG Stats + Survival Stats: the hits go to Survival Stats
+        GameObject* hero = s.CreateGameObject("Hero");
+        auto* st = hero->AddComponent<Stats>(); st->maxHealth = 200.0f; st->health = 200.0f;
+        auto* sv = hero->AddComponent<SurvivalStats>(); sv->maxHealth = 100.0f; sv->health = 100.0f;
+        GameObject* bar = s.CreateGameObject("Bar");
+        bar->transform->SetParent(hero->transform);
+        CHECK(DealDamage(hero, 30.0f));
+        float h = 0, m = 0;
+        CHECK(HealthOf(hero, h, m) && std::fabs(h - sv->health) < 1e-4f && std::fabs(m - 100.0f) < 1e-4f);
+        std::string text; float num = -1.0f; bool isNum = false;
+        CHECK(uiowner::Lookup(bar, "owner.health", text, num, isNum) && isNum);
+        CHECK_NEAR(num, sv->health, 1e-4f);                    // the bar shows the health the hit took (70), not Stats' 200
+        CHECK(uiowner::Lookup(bar, "owner.maxHealth", text, num, isNum));
+        CHECK_NEAR(num, 100.0f, 1e-4f);
+
+        // NPC Controller + Health Stat: the hits go to the Health Stat; the watcher must report it
+        auto watch = [&](GameObject* npcObj) {
+            auto* r = npcObj->AddComponent<BehaviorTreeRunner>();
+            r->runOnStart = false;
+            r->onCustomTask = [](BehaviorTreeRunner&, const BtNode&, const char*) { return BtStatus::Running; };
+            auto t = std::make_shared<BehaviorTree>();
+            const int root = t->AddNode(BtNodeType::Selector, -1);
+            const int task = t->AddNode(BtNodeType::Custom, root); t->Find(task)->name = "idle";
+            const int w = t->AddNode(BtNodeType::HealthWatcher, root); t->Find(w)->Set("interval", 0.0f);
+            r->SetTree(t);
+            return r;
+        };
+        GameObject* guard = s.CreateGameObject("Guard");
+        auto* npc = guard->AddComponent<NPCController>(); npc->maxHealth = 30.0f; npc->health = 30.0f;
+        auto* hs = guard->AddComponent<HealthStat>(); hs->maxHealth = 80.0f; hs->health = 80.0f;
+        BehaviorTreeRunner* gr = watch(guard);
+        // RPG Stats only: the watcher used to skip it and leave the blackboard alone
+        GameObject* mage = s.CreateGameObject("Mage");
+        auto* ms = mage->AddComponent<Stats>(); ms->maxHealth = 50.0f; ms->health = 50.0f;
+        BehaviorTreeRunner* mr = watch(mage);
+        s.Start(); gr->Run(); mr->Run();
+        CHECK(DealDamage(guard, 20.0f));
+        CHECK(DealDamage(mage, 10.0f));
+        for (int i = 0; i < 4; ++i) s.Update(0.1f);
+        CHECK_NEAR(hs->health, 60.0f, 1e-3f);
+        CHECK_NEAR(npc->health, 30.0f, 1e-3f);                 // the NPC's own number is not the one that is hit
+        CHECK_NEAR(gr->blackboard.GetNumber("health", -1.0f), hs->health, 1e-3f);
+        CHECK_NEAR(gr->blackboard.GetNumber("healthPct", -1.0f), 60.0f / 80.0f, 1e-3f);
+        CHECK_NEAR(mr->blackboard.GetNumber("health", -1.0f), ms->health, 1e-3f);
+        // a single holder reads as before (no change for the usual one-holder object)
+        GameObject* lone = s.CreateGameObject("Lone");
+        auto* ln = lone->AddComponent<NPCController>(); ln->health = 12.0f; ln->maxHealth = 30.0f;
+        CHECK(HealthOf(lone, h, m) && std::fabs(h - 12.0f) < 1e-4f && std::fabs(m - 30.0f) < 1e-4f);
+    }
+
+    // --- the BT "health" Condition reads the same holder as the Health Watcher (review of #1140) ------------------------
+    // HealthFraction() (the Condition with kind "health") still read the NPC Controller first while the watcher read
+    // HealthOf: an NPC at 20% on its Health Stat wrote healthPct 0.2 while "health < 0.5" said no.
+    {
+        Scene s("health-condition");
+        s.physicsEnabled = false;
+        GameObject* g = s.CreateGameObject("Guard");
+        auto* npc = g->AddComponent<NPCController>(); npc->maxHealth = 30.0f; npc->health = 30.0f;
+        auto* hs = g->AddComponent<HealthStat>(); hs->maxHealth = 80.0f; hs->health = 80.0f;
+        auto* r = g->AddComponent<BehaviorTreeRunner>();
+        r->runOnStart = false;
+        auto t = std::make_shared<BehaviorTree>();
+        const int root = t->AddNode(BtNodeType::Sequence, -1);
+        const int w = t->AddNode(BtNodeType::HealthWatcher, root); t->Find(w)->Set("interval", 0.0f);
+        const int c = t->AddNode(BtNodeType::Condition, root);
+        t->Find(c)->Set("kind", "health"); t->Find(c)->Set("fraction", 0.5f);
+        r->SetTree(t);
+        s.Start(); r->Run();
+        s.Update(0.1f);
+        CHECK(r->LastResult() == BtStatus::Failure);              // full health: not below half
+        CHECK(DealDamage(g, 64.0f));                               // the Health Stat takes it: 16 of 80 = 20%
+        CHECK_NEAR(hs->health, 16.0f, 1e-3f);
+        for (int i = 0; i < 3; ++i) s.Update(0.1f);
+        CHECK_NEAR(r->blackboard.GetNumber("healthPct", -1.0f), 0.2f, 1e-3f);
+        CHECK(r->LastResult() == BtStatus::Success);              // and the Condition agrees: below half
     }
 
     TEST_MAIN_RESULT();

@@ -4346,8 +4346,8 @@ foreach(_f MDC HMP CSM)   # -DOKAY_OWN_<FMT>=ON: the test then requires the own 
 endforeach()
 add_test(NAME own_dispatch_e COMMAND test_own_dispatch_e WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-# WAV playback seam (okay/Audio/WavPlayback.hpp, shared/WavPlayback.hpp): own path, error paths, and with SDL2 the option-off vs option-on
-# equivalence. check_wav_seam_wiring fails if a raw SDL_LoadWAV call appears outside the seam.
+# WAV playback seam (okay/Audio/WavPlayback.hpp, shared/WavPlayback.hpp): own path, error paths, and with SDL2 the launcher's seam.
+# check_wav_seam_wiring fails if SDL_LoadWAV or the deleted OKAY_OWN_WAV switch comes back anywhere in shipped code.
 add_executable(test_wav_playback test_wav_playback.cpp)
 target_link_libraries(test_wav_playback PRIVATE okay::engine)
 find_package(SDL2 QUIET)

@@ -9,7 +9,6 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
-#include "okay/Audio/WavDecoder.hpp"   // OwnWavEnabled: the slow-frame log names the switches that were on
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
 #include "okay/Render/TextureCacheFiles.hpp"   // InvalidateTextureCacheForFile: a changed picture is shown changed
@@ -2038,7 +2037,6 @@ static void WriteSlowFrame(okay::editor::perf::SlowFrameLog& log, double frameMs
     }
     if (const int lost = OkayUIRegionOverflow()) ctx += ", " + std::to_string(lost) + " OkayUI areas without the mouse";
 #endif
-    if (okay::wav::OwnWavEnabled()) ctx += ", own WAV";
     const okay::Profiler& pr = okay::Prof();
     const okay::Profiler::Frame& f = pr.paused || pr.Count() == 0 ? okay::Profiler::Frame() : pr.FrameAt(pr.Count() - 1);
     const std::string line = log.Line(f, frameMs, (long long)ImGui::GetFrameCount(), ctx);

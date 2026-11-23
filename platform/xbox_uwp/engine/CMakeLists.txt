@@ -73,8 +73,7 @@ okay_uwp_own_readers("${OKAY_SOURCE_ROOT}/CMakeLists.txt" _mi_defs _own_on)
 set_source_files_properties(${OKAY_SOURCE_ROOT}/engine/src/Render/ModelImport.cpp PROPERTIES COMPILE_DEFINITIONS "${_mi_defs}")
 list(LENGTH _own_on _own_n)
 message(STATUS "okay_engine_uwp: own model readers ON by default: ${_own_n} switches (${_own_on})")
-# Sound: the own WAV decoder is the WAV reader here (there is no SDL_LoadWAV); OGG, MP3 and FLAC are our own decoders in every build.
-target_compile_definitions(okay_engine_uwp PRIVATE OKAY_OWN_WAV_DEFAULT=1)
+# Sound: WAV, OGG, MP3 and FLAC are read by our own decoders in every build (okay::wav is the only WAV reader).
 
 # Crypto. Default: NO packet encryption (libsodium does not exist here and our own crypto stays off, CLAUDE.md rule 18). Hashes (SHA-256), random bytes and Ed25519
 # checks are our own okay_crypto_uwp code either way. OKAY_XBOX_OWN_CRYPTO=ON is an EXPERIMENT switch: it turns packet encryption on through okay::crypto,

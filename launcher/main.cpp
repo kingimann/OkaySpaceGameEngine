@@ -10,7 +10,7 @@
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "okay/Platform/WindowLogic.hpp" // frame-rate / flash / background decisions
 
-#include "WavPlayback.hpp"   // the one WAV loading seam (SDL_LoadWAV, or our own decoder with OKAY_OWN_WAV)
+#include "WavPlayback.hpp"   // the one WAV loading seam: our own decoder (okay::wav) into an SDL_AudioSpec
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
 #include "OwnSwitches.hpp"   // Settings > Experimental: the table of own replacements that can be switched on
@@ -3966,8 +3966,8 @@ struct VoiceClip {
     std::vector<Uint8> owned;        // the clip's samples (converted to 16-bit when the file was not native 16-bit / float)
     std::map<int, std::vector<Uint8>> fast;   // time-stretched copies by speed index (built on first use)
     VoiceClip() = default;
-    // `owned` frees the samples. SDL_LoadWAV's buffer is copied into `owned` and
-    // released at load, so there is no SDL buffer left for this destructor to free (#718).
+    // `owned` holds the samples our own decoder gave (okay::wav::LoadWavForSdl); there is
+    // no SDL buffer for this destructor to free (#718).
     ~VoiceClip() = default;
     VoiceClip(const VoiceClip&) = delete;             // pcm ownership is exclusive: no shallow copies
     VoiceClip& operator=(const VoiceClip&) = delete;
@@ -3992,10 +3992,9 @@ static void VoiceClipToPlayable(VoiceClip& c) {
     if (f == AUDIO_S16SYS || f == AUDIO_F32SYS || !c.pcm || !c.len) return;
     const int width = SDL_AUDIO_BITSIZE(f) / 8;
     if (width < 1 || width > 4) { c.len = 0; return; }
-    // Samples already live in c.owned. VoiceClipFor copies the SDL_LoadWAV buffer
-    // and frees it before this runs, so the bytes are read from `owned` and the
-    // old vector storage is released when it is replaced. SDL_FreeWAV here would
-    // free that storage a second time (#718).
+    // Samples already live in c.owned (our own decoder's output), so the bytes are
+    // read from `owned` and the old vector storage is released when it is replaced.
+    // Nothing here may free them a second time (#718).
     const std::size_t n = c.len / (std::size_t)width;
     std::vector<Uint8> out(n * 2);
     for (std::size_t i = 0; i < n; ++i) {
@@ -4094,9 +4093,9 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
     std::error_code ec;
     if (failed || fs::exists(cache, ec)) {
         VoiceClip& c = g_voiceClips[url];
-        // SDL hands back a buffer that only SDL_FreeWAV may release. Copy the samples into the
-        // clip's own storage and free SDL's at once, so no path (a converted clip, an
-        // unsupported width, a replaced entry) can leave it behind (#718).
+        // Our own decoder (okay::wav::PlaybackClip through LoadWavForSdl) writes the samples
+        // straight into the clip's own storage, so no path (a converted clip, an unsupported
+        // width, a replaced entry) has a foreign buffer to leave behind (#718).
         SDL_AudioSpec wavSpec{};
         if (!failed && okay::wav::LoadWavForSdl(cache.string(), wavSpec, c.owned)) {
             c.spec = wavSpec;

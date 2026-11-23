@@ -727,12 +727,6 @@ if(OKAY_OWN_BVH)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_BVH_DEFAULT)
     message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
 endif()
-# Our own WAV decoder (PCM, float, A-law, mu-law, MS and IMA ADPCM): AudioClip::LoadWAV uses it when this is ON
-# or when the environment says OKAY_OWN_WAV=1 (OKAY_OWN_WAV=0 turns it off again).
-if(OKAY_OWN_WAV)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_WAV_DEFAULT)
-    message(STATUS "OkaySpace: AudioClip::LoadWAV uses the built-in WAV decoder")
-endif()
 # Our own OFF (.off) reader (same opt-in rules; env OKAY_OWN_OFF=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_OFF)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_OFF_DEFAULT)

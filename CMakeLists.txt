@@ -47,13 +47,12 @@ option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its 
 # OKAY_THIRD_PARTY=1 (okay/Core/ThirdParty.hpp) switches every format back at run time. NDO stays OFF: that reader is a seam that
 # refuses every file. An existing build folder keeps the old OFF values in its CMakeCache.txt: configure a fresh one.
 # Since 2026-11-23 (owner: "i want our stuff to be on by default, all of them") the last four readers (glTF 1.0, OpenGEX, MDL,
-# Q3BSP), our own WAV decoder and our own HTTP client (Linux; Windows uses WinHTTP) are ON by default too. Still OFF: NDO (a seam
+# Q3BSP), our own WAV decoder (since then the only WAV reader, no switch) and our own HTTP client (Linux; Windows uses WinHTTP) are ON by default too. Still OFF: NDO (a seam
 # that refuses every file), OKAY_OWN_CRYPTO (owner rule 18), OKAY_OWN_STACK (a dogfood switch releases refuse) and the two extra
 # OkayUI programs (OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI: not built by CI yet; docs/status/own_code_roadmap.md).
 option(OKAY_OWN_COLLADA   "Read .dae with our own Collada reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .dae load at all; run-time env OKAY_OWN_COLLADA=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_3DS       "Read .3ds with our own 3DS reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .3ds load at all; run-time env OKAY_OWN_3DS=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_BVH       "Read .bvh motion capture with our own BVH reader by default (run-time env OKAY_OWN_BVH=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_WAV       "Load .wav with our own WAV decoder (PCM, float, A-law, mu-law, MS and IMA ADPCM) by default (run-time env OKAY_OWN_WAV=0/1 overrides)" ON)
 option(OKAY_OWN_OFF       "Read .off meshes with our own OFF reader by default (run-time env OKAY_OWN_OFF=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_SMD       "Read .smd (Valve Studiomdl Data) with our own SMD reader by default (run-time env OKAY_OWN_SMD=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_MD5       "Read .md5mesh / .md5anim (id Tech 4 / Doom 3) with our own MD5 reader by default (run-time env OKAY_OWN_MD5=0/1 and SetImportBackend override)" ON)

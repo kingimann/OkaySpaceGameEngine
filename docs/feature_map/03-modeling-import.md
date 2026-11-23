@@ -7,6 +7,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 ## 3. 3D modeling & import
 
 ### 3.1 Edit mode
+- **System:** Modeling - Builds and edits 3D models inside the editor: shapes, cuts, bevels, modifiers, UVs, sculpting and painting.
 - **What:** Blender-style mesh edit mode (Tab, G/R/S, axis lock, snapping, mirror) on the selected object's Mesh Renderer: Tab to enter, Vertex/Edge/Face selection, G/R/S modal transforms with axis locks, typed values and snapping, soft select, X symmetry and a set of face, edge and vertex tools. The mesh is kept welded while editing.
 - **Parts:**
   - 3.1.1 Edit mode, selection and polygon stats - `editor/main.cpp`, `Render/Mesh` - Tab or the Edit Mesh tick, Object/Edit header, keys 1/2/3, click, Shift, Alt-click loop, Ctrl+Alt ring, Ctrl+click shortest path (ShortestVertPath / ShortestFacePath), Grow/Shrink/Linked/Invert, Checker Deselect, Select Boundary Loop, Select Open / Non-Manifold Edges (PolyOps: CheckerVerts / CheckerFaces, RegionOutline, ProblemEdges), stats line
@@ -29,6 +30,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "make G snap to the grid while Ctrl is held"; "Extrude Faces leaves the collider behind"
 
 ### 3.2 Edge and loop tools
+- **System:** Modeling
 - **What:** Edge-loop modeling on the polygon mesh: select loops and rings, cut new loops, slide, bevel, knife, dissolve, bridge, fill. Each tool keeps the numbering of existing vertices so a selection survives it.
 - **Parts:**
   - 3.2.1 Loop and ring selection - `Modeling/PolyOps` - EdgeLoop, EdgeRing, OrderChains, PolyTopology; Alt-click loop, Ctrl+Alt-click ring, Select Loop/Ring buttons
@@ -50,6 +52,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "add chamfer profile to the bevel"; "knife cut across two faces fails"
 
 ### 3.3 Modifiers
+- **System:** Modeling
 - **What:** Two kinds of modifiers: one-shot operations that change the mesh at once (array, remesh, decimate, boolean, hull, bisect...), and a non-destructive stack on a Mesh Modifiers component whose result is drawn, collided with and exported while the base mesh stays editable.
 - **Parts:**
   - 3.3.1 One-shot modifiers - `Render/Mesh` - Array, VoxelRemesh/Remesh, Decimate, Boolean (Union/Subtract/Intersect), ConvexHull, Bisect, Split in two, ShrinkFatten, Wireframe, Displace, CastToCylinder, Stretch
@@ -69,6 +72,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "add a Weld modifier to the stack"; "the Boolean cutter stays visible"
 
 ### 3.4 UV tools
+- **System:** Modeling
 - **What:** Texture coordinates for modeled geometry: quick projections, per-corner UVs that survive editing, seams, a real unwrap (LSCM) with island packing, and a UV Editor window.
 - **Parts:**
   - 3.4.1 Quick projections - `Render/Mesh` - ProjectUVBox, ProjectUVPlanar, ProjectUVCylinder, ProjectUVSphere with a tile count
@@ -89,6 +93,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "pack UV islands without shrinking them"; "the UV Editor should show a checker when there is no texture"
 
 ### 3.5 Mesh assets and primitives
+- **System:** Meshes - The 3D shape data that drawing and physics share, the built-in shapes, and the `.okaymesh` file.
 - **What:** The triangle Mesh type the renderer and physics use, its built-in primitives, the `.okaymesh` text format that keeps real polygons, and how edited meshes are saved (by name, by file path, or verbatim in the scene).
 - **Parts:**
   - 3.5.1 Triangle Mesh and primitives - `Render/Mesh` - Cube, Sphere, Cylinder, Cone, Pyramid, Wedge, Quad, Plane, Tube, Torus, TorusKnot, Capsule, Icosphere, Grid, Hemisphere, Stairs, Gear, Prism, Octahedron, Disc, Tetrahedron, Bipyramid, RoundedBox
@@ -122,6 +127,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "support per-face materials in .okaymesh"; "why is the Cone inside out"
 
 ### 3.6 Model import
+- **System:** Model Import - Reads 3D model files from other programs (FBX, glTF, OBJ and more) with their materials, bones and animations.
 - **What:** One entry point turns a model file into a merged mesh or a scene hierarchy with materials, skeleton, skins, clips and morph targets, then prints an import report. Built in: OBJ (+MTL), STL, PLY, glTF/GLB and FBX (vendored ufbx); Collada has a reader of ours that is off by default; other formats only when the build has Assimp. Every Assimp read goes through one seam that returns our own `ImportedModel` type (see `docs/content/model_import.md`).
 - **Parts:**
   - 3.6.1 glTF 2.0 and GLB - `Render/Gltf`, `Render/ModelImport` - own JSON and base64 reader, accessors including sparse and quantized, up to 8 influences (4 kept), matrix nodes decomposed, STEP/LINEAR/CUBICSPLINE keys, multi-material skins
@@ -172,6 +178,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "import FBX takes as separate clips"; "support the metallic-roughness texture from glTF"
 
 ### 3.7 Rigging and playable setup
+- **System:** Rigging - Adds a skeleton to a model and sets it up so it can be animated and played as a character.
 - **What:** Turn a model into something that plays: auto-rig a model with no skeleton to the engine humanoid, attach any imported model as a player's body (size, grounding, facing, collider, locomotion clips), or build a whole playable third-person character from a model file in one click.
 - **Parts:**
   - 3.7.1 Rig Model (Humanoid) auto-rig - `Components/Character` - BindCustomMesh binds each vertex to its nearest bone segment so the built-in animations drive the model; Unrig restores the blocky body
@@ -194,6 +201,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "make a Mixamo character playable in one click"; "the model walks backwards after Set Character Model"
 
 ### 3.8 Sculpt and paint brushes
+- **System:** Modeling
 - **What:** Viewport brushes on an edited mesh: sculpt (Grab, Inflate, Smooth, Flatten, Pinch) and per-face colour painting that multiplies with the material colour.
 - **Parts:**
   - 3.8.1 Sculpt brush - `Render/Mesh` - SculptBrush (Grab, Inflate, Smooth = Laplacian over edge neighbours, Flatten, Pinch) with radius, strength, BrushFalloff (smoothstep), symmetryX in one pass; seam and pole copies move together; subdivide first for detail
@@ -211,6 +219,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "add a Crease brush"; "make paint strokes undoable one by one"
 
 ### 3.9 Generate and whole-mesh operations
+- **System:** Modeling
 - **What:** Profile-driven shapes (lathe, screw, extrude outline, pipe along a path) and the one-click whole-mesh operations in the Modeling window's Edit tab.
 - **Parts:**
   - 3.9.1 Lathe and Screw - `Render/Mesh` - Mesh::Lathe, Mesh::Screw from a (radius, height) point list; Vase, Goblet, Column presets
@@ -229,6 +238,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "add a Loft between two profiles"; "pipe along a custom spline"
 
 ### 3.10 Add library and procedural props
+- **System:** Modeling
 - **What:** The Modeling window's Add library and GameObject > 3D Object menu: 23 primitives plus pre-coloured nature, prop and structure meshes, with procedural variants (one number per object regenerates the exact shape) and Shape tab collision modes.
 - **Parts:**
   - 3.10.1 Nature props - `Render/Mesh` - Tree, Pine, PalmTree, DeadTree, Bush, Rock, Mushroom, Cactus, Crystal with Variant stepper and Randomize; terrain Scatter gives every instance its own variant
@@ -248,6 +258,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "add a Boulder variant to Rock"; "refit the collider after an edit"
 
 ### 3.11 Guided creation (templates, parts, safe regeneration)
+- **System:** Modeling
 - **What:** A Guided page in the Modeling window: pick a category and a starting design, get an ordinary editable mesh generated from a small recipe, change its settings, swap designs per kind of part or per part, keep editing by hand. Rebuilding never overwrites hand edits silently (keep / discard / convert). The fence and the architecture templates (wall, stairs, door, window, roof, building) exist; other categories show an honest empty state. Click-to-draw path and a collider option are on the page.
 - **Parts:**
   - 3.11.1 Recipe, registry and generation - `Modeling/Guided` - Recipe (text `okayguided 1`), Template and Registry, deterministic Generate, parts with stable ids
@@ -271,6 +282,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "add a wall template"; "let me draw the fence path in the 3D view"; "add a collider to a guided model"
 
 ### 3.12 Simple view of the Modeling window (beginner mode)
+- **System:** Modeling
 - **What:** The Modeling window opens in a simple view by default: Undo / Redo / Do again always on top, the model's size, a "What do I click next?" line that follows the selection, "Pick parts" (corners, edges, faces; one click turns edit mode on), up to six quick actions for what is selected, the last four tools used, and five tabs named by what you want to do (Shape with seven one-click starter models, Reshape, Details, Colour, Finish). Every tool has a plain name, a one-sentence tip, an example and its shortcut; tools that cannot run are greyed out with the reason. There is no Advanced switch any more (removed 2026-11-18): the Modeling window is one window with a page list on the left, and the simple view is its first page, "Easy", which is the page it opens on. Every other tool is a page in the same list, so no tool was lost; the old `modelingadvanced` line in okay_settings.txt is read and ignored. Tools run the existing operations (no second copy). The page list shows pages under job headings (Start here, Make something, Change it, Fix parts, Extras, Files) with plain titles (Easy, Add shapes, Step by step, Make shapes, Change the shape, Bend and cut, Fix the surface, Effects, Bring in a model; the old titles Add, Guided, Generate, Shape, Edit, Edit Mesh, Modifiers and Import are still found by the search box; fold it with the arrow or Ctrl+\) (Create, Shape and size, Edit parts, Effects, Files), has a tool search box (type bevel or round: matching buttons are outlined on their page and the page is named) and a hint line with a plain sentence for the button under the mouse; the Edit and Edit Mesh pages got real section headings (the mirror and deform tools used to sit under UV Unwrap). The simple view also has: Pick whole part and Pick similar, a mirror-my-changes switch (on by default), the last four tools remembered between sessions, and a live preview while the How much slider moves (applied once when let go). Click counts for eight beginner jobs, old window to new (walked through the code, not timed with a person): box with a roof 9 to 1, round a corner 6 to 3, window hole 7 to 3, symmetric face 4 to 1, stretch 3 to 1, table legs 10 to 1, smooth a rock 5 to 2, paint two colours 9 to 4.
 - **Code:** `editor/ModelingEasy.hpp` (catalogue, jargon check, hints, quick actions, recent tools, job counts), `editor/ModelingEasyOps.hpp` (tool to mesh operation), `editor/ModelingStarters.hpp`, `editor/ModelingEasyUi.cpp`, `editor/ModelingToolIndex.hpp` (every tool, pages by job, search), `editor/ModelingHighlight.hpp`, `editor/main.cpp` (DrawModelingSimple, DrawModeling)
 - **API:** `oked::easymodel::Tools`, `NextHint`, `QuickActions`, `WhyNot`, `RunMeshTool`, `BuildStarter`

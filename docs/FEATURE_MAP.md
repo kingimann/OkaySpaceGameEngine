@@ -8,6 +8,9 @@ docs and editor windows involved, what already works, what is missing, and what 
 This map holds every area, sub-area and numbered part, and every source file in the repo is meant to appear in it
 (`python3 scripts/check_feature_map.py --list` shows any that do not).
 
+**Systems:** [docs/SYSTEMS.md](SYSTEMS.md) lists every named system (Physics, Save Games, OkayScript...)
+with one line on what it does, its status, its main code and its sub-areas here, plus the duplicates found.
+
 **How it is organised**
 - This file is the overview: the areas and one summary table per area. It is generated; do not edit it
   by hand. Two lookup pages are generated next to it: [By what you see](feature_map/_index_symptoms.md)
@@ -115,7 +118,7 @@ Details for every sub-area and numbered part: [docs/feature_map/01-core-scene.md
 | [1.4](feature_map/01-core-scene.md#14-scene-lifecycle) | Scene lifecycle | Works | What happens when objects are created, switched on and off, destroyed and when scenes are loaded, replaced, added next to each other or streamed in... | no editor or engine caller of `RequireComponent` outside tests (grep); since #575 unload runs OnDisable/OnDestroy for every... |
 | [1.5](feature_map/01-core-scene.md#15-scene-serializer) | Scene serializer | Works | Reads and writes the human-readable `okayscene` text format (version 3), clones objects, merges scenes and records what a round trip keeps. | file splitting (19.4); #575 added `ValidateFile`, shortest-round-trip floats and `gravity3` (1.17); no editor or command-line use... |
 | [1.6](feature_map/01-core-scene.md#16-prefabs-and-templates) | Prefabs and templates | Partial | Reusable objects saved as `.okayprefab` files and the starter worlds, players and UI screens the editor creates from templates. | the old override unit is a whole record, `PrefabTools::Diff` goes per field but falls back to whole records for unknown ones.... |
-| [1.7](feature_map/01-core-scene.md#17-saves-and-prefs) | Saves and prefs | Works | Player progress and settings on disk: whole-game save slots, an Easy-Save-style typed key/value store, and a simple preferences bag. | the save framework (#572, area 35) has no scene-file record, component or editor window yet, so no game uses it, and it keeps its... |
+| [1.7](feature_map/01-core-scene.md#17-saves-and-prefs) | Saves and prefs | Works | Player progress and settings on disk: whole-game save slots, an Easy-Save-style typed key/value store, and a simple preferences bag. | loading a whole-scene slot replaces the default Save file's keys (documented); no cloud backend behind the sync hooks; an older... |
 | [1.8](feature_map/01-core-scene.md#18-localization) | Localization | Works | Player-facing text in several languages: a string table, language choice, fallbacks, `{0}`/`{name}` and plural formatting, and scene text that... | right-to-left scripts draw left to right unshaped (docs); dialogue box and journal atlas covers ASCII and Latin-1 only (docs) |
 | [1.9](feature_map/01-core-scene.md#19-events-and-ecs) | Events and ECS | Works | A typed publish/subscribe event bus and a small data-oriented ECS that lives beside the GameObject scene, with a bridge that draws ECS entities as... | the old note that `SceneBridge` keeps raw `GameObject*` is out of date: it keeps instance ids and re-creates a lost object... |
 | [1.10](feature_map/01-core-scene.md#110-logging-and-profiling) | Logging and profiling | Works | Messages for developers (levels, categories, file output) and a frame profiler with a scrubbable history and trace export. | the "GPU" time is the synchronous render plus read-back time, not a GPU timer; #574 added frame history, GPU timer, render stats... |
@@ -777,7 +780,7 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [35.1](feature_map/20-35-planned.md#351-save-slots) | Save slots | Works | Let players save and load their progress in named slots, with a list for a Load screen. | possible duplicate: `SaveGame` (`.okaygame`) and the framework (`.okayslot`) are separate formats and separate lists; nothing... |
+| [35.1](feature_map/20-35-planned.md#351-save-slots) | Save slots | Works | Let players save and load their progress in named slots, with a list for a Load screen. | the Save Slots screen has three fixed slots (package 1); an older `.okaygame` slot is not exported to sync (`ExportRaw`) until it... |
 | [35.2](feature_map/20-35-planned.md#352-checkpoints) | Checkpoints | Partial | Automatic save points (entering a level, reaching a checkpoint, timed autosave) and quick save and load. | AutoSave writes one slot, so a corrupt moment is overwritten; wait for the framework decision (35.1). |
 | [35.3](feature_map/20-35-planned.md#353-serialization) | Serialization | Works | What gets saved and how objects find their saved state again. | the two systems (whole scene vs saveable state) overlap; streamed worlds not covered. |
 | [35.4](feature_map/20-35-planned.md#354-versioned-save-data) | Versioned save data | Works | Old saves keep working after the game changes, and saves from a newer version are refused instead of damaged. | migrations operate on text; no tool to inspect a save. |

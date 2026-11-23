@@ -11,8 +11,8 @@
 # (the definition of RenderSceneUIImpl, no longer static) is a change rule.
 change: static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const UIRenderOptions& opt) { ==> void ui_pass::RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const UIRenderOptions& opt) {
 # globals: defined once in UIRenderer.cpp, declared extern in the header
-drop: ^(float g_uiDeviceScale = 1\.0f|bool g_uiSmoothEdges = true|UIQuality g_uiQuality = UIQuality::Good.*|static TtfFont\* g_uiDefaultFont = nullptr);$
-add: ^(float ui_pass::g_uiDeviceScale = 1\.0f|bool ui_pass::g_uiSmoothEdges = true|UIQuality ui_pass::g_uiQuality = UIQuality::Good.*|TtfFont\* ui_pass::g_uiDefaultFont = nullptr);$
+drop: ^(float g_uiDeviceScale = 1\.0f;|bool g_uiSmoothEdges = true;|UIQuality g_uiQuality = UIQuality::Good;.*|static TtfFont\* g_uiDefaultFont = nullptr;)$
+add: ^(float ui_pass::g_uiDeviceScale = 1\.0f;|bool ui_pass::g_uiSmoothEdges = true;|UIQuality ui_pass::g_uiQuality = UIQuality::Good;.*|TtfFont\* ui_pass::g_uiDefaultFont = nullptr;)$
 add: ^extern (float g_uiDeviceScale|bool g_uiSmoothEdges|UIQuality g_uiQuality|TtfFont\* g_uiDefaultFont);$
 add: ^using ui_pass::(g_uiDeviceScale|g_uiSmoothEdges|g_uiQuality|g_uiDefaultFont|UITextScale|RichLinkTable|DrawRichRuns|RenderSceneUIImpl);$
 # the scene-pass entry point
@@ -24,7 +24,7 @@ drop: ^std::unordered_map<const okay::GameObject\*, std::vector<RichLinkRect>>& 
 add: ^std::unordered_map<const okay::GameObject\*, std::vector<RichLinkRect>>& (ui_pass::)?RichLinkTable\(\)[ ;{]*$
 drop: ^void DrawRichRuns\(Painter& r, const std::string& disp, const std::vector<okay::RichStyle>& styles,$
 add: ^void (ui_pass::)?DrawRichRuns\(Painter& r, const std::string& disp, const std::vector<okay::RichStyle>& styles,$
-drop: ^const std::vector<std::string>\* links = nullptr, const std::vector<std::string>\* icons = nullptr, std::vector<RichLinkRect>\* linkRects = nullptr\) \{$
-add: ^const std::vector<std::string>\* links( = nullptr)?, const std::vector<std::string>\* icons( = nullptr)?, std::vector<RichLinkRect>\* linkRects( = nullptr)?\)[ ;{]*$
-add: ^float ox, float oy, float px, RGBA base, float letterSp, float lineSp, bool italic,$
-add: ^bool bold, float boldOff, TtfFont\* ttf,$
+drop: ^\s*const std::vector<std::string>\* links = nullptr, const std::vector<std::string>\* icons = nullptr, std::vector<RichLinkRect>\* linkRects = nullptr\) \{$
+add: ^\s*const std::vector<std::string>\* links( = nullptr)?, const std::vector<std::string>\* icons( = nullptr)?, std::vector<RichLinkRect>\* linkRects( = nullptr)?\)[ ;{]*$
+add: ^\s*float ox, float oy, float px, RGBA base, float letterSp, float lineSp, bool italic,$
+add: ^\s*bool bold, float boldOff, TtfFont\* ttf,$

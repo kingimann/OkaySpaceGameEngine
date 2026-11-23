@@ -15,6 +15,10 @@ import json, re, subprocess, sys, os
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FILES = ['launcher/main.cpp', 'launcher/VoiceChat.hpp', 'launcher/VersionsUI.cpp']
 BASELINE = os.path.join(ROOT, 'tests', 'data', 'thread_conversion_baseline.json')
+# launcher/main.cpp is being split into smaller files by pure moves (docs/engine/modularization_plan.md, Part C). The code moved out
+# of it is counted with it, so a move keeps the counts. (--base lines the files up in this order, so it only matches for revisions
+# from before the split.)
+SPLIT_FROM = {'launcher/main.cpp': ['launcher/ChatText.cpp']}
 MAP = [(r'\bSDL_CreateThread\b', 'okay::thr::CreateThread'), (r'\bSDL_DetachThread\b', 'okay::thr::DetachThread'),
        (r'\bSDL_WaitThread\b', 'okay::thr::WaitThread'), (r'\bSDL_CreateMutex\b', 'okay::thr::CreateMutex'),
        (r'\bSDL_DestroyMutex\b', 'okay::thr::DestroyMutex'), (r'\bSDL_LockMutex\b', 'okay::thr::LockMutex'),
@@ -32,6 +36,7 @@ def strip(s):
     return s
 
 def read(f): return strip(open(os.path.join(ROOT, f), encoding='utf-8').read())
+def read_group(f): return read(f) + ''.join('\n' + read(g) for g in SPLIT_FROM.get(f, []))
 def read_rev(rev, f): return strip(subprocess.check_output(['git', '-C', ROOT, 'show', '%s:%s' % (rev, f)]).decode('utf-8'))
 
 def counts_old(text):
@@ -53,7 +58,7 @@ def main():
     bad = 0
     base = json.load(open(BASELINE))
     for f in FILES:
-        new = read(f)
+        new = read_group(f)
         left = [m.group(0) for m in re.finditer(r'SDL_(Create|Detach|Wait|Destroy|Lock|Unlock)(Thread|Mutex)\b|SDL_Atomic\w*|SDL_atomic_t|SDL_mutex\b|SDL_Thread\b', new)]
         if left: print('%s: SDL thread names still present: %s' % (f, sorted(set(left)))); bad += 1
         want, have = base[f], counts_new(new)
@@ -66,7 +71,7 @@ def main():
             old = read_rev(rev, f)
             for a, b in MAP + ALLOWED: old = re.sub(a, b, old)
             ol = [re.sub(r'\s+', '', l) for l in old.split('\n') if TOKEN.search(l)]
-            nl = [re.sub(r'\s+', '', l) for l in read(f).split('\n') if TOKEN.search(l)]
+            nl = [re.sub(r'\s+', '', l) for l in read_group(f).split('\n') if TOKEN.search(l)]
             if len(ol) != len(nl): print('%s: %d lines with thread names before, %d now' % (f, len(ol), len(nl))); bad += 1
             for i, (a, b) in enumerate(zip(ol, nl)):
                 if a != b: print('%s: line %d differs\n  old: %s\n  new: %s' % (f, i + 1, a, b)); bad += 1

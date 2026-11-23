@@ -376,8 +376,8 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         Collider3D* cb = E.Back(b);
         if (!ca || !cb) return true;   // a terrain collides with everything solid
         if (!LayersCollide(ca->layer, cb->layer)) return false;
-        if ((ca->isTrigger || cb->isTrigger) && (!TriggerAccepts(ca, cb) || !TriggerAccepts(cb, ca))) return false;
-        return true;
+        return true;   // (a trigger's tag and layer filter is applied in the event pass: the filter can change while the
+                       //  pair stays put, and a pair is only offered here when it starts to overlap)
     };
     // friction and bounce of a pair: each collider's own value (or its body's) and the stronger of the two combine rules
     // (PhysicsMaterial.hpp: Default = square root of the frictions, the larger bounce)
@@ -812,6 +812,35 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         damp(cb, e.bodyA);
     });
 
+    // breakable joints break when their two anchors drift apart by more than breakForce (the Joint3D meaning)
+    for (auto& kv : E.joints) {
+        Joint3D* j = const_cast<Joint3D*>(kv.first);
+        if (!j->breakable || j->broken) continue;
+        const phys::JointDef& d = W.GetJoint(kv.second.id);
+        const phys::V3 a = d.bodyA != phys::kInvalidId ? W.GetTransform(d.bodyA).Apply(d.frameA.p) : d.frameA.p;
+        const phys::V3 b = W.GetTransform(d.bodyB).Apply(d.frameB.p);
+        float stretch = phys::Len(b - a);
+        if (d.type == phys::JointType::Distance) stretch = std::fabs(phys::Len(b - a) - d.maxLength);
+        // The joint now holds firm, so its stretch stays small; what it had to undo this step is the push it gave times
+        // dt^2 / mass: the stretch the old step measured before it pulled the two back (a hard yank breaks it, a weight
+        // hanging still does not).
+        float invMass = 0.0f;
+        for (phys::BodyId id : {d.bodyA, d.bodyB})
+            if (id != phys::kInvalidId && W.GetType(id) == phys::BodyType::Dynamic && W.GetMass(id) > 0.0f) invMass += 1.0f / W.GetMass(id);
+        const float undone = phys::Len(W.JointForce(kv.second.id)) * dt * dt * invMass;
+        if (std::max(stretch, undone) > j->breakForce) {
+            j->broken = true;
+            // A joint that breaks this step held nothing back: give each body the straight-line push the joint gave it
+            // this step, so a yanked body flies on with its speed instead of stopping where the joint snapped.
+            const phys::V3 F = W.JointForce(kv.second.id);
+            if (d.bodyB != phys::kInvalidId && W.GetType(d.bodyB) == phys::BodyType::Dynamic && W.GetMass(d.bodyB) > 0.0f)
+                W.SetLinearVelocity(d.bodyB, W.GetLinearVelocity(d.bodyB) - F * (dt / W.GetMass(d.bodyB)));
+            if (d.bodyA != phys::kInvalidId && W.GetType(d.bodyA) == phys::BodyType::Dynamic && W.GetMass(d.bodyA) > 0.0f)
+                W.SetLinearVelocity(d.bodyA, W.GetLinearVelocity(d.bodyA) + F * (dt / W.GetMass(d.bodyA)));
+            W.DestroyJoint(kv.second.id);   // let go now
+        }
+    }
+
     // ---- 3. world -> scene ----
     for (Rigidbody3D* rb : rbs) {
         auto it = E.bodies.find(rb);
@@ -849,27 +878,6 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
             if (rb->sleeping) ++m_stats.asleep; else ++m_stats.awake;
         }
     }
-    // breakable joints break when their two anchors drift apart by more than breakForce (the Joint3D meaning)
-    for (auto& kv : E.joints) {
-        Joint3D* j = const_cast<Joint3D*>(kv.first);
-        if (!j->breakable || j->broken) continue;
-        const phys::JointDef& d = W.GetJoint(kv.second.id);
-        const phys::V3 a = d.bodyA != phys::kInvalidId ? W.GetTransform(d.bodyA).Apply(d.frameA.p) : d.frameA.p;
-        const phys::V3 b = W.GetTransform(d.bodyB).Apply(d.frameB.p);
-        float stretch = phys::Len(b - a);
-        if (d.type == phys::JointType::Distance) stretch = std::fabs(phys::Len(b - a) - d.maxLength);
-        // The joint now holds firm, so its stretch stays small; what it had to undo this step is the push it gave times
-        // dt^2 / mass: the stretch the old step measured before it pulled the two back (a hard yank breaks it, a weight
-        // hanging still does not).
-        float invMass = 0.0f;
-        for (phys::BodyId id : {d.bodyA, d.bodyB})
-            if (id != phys::kInvalidId && W.GetType(id) == phys::BodyType::Dynamic && W.GetMass(id) > 0.0f) invMass += 1.0f / W.GetMass(id);
-        const float undone = phys::Len(W.JointForce(kv.second.id)) * dt * dt * invMass;
-        if (std::max(stretch, undone) > j->breakForce) {
-            j->broken = true;
-            W.DestroyJoint(kv.second.id);   // let go now
-        }
-    }
     const phys::WorldStats& ws = W.Stats();
     m_stats.contacts = ws.points;
     m_stats.manifolds = ws.touching;
@@ -891,6 +899,7 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         Collider3D* a = E.Back(e.a);
         Collider3D* b = E.Back(e.b);
         if (!a || !b || a == b) continue;   // terrain contacts raise no callbacks (as before)
+        if (e.sensor && (!TriggerAccepts(a, b) || !TriggerAccepts(b, a))) continue;   // filtered out (now: Exit if it was in)
         const EngineBridge::CPair key = norm(a, b);
         if (!nowSet.insert(key).second) continue;   // (another piece of the same pair already reported it)
         nowList.push_back(key);

@@ -188,6 +188,9 @@ public:
         return *this;
     }
 
+    /// An old type or record name that still finds this entry (ComponentTypeInfo::aliases).
+    PropertyBuilder& Alias(const char* oldName) { m_info.aliases.push_back(oldName); return *this; }
+
     // ---- Modifiers for the property added last ---------------------------------------
     PropertyBuilder& Group(const char* group) { Last().group = group; return *this; }
     PropertyBuilder& Tooltip(const char* text) { Last().tooltip = text; return *this; }

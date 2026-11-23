@@ -504,6 +504,39 @@ struct KvIn {
         f((b + "R").c_str(), c.r); f((b + "G").c_str(), c.g); f((b + "B").c_str(), c.b); f((b + "A").c_str(), c.a);
     }
 };
+// A component type key from a `compoff` / `comporder` record: an old name of a component that was merged into
+// another (PropertyRegistry aliases, "ActiveRagdoll" -> "Ragdoll") becomes the name it has now.
+std::string CurrentTypeKey(const std::string& key) {
+    auto info = PropertyRegistry::FindByName(key);
+    if (!info || info->name == key) return key;
+    for (const std::string& a : info->aliases) if (a == key) return info->name;
+    return key;
+}
+// The one Ragdoll's `ragdoll` record: its PropertyRegistry fields (WritePropertyFields). Files from before the one
+// Ragdoll (2026-11-23) hold the old Verlet Ragdoll's keys under the same record: the ones that still mean something
+// are renamed (onDeath -> limpOnDeath, deathPush -> deathImpulse, hits -> reactToDamage, recover -> hitRecover);
+// the Verlet solver's own (grav, damp, fric, radius, iters, maxSpeed) and hitPush have no counterpart and are dropped.
+void ReadRagdollFields(Ragdoll& rd, std::istream& in, std::vector<std::string>* notes) {
+    auto info = PropertyRegistry::FindByType(std::type_index(typeid(Ragdoll)));
+    if (!info) return;
+    KvIn k(in);
+    static const std::pair<const char*, const char*> kRenamed[] = {
+        {"onDeath", "limpOnDeath"}, {"deathPush", "deathImpulse"}, {"hits", "reactToDamage"}, {"recover", "hitRecover"}};
+    static const char* const kDropped[] = {"grav", "damp", "fric", "radius", "iters", "maxSpeed", "hitPush"};
+    std::string text;
+    for (const auto& [key, value] : k.m) {
+        std::string name = key;
+        bool drop = false;
+        for (const char* d : kDropped) if (name == d) drop = true;
+        if (drop) continue;
+        for (const auto& [from, to] : kRenamed) if (name == from) name = to;
+        text += " " + name + "=" + Quote(value);
+    }
+    std::istringstream fields(text);
+    std::vector<std::string> mine;
+    ComponentSerializerRegistry::ReadPropertyFields(rd, *info, fields, &mine);
+    if (notes) for (auto& n : mine) notes->push_back("ragdoll: " + n);
+}
 // A joint limit as `<p>T= <p>S= ...` keys (nothing when it's None).
 void WriteLimitKv(KvOut& k, const std::string& p, const IKJointLimit& l) {
     if (!l.Active()) return;
@@ -2808,15 +2841,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (!ts->weapon.empty()) k.str("weapon", ts->weapon);
         out << "\n";
     }
-    for (auto* rd : go->GetComponents<Ragdoll>()) {
-        out << "  ragdoll";
-        KvOut k{out};
-        k("grav", rd->gravity)("damp", rd->damping)("fric", rd->friction)("radius", rd->radius)
-         ("iters", rd->iterations)("maxSpeed", rd->maxSpeed).b("onDeath", rd->ragdollOnDeath)
-         ("deathPush", rd->deathImpulse).b("hits", rd->hitReactions)("hitPush", rd->hitImpulse)
-         ("recover", rd->hitRecover);
-        out << "\n";
-    }
+    if (auto rdInfo = PropertyRegistry::FindByType(std::type_index(typeid(Ragdoll))))
+        for (auto* rd : go->GetComponents<Ragdoll>()) {
+            out << "  ragdoll";
+            ComponentSerializerRegistry::WritePropertyFields(*rd, *rdInfo, out);
+            out << "\n";
+        }
     for (auto* pc : go->GetComponents<Platformer25DController>()) {
         out << "  p25ctrl";
         KvOut k{out};
@@ -7203,12 +7233,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.b("zoom", ts->wheelZoom); k.f("minDist", ts->minDistance); k.f("maxDist", ts->maxDistance);
                     k.f("shake", ts->fireShake); k.str("proj", ts->projectile); k.str("weapon", ts->weapon);
                 } else if (field == "ragdoll") {
-                    auto* rd = go->AddComponent<Ragdoll>();
-                    KvIn k(in);
-                    k.f("grav", rd->gravity); k.f("damp", rd->damping); k.f("fric", rd->friction);
-                    k.f("radius", rd->radius); k.i("iters", rd->iterations); k.f("maxSpeed", rd->maxSpeed);
-                    k.b("onDeath", rd->ragdollOnDeath); k.f("deathPush", rd->deathImpulse);
-                    k.b("hits", rd->hitReactions); k.f("hitPush", rd->hitImpulse); k.f("recover", rd->hitRecover);
+                    ReadRagdollFields(*go->AddComponent<Ragdoll>(), in, nullptr);
                 } else if (field == "fpstance" || field == "pcfirststance" || field == "tpstance" || field == "pcthirdstance") {
                     // Stance options for the controller declared just above (crouch/prone body).
                     KvIn k(in);
@@ -9518,11 +9543,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     if (pos >= 0) siblingHints[idx] = pos;
                 } else if (field == "compoff") {
                     std::string key = ReadQuoted(in); int occ = 0; in >> occ;
-                    compOff.push_back({key, occ});
+                    compOff.push_back({CurrentTypeKey(key), occ});
                 } else if (field == "comporder") {
                     std::string rest; std::getline(in, rest);
                     std::istringstream ls(rest);
-                    while (ls >> std::ws && ls.peek() == '"') compOrder.push_back(ReadQuoted(ls));
+                    while (ls >> std::ws && ls.peek() == '"') compOrder.push_back(CurrentTypeKey(ReadQuoted(ls)));
                 } else if (field == "override") {
                     GameObject::PrefabOverride ov; in >> ov.object; ov.line = ReadQuoted(in);
                     if (in && ov.object >= 0 && !ov.line.empty()) go->prefabOverrides.push_back(ov);
@@ -10818,8 +10843,24 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(tbtn));
     // Last, so every record written before keeps its place. Saved from their PropertyRegistry entries, no code of their own (none of them was saved before).
-    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion", "ActiveRagdoll"})
+    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion"})
         ComponentSerializerRegistry::RegisterFromProperties(type);
+    // `activeragdoll`: the record of ActiveRagdoll, now the one Ragdoll (saved as `ragdoll`). Read only: it fills the
+    // object's Ragdoll (one an older `ragdoll` record on the same object made, or a new one), field for field.
+    ComponentSerializerRegistry::Entry oldActive;
+    oldActive.name = "activeragdoll";
+    oldActive.write = [](const GameObject&, std::ostream&) {};
+    oldActive.readWithNotes = [](GameObject& go, std::istream& in, std::vector<std::string>& notes) {
+        auto info = PropertyRegistry::FindByType(std::type_index(typeid(Ragdoll)));
+        if (!info) return;
+        Ragdoll* rd = go.GetComponent<Ragdoll>();
+        if (!rd) rd = go.AddComponent<Ragdoll>();
+        std::vector<std::string> mine;
+        ComponentSerializerRegistry::ReadPropertyFields(*rd, *info, in, &mine);
+        for (auto& n : mine) notes.push_back("activeragdoll: " + n);
+    };
+    oldActive.read = [r = oldActive.readWithNotes](GameObject& go, std::istream& in) { std::vector<std::string> n; r(go, in, n); };
+    ComponentSerializerRegistry::Register(std::move(oldActive));
 }
 } // namespace detail
 

@@ -1,11 +1,11 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// DynamicCharacter - the brain of the ActiveRagdoll: a powered ragdoll of the
+// DynamicCharacter - the brain of the Ragdoll component: a powered ragdoll of the
 // 15 humanoid bones that follows the animation with per-joint PD drives, keeps
 // its balance under pushes, steps to catch itself, falls when it cannot, braces
 // and protects its head, and gets up again. No Scene here: it reads the
 // animated bone pose, a ContactWorld and commands, and gives back bone poses.
-// The Components/ActiveRagdoll component connects it to a character.
+// The Components/Ragdoll component connects it to a character.
 //
 // Written from published research and general control methods only (see
 // docs/gameplay/active_ragdoll.md for the full list):

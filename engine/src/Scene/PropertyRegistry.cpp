@@ -252,6 +252,12 @@ void ReindexLocked(Table& t) {
         t.byLower.emplace(Lower(e.name), i);
         if (!e.recordName.empty()) t.byLower.emplace(Lower(e.recordName), i);
     }
+    // Aliases last: a real name of another entry always wins over an old name.
+    for (std::size_t i = 0; i < t.infos.size(); ++i)
+        for (const std::string& a : t.infos[i]->aliases) {
+            t.byName.emplace(a, i);
+            t.byLower.emplace(Lower(a), i);
+        }
 }
 } // namespace
 

@@ -7,7 +7,6 @@
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/Ragdoll.hpp"
-#include "okay/Components/ActiveRagdoll.hpp"
 #include "okay/Components/TweenAnimation.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Components/ScriptComponent.hpp"

@@ -1,6 +1,6 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// RagdollPhysics - the thin physics layer under the ActiveRagdoll (our own
+// RagdollPhysics - the thin physics layer under the Ragdoll component (our own
 // "dynamic character" system, docs/gameplay/active_ragdoll.md).
 //
 // The controller (DynamicCharacter) only talks to the abstract RagdollPhysics

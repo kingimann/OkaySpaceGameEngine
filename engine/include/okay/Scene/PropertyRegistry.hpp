@@ -25,6 +25,9 @@ struct ComponentTypeInfo {
     std::string name;
     std::string recordName;
     std::string category;                 ///< "Rendering", "Physics 2D", ... for an Add Component menu
+    /// Old type or record names of this component ("ActiveRagdoll" for Ragdoll): FindByName finds the
+    /// entry by them too, so saved scenes, scripts and paths that use an old name reach the one component.
+    std::vector<std::string> aliases;
     std::type_index type{typeid(void)};   ///< the exact dynamic type
     /// The pseudo component "GameObject": its properties are the object's own (name,
     /// active, tag, layer, ...) and are read and written through any component.
@@ -91,7 +94,7 @@ public:
     /// getter are dropped, and when a property name appears twice the first one stays.
     /// Third-party components call this (see PropertyBuilder.hpp) from startup code.
     static void Register(ComponentTypeInfo info);
-    /// By type name or record name (see above). Null when unknown.
+    /// By type name, record name or alias (see above). Null when unknown.
     static std::shared_ptr<const ComponentTypeInfo> FindByName(const std::string& name);
     static std::shared_ptr<const ComponentTypeInfo> FindByType(std::type_index type);
     /// The entry for `c`'s exact dynamic type (a subclass is not matched).

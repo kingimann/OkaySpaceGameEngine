@@ -1,5 +1,5 @@
 // RagdollPhysics - our own small articulated rigid-body solver for the
-// ActiveRagdoll. Written from the method in Mueller et al., "Detailed Rigid
+// Ragdoll component. Written from the method in Mueller et al., "Detailed Rigid
 // Body Simulation with Extended Position Based Dynamics" (SCA 2020): each
 // frame is cut into substeps; each substep predicts the poses, applies one
 // pass of positional / angular corrections (joints, limits, drives, contacts),

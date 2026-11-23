@@ -1,5 +1,6 @@
 #pragma once
-// RagdollShared - what Ragdoll and ActiveRagdoll both need, in one place:
+// RagdollShared - the scene helpers of the one Ragdoll component (kept apart so its
+// .cpp stays about the body):
 //  - FindBones: the 15 humanoid bones (the blocky Character's part rig, or an
 //    imported rig through humanoid::MapHumanoidBones);
 //  - DriverKind / SwitchOff / SwitchBackOn: the one list of components that

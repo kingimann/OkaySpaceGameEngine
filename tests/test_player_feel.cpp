@@ -5,6 +5,7 @@
 #include <Okay.hpp>
 #include "okay/Components/ControllerPresets.hpp"
 #include "okay/Core/SystemCost.hpp"
+#include "player_test_rig.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -17,34 +18,11 @@ using Mode = PlayerController::ViewMode;
 
 namespace {
 
-struct Rig {
-    std::unique_ptr<Scene> sc;
-    GameObject* p = nullptr;
-    Rigidbody3D* rb = nullptr;
-    float dt = 1.0f / 60.0f;
-    Rig() {
-        sc = std::make_unique<Scene>("feel");
-        sc->physicsEnabled = true;
-        sc->UseFixedStepPhysics(true);
-        GameObject* f = sc->CreateGameObject("Floor");
-        f->transform->localPosition = {0, -0.5f, 0};
-        f->AddComponent<BoxCollider3D>()->size = {400, 1, 400};
-    }
-    void Spawn(Mode m, int preset, float y = 0.02f) {
-        p = Templates::BuildPlayerBody(*sc, {0, y, 0}, "Player");
-        rb = p->GetComponent<Rigidbody3D>();
-        PlayerController::Add(p, m, m == Mode::Third ? PlayerView::View::Third : PlayerView::View::First);
-        if (preset >= 0) ControllerPresets::ApplyTo(p, preset);
-        Templates::MountEyeCamera(*sc, p, "Main Camera");
-        sc->Start();
-    }
-    void Frame(const std::vector<char>& k, float d = 0.0f) { Input::FeedKeys(k); sc->Update(d > 0 ? d : dt); }
-    void Frames(double s, const std::vector<char>& k) { for (int i = 0, n = (int)std::lround(s / dt); i < n; ++i) Frame(k); }
-    Vec3 Pos() const { return p->transform->Position(); }
-    ~Rig() { Input::FeedKeys({}); }
+// The shared player rig (tests/player_test_rig.hpp) with this test's scene name.
+struct Rig : okay_test::PlayerTestRig {
+    Rig() : PlayerTestRig("feel") {}
 };
-
-float HSpeed(const Rig& r) { return std::hypot(r.rb->velocity.x, r.rb->velocity.z); }
+using okay_test::HSpeed;
 
 struct Motion { float timeToRun = 0, stopDist = 0, stopTime = 0, airGain = 0, runSpeed = 0; };
 

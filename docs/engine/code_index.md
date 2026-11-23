@@ -28,7 +28,7 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Physics | 30 | 149 | [code_index/engine-Physics.md](code_index/engine-Physics.md) |
 | engine-Platform | 28 | 221 | [code_index/engine-Platform.md](code_index/engine-Platform.md) |
 | engine-Render | 49 | 461 | [code_index/engine-Render.md](code_index/engine-Render.md) |
-| engine-Scene | 28 | 123 | [code_index/engine-Scene.md](code_index/engine-Scene.md) |
+| engine-Scene | 28 | 124 | [code_index/engine-Scene.md](code_index/engine-Scene.md) |
 | engine-Script | 1 | 12 | [code_index/engine-Script.md](code_index/engine-Script.md) |
 | engine-Scripting | 6 | 29 | [code_index/engine-Scripting.md](code_index/engine-Scripting.md) |
 | engine-Testing | 5 | 43 | [code_index/engine-Testing.md](code_index/engine-Testing.md) |

@@ -3069,6 +3069,18 @@ meanwhile written several of the same toolkit pieces its own way. Bringing the s
   triangles, a row-copy clear) give byte-identical pictures (all 114 compared) and the test now times 75 frames per case in a normal run
   (150 with `OKAY_UI_COMPARE_STRICT=1`, where the speed is checked; `OKAY_UI_COMPARE_FRAMES` still overrides): about 9 minutes to under
   half a minute in a Release build.
+- **Hidden tabs (fix after v2.903.1.3).** The editor's `DrawInspector` runs its body whether or not `Begin` says the window shows, as
+  Dear ImGui code may: ImGui then skips every item. The OkayUI sections (`HostSection`, editor/OkayPanels.cpp) did not skip: with the
+  Inspector and the Hierarchy as two tabs and the Hierarchy picked, every section was drawn and offered the mouse anyway, and since a
+  skipped ImGui item does not move the cursor they all landed on the same line, painted over the Hierarchy (OkayUI is flushed after
+  ImGui): a component bar, "+ Add Component" over its name, the Tag / Layer / Save as Prefab row. `okayuihost::HiddenInImGui`
+  (`shared/OkayUIHostImGui.hpp`) now answers "ImGui shows nothing of this window" (a tab behind another, collapsed, a hidden frame);
+  `HostSection` then draws nothing and offers nothing (and hands the frame to the Dear ImGui body, which ImGui skips), `HostWindow` and
+  the Console's OkayUI panel likewise on a frame ImGui keeps hidden. Shown, the card was already laid out right: the name has the room
+  left of Static and Lock (they drop to the next line when narrow) and Add Component is under the last component. Tests:
+  `okayui_host_layering` (two tabs either way round, side by side, a collapsed window) and `okayui_inspector` (the name, the boxes
+  and Add Component apart at 260 to 900 pixels). The Hierarchy in that picture is Dear ImGui's (the OkayUI Hierarchy is not wired, see
+  "Panels not wired"); it was only covered, not broken.
 - **Not taken:** the navigation fallback probe index and crowd example (an unrelated engine change in the stack's base), the Hierarchy's
   flat row list in the editor, pictures under `docs/images/` (removed on main; the section texts above still name them), `docs/try_it`
   entries.

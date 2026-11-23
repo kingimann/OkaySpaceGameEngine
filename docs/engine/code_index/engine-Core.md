@@ -216,7 +216,7 @@ Back to the [code index](../code_index.md). 80 headers, 488 names.
 
 ## `engine/include/okay/Core/FileCopy.hpp`
 
-- `CopyFileOver` function, line 20
+- `CopyFileOver` function, line 23
 
 ## `engine/include/okay/Core/FileStamp.hpp`
 

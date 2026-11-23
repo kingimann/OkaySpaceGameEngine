@@ -209,21 +209,21 @@ Back to the [code index](../code_index.md). 67 headers, 965 names.
 
 ## `shared/ContentSync.hpp`
 
-- `Commit` struct, line 38: ---- The commit record ---------------------------------------------------------------------------------------------------------
-- `StorePaths` struct, line 114: Paths inside a content root.
-- `SerializeCommit` function, line 125
-- `ReadCommit` function, line 131: Strict read of current.txt. False when it is missing or damaged (the game then sees no downloaded content at all).
-- `ReadCommittedManifest` function, line 157: The manifest of the committed version, read from the store and parsed (not re-verified: see ContentOverlay for that).
-- `Rollback` function, line 167: Put the previous version back as the visible one (a bad release). Keeps 'floor'. False when there is no usable previous version.
-- `Phase` enum, line 188: ---- Configuration and result ----------------------------------------------------------------------------------------------------
-- `Progress` struct, line 190
-- `SyncConfig` struct, line 197
-- `Status` enum, line 217
-- `Reason` enum, line 218
-- `SyncResult` struct, line 220
-- `ReasonName` function, line 232
-- `SelectEntries` function, line 252: Which manifest entries this app wants: group filter and per-entry min-app. 'skipped' counts the rest.
-- `Sync` class, line 263
+- `Commit` struct, line 39: ---- The commit record ---------------------------------------------------------------------------------------------------------
+- `StorePaths` struct, line 113: Paths inside a content root.
+- `SerializeCommit` function, line 124
+- `ReadCommit` function, line 130: Strict read of current.txt. False when it is missing or damaged (the game then sees no downloaded content at all).
+- `ReadCommittedManifest` function, line 156: The manifest of the committed version, read from the store and parsed (not re-verified: see ContentOverlay for that).
+- `Rollback` function, line 166: Put the previous version back as the visible one (a bad release). Keeps 'floor'. False when there is no usable previous version.
+- `Phase` enum, line 187: ---- Configuration and result ----------------------------------------------------------------------------------------------------
+- `Progress` struct, line 189
+- `SyncConfig` struct, line 196
+- `Status` enum, line 216
+- `Reason` enum, line 217
+- `SyncResult` struct, line 219
+- `ReasonName` function, line 231
+- `SelectEntries` function, line 251: Which manifest entries this app wants: group filter and per-entry min-app. 'skipped' counts the rest.
+- `Sync` class, line 262
 
 ## `shared/ContentTransport.hpp`
 
@@ -903,45 +903,45 @@ Back to the [code index](../code_index.md). 67 headers, 965 names.
 
 ## `shared/ProjectCreate.hpp`
 
-- `StandardFolders` function, line 31: The folders a new project starts with inside Assets (the Project panel's "Create >
-- `SettingsFileName` function, line 37: The project settings file, in the project folder.
-- `NameCheck` struct, line 48
-- `Utf8Length` function, line 54
-- `IsReservedDeviceName` function, line 60
-- `CheckName` function, line 71: Check what the person typed in the Name box. The result's 'folder' is the name with the spaces
-- `SanitizeName` function, line 99: Turn any text into a name CheckName accepts: illegal characters become '-', the ends are
-- `TemplateInfo` struct, line 119: One starting scene a new project can begin from. 'title' is what the launcher passes as --template and
-- `Templates` function, line 121
-- `TemplateGroups` function, line 144: Group names; index 0 is "All".
-- `FindTemplate` function, line 149: The template called 'title', or null.
-- `Absolute` function, line 156
-- `NearestExisting` function, line 163: The nearest folder at or above 'p' that exists ("" when none does).
-- `CanWriteIn` function, line 176: True when a file can be made in 'dir' (tries it; permission bits alone lie on network
-- `CheckLocation` function, line 191: Why 'location' can't hold a new project, or "" when it can (it may not exist yet: it is made).
-- `LooksUsed` function, line 216: A folder counts as used when it holds a project that has files, or clutter that isn't a project.
-- `Plan` struct, line 228
-- `Made` struct, line 271: What a creation step made, so a failure can take back exactly that and nothing else.
-- `MakeDirs` function, line 277: Make 'dir' and any missing parents, recording each one that did not exist before.
-- `Undo` function, line 297: Remove what 'made' lists, newest first. A folder that still holds something (the person's files)
-- `MakeSkeleton` function, line 308: <root>, <root>/Assets and the standard folders. On failure everything this call made is removed
-- `IsEmptyShell` function, line 320: A folder a launcher (or a failed Create) left behind: only an empty Assets folder and nothing else.
-- `RemoveEmptyShell` function, line 331: Remove 'root' when it is an empty shell (see IsEmptyShell). True if it was removed.
-- `WriteTextAtomic` function, line 344: Replace 'path' with 'text' all at once: write 'path.tmp', check it, rename it over. The old file stays
-- `ReadText` function, line 383: Read a whole file; false if it can't be opened.
-- `SettingsPath` function, line 391: Where the settings of the project in 'root' live.
-- `IsStarterTemplate` function, line 400: True for the few templates the Create page shows before "All templates" is opened.
-- `TemplateFeatureLines` function, line 403: Three short, true points about a template, shown on its card when it is selected.
-- `CheckProjectVersion` function, line 430: A project version the editor can store in project.okayproj (its field holds 31 characters).
-- `WizardMove` enum, line 451: The New Project popup. It is a three-step wizard (template, details, review). Creating is
-- `NewProjectWizard` struct, line 453
-- `WizardCanAdvance` function, line 463
-- `WizardOpen` function, line 470
-- `WizardOpenOnTemplate` function, line 482: A starter-template card is only a shortcut into the wizard: it opens the Details step with that
-- `WizardClose` function, line 490
-- `WizardNext` function, line 497
-- `WizardBack` function, line 504
-- `WizardBeginCreate` function, line 510
-- `ApplyWizardInput` function, line 519: Enter moves forward when the step is valid (and starts creation on the review step).
+- `StandardFolders` function, line 32: The folders a new project starts with inside Assets (the Project panel's "Create >
+- `SettingsFileName` function, line 38: The project settings file, in the project folder.
+- `NameCheck` struct, line 49
+- `Utf8Length` function, line 55
+- `IsReservedDeviceName` function, line 61
+- `CheckName` function, line 72: Check what the person typed in the Name box. The result's 'folder' is the name with the spaces
+- `SanitizeName` function, line 100: Turn any text into a name CheckName accepts: illegal characters become '-', the ends are
+- `TemplateInfo` struct, line 120: One starting scene a new project can begin from. 'title' is what the launcher passes as --template and
+- `Templates` function, line 122
+- `TemplateGroups` function, line 145: Group names; index 0 is "All".
+- `FindTemplate` function, line 150: The template called 'title', or null.
+- `Absolute` function, line 157
+- `NearestExisting` function, line 164: The nearest folder at or above 'p' that exists ("" when none does).
+- `CanWriteIn` function, line 177: True when a file can be made in 'dir' (tries it; permission bits alone lie on network
+- `CheckLocation` function, line 192: Why 'location' can't hold a new project, or "" when it can (it may not exist yet: it is made).
+- `LooksUsed` function, line 217: A folder counts as used when it holds a project that has files, or clutter that isn't a project.
+- `Plan` struct, line 229
+- `Made` struct, line 272: What a creation step made, so a failure can take back exactly that and nothing else.
+- `MakeDirs` function, line 278: Make 'dir' and any missing parents, recording each one that did not exist before.
+- `Undo` function, line 298: Remove what 'made' lists, newest first. A folder that still holds something (the person's files)
+- `MakeSkeleton` function, line 309: <root>, <root>/Assets and the standard folders. On failure everything this call made is removed
+- `IsEmptyShell` function, line 321: A folder a launcher (or a failed Create) left behind: only an empty Assets folder and nothing else.
+- `RemoveEmptyShell` function, line 332: Remove 'root' when it is an empty shell (see IsEmptyShell). True if it was removed.
+- `WriteTextAtomic` function, line 345: Replace 'path' with 'text' all at once: write 'path.tmp', check it, rename it over. The old file stays
+- `ReadText` function, line 384: Read a whole file; false if it can't be opened.
+- `SettingsPath` function, line 392: Where the settings of the project in 'root' live.
+- `IsStarterTemplate` function, line 401: True for the few templates the Create page shows before "All templates" is opened.
+- `TemplateFeatureLines` function, line 404: Three short, true points about a template, shown on its card when it is selected.
+- `CheckProjectVersion` function, line 431: A project version the editor can store in project.okayproj (its field holds 31 characters).
+- `WizardMove` enum, line 452: The New Project popup. It is a three-step wizard (template, details, review). Creating is
+- `NewProjectWizard` struct, line 454
+- `WizardCanAdvance` function, line 464
+- `WizardOpen` function, line 471
+- `WizardOpenOnTemplate` function, line 483: A starter-template card is only a shortcut into the wizard: it opens the Details step with that
+- `WizardClose` function, line 491
+- `WizardNext` function, line 498
+- `WizardBack` function, line 505
+- `WizardBeginCreate` function, line 511
+- `ApplyWizardInput` function, line 520: Enter moves forward when the step is valid (and starts creation on the review step).
 
 ## `shared/ProjectDelete.hpp`
 

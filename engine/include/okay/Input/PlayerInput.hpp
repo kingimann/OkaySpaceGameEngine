@@ -3,6 +3,7 @@
 // one controller) and its own control scheme. Press-any-button joining, leaving, per-player rebinding saved under the player's
 // number, and one Update for all. Pure logic over Input: no SDL, no window.
 #include "okay/Input/ActionSet.hpp"
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -14,8 +15,13 @@ enum class JoinDevice { Keyboard, Pad, Any };   // Any: the keyboard and every c
 class PlayerInputManager {
 public:
     static constexpr int kMaxPlayers = 8;
+    /// Called with each new player's set right after it is copied from the asset, before its saved rebinding is loaded
+    /// (InputRuntime adds the actions code defined through InputActions).
+    std::function<void(ActionSet&)> onJoin;
     /// The asset every new player starts from (copied).
-    void SetAsset(const ActionSet& asset) { m_asset = asset; }
+    void SetAsset(const ActionSet& asset) { m_asset = asset; ++m_assetSerial; }
+    /// Changes with every SetAsset (InputRuntime rebuilds its action table from the new asset).
+    unsigned AssetSerial() const { return m_assetSerial; }
     const ActionSet& Asset() const { return m_asset; }
     /// Add a player. Pad: `pad` is the controller number (0..3). Keyboard and Pad each pair a device exactly once.
     /// Returns the player index, or -1 (device already paired, bad pad number, or no room).
@@ -43,6 +49,7 @@ private:
     struct Slot { ActionSet set; JoinDevice device = JoinDevice::Keyboard; int pad = -1; unsigned serial = 0; };
     ActionSet m_asset;
     unsigned m_joins = 0;
+    unsigned m_assetSerial = 0;
     std::vector<std::unique_ptr<Slot>> m_players;
 };
 

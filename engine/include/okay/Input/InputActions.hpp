@@ -48,17 +48,14 @@ struct InputBinding {
 /// Each action has a list of bindings; it is down while any of them is. The
 /// defaults cover a typical action game; games add their own with Define.
 ///
-/// One rebinding store: the typed layer (ActionSet, the .okayinput asset, InputRuntime) is the canonical one, and this
-/// table is the text-binding facade the built-in controllers read. An action that the first local player's ActionSet
-/// (InputRuntime player 0, "the default ActionSet") also has, with the same authored bindings as this action's defaults
-/// (Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact, Reload, Inventory and Pause with the shipped asset), is linked:
-/// binding i here is binding i there. Linking starts when player 0 joins (the asset in use is known then): its saved typed
-/// rebinds come here and this table's saved rebinds ("input.<action>") go there. After that a rebind on either side
-/// (Rebind, the Controls screen, RemapBind, a profile, an "ia:" Keybind field, ia_rebind) changes both. A binding whose
-/// value one side cannot hold (a pad button inside the Move keys, a lone key for Look) is left alone on both sides, and a
-/// rebind that would give the typed layer a clash this table does not have (Controls screen Unbind) is not mirrored.
-/// Each layer saves as before: "input.<action>" here, "inputov.player0" there (only the mirrored lines are touched).
-/// Actions the ActionSet does not have (Dig, Prone, the Vehicle keys, a game's own) live only here, as before.
+/// One input system: this is the name-based front of the engine's one action table, InputRuntime::Actions() (an ActionSet:
+/// the .okayinput asset in use plus the actions defined here). There is no second copy of any action, binding or rebinding:
+/// Get / Down / Vector read that table, Rebind / the Controls screen / profiles change it, and the typed calls (ia_*,
+/// Input.Player*, the "ia:" Keybind field) change the same bindings for the first local player. Contexts are its action maps.
+/// The player's rebinding is one store, saved as "inputov.player0" and, for every action this front can show, also in the
+/// old per-action form "input.<action>" so earlier saves and builds keep reading it.
+/// An action the asset also has (Jump, Move ... in the shipped asset) keeps the asset's definition; the built-in defaults
+/// below only add what the asset lacks. A game's own Define replaces the asset's bindings for that name.
 class InputActions {
 public:
     struct Action {
@@ -79,14 +76,11 @@ public:
         bool invertX = false, invertY = false;   ///< flip a direction's axes (invert look)
         bool perPlayer = false;            ///< also evaluated for each controller (see Get(name, player))
 
-        // ---- Bookkeeping filled by Tick (do not set)
-        std::string key, ctxKey;           ///< lower-case name and context, for quick lookups
-        double pressedAt = -1.0e9, prevPressedAt = -1.0e9, heldSince = -1.0;
-        bool pressConsumed = false, pressedNow = false;
         struct PlayerState { float value = 0, previous = 0; Vec2 vector; };
         PlayerState players[Input::kMaxGamepads];
-        bool latchActive = false, latchHeld = false;   ///< hold-to-toggle state
     };
+    // Action is a read-only view of one table action (refreshed by Tick and whenever the table changes); change an action
+    // with the calls below (Rebind, SetBindings, SetContext ...), not through the view.
 
     /// How an action's raw reading is shaped. Saved with the player's settings ("inputresp.<action>").
     struct Response { float deadzone = 0.0f, curve = 1.0f, sensitivity = 1.0f; bool invertX = false, invertY = false; };
@@ -138,8 +132,7 @@ public:
     static void Tick();
     /// Tick with a known frame time (tests, replays, hosts that already measure it).
     static void Tick(float dt);
-    /// Use the original, slower evaluation (OKAY_OLD_INPUT=1 turns it on at start): same
-    /// results, kept to prove that and to measure the speed-up.
+    /// Kept for old callers and OKAY_OLD_INPUT=1: there is one evaluation now (ActionSet::Update), so this only records the flag.
     static void SetLegacy(bool on);
     static bool Legacy();
 
@@ -196,6 +189,8 @@ public:
     /// keyboard / mouse binding (added when there is none). For a Keys4 binding,
     /// `part` 0..3 (up, down, left, right) changes just that key. Saved to Prefs.
     static bool Rebind(const std::string& name, const std::string& binding, int part = -1);
+    /// Replace an action's whole binding list (a Controls screen's Unbind). Not saved: call Save. False for an unknown action.
+    static bool SetBindings(const std::string& name, const std::vector<InputBinding>& list);
     // Conflict checks and swapping live in RemapModel (RemapConflicts, RemapBind with RemapResolve::Swap), which a
     // Controls screen already uses; they understand the chord and wheel bindings too.
     /// All bindings as one text block ("okayinput 1" then one line per action) and back, for
@@ -251,18 +246,15 @@ public:
     /// Put one action (or every action, with "") back to its defaults.
     static void Reset(const std::string& name = "");
 
-    /// Read / write the player's rebinding from / to Prefs ("input.<action>"). Load touches nothing else. Save also mirrors
-    /// the linked actions into the live default ActionSet (once player 0 has joined) and saves just those override lines.
+    /// Read / write the player's rebinding from / to Prefs: the one store ("inputov.player0", plus "input.<action>" for
+    /// what this front can show; an old save with only "input.<action>" still loads).
     static void Load();
     static void Save();
-    /// Copy the current bindings of every linked action of `set` (the default ActionSet) into this table, skipping a value
-    /// this table would refuse (a lone key for Look, a pad button inside the Move keys). In memory only, and not written to
-    /// "input.<action>" until the typed layer saves (SaveWithStore). InputRuntime::Rebind / ResetBinding call it for player 0.
-    static void SyncFrom(const ActionSet& set);
-    /// Player 0 joined with `set`: its saved typed rebinds come here, this table's rebinds go there (InputRuntime calls it).
-    static void LinkJoined(ActionSet& set);
-    /// Player 0's typed overrides were saved: save this table too, typed rebinds pulled by SyncFrom included.
-    static void SaveWithStore();
+    /// Give `set` the actions defined here that it lacks (a game's own Define replaces the asset's bindings), the player's
+    /// response settings and the pushed contexts. InputRuntime calls it for its table and for every player that joins.
+    static void PrepareSet(ActionSet& set);
+    /// PrepareSet plus the player's saved rebinding: InputRuntime builds its table with it.
+    static void PrepareTable(ActionSet& set);
     /// Back to the built-in default set (tests, new game).
     static void Restore();
 

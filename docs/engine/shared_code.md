@@ -58,7 +58,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Convex contact (GJK, EPA) | `Physics/ConvexContact.hpp` | `okay::ConvexContact`, `convex_detail::Epa` | `ConvexHit hit = ConvexContact(supportA, supportB);` |
 | Ray against a triangle mesh | `Physics/TriMesh.hpp` | `okay::TriMesh::Raycast`, `TriMesh::RayLocal` | `mesh.Raycast(origin, dir, 100.0f, t, normal);` |
 | Save games | `Core/GameSaves.hpp` and `Core/SaveFramework.hpp` | `okay::GameSaves` (`Save`, `Load`, `AutoSave`), `Saveable`, `SaveWriter`, `SaveReader`, `SaveSystem` | `GameSaves::Save(scene, "slot1");` |
-| Input actions | `Input/ActionSet.hpp` | `okay::ActionSet` (`Pressed`, `Axis`), `ActionMap`, `BindingSpec` | `if (actions.Pressed("Jump")) ...` |
+| Input actions (the one input system) | `Input/ActionSet.hpp`, `Input/InputRuntime.hpp`, `Input/InputActions.hpp` | `okay::InputRuntime::Actions()` (the one table), `okay::ActionSet` (`Pressed`, `Axis`), `ActionMap`, `BindingSpec`; `InputActions` is its name-based front | `if (InputActions::Down("Jump")) ...` or `if (InputRuntime::Actions().Pressed("Jump")) ...` |
 | Saved fields of a component | `Scene/PropertyRegistry.hpp` | `okay::PropertyRegistry` (`Register`, `FindByName`, `TryGetProperty`) | `PropertyRegistry::TryGetProperty(go, "Health.value", v);` |
 | Curves and splines | `Math/Curves.hpp` | `okay::Curves` (`CubicBezier`, `CatmullRom`, `ArcLength`) | `Vec3 p = Curves::CatmullRom(p0, p1, p2, p3, t);` |
 | Import settings | `Core/ImportSettings.hpp` | `okay::ImportSettings` (`Defaults`, `FromPairs`), `AssetTypeFromPath` | `auto s = ImportSettings::Defaults(AssetTypeFromPath(path));` |

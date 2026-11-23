@@ -19,7 +19,7 @@ A **system** is a named part of OkaySpace that does one job from start to end (P
 - [5. Animation & IK](#5-animation--ik): Animation, Inverse Kinematics, Ragdolls
 - [6. Physics](#6-physics): Physics, Destruction and Projectiles
 - [7. Audio](#7-audio): Audio
-- [8. Input](#8-input): Input, Input Actions, Simple Input Actions
+- [8. Input](#8-input): Input
 - [9. AI & navigation](#9-ai--navigation): Navigation, Grid Pathfinding, Behavior Trees, NPCs
 - [10. Story & cinematics](#10-story--cinematics): Cutscenes, Dialogue, Quests
 - [11. Gameplay systems](#11-gameplay-systems): Inventory and Items, Crafting, Health and Survival, Building, Spawners, Turns and Minimap, Combat, RPG Stats, No-Code Behaviours, Volumes and Zones
@@ -133,9 +133,7 @@ A **system** is a named part of OkaySpace that does one job from start to end (P
 
 | System | What it does | Status | Main code | Feature map |
 |---|---|---|---|---|
-| **Input** | Reads the keyboard, mouse, gamepads and touch, and plays controller rumble. | Works | `engine/include/okay/Input/`, `engine/src/Input/GameInput.cpp`, `engine/src/Input/Input.cpp`, `engine/src/Platform/OwnLinuxEvdev.cpp`, `engine/src/Platform/SdlBackend.cpp` (+3 more) | [8.1](feature_map/08-input.md#81-keyboard-and-mouse), [8.2](feature_map/08-input.md#82-gamepad-sdl), [8.4](feature_map/08-input.md#84-cursor-and-touch), [8.5](feature_map/08-input.md#85-gameplay-input-blocking), [8.6](feature_map/08-input.md#86-rumble-and-haptics) |
-| **Input Actions** | Named actions such as Jump and Fire that work with any key or button, can be rebound by the player, and support several local players. | 2 Works, 1 Partial | `engine/src/Input/`, `engine/include/okay/Input/`, `editor/InputDebugger.hpp`, `editor/main.cpp`, `engine/include/okay/Components/UIKeybindField.hpp` (+2 more) | [8.3](feature_map/08-input.md#83-input-actions-and-rebinding-ui), [8.7](feature_map/08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel), [32.4](feature_map/20-35-planned.md#324-remapping) |
-| **Simple Input Actions** | The older text-based action table (`InputActions`) the built-in controllers read | Works (duplicate, see [below](#duplicates-found)) | `engine/include/okay/Input/InputActions.hpp`, `engine/src/Input/InputActions.cpp` | [8.3](feature_map/08-input.md#83-input-actions-and-rebinding-ui) |
+| **Input** | The engine's one input system: reads the keyboard, mouse, gamepads and touch, turns them into named actions the player can rebind (one action table, one rebinding store, for one or several local players), and plays controller rumble. | 7 Works, 1 Partial | `engine/src/Input/`, `engine/include/okay/Input/`, `editor/InputDebugger.hpp`, `editor/main.cpp`, `engine/include/okay/Components/UIKeybindField.hpp` (+5 more) | [8.1](feature_map/08-input.md#81-keyboard-and-mouse), [8.2](feature_map/08-input.md#82-gamepad-sdl), [8.3](feature_map/08-input.md#83-input-actions-and-rebinding-ui), [8.4](feature_map/08-input.md#84-cursor-and-touch), [8.5](feature_map/08-input.md#85-gameplay-input-blocking), [8.6](feature_map/08-input.md#86-rumble-and-haptics), [8.7](feature_map/08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel), [32.4](feature_map/20-35-planned.md#324-remapping) |
 
 ## 9. AI & navigation
 
@@ -357,7 +355,6 @@ Systems that do the same job as another system. "Being merged" means a pull requ
 |---|---|---|---|
 | **Whole-Scene Save** | Save Games | Being merged (PR #1132) | [1.7](feature_map/01-core-scene.md#17-saves-and-prefs) |
 | **ECS World** | Scenes and Objects | Kept on purpose: opt-in, mirrors objects through `SceneBridge`; no merge planned | [1.9](feature_map/01-core-scene.md#19-events-and-ecs) |
-| **Simple Input Actions** | Input Actions | Being merged (PR #1139) | [8.3](feature_map/08-input.md#83-input-actions-and-rebinding-ui) |
 | **Grid Pathfinding** | Navigation | Kept: grid and tilemap games; no merge planned | [9.3](feature_map/09-ai-navigation.md#93-grid-pathfinding-older) |
 | **RPG Stats** | Health and Survival | A second health holder; one damage path since PR #1091, not one component | [11.9](feature_map/11-gameplay-systems.md#119-rpg-stats-and-xp) |
 | **Typed OkayScript** | OkayScript | Two engine binding tables; a merge is planned on branch `claude2/lua-csharp-merge`, no PR yet | [13.2](feature_map/13-scripting.md#132-c-style-language-core) |

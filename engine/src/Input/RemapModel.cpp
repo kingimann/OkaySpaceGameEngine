@@ -34,7 +34,7 @@ int KeyIndex(const InputBinding& b, int key) {
 // The binding a rebind for this device changes (InputActions::Current's rule) in a list.
 const InputBinding* SlotIn(const std::vector<InputBinding>& list, bool gamepad) {
     for (const InputBinding& b : list)
-        if (b.IsGamepad() == gamepad && b.kind != InputBinding::Kind::MouseDelta) return &b;
+        if (b.kind != InputBinding::Kind::None && b.IsGamepad() == gamepad && b.kind != InputBinding::Kind::MouseDelta) return &b;
     return nullptr;
 }
 
@@ -231,12 +231,15 @@ RemapResult RemapBind(const std::string& action, const std::string& bindingText,
     if (!InputActions::Rebind(action, bindingText, part)) { r.error = "couldn't rebind " + a->name; return r; }
     r.changed.push_back(a->name);
     for (const RemapConflict& c : r.conflicts) {
-        InputActions::Action* other = InputActions::Find(c.action);
+        const InputActions::Action* other = InputActions::Find(c.action);
         if (!other) continue;
-        auto& list = other->bindings;
+        std::vector<InputBinding> list = other->bindings;
+        const std::vector<InputBinding> defaults = other->defaults;
+        const std::string name = other->name;
         list.erase(std::remove_if(list.begin(), list.end(), [&](const InputBinding& b) { return RemapOverlap(nb, b); }), list.end());
-        if (list.empty()) list = other->defaults;   // never leave an action with nothing
-        if (std::find(r.changed.begin(), r.changed.end(), other->name) == r.changed.end()) r.changed.push_back(other->name);
+        if (list.empty()) list = defaults;   // never leave an action with nothing
+        InputActions::SetBindings(name, list);
+        if (std::find(r.changed.begin(), r.changed.end(), name) == r.changed.end()) r.changed.push_back(name);
     }
     InputActions::Save();
     r.ok = true;

@@ -62,6 +62,12 @@ public:
     const std::string& Path() const { static const std::string e; return m_e ? m_e->key : e; }
     std::uint64_t Version() const { return m_e ? m_e->version.load() : 0; }
     long UseCount() const { return m_e ? m_e.use_count() : 0; }
+    /// A shared_ptr to the asset that shares this handle's reference count (it keeps the cache entry alive, so the
+    /// asset is still freed with the last handle or pointer). Null until Ready. For wrappers that must not include
+    /// this header (TextureHandle, Render/TextureAsset.hpp).
+    std::shared_ptr<T> Shared() const {
+        return Ready() ? std::shared_ptr<T>(m_e, static_cast<T*>(m_e->data.get())) : std::shared_ptr<T>();
+    }
     void Reset() { m_e.reset(); }
     bool operator==(const AssetHandle& o) const { return m_e == o.m_e; }
     bool operator!=(const AssetHandle& o) const { return m_e != o.m_e; }

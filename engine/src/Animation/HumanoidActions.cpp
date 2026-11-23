@@ -2005,7 +2005,10 @@ bool StartFromProbe(GameObject* go, const TraverseProbe& p) {
     BeginTraverse(go, p);
     if (p.kind == TraverseKind::Ledge) {
         auto it = TraverseJobs().find(go);
-        if (it != TraverseJobs().end()) { it->second.rememberLip = true; it->second.lip = p.lip; }
+        if (it != TraverseJobs().end()) {
+            it->second.rememberLip = true; it->second.lip = p.lip;
+            it->second.haveEdge = true; it->second.edge = p.edge; it->second.edgeNormal = p.edgeNormal;
+        }
     }
     return true;
 }
@@ -2062,6 +2065,7 @@ bool RequestClimbUp(GameObject* go) {
         p.lip = it->second;
         p.duration = 0.7f;
         HangPoints().erase(it);
+        HangEdges().erase(go);
         BeginTraverse(go, p);
     } else {
         RestoreHangGravity(go);
@@ -2076,6 +2080,7 @@ void RequestLetGo(GameObject* go) {
     SetHanging(go, false);
     if (PlayNamed(go, "LetGo", "LetGo")) NoteNetEvent(go, 7, 5.0f);
     HangPoints().erase(go);
+    HangEdges().erase(go);
     RestoreHangGravity(go);
 }
 

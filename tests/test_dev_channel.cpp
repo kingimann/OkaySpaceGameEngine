@@ -172,6 +172,7 @@ int main() {
     {
         CHECK(tb::Title("claude/walk-vs-run", "abc1234def") == "Test build of walk-vs-run (abc1234)");
         CHECK(tb::Title("claude2/own-reader", "ABC1234") == "Test build of own-reader (abc1234)");
+        CHECK(tb::Title("claude3/world-streaming", "abc1234") == "Test build of world-streaming (abc1234)");
         CHECK(tb::Title("main", "0123456789abcdef0123456789abcdef01234567") == "Test build of main (0123456)");
         CHECK(tb::Title("lts/2.850", "abc1234") == "Test build of lts/2.850 (abc1234)");
         CHECK(tb::Title("claude/", "abc1234") == "Test build (abc1234)");         // a branch name cannot end in a slash: it is left out, never shown raw

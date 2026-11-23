@@ -8,6 +8,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 ## 41. Build, tools & infrastructure
 
 ### 41.1 CMake project layout and options
+- **System:** Build System - The CMake project, build scripts, small generator tools and pinned dependency versions that build everything.
 - **What:** One CMake project builds everything: the engine library, the unit tests, the launcher, the player, the editor, the relay, the sandbox and examples, and the developer tools. Options turn parts on or off; defaults suit a plain developer build.
 - **Parts:**
   - 41.1.1 Root options - `CMakeLists.txt` - `OKAY_BUILD_SANDBOX` (on), `OKAY_BUILD_TESTS` (on), `OKAY_BUILD_LAUNCHER` (on), `OKAY_BUILD_EDITOR` (off), `OKAY_BUILD_PLAYER` (off), `OKAY_USE_SODIUM` (on), `OKAY_USE_ASSIMP` (off), `OKAY_PREFER_OWN_READERS` (off; with Assimp, STL/PLY read with our own readers first), `OKAY_OWN_COLLADA` (off; read `.dae` with our own reader first), `OKAY_OWN_3DS` (off; same for `.3ds`), `OKAY_OWN_BVH` (off; same for `.bvh`), `OKAY_BUILD_TOOLS` (off), `OKAY_SANITIZE`; C++17; `-Wall -Wextra -Wpedantic`
@@ -30,6 +31,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Ask me like:** "which CMake flag builds the editor?", "add my new source file to the engine build"
 
 ### 41.2 CMake modules, Windows resources and toolchain
+- **System:** Build System
 - **What:** The small CMake helpers: Windows exe name, description and version (what Task Manager shows), the MinGW cross toolchain, and the anti-cheat key-list check.
 - **Parts:**
   - 41.2.1 Windows exe metadata - `cmake/OkayWinVersion.cmake`, `cmake/okay_version.rc.in` - `okay_win_version(target description filename)` generates a `VERSIONINFO` resource from `PROJECT_VERSION` and embeds the manifest; no-op off Windows
@@ -49,6 +51,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Ask me like:** "why does Task Manager say POSIX WinThreads?"
 
 ### 41.3 Local build and launch scripts
+- **System:** Build System
 - **What:** Convenience scripts for a first build and run on Linux, macOS and Windows, plus the launch shortcuts at the repo root.
 - **Parts:**
   - 41.3.1 Native build - `scripts/build.sh`, `scripts/build.bat` - configure Release, build, and print how to run the sandbox demo and the tests
@@ -68,6 +71,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Ask me like:** "what is the fastest way to build and run the sandbox?"
 
 ### 41.4 Developer tools
+- **System:** Build System
 - **What:** Two small tools that generate files the repository ships.
 - **Parts:**
   - 41.4.1 Texture generator - `tools/gen_textures.cpp`, `tools/CMakeLists.txt` - deterministic 512 by 512 seamless grass, dirt, stone and grid PNGs for `assets/textures/` (target `okay_gen_textures`, run `./gen_textures <dir>`); built only with `-DOKAY_BUILD_TOOLS=ON`
@@ -86,6 +90,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Ask me like:** "regenerate the starter textures"
 
 ### 41.5 Server deployment kits
+- **System:** Relay
 - **What:** Ready-made ways to run the relay (which also serves voice calls) on a VPS, and the relay program itself.
 - **Parts:**
   - 41.5.1 Docker image - `deploy/voice-server/Dockerfile` - Debian bookworm build of `okayspace-relay` (no libsodium), runs as an unprivileged user, UDP 45100
@@ -106,6 +111,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Ask me like:** "deploy the relay on my server", "run the relay in Docker"
 
 ### 41.6 Supabase functions and SQL schema
+- **System:** Online Backend - The Supabase database tables and server functions behind accounts, chat, forums and updates.
 - **What:** The server side of the online platform. SQL files run by hand in the Supabase SQL editor, plus one Edge function. There is no migration runner: each file is idempotent and says which files must have run first.
 - **Parts:**
   - 41.6.1 Edge function - `supabase/functions/session-ticket/index.ts` - issues session tickets (39.3), with `ticket.ts`, `make_key.ts` and `ticket_test.ts`
@@ -128,6 +134,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Ask me like:** "which SQL file do I run for parties?", "what is the run order for a fresh Supabase project?"
 
 ### 41.7 Steam upload kit
+- **System:** Steam Integration
 - **What:** The SteamPipe scripts that upload the Windows distribution to Steam. Described in 18.8.
 - **Parts:**
   - 41.7.1 Build scripts - `steam/app_build_1172560.vdf`, `steam/depot_build_1172561.vdf` - app and depot definitions
@@ -145,6 +152,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Ask me like:** "upload to Steam"
 
 ### 41.8 GitHub workflows and templates
+- **System:** CI
 - **What:** Everything under `.github/`: two workflows and a PR template. Nothing else (no Dependabot, CODEOWNERS or issue templates).
 - **Parts:**
   - 41.8.1 CI - `.github/workflows/ci.yml` - on push to main and every pull request; five jobs `build-and-test`, `sanitizers`, `windows-cross`, `windows-export`, `web-build`; a newer push cancels an older run of the same PR (18.3)
@@ -164,6 +172,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Ask me like:** "list what CI runs", "add a job"
 
 ### 41.9 Versioning and release prep
+- **System:** Release Pipeline
 - **What:** One number, set in one place, flows everywhere. A release is a small pull request.
 - **Parts:**
   - 41.9.1 Source of truth - `CMakeLists.txt` - `project(OkaySpaceGameEngine VERSION 2.851.0)`; releases increment the middle number (2.850.0, 2.851.0, next 2.852.0)
@@ -184,6 +193,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Ask me like:** "what files does a version bump touch?"
 
 ### 41.10 Dependencies and pinned versions
+- **System:** Build System
 - **What:** What the build needs and which versions are pinned, so surprises are findable.
 - **Parts:**
   - 41.10.1 System libraries - SDL2 (system package; MinGW 2.30.9 fetched in CI and release; Emscripten's own port on the web), libsodium (system package, or MinGW prebuilt 1.0.20, optional)
@@ -203,6 +213,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Ask me like:** "which ImGui commit do we pin and where?"
 
 ### 41.11 Own-stack dogfood switch and startup line
+- **System:** Own-Stack Switch - One switch that runs the engine with all our own replacements for third-party code turned on, to try them.
 - **What:** One switch builds and runs the engine with every own replacement we can safely try (own model readers, own HTTP client, own platform backend on Linux, OkayUI), and each program logs one line saying which parts are ours and which are third-party. Cryptography is never part of it.
 - **Parts:**
   - 41.11.1 Build switch - `CMakeLists.txt` - `-DOKAY_OWN_STACK=ON` sets every `OKAY_OWN_<FMT>` option and `OKAY_OWN_FBX`, `OKAY_OWN_HTTP` (default on at run time), the own platform backend as the default on Linux, and OkayUI as the launcher and editor default; `-DOKAY_OWN_STACK_CRYPTO_TEST=ON` (test builds only) adds `OKAY_OWN_CRYPTO`
@@ -210,7 +221,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
   - 41.11.3 Startup line - `shared/OwnStack.hpp` - `[okay] stack: platform=... http=... readers=... crypto=... ui=...` written to stderr by the player, launcher and editor, and shown in the editor's About popup
   - 41.11.4 Release guard - `scripts/check_release_own_stack.sh` - fails a release build when own crypto or the own-stack switch is on, or when libsodium is not really in the build (cache `OKAY_SODIUM_IN_BUILD`, compiler flags, `--binary` startup line `crypto=libsodium`); `-DOKAY_REQUIRE_SODIUM=ON` makes CMake fail too; the libsodium download is SHA-256 pinned (`scripts/fetch-tarball.sh --sha256`, `scripts/libsodium-mingw.pin`); called by `scripts/build-windows-dist.sh`, `release-local.sh` and `release.yml`
   - 41.11.5 CI job - `.github/workflows/ci.yml` - `own-stack` (not required): builds with the switch on and no libsodium and runs the own pieces' tests; green on main
-  - 41.11.7 Settings switches - `shared/OwnSwitches.hpp` - table of the own parts chosen at run time (OkayUI screens, own WAV reader, own HTTP client and own window layer on Linux), all off by default; saved in `own_switches.cfg`, applied as environment variables at the top of `main()` (a variable the person set wins); launcher Settings > Experimental and editor View > Rendering & Performance > Experimental share it; the startup line gets `switches=<ids>`; a new seam is one line in `Items()`
+  - 41.11.7 Settings switches - `shared/OwnSwitches.hpp` - table of the own parts chosen at run time (OkayUI screens, OkayUI Inspector, OkayUI own renderer, own WAV reader, own HTTP client and own window layer on Linux), all ON by default since 2026-11-23 (untick to go back); saved in `own_switches.cfg` (`off=` lists what was turned off), applied as environment variables at the top of `main()` (a variable the person set wins); launcher Settings > Experimental and editor View > Rendering & Performance > Experimental share it; the startup line gets `switches=<ids>`; a new seam is one line in `Items()`
   - 41.11.6 Flip proposal - `docs/status/own_flip_proposal.md` - which own replacement could become the default, in what order (one group per release), the readiness rating of each, the prep work (Step 0), a checklist for every flip an agent can run, what blocks deleting each third-party library and how to try each replacement; no default is flipped by it
 - **Code:** `CMakeLists.txt`, `engine/CMakeLists.txt`, `shared/OwnStack.hpp`, `shared/OwnSwitches.hpp`, `scripts/check_release_own_stack.sh`, `scripts/fetch-tarball.sh`, `scripts/fetch-libsodium-mingw.sh`, `.github/workflows/ci.yml`, `cmake/OkayPlatform.cmake`
 - **API:** `OKAY_OWN_STACK`, `OKAY_OWN_STACK_CRYPTO_TEST`, `OKAY_REQUIRE_SODIUM`, `OKAY_PRINT_STACK_AND_EXIT`, `okay::ownstack::Startup`, `okay::ownstack::Describe`
@@ -225,20 +236,26 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Ask me like:** "how do I run everything on our own code?"
 
 ### 41.12 Collaboration tooling (lanes, claims, find-existing, collision check, branch lint)
-- **What:** The working agreement between Claude 2 and the coordinator, made automatic: a lanes table, one claim format on issue #422, a search for what already exists, a collision report over all open branches, cheap checks on every branch push, a "How to try it" check on PRs and a brief builder that pastes the current rules into every agent brief.
+- **System:**
+  - Collaboration Tools - Scripts that keep the three Claudes from doing the same work twice: lanes, claims, find-existing and branch lint. Code: `scripts/collab_lib.py`, `scripts/find_existing.py`, `scripts/collision_check.py`, `scripts/branch_lint.py`, `scripts/make_brief.py`, `scripts/work_board.py`, `.github/workflows/branch-lint.yml`
+  - Duplicate Guard - Finds pasted code and new copies of shared helpers and fails CI when it finds them (`scripts/dup_lint.py`). Code: `scripts/dup_lint.py`, `scripts/dup_baseline.json`, `scripts/install_hooks.sh`, `.github/workflows/dup-scan.yml`, `docs/engine/shared_code.md`
+- **What:** The working agreement between the three Claudes (coordinator `claude/*`, Claude 2 `claude2/*`, Claude 3 `claude3/*`), made automatic: a lanes table with each lane's branch prefix, one claim format on issue #422, a search for what already exists, a collision report over all open branches, cheap checks on every branch push, a "How to try it" check on PRs and a brief builder that pastes the current rules into every agent brief.
 - **Parts:**
-  - 41.12.1 Agreement and lanes - `docs/process/collaboration.md`, `docs/lanes.json`, `docs/process/agent_brief_template.md` - who owns which paths, the claim protocol, the readiness checklist, the weekly dedupe audit
+  - 41.12.1 Agreement and lanes - `docs/process/collaboration.md`, `docs/lanes.json`, `docs/process/agent_brief_template.md`, `docs/process/claude3_start.md` - who owns which paths, the claim protocol, who merges and who releases, hand-over, the readiness checklist, the weekly dedupe audit
   - 41.12.2 Find existing - `scripts/find_existing.py` - ranked "Existing:" report (feature map, notes, code names, tests, examples, open branches, PRs, claims) to paste into a claim
   - 41.12.3 Collision check - `scripts/collision_check.py` - file and line-range overlaps between branches, claims table, stale claims, out-of-lane edits, generated files edited by hand, duplicate test names; Markdown or JSON; also in `WORK_BOARD.md` via `scripts/work_board.py`
-  - 41.12.4 Branch lint - `.github/workflows/branch-lint.yml`, `scripts/branch_lint.py` - forbidden thread includes (rule 21a), secrets, docs changed, feature map, MinGW syntax check
+  - 41.12.4 Branch lint - `.github/workflows/branch-lint.yml`, `scripts/branch_lint.py` - on pushes to every lane's branches and on pull requests from any other branch or fork: forbidden thread includes (rule 21a), secrets, docs changed, feature map, MinGW syntax check
   - 41.12.5 Bug patterns - `scripts/bug_patterns.py` - warnings for the bug classes reviews keep finding
   - 41.12.6 PR hygiene and briefs - `.github/workflows/pr-hygiene.yml`, `scripts/check_pr_body.py`, `scripts/make_brief.py`
-- **Code:** `scripts/collab_lib.py`, `scripts/find_existing.py`, `scripts/collision_check.py`, `scripts/branch_lint.py`, `scripts/bug_patterns.py`, `scripts/check_pr_body.py`, `scripts/make_brief.py`, `scripts/work_board.py`, `.github/workflows/branch-lint.yml`, `.github/workflows/pr-hygiene.yml`, `.github/workflows/work-board.yml`
-- **Docs:** `docs/process/collaboration.md`, `docs/process/agent_brief_template.md`, `docs/process/review_log.md`
-- **Tests:** `collab_scripts` (`scripts/tests/test_collab.py`: throw-away git repos, no GitHub)
+  - 41.12.7 Duplicate-code guard - `scripts/dup_lint.py`, `scripts/dup_baseline.json`, `scripts/install_hooks.sh`, `docs/engine/shared_code.md` - pasted blocks (exact copies of 80+ tokens fail, renamed copies warn) and new copies of shared helpers (FNV, CRC-32, Base64, Trim/Split, JSON escape ...) in every language, with a shrink-only baseline; runs in branch-lint on every branch, main and fork PRs; optional pre-push hook; similar-name warnings; retired names (`OKAY_DEPRECATED`, `engine/include/okay/Core/Deprecated.hpp`) cannot be used again; copies and similar names between open branches (in `collision_check.py`); weekly scan `.github/workflows/dup-scan.yml`
+  - 41.12.8 Code index - `scripts/gen_code_index.py`, `docs/engine/code_index.md` - every public class, struct, enum and free function in the public headers with file:line and its doc line, one page per folder; searched by `find_existing.py`; branch-lint warns when stale
+  - 41.12.9 PR body "Existing code" - `scripts/check_pr_body.py`, `.github/workflows/pr-hygiene.yml`, `.github/PULL_REQUEST_TEMPLATE.md` - a PR names the code it reuses or replaces, or what it searched
+- **Code:** `scripts/collab_lib.py`, `scripts/find_existing.py`, `scripts/collision_check.py`, `scripts/branch_lint.py`, `scripts/bug_patterns.py`, `scripts/check_pr_body.py`, `scripts/make_brief.py`, `scripts/work_board.py`, `scripts/dup_lint.py`, `scripts/install_hooks.sh`, `scripts/gen_code_index.py`, `.github/workflows/branch-lint.yml`, `.github/workflows/dup-scan.yml`, `.github/workflows/pr-hygiene.yml`, `.github/workflows/pr-hygiene.yml`, `.github/workflows/work-board.yml`
+- **Docs:** `docs/process/collaboration.md`, `docs/process/agent_brief_template.md`, `docs/process/review_log.md`, `docs/process/no_duplicates.md`, `docs/engine/shared_code.md`
+- **Tests:** `collab_scripts` (`scripts/tests/test_collab.py`: throw-away git repos, no GitHub), `dup_lint_script` (`scripts/tests/test_dup_lint.py`)
 - **Status:** Works - the scripts and their tests were run on Linux against the real repo; the two new workflows have not run on GitHub yet
 - **Open:** heuristics can give false positives (see the "false positives" notes in `docs/process/collaboration.md`); the weekly dedupe audit and the answers to claims are by hand
 - **Related:** 41.1, 41.8
-- **Words:** collaboration, claim, lane, duplicate, collision, branch lint, find existing, brief, how to try it check
+- **Words:** collaboration, claim, lane, duplicate, collision, branch lint, find existing, brief, how to try it check, copy paste, clone detection, dup lint, shared code
 - **Seen as:** `WORK_BOARD.md` on the `work-board` branch, a red "Branch lint" check on a pushed branch, a red "PR hygiene" check on a PR
-- **Ask me like:** "how do the two Claudes avoid doing the same work?"
+- **Ask me like:** "how do the three Claudes avoid doing the same work?"

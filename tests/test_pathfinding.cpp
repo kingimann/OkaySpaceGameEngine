@@ -406,5 +406,67 @@ int main() {
         if (shot && shot[0]) CHECK(ImageWrite::WritePNG(shot, imgW, imgH, 3, px.data()));
     }
 
+    // --- One navigation A*: the grid paths are pinned to what the old Pathfinding::AStar returned ---
+    // (The expected cells were printed by the search on origin/main before it moved onto GridAStar.hpp.)
+    {
+        int w, h;
+        auto g = Grid({"..........",
+                       ".####.###.",
+                       ".#......#.",
+                       ".#......#.",
+                       "..........",
+                       "...#......",
+                       "......#...",
+                       ".....##...",
+                       ".........."}, w, h);
+        std::vector<float> cost(g.size(), 1.0f);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) cost[(std::size_t)(y * w + x)] = (x + y) % 3 == 0 ? 3.0f : 1.0f;
+        struct Case { int sx, sy, gx, gy; bool diag, priced, smooth; std::vector<GridCell> want; };
+        const std::vector<Case> cases = {
+            {0, 0, 9, 8, false, false, false, {{0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{7,0},{8,0},{9,0},{9,1},{9,2},{9,3},{9,4},{9,5},{9,6},{9,7},{9,8}}},
+            {0, 0, 9, 8, true, false, false, {{0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{5,1},{5,2},{6,3},{7,4},{8,5},{8,6},{8,7},{9,8}}},
+            {0, 0, 9, 8, false, true, false, {{0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{7,0},{8,0},{9,0},{9,1},{9,2},{9,3},{9,4},{9,5},{9,6},{9,7},{9,8}}},
+            {0, 0, 9, 8, true, true, false, {{0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{5,1},{5,2},{5,3},{6,4},{7,4},{8,5},{8,6},{9,7},{9,8}}},
+            {0, 0, 9, 8, true, false, true, {{0,0},{5,0},{5,2},{9,8}}},
+            {4, 4, 0, 8, false, false, false, {{4,4},{3,4},{2,4},{1,4},{0,4},{0,5},{0,6},{0,7},{0,8}}},
+            {4, 4, 0, 8, true, true, false, {{4,4},{5,5},{4,6},{3,7},{2,8},{1,7},{0,8}}},
+        };
+        for (const Case& c : cases) {
+            const auto viaNav = Navigation::GridPath(g, w, h, c.sx, c.sy, c.gx, c.gy, c.diag,
+                                                     c.priced ? &cost : nullptr, c.smooth);
+            const auto viaOld = Pathfinding::AStar(g, w, h, c.sx, c.sy, c.gx, c.gy, c.diag,
+                                                   c.priced ? &cost : nullptr, c.smooth);
+            bool same = viaNav.size() == c.want.size() && viaOld.size() == c.want.size();
+            for (std::size_t i = 0; same && i < c.want.size(); ++i)
+                same = viaNav[i].x == c.want[i].x && viaNav[i].y == c.want[i].y &&
+                       viaOld[i].x == c.want[i].x && viaOld[i].y == c.want[i].y;
+            CHECK(same);
+        }
+    }
+
+    // --- The shared core on an unbounded (sparse) grid, the way NavGrid3D searches ---
+    {
+        // A wall at x = 2 from z = -2 to 2; the route must go round it.
+        auto open = [](int x, int z) { return !(x == 2 && z >= -2 && z <= 2); };
+        auto edge = [&](int, int, int bx, int bz) { return open(bx, bz); };
+        auto step = [](int, int, bool diag) { return diag ? 1.41421f : 1.0f; };
+        auto heur = [](int x, int z) { float dx = float(4 - x), dz = float(0 - z); return std::sqrt(dx * dx + dz * dz); };
+        gridastar::SparseStore store;
+        gridastar::Options opt;
+        opt.diagonal = true; opt.reopen = true; opt.maxExpand = 4096;
+        std::vector<GridCell> path;
+        CHECK(gridastar::Search(store, GridCell{0, 0}, GridCell{4, 0}, opt, edge, step, heur, path));
+        CHECK(!path.empty() && path.front().x == 0 && path.front().y == 0 && path.back().x == 4 && path.back().y == 0);
+        bool avoids = true;
+        for (const GridCell& c : path) if (!open(c.x, c.y)) avoids = false;
+        CHECK(avoids);
+        // A budget too small to get round the wall gives no path, as NavGrid3D's did.
+        gridastar::SparseStore store2;
+        opt.maxExpand = 3;
+        CHECK(!gridastar::Search(store2, GridCell{0, 0}, GridCell{4, 0}, opt, edge, step, heur, path));
+        CHECK(path.empty());
+    }
+
     TEST_MAIN_RESULT();
 }

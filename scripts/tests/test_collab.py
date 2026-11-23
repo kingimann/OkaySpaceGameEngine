@@ -64,9 +64,10 @@ class Lib(unittest.TestCase):
         lanes = L.load_lanes(ROOT)
         self.assertEqual(L.owner_of("engine/src/Scene/SceneSerializer.cpp", lanes), "shared")
         self.assertEqual(L.owner_of("engine/include/okay/Components/VehicleSeat.hpp", lanes), "coordinator")   # unfinished features (owner 2026-11-15)
-        self.assertEqual(L.owner_of("engine/src/Crypto/Sha512.cpp", lanes), "claude2")   # third-party replacement (owner 2026-11-15)
-        self.assertEqual(L.owner_of("engine/src/Render/ObjReader.cpp", lanes), "claude2")
-        self.assertEqual(L.owner_of("okayui/src/OkayUI.cpp", lanes), "claude2")
+        # third-party replacement: Claude 2 from 2026-11-15, handed over to the coordinator on 2026-11-22
+        self.assertEqual(L.owner_of("engine/src/Crypto/Sha512.cpp", lanes), "coordinator")
+        self.assertEqual(L.owner_of("engine/src/Render/ObjReader.cpp", lanes), "coordinator")
+        self.assertEqual(L.owner_of("okayui/src/OkayUI.cpp", lanes), "coordinator")
         self.assertEqual(L.owner_of("editor/main.cpp", lanes), "coordinator")
         self.assertEqual(L.owner_of("scripts/work_board.py", lanes), "coordinator")
         self.assertEqual(L.owner_of("engine/include/okay/Core/Time.hpp", lanes), "open")
@@ -175,6 +176,19 @@ class Collisions(unittest.TestCase):
         r.write("scripts/x.py", "print(2)\n"); r.commit("more"); sh(r.d, "update-ref", "refs/remotes/origin/claude2/b", "HEAD"); sh(r.d, "checkout", "-q", "main")
         self.assertEqual(self.rep()["overlaps"], [])
 
+    def test_stacked_after_the_lower_branch_moved_on(self):
+        """Bug found by CI on 2026-11-22 (#1131/#1134): b was built on an earlier commit of a; then a got more commits
+        (main merged in). Neither tip is an ancestor of the other any more, but they still share unmerged commits:
+        a stack, not a collision."""
+        r = self.r
+        r.branch("claude/a", {"engine/src/Components/Foo.cpp": r.edited(10, "from a")})
+        sh(r.d, "checkout", "-q", "-b", "tmp-b", "origin/claude/a")
+        r.write("engine/src/Components/Foo.cpp", r.edited(10, "from a") .replace("line 20", "b line 20")); r.commit("b on a")
+        sh(r.d, "update-ref", "refs/remotes/origin/claude/b", "HEAD")
+        sh(r.d, "checkout", "-q", "-b", "tmp-a2", "origin/claude/a"); r.write("docs/x.md", "more\n"); r.commit("a moves on")
+        sh(r.d, "update-ref", "refs/remotes/origin/claude/a", "HEAD"); sh(r.d, "checkout", "-q", "main")
+        self.assertEqual(self.rep()["overlaps"], [])
+
     def test_claims_stale_and_conflict(self):
         r = self.r
         r.branch("claude/mine", {"engine/src/Components/Foo.cpp": r.edited(5, "x")})
@@ -195,6 +209,139 @@ class Collisions(unittest.TestCase):
         rep = self.rep()
         self.assertIn("Collision report", CC.to_markdown(rep)); self.assertIn("Claims", CC.claims_markdown(rep))
         json.dumps(rep, default=str)
+
+
+class ThreeLanes(unittest.TestCase):
+    """Three Claudes (owner 2026-11-22): coordinator claude/*, Claude 2 claude2/*, Claude 3 claude3/*. Lanes come from docs/lanes.json."""
+    def setUp(self):
+        self.lanes = L.load_lanes(ROOT)
+        self.now = datetime.datetime.now(datetime.timezone.utc)
+
+    def claim(self, branch, files, **kw):
+        return dict({"branch": branch, "has_fields": True, "existing": "e", "gap": "g", "files": files, "test_first": "t", "try_it": "s", "agreed": False}, **kw)
+
+    def test_lanes_come_from_the_file(self):
+        self.assertEqual(L.lane_prefixes(self.lanes), {"coordinator": "claude/", "claude2": "claude2/", "claude3": "claude3/"})
+        self.assertEqual(L.lane_of_branch("claude3/world-streaming", self.lanes), "claude3")
+        self.assertEqual(L.lane_of_branch("origin/claude3/x"), "claude3")
+        self.assertEqual(L.lane_of_branch("claude2/x"), "claude2"); self.assertEqual(L.lane_of_branch("claude/x"), "coordinator")
+        self.assertIsNone(L.lane_of_branch("claude4/x")); self.assertIsNone(L.lane_of_branch("john/x"))
+        # a fourth lane added to the data is picked up with no code change
+        more = json.loads(json.dumps(self.lanes)); more["lanes"]["claude4"] = {"prefix": "claude4/", "name": "Claude 4", "description": "test"}
+        self.assertEqual(L.lane_of_branch("claude4/x", more), "claude4")
+
+    def test_lane_split(self):
+        o = lambda p: L.owner_of(p, self.lanes)
+        self.assertEqual(o("engine/src/Physics/Physics3D.cpp"), "claude2")
+        self.assertEqual(o("engine/include/okay/Components/Ragdoll.hpp"), "claude2")
+        self.assertEqual(o("engine/include/okay/Components/Joint3D.hpp"), "claude2")
+        self.assertEqual(o("engine/src/Core/BuildPipeline.cpp"), "claude3")
+        self.assertEqual(o("editor/BuildSettingsWindow.cpp"), "claude3")
+        self.assertEqual(o("engine/include/okay/Components/WorldStreamer.hpp"), "claude3")
+        self.assertEqual(o("engine/src/Optimize/StreamingGrid.cpp"), "claude3")
+        self.assertEqual(o("engine/src/Platform/Steam/Steam.cpp"), "claude3")
+        self.assertEqual(o("engine/src/Lua/LuaState.cpp"), "claude3")
+        # third-party replacement moved from Claude 2 to the coordinator on 2026-11-22
+        self.assertEqual(o("engine/src/Crypto/Sha512.cpp"), "coordinator")
+        self.assertEqual(o("engine/src/Platform/Window.cpp"), "coordinator")
+        self.assertEqual(o("okayui/src/OkayUI.cpp"), "coordinator")
+        self.assertEqual(o("platform/xbox_uwp/XboxExport.hpp"), "coordinator")
+
+    def test_claude3_touching_claude2_file_needs_agree(self):
+        c = self.claim("claude3/stream-ragdolls", ["engine/src/Physics/Physics3D.cpp"])
+        probs = L.check_claim_rules(c, self.lanes, [])
+        self.assertTrue(any("claude2 lane" in p for p in probs), probs)
+        self.assertEqual(L.check_claim_rules(dict(c, agreed=True), self.lanes, []), [])
+        # the same through the parser: Agree from Claude 2 clears it, Agree from another lane does not
+        body = "Claim: claude3/stream-ragdolls\nExisting: e / Gap: g / Files: engine/src/Physics/Physics3D.cpp / Test-first: t / Try-it: s"
+        claims, _ = L.parse_claims([{"created_at": "2026-11-22T10:00:00Z", "body": body}])
+        self.assertTrue(L.check_claim_rules(claims["claude3/stream-ragdolls"], self.lanes, []))
+        claims, _ = L.parse_claims([{"created_at": "2026-11-22T10:00:00Z", "body": body},
+                                    {"created_at": "2026-11-22T11:00:00Z", "body": "Agree (Claude 2): claude3/stream-ragdolls"}])
+        self.assertEqual(L.check_claim_rules(claims["claude3/stream-ragdolls"], self.lanes, []), [])
+        claims, _ = L.parse_claims([{"created_at": "2026-11-22T10:00:00Z", "body": body},
+                                    {"created_at": "2026-11-22T11:00:00Z", "body": "Agree: claude3/stream-ragdolls\nLane: coordinator"}])
+        self.assertTrue(any("claude2 lane" in p for p in L.check_claim_rules(claims["claude3/stream-ragdolls"], self.lanes, [])))
+        # a bug claim with a Test-first line may still touch any file
+        self.assertEqual(L.check_claim_rules(dict(c, kind="bug"), self.lanes, []), [])
+
+    def test_claim_names_and_explicit_lane(self):
+        claims, _ = L.parse_claims([{"created_at": "2026-11-22T10:00:00Z", "body": "Claim (Claude 3): claude3/lod\nLane: claude3\nExisting: e / Gap: g / Files: engine/src/Core/BuildPipeline.cpp / Test-first: t / Try-it: s"}])
+        c = claims["claude3/lod"]
+        self.assertEqual(c["lane"], "claude3"); self.assertEqual(c["files"], ["engine/src/Core/BuildPipeline.cpp"])
+        self.assertEqual(L.check_claim_rules(c, self.lanes, []), [])
+        self.assertEqual(L.lane_key("Claude 3", self.lanes), "claude3"); self.assertEqual(L.lane_key("claude3/", self.lanes), "claude3")
+        self.assertEqual(L.lane_key("Coordinator", self.lanes), "coordinator"); self.assertIsNone(L.lane_key("Claude 9", self.lanes))
+        bad, _ = L.parse_claims([{"created_at": "2026-11-22T10:00:00Z", "body": "Claim: claude2/x\nLane: claude3\nExisting: e / Gap: g / Files: docs/a.md / Test-first: t / Try-it: s"}])
+        self.assertTrue(any("Lane" in p for p in L.check_claim_rules(bad["claude2/x"], self.lanes, [])))
+
+    def test_three_way_shared_file(self):
+        r = Repo()
+        try:
+            r.branch("claude/a", {"tests/CMakeLists.txt": "a\n"})
+            r.branch("claude2/b", {"tests/CMakeLists.txt": "b\n"})
+            r.branch("claude3/c", {"tests/CMakeLists.txt": "c\n"})
+            rep = CC.build_report(r.d, [], [], use_disk_cache=False, now=self.now)
+            s = next(x for x in rep["shared_files"] if x["file"] == "tests/CMakeLists.txt")
+            self.assertEqual(s["branches"], ["claude/a", "claude2/b", "claude3/c"])
+            self.assertEqual(s["lanes"], ["claude2", "claude3", "coordinator"])
+            self.assertIn("claude3/c", CC.to_markdown(rep))
+            # claims: three claims on one shared file each see the other two
+            cl = [self.claim(b, ["tests/CMakeLists.txt"]) for b in ("claude/a", "claude2/b", "claude3/c")]
+            probs = L.check_claim_rules(cl[2], self.lanes, cl[:2])
+            self.assertTrue(any("claude/a" in p for p in probs) and any("claude2/b" in p for p in probs), probs)
+        finally:
+            r.close()
+
+    def test_claude3_branch_out_of_lane_and_cross_lane(self):
+        r = Repo()
+        try:
+            r.write("engine/src/Physics/Physics3D.cpp", "x\n"); r.commit("phys"); sh(r.d, "update-ref", "refs/remotes/origin/main", "HEAD")
+            r.branch("claude3/a", {"engine/src/Physics/Physics3D.cpp": "y\n"})
+            r.branch("claude2/b", {"engine/src/Physics/Physics3D.cpp": "z\n"})
+            rep = CC.build_report(r.d, [], [], use_disk_cache=False, now=self.now)
+            self.assertEqual([(o["branch"], o["lane"]) for o in rep["out_of_lane"]], [("claude3/a", "claude3")])
+            pair = next(o for o in rep["overlaps"] if {o["a"], o["b"]} == {"claude3/a", "claude2/b"})
+            self.assertTrue(pair["cross_lane"])
+            old = (self.now - datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            body = "Claim: claude2/b\nExisting: e / Gap: g / Files: engine/src/Physics/** / Test-first: t / Try-it: s"
+            rep = CC.build_report(r.d, [{"body": body, "created_at": old}], [], use_disk_cache=False, now=self.now)
+            self.assertTrue(CC.fails_for_branch(rep, "claude3/a"))
+        finally:
+            r.close()
+
+    def test_make_brief_accepts_claude3(self):
+        p = subprocess.run([sys.executable, os.path.join(SCRIPTS, "make_brief.py"), "--lane", "claude3", "--goal", "g", "--root", ROOT],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("Claude 3", p.stdout); self.assertIn("claude3/", p.stdout)
+        self.assertIn("engine/src/Physics/**", p.stdout)   # Claude 2's files are off limits for Claude 3
+
+    def test_every_glob_matches_a_file_or_is_planned(self):
+        files = subprocess.run(["git", "-C", ROOT, "ls-files"], stdout=subprocess.PIPE, text=True).stdout.splitlines()
+        if not files:
+            self.skipTest("not a git checkout")
+        dead = [(r["owner"], g) for r in self.lanes["rules"] for g in r["globs"] if not any(L.glob_match(f, g) for f in files)]
+        self.assertEqual(dead, [], "globs that match no file: match a real file or move them to the rule's 'planned' list")
+        for r in self.lanes["rules"]:
+            self.assertIn(r["owner"], set(L.lane_names(self.lanes)) | {"shared", "open"})
+
+    def test_workflows_name_every_lane(self):
+        wf = open(os.path.join(ROOT, ".github", "workflows", "branch-lint.yml"), encoding="utf-8").read()
+        every_branch = "branches: ['**']" in wf   # pushes to every branch (the duplicate guard's trigger) cover every lane
+        for lane, prefix in L.lane_prefixes(self.lanes).items():
+            if not every_branch:
+                self.assertIn(f"'{prefix}**'", wf, f"branch-lint.yml must run on pushes to {prefix}** ({lane})")
+            # the claims step (claims on #422 are for lane branches) must run for every lane
+            self.assertIn(f"startsWith(github.ref, 'refs/heads/{prefix}')", wf, f"branch-lint.yml claims step must cover {prefix} branches")
+        self.assertRegex(wf, r"(?m)^  pull_request:")   # forks are checked on their pull request
+
+    def test_display_branch_drops_every_lane_prefix(self):
+        import dev_index as DI
+        hpp = open(os.path.join(ROOT, "shared", "TestBuild.hpp"), encoding="utf-8").read()
+        for lane, prefix in L.lane_prefixes(self.lanes).items():
+            self.assertEqual(DI.display_branch(prefix + "walk"), "walk", lane)
+            self.assertIn(f'std::string_view("{prefix}")', hpp, f"shared/TestBuild.hpp DisplayBranch must drop {prefix} like dev_index.py")
 
 
 class Lint(unittest.TestCase):

@@ -3,20 +3,26 @@ name: CI
 on:
   push:
     branches: [ main ]
+  # Pull requests run only the Windows cross-compile here (and branch-lint's quick checks): the full build and tests are
+  # run by the author before the push (scripts/precheck.sh --tests, CLAUDE.md rule 7a), and the whole suite runs on every
+  # push to main and once a night (owner, 2026-11-23).
   pull_request:
+  schedule:
+    - cron: "23 6 * * *"   # nightly full suite on main
   # Manual run on a branch: lets the MSVC job (skipped on pull requests) be run on demand to read real MSVC errors.
   workflow_dispatch:
 
-# A new push to a pull request cancels that PR's older run, so stale runs don't
-# hold the runners. Each push to main keeps its own run.
+# A new push cancels the older run of the same PR, or the older run of main, so stale runs don't hold the runners
+# (2026-11-23: seven old runs of main, about 110 jobs, were queued in front of every PR). The nightly run has its own group.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 # Job time limits: the shared runners are often queued and slow (apt downloads alone took 5-10 minutes on busy days), so
 # the short limits (15/20/30 minutes) were cancelling healthy jobs (PR #969: 'Anti-cheat tests with libsodium' hit 15 minutes).
 jobs:
   build-and-test:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Build & test (Ubuntu)
     runs-on: ubuntu-latest
     # The compiler cache makes a warm run recompile only what changed. The player and
@@ -63,7 +69,7 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build -j
+        run: cmake --build build -j "$(bash scripts/ci_jobs.sh 4)"   # capped by memory: a bare -j starved the runner (#1140)
 
       # Four tests at a time. Each test uses its own temp folder or port 0 (checked in the CI-speed audit), and the few
       # that time a real operation are marked RUN_SERIAL in tests/CMakeLists.txt so they still run alone.
@@ -79,7 +85,7 @@ jobs:
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
       # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
-        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
         with:
           path: .ccache
@@ -90,6 +96,7 @@ jobs:
   # jobs now, so the three builds run side by side and a run takes as long as the
   # slowest one. Each keeps its own compiler cache.
   player:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Build player runtime (Ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -124,7 +131,7 @@ jobs:
             -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_TESTS=OFF \
             -DOKAY_BUILD_SANDBOX=ON -DOKAY_BUILD_LAUNCHER=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build build-player -j
+          cmake --build build-player -j "$(bash scripts/ci_jobs.sh 4)"
 
       - name: Upload player runtime
         uses: actions/upload-artifact@v6
@@ -136,13 +143,14 @@ jobs:
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
       # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
-        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
         with:
           path: .ccache
           key: ccache-ubuntu-player-${{ github.sha }}
 
   editor:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Build & self-test editor (Ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -175,7 +183,7 @@ jobs:
             -DOKAY_BUILD_EDITOR=ON -DOKAY_BUILD_TESTS=OFF \
             -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build build-editor -j
+          cmake --build build-editor -j "$(bash scripts/ci_jobs.sh 4)"
           ./build-editor/bin/OkayEngine --selftest
 
       - name: Upload editor
@@ -188,7 +196,7 @@ jobs:
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
       # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
-        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
         with:
           path: .ccache
@@ -199,6 +207,7 @@ jobs:
   # jobs below run the same check on Windows. Runs once the player and editor
   # builds above have finished.
   export-check:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Export a game and check its visual scripts (Ubuntu)
     needs: [player, editor]
     runs-on: ubuntu-latest
@@ -233,6 +242,7 @@ jobs:
   # only catch their bug under a sanitizer. Only the listed test targets are built, to
   # keep it fast; this is deliberately not the whole ctest suite.
   sanitizers:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Scripting and robustness tests (ASan + UBSan)
     runs-on: ubuntu-latest
     timeout-minutes: 75   # was 45: a cold-cache run on a pull request needs 41-45 min and was cancelled at the limit (PR #1088)
@@ -331,7 +341,7 @@ jobs:
         run: ccache -s || true
 
       - name: Save compiler cache (main only)
-        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
         with:
           path: .ccache
@@ -364,6 +374,7 @@ jobs:
   # source is cloned once into the Actions cache (the tag is read from engine/CMakeLists.txt)
   # and its objects come from ccache. The built-in-reader switches stay at their defaults.
   assimp-models:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Model readers with Assimp
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -410,7 +421,7 @@ jobs:
 
       - name: Build
         run: |
-          cmake --build build-assimp -j --target test_model_readers test_model_readers_fuzz test_collada_reader \
+          cmake --build build-assimp -j "$(bash scripts/ci_jobs.sh 4)" --target test_model_readers test_model_readers_fuzz test_collada_reader \
             test_model_import_rig test_gltf_import test_fbx_reader test_glb_container test_model_corpus
 
       - name: Test
@@ -424,7 +435,7 @@ jobs:
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
       # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
-        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
         with:
           path: .ccache
@@ -436,6 +447,7 @@ jobs:
   # a failure, so the certificate checks cannot silently go missing. The sanitizer script then runs both tests
   # under ASan and UBSan.
   own-http:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Own HTTP client (OKAY_OWN_HTTP=ON, TLS tests required)
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -475,6 +487,7 @@ jobs:
   # (scripts/check_release_own_stack.sh). Not a required check: it tells us how ready the own stack is, it does not gate
   # merges. Only the test targets of the own pieces are built, and the compiler cache is reused.
   own-stack:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Own stack (OKAY_OWN_STACK=ON, no libsodium)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -538,7 +551,7 @@ jobs:
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
       # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
-        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
         with:
           path: .ccache
@@ -548,6 +561,7 @@ jobs:
   # (our own Ed25519 and SHA-512; the TweetNaCl-derived port is deleted). These targets do not link the engine, so this is quick.
   # okay::crypto has not had its outside review yet (CLAUDE.md rule 18); libsodium stays the preferred path where it is built.
   anticheat-crypto-nosodium:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Anti-cheat crypto without libsodium (Ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -573,7 +587,7 @@ jobs:
   windows-cross:
     name: Cross-compile Windows build (MinGW)
     runs-on: ubuntu-latest
-    timeout-minutes: 90   # a cold compiler cache (main's CI not finished, so no fresh cache) took over 60 min twice on 2026-11-22 (#1104, #1106); warm runs take 22-34 min
+    timeout-minutes: 120  # build jobs are now capped by memory (2 on a 16 GB runner, build-windows-dist.sh), so cold builds take longer; a cold compiler cache (main's CI not finished, so no fresh cache) took over 60 min twice on 2026-11-22 (#1104, #1106); warm runs take 22-34 min
     env:
       SDL2_VERSION: 2.30.9
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -686,7 +700,7 @@ jobs:
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
       # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
-        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
         with:
           path: .ccache
@@ -696,6 +710,7 @@ jobs:
   # Windows fiber the editor's debugger uses) and the mesh file tests, then
   # export a game with the Windows editor and check what its visual scripts print.
   windows-export:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Windows export check
     needs: windows-cross
     runs-on: windows-latest
@@ -734,6 +749,7 @@ jobs:
   # the verified restart (a new file that is the wrong version or cannot start is
   # rolled back and the previous program is started) and the self-update rules.
   windows-restart:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Windows updater restart
     runs-on: windows-latest
     timeout-minutes: 45
@@ -788,6 +804,7 @@ jobs:
         run: ctest --test-dir build-msvc -R "^(math|scene|serialize|material|actionlist|prefs|physics3d|core_features|charctrl|transform_input)$" --output-on-failure --timeout 150
 
   web-build:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: WebGL build (Emscripten)
     runs-on: ubuntu-latest
     # The build takes 12 to 20 minutes with a warm cache. A run that is still going after 40 minutes is a stalled runner,
@@ -841,7 +858,7 @@ jobs:
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
       # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
-        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
         with:
           path: .ccache
@@ -856,6 +873,7 @@ jobs:
   # service container is the target; each script makes and drops its own database and loads
   # docs/sql/*.sql into it twice (the files must be idempotent). A skip is a failure here.
   sql-tests:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: SQL row-level-security tests (Postgres)
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -898,6 +916,7 @@ jobs:
   # a current Node, the signed-update tool (scripts/sign_index.py) with its guards, and the reference account server's
   # limits. They were run by hand before.
   ticket-and-script-tests:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Ticket function, update signing and account server tests
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -941,6 +960,12 @@ jobs:
       - name: The programs never need GitHub (no GitHub address or word in shipped code and files; releases bake in the update server)
         run: python3 -I tests/scripts/test_no_github_runtime.py
 
+      - name: The pure-move checker for the editor/main.cpp split (edited, reordered, lost and extra lines fail)
+        run: python3 -I tests/scripts/test_check_pure_move.py
+
+      - name: Duplicate-code guard (scripts/dup_lint.py) on throw-away repositories
+        run: python3 -I scripts/tests/test_dup_lint.py
+
   # The anti-cheat tests that only do their real work with libsodium. The main Ubuntu job installs
   # no libsodium-dev, so a test that says "built without libsodium" there only runs its refusal
   # branch and never signs, seals or verifies anything (docs/feature_map/39). This job installs it,
@@ -948,6 +973,7 @@ jobs:
   # them still prints that branch. The launcher-side ticket flow runs here end to end against a local
   # fake ticket service (curl is on the runner).
   anticheat-crypto:
+    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Anti-cheat tests with libsodium (Ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -995,7 +1021,7 @@ jobs:
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
       # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
-        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
         with:
           path: .ccache

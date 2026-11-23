@@ -21,22 +21,9 @@
 using namespace okay;
 
 // ---- allocation fault injection --------------------------------------------------------
-// Every global allocation goes through here. A test arms a countdown on its own thread: the
-// n-th allocation from then on throws std::bad_alloc. Other threads are never affected.
-namespace {
-thread_local long t_failCountdown = -1;
-void* AllocOrThrow(std::size_t n) {
-    if (t_failCountdown > 0 && --t_failCountdown == 0) { t_failCountdown = -1; throw std::bad_alloc(); }
-    if (void* p = std::malloc(n ? n : 1)) return p;
-    throw std::bad_alloc();
-}
-} // namespace
-void* operator new(std::size_t n) { return AllocOrThrow(n); }
-void* operator new[](std::size_t n) { return AllocOrThrow(n); }
-void operator delete(void* p) noexcept { std::free(p); }
-void operator delete[](void* p) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+// Every global allocation goes through tests/AllocHook.hpp. A test arms a countdown on its own thread
+// (allochook::failCountdown): the n-th allocation from then on throws std::bad_alloc. Other threads are never affected.
+#include "AllocHook.hpp"
 
 namespace {
 
@@ -844,7 +831,7 @@ void TestAllocationFailure(int workers) {
         std::atomic<int> ran{0};
         std::vector<JobHandle> hs;
         bool threw = false;
-        t_failCountdown = n;
+        allochook::failCountdown = n;
         try {
             JobHandle a = js.Submit([&] { ++ran; }); hs.push_back(a);
             JobHandle b = js.Submit([&] { ++ran; }, {a}); hs.push_back(b);
@@ -859,7 +846,7 @@ void TestAllocationFailure(int workers) {
             threw = true;
         } catch (...) {
         }
-        t_failCountdown = -1;
+        allochook::failCountdown = -1;
         if (threw) ++thrown; else ++survived;
         // main-thread jobs are run by the pump; everything must settle
         for (int i = 0; i < 2000 && !js.WaitIdleFor(0.01); ++i) js.PumpMainThread();

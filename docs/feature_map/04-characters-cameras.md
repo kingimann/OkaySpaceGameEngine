@@ -7,6 +7,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 ## 4. Characters & cameras
 
 ### 4.1 Player Controller
+- **System:** Player Controller - Makes a first- or third-person character that walks, runs, jumps, crouches and swims, ready to drop into a scene.
 - **What:** One component, Player Controller, makes a first- or third-person character (View = First, Third or Both). Its View setting says which views exist (First only, Third only, or Both with a toggle key and a blended camera). The movement and camera code lives in parts it adds and removes itself.
 - **Parts:**
   - 4.1.1 Player Controller wrapper - `Components/PlayerController` - ViewMode First/Third/Both, SetViewMode, Add, Adopt (wraps old scenes' separate controllers), CurrentView; script set_view/get_view
@@ -28,6 +29,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Ask me like:** "make the view switch faster"; "the player stops too slowly when I release the key"
 
 ### 4.2 Stances and movement
+- **System:** Player Controller
 - **What:** The movement behaviours shared by the player controllers: a stance level that eases between standing, crouching and prone (collider, camera and speed follow), stairs and curbs, jumps and landings, slope limits, slides, dodges, dolphin dives, vaults and ledges, and swimming.
 - **Parts:**
   - 4.2.1 Stance levels and timings - `Components/Stance`, `Components/StanceControl` - 0 stand, 1 crouch, 2 prone eased over StanceTimes (0.25 s, 0.5 s, 0.8 s); keys, toggle or hold, Allow Prone, Resize Body, headroom check, SetStance
@@ -44,13 +46,14 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Docs:** `docs/gameplay/making_a_game.md` (Crouch and prone), `docs/gameplay/animation.md` (Actions: dive, roll, vault)
 - **Tests:** `stance`, `stance_save`, `jump`, `stop_settle`, `run_feel`, `view_ground`, `player_fixes`, `player_deep`, `player_course`
 - **Status:** Works - stance, stance_save, jump and stop_settle exist; vault, dodge and dive default off by design
-- **Open:** old map: verify prone on first and third person; hands-on-ledge Limb IK is not wired (Traversal.hpp comment); dive, hit, vault and emote actions are not sent to remote players (per docs, see 5.12)
+- **Open:** old map: verify prone on first and third person; hands-on-ledge IK is the LedgeHandsIK component (saved in scenes, Add Component > Animation, added by Wire missing animation and IK when Can Ledge Grab is on; editor entry and Windows not run; a ledge destroyed or moved mid-hang is not followed); dive, hit, vault and emote actions are not sent to remote players (per docs, see 5.12)
 - **Related:** 4.1, 5.12, 5.6, 5.9, 6.2
 - **Words:** crouch, prone, crawl, stance, step up, stairs, curb, slope limit, coyote, wall slide, slide, dodge, dive, vault, mantle, ledge, fall reset, swim
 - **Seen as:** the player cannot crouch or go prone; stands up inside low cover; snags on stairs or sills; falls through the floor forever; saved crouched player stands up inside a ceiling; slide or dodge does nothing
 - **Ask me like:** "verify prone works in first and third person"; "turn on vaulting for the third person player"
 
 ### 4.3 2D and 2.5D controllers
+- **System:** Ready-Made Controllers - Ready-made movement for 2D top-down and platformer games, third-person shooters, twin-stick and click-to-move characters.
 - **What:** Ready-made controllers for flat and side-on games: a top-down or platformer 2D character controller, a top-down 2D controller with dash and combat, and a 2.5D platformer with depth layers, ledges and grabbing.
 - **Parts:**
   - 4.3.1 Character Controller 2D - `Components/CharacterController2D` - TopDown or Platformer mode, sprint, acceleration, air control, coyote time, jump buffer, variable and multi-jump, wall slide and wall jump
@@ -70,6 +73,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Ask me like:** "add wall cling to the 2.5D controller"; "the 2D controller should buffer jumps longer"
 
 ### 4.4 Shooter and top-down
+- **System:** Ready-Made Controllers
 - **What:** The other ready-made 3D controllers: third-person shooter, twin-stick top-down shooter, fixed-angle top-down, click-to-move, a free-roam fly camera and a plain 3D character controller.
 - **Parts:**
   - 4.4.1 Third-person shooter - `Components/ThirdPersonShooterController` - look, right-mouse aim, left-mouse fire, cursor lock, lean
@@ -92,6 +96,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Ask me like:** "add a second weapon slot to the top-down shooter"; "click-to-move should path around obstacles"
 
 ### 4.5 Vehicles
+- **System:** Vehicles - Drivable cars and boats: throttle, steering, brakes, grip and suspension.
 - **What:** Arcade car controllers: throttle, steering, braking, handbrake and grip, with an opt-in raycast suspension, plus a 2D top-down or side-view version.
 - **Parts:**
   - 4.5.1 Arcade vehicle - `Components/VehicleController` - maxSpeed, reverseSpeed, acceleration, brakeForce, drag, turnSpeed, grip, handbrakeGrip, followCamera, Speed(), IsGrounded()
@@ -113,6 +118,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Ask me like:** "let the player get into the car"; "add engine sound pitch from Speed"
 
 ### 4.6 Third-person camera
+- **System:** Cameras
 - **What:** The over-the-shoulder orbit camera used by the third-person controller and the view toggle, and the simple chase camera for 2D and 3D scenes.
 - **Parts:**
   - 4.6.1 Shared orbit placement - `Components/PlayerCamera` - PlaceThirdPersonOrbit: pivot, aim blend, look smoothing, spring arm and landing shake in one function so controller and toggle agree
@@ -132,6 +138,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Ask me like:** "make the orbit camera lag less vertically"; "camera clips through railings"
 
 ### 4.7 First-person camera and hands
+- **System:** Cameras
 - **What:** The first-person eye, the owner's own body and hands in view, and the hands panel. The owner's camera skips the head and neck but still draws shirt and legs; a copy of the hand brick is drawn in the lower right, and other players see the real arms.
 - **Parts:**
   - 4.7.1 First-person eye feel - `Components/FirstPersonController`, `Components/ControllerFeel` - bob (up and down only), landing dip, FOV kick, zoom, lean camera roll, eye height by stance; bob and landing dip off under Reduce Motion
@@ -152,6 +159,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Ask me like:** "show empty hands in first person"; "hands are too low on screen while running"
 
 ### 4.8 Virtual cameras and dollies
+- **System:** Cameras
 - **What:** Shot-based cameras: virtual cameras describe where to stand and what to look at, a brain on the real camera blends to the highest-priority one, dolly paths (rails) carry them along a smooth curve, and the scene keeps an ordered camera stack.
 - **Parts:**
   - 4.8.1 Virtual camera - `Components/VirtualCamera` - priority, Follow and LookAt by name, binding mode (World Space or Lock To Target), damping, dead zone, field of view, Dutch angle, confiner box, handheld shake, AddImpulse
@@ -177,6 +185,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Ask me like:** "blend between two shots with an ease curve"; "render two cameras on top of each other in Play"
 
 ### 4.9 Blocky Character and customization
+- **System:** Character Creator - The built-in blocky character and its body, colours, hair, clothes and accessories.
 - **What:** The built-in low-poly character with one height slider, colours, hair, clothing and accessories, bound to a 15-bone humanoid skeleton, with an optional editable part rig and the ability to bind any mesh to it.
 - **Parts:**
   - 4.9.1 Proportions, colours and clothing - `Components/Character` - height, skin, shirt, pants, hair; hair styles, beards, shirt and leg styles, belt, jacket, gloves
@@ -198,6 +207,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Ask me like:** "add a ponytail and a new hat style"; "recolour the shirt per player"
 
 ### 4.10 Camera component, shake and zoom
+- **System:** Cameras
 - **What:** The Camera component itself: perspective or orthographic projection, lens settings, trauma-based shake, smooth zoom, pixel-perfect 2D, screen-to-world conversions, culling mask and viewport rectangle.
 - **Parts:**
   - 4.10.1 Projection and lens - `Components/Camera` - fieldOfView, orthographicSize, physicalCamera, lens shift, Dutch angle, cullingMask, viewport rect
@@ -218,6 +228,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Ask me like:** "shake the camera on landing"; "zoom the 2D camera smoothly to a target"
 
 ### 4.11 Seats and sitting
+- **System:** Seats - Places a character can sit down on and get up from with the Interact key.
 - **What:** A place to sit: the nearest local player presses Interact (E or pad X by default, the shared rebindable action) to be moved onto the seat point, the Animator plays the sit-down, loop and stand-up clips, and moving or jumping stands up.
 - **Parts:**
   - 4.11.1 Seat component - `Components/Seat` - seatHeight (0.45), sitPoint, facing, type (chair, ground, bench), exitPoint, useRadius, prompt, Claim and Release
@@ -236,6 +247,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Ask me like:** "make a sofa that seats two"; "add an interact key setting"
 
 ### 4.12 Premade players
+- **System:** Player Controller
 - **What:** The GameObject > Player menu: one-click players already wired with controller, camera, collider and animation, so a new scene is playable straight away.
 - **Parts:**
   - 4.12.1 Player menu - `editor/main.cpp` - Player Controller (first / third person, one entry), Third Person Shooter, Top Down (3D), Top Down Shooter (3D), 2.5D Platformer, Top Down (2D), Click To Move

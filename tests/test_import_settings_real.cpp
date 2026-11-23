@@ -107,9 +107,10 @@ int main() {
         CHECK(Is(Sample(pt, 0.5f, 0.25f), 0, 1, 0));                // Point: one whole texel
         CHECK(Is(Sample(old, 0.5f, 0.25f), 0, 1, 0));               // the older layout's "nearest" counts
         CHECK(Is(Sample(bil, 0.5f, 0.25f), 0.5f, 0.5f, 0));
-        // Trilinear blends two mip levels, Bilinear stays on the nearest one.
-        CHECK(Near(Sample(none, 0.5f, 0.25f, 0.5f).b, 0.25f));
-        CHECK(Near(Sample(bil, 0.5f, 0.25f, 0.5f).b, 0.5f));
+        // Trilinear blends two mip levels, Bilinear stays on the nearest one. Level 1's blue is half on in linear light
+        // (blue and white of four texels), which is sRGB 0.735 (gamma-correct mips; a plain byte average gave 0.5).
+        CHECK(Near(Sample(none, 0.5f, 0.25f, 0.5f).b, 0.3677f));
+        CHECK(Near(Sample(bil, 0.5f, 0.25f, 0.5f).b, 0.7354f));
     }
     RUN_SUITE("texture wrap");
     {
@@ -131,7 +132,9 @@ int main() {
         const MipChain* b = GetCachedMips(off);
         CHECK(a && a->size() == 2 && b && b->size() == 1);
         // Far away (a high level of detail): with mips the picture averages out, without them it keeps its texels.
-        CHECK(Is(Sample(on, 0.25f, 0.25f, 8.0f), 0.5f, 0.5f, 0.5f));
+        // The average is taken in linear light (colour picture, sRGB): each channel is half on, which is sRGB 0.735,
+        // not the 0.5 a plain average of the stored bytes gave (that made far-away textures too dark).
+        CHECK(Is(Sample(on, 0.25f, 0.25f, 8.0f), 0.735f, 0.735f, 0.735f));
         CHECK(Is(Sample(off, 0.25f, 0.25f, 8.0f), 1, 0, 0));
     }
     RUN_SUITE("changing a setting shows after the caches are dropped");
@@ -243,6 +246,55 @@ int main() {
         const TextureSampling t = TextureImportSampling(withMeta);
         CHECK(t.filter == TextureSampling::Trilinear && t.wrap == TextureSampling::Repeat && t.mipmaps);
         CHECK(Near(Sample(withMeta, 0.5f, 0.25f, 0.5f).b, Sample(none, 0.5f, 0.25f, 0.5f).b));   // identical pixels
+    }
+    // The loaders read the sidecar the same way the asset database does (ImportSettings::FromPairs): values are
+    // unescaped (the database writes them through savefmt::Escape) and an older layout is migrated with the same
+    // steps, so a key renamed in a later version reaches the texture, audio and model loaders (Grok #422 item 7).
+    RUN_SUITE("the loaders read the sidecar through ImportSettings");
+    {
+        Dir d;
+        // Escaped values: "p\oint" is "point" once unescaped.
+        const std::string esc = MakePng(d, "esc.png", "importer texture 2\nset filter p\\oint\nset wrap cl\\amp\n");
+        const TextureSampling te = TextureImportSampling(esc);
+        CHECK(te.filter == TextureSampling::Point && te.wrap == TextureSampling::Clamp);
+        CHECK(Is(Sample(esc, 0.5f, 0.25f), 0, 1, 0));               // the software renderer's cache samples it as Point
+        // A v1 texture: `linear 1` became `srgb 0` in v2 (the GPU upload reads srgb), `mips` became `mipmaps`.
+        const std::string v1 = MakePng(d, "v1.png", "importer texture 1\nset linear 1\nset mips 0\nset maxsize 64\n");
+        CHECK(ReadImportSetting(v1, "texture", "srgb") == "0");
+        CHECK(!TextureImportSampling(v1).mipmaps && TextureImportMaxSize(v1) == 64);
+        // Audio: an escaped load mode and the v1 keys.
+        const std::string wav = d.at("s.wav"), wav1 = d.at("s1.wav");
+        Write(wav + ".okaymeta", "okaymeta 1\ntype audio\nimporter audio 2\nset loadMode str\\eam\nset forceMono 1\n");
+        Write(wav1 + ".okaymeta", "okaymeta 1\ntype audio\nimporter audio 1\nset stream 1\nset mono 1\n");
+        CHECK(ReadAudioImportOptions(wav).stream && ReadAudioImportOptions(wav).forceMono);
+        CHECK(ReadAudioImportOptions(wav1).stream && ReadAudioImportOptions(wav1).forceMono);
+        // Model: an escaped scale ("2\.5" is 2.5) and normals.
+        const std::string mdl = d.at("m.glb");
+        Write(mdl + ".okaymeta", "okaymeta 1\ntype model\nimporter model 1\nset scale 2\\.5\nset normals fl\\at\n");
+        CHECK(ModelImportScale(mdl) == 2.5f && ReadModelImportOptions(mdl).normals == ModelImportOptions::Flat);
+        // The reader caches per file but sees an edited sidecar at once (no cache flush needed).
+        Write(mdl + ".okaymeta", "okaymeta 1\ntype model\nimporter model 1\nset scale 4\nset normals calculate\n");
+        CHECK(ModelImportScale(mdl) == 4.0f && ReadModelImportOptions(mdl).normals == ModelImportOptions::Calculate);
+        fs::remove(mdl + ".okaymeta");
+        CHECK(ModelImportScale(mdl) == 1.0f);                        // removed: back to the default
+    }
+    // Older key names under a current (v2) header: the loaders understood them before the one-reader change, so
+    // they still do (texture `filter nearest`, `mips 0`; audio `stream 1`, `mono 1`).
+    RUN_SUITE("older key names under a v2 header still count");
+    {
+        Dir d;
+        const std::string near2 = MakePng(d, "near2.png", "importer texture 2\nset filter nearest\n");
+        const std::string mips2 = MakePng(d, "mips2.png", "importer texture 2\nset mips 0\n");
+        CHECK(TextureImportSampling(near2).filter == TextureSampling::Point);
+        CHECK(!TextureImportSampling(mips2).mipmaps);
+        const std::string st = d.at("st.wav"), mo = d.at("mo.wav");
+        Write(st + ".okaymeta", "okaymeta 1\ntype audio\nimporter audio 2\nset stream 1\n");
+        Write(mo + ".okaymeta", "okaymeta 1\ntype audio\nimporter audio 2\nset mono 1\n");
+        CHECK(ReadAudioImportOptions(st).stream && !ReadAudioImportOptions(st).forceMono);
+        CHECK(ReadAudioImportOptions(mo).forceMono && !ReadAudioImportOptions(mo).stream);
+        // A current key wins over an older one in the same block.
+        const std::string both = MakePng(d, "both.png", "importer texture 2\nset mipmaps 1\nset mips 0\n");
+        CHECK(TextureImportSampling(both).mipmaps);
     }
 
     TEST_MAIN_RESULT();

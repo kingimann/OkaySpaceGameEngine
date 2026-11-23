@@ -4,6 +4,7 @@
 #include "XboxExport.hpp"
 #include "XboxExportTool.hpp"
 #include "XboxGameConfig.hpp"
+#include "XboxGameRuntime.hpp"
 #include "XboxSdkCheck.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -384,7 +385,24 @@ static void AppxTests() {
     CHECK(!PackFolder("/definitely/not/here").ok);
 }
 
+// A "save next frame" request that has not run when the system suspends is forced through by XboxGameRuntime::OnSuspend, after the settings.
+static void PendingSaveSuspendTests() {
+    okay::xbox::XboxGameRuntime rt;
+    int writes = 0;
+    rt.Pending().Request("slot", [&](std::string&) { ++writes; return true; });
+    CHECK(rt.Pending().HasPending() && writes == 0);
+    rt.OnSuspend(4000);
+    CHECK(writes == 1 && !rt.Pending().HasPending());
+    CHECK(rt.LastSuspend().steps.size() == 1 && rt.LastSuspend().steps[0].name == "pending saves" && rt.LastSuspend().AllOk());
+    rt.OnSuspend(4000);                                              // nothing pending any more: no step
+    CHECK(rt.LastSuspend().steps.empty() && writes == 1);
+    rt.Pending().Request("bad", [&](std::string& e) { e = "disk full"; return false; });
+    rt.OnSuspend(4000);
+    CHECK(!rt.LastSuspend().AllOk() && rt.LastSuspend().steps[0].error.find("bad FAILED: disk full") == 0 && rt.Pending().IsPending("bad"));
+}
+
 int main() {
+    PendingSaveSuspendTests();
     SdkTests();
     NewerVsTests(); ExportToolTests(); ManifestTests(); AppxTests(); AssetTests(); ExportTests();
     if (g_fail) { std::printf("%d check(s) FAILED\n", g_fail); return 1; }

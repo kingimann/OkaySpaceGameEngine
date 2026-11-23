@@ -51,6 +51,7 @@ add_library(okay_engine
     src/Core/Backup.cpp
     src/Core/AssetManager.cpp
     src/Core/ImportSettings.cpp
+    src/Core/ImportSidecar.cpp
     src/Core/AssetDatabase.cpp
     src/Core/AssetDatabaseDeps.cpp
     src/Core/AssetDatabaseSearch.cpp
@@ -103,6 +104,8 @@ add_library(okay_engine
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
     src/Components/Ragdoll.cpp
+    src/Components/ActiveRagdoll.cpp
+    src/Components/RagdollShared.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
     src/Net/NetBuildSync.cpp
@@ -131,6 +134,8 @@ add_library(okay_engine
     src/Components/UIAnimation.cpp
     src/Scripting/OkayScriptVM.cpp
     src/Scripting/ScriptVM.cpp
+    src/Scripting/ScriptApiRegistry.cpp
+    src/Scripting/ScriptApiCore.cpp
     src/Script/Lexer.cpp
     src/Script/Parser.cpp
     src/Script/Checker.cpp
@@ -191,6 +196,8 @@ add_library(okay_engine
     src/Animation/HumanoidLibrary.cpp
     src/Animation/PlayerSetup.cpp
     src/Animation/HumanoidActions.cpp
+    src/Animation/RagdollPhysics.cpp
+    src/Animation/DynamicCharacter.cpp
     src/Components/AnimClip.cpp
     src/Components/Sequence.cpp
     src/Components/SequencePlayer.cpp
@@ -224,7 +231,7 @@ add_library(okay_engine
     src/Audio/FlacDecoder.cpp
     src/Audio/WavDecoder.cpp
     src/Audio/WavPlayback.cpp
-    src/AI/Pathfinding.cpp
+    src/AI/NavigationGrid.cpp
     src/AI/GridPath2D.cpp
     src/AI/NavMesh.cpp
     src/AI/NavMeshBake.cpp
@@ -310,6 +317,10 @@ add_library(okay_engine
     src/Render/RawReader.cpp
     src/Render/PmxReader.cpp
     src/Render/LwsReader.cpp
+    src/Render/Gltf1Reader.cpp
+    src/Render/OgexReader.cpp
+    src/Render/MdlReader.cpp
+    src/Render/Q3BspReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/Measure.cpp
     src/Modeling/SelectOps.cpp
@@ -350,6 +361,7 @@ add_library(okay_engine
     src/Texture/Stream.cpp
     src/Texture/Export.cpp
     src/Render/GpuTexture.cpp
+    src/Render/TextureAsset.cpp
     src/Optimize/SceneOptimizationReport.cpp
     src/Testing/TestRegistry.cpp
     src/Testing/PlayTest.cpp
@@ -751,7 +763,7 @@ foreach(_line IN LISTS _okay_own_opts)
         message(FATAL_ERROR "OKAY_OWN_${_name} is an option in CMakeLists.txt but is in no foreach(_fmt ...) list of engine/CMakeLists.txt and has no OKAY_OWN_${_name}_DEFAULT definition: its default would never be applied")
     endif()
 endforeach()
-foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB NDO PMX LWS OGREBIN ZAE XML LXO)
+foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB NDO PMX LWS OGREBIN ZAE XML LXO GLTF1 OPENGEX MDL Q3BSP)
     if(OKAY_OWN_${_fmt})
         set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")
@@ -811,4 +823,5 @@ target_sources(okay_engine PRIVATE
     src/Core/FrameOverlay.cpp
     src/Core/TimeSnapshot.cpp
     src/Core/LoopConsole.cpp
+    src/Core/ConsoleHost.cpp
 )

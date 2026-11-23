@@ -7,6 +7,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 ## 2. Rendering & world
 
 ### 2.1 Renderers
+- **System:** Renderer - Picks the drawing backend (OpenGL, Direct3D, software) and gets each finished frame onto the screen.
 - **What:** The common face of rendering: the small `IRenderer` interface, the colour type, the console renderer, and the map of which backend draws a frame. The backends themselves (OpenGL, Direct3D 11 and 12, software, web) now live in area 38 so each can be targeted.
 - **Parts:**
   - 2.1.1 Renderer interface - `Render/Renderer` - `IRenderer` (BeginFrame, EndFrame, SetCamera, DrawQuad, GetViewport) and `Viewport`; only `ConsoleRenderer` implements it and `SpriteRenderer::OnRender` is the only caller of `DrawQuad`
@@ -27,6 +28,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Ask me like:** "Which renderer is drawing my Game view right now?"; "Add a new field to Color without breaking the saved scenes"
 
 ### 2.2 Materials and textures
+- **System:** Materials and Textures - How a surface looks: colour, roughness and shine, the pictures on it, and texture mipmaps, atlases and compression.
 - **What:** How a surface looks: reusable material presets, the Mesh Renderer component the backends read, procedural textures, and the mesh geometry with its primitives and loaders.
 - **Parts:**
   - 2.2.1 Material asset - `Render/Material` - `.okaymat` preset (colour, emissive, specular, shininess, unlit, double-sided, texture, tiling, shader and toon bands, rim, outline, UV scroll, triplanar); `FromRenderer` and `ApplyTo`
@@ -49,6 +51,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Ask me like:** "Add a Cartoon rim-light variant of the Toon shader"; "Make a brick wall without a texture file"
 
 ### 2.3 Lighting and shadows
+- **System:** Lighting and Shadows - Sun, point, spot and area lights, the shadows they cast, and baked lighting.
 - **What:** Lights (sun, point, spot, area), how every renderer shades with them, cascaded and local shadows, baked per-face lighting, and a 24-hour day/night cycle.
 - **Parts:**
   - 2.3.1 Light component - `Components/Light` - Directional, Point, Spot, Area; colour or Kelvin temperature, intensity, range, linear or inverse-square falloff, spot angle and softness, flicker, shadow strength and bias; `ApplySceneLight` fills `SceneLights`
@@ -71,6 +74,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Ask me like:** "Why is my second sun not casting shadows?"; "Run the day/night clock faster and show the hour on the HUD"
 
 ### 2.4 Sky, fog and weather
+- **System:** Sky, Weather and Time of Day - The sky, sun, stars, clouds and fog, rain and snow, and a day-night cycle that games can react to.
 - **What:** The atmosphere of a scene: a gradient or sun-driven procedural sky with stars and clouds, three fog modes, rain, snow and storms with gusts and lightning, and the global wind particles and water follow.
 - **Parts:**
   - 2.4.1 Scene render settings - `Scene/Scene` (RenderSettings) - sky mode and colours, sun disc, stars, ambient mode, fog, post and weather, all saved with the scene
@@ -95,6 +99,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Ask me like:** "Add a foggy morning preset that also lowers the sun"; "Make storms play thunder 2 seconds after the flash"; "Make the trees sway in a gusty wind"; "Add a fan that blows the leaves away"
 
 ### 2.5 Post-processing
+- **System:** Post-Processing - Screen effects on the finished picture: bloom, colour grading, depth of field, anti-aliasing and more.
 - **What:** Screen effects on the finished frame: exposure, tonemap, bloom, colour grading, vignette, anti-aliasing, ambient occlusion and depth of field, with a software fallback for some.
 - **Parts:**
   - 2.5.1 Settings and chain order - `Scene/Scene` (PostSettings), `Render/Atmosphere` - exposure, tonemap (None, ACES, Filmic), bloom, grading (temperature, tint, saturation, contrast, lift/gamma/gain), vignette; chain: SSAO, bloom, exposure/tonemap/grade/vignette, depth of field, FXAA, in an HDR target
@@ -114,6 +119,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Ask me like:** "Check the Direct3D 11 depth of field on a real GPU"; "Turn on bloom only for the Night preset"
 
 ### 2.6 Terrain and water
+- **System:** Terrain and Water - Landscapes you can sculpt, paint and dig, plants and decals on them, and animated water.
 - **What:** World-building components: sculptable heightmap terrain, cave-capable voxel terrain, runtime digging, animated water with buoyancy, world streaming by cells, and 2D tilemaps.
 - **Parts:**
   - 2.6.1 Heightmap terrain - `Components/Terrain` - square height grid, brushes (raise, smooth, flatten, noise, erode), generators, hydraulic and thermal erosion, terrace, heightmap PNG import and export; builds the sibling MeshRenderer's mesh
@@ -139,6 +145,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Ask me like:** "Dig a tunnel with the voxel digger and keep the roof"; "Stream a 10 by 10 grid of cells around the player"
 
 ### 2.7 Particles and lines
+- **System:** Particles - Smoke, fire, sparks and trails made of many small moving pictures.
 - **What:** Particle emitters with gradients, curves, motion modules and presets, plus ribbon-style Line and Trail renderers for lasers, ropes, sword swipes and projectile tails.
 - **Parts:**
   - 2.7.1 Particle emitter - `Components/ParticleSystem` - shapes (Point, Circle, Sphere, Box, Cone, Edge), emission rate, burst, duration and loop, lifetime, start velocity, gravity, damping, wind influence, ground plane with bounce, and Collide with Terrain (`collideTerrain`, `Components/ParticleSystem.cpp`): with collision on, particles land on every active Terrain (moved, turned or scaled), bounce off its slope and slide down it; saved as its own `particlesterrain` record; Inspector Collision section (editor syntax-checked only, not run), property `collideTerrain`; one point test per particle per frame, so a very fast particle can pass through a thin ridge
@@ -160,6 +167,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Ask me like:** "Add an ember preset that rises and flickers"; "Make the sword trail fade faster"
 
 ### 2.8 Culling and skinning
+- **System:** Culling and LOD - Skips drawing what the camera cannot see and draws simpler versions of far-away things, so big scenes stay fast.
 - **What:** Skip what the camera cannot see before any draw work, and let the GPU deform skinned characters when it can.
 - **Parts:**
   - 2.8.1 Frustum culling - `Render/Culling` - `Frustum`, a world bounding sphere per object (cached local bounds for static meshes, bone positions for skinned ones), `CulledByFrustum`
@@ -179,13 +187,14 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Ask me like:** "Turn culling off to see if my mesh is being culled"; "Why do skinned characters cost so much in the software renderer?"
 
 ### 2.9 Fonts and images
+- **System:** Fonts and Images - Loads pictures and fonts and turns text into letters on screen, falling back to system fonts for other alphabets.
 - **What:** The CPU side of text and pictures: the built-in 8x8 font, TrueType fonts baked into glyph atlases, the compiled-in UI font, the RGBA image buffer, and the world and screen text component.
 - **Parts:**
   - 2.9.1 Bitmap font - `Graphics/Font` - `Font8x8` built-in hand-drawn 8x8 monochrome ASCII glyphs (printable 32-126), `Pixel`, `MeasureWidth`
   - 2.9.2 TrueType fonts - `Graphics/TtfFont` - glyph atlas over our own reader, any glyph baked on first use, atlas grows, `Generation()` tells hosts to re-upload
   - 2.9.6 TrueType reader and rasterizer - `Graphics/TtfRaster` - our own sfnt parser (TrueType, OpenType CFF, .ttc; cmap 0/4/6/12/13; glyf with composite glyphs; CFF Type 2 charstrings incl. CID-keyed) and exact-area anti-aliased glyph rasterizer, unhinted; every read bounds-checked so a corrupt font loads as nothing instead of crashing; `ShelfPacker` and `BakeGlyph` for atlases
   - 2.9.3 Built-in UI font - `Graphics/EmbeddedFont` - the launcher's Roboto font compiled in as base85
-  - 2.9.4 Images - `Graphics/Image`, `Core/ImageDecode` - RGBA8 buffer, load PNG (every colour type and depth, Adam7, tRNS), JPG (baseline and progressive, any chroma subsampling, restart markers), BMP, TGA, GIF (first frame, or every frame with `DecodeGifFrames`: the frame count is read first, the decoder's live memory is at most 512 MiB, and an animation claiming more than 4096 bytes of frames per byte of file over 64 MiB is refused), HDR and PSD through our own decoder (`Core/ImageDecode`, no third-party code; also the launcher's cover art, avatars and chat images), save PNG through our own encoder (`Core/ImageWrite`), get/set pixel, fill
+  - 2.9.4 Images - `Graphics/Image`, `Core/ImageDecode` - RGBA8 buffer, load PNG (every colour type and depth, Adam7, tRNS), JPG (baseline and progressive, any chroma subsampling, restart markers), BMP, TGA, GIF (first frame, or every frame with `DecodeGifFrames`: the frame count is read first, the decoder's live memory is at most 512 MiB, and an animation claiming more than 4096 bytes of frames per byte of file over 64 MiB is refused), HDR and PSD (and PNM P1 to P6, `DecodePnm`, routed from `DecodeImage` only with `OKAY_OWN_PNM=1`, off by default) through our own decoder (`Core/ImageDecode`, no third-party code; also the launcher's cover art, avatars and chat images), save PNG through our own encoder (`Core/ImageWrite`), get/set pixel, fill
   - 2.9.5 Text component - `Components/TextRenderer` - world or screen-space text, pixel size, alignment, wrap, auto size, shadow, outline, gradient, typewriter reveal, localized text
 - **Code:** `Graphics/Font`, `Graphics/TtfFont`, `Graphics/TtfRaster`, `Graphics/EmbeddedFont`, `Graphics/Image`, `Core/ImageDecode`, `Components/TextRenderer`
 - **API:** `Font8x8`, `TtfFont`, `ttf::Face`, `ttf::BakeGlyph`, `Image::Load`, `Image::Save`, `DecodeImage`, `DecodeGifFrames`, `GetImageInfo`, `Inflate`, `TextRenderer`, `TextRenderer::text`, `TextRenderer::screenSpace`
@@ -200,6 +209,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Ask me like:** "Use a pixel font for the score and Roboto for the menu"; "Why does Japanese text fall back to another font?"
 
 ### 2.10 Cameras and the camera stack
+- **System:** Cameras - The cameras that film the scene: lens, shake and zoom, follow cameras for first and third person, and shot cameras that blend between views.
 - **What:** The Camera component (lens, viewport, culling mask, clear mode, framing effects), how a scene picks its main camera, and the camera stack that several cameras can form.
 - **Parts:**
   - 2.10.1 Camera component - `Components/Camera` - orthographic or perspective, field of view (vertical or horizontal), physical lens (focal length, sensor), near and far, viewport rect, culling mask, clear flags, depth
@@ -220,6 +230,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Ask me like:** "Add a picture-in-picture rear-view camera"; "Shake the camera on explosions, fading out in half a second"
 
 ### 2.11 Splines and spline tools
+- **System:** Splines - Curves you draw in the scene that objects follow and that meshes, lines and rows of objects are built along.
 - **What:** A curve you draw in the Scene view that followers, meshes, instancers and lines build on, with the editor overlay for editing it.
 - **Parts:**
   - 2.11.1 Spline curve - `Components/Spline` - cubic Bezier or Catmull-Rom, open or closed, per-point roll and width/height scale, arc-length table, rotation-minimising frames
@@ -240,6 +251,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Ask me like:** "Lay a road along this spline and put lamp posts every 10 metres"; "Make the cart follow the path at constant speed"
 
 ### 2.12 Sprites and sprite animation
+- **System:** Sprites and Tilemaps - Flat 2D pictures in the world, sprite sheets cut into frames, flip-book animation and levels painted from tiles.
 - **What:** The 2D drawing components: textured, tinted, sorted sprites and flip-book animation from frame lists or sprite-sheet rows.
 - **Parts:**
   - 2.12.1 Sprite renderer - `Components/SpriteRenderer` - size, colour, texture, sub-region (`uvMin`, `uvMax`), sorting layer and order, flipX and flipY, smooth or pixel filter, console glyph
@@ -257,6 +269,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Seen as:** sprites draw in the wrong order; pixel art looks blurry; a sprite animation plays the wrong row; a character faces the wrong way
 - **Ask me like:** "Put the player in front of the foreground trees"; "Play the 'run' row of this sprite sheet at 12 fps"
 ### 2.13 Texture library (mipmaps, atlases, compression, streaming)
+- **System:** Materials and Textures
 - **What:** Our own CPU texture processing: build mip chains, pack sprite atlases, convert pixel formats, block-compress to BC1/BC2/BC3/BC4/BC5, write and read DDS files, load .dds textures in every renderer (OpenGL keeps them compressed when the GPU can), and plan which mip of each texture to keep for a memory budget.
 - **Parts:**
   - 2.13.1 Mip chains - `Texture/Mip` - box, Lanczos3 and Kaiser filters for any size; sRGB-correct (linear light), alpha-weighted, alpha-test coverage kept, normal-map renormalising
@@ -266,13 +279,14 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.13.7 GPU upload - `Render/GpuTexture`, `GLRenderer::TextureFor`, `GetCachedTexture` - a `.dds` texture path, or a picture whose import settings say `compress` (compressed copy kept in `<folder>/.okaycache/<file>.dds`, with a `.src` record of the picture and .okaymeta size and hash, so any change rebuilds it; a game build ships the copy next to the picture, so the game does not encode at run time), goes to OpenGL with `glCompressedTexImage2D` when S3TC / RGTC is present (asked at run time), else decoded on the CPU; Direct3D 11 uploads the BC blocks as they are (`D3D11Renderer::TextureFor`); the software and Direct3D 12 renderers draw .dds decoded to RGBA8; `OKAY_GL_NO_COMPRESSED=1` forces the CPU decode in OpenGL
   - 2.13.5 Streaming planner - `Texture/Stream` - camera distance and screen size to the mip each texture needs, memory budget through `Optimize/MipBudget`, load and evict amounts, per-frame upload cap
   - 2.13.6 Tool and editor hook - `tools/okaytexture`, `Texture/Export`, `editor/ProjectPanelUI` - `okay-texture mips|compress|atlas|info|stream`; Project panel Import Settings "Generate mipmaps / compress" writes a .dds beside the picture
-- **Code:** `Texture/Texture`, `Texture/Mip`, `Texture/Atlas`, `Texture/Convert`, `Texture/Bc`, `Texture/Dds`, `Texture/Stream`, `Texture/Export`, `Render/GpuTexture`, `tools/okaytexture/main.cpp`, `examples/texture`, `editor/ProjectPanelUI.cpp`
-- **API:** `okay::tex::GenerateMips`, `GenerateMipsRGBA8`, `MipOptions`, `PackAtlas`, `ComposeAtlasRGBA8`, `AtlasToJson`, `ConvertPixels`, `FloatToHalf`, `EncodeBc`, `DecodeBc`, `WriteDds`, `ReadDds`, `ReadDdsFile`, `DdsLimits`, `DdsLevelToRGBA8`, `gputex::Source`, `gputex::PlanUpload`, `GLRenderer::UploadInfo`, `StreamPlanner`, `BuildDdsFile`, `BuildAtlasFiles`; command `okay-texture`
-- **Editor:** Project panel > picture > Import Settings > "Compress on the GPU" and "Generate mipmaps / compress"
-- **Docs:** `docs/rendering/own_texture_library.md`
-- **Tests:** `tex_mip`, `tex_atlas`, `tex_convert`, `tex_bc`, `tex_dds_stream`, `tex_dds_load`, `gl_dds_upload` (Mesa llvmpipe through EGL; SKIPPED without one)
+  - 2.13.8 Shared texture assets - `Render/TextureAsset` - one decoded asset per picture for all four renderers, loaded through `AssetManager` with a counted `TextureHandle`; renderers keep only their GPU object and upload again when the asset's serial changes; hot reload of changed files (`textures::Pump`, on in the editor, `OKAY_TEXTURE_HOT_RELOAD=1` in a game); per-texture settings incl. `anisotropy`, `normalMap`, `mipFilter` (box/Kaiser), `compression` (auto/BC1/BC3/BC4/BC5); our own gamma-correct mip chain in every renderer; MemoryTracker `Textures` / `Textures (GPU)`, F3 line, Profiler "Textures" table, budget `OKAY_TEXTURE_BUDGET_MB` with idle trim (docs/rendering/textures.md)
+- **Code:** `Texture/Texture`, `Texture/Mip`, `Texture/Atlas`, `Texture/Convert`, `Texture/Bc`, `Texture/Dds`, `Texture/Stream`, `Texture/Export`, `Render/GpuTexture`, `Render/TextureAsset`, `tools/okaytexture/main.cpp`, `examples/texture`, `editor/ProjectPanelUI.cpp`
+- **API:** `okay::tex::GenerateMips`, `GenerateMipsRGBA8`, `MipOptions`, `PackAtlas`, `ComposeAtlasRGBA8`, `AtlasToJson`, `ConvertPixels`, `FloatToHalf`, `EncodeBc`, `DecodeBc`, `WriteDds`, `ReadDds`, `ReadDdsFile`, `DdsLimits`, `DdsLevelToRGBA8`, `gputex::Source`, `gputex::PlanUpload`, `GLRenderer::UploadInfo`, `StreamPlanner`, `BuildDdsFile`, `BuildAtlasFiles`, `TextureHandle`, `TextureAsset`, `textures::Load`, `textures::ForRender`, `textures::Pump`, `ReadTextureSettings`, `BuildMipChain`; command `okay-texture`
+- **Editor:** Project panel > picture > Inspector Import Settings: Kind, Largest side, Filter (incl. Anisotropic 2x-16x), Wrap, Mipmaps and Mip filter, "Compress on the GPU" with Format, a "Loaded:" line, "Generate mipmaps / compress"; Profiler window > Textures
+- **Docs:** `docs/rendering/own_texture_library.md`, `docs/rendering/textures.md`
+- **Tests:** `tex_mip`, `tex_atlas`, `tex_convert`, `tex_bc`, `tex_dds_stream`, `tex_dds_load`, `gl_dds_upload` (Mesa llvmpipe through EGL; SKIPPED without one), `texture_asset`
 - **Status:** Partial - the library, tool, editor button, .dds loading and the OpenGL compressed upload work and are tested on Linux (the GL part on Mesa llvmpipe); nothing was run on Windows or a real GPU
-- **Open:** the Direct3D 11 BC upload was only compile-checked with MinGW, never run; Direct3D 12 draws .dds decoded to RGBA8 (no BC upload there); the editor's "Compress on the GPU" box was not compiled or clicked in this change; cube maps, volumes, arrays and BC6H/BC7 .dds files are refused; BC6H/BC7/ASTC/ETC are not written; no streaming loop in the renderer (the planner is the planning half); the glyph `ShelfPacker` is separate on purpose; Windows build and editor section unverified
+- **Open:** the Direct3D 11 BC upload and the shared-asset uploads of Direct3D 11 and 12 were only compile-checked with MinGW, never run; Direct3D 12 draws .dds decoded to RGBA8 (no BC upload there) and samples every picture with one sampler (Filter, Wrap and anisotropy not applied there); no streaming loop; no sRGB GPU formats; the editor's "Compress on the GPU" box was not compiled or clicked in this change; cube maps, volumes, arrays and BC6H/BC7 .dds files are refused; BC6H/BC7/ASTC/ETC are not written; no streaming loop in the renderer (the planner is the planning half); the glyph `ShelfPacker` is separate on purpose; Windows build and editor section unverified
 - **Related:** 2.9, 2.12, 20.4, 27.4
 - **Words:** mipmap, mip chain, atlas, sprite sheet, texture packer, BC1, BC3, BC4, BC5, DXT1, DXT5, DDS, texture compression, Lanczos, Kaiser, premultiplied alpha, alpha coverage, normal map mips, half float, RGB565, texture streaming, okay-texture
 - **Seen as:** far away textures shimmer or look dark; cut-out leaves vanish in the distance; I need one picture from many sprites; textures use too much memory

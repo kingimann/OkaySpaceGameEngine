@@ -1,0 +1,35 @@
+# Move 1 of the editor/main.cpp split (docs/editor/main_split_plan.md): namespace builder -> editor/BuildGame.hpp/.cpp.
+# Check it with:
+#   python3 scripts/check_pure_move.py --base 61332f077 --source editor/main.cpp \
+#       --dest editor/BuildGame.hpp --dest editor/BuildGame.cpp --dest editor/MainShared.hpp \
+#       --rules docs/editor/main_split/01_build_game.rules
+
+# The two default arguments moved to the declarations in BuildGame.hpp (C++ allows them in one place only).
+change: const std::string& gameName, const Options& opt = {}, BuildReport* report = nullptr) { ==> const std::string& gameName, const Options& opt, BuildReport* report) {
+change: Options opt, const ServerOptions& so, BuildReport* report = nullptr) { ==> Options opt, const ServerOptions& so, BuildReport* report) {
+
+# BuildGame.hpp: declarations of the functions main.cpp calls (the definitions moved unchanged).
+add: ^extern const char\* kPlayerExe;$
+add: ^std::string FindPlayer\(\);$
+add: ^std::string EnsurePlayer\(std::string\* note\);$
+add: ^std::string Build\(okay::editor::EditorState& ed, const std::string& outDir,$
+add: ^ +const std::string& gameName, const Options& opt = \{\}, BuildReport\* report = nullptr\);$
+add: ^Options OptionsFromSettings\(const BuildSettings& g, const ProjectSettings& pr\);$
+add: ^std::string ExportForPlatform\(okay::editor::EditorState& ed, const std::string& outDir,$
+add: ^ +const std::string& gameName, const Options& opt, int target\);$
+add: ^std::string BuildServer\(okay::editor::EditorState& ed, const std::string& outDir, const std::string& gameName,$
+add: ^ +Options opt, const ServerOptions& so, BuildReport\* report = nullptr\);$
+
+# MainShared.hpp: what BuildGame.cpp still uses from main.cpp (the updater, the project settings, the Xbox export result).
+add: ^std::string SelfPath\(\);$
+add: ^bool Download\(const std::string& url, const std::filesystem::path& outPath\);$
+add: ^std::string RawUrl\(const std::string& ref, const std::string& name\);$
+add: ^bool FetchVerified\(const std::string& version, const std::string& asset, const std::filesystem::path& dest, std::string& reason\);$
+add: ^struct ProjectSettings;$
+add: ^extern ProjectSettings g_project;$
+add: ^extern bool g_xboxExportOk;$
+add: ^extern std::vector<std::string> g_xboxExportWarnings;$
+
+# The Xbox include guard (BuildGame.cpp) and the Xbox declarations guard (MainShared.hpp): the same macro main.cpp uses.
+add: ^#if defined\(OKAY_XBOX_UWP\)( .*)?$
+add: ^#endif$

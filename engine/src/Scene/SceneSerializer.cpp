@@ -187,6 +187,7 @@
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/HumanoidRetarget.hpp"
 #include "okay/Components/LimbIK.hpp"
+#include "okay/Components/LedgeHandsIK.hpp"
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/IKTarget.hpp"
@@ -3271,7 +3272,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             // extended (back-compatible trailing fields): shape + corner + focus ring
             << " " << (int)in->shape << " " << in->cornerRadius << " " << in->borderWidth << " "
             << in->borderColor.r << " " << in->borderColor.g << " " << in->borderColor.b << " " << in->borderColor.a
-            << " " << (in->multiline ? 1 : 0) << "\n";   // grok/ui-controls
+            << " " << (in->multiline ? 1 : 0);   // grok/ui-controls
+        // pad / keyboard menu navigation: written only when off, so default scenes stay byte for byte the same (absent = on)
+        if (!in->focusable) out << " 0";
+        out << "\n";
     }
     for (auto* tb : go->GetComponents<UITabs>()) {
         out << "  uitabs " << tb->position.x << " " << tb->position.y << " "
@@ -8413,6 +8417,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                     in >> std::ws; // grok/ui-controls: optional multiline
                     if (std::isdigit(in.peek())) { int ml = 0; in >> ml; inp->multiline = (ml != 0); }
+                    in >> std::ws; // optional focusable (older scenes: stays on)
+                    if (std::isdigit(in.peek())) { int fo = 1; in >> fo; inp->focusable = (fo != 0); }
                 } else if (field == "uitabs") {
                     auto* tb = go->AddComponent<UITabs>();
                     int an = 0, sp = 0, it = 1; std::size_t count = 0;
@@ -10446,6 +10452,33 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(wsw));
 
+    // Hands on the ledge while hanging (LedgeHandsIK). Each arm is the GUID of the object holding that LimbIK
+    // and which LimbIK on it; the component turns the link back into the arm at Start().
+    ComponentSerializerRegistry::Entry lhik;
+    lhik.name = "ledgehandsik";
+    lhik.write = [](const GameObject& go, std::ostream& out) {
+        for (const LedgeHandsIK* h : go.GetComponents<LedgeHandsIK>()) {
+            out << "  ledgehandsik";
+            KvOut k{out};
+            k("setback", h->setback)("spread", h->handSpread)("over", h->overEdge)("fade", h->fadeTime).b("auto", h->autoWire);
+            const LedgeHandsIK::ArmLink l = h->LinkFor(0), r = h->LinkFor(1);
+            if (!l.object.empty()) k.str("left", l.object)("lefti", l.index);
+            if (!r.object.empty()) k.str("right", r.object)("righti", r.index);
+            out << "\n";
+        }
+    };
+    lhik.read = [](GameObject& go, std::istream& in) {
+        auto* h = go.AddComponent<LedgeHandsIK>();
+        KvIn k(in);
+        k.f("setback", h->setback); k.f("spread", h->handSpread); k.f("over", h->overEdge); k.f("fade", h->fadeTime);
+        k.b("auto", h->autoWire);
+        auto fin = [](float& v, float d) { if (!std::isfinite(v) || v < 0.0f) v = d; };
+        fin(h->setback, 0.25f); fin(h->handSpread, 0.22f); fin(h->overEdge, 0.05f); fin(h->fadeTime, 0.2f);
+        k.str("left", h->leftArmLink.object); k.i("lefti", h->leftArmLink.index);
+        k.str("right", h->rightArmLink.object); k.i("righti", h->rightArmLink.index);
+    };
+    ComponentSerializerRegistry::Register(std::move(lhik));
+
     ComponentSerializerRegistry::Entry wam;
     wam.name = "windambience";
     wam.write = [](const GameObject& go, std::ostream& out) {
@@ -10751,7 +10784,7 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(tbtn));
     // Last, so every record written before keeps its place. Saved from their PropertyRegistry entries, no code of their own (none of them was saved before).
-    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion"})
+    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion", "ActiveRagdoll"})
         ComponentSerializerRegistry::RegisterFromProperties(type);
 }
 } // namespace detail

@@ -163,8 +163,8 @@ int main() {
         scene.Update(0.016f);
         CHECK_NEAR(sc->VM()->GetGlobal("bad").AsFloat(), 0.0f, 1e-4f);
         CHECK_NEAR(sc->VM()->GetGlobal("good").AsFloat(), 1.0f, 1e-4f);
-        CHECK(!fs::exists(root / "pwned.okaygame"));
-        CHECK(fs::exists(root / "game" / "saves" / "slot_a.okaygame"));
+        CHECK(!fs::exists(root / "pwned.okaygame") && !fs::exists(root / "pwned.okayslot"));
+        CHECK(fs::exists(root / "game" / "saves" / "slot_a.okayslot"));   // SaveGame writes the framework's slot files
     }
 
     // ---- Every scene loader and the action-list file ops refuse outside paths ----

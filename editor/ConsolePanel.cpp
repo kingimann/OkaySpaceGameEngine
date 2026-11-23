@@ -7,6 +7,9 @@
 #include "ProblemsPanel.hpp"
 #include "ConsoleScriptLink.hpp"   // shared/: which script and line an entry points to (also used by the OkayUI port)
 #include "CrashContext.hpp"        // shared/: the last 200 lines are kept for the crash report (docs/online/crash_reports.md)
+#include "okay/Core/CommandLine.hpp"
+#include "okay/Core/ConsoleHost.hpp"   // the command line: typed line, history, completion, --cvar, standard cvars
+#include "okay/Core/LoopConsole.hpp"
 
 #include <cstdlib>
 #include <ctime>
@@ -138,6 +141,79 @@ void ConsoleClear() {
     RefreshCounts();
 }
 
+namespace {
+okay::ConsoleInput g_cmdLine;   // the panel's command line (history and completion come from okay::Console)
+
+void LogResult(const okay::Console::Result& r) {
+    std::size_t pos = 0;
+    const std::string& out = r.output;
+    while (pos < out.size()) {   // one log row per output line, an "error:" result in red
+        std::size_t nl = out.find('\n', pos);
+        ConsoleLog("[console] " + out.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos), r.ok ? 0 : 2);
+        if (nl == std::string::npos) break;
+        pos = nl + 1;
+    }
+}
+
+// Up / Down walk the history, Tab completes the command or variable name (ConsoleInput does both).
+int CmdLineCallback(ImGuiInputTextCallbackData* data) {
+    if (data->EventFlag != ImGuiInputTextFlags_CallbackHistory && data->EventFlag != ImGuiInputTextFlags_CallbackCompletion)
+        return 0;
+    g_cmdLine.text.assign(data->Buf, (std::size_t)data->BufTextLen);
+    if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
+        if (data->EventKey == ImGuiKey_UpArrow) g_cmdLine.HistoryPrev();
+        else if (data->EventKey == ImGuiKey_DownArrow) g_cmdLine.HistoryNext();
+    } else {
+        const std::vector<std::string> m = g_cmdLine.Complete();
+        if (m.size() > 1) {   // several: show them in the log
+            std::string list;
+            for (const std::string& n : m) { if (!list.empty()) list += "  "; list += n; }
+            ConsoleLog("[console] " + list);
+        }
+    }
+    data->DeleteChars(0, data->BufTextLen);
+    data->InsertChars(0, g_cmdLine.text.c_str());
+    return 0;
+}
+
+// The one-line command box under the log. Enter runs it.
+void DrawCommandLine() {
+    static char buf[256] = "";
+    static bool refocus = false;
+    ImGui::SetNextItemWidth(-1.0f);
+    if (refocus) { ImGui::SetKeyboardFocusHere(); refocus = false; }
+    const ImGuiInputTextFlags fl = ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackHistory |
+                                   ImGuiInputTextFlags_CallbackCompletion;
+    if (ImGui::InputTextWithHint("##ccmd", "Command (help, list, time.stats, game.speed 0.5 ...)  Tab completes, Up/Down history",
+                                 buf, sizeof(buf), fl, CmdLineCallback)) {
+        g_cmdLine.text = buf;
+        buf[0] = '\0';
+        refocus = true;   // keep typing after Enter
+        ConsoleRunLine(g_cmdLine.text);
+        g_cmdLine.text.clear();
+    }
+}
+}  // namespace
+
+void ConsoleRunLine(const std::string& line) {
+    g_cmdLine.text = line;
+    if (line.find_first_not_of(" \t") == std::string::npos) { g_cmdLine.text.clear(); return; }
+    ConsoleLog("[console] > " + line);
+    LogResult(g_cmdLine.Submit());
+}
+
+std::unique_ptr<okay::LoopConsole> ConsoleAttachHost(okay::GameLoop& loop, int argc, char** argv) {
+    okay::consolehost::RegisterStandard();
+    std::unique_ptr<okay::LoopConsole> cmds(new okay::LoopConsole(loop));
+    okay::CommandLine cl;
+    okay::consolehost::DeclareOptions(cl);
+    cl.AllowUnknown();
+    if (!cl.Parse(argc, argv)) ConsoleLog("[console] command line: " + cl.Error(), 1);
+    for (const std::string& a : cl.GetAll("cvar")) ConsoleLog("[console] --cvar " + a);
+    for (const std::string& w : okay::consolehost::ApplyCvarArgs(cl, true)) ConsoleLog("[console] " + w, 1);
+    return cmds;
+}
+
 #ifdef OKAY_HAVE_OKAYUI
 // The Console panel drawn by OkayUI (View > Rendering & Performance > UI backend, or OKAY_UI_BACKEND=okayui). The ImGui window stays: it
 // is the dock tab, the title with the counts and the close box, and it hands its free area to OkayUI as one rectangle.
@@ -149,7 +225,8 @@ void DrawConsoleOkayUI(const char* title) {
     g_model.SetPauseOnError(g_errorPause);
     if (g_model.ConsumePauseRequest()) g_paused = true;
     if (g_preferPending) { g_okayView.preferCategory = g_preferCategory; g_preferPending = false; }
-    if (ImGui::Begin(title, &g_showConsole, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+    if (ImGui::Begin(title, &g_showConsole, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse) &&
+        !okayuihost::HiddenInImGui(ImGui::GetCurrentWindow())) {   // a frame ImGui keeps hidden (a tab about to come to the front): nothing shows
         const ImVec2 p = okayuihost::ToMainWindowPixels(ImGui::GetCursorScreenPos());   // OkayUI's pixels, not ImGui's desktop ones
         ImVec2 a = ImGui::GetContentRegionAvail();
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
@@ -316,7 +393,7 @@ void DrawConsole() {
         const std::vector<okay::ConsoleRow> rows = g_model.Rows();
 
         const ImVec4 levelCol[3] = {cInfo, cWarn, cErr};
-        float detailsH = 90.0f;
+        float detailsH = 90.0f + ImGui::GetFrameHeightWithSpacing();   // the details and the command line under the log
         ImGui::BeginChild("log", ImVec2(0, -detailsH));
         ImGuiListClipper clipper;
         clipper.Begin((int)rows.size());
@@ -366,6 +443,7 @@ void DrawConsole() {
         if (autoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
         ImGui::EndChild();
 
+        DrawCommandLine();
         ImGui::Separator();
         ImGui::BeginChild("details", ImVec2(0, 0));
         if (selected) {

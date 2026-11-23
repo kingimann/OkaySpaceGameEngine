@@ -33,8 +33,8 @@ static dd quickSum(double a, double b) {
     double s = a + b;
     return mk(s, b - (s - a));
 }
-/* a * b exactly as hi + lo (Dekker, splitting with 2^27 + 1). */
-static void split(double a, double *hi, double *lo) {
+/* a * b exactly as hi + lo (Dekker: each factor cut into halves with 2^27 + 1). */
+static void dekkerHalves(double a, double *hi, double *lo) {
     double c = 134217729.0 * a;
     double h = c - (c - a);
     *hi = h;
@@ -43,8 +43,8 @@ static void split(double a, double *hi, double *lo) {
 static dd twoProd(double a, double b) {
     double p = a * b;
     double ah, al, bh, bl;
-    split(a, &ah, &al);
-    split(b, &bh, &bl);
+    dekkerHalves(a, &ah, &al);
+    dekkerHalves(b, &bh, &bl);
     double err = ((ah * bh - p) + ah * bl + al * bh) + al * bl;
     return mk(p, err);
 }

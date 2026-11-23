@@ -394,6 +394,7 @@ add_library(okay_engine
     src/Testing/GoldenImage.cpp
     src/Render/FbxReader.cpp
     src/Render/FbxScene.cpp
+    src/Render/FbxSceneClips.cpp
     third_party/ufbx/ufbx.c
 )
 

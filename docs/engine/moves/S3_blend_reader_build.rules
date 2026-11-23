@@ -1,0 +1,22 @@
+# Batch S3 (BlendReader split) of the engine modularization plan (docs/engine/modularization_plan.md, section 3.1):
+# engine/src/Render/BlendReader.cpp: the reader's types (container, SDNA, Ref, math helpers, MeshData, Reader struct: about 1,100 lines)
+# move to the private header BlendReaderInternal.hpp, and the build stage (Reader::Run, BuildNodes, BuildParts, BuildPartsOf,
+# EvaluateModifiers, BuildAnimation, Notes and the part helpers: about 890 lines) moves to BlendReaderBuild.cpp.
+#   python3 scripts/check_pure_move.py --base origin/main --head HEAD --source engine/src/Render/BlendReader.cpp \
+#       --dest engine/src/Render/BlendReaderBuild.cpp --dest engine/src/Render/BlendReaderInternal.hpp \
+#       --rules docs/engine/moves/S3_blend_reader_build.rules
+# The types were in an unnamed namespace of one .cpp; they now live in okay::blnd (the reader's own topic namespace, not okay::), so
+# the unnamed-namespace lines are dropped, and the eleven plain math functions get `inline` (a header defines them in two files).
+drop: ^namespace \{$
+drop: ^\} // namespace$
+change: Mat4 RotAxisMat(int axis, double a) { ==> inline Mat4 RotAxisMat(int axis, double a) {
+change: Mat4 EulerMat(const double e[3], int order) { ==> inline Mat4 EulerMat(const double e[3], int order) {
+change: Mat4 QuatMat(double w, double x, double y, double z) { ==> inline Mat4 QuatMat(double w, double x, double y, double z) {
+change: Mat4 AxisAngleMat(double ax, double ay, double az, double ang) { ==> inline Mat4 AxisAngleMat(double ax, double ay, double az, double ang) {
+change: Mat4 TransMat(double x, double y, double z) { Mat4 m; m.m[12] = (float)x; m.m[13] = (float)y; m.m[14] = (float)z; return m; } ==> inline Mat4 TransMat(double x, double y, double z) { Mat4 m; m.m[12] = (float)x; m.m[13] = (float)y; m.m[14] = (float)z; return m; }
+change: Mat4 ScaleMat(double x, double y, double z) { Mat4 m; m.at(0, 0) = (float)x; m.at(1, 1) = (float)y; m.at(2, 2) = (float)z; return m; } ==> inline Mat4 ScaleMat(double x, double y, double z) { Mat4 m; m.at(0, 0) = (float)x; m.at(1, 1) = (float)y; m.at(2, 2) = (float)z; return m; }
+change: bool MatFinite(const Mat4& m) { for (int i = 0; i < 16; ++i) if (!std::isfinite(m.m[i]) || std::fabs(m.m[i]) > 1e15f) return false; return true; } ==> inline bool MatFinite(const Mat4& m) { for (int i = 0; i < 16; ++i) if (!std::isfinite(m.m[i]) || std::fabs(m.m[i]) > 1e15f) return false; return true; }
+change: bool IsIdentity(const Mat4& m, float eps = 1e-5f) { for (int i = 0; i < 16; ++i) if (std::fabs(m.m[i] - ((i % 5 == 0) ? 1.0f : 0.0f)) > eps) return false; return true; } ==> inline bool IsIdentity(const Mat4& m, float eps = 1e-5f) { for (int i = 0; i < 16; ++i) if (std::fabs(m.m[i] - ((i % 5 == 0) ? 1.0f : 0.0f)) > eps) return false; return true; }
+change: Mat4 UpMatrix() {   // Blender is Z up, the engine Y up: (x, y, z) -> (x, z, -y) ==> inline Mat4 UpMatrix() {   // Blender is Z up, the engine Y up: (x, y, z) -> (x, z, -y)
+change: Vec3 Xform(const Mat4& m, const Vec3& v) { const Vec4 r = m * Vec4{v.x, v.y, v.z, 1.0f}; return Vec3{r.x, r.y, r.z}; } ==> inline Vec3 Xform(const Mat4& m, const Vec3& v) { const Vec4 r = m * Vec4{v.x, v.y, v.z, 1.0f}; return Vec3{r.x, r.y, r.z}; }
+change: Vec3 XformDir(const Mat4& m, const Vec3& v) { const Vec4 r = m * Vec4{v.x, v.y, v.z, 0.0f}; return Vec3{r.x, r.y, r.z}; } ==> inline Vec3 XformDir(const Mat4& m, const Vec3& v) { const Vec4 r = m * Vec4{v.x, v.y, v.z, 0.0f}; return Vec3{r.x, r.y, r.z}; }

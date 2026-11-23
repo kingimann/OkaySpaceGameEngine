@@ -1,0 +1,64 @@
+# Launcher split, move L5 (docs/engine/modularization_plan.md, Part C section 20): the Admin page's data and worker
+# (AdminJob, AdminData, AdminWorker; the end of Part C section 18), reports ("Report ..." for players, messages, posts,
+# listings and servers; Admin > Reports; "Report cheating"), the Admin page and the ban banner (launcher/main.cpp
+# 12207-13217 at the base) -> launcher/AdminPage.hpp / .cpp.
+# Check it with (on the move commit):
+#   python3 scripts/check_pure_move.py --base HEAD~1 --head HEAD --source launcher/main.cpp \
+#       --dest launcher/AdminPage.hpp --dest launcher/AdminPage.cpp --dest launcher/LauncherShared.hpp \
+#       --rules docs/engine/moves/L5_admin_page.rules
+# The Marketplace listing-type table (struct MktKind, kMktKinds, kMktKindN: constants, used by main.cpp and the Admin
+# page) moved unchanged from main.cpp into LauncherShared.hpp.
+#
+# main.cpp: `static` dropped on what the moved code uses (declared in LauncherShared.hpp); OpenPublicProfile's default
+# arguments move to its declaration in LauncherShared.hpp and main.cpp's forward declaration of it goes; the forward
+# declarations of OpenReport, DrawReportPopup and DrawAcReportPopup are replaced by AdminPage.hpp; the moved
+# forward declaration of DrawOfficialAdmin (defined later in main.cpp) is replaced by LauncherShared.hpp.
+# The moved code: `static` dropped on what main.cpp calls (declared in AdminPage.hpp).
+drop: ^\s*static std::string g_acReportUid, g_acReportName; static bool g_acReportOpen = false;$
+drop: ^\s*static void DrawAcReportPopup\(\);$
+drop: ^\s*static void OpenReport\(okayrep::Target t, const std::string\& id, const std::string\& label\);$
+drop: ^\s*static void DrawReportPopup\(\);$
+drop: ^\s*static bool ToggleSwitch\(const char\* id, bool\* v\) \{$
+add: ^\s*bool ToggleSwitch\(const char\* id, bool\* v\) \{$
+drop: ^\s*static std::string FitText\(const std::string\& s, float maxW\) \{$
+add: ^\s*std::string FitText\(const std::string\& s, float maxW\) \{$
+change: static void OpenPublicProfile(const std::string& uid, const std::string& username, ==> void OpenPublicProfile(const std::string& uid, const std::string& username,
+drop: ^\s*const std::string\& name, const std::string\& avatar, int accent\);$
+drop: ^\s*static void OpenPublicProfile\(const std::string\& uid, const std::string\& username,$
+add: ^\s*void OpenPublicProfile\(const std::string\& uid, const std::string\& username,$
+change: const std::string& name = std::string(), const std::string& avatar = std::string(), ==> const std::string& name = std::string(), const std::string& avatar = std::string(),
+drop: ^\s*int accent = 0\) \{$
+add: ^\s*int accent\) \{$
+drop: ^\s*static void DrawVerifiedBadge\(ImDrawList\* d, ImVec2 c, float r\) \{$
+add: ^\s*void DrawVerifiedBadge\(ImDrawList\* d, ImVec2 c, float r\) \{$
+drop: ^\s*static int MktKindIndex\(const std::string\& k\) \{$
+add: ^\s*int MktKindIndex\(const std::string\& k\) \{$
+drop: ^\s*static int g_myRank = \-1;(\s*//.*)?$
+add: ^\s*int g_myRank = \-1;(\s*//.*)?$
+drop: ^\s*static okay::MyBanInfo g_myBan;(\s*//.*)?$
+add: ^\s*okay::MyBanInfo g_myBan;(\s*//.*)?$
+change: static void OpenReport(rep::Target t, const std::string& id, const std::string& label) { ==> void OpenReport(rep::Target t, const std::string& id, const std::string& label) {
+change: static void DrawReportPopup() { ==> void DrawReportPopup() {
+change: static void DrawAcReportPopup() { ==> void DrawAcReportPopup() {
+drop: ^\s*static void DrawOfficialAdmin\(okay::account::AccountService\& account\);(\s*//.*)?$
+change: static void DrawAdminPage(okay::account::AccountService& account) { ==> void DrawAdminPage(okay::account::AccountService& account) {
+change: static void DrawBanBanner() { ==> void DrawBanBanner() {
+drop: ^\s*static void DrawOfficialAdmin\(okay::account::AccountService\& account\) \{$
+add: ^\s*void DrawOfficialAdmin\(okay::account::AccountService\& account\) \{$
+add: ^\s*void OpenReport\(okayrep::Target t, const std::string\& id, const std::string\& label\);(\s*//.*)?$
+add: ^\s*void DrawReportPopup\(\);(\s*//.*)?$
+add: ^\s*void DrawAcReportPopup\(\);(\s*//.*)?$
+add: ^\s*void DrawAdminPage\(okay::account::AccountService\& account\);(\s*//.*)?$
+add: ^\s*void DrawBanBanner\(\);(\s*//.*)?$
+add: ^namespace okay \{ struct MyBanInfo; namespace account \{ class AccountService; \} \}$
+add: ^\s*bool ToggleSwitch\(const char\* id, bool\* v\);(\s*//.*)?$
+add: ^\s*std::string FitText\(const std::string\& s, float maxW\);(\s*//.*)?$
+add: ^\s*void DrawVerifiedBadge\(ImDrawList\* d, ImVec2 c, float r\);(\s*//.*)?$
+add: ^\s*extern int g_myRank;(\s*//.*)?$
+add: ^\s*extern okay::MyBanInfo g_myBan;(\s*//.*)?$
+add: ^\s*extern std::string g_acReportUid, g_acReportName; extern bool g_acReportOpen;(\s*//.*)?$
+add: ^\s*int accent = 0\);(\s*//.*)?$
+add: ^\s*void DrawOfficialAdmin\(okay::account::AccountService\& account\);(\s*//.*)?$
+add: ^\s*int MktKindIndex\(const std::string\& k\);(\s*//.*)?$
+add: ^\s*std::string g_acReportUid, g_acReportName; bool g_acReportOpen = false;$
+add: ^\s*const std::string\& name, const std::string\& avatar,$

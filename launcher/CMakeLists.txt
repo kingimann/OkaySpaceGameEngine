@@ -46,6 +46,16 @@ endif()
 
 # Embed a real Windows .exe icon (taskbar / Explorer / title bar) via windres.
 set(OKAY_LAUNCHER_SOURCES main.cpp
+    ChatText.cpp          # emoji, chat text formatting, link previews (moved out of main.cpp; docs/engine/modularization_plan.md Part C)
+    AntiCheatPages.cpp    # Admin > Anti-cheat, my bans and appeals, session tickets (moved out of main.cpp)
+    CoverArtAvatars.cpp   # game cover art, avatar textures (moved out of main.cpp)
+    NavIcons.cpp          # the sidebar's line icons, round icon buttons, stars (moved out of main.cpp)
+    NewsHistory.cpp       # What's New history, news.cfg (moved out of main.cpp)
+    AdminPage.cpp         # reports, Admin > Reports, the Admin page, the ban banner (moved out of main.cpp)
+    PublicProfilePage.cpp # public profiles: the page, showcase, badges (moved out of main.cpp)
+    MemberModerationUI.cpp   # kick / ban / unban / admin role for servers and group chats (moved out of main.cpp)
+    GroupConversation.cpp    # the open group conversation (moved out of main.cpp)
+    Multiplayer.cpp       # joining, inviting, presence, server browser, parties, the Multiplayer page (moved out of main.cpp)
     VersionsManager.cpp   # the Versions page: installed editors, install / remove / prune, Latest / LTS (no SDL or ImGui; tested by launcher_versions)
     VersionsNet.cpp       # the cancellable curl download behind it
     VersionsUI.cpp        # the page itself

@@ -169,7 +169,9 @@ def check(repo, base, head, source, dests, rules_path, out=sys.stdout):
         remaining = [i for i in range(len(src_removed)) if not used[i]]
         a = [src_removed[i][1] for i in remaining]
         b = [t for _, t in dest_added]
-        sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+        # Blank lines are "junk" to the matcher: they never anchor a match (only extend one), so a blank line that also
+        # exists elsewhere cannot pair first and push a real moved line out of order (a struct moved to a header, say).
+        sm = difflib.SequenceMatcher(lambda t: not t.strip(), a, b, autojunk=False)
         matched_b = [False] * len(b)
         moved, blocks = 0, 0
         for blk in sm.get_matching_blocks():

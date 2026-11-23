@@ -56,6 +56,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Two-bone IK | `Math/TwoBoneIK.hpp` | `okay::SolveTwoBoneIK`, `SolveTwoBoneIKSoft` | `SolveTwoBoneIK(root, upper, lower, target, pole, mid, end);` |
 | Swing and twist split, joint limits | `Math/JointLimit.hpp` | `okay::TwistAbout` | `float deg; Quat twist = TwistAbout(q, axis, deg);` |
 | Convex contact (GJK, EPA) | `Physics/ConvexContact.hpp` | `okay::ConvexContact`, `convex_detail::Epa` | `ConvexHit hit = ConvexContact(supportA, supportB);` |
+| Grid A* (2D grids, tilemaps, the 3D probe grid) | `AI/GridAStar.hpp`, called through `AI/Navigation.hpp` | `okay::gridastar::Search`, `DenseStore`, `SparseStore`, `GridCell`; `Navigation::GridPath`, `Navigation::TilemapPath` | `auto path = Navigation::GridPath(walkable, w, h, 0, 0, 9, 8, true);` |
 | Ray against a triangle mesh | `Physics/TriMesh.hpp` | `okay::TriMesh::Raycast`, `TriMesh::RayLocal` | `mesh.Raycast(origin, dir, 100.0f, t, normal);` |
 | Quaternion to rotation matrix (any precision) | `Math/Mat4.hpp` | `okay::SetRotationFromUnitQuat`, `Mat4::Rotate` | `rc::M4 r; SetRotationFromUnitQuat(r, x, y, z, w);` |
 | Model readers: affine inverse, cofactors, Quake frame vertices, triangle corners | `engine/src/Render/AffineInverse.hpp`, `engine/src/Render/ReaderCommon.hpp` | `rc::InvAffine`, `rc::Cofactors3`, `rc::ReadQuakeFrameVerts`, `rc::TriCorner` | `double c[9]; rc::Cofactors3(m, c);` |
@@ -67,6 +68,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Saved fields of a component | `Scene/PropertyRegistry.hpp` | `okay::PropertyRegistry` (`Register`, `FindByName`, `TryGetProperty`) | `PropertyRegistry::TryGetProperty(go, "Health.value", v);` |
 | Curves and splines | `Math/Curves.hpp` | `okay::Curves` (`CubicBezier`, `CatmullRom`, `ArcLength`) | `Vec3 p = Curves::CatmullRom(p0, p1, p2, p3, t);` |
 | Import settings | `Core/ImportSettings.hpp` | `okay::ImportSettings` (`Defaults`, `FromPairs`), `AssetTypeFromPath` | `auto s = ImportSettings::Defaults(AssetTypeFromPath(path));` |
+| An engine function for scripts (OkayScript, C#, visual-script nodes) | `Scripting/ScriptApiRegistry.hpp`; the engine's entries are in `engine/src/Scripting/ScriptApiCore.cpp` ([guide](../scripting/script_api_registry.md)). Do not add a new one to `OkayScriptVM.cpp` or `EngineApi.cpp` | `okay::ScriptApiEntry`, `AddScriptApi`, `ScriptApis`, `ScriptApiError` | `add(Fn("time", "Time", "time", {}, T::Float, fn, "Seconds since the game started."));` |
 | Logging | `Core/Log.hpp` | `okay::Log` (`Info`, `Warning`, `Error`), `Log::Category` | `Log::Warning("missing texture: ", path);` |
 | Script-side JSON, hashing, Base64 (Python, JS, shell) | the standard library | `json.dumps`, `hashlib`, `base64`, `zlib.crc32`; `JSON.stringify`; `jq` | `json.dumps(obj)` |
 

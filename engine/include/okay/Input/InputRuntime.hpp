@@ -22,6 +22,15 @@ public:
     /// otherwise). A Player Input component with its own asset path still replaces it. True when the project's file was loaded.
     static bool UseProjectAsset(const std::string& projectDir);
     static void Update(float dt);
+    /// Rebind one part of one binding of `player` (ActionSet::Rebind). Player 0's set is the default ActionSet: its linked
+    /// actions are also what InputActions and the built-in controllers read, so they follow at once. Not saved: SaveOverrides.
+    static bool Rebind(int player, const std::string& action, int binding, int part, const std::string& path);
+    /// Put one binding back to the asset's (`binding` of `action`), or every binding of the player with action "".
+    static bool ResetBinding(int player, const std::string& action = "", int binding = -1);
+    /// Save `player`'s overrides (Prefs "inputov.player<N>"); for player 0 InputActions is saved too, so both layouts agree.
+    static void SaveOverrides(int player);
+    /// Player 0's ActionSet when one has joined (linked to InputActions on first sight of each join), else nullptr. Never joins.
+    static ActionSet* LinkedSet();
     static void Reset();                              ///< forget players and asset (tests)
     /// Join from a word: "keyboard", "pad0".."pad3", "any". Returns the player index or -1.
     static int JoinNamed(const std::string& device);

@@ -32,7 +32,7 @@ The Xbox page logic was not touched.
 ## Existing / Gap
 
 "Honoured" means the player or the build step reads it. All "Existing" rows were checked against `editor/main.cpp`
-(`builder::Build`, `OptionsFromSettings`) and `player/main.cpp` (the `game.okayconfig` reader).
+(`builder::Build`, `OptionsFromSettings`; since the split's move 1 they are in `editor/BuildGame.cpp`) and `player/main.cpp` (the `game.okayconfig` reader).
 
 | Area | Existing (honoured) | What a game maker expects and was missing | After this change |
 | --- | --- | --- | --- |

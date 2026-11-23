@@ -13,6 +13,7 @@ mentions.
 ## <Area number>. <Area name>
 
 ### 5.6 Foot, limb and chain IK
+- **System:** Inverse Kinematics - one plain line for a non-programmer (or just the name, when the system is described in another sub-area)
 - **What:** one or two plain sentences.
 - **Parts:**
   - 5.6.1 Two-bone foot IK - `Animation/FootIK` - what it does in one line
@@ -33,3 +34,20 @@ name starts with `_` (`_header.md`, `_footer.md`) are the hand-written text arou
 tables. Paths in `Code:` are relative to `engine/include/okay/` without extension for engine headers
 (`Animation/FootIK` covers the .hpp and the matching .cpp) and repo paths for everything else.
 Required lines: What, Code, Status, Words. Part IDs are `N.M.K` and unique inside their sub-area.
+
+## Systems (`docs/SYSTEMS.md`)
+Every sub-area belongs to a **system**: a named part of OkaySpace that does one job from start to end
+(Physics, Save Games, OkayScript, the Launcher Updater). The `System:` line names it. Exactly one sub-area
+of each system describes it (`Name - what it does`); the others give only the name. A sub-area that
+holds several systems lists them, each with its own files:
+```
+- **System:**
+  - Save Games - Saves a player's progress in named slots. Code: `Core/SaveFramework`, `Core/Prefs`
+  - Whole-Scene Save - The older save slots - being merged into Save Games (PR #1132) Code: `Core/SaveGame`
+```
+A system that does the same job as another ends its line with `- being merged into <System> (PR #N)`
+or `- duplicate of <System> (why both stay)`; these rows go into the "Duplicates found" table.
+The script writes `docs/SYSTEMS.md` (one table per area: name, what it does, status, main code,
+sub-areas) and warns about a sub-area with no system, a system described twice or never, and a
+duplicate that names no system. Use plain words for names, and "Okay" only where the code does
+(OkayUI, OkayScript).

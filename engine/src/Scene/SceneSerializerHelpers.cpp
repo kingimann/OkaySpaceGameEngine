@@ -1,5 +1,5 @@
 // Helpers shared by the scene text reader and writer (declared in SceneSerializerInternal.hpp). Moved unchanged from
-// SceneSerializer.cpp (docs/engine/modularization_plan.md, section 3.1, S3).
+// SceneSerializer.cpp (docs/engine/modularization_plan.md, section 3.1, S1).
 #include "SceneSerializerInternal.hpp"
 #include "okay/Scene/ComponentSerializer.hpp"
 #include <charconv>

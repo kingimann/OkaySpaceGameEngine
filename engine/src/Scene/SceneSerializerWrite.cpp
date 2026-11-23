@@ -1,5 +1,5 @@
 // Writes one object's Transform and every component record (WriteComponentRecords). Moved unchanged from
-// SceneSerializer.cpp (docs/engine/modularization_plan.md, section 3.1, S3).
+// SceneSerializer.cpp (docs/engine/modularization_plan.md, section 3.1, S1).
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/PrefabTools.hpp"
 #include "okay/Scene/SceneText.hpp"

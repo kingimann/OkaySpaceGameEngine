@@ -1,5 +1,5 @@
 // The scene text reader: ParseStep reads a slice of a document into a scene, one record at a time. Moved unchanged from
-// SceneSerializer.cpp (docs/engine/modularization_plan.md, section 3.1, S3).
+// SceneSerializer.cpp (docs/engine/modularization_plan.md, section 3.1, S1).
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/PrefabTools.hpp"
 #include "okay/Scene/SceneText.hpp"

@@ -1,6 +1,6 @@
 // Private to the scene text reader and writer (SceneSerializer*.cpp). The small helpers every record reader and writer
 // shares: quoting, the key=value line reader and writer, and the list and curve forms. They used to sit in an anonymous
-// namespace at the top of SceneSerializer.cpp (docs/engine/modularization_plan.md, section 3.1, S3).
+// namespace at the top of SceneSerializer.cpp (docs/engine/modularization_plan.md, section 3.1, S1).
 #pragma once
 #include "okay/Core/TolerantNumbers.hpp"
 #include "okay/Components/Consumables.hpp"

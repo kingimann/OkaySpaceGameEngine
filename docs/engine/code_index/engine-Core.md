@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 76 headers, 461 names.
+Back to the [code index](../code_index.md). 77 headers, 476 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -252,7 +252,8 @@ Back to the [code index](../code_index.md). 76 headers, 461 names.
 - `DecodeImage` function, line 52: Decode any supported format to RGBA8. On failure returns false, leaves 'out' empty and
 - `DecodeImageFile` function, line 54: Read a whole file and decode it.
 - `GetImageFileInfo` function, line 56: Header-only dimensions of a file.
-- `DecodeGifFrames` function, line 58: Decode every frame of a GIF.
+- `DecodePnm` function, line 59: PNM (Netpbm P1 to P6, maxval up to 65535) to RGBA8. DecodeImage and DetectImageFormat route to it only when the
+- `DecodeGifFrames` function, line 61: Decode every frame of a GIF.
 
 ## `engine/include/okay/Core/ImageWrite.hpp`
 
@@ -280,19 +281,22 @@ Back to the [code index](../code_index.md). 76 headers, 461 names.
 
 ## `engine/include/okay/Core/ImportSidecar.hpp`
 
-- `BoxDownscale` function, line 24: Area-weighted shrink to a longest side of at most 'maxSide' (defined in ThumbnailCache.cpp, linked with the engine).
-- `ReadImportSetting` function, line 27: The value of 'set <key> <value>' in '<assetPath>.okaymeta' for an asset of type 'importer', or "" when absent.
-- `TextureImportMaxSize` function, line 43: Texture 'maxSize' from the sidecar: 0 when there is none, or it is 0 (no limit). Values below 32 are ignored.
-- `ModelImportScale` function, line 52: Model 'scale' from the sidecar: 1 when there is none or it is out of range.
-- `TextureSampling` struct, line 61: How a texture is sampled. A missing sidecar, or a missing key, gives the renderer's long-standing look
-- `TextureImportSampling` function, line 69
-- `ModelImportOptions` struct, line 89: What a model's sidecar asks for when it is brought into a scene.
-- `ReadModelImportOptions` function, line 96
-- `AudioImportOptions` struct, line 112: What an audio file's sidecar asks for when the file is loaded.
-- `ImportLower` function, line 117
-- `ImportFlagOn` function, line 122
-- `ReadAudioImportOptions` function, line 127
-- `ApplyTextureImportSettings` function, line 139: Apply the texture's 'maxSize' to a freshly loaded image (never enlarges).
+- `BoxDownscale` function, line 30: Area-weighted shrink to a longest side of at most 'maxSide' (defined in ThumbnailCache.cpp, linked with the engine).
+- `ImportSidecar` struct, line 33: What '<assetPath>.okaymeta' says for one importer kind.
+- `ReadImportSidecar` function, line 41: The sidecar of 'assetPath' for 'kind' (Texture, Model or Audio), from a small per-file cache (ImportSidecar.cpp).
+- `ClearImportSidecarCache` function, line 43: Forget every cached sidecar (tests, or a tool that rewrote metas within one file-time tick).
+- `ReadImportSetting` function, line 47: The value of 'set <key> <value>' in '<assetPath>.okaymeta' for an asset of type 'importer' ("texture", "model",
+- `TextureImportMaxSize` function, line 50: Texture 'maxSize' from the sidecar: 0 when there is none, or it is 0 (no limit). Values below 32 are ignored.
+- `ModelImportScale` function, line 58: Model 'scale' from the sidecar: 1 when there is none or it is out of range.
+- `TextureSampling` struct, line 67: How a texture is sampled. A missing sidecar, or a missing key, gives the renderer's long-standing look
+- `TextureImportSampling` function, line 75
+- `ModelImportOptions` struct, line 90: What a model's sidecar asks for when it is brought into a scene.
+- `ReadModelImportOptions` function, line 97
+- `AudioImportOptions` struct, line 113: What an audio file's sidecar asks for when the file is loaded.
+- `ImportLower` function, line 118
+- `ImportFlagOn` function, line 123
+- `ReadAudioImportOptions` function, line 128
+- `ApplyTextureImportSettings` function, line 138: Apply the texture's 'maxSize' to a freshly loaded image (never enlarges).
 
 ## `engine/include/okay/Core/Inflate.hpp`
 
@@ -495,44 +499,54 @@ Back to the [code index](../code_index.md). 76 headers, 461 names.
 
 ## `engine/include/okay/Core/SaveFramework.hpp`
 
-- `SaveBlock` class, line 44: A flat bag of typed values (int, int64, float, bool, string, Vec3, Quat, string
-- `SaveWriter` class, line 91: Write side of a block, handed to Saveable::OnSave. 'Scope("inv")' gives a writer
-- `SaveReader` class, line 114: Read side of a block, handed to Saveable::OnLoad. Every getter takes the value to
-- `SaveDocument` class, line 138: What a slot holds: named blocks. SaveSystem::CaptureScene fills the reserved
-- `SlotKind` struct, line 178: What a slot is for (SaveSlotInfo::kind).
-- `SlotSort` enum, line 185
-- `SaveLoadReport` struct, line 188: What happened while a slot was read.
-- `SaveStore` class, line 205: Slot files in one folder. A slot file is:
-- `ISaveable` class, line 322: Anything that can write and read its own state. Saveable implements it, and so can
-- `Saveable` class, line 347: Marks an object to be saved by SaveSystem::CaptureScene. Subclass it and override
-- `SaveCaptureOptions` struct, line 379: How CaptureScene picks the objects to save.
-- `SaveCaptureReport` struct, line 385
-- `SaveApplyOptions` struct, line 392
-- `SaveApplyReport` struct, line 403
-- `SaveAdapter` struct, line 416: A component adapter: how SaveSystem saves and restores a built-in component type.
-- `SaveSystem` class, line 431: Capture a Scene's state into a SaveDocument and put it back, matching objects by
-- `SaveRequest` struct, line 486
-- `SaveLoadOptions` struct, line 501
-- `SaveManager` class, line 520: Slots for a game: save / load by name, a quick slot, N rotating autosaves and
-- `CheckpointManager` class, line 574: Named checkpoints, each a slot (kind "checkpoint") holding the scene state at the
-- `CheckpointTrigger` class, line 622: A spot that saves a checkpoint when the player reaches it: either when an object
-- `SaveSyncEntry` struct, line 647: One slot as a sync backend sees it.
-- `ISaveSync` class, line 657: A place slots can be mirrored to: a cloud service, a shared folder. Implement it
-- `MemorySaveSync` class, line 667: Slots kept in memory (tests, or a base for a real backend).
-- `FolderSaveSync` class, line 686: Slots kept in a folder as <slot>.okayslot (a synced drive, a mounted share).
-- `SyncState` enum, line 700
-- `SyncChoice` enum, line 701
-- `ConflictPolicy` enum, line 702
-- `SaveSyncConflict` struct, line 710
-- `SaveSyncer` class, line 719: Mirrors a SaveStore with an ISaveSync backend. It remembers the checksum both sides
-- `SaveMenuRow` struct, line 760: One row of a load / save menu.
-- `SaveMenuModel` class, line 785: Rows a UI binds to. No rendering: it reads the store, formats the text, and tracks
+- `SaveBlock` class, line 46: A flat bag of typed values (int, int64, float, bool, string, Vec3, Quat, string
+- `SaveWriter` class, line 93: Write side of a block, handed to Saveable::OnSave. 'Scope("inv")' gives a writer
+- `SaveReader` class, line 116: Read side of a block, handed to Saveable::OnLoad. Every getter takes the value to
+- `SaveDocument` class, line 140: What a slot holds: named blocks. SaveSystem::CaptureScene fills the reserved
+- `SlotKind` struct, line 180: What a slot is for (SaveSlotInfo::kind).
+- `SlotSort` enum, line 187
+- `SaveLoadReport` struct, line 190: What happened while a slot was read.
+- `SaveStore` class, line 207: Slot files in one folder. A slot file is:
+- `ISaveable` class, line 341: Anything that can write and read its own state. Saveable implements it, and so can
+- `Saveable` class, line 366: Marks an object to be saved by SaveSystem::CaptureScene. Subclass it and override
+- `SaveCaptureOptions` struct, line 398: How CaptureScene picks the objects to save.
+- `SaveCaptureReport` struct, line 408
+- `SaveApplyOptions` struct, line 415
+- `SaveApplyReport` struct, line 426
+- `ToDocument` function, line 441
+- `FromDocument` function, line 443: False when 'doc' is not a whole-scene save.
+- `SaveAdapter` struct, line 449: A component adapter: how SaveSystem saves and restores a built-in component type.
+- `SaveSystem` class, line 464: Capture a Scene's state into a SaveDocument and put it back, matching objects by
+- `SaveRequest` struct, line 519
+- `SaveLoadOptions` struct, line 535
+- `SaveManager` class, line 554: Slots for a game: save / load by name, a quick slot, N rotating autosaves and
+- `CheckpointManager` class, line 608: Named checkpoints, each a slot (kind "checkpoint") holding the scene state at the
+- `CheckpointTrigger` class, line 656: A spot that saves a checkpoint when the player reaches it: either when an object
+- `SaveSyncEntry` struct, line 681: One slot as a sync backend sees it.
+- `ISaveSync` class, line 691: A place slots can be mirrored to: a cloud service, a shared folder. Implement it
+- `MemorySaveSync` class, line 701: Slots kept in memory (tests, or a base for a real backend).
+- `FolderSaveSync` class, line 720: Slots kept in a folder as <slot>.okayslot (a synced drive, a mounted share).
+- `SyncState` enum, line 734
+- `SyncChoice` enum, line 735
+- `ConflictPolicy` enum, line 736
+- `SaveSyncConflict` struct, line 744
+- `SaveSyncer` class, line 753: Mirrors a SaveStore with an ISaveSync backend. It remembers the checksum both sides
+- `SaveMenuRow` struct, line 794: One row of a load / save menu.
+- `SaveMenuModel` class, line 819: Rows a UI binds to. No rendering: it reads the store, formats the text, and tracks
 
 ## `engine/include/okay/Core/SaveGame.hpp`
 
 - `SaveSlotInfo` struct, line 13: What a save slot holds, for a load menu.
-- `SaveOptions` struct, line 37: What a game attaches to a slot beyond the scene, for a load menu to show.
-- `SaveGame` class, line 62: Whole-game saves in named slots. A save holds the scene as it is right now
+- `SaveOptions` struct, line 44: What a game attaches to a slot beyond the scene, for a load menu to show.
+- `SaveGame` class, line 78: Whole-game saves in named slots: the save framework's "whole scene" mode (SaveFramework.hpp,
+- `State` struct, line 151: What a whole-scene save holds besides its header.
+- `Capture` function, line 158: The scene as text plus its state lines (velocities, script and graph variables, the game's Save keys).
+- `Check` function, line 160: Check the state lines and the line cap before anything is replaced. False with a reason.
+- `ApplyNow` function, line 162: Replace the scene with the saved one now (Deserialize, Start), then put the state back. False with a reason.
+- `ApplyDeferred` function, line 166: The same at the end of the frame (Scene::RequestLoadText, safe from scripts); 'after' runs once it is back.
+- `LegacyStatus` enum, line 168
+- `LegacyInfo` function, line 174: The header of an older .okaygame file (cheap; 'verify' reads it whole). 'exists' false when there is none.
+- `RemoveLegacy` function, line 176: Remove an older .okaygame file and its .bak / .tmp / .newer.bak / .corrupt / .swap companions.
 
 ## `engine/include/okay/Core/Scheduler.hpp`
 
@@ -561,6 +575,10 @@ Back to the [code index](../code_index.md). 76 headers, 461 names.
 
 - `StringId` class, line 23: A name turned into a 64-bit FNV-1a hash. Cheap to copy, compare and use as a map
 - `hash` struct, line 103
+
+## `engine/include/okay/Core/StringUtil.hpp`
+
+- `LowerAscii` function, line 11: ASCII-only lowercase: bytes 'A'..'Z' become 'a'..'z', every other byte (UTF-8 included) is left as it is.
 
 ## `engine/include/okay/Core/Subtitles.hpp`
 

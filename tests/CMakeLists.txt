@@ -407,6 +407,10 @@ add_executable(test_script_physics test_script_physics.cpp)
 target_link_libraries(test_script_physics PRIVATE okay::engine)
 add_test(NAME script_physics COMMAND test_script_physics)
 
+add_executable(test_script_api_parity test_script_api_parity.cpp)
+target_link_libraries(test_script_api_parity PRIVATE okay::engine)
+add_test(NAME script_api_parity COMMAND test_script_api_parity)
+
 add_executable(test_script_events test_script_events.cpp)
 target_link_libraries(test_script_events PRIVATE okay::engine)
 add_test(NAME script_events COMMAND test_script_events)
@@ -4854,6 +4858,16 @@ add_executable(test_gl_dds_upload test_gl_dds_upload.cpp)
 target_link_libraries(test_gl_dds_upload PRIVATE okay::engine ${CMAKE_DL_LIBS})
 add_test(NAME gl_dds_upload COMMAND test_gl_dds_upload WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(gl_dds_upload PROPERTIES TIMEOUT 240)
+# One shared texture asset for every renderer: handles through AssetManager, hot reload, settings, gamma-correct mips, memory count and budget.
+add_executable(test_texture_asset test_texture_asset.cpp)
+target_link_libraries(test_texture_asset PRIVATE okay::engine)
+add_test(NAME texture_asset COMMAND test_texture_asset)
+set_tests_properties(texture_asset PROPERTIES TIMEOUT 240)
+# The OpenGL renderer drawing from the shared texture asset: our own mip chain, hot reload re-upload, anisotropy, freeing (Mesa llvmpipe through EGL; SKIPPED without one).
+add_executable(test_gl_texture_asset test_gl_texture_asset.cpp)
+target_link_libraries(test_gl_texture_asset PRIVATE okay::engine ${CMAKE_DL_LIBS})
+add_test(NAME gl_texture_asset COMMAND test_gl_texture_asset WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(gl_texture_asset PROPERTIES TIMEOUT 240)
 
 # Colliders behave as the shapes they are (not boxes): Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield, 2D polygon / capsule / composite.
 add_executable(test_collider_shapes test_collider_shapes.cpp)
@@ -5007,3 +5021,10 @@ add_executable(test_own_q3bsp_samples test_own_q3bsp_samples.cpp)
 target_link_libraries(test_own_q3bsp_samples PRIVATE okay::engine)
 target_compile_definitions(test_own_q3bsp_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME own_q3bsp_samples COMMAND test_own_q3bsp_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Table-driven right-answer checks for Visual Script nodes that had only an "it does something" test.
+add_executable(test_vs_node_values test_vs_node_values.cpp)
+target_include_directories(test_vs_node_values PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_node_values PRIVATE okay::engine)
+target_compile_definitions(test_vs_node_values PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_node_values COMMAND test_vs_node_values)

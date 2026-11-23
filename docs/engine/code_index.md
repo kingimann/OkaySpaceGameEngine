@@ -9,7 +9,7 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 
 | Folder | Files | Names | Page |
 |---|---|---|---|
-| engine-AI | 7 | 37 | [code_index/engine-AI.md](code_index/engine-AI.md) |
+| engine-AI | 8 | 41 | [code_index/engine-AI.md](code_index/engine-AI.md) |
 | engine-Animation | 11 | 106 | [code_index/engine-Animation.md](code_index/engine-Animation.md) |
 | engine-Audio | 11 | 33 | [code_index/engine-Audio.md](code_index/engine-Audio.md) |
 | engine-Combat | 1 | 6 | [code_index/engine-Combat.md](code_index/engine-Combat.md) |

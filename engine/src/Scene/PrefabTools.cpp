@@ -75,6 +75,9 @@ using prefab_text::ReadPrefabText;
 using prefab_text::ExpandOwn;
 using prefab_text::BuildDoc;
 namespace fs = std::filesystem;
+
+// ---- The live side: an instance's objects as text -------------------------------------
+
 struct LiveObj {
     GameObject* go = nullptr;
     std::string name;

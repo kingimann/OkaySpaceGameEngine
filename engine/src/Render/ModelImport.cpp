@@ -112,8 +112,11 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot", ".mesh", ".zae", ".xml", ".lxo", ".ogex", ".mdl", ".bsp", ".pk3",
-                            ".ask", ".scn", ".prj", ".x3db", ".vta", ".md5camera"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot", ".mesh", ".zae", ".xml", ".lxo", ".ogex", ".mdl", ".bsp", ".pk3"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
+        if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
+            res += std::string(" ") + opt;
+    // Extensions read by an existing reader under another name (aliases); not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
+    for (const char* opt : {".ask", ".scn", ".prj", ".x3db", ".vta", ".md5camera"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;

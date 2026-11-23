@@ -339,6 +339,7 @@ add_library(okay_engine
     src/Render/OffReader.cpp
     src/Render/SmdReader.cpp
     src/Render/Md5Reader.cpp
+    src/Render/Md5CameraReader.cpp
     src/Render/Ms3dReader.cpp
     src/Render/AseReader.cpp
     src/Render/BlendReader.cpp

@@ -99,7 +99,7 @@ std::string ImportableExtensions() {
     // the Assimp build can read. .dae is added when our own Collada reader is switched on
     // (it is off by default, so this part is worked out per call, not cached).
     static const std::string list = [] {
-        std::string out = ".obj .gltf .glb .fbx .stl .ply";
+        std::string out = ".obj .gltf .glb .vrm .fbx .stl .ply";   // .vrm: a VRM avatar is a binary glTF 2.0 file
 #ifdef OKAY_HAVE_ASSIMP
         std::string e = assimp_backend::Extensions(), cur;
         e += ' ';
@@ -112,7 +112,8 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot", ".mesh", ".zae", ".xml", ".lxo", ".ogex", ".mdl", ".bsp", ".pk3"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot", ".mesh", ".zae", ".xml", ".lxo", ".ogex", ".mdl", ".bsp", ".pk3",
+                            ".ask", ".scn", ".prj", ".x3db", ".vta", ".md5camera"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -160,6 +161,7 @@ static bool IsModelFile(const std::string& path) {
 Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
     if (!IsModelFile(path)) { if (ok) *ok = false; return Mesh(); }
     std::string p = Lower(path);
+    if (EndsWith(p, ".vrm")) { g_readBy = "the own glTF reader (VRM)"; return LoadGLTF(path, ok, outTexture); }   // glTF 2.0 binary, never version 1
     if (EndsWith(p, ".obj") && EffectiveImportBackend(".obj") != ImportBackend::Assimp) {
         g_readBy = "the own OBJ reader";
         return Mesh::LoadOBJ(path, ok, outTexture);
@@ -736,16 +738,16 @@ int OwnSlot(const std::string& ext) {
     if (e == ".stl") return 1;
     if (e == ".ply") return 2;
     if (e == ".dae") return 3;
-    if (e == ".3ds") return 4;
+    if (e == ".3ds" || e == ".prj") return 4;   // .prj: a 3D Studio project (main chunk 0xC23D), read by the 3DS reader
     if (e == ".bvh") return 5;
     if (e == ".off") return 6;
-    if (e == ".smd") return 7;
-    if (e == ".md5mesh" || e == ".md5anim") return 8;
+    if (e == ".smd" || e == ".vta") return 7;   // .vta: Valve vertex animation, SMD text (the SMD reader)
+    if (e == ".md5mesh" || e == ".md5anim" || e == ".md5camera") return 8;   // .md5camera: the MD5 camera reader, same switch
     if (e == ".ms3d") return 9;
-    if (e == ".ase") return 10;
+    if (e == ".ase" || e == ".ask") return 10;   // .ask: the same ASCII scene text as .ase
     if (e == ".3mf") return 11;
     if (e == ".amf") return 12;
-    if (e == ".x3d") return 13;
+    if (e == ".x3d" || e == ".x3db") return 13;   // .x3db: the X3D reader (XML encoding; the binary encoding is refused)
     if (e == ".dxf") return 14;
     if (e == ".lwo") return 15;
     if (e == ".blend") return 16;
@@ -766,7 +768,7 @@ int OwnSlot(const std::string& ext) {
     if (e == ".q3o" || e == ".q3s") return 31;
     if (e == ".raw") return 33;
     if (e == ".iqm") return 34;
-    if (e == ".cob") return 35;
+    if (e == ".cob" || e == ".scn") return 35;   // .scn: a trueSpace scene, the same Caligari file as .cob
     if (e == ".ndo") return 36;
     if (e == ".ogex") return 37;
     if (e == ".mdl") return 38;
@@ -1040,7 +1042,7 @@ static bool ImportModelDataImpl(const std::string& path, ImportedModel& out, Imp
                   : s == 5 ? ReadBvhFile(path, out, &e1)
                   : s == 6 ? ReadOffFile(path, out, &e1)
                   : s == 7 ? ReadSmdFile(path, out, &e1)
-                  : s == 8 ? ReadMd5File(path, out, &e1)
+                  : s == 8 ? (ext == ".md5camera" ? ReadMd5CameraFile(path, out, &e1) : ReadMd5File(path, out, &e1))
                   : s == 9 ? ReadMs3dFile(path, out, &e1)
                   : s == 10 ? ReadAseFile(path, out, &e1)
                   : s == 11 ? Read3mfFile(path, out, &e1, flatten)
@@ -2212,7 +2214,7 @@ static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path,
 static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bool* ok) {
     using namespace gltf_detail;
     std::string p = Lower(path);
-    bool isGltf = EndsWith(p, ".gltf") || EndsWith(p, ".glb");
+    bool isGltf = EndsWith(p, ".gltf") || EndsWith(p, ".glb") || EndsWith(p, ".vrm");   // .vrm: VRM avatars are binary glTF 2.0
 
     // FBX: built in (ufbx), full hierarchy + skins + animations. Assimp (when
     // compiled in) is the fallback for files ufbx can't read.

@@ -521,7 +521,6 @@ jobs:
           # the switches must really reach the compiler, or this job would test the old stack
           grep -q 'OKAY_OWN_STACK_BUILD' build-own/build.ninja
           grep -q 'OKAY_OWN_HTTP_DEFAULT_ON' build-own/build.ninja
-          grep -q 'OKAY_OWN_FBX_DEFAULT' build-own/build.ninja
           grep -q 'OKAY_PLATFORM_DEFAULT_OWN' build-own/build.ninja
           grep -q 'OKAY_OWN_CRYPTO' build-own/build.ninja
 

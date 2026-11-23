@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
     VERSION 2.903.4
     DESCRIPTION "A modern C++ game engine"
-    LANGUAGES C CXX)   # C enabled for vendored single-file C libs (ufbx)
+    LANGUAGES C CXX)   # C enabled for C dependencies built from source (Assimp's bundled zlib and similar)
 
 # Stamp the version into binaries (used by the editor's self-updater).
 # The version string is only compiled into the editor and launcher (their targets
@@ -42,8 +42,8 @@ if(NOT OKAY_UI_DEFAULT_BACKEND STREQUAL "imgui" AND NOT OKAY_UI_DEFAULT_BACKEND 
     message(FATAL_ERROR "OKAY_UI_DEFAULT_BACKEND must be imgui or okayui (got '${OKAY_UI_DEFAULT_BACKEND}')")
 endif()
 option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its tests (behaviour, golden images, fuzz) and demo (small; needs OKAY_BUILD_TESTS and SDL2)" ON)
-# Our own model readers are the DEFAULT since 2026-11-17 (owner: "start switching them so i can test them out"). Assimp and ufbx
-# stay compiled in as the fallback: a file our reader refuses goes to them, OKAY_OWN_<FMT>=0 switches one format back and
+# Our own model readers are the DEFAULT since 2026-11-17 (owner: "start switching them so i can test them out"). Assimp (when
+# built) stays the fallback: a file our reader refuses goes to it (not for FBX: ufbx was deleted on 2026-11-23 and FBX has no fallback), OKAY_OWN_<FMT>=0 switches one format back and
 # OKAY_THIRD_PARTY=1 (okay/Core/ThirdParty.hpp) switches every format back at run time. NDO stays OFF: that reader is a seam that
 # refuses every file. An existing build folder keeps the old OFF values in its CMakeCache.txt: configure a fresh one.
 # Since 2026-11-23 (owner: "i want our stuff to be on by default, all of them") the last four readers (glTF 1.0, OpenGEX, MDL,
@@ -94,7 +94,6 @@ option(OKAY_OWN_MDL      "Read .mdl (Quake 1 and Half-Life 1 models) with our ow
 option(OKAY_OWN_Q3BSP    "Read .bsp / .pk3 (Quake III Arena maps) with our own Q3BSP reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_Q3BSP=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_GLTF1    "Read glTF 1.0 files (.gltf / .glb of version 1) with our own glTF 1.0 reader by default (without it they are refused: .gltf / .glb never go to Assimp; run-time env OKAY_OWN_GLTF1=0/1 and SetImportBackend(\".gltf1\") override)" ON)
 option(OKAY_OWN_LWS      "Read .lws / .mot (LightWave scenes and motions) with our own LWS reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LWS=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" ON)
 option(OKAY_BUILD_PLATFORM_SELFTEST "Build okay-platform-selftest: tries the own okay::platform backend (window, input, audio, pad, clipboard) and prints what worked. OFF by default" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 option(OKAY_BUILD_XBOX_UWP "EXPERIMENTAL, UNVERIFIED Xbox One Developer Mode (UWP) export: its tests, the editor entry and (on a UWP toolchain) the app. platform/xbox_uwp, docs/platform/xbox_uwp.md" OFF)

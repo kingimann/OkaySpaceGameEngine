@@ -1,0 +1,1489 @@
+# Our FBX importer's output (our own reader), recorded on 2026-11-23 by tests/test_fbx_reader.cpp (OKAY_FBX_WRITE_EXPECTED). In the
+# build just before ufbx was deleted, the old ufbx-versus-ours comparison passed on every file (14 fixtures; with the corpus, 42 real
+# files); the deletion did not change our reader's code, and these values were then also checked against the same snapshot taken
+# through ufbx: all agree within the comparison's tolerances, except clip samples past the end of a take (ufbx kept keys there, ours
+# cuts at the span: takes_bin, Granate, mar_rifle, mp5_sil, multiple_animations_test) and the vertex counts of
+# animation_with_skeleton (ufbx kept duplicate vertices; the old test allowed 0.5 %), the known differences the old test skipped.
+# fbx_reader now holds the importer to these values, with the tolerances that comparison used. Columns (tab separated): file, key, text, numbers.
+# Real files: paths relative to $OKAY_MODEL_CORPUS, the test folder of an Assimp 5.4.3 checkout (docs/content/model_corpus.md). Checked only when it is set.
+models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	uvmeshes	-	0
+models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	counts	-	7 2 0 0 6722 0
+models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	verts	-	4126
+models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	clips	-	0 0
+models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	bbox	-	-4 0 -2 4 1.08097994 2
+models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	area	-	63.92308
+models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	names	COLLADA|Camera|Collada|Floor|Light|pointLight1|testCamera	
+models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	mat.Collada	-|-	0.815685987 0.345097989 0.309803993 1 0 0 0 0 0.535999985 0.49000001 0
+models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	mat.Floor	-|-	0.521569014 0.596077979 0.658824027 1 0 0 0 0 0.432122459 0.418793648 0
+models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	flat	-	4126 20166 1 0
+models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	uvsets.0	-	433 433
+models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	uvsets.1	-	266 266
+models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	uvsets.2	-	8 8
+models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	uvmeshes	-	3
+models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	counts	-	4 3 0 0 1296 0
+models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	verts	-	723
+models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	clips	-	0 0
+models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	bbox	-	-0.483069628 -0.483069628 -0.483069628 1.51693046 0.483069628 1.50055921
+models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	area	-	10.8567932
+models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	names	Cinema4D|Kegel|Kugel|Würfel	
+models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	mat.Kegel	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.127681217 0.210104063 0
+models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	mat.Kugel	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.127681217 0.210104063 0
+models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	mat.Würfel	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.127681217 0.210104063 0
+models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	flat	-	723 3888 1 1
+models-nonbsd/FBX/2013_ASCII/ConcavePolygon.fbx	uvmeshes	-	0
+models-nonbsd/FBX/2013_ASCII/ConcavePolygon.fbx	counts	-	2 1 0 0 64 0
+models-nonbsd/FBX/2013_ASCII/ConcavePolygon.fbx	verts	-	64
+models-nonbsd/FBX/2013_ASCII/ConcavePolygon.fbx	clips	-	0 0
+models-nonbsd/FBX/2013_ASCII/ConcavePolygon.fbx	bbox	-	-1.14600003 1.65750003 1.60549998 -1.14600003 3.14249992 3.09050012
+models-nonbsd/FBX/2013_ASCII/ConcavePolygon.fbx	area	-	0.24549659
+models-nonbsd/FBX/2013_ASCII/ConcavePolygon.fbx	names	ConcavePolygon|Mesh_Object	
+models-nonbsd/FBX/2013_ASCII/ConcavePolygon.fbx	mat.Mesh_Object	-|-	0.141176 0.184313998 0.411765009 1 0 0 0 0 0.594544868 0.530131578 0
+models-nonbsd/FBX/2013_ASCII/ConcavePolygon.fbx	flat	-	64 192 1 0
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	uvsets.0	-	128 122.375721
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	uvsets.1	-	126 144.000003
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	uvmeshes	-	2
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	counts	-	3 2 0 0 376 0
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	verts	-	254
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	clips	-	1 2
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	bbox	-	-0.446131915 -0.0573826544 -1.02022171 -0.000126965155 0.132372126 -0.437560469
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	area	-	0.91538214
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	names	AbgekQuade|Granate|Zylinder01	
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	mat.AbgekQuade	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.594544868 0.530131578 0
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	mat.Zylinder01	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.594544868 0.530131578 0
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	clip.0	Granate	2
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.AbgekQuade@0.00	pppsssq	-0.000126966799 0.0351800919 -0.759889126 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.AbgekQuade@0.25	pppsssq	-0.000126966799 0.0351800919 -0.759889126 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.AbgekQuade@0.50	pppsssq	-0.000126966799 0.0351800919 -0.759889126 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.AbgekQuade@0.75	pppsssq	-0.000126966799 0.0351800919 -0.759889126 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.AbgekQuade@1.00	pppsssq	-0.000126966799 0.0351800919 -0.759889126 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.AbgekQuade@1.25	pppsssq	-0.000126966799 0.0351800919 -0.759889126 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.AbgekQuade@1.50	pppsssq	-0.000126966799 0.0351800919 -0.759889126 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.AbgekQuade@1.90	pppsssq	-0.000126966799 0.0351800919 -0.759889126 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.Zylinder01@0.00	pppsssq	-0.126946807 0.0329099409 -0.73038578 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.Zylinder01@0.25	pppsssq	-0.126946807 0.0329099409 -0.73038578 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.Zylinder01@0.50	pppsssq	-0.126946807 0.0329099409 -0.73038578 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.Zylinder01@0.75	pppsssq	-0.126946807 0.0329099409 -0.73038578 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.Zylinder01@1.00	pppsssq	-0.126946807 0.0329099409 -0.73038578 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.Zylinder01@1.25	pppsssq	-0.126946807 0.0329099409 -0.73038578 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.Zylinder01@1.50	pppsssq	-0.126946807 0.0329099409 -0.73038578 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	key.0.Zylinder01@1.90	pppsssq	-0.126946807 0.0329099409 -0.73038578 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_ASCII/Granate.fbx	flat	-	254 1128 1 1
+models-nonbsd/FBX/2013_ASCII/cube_with_2UVs.fbx	uvsets.0	-	24 35.9999926
+models-nonbsd/FBX/2013_ASCII/cube_with_2UVs.fbx	uvmeshes	-	1
+models-nonbsd/FBX/2013_ASCII/cube_with_2UVs.fbx	counts	-	3 1 0 0 12 0
+models-nonbsd/FBX/2013_ASCII/cube_with_2UVs.fbx	verts	-	24
+models-nonbsd/FBX/2013_ASCII/cube_with_2UVs.fbx	clips	-	0 0
+models-nonbsd/FBX/2013_ASCII/cube_with_2UVs.fbx	bbox	-	-0.0253999997 -3.02791592e-09 -0.025400009 0.0253999997 0.0508000106 0.0254000034
+models-nonbsd/FBX/2013_ASCII/cube_with_2UVs.fbx	area	-	0.0154838429
+models-nonbsd/FBX/2013_ASCII/cube_with_2UVs.fbx	names	Quader01|Szenenstamm|cube_with_2UVs	
+models-nonbsd/FBX/2013_ASCII/cube_with_2UVs.fbx	mat.Quader01	-|-	0.541176021 0.0313724987 0.431373 1 0 0 0 0 0.432122459 0.418793648 0
+models-nonbsd/FBX/2013_ASCII/cube_with_2UVs.fbx	flat	-	24 36 1 1
+models-nonbsd/FBX/2013_ASCII/duck.fbx	uvsets.0	-	2277 2938.38723
+models-nonbsd/FBX/2013_ASCII/duck.fbx	uvmeshes	-	1
+models-nonbsd/FBX/2013_ASCII/duck.fbx	counts	-	4 1 0 0 4212 0
+models-nonbsd/FBX/2013_ASCII/duck.fbx	verts	-	2399
+models-nonbsd/FBX/2013_ASCII/duck.fbx	clips	-	0 0
+models-nonbsd/FBX/2013_ASCII/duck.fbx	bbox	-	-0.692984998 0.0992937014 -0.613282025 0.961799026 1.63970006 0.539251983
+models-nonbsd/FBX/2013_ASCII/duck.fbx	area	-	7.02698599
+models-nonbsd/FBX/2013_ASCII/duck.fbx	names	LOD3sp|camera1|directionalLight1|duck	
+models-nonbsd/FBX/2013_ASCII/duck.fbx	mat.LOD3sp	duckCM.tga|-	1 1 1 1 0 0 0 0 0.107917595 0.196556419 0
+models-nonbsd/FBX/2013_ASCII/duck.fbx	flat	-	2399 12636 1 1
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	uvsets.0	UVSet0	210 145.090369
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	uvsets.1	UVSet0	210 145.090369
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	uvsets.2	UVSet0	210 145.090369
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	uvsets.3	UVSet0	210 145.090369
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	uvsets.4	UVSet0	24 24.5860673
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	uvsets.5	UVSet0	24 24.5860673
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	uvsets.6	UVSet0	1060 1297.7333
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	uvmeshes	-	7
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	counts	-	8 7 0 0 2032 0
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	verts	-	1948
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	clips	-	0 0
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	bbox	-	-0.14044261 -0.000661626866 -0.312369585 0.14044261 0.193383902 0.110435717
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	area	-	0.487221849
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	names	flw|frw|jeep1|lsteer|main|rlw|rrw|rsteer	
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	mat.flw	jeep1.jpg|-	1 1 1 1 0 0 0 0 0.502784348 0.467231214 0
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	mat.frw	jeep1.jpg|-	1 1 1 1 0 0 0 0 0.502784348 0.467231214 0
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	mat.lsteer	jeep1.jpg|-	1 1 1 1 0 0 0 0 0.502784348 0.467231214 0
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	mat.main	jeep1.jpg|-	1 1 1 1 0 0 0 0 0.502784348 0.467231214 0
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	mat.rlw	jeep1.jpg|-	1 1 1 1 0 0 0 0 0.502784348 0.467231214 0
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	mat.rrw	jeep1.jpg|-	1 1 1 1 0 0 0 0 0.502784348 0.467231214 0
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	mat.rsteer	jeep1.jpg|-	1 1 1 1 0 0 0 0 0.502784348 0.467231214 0
+models-nonbsd/FBX/2013_ASCII/jeep1.fbx	flat	-	1948 6096 1 1
+models-nonbsd/FBX/2013_ASCII/kwxport_test_vcolors.fbx	uvsets.0	-	20 20
+models-nonbsd/FBX/2013_ASCII/kwxport_test_vcolors.fbx	uvmeshes	-	1
+models-nonbsd/FBX/2013_ASCII/kwxport_test_vcolors.fbx	counts	-	5 3 0 0 12 0
+models-nonbsd/FBX/2013_ASCII/kwxport_test_vcolors.fbx	verts	-	24
+models-nonbsd/FBX/2013_ASCII/kwxport_test_vcolors.fbx	clips	-	0 0
+models-nonbsd/FBX/2013_ASCII/kwxport_test_vcolors.fbx	bbox	-	-0.499998987 -0.499999046 -0.499999166 0.499998987 0.500001729 0.499999046
+models-nonbsd/FBX/2013_ASCII/kwxport_test_vcolors.fbx	area	-	5.99998713
+models-nonbsd/FBX/2013_ASCII/kwxport_test_vcolors.fbx	names	Box01|Box01_bottom|Box01_side|Box01_top|kwxport_test_vcolors	
+models-nonbsd/FBX/2013_ASCII/kwxport_test_vcolors.fbx	mat.Box01_bottom	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.0993289185 0.19066903 0
+models-nonbsd/FBX/2013_ASCII/kwxport_test_vcolors.fbx	mat.Box01_side	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.0783268642 0.176272452 0
+models-nonbsd/FBX/2013_ASCII/kwxport_test_vcolors.fbx	mat.Box01_top	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.0809919071 0.178099304 0
+models-nonbsd/FBX/2013_ASCII/kwxport_test_vcolors.fbx	flat	-	24 36 1 1
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	uvsets.0	UVSet0	756 884.266907
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	uvmeshes	-	1
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	counts	-	2 1 0 0 572 0
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	verts	-	756
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	clips	-	1 1
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	bbox	-	-0.0894737393 -0.547037363 -1.14246655 0.0894746035 0.513914466 1.81108749
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	area	-	5.59596705
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	names	m_rifle|mar_rifle	
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	mat.m_rifle	m_rifl.bmp|-	1 1 1 1 0 0 0 0 0.164000034 0.235000029 0
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	clip.0	mar_rifle	1
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	key.0.m_rifle@0.00	pppsssq	3.06878292e-07 -0.0676283464 -0.185449705 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	key.0.m_rifle@0.25	pppsssq	3.06878292e-07 -0.0676283464 -0.185449705 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	key.0.m_rifle@0.50	pppsssq	3.06878292e-07 -0.0676283464 -0.185449705 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	key.0.m_rifle@0.75	pppsssq	3.06878292e-07 -0.0676283464 -0.185449705 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	key.0.m_rifle@1.00	pppsssq	3.06878292e-07 -0.0676283464 -0.185449705 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	key.0.m_rifle@1.25	pppsssq	3.06878292e-07 -0.0676283464 -0.185449705 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	key.0.m_rifle@1.50	pppsssq	3.06878292e-07 -0.0676283464 -0.185449705 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	key.0.m_rifle@1.90	pppsssq	3.06878292e-07 -0.0676283464 -0.185449705 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mar_rifle.fbx	flat	-	756 1716 1 1
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	uvsets.0	UVSet0	528 576.581005
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	uvmeshes	-	1
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	counts	-	2 1 0 0 366 0
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	verts	-	528
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	clips	-	1 1
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	bbox	-	-0.0353352576 -0.250525832 -0.799648523 0.0353353843 0.241313711 0.323054701
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	area	-	0.503968581
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	names	Line06|mp5_sil	
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	mat.Line06	-|-	0.87843138 0.87843138 0.87843138 1 0 0 0 0 0.390724945 0.390416324 0
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	clip.0	mp5_sil	1
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	key.0.Line06@0.00	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	key.0.Line06@0.25	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	key.0.Line06@0.50	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	key.0.Line06@0.75	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	key.0.Line06@1.00	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	key.0.Line06@1.25	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	key.0.Line06@1.50	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	key.0.Line06@1.90	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/mp5_sil.fbx	flat	-	528 1098 1 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	uvsets.0	-	18876 16487.9971
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	uvmeshes	-	1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	counts	-	6 1 0 0 31460 0
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	verts	-	18876
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	clips	-	1 5
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	bbox	-	-1.80417478 -1.27885139 -2.07257724 0.814138651 1.50033784 -0.0462270975
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	area	-	214.639618
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	names	Camera01|Camera01.Target|Omni01|Omni02|Torus Knot|pyramob	
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	mat.Torus Knot	-|-	0.815686285 0.443137258 0.137254909 1 0.0897254944 0.0487450995 0.01509804 0 1.28 1 0
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	clip.0	pyramob	5
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Torus Knot@0.00	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Torus Knot@0.25	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Torus Knot@0.50	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Torus Knot@0.75	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Torus Knot@1.00	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Torus Knot@1.25	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Torus Knot@1.50	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Torus Knot@1.90	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni01@0.00	pppsssq	-0.298639596 2.48500395 1.29322195 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni01@0.25	pppsssq	-0.298639596 2.48500395 1.29322195 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni01@0.50	pppsssq	-0.298639596 2.48500395 1.29322195 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni01@0.75	pppsssq	-0.298639596 2.48500395 1.29322195 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni01@1.00	pppsssq	-0.298639596 2.48500395 1.29322195 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni01@1.25	pppsssq	-0.298639596 2.48500395 1.29322195 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni01@1.50	pppsssq	-0.298639596 2.48500395 1.29322195 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni01@1.90	pppsssq	-0.298639596 2.48500395 1.29322195 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni02@0.00	pppsssq	-0.257681102 0.0372526608 -1.10107505 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni02@0.25	pppsssq	-0.257681102 0.0372526608 -1.10107505 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni02@0.50	pppsssq	-0.257681102 0.0372526608 -1.10107505 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni02@0.75	pppsssq	-0.257681102 0.0372526608 -1.10107505 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni02@1.00	pppsssq	-0.257681102 0.0372526608 -1.10107505 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni02@1.25	pppsssq	-0.257681102 0.0372526608 -1.10107505 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni02@1.50	pppsssq	-0.257681102 0.0372526608 -1.10107505 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Omni02@1.90	pppsssq	-0.257681102 0.0372526608 -1.10107505 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01@0.00	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01@0.25	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01@0.50	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01@0.75	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01@1.00	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01@1.25	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01@1.50	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01@1.90	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01.Target@0.00	pppsssq	-0.537658215 0.0244819205 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01.Target@0.25	pppsssq	-0.537658215 0.0244819205 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01.Target@0.50	pppsssq	-0.537658215 0.0244819205 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01.Target@0.75	pppsssq	-0.537658215 0.0244819205 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01.Target@1.00	pppsssq	-0.537658215 0.0244819205 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01.Target@1.25	pppsssq	-0.537658215 0.0244819205 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01.Target@1.50	pppsssq	-0.537658215 0.0244819205 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	key.0.Camera01.Target@1.90	pppsssq	-0.537658215 0.0244819205 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_ASCII/pyramob.fbx	flat	-	18876 94380 1 1
+models-nonbsd/FBX/2013_BINARY/COLLADA.fbx	uvmeshes	-	0
+models-nonbsd/FBX/2013_BINARY/COLLADA.fbx	counts	-	7 2 0 0 6722 0
+models-nonbsd/FBX/2013_BINARY/COLLADA.fbx	verts	-	4126
+models-nonbsd/FBX/2013_BINARY/COLLADA.fbx	clips	-	0 0
+models-nonbsd/FBX/2013_BINARY/COLLADA.fbx	bbox	-	-4 0 -2 4 1.08097994 2
+models-nonbsd/FBX/2013_BINARY/COLLADA.fbx	area	-	63.92308
+models-nonbsd/FBX/2013_BINARY/COLLADA.fbx	names	COLLADA|Camera|Collada|Floor|Light|pointLight1|testCamera	
+models-nonbsd/FBX/2013_BINARY/COLLADA.fbx	mat.Collada	-|-	0.815685987 0.345097989 0.309803993 1 0 0 0 0 0.535999985 0.49000001 0
+models-nonbsd/FBX/2013_BINARY/COLLADA.fbx	mat.Floor	-|-	0.521569014 0.596077979 0.658824027 1 0 0 0 0 0.432122459 0.418793648 0
+models-nonbsd/FBX/2013_BINARY/COLLADA.fbx	flat	-	4126 20166 1 0
+models-nonbsd/FBX/2013_BINARY/Cinema4D.fbx	uvsets.0	-	433 433
+models-nonbsd/FBX/2013_BINARY/Cinema4D.fbx	uvsets.1	-	266 266
+models-nonbsd/FBX/2013_BINARY/Cinema4D.fbx	uvsets.2	-	8 8
+models-nonbsd/FBX/2013_BINARY/Cinema4D.fbx	uvmeshes	-	3
+models-nonbsd/FBX/2013_BINARY/Cinema4D.fbx	counts	-	4 3 0 0 1296 0
+models-nonbsd/FBX/2013_BINARY/Cinema4D.fbx	verts	-	723
+models-nonbsd/FBX/2013_BINARY/Cinema4D.fbx	clips	-	0 0
+models-nonbsd/FBX/2013_BINARY/Cinema4D.fbx	bbox	-	-0.483069628 -0.483069628 -0.483069628 1.51693046 0.483069628 1.50055921
+models-nonbsd/FBX/2013_BINARY/Cinema4D.fbx	area	-	10.8567932
+models-nonbsd/FBX/2013_BINARY/Cinema4D.fbx	names	Cinema4D|Kegel|Kugel|Würfel	
+models-nonbsd/FBX/2013_BINARY/Cinema4D.fbx	mat.Kegel	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.127681217 0.210104063 0
+models-nonbsd/FBX/2013_BINARY/Cinema4D.fbx	mat.Kugel	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.127681217 0.210104063 0
+models-nonbsd/FBX/2013_BINARY/Cinema4D.fbx	mat.Würfel	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.127681217 0.210104063 0
+models-nonbsd/FBX/2013_BINARY/Cinema4D.fbx	flat	-	723 3888 1 1
+models-nonbsd/FBX/2013_BINARY/ConcavePolygon.fbx	uvmeshes	-	0
+models-nonbsd/FBX/2013_BINARY/ConcavePolygon.fbx	counts	-	2 1 0 0 64 0
+models-nonbsd/FBX/2013_BINARY/ConcavePolygon.fbx	verts	-	64
+models-nonbsd/FBX/2013_BINARY/ConcavePolygon.fbx	clips	-	0 0
+models-nonbsd/FBX/2013_BINARY/ConcavePolygon.fbx	bbox	-	-1.14600003 1.65750003 1.60549998 -1.14600003 3.14249992 3.09050012
+models-nonbsd/FBX/2013_BINARY/ConcavePolygon.fbx	area	-	0.24549659
+models-nonbsd/FBX/2013_BINARY/ConcavePolygon.fbx	names	ConcavePolygon|Mesh_Object	
+models-nonbsd/FBX/2013_BINARY/ConcavePolygon.fbx	mat.Mesh_Object	-|-	0.141176 0.184313998 0.411765009 1 0 0 0 0 0.594544868 0.530131578 0
+models-nonbsd/FBX/2013_BINARY/ConcavePolygon.fbx	flat	-	64 192 1 0
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	uvsets.0	-	128 122.375721
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	uvsets.1	-	126 144.000003
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	uvmeshes	-	2
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	counts	-	3 2 0 0 376 0
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	verts	-	254
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	clips	-	1 2
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	bbox	-	-0.446131915 -0.0573826544 -1.02022171 -0.000126965155 0.132372126 -0.437560469
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	area	-	0.91538214
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	names	AbgekQuade|Granate|Zylinder01	
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	mat.AbgekQuade	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.594544868 0.530131578 0
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	mat.Zylinder01	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.594544868 0.530131578 0
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	clip.0	Granate	2
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.AbgekQuade@0.00	pppsssq	-0.000126966799 0.0351800881 -0.759889066 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.AbgekQuade@0.25	pppsssq	-0.000126966799 0.0351800881 -0.759889066 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.AbgekQuade@0.50	pppsssq	-0.000126966799 0.0351800881 -0.759889066 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.AbgekQuade@0.75	pppsssq	-0.000126966799 0.0351800881 -0.759889066 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.AbgekQuade@1.00	pppsssq	-0.000126966799 0.0351800881 -0.759889066 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.AbgekQuade@1.25	pppsssq	-0.000126966799 0.0351800881 -0.759889066 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.AbgekQuade@1.50	pppsssq	-0.000126966799 0.0351800881 -0.759889066 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.AbgekQuade@1.90	pppsssq	-0.000126966799 0.0351800881 -0.759889066 1 1 0.822223186 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.Zylinder01@0.00	pppsssq	-0.126946807 0.0329099409 -0.73038584 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.Zylinder01@0.25	pppsssq	-0.126946807 0.0329099409 -0.73038584 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.Zylinder01@0.50	pppsssq	-0.126946807 0.0329099409 -0.73038584 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.Zylinder01@0.75	pppsssq	-0.126946807 0.0329099409 -0.73038584 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.Zylinder01@1.00	pppsssq	-0.126946807 0.0329099409 -0.73038584 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.Zylinder01@1.25	pppsssq	-0.126946807 0.0329099409 -0.73038584 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.Zylinder01@1.50	pppsssq	-0.126946807 0.0329099409 -0.73038584 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	key.0.Zylinder01@1.90	pppsssq	-0.126946807 0.0329099409 -0.73038584 1.52060497 0.936570823 0.936570823 0.5 -0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/Granate.fbx	flat	-	254 1128 1 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.0	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.1	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.2	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.3	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.4	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.5	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.6	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.7	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.8	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.9	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.10	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.11	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.12	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.13	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.14	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.15	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.16	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.17	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.18	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.19	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.20	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.21	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.22	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.23	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.24	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.25	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.26	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.27	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.28	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.29	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.30	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.31	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.32	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.33	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.34	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.35	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.36	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.37	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.38	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.39	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.40	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.41	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.42	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.43	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.44	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.45	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.46	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.47	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.48	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.49	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.50	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.51	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.52	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.53	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.54	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.55	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.56	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.57	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.58	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.59	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.60	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.61	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.62	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvsets.63	-	24 24
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	uvmeshes	-	64
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	counts	-	129 64 0 0 768 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	verts	-	1536
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	clips	-	1 64
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	bbox	-	-0.00525200646 -2.37426661e-07 -1.99167943 0.011414893 0.0166410748 0.00832053646
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	area	-	0.106339424
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	names	Box001|Box001-Pivot|Box002|Box002-Pivot|Box003|Box003-Pivot|Box004|Box004-Pivot|Box005|Box005-Pivot|Box006|Box006-Pivot|Box007|Box007-Pivot|Box008|Box008-Pivot|Box009|Box009-Pivot|Box010|Box010-Pivot|Box011|Box011-Pivot|Box012|Box012-Pivot|Box013|Box013-Pivot|Box014|Box014-Pivot|Box015|Box015-Pivot|Box016|Box016-Pivot|Box017|Box017-Pivot|Box018|Box018-Pivot|Box019|Box019-Pivot|Box020|Box020-Pivot|Box021|Box021-Pivot|Box022|Box022-Pivot|Box023|Box023-Pivot|Box024|Box024-Pivot|Box025|Box025-Pivot|Box026|Box026-Pivot|Box027|Box027-Pivot|Box028|Box028-Pivot|Box029|Box029-Pivot|Box030|Box030-Pivot|Box031|Box031-Pivot|Box032|Box032-Pivot|Box033|Box033-Pivot|Box034|Box034-Pivot|Box035|Box035-Pivot|Box036|Box036-Pivot|Box037|Box037-Pivot|Box038|Box038-Pivot|Box039|Box039-Pivot|Box040|Box040-Pivot|Box041|Box041-Pivot|Box042|Box042-Pivot|Box043|Box043-Pivot|Box044|Box044-Pivot|Box045|Box045-Pivot|Box046|Box046-Pivot|Box047|Box047-Pivot|Box048|Box048-Pivot|Box049|Box049-Pivot|Box050|Box050-Pivot|Box051|Box051-Pivot|Box052|Box052-Pivot|Box053|Box053-Pivot|Box054|Box054-Pivot|Box055|Box055-Pivot|Box056|Box056-Pivot|Box057|Box057-Pivot|Box058|Box058-Pivot|Box059|Box059-Pivot|Box060|Box060-Pivot|Box061|Box061-Pivot|Box062|Box062-Pivot|Box063|Box063-Pivot|Box064|Box064-Pivot|anims_with_full_rotations_between_keys	
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box001-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box002-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box003-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box004-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box005-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box006-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box007-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box008-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box009-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box010-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box011-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box012-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box013-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box014-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box015-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box016-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box017-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box018-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box019-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box020-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box021-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box022-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box023-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box024-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box025-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box026-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box027-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box028-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box029-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box030-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box031-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box032-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box033-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box034-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box035-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box036-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box037-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box038-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box039-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box040-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box041-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box042-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box043-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box044-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box045-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box046-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box047-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box048-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box049-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box050-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box051-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box052-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box053-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box054-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box055-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box056-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box057-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box058-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box059-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box060-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box061-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box062-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box063-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	mat.Box064-Pivot	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	clip.0	anims_with_full_rotations_between_keys	64
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box001@0.00	pppsssq	0 0 0 1 1 1 -0.707106769 -2.59786805e-16 -2.59786805e-16 0.707106769
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box001@0.25	pppsssq	0 0 0 1 1 1 -0.705575883 0.0465049781 0.0465049781 0.705575883
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box001@0.50	pppsssq	0 0 0 1 1 1 -0.700989723 0.0928085819 0.0928085819 0.700989723
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box001@0.75	pppsssq	0 0 0 1 1 1 -0.693368196 0.13871032 0.13871032 0.693368196
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box001@1.00	pppsssq	0 0 0 1 1 1 -0.682744324 0.18401143 0.18401143 0.682744324
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box001@1.25	pppsssq	0 0 0 1 1 1 -0.669164062 0.228515759 0.228515759 0.669164062
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box001@1.50	pppsssq	0 0 0 1 1 1 -0.652686298 0.272030562 0.272030562 0.652686298
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box001@1.90	pppsssq	0 0 0 1 1 1 -0.620477557 0.33912769 0.33912769 0.620477557
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box002@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box002@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box002@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box002@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box002@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box002@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box002@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box002@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box003@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box003@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box003@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box003@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box003@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box003@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box003@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box003@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box004@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box004@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box004@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box004@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box004@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box004@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box004@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box004@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box005@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box005@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box005@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box005@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box005@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box005@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box005@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box005@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box006@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box006@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box006@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box006@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box006@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box006@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box006@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box006@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box007@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box007@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box007@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box007@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box007@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box007@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box007@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box007@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box008@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box008@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box008@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box008@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box008@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box008@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box008@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box008@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box009@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box009@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box009@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box009@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box009@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box009@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box009@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box009@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box010@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box010@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box010@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box010@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box010@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box010@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box010@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box010@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box011@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box011@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box011@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box011@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box011@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box011@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box011@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box011@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box012@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box012@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box012@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box012@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box012@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box012@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box012@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box012@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box013@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box013@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box013@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box013@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box013@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box013@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box013@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box013@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box014@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box014@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box014@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box014@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box014@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box014@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box014@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box014@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box015@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box015@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box015@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box015@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box015@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box015@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box015@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box015@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box016@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box016@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box016@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box016@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box016@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box016@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box016@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box016@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box017@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box017@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box017@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box017@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box017@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box017@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box017@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box017@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box018@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box018@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box018@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box018@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box018@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box018@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box018@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box018@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box019@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box019@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box019@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box019@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box019@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box019@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box019@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box019@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box020@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box020@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box020@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box020@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box020@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box020@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box020@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box020@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box021@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box021@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box021@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box021@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box021@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box021@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box021@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box021@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box022@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box022@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box022@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box022@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box022@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box022@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box022@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box022@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box023@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box023@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box023@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box023@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box023@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box023@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box023@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box023@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box024@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box024@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box024@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box024@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box024@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box024@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box024@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box024@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box025@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box025@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box025@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box025@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box025@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box025@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box025@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box025@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box026@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box026@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box026@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box026@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box026@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box026@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box026@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box026@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box027@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box027@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box027@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box027@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box027@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box027@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box027@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box027@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box028@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box028@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box028@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box028@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box028@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box028@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box028@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box028@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box029@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box029@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box029@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box029@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box029@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box029@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box029@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box029@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box030@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box030@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box030@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box030@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box030@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box030@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box030@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box030@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box031@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box031@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box031@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box031@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box031@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box031@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box031@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box031@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box032@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box032@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box032@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box032@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box032@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box032@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box032@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box032@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box033@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box033@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box033@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box033@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box033@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box033@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box033@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box033@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box034@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box034@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box034@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box034@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box034@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box034@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box034@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box034@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box035@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box035@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box035@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box035@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box035@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box035@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box035@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box035@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box036@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box036@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box036@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box036@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box036@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box036@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box036@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box036@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box037@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box037@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box037@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box037@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box037@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box037@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box037@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box037@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box038@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box038@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box038@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box038@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box038@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box038@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box038@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box038@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box039@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box039@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box039@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box039@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box039@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box039@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box039@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box039@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box040@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box040@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box040@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box040@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box040@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box040@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box040@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box040@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box041@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box041@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box041@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box041@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box041@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box041@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box041@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box041@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box042@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box042@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box042@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box042@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box042@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box042@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box042@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box042@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box043@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box043@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box043@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box043@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box043@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box043@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box043@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box043@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box044@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box044@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box044@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box044@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box044@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box044@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box044@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box044@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box045@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box045@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box045@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box045@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box045@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box045@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box045@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box045@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box046@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box046@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box046@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box046@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box046@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box046@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box046@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box046@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box047@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box047@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box047@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box047@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box047@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box047@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box047@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box047@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box048@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box048@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box048@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box048@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box048@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box048@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box048@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box048@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box049@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box049@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box049@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box049@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box049@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box049@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box049@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box049@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box050@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box050@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box050@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box050@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box050@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box050@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box050@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box050@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box051@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box051@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box051@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box051@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box051@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box051@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box051@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box051@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box052@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box052@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box052@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box052@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box052@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box052@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box052@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box052@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box053@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box053@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box053@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box053@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box053@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box053@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box053@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box053@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box054@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box054@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box054@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box054@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box054@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box054@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box054@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box054@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box055@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box055@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box055@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box055@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box055@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box055@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box055@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box055@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box056@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box056@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box056@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box056@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box056@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box056@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box056@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box056@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box057@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box057@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box057@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box057@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box057@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box057@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box057@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box057@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box058@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box058@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box058@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box058@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box058@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box058@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box058@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box058@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box059@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box059@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box059@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box059@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box059@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box059@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box059@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box059@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box060@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box060@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box060@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box060@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box060@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box060@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box060@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box060@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box061@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box061@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box061@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box061@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box061@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box061@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box061@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box061@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box062@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box062@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box062@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box062@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box062@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box062@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box062@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box062@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box063@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box063@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box063@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box063@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box063@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box063@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box063@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box063@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box064@0.00	pppsssq	0 0 0 1 1 1 0 0 -3.67394029e-16 1
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box064@0.25	pppsssq	0 0 0 1 1 1 0 0 0.0657679811 0.997834921
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box064@0.50	pppsssq	0 0 0 1 1 1 0 0 0.131251171 0.991349161
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box064@0.75	pppsssq	0 0 0 1 1 1 0 0 0.196166039 0.980570674
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box064@1.00	pppsssq	0 0 0 1 1 1 0 0 0.260231495 0.96554625
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box064@1.25	pppsssq	0 0 0 1 1 1 0 0 0.323170066 0.946340919
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box064@1.50	pppsssq	0 0 0 1 1 1 0 0 0.384709328 0.923037767
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	key.0.Box064@1.90	pppsssq	0 0 0 1 1 1 0 0 0.479598999 0.877487779
+models-nonbsd/FBX/2013_BINARY/anims_with_full_rotations_between_keys.fbx	flat	-	1536 2304 1 1
+models-nonbsd/FBX/2013_BINARY/cube_with_2UVs.fbx	uvsets.0	-	24 35.9999926
+models-nonbsd/FBX/2013_BINARY/cube_with_2UVs.fbx	uvmeshes	-	1
+models-nonbsd/FBX/2013_BINARY/cube_with_2UVs.fbx	counts	-	3 1 0 0 12 0
+models-nonbsd/FBX/2013_BINARY/cube_with_2UVs.fbx	verts	-	24
+models-nonbsd/FBX/2013_BINARY/cube_with_2UVs.fbx	clips	-	0 0
+models-nonbsd/FBX/2013_BINARY/cube_with_2UVs.fbx	bbox	-	-0.0253999997 -3.02791592e-09 -0.025400009 0.0253999997 0.0508000106 0.0254000034
+models-nonbsd/FBX/2013_BINARY/cube_with_2UVs.fbx	area	-	0.0154838429
+models-nonbsd/FBX/2013_BINARY/cube_with_2UVs.fbx	names	Quader01|Szenenstamm|cube_with_2UVs	
+models-nonbsd/FBX/2013_BINARY/cube_with_2UVs.fbx	mat.Quader01	-|-	0.541176021 0.0313724987 0.431373 1 0 0 0 0 0.432122459 0.418793648 0
+models-nonbsd/FBX/2013_BINARY/cube_with_2UVs.fbx	flat	-	24 36 1 1
+models-nonbsd/FBX/2013_BINARY/duck.fbx	uvsets.0	-	2277 2938.38723
+models-nonbsd/FBX/2013_BINARY/duck.fbx	uvmeshes	-	1
+models-nonbsd/FBX/2013_BINARY/duck.fbx	counts	-	4 1 0 0 4212 0
+models-nonbsd/FBX/2013_BINARY/duck.fbx	verts	-	2399
+models-nonbsd/FBX/2013_BINARY/duck.fbx	clips	-	0 0
+models-nonbsd/FBX/2013_BINARY/duck.fbx	bbox	-	-0.692984998 0.0992937014 -0.613282025 0.961799026 1.63970006 0.539251983
+models-nonbsd/FBX/2013_BINARY/duck.fbx	area	-	7.02698599
+models-nonbsd/FBX/2013_BINARY/duck.fbx	names	LOD3sp|camera1|directionalLight1|duck	
+models-nonbsd/FBX/2013_BINARY/duck.fbx	mat.LOD3sp	duck_tex0.tga|-	1 1 1 1 0 0 0 0 0.107917595 0.196556419 0
+models-nonbsd/FBX/2013_BINARY/duck.fbx	flat	-	2399 12636 1 1
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	uvsets.0	UVSet0	210 145.090369
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	uvsets.1	UVSet0	210 145.090369
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	uvsets.2	UVSet0	210 145.090369
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	uvsets.3	UVSet0	210 145.090369
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	uvsets.4	UVSet0	24 24.5860673
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	uvsets.5	UVSet0	24 24.5860673
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	uvsets.6	UVSet0	1060 1297.7333
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	uvmeshes	-	7
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	counts	-	8 7 0 0 2032 0
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	verts	-	1948
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	clips	-	0 0
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	bbox	-	-0.14044261 -0.000661626866 -0.312369585 0.14044261 0.193383902 0.110435717
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	area	-	0.487221849
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	names	flw|frw|jeep1|lsteer|main|rlw|rrw|rsteer	
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	mat.flw	jeep1_tex4.jpg|-	1 1 1 1 0 0 0 0 0.502784348 0.467231214 0
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	mat.frw	jeep1_tex0.jpg|-	1 1 1 1 0 0 0 0 0.502784348 0.467231214 0
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	mat.lsteer	jeep1_tex10.jpg|-	1 1 1 1 0 0 0 0 0.502784348 0.467231214 0
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	mat.main	jeep1_tex12.jpg|-	1 1 1 1 0 0 0 0 0.502784348 0.467231214 0
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	mat.rlw	jeep1_tex6.jpg|-	1 1 1 1 0 0 0 0 0.502784348 0.467231214 0
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	mat.rrw	jeep1_tex2.jpg|-	1 1 1 1 0 0 0 0 0.502784348 0.467231214 0
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	mat.rsteer	jeep1_tex8.jpg|-	1 1 1 1 0 0 0 0 0.502784348 0.467231214 0
+models-nonbsd/FBX/2013_BINARY/jeep1.fbx	flat	-	1948 6096 1 1
+models-nonbsd/FBX/2013_BINARY/kwxport_test_vcolors.fbx	uvsets.0	-	20 20
+models-nonbsd/FBX/2013_BINARY/kwxport_test_vcolors.fbx	uvmeshes	-	1
+models-nonbsd/FBX/2013_BINARY/kwxport_test_vcolors.fbx	counts	-	5 3 0 0 12 0
+models-nonbsd/FBX/2013_BINARY/kwxport_test_vcolors.fbx	verts	-	24
+models-nonbsd/FBX/2013_BINARY/kwxport_test_vcolors.fbx	clips	-	0 0
+models-nonbsd/FBX/2013_BINARY/kwxport_test_vcolors.fbx	bbox	-	-0.499998987 -0.499999046 -0.499999166 0.499998987 0.500001729 0.499999046
+models-nonbsd/FBX/2013_BINARY/kwxport_test_vcolors.fbx	area	-	5.99998713
+models-nonbsd/FBX/2013_BINARY/kwxport_test_vcolors.fbx	names	Box01|Box01_bottom|Box01_side|Box01_top|kwxport_test_vcolors	
+models-nonbsd/FBX/2013_BINARY/kwxport_test_vcolors.fbx	mat.Box01_bottom	kwxport_test_vcolors_tex0.tga|-	1 1 1 1 0 0 0 0 0.0993289185 0.19066903 0
+models-nonbsd/FBX/2013_BINARY/kwxport_test_vcolors.fbx	mat.Box01_side	kwxport_test_vcolors_tex4.tga|-	1 1 1 1 0 0 0 0 0.0783268642 0.176272452 0
+models-nonbsd/FBX/2013_BINARY/kwxport_test_vcolors.fbx	mat.Box01_top	kwxport_test_vcolors_tex2.tga|-	1 1 1 1 0 0 0 0 0.0809919071 0.178099304 0
+models-nonbsd/FBX/2013_BINARY/kwxport_test_vcolors.fbx	flat	-	24 36 1 1
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	uvsets.0	UVSet0	756 884.266907
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	uvmeshes	-	1
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	counts	-	2 1 0 0 572 0
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	verts	-	756
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	clips	-	1 1
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	bbox	-	-0.0894737393 -0.547037363 -1.14246655 0.0894746035 0.513914466 1.81108749
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	area	-	5.59596705
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	names	m_rifle|mar_rifle	
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	mat.m_rifle	mar_rifle_tex0.bmp|-	1 1 1 1 0 0 0 0 0.164000034 0.235000029 0
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	clip.0	mar_rifle	1
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	key.0.m_rifle@0.00	pppsssq	3.06878292e-07 -0.0676283538 -0.18544969 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	key.0.m_rifle@0.25	pppsssq	3.06878292e-07 -0.0676283538 -0.18544969 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	key.0.m_rifle@0.50	pppsssq	3.06878292e-07 -0.0676283538 -0.18544969 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	key.0.m_rifle@0.75	pppsssq	3.06878292e-07 -0.0676283538 -0.18544969 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	key.0.m_rifle@1.00	pppsssq	3.06878292e-07 -0.0676283538 -0.18544969 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	key.0.m_rifle@1.25	pppsssq	3.06878292e-07 -0.0676283538 -0.18544969 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	key.0.m_rifle@1.50	pppsssq	3.06878292e-07 -0.0676283538 -0.18544969 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	key.0.m_rifle@1.90	pppsssq	3.06878292e-07 -0.0676283538 -0.18544969 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mar_rifle.fbx	flat	-	756 1716 1 1
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	uvsets.0	UVSet0	528 576.581005
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	uvmeshes	-	1
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	counts	-	2 1 0 0 366 0
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	verts	-	528
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	clips	-	1 1
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	bbox	-	-0.0353352576 -0.250525832 -0.799648523 0.0353353843 0.241313711 0.323054701
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	area	-	0.503968581
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	names	Line06|mp5_sil	
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	mat.Line06	mp5_sil_tex0.BMP|-	1 1 1 1 0 0 0 0 0.390724945 0.390416324 0
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	clip.0	mp5_sil	1
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	key.0.Line06@0.00	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	key.0.Line06@0.25	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	key.0.Line06@0.50	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	key.0.Line06@0.75	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	key.0.Line06@1.00	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	key.0.Line06@1.25	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	key.0.Line06@1.50	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	key.0.Line06@1.90	pppsssq	0 0 0 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/mp5_sil.fbx	flat	-	528 1098 1 1
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	uvsets.0	UVChannel_1	20 20
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	uvmeshes	-	1
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	counts	-	2 1 0 0 12 0
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	verts	-	24
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	clips	-	3 3
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	bbox	-	-2.14904022 -5.6463341e-07 -4.7364912 2.14904022 18.5127144 4.73648882
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	area	-	591.31057
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	names	Box001|multiple_animations_test	
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	mat.Box001	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	clip.0	anim 1	1
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	key.0.Box001@0.00	pppsssq	0 0 0 1 1 1 -0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	key.0.Box001@0.25	pppsssq	4.74795914 0 0 1 1 1 -0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	key.0.Box001@0.50	pppsssq	12.6527405 0 0 1 1 1 -0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	clip.1	anim 2	1
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	key.1.Box001@0.00	pppsssq	0 0 0 1 1 1 -0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	key.1.Box001@0.25	pppsssq	0 7.49907637 0 1 1 1 -0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	key.1.Box001@0.50	pppsssq	0 15 0 1 1 1 -0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	clip.2	spin	1
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	key.2.Box001@0.00	pppsssq	0 0 0 1 1 1 -0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	key.2.Box001@0.25	pppsssq	0 0 0 1 1 1 -0.5 0.5 0.5 0.5
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	key.2.Box001@0.50	pppsssq	0 0 0 1 1 1 -4.3297803e-17 0.707106769 0.707106769 4.3297803e-17
+models-nonbsd/FBX/2013_BINARY/multiple_animations_test.fbx	flat	-	24 36 1 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	uvsets.0	-	18876 16487.9971
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	uvmeshes	-	1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	counts	-	6 1 0 0 31460 0
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	verts	-	18876
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	clips	-	1 5
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	bbox	-	-1.80417478 -1.27885139 -2.07257724 0.814138651 1.50033784 -0.0462270975
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	area	-	214.639618
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	names	Camera01|Camera01.Target|Omni01|Omni02|Torus Knot|pyramob	
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	mat.Torus Knot	-|-	0.815686285 0.443137258 0.137254909 1 0.0897254944 0.0487450995 0.01509804 0 1.28 1 0
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	clip.0	pyramob	5
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Torus Knot@0.00	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Torus Knot@0.25	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Torus Knot@0.50	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Torus Knot@0.75	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Torus Knot@1.00	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Torus Knot@1.25	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Torus Knot@1.50	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Torus Knot@1.90	pppsssq	-0.296558708 0.110745497 -1.05940497 1 1 1 0.707106769 0 0 0.707106769
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni01@0.00	pppsssq	-0.298639596 2.48500395 1.29322207 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni01@0.25	pppsssq	-0.298639596 2.48500395 1.29322207 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni01@0.50	pppsssq	-0.298639596 2.48500395 1.29322207 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni01@0.75	pppsssq	-0.298639596 2.48500395 1.29322207 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni01@1.00	pppsssq	-0.298639596 2.48500395 1.29322207 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni01@1.25	pppsssq	-0.298639596 2.48500395 1.29322207 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni01@1.50	pppsssq	-0.298639596 2.48500395 1.29322207 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni01@1.90	pppsssq	-0.298639596 2.48500395 1.29322207 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni02@0.00	pppsssq	-0.257681102 0.0372526608 -1.10107493 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni02@0.25	pppsssq	-0.257681102 0.0372526608 -1.10107493 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni02@0.50	pppsssq	-0.257681102 0.0372526608 -1.10107493 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni02@0.75	pppsssq	-0.257681102 0.0372526608 -1.10107493 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni02@1.00	pppsssq	-0.257681102 0.0372526608 -1.10107493 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni02@1.25	pppsssq	-0.257681102 0.0372526608 -1.10107493 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni02@1.50	pppsssq	-0.257681102 0.0372526608 -1.10107493 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Omni02@1.90	pppsssq	-0.257681102 0.0372526608 -1.10107493 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01@0.00	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01@0.25	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01@0.50	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01@0.75	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01@1.00	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01@1.25	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01@1.50	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01@1.90	pppsssq	-1.07694805 0.0980708525 3.76612496 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01.Target@0.00	pppsssq	-0.537658215 0.0244819187 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01.Target@0.25	pppsssq	-0.537658215 0.0244819187 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01.Target@0.50	pppsssq	-0.537658215 0.0244819187 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01.Target@0.75	pppsssq	-0.537658215 0.0244819187 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01.Target@1.00	pppsssq	-0.537658215 0.0244819187 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01.Target@1.25	pppsssq	-0.537658215 0.0244819187 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01.Target@1.50	pppsssq	-0.537658215 0.0244819187 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	key.0.Camera01.Target@1.90	pppsssq	-0.537658215 0.0244819187 0.191763699 1 1 1 0 0 0 1
+models-nonbsd/FBX/2013_BINARY/pyramob.fbx	flat	-	18876 94380 1 1
+models/FBX/animation_with_skeleton.fbx	uvsets.0	UVMap	1348 1503.85066
+models/FBX/animation_with_skeleton.fbx	uvmeshes	-	1
+models/FBX/animation_with_skeleton.fbx	counts	-	21 1 1 14 2112 0
+models/FBX/animation_with_skeleton.fbx	verts	-	4216
+models/FBX/animation_with_skeleton.fbx	clips	-	1 15
+models/FBX/animation_with_skeleton.fbx	bbox	-	-1.02287292 -0.0257449262 -0.0257449169 0.977126956 0.0257449206 0.0257449169
+models/FBX/animation_with_skeleton.fbx	area	-	0.321795727
+models/FBX/animation_with_skeleton.fbx	names	Armature|Bone|Bone.001|Bone.002|Bone.003|Bone.004|Bone.005|Bone.006|Bone.006_end|Bone.007|Bone.008|Bone.009|Bone.010|Bone.011|Bone.012|Bone.013|Bone.013_end|Camera|Cube|Light|animation_with_skeleton	
+models/FBX/animation_with_skeleton.fbx	mat.Cube	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.784000015 0.660000086 0
+models/FBX/animation_with_skeleton.fbx	clip.0	ArmatureAction	15
+models/FBX/animation_with_skeleton.fbx	key.0.Armature@0.00	pppsssq	-36.1402397 0 0 100 100 100 -0.707106829 0 0 0.707106709
+models/FBX/animation_with_skeleton.fbx	key.0.Armature@0.25	pppsssq	-36.1402397 0 0 100 100 100 -0.707106829 0 0 0.707106709
+models/FBX/animation_with_skeleton.fbx	key.0.Armature@0.50	pppsssq	-36.1402397 0 0 100 100 100 -0.707106829 0 0 0.707106709
+models/FBX/animation_with_skeleton.fbx	key.0.Armature@0.75	pppsssq	-36.1402397 0 0 100 100 100 -0.707106829 0 0 0.707106709
+models/FBX/animation_with_skeleton.fbx	key.0.Bone@0.00	pppsssq	0.000149912841 3.2439728e-11 -0.000241440968 1 1 1 0.501330733 0.498666108 -0.498666197 0.501329899
+models/FBX/animation_with_skeleton.fbx	key.0.Bone@0.25	pppsssq	0.000149912841 3.2439728e-11 -0.000241440968 1 1 1 0.501330733 0.498666108 -0.498666197 0.501329899
+models/FBX/animation_with_skeleton.fbx	key.0.Bone@0.50	pppsssq	0.000149912841 3.2439728e-11 -0.000241440968 1 1 1 0.501330733 0.498666108 -0.498666197 0.501329899
+models/FBX/animation_with_skeleton.fbx	key.0.Bone@0.75	pppsssq	0.000149912841 3.2439728e-11 -0.000241440968 1 1 1 0.501330733 0.498666108 -0.498666197 0.501329899
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.001@0.00	pppsssq	2.76495892e-11 0.0446926393 1.58623119e-16 0.999999881 0.999999881 1 2.53336498e-08 1.1571624e-07 -0.0148563953 0.999889612
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.001@0.25	pppsssq	2.76495892e-11 0.0446926393 1.58623119e-16 0.999999881 0.999999881 1 2.53336498e-08 1.1571624e-07 -0.0148563953 0.999889612
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.001@0.50	pppsssq	2.76495892e-11 0.0446926393 1.58623119e-16 0.999999881 0.999999881 1 2.53336498e-08 1.1571624e-07 -0.0148563953 0.999889612
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.001@0.75	pppsssq	2.76495892e-11 0.0446926393 1.58623119e-16 0.999999881 0.999999881 1 2.53336498e-08 1.1571624e-07 -0.0148563953 0.999889612
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.002@0.00	pppsssq	-2.23516011e-10 0.0449693874 0 1 1 1 -9.37508648e-09 -2.48121648e-08 0.0121923992 0.999925673
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.002@0.25	pppsssq	-2.23516011e-10 0.0449693874 0 1 1 1 -9.37508648e-09 -2.48121648e-08 0.0121923992 0.999925673
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.002@0.50	pppsssq	-2.23516011e-10 0.0449693874 0 1 1 1 -9.37508648e-09 -2.48121648e-08 0.0121923992 0.999925673
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.002@0.75	pppsssq	-2.23516011e-10 0.0449693874 0 1 1 1 -9.37508648e-09 -2.48121648e-08 0.0121923992 0.999925673
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.003@0.00	pppsssq	3.82541212e-15 0.0493419655 2.19434477e-21 1 1 1 -9.39652154e-19 -1.1284096e-40 -9.02867326e-15 1
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.003@0.25	pppsssq	3.82541212e-15 0.0493419655 2.19434477e-21 1 1 1 -9.39652154e-19 -1.1284096e-40 -9.02867326e-15 1
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.003@0.50	pppsssq	3.82541212e-15 0.0493419655 2.19434477e-21 1 1 1 -9.39652154e-19 -1.1284096e-40 -9.02867326e-15 1
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.003@0.75	pppsssq	3.82541212e-15 0.0493419655 2.19434477e-21 1 1 1 -9.39652154e-19 -1.1284096e-40 -9.02867326e-15 1
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.004@0.00	pppsssq	1.32754923e-15 0.0442250259 0 1 0.99999994 1 -9.13759823e-09 7.23264364e-08 0.0111919241 0.999937356
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.004@0.25	pppsssq	1.32754923e-15 0.0442250259 0 1 0.99999994 1 -9.13759823e-09 7.23264364e-08 0.0111919241 0.999937356
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.004@0.50	pppsssq	1.32754923e-15 0.0442250259 0 1 0.99999994 1 -9.13759823e-09 7.23264364e-08 0.0111919241 0.999937356
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.004@0.75	pppsssq	1.32754923e-15 0.0442250259 0 1 0.99999994 1 -9.13759823e-09 7.23264364e-08 0.0111919241 0.999937356
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.005@0.00	pppsssq	-2.30209893e-10 0.0489887297 3.0031532e-16 1 1 1 7.79432696e-09 7.50873355e-08 -0.00808652118 0.999967277
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.005@0.25	pppsssq	-2.30209893e-10 0.0489887297 3.0031532e-16 1 1 1 -9.04854502e-08 8.84029561e-08 0.157009214 0.987597108
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.005@0.50	pppsssq	-2.30209893e-10 0.0489887297 3.0031532e-16 1 1 1 -1.90603487e-07 7.21867011e-08 0.317801476 0.948157251
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.005@0.75	pppsssq	-2.30209893e-10 0.0489887297 3.0031532e-16 1 1 1 -2.77371328e-07 7.15120336e-08 0.317801476 0.948157251
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.006@0.00	pppsssq	1.54293245e-15 0.0588460155 0 1.00000012 1 1 0.000419872085 -3.45085323e-06 -0.0126133813 0.999920368
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.006@0.25	pppsssq	-7.15255855e-10 0.0588460118 -1.36424206e-15 1.00000012 1 1 0.000419872085 -3.45085323e-06 -0.0126133766 0.999920368
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.006@0.50	pppsssq	-1.43051326e-09 0.0588460043 -2.72848413e-15 1.00000012 1.00000012 1 0.000419872085 -3.45085323e-06 -0.0126133729 0.999920368
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.006@0.75	pppsssq	-2.14577067e-09 0.0588459969 -4.09272641e-15 1.00000012 1.00000012 1 0.000419872085 -3.45085346e-06 -0.0126133682 0.999920368
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.007@0.00	pppsssq	0.36528939 -5.27580451e-05 -0.000779654772 1.00000012 1.00000012 1 0.506908655 0.492972851 -0.4917579 0.508129418
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.007@0.25	pppsssq	0.36528939 -5.27580451e-05 -0.000779654772 1.00000012 1.00000012 1 0.506908655 0.492972851 -0.4917579 0.508129418
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.007@0.50	pppsssq	0.36528939 -5.27580451e-05 -0.000779654772 1.00000012 1.00000012 1 0.506908655 0.492972851 -0.4917579 0.508129418
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.007@0.75	pppsssq	0.36528939 -5.27580451e-05 -0.000779654772 1.00000012 1.00000012 1 0.506908655 0.492972851 -0.4917579 0.508129418
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.008@0.00	pppsssq	1.22500721e-09 0.0446925797 3.79668554e-11 1 1.00000012 1 0.00184221857 9.10713788e-06 -0.033758387 0.999428332
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.008@0.25	pppsssq	1.22500721e-09 0.0446925797 3.79668554e-11 1 1.00000012 1 0.00184221857 9.10713788e-06 -0.033758387 0.999428332
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.008@0.50	pppsssq	1.22500721e-09 0.0446925797 3.79668554e-11 1 1.00000012 1 0.00184221857 9.10713788e-06 -0.033758387 0.999428332
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.008@0.75	pppsssq	1.22500721e-09 0.0446925797 3.79668554e-11 1 1.00000012 1 0.00184221857 9.10713788e-06 -0.033758387 0.999428332
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.009@0.00	pppsssq	2.8312328e-09 0.0449982397 -6.65740171e-11 1 0.99999994 1 -0.000624024891 7.59190243e-06 0.0186094325 0.99982661
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.009@0.25	pppsssq	2.8312328e-09 0.0449982397 -6.65740171e-11 1 0.99999994 1 -0.000624024891 7.59190243e-06 0.0186094325 0.99982661
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.009@0.50	pppsssq	2.8312328e-09 0.0449982397 -6.65740171e-11 1 0.99999994 1 -0.000624024891 7.59190243e-06 0.0186094325 0.99982661
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.009@0.75	pppsssq	2.8312328e-09 0.0449982397 -6.65740171e-11 1 0.99999994 1 -0.000624024891 7.59190243e-06 0.0186094325 0.99982661
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.010@0.00	pppsssq	-9.70894129e-11 0.0493419655 -1.59872122e-16 1 1 1 5.82066999e-11 5.68439393e-13 9.08887299e-10 1
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.010@0.25	pppsssq	-9.70894129e-11 0.0493419655 -1.59872122e-16 1 1 1 5.82066999e-11 5.68439393e-13 9.08887299e-10 1
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.010@0.50	pppsssq	-9.70894129e-11 0.0493419655 -1.59872122e-16 1 1 1 5.82066999e-11 5.68439393e-13 9.08887299e-10 1
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.010@0.75	pppsssq	-9.70894129e-11 0.0493419655 -1.59872122e-16 1 1 1 5.82066999e-11 5.68439393e-13 9.08887299e-10 1
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.011@0.00	pppsssq	-7.45044443e-11 0.0442250073 -1.91593453e-16 1 0.99999994 1 -9.15063225e-09 -1.59591821e-07 0.0111919278 0.999937356
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.011@0.25	pppsssq	-7.45044443e-11 0.0442250073 -1.91593453e-16 1 0.99999994 1 -9.15063225e-09 -1.59591821e-07 0.0111919278 0.999937356
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.011@0.50	pppsssq	-7.45044443e-11 0.0442250073 -1.91593453e-16 1 0.99999994 1 -9.15063225e-09 -1.59591821e-07 0.0111919278 0.999937356
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.011@0.75	pppsssq	-7.45044443e-11 0.0442250073 -1.91593453e-16 1 0.99999994 1 -9.15063225e-09 -1.59591821e-07 0.0111919278 0.999937356
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.012@0.00	pppsssq	5.1426563e-10 0.0489886887 -1.99840152e-17 1 1 1 6.8492314e-09 1.8897876e-07 -0.0080865249 0.999967277
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.012@0.25	pppsssq	5.1426563e-10 0.0489886887 -1.99840152e-17 1 1 1 6.8492314e-09 1.8897876e-07 -0.0080865249 0.999967277
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.012@0.50	pppsssq	5.1426563e-10 0.0489886887 -1.99840152e-17 1 1 1 6.8492314e-09 1.8897876e-07 -0.0080865249 0.999967277
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.012@0.75	pppsssq	5.1426563e-10 0.0489886887 -1.99840152e-17 1 1 1 6.8492314e-09 1.8897876e-07 -0.0080865249 0.999967277
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.013@0.00	pppsssq	3.72530368e-10 0.058845941 1.06581408e-16 1 1 1 9.58798552e-09 1.24802753e-07 -0.00825991109 0.999965906
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.013@0.25	pppsssq	3.72530368e-10 0.058845941 1.06581408e-16 1 1 1 9.58798552e-09 1.24802753e-07 -0.00825991109 0.999965906
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.013@0.50	pppsssq	3.72530368e-10 0.058845941 1.06581408e-16 1 1 1 9.58798552e-09 1.24802753e-07 -0.00825991109 0.999965906
+models/FBX/animation_with_skeleton.fbx	key.0.Bone.013@0.75	pppsssq	3.72530368e-10 0.058845941 1.06581408e-16 1 1 1 9.58798552e-09 1.24802753e-07 -0.00825991109 0.999965906
+models/FBX/animation_with_skeleton.fbx	skin.Cube	Bone|Bone.001|Bone.002|Bone.003|Bone.004|Bone.005|Bone.006|Bone.007|Bone.008|Bone.009|Bone.010|Bone.011|Bone.012|Bone.013	14 4216
+models/FBX/animation_with_skeleton.fbx	ibind.Cube.0	-	0.00646692468 6.9679561e-07 -0.999985814 0.00164008292 1.21364248 2.9349561e-08 0.00532839866 0.353104621 4.06774241e-08 -1.00000012 -6.9692635e-07 1.1699071e-08 0 0 0 1
+models/FBX/animation_with_skeleton.fbx	ibind.Cube.1	-	-0.0295926575 9.27775716e-07 -0.999702811 -0.00752341095 1.21329904 2.81461721e-09 -0.0243830457 0.308324575 -2.34889583e-08 -1.00000012 -9.27865528e-07 -4.60771199e-09 0 0 0 1
+models/FBX/animation_with_skeleton.fbx	ibind.Cube.2	-	2.17876085e-14 8.78176479e-07 -1 -0.00109978626 1.21365976 -4.54347837e-10 -5.21540642e-08 0.263460338 -8.08440644e-16 -1 -8.78473486e-07 5.45573531e-10 0 0 0 1
+models/FBX/animation_with_skeleton.fbx	ibind.Cube.3	-	-1.68081499e-26 8.78176479e-07 -1 -0.00109978614 1.21365976 -4.54349836e-10 -5.21540819e-08 0.214118391 -1.47655138e-32 -1 -8.78473486e-07 5.45573808e-10 0 0 0 1
+models/FBX/animation_with_skeleton.fbx	ibind.Cube.4	-	0.0271646734 1.02279466e-06 -0.999749422 0.0027031186 1.21335566 -3.45486484e-09 0.0223823935 0.169875413 2.41433256e-08 -1 -1.02291278e-06 3.76640896e-09 0 0 0 1
+models/FBX/animation_with_skeleton.fbx	ibind.Cube.5	-	0.00753811281 1.17301249e-06 -0.999980688 0.000747723796 1.2136364 -1.28701072e-09 0.00621100934 0.120914601 7.83176901e-09 -1 -1.173295e-06 2.14079288e-09 0 0 0 1
+models/FBX/animation_with_skeleton.fbx	ibind.Cube.6	-	-0.0230779629 4.86352428e-06 -0.99981904 -0.000818178756 1.2134397 -0.000839735905 -0.0190152284 0.0620676503 -0.00101908122 -0.999999702 1.11048312e-05 -5.21230977e-05 0 0 0 1
+models/FBX/animation_with_skeleton.fbx	ibind.Cube.7	-	0.0367786698 3.10980977e-05 -0.999540567 -0.0011438845 1.21309853 0.00243710121 0.0303037781 -0.0120017789 0.00295759924 -0.999997079 4.27747254e-05 -8.20434361e-05 0 0 0 1
+models/FBX/animation_with_skeleton.fbx	ibind.Cube.8	-	-0.0451632068 9.16021781e-06 -0.999307156 0.00268436293 1.21281791 -0.00124807621 -0.0372125357 -0.0566422381 -0.00151410163 -0.999999166 3.72952709e-05 0.000126880768 0 0 0 1
+models/FBX/animation_with_skeleton.fbx	ibind.Cube.9	-	-6.72741329e-09 1.1165946e-06 -0.999999762 -0.00109978719 1.21365952 -2.1656561e-09 -1.45800655e-07 -0.101670116 2.1841029e-10 -1.00000012 -1.11156965e-06 1.94856575e-10 0 0 0 1
+models/FBX/animation_with_skeleton.fbx	ibind.Cube.10	-	-2.92502394e-16 1.11659483e-06 -0.999999762 -0.00109978602 1.21365952 -2.32814368e-09 -1.43982888e-07 -0.151012093 6.75061395e-18 -1.00000012 -1.11157078e-06 1.15045265e-10 0 0 0 1
+models/FBX/animation_with_skeleton.fbx	ibind.Cube.11	-	0.0271646772 7.97303983e-07 -0.999749184 -0.00546939485 1.21335542 -5.44728707e-09 0.0223823022 -0.195163533 1.78745871e-08 -1 -7.92202286e-07 -2.40913867e-09 0 0 0 1
+models/FBX/animation_with_skeleton.fbx	ibind.Cube.12	-	0.00753811002 1.17534364e-06 -0.99998033 -0.00152012368 1.21363592 -3.19381455e-09 0.00621091621 -0.244208768 7.80931764e-09 -1.00000012 -1.17031686e-06 -3.85045135e-10 0 0 0 1
+models/FBX/animation_with_skeleton.fbx	ibind.Cube.13	-	-0.012511285 1.42499164e-06 -0.999946594 0.0034863227 1.21359503 -8.91170582e-10 -0.0103088673 -0.303038478 -1.6084412e-08 -1 -1.41988255e-06 5.67175951e-09 0 0 0 1
+models/FBX/animation_with_skeleton.fbx	weights.Cube	-	476.231082 0 147.244934 318.203256 260.484337 571.000946 213.097597 248.146095 248.715009 253.682777 259.983318 522.621923 490.457665 206.131076 0 2870.86459 0.416229922 0.289693437
+models/FBX/animation_with_skeleton.fbx	flat	-	4216 6336 1 1
+models/FBX/box.fbx	uvmeshes	-	0
+models/FBX/box.fbx	counts	-	2 1 0 0 12 0
+models/FBX/box.fbx	verts	-	24
+models/FBX/box.fbx	clips	-	0 0
+models/FBX/box.fbx	bbox	-	-0.226095766 -0.161864221 -0.0646463186 0.284461647 0.244348377 0.464660108
+models/FBX/box.fbx	area	-	0.652489126
+models/FBX/box.fbx	names	box|root	
+models/FBX/box.fbx	mat.root	-|-	0.992156863 0.925490201 0.650980413 1 0 0 0 0 1.02319923 0.823967218 0
+models/FBX/box.fbx	flat	-	24 36 1 0
+models/FBX/boxWithCompressedCTypeArray.FBX	uvmeshes	-	0
+models/FBX/boxWithCompressedCTypeArray.FBX	counts	-	2 1 0 0 12 0
+models/FBX/boxWithCompressedCTypeArray.FBX	verts	-	24
+models/FBX/boxWithCompressedCTypeArray.FBX	clips	-	0 0
+models/FBX/boxWithCompressedCTypeArray.FBX	bbox	-	-0.999999762 -1 -0.999999762 0.999999762 1 0.999999762
+models/FBX/boxWithCompressedCTypeArray.FBX	area	-	23.9999915
+models/FBX/boxWithCompressedCTypeArray.FBX	names	Box|boxWithCompressedCTypeArray	
+models/FBX/boxWithCompressedCTypeArray.FBX	mat.Box	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models/FBX/boxWithCompressedCTypeArray.FBX	flat	-	24 36 1 0
+models/FBX/boxWithUncompressedCTypeArray.FBX	uvmeshes	-	0
+models/FBX/boxWithUncompressedCTypeArray.FBX	counts	-	2 1 0 0 12 0
+models/FBX/boxWithUncompressedCTypeArray.FBX	verts	-	24
+models/FBX/boxWithUncompressedCTypeArray.FBX	clips	-	0 0
+models/FBX/boxWithUncompressedCTypeArray.FBX	bbox	-	-0.999999762 -1 -0.999999762 0.999999762 1 0.999999762
+models/FBX/boxWithUncompressedCTypeArray.FBX	area	-	23.9999915
+models/FBX/boxWithUncompressedCTypeArray.FBX	names	Box|boxWithUncompressedCTypeArray	
+models/FBX/boxWithUncompressedCTypeArray.FBX	mat.Box	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models/FBX/boxWithUncompressedCTypeArray.FBX	flat	-	24 36 1 0
+models/FBX/box_orphant_embedded_texture.fbx	uvsets.0	UVChannel_1|UVChannel_3	24 43.625
+models/FBX/box_orphant_embedded_texture.fbx	uvmeshes	-	1
+models/FBX/box_orphant_embedded_texture.fbx	counts	-	2 1 0 0 12 0
+models/FBX/box_orphant_embedded_texture.fbx	verts	-	24
+models/FBX/box_orphant_embedded_texture.fbx	bbox	-	-0.5 -1.1920929e-07 -0.499998003 0.5 1.00000012 0.500002444
+models/FBX/box_orphant_embedded_texture.fbx	area	-	6.00000179
+models/FBX/box_orphant_embedded_texture.fbx	names	Box|box_orphant_embedded_texture	
+models/FBX/box_orphant_embedded_texture.fbx	mat.Box	box_orphant_embedded_texture_tex0.tga|-	1 1 1 1 0 0 0 0 0.215362511 0.27020818 0
+models/FBX/box_orphant_embedded_texture.fbx	flat	-	24 36 1 1
+models/FBX/close_to_identity_transforms.fbx	uvsets.0	map1	14 12.5
+models/FBX/close_to_identity_transforms.fbx	uvsets.1	map1	14 12.5
+models/FBX/close_to_identity_transforms.fbx	uvsets.2	map1	14 12.5
+models/FBX/close_to_identity_transforms.fbx	uvsets.3	map1	250 220
+models/FBX/close_to_identity_transforms.fbx	uvmeshes	-	4
+models/FBX/close_to_identity_transforms.fbx	counts	-	5 4 0 0 420 0
+models/FBX/close_to_identity_transforms.fbx	verts	-	548
+models/FBX/close_to_identity_transforms.fbx	clips	-	0 0
+models/FBX/close_to_identity_transforms.fbx	bbox	-	-0.0821369961 -0.0612390786 -0.0604375973 0.143621504 0.159811765 0.16536817
+models/FBX/close_to_identity_transforms.fbx	area	-	0.322745372
+models/FBX/close_to_identity_transforms.fbx	names	Cube1|Cube1_1|Cube2|Cube3|close_to_identity_transforms	
+models/FBX/close_to_identity_transforms.fbx	mat.Cube1	-|-	0 1 0 1 0 0 0 0 0.16 0 0
+models/FBX/close_to_identity_transforms.fbx	mat.Cube1_1	-|-	1 0 0 1 0 0 0 0 0.16 0 0
+models/FBX/close_to_identity_transforms.fbx	mat.Cube2	-|-	0 1 0 1 0 0 0 0 0.16 0 0
+models/FBX/close_to_identity_transforms.fbx	mat.Cube3	-|-	1 0 0 1 0 0 0 0 0.16 0 0
+models/FBX/close_to_identity_transforms.fbx	flat	-	548 1260 1 1
+models/FBX/cubes_nonames.fbx	uvsets.0	map1	14 12.5
+models/FBX/cubes_nonames.fbx	uvsets.1	map1	14 12.5
+models/FBX/cubes_nonames.fbx	uvsets.2	map1	14 12.5
+models/FBX/cubes_nonames.fbx	uvsets.3	map1	250 220
+models/FBX/cubes_nonames.fbx	uvmeshes	-	4
+models/FBX/cubes_nonames.fbx	counts	-	5 4 0 0 420 0
+models/FBX/cubes_nonames.fbx	verts	-	548
+models/FBX/cubes_nonames.fbx	clips	-	0 0
+models/FBX/cubes_nonames.fbx	bbox	-	-0.060671173 -0.145149693 -0.0604375936 0.148656428 0.0599828847 0.267273486
+models/FBX/cubes_nonames.fbx	area	-	0.265373661
+models/FBX/cubes_nonames.fbx	names	cubes_nonames|mesh|mesh_1|mesh_2|mesh_3	
+models/FBX/cubes_nonames.fbx	mat.mesh	-|-	0 1 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_nonames.fbx	mat.mesh_1	-|-	0 1 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_nonames.fbx	mat.mesh_2	-|-	1 0 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_nonames.fbx	mat.mesh_3	-|-	1 0 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_nonames.fbx	flat	-	548 1260 1 1
+models/FBX/cubes_with_mirroring_and_pivot.fbx	uvsets.0	map1	14 12.5
+models/FBX/cubes_with_mirroring_and_pivot.fbx	uvsets.1	map1	14 12.5
+models/FBX/cubes_with_mirroring_and_pivot.fbx	uvsets.2	map1	14 12.5
+models/FBX/cubes_with_mirroring_and_pivot.fbx	uvsets.3	map1	250 220
+models/FBX/cubes_with_mirroring_and_pivot.fbx	uvmeshes	-	4
+models/FBX/cubes_with_mirroring_and_pivot.fbx	counts	-	5 4 0 0 420 0
+models/FBX/cubes_with_mirroring_and_pivot.fbx	verts	-	548
+models/FBX/cubes_with_mirroring_and_pivot.fbx	clips	-	0 0
+models/FBX/cubes_with_mirroring_and_pivot.fbx	bbox	-	-0.0606711768 -0.145149708 -0.0604375973 0.148656428 0.159811765 0.267273486
+models/FBX/cubes_with_mirroring_and_pivot.fbx	area	-	0.265373681
+models/FBX/cubes_with_mirroring_and_pivot.fbx	names	Cube1|Cube1_1|Cube2|Cube3|cubes_with_mirroring_and_pivot	
+models/FBX/cubes_with_mirroring_and_pivot.fbx	mat.Cube1	-|-	0 1 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_with_mirroring_and_pivot.fbx	mat.Cube1_1	-|-	1 0 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_with_mirroring_and_pivot.fbx	mat.Cube2	-|-	0 1 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_with_mirroring_and_pivot.fbx	mat.Cube3	-|-	1 0 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_with_mirroring_and_pivot.fbx	flat	-	548 1260 1 1
+models/FBX/cubes_with_names.fbx	uvsets.0	map1	14 12.5
+models/FBX/cubes_with_names.fbx	uvsets.1	map1	14 12.5
+models/FBX/cubes_with_names.fbx	uvsets.2	map1	14 12.5
+models/FBX/cubes_with_names.fbx	uvsets.3	map1	250 220
+models/FBX/cubes_with_names.fbx	uvmeshes	-	4
+models/FBX/cubes_with_names.fbx	counts	-	5 4 0 0 420 0
+models/FBX/cubes_with_names.fbx	verts	-	548
+models/FBX/cubes_with_names.fbx	clips	-	0 0
+models/FBX/cubes_with_names.fbx	bbox	-	-0.060671173 -0.145149693 -0.0604375936 0.148656428 0.0599828847 0.267273486
+models/FBX/cubes_with_names.fbx	area	-	0.265373661
+models/FBX/cubes_with_names.fbx	names	Cube2|Cube3|cubes_with_names|Куб1|Куб1_1	
+models/FBX/cubes_with_names.fbx	mat.Cube2	-|-	0 1 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_with_names.fbx	mat.Cube3	-|-	1 0 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_with_names.fbx	mat.Куб1	-|-	0 1 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_with_names.fbx	mat.Куб1_1	-|-	1 0 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_with_names.fbx	flat	-	548 1260 1 1
+models/FBX/cubes_with_outofrange_float.fbx	uvsets.0	map1	14 12.5
+models/FBX/cubes_with_outofrange_float.fbx	uvsets.1	map1	14 12.5
+models/FBX/cubes_with_outofrange_float.fbx	uvsets.2	map1	14 12.5
+models/FBX/cubes_with_outofrange_float.fbx	uvsets.3	map1	250 220
+models/FBX/cubes_with_outofrange_float.fbx	uvmeshes	-	4
+models/FBX/cubes_with_outofrange_float.fbx	counts	-	5 4 0 0 420 0
+models/FBX/cubes_with_outofrange_float.fbx	verts	-	548
+models/FBX/cubes_with_outofrange_float.fbx	clips	-	0 0
+models/FBX/cubes_with_outofrange_float.fbx	bbox	-	-0.060671173 -0.145149693 -0.0604375936 0.148656428 0.0599828847 0.267273486
+models/FBX/cubes_with_outofrange_float.fbx	area	-	0.265373661
+models/FBX/cubes_with_outofrange_float.fbx	names	cubes_with_outofrange_float|mesh|mesh_1|mesh_2|mesh_3	
+models/FBX/cubes_with_outofrange_float.fbx	mat.mesh	-|-	0 1 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_with_outofrange_float.fbx	mat.mesh_1	-|-	0 1 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_with_outofrange_float.fbx	mat.mesh_2	-|-	1 0 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_with_outofrange_float.fbx	mat.mesh_3	-|-	1 0 0 1 0 0 0 0 0.16 0 0
+models/FBX/cubes_with_outofrange_float.fbx	flat	-	548 1260 1 1
+models/FBX/embedded_ascii/box.FBX	uvsets.0	UVChannel_1	20 20
+models/FBX/embedded_ascii/box.FBX	uvmeshes	-	1
+models/FBX/embedded_ascii/box.FBX	counts	-	2 1 0 0 12 0
+models/FBX/embedded_ascii/box.FBX	verts	-	24
+models/FBX/embedded_ascii/box.FBX	clips	-	0 0
+models/FBX/embedded_ascii/box.FBX	bbox	-	-0.599885881 -7.15255766e-08 -0.600000203 0.600114167 1.20000029 0.600000083
+models/FBX/embedded_ascii/box.FBX	area	-	8.64000201
+models/FBX/embedded_ascii/box.FBX	names	Box001|box	
+models/FBX/embedded_ascii/box.FBX	mat.Box001	box_tex0.png|-	1 1 1 1 0 0 0 0 0.215362511 0.27020818 0
+models/FBX/embedded_ascii/box.FBX	flat	-	24 36 1 1
+models/FBX/embedded_ascii/box_embedded_texture_fragmented.fbx	uvsets.0	UVChannel_1|UVChannel_3	24 43.625
+models/FBX/embedded_ascii/box_embedded_texture_fragmented.fbx	uvmeshes	-	1
+models/FBX/embedded_ascii/box_embedded_texture_fragmented.fbx	counts	-	2 1 0 0 12 0
+models/FBX/embedded_ascii/box_embedded_texture_fragmented.fbx	verts	-	24
+models/FBX/embedded_ascii/box_embedded_texture_fragmented.fbx	bbox	-	-0.5 -1.1920929e-07 -0.499998003 0.5 1.00000012 0.500002444
+models/FBX/embedded_ascii/box_embedded_texture_fragmented.fbx	area	-	6.00000179
+models/FBX/embedded_ascii/box_embedded_texture_fragmented.fbx	names	Box|box_embedded_texture_fragmented	
+models/FBX/embedded_ascii/box_embedded_texture_fragmented.fbx	mat.Box	box_embedded_texture_fragmented_tex0.png|-	1 1 1 1 0 0 0 0 0.215362511 0.27020818 0
+models/FBX/embedded_ascii/box_embedded_texture_fragmented.fbx	flat	-	24 36 1 1
+models/FBX/global_settings.fbx	uvmeshes	-	0
+models/FBX/global_settings.fbx	counts	-	7 2 0 0 1352 0
+models/FBX/global_settings.fbx	verts	-	696
+models/FBX/global_settings.fbx	clips	-	0 0
+models/FBX/global_settings.fbx	bbox	-	-0.713165879 -0.769266367 -0.68157661 1.286834 1.23073339 1.31842315
+models/FBX/global_settings.fbx	area	-	13.3984925
+models/FBX/global_settings.fbx	names	Camera|Camera.001|Cube|Lamp|Lamp.001|Mball|global_settings	
+models/FBX/global_settings.fbx	mat.Cube	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.424356842 0.413470417 0
+models/FBX/global_settings.fbx	mat.Mball	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+models/FBX/global_settings.fbx	flat	-	696 4056 1 0
+models/FBX/huesitos.fbx	uvsets.0	UVTex	128 141.879246
+models/FBX/huesitos.fbx	uvmeshes	-	1
+models/FBX/huesitos.fbx	counts	-	16 1 1 9 120 0
+models/FBX/huesitos.fbx	verts	-	128
+models/FBX/huesitos.fbx	clips	-	1 10
+models/FBX/huesitos.fbx	bbox	-	-1.0584147 0.00349092484 -5.28865004 4.29930782 5.44186497 -2.07329917
+models/FBX/huesitos.fbx	area	-	47.3691123
+models/FBX/huesitos.fbx	names	Armature|Bone|Bone.001|Bone.002|Bone.003|Bone.004|Bone.005|Bone.006|Bone.006_end|Bone.007|Bone.008|Bone.008_end|Camera|Cylinder|Lamp|huesitos	
+models/FBX/huesitos.fbx	mat.Cylinder	-|-	0.514006615 0.606080174 0.891275883 1 0 0 0 0 0.424356842 0.413470417 0
+models/FBX/huesitos.fbx	clip.0	Action	10
+models/FBX/huesitos.fbx	key.0.Armature@0.00	pppsssq	-0.0402399935 0 -3.07135367 100 100 100 -0.707106769 0 0 0.707106769
+models/FBX/huesitos.fbx	key.0.Armature@0.25	pppsssq	-0.0402399935 0 -3.07135367 100 100 100 -0.707106769 0 0 0.707106769
+models/FBX/huesitos.fbx	key.0.Armature@0.50	pppsssq	-0.0402399935 0 -3.07135367 100 100 100 -0.707106769 0 0 0.707106769
+models/FBX/huesitos.fbx	key.0.Armature@0.75	pppsssq	-0.0402399935 0 -3.07135367 100 100 100 -0.707106769 0 0 0.707106769
+models/FBX/huesitos.fbx	key.0.Armature@1.00	pppsssq	-0.0402399935 0 -3.07135367 100 100 100 -0.707106769 0 0 0.707106769
+models/FBX/huesitos.fbx	key.0.Armature@1.25	pppsssq	-0.0402399935 0 -3.07135367 100 100 100 -0.707106769 0 0 0.707106769
+models/FBX/huesitos.fbx	key.0.Armature@1.50	pppsssq	-0.0402399935 0 -3.07135367 100 100 100 -0.707106769 0 0 0.707106769
+models/FBX/huesitos.fbx	key.0.Bone@0.00	pppsssq	5.96046434e-10 -1.19209287e-09 0 1 1 1 0.707106769 0 0 0.707106769
+models/FBX/huesitos.fbx	key.0.Bone@0.25	pppsssq	5.96046434e-10 -1.19209287e-09 0 1 1 1 0.707106769 2.38938296e-18 -1.80952542e-18 0.707106769
+models/FBX/huesitos.fbx	key.0.Bone@0.50	pppsssq	5.96046434e-10 -1.19209287e-09 0 1 1 1 0.707106769 4.77876591e-18 -3.61905084e-18 0.707106769
+models/FBX/huesitos.fbx	key.0.Bone@0.75	pppsssq	5.96046434e-10 -1.19209287e-09 0 1 1 1 0.707106769 7.16814949e-18 -5.42857626e-18 0.707106769
+models/FBX/huesitos.fbx	key.0.Bone@1.00	pppsssq	5.96046434e-10 -1.19209287e-09 0 1 1 1 0.707106769 9.55753183e-18 -7.23810168e-18 0.707106769
+models/FBX/huesitos.fbx	key.0.Bone@1.25	pppsssq	5.96046434e-10 -1.19209287e-09 0 1 1 1 0.71173203 1.1886664e-17 -9.12663608e-18 0.70245111
+models/FBX/huesitos.fbx	key.0.Bone@1.50	pppsssq	5.96046434e-10 -1.19209287e-09 0 1 1 1 0.791493714 1.2834024e-17 -1.25974206e-17 0.611177325
+models/FBX/huesitos.fbx	key.0.Bone.001@0.00	pppsssq	0 0.00705010351 3.5527136e-17 1 1 1 0 0 0 1
+models/FBX/huesitos.fbx	key.0.Bone.001@0.25	pppsssq	-4.18645866e-20 0.00705010351 -1.67297912e-11 1 1 1 -1.97754618e-10 1.06189801e-09 0.114437819 0.993430436
+models/FBX/huesitos.fbx	key.0.Bone.001@0.50	pppsssq	-8.37291732e-20 0.00705010351 -3.3459617e-11 1 1 1 -3.66616931e-10 2.12898033e-09 0.102584459 0.994724274
+models/FBX/huesitos.fbx	key.0.Bone.001@0.75	pppsssq	-1.25593753e-19 0.00705010351 -5.01894429e-11 1 1 1 6.32389585e-10 3.17817173e-09 -0.261765838 0.965131402
+models/FBX/huesitos.fbx	key.0.Bone.001@1.00	pppsssq	-1.67458346e-19 0.00705010351 -6.69192687e-11 1 1 1 4.62224592e-10 4.29583835e-09 -0.176342487 0.984328866
+models/FBX/huesitos.fbx	key.0.Bone.001@1.25	pppsssq	-2.0932294e-19 0.00705010351 -8.36491015e-11 1 1 1 0.0184897613 0.00127266999 -0.0671957657 0.997567654
+models/FBX/huesitos.fbx	key.0.Bone.001@1.50	pppsssq	-2.51187507e-19 0.00705010351 -1.0037892e-10 1 1 1 0.358984381 0.02471352 -0.0637375414 0.930836678
+models/FBX/huesitos.fbx	key.0.Bone.002@0.00	pppsssq	0 0.0140687386 1.42108544e-16 1.00000012 1.00000012 1.00000012 -0.580099642 -0.404332191 -0.40433225 0.580099404
+models/FBX/huesitos.fbx	key.0.Bone.002@0.25	pppsssq	2.38800663e-11 0.0140687386 -3.45250326e-12 1.00000012 1.00000012 1.00000012 -0.580099642 -0.404332191 -0.40433225 0.580099404
+models/FBX/huesitos.fbx	key.0.Bone.002@0.50	pppsssq	4.77601327e-11 0.0140687376 -6.90514833e-12 1.00000012 1.00000012 1.00000012 -0.580099583 -0.404332191 -0.404332221 0.580099463
+models/FBX/huesitos.fbx	key.0.Bone.002@0.75	pppsssq	7.16402007e-11 0.0140687376 -1.03577936e-11 1 1.00000012 1.00000012 -0.580099583 -0.404332191 -0.404332221 0.580099463
+models/FBX/huesitos.fbx	key.0.Bone.002@1.00	pppsssq	9.55202653e-11 0.0140687376 -1.38104389e-11 1 1 1 -0.580099583 -0.404332191 -0.404332191 0.580099523
+models/FBX/huesitos.fbx	key.0.Bone.002@1.25	pppsssq	1.19400337e-10 0.0140687367 -1.72630851e-11 1 1 1 -0.580099523 -0.404332191 -0.404332191 0.580099523
+models/FBX/huesitos.fbx	key.0.Bone.002@1.50	pppsssq	1.43280401e-10 0.0140687367 -2.07157295e-11 0.99999994 1 1 -0.580099523 -0.404332191 -0.404332161 0.580099583
+models/FBX/huesitos.fbx	key.0.Bone.004@0.00	pppsssq	-4.24839885e-10 0.00983560551 -1.3982572e-10 0.99999994 0.99999994 1 4.97466512e-10 4.52969005e-08 0.0257580578 0.999668181
+models/FBX/huesitos.fbx	key.0.Bone.004@0.25	pppsssq	-2.6123631e-10 0.00983560551 -4.03978573e-10 0.99999994 0.99999994 1 -0.15175274 0.0604582429 0.0254120864 0.986240387
+models/FBX/huesitos.fbx	key.0.Bone.004@0.50	pppsssq	-9.76327352e-11 0.00983560551 -6.68131384e-10 0.99999994 0.99999994 1 -0.151790664 0.0604107566 0.0251261704 0.986244798
+models/FBX/huesitos.fbx	key.0.Bone.004@0.75	pppsssq	6.59708399e-11 0.00983560551 -9.3228425e-10 0.99999994 0.99999994 1 0.243909523 -0.0971763134 0.0248543825 0.964596868
+models/FBX/huesitos.fbx	key.0.Bone.004@1.00	pppsssq	2.29574415e-10 0.00983560551 -1.19643706e-09 0.99999994 0.99999994 1 0.216199726 -0.0859404728 0.0250512138 0.972236753
+models/FBX/huesitos.fbx	key.0.Bone.004@1.25	pppsssq	3.9317799e-10 0.00983560551 -1.46058987e-09 0.99999994 0.99999994 1 0.125060767 -0.0500720702 0.0175419953 0.990729451
+models/FBX/huesitos.fbx	key.0.Bone.004@1.50	pppsssq	5.56781565e-10 0.00983560551 -1.72474268e-09 0.99999994 0.99999994 1 0.0552756637 -0.0243012588 -0.129376829 0.989755392
+models/FBX/huesitos.fbx	key.0.Bone.005@0.00	pppsssq	2.47089876e-10 0.0120969368 -2.56671712e-10 1 1 1.00000012 2.30995376e-10 9.52703583e-10 0.0423494242 0.99910289
+models/FBX/huesitos.fbx	key.0.Bone.005@0.25	pppsssq	-3.13085391e-11 0.0120969368 -1.61808275e-10 1 1 1.00000012 -0.0244531985 0.0423794128 -0.306133151 0.950730503
+models/FBX/huesitos.fbx	key.0.Bone.005@0.50	pppsssq	-3.09706955e-10 0.0120969377 -6.69448386e-11 1 1 1.00000012 0.0435551591 0.0708837286 -0.458158821 0.88496834
+models/FBX/huesitos.fbx	key.0.Bone.005@0.75	pppsssq	-5.88105342e-10 0.0120969377 2.79185841e-11 1 1 1.00000012 0.483599156 0.0896405503 -0.36784488 0.789168298
+models/FBX/huesitos.fbx	key.0.Bone.005@1.00	pppsssq	-8.66503758e-10 0.0120969377 1.22782035e-10 1.00000012 1 1 0.228389174 0.0794383064 -0.432207733 0.868748784
+models/FBX/huesitos.fbx	key.0.Bone.005@1.25	pppsssq	-1.14490217e-09 0.0120969387 2.17645485e-10 1.00000012 1 1 -0.0664317459 0.0606942475 -0.450229436 0.888367295
+models/FBX/huesitos.fbx	key.0.Bone.005@1.50	pppsssq	-1.42330059e-09 0.0120969387 3.1250888e-10 1.00000012 1 1 -0.0353095978 0.0695106387 -0.392404079 0.916482687
+models/FBX/huesitos.fbx	key.0.Bone.006@0.00	pppsssq	-2.0087918e-09 0.0130275963 -3.64732466e-10 0.999999881 0.999999881 1 -4.50766056e-11 -2.47226517e-10 -0.0115261441 0.9999336
+models/FBX/huesitos.fbx	key.0.Bone.006@0.25	pppsssq	-1.68686998e-09 0.0130275963 -2.58521621e-10 0.999999881 0.999999881 1 0.291830748 0.571427643 0.0322317518 0.766333044
+models/FBX/huesitos.fbx	key.0.Bone.006@0.50	pppsssq	-1.36494827e-09 0.0130275972 -1.52310761e-10 0.99999994 0.99999994 1 0.372897774 0.708712459 0.157425329 0.577833116
+models/FBX/huesitos.fbx	key.0.Bone.006@0.75	pppsssq	-1.04302644e-09 0.0130275972 -4.60999294e-11 0.99999994 0.99999994 1 0.305807382 0.463499427 0.355621517 0.751786828
+models/FBX/huesitos.fbx	key.0.Bone.006@1.00	pppsssq	-7.21104731e-10 0.0130275982 6.0110944e-11 0.99999994 0.99999994 1 0.0414126888 0.355239898 0.298147231 0.884984672
+models/FBX/huesitos.fbx	key.0.Bone.006@1.25	pppsssq	-3.99182909e-10 0.0130275982 1.6632179e-10 1 1 1 -0.127671555 0.317751467 0.139539734 0.929119289
+models/FBX/huesitos.fbx	key.0.Bone.006@1.50	pppsssq	-7.72610864e-11 0.0130275991 2.72532608e-10 1 1 1 -0.128117219 0.311178774 0.00149609149 0.941674829
+models/FBX/huesitos.fbx	key.0.Bone.003@0.00	pppsssq	0 0.0140687386 1.42108544e-16 1 1 1 0 0 0 1
+models/FBX/huesitos.fbx	key.0.Bone.003@0.25	pppsssq	2.38800663e-11 0.0140687386 -3.45250326e-12 1 1 1 -1.38392311e-10 -2.68794431e-09 0.11950741 0.992833316
+models/FBX/huesitos.fbx	key.0.Bone.003@0.50	pppsssq	4.77601327e-11 0.0140687376 -6.90514833e-12 1 0.99999994 1 -5.47503937e-13 -5.38302336e-09 0.171079025 0.985257328
+models/FBX/huesitos.fbx	key.0.Bone.003@0.75	pppsssq	7.16402007e-11 0.0140687376 -1.03577936e-11 1 0.99999994 1 -1.91467675e-12 -8.07453482e-09 0.170974791 0.985275388
+models/FBX/huesitos.fbx	key.0.Bone.003@1.00	pppsssq	9.55202653e-11 0.0140687376 -1.38104389e-11 0.99999994 0.999999881 1 -3.28184962e-12 -1.07660467e-08 0.170870557 0.985293508
+models/FBX/huesitos.fbx	key.0.Bone.003@1.25	pppsssq	1.19400337e-10 0.0140687367 -1.72630851e-11 0.99999994 0.999999881 1 0.00871960353 -0.00030381445 0.170783162 0.985270023
+models/FBX/huesitos.fbx	key.0.Bone.003@1.50	pppsssq	1.43280401e-10 0.0140687367 -2.07157295e-11 0.99999994 0.999999821 1 0.169401035 -0.00584855629 0.168644577 0.97099334
+models/FBX/huesitos.fbx	key.0.Bone.007@0.00	pppsssq	0 0.0124803307 -1.42108544e-16 1 1 1 0 0 0 1
+models/FBX/huesitos.fbx	key.0.Bone.007@0.25	pppsssq	-5.97001684e-11 0.0124803307 -2.32397976e-10 1 1 1 -7.31435301e-10 2.05010653e-09 0.201242715 0.979541421
+models/FBX/huesitos.fbx	key.0.Bone.007@0.50	pppsssq	-1.19400337e-10 0.0124803307 -4.64795813e-10 1 1 1 -1.38119183e-09 4.128486e-09 0.184684575 0.982797861
+models/FBX/huesitos.fbx	key.0.Bone.007@0.75	pppsssq	-1.79100498e-10 0.0124803307 -6.97193692e-10 1 1 1 2.31810215e-09 6.1048202e-09 -0.480509073 0.876989782
+models/FBX/huesitos.fbx	key.0.Bone.007@1.00	pppsssq	-2.38800674e-10 0.0124803316 -9.29591515e-10 1 1 1 1.68297087e-09 8.54261195e-09 -0.32960394 0.944119275
+models/FBX/huesitos.fbx	key.0.Bone.007@1.25	pppsssq	-2.98500863e-10 0.0124803316 -1.16198928e-09 1 1 1 0.0115638794 -0.000783369585 -0.137264073 0.990466654
+models/FBX/huesitos.fbx	key.0.Bone.007@1.50	pppsssq	-3.58200997e-10 0.0124803316 -1.39438716e-09 1 1 1 0.224597067 -0.0152159566 -0.134581938 0.964993417
+models/FBX/huesitos.fbx	key.0.Bone.008@0.00	pppsssq	0 0.0126316072 2.84217088e-16 1 1 1 0 0 0 1
+models/FBX/huesitos.fbx	key.0.Bone.008@0.25	pppsssq	-5.97001684e-11 0.0126316072 -1.51772963e-12 1 1 1 1.21270272e-09 -8.33740646e-11 0.17717813 0.984178782
+models/FBX/huesitos.fbx	key.0.Bone.008@0.50	pppsssq	-1.19400337e-10 0.0126316072 -3.03574331e-12 1 1 1 2.42576315e-09 -1.61705788e-10 0.181416199 0.983406425
+models/FBX/huesitos.fbx	key.0.Bone.008@0.75	pppsssq	-1.79100498e-10 0.0126316072 -4.55375711e-12 1 1 1 3.19371196e-09 -1.76034332e-09 -0.252790749 0.967520952
+models/FBX/huesitos.fbx	key.0.Bone.008@1.00	pppsssq	-2.38800674e-10 0.0126316072 -6.07177112e-12 0.99999994 0.99999994 0.99999994 4.52059323e-09 -1.79058468e-09 -0.130776584 0.991411865
+models/FBX/huesitos.fbx	key.0.Bone.008@1.25	pppsssq	-2.98500863e-10 0.0126316072 -7.5897847e-12 0.99999994 0.99999994 0.99999994 5.91111116e-09 -1.41392587e-09 0.0130637614 0.999914646
+models/FBX/huesitos.fbx	key.0.Bone.008@1.50	pppsssq	-3.58200997e-10 0.0126316072 -9.10779785e-12 0.99999994 0.99999994 0.99999994 7.09333348e-09 -1.6967111e-09 0.0130637614 0.999914646
+models/FBX/huesitos.fbx	skin.Cylinder	Bone|Bone.001|Bone.002|Bone.004|Bone.005|Bone.006|Bone.003|Bone.007|Bone.008	9 128
+models/FBX/huesitos.fbx	ibind.Cylinder.0	-	1 0 0 5.24867319e-05 0 7.54978942e-08 1 0.0125968382 0 -0.999999821 7.54979013e-08 -0.000253683567 0 0 0 1
+models/FBX/huesitos.fbx	ibind.Cylinder.1	-	1 0 0 5.24867319e-05 0 7.54978942e-08 1 0.0055467342 0 -0.999999821 7.54979013e-08 -0.000253683567 0 0 0 1
+models/FBX/huesitos.fbx	ibind.Cylinder.2	-	0.346061796 -0.938211441 9.74985213e-08 -0.000219845504 0.93821156 0.346061707 -8.21326918e-09 0.000137034178 -5.88830531e-08 1.18558226e-07 0.999999762 -0.0085220011 0 0 0 1
+models/FBX/huesitos.fbx	ibind.Cylinder.3	-	0.393919647 -0.91914475 6.4080754e-09 -0.000719016069 0.919144869 0.393919528 -9.89532811e-09 -0.0096743824 -2.62773501e-08 3.40295863e-08 0.999999881 -0.00852200016 0 0 0 1
+models/FBX/huesitos.fbx	ibind.Cylinder.4	-	0.470287263 -0.882513106 3.66358899e-09 -0.00255878735 0.882513285 0.470287144 -9.85983828e-09 -0.0216323826 -2.58698236e-08 3.21117994e-08 0.999999762 -0.00852199923 0 0 0 1
+models/FBX/huesitos.fbx	ibind.Cylinder.5	-	0.449819714 -0.893119216 4.38535164e-09 -0.00175917218 0.893119335 0.449819654 -9.85721993e-09 -0.0347097479 -2.60172666e-08 3.25922969e-08 0.999999881 -0.00852200016 0 0 0 1
+models/FBX/huesitos.fbx	ibind.Cylinder.6	-	1 0 0 5.24867319e-05 0 7.54978942e-08 1 -0.00852200482 0 -0.999999821 7.54979013e-08 -0.000253685954 0 0 0 1
+models/FBX/huesitos.fbx	ibind.Cylinder.7	-	1 0 0 5.24867319e-05 0 7.54978942e-08 1 -0.0210023336 0 -0.999999821 7.54979013e-08 -0.000253685954 0 0 0 1
+models/FBX/huesitos.fbx	ibind.Cylinder.8	-	1 0 0 5.24867319e-05 0 7.54978942e-08 1 -0.0336339436 0 -0.999999821 7.54979013e-08 -0.000253683567 0 0 0 1
+models/FBX/huesitos.fbx	weights.Cylinder	-	35.8167362 8.25144335 13.1454276 8.50222063 0 20.1613801 8.9157872 13.6083547 19.5986512 0 5.38907372 2.57266845 11.6833776
+models/FBX/huesitos.fbx	flat	-	128 360 1 1
+models/FBX/maxPbrMaterial_metalRough.fbx	uvsets.0	UVChannel_1	20 20
+models/FBX/maxPbrMaterial_metalRough.fbx	uvmeshes	-	1
+models/FBX/maxPbrMaterial_metalRough.fbx	counts	-	2 1 0 0 12 0
+models/FBX/maxPbrMaterial_metalRough.fbx	verts	-	24
+models/FBX/maxPbrMaterial_metalRough.fbx	clips	-	0 0
+models/FBX/maxPbrMaterial_metalRough.fbx	bbox	-	-0.759473562 -1.19209268e-07 -1.06112313 0.863398194 1.52861702 0.938876867
+models/FBX/maxPbrMaterial_metalRough.fbx	area	-	17.5674512
+models/FBX/maxPbrMaterial_metalRough.fbx	names	Box001|maxPbrMaterial_metalRough	
+models/FBX/maxPbrMaterial_metalRough.fbx	mat.Box001	-|-	1 1 0 0.25
+models/FBX/maxPbrMaterial_metalRough.fbx	flat	-	24 36 1 1
+models/FBX/maxPbrMaterial_specGloss.fbx	uvsets.0	UVChannel_1	20 20
+models/FBX/maxPbrMaterial_specGloss.fbx	uvmeshes	-	1
+models/FBX/maxPbrMaterial_specGloss.fbx	counts	-	2 1 0 0 12 0
+models/FBX/maxPbrMaterial_specGloss.fbx	verts	-	24
+models/FBX/maxPbrMaterial_specGloss.fbx	clips	-	0 0
+models/FBX/maxPbrMaterial_specGloss.fbx	bbox	-	-0.759473562 -1.19209268e-07 -1.06112313 0.863398194 1.52861702 0.938876867
+models/FBX/maxPbrMaterial_specGloss.fbx	area	-	17.5674512
+models/FBX/maxPbrMaterial_specGloss.fbx	names	Box001|maxPbrMaterial_specGloss	
+models/FBX/maxPbrMaterial_specGloss.fbx	mat.Box001	-|-	1 0 1 0
+models/FBX/maxPbrMaterial_specGloss.fbx	flat	-	24 36 1 1
+models/FBX/phong_cube.fbx	uvsets.0	map1	14 12.5
+models/FBX/phong_cube.fbx	uvmeshes	-	1
+models/FBX/phong_cube.fbx	counts	-	2 1 0 0 12 0
+models/FBX/phong_cube.fbx	verts	-	24
+models/FBX/phong_cube.fbx	clips	-	0 0
+models/FBX/phong_cube.fbx	bbox	-	-1 -1 -1 1 1 1
+models/FBX/phong_cube.fbx	area	-	24
+models/FBX/phong_cube.fbx	names	pCube1|phong_cube	
+models/FBX/phong_cube.fbx	mat.pCube1	-|-	1 0.5 0.5 1 0.25 0.125 0.25 0 0.432122459 0.418793648 0
+models/FBX/phong_cube.fbx	flat	-	24 36 1 1
+models/FBX/spider.fbx	uvsets.0	UVMap	23 18.2414162
+models/FBX/spider.fbx	uvsets.1	UVMap	37 35.8270261
+models/FBX/spider.fbx	uvsets.2	UVMap	71 71
+models/FBX/spider.fbx	uvsets.3	UVMap	26 29.7672309
+models/FBX/spider.fbx	uvsets.4	UVMap	57 66.8396182
+models/FBX/spider.fbx	uvsets.5	UVMap	23 17.3629279
+models/FBX/spider.fbx	uvsets.6	UVMap	71 71
+models/FBX/spider.fbx	uvsets.7	UVMap	71 71
+models/FBX/spider.fbx	uvsets.8	UVMap	71 71
+models/FBX/spider.fbx	uvsets.9	UVMap	17 16.617415
+models/FBX/spider.fbx	uvsets.10	UVMap	23 18.2414162
+models/FBX/spider.fbx	uvsets.11	UVMap	71 71
+models/FBX/spider.fbx	uvsets.12	UVMap	42 42.4414507
+models/FBX/spider.fbx	uvsets.13	UVMap	57 54.633907
+models/FBX/spider.fbx	uvsets.14	UVMap	23 17.3629279
+models/FBX/spider.fbx	uvsets.15	UVMap	71 71
+models/FBX/spider.fbx	uvsets.16	UVMap	71 71
+models/FBX/spider.fbx	uvsets.17	UVMap	71 71
+models/FBX/spider.fbx	uvsets.18	UVMap	26 29.7672309
+models/FBX/spider.fbx	uvmeshes	-	19
+models/FBX/spider.fbx	counts	-	22 19 0 0 1368 0
+models/FBX/spider.fbx	verts	-	986
+models/FBX/spider.fbx	clips	-	0 0
+models/FBX/spider.fbx	bbox	-	-0.958259165 -0.436790615 -1.10342216 0.59918803 0.387873471 0.896577895
+models/FBX/spider.fbx	area	-	3.5592232
+models/FBX/spider.fbx	names	Auge|Bein1Li|Bein1Re|Bein2Li|Bein2Re|Bein3Li|Bein3Re|Bein4Li|Bein4Re|Brust|Camera|Duplicate05|HLeib01|Kopf|Kopf2|Lamp|OK|Zahn|Zahn2|klZahn|klZahn2|spider	
+models/FBX/spider.fbx	mat.Auge	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.Bein1Li	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.Bein1Re	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.Bein2Li	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.Bein2Re	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.Bein3Li	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.Bein3Re	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.Bein4Li	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.Bein4Re	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.Brust	-|-	0.827450991 0.792156994 0.772548974 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.Duplicate05	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.HLeib01	-|-	0.690195978 0.639216006 0.615685999 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.Kopf	-|-	0.827450991 0.792156994 0.772548974 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.Kopf2	-|-	0.827450991 0.792156994 0.772548974 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.OK	-|-	0.827450991 0.792156994 0.772548974 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.Zahn	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.Zahn2	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.klZahn	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	mat.klZahn2	-|-	0.800000012 0.800000012 0.800000012 1 0 0 0 0 0.04 0.150000006 0
+models/FBX/spider.fbx	flat	-	986 4104 1 1

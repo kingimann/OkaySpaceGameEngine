@@ -72,6 +72,8 @@ OKAY_MODEL_CORPUS=<checkout>/test ctest -R "model_corpus|fbx_reader"
 
 ### FBX (own reader vs ufbx)
 
+**ufbx was deleted on 2026-11-23.** The comparison below was the last one: our reader's values from that run (where both agreed) are now fixed expected numbers, `tests/data/fbx_corpus_expected.txt`, checked by `fbx_reader` when `OKAY_MODEL_CORPUS` is set; `fbx_route` checks that every file is read by our reader. `test_model_corpus` lost its `fbx-ufbx` reader and `--fbxdiff` / `--fbxclips` modes.
+
 42 of 43 files read by our reader; the 43rd is a damaged file (every NUL byte in its header was replaced by a space) that ufbx and Assimp reject too. On the 42, **ufbx and ours agree** on object, mesh, skinned-mesh, joint, vertex (within 0.5 %, see below), triangle, blend-shape and clip counts and names; on bounding boxes and surface area (within 0.2 %); on skin weights and inverse binds of the two skinned files; and on clip samples (within 0.015 in a quaternion component, on two files; 0.002 elsewhere).
 
 Bugs the real files found, all fixed with a regression test (fixtures `takes_bin.fbx`, `bridge_bin.fbx` in `tests/assets/fbx`, written by `scripts/gen_fbx_fixtures.py`):

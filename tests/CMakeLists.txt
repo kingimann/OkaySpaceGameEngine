@@ -3982,14 +3982,21 @@ if(OKAY_NODE)
                      ${CMAKE_SOURCE_DIR}/supabase/functions/delete-account/delete_account_test.ts)
 endif()
 
-# Our own FBX reader (okay::fbx), side by side with ufbx: fixtures from scripts/gen_fbx_fixtures.py
+# Our own FBX reader (okay::fbx): fixtures from scripts/gen_fbx_fixtures.py, checked against hand-computed values and the importer output
+# recorded when ufbx and ours last agreed (tests/assets/fbx/expected_import.txt, tests/data/fbx_corpus_expected.txt)
 add_executable(test_fbx_reader test_fbx_reader.cpp)
 target_link_libraries(test_fbx_reader PRIVATE okay::engine)
 target_compile_definitions(test_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-target_include_directories(test_fbx_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/third_party/ufbx)   # ufbx is the oracle for UV sets
 add_test(NAME fbx_reader COMMAND test_fbx_reader)
 
-# Hostile FBX files through the importer (ufbx default path and our reader): deep node chains, animation counts, the whole-file bake budget.
+# FBX is read only by our own reader: no ufbx in the build, and every .fbx of the corpora (tests/, examples/, assets/ and, with
+# OKAY_MODEL_CORPUS, the Assimp test folder) is read by okay::fbx.
+add_executable(test_fbx_route test_fbx_route.cpp)
+target_link_libraries(test_fbx_route PRIVATE okay::engine)
+target_compile_definitions(test_fbx_route PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME fbx_route COMMAND test_fbx_route)
+
+# Hostile FBX files through the importer (our reader): deep node chains, animation counts, the whole-file bake budget.
 add_executable(test_fbx_import_limits test_fbx_import_limits.cpp)
 target_link_libraries(test_fbx_import_limits PRIVATE okay::engine)
 add_test(NAME fbx_import_limits COMMAND test_fbx_import_limits)
@@ -4024,11 +4031,10 @@ add_test(NAME fbx_exact COMMAND test_fbx_exact)
 add_executable(test_decimal_to_double test_decimal_to_double.cpp)
 add_test(NAME decimal_to_double COMMAND test_decimal_to_double)
 set_tests_properties(decimal_to_double PROPERTIES TIMEOUT 300)
-# Not a test: speed and peak heap of our FBX reader against ufbx (docs/content/model_readers.md (FBX part), "Speed and memory").
+# Not a test: speed and peak heap of our FBX reader and import (docs/content/model_readers.md (FBX part), "Speed and memory").
 # Built, never run by ctest. Synthetic large inputs: python3 scripts/gen_fbx_bench.py <dir>.
 add_executable(bench_fbx_reader bench_fbx_reader.cpp)
 target_link_libraries(bench_fbx_reader PRIVATE okay::engine)
-target_include_directories(bench_fbx_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/third_party/ufbx)
 target_compile_definitions(bench_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 # The editor's layout maths (editor/EditorLayoutMath.hpp, UI-library free): overlay anchoring, label placement and crowd fading, Inspector density, toolbar planning, maximize bookkeeping, view preferences.

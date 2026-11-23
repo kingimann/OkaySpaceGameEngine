@@ -5,8 +5,10 @@
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Render/FbxReader.hpp"
 #include "okay/Render/ModelImport.hpp"
-#include "ufbx.h"
 #include <set>
+#include <map>
+#include <sstream>
+#include <iostream>
 #include <tuple>
 #include <algorithm>
 #include <chrono>
@@ -20,9 +22,9 @@
 #include <string>
 #include <vector>
 
-// okay::fbx (our own FBX reader) against hand-computed values, and side by side with the ufbx
-// path: every fixture in tests/assets/fbx is imported both ways and compared. The fixtures are made
-// by scripts/gen_fbx_fixtures.py.
+// okay::fbx (our own FBX reader, the only FBX reader) against hand-computed values, and every fixture in
+// tests/assets/fbx (and, with OKAY_MODEL_CORPUS, every real FBX file) through the importer against the values recorded
+// when ufbx and ours last agreed (see ExpectedImportTests). The fixtures are made by scripts/gen_fbx_fixtures.py.
 using namespace okay;
 namespace fs = std::filesystem;
 
@@ -317,7 +319,7 @@ static void DirectTests() {
     }
 }
 
-// ---- ufbx vs ours -----------------------------------------------------------------------
+// ---- what the importer made ---------------------------------------------------------------
 struct ImportStats {
     int objects = 0, meshes = 0, skinned = 0, joints = 0, verts = 0, tris = 0, clips = 0, tracks = 0, blend = 0;
     double lo[3] = {1e30, 1e30, 1e30}, hi[3] = {-1e30, -1e30, -1e30}, area = 0;
@@ -406,7 +408,7 @@ static void HermiteTests() {
         CHECK(r.clips.size() == 1 && r.clips[0].nodes.size() == 1);
         CHECK(LoadBuilt(file.string(), rk, &err));
         CHECK(rk.clips.size() == 1 && rk.clips[0].nodes.size() == 1);
-        for (int mode = 0; mode < 3; ++mode) {   // 0 = our reader (baked at 30 Hz), 1 = ufbx through the importer, 2 = our reader's file keys
+        for (int mode = 0; mode < 3; ++mode) {   // 0 = our reader (baked at 30 Hz), 1 = the importer's clip (was: ufbx through the importer), 2 = our reader's file keys
             std::vector<double> got;
             if (mode == 0) {
                 if (r.clips.size() != 1 || r.clips[0].nodes.size() != 1) continue;
@@ -419,7 +421,6 @@ static void HermiteTests() {
                 CHECK(tr.size() >= 2);   // (a steep cubic: more keys than 30 a second where the 30 Hz bake missed the tolerance)
                 for (double u : us) got.push_back(KeyAt(tr, u).v[0] * 100.0);
             } else {
-                fbx::SetOwnReaderEnabled(false);
                 Scene sc("hermite"); bool ok = false;
                 GameObject* root = ImportModelScene(sc, file.string(), &ok);
                 CHECK(ok && root);
@@ -430,10 +431,10 @@ static void HermiteTests() {
             }
             for (std::size_t i = 0; i < 4; ++i) {
                 const double ref = HermiteRef(0, 10, cases[ci].a, cases[ci].b, 1.0, us[i]);
-                // ufbx bakes on its own sample grid, so its 30 Hz keys are a piecewise-linear cut of the same curve; our
-                // file keys are within the reader's stated tolerance (1e-5 m + 1e-4 x 0.1 m = 2e-3 cm here)
+                // our file keys are within the reader's stated tolerance (1e-5 m + 1e-4 x 0.1 m = 2e-3 cm here); the importer's
+                // clip plays the same keys, after its own key reduction (held to the 0.05 cm the ufbx path was held to)
                 const double tol = mode == 1 ? 0.05 : mode == 2 ? 2e-3 : 2e-4;
-                if (!Near(got[i], ref, tol)) std::cerr << "  (" << (mode == 1 ? "ufbx" : mode == 2 ? "own keys" : "own") << " a=" << cases[ci].a << " b=" << cases[ci].b << " u=" << us[i] << ") got " << got[i] << " expected " << ref << "\n";
+                if (!Near(got[i], ref, tol)) std::cerr << "  (" << (mode == 1 ? "importer" : mode == 2 ? "own keys" : "own") << " a=" << cases[ci].a << " b=" << cases[ci].b << " u=" << us[i] << ") got " << got[i] << " expected " << ref << "\n";
                 CHECK(Near(got[i], ref, tol));
                 if (ci < 2) CHECK(Near(ref, hand[ci][i], 1e-9));   // the reference itself against the hand-computed values
             }
@@ -442,51 +443,7 @@ static void HermiteTests() {
     std::error_code ec; fs::remove(file, ec);
 }
 
-static void CompareClips(Scene& su, GameObject* ru, Scene& so, GameObject* ro, const std::string& what, double tol = 2e-3) {
-    auto* mu = ru->GetComponent<ModelAnimator>();
-    auto* mo = ro->GetComponent<ModelAnimator>();
-    if (!mu || !mo) { CHECK((mu == nullptr) == (mo == nullptr)); return; }
-    (void)su; (void)so;
-    CHECK(mu->clips.size() == mo->clips.size());
-    for (std::size_t ci = 0; ci < std::min(mu->clips.size(), mo->clips.size()); ++ci) {
-        auto& cu = mu->clips[ci]; auto& co = mo->clips[ci];
-        CHECK(cu.name == co.name);
-        double worst = 0; int compared = 0;
-        for (auto& nu : cu.nodes) {
-            const ModelAnimator::NodeClip* no = nullptr;
-            for (auto& x : co.nodes) if (x.node == nu.node) no = &x;
-            if (!no) { std::cerr << "  (" << what << ") ufbx clip has a track for " << nu.node << " that ours lacks\n"; CHECK(false); continue; }
-            for (float t : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.9f}) {
-                // ufbx's bake keeps the keys after the end of a take's time span; ours cuts the clip at the span
-                float ownLen = 0; for (auto& x : co.nodes) ownLen = std::max(ownLen, x.clip.Length());
-                if (t > ownLen + 1e-4f) continue;
-                for (const char* tr : {"position.x", "position.y", "position.z", "scale.x", "scale.y", "scale.z", "weights.0"}) {
-                    bool f1 = false, f2 = false;
-                    const float a = nu.clip.Evaluate(tr, t, f1), b = no->clip.Evaluate(tr, t, f2);
-                    if (f1 != f2 && f1) { /* ufbx has a track ours does not: only constant ones may be missing */ if (std::fabs(a - ((tr[0] == 's') ? 1.0f : 0.0f)) > 1e-3f && tr[0] != 'p') CHECK(false); continue; }
-                    if (!f1 || !f2) continue;
-                    worst = std::max(worst, (double)std::fabs(a - b)); ++compared;
-                }
-                // Compare the rotation each clip really plays (SampleTRS: slerp of the bracketing keys), not the raw
-                // per-component curves. Import reduction keeps a rotation within an angle of the original keys, so on a
-                // steady turn it drops most keys; lerping the components between those far-apart keys gives a quaternion
-                // that is no longer unit length, and its dot product reads as a difference that is not there.
-                bool q1 = false, q2 = false;
-                (void)nu.clip.Evaluate("rotation.qw", t, q1); (void)no->clip.Evaluate("rotation.qw", t, q2);
-                if (q1 && q2) {
-                    Vec3 pu, su3, po, so3; Quat qu, qo;
-                    nu.clip.SampleTRS(t, pu, qu, su3, AnimationClip::kRot); no->clip.SampleTRS(t, po, qo, so3, AnimationClip::kRot);
-                    worst = std::max(worst, 1.0 - std::fabs((double)qu.x * qo.x + (double)qu.y * qo.y + (double)qu.z * qo.z + (double)qu.w * qo.w)); ++compared;
-                }
-            }
-        }
-        if (worst > tol) std::cerr << "  (" << what << ") clip " << cu.name << " worst difference " << worst << "\n";
-        CHECK(worst < tol);
-        CHECK(compared > 0);
-    }
-}
-
-// What the importer gave each mesh object as material: both FBX readers must agree (texture files by file name).
+// What the importer gave each mesh object as material (texture files by file name).
 struct MatSnap { std::string name, tex, nrm; float col[4], emi[3], metallic, shininess, specular, reflectivity; };
 static std::vector<MatSnap> CollectMaterials(Scene& sc, GameObject* root) {
     std::vector<MatSnap> out;
@@ -505,209 +462,239 @@ static std::vector<MatSnap> CollectMaterials(Scene& sc, GameObject* root) {
     return out;
 }
 
-// UV sets against ufbx, used as the oracle: for every mesh with UVs, the set names in order, and the distinct
-// (control point, value in every set) combinations over all polygons of 3 or more corners. Our parts hold exactly the
-// distinct corners, so both sides give the same list when every set is read and corners are merged only when all
-// sets agree. Values are compared as floats (ours are stored as float; ufbx keeps doubles).
-static void CompareUvSetsWithUfbx(const std::string& path, const std::string& what) {
-    fbx::Scene s; std::string err;
-    if (!LoadBuilt(path, s, &err)) return;   // (whether a file reads is checked elsewhere)
-    ufbx_load_opts uo{}; ufbx_error ue{};
-    ufbx_scene* us = ufbx_load_file(path.c_str(), &uo, &ue);
-    if (!us) return;
-    std::vector<const fbx::Mesh*> ours; std::vector<const ufbx_mesh*> theirs;
-    for (const fbx::Mesh& m : s.meshes) if (m.hasUV) ours.push_back(&m);
-    for (std::size_t i = 0; i < us->meshes.count; ++i) if (us->meshes.data[i]->uv_sets.count) theirs.push_back(us->meshes.data[i]);
-    const bool sameCount = ours.size() == theirs.size();
-    CHECK(sameCount);
-    if (!sameCount) std::cout << "  " << what << ": meshes with UVs, ours " << ours.size() << ", ufbx " << theirs.size() << "\n";
-    for (std::size_t k = 0; sameCount && k < ours.size(); ++k) {
-        const fbx::Mesh& m = *ours[k]; const ufbx_mesh& u = *theirs[k];
-        bool names = m.uvSetNames.size() == u.uv_sets.count;
-        for (std::size_t j = 0; names && j < u.uv_sets.count; ++j) names = m.uvSetNames[j] == std::string(u.uv_sets.data[j].name.data, u.uv_sets.data[j].name.length);
-        CHECK(names);
-        if (!names) { std::cout << "  " << what << " mesh " << k << ": UV set names differ (ours " << m.uvSetNames.size() << ", ufbx " << u.uv_sets.count << ")\n"; continue; }
-        const std::size_t ns = u.uv_sets.count;
-        std::set<std::vector<float>> a, b;   // cp, then u, v of each set
-        for (const fbx::Part& p : m.parts)
-            for (std::size_t v = 0; v < p.vertices.size(); ++v) {
-                std::vector<float> key{(float)p.vertices[v].cp, p.vertices[v].uv[0], p.vertices[v].uv[1]};
-                for (const auto& x : p.extraUVs) { key.push_back(x[v * 2]); key.push_back(x[v * 2 + 1]); }
-                a.insert(key);
-            }
-        for (std::size_t f = 0; f < u.faces.count; ++f) {
-            const ufbx_face fc = u.faces.data[f];
-            if (fc.num_indices < 3) continue;
-            for (std::uint32_t c = 0; c < fc.num_indices; ++c) {
-                const std::size_t ix = fc.index_begin + c;
-                std::vector<float> key{(float)u.vertex_indices.data[ix]};
-                for (std::size_t j = 0; j < ns; ++j) {
-                    const ufbx_vertex_vec2& uv = u.uv_sets.data[j].vertex_uv;
-                    const ufbx_vec2 val = uv.exists && ix < uv.indices.count && uv.indices.data[ix] < uv.values.count ? uv.values.data[uv.indices.data[ix]] : ufbx_vec2{0, 0};
-                    key.push_back((float)val.x); key.push_back((float)val.y);
-                }
-                b.insert(key);
-            }
-        }
-        const bool same = a == b;
-        CHECK(same);
-        if (!same) std::cout << "  " << what << " mesh " << k << ": distinct corners over " << ns << " UV sets, ours " << a.size() << ", ufbx " << b.size() << "\n";
-    }
-    ufbx_free_scene(us);
+// ---- fixed expected values (were: ufbx vs ours) ------------------------------------------------------------------
+// Until 2026-11-23 every fixture (and, with OKAY_MODEL_CORPUS, every real FBX file) was imported twice, through ufbx and
+// through our reader, and the two were compared. ufbx was then deleted (rule 17). The values our reader gave, on the
+// last run where both readers agreed within the tolerances of that comparison, were written down as fixed numbers:
+// tests/assets/fbx/expected_import.txt (fixtures) and tests/data/fbx_corpus_expected.txt (real files, relative to
+// $OKAY_MODEL_CORPUS). Only what the comparison checked was written: clips are left out for the two files where ufbx
+// kept a clip ours drops, colour and glossiness for the 3ds Max PBR files whose textured slots ufbx reported empty.
+// The test now holds our importer to those numbers. OKAY_FBX_WRITE_EXPECTED=<file> writes the current values instead
+// of checking them (only after a reviewed, intended change of the importer's output).
+struct SnapLine { std::string key; std::vector<double> v; std::string text; };
+struct FbxSnap { std::vector<SnapLine> lines; };
+static void SnapAdd(FbxSnap& s, std::string key, std::vector<double> v, std::string text = std::string()) { s.lines.push_back({std::move(key), std::move(v), std::move(text)}); }
+
+static std::string JoinNames(std::vector<std::string> v, bool sortThem = true) {
+    if (sortThem) std::sort(v.begin(), v.end());
+    std::string o;
+    for (const auto& x : v) { if (!o.empty()) o += '|'; o += x; }
+    return o.empty() ? "-" : o;
 }
 
-static void CompareWithUfbx() {
-    RUN_SUITE("fbx: every fixture through ufbx and through our reader");
-    int files = 0;
+// Everything the old comparison looked at, from our importer (ImportModelScene, ImportModel) and the reader's UV sets.
+static bool SnapshotFbx(const std::string& path, bool isReal, FbxSnap& out, std::string* why) {
+    const std::string what = fs::path(path).filename().string();
+    const bool clipsMayDiffer = what == "box_orphant_embedded_texture.fbx" || what == "box_embedded_texture_fragmented.fbx";
+    const bool texturedSlots = what == "maxPbrMaterial_metalRough.fbx" || what == "maxPbrMaterial_specGloss.fbx" || what == "pbr_bin.fbx";
+    {   // UV sets (the reader's parts): per mesh with UVs, the set names in order and the distinct corners over all sets
+        fbx::Scene s; std::string err;
+        if (!LoadBuilt(path, s, &err)) { if (why) *why = "own reader: " + err; return false; }
+        int k = 0;
+        for (const fbx::Mesh& m : s.meshes) {
+            if (!m.hasUV) continue;
+            std::set<std::vector<float>> a;
+            for (const fbx::Part& p : m.parts)
+                for (std::size_t v = 0; v < p.vertices.size(); ++v) {
+                    std::vector<float> key{(float)p.vertices[v].cp, p.vertices[v].uv[0], p.vertices[v].uv[1]};
+                    for (const auto& x : p.extraUVs) { key.push_back(x[v * 2]); key.push_back(x[v * 2 + 1]); }
+                    a.insert(key);
+                }
+            double sum = 0; for (const auto& key : a) for (std::size_t i = 1; i < key.size(); ++i) sum += key[i];
+            SnapAdd(out, "uvsets." + std::to_string(k++), {(double)a.size(), sum}, JoinNames(m.uvSetNames, false));
+        }
+        SnapAdd(out, "uvmeshes", {(double)k});
+    }
+    Scene so("own"); bool oko = false;
+    GameObject* ro = ImportModelScene(so, path, &oko);
+    if (!oko || !ro) { if (why) *why = "scene import failed"; return false; }
+    const ImportStats b = Collect(so, ro);
+    SnapAdd(out, "counts", {(double)b.objects, (double)b.meshes, (double)b.skinned, (double)b.joints, (double)b.tris, (double)b.blend});
+    SnapAdd(out, "verts", {(double)b.verts});
+    if (!clipsMayDiffer) SnapAdd(out, "clips", {(double)b.clips, (double)b.tracks});
+    SnapAdd(out, "bbox", {b.lo[0], b.lo[1], b.lo[2], b.hi[0], b.hi[1], b.hi[2]});
+    SnapAdd(out, "area", {b.area});
+    SnapAdd(out, "names", {}, JoinNames(b.names));
+    for (const MatSnap& x : CollectMaterials(so, ro)) {
+        std::vector<double> v;
+        if (!texturedSlots) for (int k = 0; k < 4; ++k) v.push_back(x.col[k]);
+        for (int k = 0; k < 3; ++k) v.push_back(x.emi[k]);
+        v.push_back(x.metallic);
+        if (!texturedSlots) { v.push_back(x.shininess * 0.01); v.push_back(x.specular); v.push_back(x.reflectivity); }
+        SnapAdd(out, "mat." + x.name, v, (x.tex.empty() ? "-" : x.tex) + "|" + (x.nrm.empty() ? "-" : x.nrm));
+    }
+    if (!clipsMayDiffer)
+        if (auto* mo = ro->GetComponent<ModelAnimator>())
+            for (std::size_t ci = 0; ci < mo->clips.size(); ++ci) {
+                auto& co = mo->clips[ci];
+                float ownLen = 0; for (auto& x : co.nodes) ownLen = std::max(ownLen, x.clip.Length());
+                SnapAdd(out, "clip." + std::to_string(ci), {(double)co.nodes.size()}, co.name.empty() ? "-" : co.name);
+                for (auto& no : co.nodes)
+                    for (float t : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.9f}) {
+                        if (t > ownLen + 1e-4f) continue;
+                        std::vector<double> v; std::string have;
+                        for (const char* tr : {"position.x", "position.y", "position.z", "scale.x", "scale.y", "scale.z", "weights.0"}) {
+                            bool f = false; const float a = no.clip.Evaluate(tr, t, f);
+                            if (f) { v.push_back(a); have += tr[0] == 'w' ? 'w' : tr[0]; }
+                        }
+                        bool q = false; (void)no.clip.Evaluate("rotation.qw", t, q);
+                        if (q) {
+                            Vec3 p, s3; Quat r; no.clip.SampleTRS(t, p, r, s3, AnimationClip::kRot);
+                            const double sg = r.w < 0 ? -1.0 : 1.0;   // q and -q are the same turn
+                            v.push_back(sg * r.x); v.push_back(sg * r.y); v.push_back(sg * r.z); v.push_back(sg * r.w); have += 'q';
+                        }
+                        char tk[32]; std::snprintf(tk, sizeof tk, "%.2f", t);
+                        SnapAdd(out, "key." + std::to_string(ci) + "." + no.node + "@" + tk, v, have.empty() ? "-" : have);
+                    }
+            }
+    for (const auto& up : so.Objects()) {
+        auto* sb = up->GetComponent<SkinnedMesh>();
+        if (!sb || !up->IsSelfOrDescendantOf(ro)) continue;
+        SnapAdd(out, "skin." + up->name, {(double)sb->inverseBind.size(), (double)sb->bind.vertices.size()}, JoinNames(sb->jointNames, false));
+        for (std::size_t i = 0; i < sb->inverseBind.size(); ++i) {
+            std::vector<double> v;
+            for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) v.push_back(sb->inverseBind[i].at(c, r));
+            SnapAdd(out, "ibind." + up->name + "." + std::to_string(i), v);
+        }
+        // influences as a joint -> weight sum per joint, and a weight-by-position moment (vertex order is our own)
+        std::vector<double> perJoint(sb->jointNames.size() + 1, 0.0); double mx = 0, my = 0, mz = 0;
+        for (std::size_t i = 0; i < sb->bind.vertices.size() && i < sb->jointWt.size(); ++i)
+            for (int k = 0; k < 4; ++k) {
+                const float w = sb->jointWt[i][(std::size_t)k];
+                if (w <= 0) continue;
+                const int j = sb->jointIdx[i][(std::size_t)k];
+                perJoint[j >= 0 && (std::size_t)j < sb->jointNames.size() ? (std::size_t)j : sb->jointNames.size()] += w;
+                mx += w * (j + 1) * sb->bind.vertices[i].x; my += w * (j + 1) * sb->bind.vertices[i].y; mz += w * (j + 1) * sb->bind.vertices[i].z;
+            }
+        perJoint.push_back(mx); perJoint.push_back(my); perJoint.push_back(mz);
+        SnapAdd(out, "weights." + up->name, perJoint);
+    }
+    {   // the single-mesh path (ImportModel)
+        bool m2 = false; std::string t2;
+        Mesh mb = ImportModel(path, &m2, &t2);
+        if (!m2) { if (why) *why = "ImportModel failed"; return false; }
+        SnapAdd(out, "flat", {(double)mb.vertices.size(), (double)mb.triangles.size(), mb.normals.size() == mb.vertices.size() ? 1.0 : 0.0, mb.uvs.size() == mb.vertices.size() ? 1.0 : 0.0});
+    }
+    (void)isReal;
+    return true;
+}
+
+static std::string EscapeKey(const std::string& s) { std::string o; for (char c : s) o += (c == '\t' || c == '\n' || c == '\r') ? '_' : c; return o; }
+
+// One line per value group: file <TAB> key <TAB> text <TAB> numbers (space separated, %.9g).
+static void WriteSnap(std::ostream& o, const std::string& file, const FbxSnap& s) {
+    for (const SnapLine& l : s.lines) {
+        o << EscapeKey(file) << '\t' << EscapeKey(l.key) << '\t' << EscapeKey(l.text.empty() ? "-" : l.text) << '\t';
+        for (std::size_t i = 0; i < l.v.size(); ++i) { char b[40]; std::snprintf(b, sizeof b, "%.9g", l.v[i]); o << (i ? " " : "") << b; }
+        o << '\n';
+    }
+}
+
+using SnapTable = std::map<std::string, std::map<std::string, SnapLine>>;   // file -> key -> line
+static bool ReadSnapTable(const std::string& path, SnapTable& t) {
+    std::ifstream f(path);
+    if (!f) return false;
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::vector<std::string> col; std::string cur;
+        for (char c : line) { if (c == '\t') { col.push_back(cur); cur.clear(); } else cur += c; }
+        col.push_back(cur);
+        if (col.size() != 4) continue;
+        SnapLine l; l.key = col[1]; l.text = col[2];
+        std::istringstream ns(col[3]); double d; while (ns >> d) l.v.push_back(d);
+        t[col[0]][l.key] = l;
+    }
+    return true;
+}
+
+// The tolerances the ufbx comparison used, now against the recorded values.
+static double SnapTolerance(const std::string& key, double expected, bool isReal) {
+    auto starts = [&](const char* p) { return key.compare(0, std::strlen(p), p) == 0; };
+    if (starts("counts") || starts("clips") || starts("uvmeshes") || starts("clip.") || starts("skin.") || starts("flat")) return 0;
+    if (starts("uvsets")) return 1e-3 * (1 + std::fabs(expected));
+    if (starts("verts")) return isReal ? 0.005 * expected : 0;
+    if (starts("bbox")) return 1e-4 * (1 + std::fabs(expected));
+    if (starts("area")) return (isReal ? 2e-3 : 1e-4) * (1 + std::fabs(expected));
+    if (starts("mat.")) return 1e-4;
+    if (starts("key.")) return isReal ? 1.5e-2 : 2e-3;
+    if (starts("ibind.")) return 1e-4 * (1 + std::fabs(expected));
+    if (starts("weights.")) return 1e-3 * (1 + std::fabs(expected));
+    return 1e-6;
+}
+
+static void CheckSnap(const std::string& file, const FbxSnap& got, const std::map<std::string, SnapLine>& want, bool isReal) {
+    std::map<std::string, const SnapLine*> have;
+    for (const SnapLine& l : got.lines) have[l.key] = &l;
+    int bad = 0;
+    for (const auto& kv : want) {
+        const SnapLine& w = kv.second;
+        auto it = have.find(kv.first);
+        if (it == have.end()) { if (bad++ < 8) std::cerr << "  (" << file << ") missing " << kv.first << "\n"; continue; }
+        const SnapLine& g = *it->second;
+        bool ok = g.v.size() == w.v.size() && EscapeKey(g.text.empty() ? "-" : g.text) == w.text;
+        for (std::size_t i = 0; ok && i < w.v.size(); ++i) ok = std::fabs(g.v[i] - w.v[i]) <= SnapTolerance(kv.first, w.v[i], isReal);
+        if (!ok && bad++ < 8) {
+            std::cerr << "  (" << file << ") " << kv.first << ": expected '" << w.text << "'";
+            for (double d : w.v) std::cerr << ' ' << d;
+            std::cerr << ", got '" << g.text << "'";
+            for (double d : g.v) std::cerr << ' ' << d;
+            std::cerr << "\n";
+        }
+    }
+    for (const SnapLine& l : got.lines) if (!want.count(l.key) && bad++ < 8) std::cerr << "  (" << file << ") not expected: " << l.key << "\n";
+    CHECK(bad == 0);
+}
+
+static void ExpectedImportTests() {
+    RUN_SUITE("fbx: every fixture (and real file) against the values recorded when ufbx and ours agreed");
     std::vector<std::string> paths;
     for (auto& e : fs::directory_iterator(fs::path(OKAY_SOURCE_DIR) / "tests" / "assets" / "fbx")) if (e.path().extension() == ".fbx") paths.push_back(e.path().string());
     std::sort(paths.begin(), paths.end());
-    // Real exporter files, when OKAY_MODEL_CORPUS names a directory of them (docs/content/model_corpus.md): the same checks.
-    // transparentTest.fbx is a damaged file (NUL bytes replaced by spaces); neither reader can open it.
-    std::vector<std::string> real;
+    const std::size_t fixtureCount = paths.size();
+    std::string corpusRoot;
     if (const char* root = std::getenv("OKAY_MODEL_CORPUS"); root && *root) {
+        corpusRoot = root;
+        std::vector<std::string> real;
         for (auto& e : fs::recursive_directory_iterator(root)) {
             std::string x = e.path().extension().string();
             for (char& c : x) c = (char)std::tolower((unsigned char)c);
+            // transparentTest.fbx is a damaged file (NUL bytes replaced by spaces); no reader can open it
             if (e.is_regular_file() && x == ".fbx" && e.path().filename() != "transparentTest.fbx") real.push_back(e.path().string());
         }
         std::sort(real.begin(), real.end());
         std::cout << "  " << real.size() << " real FBX files from OKAY_MODEL_CORPUS\n";
+        paths.insert(paths.end(), real.begin(), real.end());
     }
-    const std::size_t fixtureCount = paths.size();
-    paths.insert(paths.end(), real.begin(), real.end());
+    const std::string fixturesFile = std::string(OKAY_SOURCE_DIR) + "/tests/assets/fbx/expected_import.txt";
+    const std::string corpusFile = std::string(OKAY_SOURCE_DIR) + "/tests/data/fbx_corpus_expected.txt";
+    const char* writeTo = std::getenv("OKAY_FBX_WRITE_EXPECTED");   // a file name: write the fixtures' (or with OKAY_MODEL_CORPUS, the real files') values
+    SnapTable fixtures, corpus;
+    const bool haveFixtures = ReadSnapTable(fixturesFile, fixtures);
+    CHECK(haveFixtures || writeTo);
+    const bool haveCorpus = corpusRoot.empty() || ReadSnapTable(corpusFile, corpus);
+    CHECK(haveCorpus || writeTo);
+    std::ofstream wf, wc;
+    if (writeTo && *writeTo) { wf.open(std::string(writeTo) + ".fixtures"); wc.open(std::string(writeTo) + ".corpus"); }
+    int files = 0;
     for (std::size_t pi = 0; pi < paths.size(); ++pi) {
-        const std::string& path = paths[pi];
         const bool isReal = pi >= fixtureCount;
+        const std::string name = isReal ? fs::relative(paths[pi], corpusRoot).generic_string() : fs::path(paths[pi]).filename().string();
+        FbxSnap s; std::string why;
+        const bool ok = SnapshotFbx(paths[pi], isReal, s, &why);
+        if (!ok) std::cerr << "  (" << name << ") " << why << "\n";
+        CHECK(ok);
+        if (!ok) continue;
         ++files;
-        const std::string what = fs::path(path).filename().string();
-        CompareUvSetsWithUfbx(path, what);
-        // ufbx keeps a clip for a take whose curves animate only custom properties (a constant pose); ours drops it
-        const bool clipsMayDiffer = what == "box_orphant_embedded_texture.fbx" || what == "box_embedded_texture_fragmented.fbx";
-        fbx::Scene direct; std::string err;
-        const bool ownLoads = fbx::LoadFile(path, direct, &err);
-        if (!ownLoads) std::cerr << "  (" << what << ") own reader: " << err << "\n";
-        CHECK(ownLoads);
-
-        fbx::SetOwnReaderEnabled(false);
-        Scene su("ufbx"); bool oku = false;
-        GameObject* ru = ImportModelScene(su, path, &oku);
-        fbx::SetOwnReaderEnabled(true);
-        Scene so("own"); bool oko = false;
-        GameObject* ro = ImportModelScene(so, path, &oko);
-        fbx::SetOwnReaderEnabled(false);
-        CHECK(oku && ru && oko && ro);
-        if (!ru || !ro) continue;
-        ImportStats a = Collect(su, ru), b = Collect(so, ro);
-        auto same = [&](const char* label, double x, double y, double eps) {
-            if (std::fabs(x - y) > eps) std::cerr << "  (" << what << ") " << label << ": ufbx " << x << " vs ours " << y << "\n";
-            CHECK(std::fabs(x - y) <= eps);
-        };
-        same("objects", a.objects, b.objects, 0);
-        same("meshes", a.meshes, b.meshes, 0);
-        same("skinned meshes", a.skinned, b.skinned, 0);
-        same("joints", a.joints, b.joints, 0);
-        // ufbx keeps a few more duplicate vertices than we weld on real files
-        same("vertices", a.verts, b.verts, isReal ? 0.005 * a.verts : 0);
-        same("triangles", a.tris, b.tris, 0);
-        same("blend shape hosts", a.blend, b.blend, 0);
-        if (!clipsMayDiffer) { same("clips", a.clips, b.clips, 0); same("clip node tracks", a.tracks, b.tracks, 0); }
-        for (int k = 0; k < 3; ++k) { same("bbox lo", a.lo[k], b.lo[k], 1e-4 * (1 + std::fabs(a.lo[k]))); same("bbox hi", a.hi[k], b.hi[k], 1e-4 * (1 + std::fabs(a.hi[k]))); }
-        same("surface area", a.area, b.area, (isReal ? 2e-3 : 1e-4) * (1 + a.area));   // real files: quads split along the other diagonal differ slightly
-        auto na = a.names, nb = b.names; std::sort(na.begin(), na.end()); std::sort(nb.begin(), nb.end());
-        CHECK(na == nb);
-        {   // materials: colour, emission, metalness, glossiness, texture and normal-map files
-            const std::vector<MatSnap> ma_ = CollectMaterials(su, ru), mb_ = CollectMaterials(so, ro);
-            CHECK(ma_.size() == mb_.size());
-            for (std::size_t i = 0; i < std::min(ma_.size(), mb_.size()); ++i) {
-                const MatSnap &x = ma_[i], &y = mb_[i];
-                // 3ds Max's PBR materials bind textures to the colour and glossiness slots. For a textured slot ufbx reports no
-                // value, so the importer keeps its default (white, no gloss); ours reads the value the file stores next to the
-                // texture (colour, glossiness) and uses it while the picture file is missing. Not compared on those files.
-                const bool texturedSlots = what == "maxPbrMaterial_metalRough.fbx" || what == "maxPbrMaterial_specGloss.fbx" || what == "pbr_bin.fbx";
-                const bool ufbxNoGloss = texturedSlots && x.shininess == 16.0f && x.specular == 0.0f;
-                double worst = 0;
-                if (!texturedSlots) for (int k = 0; k < 4; ++k) worst = std::max(worst, (double)std::fabs(x.col[k] - y.col[k]));
-                for (int k = 0; k < 3; ++k) worst = std::max(worst, (double)std::fabs(x.emi[k] - y.emi[k]));
-                worst = std::max(worst, (double)std::fabs(x.metallic - y.metallic));
-                if (!ufbxNoGloss) worst = std::max({worst, (double)std::fabs(x.shininess - y.shininess) * 0.01, (double)std::fabs(x.specular - y.specular), (double)std::fabs(x.reflectivity - y.reflectivity)});
-                if (worst > 1e-4 || x.tex != y.tex || x.nrm != y.nrm)
-                    std::cerr << "  (" << what << ") material of " << x.name << ": ufbx tex '" << x.tex << "' nrm '" << x.nrm << "' col " << x.col[0] << "," << x.col[1] << "," << x.col[2] << " emi " << x.emi[0] << " met " << x.metallic << " shin " << x.shininess << " spec " << x.specular
-                              << " | ours tex '" << y.tex << "' nrm '" << y.nrm << "' col " << y.col[0] << "," << y.col[1] << "," << y.col[2] << " emi " << y.emi[0] << " met " << y.metallic << " shin " << y.shininess << " spec " << y.specular << "\n";
-                CHECK(worst <= 1e-4);
-                CHECK(x.tex == y.tex && x.nrm == y.nrm);
-            }
-        }
-        if (!clipsMayDiffer) CompareClips(su, ru, so, ro, what, isReal ? 1.5e-2 : 2e-3);   // real files: custom tangent weights are ignored (docs/content/model_readers.md)
-
-        // skinned vertex data: weights and inverse binds
-        for (const auto& up : su.Objects()) {
-            auto* sa = up->GetComponent<SkinnedMesh>();
-            if (!sa || !up->IsSelfOrDescendantOf(ru)) continue;
-            GameObject* other = nullptr;
-            for (const auto& o : so.Objects()) if (o->name == up->name && o->IsSelfOrDescendantOf(ro)) other = o.get();
-            auto* sb = other ? other->GetComponent<SkinnedMesh>() : nullptr;
-            CHECK(sb != nullptr);
-            if (!sb) continue;
-            CHECK(sa->jointNames == sb->jointNames);
-            CHECK(sa->inverseBind.size() == sb->inverseBind.size());
-            for (std::size_t i = 0; i < std::min(sa->inverseBind.size(), sb->inverseBind.size()); ++i)
-                for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) CHECK_NEAR(sa->inverseBind[i].at(c, r), sb->inverseBind[i].at(c, r), 1e-4);
-            if (!isReal) CHECK(sa->bind.vertices.size() == sb->bind.vertices.size());
-            if ((isReal || sa->bind.vertices.size() == sb->bind.vertices.size()) && sa->bind.uvs.size() == sa->bind.vertices.size() && sb->bind.uvs.size() == sb->bind.vertices.size()) {
-                // Vertex order may differ (each side dedupes in its own order): match vertices by
-                // position + normal + uv, then compare their influences as joint -> weight maps.
-                auto key = [isReal](const Mesh& m, std::size_t i) {
-                    char buf[160];
-                    std::snprintf(buf, sizeof(buf), isReal ? "%.3f,%.3f,%.3f|%.2f,%.2f,%.2f|%.3f,%.3f" : "%.5f,%.5f,%.5f|%.4f,%.4f,%.4f|%.4f,%.4f", m.vertices[i].x, m.vertices[i].y, m.vertices[i].z,
-                                  m.normals.size() > i ? m.normals[i].x : 0.f, m.normals.size() > i ? m.normals[i].y : 0.f, m.normals.size() > i ? m.normals[i].z : 0.f, m.uvs[i].x, m.uvs[i].y);
-                    return std::string(buf);
-                };
-                std::unordered_map<std::string, std::size_t> inB;
-                for (std::size_t i = 0; i < sb->bind.vertices.size(); ++i) inB[key(sb->bind, i)] = i;
-                // Fixtures are small, so match them by closeness instead of by printed text: a value a hair either side of a
-                // rounding boundary (or -0 against 0) prints differently on different compilers, which is not a real difference.
-                auto close = [](const Mesh& ma, std::size_t i, const Mesh& mb, std::size_t j) {
-                    auto d = [](float p, float q) { return std::fabs(p - q); };
-                    const Vec3 na = ma.normals.size() > i ? ma.normals[i] : Vec3{0, 0, 0}, nb = mb.normals.size() > j ? mb.normals[j] : Vec3{0, 0, 0};
-                    return d(ma.vertices[i].x, mb.vertices[j].x) < 2e-5f && d(ma.vertices[i].y, mb.vertices[j].y) < 2e-5f && d(ma.vertices[i].z, mb.vertices[j].z) < 2e-5f &&
-                           d(na.x, nb.x) < 2e-4f && d(na.y, nb.y) < 2e-4f && d(na.z, nb.z) < 2e-4f &&
-                           d(ma.uvs[i].x, mb.uvs[j].x) < 2e-4f && d(ma.uvs[i].y, mb.uvs[j].y) < 2e-4f;
-                };
-                double worst = 0; std::size_t unmatched = 0;
-                for (std::size_t i = 0; i < sa->bind.vertices.size(); ++i) {
-                    std::size_t j = 0; bool found = false;
-                    if (isReal) {
-                        auto it = inB.find(key(sa->bind, i));
-                        if (it != inB.end()) { j = it->second; found = true; }
-                    } else {
-                        for (std::size_t q = 0; q < sb->bind.vertices.size() && !found; ++q) if (close(sa->bind, i, sb->bind, q)) { j = q; found = true; }
-                    }
-                    if (!found) { ++unmatched; continue; }
-                    for (int k = 0; k < 4; ++k) {
-                        const float wa = sa->jointWt[i][(std::size_t)k];
-                        if (wa <= 0) continue;
-                        float wb = 0;
-                        for (int q = 0; q < 4; ++q) if (sb->jointIdx[j][(std::size_t)q] == sa->jointIdx[i][(std::size_t)k] && sb->jointWt[j][(std::size_t)q] > 0) wb += sb->jointWt[j][(std::size_t)q];
-                        worst = std::max(worst, (double)std::fabs(wa - wb));
-                    }
-                }
-                if (unmatched || worst >= 1e-4) std::cerr << "  (" << what << ") skinned part " << up->name << ": " << unmatched << " unmatched vertices, worst weight difference " << worst << "\n";
-                CHECK(unmatched == 0);
-                CHECK(worst < 1e-4);
-            }
-        }
-
-        // the single-mesh path (ImportModel) too
-        bool m1 = false, m2 = false; std::string t1, t2;
-        fbx::SetOwnReaderEnabled(false); Mesh ma = ImportModel(path, &m1, &t1);
-        fbx::SetOwnReaderEnabled(true);  Mesh mb = ImportModel(path, &m2, &t2);
-        fbx::SetOwnReaderEnabled(false);
-        CHECK(m1 && m2);
-        if (isReal) CHECK(std::fabs((double)ma.vertices.size() - (double)mb.vertices.size()) <= 0.005 * (double)ma.vertices.size() && ma.triangles.size() == mb.triangles.size());
-        else CHECK(ma.vertices.size() == mb.vertices.size() && ma.triangles.size() == mb.triangles.size());
-        CHECK(ma.normals.size() == ma.vertices.size() ? mb.normals.size() == mb.vertices.size() : mb.normals.empty());
-        CHECK(ma.uvs.size() == ma.vertices.size() ? mb.uvs.size() == mb.vertices.size() : mb.uvs.empty());
+        if (writeTo && *writeTo) { WriteSnap(isReal ? wc : wf, name, s); continue; }
+        const SnapTable& t = isReal ? corpus : fixtures;
+        auto it = t.find(name);
+        if (it == t.end()) { std::cerr << "  (" << name << ") no recorded values\n"; CHECK(false); continue; }
+        CheckSnap(name, s, it->second, isReal);
+    }
+    if (!writeTo) {   // every recorded file is still there (a removed fixture must remove its rows)
+        for (const auto& kv : fixtures) { const bool there = fs::exists(fs::path(OKAY_SOURCE_DIR) / "tests" / "assets" / "fbx" / kv.first); if (!there) std::cerr << "  recorded fixture missing: " << kv.first << "\n"; CHECK(there); }
+        if (!corpusRoot.empty()) for (const auto& kv : corpus) CHECK(fs::exists(fs::path(corpusRoot) / kv.first));
     }
     CHECK(files >= 6);
 }
@@ -745,7 +732,7 @@ static void PbrTests() {
     const fbx::Material* gl = mat("GltfMat");
     CHECK(gl && gl->shaderSet == "gltf");
     if (gl) CHECK(Near(gl->roughness, 0.6) && Near(gl->metalness, 0.5) && gl->hasEmissive && Near(gl->emissive[1], 0.25) && gl->diffuseTexture >= 0 && gl->normalTexture >= 0);
-    const fbx::Material* ph2 = mat("PhongMat");   // same class id, but the material says phong: the classic properties win (ufbx's rule)
+    const fbx::Material* ph2 = mat("PhongMat");   // same class id, but the material says phong: the classic properties win (the usual rule for these sets)
     CHECK(ph2 && ph2->shaderSet == "phong");
     if (ph2) CHECK(Near(ph2->diffuse[0], 0.9) && Near(ph2->diffuse[1], 0.8) && ph2->hasRoughness && Near(ph2->roughness, 1.0 - std::sqrt(25.0) * 0.1));
 }
@@ -805,6 +792,6 @@ int main() {
     PbrTests();
     OrphanVideoTest();
     UvSetTests();
-    CompareWithUfbx();
+    ExpectedImportTests();
     TEST_MAIN_RESULT();
 }

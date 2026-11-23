@@ -398,15 +398,8 @@ add_library(okay_engine
     src/Render/FbxReader.cpp
     src/Render/FbxScene.cpp
     src/Render/FbxSceneClips.cpp
-    third_party/ufbx/ufbx.c
 )
-
-# Our own FBX reader (okay::fbx) sits next to ufbx. OKAY_OWN_FBX=ON makes it the default reader
-# for this build; it can still be switched at run time with the OKAY_OWN_FBX environment variable
-# ("1"/"0") or okay::fbx::SetOwnReaderEnabled(). Default OFF: ufbx stays the default.
-if(OKAY_OWN_FBX)
-    set_source_files_properties(src/Render/FbxScene.cpp PROPERTIES COMPILE_DEFINITIONS OKAY_OWN_FBX_DEFAULT=1)
-endif()
+# FBX is read only by our own reader (okay::fbx, the three Fbx*.cpp files above); the vendored ufbx was deleted on 2026-11-23.
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
 # The UI library's data files (assets/ui/*.okaydata: screens, styles, themes, icons, components) are embedded into the engine, so every
@@ -429,19 +422,11 @@ target_include_directories(okay_engine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-# Vendored third-party libraries (stb_truetype, stb_vorbis, ufbx, dr_libs). Image decoding is
+# Vendored third-party libraries (stb_truetype, stb_vorbis, dr_libs). Image decoding is
 # our own (Core/ImageDecode*.cpp). Kept PRIVATE so they don't leak to consumers.
 target_include_directories(okay_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx
 )
-# ufbx (FBX importer, MIT/public domain) is a single C file: no warnings, optimised
-# even in debug builds (parsing big FBX files unoptimised is painfully slow).
-if(MSVC)
-    set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "/w;/O2")
-else()
-    set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "-w;-O2")
-endif()
 # Silence warnings from the third-party single-header libraries. `-Wno-narrowing`
 # is required in addition to `-w`: vendored tables (stb) may initialise `char`
 # arrays with 0xFF, which Clang (Emscripten/WASM) treats as a hard narrowing ERROR

@@ -1,10 +1,9 @@
 #pragma once
 // ---------------------------------------------------------------------------
 // okay::fbx - our own FBX reader (binary 7.x and ASCII), written from the
-// public format description. It is the side-by-side, NON-DEFAULT alternative to
-// the vendored ufbx used by Render/ModelImport. Select it with the CMake option
-// OKAY_OWN_FBX=ON (makes it the build default) or at run time with the
-// environment variable OKAY_OWN_FBX=1 / okay::fbx::SetOwnReaderEnabled(true).
+// public format description. It is the only FBX reader: Render/ModelImport
+// reads every .fbx with it (the vendored ufbx it replaced, and the OKAY_OWN_FBX
+// switch between the two, were deleted on 2026-11-23).
 //
 // Two layers, and two import steps:
 //   1. Parse()  - bytes -> a plain element tree (Document). No scene knowledge.
@@ -12,8 +11,8 @@
 //                 file's polygons (positions, polygon index lists and the
 //                 per-corner layers), skins, blend shapes, materials, textures
 //                 and the animation curves (the clips planned, not keyed).
-//                 Already converted to right-handed Y-up, meters (like
-//                 ModelImport asks ufbx for).
+//                 Already converted to right-handed Y-up, meters (what
+//                 ModelImport needs).
 //   3. The import steps: BuildParts() turns a mesh's polygons into triangles
 //                 split per material, with equal corners shared (Mesh::parts);
 //                 BuildClips() makes the clips' keys from the curves.
@@ -399,7 +398,7 @@ struct KeyTolerance {
 bool FileKeysDefault();
 
 struct BuildOptions {
-    bool convertToYUpMeters = true;    ///< right-handed Y-up, 1 unit = 1 m (what ModelImport asks ufbx for)
+    bool convertToYUpMeters = true;    ///< right-handed Y-up, 1 unit = 1 m (what ModelImport needs)
     /// Animation keys. true: a key at every key time of the node's curves (and the take's start and end), plus keys
     /// in between where linear playback would leave `keyTolerance`; a step gets a key just before and at its jump.
     /// false: every animated node sampled `bakeRate` times a second over the take (the only way before 2026-11-16).
@@ -426,11 +425,6 @@ bool BuildClips(Scene& s, std::string* err = nullptr);
 /// without keys: call BuildClips.
 bool LoadMemory(const std::uint8_t* data, std::size_t size, Scene& out, std::string* err, const BuildOptions& opt = BuildOptions());
 bool LoadFile(const std::string& path, Scene& out, std::string* err, const BuildOptions& opt = BuildOptions());
-
-/// Whether ModelImport should use this reader. Default: the OKAY_OWN_FBX CMake option, overridden
-/// by the OKAY_OWN_FBX environment variable ("1"/"0") and by SetOwnReaderEnabled().
-bool OwnReaderEnabled();
-void SetOwnReaderEnabled(bool on);
 
 } // namespace fbx
 } // namespace okay

@@ -68,7 +68,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Docs:** `docs/physics/physics.md`
 - **Tests:** `physics_joints`, `2d_expand`, `hinge2d`, `hinge3d`, `physics_deep_more`
 - **Status:** Works - joint solver pass in Physics3D::Step and the two headers read; distance, spring, pin and hinge covered by the tests above
-- **Open:** Joint2D's header still says "no angular/hinge yet" and its Add Component row still says "(distance/spring/pin)" although a Hinge mode exists; joints connect by body name, not by object reference
+- **Open:** the Active Ragdoll (5.8) has its own articulated solver behind `dyn::RagdollPhysics` because these joints have no ball joint with a rotation drive; Joint2D's header still says "no angular/hinge yet" and its Add Component row still says "(distance/spring/pin)" although a Hinge mode exists; joints connect by body name, not by object reference
 - **Related:** 6.1, 6.2, 5.8
 - **Words:** joint, hinge, spring, rope, rod, pin, weld, fixed joint, revolute, motor, connectedBody, breakForce, ragdoll joint
 - **Seen as:** a rope or pendulum stretches or explodes; a door does not swing about its hinge; a spring never settles; a joint snaps unexpectedly

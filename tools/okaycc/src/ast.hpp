@@ -91,6 +91,8 @@ struct Decl {
     bool function = false;
     bool isExtern = false;
     bool isStatic = false;
+    bool staticMember = false;  // a static member function: no 'this'
+    bool isInline = false;      // inline function or class-generated code: emitted as a weak symbol
     std::string asmName;
     std::string methodTag;
     std::vector<std::string> vt;  // vtable image: symbol per 8-byte slot ("" = zero)

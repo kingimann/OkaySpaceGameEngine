@@ -8,7 +8,7 @@ A **system** is a named part of OkaySpace that does one job from start to end (P
 - **Status** comes from the sub-areas' Status lines (Works, Partial, Basic, Planned, In flight); a system made of sub-areas in different states lists how many are in each.
 - **Main code** lists its files, or the folders that hold three or more of them, largest first. Engine headers are under `engine/include/okay/`, their code under `engine/src/`.
 - **Feature map** links every sub-area that is part of it; the first one is the one that describes it.
-- To name or change a system, edit the `- **System:**` line of a sub-area in `docs/feature_map/` (format in `docs/feature_map/README.md`), then run `python3 scripts/gen_feature_map.py`.
+- To name or change a system, edit the `- **System:**` line of a sub-area in `docs/feature_map/` (format in `docs/feature_map/README.md`), check it with `python3 scripts/gen_feature_map.py --validate`; this page is rebuilt on main after the merge.
 
 ## Areas
 

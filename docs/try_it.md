@@ -93,6 +93,7 @@ release job or the installer build for this change.
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | 87 | Project upgrade and saving fixes | Launcher project cards; File > Project Upgrade...; example `examples\old_project` | Tested headless (project_version, project_upgrade, project_state); the launcher and editor windows not run, Windows not run |
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
+| active-ragdoll | Active Ragdoll: a character that keeps its balance, stumbles, falls, braces and gets up | Editor: File > Open `examples\active_ragdoll\active_ragdoll.okayscene`, press Play, keys J L U O I F E T G K R P; Add Component > Active Ragdoll | Tests pass on Linux (`active_ragdoll`); the editor and the example were not run on Windows or on a screen |
 | boat1 | Water waves, floating things and a boat to drive | `examples\boat\boat_lake.okayscene` (File > Open, Play), **GameObject > Vehicles > Boat**, Add Component > Physics 3D > Buoyancy and Gameplay > Boat Controller, Water Inspector > Style | New in this change; headless tests only, Windows and GPU not run |
 | bs2 | Build Settings: search, Game and Advanced pages, checks, history | Editor: File > Build Settings (Ctrl+B) | New in this change; the editor and player were compile-checked on Linux but not run on Windows |
 | cam-up | Camera rigs and effects (Follow, Orbit, Look At, Group, walls, blends, shake presets, 2D rooms) | File > Open `examples\camera\camera_rigs.okayscene` and `examples\camera\camera_2d_rooms.okayscene`, then Play; GameObject > Camera > Camera Rig | Built and tested headless on Linux only; editor and Windows not run |
@@ -102,8 +103,10 @@ release job or the installer build for this change.
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | input | Input upgrade: input playground, rumble patterns, vibration setting, key positions (AZERTY) | Editor: File > Open, `examples\input\input_playground.okayscene`, then Play | Tested headless on Linux; nothing run on Windows or with a real controller or AZERTY keyboard |
 | okayui-apps | The launcher and editor built on OkayUI (OkaySpaceOkayUI / OkayEngineOkayUI), off by default | CMake `OKAY_LAUNCHER_ON_OKAYUI` / `OKAY_EDITOR_ON_OKAYUI`; Settings > Experimental > Run on our own UI | Launcher ran headless on Linux; the editor on OkayUI not built or run yet |
+| okayui-freeze | OkayUI Inspector: every component answers clicks again; the slow-frame log | Editor with Settings > Experimental "OkayUI screens" + "OkayUI Inspector" on; `okay_editor_perf.log` beside `OkayEngine.exe` | Fixed and verified on Linux; Windows unverified |
 | okayui-window | OkayUI window mode (editor window and frame run by OkayUI, no Dear ImGui): Scene and Game views, Hierarchy, Inspector, Console, Project, dialogs, menu bar | `OKAY_DEV=1 OKAY_UI_BACKEND=okayui OKAY_UI_HOST=okayui`; steps in the section "OkayUI window mode" | Headless tests only; the editor was never built or started with it |
 | one-controller | One Player Controller for first and third person; no Humanoid or separate First and Third Person entries | Editor: GameObject > Player, Add Component > Gameplay, File > New Project (First and Third Person) | Tests run on Linux only; not run in a real editor or on Windows |
+| oscript | One table of engine functions for OkayScript and C#: `add_torque` in OkayScript, the same save, key, action, force, audio-group and time functions in both | A script on an object, in `Tools\OkayEngine.exe` | New on `claude2/one-script-api`; tested headless (`script_api_parity`), the editor steps are unverified |
 | own-switch | One place to switch our own code on and off, all ON by default since 2026-11-23 (launcher Settings > Experimental, editor View menu) | Launcher: Settings > Experimental. Editor: View > Rendering & Performance > Experimental | Linux build only; Windows unverified |
 | pm1 | Physics Material: how a surface feels (14 presets, .okayphysmat files, Physics Surface component) | Open `examples\physics_materials\physics_materials.okayscene` and press Play; or select an object, Add Component > Physics 3D > Physics Surface | Tested headless on Linux; the Inspector rows were compiled, not opened |
 | pt1 | Physics toys: Conveyor Belt, Force Field, Gravity Zone, Turntable, Moving Platform, Explosion, Breakable | Open `examples\physics_toys\physics_toys.okayscene` and press Play; Add Component > Physics 3D | Tested headless on Linux; menu entry under GameObject not built |
@@ -126,7 +129,6 @@ release job or the installer build for this change.
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 12b | OkayUI Crash Log (visible rows only) and Audio Mixer (meter tooltip), off by default | `OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`, editor View menu | Headless tests and images only; never run in the Windows editor |
 | 12c | OkayUI DockBuilder, SetNextWindowDockID, Shortcut and eleven small calls (library only, nothing uses them yet) | none in the Windows release; headless tests only: `ctest -R "okayui_dockbuilder|okayui_internals"` | **Cannot be tried in the Windows release yet**; Linux headless tests only |
-| 12d | OkayUI Inspector stays in its own tab (no longer drawn over the Hierarchy) | Editor: Settings > Experimental, turn on "OkayUI screens" and "OkayUI Inspector", restart, select an object, click the Hierarchy tab; steps in section 12d | Fixed on branch `claude2/okayui-inspector-tabs`; headless tests on Linux only, never run in the Windows editor |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
 | 15b | Blender reader applies Mirror and Subdivision Surface modifiers (off by default, like the reader) | `OKAY_OWN_BLEND=1`, `examples\own_readers\mirror_subdiv_box.blend` | Tests only (Linux); not run in a Windows editor |
@@ -1539,6 +1541,36 @@ the server did. Details: `docs/online/anticheat.md` ("The cheat simulator"), the
 on Linux over loopback. **Unverified:** nothing was run on Windows or on a real network; the `macro` step hands the button presses to the
 detector instead of sending real input packets; the simulator's packets are not encrypted.
 
+## active-ragdoll. Active Ragdoll: a character that keeps its balance, stumbles, falls, braces and gets up
+
+**What it is.** Our own "dynamic character" (written from published research, see `docs/gameplay/active_ragdoll.md`).
+The character's body is simulated: its muscles follow the animation, it keeps its balance when pushed, takes steps to catch
+itself, falls when the push is too big (arms out toward the ground, or hands to the head when falling backwards), lies still
+for a moment and gets up again, face up or face down, then blends back into its animation.
+
+**How to try it.**
+1. In the editor, **File > Open...** and pick `examples\active_ragdoll\active_ragdoll.okayscene`. Press **Play**.
+2. The dummy stands on a grey platform with a brown wall on its left (your right is the ledge). The text at the top shows its state.
+3. Keys:
+   - **J** / **L**: a small push left / right. It sways or takes a step and stays up. Pushed toward the wall it may grab it.
+   - **U**: a hard shove toward the wall. **O**: a hard shove the other way: it stumbles off the ledge, falls to the ground,
+     lies still and gets up down there.
+   - **I**: a push away from you.
+   - **F**: shoot it (each shot hits another spot: chest, leg, head, hips). A leg shot makes the leg go weak.
+   - **E**: a blast next to it. It is thrown and falls.
+   - **T** trip, **G** get up now, **K** go limp (dead), **R** revive, **P** powered on / off (always physical).
+4. **You should see:** small pushes end with the dummy standing again within about a second; big ones end on the floor and,
+   after about 1 second still, a get-up that takes about 2 seconds. The state text reads Animated, Balancing, Falling, Down,
+   GettingUp, Blending.
+
+**On your own character.** Select a character (the built-in Character or an imported humanoid) and use
+**Add Component > Active Ragdoll (balance, stumble, fall, get up)**. With a Stat: Health on the same object, damage pushes the
+struck part, death goes limp and revive gets up. Scripts: `active_ragdoll("knockdown")`, `active_ragdoll_push(0, 0, 60)`,
+`active_ragdoll_shoot(...)`, `active_ragdoll_explode(...)`, `active_ragdoll_state()` (also visual-script nodes).
+
+**Honest status.** Tested headless on Linux only (`ctest -R active_ragdoll`). Never run in a real editor window or on Windows.
+Its limbs do not collide with other moving bodies yet, and the get-up uses a helper force (see the guide).
+
 ## boat1. Water waves, floating things and a boat to drive
 
 **What it is.** The sea now has real waves that things can float on, crates bob and settle at the right depth, heavy things
@@ -1953,6 +1985,45 @@ What it is: the same launcher and editor programs, compiled against OkayUI inste
 3. What you should see: the launcher looks like the normal one (same pages, fonts, colours). The start-up text line says "UI drawing: OkayUI frame through okay::platform::Painter (the OkayUI build; Dear ImGui is not in this program)". Starting a project from the OkayUI launcher opens `OkayEngineOkayUI` when it is next to it.
 4. Honest status: the launcher ran only headless on Linux (scripted clicks, pictures looked at); the editor on OkayUI has not been built or run yet; nothing was run on Windows. Report anything that looks or behaves differently from the normal programs.
 
+## OkayUI Inspector: lower components ignored clicks; the slow-frame log (bug fix, 2026-11-23 report)
+
+The report: "with experimental on, the editor freezes a lot, it's non-responsive".
+
+**What was wrong.** With the OkayUI Inspector on, each part of the Inspector (the object card, the Transform, and for every
+component its header bar and its body) tells the editor "the mouse is mine here". The editor kept only **8** of those areas per
+frame. An object with many components shows more than 8 parts (the First Person template's Player shows 12 when its components
+are folded), and every part after the 8th never got the mouse: clicks, folds and typing there did nothing, so the Inspector looked
+frozen. Now the editor keeps up to 96 areas and counts any it had to drop.
+
+**Try it (Windows release, after this change ships):**
+
+1. Turn on **Settings > Experimental > OkayUI screens** and **OkayUI Inspector** (in the launcher), start the editor.
+2. **File > New Project...**, template **First Person**. Select **Player** in the Hierarchy.
+3. On the **Character** bar click **...** and pick **Collapse All Components**. You see about 11 folded bars
+   (Character, Mesh Renderer, Animator, Rigidbody3D, Box Collider 3D, Player Controller, First Person Controller,
+   Third Person Controller, Player View ...).
+4. Click the fold arrow of the **lowest** bars (Third Person Controller, Player View). **You should see** each one open.
+   Before this fix nothing happened when you clicked them.
+
+**The slow-frame log (to find any freeze that is left).** Every editor frame that takes 250 ms or more now writes one line to
+**`okay_editor_perf.log` in the same folder as `OkayEngine.exe`** (the `Tools` folder of your install, where `okay_update.log` is).
+The line says how long the frame took, which part of the editor took the time (for example "Panels" with the scope
+`UI.Inspector`, "Present", "ImGui.OkayUI" for OkayUI's own drawing, "Editor.Events" for reading input), and which experimental
+switches were on (OkayUI screens, OkayUI Inspector, own renderer Direct3D 11 / OpenGL, own WAV). The first five slow frames after
+start-up also show in the Console as `[perf] slow frame ...` warnings. The first frames after start always load the scene and are
+slow; that is normal. **If the editor still freezes, send that file.** Set the environment variable `OKAY_SLOW_FRAME_MS` to change
+the limit (for example `500`), or to `0` to turn the log off. At most 300 lines are written per run.
+
+**Verified here (Linux, Xvfb, real mouse clicks with xdotool):** with the old limit the editor reported "8 kept, 4 without the
+mouse" for the folded Player and clicks on the lowest bars did nothing; with the fix "12 kept, 0 without the mouse" and the
+Third Person Controller bar opened on click. Frame times while selecting objects, folding, scrolling and typing stayed flat
+(the OkayUI part about 2.5 ms a frame, the Inspector 0.3 to 0.6 ms); no frame over 150 ms came from the UI.
+
+**Unverified:** everything on Windows, including the Direct3D 11 path of "own renderer" (it cannot run on Linux; it was read
+and compile-checked with MinGW only). If a freeze remains on Windows, the log line names the part.
+
+Tests: `ctest -R "okayui_frame_budget|okayui_host$|editor_perf"`.
+
 ## OkayUI window mode (off by default; Scene, Game, Hierarchy, Inspector, Console, Project, dialogs)
 
 What it is: the editor's window, frame and panels run by OkayUI alone, with Dear ImGui not started. It is a dev switch, so three settings are needed.
@@ -1992,6 +2063,32 @@ settings. The Console says "Added Player Controller (View: Both ...)" when you u
 **Status.** Unverified in a real editor and on Windows. Tests run on Linux: `one_controller` (an old-format Humanoid scene and
 an old First plus Third scene load as one Player Controller and keep their settings), `templates_work` (one template, old titles
 still build, Humanoid gone), `scene_cameras`, `player_controller`, `view_upgrade`.
+
+## oscript. One table of engine functions for OkayScript and C#
+
+What changed: 20 engine functions are now written once and used by both script languages (and by the visual-script
+Engine API nodes). Before, each language had its own copy and they disagreed. The guide is
+[script_api_registry.md](scripting/script_api_registry.md).
+
+Where: the editor, `Tools\OkayEngine.exe`. Open any 3D scene.
+
+1. **GameObject > 3D Object > Cube.** In the Inspector, **Add Component > Rigidbody** and set Gravity Scale to 0.
+2. **Add Component > Script**, choose OkayScript, and type:
+   `function start() { add_torque(0, 50, 0); }`
+   Press **Play**. You should see the cube start to spin around its up axis. (Before this change OkayScript had no
+   `add_torque`; the script would stop with "unknown function".)
+3. Change the script to `function start() { add_torque(0, 50, 0); add_force(0, 1, 0); print(has_save("nothing")); }`
+   and remove the Rigidbody first. Press **Play**. The Console shows two warnings, `add_torque: 'Cube' has no Rigidbody
+   (add one in the Inspector)` and the same for `add_force`, and then `0`: the script kept running.
+4. A C# script on the same cube can now read one controller's action: `Input.GetButton("Jump", 0)` (the player number is new
+   in C#; OkayScript's `action("Jump", 0)` already had it).
+
+Changed on purpose (say if one of these breaks a game of yours): in C#, `Input.GetKey("up")` is now the up arrow (it was W),
+and C# key reads are off while a text field has the keyboard, like OkayScript's always were. `save_exists` is `has_save`
+(it always was in practice; a second, unused definition was removed).
+
+Verified here: the headless test `script_api_parity` (every shared function called from both languages, same answer and
+same effect). Not verified: the editor steps above (no editor window is opened in these sessions).
 
 ## own-switch. One place to switch our own code on and off (all on by default)
 
@@ -2862,26 +2959,6 @@ window by title, the drag-and-drop payload, and the state store.
 
 **Not verified:** nothing here was run in the Windows editor or launcher, and the preset call sequence was copied by hand from the
 editor source, not run through it. See `docs/ui/own_ui_toolkit.md` section 6.9.
-
-### 12d. OkayUI Inspector: only in its own tab
-
-The bug (v2.903.1.3, every Experimental item on): with the Inspector and the Hierarchy as two tabs of the right dock and the Hierarchy
-tab picked, the OkayUI Inspector was still painted on top of the Hierarchy: the selected object's component bar (its fold arrow, enable
-box and name), the "+ Add Component" button over that name, and the Tag / Layer / Save as Prefab row. The Hierarchy's search box and
-scene line were hidden under it.
-
-Steps:
-
-1. Start `OkayEngine.exe`, open Settings > Experimental and turn on **OkayUI screens** and **OkayUI Inspector**. Restart the editor
-   when it asks.
-2. Open any scene and select an object that has components (the Player of a new First Person project, for example).
-3. Click the **Hierarchy** tab in the right dock. Expected: only the Hierarchy shows, with its search box and scene line at the top;
-   nothing of the Inspector is drawn and clicks there go to the Hierarchy.
-4. Click the **Inspector** tab. Expected: the object card at the top with the whole name visible (Static and Lock right of it, or on
-   the line below when the panel is narrow), the components under it, and "+ Add Component" at the bottom, under the last component.
-5. Drag the Hierarchy tab out beside the Inspector (side by side). Expected: both panels draw, each in its own area.
-
-Status: headless tests on Linux only (`ctest -R "okayui_host_layering|okayui_inspector$"`); never run in the Windows editor.
 
 ### 13. Own cryptography
 

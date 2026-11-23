@@ -20,7 +20,9 @@ struct CapturedGeometry {
     std::vector<DrawVertex> vertices;
     std::vector<int> indices;
     std::vector<DrawCmd> cmds;
-    void Clear() { vertices.clear(); indices.clear(); cmds.clear(); }
+    /// The first command of the overlay layer (popups, open lists, the foreground list); cmds.size() when none was taken.
+    int overlayFrom = 0;
+    void Clear() { vertices.clear(); indices.clear(); cmds.clear(); overlayFrom = 0; }
     bool Empty() const { return indices.empty(); }
 };
 

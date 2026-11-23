@@ -70,7 +70,19 @@ inline ImVec2 ToMainWindowPixels(ImVec2 p) {
     return ImVec2(p.x - o.x, p.y - o.y);
 }
 
-/// True when the ImGui window was dragged out into another OS window: OkayUI only draws into the main one.
+/// Where OkayUI's mouse is while it is over another OS window of Dear ImGui's (a panel dragged out of the editor, or docked into a
+/// node that was): Dear ImGui's desktop position, moved into the main window's pixels like every hosted rectangle (ToMainWindowPixels).
+/// False while the mouse is over the main window, or nowhere ImGui knows: the host keeps the platform's own position then.
+inline bool MouseInOtherViewport(ImVec2& out) {
+    ImGuiContext& g = *GImGui;
+    if (!(g.IO.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) || !g.MouseViewport || g.MouseViewport == ImGui::GetMainViewport()) return false;
+    if (!ImGui::IsMousePosValid(&g.IO.MousePos)) return false;
+    out = ToMainWindowPixels(g.IO.MousePos);
+    return true;
+}
+
+/// True when the ImGui window was dragged out into another OS window (a hosted panel then draws there and maps the mouse with
+/// MouseInOtherViewport).
 inline bool OutsideMainWindow(const ImGuiWindow* w) { return w && w->Viewport && w->Viewport != ImGui::GetMainViewport(); }
 
 /// True when Dear ImGui shows nothing of the window this frame: a docked panel whose tab is not the selected one (the Inspector while

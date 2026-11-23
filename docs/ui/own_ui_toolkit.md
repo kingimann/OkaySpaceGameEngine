@@ -3121,17 +3121,16 @@ ImGui popup, tooltip and window in front; the hosts therefore drew the Dear ImGu
 - **`okayuihost::HostPanelWindow`** (`shared/OkayUIImGuiEmbed.hpp`): the ImGui window (tab, title, close box) with one placeholder
   item over its free area; the OkayUI body is drawn with that capture and its shapes are put into the window's draw list
   (`ImGuiEmbed::Append`, already used by the Script Editor), so Dear ImGui draws the panel in its own order. The body offers the
-  mouse with ImGui's hover answer (no mouse while a popup or a window in front is over it); its overlays offer the mouse too. A
-  window that is not docked is kept in the main OS window (`SetNextWindowViewport`), because OkayUI reads the mouse in that window's
-  pixels. `editor/OkayPanels.cpp` `HostWindow` now calls it (the Profiler keeps its unwired `fitBody` first frame).
+  mouse with ImGui's hover answer (no mouse while a popup or a window in front is over it); its overlays offer the mouse too. The
+  panel works in any OS window of Dear ImGui's (24.1). `editor/OkayPanels.cpp` `HostWindow` now calls it (the Profiler keeps its unwired `fitBody` first frame).
 
 **What changed in the editor.**
 
 - `DrawAudioMixer`, `DrawCrashLog` and `DrawHistory` in `editor/main.cpp` call the OkayUI windows only; their Dear ImGui bodies are
   deleted (about 170 lines of `editor/main.cpp`). History builds its model only while the window shows and commits the pending undo step there, as the
   Dear ImGui body did.
-- `OkayUIInputOn()` is true in every build with OkayUI, so hosted panels get the mouse and keys even with "OkayUI screens" off; a
-  press over an OkayUI overlay is kept from Dear ImGui under the same rule.
+- `OkayUIInputOn()` is also true while one of these panels is hovered or has the focus (24.1), so they get the mouse and keys even
+  with "OkayUI screens" off; a press over an OkayUI overlay is kept from Dear ImGui under the same rule.
 - The Audio Mixer's model fill is one function, `oked::FillAudioMixerModel` (`editor/AudioMixerModel.hpp`), used by this window and
   by window mode (`editor/OkayUIHostMode.cpp` had a copy).
 - History's Dear ImGui body moved from `editor/EditorPanelViews.cpp` into `tests/test_okayui_editor_panels_imgui.cpp` as the
@@ -3153,6 +3152,36 @@ undos, a collapsed or closed window drawing and offering nothing. Also run: `oka
 `okayui_editor_panels_imgui`, `okayui_codeedit_imgui`, `okayui_host_layering`, `okayui_hostmode` (results in the PR).
 
 **Not verified.** Not built or run on Windows; the editor program was not linked or started here (its changed files were compiled
-`-fsyntax-only` with g++ and MinGW), so the three windows were not seen in a real window. A window docked into a node that was
-dragged out to another OS window is drawn there but takes no mouse (OkayUI reads the mouse in the main window's pixels); a floating
-one cannot be dragged out of the main window any more. The `OKAY_EDITOR_ON_OKAYUI` path was only compiled as far as noted in the PR.
+`-fsyntax-only` with g++ and MinGW), so the three windows were not seen in a real window. Panels in another OS window: tested headless with a stand-in platform
+backend only (24.1). The `OKAY_EDITOR_ON_OKAYUI` path was only compiled as far as noted in the PR.
+
+### 24.1 Review fixes (PR #1192)
+
+- **Any OS window.** `HostPanelWindow` no longer keeps a floating panel in the main OS window (`SetNextWindowViewport` is gone, and
+  with it the frame-late `DockIsActive` test, which could pull a tab being dragged out back into the main window for a frame). In
+  another OS window the body's shapes go into that window's draw list, its menus and modals onto that window's foreground list
+  (`CapturedGeometry::overlayFrom` splits the two layers; `ImGuiEmbed::Append` takes a command range), and the mouse is mapped:
+  `okayuihost::MouseInOtherViewport` (`shared/OkayUIHostImGui.hpp`) gives Dear ImGui's desktop position in the main window's pixels
+  while the mouse is over another ImGui OS window, and the editor feeds that to OkayUI (`editor/main.cpp`, before `OkayUI::BeginFrame`).
+  The body offers the mouse with ImGui's hover answer there too. Limit: OkayUI keeps a popup inside the main window's display size,
+  so a menu of a panel far outside the main window may be moved toward it; a press on such a menu is also seen by Dear ImGui (only
+  presses in the main window are kept from it).
+- **Input only for OkayUI's own hosted pieces.** `OkayUIInputOn()` is the "OkayUI screens" backend (as on main) or
+  `okayuihost::HostedInputWanted` (`shared/OkayUIHost.hpp`), taken once at the start of OkayUI's frame: a panel drawn by OkayUI only
+  noted itself (`Region::NoteActive`) as hovered or focused, a hosted rectangle was hovered (`Region::AnyHovered`, the code editor's
+  area too), or an OkayUI code field has the keyboard (`g_scriptCodeOwnsKeys`). The OkayUI code editor switch alone no longer turns
+  the capture on for the whole editor. With the backend off, a game's `ui_*` widgets in the Game view get only text and Backspace,
+  as before, except in frames where such a hosted piece is hovered or focused.
+- **Selectable Crash Log.** The reports are a read-only text box again, as Dear ImGui's read-only `InputTextMultiline` was: the
+  existing `OkayUI::CodeEdit` made a text box (`MakeTextBox` and `TextBoxPalette`, now public in `okay/UI/OkayUICodeEdit.hpp` and
+  shared with `InputTextMultiline`), read-only, opening at the newest line; select with the mouse or keys, Ctrl+C copies through the
+  host's clipboard. Golden `crashlog_reports` re-made for it.
+- **Menus close when Dear ImGui takes over.** The body's OkayUI menus, lists and modals close when a Dear ImGui popup or modal opens
+  over the window, when a click lands outside the body and its menus (OkayUI does not see that click: the host blocks its mouse over
+  ImGui), or when the keyboard focus leaves the window.
+- **Tests.** `okayui_panels_imgui`: input only while hovered or focused; the Crash Log's modal closes under an ImGui modal and when
+  the focus moves; a History row menu closes on a click outside; a Crash Log in a second OS window (Dear ImGui multi-viewports with a
+  stand-in platform backend, no real windows): drawn in its own draw list, its modal on that window's foreground list, offered with
+  the mouse, Refresh clicked there, the mouse mapped. `okayui_capture`: `overlayFrom`. `okayui_host`: `Region::Active`. `okayui_panels`:
+  the Crash Log selection, Ctrl+C through the host, read only, a reload goes back to the end.
+- **Not verified.** Real OS windows (SDL's or the own backend's multi-window path), Windows, the editor program.

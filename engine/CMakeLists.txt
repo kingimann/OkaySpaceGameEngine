@@ -209,6 +209,7 @@ add_library(okay_engine
     src/Components/VoxelEdit.cpp
     src/Components/VoxelFluid.cpp
     src/Components/Character.cpp
+    src/Components/CharacterFirstPerson.cpp
     src/Components/ModelAnimatorPose.cpp
     src/Components/PlayerView.cpp
     src/Components/PlayerController.cpp
@@ -217,6 +218,7 @@ add_library(okay_engine
     src/Animation/HumanoidLibrary.cpp
     src/Animation/PlayerSetup.cpp
     src/Animation/HumanoidActions.cpp
+    src/Animation/HumanoidActionsRuntime.cpp
     src/Animation/RagdollPhysics.cpp
     src/Animation/DynamicCharacter.cpp
     src/Components/AnimClip.cpp

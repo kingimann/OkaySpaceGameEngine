@@ -1,0 +1,22 @@
+# Batch S4 of the engine modularization plan (docs/engine/modularization_plan.md, section 3.1):
+# engine/src/Animation/HumanoidActions.cpp, the runtime tail (ActionNames to Seat::Update: action queries, Play, death,
+# swim, emotes, sit, hit reactions, dodge, traversal, dead-body shrink and the Seat component; about 730 lines) moves to
+# engine/src/Animation/HumanoidActionsRuntime.cpp. The bake and state-wiring half stays in HumanoidActions.cpp.
+#   python3 scripts/check_pure_move.py --base origin/main --head HEAD --source engine/src/Animation/HumanoidActions.cpp \
+#       --dest engine/src/Animation/HumanoidActionsRuntime.cpp --dest engine/src/Animation/HumanoidActionsInternal.hpp \
+#       --rules docs/engine/moves/S4_humanoid_actions_runtime.rules
+# The moved tail calls ten helpers that sat in two anonymous namespaces at the top of HumanoidActions.cpp (NoteNetEvent,
+# HasState, IsKnownAction, IsDeathLabel, IsSwimLabel, LatchSwim, DirOfClip, BaseMachine, DirFromWorld, LatchDeath) and the
+# kEmoteNames table. Those two anonymous namespaces become one named namespace, okay::HumanoidActions::humanoid_actions,
+# declared in HumanoidActionsInternal.hpp; the file gets `using namespace humanoid_actions;`, which gives the same name
+# lookup the anonymous namespaces gave. The `SM` alias is repeated in the new file (the original stays in the old one).
+# (all edits in HumanoidActions.cpp itself, so drop/add rules)
+drop: ^namespace \{$
+add: ^using namespace humanoid_actions;$
+add: ^using SM = AnimStateMachine;$
+add: ^namespace humanoid_actions \{$
+add: ^namespace HumanoidActions \{$
+add: ^\} // namespace HumanoidActions$
+add: ^(void NoteNetEvent\(GameObject\* go, int id, float param\)|bool HasState\(const AnimStateMachine& sm, const char\* name\)|bool Is(Known|Death|Swim)(Action|Label)\(const std::string& name\)|void LatchSwim\(AnimStateMachine& sm, float speed\)|int DirOfClip\(const std::string& name\)|AnimStateMachine\* BaseMachine\(GameObject\* go\)|int DirFromWorld\(GameObject\* go, const Vec3& fromWorld\)|void LatchDeath\(AnimStateMachine& sm, int dir\)|extern const char\* kEmoteNames\[\]);$
+add: ^class GameObject;$
+add: ^struct Vec3;$

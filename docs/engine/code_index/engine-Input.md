@@ -2,7 +2,7 @@
 
 # Code index: engine-Input
 
-Back to the [code index](../code_index.md). 22 headers, 107 names.
+Back to the [code index](../code_index.md). 22 headers, 108 names.
 
 ## `engine/include/okay/Input/ActionEditor.hpp`
 
@@ -102,18 +102,19 @@ Back to the [code index](../code_index.md). 22 headers, 107 names.
 
 ## `engine/include/okay/Input/InputActions.hpp`
 
-- `InputBinding` struct, line 22: One input a game action listens to, written as text so it saves and shows
-- `InputActions` class, line 49: Named game actions ("Jump", "Move", "Fire") that games read instead of raw
+- `InputBinding` struct, line 24: One input a game action listens to, written as text so it saves and shows
+- `InputActions` class, line 62: Named game actions ("Jump", "Move", "Fire") that games read instead of raw
 
 ## `engine/include/okay/Input/InputAsset.hpp`
 
-- `SerializeInputAsset` function, line 21: The asset as text. Round-trips with ParseInputAsset.
-- `ParseInputAsset` function, line 23: Parse text into 'out' (replacing its schemes, maps and actions). On an error returns false, sets 'error' ("line N: ...") and leaves 'out' alone.
-- `LoadInputAsset` function, line 24
-- `SaveInputAsset` function, line 25
-- `DefaultInputAssetText` function, line 29: The default asset new projects start with (Gameplay: Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact, Reload, Inventory,
-- `DefaultInputAsset` function, line 30
-- `MigrateInputActions` function, line 34: Build an asset from the existing InputActions table (every action with its bindings, response and context), so a project that
+- `SerializeInputAsset` function, line 22: The asset as text. Round-trips with ParseInputAsset.
+- `ParseInputAsset` function, line 24: Parse text into 'out' (replacing its schemes, maps and actions). On an error returns false, sets 'error' ("line N: ...") and leaves 'out' alone.
+- `LoadInputAsset` function, line 25
+- `SaveInputAsset` function, line 26
+- `DefaultInputAssetText` function, line 30: The default asset new projects start with (Gameplay: Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact, Reload, Inventory,
+- `DefaultInputAsset` function, line 31
+- `MigrateInputActions` function, line 35: Build an asset from the existing InputActions table (every action with its bindings, response and context), so a project that
+- `BindingParts` function, line 39: One InputActions binding as ActionSet binding parts: a four-key direction ("keys:w,s,a,d") is its four keys
 
 ## `engine/include/okay/Input/InputBuffer.hpp`
 

@@ -111,9 +111,8 @@ echo "Model readers: own by default, Assimp + ufbx compiled in as the fallback (
 # programs are Windows .exe files and cannot run on this Linux host, so the program's own startup line (--binary) is not
 # asked here; the Linux server build in release.yml is checked that way.
 scripts/check_release_own_stack.sh --cache "$BUILD_DIR"
-# One job per core: a bare -j lets make start every editor file at once, and the
-# big ones (editor and player main.cpp) together run a CI runner out of memory.
-JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+# Jobs: one per core, capped by memory (scripts/ci_jobs.sh; MinGW -O2 needs about 6 GB for the biggest files).
+JOBS="$(bash scripts/ci_jobs.sh 6)"
 cmake --build "$BUILD_DIR" -j "$JOBS"
 
 # ---- Distribution layout ------------------------------------------------------
@@ -187,6 +186,7 @@ fi
 # and physicsdemo (C++ sources), editor-plugins, and the loose graphs in visual_script itself (not scenes).
 # One folder per line, sorted, so two branches that add a folder do not fight over one long line.
 EXAMPLE_DIRS="
+active_ragdoll
 behavior_trees
 boat
 camera
@@ -257,6 +257,7 @@ cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/sr
 [ -s "$OUT_DIR/examples/boat/boat_lake.okayscene" ] || { echo "error: examples/boat/boat_lake.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/water/lake.okayscene" ] || { echo "error: examples/water/lake.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/shaders/shader_demo.okayscene" ] || { echo "error: examples/shaders/shader_demo.okayscene did not make it into the distribution" >&2; exit 1; }
+[ -s "$OUT_DIR/examples/active_ragdoll/active_ragdoll.okayscene" ] || { echo "error: examples/active_ragdoll/active_ragdoll.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/ui_text/ui_text.okayscene" ] || { echo "error: examples/ui_text/ui_text.okayscene did not make it into the distribution" >&2; exit 1; }
 
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
@@ -294,6 +295,9 @@ examples/ example scenes to try: in the editor use File > Open and pick
                         and 2x; Lighting > UI Font > UI Quality switches the old look back on).
                         examples\wind\wind.okayscene (trees, grass, a flag and leaves in the
                         wind, a box the gusts push, and a wind sound).
+                        examples\active_ragdoll\active_ragdoll.okayscene (a character that
+                        keeps its balance: J L push, O off the ledge, F shoot, E blast,
+                        T trip, G get up; it gets up by itself).
                         examples\shaders\shader_demo.okayscene (custom .okayshader
                         surfaces: lava, dissolve, rim glow; edit a .okayshader
                         file and the object updates).

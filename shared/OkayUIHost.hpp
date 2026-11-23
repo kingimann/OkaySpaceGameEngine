@@ -39,6 +39,9 @@ public:
             if (have + add < sizeof(m_text)) std::memcpy(m_text + have, e.text.text, add + 1);   // a full buffer drops the rest
             break;
         }
+        case SDL_TEXTEDITING:       // the input method's preedit (a state until it is cleared); the finished text comes as SDL_TEXTINPUT
+            SetComposition(e.edit.text, e.edit.start);
+            break;
         case SDL_MOUSEBUTTONDOWN:   // a press and release that both arrive before one frame must still show as one pressed frame
             if (e.button.button == SDL_BUTTON_LEFT) ++m_leftTaps;
             else if (e.button.button == SDL_BUTTON_RIGHT) ++m_rightTaps;
@@ -101,6 +104,9 @@ public:
             if (have + add < sizeof(m_text)) { std::memcpy(m_text + have, e.text.data(), add); m_text[have + add] = 0; }   // a full buffer drops the rest
             break;
         }
+        case EventType::TextEditing:   // the input method's preedit, as SDL_TEXTEDITING above (x = caret in code points)
+            SetComposition(e.text.c_str(), e.x);
+            break;
         case EventType::MouseButtonDown:
             if (e.button == okay::platform::MouseLeft) ++m_leftTaps;
             else if (e.button == okay::platform::MouseRight) ++m_rightTaps;
@@ -163,6 +169,7 @@ public:
             in.shift = m_shift; in.ctrl = m_ctrl;
             in.up = m_up; in.down = m_down; in.copy = m_copy; in.cut = m_cut; in.paste = m_paste;
             for (int k = 0; k < OkayUI::KeyId_COUNT; ++k) in.keyDown[k] = m_keyHeld[k] || m_keyTap[k];
+            if (m_composing) { std::memcpy(m_compOut, m_comp, sizeof(m_compOut)); in.composition = m_compOut; in.compositionCaret = m_compCaret; }
         }
         for (int k = 0; k < OkayUI::KeyId_COUNT; ++k) m_keyTap[k] = false;
         m_up = m_down = m_copy = m_cut = m_paste = false;
@@ -219,7 +226,21 @@ public:
         }
     }
 
+    /// True while the input method has a preedit (between a non-empty and an empty TextEditing).
+    bool Composing() const { return m_composing; }
+
 private:
+    /// Keep the preedit (UTF-8, cut at a whole character to fit) and its caret, given in code points, as a byte offset.
+    void SetComposition(const char* text, int caretCodePoints) {
+        std::size_t n = text ? std::strlen(text) : 0;
+        if (n >= sizeof(m_comp)) { n = sizeof(m_comp) - 1; while (n > 0 && ((unsigned char)text[n] & 0xC0) == 0x80) --n; }
+        if (n) std::memcpy(m_comp, text, n);
+        m_comp[n] = 0;
+        m_composing = n > 0;
+        int bytes = 0, cps = 0;
+        while (bytes < (int)n && cps < caretCodePoints) { ++bytes; while (bytes < (int)n && ((unsigned char)m_comp[bytes] & 0xC0) == 0x80) ++bytes; ++cps; }
+        m_compCaret = caretCodePoints < 0 ? -1 : bytes;
+    }
     /// The character a key types on a US layout (the fallback when the caller gives none).
     static char UsCharOf(okay::platform::Key k) {
         const int v = (int)k;
@@ -232,6 +253,9 @@ private:
     bool  m_keyHeld[OkayUI::KeyId_COUNT] = {}, m_keyTap[OkayUI::KeyId_COUNT] = {};
     char  m_text[64] = {0};
     char  m_out[64] = {0};
+    char  m_comp[256] = {0}, m_compOut[256] = {0};   // the preedit (Input::composition holds at most 256 bytes)
+    int   m_compCaret = -1;
+    bool  m_composing = false;
     float m_wheel = 0.0f;
     // Presses of a button not yet shown to OkayUI (each one must reach it as an up-then-down edge, even when two arrive between two
     // frames: a fast double click at a low frame rate), and whether the last frame showed the button down.

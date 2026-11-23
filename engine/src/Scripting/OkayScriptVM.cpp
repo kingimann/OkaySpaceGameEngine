@@ -6,6 +6,7 @@
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/Ragdoll.hpp"
+#include "okay/Components/ActiveRagdoll.hpp"
 #include "okay/Components/TweenAnimation.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -4214,8 +4215,8 @@ struct OkayScriptVM::Impl {
         b["ia_scheme"] = [iaPlayer](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 0)); return Value{s ? s->Scheme() : std::string()}; };
         b["ia_set_scheme"] = [iaName, iaPlayer](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 1)); return Value{s && s->SetScheme(iaName(a))}; };
         b["ia_rebind"] = [iaPlayer](std::vector<Value>& a) {
-            ActionSet* s = InputRuntime::Set(iaPlayer(a, 4));
-            return Value{s && a.size() > 3 && s->Rebind(a[0].AsString(), SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()), a[3].AsString())};
+            InputRuntime::Set(iaPlayer(a, 4));   // as before: the first read joins a player even when the call is short of arguments
+            return Value{a.size() > 3 && InputRuntime::Rebind(iaPlayer(a, 4), a[0].AsString(), SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()), a[3].AsString())};
         };
         b["ia_conflicts"] = [iaPlayer](std::vector<Value>& a) {
             ActionSet* s = InputRuntime::Set(iaPlayer(a, 4));
@@ -4223,8 +4224,8 @@ struct OkayScriptVM::Impl {
             if (s && a.size() > 3) for (const std::string& c : s->Conflicts(a[0].AsString(), SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()), a[3].AsString())) { if (!out.empty()) out += ", "; out += c; }
             return Value{out};
         };
-        b["ia_reset_bindings"] = [iaPlayer](std::vector<Value>& a) { if (ActionSet* s = InputRuntime::Set(iaPlayer(a, 0))) s->ResetOverrides(); return Value{}; };
-        b["ia_save"] = [iaPlayer](std::vector<Value>& a) { InputRuntime::Set(iaPlayer(a, 0)); InputRuntime::Players().SaveOverrides(iaPlayer(a, 0)); return Value{}; };
+        b["ia_reset_bindings"] = [iaPlayer](std::vector<Value>& a) { InputRuntime::ResetBinding(iaPlayer(a, 0)); return Value{}; };
+        b["ia_save"] = [iaPlayer](std::vector<Value>& a) { InputRuntime::SaveOverrides(iaPlayer(a, 0)); return Value{}; };
         b["ia_label"] = [iaName, iaPlayer](std::vector<Value>& a) {   // the first active binding of the action as the player reads it ("Cross", "Space", "W A S D")
             ActionSet* s = InputRuntime::Set(iaPlayer(a, 1));
             const ActionDef* d = s ? s->Find(iaName(a)) : nullptr;
@@ -7271,6 +7272,40 @@ struct OkayScriptVM::Impl {
         b["is_ragdoll"] = [selfObj](std::vector<Value>&) {
             auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
             return Value{rd && rd->IsActive() ? 1.0f : 0.0f};
+        };
+        // ActiveRagdoll (our own dynamic character): active_ragdoll("knockdown" | "getup" | "die" | "revive" |
+        // "limp" | "powered" | "reactive" | "stumble"), active_ragdoll_push(ix, iy, iz[, px, py, pz]) in N s,
+        // active_ragdoll_shoot(ox, oy, oz, dx, dy, dz[, power]) -> 1 on a hit, active_ragdoll_explode(cx, cy, cz,
+        // force, radius), active_ragdoll_state() -> "Animated", "Balancing", "Falling", "Down", "GettingUp", ...
+        b["active_ragdoll"] = [selfObj](std::vector<Value>& a) {
+            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            if (!ar || a.empty()) return Value{0.0f};
+            return Value{ar->Trigger(a[0].AsString()) ? 1.0f : 0.0f};
+        };
+        b["active_ragdoll_push"] = [selfObj](std::vector<Value>& a) {
+            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            if (!ar || !ar->Ready() || a.size() < 3) return Value{0.0f};
+            const Vec3 j{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            if (a.size() >= 6) ar->PushAt(Vec3{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()}, j);
+            else ar->Push(j);
+            return Value{1.0f};
+        };
+        b["active_ragdoll_shoot"] = [selfObj](std::vector<Value>& a) {
+            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            if (!ar || a.size() < 6) return Value{0.0f};
+            const float power = a.size() >= 7 ? a[6].AsFloat() : 25.0f;
+            return Value{ar->Shoot(Vec3{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()},
+                                   Vec3{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()}, power) ? 1.0f : 0.0f};
+        };
+        b["active_ragdoll_explode"] = [selfObj](std::vector<Value>& a) {
+            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            if (!ar || a.size() < 5) return Value{0.0f};
+            ar->Explode(Vec3{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()}, a[3].AsFloat(), a[4].AsFloat());
+            return Value{1.0f};
+        };
+        b["active_ragdoll_state"] = [selfObj](std::vector<Value>&) {
+            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            return Value{std::string(ar && ar->Ready() ? ar->StateName() : "")};
         };
         b["dive"] = [selfObj](std::vector<Value>&) {
             HumanoidActions::RequestDive(selfObj());

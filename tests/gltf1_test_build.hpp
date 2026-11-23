@@ -30,6 +30,7 @@ inline std::string QuadBuffer() {
 }
 
 inline std::string Base64(const std::string& in) {
+    // dup-allow: test-only encoder for building data URIs; main has no shared Base64 encoder yet. Switch to okay::base64::Encode when Core/Base64.hpp (claude2/dedup-small) lands.
     static const char* abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string out;
     std::size_t i = 0;

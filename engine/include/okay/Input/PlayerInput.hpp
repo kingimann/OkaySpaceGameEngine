@@ -30,6 +30,8 @@ public:
     const ActionSet* Player(int player) const { return Active(player) ? &m_players[(size_t)player]->set : nullptr; }
     JoinDevice DeviceOf(int player) const { return Active(player) ? m_players[(size_t)player]->device : JoinDevice::Keyboard; }
     int PadOf(int player) const { return Active(player) ? m_players[(size_t)player]->pad : -1; }
+    /// A number that changes each time a player joins in this slot (0 = no player), so a new join can be told apart.
+    unsigned Serial(int player) const { return Active(player) ? m_players[(size_t)player]->serial : 0u; }
     bool KeyboardPaired() const;
     bool PadPaired(int pad) const;
     /// Update every player's actions (after Input was fed).
@@ -38,8 +40,9 @@ public:
     void SaveOverrides(int player) const;
     void LoadOverrides(int player);
 private:
-    struct Slot { ActionSet set; JoinDevice device = JoinDevice::Keyboard; int pad = -1; };
+    struct Slot { ActionSet set; JoinDevice device = JoinDevice::Keyboard; int pad = -1; unsigned serial = 0; };
     ActionSet m_asset;
+    unsigned m_joins = 0;
     std::vector<std::unique_ptr<Slot>> m_players;
 };
 

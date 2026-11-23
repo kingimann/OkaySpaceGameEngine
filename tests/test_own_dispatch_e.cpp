@@ -7,6 +7,7 @@
 // under another's extension is refused by the reader of that extension, and the extension is matched in any letter case.
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
+#include "own_seam_checks.hpp"
 #include "batche_fixtures.hpp"
 #include "batchc_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"
@@ -99,9 +100,7 @@ int main() {
         CHECK(a.parts.size() == b.parts.size() && Verts(a) == Verts(b) && a.nodes.size() == b.nodes.size() && a.materials.size() == b.materials.size() && a.clips.size() == b.clips.size());
         CHECK(fx::TriCount(a) == c.tris && fx::TriCount(b) == c.tris && a.nodes.size() == c.nodes && a.clips.size() == c.clips);
         // flatten: one root node, no clips; the geometry is the same (the root's Z-up turn is baked in)
-        ImportedModel f;
-        CHECK(ImportModelData(path, f, ImportBackend::Own, true, &err) && f.nodes.size() == 1 && f.clips.empty() && fx::TriCount(f) == c.tris);
-        for (const ImportedPart& p : f.parts) CHECK(p.bones.empty() && p.node == 0);
+        seam::CheckFlattened(path, c.tris);
         // the extension list follows the switch
         CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") != std::string::npos);
         // the format-specific variable decides when nothing was chosen at run time, and each variable only its own format

@@ -5,8 +5,7 @@
 // Same pattern as the coordinator's tests/test_own_ter_default.cpp.
 #include "test_framework.hpp"
 #include "gltf1_test_build.hpp"
-#include "okay/Render/ModelData.hpp"
-#include "okay/Render/ModelImport.hpp"
+#include "own_seam_checks.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -18,24 +17,15 @@ namespace fs = std::filesystem;
 
 int main() {
     RUN_SUITE("own_gltf1_default");
-#ifdef _WIN32
-    _putenv_s("OKAY_OWN_GLTF1", "");
-#else
-    unsetenv("OKAY_OWN_GLTF1");
-#endif
+    seam::UnsetEnv("OKAY_OWN_GLTF1");
     const fs::path dir = fs::temp_directory_path() / "okay_own_gltf1_default";
     fs::create_directories(dir);
     const fs::path f = dir / "quad.gltf";
-    { std::ofstream o(f, std::ios::binary); const std::string b = gltf1build::QuadJson(); o.write(b.data(), (std::streamsize)b.size()); }
-    ImportedModel m; std::string err;
-    const bool ok = ImportModelData(f.string(), m, ImportBackend::Default, false, &err);
+    seam::Write(f, gltf1build::QuadJson());
 #ifdef OKAY_EXPECT_OWN_GLTF1
-    if (!ok) std::fprintf(stderr, "  %s\n", err.c_str());
-    CHECK(ok);
-    CHECK(m.backend == "own");
-    CHECK(!m.parts.empty());
+    seam::CheckDefaultBackend(f.string(), true);
 #else
-    CHECK(!ok || m.backend != "own");   // default OFF: not read by our reader unless asked
+    seam::CheckDefaultBackend(f.string(), false);
 #endif
     std::error_code ec; fs::remove_all(dir, ec);
     TEST_MAIN_RESULT();

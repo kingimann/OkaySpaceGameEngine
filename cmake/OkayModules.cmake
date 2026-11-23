@@ -14,7 +14,7 @@
 #   okay_modules_read()             declare every module from engine/modules/*/module.okaymodule (checks names and requires)
 #   okay_modules_group(<target>)    (call in the folder that made <target>, after its last target_sources) put each source of <target> in the first module whose sources= matches it, else core;
 #                                   writes <build>/okay_modules.tsv ("module<TAB>file") and the source property OKAY_MODULE
-#   okay_modules_label_tests()      in a tests folder: label every test module:<name> (module:core when no module claims it)
+#   okay_modules_label_tests()      in a tests folder (deferred to its end): label every test module:<name> (module:core when none claims it)
 #
 # Written for this repository from the design document; no outside code.
 

@@ -98,6 +98,9 @@ add_library(okay_engine
     src/Render/SoftwareRendererPost.cpp
     src/Render/SoftwareRendererMeshes.cpp
     src/Render/GLRenderer.cpp
+    src/Render/GLRendererShaders.cpp
+    src/Render/GLRendererPasses.cpp
+    src/Render/GLRendererResources.cpp
     src/Render/OkayShader.cpp
     src/Render/D3D11Renderer.cpp
     src/Render/D3D12Renderer.cpp

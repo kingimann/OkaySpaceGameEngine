@@ -1,0 +1,15 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=rpg_stats
+title=RPG stats
+area=Gameplay
+description=Levels, mana and defense.
+default=on
+core=0
+requires=health_damage
+provides=
+components=Flashlight,Stats
+serializers=flashlight,stats
+vs_group=
+editor=
+sources=include/okay/Components/Stats.hpp include/okay/Components/Flashlight.hpp
+tests=rpg

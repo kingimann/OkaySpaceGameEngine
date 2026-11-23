@@ -959,6 +959,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "InputDebugger.hpp"       // View > Panels > Input: live keys, axes, actions, events, curves
 #include "InputActionsWindow.hpp" // View > Editors & Tools > Input Actions: author a .okayinput asset, live view
 #include "TemplateTable.hpp"        // template title -> scene builder (New Project)
+#include "ModulesPanelUI.hpp"      // Project Settings > Modules: which engine modules the project uses
 #include "AutoPerf.hpp"           // Auto for anti-aliasing and VSync (best value for this PC; tested)
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
@@ -15788,6 +15789,21 @@ void DrawFileDialogs(EditorState& ed) {
                     }
                     ImGui::EndTabItem();
                 }
+                if (!RP.modules.empty() && ImGui::BeginTabItem("Modules")) {   // the engine modules in the player (docs/engine/modular_engine.md)
+                    ImGui::TextDisabled("Every module ships in this version; leaving modules out comes later.");
+                    if (ImGui::BeginTable("bymodule", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(460, 200))) {
+                        ImGui::TableSetupColumn("Module", ImGuiTableColumnFlags_WidthStretch, 3.0f); ImGui::TableSetupColumn("In project"); ImGui::TableSetupColumn("Size");
+                        ImGui::TableHeadersRow();
+                        for (const auto& m : RP.modules) {
+                            ImGui::TableNextRow();
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(m.title.c_str());
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(m.projectOn ? "on" : "off (still shipped)");
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(RP.moduleSizesKnown ? bp::HumanBytes(m.bytes).c_str() : "-");
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndTabItem();
+                }
                 if (ImGui::BeginTabItem("Files")) {
                     if (ImGui::BeginTable("breakdown", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(460, 200))) {
                         ImGui::TableSetupColumn("File", ImGuiTableColumnFlags_WidthStretch, 3.0f);
@@ -16058,8 +16074,13 @@ struct NewProjectForm {
     std::string lastKey;
     okayproj::Plan plan;
     Uint32 planAt = 0;
+    std::string modules;          // engine modules the new project uses ("" = every module; editor/ModulesPanelUI.hpp)
+    bool modulesTouched = false;  // the person changed them: a template change no longer does
+    int modulesTpl = -1;          // the template they were last matched to
+    std::string modulesNote;
 };
 static NewProjectForm g_npForm;
+static std::string g_newProjectModules;   // the form's modules, for the project files written on the next frame
 
 static const okayproj::Plan& NewProjectPlan(NewProjectForm& f, bool force = false) {
     const std::string key = std::string(f.name) + "\n" + f.loc;
@@ -16152,7 +16173,7 @@ static bool DrawNewProjectForm(NewProjectForm& f) {
     ImGui::TextDisabled("TEMPLATE");
     // The list takes what is left of the window (the dialog never taller than the editor window, or it would
     // spill into an OS window of its own), at most 178 px and at least 72; the Create row below needs ~64.
-    const float listH = std::min(178.0f, std::max(72.0f, ImGui::GetMainViewport()->Size.y - 24.0f - ImGui::GetCursorPosY() - 64.0f));
+    const float listH = std::min(178.0f, std::max(72.0f, ImGui::GetMainViewport()->Size.y - 24.0f - ImGui::GetCursorPosY() - 64.0f - 26.0f));   // 26: the Modules line
     ImGui::BeginChild("##nptpl", ImVec2(0, listH), ImGuiChildFlags_Borders);
     {
         const auto& all = okayproj::Templates();
@@ -16173,6 +16194,7 @@ static bool DrawNewProjectForm(NewProjectForm& f) {
         }
     }
     ImGui::EndChild();
+    okaymod::DrawNewProjectModules(f.modules, f.modulesTouched, f.modulesTpl, f.tpl, okayproj::Templates()[(std::size_t)f.tpl].title, f.modulesNote);
 
     ImGui::Dummy(ImVec2(0, 6));
     const bool can = plan.ok();
@@ -16208,6 +16230,7 @@ static void DrawNewProjectDialog(EditorState& ed) {
     if (create) {
         const std::string root = g_npForm.plan.root.string();
         const std::string tpl = okayproj::Templates()[(std::size_t)g_npForm.tpl].title;
+        g_newProjectModules = g_npForm.modules;
         ImGui::CloseCurrentPopup();
         RunAfterSavePrompt(ed, "creating the new project", [root, tpl] { g_newProjectRoot = root; g_newProjectTemplate = tpl; });
     }
@@ -16280,6 +16303,7 @@ void DrawProjectGate(EditorState& ed) {
     if (DrawNewProjectForm(g_npForm)) {
         g_newProjectRoot = g_npForm.plan.root.string();
         g_newProjectTemplate = okayproj::Templates()[(std::size_t)g_npForm.tpl].title;
+        g_newProjectModules = g_npForm.modules;
     }
     ImGui::SameLine();
     if (ImGui::Button("Quit", ImVec2(100, 32))) g_quitRequested = true;
@@ -16335,10 +16359,13 @@ void DrawNewProjectPopup(EditorState& ed) {
     const std::string folder = plan.folder;
     const std::string version = g_newProjectVersion;
     const int gpu = g_newProjectGpu;
+    const std::string modules = g_newProjectModules;   // "" (every module) when the launcher made the project
     g_newProjectVersion.clear();
     g_newProjectGpu = -1;
-    auto writeFiles = [&folder, version, gpu](const std::string& rt, std::string& err) {
+    g_newProjectModules.clear();
+    auto writeFiles = [&folder, version, gpu, modules](const std::string& rt, std::string& err) {
         ProjectSettings settings;
+        settings.modules = modules;
         if (!version.empty() && okayproj::CheckProjectVersion(version).empty())
             std::snprintf(settings.version, sizeof(settings.version), "%s", version.c_str());
         if (!okayproj::WriteTextAtomic(ProjectSettingsFile(rt), StampedNewProjectText(WriteProjectSettings(settings, "")), &err)) return false;   // stamped with this version from the first moment
@@ -16644,6 +16671,10 @@ void DrawProjectSettings(EditorState& ed) {
             }
         }
         if (ImGui::CollapsingHeader("Tags and Layers")) DrawTagsAndLayersSettings(ed);
+        if (ImGui::CollapsingHeader("Modules")) {   // engine modules this project uses (editor/ModulesPanelUI.hpp)
+            static std::string modulesNote;
+            if (okaymod::DrawModulesSettings(g_project.modules, ed.scene(), modulesNote)) SaveProjectSettings();
+        }
         if (ImGui::CollapsingHeader("Loading screen")) {
             ImGui::TextDisabled("Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.");
             const auto pngFilt = okay::filedialog::Filters("PNG image", {"*.png"});

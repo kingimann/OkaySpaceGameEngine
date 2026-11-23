@@ -1,0 +1,15 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=character_controllers
+title=Character controllers
+area=Gameplay
+description=First/third person, top-down, platformer, free roam, click to move.
+default=on
+core=0
+requires=core,physics3d
+provides=IController
+components=CharacterController3D,ClickToMoveController,FirstPersonController,FirstPersonHand,FirstPersonHands,FreeRoamController,Platformer25DController,PlayerController,PlayerView,ThirdPersonController,ThirdPersonShooterController,TopDownController,TopDownShooterController,TouchButton,TouchDPad,VirtualJoystick
+serializers=playercontroller,playerview
+vs_group=
+editor=FpHands window
+sources=include/okay/Components/CharacterController3D.hpp include/okay/Components/FirstPersonController.hpp include/okay/Components/FirstPersonHand.hpp include/okay/Components/FirstPersonHands.hpp include/okay/Components/FpHandsPreview.hpp include/okay/Components/ThirdPersonController.hpp include/okay/Components/ThirdPersonShooterController.hpp include/okay/Components/TopDownController.hpp include/okay/Components/TopDownShooterController.hpp include/okay/Components/Platformer25DController.hpp include/okay/Components/FreeRoamController.hpp include/okay/Components/ClickToMoveController.hpp include/okay/Components/Stance.hpp include/okay/Components/StanceControl.hpp include/okay/Components/Traversal.hpp include/okay/Components/StepUp.hpp include/okay/Components/MoveSpeed.hpp include/okay/Components/ControllerFeel.hpp include/okay/Components/ControllerPresets.hpp include/okay/Components/PlayerController.hpp include/okay/Components/PlayerView.hpp include/okay/Components/PlayerDebug.hpp include/okay/Components/PlayerPerf.hpp include/okay/Components/DiveAction.hpp include/okay/Components/DodgeAction.hpp include/okay/Components/AimAssist.hpp include/okay/Components/TouchControls.hpp src/Components/PlayerController.cpp src/Components/PlayerView.cpp
+tests=charctrl character_* clicktomove controller_* controllers_ik player_controller player_feel* player_course run_feel stance* jump one_controller view_ground shooter25d fp_*

@@ -1,0 +1,15 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=survival
+title=Survival
+area=Gameplay
+description=Hunger, thirst, oxygen, warmth, afflictions, zones.
+default=on
+core=0
+requires=health_damage
+provides=
+components=StatusEffectStat,SurvivalSave,SurvivalStats,SurvivalZone
+serializers=survivalsave,survivalzone
+vs_group=
+editor=
+sources=include/okay/Components/SurvivalStats.hpp include/okay/Components/SurvivalAfflictions.hpp include/okay/Components/SurvivalSystems.hpp include/okay/Components/SurvivalZone.hpp
+tests=survival

@@ -354,6 +354,42 @@ void TestSettingsText() {
     CHECK(odd.size() == 1 && odd[0].settings.layout == 2 && odd[0].settings.buildNumber == 1);
 }
 
+// The Modules section of the report: every module of the build, sizes from module_sizes.txt when it is there.
+void TestReportModules(const fs::path& tmp) {
+    RUN_SUITE("build report: modules in the player");
+    bp::Report r;
+    r.AddFile("game/Game.exe", 100);
+    r.Finish();
+    r.AddModules((tmp / "no_such_sizes.txt").string());
+    CHECK(r.modules.size() >= 30);                       // every manifest of the build
+    CHECK(!r.moduleSizesKnown);
+    for (const auto& m : r.modules) CHECK(m.shipped && m.bytes == 0);
+    CHECK(r.ToText().find("Modules in the player: ") != std::string::npos);
+    CHECK(r.ToText().find("sizes unknown") != std::string::npos);
+    {
+        std::ofstream f(tmp / "module_sizes.txt", std::ios::binary);
+        f << "physics3d\t5000\nprogram\t900\nhealth_damage\t70\nbad line\n";
+    }
+    r.AddModules((tmp / "module_sizes.txt").string());
+    CHECK(r.moduleSizesKnown);
+    CHECK(!r.modules.empty() && r.modules[0].name == "physics3d" && r.modules[0].bytes == 5000);   // largest first
+    bool hd = false;
+    for (const auto& m : r.modules) if (m.name == "health_damage") hd = m.bytes == 70 && !m.title.empty();
+    CHECK(hd);
+    const std::string text = r.ToText();
+    CHECK(text.find("3D physics (physics3d)") != std::string::npos);
+    CHECK(text.find("program") == std::string::npos);    // only modules are listed
+    // a project that turned modules off: they are marked, and still ship in this version
+    r.AddModules((tmp / "module_sizes.txt").string(), "physics2d");
+    bool p2 = false, p3 = false;
+    for (const auto& m : r.modules) {
+        if (m.name == "physics2d") p2 = m.projectOn && m.shipped;
+        if (m.name == "physics3d") p3 = !m.projectOn && m.shipped;
+    }
+    CHECK(p2 && p3);
+    CHECK(r.ToText().find("off in Project Settings, still in the player") != std::string::npos);
+}
+
 } // namespace
 
 int main() {
@@ -367,6 +403,7 @@ int main() {
     TestKinds();
     TestManifest();
     TestReport();
+    TestReportModules(tmp);
     TestZip(tmp);
     TestSettingsText();
     fs::remove_all(tmp, ec);

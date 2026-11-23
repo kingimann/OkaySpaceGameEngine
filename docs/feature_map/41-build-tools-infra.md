@@ -260,3 +260,25 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Words:** collaboration, claim, lane, duplicate, collision, branch lint, regen docs, generated docs, restore generated, find existing, brief, how to try it check, copy paste, clone detection, dup lint, shared code
 - **Seen as:** `WORK_BOARD.md` on the `work-board` branch, a red "Branch lint" check on a pushed branch, a red "PR hygiene" check on a PR
 - **Ask me like:** "how do the three Claudes avoid doing the same work?"
+
+### 41.13 Engine modules (stage 0: groups, test labels, module list, dependency check)
+- **System:** Build System
+- **What:** The engine split into 40 named modules on paper: each has a manifest saying what it requires and which engine files and tests are its own. The build groups the engine's files by module and labels every test with its module, without changing what is built. First step of the modular engine plan (`docs/design/modular_gameplay_contracts.md`, section 9, PR 1).
+- **Parts:**
+  - 41.13.1 Manifests - `engine/modules/<name>/module.okaymodule` - name, requires, sources (file patterns), tests (test name patterns), planned (files other branches are adding)
+  - 41.13.2 Build groups - `cmake/OkayModules.cmake` - `okay_modules_read`, `okay_add_module`, `okay_modules_group(okay_engine)` (writes `okay_modules.tsv`), configure fails on an unknown requirement or a cycle
+  - 41.13.3 Test labels - `okay_modules_label_tests` - every test gets `module:<name>` (or `module:core`); `ctest -L module:physics3d`
+  - 41.13.4 Module list at run time - `Modules/ModuleManifest`, `Modules/ModuleRegistry` - the manifests embedded by `okay_modules_generate` (`modules_enabled.cpp`), `ModuleRegistry::Get()`, `Validate`, `DependencyOrder`, register hooks (`ModuleContext`); the player logs `[okay] modules: 40 modules, 40 on`
+  - 41.13.5 Dependency check - `scripts/check_modules.py` - forbidden includes between modules, manifest problems, the umbrella header; about 800 known includes in `scripts/module_deps_baseline.txt` (shrink only); report mode in CI
+  - 41.13.6 Size per module - `scripts/module_sizes.py` - bytes of the player per module from the linker map (`maps/okay-player.map`), written to `module_sizes.txt` beside the player after every link; Build Game's report has a Modules tab (`buildpipe::Report::AddModules`)
+  - 41.13.7 Project Settings > Modules - `editor/ModulesModel.hpp`, `editor/ModulesPanelUI.hpp` - presets and a tick per module, requirements added and kept, what the open scene uses; saved as `modules=` in project.okayproj; the Build report marks modules that are off and warns when the scene uses one (every module still ships)
+  - 41.13.8 New Project modules - `editor/ModulesPanelUI.hpp` `DrawNewProjectModules`, `PresetForTemplate` - a folded Modules line in the New Project form; a few templates start with a smaller preset, the rest with every module
+- **Code:** `cmake/OkayModules.cmake`, `engine/modules/*/module.okaymodule`, `engine/include/okay/Modules/ModuleManifest.hpp`, `engine/include/okay/Modules/ModuleRegistry.hpp`, `scripts/check_modules.py`
+- **Docs:** `docs/engine/modular_engine.md`, `docs/design/modular_gameplay_contracts.md`, `docs/design/modular_status.md`
+- **Tests:** configure itself (a bad manifest fails it); `modules` (parser, registry, the generated list); `check_modules_script` (`tests/scripts/test_check_modules.py`, the check on a made-up tree); `module_sizes_script` (`tests/scripts/test_module_sizes.py`, a made-up linker map); `build_pipeline` (the report's Modules section); `modules_model` (the settings page's model and the project file line)
+- **Status:** Partial - grouping and labels only; nothing is stripped yet
+- **Open:** the registries that let a module register its own records, functions and nodes (stage 1), per-module libraries and stripping (stage 2); the check becomes blocking in PR 14
+- **Related:** 41.1
+- **Words:** module, modular engine, manifest, okaymodule, module group, ctest label, strip
+- **Seen as:** `-- OkaySpace: 40 engine modules; ... files of okay_engine in modules` while configuring; `[okay] modules: 40 modules, 40 on` in the player log; a Modules tab in Build Game's report; Edit > Project Settings > Modules; the Modules line in File > New Project; a "Modules" warning on a pushed branch
+- **Ask me like:** "which tests belong to the physics module?"

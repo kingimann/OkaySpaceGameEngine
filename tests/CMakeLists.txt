@@ -1,3 +1,29 @@
+# Every test in this folder gets the ctest label module:<name> from the tests= patterns of engine/modules/*/module.okaymodule
+# (module:core when no module claims it): run one module's tests with  ctest -L module:physics3d . Deferred to the end of
+# this file, so tests added anywhere below are labelled (cmake/OkayModules.cmake). Needs CMake 3.19; older ones skip it.
+if(COMMAND okay_modules_label_tests AND NOT CMAKE_VERSION VERSION_LESS 3.19)
+    cmake_language(DEFER CALL okay_modules_label_tests)
+endif()
+
+# Engine modules (docs/engine/modular_engine.md): the manifest parser, the module registry and the list the build generated.
+add_executable(test_modules test_modules.cpp)
+target_link_libraries(test_modules PRIVATE okay::engine)
+add_test(NAME modules COMMAND test_modules)
+# Project Settings > Modules: the model behind the page (editor/ModulesModel.hpp) and the project file line, no drawing.
+add_executable(test_modules_model test_modules_model.cpp)
+target_link_libraries(test_modules_model PRIVATE okay::engine)
+target_include_directories(test_modules_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+add_test(NAME modules_model COMMAND test_modules_model)
+# scripts/check_modules.py (the module dependency check) on a made-up tree.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME check_modules_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_check_modules.py
+             ${PROJECT_SOURCE_DIR}/scripts/check_modules.py)
+    # scripts/module_sizes.py (bytes of each module in a linked program) on a made-up linker map.
+    add_test(NAME module_sizes_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_module_sizes.py
+             ${PROJECT_SOURCE_DIR}/scripts/module_sizes.py)
+endif()
+
 # Our own model readers are the default since 2026-11-17 (owner approval). Tests that check "what a build does with nothing set"
 # get OKAY_EXPECT_OWN_READERS when every model reader option is ON (the default; NDO is a seam and stays OFF, so it is not listed).
 set(_okay_all_readers_on TRUE)

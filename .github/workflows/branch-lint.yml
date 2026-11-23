@@ -104,6 +104,13 @@ jobs:
             echo "::warning title=UI catalogue::docs/ui_catalogue.md is out of date. Run: python3 scripts/gen_ui_catalogue.py"
           fi
 
+      - name: "Module dependency check (report)"
+        if: always()
+        run: |
+          if ! python3 scripts/check_modules.py; then
+            echo "::warning title=Modules::a new forbidden include or a manifest problem (scripts/check_modules.py, docs/engine/modular_engine.md). Report only in stage 0; blocking later."
+          fi
+
       - name: "Bug-class patterns (warning)"
         if: always()
         run: python3 scripts/bug_patterns.py --base "$BASE" --head HEAD --github | tee bug_patterns.txt

@@ -12,14 +12,14 @@ def define(add, N, B, T, O, R):
         [R("Object"), N("Angle", "45.0f"), O()], [B("Result")],
         "out = VsValue(o && o2 && GlAngleTo(o2, o) <= n0);",
         reg="CAT_LOGIC", defaults=["Goal", "45", None],
-        setup=goal + " goal->transform->SetPosition(me->transform->Forward() * 5.0f);", expect=True, etype="b", demo="ai")
+        setup=goal + " goal->transform->SetPosition(vs::VsFacing(me->transform) * 5.0f);", expect=True, etype="b", demo="ai")
     add("GlGetAngleToObject", "Get Angle to Object", *Q, "Intermediate", "How far, in degrees, this object would have to turn to look straight at Object. 0 is dead ahead, 180 is behind.",
         [R("Object"), O()], [N("Degrees")],
         "out = VsValue(o && o2 ? GlAngleTo(o2, o) : 0.0f);",
         defaults=["Goal", None], setup=goal + " goal->transform->SetPosition(me->transform->Right() * 4.0f);", expect=90.0)
     add("GlIsObjectBehind", "Is Object Behind", *Q, "Intermediate", "True when Object is behind this object, more than 90 degrees from where it looks.",
         [R("Object"), O()], [B("Result")], "out = VsValue(o && o2 && GlAngleTo(o2, o) > 90.0f);",
-        reg="CAT_LOGIC", defaults=["Goal", None], setup=goal + " goal->transform->SetPosition(me->transform->Forward() * -3.0f);", expect=True, etype="b")
+        reg="CAT_LOGIC", defaults=["Goal", None], setup=goal + " goal->transform->SetPosition(vs::VsFacing(me->transform) * -3.0f);", expect=True, etype="b")
     add("GlIsObjectHigher", "Is Object Higher", *Q, "Intermediate", "True when Object is above this object by more than Margin.",
         [R("Object"), N("Margin", "0.1f"), O()], [B("Result")],
         "out = VsValue(o && o2 && o->transform && o2->transform && o->transform->Position().y > o2->transform->Position().y + n0);",

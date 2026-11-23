@@ -15,8 +15,8 @@ def define(add, N, B, T, O, R):
         check="CHECK_NEAR(me->transform->Position().x, 2.0f, 0.01f);", demo="movement")
     add("GlLookAtPosition", "Look at Position", "Movement", "Turn", "Basic", "Turns this object to face a point in the world.",
         [N("Right"), N("Up"), N("Forward"), O()], [],
-        "if (o && o->transform) o->transform->LookAt(Vec3(n0, n1, n2));",
-        reg="CAT_XFORM", exec_=True, defaults=["10", "0", "0", None], check="CHECK(me->transform->Forward().x > 0.95f);")
+        "if (o && o->transform) VsFaceToward(*o->transform, Vec3(n0, n1, n2));",
+        reg="CAT_XFORM", exec_=True, defaults=["10", "0", "0", None], check="CHECK(vs::VsFacing(me->transform).x > 0.95f);")
     add("GlGetDistanceToPosition", "Get Distance to Position", *M, "Basic", "How far this object is from a point in the world.",
         [N("Right"), N("Up"), N("Forward"), O()], [N("Distance")],
         "out = VsValue((o && o->transform) ? (o->transform->Position() - Vec3(n0, n1, n2)).Magnitude() : 0.0f);",
@@ -74,20 +74,20 @@ def define(add, N, B, T, O, R):
         setup=goal + " goal->transform->SetPosition(Vec3(0, 0, 10));",
         check="CHECK_NEAR(me->transform->Position().z, 4.0f, 0.05f);")
     add("GlFaceObject", "Face Object", "Movement", "Turn", "Basic", "Turns this object flat to look at another object.",
-        [R("Object"), O()], [], "if (o && o2 && o->transform && o2->transform) o2->transform->LookAtYaw(o->transform->Position());",
+        [R("Object"), O()], [], "if (o && o2 && o->transform && o2->transform) VsFaceTowardFlat(*o2->transform, o->transform->Position());",
         reg="CAT_XFORM", exec_=True, defaults=["Goal", None], setup=goal + " goal->transform->SetPosition(Vec3(6, 0, 0));",
-        check="CHECK(me->transform->Forward().x > 0.95f);", demo="ai")
+        check="CHECK(vs::VsFacing(me->transform).x > 0.95f);", demo="ai")
     add("GlTurnTowardObject", "Turn Toward Object", "Movement", "Turn", "Intermediate", "Turns this object a little each frame toward another object, at most Degrees Per Second.",
         [R("Object"), N("Degrees Per Second", "90.0f"), O()], [],
         "if (o && o2 && o->transform && o2->transform) { Vec3 d = o->transform->Position() - o2->transform->Position(); d.y = 0.0f;"
-        " Vec3 f = o2->transform->Forward(); f.y = 0.0f; float dl = d.Magnitude(), fl = f.Magnitude();"
+        " Vec3 f = VsFacing(o2->transform); f.y = 0.0f; float dl = d.Magnitude(), fl = f.Magnitude();"
         " if (dl > 1e-4f && fl > 1e-4f) { d = d * (1.0f / dl); f = f * (1.0f / fl);"
         " float ang = std::atan2(f.x * d.z - f.z * d.x, f.x * d.x + f.z * d.z) * 57.2957795f;"
         " float lim = std::max(0.0f, n0) * ctx.deltaTime; float turn = std::min(std::max(ang, -lim), lim);"
         " o2->transform->Rotate(Vec3(0.0f, -turn, 0.0f)); } }",
         reg="CAT_XFORM", exec_=True, defaults=["Goal", "90", None], update=True, dt=0.5,
         setup=goal + " goal->transform->SetPosition(me->transform->Right() * 6.0f);",
-        check="{ Vec3 dd = goal->transform->Position() - me->transform->Position(); dd = dd * (1.0f / dd.Magnitude()); Vec3 ff = me->transform->Forward();"
+        check="{ Vec3 dd = goal->transform->Position() - me->transform->Position(); dd = dd * (1.0f / dd.Magnitude()); Vec3 ff = vs::VsFacing(me->transform);"
               " float c = ff.x * dd.x + ff.y * dd.y + ff.z * dd.z; CHECK_NEAR(std::acos(std::min(1.0f, std::max(-1.0f, c))) * 57.2957795f, 45.0f, 1.0f); }")
 
     # -----------------------------------------------------------------------
@@ -253,9 +253,9 @@ def define(add, N, B, T, O, R):
         check="CHECK_NEAR(me->transform->Position().x, 10.0f, 0.05f); CHECK_NEAR(me->transform->Position().y, 5.0f, 0.05f);",
         demo="camera")
     add("GlCameraLookAtObject", "Look at Object With Camera", "Camera", "", "Basic", "Points this object, usually the camera, straight at another object.",
-        [R("Object"), O()], [], "if (o && o2 && o->transform && o2->transform) o2->transform->LookAt(o->transform->Position());",
+        [R("Object"), O()], [], "if (o && o2 && o->transform && o2->transform) VsFaceToward(*o2->transform, o->transform->Position());",
         reg="CAT_ACTION", exec_=True, defaults=["Goal", None], setup=goal + " goal->transform->SetPosition(Vec3(8, 0, 0));",
-        check="CHECK(me->transform->Forward().x > 0.95f);", demo="camera")
+        check="CHECK(vs::VsFacing(me->transform).x > 0.95f);", demo="camera")
     add("GlZoomSmoothlyTo", "Zoom Smoothly to", "Camera", "", "Intermediate", "Moves the camera's zoom toward Zoom, Per Second each second. Put it under On Every Frame.",
         [N("Zoom", "1.0f"), N("Per Second", "1.0f"), O()], [],
         "if (Camera* c = GlCamera(this, o, g, ctx)) { float step = std::max(0.0f, n1) * ctx.deltaTime; c->zoom = c->zoom < n0 ? std::min(c->zoom + step, n0) : std::max(c->zoom - step, std::max(0.05f, n0)); }",

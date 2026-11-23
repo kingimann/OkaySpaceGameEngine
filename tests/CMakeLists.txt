@@ -4984,3 +4984,9 @@ target_include_directories(test_vs_node_values PRIVATE ${CMAKE_SOURCE_DIR}/edito
 target_link_libraries(test_vs_node_values PRIVATE okay::engine)
 target_compile_definitions(test_vs_node_values PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_node_values COMMAND test_vs_node_values)
+
+# Nodes that use "the way this object faces" agree with Look At (-Z, the camera / controller convention).
+add_executable(test_vs_facing test_vs_facing.cpp)
+target_link_libraries(test_vs_facing PRIVATE okay::engine)
+target_compile_definitions(test_vs_facing PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_facing COMMAND test_vs_facing)

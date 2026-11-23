@@ -13676,7 +13676,7 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         VsNodeDoc d;
         d.type = "ForwardVector";
         d.title = "Forward Vector";
-        d.description = "The direction this object is facing.";
+        d.description = "The direction this object is facing: its -Z axis, the way Look At turns it (cameras and characters face -Z too).";
         d.requirements = "No extra component is required. It reads this object's Transform (or Target).";
         d.component = "";
         d.example = "Wire Forward Vector's Vec3 output into another node's input. It has no flow of its own.";

@@ -151,8 +151,8 @@ static void Values() {
         {"Vec3Lerp", "", {"v:0,0,0", "v:10,20,30", "0"}, "0.000,0.000,0.000", 0},
         {"Vec3Lerp", "", {"v:0,0,0", "v:10,20,30", "1"}, "10.000,20.000,30.000", 0},
         {"Vec3Negate", "", {"v:1,-2,3"}, "-1.000,2.000,-3.000", 0},
-        // An unrotated object faces the engine's forward / up / right.
-        {"ForwardVector", "", {}, "0.000,0.000,1.000", 0},
+        // An unrotated object faces -Z (the camera / character convention Look At uses); up is +Y, right +X.
+        {"ForwardVector", "", {}, "0.000,0.000,-1.000", 0},
         {"UpVector", "", {}, "0.000,1.000,0.000", 0},
         {"RightVector", "", {}, "1.000,0.000,0.000", 0},
         {"GetScale", "", {}, "1.000,1.000,1.000", 0},
@@ -195,7 +195,7 @@ static void SceneNodes() {
          Chain("node 2 SetRotation3\ndefault 2 0 10\ndefault 2 1 20\ndefault 2 2 30\nnode 3 SetVar r\nnode 4 GetRotation\ndata 3 0 4 0\n", 3), none,
          [](Scene&, GameObject*, VisualScriptComponent* vc) { return Near(vc->GetVariable("r").AsVec3(), {10, 20, 30}, 0.05f); }, 1},
         {"Rotate3 turns by degrees (90 about Y)", Chain("node 2 Rotate3\ndefault 2 1 90\nnode 3 SetVar f\nnode 4 ForwardVector\ndata 3 0 4 0\n", 3), none,
-         [](Scene&, GameObject*, VisualScriptComponent* vc) { return Near(vc->GetVariable("f").AsVec3(), {1, 0, 0}, 0.02f); }, 1},
+         [](Scene&, GameObject*, VisualScriptComponent* vc) { return Near(vc->GetVariable("f").AsVec3(), {-1, 0, 0}, 0.02f); }, 1},   // -Z turned 90 degrees about +Y
         {"Rotate3 adds up", Chain("node 2 Rotate3\ndefault 2 1 45\nnode 3 Rotate3\ndefault 3 1 45\n", 3), none,
          [](Scene&, GameObject* me, VisualScriptComponent*) { return Near(me->transform->EulerAngles().y, 90, 0.05f); }, 1},
         {"SetRotation is absolute degrees about Z", Chain("node 2 SetRotation\ndefault 2 0 30\nnode 3 SetRotation\ndefault 3 0 30\n", 3), none,

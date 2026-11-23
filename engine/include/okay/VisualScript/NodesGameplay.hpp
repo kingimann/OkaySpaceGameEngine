@@ -223,7 +223,7 @@ struct KnockbackNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (!GpHasBody(this, g, ctx)) return 0;
-        Vec3 dir = -ctx.transform->Forward();
+        Vec3 dir = VsFacing(ctx.transform) * -1.0f;   // backward: away from where it faces
         if (HasInput(0)) {
             if (GameObject* from = GpPin(this, 0, g, ctx, true, "a source")) {
                 if (!from->transform) return 0;
@@ -417,7 +417,7 @@ struct PickUpNode : VsNode {
         GameObject* item = GpPin(this, 0, g, ctx, true, "the object to pick up");
         if (!item || !item->transform) return 0;
         item->transform->SetParent(ctx.transform, true);
-        item->transform->localPosition = Vec3{0, 1, 0.6f};
+        item->transform->localPosition = Vec3{0, 1, -0.6f};   // held in front (-Z)
         if (auto* r3 = item->GetComponent<Rigidbody3D>()) r3->bodyType = Rigidbody3D::BodyType::Kinematic;
         if (auto* r2 = item->GetComponent<Rigidbody2D>()) r2->bodyType = Rigidbody2D::BodyType::Kinematic;
         return 0;
@@ -431,7 +431,7 @@ struct DropNode : VsNode {
         GameObject* item = GpPin(this, 0, g, ctx, true, "the object to drop");
         if (!item || !item->transform) return 0;
         item->transform->SetParent(nullptr, true);
-        item->transform->SetPosition(ctx.transform->Position() + ctx.transform->Forward() * 1.2f);
+        item->transform->SetPosition(ctx.transform->Position() + VsFacing(ctx.transform) * 1.2f);
         if (auto* r3 = item->GetComponent<Rigidbody3D>()) r3->bodyType = Rigidbody3D::BodyType::Dynamic;
         if (auto* r2 = item->GetComponent<Rigidbody2D>()) r2->bodyType = Rigidbody2D::BodyType::Dynamic;
         return 0;
@@ -544,8 +544,9 @@ struct SpawnProjectileNode : VsNode {
         GameObject* b = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), GpAssetPath(g, path));
         if (!b) { g.Error(this, ctx, "couldn't spawn '" + path + "'"); return 0; }
         const float speed = In(0, g, ctx, VsValue{12.0f}).AsFloat();
-        if (b->transform) b->transform->SetPosition(ctx.transform->Position() + ctx.transform->Forward() * 0.8f);
-        const Vec3 vel = ctx.transform->Forward() * speed;
+        const Vec3 fwd = VsFacing(ctx.transform);
+        if (b->transform) b->transform->SetPosition(ctx.transform->Position() + fwd * 0.8f);
+        const Vec3 vel = fwd * speed;
         if (auto* r3 = b->GetComponent<Rigidbody3D>()) r3->velocity = vel;
         id = b->InstanceId();
         return 0;
@@ -563,7 +564,7 @@ struct ShootNode : VsNode {
         const float dist = std::max(0.1f, In(0, g, ctx, VsValue{30.0f}).AsFloat());
         const float dmg = std::max(0.0f, In(1, g, ctx, VsValue{10.0f}).AsFloat());
         Scene* s = ctx.gameObject->scene();
-        RaycastHit3D h = s->physics3D().Raycast(*s, ctx.transform->Position(), ctx.transform->Forward(), dist, ctx.gameObject);
+        RaycastHit3D h = s->physics3D().Raycast(*s, ctx.transform->Position(), VsFacing(ctx.transform), dist, ctx.gameObject);
         if (!h.hit || !h.gameObject) return 0;
         hit = true; id = h.gameObject->InstanceId();
         if (auto* hp = h.gameObject->GetComponent<HealthStat>()) hp->Damage(DamageEvent::From(dmg, ctx.transform->Position(), DamageType::Physical, ctx.gameObject));
@@ -681,7 +682,7 @@ struct CanSeeNode : VsNode {
         if (dist > maxD || dist < 1e-4f) return false;
         d = d * (1.0f / dist);
         const float need = std::cos(cone * 0.5f * 0.0174533f);
-        if (Vec3::Dot(ctx.transform->Forward().Normalized(), d) < need) return false;
+        if (Vec3::Dot(VsFacing(ctx.transform).Normalized(), d) < need) return false;
         if (ctx.gameObject && ctx.gameObject->scene() && ctx.gameObject->scene()->physicsEnabled) {
             Scene* s = ctx.gameObject->scene();
             RaycastHit3D h = s->physics3D().Raycast(*s, ctx.transform->Position(), d, dist, ctx.gameObject);

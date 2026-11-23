@@ -73,7 +73,7 @@ inline float GlAngleTo(GameObject* looker, GameObject* target) {
     const float len = d.Magnitude();
     if (len < 1e-5f) return 0.0f;
     d = d * (1.0f / len);
-    const Vec3 f = looker->transform->Forward();
+    const Vec3 f = VsFacing(looker->transform);   // its -Z, the way Look At turns it
     float c = f.x * d.x + f.y * d.y + f.z * d.z;
     c = std::min(std::max(c, -1.0f), 1.0f);
     return std::acos(c) * 57.2957795f;
@@ -1059,7 +1059,7 @@ case 22: {
 float n0 = In(0, g, ctx, VsValue{1.0f}).AsFloat(); (void)n0;
 GameObject* o = GpPin(this, 1, g, ctx, false, "a target"); (void)o;
 int flow = 0; (void)flow;
-if (o && o->transform) o->transform->SetPosition(o->transform->Position() + o->transform->Forward() * (n0 * ctx.deltaTime));
+if (o && o->transform) o->transform->SetPosition(o->transform->Position() + VsFacing(o->transform) * (n0 * ctx.deltaTime));
 return flow;
 }
 case 23: {
@@ -1081,7 +1081,7 @@ float n0 = In(0, g, ctx, VsValue{0.0f}).AsFloat(); (void)n0;
 float n1 = In(1, g, ctx, VsValue{0.0f}).AsFloat(); (void)n1;
 GameObject* o = GpPin(this, 2, g, ctx, false, "a target"); (void)o;
 int flow = 0; (void)flow;
-if (o && o->transform && (n0 != 0.0f || n1 != 0.0f)) o->transform->LookAtYaw(o->transform->Position() + Vec3(n0, 0.0f, n1));
+if (o && o->transform && (n0 != 0.0f || n1 != 0.0f)) VsFaceAlongFlat(*o->transform, Vec3(n0, 0.0f, n1));
 return flow;
 }
 case 26: {
@@ -1394,7 +1394,7 @@ float n1 = In(1, g, ctx, VsValue{0.0f}).AsFloat(); (void)n1;
 float n2 = In(2, g, ctx, VsValue{0.0f}).AsFloat(); (void)n2;
 GameObject* o = GpPin(this, 3, g, ctx, false, "a target"); (void)o;
 int flow = 0; (void)flow;
-if (o && o->transform) o->transform->LookAt(Vec3(n0, n1, n2));
+if (o && o->transform) VsFaceToward(*o->transform, Vec3(n0, n1, n2));
 return flow;
 }
 case 111: {
@@ -1473,7 +1473,7 @@ case 121: {
 GameObject* o = GpPin(this, 0, g, ctx, true, "object"); (void)o;
 GameObject* o2 = GpPin(this, 1, g, ctx, false, "a target"); (void)o2;
 int flow = 0; (void)flow;
-if (o && o2 && o->transform && o2->transform) o2->transform->LookAtYaw(o->transform->Position());
+if (o && o2 && o->transform && o2->transform) VsFaceTowardFlat(*o2->transform, o->transform->Position());
 return flow;
 }
 case 122: {
@@ -1481,7 +1481,7 @@ GameObject* o = GpPin(this, 0, g, ctx, true, "object"); (void)o;
 float n0 = In(1, g, ctx, VsValue{90.0f}).AsFloat(); (void)n0;
 GameObject* o2 = GpPin(this, 2, g, ctx, false, "a target"); (void)o2;
 int flow = 0; (void)flow;
-if (o && o2 && o->transform && o2->transform) { Vec3 d = o->transform->Position() - o2->transform->Position(); d.y = 0.0f; Vec3 f = o2->transform->Forward(); f.y = 0.0f; float dl = d.Magnitude(), fl = f.Magnitude(); if (dl > 1e-4f && fl > 1e-4f) { d = d * (1.0f / dl); f = f * (1.0f / fl); float ang = std::atan2(f.x * d.z - f.z * d.x, f.x * d.x + f.z * d.z) * 57.2957795f; float lim = std::max(0.0f, n0) * ctx.deltaTime; float turn = std::min(std::max(ang, -lim), lim); o2->transform->Rotate(Vec3(0.0f, -turn, 0.0f)); } }
+if (o && o2 && o->transform && o2->transform) { Vec3 d = o->transform->Position() - o2->transform->Position(); d.y = 0.0f; Vec3 f = VsFacing(o2->transform); f.y = 0.0f; float dl = d.Magnitude(), fl = f.Magnitude(); if (dl > 1e-4f && fl > 1e-4f) { d = d * (1.0f / dl); f = f * (1.0f / fl); float ang = std::atan2(f.x * d.z - f.z * d.x, f.x * d.x + f.z * d.z) * 57.2957795f; float lim = std::max(0.0f, n0) * ctx.deltaTime; float turn = std::min(std::max(ang, -lim), lim); o2->transform->Rotate(Vec3(0.0f, -turn, 0.0f)); } }
 return flow;
 }
 case 123: {
@@ -1613,7 +1613,7 @@ case 155: {
 GameObject* o = GpPin(this, 0, g, ctx, true, "object"); (void)o;
 GameObject* o2 = GpPin(this, 1, g, ctx, false, "a target"); (void)o2;
 int flow = 0; (void)flow;
-if (o && o2 && o->transform && o2->transform) o2->transform->LookAt(o->transform->Position());
+if (o && o2 && o->transform && o2->transform) VsFaceToward(*o2->transform, o->transform->Position());
 return flow;
 }
 case 156: {
@@ -1849,7 +1849,7 @@ case 207: {
 GameObject* o = GpPin(this, 0, g, ctx, true, "object"); (void)o;
 GameObject* o2 = GpPin(this, 1, g, ctx, false, "a target"); (void)o2;
 int flow = 0; (void)flow;
-if (o && o2 && o->transform && o2->transform) o2->transform->LookAtYaw(o2->transform->Position() + (o2->transform->Position() - o->transform->Position()));
+if (o && o2 && o->transform && o2->transform) VsFaceTowardFlat(*o2->transform, o2->transform->Position() + (o2->transform->Position() - o->transform->Position()));
 return flow;
 }
 case 209: {

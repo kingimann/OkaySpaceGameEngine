@@ -22,6 +22,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
+#include "okay/VisualScript/VsFacing.hpp"
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -854,7 +855,7 @@ int main() {
             
             snaps[pass] = Snapshot(s);
             if (real) {
-                { Vec3 d = me->transform->Position(); Vec3 f = me->transform->Forward(); CHECK_NEAR(d.x, f.x * 2.0f, 0.02f); CHECK_NEAR(d.z, f.z * 2.0f, 0.02f); }
+                { Vec3 d = me->transform->Position(); Vec3 f = vs::VsFacing(me->transform); CHECK_NEAR(d.x, f.x * 2.0f, 0.02f); CHECK_NEAR(d.z, f.z * 2.0f, 0.02f); }
                 if (!g_errs.empty()) { std::printf("  GlMoveForward reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
             }
             Input::FeedKeys({});
@@ -929,7 +930,7 @@ int main() {
             
             snaps[pass] = Snapshot(s);
             if (real) {
-                CHECK_NEAR(me->transform->Forward().x, 1.0f, 0.02f);
+                CHECK_NEAR(vs::VsFacing(me->transform).x, 1.0f, 0.02f);
                 if (!g_errs.empty()) { std::printf("  GlFaceDirection reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
             }
             Input::FeedKeys({});
@@ -1303,7 +1304,7 @@ int main() {
         {
             Scene s; s.physicsEnabled = false;
             GameObject* me = s.CreateGameObject("Me");
-            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(me->transform->Forward() * 5.0f);
+            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(vs::VsFacing(me->transform) * 5.0f);
             auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsFacingObject\ndefault 2 0 Goal\ndefault 2 1 45\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
             g_errs.clear();
             s.Start();
@@ -1363,7 +1364,7 @@ int main() {
         {
             Scene s; s.physicsEnabled = false;
             GameObject* me = s.CreateGameObject("Me");
-            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(me->transform->Forward() * -3.0f);
+            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(vs::VsFacing(me->transform) * -3.0f);
             auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsObjectBehind\ndefault 2 0 Goal\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
             g_errs.clear();
             s.Start();
@@ -3135,7 +3136,7 @@ int main() {
             
             snaps[pass] = Snapshot(s);
             if (real) {
-                CHECK(me->transform->Forward().x > 0.95f);
+                CHECK(vs::VsFacing(me->transform).x > 0.95f);
                 if (!g_errs.empty()) { std::printf("  GlLookAtPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
             }
             Input::FeedKeys({});
@@ -3448,7 +3449,7 @@ int main() {
             
             snaps[pass] = Snapshot(s);
             if (real) {
-                CHECK(me->transform->Forward().x > 0.95f);
+                CHECK(vs::VsFacing(me->transform).x > 0.95f);
                 if (!g_errs.empty()) { std::printf("  GlFaceObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
             }
             Input::FeedKeys({});
@@ -3473,7 +3474,7 @@ int main() {
             
             snaps[pass] = Snapshot(s);
             if (real) {
-                { Vec3 dd = goal->transform->Position() - me->transform->Position(); dd = dd * (1.0f / dd.Magnitude()); Vec3 ff = me->transform->Forward(); float c = ff.x * dd.x + ff.y * dd.y + ff.z * dd.z; CHECK_NEAR(std::acos(std::min(1.0f, std::max(-1.0f, c))) * 57.2957795f, 45.0f, 1.0f); }
+                { Vec3 dd = goal->transform->Position() - me->transform->Position(); dd = dd * (1.0f / dd.Magnitude()); Vec3 ff = vs::VsFacing(me->transform); float c = ff.x * dd.x + ff.y * dd.y + ff.z * dd.z; CHECK_NEAR(std::acos(std::min(1.0f, std::max(-1.0f, c))) * 57.2957795f, 45.0f, 1.0f); }
                 if (!g_errs.empty()) { std::printf("  GlTurnTowardObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
             }
             Input::FeedKeys({});
@@ -4263,7 +4264,7 @@ int main() {
             
             snaps[pass] = Snapshot(s);
             if (real) {
-                CHECK(me->transform->Forward().x > 0.95f);
+                CHECK(vs::VsFacing(me->transform).x > 0.95f);
                 if (!g_errs.empty()) { std::printf("  GlCameraLookAtObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
             }
             Input::FeedKeys({});
@@ -5647,7 +5648,7 @@ int main() {
             
             snaps[pass] = Snapshot(s);
             if (real) {
-                CHECK(me->transform->Forward().x < -0.95f);
+                CHECK(vs::VsFacing(me->transform).x < -0.95f);
                 if (!g_errs.empty()) { std::printf("  GlFaceAwayFrom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
             }
             Input::FeedKeys({});

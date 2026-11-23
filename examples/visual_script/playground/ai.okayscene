@@ -68,7 +68,7 @@ end
 gameobject 8 "Lookout"
   active 1
   parent -1
-  transform 0 0.8 -6 0 0 0 1 0.5 1.6 0.5
+  transform 0 0.8 -6 0 1 0 0 0.5 1.6 0.5
     mesh "Cylinder" 0.7 0.45 0.9 1 0 "" 0
     material 0 0 0 0 8 1 "" 1 1
     visualscript ""

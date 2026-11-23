@@ -256,11 +256,11 @@ int main() {
     {
         Scene s; s.physicsEnabled = false;
         GameObject* foe = s.CreateGameObject("Foe");
-        foe->transform->SetPosition({0, 0, 2});
+        foe->transform->SetPosition({0, 0, -2});
         auto* v = Attach(s, "Looker",
             "node 1 OnStart\nentry OnStart 1\nnode 2 FindObject Foe\nnode 3 CanSee\n"
             "default 3 1 10\ndefault 3 2 120\nnode 4 SetVar seen\nexec 1 0 4\ndata 4 0 3 0\ndata 3 0 2 0\n");
-        // Face +Z, where Forward() points for an unrotated object.
+        // An unrotated object faces -Z (the way Look At turns it), so the foe is in front.
         s.Start();
         CHECK(v->GetVariable("seen").AsBool());
     }

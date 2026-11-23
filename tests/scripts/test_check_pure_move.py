@@ -85,12 +85,12 @@ def git(d, *args):
     subprocess.run(["git", "-C", d] + list(args), check=True, capture_output=True)
 
 
-def run_case(main_after, cpp, header=HEADER, rules=RULES, head_commit=False):
+def run_case(main_after, cpp, header=HEADER, rules=RULES, head_commit=False, big=BIG):
     with tempfile.TemporaryDirectory() as d:
         git(d, "init", "-q")
         git(d, "config", "user.email", "test@example.invalid")
         git(d, "config", "user.name", "test")
-        open(os.path.join(d, "main.cpp"), "w").write(BIG)
+        open(os.path.join(d, "main.cpp"), "w").write(big)
         git(d, "add", ".")
         git(d, "commit", "-q", "-m", "base")
         open(os.path.join(d, "main.cpp"), "w").write(main_after)
@@ -138,6 +138,12 @@ check(code == 1 and "#if 0" in out, "a preprocessor guard around moved code is n
 
 code, out = run_case(AFTER_MAIN, CPP.replace("// Mover.cpp\n", "// Mover.cpp\n// a new comment\n\n"))
 check(code == 0, "new comments and blank lines in the new files are allowed", out)
+
+# A blank line before the moved code in the source and one after the moved struct in the header must not pair first
+# and push the struct "out of order" (blank lines never anchor a match).
+code, out = run_case(AFTER_MAIN, CPP, big=BIG.replace("namespace mover {\nstruct", "namespace mover {\n\nstruct"),
+                     header=HEADER.replace("struct Opts { int a = 1; };\n", "// options\nstruct Opts { int a = 1; };\n\n"))
+check(code == 0, "a blank line after a struct moved to the header does not hide it", out)
 
 code, out = run_case(AFTER_MAIN, CPP, rules=RULES + "change: int Missing() { ==> int Missing2() {\n")
 check(code == 1 and "was not used" in out, "a change rule that matches nothing fails (rules stay exact)", out)

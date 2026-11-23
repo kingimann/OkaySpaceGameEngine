@@ -404,6 +404,10 @@ add_executable(test_script_physics test_script_physics.cpp)
 target_link_libraries(test_script_physics PRIVATE okay::engine)
 add_test(NAME script_physics COMMAND test_script_physics)
 
+add_executable(test_script_api_parity test_script_api_parity.cpp)
+target_link_libraries(test_script_api_parity PRIVATE okay::engine)
+add_test(NAME script_api_parity COMMAND test_script_api_parity)
+
 add_executable(test_script_events test_script_events.cpp)
 target_link_libraries(test_script_events PRIVATE okay::engine)
 add_test(NAME script_events COMMAND test_script_events)
@@ -1608,9 +1612,6 @@ add_executable(test_camera_after_ik test_camera_after_ik.cpp)
 target_link_libraries(test_camera_after_ik PRIVATE okay::engine)
 add_test(NAME camera_after_ik COMMAND test_camera_after_ik)
 
-add_executable(test_ecs test_ecs.cpp)
-target_link_libraries(test_ecs PRIVATE okay::engine)
-add_test(NAME ecs COMMAND test_ecs)
 
 add_executable(test_anim_playback test_anim_playback.cpp)
 target_link_libraries(test_anim_playback PRIVATE okay::engine)
@@ -3066,7 +3067,7 @@ target_link_libraries(test_asset_database PRIVATE okay::engine)
 target_compile_definitions(test_asset_database PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME asset_database COMMAND test_asset_database)
 
-# Core audit regressions: math edge cases, ECS/NetWorld hardening, Camera degenerate
+# Core audit regressions: math edge cases, Camera degenerate
 # viewports, Layers names, DataAsset load, input binding persistence.
 add_executable(test_core_audit test_core_audit.cpp)
 target_link_libraries(test_core_audit PRIVATE okay::engine)
@@ -3130,11 +3131,8 @@ add_executable(test_loc_prefs_time test_loc_prefs_time.cpp)
 target_link_libraries(test_loc_prefs_time PRIVATE okay::engine)
 add_test(NAME loc_prefs_time COMMAND test_loc_prefs_time)
 
-add_executable(test_ecs_commands test_ecs_commands.cpp)
-target_link_libraries(test_ecs_commands PRIVATE okay::engine)
-add_test(NAME ecs_commands COMMAND test_ecs_commands)
 
-# Core wave 6, 1.9: Subscription::Active, throwing handlers, SystemScheduler changes while running, entity id wrap, SceneBridge
+# Core wave 6, 1.9: Subscription::Active, throwing handlers (event bus)
 add_executable(test_core_events_ecs test_core_events_ecs.cpp)
 target_link_libraries(test_core_events_ecs PRIVATE okay::engine)
 add_test(NAME core_events_ecs COMMAND test_core_events_ecs)
@@ -4857,6 +4855,16 @@ add_executable(test_gl_dds_upload test_gl_dds_upload.cpp)
 target_link_libraries(test_gl_dds_upload PRIVATE okay::engine ${CMAKE_DL_LIBS})
 add_test(NAME gl_dds_upload COMMAND test_gl_dds_upload WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(gl_dds_upload PROPERTIES TIMEOUT 240)
+# One shared texture asset for every renderer: handles through AssetManager, hot reload, settings, gamma-correct mips, memory count and budget.
+add_executable(test_texture_asset test_texture_asset.cpp)
+target_link_libraries(test_texture_asset PRIVATE okay::engine)
+add_test(NAME texture_asset COMMAND test_texture_asset)
+set_tests_properties(texture_asset PROPERTIES TIMEOUT 240)
+# The OpenGL renderer drawing from the shared texture asset: our own mip chain, hot reload re-upload, anisotropy, freeing (Mesa llvmpipe through EGL; SKIPPED without one).
+add_executable(test_gl_texture_asset test_gl_texture_asset.cpp)
+target_link_libraries(test_gl_texture_asset PRIVATE okay::engine ${CMAKE_DL_LIBS})
+add_test(NAME gl_texture_asset COMMAND test_gl_texture_asset WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(gl_texture_asset PROPERTIES TIMEOUT 240)
 
 # Colliders behave as the shapes they are (not boxes): Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield, 2D polygon / capsule / composite.
 add_executable(test_collider_shapes test_collider_shapes.cpp)

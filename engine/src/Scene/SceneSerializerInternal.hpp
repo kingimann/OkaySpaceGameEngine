@@ -230,4 +230,10 @@ struct ParseSession {
     std::unordered_set<std::string> seenGuids;
 };
 
+namespace sceneser {
+// Parse (a slice of) a document into `scene`; defined in SceneSerializerParse.cpp.
+bool ParseStep(Scene& scene, ParseSession& S, bool clear, GameObject** firstNew, std::string* error,
+               std::vector<std::string>* warnings, int maxObjects = 0, bool* finished = nullptr);
+} // namespace sceneser
+
 } // namespace okay

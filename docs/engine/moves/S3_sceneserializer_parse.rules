@@ -1,0 +1,11 @@
+# S3 (docs/engine/modularization_plan.md, section 3.1): ParseStep (5,200 lines: the record reader) and the two small view-toggle
+# helpers before it move unchanged from SceneSerializer.cpp to SceneSerializerParse.cpp, in namespace okay::sceneser. ParseStep
+# is no longer `static` and its default arguments move to its declaration in SceneSerializerInternal.hpp.
+#   python3 scripts/check_pure_move.py --base <commit before> --head <this commit> \
+#       --source engine/src/Scene/SceneSerializer.cpp --dest engine/src/Scene/SceneSerializerParse.cpp \
+#       --dest engine/src/Scene/SceneSerializerInternal.hpp --rules docs/engine/moves/S3_sceneserializer_parse.rules
+change: static bool ParseStep(Scene& scene, ParseSession& S, bool clear, ==> bool ParseStep(Scene& scene, ParseSession& S, bool clear,
+change: std::vector<std::string>* warnings, int maxObjects = 0, bool* finished = nullptr) { ==> std::vector<std::string>* warnings, int maxObjects, bool* finished) {
+add: ^\s*bool ParseStep\(.*
+add: ^\s*std::vector<std::string>\* warnings, int maxObjects = 0, bool\* finished = nullptr\);$
+add: ^\s*namespace sceneser \{$

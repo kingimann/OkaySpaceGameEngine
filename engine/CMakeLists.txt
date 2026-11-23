@@ -108,6 +108,7 @@ add_library(okay_engine
     src/Scene/SceneSerializerHelpers.cpp
     src/Scene/SceneSerializerRegistry.cpp
     src/Scene/SceneSerializerWrite.cpp
+    src/Scene/SceneSerializerParse.cpp
     src/Scene/ComponentSerializer.cpp
     src/Scene/SceneLocalization.cpp
     src/Components/Camera.cpp

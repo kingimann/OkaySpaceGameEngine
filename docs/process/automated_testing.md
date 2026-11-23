@@ -266,7 +266,9 @@ of `main()` after `RUN_SUITE`, and `CHECK(sandbox.Verify())` at the end). The tw
 `bash scripts/precheck.sh` runs, in about a minute, the checks that turned most PRs red: conflict markers, a branch that
 no longer merges cleanly with main, `branch_lint all` (Windows thread includes, secrets, built programs, duplicate
 code), the feature map, and copies between open branches. `--build <dir>` adds a syntax check of the changed C++ files
-using that build folder's `compile_commands.json`. `bash scripts/install_hooks.sh` installs it as the pre-push hook of
+using that build folder's `compile_commands.json`, and `--build <dir> --tests` builds what changed and runs every
+test program that had to be rebuilt (required before a push, CLAUDE.md rule 6). On pull requests GitHub then runs only
+branch-lint, the PR-body check and the Windows cross-compile; the full suite runs on every push to main and nightly. `bash scripts/install_hooks.sh` installs it as the pre-push hook of
 the clone (all its worktrees share it), so a push with a problem stops before it reaches GitHub; `git push --no-verify`
 skips it once. CLAUDE.md rule 7a.
 

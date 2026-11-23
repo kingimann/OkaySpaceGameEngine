@@ -2,7 +2,13 @@
 # Ready to push? The checks that turned PRs red most often, run here in about a minute instead of after a CI run.
 # CLAUDE.md rule 7a. Run it before every push; the pre-push hook (scripts/install_hooks.sh) runs it for you.
 #
-#   bash scripts/precheck.sh [--base origin/main] [--head HEAD] [--build <dir with compile_commands.json>]
+#   bash scripts/precheck.sh [--base origin/main] [--head HEAD] [--build <dir with compile_commands.json>] [--tests]
+#
+# --tests (needs --build: a configured Ninja build folder of THIS checkout, e.g. cmake -S . -B build -G Ninja
+#   -DCMAKE_BUILD_TYPE=Release, as CI's "Build & test (Ubuntu)" job does): builds every test program, which only
+#   recompiles what this branch changed, then runs each test program that had to be rebuilt, so every test that can see
+#   the change runs here before CI does. Jobs are capped by memory (scripts/ci_jobs.sh). The first run in a new build
+#   folder builds everything (long); later runs only what changed.
 #
 # Errors (exit 1) - each one would make a CI job red:
 #   1. conflict markers in the files the branch changes
@@ -16,12 +22,13 @@
 # Warnings only: the code index is stale; the branch is far behind the base.
 # Nothing is built or pushed. Standard tools only (bash, git, python3, and the compiler for step 6).
 set -uo pipefail
-base="origin/main"; head="HEAD"; build="${OKAY_PRECHECK_BUILD:-}"
+base="origin/main"; head="HEAD"; build="${OKAY_PRECHECK_BUILD:-}"; tests=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) base="$2"; shift 2 ;;
     --head) head="$2"; shift 2 ;;
     --build) build="$2"; shift 2 ;;
+    --tests) tests=1; shift ;;
     *) echo "precheck: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -94,6 +101,36 @@ PY
   [ -z "$bad" ] && ok "$n changed C++ files compile (syntax only)" || fail "does not compile:$bad"
 elif [ -n "$build" ]; then
   warn "no compile_commands.json in $build: C++ syntax check skipped"
+fi
+
+# 7. --tests: build what changed and run every test program that had to be rebuilt
+if [ "$tests" = 1 ]; then
+  if [ -z "$build" ] || [ ! -f "$build/build.ninja" ]; then
+    fail "--tests needs --build <configured Ninja build folder of this checkout>"
+  else
+    stamp=$(mktemp); sleep 1; touch "$stamp"
+    jobs=$( [ -f scripts/ci_jobs.sh ] && bash scripts/ci_jobs.sh 4 2>/dev/null || echo 2 )
+    targets=$(ninja -C "$build" -t targets all 2>/dev/null | sed -n 's/^\(tests\/test_[A-Za-z0-9_]*\): .*/\1/p' | sort -u)
+    if ! ninja -C "$build" -j "$jobs" $targets >/tmp/precheck_build.$$ 2>&1; then
+      fail "build failed:"; grep -E 'error|FAILED' /tmp/precheck_build.$$ | head -10 | sed 's/^/        /'
+    else
+      rebuilt=$(find "$build/tests" -maxdepth 1 -type f -name 'test_*' -newer "$stamp" -perm -u+x | sort)
+      n=0; bad=""
+      for t in $rebuilt; do
+        n=$((n + 1)); name=$(basename "$t" | sed 's/^test_//')
+        # run it the way ctest does (from the tests folder), with ctest's own command when it knows the test
+        if ctest --test-dir "$build" -R "^${name}\$" -N 2>/dev/null | grep -q "Test *#"; then
+          ctest --test-dir "$build" -R "^${name}\$" --timeout 300 >/tmp/precheck_t.$$ 2>&1 || bad="$bad $name"
+        else
+          (cd "$build/tests" && timeout 300 "$t" >/tmp/precheck_t.$$ 2>&1) || bad="$bad $name"
+        fi
+      done
+      rm -f /tmp/precheck_t.$$
+      if [ -n "$bad" ]; then fail "tests failing:$bad (re-run: ctest --test-dir $build -R <name> --output-on-failure)"
+      else ok "$n rebuilt test programs pass"; fi
+    fi
+    rm -f /tmp/precheck_build.$$ "$stamp"
+  fi
 fi
 
 if [ "$errors" -gt 0 ]; then

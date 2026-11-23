@@ -57,10 +57,10 @@ proves both). The editor no longer shows it; **Solver iterations** stays.
 | Heightfield collider, Terrain | an engine height grid (no copy of triangles; only the cells under a body are looked at) |
 | Voxel terrain | the old voxel pass, kept as it was (`Physics3D::StepTerrain`), after the engine step; it also raises `groundedOnTerrain` |
 | Mesh collider | static: an engine triangle mesh with its own tree, shared per mesh asset; on a dynamic body: its convex hull. A mesh collider with no mesh yet collides as its size box. |
-| Triggers | sensors: OnTriggerEnter3D / Stay / Exit (tag and layer filters kept), static triggers included |
+| Triggers | sensors: OnTriggerEnter3D / Stay / Exit, static triggers included; the tag and layer filter is checked every step, so changing a tag or a filter while two things overlap raises Enter or Exit |
 | Layers | the scene's layer matrix decides every pair |
 | Materials | friction, still grip (static friction below 0.12 m/s), bounciness, rolling friction and the per-collider combine modes come from the collider's Physics Material (`CombineSurface`); surface linear and angular damping (mud, water) is applied after the step |
-| Joint3D Distance, Spring, Pin, Hinge, Slider | engine Distance (rod or spring in N/m), Fixed, Hinge (limits, motor), Slider (limits, motor); Break Force breaks them |
+| Joint3D Distance, Spring, Pin, Hinge, Slider | engine Distance (rod or spring in N/m), Fixed, Hinge (limits, motor), Slider (limits, motor); Break Force breaks them, and a body yanked free keeps its speed. A limit's position correction turns the body about the joint's pivot, so a hinged arm stops at its stop without its far end overshooting |
 | Joint3D Ball, ConeTwist | engine Ball and ConeTwist with `anchor` as the world pivot, swing cone (`swingLimit1`, `swingLimit2`), twist limits (`minAngle`, `maxAngle`), and a drive (`useDrive`, `driveTarget` Euler degrees, `driveStiffness` and `driveDamping` or `driveFrequency` and `driveDampingRatio`, `driveMaxTorque`). These drive field names are kept stable: the active ragdoll moves onto them. They are saved only when not default. |
 | A joint whose partner object is destroyed | keeps its length and hangs from the partner's last position (it is not flung) |
 | Events | OnCollisionEnter3D / Stay / Exit with normal, point, penetration and impact speed; one Enter and one Exit per pair of components (a compound's pieces or a collider rebuilt while playing do not repeat them); the event pass costs one look per touching pair |

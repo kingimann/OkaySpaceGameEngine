@@ -2403,7 +2403,7 @@ add_test(NAME file_copy COMMAND test_file_copy)
 # The project's engine version (shared/ProjectVersion.hpp): parse / compare / Decide, the engine_version line in project.okayproj, the launcher's Versions layout. Header-only: no engine link.
 add_executable(test_project_version test_project_version.cpp)
 target_compile_features(test_project_version PRIVATE cxx_std_17)
-target_include_directories(test_project_version PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+target_include_directories(test_project_version PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME project_version COMMAND test_project_version)
 
 # The launcher's Versions page logic (launcher/VersionsManager.cpp, VersionsNet.cpp): versions.json, install / remove / prune on a temp folder with an injected downloader,

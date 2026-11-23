@@ -550,7 +550,7 @@ std::string emitFunction(const Function& f) {
         saveDisp.push_back(-(saveBase + 8 * (static_cast<int>(i) + 1)));
     std::string s;
     if (!f.localSym) {
-        s += ".globl ";
+        s += f.weakSym ? ".weak " : ".globl ";
         s += f.name;
         s += "\n";
     }
@@ -694,7 +694,8 @@ std::string emitData(const Module& m) {
     };
     for (const Global& g : m.globals) {
         std::string item;
-        if (g.name.empty() || g.name[0] != '.') item += ".globl " + g.name + "\n";
+        if (!g.localSym && (g.name.empty() || g.name[0] != '.'))
+            item += (g.weakSym ? ".weak " : ".globl ") + g.name + "\n";
         item += g.name;
         item += ":\n";
         item += bytesOf(g);

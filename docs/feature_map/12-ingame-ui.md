@@ -76,7 +76,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Parts:**
   - 12.3.1 Slider - `Components/UISlider` - drag to a value in a range, whole-number mode, step, format, on_change()
   - 12.3.2 Toggle - `Components/UIToggle` - checkbox or sliding switch with label, on_toggle()
-  - 12.3.3 Input field - `Components/UIInputField` - OS text input, caret, placeholder, number or password mode, character whitelist, multiline, on_submit(); reachable by keyboard / pad menu navigation (`NavigateUI`: d-pad highlights, A / Enter starts editing; `focusable`, not saved in scenes yet; on an Xbox the on-screen keyboard comes up, see 18.10.8)
+  - 12.3.3 Input field - `Components/UIInputField` - OS text input, caret, placeholder, number or password mode, character whitelist, multiline, on_submit(); reachable by keyboard / pad menu navigation (`NavigateUI`: d-pad highlights, A / Enter starts editing; `focusable`, saved in scenes; on an Xbox the on-screen keyboard comes up, see 18.10.8)
   - 12.3.4 Dropdown - `Components/UIDropdown` - header plus open option list, swallows the click under the list
   - 12.3.5 Stepper - `Components/UIStepper` - [-] value [+] with step and range
   - 12.3.6 Keybind field - `Components/UIKeybindField` - listen for a key, Escape cancels, Backspace resets, saves to Prefs

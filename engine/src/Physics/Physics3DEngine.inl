@@ -899,11 +899,14 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         Collider3D* a = E.Back(e.a);
         Collider3D* b = E.Back(e.b);
         if (!a || !b || a == b) continue;   // terrain contacts raise no callbacks (as before)
-        if (e.sensor && (!TriggerAccepts(a, b) || !TriggerAccepts(b, a))) continue;   // filtered out (now: Exit if it was in)
         const EngineBridge::CPair key = norm(a, b);
-        if (!nowSet.insert(key).second) continue;   // (another piece of the same pair already reported it)
+        if (nowSet.count(key)) continue;   // (another piece of the same pair already reported it)
+        // A callback earlier in this pass may have removed a or b: only compare their pointers, never read them.
+        const bool removed = gone.Gone(a) || gone.Gone(b);
+        if (!removed && e.sensor && (!TriggerAccepts(a, b) || !TriggerAccepts(b, a))) continue;   // filtered out (Exit if it was in)
+        nowSet.insert(key);
         nowList.push_back(key);
-        if (gone.Gone(a) || gone.Gone(b)) continue;
+        if (removed) continue;
         const Vec3 n = E3(e.normal), pt = E3(e.point);
         const bool was = E.touchingSet.count(key) != 0;
         if (PhysicsDebug::Collect() && (int)m_debugContacts.size() < PhysicsDebug::kMaxContacts) m_debugContacts.push_back({pt, n, e.sensor});

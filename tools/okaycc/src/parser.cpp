@@ -3645,6 +3645,7 @@ private:
     // chooses). A range that is not an lvalue is held by value.
     bool isRangeFor() const {
         int depth = 0;
+        int conds = 0;  // '?' seen at depth 0 whose ':' has not come yet
         for (std::size_t j = i_; j < toks_.size() && toks_[j].kind != Tok::End; ++j) {
             const Token& t = toks_[j];
             if (t.kind != Tok::Punct) continue;
@@ -3653,7 +3654,11 @@ private:
                 if (depth == 0) return false;
                 --depth;
             } else if (depth == 0 && t.text == ";") return false;
-            else if (depth == 0 && t.text == ":") return true;
+            else if (depth == 0 && t.text == "?") ++conds;
+            else if (depth == 0 && t.text == ":") {
+                if (conds > 0) --conds;  // the ':' of a ?: (int i = c ? 1 : 0)
+                else return true;
+            }
         }
         return false;
     }

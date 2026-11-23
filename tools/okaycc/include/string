@@ -6,16 +6,16 @@
 namespace std {
 class string {
 public:
-    string() : p_(nullptr), n_(0), cap_(0) { grow(0); }
+    string() : p_(nullptr), n_(0), cap_(0) { release(grow(0)); }
     string(const char *s) : p_(nullptr), n_(0), cap_(0) {
         unsigned long n = s ? strlen(s) : 0;
-        grow(n);
+        release(grow(n));
         for (unsigned long i = 0; i < n; ++i) p_[i] = s[i];
         n_ = n;
         p_[n_] = 0;
     }
     string(const string &o) : p_(nullptr), n_(0), cap_(0) {
-        grow(o.n_);
+        release(grow(o.n_));
         for (unsigned long i = 0; i < o.n_; ++i) p_[i] = o.p_[i];
         n_ = o.n_;
         p_[n_] = 0;
@@ -24,7 +24,7 @@ public:
     string &operator=(const string &o) {
         if (this == &o) return *this;
         n_ = 0;
-        grow(o.n_);
+        release(grow(o.n_));
         for (unsigned long i = 0; i < o.n_; ++i) p_[i] = o.p_[i];
         n_ = o.n_;
         p_[n_] = 0;
@@ -40,21 +40,22 @@ public:
         p_[0] = 0;
     }
     void push_back(char c) {
-        grow(n_ + 1);
+        release(grow(n_ + 1));
         p_[n_] = c;
         ++n_;
         p_[n_] = 0;
     }
     string &operator+=(const char *s) {
         unsigned long n = strlen(s);
-        grow(n_ + n);
+        char *old = grow(n_ + n);
         for (unsigned long i = 0; i < n; ++i) p_[n_ + i] = s[i];
         n_ += n;
         p_[n_] = 0;
+        release(old);
         return *this;
     }
     string &append(const string &o) {
-        grow(n_ + o.n_);
+        release(grow(n_ + o.n_));
         for (unsigned long i = 0; i < o.n_; ++i) p_[n_ + i] = o.p_[i];
         n_ += o.n_;
         p_[n_] = 0;
@@ -64,17 +65,21 @@ public:
     int compare(const string &o) const { return strcmp(p_, o.p_); }
 
 private:
-    void grow(unsigned long n) {
-        if (p_ && n < cap_) return;
+    // Make room for n characters. The old buffer is freed only by the caller's release(), after the
+    // new text has been copied in (s += s.c_str() reads from the old buffer while appending).
+    char *grow(unsigned long n) {
+        if (p_ && n < cap_) return nullptr;
         unsigned long c = cap_ < 15 ? 15 : cap_;
         while (c <= n) c = c * 2;
         char *q = new char[c + 1];
         for (unsigned long i = 0; i < n_; ++i) q[i] = p_[i];
         q[n_] = 0;
-        delete[] p_;
+        char *old = p_;
         p_ = q;
         cap_ = c;
+        return old;
     }
+    static void release(char *old) { delete[] old; }
     char *p_;
     unsigned long n_;
     unsigned long cap_;

@@ -8,6 +8,10 @@
 #   python3 scripts/check_pure_move.py --base <commit before> --head <commit> --source okayui/src/OkayUI.cpp \
 #       --dest okayui/src/OkayUIInternal.hpp (commit 1; --dest okayui/src/OkayUI_<Family>.cpp for commits 2 to 4) \
 #       --rules docs/engine/moves/O1_okayui_split.rules
+# Part 2 (OkayUI_Menus.cpp: menu bar, menus, selectables, popups, combo, popup queries; OkayUI_Windows.cpp: windows, children, scrolling, window
+# queries): three more commits, the same check. Step 1 moves the structs and small inline helpers they read into the header (they keep `inline`),
+# adds `extern` lines and prototypes, and edits the definition lines of the file-static window state (`static` left, `ui_core::` added). The rules of
+# part 2 are at the end of this file.
 # The edits that are not moves: the toolkit's old anonymous namespace of state (and the few later blocks that hold state the new
 # files read) became `namespace ui_core`, so the new files reach it through the header; every file that uses it says
 # `using namespace ui_core;`. Where a function had to be reachable, `static` / `inline` left its definition (one drop and one add

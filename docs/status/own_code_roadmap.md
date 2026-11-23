@@ -148,7 +148,7 @@ owner's approval and a Windows run, which none has. When this list was counted n
 | `.xgl`, `.zgl` | 1, 6 | `OKAY_OWN_XGL` |
 | `.irr` | 21 | `OKAY_OWN_IRR` |
 | `.nff`, `.enff` | 13, 0 | `OKAY_OWN_NFF` |
-| `.ter`, `.mdc`, `.hmp`, `.csm` | 2, 1, 2, 1 | `OKAY_OWN_TER`, `_MDC`, `_HMP` (HMP7 only), `_CSM` |
+| `.ter`, `.mdc`, `.hmp`, `.csm` | 2, 1, 2, 1 | `OKAY_OWN_TER`, `_MDC`, `_HMP` (HMP4, HMP5, HMP7), `_CSM` |
 | `.q3o`, `.q3s` | 3, 1 | `OKAY_OWN_Q3D` |
 | `.raw` | 4 | `OKAY_OWN_RAW` (Assimp crashes on two of the four) |
 | `.iqm`, `.cob` | 1, 8 | `OKAY_OWN_IQM`, `OKAY_OWN_COB` (COB `.scn` is not routed, see 4) |
@@ -165,7 +165,7 @@ owner's approval and a Windows run, which none has. When this list was counted n
 | `.gltf`, `.glb` | 48, 6 | glTF 2.0 is always ours and never goes to Assimp. **glTF 1.0** (7 of the corpus): our own reader since 2026-11-22 (`OKAY_OWN_GLTF1`, **on by default since 2026-11-23**; turned off, a 1.0 file is refused, Assimp is never asked); all 7 read, 0.58x Assimp's read time and 0.50x its largest peak (`docs/content/own_readers_speed.md`, row `gltf1`; `docs/content/model_readers.md`, section glTF 1.0) |
 | `.fbx` | 43 | never goes to Assimp: ufbx reads FBX, and our own FBX reader (`OKAY_OWN_FBX`) replaces ufbx, not Assimp (`docs/content/model_readers.md`) |
 | `.ogex` | 6 | OpenGEX: our own reader since 2026-11-22 (`OKAY_OWN_OPENGEX`, **on by default since 2026-11-23**, Assimp the fallback); 4 of 6 read (the other 2 hold no node and are refused by Assimp too), 0.46x Assimp's read time and 0.36x its largest peak on the 3 both read (`docs/content/own_readers_speed.md`, row `ogex`) |
-| `.mdl` | 43 | MDL: our own reader for Quake 1 and Half-Life 1 since 2026-11-22 (`OKAY_OWN_MDL`, **on by default since 2026-11-23**, Assimp the fallback); 17 read, 0.26x Assimp's read time and 0.37x its largest peak on those; the 6 3D GameStudio files (MDL3, MDL5, MDL7) have no reader of ours and stay with Assimp |
+| `.mdl` | 43 | MDL: our own reader for Quake 1 and Half-Life 1 since 2026-11-22 (`OKAY_OWN_MDL`, **on by default since 2026-11-23**, Assimp the fallback); 17 read, 0.26x Assimp's read time and 0.37x its largest peak on those; the 6 3D GameStudio files (MDL3, MDL5, MDL7) are read by ours since 2026-11-23 (MDL3 / MDL4 / MDL5 from Conitec's published layout, MDL7 from our analysis of the three files; not compared with Assimp) |
 | `.bsp`, `.pk3` | 0, 1 | Quake III maps: our own reader since 2026-11-22 (`OKAY_OWN_Q3BSP`, **on by default since 2026-11-23**, Assimp the fallback); the one corpus map reads with Assimp's 1,400 triangles, 0.84x its read time and 0.86x its peak |
 | `.ndo` | 0 | Nendo: a seam that recognises the header and refuses every file (no description and no file exist; `docs/content/model_readers.md`) |
 
@@ -193,9 +193,8 @@ noted, `OKAY_OWN_MD5`), and `.vrm` our glTF 2.0 reader. The binary OGRE `.skelet
 
 | Extensions | Corpus | What it is | Note |
 |---|---:|---|---|
-| `.sib` | 1 | Silo | no public specification of the format; a reader worked out from the one sample file exists on the unmerged branch `claude/own-readers-6` and was not brought over (`docs/content/model_readers.md`, section SIB) |
-| `.ndo` | 0 | Nendo | our reader is a seam that refuses every file (`OKAY_OWN_NDO` OFF); no public description of the body and no file |
-| `.mdl` (3D GameStudio MDL3/4/5/7), `.hmp` (HMP4/5) | 6, 0 | 3D GameStudio models and terrain | our MDL reader reads Quake 1 and Half-Life 1, our HMP reader HMP7; the others are refused and fall back to Assimp; no public description in hand (the only detailed one found is Assimp's own source, which rule 19a forbids) |
+| `.sib` | 1 | Silo | our own reader since 2026-11-23 (`OKAY_OWN_SIB` OFF), worked out from the one sample file: no public specification exists (`docs/content/model_readers.md`, section SIB) |
+| `.ndo` | 0 | Nendo | our reader is a seam that refuses every file (`OKAY_OWN_NDO` OFF); no public description of the body, and the only two sample files are broken-on-purpose crash inputs (tried 2026-11-23) |
 
 The gap batch of 2026-11-16 took the three gap formats with the most corpus files (`.xml` 9, `.mesh` 3, `.zae` 3) and that users
 are most likely to have: OGRE game assets ship as binary `.mesh` far more often than as XML, ZAE is COLLADA's packaged form (one

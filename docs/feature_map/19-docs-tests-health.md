@@ -186,26 +186,29 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 - **Seen as:** a PR waits for a verdict; a rig's skeleton spikes during a walk
 - **Ask me like:** "write the QA verdict for PR 575", "add a rig to the sweep"
 
-### 19.4 Splitting the largest files (editor, launcher, OkayScript VM, serializer)
+### 19.4 Splitting the largest files, subsystem boundaries and naming (engine-wide modularization)
 - **System:** Tests and Code Health
-- **What:** Keeping source files small enough to work in. The biggest files today (lines, as of main at 224cda8c on 2026-11-09, after #587) are `editor/main.cpp` 45,207, `launcher/main.cpp` 24,802, `engine/src/Scripting/OkayScriptVM.cpp` 10,536, `engine/src/Scene/SceneSerializer.cpp` 8,958, `engine/include/okay/Render/Mesh.hpp` 4,079, `editor/VisualScriptEditor.hpp` 3,800, `engine/src/Net/NetworkManager.cpp` 3,522.
+- **What:** Breaking the big files into smaller files with one job each, grouped by subsystem, with clear layers (no include cycles, the engine never includes a program, platform code behind one interface) and descriptive names, without changing behaviour or any public name. The owner asked for it on 2026-11-23; the audit and the ranked plan come first. Largest files on 2026-11-22 (`bc5629ee8`): `editor/main.cpp` 58,835, `launcher/main.cpp` 27,261, `tools/okayms/src/compile.cpp` 15,052, `engine/src/Scripting/OkayScriptVM.cpp` 12,236, `engine/src/Scene/SceneSerializer.cpp` 11,126, `okayui/src/OkayUI.cpp` 7,809, `editor/VisualScriptEditor.hpp` 6,153, `engine/include/okay/Render/Mesh.hpp` 5,170, `engine/src/Net/NetworkManager.cpp` 4,291.
 - **Parts:**
-  - 19.4.1 Editor - `editor/main.cpp` - already partly split (windows live in `editor/*.cpp`); see 15.10
-  - 19.4.2 Launcher - `launcher/main.cpp` - one file for the shell and every page (17.1)
-  - 19.4.3 OkayScript VM - `engine/src/Scripting/OkayScriptVM.cpp` - see 13.1
-  - 19.4.4 Scene serializer - `engine/src/Scene/SceneSerializer.cpp` - see 1.5
-  - 19.4.5 Network manager - `engine/src/Net/NetworkManager.cpp` and `.hpp` - one class for 16.1 to 16.13 (not on the old list)
-- **Code:** `launcher/main.cpp`, `engine/src/Net/NetworkManager.cpp`
+  - 19.4.1 Editor - `editor/main.cpp` - Part B of the plan; see 15.10
+  - 19.4.2 Launcher - `launcher/main.cpp` - Part C of the plan: 24 sections measured, order L1-L8 (17.1)
+  - 19.4.3 OkayScript VM - `engine/src/Scripting/OkayScriptVM.cpp` - `RegisterBuiltins` is one 8,078-line function: refactor per topic, then move (batch S2, after PR #1159); see 13.1
+  - 19.4.4 Scene serializer - `engine/src/Scene/SceneSerializer.cpp` - records into `ComponentSerializerRegistry` entries per subsystem (batch S1, after #1160 and #1138); see 1.5
+  - 19.4.5 Network manager - `engine/src/Net/NetworkManager.cpp` - one class over five `.cpp` files, header unchanged (batch N1)
+  - 19.4.6 Architecture - `docs/engine/architecture.md` - the layers, the nine subsystems and their folders, what may include what
+  - 19.4.7 The plan and the audit - `docs/engine/modularization_plan.md` - largest files and functions, include graph and cycles, platform code in shared code, naming today, the frozen names (about 3,900 in 11 groups), open PRs, 23 ranked batches, the move procedure and checks, the naming rule, CI checks to add later, owner decisions
+  - 19.4.8 Pure-move check - `scripts/check_pure_move.py` - used for every move batch (15.10.6)
+- **Code:** `launcher/main.cpp`, `engine/src/Net/NetworkManager.cpp`, `scripts/check_pure_move.py`
 - **API:** -
 - **Editor:** none
-- **Docs:** `ROADMAP.md` ("Later: split the largest source files")
-- **Tests:** -
-- **Status:** Planned - on the roadmap's "Later" list; no branch exists
-- **Open:** splitting `launcher/main.cpp` needs a plan per page (17.1 to 17.16 are the natural seams); `player/main.cpp` is 2,658 lines and also carries UI drawing, matchmaking windows and the server entry point
-- **Related:** 15.10, 17.1, 13.1, 1.5, 16.2
-- **Words:** split, refactor, large file, main.cpp, file size, god file, OkayScriptVM, SceneSerializer
-- **Seen as:** slow builds when one file changes; merge conflicts in `launcher/main.cpp` or `editor/main.cpp`
-- **Ask me like:** "split the launcher chat code into its own file"
+- **Docs:** `docs/engine/modularization_plan.md`, `docs/engine/architecture.md`
+- **Tests:** `tests/scripts/test_check_pure_move.py`
+- **Status:** Partial - audit and plan written (2026-11-23); editor move 1 done; no other batch has moved yet
+- **Open:** batches 1-5 next (editor self-updater, editor script completion, network manager, launcher chat text, base-layer cycle breakers); the CI checks of the plan's section 7 (include direction in `scripts/check_modules.py` from PR #1158, platform-code lint, file and function size warnings, frozen-name list) are described, not built; owner decisions listed in the plan's section 8 (`.hpp` kept, `m_` only on private members, frozen vague names, forwarding headers for one release); `player/main.cpp` (`main` 1,936 lines) is batch X1
+- **Related:** 15.10, 17.1, 13.1, 1.5, 16.2, 41
+- **Words:** split, refactor, large file, main.cpp, file size, god file, OkayScriptVM, SceneSerializer, modularization, architecture, layers, subsystems, include cycle, circular dependency, naming convention, m_ prefix, frozen names, module boundaries
+- **Seen as:** slow builds when one file changes; merge conflicts in `launcher/main.cpp` or `editor/main.cpp`; a change in one subsystem rebuilds everything; vague one-letter names
+- **Ask me like:** "do batch 3 of the modularization plan"; "split the launcher chat code into its own file"; "which names must not change"
 
 ### 19.5 Roadmap and PR template
 - **System:** Docs

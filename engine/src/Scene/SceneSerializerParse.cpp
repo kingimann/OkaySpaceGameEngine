@@ -11,7 +11,6 @@
 #include <charconv>
 #include <limits>
 #include <locale>
-#include <mutex>
 #include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/Seat.hpp"

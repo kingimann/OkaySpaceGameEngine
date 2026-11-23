@@ -358,10 +358,10 @@ bool LoadsInStoredOrder(const GameObject* go, const std::string& records) {
     }
     // The answer also depends on the RequireComponent rules and on which serializers are registered: the memo is dropped when they change.
     const std::uint64_t generation = detail::ComponentRulesGeneration() * 1000003u + detail::ComponentSerializerGeneration();
-    struct Memo { std::mutex mutex; std::unordered_map<std::string, bool> verdict; std::uint64_t generation = 0; };
+    struct Memo { std::mutex mutex; std::unordered_map<std::string, bool> verdict; std::uint64_t generation = 0; };   // lint-allow: win32-thread (existing code, unchanged; the diff shows it as added after the split)
     static Memo memo;
     {
-        std::lock_guard<std::mutex> lock(memo.mutex);
+        std::lock_guard<std::mutex> lock(memo.mutex);   // lint-allow: win32-thread
         if (memo.generation != generation) { memo.verdict.clear(); memo.generation = generation; }
         auto it = memo.verdict.find(key);
         if (it != memo.verdict.end()) return it->second;
@@ -380,7 +380,7 @@ bool LoadsInStoredOrder(const GameObject* go, const std::string& records) {
             natural = SameSharedOrder(live, ComponentKeys(root));
     }
     probing = false;
-    std::lock_guard<std::mutex> lock(memo.mutex);
+    std::lock_guard<std::mutex> lock(memo.mutex);   // lint-allow: win32-thread
     if (memo.generation == generation) {   // not if the rules changed while this was being worked out
         if (memo.verdict.size() > 4096) memo.verdict.clear();   // shapes are few; this only bounds a pathological run
         memo.verdict[key] = natural;

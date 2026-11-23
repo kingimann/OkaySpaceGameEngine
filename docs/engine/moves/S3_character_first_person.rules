@@ -13,3 +13,6 @@ add: ^using namespace HumanoidMotion;
 add: ^using character_fp::OwnerCamera;$
 add: ^Camera\* OwnerCamera\(GameObject\* player\);$
 add: ^class (Camera|GameObject);$
+# difflib slides the closing brace of HandsOnAHold (which stays) against the last brace of FinishTwoHands (which moves): same text, ambiguous diff
+drop: ^\}$
+add: ^\}$

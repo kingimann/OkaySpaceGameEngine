@@ -99,8 +99,12 @@ static Outcome Run(const ScriptApiEntry& e, std::size_t nargs, bool typed) {
     scene.Start();
     if (hasResult && o.loaded) o.result = sc->VM()->GetGlobal("r");
     scene.Update(kDt);   // a physics step, so forces show in the velocity
-    o.velocity = body->velocity;
-    o.spin = body->angularVelocity;
+    // load_game replaces the scene's objects during Update (from the save made above), so `body` may be gone: look the
+    // probe up again instead of reading through the old pointer.
+    GameObject* probe = scene.Find("Probe");
+    body = probe ? probe->GetComponent<Rigidbody3D>() : nullptr;
+    o.velocity = body ? body->velocity : Vec3{};
+    o.spin = body ? body->angularVelocity : Vec3{};
     o.musicVolume = AudioMixer::groupVolume[(int)AudioGroup::Music];
     o.slotExists = SaveGame::Exists(kSlot);
     o.slotLabel = SaveGame::Info(kSlot).label;

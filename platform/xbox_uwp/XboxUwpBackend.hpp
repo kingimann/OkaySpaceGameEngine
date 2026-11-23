@@ -6,8 +6,10 @@
 // documentation of CoreWindow events (SizeChanged, VisibilityChanged, Activated, KeyDown/KeyUp, PointerMoved/Pressed/Released,
 // PointerWheelChanged, CharacterReceived, Closed). No <thread>, no <mutex>.
 #include "XboxAudio.hpp"
+#include "XboxCapture.hpp"
 #include "XboxClipboard.hpp"
 #include "XboxInput.hpp"
+#include "XboxKeyLayout.hpp"
 #include "XboxLifecycle.hpp"
 #include "XboxPadHub.hpp"
 #include "XboxPaths.hpp"
@@ -36,6 +38,8 @@ struct UwpHost {
     virtual void SetTitle(const std::string&) {}        // ApplicationView.Title
     virtual std::vector<std::string> Locales() { return {"en-US"}; }
     virtual void ShowMessage(const std::string&, const std::string&) {}
+    virtual CaptureHost* Capture() { return nullptr; }  // null: no microphone support on this host
+    virtual std::string InputLanguage() { return "en-US"; }   // the keyboard's language tag (Windows.Globalization.Language / InputLanguage); picks the key layout
     virtual int TouchDevices() { return 0; }            // PointerDevice.GetPointerDevices(): touch digitizers present (an Xbox usually has none)
 };
 
@@ -139,7 +143,14 @@ public:
 
     // ---- Backend ----
     platform::BackendKind Kind() const override { return platform::BackendKind::Own; }
-    bool Init(const platform::InitFlags&) override { inited_ = true; err_.clear(); return true; }
+    bool Init(const platform::InitFlags&) override { inited_ = true; err_.clear(); RefreshKeyLayout(); return true; }
+    /// The key layout KeyForChar / KeyLabel follow (XboxKeyLayout.hpp). Init and RefreshKeyLayout take it from the host's language tag
+    /// (US when the host says nothing we know); SetKeyLayout overrides it. UNVERIFIED on a console: the real language tag is the shell's.
+    void SetKeyLayout(KeyLayout l) { layout_ = l; }
+    KeyLayout GetKeyLayout() const { return layout_; }
+    void RefreshKeyLayout() { layout_ = LayoutFromLanguageTag(host_->InputLanguage()); }
+    /// The label for a key on a rebinding screen in the current layout ("" when unknown; "Space" for the space bar).
+    std::string KeyLabel(platform::Key k) const { return KeyName(layout_, (int)k); }
     void Shutdown() override { inited_ = false; }
     std::string LastError() const override { return err_; }
     std::uint64_t TicksMs() override { return (std::uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_).count(); }
@@ -168,13 +179,15 @@ public:
     bool IsCursorShown() override { return cursor_; }
     std::uint32_t RelativeMouseState(int* dx, int* dy) override { if (dx) *dx = relDx_; if (dy) *dy = relDy_; relDx_ = relDy_ = 0; return mouse_; }
     bool SupportsRelativeMouseState() override { return true; }
-    platform::Key KeyForChar(char c) override {   // a US layout (CoreWindow gives virtual keys, not the layout): documented limit
-        if (c >= 'a' && c <= 'z') return (platform::Key)((int)platform::Key::A + (c - 'a'));
-        if (c >= 'A' && c <= 'Z') return (platform::Key)((int)platform::Key::A + (c - 'A'));
-        if (c >= '1' && c <= '9') return (platform::Key)((int)platform::Key::N1 + (c - '1'));
-        if (c == '0') return platform::Key::N0;
-        if (c == ' ') return platform::Key::Space;
-        return platform::Key::Unknown;
+    /// The physical key that types `c` on the current layout (XboxKeyLayout.hpp). Only letters, digits and space are asked (the engine's
+    /// rule; anything else is Unknown, as on the US default before), so a game's WASD follows an AZERTY layout. A letter the layout does
+    /// not have (Latin letters on a Russian layout) is Unknown too.
+    platform::Key KeyForChar(char c) override {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ';
+        if (!ok) return platform::Key::Unknown;
+        const char lc = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+        const int hid = xbox::KeyForChar(layout_, (char32_t)(unsigned char)lc);
+        return hid == 0 ? platform::Key::Unknown : (platform::Key)hid;
     }
     bool ShowErrorBox(const std::string& title, const std::string& text, platform::Window*) override { Log(title + ": " + text); host_->ShowMessage(title, text); return true; }
     std::string BasePath() override { std::string p = TrimEndSlash(Slash(roots_.install)); return p.empty() ? p : p + "/"; }
@@ -193,8 +206,8 @@ public:
     std::string GetClipboardText() override { return clip_.GetText(); }
     void SetClipboardHost(ClipboardHost* h) { clip_.SetHost(h); }   // the C++/WinRT glue (never built); null = in-app only
 
-    std::unique_ptr<platform::AudioDevice> OpenAudio(const platform::AudioSpec& want, bool capture, const char*, platform::AudioSpec* got) override {
-        if (capture) { err_ = "Microphone capture is not supported in the Xbox UWP build yet."; return nullptr; }
+    std::unique_ptr<platform::AudioDevice> OpenAudio(const platform::AudioSpec& want, bool capture, const char* deviceName, platform::AudioSpec* got) override {
+        if (capture) return OpenCapture(want, deviceName, got);
         AudioHost* ah = host_->Audio();
         AudioOutputFormat fmt;
         if (!ah || !ah->Format(fmt)) { err_ = "No audio output is available."; return nullptr; }
@@ -203,8 +216,17 @@ public:
         if (got) *got = d->Spec();
         return std::unique_ptr<platform::AudioDevice>(d.release());
     }
-    int AudioDeviceCount(bool capture) override { return capture ? 0 : (host_->Audio() ? 1 : 0); }
-    std::string AudioDeviceName(int index, bool capture) override { return (!capture && index == 0 && host_->Audio()) ? "Default audio output" : ""; }
+    int AudioDeviceCount(bool capture) override { if (capture) { CaptureHost* c = host_->Capture(); return c ? c->DeviceCount() : 0; } return host_->Audio() ? 1 : 0; }
+    std::string AudioDeviceName(int index, bool capture) override {
+        if (capture) { CaptureHost* c = host_->Capture(); return (c && index >= 0 && index < c->DeviceCount()) ? c->DeviceName(index) : std::string(); }
+        return (index == 0 && host_->Audio()) ? "Default audio output" : "";
+    }
+    /// What the microphone permission is now (manifest capability + the system's consent); Denied when the host has no capture at all.
+    MicPermissionResult MicPermissionNow() {
+        CaptureHost* c = host_->Capture();
+        if (!c) return {MicPermission::Denied, "No microphone is available on this host."};
+        return EvaluateMicPermission(c->CapabilityDeclared(), c->Consent());
+    }
 
     int GamepadDeviceCount() override { return hub_ ? hub_->SlotCount() : host_->PadCount(); }
     bool IsGamepad(int i) override { return hub_ ? hub_->Present(i) : (i >= 0 && i < host_->PadCount()); }
@@ -223,6 +245,22 @@ public:
     }
 
     UwpHost* Host() { return host_; }
+    /// Microphone: refused with the reason (LastError) when the permission is Denied, there is no device, the name matches none or the
+    /// device's format is not 16-bit PCM / 32-bit float. Permission Unknown still opens: starting the device is what asks the user.
+    std::unique_ptr<platform::AudioDevice> OpenCapture(const platform::AudioSpec& want, const char* deviceName, platform::AudioSpec* got) {
+        CaptureHost* c = host_->Capture();
+        const MicPermissionResult perm = MicPermissionNow();
+        if (perm.state == MicPermission::Denied) { err_ = "Microphone capture is not available: " + perm.reason; return nullptr; }
+        int index = 0; const int n = c->DeviceCount();
+        if (n < 1) { err_ = "No microphone was found."; return nullptr; }
+        if (deviceName && *deviceName) { index = -1; for (int i = 0; i < n; ++i) if (c->DeviceName(i) == deviceName) { index = i; break; } if (index < 0) { err_ = std::string("No microphone named \"") + deviceName + "\"."; return nullptr; } }
+        CaptureFormat fmt;
+        if (!c->Format(index, fmt) || !SupportedCaptureFormat(fmt)) { err_ = "The microphone's format is not supported (16-bit PCM or 32-bit float, 1 to 8 channels)."; return nullptr; }
+        std::unique_ptr<UwpCaptureDevice> d(new UwpCaptureDevice(want, fmt, c, index));
+        std::string e; if (!d->Begin(e)) { err_ = e.empty() ? "The microphone could not be started." : e; return nullptr; }
+        if (got) *got = d->Spec();
+        return std::unique_ptr<platform::AudioDevice>(d.release());
+    }
     const PathRoots& Roots() const { return roots_; }
 
 private:
@@ -312,6 +350,7 @@ private:
     std::deque<std::string> log_; UwpClipboard clip_; std::string err_;
     int mx_ = 0, my_ = 0, relDx_ = 0, relDy_ = 0; std::uint32_t mouse_ = 0;
     TouchTracker touch_; std::vector<TouchEvent> gestures_; long long mouseFinger_ = -1; TextComposition comp_; int imeRect_[4] = {0, 0, 0, 0};
+    KeyLayout layout_ = KeyLayout::US;
     bool inited_ = false, textInput_ = false, rel_ = false, cursor_ = true, quitSent_ = false;
     int backPresses_ = 0;
 };

@@ -14,6 +14,7 @@
 #include "Process.hpp"
 
 #include <Okay.hpp>
+#include "okay/Core/StringUtil.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -100,13 +101,8 @@ void TestArguments() {
     CHECK(Cli({"build", "--target", "playstation"}, s) == 1 && Has(s.err, "has to be made on playstation"));
     CHECK(Cli({"vc", "merge-driver", "a"}, s) == 2);                 // the hidden driver needs three files
 
-    // Windows command lines: quoted the way CommandLineToArgvW reads them back.
-    CHECK(okaycli::WindowsCommandLine({"git", "commit", "-m", "two words"}) == "git commit -m \"two words\"");
-    CHECK(okaycli::WindowsCommandLine({"a\"b"}) == "\"a\\\"b\"");
-    CHECK(okaycli::WindowsCommandLine({"C:\\dir\\"}) == "C:\\dir\\");              // no space: as it is
-    CHECK(okaycli::WindowsCommandLine({"C:\\my dir\\"}) == "\"C:\\my dir\\\\\"");  // a trailing backslash is doubled before the quote
-    CHECK(okaycli::WindowsCommandLine({"f\\\\\"g"}) == "\"f\\\\\\\\\\\"g\"");
-    CHECK(okaycli::WindowsCommandLine({""}) == "\"\"");
+    // The shared Trim this CLI added to Core/StringUtil.hpp.
+    CHECK(okay::str::Trim("  a b \r\n") == "a b" && okay::str::Trim("\t\n").empty() && okay::str::Trim("x") == "x");
 
     // The process seam: a program that is not there is "not started", not a crash.
     const okaycli::RunResult r = okaycli::Run({"okay-no-such-program-xyz"}, "", true);

@@ -1,7 +1,9 @@
 // okay CLI: the one place that starts another program. See Process.hpp.
-// Written from the Win32 CreateProcessW / pipe documentation, the documented command-line quoting rules that
-// CommandLineToArgvW and the C runtime use, and POSIX fork, execvp, pipe and poll. Our own code.
+// Written from the Win32 CreateProcessW / pipe documentation and POSIX fork, execvp, pipe and poll. Our own code.
+// The Windows quoting, UTF-8 to UTF-16 and this program's path come from shared/AppRestart.hpp.
 #include "Process.hpp"
+
+#include "AppRestart.hpp"   // shared/: QuoteWindowsArg, Utf8ToWide, CurrentExecutable (one copy of each)
 
 #include <cstdlib>
 #include <cstring>
@@ -24,35 +26,12 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
 #endif
 
 namespace okaycli {
 namespace fs = std::filesystem;
 
-std::string WindowsCommandLine(const std::vector<std::string>& argv) {
-    std::string line;
-    for (std::size_t i = 0; i < argv.size(); ++i) {
-        const std::string& a = argv[i];
-        if (i) line += ' ';
-        const bool plain = !a.empty() && a.find_first_of(" \t\n\v\"") == std::string::npos;
-        if (plain) { line += a; continue; }
-        line += '"';
-        std::size_t slashes = 0;
-        for (char c : a) {
-            if (c == '\\') { ++slashes; continue; }
-            if (c == '"') line.append(slashes * 2 + 1, '\\');   // backslashes before a quote are doubled, plus one for the quote
-            else line.append(slashes, '\\');
-            slashes = 0;
-            line += c;
-        }
-        line.append(slashes * 2, '\\');   // backslashes before the closing quote are doubled
-        line += '"';
-    }
-    return line;
-}
+std::string SelfPath() { return okay::restart::Utf8(okay::restart::CurrentExecutable()); }
 
 std::string FindOnPath(const std::string& program) {
     if (program.empty()) return "";
@@ -91,19 +70,15 @@ std::string FindOnPath(const std::string& program) {
 #if defined(_WIN32)
 
 namespace {
-std::wstring Widen(const std::string& s) {
-    if (s.empty()) return std::wstring();
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    std::wstring w((std::size_t)n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
-    return w;
-}
-std::string Narrow(const std::wstring& w) {
-    if (w.empty()) return std::string();
-    const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-    std::string s((std::size_t)n, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), &s[0], n, nullptr, nullptr);
-    return s;
+/// The command line CreateProcessW gets: each argument quoted the way CommandLineToArgvW reads it back
+/// (shared/AppRestart.hpp QuoteWindowsArg, the editor's relaunch uses the same).
+std::wstring CommandLine(const std::vector<std::string>& argv) {
+    std::wstring line;
+    for (std::size_t i = 0; i < argv.size(); ++i) {
+        if (i) line += L' ';
+        line += okay::restart::QuoteWindowsArg(okay::restart::Utf8ToWide(argv[i]));
+    }
+    return line;
 }
 void ReadAll(HANDLE h, std::string& out) {
     char buf[4096];
@@ -115,19 +90,11 @@ void ReadAll(HANDLE h, std::string& out) {
 }
 } // namespace
 
-std::string SelfPath() {
-    std::wstring buf(32768, L'\0');
-    const DWORD n = GetModuleFileNameW(nullptr, &buf[0], (DWORD)buf.size());
-    if (n == 0 || n >= buf.size()) return "";
-    buf.resize(n);
-    return Narrow(buf);
-}
-
 RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool capture) {
     RunResult r;
     if (argv.empty()) return r;
-    std::wstring cmd = Widen(WindowsCommandLine(argv));
-    const std::wstring wd = Widen(cwd);
+    std::wstring cmd = CommandLine(argv);
+    const std::wstring wd = okay::restart::Utf8ToWide(cwd);
     STARTUPINFOW si = {};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi = {};
@@ -173,8 +140,8 @@ RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool
 
 bool StartDetached(const std::vector<std::string>& argv, const std::string& cwd) {
     if (argv.empty()) return false;
-    std::wstring cmd = Widen(WindowsCommandLine(argv));
-    const std::wstring wd = Widen(cwd);
+    std::wstring cmd = CommandLine(argv);
+    const std::wstring wd = okay::restart::Utf8ToWide(cwd);
     STARTUPINFOW si = {};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi = {};
@@ -187,23 +154,6 @@ bool StartDetached(const std::vector<std::string>& argv, const std::string& cwd)
 }
 
 #else   // POSIX
-
-std::string SelfPath() {
-#if defined(__APPLE__)
-    char buf[4096];
-    uint32_t n = sizeof(buf);
-    if (_NSGetExecutablePath(buf, &n) != 0) return "";
-    std::error_code ec;
-    const fs::path p = fs::canonical(buf, ec);
-    return ec ? std::string(buf) : p.string();
-#else
-    char buf[4096];
-    const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (n <= 0) return "";
-    buf[n] = '\0';
-    return buf;
-#endif
-}
 
 namespace {
 std::vector<char*> ArgvOf(const std::vector<std::string>& argv) {

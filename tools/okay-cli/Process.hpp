@@ -2,8 +2,8 @@
 // okay CLI: the ONE place that starts another program (git, the editor, the player, python, ctest).
 // Same idea as the curl seam in okay/Platform/NativeFetch.hpp: one small file owns process start-up, and every other
 // part of the CLI asks it. Windows uses CreateProcessW; Linux and macOS use fork + execvp. No shell is ever used, so a
-// file name with spaces or quotes is passed as it is. Written from the Win32 CreateProcess documentation, the documented
-// Windows command-line quoting rules (CommandLineToArgvW / the C runtime) and POSIX fork/exec/poll. No <thread> or
+// file name with spaces or quotes is passed as it is. Written from the Win32 CreateProcess documentation and POSIX fork/exec/poll (the
+// Windows argument quoting is shared/AppRestart.hpp QuoteWindowsArg). No <thread> or
 // <mutex> (CLAUDE.md rule 21a): the two output pipes are read with poll() on POSIX, and on Windows stderr goes to a
 // temporary file while stdout is read from a pipe.
 #include <string>
@@ -31,8 +31,5 @@ std::string FindOnPath(const std::string& program);
 
 /// The full path of this running program ("" when the system does not say).
 std::string SelfPath();
-
-/// The Windows command line for `argv` (each argument quoted the way CommandLineToArgvW reads it back). Public for tests.
-std::string WindowsCommandLine(const std::vector<std::string>& argv);
 
 } // namespace okaycli

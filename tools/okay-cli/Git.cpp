@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstdlib>
 
+#include "okay/Core/StringUtil.hpp"
 #include "BuildSettingsModel.hpp"   // IgnoreLines / MergeIgnore: the editor's own .gitignore list and merge
 
 namespace okaycli::vc {
@@ -77,8 +78,7 @@ const char* GroupName(Group g) {
 Group GroupOf(const std::string& path) {
     std::string p = path;
     std::replace(p.begin(), p.end(), '\\', '/');
-    std::string lower = p;
-    for (char& c : lower) c = (char)std::tolower((unsigned char)c);
+    const std::string lower = okay::str::LowerAscii(p);
     const std::size_t slash = lower.rfind('/');
     const std::string file = slash == std::string::npos ? lower : lower.substr(slash + 1);
     const std::size_t dot = file.rfind('.');
@@ -175,9 +175,7 @@ bool Git::Available() {
 std::string Git::Version() {
     const RunResult r = Run({Program(), "--version"}, "", true);
     if (!r.started || r.exitCode != 0) return "";
-    std::string v = r.out;
-    while (!v.empty() && (v.back() == '\n' || v.back() == '\r')) v.pop_back();
-    return v;
+    return okay::str::Trim(r.out);
 }
 
 RunResult Git::Capture(const std::vector<std::string>& args) const {
@@ -193,12 +191,7 @@ RunResult Git::Attached(const std::vector<std::string>& args) const {
 }
 
 namespace {
-std::string FirstLine(std::string s) {
-    const std::size_t nl = s.find('\n');
-    if (nl != std::string::npos) s.resize(nl);
-    while (!s.empty() && (s.back() == '\r' || s.back() == ' ')) s.pop_back();
-    return s;
-}
+std::string FirstLine(const std::string& s) { return okay::str::Trim(s.substr(0, s.find('\n'))); }
 } // namespace
 
 bool Git::IsRepo() const {

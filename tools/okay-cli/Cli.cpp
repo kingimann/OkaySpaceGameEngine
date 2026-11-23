@@ -32,6 +32,7 @@
 #include "ProjectCreate.hpp"    // shared/: name and place checks, the folders of a new project, templates
 #include "ProjectVersion.hpp"   // shared/: the engine_version stamp and what a version difference means
 #include "okay/Core/CommandLine.hpp"
+#include "okay/Core/StringUtil.hpp"
 #include "okay/Input/InputAsset.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneDiff.hpp"
@@ -45,6 +46,7 @@
 
 namespace okaycli {
 namespace fs = std::filesystem;
+using okay::str::Trim;
 
 const char* EngineVersion() { return OKAY_ENGINE_VERSION; }
 
@@ -283,7 +285,7 @@ std::string ReadFile(const std::string& path, bool* ok = nullptr) {
     return t;
 }
 
-std::string Lower(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
+std::string Lower(const std::string& s) { return okay::str::LowerAscii(s); }
 
 std::string JoinWords(const std::vector<std::string>& v, std::size_t from = 0) {
     std::string s;
@@ -645,8 +647,7 @@ int CmdDoctor(const std::vector<std::string>& args, const std::string& project, 
             else {
                 const RunResult d = git.Capture({"config", "--get", "merge.okayscene.driver"});
                 const std::string want = vc::MergeDriverCommand(SelfPath());
-                std::string have = d.out;
-                while (!have.empty() && (have.back() == '\n' || have.back() == '\r')) have.pop_back();
+                const std::string have = Trim(d.out);
                 if (have.empty()) bad("Git does not merge scenes with the engine yet.", "run okay vc init.");
                 else if (have != want) bad("Git's scene merge points at a different okay program (" + have + ").", "run okay vc init with this okay.");
                 else good("Git merges and compares scenes with the engine");
@@ -688,12 +689,6 @@ bool NeedRepo(const vc::Git& git, const Io& io) {
     return false;
 }
 
-std::string Trim(std::string s) {
-    while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ')) s.pop_back();
-    std::size_t i = 0;
-    while (i < s.size() && (s[i] == ' ' || s[i] == '\n')) ++i;
-    return s.substr(i);
-}
 
 /// git's own words when it refused, kept short (first lines of stderr).
 std::string GitSaid(const RunResult& r) {

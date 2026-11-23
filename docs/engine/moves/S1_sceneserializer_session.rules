@@ -1,0 +1,10 @@
+# S1 (docs/engine/modularization_plan.md, section 3.1): what ParseStep (next move) needs moves out first: the `ParseSession`
+# struct (to SceneSerializerInternal.hpp, in namespace okay as SceneSerializer.hpp declares it there), `FilePath` and the
+# thread-local `g_loadingSceneDir` (to SceneSerializerHelpers.cpp, no longer `static`, declared in the header).
+#   python3 scripts/check_pure_move.py --base <commit before> --head <this commit> \
+#       --source engine/src/Scene/SceneSerializer.cpp --dest engine/src/Scene/SceneSerializerInternal.hpp \
+#       --dest engine/src/Scene/SceneSerializerHelpers.cpp --rules docs/engine/moves/S1_sceneserializer_session.rules
+change: static thread_local std::string g_loadingSceneDir; ==> thread_local std::string g_loadingSceneDir;
+change: static std::filesystem::path FilePath(const std::string& utf8) { ==> std::filesystem::path FilePath(const std::string& utf8) {
+add: ^\s*std::filesystem::path FilePath\(const std::string& utf8\);$
+add: ^\s*extern thread_local std::string g_loadingSceneDir;$

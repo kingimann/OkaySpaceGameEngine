@@ -148,42 +148,42 @@ Back to the [code index](../code_index.md). 28 headers, 124 names.
 - `EnsureMainCamera` function, line 107: Find an existing Camera in the scene, or create a "Main Camera" if there is none.
 - `AddViewToggle` function, line 121: GTA-style view switch (V / gamepad Back) on a first- or third-person player.
 - `AddTemplateHoldables` function, line 137: Hands, a one-handed block and a two-handed crate on a switchable player
-- `AddSharedView` function, line 201: One Player Controller with both views (the V toggle), and First Person
-- `MountEyeCamera` function, line 213: The eye camera both views share. The orbit repositions this same camera
-- `PoseRestingOrbit` function, line 226: Resting over-the-shoulder orbit in the player's space (pitch 18 looks
-- `AddThirdPersonPlayer` function, line 234: Add a third-person player. Same controllers and eye camera as first person;
-- `AddFirstPersonPlayer` function, line 243: Add a first-person player. Same controllers and eye camera as third person;
-- `AddClickToMovePlayer` function, line 251: Add a click-to-move player (point-and-click; controller drives a follow camera).
-- `AddTopDownPlayer` function, line 259: Add a top-down player (twin-stick / ARPG; fixed high angled follow camera).
-- `AddTopDownShooterPlayer` function, line 268: Add a 3D top-down shooter player (twin-stick: WASD moves, the mouse aims, left
-- `AddPlatformer25DPlayer` function, line 278: Add a 2.5D (LittleBigPlanet-style) platformer player: side view, run + jump,
-- `AddTopDown2DPlayer` function, line 290: Add a 2D top-down player: a sprite driven by the native TopDownController2D
-- `AddThirdPersonShooterPlayer` function, line 319: Add a third-person shooter player (over-the-shoulder aim; cursor locked).
-- `WireCharacterIK` function, line 331: Wire foot IK + root motion onto a part-rigged Character — the "humanoid setup"
-- `BuildHumanoidBody` function, line 360: Build a fully-wired humanoid body: the part-rigged Character, a physics capsule,
-- `AddHumanoidPlayer` function, line 375: Add a one-click humanoid third-person player: rig + capsule + camera + foot IK,
-- `Platformer` function, line 384: A side-scrolling platformer starter: a follow camera, a physics player on a
-- `Platformer3D` function, line 432: A 3D platformer starter: a lit ground, a physics player cube you drive with
-- `ThirdPerson` function, line 481: A third-person starter: the blocky Character driven by a ThirdPersonController
-- `ThirdPersonShooter` function, line 528: A third-person SHOOTER starter: the blocky Character driven by a
-- `PointAndClick` function, line 605: A point-and-click starter (RuneScape / Diablo style): the blocky Character
-- `TopDown` function, line 708: A top-down starter: a follow camera and a script-driven player that walks
-- `TopDownShooter` function, line 766: A 3D top-down shooter starter (twin-stick): an arena with cover, shootable
-- `Platformer25D` function, line 807: A 2.5D platformer starter in the LittleBigPlanet style: a side-on level with
-- `Vehicle3D` function, line 844: A 3D arcade driving starter: a car you steer with WASD/arrows on a wide ground,
-- `VehicleSeats3D` function, line 896: "Vehicle Test": a third-person player standing in the road next to a small car (about 4.1 m long,
-- `DrivingWorld` function, line 1067: "Driving World": a flat city-like grid of roads with ramps, a mud patch and an ice patch, a drift circle of cones, a
-- `Vehicle2D` function, line 1132: A 2D top-down driving starter: a car you steer with WASD/arrows (throttle + turn,
-- `Multiplayer` function, line 1170: The simplest possible multiplayer: one player object whose script hosts (or
-- `CoinCollector` function, line 1221: A complete little game: drive the player with WASD to collect spinning
-- `MainMenu` function, line 1278: A main-menu scene: a background panel, a title, a Start button, a volume slider,
-- `Inventory` function, line 1411: A ready-made survival inventory on the real components: a 2D top-down Player
-- `Snake` function, line 1473: A complete, playable game of Snake — written entirely in OkayScript on a
-- `BrickBreaker` function, line 1561: A complete, playable Brick Breaker. The paddle is OkayScript (A/D), the ball
-- `TerrainSandbox` function, line 1674: A terrain-digging sandbox: a procedurally generated, eroded hilly terrain you
-- `AddBoat` function, line 1893: A boat you can drive, ready to float: a hull with a Rigidbody3D, a box collider, Buoyancy and a Boat Controller
-- `BoatLake` function, line 1945: "Boat Lake": a lake with rolling waves, a wooden dock, floating crates, a stone that sinks and a boat to drive.
-- `VoxelSandbox` function, line 2018: The Sandbox at its default size. A separate overload (not default arguments) so '&Templates::VoxelSandbox' still converts to 'void (*)(Scene&)',
+- `AddSharedView` function, line 142: One Player Controller with both views (the V toggle), and First Person
+- `MountEyeCamera` function, line 154: The eye camera both views share. The orbit repositions this same camera
+- `PoseRestingOrbit` function, line 167: Resting over-the-shoulder orbit in the player's space (pitch 18 looks
+- `AddThirdPersonPlayer` function, line 175: Add a third-person player. Same controllers and eye camera as first person;
+- `AddFirstPersonPlayer` function, line 184: Add a first-person player. Same controllers and eye camera as third person;
+- `AddClickToMovePlayer` function, line 192: Add a click-to-move player (point-and-click; controller drives a follow camera).
+- `AddTopDownPlayer` function, line 200: Add a top-down player (twin-stick / ARPG; fixed high angled follow camera).
+- `AddTopDownShooterPlayer` function, line 209: Add a 3D top-down shooter player (twin-stick: WASD moves, the mouse aims, left
+- `AddPlatformer25DPlayer` function, line 219: Add a 2.5D (LittleBigPlanet-style) platformer player: side view, run + jump,
+- `AddTopDown2DPlayer` function, line 231: Add a 2D top-down player: a sprite driven by the native TopDownController2D
+- `AddThirdPersonShooterPlayer` function, line 234: Add a third-person shooter player (over-the-shoulder aim; cursor locked).
+- `WireCharacterIK` function, line 246: Wire foot IK + root motion onto a part-rigged Character — the "humanoid setup"
+- `BuildHumanoidBody` function, line 251: Build a fully-wired humanoid body: the part-rigged Character, a physics capsule,
+- `AddHumanoidPlayer` function, line 266: Add a one-click humanoid third-person player: rig + capsule + camera + foot IK,
+- `Platformer` function, line 275: A side-scrolling platformer starter: a follow camera, a physics player on a
+- `Platformer3D` function, line 279: A 3D platformer starter: a lit ground, a physics player cube you drive with
+- `ThirdPerson` function, line 285: A third-person starter: the blocky Character driven by a ThirdPersonController
+- `ThirdPersonShooter` function, line 290: A third-person SHOOTER starter: the blocky Character driven by a
+- `PointAndClick` function, line 295: A point-and-click starter (RuneScape / Diablo style): the blocky Character
+- `TopDown` function, line 304: A top-down starter: a follow camera and a script-driven player that walks
+- `TopDownShooter` function, line 324: A 3D top-down shooter starter (twin-stick): an arena with cover, shootable
+- `Platformer25D` function, line 330: A 2.5D platformer starter in the LittleBigPlanet style: a side-on level with
+- `Vehicle3D` function, line 335: A 3D arcade driving starter: a car you steer with WASD/arrows on a wide ground,
+- `VehicleSeats3D` function, line 345: "Vehicle Test": a third-person player standing in the road next to a small car (about 4.1 m long,
+- `DrivingWorld` function, line 351: "Driving World": a flat city-like grid of roads with ramps, a mud patch and an ice patch, a drift circle of cones, a
+- `Vehicle2D` function, line 356: A 2D top-down driving starter: a car you steer with WASD/arrows (throttle + turn,
+- `Multiplayer` function, line 364: The simplest possible multiplayer: one player object whose script hosts (or
+- `CoinCollector` function, line 370: A complete little game: drive the player with WASD to collect spinning
+- `MainMenu` function, line 378: A main-menu scene: a background panel, a title, a Start button, a volume slider,
+- `Inventory` function, line 385: A ready-made survival inventory on the real components: a 2D top-down Player
+- `Snake` function, line 391: A complete, playable game of Snake — written entirely in OkayScript on a
+- `BrickBreaker` function, line 397: A complete, playable Brick Breaker. The paddle is OkayScript (A/D), the ball
+- `TerrainSandbox` function, line 403: A terrain-digging sandbox: a procedurally generated, eroded hilly terrain you
+- `AddBoat` function, line 420: A boat you can drive, ready to float: a hull with a Rigidbody3D, a box collider, Buoyancy and a Boat Controller
+- `BoatLake` function, line 425: "Boat Lake": a lake with rolling waves, a wooden dock, floating crates, a stone that sinks and a boat to drive.
+- `VoxelSandbox` function, line 429: The Sandbox at its default size. A separate overload (not default arguments) so '&Templates::VoxelSandbox' still converts to 'void (*)(Scene&)',
 
 ## `engine/include/okay/Scene/SceneText.hpp`
 

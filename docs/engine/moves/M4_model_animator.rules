@@ -1,0 +1,28 @@
+# Moved member function bodies; each definition gains the class qualifier and loses `override` and its default arguments (they stay on the declaration).
+change: void Update(float dt) override { ==> void ModelAnimator::Update(float dt) {
+add: ^\s*void\ Update\(float\ dt\)\ override;$
+change: void YawLowerBody(float dt) { ==> void ModelAnimator::YawLowerBody(float dt) {
+add: ^\s*void\ YawLowerBody\(float\ dt\);$
+change: bool DirectionalBlendStep(float dt, float spd) { ==> bool ModelAnimator::DirectionalBlendStep(float dt, float spd) {
+add: ^\s*bool\ DirectionalBlendStep\(float\ dt,\ float\ spd\);$
+change: bool SmoothBlendStep(float dt, float spd) { ==> bool ModelAnimator::SmoothBlendStep(float dt, float spd) {
+add: ^\s*bool\ SmoothBlendStep\(float\ dt,\ float\ spd\);$
+change: bool BlendClips(float dt, int A, int B, float w) override { ==> bool ModelAnimator::BlendClips(float dt, int A, int B, float w) {
+add: ^\s*bool\ BlendClips\(float\ dt,\ int\ A,\ int\ B,\ float\ w\)\ override;$
+change: bool BlendMany(float dt, const std::vector<int>& clipIdx, const std::vector<float>& weights) override { ==> bool ModelAnimator::BlendMany(float dt, const std::vector<int>& clipIdx, const std::vector<float>& weights) {
+add: ^\s*bool\ BlendMany\(float\ dt,\ const\ std::vector<int>\&\ clipIdx,\ const\ std::vector<float>\&\ weights\)\ override;$
+drop: ^\s*void\ PoseWeighted\(const\ std::vector<std::pair<int,\ float>>\&\ clipTimes,\ const\ std::vector<float>\&\ weights,$
+drop: ^\s*const\ std::unordered_set<Transform\*>\*\ mask,\ float\ amount,\ bool\ additive\ =\ false\)\ \{$
+add: ^\s*void\ PoseWeighted\(const\ std::vector<std::pair<int,\ float>>\&\ clipTimes,\ const\ std::vector<float>\&\ weights,$
+add: ^\s*const\ std::unordered_set<Transform\*>\*\ mask,\ float\ amount,\ bool\ additive\ =\ false\);$
+add: ^\s*void\ ModelAnimator::PoseWeighted\(const\ std::vector<std::pair<int,\ float>>\&\ clipTimes,\ const\ std::vector<float>\&\ weights,$
+add: ^\s*const\ std::unordered_set<Transform\*>\*\ mask,\ float\ amount,\ bool\ additive\)\ \{$
+drop: ^\s*void\ PoseLayer\(const\ std::vector<std::pair<int,\ float>>\&\ clipTimes,\ const\ std::vector<float>\&\ weights,$
+drop: ^\s*const\ std::string\&\ maskBone,\ float\ amount,\ bool\ additive\ =\ false,$
+drop: ^\s*const\ std::vector<std::string>\*\ moreBones\ =\ nullptr\)\ override\ \{$
+add: ^\s*void\ PoseLayer\(const\ std::vector<std::pair<int,\ float>>\&\ clipTimes,\ const\ std::vector<float>\&\ weights,$
+add: ^\s*const\ std::string\&\ maskBone,\ float\ amount,\ bool\ additive\ =\ false,$
+add: ^\s*const\ std::vector<std::string>\*\ moreBones\ =\ nullptr\)\ override;$
+add: ^\s*void\ ModelAnimator::PoseLayer\(const\ std::vector<std::pair<int,\ float>>\&\ clipTimes,\ const\ std::vector<float>\&\ weights,$
+add: ^\s*const\ std::string\&\ maskBone,\ float\ amount,\ bool\ additive,$
+add: ^\s*const\ std::vector<std::string>\*\ moreBones\)\ \{$

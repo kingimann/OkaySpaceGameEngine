@@ -1,0 +1,130 @@
+# O1 of the engine modularization plan (docs/engine/modularization_plan.md, section 3.1): okayui/src/OkayUI.cpp split by widget
+# family. Four commits, each checked on its own against the commit before it:
+#   1. OkayUIInternal.hpp: the shared state and helpers the moved code needs (the structs and small inline helpers move there;
+#      the variables get an `extern` line and the functions a prototype, their definitions stay in OkayUI.cpp)
+#   2. OkayUI_Tooltips.cpp (tooltips: Tooltip, SetTooltip, BeginTooltip / EndTooltip, the pending-tooltip flush)
+#   3. OkayUI_DrawList.cpp (the public draw list: shapes, paths, textured polygons, the window and foreground lists)
+#   4. OkayUI_Tables.cpp (columns and tables)
+#   python3 scripts/check_pure_move.py --base <commit before> --head <commit> --source okayui/src/OkayUI.cpp \
+#       --dest okayui/src/OkayUIInternal.hpp (commit 1; --dest okayui/src/OkayUI_<Family>.cpp for commits 2 to 4) \
+#       --rules docs/engine/moves/O1_okayui_split.rules
+# The edits that are not moves: the toolkit's old anonymous namespace of state (and the few later blocks that hold state the new
+# files read) became `namespace ui_core`, so the new files reach it through the header; every file that uses it says
+# `using namespace ui_core;`. Where a function had to be reachable, `static` / `inline` left its definition (one drop and one add
+# rule below per function) and default arguments moved to the prototype in the header. The rules below were generated from the
+# pristine file by a script and are exactly the allowed edits; the extern lines and prototypes are listed one by one.
+add: ^extern\ int\ g_dropped;$
+add: ^extern\ bool\ g_rowClipper;$
+add: ^extern\ bool\ g_cullRow;$
+add: ^extern\ SDL_Vertex\ g_verts\[kMaxVerts\];$
+add: ^extern\ int\ g_nv;$
+add: ^extern\ int\ g_idx\[kMaxIdx\];$
+add: ^extern\ int\ g_ni;$
+add: ^extern\ SDL_Vertex\ g_ovVerts\[kMaxVerts\];$
+add: ^extern\ int\ g_onv;$
+add: ^extern\ int\ g_ovIdx\[kMaxIdx\];$
+add: ^extern\ int\ g_oni;$
+add: ^extern\ bool\ g_toOverlay;$
+add: ^extern\ bool\ g_look;$
+add: ^extern\ SDL_Texture\*\ g_defTex;$
+add: ^extern\ float\ g_whiteU,\ g_whiteV;$
+add: ^extern\ OverlaySpan\ g_ovSpans\[32\];$
+add: ^extern\ int\ g_novSpans;$
+add: ^extern\ DrawSpan\ g_spans\[kMaxSpans\];$
+add: ^extern\ int\ g_nspans;$
+add: ^extern\ SDL_Rect\ g_clipStack\[16\];$
+add: ^extern\ int\ g_clipTop;$
+add: ^extern\ bool\ g_curClipOn;$
+add: ^extern\ SDL_Rect\ g_curClipRect;$
+add: ^extern\ SDL_Texture\*\ g_curTex;$
+add: ^void\ pushSpan\(\);$
+add: ^void\ setTexture\(SDL_Texture\*\ t\);$
+add: ^extern\ Input\ g_in;$
+add: ^extern\ int\ g_lastId;$
+add: ^extern\ int\ g_disCount;$
+add: ^extern\ bool\ g_rawDraw;$
+add: ^extern\ bool\ g_pressed;$
+add: ^extern\ bool\ g_released;$
+add: ^extern\ bool\ g_rPressed;$
+add: ^PopupSlot\*\ popupSlot\(int\ id,\ bool\ create\);$
+add: ^extern\ int\ g_openPopupThisFrame;$
+add: ^extern\ int\ g_hot,\ g_active;$
+add: ^extern\ float\ g_dispW,\ g_dispH;$
+add: ^extern\ bool\ g_focusClaimed;$
+add: ^extern\ Theme\ g_theme;$
+add: ^void\ deriveColor\(int\ id,\ unsigned\ char\ out\[4\]\);$
+add: ^extern\ LayoutState\ g_lay;$
+add: ^extern\ GroupBox\ g_grp\[8\];$
+add: ^extern\ int\ g_grpTop;$
+add: ^extern\ bool\ g_posOverride;$
+add: ^extern\ ColumnState\ g_col;$
+add: ^TblStore\*\ tblStoreFor\(int\ id\);$
+add: ^extern\ TableState\ g_tbl;$
+add: ^extern\ int\ g_sortSpecsFor;$
+add: ^extern\ TableSortSpecs\*\ g_sortSpecsOut;$
+add: ^float\*\ floatState\(int\ id,\ float\ dflt\);$
+add: ^extern\ unsigned\ long\ long\ g_frameCount;$
+add: ^extern\ IO\ g_io;$
+add: ^extern\ float\ g_mouseDX,\ g_mouseDY;$
+add: ^extern\ unsigned\ g_idSeed;$
+add: ^int\ hashLabel\(const\ char\*\ s\);$
+add: ^extern\ const\ Font\ kFontBold;$
+add: ^extern\ const\ Font\*\ g_font;$
+add: ^float\ fMeasure\(const\ char\*\ s\);$
+add: ^extern\ float\ g_framePadY;$
+add: ^extern\ float\ g_sbSize;$
+add: ^extern\ float\ g_nextItemW;$
+add: ^float\ availW\(\);$
+add: ^void\ place\(float\ w,\ float\ h,\ float\&\ x,\ float\&\ y\);$
+add: ^void\ quad\(float\ x,\ float\ y,\ float\ w,\ float\ h,\ const\ unsigned\ char\ c\[4\]\);$
+add: ^void\ texQuad\(float\ x,\ float\ y,\ float\ w,\ float\ h,\ SDL_Texture\*\ tex,\ float\ u0,\ float\ v0,\ float\ u1,\ float\ v1,\ const\ unsigned\ char\ tint\[4\]\);$
+add: ^void\ quadPts\(float\ ax,\ float\ ay,\ float\ bx,\ float\ by,\ float\ cx,\ float\ cy,\ float\ dx,\ float\ dy,\ const\ unsigned\ char\ c\[4\]\);$
+add: ^void\ gradQuad\(float\ x,\ float\ y,\ float\ w,\ float\ h,\ const\ unsigned\ char\ tl\[4\],\ const\ unsigned\ char\ tr\[4\],\ const\ unsigned\ char\ br\[4\],\ const\ unsigned\ char\ bl\[4\]\);$
+add: ^void\ line\(float\ x0,\ float\ y0,\ float\ x1,\ float\ y1,\ float\ th,\ const\ unsigned\ char\ c\[4\]\);$
+add: ^void\ tri\(float\ ax,\ float\ ay,\ float\ bx,\ float\ by,\ float\ cx,\ float\ cy,\ const\ unsigned\ char\ c\[4\]\);$
+add: ^const\ float\*\ unitCircle\(int\ n\);$
+add: ^void\ fillCircle\(float\ cx,\ float\ cy,\ float\ radius,\ const\ unsigned\ char\ c\[4\],\ int\ segments\ =\ 24\);$
+add: ^void\ rrect\(float\ x,\ float\ y,\ float\ w,\ float\ h,\ float\ rad,\ const\ unsigned\ char\ c\[4\]\);$
+add: ^void\ bindTexture\(SDL_Texture\*\ t\);$
+add: ^void\ drawText\(float\ x,\ float\ y,\ const\ char\*\ str,\ float\ s,\ const\ unsigned\ char\ c\[4\]\);$
+add: ^const\ unsigned\ char\*\ withAlpha\(const\ unsigned\ char\ c\[4\],\ float\ a,\ unsigned\ char\ out\[4\]\);$
+add: ^extern\ bool\ g_wheelUsed;$
+add: ^bool\ hit\(float\ x,\ float\ y,\ float\ w,\ float\ h\);$
+add: ^void\ scrollbarThumb\(float\ sbx,\ float\ top,\ float\ trackH,\ float\ thumbY,\ float\ thumbH,\ bool\ active,\ bool\ over,\ bool\ track\ =\ true\);$
+add: ^extern\ float\ g_cellPadX,\ g_cellPadY;$
+add: ^void\ flushTooltip\(\);$
+add: ^void\ dropTooltip\(\);$
+add: ^bool\ beginPopupBody\(int\ id\);$
+add: ^extern\ Vec2\ g_path\[kMaxPath\];$
+add: ^extern\ int\ g_pathN;$
+add: ^extern\ const\ DrawListHandle\ g_windowList;$
+add: ^extern\ const\ DrawListHandle\ g_foregroundList;$
+drop: ^inline\ float\ availW\(\)\ \{$
+add: ^float\ availW\(\)\ \{$
+drop: ^static\ const\ DrawListHandle\ g_windowList\(false\);$
+add: ^const\ DrawListHandle\ ui_core::g_windowList\(false\);$
+drop: ^static\ const\ DrawListHandle\ g_foregroundList\(true\);$
+add: ^const\ DrawListHandle\ ui_core::g_foregroundList\(true\);$
+drop: ^inline\ float\ fMeasure\(const\ char\*\ s\)\ \{$
+add: ^float\ fMeasure\(const\ char\*\ s\)\ \{$
+drop: ^static\ void\ scrollbarThumb\(float\ sbx,\ float\ top,\ float\ trackH,\ float\ thumbY,\ float\ thumbH,\ bool\ active,\ bool\ over,\ bool\ track\ =\ true\)\ \{$
+add: ^void\ ui_core::scrollbarThumb\(float\ sbx,\ float\ top,\ float\ trackH,\ float\ thumbY,\ float\ thumbH,\ bool\ active,\ bool\ over,\ bool\ track\)\ \{$
+drop: ^static\ bool\ beginPopupBody\(int\ id\)\ \{$
+add: ^bool\ ui_core::beginPopupBody\(int\ id\)\ \{$
+drop: ^inline\ bool\ hit\(float\ x,\ float\ y,\ float\ w,\ float\ h\)\ \{$
+add: ^bool\ hit\(float\ x,\ float\ y,\ float\ w,\ float\ h\)\ \{$
+drop: ^inline\ int\ hashLabel\(const\ char\*\ s\)\ \{$
+add: ^int\ hashLabel\(const\ char\*\ s\)\ \{$
+drop: ^void\ fillCircle\(float\ cx,\ float\ cy,\ float\ radius,\ const\ unsigned\ char\ c\[4\],\ int\ segments\ =\ 24\)\ \{$
+add: ^void\ fillCircle\(float\ cx,\ float\ cy,\ float\ radius,\ const\ unsigned\ char\ c\[4\],\ int\ segments\)\ \{$
+drop: ^bool\ ioTypedTextConsumed\(\)\ \{\ return\ g_ioQueueFrame\ ==\ \(long\ long\)g_frameCount\ \&\&\ g_io\.InputQueueCharacters\.Size\ <\ g_ioQueueFilled;\ \}$
+add: ^namespace\ ui_core\ \{\ bool\ ioTypedTextConsumed\(\)\ \{\ return\ g_ioQueueFrame\ ==\ \(long\ long\)g_frameCount\ \&\&\ g_io\.InputQueueCharacters\.Size\ <\ g_ioQueueFilled;\ \}\ \}$
+drop: ^namespace\ \{$
+drop: ^float\ g_cellPadX\ =\ 4\.0f,\ g_cellPadY\ =\ \-1\.0f;$
+add: ^namespace\ ui_core\ \{\ float\ g_cellPadX\ =\ 4\.0f,\ g_cellPadY\ =\ \-1\.0f;\ \}$
+drop: ^void\ flushTooltip\(\);\ \ \ //\ the\ frame's\ tooltip\ \(asked\ for\ with\ SetTooltip\ /\ Tooltip\),\ drawn\ last\ by\ finalizeFrame$
+drop: ^void\ dropTooltip\(\);$
+drop: ^\}\ //\ namespace$
+drop: ^inline\ bool\ hit\(float\ x,\ float\ y,\ float\ w,\ float\ h\);$
+drop: ^static\ bool\ beginPopupBody\(int\ id\);$
+add: ^using namespace ui_core;$

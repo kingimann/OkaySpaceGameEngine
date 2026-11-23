@@ -1,0 +1,16 @@
+# post: move of free function bodies out of SoftwareRenderer.hpp (docs/engine/modularization_plan.md M2).
+# Each moved definition loses `inline` and its default arguments (they stay on the declaration).
+change: inline void ApplyFXAA(Raster& r) { ==> void ApplyFXAA(Raster& r) {
+add: ^\s*void\ ApplyFXAA\(Raster\&\ r\);$
+change: inline void ApplySceneDof(Raster& r, float focus, float range, const Mat4& vp) { ==> void ApplySceneDof(Raster& r, float focus, float range, const Mat4& vp) {
+add: ^\s*void\ ApplySceneDof\(Raster\&\ r,\ float\ focus,\ float\ range,\ const\ Mat4\&\ vp\);$
+change: inline void ApplyScenePost(Raster& r, const ScenePostPlan& p) { ==> void ApplyScenePost(Raster& r, const ScenePostPlan& p) {
+add: ^\s*void\ ApplyScenePost\(Raster\&\ r,\ const\ ScenePostPlan\&\ p\);$
+change: inline void ApplyColorGrade(Raster& r) { ==> void ApplyColorGrade(Raster& r) {
+add: ^\s*void\ ApplyColorGrade\(Raster\&\ r\);$
+change: inline void ApplyToneMap(Raster& r) { ==> void ApplyToneMap(Raster& r) {
+add: ^\s*void\ ApplyToneMap\(Raster\&\ r\);$
+change: inline void ApplyBloom(Raster& r) { ==> void ApplyBloom(Raster& r) {
+add: ^\s*void\ ApplyBloom\(Raster\&\ r\);$
+change: inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) { ==> void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
+add: ^\s*void\ ApplySSAO\(Raster\&\ r,\ const\ Mat4\&\ vp,\ const\ Vec3\&\ eye\);$

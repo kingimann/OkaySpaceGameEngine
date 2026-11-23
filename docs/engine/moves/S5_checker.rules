@@ -1,9 +1,9 @@
-# S3 of docs/engine/modularization_plan.md (section 3.1): method definitions of `Checker` (engine/src/Script/Checker.cpp)
+# S5 of docs/engine/modularization_plan.md (section 3.1): method definitions of `Checker` (engine/src/Script/Checker.cpp)
 # move, unchanged, to sibling files engine/src/Script/Checker<Topic>.cpp. Step 1 (the commit before the moves, which put the
 # class in CheckerInternal.hpp and turned in-class definitions into Checker::Name(...)) is a refactor, not a pure move, so it is
 # not checked by this script. Each move commit is checked with
 #   python3 scripts/check_pure_move.py --base <parent> --head <commit> --source engine/src/Script/Checker.cpp \
-#       --dest engine/src/Script/Checker<Topic>.cpp --rules docs/engine/moves/S3_checker.rules
+#       --dest engine/src/Script/Checker<Topic>.cpp --rules docs/engine/moves/S5_checker.rules
 # Each new file only adds #include lines, `namespace okay::script::checker_detail {` and its closing line. The last line of a
 # moved block (`}`) can equal the line just before it, so the diff is shifted by a closing brace: it shows as removed in
 # Checker.cpp and added in the new file.

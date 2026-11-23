@@ -20,6 +20,7 @@
 - [Our own CSM reader (`.csm`)](#our-own-csm-reader-csm) (was `docs/own_csm_reader.md`)
 - [Our own DXF reader (`.dxf`)](#our-own-dxf-reader-dxf) (was `docs/own_dxf_reader.md`)
 - [Our own FBX reader (`okay::fbx`)](#our-own-fbx-reader-okayfbx) (was `docs/own_fbx_reader.md`)
+- [Our own glTF 1.0 reader (`.gltf`, `.glb` of version 1)](#our-own-gltf-10-reader-gltf-glb-of-version-1) (new 2026-11-22; was `docs/own_gltf1_reader.md` on an unmerged branch)
 - [Our own HMP reader (`.hmp`, version HMP7)](#our-own-hmp-reader-hmp-version-hmp7) (was `docs/own_hmp_reader.md`)
 - [Our own IQM reader (`.iqm`)](#our-own-iqm-reader-iqm) (was `docs/own_iqm_reader.md`)
 - [Our own Irrlicht scene reader (`.irr`)](#our-own-irrlicht-scene-reader-irr) (was `docs/own_irr_reader.md`)
@@ -30,12 +31,15 @@
 - [Our own MD3 reader (`.md3`)](#our-own-md3-reader-md3) (was `docs/own_md3_reader.md`)
 - [Our own MD5 reader (`.md5mesh`, `.md5anim`)](#our-own-md5-reader-md5mesh-md5anim) (was `docs/own_md5_reader.md`)
 - [Our own MDC reader (`.mdc`)](#our-own-mdc-reader-mdc) (was `docs/own_mdc_reader.md`)
+- [Our own MDL reader (`.mdl`: Quake 1 and Half-Life 1)](#our-own-mdl-reader-mdl-quake-1-and-half-life-1) (new on main 2026-11-22; was `docs/own_mdl_reader.md` on an unmerged branch)
 - [Our own MS3D reader (`.ms3d`)](#our-own-ms3d-reader-ms3d) (was `docs/own_ms3d_reader.md`)
 - [Our own NDO reader (`.ndo`): a seam only, no geometry](#our-own-ndo-reader-ndo-a-seam-only-no-geometry) (was `docs/own_ndo_reader.md`)
 - [Our own NFF reader (`.nff` `.enff`)](#our-own-nff-reader-nff-enff) (was `docs/own_nff_reader.md`)
 - [Our own OFF reader (`.off`)](#our-own-off-reader-off) (was `docs/own_off_reader.md`)
 - [Our own OGRE mesh readers (`.mesh.xml` and binary `.mesh`)](#our-own-ogre-mesh-readers-meshxml-and-binary-mesh) (was `docs/own_ogre_reader.md`)
+- [Our own OpenGEX reader (`.ogex`)](#our-own-opengex-reader-ogex) (new on main 2026-11-22; was `docs/own_ogex_reader.md` on an unmerged branch)
 - [Our own PMX reader (`.pmx`)](#our-own-pmx-reader-pmx) (was `docs/own_pmx_reader.md`)
+- [Our own Quake III map reader (`.bsp`, `.pk3`)](#our-own-quake-iii-map-reader-bsp-pk3) (new on main 2026-11-22; was `docs/own_q3bsp_reader.md` on an unmerged branch)
 - [Our own Q3D reader (`.q3o` `.q3s`)](#our-own-q3d-reader-q3o-q3s) (was `docs/own_q3d_reader.md`)
 - [Our own RAW reader (`.raw`)](#our-own-raw-reader-raw) (was `docs/own_raw_reader.md`)
 - [Our own SIB reader (`.sib`): NOT WRITTEN](#our-own-sib-reader-sib-not-written) (was `docs/own_sib_reader.md`)
@@ -1006,6 +1010,96 @@ ASCII FBX numbers are converted to the correctly rounded double (what `strtod` g
 - Sanitizers, 2026-11-21 (after the UV-set and skin changes): `fbx_hostile` (20,000 mutations per fixture), `fbx_file_keys` and a driver that loads, triangulates and keys every corpus file and fixture, all built standalone with `-fsanitize=address,undefined,float-cast-overflow`: clean. The engine-linked `fbx_reader` was not rebuilt under sanitizers this time.
 - Regenerate fixtures with `python3 scripts/gen_fbx_fixtures.py`. They are 1 to 12 KB each.
 
+## Our own glTF 1.0 reader (`.gltf`, `.glb` of version 1)
+
+*Written on branch `claude/own-readers-6` (2026-11-15), brought onto main on 2026-11-22 (branch `claude2/own-readers-last`).*
+
+Status: **side by side, off by default** (`OKAY_OWN_GLTF1`, slot 41 of the table in `ModelImport.cpp`, under the pseudo-extension
+`.gltf1` because 1.0 and 2.0 share `.gltf` / `.glb`). Without it a glTF 1.0 file is refused, with a message that names the
+switch. `.gltf` / `.glb` never go to Assimp, so before this reader the engine could not read glTF 1.0 at all. glTF 2.0 files are
+read by the glTF 2.0 reader (`okay/Render/Gltf.hpp`) whether this switch is on or off.
+
+### What it is
+
+glTF 1.0 is the first version of Khronos's transmission format (2015), replaced by 2.0 in 2017. It differs enough to be a separate
+reader: every top-level collection is an object keyed by string ids (not an array), a node lists several meshes, accessors carry
+their own `byteStride`, materials are a technique plus a dictionary of values, and the binary form (`KHR_binary_glTF`) is a
+20-byte header, one JSON block and one body.
+
+**Where it was written from.** The Khronos glTF 1.0 specification only: `specification/1.0/README.md` of the KhronosGroup/glTF
+repository and its JSON schemas, and the `KHR_binary_glTF` and `KHR_materials_common` extension descriptions. No importer source
+was read (rule 19a). The JSON parser and the base64 decoder are the engine's own, the ones the glTF 2.0 reader uses. Assimp was
+used only as a black box, through the engine's own seam, to compare results on the corpus files.
+
+| File | What |
+|---|---|
+| `engine/src/Render/Gltf1Reader.cpp` | `okay::ReadGltf1Buffer` / `ReadGltf1File`, `IsGltf1`, `GltfFileIsVersion1` (declared in `ModelData.hpp`) |
+| `engine/src/Render/ModelImport.cpp` | The seam: `ImportModelData`, `ImportModel` and the scene importer send version-1 files here when the switch is on (`Gltf1Wanted`, inside `RunReaderGuarded`); `ImportModelData(..., ImportBackend::Own)` always does |
+| `tests/test_gltf1_reader.cpp`, `tests/gltf1_test_build.hpp` | Hand-computed checks on files built in memory, files on disk, refusals and the seam (`gltf1_reader`) |
+| `tests/test_gltf1_hostile.cpp` | Hostile input, memory and time budget, mutation fuzz, real files when `OKAY_MODEL_CORPUS` is set; builds without the engine library (`gltf1_hostile`) |
+| `tests/test_own_gltf1_default.cpp` | Fails if `-DOKAY_OWN_GLTF1=ON` stops making this reader the default (`own_gltf1_default`) |
+| `tests/test_own_gltf1_samples.cpp`, `examples/own_readers/box_v1.gltf`, `box_v1.glb`, `scripts/gen_gltf1_samples.py` | The sample files (an orange box, JSON and binary, written by our script) import through the seam with the reader on (`own_gltf1_samples`) |
+
+Switch it on with `SetImportBackend(".gltf1", ImportBackend::Own)`, `OKAY_OWN_GLTF1=1` (or `0` to force it off), or
+`-DOKAY_OWN_GLTF1=ON`. Only when it is on does the importer parse a `.gltf` / `.glb` a second time to see its version.
+
+### What it reads
+
+- **Container.** JSON (a UTF-8 byte order mark is dropped), or the binary form: magic `glTF`, version 1, total length, content
+  length (more than 0), content format 0 (JSON); the body is the buffer `binary_glTF`. A binary file shorter than its header's
+  length is read with a note, every accessor still checked against the bytes that exist (one real sample is 33 bytes short).
+- **Buffers.** The binary body, base64 `data:` URIs, or files inside the model's own folder (`SceneRefPath.hpp`; `%20` and other
+  escapes are decoded first, so an escaped `..` is still refused). A buffer shorter than its `byteLength` is refused.
+- **Accessors.** `SCALAR` to `MAT4`; byte, unsigned byte, short, unsigned short, float, and unsigned int for indices.
+  `byteStride` 0 is tightly packed, else at least one element and at most 255; the last element must end inside the bufferView
+  (`byteLength` 0 runs to the end of the buffer); every float must be finite.
+- **Scene.** The node tree under one root `glTF`, walked with an explicit stack: the file's `scene`, else the first scene by id,
+  else every node that is nobody's child. A node reached twice (a loop or two parents) is refused. A node's transform is its
+  `matrix` (column-major; shear dropped with a note) or `translation`, `rotation` (x, y, z, w; normalised) and `scale`. Y up and
+  metres, as the engine, so nothing is converted.
+- **Meshes.** Each triangle primitive of a node's `meshes` is one part: triangles (4), strips (5, alternate triangles reordered so
+  all face the same way) and fans (6); `POSITION`, `NORMAL` (made from the faces when missing or zero), `TEXCOORD_0` (kept as
+  written, like the 2.0 reader), indices (each inside the primitive's vertices). Points and lines are skipped with a note.
+- **Materials.** One per glTF material, from `values` and `extensions.KHR_materials_common.values`: `diffuse` as a colour or as a
+  texture id that leads to an image file inside the model's folder, `emission`, `shininess`.
+
+Reported, not read (a line in `out.notes`): skins (skinned meshes come in their bind pose), animations, cameras, techniques and
+shaders, embedded images, image paths outside the folder, points and lines, unknown modes, NORMAL / TEXCOORD_0 that are not one
+VEC3 / VEC2 per vertex, degenerate triangles, bytes after a binary file's length.
+
+Refused: not JSON; nesting deeper than 128; `asset.version` 2.x or array collections; a bad binary header; a missing accessor,
+bufferView, buffer, mesh, node or default scene; a bad count, offset, stride, type or component type; reads past a bufferView or
+buffer; a non-finite value; an index past the vertices; a node loop; a bad matrix, translation, rotation or scale; a buffer file
+outside the folder or missing; a scene with no triangles.
+
+### Limits
+
+File 512 MiB; all buffers 512 MiB; 20,000,000 elements in one accessor; 64,000,000 accessor values decoded in the whole file
+(checked before allocating; a mesh listed by several nodes counts each time); 20,000,000 vertices; 20,000,000 triangle slots,
+degenerate ones included; 100,000 nodes; 100,000 primitives; JSON nesting 128. Measured by `gltf1_hostile` with a counting
+allocator: a 1,000,000-triangle file reads in 0.4 s at a 58 MB peak; one mesh listed 4 times with 20,000,000 degenerate indices
+each is refused at 95 MB; an 80,000,000-value accessor is refused before allocating (76 MB, the copied body).
+
+Known limits: the shared JSON parser turns `\u` escapes into `?`; only the value names `diffuse`, `emission` and `shininess` are
+used; with the switch on a file is held twice while it is read (the version check, then the reader); the JSON parser has no cap
+on the number of values in one array (shared with the 2.0 reader).
+
+### Tests and real files
+
+- `gltf1_reader`: the quad scene with every value worked out by hand (matrix and TRS transforms, positions, normals, UVs,
+  indices, material), the binary form and a binary file cut short, a file with no scenes, `KHR_materials_common`, textures inside
+  and outside the folder, strips, fans, points and lines, 24 refusals with their messages, a NaN position, files on disk (a
+  subfolder with a UTF-8 name, a missing buffer, `%20` names), a glTF 2.0 file not taken, and the seam (off by default, env,
+  `SetImportBackend`, `ImportModelScene`, `ImportModel`, flatten).
+- `gltf1_hostile` under ASan, UBSan and float-cast-overflow (2026-11-22, `OKAY_READER_FUZZ_ITERS=100000`, seeded also with the
+  real `BoxTextured` JSON and binary files): 147,615 checks, 0 failures. Before this reader (the refusing stub of the test
+  commit): 4 failures. Its corpus paths were wrong on the old branch (`glTF/...` instead of `models/glTF/...`), so the real
+  files were silently skipped there; fixed.
+- **Real files**: the 7 glTF 1.0 files under `models/glTF` of the Assimp 5.4.3 test folder all read (the `gltf1` rows of
+  `tests/data/model_corpus_manifest.tsv`). Comparison with Assimp and speed: `docs/content/own_readers_speed.md`, row `gltf1`.
+
+Not verified: files from other exporters, skinned or animated 1.0 files (not read), a run on real Windows.
+
 ## Our own HMP reader (`.hmp`, version HMP7)
 
 *Was `docs/own_hmp_reader.md` until 2026-11-20.*
@@ -1603,6 +1697,88 @@ The only real file is `spider.mdc` from the `test/models/MDC` folder of an Assim
 
 Unverified: a compressed first frame (no real example), the compressed offset scale, tag rotation, other MDC versions, files from games other than Return to Castle Wolfenstein, a run on real Windows.
 
+## Our own MDL reader (`.mdl`: Quake 1 and Half-Life 1)
+
+*Written on branch `claude/readers-e4` (2026-11-15), brought onto main on 2026-11-22 (branch `claude2/own-readers-last`).*
+
+Status: **side by side, off by default** (`OKAY_OWN_MDL`, slot 38 of the table in `ModelImport.cpp`). Assimp (when built) is the
+fallback for a file ours refuses, so the 3D GameStudio MDL files it reads still import with the default choice.
+
+### What it is
+
+`.mdl` is used by four unrelated binary formats. This reader does two:
+
+- **Quake 1** (magic `IDPO`, version 6): one vertex-animated mesh.
+- **Half-Life 1** (magic `IDST`, version 10): the "studio" model, with bones, body parts, textures and sequences.
+
+**Not done: 3D GameStudio MDL3, MDL4, MDL5 and MDL7** (no description of their layouts in hand; a file with those magics is
+refused with a message that names the format, so Assimp reads it). Also refused with their own messages: Half-Life sequence
+group files (`IDSQ`, animation only) and Half-Life 2 / Source models (`IDST` version 44 to 49).
+
+| File | What |
+|---|---|
+| `engine/src/Render/MdlReader.cpp` | `okay::ReadMdlBuffer` / `okay::ReadMdlFile` (declared in `ModelData.hpp`) |
+| `engine/src/Render/BinReader.hpp`, `ReaderCommon.hpp`, `AffineInverse.hpp` | Shared pieces: the bounds-checked cursor, the mesh builder, the affine inverse |
+| `engine/src/Render/ModelImport.cpp` | The seam: slot 38 (extension `.mdl`) |
+| `tests/test_mdl_reader.cpp`, `tests/e4_fixtures.hpp` | Hand-computed checks on synthetic files (`mdl_reader`) |
+| `tests/test_e4_hostile.cpp` | Budgets, hostile input, mutation fuzz and real files, for OpenGEX and MDL (`e4_hostile`) |
+| `tests/test_own_dispatch_e4.cpp`, `tests/test_own_e4_default.cpp` | The seam routes `.mdl` (both formats); `-DOKAY_OWN_MDL=ON` really makes it the default |
+| `tests/test_own_e4_samples.cpp`, `examples/own_readers/quake_pyramid.mdl`, `halflife_tri.mdl` | The sample files (the test fixtures written out: a Quake pyramid and a Half-Life triangle with two bones and a clip) import through the seam with the reader on (`own_e4_samples`) |
+
+### What it reads
+
+**Quake 1.** The header (scale, origin, counts, skin size), the skin list (sizes only), texture coordinates and triangles. **The
+first frame** as one static part: position = byte * scale + origin. Texture coordinates by the seam rule: an `onseam` vertex of a
+triangle that does not face front takes `s + skinwidth / 2`; `u = (s + 0.5) / skinwidth`, `v = (t + 0.5) / skinheight`. Quake
+winds clockwise, so the corner order is reversed. Vertices are welded, smooth normals generated, the root turns Z-up into Y-up.
+Further frames and the skin pictures (8-bit palette indices) are not read (noted).
+
+**Half-Life 1.** The bone table becomes the node tree under a root that turns Z-up into Y-up (a parent loop is cut, repeated names
+get a suffix); Euler angles are rotations about X, then Y, then Z (`q = qz * qy * qx`). For every body part the **first model** is
+read; every mesh is one part from its triangle commands (positive count: strip, negative: fan), vertices welded, moved from bone
+space to the bind pose and rigidly skinned to their bone. Strips and fans are reversed; each mesh's winding is checked against the
+stored normals and flipped back (with a note) when most triangles face against them. The texture table gives one material per
+texture (name only; the pictures are embedded palette images and are not extracted). Each sequence stored in the file (group 0)
+is one clip: the first blend, per bone a position and rotation key per frame from the run-length coded values.
+
+Not handled (a line in `out.notes`): Quake frames after the first, skin pictures, stored normals; Half-Life alternative
+sub-models, skin families after the first, embedded pictures, `<name>T.mdl` texture files, external sequence groups, blends after
+the first, controllers, hit boxes, attachments, events.
+
+### Limits
+
+File 256 MiB. Quake: 200,000 vertices, 400,000 triangles, 4,096 skins, 100,000 frames. Half-Life: 1,024 bones, body parts and
+models per part, 4,096 meshes per model and per file, 200,000 vertices per model, 4,096 textures and sequences, 65,536 frames per
+sequence, 2,000,000 output vertices and triangles, 4,000,000 animation keys, a file-wide work budget of 16,000,000 units and
+1,000,000 bone entries over all parts. Every offset and count is checked in 64-bit arithmetic before use.
+
+### Real files and checks
+
+43 `.mdl` files under `models/MDL` and `models-nonbsd/MDL` of the Assimp 5.4.3 test folder (`docs/content/model_corpus.md`; rows
+`mdl` of `tests/data/model_corpus_manifest.tsv`): the 3 Quake 1 models and 14 Half-Life 1 models read; the 19 Half-Life
+sequence-group files (`IDSQ`) and `manT.mdl` (textures only, no bones) are refused by ours and by Assimp; the 6 GameStudio files
+(MDL3, MDL5, MDL7) are refused by ours with their message and read by Assimp, which stays the fallback for them. Against Assimp
+(`bench_model_readers`, 2026-11-22, the 17 files both read): 0.26x the read time, 0.37x the largest peak, 0.29x the import time
+(`docs/content/own_readers_speed.md`, row `mdl`). What differs (`--compare`):
+- Quake 1: Assimp keeps zero-area triangles, ours drops them with a note (`gijoe` 404 / 408, `steg` 304 / 305, `tekmechbot`
+  1,702 / 1,748); vertex counts and boxes are the same.
+- Half-Life 1: same triangles, vertices, materials, clips and boxes on 10 of the 14 (on `unnamed_bones` the skin lists 9 bones to Assimp's 8; not looked into); Assimp makes many more nodes (it adds
+  nodes for body parts, meshes and sequences), ours only the bone tree. Assimp reads every sub-model of a body part and the
+  companion files: `duplicate_submodels` 3 / 6 parts, `man.mdl` 72 / 190 triangles, 0 / 5 materials and 3 / 6 clips (Assimp
+  also opens `manT.mdl` for the textures and `man01.mdl` for more sequences; ours reads the one file and says so in its notes),
+  and the two `*_sequence_groups.mdl` 0 / 9 clips (their sequences live in the `01` to `09` files). `e4_hostile` under ASan, UBSan and
+float-cast-overflow (2026-11-22): 20,000 mutations per synthetic seed and 5,000 per real file (`man.mdl`, `multiple_roots.mdl`,
+`chrome_sphere.mdl`, `steg.mdl`), 0 failures.
+
+### Provenance (what this file was written from)
+
+`MdlReader.cpp` was written from scratch for this project. The record layouts of the Quake 1 model and of the Half-Life 1 studio
+model, the seam rule and the Euler order were **recalled from memory** of the publicly documented layouts (the id Software and
+Valve SDK descriptions and the format notes built on them); no document, header or source was open while writing it, and no code
+of Assimp or any other importer was read, copied or ported. Recollection cannot be audited; it is checked against the real files
+above and against Assimp's output on them (`own_readers_speed.md`). Unverified: Half-Life models with several skin families,
+Quake models from other tools, a Windows run.
+
 ## Our own MS3D reader (`.ms3d`)
 
 *Was `docs/own_ms3d_reader.md` until 2026-11-20.*
@@ -1966,6 +2142,80 @@ bench program was local and is not in the repository; memory was not measured.
 other than the OGRE SDK tools; no Windows run. The switch is not in the launcher's Experimental list (`shared/OwnSwitches.hpp`
 is the coordinator's) and is not in the import seam's backend table: it is read by the OGRE reader itself.
 
+## Our own OpenGEX reader (`.ogex`)
+
+*Written on branch `claude/readers-e4` (2026-11-15), brought onto main on 2026-11-22 (branch `claude2/own-readers-last`).*
+
+Status: **side by side, off by default** (`OKAY_OWN_OPENGEX`, slot 37 of the table in `ModelImport.cpp`). Assimp (when built) is
+the fallback for a file ours refuses, and the reader when the switch is off.
+
+### What it is
+
+OpenGEX (Open Game Engine Exchange, Eric Lengyel) is a scene format written in OpenDDL, a small text data language. A file holds a
+node tree, geometry objects (meshes), materials, skins and animation tracks.
+
+| File | What |
+|---|---|
+| `engine/src/Render/OpenDdl.hpp` | The OpenDDL parser: bounded (structures, nesting depth, values, string bytes), iterative, header only |
+| `engine/src/Render/OgexReader.cpp` | `okay::ReadOgexBuffer` / `okay::ReadOgexFile` (declared in `ModelData.hpp`) |
+| `engine/src/Render/AffineInverse.hpp` | The inverse of an affine matrix (bind poses), shared with the MDL reader |
+| `engine/src/Render/ModelImport.cpp` | The seam: slot 37 (extension `.ogex`) |
+| `tests/test_ogex_reader.cpp`, `tests/e4_fixtures.hpp` | Hand-computed checks on synthetic files (`ogex_reader`) |
+| `tests/test_e4_hostile.cpp` | Budgets, hostile input, mutation fuzz and the real files when `OKAY_MODEL_CORPUS` is set, for OpenGEX and MDL (`e4_hostile`) |
+| `tests/test_own_dispatch_e4.cpp`, `tests/test_own_e4_default.cpp` | The seam routes `.ogex`; `-DOKAY_OWN_OPENGEX=ON` really makes it the default |
+| `tests/test_own_e4_samples.cpp`, `examples/own_readers/cube_spin.ogex` | The sample file (a red cube with a 2 second turn, typed by us) imports through the seam with the reader on (`own_e4_samples`) |
+
+### What it reads
+
+**OpenDDL.** Structures `Name $global %local (property = value, ...) { ... }` and the primitive data structures (`bool`, `int8` to
+`int64`, `unsigned_int8` to `unsigned_int64` and their short names, `half`, `float`, `double`, `string`, `ref`, `type`, with an
+optional `[n]` and sub-arrays); `//` and `/* */` comments; decimal, `0x`, `0o`, `0b`, character and `_`-separated literals; a hex,
+octal or binary float literal as the IEEE bit pattern; string escapes and adjacent strings joined; references. A sub-array must
+hold exactly `n` values.
+
+**OpenGEX.** `Metric` (`distance` scales the root node, `angle` and `time` scale angles and key times, `up` "z" turns the root by
+-90 degrees about X). `Node`, `BoneNode`, `GeometryNode`, `CameraNode`, `LightNode` as nodes (camera and light nodes stay empty)
+with `Name`, `Transform` (4x4, column-major), `Translation`, `Rotation` (`x`, `y`, `z`, `axis`, `quaternion`) and `Scale`. Several
+transform structures on one node compose in file order, first listed outermost. A transform marked `object` is baked into that
+node's own geometry. `GeometryObject` with its first full-detail `Mesh`: `triangles`, `quads` or `triangle_strip` (with
+`restart`); `position`, `normal` and the first `texcoord`; one part per `IndexArray` with its `material` index through the node's
+`MaterialRef`s; `front = "cw"` reverses the winding; smooth normals when the file has none. `Material`: `Color` `diffuse`,
+`emission`, `opacity`, `Param` `specular_power` and `opacity`, `Texture` `diffuse`, `normal`, `specular` (files inside the model's
+folder only). `Skin`: the bind-shape `Transform`, `Skeleton` with `BoneRefArray` and one bind `Transform` per bone,
+`BoneCountArray`, `BoneIndexArray`, `BoneWeightArray` (the four strongest weights, normalised). `Animation` / `Track` / `Time` /
+`Value` / `Key`: one clip per `clip` index, each animated node sampled at the union of its tracks' key times (linear between keys;
+bezier and TCB tangents are not used). Texture coordinates are kept as written.
+
+Not handled (a line in `out.notes`): `CameraObject`, `LightObject`, `Extension`, vertex colours, tangents, further texture
+coordinate sets, morph targets, level-of-detail meshes after the first, points and lines, curve tangents, texture transforms.
+
+Refused: OpenDDL syntax errors; budgets passed (structures, depth, values, string bytes, vertices, triangles, keys); a file with
+no nodes and no meshes; bad references; non-finite numbers; **a node or animated transform whose decomposition overflows** (added
+2026-11-22: the mutation fuzz seeded with the real `Example.ogex` changed one matrix element to 0x60000000, about 3.7e19; the
+matrix is finite but its squared column length is not, so the node's scale came out as infinity; `e4_hostile`, "huge node
+matrix", fails on the old code and passes now).
+
+### Real files and checks
+
+Six `.ogex` files under `models/OpenGEX` of the Assimp 5.4.3 test folder (`docs/content/model_corpus.md`): four read (rows `ogex`
+of `tests/data/model_corpus_manifest.tsv`), `empty_camera.ogex` and `light_issue1262.ogex` hold only a camera or a light and no
+node, and are refused ("the file has no nodes and no meshes"; Assimp refuses both too). Against Assimp (`bench_model_readers`,
+2026-11-22): `animation_example.ogex` is read only by ours (Assimp refuses it); on the 3 files both read ours takes 0.46x the
+time and 0.36x the largest peak (`docs/content/own_readers_speed.md`, row `ogex`). Same triangles and vertices on all 3; the
+boxes differ because ours turns `Metric up "z"` into Y-up (Assimp keeps Z up), and `collada.ogex` gives 2 materials to Assimp's 1. `e4_hostile` under ASan, UBSan and
+float-cast-overflow, 20,000 mutations per synthetic seed and 5,000 per real file (`Example.ogex`, `animation_example.ogex`,
+`collada.ogex`), 2026-11-22: 0 failures after the fix above.
+
+### Provenance (what this file was written from)
+
+`OpenDdl.hpp` and `OgexReader.cpp` were written from scratch for this project. The OpenDDL grammar and the OpenGEX structures,
+properties and conventions were **recalled from the public specifications** (openddl.org, opengex.org); no code, comment, table or
+test of Assimp or any other importer was read, copied or ported. On 2026-11-22 the specification site could not be reached from
+the build machine (blocked by its network rules), so the recollection is still **not checked against the text**; it is checked
+against the six real files and against Assimp's output on them instead. Unverified: the transform composition order and the
+texture-coordinate origin on files from other exporters, the per-bone bind matrices of a skin with several bones from another
+exporter, a Windows run.
+
 ## Our own PMX reader (`.pmx`)
 
 *Was `docs/own_pmx_reader.md` until 2026-11-20.*
@@ -2017,6 +2267,72 @@ Real `.pmx` files (none here); PMX 2.1 soft bodies and the 2.1 joint types (not 
 ### Provenance (what this file was written from)
 
 `PmxReader.cpp` was written from scratch for this project from the **public PMX 2.0 / 2.1 file format description** (the header with its eight globals, the text type, the vertex, face, texture, material, bone and morph records and the index-size rules), as I know that description; **no network access was used and no file, document or source was opened while writing it**. **No importer source code, snippet or table of Assimp or of any other project was read, copied or ported**, and no sample file was read. The test files were written by hand from the structure above. Assimp was not run.
+
+## Our own Quake III map reader (`.bsp`, `.pk3`)
+
+*Written on branch `claude/own-readers-6` (2026-11-16), brought onto main on 2026-11-22 (branch `claude2/own-readers-last`).*
+
+Status: **side by side, off by default** (`OKAY_OWN_Q3BSP`, slot 42 of the table in `ModelImport.cpp`). Assimp (when built) is
+the fallback for a file ours refuses, and the reader when the switch is off.
+
+### What it is
+
+A Quake III Arena map is a BSP file (magic `IBSP`, version 46) of 17 lumps, normally shipped inside a `.pk3` (a zip) as
+`maps/<name>.bsp`. It holds render geometry (polygon faces, mesh faces, Bezier patches, billboards), textures by name, lightmaps,
+entity text, the BSP tree, visibility and collision brushes.
+
+| File | What |
+|---|---|
+| `engine/src/Render/Q3BspReader.cpp` | `okay::ReadQ3bspFile` / `okay::ReadQ3bspBuffer` (declared in `ModelData.hpp`) |
+| `engine/src/Render/ZipLite.hpp` | The zip reader (shared with 3MF, ZAE; stored and deflated entries, zip-bomb caps) |
+| `tests/test_q3bsp_reader.cpp`, `tests/q3bsp_fixtures.hpp` | Hand-computed checks on synthetic maps (`q3bsp_reader`) |
+| `tests/test_q3bsp_hostile.cpp` | Budgets, every aligned word at an extreme, mutation sweeps of the `.bsp` and the `.pk3`, and the real map when `OKAY_MODEL_CORPUS` is set (`q3bsp_hostile`) |
+| `tests/test_own_q3bsp_dispatch.cpp` | The seam routes `.bsp` and `.pk3`; `-DOKAY_OWN_Q3BSP=ON` really makes it the default (`own_q3bsp_dispatch`) |
+| `tests/test_own_q3bsp_samples.cpp`, `scripts/gen_q3bsp_samples.py`, `examples/own_readers/tiny_arena.bsp` / `.pk3` | The sample maps (written by our script: a room 512 units wide with a bump in the floor and a platform on node `model_1`) import through the seam (`own_q3bsp_samples`) |
+
+### What it reads
+
+- The 144-byte header (version 46 only; others are refused with their number) and the lump directory (every lump inside the
+  file, every record lump a whole number of records).
+- Textures (name, surface flags), vertexes (position, texture coordinate, normal), mesh vertexes, faces and models.
+- **One part per (model, texture).** Model 0 (the world) hangs on the root `Q3BSP`; every other model is a child node `model_N`.
+  A `.pk3` names the root `Q3BSP maps/<name>.bsp`; the first map by name is read (a note says when there are more).
+- Polygon (1) and mesh (3) faces: the triangles of their mesh-vertex list, two corners swapped (Quake III stores triangles
+  clockwise). Stored normals are used; a zero normal is replaced from the triangles around it. Zero-area triangles are dropped.
+- Patch (2) faces: the control grid (odd sizes, at least 3) cut into 3 x 3 biquadratic Bezier patches, each tessellated into
+  6 x 6 quads with analytic normals; the front side follows the stored normals.
+- Materials: one per texture used; in a `.pk3` the name gets the extension of the matching image entry. Pictures are not
+  extracted. Faces whose texture has the nodraw, hint or skip flag are left out. Billboards are not read.
+- Quake units are kept; the root turns Z-up into Y-up.
+
+Not read (noted on every import): lightmaps, vertex colours, entities, brushes and planes, the BSP tree, visibility, fog, shader
+scripts.
+
+### Budgets
+
+File 512 MB; 4,000,000 triangles and vertices built (a patch counts 72 and 49); 8,000,000 face visits over all models; 100,000
+parts; a patch grid at most 1025 points a side. Every count is checked against the bytes present before allocating.
+
+### Real files and checks
+
+The one real map in the Assimp 5.4.3 test folder, `models-nonbsd/PK3/SGDTT3.pk3` (`docs/content/model_corpus.md`): 17 textures,
+2,084 vertexes, 336 faces (312 polygons, 24 meshes, no patch), 28 models, 1,400 triangles, all stored clockwise against their
+stored normals, which is what the corner swap assumes. Ours reads the 1,400 triangles (row `q3bsp` of
+`tests/data/model_corpus_manifest.tsv`). Against Assimp (`bench_model_readers`, 2026-11-22): the same 1,400 triangles and 2,084
+vertices; 15 parts and 15 materials to Assimp's 18 and 18, 28 nodes (one per model) to its 19; the box is turned because ours
+makes Z-up into Y-up and Assimp does not. 0.84x Assimp's read time and 0.86x its peak (`docs/content/own_readers_speed.md`,
+row `q3bsp`).
+`q3bsp_hostile` under ASan, UBSan and float-cast-overflow (2026-11-22, `OKAY_READER_FUZZ_ITERS=40000`): synthetic sweeps
+(40,756 read, 47,112 refused), the `.pk3` sweep, and 10,000 mutations of the real 852,016-byte `.bsp` plus 256 of its prefixes;
+100,237 checks, 0 failures. Without sanitizers and with the default sweep (5,000 real-map mutations): 54,237 checks, 0 failures.
+
+### Provenance (rule 19a)
+
+Written from recalled knowledge of the public description of the format (the "Unofficial Quake 3 Map Specs": header, lump
+numbers, record sizes and field order, the four face types, patches as 3 x 3 biquadratic Bezier surfaces) and from general
+knowledge of Bezier surfaces; the real map's lumps were then read with our own script to check the numbers. No importer source of
+any other project was read, copied or ported. Unverified: maps with patches from a real game (the corpus map has none, so the
+tessellation is checked against the mathematics only), version 47 and other engines' BSP files (refused), a Windows run.
 
 ## Our own Q3D reader (`.q3o` `.q3s`)
 
@@ -2157,6 +2473,12 @@ Written from the public description "POV-Ray RAW triangle format" (Paul Bourke):
 Status: **no reader**. Slot 32 of the table in `ModelImport.cpp` is reserved for it (an empty row; `.sib` is routed nowhere, and `test_own_dispatch_e2` checks that), `OKAY_OWN_SIB` does not exist.
 
 Why: SIB is the binary file of the Silo modeller (Nevercenter). The search for a public description of its structure found only that it exists (the binary twin of the ASCII `.sia`); no field list, no chunk list, no sample file (the only one, `heffalump.sib`, is in Assimp's test tree, not here). The rule for this work is to write from a format description or from our own analysis of sample files only, never from another importer's source. With neither a description nor a sample, a reader would be invented, so none was written. To go on: a published description, or the sample file to analyse (then `ModelData`, budgets and tests as for `docs/content/model_readers.md`).
+
+**2026-11-22.** A sample file was later found in Assimp's test tree (`models/SIB/heffalump.sib`, released into the public domain by
+its author), and a reader worked out from that one file was written on branch `claude/own-readers-6` (unmerged). It was
+**not** brought onto main with the glTF 1.0, OpenGEX, MDL and Q3BSP readers: the rule for this work is to write a reader from a
+public specification, and SIB has none, so a reader from one sample would be a guess at every file but that one. `.sib` stays with
+Assimp.
 
 ## Our own SMD reader (`.smd`)
 

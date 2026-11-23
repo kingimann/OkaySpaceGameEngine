@@ -56,6 +56,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Two-bone IK | `Math/TwoBoneIK.hpp` | `okay::SolveTwoBoneIK`, `SolveTwoBoneIKSoft` | `SolveTwoBoneIK(root, upper, lower, target, pole, mid, end);` |
 | Swing and twist split, joint limits | `Math/JointLimit.hpp` | `okay::TwistAbout` | `float deg; Quat twist = TwistAbout(q, axis, deg);` |
 | Convex contact (GJK, EPA) | `Physics/ConvexContact.hpp` | `okay::ConvexContact`, `convex_detail::Epa` | `ConvexHit hit = ConvexContact(supportA, supportB);` |
+| Grid A* (2D grids, tilemaps, the 3D probe grid) | `AI/GridAStar.hpp`, called through `AI/Navigation.hpp` | `okay::gridastar::Search`, `DenseStore`, `SparseStore`, `GridCell`; `Navigation::GridPath`, `Navigation::TilemapPath` | `auto path = Navigation::GridPath(walkable, w, h, 0, 0, 9, 8, true);` |
 | Ray against a triangle mesh | `Physics/TriMesh.hpp` | `okay::TriMesh::Raycast`, `TriMesh::RayLocal` | `mesh.Raycast(origin, dir, 100.0f, t, normal);` |
 | Quaternion to rotation matrix (any precision) | `Math/Mat4.hpp` | `okay::SetRotationFromUnitQuat`, `Mat4::Rotate` | `rc::M4 r; SetRotationFromUnitQuat(r, x, y, z, w);` |
 | Model readers: affine inverse, cofactors, Quake frame vertices, triangle corners | `engine/src/Render/AffineInverse.hpp`, `engine/src/Render/ReaderCommon.hpp` | `rc::InvAffine`, `rc::Cofactors3`, `rc::ReadQuakeFrameVerts`, `rc::TriCorner` | `double c[9]; rc::Cofactors3(m, c);` |

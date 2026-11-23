@@ -218,7 +218,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 15. Editor
 
-| [15.10](../feature_map/15-editor.md#1510-splitting-editormaincpp-into-panel-files-45k-lines) | Splitting `editor/main.cpp` into panel files (~45k lines) | Partial | no PR for the next split found (#577 changed about 280 lines of `main.cpp` for the layouts, the Script Editor find and replace... |
+| [15.10](../feature_map/15-editor.md#1510-splitting-editormaincpp-into-panel-files-45k-lines) | Splitting `editor/main.cpp` into panel files (~45k lines) | Partial | approved by the owner, slowly by feature: plan, order and checks in `docs/editor/main_split_plan.md`; move 1 (Build Game to `editor/BuildGame.*`) on `claude2/editor-split-1`; about 59k lines left |
 
 ### 16. Networking & multiplayer
 

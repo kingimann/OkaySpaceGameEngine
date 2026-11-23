@@ -715,7 +715,7 @@ inline const VsRule kBuiltinRules[] = {
     {"tween_clock", "Tweens", "Tween Options"}, {"tween_*", "Tweens", "Start a Tween"},
     {"seq_*", "Tweens", "Tween Sequences"}, {"play_sequence", "Cutscenes", ""}, {"stop_sequence", "Cutscenes", ""},
     {"sequence_*", "Cutscenes", ""}, {"add_force", "Forces & Velocity", ""}, {"add_force3", "Forces & Velocity", ""},
-    {"add_impulse", "Forces & Velocity", ""}, {"add_impulse3", "Forces & Velocity", ""},
+    {"add_impulse", "Forces & Velocity", ""}, {"add_impulse3", "Forces & Velocity", ""}, {"add_torque", "Forces & Velocity", ""},
     {"add_explosion_force", "Forces & Velocity", ""}, {"apply_force", "Forces & Velocity", ""},
     {"apply_impulse", "Forces & Velocity", ""}, {"velocity", "Forces & Velocity", "Speed & Jumping"},
     {"velocity_*", "Forces & Velocity", "Speed & Jumping"}, {"vel_toward", "Forces & Velocity", "Speed & Jumping"},

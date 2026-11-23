@@ -60,8 +60,8 @@ std::string CheckKeyLiteral(int, const std::string& lit) {
 }
 char KeyArg(const Args& a) { return Input::KeyFromName(a[0].AsString()); }
 
-const std::string& ActionArg(const Args& a) {
-    const std::string& n = a[0].AsString();
+std::string ActionArg(const Args& a) {   // by value: AsString() returns a temporary (ASan stack-use-after-return in CI, #1159)
+    std::string n = a[0].AsString();
     if (!InputActions::Has(n))
         throw ScriptApiError("There's no input action called \"" + n + "\" (Move, Look, Jump, Sprint, Crouch, Fire, Aim, "
                              "Interact, Reload, Inventory, Pause, or one the game defined)");

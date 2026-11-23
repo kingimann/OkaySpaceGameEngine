@@ -3150,6 +3150,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - OnDisable (1.4)
 - OnDrawGizmos (54.2)
 - One damage path (11.4.8)
+- One rebinding store (#422 duplicate audit, item 2) (8.3.9)
 - One-click presets (5.2.4)
 - one-handed (8.7)
 - one-shot (7.3)

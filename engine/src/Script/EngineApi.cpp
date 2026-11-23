@@ -2,6 +2,7 @@
 // Each one calls real engine code; there are no placeholders. The checker
 // resolves names against this table and the editor's autocomplete lists it.
 #include "ScriptInternal.hpp"
+#include "okay/Scripting/ScriptApiRegistry.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -38,7 +39,6 @@
 #include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Components/UINavigation.hpp"
 #include "okay/Audio/AudioMixer.hpp"
-#include "okay/Core/SaveGame.hpp"
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Render/Atmosphere.hpp"   // PostProcess / Fog / Weather
 #include "okay/Components/NavMeshAgent.hpp"
@@ -61,6 +61,7 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/WindZone.hpp"   // Wind (docs/gameplay/wind.md)
+#include <algorithm>
 #include <cmath>
 #include <set>
 
@@ -106,33 +107,6 @@ Transform* SelfTransform(const Value& self, CallContext& c) {
     return Resolve(std::get<ObjRef>(self), c.loc)->transform;
 }
 
-// Key names a script may use, and the engine key each maps to.
-const std::unordered_map<std::string, char>& KeyNames() {
-    static const std::unordered_map<std::string, char> k = [] {
-        std::unordered_map<std::string, char> m;
-        for (char c = 'a'; c <= 'z'; ++c) m[std::string(1, c)] = c;
-        for (char c = '0'; c <= '9'; ++c) m[std::string(1, c)] = c;
-        m["space"] = ' '; m["enter"] = '\r'; m["escape"] = (char)27; m["tab"] = '\t'; m["backspace"] = (char)8;
-        m["shift"] = Input::KeyShift; m["ctrl"] = Input::KeyCtrl;
-        // The arrow keys arrive as W/A/S/D, so these read the same keys.
-        m["up"] = 'w'; m["down"] = 's'; m["left"] = 'a'; m["right"] = 'd';
-        return m;
-    }();
-    return k;
-}
-std::string KeyListHint() { return "a-z, 0-9, space, enter, escape, tab, backspace, shift, ctrl, up, down, left, right"; }
-char KeyOf(const std::string& name, SrcLoc loc) {
-    std::string k;
-    for (char c : name) k += (char)std::tolower((unsigned char)c);
-    auto it = KeyNames().find(k);
-    if (it == KeyNames().end()) throw RuntimeError("\"" + name + "\" isn't a key name. Use one of: " + KeyListHint(), loc);
-    return it->second;
-}
-std::string CheckKeyLiteral(int, const std::string& lit) {
-    std::string k;
-    for (char c : lit) k += (char)std::tolower((unsigned char)c);
-    return KeyNames().count(k) ? "" : "\"" + lit + "\" isn't a key name. Use one of: " + KeyListHint();
-}
 std::string CheckAxisLiteral(int, const std::string& lit) {
     return (lit == "Horizontal" || lit == "Vertical") ? "" : "\"" + lit + "\" isn't an axis. Use \"Horizontal\" or \"Vertical\"";
 }
@@ -153,6 +127,88 @@ Rigidbody3D* Body(const Value& self, CallContext& c) {
     auto* rb = g->GetComponent<Rigidbody3D>();
     if (!rb) throw RuntimeError("'" + g->name + "' has no Rigidbody (add one in the Inspector)", c.loc);
     return rb;
+}
+
+// ---- The shared table (okay/Scripting/ScriptApiRegistry.hpp) ----
+// A shared function is written once, for every script language; here it becomes a member of its type.
+Type TypeOf(ScriptApiType t) {
+    switch (t) {
+        case ScriptApiType::Bool:    return Type::Of(TK::Bool);
+        case ScriptApiType::Int:     return Type::Of(TK::Int);
+        case ScriptApiType::Float:   return Type::Of(TK::Float);
+        case ScriptApiType::String:  return Type::Of(TK::String);
+        case ScriptApiType::Vector3: return Type::Of(TK::Vector3);
+        default:                     return Type::Of(TK::Void);
+    }
+}
+vs::VsValue ToShared(ScriptApiType t, const Value& v) {
+    switch (t) {
+        case ScriptApiType::Bool:    { auto* b = std::get_if<bool>(&v); return vs::VsValue(b ? *b : F(v) != 0.0f); }
+        case ScriptApiType::Int:     return vs::VsValue((float)I(v));
+        case ScriptApiType::String:  return vs::VsValue(S(v));
+        case ScriptApiType::Vector3: return vs::VsValue(V(v));
+        default:                     return vs::VsValue(F(v));
+    }
+}
+Value FromShared(ScriptApiType t, const vs::VsValue& v) {
+    switch (t) {
+        case ScriptApiType::Void:    return Value{};
+        case ScriptApiType::Bool:    return Value{v.AsBool()};
+        case ScriptApiType::Int: {
+            const float f = v.AsFloat();
+            return Value{(std::int32_t)(std::isfinite(f) ? std::max(-2147483648.0f, std::min(2147483520.0f, f)) : 0.0f)};
+        }
+        case ScriptApiType::String:  return Value{v.AsString()};
+        case ScriptApiType::Vector3: return Value{v.AsVec3()};
+        default:                     return Value{v.AsFloat()};
+    }
+}
+// Run a shared function from a typed call: `self` is the receiver for a Method, else the script's object.
+Value CallShared(const ScriptApiEntry& e, const Value& self, std::vector<Value>& a, CallContext& c) {
+    GameObject* g = e.kind == ScriptApiKind::Method ? Resolve(std::get<ObjRef>(self), c.loc) : c.self;
+    std::vector<vs::VsValue> args;
+    args.reserve(e.params.size());
+    for (std::size_t i = 0; i < e.params.size(); ++i)
+        args.push_back(i < a.size() ? ToShared(e.params[i].type, a[i]) : e.params[i].def);
+    try {
+        return FromShared(e.ret, e.fn(g, args));
+    } catch (const ScriptApiError& ex) {
+        throw RuntimeError(ex.what(), c.loc);
+    }
+}
+void AddSharedBindings(EngineApi& api) {
+    for (const ScriptApiEntry& src : ScriptApis()) {
+        if (src.typedType.empty()) continue;   // OkayScript only
+        auto e = std::make_shared<const ScriptApiEntry>(src);
+        int ti = api.Find(e->typedType);
+        if (ti < 0) {
+            ApiType t; t.name = e->typedType; t.isStatic = true;
+            api.types.push_back(std::move(t));
+            ti = (int)api.types.size() - 1;
+        }
+        ApiType& t = api.types[(std::size_t)ti];
+        if (e->kind == ScriptApiKind::StaticProperty) {
+            for (const ApiProperty& p : t.staticProps)
+                if (p.name == e->typedName) NoteScriptApiDuplicate("the typed language", t.name + "." + p.name);
+            ApiProperty p; p.name = e->typedName; p.type = TypeOf(e->ret); p.doc = e->doc;
+            p.get = [e](const Value& self, CallContext& c) { std::vector<Value> none; return CallShared(*e, self, none, c); };
+            t.staticProps.push_back(std::move(p));
+            continue;
+        }
+        std::vector<ApiMethod>& list = e->kind == ScriptApiKind::Method ? t.methods : t.staticMethods;
+        const std::size_t all = e->params.size();
+        const std::size_t fewest = e->typedMinParams < 0 ? all : std::min(all, (std::size_t)e->typedMinParams);
+        for (std::size_t n = fewest; n <= all; ++n) {   // one overload per argument count
+            for (const ApiMethod& m : list)
+                if (m.name == e->typedName && m.params.size() == n)
+                    NoteScriptApiDuplicate("the typed language", t.name + "." + m.name);
+            ApiMethod m; m.name = e->typedName; m.ret = TypeOf(e->ret); m.doc = e->doc; m.pure = e->pure;
+            for (std::size_t i = 0; i < n; ++i) { m.params.push_back(TypeOf(e->params[i].type)); m.paramNames.push_back(e->params[i].name); }
+            m.checkLiteral = e->checkLiteral;
+            m.fn = [e](const Value& self, std::vector<Value>& a, CallContext& c) { return CallShared(*e, self, a, c); };
+            list.push_back(std::move(m));
+        }
+    }
 }
 
 EngineApi Build() {
@@ -332,15 +388,7 @@ EngineApi Build() {
             [](const Value& s, const Value& v, CallContext& c) {
                 Body(s, c)->bodyType = std::get<bool>(v) ? Rigidbody3D::BodyType::Kinematic : Rigidbody3D::BodyType::Dynamic;
             }, "When true, forces and gravity don't move it; only scripts do."));
-        r.methods.push_back(method("AddForce", {tVec}, {"force"}, tVoid,
-            [](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddForce(V(a[0])); return Value{}; },
-            "Push it, over the next physics step (heavier bodies move less)."));
-        r.methods.push_back(method("AddImpulse", {tVec}, {"impulse"}, tVoid,
-            [](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddImpulse(V(a[0])); return Value{}; },
-            "Kick it at once (a jump, a hit)."));
-        r.methods.push_back(method("AddTorque", {tVec}, {"torque"}, tVoid,
-            [](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddTorque(V(a[0])); return Value{}; },
-            "Twist it around X / Y / Z."));
+        // AddForce, AddImpulse and AddTorque come from the shared table (Scripting/ScriptApiCore.cpp).
         r.methods.push_back(method("AddForceAtPosition", {tVec, tVec}, {"force", "point"}, tVoid,
             [](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddForceAtPosition(V(a[0]), V(a[1])); return Value{}; },
             "Push it at a world point (off-centre pushes also spin it)."));
@@ -1317,15 +1365,8 @@ EngineApi Build() {
     // ---- Input ----
     {
         ApiType in; in.name = "Input"; in.isStatic = true; in.doc = "Keyboard, mouse and gamepad.";
-        auto key = [&](const char* n, bool (*fn)(char), const char* doc) {
-            ApiMethod m = method(n, {tString}, {"key"}, tBool,
-                [fn](const Value&, std::vector<Value>& a, CallContext& c) { return Value{fn(KeyOf(S(a[0]), c.loc))}; }, doc);
-            m.checkLiteral = CheckKeyLiteral;
-            in.staticMethods.push_back(m);
-        };
-        key("GetKey", &Input::GetKey, "True while the key is held.");
-        key("GetKeyDown", &Input::GetKeyDown, "True on the frame the key is pressed.");
-        key("GetKeyUp", &Input::GetKeyUp, "True on the frame the key is released.");
+        // GetKey / GetKeyDown / GetKeyUp, GetButton / GetButtonDown / GetButtonUp and GetActionValue come from the
+        // shared table (Scripting/ScriptApiCore.cpp).
         ApiMethod axis = method("GetAxis", {tString}, {"axis"}, tFloat,
             [](const Value&, std::vector<Value>& a, CallContext& c) {
                 const std::string& n = S(a[0]);
@@ -1356,16 +1397,6 @@ EngineApi Build() {
                 throw RuntimeError("There's no input action called \"" + n + "\" (Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact, Reload, Inventory, Pause, or one the game defined)", c.loc);
             return n;
         };
-        auto button = [&](const char* n, bool (*fn)(const std::string&), const char* doc) {
-            in.staticMethods.push_back(method(n, {tString}, {"action"}, tBool,
-                [fn, actionOf](const Value&, std::vector<Value>& a, CallContext& c) { return Value{fn(actionOf(S(a[0]), c))}; }, doc));
-        };
-        button("GetButton", &InputActions::Get, "True while the action is held (\"Jump\", \"Fire\"...), on keyboard, mouse or controller.");
-        button("GetButtonDown", &InputActions::Down, "True on the frame the action is pressed.");
-        button("GetButtonUp", &InputActions::Up, "True on the frame the action is released.");
-        in.staticMethods.push_back(method("GetActionValue", {tString}, {"action"}, tFloat,
-            [actionOf](const Value&, std::vector<Value>& a, CallContext& c) { return Value{InputActions::Value(actionOf(S(a[0]), c))}; },
-            "How far the action is pressed, 0 to 1 (a trigger can be part way)."));
         in.staticMethods.push_back(method("GetActionVector", {tString}, {"action"}, tVec,
             [actionOf](const Value&, std::vector<Value>& a, CallContext& c) {
                 const Vec2 v = InputActions::Vector(actionOf(S(a[0]), c));
@@ -1474,10 +1505,7 @@ EngineApi Build() {
                 if (Scene* s = c.self ? c.self->scene() : nullptr) s->SetSmoothPhysics(std::get<bool>(v));
             },
             "Draw bodies between physics steps so motion stays smooth at any frame rate."));
-        t.staticProps.push_back(ro("time", tFloat, [](const Value&, CallContext&) { return Value{Time::ElapsedTime()}; },
-            "Seconds since the game started."));
-        t.staticProps.push_back(ro("frameCount", tInt, [](const Value&, CallContext&) { return Value{(std::int32_t)Time::FrameCount()}; },
-            "Frames since the game started."));
+        // time and frameCount come from the shared table (Scripting/ScriptApiCore.cpp).
         t.staticProps.push_back(prop("timeScale", tFloat,
             [](const Value&, CallContext&) { return Value{Time::TimeScale()}; },
             [](const Value&, const Value& v, CallContext& c) {
@@ -1561,14 +1589,7 @@ EngineApi Build() {
                 throw RuntimeError("There's no audio group called \"" + name + "\" (use Music, SFX, UI or Voice)", c.loc);
             return (int)g;
         };
-        au.staticMethods.push_back(method("SetGroupVolume", {tString, tFloat}, {"group", "volume"}, tVoid,
-            [group](const Value&, std::vector<Value>& a, CallContext& c) {
-                AudioMixer::groupVolume[group(S(a[0]), c)] = Mathf::Clamp(F(a[1]), 0.0f, 1.0f); return Value{}; },
-            "Set one group's volume, 0 to 1 (\"Music\", \"SFX\", \"UI\" or \"Voice\")."));
-        au.staticMethods.push_back(method("GetGroupVolume", {tString}, {"group"}, tFloat,
-            [group](const Value&, std::vector<Value>& a, CallContext& c) { return Value{AudioMixer::groupVolume[group(S(a[0]), c)]}; },
-            "One group's volume."));
-        au.staticMethods.back().pure = true;   // a value node in a visual script
+        // SetGroupVolume and GetGroupVolume come from the shared table (Scripting/ScriptApiCore.cpp).
         au.staticMethods.push_back(method("MuteGroup", {tString, tBool}, {"group", "mute"}, tVoid,
             [group](const Value&, std::vector<Value>& a, CallContext& c) {
                 AudioMixer::groupMuted[group(S(a[0]), c)] = std::get<bool>(a[1]); return Value{}; },
@@ -1582,39 +1603,7 @@ EngineApi Build() {
     {
         ApiType sg; sg.name = "SaveGame"; sg.isStatic = true;
         sg.doc = "Whole-game saves in named slots: every object, the player, inventories, script variables.";
-        auto sceneOf = [](CallContext& c) -> Scene& {
-            Scene* s = c.self ? c.self->scene() : nullptr;
-            if (!s) throw RuntimeError("SaveGame needs a script running in a scene", c.loc);
-            return *s;
-        };
-        sg.staticMethods.push_back(method("Save", {tString, tString}, {"slot", "label"}, tBool,
-            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
-                std::string err;
-                const bool ok = SaveGame::Save(sceneOf(c), S(a[0]), S(a[1]), &err);
-                if (!ok) Log::Warning("[script] SaveGame.Save: ", err);
-                return Value{ok};
-            }, "Save the game to a slot (\"1\", \"quick\"...) with a label for the load menu. False if it couldn't."));
-        sg.staticMethods.push_back(method("Load", {tString}, {"slot"}, tBool,
-            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
-                std::string err;
-                const bool ok = SaveGame::Load(sceneOf(c), S(a[0]), &err);
-                if (!ok) Log::Warning("[script] SaveGame.Load: ", err);
-                return Value{ok};
-            }, "Load a slot at the end of this frame. False if there's no save there."));
-        sg.staticMethods.push_back(method("Exists", {tString}, {"slot"}, tBool,
-            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{SaveGame::Exists(S(a[0]))}; },
-            "True if the slot has a save."));
-        sg.staticMethods.back().pure = true;
-        sg.staticMethods.push_back(method("Delete", {tString}, {"slot"}, tBool,
-            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{SaveGame::Delete(S(a[0]))}; },
-            "Delete the save in a slot."));
-        sg.staticMethods.push_back(method("Label", {tString}, {"slot"}, tString,
-            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{SaveGame::Info(S(a[0])).label}; },
-            "The label a slot was saved with (\"\" if empty)."));
-        sg.staticMethods.back().pure = true;
-        sg.staticProps.push_back(ro("playTime", tFloat,
-            [](const Value&, CallContext&) { return Value{SaveGame::PlayTime()}; },
-            "Seconds played, counting the time in the save that was loaded."));
+        // Save, Load, Exists, Delete, Label and playTime come from the shared table (Scripting/ScriptApiCore.cpp).
         api.types.push_back(std::move(sg));
     }
     // ---- Localization ----
@@ -2446,6 +2435,7 @@ EngineApi Build() {
            {"current", "target", "maxDelta"}, "Step from current toward target by at most maxDelta.");
         api.types.push_back(std::move(m));
     }
+    AddSharedBindings(api);
     // Queries and maths have no side effects: in a visual script they're value
     // nodes, not steps in the flow.
     for (ApiType& t : api.types)

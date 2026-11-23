@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/AI/GridAStar.hpp"
 #include "okay/AI/NavMesh.hpp"
 #include "okay/Math/Vec3.hpp"
 #include <cstdint>
@@ -13,13 +14,62 @@ class NavMeshSurface;
 class NavMeshAgent;
 class NavMeshObstacle;
 class NavMeshLink;
+class Tilemap;
 
 /// Pathfinding for a scene: the baked NavMesh when the scene has a NavMeshSurface
 /// with one, otherwise the lazily sampled NavGrid3D (so NPCs and click-to-move
 /// keep working in scenes that never baked). NPCController, ClickToMoveController
 /// and NavMeshAgent all go through here.
+///
+/// Grid paths for 2D games and tilemaps are part of the same system (GridPath,
+/// TilemapPath below; the 2D agent is GridPathAgent2D). They and the 3D grid
+/// fallback run the one A* search in GridAStar.hpp.
 class Navigation {
 public:
+    // ---- Grid paths (2D games, tilemaps, tower defence) ----------------------------------
+
+    /// The most cells (width * height) a grid search will take on: 4096 x 4096. A larger grid has no
+    /// path (an empty result), so a bad size can never size an allocation or wrap an index.
+    static constexpr long long kMaxGridCells = 1LL << 24;
+
+    /// A path from (sx, sy) to (gx, gy) over a width*height grid where
+    /// `walkable[y * width + x]` is true for passable cells. Returns the cells
+    /// from start to goal inclusive, or an empty vector if no path exists.
+    ///
+    /// Defaults: four directions, every open cell costs 1, every cell kept.
+    /// `allowDiagonal` adds the four diagonal steps. A diagonal never squeezes
+    /// between two blocked cells (both orthogonal neighbours must be open).
+    /// `costs`, when set, is one price per cell in the same order as `walkable`.
+    /// Stepping into a cell costs the straight or diagonal length times that
+    /// price. A price of 0 or less blocks the cell. A null pointer, or a vector
+    /// of the wrong length, leaves every open cell at price 1.
+    /// `smooth` pulls the path straight wherever the line of sight is clear
+    /// (string pulling). It does not re-price the route: it only drops cells
+    /// the line does not need, and it never crosses a blocked cell.
+    static std::vector<GridCell> GridPath(const std::vector<bool>& walkable, int width, int height,
+                                          int sx, int sy, int gx, int gy, bool allowDiagonal = false,
+                                          const std::vector<float>* costs = nullptr, bool smooth = false);
+
+    /// A grid path over a Tilemap. With no cost table, tile id 0 is walkable and
+    /// any other id is a wall. `tileCost`, when set and non-empty, is the price
+    /// of each tile id (index = id). A price of 0 or less is a wall. An id past
+    /// the end of the table is a wall, except id 0, which stays price 1.
+    static std::vector<GridCell> TilemapPath(const Tilemap& map, int sx, int sy, int gx, int gy,
+                                             bool allowDiagonal = false,
+                                             const std::vector<float>* tileCost = nullptr, bool smooth = false);
+
+    /// True when the straight line between the two cell centres stays on open
+    /// cells. A line that passes exactly through a grid corner is blocked when
+    /// either cell beside that corner is a wall, the same rule as a diagonal step.
+    static bool GridLineClear(const std::vector<bool>& walkable, int width, int height, GridCell a, GridCell b);
+
+    /// String-pull `path`: keep a later cell whenever the line of sight from the
+    /// current one reaches it. The result is a subsequence of `path`.
+    static std::vector<GridCell> SmoothGridPath(const std::vector<bool>& walkable, int width, int height,
+                                                const std::vector<GridCell>& path);
+
+    // ---- Scene navigation (navmesh, or the 3D grid when nothing is baked) ----------------
+
     /// The scene's active NavMeshSurface with a baked mesh (nullptr = none).
     static NavMeshSurface* Surface(Scene& scene);
     /// The mesh queries use, or nullptr when the scene paths over the grid: the baked mesh with the holes

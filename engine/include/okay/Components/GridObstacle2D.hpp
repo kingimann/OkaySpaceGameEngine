@@ -1,5 +1,5 @@
 #pragma once
-#include "okay/AI/Pathfinding.hpp"
+#include "okay/AI/Navigation.hpp"
 #include "okay/Scene/Component.hpp"
 #include <string>
 #include <vector>
@@ -31,7 +31,7 @@ public:
     void Update(float dt) override;
     int ExecutionOrder() const override { return -20; }
 
-    void CoveredCells(const Tilemap& map, std::vector<Pathfinding::Cell>& out) const;
+    void CoveredCells(const Tilemap& map, std::vector<GridCell>& out) const;
     bool UsesMap(const Tilemap& map) const;
 
 private:

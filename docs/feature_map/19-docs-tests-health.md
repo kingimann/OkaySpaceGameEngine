@@ -54,7 +54,6 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 | `docs/engine/debug_tools.md` | profiling and debugging data layers: frame history, GPU timer, memory tracker, draw call recorder, console model | 23 |
 | `docs/online/dedicated-server.md` | running and exporting dedicated servers, server.cfg, flags | 16.5 |
 | `docs/gameplay/dialogue_quests.md` | dialogue graphs, story state, quests | 10.2 |
-| `docs/engine/ecs.md` | ECS iteration under mutation, command buffer, delta snapshots in NetWorld | 1.9 |
 | `docs/editor/editor-plugins.md` | editor plugins written in OkayScript | 15.8 |
 | `docs/editor/editor.md` | the editor, its panels and Build Game | 15 |
 | `docs/editor/editor_undo.md` | the editor's scene undo on `UndoStack`, audit of which edits are covered | 15.9, 22.1 |

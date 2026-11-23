@@ -14,6 +14,7 @@
 #include "imgui_internal.h"
 #include "OkayUIHostImGui.hpp"
 
+#include <cstring>
 #include <functional>
 
 namespace {
@@ -105,10 +106,115 @@ bool CoveredAt(const char* name, float x, float y, float w, float h) {
     return win && okayuihost::CoveredInImGui(win, x, y, w, h);
 }
 
+// The Inspector and the Hierarchy as two tabs of one dock node (the editor's right dock), or side by side. `tabs` picks the arrangement
+// when the dock is first built; `front` names the tab brought to the front this frame (nullptr: none). `inside(name)` runs inside each
+// panel's window, after Begin, as a host's body would.
+bool tabs = true;
+const char* front = nullptr;
+std::function<void(const char*)> inside;
+void RightDock() {
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2(1920, 1200));
+    ImGui::Begin("##DockHost", nullptr, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus);
+    const ImGuiID id = ImGui::GetID("TabDock");
+    if (!ImGui::DockBuilderGetNode(id)) {
+        ImGui::DockBuilderAddNode(id, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(id, ImVec2(1920, 1200));
+        ImGuiID left = 0, right = 0;
+        ImGui::DockBuilderSplitNode(id, ImGuiDir_Left, 0.70f, &left, &right);
+        if (tabs) { ImGui::DockBuilderDockWindow("Inspector", right); ImGui::DockBuilderDockWindow("Hierarchy", right); }
+        else {
+            ImGuiID top = 0, bottom = 0;
+            ImGui::DockBuilderSplitNode(right, ImGuiDir_Up, 0.5f, &top, &bottom);
+            ImGui::DockBuilderDockWindow("Hierarchy", top); ImGui::DockBuilderDockWindow("Inspector", bottom);
+        }
+        ImGui::DockBuilderFinish(id);
+    }
+    ImGui::DockSpace(id, ImVec2(0, 0));
+    ImGui::End();
+    for (const char* name : {"Hierarchy", "Inspector"}) {
+        if (front && std::strcmp(front, name) == 0) ImGui::SetNextWindowFocus();
+        ImGui::Begin(name);   // as the editor's Inspector: its return is not looked at, the body runs either way
+        if (inside) inside(name);
+        ImGui::End();
+    }
+    front = nullptr;
+}
+
+// Is the panel shown? Asked inside it, as HostSection and HostWindow (editor/OkayPanels.cpp) ask before an OkayUI body draws.
+// Also records where two placeholder items one after the other land (the Inspector's card, then its Add Component button).
+struct Seen { bool hidden = false; float firstY = 0.0f, secondY = 0.0f; };
+Seen seenHierarchy, seenInspector;
+void Look(const char* name) {
+    Seen& s = std::strcmp(name, "Inspector") == 0 ? seenInspector : seenHierarchy;
+    s.hidden = okayuihost::HiddenInImGui(ImGui::GetCurrentWindow());
+    s.firstY = ImGui::GetCursorScreenPos().y;
+    ImGui::InvisibleButton("##card", ImVec2(200.0f, 90.0f));
+    s.secondY = ImGui::GetCursorScreenPos().y;
+    ImGui::InvisibleButton("##add", ImVec2(200.0f, 30.0f));
+}
+
+void TabbedPanels() {
+    // Tabs: the Inspector and the Hierarchy share the right dock (the owner's layout in v2.903.1.3, every Experimental item on).
+    {
+        Rig rig;
+        tabs = true; inside = Look;
+        for (int i = 0; i < 3; ++i) rig.Frame(RightDock);
+        front = "Hierarchy";
+        for (int i = 0; i < 3; ++i) rig.Frame(RightDock);
+        // The Hierarchy tab is picked: the Inspector is hidden, so its OkayUI card, component bars and Add Component button must not
+        // be drawn or take a click. ImGui does not even move the cursor there: every placeholder lands on the same line, which is
+        // where the card, a component bar and the Add Component button were all painted over the Hierarchy before the fix.
+        CHECK(seenInspector.hidden);
+        CHECK(!seenHierarchy.hidden);
+        CHECK(seenInspector.secondY == seenInspector.firstY);
+        CHECK(seenHierarchy.secondY > seenHierarchy.firstY + 80.0f);
+        // The Inspector tab picked: the other way round.
+        front = "Inspector";
+        for (int i = 0; i < 3; ++i) rig.Frame(RightDock);
+        CHECK(!seenInspector.hidden);
+        CHECK(seenHierarchy.hidden);
+        CHECK(seenInspector.secondY > seenInspector.firstY + 80.0f);
+        // Back to the Hierarchy tab: never a frame where both bodies would draw over each other.
+        front = "Hierarchy";
+        for (int i = 0; i < 3; ++i) {
+            rig.Frame(RightDock);
+            CHECK(seenInspector.hidden || seenHierarchy.hidden);
+        }
+        CHECK(seenInspector.hidden && !seenHierarchy.hidden);
+    }
+    // Side by side: both panels are shown and both bodies draw.
+    {
+        Rig rig;
+        tabs = false; inside = Look;
+        for (int i = 0; i < 4; ++i) rig.Frame(RightDock);
+        CHECK(!seenInspector.hidden && !seenHierarchy.hidden);
+        CHECK(seenInspector.secondY > seenInspector.firstY + 80.0f && seenHierarchy.secondY > seenHierarchy.firstY + 80.0f);
+    }
+    // A collapsed floating window shows nothing either; no window at all is not hidden (the helper takes a null window).
+    {
+        Rig rig;
+        auto floating = [] {
+            ImGui::SetNextWindowPos(ImVec2(100, 100), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_Always);
+            ImGui::SetNextWindowCollapsed(true, ImGuiCond_Always);
+            ImGui::Begin("Floating");
+            seenInspector.hidden = okayuihost::HiddenInImGui(ImGui::GetCurrentWindow());
+            ImGui::End();
+        };
+        for (int i = 0; i < 3; ++i) rig.Frame(floating);
+        CHECK(seenInspector.hidden);
+        CHECK(!okayuihost::HiddenInImGui(nullptr));
+    }
+    inside = nullptr;
+}
+
 } // namespace
 
 int main() {
     RUN_SUITE("okayui_host_layering");
+    TabbedPanels();
     Rig rig;
     for (int i = 0; i < 4; ++i) rig.Frame(Editor);
 

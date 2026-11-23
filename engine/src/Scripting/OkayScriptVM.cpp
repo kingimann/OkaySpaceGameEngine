@@ -3,6 +3,7 @@
 #include "okay/Scene/UIStyleLib.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
+#include "okay/Scripting/ScriptApiRegistry.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/Ragdoll.hpp"
@@ -3712,7 +3713,43 @@ private:
 } // namespace
 
 // ===================== OkayScriptVM::Impl =====================
+namespace {
+// A function from the shared table (okay/Scripting/ScriptApiRegistry.hpp) as an OkayScript builtin. It is a
+// named type so RegisterBuiltins can tell a shared function from a second, hand-written copy in the map.
+struct SharedApiCall {
+    std::shared_ptr<const ScriptApiEntry> entry;
+    const Runtime* rt = nullptr;
+    std::shared_ptr<bool> warned = std::make_shared<bool>(false);   // warn once per VM, not every frame
+    Value operator()(std::vector<Value>& a) const {
+        return CallScriptApiDynamic(*entry, rt->host ? rt->host->gameObject : nullptr, a, warned.get());
+    }
+};
+} // namespace
+
 struct OkayScriptVM::Impl {
+    // Every shared function under its OkayScript name and aliases. Runs first in RegisterBuiltins, so the
+    // aliases made further down find it; the check at the end refuses a later hand-written copy.
+    void InstallSharedApis() {
+        for (const ScriptApiEntry& e : ScriptApis()) {
+            auto shared = std::make_shared<const ScriptApiEntry>(e);
+            SharedApiCall call{shared, &rt};
+            rt.builtins[e.name] = call;
+            for (const std::string& a : e.aliases) rt.builtins[a] = call;
+        }
+    }
+    void CheckSharedApis() {
+        for (const ScriptApiEntry& e : ScriptApis()) {
+            std::vector<std::string> names = e.aliases;
+            names.push_back(e.name);
+            for (const std::string& n : names) {
+                auto it = rt.builtins.find(n);
+                if (it != rt.builtins.end() && it->second.target<SharedApiCall>()) continue;
+                NoteScriptApiDuplicate("OkayScript", n);
+                rt.builtins[n] = SharedApiCall{std::make_shared<const ScriptApiEntry>(e), &rt};
+            }
+        }
+    }
+
     Runtime rt;
     // Tweens and timers outlive a call; their callbacks check this so they do
     // nothing once the script is gone (its component removed or reloaded).
@@ -3759,6 +3796,7 @@ struct OkayScriptVM::Impl {
     }
 
     void RegisterBuiltins() {
+        InstallSharedApis();
         auto& b = rt.builtins;
         auto tf = [this]() -> Transform* { return rt.host ? rt.host->transform : nullptr; };
 
@@ -3958,12 +3996,11 @@ struct OkayScriptVM::Impl {
         };
         b["pos_x"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localPosition.x : 0.0f}; };
         b["pos_y"] = [tf](std::vector<Value>&) { Transform* t = tf(); return Value{t ? t->localPosition.y : 0.0f}; };
-        b["time"]  = [](std::vector<Value>&) { return Value{Time::ElapsedTime()}; };
+        // time() and frame_count() are in the shared table (Scripting/ScriptApiCore.cpp).
         b["set_timescale"] = [](std::vector<Value>& a) { Time::SetTimeScale(a.empty() ? 1.0f : a[0].AsFloat()); return Value{}; };
         b["timescale"]     = [](std::vector<Value>&) { return Value{Time::TimeScale()}; };
         // has_var("score"): is a script variable defined (in any scope)?
         b["has_var"] = [this](std::vector<Value>& a) { return Value{!a.empty() && rt.Has(a[0].AsString())}; };
-        b["frame_count"]   = [](std::vector<Value>&) { return Value{(float)Time::FrameCount()}; };
         // Time since this Play began: time() and frame_count() keep counting across Plays, these start from 0.
         b["session_time"]          = [](std::vector<Value>&) { return Value{(float)Time::SessionTime()}; };
         b["session_unscaled_time"] = [](std::vector<Value>&) { return Value{(float)Time::SessionUnscaledTime()}; };
@@ -4027,26 +4064,12 @@ struct OkayScriptVM::Impl {
         };
         b["axis_x"] = [](std::vector<Value>&) { return Value{Input::AxisWASD().x}; };
         b["axis_y"] = [](std::vector<Value>&) { return Value{Input::AxisWASD().y}; };
-        b["key"]    = [](std::vector<Value>& a) {
-            if (a.empty()) return Value{false};
-            char c = KeyCharFromName(a[0].AsString());
-            return Value{c != 0 && Input::GetKeyGame(c)};
-        };
-        b["key_down"] = [](std::vector<Value>& a) {
-            if (a.empty()) return Value{false};
-            char c = KeyCharFromName(a[0].AsString());
-            return Value{c != 0 && Input::GetKeyDownGame(c)};
-        };
-        // Game actions (InputActions): action("jump"), action_down / action_up,
-        // action_value (0..1), action_x / action_y for Move / Look, rumble(low, high, s),
-        // rebind("interact", "key:f").
+        // key / key_down / key_up and the game actions action / action_down / action_up / action_value are in
+        // the shared table (Scripting/ScriptApiCore.cpp). Here: action_x / action_y for Move / Look,
+        // rumble(low, high, s), rebind("interact", "key:f").
         auto actName = [](std::vector<Value>& a) { return a.empty() ? std::string() : a[0].AsString(); };
         // A second argument names the controller (0..3) for an action marked per player.
         auto playerOf = [](std::vector<Value>& a) { return a.size() > 1 ? SafeInt(a[1].AsFloat()) : -1; };
-        b["action"]       = [actName, playerOf](std::vector<Value>& a) { const int p = playerOf(a); return Value{p < 0 ? InputActions::Get(actName(a)) : InputActions::Get(actName(a), p)}; };
-        b["action_down"]  = [actName, playerOf](std::vector<Value>& a) { const int p = playerOf(a); return Value{p < 0 ? InputActions::Down(actName(a)) : InputActions::Down(actName(a), p)}; };
-        b["action_up"]    = [actName, playerOf](std::vector<Value>& a) { const int p = playerOf(a); return Value{p < 0 ? InputActions::Up(actName(a)) : InputActions::Up(actName(a), p)}; };
-        b["action_value"] = [actName, playerOf](std::vector<Value>& a) { const int p = playerOf(a); return Value{p < 0 ? InputActions::Value(actName(a)) : InputActions::Value(actName(a), p)}; };
         b["action_x"]     = [actName, playerOf](std::vector<Value>& a) { const int p = playerOf(a); return Value{(p < 0 ? InputActions::Vector(actName(a)) : InputActions::Vector(actName(a), p)).x}; };
         b["action_y"]     = [actName, playerOf](std::vector<Value>& a) { const int p = playerOf(a); return Value{(p < 0 ? InputActions::Vector(actName(a)) : InputActions::Vector(actName(a), p)).y}; };
         // Timing: action_buffered("jump", 0.15) is true for a moment after a press until action_consume("jump")
@@ -6096,20 +6119,7 @@ struct OkayScriptVM::Impl {
             if ((p.y <= y0 && rb->velocity.y < 0) || (p.y >= y1 && rb->velocity.y > 0)) rb->velocity.y = -rb->velocity.y;
             return Value{};
         };
-        b["add_force"] = [go, arg3](std::vector<Value>& a) {
-            if (GameObject* g = go()) {
-                if (auto* rb = g->GetComponent<Rigidbody2D>()) rb->AddForce({arg3(a, 0), arg3(a, 1)});
-                else if (auto* r3 = g->GetComponent<Rigidbody3D>()) r3->AddForce(Vec3{arg3(a, 0), arg3(a, 1), arg3(a, 2)});
-            }
-            return Value{};
-        };
-        b["add_impulse"] = [go, arg3](std::vector<Value>& a) {
-            if (GameObject* g = go()) {
-                if (auto* rb = g->GetComponent<Rigidbody2D>()) rb->AddImpulse({arg3(a, 0), arg3(a, 1)});
-                else if (auto* r3 = g->GetComponent<Rigidbody3D>()) r3->AddImpulse(Vec3{arg3(a, 0), arg3(a, 1), arg3(a, 2)});
-            }
-            return Value{};
-        };
+        // add_force / add_impulse / add_torque are in the shared table (Scripting/ScriptApiCore.cpp).
         // add_explosion_force(cx, cy, force, radius [, up]) — shove this 2D body
         // away from (cx, cy). Linear falloff; nothing past the radius. up > 0 pops it.
         b["add_explosion_force"] = [go](std::vector<Value>& a) {
@@ -6212,41 +6222,10 @@ struct OkayScriptVM::Impl {
         b["set_volume"] = [](std::vector<Value>& a) { AudioMixer::masterVolume = a.empty() ? 1.0f : a[0].AsFloat(); return Value{}; };
         b["volume"]     = [](std::vector<Value>&) { return Value{AudioMixer::masterVolume}; };
         b["mute"]       = [](std::vector<Value>& a) { AudioMixer::muted = a.empty() ? true : a[0].AsBool(); return Value{}; };
-        // Mixer groups ("music", "sfx", "ui", "voice"): their own volume and mute.
-        b["set_group_volume"] = [](std::vector<Value>& a) {
-            AudioGroup g;
-            if (a.size() >= 2 && AudioMixer::GroupFromName(a[0].AsString().c_str(), g))
-                AudioMixer::groupVolume[(int)g] = Mathf::Clamp(a[1].AsFloat(), 0.0f, 1.0f);
-            return Value{};
-        };
-        b["group_volume"] = [](std::vector<Value>& a) {
-            AudioGroup g;
-            if (!a.empty() && AudioMixer::GroupFromName(a[0].AsString().c_str(), g))
-                return Value{AudioMixer::groupVolume[(int)g]};
-            return Value{0.0f};
-        };
-        // Whole-game saves (SaveGame): save_game(["save1"] [, "label"]), load_game(["save1"])
-        // (happens at the end of the frame), has_save, delete_save, save_label,
-        // play_time (seconds played, carried through loads).
+        // Mixer groups: set_group_volume / group_volume are in the shared table (Scripting/ScriptApiCore.cpp).
+        // Whole-game saves (SaveGame): save_game, load_game, has_save (save_exists), delete_save, save_label and
+        // play_time are in the shared table too. The slot details below are still OkayScript's own.
         auto slotArg = [](std::vector<Value>& a) { return a.empty() ? std::string("save1") : a[0].AsString(); };
-        b["save_game"] = [sceneOf, slotArg](std::vector<Value>& a) {
-            Scene* s = sceneOf();
-            std::string err;
-            const bool ok = s && SaveGame::Save(*s, slotArg(a), a.size() > 1 ? a[1].AsString() : "", &err);
-            if (!ok) Log::Warning("[script] save_game: ", err);
-            return Value{ok ? 1.0f : 0.0f};
-        };
-        b["load_game"] = [sceneOf, slotArg](std::vector<Value>& a) {
-            Scene* s = sceneOf();
-            std::string err;
-            const bool ok = s && SaveGame::Load(*s, slotArg(a), &err);
-            if (!ok) Log::Warning("[script] load_game: ", err);
-            return Value{ok ? 1.0f : 0.0f};
-        };
-        b["has_save"]    = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Exists(slotArg(a)) ? 1.0f : 0.0f}; };
-        b["delete_save"] = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Delete(slotArg(a)) ? 1.0f : 0.0f}; };
-        b["save_label"]  = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).label}; };
-        b["play_time"]   = [](std::vector<Value>&) { return Value{SaveGame::PlayTime()}; };
         // Load menus: save_slots() lists every slot (newest first, damaged ones included), save_valid
         // says whether a slot would load, and one slot's details come as text a menu can show.
         b["save_slots"]  = [](std::vector<Value>&) {
@@ -8857,10 +8836,8 @@ struct OkayScriptVM::Impl {
             if (!file.empty()) Save::Clear(file);
             return Value{};
         };
-        b["save_exists"] = [saveFile](std::vector<Value>& a) -> Value {
-            const std::string file = saveFile(a, 0);
-            return Value{!file.empty() && Save::FileExists(file)};
-        };
+        // save_exists is has_save's other name (shared table); it never reached this file store (a later line
+        // replaced it), so the key/value file check that stood here was dead code.
         b["save_delete_file"] = [saveFile](std::vector<Value>& a) -> Value {
             const std::string file = saveFile(a, 0);
             return Value{!file.empty() && Save::DeleteFile(file)};
@@ -9787,11 +9764,6 @@ struct OkayScriptVM::Impl {
         };
 
         // --- More input ---
-        b["key_up"] = [](std::vector<Value>& a) {
-            if (a.empty()) return Value{false};
-            char c = KeyCharFromName(a[0].AsString());
-            return Value{c != 0 && Input::GetKeyUp(c)};
-        };
         b["mouse_up"] = [](std::vector<Value>& a) {
             return Value{Input::GetMouseButtonUp(a.empty() ? 0 : SafeInt(a[0].AsFloat()))};
         };
@@ -10779,8 +10751,6 @@ struct OkayScriptVM::Impl {
         b["seq_insert_callback"] = seqOp([fnFromArg](TweenSequence& s, std::vector<Value>& a) {
             if (auto f = fnFromArg(a, 2)) s.InsertCallback(a.size() > 1 ? a[1].AsFloat() : 0.0f, f);
         });
-        // Whole-game saves are save_game / load_game / has_save above (SaveGame).
-        b["save_exists"] = b["has_save"];
 
         // ---- Friendly aliases: intuitive names for common builtins so games
         //      read naturally. Each points at an already-registered function. ----
@@ -11869,6 +11839,7 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["ForceMode2D.Impulse"] = [](std::vector<Value>&) { return Value{1.0f}; };
+        CheckSharedApis();
     }
 };
 

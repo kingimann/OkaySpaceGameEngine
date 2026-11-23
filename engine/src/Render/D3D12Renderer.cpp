@@ -13,7 +13,8 @@
 #include "okay/Render/D3D12Renderer.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/Atmosphere.hpp"   // fog modes, sky colours
-#include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture, EnvSky, SceneLights
+#include "okay/Render/SoftwareRenderer.hpp"   // the shared texture library (TextureAsset.hpp), EnvSky, SceneLights
+#include "okay/Debug/MemoryTracker.hpp"       // "Textures (GPU)"
 #include "okay/Render/Visibility.hpp"
 #include "okay/Components/LODGroup.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -281,8 +282,12 @@ struct D3D12Renderer::Impl {
     ID3D12Resource* cbUpload = nullptr; UINT cbCap = 0; UINT8* cbPtr = nullptr; UINT cbNext = 0;
     UINT cbStride = 0;                             // aligned sizeof(CB)
 
-    struct Tex { ID3D12Resource* res; D3D12_CPU_DESCRIPTOR_HANDLE srv; };
+    // From the shared TextureAsset (TextureAsset.hpp); `serial` is the asset version uploaded, `slot` the staging-heap
+    // descriptor it owns (reused when the picture is uploaded again, so reloads do not use up the heap).
+    struct Tex { ID3D12Resource* res; D3D12_CPU_DESCRIPTOR_HANDLE srv; std::uint64_t serial = 0; std::size_t gpuBytes = 0; };
     std::unordered_map<std::string, Tex> texCache;
+    std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> freeSlots;   // staging descriptors of textures the library let go of
+    unsigned texLibGen = 0;
     D3D12_CPU_DESCRIPTOR_HANDLE whiteSrv{};       // 1x1 white default for unused slots
 
     std::vector<float> verts;
@@ -291,6 +296,7 @@ struct D3D12Renderer::Impl {
     bool EnsureTargets(int W, int H);
     void DestroyTargets();
     D3D12_CPU_DESCRIPTOR_HANDLE TextureFor(const std::string& name);   // -> staging SRV handle
+    void PrepareTextures(const Scene& scene);
     void Barrier(ID3D12Resource* r, D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to);
     void WaitGPU();
 };
@@ -314,29 +320,55 @@ void D3D12Renderer::Impl::WaitGPU() {
     }
 }
 
-// Create / upload a texture once and return its (staging-heap) SRV handle. Failures
-// fall back to the 1x1 white default so a slot is always bound.
+static int D3D12GpuTextureCategory() { static const int id = MemoryTracker::Global().Category("Textures (GPU)"); return id; }
+
+// Upload a texture and return its (staging-heap) SRV handle. The pixels come from the shared TextureAsset (one decode for
+// every renderer) with our own gamma-correct mip chain; a new asset serial (hot reload, reimport, painted splat)
+// uploads again into the same descriptor slot. Failures fall back to the 1x1 white default so a slot is always bound.
+// Uploads record and wait on the command list, so RenderToPixels calls this for every picture of the frame before it
+// starts recording (PrepareTextures); a call during recording is then always a cache hit.
 D3D12_CPU_DESCRIPTOR_HANDLE D3D12Renderer::Impl::TextureFor(const std::string& name) {
     if (name.empty()) return whiteSrv;
+    const TextureAsset* asset = textures::ForRender(name);
+    const std::uint64_t serial = asset ? asset->serial : 0;
+    D3D12_CPU_DESCRIPTOR_HANDLE slot{};
     auto it = texCache.find(name);
-    if (it != texCache.end()) return it->second.srv;
+    if (it != texCache.end()) {
+        if (it->second.serial == serial) return it->second.srv;
+        // A new version: free the old resource (the previous frame was waited for), keep its descriptor slot.
+        if (it->second.srv.ptr != whiteSrv.ptr) slot = it->second.srv;
+        Release(it->second.res);
+        if (it->second.gpuBytes) MemoryTracker::Global().Remove(D3D12GpuTextureCategory(), std::int64_t(it->second.gpuBytes), 1);
+        texCache.erase(it);
+    }
+    if (!slot.ptr && !freeSlots.empty()) { slot = freeSlots.back(); freeSlots.pop_back(); }
+    if (!slot.ptr && stageNext < stageCap) {
+        slot = srvStage->GetCPUDescriptorHandleForHeapStart();
+        slot.ptr += (size_t)stageNext * srvInc; stageNext++;
+    }
 
     D3D12_CPU_DESCRIPTOR_HANDLE handle = whiteSrv;
     ID3D12Resource* res = nullptr;
-    Image* img = GetCachedTexture(name);
-    if (img && img->Width() > 0 && stageNext < stageCap) {
-        const UINT iw = (UINT)img->Width(), ih = (UINT)img->Height();
+    std::size_t gpuBytes = 0;
+    if (asset && asset->Valid() && slot.ptr) {
+        std::vector<Image> built;
+        const std::vector<Image>* levels = &asset->UploadLevels(built);
+        const UINT n = (UINT)levels->size();
+        const UINT iw = (UINT)asset->Width(), ih = (UINT)asset->Height();
         D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
         D3D12_RESOURCE_DESC rd{};
         rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        rd.Width = iw; rd.Height = ih; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
+        rd.Width = iw; rd.Height = ih; rd.DepthOrArraySize = 1; rd.MipLevels = (UINT16)n;
         rd.Format = DXGI_FORMAT_R8G8B8A8_UNORM; rd.SampleDesc.Count = 1;
         rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
         if (SUCCEEDED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
                 D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_ID3D12Resource, (void**)&res)) && res) {
-            // Upload buffer sized to the (256-aligned-pitch) footprint.
-            D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{}; UINT rows = 0; UINT64 rowBytes = 0, total = 0;
-            dev->GetCopyableFootprints(&rd, 0, 1, 0, &fp, &rows, &rowBytes, &total);
+            // One upload buffer holding every level at its (256-aligned-pitch) footprint.
+            std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> fp(n);
+            std::vector<UINT> rows(n);
+            std::vector<UINT64> rowBytes(n);
+            UINT64 total = 0;
+            dev->GetCopyableFootprints(&rd, 0, n, 0, fp.data(), rows.data(), rowBytes.data(), &total);
             D3D12_HEAP_PROPERTIES up{}; up.Type = D3D12_HEAP_TYPE_UPLOAD;
             D3D12_RESOURCE_DESC bd{};
             bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; bd.Width = total; bd.Height = 1;
@@ -347,19 +379,25 @@ D3D12_CPU_DESCRIPTOR_HANDLE D3D12Renderer::Impl::TextureFor(const std::string& n
                     D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_ID3D12Resource, (void**)&upRes)) && upRes) {
                 UINT8* dst = nullptr; D3D12_RANGE nr{0, 0};
                 if (SUCCEEDED(upRes->Map(0, &nr, (void**)&dst)) && dst) {
-                    const UINT8* src = img->Data();
-                    for (UINT y = 0; y < ih; ++y)
-                        std::memcpy(dst + fp.Offset + (size_t)y * fp.Footprint.RowPitch,
-                                    src + (size_t)y * iw * 4, (size_t)iw * 4);
+                    for (UINT l = 0; l < n; ++l) {
+                        const Image& lv = (*levels)[l];
+                        const UINT lw = (UINT)lv.Width(), lh = (UINT)lv.Height();
+                        for (UINT y = 0; y < lh; ++y)
+                            std::memcpy(dst + fp[l].Offset + (size_t)y * fp[l].Footprint.RowPitch,
+                                        lv.Data() + (size_t)y * lw * 4, (size_t)lw * 4);
+                        gpuBytes += lv.Pixels().size();
+                    }
                     upRes->Unmap(0, nullptr);
                 }
-                // Record the copy on a one-shot command list.
+                // Record the copies on a one-shot command list.
                 alloc->Reset(); list->Reset(alloc, nullptr);
-                D3D12_TEXTURE_COPY_LOCATION d{}; d.pResource = res;
-                d.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; d.SubresourceIndex = 0;
-                D3D12_TEXTURE_COPY_LOCATION sLoc{}; sLoc.pResource = upRes;
-                sLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; sLoc.PlacedFootprint = fp;
-                list->CopyTextureRegion(&d, 0, 0, 0, &sLoc, nullptr);
+                for (UINT l = 0; l < n; ++l) {
+                    D3D12_TEXTURE_COPY_LOCATION d{}; d.pResource = res;
+                    d.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; d.SubresourceIndex = l;
+                    D3D12_TEXTURE_COPY_LOCATION sLoc{}; sLoc.pResource = upRes;
+                    sLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; sLoc.PlacedFootprint = fp[l];
+                    list->CopyTextureRegion(&d, 0, 0, 0, &sLoc, nullptr);
+                }
                 Barrier(res, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                 list->Close();
                 ID3D12CommandList* lists[] = {list};
@@ -367,20 +405,46 @@ D3D12_CPU_DESCRIPTOR_HANDLE D3D12Renderer::Impl::TextureFor(const std::string& n
                 WaitGPU();
                 upRes->Release();
             }
-            // SRV in the staging heap.
-            D3D12_CPU_DESCRIPTOR_HANDLE cpu = srvStage->GetCPUDescriptorHandleForHeapStart();
-            cpu.ptr += (size_t)stageNext * srvInc; stageNext++;
             D3D12_SHADER_RESOURCE_VIEW_DESC sd{};
             sd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
             sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
             sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-            sd.Texture2D.MipLevels = 1;
-            dev->CreateShaderResourceView(res, &sd, cpu);
-            handle = cpu;
+            sd.Texture2D.MipLevels = n;
+            dev->CreateShaderResourceView(res, &sd, slot);
+            handle = slot;
         }
     }
-    texCache[name] = Tex{res, handle};
+    if (handle.ptr == whiteSrv.ptr) {
+        if (slot.ptr) freeSlots.push_back(slot);   // nothing made: give the slot back
+        gpuBytes = 0;
+    }
+    if (gpuBytes) MemoryTracker::Global().Add(D3D12GpuTextureCategory(), std::int64_t(gpuBytes), 1);
+    texCache[name] = Tex{res, handle, serial, gpuBytes};
     return handle;
+}
+
+// Every picture this frame draws with, uploaded (or uploaded again) before recording starts, and the copies of names
+// the texture library let go of freed.
+void D3D12Renderer::Impl::PrepareTextures(const Scene& scene) {
+    if (texLibGen != textures::Generation()) {
+        for (auto it = texCache.begin(); it != texCache.end();) {
+            if (it->first == "__white__" || textures::IsHeld(it->first)) { ++it; continue; }
+            Release(it->second.res);
+            if (it->second.srv.ptr && it->second.srv.ptr != whiteSrv.ptr) freeSlots.push_back(it->second.srv);
+            if (it->second.gpuBytes) MemoryTracker::Global().Remove(D3D12GpuTextureCategory(), std::int64_t(it->second.gpuBytes), 1);
+            it = texCache.erase(it);
+        }
+        texLibGen = textures::Generation();
+    }
+    for (const auto& up : scene.Objects()) {
+        const GameObject* go = up.get();
+        if (!go || !go->ActiveInHierarchy()) continue;
+        const MeshRenderer* mr = go->GetComponent<MeshRenderer>();
+        if (!mr || !mr->enabled) continue;
+        for (const std::string* n : {&mr->texture, &mr->normalMap, &mr->specularMap, &mr->aoMap, &mr->metallicRoughnessMap, &mr->emissiveMap})
+            if (!n->empty()) TextureFor(*n);
+        for (const std::string& n : mr->slotTextures) if (!n.empty()) TextureFor(n);
+    }
 }
 
 // ===========================================================================
@@ -693,6 +757,7 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
     Impl* p = m_impl;
     if (!p->EnsureTargets(w, h)) return nullptr;
 
+    p->PrepareTextures(scene);   // uploads record on the command list: all of them before this frame's recording starts
     p->srvRingNext = 0; p->cbNext = 0; p->vbNext = 0;
     p->alloc->Reset();
     p->list->Reset(p->alloc, p->psoOpaque);
@@ -1072,8 +1137,12 @@ void D3D12Renderer::Destroy() {
     if (!m_impl) return;
     Impl* p = m_impl;
     if (p->queue && p->fence) p->WaitGPU();
-    for (auto& kv : p->texCache) Release(kv.second.res);
+    for (auto& kv : p->texCache) {
+        Release(kv.second.res);
+        if (kv.second.gpuBytes) MemoryTracker::Global().Remove(D3D12GpuTextureCategory(), std::int64_t(kv.second.gpuBytes), 1);
+    }
     p->texCache.clear();
+    p->freeSlots.clear();
     if (p->cbUpload) { D3D12_RANGE wr{0, 0}; p->cbUpload->Unmap(0, &wr); }
     Release(p->vbUpload); Release(p->cbUpload);
     Release(p->shadowTex);

@@ -808,7 +808,7 @@ target_sources(okay_engine PRIVATE
 )
 # ---- Prefab system wave 2 (docs/engine/prefabs.md): nested prefabs, variants, unpack,
 # per-record / per-field apply and revert, prefab queries and the asset validator.
-target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp)
+target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp src/Scene/PrefabResolve.cpp)
 # Project tag list and layer names in the project settings file (docs/gameplay/cameras.md).
 target_sources(okay_engine PRIVATE src/Scene/ProjectLists.cpp)
 # ---- Property reflection (docs/engine/properties.md) ----

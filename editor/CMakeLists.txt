@@ -98,16 +98,12 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     LaunchFile.cpp                                                     # open a file with the system's program, in a text editor, or show it in the file manager (no shell; never a program or script)
     ${CMAKE_SOURCE_DIR}/launcher/VersionsManager.cpp                  # the version list reader + download plan (checksums required), shared with the launcher updater
     ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...
-    vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget
     VsGraphShot.cpp                                                    # --vs-shot: screenshots of example graphs
     ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp                         # monitor list and display-mode changes (SDL, shared with the player)
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                          # open / save / folder dialogs: system dialogs or the built-in browser (model)
     ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp)                       # the built-in browser's ImGui window
 target_compile_definitions(okay-editor PRIVATE ${OKAY_VERSION_DEFINE})
-target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher
-    ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
-# The vendored widget isn't -Wall/-Wextra clean; silence its warnings only.
-set_source_files_properties(vendor/TextEditor.cpp PROPERTIES COMPILE_OPTIONS "-w")
+target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher)
 target_link_libraries(okay-editor PRIVATE okay::engine okay_imgui ${OKAY_SDL_LIB})
 if(WIN32)
     # Embed the OkaySpace app icon so OkayEngine.exe shows a real taskbar /
@@ -186,9 +182,8 @@ if(OKAY_EDITOR_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
     target_compile_definitions(okay-editor-okayui PRIVATE ${OKAY_VERSION_DEFINE} OKAY_ON_OKAYUI=1 OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
     target_compile_features(okay-editor-okayui PRIVATE cxx_std_17)
     target_include_directories(okay-editor-okayui BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe ${CMAKE_SOURCE_DIR}/okayui/probe/backends)
-    target_include_directories(okay-editor-okayui PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_CURRENT_SOURCE_DIR}/vendor
+    target_include_directories(okay-editor-okayui PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher
         ${CMAKE_SOURCE_DIR}/okayui/include ${CMAKE_SOURCE_DIR}/okayui/screens ${CMAKE_SOURCE_DIR}/okayui/soft)
-    set_source_files_properties(vendor/TextEditor.cpp PROPERTIES COMPILE_OPTIONS "-w")
     target_link_libraries(okay-editor-okayui PRIVATE okay::engine okay_ui okay_ui_screens okay_ui_soft ${OKAY_SDL_LIB})
     if(OKAY_ENABLE_TEST_HOOKS)
         target_compile_definitions(okay-editor-okayui PRIVATE OKAY_ENABLE_TEST_HOOKS=1)

@@ -309,6 +309,21 @@ still runs on pull requests and on main under the same name. To check it, see `d
 * **`paths-ignore` for docs-only PRs:** left out on purpose (it can leave required checks missing).
 * Not added: ccache to the ASan job (`sanitizers`) and `own-http` jobs, which have none today.
 
+### Larger runners
+
+The five heaviest jobs ("Build & test (Ubuntu)", the player and editor builds, the ASan/UBSan tests and the MinGW
+cross-compile) run on `${{ vars.OKAY_BIG_RUNNER || 'ubuntu-latest' }}`. With no repository variable they use GitHub's
+normal 4-core, 16 GB runner, exactly as before. To make them faster:
+
+1. Create a larger runner (GitHub Team or Enterprise plan; billed per minute): the organization's or repository's
+   Settings > Actions > Runners > New runner > New GitHub-hosted runner. Pick Ubuntu, for example 8 or 16 cores,
+   and give it a name such as `okay-linux-16core`.
+2. Settings > Secrets and variables > Actions > Variables > New repository variable: name `OKAY_BIG_RUNNER`, value
+   the runner's name.
+3. The next CI run uses it. `scripts/ci_jobs.sh` sizes the parallel jobs to the bigger machine's cores and memory by
+   itself. Delete the variable to go back.
+
+
 ## Tests of the testing code
 
 `test_testing_registry`, `test_playtest`, `test_scene_validator` and `test_regression` in

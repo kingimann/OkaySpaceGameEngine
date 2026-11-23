@@ -1,5 +1,6 @@
 // The Blender (.blend) reader's build stage: nodes, parts, modifiers, animation and the notes (a pure move out of BlendReader.cpp).
 #include "BlendReaderInternal.hpp"
+#include "okay/Render/ModelData.hpp"
 #include "okay/Core/ImageDecode.hpp"
 #include "BlendModifiers.hpp"
 #include <algorithm>

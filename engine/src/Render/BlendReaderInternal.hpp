@@ -1,5 +1,6 @@
 #pragma once
 // Private to the engine: the Blender (.blend) reader's types (BlendReader.cpp reads the container, BlendReaderBuild.cpp builds the model).
+#include "okay/Render/ModelData.hpp"
 #include "okay/Core/ImageDecode.hpp"
 #include "BlendModifiers.hpp"
 #include <algorithm>

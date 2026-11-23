@@ -84,6 +84,11 @@ SDL_Texture* GetThumb(const std::string& path);
 
 // Run a shell command without flashing a console window (main.cpp); returns the exit code like std::system.
 int SysNoWindow(const std::string& cmd);
+// The Scripting Reference window's visibility (Help > Scripting Reference, the Script Editor's Docs), the Script
+// Editor's monospace face, and the accent-ticked section heading every panel uses (main.cpp).
+extern bool g_showScriptDocs;
+extern ImFont* g_codeFont;
+void SectionHeader(const char* label);
 // The open project's settings (main.cpp; the struct is in ProjectState.hpp).
 struct ProjectSettings;
 extern ProjectSettings g_project;

@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace okaycompare;
@@ -42,11 +43,39 @@ struct Offers {
     struct O { float x, y, w, h; bool hovered, overlay; };
     std::vector<O> list;
     void Offer(float x, float y, float w, float h, bool hovered, bool overlay = false) { list.push_back(O{x, y, w, h, hovered, overlay}); }
+    bool active = false;                  // NoteActive: the body is hovered or its window has the focus
+    void NoteActive() { active = true; }
     bool BodyHovered() const { for (const O& o : list) if (!o.overlay && o.hovered) return true; return false; }
     int Overlays() const { int n = 0; for (const O& o : list) n += o.overlay ? 1 : 0; return n; }
 };
 
 const float kWinX = 20.0f, kWinY = 20.0f, kWinW = 520.0f, kWinH = 380.0f;
+
+// A platform "backend" with no windows, so Dear ImGui's multi-viewports run headless: a window that leaves the main viewport gets an
+// OS window of its own (here: a remembered position and size), as in the editor, where panels can be dragged out to other monitors.
+struct FakeOsWindow { ImVec2 pos, size; };
+std::unordered_map<ImGuiID, FakeOsWindow> g_osWindows;
+void EnableFakeViewports() {
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    io.BackendFlags |= ImGuiBackendFlags_PlatformHasViewports | ImGuiBackendFlags_RendererHasViewports;
+    ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+    pio.Platform_CreateWindow = [](ImGuiViewport* v) { g_osWindows[v->ID] = FakeOsWindow{v->Pos, v->Size}; };
+    pio.Platform_DestroyWindow = [](ImGuiViewport* v) { g_osWindows.erase(v->ID); };
+    pio.Platform_ShowWindow = [](ImGuiViewport*) {};
+    pio.Platform_SetWindowPos = [](ImGuiViewport* v, ImVec2 p) { g_osWindows[v->ID].pos = p; };
+    pio.Platform_GetWindowPos = [](ImGuiViewport* v) { auto it = g_osWindows.find(v->ID); return it == g_osWindows.end() ? v->Pos : it->second.pos; };
+    pio.Platform_SetWindowSize = [](ImGuiViewport* v, ImVec2 sz) { g_osWindows[v->ID].size = sz; };
+    pio.Platform_GetWindowSize = [](ImGuiViewport* v) { auto it = g_osWindows.find(v->ID); return it == g_osWindows.end() ? v->Size : it->second.size; };
+    pio.Platform_SetWindowFocus = [](ImGuiViewport*) {};
+    pio.Platform_GetWindowFocus = [](ImGuiViewport*) { return true; };
+    pio.Platform_GetWindowMinimized = [](ImGuiViewport*) { return false; };
+    pio.Platform_SetWindowTitle = [](ImGuiViewport*, const char*) {};
+    ImGuiPlatformMonitor mon;
+    mon.MainPos = mon.WorkPos = ImVec2(0, 0); mon.MainSize = mon.WorkSize = ImVec2(4000, 3000); mon.DpiScale = 1.0f;
+    pio.Monitors.resize(0);
+    pio.Monitors.push_back(mon);
+}
 
 // One frame of "the editor": OkayUI's frame open around Dear ImGui's, the panel window, optionally something in front of it.
 struct Editor {
@@ -64,6 +93,9 @@ struct Editor {
     bool open = true, drawn = false;
     bool collapse = false;
     float winH = kWinH;
+    ImVec2 winPos{kWinX, kWinY};
+    bool imguiModal = false;     // a Dear ImGui modal opened over everything
+    bool viewports = false;      // multi-viewports on (EnableFakeViewports)
     Editor() {
         okayuitest::Reset();
         OkayUI::UseLauncherLook(true);
@@ -75,7 +107,7 @@ struct Editor {
     Editor(const Editor&) = delete;
     Editor& operator=(const Editor&) = delete;
     void Panel() {
-        ImGui::SetNextWindowPos(ImVec2(kWinX, kWinY), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(winPos, ImGuiCond_Always);
         if (collapse) ImGui::SetNextWindowCollapsed(true, ImGuiCond_Always);
         if (hosted) {
             drawn = okayuihost::HostPanelWindow(title, &open, "##panelbody", offers, embed, cap, ImVec2(kWinW, winH), [&](ImVec2 p, ImVec2 a) {
@@ -107,6 +139,14 @@ struct Editor {
             ImGui::End();
             ImGui::PopStyleColor();
         }
+        if (imguiModal) {
+            if (!ImGui::IsPopupOpen("Unsaved changes")) ImGui::OpenPopup("Unsaved changes");
+            ImGui::SetNextWindowPos(ImVec2(150, 150), ImGuiCond_Always);
+            if (ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextUnformatted("Save the scene?");
+                ImGui::EndPopup();
+            }
+        }
         if (tooltip) {
             ImGui::SetNextWindowPos(ImVec2(100, 250));
             ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(kFront[0], kFront[1], kFront[2], 255));
@@ -117,14 +157,18 @@ struct Editor {
         }
     }
     void Frame() {
-        offers.list.clear();
-        im.mx = sim.mx; im.my = sim.my; im.down = sim.down;
-        sim.Frame([&] { im.Frame([&] { Panel(); Front(); }); });
+        offers.list.clear(); offers.active = false;
+        im.mx = sim.mx; im.my = sim.my; im.down = sim.down; im.rdown = sim.rdown;
+        sim.Frame([&] {
+            im.Frame([&] { Panel(); Front(); });
+            if (viewports) ImGui::UpdatePlatformWindows();
+        });
         ras.DrawImGui();
         ras.renderer.Render(OkayUI::GetDrawData(), ras.fi);
     }
     void Frames(int n) { for (int i = 0; i < n; ++i) Frame(); }
     void Click(float x, float y) { sim.Move(x, y); Frame(); sim.Down(); Frame(); sim.Up(); Frame(); }
+    void RightClick(float x, float y) { sim.Move(x, y); Frame(); sim.rdown = true; Frame(); sim.rdown = false; Frame(); }
 };
 
 // ---- the three screens with sample data ----------------------------------------------------------------------------------------
@@ -362,6 +406,92 @@ void MoreClicksReachThePanels() {
     }
 }
 
+void ActiveOnlyWhenHoveredOrFocused() {
+    // The host gives OkayUI the keys and text only while a panel is active (editor/main.cpp OkayUIInputOn), not for the whole editor.
+    CrashLogData d;
+    Editor e;
+    e.body = d.Body();
+    e.sim.Move(480, 380); e.Frames(3);
+    CHECK(e.offers.active && e.offers.BodyHovered());            // hovered (and focused: a new window takes the focus)
+    e.front = true; e.sim.Move(300, 200); e.Frames(3);           // another window took the focus, the mouse is over it
+    CHECK(!e.offers.active);
+    e.front = false; e.sim.Move(480, 380); e.Frames(2);           // the mouse back over the panel: active again
+    CHECK(e.offers.active);
+}
+
+void MenusCloseWhenImGuiTakesOver() {
+    {   // the Crash Log's own modal ("Clear crash reports?", OkayUI's) closes when a Dear ImGui modal opens over the window
+        CrashLogData d;
+        Editor e;
+        e.body = d.Body();
+        e.Frames(3);
+        const OkayUI::Rect c = d.res.clearButton;
+        e.Click(c.x + c.w * 0.5f, c.y + c.h * 0.5f); e.Frames(2);
+        CHECK(d.state.confirming && e.offers.Overlays() >= 1);
+        e.imguiModal = true; e.Frames(3);
+        CHECK(!d.state.confirming && e.offers.Overlays() == 0);    // gone: it does not sit above the ImGui modal or take its clicks
+        CHECK(d.clears == 0);
+    }
+    {   // ... and when the keyboard focus moves to another ImGui window
+        CrashLogData d;
+        Editor e;
+        e.body = d.Body();
+        e.Frames(3);
+        const OkayUI::Rect c = d.res.clearButton;
+        e.Click(c.x + c.w * 0.5f, c.y + c.h * 0.5f); e.Frames(2);
+        CHECK(d.state.confirming);
+        e.front = true; e.Frames(3);
+        CHECK(!d.state.confirming);
+    }
+    {   // a row menu (History's right-click menu) closes on a click outside the panel and the menu
+        HistoryData d;
+        Editor e;
+        e.title = "History"; e.body = d.Body();
+        e.Frames(3);
+        const OkayUI::Rect r = d.res.rows[2];
+        e.RightClick(r.x + 60.0f, r.y + r.h * 0.5f); e.Frames(2);
+        CHECK(d.res.menuCopy.w > 0.0f);
+        // the editor's background, outside the History window: OkayUI does not see that click (the host blocks its mouse over Dear
+        // ImGui's windows), only Dear ImGui does
+        e.sim.blocked = true; e.Click(8.0f, 410.0f); e.sim.blocked = false; e.Frames(2);
+        CHECK(d.res.menuCopy.w == 0.0f && d.seen.undo == 0 && d.seen.redo == 0);
+    }
+}
+
+void PanelInAnotherOsWindow() {
+    // Multi-viewports: the Crash Log dragged out of the main window (here: placed beyond its right edge) gets an OS window of its own.
+    // It is drawn there (its own draw list, nothing left in OkayUI's main frame), it is not pulled back, and clicks reach it.
+    CrashLogData d;
+    Editor e;
+    e.viewports = true; EnableFakeViewports();
+    e.body = d.Body();
+    e.winPos = ImVec2(900.0f, 120.0f);
+    e.Frames(6);
+    ImGuiWindow* w = ImGui::FindWindowByName("Crash Log");
+    CHECK(w && w->Viewport && w->Viewport != ImGui::GetMainViewport());
+    CHECK(e.drawn && w && w->DrawList->VtxBuffer.Size > 400);   // the body's shapes are in that window's draw list
+    CHECK(OkayUI::GetDrawData().indexCount == 0);               // and not in OkayUI's frame (the main window)
+    const OkayUI::Rect b = d.res.refreshButton;
+    CHECK(b.x >= 900.0f);                                       // OkayUI's pixels: desktop minus the main window's place (0, 0 here)
+    e.sim.Move(b.x + b.w * 0.5f, b.y + b.h * 0.5f); e.Frames(2);
+    CHECK(e.offers.BodyHovered());                              // ImGui says the mouse is over it: offered with the mouse
+    ImVec2 vm;
+    CHECK(okayuihost::MouseInOtherViewport(vm) &&   // (Dear ImGui keeps whole-pixel mouse positions)
+          std::abs(vm.x - (b.x + b.w * 0.5f)) <= 1.0f && std::abs(vm.y - (b.y + b.h * 0.5f)) <= 1.0f);
+    e.Click(b.x + b.w * 0.5f, b.y + b.h * 0.5f);
+    CHECK(d.refreshes == 1);
+    // its own modal is drawn on top of that OS window (its foreground list), not in the main window
+    const OkayUI::Rect c = d.res.clearButton;
+    e.Click(c.x + c.w * 0.5f, c.y + c.h * 0.5f); e.Frames(2);
+    CHECK(d.state.confirming && OkayUI::GetDrawData().indexCount == 0);
+    CHECK(ImGui::GetForegroundDrawList(w->Viewport)->VtxBuffer.Size > 0);
+    // the mouse over the main window: the host keeps the platform's position
+    e.sim.Move(100.0f, 100.0f); e.Frames(2);
+    CHECK(!okayuihost::MouseInOtherViewport(vm));
+    ImGui::DestroyPlatformWindows();
+    g_osWindows.clear();
+}
+
 void HiddenDrawsNothing() {
     CrashLogData d;
     Editor e;
@@ -384,6 +514,9 @@ int main() {
     ImGuiInFrontCoversThePanel();
     ClicksReachThePanel();
     MoreClicksReachThePanels();
+    ActiveOnlyWhenHoveredOrFocused();
+    MenusCloseWhenImGuiTakesOver();
+    PanelInAnotherOsWindow();
     HiddenDrawsNothing();
     TEST_MAIN_RESULT();
 }

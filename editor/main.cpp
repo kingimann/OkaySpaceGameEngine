@@ -132,6 +132,7 @@
 #include "OkayUIHostMode.hpp"           // window mode (OKAY_UI_HOST=okayui): OkayUI owns the window, no Dear ImGui
 #include "OkayUIFrame.hpp"              // OkayUI end-of-frame on an SDL renderer or an own-backend painter
 #include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/ui/own_ui_toolkit.md, section 5)
+#include "OkayUIHostImGui.hpp"           // MouseInOtherViewport: a hosted panel in another OS window gets ImGui's mouse
 #endif
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
@@ -2015,15 +2016,12 @@ bool UseOkayUICodeEdit() {   // read once, like the other switches (Settings > E
     return false;
 #endif
 }
-// Hosted OkayUI panels take the mouse and keys. Always, in a build with OkayUI: the Crash Log, the Audio Mixer and History are drawn by
-// OkayUI only, whichever backend the other screens use.
-bool OkayUIInputOn() {
-#ifdef OKAY_HAVE_OKAYUI
-    return true;
-#else
-    return UseOkayUIBackend() || UseOkayUICodeEdit();
-#endif
-}
+// Hosted OkayUI screens take the mouse, keys and text: with the "OkayUI screens" backend (as before), and otherwise only for OkayUI's
+// own hosted pieces: a panel drawn by OkayUI only that is hovered or focused, a hosted area under the mouse, or a focused OkayUI code
+// field (okayuihost::HostedInputWanted, taken once at the start of OkayUI's frame). With the backend off a game's ui_* widgets in the
+// Game view get what they got before.
+bool g_okayHostedInput = false;
+bool OkayUIInputOn() { return UseOkayUIBackend() || g_okayHostedInput; }
 bool UseOkayUIInspector() {   // okayuibackend::InspectorOn; the variables are read once (Settings > Experimental sets them before main() reads anything)
     static const bool dev = okayuibackend::DevMode(std::getenv("OKAY_DEV")), item = okayuibackend::DevMode(std::getenv("OKAY_UI_INSPECTOR"));
     return okayuibackend::InspectorOn(g_uiBackend, dev ? "1" : nullptr, item ? "1" : nullptr);
@@ -54323,6 +54321,10 @@ int main(int argc, char** argv) {
             int mx = 0, my = 0; uint32_t mb = okay::platform::Default() ? okay::platform::Default()->MouseState(&mx, &my) : 0;
             OkayUI::Input uin;
             uin.mouseX = (float)mx; uin.mouseY = (float)my;
+            {   // over another OS window of Dear ImGui's (a hosted panel dragged out): ImGui's mouse, in the main window's pixels
+                ImVec2 vm;
+                if (okayuihost::MouseInOtherViewport(vm)) { uin.mouseX = vm.x; uin.mouseY = vm.y; }
+            }
             uin.mouseDown = (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0;
             uin.blocked = io.WantCaptureMouse;
             uin.text = g_okayUITyped[0] ? g_okayUITyped : nullptr;
@@ -54330,6 +54332,7 @@ int main(int argc, char** argv) {
             {   // The OkayUI backend: a hosted panel's region takes the mouse over ImGui's window, and a focused OkayUI field
                 // takes the full set of keys (the legacy path above only carries text and Backspace, for game ui_inputtext).
                 g_okayRegion.NextFrame();
+                g_okayHostedInput = okayuihost::HostedInputWanted(g_okayRegion, g_scriptCodeOwnsKeys);   // last frame's hover and focus
                 const bool left = uin.mouseDown;
                 const bool owns = OkayUIInputOn() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
                 const bool blocked = io.WantCaptureMouse && !owns;

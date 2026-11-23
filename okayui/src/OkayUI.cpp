@@ -4836,6 +4836,7 @@ void EndCapture(CapturedGeometry& out) {
         flushTo(g_ni);
     }
     // ---- the overlay layer: after the main shapes, never clipped (as mergeOverlay appends it); left in the frame with KeepOverlay
+    out.overlayFrom = (int)out.cmds.size();
     if (!g_cap.keepOverlay) {
         const int ov0 = g_cap.onv, oi0 = g_cap.oni, base = (int)out.vertices.size();
         for (int i = ov0; i < g_onv; ++i) {

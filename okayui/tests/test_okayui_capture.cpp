@@ -213,6 +213,20 @@ void OverlayIsCaptured() {
         if (v.r == 9 && v.g == 8 && v.b == 7 && firstFg < 0) firstFg = (int)i;
     }
     CHECK(lastBg >= 0 && firstFg > lastBg);
+    // overlayFrom: the first command of the overlay layer, so a host can draw the two layers in different places (a panel in another
+    // OS window: its own shapes in the window, its menus on top of that window)
+    CHECK(g.overlayFrom > 0 && g.overlayFrom < (int)g.cmds.size());
+    bool mainHasFg = false, overlayHasBg = false;
+    for (int c = 0; c < (int)g.cmds.size(); ++c)
+        for (int k = 0; k < g.cmds[(size_t)c].idxCount; ++k) {
+            const UI::DrawVertex& v = g.vertices[(size_t)g.indices[(size_t)(g.cmds[(size_t)c].idxOffset + k)]];
+            if (c < g.overlayFrom && v.r == 9 && v.g == 8 && v.b == 7) mainHasFg = true;
+            if (c >= g.overlayFrom && v.r == 1 && v.g == 2 && v.b == 3) overlayHasBg = true;
+        }
+    CHECK(!mainHasFg && !overlayHasBg);
+    UI::CapturedGeometry k;
+    OverlayFrame(r, UI::Capture_KeepOverlay, fg, k);
+    CHECK(k.overlayFrom == (int)k.cmds.size());       // nothing of the overlay layer taken
 }
 
 void OverlayCanStayInTheFrame() {

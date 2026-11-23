@@ -55,6 +55,7 @@ struct Image {
         int size = 0;
         bool func = false;
         bool global = true;
+        bool weak = false;  // STB_WEAK (ELF gABI): a duplicate definition in another object is allowed
     };
     std::vector<Pub> pubs;
 };
@@ -881,6 +882,7 @@ void emitFunction(Image& im, const Function& f) {
     p.size = static_cast<int>(im.bytes.size() - start);
     p.func = true;
     p.global = !f.localSym;
+    p.weak = f.weakSym;
     im.pubs.push_back(p);
 }
 
@@ -942,7 +944,8 @@ void emitData(Image& im, const Module& m) {
         p.sec = ro ? 2 : 3;
         p.size = static_cast<int>(im.bytes.size() - item);
         p.func = false;
-        p.global = g.name.empty() || g.name[0] != '.';
+        p.global = !g.localSym && (g.name.empty() || g.name[0] != '.');
+        p.weak = g.weakSym;
         im.pubs.push_back(p);
     }
 }
@@ -1060,7 +1063,7 @@ std::vector<unsigned char> writeObject(Image& im) {
     for (const Image::Pub& p : im.pubs) {
         if (!p.global) continue;
         idx[p.name] = static_cast<std::uint32_t>(syms.size() / 24);
-        addSym(strs.add(p.name), 1, p.func ? 2 : 1, static_cast<std::uint16_t>(p.sec), p.off, static_cast<std::uint64_t>(p.size));
+        addSym(strs.add(p.name), p.weak ? 2 : 1, p.func ? 2 : 1, static_cast<std::uint16_t>(p.sec), p.off, static_cast<std::uint64_t>(p.size));
     }
     auto ensure = [&](const std::string& name) {
         if (idx.count(name)) return idx[name];

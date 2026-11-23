@@ -14,7 +14,9 @@ std::string normalizePath(const std::string& path) {
     auto flush = [&]() {
         if (cur.empty() || cur == ".") {
         } else if (cur == "..") {
-            if (!parts.empty()) parts.pop_back();
+            // A relative path keeps a leading "..": "../../engine/include" is above the current folder.
+            if (!parts.empty() && parts.back() != "..") parts.pop_back();
+            else if (!abs) parts.push_back(cur);
         } else {
             parts.push_back(cur);
         }

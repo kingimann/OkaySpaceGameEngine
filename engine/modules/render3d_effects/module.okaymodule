@@ -1,0 +1,15 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=render3d_effects
+title=3D render effects
+area=Rendering
+description=Decals, LOD groups, occluders, volumes, water, lines, cables, mesh modifiers, optimisation helpers.
+default=on
+core=0
+requires=core
+provides=
+components=Cable,Decal,LODGroup,LineRenderer,MeshModifiers,Occluder,TrailRenderer,Volume,Water
+serializers=linerenderer,water
+vs_group=render
+editor=
+sources=include/okay/Components/Decal.hpp include/okay/Components/LODGroup.hpp include/okay/Components/Occluder.hpp include/okay/Components/Volume.hpp include/okay/Components/Water.hpp include/okay/Components/LineRenderer.hpp include/okay/Components/Cable.hpp include/okay/Components/MeshModifiers.hpp src/Components/Decal.cpp src/Components/LODGroup.cpp src/Components/Volume.cpp src/Components/LineRenderer.cpp src/Components/Cable.cpp include/okay/Optimize/* src/Optimize/*
+tests=lighting* light_shadows shadows ssao_math dof_math post_* water_visuals visibility_lod lightmap

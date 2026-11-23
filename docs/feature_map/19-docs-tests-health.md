@@ -9,6 +9,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 
 ### 19.1 README and docs
 - **System:** Docs - The written guides, the roadmap, the generated API reference, and in-editor tutorials, tips and help.
+  Home: `docs/`. Entry: `docs/README.md`. Also called: documentation, guides, tutorials, feature map.
 - **What:** The user-facing documentation: `README.md` at the repo root, `ROADMAP.md`, and 71 Markdown pages, 16 SQL files and 21 screenshots under `docs/`. `docs/README.md` is the index players and developers start from (this feature map, `docs/FEATURE_MAP.md` and `docs/feature_map/`, and `docs/archive/` are not listed below).
 - **Parts:**
   - 19.1.1 Root README - `README.md` - what OkaySpace is, how to download and build, the repo layout (checked against the code in 2.847.0, #544 and #546)
@@ -124,6 +125,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 
 ### 19.2 Test suite
 - **System:** Tests and Code Health - The automated tests run after every change, compiler warnings, memory checkers and splitting big files.
+  Home: `tests/`. Entry: `tests/test_framework.hpp`. Also called: tests, ctest, test framework, sanitizers, PlayTest.
 - **What:** About 418 tests (414 `add_test` lines; one sits in a loop that registers five) in one `tests/CMakeLists.txt`, almost all of them a small program that prints `FAIL` lines and returns non-zero. Plus a few shell, SQL and CMake checks. This sub-area is how it is organised; each test belongs to the area it tests.
 - **Parts:**
   - 19.2.1 Layout of `tests/CMakeLists.txt` - `tests/CMakeLists.txt` - 1,541 lines, roughly in the order tests were added (no grouping by area): each test is `add_executable(test_x test_x.cpp)`, a link to `okay::engine` and `add_test(NAME x COMMAND test_x)` under a `#` comment. ctest names drop `test_` except `remove_component` (`test_remove`), `physics_layers` (`test_layers`), `physics_queries` (`test_queries`)

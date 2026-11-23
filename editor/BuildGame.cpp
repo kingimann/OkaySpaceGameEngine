@@ -10,6 +10,7 @@
 #include "BuildSettingsModel.hpp"    // bsm::ExtraFrom, the pre / post build commands, the exclude list
 #include "ConsolePanel.hpp"          // ConsoleLog
 #include "LocalizationWindow.hpp"    // CopyLocalizationFiles: strings.okayloc and its fonts go into the build
+#include "ModulesModel.hpp"          // okaymod::Selection / UsedButOff / UsageInScene: Build warns about modules in use but off
 #include "okay/Core/BuildPipeline.hpp"
 #if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/platform/xbox_uwp.md
 #include "XboxExport.hpp"
@@ -575,6 +576,16 @@ std::string Build(EditorState& ed, const std::string& outDir,
         }
     }
     rp.Finish();
+    {   // the engine modules in the player, with their sizes from module_sizes.txt beside it (docs/engine/modular_engine.md)
+        const std::string pl = FindPlayer();
+        rp.AddModules(pl.empty() ? std::string() : (fs::path(pl).parent_path() / "module_sizes.txt").string(), g_project.modules);
+        okaymod::Selection sel(okay::ModuleRegistry::Get(), g_project.modules);   // Project Settings > Modules
+        for (const auto& u : okaymod::UsedButOff(sel, okaymod::UsageInScene(okay::ModuleRegistry::Get(), ed.scene()))) {
+            const auto* mi = okay::ModuleRegistry::Get().Find(u.first);
+            rp.Warn("The scene uses " + std::to_string(u.second) + " object(s) of the module " + (mi ? mi->manifest.title : u.first) +
+                    ", which is off in Project Settings > Modules. The game still contains it in this version.");
+        }
+    }
     rp.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 
     // 4) The archive: a zip of the finished build (Zip layout keeps only the zip; "also zip" keeps both).

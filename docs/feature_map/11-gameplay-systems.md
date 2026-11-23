@@ -11,6 +11,7 @@ No open PR touches this area.
 
 ### 11.1 Inventory: bag, grid, chests, equipment
 - **System:** Inventory and Items - Bags, grid inventories, chests, equipment, the item list and loot, also kept by the server in multiplayer.
+  Home: `engine/include/okay/Inventory/`, `engine/src/Inventory/`, `engine/include/okay/Components/Inventory.hpp`. Entry: `engine/include/okay/Components/Inventory.hpp`. Also called: Inventory, GridInventory, ItemDatabase, items, loot, equipment.
 - **What:** Items live in a slot Inventory (hotbar and backpack), a DayZ-style Grid Inventory, chests and crates, and an Equipment component of worn and held slots; all player actions go through one shared set of operations so the player and the editor Play view behave the same.
 - **Parts:**
   - 11.1.1 Slot inventory - `Components/Inventory` - stacks with item id, count and per-instance data; capacity, max stack, weight limit, optional enforced weight limit and slow-when-overweight; Add, Remove, Count, dry-run fit; keep across scenes
@@ -56,6 +57,7 @@ No open PR touches this area.
 
 ### 11.3 Crafting and recipes
 - **System:** Crafting - Recipes that turn items into other items at a workbench.
+  Home: `engine/include/okay/Components/Crafting.hpp`, `engine/include/okay/Inventory/Recipe.hpp`. Entry: `engine/include/okay/Components/Crafting.hpp`. Also called: Crafting, recipes, CraftingStation, .okayrecipes.
 - **What:** Recipes turn input items into outputs (with byproducts, craft time, bench tags and unlock flags); a Crafting menu on the player, a Crafting Menu that builds its own buttons, and Crafting Station benches all share one recipe system and a craft queue.
 - **Parts:**
   - 11.3.1 Recipes and books - `Inventory/Recipe` - `Recipe`, `RecipeBook` (`.okayrecipes` text file), unlock by game variable
@@ -76,6 +78,7 @@ No open PR touches this area.
 
 ### 11.4 Survival: stats, afflictions, zones
 - **System:** Health and Survival - Health, hunger, thirst, stamina, temperature and other stats, damage, and death.
+  Home: `engine/include/okay/Components/SurvivalStats.hpp`, `engine/include/okay/Components/SurvivalComponents.hpp`. Entry: `engine/include/okay/Components/SurvivalStats.hpp`. Also called: Health, SurvivalStats, hunger, stamina, damage.
 - **What:** Native drop-in stat components (health, hunger, thirst, stamina, oxygen, temperature, sleep, sanity), damage-over-time afflictions, carry weight, timed status effects, zones that drive them from the world, and consumable items that feed them.
 - **Parts:**
   - 11.4.1 All-in-one Survival Stats - `Components/SurvivalStats` - drains stats, damages health when hunger, thirst, oxygen or warmth hit zero, armor, regen, death
@@ -100,6 +103,7 @@ No open PR touches this area.
 
 ### 11.5 Building: build mode, structure builder, snapping
 - **System:** Building - Lets players (or you in the editor) place walls, floors and parts that snap together.
+  Home: `engine/include/okay/Components/BuildMode.hpp`, `engine/include/okay/Components/Buildable.hpp`. Entry: `engine/include/okay/Components/BuildMode.hpp`. Also called: BuildMode, Buildable, build mode, base building.
 - **What:** Several ways to build: a Build Mode players use in your game (palette, snapping, undo, logic links, saved creations), a Rust-style tiered Structure Builder, a Minecraft-style Block Builder, and a developer Builder Mode for modelling while walking.
 - **Parts:**
   - 11.5.1 Build Mode - `Components/BuildMode`, `Components/Buildable` - palette hotbar, grid snap, rotate, move, copy, delete, undo and redo, reach and object caps, `BuildCreation` save and load to a creations file
@@ -121,6 +125,7 @@ No open PR touches this area.
 
 ### 11.6 Spawners, turn manager, minimap
 - **System:** Spawners, Turns and Minimap - Spawns waves of enemies or loot, keeps turn order, and draws a minimap.
+  Home: `engine/include/okay/Components/Spawner.hpp`, `engine/include/okay/Components/TurnManager.hpp`, `engine/include/okay/Components/Minimap.hpp`. Entry: `engine/include/okay/Components/Spawner.hpp`. Also called: Spawner, TurnManager, Minimap, waves.
 - **What:** A Spawner drips copies of a template or prefab (enemy waves, loot); a Turn Manager holds turn order for turn-based games; a Minimap panel plots tagged objects around a target.
 - **Parts:**
   - 11.6.1 Spawner - `Components/Spawner` - interval, max alive, total cap, spawn radius, waves, start and stop, live count, `spawner_wave` message
@@ -140,6 +145,7 @@ No open PR touches this area.
 
 ### 11.7 Combat actions: melee, dodge, dive
 - **System:** Combat - Melee swings, dodge rolls and dives.
+  Home: `engine/include/okay/Components/MeleeAttacker.hpp`, `engine/include/okay/Combat/`. Entry: `engine/include/okay/Components/MeleeAttacker.hpp`. Also called: MeleeAttacker, WeaponDefinition, dodge roll, weapons.
 - **What:** Player melee swings that hit NPCs in an arc, plus a dodge roll and a dolphin dive that the first and third person controllers can use.
 - **Parts:**
   - 11.7.1 Melee attacker - `Components/MeleeAttacker` - attack key or left mouse, range, arc, damage, cooldown, `Swing()`, `player_attack` message
@@ -178,6 +184,7 @@ No open PR touches this area.
 
 ### 11.9 RPG stats and XP
 - **System:** RPG Stats - A simple character sheet with health, mana, levels and XP - duplicate of Health and Survival (a second health holder; one damage path since PR #1091, not one component)
+  Home: `engine/include/okay/Components/Stats.hpp`. Entry: `engine/include/okay/Components/Stats.hpp`. Also called: Stats, character sheet, XP, levels, mana.
 - **What:** A simple RPG character sheet: health, mana, level and XP with attributes, damage mitigated by defense, healing and levelling that fire script events.
 - **Parts:**
   - 11.9.1 Health, mana and attributes - `Components/Stats` - health and mana pools, strength, defense, intelligence, agility; `TakeDamage` mitigated by defense, `Heal`
@@ -196,6 +203,7 @@ No open PR touches this area.
 
 ### 11.10 No-code behaviours: move, spin, lifetime
 - **System:** No-Code Behaviours - Tiny components that move, spin, delete or drag objects with no script.
+  Home: `engine/include/okay/Components/Mover.hpp`, `engine/include/okay/Components/Spinner.hpp`, `engine/include/okay/Components/Lifetime.hpp`. Entry: `engine/include/okay/Components/Mover.hpp`. Also called: Mover, Spinner, Lifetime, simple behaviours.
 - **What:** Three tiny components that need no script: Mover (constant velocity), Spinner (constant rotation) and Lifetime (destroy after N seconds).
 - **Parts:**
   - 11.10.1 Mover - `Components/Mover` - world velocity per second
@@ -233,6 +241,7 @@ No open PR touches this area.
 
 ### 11.12 Volumes and zones
 - **System:** Volumes and Zones - Invisible areas that act when something enters them: checkpoint, kill, push, change the look.
+  Home: `engine/include/okay/Components/Volume.hpp`. Entry: `engine/include/okay/Components/Volume.hpp`. Also called: Volume, trigger zones, kill zone, checkpoint volume.
 - **What:** One region shape (box, sphere or cylinder, no collider needed) with six zone kinds: checkpoint and kill (a respawn point per body), force (wind, updraft, current), atmosphere (fog and vignette that fade in around the camera), ambience (a sound that fades in around the camera) and reverb (a room, hall, cave or outdoor echo on 3D sounds, blended at the edges). Drawn as a coloured translucent shape in the Scene view, drawn and resized by dragging.
 - **Parts:**
   - 11.12.1 Shape - `Components/Volume` - `VolumeGeometry`: box, sphere (ellipsoid) and cylinder from one `size` and `offset`; `Contains`, `DepthAt`, `DragFace` (move one face, the opposite stays), `FromGroundDrag`

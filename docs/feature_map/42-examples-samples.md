@@ -9,6 +9,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 
 ### 42.1 Sandbox demo (solar system)
 - **System:** Examples - Example scenes, demos, starter assets and sample plugins people can open and learn from.
+  Home: `examples/`, `sandbox/`. Entry: `examples/`. Also called: samples, demos, example scenes, sandbox. Fix: sandbox/ is a separate test program: move it under examples/ or tools/, or make it its own system.
 - **What:** A tiny console game that doubles as a feature tour: a sun, a planet with a moon parented to it, an inner planet and a ship you fly, drawn as text in the terminal.
 - **Parts:**
   - 42.1.1 Scene and scripts - `sandbox/main.cpp` - `Orbit` and `Spin` behaviours and a `ShipController` driven by WASD; the moon is a child of the planet to show the Transform hierarchy
@@ -104,6 +105,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 
 ### 42.6 Standalone player runtime
 - **System:** Game Player - The program that plays a built game (`OkaySpacePlayer.exe` or `<Game>.exe`).
+  Home: `player/`. Entry: `player/main.cpp`. Also called: OkaySpacePlayer.exe, player, runtime.
 - **What:** `okay-player` (shipped as `OkaySpacePlayer.exe` or `<Game>.exe`): the runtime that plays a built game with only SDL2 (no ImGui). It loads `game.okayscene` next to it, draws 2D and 3D, plays audio, reads keyboard, mouse and gamepad, and also runs headless as the dedicated server.
 - **Parts:**
   - 42.6.1 Startup and game files - `player/main.cpp` (`main` near L1110) - finds `Data/` or the flat layout, reads `game.okayconfig` (window, scene list, fullscreen toggle on Alt+Enter and F11), picks the startup scene (command line, config, `game.okayscene`), save folder, language

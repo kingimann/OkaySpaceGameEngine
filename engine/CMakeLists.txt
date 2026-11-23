@@ -840,3 +840,17 @@ target_sources(okay_engine PRIVATE
     src/Core/LoopConsole.cpp
     src/Core/ConsoleHost.cpp
 )
+
+# The module list the engine knows at run time (okay/Modules/ModuleRegistry.hpp): the manifests embedded as text by
+# cmake/OkayModules.cmake, plus the manifest parser and the registry. Every module is on in this stage.
+okay_modules_generate("${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp")
+get_property(_okay_mod_register GLOBAL PROPERTY OKAY_MODULE_REGISTER_SOURCES)
+target_sources(okay_engine PRIVATE
+    src/Modules/ModuleManifest.cpp
+    src/Modules/ModuleRegistry.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp"
+    ${_okay_mod_register})
+
+# Which module each engine file belongs to (engine/modules/*/module.okaymodule sources=). Keep this last: it reads the
+# whole source list. Writes okay_modules.tsv in the build folder; the build itself is unchanged.
+okay_modules_group(okay_engine)

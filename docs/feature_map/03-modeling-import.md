@@ -8,6 +8,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 
 ### 3.1 Edit mode
 - **System:** Modeling - Builds and edits 3D models inside the editor: shapes, cuts, bevels, modifiers, UVs, sculpting and painting.
+  Home: `engine/include/okay/Modeling/`, `editor/`. Entry: `engine/include/okay/Modeling/PolyMesh.hpp`. Also called: edit mode, mesh editing, modeling window, ModelingEasy, sculpt.
 - **What:** Blender-style mesh edit mode (Tab, G/R/S, axis lock, snapping, mirror) on the selected object's Mesh Renderer: Tab to enter, Vertex/Edge/Face selection, G/R/S modal transforms with axis locks, typed values and snapping, soft select, X symmetry and a set of face, edge and vertex tools. The mesh is kept welded while editing.
 - **Parts:**
   - 3.1.1 Edit mode, selection and polygon stats - `editor/main.cpp`, `Render/Mesh` - Tab or the Edit Mesh tick, Object/Edit header, keys 1/2/3, click, Shift, Alt-click loop, Ctrl+Alt ring, Ctrl+click shortest path (ShortestVertPath / ShortestFacePath), Grow/Shrink/Linked/Invert, Checker Deselect, Select Boundary Loop, Select Open / Non-Manifold Edges (PolyOps: CheckerVerts / CheckerFaces, RegionOutline, ProblemEdges), stats line
@@ -94,6 +95,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 
 ### 3.5 Mesh assets and primitives
 - **System:** Meshes - The 3D shape data that drawing and physics share, the built-in shapes, and the `.okaymesh` file.
+  Home: `engine/include/okay/Render/Mesh.hpp`, `engine/include/okay/Modeling/MeshAsset.hpp`. Entry: `engine/include/okay/Render/Mesh.hpp`. Also called: Mesh, MeshAsset, .okaymesh, primitives. Fix: Render/Mesh (drawn mesh) and Modeling/PolyMesh, MeshAsset (edited mesh, file): document the split in docs/editor/modeling.md, one converter between them.
 - **What:** The triangle Mesh type the renderer and physics use, its built-in primitives, the `.okaymesh` text format that keeps real polygons, and how edited meshes are saved (by name, by file path, or verbatim in the scene).
 - **Parts:**
   - 3.5.1 Triangle Mesh and primitives - `Render/Mesh` - Cube, Sphere, Cylinder, Cone, Pyramid, Wedge, Quad, Plane, Tube, Torus, TorusKnot, Capsule, Icosphere, Grid, Hemisphere, Stairs, Gear, Prism, Octahedron, Disc, Tetrahedron, Bipyramid, RoundedBox
@@ -128,6 +130,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 
 ### 3.6 Model import
 - **System:** Model Import - Reads 3D model files from other programs (FBX, glTF, OBJ and more) with their materials, bones and animations.
+  Home: `engine/include/okay/Render/`, `engine/src/Render/`. Entry: `engine/include/okay/Render/ModelImport.hpp`. Also called: own readers, OKAY_PREFER_OWN_READERS, OKAY_OWN_FBX, ImportBackend::Own, Assimp, ufbx, FBX import, glTF import.
 - **What:** One entry point turns a model file into a merged mesh or a scene hierarchy with materials, skeleton, skins, clips and morph targets, then prints an import report. Built in: OBJ (+MTL), STL, PLY, glTF/GLB and FBX (vendored ufbx); Collada has a reader of ours that is off by default; other formats only when the build has Assimp. Every Assimp read goes through one seam that returns our own `ImportedModel` type (see `docs/content/model_import.md`).
 - **Parts:**
   - 3.6.1 glTF 2.0 and GLB - `Render/Gltf`, `Render/ModelImport` - own JSON reader and the shared `Core/Base64` decoder (#422 audit item 24: one Base64 for glTF, FBX, voxel saves, .okf fonts and session tickets, test `base64`), accessors including sparse and quantized, up to 8 influences (4 kept), matrix nodes decomposed, STEP/LINEAR/CUBICSPLINE keys, multi-material skins
@@ -179,6 +182,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 
 ### 3.7 Rigging and playable setup
 - **System:** Rigging - Adds a skeleton to a model and sets it up so it can be animated and played as a character.
+  Home: `engine/include/okay/Components/HumanoidRetarget.hpp`. Entry: `engine/include/okay/Components/HumanoidRetarget.hpp`. Also called: rig, skeleton setup, auto rig, playable setup.
 - **What:** Turn a model into something that plays: auto-rig a model with no skeleton to the engine humanoid, attach any imported model as a player's body (size, grounding, facing, collider, locomotion clips), or build a whole playable third-person character from a model file in one click.
 - **Parts:**
   - 3.7.1 Rig Model (Humanoid) auto-rig - `Components/Character` - BindCustomMesh binds each vertex to its nearest bone segment so the built-in animations drive the model; Unrig restores the blocky body

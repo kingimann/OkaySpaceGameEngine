@@ -47,6 +47,7 @@ namespace okay { void RegisterPhysicsToyProperties(); }
 #include "okay/Components/NoCode.hpp"
 #include "okay/Components/Platformer25DController.hpp"
 #include "okay/Components/PlayerController.hpp"
+#include "okay/Components/ControllerTuning.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/Projectile3D.hpp"
 #include "okay/Components/Spawner.hpp"
@@ -78,6 +79,7 @@ void RegisterPlayerController() {
                  [](const PlayerController& p) { return static_cast<int>(p.viewMode()); },
                  [](PlayerController& p, int v) { p.SetViewMode(static_cast<PlayerController::ViewMode>(v)); return true; })
         .Tooltip("Which views the player has: first or third person only, or both with a toggle. A view that is off is removed together with its settings");
+    b.Description("Moves and turns the player with keyboard, mouse or gamepad. Choose a first person view, a third person view, or both with a key to switch.");
     b.Adder([](GameObject& go) -> Component* { return PlayerController::Add(&go); });
     b.Commit();
 }
@@ -196,6 +198,7 @@ void RegisterFirstPersonController() {
      .AddFloat("dodgeCooldown", &FirstPersonController::dodge, &DodgeMove::cooldown).Range(0, 3600, 0.05)
      .AddFloat("dodgeStamina", &FirstPersonController::dodge, &DodgeMove::stamina).Range(0, 100000, 0.5).Tooltip("Spent when a Stamina stat is on this body")
      .AddBool("dodgeIFrames", &FirstPersonController::dodge, &DodgeMove::iFrames).Tooltip("On: no damage during a dodge");
+    b.Each(ControllerTuning::Annotate);
     b.Commit();
 }
 
@@ -311,6 +314,7 @@ void RegisterThirdPersonController() {
      .AddFloat("dodgeCooldown", &ThirdPersonController::dodge, &DodgeMove::cooldown).Range(0, 3600, 0.05)
      .AddFloat("dodgeStamina", &ThirdPersonController::dodge, &DodgeMove::stamina).Range(0, 100000, 0.5).Tooltip("Spent when a Stamina stat is on this body")
      .AddBool("dodgeIFrames", &ThirdPersonController::dodge, &DodgeMove::iFrames).Tooltip("On: no damage during a dodge");
+    b.Each(ControllerTuning::Annotate);
     b.Commit();
 }
 

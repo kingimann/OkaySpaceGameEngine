@@ -1,5 +1,27 @@
 OkaySpace Game Engine — Changelog
 
+v2.903.4
+  Release notes, one physics engine, Windows fixes
+  - Launcher, What's New: each release now shows its real notes (before,
+    2.903.2 and 2.903.3 showed only "Release 2.903.x"), and test builds
+    are no longer listed under Earlier releases.
+  - Physics: one physics engine. Our own physics core is the engine's 3D
+    physics; the Classic, Improved and separate Engine choices are gone.
+    Joints, triggers and breakable joints were fixed on the way.
+  - Windows: scenes and prefabs in folders with letters like "ü" open
+    and save; prefabs are saved the same way on every PC; restoring a
+    project after a failed upgrade puts every file back; the Project
+    panel re-checks assets faster.
+  - Visual Script: 34 new friendly nodes for the camera, movement,
+    damage, vehicles, UI and input.
+  - Xbox: keyboard layouts follow the console's language, a splash
+    screen, and the start of microphone support (logic only).
+  - Model files: one shared bad-file test for six model readers, and a
+    fix for IQM models with a very low frame rate.
+  - Behind the scenes: the editor's and the script compilers' biggest
+    files are split into smaller files by job (no change in behaviour),
+    and generated docs are rebuilt automatically.
+
 v2.903.3
   Our own parts on by default, textures, and fixes
   - Our own parts are now on by default (Settings > Experimental starts

@@ -22,6 +22,7 @@
 #include "SaveShortcutModel.hpp"  // what Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S do
 #include "HierarchyContextModel.hpp"
 #include "SceneAddMenu.hpp"
+#include "ControllerInspectorUi.hpp"   // the one Inspector of the character controllers
 #include "VehicleEditorUi.hpp"      // GameObject > Vehicles and the Vehicle Controller Inspector tabs
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
@@ -959,6 +960,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "InputDebugger.hpp"       // View > Panels > Input: live keys, axes, actions, events, curves
 #include "InputActionsWindow.hpp" // View > Editors & Tools > Input Actions: author a .okayinput asset, live view
 #include "TemplateTable.hpp"        // template title -> scene builder (New Project)
+#include "ModulesPanelUI.hpp"      // Project Settings > Modules: which engine modules the project uses
 #include "AutoPerf.hpp"           // Auto for anti-aliasing and VSync (best value for this PC; tested)
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
@@ -15788,6 +15790,21 @@ void DrawFileDialogs(EditorState& ed) {
                     }
                     ImGui::EndTabItem();
                 }
+                if (!RP.modules.empty() && ImGui::BeginTabItem("Modules")) {   // the engine modules in the player (docs/engine/modular_engine.md)
+                    ImGui::TextDisabled("Every module ships in this version; leaving modules out comes later.");
+                    if (ImGui::BeginTable("bymodule", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(460, 200))) {
+                        ImGui::TableSetupColumn("Module", ImGuiTableColumnFlags_WidthStretch, 3.0f); ImGui::TableSetupColumn("In project"); ImGui::TableSetupColumn("Size");
+                        ImGui::TableHeadersRow();
+                        for (const auto& m : RP.modules) {
+                            ImGui::TableNextRow();
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(m.title.c_str());
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(m.projectOn ? "on" : "off (still shipped)");
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(RP.moduleSizesKnown ? bp::HumanBytes(m.bytes).c_str() : "-");
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndTabItem();
+                }
                 if (ImGui::BeginTabItem("Files")) {
                     if (ImGui::BeginTable("breakdown", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(460, 200))) {
                         ImGui::TableSetupColumn("File", ImGuiTableColumnFlags_WidthStretch, 3.0f);
@@ -16058,8 +16075,13 @@ struct NewProjectForm {
     std::string lastKey;
     okayproj::Plan plan;
     Uint32 planAt = 0;
+    std::string modules;          // engine modules the new project uses ("" = every module; editor/ModulesPanelUI.hpp)
+    bool modulesTouched = false;  // the person changed them: a template change no longer does
+    int modulesTpl = -1;          // the template they were last matched to
+    std::string modulesNote;
 };
 static NewProjectForm g_npForm;
+static std::string g_newProjectModules;   // the form's modules, for the project files written on the next frame
 
 static const okayproj::Plan& NewProjectPlan(NewProjectForm& f, bool force = false) {
     const std::string key = std::string(f.name) + "\n" + f.loc;
@@ -16152,7 +16174,7 @@ static bool DrawNewProjectForm(NewProjectForm& f) {
     ImGui::TextDisabled("TEMPLATE");
     // The list takes what is left of the window (the dialog never taller than the editor window, or it would
     // spill into an OS window of its own), at most 178 px and at least 72; the Create row below needs ~64.
-    const float listH = std::min(178.0f, std::max(72.0f, ImGui::GetMainViewport()->Size.y - 24.0f - ImGui::GetCursorPosY() - 64.0f));
+    const float listH = std::min(178.0f, std::max(72.0f, ImGui::GetMainViewport()->Size.y - 24.0f - ImGui::GetCursorPosY() - 64.0f - 26.0f));   // 26: the Modules line
     ImGui::BeginChild("##nptpl", ImVec2(0, listH), ImGuiChildFlags_Borders);
     {
         const auto& all = okayproj::Templates();
@@ -16173,6 +16195,7 @@ static bool DrawNewProjectForm(NewProjectForm& f) {
         }
     }
     ImGui::EndChild();
+    okaymod::DrawNewProjectModules(f.modules, f.modulesTouched, f.modulesTpl, f.tpl, okayproj::Templates()[(std::size_t)f.tpl].title, f.modulesNote);
 
     ImGui::Dummy(ImVec2(0, 6));
     const bool can = plan.ok();
@@ -16208,6 +16231,7 @@ static void DrawNewProjectDialog(EditorState& ed) {
     if (create) {
         const std::string root = g_npForm.plan.root.string();
         const std::string tpl = okayproj::Templates()[(std::size_t)g_npForm.tpl].title;
+        g_newProjectModules = g_npForm.modules;
         ImGui::CloseCurrentPopup();
         RunAfterSavePrompt(ed, "creating the new project", [root, tpl] { g_newProjectRoot = root; g_newProjectTemplate = tpl; });
     }
@@ -16280,6 +16304,7 @@ void DrawProjectGate(EditorState& ed) {
     if (DrawNewProjectForm(g_npForm)) {
         g_newProjectRoot = g_npForm.plan.root.string();
         g_newProjectTemplate = okayproj::Templates()[(std::size_t)g_npForm.tpl].title;
+        g_newProjectModules = g_npForm.modules;
     }
     ImGui::SameLine();
     if (ImGui::Button("Quit", ImVec2(100, 32))) g_quitRequested = true;
@@ -16335,10 +16360,13 @@ void DrawNewProjectPopup(EditorState& ed) {
     const std::string folder = plan.folder;
     const std::string version = g_newProjectVersion;
     const int gpu = g_newProjectGpu;
+    const std::string modules = g_newProjectModules;   // "" (every module) when the launcher made the project
     g_newProjectVersion.clear();
     g_newProjectGpu = -1;
-    auto writeFiles = [&folder, version, gpu](const std::string& rt, std::string& err) {
+    g_newProjectModules.clear();
+    auto writeFiles = [&folder, version, gpu, modules](const std::string& rt, std::string& err) {
         ProjectSettings settings;
+        settings.modules = modules;
         if (!version.empty() && okayproj::CheckProjectVersion(version).empty())
             std::snprintf(settings.version, sizeof(settings.version), "%s", version.c_str());
         if (!okayproj::WriteTextAtomic(ProjectSettingsFile(rt), StampedNewProjectText(WriteProjectSettings(settings, "")), &err)) return false;   // stamped with this version from the first moment
@@ -16644,6 +16672,10 @@ void DrawProjectSettings(EditorState& ed) {
             }
         }
         if (ImGui::CollapsingHeader("Tags and Layers")) DrawTagsAndLayersSettings(ed);
+        if (ImGui::CollapsingHeader("Modules")) {   // engine modules this project uses (editor/ModulesPanelUI.hpp)
+            static std::string modulesNote;
+            if (okaymod::DrawModulesSettings(g_project.modules, ed.scene(), modulesNote)) SaveProjectSettings();
+        }
         if (ImGui::CollapsingHeader("Loading screen")) {
             ImGui::TextDisabled("Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.");
             const auto pngFilt = okay::filedialog::Filters("PNG image", {"*.png"});
@@ -24339,6 +24371,9 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
 // A Player Controller's first-person, third-person and toggle sections: parts
 // of the one panel. They draw only while that panel is open, and have no
 // Remove of their own. A bare controller (no Player Controller) keeps its header.
+// The old every-field panels of the First / Third Person parts. Off: the Player Controller (or a bare controller) shows
+// the one plain Inspector from ControllerInspectorUi.hpp instead. The old code below stays until it is deleted.
+static constexpr bool kOldControllerPanels = false;
 static bool sPlayerControllerOpen = false;
 static okay::PlayerController* sPendingViewModeCtrl = nullptr;
 static int sPendingViewMode = 0;
@@ -24346,7 +24381,7 @@ static bool PlayerPartHeader(GameObject* go, const char* label, okay::Component*
                              bool* owned) {
     *owned = okay::PlayerController::Of(go) != nullptr;
     if (!*owned) return CompHeader(label, part, toRemove);
-    if (!sPlayerControllerOpen) return false;
+    if (!sPlayerControllerOpen || !kOldControllerPanels) return false;   // the parts sit behind the one Player Controller entry
     ImGui::PushID(part);
     ImGui::SetNextItemOpen(true, ImGuiCond_Once);
     const bool open = ImGui::CollapsingHeader(label);
@@ -34569,8 +34604,20 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##ma")) toRemove = ma;
         }
     }
+    // A player has two animator machines on purpose: the walk / jump graph (layer 0) and a small upper-body layer that
+    // plays a flinch when the player is hit. The second one gets a one-line explanation instead of a full panel.
+    if (auto* hl = dynamic_cast<AnimStateMachine*>(curComp); hl && hl->layer > 0 && hl->maskBone == "Torso" && go->GetComponent<Character>()) {
+        if (CompHeader("Hit reaction (upper body)", hl, &toRemove)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.7f, 0.75f, 1.0f));
+            ImGui::TextWrapped("Plays a short flinch on the upper body when the player is hit. It is not a second walk animation: the Animator above does the walking, running and jumping.");
+            ImGui::PopStyleColor();
+        }
+    } else
     if (auto* sm = dynamic_cast<AnimStateMachine*>(curComp)) {
         if (CompHeader(okay::editor::vsed::kAnimGraphTitle, sm, &toRemove) && !(UseOkayUIInspector() && DrawAnimStateMachineWithOkayUI(ed, go, sm))) {   // OkayUI's with the preview switch (section 18)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.7f, 0.75f, 1.0f));
+            ImGui::TextWrapped("Picks the walk, run, jump and crouch animation from how the player moves.");
+            ImGui::PopStyleColor();
             if (ImGui::Button("Open Animator Graph##asm")) g_showAnimatorGraph = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Visual node editor: drag states around, draw transitions,\nwatch the active state light up in Play mode.");
             auto* ma = go->GetComponent<ModelAnimator>();
@@ -39794,7 +39841,19 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##spwn")) toRemove = c;
         }
     }
-    if (auto* fp = dynamic_cast<FirstPersonController*>(curComp)) {
+    if (auto* fp = dynamic_cast<FirstPersonController*>(curComp); fp && !PlayerController::Of(go)) {
+        if (CompHeader("First-person settings", fp, &toRemove)) {
+            CharacterModelTools(ed, go, "fp");
+            oked::ctrlui::DrawSimple(ed, *fp, (ThirdPersonController*)nullptr, "fps");
+        }
+    }
+    if (auto* tp = dynamic_cast<ThirdPersonController*>(curComp); tp && !PlayerController::Of(go)) {
+        if (CompHeader("Third-person settings", tp, &toRemove)) {
+            CharacterModelTools(ed, go, "tp");
+            oked::ctrlui::DrawSimple(ed, *tp, (FirstPersonController*)nullptr, "tps");
+        }
+    }
+    if (auto* fp = kOldControllerPanels ? dynamic_cast<FirstPersonController*>(curComp) : nullptr) {
         bool owned = false;
         if (PlayerPartHeader(go, "First-person settings", fp, &toRemove, &owned)) {
             if (!owned) CharacterModelTools(ed, go, "fp");
@@ -40044,7 +40103,7 @@ void DrawInspector(EditorState& ed) {
             if (!owned && ImGui::SmallButton("Remove##fp")) toRemove = fp;
         }
     }
-    if (auto* tp = dynamic_cast<ThirdPersonController*>(curComp)) {
+    if (auto* tp = kOldControllerPanels ? dynamic_cast<ThirdPersonController*>(curComp) : nullptr) {
         bool owned = false;
         if (PlayerPartHeader(go, "Third-person settings", tp, &toRemove, &owned)) {
             if (!owned) CharacterModelTools(ed, go, "tp");
@@ -40358,6 +40417,9 @@ void DrawInspector(EditorState& ed) {
         sPlayerControllerOpen = CompHeader("Player Controller", pc, &toRemove);
         pc->SyncEnabled();
         if (sPlayerControllerOpen && !(UseOkayUIInspector() && DrawPlayerControllerWithOkayUI(ed, go, pc))) {   // OkayUI's with the preview switch (section 18)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.7f, 0.75f, 1.0f));
+            ImGui::TextWrapped("Moves and turns the player with keyboard, mouse or gamepad. Choose a first person view, a third person view, or both with a key to switch.");
+            ImGui::PopStyleColor();
             int mode = (int)pc->viewMode();
             const char* modes[] = {"First Person only", "Third Person only", "Both"};
             if (ImGui::Combo("View##pc", &mode, modes, 3) && mode != (int)pc->viewMode()) {
@@ -40375,6 +40437,8 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             CharacterModelTools(ed, go, "pc");
+            if (pc->third()) oked::ctrlui::DrawSimple(ed, *pc->third(), pc->first(), "pcs");
+            else if (pc->first()) oked::ctrlui::DrawSimple(ed, *pc->first(), (ThirdPersonController*)nullptr, "pcs");
             if (pc->viewMode() != PlayerController::ViewMode::Both)
                 ImGui::TextDisabled("%s only. Pick Both to let the player switch.",
                                     pc->viewMode() == PlayerController::ViewMode::First ? "First person" : "Third person");

@@ -2,7 +2,7 @@
 
 # Code index: engine-Scene
 
-Back to the [code index](../code_index.md). 28 headers, 123 names.
+Back to the [code index](../code_index.md). 28 headers, 124 names.
 
 ## `engine/include/okay/Scene/ClearSpawn.hpp`
 
@@ -74,7 +74,8 @@ Back to the [code index](../code_index.md). 28 headers, 123 names.
 - `PropertyTypeFromName` function, line 26
 - `PropertyTypeComponentCount` function, line 28: How many float components a type has (Vec2 2, Vec3 3, Vec4/Quat/Color 4); 0 for the rest.
 - `PropertyValue` class, line 44: A property's value. Plain data: copy it freely. Nothing here throws; a getter
-- `PropertyDesc` struct, line 124: One property of a component type: its name and type, the hints an inspector
+- `PropertyLevel` enum, line 123: How prominent a property is in an Inspector: Simple settings are always shown, Advanced ones sit in a foldout,
+- `PropertyDesc` struct, line 128: One property of a component type: its name and type, the hints an inspector
 
 ## `engine/include/okay/Scene/PropertyBuilder.hpp`
 
@@ -83,23 +84,23 @@ Back to the [code index](../code_index.md). 28 headers, 123 names.
 ## `engine/include/okay/Scene/PropertyRegistry.hpp`
 
 - `ComponentTypeInfo` struct, line 24: One registered component type and its properties. 'name' is the C++ type name
-- `PropertyChange` struct, line 44: What the change hook is told. 'oldValue' and 'newValue' are the WHOLE property's
-- `PropertyRef` struct, line 56: A resolved property path.
-- `PropertyWriteResult` struct, line 65: What one write did, for code that records it (an undo stack) without installing a hook.
-- `PropertyRegistry` class, line 83: The table of component types and their properties. Every function is safe to
-- `RegisterBuiltinProperties` function, line 171: Register every built-in component's properties (GameObject, Transform, Camera,
-- `PropertySnapshotOptions` struct, line 182: What a snapshot, apply or copy includes. By default only authored data: no
-- `PropertySnapshot` struct, line 192: Every property value of an object at one moment, in a stable order (the
-- `SnapshotProperties` function, line 205
-- `SnapshotComponent` function, line 207: One component's properties. Entry.index is 0.
-- `PropertyDiffKind` enum, line 209
-- `PropertyDiff` struct, line 214: One difference between two snapshots. 'Changed': both have the property and the
-- `DiffProperties` function, line 224: What changed going from 'a' to 'b': Changed and Added in b's order, then Removed.
-- `ApplyPropertySnapshot` function, line 230: Write a snapshot's values back (each entry found on 'go' by component name and
-- `ApplyPropertyDiff` function, line 234: Apply the 'Changed' entries of a diff: the 'after' values going forward, the
-- `PropertyCopyOptions` struct, line 236
-- `CopyProperties` function, line 253: Copy property values from one object to another, component by component
-- `CopyComponentProperties` function, line 256: Copy every property of 'from' to 'to', which must be the same exact type. Structural
+- `PropertyChange` struct, line 45: What the change hook is told. 'oldValue' and 'newValue' are the WHOLE property's
+- `PropertyRef` struct, line 57: A resolved property path.
+- `PropertyWriteResult` struct, line 66: What one write did, for code that records it (an undo stack) without installing a hook.
+- `PropertyRegistry` class, line 84: The table of component types and their properties. Every function is safe to
+- `RegisterBuiltinProperties` function, line 172: Register every built-in component's properties (GameObject, Transform, Camera,
+- `PropertySnapshotOptions` struct, line 183: What a snapshot, apply or copy includes. By default only authored data: no
+- `PropertySnapshot` struct, line 193: Every property value of an object at one moment, in a stable order (the
+- `SnapshotProperties` function, line 206
+- `SnapshotComponent` function, line 208: One component's properties. Entry.index is 0.
+- `PropertyDiffKind` enum, line 210
+- `PropertyDiff` struct, line 215: One difference between two snapshots. 'Changed': both have the property and the
+- `DiffProperties` function, line 225: What changed going from 'a' to 'b': Changed and Added in b's order, then Removed.
+- `ApplyPropertySnapshot` function, line 231: Write a snapshot's values back (each entry found on 'go' by component name and
+- `ApplyPropertyDiff` function, line 235: Apply the 'Changed' entries of a diff: the 'after' values going forward, the
+- `PropertyCopyOptions` struct, line 237
+- `CopyProperties` function, line 254: Copy property values from one object to another, component by component
+- `CopyComponentProperties` function, line 257: Copy every property of 'from' to 'to', which must be the same exact type. Structural
 
 ## `engine/include/okay/Scene/ReflectedRecord.hpp`
 

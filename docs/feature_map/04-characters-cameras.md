@@ -8,6 +8,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 
 ### 4.1 Player Controller
 - **System:** Player Controller - Makes a first- or third-person character that walks, runs, jumps, crouches and swims, ready to drop into a scene.
+  Home: `engine/include/okay/Components/PlayerController.hpp`, `engine/include/okay/Components/FirstPersonController.hpp`, `engine/include/okay/Components/ThirdPersonController.hpp`. Entry: `engine/include/okay/Components/PlayerController.hpp`. Also called: PlayerController, FirstPersonController, ThirdPersonController, character controller.
 - **What:** One component, Player Controller, makes a first- or third-person character (View = First, Third or Both). Its View setting says which views exist (First only, Third only, or Both with a toggle key and a blended camera). The movement and camera code lives in parts it adds and removes itself.
 - **Parts:**
   - 4.1.1 Player Controller wrapper - `Components/PlayerController` - ViewMode First/Third/Both, SetViewMode, Add, Adopt (wraps old scenes' separate controllers), CurrentView; script set_view/get_view
@@ -54,6 +55,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 
 ### 4.3 2D and 2.5D controllers
 - **System:** Ready-Made Controllers - Ready-made movement for 2D top-down and platformer games, third-person shooters, twin-stick and click-to-move characters.
+  Home: `engine/include/okay/Components/`. Entry: `engine/include/okay/Components/CharacterController2D.hpp`. Also called: CharacterController2D, TopDownController2D, Platformer25DController, TopDownShooterController, twin-stick.
 - **What:** Ready-made controllers for flat and side-on games: a top-down or platformer 2D character controller, a top-down 2D controller with dash and combat, and a 2.5D platformer with depth layers, ledges and grabbing.
 - **Parts:**
   - 4.3.1 Character Controller 2D - `Components/CharacterController2D` - TopDown or Platformer mode, sprint, acceleration, air control, coyote time, jump buffer, variable and multi-jump, wall slide and wall jump
@@ -97,6 +99,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 
 ### 4.5 Vehicles
 - **System:** Vehicles - Drivable cars and boats: throttle, steering, brakes, grip and suspension.
+  Home: `engine/include/okay/Components/VehicleController.hpp`, `engine/include/okay/Components/BoatController.hpp`. Entry: `engine/include/okay/Components/VehicleController.hpp`. Also called: VehicleController, car, BoatController, VehicleSeat, Buoyancy.
 - **What:** Arcade car controllers: throttle, steering, braking, handbrake and grip, with an opt-in raycast suspension, plus a 2D top-down or side-view version.
 - **Parts:**
   - 4.5.1 Arcade vehicle - `Components/VehicleController` - maxSpeed, reverseSpeed, acceleration, brakeForce, drag, turnSpeed, grip, handbrakeGrip, followCamera, Speed(), IsGrounded()
@@ -186,6 +189,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 
 ### 4.9 Blocky Character and customization
 - **System:** Character Creator - The built-in blocky character and its body, colours, hair, clothes and accessories.
+  Home: `engine/include/okay/Components/Character.hpp`. Entry: `engine/include/okay/Components/Character.hpp`. Also called: blocky character, Character, avatar, customization, clothing.
 - **What:** The built-in low-poly character with one height slider, colours, hair, clothing and accessories, bound to a 15-bone humanoid skeleton, with an optional editable part rig and the ability to bind any mesh to it.
 - **Parts:**
   - 4.9.1 Proportions, colours and clothing - `Components/Character` - height, skin, shirt, pants, hair; hair styles, beards, shirt and leg styles, belt, jacket, gloves
@@ -229,6 +233,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 
 ### 4.11 Seats and sitting
 - **System:** Seats - Places a character can sit down on and get up from with the Interact key.
+  Home: `engine/include/okay/Components/Seat.hpp`. Entry: `engine/include/okay/Components/Seat.hpp`. Also called: Seat, sitting, chairs.
 - **What:** A place to sit: the nearest local player presses Interact (E or pad X by default, the shared rebindable action) to be moved onto the seat point, the Animator plays the sit-down, loop and stand-up clips, and moving or jumping stands up.
 - **Parts:**
   - 4.11.1 Seat component - `Components/Seat` - seatHeight (0.45), sitPoint, facing, type (chair, ground, bench), exitPoint, useRadius, prompt, Claim and Release

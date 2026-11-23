@@ -157,12 +157,23 @@ struct Report {
     bool archiveCompressed = false;
     double seconds = 0.0;
     int missingAssets = 0;
+    /// The engine modules in the shipped player (docs/engine/modular_engine.md). Every module ships in this version (no
+    /// module is stripped yet); `bytes` is that module's share of the player, 0 when the size file was not found.
+    /// `projectOn` is false for a module the project turned off in Project Settings > Modules (it still ships until
+    /// modules can be left out of the player).
+    struct ModuleRow { std::string name, title; bool shipped = true; bool projectOn = true; std::uintmax_t bytes = 0; };
+    std::vector<ModuleRow> modules;
+    bool moduleSizesKnown = false;
 
     void AddFile(const std::string& path, std::uintmax_t bytes, const std::string& reason = std::string());
     void AddExcluded(const std::string& path, std::uintmax_t bytes, const std::string& reason);
     void Warn(const std::string& text) { warnings.push_back(text); }
     /// Sort and total. Call once after the last AddFile.
     void Finish();
+    /// Fill `modules` from the build's module list (ModuleRegistry) and, when `sizesFile` exists, each module's bytes from
+    /// it ("name<TAB>bytes" lines, written beside the player by scripts/module_sizes.py). Rows are largest first.
+    /// `projectModules` is the project's module list (project.okayproj modules=, "" = every module).
+    void AddModules(const std::string& sizesFile, const std::string& projectModules = std::string());
     /// (extension, bytes, count) rows, largest first; files without one are "(none)".
     struct TypeRow { std::string ext; std::uintmax_t bytes = 0; int count = 0; };
     std::vector<TypeRow> ByExtension() const;

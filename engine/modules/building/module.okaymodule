@@ -1,0 +1,15 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=building
+title=Building
+area=Gameplay
+description=Build mode, structure and block builders.
+default=on
+core=0
+requires=inventory
+provides=
+components=BlockBuilder,BuildMode,BuildPiece,Buildable,BuilderMode,StructureBuilder
+serializers=blockbuilder,buildmode,buildpiece,buildable,buildermode,structurebuilder
+vs_group=
+editor=
+sources=include/okay/Components/BuildMode.hpp include/okay/Components/BuilderMode.hpp include/okay/Components/StructureBuilder.hpp include/okay/Components/BlockBuilder.hpp include/okay/Components/BuildPiece.hpp include/okay/Components/Buildable.hpp src/Components/BuildMode.cpp
+tests=build_mode builder_mode block_builder structure_builder structure_version

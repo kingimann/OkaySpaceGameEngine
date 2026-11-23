@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.903.3
+    VERSION 2.903.4
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (ufbx)
 
@@ -266,6 +266,10 @@ set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff"
     CACHE STRING "Dear ImGui git commit/branch to fetch (must be the docking branch)")
 
 # ---- The engine library ----------------------------------------------
+# Engine modules (docs/design/modular_gameplay_contracts.md): read engine/modules/*/module.okaymodule. Stage 0 only groups
+# files and labels tests (ctest -L module:<name>); the build itself is unchanged.
+include(${CMAKE_SOURCE_DIR}/cmake/OkayModules.cmake)
+okay_modules_read()
 add_subdirectory(engine)
 
 # ---- OkayUI (SDL_Renderer immediate-mode UI toolkit) -----------------

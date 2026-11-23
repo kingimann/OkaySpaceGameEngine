@@ -2825,7 +2825,7 @@ Points a vector the opposite way.
 
 `ForwardVector`
 
-The direction this object is facing.
+The direction this object is facing: its -Z axis, the way Look At turns it (cameras and characters face -Z too).
 
 **Requires:** No extra component is required. It reads this object's Transform (or Target).
 

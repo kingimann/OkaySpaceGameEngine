@@ -8,6 +8,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 
 ### 14.1 Graph editor
 - **System:** Visual Scripting - Makes game logic by connecting boxes (nodes) with wires instead of typing code.
+  Home: `engine/include/okay/VisualScript/`, `editor/`. Entry: `engine/include/okay/VisualScript/NodeGraph.hpp`. Also called: visual scripts, OkayVS, .okayvs, node graph, Flow Graph, blueprints.
 - **What:** The Visual Script window (View > Editors & Tools > Visual Script): a zoomable canvas where nodes are placed from a palette, wired, commented and run live, with the runtime graph and the OkayVS file format behind it.
 - **Parts:**
   - 14.1.1 Canvas - `editor/VisualScriptEditor.hpp` - zoom, pan, grid, box select, comment frames, minimap, Fit, drag wires
@@ -125,6 +126,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 
 ### 14.6 Action framework
 - **System:** Action Lists - No-code rules: "when this happens, if this is true, do these steps".
+  Home: `engine/include/okay/Components/ActionList.hpp`, `engine/include/okay/VisualScript/ActionGraph.hpp`. Entry: `engine/include/okay/Components/ActionList.hpp`. Also called: ActionList, no-code triggers, ActionGraph, NoCode.
 - **What:** No-code rules: an Actions list (trigger, optional conditions, steps run top to bottom with Wait) authored from dropdowns, ready-made no-code gameplay components, and the conversion of an Actions list into a graph so one editor covers both.
 - **Parts:**
   - 14.6.1 Actions component - `Components/ActionList` - triggers (start, update, key, collision, click, trigger, mouse), conditions, instructions, extra handlers

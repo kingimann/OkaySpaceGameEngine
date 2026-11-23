@@ -21,6 +21,7 @@
 - [Localization](localization.md): The string table, the localization tools, and the formats / typed Prefs / fixed timestep record.
 - [Loop and time](loop_and_time.md): How a frame runs and how the engine keeps time.
 - [Math, geometry, noise and RNG](math_geometry.md): Header-only additions to the core math library.
+- [Modular engine](modular_engine.md): Engine modules: the `module.okaymodule` manifests, the module groups in the build and the `module:<name>` test labels (design: `docs/design/modular_gameplay_contracts.md`).
 - [Modularization plan](modularization_plan.md): the audit of the largest files, include cycles, platform code and names, and the ranked plan for splitting files, fixing the layers and cleaning up names (includes the `editor/main.cpp` split and the `launcher/main.cpp` map).
 - [Optimization tools](optimization_tools.md): Engine-side algorithms for feature map area 27: LOD generation, occlusion culling, batching, streaming and a scene analysis report.
 - [Performance log](perf_log.md): Owner request (2026-11-15): "work on optimization for the engine, improve FPS." This page is the record: what was measured, what was changed, and the numbers before and after.

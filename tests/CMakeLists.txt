@@ -1,3 +1,29 @@
+# Every test in this folder gets the ctest label module:<name> from the tests= patterns of engine/modules/*/module.okaymodule
+# (module:core when no module claims it): run one module's tests with  ctest -L module:physics3d . Deferred to the end of
+# this file, so tests added anywhere below are labelled (cmake/OkayModules.cmake). Needs CMake 3.19; older ones skip it.
+if(COMMAND okay_modules_label_tests AND NOT CMAKE_VERSION VERSION_LESS 3.19)
+    cmake_language(DEFER CALL okay_modules_label_tests)
+endif()
+
+# Engine modules (docs/engine/modular_engine.md): the manifest parser, the module registry and the list the build generated.
+add_executable(test_modules test_modules.cpp)
+target_link_libraries(test_modules PRIVATE okay::engine)
+add_test(NAME modules COMMAND test_modules)
+# Project Settings > Modules: the model behind the page (editor/ModulesModel.hpp) and the project file line, no drawing.
+add_executable(test_modules_model test_modules_model.cpp)
+target_link_libraries(test_modules_model PRIVATE okay::engine)
+target_include_directories(test_modules_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+add_test(NAME modules_model COMMAND test_modules_model)
+# scripts/check_modules.py (the module dependency check) on a made-up tree.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME check_modules_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_check_modules.py
+             ${PROJECT_SOURCE_DIR}/scripts/check_modules.py)
+    # scripts/module_sizes.py (bytes of each module in a linked program) on a made-up linker map.
+    add_test(NAME module_sizes_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_module_sizes.py
+             ${PROJECT_SOURCE_DIR}/scripts/module_sizes.py)
+endif()
+
 # Our own model readers are the default since 2026-11-17 (owner approval). Tests that check "what a build does with nothing set"
 # get OKAY_EXPECT_OWN_READERS when every model reader option is ON (the default; NDO is a seam and stays OFF, so it is not listed).
 set(_okay_all_readers_on TRUE)
@@ -4973,6 +4999,9 @@ add_test(NAME grok_145_146_153_155 COMMAND test_grok_145_146_153_155)
 add_executable(test_controller_actions test_controller_actions.cpp)
 target_link_libraries(test_controller_actions PRIVATE okay::engine)
 add_test(NAME controller_actions COMMAND test_controller_actions)
+add_executable(test_controller_feel2 test_controller_feel2.cpp)
+target_link_libraries(test_controller_feel2 PRIVATE okay::engine)
+add_test(NAME controller_feel2 COMMAND test_controller_feel2)
 
 # One rebinding store for InputActions and the typed ActionSet (duplicate audit #422, item 2).
 add_executable(test_input_one_store test_input_one_store.cpp)
@@ -5064,6 +5093,11 @@ target_link_libraries(test_own_q3bsp_samples PRIVATE okay::engine)
 target_compile_definitions(test_own_q3bsp_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME own_q3bsp_samples COMMAND test_own_q3bsp_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
+add_executable(test_vs_editor_bugs test_vs_editor_bugs.cpp)
+target_include_directories(test_vs_editor_bugs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_editor_bugs PRIVATE okay::engine)
+target_compile_definitions(test_vs_editor_bugs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_editor_bugs COMMAND test_vs_editor_bugs)
 # One hostile-input battery over all six late own readers (glTF 1.0, OpenGEX, MDL, Q3BSP, IQM, COB): every truncation, every 32-bit word set to lying
 # values, bit flips, overlapping blocks, garbage with and without magic, deep nesting; time and counted-memory limits (tests/test_own_readers_sweep.cpp).
 add_executable(test_own_readers_sweep test_own_readers_sweep.cpp)
@@ -5078,3 +5112,9 @@ target_include_directories(test_vs_node_values PRIVATE ${CMAKE_SOURCE_DIR}/edito
 target_link_libraries(test_vs_node_values PRIVATE okay::engine)
 target_compile_definitions(test_vs_node_values PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_node_values COMMAND test_vs_node_values)
+
+# Nodes that use "the way this object faces" agree with Look At (-Z, the camera / controller convention).
+add_executable(test_vs_facing test_vs_facing.cpp)
+target_link_libraries(test_vs_facing PRIVATE okay::engine)
+target_compile_definitions(test_vs_facing PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_facing COMMAND test_vs_facing)

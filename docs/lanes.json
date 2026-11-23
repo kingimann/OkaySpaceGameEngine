@@ -15,6 +15,11 @@
       "prefix": "claude3/",
       "name": "Claude 3",
       "description": "Claude 3 (branches claude3/*): the Build window and game export (BuildPipeline, Build Settings); world, level and chunk streaming, World Partition, LOD and asset streaming (WorldStreamer, Optimize/StreamingGrid); the Steam/Epic Store Kit (Platform/Steam, Platform/Epic, PlatformServices, StoreExport); C# and Lua scripting in the script editor."
+    },
+    "grok": {
+      "prefix": "grok/",
+      "name": "Grok",
+      "description": "Grok (branches grok/*; owner 2026-11-23, 'agree with grok on 422'): feature-map areas 1 to 4 (docs/feature_map/01-core-scene.md, 02-rendering-world.md, 03-modeling-import.md, 04-characters-cameras.md): improvements, new features and bug fixes (Kind: bug with a failing test first). Each piece is claimed on #422 first; files another lane owns or has an open claim on need an Agree: reply. Our own build tool and compilers (tools/okaybuild, tools/okaycc, tools/okayms) moved to the coordinator's third-party work on 2026-11-23."
     }
   },
   "rules": [

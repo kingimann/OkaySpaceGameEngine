@@ -53,8 +53,8 @@ public:
         return q.ToEuler().z * Mathf::Deg2Rad;
     }
 
-    /// World-space center of the collider. With the Improved physics quality the offset turns and scales with the object
-    /// (as a child at that local position would); Classic adds it to the position unturned and unscaled, as it always did.
+    /// World-space center of the collider: the offset turns and scales with the object (as a child at that local
+    /// position would).
     Vec2 WorldCenter() const;
     /// World-space axis-aligned bounds (broad phase).
     virtual void WorldAABB(Vec2& outMin, Vec2& outMax) const = 0;

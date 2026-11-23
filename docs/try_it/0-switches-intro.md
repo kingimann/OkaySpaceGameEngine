@@ -2,11 +2,12 @@
 id: 0
 group: switches
 ---
-## Switches that are off by default (own code)
+## Switches for our own code (environment variables)
 
-CLAUDE.md rule 17 and `docs/status/own_stack_rollout.md`: our own code exists beside the third-party library, off by default,
-and switches on by an environment variable. **The release does not set any of them.** You can set them yourself before
-starting a program, with no rebuild.
+CLAUDE.md rule 17 and `docs/status/own_stack_rollout.md`: our own code exists beside the third-party library and switches by an
+environment variable. **Since 2026-11-23 the parts listed in launcher Settings > Experimental are ON by default** (the launcher and
+editor set their variables at start; `docs/try_it/own-switch.md`). The variables below are for the rest, or to force a part either
+way: a variable you set yourself always wins. You can set them before starting a program, with no rebuild.
 
 **How to set one (Windows).** Open a Command Prompt, then:
 

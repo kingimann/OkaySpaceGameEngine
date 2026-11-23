@@ -12,10 +12,10 @@ on:
   # Manual run on a branch: lets the MSVC job (skipped on pull requests) be run on demand to read real MSVC errors.
   workflow_dispatch:
 
-# A new push to a pull request cancels that PR's older run, so stale runs don't
-# hold the runners. Each push to main keeps its own run.
+# A new push cancels the older run of the same PR, or the older run of main, so stale runs don't hold the runners
+# (2026-11-23: seven old runs of main, about 110 jobs, were queued in front of every PR). The nightly run has its own group.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 # Job time limits: the shared runners are often queued and slow (apt downloads alone took 5-10 minutes on busy days), so
@@ -965,6 +965,9 @@ jobs:
 
       - name: Duplicate-code guard (scripts/dup_lint.py) on throw-away repositories
         run: python3 -I scripts/tests/test_dup_lint.py
+
+      - name: Generated docs rebuilt on main (precheck --restore-generated, regen-docs.yml commit-back) on throw-away repositories
+        run: python3 -I scripts/tests/test_precheck_generated.py
 
   # The anti-cheat tests that only do their real work with libsodium. The main Ubuntu job installs
   # no libsodium-dev, so a test that says "built without libsodium" there only runs its refusal

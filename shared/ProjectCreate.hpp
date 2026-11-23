@@ -355,7 +355,7 @@ inline bool WriteTextAtomic(const std::string& path, const std::string& text, st
     const std::string tmp = path + ".tmp";
     {
         errno = 0;
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        std::ofstream f(fs::path(tmp), std::ios::binary | std::ios::trunc);
         if (!f) return fail("Couldn't write \"" + tmp + "\": " + (errno ? std::error_code(errno, std::generic_category()).message() : std::string("no permission")));
         f.write(text.data(), (std::streamsize)text.size());
         f.flush();
@@ -381,7 +381,7 @@ inline bool WriteTextAtomic(const std::string& path, const std::string& text, st
 
 /// Read a whole file; false if it can't be opened.
 inline bool ReadText(const std::string& path, std::string& out) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(fs::path(path), std::ios::binary);
     if (!f) return false;
     out.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     return true;

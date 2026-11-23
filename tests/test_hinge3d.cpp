@@ -222,14 +222,17 @@ int main() {
         j->useLimits = true; j->minAngle = -20.0f; j->maxAngle = 40.0f;
         s.Start();
         bool reachedStop = false;
+        float minSeen = 0.0f;
         for (int i = 0; i < 300; ++i) {
             s.Update(1.0f / 60.0f);
             Vec3 p = bob->transform->localPosition;
             float ang = std::atan2(p.y, p.x) * Mathf::Rad2Deg;
+            if (ang < minSeen) minSeen = ang;
             CHECK(ang <= 40.5f && ang >= -20.5f);
             CHECK(p.y > -0.9f);                         // an unlimited hinge falls to y = -2
             if (ang <= -18.0f) reachedStop = true;
         }
+        std::cout << "  lowest angle " << minSeen << " (stop at -20)\n";
         CHECK(reachedStop);
     }
 

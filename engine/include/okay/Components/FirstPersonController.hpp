@@ -93,6 +93,7 @@ public:
     float eyeStepSmoothing = 14.0f;
     char  sprintKey = Input::KeyShift;  // hold (or tap, if toggleRun) to run; 0 = disabled
     bool  toggleRun = false;            // tap sprint to keep running instead of holding
+    bool  sprintByScript = false;       // runtime only: a script (Visual Script Set Sprinting) holds sprint on; not saved
     bool  canJump = true;
     bool  driveAnimation = true;        // set a sibling Character's anim from movement
     bool  footIK = false;               // plant the Character's feet on the ground (foot IK)
@@ -999,6 +1000,7 @@ private:
     // Sprint held this frame, honouring the toggle option (tap to latch).
     // Accessibility "hold to toggle" uses the same latch as toggleRun.
     bool IsRunHeld(const PlayerInput& in) {
+        if (sprintByScript) return true;   // a script's Set Sprinting holds it
         if (!sprintKey) return false;
         if (toggleRun || Accessibility::ToggleFor("Sprint")) {
             if (in.Pressed(PlayerInput::Sprint)) m_runToggled = !m_runToggled;

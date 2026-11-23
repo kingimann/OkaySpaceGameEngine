@@ -95,9 +95,63 @@ void CheckTable() {
 }
 
 // ---- The comparison ---------------------------------------------------------------------------------------------
-struct Stats { long tried = 0, bad = 0, fallback = 0, accepted = 0; bool showFallbacks = false; };
+struct Stats { long tried = 0, bad = 0, fallback = 0, accepted = 0, strtodWrong = 0; bool showFallbacks = false; };
 
 std::uint64_t Bits(double d) { std::uint64_t b; std::memcpy(&b, &d, 8); return b; }
+
+// The referee for a disagreement. Not every C library rounds correctly (the Windows runtime's strtod was seen one unit
+// in the last place off on 16-digit inputs), so when ours and strtod differ by one step this decides, exactly, which of
+// the two neighbouring doubles is the nearest to the decimal: it compares the decimal D * 10^E with the midpoint
+// between them, both as big integers. Returns +1 when `ours` is the correctly rounded one, -1 when `ref` is, 0 when it
+// cannot tell (not neighbours, or an exponent too large to expand).
+int Referee(const std::string& s, double ours, double ref) {
+    std::uint64_t a = Bits(ours), b = Bits(ref);
+    if ((a >> 63) != (b >> 63)) return 0;
+    a &= ~(1ull << 63); b &= ~(1ull << 63);
+    const std::uint64_t lo = a < b ? a : b;
+    if ((a < b ? b - a : a - b) != 1 || lo >= 0x7FF0000000000000ull) return 0;
+    // the lower one as m * 2^e (an integer m), so the midpoint is (2m + 1) * 2^(e - 1)
+    const std::uint64_t field = lo >> 52, frac = lo & 0x000FFFFFFFFFFFFFull;
+    const std::uint64_t m = field ? (frac | (1ull << 52)) : frac;
+    const long e = field ? (long)field - 1075 : -1074;
+    // the decimal: its digits as one integer D and the power of ten E
+    Big D;
+    long E = 0, ex = 0;
+    bool seenPoint = false, expNeg = false;
+    std::size_t i = 0;
+    if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
+    for (; i < s.size() && s[i] != 'e' && s[i] != 'E'; ++i) {
+        if (s[i] == '.') { seenPoint = true; continue; }
+        D = Mul(D.empty() ? Big{0} : D, Big{10});
+        std::uint64_t c = (std::uint64_t)(s[i] - '0');   // add the digit
+        for (std::size_t k = 0; c; ++k) { if (k == D.size()) D.push_back(0); const std::uint64_t t = (std::uint64_t)D[k] + c; D[k] = (std::uint32_t)t; c = t >> 32; }
+        if (seenPoint) --E;
+    }
+    if (i < s.size()) {
+        ++i;
+        if (i < s.size() && (s[i] == '+' || s[i] == '-')) expNeg = s[i++] == '-';
+        for (; i < s.size(); ++i) { ex = ex * 10 + (s[i] - '0'); if (ex > 100000) return 0; }
+    }
+    E += expNeg ? -ex : ex;
+    if (E > 5000 || E < -5000) return 0;
+    // compare D * 5^E * 2^E with (2m + 1) * 2^(e - 1), scaled so both sides are integers
+    Big left = D, right = FromU128(0, 2 * m + 1);
+    if (E >= 0) left = Mul(left, Pow5((int)E)); else right = Mul(right, Pow5((int)-E));
+    const long l2 = E, r2 = e - 1, low2 = l2 < r2 ? l2 : r2;
+    left = Shl(left, (int)(l2 - low2)); right = Shl(right, (int)(r2 - low2));
+    const int c = Cmp(left, right);
+    const std::uint64_t correct = c < 0 ? lo : c > 0 ? lo + 1 : ((m & 1) ? lo + 1 : lo);   // a tie goes to the even one
+    return correct == a ? 1 : -1;
+}
+
+// Ours differs from strtod: a mistake unless the referee says ours is exact (then strtod is the one that is off).
+void Disagree(const std::string& s, double v, double ref, Stats& st) {
+    if (Referee(s, v, ref) > 0) {
+        if (st.strtodWrong++ < 10) std::printf("  \"%.80s\" -> %a; strtod %a is off by one (checked exactly)\n", s.c_str(), v, ref);
+        return;
+    }
+    if (st.bad++ < 10) std::printf("  \"%.80s\" -> %a, strtod %a\n", s.c_str(), v, ref);
+}
 
 // The same text with something after it, as in a file: a character that ends a number, then 64 more bytes (digits,
 // points and letters among them). The scanner reads up to 48 bytes ahead when it has them (ScanShortDecimal), so this is
@@ -132,8 +186,7 @@ void Compare(const std::string& s, Stats& st) {
     }
     double v;
     if (!DecimalToDouble(d, v)) { if (st.showFallbacks) std::printf("  falls back to strtod: \"%.80s\"\n", s.c_str()); ++st.fallback; return; }
-    if (Bits(v) != Bits(ref) && st.bad++ < 10)
-        std::printf("  \"%.80s\" -> %a, strtod %a\n", s.c_str(), v, ref);
+    if (Bits(v) != Bits(ref)) Disagree(s, v, ref, st);
 }
 
 // Garbage tokens: accepted by the scanner (read whole) exactly when strtod reads them whole, and then the same double.
@@ -151,7 +204,7 @@ void CompareGarbage(const std::string& s, Stats& st) {
     ++st.accepted;
     double v;
     if (!DecimalToDouble(d, v)) { ++st.fallback; return; }
-    if (Bits(v) != Bits(ref) && st.bad++ < 10) std::printf("  \"%s\" -> %a, strtod %a\n", s.c_str(), v, ref);
+    if (Bits(v) != Bits(ref)) Disagree(s, v, ref, st);
 }
 
 double RandomFinite(std::mt19937_64& r) {
@@ -349,13 +402,14 @@ void Random(long iters) {
     }
     static const char* kNames[8] = {"printed doubles", "fixed point", "random digits", "halfway cases",
                                     "subnormals, range edges", "long mantissas", "garbage tokens", "FBX-like"};
-    long tried = 0, bad = 0, fallback = 0;
+    long tried = 0, bad = 0, fallback = 0, strtodWrong = 0;
     for (int m = 0; m < 8; ++m) {
         std::printf("  %-24s %10ld inputs, %ld differ, %ld fall back to strtod%s\n", kNames[m], st[m].tried, st[m].bad,
                     st[m].fallback, m == 6 ? "" : "");
-        tried += st[m].tried; bad += st[m].bad; fallback += st[m].fallback;
+        tried += st[m].tried; bad += st[m].bad; fallback += st[m].fallback; strtodWrong += st[m].strtodWrong;
     }
     std::printf("  garbage tokens read whole as numbers: %ld\n", st[6].accepted);
+    if (strtodWrong) std::printf("  this C library's strtod was off by one on %ld inputs (ours checked exactly)\n", strtodWrong);
     std::printf("  total: %ld inputs, %ld differ from strtod, %ld (%.2g) fall back to strtod\n", tried, bad, fallback,
                 (double)fallback / (double)(tried ? tried : 1));
     if (!haveMid) std::printf("  (no 80-bit long double here: exact midpoints replaced by random 17-20 digit inputs)\n");
@@ -371,8 +425,22 @@ void Random(long iters) {
 
 } // namespace
 
+// The referee itself, on the two inputs the Windows strtod got wrong (correct values from an exact conversion), on an
+// exact tie (goes to the even mantissa) and on doubles that are not neighbours (it does not decide those).
+void CheckReferee() {
+    RUN_SUITE("the referee for disagreements with strtod");
+    const double a = -0x1.fffffffffffffp-763, a2 = -0x1p-762, b = 0x1.fffffffffffffp-696, b2 = 0x1p-695;
+    CHECK(Referee("-4.122335212542165e-230", a, a2) == 1 && Referee("-4.122335212542165e-230", a2, a) == -1);
+    CHECK(Referee("6.083493012144511e-210", b, b2) == 1 && Referee("6.083493012144511e-210", b2, b) == -1);
+    CHECK(Referee("1.00000000000000011102230246251565404236316680908203125", 1.0, 0x1.0000000000001p0) == 1);
+    CHECK(Referee("1.00000000000000011102230246251565404236316680908203126", 0x1.0000000000001p0, 1.0) == 1);
+    CHECK(Referee("2.4703282292062327208828439643411068618252990130716238221279284125033775364e-324", 0x1p-1074, 0.0) == 1);
+    CHECK(Referee("1.5", 1.5, 2.0) == 0 && Referee("1", 1.0, -1.0) == 0);
+}
+
 int main() {
     CheckTable();
+    CheckReferee();
     Fixed();
     long iters = 2000000;
     if (const char* e = std::getenv("OKAY_DECIMAL_ITERS")) iters = std::max(1L, std::atol(e));

@@ -1,5 +1,59 @@
 OkaySpace Game Engine — Changelog
 
+v2.903.3
+  Our own parts on by default, textures, and fixes
+  - Our own parts are now on by default (Settings > Experimental starts
+    with every box ticked): the OkayUI screens and Inspector, the OkayUI
+    renderer and our own WAV reader. Untick a box to go back; the buttons
+    "All on" and "All off" switch them all. Encryption is unchanged.
+  - Editor: the Inspector no longer draws over the Hierarchy tab when our
+    UI is on, and the lower Inspector sections of an object with many
+    components (for example the Player) answer clicks and typing again
+    (before, only the first 8 sections took the mouse, so the editor
+    looked frozen). A frame slower than a quarter of a second writes a
+    line to okay_editor_perf.log in the Tools folder.
+  - Textures: each texture is one shared asset with its own settings
+    (filter, wrap, mipmaps, compression), correct mipmaps in every
+    renderer, live reload when the file changes, and a texture memory
+    count and budget.
+  - Navigation: Grid Pathfinding is now part of Navigation (one path
+    finder for 2D grids and 3D nav grids). Old scenes load unchanged.
+  - Scripts: OkayScript and typed OkayScript (C#) share one table for
+    the first 20 engine commands, so both behave the same.
+  - Visual Script: right-answer tests for 66 more nodes.
+  - Removed an unused second object store (the ECS World).
+
+v2.903.2
+  Console and ledge grab
+  - In-game console: press the ` key (the key left of 1) in a development
+    build, or start the game with --console or OKAY_CONSOLE=1. Type
+    commands with history and Tab to complete them. Settings you can change
+    while playing: game.speed, r.vsync, debug.show_fps, debug.profile, and
+    prof.save to save a profile. A shipped game keeps the console off.
+  - The editor's Console panel has the same command line.
+  - Ledge grab: the character's hands now go onto the ledge.
+  - Saves: one save system instead of two. Whole-game saves and slot saves
+    share the same files and code, so a save made one way loads the other
+    way, and several save bugs (lost data, a stuck "restoring" state) are
+    fixed.
+  - Controls: rebinding a key in the game's settings now changes it
+    everywhere (actions and action sets share one set of bindings).
+  - Script editor: popups draw over it, line numbers in a frame, the
+    current line outlined, copy and paste with the system clipboard, and
+    typing in other languages (IME).
+  - Xbox: a pending save is written before the console suspends the game,
+    a splash screen, French, German, Swedish/Finnish and Russian keyboards.
+  - Model files: our own readers for glTF 1.0, OpenGEX, Quake/Half-Life
+    MDL and Quake III maps, and our own PNM image reader (off by default
+    in this version; the next version turns them on).
+  - Also in 2.903.1 (missing from its notes):
+    - Xbox: saves and settings are kept, the game saves properly before it
+      is suspended, rumble stops on suspend, pad battery level, the d-pad
+      reaches text fields, on-screen keyboard, and a message box with the
+      reason when the game fails to start.
+    - Try it (off by default): OKAY_PLATFORM_BACKEND=own runs the launcher
+      on our own window and drawing code instead of SDL.
+
 v2.903.1
   Fixes, custom shaders and a working release
   - 2.902.0 and 2.903.0 could not become the "latest" download because one

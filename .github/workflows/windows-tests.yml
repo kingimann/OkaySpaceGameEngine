@@ -28,7 +28,9 @@ jobs:
   build:
     name: Build Windows tests (MinGW cross-compile)
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # 180, not 120: a cold build (no compiler cache) plus the upload of the bundle ran past 120 minutes and was cancelled
+    # before any test ran (runs 44910237711 and 44937036735).
+    timeout-minutes: 180
     env:
       SDL2_VERSION: 2.30.9
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -115,7 +117,14 @@ jobs:
           for f in /usr/lib/gcc/x86_64-w64-mingw32/*-win32/{libstdc++-6,libgcc_s_seh-1}.dll; do [ -f "$f" ] && cp "$f" wt/bin/; done
           cp tests.json build-failures.txt wt/
           echo "$PWD/build-wt" > wt/build-root.txt
-          du -sh wt
+          echo "bundle before strip: $(du -sh wt | cut -f1)"
+          # Every test statically links the whole engine, and each .exe carried its own symbol table (names only: the
+          # tests never read them, and Windows does not need them to run). Stripping only our own copies, never the
+          # build tree, makes the bundle (about 3 GB unstripped, an upload that ran past the time limit) smaller. All
+          # executables stay in the bundle: some tests start a helper .exe by its build-tree path.
+          find wt/bin -name '*.exe' -print0 | xargs -0 -r -P "$(nproc)" -n 16 x86_64-w64-mingw32-strip --strip-all \
+            || echo "some executables could not be stripped; they are uploaded as built"
+          echo "bundle after strip: $(du -sh wt | cut -f1)"
 
       - name: Upload Windows tests
         uses: actions/upload-artifact@v6
@@ -142,6 +151,11 @@ jobs:
       SDL_VIDEODRIVER: dummy
       SDL_AUDIODRIVER: dummy
     steps:
+      # The runner's git turns LF into CRLF on checkout; the tests compare files byte for byte with what the code
+      # writes (docs/engine_api.md, scenes, fixtures), so check out exactly the bytes the Linux build saw.
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref }}

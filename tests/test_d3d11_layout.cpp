@@ -103,7 +103,7 @@ int main() {
 
     // ---- OpenGL: the same pieces (text checks of GLRenderer.cpp; the GLSL is not compiled here, UNVERIFIED on a GPU) ----
     {
-        std::string here = __FILE__;
+        std::string here = OKAY_TESTS_DIR "/test_d3d11_layout.cpp";
         std::ifstream f(here.substr(0, here.find_last_of("/\\") + 1) + "../engine/src/Render/GLRenderer.cpp", std::ios::binary);
         std::ostringstream o; o << f.rdbuf();
         const std::string gl = o.str();

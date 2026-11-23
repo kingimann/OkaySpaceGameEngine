@@ -70,7 +70,7 @@ int main() {
     CHECK(Has(hlsl, "lerp(float4(s.rgb * s.a, s.a), uNormalTex.Sample(uSampClamp, i.uv), coc)"));
     CHECK(Has(hlsl, "PSDofCopy(")); CHECK(Has(hlsl, "PSDofBlur("));
 
-    std::string here = __FILE__;
+    std::string here = OKAY_TESTS_DIR "/test_dof_math.cpp";
     std::string root = here.substr(0, here.find_last_of("/\\") + 1) + "../engine/src/Render/";
     const std::string gl = Slurp(root + "GLRenderer.cpp");
     const std::string dx = Slurp(root + "D3D11Renderer.cpp") + Slurp(root + "../../include/okay/Render/D3D11Hlsl.hpp");   // HLSL text lives in D3D11Hlsl.hpp (moved out, same bytes)

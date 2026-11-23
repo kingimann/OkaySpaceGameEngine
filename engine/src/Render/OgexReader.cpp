@@ -75,9 +75,7 @@ rc::M4 FactorMatrix(const Factor& f, const double* v, double angleScale) {
             rc::M4 r;
             if (!(l > 1e-12)) return r;
             x /= l; y /= l; z /= l; w /= l;
-            r.at(0, 0) = 1 - 2 * (y * y + z * z); r.at(1, 0) = 2 * (x * y - w * z);     r.at(2, 0) = 2 * (x * z + w * y);
-            r.at(0, 1) = 2 * (x * y + w * z);     r.at(1, 1) = 1 - 2 * (x * x + z * z); r.at(2, 1) = 2 * (y * z - w * x);
-            r.at(0, 2) = 2 * (x * z - w * y);     r.at(1, 2) = 2 * (y * z + w * x);     r.at(2, 2) = 1 - 2 * (x * x + y * y);
+            SetRotationFromUnitQuat(r, x, y, z, w);
             return r;
         }
     }
@@ -618,13 +616,7 @@ struct Reader {
             const bool objT = ni.hasObject && !skinned;
             // normal matrix of an object-only transform: the cofactor matrix of its 3x3 part
             double cof[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
-            if (objT) {
-                const rc::M4& a = ni.objectM;
-                const double a00 = a.at(0, 0), a01 = a.at(1, 0), a02 = a.at(2, 0), a10 = a.at(0, 1), a11 = a.at(1, 1), a12 = a.at(2, 1), a20 = a.at(0, 2), a21 = a.at(1, 2), a22 = a.at(2, 2);
-                cof[0] = a11 * a22 - a12 * a21; cof[1] = a12 * a20 - a10 * a22; cof[2] = a10 * a21 - a11 * a20;
-                cof[3] = a02 * a21 - a01 * a22; cof[4] = a00 * a22 - a02 * a20; cof[5] = a01 * a20 - a00 * a21;
-                cof[6] = a01 * a12 - a02 * a11; cof[7] = a02 * a10 - a00 * a12; cof[8] = a00 * a11 - a01 * a10;
-            }
+            if (objT) rc::Cofactors3(ni.objectM, cof);
             bool badNormal = g.nrm.empty();
             for (std::uint32_t v : used) {
                 Vec3 p = g.pos[v];

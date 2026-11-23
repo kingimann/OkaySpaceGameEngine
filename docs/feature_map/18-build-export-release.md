@@ -101,7 +101,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Parts:**
   - 18.5.1 Supabase publish script - `scripts/publish-supabase.sh` - uploads `v<ver>/OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe`, `CHANGELOG.txt`, then `NOTES.txt`, then `VERSION.txt` last; checks each file is a Windows program under 50 MB; keeps the newest 3 versions (`KEEP`); keys from the environment only; `DRY_RUN=1`
   - 18.5.2 GitHub fallback - `.github/workflows/release.yml` - the individual files as release assets at `releases/latest/download/<name>`
-  - 18.5.3 Client side - `launcher/main.cpp` (L810-1031), `editor/main.cpp` (updater near L1593) - launcher picks the newer of Supabase and GitHub; the editor's update dialog reads `CHANGELOG.txt`
+  - 18.5.3 Client side - `launcher/main.cpp` (L810-1031), `editor/Updater.cpp` (`namespace updater`) - launcher picks the newer of Supabase and GitHub; the editor's update dialog reads `CHANGELOG.txt`
   - 18.5.4 Notes - `scripts/publish-supabase.sh` - `NOTES.txt` is the launcher's "what's new" card (default: the last 6 non-merge commit subjects; `NOTES_FILE` to choose)
 - **Code:** `scripts/publish-supabase.sh`, `.github/workflows/release.yml`, `launcher/main.cpp`, `editor/main.cpp`, `docs/sql/official_game_admin.sql`
 - **API:** `SUPABASE_ACCESS_TOKEN` or `SUPABASE_SERVICE_KEY` (environment only), `DIST_DIR`, `NOTES_FILE`, `KEEP`, `DRY_RUN`, `SUPABASE_URL`, `OKAY_UPDATE_SERVER`
@@ -135,7 +135,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Docs:** `docs/release/build_pipeline.md`, `docs/gameplay/making_a_game.md`, `docs/editor/editor.md`, `docs/release/packaging.md`
 - **Tests:** `build_pipeline` (ctest; layout, data-folder lookup, dependency walk, manifest, report, zip, settings text); the layout check and the export check run in CI (18.3)
 - **Status:** Works - the layout check exports and runs real builds; no pack file, no `Plugins/`, no separate symbol files (docs/release/build_pipeline.md, known gaps)
-- **Open:** the build code now lives in `editor/BuildGame.cpp` (move 1 of the split, 15.10, `docs/editor/main_split_plan.md`); the Build Result window and the build dialogs are still in `editor/main.cpp`; the export check covers visual scripts and one mesh, not UI, audio or networking; anti-cheat forces the compact layout; Web, Android and server exports ignore the new Output settings
+- **Open:** the build code now lives in `editor/BuildGame.cpp` (move 1 of the split, 15.10, `docs/engine/modularization_plan.md`); the Build Result window and the build dialogs are still in `editor/main.cpp`; the export check covers visual scripts and one mesh, not UI, audio or networking; anti-cheat forces the compact layout; Web, Android and server exports ignore the new Output settings
 - **Related:** 15.7, 18.3, 39.4, 42.6
 - **Words:** Build Game, export, Build Settings, Data folder, _Data, Folder layout, Compact layout, Zip archive, build.json, build number, StreamingAssets, asset stripping, dependency walk, dry run, build report, game.okayconfig, player runtime, scenes in build, --build-game, --build-info, verify.sh, manifest
 - **Seen as:** the exported game is missing a texture or sound; the build refuses the folder; game starts but a scene doesn't load; the exe has the wrong name; a file you did not expect is (or is not) in the build

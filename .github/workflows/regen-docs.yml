@@ -1,0 +1,64 @@
+# Regenerate docs on main: rebuilds the generated docs after every push to main and commits them back if they changed.
+# Why: when every PR committed its own copy of the generated docs, each merge made every other open PR conflict in them,
+# and each of those PRs then needed a re-push and a new CI run. Now PRs change only the hand-written sources and main
+# keeps the generated copies current.
+# The list of generated docs and the commands that rebuild them live in one place: scripts/precheck.sh
+# (--list-generated, --regen-generated). Today: docs/FEATURE_MAP.md, docs/SYSTEMS.md, docs/feature_map/_index_*.md
+# (scripts/gen_feature_map.py), docs/engine/code_index.md and docs/engine/code_index/ (scripts/gen_code_index.py),
+# docs/try_it.md (scripts/gen_try_it.py).
+# Safety:
+#   - one run at a time (concurrency group, queued, never cancelled mid-push);
+#   - only the generated paths are committed; any other change the generators make fails the run;
+#   - if main moved while this ran, it starts again from the new main and regenerates (no rebase of generated files,
+#     which would conflict), once;
+#   - the commit says [skip ci] and is pushed with the workflow's own token, which does not start other workflows,
+#     so the full CI does not run for it and this workflow does not run again for its own commit.
+name: Regenerate docs on main
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: regen-docs
+  cancel-in-progress: false
+jobs:
+  regen:
+    # never react to our own commit (belt and braces: a push made with the workflow token does not trigger workflows)
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 1
+      - name: Regenerate and commit back to main
+        run: |
+          set -uo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mapfile -t gen < <(bash scripts/precheck.sh --list-generated)
+          for attempt in 1 2; do
+            git fetch -q --depth=1 origin main && git reset -q --hard origin/main && git clean -qfd
+            regen_rc=0
+            bash scripts/precheck.sh --regen-generated || regen_rc=$?
+            other=$(git status --porcelain -- . $(printf ':(exclude)%s ' "${gen[@]}"))
+            if [ -n "$other" ]; then
+              echo "::error title=Regenerate docs::a generator changed files outside the generated list:"; echo "$other"; exit 1
+            fi
+            git add -A -- "${gen[@]}"
+            if git diff --cached --quiet; then
+              echo "generated docs are up to date"; exit $regen_rc
+            fi
+            git diff --cached --stat
+            git commit -q -m "Regenerate docs from main's sources [skip ci]" \
+              -m "Made by .github/workflows/regen-docs.yml (bash scripts/precheck.sh --regen-generated)."
+            if git push -q origin HEAD:main; then
+              echo "pushed $(git rev-parse --short HEAD)"; exit $regen_rc
+            fi
+            echo "main moved while regenerating (attempt $attempt); starting again from the new main"
+          done
+          echo "::error title=Regenerate docs::could not push after 2 attempts; the next push to main will try again"
+          exit 1

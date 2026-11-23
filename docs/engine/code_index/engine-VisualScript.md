@@ -2,7 +2,7 @@
 
 # Code index: engine-VisualScript
 
-Back to the [code index](../code_index.md). 29 headers, 581 names.
+Back to the [code index](../code_index.md). 30 headers, 598 names.
 
 ## `engine/include/okay/VisualScript/ActionGraph.hpp`
 
@@ -255,6 +255,25 @@ Back to the [code index](../code_index.md). 29 headers, 581 names.
 - `BlendShapeNode` struct, line 1112: Blend shape (morph target) weight on every mesh under this object.
 - `EngineReadNode` struct, line 1133
 
+## `engine/include/okay/VisualScript/NodesFriendlyHelpers.hpp`
+
+- `FrViewCamera` function, line 31: The camera the player looks through: the scene's main camera, else the first camera in the scene.
+- `FrCameraFlat` function, line 44: The camera's view direction ('right' false) or its right ('right' true), flattened onto the ground
+- `FrSpeeds` struct, line 58: The walk and run speed fields of every player controller on 'go' (first person, third person,
+- `FrMoverSpeeds` function, line 59
+- `FrSetMoveSpeed` function, line 70: Walk speed 'speed' on every controller; the run speed keeps its ratio to the walk speed.
+- `FrWithStanceController` function, line 85: Run 'f' on the first- or third-person controller of 'go' or of the nearest parent that has one
+- `FrSeatOf` function, line 98: The seat 'who' sits in, or nullptr.
+- `FrEnterVehicle` function, line 108: Put 'who' in 'vehicle': its free driver seat first, then a free passenger seat.
+- `FrIsDriving` function, line 117: True while 'who' drives a vehicle (sits in a driver seat).
+- `FrSetColliderSize` function, line 129: Size every collider on 'go': a box gets Width x Height x Depth, a sphere or circle radius Width / 2,
+- `FrSetCollidersEnabled` function, line 144: Switch every collider on 'go' on or off. Returns how many there are.
+- `FrIsGrounded` function, line 154: Standing on something: a player controller's own answer when the object has one; otherwise a short
+- `FrDebugLine` function, line 170: This object's debug line renderer (the one Draw Debug Line uses), set up for a debug shape.
+- `FrSpherePoints` function, line 181: A wire sphere as one line: the circles round X-Y, X-Z and Y-Z, joined where they meet so no
+- `FrBoxPoints` function, line 192: A wire box as one line through all 12 edges (some are drawn twice).
+- `FrWatch` function, line 202: The on-screen list Watch Value writes to: an object named "Watch Values" with a screen text,
+
 ## `engine/include/okay/VisualScript/NodesFunctions.hpp`
 
 - `FunctionStartNode` struct, line 16: Function: exec out 0 = the body; data outs = the parameters of the running call.
@@ -299,46 +318,47 @@ Back to the [code index](../code_index.md). 29 headers, 581 names.
 - `CollectNode` struct, line 474
 - `ProximityNode` struct, line 484
 - `DamageNode` struct, line 495: ---- Health and combat -----------------------------------------------------
-- `HealNode` struct, line 506
-- `IsDeadNode` struct, line 516
-- `RespawnNode` struct, line 524
-- `SpawnProjectileNode` struct, line 533
-- `ShootNode` struct, line 555
-- `AmmoNode` struct, line 574
-- `PatrolNode` struct, line 589: ---- AI --------------------------------------------------------------------
-- `ChaseNode` struct, line 615
-- `FleeNode` struct, line 630
-- `WanderNode` struct, line 644
-- `CanSeeNode` struct, line 672
-- `GpSpawn` function, line 711
-- `SpawnEveryNode` struct, line 720
-- `DestroyAfterNode` struct, line 744
-- `GpPool` function, line 757
-- `PoolGetNode` struct, line 762
-- `PoolReleaseNode` struct, line 788
-- `ScoreAddNode` struct, line 802: ---- Game flow -------------------------------------------------------------
-- `ScoreSetNode` struct, line 809
-- `ScoreGetNode` struct, line 817
-- `CountdownNode` struct, line 823
-- `OutcomeNode` struct, line 850
-- `RestartSceneNode` struct, line 864
-- `CheckpointSaveNode` struct, line 874
-- `CheckpointLoadNode` struct, line 885
-- `SetProgressNode` struct, line 900: ---- UI, camera, audio, input ----------------------------------------------
-- `ShowFloatingTextNode` struct, line 912
-- `FadeScreenNode` struct, line 926
-- `SetCameraTargetNode` struct, line 940
-- `ZoomNode` struct, line 957
-- `SwitchCameraNode` struct, line 968
-- `PlaySoundAtNode` struct, line 983
-- `StopSoundNode` struct, line 995
-- `GetMoveAxisNode` struct, line 1006
-- `RandomPickNode` struct, line 1014: ---- Lists -----------------------------------------------------------------
-- `RandomPointNode` struct, line 1023
-- `ShuffleListNode` struct, line 1033
-- `ListExtremeNode` struct, line 1048
-- `GpJoin` function, line 1060
-- `MakeGameplayNode` function, line 1066
+- `DamagedEventNode` struct, line 514: On Damaged: runs once for each hit this object took (any health holder, through the one damage path).
+- `HealNode` struct, line 525
+- `IsDeadNode` struct, line 535
+- `RespawnNode` struct, line 543
+- `SpawnProjectileNode` struct, line 552
+- `ShootNode` struct, line 574
+- `AmmoNode` struct, line 593
+- `PatrolNode` struct, line 608: ---- AI --------------------------------------------------------------------
+- `ChaseNode` struct, line 634
+- `FleeNode` struct, line 649
+- `WanderNode` struct, line 663
+- `CanSeeNode` struct, line 691
+- `GpSpawn` function, line 730
+- `SpawnEveryNode` struct, line 739
+- `DestroyAfterNode` struct, line 763
+- `GpPool` function, line 776
+- `PoolGetNode` struct, line 781
+- `PoolReleaseNode` struct, line 807
+- `ScoreAddNode` struct, line 821: ---- Game flow -------------------------------------------------------------
+- `ScoreSetNode` struct, line 828
+- `ScoreGetNode` struct, line 836
+- `CountdownNode` struct, line 842
+- `OutcomeNode` struct, line 869
+- `RestartSceneNode` struct, line 883
+- `CheckpointSaveNode` struct, line 893
+- `CheckpointLoadNode` struct, line 904
+- `SetProgressNode` struct, line 919: ---- UI, camera, audio, input ----------------------------------------------
+- `ShowFloatingTextNode` struct, line 931
+- `FadeScreenNode` struct, line 945
+- `SetCameraTargetNode` struct, line 959
+- `ZoomNode` struct, line 976
+- `SwitchCameraNode` struct, line 987
+- `PlaySoundAtNode` struct, line 1002
+- `StopSoundNode` struct, line 1014
+- `GetMoveAxisNode` struct, line 1025
+- `RandomPickNode` struct, line 1033: ---- Lists -----------------------------------------------------------------
+- `RandomPointNode` struct, line 1042
+- `ShuffleListNode` struct, line 1052
+- `ListExtremeNode` struct, line 1067
+- `GpJoin` function, line 1079
+- `MakeGameplayNode` function, line 1085
 
 ## `engine/include/okay/VisualScript/NodesInventory.hpp`
 

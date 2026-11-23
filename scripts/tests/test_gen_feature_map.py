@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Tests for the systems list (docs/SYSTEMS.md) of scripts/gen_feature_map.py.
+"""Tests for the systems list (docs/SYSTEMS.md) and the --validate mode of scripts/gen_feature_map.py.
 Run: python3 scripts/tests/test_gen_feature_map.py"""
-import os, sys, tempfile, unittest
+import io, os, sys, tempfile, unittest
+from contextlib import redirect_stderr, redirect_stdout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -61,6 +62,51 @@ class Systems(unittest.TestCase):
         self.assertIn("1.3 has no 'System' line", text)
         self.assertIn("system 'Lonely' has no ' - what it does' line", text)
         self.assertIn("system 'Two' says 'duplicate of' but names no other system", text)
+
+
+class Validate(unittest.TestCase):
+    """--validate checks the hand-written pages only: no file is written or compared (PRs do not commit the generated docs)."""
+    setUp, tearDown, page = Systems.setUp, Systems.tearDown, Systems.page
+
+    def run_main(self, *args):
+        old = sys.argv
+        sys.argv = ['gen_feature_map.py', '--root', self.d.name, *args]
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = G.main()
+        finally:
+            sys.argv = old
+        return rc, out.getvalue(), err.getvalue()
+
+    def generated(self):
+        return [p for p in ('docs/FEATURE_MAP.md', 'docs/SYSTEMS.md', 'docs/feature_map/_index_az.md',
+                            'docs/feature_map/_index_symptoms.md') if os.path.exists(os.path.join(self.d.name, p))]
+
+    def test_valid_pages_pass_and_nothing_is_written(self):
+        self.page(sub('1.1', 'Saves', '- **System:** Save Games - Keeps progress.'))
+        rc, out, err = self.run_main('--validate')
+        self.assertEqual(rc, 0, err)
+        self.assertIn('pages valid (1 areas, 1 sub-areas', out)
+        self.assertEqual(self.generated(), [])
+
+    def test_stale_generated_files_do_not_matter(self):
+        self.page(sub('1.1', 'Saves', '- **System:** Save Games - Keeps progress.'))
+        write(os.path.join(self.d.name, 'docs', 'FEATURE_MAP.md'), 'old copy from an older main\n')
+        self.assertEqual(self.run_main('--check')[0], 1)      # the old check would fail ...
+        self.assertEqual(self.run_main('--validate')[0], 0)   # ... the PR check does not
+        with open(os.path.join(self.d.name, 'docs', 'FEATURE_MAP.md'), encoding='utf-8') as f:
+            self.assertEqual(f.read(), 'old copy from an older main\n')
+
+    def test_problems_fail(self):
+        self.page("### 1.1 Saves\n- **System:** Save Games - Keeps progress.\n- **What:** w\n- **Code:** `src/a.cpp`\n"
+                  "- **Status:** Works\n\n" + sub('1.2', 'No system', ''))
+        rc, out, err = self.run_main('--validate')
+        self.assertEqual(rc, 1)
+        self.assertIn("error: 01-core.md:5: 1.1 is missing 'Words'", err)
+        self.assertIn("1.2 has no 'System' line", err)
+        self.assertIn('2 problem(s)', err)
+        self.assertEqual(self.generated(), [])
 
 
 if __name__ == '__main__':

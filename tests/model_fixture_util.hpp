@@ -104,6 +104,8 @@ namespace fx {
 inline void PF(std::string& s, float f) { std::uint32_t v; std::memcpy(&v, &f, 4); P32(s, v); }
 inline void PStr(std::string& s, const std::string& t, std::size_t len) { std::string x = t.substr(0, len); x.resize(len, '\0'); s += x; }
 inline bool Near(float a, float b, float e = 1e-4f) { return std::fabs(a - b) < e; }
+// Each component of `v` within `e` of x, y, z (inclusive).
+inline bool NearXyz(const okay::Vec3& v, float x, float y, float z, float e) { return std::fabs(v.x - x) <= e && std::fabs(v.y - y) <= e && std::fabs(v.z - z) <= e; }
 inline double Area(const okay::ImportedModel& m) {
     double a = 0;
     for (const okay::ImportedPart& p : m.parts)

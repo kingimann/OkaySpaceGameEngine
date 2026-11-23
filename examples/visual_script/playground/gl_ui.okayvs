@@ -22,6 +22,8 @@ exec 110 0 111
 exec 111 0 112
 exec 112 0 113
 exec 113 0 114
+exec 114 0 118
+exec 118 0 119
 node 100 GlShowNumberInText
 pos 100 40 520
 default 100 0 "Score: "
@@ -81,3 +83,11 @@ node 115 GlGetTextOpacity
 pos 115 820 900
 node 116 GlGetTextSize
 pos 116 1080 900
+node 117 GlGetSliderValue
+pos 117 1340 900
+node 118 GlOpenMenu
+pos 118 40 1090
+default 118 0 Options
+node 119 GlCloseMenu
+pos 119 300 1090
+default 119 0 Options

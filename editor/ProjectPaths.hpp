@@ -4,8 +4,12 @@
 // NearestFolder looks at the disk.
 //
 //   Fold            the text to compare: lower case on Windows (file names ignore case there), as written elsewhere
-//   StripSlash      no trailing '/' (the root "/" stays)
-//   Normalize       absolute, '/' separators, "." and ".." resolved, no trailing '/' (a relative path starts at the current folder)
+//   RootLength      how long the root at the start is: 1 for "/", 3 for a drive root "D:/" or "D:\\" (any case), else 0
+//   StripSlash      no trailing '/', but a root keeps its slash: "/" and "D:/" stay ("D:" alone would mean the current
+//                   folder on drive D on Windows, not its root). "D:" is left as written: no slash is added.
+//   Clean           '/' separators, "." and ".." resolved, no trailing '/' (text only, the same on every system)
+//   Normalize       Clean of the absolute path (a relative path starts at the current folder)
+//   Parent          the folder a '/' path is in ("D:/a" -> "D:/", "/a" -> "/"); "" for a root or a bare name
 //   SameOrInside    `child` is `parent` or somewhere below it
 //   Outermost       a selection without the items that are inside another selected item ({A, A/x} -> {A}), duplicates dropped
 //   NearestFolder   the folder to show when the one on screen is gone: it, or its nearest parent that exists
@@ -39,12 +43,33 @@ inline std::string Fold(const std::string& s) {
 #endif
 }
 
+/// Length of the root at the start of `s`: 1 for "/", 3 for a drive root ("D:/", "d:\\"), 0 for anything else (a
+/// relative path, or "D:" alone, which on Windows is the current folder of drive D). Text only, so it is the same on
+/// every system; on Linux "D:/" is never seen after Normalize (it makes every path start with '/').
+inline std::size_t RootLength(const std::string& s) {
+    if (!s.empty() && s[0] == '/') return 1;
+    const bool letter = s.size() >= 3 && ((s[0] >= 'A' && s[0] <= 'Z') || (s[0] >= 'a' && s[0] <= 'z'));
+    return (letter && s[1] == ':' && (s[2] == '/' || s[2] == '\\')) ? 3 : 0;
+}
+
+/// Drops trailing '/' but never the slash of a root: "/a/" -> "/a", "/" and "D:/" stay, "D://" -> "D:/". Only '/' is
+/// stripped ('\\' is a file-name character on Linux); "D:\\" stays as it is, being a root.
 inline std::string StripSlash(std::string s) {
-    while (s.size() > 1 && s.back() == '/') s.pop_back();
+    const std::size_t keep = std::max<std::size_t>(RootLength(s), 1);
+    while (s.size() > keep && s.back() == '/') s.pop_back();
     return s;
 }
 
-/// Absolute-ish, lexically cleaned, '/' separated, no trailing slash. "" stays "".
+/// Lexically cleaned, '/' separated, no trailing slash (a root keeps its slash). Text only: does not look at the disk or
+/// at the current folder. "" stays "".
+inline std::string Clean(const std::string& in) {
+    if (in.empty()) return in;
+    std::string s = in;
+    for (char& c : s) if (c == '\\') c = '/';
+    return StripSlash(std::filesystem::u8path(s).lexically_normal().generic_u8string());
+}
+
+/// Absolute-ish, lexically cleaned, '/' separated, no trailing slash (a root keeps its slash). "" stays "".
 inline std::string Normalize(const std::string& in) {
     if (in.empty()) return in;
     std::string s = in;
@@ -56,7 +81,17 @@ inline std::string Normalize(const std::string& in) {
         fs::path a = fs::absolute(p, ec);
         if (!ec) p = a;
     }
-    return StripSlash(p.lexically_normal().generic_u8string());
+    return Clean(p.generic_u8string());
+}
+
+/// The folder a '/' path is in: "/a/b" -> "/a", "/a" -> "/", "D:/a" -> "D:/" (the drive root, with its slash). "" for a
+/// root ("/", "D:/") and for a name with no '/'.
+inline std::string Parent(const std::string& p) {
+    const std::size_t root = RootLength(p);
+    if (p.size() <= root) return std::string();
+    const auto sl = p.find_last_of('/');
+    if (sl == std::string::npos) return std::string();
+    return sl + 1 <= root ? p.substr(0, root) : p.substr(0, sl);
 }
 
 /// `child` is `parent` or inside it. Both are '/' paths (run them through Normalize first); case is ignored on Windows.
@@ -106,9 +141,9 @@ inline std::string NearestFolder(const std::string& assetsRoot, const std::strin
     std::error_code ec;
     while (!fs::is_directory(fs::u8path(p), ec)) {
         if (Fold(p) == Fold(root)) return root;
-        const auto sl = p.find_last_of('/');
-        if (sl == std::string::npos || sl == 0) return root;
-        p.resize(sl);
+        std::string up = Parent(p);   // "D:/x" -> "D:/" (not "D:", the current folder of drive D)
+        if (up.empty()) return root;
+        p = std::move(up);
         if (!SameOrInside(root, p)) return root;
     }
     return p;

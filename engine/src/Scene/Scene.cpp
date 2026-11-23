@@ -213,7 +213,7 @@ void Scene::Clear() {
     m_physics.Clear();
     m_physics3d.Clear();                       // stale contact pairs point at colliders about to be freed
     m_physics3d.gravity = Vec3{0.0f, -9.81f, 0.0f};   // gravity is a scene setting: a new scene starts at the default
-    m_physics.quality = m_physics3d.quality = PhysicsQuality::Classic;   // so is the physics quality (a file without the record is Classic)
+    m_physics.quality = m_physics3d.quality = PhysicsQuality::Classic;   // so is the physics quality (kept for old files; it changes nothing)
     m_physics.solverIterations = m_physics3d.solverIterations = 10;
     m_physics3d.autoContinuous = true;
     m_physicsAcc = 0.0f;

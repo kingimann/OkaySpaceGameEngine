@@ -37,6 +37,12 @@ void operator delete[](void* p) noexcept { CountedFree(p); }
 void operator delete(void* p, std::size_t) noexcept { CountedFree(p); }
 void operator delete[](void* p, std::size_t) noexcept { CountedFree(p); }
 
+// time limits are for a normal build; the sanitizers (CI runs them) make the same read several times slower (7.2 s measured for the 25 MB chunk walk)
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
+static constexpr double kSlow = 6.0;
+#else
+static constexpr double kSlow = 1.0;
+#endif
 static constexpr std::size_t kWorstCap = 480u * 1024u * 1024u;   // about 2x the measured worst case (see the printed peak)
 static bool HasNote(const ImportedModel& m, const char* what) { for (const std::string& n : m.notes) if (n.find(what) != std::string::npos) return true; return false; }
 static bool Read(const std::string& b, ImportedModel& m, std::string* e = nullptr) { std::string er; return ReadCobBuffer(b, "dir/", m, e ? e : &er); }
@@ -220,7 +226,7 @@ int main() {
         const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         std::fprintf(stderr, "  %d materials + %d shader chunks (ASCII, %zu MB): %s in %.2f s\n", nm, ns, a.size() >> 20, ok ? "read" : e.c_str(), secs);
         CHECK(!ok && e.find("no polygon object") != std::string::npos);   // no object in it: refused for that, after the chunks were walked
-        CHECK(secs < 5.0);
+        CHECK(secs < 5.0 * kSlow);
         // the same with a chunk count over the cap is refused by the cap
         std::string b = "Caligari V00.01ALH             \n";
         for (int i = 0; i < 1000001; ++i) b += "Unit V0.01 Id 1 Parent 0 Size 1\n";
@@ -235,7 +241,7 @@ int main() {
         const bool okb = Read(c, m, &e);
         const double sb = std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count();
         std::fprintf(stderr, "  binary: %s in %.2f s\n", okb ? "read" : e.c_str(), sb);
-        CHECK(!okb && e.find("no polygon object") != std::string::npos && sb < 5.0);
+        CHECK(!okb && e.find("no polygon object") != std::string::npos && sb < 5.0 * kSlow);
     }
     {   // quadratic / cubic work: many concave 256-corner polygons (ear clipping is cubic; above 48 corners the faces are fanned)
         std::string a = "Caligari V00.01ALH             \nPolH V0.08 Id 1 Parent 0 Size 1\nName S\ncenter 0 0 0\nx axis 1 0 0\ny axis 0 1 0\nz axis 0 0 1\nTransform\n1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n";
@@ -252,7 +258,7 @@ int main() {
         const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         std::fprintf(stderr, "  %d concave 256-corner faces: %s in %.2f s\n", nf, ok ? "read" : e.c_str(), secs);
         CHECK(ok || e.find("too many") != std::string::npos);
-        CHECK(secs < 10.0);
+        CHECK(secs < 10.0 * kSlow);
         // a 40-corner concave star is still ear clipped (it has no overlapping triangles: all 38 are inside the star)
         std::string b = "Caligari V00.01ALH             \nPolH V0.08 Id 1 Parent 0 Size 1\nName S\ncenter 0 0 0\nx axis 1 0 0\ny axis 0 1 0\nz axis 0 0 1\nTransform\n1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\nWorld Vertices 40\n";
         for (int i = 0; i < 40; ++i) { const double r = i % 2 ? 0.3 : 1.0, t = 6.283185307179586 * i / 40.0; b += std::to_string(r * std::cos(t)) + " " + std::to_string(r * std::sin(t)) + " 0\n"; }

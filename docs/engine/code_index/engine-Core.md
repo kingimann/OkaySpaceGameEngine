@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 77 headers, 476 names.
+Back to the [code index](../code_index.md). 78 headers, 477 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -41,8 +41,8 @@ Back to the [code index](../code_index.md). 77 headers, 476 names.
 ## `engine/include/okay/Core/AssetManager.hpp`
 
 - `AssetHandle` class, line 49: Typed, cheap-to-copy reference to a cached asset. The asset lives as long as any
-- `AssetReport` struct, line 75: Usage report row/summary.
-- `AssetManager` class, line 84
+- `AssetReport` struct, line 81: Usage report row/summary.
+- `AssetManager` class, line 90
 
 ## `engine/include/okay/Core/Backup.hpp`
 
@@ -203,6 +203,10 @@ Back to the [code index](../code_index.md). 77 headers, 476 names.
 - `Subscription` class, line 19: RAII handle for a subscription made with EventBus::Listen (or Subscribe with
 - `EventBus` class, line 81: A lightweight, type-safe publish/subscribe event bus. Any struct/class can
 
+## `engine/include/okay/Core/FileCopy.hpp`
+
+- `CopyFileOver` function, line 20
+
 ## `engine/include/okay/Core/FrameOverlay.hpp`
 
 - `FrameOverlayState` struct, line 38: Everything the overlay shows besides the frame times.
@@ -281,22 +285,22 @@ Back to the [code index](../code_index.md). 77 headers, 476 names.
 
 ## `engine/include/okay/Core/ImportSidecar.hpp`
 
-- `BoxDownscale` function, line 30: Area-weighted shrink to a longest side of at most 'maxSide' (defined in ThumbnailCache.cpp, linked with the engine).
-- `ImportSidecar` struct, line 33: What '<assetPath>.okaymeta' says for one importer kind.
-- `ReadImportSidecar` function, line 41: The sidecar of 'assetPath' for 'kind' (Texture, Model or Audio), from a small per-file cache (ImportSidecar.cpp).
-- `ClearImportSidecarCache` function, line 43: Forget every cached sidecar (tests, or a tool that rewrote metas within one file-time tick).
-- `ReadImportSetting` function, line 47: The value of 'set <key> <value>' in '<assetPath>.okaymeta' for an asset of type 'importer' ("texture", "model",
-- `TextureImportMaxSize` function, line 50: Texture 'maxSize' from the sidecar: 0 when there is none, or it is 0 (no limit). Values below 32 are ignored.
-- `ModelImportScale` function, line 58: Model 'scale' from the sidecar: 1 when there is none or it is out of range.
-- `TextureSampling` struct, line 67: How a texture is sampled. A missing sidecar, or a missing key, gives the renderer's long-standing look
-- `TextureImportSampling` function, line 75
-- `ModelImportOptions` struct, line 90: What a model's sidecar asks for when it is brought into a scene.
-- `ReadModelImportOptions` function, line 97
-- `AudioImportOptions` struct, line 113: What an audio file's sidecar asks for when the file is loaded.
-- `ImportLower` function, line 118
-- `ImportFlagOn` function, line 123
-- `ReadAudioImportOptions` function, line 128
-- `ApplyTextureImportSettings` function, line 138: Apply the texture's 'maxSize' to a freshly loaded image (never enlarges).
+- `BoxDownscale` function, line 31: Area-weighted shrink to a longest side of at most 'maxSide' (defined in ThumbnailCache.cpp, linked with the engine).
+- `ImportSidecar` struct, line 34: What '<assetPath>.okaymeta' says for one importer kind.
+- `ReadImportSidecar` function, line 42: The sidecar of 'assetPath' for 'kind' (Texture, Model or Audio), from a small per-file cache (ImportSidecar.cpp).
+- `ClearImportSidecarCache` function, line 44: Forget every cached sidecar (tests, or a tool that rewrote metas within one file-time tick).
+- `ReadImportSetting` function, line 48: The value of 'set <key> <value>' in '<assetPath>.okaymeta' for an asset of type 'importer' ("texture", "model",
+- `TextureImportMaxSize` function, line 51: Texture 'maxSize' from the sidecar: 0 when there is none, or it is 0 (no limit). Values below 32 are ignored.
+- `ModelImportScale` function, line 59: Model 'scale' from the sidecar: 1 when there is none or it is out of range.
+- `TextureSampling` struct, line 68: How a texture is sampled. A missing sidecar, or a missing key, gives the renderer's long-standing look
+- `TextureImportSampling` function, line 77
+- `ModelImportOptions` struct, line 96: What a model's sidecar asks for when it is brought into a scene.
+- `ReadModelImportOptions` function, line 103
+- `AudioImportOptions` struct, line 119: What an audio file's sidecar asks for when the file is loaded.
+- `ImportLower` function, line 124
+- `ImportFlagOn` function, line 129
+- `ReadAudioImportOptions` function, line 134
+- `ApplyTextureImportSettings` function, line 144: Apply the texture's 'maxSize' to a freshly loaded image (never enlarges).
 
 ## `engine/include/okay/Core/Inflate.hpp`
 

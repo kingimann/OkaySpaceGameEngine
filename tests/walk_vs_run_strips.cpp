@@ -13,6 +13,8 @@
 // a controller steps it. The 8 tiles are evenly spaced in time over one stride, starting at the left foot touching down.
 // Written from the engine's own APIs (Raster, ImageWrite, Font8x8); the framing (a side camera, a ground with 0.5 m tick
 // marks so the length of a step can be read off) is this file's own.
+#include <filesystem>
+#include <system_error>
 #include "walk_vs_run_measure.hpp"
 #include "okay/Core/ImageWrite.hpp"
 #include "okay/Graphics/Font.hpp"
@@ -183,6 +185,7 @@ Rgba Compose(const Strip& s, const std::string& title, std::uint32_t bar) {
 
 int main(int argc, char** argv) {
     const std::string dir = argc > 1 ? argv[1] : "walk_vs_run_pictures";
+    { std::error_code ec; std::filesystem::create_directories(std::filesystem::u8path(dir), ec); }   // the build makes it, but not on a copied test folder
     std::printf("gait: %s\n", HumanoidMotion::OldGait() ? "OLD (OKAY_OLD_GAIT=1)" : "natural");
     FirstPersonController fp;            // the defaults a new project's player starts with
     const float walk = fp.walkSpeed, run = fp.runSpeed;

@@ -21,7 +21,13 @@ inline std::string SceneKey(const std::filesystem::path& p) {
     std::error_code ec;
     std::filesystem::path c = std::filesystem::weakly_canonical(p, ec);
     if (ec || c.empty()) c = std::filesystem::absolute(p, ec).lexically_normal();
-    return c.generic_string();
+    std::string key = c.generic_string();
+#ifdef _WIN32
+    // Windows file names ignore case: "Games" and "games" are one folder, so they must give one key (ASCII letters;
+    // weakly_canonical keeps the case it was given for the part it does not look up).
+    for (char& ch : key) if (ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
+#endif
+    return key;
 }
 
 /// Every *.okayscene under each folder of `roots` (recursively), once each. `skipDir` returns true for a folder

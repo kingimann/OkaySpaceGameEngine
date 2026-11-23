@@ -1007,6 +1007,120 @@ bool DecodeGifFrames(const std::uint8_t* data, std::size_t size, DecodedAnimatio
     return ok;
 }
 
+// ---- PNM (Netpbm P1..P6) -------------------------------------------------------------------------------------------
+// Written from the Netpbm format description (header: "P<n>", width, height, and for all but P1 and P4 a maxval, separated
+// by white space, "#" comments run to the end of the line; binary kinds have exactly one white space byte before the data;
+// P4 packs 8 pixels to a byte, rows padded, 1 = black; maxval above 255 means two bytes per sample, most significant first).
+// Samples are scaled to 8 bits as v*255/maxval, rounded to nearest. No code from any other project.
+namespace {
+bool PnmIsSpace(std::uint8_t c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+
+// Skips white space and comments, then reads an unsigned decimal. False at the end of data, on a non-digit or on overflow.
+bool PnmNumber(const std::uint8_t* d, std::size_t n, std::size_t& pos, unsigned long& out) {
+    for (;;) {
+        while (pos < n && PnmIsSpace(d[pos])) ++pos;
+        if (pos < n && d[pos] == '#') { while (pos < n && d[pos] != '\n' && d[pos] != '\r') ++pos; continue; }
+        break;
+    }
+    if (pos >= n || d[pos] < '0' || d[pos] > '9') return false;
+    unsigned long v = 0;
+    while (pos < n && d[pos] >= '0' && d[pos] <= '9') {
+        v = v * 10 + (d[pos] - '0');
+        if (v > 100000000UL) return false;
+        ++pos;
+    }
+    out = v;
+    return true;
+}
+
+bool DecodePnm(const std::uint8_t* d, std::size_t n, int& W, int& H, std::vector<std::uint8_t>* rgba, std::string& err) {
+    if (n < 2 || d[0] != 'P' || d[1] < '1' || d[1] > '6') return Fail(err, "not a PNM file");
+    const int kind = d[1] - '0';
+    std::size_t pos = 2;
+    unsigned long w = 0, h = 0, maxv = 1;
+    if (!PnmNumber(d, n, pos, w) || !PnmNumber(d, n, pos, h)) return Fail(err, "PNM header is incomplete");
+    if (w < 1 || h < 1 || w > static_cast<unsigned long>(kMaxImageDimension) || h > static_cast<unsigned long>(kMaxImageDimension))
+        return Fail(err, "image dimensions out of range");
+    if (kind != 1 && kind != 4) {
+        if (!PnmNumber(d, n, pos, maxv)) return Fail(err, "PNM header is incomplete");
+        if (maxv < 1 || maxv > 65535) return Fail(err, "PNM maxval out of range");
+    }
+    W = static_cast<int>(w); H = static_cast<int>(h);
+    const bool binary = kind >= 4;
+    if (binary) {
+        if (pos >= n || !PnmIsSpace(d[pos])) return Fail(err, "PNM header is incomplete");
+        ++pos;
+    }
+    const std::size_t pixels = static_cast<std::size_t>(w) * h;
+    const int channels = (kind == 3 || kind == 6) ? 3 : 1;
+    const std::size_t bytesPerSample = (maxv > 255) ? 2 : 1;
+    const std::size_t left = n - pos;
+    // The body must be able to hold the samples, so a lying header cannot make us allocate for nothing.
+    if (kind == 4) { if (left < ((static_cast<std::size_t>(w) + 7) / 8) * h) return Fail(err, "PNM data is truncated"); }
+    else if (kind == 5 || kind == 6) { if (left < pixels * channels * bytesPerSample) return Fail(err, "PNM data is truncated"); }
+    else if (left < pixels * channels) return Fail(err, "PNM data is truncated");   // ASCII: at least one byte per sample
+    if (!rgba) return true;
+    if (!AllocRgba(W, H, *rgba, err)) return false;
+    std::uint8_t* o = rgba->data();
+    auto scale = [&](unsigned long v) -> std::uint8_t {
+        return static_cast<std::uint8_t>((v * 255UL + maxv / 2) / maxv);
+    };
+    if (kind == 4) {
+        const std::size_t stride = (static_cast<std::size_t>(w) + 7) / 8;
+        for (unsigned long y = 0; y < h; ++y)
+            for (unsigned long x = 0; x < w; ++x) {
+                const bool black = (d[pos + y * stride + x / 8] >> (7 - (x & 7))) & 1;
+                const std::uint8_t v = black ? 0 : 255;
+                *o++ = v; *o++ = v; *o++ = v; *o++ = 255;
+            }
+        return true;
+    }
+    for (std::size_t i = 0; i < pixels; ++i) {
+        unsigned long s[3] = {0, 0, 0};
+        for (int c = 0; c < channels; ++c) {
+            unsigned long v = 0;
+            if (kind == 1) {   // digits may touch each other
+                while (pos < n && PnmIsSpace(d[pos])) ++pos;
+                if (pos < n && d[pos] == '#') { while (pos < n && d[pos] != '\n' && d[pos] != '\r') ++pos; --c; continue; }
+                if (pos >= n || (d[pos] != '0' && d[pos] != '1')) { rgba->clear(); return Fail(err, "PNM bit is not 0 or 1"); }
+                v = (d[pos++] == '1') ? 0 : 255;
+            } else if (kind == 2 || kind == 3) {
+                if (!PnmNumber(d, n, pos, v) || v > maxv) { rgba->clear(); return Fail(err, "PNM sample missing or above maxval"); }
+                v = scale(v);
+            } else {
+                unsigned long raw = d[pos++];
+                if (bytesPerSample == 2) raw = (raw << 8) | d[pos++];
+                if (raw > maxv) { rgba->clear(); return Fail(err, "PNM sample above maxval"); }
+                v = scale(raw);
+            }
+            s[c] = v;
+        }
+        if (channels == 1) s[1] = s[2] = s[0];
+        *o++ = static_cast<std::uint8_t>(s[0]); *o++ = static_cast<std::uint8_t>(s[1]);
+        *o++ = static_cast<std::uint8_t>(s[2]); *o++ = 255;
+    }
+    return true;
+}
+
+bool PnmOptedIn() {
+    const char* e = std::getenv("OKAY_OWN_PNM");
+    return e && e[0] == '1' && e[1] == '\0';
+}
+} // namespace
+
+bool DecodePnm(const std::uint8_t* data, std::size_t size, DecodedImage& out, std::string* error) {
+    out = DecodedImage();
+    std::string err;
+    int w = 0, h = 0;
+    std::vector<std::uint8_t> rgba;
+    if (data == nullptr || !DecodePnm(data, size, w, h, &rgba, err)) {
+        if (error) *error = err.empty() ? "PNM decode failed" : err;
+        return false;
+    }
+    out.width = w; out.height = h; out.rgba = std::move(rgba);
+    return true;
+}
+
 ImageFormat DetectImageFormat(const std::uint8_t* d, std::size_t n) {
     static const std::uint8_t png[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
     if (n >= 8 && std::memcmp(d, png, 8) == 0) return ImageFormat::PNG;
@@ -1016,6 +1130,7 @@ ImageFormat DetectImageFormat(const std::uint8_t* d, std::size_t n) {
     if (n >= 4 && std::memcmp(d, "8BPS", 4) == 0) return ImageFormat::PSD;
     if ((n >= 10 && std::memcmp(d, "#?RADIANCE", 10) == 0) || (n >= 6 && std::memcmp(d, "#?RGBE", 6) == 0)) return ImageFormat::HDR;
     if (TgaHeaderOk(d, n, nullptr, nullptr)) return ImageFormat::TGA;
+    if (n >= 3 && d[0] == 'P' && d[1] >= '1' && d[1] <= '6' && PnmIsSpace(d[2]) && PnmOptedIn()) return ImageFormat::PNM;
     return ImageFormat::Unknown;
 }
 
@@ -1029,6 +1144,7 @@ bool Dispatch(const std::uint8_t* data, std::size_t size, ImageFormat fmt, int& 
         case ImageFormat::GIF: return DecodeGifFirst(data, size, w, h, rgba, err);
         case ImageFormat::HDR: return DecodeHdr(data, size, w, h, rgba, err);
         case ImageFormat::PSD: return DecodePsd(data, size, w, h, rgba, err);
+        case ImageFormat::PNM: return DecodePnm(data, size, w, h, rgba, err);
         default: break;
     }
     return Fail(err, "unrecognised image format");

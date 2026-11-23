@@ -1,0 +1,88 @@
+// <vector> for okay-cc (ISO/IEC 14882 [vector]). Our own header, minimal. The elements live in an
+// array made with new T[capacity], so T needs a default constructor, and growing assigns the old
+// elements into the new array. Iterators are pointers.
+#pragma once
+#include <cstddef>
+#include <utility>
+namespace std {
+template <typename T>
+class vector {
+public:
+    vector() : data_(nullptr), size_(0), cap_(0) {}
+    explicit vector(unsigned long n) : data_(nullptr), size_(0), cap_(0) { resize(n); }
+    vector(unsigned long n, const T &v) : data_(nullptr), size_(0), cap_(0) {
+        reserve(n);
+        for (unsigned long i = 0; i < n; ++i) data_[i] = v;
+        size_ = n;
+    }
+    vector(const vector<T> &o) : data_(nullptr), size_(0), cap_(0) {
+        reserve(o.size_);
+        for (unsigned long i = 0; i < o.size_; ++i) data_[i] = o.data_[i];
+        size_ = o.size_;
+    }
+    ~vector() { delete[] data_; }
+    vector<T> &operator=(const vector<T> &o) {
+        if (this == &o) return *this;
+        size_ = 0;
+        reserve(o.size_);
+        for (unsigned long i = 0; i < o.size_; ++i) data_[i] = o.data_[i];
+        size_ = o.size_;
+        return *this;
+    }
+
+    unsigned long size() const { return size_; }
+    unsigned long capacity() const { return cap_; }
+    bool empty() const { return size_ == 0; }
+    T *data() { return data_; }
+    T *begin() { return data_; }
+    T *end() { return data_ + size_; }
+    T &operator[](unsigned long i) { return data_[i]; }
+    T &at(unsigned long i) { return data_[i]; }
+    T &front() { return data_[0]; }
+    T &back() { return data_[size_ - 1]; }
+
+    void reserve(unsigned long n) {
+        if (n <= cap_) return;
+        T *grown = new T[n];
+        for (unsigned long i = 0; i < size_; ++i) grown[i] = data_[i];
+        delete[] data_;
+        data_ = grown;
+        cap_ = n;
+    }
+    void push_back(const T &v) {
+        if (size_ == cap_) {
+            T keep = v;  // v may be an element of this vector
+            reserve(cap_ == 0 ? 4 : cap_ * 2);
+            data_[size_] = keep;
+        } else {
+            data_[size_] = v;
+        }
+        ++size_;
+    }
+    void pop_back() { --size_; }
+    void clear() { size_ = 0; }
+    void resize(unsigned long n) {
+        reserve(n);
+        for (unsigned long i = size_; i < n; ++i) data_[i] = T();
+        size_ = n;
+    }
+    T *erase(T *pos) {
+        T *last = data_ + size_;
+        for (T *p = pos; p + 1 != last; ++p) *p = *(p + 1);
+        --size_;
+        return pos;
+    }
+    T *insert(T *pos, const T &v) {
+        unsigned long at = (unsigned long)(pos - data_);
+        push_back(v);
+        for (unsigned long i = size_ - 1; i > at; --i) data_[i] = data_[i - 1];
+        data_[at] = v;
+        return data_ + at;
+    }
+
+private:
+    T *data_;
+    unsigned long size_;
+    unsigned long cap_;
+};
+}  // namespace std

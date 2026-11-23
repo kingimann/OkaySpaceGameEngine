@@ -804,8 +804,9 @@ RegHomes assignRegs(const Function& f) {
     return h;
 }
 
-std::string irText(const std::string& source, Diagnostics& diags, const std::string& file) {
-    return printModule(lowerSource(source, diags, file));
+std::string irText(const std::string& source, Diagnostics& diags, const std::string& file,
+                   const std::vector<std::string>& includes) {
+    return printModule(lowerSource(source, diags, file, includes));
 }
 
 }  // namespace okaycc

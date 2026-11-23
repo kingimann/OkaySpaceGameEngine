@@ -1,0 +1,82 @@
+// <string> for okay-cc (ISO/IEC 14882 [basic.string]). Our own header, minimal: a std::string of
+// char that owns a zero-terminated buffer. No templates (basic_string), iterators or find yet.
+#pragma once
+#include <cstddef>
+#include <cstring>
+namespace std {
+class string {
+public:
+    string() : p_(nullptr), n_(0), cap_(0) { grow(0); }
+    string(const char *s) : p_(nullptr), n_(0), cap_(0) {
+        unsigned long n = s ? strlen(s) : 0;
+        grow(n);
+        for (unsigned long i = 0; i < n; ++i) p_[i] = s[i];
+        n_ = n;
+        p_[n_] = 0;
+    }
+    string(const string &o) : p_(nullptr), n_(0), cap_(0) {
+        grow(o.n_);
+        for (unsigned long i = 0; i < o.n_; ++i) p_[i] = o.p_[i];
+        n_ = o.n_;
+        p_[n_] = 0;
+    }
+    ~string() { delete[] p_; }
+    string &operator=(const string &o) {
+        if (this == &o) return *this;
+        n_ = 0;
+        grow(o.n_);
+        for (unsigned long i = 0; i < o.n_; ++i) p_[i] = o.p_[i];
+        n_ = o.n_;
+        p_[n_] = 0;
+        return *this;
+    }
+    unsigned long size() const { return n_; }
+    unsigned long length() const { return n_; }
+    bool empty() const { return n_ == 0; }
+    const char *c_str() const { return p_; }
+    char &operator[](unsigned long i) { return p_[i]; }
+    void clear() {
+        n_ = 0;
+        p_[0] = 0;
+    }
+    void push_back(char c) {
+        grow(n_ + 1);
+        p_[n_] = c;
+        ++n_;
+        p_[n_] = 0;
+    }
+    string &operator+=(const char *s) {
+        unsigned long n = strlen(s);
+        grow(n_ + n);
+        for (unsigned long i = 0; i < n; ++i) p_[n_ + i] = s[i];
+        n_ += n;
+        p_[n_] = 0;
+        return *this;
+    }
+    string &append(const string &o) {
+        grow(n_ + o.n_);
+        for (unsigned long i = 0; i < o.n_; ++i) p_[n_ + i] = o.p_[i];
+        n_ += o.n_;
+        p_[n_] = 0;
+        return *this;
+    }
+    bool operator==(const char *s) const { return strcmp(p_, s) == 0; }
+    int compare(const string &o) const { return strcmp(p_, o.p_); }
+
+private:
+    void grow(unsigned long n) {
+        if (p_ && n < cap_) return;
+        unsigned long c = cap_ < 15 ? 15 : cap_;
+        while (c <= n) c = c * 2;
+        char *q = new char[c + 1];
+        for (unsigned long i = 0; i < n_; ++i) q[i] = p_[i];
+        q[n_] = 0;
+        delete[] p_;
+        p_ = q;
+        cap_ = c;
+    }
+    char *p_;
+    unsigned long n_;
+    unsigned long cap_;
+};
+}  // namespace std

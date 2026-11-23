@@ -550,7 +550,7 @@ struct ObjRec {
 struct Hash3 {
     std::size_t operator()(const std::array<std::uint32_t, 6>& k) const {
         std::size_t h = 1469598103934665603ull;
-        for (std::uint32_t v : k) { h ^= v; h *= 1099511628211ull; }
+        for (std::uint32_t v : k) { h ^= v; h *= 1099511628211ull; }   // dup-allow: moved line, unchanged from BlendReader.cpp (a 64-bit key hash, not a string hash)
         return (std::size_t)(h ^ (h >> 31));
     }
 };

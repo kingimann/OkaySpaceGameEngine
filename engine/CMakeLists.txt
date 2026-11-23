@@ -155,6 +155,7 @@ add_library(okay_engine
     src/Components/UIAnimation.cpp
     src/Scripting/OkayScriptVM.cpp
     src/Scripting/OkayScriptVM_Ui.cpp
+    src/Scripting/OkayScriptVM_Alias.cpp
     src/Scripting/OkayScriptVM_Tween.cpp
     src/Scripting/OkayScriptVM_Physics.cpp
     src/Scripting/OkayScriptVM_Math.cpp

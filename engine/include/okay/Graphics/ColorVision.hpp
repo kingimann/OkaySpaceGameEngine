@@ -6,7 +6,7 @@
 // Everything is a pure function of its arguments. Colours are sRGB in [0, 1] like Color; the
 // matrices act on linear light. Alpha is never changed.
 #include "okay/Graphics/Image.hpp"
-#include "okay/Render/Color.hpp"
+#include "okay/Math/Color.hpp"
 
 #include <array>
 #include <cstddef>

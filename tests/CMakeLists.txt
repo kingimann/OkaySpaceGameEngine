@@ -1855,7 +1855,7 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     set_tests_properties(okayui_codeedit_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()
 
-# The editor's Crash Log, Audio Mixer and History windows: drawn by OkayUI only, hosted in a Dear ImGui window by okayuihost::HostPanelWindow
+# The editor's Crash Log, Audio Mixer, History, Problems, Stats and Profiler windows: drawn by OkayUI only, hosted in a Dear ImGui window by okayuihost::HostPanelWindow
 # (shared/OkayUIImGuiEmbed.hpp) in Dear ImGui's draw order. Same picture as before, ImGui windows and tooltips in front cover it, clicks
 # reach it, a collapsed window draws nothing (docs/ui/own_ui_toolkit.md section 24).
 if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)

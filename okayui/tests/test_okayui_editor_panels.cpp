@@ -781,6 +781,35 @@ int main() {
         CHECK(res.empty && res.rows.empty() && res.pauseBox.w == 0 && UI::DroppedGeometry() == 0);
         CHECK(P::ProfilerDiagnosis(m) == "Waiting for frames..." && std::string(P::ProfilerEmptyText(m)).find("Press Play") == 0);
     }
+    {   // the Textures section (the editor's texture library): folded at first and not asked for; opened, its line, the budget
+        // warning, the hot-reload note and one row per texture, the file name with its path as the tooltip
+        panelfix::ProfilerData d;
+        int asked = 0;
+        d.model.textures = [&](P::ProfilerTextures& t) {
+            ++asked;
+            t.line = "Textures: 2, 5.25 MB of 256 MB";
+            t.overBudget = true; t.hotReload = true; t.reloads = 3; t.trimmed = 1;
+            P::ProfilerTexture a; a.path = "Assets/Art/crate.png"; a.width = 512; a.height = 512; a.mipLevels = 10; a.megabytes = 1.33; a.kind = "colour";
+            P::ProfilerTexture b; b.path = "Assets/Art/crate_n.png"; b.width = 1024; b.height = 1024; b.mipLevels = 11; b.megabytes = 5.33; b.kind = "normal";
+            t.rows = {a, b};
+        };
+        S::ProfilerResult res;
+        auto r = MakeRig(560, 1100, [&](float x, float y, float w, float h) { res = S::DrawProfiler(d.model, x, y, w, h); });
+        r.Frames(3);
+        CHECK(res.texturesHeader.w > 0 && asked == 0 && res.textureRows.empty());
+        r.Click(res.texturesHeader);
+        r.Frames(2);
+        CHECK(asked > 0 && res.textureRows.size() == 2 && res.texturesOverBudget);
+        CHECK(P::ProfilerTextureName(d.model.textures ? "Assets/Art/crate.png" : "") == "crate.png");
+        CHECK(P::ProfilerTexturesNote(P::ProfilerTextures{}) == "Hot reload off, 0 reloaded, 0 let go of for the budget");
+        P::ProfilerTextures tn; tn.hotReload = true; tn.reloads = 3; tn.trimmed = 1;
+        CHECK(P::ProfilerTexturesNote(tn) == "Hot reload on, 3 reloaded, 1 let go of for the budget");
+        CHECK(UI::DroppedGeometry() == 0);
+        r.Click(res.texturesHeader);   // folded again: not asked any more
+        const int before = asked;
+        r.Frames(2);
+        CHECK(asked == before && res.textureRows.empty());
+    }
 
     // ================= section 11: the toolkit pieces (framed check boxes and combos, scroll bar size, framed InputInt and SliderFloat3,
     // fields outside the clip) =================

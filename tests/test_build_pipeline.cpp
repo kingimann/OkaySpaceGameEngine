@@ -350,8 +350,10 @@ void TestZip(const fs::path& tmp) {
         // writer as it was, before WriteZipEntries existed.
         const std::uint64_t hStored = Fnv64(ZipBytesNoTime(tmp / "stored.zip")), hPacked = Fnv64(ZipBytesNoTime(tmp / "packed.zip"));
         std::printf("  zip bytes (no time): stored %016llx packed %016llx\n", (unsigned long long)hStored, (unsigned long long)hPacked);
-        CHECK(hStored == 0x8be018ac06387f21ull);
-        CHECK(hPacked == 0xe93a665d620e0176ull);
+        // Hashed with okay::StringId::HashOf (FNV-1a 64); the old local copy started from a wrong offset basis (a digit
+        // missing), so these two numbers changed when it was replaced, not the zip bytes they stand for.
+        CHECK(hStored == 0x02378791501b6127ull);
+        CHECK(hPacked == 0x9b93b23fc43146a8ull);
 
         // The same files handed over in memory, in the same (sorted) order, give the same bytes.
         std::vector<bp::ZipInput> in;

@@ -2,7 +2,7 @@
 
 # Code index: engine-Animation
 
-Back to the [code index](../code_index.md). 9 headers, 89 names.
+Back to the [code index](../code_index.md). 11 headers, 106 names.
 
 ## `engine/include/okay/Animation/AnimationClip.hpp`
 
@@ -25,6 +25,17 @@ Back to the [code index](../code_index.md). 9 headers, 89 names.
 - `ClipPresetName` function, line 14
 - `ClipPresetHint` function, line 29
 - `ClipPresetDefaultAmount` function, line 45: Default amount for each preset (units, degrees or scale fraction).
+
+## `engine/include/okay/Animation/DynamicCharacter.hpp`
+
+- `CharState` enum, line 41
+- `StateName` function, line 42
+- `RagdollMode` enum, line 45: How the character uses physics when nothing has happened to it.
+- `RigInput` struct, line 48: The standing rig, world space (one entry per humanoid bone).
+- `Tuning` struct, line 56
+- `Frame` struct, line 79: One frame of wishes the behaviours fill in.
+- `DynBehaviour` class, line 88: A behaviour module. Each one only writes the Frame and may push bodies.
+- `DynamicCharacter` class, line 96
 
 ## `engine/include/okay/Animation/HumanoidActions.hpp`
 
@@ -119,3 +130,15 @@ Back to the [code index](../code_index.md). 9 headers, 89 names.
 - `PlayerAnimStatus` struct, line 17: What the controller panel shows before the user presses the button.
 - `InspectPlayerAnimation` function, line 28
 - `WirePlayerAnimation` function, line 37: Add Foot IK, Look-At, the default Animator and (when a First / Third Person
+
+## `engine/include/okay/Animation/RagdollPhysics.hpp`
+
+- `ContactWorld` class, line 35: The world the ragdoll touches. Cast returns the first surface along
+- `SimpleWorld` class, line 43: A flat ground at 'groundY' plus optional axis-aligned boxes (a ledge, a
+- `ContactSphere` struct, line 52
+- `BodyDesc` struct, line 54
+- `JointDesc` struct, line 63
+- `BodyState` struct, line 76
+- `JointDrive` struct, line 88: A powered joint, field for field the drive of the scene physics' Ball and
+- `RagdollPhysics` class, line 95: What the controller needs from a physics engine. Keep it this small.
+- `XpbdRagdoll` class, line 135: Our own solver (see the header comment for the method).

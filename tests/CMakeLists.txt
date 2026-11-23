@@ -4623,7 +4623,7 @@ add_executable(test_obj_texture_roots test_obj_texture_roots.cpp)
 target_link_libraries(test_obj_texture_roots PRIVATE okay::engine)
 add_test(NAME obj_texture_roots COMMAND test_obj_texture_roots WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-# Batch E own readers (Q3D, RAW; SIB has its own tests below, sib_reader and own_sib): one test per reader on SYNTHETIC hand-built fixtures
+# Batch E own readers (Q3D, RAW; SIB has its own tests below, sib_reader and sib_import): one test per reader on SYNTHETIC hand-built fixtures
 # (tests/batche2_fixtures.hpp), a hostile-input / bit-flip test, a budget + memory test (counting operator new), and the dispatch test.
 # The reader tests build on their own from the reader sources (no engine library).
 foreach(_e_t IN ITEMS q3d_reader:Q3dReader.cpp raw_reader:RawReader.cpp)
@@ -5064,15 +5064,15 @@ endfunction()
 okay_e4_reader_test(ogex_reader OgexReader.cpp)
 okay_e4_reader_test(mdl_reader MdlReader.cpp)
 # Our own SIB (Silo) reader (docs/content/model_readers.md, section SIB): synthetic files with hand-computed values, instances, every
-# truncation, a mutation sweep and budgets (sib_reader), and the import seam plus, with OKAY_MODEL_CORPUS set, the one real file (own_sib).
+# truncation, a mutation sweep and budgets (sib_reader), and the import seam plus, with OKAY_MODEL_CORPUS set, the one real file (sib_import).
 okay_e4_reader_test(sib_reader SibReader.cpp)   # reader source only, so it can also be built by hand under the sanitizers
 set_tests_properties(sib_reader PROPERTIES TIMEOUT 600)
-add_executable(test_own_sib test_own_sib.cpp)
-target_link_libraries(test_own_sib PRIVATE okay::engine)
+add_executable(test_sib_import test_sib_import.cpp)
+target_link_libraries(test_sib_import PRIVATE okay::engine)
 if(OKAY_OWN_SIB)
-    target_compile_definitions(test_own_sib PRIVATE OKAY_EXPECT_OWN_SIB)
+    target_compile_definitions(test_sib_import PRIVATE OKAY_EXPECT_OWN_SIB)
 endif()
-add_test(NAME own_sib COMMAND test_own_sib WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_test(NAME sib_import COMMAND test_sib_import WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_executable(test_e4_hostile test_e4_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/OgexReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/MdlReader.cpp)

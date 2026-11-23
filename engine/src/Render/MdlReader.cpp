@@ -46,6 +46,33 @@ bool Fail(std::string* err, const std::string& m) { if (err) *err = "MDL: " + m;
 
 bool Reasonable(float v) { return std::isfinite(v) && std::fabs(v) <= 1e9f; }
 
+// The three corners of a triangle name vertices in 0 .. n - 1.
+template <class T> bool CornersIn(const T (&v)[3], std::int32_t n) { return v[0] >= 0 && v[1] >= 0 && v[2] >= 0 && v[0] < n && v[1] < n && v[2] < n; }
+
+// Quake and GameStudio models: the first frame's soup becomes the one part of the model, on a root node "MDL" that turns Z-up
+// into Y-up, with one white material "MDL skin". Empty `why` on success.
+std::string OneFramePart(const rc::Soup& soup, const std::string& frameName, ImportedModel& out, rc::BuildStats& stats) {
+    ImportedPart part;
+    if (!rc::BuildMesh(soup, 180.0, part.mesh, &stats, kMaxOutVerts)) return "too many output vertices";
+    if (part.mesh.triangles.empty()) return "the file has no usable triangles";
+    part.mesh.name = frameName.empty() ? "MDL" : frameName;
+    if (!rc::PartInRange(part)) return "a vertex is out of range";
+    ImportedNode root;
+    root.name = "MDL";
+    out.nodes.push_back(root);
+    ImportedMaterial mat;
+    mat.name = "MDL skin";
+    mat.hasDiffuse = true;
+    mat.diffuse = Color{1, 1, 1, 1};
+    out.materials.push_back(mat);
+    part.node = 0;
+    part.material = 0;
+    out.parts.push_back(std::move(part));
+    rc::ApplyUpAxis(out, true, false);   // Quake and GameStudio are Z-up
+    out.backend = "own";
+    return std::string();
+}
+
 // ---- Quake 1 -----------------------------------------------------------------------------------------------------------
 bool ReadQuake(Br& b, const std::string& baseDir, ImportedModel& out, std::string* err) {
     (void)baseDir;
@@ -116,7 +143,7 @@ bool ReadQuake(Br& b, const std::string& baseDir, ImportedModel& out, std::strin
     soup.ci.reserve((std::size_t)numTris * 3);
     soup.cuv.reserve((std::size_t)numTris * 3);
     for (const Tr& t : tr) {
-        if (t.v[0] < 0 || t.v[1] < 0 || t.v[2] < 0 || t.v[0] >= numVerts || t.v[1] >= numVerts || t.v[2] >= numVerts) { ++badVert; continue; }
+        if (!CornersIn(t.v, numVerts)) { ++badVert; continue; }
         for (int k : {2, 1, 0}) {   // Quake winds clockwise: the order is reversed
             const St& v = st[(std::size_t)t.v[k]];
             // a vertex on the seam belongs to the back half of the skin when the triangle faces away
@@ -126,25 +153,8 @@ bool ReadQuake(Br& b, const std::string& baseDir, ImportedModel& out, std::strin
             soup.cuv.push_back(Vec2{(float)((s + 0.5) / (double)skinW), (float)(((double)v.t + 0.5) / (double)skinH)});
         }
     }
-    ImportedPart part;
     rc::BuildStats stats;
-    if (!rc::BuildMesh(soup, 180.0, part.mesh, &stats)) return Fail(err, "too many output vertices");
-    if (part.mesh.triangles.empty()) return Fail(err, "the file has no usable triangles");
-    part.mesh.name = frameName.empty() ? "MDL" : frameName;
-    if (!rc::PartInRange(part)) return Fail(err, "a vertex is out of range");
-    ImportedNode root;
-    root.name = "MDL";
-    out.nodes.push_back(root);
-    ImportedMaterial mat;
-    mat.name = "MDL skin";
-    mat.hasDiffuse = true;
-    mat.diffuse = Color{1, 1, 1, 1};
-    out.materials.push_back(mat);
-    part.node = 0;
-    part.material = 0;
-    out.parts.push_back(std::move(part));
-    rc::ApplyUpAxis(out, true, false);   // Quake is Z-up
-    out.backend = "own";
+    if (const std::string why = OneFramePart(soup, frameName, out, stats); !why.empty()) return Fail(err, why);
     auto note = [&](const std::string& s) { out.notes.push_back("MDL (Quake): " + s); };
     if (numFrames > 1) note(std::to_string(numFrames) + " frames of vertex animation: only the first frame is read (the engine has no vertex animation)");
     if (numSkins > 0) note(std::to_string(numSkins) + " embedded skin(s), " + std::to_string(skinW) + " x " + std::to_string(skinH) + " 8-bit palette pictures, are not extracted: no texture");
@@ -589,7 +599,7 @@ bool ReadGameStudio5(Br& b, ImportedModel& out, std::string* err) {
     soup.ci.reserve((std::size_t)numTris * 3);
     if (haveUv) soup.cuv.reserve((std::size_t)numTris * 3);
     for (const Tr& t : tr) {
-        if (t.v[0] < 0 || t.v[1] < 0 || t.v[2] < 0 || t.v[0] >= numVerts || t.v[1] >= numVerts || t.v[2] >= numVerts) { ++badVert; continue; }
+        if (!CornersIn(t.v, numVerts)) { ++badVert; continue; }
         for (int k : {2, 1, 0}) {   // the files wind clockwise (all real files have a negative signed volume): reversed
             soup.ci.push_back((std::uint32_t)t.v[k]);
             if (!haveUv) continue;
@@ -601,25 +611,8 @@ bool ReadGameStudio5(Br& b, ImportedModel& out, std::string* err) {
             soup.cuv.push_back(uv);
         }
     }
-    ImportedPart part;
     rc::BuildStats stats;
-    if (!rc::BuildMesh(soup, 180.0, part.mesh, &stats, kMaxOutVerts)) return fail("too many output vertices");
-    if (part.mesh.triangles.empty()) return fail("the file has no usable triangles");
-    part.mesh.name = frameName.empty() ? "MDL" : frameName;
-    if (!rc::PartInRange(part)) return fail("a vertex is out of range");
-    ImportedNode root;
-    root.name = "MDL";
-    out.nodes.push_back(root);
-    ImportedMaterial mat;
-    mat.name = "MDL skin";
-    mat.hasDiffuse = true;
-    mat.diffuse = Color{1, 1, 1, 1};
-    out.materials.push_back(mat);
-    part.node = 0;
-    part.material = 0;
-    out.parts.push_back(std::move(part));
-    rc::ApplyUpAxis(out, true, false);   // GameStudio is Z-up
-    out.backend = "own";
+    if (const std::string why = OneFramePart(soup, frameName, out, stats); !why.empty()) return fail(why);
     auto note = [&](const std::string& s) { out.notes.push_back("MDL (3D GameStudio " + name + "): " + s); };
     if (numFrames > 1) note(std::to_string(numFrames) + " frames of vertex animation: only the first frame is read (the engine has no vertex animation)");
     if (numSkins > 0) note(std::to_string(numSkins) + " embedded skin(s) are not extracted (a material names a texture file, it cannot carry pixels): no texture");
@@ -794,7 +787,7 @@ bool ReadGameStudio7(Br& b, const std::string& baseDir, ImportedModel& out, std:
             for (std::int16_t& x : si) x = t.I16();
             const std::int32_t skin = t.I32();
             t.pos = at + triSz;
-            if (vi[0] < 0 || vi[1] < 0 || vi[2] < 0 || vi[0] >= nVert || vi[1] >= nVert || vi[2] >= nVert) { ++badTri; continue; }
+            if (!CornersIn(vi, nVert)) { ++badTri; continue; }
             std::int32_t mat = -1;
             if (skin >= 0 && (std::size_t)skin < skinMaterial.size()) mat = skinMaterial[(std::size_t)skin];
             else if (!(skin == -1 && skinMaterial.empty())) ++badSkin;

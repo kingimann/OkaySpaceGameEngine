@@ -2567,14 +2567,14 @@ versions or with other features.
 
 The sample: `heffalump.sib` by Richard Mitton (the readme next to it: "I waive all rights to this and release it into the
 public domain"), from the `test/models/SIB` data folder of Assimp's repository (a sparse checkout of data folders only, no
-`code/`). It is **not in this repository**; `own_sib` reads it when `OKAY_MODEL_CORPUS` names that `test` folder.
+`code/`). It is **not in this repository**; `sib_import` reads it when `OKAY_MODEL_CORPUS` names that `test` folder.
 
 | File | What |
 |---|---|
 | `engine/src/Render/SibReader.cpp` | `okay::ReadSibFile` / `okay::ReadSibBuffer` (declared in `ModelData.hpp`) |
 | `engine/src/Render/ModelImport.cpp` | The seam: slot 32 (extension `.sib`), `OKAY_OWN_SIB` (CMake option OFF, env `OKAY_OWN_SIB=1/0`) |
 | `tests/test_sib_reader.cpp`, `tests/sib_fixtures.hpp` | Hand-computed checks on synthetic files, instances, every truncation, 30,000 mutations, every aligned word at five extreme values, budgets (`sib_reader`, reader source only) |
-| `tests/test_own_sib.cpp` | The seam routes `.sib`, the switches, flatten; with `OKAY_MODEL_CORPUS` the real file (`own_sib`) |
+| `tests/test_sib_import.cpp` | The seam routes `.sib`, the switches, flatten; with `OKAY_MODEL_CORPUS` the real file (`sib_import`) |
 
 ### The structure we found (all from `heffalump.sib`)
 
@@ -2616,7 +2616,7 @@ before anything is allocated.
   pointing out), bad instances (shape number past the end, NaN frame, flat scale) skipped and noted, a scale with a move noted,
   2,000 instances of a 2,500-triangle grid refused by the budget, every truncation, 30,000 mutations, every aligned word at five
   extreme values, a 40,000-corner face (fanned), 5 million triangles (refused).
-- The real file (`own_sib` with `OKAY_MODEL_CORPUS`, and our own driver): 10 nodes (root, 5 shapes, 4 instances), 4 materials
+- The real file (`sib_import` with `OKAY_MODEL_CORPUS`, and our own driver): 10 nodes (root, 5 shapes, 4 instances), 4 materials
   (`HeffalumpSkin`, `UpMtl`, `Mapping`, `Ground`; the two textures resolve to the pictures next to the file), 14 parts, **724
   triangles** (676 of the shapes, worked out from the bytes by a separate script, plus 4 x 12), box x and z -4.91 to 4.91, y
   -0.023 to 3.165. **Not compared with Assimp** (not run).

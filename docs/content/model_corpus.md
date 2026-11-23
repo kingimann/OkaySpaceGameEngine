@@ -52,7 +52,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | Terragen | 2 | `models/TER`: `RealisticTerrain` (257 x 257 points, 30 m) and `RealisticTerrain_Large` (513 x 513, 19.53 m); both flat. Compared with Assimp v5.4.3 built with only its Terragen importer: same triangles and bounding box, area within 2e-6 (`docs/content/model_readers.md`) |
 | OpenGEX | 6 | `models/OpenGEX`: a scene with two boxes, a skinned and animated example, a camera, a COLLADA conversion, and two files with only a camera or a light (2026-11-22, our own OpenGEX reader: 4 read, those 2 refused by both) |
 | MDL | 43 | `models/MDL` and `models-nonbsd/MDL`: 3 Quake 1, 14 Half-Life 1 models, 19 Half-Life sequence-group files, 1 textures-only file, 6 3D GameStudio (MDL3, MDL5, MDL7) (2026-11-22, our own MDL reader: 17 read; 2026-11-23: 23 read, the 6 GameStudio files too) |
-| SIB | 1 | `models/SIB/heffalump.sib` (public domain, its readme says so): read by our own SIB reader since 2026-11-23 (`own_sib` checks it when `OKAY_MODEL_CORPUS` is set) |
+| SIB | 1 | `models/SIB/heffalump.sib` (public domain, its readme says so): read by our own SIB reader since 2026-11-23 (`sib_import` checks it when `OKAY_MODEL_CORPUS` is set) |
 | PK3 | 1 | `models-nonbsd/PK3/SGDTT3.pk3`: one Quake III map (28 models, 1,400 triangles, no patch) (2026-11-22, our own Q3BSP reader) |
 
 ## Running it

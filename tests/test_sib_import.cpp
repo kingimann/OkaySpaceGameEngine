@@ -8,6 +8,8 @@
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
 #include "sib_fixtures.hpp"
+#include "own_seam_checks.hpp"
+#include "reader_hostile_common.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include <algorithm>
@@ -21,31 +23,19 @@
 using namespace okay;
 namespace fs = std::filesystem;
 
-static void SetEnv(const char* n, const char* v) {
-#ifdef _WIN32
-    _putenv_s(n, v);
-#else
-    ::setenv(n, v, 1);
-#endif
-}
-static void UnsetEnv(const char* n) {
-#ifdef _WIN32
-    _putenv_s(n, "");
-#else
-    ::unsetenv(n);
-#endif
-}
+using seam::SetEnv;
+using seam::UnsetEnv;
 #ifdef OKAY_EXPECT_OWN_SIB
 static const bool kOnByDefault = true;
 #else
 static const bool kOnByDefault = false;
 #endif
-static bool HasNote(const ImportedModel& m, const char* what) { for (const std::string& n : m.notes) if (n.find(what) != std::string::npos) return true; return false; }
+using hostile::HasNote;
 
 int main() {
-    RUN_SUITE("own_sib");
+    RUN_SUITE("sib_import");
     UnsetEnv("OKAY_OWN_SIB");
-    const fs::path dir = fs::temp_directory_path() / "okay_own_sib";
+    const fs::path dir = fs::temp_directory_path() / "okay_sib_import";
     fs::create_directories(dir);
     const std::string path = (dir / "cube.sib").string();
     {

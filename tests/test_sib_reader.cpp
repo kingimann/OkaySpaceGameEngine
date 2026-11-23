@@ -1,6 +1,6 @@
 // Our own SIB (Silo) reader (engine/src/Render/SibReader.cpp). SYNTHETIC files built in memory (tests/sib_fixtures.hpp) checked against
 // numbers worked out by hand, plus every truncation, a mutation sweep and the budgets. The one real file (heffalump.sib, public domain,
-// not in this repository) is checked by own_sib when OKAY_MODEL_CORPUS is set. The structure the reader follows was worked out from
+// not in this repository) is checked by sib_import when OKAY_MODEL_CORPUS is set. The structure the reader follows was worked out from
 // that one file only: see docs/content/model_readers.md (section SIB) for what is an assumption.
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
@@ -15,8 +15,8 @@
 using namespace okay;
 namespace fs = std::filesystem;
 
-static bool HasNote(const ImportedModel& m, const char* what) { for (const std::string& n : m.notes) if (n.find(what) != std::string::npos) return true; return false; }
-static bool Near(float a, float b, float e = 1e-5f) { return std::fabs(a - b) <= e; }
+using hostile::HasNote;
+using fx::Near;
 static bool Read(const std::string& t, ImportedModel& m, std::string& err, const std::string& dir = std::string()) { return ReadSibBuffer(t, dir, m, &err); }
 static std::string Basic() {
     return sibfx::File({sibfx::Matr(0.5f, 0.5f, 0.5f, "Grey", ""), sibfx::Matr(0.25f, 0.5f, 0.75f, "Red", "tex.png"),
@@ -56,11 +56,9 @@ int main() {
         for (std::size_t pi = 0; pi < 2; ++pi) {
             const Mesh& me = m.parts[pi].mesh;
             for (std::size_t i = 0; i + 2 < me.triangles.size(); i += 3) {
-                const Vec3 &a = me.vertices[(std::size_t)me.triangles[i]], &b = me.vertices[(std::size_t)me.triangles[i + 1]], &c = me.vertices[(std::size_t)me.triangles[i + 2]];
-                const double ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z, vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
-                const double nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-                const double cx = (a.x + b.x + c.x) / 3 - 0.5, cy = (a.y + b.y + c.y) / 3 - 0.5, cz = (a.z + b.z + c.z) / 3 - 0.5;
-                CHECK(nx * cx + ny * cy + nz * cz > 0);
+                double n[3], c[3];
+                fx::FaceOf(me, i, n, c);
+                CHECK(n[0] * (c[0] - 0.5) + n[1] * (c[1] - 0.5) + n[2] * (c[2] - 0.5) > 0);
             }
         }
         // the concave L is not fanned wrong: no triangle leaves the L (the notch at (1.5, 1.5) is empty)
@@ -90,13 +88,11 @@ int main() {
                 const Mesh& me = m.parts[pi].mesh;
                 for (const Vec3& v : me.vertices) { const float q[3] = {v.x, v.y, v.z}; for (int k = 0; k < 3; ++k) { lo[k] = std::fmin(lo[k], q[k]); hi[k] = std::fmax(hi[k], q[k]); } }
                 for (std::size_t i = 0; i + 2 < me.triangles.size(); i += 3) {   // outward: normal . (centroid - centre) > 0, and the stored normals agree
-                    const Vec3 &a = me.vertices[(std::size_t)me.triangles[i]], &b = me.vertices[(std::size_t)me.triangles[i + 1]], &d = me.vertices[(std::size_t)me.triangles[i + 2]];
-                    const double ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z, vx = d.x - a.x, vy = d.y - a.y, vz = d.z - a.z;
-                    const double nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-                    const double cx = (a.x + b.x + d.x) / 3 - 10, cy = (a.y + b.y + d.y) / 3, cz = (a.z + b.z + d.z) / 3;
-                    CHECK(nx * cx + ny * cy + nz * cz > 0);
+                    double n[3], cc[3];
+                    fx::FaceOf(me, i, n, cc);
+                    CHECK(n[0] * (cc[0] - 10) + n[1] * cc[1] + n[2] * cc[2] > 0);
                     const Vec3& sn = me.normals[(std::size_t)me.triangles[i]];
-                    CHECK(nx * sn.x + ny * sn.y + nz * sn.z > 0);
+                    CHECK(n[0] * sn.x + n[1] * sn.y + n[2] * sn.z > 0);
                 }
             }
             CHECK(Near(lo[0], 9.5f, 1e-4f) && Near(hi[0], 10.5f, 1e-4f) && Near(lo[1], -0.5f, 1e-4f) && Near(hi[1], 0.5f, 1e-4f) && Near(lo[2], -1, 1e-4f) && Near(hi[2], 1, 1e-4f));
@@ -155,11 +151,7 @@ int main() {
     }
     {   // every truncation is refused or sane; a mutation sweep
         const std::string full = Basic();
-        for (std::size_t n = 0; n < full.size(); ++n) {
-            ImportedModel m; std::string err;
-            const bool ok = Read(full.substr(0, n), m, err);
-            CHECK(ok ? fx::Sane(m) : (!err.empty() && m.parts.empty() && m.nodes.empty()));
-        }
+        for (std::size_t n = 0; n < full.size(); ++n) { ImportedModel m; std::string err; CHECK(fx::SaneOrRefused(Read(full.substr(0, n), m, err), m, err)); }
         long reads = 0, refusals = 0;
         for (long i = 0; i < hostile::Iters(30000); ++i) {
             std::string s = full;

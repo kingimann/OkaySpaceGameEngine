@@ -118,4 +118,4 @@ Back to the [code index](../code_index.md). 9 headers, 89 names.
 
 - `PlayerAnimStatus` struct, line 17: What the controller panel shows before the user presses the button.
 - `InspectPlayerAnimation` function, line 28
-- `WirePlayerAnimation` function, line 35: Add Foot IK, Look-At and the default Animator only where they are missing,
+- `WirePlayerAnimation` function, line 37: Add Foot IK, Look-At, the default Animator and (when a First / Third Person

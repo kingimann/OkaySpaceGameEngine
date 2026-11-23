@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 75 headers, 453 names.
+Back to the [code index](../code_index.md). 76 headers, 461 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -134,6 +134,17 @@ Back to the [code index](../code_index.md). 75 headers, 453 names.
 ## `engine/include/okay/Core/Console.hpp`
 
 - `Console` class, line 23: A text console: commands plus the Cvar registry, driven by lines of text. The UI
+
+## `engine/include/okay/Core/ConsoleHost.hpp`
+
+- `ConsoleInput` class, line 36: One line of console input: the text typed so far, Up / Down through the history, Tab completion of the first
+- `DeclareOptions` function, line 62: Declare '--cvar NAME=VALUE' (repeatable) and the '--console' flag.
+- `ApplyCvarArgs` function, line 67: Apply every '--cvar' given, in order, when 'allowed' (use PlayerConsoleAllowed's answer in a player; the editor
+- `RegisterStandard` function, line 72: Register the standard cvars and commands listed at the top (safe to call again). game.speed and r.vsync start
+- `SyncFromEngine` function, line 75: Copy the engine's current time scale and vsync into game.speed and r.vsync, so a change made elsewhere (the
+- `ProfilerWanted` function, line 78: Whether the profiler should record this frame: a profiler view is open, or debug.profile is on.
+- `PlayerConsoleAllowed` function, line 82: Whether a shipped player may open its backquote console: a development build, the '--console' flag, or the
+- `TailLines` function, line 85: The newest 'maxLines' lines of the console output, oldest first (what an overlay draws above the input line).
 
 ## `engine/include/okay/Core/Countdown.hpp`
 

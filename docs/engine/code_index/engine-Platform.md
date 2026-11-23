@@ -2,7 +2,7 @@
 
 # Code index: engine-Platform
 
-Back to the [code index](../code_index.md). 28 headers, 220 names.
+Back to the [code index](../code_index.md). 28 headers, 221 names.
 
 ## `engine/include/okay/Platform/Account/Account.hpp`
 
@@ -179,15 +179,16 @@ Back to the [code index](../code_index.md). 28 headers, 220 names.
 
 ## `engine/include/okay/Platform/Painter.hpp`
 
-- `PainterKind` enum, line 27
-- `BlendMode` enum, line 28
-- `ScaleMode` enum, line 29
-- `TextureDesc` struct, line 31
-- `Painter` class, line 41
-- `PainterDesc` struct, line 128
-- `CreateSdl2Painter` function, line 136: sdl2: a renderer on an sdl2 window (accelerated, else any), as the player always made one.
-- `WrapSdl2Renderer` function, line 139: sdl2 over a renderer somebody else owns (the editor's and the launcher's). 'sdlRenderer' is an
-- `CreateSdl2SurfacePainter` function, line 142: Headless sdl2 painter: SDL's software renderer on an RGBA surface. For tests and tools that need the
+- `PainterKind` enum, line 30
+- `BlendMode` enum, line 31
+- `ScaleMode` enum, line 32
+- `TextureDesc` struct, line 34
+- `Painter` class, line 44
+- `PainterDesc` struct, line 131
+- `CreateSdl2Painter` function, line 139: sdl2: a renderer on an sdl2 window (accelerated, else any), as the player always made one.
+- `WrapSdl2Renderer` function, line 142: sdl2 over a renderer somebody else owns (the editor's and the launcher's). 'sdlRenderer' is an
+- `CreateSdl2SurfacePainter` function, line 145: Headless sdl2 painter: SDL's software renderer on an RGBA surface. For tests and tools that need the
+- `CreateGLPainter` function, line 152: opengl (own code, off by default): a GPU painter on a window of the own backend made with WindowDesc::opengl. It creates the
 
 ## `engine/include/okay/Platform/Parties.hpp`
 

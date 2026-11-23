@@ -97,9 +97,12 @@ void TestArguments() {
     CHECK(Cli({"new"}, s) == 2 && Has(s.err, "okay new MyGame"));    // the name is missing
     CHECK(Cli({"new", "--template", "list"}, s) == 0 && Has(s.out, "\"3D Scene\""));
     CHECK(Cli({"new", "X", "--template", "No Such Template"}, s) == 2 && Has(s.err, "no template"));
-    CHECK(Cli({"vc", "history", "-n", "0", "--project", "/nonexistent-okay"}, s) != 0);
+    CHECK(Cli({"--project", "/nonexistent-okay", "vc", "history", "-n", "0"}, s) != 0);
     CHECK(Cli({"build", "--target", "playstation"}, s) == 1 && Has(s.err, "has to be made on playstation"));
     CHECK(Cli({"vc", "merge-driver", "a"}, s) == 2);                 // the hidden driver needs three files
+    CHECK(Cli({"help", "--project", "x"}, s) == 2);                  // --project is only taken before the command
+    CHECK(Cli({"help", "vc", "resolve"}, s) == 0 && Has(s.out, "--theirs"));
+    CHECK(Cli({"help", "vc", "clone"}, s) == 0);
 
     // The shared Trim this CLI added to Core/StringUtil.hpp.
     CHECK(okay::str::Trim("  a b \r\n") == "a b" && okay::str::Trim("\t\n").empty() && okay::str::Trim("x") == "x");
@@ -109,28 +112,66 @@ void TestArguments() {
     CHECK(!r.started);
     CHECK(okaycli::FindOnPath("okay-no-such-program-xyz").empty());
     CHECK(!okaycli::SelfPath().empty());
+    // .cmd and .bat files are never started (Windows would run them through cmd.exe).
+    CHECK(okaycli::ResolveProgram("C:/tools/git.cmd").empty() && okaycli::ResolveProgram("run.BAT").empty());
+    CHECK(!okaycli::Run({"tools/okay.bat"}, "", true).started);
 }
+
+#if !defined(_WIN32)
+/// A program in the current folder is never started by its bare name, even when PATH has "." or a relative entry.
+void TestPathLookup(const fs::path& tmp) {
+    RUN_SUITE("okay cli: programs are found only in absolute PATH folders");
+    const fs::path bin = tmp / "relbin";
+    Write(bin / "okayfakeprog", "#!/bin/sh\nexit 0\n");
+    fs::permissions(bin / "okayfakeprog", fs::perms::owner_all);
+    Write(tmp / "okayfakeprog2", "#!/bin/sh\nexit 0\n");
+    fs::permissions(tmp / "okayfakeprog2", fs::perms::owner_all);
+    const char* old = std::getenv("PATH");
+    const std::string saved = old ? old : "";
+    std::error_code ec;
+    const fs::path cwd = fs::current_path(ec);
+    fs::current_path(tmp, ec);
+    SetEnv("PATH", "relbin:.::" + saved);
+    CHECK(okaycli::FindOnPath("okayfakeprog").empty());
+    CHECK(okaycli::FindOnPath("okayfakeprog2").empty());
+    CHECK(!okaycli::Run({"okayfakeprog2"}, "", true).started);
+    SetEnv("PATH", bin.string() + ":" + saved);
+    CHECK(fs::path(okaycli::FindOnPath("okayfakeprog")) == bin / "okayfakeprog");
+    const okaycli::RunResult r = okaycli::Run({"okayfakeprog"}, "", true);
+    CHECK(r.started && r.exitCode == 0);
+    SetEnv("PATH", saved);
+    fs::current_path(cwd, ec);
+}
+#endif
 
 void TestIgnoreAndAttributes() {
     RUN_SUITE("okay cli: .gitignore and .gitattributes");
     const Strs ig = okaycli::vc::IgnoreLines();
     auto in = [](const Strs& v, const std::string& l) { for (const auto& x : v) if (x == l) return true; return false; };
-    for (const char* l : {"build/", ".okay/backups/", ".okay/build_live.cfg", "*.autosave", "*.log", "*.bak", ".okaycache/",
-                          "Library/", "export/", ".okay/projectview.txt", ".okay/favourites.txt"})
+    for (const char* l : {"/build/", "/.okay/backups/", "/.okay/build_live.cfg", "/.okay/clashes/", "*.autosave", "*.okayscene.bak",
+                          "*.okayprefab.bak", ".okaycache/", "/.okay/projectview.txt", "/.okay/favourites.txt"})
         CHECK(in(ig, l));
+    // Nothing that could match a real folder deeper in the project, or a person's own files.
+    for (const char* l : {"build/", "Build/", "export/", "Export/", "Library/", "Temp/", "*.log", "*.bak"}) CHECK(!in(ig, l));
+    for (const auto& l : ig) if (l.find('/') != std::string::npos && l != ".okaycache/") CHECK(l[0] == '/');
+    CHECK(in(okaycli::vc::IgnoreLines("Out/Game"), "/Out/Game/"));   // the Build Settings output folder
+    CHECK(in(okaycli::vc::IgnoreLines("Out/Game"), "/build/"));
     CHECK(!in(ig, "Assets/"));
     CHECK(!in(ig, "project.okayproj"));
     int added = 0;
-    const std::string first = okaycli::vc::GitIgnoreText("my-own-line\n", &added);
+    const std::string first = okaycli::vc::GitIgnoreText("my-own-line\n", "", &added);
     CHECK(first.rfind("my-own-line\n", 0) == 0);          // the person's lines stay first and untouched
     CHECK(added == (int)ig.size());
     CHECK(Has(first, "# added by okay vc init"));
     int again = -1;
-    CHECK(okaycli::vc::GitIgnoreText(first, &again) == first && again == 0);   // running it twice adds nothing
+    CHECK(okaycli::vc::GitIgnoreText(first, "", &again) == first && again == 0);   // running it twice adds nothing
     const Strs at = okaycli::vc::AttributeLines();
     CHECK(in(at, "*.okayscene text eol=lf merge=okayscene diff=okayscene"));
     CHECK(in(at, "*.okayprefab text eol=lf merge=okayscene diff=okayscene"));
-    for (const char* b : {"*.png binary", "*.wav binary", "*.fbx binary", "*.ttf binary", "*.glb binary"}) CHECK(in(at, b));
+    for (const char* b : {"*.png binary", "*.wav binary", "*.fbx binary", "*.ttf binary", "*.glb binary", "*.tif binary", "*.tiff binary",
+                          "*.mp4 binary", "*.webm binary", "*.mov binary", "*.m4a binary", "*.opus binary", "*.aiff binary",
+                          "*.bin binary", "*.okaypkg binary", "*.okaynav binary"})
+        CHECK(in(at, b));
     CHECK(okaycli::vc::MergeDriverCommand("C:\\Program Files\\okay.exe") == "\"C:/Program Files/okay.exe\" vc merge-driver %O %A %B %P");
     CHECK(okaycli::vc::DiffDriverCommand("/opt/my $dir/okay") == "\"/opt/my \\$dir/okay\" vc diff-driver");
 }
@@ -171,6 +212,7 @@ void TestStatusGrouping() {
     CHECK(Has(okaycli::vc::StatusText({}, "main"), "Everything is saved"));
     CHECK(okaycli::vc::GroupOf("Assets\\Scripts\\Boss.CS") == Group::Scripts);
     CHECK(okaycli::vc::GroupOf(".okay/scene_build.txt") == Group::Settings);
+    CHECK(okaycli::vc::GroupOf("Assets/Scripts/ai.okay") == Group::Scripts);
 }
 
 void TestProjects(const fs::path& tmp) {
@@ -201,12 +243,12 @@ void TestProjects(const fs::path& tmp) {
     Write(root / ".okay" / "scene_build.txt", "# list\n0|Assets/My Game.okayscene\n1|Assets/Levels/Two.okayscene\n");
     CHECK(fs::path(okaycli::MainScene(root.string())) == root / "Assets" / "Levels" / "Two.okayscene");
 
-    CHECK(Cli({"info", "--project", root.string()}, s) == 0 && Has(s.out, "Project: My Game") && Has(s.out, "Game version: 0.3.0"));
-    CHECK(Cli({"test", "--project", root.string()}, s) == 0 && Has(s.out, "Checked 2 scenes") && Has(s.out, "Everything loads"));
+    CHECK(Cli({"--project", root.string(), "info"}, s) == 0 && Has(s.out, "Project: My Game") && Has(s.out, "Game version: 0.3.0"));
+    CHECK(Cli({"--project", root.string(), "test"}, s) == 0 && Has(s.out, "Checked 2 scenes") && Has(s.out, "Everything loads"));
     Write(root / "Assets" / "Broken.okayscene", "okayscene 3\n<<<<<<< ours\nname \"x\"\n=======\nname \"y\"\n>>>>>>> theirs\n");
-    CHECK(Cli({"test", "--project", root.string()}, s) == 1 && Has(s.err, "Broken.okayscene: still has merge clash marks"));
+    CHECK(Cli({"--project", root.string(), "test"}, s) == 1 && Has(s.err, "Broken.okayscene: still has merge clash marks"));
     fs::remove(root / "Assets" / "Broken.okayscene");
-    CHECK(Cli({"play", "--project", tmp.string()}, s) == 1 && Has(s.err, "not an OkaySpace project"));
+    CHECK(Cli({"--project", tmp.string(), "play"}, s) == 1 && Has(s.err, "not an OkaySpace project"));
 }
 
 void TestMergeDriverDirect(const fs::path& tmp) {
@@ -228,7 +270,12 @@ void TestMergeDriverDirect(const fs::path& tmp) {
     s.out.clear(); s.err.clear();
     Write(d / "ours", LevelText("5", "0"));
     Write(d / "theirs", LevelText("7", "0"));
+    std::error_code cec;
+    const fs::path cwd = fs::current_path(cec);
+    fs::current_path(d, cec);   // not a repository: the clash report goes into this folder's .okay/clashes
     CHECK(okaycli::SceneMergeDriver((d / "base").string(), (d / "ours").string(), (d / "theirs").string(), "Level.okayscene", s.io) == 1);
+    fs::current_path(cwd, cec);
+    CHECK(Has(Read(d / ".okay" / "clashes" / "Level.okayscene.txt"), "they made it 7"));
     CHECK(Has(s.err, "Level.okayscene: 1 change clashes"));
     CHECK(Has(s.err, "A: "));
     CHECK(Has(s.err, "you made it") && Has(s.err, "they made it"));
@@ -271,62 +318,101 @@ void TestGit(const fs::path& tmp) {
     const fs::path root = where / "Game";
     const std::string P = root.string();
     CHECK(fs::is_directory(root / ".git"));
-    CHECK(Has(Read(root / ".gitignore"), ".okay/backups/"));
+    CHECK(Has(Read(root / ".gitignore"), "/.okay/backups/"));
     CHECK(Has(Read(root / ".gitattributes"), "*.okayscene text eol=lf merge=okayscene diff=okayscene"));
     CHECK(Has(GitOut(root, {"config", "merge.okayscene.driver"}), "vc merge-driver %O %A %B %P"));
     CHECK(Has(GitOut(root, {"config", "diff.okayscene.command"}), "vc diff-driver"));
     CHECK(GitOut(root, {"symbolic-ref", "--short", "HEAD"}).rfind("main", 0) == 0);
-    CHECK(Cli({"vc", "init", "--project", P}, s) == 0 && Has(s.out, "already had everything"));   // safe to run again
+    CHECK(Cli({"--project", P, "vc", "init"}, s) == 0 && Has(s.out, "already had everything"));   // safe to run again
 
-    CHECK(Cli({"vc", "status", "--project", P}, s) == 0 && Has(s.out, "Scenes and prefabs (1)") && Has(s.out, "Nothing has been saved yet"));
-    // Saving needs a name first; vc who stores it (in this test's private config).
-    CHECK(Cli({"vc", "who", "Test Person", "test@example.invalid", "--project", P}, s) == 0);
-    CHECK(Cli({"vc", "who", "--project", P}, s) == 0 && Has(s.out, "Test Person"));
-    CHECK(Cli({"vc", "save", "--project", P}, s) == 2);   // no message
+    CHECK(Cli({"--project", P, "vc", "status"}, s) == 0 && Has(s.out, "Scenes and prefabs (1)") && Has(s.out, "Nothing has been saved yet"));
+    // Saving needs a name first; vc who stores it in this project's own git config (not for every project).
+    CHECK(Cli({"--project", P, "vc", "who", "Test Person", "test@example.invalid"}, s) == 0 && Has(s.out, "in this project"));
+    CHECK(Cli({"--project", P, "vc", "who"}, s) == 0 && Has(s.out, "Test Person"));
+    CHECK(Has(GitOut(root, {"config", "--local", "user.name"}), "Test Person"));
+    CHECK(!fs::exists(home / ".gitconfig") || !Has(Read(home / ".gitconfig"), "Test Person"));
+    CHECK(Cli({"--project", tmp.string(), "vc", "who", "X", "x@example.invalid"}, s) == 1);   // no repository and no --global
+    CHECK(Cli({"--project", P, "vc", "save"}, s) == 2);   // no message
     const fs::path scene = root / "Assets" / "Level.okayscene";
     Write(scene, LevelText("0", "0"));
-    CHECK(Cli({"vc", "save", "First version", "--project", P}, s) == 0 && Has(s.out, "Saved") && Has(s.out, "First version"));
-    CHECK(Cli({"vc", "status", "--project", P}, s) == 0 && Has(s.out, "Everything is saved"));
-    CHECK(Cli({"vc", "save", "again", "--project", P}, s) == 0 && Has(s.out, "nothing to save"));
+    CHECK(Cli({"--project", P, "vc", "save", "First version"}, s) == 0 && Has(s.out, "Saved") && Has(s.out, "First version"));
+    CHECK(Cli({"--project", P, "vc", "status"}, s) == 0 && Has(s.out, "Everything is saved"));
+    CHECK(Cli({"--project", P, "vc", "save", "again"}, s) == 0 && Has(s.out, "nothing to save"));
     // Nothing ignored made it in: build output and backups stay out.
     Write(root / "build" / "Game.exe", "x");
     Write(root / ".okay" / "backups" / "Level.okayscene.1", "x");
     Write(root / "Assets" / "Level.okayscene.bak", "x");
-    CHECK(Cli({"vc", "status", "--project", P}, s) == 0 && Has(s.out, "Everything is saved"));
+    CHECK(Cli({"--project", P, "vc", "status"}, s) == 0 && Has(s.out, "Everything is saved"));
+    // ...but folders and files of the same names deeper in Assets are the person's own work and are saved.
+    for (const char* f : {"Assets/Models/Export/rock.png", "Assets/build/wall.okaymesh", "Assets/Temp/t.png", "Assets/Library/l.png",
+                          "Assets/notes.log", "Assets/Old.bak"})
+        Write(root / f, "x");
+    CHECK(Cli({"--project", P, "vc", "status"}, s) == 0 && Has(s.out, "Assets (6)") && Has(s.out, "Assets/Models/Export/rock.png") &&
+          Has(s.out, "Assets/build/wall.okaymesh"));
+    CHECK(Cli({"--project", P, "vc", "save", "Own folders"}, s) == 0 && Has(s.out, "Saved 6 changes"));
+    // The Build Settings output folder is kept out too.
+    Write(root / ".okay" / "build_live.cfg", "# OkaySpace build settings\n@profile live\ndir=Out/Game\n");
+    Write(root / "Out" / "Game" / "Game.exe", "x");
+    CHECK(Cli({"--project", P, "vc", "init"}, s) == 0);
+    CHECK(Has(Read(root / ".gitignore"), "\n/Out/Game/\n"));
+    CHECK(Cli({"--project", P, "vc", "status"}, s) == 0 && !Has(s.out, "Out/Game") && Has(s.out, "changed  .gitignore"));
+    // --project is taken only before the command: here it is part of the message.
+    CHECK(Cli({"--project", P, "vc", "save", "--", "fix --project thing"}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "history", "-n", "1"}, s) == 0 && Has(s.out, "fix --project thing"));
 
     // Change, history, undo (with a kept copy).
     Write(scene, LevelText("4", "0"));
-    CHECK(Cli({"vc", "status", "--project", P}, s) == 0 && Has(s.out, "changed  Assets/Level.okayscene"));
-    CHECK(Cli({"vc", "save", "Moved A", "--project", P}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "status"}, s) == 0 && Has(s.out, "changed  Assets/Level.okayscene"));
+    CHECK(Cli({"--project", P, "vc", "save", "Moved A"}, s) == 0);
     Write(scene, LevelText("8", "0"));
-    CHECK(Cli({"vc", "history", scene.string(), "--project", P}, s) == 0 && Has(s.out, "Moved A") && Has(s.out, "First version"));
-    CHECK(Cli({"vc", "history", "-n", "1", "--project", P}, s) == 0 && Has(s.out, "Moved A") && !Has(s.out, "First version"));
-    CHECK(Cli({"vc", "undo", scene.string(), "--project", P}, s) == 0 && Has(s.out, "is back to how it was"));
+    CHECK(Cli({"--project", P, "vc", "history", scene.string()}, s) == 0 && Has(s.out, "Moved A") && Has(s.out, "First version"));
+    CHECK(Cli({"--project", P, "vc", "history", "-n", "1"}, s) == 0 && Has(s.out, "Moved A") && !Has(s.out, "First version"));
+    CHECK(Cli({"--project", P, "vc", "undo", scene.string()}, s) == 0 && Has(s.out, "is back to how it was"));
     okay::Vec3 a, b;
     CHECK(PositionOf(Read(scene), "A", a) && a.x == 4.0f);
     bool kept = false;
     for (const auto& e : fs::directory_iterator(root / ".okay" / "backups" / "undo"))
         if (PositionOf(Read(e.path()), "A", b) && b.x == 8.0f) kept = true;
     CHECK(kept);
-    CHECK(Cli({"vc", "undo", scene.string(), "--project", P}, s) == 0 && Has(s.out, "no changes since the last save"));
+    CHECK(Cli({"--project", P, "vc", "undo", scene.string()}, s) == 0 && Has(s.out, "no changes since the last save"));
     const std::string first = GitOut(root, {"rev-list", "--max-parents=0", "HEAD"}).substr(0, 7);
-    CHECK(Cli({"vc", "undo", scene.string(), "--to", first, "--project", P}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "undo", scene.string(), "--to", first}, s) == 0);
     CHECK(PositionOf(Read(scene), "A", a) && a.x == 0.0f);
     GitOut(root, {"checkout", "HEAD", "--", scene.string()});
+    CHECK(Cli({"--project", P, "vc", "undo", scene.string(), "--to", "-q"}, s) == 1 && Has(s.err, "no save called"));
+    CHECK(Cli({"--project", P, "vc", "undo", (root / "Assets").string()}, s) == 1 && Has(s.err, "is a folder"));
+    // Kept copies never overwrite each other: same file name in two folders, and the same file twice in one second.
+    const fs::path xa = root / "Assets" / "A" / "x.okayscene", xb = root / "Assets" / "B" / "x.okayscene";
+    Write(xa, LevelText("1", "0"));
+    Write(xb, LevelText("2", "0"));
+    CHECK(Cli({"--project", P, "vc", "save", "two x"}, s) == 0);
+    for (int round = 0; round < 2; ++round) {
+        Write(xa, LevelText(std::to_string(10 + round), "0"));
+        Write(xb, LevelText(std::to_string(20 + round), "0"));
+        CHECK(Cli({"--project", P, "vc", "undo", xa.string()}, s) == 0);
+        CHECK(Cli({"--project", P, "vc", "undo", xb.string()}, s) == 0);
+    }
+    int copiesA = 0, copiesB = 0;
+    for (const auto& e : fs::directory_iterator(root / ".okay" / "backups" / "undo")) {
+        const std::string n = e.path().filename().string();
+        if (n.rfind("Assets~A~x.okayscene.", 0) == 0) ++copiesA;
+        if (n.rfind("Assets~B~x.okayscene.", 0) == 0) ++copiesB;
+    }
+    CHECK(copiesA == 2 && copiesB == 2);
     Write(root / "Assets" / "Never.okayscene", LevelText("1", "1"));
-    CHECK(Cli({"vc", "undo", (root / "Assets" / "Never.okayscene").string(), "--project", P}, s) == 1 && Has(s.err, "was never saved"));
+    CHECK(Cli({"--project", P, "vc", "undo", (root / "Assets" / "Never.okayscene").string()}, s) == 1 && Has(s.err, "was never saved"));
     fs::remove(root / "Assets" / "Never.okayscene");
 
     // Branches: a clean three-way scene merge through git's merge driver.
-    CHECK(Cli({"vc", "branch", "--project", P}, s) == 0 && Has(s.out, "* main"));
-    CHECK(Cli({"vc", "branch", "try-idea", "--project", P}, s) == 0 && Has(s.out, "you are on it now"));
+    CHECK(Cli({"--project", P, "vc", "branch"}, s) == 0 && Has(s.out, "* main"));
+    CHECK(Cli({"--project", P, "vc", "branch", "try-idea"}, s) == 0 && Has(s.out, "you are on it now"));
     Write(scene, LevelText("4", "6"));   // B moved on the new line
-    CHECK(Cli({"vc", "switch", "main", "--project", P}, s) == 1 && Has(s.err, "not saved yet"));
-    CHECK(Cli({"vc", "save", "Moved B", "--project", P}, s) == 0);
-    CHECK(Cli({"vc", "switch", "main", "--project", P}, s) == 0 && Has(s.out, "You are on main"));
-    CHECK(Cli({"vc", "switch", "nope", "--project", P}, s) == 1 && Has(s.err, "no version line called nope"));
+    CHECK(Cli({"--project", P, "vc", "switch", "main"}, s) == 1 && Has(s.err, "not saved yet"));
+    CHECK(Cli({"--project", P, "vc", "save", "Moved B"}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "switch", "main"}, s) == 0 && Has(s.out, "You are on main"));
+    CHECK(Cli({"--project", P, "vc", "switch", "nope"}, s) == 1 && Has(s.err, "no version line called nope"));
     Write(scene, LevelText("4", "0", "Crate"));   // C renamed on main
-    CHECK(Cli({"vc", "save", "Renamed C", "--project", P}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "save", "Renamed C"}, s) == 0);
     int code = -1;
     const std::string mergeSaid = GitOut(root, {"merge", "--no-edit", "try-idea"}, &code);
     CHECK(code == 0);
@@ -338,41 +424,126 @@ void TestGit(const fs::path& tmp) {
     CHECK(Has(GitOut(root, {"diff", "HEAD~1", "--", scene.string()}), "scene "));   // git diff goes through our scene diff
 
     // A real clash through git: A moved to different places on two lines.
-    CHECK(Cli({"vc", "branch", "other", "--project", P}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "branch", "other"}, s) == 0);
     Write(scene, LevelText("11", "6", "Crate"));
-    CHECK(Cli({"vc", "save", "A to 11", "--project", P}, s) == 0);
-    CHECK(Cli({"vc", "switch", "main", "--project", P}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "save", "A to 11"}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "switch", "main"}, s) == 0);
     Write(scene, LevelText("22", "6", "Crate"));
-    CHECK(Cli({"vc", "save", "A to 22", "--project", P}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "save", "A to 22"}, s) == 0);
     const std::string clash = GitOut(root, {"merge", "--no-edit", "other"}, &code);
     CHECK(code != 0);
     CHECK(Has(clash, "change clashes") && Has(clash, "you made it"));   // the driver's plain words reach the person
     CHECK(!Has(Read(scene), "<<<<<<<"));
     CHECK(PositionOf(Read(scene), "A", a) && a.x == 22.0f);   // loads, with our side kept
-    CHECK(Cli({"vc", "status", "--project", P}, s) == 0 && Has(s.out, "clash") && Has(s.out, "with changes from someone else"));
-    CHECK(Cli({"vc", "save", "Merged", "--project", P}, s) == 0);   // finishing the merge is a plain save
-    CHECK(Cli({"vc", "status", "--project", P}, s) == 0 && Has(s.out, "Everything is saved"));
+    // Nothing of the other side is lost silently: a report lists both values, and save refuses until it is settled.
+    const fs::path report = root / ".okay" / "clashes" / "Assets" / "Level.okayscene.txt";
+    CHECK(fs::is_regular_file(report));
+    CHECK(Has(Read(report), "you made it 22") && Has(Read(report), "they made it 11"));
+    CHECK(Cli({"--project", P, "vc", "status"}, s) == 0 && Has(s.out, "clash") && Has(s.out, "Clashes to settle (1)"));
+    CHECK(Cli({"--project", P, "vc", "save", "Merged"}, s) == 1 && Has(s.err, "not settled"));
+    CHECK(Cli({"--project", P, "vc", "resolve", scene.string()}, s) == 2);   // a choice is needed
+    CHECK(Cli({"--project", P, "vc", "resolve", scene.string(), "--theirs"}, s) == 0 && Has(s.out, "took theirs"));
+    CHECK(PositionOf(Read(scene), "A", a) && a.x == 11.0f);                  // their value for the clash...
+    CHECK(PositionOf(Read(scene), "B", b) && b.y == 6.0f);                   // ...and every change that did not clash
+    CHECK(!fs::exists(report));
+    CHECK(Cli({"--project", P, "vc", "save", "Merged"}, s) == 0);   // finishing the merge is a plain save
+    CHECK(Cli({"--project", P, "vc", "status"}, s) == 0 && Has(s.out, "Everything is saved"));
+
+    // --mine keeps your side of the clash and still takes their changes that did not clash.
+    CHECK(Cli({"--project", P, "vc", "branch", "other2"}, s) == 0);
+    Write(scene, LevelText("31", "6", "Box"));
+    CHECK(Cli({"--project", P, "vc", "save", "A to 31, Box"}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "switch", "main"}, s) == 0);
+    Write(scene, LevelText("32", "6", "Crate"));
+    CHECK(Cli({"--project", P, "vc", "save", "A to 32"}, s) == 0);
+    GitOut(root, {"merge", "--no-edit", "other2"}, &code);
+    CHECK(code != 0);
+    CHECK(Cli({"--project", P, "vc", "resolve", scene.string(), "--mine"}, s) == 0 && Has(s.out, "kept yours"));
+    CHECK(PositionOf(Read(scene), "A", a) && a.x == 32.0f);
+    { okay::Scene pr("p"); CHECK(okay::SceneSerializer::Deserialize(pr, Read(scene)) && pr.Find("Box") != nullptr); }
+    CHECK(Cli({"--project", P, "vc", "save", "Merged 2"}, s) == 0);
+
+    // --as-is keeps the file as the person fixed it by hand.
+    CHECK(Cli({"--project", P, "vc", "branch", "other3"}, s) == 0);
+    Write(scene, LevelText("41", "6", "Box"));
+    CHECK(Cli({"--project", P, "vc", "save", "A to 41"}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "switch", "main"}, s) == 0);
+    Write(scene, LevelText("42", "6", "Box"));
+    CHECK(Cli({"--project", P, "vc", "save", "A to 42"}, s) == 0);
+    GitOut(root, {"merge", "--no-edit", "other3"}, &code);
+    CHECK(code != 0);
+    Write(scene, LevelText("43", "6", "Box"));
+    CHECK(Cli({"--project", P, "vc", "resolve", scene.string(), "--as-is"}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "save", "Merged 3"}, s) == 0);
+    CHECK(PositionOf(Read(scene), "A", a) && a.x == 43.0f);
+
+    // In a rebase git swaps "ours" and "theirs": the words and --mine still mean the person's own change.
+    CHECK(Cli({"--project", P, "vc", "branch", "rb"}, s) == 0);
+    Write(scene, LevelText("51", "6", "Box"));
+    CHECK(Cli({"--project", P, "vc", "save", "A to 51"}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "switch", "main"}, s) == 0);
+    Write(scene, LevelText("52", "6", "Box"));
+    CHECK(Cli({"--project", P, "vc", "save", "A to 52"}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "switch", "rb"}, s) == 0);
+    const std::string rebaseSaid = GitOut(root, {"rebase", "main"}, &code);
+    CHECK(code != 0);
+    CHECK(Has(rebaseSaid, "you made it 51") && Has(rebaseSaid, "they made it 52"));
+    CHECK(Cli({"--project", P, "vc", "resolve", scene.string(), "--mine"}, s) == 0);
+    CHECK(PositionOf(Read(scene), "A", a) && a.x == 51.0f);
+    GitOut(root, {"-c", "core.editor=true", "rebase", "--continue"}, &code);
+    CHECK(code == 0);
+    CHECK(Cli({"--project", P, "vc", "switch", "main"}, s) == 0);
+
+    // A driver path that went stale (the launcher removed that version) is pointed at the stable okay again.
+    GitOut(root, {"config", "--local", "merge.okayscene.driver", "\"/nonexistent/okay\" vc merge-driver %O %A %B %P"});
+    CHECK(Cli({"--project", P, "vc", "status"}, s) == 0 && Has(s.err, "is gone"));
+    CHECK(!Has(GitOut(root, {"config", "merge.okayscene.driver"}), "/nonexistent/"));
+    CHECK(Has(GitOut(root, {"config", "merge.okayscene.driver"}), okaycli::SelfPath()));
 
     // Sync with an online copy: here a bare repository in a folder (any git host works the same way).
     const fs::path bare = tmp / "server.git";
     GitOut(tmp, {"init", "-q", "--bare", bare.string()});
     GitOut(tmp, {"--git-dir", bare.string(), "symbolic-ref", "HEAD", "refs/heads/main"});   // so a clone checks out main
-    CHECK(Cli({"vc", "sync", "--project", P}, s) == 1 && Has(s.err, "no online copy"));
-    CHECK(Cli({"vc", "remote", bare.string(), "--project", P}, s) == 0);
-    CHECK(Cli({"vc", "remote", "--project", P}, s) == 0 && Has(s.out, bare.string()));
-    CHECK(Cli({"vc", "sync", "--project", P}, s) == 0 && Has(s.out, "Synced"));
-    CHECK(GitOut(bare, {"--git-dir", bare.string(), "log", "--format=%s", "-n", "1", "main"}).rfind("Merged", 0) == 0);
+    CHECK(Cli({"--project", P, "vc", "sync"}, s) == 1 && Has(s.err, "no online copy"));
+    CHECK(Cli({"--project", P, "vc", "remote", bare.string()}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "remote"}, s) == 0 && Has(s.out, bare.string()));
+    CHECK(Cli({"--project", P, "vc", "sync"}, s) == 0 && Has(s.out, "Synced"));
+    CHECK(okay::str::Trim(GitOut(bare, {"--git-dir", bare.string(), "rev-parse", "main"})) == okay::str::Trim(GitOut(root, {"rev-parse", "HEAD"})));
     // A second person: clone, change B, sync; the first person syncs and gets it.
     const fs::path second = tmp / "second";
-    GitOut(tmp, {"clone", "-q", bare.string(), second.string()});
+    CHECK(Cli({"vc", "clone", bare.string(), second.string()}, s) == 0);   // join an existing project: clone and set up
+    CHECK(Has(GitOut(second, {"config", "merge.okayscene.driver"}), "vc merge-driver"));
+    CHECK(fs::is_regular_file(second / ".gitignore"));
+    CHECK(Cli({"--project", second.string(), "vc", "who", "--global", "Second Person", "second@example.invalid"}, s) == 0);
     Write(second / "Assets" / "Level.okayscene", LevelText("22", "33", "Crate"));
-    CHECK(Cli({"vc", "save", "B to 33", "--project", second.string()}, s) == 0);
-    CHECK(Cli({"vc", "sync", "--project", second.string()}, s) == 0);
-    CHECK(Cli({"vc", "sync", "--project", P}, s) == 0 && Has(s.out, "took in 1 new save"));
+    CHECK(Cli({"--project", second.string(), "vc", "save", "B to 33"}, s) == 0);
+    CHECK(Cli({"--project", second.string(), "vc", "sync"}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "sync"}, s) == 0 && Has(s.out, "took in 1 new save"));
     CHECK(PositionOf(Read(scene), "B", b) && b.y == 33.0f);
+    // A clash through sync: the clash list with both values is printed, then settled and sent.
+    Write(second / "Assets" / "Level.okayscene", LevelText("61", "33", "Box"));
+    CHECK(Cli({"--project", second.string(), "vc", "save", "A to 61"}, s) == 0);
+    CHECK(Cli({"--project", second.string(), "vc", "sync"}, s) == 0);
+    Write(scene, LevelText("62", "33", "Box"));
+    CHECK(Cli({"--project", P, "vc", "save", "A to 62"}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "sync"}, s) == 1 && Has(s.err, "you made it 62") && Has(s.err, "they made it 61") &&
+          Has(s.err, "These files clash"));
+    CHECK(Cli({"--project", P, "vc", "resolve", scene.string(), "--mine"}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "save", "Merged sync"}, s) == 0);
+    CHECK(Cli({"--project", P, "vc", "sync"}, s) == 0);
 
-    CHECK(Cli({"doctor", "--project", P}, s) >= 0 && Has(s.out, "Git merges and compares scenes with the engine"));
-    CHECK(Cli({"info", "--project", P}, s) == 0 && Has(s.out, "Version line: main") && Has(s.out, "Online copy: " + bare.string()));
+    // A project inside a bigger git folder: init refuses to change the outer one unless asked.
+    const fs::path outer = tmp / "outer";
+    fs::create_directories(outer);
+    GitOut(outer, {"init", "-q"});
+    CHECK(Cli({"new", "Inner", "--in", outer.string(), "--no-git"}, s) == 0);
+    CHECK(Cli({"--project", (outer / "Inner").string(), "vc", "init"}, s) == 1 && Has(s.err, "inside another Git folder"));
+    CHECK(!Has(GitOut(outer, {"config", "--local", "--get", "merge.okayscene.driver"}), "merge-driver"));
+    CHECK(Cli({"--project", (outer / "Inner").string(), "vc", "init", "--separate"}, s) == 0);
+    CHECK(fs::exists(outer / "Inner" / ".git"));
+
+    CHECK(Cli({"--project", P, "doctor"}, s) >= 0 && Has(s.out, "Git merges and compares scenes with the engine"));
+    CHECK(Cli({"--project", P, "info"}, s) == 0 && Has(s.out, "Version line: main") && Has(s.out, "Online copy: " + bare.string()));
 }
 
 } // namespace
@@ -394,6 +565,9 @@ int main(int argc, char** argv) {
     TestIgnoreAndAttributes();
     TestStatusGrouping();
     TestProjects(tmp);
+#if !defined(_WIN32)
+    TestPathLookup(tmp);
+#endif
     TestMergeDriverDirect(tmp);
     const bool git = okaycli::vc::Git::Available();
     if (git) TestGit(tmp);

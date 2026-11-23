@@ -3,6 +3,7 @@
 // documentation for the merge and diff driver interfaces (gitattributes: "Defining a custom merge driver",
 // "Defining an external diff driver").
 #include "Cli.hpp"
+#include "CliInternal.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -63,6 +64,64 @@ void Io::Warn(const std::string& text) const {
     else { std::fputs(t.c_str(), stderr); std::fflush(stderr); }
 }
 
+namespace detail {
+
+std::string Pad(std::string s, std::size_t n) { if (s.size() < n) s.resize(n, ' '); return s; }
+
+std::string ReadFile(const std::string& path, bool* ok) {
+    std::string t;
+    const bool r = okayproj::ReadText(path, t);
+    if (ok) *ok = r;
+    return t;
+}
+
+std::string JoinWords(const std::vector<std::string>& v, std::size_t from) {
+    std::string s;
+    for (std::size_t i = from; i < v.size(); ++i) { if (i > from) s += ' '; s += v[i]; }
+    return s;
+}
+
+/// Parse a command's arguments; a bad command line is said in plain words.
+bool ParseArgs(okay::CommandLine& cl, const std::vector<std::string>& args, const std::string& command, const Io& io) {
+    cl.Flag("help", "show this help").Short('h');
+    if (cl.Parse(args)) return true;
+    io.Warn(cl.Error() + "\n" + HelpText(command));
+    return false;
+}
+
+std::string RelTo(const std::string& path, const std::string& root) {
+    std::error_code ec;
+    const fs::path r = fs::relative(path, root, ec);
+    return ec || r.empty() ? path : r.generic_string();
+}
+
+bool HasClashMarks(const std::string& text) {
+    std::istringstream in(text);
+    for (std::string line; std::getline(in, line);)
+        if (line.rfind("<<<<<<< ", 0) == 0 || line == "<<<<<<<" || line.rfind(">>>>>>> ", 0) == 0) return true;
+    return false;
+}
+
+std::string StableOkayPath() {
+    // okay on PATH is where a person (and the installer) puts it; it does not move when a version is removed.
+    const std::string onPath = FindOnPath("okay");
+    if (!onPath.empty()) return onPath;
+    const std::string self = SelfPath();
+    if (self.empty()) return "";
+    // A kept copy of an older version (<L>/Versions/<v>/Tools/okay) is removed when the launcher prunes versions:
+    // use the launcher-level <L>/Tools/okay when there is one.
+    std::error_code ec;
+    const fs::path dir = fs::path(self).parent_path();
+    if (dir.parent_path().parent_path().filename() == okayver::VersionsDirName()) {
+        const fs::path top = okayver::LauncherDirOf(dir) / okayver::ToolsDirName() / fs::path(self).filename();
+        if (fs::is_regular_file(top, ec)) return top.string();
+    }
+    return self;
+}
+
+} // namespace detail
+using namespace detail;
+
 namespace {
 
 // ---- the commands and their help ---------------------------------------------------------------------------------
@@ -94,7 +153,7 @@ const std::vector<CommandHelp>& Commands() {
          "--engine runs the engine's own tests (ctest) in a build folder instead; -R picks tests by name."},
         {"info", "okay info", "Show the engine version, the project and its version control.", ""},
         {"doctor", "okay doctor", "Check that everything a project needs is in place, and say how to fix what is not.", ""},
-        {"vc", "okay vc <init|status|save|history|undo|branch|switch|sync|remote|who> ...",
+        {"vc", "okay vc <init|clone|status|save|resolve|history|undo|branch|switch|sync|remote|who> ...",
          "Version control (Git underneath).", ""},
         {"help", "okay help [command]", "Show help for a command.", ""},
     };
@@ -103,12 +162,19 @@ const std::vector<CommandHelp>& Commands() {
 
 const std::vector<CommandHelp>& VcCommands() {
     static const std::vector<CommandHelp> c = {
-        {"init", "okay vc init", "Start version control in this project.",
-         "Runs git init if needed, writes .gitignore (build output, caches, backups, per-person files) and\n"
+        {"init", "okay vc init [--separate | --outer]", "Start version control in this project.",
+         "Runs git init if needed, writes .gitignore (the build output folder, caches, backups, per-person files) and\n"
          ".gitattributes (scenes merge with the engine's scene merge, pictures and sounds are binary), and\n"
-         "tells Git to merge and compare .okayscene and .okayprefab files with the engine. Safe to run again."},
+         "tells Git to merge and compare .okayscene and .okayprefab files with the engine. Safe to run again.\n"
+         "A project inside another Git folder needs --separate (its own) or --outer (set up the outer one)."},
+        {"clone", "okay vc clone <url or folder> [folder]", "Get a copy of an existing project and set it up.", ""},
         {"status", "okay vc status", "What changed since the last save, grouped into scenes, scripts and assets.", ""},
-        {"save", "okay vc save \"message\"", "Save a version of every change, with a message saying what you did.", ""},
+        {"save", "okay vc save \"message\"", "Save a version of every change, with a message saying what you did.",
+         "It refuses while a clash from a merge or sync is not settled (see okay vc resolve)."},
+        {"resolve", "okay vc resolve <file> --mine | --theirs | --as-is", "Settle a clash after a merge or sync.",
+         "--mine keeps your side of each clash, --theirs takes theirs; every change that did not clash is kept\n"
+         "either way (a file that is not a scene is taken whole). --as-is keeps the file as you fixed it.\n"
+         "The clashes are listed in .okay/clashes/<file>.txt."},
         {"history", "okay vc history [file] [-n N]", "The saved versions, newest first (of one file, or of everything).", ""},
         {"undo", "okay vc undo <file> [--to ID]", "Put a file back to how it was at the last save (or at save ID).",
          "Your current copy is kept in .okay/backups/undo first, so nothing is lost."},
@@ -119,12 +185,12 @@ const std::vector<CommandHelp>& VcCommands() {
         {"sync", "okay vc sync", "Get the online copy's new saves and send yours.",
          "Works with any Git server or a shared folder. Set the online copy once with okay vc remote <url>."},
         {"remote", "okay vc remote [url]", "Show or set the online copy (the Git remote called origin).", ""},
-        {"who", "okay vc who [\"Your Name\" email]", "Show or set the name and email your saves are signed with.", ""},
+        {"who", "okay vc who [\"Your Name\" email] [--global]", "Show or set the name and email your saves are signed with.",
+         "Stored for this project; --global stores it for every project on this computer."},
     };
     return c;
 }
 
-std::string Pad(std::string s, std::size_t n) { if (s.size() < n) s.resize(n, ' '); return s; }
 
 } // namespace
 
@@ -134,7 +200,7 @@ std::string HelpText(const std::string& command) {
         for (const CommandHelp& c : Commands()) t += "  " + Pad(c.name, 8) + c.summary + "\n";
         t += "\nVersion control:\n";
         for (const CommandHelp& c : VcCommands()) t += "  vc " + Pad(c.name, 9) + c.summary + "\n";
-        t += "\nEvery command takes --project FOLDER (default: the project this folder is in).\n"
+        t += "\nPut --project FOLDER before the command to work on another project (default: the one this folder is in).\n"
              "okay help <command> tells you more.\n";
         return t;
     }
@@ -279,27 +345,9 @@ unsigned long OwnPid() {
 #endif
 }
 
-std::string ReadFile(const std::string& path, bool* ok = nullptr) {
-    std::string t;
-    const bool r = okayproj::ReadText(path, t);
-    if (ok) *ok = r;
-    return t;
-}
 
 
-std::string JoinWords(const std::vector<std::string>& v, std::size_t from = 0) {
-    std::string s;
-    for (std::size_t i = from; i < v.size(); ++i) { if (i > from) s += ' '; s += v[i]; }
-    return s;
-}
 
-/// Parse a command's arguments; a bad command line is said in plain words.
-bool ParseArgs(okay::CommandLine& cl, const std::vector<std::string>& args, const std::string& command, const Io& io) {
-    cl.Flag("help", "show this help").Short('h');
-    if (cl.Parse(args)) return true;
-    io.Warn(cl.Error() + "\n" + HelpText(command));
-    return false;
-}
 
 /// The project root to work on: --project, else the project this folder is in.
 std::string ProjectOrSay(const std::string& given, const Io& io, bool quiet = false) {
@@ -310,11 +358,6 @@ std::string ProjectOrSay(const std::string& given, const Io& io, bool quiet = fa
     return root;
 }
 
-std::string RelTo(const std::string& path, const std::string& root) {
-    std::error_code ec;
-    const fs::path r = fs::relative(path, root, ec);
-    return ec || r.empty() ? path : r.generic_string();
-}
 
 // ---- okay new / open / play / run / build / test -------------------------------------------------------------------
 
@@ -369,7 +412,7 @@ int CmdNew(const std::vector<std::string>& args, const std::string&, const Io& i
     if (!cl.Has("no-git")) {
         if (!vc::Git::Available()) io.Say("Git is not installed, so the project has no version control yet. Install Git, then run: okay vc init");
         else {
-            const int rc = Main({"vc", "init", "--project", root}, io);
+            const int rc = Main({"--project", root, "vc", "init"}, io);
             if (rc != 0) return rc;
         }
     }
@@ -488,12 +531,6 @@ int CmdBuild(const std::vector<std::string>& args, const std::string& project, c
     return r.exitCode == 0 ? 0 : 1;
 }
 
-bool HasClashMarks(const std::string& text) {
-    std::istringstream in(text);
-    for (std::string line; std::getline(in, line);)
-        if (line.rfind("<<<<<<< ", 0) == 0 || line == "<<<<<<<" || line.rfind(">>>>>>> ", 0) == 0) return true;
-    return false;
-}
 
 int CmdTest(const std::vector<std::string>& args, const std::string& project, const Io& io) {
     okay::CommandLine cl;
@@ -646,7 +683,7 @@ int CmdDoctor(const std::vector<std::string>& args, const std::string& project, 
             if (!git.IsRepo()) note("Version control is not started here (okay vc init starts it).");
             else {
                 const RunResult d = git.Capture({"config", "--get", "merge.okayscene.driver"});
-                const std::string want = vc::MergeDriverCommand(SelfPath());
+                const std::string want = vc::MergeDriverCommand(StableOkayPath());
                 const std::string have = Trim(d.out);
                 if (have.empty()) bad("Git does not merge scenes with the engine yet.", "run okay vc init.");
                 else if (have != want) bad("Git's scene merge points at a different okay program (" + have + ").", "run okay vc init with this okay.");
@@ -666,474 +703,20 @@ int CmdDoctor(const std::vector<std::string>& args, const std::string& project, 
     return problems == 0 ? 0 : 1;
 }
 
-// ---- okay vc ---------------------------------------------------------------------------------------------------
-
-/// The git folder for a vc command: the project, else this folder (vc works in any folder, but says so).
-std::string VcFolder(const std::string& project) {
-    const std::string root = FindProjectRoot(project.empty() ? "." : project);
-    if (!root.empty()) return root;
-    std::error_code ec;
-    return fs::absolute(project.empty() ? "." : project, ec).string();
-}
-
-bool NeedGit(const Io& io) {
-    if (vc::Git::Available()) return true;
-    io.Warn("Git is not installed (or not on PATH). Install it from git-scm.com, then try again.");
-    return false;
-}
-
-bool NeedRepo(const vc::Git& git, const Io& io) {
-    if (!NeedGit(io)) return false;
-    if (git.IsRepo()) return true;
-    io.Warn("Version control is not started in this project yet. Start it with: okay vc init");
-    return false;
-}
-
-
-/// git's own words when it refused, kept short (first lines of stderr).
-std::string GitSaid(const RunResult& r) {
-    std::string e = Trim(r.err.empty() ? r.out : r.err);
-    if (e.size() > 600) e = e.substr(0, 600) + " ...";
-    return e.empty() ? std::string() : "\nGit said: " + e;
-}
-
-bool IdentityProblem(const RunResult& r) {
-    return r.err.find("Please tell me who you are") != std::string::npos || r.err.find("empty ident") != std::string::npos ||
-           r.err.find("unable to auto-detect email") != std::string::npos;
-}
-const char* kWhoHint = "Git needs your name and email once, to sign your saves. Run: okay vc who \"Your Name\" you@example.com";
-
-int VcInit(const std::vector<std::string>& args, const std::string& project, const Io& io) {
-    okay::CommandLine cl;
-    if (!ParseArgs(cl, args, "vc init", io)) return 2;
-    if (cl.Has("help")) { io.Say(HelpText("vc init")); return 0; }
-    if (!NeedGit(io)) return 1;
-    const std::string folder = VcFolder(project);
-    if (FindProjectRoot(folder).empty()) io.Say("Note: this folder does not look like an OkaySpace project; starting version control anyway.");
-    vc::Git git(folder);
-    const bool existed = git.IsRepo();
-    if (!existed) {
-        const RunResult r = git.Capture({"init", "-q"});
-        if (!r.started || r.exitCode != 0) { io.Warn("Couldn't start version control here." + GitSaid(r)); return 1; }
-        git.Capture({"symbolic-ref", "HEAD", "refs/heads/main"});   // the first version line is called main (works on every git version)
-    }
-    int addedIgnore = 0, addedAttr = 0;
-    std::string err;
-    const fs::path ignore = fs::path(folder) / ".gitignore", attrs = fs::path(folder) / ".gitattributes";
-    const std::string oldIgnore = ReadFile(ignore.string()), oldAttrs = ReadFile(attrs.string());
-    const std::string newIgnore = vc::GitIgnoreText(oldIgnore, &addedIgnore), newAttrs = vc::GitAttributesText(oldAttrs, &addedAttr);
-    if (addedIgnore && !okayproj::WriteTextAtomic(ignore.string(), newIgnore, &err)) { io.Warn("Couldn't write .gitignore: " + err); return 1; }
-    if (addedAttr && !okayproj::WriteTextAtomic(attrs.string(), newAttrs, &err)) { io.Warn("Couldn't write .gitattributes: " + err); return 1; }
-    // Tell git to merge and compare scenes and prefabs with this program (the engine's SceneMerge and SceneDiff).
-    const std::string self = SelfPath();
-    if (self.empty()) { io.Warn("Couldn't find this program's own path, so Git can't be told to merge scenes with it."); return 1; }
-    const std::vector<std::vector<std::string>> config = {
-        {"config", "merge.okayscene.name", "OkaySpace scene merge"},
-        {"config", "merge.okayscene.driver", vc::MergeDriverCommand(self)},
-        {"config", "diff.okayscene.command", vc::DiffDriverCommand(self)},
-    };
-    for (const auto& c : config) {
-        const RunResult r = git.Capture(c);
-        if (!r.started || r.exitCode != 0) { io.Warn("Couldn't set up Git's scene merge." + GitSaid(r)); return 1; }
-    }
-    std::string t = existed ? "Version control was already on here; it is set up for OkaySpace now.\n" : "Started version control in " + folder + ".\n";
-    t += addedIgnore ? "  .gitignore: " + std::to_string(addedIgnore) + " line(s) added (build output, caches, backups, your own editor files).\n"
-                     : "  .gitignore already had everything.\n";
-    t += addedAttr ? "  .gitattributes: " + std::to_string(addedAttr) + " line(s) added (scenes merge with the engine; pictures and sounds are binary).\n"
-                   : "  .gitattributes already had everything.\n";
-    t += "  Scenes and prefabs now merge and compare with the engine's own scene merge.\n";
-    if (!git.HasCommits()) t += "Make your first save with: okay vc save \"First version\"\n";
-    io.Say(t);
-    return 0;
-}
-
-int VcStatus(const std::vector<std::string>& args, const std::string& project, const Io& io) {
-    okay::CommandLine cl;
-    if (!ParseArgs(cl, args, "vc status", io)) return 2;
-    if (cl.Has("help")) { io.Say(HelpText("vc status")); return 0; }
-    vc::Git git(VcFolder(project));
-    if (!NeedRepo(git, io)) return 1;
-    std::string t = vc::StatusText(git.Status(), git.Branch());
-    if (!git.HasCommits()) t += "Nothing has been saved yet.\n";
-    io.Say(t);
-    return 0;
-}
-
-int VcWho(const std::vector<std::string>& args, const std::string& project, const Io& io) {
-    okay::CommandLine cl;
-    if (!ParseArgs(cl, args, "vc who", io)) return 2;
-    if (cl.Has("help")) { io.Say(HelpText("vc who")); return 0; }
-    if (!NeedGit(io)) return 1;
-    vc::Git git(VcFolder(project));
-    if (cl.Positionals().empty()) {
-        const std::string name = Trim(git.Capture({"config", "user.name"}).out), email = Trim(git.Capture({"config", "user.email"}).out);
-        io.Say(name.empty() ? std::string(kWhoHint) : "Your saves are signed " + name + (email.empty() ? "" : " <" + email + ">") + ".");
-        return 0;
-    }
-    if (cl.Positionals().size() != 2) { io.Warn("Give your name and your email: okay vc who \"Your Name\" you@example.com"); return 2; }
-    for (const auto& kv : {std::make_pair("user.name", cl.Positional(0)), std::make_pair("user.email", cl.Positional(1))}) {
-        const RunResult r = git.Capture({"config", "--global", kv.first, kv.second});
-        if (!r.started || r.exitCode != 0) { io.Warn("Couldn't store that." + GitSaid(r)); return 1; }
-    }
-    io.Say("Your saves are signed " + cl.Positional(0) + " <" + cl.Positional(1) + "> from now on (every project on this computer).");
-    return 0;
-}
-
-int VcSave(const std::vector<std::string>& args, const std::string& project, const Io& io) {
-    okay::CommandLine cl;
-    cl.Value("message", "TEXT").Short('m');
-    if (!ParseArgs(cl, args, "vc save", io)) return 2;
-    if (cl.Has("help")) { io.Say(HelpText("vc save")); return 0; }
-    const std::string folder = VcFolder(project);
-    vc::Git git(folder);
-    if (!NeedRepo(git, io)) return 1;
-    std::string message = cl.Has("message") ? cl.Get("message") : JoinWords(cl.Positionals());
-    if (Trim(message).empty()) { io.Warn("Say what you changed: okay vc save \"Added the second level\""); return 2; }
-    const std::vector<vc::Change> before = git.Status();
-    const std::string top = git.TopLevel();
-    for (const vc::Change& c : before) {   // never save a file that still has text-merge clash marks in it
-        if (c.state != vc::State::Conflict) continue;
-        const std::string text = ReadFile((fs::path(top) / c.path).string());
-        if (HasClashMarks(text)) {
-            io.Warn(c.path + " still has clash marks (<<<<<<< and >>>>>>>) in it. Open it, keep what you want, remove the marks, then save again.");
-            return 1;
-        }
-    }
-    const bool merging = git.Capture({"rev-parse", "-q", "--verify", "MERGE_HEAD"}).exitCode == 0;
-    if (before.empty() && !merging) { io.Say("Nothing has changed since the last save, so there is nothing to save."); return 0; }
-    RunResult r = git.Capture({"add", "-A", "--", "."});
-    if (!r.started || r.exitCode != 0) { io.Warn("Couldn't gather the changes." + GitSaid(r)); return 1; }
-    r = git.Capture({"commit", "-q", "-m", message});
-    if (!r.started || r.exitCode != 0) {
-        if (IdentityProblem(r)) io.Warn(kWhoHint);
-        else io.Warn("The save did not work." + GitSaid(r));
-        return 1;
-    }
-    const std::string id = Trim(git.Capture({"rev-parse", "--short", "HEAD"}).out);
-    io.Say("Saved " + std::to_string(before.size()) + (before.size() == 1 ? " change" : " changes") + " as " + id + ": " + message);
-    return 0;
-}
-
-int VcHistory(const std::vector<std::string>& args, const std::string& project, const Io& io) {
-    okay::CommandLine cl;
-    cl.Value("count", "N", "how many", "20").Short('n');
-    if (!ParseArgs(cl, args, "vc history", io)) return 2;
-    if (cl.Has("help")) { io.Say(HelpText("vc history")); return 0; }
-    vc::Git git(VcFolder(project));
-    if (!NeedRepo(git, io)) return 1;
-    if (!git.HasCommits()) { io.Say("Nothing has been saved yet."); return 0; }
-    int n = 20;
-    if (!cl.TryGetInt("count", 1, 100000, n)) { io.Warn("-n needs a number from 1 up."); return 2; }
-    std::vector<std::string> a = {"log", "-n", std::to_string(n), "--date=format:%Y-%m-%d %H:%M", "--format=%h%x1f%ad%x1f%an%x1f%s"};
-    const std::string file = cl.Positional(0);
-    std::error_code ec;
-    if (!file.empty()) { a.push_back("--follow"); a.push_back("--"); a.push_back(fs::absolute(file, ec).string()); }
-    const RunResult r = git.Capture(a);
-    if (!r.started || r.exitCode != 0) { io.Warn("Couldn't read the history." + GitSaid(r)); return 1; }
-    std::string t;
-    int count = 0;
-    std::istringstream in(r.out);
-    for (std::string line; std::getline(in, line);) {
-        std::vector<std::string> f;
-        std::size_t at = 0;
-        for (std::size_t s; (s = line.find('\x1f', at)) != std::string::npos; at = s + 1) f.push_back(line.substr(at, s - at));
-        f.push_back(line.substr(at));
-        if (f.size() < 4) continue;
-        t += "  " + f[0] + "  " + f[1] + "  " + Pad(f[2], 16) + "  " + f[3] + "\n";
-        ++count;
-    }
-    if (!count) { io.Say(file.empty() ? "Nothing has been saved yet." : file + " has never been saved."); return 0; }
-    io.Say((file.empty() ? std::string("Saves, newest first:\n") : "Saves of " + file + ", newest first:\n") + t +
-           "Put a file back with: okay vc undo <file> [--to ID]");
-    return 0;
-}
-
-int VcUndo(const std::vector<std::string>& args, const std::string& project, const Io& io) {
-    okay::CommandLine cl;
-    cl.Value("to", "ID");
-    if (!ParseArgs(cl, args, "vc undo", io)) return 2;
-    if (cl.Has("help")) { io.Say(HelpText("vc undo")); return 0; }
-    const std::string folder = VcFolder(project);
-    vc::Git git(folder);
-    if (!NeedRepo(git, io)) return 1;
-    const std::string file = cl.Positional(0);
-    if (file.empty()) { io.Warn("Say which file to put back: okay vc undo Assets/Level.okayscene"); return 2; }
-    if (!git.HasCommits()) { io.Warn("Nothing has been saved yet, so there is nothing to go back to."); return 1; }
-    const std::string rev = cl.Get("to", "HEAD");
-    std::error_code ec;
-    const fs::path abs = fs::absolute(file, ec).lexically_normal();
-    const std::string top = git.TopLevel();
-    const std::string rel = RelTo(abs.string(), top);
-    if (rel.rfind("..", 0) == 0) { io.Warn(file + " is not inside this project."); return 1; }
-    const RunResult exists = git.Capture({"cat-file", "-e", rev + ":" + rel});
-    if (exists.exitCode != 0) {
-        io.Warn(rev == "HEAD" ? file + " was never saved, so there is no saved copy to go back to."
-                              : file + " is not in save " + rev + " (or there is no save " + rev + "). See okay vc history " + file);
-        return 1;
-    }
-    const RunResult same = git.Capture({"diff", "--quiet", rev, "--", abs.string()});
-    if (same.exitCode == 0 && fs::exists(abs, ec)) {
-        io.Say(file + (rev == "HEAD" ? " has no changes since the last save." : " is already the same as in save " + rev + "."));
-        return 0;
-    }
-    std::string backup;
-    if (fs::is_regular_file(abs, ec)) {   // keep the current copy first, so undo never loses work
-        char stamp[32];
-        const std::time_t now = std::time(nullptr);
-        std::tm tmv{};
-#if defined(_WIN32)
-        localtime_s(&tmv, &now);
-#else
-        localtime_r(&now, &tmv);
-#endif
-        std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
-        const fs::path dir = fs::path(folder) / ".okay" / "backups" / "undo";
-        fs::create_directories(dir, ec);
-        const fs::path dst = dir / (abs.filename().string() + "." + stamp);
-        fs::copy_file(abs, dst, fs::copy_options::overwrite_existing, ec);
-        if (ec) { io.Warn("Couldn't keep a copy of " + file + " first (" + ec.message() + "), so nothing was changed."); return 1; }
-        backup = RelTo(dst.string(), folder);
-    }
-    const RunResult r = git.Capture({"checkout", rev, "--", abs.string()});
-    if (!r.started || r.exitCode != 0) { io.Warn("Couldn't put " + file + " back." + GitSaid(r)); return 1; }
-    const std::string id = Trim(git.Capture({"rev-parse", "--short", rev}).out);
-    io.Say(file + " is back to how it was in save " + id + "." + (backup.empty() ? "" : " Your copy from before is in " + backup + "."));
-    return 0;
-}
-
-std::vector<std::string> Branches(const vc::Git& git) {
-    std::vector<std::string> v;
-    std::istringstream in(git.Capture({"branch", "--format=%(refname:short)"}).out);
-    for (std::string l; std::getline(in, l);) { l = Trim(l); if (!l.empty()) v.push_back(l); }
-    return v;
-}
-
-int VcBranch(const std::vector<std::string>& args, const std::string& project, const Io& io) {
-    okay::CommandLine cl;
-    if (!ParseArgs(cl, args, "vc branch", io)) return 2;
-    if (cl.Has("help")) { io.Say(HelpText("vc branch")); return 0; }
-    vc::Git git(VcFolder(project));
-    if (!NeedRepo(git, io)) return 1;
-    const std::string cur = git.Branch();
-    const std::string name = cl.Positional(0);
-    if (name.empty()) {
-        std::vector<std::string> list = Branches(git);
-        if (list.empty() && !cur.empty()) list.push_back(cur);
-        std::string t = "Version lines:\n";
-        for (const std::string& b : list) t += (b == cur ? "  * " : "    ") + b + (b == cur ? "  (you are here)" : "") + "\n";
-        io.Say(t + "Start a new one with: okay vc branch <name>");
-        return 0;
-    }
-    if (!git.HasCommits()) { io.Warn("Save once first (okay vc save \"First version\"); a new version line starts from a save."); return 1; }
-    if (git.Capture({"check-ref-format", "--branch", name}).exitCode != 0) { io.Warn("\"" + name + "\" can't be a version line name. Use letters, numbers and dashes."); return 2; }
-    const std::vector<std::string> list = Branches(git);
-    if (std::find(list.begin(), list.end(), name) != list.end()) { io.Warn("There is already a version line called " + name + ". Move to it with: okay vc switch " + name); return 1; }
-    const RunResult r = git.Capture({"checkout", "-q", "-b", name});
-    if (!r.started || r.exitCode != 0) { io.Warn("Couldn't start the version line." + GitSaid(r)); return 1; }
-    io.Say("Started the version line " + name + " from " + (cur.empty() ? std::string("here") : cur) + ", and you are on it now. Unsaved changes came with you.\n"
-           "Go back with: okay vc switch " + (cur.empty() ? std::string("main") : cur));
-    return 0;
-}
-
-int VcSwitch(const std::vector<std::string>& args, const std::string& project, const Io& io) {
-    okay::CommandLine cl;
-    cl.Flag("carry");
-    if (!ParseArgs(cl, args, "vc switch", io)) return 2;
-    if (cl.Has("help")) { io.Say(HelpText("vc switch")); return 0; }
-    vc::Git git(VcFolder(project));
-    if (!NeedRepo(git, io)) return 1;
-    const std::string name = cl.Positional(0);
-    if (name.empty()) { io.Warn("Say which version line to move to. See them with: okay vc branch"); return 2; }
-    const std::vector<std::string> list = Branches(git);
-    if (std::find(list.begin(), list.end(), name) == list.end()) {
-        std::string t = "There is no version line called " + name + ". There are:";
-        for (const std::string& b : list) t += " " + b;
-        io.Warn(t);
-        return 1;
-    }
-    if (name == git.Branch()) { io.Say("You are already on " + name + "."); return 0; }
-    const std::vector<vc::Change> changes = git.Status();
-    if (!changes.empty() && !cl.Has("carry")) {
-        io.Warn(std::to_string(changes.size()) + (changes.size() == 1 ? " change is" : " changes are") + " not saved yet. Save first (okay vc save \"message\"),\n"
-                "or run okay vc switch " + name + " --carry to take the changes with you.");
-        return 1;
-    }
-    const RunResult r = git.Capture({"checkout", "-q", name});
-    if (!r.started || r.exitCode != 0) {
-        io.Warn("Couldn't move to " + name + ". Your unsaved changes clash with files that differ there; save them first." + GitSaid(r));
-        return 1;
-    }
-    io.Say("You are on " + name + " now. If the editor is open, open the scene again to see this version.");
-    return 0;
-}
-
-int VcRemote(const std::vector<std::string>& args, const std::string& project, const Io& io) {
-    okay::CommandLine cl;
-    if (!ParseArgs(cl, args, "vc remote", io)) return 2;
-    if (cl.Has("help")) { io.Say(HelpText("vc remote")); return 0; }
-    vc::Git git(VcFolder(project));
-    if (!NeedRepo(git, io)) return 1;
-    const std::string url = cl.Positional(0), have = git.Remote();
-    if (url.empty()) {
-        io.Say(have.empty() ? "This project has no online copy yet. Set one with: okay vc remote <url or folder>" : "The online copy is " + have + ".");
-        return 0;
-    }
-    const RunResult r = git.Capture(have.empty() ? std::vector<std::string>{"remote", "add", "origin", url}
-                                                 : std::vector<std::string>{"remote", "set-url", "origin", url});
-    if (!r.started || r.exitCode != 0) { io.Warn("Couldn't set the online copy." + GitSaid(r)); return 1; }
-    io.Say("The online copy is " + url + " now. Send your saves with: okay vc sync");
-    return 0;
-}
-
-int VcSync(const std::vector<std::string>& args, const std::string& project, const Io& io) {
-    okay::CommandLine cl;
-    if (!ParseArgs(cl, args, "vc sync", io)) return 2;
-    if (cl.Has("help")) { io.Say(HelpText("vc sync")); return 0; }
-    vc::Git git(VcFolder(project));
-    if (!NeedRepo(git, io)) return 1;
-    if (git.Remote().empty()) { io.Warn("This project has no online copy yet. Set one with: okay vc remote <url or folder>"); return 1; }
-    const std::string branch = git.Branch();
-    if (branch.empty()) { io.Warn("You are not on a version line, so there is nothing to sync. Move to one with okay vc switch main."); return 1; }
-    const std::vector<vc::Change> changes = git.Status();
-    if (!changes.empty()) { io.Warn("Save your changes first (okay vc save \"message\"), then sync."); return 1; }
-    io.Say("Getting new saves from the online copy...");
-    RunResult r = git.Attached({"fetch", "-q", "origin"});
-    if (!r.started || r.exitCode != 0) { io.Warn("Couldn't reach the online copy. Check the address (okay vc remote) and your connection."); return 1; }
-    int got = 0;
-    if (git.Capture({"rev-parse", "-q", "--verify", "refs/remotes/origin/" + branch}).exitCode == 0) {
-        const std::string count = Trim(git.Capture({"rev-list", "--count", "HEAD..refs/remotes/origin/" + branch}).out);
-        got = std::atoi(count.c_str());
-        if (!git.HasCommits()) got = std::max(got, 1);
-        if (got > 0) {
-            r = git.Capture({"merge", "--no-edit", "-q", "refs/remotes/origin/" + branch});
-            if (!r.started || r.exitCode != 0) {
-                std::string t;
-                for (const vc::Change& c : git.Status()) if (c.state == vc::State::Conflict) t += "\n  " + c.path;
-                if (t.empty()) {
-                    io.Warn(IdentityProblem(r) ? std::string(kWhoHint) : "Couldn't take in the new saves." + GitSaid(r));
-                    return 1;
-                }
-                io.Warn("Someone else changed the same things as you. These files clash:" + t + "\n"
-                        "Scenes kept your side of each clash and the lines above list them. Open each file, keep what you want,\n"
-                        "then run okay vc save \"Merged\" and okay vc sync again.");
-                return 1;
-            }
-        }
-    }
-    if (git.HasCommits()) {
-        io.Say("Sending your saves...");
-        r = git.Attached({"push", "-q", "-u", "origin", branch});
-        if (!r.started || r.exitCode != 0) { io.Warn("Couldn't send your saves to the online copy. Check that you may write to it."); return 1; }
-    }
-    io.Say(got > 0 ? "Synced: took in " + std::to_string(got) + " new save(s) and sent yours." : "Synced: the online copy and this project match.");
-    return 0;
-}
-
-// ---- the merge and diff drivers git calls ---------------------------------------------------------------------
-
-std::string Upgraded(const std::string& text) {
-    const okay::SceneMigration::Result m = okay::SceneMigration::MigrateToCurrent(text);
-    return m.ok && m.complete ? m.text : text;
-}
-
-std::string Shown(const std::string& v) {
-    if (v.empty()) return "(empty)";
-    return v.size() > 40 ? v.substr(0, 37) + "..." : v;
-}
-
-/// One clash in plain words.
-std::string ClashSentence(const okay::SceneMerge::Conflict& c) {
-    using K = okay::SceneMerge::Conflict::Kind;
-    const std::string who = !c.path.empty() ? c.path : !c.name.empty() ? c.name : std::string("Scene settings");
-    const std::string part = c.record.empty() ? std::string("a part") : "the " + c.record + " part";
-    std::string s;
-    switch (c.kind) {
-        case K::FieldChanged:
-            s = who + ": " + (c.record.empty() ? std::string() : c.record + " ") + (c.field.empty() ? "value" : c.field) + " was " + Shown(c.base) +
-                "; you made it " + Shown(c.ours) + " and they made it " + Shown(c.theirs) + ".";
-            break;
-        case K::RecordChanged: s = who + ": " + part + " was changed differently on both sides."; break;
-        case K::RecordDeletedAndEdited: s = who + ": one side removed " + part + " and the other changed it."; break;
-        case K::RecordAddedDifferently: s = who + ": both sides added " + part + ", in different ways."; break;
-        case K::ObjectDeletedAndEdited: s = who + ": one side deleted this object and the other changed it."; break;
-        case K::RenamedDifferently: s = who + ": you renamed it " + Shown(c.ours) + " and they renamed it " + Shown(c.theirs) + "."; break;
-        case K::ParentChanged: s = who + ": you and they moved it under different parents."; break;
-        case K::ParentDeleted: s = who + ": it was put under an object that the other side deleted."; break;
-        case K::ParentCycle: s = who + ": the two moves together would put it inside itself."; break;
-        case K::OrderChanged: s = who + ": you and they moved it to different places in the list."; break;
-        case K::Invalid: return "The merged scene would not load, so your version was kept whole.";
-    }
-    if (!c.resolution.empty()) s += " Kept: " + (c.resolution == "ours" ? std::string("yours") : c.resolution) + ".";
-    return s;
-}
-
 } // namespace
 
-int SceneMergeDriver(const std::string& basePath, const std::string& oursPath, const std::string& theirsPath,
-                     const std::string& shownName, const Io& io) {
-    bool okB = false, okO = false, okT = false;
-    const std::string base = ReadFile(basePath, &okB), ours = ReadFile(oursPath, &okO), theirs = ReadFile(theirsPath, &okT);
-    const std::string name = shownName.empty() ? fs::path(oursPath).filename().string() : shownName;
-    if (!okO || !okT) { io.Warn(name + ": couldn't read the two versions to merge."); return 2; }
-    okay::SceneMerge::Options opt;
-    opt.policy = okay::SceneMerge::Policy::Mark;
-    opt.validator = [](const std::string& text, std::string* error) {   // the merged text must load into a real scene
-        okay::Scene probe("probe");
-        return okay::SceneSerializer::Deserialize(probe, text, error);
-    };
-    const okay::SceneMerge::Result r = okay::SceneMerge::Merge(Upgraded(base), Upgraded(ours), Upgraded(theirs), opt);
-    if (!r.ok) {
-        // Not a scene the engine can read (or damaged): let git merge it as plain text, with its usual clash marks.
-        io.Warn(name + ": not a scene the engine can read (" + r.error + "), so it was merged as plain text.");
-        const RunResult t = Run({vc::Git::Program(), "merge-file", "-L", "yours", "-L", "base", "-L", "theirs", oursPath, basePath, theirsPath}, "", true);
-        if (!t.started) return 2;
-        return t.exitCode == 0 ? 0 : 1;
-    }
-    std::string err;
-    if (!okayproj::WriteTextAtomic(oursPath, r.text, &err)) { io.Warn(name + ": couldn't write the merged scene: " + err); return 2; }
-    if (r.Clean()) {
-        io.Warn(name + ": merged both sets of changes with the engine's scene merge.");
-        return 0;
-    }
-    std::string t = name + ": " + std::to_string(r.conflicts.size()) + (r.conflicts.size() == 1 ? " change clashes" : " changes clash") +
-                    " (you and they changed the same thing). The file has your side of each one and still loads:";
-    for (const auto& c : r.conflicts) t += "\n  - " + ClashSentence(c);
-    t += "\nOpen it in the editor, fix what you want, then save with: okay vc save \"Merged\"";
-    io.Warn(t);
-    return 1;
-}
-
-int SceneDiffDriver(const std::vector<std::string>& args, const Io& io) {
-    std::string path, oldFile, newFile;
-    if (args.size() >= 7) { path = args[0]; oldFile = args[1]; newFile = args[4]; }
-    else if (args.size() == 2) { oldFile = args[0]; newFile = args[1]; path = newFile; }
-    else { io.Warn("Usage: okay vc diff-driver <path> <old-file> <old-hex> <old-mode> <new-file> <new-hex> <new-mode>"); return 2; }
-    auto load = [](const std::string& f) {
-        if (f == "/dev/null" || f == "nul" || f == "NUL") return std::string();
-        return ReadFile(f);
-    };
-    const std::string a = load(oldFile), b = load(newFile);
-    const okay::SceneDiff::Result d = okay::SceneDiff::Compute(a, b);
-    if (!d.ok) {   // not a readable scene: show the plain text difference
-        const RunResult r = Run({vc::Git::Program(), "diff", "--no-index", "--no-ext-diff", "--", oldFile, newFile}, "", true);
-        io.Say("scene " + path + " (not readable as a scene: " + d.error + "; plain text difference)\n" + r.out);
-        return 0;
-    }
-    if (d.Empty()) { io.Say("scene " + path + ": no change to the scene (only how the file is laid out)"); return 0; }
-    io.Say("scene " + path + "\n" + d.ToText());
-    return 0;
-}
-
 int Main(const std::vector<std::string>& argsIn, const Io& io) {
-    // --project FOLDER (or -C FOLDER) works with every command; take it out first.
-    std::vector<std::string> args;
+    // --project FOLDER (or -C FOLDER) may come before the command, and only there: after the command every word
+    // belongs to it (a save message, a file name, anything after --).
+    std::size_t i = 0;
     std::string project;
-    for (std::size_t i = 0; i < argsIn.size(); ++i) {
+    while (i < argsIn.size()) {
         const std::string& a = argsIn[i];
-        if ((a == "--project" || a == "-C") && i + 1 < argsIn.size()) { project = argsIn[++i]; continue; }
-        if (a.rfind("--project=", 0) == 0) { project = a.substr(10); continue; }
-        args.push_back(a);
+        if ((a == "--project" || a == "-C") && i + 1 < argsIn.size()) { project = argsIn[i + 1]; i += 2; continue; }
+        if (a.rfind("--project=", 0) == 0) { project = a.substr(10); ++i; continue; }
+        break;
     }
+    const std::vector<std::string> args(argsIn.begin() + (std::ptrdiff_t)i, argsIn.end());
     if (args.empty()) { io.Say(HelpText("")); return 0; }
     const std::string cmd = args[0];
     const std::vector<std::string> rest(args.begin() + 1, args.end());
@@ -1153,29 +736,7 @@ int Main(const std::vector<std::string>& argsIn, const Io& io) {
     if (cmd == "test") return CmdTest(rest, project, io);
     if (cmd == "info") return CmdInfo(rest, project, io);
     if (cmd == "doctor") return CmdDoctor(rest, project, io);
-    if (cmd == "vc") {
-        if (rest.empty()) { io.Say(HelpText("vc")); return 0; }
-        const std::string sub = rest[0];
-        const std::vector<std::string> more(rest.begin() + 1, rest.end());
-        if (sub == "init") return VcInit(more, project, io);
-        if (sub == "status") return VcStatus(more, project, io);
-        if (sub == "save") return VcSave(more, project, io);
-        if (sub == "history" || sub == "log") return VcHistory(more, project, io);
-        if (sub == "undo") return VcUndo(more, project, io);
-        if (sub == "branch") return VcBranch(more, project, io);
-        if (sub == "switch") return VcSwitch(more, project, io);
-        if (sub == "sync") return VcSync(more, project, io);
-        if (sub == "remote") return VcRemote(more, project, io);
-        if (sub == "who") return VcWho(more, project, io);
-        // Hidden: what git itself calls (set up by okay vc init).
-        if (sub == "merge-driver") {
-            if (more.size() < 3) { io.Warn("Usage: okay vc merge-driver <base> <ours> <theirs> [path]"); return 2; }
-            return SceneMergeDriver(more[0], more[1], more[2], more.size() > 3 ? more[3] : std::string(), io);
-        }
-        if (sub == "diff-driver") return SceneDiffDriver(more, io);
-        io.Warn("There is no okay vc command called \"" + sub + "\".\n" + HelpText("vc"));
-        return 2;
-    }
+    if (cmd == "vc") return detail::VcMain(rest, project, io);
     io.Warn("There is no command called \"" + cmd + "\".\n" + HelpText(""));
     return 2;
 }

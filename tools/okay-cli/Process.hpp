@@ -18,7 +18,7 @@ struct RunResult {
     std::string err;        ///< what it wrote to stderr (only when captured)
 };
 
-/// Run `argv` (argv[0] is looked up on PATH when it has no folder in it) in `cwd` ("" = the current folder) and wait.
+/// Run `argv` (argv[0] goes through ResolveProgram: started by its full path) in `cwd` ("" = the current folder) and wait.
 /// `capture` true: stdout and stderr are collected into the result and standard input is empty. False: the program
 /// shares this terminal (it can print and ask questions, as git does for a password).
 RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool capture);
@@ -26,8 +26,12 @@ RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool
 /// Start `argv` and do not wait for it (the editor). True when it started.
 bool StartDetached(const std::vector<std::string>& argv, const std::string& cwd);
 
-/// The full path of a program found on PATH, or "" (Windows also tries ".exe").
+/// The full path of a program found on PATH, or "" (Windows also tries ".exe"). Only absolute PATH folders are
+/// searched, so a program in the current folder is never picked up by its bare name.
 std::string FindOnPath(const std::string& program);
+/// The full path that Run and StartDetached start for `program`: a path given with a folder (made absolute), else
+/// FindOnPath. "" for a .cmd or .bat file (Windows would run those through cmd.exe) or when nothing is found.
+std::string ResolveProgram(const std::string& program);
 
 /// The full path of this running program ("" when the system does not say).
 std::string SelfPath();

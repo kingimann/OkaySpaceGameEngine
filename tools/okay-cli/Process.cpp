@@ -1,9 +1,10 @@
 // okay CLI: the one place that starts another program. See Process.hpp.
-// Written from the Win32 CreateProcessW / pipe documentation and POSIX fork, execvp, pipe and poll. Our own code.
+// Written from the Win32 CreateProcessW / pipe documentation and POSIX fork, execv, pipe and poll. Our own code.
 // The Windows quoting, UTF-8 to UTF-16 and this program's path come from shared/AppRestart.hpp.
 #include "Process.hpp"
 
-#include "AppRestart.hpp"   // shared/: QuoteWindowsArg, Utf8ToWide, CurrentExecutable (one copy of each)
+#include "AppRestart.hpp"
+#include "okay/Core/StringUtil.hpp"   // shared/: QuoteWindowsArg, Utf8ToWide, CurrentExecutable (one copy of each)
 
 #include <cstdlib>
 #include <cstring>
@@ -33,6 +34,22 @@ namespace fs = std::filesystem;
 
 std::string SelfPath() { return okay::restart::Utf8(okay::restart::CurrentExecutable()); }
 
+bool IsScriptFile(const std::string& program) {
+    const std::string ext = okay::str::LowerAscii(fs::path(program).extension().string());
+    return ext == ".cmd" || ext == ".bat";
+}
+
+std::string ResolveProgram(const std::string& program) {
+    if (program.empty() || IsScriptFile(program)) return "";
+    std::error_code ec;
+    if (program.find('/') != std::string::npos || program.find('\\') != std::string::npos) {
+        const fs::path p = fs::absolute(program, ec);
+        return !ec && fs::is_regular_file(p, ec) && !IsScriptFile(p.string()) ? p.string() : std::string();
+    }
+    const std::string found = FindOnPath(program);
+    return IsScriptFile(found) ? std::string() : found;
+}
+
 std::string FindOnPath(const std::string& program) {
     if (program.empty()) return "";
     std::error_code ec;
@@ -54,7 +71,9 @@ std::string FindOnPath(const std::string& program) {
         if (end == std::string::npos) end = p.size();
         const std::string dir = p.substr(at, end - at);
         at = end + 1;
-        if (dir.empty()) continue;
+        // An empty or relative entry ("", ".", "bin") would mean the current folder: a git.exe planted in a project
+        // must never run. Only absolute folders are searched.
+        if (dir.empty() || !fs::path(dir).is_absolute()) continue;
         for (const std::string& n : names) {
             const fs::path full = fs::path(dir) / n;
             if (!fs::is_regular_file(full, ec)) continue;
@@ -93,6 +112,9 @@ void ReadAll(HANDLE h, std::string& out) {
 RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool capture) {
     RunResult r;
     if (argv.empty()) return r;
+    const std::string exe = ResolveProgram(argv[0]);   // a full path, never from the current folder, never a .cmd/.bat
+    if (exe.empty()) return r;
+    const std::wstring app = okay::restart::Utf8ToWide(exe);
     std::wstring cmd = CommandLine(argv);
     const std::wstring wd = okay::restart::Utf8ToWide(cwd);
     STARTUPINFOW si = {};
@@ -112,8 +134,14 @@ RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool
         si.hStdOutput = outWrite;
         si.hStdError = errFile != INVALID_HANDLE_VALUE ? errFile : outWrite;
         si.hStdInput = inNul != INVALID_HANDLE_VALUE ? inNul : GetStdHandle(STD_INPUT_HANDLE);
+    } else {
+        // Share this program's own standard handles, so `okay build > log.txt` also catches the editor's lines.
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+        si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+        si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
     }
-    const BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, capture ? TRUE : FALSE, capture ? CREATE_NO_WINDOW : 0,
+    const BOOL ok = CreateProcessW(app.c_str(), &cmd[0], nullptr, nullptr, TRUE, capture ? CREATE_NO_WINDOW : 0,
                                    nullptr, wd.empty() ? nullptr : wd.c_str(), &si, &pi);
     if (outWrite) CloseHandle(outWrite);
     if (inNul != INVALID_HANDLE_VALUE) CloseHandle(inNul);
@@ -140,12 +168,15 @@ RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool
 
 bool StartDetached(const std::vector<std::string>& argv, const std::string& cwd) {
     if (argv.empty()) return false;
+    const std::string exe = ResolveProgram(argv[0]);
+    if (exe.empty()) return false;
+    const std::wstring app = okay::restart::Utf8ToWide(exe);
     std::wstring cmd = CommandLine(argv);
     const std::wstring wd = okay::restart::Utf8ToWide(cwd);
     STARTUPINFOW si = {};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi = {};
-    if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, nullptr,
+    if (!CreateProcessW(app.c_str(), &cmd[0], nullptr, nullptr, FALSE, DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, nullptr,
                         wd.empty() ? nullptr : wd.c_str(), &si, &pi))
         return false;
     CloseHandle(pi.hThread);
@@ -168,6 +199,8 @@ void CloseFd(int& fd) { if (fd >= 0) { ::close(fd); fd = -1; } }
 RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool capture) {
     RunResult r;
     if (argv.empty()) return r;
+    const std::string exe = ResolveProgram(argv[0]);   // a full path from PATH's absolute folders only
+    if (exe.empty()) return r;
     int outP[2] = {-1, -1}, errP[2] = {-1, -1}, execP[2] = {-1, -1};
     if (capture && (::pipe(outP) != 0 || ::pipe(errP) != 0)) { CloseFd(outP[0]); CloseFd(outP[1]); return r; }
     // A close-on-exec pipe tells the parent whether exec worked: it reads EOF on success, an errno on failure.
@@ -190,7 +223,7 @@ RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool
         }
         int e = 0;
         if (!cwd.empty() && ::chdir(cwd.c_str()) != 0) e = errno;
-        else { ::execvp(av[0], av.data()); e = errno; }
+        else { ::execv(exe.c_str(), av.data()); e = errno; }
         ssize_t w = ::write(execP[1], &e, sizeof(e));
         (void)w;
         ::_exit(127);
@@ -238,7 +271,8 @@ RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool
 
 bool StartDetached(const std::vector<std::string>& argv, const std::string& cwd) {
     if (argv.empty()) return false;
-    if (FindOnPath(argv[0]).empty()) return false;
+    const std::string exe = ResolveProgram(argv[0]);
+    if (exe.empty()) return false;
     std::vector<char*> av = ArgvOf(argv);
     const pid_t pid = ::fork();
     if (pid < 0) return false;
@@ -249,7 +283,7 @@ bool StartDetached(const std::vector<std::string>& argv, const std::string& cwd)
         const int nul = ::open("/dev/null", O_RDWR);
         if (nul >= 0) { ::dup2(nul, 0); ::dup2(nul, 1); ::dup2(nul, 2); if (nul > 2) ::close(nul); }
         if (!cwd.empty() && ::chdir(cwd.c_str()) != 0) ::_exit(127);
-        ::execvp(av[0], av.data());
+        ::execv(exe.c_str(), av.data());
         ::_exit(127);
     }
     int status = 0;

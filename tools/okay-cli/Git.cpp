@@ -11,18 +11,20 @@
 
 namespace okaycli::vc {
 
-std::vector<std::string> IgnoreLines() {
-    // The editor's Build Settings list first (build_live.cfg, build_history.txt, *.autosave, *.log, Thumbs.db,
-    // .DS_Store, and the default build output folder), so the two never disagree.
-    std::vector<std::string> v = oked::bsm::IgnoreLines("build");
+std::vector<std::string> IgnoreLines(const std::string& buildOutputDir) {
+    // The editor's Build Settings list first (/.okay/build_live.cfg, /.okay/build_history.txt, *.autosave, Thumbs.db,
+    // .DS_Store, and the project's build output folder), so the two never disagree. Every line for a file or folder at a
+    // fixed place starts with "/": it matches only at the project's top, never an Assets folder of the same name.
+    std::vector<std::string> v = oked::bsm::IgnoreLines(buildOutputDir.empty() ? std::string("build") : buildOutputDir);
     for (const char* extra : {
+             "/build/",   // the default build output, also when Build Settings point somewhere else now
              // what the engine makes again by itself
-             ".okay/backups/", ".okay/build_report.txt", ".okay/upgrade_report.txt", ".okay/upgrade_backup.txt",
-             ".okaycache/", "Library/", "Temp/",
+             "/.okay/backups/", "/.okay/build_report.txt", "/.okay/upgrade_report.txt", "/.okay/upgrade_backup.txt",
+             "/.okay/clashes/", ".okaycache/",
              // per-person editor files: what the Project panel shows and the favourites list
-             ".okay/projectview.txt", ".okay/favourites.txt",
-             // build and export output, and backups of saved scenes
-             "Build/", "export/", "Export/", "*.bak", "*.okaycrash"}) {
+             "/.okay/projectview.txt", "/.okay/favourites.txt",
+             // the copy the engine keeps of the previous version of a saved scene or prefab
+             "*.okayscene.bak", "*.okayprefab.bak"}) {
         if (std::find(v.begin(), v.end(), extra) == v.end()) v.push_back(extra);
     }
     return v;
@@ -33,15 +35,16 @@ std::vector<std::string> AttributeLines() {
         "*.okayscene text eol=lf merge=okayscene diff=okayscene",
         "*.okayprefab text eol=lf merge=okayscene diff=okayscene",
     };
-    for (const char* ext : {"png", "jpg", "jpeg", "tga", "bmp", "gif", "psd", "hdr", "exr", "dds", "ktx", "ktx2", "webp",
-                            "ico", "wav", "ogg", "mp3", "flac", "fbx", "glb", "blend", "3ds", "max", "ma", "mb", "ttf",
-                            "otf", "woff", "woff2", "zip", "7z", "exe", "dll", "so", "dylib", "okaymesh", "okaytex", "pdf"})
+    for (const char* ext : {"png", "jpg", "jpeg", "tga", "bmp", "gif", "psd", "tif", "tiff", "hdr", "exr", "dds", "ktx", "ktx2",
+                            "webp", "ico", "wav", "ogg", "mp3", "flac", "m4a", "opus", "aiff", "mp4", "webm", "mov", "fbx",
+                            "glb", "bin", "blend", "3ds", "max", "ma", "mb", "ttf", "otf", "woff", "woff2", "zip", "7z", "exe",
+                            "dll", "so", "dylib", "okaymesh", "okaypkg", "okaynav", "pdf"})
         v.push_back(std::string("*.") + ext + " binary");
     return v;
 }
 
-std::string GitIgnoreText(const std::string& existing, int* added) {
-    return oked::bsm::MergeIgnore(existing, IgnoreLines(), added, "# added by okay vc init (files the engine makes again, and per-person files)");
+std::string GitIgnoreText(const std::string& existing, const std::string& buildOutputDir, int* added) {
+    return oked::bsm::MergeIgnore(existing, IgnoreLines(buildOutputDir), added, "# added by okay vc init (files the engine makes again, and per-person files)");
 }
 std::string GitAttributesText(const std::string& existing, int* added) {
     return oked::bsm::MergeIgnore(existing, AttributeLines(), added,
@@ -84,7 +87,7 @@ Group GroupOf(const std::string& path) {
     const std::size_t dot = file.rfind('.');
     const std::string ext = dot == std::string::npos ? "" : file.substr(dot);
     if (ext == ".okayscene" || ext == ".okayprefab") return Group::Scenes;
-    if (ext == ".okayvs" || ext == ".okayscript" || ext == ".cs" || ext == ".lua" || ext == ".okaybt") return Group::Scripts;
+    if (ext == ".okay" || ext == ".okayvs" || ext == ".okayscript" || ext == ".cs" || ext == ".lua" || ext == ".okaybt") return Group::Scripts;
     if (file == "project.okayproj" || file == ".gitignore" || file == ".gitattributes" || lower.rfind(".okay/", 0) == 0 ||
         ext == ".okayinput" || ext == ".okaybuild" || ext == ".okayconfig")
         return Group::Settings;

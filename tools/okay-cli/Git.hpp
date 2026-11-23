@@ -15,15 +15,16 @@ namespace okaycli::vc {
 
 // ---- what a project keeps out of git, and how git treats its files ------------------------------------------------
 
-/// The lines `okay vc init` puts in .gitignore: build output, caches, backups, autosaves, logs and per-person editor
-/// files. Includes the editor's Build Settings list (editor/BuildSettingsModel.hpp IgnoreLines).
-std::vector<std::string> IgnoreLines();
+/// The lines `okay vc init` puts in .gitignore: build output (`buildOutputDir`, the project's Build Settings folder
+/// relative to the project, plus the default /build/), caches, backups, autosaves and per-person editor files. Lines for
+/// a fixed place are anchored with "/". Includes the editor's Build Settings list (editor/BuildSettingsModel.hpp).
+std::vector<std::string> IgnoreLines(const std::string& buildOutputDir = std::string());
 /// The lines `okay vc init` puts in .gitattributes: scenes and prefabs merge and diff with the engine's own scene merge
 /// and diff (merge=okayscene diff=okayscene), pictures, sounds, models and fonts are binary.
 std::vector<std::string> AttributeLines();
 /// The new text of .gitignore / .gitattributes: `existing` plus the wanted lines it does not have yet, under a comment.
 /// Nothing is removed or reordered (the editor's Build Settings merge, BuildSettingsModel.hpp MergeIgnore).
-std::string GitIgnoreText(const std::string& existing, int* added = nullptr);
+std::string GitIgnoreText(const std::string& existing, const std::string& buildOutputDir = std::string(), int* added = nullptr);
 std::string GitAttributesText(const std::string& existing, int* added = nullptr);
 
 /// The command git runs for a scene merge: "<okay>" vc merge-driver %O %A %B %P (forward slashes, quoted for git's shell).

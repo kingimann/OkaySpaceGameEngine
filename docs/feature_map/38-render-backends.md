@@ -7,6 +7,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 ## 38. Render backends & GPU
 
 ### 38.1 Renderer interface and backend selection
+- **System:** Renderer
 - **What:** How the engine talks to a renderer and how the editor and the player pick one for the machine they run on.
 - **Parts:**
   - 38.1.1 Interface - `Render/Renderer` - `IRenderer` with five calls, implemented only by the console renderer (see 2.1.1)
@@ -27,6 +28,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Ask me like:** "Force the player to use OpenGL"; "Add a Vulkan backend behind the same RenderToPixels contract"
 
 ### 38.2 OpenGL backend
+- **System:** Render Backends - The OpenGL, Direct3D 11, Direct3D 12 and CPU (software) drawing code; the software one needs no graphics card and is used by tests.
 - **What:** The GPU renderer for every platform: an MSAA offscreen render with per-pixel lighting, shadow atlases, a procedural sky and a full post chain.
 - **Parts:**
   - 38.2.1 Loading and context - `Render/GLRenderer` - `LoadGL(getProc)` resolves modern GL functions at run time (no link-time GL dependency); the host makes a hidden SDL window with a 3.2 compatibility context; shaders are `#version 120`
@@ -48,6 +50,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Ask me like:** "Add a screen-space reflections pass to the OpenGL chain"
 
 ### 38.3 Direct3D 11 backend
+- **System:** Render Backends
 - **What:** The default GPU renderer on Windows: same contract as OpenGL, with an isolated device, optional direct rendering into the editor's own textures and pipelined read-back.
 - **Parts:**
   - 38.3.1 Device - `Render/D3D11Renderer` - `Init()` makes an isolated device with an offscreen target; `InitShared(device)` builds on SDL's own device
@@ -69,6 +72,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Ask me like:** "Check the Direct3D 11 SSAO pass on a real GPU"; "Check the Direct3D 11 depth of field pass on a real GPU"
 
 ### 38.4 Direct3D 12 backend
+- **System:** Render Backends
 - **What:** An opt-in explicit-API sibling of the Direct3D 11 backend, used only by the player when Build Game asks for it.
 - **Parts:**
   - 38.4.1 Opt-in selection - `player/main.cpp` - Build Game "Prefer Direct3D 12" (config `d3d12=1`); the editor does not use it
@@ -89,6 +93,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Ask me like:** "What is missing before Direct3D 12 can be the default?"
 
 ### 38.5 Software rasterizer
+- **System:** Render Backends
 - **What:** The CPU renderer that runs everywhere and is the fallback and the test renderer: a z-buffered triangle rasterizer with lighting, shadows and its own post passes.
 - **Parts:**
   - 38.5.1 Rasterizer - `Render/SoftwareRenderer` - `Raster`: W-buffer depth, perspective-correct textured triangles with mip maps, flat or per-pixel lighting (per-pixel is chosen automatically while a shadow map exists, `ShadowsUsePerPixel`)
@@ -110,6 +115,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Ask me like:** "Why is the software renderer used when I have a GPU?"; "Draw software shadows on the vertex path"
 
 ### 38.6 Console renderer
+- **System:** Render Backends
 - **What:** A dependency-free renderer that draws 2D quads as characters in the terminal, so the engine runs headless.
 - **Parts:**
   - 38.6.1 Frame buffer - `Render/ConsoleRenderer` - glyph and depth per cell, nearer quad wins, framed output with an optional screen clear
@@ -128,6 +134,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Ask me like:** "Add ANSI colours to the console renderer"
 
 ### 38.7 Web (WebGL) path
+- **System:** Web, Mobile and Console Export
 - **What:** How the player runs in a browser: the player is compiled to WebAssembly and uses the software path for 3D; there is no engine WebGL renderer class.
 - **Parts:**
   - 38.7.1 Web build - `scripts/build-web.sh` - Emscripten, SDL2 from Emscripten's port, scene preloaded as `game.okayscene`; Assimp, libsodium and the relay are off
@@ -146,6 +153,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Ask me like:** "Add a WebGL2 renderer using the OpenGL shaders"
 
 ### 38.8 Shader pipeline
+- **System:** Shaders - The small GPU programs that colour each pixel, including our own `.okayshader` language for custom looks.
 - **What:** The shader programs the backends run, how they stay in step with the CPU maths, and the places a custom shader would plug in.
 - **Parts:**
   - 38.8.1 GLSL programs - `Render/GLRenderer` - `#version 120` source strings: main mesh, depth-only shadow, procedural sky, bloom, SSAO, uber post, FXAA, depth of field
@@ -167,6 +175,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Ask me like:** "Add a dissolve shader mode to all backends"
 
 ### 38.9 GPU resources
+- **System:** Render Backends
 - **What:** What the backends keep on the GPU between frames: render targets, vertex buffers, textures, shadow maps and bone palettes.
 - **Parts:**
   - 38.9.1 Render targets - `Render/GLRenderer` - MSAA target and resolve, shadow atlases, bloom, SSAO and post targets, re-created when the view size changes
@@ -188,6 +197,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Ask me like:** "Where do we upload textures and can we compress them?"
 
 ### 38.10 Frame and present path
+- **System:** Renderer
 - **What:** The journey from a rendered 3D image to the screen in the editor and the player, including the fallbacks and what is drawn on top.
 - **Parts:**
   - 38.10.1 Offscreen render and upload - `editor/main.cpp`, `player/main.cpp` - the backend renders to an offscreen target and returns RGBA8; the host uploads it into an SDL streaming texture and draws it under the UI
@@ -209,6 +219,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Ask me like:** "Can the editor view present without reading pixels back on OpenGL?"
 
 ### 38.11 GPU timing and frame debugging
+- **System:** Profiler
 - **What:** Knowing what the GPU spent: real GPU timers, draw-call lists and render stats.
 - **Parts:**
   - 38.11.1 Today - `Core/Profiler`, `Render/Culling` - a synchronous render-time proxy (`Prof().Gpu`) and the drawn/culled object counts

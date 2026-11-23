@@ -10,6 +10,7 @@
 // software painter has no UWP present path wired. Audio: the mixer is not started by this file (the shell opens a platform AudioDevice).
 #include "XboxGameConfig.hpp"
 #include "XboxPaths.hpp"
+#include "XboxPendingSave.hpp"
 #include "XboxRecovery.hpp"
 #include "XboxSuspend.hpp"
 #include "XboxTextEntry.hpp"
@@ -121,6 +122,7 @@ public:
     void FeedMouse(float x, float y, unsigned mask) { Input::FeedMouse(Vec2{x, y}, mask); }
     bool Frame(double realDeltaSeconds, std::vector<char>& keysDown) {
         if (!started_) return false;
+        if (pending_.HasPending()) { const PendingReport pr = pending_.RunFrame(); if (!pr.AllSaved()) Log::Warning("[xbox] save: ", pr.Summary()); }
         pads_.Feed(keysDown);
         Input::FeedKeys(keysDown);
         if (uiW_ > 0 && uiH_ > 0 && scene_) PrepareUi(*scene_, uiW_, uiH_);
@@ -186,13 +188,22 @@ public:
     void OnSuspend(std::uint64_t budgetMs = 4000) {
         Log::Info("[xbox] suspending");
         SuspendFlush f;
-        if (layout_.Valid()) f.Add("settings", [this](std::string& err) { if (Prefs::Save(layout_.prefsFile)) return true; err = Prefs::LastError(); return false; });
-        if (scene_ && !saveDir_.empty()) f.Add("game state", [this](std::string& err) { return SaveSnapshot(err); });
         const auto t0 = std::chrono::steady_clock::now();
-        const SuspendReport r = f.Run([t0] { return (std::uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count(); }, budgetMs);
+        const auto clock = [t0] { return (std::uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count(); };
+        if (layout_.Valid()) f.Add("settings", [this](std::string& err) { if (Prefs::Save(layout_.prefsFile)) return true; err = Prefs::LastError(); return false; });
+        // A "save next frame" request that had not run yet: forced through now, inside what is left of the budget (a write that would
+        // not fit is not started and stays pending; the report says so).
+        if (pending_.HasPending()) f.Add("pending saves", [this, clock, budgetMs](std::string& err) {
+            const std::uint64_t used = clock(); const PendingReport pr = pending_.FlushForSuspend(clock, used >= budgetMs ? 0 : budgetMs - used);
+            if (pr.AllSaved()) return true; err = pr.Summary(); return false; });
+        if (scene_ && !saveDir_.empty()) f.Add("game state", [this](std::string& err) { return SaveSnapshot(err); });
+        const SuspendReport r = f.Run(clock, budgetMs);
         if (r.AllOk()) Log::Info("[xbox] suspend: ", r.Summary()); else Log::Warning("[xbox] suspend: ", r.Summary());
         lastSuspend_ = r;
     }
+    /// The game's "save next frame" requests: Request a save here; Frame() runs it at the start of the next frame, and OnSuspend forces
+    /// it through first if the system suspends before that frame.
+    PendingSaves& Pending() { return pending_; }
     const SuspendReport& LastSuspend() const { return lastSuspend_; }
     /// Resume (the process was kept): the saved state is not needed any more, drop the marker. The scene never stopped existing, so nothing is reloaded.
     void OnResume() {
@@ -240,6 +251,7 @@ private:
         if (c.kind != TextEntryCommand::None && onKeyboard) onKeyboard(c.kind == TextEntryCommand::Show, c.scope, f ? f->text : std::string());
     }
     SaveLayout layout_;
+    PendingSaves pending_;
     TextEntry textEntry_;
     SuspendReport lastSuspend_;
     // At start: if the marker is still there the last run ended while suspended; put the saved state back over the freshly loaded scene.

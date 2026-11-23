@@ -2,7 +2,7 @@
 
 # Code index: engine-Math
 
-Back to the [code index](../code_index.md). 22 headers, 86 names.
+Back to the [code index](../code_index.md). 23 headers, 91 names.
 
 ## `engine/include/okay/Math/Bounds.hpp`
 
@@ -98,6 +98,14 @@ Back to the [code index](../code_index.md). 22 headers, 86 names.
 - `TwistAbout` function, line 84: Signed angle (degrees) of the twist component of 'q' about 'axis', and that
 - `ApplyLimit` function, line 98: Clamp a bone's local rotation to 'limit' around its rest frame. 'bendFree'
 - `HingeAngleDegrees` function, line 137: Signed angle, in degrees, of 'localRot' relative to 'restLocal' about a world
+
+## `engine/include/okay/Math/LedgeHands.hpp`
+
+- `LedgeGrip` struct, line 18
+- `LedgeFromEdge` function, line 26: 'edge' is on the top edge, 'normal' points from the wall toward the body (only its
+- `LedgeFromLip` function, line 39: 'body' is where the hanging body stands, 'lip' the stand-on-top point beyond the
+- `LedgeHandTargets` function, line 53: Hands 'spread' metres either side of the edge point, 'overEdge' metres onto the top
+- `ClampToReach` function, line 64: If 'target' is farther than 'maxReach' from 'shoulder', move it onto that sphere.
 
 ## `engine/include/okay/Math/Mat3.hpp`
 

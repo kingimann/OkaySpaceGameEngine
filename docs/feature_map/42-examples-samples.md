@@ -8,6 +8,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 ## 42. Examples, samples & sandbox
 
 ### 42.1 Sandbox demo (solar system)
+- **System:** Examples - Example scenes, demos, starter assets and sample plugins people can open and learn from.
 - **What:** A tiny console game that doubles as a feature tour: a sun, a planet with a moon parented to it, an inner planet and a ship you fly, drawn as text in the terminal.
 - **Parts:**
   - 42.1.1 Scene and scripts - `sandbox/main.cpp` - `Orbit` and `Spin` behaviours and a `ShipController` driven by WASD; the moon is a child of the planet to show the Transform hierarchy
@@ -26,6 +27,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Ask me like:** "run the sandbox for 300 frames", "make the sandbox ship fire"
 
 ### 42.2 Network demo
+- **System:** Examples
 - **What:** Two or more terminals each fly a ship and see every other connected peer move in real time. It shows the smallest possible NetworkManager setup.
 - **Parts:**
   - 42.2.1 Server and client modes - `examples/netdemo/main.cpp` - `netdemo server [port]` or `netdemo client <host> [port]`, default port 45000
@@ -44,6 +46,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Ask me like:** "run the network demo server and a client", "add chat to the network demo"
 
 ### 42.3 Physics demo
+- **System:** Examples
 - **What:** Boxes fall under gravity, bounce and settle on a floor between two walls, in the terminal. It shows Rigidbody2D, box colliders and the physics world driving a scene.
 - **Parts:**
   - 42.3.1 Scene - `examples/physicsdemo/main.cpp` - a static floor and two walls, six dynamic boxes with different bounciness and glyphs, gravity -12
@@ -61,6 +64,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Ask me like:** "run the physics demo", "add a ramp to the physics demo"
 
 ### 42.4 Account server example
+- **System:** Accounts
 - **What:** A tiny, dependency-free Python server that speaks the exact contract the engine's account client expects, so you can try the online account backend end to end locally. Not for production.
 - **Parts:**
   - 42.4.1 Register and login - `examples/account-server/server.py` - `POST /register` and `POST /login` with JSON, return `{"token": ...}`; PBKDF2-HMAC-SHA256 with 200,000 rounds, accounts in `accounts.json`, tokens in memory
@@ -80,6 +84,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Ask me like:** "start the example account server and point the launcher at it"
 
 ### 42.5 Editor plugin examples
+- **System:** Examples
 - **What:** Two ready-to-copy editor plugins in OkayScript: a window that aligns, spaces and drops the selected objects, and a one-click command that strips trailing numbers like "Cube (3)" from names.
 - **Parts:**
   - 42.5.1 Align Tools - `examples/editor-plugins/AlignTools.okay` - a window (`@window`, `on_gui`) with X, Y, Z align to the first selected object, distribute along X with a gap slider, drop to y 0; each action sets an undo point
@@ -98,6 +103,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Ask me like:** "write a plugin that randomizes rotation of the selection"
 
 ### 42.6 Standalone player runtime
+- **System:** Game Player - The program that plays a built game (`OkaySpacePlayer.exe` or `<Game>.exe`).
 - **What:** `okay-player` (shipped as `OkaySpacePlayer.exe` or `<Game>.exe`): the runtime that plays a built game with only SDL2 (no ImGui). It loads `game.okayscene` next to it, draws 2D and 3D, plays audio, reads keyboard, mouse and gamepad, and also runs headless as the dedicated server.
 - **Parts:**
   - 42.6.1 Startup and game files - `player/main.cpp` (`main` near L1110) - finds `Data/` or the flat layout, reads `game.okayconfig` (window, scene list, fullscreen toggle on Alt+Enter and F11), picks the startup scene (command line, config, `game.okayscene`), save folder, language
@@ -122,6 +128,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Ask me like:** "what flags does the player take?", "why does my built game start in report mode?"
 
 ### 42.7 Starter assets
+- **System:** Examples
 - **What:** The small asset pack shipped in the Windows distribution under `Assets/`: four generated seamless textures and a font, so a new project has something to drop onto meshes and text.
 - **Parts:**
   - 42.7.1 Textures - `assets/textures` - `grass.png`, `dirt.png`, `stone.png`, `grid.png`, made by `tools/gen_textures.cpp` (41.4)
@@ -139,6 +146,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Ask me like:** "add a starter water texture to the pack"
 
 ### 42.8 Example scenes and their check
+- **System:** Examples
 - **What:** The `.okayscene` files under `examples/` that File > Examples, File > Open and `docs/try_it.md` point at, and the test that runs every one.
 - **Parts:**
   - 42.8.1 The scenes - `examples/` - 52 scenes in vehicle, own_wav, spatial_audio, cutscene, behavior_trees, node_playground, physics, physics2d, weapons, touch_controls and visual_script/playground (the Node Playground demos)

@@ -24,7 +24,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | COLLADA | 26 | 25 in `Collada/` and one in `invalid/`; geometry, skins, animation, instancing, cameras and lights only, three encodings |
 | 3DS | 16 | static and keyframed, camera animation, textured, one empty file |
 | BVH | 3 | motion capture, 2,752 to 4,511 frames |
-| glTF / GLB | 54 (48 `.gltf`, 6 `.glb`) | glTF 2.0 samples, embedded and external buffers, skins, morph targets, texture transform, primitive modes, extensions, and about 15 deliberately broken files; 7 are glTF 1.0 (6 `.gltf` and one `.glb`) |
+| glTF / GLB | 54 (48 `.gltf`, 6 `.glb`) | glTF 2.0 samples, embedded and external buffers, skins, morph targets, texture transform, primitive modes, extensions, and about 15 deliberately broken files; 7 are glTF 1.0 (6 `.gltf` and one `.glb`): read since 2026-11-22 by our own glTF 1.0 reader (rows `gltf1`, switch on), refused by the 2.0 reader (rows `gltf`) |
 | OBJ | 28 | `models/OBJ` (23), `models-nonbsd/OBJ` (2), `models/invalid` (3): groups, `usemtl`, concave polygons, point and line elements, vertex colours, UTF-16 |
 | STL | 8 | ascii and binary, several solids, an empty solid |
 | PLY | 12 | ascii, binary little and big endian, point clouds, a truncated file, odd headers |
@@ -50,6 +50,9 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | IRR | 21 | `models/IRR`: scenes with cubes, spheres, referenced meshes (`dwarf.x`, `cellar.irrmesh`, `spider.obj`), animators, instancing; each in UTF-8 and UTF-16LE except `instancing` |
 | NFF | 13 | `models/NFF/NFF` (the platonic solids, spheres, cones, a camera file) and `models-nonbsd/NFF/NFFSense8` (`teapot`, `HOME4`, `cokecan` with its `.mat`) |
 | Terragen | 2 | `models/TER`: `RealisticTerrain` (257 x 257 points, 30 m) and `RealisticTerrain_Large` (513 x 513, 19.53 m); both flat. Compared with Assimp v5.4.3 built with only its Terragen importer: same triangles and bounding box, area within 2e-6 (`docs/content/model_readers.md`) |
+| OpenGEX | 6 | `models/OpenGEX`: a scene with two boxes, a skinned and animated example, a camera, a COLLADA conversion, and two files with only a camera or a light (2026-11-22, our own OpenGEX reader: 4 read, those 2 refused by both) |
+| MDL | 43 | `models/MDL` and `models-nonbsd/MDL`: 3 Quake 1, 14 Half-Life 1 models, 19 Half-Life sequence-group files, 1 textures-only file, 6 3D GameStudio (MDL3, MDL5, MDL7) (2026-11-22, our own MDL reader: 17 read) |
+| PK3 | 1 | `models-nonbsd/PK3/SGDTT3.pk3`: one Quake III map (28 models, 1,400 triangles, no patch) (2026-11-22, our own Q3BSP reader) |
 
 ## Running it
 

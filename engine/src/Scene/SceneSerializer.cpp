@@ -306,17 +306,6 @@ static unsigned OwnSkipBits(const GameObject* g) {
 // component per record). A second record of a type this build does not save would still warn.
 bool AllowsMultiple(const Component*) { return true; }
 
-// `compoff` records for every component that is switched off (per-component flags
-// the individual records may not carry). Keyed by type name + occurrence.
-void WriteDisabledComponents(std::ostream& out, const GameObject* go) {
-    std::unordered_map<std::string, int> seen;
-    for (const auto& c : go->Components()) {
-        if (c.get() == static_cast<const Component*>(go->transform)) continue;
-        const std::string key = ComponentSerializerRegistry::TypeKey(*c);
-        const int occ = seen[key]++;
-        if (!c->enabled) out << "  compoff " << Quote(key) << " " << occ << "\n";
-    }
-}
 
 // `comporder "Type" "Type" ...`: the stored order of an object's components after the Transform.
 void WriteComponentOrderLine(std::ostream& out, const GameObject* go) {

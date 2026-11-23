@@ -1,6 +1,7 @@
 // Helpers shared by the scene text reader and writer (declared in SceneSerializerInternal.hpp). Moved unchanged from
 // SceneSerializer.cpp (docs/engine/modularization_plan.md, section 3.1, S3).
 #include "SceneSerializerInternal.hpp"
+#include "okay/Scene/ComponentSerializer.hpp"
 #include <charconv>
 #include <locale>
 #include <algorithm>
@@ -283,6 +284,18 @@ void ReadAnchor(std::istream& in, UIAnchor& anchor) {
     if (ch >= '0' && ch <= '9') {
         int a = 0; in >> a;
         anchor = static_cast<UIAnchor>(a);
+    }
+}
+
+// `compoff` records for every component that is switched off (per-component flags
+// the individual records may not carry). Keyed by type name + occurrence.
+void WriteDisabledComponents(std::ostream& out, const GameObject* go) {
+    std::unordered_map<std::string, int> seen;
+    for (const auto& c : go->Components()) {
+        if (c.get() == static_cast<const Component*>(go->transform)) continue;
+        const std::string key = ComponentSerializerRegistry::TypeKey(*c);
+        const int occ = seen[key]++;
+        if (!c->enabled) out << "  compoff " << Quote(key) << " " << occ << "\n";
     }
 }
 

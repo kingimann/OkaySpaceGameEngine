@@ -54,6 +54,7 @@ void WriteGradientKv(KvOut& k, const std::string& p, const ParticleGradient& g);
 void ReadGradientKv(const KvIn& k, const std::string& p, ParticleGradient& g);
 void ReadStatTail(std::istream& in, StatComponent* c);
 void ReadAnchor(std::istream& in, UIAnchor& anchor);
+void WriteDisabledComponents(std::ostream& out, const GameObject* go);
 
 // True when the next token on the stream is a number the reader accepts. The writer
 // prints floats through std::to_chars, which emits '-', '+', '.' and digits, so

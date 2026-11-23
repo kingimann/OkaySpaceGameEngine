@@ -1,0 +1,30 @@
+# Batch U1 of the engine modularization plan (docs/engine/modularization_plan.md, Part A section 3.1):
+# engine/src/UI/UIRenderer.cpp: the scene pass (the turned-frame painter FrameXformPainter, the per-scene pass cache and
+# RenderSceneUIImpl, about 2,000 lines) moves to engine/src/UI/UIScenePass.cpp. Written from the file itself; nothing else.
+#   python3 scripts/check_pure_move.py --base origin/main --head HEAD --source engine/src/UI/UIRenderer.cpp \
+#       --dest engine/src/UI/UIScenePass.cpp --dest engine/src/UI/UIRendererInternal.hpp \
+#       --rules docs/engine/moves/U1_ui_scene_pass.rules
+# What the moved code shares with the code that stays (the pass state globals, the text-scale helper, the rich-text
+# table and DrawRichRuns, and RenderSceneUIImpl itself) leaves its file-local home and is declared in the private header
+# UIRendererInternal.hpp under okay::ui2d::ui_pass. Both files bring those names in with using-declarations, so every
+# call stays as written. The edits inside UIRenderer.cpp are drop/add rules; the one moved line that had to change
+# (the definition of RenderSceneUIImpl, no longer static) is a change rule.
+change: static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const UIRenderOptions& opt) { ==> void ui_pass::RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const UIRenderOptions& opt) {
+# globals: defined once in UIRenderer.cpp, declared extern in the header
+drop: ^(float g_uiDeviceScale = 1\.0f|bool g_uiSmoothEdges = true|UIQuality g_uiQuality = UIQuality::Good.*|static TtfFont\* g_uiDefaultFont = nullptr);$
+add: ^(float ui_pass::g_uiDeviceScale = 1\.0f|bool ui_pass::g_uiSmoothEdges = true|UIQuality ui_pass::g_uiQuality = UIQuality::Good.*|TtfFont\* ui_pass::g_uiDefaultFont = nullptr);$
+add: ^extern (float g_uiDeviceScale|bool g_uiSmoothEdges|UIQuality g_uiQuality|TtfFont\* g_uiDefaultFont);$
+add: ^using ui_pass::(g_uiDeviceScale|g_uiSmoothEdges|g_uiQuality|g_uiDefaultFont|UITextScale|RichLinkTable|DrawRichRuns|RenderSceneUIImpl);$
+# the scene-pass entry point
+drop: ^static void RenderSceneUIImpl\(Scene& scene, Painter& target, int w, int h, const UIRenderOptions& opt\);$
+drop: ^static void RenderSceneUIImpl\(Scene& scene, Painter& target, int w, int h, const UIRenderOptions& opt\) \{$
+add: ^void RenderSceneUIImpl\(Scene& scene, Painter& target, int w, int h, const UIRenderOptions& opt\);$
+# the rich-text table and DrawRichRuns (default arguments move to the declaration)
+drop: ^std::unordered_map<const okay::GameObject\*, std::vector<RichLinkRect>>& RichLinkTable\(\) \{$
+add: ^std::unordered_map<const okay::GameObject\*, std::vector<RichLinkRect>>& (ui_pass::)?RichLinkTable\(\)[ ;{]*$
+drop: ^void DrawRichRuns\(Painter& r, const std::string& disp, const std::vector<okay::RichStyle>& styles,$
+add: ^void (ui_pass::)?DrawRichRuns\(Painter& r, const std::string& disp, const std::vector<okay::RichStyle>& styles,$
+drop: ^const std::vector<std::string>\* links = nullptr, const std::vector<std::string>\* icons = nullptr, std::vector<RichLinkRect>\* linkRects = nullptr\) \{$
+add: ^const std::vector<std::string>\* links( = nullptr)?, const std::vector<std::string>\* icons( = nullptr)?, std::vector<RichLinkRect>\* linkRects( = nullptr)?\)[ ;{]*$
+add: ^float ox, float oy, float px, RGBA base, float letterSp, float lineSp, bool italic,$
+add: ^bool bold, float boldOff, TtfFont\* ttf,$

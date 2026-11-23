@@ -89,7 +89,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **What:** The built-in code editor (View > Editors & Tools > Script Editor): tabs, syntax colours, inline errors and warnings, autocomplete with docs, outline, rename, find in files, formatting and an external-IDE bridge.
 - **Parts:**
   - 13.5.1 Editor window and tabs - `editor/main.cpp` (`DrawScriptEditor` ~12930-15670) - one tab per Script component, float or dock, File menu (New, Save, Reload, Switch Script); since #577 a larger code face and a collapsible script list (Alt+1)
-  - 13.5.2 Text widget and colours - `editor/vendor/TextEditor.*` (vendored), `editor/main.cpp` (`OkayScriptLangDef` ~12687-12930) - syntax highlighting, gutter, changed-line bars, minimap, zoom
+  - 13.5.2 Text widget and colours - `editor/vendor/TextEditor.*` (vendored), `editor/main.cpp` (`OkayScriptLangDef` ~12687-12930) - syntax highlighting, gutter, changed-line bars, minimap, zoom; our own replacement `OkayUI::CodeEdit` (`okayui/src/OkayUICodeEdit.cpp`, adapter `editor/ScriptEditorCodeEdit.*`, `editor/ScriptEditorWidget.hpp`) behind the developer variable `OKAY_UI_CODEEDIT=1` or the OkayUI backend (off by default, no Settings item yet; `docs/ui/own_ui_code_editor.md`)
   - 13.5.3 Problems and inline errors - `editor/main.cpp` (~76-230 `AnalyzeScriptWarnings`, Problems panel ~15460) - ValidateAll diagnostics, did-you-mean lint, click-to-fix gutter action
   - 13.5.4 Autocomplete and signature help - `editor/main.cpp` (C#-aware member completion ~12178, details with code examples ~12380, floating `##autocomplete`, `##sighelp`, `##sighint`) - fed by `BuiltinNames()` and the typed Engine API
   - 13.5.5 Navigation - `editor/ScriptText.hpp` - tokenizer, outline, Go to Symbol, Go to Definition, Find All References, bookmarks, Rename Symbol (pure text, covered by selftest)
@@ -102,7 +102,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **API:** menu File / Edit / View / Go / Insert / Help inside the Script Editor; shortcuts Ctrl+F, Ctrl+Shift+F, Ctrl+/, Ctrl+D, Alt+Up/Down
 - **Editor:** View > Editors & Tools > Script Editor; Help > Scripting Reference; Layout preset "Scripting"
 - **Docs:** `docs/editor/editor.md` (Script Editor), `docs/scripting/scripting.md`
-- **Tests:** `editor` (selftest covers ScriptText outline, identifier search and the lint), `starter_script`
+- **Tests:** `editor` (selftest covers ScriptText outline, identifier search and the lint), `starter_script`; the own code widget: `okayui_codeedit`, `okayui_codeedit_fuzz`, `okayui_script_adapter`, `okayui_host`, `okayui_capture`, `okayui_codeedit_imgui`
 - **Status:** Works - features are present as menu items and code per the editor source; no separate unit tests except the selftest
 - **Open:** earlier map: "meaningful syntax only; classes and templates for New Script" (open); no step debugger for text scripts (only the visual-script debugger, 14.5); the 2.7k-line window lives in `main.cpp` (15.10). Script compile errors and missing script files are also rows in the project Problems panel (15.11.8), separate from this window's own Problems list
 - **Related:** 13.1, 13.2, 13.4, 15.10, 15.8

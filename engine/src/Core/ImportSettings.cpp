@@ -253,6 +253,25 @@ ImportSettings::Pairs ImportSettings::Migrate(AssetType kind, int fromVersion, P
     return pairs;
 }
 
+ImportSettings::Pairs ImportSettings::AcceptOlderKeys(AssetType kind, Pairs pairs) {
+    Pairs older, rest;
+    for (auto& kv : pairs) {
+        const std::string k = Lower(kv.first), v = Lower(kv.second);
+        const bool old = kind == AssetType::Texture ? (k == "mips" || (k == "filter" && (v == "nearest" || v == "linear")))
+                       : kind == AssetType::Audio ? (k == "stream" || k == "mono")
+                       : false;
+        (old ? older : rest).push_back(std::move(kv));
+    }
+    if (older.empty()) return rest;
+    const Pairs converted = kind == AssetType::Texture ? TextureV1ToV2(older, nullptr) : AudioV1ToV2(older, nullptr);
+    for (const auto& c : converted) {
+        bool present = false;
+        for (const auto& r : rest) if (Lower(r.first) == Lower(c.first)) present = true;
+        if (!present) rest.push_back(c);   // the current name, when the block has it, wins
+    }
+    return rest;
+}
+
 ImportSettings ImportSettings::FromPairs(AssetType kind, int version, const Pairs& pairsIn, std::vector<std::string>* notes) {
     ImportSettings s = Defaults(kind);
     const int current = CurrentVersion(kind);
@@ -270,6 +289,8 @@ ImportSettings ImportSettings::FromPairs(AssetType kind, int version, const Pair
                     std::to_string(version) + ", this build reads v" + std::to_string(current) + ")");
     } else if (version < current) {
         pairs = Migrate(kind, version, pairs, notes);
+    } else {
+        pairs = AcceptOlderKeys(kind, std::move(pairs));
     }
     s.version = version > current ? version : current;
 

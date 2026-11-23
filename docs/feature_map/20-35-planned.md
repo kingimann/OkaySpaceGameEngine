@@ -97,8 +97,8 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `ImportSettings`, `TextureImportSettings`, `ModelImportSettings`, `AudioImportSettings`, `AssetDatabase::SetSettings`, `SetReimportCallback`, `TakeReimports`
 - **Editor:** Project panel details strip > Import Settings button (`oked::projectpanel::DrawImportSettings`): texture Largest side; model Scale, Normals with Smoothing angle, Import animations. Filter, Wrap and Mipmaps are hidden until the Direct3D renderers read them; sRGB, Compress and the audio options are not offered (`docs/editor/project_panel.md`)
 - **Docs:** `docs/engine/asset_database.md`
-- **Tests:** `asset_database`
-- **Status:** Partial - settings are stored and signalled, and some importers read them (`Core/ImportSidecar.hpp`): texture max size (software renderer's texture cache), texture filter, wrap and mipmaps (software and OpenGL renderers), model scale, normals, smoothing angle and import animations (applied when a model is added to a scene; parts already in a scene are not changed); audio load mode and force-mono are read by the audio loader. sRGB, compress and audio quality are stored but not applied. Whether this is verified in a real editor session was not checked here: the code and `docs/editor/project_panel.md` say so.
+- **Tests:** `asset_database`, `import_settings_real`
+- **Status:** Partial - settings are stored and signalled, and some importers read them (`Core/ImportSidecar.hpp`, which reads the meta through `ImportSettings::FromPairs` since 2026-11-22: values unescaped and old layouts migrated by the same steps as the editor, cached per file; Grok #422 item 7): texture max size (software renderer's texture cache), texture filter, wrap and mipmaps (software and OpenGL renderers), model scale, normals, smoothing angle and import animations (applied when a model is added to a scene; parts already in a scene are not changed); audio load mode and force-mono are read by the audio loader. sRGB, compress and audio quality are stored but not applied. Whether this is verified in a real editor session was not checked here: the code and `docs/editor/project_panel.md` say so.
 - **Exists today:** Settings round-trip through the meta with unknown keys kept; changing them raises a reimport event; the Project panel edits them and the importers listed in Status read them. The `MeshRenderer` still has its own texture filter and wrap fields (see Open).
 - **Work packages:**
   1. Done for textures and models - the Import Settings box in the Project panel writes through `SetSettings`; audio options are not offered in it.
@@ -1510,7 +1510,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ### 35.1 Save slots
 - **What:** Let players save and load their progress in named slots, with a list for a Load screen.
 - **Parts:**
-  - 35.1.1 Whole-scene save slots - `Core/SaveGame` - `SaveGame::Save`, `Load`, `Exists`, `Delete`, `Label`, `List` in `saves/<slot>.okaygame`; atomic write, checksum, `.bak` fallback; script `save_game`, `load_game`, `has_save`, `save_label`, `delete_save`, `play_time`; visual-script SaveGame nodes
+  - 35.1.1 Whole-scene save slots - `Core/SaveGame` - `SaveGame::Save`, `Load`, `Exists`, `Delete`, `Label`, `List`: the framework's whole-scene mode, `saves/<slot>.okayslot` in the same store as 35.1.3 (older `saves/<slot>.okaygame` files still load, list and count for Continue); atomic write, checksum, `.bak` fallback; script `save_game`, `load_game`, `has_save`, `save_label`, `delete_save`, `play_time`; visual-script SaveGame nodes
   - 35.1.2 Key-value save data - `Core/SaveData` - `Save` keys and `SaveFile` (Easy-Save-style values), per-slot copy
   - 35.1.3 Framework slots (#572) - `Core/SaveFramework` - `SaveManager` slots `<slot>.okayslot` with headers (label, scene, time, play time, thumbnail, kind, game version), listing, copy, rename and delete
   - 35.1.4 Slot menu model (#572) - `Core/SaveFramework` - `SaveMenuModel` rows with ready-made text and flags (empty, corrupt, newer version, auto, quick, can load, can save)
@@ -1521,16 +1521,16 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `SaveGame::Save/Load/List`, `Save::SetInt`; `SaveManager`, `SaveRequest`, `SaveMenuModel`, `ISaveSync`; `GameSaves`
 - **Editor:** UI > Prebuilt Screens > Menus > Save Slots (Save / Load / Delete / Continue per slot); Add Component > Saveable and Save Settings
 - **Docs:** `docs/engine/save_games.md`; `docs/engine/save_games.md`
-- **Tests:** `save_game`, `durable_saves`, `savedata`; `save_framework`, `save_scene`, `save_nocode`, `ui_templates`
+- **Tests:** `save_game`, `durable_saves`, `savedata`; `save_framework`, `save_scene`, `save_nocode`, `save_merge`, `ui_templates`
 - **Status:** Works - `SaveGame` slots are in use and tested; the framework (`SaveManager`, tests `save_framework`, `save_scene`) is now reachable without code through `GameSaves`, script builtins, visual-script nodes, Action List actions and the Save Slots screen (test `save_nocode`).
 - **Exists today:** SaveGame slots with durable writes. The framework's slots are used by the no-code route (`game_*` calls and the Save Slots screen, which shows the slot label and saved time, not a thumbnail). The screen does not use `SaveMenuModel` and has three fixed slots; rename and thumbnails are not in it. Sync hooks are library code only.
 - **Work packages:**
   1. S - Save Slots screen: a list bound to `SaveMenuModel` with any number of slots, rename and a thumbnail (the shipped screen has three fixed slots). Depends on: #572 (on main), 12.4.
   2. S - Screenshot thumbnail captured on save (needs 50.1). Depends on: package 1.
-  3. M - Choose one system: either move SaveGame callers to the framework or keep both with clear names (two slot formats). Depends on: #572 (on main).
+  3. Done (2026-11-22, Grok #422 item 1) - SaveGame is the framework's whole-scene mode: `save_game`, the C# `SaveGame` API and the AutoSave component write `.okayslot` files in the framework's store; older `.okaygame` files load, list, continue and are retired by the next save (test `save_merge`).
   4. M - Cloud sync: `ISaveSync` backends for Steam Cloud and PlayFab user data. Depends on: package 3, 49.1.
   5. S - Editor window listing saves in the project's save folder with open-folder and delete. Depends on: package 3.
-- **Open:** possible duplicate: `SaveGame` (`.okaygame`) and the framework (`.okayslot`) are separate formats and separate lists; nothing converts between them (stated in `docs/engine/save_games.md`).
+- **Open:** the Save Slots screen has three fixed slots (package 1); an older `.okaygame` slot is not exported to sync (`ExportRaw`) until it is saved, copied or renamed once.
 - **Related:** 1.7, 12.8, 17.10, 35.2, 49.1
 - **Words:** save slot, save game, load game, Continue, SaveGame, SaveManager, slot list, load screen, cloud save, save folder
 - **Seen as:** Load screen is empty; save corrupted after a crash (handled by .bak); two kinds of saves in the folder

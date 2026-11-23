@@ -164,18 +164,18 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 ### 1.7 Saves and prefs
 - **What:** Player progress and settings on disk: whole-game save slots, an Easy-Save-style typed key/value store, and a simple preferences bag.
 - **Parts:**
-  - 1.7.1 Save slots - `Core/SaveGame` - `SaveGame::Save/Load/LoadNow/List/Info/Delete`, versioned and checksummed `<slot>.okaygame`, `.bak` fallback, migration hook, size caps
+  - 1.7.1 Save slots - `Core/SaveGame` - `SaveGame::Save/Load/LoadNow/List/Info/Delete`: the save framework's whole-scene mode, `<slot>.okayslot` in the framework's store (one store since 2026-11-22, Grok #422 item 1); older `<slot>.okaygame` files still load, list and count for Continue; `.bak` fallback, migration hook, size caps
   - 1.7.2 Typed save files - `Core/SaveData` - `SaveFile` and the `Save` facade: float, int, bool, string, Vec3 keys per file, `BaseDir`, safe relative paths, escaped on disk
   - 1.7.3 Prefs - `Core/Prefs` - global string-backed bag (`SetInt/GetInt`, floats, strings), typed `SetBool`, `SetVec3`, `SetColor` and change listeners (`AddListener`, #571), `Save(path)/Load(path)`; also holds audio, video and accessibility settings
-  - 1.7.4 Autosave component - `Components/AutoSave` - saves a slot every N seconds and/or when the scene starts
-  - 1.7.5 Save framework - `Core/SaveFramework`, `Core/SaveFrameworkScene`, `Core/SaveFrameworkSync` - (#572) saveable objects and `SaveSystem::CaptureScene/ApplyScene`, `<slot>.okayslot` slots with headers, quick save, autosave ring, checkpoints, migrations, sync hooks and a slot menu model; separate from `SaveGame` (see 35); `Countdown`/`Cooldown` and `TimeSnapshot` (1.1.14, 1.1.15) save through its `SaveWriter`/`SaveReader`
+  - 1.7.4 Autosave component - `Components/AutoSave` - saves a slot every N seconds and/or when the scene starts (a kind "auto" slot in the framework's store)
+  - 1.7.5 Save framework - `Core/SaveFramework`, `Core/SaveFrameworkScene`, `Core/SaveFrameworkSync` - (#572) saveable objects and `SaveSystem::CaptureScene/ApplyScene`, `<slot>.okayslot` slots with headers, quick save, autosave ring, checkpoints, migrations, sync hooks and a slot menu model; `SaveGame` is its whole-scene capture mode (`SaveCaptureOptions::wholeScene`, see 35); `Countdown`/`Cooldown` and `TimeSnapshot` (1.1.14, 1.1.15) save through its `SaveWriter`/`SaveReader`
 - **Code:** `Core/SaveGame`, `Core/SaveData`, `Core/Prefs`, `Components/AutoSave`, `Core/SaveFramework`, `Core/SaveFrameworkScene`, `Core/SaveFrameworkSync`
 - **API:** `SaveGame::Save`, `SaveGame::List`, `Save::SetInt`, `Save::GetString`, `Prefs::SetInt`, `AutoSave`, script `save()` and `save_game`
 - **Editor:** AutoSave component in the Inspector (editor/main.cpp); no save-slot UI components yet (12.8)
 - **Docs:** `docs/engine/save_games.md`, `docs/engine/save_games.md`, `docs/engine/localization.md`
-- **Tests:** `save_game`, `durable_saves`, `savedata`, `prefs`, `prefs_misc`, `save_framework`, `save_scene`, `loc_prefs_time`
+- **Tests:** `save_game`, `durable_saves`, `savedata`, `prefs`, `prefs_misc`, `save_framework`, `save_scene`, `save_merge`, `loc_prefs_time`
 - **Status:** Works - atomic writes, escaping and checksums merged in #552 (read `SaveGame.hpp`); `Prefs` is a thin string bag read by the player at start and saved at exit (`player/main.cpp`)
-- **Open:** the save framework (#572, area 35) has no scene-file record, component or editor window yet, so no game uses it, and it keeps its own slot format next to `SaveGame` (nothing converts between them); loading a slot replaces the default Save file's keys (documented); no cloud backend behind the sync hooks
+- **Open:** loading a whole-scene slot replaces the default Save file's keys (documented); no cloud backend behind the sync hooks; an older `.okaygame` slot is not exported by `SaveStore::ExportRaw` (sync) until it is saved, copied or renamed once
 - **Related:** 1.14, 12.8, 35, 7.4
 - **Words:** SaveGame, save slot, okaygame, SaveData, Save, Easy Save, Prefs, PlayerPrefs, autosave, checkpoint, load menu, backup, migration, save game, save file, SaveManager, checkpoint, quick save, Saveable, slot header, okayslot
 - **Seen as:** progress lost; corrupt save refuses to load; a save from a newer version is rejected; settings reset on restart

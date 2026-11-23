@@ -56,6 +56,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     NavigationWindow.cpp                                               # the Navigation window (navmesh bake + overlays)
     BuildSettingsWindow.cpp                                            # the Build Settings window: page list + search, Game and Advanced pages, summary, checks, history
     BuildGame.cpp                                                      # Build Game: export the game, Web / Android / Xbox data, the dedicated server (builder::)
+    Updater.cpp                                                        # the self-updater and runtime fetcher (updater::): check, download with checksums, install
     DialogueWindow.cpp                                                 # the Dialogue window (dialogue graphs + quests)
     BehaviorTreeWindow.cpp                                             # the Behavior Tree window (NPC AI trees)
     LevelTools.cpp                                                     # foliage brush, terrain layers, decals, cables, measuring tool, orthographic views

@@ -82,14 +82,8 @@ extern bool  g_gizmoLocal;
 // An image file (or "proc:" texture) as a cached SDL texture, null when it can't load.
 SDL_Texture* GetThumb(const std::string& path);
 
-
-// The self-updater's download helpers (main.cpp, namespace updater): Build Game fetches the player runtime with them.
-namespace updater {
-std::string SelfPath();
-bool Download(const std::string& url, const std::filesystem::path& outPath);
-std::string RawUrl(const std::string& ref, const std::string& name);
-bool FetchVerified(const std::string& version, const std::string& asset, const std::filesystem::path& dest, std::string& reason);
-} // namespace updater
+// Run a shell command without flashing a console window (main.cpp); returns the exit code like std::system.
+int SysNoWindow(const std::string& cmd);
 // The open project's settings (main.cpp; the struct is in ProjectState.hpp).
 struct ProjectSettings;
 extern ProjectSettings g_project;

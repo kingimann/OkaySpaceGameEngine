@@ -76,8 +76,8 @@ public:
         if (dt <= 0.0f) return;
         for (size_t i = 0; i < m_effects.size(); ) {
             Effect& e = m_effects[i];
-            if (e.hpPerSecond < 0.0f)      DamageHealthOn(gameObject, -e.hpPerSecond * dt);
-            else if (e.hpPerSecond > 0.0f) HealOn(gameObject, e.hpPerSecond * dt);
+            if (e.hpPerSecond < 0.0f)      DealDamage(gameObject, -e.hpPerSecond * dt);
+            else if (e.hpPerSecond > 0.0f) HealObject(gameObject, e.hpPerSecond * dt);
             e.remaining -= dt;
             if (e.remaining <= 0.0f) {
                 std::string n = e.name;
@@ -122,7 +122,7 @@ private:
     void Capture() {
         GameObject* g = gameObject; if (!g) return;
         if (auto* c = g->GetComponent<SurvivalStats>()) {
-            P("health", c->health); P("hunger", c->hunger); P("thirst", c->thirst);
+            P("hunger", c->hunger); P("thirst", c->thirst);
             P("stamina", c->stamina); P("oxygen", c->oxygen); P("warmth", c->warmth);
         }
         if (auto* c = g->GetComponent<HealthStat>())      P("health", c->health);
@@ -144,7 +144,7 @@ private:
     void Apply() {
         GameObject* g = gameObject; if (!g) return;
         if (auto* c = g->GetComponent<SurvivalStats>()) {
-            c->health = G("health", c->health); c->hunger = G("hunger", c->hunger);
+            c->hunger = G("hunger", c->hunger);
             c->thirst = G("thirst", c->thirst); c->stamina = G("stamina", c->stamina);
             c->oxygen = G("oxygen", c->oxygen); c->warmth = G("warmth", c->warmth);
         }

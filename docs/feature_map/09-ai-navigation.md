@@ -91,7 +91,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Parts:**
   - 9.5.1 Base behaviours - `Components/NPCController` - Idle, Wander, Patrol, Guard, Follow, Flee, Chase with waypoints, speeds, acceleration and turning
   - 9.5.2 Perception - `AI/Perception`, shared by `Components/NPCController` and the behavior tree Perception service - sight range and field of view, optional physics line of sight from eye height, hearing range; the controller also keeps detection time (stealth), lose-sight and search timers. Each keeps its own numbers
-  - 9.5.3 Combat and health - `Components/NPCController` - attack range, damage, interval, windup, flee at low health, provoke, `Damage`, death broadcast
+  - 9.5.3 Combat and health - `Components/NPCController` - attack range, damage, interval, windup, flee at low health, provoke on a hit, `npc_died`; its health is the object's Health Stat (added with it, 30 HP, removed on death; scene format 4, `test_one_health`)
   - 9.5.4 Pathfinding use and animation - `Components/NPCController` - routes through `Navigation` when Use Pathfinding is on; drives a sibling Character's idle, walk, run and head look; broadcasts `npc_alert`, `npc_lost`, `npc_died` and more to Action Lists
   - 9.5.5 Behavior-tree brain mode - `Components/NPCController` - `SetExternalBrain` makes it take orders (`CommandGoTo`, `AttackNow`) from a BehaviorTreeRunner
   - 9.5.6 Follow target (2D chase) - `Components/FollowTarget2D` - no-code chase: moves toward a named object each frame, stops within a stop distance, drives a sibling Rigidbody2D when present (enemies seeking the player, homing pickups, companions)
@@ -101,7 +101,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Docs:** `docs/gameplay/npcs_and_crafting.md`
 - **Tests:** `npc_ai`, `npc_crafting`, `perception`
 - **Status:** Works - NPCController.hpp read in full (states, perception, external-brain hooks); behaviours covered by `npc_ai` (sight cone, search, patrol, flee, leash) and `perception` (the controller, the tree service and the tree's line-of-sight test agree)
-- **Open:** health is a built-in `health` field here, separate from HealthStat and Stats (11.4, 11.8); no group tactics beyond separation radius. Visual-script Can See, In Cone and Has Line of Sight stay a separate full-3D check (no hearing, no eye height)
+- **Open:** no group tactics beyond separation radius. Visual-script Can See, In Cone and Has Line of Sight stay a separate full-3D check (no hearing, no eye height)
 - **Related:** 9.1, 9.2, 9.4, 11.4, 11.7, 5.8
 - **Words:** AI, NPC, NPCController, enemy, wildlife, guard, patrol, wander, chase, flee, perception, sight cone, field of view, hearing, stealth, detection meter, leash, aggro
 - **Seen as:** an enemy sees through walls; an enemy never notices the player or notices from behind; an NPC returns to its spawn after a chase; the NPC dies but nothing drops; enemies stack on each other

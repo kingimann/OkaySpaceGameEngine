@@ -68,8 +68,10 @@ class SceneSerializer {
 public:
     /// The `okayscene` version this build writes. A file with a larger version
     /// still loads (records this build doesn't know are skipped, with a warning);
-    /// version 0 or a non-number is an error.
-    static constexpr int kSceneFormatVersion = 3;
+    /// version 0 or a non-number is an error. Version 4 (one health per object): the
+    /// `survival`, `stats` and `npc` records no longer hold health; the Health Stat
+    /// (`stat_health`) does, and an older file's values are moved there on load.
+    static constexpr int kSceneFormatVersion = 4;
 
     // Every loader below is all-or-nothing: if the text is bad (no header, a bad
     // version or count, a record cut short, a duplicate object index) it returns

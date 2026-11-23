@@ -130,21 +130,21 @@ int main() {
         GameObject* behind = s.CreateGameObject("Behind");
         behind->transform->SetPosition({0, 0, -1.5f});
         auto* npc = behind->AddComponent<NPCController>();
-        npc->maxHealth = 40.0f;
+        npc->Health()->maxHealth = 40.0f;
         GameObject* ahead = s.CreateGameObject("Guard");
         ahead->transform->SetPosition({0, 0, 2.0f});
         auto* guard = ahead->AddComponent<NPCController>();
-        guard->maxHealth = 40.0f;
+        guard->Health()->maxHealth = 40.0f;
         s.Start();
         melee->Swing();
         s.Update(0.20f);                                   // still before the window
         CHECK_NEAR(front->health, 100.0f, 1e-3f);
-        CHECK_NEAR(guard->health, 40.0f, 1e-3f);
+        CHECK_NEAR(guard->Health()->health, 40.0f, 1e-3f);
         s.Update(0.10f);                                   // age 0.30, window is 0.25..0.45
         CHECK_NEAR(front->health, 90.0f, 1e-3f);
         CHECK_NEAR(side->health, 100.0f, 1e-3f);           // outside the arc
-        CHECK_NEAR(npc->health, 40.0f, 1e-3f);             // behind the fighter
-        CHECK_NEAR(guard->health, 30.0f, 1e-3f);           // an NPC in front is hit too
+        CHECK_NEAR(npc->Health()->health, 40.0f, 1e-3f);   // behind the fighter
+        CHECK_NEAR(guard->Health()->health, 30.0f, 1e-3f); // an NPC in front is hit too
         CHECK(front->gameObject->GetComponent<Rigidbody3D>()->velocity.z > 3.5f);
         front->gameObject->GetComponent<Rigidbody3D>()->velocity = Vec3::Zero;
         front->gameObject->transform->SetPosition({0, 0, 1.5f});

@@ -23,16 +23,25 @@ a HUD works the same either way.
 *Add Component ▸ Gameplay ▸ Survival Stats (native)*. Drop it on the Player and tune
 the Inspector groups (Health, Hunger, Thirst, Stamina, Oxygen, Temperature, Output).
 Each frame it drains the stats, and when hunger/thirst/oxygen/warmth hit zero it
-calls `Damage()` **directly** (no message round-trip). `armor` soaks incoming
-damage; health regenerates while fed + hydrated after a `regenDelay` pause. On death
-it broadcasts `died`, plays a sibling AudioSource, and deactivates the object.
+damages health **directly** (no message round-trip). Health regenerates while fed +
+hydrated (`regenWhenFed`) after the Health Stat's `regenDelay` pause.
+
+**One health per object.** Survival Stats has no health of its own: adding it adds a
+**Stat: Health** to the object when there is none (regen delay 5 s, death switches
+the player off), and max health, armor, resistance, i-frames, god mode, death and
+respawn are set there. On death the Health Stat broadcasts `died`, plays a sibling
+AudioSource, and deactivates the object. The editor will not remove that Health Stat
+while Survival Stats needs it. Scenes saved before scene format 4 kept those health
+values in Survival Stats; opening one moves them into the Health Stat (see
+`docs/engine/scene_diff_merge.md`, "one-health").
 
 Sprinting (`SetSprinting`) burns stamina **and** drains hunger/thirst faster.
 
-Methods: `Damage`, `Heal`, `Eat`, `Drink`, `Breathe`, `Warm`, `AddArmor`, `Revive`,
-`SetSprinting`, `SetSubmerged`, `SetCold`, plus `Fraction()` / `…Fraction()` /
-`IsDead()` / `CanSprint()`. **Output** toggles control whether it writes saved
-values, fills `*Bar` widgets, and broadcasts messages.
+Methods: `Eat`, `Drink`, `Breathe`, `Warm`, `SetSprinting`, `SetSubmerged`, `SetCold`,
+plus `…Fraction()` / `CanSprint()`; health (`Damage`, `Heal`, `AddArmor`, `Revive`,
+`Kill`) is the Health Stat's, and a button's Damage / Heal on the player reaches it.
+**Output** toggles control whether it writes saved values, fills `*Bar` widgets, and
+broadcasts messages (the Health Stat has its own for `{health}`, `HealthBar` and `died`).
 
 ## Individual stat components
 
@@ -80,9 +89,8 @@ The all-in-one **Survival Stats** mirrors `resistance`, `godMode`, and
 
 *Add Component ▸ Gameplay ▸ Stat: Radiation / Bleeding / Poison / Wetness*. These are
 "danger meters" — the bar **fills toward harm** (full = bad) and, while active, they
-damage the object's health source directly (the all-in-one `SurvivalStats` if
-present, else a `HealthStat` sibling). Put them on the same object as your health
-component.
+damage the object's health directly: its Health Stat (the one health, also the one
+Survival Stats uses). Put them on the same object as your health component.
 
 | Component | What it does | Key fields | Methods | Message |
 |-----------|--------------|-----------|---------|---------|

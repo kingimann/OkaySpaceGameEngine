@@ -6,7 +6,6 @@
 #include "okay/Components/Sockets.hpp"
 #include "okay/Components/Stats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
-#include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/NetInventory.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
@@ -302,7 +301,6 @@ void Equipment::OnDestroy() {
 void Equipment::ApplyBonuses(float armor, int defense, float weight) {
     if (!gameObject) return;
     if (auto* h = gameObject->GetComponent<HealthStat>()) h->equipArmor = armor;
-    if (auto* ss = gameObject->GetComponent<SurvivalStats>()) ss->equipArmor = armor;
     if (auto* st = gameObject->GetComponent<Stats>()) st->equipDefense = defense;
     if (auto* inv = gameObject->GetComponent<Inventory>())
         if (inv->wornWeight != weight) { inv->wornWeight = weight; inv->NotifyChanged(); }

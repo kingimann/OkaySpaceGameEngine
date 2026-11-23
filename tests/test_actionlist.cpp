@@ -174,7 +174,7 @@ int main() {
         al->instructions = { I("hurt", {"30"}), I("heal", {"10"}),
                              I("eat", {"5"}), I("survival", {"Drink", "7"}) };
         s.Start(); s.Update(0.016f);
-        CHECK_NEAR(sv->health, 80.0f, 1e-3f);          // -30 +10
+        CHECK_NEAR(p->GetComponent<HealthStat>()->health, 80.0f, 1e-3f);   // -30 +10, on the one health
         CHECK_NEAR(sv->hunger, 100.0f, 1e-3f);         // eat clamps at max (started full)
         CHECK(sv->thirst <= 100.0f);
     }

@@ -81,9 +81,7 @@ private:
     }
     bool Dead() const {
         if (!gameObject) return false;
-        if (auto* n = gameObject->GetComponent<NPCController>()) if (n->IsDead()) return true;
-        if (auto* h = gameObject->GetComponent<HealthStat>()) if (h->IsDead()) return true;
-        return false;
+        return IsObjectDead(gameObject);   // the one health: an NPC's is its Health Stat too
     }
     bool Empty() const {
         if (auto* inv = gameObject->GetComponent<Inventory>()) return inv->SlotsUsed() == 0;

@@ -281,7 +281,7 @@ int main() {
         pc->toggle()->blendTime = 0.5f;
         pc->toggle()->shoulderOffset = 0.3f;
         const std::string text = SceneSerializer::Serialize(sc);
-        CHECK(text.compare(0, 12, "okayscene 3\n") == 0);
+        CHECK(text.compare(0, 12, "okayscene 4\n") == 0);
         CHECK(Has(text, "playercontroller"));
         CHECK(!Has(text, "fpctrl") && !Has(text, "tpctrl") && !Has(text, "playerview") &&
               !Has(text, "fpfeel") && !Has(text, "tpfeel") && !Has(text, "fpstance") && !Has(text, "tpstance"));

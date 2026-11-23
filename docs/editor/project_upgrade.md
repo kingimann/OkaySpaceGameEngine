@@ -11,7 +11,7 @@ asks before it touches anything: upgrade the project (after a full backup), keep
 `shared/ProjectVersion.hpp` (no editor, ImGui or engine code, so the launcher uses the same ones) and `editor/ProjectUpgrade.hpp`
 (the backup, the upgrade and the question, no ImGui); the windows are `editor/ProjectUpgradeUI.cpp`.
 
-This is about the **engine version** (`2.855.0`). Scene files have their own format version (`okayscene 3`, with migrations: see
+This is about the **engine version** (`2.855.0`). Scene files have their own format version (`okayscene 4`, with migrations: see
 [scene_serializer.md](../engine/scene_serializer.md) and [scene_diff_merge.md](../engine/scene_diff_merge.md)); an upgrade uses those migrations on every scene
 and prefab, but the two numbers are not the same thing.
 

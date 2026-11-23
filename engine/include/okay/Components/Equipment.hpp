@@ -20,7 +20,7 @@ class GameObject;
 ///    or a ModelAnimator node), without physics. It is runtime-only and never saved.
 ///    A Main Hand item goes into the character's hands instead when it has a
 ///    ProceduralObjectHolding (ProceduralObjectHolding::Pickup; Drop when it comes off).
-///  - The definitions' custom "armor" fields add to HealthStat / SurvivalStats armor and
+///  - The definitions' custom "armor" fields add to the Health Stat's armor and
 ///    "defense" to Stats defense, and worn items' weight still counts toward the
 ///    Inventory's encumbrance, all as runtime values removed when the item comes off.
 ///  - A worn item whose prefab has a GridInventory (a backpack) is a worn container:

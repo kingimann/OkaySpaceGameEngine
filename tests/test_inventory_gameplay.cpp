@@ -173,7 +173,7 @@ int main() {
         auto* npc = goblin->AddComponent<NPCController>();
         auto* gls = goblin->AddComponent<LootSource>(); gls->table = path; gls->when = LootSource::When::Death;
         s.Update(0.016f);
-        npc->Damage(1e9f);                                    // removes itself the moment it dies
+        DealDamage(goblin, 1e9f); (void)npc;                  // removes itself the moment it dies (its Health Stat)
         s.Update(0.016f);
         CHECK(Pickups(s, "apple") == 4);
         std::remove(path.c_str());

@@ -62,8 +62,8 @@ private:
             if (inside) if (auto* c = g->GetComponent<StatusEffectStat>())
                 c->Apply(effectName, duration, amount);
             break;
-        case Effect::Damage: if (inside) DamageHealthOn(g, amount); break;
-        case Effect::Heal:   if (inside) HealOn(g, amount); break;
+        case Effect::Damage: if (inside) DealDamage(g, amount); break;
+        case Effect::Heal:   if (inside) HealObject(g, amount); break;
         case Effect::Eat:    // a berry bush / food source restores hunger
             if (inside) {
                 if (auto* s = g->GetComponent<SurvivalStats>()) s->Eat(amount);

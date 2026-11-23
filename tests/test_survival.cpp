@@ -7,6 +7,9 @@ using namespace okay;
 // Native SurvivalStats: stats drain over time, empty stats damage health directly
 // (no script VM / message round-trip), death deactivates the object, refills clamp,
 // it fills same-named progress bars, and it round-trips through serialization.
+// Survival Stats keeps no health of its own: the object's Health Stat is its health (added with it).
+static HealthStat* HP(GameObject* g) { return g ? g->GetComponent<HealthStat>() : nullptr; }
+
 int main() {
     RUN_SUITE("survival");
 
@@ -22,10 +25,10 @@ int main() {
         CHECK_NEAR(sv->hunger, 100.0f, 1e-3f);               // Start() filled it
         for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f); // 1s: drains, not yet empty
         CHECK(sv->hunger < 60.0f);
-        CHECK_NEAR(sv->health, 100.0f, 1e-3f);               // still fed enough -> no dmg
+        CHECK_NEAR(HP(p)->health, 100.0f, 1e-3f);               // still fed enough -> no dmg
         for (int i = 0; i < 180; ++i) s.Update(1.0f / 60.0f);// 3s more: hunger/thirst hit 0
         CHECK_NEAR(sv->hunger, 0.0f, 1e-3f);
-        CHECK(sv->health < 100.0f);                          // empty stats bit health directly
+        CHECK(HP(p)->health < 100.0f);                          // empty stats bit health directly
     }
 
     // --- Armor soaks damage; Heal clamps to max --------------------------
@@ -33,14 +36,14 @@ int main() {
         Scene s("dmg");
         GameObject* p = s.CreateGameObject("Player");
         auto* sv = p->AddComponent<SurvivalStats>();
-        sv->armor = 5.0f;
+        HP(p)->armor = 5.0f;
         s.Start();
-        sv->Damage(20.0f);                                   // 20 - 5 armor = 15
-        CHECK_NEAR(sv->health, 85.0f, 1e-3f);
-        sv->Damage(2.0f);                                    // fully soaked by armor
-        CHECK_NEAR(sv->health, 85.0f, 1e-3f);
-        sv->Heal(999.0f);
-        CHECK_NEAR(sv->health, 100.0f, 1e-3f);               // clamped
+        DealDamage(p, 20.0f);                                   // 20 - 5 armor = 15
+        CHECK_NEAR(HP(p)->health, 85.0f, 1e-3f);
+        DealDamage(p, 2.0f);                                    // fully soaked by armor
+        CHECK_NEAR(HP(p)->health, 85.0f, 1e-3f);
+        HealObject(p, 999.0f);
+        CHECK_NEAR(HP(p)->health, 100.0f, 1e-3f);               // clamped
     }
 
     // --- Death deactivates the object + broadcasts "died" ----------------
@@ -53,13 +56,13 @@ int main() {
         auto* sv = p->AddComponent<SurvivalStats>();
         s.Start();
         CHECK(p->active);
-        sv->Damage(1000.0f);
-        CHECK(sv->IsDead());
+        DealDamage(p, 1000.0f);
+        CHECK(IsObjectDead(p));
         CHECK(!p->active);                                   // deactivated on death
-        sv->Revive();
-        CHECK(!sv->IsDead());
+        HP(p)->Revive();
+        CHECK(!IsObjectDead(p));
         CHECK(p->active);
-        CHECK_NEAR(sv->health, 100.0f, 1e-3f);
+        CHECK_NEAR(HP(p)->health, 100.0f, 1e-3f);
     }
 
     // --- Sprinting burns stamina and drains hunger faster ----------------
@@ -82,9 +85,9 @@ int main() {
         auto* pb = bar->AddComponent<UIProgressBar>();
         GameObject* p = s.CreateGameObject("Player");
         auto* sv = p->AddComponent<SurvivalStats>();
-        sv->maxHealth = 200.0f;
+        HP(p)->maxHealth = 200.0f;
         s.Start();
-        sv->Damage(100.0f);          // health 100/200 -> 0.5
+        DealDamage(p, 100.0f);          // health 100/200 -> 0.5
         s.Update(1.0f / 60.0f);
         CHECK_NEAR(pb->value, 0.5f, 0.02f);
     }
@@ -94,7 +97,7 @@ int main() {
         Scene s("ser");
         GameObject* p = s.CreateGameObject("Player");
         auto* sv = p->AddComponent<SurvivalStats>();
-        sv->maxHealth = 150.0f; sv->armor = 7.5f; sv->hungerDrain = 2.5f;
+        HP(p)->maxHealth = 150.0f; HP(p)->armor = 7.5f; sv->hungerDrain = 2.5f;
         sv->drownDamage = 9.0f; sv->sendMessages = false;
         std::string txt = SceneSerializer::SerializeObject(*p);
         CHECK(txt.find("survival ") != std::string::npos);
@@ -102,8 +105,8 @@ int main() {
         GameObject* c2 = SceneSerializer::InstantiateFromText(s2, txt);
         auto* v2 = c2 ? c2->GetComponent<SurvivalStats>() : nullptr;
         CHECK(v2 != nullptr);
-        CHECK_NEAR(v2->maxHealth, 150.0f, 1e-3f);
-        CHECK_NEAR(v2->armor, 7.5f, 1e-3f);
+        CHECK(HP(c2) && c2->GetComponents<HealthStat>().size() == 1 && std::fabs(HP(c2)->maxHealth - 150.0f) < 1e-3f);
+        CHECK(HP(c2) && std::fabs(HP(c2)->armor - 7.5f) < 1e-3f);   // health settings live in the Health Stat
         CHECK_NEAR(v2->hungerDrain, 2.5f, 1e-3f);
         CHECK_NEAR(v2->drownDamage, 9.0f, 1e-3f);
         CHECK(!v2->sendMessages);
@@ -202,9 +205,9 @@ int main() {
         sv->thirst = 40.0f;
         CHECK(InvokeNativeUIAction(p, "Drink", 30.0f));    // handled
         CHECK_NEAR(sv->thirst, 70.0f, 1e-3f);
-        sv->health = 50.0f;
+        HP(p)->health = 50.0f;
         CHECK(InvokeNativeUIAction(p, "Heal", 25.0f));
-        CHECK_NEAR(sv->health, 75.0f, 1e-3f);
+        CHECK_NEAR(HP(p)->health, 75.0f, 1e-3f);
         CHECK(!InvokeNativeUIAction(p, "NotAMethod", 1.0f));   // unknown -> false
         auto names = NativeUIActionNames(p);
         CHECK(std::find(names.begin(), names.end(), "Eat") != names.end());
@@ -268,7 +271,7 @@ int main() {
         rd->SetInRadiation(true);
         for (int i = 0; i < 120; ++i) s.Update(1.0f / 60.0f);    // 2s: ramps past threshold
         CHECK(rd->sick);
-        CHECK(sv->health < 100.0f);                              // irradiated -> health damage
+        CHECK(HP(p)->health < 100.0f);                              // irradiated -> health damage
         rd->SetInRadiation(false);
         rd->TakeAntiRad(1000.0f);
         s.Update(1.0f / 60.0f);
@@ -387,7 +390,7 @@ int main() {
             auto* save = p->AddComponent<SurvivalSave>();
             save->saveKey = "test_survsave"; save->loadOnStart = false;
             s.Start();
-            sv->health = 42.0f; sv->hunger = 17.0f; sv->thirst = 88.0f;
+            HP(p)->health = 42.0f; sv->hunger = 17.0f; sv->thirst = 88.0f;
             save->Save();
         }
         {
@@ -397,9 +400,9 @@ int main() {
             auto* save = p->AddComponent<SurvivalSave>();
             save->saveKey = "test_survsave"; save->loadOnStart = true;
             s2.Start();                                      // fills to max
-            CHECK_NEAR(sv->health, 100.0f, 1e-3f);           // not loaded yet (deferred)
+            CHECK_NEAR(HP(p)->health, 100.0f, 1e-3f);           // not loaded yet (deferred)
             s2.Update(1.0f / 60.0f);                         // first frame -> Load()
-            CHECK_NEAR(sv->health, 42.0f, 0.5f);
+            CHECK_NEAR(HP(p)->health, 42.0f, 0.5f);
             CHECK_NEAR(sv->hunger, 17.0f, 0.5f);
             CHECK_NEAR(sv->thirst, 88.0f, 0.5f);
         }

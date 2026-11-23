@@ -443,7 +443,7 @@ SaveAdapter StatsAdapter() {
     a.save = [](GameObject& go, SaveWriter& w) {
         auto* s = go.GetComponent<Stats>();
         if (!s) return false;
-        w.Float("health", s->health); w.Float("maxHealth", s->maxHealth);
+        if (const HealthStat* h = s->Health()) { w.Float("health", h->health); w.Float("maxHealth", h->maxHealth); }   // the one health
         w.Float("mana", s->mana);     w.Float("maxMana", s->maxMana);
         w.Int("level", s->level); w.Int("xp", s->xp); w.Int("xpToNext", s->xpToNext);
         w.Int("strength", s->strength); w.Int("defense", s->defense);
@@ -453,7 +453,7 @@ SaveAdapter StatsAdapter() {
     a.load = [](GameObject& go, SaveReader& r) {
         auto* s = go.GetComponent<Stats>();
         if (!s) return;
-        s->health = r.Float("health", s->health); s->maxHealth = r.Float("maxHealth", s->maxHealth);
+        if (HealthStat* h = s->Health()) { h->maxHealth = r.Float("maxHealth", h->maxHealth); h->health = r.Float("health", h->health); }
         s->mana = r.Float("mana", s->mana);       s->maxMana = r.Float("maxMana", s->maxMana);
         s->level = r.Int("level", s->level); s->xp = r.Int("xp", s->xp); s->xpToNext = r.Int("xpToNext", s->xpToNext);
         s->strength = r.Int("strength", s->strength); s->defense = r.Int("defense", s->defense);

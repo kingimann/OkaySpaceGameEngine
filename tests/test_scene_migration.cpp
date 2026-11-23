@@ -86,12 +86,12 @@ static bool Same(const std::string& a, const std::string& b) {
 static void TestRegistry() {
     RUN_SUITE("migration: the registry");
     const auto steps = SceneMigration::Steps();
-    CHECK(SceneMigration::CurrentVersion() == 3);
-    CHECK(steps.size() == 2 && steps[0].from == 1 && steps[1].from == 2);
-    CHECK(steps[0].name == "character-animator" && steps[1].name == "view-toggle-controllers");
-    CHECK(steps[0].needsEngine && steps[1].needsEngine);
+    CHECK(SceneMigration::CurrentVersion() == 4);
+    CHECK(steps.size() == 3 && steps[0].from == 1 && steps[1].from == 2 && steps[2].from == 3);
+    CHECK(steps[0].name == "character-animator" && steps[1].name == "view-toggle-controllers" && steps[2].name == "one-health");
+    CHECK(steps[0].needsEngine && steps[1].needsEngine && steps[2].needsEngine);
     const std::string d = SceneMigration::Describe();
-    CHECK(Has(d, "okayscene 1 -> 2") && Has(d, "okayscene 2 -> 3") && Has(d, "#346") && Has(d, "#510"));
+    CHECK(Has(d, "okayscene 1 -> 2") && Has(d, "okayscene 2 -> 3") && Has(d, "okayscene 3 -> 4") && Has(d, "#346") && Has(d, "#510"));
 
     SceneMigration::Step bad;
     bad.from = 0;
@@ -99,7 +99,7 @@ static void TestRegistry() {
     bad.from = 1;
     CHECK(!SceneMigration::Register(bad));              // already there
     CHECK(!SceneMigration::Unregister(77));
-    CHECK(SceneMigration::Steps().size() == 2);
+    CHECK(SceneMigration::Steps().size() == 3);
 }
 
 static void TestOldFormats() {
@@ -107,9 +107,9 @@ static void TestOldFormats() {
     // Version 1, hand written.
     {
         const auto r = SceneMigration::MigrateToCurrent(kV1);
-        CHECK(r.ok && r.complete && r.changed && !r.needsEngine && r.fromVersion == 1 && r.toVersion == 3);
-        CHECK(r.text.compare(0, 12, "okayscene 3\n") == 0);
-        CHECK(r.log.size() == 2 && Has(r.log[0], "okayscene 1 -> 2") && Has(r.log[1], "okayscene 2 -> 3"));
+        CHECK(r.ok && r.complete && r.changed && !r.needsEngine && r.fromVersion == 1 && r.toVersion == 4);
+        CHECK(r.text.compare(0, 12, "okayscene 4\n") == 0);
+        CHECK(r.log.size() == 3 && Has(r.log[0], "okayscene 1 -> 2") && Has(r.log[1], "okayscene 2 -> 3") && Has(r.log[2], "okayscene 3 -> 4"));
         CHECK(Has(r.log[0], "nothing in this scene needs it"));
         CHECK(SceneText::Canonicalize(r.text) == r.text);
         CHECK(Same(kV1, r.text));                                 // loads as the same scene
@@ -125,7 +125,7 @@ static void TestOldFormats() {
     // Version 2, hand written.
     {
         const auto r = SceneMigration::MigrateToCurrent(kV2);
-        CHECK(r.ok && r.complete && r.fromVersion == 2 && r.toVersion == 3 && r.log.size() == 1 && Has(r.log[0], "2 -> 3"));
+        CHECK(r.ok && r.complete && r.fromVersion == 2 && r.toVersion == 4 && r.log.size() == 2 && Has(r.log[0], "2 -> 3") && Has(r.log[1], "3 -> 4"));
         CHECK(Same(kV2, r.text));
         CHECK(Has(r.text, "sprite 64 1 0 0 1 1 1 \"hero.png\" 0 0 1 1 3 0 0"));
     }
@@ -134,7 +134,7 @@ static void TestOldFormats() {
         const std::string real = ReadFile(std::string(OKAY_SOURCE_DIR) + "/tests/export/vs_export.okayscene");
         CHECK(real.compare(0, 12, "okayscene 1\n") == 0);
         const auto r = SceneMigration::MigrateToCurrent(real);
-        CHECK(r.ok && r.complete && r.toVersion == 3 && Has(r.text, "gameobject 9 \"Tower\""));
+        CHECK(r.ok && r.complete && r.toVersion == 4 && Has(r.text, "gameobject 9 \"Tower\""));
         CHECK(Same(real, r.text));
         CHECK(Has(r.text, "visualscriptpath \"hero.okayvs\""));
     }
@@ -144,16 +144,16 @@ static void TestOldFormats() {
         const std::string x = LiveSceneText(r, 15);
         const std::string messy = Mess(x, r);
         const auto m = SceneMigration::MigrateToCurrent(messy);
-        CHECK(m.ok && m.complete && !m.changed && m.text == messy && m.fromVersion == 3 && m.log.empty());
+        CHECK(m.ok && m.complete && !m.changed && m.text == messy && m.fromVersion == 4 && m.log.empty());
     }
-    // Random scenes saved as version 1 or 2 come out as the same scenes at version 3.
+    // Random scenes saved as version 1, 2 or 3 come out as the same scenes at version 4 (they hold no health owners).
     for (std::uint64_t seed = 1; seed <= (std::uint64_t)Seeds(40); ++seed) {
         TkRng r(seed + 500);
         const std::string x = LiveSceneText(r, 1 + r.range(40), r.chance(0.7));
-        const int v = 1 + r.range(2);
+        const int v = 1 + r.range(3);
         const std::string old = WithVersion(x, v);
         const auto m = SceneMigration::MigrateToCurrent(old);
-        CHECK(m.ok && m.complete && !m.needsEngine && m.toVersion == 3);
+        CHECK(m.ok && m.complete && !m.needsEngine && m.toVersion == 4);
         CHECK(m.text == SceneText::Canonicalize(x));
         CHECK(Same(old, m.text));
     }
@@ -175,10 +175,10 @@ static void TestEngineSteps() {
         CHECK(Has(t.log[0], "character-animator") && Has(t.log[0], "only the engine's loader"));
 
         const auto e = SceneMigration::MigrateThroughEngine(v1);
-        CHECK(e.ok && e.complete && !e.needsEngine && e.toVersion == 3 && e.changed);
-        CHECK(e.text.compare(0, 12, "okayscene 3\n") == 0);
+        CHECK(e.ok && e.complete && !e.needsEngine && e.toVersion == 4 && e.changed);
+        CHECK(e.text.compare(0, 12, "okayscene 4\n") == 0);
         CHECK(Has(e.text, "animsm"));                            // the Animator the loader adds
-        CHECK(Has(e.log.back(), "wrote it back out") || Has(e.log[e.log.size() - 1], "okayscene 3"));
+        CHECK(Has(e.log.back(), "wrote it back out") || Has(e.log[e.log.size() - 1], "okayscene 4"));
         // Stable: loading the upgraded file again changes nothing, and it needs no more upgrades.
         std::string again;
         CHECK(Reserialize(e.text, &again) && StripGuids(again) == StripGuids(e.text));
@@ -201,7 +201,7 @@ static void TestEngineSteps() {
         // The old one-controller player came out with both view controllers (under a Player Controller).
         CHECK(!Has(e.text, "  playerview ") && Has(e.text, "  pcfirst ") && Has(e.text, "  pcthird "));
         CHECK(e.changed && !Has(v2, "  pcthird "));
-        CHECK(e.ok && e.complete && e.toVersion == 3);
+        CHECK(e.ok && e.complete && e.toVersion == 4);
         std::string viaLoader;
         CHECK(Reserialize(v2, &viaLoader) && StripGuids(viaLoader) == StripGuids(e.text));
         const auto m = SceneMigration::MigrateThroughEngine(e.text);
@@ -222,9 +222,9 @@ static void TestEngineSteps() {
 
 static void TestRefusals() {
     RUN_SUITE("migration: files it must not touch");
-    const std::string newer = "okayscene 4\nname \"Future\"\nfuturething 1 2 3\ngameobject 0 \"F\"\n  active 1\n  parent -1\nend\n";
+    const std::string newer = "okayscene 5\nname \"Future\"\nfuturething 1 2 3\ngameobject 0 \"F\"\n  active 1\n  parent -1\nend\n";
     auto r = SceneMigration::MigrateToCurrent(newer);
-    CHECK(!r.ok && r.text == newer && !r.changed && Has(r.error, "newer") && Has(r.error, "okayscene 4") && r.log.empty());
+    CHECK(!r.ok && r.text == newer && !r.changed && Has(r.error, "newer") && Has(r.error, "okayscene 5") && r.log.empty());
     r = SceneMigration::MigrateToCurrent("okayscene 99\n");
     CHECK(!r.ok && Has(r.error, "newer"));
     const auto e = SceneMigration::MigrateThroughEngine(newer);
@@ -240,11 +240,11 @@ static void TestRefusals() {
     CHECK(!r.ok && Has(r.error, "newer"));
 }
 
-// ---- SYNTHETIC steps: registered only here, to exercise the framework beyond version 3 ----
+// ---- SYNTHETIC steps: registered only here, to exercise the framework beyond version 4 ----
 
 static void RegisterSynthetic() {
     SceneMigration::Step a;
-    a.from = 3;
+    a.from = 4;
     a.name = "SYNTHETIC-TEST-rename-record";
     a.description = "test only: rename the record `oldthing` to `newthing`";
     a.affects = [](const SceneText::Document& d) {
@@ -261,7 +261,7 @@ static void RegisterSynthetic() {
     };
     CHECK(SceneMigration::Register(a));
     SceneMigration::Step b;
-    b.from = 4;
+    b.from = 5;
     b.name = "SYNTHETIC-TEST-add-tag";
     b.description = "test only: untagged objects get the tag \"migrated\"";
     b.apply = [](SceneText::Document& d, std::vector<std::string>& log, std::string&) {
@@ -278,18 +278,18 @@ static void RegisterSynthetic() {
 }
 
 static void UnregisterSynthetic() {
-    SceneMigration::Unregister(3);
     SceneMigration::Unregister(4);
     SceneMigration::Unregister(5);
+    SceneMigration::Unregister(6);
 }
 
 static void TestSyntheticSteps() {
     RUN_SUITE("migration: framework with SYNTHETIC steps");
-    const std::string v3 =
-        "okayscene 3\ngameobject 0 \"A\"\n  active 1\n  parent -1\n  oldthing 1 2\nend\n"
+    const std::string v3 =   // (named for the old current version; the synthetic steps start at the current one, 4)
+        "okayscene 4\ngameobject 0 \"A\"\n  active 1\n  parent -1\n  oldthing 1 2\nend\n"
         "gameobject 1 \"B\"\n  active 1\n  tag \"keep\"\n  parent -1\nend\n";
     RegisterSynthetic();
-    CHECK(SceneMigration::Steps().size() == 4);
+    CHECK(SceneMigration::Steps().size() == 5);
     // The current-version entry point is not affected by steps above the current version.
     {
         const auto r = SceneMigration::MigrateToCurrent(v3);
@@ -297,79 +297,79 @@ static void TestSyntheticSteps() {
     }
     // Two steps in a row, with their log lines.
     {
-        const auto r = SceneMigration::MigrateTo(v3, 5);
-        CHECK(r.ok && r.complete && r.fromVersion == 3 && r.toVersion == 5 && r.changed);
-        CHECK(r.text.compare(0, 12, "okayscene 5\n") == 0);
+        const auto r = SceneMigration::MigrateTo(v3, 6);
+        CHECK(r.ok && r.complete && r.fromVersion == 4 && r.toVersion == 6 && r.changed);
+        CHECK(r.text.compare(0, 12, "okayscene 6\n") == 0);
         CHECK(Has(r.text, "  newthing 1 2\n") && !Has(r.text, "oldthing"));
         CHECK(Has(r.text, "gameobject 0 \"A\"") && Has(r.text, "  tag \"migrated\"\n") && Has(r.text, "  tag \"keep\"\n"));
         CHECK(r.log.size() == 4);
-        CHECK(Has(r.log[0], "renamed 1 oldthing") && Has(r.log[1], "okayscene 3 -> 4") && Has(r.log[1], "applied"));
-        CHECK(Has(r.log[2], "tagged 1 object") && Has(r.log[3], "okayscene 4 -> 5"));
-        // A version 5 file is refused by the current entry point, untouched.
+        CHECK(Has(r.log[0], "renamed 1 oldthing") && Has(r.log[1], "okayscene 4 -> 5") && Has(r.log[1], "applied"));
+        CHECK(Has(r.log[2], "tagged 1 object") && Has(r.log[3], "okayscene 5 -> 6"));
+        // A version 6 file is refused by the current entry point, untouched.
         const auto cur = SceneMigration::MigrateToCurrent(r.text);
         CHECK(!cur.ok && cur.text == r.text && Has(cur.error, "newer"));
     }
     // Only the first step.
     {
-        const auto r = SceneMigration::MigrateTo(v3, 4);
-        CHECK(r.ok && r.complete && r.toVersion == 4 && Has(r.text, "newthing") && !Has(r.text, "migrated"));
+        const auto r = SceneMigration::MigrateTo(v3, 5);
+        CHECK(r.ok && r.complete && r.toVersion == 5 && Has(r.text, "newthing") && !Has(r.text, "migrated"));
     }
     // A step with nothing to do just raises the number.
     {
-        const std::string none = "okayscene 3\ngameobject 0 \"A\"\n  active 1\n  parent -1\nend\n";
-        const auto r = SceneMigration::MigrateTo(none, 4);
-        CHECK(r.ok && r.complete && Has(r.log[0], "nothing in this scene needs it") && r.text.compare(0, 12, "okayscene 4\n") == 0);
+        const std::string none = "okayscene 4\ngameobject 0 \"A\"\n  active 1\n  parent -1\nend\n";
+        const auto r = SceneMigration::MigrateTo(none, 5);
+        CHECK(r.ok && r.complete && Has(r.log[0], "nothing in this scene needs it") && r.text.compare(0, 12, "okayscene 5\n") == 0);
         CHECK(!Has(r.text, "newthing"));
     }
     // A file from a build before the target migrates through the real steps and the synthetic ones.
     {
-        const auto r = SceneMigration::MigrateTo(kV1, 5);
-        CHECK(r.ok && r.complete && r.fromVersion == 1 && r.toVersion == 5 && r.log.size() == 5);
+        const auto r = SceneMigration::MigrateTo(kV1, 6);
+        CHECK(r.ok && r.complete && r.fromVersion == 1 && r.toVersion == 6 && r.log.size() == 6);
     }
     // The engine-needing step still stops the chain on the way.
     {
         Scene s("Chars");
         s.CreateGameObject("P")->AddComponent<Character>()->Apply();
         const std::string v1 = WithVersion(SceneSerializer::Serialize(s), 1);
-        const auto r = SceneMigration::MigrateTo(v1, 5);
+        const auto r = SceneMigration::MigrateTo(v1, 6);
         CHECK(r.ok && r.needsEngine && !r.complete && r.toVersion == 1 && r.text == v1);
     }
     // A step that refuses leaves the text as it was.
     UnregisterSynthetic();
     {
         SceneMigration::Step f;
-        f.from = 3;
+        f.from = 4;
         f.name = "SYNTHETIC-TEST-failing";
         f.apply = [](SceneText::Document&, std::vector<std::string>& log, std::string& err) { log.push_back("half done"); err = "cannot do it"; return false; };
         CHECK(SceneMigration::Register(f));
-        const auto r = SceneMigration::MigrateTo(v3, 4);
-        CHECK(!r.ok && r.text == v3 && !r.changed && r.toVersion == 3 && r.log.empty());
+        const auto r = SceneMigration::MigrateTo(v3, 5);
+        CHECK(!r.ok && r.text == v3 && !r.changed && r.toVersion == 4 && r.log.empty());
         CHECK(Has(r.error, "SYNTHETIC-TEST-failing") && Has(r.error, "cannot do it"));
         UnregisterSynthetic();
     }
-    // A gap: no step from 4.
+    // A gap: no step from 5.
     {
         SceneMigration::Step a;
-        a.from = 3;
+        a.from = 4;
         a.name = "SYNTHETIC-TEST-only-first";
         CHECK(SceneMigration::Register(a));
-        const auto r = SceneMigration::MigrateTo(v3, 5);
-        CHECK(!r.ok && r.text == v3 && Has(r.error, "okayscene 4 -> 5") && Has(r.error, "no migration"));
+        const auto r = SceneMigration::MigrateTo(v3, 6);
+        CHECK(!r.ok && r.text == v3 && Has(r.error, "okayscene 5 -> 6") && Has(r.error, "no migration"));
         UnregisterSynthetic();
     }
-    CHECK(SceneMigration::Steps().size() == 2);
-    CHECK(!SceneMigration::Unregister(3));
+    CHECK(SceneMigration::Steps().size() == 3);
+    CHECK(!SceneMigration::Unregister(4));
     // Registered out of order, kept in order.
     {
         SceneMigration::Step a, b;
-        a.from = 4; a.name = "SYNTHETIC-TEST-b";
-        b.from = 3; b.name = "SYNTHETIC-TEST-a";
+        a.from = 5; a.name = "SYNTHETIC-TEST-b";
+        b.from = 4; b.name = "SYNTHETIC-TEST-a";
         CHECK(SceneMigration::Register(a) && SceneMigration::Register(b));
         const auto s = SceneMigration::Steps();
-        CHECK(s.size() == 4 && s[2].from == 3 && s[3].from == 4);
+        CHECK(s.size() == 5 && s[3].from == 4 && s[4].from == 5);
         UnregisterSynthetic();
     }
-    CHECK(SceneMigration::Steps().size() == 2);
+    CHECK(SceneMigration::Steps().size() == 3);
 }
 
 static void TestFuzz() {
@@ -380,7 +380,7 @@ static void TestFuzz() {
     for (std::size_t cut = 0; cut <= x.size(); cut += 2) {
         const std::string t = x.substr(0, cut);
         const auto m = SceneMigration::MigrateToCurrent(t);
-        if (m.ok) { ++ok; SceneText::Document d; CHECK(SceneText::Parse(m.text, d)); CHECK(m.toVersion == 3); }
+        if (m.ok) { ++ok; SceneText::Document d; CHECK(SceneText::Parse(m.text, d)); CHECK(m.toVersion == 4); }
         else { ++refused; CHECK(m.text == t && !m.error.empty()); }
         const auto e = SceneMigration::MigrateThroughEngine(t);
         if (!e.ok) CHECK(e.text == t);

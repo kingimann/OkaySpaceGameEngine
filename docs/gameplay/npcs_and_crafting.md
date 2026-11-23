@@ -26,10 +26,14 @@ heading. Pick a **Behavior**:
 
 Fields: `moveSpeed`, `targetName` (default `Player`), `sightRange`, `wanderRadius`,
 `attackRange`, `attackDamage`, `attackInterval`, `faceMovement`. Chase damages the
-target's health source (`SurvivalStats` or `HealthStat`), so it drops the player's
-health directly. NPCs also have **`health`/`maxHealth`** and `Damage()` — at 0 HP they
-broadcast `npc_died`, play a sibling AudioSource, and despawn, so the player can fight
-them.
+target's health (its Health Stat), so it drops the player's health directly. An NPC's
+own health is a **Stat: Health** on it too, added with the NPC Controller (30 HP,
+removed on death, not the player's `{health}`): set Max Health and God Mode (the old
+"Invulnerable") there. A hit provokes a provokable NPC; at 0 HP it broadcasts
+`npc_died`, plays a sibling AudioSource, and despawns, so the player can fight it.
+Switch on the Health Stat's Play Death Animation to let a humanoid NPC fall first.
+Scenes saved before scene format 4 kept NPC health in the NPC Controller; opening one
+moves it into the Health Stat.
 
 ## Player attacks (Melee Attacker)
 

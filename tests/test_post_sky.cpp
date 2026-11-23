@@ -57,7 +57,7 @@ int main() {
         go->AddComponent<ParticleSystem>()->windInfluence = 0.25f;
 
         const std::string txt = SceneSerializer::Serialize(s);
-        CHECK(txt.find("okayscene 3\n") == 0);
+        CHECK(txt.find("okayscene 4\n") == 0);
         CHECK(txt.find("\nfogmode ") != std::string::npos);
         CHECK(txt.find("\nskyproc ") != std::string::npos);
         CHECK(txt.find("\npost ") != std::string::npos);

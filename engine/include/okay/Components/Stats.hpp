@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Components/Damage.hpp"
+#include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -8,64 +9,44 @@
 
 namespace okay {
 
-/// RPG character stats: health, mana, level/XP and a few attributes, with the usual
-/// combat verbs (TakeDamage / Heal / AddXP). Levelling raises max health/mana and the
-/// attributes. Fires the sibling ScriptComponent's on_death() when health hits 0 and
-/// on_level_up() each level gained — so gameplay reacts without polling.
+/// RPG character stats: mana, level/XP and a few attributes. Levelling raises max
+/// health/mana and the attributes. Health is the object's Health Stat (one health per
+/// object): adding Stats adds a Health Stat when there is none, every hit there counts
+/// `defense` (plus worn defense) as armor and deals at least 1, and Stats fires the
+/// sibling ScriptComponent's on_death() when that health hits 0 and on_level_up() each
+/// level gained, so gameplay reacts without polling. Scenes saved before format 4 kept
+/// health here; the loader moves it into the Health Stat.
 class Stats : public Behaviour {
 public:
-    float health = 100.0f, maxHealth = 100.0f;
     float mana   = 50.0f,  maxMana   = 50.0f;
     int   level = 1;
     int   xp = 0, xpToNext = 100;
-    // Attributes (used by TakeDamage and your own formulas).
+    // Attributes (defense is armor on the Health Stat; the rest are for your own formulas).
     int   strength = 10, defense = 5, intelligence = 5, agility = 5;
     int   equipDefense = 0;   ///< runtime: added by worn Equipment (not saved)
 
-    bool IsDead() const { return health <= 0.0f; }
-    float HealthFraction() const { return maxHealth > 0 ? Mathf::Clamp01(health / maxHealth) : 0.0f; }
     float ManaFraction()   const { return maxMana   > 0 ? Mathf::Clamp01(mana / maxMana)   : 0.0f; }
+    /// The object's one health (null only if someone removed it).
+    HealthStat* Health() const { return gameObject ? gameObject->GetComponent<HealthStat>() : nullptr; }
+    /// The Health Stat defaults an RPG character had before health moved there: every hit deals at least
+    /// 1, death changes nothing on the object (on_death is the script's to handle), and nothing is
+    /// published as the player's {health}. Used when Stats adds the Health Stat.
+    static void SetUpHealth(HealthStat& h) {
+        h.minDamage = 1.0f;
+        h.SetDeathAction(HealthStat::DeathAction::Nothing);
+        h.publishPrefs = false; h.publishBar = false; h.sendMessages = false;
+    }
+    /// The Health Stat reached 0 (Damage.cpp HealthOwnersDied): fire the script's on_death.
+    void OnHealthDied() { Event("on_death"); }
 
-    /// Apply incoming damage mitigated by defense (always at least 1). Fires on_death
-    /// the moment health reaches 0.
-    void TakeDamage(float amount) { TakeDamage(DamageEvent::Make(amount)); }
-    /// Same hit as a Health Stat takes; listeners are told (this holder has no per-type resistances).
-    /// The old rule is kept: every hit deals at least 1, even 0 or a negative amount. NaN counts as 0.
-    bool TakeDamage(DamageEvent ev) {
-        if (IsDead()) return false;
-        float amount = std::isnan(ev.amount) ? 0.0f : ev.amount;
-        if (std::isinf(amount) && amount > 0.0f) amount = 3.0e38f;
-        float dmg = Mathf::Max(1.0f, amount - (float)(defense + equipDefense));
-        const float before = health;
-        health = Mathf::Max(0.0f, health - dmg);
-        ev.target = gameObject; ev.amount = Mathf::Max(0.0f, amount); ev.dealt = before - health; ev.killed = health <= 0.0f;
-        NotifyDamaged(ev);
-        if (health <= 0.0f) { Event("on_death"); NotifyDeath(ev); }
-        return true;
-    }
-    /// As always: healing a dead character brings it back, and a negative amount takes health away
-    /// (without firing on_death). NaN is ignored.
-    void Heal(float amount) {
-        if (std::isnan(amount)) return;
-        const float before = health;
-        health = Mathf::Clamp(health + amount, 0.0f, maxHealth);
-        if (health > before) NotifyHealed(gameObject, health - before);
-    }
-    /// Kill outright (defense does not matter). Tells the listeners and fires on_death. No effect if dead.
-    void Kill(GameObject* source = nullptr) {
-        if (IsDead()) return;
-        DamageEvent ev = DamageEvent::Make(health, DamageType::Generic, source);
-        ev.target = gameObject; ev.dealt = health; ev.killed = true;
-        health = 0.0f;
-        NotifyDamaged(ev);
-        Event("on_death");
-        NotifyDeath(ev);
-    }
     void UseMana(float amount)   { mana = Mathf::Max(0.0f, mana - amount); }
     void RestoreMana(float amt)  { mana = Mathf::Clamp(mana + amt, 0.0f, maxMana); }
     bool HasMana(float amount) const { return mana >= amount; }
-    /// Full heal + mana (e.g. on respawn / rest).
-    void Restore() { health = maxHealth; mana = maxMana; }
+    /// Full heal + mana (e.g. on respawn / rest). A dead character is revived.
+    void Restore() {
+        mana = maxMana;
+        if (HealthStat* h = Health()) { if (h->IsDead()) h->Revive(); else h->health = h->maxHealth; }
+    }
 
     /// Grant experience; auto-levels while there's enough, raising caps + attributes.
     void AddXP(int amount) {
@@ -75,9 +56,10 @@ public:
             xp -= xpToNext;
             ++level;
             xpToNext = (int)(xpToNext * 1.5f) + 25;
-            maxHealth += 20.0f; maxMana += 10.0f;
+            maxMana += 10.0f;
             strength += 2; defense += 1; intelligence += 2; agility += 1;
-            health = maxHealth; mana = maxMana;     // refill on level up
+            mana = maxMana;                          // refill on level up
+            if (HealthStat* h = Health()) { h->maxHealth += 20.0f; if (!h->IsDead()) h->health = h->maxHealth; }
             Event("on_level_up");
         }
     }
@@ -89,5 +71,7 @@ private:
                 if (sc->VM()) sc->VM()->CallEvent(name);
     }
 };
+
+namespace detail { inline const bool kStatsHealthRule = RequireHealthStat<Stats, &Stats::SetUpHealth>(); }
 
 } // namespace okay

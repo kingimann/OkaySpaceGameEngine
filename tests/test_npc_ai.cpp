@@ -76,9 +76,9 @@ int main() {
         auto* ai = npc->AddComponent<NPCController>();
         ai->behavior = (int)NPCController::Behavior::Wander;
         ai->fieldOfView = 360.0f; ai->sightRange = 10.0f;
-        ai->fleeHealthPct = 0.5f; ai->maxHealth = 100; ai->turnSpeed = 0.0f;
+        ai->fleeHealthPct = 0.5f; ai->Health()->maxHealth = 100; ai->turnSpeed = 0.0f;
         s.Start();
-        ai->Damage(60);                                  // drop to 40% -> should flee when aware
+        DealDamage(npc, 60);                                  // drop to 40% -> should flee when aware
         s.Update(0.1f);
         CHECK(std::string(ai->StateName()) == "Flee");
         CHECK(npc->transform->Position().x < 0.0f);      // moved away from the player at +X
@@ -95,7 +95,7 @@ int main() {
         ai->turnSpeed = 0.0f;
         s.Start();
         s.Update(0.1f);
-        ai->Damage(5);
+        DealDamage(npc, 5);
         s.Update(0.1f);
         CHECK(ai->IsAlerted());                          // now hunts the attacker
     }

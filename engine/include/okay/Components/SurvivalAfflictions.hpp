@@ -4,15 +4,6 @@
 
 namespace okay {
 
-/// Damage the object's health source — the all-in-one SurvivalStats if present,
-/// otherwise a standalone HealthStat. Used by afflictions to hurt the player.
-/// `type` is the affliction's own kind (Poison for poison); Generic when it has none, so a
-/// resistance to one kind never blocks the others. Same holders and order as always.
-inline void DamageHealthOn(GameObject* go, float amount, DamageType type = DamageType::Generic) {
-    if (!go || amount <= 0.0f) return;
-    if (auto* s = go->GetComponent<SurvivalStats>()) { s->Damage(DamageEvent::Make(amount, type)); return; }
-    if (auto* h = go->GetComponent<HealthStat>())     { h->Damage(DamageEvent::Make(amount, type)); return; }
-}
 /// Reduce the object's warmth source (SurvivalStats or TemperatureStat) — used by
 /// Wetness to chill the player. Safe no-op if neither is present.
 inline void ChillWarmthOn(GameObject* go, float amount) {
@@ -21,12 +12,6 @@ inline void ChillWarmthOn(GameObject* go, float amount) {
         s->warmth = Mathf::Max(0.0f, s->warmth - amount);
     else if (auto* t = go->GetComponent<TemperatureStat>())
         t->warmth = Mathf::Max(0.0f, t->warmth - amount);
-}
-/// Heal the object's health source (SurvivalStats or HealthStat). For buffs/regen.
-inline void HealOn(GameObject* go, float amount) {
-    if (!go || amount <= 0.0f) return;
-    if (auto* s = go->GetComponent<SurvivalStats>()) { s->Heal(amount); return; }
-    if (auto* h = go->GetComponent<HealthStat>())     { h->Heal(amount); return; }
 }
 /// Drain the object's stamina source (SurvivalStats or StaminaStat) — used by
 /// encumbrance. Safe no-op if neither is present.
@@ -63,7 +48,7 @@ public:
         else             radiation -= decayPerSecond * dt;
         radiation = Mathf::Clamp(radiation, 0.0f, maxRadiation);
         sick = radiation >= sickThreshold;
-        if (sick) DamageHealthOn(gameObject, damagePerSecond * dt);
+        if (sick) DealDamage(gameObject, damagePerSecond * dt);
         Signal(sick, m_sick, "irradiated");
         Publish();
     }
@@ -90,7 +75,7 @@ public:
     void Update(float dt) override {
         if (dt <= 0.0f) return;
         if (bleed > 0.0f) {
-            DamageHealthOn(gameObject, damagePerSecond * Fraction() * dt);
+            DealDamage(gameObject, damagePerSecond * Fraction() * dt);
             bleed = Mathf::Max(0.0f, bleed - clotPerSecond * dt);
         }
         bleeding = bleed > 0.0f;
@@ -120,7 +105,7 @@ public:
     void Update(float dt) override {
         if (dt <= 0.0f) return;
         if (poison > 0.0f) {
-            DamageHealthOn(gameObject, damagePerSecond * Fraction() * dt, DamageType::Poison);
+            DealDamage(gameObject, damagePerSecond * Fraction() * dt, DamageType::Poison);
             poison = Mathf::Max(0.0f, poison - decayPerSecond * dt);
         }
         poisoned = poison > 0.0f;

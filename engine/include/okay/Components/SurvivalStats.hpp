@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Components/Damage.hpp"
+#include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -12,32 +13,27 @@
 namespace okay {
 
 /// All-in-one survival stats as a native component — the C++ sibling of the
-/// Survival Kit's "Survival" script. Health, hunger, thirst, stamina, oxygen and
+/// Survival Kit's "Survival" script. Hunger, thirst, stamina, oxygen and
 /// temperature are wired together and ticked each frame: hunger/thirst/oxygen and
-/// warmth, when empty, call Damage() **directly** (no script VM, no message round-
-/// trip), armor soaks incoming damage, and health regenerates while fed + hydrated
-/// after a post-hit delay.
+/// warmth, when empty, damage health **directly** (no script VM, no message round-
+/// trip), and health regenerates while fed + hydrated after the post-hit delay.
+///
+/// Health itself is the object's Health Stat (one health per object): adding Survival
+/// Stats adds a Health Stat when there is none, and max health, armor, resistance, god
+/// mode, i-frames, the regen delay, death and respawn are set there. Scenes saved before
+/// format 4 kept those values here; the loader moves them into the Health Stat.
 ///
 /// Drop it on the Player and tune in the Inspector. Each frame it publishes every
-/// stat to a saved value (bind UI text with `{health}`, `{hunger}`, …) and fills a
-/// same-named progress bar if one exists (`HealthBar`, `HungerBar`, `ThirstBar`,
-/// `StaminaBar`, `OxygenBar`, `TemperatureBar`). On death it broadcasts `died`,
-/// plays a sibling AudioSource, and deactivates the object; on each stat hitting
-/// zero it broadcasts once (`starving`, `dehydrated`, `drowning`, `freezing`) for an
-/// ActionList OnMessage to catch. Methods (Eat/Drink/Heal/…) are callable from a
-/// Button On Click, an Action List `call`, or another component.
+/// stat to a saved value (bind UI text with `{hunger}`, `{thirst}`, …; the Health Stat
+/// publishes `{health}`) and fills a same-named progress bar if one exists
+/// (`HungerBar`, `ThirstBar`, `StaminaBar`, `OxygenBar`, `TemperatureBar`; the Health
+/// Stat fills `HealthBar`). On each stat hitting zero it broadcasts once (`starving`,
+/// `dehydrated`, `drowning`, `freezing`) for an ActionList OnMessage to catch; the
+/// Health Stat broadcasts `died`. Methods (Eat/Drink/…) are callable from a Button On
+/// Click, an Action List `call`, or another component.
 class SurvivalStats : public Behaviour {
 public:
-    // ---- Health ----
-    float maxHealth = 100.0f, health = 100.0f;
-    float armor = 0.0f;
-    float equipArmor = 0.0f;       // runtime: added by worn Equipment (not saved)
-    float resistance = 0.0f;       // 0..1 fraction of post-armor damage ignored
-    bool  godMode = false;         // ignore all damage
-    float invincibleTime = 0.0f;   // i-frames after a hit (seconds, 0 = off)
-    float regenWhenFed = 1.0f;     // HP/s regained while fed + hydrated
-    float regenDelay   = 5.0f;     // pause regen this long after a hit
-    bool  dead = false;
+    float regenWhenFed = 1.0f;     // HP/s given to the Health Stat while fed + hydrated (after its Regen Delay)
 
     // ---- Hunger ----
     float maxHunger = 100.0f, hunger = 100.0f;
@@ -73,29 +69,31 @@ public:
     // ---- Output ----
     bool publishPrefs = true;      // write saved values each frame
     bool publishBars  = true;      // fill same-named *Bar progress widgets
-    bool sendMessages = true;      // broadcast died/starving/… to ActionLists
+    bool sendMessages = true;      // broadcast starving/dehydrated/… to ActionLists
 
     // 0..1 fractions for HUDs / logic.
-    float Fraction()        const { return Frac(health,  maxHealth); }
     float HungerFraction()  const { return Frac(hunger,  maxHunger); }
     float ThirstFraction()  const { return Frac(thirst,  maxThirst); }
     float StaminaFraction() const { return Frac(stamina, maxStamina); }
     float OxygenFraction()  const { return Frac(oxygen,  maxOxygen); }
     float WarmthFraction()  const { return Frac(warmth,  maxWarmth); }
-    bool  IsDead()    const { return dead; }
     bool  CanSprint() const { return stamina > 0.0f; }
+    /// The object's one health (null only if someone removed it).
+    HealthStat* Health() const { return gameObject ? gameObject->GetComponent<HealthStat>() : nullptr; }
+    /// The Health Stat defaults a Survival Stats player had before health moved there: regen waits 5 s after
+    /// a hit, and death switches the player off. Used when Survival Stats adds the Health Stat.
+    static void SetUpHealth(HealthStat& h) { h.regenDelay = 5.0f; h.SetDeathAction(HealthStat::DeathAction::Disable); }
 
     void Start() override {
-        health = maxHealth; hunger = maxHunger; thirst = maxThirst;
+        hunger = maxHunger; thirst = maxThirst;
         stamina = maxStamina; oxygen = maxOxygen; warmth = maxWarmth;
-        dead = false; m_regenTimer = 0.0f; m_iframes = 0.0f;
         m_starv = m_dehy = m_drown = m_freeze = false;
         Publish();
     }
 
     void Update(float dt) override {
-        if (dead || dt <= 0.0f) return;
-        if (m_iframes > 0.0f) m_iframes -= dt;
+        HealthStat* hp = Health();
+        if ((hp && hp->IsDead()) || dt <= 0.0f) return;
         float drainMult = (sprinting && stamina > 0.0f) ? sprintDrainMult : 1.0f;
 
         hunger = Mathf::Clamp(hunger - hungerDrain * drainMult * dt, 0.0f, maxHunger);
@@ -119,60 +117,17 @@ public:
         tookEnv |= Drain(oxygen,  drownDamage,     dt, m_drown,  "drowning",    DamageType::Drowning);
         tookEnv |= Drain(warmth,  freezeDamage,    dt, m_freeze, "freezing",    DamageType::Cold);
 
-        if (m_regenTimer > 0.0f) m_regenTimer -= dt;
-        if (!tookEnv && m_regenTimer <= 0.0f && hunger > 0.0f && thirst > 0.0f && regenWhenFed > 0.0f)
-            health = Mathf::Min(maxHealth, health + regenWhenFed * dt);
+        if (hp && !tookEnv && !hp->RegenPaused() && hunger > 0.0f && thirst > 0.0f && regenWhenFed > 0.0f)
+            hp->Regenerate(regenWhenFed * dt);
 
         Publish();
     }
 
     // ---- Actions (callable from On Click / Action List / code) ----
-    void Damage(float amount) { Damage(DamageEvent::Make(amount)); }
-    /// Same hit as a Health Stat takes (type, source, hit point); listeners are told. This holder has no
-    /// per-type resistances; add a Health Stat to the object when you need them (it is used first).
-    bool Damage(DamageEvent ev) {
-        const float amount = SaneDamage(ev.amount);
-        if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return false;
-        float dmg = Mathf::Max(0.0f, amount - (armor + equipArmor)) * (1.0f - Mathf::Clamp01(resistance));
-        const float before = health;
-        health -= dmg;
-        m_regenTimer = regenDelay;
-        m_iframes = invincibleTime;
-        ev.target = gameObject; ev.amount = amount;
-        ev.dealt = Mathf::Max(0.0f, before - Mathf::Max(0.0f, health));
-        ev.killed = health <= 0.0f;
-        NotifyDamaged(ev);
-        if (health <= 0.0f) { health = 0.0f; dead = true; OnDeath(); NotifyDeath(ev); }
-        return true;
-    }
-    /// Kill outright (ignores armor, resistance, god mode and i-frames). No effect if already dead.
-    void Kill(GameObject* source = nullptr) {
-        if (dead) return;
-        DamageEvent ev = DamageEvent::Make(health > 0.0f ? health : 0.0f, DamageType::Generic, source);
-        ev.target = gameObject; ev.dealt = ev.amount; ev.killed = true;
-        health = 0.0f; dead = true;
-        NotifyDamaged(ev);
-        OnDeath();
-        NotifyDeath(ev);
-    }
-    void SetGodMode(bool on) { godMode = on; }
-    bool IsInvincible() const { return godMode || m_iframes > 0.0f; }
-    /// As before: no effect when dead, and a negative amount takes health away. NaN is ignored.
-    void Heal(float a) {
-        if (dead || std::isnan(a)) return;
-        const float before = health;
-        health = Mathf::Min(maxHealth, health + a);
-        if (health > before) NotifyHealed(gameObject, health - before);
-    }
     void Eat(float a)     { hunger = Mathf::Min(maxHunger, hunger + a); if (a > 0) m_starv = false; }
     void Drink(float a)   { thirst = Mathf::Min(maxThirst, thirst + a); if (a > 0) m_dehy = false; }
     void Breathe(float a) { oxygen = Mathf::Min(maxOxygen, oxygen + a); if (a > 0) m_drown = false; }
     void Warm(float a)    { warmth = Mathf::Min(maxWarmth, warmth + a); if (a > 0) m_freeze = false; }
-    void AddArmor(float a){ armor += a; }
-    void Revive() {
-        dead = false; health = maxHealth; m_regenTimer = 0.0f;
-        if (gameObject) gameObject->active = true;
-    }
     void SetSprinting(bool on) { sprinting = on; }
     void SetSubmerged(bool on) { submerged = on; }
     void SetCold(bool on)      { cold = on; }
@@ -184,18 +139,18 @@ private:
     // bit this frame (so health regen stays paused).
     bool Drain(float stat, float dps, float dt, bool& latch, const char* msg, DamageType type) {
         if (stat > 0.0f) { latch = false; return false; }
-        Damage(DamageEvent::Make(dps * dt, type));
+        DealDamage(gameObject, dps * dt, type);
         if (!latch) { latch = true; Broadcast(msg); }
         return true;
     }
     void Publish() {
         if (publishPrefs) {
-            Prefs::SetFloat("health",  health);  Prefs::SetFloat("hunger",  hunger);
-            Prefs::SetFloat("thirst",  thirst);  Prefs::SetFloat("stamina", stamina);
-            Prefs::SetFloat("oxygen",  oxygen);  Prefs::SetFloat("warmth",  warmth);
+            Prefs::SetFloat("hunger",  hunger);  Prefs::SetFloat("thirst",  thirst);
+            Prefs::SetFloat("stamina", stamina); Prefs::SetFloat("oxygen",  oxygen);
+            Prefs::SetFloat("warmth",  warmth);
         }
         if (publishBars) {
-            SetBar("HealthBar", Fraction());        SetBar("HungerBar", HungerFraction());
+            SetBar("HungerBar", HungerFraction());
             SetBar("ThirstBar", ThirstFraction());  SetBar("StaminaBar", StaminaFraction());
             SetBar("OxygenBar", OxygenFraction());   SetBar("TemperatureBar", WarmthFraction());
         }
@@ -212,17 +167,9 @@ private:
         if (!s) return;
         for (ActionList* al : s->FindObjectsOfType<ActionList>()) al->ReceiveMessage(msg);
     }
-    void OnDeath() {
-        Broadcast("died");
-        if (gameObject) {
-            if (auto* au = gameObject->GetComponent<AudioSource>()) au->Play();
-            gameObject->active = false;
-        }
-    }
-
-    float m_regenTimer = 0.0f;
-    float m_iframes = 0.0f;
     bool  m_starv = false, m_dehy = false, m_drown = false, m_freeze = false;
 };
+
+namespace detail { inline const bool kSurvivalStatsHealthRule = RequireHealthStat<SurvivalStats, &SurvivalStats::SetUpHealth>(); }
 
 } // namespace okay

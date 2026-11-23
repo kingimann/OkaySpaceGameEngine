@@ -80,7 +80,7 @@ void BuildExample(Scene& s) {
     auto character = [&](const char* name, Vec2 at, Vec2 size, Color col, int level, float hp) {
         GameObject* g = sprite(name, at, size, col, 2);
         auto* st = g->AddComponent<Stats>();
-        st->level = level; st->health = hp; st->maxHealth = hp; st->defense = 0;   // damage is what the script says
+        st->level = level; st->Health()->health = hp; st->Health()->maxHealth = hp; st->defense = 0;   // damage is what the script says (health: the Health Stat)
         GameObject* plate = UIGallery::AddNameplate(s, true);    // a nameplate in the world...
         plate->transform->SetParent(g->transform, false);        // ...that is a child of the character: it shows this one
         plate->transform->localPosition = {0.0f, size.y * 0.5f + 0.25f, 0.0f};
@@ -191,20 +191,20 @@ int main() {
     CHECK_NEAR(po.bar->value, 1.0f, 1e-4f);
 
     frames(75);                                                                    // a little over a second
-    CHECK(sg->health < 40.0f);                                                     // the script has hit the Goblin by itself
-    CHECK_NEAR(pg.bar->value, sg->health / sg->maxHealth, 1e-4f);                  // and its bar dropped with it
+    CHECK(sg->Health()->health < 40.0f);                                                     // the script has hit the Goblin by itself
+    CHECK_NEAR(pg.bar->value, sg->Health()->health / sg->Health()->maxHealth, 1e-4f);                  // and its bar dropped with it
     CHECK_NEAR(po.bar->value, 1.0f, 1e-4f);                                        // the Orc's plate did not move
-    const float afterFirstHit = sg->health;
+    const float afterFirstHit = sg->Health()->health;
 
     frames(2, {'2'});                                                              // press 2: hurt the Orc
-    CHECK_NEAR(so->health, 108.0f, 1e-3f);
+    CHECK_NEAR(so->Health()->health, 108.0f, 1e-3f);
     CHECK_NEAR(po.bar->value, 108.0f / 120.0f, 1e-4f);
-    CHECK_NEAR(sg->health, afterFirstHit, 1e-3f);                                  // the Goblin is untouched by key 2
+    CHECK_NEAR(sg->Health()->health, afterFirstHit, 1e-3f);                                  // the Goblin is untouched by key 2
     frames(1);
 
     frames(2, {'1'});                                                              // press 1: hurt the Goblin
-    CHECK_NEAR(sg->health, afterFirstHit - 8.0f, 1e-3f);
-    CHECK_NEAR(pg.bar->value, sg->health / sg->maxHealth, 1e-4f);
+    CHECK_NEAR(sg->Health()->health, afterFirstHit - 8.0f, 1e-3f);
+    CHECK_NEAR(pg.bar->value, sg->Health()->health / sg->Health()->maxHealth, 1e-4f);
     frames(1);
 
     frames(2, {'3'});                                                              // press 3: a level up (100 experience), health refilled
@@ -215,7 +215,7 @@ int main() {
     frames(1);
 
     frames(2, {'h'});                                                              // press H: heal both
-    CHECK_NEAR(so->health, 120.0f, 1e-3f);
+    CHECK_NEAR(so->Health()->health, 120.0f, 1e-3f);
     CHECK_NEAR(po.bar->value, 1.0f, 1e-4f);
     Input::FeedKeys({});
 

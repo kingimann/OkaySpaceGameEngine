@@ -179,7 +179,7 @@ int main() {
         Scene s2("v2");
         CHECK(SceneSerializer::Deserialize(s2, good, nullptr, &warns));
         CHECK(warns.empty());
-        CHECK(SceneSerializer::kSceneFormatVersion == 3);
+        CHECK(SceneSerializer::kSceneFormatVersion == 4);
     }
     // A newer file whose record this build does read wrongly is still caught.
     CHECK(FailsClean(live, Obj("  transform 0 0", 99), "version 99, cut-short known record"));

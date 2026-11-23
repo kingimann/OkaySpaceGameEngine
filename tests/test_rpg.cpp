@@ -6,28 +6,32 @@ using namespace okay;
 int main() {
     RUN_SUITE("rpg");
 
-    // --- Stats: damage (mitigated by defense), heal, XP levelling ---
+    // --- Stats: damage (mitigated by defense, on the object's Health Stat), heal, XP levelling ---
     {
         Scene s("S"); s.physicsEnabled = false;
-        auto* st = s.CreateGameObject("Hero")->AddComponent<Stats>();
-        st->maxHealth = 100; st->health = 100; st->defense = 5;
-        st->TakeDamage(20);                       // 20 - 5 defense = 15
-        CHECK_NEAR(st->health, 85.0f, 1e-4f);
-        st->TakeDamage(3);                        // below defense -> minimum 1
-        CHECK_NEAR(st->health, 84.0f, 1e-4f);
-        st->Heal(1000);                           // clamps to max
-        CHECK_NEAR(st->health, 100.0f, 1e-4f);
-        CHECK(!st->IsDead());
-        st->TakeDamage(99999);
-        CHECK(st->IsDead());
+        GameObject* hero = s.CreateGameObject("Hero");
+        auto* st = hero->AddComponent<Stats>();
+        HealthStat* h = st->Health();                // added with Stats: the one health
+        CHECK(h != nullptr);
+        h->maxHealth = 100; h->health = 100; st->defense = 5;
+        DealDamage(hero, 20);                        // 20 - 5 defense = 15
+        CHECK_NEAR(h->health, 85.0f, 1e-4f);
+        DealDamage(hero, 3);                         // below defense -> minimum 1
+        CHECK_NEAR(h->health, 84.0f, 1e-4f);
+        HealObject(hero, 1000);                      // clamps to max
+        CHECK_NEAR(h->health, 100.0f, 1e-4f);
+        CHECK(!IsObjectDead(hero));
+        DealDamage(hero, 99999);
+        CHECK(IsObjectDead(hero));
 
         // Level up: enough XP raises level + caps and refills.
-        auto* st2 = s.CreateGameObject("Hero2")->AddComponent<Stats>();
-        st2->level = 1; st2->xp = 0; st2->xpToNext = 100; st2->maxHealth = 100;
+        GameObject* hero2 = s.CreateGameObject("Hero2");
+        auto* st2 = hero2->AddComponent<Stats>();
+        st2->level = 1; st2->xp = 0; st2->xpToNext = 100; st2->Health()->maxHealth = 100;
         st2->AddXP(120);                          // crosses one level
         CHECK(st2->level == 2);
-        CHECK(st2->maxHealth > 100.0f);
-        CHECK_NEAR(st2->health, st2->maxHealth, 1e-4f);  // refilled on level up
+        CHECK(st2->Health()->maxHealth > 100.0f);
+        CHECK_NEAR(st2->Health()->health, st2->Health()->maxHealth, 1e-4f);  // refilled on level up
     }
 
     // --- Inventory: stacking, remove, capacity ---

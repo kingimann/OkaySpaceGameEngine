@@ -10,7 +10,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/StanceControl.hpp"
-#include "okay/Components/SurvivalAfflictions.hpp"   // DamageHealthOn
+#include "okay/Components/SurvivalComponents.hpp"    // HealthStat: the NPC's one health
 #include "okay/Net/NetOwnership.hpp"                  // IsLocallyControlled (MP-safe AI)
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Vec3.hpp"
@@ -40,6 +40,12 @@ namespace okay {
 /// optionally drives a sibling Character's animation (idle/walk/run) and head-look,
 /// and broadcasts messages (`npc_alert`, `npc_lost`, `npc_search`, `npc_waypoint`,
 /// `npc_attack`, `npc_flee`, `npc_arrived`, `npc_died`) ActionLists can react to.
+///
+/// Its health is the object's Health Stat (one health per object): adding an NPC Controller
+/// adds a Health Stat when there is none (30 HP, removed on death, nothing published as the
+/// player's {health}). Max health and invulnerability (God Mode) are set there; a hit there
+/// provokes the NPC, and its death broadcasts `npc_died`. Scenes saved before format 4 kept
+/// health here; the loader moves it into the Health Stat.
 class NPCController : public Behaviour {
 public:
     /// Runs before the animation components (Character, ModelAnimator,
@@ -101,11 +107,17 @@ public:
     bool  footIK         = false;  ///< plant the Character's feet on the ground (foot IK)
     bool  lookAtTarget   = true;   ///< head-track the target while alert (uses Character look-at)
 
-    // ---- Combat target (so the player can fight back) ----
-    float maxHealth = 30.0f, health = 30.0f;
-    bool  invulnerable = false;
-
-    bool IsDead() const { return m_dead; }
+    /// The object's one health (null only if someone removed it).
+    HealthStat* Health() const { return gameObject ? gameObject->GetComponent<HealthStat>() : nullptr; }
+    /// The Health Stat defaults an NPC had before health moved there: 30 HP, removed from the scene on death,
+    /// and its health is not the player's {health} or `died`. Used when an NPC Controller adds the Health Stat.
+    static void SetUpHealth(HealthStat& h) {
+        h.maxHealth = h.health = 30.0f;
+        h.SetDeathAction(HealthStat::DeathAction::Destroy);
+        h.playDeathAnim = false;   // gone at once, as before; switch it on in the Health Stat to play a death
+        h.publishPrefs = false; h.publishBar = false; h.sendMessages = false;
+    }
+    bool IsDead() const { const HealthStat* h = Health(); return h && h->IsDead(); }
     /// Order the NPC to walk to a world point, overriding its base behavior
     /// (Chase/Flee still take priority so a commanded guard can defend itself).
     /// Broadcasts `npc_arrived` on arrival. Call from a script (`npc_goto`) or code.
@@ -134,42 +146,13 @@ public:
     }
     bool IsAlerted() const { return m_external ? m_extAlert : (m_state == State::Chase || m_state == State::Search); }
 
-    /// Take damage; provokes (if allowed), and on death broadcasts `npc_died`, plays a
-    /// sibling AudioSource and removes the object. Call from a weapon or trap.
-    void Damage(float amount) { Damage(DamageEvent::Make(amount)); }
-    /// Same hit as a Health Stat takes; listeners are told. True if it took health.
-    bool Damage(DamageEvent ev) {
-        const float amount = SaneDamage(ev.amount);
-        if (m_dead || invulnerable || amount <= 0.0f) return false;
-        const float before = health;
-        health -= amount;
-        ev.target = gameObject; ev.amount = amount;
-        ev.dealt = before - Mathf::Max(0.0f, health); ev.killed = health <= 0.0f;
-        NotifyDamaged(ev);
+    /// A hit took health from the Health Stat (Damage.cpp HealthOwnersHit): turn hostile if provokable.
+    void OnHealthHit() {
         if (provokable) { m_provoked = true; m_sightLost = 0.0f; if (GameObject* t = Target()) m_lastKnown = TP(t); }
-        if (health <= 0.0f) Die(ev);
-        return true;
     }
-    /// Kill outright (ignores `invulnerable`): the same death as a lethal hit. No effect if already dead.
-    void Kill(GameObject* source = nullptr) {
-        if (m_dead) return;
-        DamageEvent ev = DamageEvent::Make(health > 0.0f ? health : 0.0f, DamageType::Generic, source);
-        ev.target = gameObject; ev.dealt = ev.amount; ev.killed = true;
-        NotifyDamaged(ev);
-        Die(ev);
-    }
+    /// The Health Stat reached 0 (Damage.cpp HealthOwnersDied); the Health Stat plays the sound and removes the body.
+    void OnHealthDied() { Broadcast("npc_died"); }
 
-private:
-    void Die(const DamageEvent& ev) {
-        health = 0.0f; m_dead = true;
-        Broadcast("npc_died");
-        NotifyDeath(ev);
-        if (gameObject) {
-            if (auto* au = gameObject->GetComponent<AudioSource>()) au->Play();
-            if (gameObject->scene()) gameObject->scene()->Destroy(gameObject);
-            else gameObject->active = false;
-        }
-    }
 public:
     /// Crouch and prone from scripts (SetStance): a smaller, slower body that
     /// eases between stances (sneaking guards, a wounded NPC down on the ground).
@@ -178,7 +161,7 @@ public:
 
     void Start() override {
         stanceControl.Start(gameObject);
-        health = maxHealth; m_dead = false; m_provoked = false;
+        m_provoked = false;
         if (transform) m_home = transform->Position();
         m_seed = (uint32_t)(std::fabs(m_home.x) * 73856093.0f + std::fabs(m_home.z) * 19349663.0f) + 1u;
         m_state = State::Idle; m_wp = 0; m_wpDir = 1;
@@ -187,7 +170,7 @@ public:
     }
 
     void Update(float dt) override {
-        if (!transform || dt <= 0.0f || m_dead) return;
+        if (!transform || dt <= 0.0f || IsDead()) return;
         if (!IsLocallyControlled(gameObject)) return;   // MP: only the authority runs AI; others follow via NetworkSync
         Vec3 pos = transform->Position();
         if (m_atkTimer > 0.0f) m_atkTimer -= dt;
@@ -228,7 +211,8 @@ public:
 
         // ---- Decide the AI state ------------------------------------------
         Behavior base = (Behavior)behavior;
-        bool lowHealth = fleeHealthPct > 0.0f && health <= maxHealth * fleeHealthPct;
+        const HealthStat* hp = Health();
+        bool lowHealth = fleeHealthPct > 0.0f && hp && hp->health <= hp->maxHealth * fleeHealthPct;
         bool fleer     = base == Behavior::Flee || lowHealth;
         // Flee is sticky: once spooked, keep running even after turning your back on the
         // threat (so the sight cone losing the target doesn't instantly calm the NPC) —
@@ -461,7 +445,7 @@ private:
         if (m_atkTimer > 0.0f || !tgt) return false;
         if (attackWindup > 0.0f && m_windup <= 0.0f && !m_winding) { m_windup = attackWindup; m_winding = true; return false; }
         if (m_winding && m_windup > 0.0f) return false;   // still telegraphing
-        DamageHealthOn(tgt, attackDamage);
+        DealDamage(tgt, attackDamage);
         m_atkTimer = attackInterval; m_winding = false;
         Broadcast("npc_attack");
         return true;
@@ -506,8 +490,10 @@ private:
     int  m_wp = 0, m_wpDir = 1;
     float m_atkTimer = 0.0f, m_windup = 0.0f, m_wait = 0.0f;
     float m_detect = 0.0f, m_sightLost = 1e9f;
-    bool m_dead = false, m_provoked = false, m_winding = false;
+    bool m_provoked = false, m_winding = false;
     uint32_t m_seed = 1u;
 };
+
+namespace detail { inline const bool kNPCControllerHealthRule = RequireHealthStat<NPCController, &NPCController::SetUpHealth>(); }
 
 } // namespace okay

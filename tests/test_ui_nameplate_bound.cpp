@@ -33,7 +33,10 @@ GameObject* Mob(Scene& s, const char* name, float hp, float maxHp, int level) {
     auto* h = g->AddComponent<HealthStat>();
     h->publishPrefs = false;
     h->maxHealth = maxHp; h->health = hp;
-    if (level > 0) g->AddComponent<Stats>()->level = level;
+    if (level > 0) {
+        auto* st = g->AddComponent<Stats>(); st->level = level;
+        st->defense = 0;   // RPG defense is armor on the Health Stat (one health); 0 keeps the hits plain
+    }
     return g;
 }
 GameObject* PlateOn(Scene& s, GameObject* owner) {
@@ -88,19 +91,19 @@ int main() {
         Scene s("partial");
         GameObject* npc = s.CreateGameObject("Villager");
         auto* n = npc->AddComponent<NPCController>();
-        n->maxHealth = 50.0f; n->health = 20.0f;
+        n->Health()->maxHealth = 50.0f; n->Health()->health = 20.0f;   // the NPC's health: its Health Stat
         GameObject* shade = s.CreateGameObject("Shade");
         shade->AddComponent<Character>();
         const Plate pn = PlateOf(PlateOn(s, npc)), ps = PlateOf(PlateOn(s, shade));
         s.Start();
-        n->health = 20.0f;                                                    // after Start (it fills to the maximum)
+        n->Health()->health = 20.0f;                                          // after Start (it fills to the maximum)
         ActionList::Vars()["healthFrac"] = 0.9f;
         ActionList::Vars()["level"] = 30.0f;                                  // a global "level" must not leak in
         Tick(s);
         if (pn.name && pn.level && pn.bar && ps.name && ps.bar) {
             CHECK(pn.name->text == "Villager");
             CHECK(pn.level->text == "Lv 1");                                  // no Stats: level 1, not the global 30
-            CHECK_NEAR(pn.bar->value, 0.4f, 1e-4f);                          // from the NPC Controller
+            CHECK_NEAR(pn.bar->value, 0.4f, 1e-4f);                          // from the NPC's Health Stat
             CHECK(ps.name->text == "Shade");
             CHECK_NEAR(ps.bar->value, 0.72f, 1e-4f);                        // no health: keeps its built fill, never the player's 0.9
         }

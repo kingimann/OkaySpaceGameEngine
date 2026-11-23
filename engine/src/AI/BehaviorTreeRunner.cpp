@@ -15,7 +15,7 @@
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
 #include "okay/Components/ScriptComponent.hpp"
-#include "okay/Components/SurvivalAfflictions.hpp"   // DamageHealthOn
+#include "okay/Components/SurvivalAfflictions.hpp"
 #include "okay/Components/SurvivalComponents.hpp"    // HealthStat
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
@@ -738,11 +738,11 @@ bool BehaviorTreeRunner::ResolveTarget(const std::string& spec, Vec3& pos, GameO
     return true;
 }
 
+// The health Condition reads HealthOf, like the Health Watcher: the object's one health (its Health Stat).
 float BehaviorTreeRunner::HealthFraction() const {
-    if (m_npc) return m_npc->maxHealth > 0.0f ? m_npc->health / m_npc->maxHealth : 1.0f;
-    if (auto* s = gameObject->GetComponent<SurvivalStats>()) return s->Fraction();
-    if (auto* h = gameObject->GetComponent<HealthStat>()) return h->maxHealth > 0.0f ? h->health / h->maxHealth : 1.0f;
-    return 1.0f;
+    float hp = 0.0f, max = 0.0f;
+    if (!HealthOf(gameObject, hp, max)) return 1.0f;
+    return max > 0.0f ? std::clamp(hp / max, 0.0f, 1.0f) : 1.0f;
 }
 
 bool BehaviorTreeRunner::Test(const BtNode& n) const {
@@ -990,7 +990,7 @@ BtStatus BehaviorTreeRunner::TickTask(int idx, float dt, bool first) {
             if (r.flag && m_time < r.timer) return BtStatus::Running;
             float damage = n.Num("damage");
             if (damage <= 0.0f) damage = 10.0f;
-            DamageHealthOn(g, damage);
+            DealDamage(g, damage);
             r.flag = false;
             r.until = m_time + std::max(0.0f, n.Num("interval"));
             if (sc) for (ActionList* al : sc->FindObjectsOfType<ActionList>()) if (al) al->ReceiveMessage("npc_attack");

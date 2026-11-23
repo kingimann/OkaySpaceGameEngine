@@ -115,7 +115,7 @@ int main() {
         l.player->transform->localRotation = Quat::Euler(Vec3{0, 90, 0});
         l.player->transform->localScale = Vec3{2, 2, 2};
         auto* stats = l.player->GetComponent<Stats>();
-        stats->health = 33.0f; stats->level = 4; stats->xp = 77; stats->mana = 1.5f;
+        stats->Health()->health = 33.0f; stats->level = 4; stats->xp = 77; stats->mana = 1.5f;
         auto* inv = l.player->GetComponent<Inventory>();
         inv->capacity = 12;
         inv->slots.push_back(Inventory::Slot{"sword", 1, ItemInstanceData{}});
@@ -159,7 +159,7 @@ int main() {
         CHECK(Near(n.player->transform->localPosition, Vec3{5, 6, 7}) && Near(n.player->transform->localScale, Vec3{2, 2, 2}));
         CHECK(Quat::Dot(n.player->transform->localRotation, Quat::Euler(Vec3{0, 90, 0})) > 0.9999f);
         auto* st2 = n.player->GetComponent<Stats>();
-        CHECK(st2->health == 33.0f && st2->level == 4 && st2->xp == 77 && st2->mana == 1.5f);
+        CHECK(st2->Health()->health == 33.0f && st2->level == 4 && st2->xp == 77 && st2->mana == 1.5f);
         auto* inv2 = n.player->GetComponent<Inventory>();
         CHECK(inv2->capacity == 12 && inv2->slots.size() == 3 && inv2->slots[0].item == "sword" && inv2->slots[2].count == 40);
         CHECK(inv2->slots[1].data.durability == 0.5f && inv2->slots[1].data.uid == 99 && inv2->slots[1].data.Get("enchant") == "fire = hot");

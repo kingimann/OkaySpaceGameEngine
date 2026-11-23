@@ -38,10 +38,8 @@ Vec3 Flat(const Vec3& v) {
     return m > 1e-5f ? Vec3{p.x / m, 0.0f, p.z / m} : Vec3{0.0f, 0.0f, 1.0f};
 }
 
-bool CanBeHurt(const GameObject* g) {
-    return g->GetComponent<HealthStat>() || g->GetComponent<SurvivalStats>() ||
-           g->GetComponent<Stats>() || g->GetComponent<NPCController>();
-}
+// One health per object: the Health Stat (Survival Stats, RPG Stats and NPCs use theirs).
+bool CanBeHurt(const GameObject* g) { return g->GetComponent<HealthStat>() != nullptr; }
 
 const WeaponDefinition* Chosen(const MeleeAttacker& m) {
     const WeaponDefinition* w = FindWeapon(m.weapon, m.weaponFile);

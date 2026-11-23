@@ -21,6 +21,9 @@ bool HasRecord(const SceneText::Document& d, const char* key) {
 //          The loader gives one to every Character of a file older than version 2.
 //  2 -> 3  PR #510: a switchable first / third person player gets both view controllers and a
 //          camera mounted on it. The loader completes such a player when the file is older than 3.
+//  3 -> 4  claude2/one-health: one health per object. Survival Stats, RPG Stats and an NPC Controller
+//          lost their health fields; the loader moves an older file's values into the Health Stat
+//          (SceneSerializer.cpp LegacyHealth / ApplyLegacyHealth).
 // Everything else that was added to the format since (guid, sibling, compoff, override, layermatrix,
 // ...) is optional and was added without a version bump: older files simply lack those records.
 std::vector<SceneMigration::Step> Builtins() {
@@ -42,6 +45,19 @@ std::vector<SceneMigration::Step> Builtins() {
         s.description = "A switchable first / third person player gets both view controllers and a camera on the player (PR #510). "
                         "The loader completes such a player when it opens an older file.";
         s.affects = [](const SceneText::Document& d) { return HasRecord(d, "playerview"); };
+        s.needsEngine = true;
+        v.push_back(std::move(s));
+    }
+    {
+        SceneMigration::Step s;
+        s.from = 3;
+        s.name = "one-health";
+        s.description = "One health per object: Survival Stats, RPG Stats and an NPC Controller keep their health in the "
+                        "object's Health Stat. The loader moves an older file's health values there (a Health Stat record "
+                        "of the object wins, then Survival Stats, then RPG Stats, then the NPC Controller).";
+        s.affects = [](const SceneText::Document& d) {
+            return HasRecord(d, "survival") || HasRecord(d, "stats") || HasRecord(d, "npc");
+        };
         s.needsEngine = true;
         v.push_back(std::move(s));
     }

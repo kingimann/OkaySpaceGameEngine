@@ -23237,7 +23237,8 @@ static bool ObjHasOpComponent(GameObject* go, const std::string& op) {
     if (op == "impulse3" || op == "velocity3" || op == "force3") return go->GetComponent<Rigidbody3D>() != nullptr;
     if (op == "play_sound") return go->GetComponent<AudioSource>() != nullptr;
     if (op == "emit") return go->GetComponent<ParticleSystem>() != nullptr;
-    if (op == "hurt" || op == "heal" || op == "eat" || op == "drink" || op == "survival") return go->GetComponent<SurvivalStats>() != nullptr;
+    if (op == "hurt" || op == "heal") return go->GetComponent<HealthStat>() != nullptr;   // the one health
+    if (op == "eat" || op == "drink" || op == "survival") return go->GetComponent<SurvivalStats>() != nullptr;
     if (op == "set_text") return go->GetComponent<TextRenderer>() != nullptr;
     return true;
 }
@@ -23249,7 +23250,8 @@ static void EnsureOpComponent(GameObject* go, const std::string& op) {
     else if (op == "impulse3" || op == "velocity3" || op == "force3") go->AddComponent<Rigidbody3D>();
     else if (op == "play_sound") go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.2f);
     else if (op == "emit") go->AddComponent<ParticleSystem>();
-    else if (op == "hurt" || op == "heal" || op == "eat" || op == "drink" || op == "survival") go->AddComponent<SurvivalStats>();
+    else if (op == "hurt" || op == "heal") go->AddComponent<HealthStat>();
+    else if (op == "eat" || op == "drink" || op == "survival") go->AddComponent<SurvivalStats>();   // adds a Health Stat too
 }
 
 // Apply a recipe: fill the primary handler if the script is still untouched, else add
@@ -34290,11 +34292,9 @@ static bool DrawStatsWithOkayUI(EditorState& ed, Stats* st, okay::Component*& to
     InspFieldList L;
     L.rows.reserve(24);
     L.Section("Vitals");
-    L.Drag("Health##st", &st->health, 1, 1.0f, 0.0f, 100000.0f); L.TipLookup();
-    L.SameLineOrWrap(); L.Drag("Max##sthp", &st->maxHealth, 1, 1.0f, 1.0f, 100000.0f); L.Last().width = 90.0f; L.TipLookup();
+    L.Note("Health: the Health Stat on this object (Defense counts as its armor).", false, true);
     L.Drag("Mana##st", &st->mana, 1, 1.0f, 0.0f, 100000.0f); L.TipLookup();
     L.SameLineOrWrap(); L.Drag("Max##stmp", &st->maxMana, 1, 1.0f, 0.0f, 100000.0f); L.Last().width = 90.0f; L.TipLookup();
-    L.Progress("HP", st->HealthFraction());
     L.Section("Progression");
     L.DragInt("Level##st", &st->level, 0.1f, 1, 999); L.TipLookup();
     L.DragInt("XP##st", &st->xp, 1.0f, 0, 1000000); L.TipLookup();
@@ -35123,6 +35123,8 @@ static bool DrawHealthStatWithOkayUI(EditorState& ed, HealthStat* c, okay::Compo
     L.TipLookup();
     L.Drag("Low Threshold##sth", &c->lowThreshold, 1, 1.0f, 0.0f, 100000.0f);
     L.TipLookup();
+    L.Drag("Start Health##sth", &c->startHealth, 1, 1.0f, 0.0f, 100000.0f);
+    L.Tip("Health when Play starts (0 = full). An older RPG Stats scene keeps a hurt character's health here.");
     L.Tree("Mitigation##sth");
     L.Slider("Resistance##sth", &c->resistance, 0.0f, 1.0f);
     L.Tip("Fraction of post-armor damage ignored.");
@@ -43015,14 +43017,14 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* sv = dynamic_cast<SurvivalStats*>(curComp)) {
         if (CompHeader("Survival Stats (native)", sv, &toRemove)) {
-            ImGui::TextDisabled("Hunger/thirst/oxygen/cold damage health directly.");
+            ImGui::TextDisabled("Hunger/thirst/oxygen/cold damage the Health Stat directly.");
             // Live values (tick during Play) so you can see the system is working.
             auto svbar = [&](const char* name, float v, float mx) {
                 float frac = mx > 0.0f ? Mathf::Clamp01(v / mx) : 0.0f;
                 char ov[56]; std::snprintf(ov, sizeof(ov), "%s  %.1f / %.0f", name, v, mx);
                 ImGui::ProgressBar(frac, ImVec2(-1.0f, 0.0f), ov);
             };
-            svbar("Health",  sv->health,  sv->maxHealth);
+            if (const HealthStat* svh = sv->Health()) svbar("Health", svh->health, svh->maxHealth);
             svbar("Hunger",  sv->hunger,  sv->maxHunger);
             svbar("Thirst",  sv->thirst,  sv->maxThirst);
             svbar("Stamina", sv->stamina, sv->maxStamina);
@@ -43030,20 +43032,9 @@ void DrawInspector(EditorState& ed) {
             svbar("Warmth",  sv->warmth,  sv->maxWarmth);
             ImGui::Spacing();
             if (ImGui::TreeNodeEx("Health##sv", ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (ImGui::DragFloat("Max Health##sv", &sv->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
-                oked::FieldTip("Max Health##sv");
-                if (ImGui::DragFloat("Armor##sv", &sv->armor, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
-                oked::FieldTip("Armor##sv");
+                ImGui::TextDisabled("Max health, armor, regen delay, god mode: the Health Stat on this object.");
                 if (ImGui::DragFloat("Regen / s (fed)##sv", &sv->regenWhenFed, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
                 oked::FieldTip("Regen / s (fed)##sv");
-                if (ImGui::DragFloat("Regen Delay##sv", &sv->regenDelay, 0.1f, 0.0f, 60.0f, "%.1f s")) ed.dirty = true;
-                oked::FieldTip("Regen Delay##sv");
-                if (ImGui::SliderFloat("Resistance##sv", &sv->resistance, 0.0f, 1.0f)) ed.dirty = true;
-                oked::FieldTip("Resistance##sv");
-                if (ImGui::DragFloat("I-Frames##sv", &sv->invincibleTime, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
-                oked::FieldTip("I-Frames##sv");
-                if (ImGui::Checkbox("God Mode##sv", &sv->godMode)) ed.dirty = true;
-                oked::FieldTip("God Mode##sv");
                 ImGui::TreePop();
             }
             if (ImGui::TreeNodeEx("Hunger##sv")) {
@@ -43143,6 +43134,8 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Regen Delay##sth");
             if (ImGui::DragFloat("Low Threshold##sth", &c->lowThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Low Threshold##sth");
+            if (ImGui::DragFloat("Start Health##sth", &c->startHealth, 1.0f, 0.0f, 100000.0f, c->startHealth > 0.0f ? "%.0f" : "full")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Health when Play starts (0 = full). An older RPG Stats scene keeps a hurt character's health here.");
             if (ImGui::TreeNodeEx("Mitigation##sth")) {
                 if (ImGui::SliderFloat("Resistance##sth", &c->resistance, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fraction of post-armor damage ignored.");
@@ -43774,10 +43767,7 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Look At Target##npc");
 
             SectionHeader("Health");
-            if (ImGui::DragFloat("Max Health##npc", &c->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Damage() kills it at 0 (a MeleeAttacker can fight it).");
-            if (ImGui::Checkbox("Invulnerable##npc", &c->invulnerable)) ed.dirty = true;
-            oked::FieldTip("Invulnerable##npc");
+            ImGui::TextDisabled("The Health Stat on this object: Max Health, God Mode (invulnerable), death.");
             ImGui::TextDisabled("Moves a sibling Rigidbody3D (or the Transform).");
             if (ImGui::SmallButton("Remove##npc")) toRemove = c;
         }
@@ -45774,17 +45764,12 @@ void DrawInspector(EditorState& ed) {
     if (auto* st = dynamic_cast<Stats*>(curComp)) {
         if (CompHeader("Stats", st, &toRemove) && !(UseOkayUIInspector() && DrawStatsWithOkayUI(ed, st, toRemove))) {   // OkayUI's with the preview switch (section 20)
             SectionHeader("Vitals");
-            if (ImGui::DragFloat("Health##st", &st->health, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
-            oked::FieldTip("Health##st");
-            ImGui::SameLine(); ImGui::SetNextItemWidth(90);
-            if (ImGui::DragFloat("Max##sthp", &st->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
-            oked::FieldTip("Max##sthp");
+            ImGui::TextDisabled("Health: the Health Stat on this object (Defense counts as its armor).");
             if (ImGui::DragFloat("Mana##st", &st->mana, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Mana##st");
             ImGui::SameLine(); ImGui::SetNextItemWidth(90);
             if (ImGui::DragFloat("Max##stmp", &st->maxMana, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max##stmp");
-            ImGui::ProgressBar(st->HealthFraction(), ImVec2(-1, 0), "HP");
             SectionHeader("Progression");
             if (ImGui::DragInt("Level##st", &st->level, 0.1f, 1, 999)) ed.dirty = true;
             oked::FieldTip("Level##st");
@@ -48835,8 +48820,11 @@ void DrawInspector(EditorState& ed) {
         ImGui::PopItemWidth(); ImGui::PopStyleVar(3); ImGui::End();
         return;
     }
-    // Apply a queued component removal (undoable).
-    if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
+    // Apply a queued component removal (undoable). Refused while another component needs it (RequireComponent:
+    // Survival Stats, RPG Stats and an NPC Controller keep their health in the Health Stat), as the OkayUI inspector does.
+    if (toRemove && go->RequiredBy(toRemove)) {
+        if (DialogService* d = CurrentDialogs()) d->ShowError("Can't remove this component", "Another component on this object needs it. Remove that one first.");
+    } else if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
 
     // Apply a deferred reorder request (set by CompHeader's arrows / context menu).
     if (sMoveComp && sMoveComp->gameObject == go) {

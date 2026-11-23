@@ -472,7 +472,7 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `exists(name)` / `is_active(name)` | query another object by name |
 | `set_parent(name)` / `detach()` / `has_parent()` | parent this object under another / unparent / query (pickups, mounts) |
 | `child_count(name)` / `get_child(name, i)` / `parent_of(name)` | children of a named object (child name by index) / its parent's name, `""` if none |
-| `hurt(name, n)` / `heal(name, n)` / `add_xp(name, n)` | damage / heal / XP on a named object's `Stats` or `SurvivalStats` (fires `on_death`, `on_level_up`) |
+| `hurt(name, n)` / `heal(name, n)` / `add_xp(name, n)` | damage / heal a named object's one health (its Health Stat, also the health of Survival Stats, RPG Stats and NPCs; RPG defense counts as armor, fires `on_death`) / XP on its `Stats` (`on_level_up`) |
 | `get_hp(name)` / `get_max_hp(name)` / `is_dead(name)` | read health / death state of a named object |
 | `set_light_intensity(name, v)` / `set_light_range(name, v)` / `set_light_angle(name, deg)` / `set_light_color(name, r, g, b)` | tune a named object's Light component |
 | `obj_x(name)` / `obj_y(name)` / `obj_z(name)` | read another object's world position |
@@ -1321,7 +1321,7 @@ degrees per second, `bodyType = RigidbodyType2D.Kinematic`, ...). See
 | `destroy()` | Destroy this object |
 | `set_parent("name")` / `detach()` | Re-parent / unparent |
 | `child_count("name")` / `get_child("name", i)` / `parent_of("name")` | Hierarchy queries (child name by index; `""` if none) |
-| `hurt("name", n)` / `heal("name", n)` / `add_xp("name", n)` | Damage / heal / grant XP on a named object's `Stats` (or `SurvivalStats` for hurt/heal); fires `on_death` / `on_level_up`; return whether it applied |
+| `hurt("name", n)` / `heal("name", n)` / `add_xp("name", n)` | Damage / heal the named object's one health (its Health Stat; Survival Stats, RPG Stats and NPCs use it) / grant XP on its `Stats`; fires `on_death` / `on_level_up`; return whether it applied |
 | `get_hp("name")` / `get_max_hp("name")` / `is_dead("name")` | Read health and death state (`is_dead()` with no argument is the humanoid check) |
 | `set_light_intensity("name", v)` / `set_light_range("name", v)` / `set_light_angle("name", deg)` / `set_light_color("name", r,g,b)` | Light component on a named object |
 | `set_text(s)` / `set_color(r,g,b,a)` / `set_texture(p)` | Sibling renderers |

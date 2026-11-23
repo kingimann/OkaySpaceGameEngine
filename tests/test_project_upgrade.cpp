@@ -265,7 +265,7 @@ int main() {
         }
         CHECK(after.size() == before.size());                                    // nothing added, nothing lost
         for (const std::string& rel : {kChanged1, kChanged2, kChanged3}) {
-            CHECK(after.at(rel) != before.at(rel) && after.at(rel).rfind("okayscene 3\n", 0) == 0);
+            CHECK(after.at(rel) != before.at(rel) && after.at(rel).rfind("okayscene 4\n", 0) == 0);
             CHECK(Loads(p.root / rel) || rel == kChanged3);                      // a prefab is not a scene file, but it parses as one
         }
         CHECK(Has(after.at(kChanged1), "animsm"));                               // the engine's own upgrade: the Character got its Animator
@@ -585,7 +585,7 @@ int main() {
         CHECK(ReadFile(p.root / "Assets" / "Scenes" / "Level1.okayscene") == level1);
         CHECK(fs::last_write_time(p.root / "Assets" / "Scenes" / "Level1.okayscene") == mtimeBefore);     // a current scene is not even rewritten
         const std::string old1 = ReadFile(p.root / kChanged2);
-        CHECK(old1.rfind("okayscene 3\n", 0) == 0 && Has(old1, "gameobject 0 \"Hero\"") && Has(old1, "name \"Old Level\""));
+        CHECK(old1.rfind("okayscene 4\n", 0) == 0 && Has(old1, "gameobject 0 \"Hero\"") && Has(old1, "name \"Old Level\""));
         Scene a("a"), b("b");
         std::string e1, e2;
         CHECK(SceneSerializer::Deserialize(a, kV1, &e1) && SceneSerializer::Deserialize(b, old1, &e2));

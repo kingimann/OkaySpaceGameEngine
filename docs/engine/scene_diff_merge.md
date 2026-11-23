@@ -178,10 +178,23 @@ SceneSerializer.cpp):
 |---|---|---|
 | 1 -> 2 | a Character body gets the visible Animator with the default humanoid graph (PR #346) | the loader, for every Character in a file older than 2 |
 | 2 -> 3 | a switchable first / third person player gets both view controllers and a camera on it (PR #510) | the loader, for such a player in a file older than 3 |
+| 3 -> 4 | "one-health": one health per object. The `survival`, `stats` and `npc` records lose their health fields; the object's Health Stat (`stat_health`, now written before them) holds health (claude2/one-health) | the loader (`LegacyHealth` / `ApplyLegacyHealth` in `SceneSerializer.cpp`), for any object with one of those records in a file older than 4 |
 
-Both upgrades need the engine's component classes, so they cannot be written as text. The two
+The 3 -> 4 rule when an object had two healths: the one `HealthOf` already treated as the real one
+is kept. An object's own `stat_health` record wins outright; otherwise Survival Stats' values win
+over RPG Stats', and RPG Stats' over the NPC Controller's. A dropped health that differed is named
+in a load warning. What moves: Survival Stats' max health, armor, regen delay, resistance, god
+mode, i-frames and its Output switches; RPG Stats' max and current health (a character saved hurt
+keeps that health as the Health Stat's Start Health); the NPC Controller's max health and
+Invulnerable (as God Mode). The Health Stat gets the owner's old behaviour too (Survival Stats:
+regen delay 5 s, death switches the player off; RPG Stats: at least 1 damage per hit, nothing
+happens to the object on death, nothing published as `{health}`; NPC: removed on death, nothing
+published). Tests: `test_one_health` (each owner, the combinations, a stable second save, the
+migration chain) and `test_ui_text_example` (the shipped `examples/ui_text` scene, still format 3).
+
+All three upgrades need the engine's component classes, so they cannot be written as text. The
 built-in steps therefore only raise the version number when the scene has nothing for them to
-do (no `character` record, no `playerview` record); otherwise `MigrateToCurrent` stops there
+do (no `character` record, no `playerview` record, no `survival` / `stats` / `npc` record); otherwise `MigrateToCurrent` stops there
 (`needsEngine`, text left at that version) and `SceneMigration::MigrateThroughEngine(text)`
 lets the loader do the work: it loads the text into a scratch scene and writes it back at the
 current version. That round trip drops records this build does not know and gives objects

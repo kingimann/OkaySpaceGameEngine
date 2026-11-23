@@ -1250,6 +1250,11 @@ add_executable(test_vehicle_seat_fit test_vehicle_seat_fit.cpp)
 target_link_libraries(test_vehicle_seat_fit PRIVATE okay::engine)
 add_test(NAME vehicle_seat_fit COMMAND test_vehicle_seat_fit)
 
+# One health per object: Survival Stats, RPG Stats and NPC Controller use the Health Stat; old scenes migrate (format 3 -> 4)
+add_executable(test_one_health test_one_health.cpp)
+target_link_libraries(test_one_health PRIVATE okay::engine)
+add_test(NAME one_health COMMAND test_one_health)
+
 add_executable(test_survival test_survival.cpp)
 target_link_libraries(test_survival PRIVATE okay::engine)
 add_test(NAME survival COMMAND test_survival)

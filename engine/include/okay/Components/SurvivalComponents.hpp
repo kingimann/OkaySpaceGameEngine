@@ -92,11 +92,17 @@ void NetNoteDeath(GameObject* go, bool hasFrom, const Vec3& from);
 
 /// HP with flat armor, optional delayed regen, low/death flags. On death it
 /// broadcasts `died`, plays a sibling AudioSource, and deactivates the object.
+///
+/// The one health of an object. Survival Stats, RPG Stats and an NPC Controller keep no health
+/// of their own: each needs a Health Stat on its object (one is added with it, RequireHealthStat
+/// below) and reads and changes that one. Their own reactions (an NPC's provoke and `npc_died`,
+/// RPG Stats' `on_death`, RPG defense as armor) are reached through Damage.hpp's HealthOwners*.
 class HealthStat : public StatComponent {
 public:
     // ---- Pools ----
     float maxHealth = 100.0f, health = 100.0f;
     float lowThreshold = 25.0f;
+    float startHealth = 0.0f;      // health when Play starts (0 = full; kept from older RPG Stats files)
 
     // ---- Damage mitigation ----
     float armor = 0.0f;            // flat reduction subtracted first
@@ -135,7 +141,8 @@ public:
     bool  LastHitFrom(Vec3& out) const { if (hasLastHit) out = lastHitFrom; return hasLastHit; }
 
     void Start() override {
-        health = maxHealth; dead = false; m_timer = 0.0f; m_iframes = 0.0f;
+        health = (startHealth > 0.0f && startHealth < maxHealth) ? startHealth : maxHealth;
+        dead = false; m_timer = 0.0f; m_iframes = 0.0f;
         m_respawnTimer = 0.0f; m_livesLeft = lives;
         if (gameObject && gameObject->transform) m_start = gameObject->transform->Position();
         Publish();
@@ -157,8 +164,7 @@ public:
             return;
         }
         if (m_timer > 0.0f) m_timer -= dt;
-        if (regenPerSecond > 0.0f && m_timer <= 0.0f && health < maxHealth)
-            health = Mathf::Min(maxHealth, health + regenPerSecond * dt);
+        if (regenPerSecond > 0.0f && m_timer <= 0.0f) Regenerate(regenPerSecond * dt);
         if (health > maxHealth && overhealDecay > 0.0f)
             health = Mathf::Max(maxHealth, health - overhealDecay * dt);
         lowHealth = health <= lowThreshold;
@@ -229,6 +235,14 @@ public:
         if (respawn && destroyOnDeath) w.push_back("Respawn and Destroy are both on; Respawn wins.");
         return w;
     }
+    /// Passive healing (regeneration, Survival Stats' "regen while fed"): up to Max Health, no overheal,
+    /// no listeners told. Nothing while dead.
+    void Regenerate(float amount) {
+        if (dead || !(amount > 0.0f) || health >= maxHealth) return;
+        health = Mathf::Min(maxHealth, health + amount);
+    }
+    /// True while a recent hit holds regeneration back (Regen Delay after a hit).
+    bool RegenPaused() const { return m_timer > 0.0f; }
     /// The last hit this holder took (type, source, amount really dealt), for listeners that ask later.
     const DamageEvent& LastEvent() const { return m_lastEvent; }
     void OnAnimationEvent(const std::string& name) override {
@@ -242,7 +256,7 @@ public:
         if (HumanoidActions::DodgeIFrames(gameObject)) return false;
         const float typeRes = ResistanceTo(ev.type);
         if (typeRes >= 1.0f) return false;   // immune to this kind: no i-frames, regen delay, listeners or flinch
-        float dmg = Mathf::Max(0.0f, amount - (armor + equipArmor));
+        float dmg = Mathf::Max(0.0f, amount - (armor + equipArmor + HealthOwnerArmor(gameObject)));
         dmg *= (1.0f - Mathf::Clamp01(resistance));
         dmg *= (1.0f - typeRes);
         if (dmg < minDamage) dmg = Mathf::Min(minDamage, amount);   // mitigation never fully nullifies a hit
@@ -255,6 +269,7 @@ public:
         ev.killed = health <= 0.0f;
         m_lastEvent = ev;
         NotifyDamaged(ev);
+        HealthOwnersHit(ev);
         if (health <= 0.0f) OnDeath();
         else if (playHitAnim && hasLastHit)
             HumanoidActions::HitReact(gameObject, HumanoidActions::HitDirFromWorld(gameObject, lastHitFrom), false);
@@ -320,6 +335,7 @@ private:
         Broadcast("died");
         if (auto& hook = HealthDeathHook()) hook(gameObject);
         m_lastEvent.target = gameObject; m_lastEvent.killed = true;
+        HealthOwnersDied(m_lastEvent);
         NotifyDeath(m_lastEvent);
         if (gameObject) { if (auto* au = gameObject->GetComponent<AudioSource>()) au->Play(); }
         if (playDeathAnim)
@@ -364,7 +380,8 @@ private:
         if (moveToStart) NetNoteRespawn(gameObject);
     }
     bool m_awaitServerRespawn = false;   // died by the server's word: only its respawn brings it back
-    void Publish() { SaveValue("health", health, maxHealth); SetBar("HealthBar", Fraction()); }
+    // An enemy's or an NPC's health (Publish Prefs off) does not overwrite the player's {health} variable.
+    void Publish() { if (publishPrefs) SaveValue("health", health, maxHealth); SetBar("HealthBar", Fraction()); }
     float m_timer = 0.0f, m_iframes = 0.0f, m_respawnTimer = 0.0f;
     int   m_livesLeft = 0;
     Vec3  m_start{0, 0, 0};
@@ -375,6 +392,18 @@ private:
     HumanoidActions::DeadShape m_deathShape;
     DamageEvent m_lastEvent;
 };
+
+/// Declare that every `Owner` (Survival Stats, RPG Stats, NPC Controller) keeps its health in a sibling
+/// Health Stat: AddComponent<Owner> (the editor's Add Component, the scene loader, scripts) first adds a
+/// Health Stat when the object has none, set up by `Setup` with the owner's own defaults. Uses the engine's
+/// RequireComponent rules, so the editor also refuses to remove that Health Stat while the owner needs it.
+template <typename Owner, void (*Setup)(HealthStat&)>
+bool RequireHealthStat() {
+    ComponentRules::AddRequirement(typeid(Owner), {std::type_index(typeid(HealthStat)),
+        [](const GameObject& g) { return g.GetComponent<HealthStat>() != nullptr; },
+        [](GameObject& g) { if (HealthStat* h = g.AddComponent<HealthStat>()) Setup(*h); }});
+    return true;
+}
 
 /// Hunger that drains over time (faster while sprinting); empty -> `starving`. When
 /// empty it can damage a sibling HealthStat (`starveDamage`), slow the player

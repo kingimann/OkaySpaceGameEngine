@@ -1,7 +1,8 @@
 #pragma once
 // One damage vocabulary for the whole engine: what kind of damage, how much, who dealt it, who got it.
-// Every health holder (Health Stat, Survival Stats, RPG Stats, NPC Controller) takes a DamageEvent and
-// tells the same listeners, so melee, shots, traps, quests, scripts and survival all go through one path.
+// An object's one health is its Health Stat (Survival Stats, RPG Stats and an NPC Controller use that one,
+// SurvivalComponents.hpp RequireHealthStat); it takes a DamageEvent and tells the same listeners, so melee,
+// shots, traps, quests, scripts and survival all go through one path.
 // Written from the engine's own needs; no outside code.
 #include "okay/Math/Vec3.hpp"
 #include <cctype>
@@ -98,20 +99,28 @@ inline void NotifyDeath(const DamageEvent& e) {
     auto list = Listeners().death; for (auto& f : list) if (f) f(e);
 }
 
-/// The one way to hurt something. Finds the object's health holder (Health Stat first, then
-/// Survival Stats, RPG Stats, NPC Controller), applies the hit and tells the listeners.
-/// Returns true if something took the hit (false for an already dead or immune target).
+/// What the components that use an object's Health Stat add to it (defined with them in Damage.cpp, which
+/// knows those classes; the header-only Health Stat calls these):
+///  - HealthOwnerArmor: flat armor on top of the Health Stat's own (RPG Stats: defense + worn defense).
+///  - HealthOwnersHit: a hit took health (an NPC Controller turns hostile when it is provokable).
+///  - HealthOwnersDied: the health reached 0 (RPG Stats fires on_death, an NPC Controller broadcasts npc_died).
+float HealthOwnerArmor(GameObject* go);
+void HealthOwnersHit(const DamageEvent& ev);
+void HealthOwnersDied(const DamageEvent& ev);
+
+/// The one way to hurt something: the object's Health Stat takes the hit and tells the listeners.
+/// Returns true if something took the hit (false for an already dead or immune target, or no Health Stat).
 bool DealDamage(GameObject* target, DamageEvent ev);
 /// Convenience: plain amount, type, source.
 bool DealDamage(GameObject* target, float amount, DamageType type = DamageType::Generic, GameObject* source = nullptr);
-/// Heal the object's health holder. Returns the health really gained.
+/// Heal the object's Health Stat. Returns the health really gained.
 float HealObject(GameObject* target, float amount);
-/// Kill every health holder on the object outright: god mode, i-frames, armor, resistance and an NPC's
-/// `invulnerable` do not stop it. True only if this call killed something and the object is dead now.
+/// Kill the object's Health Stat outright: god mode, i-frames, armor and resistance do not stop it.
+/// True only if this call killed it.
 bool KillObject(GameObject* target, GameObject* source = nullptr);
-/// Current / max health of whichever holder the object has (false if none).
+/// Current / max health of the object's Health Stat (false if it has none).
 bool HealthOf(GameObject* target, float& health, float& maxHealth);
-/// True if the object has a health holder and it is dead.
+/// True if the object has a Health Stat and it is dead.
 bool IsObjectDead(GameObject* target);
 
 } // namespace okay

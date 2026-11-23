@@ -74,21 +74,22 @@ No open PR touches this area.
 ### 11.4 Survival: stats, afflictions, zones
 - **What:** Native drop-in stat components (health, hunger, thirst, stamina, oxygen, temperature, sleep, sanity), damage-over-time afflictions, carry weight, timed status effects, zones that drive them from the world, and consumable items that feed them.
 - **Parts:**
-  - 11.4.1 All-in-one Survival Stats - `Components/SurvivalStats` - drains stats, damages health when hunger, thirst, oxygen or warmth hit zero, armor, regen, death
+  - 11.4.1 All-in-one Survival Stats - `Components/SurvivalStats` - drains stats, damages health when hunger, thirst, oxygen or warmth hit zero, regen while fed; its health (armor, death, respawn) is the object's Health Stat, added with it
   - 11.4.2 Individual stat components - `Components/SurvivalComponents` - `HealthStat` (armor, resistance, i-frames, overheal, respawn, lives) and Hunger, Thirst, Stamina, Oxygen, Temperature, Sleep, Sanity stats on a shared `StatComponent`
   - 11.4.3 Afflictions - `Components/SurvivalAfflictions` - Radiation, Bleeding, Poison, Wetness that fill toward harm and damage the health source
   - 11.4.4 Systems - `Components/SurvivalSystems` - Carry Weight stat, generic timed Status Effects (`Apply`, `Remove`), Survival Save and Load
   - 11.4.5 Zones - `Components/SurvivalZone` - trigger volumes that drive radiation, water, cold, fire and similar inputs
   - 11.4.6 Consumables - `Components/Consumables` - maps item names to Eat, Drink, Heal and similar; works from `Use(item)` or by dropping a world item on the player
   - 11.4.7 Death lock and speed scale - `Components/DeathLock`, `Components/MoveSpeed` - a dead body does not read move input; one multiplier for load, holding and overweight that controllers apply to their speed
-  - 11.4.8 One damage path - `Components/Damage` - `DamageEvent` (amount, type, source, target, hit point), 13 damage types, per-type resistances and a death choice on `HealthStat`, damaged / healed / death listeners, and `DealDamage`, `HealObject`, `KillObject`, `HealthOf` that reach a Health Stat, Survival Stats, RPG Stats or NPC Controller; melee, guns, projectiles, afflictions, survival drains, Visual Script and `hurt()` all use it; existing games keep their old rules (knockback lands during i-frames, scripts reach RPG Stats then Survival Stats first, afflictions reach Survival Stats then Health Stat, RPG heal still revives); `KillObject` kills every holder outright; an immune hit changes nothing (`test_damage`); a health bar (`owner.health`, `owner.healthFrac` ...) and the Behavior Tree Health Watcher read `HealthOf` too, so they show the holder the hits go to (#422 audit item 21; before, the bar read RPG Stats before Survival Stats and the watcher read the NPC Controller first and skipped RPG Stats)
+  - 11.4.8 One damage path - `Components/Damage` - `DamageEvent` (amount, type, source, target, hit point), 13 damage types, per-type resistances and a death choice on `HealthStat`, damaged / healed / death listeners, and `DealDamage`, `HealObject`, `KillObject`, `HealthOf` that reach the object's Health Stat; melee, guns, projectiles, afflictions, survival drains, Visual Script and `hurt()` all use it; knockback still lands during i-frames; `KillObject` kills outright; an immune hit changes nothing (`test_damage`); a health bar (`owner.health`, `owner.healthFrac` ...) and the Behavior Tree Health Watcher read `HealthOf` too (#422 audit item 21)
+  - 11.4.9 One health per object - `Components/SurvivalComponents` (`RequireHealthStat`), `Scene/SceneSerializer` (`LegacyHealth`) - Survival Stats, RPG Stats and NPC Controller keep no health of their own: adding one adds a Health Stat with that owner's old defaults (the editor will not remove it while needed), RPG defense counts as its armor, an NPC hit provokes and its death broadcasts `npc_died`, RPG Stats fires `on_death`; scene format 3 -> 4 moves old health values into the Health Stat (a Health Stat record wins, then Survival Stats, RPG Stats, NPC; an RPG character saved hurt keeps its health as Start Health); script `hurt`/`heal`/`get_hp`/`get_max_hp`/`is_dead` act on it (`test_one_health`)
 - **Code:** `Components/SurvivalStats`, `Components/SurvivalComponents`, `Components/SurvivalAfflictions`, `Components/SurvivalSystems`, `Components/SurvivalZone`, `Components/Consumables`, `Components/DeathLock`, `Components/MoveSpeed`, `editor/main.cpp` (Stat inspectors and Add Component rows)
 - **API:** `SurvivalStats`, `HealthStat`, `HungerStat`, `StaminaStat`, `StatusEffectStat`, `CarryWeightStat`, `SurvivalSave`, `SurvivalZone`, `Consumables`, `MoveSpeedScale`, `DeathLocksInput`, messages `died`, `starving`, `dehydrated`, script `Stats` and `SurvivalStats` access
 - **Editor:** Add Component > Gameplay > Survival Stats and Stat rows; UI buttons can call Eat, Drink and Heal through On Click (native UI actions)
 - **Docs:** `docs/gameplay/survival_kit.md`
-- **Tests:** `survival`, `death_lock`
+- **Tests:** `survival`, `death_lock`, `damage`, `one_health`
 - **Status:** Works - SurvivalComponents.hpp (HealthStat read in detail), SurvivalSystems.hpp and the docs read; drain, damage, armor, death and save round trip covered by the 728-line `survival` test
-- **Open:** four health holders still exist (HealthStat, SurvivalStats' own health, the older RPG `Stats` (11.9) and `NPCController`'s own `health` (9.5)); they now share one damage path and one set of listeners (11.4.8) but are not merged into one component, and only HealthStat has per-type resistances and the death choice; the editor Inspector for HealthStat does not show the new resistances or death choice yet (not built or seen in a window)
+- **Open:** the editor Inspector for HealthStat does not show the new resistances or death choice yet (not built or seen in a window)
 - **Related:** 11.1, 11.7, 9.5, 6.6, 12.2, 5.8
 - **Words:** survival, health, HealthStat, hunger, thirst, stamina, oxygen, temperature, sanity, radiation, bleeding, poison, wetness, status effect, buff, debuff, damage over time, respawn, lives, consumable
 - **Seen as:** the player never gets hungry or never dies; health does not regenerate; the stamina bar stays full; a dead player can still move; eating an item does nothing; the bar does not update
@@ -169,17 +170,17 @@ No open PR touches this area.
 - **Ask me like:** "make the inventory server-authoritative"; "add a test for NetInventory"
 
 ### 11.9 RPG stats and XP
-- **What:** A simple RPG character sheet: health, mana, level and XP with attributes, damage mitigated by defense, healing and levelling that fire script events.
+- **What:** A simple RPG character sheet: mana, level and XP with attributes, defense that counts as armor on the object's health, and levelling that fires script events.
 - **Parts:**
-  - 11.9.1 Health, mana and attributes - `Components/Stats` - health and mana pools, strength, defense, intelligence, agility; `TakeDamage` mitigated by defense, `Heal`
-  - 11.9.2 Levelling and events - `Components/Stats` - `AddXP` raises level, max health, max mana and attributes; calls `on_death` and `on_level_up` on the sibling script
+  - 11.9.1 Mana and attributes - `Components/Stats` - mana pool, strength, defense, intelligence, agility; health is the object's Health Stat (added with Stats; every hit counts defense as armor and deals at least 1)
+  - 11.9.2 Levelling and events - `Components/Stats` - `AddXP` raises level, the Health Stat's max health, max mana and attributes; calls `on_death` (when the Health Stat dies) and `on_level_up` on the sibling script
 - **Code:** `Components/Stats`, `editor/main.cpp` (Stats inspector)
-- **API:** `Stats`, `TakeDamage`, `Heal`, `AddXP`, script `on_death`, `on_level_up`
+- **API:** `Stats`, `AddXP`, `Restore`, `DealDamage` / `HealObject` (Damage.hpp), script `on_death`, `on_level_up`
 - **Editor:** Add Component > RPG / Turn-Based > Stats
 - **Docs:** -
-- **Tests:** `rpg`
-- **Status:** Works - Stats.hpp read in full; covered by `rpg` (damage, heal, XP levelling)
-- **Open:** a fourth health holder next to HealthStat, SurvivalStats and NPCController (they share one damage path, see 11.4.8, but are not merged); no skill tree, buff stacking or save wiring
+- **Tests:** `rpg`, `one_health`
+- **Status:** Works - Stats.hpp read in full; covered by `rpg` (damage, heal, XP levelling) and `one_health` (defense as armor, level-up max, old scenes)
+- **Open:** no skill tree, buff stacking or save wiring
 - **Related:** 11.4, 11.6, 9.5
 - **Words:** RPG, stats, health, mana, level up, XP, experience, attributes, strength, defense, Stats component
 - **Seen as:** damage ignores armor; the character never levels; on_level_up never fires

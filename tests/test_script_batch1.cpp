@@ -50,10 +50,11 @@ int main() {
     }
     { // SurvivalStats
         Scene s; auto* hero = s.CreateGameObject("Hero"); auto* t = s.CreateGameObject("Tank");
-        auto* sv = t->AddComponent<SurvivalStats>(); sv->armor = 0; sv->publishPrefs = false; sv->publishBars = false;
+        auto* sv = t->AddComponent<SurvivalStats>(); sv->publishPrefs = false; sv->publishBars = false;
+        HealthStat* th = t->GetComponent<HealthStat>(); th->publishPrefs = false;   // its health (added with it)
         auto* sc = Load(hero, "var dd = 1\nfunc start() { hurt(\"Tank\", 40)\n heal(\"Tank\", 5)\n dd = is_dead(\"Tank\") }\n");
         CHECK(sc != nullptr);
-        if (sc) { s.Start(); Run(s, 1); CHECK_NEAR(sv->health, 65.0f, 0.01f); CHECK_NEAR(sc->VM()->GetGlobal("dd").AsFloat(), 0.0f, 0.01f); }
+        if (sc) { s.Start(); Run(s, 1); CHECK_NEAR(th->health, 65.0f, 0.01f); CHECK_NEAR(sc->VM()->GetGlobal("dd").AsFloat(), 0.0f, 0.01f); }
     }
     { // Hierarchy
         Scene s; auto* hero = s.CreateGameObject("Hero"); auto* ship = s.CreateGameObject("Ship");

@@ -64,6 +64,7 @@ release job or the installer build for this change.
 | 7g | Install, uninstall and Versions: see today's behaviour (audit, nothing changed) | Setup, Settings > Apps, `%LOCALAPPDATA%\OkaySpace`, the launcher's Versions page | Audit only: no program change in this branch. Windows steps unverified |
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7j | Nameplates bound to their characters, and a rich-text sign | `examples\ui_text\ui_text.okayscene` (File > Open..., then Play) | New in this change; real window unverified |
+| 7oh | One health per object: Survival Stats, RPG Stats and NPCs use the Health Stat; old scenes move their health there | `examples\ui_text\ui_text.okayscene` (an old-format scene with RPG Stats), Add Component > Survival Stats / Stats / NPC Controller | New in `claude2/one-health`; tested headless on Linux, the editor and Windows unverified |
 | 7k | UI library slice 1: range slider, input validation, aspect-ratio box | File > Examples > UI library > ui_library_1 (then Play), or GameObject > UI > Controls and Layout & Overlays; file `examples\ui_library\ui_library_1.okayscene` | New in this change; headless pictures only, real window unverified |
 | 7lit | Lighting upgrade: presets, soft shadows, masks, panels, real-world units | Editor: **View > Lighting** (Lighting Presets), **File > Examples > Lighting presets**, any Light's Inspector | New in this change (branch `claude/lighting-2`); only the software renderer was run, no GPU, no Windows |
 | 7pl | Project panel: One column / Two columns | Editor: **View > Panels > Project**, buttons at the right end of the Assets / Favourites / Recent row | New in this change; unverified in the real window (only syntax-checked) |
@@ -593,6 +594,35 @@ and Standard Folders, Duplicate of a selection and the tags a menu lists are tes
 refused before anything starts; its Windows half (`ShellExecuteW`) was only compile-checked with the MinGW cross compiler. **Unverified:** everything you see in the real window (drawing, tooltips, the Move to... and Properties
 windows, the Explorer, Notepad and default-app launches on Windows, the tree's expand and collapse, the panel following a renamed folder). Nothing here was run on Windows. The changed editor files (`editor/main.cpp`, `ProjectPanelUI.cpp`, `ProjectMenuDraw.cpp`, `ProjectBrowser.cpp`, `ContentEditors.cpp`, `LaunchFile.cpp`) were compiled with `-fsyntax-only` on Linux with the editor's real flags (no error; `main.cpp` has older warnings of its own) and the launcher, the panel and the menu drawing also with the MinGW Windows cross compiler; the editor was not linked or started.
 **Pictures:** a picture folder (pictures are no longer stored in the repository) (listed in `docs/editor/project_panel.md`) are headless renders, **not screenshots of the editor window**: the real item lists and the real menu drawing code, drawn by Dear ImGui into a software surface with ImGui's default look and font (`tools/project_menu_shots.cpp`). The editor itself could not be built and run on the machine that wrote this, so there is no screenshot of the real window; the OkayUI panels have no Project panel, so there is no second copy of this menu to keep in step.
+
+## 7oh. One health per object
+
+**What it is.** An object has one health: its **Stat: Health** component. Survival Stats, RPG Stats and the NPC
+Controller no longer keep a health number of their own; each one adds a Stat: Health when you add it, and reads and
+changes that one. Scenes saved before this change (scene format 3) move their health values into the Stat: Health when
+they are opened. Code: `SurvivalComponents.hpp` (`RequireHealthStat`), `Damage.cpp`, `SceneSerializer.cpp`
+(`LegacyHealth`); docs `docs/gameplay/survival_kit.md`, `docs/engine/scene_diff_merge.md` (step 3 -> 4).
+
+**Steps.**
+1. Open the editor, **File > Open...**, `<install folder>\examples\ui_text\ui_text.okayscene`. This sample was saved in
+   the old format with RPG Stats holding the health (Goblin 40, Orc 120).
+2. Select `Goblin Scout`. The Inspector shows a **Stat: Health** card with **Max Health 40**, and the **Stats** card says
+   "Health: the Health Stat on this object". Select `Orc Chief`: Max Health 120.
+3. Press **Play** and use the keys of section 7j (**1**, **2**, **3**, **H**): the bars move exactly as before.
+4. Stop. Make a new cube (**GameObject > 3D Object > Cube**), then **Add Component > Survival Stats (native)**: a
+   **Stat: Health** appears with it (Regen Delay 5 s). Click the (x) on the Stat: Health card: the editor says it can't
+   remove it, because Survival Stats needs it.
+5. Make another cube and add **NPC Controller**: its Stat: Health has Max Health 30 and death set to remove the object.
+   Tick **God Mode** there: that is the old "Invulnerable".
+6. **File > Save As...** a new file and open it in a text editor: the first line is `okayscene 4`, and each object has
+   one `stat_health` line.
+
+**How you know it worked.** Every object with Survival Stats, Stats or an NPC Controller shows exactly one Stat: Health,
+the old sample keeps its 40 and 120, and the Health Stat cannot be removed while one of those needs it.
+
+**Known rough.** The Survival Stats, Stats and NPC inspectors changed in `editor/main.cpp` and were not compiled or seen
+in a window in this change (Linux headless tests only). An older build cannot read a format-4 scene's Survival Stats,
+Stats or NPC records correctly.
 
 ## 7j. Nameplates that show their own character, and a sign with rich text
 

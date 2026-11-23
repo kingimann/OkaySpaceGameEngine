@@ -11,8 +11,9 @@
 using namespace okay;
 
 // One damage path: DamageEvent, per-type resistances, death choices, events, regeneration at several
-// frame rates, i-frames, NaN/inf handling, old saved files, and every holder (Health Stat, Survival
-// Stats, RPG Stats, NPC Controller) reached through DealDamage.
+// frame rates, i-frames, NaN/inf handling, old saved files, and the one health of every object (a Health
+// Stat; Survival Stats, RPG Stats and NPC Controller use theirs) reached through DealDamage.
+static HealthStat* HP(GameObject* g) { return g ? g->GetComponent<HealthStat>() : nullptr; }
 static void Run(Scene& s, float seconds, float fps) {
     const int n = (int)std::lround(seconds * fps);
     for (int i = 0; i < n; ++i) s.Update(1.0f / fps);
@@ -202,24 +203,24 @@ int main() {
         AddDeathListener([&](const DamageEvent& e) { died.push_back(e.target); });
         Scene s("holders");
         GameObject* a = s.CreateGameObject("Hs");   a->AddComponent<HealthStat>();
-        GameObject* b = s.CreateGameObject("Sv");   auto* sv = b->AddComponent<SurvivalStats>(); sv->armor = 5.0f;
+        GameObject* b = s.CreateGameObject("Sv");   b->AddComponent<SurvivalStats>(); HP(b)->armor = 5.0f;
         GameObject* c = s.CreateGameObject("Rpg");  auto* st = c->AddComponent<Stats>(); st->defense = 5;
-        GameObject* d = s.CreateGameObject("Npc");  auto* npc = d->AddComponent<NPCController>(); npc->maxHealth = 30;
+        GameObject* d = s.CreateGameObject("Npc");  d->AddComponent<NPCController>();   // its Health Stat: 30 HP
         s.Start();
         CHECK(DealDamage(a, 10.0f, DamageType::Fire));
         CHECK(DealDamage(b, 20.0f, DamageType::Fire));
-        CHECK_NEAR(sv->health, 85.0f, 1e-3f);                   // 20 - 5 armor, as before
+        CHECK_NEAR(HP(b)->health, 85.0f, 1e-3f);                // 20 - 5 armor, as before
         CHECK(DealDamage(c, 3.0f));
-        CHECK_NEAR(st->health, st->maxHealth - 1.0f, 1e-3f);    // RPG rule kept: a hit is always at least 1
+        CHECK_NEAR(HP(c)->health, HP(c)->maxHealth - 1.0f, 1e-3f);   // RPG rule kept: a hit is always at least 1
         CHECK(DealDamage(d, 12.0f));
-        CHECK_NEAR(npc->health, 18.0f, 1e-3f);
+        CHECK_NEAR(HP(d)->health, 18.0f, 1e-3f);
         CHECK(hit.size() == 4 && types[0] == DamageType::Fire);
         float hh = 0, mm = 0;
-        CHECK(HealthOf(b, hh, mm) && hh == sv->health && mm == sv->maxHealth);
+        CHECK(HealthOf(b, hh, mm) && hh == HP(b)->health && mm == HP(b)->maxHealth);
         CHECK(HealthOf(d, hh, mm) && mm == 30.0f);
         CHECK(HealObject(b, 100.0f) > 0.0f);
-        CHECK_NEAR(sv->health, sv->maxHealth, 1e-3f);
-        CHECK(KillObject(b) && sv->dead && IsObjectDead(b));
+        CHECK_NEAR(HP(b)->health, HP(b)->maxHealth, 1e-3f);
+        CHECK(KillObject(b) && HP(b)->IsDead() && IsObjectDead(b));
         CHECK(KillObject(c) && IsObjectDead(c));
         CHECK(died.size() == 2);
         CHECK(!DealDamage(s.CreateGameObject("Bare"), 5.0f)); // nothing to hurt
@@ -236,14 +237,15 @@ int main() {
         auto* hp = p->AddComponent<HealthStat>(); hp->regenPerSecond = 0.0f;
         auto* hu = p->AddComponent<HungerStat>();
         hu->drainPerSecond = 200.0f; hu->starveDamage = 20.0f;
-        auto* sv2 = s.CreateGameObject("Q")->AddComponent<SurvivalStats>();
+        GameObject* q = s.CreateGameObject("Q");
+        auto* sv2 = q->AddComponent<SurvivalStats>();
         sv2->hungerDrain = 200.0f; sv2->starveDamage = 10.0f; sv2->regenWhenFed = 0.0f;
         s.Start();
         Run(s, 2.0f, 60);
         CHECK(!types.empty());
         bool allHunger = true; for (auto t : types) allHunger &= (t == DamageType::Hunger);
         CHECK(allHunger);
-        CHECK(hp->health < 100.0f && sv2->health < 100.0f);
+        CHECK(hp->health < 100.0f && HP(q)->health < 100.0f);
         ClearDamageListeners();
     }
 
@@ -290,13 +292,15 @@ int main() {
         CHECK_NEAR(rb->velocity.z, 0.0f, 1e-6f);
     }
 
-    // 2. Script hurt / heal / get_hp / get_max_hp / is_dead keep the old order: Stats, then Survival Stats.
+    // 2. Script hurt / heal / get_hp / get_max_hp / is_dead act on the object's one health (its Health Stat).
     {
         Scene s("scriptorder");
         GameObject* hero = s.CreateGameObject("Hero");
         GameObject* both = s.CreateGameObject("Both");
-        auto* st = both->AddComponent<Stats>(); st->defense = 0; st->maxHealth = 80.0f; st->health = 80.0f;
-        auto* sv = both->AddComponent<SurvivalStats>(); sv->armor = 0.0f;
+        auto* st = both->AddComponent<Stats>(); st->defense = 0;
+        both->AddComponent<SurvivalStats>()->regenWhenFed = 0.0f;   // no "regen while fed" during the check
+        HealthStat* bh = HP(both); bh->maxHealth = 80.0f; bh->publishPrefs = false;
+        CHECK(both->GetComponents<HealthStat>().size() == 1);                 // two owners, one health
         GameObject* hs = s.CreateGameObject("HsOnly"); auto* hso = hs->AddComponent<HealthStat>();
         auto* sc = hero->AddComponent<ScriptComponent>(); std::string err;
         const bool ok = sc->LoadSource(
@@ -308,36 +312,36 @@ int main() {
         CHECK(ok);
         s.Start(); s.Update(1.0f / 60.0f);
         if (ok && sc->VM()) {
-            CHECK_NEAR(sc->VM()->GetGlobal("a").AsFloat(), 50.0f, 0.01f);    // Stats took it
+            CHECK_NEAR(sc->VM()->GetGlobal("a").AsFloat(), 50.0f, 0.01f);
             CHECK_NEAR(sc->VM()->GetGlobal("m").AsFloat(), 80.0f, 0.01f);
             CHECK_NEAR(sc->VM()->GetGlobal("b").AsFloat(), 60.0f, 0.01f);
             CHECK_NEAR(sc->VM()->GetGlobal("d").AsFloat(), 0.0f, 0.01f);
-            CHECK_NEAR(sc->VM()->GetGlobal("c").AsFloat(), 75.0f, 0.01f);    // new holders still reached last
+            CHECK_NEAR(sc->VM()->GetGlobal("c").AsFloat(), 75.0f, 0.01f);
         }
-        CHECK_NEAR(st->health, 60.0f, 1e-3f);
-        CHECK_NEAR(sv->health, sv->maxHealth, 1e-3f);                        // Survival Stats untouched
+        CHECK_NEAR(bh->health, 60.0f, 1e-3f);
         CHECK_NEAR(hso->health, 75.0f, 1e-3f);
     }
 
-    // 3. RPG Stats: heal revives, a negative heal hurts, and a zero hit still deals the minimum 1.
+    // 3. RPG Stats on the Health Stat: a zero or negative hit and a negative heal do nothing (the Health Stat's rule;
+    // before format 4 they still dealt 1 or took health), and healing does not bring the dead back: Restore does.
     {
         Scene s("rpgold");
         GameObject* g = s.CreateGameObject("G");
         auto* st = g->AddComponent<Stats>(); st->defense = 5;
         s.Start();
-        st->TakeDamage(0.0f);
-        CHECK_NEAR(st->health, 99.0f, 1e-3f);
-        st->TakeDamage(-4.0f);
-        CHECK_NEAR(st->health, 98.0f, 1e-3f);
-        st->Heal(-18.0f);
-        CHECK_NEAR(st->health, 80.0f, 1e-3f);
-        st->TakeDamage(1000.0f);
-        CHECK(st->IsDead());
-        st->Heal(50.0f);                                                       // revive by heal, as before
-        CHECK(!st->IsDead());
-        CHECK_NEAR(st->health, 50.0f, 1e-3f);
-        st->Heal(std::nanf(""));                                               // NaN still ignored
-        CHECK_NEAR(st->health, 50.0f, 1e-3f);
+        CHECK(!DealDamage(g, 0.0f));
+        CHECK(!DealDamage(g, -4.0f));
+        CHECK_NEAR(HP(g)->health, 100.0f, 1e-3f);
+        CHECK_NEAR(HealObject(g, -18.0f), 0.0f, 1e-6f);
+        CHECK_NEAR(HP(g)->health, 100.0f, 1e-3f);
+        CHECK(DealDamage(g, 1000.0f));
+        CHECK(IsObjectDead(g));
+        CHECK_NEAR(HealObject(g, 50.0f), 0.0f, 1e-6f);
+        CHECK(IsObjectDead(g));
+        st->Restore();
+        CHECK(!IsObjectDead(g));
+        CHECK_NEAR(HP(g)->health, 100.0f, 1e-3f);
+        CHECK_NEAR(HealObject(g, std::nanf("")), 0.0f, 1e-6f);                // NaN still ignored
     }
 
     // 4. An immune hit returns false and touches nothing: no i-frames, no regen delay, no listener.
@@ -371,13 +375,13 @@ int main() {
         Scene s("realkill");
         GameObject* a = s.CreateGameObject("Hs");  auto* ha = a->AddComponent<HealthStat>();
         ha->resistance = 1.0f; ha->godMode = true; ha->invincibleTime = 5.0f; ha->SetResistance(DamageType::Generic, 1.0f);
-        GameObject* b = s.CreateGameObject("Sv");  auto* sv = b->AddComponent<SurvivalStats>();
-        sv->godMode = true; sv->resistance = 1.0f;
+        GameObject* b = s.CreateGameObject("Sv");  b->AddComponent<SurvivalStats>();
+        HP(b)->godMode = true; HP(b)->resistance = 1.0f;
         GameObject* c = s.CreateGameObject("Rpg"); c->AddComponent<Stats>()->defense = 100000;
-        GameObject* d = s.CreateGameObject("Npc"); auto* npc = d->AddComponent<NPCController>(); npc->invulnerable = true;
+        GameObject* d = s.CreateGameObject("Npc"); auto* npc = d->AddComponent<NPCController>(); HP(d)->godMode = true;   // the old Invulnerable
         s.Start();
         CHECK(KillObject(a) && ha->IsDead());
-        CHECK(KillObject(b) && sv->dead && IsObjectDead(b));
+        CHECK(KillObject(b) && HP(b)->IsDead() && IsObjectDead(b));
         CHECK(KillObject(c) && IsObjectDead(c));
         CHECK(KillObject(d) && npc->IsDead());
         CHECK(!KillObject(a) && !KillObject(b) && !KillObject(c));             // already dead
@@ -456,23 +460,6 @@ int main() {
         ClearDamageListeners();
     }
 
-    // DamageHealthOn / HealOn keep their old holders and order: Survival Stats first, then Health Stat only.
-    {
-        Scene s("afforder");
-        GameObject* g = s.CreateGameObject("G");
-        auto* h = g->AddComponent<HealthStat>();
-        auto* sv = g->AddComponent<SurvivalStats>(); sv->armor = 0.0f;
-        GameObject* r = s.CreateGameObject("R"); auto* st = r->AddComponent<Stats>();
-        s.Start();
-        DamageHealthOn(g, 10.0f);
-        CHECK_NEAR(sv->health, sv->maxHealth - 10.0f, 1e-3f);
-        CHECK_NEAR(h->health, 100.0f, 1e-3f);
-        HealOn(g, 5.0f);
-        CHECK_NEAR(sv->health, sv->maxHealth - 5.0f, 1e-3f);
-        DamageHealthOn(r, 10.0f);                                              // RPG Stats were never hurt by this
-        CHECK_NEAR(st->health, st->maxHealth, 1e-3f);
-    }
-
     // --- save and load round trip; an old saved line still loads ---------------
     {
         Scene s("ser");
@@ -524,9 +511,9 @@ int main() {
             for (const char* tail : {" 0 2147483647 0.5 0.5", " 0 20 0 0 0.5 0 0 0 0 0 0 0 0 0 0", " 0 -5 0.5"}) {
                 if (lb == std::string::npos) break;
                 std::string line = base.substr(la, lb - la);
-                // Cut the written "keep active, count, resistances" tail and put the hostile one in its place.
+                // Cut the written "keep active, count, resistances, start health" tail and put the hostile one in its place.
                 size_t cut = line.size();
-                for (int k = 0; k < kDamageTypeCount + 2; ++k) cut = line.rfind(' ', cut - 1);
+                for (int k = 0; k < kDamageTypeCount + 3; ++k) cut = line.rfind(' ', cut - 1);   // ... and the start health
                 std::string doc = base.substr(0, la) + line.substr(0, cut) + tail + base.substr(lb);
                 Scene sh("hostile");
                 GameObject* o = SceneSerializer::InstantiateFromText(sh, doc);
@@ -540,41 +527,37 @@ int main() {
                     CHECK_NEAR(hh->ResistanceTo(DamageType::Fire), 0.5f, 1e-6f);   // the values that are there still load
             }
         }
-        // Survival Stats, RPG Stats and NPC Controller still round-trip with their old fields
+        // A Survival Stats player round-trips with its health settings in the Health Stat
         GameObject* q = s.CreateGameObject("Q");
-        auto* sv = q->AddComponent<SurvivalStats>(); sv->armor = 4.0f; sv->resistance = 0.2f; sv->invincibleTime = 0.3f;
+        q->AddComponent<SurvivalStats>(); HP(q)->armor = 4.0f; HP(q)->resistance = 0.2f; HP(q)->invincibleTime = 0.3f;
         Scene s4("ser4");
         GameObject* q2 = SceneSerializer::InstantiateFromText(s4, SceneSerializer::SerializeObject(*q));
-        auto* sv2 = q2 ? q2->GetComponent<SurvivalStats>() : nullptr;
-        CHECK(sv2 != nullptr);
-        if (sv2) { CHECK_NEAR(sv2->armor, 4.0f, 1e-4f); CHECK_NEAR(sv2->resistance, 0.2f, 1e-4f); CHECK_NEAR(sv2->invincibleTime, 0.3f, 1e-4f); }
+        HealthStat* hq2 = HP(q2);
+        CHECK(q2 && q2->GetComponent<SurvivalStats>() && hq2 && q2->GetComponents<HealthStat>().size() == 1);
+        if (hq2) { CHECK_NEAR(hq2->armor, 4.0f, 1e-4f); CHECK_NEAR(hq2->resistance, 0.2f, 1e-4f); CHECK_NEAR(hq2->invincibleTime, 0.3f, 1e-4f); }
     }
 
-    // --- one "health of this object" (#422 audit item 21) -------------------------------------------------------------
-    // A health bar (UI `owner.health`) and a Behavior Tree's Health Watcher used to look for health in their own orders
-    // (UI: Health Stat, RPG Stats, Survival Stats, NPC; the watcher: NPC, Survival Stats, Health Stat, and never RPG
-    // Stats). DealDamage hurts the FIRST holder in HealthOf's order (Health Stat, Survival Stats, RPG Stats, NPC), so on
-    // an object with two holders the bar or the watcher showed a number that the hits never changed. Both now use
-    // HealthOf, so they show the holder that takes the damage.
+    // --- one "health of this object" (#422 audit item 21; one storage since scene format 4) ------------------------------
+    // A health bar (UI `owner.health`) and a Behavior Tree's Health Watcher read HealthOf: the object's one health, its
+    // Health Stat, which every owner (Survival Stats, RPG Stats, NPC Controller) uses, so they show what the hits change.
     {
         Scene s("health-of");
         s.physicsEnabled = false;
-        // RPG Stats + Survival Stats: the hits go to Survival Stats
         GameObject* hero = s.CreateGameObject("Hero");
-        auto* st = hero->AddComponent<Stats>(); st->maxHealth = 200.0f; st->health = 200.0f;
-        auto* sv = hero->AddComponent<SurvivalStats>(); sv->maxHealth = 100.0f; sv->health = 100.0f;
+        hero->AddComponent<Stats>()->defense = 0;
+        hero->AddComponent<SurvivalStats>();
+        HP(hero)->publishPrefs = false;
         GameObject* bar = s.CreateGameObject("Bar");
         bar->transform->SetParent(hero->transform);
         CHECK(DealDamage(hero, 30.0f));
         float h = 0, m = 0;
-        CHECK(HealthOf(hero, h, m) && std::fabs(h - sv->health) < 1e-4f && std::fabs(m - 100.0f) < 1e-4f);
+        CHECK(HealthOf(hero, h, m) && std::fabs(h - 70.0f) < 1e-4f && std::fabs(m - 100.0f) < 1e-4f);
         std::string text; float num = -1.0f; bool isNum = false;
         CHECK(uiowner::Lookup(bar, "owner.health", text, num, isNum) && isNum);
-        CHECK_NEAR(num, sv->health, 1e-4f);                    // the bar shows the health the hit took (70), not Stats' 200
+        CHECK_NEAR(num, 70.0f, 1e-4f);
         CHECK(uiowner::Lookup(bar, "owner.maxHealth", text, num, isNum));
         CHECK_NEAR(num, 100.0f, 1e-4f);
 
-        // NPC Controller + Health Stat: the hits go to the Health Stat; the watcher must report it
         auto watch = [&](GameObject* npcObj) {
             auto* r = npcObj->AddComponent<BehaviorTreeRunner>();
             r->runOnStart = false;
@@ -587,25 +570,24 @@ int main() {
             return r;
         };
         GameObject* guard = s.CreateGameObject("Guard");
-        auto* npc = guard->AddComponent<NPCController>(); npc->maxHealth = 30.0f; npc->health = 30.0f;
-        auto* hs = guard->AddComponent<HealthStat>(); hs->maxHealth = 80.0f; hs->health = 80.0f;
+        guard->AddComponent<NPCController>()->targetName = "nobody";
+        HP(guard)->maxHealth = 80.0f;
+        CHECK(guard->GetComponents<HealthStat>().size() == 1);
         BehaviorTreeRunner* gr = watch(guard);
-        // RPG Stats only: the watcher used to skip it and leave the blackboard alone
-        GameObject* mage = s.CreateGameObject("Mage");
-        auto* ms = mage->AddComponent<Stats>(); ms->maxHealth = 50.0f; ms->health = 50.0f;
+        GameObject* mage = s.CreateGameObject("Mage");                       // RPG Stats only: the watcher fills it too
+        mage->AddComponent<Stats>()->defense = 0;
+        HP(mage)->maxHealth = 50.0f;
         BehaviorTreeRunner* mr = watch(mage);
         s.Start(); gr->Run(); mr->Run();
         CHECK(DealDamage(guard, 20.0f));
         CHECK(DealDamage(mage, 10.0f));
         for (int i = 0; i < 4; ++i) s.Update(0.1f);
-        CHECK_NEAR(hs->health, 60.0f, 1e-3f);
-        CHECK_NEAR(npc->health, 30.0f, 1e-3f);                 // the NPC's own number is not the one that is hit
-        CHECK_NEAR(gr->blackboard.GetNumber("health", -1.0f), hs->health, 1e-3f);
+        CHECK_NEAR(HP(guard)->health, 60.0f, 1e-3f);
+        CHECK_NEAR(gr->blackboard.GetNumber("health", -1.0f), 60.0f, 1e-3f);
         CHECK_NEAR(gr->blackboard.GetNumber("healthPct", -1.0f), 60.0f / 80.0f, 1e-3f);
-        CHECK_NEAR(mr->blackboard.GetNumber("health", -1.0f), ms->health, 1e-3f);
-        // a single holder reads as before (no change for the usual one-holder object)
+        CHECK_NEAR(mr->blackboard.GetNumber("health", -1.0f), 40.0f, 1e-3f);
         GameObject* lone = s.CreateGameObject("Lone");
-        auto* ln = lone->AddComponent<NPCController>(); ln->health = 12.0f; ln->maxHealth = 30.0f;
+        lone->AddComponent<NPCController>(); HP(lone)->health = 12.0f;
         CHECK(HealthOf(lone, h, m) && std::fabs(h - 12.0f) < 1e-4f && std::fabs(m - 30.0f) < 1e-4f);
     }
 

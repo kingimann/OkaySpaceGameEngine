@@ -22,8 +22,16 @@ std::uint64_t g_nextInstanceId = 1;
 std::mutex g_rulesMutex;
 std::atomic<bool> g_anyRules{false};
 std::atomic<std::uint64_t> g_rulesGeneration{0};   // moves whenever a rule is added or the rules are cleared
-std::unordered_map<std::type_index, std::vector<ComponentRules::Requirement>> g_requirements;
-std::unordered_set<std::type_index> g_unique;
+// Built on first use, not at program start: a header may declare a rule from a static initializer (the
+// health owners do, SurvivalComponents.hpp RequireHealthStat), which can run before this file's globals exist.
+std::unordered_map<std::type_index, std::vector<ComponentRules::Requirement>>& Requirements() {
+    static std::unordered_map<std::type_index, std::vector<ComponentRules::Requirement>> r;
+    return r;
+}
+std::unordered_set<std::type_index>& UniqueTypes() {
+    static std::unordered_set<std::type_index> u;
+    return u;
+}
 thread_local std::vector<std::type_index> t_applying;   // owners whose requirements are being added
 std::string NewGuid() {   // caller holds g_registryMutex
     static std::mt19937_64 rng{std::random_device{}() ^ (std::uint64_t)std::chrono::steady_clock::now().time_since_epoch().count()};
@@ -39,7 +47,7 @@ std::string NewGuid() {   // caller holds g_registryMutex
 
 void ComponentRules::AddRequirement(std::type_index owner, Requirement req) {
     std::lock_guard<std::mutex> lock(g_rulesMutex);
-    auto& v = g_requirements[owner];
+    auto& v = Requirements()[owner];
     for (const auto& r : v) if (r.type == req.type) return;   // already declared
     v.push_back(req);
     g_anyRules = true;
@@ -47,23 +55,23 @@ void ComponentRules::AddRequirement(std::type_index owner, Requirement req) {
 }
 void ComponentRules::SetUnique(std::type_index owner) {
     std::lock_guard<std::mutex> lock(g_rulesMutex);
-    g_unique.insert(owner);
+    UniqueTypes().insert(owner);
     g_anyRules = true;
     g_rulesGeneration.fetch_add(1, std::memory_order_relaxed);
 }
 bool ComponentRules::Any() { return g_anyRules.load(std::memory_order_relaxed); }
 bool ComponentRules::IsUnique(std::type_index owner) {
     std::lock_guard<std::mutex> lock(g_rulesMutex);
-    return g_unique.count(owner) != 0;
+    return UniqueTypes().count(owner) != 0;
 }
 std::vector<ComponentRules::Requirement> ComponentRules::RequirementsOf(std::type_index owner) {
     std::lock_guard<std::mutex> lock(g_rulesMutex);
-    auto it = g_requirements.find(owner);
-    return it == g_requirements.end() ? std::vector<Requirement>{} : it->second;
+    auto it = Requirements().find(owner);
+    return it == Requirements().end() ? std::vector<Requirement>{} : it->second;
 }
 void ComponentRules::Clear() {
     std::lock_guard<std::mutex> lock(g_rulesMutex);
-    g_requirements.clear(); g_unique.clear(); g_anyRules = false;
+    Requirements().clear(); UniqueTypes().clear(); g_anyRules = false;
     g_rulesGeneration.fetch_add(1, std::memory_order_relaxed);
 }
 

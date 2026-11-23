@@ -661,6 +661,55 @@ void ReadStatTail(std::istream& in, StatComponent* c) {
     c->publishPrefs = (pp != 0); c->publishBar = (pb != 0); c->sendMessages = (sm != 0);
 }
 
+// One health per object (scene format 4). Files older than 4 kept health values in the `survival`, `stats` and
+// `npc` records; the loader keeps the values of each object's best source here and moves them into the object's
+// Health Stat once all its records are read. The rule when an object had two: the one HealthOf (Damage.cpp)
+// already treated as the real one wins: a `stat_health` record first, then Survival Stats, RPG Stats, NPC.
+struct LegacyHealth {
+    enum Source { None = 0, Npc = 1, Rpg = 2, Survival = 3 };   // higher wins
+    Source source = None;
+    float maxHealth = 100.0f, health = -1.0f;   // health < 0: start full
+    float armor = 0.0f, resistance = 0.0f, invincibleTime = 0.0f, regenDelay = -1.0f;
+    bool  godMode = false;
+    int   publishPrefs = -1, publishBar = -1, sendMessages = -1;   // -1: keep what the owner set up
+    static const char* Name(Source s) { return s == Npc ? "NPC Controller" : s == Rpg ? "Stats" : "Survival Stats"; }
+    // Keep `from` if it beats what is held. Returns a note when a different health was dropped ("" otherwise).
+    std::string Offer(const LegacyHealth& from) {
+        const bool wins = from.source > source;
+        std::string note;
+        if (source != None && maxHealth != from.maxHealth)
+            note = std::string("the ") + Name(wins ? source : from.source) + " health was dropped; the " +
+                   Name(wins ? from.source : source) + " health is kept in the Health Stat";
+        if (wins) *this = from;
+        return note;
+    }
+};
+// A Health Stat that an owner's record added (RequireHealthStat) before the object's own `stat_health` record:
+// start it from the Health Stat defaults, so that record alone decides its settings.
+void ResetHealthToDefaults(HealthStat& c) {
+    HealthStat d;
+    d.gameObject = c.gameObject; d.transform = c.transform; d.enabled = c.enabled;
+    c = d;
+}
+// After an older file's object is read: move its legacy health into the Health Stat (one is added with the
+// winning owner's defaults if the rules did not add it). A `stat_health` record of its own wins outright.
+void ApplyLegacyHealth(GameObject& go, const LegacyHealth& lh, bool hadHealthRecord) {
+    if (lh.source == LegacyHealth::None || hadHealthRecord) return;
+    HealthStat* h = go.GetComponent<HealthStat>();
+    if (!h) h = go.AddComponent<HealthStat>();
+    if (lh.source == LegacyHealth::Survival) SurvivalStats::SetUpHealth(*h);
+    else if (lh.source == LegacyHealth::Rpg) Stats::SetUpHealth(*h);
+    else NPCController::SetUpHealth(*h);
+    h->maxHealth = lh.maxHealth;
+    h->health = (lh.health >= 0.0f && lh.health < lh.maxHealth) ? lh.health : lh.maxHealth;
+    if (lh.health > 0.0f && lh.health < lh.maxHealth) h->startHealth = lh.health;   // an RPG character saved hurt
+    h->armor = lh.armor; h->resistance = lh.resistance; h->invincibleTime = lh.invincibleTime; h->godMode = lh.godMode;
+    if (lh.regenDelay >= 0.0f) h->regenDelay = lh.regenDelay;
+    if (lh.publishPrefs >= 0) h->publishPrefs = lh.publishPrefs != 0;
+    if (lh.publishBar >= 0) h->publishBar = lh.publishBar != 0;
+    if (lh.sendMessages >= 0) h->sendMessages = lh.sendMessages != 0;
+}
+
 // Read an optional trailing UI anchor enum (added in a later format version).
 // Older scenes lack the field, so we only consume it when an integer follows;
 // otherwise the anchor stays at its default (TopLeft).
@@ -805,7 +854,8 @@ bool LoadsInStoredOrder(const GameObject* go, const std::string& records) {
     bool natural = true;
     {
         Scene probe("component order");
-        const std::string text = "okayscene 3\ngameobject 0 \"O\"\n  active 1\n  parent -1\n" + records + "end\n";
+        const std::string text = "okayscene " + std::to_string(SceneSerializer::kSceneFormatVersion) +   // this build's records
+                                 "\ngameobject 0 \"O\"\n  active 1\n  parent -1\n" + records + "end\n";
         GameObject* root = nullptr;
         std::string error;
         std::vector<std::string> warnings;   // kept here so nothing is printed
@@ -2384,18 +2434,6 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v2->handbrakeGrip << " " << (v2->sideView ? 1 : 0)
             << " " << (int)(unsigned char)v2->handbrakeKey << "\n";
     }
-    for (auto* sv : go->GetComponents<SurvivalStats>()) {
-        out << "  survival " << sv->maxHealth << " " << sv->armor << " " << sv->regenWhenFed
-            << " " << sv->regenDelay << " " << sv->maxHunger << " " << sv->hungerDrain << " "
-            << sv->starveDamage << " " << sv->maxThirst << " " << sv->thirstDrain << " "
-            << sv->dehydrateDamage << " " << sv->maxStamina << " " << sv->staminaRegen << " "
-            << sv->sprintCost << " " << sv->sprintDrainMult << " " << sv->maxOxygen << " "
-            << sv->oxygenDrain << " " << sv->oxygenRefill << " " << sv->drownDamage << " "
-            << sv->maxWarmth << " " << sv->coldDrain << " " << sv->warmRegen << " "
-            << sv->freezeDamage << " " << (sv->publishPrefs ? 1 : 0) << " "
-            << (sv->publishBars ? 1 : 0) << " " << (sv->sendMessages ? 1 : 0)
-            << " " << sv->resistance << " " << (sv->godMode ? 1 : 0) << " " << sv->invincibleTime << "\n";
-    }
     auto statTail = [](std::ostream& o, StatComponent* c) {
         o << " " << (c->publishPrefs ? 1 : 0) << " " << (c->publishBar ? 1 : 0)
           << " " << (c->sendMessages ? 1 : 0) << "\n";
@@ -2416,7 +2454,20 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (c->playDeathAnim ? 1 : 0) << " " << (c->playHitAnim ? 1 : 0)
             << " " << (c->keepActiveOnDeath ? 1 : 0) << " " << kDamageTypeCount;   // then one resistance per damage kind
         for (int i = 0; i < kDamageTypeCount; ++i) out << " " << c->typeResistance[i];
-        out << "\n";
+        out << " " << c->startHealth << "\n";   // then the health at Play start (0 = full)
+    }
+    // Format 4: health is the Health Stat's (`stat_health`, written just above, so loading it first means
+    // Survival Stats finds it); older files had max health, armor, regen delay, resistance, god mode and
+    // i-frames here, after which `regenWhenFed` followed.
+    for (auto* sv : go->GetComponents<SurvivalStats>()) {
+        out << "  survival " << sv->regenWhenFed << " " << sv->maxHunger << " " << sv->hungerDrain << " "
+            << sv->starveDamage << " " << sv->maxThirst << " " << sv->thirstDrain << " "
+            << sv->dehydrateDamage << " " << sv->maxStamina << " " << sv->staminaRegen << " "
+            << sv->sprintCost << " " << sv->sprintDrainMult << " " << sv->maxOxygen << " "
+            << sv->oxygenDrain << " " << sv->oxygenRefill << " " << sv->drownDamage << " "
+            << sv->maxWarmth << " " << sv->coldDrain << " " << sv->warmRegen << " "
+            << sv->freezeDamage << " " << (sv->publishPrefs ? 1 : 0) << " "
+            << (sv->publishBars ? 1 : 0) << " " << (sv->sendMessages ? 1 : 0) << "\n";
     }
     for (auto* c : go->GetComponents<Seat>()) {
         out << "  seat " << c->seatHeight << " "
@@ -2527,8 +2578,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "  npc " << c->behavior << " " << c->moveSpeed << " " << c->sightRange << " "
             << c->wanderRadius << " " << c->attackRange << " " << c->attackDamage << " "
             << c->attackInterval << " " << (c->faceMovement ? 1 : 0) << " " << Quote(c->targetName)
-            << " " << c->maxHealth << " " << (c->invulnerable ? 1 : 0)
-            // smarter-AI trailing fields (older files stop after invulnerable):
+            // format 4: the health fields (max health, invulnerable) that stood here are the Health Stat's;
+            // then the smarter-AI fields (files before them stop after the target name):
             << " " << c->runSpeed << " " << c->turnSpeed << " " << c->acceleration
             << " " << c->stopDistance << " " << c->fieldOfView << " " << (c->lineOfSight ? 1 : 0)
             << " " << c->eyeHeight << " " << c->hearingRange << " " << c->detectionTime
@@ -2934,7 +2985,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (tz->once ? 1 : 0) << " " << Quote(tz->targetName) << " " << Quote(tz->triggerTag) << "\n";
     }
     for (auto* st : go->GetComponents<Stats>()) {
-        out << "  stats " << st->health << " " << st->maxHealth << " " << st->mana << " " << st->maxMana
+        out << "  stats " << st->mana << " " << st->maxMana   // format 4: health and max health moved to `stat_health`
             << " " << st->level << " " << st->xp << " " << st->xpToNext
             << " " << st->strength << " " << st->defense << " " << st->intelligence << " " << st->agility << "\n";
     }
@@ -4081,7 +4132,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     VehicleSeatSaveGuard seatGuard;
     std::ostringstream out;
     UseRoundTripFloats(out);
-    out << "okayscene 3\n";
+    out << "okayscene " << SceneSerializer::kSceneFormatVersion << "\n";
     out << "name " << Quote(scene.Name()) << "\n";
     if (!scene.uiFont.empty()) out << "uifont " << Quote(scene.uiFont) << "\n";
     if (scene.uiQuality != 1) out << "uiquality " << scene.uiQuality << "\n";
@@ -4640,6 +4691,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             int nFpFeel = 0, nTpFeel = 0, nFpStance = 0, nTpStance = 0;
             int nCc3dSt = 0, nTpsSt = 0, nTdSt = 0, nCtmSt = 0, nNpcSt = 0;
             int nIkAim = 0, nIkLook = 0, nIkLimb = 0, nIkChain = 0;
+            LegacyHealth legacyHealth;       // a pre-format-4 health from survival / stats / npc (ApplyLegacyHealth)
+            bool sawHealthRecord = false;    // this object has its own `stat_health` record
             while (in >> field) {
                 if (field == "end") { sawEnd = true; break; }
                 bool fieldDone = true;   // the chain is split in chunks: MSVC allows ~128 nested blocks (C1061)
@@ -6569,20 +6622,31 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int hk = 32; in >> hk; v2->handbrakeKey = (char)hk;
                 } else if (field == "survival") {
                     auto* sv = go->AddComponent<SurvivalStats>();
-                    in >> sv->maxHealth >> sv->armor >> sv->regenWhenFed >> sv->regenDelay
-                       >> sv->maxHunger >> sv->hungerDrain >> sv->starveDamage
+                    LegacyHealth lh; lh.source = LegacyHealth::Survival;
+                    if (version < 4) in >> lh.maxHealth >> lh.armor >> sv->regenWhenFed >> lh.regenDelay;   // health moves to the Health Stat
+                    else in >> sv->regenWhenFed;
+                    in >> sv->maxHunger >> sv->hungerDrain >> sv->starveDamage
                        >> sv->maxThirst >> sv->thirstDrain >> sv->dehydrateDamage
                        >> sv->maxStamina >> sv->staminaRegen >> sv->sprintCost >> sv->sprintDrainMult
                        >> sv->maxOxygen >> sv->oxygenDrain >> sv->oxygenRefill >> sv->drownDamage
                        >> sv->maxWarmth >> sv->coldDrain >> sv->warmRegen >> sv->freezeDamage;
                     int pp = 1, pb = 1, sm = 1; in >> pp >> pb >> sm;
                     sv->publishPrefs = (pp != 0); sv->publishBars = (pb != 0); sv->sendMessages = (sm != 0);
-                    in >> std::ws;   // optional mitigation fields (added later)
-                    if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') {
-                        int gd = 0; in >> sv->resistance >> gd >> sv->invincibleTime; sv->godMode = (gd != 0);
+                    if (version < 4) {
+                        lh.publishPrefs = pp != 0; lh.publishBar = pb != 0; lh.sendMessages = sm != 0;
+                        in >> std::ws;   // optional mitigation fields (added later)
+                        if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') {
+                            int gd = 0; in >> lh.resistance >> gd >> lh.invincibleTime; lh.godMode = (gd != 0);
+                        }
+                        if (const std::string note = legacyHealth.Offer(lh); !note.empty()) warn("object " + std::to_string(idx) + ": " + note);
                     }
                 } else if (field == "stat_health") {
-                    auto* c = go->AddComponent<HealthStat>();
+                    // The object's one health. An owner record above may have added it already (RequireHealthStat):
+                    // this record then fills that one, from the defaults.
+                    HealthStat* c = sawHealthRecord ? nullptr : go->GetComponent<HealthStat>();
+                    if (c) ResetHealthToDefaults(*c);
+                    else c = go->AddComponent<HealthStat>();
+                    sawHealthRecord = true;
                     in >> c->maxHealth >> c->armor >> c->regenPerSecond >> c->regenDelay >> c->lowThreshold;
                     ReadStatTail(in, c);
                     in >> std::ws;   // optional mitigation / overheal / respawn fields (added later)
@@ -6614,6 +6678,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                                 if (!(ls >> r)) break;
                                 if (i < kDamageTypeCount && std::isfinite(r)) c->typeResistance[i] = Mathf::Clamp(r, -1.0f, 1.0f);
                             }
+                            float sh = 0.0f;   // optional: health at Play start (0 = full)
+                            if (ls && (ls >> sh) && std::isfinite(sh) && sh >= 0.0f) c->startHealth = sh;
                         }
                     }
                 } else if (field == "seat") {
@@ -6753,10 +6819,13 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                        >> c->attackRange >> c->attackDamage >> c->attackInterval >> fm;
                     c->faceMovement = (fm != 0);
                     c->targetName = ReadQuoted(in);
-                    in >> std::ws;   // optional combat health (added later)
+                    in >> std::ws;   // optional combat health (added later; the Health Stat's since format 4)
                     if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') {
-                        in >> c->maxHealth; c->health = c->maxHealth;
-                        int iv = 0; in >> iv; c->invulnerable = (iv != 0);
+                        if (version < 4) {
+                            LegacyHealth lh; lh.source = LegacyHealth::Npc;
+                            int iv = 0; in >> lh.maxHealth >> iv; lh.godMode = (iv != 0);
+                            if (const std::string note = legacyHealth.Offer(lh); !note.empty()) warn("object " + std::to_string(idx) + ": " + note);
+                        }
                         // Smarter-AI trailing fields: read whatever remains (old files stop here).
                         std::string rest; std::getline(in, rest);
                         std::istringstream rs(rest); std::vector<float> v; float f;
@@ -7368,7 +7437,12 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws; if (in.peek() == '"') tz->triggerTag = ReadQuoted(in);
                 } else if (field == "stats") {
                     auto* st = go->AddComponent<Stats>();
-                    in >> st->health >> st->maxHealth >> st->mana >> st->maxMana
+                    if (version < 4) {   // health and max health move to the Health Stat
+                        LegacyHealth lh; lh.source = LegacyHealth::Rpg;
+                        in >> lh.health >> lh.maxHealth;
+                        if (const std::string note = legacyHealth.Offer(lh); !note.empty()) warn("object " + std::to_string(idx) + ": " + note);
+                    }
+                    in >> st->mana >> st->maxMana
                        >> st->level >> st->xp >> st->xpToNext
                        >> st->strength >> st->defense >> st->intelligence >> st->agility;
                 } else if (field == "inventory") {
@@ -9512,6 +9586,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             // the loop above stopped without finding 'end'.
             if (!sawEnd)
                 return bad("object " + std::to_string(idx) + " is cut short (no 'end')");
+            ApplyLegacyHealth(*go, legacyHealth, sawHealthRecord);
             // Per-component enabled flags, applied last so they win over anything a
             // record set while building its component. A flag for a component that is
             // not there (an older or newer build's) is ignored.
@@ -9813,7 +9888,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
 
     std::ostringstream out;
     UseRoundTripFloats(out);
-    out << "okayscene 3\n";
+    out << "okayscene " << SceneSerializer::kSceneFormatVersion << "\n";
     for (std::size_t i = 0; i < subtree.size(); ++i) {
         GameObject* go = subtree[i];
         if (skipBits[i] != 0 || IsGeneratedViewmodel(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load

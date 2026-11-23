@@ -1,10 +1,10 @@
 #pragma once
+#include "okay/AI/GridAStar.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include <vector>
-#include <queue>
 #include <unordered_map>
 #include <cmath>
 #include <cstdint>
@@ -17,6 +17,8 @@ namespace okay {
 /// which also hits heightmap Terrain) overlaps no solid collider. Returns a
 /// smoothed list of world waypoints, or empty when no route exists within
 /// the expansion budget (the caller falls back to straight-line steering).
+/// The search is the shared grid A* (GridAStar.hpp), the same one Navigation's
+/// 2D grid paths use.
 class NavGrid3D {
 public:
     static std::vector<Vec3> FindPath(Scene& sc, const Vec3& from, const Vec3& to,
@@ -27,7 +29,7 @@ public:
         float dx = to.x - from.x, dz = to.z - from.z;
         if (std::sqrt(dx * dx + dz * dz) < cell) return out;   // adjacent — no plan needed
 
-        auto key = [](int ix, int iz) { return (std::int64_t)(((std::uint64_t)(std::uint32_t)ix << 32) | (std::uint32_t)iz); };
+        auto key = [](int ix, int iz) { return gridastar::SparseStore::Key(ix, iz); };
         auto cellCenter = [&](int ix, int iz) {
             return Vec3{from.x + ix * cell, from.y, from.z + iz * cell};
         };
@@ -66,7 +68,6 @@ public:
             walkCache[key(ix, iz)] = ci;
             return ci;
         };
-        auto walkable = [&](int ix, int iz) -> bool { return probeCell(ix, iz).ok; };
         // An edge is traversable when both cells are walkable AND the surface
         // rise between them is a real step, not a wall top or a cliff face.
         auto edgeOK = [&](int ax, int az, int bx, int bz) -> bool {
@@ -74,46 +75,24 @@ public:
             return a.ok && b.ok && std::fabs(a.surf - b.surf) <= kMaxStep;
         };
 
-        struct Node { int ix, iz; float g; int parent; };
-        std::vector<Node> nodes;
-        std::unordered_map<std::int64_t, int> seen;
         auto hcost = [&](int ix, int iz) {
             float hx = (float)(gx - ix), hz = (float)(gz - iz);
             return std::sqrt(hx * hx + hz * hz);
         };
-        using QE = std::pair<float, int>;   // f, node index
-        std::priority_queue<QE, std::vector<QE>, std::greater<QE>> open;
-        nodes.push_back({0, 0, 0.0f, -1});
-        seen[key(0, 0)] = 0;
-        open.push({hcost(0, 0), 0});
-        int found = -1, expanded = 0;
-        const int NX[8] = {1, -1, 0, 0, 1, 1, -1, -1};
-        const int NZ[8] = {0, 0, 1, -1, 1, -1, 1, -1};
-        while (!open.empty() && expanded < maxExpand) {
-            int ni = open.top().second; open.pop();
-            Node n = nodes[ni];
-            ++expanded;
-            if (n.ix == gx && n.iz == gz) { found = ni; break; }
-            for (int d = 0; d < 8; ++d) {
-                int nx = n.ix + NX[d], nz = n.iz + NZ[d];
-                bool diag = NX[d] != 0 && NZ[d] != 0;
-                if (!edgeOK(n.ix, n.iz, nx, nz)) continue;
-                // no corner cutting: a diagonal needs both orthogonal cells free
-                if (diag && (!edgeOK(n.ix, n.iz, n.ix + NX[d], n.iz) ||
-                             !edgeOK(n.ix, n.iz, n.ix, n.iz + NZ[d]))) continue;
-                float ng = n.g + (diag ? 1.41421f : 1.0f);
-                auto it = seen.find(key(nx, nz));
-                if (it != seen.end() && nodes[it->second].g <= ng) continue;
-                int idx;
-                if (it == seen.end()) { idx = (int)nodes.size(); nodes.push_back({nx, nz, ng, ni}); seen[key(nx, nz)] = idx; }
-                else { idx = it->second; nodes[idx].g = ng; nodes[idx].parent = ni; }
-                open.push({ng + hcost(nx, nz), idx});
-            }
-        }
-        if (found < 0) return out;
-        for (int i = found; i >= 0; i = nodes[i].parent)
-            out.push_back(cellCenter(nodes[i].ix, nodes[i].iz));
-        std::reverse(out.begin(), out.end());
+        // Grid y is world z. No closed set (reopen) and a pop budget, as this search always had.
+        gridastar::SparseStore store;
+        gridastar::Options opt;
+        opt.diagonal = true;
+        opt.maxExpand = maxExpand < 0 ? 0 : maxExpand;   // a negative budget searched nothing before, too
+        opt.reopen = true;
+        std::vector<GridCell> cells;
+        if (!gridastar::Search(store, GridCell{0, 0}, GridCell{gx, gz}, opt,
+                               edgeOK,
+                               [](int, int, bool diag) { return diag ? 1.41421f : 1.0f; },
+                               hcost, cells))
+            return out;
+        out.reserve(cells.size());
+        for (const GridCell& c : cells) out.push_back(cellCenter(c.x, c.y));
         out.back() = to;   // land exactly on the target
 
         // String-pull smoothing: drop waypoints whose straight segment stays on

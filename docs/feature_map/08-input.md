@@ -8,6 +8,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 ## 8. Input
 
 ### 8.1 Keyboard and mouse
+- **System:** Input - Reads the keyboard, mouse, gamepads and touch, and plays controller rumble.
 - **What:** Polled key and mouse-button state (held, pressed this frame, released this frame), mouse position, delta and wheel, typed text, and a WASD and arrows axis, all fed by the host each frame.
 - **Parts:**
   - 8.1.1 Keys - `Input/Input` - `GetKey`, `GetKeyDown`, `GetKeyUp`, `AnyKey`, `FirstKeyDown`, `KeyFromName`, `KeyName`; one `char` per key, synthetic codes for Shift, Ctrl and arrows
@@ -28,6 +29,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "let me bind F5 to quick-save"; "the camera jumps when the game starts"
 
 ### 8.2 Gamepad (SDL)
+- **System:** Input
 - **What:** Game controllers (read through `okay::platform`: SDL2, or our own evdev backend) are read into Input: both sticks (radial dead zone 0.18), both triggers, 14 buttons plus trigger-as-button, and the left stick, d-pad and A also press W, A, S, D and Space so keyboard games play on a pad.
 - **Parts:**
   - 8.2.1 Pad state - `Input/Input` - `GamepadAxis`, `GamepadRightAxis`, `GamepadTrigger`, `GetGamepadButton`(Down/Up), `GamepadConnected`, button names and `FirstGamepadButtonDown`
@@ -47,6 +49,9 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "add a dead zone setting for the right stick"; "support two controllers for couch co-op"
 
 ### 8.3 Input actions and rebinding UI
+- **System:**
+  - Input Actions - Named actions such as Jump and Fire that work with any key or button, can be rebound by the player, and support several local players. Code: `Input/ActionSet`, `Input/InputAsset`, `Input/PlayerInput`, `Input/InputRuntime`, `Input/InputBuffer`, `Input/RemapModel`, `Components/UIKeybindField`
+  - Simple Input Actions - The older text-based action table (`InputActions`) the built-in controllers read - being merged into Input Actions (PR #1139) Code: `Input/InputActions`, `engine/src/Input/InputActions.cpp`
 - **What:** Named actions ("Jump", "Move", "Fire") that read keys, mouse and controller together, with text bindings, a direction type for sticks and WASD, and player rebinding saved in Prefs.
 - **Parts:**
   - 8.3.1 Bindings - `Input/InputActions` - `InputBinding` text forms `key:`, `mouse:`, `pad:`, `keys:w,s,a,d`, `stick:`, `dpad`, `mouse:delta` with display labels
@@ -70,6 +75,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "let players rebind Interact on keyboard and gamepad"; "a menu that stops the jump key from working"
 
 ### 8.4 Cursor and touch
+- **System:** Input
 - **What:** Gameplay asks for the mouse cursor to be hidden and locked (shooters) and the host applies it; finger touches are fed from SDL finger events and finger drag-scrolling is provided for scroll and list views.
 - **Parts:**
   - 8.4.1 Cursor lock and visibility - `Input/Cursor` - `Cursor::Capture`, `SetLock`, `SetVisible`; the player turns it into SDL relative mouse mode and releases it on Esc, focus loss or an open menu
@@ -88,6 +94,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "add pinch to zoom"; "put an on-screen joystick on mobile"
 
 ### 8.5 Gameplay input blocking
+- **System:** Input
 - **What:** One place that answers "should the world ignore this click or key right now?": pause menu, open bag, chest, crafting, a focused text field, modal, dialogue, a pointer on UI or a cutscene.
 - **Parts:**
   - 8.5.1 Block masks - `Input/GameInput` - `GameInputMask` with `World` (clicks, swings, digging) and `Keys` (hotbar, bag toggle) presets; `GameInputBlocked`, `GameInputBlockReason`
@@ -106,6 +113,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "stop the player from shooting while my shop menu is open"; "why does the bag toggle when I pick something up?"
 
 ### 8.6 Rumble and haptics
+- **System:** Input
 - **What:** Games request controller rumble with a heavy and a light motor strength and a duration; the host plays the latest request on the connected pad.
 - **Parts:**
   - 8.6.1 Rumble request - `Input/Input` - `Input::Rumble(low, high, seconds)` and `TakeRumble`
@@ -123,6 +131,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "shake the controller when the player takes damage"; "add a vibration on/off setting"
 
 ### 8.7 Input upgrade: timing, curves, per-player actions, recording, the Input panel
+- **System:** Input Actions
 - **What:** Fixes found by the input audit (fast taps, typing moving the player, layouts without Latin letters, rebinding Move) and new features built on 8.1-8.3: chord and wheel bindings, per-action dead zone / curve / sensitivity / invert, input buffering and double tap and hold-to-confirm, per-player actions, rebind conflicts and swap, profiles and one-handed presets, controller picture names by family, the last-used device, input recording and replay, and an editor Input panel.
 - **Parts:**
   - 8.7.1 Fast taps and typing - `Input/Input` - `FeedKeyTap`, `FeedMouseTap` (a press shorter than a poll still counts); `SetTextFocused`, `GetKeyGame`, `GetKeyDownGame` (a text field keeps its keys from the game); `Touch::began`

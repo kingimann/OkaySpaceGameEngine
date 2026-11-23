@@ -8,6 +8,9 @@ docs and editor windows involved, what already works, what is missing, and what 
 This map holds every area, sub-area and numbered part, and every source file in the repo is meant to appear in it
 (`python3 scripts/check_feature_map.py --list` shows any that do not).
 
+**Systems:** [docs/SYSTEMS.md](SYSTEMS.md) lists every named system (Physics, Save Games, OkayScript...)
+with one line on what it does, its status, its main code and its sub-areas here, plus the duplicates found.
+
 **How it is organised**
 - This file is the overview: the areas and one summary table per area. It is generated; do not edit it
   by hand. Two lookup pages are generated next to it: [By what you see](feature_map/_index_symptoms.md)

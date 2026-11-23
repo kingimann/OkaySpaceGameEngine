@@ -141,13 +141,13 @@ ply	models/PLY/points.ply	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips
 ply	models/PLY/pond.0.ply	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-1.502,0.571,-2.632,1.976,1.092,0.510	verts=70051	tex=0	nodes=0	uv=0	nrm=1
 ply	models/invalid/crash-30d6d0f7c529b3b66b4131700b7a4580cd7082df.ply	FAIL	unknown PLY property type
 ply	models/invalid/empty.ply	FAIL	not a PLY (missing 'ply' magic)
-gltf	models/glTF/BoxTextured-glTF-Binary/BoxTextured.glb	FAIL	scene import failed
-gltf	models/glTF/BoxTextured-glTF-Embedded/BoxTextured.gltf	FAIL	scene import failed
-gltf	models/glTF/BoxTextured-glTF-MaterialsCommon/BoxTextured.gltf	FAIL	scene import failed
-gltf	models/glTF/BoxTextured-glTF/BoxTextured.gltf	FAIL	scene import failed
-gltf	models/glTF/CesiumMilkTruck/CesiumMilkTruck.gltf	FAIL	scene import failed
-gltf	models/glTF/IncorrectVertexArrays/Cube_v1.gltf	FAIL	scene import failed
-gltf	models/glTF/TwoBoxes/TwoBoxes.gltf	FAIL	scene import failed
+gltf	models/glTF/BoxTextured-glTF-Binary/BoxTextured.glb	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=6	uv=1	nrm=1
+gltf	models/glTF/BoxTextured-glTF-Embedded/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=6	uv=1	nrm=1
+gltf	models/glTF/BoxTextured-glTF-MaterialsCommon/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=6	uv=1	nrm=1
+gltf	models/glTF/BoxTextured-glTF/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=6	uv=1	nrm=1
+gltf	models/glTF/CesiumMilkTruck/CesiumMilkTruck.gltf	ok	area=64.8164	meshes=5	tris=3624	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-2.431,0.001,-1.396,2.438,2.584,1.396	verts=8348	tex=1	nodes=11	uv=1	nrm=1
+gltf	models/glTF/IncorrectVertexArrays/Cube_v1.gltf	ok	area=92.0000	meshes=4	tris=46	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-3.500,-1.000,-1.000,3.500,1.000,3.500	verts=142	tex=0	nodes=10	uv=0	nrm=1
+gltf	models/glTF/TwoBoxes/TwoBoxes.gltf	ok	area=7.5000	meshes=2	tris=24	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,-0.500,0.500,1.250,0.500	verts=48	tex=0	nodes=5	uv=0	nrm=1
 gltf	models/glTF2/2CylinderEngine-glTF-Binary/2CylinderEngine.glb	ok	area=2663488.8208	meshes=115	tris=121496	bones=0	skinned=0	clips=0	dur=0.000	mat=34	bbox=-371.692,-180.972,-140.000,371.692,92.042,128.000	verts=84657	tex=0	nodes=159	uv=0	nrm=1
 gltf	models/glTF2/BoxBadNormals-glTF-Binary/BoxBadNormals.glb	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=0	nrm=1
 gltf	models/glTF2/BoxTexcoords-glTF/boxTexcoords.gltf	ok	area=24.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.000,-1.000,-1.000,1.000,1.000,1.000	verts=24	tex=1	nodes=4	uv=1	nrm=1
@@ -470,7 +470,7 @@ xml	models-nonbsd/IRR/skybox.xml	FAIL	IRR: the scene has no geometry (no cube, s
 xml	models-nonbsd/IRR/skybox_UTF16LE.xml	FAIL	IRR: the scene has no geometry (no cube, sphere or readable mesh node)
 xml	models-nonbsd/Ogre/OgreSDK/fish.skeleton.xml	FAIL	XML: the root element <skeleton> is not one this engine reads (irr_scene, mesh, COLLADA, WORLD)
 xml	models-nonbsd/Ogre/OgreSDK/ninja.skeleton.xml	FAIL	XML: the root element <skeleton> is not one this engine reads (irr_scene, mesh, COLLADA, WORLD)
-# gltf1: own glTF 1.0 reader, switched on for the run (the gltf rows above record the same files failing with it off)
+# gltf1: own glTF 1.0 reader, switched on for the run (the gltf rows above now read the same files too: the glTF 1.0 reader is on by default since #1168; there mat counts the glTF 2 materials array, 0 for a version 1 file)
 gltf1	models/glTF/BoxTextured-glTF-Binary/BoxTextured.glb	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=5	uv=1	nrm=1
 gltf1	models/glTF/BoxTextured-glTF-Embedded/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=5	uv=1	nrm=1
 gltf1	models/glTF/BoxTextured-glTF-MaterialsCommon/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=5	uv=1	nrm=1

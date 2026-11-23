@@ -10,7 +10,8 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 WORKFLOW = os.path.join(ROOT, '.github', 'workflows', 'regen-docs.yml')
 GEN_SCRIPTS = ('precheck.sh', 'gen_feature_map.py', 'gen_code_index.py', 'gen_try_it.py')
 
-PAGE = ("# 1. Core\n\n## 1. Core\n\n### 1.1 Saves\n- **System:** Save Games - Keeps progress.\n- **What:** w\n"
+PAGE = ("# 1. Core\n\n## 1. Core\n\n### 1.1 Saves\n- **System:** Save Games - Keeps progress.\n"
+        "  Home: `engine/include/okay/Save.hpp`. Entry: `engine/include/okay/Save.hpp`.\n- **What:** w\n"
         "- **Code:** `engine/include/okay/Save.hpp`\n- **Status:** Works - read\n- **Words:** save\n")
 BAD_PAGE = PAGE.replace("- **Words:** save\n", "")
 

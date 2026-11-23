@@ -24,9 +24,15 @@ struct CapturedGeometry {
     bool Empty() const { return indices.empty(); }
 };
 
-/// Start taking the shapes drawn from here on out of the frame (main and overlay layer). Nested calls are counted: only the
-/// outermost pair captures, an inner EndCapture hands back nothing.
-void BeginCapture();
+/// What BeginCapture takes. Capture_All: the main and the overlay layer (popups, open lists, the foreground list), all of it drawn
+/// where the host puts the captured shapes (the Script Editor's code). Capture_KeepOverlay: only the main layer; what the captured
+/// windows draw on the overlay layer stays in the frame and is drawn on top of everything as usual (a hosted panel inside a Dear
+/// ImGui window: the panel lies in ImGui's order, its own menus, lists and modal dialogs still cover the whole screen).
+enum CaptureFlags { Capture_All = 0, Capture_KeepOverlay = 1 };
+
+/// Start taking the shapes drawn from here on out of the frame (`flags`: CaptureFlags). Nested calls are counted: only the
+/// outermost pair captures (with the outermost call's flags), an inner EndCapture hands back nothing.
+void BeginCapture(int flags = Capture_All);
 /// Stop, move the shapes made since BeginCapture into `out` (replacing what it held) and remove them from the frame. Windows begun
 /// and ended in between keep their place for the mouse (hover, clicks, scrolling), they just draw nothing in this frame's batch.
 /// Without a matching BeginCapture, `out` is emptied and nothing changes.

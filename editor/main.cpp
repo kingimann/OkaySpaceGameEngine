@@ -2016,7 +2016,15 @@ bool UseOkayUICodeEdit() {   // read once, like the other switches (Settings > E
     return false;
 #endif
 }
-bool OkayUIInputOn() { return UseOkayUIBackend() || UseOkayUICodeEdit(); }
+// Hosted OkayUI panels take the mouse and keys. Always, in a build with OkayUI: the Crash Log, the Audio Mixer and History are drawn by
+// OkayUI only, whichever backend the other screens use.
+bool OkayUIInputOn() {
+#ifdef OKAY_HAVE_OKAYUI
+    return true;
+#else
+    return UseOkayUIBackend() || UseOkayUICodeEdit();
+#endif
+}
 bool UseOkayUIInspector() {   // okayuibackend::InspectorOn; the variables are read once (Settings > Experimental sets them before main() reads anything)
     static const bool dev = okayuibackend::DevMode(std::getenv("OKAY_DEV")), item = okayuibackend::DevMode(std::getenv("OKAY_UI_INSPECTOR"));
     return okayuibackend::InspectorOn(g_uiBackend, dev ? "1" : nullptr, item ? "1" : nullptr);
@@ -7202,55 +7210,7 @@ std::string OkayExeDir() {
 // Audio Mixer: the same levels a game's settings menu drives (master, each group,
 // mutes), live output meters during Play, and music ducking under voice.
 void DrawAudioMixer() {
-    if (UseOkayUIBackend() && DrawAudioMixerOkayUI(&g_showAudioMixer)) return;   // the opt-in OkayUI port (editor/OkayPanels.cpp)
-    if (!ImGui::Begin("Audio Mixer", &g_showAudioMixer)) { ImGui::End(); return; }
-    auto meter = [](const char* id, float v) {
-        const float db = v > 1e-5f ? 20.0f * std::log10(v) : -60.0f;
-        const float t = std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, v >= 1.0f ? ImVec4(0.85f, 0.3f, 0.3f, 1) : ImVec4(0.35f, 0.7f, 0.45f, 1));
-        ImGui::ProgressBar(t, ImVec2(-1, 6), "");
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s: %.1f dB", id, db);
-    };
-    ImGui::TextDisabled("Output");
-    meter("Left", AudioMixer::peak[0]);
-    meter("Right", AudioMixer::peak[1]);
-    ImGui::Spacing();
-    if (ImGui::BeginTable("##mix", 3, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Group", ImGuiTableColumnFlags_WidthFixed, 70);
-        ImGui::TableSetupColumn("Volume", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Mute", ImGuiTableColumnFlags_WidthFixed, 40);
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn(); ImGui::TextUnformatted("Master");
-        ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##master", &AudioMixer::masterVolume, 0.0f, 1.0f, "%.2f");
-        ImGui::TableNextColumn(); ImGui::Checkbox("##mastermute", &AudioMixer::muted);
-        for (int i = 0; i < (int)AudioGroup::Count; ++i) {
-            ImGui::PushID(i);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn(); ImGui::TextUnformatted(AudioMixer::GroupName((AudioGroup)i));
-            ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##v", &AudioMixer::groupVolume[i], 0.0f, 1.0f, "%.2f");
-            ImGui::TableNextColumn(); ImGui::Checkbox("##m", &AudioMixer::groupMuted[i]);
-            ImGui::PopID();
-        }
-        ImGui::EndTable();
-    }
-    ImGui::Spacing();
-    ImGui::Checkbox("Duck music under voice", &AudioMixer::duckMusicUnderVoice);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "While a Voice-group source plays, the Music group dips to the duck level.");
-    if (AudioMixer::duckMusicUnderVoice) {
-        ImGui::SliderFloat("Duck level", &AudioMixer::duckLevel, 0.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Attack (s)", &AudioMixer::duckAttack, 0.0f, 2.0f, "%.2f");
-        ImGui::SliderFloat("Release (s)", &AudioMixer::duckRelease, 0.0f, 4.0f, "%.2f");
-        ImGui::TextDisabled("Music now at %.0f%%", AudioMixer::duckGain * 100.0f);
-    }
-    ImGui::Spacing();
-    if (ImGui::Button("Reset")) {
-        AudioMixer::masterVolume = 1.0f; AudioMixer::muted = false;
-        for (int i = 0; i < (int)AudioGroup::Count; ++i) { AudioMixer::groupVolume[i] = 1.0f; AudioMixer::groupMuted[i] = false; }
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Editor only; players set their own in the pause menu.");
-    ImGui::End();
+    DrawAudioMixerOkayUI(&g_showAudioMixer);   // drawn by OkayUI only (editor/OkayPanels.cpp; docs/ui/own_ui_toolkit.md section 24)
 }
 
 // Crash Log viewer: shows the crash reports the exception handler writes next to the
@@ -7277,56 +7237,13 @@ void DrawCrashLog() {
         ++revision;
     };
     if (!loaded) load();
-    if (UseOkayUIBackend()) {   // the opt-in OkayUI port (editor/OkayPanels.cpp): same reports, same four actions
-        CrashLogActions act;
-        act.refresh = load;
-        act.openFolder = [dir] { extide::RevealInFiles(dir.string()); };
-        act.clear = [&] { std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); ++revision; };
-        if (DrawCrashLogOkayUI(&g_showCrashLog, text, histPath.string(), revision, act)) return;
-    }
-    if (!ImGui::Begin("Crash Log", &g_showCrashLog)) { ImGui::End(); return; }
-
-    if (ImGui::Button("Refresh")) load();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(text.empty());
-    if (ImGui::Button("Copy All")) ImGui::SetClipboardText(text.c_str());
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered() && !text.empty()) ImGui::SetTooltip("%s", "Copy every report to the clipboard, then paste it to support.");
-    ImGui::SameLine();
-    if (ImGui::Button("Open Folder")) extide::RevealInFiles(dir.string());
-    ImGui::SameLine();
-    if (ImGui::Button("Clear")) ImGui::OpenPopup("Clear crash reports?");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Delete the saved crash reports.");
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal("Clear crash reports?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("Delete all saved crash reports from disk?");
-        ImGui::TextDisabled("This can't be undone.");
-        ImGui::Dummy(ImVec2(0, 4));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
-        bool doClear = ImGui::Button("Delete", ImVec2(110, 0));
-        ImGui::PopStyleColor(2);
-        if (doClear) {
-            std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); ++revision;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
-    ImGui::SameLine(); ImGui::TextDisabled("%s", histPath.string().c_str());
-    ImGui::Separator();
-
-    if (text.empty()) {
-        ImGui::TextColored(ImVec4(0.5f, 0.85f, 0.5f, 1.0f), "No crash reports \xE2\x80\x94 nice.");
-        ImGui::TextDisabled("%s", "If the editor ever crashes, a report is written next to the exe and\nappears here. Use Copy All to send it to support.");
-    } else {
-        ImGui::TextDisabled("Newest report is at the bottom. \xE2\x80\xA2 %d bytes", (int)text.size());
-        // Read-only multiline: selectable + scrollable; Copy All grabs everything.
-        ImGui::InputTextMultiline("##crashbody", (char*)text.data(), text.size() + 1,
-                                  ImVec2(-1, -1), ImGuiInputTextFlags_ReadOnly);
-    }
-    ImGui::End();
+    // Drawn by OkayUI only (editor/OkayPanels.cpp; docs/ui/own_ui_toolkit.md section 24): Refresh, Copy All, Open Folder, Clear with
+    // its confirmation, and the reports newest last.
+    CrashLogActions act;
+    act.refresh = load;
+    act.openFolder = [dir] { extide::RevealInFiles(dir.string()); };
+    act.clear = [&] { std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); ++revision; };
+    DrawCrashLogOkayUI(&g_showCrashLog, text, histPath.string(), revision, act);
 }
 
 // Console log + panel: ConsolePanel.cpp / .hpp.
@@ -7335,79 +7252,16 @@ void DrawCrashLog() {
 // click any step to jump straight there (applies that many undos/redos).
 void DrawHistory(EditorState& ed) {
     if (!g_showHistory) return;
-    if (!ImGui::Begin("History", &g_showHistory)) { ImGui::End(); return; }
-    ed.CommitUndo();
-    const std::vector<std::string> histUndo = ed.UndoNames(200), histRedo = ed.RedoNames(200);
-    ImGui::BeginDisabled(!ed.CanUndo());
-    if (ImGui::Button("Undo##hist")) ed.Undo();
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Z");
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!ed.CanRedo());
-    if (ImGui::Button("Redo##hist")) ed.Redo();
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Y");
-    ImGui::SameLine();
-    ImGui::TextDisabled("%d behind  \xE2\x80\xA2  %d ahead", ed.UndoDepth(), ed.RedoDepth());
-    ImGui::Separator();
-    ImGui::BeginChild("##histlist");
-    if (!ed.CanUndo() && !ed.CanRedo()) {
-        ImGui::Dummy(ImVec2(0, 6));
-        ImGui::TextDisabled("No edits yet — changes will appear here.");
-        ImGui::EndChild(); ImGui::End(); return;
-    }
-    // Timeline rail down the left: a node per state, the current one filled
-    // with the accent color, future (redo) states hollow and dimmed.
-    ImDrawList* hdl = ImGui::GetWindowDrawList();
-    const float railX = ImGui::GetCursorScreenPos().x + 9.0f;
-    const float railTopY = ImGui::GetCursorScreenPos().y;
-    {
-        int rows = ed.RedoDepth() + 1 + ed.UndoDepth();
-        float rowH = ImGui::GetTextLineHeightWithSpacing();
-        hdl->AddLine(ImVec2(railX, railTopY + 4.0f),
-                     ImVec2(railX, railTopY + rows * rowH - 4.0f),
-                     ImGui::GetColorU32(ImGuiCol_Border), 1.0f);
-    }
-    auto histRow = [&](const char* lbl, bool current, bool ahead) {
-        char pad[220]; std::snprintf(pad, sizeof(pad), "     %s", lbl);
-        bool hit = ImGui::Selectable(pad, current);
-        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-        float cy = (mn.y + mx.y) * 0.5f;
-        if (current) {
-            hdl->AddCircleFilled(ImVec2(railX, cy), 4.0f,
-                                 ImGui::GetColorU32(ImGuiCol_CheckMark), 12);
-        } else {
-            ImU32 col = ahead ? ImGui::GetColorU32(ImGuiCol_TextDisabled)
-                              : ImGui::GetColorU32(ImGuiCol_Text, 0.55f);
-            hdl->AddCircle(ImVec2(railX, cy), 3.0f, col, 12, 1.5f);
-        }
-        return hit;
-    };
-    // Future (redo) states first, newest-forward at the top; then the current
-    // state; then the past, most recent first. Click any row to jump there.
-    bool jumped = false;
-    for (int i = ed.RedoDepth(); i >= 1 && !jumped; --i) {
-        char lbl[160]; std::snprintf(lbl, sizeof(lbl), "After: %s##hr%d", (size_t)i <= histRedo.size() ? histRedo[(size_t)i - 1].c_str() : "Edit", i);
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        bool hit = histRow(lbl, false, true);
-        ImGui::PopStyleColor();
-        if (hit) {
-            for (int k = 0; k < i && ed.CanRedo(); ++k) ed.Redo();
-            jumped = true;
-        }
-    }
-    if (!jumped) {
-        histRow("Current state", true, false);
-        for (int i = 1; i <= ed.UndoDepth() && !jumped; ++i) {
-            char lbl[160]; std::snprintf(lbl, sizeof(lbl), "Before: %s##hu%d", (size_t)i <= histUndo.size() ? histUndo[(size_t)i - 1].c_str() : "Edit", i);
-            if (histRow(lbl, false, false)) {
-                for (int k = 0; k < i && ed.CanUndo(); ++k) ed.Undo();
-                jumped = true;
-            }
-        }
-    }
-    ImGui::EndChild();
-    ImGui::End();
+    // Drawn by OkayUI only (editor/OkayPanels.cpp; docs/ui/own_ui_toolkit.md section 24). The model is built only while the window
+    // shows, after the pending undo step is committed, as before; Undo, Redo and a click on a row come back as counts.
+    okaypanels::HistoryIntent in;
+    DrawHistoryOkayUI(&g_showHistory, [&](okaypanels::HistoryModel& m) {
+        ed.CommitUndo();
+        m.undoNames = ed.UndoNames(200); m.redoNames = ed.RedoNames(200);
+        m.undoDepth = ed.UndoDepth(); m.redoDepth = ed.RedoDepth();
+    }, in);
+    for (int k = 0; k < in.undo && ed.CanUndo(); ++k) ed.Undo();
+    for (int k = 0; k < in.redo && ed.CanRedo(); ++k) ed.Redo();
 }
 
 // Lowercase a copy of a string (for case-insensitive compares).
@@ -54273,7 +54127,7 @@ int main(int argc, char** argv) {
             // window) is OkayUI's: ImGui does not get it too, so choosing a menu row over the Scene view does not also click the scene.
             bool okayOverlay = false;
 #ifdef OKAY_HAVE_OKAYUI
-            if (UseOkayUIBackend() && (e.type == EvT::MouseButtonDown || e.type == EvT::MouseWheel)) {
+            if (OkayUIInputOn() && (e.type == EvT::MouseButtonDown || e.type == EvT::MouseWheel)) {
                 int ox = e.x, oy = e.y;
                 if (e.type == EvT::MouseWheel) sdlSeam->MouseState(&ox, &oy);
                 okayOverlay = e.windowId == winSeam->Id() && g_okayRegion.OwnsOverlay((float)ox, (float)oy);

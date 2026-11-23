@@ -3084,3 +3084,75 @@ meanwhile written several of the same toolkit pieces its own way. Bringing the s
 - **Not taken:** the navigation fallback probe index and crowd example (an unrelated engine change in the stack's base), the Hierarchy's
   flat row list in the editor, pictures under `docs/images/` (removed on main; the section texts above still name them), `docs/try_it`
   entries.
+
+## 24. Three windows on OkayUI only: Crash Log, Audio Mixer, History (no Dear ImGui version)
+
+The first editor windows with no Dear ImGui body at all (rule 19d: one version, no fallback). Before, the Crash Log and the Audio
+Mixer had an OkayUI port behind the "OkayUI screens" switch and their Dear ImGui body next to it, drawn whenever the switch was off
+or anything of Dear ImGui lay over the window; History had an unwired OkayUI port and two Dear ImGui bodies (one in `editor/main.cpp`,
+one in `editor/EditorPanelViews.cpp` that only the comparison test used).
+
+**Where the panels stand (2026-11-23, main).**
+
+| App | Window or page | Drawn by |
+|---|---|---|
+| Editor | Crash Log, Audio Mixer, History | OkayUI only (this section) |
+| Editor | Console | OkayUI with the "OkayUI screens" switch (on by default), Dear ImGui otherwise and while covered |
+| Editor | Inspector | OkayUI sections with "OkayUI Inspector" (on by default); stale bodies and the rest Dear ImGui |
+| Editor | Script Editor code area | OkayUI `CodeEdit` with `OKAY_UI_CODEEDIT=1` (developer), else the vendored ImGui editor |
+| Editor | Problems, Stats, Profiler, Hierarchy, Project Settings sections, import settings, Post-processing | OkayUI ports exist (models, screens, tests, wrappers in `editor/OkayPanels.cpp`) but are not wired: Dear ImGui |
+| Editor | every other window (about 40: Scene, Game, Project, Timeline, Animator, Visual Script, Lighting, Build Settings, ...) | Dear ImGui |
+| Launcher | What's New, Tips | OkayUI with the switch, Dear ImGui otherwise and while an ImGui popup covers the page |
+| Launcher | Versions | probed and golden-tested headless only; Dear ImGui |
+| Launcher | every other page and window | Dear ImGui |
+
+**Why these three.** They are the smallest windows with a finished OkayUI screen (`okayui/screens/OkayUIPanels.cpp`,
+`OkayUIEditorPanels.cpp`) and golden tests already (`okayui_panels`: `crashlog_*`, `audiomixer_*`; `okayui_editor_panels`:
+`editorpanels_history`), and each is one function of `editor/main.cpp` with no state shared with other windows.
+
+**The gap that forced a Dear ImGui copy, closed.** OkayUI's frame is drawn after Dear ImGui's, so a hosted body was painted over every
+ImGui popup, tooltip and window in front; the hosts therefore drew the Dear ImGui version while anything covered the window
+(`CoveredInImGui`). Two pieces replace that:
+
+- **`OkayUI::BeginCapture(Capture_KeepOverlay)`** (`okay/UI/OkayUICapture.hpp`): the captured windows' own shapes are cut out of
+  the frame, but what they draw on the overlay layer (their popups, open lists, a modal and its dimming) stays in OkayUI's frame, on
+  top of everything as before. `Capture_All` (the default) is the old behaviour the Script Editor uses. Test: `okayui_capture`
+  `OverlayCanStayInTheFrame`.
+- **`okayuihost::HostPanelWindow`** (`shared/OkayUIImGuiEmbed.hpp`): the ImGui window (tab, title, close box) with one placeholder
+  item over its free area; the OkayUI body is drawn with that capture and its shapes are put into the window's draw list
+  (`ImGuiEmbed::Append`, already used by the Script Editor), so Dear ImGui draws the panel in its own order. The body offers the
+  mouse with ImGui's hover answer (no mouse while a popup or a window in front is over it); its overlays offer the mouse too. A
+  window that is not docked is kept in the main OS window (`SetNextWindowViewport`), because OkayUI reads the mouse in that window's
+  pixels. `editor/OkayPanels.cpp` `HostWindow` now calls it (the Profiler keeps its unwired `fitBody` first frame).
+
+**What changed in the editor.**
+
+- `DrawAudioMixer`, `DrawCrashLog` and `DrawHistory` in `editor/main.cpp` call the OkayUI windows only; their Dear ImGui bodies are
+  deleted (about 170 lines of `editor/main.cpp`). History builds its model only while the window shows and commits the pending undo step there, as the
+  Dear ImGui body did.
+- `OkayUIInputOn()` is true in every build with OkayUI, so hosted panels get the mouse and keys even with "OkayUI screens" off; a
+  press over an OkayUI overlay is kept from Dear ImGui under the same rule.
+- The Audio Mixer's model fill is one function, `oked::FillAudioMixerModel` (`editor/AudioMixerModel.hpp`), used by this window and
+  by window mode (`editor/OkayUIHostMode.cpp` had a copy).
+- History's Dear ImGui body moved from `editor/EditorPanelViews.cpp` into `tests/test_okayui_editor_panels_imgui.cpp` as the
+  reference the comparison measures against; the editor does not contain it.
+- The editor compiled against OkayUI's Dear ImGui layer (`OKAY_EDITOR_ON_OKAYUI`, off) draws the three screens straight into its
+  (OkayUI) windows (`PlainWindow` in `editor/OkayPanels.cpp`).
+
+**Behaviour.** The same screens as the goldens: Crash Log (Refresh, Copy All, Open Folder, Clear with its confirmation, the reports
+newest last), Audio Mixer (meters with a dB tooltip, master and group volume and mute, ducking, Reset), History (Undo, Redo, the rows,
+a click jumps there). New against the old editor body: History's rows have the right-click menu (Jump to this state, Copy name) that
+the port always had. Windows opened for the first time with no saved place open at 440 x 340 (times the UI scale), as the OkayUI port
+did; Dear ImGui sized them to their first frame.
+
+**Tests.** `okayui_panels_imgui` (new, `tests/test_okayui_panels_imgui.cpp`): each of the three hosted through `HostPanelWindow` in
+a real Dear ImGui context, drawn in the editor's order by one software rasteriser: the picture against the old hosting (OkayUI's
+frame drawn last) for all three, an ImGui window in front and an ImGui tooltip stay whole over the panel (the old hosting painted
+over them) and the panel offers no mouse under them, Refresh / Clear with the modal / Delete, Reset, a History row asking for three
+undos, a collapsed or closed window drawing and offering nothing. Also run: `okayui_capture`, `okayui_panels`,
+`okayui_editor_panels_imgui`, `okayui_codeedit_imgui`, `okayui_host_layering`, `okayui_hostmode` (results in the PR).
+
+**Not verified.** Not built or run on Windows; the editor program was not linked or started here (its changed files were compiled
+`-fsyntax-only` with g++ and MinGW), so the three windows were not seen in a real window. A window docked into a node that was
+dragged out to another OS window is drawn there but takes no mouse (OkayUI reads the mouse in the main window's pixels); a floating
+one cannot be dragged out of the main window any more. The `OKAY_EDITOR_ON_OKAYUI` path was only compiled as far as noted in the PR.

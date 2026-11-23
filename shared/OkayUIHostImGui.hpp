@@ -5,7 +5,8 @@
 // OkayUI is flushed after ImGui's draw data, so it draws over every ImGui window. A modal dialog or a menu that opens above a
 // hosted screen would be painted over by it. Hosts therefore ask this first, and while it answers true they draw the screen's
 // Dear ImGui version instead (the launcher's What's New page, the editor's Console panel keep one): the popup is then layered
-// correctly and the screen comes back to OkayUI when the popup closes.
+// correctly and the screen comes back to OkayUI when the popup closes. A panel with no Dear ImGui version is hosted instead by
+// okayuihost::HostPanelWindow (OkayUIImGuiEmbed.hpp), which draws it in Dear ImGui's own order and needs none of this.
 #include "imgui.h"
 #include "imgui_internal.h"
 

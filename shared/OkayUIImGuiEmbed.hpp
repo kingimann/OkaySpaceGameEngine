@@ -12,8 +12,11 @@
 // gives (OkayUI::GetTexturePixels: the launcher look's atlas, a TrueType font's glyph atlas). Each becomes a Dear ImGui user
 // texture (ImTextureData, RegisterUserTexture) that the ImGui renderer uploads like its own font atlas; it is refreshed when the
 // font bakes new characters and replaced when it grows. Shapes on a texture only a backend knows (an OkayUI Image) are skipped.
+//
+// HostPanelWindow (below) uses the same path for a whole panel: an ImGui window whose body is OkayUI only.
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "OkayUIHostImGui.hpp"   // HiddenInImGui, OutsideMainWindow, ToMainWindowPixels
 #include "okay/UI/OkayUICapture.hpp"
 
 #include <algorithm>
@@ -128,5 +131,52 @@ private:
 
 /// The one embed the editor's hosted OkayUI widgets share (one set of textures).
 inline ImGuiEmbed& SharedImGuiEmbed() { static ImGuiEmbed* e = new ImGuiEmbed(); return *e; }
+
+/// A whole panel drawn by OkayUI inside a Dear ImGui window, with no Dear ImGui copy of the panel (the editor's Crash Log, Audio
+/// Mixer and History, editor/OkayPanels.cpp). The ImGui window stays: it is the dock tab, the title bar and the close box, and its
+/// free area is one placeholder item that the OkayUI body fills. The body's shapes go into the window's draw list (Capture_KeepOverlay),
+/// so Dear ImGui's popups, tooltips, modals and the windows in front of it are drawn over the panel as over any ImGui panel; the
+/// body's own menus, lists and modals stay on OkayUI's top layer. Earlier hosts drew the panel's Dear ImGui version while something
+/// covered it; this one needs none.
+///
+/// `region` gets the rectangles that may take the mouse (anything with Offer(x, y, w, h, hovered, overlay), the editor's
+/// okayuihost::Region): the body's, with ImGui's own hover answer (false while a popup or a window in front is over it), and every
+/// overlay the body opened. A window that is not docked is kept in the main OS window (OkayUI reads the mouse in that window's
+/// pixels); one docked into a node that was dragged out to another OS window is drawn there but does not take the mouse.
+/// `firstSize`: the size a window with no saved place opens at. `draw(pos, size)` gets OkayUI's pixels (the main window's).
+/// Returns true when the body was drawn this frame (false: the window is closed, collapsed, a tab behind another, or hidden).
+template <class Region, class Draw>
+bool HostPanelWindow(const char* title, bool* open, const char* itemId, Region& region, ImGuiEmbed& embed, OkayUI::CapturedGeometry& cap,
+                     ImVec2 firstSize, Draw draw) {
+    if (open && !*open) return false;
+    const ImGuiWindow* before = ImGui::FindWindowByName(title);
+    if (!before || !before->DockIsActive) ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+    ImGui::SetNextWindowSize(firstSize, ImGuiCond_FirstUseEver);
+    bool drawn = false;
+    if (ImGui::Begin(title, open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+        ImGuiWindow* win = ImGui::GetCurrentWindow();
+        const ImVec2 p = ToMainWindowPixels(ImGui::GetCursorScreenPos());   // OkayUI's pixels, not ImGui's desktop ones
+        ImVec2 a = ImGui::GetContentRegionAvail();
+        a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
+        ImGui::InvisibleButton(itemId, a);                     // an ImGui item, so ImGui does not move or scroll the window under it
+        if (!HiddenInImGui(win)) {
+            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);      // the wheel scrolls the OkayUI body, not the ImGui window
+            const bool mainWindow = !OutsideMainWindow(win);
+            region.Offer(p.x, p.y, a.x, a.y, mainWindow && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            const int overlays = OkayUI::GetOverlayCount();
+            OkayUI::BeginCapture(OkayUI::Capture_KeepOverlay);
+            draw(p, a);
+            OkayUI::EndCapture(cap);
+            embed.Append(win->DrawList, cap, ImGui::GetMainViewport()->Pos, win->InnerClipRect.Min, win->InnerClipRect.Max);
+            for (int i = overlays; mainWindow && i < OkayUI::GetOverlayCount(); ++i) {   // a menu or list the body opened: it takes the mouse
+                const OkayUI::Rect r = OkayUI::GetOverlayRect(i);
+                if (r.w > 0.0f && r.h > 0.0f) region.Offer(r.x, r.y, r.w, r.h, true, true);
+            }
+            drawn = true;
+        }
+    }
+    ImGui::End();
+    return drawn;
+}
 
 } // namespace okayuihost

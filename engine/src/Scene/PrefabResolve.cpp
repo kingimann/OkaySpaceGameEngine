@@ -2,7 +2,6 @@
 // and variant bases folded in. Moved verbatim out of PrefabTools.cpp (docs/engine/modularization_plan.md, batch P1).
 #include "PrefabInternal.hpp"
 #include "okay/Core/DataPack.hpp"
-#include "okay/Core/SaveData.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/Transform.hpp"
 #include <algorithm>

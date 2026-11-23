@@ -180,6 +180,7 @@ add_library(okay_engine
     src/Script/Checker.cpp
     src/Script/Interpreter.cpp
     src/Script/EngineApi.cpp
+    src/Script/EngineApi_Ui.cpp
     src/Script/EngineApi_Core.cpp
     src/Script/NextScriptVM.cpp
     src/Components/ScriptComponent.cpp

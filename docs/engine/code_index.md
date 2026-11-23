@@ -22,7 +22,7 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Graphics | 5 | 36 | [code_index/engine-Graphics.md](code_index/engine-Graphics.md) |
 | engine-Input | 22 | 108 | [code_index/engine-Input.md](code_index/engine-Input.md) |
 | engine-Inventory | 9 | 64 | [code_index/engine-Inventory.md](code_index/engine-Inventory.md) |
-| engine-Math | 23 | 92 | [code_index/engine-Math.md](code_index/engine-Math.md) |
+| engine-Math | 23 | 91 | [code_index/engine-Math.md](code_index/engine-Math.md) |
 | engine-Modeling | 21 | 196 | [code_index/engine-Modeling.md](code_index/engine-Modeling.md) |
 | engine-Net | 31 | 150 | [code_index/engine-Net.md](code_index/engine-Net.md) |
 | engine-Optimize | 8 | 69 | [code_index/engine-Optimize.md](code_index/engine-Optimize.md) |

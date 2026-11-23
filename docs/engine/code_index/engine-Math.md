@@ -2,7 +2,7 @@
 
 # Code index: engine-Math
 
-Back to the [code index](../code_index.md). 23 headers, 92 names.
+Back to the [code index](../code_index.md). 23 headers, 91 names.
 
 ## `engine/include/okay/Math/Bounds.hpp`
 
@@ -113,8 +113,7 @@ Back to the [code index](../code_index.md). 23 headers, 92 names.
 
 ## `engine/include/okay/Math/Mat4.hpp`
 
-- `SetRotationFromUnitQuat` function, line 11: Fill the 3x3 rotation part of 'r' (any matrix with 'at(col, row)', such as Mat4 or the readers' double-precision
-- `Mat4` struct, line 19: Column-major 4x4 matrix, modeled after 'Matrix4x4'.
+- `Mat4` struct, line 10: Column-major 4x4 matrix, modeled after 'Matrix4x4'.
 
 ## `engine/include/okay/Math/Mathf.hpp`
 

@@ -1,5 +1,6 @@
 #include "okay/Core/SaveFramework.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/FileCopy.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -897,11 +898,9 @@ bool SaveStore::Copy(const std::string& from, const std::string& to, bool overwr
     if (ManagedThumbnail(from, info.thumbnail, ext)) {
         std::error_code ec;
         const std::string newName = to + ext;
-        // Remove, then copy: on Windows (MinGW) copy_file with overwrite_existing failed over an existing picture (the
-        // Windows test run lost the thumbnail name here), and a plain copy to a free name does not depend on it.
-        fs::remove(dir / newName, ec);
-        ec.clear();
-        fs::copy_file(dir / info.thumbnail, dir / newName, ec);
+        // CopyFileOver: on Windows (MinGW) copy_file with overwrite_existing failed over an existing picture (the
+        // Windows test run lost the thumbnail name here).
+        CopyFileOver(dir / info.thumbnail, dir / newName, ec);
         std::string out;
         if (RewriteHeader(bytes, [&](SaveSlotInfo& i) { i.thumbnail = ec ? std::string() : newName; }, out, nullptr)) bytes = std::move(out);
     }

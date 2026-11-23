@@ -220,6 +220,8 @@
 #include <cctype>
 #include <functional>
 #include "okay/Core/DataPack.hpp"   // transparent unpack of obfuscated game data
+#include "okay/Core/Utf8.hpp"
+#include "okay/Core/FileCopy.hpp"
 #include <fstream>
 #include <chrono>
 #include <filesystem>
@@ -238,6 +240,17 @@ namespace okay {
 static thread_local std::string g_loadingSceneDir;
 // The folder of the scene file loaded last: restoring a scene from text (Stop after Play, Undo) finds mesh files next to it again.
 static thread_local std::string g_lastSceneDir;
+
+// A UTF-8 path as a file-system path for the streams below. On Windows a std::string handed to std::ifstream is read in
+// the ANSI code page, so a scene or prefab under a folder such as "My Game \xC3\xBC" could not be opened or saved; the
+// wide form names the right file and never throws (text that is not UTF-8 becomes U+FFFD, a name no file has).
+static std::filesystem::path FilePath(const std::string& utf8) {
+#ifdef _WIN32
+    return std::filesystem::path(utf8::ToWide(utf8));
+#else
+    return std::filesystem::path(utf8);
+#endif
+}
 
 namespace detail {
 std::uint64_t ComponentRulesGeneration();        // GameObject.cpp
@@ -4289,7 +4302,7 @@ bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path, st
     // previous good copy (a copy, so a failed rename leaves the scene exactly where it was).
     auto fail = [&](const std::string& why) { if (error) *error = why; return false; };
     std::error_code ec;
-    const fs::path target(path);
+    const fs::path target = FilePath(path);
     if (fs::exists(target, ec)) {
         if (fs::is_directory(target, ec)) return fail("\"" + path + "\" is a folder, not a scene file.");
         const fs::perms perm = fs::status(target, ec).permissions();
@@ -4302,35 +4315,35 @@ bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path, st
     const std::string tmp = path + ".savetmp";
     {
         errno = 0;
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        std::ofstream f(FilePath(tmp), std::ios::binary | std::ios::trunc);
         if (!f) return fail("Couldn't write \"" + tmp + "\": " + (errno ? std::error_code(errno, std::generic_category()).message() : std::string("no permission")));
         f.write(text.data(), (std::streamsize)text.size());
         f.flush();
         if (!f) {
             const int e = errno;
             f.close();
-            fs::remove(tmp, ec);
+            fs::remove(FilePath(tmp), ec);
             return fail("Couldn't write \"" + path + "\": " + (e ? std::error_code(e, std::generic_category()).message() : std::string("the disk may be full")));
         }
     }
-    const std::uintmax_t written = fs::file_size(tmp, ec);
+    const std::uintmax_t written = fs::file_size(FilePath(tmp), ec);
     if (ec || written != text.size()) {
-        fs::remove(tmp, ec);
+        fs::remove(FilePath(tmp), ec);
         return fail("Couldn't write \"" + path + "\": the file came out the wrong size (is the disk full?).");
     }
     if (fs::exists(target, ec)) {   // best-effort previous-version backup; the target itself stays put
         std::error_code be;
-        fs::copy_file(target, path + ".bak", fs::copy_options::overwrite_existing, be);
+        CopyFileOver(target, FilePath(path + ".bak"), be);   // a plain copy_file never refreshed an existing .bak on Windows (MinGW)
     }
     ec.clear();
-    fs::rename(tmp, target, ec);      // atomic replace on the same filesystem
+    fs::rename(FilePath(tmp), target, ec);      // atomic replace on the same filesystem
     if (ec) {
         // Locked or a platform that won't rename over an existing file: overwrite by copy. The old file is
         // still in place until this succeeds, and the backup above holds its content if it half-fails.
         std::error_code ce;
-        fs::copy_file(tmp, target, fs::copy_options::overwrite_existing, ce);
+        fs::copy_file(FilePath(tmp), target, fs::copy_options::overwrite_existing, ce);
         std::error_code rc;
-        fs::remove(tmp, rc);
+        fs::remove(FilePath(tmp), rc);
         if (ce) return fail("Couldn't replace \"" + path + "\": " + ce.message());
     }
     return true;
@@ -6052,7 +6065,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     auto graphs = go->GetComponents<VisualScriptComponent>();
                     if (auto* vsc = graphs.empty() ? nullptr : graphs.back()) {
                         vsc->SetPath(p);
-                        std::ifstream probe(p);
+                        std::ifstream probe(FilePath(p));
                         if (probe) vsc->Reload();
                     }
                 } else if (field == "actions") {
@@ -9708,7 +9721,7 @@ std::unique_ptr<SceneLoadJob> SceneLoadJob::OpenText(std::string text, bool addi
 
 std::unique_ptr<SceneLoadJob> SceneLoadJob::OpenFile(const std::string& path, bool additive,
                                                      const Vec3& offset, std::string* error) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(FilePath(path), std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return nullptr; }
     std::stringstream ss;
     ss << f.rdbuf();
@@ -9858,7 +9871,7 @@ GameObject* SceneSerializer::Instantiate(Scene& scene, const GameObject& prefab)
 
 bool SceneSerializer::SaveObjectToFile(const GameObject& root, const std::string& path) {
     ClearPrefabCacheOnExit clearPrefabCache;
-    std::ofstream f(path);
+    std::ofstream f(FilePath(path), std::ios::binary | std::ios::trunc);   // binary: LF on every platform (text mode wrote CRLF on Windows)
     if (!f) return false;
     f << SerializeObject(root);
     return static_cast<bool>(f);
@@ -9871,8 +9884,8 @@ GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string
     std::string text;
     {
         std::error_code ec1, ec2;
-        const auto mtime = std::filesystem::last_write_time(path, ec1);
-        const auto fsize = std::filesystem::file_size(path, ec2);
+        const auto mtime = std::filesystem::last_write_time(FilePath(path), ec1);
+        const auto fsize = std::filesystem::file_size(FilePath(path), ec2);
         bool hit = false;
         if (!ec1 && !ec2) {
             std::lock_guard<std::mutex> lock(cacheMutex);
@@ -9880,7 +9893,7 @@ GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string
             if (it != cache.end() && it->second.time == mtime && it->second.size == fsize) { text = it->second.text; hit = true; }
         }
         if (!hit) {
-            std::ifstream f(path, std::ios::binary);
+            std::ifstream f(FilePath(path), std::ios::binary);
             if (!f) { if (error) *error = "cannot open " + path; return nullptr; }
             std::stringstream ss; ss << f.rdbuf();
             text = DataPack::Unpack(ss.str());   // decode if obfuscated
@@ -9968,7 +9981,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
 
 bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::string* error,
                                    std::vector<std::string>* warnings) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(FilePath(path), std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::stringstream ss;
     ss << f.rdbuf();
@@ -10008,7 +10021,7 @@ bool SceneSerializer::MergeFromText(Scene& scene, const std::string& text, const
 bool SceneSerializer::MergeFromFile(Scene& scene, const std::string& path, const Vec3& offset,
                                     std::vector<GameObject*>* addedRoots, std::string* error,
                                     std::vector<std::string>* warnings) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(FilePath(path), std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::stringstream ss;
     ss << f.rdbuf();
@@ -10845,7 +10858,7 @@ std::string RecordKey(const std::string& line, std::unordered_map<std::string, i
 }
 
 bool ReadFileText(const std::string& path, std::string& text, std::string* error) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(FilePath(path), std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::stringstream ss; ss << f.rdbuf();
     const std::string raw = ss.str();
@@ -11106,7 +11119,7 @@ SceneValidationReport SceneSerializer::Validate(const std::string& text, const s
 }
 
 SceneValidationReport SceneSerializer::ValidateFile(const std::string& path, const std::string& assetRoot) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(FilePath(path), std::ios::binary);
     if (!f) {
         SceneValidationReport r;
         r.issues.push_back(SceneIssue{SceneIssue::Kind::LoadError, "", "cannot open " + path});

@@ -52,7 +52,10 @@ int main() {
     haveLink = !ec;
     ec.clear();
     const std::string wood = Canon(textures / "wood.png");
-    const std::string modelDir = models.u8string() + "/";
+    // The model's folder as both readers take it from the model's path: everything up to and including the last
+    // separator, which is a backslash on Windows (the path the test hands them ends in "Models", backslash, "m.obj" there).
+    // The two checks that compare a kept name with this folder failed on Windows while it was always written with '/'.
+    const std::string modelDir = models.u8string() + std::string(1, (char)fs::path::preferred_separator);
 
     {   // no roots (the default, and the player): only the model's own folder, as since #753
         SetModelTextureRoots({});

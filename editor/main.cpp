@@ -48976,8 +48976,17 @@ void DrawInspector(EditorState& ed) {
             return true;
         };
         auto EndCat = [&](bool) {};
+        // Components of modules this project turned off (Project Settings > Modules) are not offered.
+        static std::string s_acModules = "\x01";
+        static std::set<std::string> s_acOffTypes;
+        if (s_acModules != g_project.modules) {
+            s_acModules = g_project.modules;
+            s_acOffTypes = okaymod::OffComponentTypes(okaymod::Selection(okay::ModuleRegistry::Get(), g_project.modules), okay::ModuleRegistry::Get());
+        }
+        int acHiddenByModules = 0;
         auto item = [&](bool absent, const char* label) {
             if (!absent || !F(label)) return false;
+            if (!s_acOffTypes.empty() && s_acOffTypes.count(okaymod::TypeForMenuLabel(label))) { ++acHiddenByModules; return false; }
             if (!acCats.empty()) ++acCats.back().second;
             const bool isRecent = std::find(s_acRecent.begin(), s_acRecent.end(), label) != s_acRecent.end();
             if (isRecent && !acRecentShown.count(label)) ++acRecentCount;
@@ -49444,6 +49453,9 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("%s", searching ? "No component matches that." :
                                       s_acCat == "Recent" ? "Components you add show up here." :
                                       "Everything in this group is already on this object.");
+        if (acHiddenByModules > 0)
+            ImGui::TextDisabled("%d component%s hidden: %s module is off in Project Settings > Modules.", acHiddenByModules,
+                                acHiddenByModules == 1 ? "" : "s", acHiddenByModules == 1 ? "its" : "their");
         ImGui::EndChild();
         // Categories (drawn after the list so their counts are this frame's).
         ImGui::SetCursorPos(acBody);

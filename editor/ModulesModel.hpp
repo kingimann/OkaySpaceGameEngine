@@ -200,6 +200,36 @@ private:
     std::vector<std::string> unknown_;
 };
 
+/// Component types of the modules the selection turns off (the Add Component menu hides them).
+inline std::set<std::string> OffComponentTypes(const Selection& sel, const ModuleRegistry& reg) {
+    std::set<std::string> out;
+    for (auto& e : reg.All())
+        if (!sel.IsOn(e.manifest.name))
+            for (auto& c : e.manifest.components) out.insert(c);
+    return out;
+}
+
+/// The component type an Add Component row adds, from its label: the words before " (" with the spaces taken out
+/// ("Box Collider 2D" -> BoxCollider2D, "Joint 3D (distance/...)" -> Joint3D), or the type from the short table below
+/// for labels that are not the type's name. A row whose type is not a module's component is never hidden.
+/// test_modules_model reads editor/main.cpp and checks every row of a module's component maps into that module.
+inline std::string TypeForMenuLabel(const std::string& label) {
+    static const std::map<std::string, std::string> named = {
+        {"Grid Movement Costs", "GridCostLayer"}, {"Grid Path Agent (2D)", "GridPathAgent2D"},
+        {"Anti-Cheat Config", "AntiCheatConfig"}, {"Hand (legacy)", "FirstPersonHand"},
+        {"Free Roam (Fly) Controller", "FreeRoamController"}, {"2.5D Platformer Controller (LittleBigPlanet)", "Platformer25DController"},
+        {"D-Pad", "TouchDPad"}, {"Chest / Container", "ChestInventory"}, {"Camera Rig", "VirtualCamera"},
+        {"Stat: Health", "HealthStat"}, {"Look-At IK (head/eye tracking)", "LookAtIK"}, {"Grid Obstacle (2D)", "GridObstacle2D"},
+        {"Day / Night Cycle", "DayNightCycle"}, {"Status Effects", "StatusEffectStat"}, {"Survival Save / Load", "SurvivalSave"},
+        {"Text", "TextRenderer"}, {"UI Date and Time", "UIDateTimePicker"},
+    };
+    auto it = named.find(label);
+    if (it != named.end()) return it->second;
+    std::string t = label.substr(0, label.find(" ("));
+    t.erase(std::remove(t.begin(), t.end(), ' '), t.end());
+    return t;
+}
+
 /// What the open scene uses: per module, how many objects have one of its components.
 inline std::map<std::string, int> UsageInScene(const ModuleRegistry& reg, const okay::Scene& scene) {
     std::map<std::string, int> out;

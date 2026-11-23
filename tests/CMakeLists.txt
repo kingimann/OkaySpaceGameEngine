@@ -13,6 +13,7 @@ add_test(NAME modules COMMAND test_modules)
 add_executable(test_modules_model test_modules_model.cpp)
 target_link_libraries(test_modules_model PRIVATE okay::engine)
 target_include_directories(test_modules_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_modules_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")   # reads editor/main.cpp (Add Component rows)
 add_test(NAME modules_model COMMAND test_modules_model)
 # scripts/check_modules.py (the module dependency check) on a made-up tree.
 find_package(Python3 COMPONENTS Interpreter QUIET)

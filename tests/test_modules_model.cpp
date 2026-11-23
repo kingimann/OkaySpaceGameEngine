@@ -3,6 +3,9 @@
 #include "ProjectState.hpp"
 #include <Okay.hpp>
 #include <algorithm>
+#include <fstream>
+#include <regex>
+#include <sstream>
 
 using namespace okaymod;
 using namespace oked;
@@ -98,6 +101,35 @@ int main() {
         CHECK(PresetForTemplate("2D Scene") == "2d" && PresetForTemplate("Something New") == "full");
         Selection two(reg, ""); two.ApplyPreset(PresetForTemplate("2D Scene"));
         CHECK(two.IsOn("physics2d") && !two.ToText().empty());
+    }
+
+    // ---- the Add Component menu: every row of a module's component is recognised as that module's (editor/main.cpp)
+    {
+        std::ifstream f(std::string(OKAY_SOURCE_DIR) + "/editor/main.cpp", std::ios::binary);
+        std::stringstream ss; ss << f.rdbuf();
+        const std::string src = ss.str();
+        CHECK(src.size() > 100000);
+        const std::regex row(R"(item\(\s*!go->GetComponent<(\w+)>\(\)[^"]*"([^"]+)")");
+        int rows = 0, moduleRows = 0, wrong = 0;
+        for (std::sregex_iterator it(src.begin(), src.end(), row), end; it != end; ++it) {
+            ++rows;
+            const std::string type = (*it)[1], label = (*it)[2];
+            const auto* owner = reg.ModuleOfComponent(type);
+            const auto* guess = reg.ModuleOfComponent(TypeForMenuLabel(label));
+            if (owner) ++moduleRows;
+            // a module's row must be hidden with its module; a row must never be hidden with another module
+            if ((owner && (!guess || guess != owner)) || (!owner && guess)) {
+                ++wrong;
+                std::cerr << "  Add Component row \"" << label << "\" adds " << type << " but maps to "
+                          << (guess ? guess->manifest.name : std::string("no module")) << "\n";
+            }
+        }
+        CHECK(rows > 150 && moduleRows > 100);
+        CHECK(wrong == 0);
+        Selection sel(reg, "physics3d");
+        const auto off = OffComponentTypes(sel, reg);
+        CHECK(off.count("Rigidbody2D") && !off.count("Joint3D"));
+        CHECK(off.count(TypeForMenuLabel("Box Collider 2D")) && off.count(TypeForMenuLabel("Day / Night Cycle")));
     }
 
     // ---- what the open scene uses

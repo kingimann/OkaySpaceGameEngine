@@ -167,14 +167,6 @@ static void ClipboardTests() {
 
 // ---- microphone capture (XboxCapture.hpp): permission, format conversion, queue, silence ----
 namespace {
-    int DeviceCount() override { return (int)names.size(); }
-    std::string DeviceName(int i) override { return names[(size_t)i]; }
-    bool Format(int, okay::xbox::CaptureFormat& o) override { o = fmt; return true; }
-    bool CapabilityDeclared() override { return declared; }
-    okay::xbox::MicConsent Consent() override { return consent; }
-    bool Start(okay::xbox::UwpCaptureDevice*, int, std::string& e) override { if (!startOk) { e = "the user said no"; return false; } ++starts; return true; }
-    void Stop(okay::xbox::UwpCaptureDevice*) override { ++stops; }
-};
 std::vector<std::int16_t> ReadS16(okay::xbox::UwpCaptureDevice& d) {
     std::vector<std::int16_t> v(d.QueuedBytes() / 2); const std::uint32_t n = d.Dequeue(v.data(), (std::uint32_t)v.size() * 2); v.resize(n / 2); return v;
 }

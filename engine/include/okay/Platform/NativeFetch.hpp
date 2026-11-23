@@ -24,6 +24,7 @@
 #include "okay/Crypto/Sha256.hpp"
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -262,8 +263,6 @@ inline std::string Sha256File(const std::filesystem::path& p) {
     return out;
 }
 
-inline std::string Lower(std::string s) { for (char& c : s) if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a'); return s; }
-
 /// Escape a value for a quoted curl config line (the config format reads \\ and \" inside double quotes).
 inline std::string CurlCfgQuote(const std::string& v) {
     std::string o = "\"";
@@ -291,8 +290,10 @@ inline OwnDownloadResult Finish(const std::filesystem::path& tmp, const std::fil
     out.bytes = SizeOf(tmp);
     if (sp.maxBytes && out.bytes > sp.maxBytes) { std::filesystem::remove(tmp, ec); out.outcome = OwnOutcome::TooBig; return out; }
     if (!sp.expectedSha256.empty()) {
-        out.sha256 = Sha256File(tmp);
-        if (out.sha256 != Lower(sp.expectedSha256)) {
+        out.sha256 = Sha256File(tmp);   // lower-case hex; the expected value may be upper case
+        bool same = out.sha256.size() == sp.expectedSha256.size();
+        for (size_t i = 0; same && i < out.sha256.size(); ++i) same = out.sha256[i] == (char)std::tolower((unsigned char)sp.expectedSha256[i]);
+        if (!same) {
             std::filesystem::remove(tmp, ec); out.outcome = OwnOutcome::ChecksumMismatch; return out;
         }
     }

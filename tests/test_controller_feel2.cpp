@@ -2,6 +2,7 @@
 // slopes, steps, and the first-person look turn at 30 / 60 / 144 fps. The real controller, fake keys, headless.
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include "player_test_rig.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -12,37 +13,11 @@ using namespace okay;
 using Mode = PlayerController::ViewMode;
 
 namespace {
-struct Rig {
-    std::unique_ptr<Scene> sc;
-    GameObject* p = nullptr;
-    Rigidbody3D* rb = nullptr;
-    float dt = 1.0f / 60.0f;
-    explicit Rig(bool floor = true, float fps = 60.0f) : dt(1.0f / fps) {
-        sc = std::make_unique<Scene>("feel2");
-        sc->physicsEnabled = true;
-        sc->UseFixedStepPhysics(true);
-        if (floor) Box({0, -0.5f, 0}, {400, 1, 400});
-    }
-    GameObject* Box(Vec3 at, Vec3 size, Vec3 euler = {0, 0, 0}) {
-        GameObject* f = sc->CreateGameObject("Box");
-        f->transform->localPosition = at;
-        f->transform->localRotation = Quat::Euler(euler.x, euler.y, euler.z);
-        f->AddComponent<BoxCollider3D>()->size = size;
-        return f;
-    }
-    void Spawn(Mode m, Vec3 at = {0, 0.02f, 0}) {
-        p = Templates::BuildPlayerBody(*sc, at, "Player");
-        rb = p->GetComponent<Rigidbody3D>();
-        PlayerController::Add(p, m, m == Mode::Third ? PlayerView::View::Third : PlayerView::View::First);
-        Templates::MountEyeCamera(*sc, p, "Main Camera");
-        sc->Start();
-    }
-    void Frame(const std::vector<char>& k) { Input::FeedKeys(k); sc->Update(dt); }
-    void Frames(double s, const std::vector<char>& k) { for (int i = 0, n = (int)std::lround(s / dt); i < n; ++i) Frame(k); }
-    Vec3 Pos() const { return p->transform->Position(); }
-    ~Rig() { Input::FeedKeys({}); }
+// The shared player rig, with this test's scene name, floor name and an optional frame rate.
+struct Rig : okay_test::PlayerTestRig {
+    explicit Rig(bool floor = true, float fps = 60.0f) : PlayerTestRig("feel2", floor, fps, "Box") {}
 };
-float HSpeed(const Rig& r) { return std::hypot(r.rb->velocity.x, r.rb->velocity.z); }
+using okay_test::HSpeed;
 }  // namespace
 
 // Animator-type components on a player: names and layers.

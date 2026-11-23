@@ -1,69 +1,7 @@
 // The engine binding registry: every type, property and method a script can use.
 // Each one calls real engine code; there are no placeholders. The checker
 // resolves names against this table and the editor's autocomplete lists it.
-#include "ScriptInternal.hpp"
-#include "okay/Scripting/ScriptApiRegistry.hpp"
-#include "okay/Scene/GameObject.hpp"
-#include "okay/Scene/Scene.hpp"
-#include "okay/Scene/Transform.hpp"
-#include "okay/Input/Input.hpp"
-#include "okay/Input/InputActions.hpp"
-#include "okay/Input/Gestures.hpp"
-#include "okay/Input/InputRuntime.hpp"
-#include "okay/Components/LocalPlayerInput.hpp"
-#include "okay/Core/Time.hpp"
-#include "okay/Core/Game.hpp"
-#include "okay/Core/GameLoop.hpp"
-#include "okay/Core/Log.hpp"
-#include "okay/Core/Localization.hpp"
-#include "okay/Math/Mathf.hpp"
-#include "okay/Math/Quat.hpp"
-#include "okay/Physics/Rigidbody3D.hpp"
-#include "okay/Components/PlayerView.hpp"
-#include "okay/Components/PlayerController.hpp"
-#include "okay/Components/UIColorPicker.hpp"   // grok/ui-color
-#include "okay/Components/Crosshair.hpp"          // grok/ui-hud
-#include "okay/Components/UIRadialProgress.hpp"   // grok/ui-hud
-#include "okay/Components/UISlotGrid.hpp"         // grok/ui-hud
-#include "okay/Components/UIDropdown.hpp"      // grok/ui-controls
-#include "okay/Components/UIScrollView.hpp"
-#include "okay/Components/UITabs.hpp"
-#include "okay/Components/UITooltip.hpp"
-#include "okay/Components/UIInputField.hpp"
-#include "okay/Components/UIToast.hpp"    // grok/ui-toast
-#include "okay/Components/UIModal.hpp"    // grok/ui-toast
-#include "okay/Components/UITheme.hpp"          // grok/ui-theme
-#include "okay/Components/UISlider.hpp"
-#include "okay/Components/UIProgressBar.hpp"
-#include "okay/Components/UIButton.hpp"
-#include "okay/Components/UIWidgetsMore.hpp"
-#include "okay/Components/UINavigation.hpp"
-#include "okay/Audio/AudioMixer.hpp"
-#include "okay/Components/SequencePlayer.hpp"
-#include "okay/Render/Atmosphere.hpp"   // PostProcess / Fog / Weather
-#include "okay/Components/NavMeshAgent.hpp"
-#include "okay/Components/GridPathAgent2D.hpp"
-#include "okay/Components/GridCostLayer.hpp"
-#include "okay/Components/GridObstacle2D.hpp"
-#include "okay/Components/DialogueRunner.hpp"   // Dialogue / Story / Quest statics
-#include "okay/Components/QuestLog.hpp"
-#include "okay/Components/StoryState.hpp"
-#include "okay/Components/BehaviorTreeRunner.hpp"
-#include "okay/Components/Spline.hpp"
-#include "okay/Components/LineRenderer.hpp"
-#include "okay/Components/AnimStateMachine.hpp"
-#include "okay/Components/ModelAnimator.hpp"
-#include "okay/Components/LookAtIK.hpp"
-#include "okay/Components/FootIK.hpp"
-#include "okay/Components/FullBodyIK.hpp"
-#include "okay/Components/AimIK.hpp"
-#include "okay/Script/AnimIkTools.hpp"
-#include "okay/Components/ThirdPersonController.hpp"
-#include "okay/Components/FirstPersonController.hpp"
-#include "okay/Components/WindZone.hpp"   // Wind (docs/gameplay/wind.md)
-#include <algorithm>
-#include <cmath>
-#include <set>
+#include "EngineApiInternal.hpp"
 
 namespace okay::script {
 
@@ -84,50 +22,10 @@ int EngineApi::Find(const std::string& name) const {
     return -1;
 }
 
+using namespace engine_api;
+
 namespace {
 
-float F(const Value& v) {
-    if (auto* f = std::get_if<float>(&v)) return *f;
-    if (auto* i = std::get_if<std::int32_t>(&v)) return (float)*i;
-    return 0.0f;
-}
-std::int32_t I(const Value& v) { if (auto* i = std::get_if<std::int32_t>(&v)) return *i; return (std::int32_t)F(v); }
-const std::string& S(const Value& v) { static const std::string e; auto* s = std::get_if<std::string>(&v); return s ? *s : e; }
-Vec3 V(const Value& v) { if (auto* x = std::get_if<Vec3>(&v)) return *x; return Vec3::Zero; }
-
-// The component of type T on the object a script call is made on, or a plain-English error (slice 2 UI parts).
-template <class T> T* UiComp(const Value& self, CallContext& c, const char* nice) {
-    GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
-    auto* x = g->GetComponent<T>();
-    if (!x) throw RuntimeError("'" + g->name + "' has no " + std::string(nice), c.loc);
-    return x;
-}
-
-Transform* SelfTransform(const Value& self, CallContext& c) {
-    return Resolve(std::get<ObjRef>(self), c.loc)->transform;
-}
-
-std::string CheckAxisLiteral(int, const std::string& lit) {
-    return (lit == "Horizontal" || lit == "Vertical") ? "" : "\"" + lit + "\" isn't an axis. Use \"Horizontal\" or \"Vertical\"";
-}
-std::string CheckMouseButtonLiteral(int, const std::string&) { return ""; }
-
-Vec2 Axes() {
-    Vec2 a = Input::AxisWASD();
-    Vec2 pad = Input::GamepadAxis();
-    if (std::fabs(pad.x) > std::fabs(a.x)) a.x = pad.x;
-    if (std::fabs(pad.y) > std::fabs(a.y)) a.y = pad.y;
-    return a;
-}
-
-std::string LogText(const Value& v) { return ValueToString(v); }
-
-Rigidbody3D* Body(const Value& self, CallContext& c) {
-    GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
-    auto* rb = g->GetComponent<Rigidbody3D>();
-    if (!rb) throw RuntimeError("'" + g->name + "' has no Rigidbody (add one in the Inspector)", c.loc);
-    return rb;
-}
 
 // ---- The shared table (okay/Scripting/ScriptApiRegistry.hpp) ----
 // A shared function is written once, for every script language; here it becomes a member of its type.
@@ -211,22 +109,11 @@ void AddSharedBindings(EngineApi& api) {
     }
 }
 
-EngineApi Build() {
-    EngineApi api;
-    const Type tFloat = Type::Of(TK::Float), tInt = Type::Of(TK::Int), tBool = Type::Of(TK::Bool),
-               tString = Type::Of(TK::String), tVec = Type::Of(TK::Vector3), tVoid = Type::Of(TK::Void),
-               tAny = Type::Of(TK::Any);
-    auto prop = [](std::string n, Type t, auto get, auto set, std::string doc) {
-        ApiProperty p; p.name = std::move(n); p.type = t; p.get = get; p.set = set; p.doc = std::move(doc); return p;
-    };
-    auto ro = [](std::string n, Type t, auto get, std::string doc) {
-        ApiProperty p; p.name = std::move(n); p.type = t; p.get = get; p.doc = std::move(doc); return p;
-    };
-    auto method = [](std::string n, std::vector<Type> params, std::vector<std::string> names, Type ret, auto fn, std::string doc) {
-        ApiMethod m; m.name = std::move(n); m.params = std::move(params); m.paramNames = std::move(names);
-        m.ret = ret; m.fn = fn; m.doc = std::move(doc); return m;
-    };
+} // namespace
 
+namespace engine_api {
+
+void Ctx::Init() {
     // ---- GameObject ----
     api.gameObject = (int)api.types.size();
     api.types.push_back({});
@@ -236,9 +123,13 @@ EngineApi Build() {
     // ---- Vector3 ----
     api.vector3 = (int)api.types.size();
     api.types.push_back({});
-    const Type tGO = Type::Obj(api.gameObject), tTr = Type::Obj(api.transform);
-    const int goIdx = api.gameObject, trIdx = api.transform;
+    tGO = Type::Obj(api.gameObject); tTr = Type::Obj(api.transform);
+    goSlot = api.gameObject; trSlot = api.transform;
+}
 
+void Ctx::BindCore() {
+    const int goIdx = goSlot;
+    const int trIdx = trSlot;
     {
         ApiType& g = api.types[(std::size_t)api.gameObject];
         g.name = "GameObject";
@@ -355,6 +246,9 @@ EngineApi Build() {
             [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Vec3::MoveTowards(V(a[0]), V(a[1]), F(a[2]))}; },
             "Step from current toward target, moving at most maxDistance."));
     }
+}
+
+void Ctx::BindGameplay() {
     // ---- Rigidbody ----
     {
         api.rigidbody = (int)api.types.size();
@@ -452,6 +346,9 @@ EngineApi Build() {
             }, "Which views the player has: 0 first person only, 1 third person only, 2 both."));
         api.types.push_back(std::move(pc));
     }
+}
+
+void Ctx::BindUiControls() {
     // ---- grok/ui-color ----
     {
         ApiType cp; cp.name = "UIColorPicker"; cp.isComponent = true;
@@ -884,6 +781,9 @@ EngineApi Build() {
             "Move keyboard and gamepad focus here, show the focus ring, and scroll it into view."));
         api.types.push_back(std::move(bt));
     }
+}
+
+void Ctx::BindUiApp() {
     // App widgets. Each method is a visual-script node. Value changes raise on_change.
     {
         ApiType w; w.name = "UISearchBar"; w.isComponent = true;
@@ -1123,6 +1023,9 @@ EngineApi Build() {
         n.pure = true; w.methods.push_back(std::move(n));
         api.types.push_back(std::move(w));
     }
+}
+
+void Ctx::BindUiLibrary() {
     // ---- UI library slice 2: game HUD parts and data glue ----
     {
         ApiType w; w.name = "UIRadialMenu"; w.isComponent = true;
@@ -1362,6 +1265,9 @@ EngineApi Build() {
             [of](const Value& s, std::vector<Value>& a, CallContext& c) { auto* x = of(s, c); x->SetValue(x->IndexOfLabel(S(a[0])), S(a[1])); return Value{}; }, "Type text into the field with this label."));
         api.types.push_back(std::move(w));
     }
+}
+
+void Ctx::BindInput() {
     // ---- Input ----
     {
         ApiType in; in.name = "Input"; in.isStatic = true; in.doc = "Keyboard, mouse and gamepad.";
@@ -1480,6 +1386,9 @@ EngineApi Build() {
             "True once a touch screen has been used or reported."));
         api.types.push_back(std::move(in));
     }
+}
+
+void Ctx::BindRuntime() {
     // ---- Time ----
     {
         ApiType t; t.name = "Time"; t.isStatic = true; t.doc = "Frame timing.";
@@ -1683,6 +1592,9 @@ EngineApi Build() {
             "The event being delivered: read it in OnSequenceEvent()."));
         api.types.push_back(std::move(sq));
     }
+}
+
+void Ctx::BindRendering() {
     // ---- PostProcess / Fog / Weather: the scene's look (docs/rendering/rendering.md) ----
     {
         auto look = [](CallContext& c) -> Scene::RenderSettings& {
@@ -1780,6 +1692,9 @@ EngineApi Build() {
             "How much the scene's wind swells and drops (0 steady, 1 calm to double) and how many gusts come each second (0.2 = one every 5 seconds)."));
         api.types.push_back(std::move(wi));
     }
+}
+
+void Ctx::BindNavigation() {
     // ---- NavMeshAgent ----
     {
         ApiType na; na.name = "NavMeshAgent"; na.isComponent = true;
@@ -1911,6 +1826,10 @@ EngineApi Build() {
             "Stop blocking cells."));
         api.types.push_back(std::move(block));
     }
+}
+
+void Ctx::BindStory() {
+    const int goIdx = goSlot;
     // ---- Dialogue / Story / Quest ----
     {
         auto sceneOf = [](CallContext& c) -> Scene* { return c.self ? c.self->scene() : nullptr; };
@@ -2096,6 +2015,9 @@ EngineApi Build() {
             "True while the tree is being ticked."));
         api.types.push_back(std::move(bt));
     }
+}
+
+void Ctx::BindSplines() {
     // ---- Spline ----
     {
         ApiType sp; sp.name = "Spline"; sp.isComponent = true;
@@ -2207,6 +2129,9 @@ EngineApi Build() {
             "Width in world units (times the width curve)."));
         api.types.push_back(std::move(lr));
     }
+}
+
+void Ctx::BindAnimation() {
     // ---- Animator (graph on this object or its model) ----
     {
         ApiType an; an.name = "Animator"; an.isComponent = true;
@@ -2379,6 +2304,9 @@ EngineApi Build() {
             "Drop the goal for that limb so the animation owns it again."));
         api.types.push_back(std::move(ik));
     }
+}
+
+void Ctx::BindTrail() {
     // ---- TrailRenderer ----
     {
         ApiType tr; tr.name = "TrailRenderer"; tr.isComponent = true;
@@ -2399,6 +2327,9 @@ EngineApi Build() {
             "Whether new points are added as it moves (off: the trail fades away)."));
         api.types.push_back(std::move(tr));
     }
+}
+
+void Ctx::BindMathf() {
     // ---- Mathf ----
     {
         ApiType m; m.name = "Mathf"; m.isStatic = true; m.doc = "Maths helpers.";
@@ -2435,6 +2366,30 @@ EngineApi Build() {
            {"current", "target", "maxDelta"}, "Step from current toward target by at most maxDelta.");
         api.types.push_back(std::move(m));
     }
+}
+
+} // namespace engine_api
+
+namespace {
+
+EngineApi Build() {
+    Ctx ctx;
+    EngineApi& api = ctx.api;
+    ctx.Init();
+    ctx.BindCore();
+    ctx.BindGameplay();
+    ctx.BindUiControls();
+    ctx.BindUiApp();
+    ctx.BindUiLibrary();
+    ctx.BindInput();
+    ctx.BindRuntime();
+    ctx.BindRendering();
+    ctx.BindNavigation();
+    ctx.BindStory();
+    ctx.BindSplines();
+    ctx.BindAnimation();
+    ctx.BindTrail();
+    ctx.BindMathf();
     AddSharedBindings(api);
     // Queries and maths have no side effects: in a visual script they're value
     // nodes, not steps in the flow.
@@ -2442,10 +2397,11 @@ EngineApi Build() {
         if (t.name == "GameObject" || t.name == "Vector3" || t.name == "Input" || t.name == "Mathf")
             for (ApiMethod& m : t.staticMethods) m.pure = m.name != "Rumble" && m.name != "RebindAction" &&
                                                       m.name != "DefineAction" && m.name != "DefineDirection";
-    return api;
+    return std::move(api);
 }
 
 } // namespace
+
 
 const EngineApi& EngineApi::Get() {
     static const EngineApi api = Build();

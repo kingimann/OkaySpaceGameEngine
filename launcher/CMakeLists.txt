@@ -55,6 +55,7 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     PublicProfilePage.cpp # public profiles: the page, showcase, badges (moved out of main.cpp)
     MemberModerationUI.cpp   # kick / ban / unban / admin role for servers and group chats (moved out of main.cpp)
     GroupConversation.cpp    # the open group conversation (moved out of main.cpp)
+    Multiplayer.cpp       # joining, inviting, presence, server browser, parties, the Multiplayer page (moved out of main.cpp)
     VersionsManager.cpp   # the Versions page: installed editors, install / remove / prune, Latest / LTS (no SDL or ImGui; tested by launcher_versions)
     VersionsNet.cpp       # the cancellable curl download behind it
     VersionsUI.cpp        # the page itself

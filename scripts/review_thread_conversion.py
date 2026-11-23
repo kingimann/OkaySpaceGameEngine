@@ -21,7 +21,8 @@ BASELINE = os.path.join(ROOT, 'tests', 'data', 'thread_conversion_baseline.json'
 SPLIT_FROM = {'launcher/main.cpp': ['launcher/ChatText.cpp', 'launcher/AntiCheatPages.cpp', 'launcher/CoverArtAvatars.cpp',
                                      'launcher/NavIcons.cpp', 'launcher/NewsHistory.cpp', 'launcher/AdminPage.cpp',
                                      'launcher/PublicProfilePage.cpp',
-                                     'launcher/MemberModerationUI.cpp', 'launcher/GroupConversation.cpp']}
+                                     'launcher/MemberModerationUI.cpp', 'launcher/GroupConversation.cpp',
+                                     'launcher/Multiplayer.cpp']}
 MAP = [(r'\bSDL_CreateThread\b', 'okay::thr::CreateThread'), (r'\bSDL_DetachThread\b', 'okay::thr::DetachThread'),
        (r'\bSDL_WaitThread\b', 'okay::thr::WaitThread'), (r'\bSDL_CreateMutex\b', 'okay::thr::CreateMutex'),
        (r'\bSDL_DestroyMutex\b', 'okay::thr::DestroyMutex'), (r'\bSDL_LockMutex\b', 'okay::thr::LockMutex'),

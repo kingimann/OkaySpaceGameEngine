@@ -8,6 +8,7 @@
 #include "OkayThreads.hpp"   // okay::thr (the launcher's mutexes and threads)
 #include "okay/Net/JoinLink.hpp"            // ChatInviteInfo holds a link
 #include "okay/Platform/Messages.hpp"      // okay::Messages (chat helpers)
+#include "okay/Platform/Friends.hpp"       // okay::Friend (the friends list)
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -26,6 +27,34 @@
 #include <vector>
 
 namespace fs = std::filesystem;   // the same alias as main.cpp's
+#if !defined(_WIN32)
+#include <sys/types.h>   // pid_t (PlayProc)
+#endif
+
+// Window calls on the launcher's raw SDL windows, through the okay::platform seam (a non-owning wrapper per call; the
+// windows are still made and destroyed by SDL). A null window does nothing, like SDL's own calls with an error.
+#include "WindowHandles.hpp"   // native handle -> okay::platform::Window (sdl2 and own-backend windows)
+namespace lw {
+inline void Restore(SDL_Window* w)  { if (auto s = okay::pb::Win(w)) s->Restore(); }
+inline void Raise(SDL_Window* w)    { if (auto s = okay::pb::Win(w)) s->Raise(); }
+inline void Show(SDL_Window* w)     { if (auto s = okay::pb::Win(w)) s->Show(); }
+inline void Hide(SDL_Window* w)     { if (auto s = okay::pb::Win(w)) s->Hide(); }
+inline void Minimize(SDL_Window* w) { if (auto s = okay::pb::Win(w)) s->Minimize(); }
+inline void GetPos(SDL_Window* w, int* x, int* y) { int a = 0, b = 0; if (auto s = okay::pb::Win(w)) s->GetPosition(a, b); if (x) *x = a; if (y) *y = b; }
+inline bool IsMinimized(SDL_Window* w) { auto s = okay::pb::Win(w); return s && s->IsMinimized(); }
+inline bool IsVisible(SDL_Window* w)   { auto s = okay::pb::Win(w); return s && s->IsVisible(); }
+inline bool HasInputFocus(SDL_Window* w) { auto s = okay::pb::Win(w); return s && s->HasInputFocus(); }
+inline bool HasMouseFocus(SDL_Window* w) { auto s = okay::pb::Win(w); return s && s->HasMouseFocus(); }
+inline bool AnyKeyboardFocus() { auto* b = okay::platform::Default(); return b && b->KeyboardFocusWindowId() != 0; }
+inline void* Win32Handle(SDL_Window* w) { auto s = okay::pb::Win(w); return s ? s->Win32Handle() : nullptr; }
+inline void GetSize(SDL_Window* w, int* x, int* y) { int a = 0, b = 0; if (auto s = okay::pb::Win(w)) s->GetSize(a, b); if (x) *x = a; if (y) *y = b; }
+inline void SetSize(SDL_Window* w, int x, int y) { if (auto s = okay::pb::Win(w)) s->SetSize(x, y); }
+inline void SetPos(SDL_Window* w, int x, int y)  { if (auto s = okay::pb::Win(w)) s->SetPosition(x, y); }
+inline void SetMinSize(SDL_Window* w, int x, int y) { if (auto s = okay::pb::Win(w)) s->SetMinimumSize(x, y); }
+inline uint32_t Id(SDL_Window* w)   { auto s = okay::pb::Win(w); return s ? s->Id() : 0; }
+inline bool IsFocused(SDL_Window* w) { auto s = okay::pb::Win(w); return s && s->IsFocused(); }
+inline void Flash(SDL_Window* w, okay::platform::FlashMode m) { if (auto s = okay::pb::Win(w)) s->Flash(m); }
+} // namespace lw
 
 namespace okay { struct JoinLink; }
 namespace okay { struct MyBanInfo; namespace account { class AccountService; } }
@@ -202,4 +231,45 @@ extern std::map<long, long> g_pinsDm, g_pinsGroup;   // message id -> pinned at 
 extern ImVec4 kAccentDim;                      // the darker accent
 extern const char* kChatThemeNames[];          // the chat colour themes (kChatThemeCount)
 extern const ImVec4 kChatWinBg;                // the chat window's background
+// Games, friends and presence (main.cpp): what the multiplayer code shares with the rest.
+struct PlayProc {
+    std::string key, title; Uint32 lastCredit = 0;
+#if defined(_WIN32)
+    HANDLE h = nullptr;
+#else
+    pid_t pid = -1;
+#endif
+};
+struct PendingInvite { long id = 0; std::string from, fromName, body; long when = 0; };
+
+std::string AgoText(long when);
+bool AntiCheatAllowsSceneLaunch(const std::string& scene);
+void DrawGamepadIcon(ImDrawList* d, ImVec2 c, float s, ImU32 col);
+std::string FindExe(std::initializer_list<const char*> names);
+std::vector<fs::path> FindScenes();
+int FriendsListWorker(void*);
+std::string GameTitleFromPath(const std::string& path);
+std::string InviteMessageBody(const std::string& title, const std::string& link);
+bool IsBuiltGame(const fs::path& scene);
+std::string LastOnline(long when);
+void PlayChatChime();
+std::string PresenceText();
+void RecordPlayed(const std::string& p);
+bool SpawnTracked(const std::string& exe, const std::string& args, const std::string& key, const std::string& title);
+extern volatile bool g_frFetching;
+extern std::vector<okay::Friend> g_frList;
+extern okay::thr::Mutex* g_frMutex;
+extern volatile long g_inviteSeenId;
+extern int g_onlineStatus;
+extern bool g_partyFollow;
+extern std::vector<PlayProc> g_playProcs;
+extern std::vector<PendingInvite> g_pollInvites;
+extern okay::thr::Mutex*  g_pollMutex;
+extern okay::thr::Mutex* g_presMutex;
+extern okay::account::AccountService* g_presenceAccount;
+extern bool g_sharePresence;
+extern int g_themeIndex;
+bool UpsertNotif(const std::string& key, const std::string& title,
+                 const std::string& body, int kind, int gotoTab);   // add or update a notification (true = new or changed)
+extern std::string g_presText, g_presJoin;     // (guarded by g_presMutex) "" = no game running
 } // namespace okl

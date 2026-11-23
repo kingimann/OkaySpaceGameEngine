@@ -300,6 +300,10 @@ add_library(okay_engine
     src/UI/UIFocus.cpp
     src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
+    src/Render/MeshModifiers.cpp
+    src/Render/MeshObj.cpp
+    src/Render/MeshUV.cpp
+    src/Render/MeshShapes.cpp
     src/Render/ModelImportCharacter.cpp
     src/Render/ModelReaders.cpp
     src/Render/ColladaReader.cpp

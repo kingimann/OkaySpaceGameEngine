@@ -3,8 +3,10 @@
 // This list shrinks as main.cpp is split further; each entry moves to the
 // header of the module that ends up owning it.
 #include "imgui.h"
+#include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace okay { class GameObject; namespace editor { class EditorState; } }
 #ifdef OKAY_HAVE_OKAYUI
@@ -79,5 +81,22 @@ extern float g_snapSize;
 extern bool  g_gizmoLocal;
 // An image file (or "proc:" texture) as a cached SDL texture, null when it can't load.
 SDL_Texture* GetThumb(const std::string& path);
+
+
+// The self-updater's download helpers (main.cpp, namespace updater): Build Game fetches the player runtime with them.
+namespace updater {
+std::string SelfPath();
+bool Download(const std::string& url, const std::filesystem::path& outPath);
+std::string RawUrl(const std::string& ref, const std::string& name);
+bool FetchVerified(const std::string& version, const std::string& asset, const std::filesystem::path& dest, std::string& reason);
+} // namespace updater
+// The open project's settings (main.cpp; the struct is in ProjectState.hpp).
+struct ProjectSettings;
+extern ProjectSettings g_project;
+#if defined(OKAY_XBOX_UWP)
+// The last Xbox export's result (main.cpp), set by Build Game's Xbox export.
+extern bool g_xboxExportOk;
+extern std::vector<std::string> g_xboxExportWarnings;
+#endif
 
 } // namespace oked

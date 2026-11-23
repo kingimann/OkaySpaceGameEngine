@@ -67,6 +67,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Saved fields of a component | `Scene/PropertyRegistry.hpp` | `okay::PropertyRegistry` (`Register`, `FindByName`, `TryGetProperty`) | `PropertyRegistry::TryGetProperty(go, "Health.value", v);` |
 | Curves and splines | `Math/Curves.hpp` | `okay::Curves` (`CubicBezier`, `CatmullRom`, `ArcLength`) | `Vec3 p = Curves::CatmullRom(p0, p1, p2, p3, t);` |
 | Import settings | `Core/ImportSettings.hpp` | `okay::ImportSettings` (`Defaults`, `FromPairs`), `AssetTypeFromPath` | `auto s = ImportSettings::Defaults(AssetTypeFromPath(path));` |
+| An engine function for scripts (OkayScript, C#, visual-script nodes) | `Scripting/ScriptApiRegistry.hpp`; the engine's entries are in `engine/src/Scripting/ScriptApiCore.cpp` ([guide](../scripting/script_api_registry.md)). Do not add a new one to `OkayScriptVM.cpp` or `EngineApi.cpp` | `okay::ScriptApiEntry`, `AddScriptApi`, `ScriptApis`, `ScriptApiError` | `add(Fn("time", "Time", "time", {}, T::Float, fn, "Seconds since the game started."));` |
 | Logging | `Core/Log.hpp` | `okay::Log` (`Info`, `Warning`, `Error`), `Log::Category` | `Log::Warning("missing texture: ", path);` |
 | Script-side JSON, hashing, Base64 (Python, JS, shell) | the standard library | `json.dumps`, `hashlib`, `base64`, `zlib.crc32`; `JSON.stringify`; `jq` | `json.dumps(obj)` |
 

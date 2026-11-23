@@ -122,15 +122,16 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
   - 13.6.1 Binding table - `engine/src/Script/EngineApi.cpp` - GameObject, Transform, Rigidbody, Input, Time, Debug, Audio, SaveGame, Localization, Sequence, post-process, NavMeshAgent, Dialogue, Quest, BehaviorTree, Spline, UI components and more
   - 13.6.2 IK and Animator script tools - `Script/AnimIkTools` - shared by OkayScript builtins and the typed API so one IK kind name means the same everywhere (foot, look, aim, hand_l, hand_r, full)
   - 13.6.3 Generated reference - `docs/engine_api.md` - regenerate with `OKAY_WRITE_API_DOCS=1 ./tests/test_vs_types` from the build folder; the `vs_types` test fails while it is stale
-- **Code:** `engine/src/Script/EngineApi.cpp`, `Script/AnimIkTools`, `VisualScript/VsApi`
+  - 13.6.4 Shared script-function table - `Scripting/ScriptApiRegistry`, `engine/src/Scripting/ScriptApiCore.cpp` - one entry per engine function that OkayScript (by snake_case name) and the typed language (as Type.Member, so also the Engine API nodes) both read; first batch: keys, actions, forces, whole-game saves, audio groups, time ([guide](../scripting/script_api_registry.md))
+- **Code:** `engine/src/Script/EngineApi.cpp`, `Scripting/ScriptApiRegistry`, `Scripting/ScriptApiCore.cpp`, `Script/AnimIkTools`, `VisualScript/VsApi`
 - **API:** `OKAY_WRITE_API_DOCS=1`, `VsApiReference()`, `ParseIkKind`
 - **Editor:** Script Editor autocomplete list; visual-script palette "Engine API" nodes (14.7)
 - **Docs:** `docs/engine_api.md` (generated, do not edit by hand)
-- **Tests:** `vs_types` (checks the generated page), `okayscript_next`, `vs_acceptance` (Engine API nodes end to end), `api_expand` (script API additions, exercised with an animation clip)
+- **Tests:** `vs_types` (checks the generated page), `script_api_parity` (every shared entry from both languages), `okayscript_next`, `vs_acceptance` (Engine API nodes end to end), `api_expand` (script API additions, exercised with an animation clip)
 - **Status:** Works - the page is generated from the table and guarded by a test
 - **Open:** animation and IK script tools are Grok's area (5.6, 5.7): do not edit them here
 - **Related:** 13.2, 14.7, 5.6
-- **Words:** engine API, binding table, EngineApi, API reference, autocomplete list, IK script tools, generated docs, engine_api.md
+- **Words:** engine API, binding table, EngineApi, ScriptApiRegistry, shared script table, add_torque, API reference, autocomplete list, IK script tools, generated docs, engine_api.md
 - **Seen as:** a member autocompletes but fails to run; engine_api.md differs from the code; an API node is missing from the palette
 - **Ask me like:** "work on 13.6.1, add Camera shake to the typed API"; "regenerate engine_api.md"
 

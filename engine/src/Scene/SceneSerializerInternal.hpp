@@ -61,6 +61,8 @@ std::filesystem::path FilePath(const std::string& utf8);
 extern thread_local std::string g_loadingSceneDir;
 void WriteComponentRecords(std::ostream& out, GameObject* go);   // SceneSerializerWrite.cpp
 void WriteDisabledComponents(std::ostream& out, const GameObject* go);
+bool AllowsMultiple(const Component*);
+void ApplyComponentOrder(GameObject& go, const std::vector<std::string>& names);
 
 // True when the next token on the stream is a number the reader accepts. The writer
 // prints floats through std::to_chars, which emits '-', '+', '.' and digits, so

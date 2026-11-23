@@ -314,5 +314,27 @@ std::filesystem::path FilePath(const std::string& utf8) {
 #endif
 }
 
+// Every component the file knows is saved per instance (the writers loop, the reader adds one
+// component per record). A second record of a type this build does not save would still warn.
+bool AllowsMultiple(const Component*) { return true; }
+
+// Bring an object's components into the order of a `comporder` record: the Nth name of a type is the Nth
+// component of that type; names the object has no component for are ignored, and components the record
+// does not name keep their order after the named ones.
+void ApplyComponentOrder(GameObject& go, const std::vector<std::string>& names) {
+    std::unordered_map<std::string, std::vector<Component*>> byType;
+    for (const auto& c : go.Components())
+        if (c.get() != static_cast<Component*>(go.transform)) byType[ComponentSerializerRegistry::TypeKey(*c)].push_back(c.get());
+    std::unordered_map<std::string, std::size_t> used;
+    std::vector<Component*> want;
+    for (const std::string& n : names) {
+        auto it = byType.find(n);
+        if (it == byType.end()) continue;
+        std::size_t& u = used[n];
+        if (u < it->second.size()) want.push_back(it->second[u++]);
+    }
+    go.ReorderComponents(want);
+}
+
 } // namespace sceneser
 } // namespace okay

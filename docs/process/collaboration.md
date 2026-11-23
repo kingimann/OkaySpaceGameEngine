@@ -60,9 +60,15 @@ How the lanes work:
   another open claim still needs the handshake.
 - **Shared files need a handshake.** Only one open claim at a time may name a shared file. Every lane whose claim touches
   it agrees. Keep your edit small, at the end of the file or in its own block, so the next branch can merge.
-- **Generated files are regenerated, never edited.** `docs/FEATURE_MAP.md` and `docs/feature_map/_index_*.md` come from
-  `python3 scripts/gen_feature_map.py` (check: `--check`); `editor/VisualScriptNodeDocs.inc` from
-  `scripts/gen_vs_node_docs.py`. Edit the source pages, then regenerate. On a merge conflict, regenerate.
+- **Generated docs are rebuilt on main, never committed in a branch.** `docs/FEATURE_MAP.md`, `docs/SYSTEMS.md` and
+  `docs/feature_map/_index_*.md` (`scripts/gen_feature_map.py`), `docs/engine/code_index.md` and `docs/engine/code_index/`
+  (`scripts/gen_code_index.py`) and `docs/try_it.md` (`scripts/gen_try_it.py`) are rewritten by
+  `.github/workflows/regen-docs.yml` after every push to main and committed back with `[skip ci]`. A branch edits only
+  the sources (the feature map pages, headers, `docs/try_it/*.md`); `python3 scripts/gen_feature_map.py --validate` checks
+  the pages. When every PR committed these files, each merge made every other open PR conflict. If a branch changed one
+  (precheck and branch-lint warn), `bash scripts/precheck.sh --restore-generated` puts main's copy back. The list lives in
+  `scripts/precheck.sh` (`--list-generated`). `editor/VisualScriptNodeDocs.inc` (compiled into the editor) is still
+  regenerated with `scripts/gen_vs_node_docs.py` in the same change.
 - **No duplicate features** (owner, 2026-11-15). Every lane runs `find_existing.py` first, extends what exists, and says
   `Existing:` / `Gap:` in the claim.
 - **A new lane** is one entry in the `lanes` map of `lanes.json` (name and branch prefix) plus its rules. Then add the
@@ -143,7 +149,7 @@ A branch that does not meet this is sent back, not reviewed. The coordinator's t
 - [ ] The failing test was shown failing first, then passing; an option-ON test where the feature is off by default.
 - [ ] Rule 4a material: a way to try it in the Windows release (menu, template, shipped example scene, setting), exact steps
       and what to expect in `docs/try_it.md`; screenshots for visual work (headless renders are fine, say they are).
-- [ ] Docs updated in the same change; generated files regenerated (`python3 scripts/gen_feature_map.py --check`).
+- [ ] Docs updated in the same change; feature map pages valid (`python3 scripts/gen_feature_map.py --validate`); no generated docs committed.
 - [ ] No forbidden includes (`<mutex>`, `<thread>`, `<condition_variable>`, `std::call_once` in Windows code; rule 21a):
       `python3 scripts/branch_lint.py all`.
 - [ ] `python3 scripts/bug_patterns.py` is clean or each finding is explained in the report.

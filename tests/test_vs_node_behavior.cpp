@@ -1,6 +1,7 @@
 // Every gameplay node added in NodesGameplay.hpp is run in a real scene.
 // The gate at the bottom fails if a node is registered there and this file
 // never called Cover() for it.
+#include <filesystem>
 #include "test_framework.hpp"
 #include "test_sandbox.hpp"
 #include <Okay.hpp>
@@ -68,7 +69,7 @@ static HealthStat* Hp(GameObject* go, float maxHp = 100) {
 static std::string Prefab() {
     static std::string path;
     if (!path.empty()) return path;
-    path = "/tmp/vs_behav_bullet.okayprefab";
+    path = (std::filesystem::temp_directory_path() / "vs_behav_bullet.okayprefab").string();
     Scene s; s.physicsEnabled = false;
     GameObject* b = s.CreateGameObject("Bullet");
     b->transform->SetPosition({0, 0, 0});
@@ -514,7 +515,7 @@ int main() {
         Scene s;
         GameObject* dummy = s.CreateGameObject("Dummy");
         dummy->tag = "Enemy";
-        dummy->transform->SetPosition({0, 0, 3});
+        dummy->transform->SetPosition({0, 0, -3});   // in front: an unrotated object faces -Z
         dummy->AddComponent<BoxCollider3D>()->size = {2, 2, 2};
         auto* hp = Hp(dummy);
         auto* v = Attach(s, "Gun",
@@ -604,7 +605,7 @@ int main() {
     {
         Scene s; s.physicsEnabled = false;
         GameObject* foe = s.CreateGameObject("Foe");
-        foe->transform->SetPosition({0, 0, 3});
+        foe->transform->SetPosition({0, 0, -3});   // in front: an unrotated object faces -Z
         auto* v = Attach(s, "Eye",
             "node 1 OnStart\nentry OnStart 1\nnode 2 FindObject Foe\nnode 3 CanSee\n"
             "default 3 1 10\ndefault 3 2 80\nnode 4 SetVar seen\nexec 1 0 4\ndata 4 0 3 0\ndata 3 0 2 0\n");
@@ -615,7 +616,7 @@ int main() {
     {
         Scene s; s.physicsEnabled = false;
         GameObject* foe = s.CreateGameObject("Foe");
-        foe->transform->SetPosition({0, 0, -4});
+        foe->transform->SetPosition({0, 0, 4});    // behind
         auto* v = Attach(s, "Eye",
             "node 1 OnStart\nentry OnStart 1\nnode 2 FindObject Foe\nnode 3 CanSee\n"
             "default 3 1 10\ndefault 3 2 40\nnode 4 SetVar seen\nexec 1 0 4\ndata 4 0 3 0\ndata 3 0 2 0\n");

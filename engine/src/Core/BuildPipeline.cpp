@@ -1,11 +1,13 @@
 #include "okay/Core/BuildPipeline.hpp"
 #include "okay/Core/AssetDatabase.hpp"
 #include "okay/Core/ImageWrite.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -618,6 +620,36 @@ void Report::Finish() {
     for (const ExcludedFile& e : excluded) excludedBytes += e.bytes;
     valid = true;
 }
+void Report::AddModules(const std::string& sizesFile, const std::string& projectModules) {
+    modules.clear();
+    std::map<std::string, std::uintmax_t> bytes;
+    moduleSizesKnown = false;
+    if (!sizesFile.empty()) {
+        std::ifstream in(sizesFile, std::ios::binary);
+        std::string line;
+        while (std::getline(in, line)) {
+            const std::size_t tab = line.find('\t');
+            if (tab == std::string::npos) continue;
+            bytes[line.substr(0, tab)] = (std::uintmax_t)std::strtoull(line.c_str() + tab + 1, nullptr, 10);
+            moduleSizesKnown = true;
+        }
+    }
+    const ModuleRegistry& reg = ModuleRegistry::Get();
+    std::set<std::string> wanted;
+    if (!projectModules.empty())
+        for (const std::string& n : reg.Resolve(ModuleManifest::SplitList(projectModules))) wanted.insert(n);
+    for (const ModuleRegistry::Info& m : reg.All()) {
+        ModuleRow r;
+        r.name = m.manifest.name; r.title = m.manifest.title; r.shipped = m.enabled;
+        r.projectOn = projectModules.empty() || wanted.count(r.name) != 0;
+        auto it = bytes.find(r.name);
+        if (it != bytes.end()) r.bytes = it->second;
+        modules.push_back(r);
+    }
+    std::stable_sort(modules.begin(), modules.end(), [](const ModuleRow& a, const ModuleRow& b) {
+        return a.bytes != b.bytes ? a.bytes > b.bytes : a.name < b.name; });
+}
+
 std::vector<Report::TypeRow> Report::ByExtension() const {
     std::map<std::string, TypeRow> m;
     for (const ReportFile& f : files) {
@@ -662,6 +694,15 @@ std::string Report::ToText(std::size_t maxRows) const {
         if (maxRows && n++ >= maxRows) { o << "  ... " << (excluded.size() - maxRows) << " more\n"; break; }
         o << "  " << HumanBytes(e.bytes) << "  " << e.path << "  (" << e.reason << ")\n";
     }
+    if (!modules.empty()) {
+        int shipped = 0;
+        for (const ModuleRow& m : modules) shipped += m.shipped ? 1 : 0;
+        o << "\nModules in the player: " << shipped << " of " << modules.size() << " (no module is left out yet)"
+          << (moduleSizesKnown ? "" : "; sizes unknown (module_sizes.txt not found beside the player)") << "\n";
+        for (const ModuleRow& m : modules)
+            o << "  " << (m.shipped ? "shipped " : "left out ") << (moduleSizesKnown ? HumanBytes(m.bytes) : std::string("-"))
+              << "  " << m.title << " (" << m.name << ")" << (m.projectOn ? "" : "  - off in Project Settings, still in the player") << "\n";
+    }
     o << "\nWarnings: " << warnings.size() << "\n";
     for (const std::string& w : warnings) o << "  " << w << "\n";
     return o.str();
@@ -682,7 +723,6 @@ bool AlreadyCompressed(const std::string& rel) {
 } // namespace
 
 bool WriteZip(const std::string& zipPath, const std::string& rootDir, bool compress, ZipStats* stats, std::string* error) {
-    auto fail = [&](const std::string& m) { if (error) *error = m; std::error_code ec; fs::remove(fs::u8path(zipPath), ec); return false; };
     const fs::path root = fs::u8path(rootDir);
     std::error_code ec;
     if (!fs::is_directory(root, ec)) { if (error) *error = "not a folder: " + rootDir; return false; }
@@ -695,6 +735,16 @@ bool WriteZip(const std::string& zipPath, const std::string& rootDir, bool compr
         list.emplace_back(Generic(it->path().lexically_relative(root)), it->path());
     }
     std::sort(list.begin(), list.end());
+    std::vector<ZipInput> entries;
+    entries.reserve(list.size());
+    for (const auto& f : list) { ZipInput z; z.name = f.first; z.sourcePath = f.second.u8string(); entries.push_back(std::move(z)); }
+    return WriteZipEntries(zipPath, entries, compress, stats, error);
+}
+
+bool WriteZipEntries(const std::string& zipPath, const std::vector<ZipInput>& entries, bool compress, ZipStats* stats, std::string* error) {
+    auto fail = [&](const std::string& m) { if (error) *error = m; std::error_code ec; fs::remove(fs::u8path(zipPath), ec); return false; };
+    for (const ZipInput& e : entries)
+        if (e.name.empty()) { if (error) *error = "a zip entry has no name"; return false; }
     std::ofstream out(fs::u8path(zipPath), std::ios::binary | std::ios::trunc);
     if (!out) return fail("cannot write " + zipPath);
 
@@ -708,20 +758,25 @@ bool WriteZip(const std::string& zipPath, const std::string& rootDir, bool compr
     std::vector<Central> dir;
     std::uint64_t pos = 0;
     ZipStats st;
-    for (const auto& f : list) {
-        std::ifstream in(f.second, std::ios::binary);
-        std::ostringstream buf; buf << in.rdbuf();
-        const std::string data = buf.str();
+    for (const ZipInput& f : entries) {
+        std::string read;
+        if (!f.sourcePath.empty()) {
+            std::ifstream in(fs::u8path(f.sourcePath), std::ios::binary);
+            if (!in) return fail("cannot read " + f.sourcePath);
+            std::ostringstream buf; buf << in.rdbuf();
+            read = buf.str();
+        }
+        const std::string& data = f.sourcePath.empty() ? f.data : read;
         if ((std::uint64_t)data.size() >= 0xFFFFFFFFull || pos >= 0xF0000000ull) return fail("archive too large for the zip format (4 GB)");
         const std::uint8_t* d = (const std::uint8_t*)data.data();
         Central c;
-        c.name = f.first;
+        c.name = f.name;
         c.crc = ImageWrite::Crc32(d, data.size());
         c.usize = (std::uint32_t)data.size();
         c.offset = (std::uint32_t)pos;
         c.method = 0;
         std::vector<std::uint8_t> packed;
-        if (compress && !data.empty() && !AlreadyCompressed(f.first)) {
+        if (compress && !data.empty() && !AlreadyCompressed(f.name)) {
             packed = ImageWrite::Deflate(d, data.size());
             if (!packed.empty() && packed.size() < data.size()) c.method = 8;
         }

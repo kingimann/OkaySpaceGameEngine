@@ -2,7 +2,7 @@
 
 # Code index: engine-VisualScript
 
-Back to the [code index](../code_index.md). 29 headers, 581 names.
+Back to the [code index](../code_index.md). 31 headers, 602 names.
 
 ## `engine/include/okay/VisualScript/ActionGraph.hpp`
 
@@ -151,109 +151,128 @@ Back to the [code index](../code_index.md). 29 headers, 581 names.
 
 ## `engine/include/okay/VisualScript/NodesExtra.hpp`
 
-- `VsFindObject` function, line 53
-- `VsResolveObject` function, line 70: An object input: an object reference (Self, Other, Spawn's object, Find,
-- `VsPinOrName` function, line 76: A node that names its object in its text field may instead get it wired into
-- `MathFn2Node` struct, line 81: ---- More math ---------------------------------------------------------
-- `InverseLerpNode` struct, line 98
-- `RemapNode` struct, line 104
-- `SmoothStepNode` struct, line 112
-- `MoveTowardsValueNode` struct, line 120
-- `Vec3OpNode` struct, line 129: ---- Vector math -------------------------------------------------------
-- `TextOpNode` struct, line 148: ---- Text ----------------------------------------------------------------
-- `ToFixedNode` struct, line 163
-- `ObjectQueryNode` struct, line 173: ---- Objects ---------------------------------------------------------------
-- `OtherNameNode` struct, line 190
-- `SelfNode` struct, line 194: ---- Object references -------------------------------------------------------
-- `OtherNode` struct, line 197
-- `FindObjectNode` struct, line 200
-- `ObjectInfoNode` struct, line 208
-- `AnimEventNameNode` struct, line 216
-- `OtherTagNode` struct, line 222
-- `MouseGroundNode` struct, line 229: ---- Mouse buttons ----------------------------------------------------------
-- `MouseButtonNode` struct, line 253
-- `LookAtNode` struct, line 262: ---- Actions ----------------------------------------------------------------
-- `MoveTowardsObjectNode` struct, line 283
-- `SetActiveNode` struct, line 298
-- `SetTextNode` struct, line 314
-- `LoadSceneNode` struct, line 324
-- `CooldownNode` struct, line 338
-- `AnimParamNode` struct, line 351
-- `AnimStateNode` struct, line 366
-- `IkLookNode` struct, line 372
-- `PlaySequenceNode` struct, line 383
-- `StopSequenceNode` struct, line 392
-- `LocalizeNode` struct, line 400: Localization: text in the player's language from the project's string table.
-- `SetLanguageNode` struct, line 414
-- `GetLanguageNode` struct, line 425
-- `SetWeatherNode` struct, line 429: ---- The scene's look: weather, fog and post-processing (Atmosphere.hpp) ----
-- `SetFogNode` struct, line 443
-- `SetPostEffectNode` struct, line 456
-- `NavMoveToNode` struct, line 467: Navigation: the NavMeshAgent on this object (or the Target) walks the navmesh.
-- `NavStopNode` struct, line 475
-- `NavArrivedNode` struct, line 483
-- `GridMoveToNode` struct, line 490: 2D grid: the Grid Path Agent on this object (or the Target).
-- `GridStopNode` struct, line 499
-- `GridArrivedNode` struct, line 507
-- `BtSetNode` struct, line 514: Behavior trees: the Behavior Tree Runner on this object (or the Target).
-- `BtGetNode` struct, line 524
-- `BtRunNode` struct, line 533
-- `SplinePointNode` struct, line 550: Splines, lines and trails: the component on this object (or the Target).
-- `SplineLengthNode` struct, line 557
-- `SetLinePointsNode` struct, line 563
-- `ClearTrailNode` struct, line 574
-- `VsMusicPlayer` function, line 582: Music: the scene's Music Player (the first one found), like the music_* script calls.
-- `MusicPlayNode` struct, line 588
-- `MusicStopNode` struct, line 602
-- `MusicPauseNode` struct, line 609
-- `MusicResumeNode` struct, line 613
-- `MusicNextNode` struct, line 617
-- `VsMainCamera` function, line 622: Camera: the scene's main camera.
-- `CameraShakeNode` struct, line 626
-- `SetFovNode` struct, line 633
-- `CameraFollowNode` struct, line 640
-- `ParticlePlayNode` struct, line 654: Particles: the Particle System on this object (or the Target).
-- `ParticleStopNode` struct, line 661
-- `ParticleBurstNode` struct, line 668
-- `EaseCurveNode` struct, line 680: ---- Tweens, springs and eases (Core/Tween.hpp, Math/Spring.hpp, Math/Easing.hpp) ----
-- `SpringStepNode` struct, line 694: Spring Step: moves a value toward in0 the way a spring would (Spring::Step), once each time it runs, by the frame
-- `TweenMoveNode` struct, line 722: Tween Move / Tween Move By Speed: this object's (or the Target's) local position goes to (x, y, z). An axis nobody
-- `TweenTagNode` struct, line 745: Kill / Pause / Play Tweens With Tag: every tween of the scene with the text field's tag (Tweener::SetTag, the
-- `IkHandNode` struct, line 764
-- `ForLoopNode` struct, line 782: ---- Third wave: loops, switch, gate, 3D transform, colour, clips, shapes ----
-- `GateNode` struct, line 823: Only lets the flow through while Open is true.
-- `DoNNode` struct, line 832: Passes the first N times only; Count reads how many times it has passed.
-- `SwitchIntNode` struct, line 847: Pick an exec output by a whole number: 0, 1, 2, or Default for anything else.
-- `RandomIntNode` struct, line 857: Integer in [min, max], both ends included.
-- `MathFn3Node` struct, line 866
-- `Vec3MoreNode` struct, line 885
-- `TransformReadNode` struct, line 903
-- `Transform3Node` struct, line 912: 3D transform actions with one Vec3 input (or X/Y/Z).
-- `SetColorNode` struct, line 931: Tint this object's sprite / text / mesh (R, G, B, A in 0..1; blank = 1).
-- `PlayActionNode` struct, line 946: Play a clip by name the same way a script's play_clip does (AnimControl.hpp):
-- `IsInActionNode` struct, line 956
-- `DieNode` struct, line 961
-- `DiveNode` struct, line 971
-- `HitReactNode` struct, line 978
-- `RollNode` struct, line 989
-- `DodgeNode` struct, line 998
-- `ReviveNode` struct, line 1007
-- `SitNode` struct, line 1015: arg: a Seat's name, or ground / knees / chair. Empty sits on a flat floor.
-- `StandUpNode` struct, line 1037
-- `IsSittingNode` struct, line 1044
-- `InteractNode` struct, line 1049
-- `SeatPromptNode` struct, line 1056
-- `VaultNode` struct, line 1061
-- `MantleNode` struct, line 1065
-- `LedgeGrabNode` struct, line 1069
-- `ClimbUpNode` struct, line 1073
-- `LetGoNode` struct, line 1077
-- `IsHangingNode` struct, line 1081
-- `ShimmyNode` struct, line 1086
-- `PlayClipNode` struct, line 1093
-- `SetTimeScaleNode` struct, line 1103
-- `BlendShapeNode` struct, line 1112: Blend shape (morph target) weight on every mesh under this object.
-- `EngineReadNode` struct, line 1133
+- `VsFindObject` function, line 54
+- `VsResolveObject` function, line 71: An object input: an object reference (Self, Other, Spawn's object, Find,
+- `VsPinOrName` function, line 77: A node that names its object in its text field may instead get it wired into
+- `MathFn2Node` struct, line 82: ---- More math ---------------------------------------------------------
+- `InverseLerpNode` struct, line 99
+- `RemapNode` struct, line 105
+- `SmoothStepNode` struct, line 113
+- `MoveTowardsValueNode` struct, line 121
+- `Vec3OpNode` struct, line 130: ---- Vector math -------------------------------------------------------
+- `TextOpNode` struct, line 149: ---- Text ----------------------------------------------------------------
+- `ToFixedNode` struct, line 164
+- `ObjectQueryNode` struct, line 174: ---- Objects ---------------------------------------------------------------
+- `OtherNameNode` struct, line 191
+- `SelfNode` struct, line 195: ---- Object references -------------------------------------------------------
+- `OtherNode` struct, line 198
+- `FindObjectNode` struct, line 201
+- `ObjectInfoNode` struct, line 209
+- `AnimEventNameNode` struct, line 217
+- `OtherTagNode` struct, line 223
+- `MouseGroundNode` struct, line 230: ---- Mouse buttons ----------------------------------------------------------
+- `MouseButtonNode` struct, line 254
+- `LookAtNode` struct, line 263: ---- Actions ----------------------------------------------------------------
+- `MoveTowardsObjectNode` struct, line 284
+- `SetActiveNode` struct, line 299
+- `SetTextNode` struct, line 315
+- `LoadSceneNode` struct, line 325
+- `CooldownNode` struct, line 339
+- `AnimParamNode` struct, line 352
+- `AnimStateNode` struct, line 367
+- `IkLookNode` struct, line 373
+- `PlaySequenceNode` struct, line 384
+- `StopSequenceNode` struct, line 393
+- `LocalizeNode` struct, line 401: Localization: text in the player's language from the project's string table.
+- `SetLanguageNode` struct, line 415
+- `GetLanguageNode` struct, line 426
+- `SetWeatherNode` struct, line 430: ---- The scene's look: weather, fog and post-processing (Atmosphere.hpp) ----
+- `SetFogNode` struct, line 444
+- `SetPostEffectNode` struct, line 457
+- `NavMoveToNode` struct, line 468: Navigation: the NavMeshAgent on this object (or the Target) walks the navmesh.
+- `NavStopNode` struct, line 476
+- `NavArrivedNode` struct, line 484
+- `GridMoveToNode` struct, line 491: 2D grid: the Grid Path Agent on this object (or the Target).
+- `GridStopNode` struct, line 500
+- `GridArrivedNode` struct, line 508
+- `BtSetNode` struct, line 515: Behavior trees: the Behavior Tree Runner on this object (or the Target).
+- `BtGetNode` struct, line 525
+- `BtRunNode` struct, line 534
+- `SplinePointNode` struct, line 551: Splines, lines and trails: the component on this object (or the Target).
+- `SplineLengthNode` struct, line 558
+- `SetLinePointsNode` struct, line 564
+- `ClearTrailNode` struct, line 575
+- `VsMusicPlayer` function, line 583: Music: the scene's Music Player (the first one found), like the music_* script calls.
+- `MusicPlayNode` struct, line 589
+- `MusicStopNode` struct, line 603
+- `MusicPauseNode` struct, line 610
+- `MusicResumeNode` struct, line 614
+- `MusicNextNode` struct, line 618
+- `VsMainCamera` function, line 623: Camera: the scene's main camera.
+- `CameraShakeNode` struct, line 627
+- `SetFovNode` struct, line 634
+- `CameraFollowNode` struct, line 641
+- `ParticlePlayNode` struct, line 655: Particles: the Particle System on this object (or the Target).
+- `ParticleStopNode` struct, line 662
+- `ParticleBurstNode` struct, line 669
+- `EaseCurveNode` struct, line 681: ---- Tweens, springs and eases (Core/Tween.hpp, Math/Spring.hpp, Math/Easing.hpp) ----
+- `SpringStepNode` struct, line 695: Spring Step: moves a value toward in0 the way a spring would (Spring::Step), once each time it runs, by the frame
+- `TweenMoveNode` struct, line 723: Tween Move / Tween Move By Speed: this object's (or the Target's) local position goes to (x, y, z). An axis nobody
+- `TweenTagNode` struct, line 746: Kill / Pause / Play Tweens With Tag: every tween of the scene with the text field's tag (Tweener::SetTag, the
+- `IkHandNode` struct, line 765
+- `ForLoopNode` struct, line 783: ---- Third wave: loops, switch, gate, 3D transform, colour, clips, shapes ----
+- `GateNode` struct, line 824: Only lets the flow through while Open is true.
+- `DoNNode` struct, line 833: Passes the first N times only; Count reads how many times it has passed.
+- `SwitchIntNode` struct, line 848: Pick an exec output by a whole number: 0, 1, 2, or Default for anything else.
+- `RandomIntNode` struct, line 858: Integer in [min, max], both ends included.
+- `MathFn3Node` struct, line 867
+- `Vec3MoreNode` struct, line 886
+- `TransformReadNode` struct, line 904
+- `Transform3Node` struct, line 913: 3D transform actions with one Vec3 input (or X/Y/Z).
+- `SetColorNode` struct, line 932: Tint this object's sprite / text / mesh (R, G, B, A in 0..1; blank = 1).
+- `PlayActionNode` struct, line 947: Play a clip by name the same way a script's play_clip does (AnimControl.hpp):
+- `IsInActionNode` struct, line 957
+- `DieNode` struct, line 962
+- `DiveNode` struct, line 972
+- `HitReactNode` struct, line 979
+- `RollNode` struct, line 990
+- `DodgeNode` struct, line 999
+- `ReviveNode` struct, line 1008
+- `SitNode` struct, line 1016: arg: a Seat's name, or ground / knees / chair. Empty sits on a flat floor.
+- `StandUpNode` struct, line 1038
+- `IsSittingNode` struct, line 1045
+- `InteractNode` struct, line 1050
+- `SeatPromptNode` struct, line 1057
+- `VaultNode` struct, line 1062
+- `MantleNode` struct, line 1066
+- `LedgeGrabNode` struct, line 1070
+- `ClimbUpNode` struct, line 1074
+- `LetGoNode` struct, line 1078
+- `IsHangingNode` struct, line 1082
+- `ShimmyNode` struct, line 1087
+- `PlayClipNode` struct, line 1094
+- `SetTimeScaleNode` struct, line 1104
+- `BlendShapeNode` struct, line 1113: Blend shape (morph target) weight on every mesh under this object.
+- `EngineReadNode` struct, line 1134
+
+## `engine/include/okay/VisualScript/NodesFriendlyHelpers.hpp`
+
+- `FrViewCamera` function, line 31: The camera the player looks through: the scene's main camera, else the first camera in the scene.
+- `FrCameraFlat` function, line 44: The camera's view direction ('right' false) or its right ('right' true), flattened onto the ground
+- `FrSpeeds` struct, line 58: The walk and run speed fields of every player controller on 'go' (first person, third person,
+- `FrMoverSpeeds` function, line 59
+- `FrSetMoveSpeed` function, line 70: Walk speed 'speed' on every controller; the run speed keeps its ratio to the walk speed.
+- `FrWithStanceController` function, line 85: Run 'f' on the first- or third-person controller of 'go' or of the nearest parent that has one
+- `FrSeatOf` function, line 98: The seat 'who' sits in, or nullptr.
+- `FrEnterVehicle` function, line 108: Put 'who' in 'vehicle': its free driver seat first, then a free passenger seat.
+- `FrIsDriving` function, line 117: True while 'who' drives a vehicle (sits in a driver seat).
+- `FrSetColliderSize` function, line 129: Size every collider on 'go': a box gets Width x Height x Depth, a sphere or circle radius Width / 2,
+- `FrSetCollidersEnabled` function, line 144: Switch every collider on 'go' on or off. Returns how many there are.
+- `FrIsGrounded` function, line 154: Standing on something: a player controller's own answer when the object has one; otherwise a short
+- `FrDebugLine` function, line 170: This object's debug line renderer (the one Draw Debug Line uses), set up for a debug shape.
+- `FrSpherePoints` function, line 181: A wire sphere as one line: the circles round X-Y, X-Z and Y-Z, joined where they meet so no
+- `FrBoxPoints` function, line 192: A wire box as one line through all 12 edges (some are drawn twice).
+- `FrWatch` function, line 202: The on-screen list Watch Value writes to: an object named "Watch Values" with a screen text,
 
 ## `engine/include/okay/VisualScript/NodesFunctions.hpp`
 
@@ -299,46 +318,47 @@ Back to the [code index](../code_index.md). 29 headers, 581 names.
 - `CollectNode` struct, line 474
 - `ProximityNode` struct, line 484
 - `DamageNode` struct, line 495: ---- Health and combat -----------------------------------------------------
-- `HealNode` struct, line 506
-- `IsDeadNode` struct, line 516
-- `RespawnNode` struct, line 524
-- `SpawnProjectileNode` struct, line 533
-- `ShootNode` struct, line 555
-- `AmmoNode` struct, line 574
-- `PatrolNode` struct, line 589: ---- AI --------------------------------------------------------------------
-- `ChaseNode` struct, line 615
-- `FleeNode` struct, line 630
-- `WanderNode` struct, line 644
-- `CanSeeNode` struct, line 672
-- `GpSpawn` function, line 711
-- `SpawnEveryNode` struct, line 720
-- `DestroyAfterNode` struct, line 744
-- `GpPool` function, line 757
-- `PoolGetNode` struct, line 762
-- `PoolReleaseNode` struct, line 788
-- `ScoreAddNode` struct, line 802: ---- Game flow -------------------------------------------------------------
-- `ScoreSetNode` struct, line 809
-- `ScoreGetNode` struct, line 817
-- `CountdownNode` struct, line 823
-- `OutcomeNode` struct, line 850
-- `RestartSceneNode` struct, line 864
-- `CheckpointSaveNode` struct, line 874
-- `CheckpointLoadNode` struct, line 885
-- `SetProgressNode` struct, line 900: ---- UI, camera, audio, input ----------------------------------------------
-- `ShowFloatingTextNode` struct, line 912
-- `FadeScreenNode` struct, line 926
-- `SetCameraTargetNode` struct, line 940
-- `ZoomNode` struct, line 957
-- `SwitchCameraNode` struct, line 968
-- `PlaySoundAtNode` struct, line 983
-- `StopSoundNode` struct, line 995
-- `GetMoveAxisNode` struct, line 1006
-- `RandomPickNode` struct, line 1014: ---- Lists -----------------------------------------------------------------
-- `RandomPointNode` struct, line 1023
-- `ShuffleListNode` struct, line 1033
-- `ListExtremeNode` struct, line 1048
-- `GpJoin` function, line 1060
-- `MakeGameplayNode` function, line 1066
+- `DamagedEventNode` struct, line 514: On Damaged: runs once for each hit this object took (any health holder, through the one damage path).
+- `HealNode` struct, line 525
+- `IsDeadNode` struct, line 535
+- `RespawnNode` struct, line 543
+- `SpawnProjectileNode` struct, line 552
+- `ShootNode` struct, line 575
+- `AmmoNode` struct, line 594
+- `PatrolNode` struct, line 609: ---- AI --------------------------------------------------------------------
+- `ChaseNode` struct, line 635
+- `FleeNode` struct, line 650
+- `WanderNode` struct, line 664
+- `CanSeeNode` struct, line 692
+- `GpSpawn` function, line 731
+- `SpawnEveryNode` struct, line 740
+- `DestroyAfterNode` struct, line 764
+- `GpPool` function, line 777
+- `PoolGetNode` struct, line 782
+- `PoolReleaseNode` struct, line 808
+- `ScoreAddNode` struct, line 822: ---- Game flow -------------------------------------------------------------
+- `ScoreSetNode` struct, line 829
+- `ScoreGetNode` struct, line 837
+- `CountdownNode` struct, line 843
+- `OutcomeNode` struct, line 870
+- `RestartSceneNode` struct, line 884
+- `CheckpointSaveNode` struct, line 894
+- `CheckpointLoadNode` struct, line 905
+- `SetProgressNode` struct, line 920: ---- UI, camera, audio, input ----------------------------------------------
+- `ShowFloatingTextNode` struct, line 932
+- `FadeScreenNode` struct, line 946
+- `SetCameraTargetNode` struct, line 960
+- `ZoomNode` struct, line 977
+- `SwitchCameraNode` struct, line 988
+- `PlaySoundAtNode` struct, line 1003
+- `StopSoundNode` struct, line 1015
+- `GetMoveAxisNode` struct, line 1026
+- `RandomPickNode` struct, line 1034: ---- Lists -----------------------------------------------------------------
+- `RandomPointNode` struct, line 1043
+- `ShuffleListNode` struct, line 1053
+- `ListExtremeNode` struct, line 1068
+- `GpJoin` function, line 1080
+- `MakeGameplayNode` function, line 1086
 
 ## `engine/include/okay/VisualScript/NodesInventory.hpp`
 
@@ -441,60 +461,60 @@ Back to the [code index](../code_index.md). 29 headers, 581 names.
 
 ## `engine/include/okay/VisualScript/NodesPhysics.hpp`
 
-- `VsPhysicsNode` struct, line 26: Shared bits for nodes that look at the scene from this object.
-- `Raycast3DNode` struct, line 50: Raycast 3D: in0 Origin, in1 Direction, in2 Max Dist, in3 Ignore Triggers ->
-- `SphereCast3DNode` struct, line 69: Sphere Cast: in0 Origin, in1 Direction, in2 Radius, in3 Max Dist -> same outs
-- `RaycastAll3DNode` struct, line 88: Raycast All 3D: in0 Origin, in1 Direction, in2 Max Dist -> out Count, Objects
-- `Overlap3DNode` struct, line 109: Overlap Sphere / Overlap Box: in0 Center, in1 Radius (sphere) or Half Size
-- `VsPhysics2DNode` struct, line 134: Flat (side-view) casts. Pins are the same shape as the 3D casts, and Z is ignored.
-- `BoxCast2DNode` struct, line 159: Box Cast: in0 Center, in1 Half Size, in2 Direction, in3 Angle (degrees), in4 Reach.
-- `CapsuleCast2DNode` struct, line 181: Capsule Cast: in0 Segment Start, in1 Segment End, in2 Radius, in3 Direction, in4 Reach.
-- `OverlapBox2DNode` struct, line 204: Overlap Rectangle: in0 Center, in1 Half Size, in2 Angle (degrees) -> Count, Objects.
-- `OverlapCapsule2DNode` struct, line 225: Overlap Capsule: in0 Segment Start, in1 Segment End, in2 Radius -> Count, Objects.
-- `AddExplosionForceNode` struct, line 249: Add Explosion Force: in0 Center, in1 Force, in2 Radius, in3 Upward Bias.
-- `ContactInfoNode` struct, line 266: Contact Point / Contact Normal / Impact Speed: details of the collision or
+- `VsPhysicsNode` struct, line 27: Shared bits for nodes that look at the scene from this object.
+- `Raycast3DNode` struct, line 51: Raycast 3D: in0 Origin, in1 Direction, in2 Max Dist, in3 Ignore Triggers ->
+- `SphereCast3DNode` struct, line 70: Sphere Cast: in0 Origin, in1 Direction, in2 Radius, in3 Max Dist -> same outs
+- `RaycastAll3DNode` struct, line 89: Raycast All 3D: in0 Origin, in1 Direction, in2 Max Dist -> out Count, Objects
+- `Overlap3DNode` struct, line 110: Overlap Sphere / Overlap Box: in0 Center, in1 Radius (sphere) or Half Size
+- `VsPhysics2DNode` struct, line 135: Flat (side-view) casts. Pins are the same shape as the 3D casts, and Z is ignored.
+- `BoxCast2DNode` struct, line 160: Box Cast: in0 Center, in1 Half Size, in2 Direction, in3 Angle (degrees), in4 Reach.
+- `CapsuleCast2DNode` struct, line 182: Capsule Cast: in0 Segment Start, in1 Segment End, in2 Radius, in3 Direction, in4 Reach.
+- `OverlapBox2DNode` struct, line 205: Overlap Rectangle: in0 Center, in1 Half Size, in2 Angle (degrees) -> Count, Objects.
+- `OverlapCapsule2DNode` struct, line 226: Overlap Capsule: in0 Segment Start, in1 Segment End, in2 Radius -> Count, Objects.
+- `AddExplosionForceNode` struct, line 250: Add Explosion Force: in0 Center, in1 Force, in2 Radius, in3 Upward Bias.
+- `ContactInfoNode` struct, line 267: Contact Point / Contact Normal / Impact Speed: details of the collision or
 
 ## `engine/include/okay/VisualScript/NodesSmart.hpp`
 
-- `SmartClock` function, line 20
-- `SmartEdge` function, line 22
-- `HeldLongNode` struct, line 30: True after Condition has stayed true for Seconds. A false frame starts over.
-- `HappenedNearNode` struct, line 41: True when First and Second have each turned true within Seconds of each other.
-- `EveryWhileNode` struct, line 56: Passes every Seconds while Condition stays true. A false frame starts the wait over.
-- `EaseTowardNode` struct, line 70: One step from Current toward Target, limited by Speed per second.
-- `BlendTimeNode` struct, line 83: Parks, and Value moves from From to To over Seconds. Then the flow continues.
-- `StopwatchNode` struct, line 118: Seconds since it started. Reset clears it and does not pass.
-- `FuzzyBandNode` struct, line 130: Bands of a 0 to 1 value. Slightly is the low band, Mostly the middle, Very the top.
-- `PickBestNode` struct, line 143: Index of the highest score, counting from 0. A tie keeps the earlier one.
-- `ShuffleBagNode` struct, line 156: Next list entry, with no repeat until every entry has been used once.
-- `ChanceEachSecondNode` struct, line 176: True at random, about Rate times per second. Rate 0 never passes. A huge rate passes every frame.
-- `SmartRunChild` function, line 185
-- `TryFirstNode` struct, line 196: Runs the first child that succeeds.
-- `AllSucceedNode` struct, line 210: Runs each child. Stops at the first failure.
-- `FlipOutcomeNode` struct, line 226
-- `AlwaysSucceedNode` struct, line 235
-- `RepeatUntilFailNode` struct, line 245: Runs Child until it fails, at most 16 times. Still succeeding then is an error.
-- `WaitBetweenNode` struct, line 261: Runs Child, then ignores it until Seconds have passed.
-- `OutcomeLeafNode` struct, line 280
-- `CheckOutcomeNode` struct, line 287: Succeeds when Condition is true, and fails when it is not.
-- `InConeNode` struct, line 296
-- `LineOfSightNode` struct, line 318
-- `InsideAreaNode` struct, line 344
-- `NearbyNode` struct, line 373
-- `SortByDistanceNode` struct, line 386
-- `WhenChangedNode` struct, line 413
-- `DoUnlessNode` struct, line 426
-- `RememberKey` function, line 435
-- `RememberValueNode` struct, line 437
-- `RecallValueNode` struct, line 449
-- `HealthEdgeNode` struct, line 462
-- `TimedBuff` struct, line 479
-- `AddBuffNode` struct, line 481
-- `AdvanceObjectiveNode` struct, line 510
-- `AssertThisNode` struct, line 526
-- `LogOnceNode` struct, line 538
-- `DrawDebugLineNode` struct, line 550
-- `MakeSmartNode` function, line 566
+- `SmartClock` function, line 21
+- `SmartEdge` function, line 23
+- `HeldLongNode` struct, line 31: True after Condition has stayed true for Seconds. A false frame starts over.
+- `HappenedNearNode` struct, line 42: True when First and Second have each turned true within Seconds of each other.
+- `EveryWhileNode` struct, line 57: Passes every Seconds while Condition stays true. A false frame starts the wait over.
+- `EaseTowardNode` struct, line 71: One step from Current toward Target, limited by Speed per second.
+- `BlendTimeNode` struct, line 84: Parks, and Value moves from From to To over Seconds. Then the flow continues.
+- `StopwatchNode` struct, line 119: Seconds since it started. Reset clears it and does not pass.
+- `FuzzyBandNode` struct, line 131: Bands of a 0 to 1 value. Slightly is the low band, Mostly the middle, Very the top.
+- `PickBestNode` struct, line 144: Index of the highest score, counting from 0. A tie keeps the earlier one.
+- `ShuffleBagNode` struct, line 157: Next list entry, with no repeat until every entry has been used once.
+- `ChanceEachSecondNode` struct, line 177: True at random, about Rate times per second. Rate 0 never passes. A huge rate passes every frame.
+- `SmartRunChild` function, line 186
+- `TryFirstNode` struct, line 197: Runs the first child that succeeds.
+- `AllSucceedNode` struct, line 211: Runs each child. Stops at the first failure.
+- `FlipOutcomeNode` struct, line 227
+- `AlwaysSucceedNode` struct, line 236
+- `RepeatUntilFailNode` struct, line 246: Runs Child until it fails, at most 16 times. Still succeeding then is an error.
+- `WaitBetweenNode` struct, line 262: Runs Child, then ignores it until Seconds have passed.
+- `OutcomeLeafNode` struct, line 281
+- `CheckOutcomeNode` struct, line 288: Succeeds when Condition is true, and fails when it is not.
+- `InConeNode` struct, line 297
+- `LineOfSightNode` struct, line 319
+- `InsideAreaNode` struct, line 345
+- `NearbyNode` struct, line 374
+- `SortByDistanceNode` struct, line 387
+- `WhenChangedNode` struct, line 414
+- `DoUnlessNode` struct, line 427
+- `RememberKey` function, line 436
+- `RememberValueNode` struct, line 438
+- `RecallValueNode` struct, line 450
+- `HealthEdgeNode` struct, line 463
+- `TimedBuff` struct, line 480
+- `AddBuffNode` struct, line 482
+- `AdvanceObjectiveNode` struct, line 511
+- `AssertThisNode` struct, line 527
+- `LogOnceNode` struct, line 539
+- `DrawDebugLineNode` struct, line 551
+- `MakeSmartNode` function, line 567
 
 ## `engine/include/okay/VisualScript/NodesStory.hpp`
 
@@ -609,6 +629,13 @@ Back to the [code index](../code_index.md). 29 headers, 581 names.
 - `VsParseTyped` function, line 80: Parse literal text and fit it to 't' (a bare word that isn't a literal counts as text).
 - `VsKindName` function, line 82: The type a value has, as a word for messages ("Number", "Vector3", "List"...).
 - `VsCompare` function, line 85: A total order over any two values (kind first, then content) so sorting a mixed
+
+## `engine/include/okay/VisualScript/VsFacing.hpp`
+
+- `VsFacing` function, line 15: The world direction a rotation faces (its -Z).
+- `VsFaceToward` function, line 21: Turn 't' so it faces the world point 'target' (full 3D, world up as the hint). Nothing happens when the
+- `VsFaceTowardFlat` function, line 26: Turn 't' about the world up axis only so it faces the side of 'target' (level, no tilt).
+- `VsFaceAlongFlat` function, line 31: Turn 't' about the world up axis only so it faces along the world direction 'dir'.
 
 ## `engine/include/okay/VisualScript/VsPinType.hpp`
 

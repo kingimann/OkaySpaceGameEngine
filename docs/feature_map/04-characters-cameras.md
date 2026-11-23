@@ -8,6 +8,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 
 ### 4.1 Player Controller
 - **System:** Player Controller - Makes a first- or third-person character that walks, runs, jumps, crouches and swims, ready to drop into a scene.
+  Home: `engine/include/okay/Components/PlayerController.hpp`, `engine/include/okay/Components/FirstPersonController.hpp`, `engine/include/okay/Components/ThirdPersonController.hpp`. Entry: `engine/include/okay/Components/PlayerController.hpp`. Also called: PlayerController, FirstPersonController, ThirdPersonController, character controller.
 - **What:** One component, Player Controller, makes a first- or third-person character (View = First, Third or Both). Its View setting says which views exist (First only, Third only, or Both with a toggle key and a blended camera). The movement and camera code lives in parts it adds and removes itself.
 - **Parts:**
   - 4.1.1 Player Controller wrapper - `Components/PlayerController` - ViewMode First/Third/Both, SetViewMode, Add, Adopt (wraps old scenes' separate controllers), CurrentView; script set_view/get_view
@@ -54,6 +55,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 
 ### 4.3 2D and 2.5D controllers
 - **System:** Ready-Made Controllers - Ready-made movement for 2D top-down and platformer games, third-person shooters, twin-stick and click-to-move characters.
+  Home: `engine/include/okay/Components/`. Entry: `engine/include/okay/Components/CharacterController2D.hpp`. Also called: CharacterController2D, TopDownController2D, Platformer25DController, TopDownShooterController, twin-stick.
 - **What:** Ready-made controllers for flat and side-on games: a top-down or platformer 2D character controller, a top-down 2D controller with dash and combat, and a 2.5D platformer with depth layers, ledges and grabbing.
 - **Parts:**
   - 4.3.1 Character Controller 2D - `Components/CharacterController2D` - TopDown or Platformer mode, sprint, acceleration, air control, coyote time, jump buffer, variable and multi-jump, wall slide and wall jump
@@ -97,6 +99,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 
 ### 4.5 Vehicles
 - **System:** Vehicles - Drivable cars and boats: throttle, steering, brakes, grip and suspension.
+  Home: `engine/include/okay/Components/VehicleController.hpp`, `engine/include/okay/Components/BoatController.hpp`. Entry: `engine/include/okay/Components/VehicleController.hpp`. Also called: VehicleController, car, BoatController, VehicleSeat, Buoyancy.
 - **What:** Arcade car controllers: throttle, steering, braking, handbrake and grip, with an opt-in raycast suspension, plus a 2D top-down or side-view version.
 - **Parts:**
   - 4.5.1 Arcade vehicle - `Components/VehicleController` - maxSpeed, reverseSpeed, acceleration, brakeForce, drag, turnSpeed, grip, handbrakeGrip, followCamera, Speed(), IsGrounded()
@@ -186,6 +189,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 
 ### 4.9 Blocky Character and customization
 - **System:** Character Creator - The built-in blocky character and its body, colours, hair, clothes and accessories.
+  Home: `engine/include/okay/Components/Character.hpp`. Entry: `engine/include/okay/Components/Character.hpp`. Also called: blocky character, Character, avatar, customization, clothing.
 - **What:** The built-in low-poly character with one height slider, colours, hair, clothing and accessories, bound to a 15-bone humanoid skeleton, with an optional editable part rig and the ability to bind any mesh to it.
 - **Parts:**
   - 4.9.1 Proportions, colours and clothing - `Components/Character` - height, skin, shirt, pants, hair; hair styles, beards, shirt and leg styles, belt, jacket, gloves
@@ -221,7 +225,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Docs:** `docs/gameplay/cameras.md`, `docs/gameplay/cameras.md`
 - **Tests:** `camera_cine`, `script_camera`, `scene_cameras`, `camera_math`, `camera_rig`
 - **Status:** Works - camera_cine checks projection and visibility maths; script_camera covers script control
-- **Open:** none recorded; GPU culling uses the camera frustum (2.8)
+- **Open:** none recorded; GPU culling uses the camera frustum (2.8); four hand-made camera shakes stay outside `cam::CameraShaker` (#422 audit item 23, reviewed 2026-11-22, left as they are): TopDownShooterController (sines at 61 and 47 per second), VehicleController (sines at 91 and 77), ThirdPersonController's landing bump and the Sequence shake track each move the camera by a fixed formula, while CameraShaker moves it by gradient noise, so moving them over would change every offset a player sees; the Sequence track must also stay scrub-exact (a pure function of time)
 - **Related:** 4.8, 2.1, 2.8, 13.4
 - **Words:** camera, field of view, orthographic, perspective, shake, trauma, zoom, pixel perfect, WorldToScreen, culling mask, viewport rect
 - **Seen as:** the screen shakes too long or never; the 2D game looks blurry or jitters; world-to-screen is off; an object disappears when the camera turns
@@ -229,6 +233,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 
 ### 4.11 Seats and sitting
 - **System:** Seats - Places a character can sit down on and get up from with the Interact key.
+  Home: `engine/include/okay/Components/Seat.hpp`. Entry: `engine/include/okay/Components/Seat.hpp`. Also called: Seat, sitting, chairs.
 - **What:** A place to sit: the nearest local player presses Interact (E or pad X by default, the shared rebindable action) to be moved onto the seat point, the Animator plays the sit-down, loop and stand-up clips, and moving or jumping stands up.
 - **Parts:**
   - 4.11.1 Seat component - `Components/Seat` - seatHeight (0.45), sitPoint, facing, type (chair, ground, bench), exitPoint, useRadius, prompt, Claim and Release

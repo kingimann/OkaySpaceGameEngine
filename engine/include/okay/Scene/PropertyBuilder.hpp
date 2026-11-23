@@ -191,6 +191,14 @@ public:
     // ---- Modifiers for the property added last ---------------------------------------
     PropertyBuilder& Group(const char* group) { Last().group = group; return *this; }
     PropertyBuilder& Tooltip(const char* text) { Last().tooltip = text; return *this; }
+    PropertyBuilder& Label(const char* text) { Last().label = text; return *this; }
+    PropertyBuilder& Unit(const char* text) { Last().unit = text; return *this; }
+    /// Simple / Advanced / Hidden. Hidden also sets the HideInInspector flag.
+    PropertyBuilder& Level(PropertyLevel l) {
+        Last().level = l; if (l == PropertyLevel::Hidden) Last().flags |= PropertyFlag::HideInInspector; return *this;
+    }
+    /// Run `fn` on every property added so far (to annotate many at once from a table).
+    PropertyBuilder& Each(const std::function<void(PropertyDesc&)>& fn) { for (PropertyDesc& d : m_info.properties) fn(d); return *this; }
     /// Numeric limits (each component of a vector or color); out-of-range values are clamped.
     PropertyBuilder& Range(double minValue, double maxValue, double step = 0.0) {
         PropertyDesc& d = Last(); d.hasRange = true; d.rangeMin = minValue; d.rangeMax = maxValue; d.step = step; return *this;
@@ -207,6 +215,9 @@ public:
     PropertyBuilder& Default(const PropertyValue& v) { Last().defaultValue = v; return *this; }
     /// Properties added from here on go in this inspector section (until changed).
     PropertyBuilder& Section(const char* group) { m_section = group ? group : ""; return *this; }
+
+    /// One plain sentence shown at the top of the component in the Inspector: what the component does.
+    PropertyBuilder& Description(const char* text) { m_info.description = text; return *this; }
 
     /// The component cannot be added through the registry (a Transform).
     PropertyBuilder& NoAdd() { m_info.add = nullptr; return *this; }

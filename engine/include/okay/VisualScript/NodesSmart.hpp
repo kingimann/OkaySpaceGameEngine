@@ -4,6 +4,7 @@
 // single node. A behaviour node sets `outcome` (0 succeeded, 1 failed) so a
 // parent can read it after running the child. Trees finish in one frame.
 #include "okay/VisualScript/Nodes.hpp"
+#include "okay/VisualScript/VsFacing.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
@@ -310,7 +311,7 @@ struct InConeNode : VsNode {
         d = d * (1.0f / dist);
         const float cone = In(1, g, ctx, VsValue{60.0f}).AsFloat();
         const float need = std::cos(cone * 0.5f * 0.0174533f);
-        const Vec3 fwd = ctx.transform->Forward().Normalized();
+        const Vec3 fwd = VsFacing(ctx.transform).Normalized();
         return Vec3::Dot(fwd, d) >= need;
     }
 };

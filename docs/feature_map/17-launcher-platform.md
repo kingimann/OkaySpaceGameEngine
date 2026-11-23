@@ -11,7 +11,9 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 ### 17.1 Launcher shell and updater
 - **System:**
   - Launcher - The OkaySpace app players open first: projects, the games library with the official game, the multiplayer page and settings. Code: `launcher/main.cpp`, `launcher/CMakeLists.txt`, `launcher/okayspace.rc`, `shared/OkayTheme.hpp`, `shared/Splash.hpp`, `shared/AppIcon.hpp`
+    Home: `launcher/`. Entry: `launcher/main.cpp`. Also called: OkaySpace.exe, launcher app, games library.
   - Launcher Updater - Checks for new versions of the launcher, editor and player, downloads them and checks their checksums. Code: `launcher/UpdaterCore.hpp`, `launcher/VersionsManager.cpp`, `launcher/VersionsNet.cpp`, `shared/SelfUpdate.hpp`, `shared/StartupUpdate.hpp`, `shared/UpdateGuard.hpp`, `shared/UpdateSignature.hpp`
+    Home: `shared/SelfUpdate.hpp`, `launcher/VersionsManager.cpp`. Entry: `shared/SelfUpdate.hpp`. Also called: self-updater, SelfUpdate, VersionsManager, versions.json, auto update. Fix: One job in two folders: move launcher/UpdaterCore.hpp (download and verify) next to shared/SelfUpdate.hpp (replace itself).
 - **What:** The launcher program players double-click (`OkaySpace.exe`): window and sidebar, the pages, settings, notifications, the loading screen, and the self-updater that keeps the launcher, editor and player current.
 - **Parts:**
   - 17.1.1 Window, sidebar and pages - `launcher/main.cpp` - SDL2 plus Dear ImGui; tabs Create, Play, Community, Account, Settings, Achievements, Friends, Market, Servers, Forums, Downloads, plus Multiplayer, What's New, Tips and Admin; `main()` starts near L16377, the tab pages from L17892; number keys switch pages
@@ -30,7 +32,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Docs:** `docs/release/packaging.md`, `docs/release/releasing.md`, `docs/online/multiplayer.md`
 - **Tests:** none for the shell itself; `startup_update` (the start-up screen rules); the updater rules and helpers have tests (`self_update`, `app_restart` verified-restart cases, `launcher_versions` updater suite, `versions_index`, `crash_reports`, `project_delete`, `official_game`, `chat_json`, `friends_json`)
 - **Status:** Works - the shipping app, structure read from `main.cpp`; no automated UI test
-- **Open:** split `launcher/main.cpp` (1.5 MB, see 19.4 and ROADMAP "Later"); the update index (`versions.json`) is not signed (17.11); the updater itself requires and verifies checksums
+- **Open:** split `launcher/main.cpp` (1.5 MB, see 19.4 and ROADMAP "Later"); the update index (`versions.json`) is not signed (17.11); the updater itself requires and verifies checksums; two download chains (#422 finding 10, reviewed 2026-11-22, left as they are): `Download` in `launcher/main.cpp` and `okayversions::net::DownloadFile` (`launcher/VersionsNet.cpp`) are not the same behaviour, so a wrapper would change the updater: `Download` allows `http://` URLs (`ShellSafeUrl`) while `DownloadFile` takes only `https://` and localhost (`IsAcceptableUrl`); `Download` adds cache-busting and no-cache headers, uses the system client (WinHTTP on Windows) when our own HTTP is off and falls back to curl, then PowerShell or wget, while `DownloadFile` goes straight to curl with a size cap, cancel and `--proto-redir =https`. Folding them needs a decision on those rules and a Windows test of the updater, which cannot be run here
 - **Related:** 18.1, 18.5, 17.12, 17.13, 41.1
 - **Words:** launcher, OkaySpace.exe, updater, update, new version, sidebar, tray, splash, loading screen, Settings, launcher.cfg, What's New, Tips, notifications, toast, Slate theme
 - **Seen as:** launcher won't update or says "new version" forever; black frame at startup; wrong theme or text size; the sidebar is collapsed; two launchers open
@@ -38,6 +40,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 
 ### 17.2 Accounts and sign-in
 - **System:** Accounts - Sign-up, sign-in and the clients that talk to the online services.
+  Home: `engine/include/okay/Platform/Account/`. Entry: `engine/include/okay/Platform/Account/Account.hpp`. Also called: Account, AccountService, sign-in, login.
 - **What:** One account service shared by the launcher, editor, player and game scripts: sign up and in, session tokens that refresh, cloud saves and leaderboards. It works offline with a local on-disk account, with a custom server, or with Supabase.
 - **Parts:**
   - 17.2.1 Account service - `Platform/Account/AccountService` - providers Local (salted PBKDF2-HMAC-SHA256 file, on `Crypto/Sha256.hpp`), Remote (your server, see 42.4) and Supabase (email sign-up, password reset (emails a link to the hosted page `supabase/auth-pages/reset-password`, see `docs/online/password-reset.md`), change email or username, token refresh); `Api()` adds the key and bearer token
@@ -62,6 +65,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 
 ### 17.3 Friends, following, parties
 - **System:** Community - Friends, parties, chat and calls, forums, Discord-style community servers and the staff tools that moderate them.
+  Home: `engine/include/okay/Platform/`. Entry: `engine/include/okay/Platform/Friends.hpp`. Also called: Friends, Parties, Forums, Messages, chat, community servers.
 - **What:** Friend lists with online status and what they play, one-way follows, and parties of friends who follow their leader into a match.
 - **Parts:**
   - 17.3.1 Friends - `Platform/Friends` - add by username or short friend code, accept or decline, presence heartbeat ("playing X"), join a friend's relay session, a small activity feed; no-ops when signed out
@@ -126,6 +130,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 
 ### 17.6 Marketplace and Workshop
 - **System:** Marketplace and Workshop - Browse, share and download games, scenes and templates made by others.
+  Home: `engine/include/okay/Platform/Workshop.hpp`. Entry: `engine/include/okay/Platform/Workshop.hpp`. Also called: Workshop, marketplace, asset store, UGC.
 - **What:** Browse and publish shared games, scenes and templates; each item points to a hosted build and players press Get to download it through the launcher's download manager.
 - **Parts:**
   - 17.6.1 Workshop client - `Platform/Workshop` - items (title, author, kind, download count, URL), reviews, publish; gracefully empty when the table is missing
@@ -145,6 +150,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 
 ### 17.7 Profiles, badges, achievements
 - **System:** Profiles and Achievements - Public profiles, badges and achievements.
+  Home: `engine/include/okay/Platform/Achievements.hpp`, `engine/include/okay/Platform/Profiles.hpp`. Entry: `engine/include/okay/Platform/Achievements.hpp`. Also called: Achievements, Profiles, badges.
 - **What:** Steam-style public profiles (me, friends, forum authors) with a showcase of achievements and games, playtime, social links and badges, plus achievements stored per user on this machine so games and the launcher read the same list.
 - **Parts:**
   - 17.7.1 Achievements store - `Platform/Achievements` - local-first list per user (id, label, when unlocked), shared by running games and the launcher, no server needed
@@ -208,6 +214,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 
 ### 17.10 Steam and PlayFab
 - **System:** Steam Integration - Steam achievements, stats, cloud files, workshop and uploading OkaySpace to Steam (simulated without the Steam SDK).
+  Home: `engine/include/okay/Platform/Steam/`, `engine/src/Platform/Steam/`. Entry: `engine/include/okay/Platform/Steam/Steam.hpp`. Also called: Steam, SteamService, Steamworks, SteamManager.
 - **What:** Steam features behind one interface (achievements, stats, leaderboards, cloud files, workshop, friends, lobbies, overlay) with a built-in simulation so everything runs without the SDK, plus a PlayFab REST client.
 - **Parts:**
   - 17.10.1 Steam interface and simulation - `Platform/Steam/SteamService`, `Platform/Steam/NullSteamService` - `ISteamService` and an in-memory backend (default)
@@ -332,6 +339,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 
 ### 17.16 Crash reports (launcher side)
 - **System:** Crash Reports and Telemetry - Keeps a report when a program crashes, asks before sending anything, and (planned) counts usage.
+  Home: `shared/CrashReports.hpp`, `shared/CrashHandler.hpp`. Entry: `shared/CrashReports.hpp`. Also called: crash handler, CrashReports, telemetry.
 - **What:** The launcher's Settings > Crash reports page: what the editor wrote when it closed unexpectedly (the latest report and a history), a switch (on by default, with a one-time notice before the first send that says the report becomes a public GitHub issue) that sends a cleaned copy to our server, a preview of exactly what would be sent, and a button that opens a prefilled GitHub issue. One parser, one scrubber and one uploader are shared with the tests.
 - **Parts:**
   - 17.16.1 Report parser and signature - `shared/CrashReports.hpp` - reads `okay_crash.txt` and `okay_crashlog.txt` (Windows SEH and Linux or macOS signal format, old and detailed): when, version, build, OS, last step, exception, module, the other header lines, backtrace, breadcrumbs, Console; a 16-hex crash signature (exception kind + the top three of the program's own frames) and a report id
@@ -355,6 +363,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 
 ### 17.17 Platform layer (`okay::platform`) and the own backend
 - **System:** Platform Layer - Our own layer between the engine and the operating system: windows, cursor, clipboard, file dialogs, folders and HTTP.
+  Home: `engine/include/okay/Platform/`, `engine/src/Platform/`, `shared/FileDialog.hpp`, `shared/PlatformClipboard.hpp`. Entry: `engine/include/okay/Platform/Platform.hpp`. Also called: own platform, OwnWin32, OwnLinux, BackendKind::Own, SDL backend, OKAY_PLATFORM_DEFAULT_OWN, Own HTTP, OwnHttp, OKAY_OWN_HTTP, NativeHttp, Painter, OwnPainter, OKAY_OWN_PAINTER. Fix: Platform code in shared/ (FileDialog, PlatformClipboard, SdlDisplays) moves behind okay/Platform (modularization plan, section 1.7).
 - **What:** The seam between the engine and the windowing / OS library, with SDL2 as the default backend and our own backend beside it (Linux: X11/GLX, ALSA and evdev through `dlopen`; Windows: Win32, compiles but untested; macOS: not written). Not the online services in the same `Platform/` folder. Timers, audio devices and game controllers of the editor, launcher and player go through it, and the player's window, event loop, keyboard and mouse state, GL context, base and save paths, locales, error boxes and logging do too (stage 2; the sdl2 backend behaves as before). The player's 2D drawing goes through `okay::platform::Painter` (stage 3): the sdl2 painter is the default and unchanged, a CPU software painter on the own backend is built but **off and not ready** (only reachable with `OKAY_PLATFORM_BACKEND=own` in the environment). The editor's and launcher's windows, event loops and drawing still call SDL directly (`SDL_Renderer`, ImGui's SDL backends), so the own backend cannot run them yet.
 - **Parts:**
   - 17.17.1 Interface - `Platform/Platform` - `Backend`, `Window`, `Event` (incl. touch), `Key` (USB HID numbering = SDL scancodes), `AudioDevice`, `Gamepad`, free timer functions; `Get(kind)`, `Default()`; run-time override `OKAY_PLATFORM_BACKEND=sdl2|own`; also `RelativeMouseState`, `ModState`, `KeyForChar`, `BasePath`, `PrefPath`, `PreferredLocales`, `ShowErrorBox`, `Window::SetIcon` / `IsFullscreen` / `RefreshRateHz`

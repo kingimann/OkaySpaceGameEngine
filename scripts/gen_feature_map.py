@@ -13,6 +13,11 @@ sub-areas, plus the duplicates found).
   python3 scripts/gen_feature_map.py            rewrite docs/FEATURE_MAP.md
   python3 scripts/gen_feature_map.py --check    exit 1 if docs/FEATURE_MAP.md is out of date
   python3 scripts/gen_feature_map.py --strict   also exit 1 on format warnings
+  python3 scripts/gen_feature_map.py --validate check the hand-written pages only (exit 1 on any format problem, such
+                                                as a missing What/Code/Status/Words line or a bad System line); writes
+                                                nothing and does not compare the generated files. This is what PRs and
+                                                scripts/precheck.sh run: the generated files are rebuilt on main by
+                                                .github/workflows/regen-docs.yml, so PRs do not commit them.
 Page format: docs/feature_map/README.md
 """
 import argparse, glob, os, re, sys
@@ -35,12 +40,16 @@ def slug(text):
 
 
 def parse_page(path, problems):
-    rel = os.path.basename(path)
+    with open(path, encoding='utf-8') as f:
+        return parse_page_text(os.path.basename(path), f.read(), problems)
+
+
+def parse_page_text(rel, text, problems):
+    """The areas of one page, from its text (rel is the page's file name)."""
     h1, areas = [], []
     area = sub = field = None
     mode = None
-    with open(path, encoding='utf-8') as f:
-        lines = f.read().split('\n')
+    lines = text.split('\n')
     for n, line in enumerate(lines, 1):
         if H1_RE.match(line) and not line.startswith('## '):
             mode = 'h1'; continue
@@ -69,6 +78,8 @@ def parse_page(path, problems):
                 st = line.strip()
                 if st.startswith('- ') and line.startswith((' ', '\t')):
                     sub['lists'].setdefault(field, []).append(st[2:].strip())
+                elif field == 'System' and sub['lists'].get(field) and line.startswith((' ', '\t')):
+                    sub['lists'][field][-1] += ' ' + st  # Home:/Entry:/... on the next line of a listed system
                 elif line.startswith((' ', '\t')):
                     sub['f'][field] = (sub['f'][field] + ' ' + st).strip()
     for a in areas:
@@ -167,8 +178,86 @@ def main_code(root, paths, limit=5):
     return ', '.join(cells[:limit]) + (f" (+{more} more)" if more > 0 else '') if cells else '-'
 
 
-def build_systems(root, areas, problems, link):
-    """docs/SYSTEMS.md from the System lines. Returns (text, number of systems)."""
+SYS_KEY_RE = re.compile(r'(?:^|\s)(Code|Home|Entry|Doc|Also called|Fix):\s')
+# Folders that hold one side of many systems by design (architecture.md): an editor window, a component wrapper.
+SIDE_HOMES = ('editor', 'okay/Components')
+BANNED_NAME_WORDS = ('own', 'new', 'improved', 'classic', 'v2')  # CLAUDE.md rule 19e; scripts/dup_lint.py checks file names
+DEFAULT_FIX = 'Pick one home folder and move the rest there (docs/engine/modularization_plan.md)'
+
+
+def parse_system(value):
+    """One System value -> {'name', 'desc', 'Code', 'Home', 'Entry', 'Doc', 'Also called', 'Fix'} (keys only when given).
+    Format: `Name - what it does Code: ... Home: `a/`, `b/` Entry: `a/X.hpp` Doc: `docs/x.md` Also called: old, other`."""
+    keys = list(SYS_KEY_RE.finditer(value))
+    head = value[:keys[0].start()] if keys else value
+    out = {}
+    for i, m in enumerate(keys):
+        end = keys[i + 1].start() if i + 1 < len(keys) else len(value)
+        out[m.group(1)] = value[m.end():end].strip().rstrip('.').strip()
+    name, _, desc = head.partition(' - ')
+    out['name'], out['desc'] = name.strip(), desc.strip()
+    return out
+
+
+def system_paths(value):
+    """`a/`, `b/X.hpp` (planned) -> [('a/', False), ('b/X.hpp', True)]: (path, planned)."""
+    res = []
+    for item in value.split(','):
+        m = re.search(r'`([^`]+)`', item)
+        if m:
+            res.append((m.group(1).strip(), 'planned' in item.lower()))
+    return res
+
+
+def split_aliases(value):
+    return [a.strip().strip('`').strip() for a in value.split(',') if a.strip().strip('`').strip() not in ('', '-')]
+
+
+def path_exists(root, p):
+    if any(c in p for c in '*?['):
+        return bool(glob.glob(os.path.join(root, p)))
+    return os.path.exists(os.path.join(root, p))
+
+
+def home_key(p):
+    """The folder a home path belongs to: okay/<Folder> for engine/include/okay/ and engine/src/, else the top folder."""
+    p = p.strip('/')
+    for pre in ('engine/include/okay/', 'engine/src/'):
+        if p.startswith(pre):
+            return 'okay/' + p[len(pre):].split('/')[0]
+    return p.split('/')[0]
+
+
+def home_keys(paths):
+    """Distinct homes of a system; an editor window or a component wrapper next to a subsystem folder is not a second home."""
+    keys = list(dict.fromkeys(home_key(p) for p in paths))
+    main = [k for k in keys if k not in SIDE_HOMES]
+    return main or keys[:1]  # an editor tool with its component: one home
+
+
+def lane_of(root, path):
+    """Owner lane of a path from docs/lanes.json (scripts/collab_lib.py); '-' when there is no lanes file."""
+    lp = os.path.join(root, 'docs', 'lanes.json')
+    if not path or not os.path.exists(lp):
+        return '-'
+    import collab_lib as L
+    lanes = L.load_lanes(root)
+    owner = L.owner_of(path, lanes)
+    return L.lane_display(owner, lanes) if owner in L.lane_defs(lanes) else owner
+
+
+def first_doc(root, sub):
+    for tok in re.findall(r'`([^`]+)`', sub['f'].get('Docs', '')):
+        tok = tok.split('#')[0].strip()
+        if tok.endswith('.md') and os.path.exists(os.path.join(root, tok)):
+            return tok
+    return ''
+
+
+def collect_systems(root, areas, problems):
+    """The system registry: {name: entry} and the order they were found. Each entry has name, desc, home (paths), entry,
+    doc, lane, aliases, fix, subs [(area, sub)], code {sub id: Code value}, dup (phrase, target, note) or None, homes
+    (distinct home folders). Used by docs/SYSTEMS.md, scripts/find_existing.py and scripts/dup_lint.py."""
     systems, order = {}, []
     for a in areas:
         for s in a['subs']:
@@ -176,33 +265,72 @@ def build_systems(root, areas, problems, link):
             if not vals:
                 problems.append(f"{s['page']}:{s['line']}: {s['id']} has no 'System' line")
             for v in vals:
-                code = None
-                if ' Code: ' in v:  # this system's own files when a sub-area holds several systems
-                    v, _, code = v.rpartition(' Code: ')
-                name, _, desc = v.partition(' - ')
-                name = name.strip()
+                f = parse_system(v)
+                name, desc = f['name'], f['desc']
                 e = systems.get(name)
                 if e is None:
-                    e = systems[name] = {'name': name, 'desc': '', 'home': None, 'subs': [], 'code': {}}
+                    e = systems[name] = {'name': name, 'desc': '', 'home': [], 'planned': set(), 'entry': '', 'doc': '',
+                                         'aliases': [], 'fix': '', 'home_sub': None, 'subs': [], 'code': {}}
                     order.append(name)
-                if code is not None:
-                    e['code'][s['id']] = code
+                if 'Code' in f:  # this system's own files when a sub-area holds several systems
+                    e['code'][s['id']] = f['Code']
                 elif len(vals) > 1:
                     problems.append(f"{s['page']}:{s['line']}: {s['id']} holds several systems; give '{name}' "
                                     "its own ' Code: `...`' list")
-                if desc.strip():
-                    if e['home'] is not None:
+                for key, attr in (('Entry', 'entry'), ('Doc', 'doc'), ('Fix', 'fix')):
+                    if key in f:
+                        val = f[key]
+                        if key != 'Fix':
+                            m = re.search(r'`([^`]+)`', val)
+                            val = m.group(1).strip() if m else val
+                        if e[attr] and e[attr] != val:
+                            problems.append(f"{s['page']}:{s['line']}: system '{name}' has two different '{key}:' values")
+                        e[attr] = e[attr] or val
+                if 'Home' in f:
+                    for p, planned in system_paths(f['Home']):
+                        if p not in e['home']:
+                            e['home'].append(p)
+                        if planned:
+                            e['planned'].add(p)
+                if 'Also called' in f:
+                    e['aliases'] += [x for x in split_aliases(f['Also called']) if x not in e['aliases']]
+                if desc:
+                    if e['home_sub'] is not None:
                         problems.append(f"{s['page']}:{s['line']}: system '{name}' is described twice "
-                                        f"({e['home'][1]['id']} and {s['id']})")
+                                        f"({e['home_sub'][1]['id']} and {s['id']})")
                     else:
-                        e['desc'], e['home'] = desc.strip(), (a, s)
+                        e['desc'], e['home_sub'] = desc, (a, s)
                 e['subs'].append((a, s))
+    owners = {}
+    for name in order:
+        for k in [name] + systems[name]['aliases']:
+            owners.setdefault(k.lower(), []).append(name)
     for name in order:
         e = systems[name]
-        if e['home'] is None:
+        if e['home_sub'] is None:
             a, s = e['subs'][0]
             problems.append(f"{s['page']}:{s['line']}: system '{name}' has no ' - what it does' line anywhere")
-            e['home'], e['desc'] = (a, s), ''
+            e['home_sub'], e['desc'] = (a, s), ''
+        hs = e['home_sub'][1]
+        where = f"{hs['page']}:{hs['line']}"
+        for key, attr in (('Home', 'home'), ('Entry', 'entry')):
+            if not e[attr]:
+                problems.append(f"{where}: system '{name}' has no '{key}:' (registry format: docs/feature_map/README.md)")
+        for p in e['home'] + ([e['entry']] if e['entry'] else []):
+            if p not in e['planned'] and not path_exists(root, p):
+                problems.append(f"{where}: system '{name}' names `{p}`, which does not exist (mark it 'planned' if it is)")
+        if e['doc'] and not path_exists(root, e['doc']):
+            problems.append(f"{where}: system '{name}' Doc `{e['doc']}` does not exist")
+        e['doc'] = e['doc'] or first_doc(root, hs)
+        for al in e['aliases']:
+            others = [n for n in owners.get(al.lower(), []) if n != name]
+            if others:
+                problems.append(f"{where}: '{al}' is a name or alias of both '{name}' and '{others[0]}'; one name, one system")
+        q = next((w for w in re.findall(r'[A-Za-z0-9]+', name) if w.lower() in BANNED_NAME_WORDS), None)
+        if q:
+            problems.append(f"{where}: system name '{name}' has '{q}' in it; one plain name per system (CLAUDE.md rule 19e)")
+        e['lane'] = lane_of(root, e['entry'] or (e['home'][0] if e['home'] else ''))
+        e['homes'] = home_keys([p for p in e['home'] if p not in e['planned']])
         e['dup'] = None
         for ph in DUP_PHRASES:
             i = e['desc'].find(' - ' + ph + ' ')
@@ -210,41 +338,83 @@ def build_systems(root, areas, problems, link):
                 rest = e['desc'][i + len(ph) + 4:]
                 target = next((n for n in sorted(systems, key=len, reverse=True) if rest.startswith(n)), None)
                 if target is None or target == name:
-                    problems.append(f"{e['home'][1]['page']}:{e['home'][1]['line']}: system '{name}' says "
-                                    f"'{ph}' but names no other system")
+                    problems.append(f"{where}: system '{name}' says '{ph}' but names no other system")
                 else:
                     e['dup'] = (ph, target, rest[len(target):].strip())
                     e['desc'] = e['desc'][:i].strip()
                 break
+    return systems, order
+
+
+def registry(root, pages=None):
+    """The system registry for other tools: a list of system entries (see collect_systems) in feature-map order.
+    pages: {file name: text} to read instead of docs/feature_map/*.md (dup_lint reads them from a git commit)."""
+    problems, areas = [], []
+    if pages is None:
+        pages = {}
+        for p in sorted(glob.glob(os.path.join(root, 'docs', 'feature_map', '*.md'))):
+            with open(p, encoding='utf-8') as fh:
+                pages[os.path.basename(p)] = fh.read()
+    for rel in sorted(pages):
+        if not rel.startswith('_') and rel != 'README.md':
+            areas += parse_page_text(rel, pages[rel], problems)
+    areas.sort(key=lambda a: a['num'])
+    systems, order = collect_systems(root, areas, [])
+    return [systems[n] for n in order]
+
+
+def paths_cell(paths, planned=()):
+    return ', '.join(f"`{p}`" + (' (planned)' if p in planned else '') for p in paths) or '-'
+
+
+def doc_cell(doc):
+    if not doc:
+        return '-'
+    return f"[{doc[5:]}]({doc[5:]})" if doc.startswith('docs/') else f"`{doc}`"
+
+
+def build_systems(root, areas, problems, link):
+    """docs/SYSTEMS.md from the System lines. Returns (text, systems)."""
+    systems, order = collect_systems(root, areas, problems)
     lines = ['# Systems', '',
              'Generated from the `System:` lines of the feature map pages by `scripts/gen_feature_map.py`; do not edit.',
              'Back to the [feature map](FEATURE_MAP.md).', '',
-             'A **system** is a named part of OkaySpace that does one job from start to end (Physics, Save Games, '
-             'OkayScript, the Launcher Updater). Each system has one official name and is made of one or more '
-             'sub-areas of the feature map. Its home area is the area of the sub-area that describes it.', '',
-             '- **Status** comes from the sub-areas\' Status lines (Works, Partial, Basic, Planned, In flight); '
-             'a system made of sub-areas in different states lists how many are in each.',
-             '- **Main code** lists its files, or the folders that hold three or more of them, largest first. '
-             'Engine headers are under `engine/include/okay/`, their code under `engine/src/`.',
+             'This is **the one list of systems** (the registry). A **system** is a named part of OkaySpace that does one '
+             'job from start to end (Physics, Save Games, OkayScript, the Launcher Updater). Each system has one official '
+             'name, one home folder, one entry file, one doc and one owner lane, and is made of one or more sub-areas of '
+             'the feature map.', '',
+             '**Before you make anything**, look here: `python3 scripts/find_existing.py <words>` searches the names and '
+             'the old names below first. If a system does the job, add on to it (CLAUDE.md rules 19c, 19d and 19e; '
+             '[docs/process/no_duplicates.md](process/no_duplicates.md)).', '',
+             '- **Home** is the folder (or files) that hold the system\'s own code; new code for it goes there. An editor '
+             'window or a component for it is not a second home.',
+             '- **Entry** is the file to open first: the main header, program or script.',
+             '- **Doc** is the one guide for it. **Lane** is who owns the entry file (`docs/lanes.json`).',
+             '- **Also called** lists old and other names it has had, frozen names (scene keys, env vars, CMake options, '
+             'class names) and the third-party part it replaces, so a search for any of them lands here. Use the official '
+             'name in new code, docs and messages (naming rule: [engine/architecture.md](engine/architecture.md#naming)).',
+             '- **Status** comes from the sub-areas\' Status lines (Works, Partial, Basic, Planned, In flight); a system made '
+             'of sub-areas in different states lists how many are in each.',
              '- **Feature map** links every sub-area that is part of it; the first one is the one that describes it.',
              '- To name or change a system, edit the `- **System:**` line of a sub-area in `docs/feature_map/` '
-             '(format in `docs/feature_map/README.md`), then run `python3 scripts/gen_feature_map.py`.', '']
+             '(format in `docs/feature_map/README.md`), check it with `python3 scripts/gen_feature_map.py --validate`; this page is rebuilt on main after the merge.', '']
     byarea = {}
     for name in order:
-        byarea.setdefault(systems[name]['home'][0]['num'], []).append(systems[name])
+        byarea.setdefault(systems[name]['home_sub'][0]['num'], []).append(systems[name])
     lines += ['## Areas', '']
     for a in areas:
         if a['num'] in byarea:
             lines.append(f"- [{a['num']}. {a['name']}](#{slug(str(a['num']) + ' ' + a['name'])}): "
-                         + ', '.join(e['name'] for e in sorted(byarea[a['num']], key=lambda e: idkey(e['home'][1]['id']))))
-    lines += ['- [Duplicates found](#duplicates-found)', '']
+                         + ', '.join(e['name'] for e in sorted(byarea[a['num']], key=lambda e: idkey(e['home_sub'][1]['id']))))
+    lines += ['- [Still duplicated](#still-duplicated)', '']
     for a in areas:
         if a['num'] not in byarea:
             continue
         lines += [f"## {a['num']}. {a['name']}", '',
-                  '| System | What it does | Status | Main code | Feature map |', '|---|---|---|---|---|']
-        for e in sorted(byarea[a['num']], key=lambda e: idkey(e['home'][1]['id'])):
-            home = e['home'][1]
+                  '| System | What it does | Home | Entry | Doc | Lane | Also called | Status | Feature map |',
+                  '|---|---|---|---|---|---|---|---|---|']
+        for e in sorted(byarea[a['num']], key=lambda e: idkey(e['home_sub'][1]['id'])):
+            home = e['home_sub'][1]
             subs = [home] + sorted((s for _, s in e['subs'] if s is not home), key=lambda s: idkey(s['id']))
             counts = {}
             for s in subs:
@@ -255,35 +425,41 @@ def build_systems(root, areas, problems, link):
             else:
                 rank = {w: i for i, w in enumerate(STATUS_WORDS)}
                 status = ', '.join(f"{n} {w}" for w, n in sorted(counts.items(), key=lambda kv: (-kv[1], rank.get(kv[0], 99), kv[0])))
-            if e['dup']:
-                status += ' (duplicate, see [below](#duplicates-found))'
-            paths = []
-            for s in subs:
-                for tok in re.findall(r'`([^`]+)`', e['code'].get(s['id'], s['f'].get('Code', ''))):
-                    for p in resolve_code(root, tok):
-                        if p not in paths:
-                            paths.append(p)
+            if e['dup'] or len(e['homes']) > 1:
+                status += ' (see [Still duplicated](#still-duplicated))'
             pages = {s['id']: s['page'] for _, s in e['subs']}
             links = ', '.join(link(s['id'], pages[s['id']], s['title']) for s in subs)
-            lines.append(f"| **{esc(e['name'])}** | {esc(e['desc'])} | {esc(status)} | {esc(main_code(root, paths))} | {links} |")
+            lines.append(f"| **{esc(e['name'])}** | {esc(e['desc'])} | {esc(paths_cell(e['home'], e['planned']))} | "
+                         f"{esc(paths_cell([e['entry']] if e['entry'] else []))} | {doc_cell(e['doc'])} | {esc(e['lane'])} | "
+                         f"{esc(', '.join(e['aliases']) or '-')} | {esc(status)} | {links} |")
         lines.append('')
-    lines += ['## Duplicates found', '',
-              'Systems that do the same job as another system. "Being merged" means a pull request is folding it into '
-              'the other one; any other row means both stay for now, for the reason given. Found while naming the '
-              'systems and from the duplicate audits on issue #422; the code is not changed here.', '',
-              '| System | Same job as | State | Feature map |', '|---|---|---|---|']
-    dups = [systems[n] for n in order if systems[n]['dup']]
-    for e in sorted(dups, key=lambda e: idkey(e['home'][1]['id'])):
-        ph, target, note = e['dup']
-        note = note.strip()
-        if note.startswith('(') and note.endswith(')'):
-            note = note[1:-1]
-        home = e['home'][1]
-        state = f"Being merged ({note})" if ph == 'being merged into' else (note[:1].upper() + note[1:] or 'Kept for now')
-        lines.append(f"| **{esc(e['name'])}** | {esc(target)} | {esc(state)} | "
-                     f"{link(home['id'], home['page'], home['title'])} |")
-    if not dups:
-        lines.append('| - | - | none recorded | - |')
+    lines += ['## Still duplicated', '',
+              'Systems that do the same job as another system, or whose code lives in more than one home folder. These '
+              'are where a second copy is most likely to be made by someone who did not find the first: read the row '
+              'before you touch either side. "Being merged" means a pull request is folding it into the other one. '
+              'Rows come from `- duplicate of` / `- being merged into` on a System line, and from a `Home:` that names '
+              'more than one folder (the fix is the `Fix:` text, or the default: pick one home). The code is not changed here.', '',
+              '| System | Problem | Fix | Owner | Feature map |', '|---|---|---|---|---|']
+    rows = []
+    for name in order:
+        e = systems[name]
+        problem, fix = [], e['fix']
+        if e['dup']:
+            ph, target, note = e['dup']
+            note = note.strip()
+            if note.startswith('(') and note.endswith(')'):
+                note = note[1:-1]
+            problem.append(f"Same job as **{target}**")
+            state = f"Being merged ({note})" if ph == 'being merged into' else (note[:1].upper() + note[1:] or 'Kept for now')
+            fix = f"{state}. {fix}" if fix else state
+        if len(e['homes']) > 1:
+            problem.append('Code in ' + str(len(e['homes'])) + ' homes: ' + ', '.join(f"`{k}`" for k in e['homes']))
+            fix = fix or DEFAULT_FIX
+        if problem:
+            home = e['home_sub'][1]
+            rows.append((idkey(home['id']), f"| **{esc(name)}** | {esc('; '.join(problem))} | {esc(fix)} | {esc(e['lane'])} | "
+                                             f"{link(home['id'], home['page'], home['title'])} |"))
+    lines += [r for _, r in sorted(rows)] or ['| - | none recorded | - | - | - |']
     lines.append('')
     return '\n'.join(lines), systems
 
@@ -316,8 +492,10 @@ def build(root):
     def link(sid, page, title):
         return f"[{sid}](feature_map/{page}#{slug(sid + ' ' + title)})"
 
-    hdr = open(os.path.join(root, 'docs', 'feature_map', '_header.md'), encoding='utf-8').read().rstrip('\n')
-    ftr = open(os.path.join(root, 'docs', 'feature_map', '_footer.md'), encoding='utf-8').read().strip('\n')
+    with open(os.path.join(root, 'docs', 'feature_map', '_header.md'), encoding='utf-8') as f:
+        hdr = f.read().rstrip('\n')
+    with open(os.path.join(root, 'docs', 'feature_map', '_footer.md'), encoding='utf-8') as f:
+        ftr = f.read().strip('\n')
     # No counts here: a count changes with every pull request and made this file conflict on every merge.
     hdr = hdr.replace('{{STATS}}', 'every area, sub-area and numbered part')
     out = [hdr, '', '## Areas', '', '| # | Area | Sub-areas |', '|---|---|---|']
@@ -368,10 +546,15 @@ def build(root):
                 pm = re.match(r'(\d+\.\d+\.\d+) (.+?)(?: - |$)', p_)
                 if pm:
                     add(pm.group(2), pm.group(1))
-    for a in areas:  # system names (docs/SYSTEMS.md) lead to every sub-area of the system
+    for a in areas:  # system names and their old names (docs/SYSTEMS.md) lead to every sub-area of the system
         for s in a['subs']:
             for v in system_entries(s):
-                add(v.split(' Code: ')[0].split(' - ')[0].strip(), s['id'])
+                add(parse_system(v)['name'], s['id'])
+    sysmap, _ = collect_systems(root, areas, [])
+    for e in sysmap.values():
+        for al in e['aliases']:
+            for _, s in e['subs']:
+                add(al, s['id'])
     az = ['# A-Z index', '',
           'Generated from the `Words` lines and titles of the detail pages by `scripts/gen_feature_map.py`; do not edit.',
           'Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).', '']
@@ -400,11 +583,19 @@ def main():
     ap.add_argument('--root', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
     ap.add_argument('--check', action='store_true')
     ap.add_argument('--strict', action='store_true')
+    ap.add_argument('--validate', action='store_true')
     a = ap.parse_args()
     root = os.path.abspath(a.root)
     outputs, problems, (na, ns, npart, nsys) = build(root)
     for p in problems:
-        print('warning:', p, file=sys.stderr)
+        print('error:' if a.validate else 'warning:', p, file=sys.stderr)
+    if a.validate:
+        if problems:
+            print(f'{len(problems)} problem(s) in docs/feature_map/*.md: fix the pages (format: docs/feature_map/README.md)',
+                  file=sys.stderr)
+            return 1
+        print(f'pages valid ({na} areas, {ns} sub-areas, {npart} parts, {nsys} systems)')
+        return 0
     stale = []
     for rel, text in outputs.items():
         target = os.path.join(root, rel)

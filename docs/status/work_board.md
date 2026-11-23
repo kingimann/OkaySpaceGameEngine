@@ -110,3 +110,14 @@ against a prebuilt library; CI is the first full build, and many branches above 
 Ubuntu) and runs it on a real Windows runner (`scripts/run_windows_tests.py`). It runs on pushes to main, nightly at 03:17 UTC
 and by hand (input `ref`). It never runs on pull requests, so it blocks no merge or release; the owner decides later whether
 to make it required. Results: the run's summary page and the `windows-tests-log` artifact.
+
+PR #1074 (`claude/windows-tests-fix-1`), last 7 of the run on 2026-11-22, fixed 2026-11-23, unverified until the next Windows run:
+engine bugs: prefabs were saved with CRLF (`SaveObjectToFile` in text mode); scenes and prefabs under a non-ASCII folder could not be
+opened or saved (narrow paths read as ANSI; `SceneSerializer` now opens UTF-8 paths as wide paths); `copy_file` with
+`overwrite_existing` fails over an existing file with MinGW (new `okay/Core/FileCopy.hpp` `CopyFileOver`, used by the project restore,
+the scene `.bak` and the save thumbnail); the asset scan asked Windows four times per file (now one `GetFileAttributesExW`).
+Test bugs: `okayui_calls` read a pointer after the call that frees it; `decimal_to_double` trusted the Windows `strtod`, which is one
+step off on some 16-digit inputs (an exact big-integer referee now decides); `obj_texture_roots` wrote the model folder with '/'
+where the readers give '\'. `ui_render_bench` and `project_panel_db` are now RUN_SERIAL, and `run_windows_tests.py` runs RUN_SERIAL
+tests alone after the others, as ctest does. Still open: about 20 other `overwrite_existing` copies (editor build, launcher) have the
+same MinGW problem.

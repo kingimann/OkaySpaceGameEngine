@@ -13,6 +13,11 @@ using namespace okay;
 namespace fs = std::filesystem;
 
 namespace {
+// The same file whichever separator built the name: the manager joins with fs::path (a backslash on Windows), the test
+// with "/".
+bool SamePath(const std::string& a, const std::string& b) {
+    return fs::path(a).lexically_normal() == fs::path(b).lexically_normal();
+}
 
 struct TempDir {
     fs::path path;
@@ -389,13 +394,13 @@ int main() {
         auto c = b.FindRecoverable();
         CHECK(c.size() == 1);
         if (!c.empty()) {
-            CHECK(c[0].path == f0 && c[0].seq == 1);
+            CHECK(SamePath(c[0].path, f0) && c[0].seq == 1);
             std::string out;
             CHECK(b.Restore(c[0], out) && out == std::string(400, 'q') + "0");
         }
         CHECK(b.SkippedFiles().size() == 3);
         auto reasonOf = [&](const std::string& path) {
-            for (const auto& s : b.SkippedFiles()) if (s.path == path) return s.reason;
+            for (const auto& s : b.SkippedFiles()) if (SamePath(s.path, path)) return s.reason;
             return std::string("<not skipped>");
         };
         CHECK(reasonOf(f3) == "truncated");

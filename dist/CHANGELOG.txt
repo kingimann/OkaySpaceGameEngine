@@ -1,5 +1,50 @@
 OkaySpace Game Engine — Changelog
 
+v2.903.4
+  Release notes, one physics engine, Windows fixes
+  - Launcher, What's New: each release now shows its real notes (before,
+    2.903.2 and 2.903.3 showed only "Release 2.903.x"), and test builds
+    are no longer listed under Earlier releases.
+  - Physics: one physics engine. Our own physics core is the engine's 3D
+    physics; the Classic, Improved and separate Engine choices are gone.
+    Joints, triggers and breakable joints were fixed on the way.
+  - Windows: scenes and prefabs in folders with letters like "ü" open
+    and save; prefabs are saved the same way on every PC; restoring a
+    project after a failed upgrade puts every file back; the Project
+    panel re-checks assets faster.
+  - Visual Script: 34 new friendly nodes for the camera, movement,
+    damage, vehicles, UI and input.
+  - Xbox: keyboard layouts follow the console's language, a splash
+    screen, and the start of microphone support (logic only).
+  - Model files: one shared bad-file test for six model readers, and a
+    fix for IQM models with a very low frame rate.
+  - Behind the scenes: the editor's and the script compilers' biggest
+    files are split into smaller files by job (no change in behaviour),
+    and generated docs are rebuilt automatically.
+
+v2.903.3
+  Our own parts on by default, textures, and fixes
+  - Our own parts are now on by default (Settings > Experimental starts
+    with every box ticked): the OkayUI screens and Inspector, the OkayUI
+    renderer and our own WAV reader. Untick a box to go back; the buttons
+    "All on" and "All off" switch them all. Encryption is unchanged.
+  - Editor: the Inspector no longer draws over the Hierarchy tab when our
+    UI is on, and the lower Inspector sections of an object with many
+    components (for example the Player) answer clicks and typing again
+    (before, only the first 8 sections took the mouse, so the editor
+    looked frozen). A frame slower than a quarter of a second writes a
+    line to okay_editor_perf.log in the Tools folder.
+  - Textures: each texture is one shared asset with its own settings
+    (filter, wrap, mipmaps, compression), correct mipmaps in every
+    renderer, live reload when the file changes, and a texture memory
+    count and budget.
+  - Navigation: Grid Pathfinding is now part of Navigation (one path
+    finder for 2D grids and 3D nav grids). Old scenes load unchanged.
+  - Scripts: OkayScript and typed OkayScript (C#) share one table for
+    the first 20 engine commands, so both behave the same.
+  - Visual Script: right-answer tests for 66 more nodes.
+  - Removed an unused second object store (the ECS World).
+
 v2.903.2
   Console and ledge grab
   - In-game console: press the ` key (the key left of 1) in a development

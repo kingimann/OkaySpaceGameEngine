@@ -4,7 +4,7 @@
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
-#include "okay/Render/Color.hpp"
+#include "okay/Math/Color.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>

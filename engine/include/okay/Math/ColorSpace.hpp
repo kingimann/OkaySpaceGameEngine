@@ -2,7 +2,7 @@
 // Colour-space helpers on `Color` (components 0..1, assumed sRGB-encoded unless a
 // function says "Linear"): sRGB <-> linear, HSV, HSL, hex parse / format, and
 // perceptually-correct blending in linear light. Alpha is never gamma-converted.
-#include "okay/Render/Color.hpp"
+#include "okay/Math/Color.hpp"
 #include <cstdint>
 #include <string>
 

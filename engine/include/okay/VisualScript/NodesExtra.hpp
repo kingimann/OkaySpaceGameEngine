@@ -9,6 +9,7 @@
 #include "okay/Core/ScriptPaths.hpp"
 #include "okay/VisualScript/VsRefs.hpp"
 #include "okay/VisualScript/VsWhole.hpp"
+#include "okay/VisualScript/VsFacing.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Core/SaveData.hpp"
@@ -894,7 +895,7 @@ struct Vec3MoreNode : VsNode {
             }
             case Op::Negate: return In(0, g, ctx).AsVec3() * -1.0f;
             case Op::Up:      return ctx.transform ? ctx.transform->Up()      : Vec3::Up;
-            case Op::Forward: return ctx.transform ? ctx.transform->Forward() : Vec3::Forward;
+            case Op::Forward: return VsFacing(ctx.transform);   // -Z, the way Look At turns it
             case Op::Right:   return ctx.transform ? ctx.transform->Right()   : Vec3::Right;
         }
         return Vec3::Zero;

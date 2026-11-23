@@ -41,6 +41,21 @@ endif()
 
 add_executable(okay-player main.cpp ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp)
 target_link_libraries(okay-player PRIVATE okay::engine ${OKAY_PLAYER_SDL_LIB})
+# Bytes of the player per engine module (docs/engine/modular_engine.md): GNU linkers (Linux, MinGW) write a link map
+# into the build folder (not shipped), and scripts/module_sizes.py turns it into module_sizes.txt beside the player,
+# which the editor's Build report shows. Without Python the size file is simply not made.
+if(NOT MSVC AND NOT APPLE)
+    set(_okay_player_map "${CMAKE_BINARY_DIR}/maps/okay-player.map")
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/maps")
+    target_link_options(okay-player PRIVATE "LINKER:-Map=${_okay_player_map}")
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_custom_command(TARGET okay-player POST_BUILD
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/scripts/module_sizes.py ${CMAKE_BINARY_DIR} ${_okay_player_map}
+                    --out $<TARGET_FILE_DIR:okay-player>/module_sizes.txt
+            VERBATIM)
+    endif()
+endif()
 okay_win_version(okay-player "OkaySpace Player" "OkaySpacePlayer.exe")
 target_include_directories(okay-player PRIVATE ${SDL2_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/shared)
 # OkayUI in the runtime: games can render the immediate-mode toolkit (and the F1

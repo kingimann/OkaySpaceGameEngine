@@ -1,6 +1,7 @@
 // The character a piece of UI belongs to, for `owner.` binding keys (see okay/Components/UIOwnerData.hpp).
 #include "okay/Components/UIOwnerData.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/Damage.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/Stats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
@@ -20,14 +21,9 @@ bool HasOwnerData(const GameObject* g) {
     return g->GetComponent<HealthStat>() || g->GetComponent<Stats>() || g->GetComponent<SurvivalStats>() ||
            g->GetComponent<NPCController>() || g->GetComponent<Character>();
 }
-// Health and its maximum from the first health model the owner has.
-bool Health(const GameObject* o, float& hp, float& maxHp) {
-    if (auto* h = o->GetComponent<HealthStat>())    { hp = h->health; maxHp = h->maxHealth; return true; }
-    if (auto* s = o->GetComponent<Stats>())         { hp = s->health; maxHp = s->maxHealth; return true; }
-    if (auto* v = o->GetComponent<SurvivalStats>()) { hp = v->health; maxHp = v->maxHealth; return true; }
-    if (auto* n = o->GetComponent<NPCController>()) { hp = n->health; maxHp = n->maxHealth; return true; }
-    return false;
-}
+// Health and its maximum: HealthOf (Damage.hpp), the holder DealDamage hurts, so the bar moves with the hits. (This
+// used to check RPG Stats before Survival Stats, the other way round from the damage; #422 audit item 21.)
+bool Health(const GameObject* o, float& hp, float& maxHp) { return HealthOf(const_cast<GameObject*>(o), hp, maxHp); }
 } // namespace
 
 GameObject* Find(const GameObject* ui) {

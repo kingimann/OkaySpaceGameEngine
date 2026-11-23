@@ -9,6 +9,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 
 ### 12.1 Canvas, anchors, flex layout, safe area
 - **System:** Game UI - Menus, buttons, health bars and other on-screen interface inside your game, built in the editor or written as markup.
+  Home: `engine/include/okay/UI/`, `engine/include/okay/Components/Canvas.hpp`. Entry: `engine/include/okay/Components/Canvas.hpp`. Also called: in-game UI, scene UI, Canvas, UIElement, HTML UI, UIRenderer.
 - **What:** Where every widget sits on screen: a Canvas scales a design size (1280x720) to the window, widgets are placed by anchor presets or a general UI Frame, and containers (layout group, flex, mask, safe area) arrange children.
 - **Parts:**
   - 12.1.1 Canvas and scaling - `Components/Canvas` - Constant Pixel Size or Scale With Screen Size, Screen Match (Match Width/Height blend, Expand, Shrink), sort order, master opacity, world-space switch

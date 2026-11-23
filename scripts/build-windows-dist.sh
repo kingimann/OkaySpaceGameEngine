@@ -146,6 +146,8 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
 [ -f "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" "$OUT_DIR/"
 [ -f "$BUILD_DIR/bin/OkayEngineOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkayEngineOkayUI.exe" "$OUT_DIR/Tools/"
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
+# Bytes of the player per engine module (made after the player links; the editor's Build report shows them).
+[ -f "$BUILD_DIR/bin/module_sizes.txt" ] && cp "$BUILD_DIR/bin/module_sizes.txt" "$OUT_DIR/Tools/"
 # okay-content: builds, signs, checks and fetches downloadable game content (docs/release/content_delivery.md); a small command-line tool.
 [ -f "$BUILD_DIR/bin/okay-content.exe" ] && cp "$BUILD_DIR/bin/okay-content.exe" "$OUT_DIR/Tools/"
 # okay-texture.exe: our texture tool (mips, atlas, compress to DDS); examples\texture shows how to use it.
@@ -203,6 +205,7 @@ own_readers
 own_wav
 perf
 physics
+physics_engine
 physics_toys
 physics_materials
 physics2d
@@ -259,6 +262,7 @@ cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/sr
 [ -s "$OUT_DIR/examples/shaders/shader_demo.okayscene" ] || { echo "error: examples/shaders/shader_demo.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/active_ragdoll/active_ragdoll.okayscene" ] || { echo "error: examples/active_ragdoll/active_ragdoll.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/ui_text/ui_text.okayscene" ] || { echo "error: examples/ui_text/ui_text.okayscene did not make it into the distribution" >&2; exit 1; }
+[ -s "$OUT_DIR/examples/physics_engine/physics_engine.okayscene" ] || { echo "error: examples/physics_engine/physics_engine.okayscene did not make it into the distribution" >&2; exit 1; }
 
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
 # every exe that initializes Steam (the launcher at top, the tools in Tools/).
@@ -301,6 +305,9 @@ examples/ example scenes to try: in the editor use File > Open and pick
                         examples\shaders\shader_demo.okayscene (custom .okayshader
                         surfaces: lava, dissolve, rim glow; edit a .okayshader
                         file and the object updates).
+                        examples\physics_engine\physics_engine.okayscene (our own physics
+                        engine: a tower, a pyramid, cone-twist limb chains, a powered
+                        arm and fast shots at a thin wall; physics_engine_5k has 5,000).
                         More in docs/try_it.md.
 
 Each .exe needs SDL2.dll in its own folder — that's why one sits beside the

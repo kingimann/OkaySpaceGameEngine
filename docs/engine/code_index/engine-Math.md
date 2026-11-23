@@ -2,11 +2,15 @@
 
 # Code index: engine-Math
 
-Back to the [code index](../code_index.md). 23 headers, 91 names.
+Back to the [code index](../code_index.md). 22 headers, 80 names.
 
 ## `engine/include/okay/Math/Bounds.hpp`
 
 - `Bounds` struct, line 15: Axis-aligned bounding box defined by a center and extents (half-size).
+
+## `engine/include/okay/Math/Color.hpp`
+
+- `Color` struct, line 9: RGBA color with components in the [0, 1] range, like 'Color'.
 
 ## `engine/include/okay/Math/ColorSpace.hpp`
 
@@ -80,25 +84,6 @@ Back to the [code index](../code_index.md). 23 headers, 91 names.
 
 - `IKFade` struct, line 10
 
-## `engine/include/okay/Math/IKMath.hpp`
-
-- `Finite` function, line 22
-- `SafeNormalize` function, line 26: 'v' as a unit vector, or 'fallback' when 'v' is too short or not finite.
-- `IsUnder` function, line 33: True when 't' sits somewhere below 'ancestor' in the hierarchy.
-- `AimBone` function, line 41: The world rotation that turns 'bone' so the child now at 'childNow' ends up on
-- `BlendWorldRotation` function, line 52: Give 't' the blend of two world rotations: 'from' at w = 0 (the animated pose),
-- `IKPoleMode` enum, line 59: Where a joint bends toward. The numbers match LimbIK's saved 'poleMode'
-- `IKPole` struct, line 71: One pole helper for every solver. Call Direction() each frame with the limb's
-- `IKGoalBlend` struct, line 113: Eases a goal across a jump instead of snapping. When its source changes (a
-
-## `engine/include/okay/Math/JointLimit.hpp`
-
-- `IKJointLimit` struct, line 22
-- `IKJointFrame` struct, line 52: The rest frame one bone's limit measures from. Capture() when the bones
-- `TwistAbout` function, line 84: Signed angle (degrees) of the twist component of 'q' about 'axis', and that
-- `ApplyLimit` function, line 98: Clamp a bone's local rotation to 'limit' around its rest frame. 'bendFree'
-- `HingeAngleDegrees` function, line 137: Signed angle, in degrees, of 'localRot' relative to 'restLocal' about a world
-
 ## `engine/include/okay/Math/LedgeHands.hpp`
 
 - `LedgeGrip` struct, line 18
@@ -113,7 +98,8 @@ Back to the [code index](../code_index.md). 23 headers, 91 names.
 
 ## `engine/include/okay/Math/Mat4.hpp`
 
-- `Mat4` struct, line 10: Column-major 4x4 matrix, modeled after 'Matrix4x4'.
+- `SetRotationFromUnitQuat` function, line 11: Fill the 3x3 rotation part of 'r' (any matrix with 'at(col, row)', such as Mat4 or the readers' double-precision
+- `Mat4` struct, line 19: Column-major 4x4 matrix, modeled after 'Matrix4x4'.
 
 ## `engine/include/okay/Math/Mathf.hpp`
 

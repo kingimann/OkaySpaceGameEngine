@@ -24,6 +24,21 @@ if(OKAY_OWN_CRYPTO)
 endif()
 add_library(okay::crypto ALIAS okay_crypto)
 
+# ---- okay::physcore: our own rigid-body physics core (docs/physics/physics_core.md) ----
+# Its own static library so its tests and benchmarks build and link in seconds without the whole engine.
+# Written only from papers and textbooks (each file says which). okay_engine links it PUBLIC.
+add_library(okay_physcore STATIC
+    src/Physics/Core/DynamicTree.cpp
+    src/Physics/Core/Shape.cpp
+    src/Physics/Core/Collide.cpp
+    src/Physics/Core/World.cpp
+    src/Physics/Core/Solver.cpp
+    src/Physics/Core/Joint.cpp
+)
+target_include_directories(okay_physcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(okay_physcore PUBLIC cxx_std_17)
+add_library(okay::physcore ALIAS okay_physcore)
+
 # OkaySpace engine library
 add_library(okay_engine
     src/Core/Application.cpp
@@ -108,6 +123,12 @@ add_library(okay_engine
     src/Components/RagdollShared.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
+    # NetworkManager's other parts (batch N1, docs/engine/modularization_plan.md): sync and messages,
+    # server authority (lag compensation, anti-cheat checks, movement), the server tick and the client tick.
+    src/Net/NetworkManagerSync.cpp
+    src/Net/NetworkManagerAuthority.cpp
+    src/Net/NetworkManagerServer.cpp
+    src/Net/NetworkManagerClient.cpp
     src/Net/NetBuildSync.cpp
     src/Net/NetQuestSync.cpp
     src/Net/NetDelta.cpp
@@ -431,7 +452,8 @@ set_source_files_properties(src/Core/BuildInfo.cpp PROPERTIES COMPILE_DEFINITION
 # files anti-cheat kicks with #270's request builder (shared/AntiCheatBackend.hpp);
 # the relay makes its hello cookies with HmacSha256 (shared/AntiCheatChecks.hpp).
 set_source_files_properties(src/Net/NetworkManager.cpp src/Net/ClockCheck.cpp src/Net/DedicatedServer.cpp
-                            src/Net/RelayServer.cpp PROPERTIES
+                            src/Net/RelayServer.cpp src/Net/NetworkManagerSync.cpp src/Net/NetworkManagerAuthority.cpp
+                            src/Net/NetworkManagerServer.cpp src/Net/NetworkManagerClient.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 
 target_compile_features(okay_engine PUBLIC cxx_std_17)
@@ -505,7 +527,7 @@ endif()
 # decides whether the network layer uses them instead of libsodium. UNREVIEWED by an
 # outside cryptographer: it must not become the default, and libsodium must not be
 # removed, before that review (docs/status/own_code_roadmap.md, docs/platform/crypto.md).
-target_link_libraries(okay_engine PUBLIC okay_crypto)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
+target_link_libraries(okay_engine PUBLIC okay_crypto okay_physcore)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
 set(OKAY_SODIUM_IN_BUILD OFF CACHE INTERNAL "libsodium was found and linked into okay_engine")   # reset on every configure; set ON below
 if(OKAY_REQUIRE_SODIUM)
     if(OKAY_OWN_CRYPTO OR OKAY_OWN_STACK_CRYPTO_TEST)
@@ -825,3 +847,17 @@ target_sources(okay_engine PRIVATE
     src/Core/LoopConsole.cpp
     src/Core/ConsoleHost.cpp
 )
+
+# The module list the engine knows at run time (okay/Modules/ModuleRegistry.hpp): the manifests embedded as text by
+# cmake/OkayModules.cmake, plus the manifest parser and the registry. Every module is on in this stage.
+okay_modules_generate("${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp")
+get_property(_okay_mod_register GLOBAL PROPERTY OKAY_MODULE_REGISTER_SOURCES)
+target_sources(okay_engine PRIVATE
+    src/Modules/ModuleManifest.cpp
+    src/Modules/ModuleRegistry.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp"
+    ${_okay_mod_register})
+
+# Which module each engine file belongs to (engine/modules/*/module.okaymodule sources=). Keep this last: it reads the
+# whole source list. Writes okay_modules.tsv in the build folder; the build itself is unchanged.
+okay_modules_group(okay_engine)

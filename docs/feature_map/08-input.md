@@ -9,6 +9,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 
 ### 8.1 Keyboard and mouse
 - **System:** Input - Reads the keyboard, mouse, gamepads and touch, and plays controller rumble.
+  Home: `engine/include/okay/Input/`, `engine/src/Input/`. Entry: `engine/include/okay/Input/Input.hpp`. Also called: keyboard, mouse, gamepad, GameInput, PlatformGamepad, rumble.
 - **What:** Polled key and mouse-button state (held, pressed this frame, released this frame), mouse position, delta and wheel, typed text, and a WASD and arrows axis, all fed by the host each frame.
 - **Parts:**
   - 8.1.1 Keys - `Input/Input` - `GetKey`, `GetKeyDown`, `GetKeyUp`, `AnyKey`, `FirstKeyDown`, `KeyFromName`, `KeyName`; one `char` per key, synthetic codes for Shift, Ctrl and arrows
@@ -51,7 +52,9 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 ### 8.3 Input actions and rebinding UI
 - **System:**
   - Input Actions - Named actions such as Jump and Fire that work with any key or button, can be rebound by the player, and support several local players. Code: `Input/ActionSet`, `Input/InputAsset`, `Input/PlayerInput`, `Input/InputRuntime`, `Input/InputBuffer`, `Input/RemapModel`, `Components/UIKeybindField`
+    Home: `engine/include/okay/Input/`, `engine/src/Input/`. Entry: `engine/include/okay/Input/ActionSet.hpp`. Also called: ActionSet, InputAsset, PlayerInput, new input system, rebinding, Input Upgrade.
   - Simple Input Actions - The older text-based action table (`InputActions`) the built-in controllers read - being merged into Input Actions (PR #1139) Code: `Input/InputActions`, `engine/src/Input/InputActions.cpp`
+    Home: `engine/include/okay/Input/InputActions.hpp`, `engine/src/Input/InputActions.cpp`. Entry: `engine/include/okay/Input/InputActions.hpp`. Also called: InputActions, old input actions, InputActions::Legacy, legacy input. Fix: After the merge, delete `Input/InputActions`.
 - **What:** Named actions ("Jump", "Move", "Fire") that read keys, mouse and controller together, with text bindings, a direction type for sticks and WASD, and player rebinding saved in Prefs.
 - **Parts:**
   - 8.3.1 Bindings - `Input/InputActions` - `InputBinding` text forms `key:`, `mouse:`, `pad:`, `keys:w,s,a,d`, `stick:`, `dpad`, `mouse:delta` with display labels

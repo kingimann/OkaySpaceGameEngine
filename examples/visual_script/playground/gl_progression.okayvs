@@ -38,3 +38,7 @@ default 105 1 12
 node 106 GlRollChance
 pos 106 40 710
 default 106 0 1
+node 107 GlSplitText
+pos 107 300 710
+default 107 0 "red,green,blue"
+default 107 1 ","

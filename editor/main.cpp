@@ -22,6 +22,7 @@
 #include "SaveShortcutModel.hpp"  // what Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S do
 #include "HierarchyContextModel.hpp"
 #include "SceneAddMenu.hpp"
+#include "ControllerInspectorUi.hpp"   // the one Inspector of the character controllers
 #include "VehicleEditorUi.hpp"      // GameObject > Vehicles and the Vehicle Controller Inspector tabs
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
@@ -795,6 +796,7 @@ int main(int argc, char** argv) {
 #include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
+#include "AnimComponentNames.hpp"  // "Animator" (the state graph) vs "Clip Player" (the simple keyframe Animator class)
 #include "EditorPlayInput.hpp"     // Play keyboard: SDL state -> the keys scripts read
 
 // Holding D in EditorState::Play, through CollectEditorPlayKeys, walks a Move
@@ -958,6 +960,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "InputDebugger.hpp"       // View > Panels > Input: live keys, axes, actions, events, curves
 #include "InputActionsWindow.hpp" // View > Editors & Tools > Input Actions: author a .okayinput asset, live view
 #include "TemplateTable.hpp"        // template title -> scene builder (New Project)
+#include "ModulesPanelUI.hpp"      // Project Settings > Modules: which engine modules the project uses
 #include "AutoPerf.hpp"           // Auto for anti-aliasing and VSync (best value for this PC; tested)
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
@@ -15787,6 +15790,21 @@ void DrawFileDialogs(EditorState& ed) {
                     }
                     ImGui::EndTabItem();
                 }
+                if (!RP.modules.empty() && ImGui::BeginTabItem("Modules")) {   // the engine modules in the player (docs/engine/modular_engine.md)
+                    ImGui::TextDisabled("Every module ships in this version; leaving modules out comes later.");
+                    if (ImGui::BeginTable("bymodule", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(460, 200))) {
+                        ImGui::TableSetupColumn("Module", ImGuiTableColumnFlags_WidthStretch, 3.0f); ImGui::TableSetupColumn("In project"); ImGui::TableSetupColumn("Size");
+                        ImGui::TableHeadersRow();
+                        for (const auto& m : RP.modules) {
+                            ImGui::TableNextRow();
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(m.title.c_str());
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(m.projectOn ? "on" : "off (still shipped)");
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(RP.moduleSizesKnown ? bp::HumanBytes(m.bytes).c_str() : "-");
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndTabItem();
+                }
                 if (ImGui::BeginTabItem("Files")) {
                     if (ImGui::BeginTable("breakdown", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(460, 200))) {
                         ImGui::TableSetupColumn("File", ImGuiTableColumnFlags_WidthStretch, 3.0f);
@@ -16057,8 +16075,13 @@ struct NewProjectForm {
     std::string lastKey;
     okayproj::Plan plan;
     Uint32 planAt = 0;
+    std::string modules;          // engine modules the new project uses ("" = every module; editor/ModulesPanelUI.hpp)
+    bool modulesTouched = false;  // the person changed them: a template change no longer does
+    int modulesTpl = -1;          // the template they were last matched to
+    std::string modulesNote;
 };
 static NewProjectForm g_npForm;
+static std::string g_newProjectModules;   // the form's modules, for the project files written on the next frame
 
 static const okayproj::Plan& NewProjectPlan(NewProjectForm& f, bool force = false) {
     const std::string key = std::string(f.name) + "\n" + f.loc;
@@ -16151,7 +16174,7 @@ static bool DrawNewProjectForm(NewProjectForm& f) {
     ImGui::TextDisabled("TEMPLATE");
     // The list takes what is left of the window (the dialog never taller than the editor window, or it would
     // spill into an OS window of its own), at most 178 px and at least 72; the Create row below needs ~64.
-    const float listH = std::min(178.0f, std::max(72.0f, ImGui::GetMainViewport()->Size.y - 24.0f - ImGui::GetCursorPosY() - 64.0f));
+    const float listH = std::min(178.0f, std::max(72.0f, ImGui::GetMainViewport()->Size.y - 24.0f - ImGui::GetCursorPosY() - 64.0f - 26.0f));   // 26: the Modules line
     ImGui::BeginChild("##nptpl", ImVec2(0, listH), ImGuiChildFlags_Borders);
     {
         const auto& all = okayproj::Templates();
@@ -16172,6 +16195,7 @@ static bool DrawNewProjectForm(NewProjectForm& f) {
         }
     }
     ImGui::EndChild();
+    okaymod::DrawNewProjectModules(f.modules, f.modulesTouched, f.modulesTpl, f.tpl, okayproj::Templates()[(std::size_t)f.tpl].title, f.modulesNote);
 
     ImGui::Dummy(ImVec2(0, 6));
     const bool can = plan.ok();
@@ -16207,6 +16231,7 @@ static void DrawNewProjectDialog(EditorState& ed) {
     if (create) {
         const std::string root = g_npForm.plan.root.string();
         const std::string tpl = okayproj::Templates()[(std::size_t)g_npForm.tpl].title;
+        g_newProjectModules = g_npForm.modules;
         ImGui::CloseCurrentPopup();
         RunAfterSavePrompt(ed, "creating the new project", [root, tpl] { g_newProjectRoot = root; g_newProjectTemplate = tpl; });
     }
@@ -16279,6 +16304,7 @@ void DrawProjectGate(EditorState& ed) {
     if (DrawNewProjectForm(g_npForm)) {
         g_newProjectRoot = g_npForm.plan.root.string();
         g_newProjectTemplate = okayproj::Templates()[(std::size_t)g_npForm.tpl].title;
+        g_newProjectModules = g_npForm.modules;
     }
     ImGui::SameLine();
     if (ImGui::Button("Quit", ImVec2(100, 32))) g_quitRequested = true;
@@ -16334,10 +16360,13 @@ void DrawNewProjectPopup(EditorState& ed) {
     const std::string folder = plan.folder;
     const std::string version = g_newProjectVersion;
     const int gpu = g_newProjectGpu;
+    const std::string modules = g_newProjectModules;   // "" (every module) when the launcher made the project
     g_newProjectVersion.clear();
     g_newProjectGpu = -1;
-    auto writeFiles = [&folder, version, gpu](const std::string& rt, std::string& err) {
+    g_newProjectModules.clear();
+    auto writeFiles = [&folder, version, gpu, modules](const std::string& rt, std::string& err) {
         ProjectSettings settings;
+        settings.modules = modules;
         if (!version.empty() && okayproj::CheckProjectVersion(version).empty())
             std::snprintf(settings.version, sizeof(settings.version), "%s", version.c_str());
         if (!okayproj::WriteTextAtomic(ProjectSettingsFile(rt), StampedNewProjectText(WriteProjectSettings(settings, "")), &err)) return false;   // stamped with this version from the first moment
@@ -16615,37 +16644,15 @@ void DrawProjectSettings(EditorState& ed) {
                 ImGui::SetTooltip("Draw each body part way between its last two physics steps,\n"
                                   "so motion stays smooth when the frame rate and the step rate differ.");
             ImGui::Separator();
-            ImGui::TextDisabled("Physics quality of the open scene (saved with the scene)");
+            ImGui::TextDisabled("Physics solver of the open scene (saved with the scene)");
             {
                 auto& p3 = ed.scene().physics3D();
-                int q = (int)p3.quality;
-                // Short names in the box (the long ones were cut off at "fas"); what each does is the line below.
-                const char* qn[] = {"Classic", "Improved"};
-                ImGui::SetNextItemWidth(ImGui::CalcTextSize("Improved").x + ImGui::GetStyle().FramePadding.x * 4.0f + ImGui::GetFrameHeight());
-                if (ImGui::Combo("Quality##psq", &q, qn, 2)) {
-                    p3.quality = q == 1 ? okay::PhysicsQuality::Improved : okay::PhysicsQuality::Classic;
-                    ed.scene().physics().quality = p3.quality;
-                    ed.dirty = true;
+                int it = p3.solverIterations;
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) {
+                    p3.solverIterations = it; ed.scene().physics().solverIterations = it; ed.dirty = true;
                 }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Classic plays old scenes exactly as they always played.\n"
-                                      "Improved solves contacts several times a step and remembers them, so crates stack and stay put,\n"
-                                      "resting bodies sleep together, fast bodies cannot pass through thin walls and balls roll to a stop.\n"
-                                      "New scenes start Improved. The setting is part of the scene file.");
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-                ImGui::TextWrapped("%s", p3.quality == okay::PhysicsQuality::Improved ? "Stacks stand, bodies sleep, fast bodies stop."
-                                                                                     : "The original step, for old scenes.");
-                ImGui::PopStyleColor();
-                if (p3.quality == okay::PhysicsQuality::Improved) {
-                    int it = p3.solverIterations;
-                    ImGui::SetNextItemWidth(160);
-                    if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) {
-                        p3.solverIterations = it; ed.scene().physics().solverIterations = it; ed.dirty = true;
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many times the contact solver repeats each step. 10 is enough for towers up to about 6 crates;\nraise it for taller stacks (costs time).");
-                    if (ImGui::Checkbox("Catch fast bodies automatically##psq", &p3.autoContinuous)) ed.dirty = true;
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A body that moves farther in one step than its own size is checked along its path against walls and floors,\nso a bullet cannot pass through a thin wall without ticking Continuous Collision.");
-                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many times the solver repeats each step: more holds tall stacks and long joint chains stiffer\n(costs time). 10 suits most scenes.");
             }
             if (ImGui::Button("Apply to current scene##phys")) {
                 ed.scene().physics().gravity = {g_project.gravity2D[0], g_project.gravity2D[1]};
@@ -16665,6 +16672,10 @@ void DrawProjectSettings(EditorState& ed) {
             }
         }
         if (ImGui::CollapsingHeader("Tags and Layers")) DrawTagsAndLayersSettings(ed);
+        if (ImGui::CollapsingHeader("Modules")) {   // engine modules this project uses (editor/ModulesPanelUI.hpp)
+            static std::string modulesNote;
+            if (okaymod::DrawModulesSettings(g_project.modules, ed.scene(), modulesNote)) SaveProjectSettings();
+        }
         if (ImGui::CollapsingHeader("Loading screen")) {
             ImGui::TextDisabled("Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.");
             const auto pngFilt = okay::filedialog::Filters("PNG image", {"*.png"});
@@ -21615,8 +21626,8 @@ static void DrawAnimationEditor(EditorState& ed) {
     StopModelScenePreview(ed);
     Animator* an = go->GetComponent<Animator>();
     if (!an) {
-        ImGui::TextDisabled("'%s' has no Animator.", go->name.c_str());
-        if (ImGui::Button("Add Animator")) { go->AddComponent<Animator>(); ed.dirty = true; }
+        ImGui::TextDisabled("'%s' has no Clip Player.", go->name.c_str());
+        if (ImGui::Button("Add Clip Player")) { go->AddComponent<Animator>(); ed.dirty = true; }
         ImGui::TextDisabled("Tip: to animate a Character, select it (or any of its parts) - its pose and clip tools open here.");
         ImGui::End(); return;
     }
@@ -24360,6 +24371,9 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
 // A Player Controller's first-person, third-person and toggle sections: parts
 // of the one panel. They draw only while that panel is open, and have no
 // Remove of their own. A bare controller (no Player Controller) keeps its header.
+// The old every-field panels of the First / Third Person parts. Off: the Player Controller (or a bare controller) shows
+// the one plain Inspector from ControllerInspectorUi.hpp instead. The old code below stays until it is deleted.
+static constexpr bool kOldControllerPanels = false;
 static bool sPlayerControllerOpen = false;
 static okay::PlayerController* sPendingViewModeCtrl = nullptr;
 static int sPendingViewMode = 0;
@@ -24367,7 +24381,7 @@ static bool PlayerPartHeader(GameObject* go, const char* label, okay::Component*
                              bool* owned) {
     *owned = okay::PlayerController::Of(go) != nullptr;
     if (!*owned) return CompHeader(label, part, toRemove);
-    if (!sPlayerControllerOpen) return false;
+    if (!sPlayerControllerOpen || !kOldControllerPanels) return false;   // the parts sit behind the one Player Controller entry
     ImGui::PushID(part);
     ImGui::SetNextItemOpen(true, ImGuiCond_Once);
     const bool open = ImGui::CollapsingHeader(label);
@@ -30268,18 +30282,50 @@ static bool DrawVehicleWithOkayUI(EditorState& ed, VehicleController* v, okay::C
 
 static bool DrawJoint3DWithOkayUI(EditorState& ed, Joint3D* jt, okay::Component*& toRemove) {
     using namespace okaypanels;
-    static const char* const kModes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)", "Slider (prismatic)"};
+    static const char* const kModes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)", "Slider (prismatic)",
+                                         "Ball", "Cone Twist (ragdoll)"};
     InspFieldList L;
-    L.rows.reserve(28);
+    L.rows.reserve(40);
     L.Note("Constrains this body to an anchor or another body.", false, true);
-    L.Combo("Mode##jt", &jt->mode, kModes, 5);
+    L.Combo("Mode##jt", &jt->mode, kModes, 7);
     L.Text("Connected Body##jt", &jt->connectedBody);
     L.Tip("Name of another object with a Rigidbody3D. Leave blank to anchor to a fixed world point below.");
     float a[3] = {jt->anchor.x, jt->anchor.y, jt->anchor.z}, ax[3] = {jt->axis.x, jt->axis.y, jt->axis.z};
-    int kAnchor = -1, kAxis = -1;
-    if (jt->connectedBody.empty()) { kAnchor = L.Drag("Anchor##jt", a, 3, 0.1f); L.TipLookup(); }
+    float dt3[3] = {jt->driveTarget.x, jt->driveTarget.y, jt->driveTarget.z};
+    int kAnchor = -1, kAxis = -1, kDrive = -1;
+    const bool ball = jt->mode == (int)Joint3D::Mode::Ball, cone = jt->mode == (int)Joint3D::Mode::ConeTwist;
+    if (jt->connectedBody.empty() || ball || cone) {
+        kAnchor = L.Drag("Anchor##jt", a, 3, 0.1f);
+        if (ball || cone) L.Tip("The world point the joint turns about (taken when Play starts).");
+        else L.TipLookup();
+    }
     const bool hinge = jt->mode == (int)Joint3D::Mode::Hinge, slider = jt->mode == (int)Joint3D::Mode::Slider;
-    if (jt->mode != (int)Joint3D::Mode::Pin && !hinge && !slider) {
+    if (ball || cone) {
+        L.Note("Turns about the anchor; a powered joint for ragdolls with Use Drive. Needs Freeze Rotation OFF.", false, true);
+        if (cone) {
+            kAxis = L.Drag("Twist Axis##jtc", ax, 3, 0.05f); L.Tip("The bone's long axis (world space, taken when Play starts).");
+            L.Drag("Swing Limit 1 (deg)##jtc", &jt->swingLimit1, 1, 1.0f, 0.0f, 180.0f); L.TipLookup();
+            L.Drag("Swing Limit 2 (deg)##jtc", &jt->swingLimit2, 1, 1.0f, 0.0f, 180.0f); L.TipLookup();
+            L.Check("Limit Twist##jtc", &jt->useLimits);
+            if (jt->useLimits) {
+                L.Drag("Min Twist (deg)##jtc", &jt->minAngle, 1, 1.0f, -180.0f, 180.0f);
+                L.Drag("Max Twist (deg)##jtc", &jt->maxAngle, 1, 1.0f, -180.0f, 180.0f);
+            }
+        }
+        L.Check("Use Drive##jtc", &jt->useDrive); L.TipLookup();
+        if (jt->useDrive) {
+            kDrive = L.Drag("Drive Target (deg)##jtc", dt3, 3, 1.0f);
+            L.Tip("The turn to hold, from the start pose, in degrees (x = twist). Scripts change it every frame for an active ragdoll.");
+            L.Drag("Drive Frequency (Hz)##jtc", &jt->driveFrequency, 1, 0.1f, 0.0f, 60.0f); L.TipLookup();
+            L.Drag("Drive Damping Ratio##jtc", &jt->driveDampingRatio, 1, 0.05f, 0.0f, 10.0f); L.TipLookup();
+            if (jt->driveFrequency <= 0.0f) {
+                L.Drag("Drive Stiffness##jtc", &jt->driveStiffness, 1, 1.0f, 0.0f, 1e6f); L.TipLookup();
+                L.Drag("Drive Damping##jtc", &jt->driveDamping, 1, 0.1f, 0.0f, 1e5f); L.TipLookup();
+            }
+            L.Drag("Drive Max Torque##jtc", &jt->driveMaxTorque, 1, 1.0f, 0.0f, 1e6f); L.TipLookup();
+        }
+    }
+    if (jt->mode != (int)Joint3D::Mode::Pin && !hinge && !slider && !ball && !cone) {
         L.Check("Auto distance##jt", &jt->autoConfigure);
         if (!jt->autoConfigure) L.Drag("Distance##jt", &jt->distance, 1, 0.05f, 0.0f, 1000.0f);
     }
@@ -30322,6 +30368,7 @@ static bool DrawJoint3DWithOkayUI(EditorState& ed, Joint3D* jt, okay::Component*
     if (L.AnyChanged()) ed.dirty = true;
     if (kAnchor >= 0 && L[kAnchor].changed) jt->anchor = {a[0], a[1], a[2]};
     if (kAxis >= 0 && L[kAxis].changed) jt->axis = {ax[0], ax[1], ax[2]};
+    if (kDrive >= 0 && L[kDrive].changed) jt->driveTarget = {dt3[0], dt3[1], dt3[2]};
     if (L[kRemove].clicked) toRemove = jt;
     return true;
 }
@@ -34557,8 +34604,20 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##ma")) toRemove = ma;
         }
     }
+    // A player has two animator machines on purpose: the walk / jump graph (layer 0) and a small upper-body layer that
+    // plays a flinch when the player is hit. The second one gets a one-line explanation instead of a full panel.
+    if (auto* hl = dynamic_cast<AnimStateMachine*>(curComp); hl && hl->layer > 0 && hl->maskBone == "Torso" && go->GetComponent<Character>()) {
+        if (CompHeader("Hit reaction (upper body)", hl, &toRemove)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.7f, 0.75f, 1.0f));
+            ImGui::TextWrapped("Plays a short flinch on the upper body when the player is hit. It is not a second walk animation: the Animator above does the walking, running and jumping.");
+            ImGui::PopStyleColor();
+        }
+    } else
     if (auto* sm = dynamic_cast<AnimStateMachine*>(curComp)) {
-        if (CompHeader("Animator", sm, &toRemove) && !(UseOkayUIInspector() && DrawAnimStateMachineWithOkayUI(ed, go, sm))) {   // OkayUI's with the preview switch (section 18)
+        if (CompHeader(okay::editor::vsed::kAnimGraphTitle, sm, &toRemove) && !(UseOkayUIInspector() && DrawAnimStateMachineWithOkayUI(ed, go, sm))) {   // OkayUI's with the preview switch (section 18)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.7f, 0.75f, 1.0f));
+            ImGui::TextWrapped("Picks the walk, run, jump and crouch animation from how the player moves.");
+            ImGui::PopStyleColor();
             if (ImGui::Button("Open Animator Graph##asm")) g_showAnimatorGraph = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Visual node editor: drag states around, draw transitions,\nwatch the active state light up in Play mode.");
             auto* ma = go->GetComponent<ModelAnimator>();
@@ -39782,7 +39841,19 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##spwn")) toRemove = c;
         }
     }
-    if (auto* fp = dynamic_cast<FirstPersonController*>(curComp)) {
+    if (auto* fp = dynamic_cast<FirstPersonController*>(curComp); fp && !PlayerController::Of(go)) {
+        if (CompHeader("First-person settings", fp, &toRemove)) {
+            CharacterModelTools(ed, go, "fp");
+            oked::ctrlui::DrawSimple(ed, *fp, (ThirdPersonController*)nullptr, "fps");
+        }
+    }
+    if (auto* tp = dynamic_cast<ThirdPersonController*>(curComp); tp && !PlayerController::Of(go)) {
+        if (CompHeader("Third-person settings", tp, &toRemove)) {
+            CharacterModelTools(ed, go, "tp");
+            oked::ctrlui::DrawSimple(ed, *tp, (FirstPersonController*)nullptr, "tps");
+        }
+    }
+    if (auto* fp = kOldControllerPanels ? dynamic_cast<FirstPersonController*>(curComp) : nullptr) {
         bool owned = false;
         if (PlayerPartHeader(go, "First-person settings", fp, &toRemove, &owned)) {
             if (!owned) CharacterModelTools(ed, go, "fp");
@@ -40032,7 +40103,7 @@ void DrawInspector(EditorState& ed) {
             if (!owned && ImGui::SmallButton("Remove##fp")) toRemove = fp;
         }
     }
-    if (auto* tp = dynamic_cast<ThirdPersonController*>(curComp)) {
+    if (auto* tp = kOldControllerPanels ? dynamic_cast<ThirdPersonController*>(curComp) : nullptr) {
         bool owned = false;
         if (PlayerPartHeader(go, "Third-person settings", tp, &toRemove, &owned)) {
             if (!owned) CharacterModelTools(ed, go, "tp");
@@ -40346,6 +40417,9 @@ void DrawInspector(EditorState& ed) {
         sPlayerControllerOpen = CompHeader("Player Controller", pc, &toRemove);
         pc->SyncEnabled();
         if (sPlayerControllerOpen && !(UseOkayUIInspector() && DrawPlayerControllerWithOkayUI(ed, go, pc))) {   // OkayUI's with the preview switch (section 18)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.7f, 0.75f, 1.0f));
+            ImGui::TextWrapped("Moves and turns the player with keyboard, mouse or gamepad. Choose a first person view, a third person view, or both with a key to switch.");
+            ImGui::PopStyleColor();
             int mode = (int)pc->viewMode();
             const char* modes[] = {"First Person only", "Third Person only", "Both"};
             if (ImGui::Combo("View##pc", &mode, modes, 3) && mode != (int)pc->viewMode()) {
@@ -40363,6 +40437,8 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             CharacterModelTools(ed, go, "pc");
+            if (pc->third()) oked::ctrlui::DrawSimple(ed, *pc->third(), pc->first(), "pcs");
+            else if (pc->first()) oked::ctrlui::DrawSimple(ed, *pc->first(), (ThirdPersonController*)nullptr, "pcs");
             if (pc->viewMode() != PlayerController::ViewMode::Both)
                 ImGui::TextDisabled("%s only. Pick Both to let the player switch.",
                                     pc->viewMode() == PlayerController::ViewMode::First ? "First person" : "Third person");
@@ -44469,7 +44545,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* anm = dynamic_cast<Animator*>(curComp)) {
-        if (CompHeader("Animator", anm, &toRemove) && !(UseOkayUIInspector() && DrawAnimatorWithOkayUI(ed, go, anm, toRemove))) {   // OkayUI's with the preview switch (section 16)
+        if (CompHeader(okay::editor::vsed::kClipPlayerTitle, anm, &toRemove) && !(UseOkayUIInspector() && DrawAnimatorWithOkayUI(ed, go, anm, toRemove))) {   // OkayUI's with the preview switch (section 16)
             char cn[64]; std::strncpy(cn, anm->clip.name.c_str(), sizeof(cn) - 1); cn[sizeof(cn)-1] = '\0';
             if (ImGui::InputText("Clip##anm", cn, sizeof(cn))) { anm->clip.name = cn; ed.dirty = true; }
             oked::FieldTip("Clip##anm");
@@ -44784,7 +44860,7 @@ void DrawInspector(EditorState& ed) {
 
         { bool o = BeginCat("Animation");
           if (o) {
-            if (item(!go->GetComponent<Animator>(), "Animator (keyframes)")) { go->AddComponent<Animator>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Animator>(), "Clip Player (keyframes)")) { go->AddComponent<Animator>(); ed.dirty = true; }
             if (item(!go->GetComponent<AnimStateMachine>(), "Animator (states + transitions)")) { go->AddComponent<AnimStateMachine>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<AimIK>(), "Aim IK (point a bone at a target)")) { go->AddComponent<AimIK>(); ed.dirty = true; }
@@ -44849,7 +44925,7 @@ void DrawInspector(EditorState& ed) {
           if (o) {
             if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Buoyancy>(), "Buoyancy (floats on Water)")) { ed.PushUndo(); go->AddComponent<Buoyancy>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); if (!go->GetComponent<Collider3D>()) { go->AddComponent<BoxCollider3D>(); FitColliders(go); } ed.dirty = true; }
-            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge/slider)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge/slider/ball/cone twist)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }
@@ -50087,7 +50163,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Moving a collider's centre by a world-space step: Classic keeps the offset in world units, Improved in the object's own.
     auto shiftColliderOffset = [&](Collider3D* col, const Vec3& worldMove) {
         Transform* tr = col->transform;
-        if (tr && ed.scene().physics3D().quality == PhysicsQuality::Improved) {
+        if (tr) {
             Vec3 loc = tr->Rotation().Inverse() * worldMove; Vec3 ls = tr->LossyScale();
             col->offset = col->offset + Vec3{loc.x / (Mathf::Abs(ls.x) > 1e-4f ? ls.x : 1.0f), loc.y / (Mathf::Abs(ls.y) > 1e-4f ? ls.y : 1.0f), loc.z / (Mathf::Abs(ls.z) > 1e-4f ? ls.z : 1.0f)};
         } else col->offset = col->offset + worldMove;
@@ -53745,8 +53821,10 @@ int main(int argc, char** argv) {
         if (n == "Rigidbody3D") return go->GetComponent<Rigidbody3D>() != nullptr;
         if (n == "Rigidbody2D") return go->GetComponent<Rigidbody2D>() != nullptr;
         if (n == "Rigidbody") return go->GetComponent<Rigidbody3D>() || go->GetComponent<Rigidbody2D>();
-        if (n == "AnimStateMachine") return go->GetComponent<AnimStateMachine>() != nullptr;
-        if (n == "Animator") return go->GetComponent<Animator>() != nullptr;
+        // The animation ids ("Animator", "AnimStateMachine", "ClipPlayer", "Character", "ModelAnimator") are checked
+        // where their nodes look at run time (editor/AnimComponentNames.hpp).
+        if (okay::editor::vsed::VsAnimComponentFor(id) != okay::editor::vsed::VsAnimComponent::None)
+            return okay::editor::vsed::VsAnimHas(go, okay::editor::vsed::VsAnimComponentFor(id));
         if (n == "NavMeshAgent") return go->GetComponent<NavMeshAgent>() != nullptr;
         if (n == "Inventory") return go->GetComponent<Inventory>() != nullptr;
         if (n == "Equipment") return go->GetComponent<Equipment>() != nullptr;
@@ -53773,8 +53851,11 @@ int main(int argc, char** argv) {
         auto add = [&](auto* p) { if (p) { ConsoleLog(std::string("Added ") + id); return true; } return false; };
         if (n == "Rigidbody3D" || n == "Rigidbody") return add(go->AddComponent<Rigidbody3D>());
         if (n == "Rigidbody2D") return add(go->AddComponent<Rigidbody2D>());
-        if (n == "AnimStateMachine") return add(go->AddComponent<AnimStateMachine>());
-        if (n == "Animator") return add(go->AddComponent<Animator>());
+        if (okay::editor::vsed::VsAnimComponentFor(id) != okay::editor::vsed::VsAnimComponent::None) {   // AnimComponentNames.hpp
+            const bool ok = okay::editor::vsed::VsAnimAdd(go, okay::editor::vsed::VsAnimComponentFor(id));
+            if (ok) ConsoleLog(std::string("Added ") + id);
+            return ok;
+        }
         if (n == "NavMeshAgent") return add(go->AddComponent<NavMeshAgent>());
         if (n == "Inventory") return add(go->AddComponent<Inventory>());
         if (n == "Equipment") return add(go->AddComponent<Equipment>());

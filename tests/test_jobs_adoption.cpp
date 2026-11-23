@@ -7,6 +7,7 @@
 // `test_jobs_adoption bench [bodies]` prints step times for a large scene instead
 // (serial vs workers); it is not part of ctest.
 #include "test_framework.hpp"
+#include "physics_test_scenes.hpp"
 #include <Okay.hpp>
 #include "okay/Core/AssetManager.hpp"
 #include "okay/Core/Jobs.hpp"
@@ -27,42 +28,13 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// Raw bytes of every value that describes a pose, so the comparison is bit-for-bit.
-template <class T> void Put(std::vector<unsigned char>& out, const T& v) {
-    const unsigned char* p = reinterpret_cast<const unsigned char*>(&v);
-    out.insert(out.end(), p, p + sizeof(T));
-}
+using okaytest::PutBytes;
+template <class T> void Put(std::vector<unsigned char>& out, const T& v) { PutBytes(out, v); }
 
 // ---- 3D -----------------------------------------------------------------------------
 
 void Build3D(Scene& s, int bodies, bool improved) {
-    s.physics3D().quality = improved ? PhysicsQuality::Improved : PhysicsQuality::Classic;
-    GameObject* floor = s.CreateGameObject("Floor");
-    floor->transform->localPosition = {0, -0.5f, 0};
-    floor->AddComponent<BoxCollider3D>()->size = {200, 1, 200};
-    floor->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
-    const int side = (int)std::ceil(std::sqrt((double)bodies / 4.0));
-    for (int i = 0; i < bodies; ++i) {
-        GameObject* g = s.CreateGameObject("B" + std::to_string(i));
-        const int layer = i / (side * side), cell = i % (side * side);
-        const float x = (float)(cell % side) * 1.05f - side * 0.5f, z = (float)(cell / side) * 1.05f - side * 0.5f;
-        g->transform->localPosition = {x + 0.07f * (float)(i % 3), 0.6f + (float)layer * 1.1f, z};
-        g->transform->localRotation = Quat::Euler(0.0f, (float)(i * 13 % 90), (float)(i * 7 % 20));
-        switch (i % 5) {
-            case 0: g->AddComponent<BoxCollider3D>()->size = {0.9f, 0.9f, 0.9f}; break;
-            case 1: g->AddComponent<SphereCollider3D>()->radius = 0.45f; break;
-            case 2: { auto* c = g->AddComponent<CapsuleCollider3D>(); c->radius = 0.3f; c->height = 1.0f; break; }
-            case 3: { auto* c = g->AddComponent<CylinderCollider3D>(); c->radius = 0.4f; c->height = 0.8f; break; }
-            default: {   // a compound (bounds done on the calling thread: it caches its parsed parts)
-                auto* c = g->AddComponent<CompoundCollider3D>();
-                c->AddBox({0, 0, 0}, {0.8f, 0.3f, 0.8f});
-                c->AddSphere({0, 0.3f, 0}, 0.25f);
-                break;
-            }
-        }
-        auto* rb = g->AddComponent<Rigidbody3D>();
-        rb->velocity = {0.1f * (float)(i % 7) - 0.3f, 0.0f, 0.05f * (float)(i % 5)};
-    }
+    okaytest::BuildMixedBodies(s, bodies, improved ? PhysicsQuality::Improved : PhysicsQuality::Classic);
 }
 
 std::vector<unsigned char> Run3D(JobSystem& js, int bodies, bool improved, int frames) {

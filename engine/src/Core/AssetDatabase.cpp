@@ -11,6 +11,15 @@
 #include <random>
 #include <set>
 #include <sstream>
+#ifdef _WIN32
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#endif
 
 namespace okay {
 
@@ -43,6 +52,48 @@ std::int64_t EpochSeconds(fs::file_time_type t) {
     using namespace std::chrono;
     const auto d = duration_cast<seconds>(t - fs::file_time_type::clock::now());
     return static_cast<std::int64_t>(duration_cast<seconds>(system_clock::now().time_since_epoch()).count()) + d.count();
+}
+
+// What the scan needs to know about one file: folder or file, size, and its modification time (raw ticks to notice a
+// change between scans, epoch seconds for the record).
+struct FileFacts { bool dir = false, file = false, timeOk = false; std::int64_t size = 0, stamp = 0, mtime = 0; };
+
+#ifdef _WIN32
+// One GetFileAttributesExW call gives all of it. Through std::filesystem the MinGW library asked Windows four times per file
+// (is_directory, is_regular_file, file_size and last_write_time each stat the file: its directory entries carry no type),
+// so re-checking an unchanged 5,000-asset project took over half a second on the Windows test runner. A link or other
+// reparse point is answered through std::filesystem (it follows the link); false = ask std::filesystem.
+bool WinFacts(const fs::path& p, FileFacts& f) {
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &d)) return false;
+    if (d.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) return false;
+    f.dir = (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    f.file = !f.dir && !(d.dwFileAttributes & FILE_ATTRIBUTE_DEVICE);
+    f.size = f.file ? static_cast<std::int64_t>((static_cast<std::uint64_t>(d.nFileSizeHigh) << 32) | d.nFileSizeLow) : 0;
+    const std::uint64_t ticks = (static_cast<std::uint64_t>(d.ftLastWriteTime.dwHighDateTime) << 32) | d.ftLastWriteTime.dwLowDateTime;
+    f.stamp = static_cast<std::int64_t>(ticks);                                             // 100 ns since 1601
+    f.mtime = static_cast<std::int64_t>((ticks - 116444736000000000ull) / 10000000ull);    // seconds since 1970 (UTC)
+    f.timeOk = true;
+    return true;
+}
+#endif
+
+// The facts for a directory entry the scan walked to.
+FileFacts FactsOf(const fs::directory_entry& e) {
+    FileFacts f;
+#ifdef _WIN32
+    if (WinFacts(e.path(), f)) return f;
+#endif
+    std::error_code e2;
+    f.dir = e.is_directory(e2);
+    if (f.dir) return f;
+    f.file = e.is_regular_file(e2);
+    if (!f.file) return f;
+    const auto sz = e.file_size(e2);
+    f.size = e2 ? 0 : static_cast<std::int64_t>(sz);
+    const auto ft = e.last_write_time(e2);
+    if (!e2) { f.stamp = static_cast<std::int64_t>(ft.time_since_epoch().count()); f.mtime = EpochSeconds(ft); f.timeOk = true; }
+    return f;
 }
 
 std::string Trim(const std::string& s) {
@@ -477,19 +528,17 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
         for (; !ec && it != end; it.increment(ec)) {
             const fs::directory_entry& e = *it;
             const std::string name = U8(e.path().filename());
-            std::error_code e2;
-            if (e.is_directory(e2)) {
+            const FileFacts facts = FactsOf(e);
+            if (facts.dir) {
                 if (name.empty() || name[0] == '.' || skipDirs.count(name)) it.disable_recursion_pending();
                 else folders.push_back(U8(e.path().lexically_relative(rootPath)));
                 continue;
             }
-            if (name.empty() || name[0] == '.' || !e.is_regular_file(e2)) continue;
+            if (name.empty() || name[0] == '.' || !facts.file) continue;
             FileEntry fe;
             fe.rel = U8(e.path().lexically_relative(rootPath));
-            const auto sz = e.file_size(e2);
-            fe.size = e2 ? 0 : static_cast<std::int64_t>(sz);
-            const auto ft = e.last_write_time(e2);
-            if (!e2) { fe.stamp = static_cast<std::int64_t>(ft.time_since_epoch().count()); fe.mtime = EpochSeconds(ft); }
+            fe.size = facts.size;
+            if (facts.timeOk) { fe.stamp = facts.stamp; fe.mtime = facts.mtime; }
             const std::string ext = AssetExtension(name);
             if (ext == "okaymeta") metaFiles.push_back(std::move(fe));
             else if (!skipExts.count(ext)) files.push_back(std::move(fe));
@@ -1021,8 +1070,8 @@ Guid AssetDatabase::RefreshFile(const std::string& path) {
     if (!fs::is_regular_file(PathFromU8(abs), ec)) return Guid();
     std::int64_t size = 0;
     const std::uint64_t h = HashFile(abs, &size, m_options.fullHashLimit);
-    const auto ft = fs::last_write_time(PathFromU8(abs), ec);
-    if (!ec) { s->stamp = static_cast<std::int64_t>(ft.time_since_epoch().count()); s->rec.modified = EpochSeconds(ft); }
+    const FileFacts facts = FactsOf(fs::directory_entry(PathFromU8(abs), ec));   // the same clock as the scan's
+    if (facts.timeOk) { s->stamp = facts.stamp; s->rec.modified = facts.mtime; }
     s->rec.size = size;
     if (h != 0 && h != s->rec.hash) {
         s->rec.hash = h;

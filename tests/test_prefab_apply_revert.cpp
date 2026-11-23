@@ -351,6 +351,7 @@ static void TestDamagedFiles() {
     err.clear();
     CHECK(!PrefabTools::ApplyToSource(*inst, 0, "transform", "", 0, &err) && !err.empty());
     CHECK(Read(f.lamp) == cut);                                                     // not touched
+    if (Read(f.lamp) != cut) std::cerr << "  cut " << cut.size() << " bytes, now " << Read(f.lamp).size() << " bytes; error: " << err << "\n";
     CHECK(PrefabTools::RevertOverride(s, *inst, 0, "light", "", 0, &err) == nullptr);
     CHECK(PrefabTools::RevertAll(s, *inst, &err) == nullptr);
     CHECK(PrefabTools::Reapply(s, *inst, &err) == nullptr);

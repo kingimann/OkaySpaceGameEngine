@@ -779,33 +779,10 @@ static std::uint64_t FnvBytes(const void* data, std::size_t nbytes,
                               std::uint64_t seed = 1469598103934665603ull) {
     return meshhash::Bytes(data, nbytes, seed);
 }
-static std::uint64_t MeshSampleHash(const Mesh& m) {
-    std::size_t sizes[7] = { m.vertices.size(), m.triangles.size(), m.normals.size(),
-                             m.uvs.size(), m.triColors.size(), m.vertexColors.size(), m.triSlot.size() };
-    std::uint64_t h = FnvBytes(sizes, sizeof(sizes));
-    { const std::size_t cn = m.vertexColors.size(), cstep = cn / 2048 + 1;     // a stroke of vertex paint shows at once
-      for (std::size_t i = 0; i < cn; i += cstep) h = FnvBytes(&m.vertexColors[i], sizeof(Color), h); }
-    const std::size_t vn = m.vertices.size(), step = vn / 2048 + 1;
-    // A small mesh is sampled at every vertex: hash its array in one go (a chunk of a voxel terrain is such a mesh,
-    // and a scene can show hundreds of them every frame).
-    if (step == 1) { if (vn) h = FnvBytes(m.vertices.data(), vn * sizeof(Vec3), h); }
-    else for (std::size_t i = 0; i < vn; i += step) h = FnvBytes(&m.vertices[i], sizeof(Vec3), h);
-    const std::size_t tn = m.triangles.size(), tstep = tn / 2048 + 1;
-    if (tstep == 1) { if (tn) h = FnvBytes(m.triangles.data(), tn * sizeof(int), h); }
-    else for (std::size_t i = 0; i < tn; i += tstep) h = FnvBytes(&m.triangles[i], sizeof(int), h);
-    return h;
-}
-static std::uint64_t MeshFullHash(const Mesh& m) {
-    std::uint64_t h = 1469598103934665603ull;
-    if (!m.vertices.empty())  h = FnvBytes(m.vertices.data(),  m.vertices.size()  * sizeof(Vec3),  h);
-    if (!m.normals.empty())   h = FnvBytes(m.normals.data(),   m.normals.size()   * sizeof(Vec3),  h);
-    if (!m.uvs.empty())       h = FnvBytes(m.uvs.data(),       m.uvs.size()       * sizeof(Vec2),  h);
-    if (!m.triangles.empty()) h = FnvBytes(m.triangles.data(), m.triangles.size() * sizeof(int),   h);
-    if (!m.triColors.empty()) h = FnvBytes(m.triColors.data(), m.triColors.size() * sizeof(Color), h);
-    if (!m.vertexColors.empty()) h = FnvBytes(m.vertexColors.data(), m.vertexColors.size() * sizeof(Color), h);
-    if (!m.triSlot.empty()) h = FnvBytes(m.triSlot.data(), m.triSlot.size() * sizeof(int), h);
-    return h;
-}
+// The per-mesh change hashes live in MeshHash.hpp, shared with the other GPU renderer: a cheap sample every frame,
+// the full hash now and then (a lone-vertex edit).
+static std::uint64_t MeshSampleHash(const Mesh& m) { return meshhash::MeshSample(m); }
+static std::uint64_t MeshFullHash(const Mesh& m) { return meshhash::MeshFull(m); }
 
 // Content hashes of a skin's joint data (indices + weights + palette size, since
 // the upload clamps against it), like the plain-mesh cache: a cheap sample each

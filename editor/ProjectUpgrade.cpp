@@ -12,6 +12,7 @@
 #include <sstream>
 
 #include "ProjectState.hpp"
+#include "okay/Core/FileCopy.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneMigration.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
@@ -861,7 +862,7 @@ RestoreResult RestoreBackup(const BackupInfo& backup, const std::string& project
         if (hook(rel)) return false;
         std::error_code e2;
         fs::create_directories((side / fs::path(rel)).parent_path(), e2);
-        fs::copy_file(target, side / fs::path(rel), fs::copy_options::overwrite_existing, e2);
+        okay::CopyFileOver(target, side / fs::path(rel), e2);
         if (e2) return false;
         hadBefore.insert(rel);
         return true;
@@ -875,7 +876,7 @@ RestoreResult RestoreBackup(const BackupInfo& backup, const std::string& project
         for (std::size_t i = done.size(); i-- > 0;) {
             const fs::path target = root / fs::path(done[i]);
             std::error_code e2;
-            if (hadBefore.count(done[i])) fs::copy_file(side / fs::path(done[i]), target, fs::copy_options::overwrite_existing, e2);
+            if (hadBefore.count(done[i])) okay::CopyFileOver(side / fs::path(done[i]), target, e2);   // plain copy_file fails over a file on Windows (MinGW)
             else fs::remove(target, e2);
         }
     };

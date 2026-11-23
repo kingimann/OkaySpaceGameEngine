@@ -88,7 +88,7 @@ The graph file stores the type, not the title, so every saved graph loads unchan
 |---|---|
 | `editor/VisualScriptGuide.hpp` | Pure functions (no ImGui): `VsPlainLine`, `VsPinExample`, `VsPinTip`, `VsPinNeedsInput`, `VsMissingHint`, `VsNextSteps`, `VsHelpCardFor`, `VsTryGraph`, `VsIntentFor`. Written from this page, from the node tables and from `PinCompatible`. |
 | `editor/VisualScriptGuideDraw.hpp` | Paints the card, the chips and the Try button. |
-| `editor/VisualScriptPlain.hpp` | `kVsPlainRenames` (the 8 renames). |
+| `editor/VisualScriptNames.hpp` | The 8 renames are rows of `kVsNames`, the one title table; the older names are in each row's search words. (Until 2026-11 they were a second table, `kVsPlainRenames` in `VisualScriptPlain.hpp`, that overrode it.) |
 | `editor/VisualScriptEditor.hpp`, `VisualScriptPalette.hpp` | Wire all of the above into the node, the pin tips and the Add Node list. |
 | `tests/test_vs_guide.cpp` | Runs the checks below over every node in the list. |
 

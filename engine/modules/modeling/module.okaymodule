@@ -1,0 +1,15 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=modeling
+title=Modeling
+area=Tools
+description=Polygon mesh modeling, UV unwrap, mesh assets.
+default=on
+core=0
+requires=core
+provides=
+components=
+serializers=
+vs_group=
+editor=Modeling window
+sources=include/okay/Modeling/* src/Modeling/*
+tests=modeling* poly_ops polymesh meshedit edit_transform sculpt_paint uv modifiers mesh_asset

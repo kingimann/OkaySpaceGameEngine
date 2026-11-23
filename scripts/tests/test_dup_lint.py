@@ -135,7 +135,7 @@ class DupLintTest(unittest.TestCase):
         pasted = "// my new steering\n" + "\n".join(("        " + l.strip() + "   // tweaked") if i % 3 == 0 else l
                                                     for i, l in enumerate(BLOCK.split("\n")))
         code, out = self.run_case({"engine/src/Steer.cpp": "#include \"x.hpp\"\n" + BLOCK},
-                                  {"engine/src/NewSteer.cpp": "#include \"y.hpp\"\n" + pasted})
+                                  {"engine/src/SteerCopy.cpp": "#include \"y.hpp\"\n" + pasted})
         self.assertEqual(code, 1, out)
         self.assertIn("copy-paste (pasted)", out)
         self.assertIn("engine/src/Steer.cpp:2-", out)
@@ -166,13 +166,13 @@ class DupLintTest(unittest.TestCase):
     def test_dup_allow_with_reason_passes(self):
         pasted = BLOCK.replace("float SteerTowards", "// dup-allow: kept until the AI steering merge lands\nfloat SteerTowards", 1)
         code, out = self.run_case({"engine/src/Steer.cpp": BLOCK},
-                                  {"engine/src/NewSteer.cpp": pasted,
+                                  {"engine/src/SteerCopy.cpp": pasted,
                                    "engine/src/Hash.cpp": "unsigned k = 16777619u;  // dup-allow: matches the file format spec\n"})
         self.assertEqual(code, 0, out)
 
     def test_dup_allow_block_marker_passes(self):
         pasted = "// dup-allow-begin: generated-style table, checked by a test\n" + BLOCK + "// dup-allow-end\n"
-        code, out = self.run_case({"engine/src/Steer.cpp": BLOCK}, {"engine/src/NewSteer.cpp": pasted})
+        code, out = self.run_case({"engine/src/Steer.cpp": BLOCK}, {"engine/src/SteerCopy.cpp": pasted})
         self.assertEqual(code, 0, out)
 
     def test_dup_allow_without_reason_fails(self):
@@ -240,6 +240,58 @@ class DupLintTest(unittest.TestCase):
             self.assertNotIn("copy-paste (pasted)", out)
         finally:
             r.close()
+
+REG_PAGE = ("# 6. Physics\n\n## 6. Physics\n\n### 6.1 Bodies\n- **System:** Physics - Moves bodies.\n"
+            "  Home: `engine/include/okay/Physics/`, `engine/src/Physics/`. Entry: `engine/include/okay/Physics/P.hpp`.{extra}\n"
+            "- **What:** w\n- **Code:** `Physics/P`\n- **Status:** Works\n- **Words:** x\n")
+SYS_BASE = {"engine/include/okay/Physics/P.hpp": "int p;\n", "engine/src/Physics/P.cpp": "int q;\n", "editor/main.cpp": "int m;\n",
+            "docs/feature_map/06-physics.md": REG_PAGE.format(extra="")}
+
+
+class SystemNamesTest(unittest.TestCase):
+    """Rule 19e: one plain name per system, and a new system folder needs a registry entry (the feature map's System lines)."""
+
+    def test_banned_qualifier_in_new_file_fails(self):
+        for name in ("OwnSolver.cpp", "ImprovedStep.cpp", "SolverV2.cpp", "classic_step.py", "NewContacts.hpp"):
+            code, out = self.run_case(SYS_BASE, {"engine/src/Physics/" + name: "int z;\n"})
+            self.assertEqual(code, 1, name + out)
+            self.assertIn("system name", out)
+
+    run_case = DupLintTest.run_case
+
+    def test_plain_names_pass(self):
+        code, out = self.run_case(SYS_BASE, {"engine/src/Physics/Owner.cpp": "int z;\n", "engine/src/Physics/Renewal.cpp": "int y;\n"})
+        self.assertEqual(code, 0, out)
+
+    def test_dup_allow_or_registry_entry_lets_a_qualified_name_through(self):
+        code, out = self.run_case(SYS_BASE, {"engine/src/Physics/OwnSolver.cpp": "// dup-allow: replaces the vendored solver, renamed next release\nint z;\n"})
+        self.assertEqual(code, 0, out)
+        page = REG_PAGE.format(extra=" Home: `engine/src/Physics/OwnSolver.cpp`.")
+        code, out = self.run_case(SYS_BASE, {"engine/src/Physics/OwnSolver.cpp": "int z;\n", "docs/feature_map/06-physics.md": page})
+        self.assertEqual(code, 0, out)
+
+    def test_new_system_folder_needs_a_registry_home(self):
+        code, out = self.run_case(SYS_BASE, {"engine/include/okay/Wind/Wind.hpp": "int w;\n"})
+        self.assertEqual(code, 1, out)
+        self.assertIn("system folder engine/include/okay/Wind/ is not in the system registry", out)
+        page = REG_PAGE + "\n### 6.2 Wind\n- **System:** Wind - Blows.\n  Home: `engine/include/okay/Wind/`. Entry: `engine/include/okay/Wind/Wind.hpp`.\n- **What:** w\n- **Code:** `Wind/Wind`\n- **Status:** Works\n- **Words:** x\n"
+        code, out = self.run_case(SYS_BASE, {"engine/include/okay/Wind/Wind.hpp": "int w;\n",
+                                             "docs/feature_map/06-physics.md": page.format(extra="")})
+        self.assertEqual(code, 0, out)
+
+    def test_new_top_level_folder_and_qualified_folder_fail(self):
+        code, out = self.run_case(SYS_BASE, {"newtool/main.cpp": "int t;\n"})
+        self.assertEqual(code, 1, out)
+        self.assertIn("new top-level folder newtool/", out)
+        code, out = self.run_case(SYS_BASE, {"engine/src/Physics/OwnCore/Step.cpp": "int s;\n"})
+        self.assertEqual(code, 1, out)
+        self.assertIn("new folder engine/src/Physics/OwnCore/ has 'Own'", out)
+
+    def test_new_code_name_with_qualifier_warns(self):
+        code, out = self.run_case(SYS_BASE, {"engine/src/Physics/P.cpp": "int q;\nint ImprovedContactSolve(int a, int b) {\n  return a + b;\n}\n"})
+        self.assertEqual(code, 0, out)
+        self.assertIn("new name ImprovedContactSolve has 'Improved'", out)
+
 
 class CrossBranchTest(unittest.TestCase):
     """collision_check's copy check between open branches (dup_lint.cross_branch)."""

@@ -43,7 +43,7 @@ std::set<std::string> Declared(const std::string& src) {
 int main() {
     {
         RUN_SUITE("registry: every BuildSettings member is listed once or is on the unlisted list");
-        std::string src; { std::ifstream f(fs::path(__FILE__).parent_path().parent_path() / "editor" / "ProjectState.hpp"); std::stringstream ss; ss << f.rdbuf(); src = ss.str(); }
+        std::string src; { std::ifstream f(fs::path(OKAY_TESTS_DIR).parent_path() / "editor" / "ProjectState.hpp"); std::stringstream ss; ss << f.rdbuf(); src = ss.str(); }
         const std::set<std::string> decl = Declared(src);
         CHECK(decl.size() > 70);
         const BuildSettings d;

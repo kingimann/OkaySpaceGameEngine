@@ -49,7 +49,9 @@ The Folder layout, packed into one `.zip` named by **Archive name** (`{name}-{ve
 `{name} {version} {build} {platform} {date}`). Only the archive stays in the output folder. **Also create a .zip**
 (on the Folder or Compact layout) keeps the folder and writes the zip beside it. **Compress the archive** deflates
 files that shrink (already-compressed types such as `.png` and `.ogg` are stored); off, everything is stored. The result
-shows the archive size next to the folder size.
+shows the archive size next to the folder size. A file that cannot be read while the archive is written (locked by another
+program, or removed during the build) stops the build with "cannot read <path>" and no archive is left behind; before
+2026-11 such a file went into the zip empty without a word (`BuildPipeline::WriteZipEntries`, test `build_pipeline`).
 
 ### build.json
 

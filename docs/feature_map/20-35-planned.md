@@ -370,6 +370,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Docs:** `docs/engine/core_logging_profiling.md`; `docs/engine/debug_tools.md`
 - **Tests:** `profiler`, `profiler_export`; `debug_frame_history`, `debug_gpu_stats`, `debug_overlay`
 - **Status:** Partial - the Profiler window works on CPU data; the trace and CSV exports exist in code but have no button (CSV of one frame can be copied); real GPU timing exists only as a data layer.
+- **Open:** two frame rings (#422 finding 13, reviewed 2026-11-22, left as they are): `Profiler`'s 240-frame ring is the hand-off buffer that `FrameHistory::Capture` copies from (it reads `Profiler::FrameAt`), and the editor Profiler window's pause and scrub (`selected`, `paused`, `FrameAt`, `Displayed`, `SectionStat`) read it directly. Making the Profiler keep only the current frame would need `FrameHistory` pushed from `EndFrame` and the window rewritten in `editor/main.cpp` onto `FrameHistory`; that rewrite cannot be run here (no editor run), so it was not done. `FrameStats` (GameLoop) already shares `Distribution::Of` for its numbers.
 - **Exists today:** Frame profiler and window as above. The data layer from #574 (`FrameHistory`, `GpuTimer`, `RenderStats`, `DebugStatsOverlay`) is on main and tested but not wired: "No renderer calls the hooks yet" (`docs/engine/debug_tools.md`; grep finds no `GpuScope` outside `Debug/`).
 - **Work packages:**
   1. S - Profiler window: "Export Chrome trace" and "Export CSV" buttons using the existing `ExportChromeTraceToFile`. Depends on: nothing.
@@ -570,6 +571,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 
 ### 25.1 Templates
 - **System:** Project Templates and Upgrades - New-project templates, project settings and upgrading old projects to the current version.
+  Home: `editor/ProjectUpgrade.cpp`, `shared/ProjectCreate.hpp`. Entry: `editor/ProjectUpgrade.hpp`. Also called: project templates, new project, project upgrade, project settings.
 - **What:** Starting points for a new project: a blank scene, a genre starter or a complete small game.
 - **Parts:**
   - 25.1.1 Launcher Create page - `launcher/main.cpp` - 22 templates in four groups (All, Start simple, Game kits, Examples and systems) with search; `CreateProject` makes the folder and `Assets`, the editor fills in the template scene headless
@@ -897,6 +899,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 
 ### 28.1 Git integration
 - **System:** Version Control - Git inside the launcher and editor: commit, compare and fix merge conflicts.
+  Home: `launcher/main.cpp`. Entry: `launcher/main.cpp`. Also called: git, source control, merge conflicts.
 - **What:** Use git from the tools: clone a project, see what changed, commit, push, pull and switch branches without a terminal.
 - **Parts:**
   - 28.1.1 Launcher git jobs - `launcher/main.cpp` - runs `git` on a background thread (needs git on the PATH) and reports a toast; works on any listed project
@@ -1292,6 +1295,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 
 ### 32.1 Controller navigation
 - **System:** Accessibility - Playing with a controller only, colour-blind options and other help for players with different needs.
+  Home: `engine/include/okay/Core/AccessibilitySettings.hpp`, `engine/include/okay/Components/UINavigation.hpp`. Entry: `engine/include/okay/Core/AccessibilitySettings.hpp`. Also called: AccessibilitySettings, colour-blind, controller-only.
 - **What:** Play and use every menu with a gamepad or keyboard only, with a visible focus that moves the way the screen looks.
 - **Parts:**
   - 32.1.1 UI navigation - `Components/UINavigation` - `NavigateUI` moves focus to the nearest widget in the pressed direction (arrows, WASD, D-pad), wraps at the ends, scrolls a focused widget into view, handles button, toggle, slider, dropdown, tabs and keybind fields, and keeps focus inside an open modal

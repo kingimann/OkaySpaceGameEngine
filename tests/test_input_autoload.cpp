@@ -28,7 +28,7 @@ int main() {
     // Play: the project's asset, and the single default player works with no component at all
     ed.Play();
     CHECK(ed.isPlaying());
-    CHECK(InputRuntime::AssetPath() == projectFile);
+    CHECK(fs::path(InputRuntime::AssetPath()).lexically_normal() == fs::path(projectFile).lexically_normal());   // the same file; Windows may mix the two slashes
     ActionSet* s = InputRuntime::Set(0);
     CHECK(s && s->Find("Zoom") && s->Find("Move"));
     Input::FeedKeys({'z'}); InputActions::Tick(0.016f);

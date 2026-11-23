@@ -1,4 +1,5 @@
 #include <cmath>
+#include "okay/Core/FileStamp.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Debug/DebugUtil.hpp"
@@ -85,14 +86,11 @@ std::string NormPath(const std::string& p) {
 debugutil::SpinLock& BakeRecordLock() { static debugutil::SpinLock l; return l; }
 std::map<std::string, BakeRecord>& BakeRecords() { static std::map<std::string, BakeRecord> r; return r; }
 
+// Size and time of the file; false unless both can be read (okay/Core/FileStamp.hpp).
 bool FileStamp(const std::string& path, std::uintmax_t& size, std::int64_t& time) {
-    std::error_code ec;
-    const auto fp = std::filesystem::u8path(path);
-    size = std::filesystem::file_size(fp, ec);
-    if (ec) return false;
-    const auto t = std::filesystem::last_write_time(fp, ec);
-    if (ec) return false;
-    time = (std::int64_t)t.time_since_epoch().count();
+    const auto s = okay::StampOf(path);   // (auto: this function shares the struct's name)
+    if (!s.sizeOk || !s.timeOk) return false;
+    size = s.size; time = s.time;
     return true;
 }
 }  // namespace

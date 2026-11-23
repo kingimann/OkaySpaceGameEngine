@@ -10,7 +10,11 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 ## 16. Networking & multiplayer
 
 ### 16.1 Transport, sealed channels, packets
-- **System:** Networking - Sends game state between players over the internet: packets, sync, prediction, remote calls and networked players.
+- **System:**
+  - Networking - Sends game state between players over the internet: packets, sync, prediction, remote calls and networked players. Code: `Net/UdpSocket`, `Net/Packet`, `Net/SecureChannel`, `Net/NetChannels`, `Net/NetTransport`, `Net/NetworkManager`
+    Home: `engine/include/okay/Net/`, `engine/src/Net/`. Entry: `engine/include/okay/Net/NetworkManager.hpp`. Also called: NetworkManager, multiplayer, netcode, replication, RPC, SyncVar.
+  - Cryptography - Hashing, signing and encryption (SHA-256, ChaCha20-Poly1305, X25519, Ed25519) for network traffic, accounts and file checks; libsodium stays the default until an outside review (CLAUDE.md rule 18). Code: `Crypto/Crypto`, `Crypto/Sha256`, `Net/NetCrypto`, `engine/src/Crypto/*.cpp`
+    Home: `engine/include/okay/Crypto/`, `engine/src/Crypto/`. Entry: `engine/include/okay/Crypto/Crypto.hpp`. Also called: okay::crypto, own crypto, OKAY_OWN_CRYPTO, libsodium, Sha256, ChaCha20.
 - **What:** The UDP layer under all multiplayer: sockets, byte packets that are split when large, authenticated encryption with libsodium (or, opt-in and unreviewed, our own okay::crypto), and two per-channel delivery modes on top of plain UDP (reliable ordered, and unreliable where only the newest counts).
 - **Parts:**
   - 16.1.1 UDP socket and endpoints - `Net/UdpSocket` - non-blocking UDP, an `Endpoint` (IPv4 address and port) that can key a table, wait-until-readable for the relay loop
@@ -51,7 +55,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Docs:** `docs/online/multiplayer.md` (Fixed network tick, Server-authoritative movement, Lag compensation, Server authority), `docs/online/dedicated-server.md`
 - **Tests:** `net_authority`, `net_tick`, `net_auth_move`, `net_predict`, `net_interp`, `net_lagcomp`, `mp_controllers`
 - **Status:** Works - one test per stage (5a tick, 5b authoritative moves, 5c prediction, 5d interpolation, 5e lag compensation), each through a proxy that delays packets; shipped in releases 2.825 to 2.836 per ROADMAP
-- **Open:** no replay or demo recording exists (only packet "replay protection"); `NetInventory` has no test that names it; the old map's "Anti-cheat items 12-13" are merged (#376, #384), so that note is stale; `NetworkManager.cpp` is 3,522 lines (split candidate, see 19.4)
+- **Open:** no replay or demo recording exists (only packet "replay protection"); `NetInventory` has no test that names it; the old map's "Anti-cheat items 12-13" are merged (#376, #384), so that note is stale; `NetworkManager.cpp` is split into five files by job (batch N1, see 19.4)
 - **Related:** 16.3, 16.6, 4.1, 39.1
 - **Words:** authority, authoritative movement, server-authoritative, prediction, reconciliation, rubber-banding, interpolation, lag compensation, rewind, netTickRate, NetTick, OnNetTick, IPlayerSim, PlayerInput, ServerTeleport, maxMoveSpeed, minPressInterval, pawn
 - **Seen as:** rubber-banding or snapping back when I move online; other players stutter or teleport; shots miss although I aimed right (lag); my player moves a beat late; a player moves faster than allowed
@@ -71,7 +75,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Editor:** Inspector: Network Sync (authority, id, claimable), Add Component menu; Net panel shows bytes per object (16.13); `interestRadius` has no inspector field
 - **Docs:** `docs/online/multiplayer.md`
 - **Tests:** `net_sync`, `net_aoi`, `net_interp`, `net_anim_actions`, `ecs`, `ecs_commands`
-- **Status:** Works - transform replication, interest culling and the delta path are exercised by `net_sync`, `net_aoi`, `net_interp`; read `SendSnap` and `OnSnapDelta` in NetworkManager.cpp
+- **Status:** Works - transform replication, interest culling and the delta path are exercised by `net_sync`, `net_aoi`, `net_interp`; read `SendSnap` and `OnSnapDelta` in NetworkManagerSync.cpp
 - **Open:** the old map listed "Delta snapshots" as open, but they exist and are on by default; no test names `NetDelta` or `QPose` directly; PR #571 (merged after this map was started) gave `ECS/NetWorld.hpp` delta snapshots against the newest acknowledged tick, a command buffer and `docs/engine/ecs.md`; the header's top comment still says "full-state snapshots", and the `ecs_commands` test covers the new code
 - **Related:** 16.2, 16.8, 1.9, 16.13
 - **Words:** NetworkSync, netId, authority, snapshot, delta snapshot, quantized, baseline, ack, interest management, area of interest, culling, syncRate, NetWorld, WorldReplicator, replicate, SyncVar, claimable
@@ -80,6 +84,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 
 ### 16.4 Matchmaking, queues, server browser, join links
 - **System:** Matchmaking and Lobbies - Finding and joining games, rooms and lobbies, match flow, results and leaderboards.
+  Home: `engine/include/okay/Net/`. Entry: `engine/include/okay/Net/Matchmaking.hpp`. Also called: Matchmaker, server browser, lobby, rooms, join links.
 - **What:** Finding and joining a game: one-string join links, asking a server who it is without joining, the server browser (internet list, friends, LAN, pings), listing servers in Supabase, and "Find match" queues that put players in a match by game, mode, skill and region.
 - **Parts:**
   - 16.4.1 Join links - `Net/JoinLink` - `okay://join?game=...&addr=...` or relay plus code, with room, name and optional password; shared by launcher, chat invites and presence
@@ -102,6 +107,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 
 ### 16.5 Dedicated server, export, relay
 - **System:** Dedicated Server - Runs a game with no window as the server everyone connects to, and exports it.
+  Home: `engine/include/okay/Net/DedicatedServer.hpp`. Entry: `engine/include/okay/Net/DedicatedServer.hpp`. Also called: headless server, DedicatedServer, server export.
 - **What:** Running any game as a headless authoritative server (no window, GPU or audio) with the same player executable, configured by flags, `server.cfg` or environment variables, with sign-in checks that never stall the tick. Exporting it is 18.7; the relay is 16.14.
 - **Parts:**
   - 16.5.1 Headless run loop - `Net/DedicatedServer`, `Core/TickPacer` - `RunDedicatedServer(scene, opts)` steps the scene at a fixed tick (one tick of `Time::Step(1 / tickRate)` per tick, never by the real elapsed time; the pacing arithmetic is `TickPacer`, #581), logs joins and a status line, stops on Ctrl+C or SIGTERM; exit code 2 = could not open the port; it still calls `Game::Reset()` at start (line 548), which keeps a script's time scale (see 1.1)
@@ -123,6 +129,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 
 ### 16.6 Anti-cheat (server side)
 - **System:** Server Anti-Cheat - The server checks what players send, spots cheaters, and handles reports and bans.
+  Home: `engine/include/okay/Net/AntiCheat.hpp`, `shared/AntiCheatBackend.hpp`. Entry: `engine/include/okay/Net/AntiCheat.hpp`. Also called: anti-cheat, AntiCheat, bans, cheat detection. Fix: shared/AntiCheat* (reports, bans, client checks) and Net/AntiCheat (server checks) go into one folder when okay/Online exists (architecture.md).
 - **What:** The opt-in checks the server makes on everything a client sends: who may move or spawn what, SyncVar and RPC limits, hit claims, the clock heartbeat and join tickets. The full cross-cutting picture (client integrity, bans, keys) is area 39.
 - **Parts:**
   - 16.6.1 Rules, violations and kicks - `Net/AntiCheat` - `AntiCheatSettings` (parsed from `.okayac`), refusal counts, kick after N in a minute, rejoin cooldown that doubles up to an hour, budgets that survive a reconnect for 5 minutes
@@ -146,6 +153,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 
 ### 16.7 Voice chat server
 - **System:** Voice Chat - Voice calls between friends, groups and server voice rooms.
+  Home: `launcher/VoiceChat.hpp`. Entry: `launcher/VoiceChat.hpp`. Also called: voice, VoiceChat, voice server, calls.
 - **What:** Voice calls (friend calls, group calls, server voice rooms) from the launcher. Audio goes peer to the relay to the peers over UDP, encrypted with a room key, so nobody opens ports. The "server" is the relay program.
 - **Parts:**
   - 16.7.1 Voice engine - `launcher/VoiceChat.hpp` - 16 kHz mono capture, 20 ms frames, voice-activity gate, IMA ADPCM (about 64 kbit/s), ChaCha20 with the room key, per-speaker jitter buffer and mixer; classes `Session`, `MicTest`; no echo cancellation
@@ -285,6 +293,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 
 ### 16.14 Relay server (NAT traversal)
 - **System:** Relay - A small server that connects players behind home routers to each other.
+  Home: `engine/include/okay/Net/RelayServer.hpp`, `engine/include/okay/Net/RelayProtocol.hpp`. Entry: `engine/include/okay/Net/RelayServer.hpp`. Also called: relay server, NAT traversal, RelayProtocol.
 - **What:** A small program players behind home routers meet at: both connect out to it, share a code, and it forwards datagrams by slot without reading them. It is exposed to the internet, so it caps and trusts nothing. Also carries voice (16.7).
 - **Parts:**
   - 16.14.1 Relay protocol - `Net/RelayProtocol` - outer frames Hello (0x90), Welcome, Data, Bye, Refused; versions 1 to 4 (4 adds the welcome nonce); little-endian throughout; the relay strips its header so inner messages are untouched

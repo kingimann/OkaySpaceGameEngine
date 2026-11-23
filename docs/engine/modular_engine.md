@@ -1,0 +1,60 @@
+# Modular engine (internal notes)
+
+Design, plan and decisions: `../design/modular_gameplay_contracts.md` (sections 9 to 11). Stage by stage state:
+`../design/modular_status.md`.
+
+## What is on main (stage 0, PR 1: module groups in the build)
+- 40 module manifests, `engine/modules/<name>/module.okaymodule`. Each says its name, what it requires and which engine files
+  are its own (`sources=`, patterns relative to `engine/`; the most specific pattern wins when two match).
+- `cmake/OkayModules.cmake`: `okay_modules_read()` reads the manifests and fails configure on an unknown requirement or a
+  requirement cycle; `okay_modules_group(okay_engine)` puts each engine source in its module (or core) and writes
+  `okay_modules.tsv` in the build folder; `okay_modules_label_tests()` gives every test the label `module:<name>`
+  (`tests=` patterns in the manifest; `module:core` when no module claims it). `ctest -L module:physics3d` runs one module's tests.
+- Nothing is stripped and nothing moved: `okay_engine` keeps its one source list in the same order, so the programs are built
+  from the same objects as before.
+
+## Stage 0, PR 2: the module list at run time and the dependency check
+- `okay/Modules/ModuleManifest.hpp` parses a manifest (unknown keys are ignored, so older programs read newer manifests).
+- `okay/Modules/ModuleRegistry.hpp`: `ModuleRegistry::Get()` is the list of modules in this build, filled from
+  `modules_enabled.cpp`, which `okay_modules_generate()` writes from the manifests (their text is embedded). It answers
+  what exists, what each requires (`TransitiveRequires`, `DependencyOrder`) and what is wrong with the list (`Validate`).
+  Every module is on in this stage. A module's `engine/modules/<name>/register.cpp` (none yet) gets a `ModuleContext`
+  through `Register_<name>`, called in dependency order on first use.
+- The player logs `[okay] modules: 40 modules, 40 on` at start.
+- `scripts/check_modules.py` (the dependency check): a file of module A may include a header of B only if B is A, core,
+  or in A's requirements; core includes no module; no requirement cycles; manifest patterns, components and records
+  exist; engine code does not include `Okay.hpp`. Today's ~800 forbidden includes (the serializer, the script VM and the
+  renderer name every component) are listed in `scripts/module_deps_baseline.txt`; a new one is reported. The list may
+  only shrink: `--update-baseline` is for after a fix. CI runs it in report mode (a warning); design PR 14 makes it blocking.
+
+## Stage 0, PR 3: bytes of the player per module, in the Build report
+- Every GNU-linker build of the player (Linux, and the MinGW build of the Windows release) writes `maps/okay-player.map`
+  in the build folder (not shipped). After the link, `scripts/module_sizes.py` turns it into `module_sizes.txt` beside the
+  player ("name<TAB>bytes": each module's share of the sections the linker kept from its engine files, `okay_modules.tsv`
+  says which file is whose; plus `program` and the outside libraries). The Windows zip ships it in `Tools/`.
+- Build Game's report (`buildpipe::Report::AddModules`) lists the modules in the player, largest first: in the Build
+  Result window's "Modules" tab and in `.okay/build_report.txt`. Every module ships in this version.
+- Header-only components count in the .cpp files that include them, so a module whose code is in headers looks small.
+- Not checked yet: a real MinGW map (the parser was tested on a Linux map and a made-up one).
+
+## Stage 3, step 1: Project Settings > Modules
+- Edit > Project Settings > Modules: the module list with presets (2D game, 3D action, Survival, Everything) and a tick
+  per module. Turning one on turns on what it needs; one that another needs cannot be turned off (the reason shows on
+  hover). The open scene's use of each module is shown ("used by 3 objects"), and a module it uses that is off gets a red line.
+- Saved as `modules=` in `project.okayproj` (no line = every module, as in projects made before modules).
+- The Build report marks a module that is off ("off in Project Settings, still in the player") and warns when the open
+  scene uses one. In this version the player still contains every module: leaving code out needs stage 1 and 2.
+- Code: `editor/ModulesModel.hpp` (no drawing; test `modules_model`), `editor/ModulesPanelUI.hpp` (drawing).
+
+## Stage 3, step 2: modules in the New Project form
+- File > New Project (and the project chooser): under the template list, a folded "Modules: N of 40 modules are on
+  (preset)" line opens the same presets and ticks. The 2D Scene template starts with the 2D set, First and Third Person
+  and Third Person Shooter with 3D action, Sandbox with Survival, every other template with every module (so nothing its
+  scene uses is off). The choice is saved as `modules=` in the new project.okayproj. A project made by the launcher's
+  Create page gets every module.
+
+## Manifest keys
+`name`, `title`, `area`, `description`, `default`, `core`, `requires` (comma separated), `provides`, `components`,
+`serializers` (scene records), `vs_group`, `editor`, `sources` (space separated file patterns), `tests` (space separated test
+name patterns), `planned` (files another branch is adding; read by nothing yet). The build reads `name`, `core`, `requires`,
+`sources` and `tests`; the engine's parser reads the rest (`tests` and `planned` it ignores).

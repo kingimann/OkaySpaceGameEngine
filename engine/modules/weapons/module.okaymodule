@@ -1,0 +1,15 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=weapons
+title=Weapons
+area=Gameplay
+description=Ranged and melee weapons, projectiles, weapon definitions.
+default=on
+core=0
+requires=health_damage,physics3d
+provides=IWeapon
+components=Crosshair,MeleeAttacker,Projectile3D,RangedWeapon
+serializers=crosshair
+vs_group=
+editor=
+sources=include/okay/Components/RangedWeapon.hpp include/okay/Components/Projectile3D.hpp include/okay/Components/MeleeAttacker.hpp include/okay/Components/Crosshair.hpp src/Components/RangedWeapon.cpp src/Components/MeleeAttacker.cpp include/okay/Combat/* src/Combat/*
+tests=weapons

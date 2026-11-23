@@ -1,0 +1,12 @@
+# Batch B1 of the engine modularization plan (docs/engine/modularization_plan.md, Part A section 3, batch 5):
+# three base-layer headers move to the folder they belong in; each old path keeps a three-line forwarding header
+# (#pragma once, a comment, the #include of the new path), so no caller changes. Check each with:
+#   python3 scripts/check_pure_move.py --base $(git merge-base HEAD origin/main) --source engine/include/okay/Render/Color.hpp \
+#       --dest engine/include/okay/Math/Color.hpp
+#   python3 scripts/check_pure_move.py --base $(git merge-base HEAD origin/main) --source engine/include/okay/Math/IKMath.hpp \
+#       --dest engine/include/okay/Animation/IKMath.hpp
+#   python3 scripts/check_pure_move.py --base $(git merge-base HEAD origin/main) --source engine/include/okay/Math/JointLimit.hpp \
+#       --dest engine/include/okay/Animation/JointLimit.hpp --rules docs/engine/moves/B1_base_layer_headers.rules
+# The only edit: JointLimit.hpp's own #include of IKMath.hpp names the new path (plan section 4, step 7: "change its
+# own includes"). Color.hpp and IKMath.hpp moved with no edit at all, so their checks run without this file.
+change: #include "okay/Math/IKMath.hpp" ==> #include "okay/Animation/IKMath.hpp"

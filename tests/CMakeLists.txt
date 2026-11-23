@@ -39,6 +39,9 @@ if(OKAY_PYTHON)
     if(OKAY_GIT)
         add_test(NAME collab_scripts COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_collab.py)
         add_test(NAME dup_lint_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_dup_lint.py)
+        # Generated docs rebuilt on main only: scripts/precheck.sh --list/--regen/--restore-generated and the commit-back
+        # step of .github/workflows/regen-docs.yml, against a throw-away bare repository (no GitHub).
+        add_test(NAME precheck_generated COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_precheck_generated.py)
         # scripts/integration_merge.py: all open PRs merged together (docs/process/collaboration.md "Integration check").
         add_test(NAME integration_merge COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/integration_merge.py --self-test)
     endif()

@@ -14,7 +14,7 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Audio | 11 | 33 | [code_index/engine-Audio.md](code_index/engine-Audio.md) |
 | engine-Combat | 1 | 6 | [code_index/engine-Combat.md](code_index/engine-Combat.md) |
 | engine-Components | 260 | 735 | [code_index/engine-Components.md](code_index/engine-Components.md) |
-| engine-Core | 76 | 461 | [code_index/engine-Core.md](code_index/engine-Core.md) |
+| engine-Core | 76 | 462 | [code_index/engine-Core.md](code_index/engine-Core.md) |
 | engine-Crypto | 2 | 21 | [code_index/engine-Crypto.md](code_index/engine-Crypto.md) |
 | engine-Debug | 11 | 80 | [code_index/engine-Debug.md](code_index/engine-Debug.md) |
 | engine-ECS | 5 | 9 | [code_index/engine-ECS.md](code_index/engine-ECS.md) |
@@ -28,7 +28,7 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Optimize | 8 | 69 | [code_index/engine-Optimize.md](code_index/engine-Optimize.md) |
 | engine-Physics | 26 | 109 | [code_index/engine-Physics.md](code_index/engine-Physics.md) |
 | engine-Platform | 28 | 221 | [code_index/engine-Platform.md](code_index/engine-Platform.md) |
-| engine-Render | 48 | 414 | [code_index/engine-Render.md](code_index/engine-Render.md) |
+| engine-Render | 48 | 424 | [code_index/engine-Render.md](code_index/engine-Render.md) |
 | engine-Scene | 28 | 123 | [code_index/engine-Scene.md](code_index/engine-Scene.md) |
 | engine-Script | 1 | 12 | [code_index/engine-Script.md](code_index/engine-Script.md) |
 | engine-Scripting | 5 | 19 | [code_index/engine-Scripting.md](code_index/engine-Scripting.md) |

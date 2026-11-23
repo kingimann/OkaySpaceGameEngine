@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 76 headers, 461 names.
+Back to the [code index](../code_index.md). 76 headers, 462 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -252,7 +252,8 @@ Back to the [code index](../code_index.md). 76 headers, 461 names.
 - `DecodeImage` function, line 52: Decode any supported format to RGBA8. On failure returns false, leaves 'out' empty and
 - `DecodeImageFile` function, line 54: Read a whole file and decode it.
 - `GetImageFileInfo` function, line 56: Header-only dimensions of a file.
-- `DecodeGifFrames` function, line 58: Decode every frame of a GIF.
+- `DecodePnm` function, line 59: PNM (Netpbm P1 to P6, maxval up to 65535) to RGBA8. DecodeImage and DetectImageFormat route to it only when the
+- `DecodeGifFrames` function, line 61: Decode every frame of a GIF.
 
 ## `engine/include/okay/Core/ImageWrite.hpp`
 

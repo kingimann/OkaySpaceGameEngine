@@ -1,5 +1,5 @@
 // Hostile-input tests and a deterministic mutation fuzz for our own image decoders (engine/src/Core/ImageDecode*.cpp: PNG, JPEG, BMP, TGA,
-// GIF, HDR, PSD, and the inflater). Written from the public file-format descriptions (PNG with its CRC-32 definition, JFIF/JPEG, BMP, TGA,
+// GIF, HDR, PSD, PNM, and the inflater). Written from the public file-format descriptions (PNG with its CRC-32 definition, JFIF/JPEG, BMP, TGA,
 // GIF89a, Radiance RGBE, PSD, RFC 1950/1951) and nothing else. test_image_decoder already truncates and flips bytes in the small fixtures;
 // this adds what it lacks: every fixture of any size, a "lying header field" sweep (every 1, 2 and 4 byte field in the first 128 bytes set to
 // extreme values, both byte orders), PNG files with valid CRCs and extreme headers, decompression bombs, huge claimed sizes with tiny data,
@@ -14,8 +14,25 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+
+// setenv and unsetenv are POSIX; Windows (MinGW and MSVC) has _putenv_s, and an empty value removes the variable.
+static void SetEnvVar(const char* k, const char* v) {
+#ifdef _WIN32
+    _putenv_s(k, v);
+#else
+    setenv(k, v, 1);
+#endif
+}
+static void UnsetEnvVar(const char* k) {
+#ifdef _WIN32
+    _putenv_s(k, "");
+#else
+    unsetenv(k);
+#endif
+}
 #include <cstring>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <new>
 #include <sstream>
@@ -85,6 +102,7 @@ static void Try(const Bytes& v) {
     CHECK(used <= kMemCap);
 }
 
+static void Add(Bytes& b, std::initializer_list<int> l) { for (int x : l) b.push_back((std::uint8_t)x); }
 static Bytes ReadFile(const std::string& p) { std::ifstream f(p, std::ios::binary); return Bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); }
 static void Put(Bytes& b, std::size_t at, std::uint64_t v, int n) { for (int i = 0; i < n && at + (std::size_t)i < b.size(); ++i) b[at + (std::size_t)i] = (std::uint8_t)((v >> (8 * i)) & 255); }
 static void PutBE(Bytes& b, std::size_t at, std::uint64_t v, int n) { for (int i = 0; i < n && at + (std::size_t)i < b.size(); ++i) b[at + (std::size_t)i] = (std::uint8_t)((v >> (8 * (n - 1 - i))) & 255); }
@@ -361,6 +379,160 @@ int main() {
         }
         std::printf("  fuzz: %ld iterations\n", iters);
     }
+    // ---- 9. PNM (P1..P6, our own decoder, OKAY_OWN_PNM=1): truncations, lying headers, comment storms, garbage ----
+    {
+        const char* oldEnv = std::getenv("OKAY_OWN_PNM"); const std::string saved = oldEnv ? oldEnv : ""; const bool had = oldEnv != nullptr;
+        SetEnvVar("OKAY_OWN_PNM", "1");
+        long n = 0;
+        // One input through DecodeImage / GetImageInfo (Try), and through DecodePnm directly; both must agree on success.
+        // lowMem: the header lies about the size, so the decoder must fail before it allocates anything big.
+        auto TryPnm = [&](const Bytes& v, int expect /* -1 any, 0 must fail, 1 must succeed */, bool lowMem) {
+            ++n;
+            Try(v);
+            g_peak.store(g_live.load()); const std::size_t base = g_live.load(); const double t0 = Now();
+            DecodedImage img; std::string err;
+            const bool ok = DecodePnm(v.data(), v.size(), img, &err);
+            const double dt = Now() - t0; const std::size_t used = g_peak.load() > base ? g_peak.load() - base : 0;
+            if (ok) { CHECK(Consistent(img)); } else { CHECK(img.rgba.empty() && !err.empty()); }
+            if (expect == 0) CHECK(!ok);
+            if (expect == 1) CHECK(ok);
+            CHECK(dt < kMaxSeconds);
+            CHECK(used <= kMemCap);
+            if (lowMem) {
+                if (used >= (1u << 20)) std::fprintf(stderr, "  PNM lowMem violated: %zu bytes, header '%.24s'\n", used, std::string(v.begin(), v.begin() + (std::ptrdiff_t)std::min<std::size_t>(v.size(), 24)).c_str());
+                CHECK(used < (1u << 20));
+            }
+            DecodedImage via; std::string e2;
+            const bool ok2 = DecodeImage(v.data(), v.size(), via, &e2);
+            if (ok2) { CHECK(ok); }            // the routed path may never accept what the direct decoder rejects
+            if (ok && v.size() >= 3 && v[0] == 'P' && v[1] >= '1' && v[1] <= '6' && (v[2] == ' ' || v[2] == '\n' || v[2] == '\t' || v[2] == '\r')) { CHECK(ok2 && via.width == img.width && via.rgba == img.rgba); }
+        };
+        auto S = [](const std::string& s) { return Bytes(s.begin(), s.end()); };
+        auto Cat = [](Bytes a, const Bytes& b) { a.insert(a.end(), b.begin(), b.end()); return a; };
+        auto Rand = [](std::size_t k) { Bytes b(k); for (auto& x : b) x = (std::uint8_t)Rnd(); return b; };
+
+        // valid fixtures P1..P6 (P4 with padded rows, 16-bit P5/P6, ASCII P2/P3 with comments)
+        std::vector<Bytes> fx;
+        fx.push_back(S("P1\n# c\n5 3\n10101 01010\n11111\n"));
+        fx.push_back(S("P2\n3 2\n255\n0 10 20\n30 40 255\n"));
+        fx.push_back(S("P2\n2 2\n65535\n0 65535 1000 40000\n"));
+        fx.push_back(S("P3\n# c\n2 2\n255\n255 0 0  0 255 0\n0 0 255  9 9 9\n"));
+        { Bytes b = S("P4\n10 3\n"); Add(b, {0xAA, 0x80, 0x55, 0x40, 0xFF, 0xC0}); fx.push_back(b); }
+        { Bytes b = S("P5\n3 2\n255\n"); Add(b, {0, 50, 100, 150, 200, 255}); fx.push_back(b); }
+        { Bytes b = S("P5\n2 2\n65535\n"); Add(b, {0, 0, 0x80, 0, 0xFF, 0xFF, 0x12, 0x34}); fx.push_back(b); }
+        { Bytes b = S("P6\n2 2\n255\n"); b.insert(b.end(), 12, 0x77); fx.push_back(b); }
+        { Bytes b = S("P6\n2 1\n1000\n"); Add(b, {0, 0, 1, 0, 3, 0xE8, 0, 1, 0, 2, 0, 3}); fx.push_back(b); }
+        for (const Bytes& f : fx) {
+            TryPnm(f, 1, false);
+            for (std::size_t cut = 0; cut < f.size(); ++cut) TryPnm(Bytes(f.begin(), f.begin() + (std::ptrdiff_t)cut), -1, false);
+            for (std::size_t cut = 0; cut + 1 < f.size(); ++cut) { Bytes g = f; g.insert(g.begin() + (std::ptrdiff_t)cut, '#'); TryPnm(g, -1, false); }   // a comment opened anywhere
+            TryPnm(Cat(f, Bytes(300, 0xAB)), -1, false);                                                         // extra trailing bytes
+            TryPnm(Cat(f, S("\n# trailing comment, no newline")), -1, false);
+        }
+        // binary kinds must fail when a single byte of body is missing, and must not read past the end
+        for (int k = 4; k <= 6; ++k) {
+            Bytes full = S("P" + std::to_string(k) + "\n9 3\n" + (k == 4 ? "" : "255\n")); const std::size_t need = (k == 4 ? 2 * 3 : k == 5 ? 27 : 81);
+            TryPnm(Cat(full, Bytes(need, 0)), 1, false); TryPnm(Cat(full, Bytes(need - 1, 0)), 0, true);
+        }
+        { Bytes b = S("P5\n3 3\n65535\n"); TryPnm(Cat(b, Bytes(18, 0)), 1, false); TryPnm(Cat(b, Bytes(17, 0)), 0, true); }
+
+        // lying header fields: every kind, width x height over a list of extremes, tiny body
+        const char* vals[] = {"0", "1", "2", "65535", "65536", "2147483647", "2147483648", "4294967295", "4294967296", "18446744073709551615", "18446744073709551616", "100000000", "100000001", "-1", "-0", "+5", "abc", "1.5", "0x10",
+                              "123456789012345678901234567890", "000000000000000000000000000000002", "16384", "16385", "32768", "99999999999", ""};
+        for (int k = 1; k <= 6; ++k) {
+            const std::string kk = "P" + std::to_string(k);
+            for (const char* w : vals) for (const char* h : vals) {
+                const std::string mv = (k == 1 || k == 4) ? "" : " 255";
+                TryPnm(Cat(S(kk + " " + w + " " + h + mv + "\n"), Bytes(12, '1')), -1, true);
+            }
+            if (k == 1 || k == 4) continue;
+            for (const char* m : vals) {
+                TryPnm(Cat(S(kk + " 2 2 " + m + "\n"), Bytes(24, '1')), -1, true);
+                TryPnm(Cat(S(kk + " 2 2 " + m + "\n"), Bytes(24, 0)), -1, true);
+            }
+            for (const char* m : {"1", "255", "256", "65535", "65536", "0"})   // maxval x oversized dimensions
+                for (const char* d : {"16384", "16385", "46341", "65536", "2147483647", "4294967295", "100000000", "100000001"}) {
+                    TryPnm(S(kk + " " + d + " " + d + " " + m + "\n"), 0, true);
+                    TryPnm(S(kk + " " + d + " 1 " + m + "\n" + std::string(16, 'x')), 0, true);
+                    TryPnm(S(kk + " 1 " + d + " " + m + "\n" + std::string(16, 'x')), 0, true);
+                }
+        }
+        // huge claimed dimensions with tiny data
+        for (int k = 1; k <= 6; ++k) for (const char* d : {"16384 16384", "100000 100000", "16384 1", "1 16384", "8192 8192", "46341 46341"}) {
+            const std::string h = std::string("P") + char('0' + k) + " " + d + ((k == 1 || k == 4) ? "" : " 255") + "\n";
+            TryPnm(Cat(S(h), Bytes(100, '0')), 0, true); TryPnm(S(h), 0, true); TryPnm(Cat(S(h), Rand(64)), 0, true);
+        }
+        // a 16384 x 16384 P4 with just one byte too few is refused at once; the P5 16-bit twin as well
+        { Bytes b = S("P4 16384 16384\n"); b.insert(b.end(), (16384 / 8) * 16384 - 1, 0); TryPnm(b, 0, true); }
+        { Bytes b = S("P5 16384 16384 65535\n"); b.insert(b.end(), 16384u * 16384u * 2u - 1u, 0); TryPnm(b, 0, true); }
+
+        // comment storms
+        { Bytes b = S("P6\n#"); b.insert(b.end(), 10u * 1024u * 1024u, 'c'); Add(b, {'\n'}); Bytes t = S("1 1\n255\n"); b.insert(b.end(), t.begin(), t.end()); Add(b, {1, 2, 3}); TryPnm(b, 1, false); }
+        { Bytes b = S("P6\n#"); b.insert(b.end(), 10u * 1024u * 1024u, 'c'); TryPnm(b, 0, false); }                                   // 10 MB comment, nothing after it
+        { Bytes b = S("P3 # a\n#b\n\n#\n2#c\n1 # d\n#\n255#e\n 1 2 3#f\n 4 5 6 #g"); TryPnm(b, 1, false); }                            // comments between every token, none newline-terminated at the end
+        { Bytes b = S("P2\n1 1\n255\n7 #"); TryPnm(b, 1, false); }
+        { Bytes b = S("P1\n1 1\n#"); TryPnm(b, 0, false); }
+        { Bytes b = S("P5\n1 1\n255#c\n"); Add(b, {9}); TryPnm(b, -1, false); }                                                        // comment right before the data: the newline is the one separator
+        { Bytes b = S("P3\n"); for (int i = 0; i < 200000; ++i) b.insert(b.end(), {'#', '\n'}); Bytes t = S("1 1 255 1 2 3"); b.insert(b.end(), t.begin(), t.end()); TryPnm(b, 1, false); }
+        { Bytes b = S("P1\n64 64\n"); for (int i = 0; i < 4096; ++i) { b.push_back('#'); b.push_back('\r'); b.push_back('1'); } TryPnm(b, -1, false); }
+        { Bytes b = S("P1\n2 2\n1#x\n0#y\n1#z\n0"); TryPnm(b, 1, false); }
+
+        // whitespace after the header: none, one, two, odd bytes, NUL
+        for (int k = 4; k <= 6; ++k) {
+            const std::string h = "P" + std::to_string(k) + " 2 2" + ((k == 4) ? "" : " 255");
+            Bytes body((k == 4) ? 2 : k == 5 ? 4 : 12, 0x55);
+            TryPnm(Cat(S(h), body), 0, false);                                           // no separator at all
+            for (char sp : {' ', '\n', '\t', '\r', '\v', '\f'}) TryPnm(Cat(S(h + sp), body), 1, false);
+            TryPnm(Cat(S(h + "\r\n"), body), -1, false);                                 // two white space bytes: the second is data, so the body is one byte short
+            TryPnm(Cat(S(h + "  "), body), -1, false);
+            TryPnm(Cat(S(h + std::string(1, '\0')), body), -1, false);
+            TryPnm(Cat(S(h + "\n\n\n\n"), body), -1, false);
+        }
+        for (const char* h : {"P3 2 1 255 1 2 3 4 5 6", "P3\t2\r\n1\f255\v1 2 3 4 5 6", "P3  2   1  255   1   2   3   4   5   6   ", "P3 2 1 255\n1 2 3 4 5 6\n\n\n", "P2 2 1 255 1 2", "P2 2 1 255 1", "P2 2 1 255 1 2 3"}) TryPnm(S(h), -1, false);
+        for (const char* h : {"P", "P ", "P1", "P1 ", "P1 1", "P1 1 1", "P2 1 1", "P2 1 1 255", "P3 1 1 255 1 2", "P7\n1 1\n255\n123", "P0 1 1 1", "P9 1 1", "Q1 1 1", "p1 1 1 1", "P11 1 1 1", "P6", "P6\n", "P6\n1", "P6\n1 1", "P6\n1 1\n255"}) TryPnm(S(h), -1, false);
+        { Bytes b = {'P', '1', '\0', '1', ' ', '1', ' ', '0'}; TryPnm(b, -1, false); }
+        { Bytes b = {'P', '1', ' ', '1', ' ', '1', ' ', '0'}; TryPnm(b, 1, false); }
+        { Bytes b = S("P7\n1 1\n255\n"); b.insert(b.end(), 3, 7); TryPnm(b, 0, false); }                                                 // P7 (PAM) is not handled; the router must say so
+        { Bytes b = S("P7\nWIDTH 1\nHEIGHT 1\nDEPTH 3\nMAXVAL 255\nTUPLTYPE RGB\nENDHDR\n"); b.insert(b.end(), 3, 7); TryPnm(b, 0, false); }
+        TryPnm(Bytes{'P'}, 0, false); TryPnm(Bytes{'P', '7'}, 0, false); TryPnm(Bytes{'P', '3'}, 0, false); TryPnm(Bytes{'P', '3', '\n'}, 0, false);
+
+        // maxval and samples above it, 16-bit edge cases
+        TryPnm(S("P2 1 1 15 16"), 0, false); TryPnm(S("P2 1 1 15 15"), 1, false); TryPnm(S("P3 1 1 0 0 0 0"), 0, false);
+        { Bytes b = S("P5 1 1 300\n"); Add(b, {0x01, 0x2C}); TryPnm(b, 1, false); b = S("P5 1 1 300\n"); Add(b, {0x01, 0x2D}); TryPnm(b, 0, false); }
+        { Bytes b = S("P6 1 1 65535\n"); Add(b, {0xFF, 0xFF, 0, 0, 0x80, 0}); TryPnm(b, 1, false); }
+        { Bytes b = S("P6 1 1 256\n"); Add(b, {1, 0, 0, 0, 0, 0}); TryPnm(b, 1, false); b = S("P6 1 1 256\n"); Add(b, {1, 1, 0, 0, 0, 0}); TryPnm(b, 0, false); }
+        TryPnm(S("P1 3 1 0 1 2"), 0, false); TryPnm(S("P1 3 1 011"), 1, false); TryPnm(S("P1 3 1 0 1 x"), 0, false);
+
+        // random garbage with and without a magic, binary and text-like
+        for (int round = 0; round < 400; ++round) {
+            const std::size_t len = Rnd() % 300;
+            TryPnm(Rand(len), -1, false);
+            for (int k = 1; k <= 7; ++k) {
+                Bytes b = S("P" + std::to_string(k)); b.push_back(" \n\t\r"[Rnd() % 4]);
+                const int mode = round % 4;
+                if (mode == 0) { Bytes r = Rand(len); b.insert(b.end(), r.begin(), r.end()); }
+                else { for (std::size_t i = 0; i < len; ++i) b.push_back("0123456789 \n#\r\t-x"[Rnd() % (mode == 1 ? 12 : 17)]); }
+                TryPnm(b, -1, false);
+            }
+        }
+        // random mutations of the valid fixtures
+        for (int round = 0; round < 3000; ++round) {
+            Bytes s = fx[Rnd() % fx.size()];
+            for (int o = 0, ops = 1 + (int)(Rnd() % 4); o < ops && !s.empty(); ++o) {
+                const std::size_t at = Rnd() % s.size();
+                switch (Rnd() % 4) {
+                case 0: s[at] = (std::uint8_t)Rnd(); break;
+                case 1: s[at] = (std::uint8_t)"0123456789 #\n-"[Rnd() % 14]; break;
+                case 2: s.insert(s.begin() + (std::ptrdiff_t)at, 1 + Rnd() % 5, (std::uint8_t)"0129 #\n"[Rnd() % 7]); break;
+                default: s.erase(s.begin() + (std::ptrdiff_t)at); break;
+                }
+            }
+            TryPnm(s, -1, false);
+        }
+        std::printf("  pnm: %ld inputs\n", n);
+        if (had) SetEnvVar("OKAY_OWN_PNM", saved.c_str()); else UnsetEnvVar("OKAY_OWN_PNM");
+    }
+
     std::printf("  worst: peak %zu KiB above the input, %.2f s for one input\n", g_worstPeak / 1024, g_worstTime);
     TEST_MAIN_RESULT();
 }

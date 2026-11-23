@@ -299,5 +299,20 @@ void WriteDisabledComponents(std::ostream& out, const GameObject* go) {
     }
 }
 
+// The folder of the scene file being loaded (LoadFromFile), so mesh files it
+// points at can be found next to it in an exported game.
+thread_local std::string g_loadingSceneDir;
+
+// A UTF-8 path as a file-system path for the streams below. On Windows a std::string handed to std::ifstream is read in
+// the ANSI code page, so a scene or prefab under a folder such as "My Game \xC3\xBC" could not be opened or saved; the
+// wide form names the right file and never throws (text that is not UTF-8 becomes U+FFFD, a name no file has).
+std::filesystem::path FilePath(const std::string& utf8) {
+#ifdef _WIN32
+    return std::filesystem::path(utf8::ToWide(utf8));
+#else
+    return std::filesystem::path(utf8);
+#endif
+}
+
 } // namespace sceneser
 } // namespace okay

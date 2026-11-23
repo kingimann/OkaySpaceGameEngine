@@ -236,22 +236,9 @@
 
 namespace okay {
 
-// The folder of the scene file being loaded (LoadFromFile), so mesh files it
-// points at can be found next to it in an exported game.
-static thread_local std::string g_loadingSceneDir;
 // The folder of the scene file loaded last: restoring a scene from text (Stop after Play, Undo) finds mesh files next to it again.
 static thread_local std::string g_lastSceneDir;
 
-// A UTF-8 path as a file-system path for the streams below. On Windows a std::string handed to std::ifstream is read in
-// the ANSI code page, so a scene or prefab under a folder such as "My Game \xC3\xBC" could not be opened or saved; the
-// wide form names the right file and never throws (text that is not UTF-8 becomes U+FFFD, a name no file has).
-static std::filesystem::path FilePath(const std::string& utf8) {
-#ifdef _WIN32
-    return std::filesystem::path(utf8::ToWide(utf8));
-#else
-    return std::filesystem::path(utf8);
-#endif
-}
 
 namespace detail {
 std::uint64_t ComponentRulesGeneration();        // GameObject.cpp
@@ -784,22 +771,6 @@ static void CompleteViewToggle(Scene& scene, GameObject* go) {
     }
 }
 
-// State of a document being parsed, kept so a parse can pause between objects
-// and carry on later (multi-frame scene loads).
-struct ParseSession {
-    explicit ParseSession(std::string t) : text(std::move(t)), in(text) { in.imbue(TolerantLocale()); }
-    std::string text;
-    std::istringstream in;
-    bool started = false;
-    int version = 0;
-    // file index -> created GameObject, plus deferred parent links.
-    std::unordered_map<int, GameObject*> byIndex;
-    std::vector<std::pair<int, int>> parentLinks; // child index -> parent index
-    GameObject* first = nullptr;                  // first object created
-    std::vector<std::string> warnings;            // unknown records skipped so far
-    std::unordered_map<int, int> siblingHints;    // child index -> saved position among its siblings
-    std::unordered_set<std::string> seenGuids;
-};
 
 // Parse (a slice of) a document into `scene`, which the caller has already
 // cleared if it is a full load. If `clear` is false, objects are appended (used

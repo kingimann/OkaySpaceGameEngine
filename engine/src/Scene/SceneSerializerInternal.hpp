@@ -2,6 +2,7 @@
 // shares: quoting, the key=value line reader and writer, and the list and curve forms. They used to sit in an anonymous
 // namespace at the top of SceneSerializer.cpp (docs/engine/modularization_plan.md, section 3.1, S3).
 #pragma once
+#include "okay/Core/TolerantNumbers.hpp"
 #include "okay/Components/Consumables.hpp"
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/StanceControl.hpp"
@@ -17,11 +18,13 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <istream>
 #include <ostream>
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace okay {
@@ -54,6 +57,8 @@ void WriteGradientKv(KvOut& k, const std::string& p, const ParticleGradient& g);
 void ReadGradientKv(const KvIn& k, const std::string& p, ParticleGradient& g);
 void ReadStatTail(std::istream& in, StatComponent* c);
 void ReadAnchor(std::istream& in, UIAnchor& anchor);
+std::filesystem::path FilePath(const std::string& utf8);
+extern thread_local std::string g_loadingSceneDir;
 void WriteComponentRecords(std::ostream& out, GameObject* go);   // SceneSerializerWrite.cpp
 void WriteDisabledComponents(std::ostream& out, const GameObject* go);
 
@@ -205,4 +210,22 @@ void WriteContactOffsets(std::ostream& out, const char* rec, const std::vector<T
 }
 
 } // namespace sceneser
+
+// State of a document being parsed, kept so a parse can pause between objects
+// and carry on later (multi-frame scene loads).
+struct ParseSession {
+    explicit ParseSession(std::string t) : text(std::move(t)), in(text) { in.imbue(TolerantLocale()); }
+    std::string text;
+    std::istringstream in;
+    bool started = false;
+    int version = 0;
+    // file index -> created GameObject, plus deferred parent links.
+    std::unordered_map<int, GameObject*> byIndex;
+    std::vector<std::pair<int, int>> parentLinks; // child index -> parent index
+    GameObject* first = nullptr;                  // first object created
+    std::vector<std::string> warnings;            // unknown records skipped so far
+    std::unordered_map<int, int> siblingHints;    // child index -> saved position among its siblings
+    std::unordered_set<std::string> seenGuids;
+};
+
 } // namespace okay

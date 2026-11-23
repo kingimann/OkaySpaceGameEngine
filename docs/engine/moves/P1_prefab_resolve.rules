@@ -1,0 +1,19 @@
+# Batch P1 of the engine modularization plan (docs/engine/modularization_plan.md, Part A section 3.1):
+# engine/src/Scene/PrefabTools.cpp: the file reader and resolver stage (text helpers, raw documents, deltas, the resolved
+# object list, Normalize, the resolver context, ReadPrefabText, BuildDoc and ResolveFile; about 760 lines, the whole first
+# part of the file's private namespace) moves to engine/src/Scene/PrefabResolve.cpp. Nothing in it calls code that is
+# lower in the file, so the stage stands alone. Written from the file itself; nothing else.
+#   python3 scripts/check_pure_move.py --base origin/main --head HEAD --source engine/src/Scene/PrefabTools.cpp \
+#       --dest engine/src/Scene/PrefabResolve.cpp --dest engine/src/Scene/PrefabInternal.hpp \
+#       --rules docs/engine/moves/P1_prefab_resolve.rules
+# The types, constants and aliases of the stage moved as they were into PrefabInternal.hpp, under okay::prefab_text (a
+# namespace of its own; the stage's names are common words such as Trim and Render). Each function of the stage is
+# declared there, and PrefabTools.cpp names what it uses with using-declarations, so every call stays as written.
+# (edits inside PrefabTools.cpp itself are drop/add rules; the one moved line that had to change, RecordKey, loses its default
+# argument because the declaration carries it)
+change: std::string RecordKey(const std::string& line, std::unordered_map<std::string, int>& seen, int* occ = nullptr) { ==> std::string RecordKey(const std::string& line, std::unordered_map<std::string, int>& seen, int* occ) {
+# what PrefabTools.cpp keeps of the stage's names
+add: ^using prefab_text::\w+;$
+add: ^namespace fs = std::filesystem;$
+# one declaration per function of the stage, in PrefabInternal.hpp
+add: ^(std::string|bool|int|void|Status|ObjSem|std::vector<int>) \w+\([^()]*\);$

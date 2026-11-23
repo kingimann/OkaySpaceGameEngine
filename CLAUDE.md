@@ -52,23 +52,39 @@ then this file gets updated. Keep this file short and true.
 
 ## Pull requests and CI
 
-6. **Merge only a PR with no problems.** Every CI job must be finished and green, including the slow "Build & test
-   (Ubuntu)" job. Wait for it; do not merge while any job is running, red or cancelled, and do not merge a PR whose
-   own text lists a failing or unrun test that CI could have run. Squash-merge with the title `<PR title> (#N)` and
-   the exact head sha. (The owner said on 2026-11-15: "stop merging PRs with problems". Before that this rule let
-   PRs merge without the Ubuntu job, and PRs #842 to #856 merged with the `player` test red.) A docs-only change
-   whose only jobs are docs checks may merge once those are green.
+6. **Merge only a PR with no problems; the checks happen before the push** (owner, 2026-11-23: "instead of doing the
+   checks there we do it before hand", choosing "lint + Windows build only" on GitHub). Before pushing, the author runs
+   `bash scripts/precheck.sh --build <build folder> --tests` (rule 7a): the quick checks, a build of what changed, and
+   every test program that had to be rebuilt. The PR body has a `## Precheck` section with that run's summary lines.
+   On a PR, GitHub then runs only branch-lint, the PR-body check and the Windows cross-compile (we cannot build
+   Windows here); merge when those are finished and green and the precheck was clean. Do not merge a PR whose own text
+   lists a failing or unrun test. The full suite (Ubuntu build and tests, ASan, editor, player, readers, web, SQL...)
+   runs on every push to main and every night: a red full run on main is fixed before anything else (rule 7), and a
+   release is only made from a main commit whose full run is green. Squash-merge with the title `<PR title> (#N)` and
+   the exact head sha. (History: on 2026-11-15 the owner said "stop merging PRs with problems" after PRs #842 to #856
+   merged with the `player` test red; the precheck is what keeps that from happening now.)
    **Nothing is held** (owner, 2026-11-22: "I don't want anything to be held. I want to be able to test everything."): a PR
-   whose CI is fully green is merged at once and goes into the next release, so the owner can test it. Extra reviews run
+   whose checks are green is merged at once and goes into the next release, so the owner can test it. Extra reviews run
    while CI runs, not after it; a review finding is fixed in a follow-up PR unless it can lose player data or crash,
    in which case it is fixed in the PR before merging. Drafts are only for work that does not build yet.
 7. **Never merge a red PR, and never just retry it.** Read the failing job's log, find the cause and fix it in
    the code. A re-run is only for a job that was cancelled by a runner shutdown, and if the same job keeps
    dying, find out why (this is how the WebGL job got its cache and timeout).
+7a. **Run the checks before you push, so PRs are not red** (owner, 2026-11-23: "do what needs to be done to prevent
+    it"). Before every push, by every Claude and every agent: merge main in, then `bash scripts/precheck.sh` (about a
+    minute; the pre-push hook from `bash scripts/install_hooks.sh` runs it for you, once per clone). It catches conflict
+    markers, a branch that no longer merges, Windows thread includes, secrets, duplicate code, a stale feature map and
+    copies between open branches; `--build <dir> --tests` also builds what changed and runs every test it touches
+    (required before a push, rule 6). A new or changed CI check is first run against every open PR (the integration check,
+    or `scripts/precheck.sh --head origin/<branch>` per branch) and fixed until it turns nothing red that was green.
 8. **Fix PRs that have conflicts or errors**: merge main into the branch, resolve keeping both sides, build and
    run the relevant tests, push. This includes the `john/` branches (the owner allowed it).
 9. **Keep the open PR count low.** Merge or close. Close PRs that are superseded, with a comment saying by what.
    Do not open new PRs faster than CI can check them.
+   **Fewer, bigger PRs** (owner, 2026-11-23: "can we do bigger PRs, that way it's fewer"): every PR runs the whole
+   1.5-2 hour CI, so batch related work into one PR per area (for example one physics PR, one duplicates PR) instead of
+   one per step, keep about 5 open per Claude at most, and push to an open PR only when its fix is complete. Stacked
+   steps go in as the top branch's single PR.
 10. Agents push only their own branch (plain push, never force) and do not open PRs unless told. Each Claude's main
     session opens and merges its own lane's PRs (rule 6). Only the coordinator merges the release PR and runs `release.yml`.
 26. **Three Claudes, one set of lanes.** The coordinator (`claude/*`), Claude 2 (`claude2/*`) and Claude 3 (`claude3/*`) follow

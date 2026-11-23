@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 67 headers, 965 names.
+Back to the [code index](../code_index.md). 67 headers, 962 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -721,20 +721,20 @@ Back to the [code index](../code_index.md). 67 headers, 965 names.
 
 ## `shared/OkayUIBackend.hpp`
 
-- `Backend` enum, line 26
-- `CompiledIn` function, line 29: True when this binary can host OkayUI at all (the okay_ui library is linked in).
-- `BuildDefault` function, line 38: The build's default (the CMake option OKAY_UI_DEFAULT_BACKEND).
-- `Name` function, line 41: The short name stored in settings files and read from the environment: "imgui" or "okayui".
-- `Label` function, line 43: The words the settings screens show.
-- `Parse` function, line 47: Read a backend name: "imgui", "dear imgui", "okayui", "okay ui" (case and surrounding spaces ignored), or the numbers
-- `Normalize` function, line 58: What a settings file stores: the canonical name of 'text', or an empty string for anything unreadable (= "never chosen").
-- `FromSettingInt` function, line 63: The editor's settings file holds integers ("uibackend 1"): 1 is OkayUI, any other number Dear ImGui.
-- `ToSettingInt` function, line 65: The integer to save for a setting (never called for an empty one: nothing is saved then, so "never chosen" survives a save).
-- `DevMode` function, line 68: The developer flag: OKAY_DEV set to anything but empty or "0" (the same rule as the editor's launcher gate).
-- `SettingRowVisible` function, line 71: The settings rows that change the backend are shown only with the developer flag, and only where OkayUI is compiled in.
-- `Resolve` function, line 76: The backend to use: the environment value (null or unreadable = none) over the saved setting, and Dear ImGui when OkayUI is
-- `Source` function, line 85: Which source decided: 0 build default, 1 the saved setting, 2 the environment (for the settings row's note).
-- `InspectorOn` function, line 95: The Inspector drawn by OkayUI (a preview; docs/ui/own_ui_toolkit.md sections 14-22; on by default through the Settings > Experimental items since 2026-11-23). I
+- `Backend` enum, line 22
+- `CompiledIn` function, line 25: True when this binary can host OkayUI at all (the okay_ui library is linked in).
+- `BuildDefault` function, line 34: The build's default (the CMake option OKAY_UI_DEFAULT_BACKEND).
+- `Name` function, line 37: The short name stored in settings files and read from the environment: "imgui" or "okayui".
+- `Label` function, line 39: The words the settings screens show.
+- `Parse` function, line 43: Read a backend name: "imgui", "dear imgui", "okayui", "okay ui" (case and surrounding spaces ignored), or the numbers
+- `Normalize` function, line 54: What a settings file stores: the canonical name of 'text', or an empty string for anything unreadable (= "never chosen").
+- `FromSettingInt` function, line 59: The editor's settings file holds integers ("uibackend 1"): 1 is OkayUI, any other number Dear ImGui.
+- `ToSettingInt` function, line 61: The integer to save for a setting (never called for an empty one: nothing is saved then, so "never chosen" survives a save).
+- `DevMode` function, line 64: The developer flag: OKAY_DEV set to anything but empty or "0" (the same rule as the editor's launcher gate).
+- `SettingRowVisible` function, line 67: The settings rows that change the backend are shown only with the developer flag, and only where OkayUI is compiled in.
+- `Resolve` function, line 72: The backend to use: the environment value (null or unreadable = none) over the saved setting, and Dear ImGui when OkayUI is
+- `Source` function, line 81: Which source decided: 0 build default, 1 the saved setting, 2 the environment (for the settings row's note).
+- `InspectorOn` function, line 91: The Inspector drawn by OkayUI (a preview, off by default; docs/ui/own_ui_toolkit.md sections 14-22). It needs the OkayUI backend
 
 ## `shared/OkayUIFrame.hpp`
 
@@ -763,7 +763,6 @@ Back to the [code index](../code_index.md). 67 headers, 965 names.
 - `CoveredInImGui` function, line 60: Popups and windows in front together: while this is true a host draws the Dear ImGui version, which ImGui layers correctly.
 - `ToMainWindowPixels` function, line 67: ImGui positions are desktop coordinates while multi-viewports are on (the editor turns them on): the main window's inside
 - `OutsideMainWindow` function, line 73: True when the ImGui window was dragged out into another OS window: OkayUI only draws into the main one.
-- `HiddenInImGui` function, line 81: True when Dear ImGui shows nothing of the window this frame: a docked panel whose tab is not the selected one (the Inspector while
 
 ## `shared/OkayUIHostMode.hpp`
 
@@ -833,39 +832,37 @@ Back to the [code index](../code_index.md). 67 headers, 965 names.
 
 ## `shared/OwnSwitches.hpp`
 
-- `Needs` enum, line 33: What an item needs from the build or the system. A screen passes what is true here; an unavailable item is hidden.
-- `Item` struct, line 35
-- `Items` function, line 46: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
-- `AlternativeExe` struct, line 61: A second program built from the same sources against our own UI (CMake options OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): the
-- `Alternative` function, line 65
-- `Context` struct, line 79: What is true on this machine: used to hide items that cannot work here.
-- `Available` function, line 94
-- `SplitIds` function, line 102
-- `JoinIds` function, line 111
-- `Has` function, line 116
-- `Find` function, line 120
-- `Select` function, line 126: The ids of 'items' for which 'pick(id)' is true, in table order.
-- `Parse` function, line 135: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
-- `Serialize` function, line 145: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
-- `AllOn` function, line 152: The default: everything on.
-- `AllOff` function, line 154: "Back to the third-party parts": everything off.
-- `Set` function, line 155
-- `AppliedVar` function, line 164
-- `PutEnv` function, line 166
-- `DropEnv` function, line 173
-- `AppliedNow` function, line 180
-- `SetByUser` function, line 186: True when the person set the item's variable themselves (it is set and we did not set it).
-- `Apply` function, line 192: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
-- `Status` enum, line 207
-- `StatusOf` function, line 210: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
-- `StatusText` function, line 217
-- `DefaultPath` function, line 228: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
-- `LoadFile` function, line 242
-- `SaveFile` function, line 249
-- `State` struct, line 260: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
-- `Global` function, line 265
-- `Startup` function, line 268: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
-- `SaveChosen` function, line 275: Save the screen's choice to the file Startup() read.
+- `Needs` enum, line 29: What an item needs from the build or the system. A screen passes what is true here; an unavailable item is hidden.
+- `Item` struct, line 31
+- `Items` function, line 41: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed).
+- `AlternativeExe` struct, line 56: A second program built from the same sources against our own UI (CMake options OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): the
+- `Alternative` function, line 60
+- `Context` struct, line 74: What is true on this machine: used to hide items that cannot work here.
+- `Available` function, line 89
+- `SplitIds` function, line 97
+- `JoinIds` function, line 106
+- `Has` function, line 111
+- `Find` function, line 115
+- `Parse` function, line 122: Read the file text: the 'on=' line. Unknown ids, repeats and damaged lines are dropped, so a hand-edited file cannot turn
+- `Serialize` function, line 133
+- `AllOff` function, line 140: "Back to normal": everything off.
+- `Set` function, line 141
+- `AppliedVar` function, line 150
+- `PutEnv` function, line 152
+- `DropEnv` function, line 159
+- `AppliedNow` function, line 166
+- `SetByUser` function, line 172: True when the person set the item's variable themselves (it is set and we did not set it).
+- `Apply` function, line 178: Set the variables of the chosen, available items (not over a variable the person set), remove the ones a parent program set that
+- `Status` enum, line 193
+- `StatusOf` function, line 196: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
+- `StatusText` function, line 203
+- `DefaultPath` function, line 214: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
+- `LoadFile` function, line 228
+- `SaveFile` function, line 235
+- `State` struct, line 246: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
+- `Global` function, line 251
+- `Startup` function, line 254: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
+- `SaveChosen` function, line 261: Save the screen's choice to the file Startup() read.
 
 ## `shared/PainterBridge.hpp`
 

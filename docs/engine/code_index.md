@@ -10,10 +10,10 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | Folder | Files | Names | Page |
 |---|---|---|---|
 | engine-AI | 7 | 37 | [code_index/engine-AI.md](code_index/engine-AI.md) |
-| engine-Animation | 9 | 89 | [code_index/engine-Animation.md](code_index/engine-Animation.md) |
+| engine-Animation | 11 | 106 | [code_index/engine-Animation.md](code_index/engine-Animation.md) |
 | engine-Audio | 11 | 33 | [code_index/engine-Audio.md](code_index/engine-Audio.md) |
 | engine-Combat | 1 | 6 | [code_index/engine-Combat.md](code_index/engine-Combat.md) |
-| engine-Components | 260 | 735 | [code_index/engine-Components.md](code_index/engine-Components.md) |
+| engine-Components | 262 | 741 | [code_index/engine-Components.md](code_index/engine-Components.md) |
 | engine-Core | 77 | 476 | [code_index/engine-Core.md](code_index/engine-Core.md) |
 | engine-Crypto | 2 | 21 | [code_index/engine-Crypto.md](code_index/engine-Crypto.md) |
 | engine-Debug | 11 | 80 | [code_index/engine-Debug.md](code_index/engine-Debug.md) |
@@ -37,4 +37,4 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-UI | 16 | 77 | [code_index/engine-UI.md](code_index/engine-UI.md) |
 | engine-VisualScript | 29 | 581 | [code_index/engine-VisualScript.md](code_index/engine-VisualScript.md) |
 | okayui | 12 | 638 | [code_index/okayui.md](code_index/okayui.md) |
-| shared | 67 | 965 | [code_index/shared.md](code_index/shared.md) |
+| shared | 67 | 962 | [code_index/shared.md](code_index/shared.md) |

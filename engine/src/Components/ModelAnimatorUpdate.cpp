@@ -204,6 +204,7 @@ namespace okay {
         m_prevSlot = slot;
     }
 
+    // dup-allow: false positive, "LowerBody" is the lower half of the body, not a string helper; the line is moved unchanged
     void ModelAnimator::YawLowerBody(float dt) {
         if (!transform) return;
         UndoYaw();

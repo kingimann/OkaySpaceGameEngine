@@ -159,6 +159,8 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "NewsHistory.hpp"      // What's New history (news.cfg)
 #include "AdminPage.hpp"        // reports, Admin > Reports, the Admin page, the ban banner
 #include "PublicProfilePage.hpp"   // public profiles: the page, showcase, social links table
+#include "MemberModerationUI.hpp"  // kick / ban / unban / admin role for servers and group chats
+#include "GroupConversation.hpp"   // the open group conversation
 
 // An RGBA8 picture (w * h * 4 bytes, top row first) as a texture of `renderer`; null when it cannot be made. The same texture
 // SDL_CreateTextureFromSurface gave (static, alpha blended, nearest sampling); the caller still draws it with SDL_RenderCopy and
@@ -2027,14 +2029,12 @@ std::set<std::string>              g_archivedChats;
 // Messenger/WhatsApp-style per-conversation extras (client-side, persisted).
 std::set<std::string>              g_blockedUsers;   // uids I've blocked: their messages hidden, can't send
 std::map<std::string,int>          g_chatColor;      // uid -> per-chat theme colour index (0 = default)
-struct StarredMsg { std::string uid; std::string preview; long when = 0; };
 std::map<long, StarredMsg>         g_starred;        // message id -> starred ("saved") message
 // Pinned messages (shared with everyone in the chat via message_pins). Until
 // the server has that table, pins live here only, persisted as "lpin=".
 std::map<long, long>               g_pinsDm, g_pinsGroup;   // message id -> pinned at (unix)
 bool                               g_pinsShared = false;    // true once the server confirms message_pins exists
 // Scheduled messages: sent by this launcher when they're due (scheduled.cfg).
-struct SchedMsg { long id = 0; std::string toUid, toName; long toGroup = 0; std::string body; long at = 0; };
 std::vector<SchedMsg>              g_scheduled;
 // Custom status ("profiles.status") and when to clear it (0 = never).
 std::string                        g_myStatus;
@@ -2698,7 +2698,6 @@ bool PrimaryButton(const char* label, const ImVec2& size) {
 //   messages carry the URL ("<:name:url>", "[Sticker] url").
 // ===========================================================================
 void SavePrefs();                                              // defined with the prefs below
-static void DrawStar(ImDrawList* dl, ImVec2 c, float r, ImU32 col);   // defined with the chat helpers
 static const char* kEmojiJsonUrl  = "https://cdn.jsdelivr.net/npm/emoji-datasource@15.1.2/emoji.json";
 static const char* kEmojiSheetUrl = "https://cdn.jsdelivr.net/npm/emoji-datasource-twitter@15.1.2/img/twitter/sheets/32.png";
 static constexpr int kEmojiCell = 32, kEmojiStride = 34;   // sheet cells have 1px padding
@@ -2975,7 +2974,7 @@ static void LibraryRefresh();                                                // 
 static void LibraryUpload(const std::string& path, const std::string& folder, const std::string& name);
 static void LibraryDelete(const std::string& folder, const std::string& file);
 // Replace ":name:" with my custom emoji token before sending ("<:name:url>").
-static std::string ExpandCustomEmoji(const std::string& text) {
+std::string ExpandCustomEmoji(const std::string& text) {
     if (text.find(':') == std::string::npos) return text;
     std::vector<okay::Messages::LibraryItem> lib;
     if (g_libMutex) { okay::thr::LockMutex(g_libMutex); lib = g_libEmoji; okay::thr::UnlockMutex(g_libMutex); }
@@ -3616,7 +3615,7 @@ void SavePrefs() {
 // from the sidebar "Chat" button and from any friend's "Message" action.
 // Short, single-line preview of a message body for the conversation list /
 // reply quote: strips newlines and clips to `n` chars with an ellipsis.
-static std::string ChatPreview(const std::string& body, std::size_t n) {
+std::string ChatPreview(const std::string& body, std::size_t n) {
     std::string s; s.reserve(body.size());
     for (char c : body) s += (c == '\n' || c == '\r') ? ' ' : c;
     if (s.size() > n) { s.erase(n); while (!s.empty() && s.back()==' ') s.pop_back(); s += "\xE2\x80\xA6"; }
@@ -3625,7 +3624,7 @@ static std::string ChatPreview(const std::string& body, std::size_t n) {
 
 // The first http(s) URL in `body` that points at an image (by extension), so a
 // chat message containing an image link renders an inline preview.
-static std::string FirstImageUrl(const std::string& body) {
+std::string FirstImageUrl(const std::string& body) {
     std::size_t i = 0, n = body.size();
     while (i < n) {
         while (i < n && (body[i]==' '||body[i]=='\n')) ++i;
@@ -3646,8 +3645,7 @@ static std::string FirstImageUrl(const std::string& body) {
 // A file message body is "[File] <name> (<size>) <url>" (okay::Messages::
 // FileMessageBody). Older clients show it as text + a link; here it renders as
 // a tappable file card.
-struct ChatFileInfo { std::string name, size, url; };
-static bool ParseChatFile(const std::string& body, ChatFileInfo& out) {
+bool ParseChatFile(const std::string& body, ChatFileInfo& out) {
     if (body.rfind("[File] ", 0) != 0) return false;
     std::size_t us = body.find_last_of(' ');
     if (us == std::string::npos || us < 7) return false;
@@ -3661,12 +3659,12 @@ static bool ParseChatFile(const std::string& body, ChatFileInfo& out) {
     } else { out.name = mid; out.size.clear(); }
     return !out.name.empty();
 }
-static float ChatFileCardWidth(const ChatFileInfo& f, float maxW) {
+float ChatFileCardWidth(const ChatFileInfo& f, float maxW) {
     float w = std::max(ImGui::CalcTextSize(f.name.c_str()).x, ImGui::CalcTextSize(f.size.c_str()).x) + 50.0f;
     return std::min(std::max(w, 190.0f), maxW);
 }
 // Document icon + name + size; the whole card opens/downloads the file.
-static void RenderChatFileCard(const ChatFileInfo& f, float width) {
+void RenderChatFileCard(const ChatFileInfo& f, float width) {
     const float h = 44.0f;
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::PushID(f.url.c_str());
@@ -3699,7 +3697,7 @@ static void RenderChatFileCard(const ChatFileInfo& f, float width) {
 }
 // Chat window palette (dark slate, Messenger-dark): the bubbles, header strip
 // and composer are designed around it.
-static const ImVec4 kChatWinBg   = okaytheme::kBase;
+extern const ImVec4 kChatWinBg   = okaytheme::kBase;
 static const ImVec4 kChatSideBg  = okaytheme::kSunken;
 static const ImVec4 kChatSideSel (0.170f, 0.178f, 0.204f, 1.0f);   // side bg + the selected-row wash
 
@@ -3751,8 +3749,7 @@ static void DrawRichLine(ImDrawList* dl, ImVec2 pos, ImU32 col, const std::strin
 }
 
 // Poll message bodies (see Polls below).
-struct ChatPollInfo { std::string question; std::vector<std::string> options; };
-static bool ParseChatPoll(const std::string& body, ChatPollInfo& p) {
+bool ParseChatPoll(const std::string& body, ChatPollInfo& p) {
     if (body.rfind("[Poll] ", 0) != 0) return false;
     p = ChatPollInfo{};
     std::size_t nl = body.find('\n');
@@ -3775,8 +3772,7 @@ static std::string PollMessageBody(const std::string& q, const std::vector<std::
 // An invite is an ordinary message: "[Invite] Game title" then the join link on
 // the next line. It draws as a card with a Join button; older launchers just
 // show the text and the link.
-struct ChatInviteInfo { std::string title; okay::JoinLink link; };
-static bool ParseChatInvite(const std::string& body, ChatInviteInfo& out) {
+bool ParseChatInvite(const std::string& body, ChatInviteInfo& out) {
     if (body.rfind("[Invite] ", 0) != 0) return false;
     const std::size_t nl = body.find('\n');
     if (nl == std::string::npos || nl <= 9) return false;
@@ -3798,8 +3794,8 @@ static void DrawGamepadIcon(ImDrawList* d, ImVec2 c, float s, ImU32 col) {
     d->AddCircleFilled(ImVec2(c.x + w * 0.42f, c.y + k * 1.2f), k * 1.3f, cut, 10);
     d->AddCircleFilled(ImVec2(c.x + w * 0.66f, c.y - k * 1.2f), k * 1.3f, cut, 10);
 }
-static float ChatInviteWidth(float maxW) { return std::min(maxW, 270.0f); }
-static void RenderChatInvite(const ChatInviteInfo& inv, bool mine, long when, float width) {
+float ChatInviteWidth(float maxW) { return std::min(maxW, 270.0f); }
+void RenderChatInvite(const ChatInviteInfo& inv, bool mine, long when, float width) {
     ImDrawList* d = ImGui::GetWindowDrawList();
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float tile = 44.0f;
@@ -3831,8 +3827,7 @@ static void RenderChatInvite(const ChatInviteInfo& inv, bool mine, long when, fl
 }
 // A forwarded message: "[Fwd] <original sender>\n<the message>". Older clients
 // just show the tag line; newer ones show a "Forwarded from" label instead.
-struct ChatFwd { bool ok = false; std::string from, body; };
-static ChatFwd ParseChatFwd(const std::string& b) {
+ChatFwd ParseChatFwd(const std::string& b) {
     ChatFwd f;
     if (b.rfind("[Fwd] ", 0) != 0) return f;
     const std::size_t nl = b.find('\n');
@@ -3845,7 +3840,7 @@ static std::string ChatFwdBody(const std::string& from, const std::string& body)
     return inner.ok ? body : "[Fwd] " + (from.empty() ? std::string("someone") : from) + "\n" + body;
 }
 // Conversation-list preview: "Photo" / "File: name" instead of raw URLs.
-static std::string ChatPreviewSmart(const std::string& body, std::size_t n) {
+std::string ChatPreviewSmart(const std::string& body, std::size_t n) {
     if (const ChatFwd fw = ParseChatFwd(body); fw.ok) return "Forwarded: " + ChatPreviewSmart(fw.body, n);
     ChatFileInfo fi;
     if (ParseChatFile(body, fi)) return ChatPreview("File: " + fi.name, n);
@@ -3880,8 +3875,8 @@ static std::string ChatPreviewSmart(const std::string& body, std::size_t n) {
 // ---- Chat attachment upload (background) ---------------------------------------
 // Uploading can take seconds, so it runs on a worker (own account service) that
 // uploads to Storage and then sends the message; the composer shows progress.
-static volatile bool g_attBusy = false;   // an upload is in flight
-static std::string   g_attName;           // file being uploaded (composer status)
+volatile bool g_attBusy = false;   // an upload is in flight
+std::string   g_attName;           // file being uploaded (composer status)
 static okay::thr::Mutex*    g_attMutex = nullptr;
 static bool          g_attDone = false;   // (guarded) finished -> toast result
 static std::string   g_attError;          // (guarded) "" on success
@@ -3896,8 +3891,7 @@ static constexpr unsigned long long kMaxChatUpload = 25ULL * 1024ULL * 1024ULL; 
 // capture device each frame (queue mode, no callback thread); playback fetches
 // the clip once in the background (same worker as avatars) and queues it on an
 // output device.
-struct ChatVoiceInfo { int secs = 0; std::string url; };
-static bool ParseChatVoice(const std::string& body, ChatVoiceInfo& out) {
+bool ParseChatVoice(const std::string& body, ChatVoiceInfo& out) {
     if (body.rfind("[Voice] ", 0) != 0) return false;
     std::size_t sp = body.find(' ', 8);
     int m = 0, s = 0;
@@ -3932,8 +3926,8 @@ static std::string         g_recToUid;            // which chat the recording is
 static long                g_recToGroup = 0;
 static long                g_recToChannel = 0;    // a server channel (0 = a DM / group)
 
-static bool VoiceRecording() { return g_recDev != nullptr || g_recFake; }
-static bool VoiceRecordingFor(const std::string& uid, long gid, long channel = 0) {
+bool VoiceRecording() { return g_recDev != nullptr || g_recFake; }
+bool VoiceRecordingFor(const std::string& uid, long gid, long channel) {
     return VoiceRecording() && g_recToUid == uid && g_recToGroup == gid && g_recToChannel == channel;
 }
 static float VoiceRecSeconds() { return VoiceRecording() ? (okay::platform::TicksMs32() - g_recStart) / 1000.0f : 0.0f; }
@@ -3976,7 +3970,7 @@ static bool WriteWav16(const std::string& path, const std::vector<Sint16>& pcm, 
     return (bool)f;
 }
 // Stop recording; send=true writes the WAV and hands it to the upload worker.
-static void FinishVoiceRecord(bool send) {
+void FinishVoiceRecord(bool send) {
     if (g_recDev) { PumpVoiceRecord(); g_recDev.reset(); }
     const bool fake = g_recFake; g_recFake = false;
     std::vector<Sint16> pcm; pcm.swap(g_recPcm); g_recLevels.clear();
@@ -4246,8 +4240,8 @@ static void DrawBinIcon(ImDrawList* d, ImVec2 c, float s, ImU32 col) {
 }
 
 // The voice bubble body: play/pause, waveform (tap to seek), time.
-static float ChatVoiceWidth(float maxW) { return std::min(maxW, 250.0f); }
-static void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVec4 accent) {
+float ChatVoiceWidth(float maxW) { return std::min(maxW, 250.0f); }
+void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVec4 accent) {
     const float h = 38.0f, r = 16.0f;
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImDrawList* d = ImGui::GetWindowDrawList();
@@ -4341,7 +4335,7 @@ static void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVe
 }
 
 // Composer while recording: [bin] ● 0:04 ▮▮▮▮ live level  [Send]
-static void DrawVoiceRecorderBar(float h, ImVec4 sendCol) {
+void DrawVoiceRecorderBar(float h, ImVec4 sendCol) {
     if (VoiceRecSeconds() >= kVoiceMaxSecs) { FinishVoiceRecord(true); return; }
     const float sendW = 58.0f;
     float w = ImGui::GetContentRegionAvail().x - sendW - 8;
@@ -4427,7 +4421,7 @@ static std::string g_chatDropUid;
 static long        g_chatDropGroup = 0;
 
 // Round mic button that stands in for Send while the composer is empty.
-static void DrawVoiceMicButton(const char* id, ImVec2 size, ImVec4 col, const std::string& toUid, long toGroup, long toChannel = 0) {
+void DrawVoiceMicButton(const char* id, ImVec2 size, ImVec4 col, const std::string& toUid, long toGroup, long toChannel) {
     auto brighten = [](ImVec4 c, float k) { return ImVec4(std::min(1.0f, c.x * k), std::min(1.0f, c.y * k), std::min(1.0f, c.z * k), 1.0f); };
     ImGui::PushStyleColor(ImGuiCol_Button, brighten(col, 1.25f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, brighten(col, 1.45f));
@@ -4733,7 +4727,7 @@ static okay::thr::Mutex*  g_chatMutex = nullptr;
 static okay::thr::Thread* g_chatThread = nullptr;
 static volatile bool g_chatPollRun = true;
 static volatile bool g_chatPeerTyping = false;
-static volatile bool g_chatForceLog = false;   // a send/edit/react asks for an immediate re-poll
+volatile bool g_chatForceLog = false;   // a send/edit/react asks for an immediate re-poll
 
 // ---- Outbox: a sent message shows up instantly; the network send runs off-thread ----
 // (Sending used to block the UI on the HTTP request, and the message only
@@ -4751,7 +4745,7 @@ static bool g_outWorkerRunning = false; // (guarded)
 static long g_outNextId = 1;
 static volatile bool g_srvForce = false; // Servers poller: refresh now (set after a channel post lands)
 static void OutboxKick();               // starts the sender thread (defined with the chat workers)
-static void OutboxSend(const std::string& toUid, long toGroup, const std::string& body, long replyTo = 0, long toChannel = 0) {
+void OutboxSend(const std::string& toUid, long toGroup, const std::string& body, long replyTo, long toChannel) {
     if (body.empty()) return;
     if (!g_outMutex) g_outMutex = okay::thr::CreateMutex();
     OutMsg o; o.localId = g_outNextId++; o.toUid = toUid; o.toGroup = toGroup; o.toChannel = toChannel;
@@ -4785,7 +4779,7 @@ static std::string SvTag(int kind, long ref) { return kind == 0 || ref <= 0 ? st
 // worker threads with their own account service (the same as reactions), so
 // the chat never waits on the network.
 // ============================================================================
-static bool ChatDemo() { static const bool d = std::getenv("OKAY_CHAT_DEMO") != nullptr; return d; }
+bool ChatDemo() { static const bool d = std::getenv("OKAY_CHAT_DEMO") != nullptr; return d; }
 
 // ---- Pinned messages -----------------------------------------------------------
 static Uint32 g_pinsTouchedMs = 0;   // a local pin change: polled pins wait a moment (no flicker)
@@ -4804,8 +4798,8 @@ static void ChatPinAsync(bool group, long id, bool on) {
     if (okay::thr::Thread* t = okay::thr::CreateThread(ChatPinWorker, "okay-pin", j)) okay::thr::DetachThread(t);
     else delete j;
 }
-static bool ChatIsPinned(bool group, long id) { return (group ? g_pinsGroup : g_pinsDm).count(id) != 0; }
-static void ChatPinToggle(bool group, long id) {
+bool ChatIsPinned(bool group, long id) { return (group ? g_pinsGroup : g_pinsDm).count(id) != 0; }
+void ChatPinToggle(bool group, long id) {
     auto& m = group ? g_pinsGroup : g_pinsDm;
     const bool on = m.count(id) == 0;
     if (on) m[id] = (long)std::time(nullptr); else m.erase(id);
@@ -4837,8 +4831,7 @@ static void ChatApplyPolledPins(const std::map<long, long>& dmPins, const std::m
 // The strip under a conversation's header: the newest pinned message (click to
 // jump; clicking again walks back through older pins, Telegram-style), a count,
 // and a list button with every pin (jump / unpin).
-struct ChatPinRef { long id = 0; long when = 0; std::string preview, who; };
-static void DrawPinnedBar(const char* id, std::vector<ChatPinRef> pins, bool group, long& jumpTo) {
+void DrawPinnedBar(const char* id, std::vector<ChatPinRef> pins, bool group, long& jumpTo) {
     if (pins.empty()) return;
     std::sort(pins.begin(), pins.end(), [](const ChatPinRef& a, const ChatPinRef& b) { return a.when > b.when; });
     static std::map<std::string, int> s_idx;      // which pin each chat's bar shows
@@ -4923,7 +4916,7 @@ static void DrawPinnedBar(const char* id, std::vector<ChatPinRef> pins, bool gro
 // Save an edit: the old text is recorded first (message_edits), then the new
 // text is written. Recording is best-effort: a server without the table still
 // saves the edit itself.
-static bool ChatSaveEdit(okay::Messages& dm, bool group, long id, const std::string& oldBody, const std::string& newBody) {
+bool ChatSaveEdit(okay::Messages& dm, bool group, long id, const std::string& oldBody, const std::string& newBody) {
     if (oldBody == newBody) return true;
     if (!oldBody.empty()) dm.RecordEdit(group ? "group" : "dm", id, oldBody);
     return group ? dm.EditGroup(id, newBody) : dm.Edit(id, newBody);
@@ -4931,7 +4924,7 @@ static bool ChatSaveEdit(okay::Messages& dm, bool group, long id, const std::str
 struct EditHistView { bool open = false; std::string scope; long id = 0; std::string current; bool supported = true;
                       std::vector<okay::Messages::EditVersion> versions; };
 static EditHistView g_editHist;
-static void OpenEditHistory(okay::Messages& dm, bool group, long id, const std::string& current) {
+void OpenEditHistory(okay::Messages& dm, bool group, long id, const std::string& current) {
     g_editHist = EditHistView{};
     g_editHist.open = true; g_editHist.scope = group ? "group" : "dm"; g_editHist.id = id; g_editHist.current = current;
     if (ChatDemo()) {   // dev screenshot data
@@ -5050,8 +5043,8 @@ static void PumpScheduled(bool signedIn) {
 }
 // "Schedule message" dialog for one conversation. `text` is the composer's
 // buffer (prefilled into the dialog, cleared when scheduled).
-static bool g_schedOpenReq = false;   // the composer's "+" menu asked for it
-static void DrawScheduleDialog(const char* popupId, char* text, std::size_t cap,
+bool g_schedOpenReq = false;   // the composer's "+" menu asked for it
+void DrawScheduleDialog(const char* popupId, char* text, std::size_t cap,
                                const std::string& toUid, const std::string& toName, long toGroup) {
     static char body[1024] = "";
     static int preset = 1;
@@ -5126,7 +5119,7 @@ static void DrawScheduleDialog(const char* popupId, char* text, std::size_t cap,
 }
 // A slim line above the composer when this chat has scheduled messages, with
 // a popup to send one now, edit its time (reschedule) or delete it.
-static void DrawScheduledStrip(const std::string& toUid, long toGroup) {
+void DrawScheduledStrip(const std::string& toUid, long toGroup) {
     std::vector<SchedMsg*> mine;
     for (auto& m : g_scheduled) if ((toGroup > 0 && m.toGroup == toGroup) || (toGroup == 0 && m.toGroup == 0 && m.toUid == toUid)) mine.push_back(&m);
     if (mine.empty()) return;
@@ -5336,10 +5329,10 @@ static void ChatSearchStart(const std::string& q) {
 // ---- Forwarding ------------------------------------------------------------------
 // Any message (DM or group) can be forwarded to several friends and groups at
 // once, optionally with a note. Drawn by the chat window (it has the lists).
-static long g_chatJumpGroup = 0;   // a group message to scroll to once its thread is open
+long g_chatJumpGroup = 0;   // a group message to scroll to once its thread is open
 static bool g_fwdOpenReq = false;
 static std::string g_fwdBody, g_fwdFrom;   // what to forward and who wrote it
-static void ChatForward(const std::string& body, const std::string& from) {
+void ChatForward(const std::string& body, const std::string& from) {
     g_fwdBody = body; g_fwdFrom = from; g_fwdOpenReq = true;
 }
 
@@ -5360,7 +5353,7 @@ static void DrawPencilIcon(ImDrawList* d, ImVec2 c, ImU32 col) {
     d->AddLine(ImVec2(c.x - 5, c.y + 5), ImVec2(c.x + 4, c.y - 4), col, 2.2f);
     d->AddLine(ImVec2(c.x - 6, c.y + 6), ImVec2(c.x - 4.5f, c.y + 4.5f), col, 1.2f);
 }
-static void DrawDotsIcon(ImDrawList* d, ImVec2 c, ImU32 col) {   // "more" (⋯)
+void DrawDotsIcon(ImDrawList* d, ImVec2 c, ImU32 col) {   // "more" (⋯)
     for (int k = -1; k <= 1; ++k) d->AddCircleFilled(ImVec2(c.x + k * 5.0f, c.y), 1.7f, col, 8);
 }
 
@@ -5369,8 +5362,7 @@ static void DrawDotsIcon(ImDrawList* d, ImVec2 c, ImU32 col) {   // "more" (⋯)
 // 'E' edit, 'M' more. Drawn in its own child window so it sits on top of the
 // bubble, and it stays up while the mouse moves from the message onto it.
 // Returns the index of the clicked button, or -1.
-struct ChatTbBtn { char icon; const char* tip; };
-static int ChatMsgToolbar(long msgId, ImVec2 rowMin, ImVec2 rowMax, const ChatTbBtn* btns, int nb, bool liked) {
+int ChatMsgToolbar(long msgId, ImVec2 rowMin, ImVec2 rowMax, const ChatTbBtn* btns, int nb, bool liked) {
     static long s_owner = 0; static ImVec2 s_min, s_max; static int s_frame = -1;
     if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) return -1;
     const float bs = 28.0f;
@@ -5424,7 +5416,7 @@ static int ChatMsgToolbar(long msgId, ImVec2 rowMin, ImVec2 rowMax, const ChatTb
 // Flat icon button for chat headers (call, ⋯, search, members): no frame, a
 // soft rounded highlight on hover / while `active`. The caller draws the glyph
 // centred on *centre.
-static bool ChatHeaderIconButton(const char* id, ImVec2 pos, bool active, const char* tip, ImVec2* centre) {
+bool ChatHeaderIconButton(const char* id, ImVec2 pos, bool active, const char* tip, ImVec2* centre) {
     ImGui::SetCursorScreenPos(pos);
     const bool hit = ImGui::InvisibleButton(id, ImVec2(30, 30));
     const bool h = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
@@ -5466,7 +5458,7 @@ static void OutboxDiscard(long localId) {
 // Draw my pending messages for one conversation (right-aligned, after the log)
 // and drop the ones the log now contains. inLog(body, when) says whether the
 // real message has arrived.
-static int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, ImVec4 bubbleCol,
+int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, ImVec4 bubbleCol,
                       const std::function<bool(const std::string&, long)>& inLog) {
     if (!g_outMutex) return 0;
     std::vector<OutMsg> pend;
@@ -5554,7 +5546,7 @@ static volatile Uint32 g_chatViewMs = 0;   // last frame an open DM was on scree
 static std::vector<okay::Messages::ConversationPreview> g_chatConvs;    // (guarded)
 static std::vector<okay::Friend> g_chatFriends;                        // (guarded)
 // ---- Group chats (multi-person DMs) ----------------------------------------
-static volatile long g_chatSelGroup = 0;        // (guarded input) open group id (0 = DM mode)
+volatile long g_chatSelGroup = 0;        // (guarded input) open group id (0 = DM mode)
 static bool g_chatGroupsReady = false, g_chatGLogReady = false;        // (guarded)
 static std::vector<okay::Messages::GroupConvo>  g_chatGroups;          // (guarded) my groups
 static std::vector<okay::Messages::GroupMessage> g_chatGLog;          // (guarded) open group thread
@@ -5564,15 +5556,14 @@ static std::vector<okay::Messages::GroupMemberInfo> g_chatGMembersIn;  // (guard
 static long g_chatGMembersInFor = 0;                                    // (guarded) which group they belong to
 static bool g_chatGMembersReady = false;                                // (guarded)
 // UI-thread copy of the open group's members (names, avatars, "Seen by").
-static std::vector<okay::Messages::GroupMemberInfo> g_groupMembers;
-static long g_groupMembersFor = 0;
-static std::string g_chatLightboxReq;   // an image to show full-size (set from the group view)
+std::vector<okay::Messages::GroupMemberInfo> g_groupMembers;
+long g_groupMembersFor = 0;
+std::string g_chatLightboxReq;   // an image to show full-size (set from the group view)
 
 // Messenger-style per-chat theme colours: the fill of *your* bubbles in that
 // conversation. Index 0 follows the app accent.
-static const char* kChatThemeNames[] = { "Default", "Purple", "Pink", "Orange", "Green", "Teal", "Red", "Graphite" };
-static constexpr int kChatThemeCount = 8;
-static ImVec4 ChatThemeColor(int idx) {
+const char* kChatThemeNames[] = { "Default", "Purple", "Pink", "Orange", "Green", "Teal", "Red", "Graphite" };
+ImVec4 ChatThemeColor(int idx) {
     static const ImVec4 pal[kChatThemeCount] = {
         ImVec4(0.19f, 0.43f, 0.72f, 1.0f), ImVec4(0.50f, 0.30f, 0.80f, 1.0f),
         ImVec4(0.80f, 0.30f, 0.52f, 1.0f), ImVec4(0.85f, 0.45f, 0.18f, 1.0f),
@@ -5582,13 +5573,13 @@ static ImVec4 ChatThemeColor(int idx) {
     if (idx <= 0 || idx >= kChatThemeCount) return kAccentDim;
     return pal[idx];
 }
-static ImVec4 ChatThemeFor(const std::string& uid) {
+ImVec4 ChatThemeFor(const std::string& uid) {
     auto it = g_chatColor.find(uid);
     return ChatThemeColor(it == g_chatColor.end() ? 0 : it->second);
 }
 // A small filled 5-point star (drawn as geometry, so it never depends on the
 // font having a star glyph). Used to mark starred/saved messages.
-static void DrawStar(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
+void DrawStar(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
     ImVec2 pts[10];
     for (int i = 0; i < 10; ++i) {
         float a = -1.5707963f + i * 0.6283185f;            // start at the top, 36deg steps
@@ -5603,7 +5594,7 @@ static void DrawStar(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
 // (older clients just see the text). A vote is a reaction "poll:<n>" on that
 // message, so no extra tables; one vote per person (voting again moves it,
 // tapping your choice again takes it back).
-static float ChatPollWidth(float maxW) { return std::min(maxW, 300.0f); }
+float ChatPollWidth(float maxW) { return std::min(maxW, 300.0f); }
 static void ChatReactAsync(bool group, long id, const std::string& removeKey, const std::string& addKey);   // defined with the chat workers
 // My vote as just tapped, shown until the poller's data agrees (or 15 s pass).
 struct PollLocalVote { int choice = -1; Uint32 at = 0; };
@@ -5625,7 +5616,7 @@ static void PollTally(bool group, long id, std::size_t n, const std::map<std::st
 }
 // The poll card: question, one row per option (tap to vote) with a result bar,
 // and the vote total. Votes apply locally at once and sync in the background.
-static void RenderChatPoll(const ChatPollInfo& p, bool group, long id, const std::map<std::string, long>* counts,
+void RenderChatPoll(const ChatPollInfo& p, bool group, long id, const std::map<std::string, long>* counts,
                            const std::set<std::string>* mine, float width, bool mineBubble, ImVec4 accent) {
     std::vector<long> tally; int myChoice = -1;
     PollTally(group, id, p.options.size(), counts, mine, tally, myChoice);
@@ -5690,8 +5681,8 @@ static void RenderChatPoll(const ChatPollInfo& p, bool group, long id, const std
         g_pollLocal[{group ? 1 : 0, id}] = PollLocalVote{next, okay::platform::TicksMs32()};
     }
 }
-static bool IsPollReaction(const std::string& k) { return k.rfind("poll:", 0) == 0; }
-static bool HasVisibleReactions(const std::map<std::string, long>& m) {
+bool IsPollReaction(const std::string& k) { return k.rfind("poll:", 0) == 0; }
+bool HasVisibleReactions(const std::map<std::string, long>& m) {
     for (const auto& kv : m) if (kv.second > 0 && !IsPollReaction(kv.first)) return true;
     return false;
 }
@@ -5737,7 +5728,7 @@ static void PollCreatorPopup(const char* id, const std::string& toUid, long toGr
 }
 // The composer's "+" button: photo/file or a poll (polls need reactions for votes,
 // so server channels get files only).
-static void ComposerPlusButton(const char* id, float size, const std::string& toUid, long toGroup, long toChannel = 0) {
+void ComposerPlusButton(const char* id, float size, const std::string& toUid, long toGroup, long toChannel) {
     ImGui::PushID(id);
     ImVec2 ap = ImGui::GetCursorScreenPos();
     if (ImGui::InvisibleButton("##plus", ImVec2(size, size))) ImGui::OpenPopup("##plusmenu");
@@ -5896,7 +5887,7 @@ static void RenderPartyInvite(const std::string& partyId, const std::string& fro
 
 // Chat commands: "/invite" sends a game invite to this chat, "/party" (in a DM)
 // invites them to my party. True if handled.
-static bool ChatSlashCommand(const std::string& text, const std::string& uid, const std::string& name, long gid) {
+bool ChatSlashCommand(const std::string& text, const std::string& uid, const std::string& name, long gid) {
     std::string t = text; while (!t.empty() && (t.back() == ' ' || t.back() == '\n')) t.pop_back();
     if (t == "/party" && gid <= 0) { MpPartyInvite(uid, name); return true; }
     if (t != "/invite") return false;
@@ -5905,7 +5896,7 @@ static bool ChatSlashCommand(const std::string& text, const std::string& uid, co
 }
 
 // "Forwarded from <name>" over a forwarded message: a small arrow + dim italic-ish line.
-static void ChatForwardedLabel(const std::string& from) {
+void ChatForwardedLabel(const std::string& from) {
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float lh = ImGui::GetTextLineHeight();
     const ImU32 col = ImGui::GetColorU32(ImVec4(0.78f, 0.82f, 0.90f, 0.75f));
@@ -5928,1030 +5919,6 @@ static void RenderChatAny(const std::string& body, float width, bool mine) {
     ChatVoiceInfo v;
     if (ParseChatVoice(body, v)) { RenderChatVoice(v, std::min(width, ChatVoiceWidth(std::min(width, 420.0f))), mine, kAccentDim); return; }
     RenderChatBody(body, width);
-}
-
-// ---- Member moderation (servers and group chats): kick / ban / unban / admin role ----
-// One set of helpers for both members lists (shared/MemberModeration.hpp holds the
-// rules and request building; docs/sql/member_moderation.sql enforces them). Calls run
-// off-thread; the outcome comes back as a toast that says what the server answered.
-namespace mm = okay::modmember;
-struct ModJob { int kind = 0; mm::Scope scope = mm::Scope::Server; long cid = 0; mm::Request req; std::string what; };   // kind 0 action, 1 banned list
-struct ModResult { int kind = 0; mm::Scope scope = mm::Scope::Server; long cid = 0; mm::Outcome out; std::vector<mm::BanEntry> bans; };
-struct ModBanList {
-    long cid = 0; bool loaded = false, inflight = false; Uint32 nextAt = 0;
-    std::vector<mm::BanEntry> list; std::string problem;   // problem: why the list could not load ("" = fine)
-};
-static okay::thr::Mutex* g_modMu = nullptr;
-static std::vector<ModResult> g_modDone;          // (guarded)
-static ModBanList g_modBans[2];                   // by scope; main thread only
-static int ModIdx(mm::Scope s) { return s == mm::Scope::Server ? 0 : 1; }
-static int ModWorker(void* p) {
-    std::unique_ptr<ModJob> j(static_cast<ModJob*>(p));
-    ModResult r; r.kind = j->kind; r.scope = j->scope; r.cid = j->cid;
-    try {
-        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
-        auto api = [&](const std::string& path, const std::string& method, const std::string& body) { return a.Api(path, method, body); };
-        if (j->kind == 0) r.out = mm::Execute(api, j->req, j->what);
-        else {
-            auto resp = a.Api(j->req.path, "GET");
-            r.out = mm::MapResponse(resp.ok, resp.reached, resp.status, resp.body, "List");
-            if (r.out.ok()) {
-                r.bans = mm::ParseBans(resp.body, (long)std::time(nullptr));
-                std::string ids; for (const auto& b : r.bans) { if (!ids.empty()) ids += ","; ids += b.uid; }
-                if (!ids.empty()) {
-                    auto p2 = a.Api("/rest/v1/profiles?select=id,username,display_name&id=in.(" + ids + ")", "GET");
-                    if (p2.ok) for (const auto& o : okay::Servers::SplitObjects(p2.body)) {
-                        const std::string id = okay::Servers::Field(o, "id");
-                        for (auto& b : r.bans) if (b.uid == id) {
-                            b.name = okay::Servers::Field(o, "display_name");
-                            if (b.name.empty()) b.name = okay::Servers::Field(o, "username");
-                        }
-                    }
-                }
-            }
-        }
-    } catch (...) { r.out.status = mm::Status::Offline; r.out.message = "Couldn't reach the server. Nothing was changed."; }
-    if (g_modMu) { okay::thr::LockMutex(g_modMu); g_modDone.push_back(std::move(r)); okay::thr::UnlockMutex(g_modMu); }
-    return 0;
-}
-static void ModStart(ModJob* j) {
-    if (!g_modMu) g_modMu = okay::thr::CreateMutex();
-    if (okay::thr::Thread* t = okay::thr::CreateThread(ModWorker, "okay-modmember", j)) okay::thr::DetachThread(t);
-    else delete j;
-}
-static void ModAction(mm::Scope sc, long cid, const mm::Request& req, const std::string& what) {
-    if (!req.valid()) { Toast("That request isn't valid.", 2); return; }
-    auto* j = new ModJob; j->kind = 0; j->scope = sc; j->cid = cid; j->req = req; j->what = what;
-    ModStart(j);
-}
-static void ModFetchBans(mm::Scope sc, long cid) {
-    ModBanList& b = g_modBans[ModIdx(sc)];
-    if (b.inflight) return;
-    b.inflight = true; b.nextAt = okay::platform::TicksMs32() + 20000;
-    auto* j = new ModJob; j->kind = 1; j->scope = sc; j->cid = cid; j->req = mm::BansListRequest(sc, cid);
-    ModStart(j);
-}
-// Main thread, once per frame per screen: toast finished actions, store fetched lists.
-// Returns true when a member change went through (the caller refreshes its members).
-static bool ModDrain(mm::Scope sc) {
-    std::vector<ModResult> mine;
-    if (g_modMu) {
-        okay::thr::LockMutex(g_modMu);
-        for (auto it = g_modDone.begin(); it != g_modDone.end();) {
-            if (it->scope == sc) { mine.push_back(std::move(*it)); it = g_modDone.erase(it); } else ++it;
-        }
-        okay::thr::UnlockMutex(g_modMu);
-    }
-    bool changed = false;
-    for (auto& r : mine) {
-        ModBanList& b = g_modBans[ModIdx(sc)];
-        if (r.kind == 1) {
-            b.inflight = false;
-            if (r.cid != b.cid) continue;   // another server / group was opened meanwhile
-            b.loaded = r.out.ok(); b.problem = r.out.ok() ? std::string() : r.out.message;
-            if (r.out.ok()) b.list = std::move(r.bans);
-        } else {
-            Toast(r.out.message, r.out.ok() ? 1 : 2);
-            if (r.out.ok()) { changed = true; b.nextAt = 0; }   // refetch the banned list now
-        }
-    }
-    return changed;
-}
-// Banned list follows the open server / group: reset when it changes.
-static ModBanList& ModBansFor(mm::Scope sc, long cid) {
-    ModBanList& b = g_modBans[ModIdx(sc)];
-    if (b.cid != cid) { b = ModBanList(); b.cid = cid; }
-    return b;
-}
-
-struct ModDialogState {
-    bool openReq = false; int action = 0;   // 0 remove, 1 ban
-    mm::Scope scope = mm::Scope::Server; long cid = 0; std::string uid, name;
-    char reason[320] = ""; int dur = 1;     // index into mm::Durations() (default: 1 day)
-};
-static ModDialogState g_modDlg;
-
-static bool ModHasActions(mm::Role actor, mm::Role target, bool isSelf) {
-    return mm::CanModerate(actor, target, isSelf) || mm::CanSetRole(actor, target, isSelf);
-}
-// The menu body for one member. Call inside a BeginPopup; every item shown works.
-static void ModMenuItems(mm::Scope sc, long cid, mm::Role actor, const std::string& uid, const std::string& name, mm::Role target, bool isSelf) {
-    const char* noun = mm::ScopeNoun(sc);
-    if (mm::CanSetRole(actor, target, isSelf)) {
-        const bool toAdmin = target != mm::Role::Admin;
-        if (ImGui::MenuItem(toAdmin ? "Make admin" : "Remove admin"))
-            ModAction(sc, cid, mm::SetRoleRequest(sc, cid, uid, toAdmin ? mm::Role::Admin : mm::Role::Member),
-                      toAdmin ? name + " is now an admin" : name + " is no longer an admin");
-    }
-    if (mm::CanModerate(actor, target, isSelf)) {
-        if (ImGui::MenuItem((std::string("Remove from ") + noun).c_str())) {
-            g_modDlg = ModDialogState(); g_modDlg.openReq = true; g_modDlg.action = 0; g_modDlg.scope = sc; g_modDlg.cid = cid; g_modDlg.uid = uid; g_modDlg.name = name;
-        }
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
-        if (ImGui::MenuItem("Ban\xE2\x80\xA6")) {
-            g_modDlg = ModDialogState(); g_modDlg.openReq = true; g_modDlg.action = 1; g_modDlg.scope = sc; g_modDlg.cid = cid; g_modDlg.uid = uid; g_modDlg.name = name;
-        }
-        ImGui::PopStyleColor();
-    }
-}
-// The "..." button at the right end of a member row; opens the menu. Returns the menu id state.
-static void ModRowButton(const char* popupId, ImVec2 topLeft, float size, bool hasActions) {
-    if (!hasActions) return;
-    ImGui::SetCursorScreenPos(topLeft);
-    const bool clicked = ImGui::InvisibleButton("##modmore", ImVec2(size, size));
-    const bool hov = ImGui::IsItemHovered();
-    ImDrawList* d = ImGui::GetWindowDrawList();
-    if (hov) { d->AddRectFilled(topLeft, ImVec2(topLeft.x + size, topLeft.y + size), IM_COL32(255, 255, 255, 26), 6.0f); ImGui::SetTooltip("Manage member"); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
-    const ImU32 c = ImGui::GetColorU32(hov ? ImGuiCol_Text : ImGuiCol_TextDisabled);
-    for (int i = -1; i <= 1; ++i) d->AddCircleFilled(ImVec2(topLeft.x + size * 0.5f + i * 5.0f, topLeft.y + size * 0.5f), 1.7f, c, 8);
-    if (clicked) ImGui::OpenPopup(popupId);
-}
-// Call once per screen at a fixed spot in the ID stack (not inside a member row).
-static void ModDialog() {
-    ModDialogState& D = g_modDlg;
-    if (D.openReq) { ImGui::OpenPopup("Member moderation##mm"); D.openReq = false; }
-    ImGui::SetNextWindowSizeConstraints(ImVec2(340, 0), ImVec2(460, 400));
-    if (!ImGui::BeginPopupModal("Member moderation##mm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    const char* noun = mm::ScopeNoun(D.scope);
-    const std::string nm = D.name.empty() ? std::string("this member") : D.name;
-    if (D.action == 0) {
-        ImGui::TextWrapped("Remove %s from this %s?", nm.c_str(), noun);
-        ImGui::TextDisabled("They can join again with an invite. To stop that, ban them instead.");
-    } else {
-        ImGui::TextWrapped("Ban %s from this %s?", nm.c_str(), noun);
-        ImGui::TextDisabled("They are removed now and can't rejoin, read or post until the ban ends or is lifted.");
-        ImGui::Spacing();
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##modreason", "Reason (optional, shown to them)", D.reason, 300);
-        const auto& durs = mm::Durations();
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::BeginCombo("##moddur", durs[(std::size_t)std::max(0, std::min(D.dur, (int)durs.size() - 1))].label)) {
-            for (int i = 0; i < (int)durs.size(); ++i) if (ImGui::Selectable(durs[(std::size_t)i].label, i == D.dur)) D.dur = i;
-            ImGui::EndCombo();
-        }
-    }
-    ImGui::Spacing();
-    if (ImGui::Button(D.action == 0 ? "Remove" : "Ban", ImVec2(120, 0))) {
-        if (D.action == 0) ModAction(D.scope, D.cid, mm::KickRequest(D.scope, D.cid, D.uid), "Removed " + nm);
-        else ModAction(D.scope, D.cid, mm::BanRequest(D.scope, D.cid, D.uid, D.reason, mm::Durations()[(std::size_t)std::max(0, std::min(D.dur, (int)mm::Durations().size() - 1))].seconds), "Banned " + nm);
-        ImGui::CloseCurrentPopup();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
-    ImGui::EndPopup();
-}
-// "Banned" list for owners and admins, with Unban. Fetches itself (and says plainly when it can't).
-static void ModDrawBanned(mm::Scope sc, long cid, mm::Role actor) {
-    if (!mm::CanSeeBans(actor) || cid <= 0) return;
-    ModBanList& b = ModBansFor(sc, cid);
-    if (!b.inflight && okay::platform::TicksMs32() >= b.nextAt) ModFetchBans(sc, cid);
-    ImGui::Dummy(ImVec2(0, 6));
-    ImGui::SetWindowFontScale(0.80f);
-    ImGui::TextDisabled("  BANNED  \xE2\x80\x94  %d", (int)b.list.size());
-    ImGui::SetWindowFontScale(1.0f);
-    if (!b.problem.empty()) { ImGui::PushTextWrapPos(0); ImGui::TextColored(ImVec4(0.96f, 0.6f, 0.45f, 1), "%s", b.problem.c_str()); ImGui::PopTextWrapPos(); return; }
-    if (!b.loaded) { ImGui::TextDisabled("Loading\xE2\x80\xA6"); return; }
-    if (b.list.empty()) { ImGui::TextDisabled("Nobody is banned."); return; }
-    for (const auto& e : b.list) {
-        ImGui::PushID(e.uid.c_str());
-        const std::string nm = e.name.empty() ? std::string("(unknown)") : e.name;
-        ImGui::TextUnformatted(nm.c_str());
-        std::string sub = e.reason.empty() ? std::string("No reason given") : e.reason;
-        if (e.until == 0) sub += "  \xC2\xB7  permanent";
-        else { const long left = std::max(0L, e.until - (long)std::time(nullptr));
-               sub += "  \xC2\xB7  ends in " + (left < 3600 ? std::to_string(std::max(1L, left / 60)) + "m"
-                                                 : left < 86400 ? std::to_string(left / 3600) + "h" : std::to_string(left / 86400) + "d"); }
-        ImGui::SameLine(ImGui::GetContentRegionMax().x - 56);
-        if (ImGui::SmallButton("Unban")) ModAction(sc, cid, mm::UnbanRequest(sc, cid, e.uid), "Unbanned " + nm);
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 260);
-        ImGui::TextDisabled("%s", sub.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::PopID();
-    }
-}
-
-// Render the open group conversation (header + members menu + multi-sender
-// thread + composer). Actions run on the main thread (same as DM sends); the
-// background poller publishes glog/greacts. Kept a free function to keep the
-// huge DrawChatWindow readable.
-static void DrawGroupConversation(
-    okay::Messages& dm,
-    const std::vector<okay::Messages::GroupConvo>& groups,
-    const std::vector<okay::Messages::GroupMessage>& glog,
-    const std::map<long, std::map<std::string,long>>& greacts,
-    const std::map<long, std::set<std::string>>& gmyreacts,
-    const std::map<std::string, const okay::Friend*>& fById,
-    char* gInput, long& gEditId, long& gReplyTo,
-    std::string& gReplyName, std::string& gReplySnippet,
-    std::map<long,long>& gSeenId,
-    const std::string& myName)
-{
-    const long gid = g_chatSelGroup;
-    const okay::Messages::GroupConvo* gp = nullptr;
-    for (const auto& gg : groups) if (gg.id == gid) gp = &gg;
-    const std::string title = (gp && !gp->title.empty()) ? gp->title : "Group chat";
-    const int memberCount = gp ? gp->members : 0;
-    const std::string gkey = "g:" + std::to_string(gid);
-    const ImVec4 myBubble = ChatThemeFor(gkey);   // this group's theme colour for my bubbles
-    const Uint32 now = okay::platform::TicksMs32();
-    const bool demo = ChatDemo();
-
-    // Members of this group (names, avatars, read position) from the poller.
-    const std::vector<okay::Messages::GroupMemberInfo> noMembers;
-    const auto& members = g_groupMembersFor == gid ? g_groupMembers : noMembers;
-    auto isMe = [&](const okay::Messages::GroupMemberInfo& mi) { return !myName.empty() && (mi.username == myName || mi.name == myName); };
-    auto avatarOf = [&](const std::string& uid) -> std::string {
-        if (auto it = fById.find(uid); it != fById.end()) return it->second->avatar;
-        for (const auto& mi : members) if (mi.uid == uid) return mi.avatar;
-        return std::string();
-    };
-    auto onlineOf = [&](const okay::Messages::GroupMemberInfo& mi) {
-        if (auto it = fById.find(mi.uid); it != fById.end()) return it->second->online;
-        return mi.lastSeen > 0 && (long)std::time(nullptr) - mi.lastSeen < 180;
-    };
-
-    // Per-group view state, reset when another group opens.
-    static long sGid = 0;
-    static bool showSearch = false; static char search[96] = "";
-    static long unreadBaseline = 0;                 // newest id I'd seen before opening (-> "New messages")
-    static bool openStarred = false, openMedia = false, openMembers = false;
-    static long gScrollTo = 0, gFlashId = 0; static Uint32 gFlashUntil = 0, gScrollSince = 0; static int gHits = 0;
-    static bool wantBottom = false, gRefocus = false;
-    if (sGid != gid) {
-        sGid = gid; showSearch = false; search[0] = '\0';
-        unreadBaseline = std::max(gSeenId.count(gid) ? gSeenId[gid] : 0L, gp ? gp->lastRead : 0L);
-        gScrollTo = 0; gRefocus = true;
-    }
-    auto jumpTo = [&](long id) { gScrollTo = gFlashId = id; gFlashUntil = now + 1800; gScrollSince = now; gHits = 0; };
-    if (g_chatJumpGroup) { jumpTo(g_chatJumpGroup); g_chatJumpGroup = 0; }
-    if (gScrollTo && now - gScrollSince > 4000) gScrollTo = 0;
-
-    // ---- Header (the same as a DM's): group avatar, name, members / online,
-    // then members, options and search on the right, and a hairline.
-    const ImVec2 hdrPos = ImGui::GetCursorScreenPos();
-    const float hdrW = ImGui::GetContentRegionAvail().x;
-    {
-        ImDrawList* hd = ImGui::GetWindowDrawList();
-        const float av = 28.0f;
-        ImVec4 nc = NameColor(title);
-        hd->AddCircleFilled(ImVec2(hdrPos.x + 10, hdrPos.y + 10), 10.0f, ImGui::GetColorU32(kAccentDim), 20);
-        hd->AddCircleFilled(ImVec2(hdrPos.x + 19, hdrPos.y + 18), 11.5f, ImGui::GetColorU32(kChatWinBg), 20);
-        hd->AddCircleFilled(ImVec2(hdrPos.x + 19, hdrPos.y + 18), 10.0f, ImGui::GetColorU32(ImVec4(nc.x * 0.6f, nc.y * 0.6f, nc.z * 0.6f, 1.0f)), 20);
-        char ini[2] = {title.empty() ? '#' : (char)std::toupper((unsigned char)title[0]), 0};
-        const ImVec2 ts = ImGui::CalcTextSize(ini);
-        hd->AddText(ImVec2(hdrPos.x + 19 - ts.x * 0.5f, hdrPos.y + 18 - ts.y * 0.5f), IM_COL32_WHITE, ini);
-        ImGui::SetWindowFontScale(1.12f);
-        const float nameH = ImGui::GetTextLineHeight();
-        ImGui::SetCursorScreenPos(ImVec2(hdrPos.x + av + 10, hdrPos.y + (av - nameH) * 0.5f - 1));
-        ImGui::TextUnformatted(FitText(title, std::max(60.0f, hdrW - av - 10 - 260)).c_str());
-        ImGui::SetWindowFontScale(1.0f);
-        ImGui::SameLine(0, 10);
-        ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, hdrPos.y + (av - ImGui::GetTextLineHeight()) * 0.5f));
-        int online = 0;
-        for (const auto& mi : members) if (!isMe(mi) && onlineOf(mi)) ++online;
-        const int n = members.empty() ? memberCount : (int)members.size();
-        char sub[64];
-        if (online > 0) std::snprintf(sub, sizeof(sub), "%d members \xC2\xB7 %d online", n, online);
-        else std::snprintf(sub, sizeof(sub), "%d member%s", n, n == 1 ? "" : "s");
-        ImGui::PushStyleColor(ImGuiCol_Text, online > 0 ? ImVec4(0.47f, 0.80f, 0.43f, 1) : ImVec4(0.6f, 0.64f, 0.7f, 1));
-        ImGui::TextUnformatted(sub);
-        ImGui::PopStyleColor();
-        ImVec2 c;
-        if (ChatHeaderIconButton("##gmembers", ImVec2(hdrPos.x + hdrW - 96, hdrPos.y - 2), openMembers, "Members", &c)) openMembers = true;
-        DrawNavIcon(hd, 6, c, ImGui::GetColorU32(ImGuiCol_TextDisabled));
-        if (ChatHeaderIconButton("##gmenu", ImVec2(hdrPos.x + hdrW - 64, hdrPos.y - 2), ImGui::IsPopupOpen("##gmenu_pop"), "Group options", &c))
-            ImGui::OpenPopup("##gmenu_pop");
-        DrawDotsIcon(hd, c, ImGui::GetColorU32(ImGuiCol_TextDisabled));
-        if (ChatHeaderIconButton("##gsrch", ImVec2(hdrPos.x + hdrW - 32, hdrPos.y - 2), showSearch,
-                                 showSearch ? "Close search" : "Search in this group", &c)) { showSearch = !showSearch; if (!showSearch) search[0] = '\0'; }
-        const ImU32 ic = ImGui::GetColorU32(showSearch ? ImGuiCol_Text : ImGuiCol_TextDisabled);
-        if (showSearch) {
-            hd->AddLine(ImVec2(c.x - 4, c.y - 4), ImVec2(c.x + 4, c.y + 4), ic, 1.8f);
-            hd->AddLine(ImVec2(c.x + 4, c.y - 4), ImVec2(c.x - 4, c.y + 4), ic, 1.8f);
-        } else {
-            hd->AddCircle(ImVec2(c.x - 2, c.y - 2), 5.0f, ic, 16, 1.8f);
-            hd->AddLine(ImVec2(c.x + 2, c.y + 2), ImVec2(c.x + 6, c.y + 6), ic, 1.9f);
-        }
-    }
-    static char renameBuf[64] = "";
-    if (ImGui::BeginPopup("##gmenu_pop")) {
-        if (ImGui::BeginMenu("Add member")) {
-            int n = 0;
-            for (const auto& kv : fById) {
-                const okay::Friend* f = kv.second;
-                if (!f || f->status != "accepted") continue;
-                bool already = false; for (const auto& mi : members) if (mi.uid == f->id) already = true;
-                if (already) continue;
-                std::string nm = f->display.empty() ? f->username : f->display;
-                if (ImGui::MenuItem((nm + "##gaddm" + f->id).c_str())) {
-                    if (dm.AddGroupMember(gid, f->id)) { Toast("Added " + nm + " to the group", 1); g_chatForceLog = true; }
-                    else Toast("Couldn't add " + nm + ": only the group owner can add members, and banned people can't be added until unbanned", 2);
-                }
-                ++n;
-            }
-            if (n == 0) ImGui::TextDisabled("All your friends are in this group.");
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Rename group")) {
-            ImGui::SetNextItemWidth(180);
-            ImGui::InputTextWithHint("##grn", "New name", renameBuf, sizeof(renameBuf));
-            if (ImGui::Button("Save##grn") && renameBuf[0]) {
-                if (dm.RenameGroup(gid, renameBuf)) { g_chatForceLog = true; Toast("Group renamed", 1); renameBuf[0] = '\0'; }
-                else Toast("Only the group owner can rename it", 2);
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndMenu();
-        }
-        ImGui::Separator();
-        const bool pin = g_pinnedChats.count(gkey) != 0, mut = g_mutedChats.count(gkey) != 0;
-        if (ImGui::MenuItem(pin ? "Unpin conversation" : "Pin conversation")) { if (pin) g_pinnedChats.erase(gkey); else g_pinnedChats.insert(gkey); SavePrefs(); }
-        if (ImGui::MenuItem(mut ? "Unmute" : "Mute notifications")) { if (mut) g_mutedChats.erase(gkey); else g_mutedChats.insert(gkey); SavePrefs(); }
-        if (ImGui::BeginMenu("Theme colour")) {
-            const int cur = g_chatColor.count(gkey) ? g_chatColor[gkey] : 0;
-            for (int ci = 0; ci < kChatThemeCount; ++ci) {
-                const ImVec2 sp = ImGui::GetCursorScreenPos();
-                if (ImGui::MenuItem((std::string("      ") + kChatThemeNames[ci] + "##gth" + std::to_string(ci)).c_str(), nullptr, cur == ci)) {
-                    if (ci == 0) g_chatColor.erase(gkey); else g_chatColor[gkey] = ci;
-                    SavePrefs();
-                }
-                ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(sp.x + 9, sp.y + ImGui::GetTextLineHeight() * 0.5f), 6.0f,
-                                                            ImGui::GetColorU32(ChatThemeColor(ci)), 16);
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::MenuItem("Members")) openMembers = true;
-        if (ImGui::MenuItem("Starred messages")) openStarred = true;
-        if (ImGui::MenuItem("Media & links")) openMedia = true;
-        ImGui::Separator();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1.0f));
-        if (ImGui::MenuItem("Leave group")) {
-            if (dm.LeaveGroup(gid)) { g_chatSelGroup = 0; g_chatForceLog = true; Toast("You left the group", 1); }
-        }
-        ImGui::PopStyleColor();
-        ImGui::EndPopup();
-    }
-    if (g_chatSelGroup == 0) return;   // left the group this frame
-
-    // My role here (owner / admin / member) decides which moderation controls the members list shows.
-    // Real groups only: the demo data has no server to answer.
-    std::string gMyUid; for (const auto& mi : members) if (isMe(mi)) gMyUid = mi.uid;
-    auto gRoleOf = [&](const okay::Messages::GroupMemberInfo& mi) {
-        return (gp && !gp->owner.empty() && gp->owner == mi.uid) ? mm::Role::Owner : mm::ParseRole(mi.role); };
-    mm::Role gActor = mm::Role::None;
-    if (!demo && !gMyUid.empty()) for (const auto& mi : members) if (mi.uid == gMyUid) gActor = gRoleOf(mi);
-    if (ModDrain(mm::Scope::Group)) g_chatForceLog = true;   // a kick / ban / role change went through: reload the members
-
-    // Members list: who's in the group, online / last seen, the owner.
-    if (openMembers) { ImGui::OpenPopup("##gmemberspop"); openMembers = false; }
-    ImGui::SetNextWindowSizeConstraints(ImVec2(280, 0), ImVec2(380, 420));
-    if (ImGui::BeginPopup("##gmemberspop")) {
-        ImGui::TextDisabled("Members (%d)", members.empty() ? memberCount : (int)members.size());
-        ImGui::Separator();
-        if (members.empty()) ImGui::TextDisabled("Loading\xE2\x80\xA6");
-        std::vector<const okay::Messages::GroupMemberInfo*> sorted;
-        for (const auto& mi : members) sorted.push_back(&mi);
-        std::stable_sort(sorted.begin(), sorted.end(), [&](const auto* a, const auto* b) {
-            const bool ma = isMe(*a), mb2 = isMe(*b); if (ma != mb2) return ma;
-            const bool oa = onlineOf(*a), ob = onlineOf(*b); if (oa != ob) return oa;
-            return a->name < b->name; });
-        for (const auto* mi : sorted) {
-            ImGui::PushID(mi->uid.c_str());
-            const ImVec2 rp = ImGui::GetCursorScreenPos();
-            ImGui::Dummy(ImVec2(300, 34));
-            ImDrawList* md = ImGui::GetWindowDrawList();
-            ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + 3));
-            DrawAvatar(avatarOf(mi->uid), mi->name, 28.0f);
-            if (onlineOf(*mi)) {
-                md->AddCircleFilled(ImVec2(rp.x + 24, rp.y + 27), 5.5f, ImGui::GetColorU32(ImGuiCol_PopupBg), 12);
-                md->AddCircleFilled(ImVec2(rp.x + 24, rp.y + 27), 4.0f, IM_COL32(76, 200, 110, 255), 12);
-            }
-            std::string nm = mi->name + (isMe(*mi) ? "  (you)" : "");
-            md->AddText(ImVec2(rp.x + 38, rp.y + 2), ImGui::GetColorU32(ImGuiCol_Text), nm.c_str());
-            std::string st = onlineOf(*mi) ? "Online" : mi->lastSeen > 978307200 ? "Last seen " + RelTime(mi->lastSeen) : "Offline";
-            if (gp && gp->owner == mi->uid) st += "  \xC2\xB7  owner";
-            else if (gRoleOf(*mi) == mm::Role::Admin) st += "  \xC2\xB7  admin";
-            md->AddText(ImVec2(rp.x + 38, rp.y + 18), ImGui::GetColorU32(ImGuiCol_TextDisabled), st.c_str());
-            {   // Manage: Make / remove admin, Remove, Ban (only what my role allows on this person)
-                const bool selfRow = !gMyUid.empty() && mi->uid == gMyUid;
-                const mm::Role tr = gRoleOf(*mi);
-                ModRowButton("##gmmenu", ImVec2(rp.x + 300 - 26, rp.y + 6), 22.0f, ModHasActions(gActor, tr, selfRow));
-                if (ImGui::BeginPopup("##gmmenu")) { ModMenuItems(mm::Scope::Group, gid, gActor, mi->uid, mi->name, tr, selfRow); ImGui::EndPopup(); }
-            }
-            ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + 36));
-            ImGui::Dummy(ImVec2(0, 0));
-            ImGui::PopID();
-        }
-        if (!members.empty()) ModDrawBanned(mm::Scope::Group, gid, gActor);
-        ModDialog();
-        ImGui::EndPopup();
-    }
-    // Starred messages in this group: click to jump.
-    if (openStarred) { ImGui::OpenPopup("##gstarredpop"); openStarred = false; }
-    ImGui::SetNextWindowSizeConstraints(ImVec2(280, 0), ImVec2(420, 360));
-    if (ImGui::BeginPopup("##gstarredpop")) {
-        ImGui::TextDisabled("Starred messages");
-        ImGui::Separator();
-        long unstar = 0; int shownS = 0;
-        for (const auto& kv : g_starred) {
-            if (kv.second.uid != gkey) continue;
-            ++shownS;
-            ImGui::PushID((int)kv.first);
-            const ImVec2 sp = ImGui::GetCursorScreenPos();
-            if (ImGui::Selectable(("      " + kv.second.preview).c_str(), false, 0, ImVec2(ImGui::GetContentRegionAvail().x - 26, 0))) {
-                jumpTo(-kv.first); ImGui::CloseCurrentPopup();
-            }
-            DrawStar(ImGui::GetWindowDrawList(), ImVec2(sp.x + 8, sp.y + ImGui::GetTextLineHeight() * 0.5f), 6.0f, IM_COL32(250, 200, 70, 255));
-            ImGui::SameLine();
-            if (ImGui::SmallButton("x")) unstar = kv.first;
-            ImGui::PopID();
-        }
-        if (unstar) { g_starred.erase(unstar); SavePrefs(); }
-        if (shownS == 0) ImGui::TextDisabled("No starred messages yet.\nHover a message > More > Star.");
-        ImGui::EndPopup();
-    }
-    // Media & links shared in the group.
-    if (openMedia) { ImGui::OpenPopup("##gmediapop"); openMedia = false; }
-    ImGui::SetNextWindowSizeConstraints(ImVec2(360, 0), ImVec2(460, 420));
-    if (ImGui::BeginPopup("##gmediapop")) {
-        std::vector<std::string> imgs, links;
-        for (auto it = glog.rbegin(); it != glog.rend(); ++it) {
-            const std::string iu = FirstImageUrl(it->body);
-            if (!iu.empty()) imgs.push_back(iu);
-            std::size_t i = 0, n = it->body.size();
-            while (i < n) {
-                while (i < n && (it->body[i] == ' ' || it->body[i] == '\n')) ++i;
-                std::size_t j = i; while (j < n && it->body[j] != ' ' && it->body[j] != '\n') ++j;
-                std::string tok = it->body.substr(i, j - i); i = j;
-                if ((tok.rfind("http://", 0) == 0 || tok.rfind("https://", 0) == 0) && tok != iu) links.push_back(tok);
-            }
-        }
-        ImGui::TextDisabled("Media (%d)", (int)imgs.size());
-        ImGui::Separator();
-        if (imgs.empty()) ImGui::TextDisabled("No photos shared yet.");
-        const float th = 76.0f;
-        int col = 0; const int perRow = std::max(1, (int)((ImGui::GetContentRegionAvail().x + 6) / (th + 6)));
-        for (std::size_t k = 0; k < imgs.size(); ++k) {
-            ImGui::PushID((int)k);
-            if (col > 0) ImGui::SameLine(0, 6);
-            const ImVec2 tp = ImGui::GetCursorScreenPos();
-            if (ImGui::InvisibleButton("##thumb", ImVec2(th, th))) { g_chatLightboxReq = imgs[k]; ImGui::CloseCurrentPopup(); }
-            ImDrawList* md = ImGui::GetWindowDrawList();
-            if (SDL_Texture* tx = AvatarTexture(imgs[k]))
-                md->AddImageRounded((ImTextureID)(intptr_t)tx, tp, ImVec2(tp.x + th, tp.y + th), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 8.0f);
-            else md->AddRectFilled(tp, ImVec2(tp.x + th, tp.y + th), IM_COL32(44, 48, 58, 255), 8.0f);
-            ImGui::PopID();
-            if (++col >= perRow) col = 0;
-        }
-        ImGui::Spacing();
-        ImGui::TextDisabled("Links (%d)", (int)links.size());
-        ImGui::Separator();
-        if (links.empty()) ImGui::TextDisabled("No links shared yet.");
-        for (std::size_t k = 0; k < links.size(); ++k) {
-            ImGui::PushID((int)(1000 + k));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.78f, 1.0f, 1.0f));
-            if (ImGui::Selectable(ChatPreview(links[k], 52).c_str())) { OpenExternal(links[k]); ImGui::CloseCurrentPopup(); }
-            ImGui::PopStyleColor();
-            ImGui::PopID();
-        }
-        ImGui::EndPopup();
-    }
-    ImGui::SetCursorScreenPos(ImVec2(hdrPos.x, hdrPos.y + 34));
-    {
-        const ImVec2 lp = ImGui::GetCursorScreenPos();
-        ImGui::GetWindowDrawList()->AddLine(lp, ImVec2(lp.x + hdrW, lp.y), IM_COL32(255, 255, 255, 16), 1.0f);
-    }
-    ImGui::Dummy(ImVec2(0, 6));
-    if (showSearch) {
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.0f);
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##gmsgsearch", "Find a message in this group", search, sizeof(search));
-        ImGui::PopStyleVar();
-    }
-    {   // Pinned messages in this group (shared with everyone in it).
-        std::vector<ChatPinRef> pins;
-        for (const auto& gm : glog)
-            if (auto pi = g_pinsGroup.find(gm.id); pi != g_pinsGroup.end())
-                pins.push_back({gm.id, pi->second, ChatPreviewSmart(gm.body, 90), gm.mine ? std::string("You") : gm.senderName});
-        long jump = 0;
-        DrawPinnedBar(gkey.c_str(), pins, true, jump);
-        if (jump) jumpTo(jump);
-    }
-
-    // Mark the newest message seen (clears the unread dot in the list).
-    if (!glog.empty()) gSeenId[gid] = glog.back().id;
-
-    // ---- Composer layout (computed first so the thread knows its height) ----
-    // @mention autocomplete: the word being typed starts with '@' -> matching names.
-    std::size_t mentionAt = std::string::npos;
-    std::vector<std::string> mentionHits;
-    {
-        std::string cur = gInput;
-        std::size_t sp = cur.find_last_of(" \n");
-        std::size_t start = (sp == std::string::npos) ? 0 : sp + 1;
-        if (start < cur.size() && cur[start] == '@') {
-            mentionAt = start;
-            std::string pre = cur.substr(start + 1);
-            for (auto& ch : pre) ch = (char)std::tolower((unsigned char)ch);
-            std::set<std::string> names;
-            for (const auto& mi : members) if (!isMe(mi) && !mi.username.empty()) names.insert(mi.username);
-            for (const auto& gm : glog) if (!gm.senderName.empty() && gm.senderName != myName) names.insert(gm.senderName);
-            for (const auto& nm : names) {
-                std::string low = nm; for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
-                if (low.compare(0, pre.size(), pre) == 0) mentionHits.push_back(nm);
-                if (mentionHits.size() >= 6) break;
-            }
-        }
-    }
-    int clines = 1; for (const char* c = gInput; *c; ++c) if (*c == '\n') ++clines;
-    if (clines > 4) clines = 4;
-    const ImGuiStyle& cst = ImGui::GetStyle();
-    float composerH = 4.0f + cst.ItemSpacing.y + (ImGui::GetTextLineHeight() * clines + 16.0f)
-                    + cst.ItemSpacing.y * 2.0f + cst.WindowPadding.y + 4.0f
-                    + (gReplyTo || gEditId ? ImGui::GetTextLineHeightWithSpacing() + 4.0f : 0.0f)
-                    + (mentionHits.empty() ? 0.0f : ImGui::GetFrameHeightWithSpacing());
-    for (const auto& sm : g_scheduled) if (sm.toGroup == gid) { composerH += ImGui::GetTextLineHeightWithSpacing() + 2.0f; break; }
-
-    // ---- Thread ---------------------------------------------------------------
-    std::map<long, const okay::Messages::GroupMessage*> byId;
-    for (const auto& m : glog) byId[m.id] = &m;
-    long lastMineId = 0; for (const auto& m : glog) if (m.mine) lastMineId = m.id;
-    long firstUnread = 0;
-    if (unreadBaseline > 0) for (const auto& m : glog) if (!m.mine && m.id > unreadBaseline) { firstUnread = m.id; break; }
-    std::string filt = search; for (auto& ch : filt) ch = (char)std::tolower((unsigned char)ch);
-
-    ImGui::BeginChild("##glog", ImVec2(0, ImGui::GetContentRegionAvail().y - composerH), false,
-                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
-    const float avW = ImGui::GetContentRegionAvail().x;
-    const float baseX = ImGui::GetCursorPosX();
-    const float avatarW = 28.0f, avatarGap = 6.0f, padX = 14.0f, padY = 8.0f;
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    long prevDay = 0, prevWhen = 0; std::string prevSender; bool first = true;
-    int matches = 0;
-    for (const auto& m : glog) {
-        const ChatFwd fwd = ParseChatFwd(m.body);
-        const std::string& mb = fwd.ok ? fwd.body : m.body;
-        if (!filt.empty()) {
-            std::string low = m.body; for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
-            if (low.find(filt) == std::string::npos) continue;
-            ++matches;
-        }
-        const long day = DayKey(m.when);
-        if (day != 0 && day != prevDay) { ImGui::SetCursorPosX(baseX); ChatDateSeparator(m.when); prevDay = day; first = true; }
-        if (firstUnread != 0 && m.id == firstUnread && filt.empty()) {   // "New messages" divider
-            ImGui::SetCursorPosX(baseX); ImGui::Dummy(ImVec2(0, 4));
-            const ImVec2 up = ImGui::GetCursorScreenPos(); const float uw = ImGui::GetContentRegionAvail().x;
-            const ImU32 uc = ImGui::GetColorU32(kAccent);
-            const char* ul = "New messages"; const float ulw = ImGui::CalcTextSize(ul).x;
-            const float uy = up.y + ImGui::GetTextLineHeight() * 0.5f;
-            dl->AddLine(ImVec2(up.x, uy), ImVec2(up.x + (uw - ulw) * 0.5f - 8, uy), uc, 1.0f);
-            dl->AddLine(ImVec2(up.x + (uw + ulw) * 0.5f + 8, uy), ImVec2(up.x + uw, uy), uc, 1.0f);
-            ImGui::SetCursorPosX(baseX + (uw - ulw) * 0.5f);
-            ImGui::PushStyleColor(ImGuiCol_Text, uc); ImGui::TextUnformatted(ul); ImGui::PopStyleColor();
-            ImGui::SetCursorPosX(baseX); ImGui::Dummy(ImVec2(0, 2));
-            first = true;
-        }
-        const bool grouped = !first && prevSender == m.sender && (m.when - prevWhen) < 300 && m.when > 0;
-        ImGui::Dummy(ImVec2(0, grouped ? 2.0f : 9.0f));
-
-        int ecount = 0; const bool emojiOnly = IsEmojiOnly(mb, ecount);
-        const float bigEm = ImGui::GetTextLineHeight() * 2.3f;
-        float bubbleMax = std::min(avW * 0.72f, 460.0f); if (bubbleMax < 120) bubbleMax = (avW < 120 ? avW : 120);
-        ChatFileInfo gfile; const bool gIsFile = ParseChatFile(mb, gfile);
-        ChatVoiceInfo gvoice; const bool gIsVoice = !gIsFile && ParseChatVoice(mb, gvoice);
-        ChatPollInfo gpoll; const bool gIsPoll = !gIsFile && !gIsVoice && ParseChatPoll(mb, gpoll);
-        ChatInviteInfo ginv; const bool gIsInvite = !gIsFile && !gIsVoice && !gIsPoll && ParseChatInvite(mb, ginv);
-        const float bodyW = gIsFile ? ChatFileCardWidth(gfile, bubbleMax - padX * 2)
-                          : gIsVoice ? ChatVoiceWidth(bubbleMax - padX * 2)
-                          : gIsInvite ? ChatInviteWidth(bubbleMax - padX * 2)
-                          : gIsPoll ? ChatPollWidth(bubbleMax - padX * 2) : MeasureChatBodyWidth(mb, bubbleMax - padX * 2);
-        const okay::Messages::GroupMessage* rep = (m.replyTo && byId.count(m.replyTo)) ? byId[m.replyTo] : nullptr;
-        const std::string repName = rep ? (rep->mine ? std::string("You") : rep->senderName) : std::string();
-        const std::string repText = rep ? ChatPreviewSmart(rep->body, 36) : std::string();
-        const float repW = rep ? std::min(bubbleMax - padX * 2, std::max(ImGui::CalcTextSize(repText.c_str()).x, ImGui::CalcTextSize(repName.c_str()).x) + 8) : 0.0f;
-        char tbuf[24] = ""; if (m.when > 0) { std::time_t tt = (std::time_t)m.when; std::tm* tm = std::localtime(&tt); if (tm) std::strftime(tbuf, sizeof(tbuf), "%H:%M", tm); }
-        std::string meta = tbuf; if (m.edited) meta += " \xC2\xB7 edited";
-        const float metaW = ImGui::CalcTextSize(meta.c_str()).x;
-        const long starKey = -m.id;   // group ids are stored negated (DM ids share the map)
-        const bool starred = g_starred.count(starKey) != 0;
-        const bool bareEmoji = emojiOnly && !rep && !fwd.ok;
-        std::string mediaUrl; bool isSticker = false;
-        if (!rep && !fwd.ok && !gIsFile && !gIsVoice) {
-            if (mb.rfind("[Sticker] ", 0) == 0) { mediaUrl = mb.substr(10); isSticker = true; }
-            else {
-                std::string t = mb;
-                while (!t.empty() && (t.back() == ' ' || t.back() == '\n')) t.pop_back();
-                while (!t.empty() && t.front() == ' ') t.erase(0, 1);
-                if (!t.empty() && FirstImageUrl(t) == t) mediaUrl = t;
-            }
-        }
-        const bool bareMedia = !mediaUrl.empty();
-        const bool bare = bareEmoji || bareMedia;
-        ImVec2 mediaSz(0, 0);
-        if (bareMedia) {
-            int iw = 0, ih = 0; ChatImageTexture(mediaUrl, &iw, &ih);
-            const float mw = isSticker ? 150.0f : std::min(bubbleMax - padX * 2, 260.0f), mh = isSticker ? 150.0f : 220.0f;
-            if (iw > 0 && ih > 0) { float k = std::min(mw / iw, mh / ih); if (!isSticker) k = std::min(k, 2.0f); mediaSz = ImVec2(iw * k, ih * k); }
-            else mediaSz = ImVec2(mw, isSticker ? mw : mh * 0.7f);
-        }
-        const std::string imgUrl = (bare || gIsFile || gIsVoice) ? std::string() : FirstImageUrl(mb);
-        const float fwdW = fwd.ok ? ImGui::CalcTextSize(("Forwarded from " + fwd.from).c_str()).x + 16.0f : 0.0f;
-        float contentW = bareEmoji ? std::max((float)ecount * (bigEm + 3), metaW)
-                       : bareMedia ? std::max(mediaSz.x, metaW)
-                                   : std::max({bodyW + 2.0f, repW, metaW + (starred ? 14.0f : 0.0f), fwdW});
-        if (!imgUrl.empty()) contentW = std::max(contentW, std::min(bubbleMax - padX * 2, 240.0f));
-        const float useW = std::max(contentW + padX * 2, 46.0f);
-        const float leftPad = m.mine ? 0.0f : (avatarW + avatarGap);
-        float x0 = m.mine ? (avW - useW - 8.0f) : leftPad; if (x0 < leftPad) x0 = leftPad;
-
-        // Sender name + avatar on the first message of someone else's run.
-        if (!m.mine && !grouped) {
-            if (!m.senderName.empty()) {
-                ImGui::SetCursorPosX(baseX + leftPad + 2);
-                ImGui::PushStyleColor(ImGuiCol_Text, NameColor(m.senderName));
-                ImGui::TextUnformatted(m.senderName.c_str());
-                ImGui::PopStyleColor();
-            }
-            const ImVec2 cp = ImGui::GetCursorScreenPos();
-            const ImVec2 ac(cp.x + avatarW * 0.5f, cp.y + avatarW * 0.5f);
-            if (SDL_Texture* at = AvatarTexture(avatarOf(m.sender)))
-                dl->AddImageRounded((ImTextureID)(intptr_t)at, cp, ImVec2(cp.x + avatarW, cp.y + avatarW), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, avatarW * 0.5f);
-            else {
-                const ImVec4 col = NameColor(m.senderName);
-                dl->AddCircleFilled(ac, avatarW * 0.5f, ImGui::GetColorU32(ImVec4(col.x * 0.55f, col.y * 0.55f, col.z * 0.55f, 1)), 20);
-                char init[2] = {m.senderName.empty() ? '?' : (char)std::toupper((unsigned char)m.senderName[0]), 0};
-                const ImVec2 tsz = ImGui::CalcTextSize(init);
-                dl->AddText(ImVec2(ac.x - tsz.x * 0.5f, ac.y - tsz.y * 0.5f), IM_COL32_WHITE, init);
-            }
-        }
-
-        ImGui::PushID((int)m.id);
-        ImGui::SetCursorPosX(baseX + x0);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, bare ? ImVec4(0, 0, 0, 0) : (m.mine ? myBubble : ImVec4(0.204f, 0.235f, 0.306f, 1.0f)));
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, padY));
-        ImGui::BeginChild("##gbub", ImVec2(useW, 0),
-                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
-                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
-        ImDrawList* bdl = ImGui::GetWindowDrawList();
-        if (rep) {   // quoted message (click to jump)
-            ImGui::BeginGroup();
-            const ImVec2 qp = ImGui::GetCursorScreenPos();
-            bdl->AddRectFilled(ImVec2(qp.x - 4, qp.y), ImVec2(qp.x - 1, qp.y + ImGui::GetTextLineHeight() * 1.7f), ImGui::GetColorU32(kAccent), 1.0f);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImVec4(0.8f, 0.85f, 0.95f, 0.9f)));
-            ImGui::TextUnformatted(repName.c_str());
-            ImGui::PopStyleColor();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
-            ImGui::TextUnformatted(repText.c_str());
-            ImGui::PopStyleColor();
-            ImGui::EndGroup();
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) jumpTo(rep->id);
-            }
-        }
-        if (fwd.ok) ChatForwardedLabel(fwd.from);
-        if (bareEmoji) {   // big, bubble-less emoji
-            const std::string eb = NormalizeEmoji(mb);
-            std::size_t bi = 0, bn = eb.size(); bool firstTok = true;
-            while (bi < bn) {
-                while (bi < bn && (eb[bi] == ' ' || eb[bi] == '\n')) ++bi;
-                if (bi >= bn) break;
-                std::size_t bj = bi; while (bj < bn && eb[bj] != ' ' && eb[bj] != '\n') ++bj;
-                const std::string etok = eb.substr(bi, bj - bi); bi = bj;
-                if (!firstTok) ImGui::SameLine(0, 3);
-                const ImVec2 ep = ImGui::GetCursorScreenPos();
-                DrawEmojiToken(bdl, ImVec2(ep.x + bigEm * 0.5f, ep.y + bigEm * 0.5f), bigEm, etok);
-                ImGui::Dummy(ImVec2(bigEm, bigEm));
-                firstTok = false;
-            }
-        } else if (bareMedia) {   // sticker / GIF / photo without a bubble
-            const ImVec2 ip = ImGui::GetCursorScreenPos();
-            const bool mclick = ImGui::InvisibleButton("##media", mediaSz);
-            const bool mhov = ImGui::IsItemHovered();
-            if (SDL_Texture* mt = ChatImageTexture(mediaUrl))
-                bdl->AddImageRounded((ImTextureID)(intptr_t)mt, ip, ImVec2(ip.x + mediaSz.x, ip.y + mediaSz.y),
-                                     ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, isSticker ? 0.0f : 12.0f);
-            else {
-                bdl->AddRectFilled(ip, ImVec2(ip.x + mediaSz.x, ip.y + mediaSz.y), IM_COL32(255, 255, 255, 14), 12.0f);
-                const float a0 = (float)ImGui::GetTime() * 6.0f;
-                bdl->PathArcTo(ImVec2(ip.x + mediaSz.x * 0.5f, ip.y + mediaSz.y * 0.5f), 10.0f, a0, a0 + 4.6f, 20);
-                bdl->PathStroke(IM_COL32(255, 255, 255, 120), 0, 2.0f);
-            }
-            if (!isSticker && mhov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (mclick) g_chatLightboxReq = mediaUrl; }
-        } else if (gIsFile) RenderChatFileCard(gfile, ImGui::GetContentRegionAvail().x);
-        else if (gIsVoice) RenderChatVoice(gvoice, ImGui::GetContentRegionAvail().x, m.mine, myBubble);
-        else if (gIsInvite) RenderChatInvite(ginv, m.mine, m.when, ImGui::GetContentRegionAvail().x);
-        else if (gIsPoll) {
-            auto rc = greacts.find(m.id); auto mr = gmyreacts.find(m.id);
-            RenderChatPoll(gpoll, true, m.id, rc != greacts.end() ? &rc->second : nullptr,
-                           mr != gmyreacts.end() ? &mr->second : nullptr, ImGui::GetContentRegionAvail().x, m.mine, myBubble);
-        }
-        else RenderChatBody(mb, ImGui::GetContentRegionAvail().x);
-        if (!imgUrl.empty()) {   // inline preview of an image link (click: full size)
-            if (SDL_Texture* it = ChatImageTexture(imgUrl)) {
-                int iw = 0, ih = 0; okay::pb::QueryTexture(g_renderer, it, &iw, &ih);
-                const float availW = ImGui::GetContentRegionAvail().x;
-                float w = (iw > 0 && iw > availW) ? availW : (float)iw; if (w < 1) w = availW;
-                float h = (iw > 0) ? w * (float)ih / (float)iw : w * 0.6f;
-                if (h > 220.0f) { w *= 220.0f / h; h = 220.0f; }
-                ImGui::Dummy(ImVec2(0, 2));
-                if (ImGui::ImageButton("##img", (ImTextureID)(intptr_t)it, ImVec2(w, h))) g_chatLightboxReq = imgUrl;
-                if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            }
-        }
-        {   // Timestamp tucked bottom-right (+ a star when saved).
-            const float av2 = ImGui::GetContentRegionAvail().x, mw2 = ImGui::CalcTextSize(meta.c_str()).x;
-            if (!bare && mw2 < av2) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (av2 - mw2));
-            if (starred) {
-                const ImVec2 sp = ImGui::GetCursorScreenPos();
-                DrawStar(bdl, ImVec2(sp.x - 8.0f, sp.y + ImGui::GetTextLineHeight() * 0.5f), 5.0f, IM_COL32(250, 200, 70, 255));
-            }
-        }
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(bare ? ImVec4(0.6f, 0.64f, 0.72f, 0.9f)
-                                : (m.mine ? ImVec4(0.82f, 0.88f, 1.0f, 0.60f) : ImVec4(0.60f, 0.66f, 0.76f, 0.70f))));
-        ImGui::TextUnformatted(meta.c_str());
-        ImGui::PopStyleColor();
-        if (m.edited && ImGui::IsItemHovered()) {   // "edited" -> earlier versions
-            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            ImGui::SetTooltip("Edited \xE2\x80\x94 click to see earlier versions");
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) OpenEditHistory(dm, true, m.id, m.body);
-        }
-        ImGui::PopStyleVar();
-        ImGui::EndChild();
-        ImGui::PopStyleVar(2);
-        ImGui::PopStyleColor();
-        const ImVec2 bmin = ImGui::GetItemRectMin(), bmax = ImGui::GetItemRectMax();
-        if (gScrollTo == m.id) { ImGui::SetScrollHereY(0.4f); if (++gHits >= 5) { gScrollTo = 0; gHits = 0; } }
-        if (gFlashId == m.id && now < gFlashUntil) {
-            const float al = 0.55f * ((gFlashUntil - now) / 1800.0f);
-            dl->AddRect(ImVec2(bmin.x - 3, bmin.y - 3), ImVec2(bmax.x + 3, bmax.y + 3),
-                        ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, al)), 14.0f, 0, 2.5f);
-        }
-        if (!m.mine && !myName.empty()) {   // a message that @mentions you gets an accent outline
-            std::string lb = mb, tag = "@" + myName;
-            for (auto& ch : lb)  ch = (char)std::tolower((unsigned char)ch);
-            for (auto& ch : tag) ch = (char)std::tolower((unsigned char)ch);
-            if (lb.find(tag) != std::string::npos)
-                dl->AddRect(ImVec2(bmin.x - 1.5f, bmin.y - 1.5f), ImVec2(bmax.x + 1.5f, bmax.y + 1.5f), ImGui::GetColorU32(kAccent), 15.0f, 0, 2.0f);
-        }
-
-        // Right-click (or the toolbar's "more"): everything you can do with it.
-        auto myit = gmyreacts.find(m.id);
-        auto startReply = [&]() { gReplyTo = m.id; gReplyName = m.mine ? "yourself" : m.senderName; gReplySnippet = ChatPreviewSmart(mb, 40); gEditId = 0; gRefocus = true; };
-        auto startEdit = [&]() { gEditId = m.id; gReplyTo = 0; std::snprintf(gInput, 1024, "%s", m.body.c_str()); gRefocus = true; };
-        if (ImGui::BeginPopupContextItem("##gmsgctx")) {
-            if (ImGui::BeginMenu("React")) {
-                for (const auto& rdef : kReactions) {
-                    const bool have = myit != gmyreacts.end() && myit->second.count(rdef.key);
-                    const ImVec2 mp = ImGui::GetCursorScreenPos();
-                    if (ImGui::MenuItem((std::string("     ") + (have ? "remove" : "add") + "##grx" + rdef.key).c_str()))
-                        { dm.GroupReact(m.id, rdef.key, !have); g_chatForceLog = true; }
-                    DrawEmoji(ImGui::GetWindowDrawList(), ImVec2(mp.x + 9, mp.y + ImGui::GetTextLineHeight() * 0.5f), 18, rdef.id);
-                }
-                ImGui::EndMenu();
-            }
-            if (ImGui::MenuItem("Reply")) startReply();
-            if (ImGui::MenuItem("Copy text")) ImGui::SetClipboardText(mb.c_str());
-            if (ImGui::MenuItem("Forward\xE2\x80\xA6")) ChatForward(m.body, m.mine ? myName : m.senderName);
-            if (!m.mine && ImGui::MenuItem("Report message\xE2\x80\xA6")) OpenReport(okayrep::Target::GroupMessage, std::to_string(m.id), "a message from " + m.senderName);
-            if (ImGui::MenuItem(ChatIsPinned(true, m.id) ? "Unpin message" : "Pin message")) ChatPinToggle(true, m.id);
-            if (ImGui::MenuItem(starred ? "Unstar" : "Star message")) {
-                if (starred) g_starred.erase(starKey);
-                else {
-                    StarredMsg sm; sm.uid = gkey; sm.when = m.when; sm.preview = ChatPreviewSmart(mb, 60);
-                    for (auto& ch : sm.preview) if (ch == '\n' || ch == '\r') ch = ' ';
-                    g_starred[starKey] = sm;
-                }
-                SavePrefs();
-            }
-            if (m.edited && ImGui::MenuItem("Edit history")) OpenEditHistory(dm, true, m.id, m.body);
-            if (m.mine) {
-                ImGui::Separator();
-                if (ImGui::MenuItem("Edit")) startEdit();
-                if (ImGui::MenuItem("Delete")) { if (dm.DeleteGroup(m.id)) g_chatForceLog = true; }
-            }
-            ImGui::EndPopup();
-        }
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {   // double-click: heart
-            const bool have = myit != gmyreacts.end() && myit->second.count("heart");
-            dm.GroupReact(m.id, "heart", !have); g_chatForceLog = true;
-        }
-        // Hover toolbar, the same as DMs and server channels.
-        if (!ImGui::IsPopupOpen("##gmsgctx")) {
-            const bool liked = myit != gmyreacts.end() && myit->second.count("heart");
-            ChatTbBtn btns[4]; int nb = 0;
-            btns[nb++] = {'L', liked ? "Unlike" : "Like  (double-click)"};
-            btns[nb++] = {'R', "Reply"};
-            if (m.mine) btns[nb++] = {'E', "Edit"};
-            btns[nb++] = {'M', "More"};
-            const int hit = ChatMsgToolbar(-m.id, bmin, bmax, btns, nb, liked);   // negative: never clashes with a DM id
-            if (hit >= 0) switch (btns[hit].icon) {
-                case 'L': dm.GroupReact(m.id, "heart", !liked); g_chatForceLog = true; break;
-                case 'R': startReply(); break;
-                case 'E': startEdit(); break;
-                default:  ImGui::OpenPopup("##gmsgctx"); break;
-            }
-        }
-        // Reaction pills under the bubble (tap to toggle).
-        auto cit = greacts.find(m.id);
-        if (cit != greacts.end() && HasVisibleReactions(cit->second)) {
-            ImGui::SetCursorPosX(baseX + x0);
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
-            bool firstPill = true;
-            for (const auto& kv : cit->second) {
-                if (kv.second <= 0 || IsPollReaction(kv.first)) continue;
-                if (!firstPill) ImGui::SameLine();
-                firstPill = false;
-                const bool mineR = myit != gmyreacts.end() && myit->second.count(kv.first);
-                const std::string cnt = std::to_string(kv.second);
-                const float pw = 26.0f + ImGui::CalcTextSize(cnt.c_str()).x;
-                ImGui::PushID(ReactionEmojiId(kv.first));
-                const ImVec2 pp = ImGui::GetCursorScreenPos();
-                if (ImGui::InvisibleButton("##gpill", ImVec2(pw, 20))) { dm.GroupReact(m.id, kv.first, !mineR); g_chatForceLog = true; }
-                const bool ph = ImGui::IsItemHovered();
-                if (ph) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip(mineR ? "Remove" : "React"); }
-                dl->AddRectFilled(pp, ImVec2(pp.x + pw, pp.y + 20), mineR ? IM_COL32(232, 72, 92, ph ? 60 : 42) : IM_COL32(255, 255, 255, ph ? 26 : 14), 10.0f);
-                if (mineR) dl->AddRect(pp, ImVec2(pp.x + pw, pp.y + 20), IM_COL32(232, 72, 92, 150), 10.0f, 0, 1.0f);
-                if (kv.first == "heart") DrawHeart(dl, ImVec2(pp.x + 11, pp.y + 10), 5.5f, mineR ? IM_COL32(232, 72, 92, 255) : ImGui::GetColorU32(ImGuiCol_TextDisabled));
-                else DrawEmoji(dl, ImVec2(pp.x + 11, pp.y + 10), 13, ReactionEmojiId(kv.first));
-                dl->AddText(ImVec2(pp.x + 20, pp.y + 10 - ImGui::GetTextLineHeight() * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), cnt.c_str());
-                ImGui::PopID();
-            }
-            ImGui::PopStyleVar();
-        }
-        ImGui::PopID();
-        ImGui::SetCursorPosX(baseX);
-        prevSender = m.sender; prevWhen = m.when; first = false;
-    }
-    ImGui::Dummy(ImVec2(0.0f, 0.0f));
-    const int pendingOut = DrawOutbox(std::string(), gid, avW, baseX, myBubble, [&](const std::string& body, long when) {
-        for (auto it = glog.rbegin(); it != glog.rend(); ++it)
-            if (it->mine && it->body == body && it->when >= when - 120) return true;
-        return false;
-    });
-    // "Seen by" under the newest message (from each member's last_read).
-    if (!glog.empty() && filt.empty() && pendingOut == 0 && !members.empty()) {
-        const long lastId = glog.back().id;
-        std::vector<const okay::Messages::GroupMemberInfo*> seen; int others = 0;
-        for (const auto& mi : members) {
-            if (isMe(mi) || mi.uid == glog.back().sender) continue;
-            ++others;
-            if (mi.lastRead >= lastId) seen.push_back(&mi);
-        }
-        if (others > 0 && (glog.back().mine || !seen.empty())) {
-            std::string label;
-            if (seen.empty()) label = "Sent";
-            else if ((int)seen.size() == others) label = others == 1 ? "Seen by " + seen[0]->name : "Seen by everyone";
-            else {
-                label = "Seen by ";
-                for (std::size_t k = 0; k < seen.size() && k < 3; ++k) label += (k ? ", " : "") + seen[k]->name;
-                if (seen.size() > 3) label += " +" + std::to_string(seen.size() - 3);
-            }
-            const float faces = std::min<std::size_t>(seen.size(), 5) * 13.0f + (seen.empty() ? 0.0f : 6.0f);
-            const float lw = ImGui::CalcTextSize(label.c_str()).x;
-            const float x = glog.back().mine ? baseX + avW - lw - faces - 10.0f : baseX + avatarW + avatarGap;
-            ImGui::SetCursorPosX(x);
-            const ImVec2 sp = ImGui::GetCursorScreenPos();
-            for (std::size_t k = 0; k < seen.size() && k < 5; ++k) {   // little overlapping faces
-                ImGui::SetCursorScreenPos(ImVec2(sp.x + k * 13.0f, sp.y + 1));
-                DrawAvatar(seen[k]->avatar, seen[k]->name, 16.0f);
-            }
-            ImGui::SetCursorScreenPos(ImVec2(sp.x + faces, sp.y));
-            ImGui::TextColored(seen.empty() ? ImVec4(0.60f, 0.64f, 0.72f, 0.90f) : ImVec4(0.55f, 0.76f, 1.0f, 0.95f), "%s", label.c_str());
-            if (ImGui::IsItemHovered() && !seen.empty()) {
-                std::string all; for (const auto* s2 : seen) all += (all.empty() ? "" : "\n") + s2->name;
-                ImGui::SetTooltip("%s", all.c_str());
-            }
-        }
-    }
-    if (glog.empty()) ImGui::TextDisabled("No messages yet \xE2\x80\x94 say hello!");
-    else if (!filt.empty() && matches == 0) ImGui::TextDisabled("No messages match \"%s\".", search);
-    // Stay at the newest message on open / a new message (unless you scrolled up).
-    const bool scrolledUp = ImGui::GetScrollMaxY() > 1.0f && (ImGui::GetScrollMaxY() - ImGui::GetScrollY()) > 80.0f;
-    static int gStick = 0; static long gLastGid = 0; static size_t gLastN = 0;
-    if (wantBottom) { wantBottom = false; gStick = 4; }
-    else if (gid != gLastGid || glog.size() != gLastN) {
-        if (filt.empty() && (gid != gLastGid || !scrolledUp)) gStick = 4;
-        gLastGid = gid; gLastN = glog.size();
-    }
-    {   // content grew while at the bottom (an image loaded): stay there
-        static float prevMaxY = 0.0f, prevY = 0.0f;
-        const float maxY = ImGui::GetScrollMaxY();
-        if (maxY > prevMaxY + 0.5f && prevY >= prevMaxY - 4.0f && filt.empty()) gStick = std::max(gStick, 2);
-        prevMaxY = maxY; prevY = ImGui::GetScrollY();
-    }
-    if (gScrollTo) gStick = 0;   // a jump to a message wins over "stay at the bottom"
-    if (gStick > 0) { ImGui::SetScrollHereY(1.0f); --gStick; }
-    if (scrolledUp && gStick == 0) {   // floating "jump to latest" button
-        const ImVec2 keep = ImGui::GetCursorPos();
-        const ImVec2 wp = ImGui::GetWindowPos(), wsz = ImGui::GetWindowSize();
-        ImGui::SetCursorScreenPos(ImVec2(wp.x + wsz.x - ImGui::GetStyle().ScrollbarSize - 48, wp.y + wsz.y - 46));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-        ImGui::BeginChild("##gjumpbtn", ImVec2(36, 36), ImGuiChildFlags_None,
-                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
-        const ImVec2 jp = ImGui::GetCursorScreenPos();
-        if (ImGui::InvisibleButton("##gjump", ImVec2(34, 34))) wantBottom = true;
-        const bool jh = ImGui::IsItemHovered();
-        ImDrawList* jd = ImGui::GetWindowDrawList();
-        const ImVec2 jc(jp.x + 17, jp.y + 17);
-        jd->AddCircleFilled(jc, 16.0f, ImGui::GetColorU32(jh ? ImVec4(0.30f, 0.33f, 0.40f, 1.0f) : ImVec4(0.22f, 0.24f, 0.30f, 0.97f)), 24);
-        jd->AddCircle(jc, 16.0f, IM_COL32(255, 255, 255, 34), 24, 1.0f);
-        jd->AddLine(ImVec2(jc.x - 5.5f, jc.y - 2.5f), ImVec2(jc.x, jc.y + 3.0f), IM_COL32(230, 234, 242, 255), 2.0f);
-        jd->AddLine(ImVec2(jc.x, jc.y + 3.0f), ImVec2(jc.x + 5.5f, jc.y - 2.5f), IM_COL32(230, 234, 242, 255), 2.0f);
-        if (jh) ImGui::SetTooltip("Jump to latest");
-        ImGui::EndChild();
-        ImGui::PopStyleVar();
-        ImGui::SetCursorPos(keep);
-        ImGui::Dummy(ImVec2(0, 0));
-    }
-    ImGui::EndChild();
-
-    // ---- Composer: reply/edit banner, mentions, emoji, +, message box, send ----
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {   // Esc cancels, Up edits your last message
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            if (gReplyTo) gReplyTo = 0;
-            else if (gEditId) { gEditId = 0; gInput[0] = '\0'; }
-        }
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) && gInput[0] == '\0' && !gEditId && lastMineId > 0)
-            if (auto it = byId.find(lastMineId); it != byId.end()) { gEditId = lastMineId; gReplyTo = 0; std::snprintf(gInput, 1024, "%s", it->second->body.c_str()); }
-    }
-    DrawScheduledStrip(std::string(), gid);
-    DrawScheduleDialog("Schedule message", gInput, 1024, std::string(), title, gid);
-    if (gReplyTo) {
-        ImGui::TextDisabled("Replying to"); ImGui::SameLine(0, 4);
-        ImGui::TextColored(kAccent, "@%s", gReplyName.c_str());
-        ImGui::SameLine(0, 6); ImGui::TextDisabled("%s", gReplySnippet.c_str());
-        ImGui::SameLine(0, 8); if (ImGui::SmallButton("cancel##gcancelreply")) gReplyTo = 0;
-    } else if (gEditId) {
-        ImGui::TextDisabled("Editing a message"); ImGui::SameLine();
-        if (ImGui::SmallButton("cancel edit##gcanceledit")) { gEditId = 0; gInput[0] = '\0'; }
-    }
-    if (!mentionHits.empty()) {   // suggestion chips: click to complete the @name
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("Mention");
-        for (const auto& nm : mentionHits) {
-            ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.78f, 1.0f, 1.0f));
-            if (ImGui::SmallButton(("@" + nm + "##mh").c_str())) {
-                std::string cur = gInput;
-                cur = cur.substr(0, mentionAt) + "@" + nm + " ";
-                std::snprintf(gInput, 1024, "%s", cur.c_str());
-                gRefocus = true;
-            }
-            ImGui::PopStyleColor();
-        }
-    }
-    ImGui::Dummy(ImVec2(0, 4));
-    const float inH = ImGui::GetTextLineHeight() * clines + 16;
-    {   // Emoji / GIFs / stickers (GIFs + stickers send straight away)
-        const std::string media = ChatMediaPicker("gmedia", gInput, 1024, nullptr, true);
-        if (!media.empty() && !demo) { OutboxSend(std::string(), gid, media); wantBottom = true; }
-        ImGui::SameLine(0, 6);
-    }
-    ComposerPlusButton("gplus", ImGui::GetTextLineHeight() + 16.0f, std::string(), gid);   // photo/file, poll, schedule
-    ImGui::SameLine(0, 6);
-    if (VoiceRecording() && !VoiceRecordingFor(std::string(), gid)) FinishVoiceRecord(false);   // switched chats
-    if (VoiceRecordingFor(std::string(), gid)) { DrawVoiceRecorderBar(inH, myBubble); return; }
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(11, 8));
-    if (gRefocus) { ImGui::SetKeyboardFocusHere(); gRefocus = false; }
-    const bool send = ImGui::InputTextMultiline("##ginput", gInput, 1024, ImVec2(ImGui::GetContentRegionAvail().x - 70, inH),
-                                                ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine);
-    if (!gInput[0] && !ImGui::IsItemActive()) {   // placeholder (multiline inputs have no hint)
-        const std::string hint = g_attBusy ? "Uploading " + ChatPreview(g_attName, 28) + "\xE2\x80\xA6" : "Message " + title + "  (@ to mention)";
-        const ImVec2 ip = ImGui::GetItemRectMin();
-        ImGui::GetWindowDrawList()->AddText(ImVec2(ip.x + 11, ip.y + 8), ImGui::GetColorU32(ImGuiCol_TextDisabled), hint.c_str());
-    }
-    ImGui::PopStyleVar(2);
-    ImGui::SameLine(0, 8);
-    if (!gInput[0] && !gEditId && !g_attBusy) {   // empty composer -> mic (WhatsApp)
-        DrawVoiceMicButton("##gmic", ImVec2(62, inH), myBubble, std::string(), gid);
-        return;
-    }
-    auto brighten = [](ImVec4 c, float k) { return ImVec4(std::min(1.0f, c.x * k), std::min(1.0f, c.y * k), std::min(1.0f, c.z * k), 1.0f); };
-    ImGui::PushStyleColor(ImGuiCol_Button, brighten(myBubble, 1.25f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, brighten(myBubble, 1.45f));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
-    const bool sendBtn = ImGui::Button(gEditId ? "Save##g" : "Send##g", ImVec2(62, inH));
-    if (!gEditId && ImGui::BeginPopupContextItem("##gsendctx")) {   // right-click Send
-        if (ImGui::MenuItem("Schedule message\xE2\x80\xA6")) g_schedOpenReq = true;
-        ImGui::EndPopup();
-    }
-    if (!gEditId && ImGui::IsItemHovered() && !ImGui::IsPopupOpen("##gsendctx")) ImGui::SetTooltip("Send  (right-click to schedule)");
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor(2);
-    if ((send || sendBtn) && gInput[0]) {
-        if (gEditId) {
-            std::string ob; if (auto it = byId.find(gEditId); it != byId.end()) ob = it->second->body;
-            if (demo || ChatSaveEdit(dm, true, gEditId, ob, gInput)) { gEditId = 0; gInput[0] = '\0'; g_chatForceLog = true; }
-            else Toast("Couldn't save the edit", 2);
-        } else {
-            if (!demo && !ChatSlashCommand(gInput, std::string(), "the group", gid)) OutboxSend(std::string(), gid, ExpandCustomEmoji(gInput), gReplyTo);
-            gInput[0] = '\0'; gReplyTo = 0; wantBottom = true;
-        }
-        gRefocus = true;   // keep typing without clicking back into the box
-    }
 }
 
 // ---- Voice calls (Discord-style; the audio engine is in VoiceChat.hpp) -------

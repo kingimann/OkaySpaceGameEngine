@@ -6,6 +6,8 @@
 #include "imgui.h"
 #include <SDL.h>
 #include "OkayThreads.hpp"   // okay::thr (the launcher's mutexes and threads)
+#include "okay/Net/JoinLink.hpp"            // ChatInviteInfo holds a link
+#include "okay/Platform/Messages.hpp"      // okay::Messages (chat helpers)
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -121,4 +123,83 @@ extern bool g_raiseMainReq;                    // something in the chat window w
 extern bool g_openPublishForm;                 // request the Market tab to open its publish form
 extern bool g_chatInOwnWindow;                 // true while drawing the chat window's own frame
 void OpenChatWith(const std::string& uid, const std::string& name, const std::string& avatar);   // open a chat with someone
+// Chat (main.cpp): the message types and helpers the chat screens share.
+struct StarredMsg { std::string uid; std::string preview; long when = 0; };
+struct SchedMsg { long id = 0; std::string toUid, toName; long toGroup = 0; std::string body; long at = 0; };
+struct ChatFileInfo { std::string name, size, url; };
+struct ChatPollInfo { std::string question; std::vector<std::string> options; };
+struct ChatInviteInfo { std::string title; okay::JoinLink link; };
+struct ChatFwd { bool ok = false; std::string from, body; };
+struct ChatVoiceInfo { int secs = 0; std::string url; };
+struct ChatPinRef { long id = 0; long when = 0; std::string preview, who; };
+struct ChatTbBtn { char icon; const char* tip; };
+static constexpr int kChatThemeCount = 8;
+void ChatDateSeparator(long when);
+bool ChatDemo();
+float ChatFileCardWidth(const ChatFileInfo& f, float maxW);
+void ChatForward(const std::string& body, const std::string& from);
+void ChatForwardedLabel(const std::string& from);
+bool ChatHeaderIconButton(const char* id, ImVec2 pos, bool active, const char* tip, ImVec2* centre);
+float ChatInviteWidth(float maxW);
+bool ChatIsPinned(bool group, long id);
+int ChatMsgToolbar(long msgId, ImVec2 rowMin, ImVec2 rowMax, const ChatTbBtn* btns, int nb, bool liked);
+void ChatPinToggle(bool group, long id);
+float ChatPollWidth(float maxW);
+std::string ChatPreview(const std::string& body, std::size_t n);
+std::string ChatPreviewSmart(const std::string& body, std::size_t n);
+bool ChatSaveEdit(okay::Messages& dm, bool group, long id, const std::string& oldBody, const std::string& newBody);
+bool ChatSlashCommand(const std::string& text, const std::string& uid, const std::string& name, long gid);
+ImVec4 ChatThemeColor(int idx);
+ImVec4 ChatThemeFor(const std::string& uid);
+float ChatVoiceWidth(float maxW);
+void ComposerPlusButton(const char* id, float size, const std::string& toUid, long toGroup, long toChannel = 0);
+long DayKey(long when);
+void DrawDotsIcon(ImDrawList* d, ImVec2 c, ImU32 col);
+void DrawPinnedBar(const char* id, std::vector<ChatPinRef> pins, bool group, long& jumpTo);
+void DrawScheduledStrip(const std::string& toUid, long toGroup);
+void DrawVoiceMicButton(const char* id, ImVec2 size, ImVec4 col, const std::string& toUid, long toGroup, long toChannel = 0);
+void DrawVoiceRecorderBar(float h, ImVec4 sendCol);
+std::string ExpandCustomEmoji(const std::string& text);
+void FinishVoiceRecord(bool send);
+std::string FirstImageUrl(const std::string& body);
+bool HasVisibleReactions(const std::map<std::string, long>& m);
+bool IsPollReaction(const std::string& k);
+void OpenEditHistory(okay::Messages& dm, bool group, long id, const std::string& current);
+bool ParseChatFile(const std::string& body, ChatFileInfo& out);
+bool ParseChatInvite(const std::string& body, ChatInviteInfo& out);
+bool ParseChatPoll(const std::string& body, ChatPollInfo& p);
+bool ParseChatVoice(const std::string& body, ChatVoiceInfo& out);
+void RenderChatFileCard(const ChatFileInfo& f, float width);
+void RenderChatInvite(const ChatInviteInfo& inv, bool mine, long when, float width);
+void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVec4 accent);
+bool VoiceRecordingFor(const std::string& uid, long gid, long channel = 0);
+extern volatile bool g_attBusy;
+extern std::string   g_attName;
+extern std::map<std::string,int>          g_chatColor;
+extern volatile bool g_chatForceLog;
+extern long g_chatJumpGroup;
+extern std::string g_chatLightboxReq;
+extern volatile long g_chatSelGroup;
+extern std::vector<okay::Messages::GroupMemberInfo> g_groupMembers;
+extern long g_groupMembersFor;
+extern std::set<std::string>              g_mutedChats;
+extern std::set<std::string>              g_pinnedChats;
+extern bool g_schedOpenReq;
+extern std::vector<SchedMsg>              g_scheduled;
+extern std::map<long, StarredMsg>         g_starred;
+int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, ImVec4 bubbleCol,
+               const std::function<bool(const std::string&, long)>& inLog);   // the not-yet-sent messages of a chat
+void DrawScheduleDialog(const char* popupId, char* text, std::size_t cap,
+                        const std::string& toUid, const std::string& toName, long toGroup);
+void RenderChatPoll(const ChatPollInfo& p, bool group, long id, const std::map<std::string, long>* counts,
+                    const std::set<std::string>* mine, float width, bool mineBubble, ImVec4 accent);
+void DrawStar(ImDrawList* dl, ImVec2 c, float r, ImU32 col);
+bool VoiceRecording();                         // a voice message is being recorded
+void OutboxSend(const std::string& toUid, long toGroup, const std::string& body, long replyTo = 0, long toChannel = 0);   // send through the outbox
+void SavePrefs();                              // write the launcher's preferences file
+ChatFwd ParseChatFwd(const std::string& b);    // a forwarded message: who from, and the body
+extern std::map<long, long> g_pinsDm, g_pinsGroup;   // message id -> pinned at (unix)
+extern ImVec4 kAccentDim;                      // the darker accent
+extern const char* kChatThemeNames[];          // the chat colour themes (kChatThemeCount)
+extern const ImVec4 kChatWinBg;                // the chat window's background
 } // namespace okl

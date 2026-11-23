@@ -1,0 +1,219 @@
+# Launcher split, move L7 (docs/engine/modularization_plan.md, Part C section 13): member moderation for servers and
+# group chats (launcher/main.cpp 5933-6132 at the base) -> launcher/MemberModerationUI.hpp / .cpp, and the open group
+# conversation, DrawGroupConversation (6133-6956) -> launcher/GroupConversation.hpp / .cpp.
+# Check it with (on the move commit):
+#   python3 scripts/check_pure_move.py --base HEAD~1 --head HEAD --source launcher/main.cpp \
+#       --dest launcher/MemberModerationUI.hpp --dest launcher/MemberModerationUI.cpp --dest launcher/GroupConversation.hpp \
+#       --dest launcher/GroupConversation.cpp --dest launcher/LauncherShared.hpp --rules docs/engine/moves/L7_group_conversation.rules
+# The `mm` namespace alias moved unchanged into MemberModerationUI.hpp. The chat's message types (StarredMsg, SchedMsg,
+# ChatFileInfo, ChatPollInfo, ChatInviteInfo, ChatFwd, ChatVoiceInfo, ChatPinRef, ChatTbBtn) and the constant
+# kChatThemeCount moved unchanged from main.cpp into LauncherShared.hpp: main.cpp's chat and the group conversation
+# both use them.
+#
+# main.cpp: `static` dropped on what the moved code uses (declared in LauncherShared.hpp); default arguments of
+# OutboxSend, VoiceRecordingFor, DrawVoiceMicButton and ComposerPlusButton move to the declarations; kChatWinBg goes
+# from `static const` to `extern const` (one definition); DrawStar's forward declaration is replaced by the header.
+# The moved code: `static` dropped on what main.cpp calls (declared in MemberModerationUI.hpp / GroupConversation.hpp).
+drop: ^\s*static void DrawStar\(ImDrawList\* dl, ImVec2 c, float r, ImU32 col\);(\s*//.*)?$
+drop: ^\s*static std::string ExpandCustomEmoji\(const std::string\& text\) \{$
+add: ^\s*std::string ExpandCustomEmoji\(const std::string\& text\) \{$
+drop: ^\s*static std::string ChatPreview\(const std::string\& body, std::size_t n\) \{$
+add: ^\s*std::string ChatPreview\(const std::string\& body, std::size_t n\) \{$
+drop: ^\s*static std::string FirstImageUrl\(const std::string\& body\) \{$
+add: ^\s*std::string FirstImageUrl\(const std::string\& body\) \{$
+drop: ^\s*static bool ParseChatFile\(const std::string\& body, ChatFileInfo\& out\) \{$
+add: ^\s*bool ParseChatFile\(const std::string\& body, ChatFileInfo\& out\) \{$
+drop: ^\s*static float ChatFileCardWidth\(const ChatFileInfo\& f, float maxW\) \{$
+add: ^\s*float ChatFileCardWidth\(const ChatFileInfo\& f, float maxW\) \{$
+drop: ^\s*static void RenderChatFileCard\(const ChatFileInfo\& f, float width\) \{$
+add: ^\s*void RenderChatFileCard\(const ChatFileInfo\& f, float width\) \{$
+drop: ^\s*static const ImVec4 kChatWinBg   = okaytheme::kBase;$
+drop: ^\s*static bool ParseChatPoll\(const std::string\& body, ChatPollInfo\& p\) \{$
+add: ^\s*bool ParseChatPoll\(const std::string\& body, ChatPollInfo\& p\) \{$
+drop: ^\s*static bool ParseChatInvite\(const std::string\& body, ChatInviteInfo\& out\) \{$
+add: ^\s*bool ParseChatInvite\(const std::string\& body, ChatInviteInfo\& out\) \{$
+drop: ^\s*static float ChatInviteWidth\(float maxW\) \{ return std::min\(maxW, 270\.0f\); \}$
+add: ^\s*float ChatInviteWidth\(float maxW\) \{ return std::min\(maxW, 270\.0f\); \}$
+drop: ^\s*static void RenderChatInvite\(const ChatInviteInfo\& inv, bool mine, long when, float width\) \{$
+add: ^\s*void RenderChatInvite\(const ChatInviteInfo\& inv, bool mine, long when, float width\) \{$
+drop: ^\s*static ChatFwd ParseChatFwd\(const std::string\& b\) \{$
+add: ^\s*ChatFwd ParseChatFwd\(const std::string\& b\) \{$
+drop: ^\s*static std::string ChatPreviewSmart\(const std::string\& body, std::size_t n\) \{$
+add: ^\s*std::string ChatPreviewSmart\(const std::string\& body, std::size_t n\) \{$
+drop: ^\s*static volatile bool g_attBusy = false;(\s*//.*)?$
+add: ^\s*volatile bool g_attBusy = false;(\s*//.*)?$
+drop: ^\s*static std::string   g_attName;(\s*//.*)?$
+add: ^\s*std::string   g_attName;(\s*//.*)?$
+drop: ^\s*static bool ParseChatVoice\(const std::string\& body, ChatVoiceInfo\& out\) \{$
+add: ^\s*bool ParseChatVoice\(const std::string\& body, ChatVoiceInfo\& out\) \{$
+drop: ^\s*static bool VoiceRecording\(\) \{ return g_recDev != nullptr \|\| g_recFake; \}$
+add: ^\s*bool VoiceRecording\(\) \{ return g_recDev != nullptr \|\| g_recFake; \}$
+drop: ^\s*static bool VoiceRecordingFor\(const std::string\& uid, long gid, long channel = 0\) \{$
+add: ^\s*bool VoiceRecordingFor\(const std::string\& uid, long gid, long channel\) \{$
+drop: ^\s*static void FinishVoiceRecord\(bool send\) \{$
+add: ^\s*void FinishVoiceRecord\(bool send\) \{$
+drop: ^\s*static float ChatVoiceWidth\(float maxW\) \{ return std::min\(maxW, 250\.0f\); \}$
+add: ^\s*float ChatVoiceWidth\(float maxW\) \{ return std::min\(maxW, 250\.0f\); \}$
+drop: ^\s*static void RenderChatVoice\(const ChatVoiceInfo\& v, float width, bool mine, ImVec4 accent\) \{$
+add: ^\s*void RenderChatVoice\(const ChatVoiceInfo\& v, float width, bool mine, ImVec4 accent\) \{$
+drop: ^\s*static void DrawVoiceRecorderBar\(float h, ImVec4 sendCol\) \{$
+add: ^\s*void DrawVoiceRecorderBar\(float h, ImVec4 sendCol\) \{$
+drop: ^\s*static void DrawVoiceMicButton\(const char\* id, ImVec2 size, ImVec4 col, const std::string\& toUid, long toGroup, long toChannel = 0\) \{$
+add: ^\s*void DrawVoiceMicButton\(const char\* id, ImVec2 size, ImVec4 col, const std::string\& toUid, long toGroup, long toChannel\) \{$
+drop: ^\s*static volatile bool g_chatForceLog = false;(\s*//.*)?$
+add: ^\s*volatile bool g_chatForceLog = false;(\s*//.*)?$
+drop: ^\s*static void OutboxSend\(const std::string\& toUid, long toGroup, const std::string\& body, long replyTo = 0, long toChannel = 0\) \{$
+add: ^\s*void OutboxSend\(const std::string\& toUid, long toGroup, const std::string\& body, long replyTo, long toChannel\) \{$
+drop: ^\s*static bool ChatDemo\(\) \{ static const bool d = std::getenv\("OKAY_CHAT_DEMO"\) != nullptr; return d; \}$
+add: ^\s*bool ChatDemo\(\) \{ static const bool d = std::getenv\("OKAY_CHAT_DEMO"\) != nullptr; return d; \}$
+drop: ^\s*static bool ChatIsPinned\(bool group, long id\) \{ return \(group \? g_pinsGroup : g_pinsDm\)\.count\(id\) != 0; \}$
+add: ^\s*bool ChatIsPinned\(bool group, long id\) \{ return \(group \? g_pinsGroup : g_pinsDm\)\.count\(id\) != 0; \}$
+drop: ^\s*static void ChatPinToggle\(bool group, long id\) \{$
+add: ^\s*void ChatPinToggle\(bool group, long id\) \{$
+drop: ^\s*static void DrawPinnedBar\(const char\* id, std::vector<ChatPinRef> pins, bool group, long\& jumpTo\) \{$
+add: ^\s*void DrawPinnedBar\(const char\* id, std::vector<ChatPinRef> pins, bool group, long\& jumpTo\) \{$
+drop: ^\s*static bool ChatSaveEdit\(okay::Messages\& dm, bool group, long id, const std::string\& oldBody, const std::string\& newBody\) \{$
+add: ^\s*bool ChatSaveEdit\(okay::Messages\& dm, bool group, long id, const std::string\& oldBody, const std::string\& newBody\) \{$
+drop: ^\s*static void OpenEditHistory\(okay::Messages\& dm, bool group, long id, const std::string\& current\) \{$
+add: ^\s*void OpenEditHistory\(okay::Messages\& dm, bool group, long id, const std::string\& current\) \{$
+drop: ^\s*static bool g_schedOpenReq = false;(\s*//.*)?$
+add: ^\s*bool g_schedOpenReq = false;(\s*//.*)?$
+drop: ^\s*static void DrawScheduleDialog\(const char\* popupId, char\* text, std::size_t cap,$
+add: ^\s*void DrawScheduleDialog\(const char\* popupId, char\* text, std::size_t cap,$
+drop: ^\s*static void DrawScheduledStrip\(const std::string\& toUid, long toGroup\) \{$
+add: ^\s*void DrawScheduledStrip\(const std::string\& toUid, long toGroup\) \{$
+drop: ^\s*static long g_chatJumpGroup = 0;(\s*//.*)?$
+add: ^\s*long g_chatJumpGroup = 0;(\s*//.*)?$
+drop: ^\s*static void ChatForward\(const std::string\& body, const std::string\& from\) \{$
+add: ^\s*void ChatForward\(const std::string\& body, const std::string\& from\) \{$
+drop: ^\s*static void DrawDotsIcon\(ImDrawList\* d, ImVec2 c, ImU32 col\) \{(\s*//.*)?$
+add: ^\s*void DrawDotsIcon\(ImDrawList\* d, ImVec2 c, ImU32 col\) \{(\s*//.*)?$
+drop: ^\s*static int ChatMsgToolbar\(long msgId, ImVec2 rowMin, ImVec2 rowMax, const ChatTbBtn\* btns, int nb, bool liked\) \{$
+add: ^\s*int ChatMsgToolbar\(long msgId, ImVec2 rowMin, ImVec2 rowMax, const ChatTbBtn\* btns, int nb, bool liked\) \{$
+drop: ^\s*static bool ChatHeaderIconButton\(const char\* id, ImVec2 pos, bool active, const char\* tip, ImVec2\* centre\) \{$
+add: ^\s*bool ChatHeaderIconButton\(const char\* id, ImVec2 pos, bool active, const char\* tip, ImVec2\* centre\) \{$
+drop: ^\s*static int DrawOutbox\(const std::string\& uid, long gid, float avW, float baseX, ImVec4 bubbleCol,$
+add: ^\s*int DrawOutbox\(const std::string\& uid, long gid, float avW, float baseX, ImVec4 bubbleCol,$
+drop: ^\s*static volatile long g_chatSelGroup = 0;(\s*//.*)?$
+add: ^\s*volatile long g_chatSelGroup = 0;(\s*//.*)?$
+drop: ^\s*static std::vector<okay::Messages::GroupMemberInfo> g_groupMembers;$
+add: ^\s*std::vector<okay::Messages::GroupMemberInfo> g_groupMembers;$
+drop: ^\s*static long g_groupMembersFor = 0;$
+add: ^\s*long g_groupMembersFor = 0;$
+drop: ^\s*static std::string g_chatLightboxReq;(\s*//.*)?$
+add: ^\s*std::string g_chatLightboxReq;(\s*//.*)?$
+drop: ^\s*static const char\* kChatThemeNames\[\] = \{ "Default", "Purple", "Pink", "Orange", "Green", "Teal", "Red", "Graphite" \};$
+add: ^\s*const char\* kChatThemeNames\[\] = \{ "Default", "Purple", "Pink", "Orange", "Green", "Teal", "Red", "Graphite" \};$
+drop: ^\s*static ImVec4 ChatThemeColor\(int idx\) \{$
+add: ^\s*ImVec4 ChatThemeColor\(int idx\) \{$
+drop: ^\s*static ImVec4 ChatThemeFor\(const std::string\& uid\) \{$
+add: ^\s*ImVec4 ChatThemeFor\(const std::string\& uid\) \{$
+drop: ^\s*static void DrawStar\(ImDrawList\* dl, ImVec2 c, float r, ImU32 col\) \{$
+add: ^\s*void DrawStar\(ImDrawList\* dl, ImVec2 c, float r, ImU32 col\) \{$
+drop: ^\s*static float ChatPollWidth\(float maxW\) \{ return std::min\(maxW, 300\.0f\); \}$
+add: ^\s*float ChatPollWidth\(float maxW\) \{ return std::min\(maxW, 300\.0f\); \}$
+drop: ^\s*static void RenderChatPoll\(const ChatPollInfo\& p, bool group, long id, const std::map<std::string, long>\* counts,$
+add: ^\s*void RenderChatPoll\(const ChatPollInfo\& p, bool group, long id, const std::map<std::string, long>\* counts,$
+drop: ^\s*static bool IsPollReaction\(const std::string\& k\) \{ return k\.rfind\("poll:", 0\) == 0; \}$
+add: ^\s*bool IsPollReaction\(const std::string\& k\) \{ return k\.rfind\("poll:", 0\) == 0; \}$
+drop: ^\s*static bool HasVisibleReactions\(const std::map<std::string, long>\& m\) \{$
+add: ^\s*bool HasVisibleReactions\(const std::map<std::string, long>\& m\) \{$
+drop: ^\s*static void ComposerPlusButton\(const char\* id, float size, const std::string\& toUid, long toGroup, long toChannel = 0\) \{$
+add: ^\s*void ComposerPlusButton\(const char\* id, float size, const std::string\& toUid, long toGroup, long toChannel\) \{$
+drop: ^\s*static bool ChatSlashCommand\(const std::string\& text, const std::string\& uid, const std::string\& name, long gid\) \{$
+add: ^\s*bool ChatSlashCommand\(const std::string\& text, const std::string\& uid, const std::string\& name, long gid\) \{$
+drop: ^\s*static void ChatForwardedLabel\(const std::string\& from\) \{$
+add: ^\s*void ChatForwardedLabel\(const std::string\& from\) \{$
+change: static bool ModDrain(mm::Scope sc) { ==> bool ModDrain(mm::Scope sc) {
+change: static bool ModHasActions(mm::Role actor, mm::Role target, bool isSelf) { ==> bool ModHasActions(mm::Role actor, mm::Role target, bool isSelf) {
+change: static void ModMenuItems(mm::Scope sc, long cid, mm::Role actor, const std::string& uid, const std::string& name, mm::Role target, bool isSelf) { ==> void ModMenuItems(mm::Scope sc, long cid, mm::Role actor, const std::string& uid, const std::string& name, mm::Role target, bool isSelf) {
+change: static void ModRowButton(const char* popupId, ImVec2 topLeft, float size, bool hasActions) { ==> void ModRowButton(const char* popupId, ImVec2 topLeft, float size, bool hasActions) {
+change: static void ModDialog() { ==> void ModDialog() {
+change: static void ModDrawBanned(mm::Scope sc, long cid, mm::Role actor) { ==> void ModDrawBanned(mm::Scope sc, long cid, mm::Role actor) {
+change: static void DrawGroupConversation( ==> void DrawGroupConversation(
+add: ^\s*bool ModDrain\(mm::Scope sc\);(\s*//.*)?$
+add: ^\s*bool ModHasActions\(mm::Role actor, mm::Role target, bool isSelf\);$
+add: ^\s*void ModMenuItems\(mm::Scope sc, long cid, mm::Role actor, const std::string\& uid, const std::string\& name, mm::Role target, bool isSelf\);$
+add: ^\s*void ModRowButton\(const char\* popupId, ImVec2 topLeft, float size, bool hasActions\);(\s*//.*)?$
+add: ^\s*void ModDialog\(\);(\s*//.*)?$
+add: ^\s*void ModDrawBanned\(mm::Scope sc, long cid, mm::Role actor\);(\s*//.*)?$
+add: ^\s*const std::string\& myName\);$
+add: ^\s*void DrawGroupConversation\($
+add: ^\s*okay::Messages\& dm,$
+add: ^\s*const std::vector<okay::Messages::GroupConvo>\& groups,$
+add: ^\s*const std::vector<okay::Messages::GroupMessage>\& glog,$
+add: ^\s*const std::map<long, std::map<std::string,long>>\& greacts,$
+add: ^\s*const std::map<long, std::set<std::string>>\& gmyreacts,$
+add: ^\s*const std::map<std::string, const okay::Friend\*>\& fById,$
+add: ^\s*char\* gInput, long\& gEditId, long\& gReplyTo,$
+add: ^\s*std::string\& gReplyName, std::string\& gReplySnippet,$
+add: ^\s*std::map<long,long>\& gSeenId,$
+add: ^\s*void ChatDateSeparator\(long when\);$
+add: ^\s*bool ChatDemo\(\);$
+add: ^\s*float ChatFileCardWidth\(const ChatFileInfo\& f, float maxW\);$
+add: ^\s*void ChatForward\(const std::string\& body, const std::string\& from\);$
+add: ^\s*void ChatForwardedLabel\(const std::string\& from\);$
+add: ^\s*bool ChatHeaderIconButton\(const char\* id, ImVec2 pos, bool active, const char\* tip, ImVec2\* centre\);$
+add: ^\s*float ChatInviteWidth\(float maxW\);$
+add: ^\s*bool ChatIsPinned\(bool group, long id\);$
+add: ^\s*int ChatMsgToolbar\(long msgId, ImVec2 rowMin, ImVec2 rowMax, const ChatTbBtn\* btns, int nb, bool liked\);$
+add: ^\s*void ChatPinToggle\(bool group, long id\);$
+add: ^\s*float ChatPollWidth\(float maxW\);$
+add: ^\s*std::string ChatPreview\(const std::string\& body, std::size_t n\);$
+add: ^\s*std::string ChatPreviewSmart\(const std::string\& body, std::size_t n\);$
+add: ^\s*bool ChatSaveEdit\(okay::Messages\& dm, bool group, long id, const std::string\& oldBody, const std::string\& newBody\);$
+add: ^\s*bool ChatSlashCommand\(const std::string\& text, const std::string\& uid, const std::string\& name, long gid\);$
+add: ^\s*ImVec4 ChatThemeColor\(int idx\);$
+add: ^\s*ImVec4 ChatThemeFor\(const std::string\& uid\);$
+add: ^\s*float ChatVoiceWidth\(float maxW\);$
+add: ^\s*void ComposerPlusButton\(const char\* id, float size, const std::string\& toUid, long toGroup, long toChannel = 0\);$
+add: ^\s*long DayKey\(long when\);$
+add: ^\s*void DrawDotsIcon\(ImDrawList\* d, ImVec2 c, ImU32 col\);$
+add: ^\s*void DrawPinnedBar\(const char\* id, std::vector<ChatPinRef> pins, bool group, long\& jumpTo\);$
+add: ^\s*void DrawScheduledStrip\(const std::string\& toUid, long toGroup\);$
+add: ^\s*void DrawVoiceMicButton\(const char\* id, ImVec2 size, ImVec4 col, const std::string\& toUid, long toGroup, long toChannel = 0\);$
+add: ^\s*void DrawVoiceRecorderBar\(float h, ImVec4 sendCol\);$
+add: ^\s*std::string ExpandCustomEmoji\(const std::string\& text\);$
+add: ^\s*void FinishVoiceRecord\(bool send\);$
+add: ^\s*std::string FirstImageUrl\(const std::string\& body\);$
+add: ^\s*bool HasVisibleReactions\(const std::map<std::string, long>\& m\);$
+add: ^\s*bool IsPollReaction\(const std::string\& k\);$
+add: ^\s*void OpenEditHistory\(okay::Messages\& dm, bool group, long id, const std::string\& current\);$
+add: ^\s*bool ParseChatFile\(const std::string\& body, ChatFileInfo\& out\);$
+add: ^\s*bool ParseChatInvite\(const std::string\& body, ChatInviteInfo\& out\);$
+add: ^\s*bool ParseChatPoll\(const std::string\& body, ChatPollInfo\& p\);$
+add: ^\s*bool ParseChatVoice\(const std::string\& body, ChatVoiceInfo\& out\);$
+add: ^\s*void RenderChatFileCard\(const ChatFileInfo\& f, float width\);$
+add: ^\s*void RenderChatInvite\(const ChatInviteInfo\& inv, bool mine, long when, float width\);$
+add: ^\s*void RenderChatVoice\(const ChatVoiceInfo\& v, float width, bool mine, ImVec4 accent\);$
+add: ^\s*bool VoiceRecordingFor\(const std::string\& uid, long gid, long channel = 0\);$
+add: ^\s*extern volatile bool g_attBusy;$
+add: ^\s*extern std::string   g_attName;$
+add: ^\s*extern std::map<std::string,int>          g_chatColor;$
+add: ^\s*extern volatile bool g_chatForceLog;$
+add: ^\s*extern long g_chatJumpGroup;$
+add: ^\s*extern std::string g_chatLightboxReq;$
+add: ^\s*extern volatile long g_chatSelGroup;$
+add: ^\s*extern std::vector<okay::Messages::GroupMemberInfo> g_groupMembers;$
+add: ^\s*extern long g_groupMembersFor;$
+add: ^\s*extern std::set<std::string>              g_mutedChats;$
+add: ^\s*extern std::set<std::string>              g_pinnedChats;$
+add: ^\s*extern bool g_schedOpenReq;$
+add: ^\s*extern std::vector<SchedMsg>              g_scheduled;$
+add: ^\s*extern std::map<long, StarredMsg>         g_starred;$
+add: ^\s*int DrawOutbox\(const std::string\& uid, long gid, float avW, float baseX, ImVec4 bubbleCol,$
+add: ^\s*const std::function<bool\(const std::string\&, long\)>\& inLog\);(\s*//.*)?$
+add: ^\s*void DrawScheduleDialog\(const char\* popupId, char\* text, std::size_t cap,$
+add: ^\s*const std::string\& toUid, const std::string\& toName, long toGroup\);$
+add: ^\s*void RenderChatPoll\(const ChatPollInfo\& p, bool group, long id, const std::map<std::string, long>\* counts,$
+add: ^\s*const std::set<std::string>\* mine, float width, bool mineBubble, ImVec4 accent\);$
+add: ^\s*void DrawStar\(ImDrawList\* dl, ImVec2 c, float r, ImU32 col\);$
+add: ^\s*bool VoiceRecording\(\);(\s*//.*)?$
+add: ^\s*void OutboxSend\(const std::string\& toUid, long toGroup, const std::string\& body, long replyTo = 0, long toChannel = 0\);(\s*//.*)?$
+add: ^\s*void SavePrefs\(\);(\s*//.*)?$
+add: ^\s*ChatFwd ParseChatFwd\(const std::string\& b\);(\s*//.*)?$
+add: ^\s*extern std::map<long, long> g_pinsDm, g_pinsGroup;(\s*//.*)?$
+add: ^\s*extern ImVec4 kAccentDim;(\s*//.*)?$
+add: ^\s*extern const char\* kChatThemeNames\[\];(\s*//.*)?$
+add: ^\s*extern const ImVec4 kChatWinBg;(\s*//.*)?$
+add: ^\s*extern const ImVec4 kChatWinBg   = okaytheme::kBase;$

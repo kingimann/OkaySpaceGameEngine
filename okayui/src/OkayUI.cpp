@@ -5,6 +5,7 @@
 #include "okay/UI/OkayUI.hpp"
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIInternals.hpp"
+#include "OkayUIInternal.hpp"
 #include "okay/UI/OkayUICompat.hpp"   // BeginTooltip, GetStyle, ListClipper (defined here: they need the private layout state)
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
@@ -27,18 +28,12 @@ void DockReset();   // okayui/src/OkayUIDock.cpp: ResetState forgets the dock la
 void ColorPickerReset();
 void ChannelsMergeAll();   // the window draw list's channels (below)
 void StateStorageReset();   // okayui/src/OkayUICompat.cpp: the state store and key owners (OkayUIInternals.hpp)   // okayui/src/OkayUIColor.cpp: and the colour pickers' remembered hue and original colour
-namespace {
+namespace ui_core {
 
-// Fixed-capacity geometry batch. Text is drawn as one small quad per lit font
-// pixel, so size generously for several labelled buttons per frame; on overflow we
-// silently drop further geometry rather than grow/allocate.
-constexpr int kMaxVerts = 262144;   // per batch (main and overlay): about 5 MB of vertices each
-constexpr int kMaxIdx   = 393216;
 // Geometry that did not fit is counted, not hidden: DrawData::dropped, DroppedGeometry() and a message on stderr.
 int g_dropped = 0;
 bool g_rowClipper = true;   // the table row clipper (SetTableRowClipping)
 bool g_cullRow = false;   // a table row wholly outside the clip: its geometry is skipped, not emitted (see TableNextRow)
-inline void noteDrop() { ++g_dropped; }
 SDL_Vertex g_verts[kMaxVerts];
 int        g_nv = 0;
 int        g_idx[kMaxIdx];
@@ -66,9 +61,6 @@ SDL_Renderer* g_atlasR = nullptr;
 // carry the font's address as a placeholder; EndFrame binds the font's atlas.
 okay::TtfFont* g_fbFonts[8];
 int            g_nfb = 0;
-// Texture changes inside the overlay batch (fallback-font text in toasts and
-// popups): the overlay index each starts at. mergeOverlay turns them into spans.
-struct OverlaySpan { int startIdx; SDL_Texture* tex; };
 OverlaySpan g_ovSpans[32];
 int         g_novSpans = 0;
 SDL_Texture* fallbackTex(okay::TtfFont* f) {
@@ -78,12 +70,6 @@ SDL_Texture* fallbackTex(okay::TtfFont* f) {
     return (SDL_Texture*)(void*)f;
 }
 
-// Draw spans: the main batch is split into contiguous index ranges, each carrying a
-// clip state and a texture, so scrolling child regions can clip and Image() can bind a
-// texture. A span records the index where a state begins; EndFrame draws each range
-// with the matching clip rect + texture. The overlay batch is never clipped.
-struct DrawSpan { int startIdx; bool on; SDL_Rect rect; SDL_Texture* tex; };
-constexpr int kMaxSpans = 256;   // 128 before window z-order: reordering adds a span per window segment
 DrawSpan g_spans[kMaxSpans];
 int      g_nspans = 0;
 SDL_Rect g_clipStack[16];
@@ -127,11 +113,6 @@ bool  g_mPrevDown = false, g_mPressed = false, g_mReleased = false;   // the mid
 float g_dragOriginX[3] = {0, 0, 0}, g_dragOriginY[3] = {0, 0, 0};    // where each button went down (GetMouseDragDelta measures from here; ResetMouseDragDelta moves it)
 double g_lastMouseMove = 0.0;    // g_clock when the pointer last moved (the Stationary hover flag)
 
-// Popup/context-menu registry. Each open popup remembers where it opened and its
-// measured height (so the background can be drawn before the content next frame).
-struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0, y = 0; float w = 0; bool modal = false; bool fixedW = false;   // w <= 0: the default width; modal: a click outside does not close it
-                   unsigned long long touched = 0;   // the last frame it was asked for (a closed slot not asked for longest is reused)
-                   bool combo = false; float boxTop = 0, boxRight = 0; };   // a combo's list: placed around its box as Dear ImGui places one
 PopupSlot g_popups[32];
 extern unsigned long long g_frameCount;
 // Every combo box and menu keeps a slot. When all are taken (an editor with many hosted panels has more combos than slots), the closed
@@ -230,20 +211,6 @@ Theme g_theme;
 struct ColorSave { unsigned char* field; unsigned char prev[4]; int ext = -1; bool prevSet = false; };   // ext >= 0: a colour of Theme::colors
 ColorSave g_colStack[64];
 int       g_colTop = 0;
-// Map a Col enum to the theme's 4-byte color field.
-inline unsigned char* themeColor(int which) {
-    switch (which) {
-        case 0: return g_theme.bg;      case 1: return g_theme.bgHover;
-        case 2: return g_theme.bgDown;  case 3: return g_theme.border;
-        case 4: return g_theme.text;    case 5: return g_theme.panel;
-        case 6: return g_theme.track;   case 7: return g_theme.accent;
-        default: return g_theme.text;
-    }
-}
-// The colours beyond the original eight: set (Theme::colorSet) or following the base theme.
-inline bool colorIsSet(int id) { return id >= 8 && id < 64 && ((g_theme.colorSet >> id) & 1ull) != 0; }
-// `dflt` unless the colour was set: how a widget honours an override while keeping its own default look.
-inline const unsigned char* pick(int id, const unsigned char* dflt) { return colorIsSet(id) ? g_theme.colors[id] : dflt; }
 // The base-theme value of a colour that was never set (what GetStyleColorVec4 answers; the classic look's default).
 void deriveColor(int id, unsigned char out[4]) {
     auto cp = [&](const unsigned char* c) { out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; out[3] = c[3]; };
@@ -290,40 +257,11 @@ void deriveColor(int id, unsigned char out[4]) {
         default: rgba(0, 0, 0, 0); break;
     }
 }
-// Any colour as bytes: the original eight, a set one, or the derived default (valid until the next call with `tmp`).
-inline const unsigned char* styleColor(int id, unsigned char tmp[4]) {
-    if (id >= 0 && id < 8) return themeColor(id);
-    if (id < 8 || id >= Col_COUNT) { tmp[0] = tmp[1] = tmp[2] = tmp[3] = 0; return tmp; }
-    if (colorIsSet(id)) return g_theme.colors[id];
-    deriveColor(id, tmp);
-    return tmp;
-}
 
 // Length of a C string without pulling in <cstring> (keeps the toolkit STL/libc-light).
 inline int cstrlen(const char* s) { int n = 0; if (s) while (s[n]) ++n; return n; }
 
-// ---- Auto-layout state (ImGui-style window + cursor) ---------------------------
-struct LayoutState {
-    bool  active   = false;
-    bool  winClip  = false;           // Begin() clipped the content to the window (launcher look)
-    float ox = 0, oy = 0;            // content origin (top-left of the content area)
-    float cx = 0, cy = 0;            // cursor: top-left where the next item goes
-    float contentW = 0;             // usable content width
-    float spacingX = 8.0f, spacingY = 6.0f;
-    float prevX = 0, prevY = 0, prevW = 0, prevH = 0;   // last placed item
-    // a text centred on the taller item before it on its line (textLine) keeps the line's top here: the next SameLine item starts at
-    // the line's top as in Dear ImGui, not at the text's lowered top (a drag after a labelled drag sat 8 px low, section 19)
-    bool hasLineTop = false; float lineTopY = 0;
-    bool  pendingSameLine = false;
-    float sameLineSpacing = -1.0f;
-    float indent = 0.0f;            // TreeNode indentation of the content's left edge
-    float bottom = 0.0f;            // bottom of the visible content area (GetContentRegionAvail)
-    float maxRight = 0.0f;          // right edge of the furthest item placed (window auto-resize measures it)
-    int   seed = 0;                 // window id, mixed into label->id hashing
-};
 LayoutState g_lay;
-// BeginGroup / EndGroup: the bounding box of the items placed since BeginGroup (nested up to 8 deep).
-struct GroupBox { float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f; bool any = false; };
 GroupBox g_grp[8];
 int      g_grpTop = 0;
 inline void groupAdd(float x, float y, float w, float h) {
@@ -362,24 +300,8 @@ ChildSave g_childStack[8];
 int       g_childTop = 0;
 constexpr float kScrollbarW = 10.0f;
 
-// Multi-column layout state (Columns/NextColumn/EndColumns).
-struct ColumnState {
-    bool  active = false;
-    int   count = 1, index = 0;
-    float x0 = 0, fullW = 0;   // content origin + full width when Columns() began
-    float rowTop = 0, rowBottom = 0;
-};
 ColumnState g_col;
 
-// Table layout state (BeginTable/TableNextRow/TableNextColumn/EndTable).
-// Per-table memory that outlives a frame: the sort keys and the row heights of the last frame (for row backgrounds).
-constexpr int kTblRows = 256, kTblSortKeys = 4;
-struct TblStore {
-    int id = 0; bool used = false; unsigned long long lastFrame = 0;
-    float rowH[kTblRows] = {};
-    int sortN = 0; int sortCol[kTblSortKeys] = {}; bool sortDesc[kTblSortKeys] = {};
-    bool dirty = false, inited = false;
-};
 TblStore g_tstore[8];
 TblStore* tblStoreFor(int id) {
     TblStore* free = nullptr; TblStore* oldest = &g_tstore[0];
@@ -392,40 +314,6 @@ TblStore* tblStoreFor(int id) {
     *t = TblStore(); t->used = true; t->id = id;
     return t;
 }
-struct TableState {
-    bool  active = false;
-    int   id = 0, count = 0, index = -1;
-    float x0 = 0, fullW = 0;
-    float rowTop = 0, rowBottom = 0, rowStart = 0;
-    float minRowH = 0;          // TableNextRow(flags, minRowHeight): the row being built is at least this tall
-    float* w[16] = {nullptr};   // persisted per-column widths (pixels)
-    float headerBottom = 0;     // y below the header row (for the resize handles)
-    float topY = 0;             // y of the table's top edge (borders and resize handles start here)
-    // The flag-style API (BeginTable(id, n, flags) + TableSetupColumn): columns are described after Begin and sized on first use.
-    int   flags = 0, rowIndex = -1, nSetup = 0;
-    bool  setupDone = true;
-    const char* sLabel[16] = {nullptr};
-    int   sFlags[16] = {0};
-    float sVal[16] = {0};
-    unsigned sUser[16] = {0};
-    TblStore* store = nullptr;
-    // scrolling boxes (Table_ScrollX / Table_ScrollY): the outer rectangle, the scroll offsets and the frozen part
-    bool  scrollX = false, scrollY = false, needV = false, needH = false;
-    float ox = 0, oy = 0, ow = 0, oh = 0, viewW = 0, contentW = 0, innerWidth = 0;
-    float* pSX = nullptr; float* pSY = nullptr; float* pMaxY = nullptr; float* pH = nullptr;
-    float sx = 0, sy = 0;                 // this frame's scroll
-    int   freezeCols = 0, freezeRows = 0, rowsDone = 0;
-    float frozenW = 0, frozenBottom = 0;
-    bool  bodyStarted = false, rowFrozen = true, headerDrawn = false;
-    float shiftY = 0;                     // added to the logical row top to get the screen y (minus the scroll, for body rows)
-    bool  clipOn = false; float clipR[4] = {0, 0, 0, 0};   // the clip rectangle in force (nothing changes when the next one is the same)
-    float rowBgH = 0;                     // height of the band the current row's background got
-    bool  rowCulled = false;              // the current row is wholly outside the visible clip: its geometry is skipped (the row clipper)
-    LayoutState saved;                    // the parent layout, restored by EndTable of a scrolling box
-    unsigned hidden = 0;                  // bit i: column i is hidden (flag-style tables: Col_DefaultHide, the header menu, TableSetColumnEnabled)
-    float*   pHidden = nullptr;           // its persisted copy (a float holding the mask; negative before the first frame)
-    float    zeroW[16] = {0};             // what a hidden column's width points at, so no layout loop touches its remembered width
-};
 TableState g_tbl;
 int g_sortSpecsFor = 0; TableSortSpecs* g_sortSpecsOut = nullptr;   // the specs struct TableGetSortSpecs handed out (EndTable reads specsDirty back from it)
 
@@ -525,7 +413,7 @@ inline void popIdSeed() {
 }
 
 // FNV-1a hash of a label -> stable nonzero widget id (so callers needn't pass ids).
-inline int hashLabel(const char* s) {
+int hashLabel(const char* s) {
     unsigned h = (2166136261u ^ (unsigned)g_lay.seed ^ g_idSeed);
     if (s) for (; *s; ++s) h = (h ^ (unsigned char)*s) * 16777619u;
     int id = (int)(h & 0x7fffffffu);
@@ -539,7 +427,6 @@ const Font kFontDefault{8, 8, defGlyph};
 const Font kFontBold{8, 8, boldGlyph};
 const Font* g_font = &kFontDefault;
 inline int  fW() { return g_font->width; }
-inline int  fH() { return g_font->height; }
 inline bool fPix(char c, int x, int y) { return g_font->pixel && g_font->pixel(c, x, y); }
 // The glyph for the character at *p, and *p moved past it: an ASCII byte is looked up in the size's table right here (text is
 // nearly all ASCII), anything else is decoded and searched.
@@ -550,7 +437,7 @@ inline const fontatlas::Glyph* asciiGlyph(const fontatlas::Size& z, const char*&
 }
 // Width of `s` in font-cell units (multiply by textScale for pixels). With the
 // launcher look it's the TrueType width at the 8-unit cell height (proportional).
-inline float fMeasure(const char* s) {
+float fMeasure(const char* s) {
     if (g_font->ttf && s) return static_cast<const okay::TtfFont*>(g_font->ttf)->Measure(s, 8.0f);   // a user font (AddFontTtf): its width at the 8-unit cell
     if (g_ttf && s) {
         if (okay::TtfFont* f = fontatlas::FallbackFont(s)) return f->Measure(s, 8.0f);
@@ -596,9 +483,6 @@ bool g_framedWidgets = false;
 // A pushed StyleVar_WindowPadding (y; < 0 = none pushed): a framed or padded child (the flags form of BeginChild) then pads its content by
 // the window padding (x, y) instead of 6 pixels each way.
 float g_childPadY = -1.0f;
-inline float rowH() { return fH() * g_theme.textScale + (g_framePadY >= 0.0f ? 2.0f * g_framePadY : (g_look ? 15.0f : 12.0f)); }
-inline float textH() { return fH() * g_theme.textScale; }
-inline float labelW(const char* s) { return s && *s ? fMeasure(s) * g_theme.textScale : 0.0f; }
 // ImGui's convention for labels: what follows "##" is only part of the widget id and is not shown.
 struct VisLabel {
     char b[128];
@@ -632,7 +516,7 @@ float g_itemWStack[16];
 int   g_itemWTop = 0;
 int   g_winItemWDepth = 0;   // item-width stack height just above the default SetWindowItemWidthDefault pushed (0: none pushed)
 // Remaining width from the next item's left edge to the content's right edge.
-inline float availW() {
+float availW() {
     float real = g_lay.ox + g_lay.contentW - cursorX();
     float over = g_nextItemW > 0.0f ? g_nextItemW : (g_itemWTop > 0 ? g_itemWStack[g_itemWTop - 1] : -1.0f);
     if (over > 0.0f && over < real) return over;
@@ -645,7 +529,6 @@ inline bool widthOverridden() { return g_nextItemW > 0.0f || g_itemWTop > 0; }
 inline float realAvailW() { return g_lay.ox + g_lay.contentW - cursorX(); }
 // Reserve a w*h slot for the next item; returns its top-left and advances the cursor
 // to the next line (SameLine() keeps it on the current line instead).
-inline bool hit(float x, float y, float w, float h);
 void place(float w, float h, float& x, float& y) {
     bool sameLine = false;
     const float lineH = g_lay.prevH;   // the item before, for CenterNextOnLine
@@ -679,14 +562,6 @@ void place(float w, float h, float& x, float& y) {
     g_nextItemW = -1.0f;   // a one-shot SetNextItemWidth applies to just this item
 }
 
-inline SDL_Color toColor(const unsigned char c[4]) {
-    SDL_Color sc; sc.r = c[0]; sc.g = c[1]; sc.b = c[2]; sc.a = c[3];
-    if (g_disCount > 0 && !g_rawDraw) {   // inside BeginDisabled: halfway to the panel colour, alpha kept
-        const unsigned char* p = g_theme.panel;   // (so stacked layers of one widget do not blend through each other)
-        sc.r = (unsigned char)((sc.r + p[0]) / 2); sc.g = (unsigned char)((sc.g + p[1]) / 2); sc.b = (unsigned char)((sc.b + p[2]) / 2);
-    }
-    return sc;
-}
 
 // Append an axis-aligned rectangle (two triangles) in a flat color, to whichever
 // batch is active (main, or overlay when g_toOverlay is set).
@@ -824,7 +699,7 @@ const float* unitCircle(int n) {
 }
 // A filled circle as a triangle fan of `segments` wedges that share the centre and rim vertices (the same triangles as one
 // tri() per wedge, with a third of the vertices).
-void fillCircle(float cx, float cy, float radius, const unsigned char c[4], int segments = 24) {
+void fillCircle(float cx, float cy, float radius, const unsigned char c[4], int segments) {
     if (segments < 3) segments = 3;
     if (segments > 128) segments = 128;
     SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
@@ -1029,9 +904,6 @@ const unsigned char* withAlpha(const unsigned char c[4], float a, unsigned char 
     return out;
 }
 
-inline bool pointIn(float px, float py, float x, float y, float w, float h) {
-    return px >= x && px < x + w && py >= y && py < y + h;
-}
 
 // ---- Mouse hit testing with overlays ---------------------------------------------
 // Overlays (combo lists, popups, menu dropdowns) draw on top of later widgets, so
@@ -1141,7 +1013,7 @@ inline bool inClip() {
     const SDL_Rect& c = g_clipStack[g_clipTop - 1];
     return pointIn(g_in.mouseX, g_in.mouseY, (float)c.x, (float)c.y, (float)c.w, (float)c.h);
 }
-inline bool hit(float x, float y, float w, float h) {
+bool hit(float x, float y, float w, float h) {
     if (g_disCount > 0) return false;   // inside BeginDisabled: no hover, no click
     if (!hitOverlay(x, y, w, h)) return false;
     if (g_popupTop > 0) {   // a widget inside a popup body: only a deeper popup above it can take the pointer
@@ -1174,12 +1046,9 @@ inline float clamp01(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; 
 constexpr int kMaxHexSlots = 16;
 
 } // namespace
+using namespace ui_core;
 
 
-namespace {
-void flushTooltip();   // the frame's tooltip (asked for with SetTooltip / Tooltip), drawn last by finalizeFrame
-void dropTooltip();
-} // namespace
 void BeginFrame(const Input& in) {
     g_in       = in;
     g_pressed  =  in.mouseDown && !g_prevDown;
@@ -2498,7 +2367,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
 
 // A scroll bar's track (classic look, or when ScrollbarBg is set) and thumb in the Col_Scrollbar* colours.
 // With a pushed StyleVar_ScrollbarSize the bar is that wide and the grab sits 2 pixels inside it on every side, fully rounded.
-static void scrollbarThumb(float sbx, float top, float trackH, float thumbY, float thumbH, bool active, bool over, bool track = true) {
+void ui_core::scrollbarThumb(float sbx, float top, float trackH, float thumbY, float thumbH, bool active, bool over, bool track) {
     const float bw = g_sbSize > 0.0f ? g_sbSize : kScrollbarW;
     if (track && (!g_look || colorIsSet(Col_ScrollbarBg))) quad(sbx, top, bw, trackH, pick(Col_ScrollbarBg, g_theme.track));
     if (g_look || g_sbSize > 0.0f) {   // thin rounded thumb, faint until hovered
@@ -2592,7 +2461,9 @@ unsigned decodeOne(const char*& p) {   // one UTF-8 code point (invalid bytes gi
     for (int i = 0; i < n; ++i) { if (((unsigned char)*p & 0xC0) != 0x80) return 0xFFFDu; cp = (cp << 6) | ((unsigned char)*p++ & 63u); }
     return cp;
 }
-bool ioTypedTextConsumed() { return g_ioQueueFrame == (long long)g_frameCount && g_io.InputQueueCharacters.Size < g_ioQueueFilled; }
+} // namespace
+namespace ui_core { bool ioTypedTextConsumed() { return g_ioQueueFrame == (long long)g_frameCount && g_io.InputQueueCharacters.Size < g_ioQueueFilled; } }
+namespace {
 }
 void IO::AddKeyEvent(int key, bool down) {
     if (key <= 0 || key >= KeyId_COUNT) return;
@@ -3159,7 +3030,9 @@ namespace {
 float g_textRowH = 0.0f;   // StyleVar_TextRowHeight: 0 = a text line takes a frame's height (rowH)
 // StyleVar_CellPadding: the gap inside a cell, across (default 4) and above and below (default -1: none, and the row ends after the
 // last item's spacing, as it always did; 0 or more: that much above the first item and below the last one, without its spacing).
-float g_cellPadX = 4.0f, g_cellPadY = -1.0f;
+} // namespace
+namespace ui_core { float g_cellPadX = 4.0f, g_cellPadY = -1.0f; }
+namespace {
 // The boxes of Checkbox and RadioButton: a text line + 6, or with StyleVar_FramePadding (y) a text line plus twice it (g_framePadY).
 // OkayUI's own style values for Dear ImGui-looking menus and fields (PushStyleVar; < 0 = the usual OkayUI value):
 // StyleVar_PopupPadding (x, y) inside a popup (default 6, 6), StyleVar_PopupWidth (default 160), StyleVar_ItemInnerSpacing (x only: the gap
@@ -4109,7 +3982,7 @@ bool CollapsingHeader(const char* label, bool defaultOpen) {
     return *open;
 }
 
-namespace {
+namespace ui_core {
 // A tooltip box next to the cursor: several lines ("\n"), kept inside the display (flipped to the left / above when it would run off).
 // A tooltip is drawn at the end of the frame, on top of everything (as Dear ImGui's tooltip window is): drawn where it was asked for, a
 // tooltip inside an open list was painted over by the list's later rows, and it switched the overlay off for them, so they went under
@@ -4785,7 +4658,6 @@ bool ColorButton(const char* id, const float rgba[4], int flags, float size) {
 }
 bool ColorButton(const char* id, const float rgba[4], float size) { return ColorButton(id, rgba, 0, size); }
 
-static bool beginPopupBody(int id);
 // ColorEdit3 / ColorEdit4: one row of swatch, channel sliders (or a hex field) and label; a click on the swatch opens a picker popup.
 static bool colorEditRow_ed(const char* label, float* c, int n, int flags);
 static bool colorEditRow(const char* label, float* c, int n, int flags) { return noteEdit(colorEditRow_ed(label, c, n, flags)); }
@@ -5302,7 +5174,7 @@ void CloseCurrentPopup() {
 
 // Shared popup body setup: redirect layout into a floating overlay box at (px,py),
 // drawing the background using last frame's measured height. Returns true if open.
-static bool beginPopupBody(int id) {
+bool ui_core::beginPopupBody(int id) {
     // Depth guard first: past the popup-stack capacity the parent layout cannot
     // be saved, so the popup cannot begin -- otherwise EndPopup would restore a
     // state that was never saved and stomp another popup's measured height.
@@ -5686,7 +5558,7 @@ void EndColumns() {
 }
 
 // ---- Tables --------------------------------------------------------------------
-namespace {
+namespace ui_core {
 // Left edge of column `i` (sum of prior column widths from the table origin), before any scrolling.
 float tblColX(int i) {
     float cx = g_tbl.x0;
@@ -6315,7 +6187,7 @@ void EndTable() {
 }
 
 // ---- Launcher-style building blocks ---------------------------------------------
-namespace {
+namespace ui_core {
 float g_textScaleStack[8];
 int   g_textScaleTop = 0;
 struct CardSave { float x, y, w; float* height; float ox, contentW; };
@@ -6576,14 +6448,11 @@ const char* GetClipboardText() {
 // ---------------------------------------------------------------------------------------------
 // Public draw list, cursor and measurement, item state, disabled blocks (docs/ui/own_ui_toolkit.md, section 4)
 // ---------------------------------------------------------------------------------------------
-namespace {
+namespace ui_core {
 
-constexpr int kMaxPath = 256;
 Vec2 g_path[kMaxPath];
 int  g_pathN = 0;
 
-inline bool finite1(float v) { return v == v && v > -1.0e7f && v < 1.0e7f; }
-inline bool finite2(Vec2 p) { return finite1(p.x) && finite1(p.y); }
 
 void unpack(Color32 c, unsigned char out[4]) {
     out[0] = (unsigned char)(c & 0xffu);         out[1] = (unsigned char)((c >> 8) & 0xffu);
@@ -7069,8 +6938,8 @@ void DrawList::PathFillConvex(Color32 col) const {
     g_pathN = 0; _Path.clear();
 }
 
-static const DrawListHandle g_windowList(false);
-static const DrawListHandle g_foregroundList(true);
+const DrawListHandle ui_core::g_windowList(false);
+const DrawListHandle ui_core::g_foregroundList(true);
 DrawListHandle::operator DrawList*() const { if (isNull) return nullptr; return const_cast<DrawListHandle*>(overlay ? &g_foregroundList : &g_windowList); }
 // ---- raw geometry ----
 Vec2 GetFontTexUvWhitePixel() { return Vec2{g_whiteU, g_whiteV}; }

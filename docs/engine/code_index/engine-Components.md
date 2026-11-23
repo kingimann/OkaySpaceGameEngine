@@ -63,7 +63,7 @@ Back to the [code index](../code_index.md). 260 headers, 735 names.
 
 ## `engine/include/okay/Components/AutoSave.hpp`
 
-- `AutoSave` class, line 12: Saves the whole game (SaveGame) to a slot every 'interval' seconds of play,
+- `AutoSave` class, line 13: Saves the whole game (SaveGame) to a slot every 'interval' seconds of play,
 
 ## `engine/include/okay/Components/BehaviorTreeRunner.hpp`
 

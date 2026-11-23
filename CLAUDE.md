@@ -128,7 +128,9 @@ then this file gets updated. Keep this file short and true.
     the old code (rule 19c: no second copy kept "just in case"). New features ship on. The switches that are off today
     are being turned on one by one, each with its tests; one that cannot be turned on safely yet is finished first, not
     left off. Do not drop a format or feature just because it is hard: write the replacement. Cryptography is the one
-    exception (rule 18).
+    exception (rule 18). Why on (owner, 2026-11-23): "if it's not on, I can't find bugs". Our own parts are on in every
+    build the owner runs, so their bugs show up in normal use and get fixed; the Settings > Experimental switches start
+    ticked and the person can untick one to go back.
 18. **Cryptography cannot be replaced on our word.** It needs an outside review first. The owner has decided not to hire a reviewer (2026-11-14), so libsodium stays the default in every release and `okay::crypto` stays off by default. AI reviews (an internal agent, a second AI such as Grok through the `claude/crypto-review-grok` branch) are extra assurance and are reported as "not independently reviewed"; they do not unlock the switch. Releases refuse own-crypto builds.
 19. Do not switch to an own version until its tests show it is finished; finish it rather than leave it off. Say honestly how close each one is.
 

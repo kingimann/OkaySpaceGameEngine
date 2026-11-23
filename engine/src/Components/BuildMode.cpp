@@ -33,6 +33,7 @@
 #include <limits>
 #include <set>
 #include <sstream>
+#include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
 namespace okay {
 
@@ -605,7 +606,7 @@ bool BuildCreation::Save(const Scene& scene, const std::string& path, std::strin
     fs::rename(tmp, path, ec);
     if (ec) {
         std::error_code ce;
-        fs::copy_file(tmp, path, fs::copy_options::overwrite_existing, ce);
+        okay::CopyFileOver(tmp, path, ce);
         fs::remove(tmp, ec);
         if (ce) { if (error) *error = "can't write " + path; return false; }
     }

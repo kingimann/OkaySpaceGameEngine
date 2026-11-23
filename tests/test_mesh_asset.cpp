@@ -2,6 +2,7 @@
 // edits to a file-backed mesh survive save + reload, and an exported game finds
 // the file next to its scene.
 #include "test_framework.hpp"
+#include "okay/Core/FileCopy.hpp"
 #include <Okay.hpp>
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Modeling/PolyMesh.hpp"
@@ -76,7 +77,7 @@ int main() {
     // ---- An exported game: the scene's path to the asset is gone, the file sits next to the scene ----
     {
         const fs::path game = dir / "elsewhere";
-        fs::copy_file(asset, game / "Crate.okaymesh", fs::copy_options::overwrite_existing);
+        okay::CopyFileOver(asset, game / "Crate.okaymesh");
         std::string text;
         { std::ifstream f(scenePath); std::stringstream ss; ss << f.rdbuf(); text = ss.str(); }
         const std::string bogus = "/no/such/machine/Assets/Crate.okaymesh";

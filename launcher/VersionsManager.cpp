@@ -15,6 +15,7 @@
 
 #include "OfficialGame.hpp"   // the strict JSON reader and the bundled SHA-256
 #include "TestBuild.hpp"      // test builds (four-number versions): the real list ignores them, the dev list keeps only them
+#include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
 namespace okayversions {
 namespace {
@@ -613,7 +614,7 @@ Result Install(const fs::path& launcherDir, const InstallPlan& plan, const Insta
 
             if (!f.localCopy.empty()) {                              // the launcher's own SDL2.dll
                 if (Hook(io, "copy:" + f.indexName)) return done(Outcome::Failed, "Couldn't copy " + f.indexName + ".");
-                fs::copy_file(f.localCopy, tmp, fs::copy_options::overwrite_existing, ec);
+                okay::CopyFileOver(f.localCopy, tmp, ec);   // a .part left by a cancelled install is replaced
                 if (ec) return done(NoSpace(ec) ? Outcome::NotEnoughSpace : Outcome::Failed, "Couldn't copy " + f.indexName + " (" + ec.message() + ").");
             } else {
                 std::string lastError = "no download address", verifyError;   // a file that did not check out is what to report, not a later "no connection"
@@ -814,7 +815,7 @@ Result KeepCurrent(const fs::path& launcherDir, const std::string& currentVersio
         if (ec) return done(Outcome::Failed, "Couldn't keep v" + v + " (" + ec.message() + ").");
         for (const Item& it : items) {
             if (Hook(io, "keep-copy:" + it.name)) return done(Outcome::Failed, "Couldn't keep v" + v + ": copying " + it.name + " failed.");
-            fs::copy_file(it.from, tools / it.name, fs::copy_options::overwrite_existing, ec);
+            okay::CopyFileOver(it.from, tools / it.name, ec);
             if (ec) return done(Outcome::Failed, "Couldn't keep v" + v + ": copying " + it.name + " failed (" + ec.message() + ").");
             if (it.exec) SetExecutable(tools / it.name);
             const std::string why = VerifyFile(tools / it.name, (std::uint64_t)fs::file_size(it.from, ec), {});

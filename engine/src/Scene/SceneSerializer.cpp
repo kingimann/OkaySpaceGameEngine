@@ -4354,7 +4354,7 @@ bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path, st
         // Locked or a platform that won't rename over an existing file: overwrite by copy. The old file is
         // still in place until this succeeds, and the backup above holds its content if it half-fails.
         std::error_code ce;
-        fs::copy_file(FilePath(tmp), target, fs::copy_options::overwrite_existing, ce);
+        CopyFileOver(FilePath(tmp), target, ce);
         std::error_code rc;
         fs::remove(FilePath(tmp), rc);
         if (ce) return fail("Couldn't replace \"" + path + "\": " + ce.message());

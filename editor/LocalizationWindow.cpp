@@ -40,6 +40,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
 using namespace okay;
 using namespace okay::editor;
@@ -1151,7 +1152,7 @@ void CopyLocalizationFiles(EditorState& ed, const std::string& dataDir) {
         std::error_code fe;
         if (!fs::exists(src, fe)) { ConsoleLog("Build: the " + l.code + " font " + l.font + " is missing", 1); continue; }
         fs::create_directories((data / rel).parent_path(), fe);
-        fs::copy_file(src, data / rel, fs::copy_options::overwrite_existing, fe);
+        okay::CopyFileOver(src, data / rel, fe);
         if (fe) ConsoleLog("Build: couldn't copy " + l.font + " (" + fe.message() + ")", 1);
         l.font = rel.generic_u8string();
     }

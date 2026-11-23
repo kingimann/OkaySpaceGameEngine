@@ -6,6 +6,7 @@
 #include "ConsolePanel.hpp"        // ConsoleLog
 #include "EditorWidgets.hpp"       // IconButton, AccentToggleButton, SearchField, TbIcon
 #include "okay/Platform/Platform.hpp"   // okay::platform
+#include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
 namespace oked {
 
@@ -107,7 +108,7 @@ static bool ImportDownloadedAsset(EditorState& ed, const DlAsset& a, std::string
         if (!ok) { err = "Couldn't extract the archive."; return false; }
     } else {
         fs::create_directories(dst.parent_path(), ec);
-        fs::copy_file(a.path, dst, fs::copy_options::overwrite_existing, ec);
+        okay::CopyFileOver(a.path, dst, ec);
         if (ec) { err = ec.message(); return false; }
     }
     g_pingAsset = dst.string();

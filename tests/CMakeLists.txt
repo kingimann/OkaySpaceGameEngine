@@ -2374,6 +2374,13 @@ add_executable(test_project_create test_project_create.cpp)
 target_link_libraries(test_project_create PRIVATE okay::engine)
 add_test(NAME project_create COMMAND test_project_create)
 
+# okay::CopyFileOver (engine/include/okay/Core/FileCopy.hpp): copy over an existing file, onto a new one, from a missing source, onto a folder
+# (the fallback cleans up and leaves the target as it was), and the throwing form. Header-only: no engine link.
+add_executable(test_file_copy test_file_copy.cpp)
+target_compile_features(test_file_copy PRIVATE cxx_std_17)
+target_include_directories(test_file_copy PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME file_copy COMMAND test_file_copy)
+
 # The project's engine version (shared/ProjectVersion.hpp): parse / compare / Decide, the engine_version line in project.okayproj, the launcher's Versions layout. Header-only: no engine link.
 add_executable(test_project_version test_project_version.cpp)
 target_compile_features(test_project_version PRIVATE cxx_std_17)
@@ -2509,7 +2516,7 @@ add_test(NAME ticket_client COMMAND test_ticket_client)
 # Editor/launcher self-update: wait for the old process, swap, relaunch once.
 add_executable(test_app_restart test_app_restart.cpp)
 target_compile_features(test_app_restart PRIVATE cxx_std_17)
-target_include_directories(test_app_restart PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(test_app_restart PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_CURRENT_SOURCE_DIR})
 find_package(Threads REQUIRED)
 target_link_libraries(test_app_restart PRIVATE Threads::Threads)
 if(WIN32)

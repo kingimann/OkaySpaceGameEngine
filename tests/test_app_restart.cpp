@@ -4,6 +4,7 @@
 // a disposable temp install. They never touch a real OkaySpace installation.
 #include "test_framework.hpp"
 #include "AppRestart.hpp"
+#include "okay/Core/FileCopy.hpp"
 
 #include <cerrno>
 #include <atomic>
@@ -803,7 +804,7 @@ int main(int argc, char** argv) {
         WriteFile(decoy, "scene-v1");
         WriteFile(settings, "volume=1\n");
         const fs::path self = okay::restart::CurrentExecutable();
-        CHECK(fs::copy_file(self, source, fs::copy_options::overwrite_existing, ec));
+        CHECK(okay::CopyFileOver(self, source, ec));
         fs::permissions(source,
                         fs::perms::owner_read | fs::perms::owner_write |
                         fs::perms::group_read | fs::perms::others_read,

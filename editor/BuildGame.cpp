@@ -14,6 +14,7 @@
 #include "okay/Core/BuildPipeline.hpp"
 #if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/platform/xbox_uwp.md
 #include "XboxExport.hpp"
+#include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 #endif
 
 namespace oked {
@@ -274,7 +275,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
                 if (!gsrc.empty()) sceneSources.push_back(gsrc);
             }
         } else {
-            fs::copy_file(se.src, data / se.fn, fs::copy_options::overwrite_existing, pe);
+            okay::CopyFileOver(se.src, data / se.fn, pe);
             if (pe) return "Couldn't copy the scene " + se.src.string() + " (" + pe.message() + ").";
             { std::ifstream sf(se.src, std::ios::binary); std::ostringstream sb; sb << sf.rdbuf();   // a scene copied as a file still reads its graphs from their files
               for (const std::string& g : bp::ScriptRefsInSceneText(okay::DataPack::Unpack(sb.str()))) roots.push_back({g, se.src.string()}); }
@@ -325,7 +326,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         const fs::path dst = data / fs::u8path(a.dest);
         std::error_code aec;
         if (dst.has_parent_path()) fs::create_directories(dst.parent_path(), aec);
-        fs::copy_file(fs::path(a.src), dst, fs::copy_options::overwrite_existing, aec);
+        okay::CopyFileOver(fs::path(a.src), dst, aec);
         if (aec) { R.r.Warn("Couldn't copy " + a.src + " (" + aec.message() + ")."); continue; }
         ++copied; assetBytes += a.bytes;
         shippedSources.push_back(a.src);
@@ -334,7 +335,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         std::error_code me;
         if (fs::is_regular_file(ms, me)) {
             fs::path md = dst; md += ".okaymeta";
-            fs::copy_file(ms, md, fs::copy_options::overwrite_existing, me);
+            okay::CopyFileOver(ms, md, me);
             if (!me) why[relRoot(md)] = "import settings of " + a.dest;
         }
         {   // a picture set to `compress`: its BC copy ships beside it, so the game never encodes it at run time
@@ -445,16 +446,13 @@ std::string Build(EditorState& ed, const std::string& outDir,
                ", but couldn't find or download the player runtime. Check your "
                "internet connection, or place OkaySpacePlayer next to the editor.";
     }
-    // Copy that overwrites even a locked/existing target: remove first, then copy.
-    // copy_file(overwrite_existing) can still report "file exists" on some setups
-    // (and copying a file onto itself is an error), so guard both.
+    // Copy over an existing target with okay::CopyFileOver (a plain copy_file with overwrite_existing reports
+    // "file exists" on Windows with MinGW). Copying a file onto itself is an error, so that case is skipped.
     auto copyOver = [](const fs::path& src, const fs::path& dst, std::error_code& e) -> bool {
         e.clear();
         std::error_code e0;
         if (fs::exists(dst, e0) && fs::equivalent(src, dst, e0)) return true;  // same file → nothing to do
-        std::error_code e1; fs::remove(dst, e1);                              // best-effort unlock/replace
-        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, e);
-        return !e;
+        return okay::CopyFileOver(src, dst, e);
     };
     auto putRuntime = [&](const fs::path& src, const std::string& name, const std::string& reason, std::error_code& e) -> bool {
         if (opt.dryRun) {
@@ -498,7 +496,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         if (path.empty()) return;
         std::error_code ie; fs::path isrc(path);
         if (fs::exists(isrc, ie) && fs::is_regular_file(isrc, ie)) {
-            fs::copy_file(isrc, data / isrc.filename(), fs::copy_options::overwrite_existing, ie);
+            okay::CopyFileOver(isrc, data / isrc.filename(), ie);
             if (!ie) { why[relRoot(data / isrc.filename())] = what; shippedSources.push_back(path); }
         } else R.r.Warn(std::string("The ") + what + " file " + path + " was not found.");
     };
@@ -514,7 +512,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         const fs::path dst = data / "StreamingAssets" / fs::u8path(sf.first);
         std::error_code se;
         fs::create_directories(dst.parent_path(), se);
-        fs::copy_file(fs::path(sf.second), dst, fs::copy_options::overwrite_existing, se);
+        okay::CopyFileOver(fs::path(sf.second), dst, se);
         if (se) { R.r.Warn("Couldn't copy StreamingAssets/" + sf.first + " (" + se.message() + ")."); continue; }
         why[relRoot(dst)] = "StreamingAssets (copied as it is)"; ++streaming;
     }
@@ -731,10 +729,10 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
         if (rel.empty()) rel = src.filename();
         fs::path dst = data / rel;
         if (dst.has_parent_path()) fs::create_directories(dst.parent_path(), aec);
-        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, aec);
+        okay::CopyFileOver(src, dst, aec);
         if (!aec) ++copied;
         { std::error_code me; fs::path ms = src; ms += ".okaymeta";
-          if (!aec && fs::is_regular_file(ms, me)) { fs::path md = dst; md += ".okaymeta"; fs::copy_file(ms, md, fs::copy_options::overwrite_existing, me); } }
+          if (!aec && fs::is_regular_file(ms, me)) { fs::path md = dst; md += ".okaymeta"; okay::CopyFileOver(ms, md, me); } }
     }
     CopyLocalizationFiles(ed, data.u8string());   // strings.okayloc and its languages' fonts
 

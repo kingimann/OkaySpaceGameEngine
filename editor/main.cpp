@@ -1003,6 +1003,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "ProjectNewAssets.hpp"   // the text of a new dialogue, quest file, behavior tree and cutscene (Project > Create)
 #include "ProjectDelete.hpp"      // okayproj::Normalized / IsSameOrInside: the launcher's "is this path inside that folder" test
 #include "LaunchFile.hpp"         // open a file with the system's program, in a text editor, or show it in the file manager (no shell)
+#include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
 #ifndef OKAY_ENGINE_VERSION
 #  define OKAY_ENGINE_VERSION "dev"
@@ -8148,7 +8149,7 @@ static std::string ImportAssetFile(const std::string& srcPath, std::filesystem::
     for (int n = 2; fs::exists(dst, ec); ++n) dst = destDir / (stem + " " + std::to_string(n) + ext);
     {   // copy beside it first, then rename: a failed copy never leaves half a file under the real name
         fs::path part = dst; part += ".tmp";
-        fs::copy_file(src, part, fs::copy_options::overwrite_existing, ec);
+        okay::CopyFileOver(src, part, ec);   // a .tmp left by a crashed import is replaced
         if (!ec) fs::rename(part, dst, ec);
         if (ec) { std::error_code rm; fs::remove(part, rm); ConsoleLog("Import failed: " + ec.message(), 2); return {}; }
     }
@@ -16406,8 +16407,7 @@ void DrawRecoveryPopup(EditorState& ed) {
         if (ImGui::Button("Recover", ImVec2(130, 0))) {
             std::error_code rc;
             std::string scene = ed.path();
-            std::filesystem::copy_file(g_recoverPath, scene,
-                std::filesystem::copy_options::overwrite_existing, rc);
+            okay::CopyFileOver(g_recoverPath, scene, rc);   // the scene file always exists here
             std::string err;
             if (!rc && ed.Load(scene, &err)) { ed.dirty = true; ConsoleLog("Recovered autosave"); }
             else ConsoleLog("Recover failed: " + (rc ? rc.message() : err));

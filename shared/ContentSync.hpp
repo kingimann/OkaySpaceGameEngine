@@ -29,6 +29,7 @@
 
 #include "ContentManifest.hpp"
 #include "ContentTransport.hpp"
+#include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
 namespace okaycontent {
 
@@ -104,9 +105,7 @@ inline bool LinkOrCopy(const fs::path& from, const fs::path& to) {
     fs::remove(to, ec);
     fs::create_hard_link(from, to, ec);
     if (!ec) return true;
-    ec.clear();
-    fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
-    return !ec;
+    return okay::CopyFileOver(from, to, ec);   // `to` may still be there if the remove above failed
 }
 }  // namespace detail
 

@@ -12,7 +12,7 @@
 namespace okl {
 
 // The open group conversation (header + members menu + multi-sender thread + composer), drawn inside DrawChatWindow.
-void DrawGroupConversation(
+void DrawGroupConversation(   // dup-allow: a declaration repeats its definition's signature
     okay::Messages& dm,
     const std::vector<okay::Messages::GroupConvo>& groups,
     const std::vector<okay::Messages::GroupMessage>& glog,

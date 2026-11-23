@@ -250,7 +250,7 @@ static okay::ProfileBundle DemoProfileBundle(const PfOpenReq& r, const std::stri
         p.id = !r.uid.empty() ? r.uid : "u-" + p.username;
         p.display = !r.name.empty() ? r.name : p.username;
         p.avatar = r.avatar;
-        unsigned h = 2166136261u; for (char c : p.username) h = (h ^ (unsigned char)c) * 16777619u;
+        unsigned h = 2166136261u; for (char c : p.username) h = (h ^ (unsigned char)c) * 16777619u;   // dup-allow: moved unchanged from launcher/main.cpp (L6); one copy
         p.accent = (int)(h % 7u); p.online = (h & 1u) != 0; p.lastSeen = t0 - (long)(h % 20u + 1) * 3600;
         p.memberSince = t0 - (long)(h % 500u + 30) * day;
         p.bio = "Making games with friends on OkaySpace.";

@@ -50,6 +50,11 @@ exec 129 0 130
 exec 130 0 131
 exec 131 0 133
 exec 133 0 134
+exec 134 0 137
+exec 137 0 139
+exec 139 0 140
+exec 140 0 141
+exec 141 0 142
 node 100 GlGetSpeed
 pos 100 40 520
 node 101 GlIsMoving
@@ -184,3 +189,21 @@ default 135 0 1
 node 136 GlIsBelowHeight
 pos 136 40 1660
 default 136 0 1
+node 137 GlSetMoveSpeed
+pos 137 300 1660
+default 137 0 3
+node 138 GlGetMoveSpeed
+pos 138 560 1660
+node 139 GlSetSprinting
+pos 139 820 1660
+default 139 0 true
+node 140 GlSetCrouching
+pos 140 1080 1660
+default 140 0 true
+node 141 GlEnterVehicle
+pos 141 1340 1660
+default 141 0 Car
+node 142 GlExitVehicle
+pos 142 40 1850
+node 143 GlIsDriving
+pos 143 300 1850

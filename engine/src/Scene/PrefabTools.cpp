@@ -179,10 +179,17 @@ std::vector<int> MatchTrees(const std::vector<std::string>& aName, const std::ve
 
 // ---- Baselines: a file as the serializer would write it ----------------------------------
 
-struct Baseline {
+} // namespace
+
+// Defined in prefab_text (declared in PrefabInternal.hpp, where Ctx holds it), not in this
+// file's anonymous namespace: a second Baseline here clashes with the using declaration above
+// (clang rejects it; GCC let it through).
+struct prefab_text::Baseline {
     std::shared_ptr<const RDoc> doc;
     std::vector<std::vector<std::string>> canon;   // per object: its records in the serializer's own form
 };
+
+namespace {
 
 // The prefab file's objects loaded into a scratch scene and written back, so both sides
 // of a comparison come from the same writer (a hand written file may format differently).

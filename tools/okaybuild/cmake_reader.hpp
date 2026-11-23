@@ -149,9 +149,28 @@ struct Options {
 
 struct Tally { std::map<string, int> run, unknown, genex; vector<string> messages; int options = 0, setOptions = 0, widened = 0; };
 
+// The variable table. A function call opens a frame; the first write of each name in the frame keeps the old value, and closing the
+// frame puts those back. This gives a function its own scope without copying the whole table on every call.
+struct VarMap {
+    std::map<string, string> m;
+    struct Old { bool had; string value; };
+    vector<std::map<string, Old>> frames;
+    void note(const string& k) {
+        if (frames.empty()) return; auto& f = frames.back(); if (f.count(k)) return;
+        auto it = m.find(k); f.emplace(k, it == m.end() ? Old{false, string()} : Old{true, it->second});
+    }
+    string& operator[](const string& k) { note(k); return m[k]; }
+    size_t erase(const string& k) { note(k); return m.erase(k); }
+    std::map<string, string>::const_iterator find(const string& k) const { return m.find(k); }
+    std::map<string, string>::const_iterator end() const { return m.end(); }
+    size_t count(const string& k) const { return m.count(k); }
+    void push() { frames.emplace_back(); }
+    void pop() { auto f = std::move(frames.back()); frames.pop_back(); for (auto& o : f) { note(o.first); if (o.second.had) m[o.first] = o.second.value; else m.erase(o.first); } }
+};
+
 struct Interp {
     Options opt; Tally tally;
-    std::map<string, string> vars, cache; std::set<string> cacheForced;
+    VarMap vars; std::map<string, string> cache; std::set<string> cacheForced;
     std::map<string, Target> targets; vector<string> order; // creation order
     vector<TestDef> tests;
     std::map<string, Func> funcs;
@@ -163,6 +182,24 @@ struct Interp {
     int depth = 0; bool returning = false, breaking = false;
     std::map<string, string> srcProps; // "file|PROP" -> value (per-file properties collected as set_source_files_properties runs)
     bool testingOn = false;
+    // Files the CMake code writes while it is read (file(WRITE/APPEND), cmake -E copy): path -> text. Only paths in the build folder
+    // ({bin}) go into the manifest; the source tree is never written.
+    std::map<string, string> written;
+    std::set<string> inputs; // every file read (CMake files, file(READ/STRINGS), CMAKE_CONFIGURE_DEPENDS): a change means read again
+    bool readText(const string& path, string& out) {
+        auto w = written.find(path); if (w != written.end()) { out = w->second; return true; }
+        std::ifstream in(path, std::ios::binary); if (!in) return false;
+        out.assign((std::istreambuf_iterator<char>(in)), {}); inputs.insert(path); return true;
+    }
+    int cmakeTool(const vector<string>& w); // `cmake -E ...` done here: CMake itself is never run
+    std::map<string, string> globalProps; // set_property(GLOBAL ...)
+    std::map<string, std::regex> rxCache; // each pattern is compiled once (the module grouping matches thousands of times)
+    const std::regex& rx(const string& pattern) { auto it = rxCache.find(pattern); if (it == rxCache.end()) it = rxCache.emplace(pattern, std::regex(pattern)).first; return it->second; }
+    std::map<string, vector<string>> dirDefsFinal; // add_compile_definitions as it stands at the end of each folder (CMake reads it when it generates)
+    vector<std::pair<string, vector<string>>> deferred; // cmake_language(DEFER CALL ...) for the folder being read
+    void runDeferred() { auto d = std::move(deferred); deferred.clear(); for (auto& c : d) { auto f = funcs.find(lower(c.first)); if (f != funcs.end()) callFunc(f->second, c.first, c.second); else tally.unknown["cmake_language(DEFER) of " + c.first]++; } }
+    void doProperty(const string& n, const vector<string>& a);
+    void parseArguments(const vector<string>& a);
 
     // ---- variables ----
     bool has(const string& k) const { return vars.count(k) || cache.count(k); }
@@ -272,7 +309,7 @@ struct Interp {
                 const string& w = t[p].s;
                 if (w == "DEFINED") { string nm = t[p + 1].s; p += 2; if (nm.compare(0, 4, "ENV{") == 0 && nm.back() == '}') return getenv(nm.substr(4, nm.size() - 5).c_str()) != nullptr; return has(nm); }
                 if (w == "TARGET") { string nm = t[p + 1].s; p += 2; return targets.count(nm) > 0; }
-                if (w == "COMMAND") { string nm = t[p + 1].s; p += 2; return funcs.count(nm) > 0 || knownCommand(nm); }
+                if (w == "COMMAND") { string nm = t[p + 1].s; p += 2; return funcs.count(lower(nm)) > 0 || knownCommand(lower(nm)); }
                 if (w == "EXISTS") { string nm = deref(t[p + 1]); p += 2; std::error_code ec; return fs::exists(nm, ec); }
                 if (w == "IS_DIRECTORY") { string nm = deref(t[p + 1]); p += 2; std::error_code ec; return fs::is_directory(nm, ec); }
                 if (w == "IS_ABSOLUTE") { string nm = deref(t[p + 1]); p += 2; return !nm.empty() && nm[0] == '/'; }
@@ -294,7 +331,7 @@ struct Interp {
                     if (w == "EQUAL") return atof(a.c_str()) == atof(b.c_str()); if (w == "LESS") return atof(a.c_str()) < atof(b.c_str());
                     if (w == "GREATER") return atof(a.c_str()) > atof(b.c_str()); if (w == "LESS_EQUAL") return atof(a.c_str()) <= atof(b.c_str());
                     if (w == "GREATER_EQUAL") return atof(a.c_str()) >= atof(b.c_str());
-                    if (w == "MATCHES") { try { std::smatch m; bool ok = std::regex_search(a, m, std::regex(b)); setMatch(ok, m); return ok; } catch (...) { return false; } }
+                    if (w == "MATCHES") { try { std::smatch m; bool ok = std::regex_search(a, m, rx(b)); setMatch(ok, m); return ok; } catch (...) { return false; } }
                     if (w == "IN_LIST") { auto l = splitList(get(t[p - 1].s)); return std::find(l.begin(), l.end(), a) != l.end(); }
                     if (w == "VERSION_LESS") return cmpVersion(a, b) < 0; if (w == "VERSION_GREATER") return cmpVersion(a, b) > 0;
                     if (w == "VERSION_EQUAL") return cmpVersion(a, b) == 0; if (w == "VERSION_LESS_EQUAL") return cmpVersion(a, b) <= 0;
@@ -342,7 +379,7 @@ struct Interp {
             "target_compile_options", "target_compile_features", "target_sources", "target_link_options", "set_target_properties", "add_test", "set_tests_properties",
             "find_package", "find_program", "find_path", "pkg_check_modules", "check_include_file_cxx", "add_compile_options", "add_compile_definitions",
             "add_link_options", "include_directories", "enable_testing", "cmake_minimum_required", "enable_language", "get_filename_component",
-            "set_source_files_properties", "set_property", "execute_process", "FetchContent_Declare", "FetchContent_MakeAvailable", "return", "break", "math", "cmake_policy"};
+            "set_source_files_properties", "set_property", "get_property", "get_target_property", "cmake_parse_arguments", "separate_arguments", "cmake_language", "while", "find_library", "execute_process", "FetchContent_Declare", "FetchContent_MakeAvailable", "return", "break", "math", "cmake_policy"};
         return k.count(n) > 0;
     }
 
@@ -416,7 +453,14 @@ inline void Interp::exec(const vector<Cmd>& cs, size_t& i, size_t e) {
         if (!had) vars.erase(var); else vars[var] = old;
         i = end + 1; return;
     }
-    if (n == "while") { size_t end = matchEnd(cs, i, e, "while", "endwhile"); tally.unknown["while"]++; i = end + 1; return; }
+    if (n == "while") { // the condition is checked before each pass; break() leaves the loop
+        size_t end = matchEnd(cs, i, e, "while", "endwhile"); long passes = 0;
+        while (!returning && condArgs(c)) {
+            if (++passes > 100000) throw ReadError{c.file + ":" + std::to_string(c.line) + ": while() ran 100000 times; stopping"};
+            run(cs, i + 1, end); if (breaking) { breaking = false; break; }
+        }
+        i = end + 1; return;
+    }
     if (n == "function" || n == "macro") {
         string close = n == "function" ? "endfunction" : "endmacro"; size_t end = matchEnd(cs, i, e, n.c_str(), close.c_str());
         auto a = args(c.args); if (a.empty()) throw ReadError{c.file + ":" + std::to_string(c.line) + ": " + n + "() needs a name"};
@@ -433,14 +477,14 @@ inline void Interp::exec(const vector<Cmd>& cs, size_t& i, size_t e) {
 
 inline void Interp::callFunc(const Func& f, const string& name, const vector<string>& av) {
     if (++depth > 40) throw ReadError{"function calls nest too deeply at " + name};
-    auto saved = vars; auto savedWrites = parentWrites; parentWrites.clear();
+    if (!f.macro) vars.push(); auto savedWrites = parentWrites; parentWrites.clear();
     for (size_t k = 0; k < f.params.size(); ++k) vars[f.params[k]] = k < av.size() ? av[k] : "";
     vector<string> extra; for (size_t k = f.params.size(); k < av.size(); ++k) extra.push_back(av[k]);
     vars["ARGN"] = joinList(extra); vars["ARGC"] = std::to_string(av.size()); vars["ARGV"] = joinList(av);
     for (size_t k = 0; k < av.size() && k < 10; ++k) vars["ARGV" + std::to_string(k)] = av[k];
     run(f.body, 0, f.body.size()); returning = false;
     auto writes = parentWrites;
-    if (!f.macro) vars = saved; // a macro changes the caller's variables directly
+    if (!f.macro) vars.pop(); // a macro changes the caller's variables directly
     parentWrites = savedWrites;
     for (auto& w : writes) vars[w.first] = w.second;
     --depth;
@@ -448,7 +492,7 @@ inline void Interp::callFunc(const Func& f, const string& name, const vector<str
 
 inline void Interp::includeFile(const string& file) {
     std::ifstream in(file); if (!in) return;
-    string text((std::istreambuf_iterator<char>(in)), {});
+    string text((std::istreambuf_iterator<char>(in)), {}); inputs.insert(file);
     auto cs = parseFile(text, fs::path(file).lexically_relative(opt.root).generic_string());
     string was = get("CMAKE_CURRENT_LIST_FILE"); vars["CMAKE_CURRENT_LIST_FILE"] = file;
     vars["CMAKE_CURRENT_LIST_DIR"] = fs::path(file).parent_path().generic_string();
@@ -458,14 +502,16 @@ inline void Interp::includeFile(const string& file) {
 inline void Interp::sub(const string& dir) {
     string src = abs(dir, curSrc); string file = src + "/CMakeLists.txt";
     std::ifstream in(file); if (!in) throw ReadError{"add_subdirectory: no CMakeLists.txt in " + src};
-    string text((std::istreambuf_iterator<char>(in)), {});
+    string text((std::istreambuf_iterator<char>(in)), {}); inputs.insert(file);
     auto cs = parseFile(text, fs::path(file).lexically_relative(opt.root).generic_string());
     auto savedVars = vars; auto savedWrites = parentWrites; parentWrites.clear();
     auto sd = dirDefs, so = dirOpts, si = dirIncs, sl = dirLinkOpts; string ss = curSrc, sb = curBin;
     string rel = fs::path(src).lexically_relative(opt.root).generic_string(); if (rel == ".") rel = "";
     curSrc = src; curBin = opt.binDir + (rel.empty() ? "" : "/" + rel);
     vars["CMAKE_CURRENT_SOURCE_DIR"] = curSrc; vars["CMAKE_CURRENT_BINARY_DIR"] = curBin; vars["CMAKE_CURRENT_LIST_FILE"] = file; vars["CMAKE_CURRENT_LIST_DIR"] = curSrc;
-    run(cs, 0, cs.size()); returning = false;
+    auto savedDefer = std::move(deferred); deferred.clear();
+    run(cs, 0, cs.size()); returning = false; runDeferred(); deferred = std::move(savedDefer);
+    dirDefsFinal[curSrc] = dirDefs;
     auto writes = parentWrites;
     vars = savedVars; parentWrites = savedWrites;
     for (auto& w : writes) vars[w.first] = w.second;
@@ -510,7 +556,88 @@ inline void Interp::doList(const vector<string>& a) {
     else if (op == "JOIN" && a.size() > 3) { string r; for (size_t k = 0; k < cur.size(); ++k) { if (k) r += a[2]; r += cur[k]; } vars[a[3]] = r; }
     else if (op == "SORT") { std::sort(cur.begin(), cur.end()); vars[var] = joinList(cur); }
     else if (op == "INSERT" && a.size() > 3) { size_t at = (size_t)std::min<long>(std::max<long>(0, atol(a[2].c_str())), (long)cur.size()); cur.insert(cur.begin() + at, a.begin() + 3, a.end()); vars[var] = joinList(cur); }
+    else if (op == "TRANSFORM" && a.size() >= 3) { // list(TRANSFORM <list> <ACTION> [args] [REGEX r] [OUTPUT_VARIABLE v])
+        const string& act = a[2]; size_t k = 3; string arg1, arg2, outVar = var, sel;
+        if (act == "APPEND" || act == "PREPEND") { if (k < a.size()) arg1 = a[k++]; }
+        else if (act == "REPLACE") { if (k + 1 < a.size()) { arg1 = a[k]; arg2 = a[k + 1]; k += 2; } }
+        else if (act != "TOLOWER" && act != "TOUPPER" && act != "STRIP" && act != "GENEX_STRIP") { tally.unknown["list(TRANSFORM " + act + ")"]++; return; }
+        for (; k < a.size(); ++k) {
+            if (a[k] == "OUTPUT_VARIABLE" && k + 1 < a.size()) outVar = a[++k];
+            else if (a[k] == "REGEX" && k + 1 < a.size()) sel = a[++k];
+            else { tally.unknown["list(TRANSFORM) selector " + a[k]]++; return; }
+        }
+        try {
+            std::regex selRx(sel.empty() ? string(".*") : sel);
+            for (auto& x : cur) {
+                if (!sel.empty() && !std::regex_search(x, selRx)) continue;
+                if (act == "APPEND") x += arg1; else if (act == "PREPEND") x = arg1 + x;
+                else if (act == "TOLOWER") for (auto& ch : x) ch = (char)tolower((unsigned char)ch);
+                else if (act == "TOUPPER") for (auto& ch : x) ch = (char)toupper((unsigned char)ch);
+                else if (act == "STRIP") { size_t b = x.find_first_not_of(" \t\r\n"), e2 = x.find_last_not_of(" \t\r\n"); x = b == string::npos ? "" : x.substr(b, e2 - b + 1); }
+                else if (act == "GENEX_STRIP") { if (x.find("$<") != string::npos) x.clear(); }
+                else if (act == "REPLACE") { string rep2; for (size_t q = 0; q < arg2.size(); ++q) { if (arg2[q] == '\\' && q + 1 < arg2.size() && isdigit((unsigned char)arg2[q + 1])) { rep2 += '$'; rep2 += arg2[++q]; } else if (arg2[q] == '$') rep2 += "$$"; else rep2 += arg2[q]; } x = std::regex_replace(x, rx(arg1), rep2); }
+            }
+        } catch (const std::regex_error&) { tally.unknown["list(TRANSFORM) regex"]++; return; }
+        if (act == "GENEX_STRIP") { vector<string> r; for (auto& x : cur) if (!x.empty()) r.push_back(x); cur = r; }
+        vars[outVar] = joinList(cur);
+    }
     else tally.unknown["list(" + op + ")"]++;
+}
+
+// get_property / set_property for the scopes the project uses: GLOBAL, TARGET, SOURCE (and DIRECTORY CMAKE_CONFIGURE_DEPENDS).
+inline void Interp::doProperty(const string& n, const vector<string>& a) {
+    if (n == "set_property") {
+        if (a.empty()) return; const string scope = a[0]; size_t k = 1; vector<string> names; bool append = false, appendStr = false;
+        for (; k < a.size() && a[k] != "PROPERTY"; ++k) { if (a[k] == "APPEND") append = true; else if (a[k] == "APPEND_STRING") appendStr = true; else names.push_back(a[k]); }
+        if (k + 1 >= a.size()) return; string prop = a[k + 1]; vector<string> vals(a.begin() + (long)k + 2, a.end());
+        auto put = [&](string& slot) { if (appendStr) { for (auto& v : vals) slot += v; } else if (append) { auto l = splitList(slot); for (auto& v : vals) l.push_back(v); slot = joinList(l); } else slot = joinList(vals); };
+        if (scope == "GLOBAL") { put(globalProps[prop]); return; }
+        if (scope == "DIRECTORY") { if (prop == "CMAKE_CONFIGURE_DEPENDS") for (auto& v : vals) inputs.insert(abs(v, curSrc)); return; }
+        if (scope == "TARGET") { for (auto& t : names) if (Target* tt = tgt(t)) put(tt->props[prop]); return; }
+        if (scope == "SOURCE") {
+            for (auto& f : names) { string key = abs(f, curSrc) + "|" + prop; string slot = srcProps.count(key) ? srcProps[key] : ""; put(slot); srcProps[key] = slot; }
+            return;
+        }
+        tally.unknown["set_property(" + scope + ")"]++; return;
+    }
+    // get_property(<var> <scope> [name] PROPERTY <prop> [SET|DEFINED])
+    if (a.size() < 4) return; const string& var = a[0]; const string& scope = a[1]; size_t k = 2; string name;
+    if (scope != "GLOBAL" && k < a.size() && a[k] != "PROPERTY") name = a[k++];
+    if (k >= a.size() || a[k] != "PROPERTY" || k + 1 >= a.size()) return; string prop = a[k + 1];
+    bool askSet = k + 2 < a.size() && (a[k + 2] == "SET" || a[k + 2] == "DEFINED");
+    bool found = false; string v;
+    if (scope == "GLOBAL") { auto it = globalProps.find(prop); if (it != globalProps.end()) { found = true; v = it->second; } }
+    else if (scope == "TARGET") { if (Target* t = tgt(name)) { auto it = t->props.find(prop); if (it != t->props.end()) { found = true; v = it->second; } } }
+    else if (scope == "SOURCE") { auto it = srcProps.find(abs(name, curSrc) + "|" + prop); if (it != srcProps.end()) { found = true; v = it->second; } }
+    else { tally.unknown["get_property(" + scope + ")"]++; }
+    vars[var] = askSet ? (found ? "1" : "0") : v;
+}
+
+// cmake_parse_arguments(<prefix> <options> <one_value_keywords> <multi_value_keywords> <args>...) and the PARSE_ARGV <N> form.
+inline void Interp::parseArguments(const vector<string>& a0) {
+    vector<string> a = a0; vector<string> items; size_t first = 4;
+    if (!a.empty() && a[0] == "PARSE_ARGV") {
+        if (a.size() < 5) return; long from = atol(a[1].c_str()); a.erase(a.begin(), a.begin() + 2);
+        long argc = atol(get("ARGC").c_str()); for (long q = from; q < argc; ++q) items.push_back(get("ARGV" + std::to_string(q)));
+        first = a.size();
+    }
+    if (a.size() < 4) return;
+    const string pre = a[0] + "_"; auto opts = splitList(a[1]), ones = splitList(a[2]), multis = splitList(a[3]);
+    for (size_t q = first; q < a.size(); ++q) items.push_back(a[q]);
+    auto in = [](const vector<string>& l, const string& w) { return std::find(l.begin(), l.end(), w) != l.end(); };
+    std::map<string, vector<string>> got; std::set<string> seen; vector<string> unparsed, missing; string cur; bool curMulti = false, curHas = false;
+    auto close = [&]() { if (!cur.empty() && !curHas) missing.push_back(cur); cur.clear(); };
+    for (auto& w : items) {
+        if (in(opts, w)) { close(); seen.insert(w); continue; }
+        if (in(ones, w) || in(multis, w)) { close(); cur = w; curMulti = in(multis, w); curHas = false; seen.insert(w); got[w].clear(); continue; }
+        if (!cur.empty()) { got[cur].push_back(w); curHas = true; if (!curMulti) cur.clear(); continue; }
+        unparsed.push_back(w);
+    }
+    close();
+    for (auto& o : opts) vars[pre + o] = seen.count(o) ? "TRUE" : "FALSE";
+    for (auto* l : {&ones, &multis}) for (auto& o : *l) { auto it = got.find(o); if (it == got.end() || it->second.empty()) vars.erase(pre + o); else vars[pre + o] = joinList(it->second); }
+    if (unparsed.empty()) vars.erase(pre + "UNPARSED_ARGUMENTS"); else vars[pre + "UNPARSED_ARGUMENTS"] = joinList(unparsed);
+    if (missing.empty()) vars.erase(pre + "KEYWORDS_MISSING_VALUES"); else vars[pre + "KEYWORDS_MISSING_VALUES"] = joinList(missing);
 }
 
 static string cmakeRegexToStd(const string& r) { return r; }
@@ -534,10 +661,10 @@ inline void Interp::doString(const vector<string>& a) {
                 string rep = a[3]; string r2; // \1 -> $1 for the standard library
                 for (size_t k = 0; k < rep.size(); ++k) { if (rep[k] == '\\' && k + 1 < rep.size() && isdigit((unsigned char)rep[k + 1])) { r2 += '$'; r2 += rep[++k]; } else if (rep[k] == '$') r2 += "$$"; else r2 += rep[k]; }
                 string in; for (size_t k = 5; k < a.size(); ++k) in += a[k];
-                vars[a[4]] = std::regex_replace(in, std::regex(cmakeRegexToStd(a[2])), r2); return;
+                vars[a[4]] = std::regex_replace(in, rx(cmakeRegexToStd(a[2])), r2); return;
             }
             if ((m == "MATCH" || m == "MATCHALL") && a.size() >= 5) {
-                string in; for (size_t k = 4; k < a.size(); ++k) in += a[k]; std::regex re(cmakeRegexToStd(a[2])); vector<string> found;
+                string in; for (size_t k = 4; k < a.size(); ++k) in += a[k]; const std::regex& re = rx(cmakeRegexToStd(a[2])); vector<string> found;
                 for (auto it = std::sregex_iterator(in.begin(), in.end(), re); it != std::sregex_iterator(); ++it) { found.push_back(it->str(0)); if (m == "MATCH") { setMatch(true, *it); break; } }
                 vars[a[3]] = joinList(found); return;
             }
@@ -547,31 +674,106 @@ inline void Interp::doString(const vector<string>& a) {
     tally.unknown["string(" + op + ")"]++;
 }
 
+// math(EXPR): 64-bit integers with ( ) unary - + ~, then * / %, + -, << >>, &, ^, | (lowest), as in C. Decimal and 0x numbers.
+static bool mathExpr(const string& src, long long& out) {
+    size_t p = 0; bool ok = true;
+    auto ws = [&]() { while (p < src.size() && isspace((unsigned char)src[p])) ++p; };
+    std::function<long long(int)> bin;
+    std::function<long long()> unary = [&]() -> long long {
+        ws(); if (p >= src.size()) { ok = false; return 0; }
+        char ch = src[p];
+        if (ch == '-') { ++p; return -unary(); } if (ch == '+') { ++p; return unary(); } if (ch == '~') { ++p; return ~unary(); }
+        if (ch == '(') { ++p; long long v = bin(0); ws(); if (p < src.size() && src[p] == ')') ++p; else ok = false; return v; }
+        if (!isdigit((unsigned char)ch)) { ok = false; return 0; }
+        size_t used = 0; long long v = 0;
+        try { v = std::stoll(src.substr(p), &used, src.compare(p, 2, "0x") == 0 || src.compare(p, 2, "0X") == 0 ? 16 : 10); } catch (...) { ok = false; return 0; }
+        p += used; return v;
+    };
+    // levels: 0 |, 1 ^, 2 &, 3 << >>, 4 + -, 5 * / %
+    bin = [&](int level) -> long long {
+        if (level > 5) return unary();
+        long long v = bin(level + 1);
+        for (;;) {
+            ws(); if (p >= src.size()) return v;
+            string op;
+            if (level == 0 && src[p] == '|') op = "|"; else if (level == 1 && src[p] == '^') op = "^"; else if (level == 2 && src[p] == '&') op = "&";
+            else if (level == 3 && (src.compare(p, 2, "<<") == 0 || src.compare(p, 2, ">>") == 0)) op = src.substr(p, 2);
+            else if (level == 4 && (src[p] == '+' || src[p] == '-')) op = src.substr(p, 1);
+            else if (level == 5 && (src[p] == '*' || src[p] == '/' || src[p] == '%')) op = src.substr(p, 1);
+            if (op.empty()) return v;
+            p += op.size(); long long r = bin(level + 1);
+            if ((op == "/" || op == "%") && r == 0) { ok = false; return 0; }
+            if (op == "|") v |= r; else if (op == "^") v ^= r; else if (op == "&") v &= r; else if (op == "<<") v <<= r; else if (op == ">>") v >>= r;
+            else if (op == "+") v += r; else if (op == "-") v -= r; else if (op == "*") v *= r; else if (op == "/") v /= r; else v %= r;
+        }
+    };
+    out = bin(0); ws(); return ok && p == src.size();
+}
+
+// The `cmake -E` commands the project runs while it is configured, done in memory. Written from what each command is documented to do.
+inline int Interp::cmakeTool(const vector<string>& w) {
+    if (w.size() < 3 || w[1] != "-E") { tally.unknown["execute_process(cmake)"]++; return 1; }
+    const string& op = w[2];
+    if ((op == "copy_if_different" || op == "copy") && w.size() == 5) {
+        string from = abs(w[3], curSrc), to = abs(w[4], curSrc), text;
+        if (!readText(from, text)) return 1;
+        if (to.compare(0, 5, "{bin}") != 0) { tally.unknown["cmake -E " + op + " outside the build folder"]++; return 1; }
+        written[to] = text; return 0;
+    }
+    if (op == "make_directory" || op == "remove" || op == "rm" || op == "touch" || op == "echo") return 0; // nothing to keep: folders are made when files are written
+    tally.unknown["cmake -E " + op]++; return 1;
+}
+
 inline void Interp::doFile(const vector<string>& a) {
     if (a.empty()) return; const string& op = a[0];
-    if (op == "READ" && a.size() >= 3) { std::ifstream in(abs(a[1], curSrc)); string t((std::istreambuf_iterator<char>(in)), {}); vars[a[2]] = t; return; }
+    if (op == "READ" && a.size() >= 3) { string t; readText(abs(a[1], curSrc), t); vars[a[2]] = t; return; }
     if (op == "STRINGS" && a.size() >= 3) {
-        std::ifstream in(abs(a[1], curSrc)); string line; vector<string> found; string re;
+        string whole; readText(abs(a[1], curSrc), whole); std::istringstream in(whole); string line; vector<string> found; string re;
         for (size_t k = 3; k + 1 < a.size(); ++k) if (a[k] == "REGEX") re = a[k + 1];
         std::regex rx; bool use = !re.empty(); try { if (use) rx = std::regex(re); } catch (...) { use = false; }
         while (std::getline(in, line)) { if (!line.empty() && line.back() == '\r') line.pop_back(); if (!use || std::regex_search(line, rx)) { string esc; for (char ch : line) { if (ch == ';') esc += "\\;"; else esc += ch; } found.push_back(esc); } }
         vars[a[2]] = joinList(found); return;
     }
     if (op == "GLOB" || op == "GLOB_RECURSE") {
-        vector<string> found; string var = a.size() > 1 ? a[1] : "";
+        vector<string> found; string var = a.size() > 1 ? a[1] : "", relTo;
+        auto wild = [](const string& x) { return x.find_first_of("*?[") != string::npos; };
+        auto rxOf = [](const string& fnpat) { string rx; for (char ch : fnpat) { if (ch == '*') rx += "[^/]*"; else if (ch == '?') rx += "[^/]"; else if (strchr(".+()[]{}^$|\\", ch)) { rx += '\\'; rx += ch; } else rx += ch; } return std::regex(rx); };
         for (size_t k = 2; k < a.size(); ++k) {
-            if (a[k] == "CONFIGURE_DEPENDS" || a[k] == "RELATIVE") continue;
-            fs::path pat = abs(a[k], curSrc); fs::path dir = pat.parent_path(); string fnpat = pat.filename().string(); string rx;
-            for (char ch : fnpat) { if (ch == '*') rx += ".*"; else if (ch == '?') rx += "."; else if (strchr(".+()[]{}^$|\\", ch)) { rx += '\\'; rx += ch; } else rx += ch; }
-            std::error_code ec; if (!fs::is_directory(dir, ec)) continue;
-            std::regex re(rx);
-            auto take = [&](const fs::path& p) { if (std::regex_match(p.filename().string(), re)) found.push_back(p.generic_string()); };
-            if (op == "GLOB") for (auto& e : fs::directory_iterator(dir, ec)) take(e.path());
-            else for (auto& e : fs::recursive_directory_iterator(dir, ec)) if (e.is_regular_file()) take(e.path());
+            if (a[k] == "CONFIGURE_DEPENDS" || a[k] == "FOLLOW_SYMLINKS") continue;
+            if (a[k] == "RELATIVE" && k + 1 < a.size()) { relTo = abs(a[++k], curSrc); continue; }
+            if (a[k] == "LIST_DIRECTORIES" && k + 1 < a.size()) { ++k; continue; }
+            fs::path pat = abs(a[k], curSrc); std::error_code ec;
+            // folders: walk each part; a part with * or ? matches the folder names in the folders found so far
+            vector<string> parts; for (auto& q : pat.parent_path()) parts.push_back(q.generic_string());
+            vector<fs::path> dirs{fs::path()};
+            for (auto& q : parts) {
+                vector<fs::path> next;
+                for (auto& d : dirs) {
+                    if (!wild(q)) { next.push_back(d / q); continue; }
+                    std::regex re = rxOf(q);
+                    for (auto& e : fs::directory_iterator(d, ec)) if (e.is_directory(ec) && std::regex_match(e.path().filename().string(), re)) next.push_back(e.path());
+                }
+                dirs.swap(next);
+            }
+            std::regex re = rxOf(pat.filename().string());
+            for (auto& dir : dirs) {
+                if (!fs::is_directory(dir, ec)) continue;
+                auto take = [&](const fs::path& p) { if (std::regex_match(p.filename().string(), re)) found.push_back(p.lexically_normal().generic_string()); };
+                if (op == "GLOB") for (auto& e : fs::directory_iterator(dir, ec)) take(e.path());
+                else for (auto& e : fs::recursive_directory_iterator(dir, ec)) if (e.is_regular_file()) take(e.path());
+            }
         }
+        if (!relTo.empty()) for (auto& f : found) f = fs::path(f).lexically_relative(relTo).generic_string();
         std::sort(found.begin(), found.end()); vars[var] = joinList(found); return;
     }
-    if (op == "MAKE_DIRECTORY" || op == "WRITE" || op == "APPEND" || op == "COPY" || op == "REMOVE" || op == "REMOVE_RECURSE" || op == "TOUCH") return; // the build writes nothing here
+    if (op == "RELATIVE_PATH" && a.size() >= 4) { vars[a[1]] = fs::path(abs(a[3], curSrc)).lexically_relative(abs(a[2], curSrc)).generic_string(); return; }
+    if ((op == "WRITE" || op == "APPEND") && a.size() >= 2) { // kept in memory; a file in the build folder goes into the manifest
+        string p = abs(a[1], curSrc), text; for (size_t k = 2; k < a.size(); ++k) text += a[k];
+        if (p.compare(0, 5, "{bin}") != 0) { tally.unknown["file(" + op + ") outside the build folder"]++; return; }
+        if (op == "WRITE") written[p] = text; else { string old; readText(p, old); written[p] = old + text; }
+        return;
+    }
+    if (op == "MAKE_DIRECTORY" || op == "COPY" || op == "REMOVE" || op == "REMOVE_RECURSE" || op == "TOUCH") return; // the build writes nothing here
     tally.unknown["file(" + op + ")"]++;
 }
 
@@ -599,6 +801,21 @@ inline void Interp::doFind(const string& name, const vector<string>& a) {
         for (auto& n : names) {
             if (!n.empty() && n[0] == '/') { std::error_code ec; if (fs::exists(n, ec)) { cache[var] = n; return; } continue; }
             for (auto& d : dirs) { std::error_code ec; string cand = d + "/" + n; if (fs::is_regular_file(cand, ec) && (fs::status(cand, ec).permissions() & (fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec)) != fs::perms::none) { cache[var] = cand; return; } }
+        }
+        cache[var] = var + "-NOTFOUND"; return;
+    }
+    if (name == "find_library") { // the library folders of this host; a name is tried as lib<name>.so, lib<name>.a and as given
+        if (a.empty()) return; const string& var = a[0];
+        { string was = get(var); if (!was.empty() && was.find("-NOTFOUND") == string::npos) return; } // already found (a cache entry): kept
+        vector<string> names, dirs; int mode = 0; // 0 names, 1 paths
+        for (size_t k = 1; k < a.size(); ++k) {
+            if (a[k] == "NAMES") { mode = 0; continue; } if (a[k] == "PATHS" || a[k] == "HINTS") { mode = 1; continue; }
+            if (a[k] == "REQUIRED" || a[k] == "NO_DEFAULT_PATH" || a[k] == "NAMES_PER_DIR" || a[k] == "PATH_SUFFIXES" || a[k] == "DOC") { mode = 2; continue; }
+            if (mode == 0) names.push_back(a[k]); else if (mode == 1) dirs.push_back(abs(a[k], curSrc));
+        }
+        for (const char* d : {"/usr/local/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib", "/lib/x86_64-linux-gnu", "/lib"}) dirs.push_back(d);
+        for (auto& d : dirs) for (auto& nm : names) for (const string& cand : {d + "/lib" + nm + ".so", d + "/lib" + nm + ".a", d + "/" + nm}) {
+            std::error_code ec; if (fs::is_regular_file(cand, ec)) { cache[var] = cand; return; }
         }
         cache[var] = var + "-NOTFOUND"; return;
     }
@@ -694,7 +911,7 @@ inline void Interp::builtin(const Cmd& c) {
         for (size_t k = 1; k + 1 < a.size(); ++k) if (a[k] == "VERSION") { vars["PROJECT_VERSION"] = a[k + 1]; vars[a[0] + "_VERSION"] = a[k + 1]; }
         vars["PROJECT_SOURCE_DIR"] = curSrc; vars["PROJECT_BINARY_DIR"] = curBin; return;
     }
-    if (n == "cmake_minimum_required" || n == "cmake_policy" || n == "enable_language" || n == "mark_as_advanced" || n == "configure_file" || n == "add_custom_target" || n == "add_custom_command" || n == "install" || n == "add_dependencies" || n == "source_group" || n == "include_guard" || n == "math") {
+    if (n == "cmake_minimum_required" || n == "cmake_policy" || n == "enable_language" || n == "mark_as_advanced" || n == "configure_file" || n == "add_custom_target" || n == "add_custom_command" || n == "install" || n == "add_dependencies" || n == "source_group" || n == "include_guard") {
         if (n == "configure_file" || n == "add_custom_target" || n == "add_custom_command" || n == "install" || n == "add_dependencies") tally.unknown[n]++;
         if (n == "add_custom_target" && !a.empty()) { Target t; t.name = a[0]; t.kind = "custom"; t.skipReason = "add_custom_target is not expressed"; targets[t.name] = t; }
         return;
@@ -716,7 +933,7 @@ inline void Interp::builtin(const Cmd& c) {
         else if (m == "NAME_WE") r = p.stem().generic_string(); else if (m == "NAME_WLE") r = p.stem().generic_string(); else r = in;
         vars[a[0]] = r; return;
     }
-    if (n == "find_package" || n == "find_program" || n == "find_path" || n == "pkg_check_modules" || n == "check_include_file_cxx" || n == "check_include_file") { doFind(n, a); return; }
+    if (n == "find_package" || n == "find_program" || n == "find_library" || n == "find_path" || n == "pkg_check_modules" || n == "check_include_file_cxx" || n == "check_include_file") { doFind(n, a); return; }
     if (n == "execute_process") {
         string cmdline, outVar, resVar; bool inCmd = false; vector<string> w;
         for (size_t k = 0; k < a.size(); ++k) {
@@ -726,6 +943,7 @@ inline void Interp::builtin(const Cmd& c) {
             if (a[k].rfind("OUTPUT_", 0) == 0 || a[k].rfind("ERROR_", 0) == 0 || a[k] == "TIMEOUT" || a[k] == "WORKING_DIRECTORY") { inCmd = false; if (a[k] == "TIMEOUT" || a[k] == "WORKING_DIRECTORY") ++k; continue; }
             if (inCmd) w.push_back(a[k]);
         }
+        if (!w.empty() && w[0] == get("CMAKE_COMMAND")) { int rc = cmakeTool(w); if (!outVar.empty()) vars[outVar] = ""; if (!resVar.empty()) vars[resVar] = std::to_string(rc); return; }
         for (auto& x : w) { string q = "'"; for (char ch : x) { if (ch == '\'') q += "'\\''"; else q += ch; } cmdline += q + "' "; }
         string out; int rc = 1;
         if (!w.empty()) { FILE* f = CMR_POPEN((cmdline + " 2>/dev/null").c_str(), "r"); if (f) { char b[512]; size_t k; while ((k = fread(b, 1, sizeof b, f)) > 0) out.append(b, k); int st = CMR_PCLOSE(f);
@@ -754,7 +972,41 @@ inline void Interp::builtin(const Cmd& c) {
         for (size_t q = p + 1; q + 1 < a.size(); q += 2) for (size_t k = 0; k < p; ++k) srcProps[abs(a[k], curSrc) + "|" + a[q]] += (srcProps.count(abs(a[k], curSrc) + "|" + a[q]) ? ";" : "") + a[q + 1];
         return;
     }
-    if (n == "set_property") { return; }
+    if (n == "set_property" || n == "get_property") { doProperty(n, a); return; }
+    if (n == "cmake_parse_arguments") { parseArguments(a); return; }
+    if (n == "math") {
+        if (a.size() < 3 || a[0] != "EXPR") { tally.unknown["math(" + (a.empty() ? string() : a[0]) + ")"]++; return; }
+        long long v = 0; if (!mathExpr(a[2], v)) throw ReadError{c.file + ":" + std::to_string(c.line) + ": math(EXPR) cannot read '" + a[2] + "'"};
+        bool hex = a.size() >= 5 && a[3] == "OUTPUT_FORMAT" && a[4] == "HEXADECIMAL";
+        if (hex) { char b[32]; snprintf(b, sizeof b, "0x%llx", v); vars[a[1]] = b; } else vars[a[1]] = std::to_string(v);
+        return;
+    }
+    if (n == "get_target_property" && a.size() >= 3) { // SOURCES and SOURCE_DIR come from what the reader recorded; other properties from set_target_properties
+        Target* t = tgt(a[1]); string v; bool ok = t != nullptr;
+        if (t && a[2] == "SOURCES") v = joinList(t->sources); else if (t && a[2] == "SOURCE_DIR") v = t->dir; else if (t && a[2] == "NAME") v = t->name;
+        else if (t) { auto it = t->props.find(a[2]); ok = it != t->props.end(); if (ok) v = it->second; }
+        vars[a[0]] = ok ? v : a[0] + "-NOTFOUND"; return;
+    }
+    if (n == "separate_arguments" && !a.empty()) { // UNIX_COMMAND: split on blanks outside quotes, \ escapes the next character
+        if (a.size() == 1) { string v = get(a[0]); for (auto& ch : v) if (ch == ' ') ch = ';'; vars[a[0]] = v; return; }
+        if (a.size() < 3 || (a[1] != "UNIX_COMMAND" && a[1] != "NATIVE_COMMAND")) { tally.unknown["separate_arguments(" + (a.size() > 1 ? a[1] : string()) + ")"]++; return; }
+        vector<string> words; string w; bool have = false; char q = 0; const string& t = a[2];
+        for (size_t k = 0; k < t.size(); ++k) {
+            char ch = t[k];
+            if (q) { if (ch == q) q = 0; else if (ch == '\\' && q == '"' && k + 1 < t.size()) w += t[++k]; else w += ch; continue; }
+            if (ch == '"' || ch == '\'') { q = ch; have = true; continue; }
+            if (ch == '\\' && k + 1 < t.size()) { w += t[++k]; have = true; continue; }
+            if (isspace((unsigned char)ch)) { if (have) { words.push_back(w); w.clear(); have = false; } continue; }
+            w += ch; have = true;
+        }
+        if (have) words.push_back(w);
+        vars[a[0]] = joinList(words); return;
+    }
+    if (n == "cmake_language" && a.size() >= 2) {
+        if (a[0] == "CALL") { auto f = funcs.find(lower(a[1])); if (f != funcs.end()) callFunc(f->second, a[1], vector<string>(a.begin() + 2, a.end())); else tally.unknown["cmake_language(CALL " + a[1] + ")"]++; return; }
+        if (a[0] == "DEFER") { size_t k = 1; while (k < a.size() && a[k] != "CALL") ++k; if (k + 1 < a.size()) deferred.push_back({a[k + 1], vector<string>(a.begin() + (long)k + 2, a.end())}); return; }
+        tally.unknown["cmake_language(" + a[0] + ")"]++; return;
+    }
     if (n == "add_test") {
         TestDef t; t.dir = curSrc; size_t k = 0;
         if (!a.empty() && a[0] == "NAME") {
@@ -802,6 +1054,7 @@ inline void Interp::init() {
     curSrc = opt.root; curBin = opt.binDir;
     vars["CMAKE_CURRENT_SOURCE_DIR"] = curSrc; vars["CMAKE_CURRENT_BINARY_DIR"] = curBin;
     vars["CMAKE_SYSTEM_NAME"] = "Linux"; vars["UNIX"] = "1"; vars["CMAKE_DL_LIBS"] = "dl"; vars["CMAKE_CXX_COMPILER_ID"] = "GNU"; vars["CMAKE_C_COMPILER_ID"] = "GNU";
+    vars["CMAKE_VERSION"] = "3.28.0"; vars["CMAKE_MAJOR_VERSION"] = "3"; vars["CMAKE_MINOR_VERSION"] = "28"; // the language level this reader follows
     vars["CMAKE_COMMAND"] = "cmake"; vars["CMAKE_CROSSCOMPILING"] = ""; vars["CMAKE_HOST_UNIX"] = "1";
     vars["CMAKE_BUILD_TYPE"] = opt.defs.count("CMAKE_BUILD_TYPE") ? opt.defs["CMAKE_BUILD_TYPE"] : opt.buildType;
     cache["CMAKE_BUILD_TYPE"] = vars["CMAKE_BUILD_TYPE"];
@@ -809,16 +1062,17 @@ inline void Interp::init() {
 
 inline void Interp::runTop() {
     string file = opt.root + "/CMakeLists.txt"; std::ifstream in(file); if (!in) throw ReadError{"no CMakeLists.txt in " + opt.root};
-    string text((std::istreambuf_iterator<char>(in)), {});
+    string text((std::istreambuf_iterator<char>(in)), {}); inputs.insert(file);
     auto cs = parseFile(text, "CMakeLists.txt");
     vars["CMAKE_CURRENT_LIST_FILE"] = file; vars["CMAKE_CURRENT_LIST_DIR"] = opt.root;
-    run(cs, 0, cs.size());
+    run(cs, 0, cs.size()); runDeferred(); dirDefsFinal[curSrc] = dirDefs;
 }
 
 
 // ---- 3. Interpreter result to a build.okay manifest ----------------------------------------------------------------------
 struct Report {
     int targetsDeclared = 0, exes = 0, libs = 0, ifaces = 0, emitted = 0, skipped = 0, sources = 0, defines = 0, flags = 0, perFile = 0;
+    int generated = 0; vector<string> inputs; // generate blocks written; the files read (for the buildfile block)
     int fetches = 0, testsDuplicate = 0, testsNoCommand = 0, testsDeclared = 0, testsExe = 0, testsScript = 0, testsEmitted = 0, testsSkipped = 0, testsNeedCmake = 0;
     vector<std::pair<string, string>> skippedTargets; // name, reason
     vector<std::pair<string, string>> skippedTests;
@@ -826,6 +1080,15 @@ struct Report {
     bool accountDefines = false;
 };
 
+// A generated file's text in one manifest line: \\ \" \n \r \t and \xHH for other control bytes. okay-build's parser reads it back.
+static string escapeText(const string& s) {
+    string r; char b[5];
+    for (unsigned char c : s) {
+        if (c == '\\') r += "\\\\"; else if (c == '"') r += "\\\""; else if (c == '\n') r += "\\n"; else if (c == '\r') r += "\\r"; else if (c == '\t') r += "\\t";
+        else if (c < 32 || c == 127) { snprintf(b, sizeof b, "\\x%02x", c); r += b; } else r += (char)c;
+    }
+    return r;
+}
 static bool implicitInclude(const string& p) { return p == "/usr/include" || p == "/usr/local/include" || p == "/usr/include/x86_64-linux-gnu"; } // the compiler already searches these, in its own order
 static string rootRel(const string& p, const string& root) {
     if (p.compare(0, root.size() + 1, root + "/") == 0) return p.substr(root.size() + 1);
@@ -898,13 +1161,15 @@ static string emitManifest(Interp& in, Report& rep) {
         Target& t = in.targets[n]; ++rep.targetsDeclared;
         if (t.kind == "exe") ++rep.exes; else if (t.kind == "lib") ++rep.libs; else if (t.kind == "iface") ++rep.ifaces;
     }
+    // add_compile_definitions applies to every target of its folder, also to targets made before it: use the folder's final list
+    for (auto& n : in.order) { Target& t = in.targets[n]; auto it = in.dirDefsFinal.find(t.dir); if (it != in.dirDefsFinal.end()) t.dirDefs = it->second; }
     // 1. skip what cannot be written: missing sources, downloads, unsupported kinds. Dependents of a skipped target are skipped too.
     for (auto& n : in.order) {
         Target& t = in.targets[n]; if (t.kind != "exe" && t.kind != "lib") continue;
         if (t.skipReason.empty()) {
             if (t.sources.empty()) t.skipReason = "no sources";
             for (auto& s : t.sources) {
-                if (s.compare(0, 5, "{bin}") == 0) { t.skipReason = "generated source " + s; break; }
+                if (s.compare(0, 5, "{bin}") == 0) { if (in.written.count(s)) continue; t.skipReason = "generated source " + s; break; }
                 std::error_code ec; bool willFetch = false; for (auto& fu : in.fetchUsed) if (s.rfind(root + "/_deps/" + fu + "-src/", 0) == 0) willFetch = true;
                 if (!willFetch && !fs::exists(s, ec)) { t.skipReason = s.compare(0, 18, "/okay-not-fetched/") == 0 ? "needs a download: " + s.substr(18, s.find('/', 18) - 18) + " (give --fetched NAME=DIR)" : "missing source " + rootRel(s, root); break; }
             }
@@ -934,6 +1199,13 @@ static string emitManifest(Interp& in, Report& rep) {
         if (!f.git.empty()) out << "  git = " << qw(f.git) << "\n  commit = " << qw(f.tag) << "\n"; else out << "  url = " << qw(f.url) << "\n  sha256 = " << qw(f.sha256) << "\n";
         out << "  dir = _deps/" << fu << "-src\nend\n"; ++rep.fetches;
     }
+    for (auto& g : in.written) { // files the CMake code wrote while it was read: the build writes them (only when the text changed)
+        out << "generate " << qw(g.first) << "\n";
+        const size_t chunk = 4000; // several text lines keep each line short; they are joined with nothing in between
+        for (size_t at = 0; at < g.second.size() || at == 0; at += chunk) out << "  text = \"" << escapeText(g.second.substr(at, chunk)) << "\"\n";
+        out << "end\n"; ++rep.generated;
+    }
+    for (auto& i : in.inputs) rep.inputs.push_back(i);
     std::set<string> emitted;
     for (auto& n : in.order) {
         Target& t = in.targets[n]; if (t.kind != "exe" && t.kind != "lib") continue;
@@ -1019,7 +1291,7 @@ static string readProject(const Options& o, Report& rep, Tally& tally, std::map<
     Interp in; in.opt = o; in.init();
     in.runTop();
     string m = emitManifest(in, rep);
-    tally = in.tally; if (varsOut) *varsOut = in.vars;
+    tally = in.tally; if (varsOut) *varsOut = in.vars.m;
     return m;
 }
 

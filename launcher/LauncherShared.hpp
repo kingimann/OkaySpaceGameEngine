@@ -91,7 +91,8 @@ void DrawVerifiedBadge(ImDrawList* d, ImVec2 c, float r);   // the blue "verifie
 extern std::string g_exeDir;                   // the folder the launcher runs from
 extern SDL_Renderer* g_renderer;               // the renderer textures are uploaded to (switched while the chat window draws)
 extern int g_rslot;                            // render slot: 0 = launcher window, 1 = chat window (each texture cache keeps one copy per slot)
-bool Download(const std::string& url, const fs::path& out, const std::function<void(uint64_t)>& onBytes = {});   // fetch a URL to a file (blocking); onBytes = progress
+bool Download(const std::string& url, const fs::path& out, const std::function<void(uint64_t)>& onBytes = {},
+              const std::function<bool()>& cancelled = {});   // fetch a URL to a file (blocking); onBytes = progress; cancelled = stop
 extern std::string g_pollCfgDir, g_pollUrl, g_pollKey;   // account config for worker threads (set once at startup)
 extern int g_myRank;                           // 3 admin, 2 staff, 1 moderator, 0 player, -1 unknown / not set up
 extern okay::MyBanInfo g_myBan;                // my own site ban, if any

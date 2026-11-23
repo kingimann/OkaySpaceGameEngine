@@ -282,10 +282,13 @@ inline bool SleepUnlessCancelled(int ms, const std::function<bool()>& cancelled)
     return !(cancelled && cancelled());
 }
 
-/// Finish a complete temporary file: check the size cap and the expected SHA-256, then rename it over `path`.
+/// Finish a complete temporary file: check the size cap and the expected SHA-256, then rename it over `path`. A cancel
+/// that came in meanwhile (a caller that gave up on this transfer) wins: the file is dropped and `path` is not touched.
+/// A rename that fails is NotHandled with the reason (not DiskFull: the disk is not full, the target is in use or locked).
 inline OwnDownloadResult Finish(const std::filesystem::path& tmp, const std::filesystem::path& path, const OwnDownloadSpec& sp,
                                 OwnDownloadResult out) {
     std::error_code ec;
+    if (sp.cancelled && sp.cancelled()) { std::filesystem::remove(tmp, ec); out.outcome = OwnOutcome::Cancelled; return out; }
     out.bytes = SizeOf(tmp);
     if (sp.maxBytes && out.bytes > sp.maxBytes) { std::filesystem::remove(tmp, ec); out.outcome = OwnOutcome::TooBig; return out; }
     if (!sp.expectedSha256.empty()) {
@@ -298,17 +301,39 @@ inline OwnDownloadResult Finish(const std::filesystem::path& tmp, const std::fil
     }
     std::filesystem::remove(path, ec);
     std::filesystem::rename(tmp, path, ec);
-    if (ec) { std::filesystem::remove(tmp, ec); out.outcome = OwnOutcome::DiskFull; out.error = "rename failed"; return out; }
+    if (ec) {
+        out.error = "rename failed: " + ec.message();
+        std::filesystem::remove(tmp, ec);
+        out.outcome = OwnOutcome::NotHandled;
+        return out;
+    }
     if (sp.onBytes) sp.onBytes(out.bytes);
     out.outcome = OwnOutcome::Ok;
     return out;
+}
+
+/// Strong validator of an answer for If-Range (RFC 9110 section 13.1.5: a weak ETag must not be used): the ETag unless it is
+/// weak, else the Last-Modified date; "" when there is none.
+inline std::string IfRangeValidator(const std::string& etag, const std::string& lastModified) {
+    auto trim = [](const std::string& v) {
+        size_t a = 0, b = v.size();
+        while (a < b && (v[a] == ' ' || v[a] == '\t')) ++a;
+        while (b > a && (v[b - 1] == ' ' || v[b - 1] == '\t')) --b;
+        return v.substr(a, b - a);
+    };
+    const std::string e = trim(etag);
+    if (!e.empty() && !(e.size() >= 2 && (e[0] == 'W' || e[0] == 'w') && e[1] == '/')) return e;
+    return trim(lastModified);
 }
 
 #if defined(OKAY_HTTP_WINHTTP)
 inline bool RetryableStatus(long s) { return s == 408 || s == 429 || s == 500 || s == 502 || s == 503 || s == 504; }
 
 /// FetchToFile on WinHTTP: a temporary file next to `path`, a dropped transfer resumed with Range on the next try,
-/// 408/429/5xx tried again with a doubling wait, a cancel or a cap that ends it at once.
+/// 408/429/5xx tried again with a doubling wait, a cancel or a cap that ends it at once. A resume sends If-Range with
+/// the first answer's validator (as OwnHttpDownload.hpp does), so a file that changed comes back whole (200: the file
+/// starts again); with no validator and no expected SHA-256 the next try starts from byte 0 instead of resuming.
+/// A 407 from a proxy is no answer here (NotHandled): curl may know the proxy's password.
 inline OwnDownloadResult WinDownload(const std::string& url, const std::filesystem::path& path, const OwnDownloadSpec& sp) {
     OwnDownloadResult out;
     std::error_code ec;
@@ -321,6 +346,7 @@ inline OwnDownloadResult WinDownload(const std::string& url, const std::filesyst
     auto lastTick = std::chrono::steady_clock::now() - std::chrono::milliseconds(1000);
     int wait = sp.retryDelayMs > 0 ? sp.retryDelayMs : 1000;
     const auto t0 = std::chrono::steady_clock::now();
+    std::string validator;   // of the answer the bytes in `tmp` came from
     for (int attempt = 0; attempt <= sp.retries; ++attempt) {
         out.attempts = attempt + 1;
         RequestOptions ro;
@@ -331,6 +357,11 @@ inline OwnDownloadResult WinDownload(const std::string& url, const std::filesyst
         ro.maxRedirects = sp.maxRedirects;
         ro.maxBytes = cap;
         ro.resumeFrom = attempt > 0 ? SizeOf(tmp) : 0;
+        if (ro.resumeFrom > 0 && validator.empty() && sp.expectedSha256.empty()) {   // nothing proves the rest is the same file
+            std::filesystem::remove(tmp, ec);
+            ro.resumeFrom = 0;
+        }
+        ro.ifRange = validator;
         ro.cancel = [&]() { if (sp.cancelled && sp.cancelled()) { cancelled = true; return true; } return false; };
         ro.progress = [&](uint64_t done, uint64_t) {
             if (done > cap) { tooBig = true; return false; }
@@ -342,6 +373,7 @@ inline OwnDownloadResult WinDownload(const std::string& url, const std::filesyst
         const ExResult r = okay::http::detail::WinRequestEx("GET", url, hdrs, std::string(), std::string(), tmp, ro);
         out.status = r.status;
         if (r.resumed) ++out.resumes;
+        if (r.answerStatus == 200) validator = IfRangeValidator(r.etag, r.lastModified);   // the file started again from this answer
         if (cancelled) { std::filesystem::remove(tmp, ec); out.outcome = OwnOutcome::Cancelled; return out; }
         if (r.writeFailed) { std::filesystem::remove(tmp, ec); out.outcome = OwnOutcome::DiskFull; return out; }
         if (tooBig || r.error.rfind("too-large", 0) == 0) { std::filesystem::remove(tmp, ec); out.outcome = OwnOutcome::TooBig; return out; }
@@ -354,7 +386,7 @@ inline OwnDownloadResult WinDownload(const std::string& url, const std::filesyst
         } else {
             out.error = r.error;
             if (r.error.rfind("bad-response: Content-Range", 0) == 0) std::filesystem::remove(tmp, ec);   // the next try starts over
-            if (r.error.rfind("bad-url", 0) == 0) break;
+            if (r.error.rfind("bad-url", 0) == 0 || r.error.rfind("proxy-auth", 0) == 0) break;
         }
         if (attempt < sp.retries) {
             if (!SleepUnlessCancelled(wait, sp.cancelled)) { std::filesystem::remove(tmp, ec); out.outcome = OwnOutcome::Cancelled; return out; }
@@ -425,7 +457,10 @@ inline OwnDownloadResult CurlDownload(const std::string& url, const std::filesys
 /// GET `url` into the file `path` (replacing it only when the whole file arrived), like `curl -L -f [--max-filesize N]
 /// [--retry N] -o path url` with a progress callback and a cancel check. Native first (Windows: WinHTTP; Linux: our own
 /// client when on), then curl. NotHandled means nothing could fetch it (no native answer and curl missing or off).
-inline OwnDownloadResult FetchToFile(const std::string& url, const std::filesystem::path& path, const OwnDownloadSpec& sp) {
+inline OwnDownloadResult FetchToFile(const std::string& url, const std::filesystem::path& path, const OwnDownloadSpec& spIn) {
+    OwnDownloadSpec sp = spIn;   // header lines lose any CR/LF on every path (CleanHeaderLine)
+    sp.userAgent = CleanHeaderLine(sp.userAgent);
+    sp.headers = CleanHeaderLines(sp.headers);
     if (NativeAvailable()) {
 #if defined(OKAY_OWN_HTTP_ACTIVE)
         OwnDownloadResult r = OwnDownload(url, fetch_detail::Utf8(path), sp);
@@ -433,6 +468,7 @@ inline OwnDownloadResult FetchToFile(const std::string& url, const std::filesyst
 #elif defined(OKAY_HTTP_WINHTTP)
         OwnDownloadResult r = fetch_detail::WinDownload(url, path, sp);
         if (r.outcome != OwnOutcome::NotHandled) return r;
+        if (r.error.rfind("rename failed", 0) == 0) return r;   // the file came; curl would only fetch it again to the same rename
 #endif
     }
     if (sp.cancelled && sp.cancelled()) { OwnDownloadResult c; c.outcome = OwnOutcome::Cancelled; return c; }
@@ -502,11 +538,15 @@ inline OwnOutcome FetchPrefix(const std::string& url, const std::string& userAge
 /// -w %{http_code}` without -f: any status is an answer and the body comes back with it. `timeoutMs` > 0 limits the
 /// whole call. Native first; curl only when the native call cannot have reached the server, or the method is GET or
 /// HEAD (ShouldFallBackToCurl), so a POST is never sent twice. Headers and the body go to curl through files only this
-/// user can read (never the command line), so secrets do not show up in the process list.
-inline Result Send(const std::string& method, const std::string& url, const std::vector<std::string>& headers,
+/// user can read (never the command line), so secrets do not show up in the process list. Header lines lose any CR/LF.
+/// Like curl without -L, a call that carries a credential header (Authorization, apikey, ...: HeaderCarriesSecret) does
+/// not follow a redirect on WinHTTP: the 3xx is the answer, so the header never goes to another host. A 407 from a proxy
+/// is no answer from WinHTTP, so curl is tried (the proxy did not pass the request on, so even a POST is safe to send).
+inline Result Send(const std::string& method, const std::string& url, const std::vector<std::string>& rawHeaders,
                    const std::string& body = std::string(), const std::string& bodyFile = std::string(), int timeoutMs = 0) {
+    const std::vector<std::string> headers = CleanHeaderLines(rawHeaders);
     if (NativeAvailable()) {
-        Result nr = Request(method, url, headers, body, bodyFile, std::string(), timeoutMs);
+        Result nr = Request(method, url, headers, body, bodyFile, std::string(), timeoutMs, !AnyHeaderCarriesSecret(headers));
         if (nr.reached) return nr;
         if (!ShouldFallBackToCurl(method, nr)) return nr;
     }

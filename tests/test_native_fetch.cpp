@@ -341,6 +341,64 @@ static void TestSeam() {
     std::error_code ec; fs::remove_all(dir, ec);
 }
 
+// PR #1186 review fixes that can be checked on Linux: header lines lose CR/LF before the own client sees them (it used to
+// refuse the call, and the seam then ran curl, which strips them); a failed rename is not "disk full"; a cancel that
+// comes in after the bytes arrived still wins over the rename (a caller that gave up must never get a late file);
+// RequestEx sends If-Range with a resume; the If-Range validator and credential-header rules.
+static void TestReviewFixes() {
+    Srv s;
+    s.handler = [&](int, int, const std::string& h, int c) {
+        const std::string path = PathOf(h);
+        if (path == "/tail") {
+            if (h.find("If-Range: \"v1\"") != std::string::npos) SendAll(c, "HTTP/1.1 206 Partial Content\r\nContent-Length: 3\r\nContent-Range: bytes 2-4/5\r\n\r\ncde");
+            else SendAll(c, Ok("abcde"));
+            return true;
+        }
+        SendAll(c, Ok("hi")); return true;
+    };
+    s.Start();
+    const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+    {   // a CR/LF inside a header value is taken out, the call is made (before: refused, then curl, which is not on PATH)
+        const Result r = Send("GET", base + "/x", {"X-Test: a\r\nInjected: 1"});
+        CHECK(r.reached && r.status == 200);
+        const std::string h = s.Head((size_t)s.requests.load() - 1);
+        CHECK(h.find("X-Test: aInjected: 1\r\n") != std::string::npos && h.find("\r\nInjected:") == std::string::npos);
+    }
+    CHECK(CleanHeaderLine(std::string("A: b\r\nC: d\0e", 13)) == "A: bC: de");
+    CHECK(CleanHeaderLines({"\r\n", "X: 1"}).size() == 1);
+    CHECK(HeaderCarriesSecret("Authorization: Bearer x") && HeaderCarriesSecret("apikey: k") && HeaderCarriesSecret("X-Authorization: t"));
+    CHECK(!HeaderCarriesSecret("Content-Type: application/json") && !HeaderCarriesSecret("User-Agent: tokenish"));
+    CHECK(fetch_detail::IfRangeValidator(" \"v1\" ", "Mon") == "\"v1\"" && fetch_detail::IfRangeValidator("W/\"v1\"", "Mon, 01 Jan") == "Mon, 01 Jan");
+    CHECK(fetch_detail::IfRangeValidator("", "") == "");
+    {   // RequestEx: a resume carries If-Range
+        const std::string f = "/tmp/okay_nf_tail_" + std::to_string(::getpid());
+        { std::ofstream o(f, std::ios::binary); o << "ab"; }
+        RequestOptions ro; ro.resumeFrom = 2; ro.ifRange = "\"v1\"";
+        const ExResult r = RequestEx("GET", base + "/tail", {}, "", "", f, ro);
+        CHECK(r.reached && r.status == 206 && r.resumed && Slurp(f) == "abcde");
+        CHECK(s.Head((size_t)s.requests.load() - 1).find("If-Range: \"v1\"\r\n") != std::string::npos);
+        std::remove(f.c_str());
+    }
+    s.Stop();
+    {   // Finish: a rename that fails is NotHandled with its reason, never DiskFull
+        const fs::path dir = fs::temp_directory_path() / ("okay_nf_fin_" + std::to_string(::getpid()));
+        std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir / "target" / "inside", ec);
+        const fs::path tmp = dir / "t.part";
+        { std::ofstream o(tmp, std::ios::binary); o << "data"; }
+        OwnDownloadSpec sp;
+        OwnDownloadResult r = fetch_detail::Finish(tmp, dir / "target", sp, OwnDownloadResult());   // a non-empty folder is in the way
+        CHECK(r.outcome == OwnOutcome::NotHandled && r.outcome != OwnOutcome::DiskFull && r.error.find("rename failed") == 0);
+        CHECK(!fs::exists(tmp));
+        // a cancel that came in after the bytes arrived: the file is dropped, the target is not touched
+        { std::ofstream o(tmp, std::ios::binary); o << "late"; }
+        { std::ofstream o(dir / "out.bin", std::ios::binary); o << "other"; }
+        sp.cancelled = [] { return true; };
+        r = fetch_detail::Finish(tmp, dir / "out.bin", sp, OwnDownloadResult());
+        CHECK(r.outcome == OwnOutcome::Cancelled && !fs::exists(tmp) && Slurp((dir / "out.bin").string()) == "other");
+        fs::remove_all(dir, ec);
+    }
+}
+
 int main() {
     std::signal(SIGPIPE, SIG_IGN);
     ::setenv("OKAY_OWN_HTTP", "1", 1); ::unsetenv("OKAY_HTTP_CURL");
@@ -350,6 +408,7 @@ int main() {
     TestHeadAndPrefix();
     TestProxyRefusal();
     TestSeam();
+    TestReviewFixes();
     std::printf("native_fetch: %d checks, %d failed, %d skipped\n", g_checks, g_fail, g_skips);
     return g_fail ? 1 : 0;
 }

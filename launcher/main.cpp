@@ -390,7 +390,8 @@ int RunCmd(const std::string& cmd, bool wait) {
 
 // Download a URL to a file: the HTTP seam (WinHTTP on Windows, our own client on Linux when on, curl only as its last
 // fallback), then PowerShell / wget when nothing else could fetch it. `onBytes` (optional) gets the bytes so far.
-bool Download(const std::string& url, const fs::path& out, const std::function<void(uint64_t)>& onBytes) {
+bool Download(const std::string& url, const fs::path& out, const std::function<void(uint64_t)>& onBytes,
+              const std::function<bool()>& cancelled) {
     std::error_code ec; fs::remove(out, ec);
     if (!ShellSafeUrl(url)) return false;
     std::string u = BustCache(url);
@@ -399,10 +400,11 @@ bool Download(const std::string& url, const fs::path& out, const std::function<v
     // too big) ends it like curl -f; only "nothing could fetch it" goes on to the last resort below.
     okay::http::OwnDownloadSpec sp;
     sp.userAgent = "OkaySpace-Launcher"; sp.headers = {"Cache-Control: no-cache", "Pragma: no-cache"}; sp.retries = 2;
-    sp.connectMs = 30000; sp.onBytes = onBytes;
+    sp.connectMs = 30000; sp.onBytes = onBytes; sp.cancelled = cancelled;
     const okay::http::OwnDownloadResult r = okay::http::FetchToFile(u, out, sp);
     if (r.outcome == okay::http::OwnOutcome::Ok) return true;
     if (r.outcome != okay::http::OwnOutcome::NotHandled) return false;
+    if (cancelled && cancelled()) return false;   // given up on: no last resort that would write `out` later
 #if defined(_WIN32)
     auto psQuote = [](const std::string& s) {
         std::string o; o.reserve(s.size());
@@ -656,12 +658,13 @@ long long RemoteSize(const std::string& url) {
 // its byte count (the seam's progress callback; the file itself only appears when it is
 // complete), publishing byte progress into the update globals so the dialog can show a
 // live MB / percentage bar.
-struct DlMonitor { std::string url; fs::path out; okay::thr::AtomicInt done; okay::thr::AtomicInt ok; okay::thr::AtomicInt bytes; };
+struct DlMonitor { std::string url; fs::path out; okay::thr::AtomicInt done; okay::thr::AtomicInt ok; okay::thr::AtomicInt bytes; okay::thr::AtomicInt cancel; };
 static okay::thr::AtomicInt g_dlStalled;   // the last DownloadProgress gave up because no data came (worker thread writes, StageFile reads)
 int DlMonitorThread(void* p) {
     std::shared_ptr<DlMonitor>* keep = (std::shared_ptr<DlMonitor>*)p;   // (the thread owns a share: it may outlive a download that was given up on)
     DlMonitor* d = keep->get();
-    bool r = Download(d->url, d->out, [d](uint64_t n) { okay::thr::AtomicSet(&d->bytes, (int)std::min<uint64_t>(n, 0x7fffffffull)); });
+    bool r = Download(d->url, d->out, [d](uint64_t n) { okay::thr::AtomicSet(&d->bytes, (int)std::min<uint64_t>(n, 0x7fffffffull)); },
+                      [d] { return okay::thr::AtomicGet(&d->cancel) != 0; });
     okay::thr::AtomicSet(&d->ok, r ? 1 : 0);
     okay::thr::AtomicSet(&d->done, 1);
     delete keep;
@@ -673,7 +676,7 @@ bool DownloadProgress(const std::string& url, const fs::path& out) {
     const long long total = std::min<long long>(RemoteSize(url), 0x7fffffffll);
     okay::thr::AtomicSet(&g_upBytesTotal, (int)total);   // 0 if unknown; clamp for the progress bar
     auto d = std::make_shared<DlMonitor>(); d->url = url; d->out = out;
-    okay::thr::AtomicSet(&d->done, 0); okay::thr::AtomicSet(&d->ok, 0); okay::thr::AtomicSet(&d->bytes, 0);
+    okay::thr::AtomicSet(&d->done, 0); okay::thr::AtomicSet(&d->ok, 0); okay::thr::AtomicSet(&d->bytes, 0); okay::thr::AtomicSet(&d->cancel, 0);
     okay::thr::Thread* th = okay::thr::CreateThread(DlMonitorThread, "okay-dlp", new std::shared_ptr<DlMonitor>(d));
     const Uint32 t0 = okay::platform::TicksMs32();
     Uint32 lastGrow = t0; long long lastSize = -1;
@@ -686,7 +689,10 @@ bool DownloadProgress(const std::string& url, const fs::path& out) {
         if (okay::startupupdate::DownloadShouldAbort((long long)(Uint32)(now - lastGrow), (long long)(Uint32)(now - t0), total)) {
             okay::thr::AtomicSet(&g_dlStalled, 1);
             okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "download stalled, giving up: " + url);
-            okay::thr::DetachThread(th);   // the blocked transfer cannot be stopped from here; it ends on its own (the client's timeouts) and frees itself
+            // Cancel the transfer so it can never rename a late file over `out` (Finish checks the cancel right before the
+            // rename); the thread then ends on its own (the seam notices a cancel within about 50 ms) and frees itself.
+            okay::thr::AtomicSet(&d->cancel, 1);
+            okay::thr::DetachThread(th);
             return false;
         }
         okay::platform::DelayMs(90);

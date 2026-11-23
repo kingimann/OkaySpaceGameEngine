@@ -2,8 +2,11 @@
 // claude/third-party-1 ("stop the shipped programs from spawning curl"). The curl fallback is switched off
 // (OKAY_NO_CURL=1) and PATH is emptied, so every answer here comes from WinHTTP or the case fails.
 // Checks: WinHTTP is compiled in (it was silently off from #1001 to claude/third-party-1), downloads (success, redirect,
-// 404, 503 retries, a size cap, cancel, a cut answer resumed with Range), HEAD, a Range prefix fetch, and a POST with
-// headers and a body. Windows only (built by the Windows test job; also runs under Wine). No <thread>/<mutex> (rule 21a):
+// 404, 503 retries, a size cap, cancel, a cut answer resumed with Range + If-Range, a file that changed (200 to the
+// resume: started again), no validator (the next try starts from 0)), HEAD, a Range prefix fetch, a POST with headers and
+// a body, and the PR #1186 review fixes: Send's timeout, a cancel and the whole-call limit on a silent server (before the
+// fix they waited for the receive timeout), a 407 that is no answer (curl would be tried), no redirect for a call with a
+// credential header, CR/LF taken out of header lines, a body file with a non-ASCII name and one that is missing. Windows only (built by the Windows test job; also runs under Wine). No <thread>/<mutex> (rule 21a):
 // the server runs on a Win32 thread.
 #include <winsock2.h>   // before windows.h (NativeHttp.hpp includes it)
 #include <ws2tcpip.h>
@@ -26,6 +29,8 @@ static int g_fail = 0, g_checks = 0;
 static SOCKET g_listen = INVALID_SOCKET;
 static int g_port = 0;
 static volatile LONG g_flaky = 0, g_trunc = 0, g_stop = 0;
+static std::string Changed() { return std::string(5000, 'z'); }
+static void QuietWait() { for (int i = 0; i < 400 && !g_stop; ++i) Sleep(25); }   // up to 10 s of silence
 static std::string g_lastHead;   // written by the server thread before it answers, read after the call returned
 static CRITICAL_SECTION g_cs;
 
@@ -56,7 +61,7 @@ static void Serve(SOCKET c) {
     else if (path == "/flaky") { if (InterlockedIncrement(&g_flaky) <= 2) SendAll(c, "HTTP/1.1 503 Busy\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"); else SendAll(c, Ok(pl)); }
     else if (path == "/trunc") {   // the first answer dies half way; a later one honours Range
         const size_t r = head.find("Range: bytes=");
-        if (r == std::string::npos) {
+        if (r == std::string::npos || head.find("If-Range: \"v1\"\r\n") == std::string::npos) {   // no If-Range: the whole file
             InterlockedIncrement(&g_trunc);
             SendAll(c, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5000\r\nETag: \"v1\"\r\n\r\n" + pl.substr(0, 2000));
         } else {
@@ -66,6 +71,20 @@ static void Serve(SOCKET c) {
                        "\r\nContent-Range: bytes " + std::to_string(from) + "-4999/5000\r\n\r\n" + part);
         }
     }
+    else if (path == "/changed") {   // cut half way (ETag v1); the resume's If-Range no longer matches: 200, the new file
+        if (head.find("Range: bytes=") == std::string::npos)
+            SendAll(c, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5000\r\nETag: \"v1\"\r\n\r\n" + pl.substr(0, 2000));
+        else
+            SendAll(c, Ok(Changed(), "ETag: \"v2\"\r\n"));
+    }
+    else if (path == "/novalid") {   // cut half way with no ETag and no Last-Modified: the next try must not send Range
+        if (head.find("Range: bytes=") == std::string::npos && InterlockedIncrement(&g_trunc) % 2 == 1)
+            SendAll(c, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5000\r\n\r\n" + pl.substr(0, 2000));
+        else SendAll(c, Ok(pl));
+    }
+    else if (path == "/silent") QuietWait();   // never answers
+    else if (path == "/stall") { SendAll(c, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 1000\r\n\r\n" + pl.substr(0, 100)); QuietWait(); }
+    else if (path == "/proxyauth") SendAll(c, "HTTP/1.1 407 Proxy Authentication Required\r\nConnection: close\r\nProxy-Authenticate: Basic realm=\"x\"\r\nContent-Length: 0\r\n\r\n");
     else if (path == "/slow") { SendAll(c, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 100000\r\n\r\n");
         for (int i = 0; i < 400 && !g_stop; ++i) { SendAll(c, std::string(250, 's')); Sleep(25); } }
     else if (path == "/page") SendAll(c, "HTTP/1.1 206 Partial Content\r\nConnection: close\r\nContent-Length: 100\r\nContent-Range: bytes 0-99/5000\r\n\r\n" + pl.substr(0, 100));
@@ -151,6 +170,65 @@ int main() {
         r = FetchToFile(base + "/trunc", out, sp);
         CHECK(r.outcome == OwnOutcome::Ok && r.resumes == 1 && Slurp(out) == pl);
         CHECK(LastHead().find("Range: bytes=2000-") != std::string::npos);
+        CHECK(LastHead().find("If-Range: \"v1\"") != std::string::npos);   // the first answer's ETag
+        r = FetchToFile(base + "/changed", out, sp);   // the file changed between the tries: started again, never glued
+        CHECK(r.outcome == OwnOutcome::Ok && r.resumes == 0 && Slurp(out) == Changed());
+        CHECK(LastHead().find("If-Range: \"v1\"") != std::string::npos);
+        g_trunc = 0;
+        r = FetchToFile(base + "/novalid", out, sp);   // no validator, no checksum: the second try starts from byte 0
+        CHECK(r.outcome == OwnOutcome::Ok && r.resumes == 0 && Slurp(out) == pl);
+        CHECK(LastHead().find("Range:") == std::string::npos);
+    }
+    {   // a silent server: Send's timeout holds; a cancel and the whole-call limit end a blocked call quickly
+        DWORD t0 = GetTickCount();
+        Result r = Send("GET", base + "/silent", {}, "", "", 1000);
+        CHECK(!r.reached && GetTickCount() - t0 < 4000);
+        t0 = GetTickCount();
+        r = Send("POST", base + "/silent", {}, "x", "", 1000);
+        CHECK(!r.reached && r.maybeSent && GetTickCount() - t0 < 4000);   // a POST that may have arrived: never re-sent by curl
+        for (const char* p : {"/silent", "/stall"}) {
+            OwnDownloadSpec sp; sp.ioMs = 60000;
+            const DWORD c0 = GetTickCount();
+            sp.cancelled = [c0] { return GetTickCount() - c0 > 300; };
+            t0 = GetTickCount();
+            OwnDownloadResult d = FetchToFile(base + p, out, sp);
+            CHECK(d.outcome == OwnOutcome::Cancelled && !fs::exists(out) && NoParts(dir));
+            CHECK(GetTickCount() - t0 < 3000);
+            RequestOptions ro; ro.ioMs = 60000; ro.totalMs = 800;
+            t0 = GetTickCount();
+            const ExResult x = RequestEx("GET", base + p, {}, "", "", "", ro);
+            CHECK(!x.reached && x.error.rfind("timeout", 0) == 0 && GetTickCount() - t0 < 3000);
+        }
+    }
+    {   // a 407 is no answer from WinHTTP: the seam goes on to curl (off here, so it reports that), even for a POST
+        OwnDownloadSpec sp; sp.retries = 2; sp.retryDelayMs = 10;
+        OwnDownloadResult d = FetchToFile(base + "/proxyauth", out, sp);
+        CHECK(d.outcome == OwnOutcome::NotHandled && d.attempts == 1 && !fs::exists(out));
+        Result r = Send("POST", base + "/proxyauth", {}, "x");
+        CHECK(!r.reached && r.error.find("curl") != std::string::npos);
+    }
+    {   // redirects: a call with a credential header gets the 3xx itself (curl without -L); others follow
+        Result r = Send("GET", base + "/redir", {"Authorization: Bearer secret"});
+        CHECK(r.reached && r.status == 302);
+        CHECK(LastHead().rfind("GET /redir ", 0) == 0);
+        r = Send("GET", base + "/redir", {"apikey: k"});
+        CHECK(r.reached && r.status == 302);
+        r = Send("GET", base + "/redir", {"Accept: */*"});
+        CHECK(r.reached && r.status == 200 && r.body == pl);
+    }
+    {   // CR/LF inside a header line is taken out, never a second header
+        Result r = Send("POST", base + "/echo", {"X-Test: a\r\nInjected: 1"}, "b");
+        CHECK(r.reached && r.status == 201);
+        const std::string h = LastHead();
+        CHECK(h.find("X-Test: aInjected: 1\r\n") != std::string::npos && h.find("\r\nInjected:") == std::string::npos);
+    }
+    {   // the body file: a UTF-8 name with a non-ASCII letter is read; a missing one fails before anything is sent
+        const fs::path bf = dir / fs::u8path("k\xC3\xB6rper.json");
+        { std::ofstream f(bf, std::ios::binary); f << "{\"u\":1}"; }
+        Result r = Send("POST", base + "/echo", {"Content-Type: application/json"}, "", bf.u8string());
+        CHECK(r.reached && r.status == 201 && r.body == "{\"u\":1}");
+        r = Request("POST", base + "/echo", {}, "", (dir / "missing.json").u8string());
+        CHECK(!r.reached && !r.maybeSent && r.error == "cannot read the body file");
     }
     {   // HEAD and a prefix fetch
         std::string dump;

@@ -15,9 +15,11 @@
 //
 // No shell: the arguments go straight to the program, so paths and addresses with spaces, quotes or unicode stay one
 // argument each and cmd.exe never re-reads them. Windows: CreateProcessW, hidden (CREATE_NO_WINDOW). POSIX:
-// posix_spawnp. The UWP build cannot start programs at all, so there the fallback is never started.
+// posix_spawnp. The UWP and web (Emscripten) builds cannot start programs at all, so there the fallback is never started
+// (RunCurlProcess reports "not started", and posix_spawnp is not referenced, so wasm-ld has nothing to resolve).
 // Written from the Win32 CreateProcess and CommandLineToArgvW documentation and the POSIX posix_spawn manual page.
-// No <mutex> / <thread> (rule 21a): the poll loop sleeps with Sleep / nanosleep.
+// No <mutex> / <thread> (rule 21a): the poll loop sleeps with Sleep / nanosleep. Windows: only the three standard handles
+// are inherited (PROC_THREAD_ATTRIBUTE_HANDLE_LIST, from the UpdateProcThreadAttribute documentation).
 // ---------------------------------------------------------------------------
 #include <cstdlib>
 #include <functional>
@@ -26,6 +28,9 @@
 
 #if defined(_WIN32)
 #  include <windows.h>
+#elif defined(__EMSCRIPTEN__)
+#  include <cerrno>
+#  include <ctime>   // (the web build cannot start programs: no spawn headers, no posix_spawnp)
 #else
 #  include <cerrno>
 #  include <csignal>
@@ -102,9 +107,9 @@ inline RunResult RunCurlProcess(const std::vector<std::string>& args, const RunS
     RunResult res;
     if (Disabled()) return res;
     const int pollMs = rs.pollMs < 10 ? 10 : rs.pollMs;
-#if defined(OKAY_XBOX_UWP)
+#if defined(OKAY_XBOX_UWP) || defined(__EMSCRIPTEN__)
     (void)args; (void)pollMs;
-    return res;   // a UWP app cannot start other programs
+    return res;   // a UWP app or a web page cannot start other programs: "not started", the seam's answer is final
 #elif defined(_WIN32)
     std::wstring cmd = L"curl";
     for (const std::string& a : args) { cmd.push_back(L' '); cmd += detail::QuoteArg(detail::Wide(a)); }
@@ -134,9 +139,39 @@ inline RunResult RunCurlProcess(const std::vector<std::string>& args, const RunS
         si.hStdInput = nulIn; si.hStdOutput = outH; si.hStdError = nulErr;
         inherit = TRUE;
     }
+    // Only these three handles may be inherited (PROC_THREAD_ATTRIBUTE_HANDLE_LIST, Windows Vista and later): without the
+    // list a curl started on another thread at the same moment would also inherit this call's open, inheritable handles
+    // (and keep this call's temporary files open and locked until it ends). If the list cannot be set up, curl is not
+    // started with inherited handles at all (this call reports not started; the seam treats that as "no curl").
+    STARTUPINFOEXW six{};
+    six.StartupInfo = si;
+    six.StartupInfo.cb = sizeof(six);
+    std::vector<unsigned char> attrBuf;
+    DWORD flags = CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
+    HANDLE inheritList[3] = {nulIn, outH, nulErr};
+    bool listOk = !inherit;
+    if (inherit) {
+        SIZE_T need = 0;
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &need);
+        if (need > 0) {
+            attrBuf.resize((size_t)need);
+            six.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attrBuf.data());
+            if (InitializeProcThreadAttributeList(six.lpAttributeList, 1, 0, &need)) {
+                if (UpdateProcThreadAttribute(six.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inheritList,
+                                              sizeof(inheritList), nullptr, nullptr)) {
+                    listOk = true;
+                    flags |= EXTENDED_STARTUPINFO_PRESENT;
+                } else {
+                    DeleteProcThreadAttributeList(six.lpAttributeList);
+                }
+            }
+            if (!listOk) six.lpAttributeList = nullptr;
+        }
+    }
     PROCESS_INFORMATION pi{};
-    const BOOL ok = CreateProcessW(nullptr, buf.data(), nullptr, nullptr, inherit, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
-                                   nullptr, nullptr, &si, &pi);
+    const BOOL ok = listOk && CreateProcessW(nullptr, buf.data(), nullptr, nullptr, inherit, flags, nullptr, nullptr,
+                                             (flags & EXTENDED_STARTUPINFO_PRESENT) ? &six.StartupInfo : &si, &pi);
+    if (six.lpAttributeList) DeleteProcThreadAttributeList(six.lpAttributeList);
     if (outH != INVALID_HANDLE_VALUE) CloseHandle(outH);
     if (nulIn != INVALID_HANDLE_VALUE) CloseHandle(nulIn);
     if (nulErr != INVALID_HANDLE_VALUE) CloseHandle(nulErr);

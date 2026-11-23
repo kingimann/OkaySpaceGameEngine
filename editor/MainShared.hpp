@@ -89,6 +89,22 @@ int SysNoWindow(const std::string& cmd);
 extern bool g_showScriptDocs;
 extern ImFont* g_codeFont;
 void SectionHeader(const char* label);
+// Panel and window visibility the split-out windows read or set (main.cpp).
+extern bool g_showProject;
+extern bool g_showAssetManager;
+extern bool g_showPluginManager;
+// The Project panel scrolls to, selects and flashes this asset path next frame, then clears it (main.cpp).
+extern std::string g_pingAsset;
+// The folder the editor executable lives in (main.cpp).
+std::string OkayExeDir();
+// A model file extension the importer reads (lower case, with the dot) (main.cpp).
+bool IsModelExt(const std::string& extLower);
+// External-IDE helpers (main.cpp, namespace extide): write and read a text file, show a path in the file manager.
+namespace extide {
+bool WriteFile(const std::string& path, const std::string& text);
+std::string ReadFile(const std::string& path);
+void RevealInFiles(const std::string& path);
+} // namespace extide
 // The open project's settings (main.cpp; the struct is in ProjectState.hpp).
 struct ProjectSettings;
 extern ProjectSettings g_project;

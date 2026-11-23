@@ -58,6 +58,9 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     BuildGame.cpp                                                      # Build Game: export the game, Web / Android / Xbox data, the dedicated server (builder::)
     Updater.cpp                                                        # the self-updater and runtime fetcher (updater::): check, download with checksums, install
     ScriptAssist.cpp                                                   # Scripting Reference window; the Script Editor's completion, signatures, docs, C# members, palette
+    FindInFiles.cpp                                                    # Find in Files: search every project script, open a hit in the Script Editor
+    AssetManagerWindow.cpp                                             # the Asset Manager window: Marketplace downloads listed by type, imported into the project
+    PluginsWindow.cpp                                                  # editor plugins (OkayScript): editor_* builtins, Plugins menu, Plugin Manager
     DialogueWindow.cpp                                                 # the Dialogue window (dialogue graphs + quests)
     BehaviorTreeWindow.cpp                                             # the Behavior Tree window (NPC AI trees)
     LevelTools.cpp                                                     # foliage brush, terrain layers, decals, cables, measuring tool, orthographic views

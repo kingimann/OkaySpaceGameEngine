@@ -9,6 +9,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
+#include "okay/Audio/WavDecoder.hpp"   // OwnWavEnabled: the slow-frame log names the switches that were on
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
 #include "okay/Render/TextureCacheFiles.hpp"   // InvalidateTextureCacheForFile: a changed picture is shown changed
@@ -2286,10 +2287,40 @@ bool UseOkayUIInspector() {   // okayuibackend::InspectorOn; the variables are r
     return okayuibackend::InspectorOn(g_uiBackend, dev ? "1" : nullptr, item ? "1" : nullptr);
 }
 
+// The slow-frame log: a frame over OKAY_SLOW_FRAME_MS (default 250 ms; 0 turns it off) writes one line to okay_editor_perf.log beside the
+// editor (okay_update.log's folder), naming the part of the frame that took the time and what was switched on (editor/EditorPerf.hpp
+// SlowFrameLog). The first few lines go to the Console too. For freezes someone reports from a release: send that file.
+int OkayUIRegionOverflow();
+static void WriteSlowFrame(okay::editor::perf::SlowFrameLog& log, double frameMs, bool playing) {
+    std::string ctx = playing ? "play" : "edit";
+    ctx += UseOkayUIBackend() ? ", OkayUI screens" : ", Dear ImGui";
+    if (UseOkayUIInspector()) ctx += ", OkayUI Inspector";
+#ifdef OKAY_HAVE_OKAYUI
+    if (OkayUI::render::OwnRenderSwitchOn()) {
+        const OkayUI::render::HostPath hp = okay::pb::OkayUILastFrame().path;
+        ctx += hp == OkayUI::render::HostPath::OwnD3D11 ? ", own renderer (Direct3D 11)" : hp == OkayUI::render::HostPath::OwnGL ? ", own renderer (OpenGL)"
+                                                                                       : ", own renderer off for this frame (SDL path)";
+    }
+    if (const int lost = OkayUIRegionOverflow()) ctx += ", " + std::to_string(lost) + " OkayUI areas without the mouse";
+#endif
+    if (okay::wav::OwnWavEnabled()) ctx += ", own WAV";
+    const okay::Profiler& pr = okay::Prof();
+    const okay::Profiler::Frame& f = pr.paused || pr.Count() == 0 ? okay::Profiler::Frame() : pr.FrameAt(pr.Count() - 1);
+    const std::string line = log.Line(f, frameMs, (long long)ImGui::GetFrameCount(), ctx);
+    if (line.empty()) return;
+    std::filesystem::path self = okay::restart::CurrentExecutable();
+    if (self.empty()) { const std::string narrow = updater::SelfPath(); if (!narrow.empty()) self = std::filesystem::path(narrow); }
+    okay::restart::AppendLog(self.empty() ? std::filesystem::path("okay_editor_perf.log") : self.parent_path() / "okay_editor_perf.log", line);
+    // The Console gets the first five after start-up (the first frames load fonts and the scene and are always slow; the file has them).
+    static int s_shown = 0;
+    if (ImGui::GetFrameCount() > 30 && s_shown < 5) { ++s_shown; ConsoleLog("[perf] " + line + (s_shown == 5 ? " (more in okay_editor_perf.log)" : ""), 1); }
+}
+
 #ifdef OKAY_HAVE_OKAYUI
 okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL events, for hosted OkayUI panels
 okayuihost::Region g_okayRegion;          // where the hosted panel was last frame: who owns the mouse there
 okayuihost::Region& OkayUIRegion() { return g_okayRegion; }
+int OkayUIRegionOverflow() { return g_okayRegion.Overflowed(); }
 #endif
 bool g_multiWindow = true;        // always on: panels can be dragged out to other OS windows/monitors (no toggle)
 bool g_darkMode = true;         // Edit > Dark Mode / Light Mode (the only theme choice); saved as "darkmode"
@@ -57171,7 +57202,10 @@ int main(int argc, char** argv) {
             }
         }
         static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout
-        okay::Prof().enabled = g_showProfiler || g_showPerfOverlay || kPerfDump || (g_gameStatsOverlay && ed.isPlaying());   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
+        // The slow-frame log (okay_editor_perf.log) reads the profiler's scopes, so the timers stay on while it is (the default).
+        static okay::editor::perf::SlowFrameLog s_slowLog = [] {
+            okay::editor::perf::SlowFrameLog l; l.thresholdMs = okay::editor::perf::SlowFrameLog::ThresholdFrom(std::getenv("OKAY_SLOW_FRAME_MS")); return l; }();
+        okay::Prof().enabled = g_showProfiler || g_showPerfOverlay || kPerfDump || (g_gameStatsOverlay && ed.isPlaying()) || s_slowLog.thresholdMs > 0.0;   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
         // Pick up the background update check when it finishes (once).
         if (!g_autoCheckDone && g_updateCheck.valid() &&
@@ -57212,6 +57246,7 @@ int main(int argc, char** argv) {
             SDL_PumpEvents();
             if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT)) { s_lastInput = okay::platform::PerfCounter(); g_secSinceInput = 0.0; }
         }
+        okay::Prof().Begin("Editor.Events");   // reading the window system's events (closed after the loop; nothing leaves it early)
         okay::platform::Event e;
         while (sdlSeam->PollEvent(e)) {
             using EvT = okay::platform::EventType;
@@ -57323,6 +57358,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        okay::Prof().End();                    // Editor.Events
         okay::Prof().Begin("Editor.Update");   // closed before the window title below (nothing in between leaves the loop body early)
         Uint64 now = okay::platform::PerfCounter();
         float dt = (float)((now - last) / (double)okay::platform::PerfFrequency());
@@ -58734,7 +58770,7 @@ int main(int argc, char** argv) {
             OkayUI::SetFont(OkayUI::FontDefault());
         }
         // Flush the whole OkayUI frame (game-script widgets + demo) every frame.
-        okay::pb::OkayUIEndFrame(renderer);
+        { OKAY_PROFILE("ImGui.OkayUI"); okay::pb::OkayUIEndFrame(renderer); }   // OkayUI's draw (its own renderer with OKAY_UI_OWN_RENDER)
         // Keep SDL text input alive for OkayUI text fields when ImGui isn't using it,
         // so they receive SDL_TEXTINPUT events (Test UI demo or a game's ui_inputtext).
         if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) { if (okay::platform::Backend* pb = okay::platform::Default()) pb->StartTextInput(); }
@@ -58804,6 +58840,7 @@ int main(int argc, char** argv) {
             Uint64 f1 = okay::platform::PerfCounter();
             double frameMs = (double)(f1 - g_frameT0) / (double)okay::platform::PerfFrequency() * 1000.0;
             okay::Prof().EndFrame(frameMs);
+            if (frameMs >= s_slowLog.thresholdMs && s_slowLog.thresholdMs > 0.0) WriteSlowFrame(s_slowLog, frameMs, ed.isPlaying());
             if (kPerfDump) {   // every ~2 s: average ms per section (inclusive), biggest first
                 static std::map<std::string, double> acc; static double accFrame = 0; static int n = 0;
                 const auto& fr = okay::Prof().Displayed();
@@ -58815,6 +58852,9 @@ int main(int argc, char** argv) {
                     std::sort(v.rbegin(), v.rend());
                     std::printf("[perf] frame %.2f ms (%.0f fps):", accFrame / n, 1000.0 / (accFrame / n));
                     for (size_t i = 0; i < v.size() && i < 14; ++i) std::printf("  %s %.2f", v[i].second.c_str(), v[i].first);
+#ifdef OKAY_HAVE_OKAYUI
+                    std::printf("  [OkayUI mouse areas: %d kept, %d without the mouse]", g_okayRegion.Count(), g_okayRegion.Overflowed());
+#endif
                     std::printf("\n"); std::fflush(stdout);
                     acc.clear(); accFrame = 0; n = 0;
                 }

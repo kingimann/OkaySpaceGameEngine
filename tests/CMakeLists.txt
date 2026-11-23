@@ -4977,3 +4977,10 @@ add_executable(test_own_q3bsp_samples test_own_q3bsp_samples.cpp)
 target_link_libraries(test_own_q3bsp_samples PRIVATE okay::engine)
 target_compile_definitions(test_own_q3bsp_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME own_q3bsp_samples COMMAND test_own_q3bsp_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Table-driven right-answer checks for Visual Script nodes that had only an "it does something" test.
+add_executable(test_vs_node_values test_vs_node_values.cpp)
+target_include_directories(test_vs_node_values PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_node_values PRIVATE okay::engine)
+target_compile_definitions(test_vs_node_values PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_node_values COMMAND test_vs_node_values)

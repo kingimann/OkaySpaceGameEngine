@@ -17,7 +17,6 @@
 - [Data assets and data packs](data_assets.md): Data assets and data packs: typed data files a game reads (headers `okay/Core/DataAsset.hpp`, `okay/Core/DataPack.hpp`).
 - [Profiling and debugging tools (data layer)](debug_tools.md): The profiling and debugging tools data layer (headers in `engine/include/okay/Debug/`, sources in `engine/src/Debug/`).
 - [Display settings](display_settings.md): `okay::DisplaySettings` (`okay/Core/DisplaySettings.hpp`) holds what the Settings screen changes about the window and the picture: the **window mode**, the **resolution**, **vsync** and the **quality preset**.
-- [ECS: iteration, command buffer and delta snapshots](ecs.md): The ECS (entity component system): iteration, the command buffer and delta snapshots (headers `okay/ECS/World.hpp`, `Systems.hpp`, `NetWorld.hpp`, `SceneBridge.hpp`).
 - [Input](input.md): Where the input code is, what is missing, and the input audit.
 - [Localization](localization.md): The string table, the localization tools, and the formats / typed Prefs / fixed timestep record.
 - [Loop and time](loop_and_time.md): How a frame runs and how the engine keeps time.

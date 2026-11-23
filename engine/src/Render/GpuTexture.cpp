@@ -2,6 +2,7 @@
 #include "okay/Render/GpuTexture.hpp"
 
 #include "okay/Core/ImportSidecar.hpp"
+#include "okay/Render/TextureAsset.hpp"   // ReadTextureSettings
 #include "okay/Graphics/Image.hpp"
 #include "okay/Texture/Export.hpp"
 #include "okay/Texture/Texture.hpp"
@@ -167,16 +168,24 @@ bool LoadCompressedCopy(const std::string& imagePath, tex::DdsImage* out, std::s
         tex::DdsImage cached;
         if (tex::ReadDdsFile(cache, &cached) && cached.format != tex::DdsFormat::RGBA8) { *out = std::move(cached); return true; }
     }
-    // build it: the picture as the renderers load it (maxSize applied), its own sRGB and mipmaps settings
+    // build it: the picture as the renderers load it (maxSize applied), its own sRGB, normal-map, mipmaps, mip filter
+    // and compression format settings (TextureSettings, Render/TextureAsset.hpp)
     Image img;
     std::string why;
     if (!img.Load(imagePath, &why)) return fail("cannot load " + imagePath + ": " + why);
     ApplyTextureImportSettings(imagePath, img);
+    const TextureSettings ts = ReadTextureSettings(imagePath);
     tex::TextureBuildOptions bo;
     bo.compress = true;
-    bo.mips = TextureImportSampling(imagePath).mipmaps;
-    const std::string srgb = ImportLower(ReadImportSetting(imagePath, "texture", "srgb"));
-    bo.mip.srgb = !(srgb == "0" || srgb == "false" || srgb == "off");
+    bo.mips = ts.mipmaps;
+    bo.mip.srgb = ts.IsColour();
+    bo.mip.normalMap = ts.normalMap;
+    bo.mip.wrap = ts.wrap == TextureSettings::Repeat ? tex::MipWrap::Repeat : tex::MipWrap::Clamp;
+    bo.mip.filter = ts.mipFilter == TextureSettings::MipKaiser ? tex::MipFilter::Kaiser : tex::MipFilter::Box;
+    bo.autoFormat = ts.compression == TextureSettings::CompressAuto;   // BC1 opaque, BC3 with alpha, BC5 normal maps
+    bo.format = ts.compression == TextureSettings::CompressBC3 ? tex::BcFormat::BC3
+              : ts.compression == TextureSettings::CompressBC4 ? tex::BcFormat::BC4
+              : ts.compression == TextureSettings::CompressBC5 ? tex::BcFormat::BC5 : tex::BcFormat::BC1;
     tex::DdsImage built;
     if (!tex::BuildDds(img.Data(), img.Width(), img.Height(), bo, &built, &why)) return fail(why);
     WriteCachedCopy(cache, built, record);   // keep it for next time; a folder we may not write to only costs the rebuild

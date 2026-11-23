@@ -11,13 +11,14 @@
 //   const perf::HistoryStats s = perf::Stats(frameMsList);              // fps, average, 95th percentile, worst, 1% low
 //   const double fps = perf::TargetFps(settings, playing, idleSeconds); // 0 = run flat out
 //
-// Windows build rule (CLAUDE.md 21a): only <algorithm>, <cmath>, <cstdio>, <string> and <vector> here.
+// Windows build rule (CLAUDE.md 21a): only <algorithm>, <cmath>, <cstdio>, <cstdlib>, <cstring>, <string> and <vector> here.
 #include "okay/Core/Profiler.hpp"
 #include "okay/Core/FrameStats.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -211,5 +212,58 @@ inline ViewKnobs Cheaper(const ViewKnobs& k, bool changeShadowSize = true) {
     c.supersample = 1;
     return c;
 }
+
+// ---------------------------------------------------------------- the slow-frame log
+
+/// The slow-frame log: one line for every editor frame that took at least `thresholdMs`, written to okay_editor_perf.log next to
+/// the editor (the main loop does the writing). It names the part of the frame that took the time, so a freeze someone reports from
+/// a Windows release can be traced without a debugger. Made from the profiler's frame by self time (Break above), nothing else.
+struct SlowFrameLog {
+    double thresholdMs = 250.0;   // 0 or less: off
+    int maxLines = 300;           // per run, so a machine that is slow all the time does not fill the disk
+    int written = 0;
+
+    /// The threshold from the environment value OKAY_SLOW_FRAME_MS (null or unreadable: 250 ms; "0": off; at least 20 ms).
+    static double ThresholdFrom(const char* env) {
+        if (!env || !*env) return 250.0;
+        char* end = nullptr;
+        const double v = std::strtod(env, &end);
+        if (end == env || !std::isfinite(v)) return 250.0;
+        if (v <= 0.0) return 0.0;
+        return std::max(20.0, v);
+    }
+
+    /// The line for a frame of `frameMs` (`f`: the profiler's buckets for it; none when the profiler had nothing), or "" when the
+    /// frame was quick, the log is off or full. `frameNo` counts frames since start; `context` (what is switched on, edit or play)
+    /// is added at the end as it is. Counts the line as written.
+    std::string Line(const Profiler::Frame& f, double frameMs, long long frameNo, const std::string& context) {
+        if (!(thresholdMs > 0.0) || !std::isfinite(frameMs) || frameMs < thresholdMs || written >= maxLines) return std::string();
+        ++written;
+        Profiler::Frame g;
+        g.total = frameMs;
+        g.buckets = f.buckets;
+        const Breakdown b = Break(g);
+        int top = 0;
+        for (int i = 1; i < (int)Section::Count; ++i) if (b.ms[i] > b.ms[top]) top = i;
+        char buf[256];
+        std::snprintf(buf, sizeof(buf), "slow frame %lld: %.0f ms, mostly %s (%.0f ms)", frameNo, frameMs, SectionName((Section)top), b.ms[top]);
+        std::string line = buf;
+        std::vector<const Profiler::Bucket*> scopes;
+        for (const Profiler::Bucket& k : f.buckets) if (k.self >= 1.0) scopes.push_back(&k);
+        const std::size_t keep = std::min<std::size_t>(4, scopes.size());
+        std::partial_sort(scopes.begin(), scopes.begin() + (std::ptrdiff_t)keep, scopes.end(),
+                          [](const Profiler::Bucket* a, const Profiler::Bucket* c) { return a->self > c->self; });
+        if (keep == 0) line += "; no timed scopes (the profiler saw nothing: events, a wait or a window move)";
+        for (std::size_t i = 0; i < keep; ++i) {
+            std::snprintf(buf, sizeof(buf), "%s%s %.0f ms", i == 0 ? "; scopes: " : ", ", scopes[i]->name.c_str(), scopes[i]->self);
+            line += buf;
+        }
+        std::snprintf(buf, sizeof(buf), "; not timed %.0f ms", b.ms[(int)Section::Untimed]);
+        line += buf;
+        if (!context.empty()) line += " | " + context;
+        if (written == maxLines) line += " (the log is full: no more slow frames are written this run)";
+        return line;
+    }
+};
 
 } // namespace okay::editor::perf

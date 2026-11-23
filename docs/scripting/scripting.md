@@ -561,7 +561,7 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `flip_x(bool)` / `flip_y(bool)` | mirror this object's sprite |
 | `velocity_x()` / `velocity_y()` | read this object's Rigidbody2D velocity |
 | `set_velocity(x, y)` / `set_vx(x)` / `set_vy(y)` | set its velocity (jump, dash, top-down move) |
-| `add_force(x, y)` / `add_impulse(x, y)` | apply a continuous force / instant momentum |
+| `add_force(x, y [, z])` / `add_impulse(x, y [, z])` / `add_torque(x, y, z)` | apply a continuous force / instant momentum / a twist (2D or 3D body; a vector works too) |
 | `add_explosion_force(cx, cy, force, radius[, up])` | shove this 2D body away from a point; the push fades to nothing at `radius` |
 | `set_image(path)` | set this object's UIImage texture (swap icons/states) |
 | `set_interactable(bool)` | enable/disable this object's UIButton (grey out menu entries) |
@@ -603,7 +603,6 @@ write-through to disk — use the `save`/`load` family. Each value keeps its typ
 | `save_has(key[, file])` | does the key exist? |
 | `save_delete(key[, file])` | remove one key (and re-save) |
 | `save_clear([file])` | wipe a file's keys |
-| `save_exists([file])` | does the save file exist on disk? |
 | `save_delete_file([file])` | delete the whole save file |
 
 ```cs
@@ -615,7 +614,7 @@ save("spawn", new Vector3(4, 0, 2), "slot1.okaysave");
 int coins = load("coins", 0);
 string who = load("name", "Player");
 Vector3 at = load("spawn", new Vector3(0, 0, 0), "slot1.okaysave");
-if (!save_exists("slot1.okaysave")) { /* first time playing */ }
+if (!save_has("coins", "slot1.okaysave")) { /* first time playing */ }
 ```
 
 **File names stay inside the game.** Every script call that names a file
@@ -1445,7 +1444,7 @@ has the full list, plus the **Tween Animation** component for tweens without cod
 | `get_refresh_rate()` / `set_refresh_rate(hertz)` / `get_display_resolutions()` / `get_refresh_rates(width, height)` | The rate, the sizes on offer, and the rates for a size |
 | `begin_display_confirm()` / `keep_display_settings()` / `revert_display_settings()` / `get_display_confirm_seconds()` | Start the 10-second "keep these settings?" question, answer it, or read the seconds left |
 | `game_slot_text(slot)` / `game_slot_age(slot)` / `game_slot_label(slot)` | When a slot was saved (`"2026-11-08 14:03"` UTC, `""` if none), seconds since then (-1 if none), and its label |
-| `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
+| `save_exists([slot])` (the same as `has_save`) / `delete_save([slot])` | Manage save slots |
 | `play_sequence("name")` / `stop_sequence()` | Play / stop a cutscene sequence (see docs/gameplay/cutscenes.md) |
 | `sequence_playing()` / `sequence_time()` | 1 while a sequence plays / seconds into it; events reach `on_sequence_event(name)` |
 | `loc("key" [, args...])` | The key's text in the player's language; `{0}`, `{1}`... from the arguments, `{name}` from a map (see docs/engine/localization.md) |

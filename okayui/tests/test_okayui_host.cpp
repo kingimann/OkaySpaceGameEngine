@@ -259,6 +259,22 @@ int main() {
         CHECK(r.Count() == 0 && !r.Owns(100, 100));
         for (int i = 0; i < Region::kMax + 3; ++i) r.Offer((float)i * 10, 0, 5, 5, true);   // more than it holds: the rest are ignored
         CHECK(r.Count() == Region::kMax && r.Owns(1, 1) && !r.Owns((Region::kMax + 1) * 10.0f + 1, 1));
+        r.NextFrame();
+        CHECK(r.Overflowed() == 3);                            // the three ignored offers are counted for the frame
+        r.NextFrame();
+        CHECK(r.Overflowed() == 0);
+    }
+    {   // the OkayUI Inspector: one rectangle per section (card, Transform, a header and a body per component). With 8 slots an
+        // object with five components lost the mouse on every section after the 8th (its fields ignored clicks: "frozen").
+        Region r;
+        const int sections = 2 + 2 * 12;                       // twelve components
+        CHECK(sections <= Region::kMax);
+        for (int i = 0; i < sections; ++i) r.Offer(0, (float)i * 40, 300, 38, true);
+        r.NextFrame();
+        CHECK(r.Overflowed() == 0);
+        bool all = true;
+        for (int i = 0; i < sections; ++i) all = all && r.Owns(10, (float)i * 40 + 5);
+        CHECK(all);                                            // the last component's body takes the mouse like the first
     }
     {   // an open menu offered as an overlay: the host keeps a press there from ImGui (OwnsOverlay); the panel itself is not an overlay
         Region r;

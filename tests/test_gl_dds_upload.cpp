@@ -6,7 +6,7 @@
 // gives our own CPU decode within a small tolerance (drivers may round the 1/3 and 2/3 palette entries differently).
 // With OKAY_GL_NO_COMPRESSED=1 the same files go the CPU-decode way and read back exactly as our decoder gives them.
 #include "test_framework.hpp"
-#include "../okayui/tests/RenderGLContext.hpp"
+#include "gl_readback_setup.hpp"
 
 #include "okay/Render/GLRenderer.hpp"
 #include "okay/Render/GpuTexture.hpp"
@@ -21,17 +21,10 @@
 #include <fstream>
 
 using namespace okay;
+using namespace glread;
 using Bytes = std::vector<std::uint8_t>;
 
 namespace {
-
-gltest::Context* g_ctx = nullptr;
-void* Proc(const char* n) { return g_ctx ? g_ctx->Proc(n) : nullptr; }
-
-void (*glBindTexture_)(unsigned, unsigned) = nullptr;
-void (*glGetTexImage_)(unsigned, int, unsigned, unsigned, void*) = nullptr;
-void (*glGetTexLevelParameteriv_)(unsigned, int, unsigned, int*) = nullptr;
-void (*glPixelStorei_)(unsigned, int) = nullptr;
 
 Bytes Picture(int w, int h, bool alpha) {
     Bytes px(std::size_t(w) * h * 4);
@@ -153,16 +146,8 @@ void RunCases(bool allowCompressed, const gputex::Caps& caps) {
 
 int main() {
     RUN_SUITE("gl dds upload (EGL, Mesa)");
-    gltest::Context ctx; std::string why;
-    if (!ctx.Create(false, &why)) { std::cout << "  SKIPPED: " << why << "\n"; TEST_MAIN_RESULT(); }
-    g_ctx = &ctx;
-    std::cout << "  context: " << ctx.Info() << "\n";
-    CHECK(GLRenderer::LoadGL(&Proc));
-    glBindTexture_ = (decltype(glBindTexture_))Proc("glBindTexture");
-    glGetTexImage_ = (decltype(glGetTexImage_))Proc("glGetTexImage");
-    glGetTexLevelParameteriv_ = (decltype(glGetTexLevelParameteriv_))Proc("glGetTexLevelParameteriv");
-    glPixelStorei_ = (decltype(glPixelStorei_))Proc("glPixelStorei");
-    if (!glBindTexture_ || !glGetTexImage_ || !glGetTexLevelParameteriv_ || !glPixelStorei_) { std::cout << "  SKIPPED: no glGetTexImage\n"; TEST_MAIN_RESULT(); }
+    gltest::Context ctx;
+    if (!glread::Open(ctx)) TEST_MAIN_RESULT();
     const gputex::Caps caps = GLRenderer::QueryTextureCaps();
     std::cout << "  driver: S3TC " << (caps.s3tc ? "yes" : "no") << ", RGTC " << (caps.rgtc ? "yes" : "no") << "\n";
 

@@ -1,3 +1,4 @@
+#include <filesystem>
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Net/Packet.hpp"
@@ -77,6 +78,7 @@ bool Contains(const std::vector<std::uint8_t>& d, const std::string& needle) {
 
 int main() {
     RUN_SUITE("net_anticheat_ph3");
+    okay::net::Startup();   // raw UdpSockets below open before any NetworkManager does: Windows needs WSAStartup first
     auto sink = Log::sink;
     Log::sink = [](Log::Level, const std::string&) {};
     const bool crypto = SecureChannel::Available();
@@ -437,7 +439,7 @@ int main() {
         a.CreateGameObject("Net")->AddComponent<NetworkManager>();
         auto* ac = a.CreateGameObject("R")->AddComponent<AntiCheatConfig>();
         ac->settings.maxClockDrift = 0.08f;
-        const std::string path = "/tmp/okay_ph3_scene.okayscene";
+        const std::string path = (std::filesystem::temp_directory_path() / "okay_ph3_scene.okayscene").string();
         CHECK(SceneSerializer::SaveToFile(a, path));
         Scene b("B");
         CHECK(SceneSerializer::LoadFromFile(b, path));
@@ -448,7 +450,7 @@ int main() {
 
     // ---- 3d. The dedicated server's --host-key ---------------------------------------------
     {
-        const std::string keyFile = "/tmp/okay_ph3_host.key", badFile = "/tmp/okay_ph3_bad.key";
+        const std::string keyFile = (std::filesystem::temp_directory_path() / "okay_ph3_host.key").string(), badFile = (std::filesystem::temp_directory_path() / "okay_ph3_bad.key").string();
         const std::string seed = RandomSeed();
         { std::ofstream f(keyFile); f << seed << "\n"; }
         { std::ofstream f(badFile); f << "SECRET-BUT-WRONG\n"; }

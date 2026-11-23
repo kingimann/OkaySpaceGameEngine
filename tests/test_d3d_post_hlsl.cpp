@@ -31,7 +31,7 @@ int main() {
     CHECK(Has(hlsl, "1.0 + 0.25 * uP1.z") && Has(hlsl, "0.8 * uP2.z * smoothstep"));
     CHECK(Has(hlsl, "hable(x * 2.0) / hable(float3(11.2, 11.2, 11.2))"));
 
-    std::string here = __FILE__;
+    std::string here = OKAY_TESTS_DIR "/test_d3d_post_hlsl.cpp";
     std::string root = here.substr(0, here.find_last_of("/\\") + 1) + "../engine/src/Render/";
     const std::string d11 = Slurp(root + "D3D11Renderer.cpp") + Slurp(root + "../../include/okay/Render/D3D11Hlsl.hpp");   // text moved to D3D11Hlsl.hpp
     CHECK(!d11.empty());

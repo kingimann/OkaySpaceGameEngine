@@ -72,11 +72,9 @@ public:
 
     Vec2 gravity{0.0f, -9.81f};
 
-    /// Classic (the original single-pass step, what old scenes use) or Improved (iterated contacts with two points per box
-    /// face, stacks that stand, bodies that sleep together, rolling resistance; see PhysicsQuality.hpp and docs/physics/physics.md).
-    /// Saved in the scene file as `physicsquality`; a scene without the record is Classic.
+    /// Kept only so scene files round-trip (`physicsquality`); 2D has one step and this value changes nothing.
     PhysicsQuality quality = PhysicsQuality::Classic;
-    /// Improved: how many times the contact solver repeats per step (more = stiffer stacks, slower). 4 to 30.
+    /// Kept for scene files (the 2D step does not read it). 4 to 30.
     int solverIterations = 10;
     /// What the last Step did.
     const PhysicsStepStats& Stats() const { return m_stats; }

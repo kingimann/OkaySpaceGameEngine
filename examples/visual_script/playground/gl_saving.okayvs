@@ -25,6 +25,8 @@ exec 100 0 101
 exec 101 0 103
 exec 103 0 104
 exec 104 0 105
+exec 105 0 106
+exec 106 0 107
 node 100 GlSavePosition
 pos 100 40 520
 default 100 0 "spot"
@@ -43,3 +45,12 @@ default 104 0 "hero"
 node 105 GlLoadHealth
 pos 105 1340 520
 default 105 0 "back"
+node 106 GlSaveGame
+pos 106 40 710
+default 106 0 "vstest"
+node 107 GlLoadGame
+pos 107 300 710
+default 107 0 "vsnothing"
+node 108 GlHasSave
+pos 108 560 710
+default 108 0 "vsnothing"

@@ -118,6 +118,10 @@ namespace PropertyFlag {
     constexpr unsigned Structural = 1u << 4;
 }
 
+/// How prominent a property is in an Inspector: Simple settings are always shown, Advanced ones sit in a foldout,
+/// Hidden ones are not shown (old scenes still load them). Default Advanced, so older registrations are unchanged.
+enum class PropertyLevel { Simple = 0, Advanced = 1, Hidden = 2 };
+
 /// One property of a component type: its name and type, the hints an inspector
 /// needs, and how to read and write it. Built by PropertyBuilder (see
 /// PropertyRegistry.hpp) or by hand.
@@ -126,6 +130,9 @@ struct PropertyDesc {
     PropertyType type = PropertyType::None;
     std::string group;                ///< inspector section ("Shadows"); empty = none
     std::string tooltip;
+    std::string label;                ///< plain-language name for the Inspector; empty = derive one from `name`
+    std::string unit;                 ///< "m/s", "seconds", ...; empty = none
+    PropertyLevel level = PropertyLevel::Advanced;
 
     /// Numeric limits (Int, Float, and each component of Vec2/3/4 and Color).
     /// Ignored for the other types.

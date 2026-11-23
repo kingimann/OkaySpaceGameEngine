@@ -95,9 +95,8 @@ TagsLayersResult DrawTagsLayers(const okaypanels::TagsLayersModel& model, okaypa
 
 struct PhysicsSettingsResult {
     okaypanels::PhysicsSettingsIntent intent;
-    OkayUI::Rect gravity2D, gravity3D, stepRate, smooth, quality, iterations, continuous, apply;   // zero size when not shown
+    OkayUI::Rect gravity2D, gravity3D, stepRate, smooth, iterations, apply;   // zero size when not shown
     float contentHeight = 0.0f;
-    OkayUI::Rect popup;                                       // the quality list while it is open
 };
 
 PhysicsSettingsResult DrawPhysicsSettings(okaypanels::PhysicsSettingsModel& model, float x, float y, float w, float h);

@@ -107,7 +107,8 @@ int main() {
 
         std::string path = (std::filesystem::temp_directory_path() / "okay_prof_trace.json").string();
         CHECK(P.ExportChromeTraceToFile(path, 0, 2));
-        std::ifstream f(path); std::stringstream ss; ss << f.rdbuf();
+        std::stringstream ss;
+        { std::ifstream f(path); ss << f.rdbuf(); }   // closed before remove: Windows cannot delete an open file
         CHECK(ss.str() == js);
         std::filesystem::remove(path);
         CHECK(!P.ExportChromeTraceToFile("/no/such/dir/x.json", 0, 2));

@@ -535,12 +535,19 @@ static void TestValidator() {
 static void TestLongPathAndEveryCut() {
     RUN_SUITE("long project path and a variant cut at every byte");
     std::string deep = "okay_prefab_var_long";
-    for (int i = 0; i < 4; ++i) deep += "/" + std::string(70, (char)('p' + i));
+#ifdef _WIN32
+    // Windows programs without a long-path manifest (none of ours has one) cannot make a folder past 260 characters,
+    // so on Windows only the every-cut part runs, in a short folder.
+    const int levels = 0;
+#else
+    const int levels = 4;
+#endif
+    for (int i = 0; i < levels; ++i) deep += "/" + std::string(70, (char)('p' + i));
     struct RemoveTop {   // Files removes only the deepest folder; take the whole chain away at the end
         ~RemoveTop() { std::error_code ec; fs::remove_all(fs::temp_directory_path() / "okay_prefab_var_long", ec); }
     } removeTop;
     Files f(deep);
-    CHECK(f.base.size() > 300);
+    CHECK(levels == 0 || f.base.size() > 300);
     MakeRobot(f.base);
     const std::string good = VariantText(f.base);
     Write(f.P("v.okayprefab"), good);

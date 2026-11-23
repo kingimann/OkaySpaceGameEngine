@@ -116,7 +116,8 @@ inline VsPlace VsLegacyPlaceForNewNode(const char* type) {
         VsIs(type, "Proximity"))
         return VsAt("Physics", "Collisions");
     if (VsIs(type, "CanSee")) return VsAt("Physics", "Queries");
-    if (VsIs(type, "OnInteract") || VsIs(type, "OnDeath") || VsIs(type, "OnHealthChanged"))
+    if (VsIs(type, "OnInteract") || VsIs(type, "OnDeath") || VsIs(type, "OnHealthChanged") || VsIs(type, "OnDamaged") ||
+        VsIs(type, "OnButtonClicked"))
         return VsAt("Events");
     if (VsIs(type, "OnAction") || VsIs(type, "OnActionUp") || VsIs(type, "OnActionHeld"))
         return VsAt("Input", "Controls");

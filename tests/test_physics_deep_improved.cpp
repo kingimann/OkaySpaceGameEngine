@@ -129,17 +129,7 @@ int main() {
         CHECK(maxX < 10.2f);
         CHECK(w.s.physics3D().Stats().sweeps >= 0);
     }
-    // ... and the switch turns it off.
-    {
-        World w; w.s.physics3D().autoContinuous = false; w.Floor(-50.0f);
-        GameObject* wall = w.s.CreateGameObject("Wall"); wall->transform->localPosition = {10, 0, 0};
-        wall->AddComponent<BoxCollider3D>()->size = {0.1f, 10, 10};
-        GameObject* b = w.Ball({0, 0, 0}, 0.1f, 0.1f, true);
-        RB(b)->gravityScale = 0.0f; RB(b)->velocity = {60.0f, 0, 0};
-        float maxX = -1e9f;
-        for (int i = 0; i < 50; ++i) { w.Step(); maxX = std::max(maxX, P(b).x); }
-        CHECK(maxX > 30.0f);
-    }
+    // (The "switch turns it off" case is gone: `autoContinuous` is kept only for old scene files; fast bodies are always caught.)
     // ---- A ball rolls to a stop (the old step: 445 m after two minutes, still rolling at 3.6 m/s).
     {
         World w; w.Floor();
@@ -202,7 +192,7 @@ int main() {
         CHECK(Tilt(table) < 3.0f);
         CHECK(P(table).y > 0.4f && P(table).y < 1.1f);
     }
-    // ---- An offset collider turns with its object (Classic leaves the offset where it was).
+    // ---- An offset collider turns with its object.
     {
         World w;
         GameObject* o = w.s.CreateGameObject("O");
@@ -211,11 +201,7 @@ int main() {
         auto* c = o->AddComponent<BoxCollider3D>(); c->offset = {0, 1, 0};
         const Vec3 wc = c->WorldCenter();
         CHECK_NEAR(wc.x, -2.0f, 1e-3); CHECK_NEAR(wc.y, 0.0f, 1e-3);
-        World k(PhysicsQuality::Classic);
-        GameObject* o2 = k.s.CreateGameObject("O");
-        o2->transform->localRotation = Quat::Euler(0, 0, 90);
-        auto* c2 = o2->AddComponent<BoxCollider3D>(); c2->offset = {0, 1, 0};
-        CHECK_NEAR(c2->WorldCenter().y, 1.0f, 1e-4);          // Classic: as it always was
+        // (Classic left the offset unturned; Classic is gone: every scene turns and scales it now.)
     }
     // ---- Per-collider materials: a floor made icy by its own collider (no Rigidbody) lets a crate slide much farther.
     {

@@ -24,6 +24,7 @@ class Component;
 struct ComponentTypeInfo {
     std::string name;
     std::string recordName;
+    std::string description;              ///< one plain sentence for the top of the component in the Inspector; empty = none
     std::string category;                 ///< "Rendering", "Physics 2D", ... for an Add Component menu
     std::type_index type{typeid(void)};   ///< the exact dynamic type
     /// The pseudo component "GameObject": its properties are the object's own (name,

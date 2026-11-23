@@ -181,18 +181,7 @@ int main() {
         }
     }
 
-    // ---- Classic keeps its old behaviour: an unticked fast ball passes through a thin wall. (Improved stops it: see
-    //      test_physics_deep_improved.) This guards the promise that old scenes play exactly as they did.
-    {
-        World w(PhysicsQuality::Classic);
-        GameObject* wall = w.s.CreateGameObject("Wall"); wall->transform->localPosition = {10, 0, 0};
-        wall->AddComponent<BoxCollider3D>()->size = {0.1f, 10, 10};
-        GameObject* b = w.s.CreateGameObject("Bullet");
-        b->AddComponent<SphereCollider3D>()->radius = 0.1f;
-        auto* rb = b->AddComponent<Rigidbody3D>(); rb->mass = 0.1f; rb->gravityScale = 0.0f; rb->freezeRotation = true; rb->velocity = {60.0f, 0, 0};
-        float maxX = -1e9f;
-        for (int i = 0; i < 50; ++i) { w.s.physics3D().Step(w.s, w.dt); maxX = std::max(maxX, P(b).x); }
-        CHECK(maxX > 30.0f);
-    }
+    // (The Classic case that checked an unticked fast ball still passed through a thin wall is gone with Classic: there is
+    //  one physics path, and it stops fast bodies whether or not Continuous Collision is ticked.)
     TEST_MAIN_RESULT();
 }

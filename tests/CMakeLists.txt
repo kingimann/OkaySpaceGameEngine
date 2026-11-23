@@ -8,6 +8,10 @@ foreach(_f FBX COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD
     endif()
 endforeach()
 
+# The tests folder as an absolute path, for tests that read source files next to them. __FILE__ is relative to the
+# build folder in some builds (the MinGW cross build gives "../tests/x.cpp"), so it cannot be used to find them.
+add_compile_definitions(OKAY_TESTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
 # The sandbox the file-writing tests run in (temp folder as working and save folder; guard against writes into the source tree)
 add_executable(test_sandbox test_sandbox.cpp)
 target_link_libraries(test_sandbox PRIVATE okay::engine)
@@ -39,6 +43,9 @@ if(OKAY_PYTHON)
     if(OKAY_GIT)
         add_test(NAME collab_scripts COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_collab.py)
         add_test(NAME dup_lint_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_dup_lint.py)
+        # Generated docs rebuilt on main only: scripts/precheck.sh --list/--regen/--restore-generated and the commit-back
+        # step of .github/workflows/regen-docs.yml, against a throw-away bare repository (no GitHub).
+        add_test(NAME precheck_generated COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_precheck_generated.py)
         # scripts/integration_merge.py: all open PRs merged together (docs/process/collaboration.md "Integration check").
         add_test(NAME integration_merge COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/integration_merge.py --self-test)
     endif()
@@ -1002,6 +1009,29 @@ add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --wa
 
 # Physics broad phase: the sort-and-sweep pair finder gives the brute force pair list in the same order, and whole 2D and 3D
 # physics scenes move bit-for-bit the same with either one (docs/engine/perf_log.md)
+# Our own physics core (okay::physcore, docs/physics/physics_core.md): links only that small library, not the engine.
+add_executable(test_physcore_tree test_physcore_tree.cpp)
+target_link_libraries(test_physcore_tree PRIVATE okay::physcore)
+add_test(NAME physcore_tree COMMAND test_physcore_tree)
+add_executable(test_physcore_collide test_physcore_collide.cpp)
+target_link_libraries(test_physcore_collide PRIVATE okay::physcore)
+add_test(NAME physcore_collide COMMAND test_physcore_collide)
+add_executable(test_physcore_world test_physcore_world.cpp)
+target_link_libraries(test_physcore_world PRIVATE okay::physcore)
+add_test(NAME physcore_world COMMAND test_physcore_world)
+add_executable(test_physics_engine_mode test_physics_engine_mode.cpp)
+target_link_libraries(test_physics_engine_mode PRIVATE okay::engine)
+add_test(NAME physics_engine_mode COMMAND test_physics_engine_mode)
+add_executable(test_physics_one_path test_physics_one_path.cpp)
+target_link_libraries(test_physics_one_path PRIVATE okay::engine)
+add_test(NAME physics_one_path COMMAND test_physics_one_path)
+add_executable(test_physics_core_regressions test_physics_core_regressions.cpp)
+target_link_libraries(test_physics_core_regressions PRIVATE okay::engine)
+add_test(NAME physics_core_regressions COMMAND test_physics_core_regressions)
+# Writes the physics example scenes (not a test; build by hand: ninja gen_physics_examples, run with the examples folder).
+add_executable(gen_physics_examples EXCLUDE_FROM_ALL gen_physics_examples.cpp)
+target_link_libraries(gen_physics_examples PRIVATE okay::engine)
+
 add_executable(test_broadphase test_broadphase.cpp)
 target_link_libraries(test_broadphase PRIVATE okay::engine)
 add_test(NAME broadphase COMMAND test_broadphase)
@@ -1531,12 +1561,6 @@ add_test(NAME physics_joints COMMAND test_physics_joints)
 
 # Physics audit (docs/physics/physics.md): box contact points, the iterated solver on its own, the bugs the audit found
 # (both physics qualities), the Improved quality, and how its settings are saved.
-add_executable(test_physics_deep_manifold test_physics_deep_manifold.cpp)
-target_link_libraries(test_physics_deep_manifold PRIVATE okay::engine)
-add_test(NAME physics_deep_manifold COMMAND test_physics_deep_manifold)
-add_executable(test_physics_deep_solver test_physics_deep_solver.cpp)
-target_link_libraries(test_physics_deep_solver PRIVATE okay::engine)
-add_test(NAME physics_deep_solver COMMAND test_physics_deep_solver)
 add_executable(test_physics_deep_bugs test_physics_deep_bugs.cpp)
 target_link_libraries(test_physics_deep_bugs PRIVATE okay::engine)
 add_test(NAME physics_deep_bugs COMMAND test_physics_deep_bugs)
@@ -4666,8 +4690,10 @@ add_test(NAME controller_mapping COMMAND test_controller_mapping)
 # a 2 s network cancel). CI runs ctest with -j4, and a test sharing the machine with three others could miss such a limit for
 # reasons that have nothing to do with the code. RUN_SERIAL makes ctest run each of these with nothing else running, so they
 # see the same quiet machine as before; the other tests still run four at a time. Nothing is skipped or loosened (docs/process/automated_testing.md "CI speed").
+# ui_render_bench (3 ms per UI frame) and project_panel_db (re-checking 5,000 assets) missed their limits on the Windows test run
+# while sharing the runner with other tests; scripts/run_windows_tests.py honours RUN_SERIAL the same way.
 foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_pacing platform own_http_net
-                     launcher_download_own launcher_versions native_fetch playfab_own)
+                     launcher_download_own launcher_versions native_fetch playfab_own ui_render_bench project_panel_db)
     if(TEST ${_serial_test})
         set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
     endif()
@@ -4928,6 +4954,9 @@ add_test(NAME grok_145_146_153_155 COMMAND test_grok_145_146_153_155)
 add_executable(test_controller_actions test_controller_actions.cpp)
 target_link_libraries(test_controller_actions PRIVATE okay::engine)
 add_test(NAME controller_actions COMMAND test_controller_actions)
+add_executable(test_controller_feel2 test_controller_feel2.cpp)
+target_link_libraries(test_controller_feel2 PRIVATE okay::engine)
+add_test(NAME controller_feel2 COMMAND test_controller_feel2)
 
 # One rebinding store for InputActions and the typed ActionSet (duplicate audit #422, item 2).
 add_executable(test_input_one_store test_input_one_store.cpp)
@@ -5018,6 +5047,14 @@ add_executable(test_own_q3bsp_samples test_own_q3bsp_samples.cpp)
 target_link_libraries(test_own_q3bsp_samples PRIVATE okay::engine)
 target_compile_definitions(test_own_q3bsp_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME own_q3bsp_samples COMMAND test_own_q3bsp_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# One hostile-input battery over all six late own readers (glTF 1.0, OpenGEX, MDL, Q3BSP, IQM, COB): every truncation, every 32-bit word set to lying
+# values, bit flips, overlapping blocks, garbage with and without magic, deep nesting; time and counted-memory limits (tests/test_own_readers_sweep.cpp).
+add_executable(test_own_readers_sweep test_own_readers_sweep.cpp)
+target_link_libraries(test_own_readers_sweep PRIVATE okay::engine)
+target_include_directories(test_own_readers_sweep PRIVATE ${PROJECT_SOURCE_DIR}/engine/src/Render ${PROJECT_SOURCE_DIR}/engine/src/Core)
+add_test(NAME own_readers_sweep COMMAND test_own_readers_sweep WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(own_readers_sweep PROPERTIES TIMEOUT 900)
 
 # Table-driven right-answer checks for Visual Script nodes that had only an "it does something" test.
 add_executable(test_vs_node_values test_vs_node_values.cpp)

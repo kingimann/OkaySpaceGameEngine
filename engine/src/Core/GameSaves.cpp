@@ -51,7 +51,8 @@ bool GameSaves::Load(Scene& scene, const std::string& slot, std::string* error) 
     SaveLoadOptions o;
     o.deferred = true;
     // Only a level the game ships is loaded by name: the slot header is not trusted to name a file.
-    if (!info.scene.empty() && SceneManager::IndexOf(info.scene) >= 0)
+    // A whole-scene save (SaveGame, save_game, AutoSave) carries its own scene, so no level is reloaded for it.
+    if (!doc.Has(wholescene::kBlock) && !info.scene.empty() && SceneManager::IndexOf(info.scene) >= 0)
         o.reloadScene = SceneManager::Scenes()[(std::size_t)SceneManager::IndexOf(info.scene)];
     ++g_restoring;
     o.onDone = [slot](bool ok, const std::string& why) {

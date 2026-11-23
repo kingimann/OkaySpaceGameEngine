@@ -3011,6 +3011,11 @@ add_executable(test_save_framework test_save_framework.cpp)
 target_link_libraries(test_save_framework PRIVATE okay::engine)
 add_test(NAME save_framework COMMAND test_save_framework)
 
+# One store for whole-game saves: SaveGame is the save framework's whole-scene mode; old .okaygame files still load (Grok #422 item 1).
+add_executable(test_save_merge test_save_merge.cpp)
+target_link_libraries(test_save_merge PRIVATE okay::engine)
+add_test(NAME save_merge COMMAND test_save_merge)
+
 # Save framework on a Scene: Saveable capture/apply, dynamic spawn, destroyed objects,
 # checkpoints, quick save, autosave ring, continue.
 add_executable(test_save_scene test_save_scene.cpp)

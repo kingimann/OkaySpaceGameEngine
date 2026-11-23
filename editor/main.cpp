@@ -7583,8 +7583,10 @@ static void DrawRenderingMenuItems(EditorState& ed) {
         namespace osw = okay::ownswitches;
         osw::State& st = osw::Global();
         const osw::Context ctx = osw::Context::Here();
-        ImGui::TextDisabled("Off by default. A change works after you restart the editor.");
-        if (ImGui::MenuItem("Back to normal (all off)", nullptr, false, !st.chosen.empty())) { osw::AllOff(st.chosen); osw::SaveChosen(); }
+        ImGui::TextDisabled("On by default; untick one to go back to the third-party part. A change works after you restart the editor.");
+        std::vector<std::string> allOn; osw::AllOn(allOn);
+        if (ImGui::MenuItem("All on (default)", nullptr, false, st.chosen != allOn)) { st.chosen = allOn; osw::SaveChosen(); }
+        if (ImGui::MenuItem("All off (third-party parts)", nullptr, false, !st.chosen.empty())) { osw::AllOff(st.chosen); osw::SaveChosen(); }
         ImGui::Separator();
         for (const osw::Item& it : osw::Items()) {
             if (!osw::Available(it, ctx)) continue;

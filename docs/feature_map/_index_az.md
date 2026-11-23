@@ -5066,7 +5066,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - texture streaming (2.13)
 - textures (2.2, 3.6, 42.7, 42.7.1)
 - The check (42.8.2)
-- The Inspector on OkayUI (preview, off by default) (40.10)
+- The Inspector on OkayUI (preview, on by default) (40.10)
 - The launcher (18.9.5)
 - The loop (19.3.1)
 - The number and the rules (18.9.4)

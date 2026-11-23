@@ -3724,6 +3724,61 @@ struct SharedApiCall {
         return CallScriptApiDynamic(*entry, rt->host ? rt->host->gameObject : nullptr, a, warned.get());
     }
 };
+
+// What the topic functions of OkayScriptVM::Impl (RegisterXxxBuiltins) share: the command table and the few
+// small closures that more than one topic needs. Each topic copies the ones it uses at its top, so its body
+// reads exactly as it did when it was part of one long function.
+using BuiltinTable = decltype(Runtime::builtins);
+struct HostTransformFn {
+    Runtime* rt;
+    Transform* operator()() const { return rt->host ? rt->host->transform : nullptr; }
+};
+struct HostObjectFn {
+    Runtime* rt;
+    GameObject* operator()() const { return rt->host ? rt->host->gameObject : nullptr; }
+};
+struct HostSceneFn {
+    Runtime* rt;
+    Scene* operator()() const { return (rt->host && rt->host->gameObject) ? rt->host->gameObject->scene() : nullptr; }
+};
+// An object reference resolves by its id; a name ("" / "self" = this object) by the first object with that name.
+struct FindNamedFn {
+    Runtime* rt;
+    HostSceneFn sceneOf;
+    GameObject* operator()(const Value& v) const {
+        if (v.IsObject()) return ResolveObject(nullptr, v);
+        const std::string n = v.AsString();
+        if (n.empty() || n == "self") return rt->host ? rt->host->gameObject : nullptr;
+        Scene* s = sceneOf(); return s ? s->Find(n) : nullptr;
+    }
+};
+// alias("from", "to"): a second name for a builtin that is already registered.
+struct BuiltinAliasFn {
+    BuiltinTable* table;
+    void operator()(const char* from, const char* to) const {
+        auto it = table->find(to);
+        if (it != table->end()) (*table)[from] = it->second;
+    }
+};
+template <class T> struct HostAnimFn {
+    HostObjectFn self;
+    T* operator()() const { return FindAnimComponent<T>(self()); }
+};
+struct BuiltinCtx {
+    explicit BuiltinCtx(Runtime& r)
+        : b(r.builtins), tf{&r}, go{&r}, sceneOf{&r}, findNamed{&r, HostSceneFn{&r}}, alias{&r.builtins},
+          selfObj{&r}, charSelf{HostObjectFn{&r}}, modelSelf{HostObjectFn{&r}}, smSelf{HostObjectFn{&r}} {}
+    BuiltinTable& b;
+    HostTransformFn tf;
+    HostObjectFn go;
+    HostSceneFn sceneOf;
+    FindNamedFn findNamed;
+    BuiltinAliasFn alias;
+    HostObjectFn selfObj;
+    HostAnimFn<Character> charSelf;
+    HostAnimFn<ModelAnimator> modelSelf;
+    HostAnimFn<AnimStateMachine> smSelf;
+};
 } // namespace
 
 struct OkayScriptVM::Impl {
@@ -3795,11 +3850,8 @@ struct OkayScriptVM::Impl {
         return n;
     }
 
-    void RegisterBuiltins() {
-        InstallSharedApis();
-        auto& b = rt.builtins;
-        auto tf = [this]() -> Transform* { return rt.host ? rt.host->transform : nullptr; };
-
+    void RegisterDebugBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // ---- Debugging -------------------------------------------------
         // All of these surface in the editor's Console (it installs a log sink).
         auto joinArgs = [](std::vector<Value>& a, const char* sep = " ") {
@@ -3840,6 +3892,11 @@ struct OkayScriptVM::Impl {
         };
         b["concat"] = [joinArgs](std::vector<Value>& a) { return Value{joinArgs(a, "")}; };
 
+    }
+
+    void RegisterScriptUiBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto tf = c.tf;
         // ---- Immediate-mode UI (forwarded to the host's ScriptUIBridge) ----
         // A game draws its UI each frame; the host brackets the frame and renders it.
         //   ui_begin("Title", x, y, w, h) ... widgets ... ui_end()
@@ -3931,6 +3988,11 @@ struct OkayScriptVM::Impl {
             if (Transform* t = tf()) t->Rotate({0, 0, a.empty() ? 0.0f : a[0].AsFloat()});
             return Value{};
         };
+    }
+
+    void RegisterMotionHelperBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto tf = c.tf;
         // ---- High-level one-liners: dt-scaled INTERNALLY so beginners never write
         // "* dt". walk(dx,dy,speed) heads in a direction; spin(degPerSec) rotates
         // smoothly. (WASD control is the existing on_key_move(speed).) Much less code.
@@ -4064,6 +4126,10 @@ struct OkayScriptVM::Impl {
         };
         b["axis_x"] = [](std::vector<Value>&) { return Value{Input::AxisWASD().x}; };
         b["axis_y"] = [](std::vector<Value>&) { return Value{Input::AxisWASD().y}; };
+    }
+
+    void RegisterInputBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // key / key_down / key_up and the game actions action / action_down / action_up / action_value are in
         // the shared table (Scripting/ScriptApiCore.cpp). Here: action_x / action_y for Move / Look,
         // rumble(low, high, s), rebind("interact", "key:f").
@@ -4360,6 +4426,11 @@ struct OkayScriptVM::Impl {
             if (a.size() >= 2 && rt.host) rt.host->globals[a[0].AsString()] = a[1];
             return Value{};
         };
+    }
+
+    void RegisterScoreSpawnBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto go = c.go;
         // score()/add_score(n): the shared "score" value in one call (less than
         // set("score", get("score") + n)). set_score(n) overwrites it.
         b["score"] = [this](std::vector<Value>&) -> Value {
@@ -4407,6 +4478,12 @@ struct OkayScriptVM::Impl {
                                                  a.size() > 3 ? a[3].AsFloat() : 0.0f};
             return ObjectRef(go);
         };
+    }
+
+    void RegisterObjectPoolBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto go = c.go;
+        auto sceneOf = c.sceneOf;
         // ---- Object pools: reuse spawned objects instead of creating and freeing each one ----
         // pool_get("Bullet.okayprefab", x, y [, z]) is spawn / spawn3 taken from this scene's pool for that prefab: an
         // idle object when there is one (reset to a fresh copy of the prefab, its scripts start again), else a new one.
@@ -4454,9 +4531,6 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         // Control other objects by name (show/hide UI, toggle enemies, etc.).
-        auto sceneOf = [this]() -> Scene* {
-            return (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-        };
         b["activate"] = [sceneOf](std::vector<Value>& a) {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) g->active = true;
             return Value{};
@@ -4469,15 +4543,15 @@ struct OkayScriptVM::Impl {
             if (!a.empty()) if (Scene* s = sceneOf()) return Value{ResolveObject(s, a[0]) != nullptr};
             return Value{false};
         };
+    }
+
+    void RegisterNamedObjectBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto sceneOf = c.sceneOf;
+        auto findNamed = c.findNamed;
         // ---- Named-object helpers (also what visual-graph code export uses) ----
         // An object reference resolves by its id; a name ("" / "self" = this object)
         // by the first object with that name, as it always did.
-        auto findNamed = [this, sceneOf](const Value& v) -> GameObject* {
-            if (v.IsObject()) return ResolveObject(nullptr, v);
-            const std::string n = v.AsString();
-            if (n.empty() || n == "self") return rt.host ? rt.host->gameObject : nullptr;
-            Scene* s = sceneOf(); return s ? s->Find(n) : nullptr;
-        };
         b["position_of"] = [findNamed](std::vector<Value>& a) {
             GameObject* g = findNamed(a.empty() ? Value{std::string()} : a[0]);
             return Value{(g && g->transform) ? g->transform->Position() : Vec3{0, 0, 0}};
@@ -4625,6 +4699,11 @@ struct OkayScriptVM::Impl {
                 return Value{g->transform->Position().z};
             return Value{0.0f};
         };
+    }
+
+    void RegisterNpcBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto sceneOf = c.sceneOf;
         // ---- NPC commands: order an NPC Controller around from a script -----
         // npc_goto("Guard", x, y, z): send the named NPC to a world point (it
         // pathfinds there if pathfinding is on, then broadcasts npc_arrived).
@@ -4658,6 +4737,11 @@ struct OkayScriptVM::Impl {
             NPCController* n = npcOf(a.empty() ? std::string{} : a[0].AsString());
             return Value{std::string{n ? n->StateName() : ""}};
         };
+    }
+
+    void RegisterSpawnerBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto sceneOf = c.sceneOf;
         // ---- Spawner control: run enemy/pickup waves from a script ----------
         // Omit the name ("" ) to drive a sibling Spawner on this object.
         auto spawnerOf = [this, sceneOf](const std::string& name) -> Spawner* {
@@ -4682,6 +4766,12 @@ struct OkayScriptVM::Impl {
             Spawner* s = spawnerOf(a.empty() ? std::string{} : a[0].AsString());
             return Value{(float)(s ? s->AliveCount() : 0)};
         };
+    }
+
+    void RegisterBuildModeBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto tf = c.tf;
+        auto sceneOf = c.sceneOf;
         // ---- In-game build mode + logic links (docs/gameplay/build_mode.md) -----------
         // They drive the scene's Build Mode component (the player's).
         auto buildOf = [sceneOf]() -> BuildMode* {
@@ -4837,6 +4927,13 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
 
+    }
+
+    void RegisterMovementHelperBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto tf = c.tf;
+        auto go = c.go;
+        auto sceneOf = c.sceneOf;
         // ---- High-level one-liners -----------------------------------------
         // Each is a whole behaviour in a single call, meant to be invoked every
         // frame from update(): the "write less, do more" layer over the low-level
@@ -5048,6 +5145,11 @@ struct OkayScriptVM::Impl {
             }
             return Value{(float)made};
         };
+    }
+
+    void RegisterCameraControlBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto sceneOf = c.sceneOf;
         // Main-camera control from script (screen-follow, cutscenes, zoom).
         b["cam_x"] = [sceneOf](std::vector<Value>&) -> Value {
             if (Scene* s = sceneOf()) if (s->mainCamera) return Value{s->mainCamera->gameObject->transform->localPosition.x};
@@ -5115,6 +5217,12 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
+    }
+
+    void RegisterCameraRigBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto go = c.go;
+        auto sceneOf = c.sceneOf;
         // ---- Camera rigs and effects (docs/gameplay/cameras.md): Camera.* ----
         // The live shot: the virtual camera the brain is showing, else the first enabled one.
         auto liveVcam = [sceneOf]() -> VirtualCamera* {
@@ -5275,7 +5383,6 @@ struct OkayScriptVM::Impl {
             return Value{best};
         };
         // Drive sibling components on this GameObject.
-        auto go = [this]() -> GameObject* { return rt.host ? rt.host->gameObject : nullptr; };
         b["set_text"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go())
                 if (auto* tr = g->GetComponent<TextRenderer>())
@@ -5300,6 +5407,11 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
+    }
+
+    void RegisterUiByNameBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto sceneOf = c.sceneOf;
         // ---- UI by name: read/drive any widget from script -----------------
         // All take the GameObject name as the first argument so one script can
         // wire up a whole menu. Missing objects/components are no-ops / defaults.
@@ -5544,6 +5656,11 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
+    }
+
+    void RegisterUiRuntimeBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto sceneOf = c.sceneOf;
         // ---- Runtime UI: roles, radio groups, floating numbers, dialogue boxes (by object name) ----
         // ui_set_variant("Quit", "danger"): give a widget a role (primary, secondary, danger, ghost,
         // outline, pill, default) and style it from the scene's theme now.
@@ -5815,6 +5932,12 @@ struct OkayScriptVM::Impl {
                 if (auto* in = g->GetComponent<UIInputField>()) in->SetContentType(SafeInt(a[1].AsFloat()));
             return Value{};
         };
+    }
+
+    void RegisterUiControlBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto go = c.go;
+        auto sceneOf = c.sceneOf;
         // grok/ui-toast. toast_push (not ui_toast, which is the immediate-mode popup).
         auto firstToast = [sceneOf]() -> UIToast* {
             Scene* s = sceneOf();
@@ -6051,6 +6174,12 @@ struct OkayScriptVM::Impl {
                 if (auto* tb = g->GetComponent<UITabs>()) tb->SetTabEnabled(SafeInt(a[0].AsFloat()), a[1].AsBool());
             return Value{};
         };
+    }
+
+    void RegisterBody2DBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto tf = c.tf;
+        auto go = c.go;
         // Sibling Rigidbody2D control (jump, dash, knockback, top-down movement).
         // (No Rigidbody2D? The same calls drive a Rigidbody3D, with an optional z.)
         auto arg3 = [](std::vector<Value>& a, std::size_t i) { return a.size() > i ? a[i].AsFloat() : 0.0f; };
@@ -6129,6 +6258,11 @@ struct OkayScriptVM::Impl {
                                       a[3].AsFloat(), a.size() > 4 ? a[4].AsFloat() : 0.0f);
             return Value{};
         };
+    }
+
+    void RegisterSpriteEffectBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto go = c.go;
         // Set a sibling UIImage's texture from script (swap icons, states).
         b["set_image"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go()) if (auto* im = g->GetComponent<UIImage>())
@@ -6218,6 +6352,11 @@ struct OkayScriptVM::Impl {
         };
         b["tile_w"] = [go](std::vector<Value>&) { GameObject* g = go(); auto* tm = g ? g->GetComponent<Tilemap>() : nullptr; return Value{tm ? (float)tm->Width() : 0.0f}; };
         b["tile_h"] = [go](std::vector<Value>&) { GameObject* g = go(); auto* tm = g ? g->GetComponent<Tilemap>() : nullptr; return Value{tm ? (float)tm->Height() : 0.0f}; };
+    }
+
+    void RegisterAudioSaveBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto sceneOf = c.sceneOf;
         // Global audio settings (for options menus).
         b["set_volume"] = [](std::vector<Value>& a) { AudioMixer::masterVolume = a.empty() ? 1.0f : a[0].AsFloat(); return Value{}; };
         b["volume"]     = [](std::vector<Value>&) { return Value{AudioMixer::masterVolume}; };
@@ -6276,6 +6415,10 @@ struct OkayScriptVM::Impl {
         b["game_slot_text"]    = [gameSlot](std::vector<Value>& a) { return Value{GameSaves::SavedText(gameSlot(a))}; };
         b["game_slot_label"]   = [gameSlot](std::vector<Value>& a) { return Value{GameSaves::Label(gameSlot(a))}; };
         b["game_can_continue"] = [](std::vector<Value>&) { return Value{GameSaves::CanContinue() ? 1.0f : 0.0f}; };
+    }
+
+    void RegisterDisplayBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // Display: the monitor, window mode, resolution and refresh the Settings screen edits.
         // set_* applies at once and is saved. begin_display_confirm remembers the current
         // choice and starts the 10-second "keep these settings?" clock; keep_display_settings
@@ -6348,6 +6491,12 @@ struct OkayScriptVM::Impl {
             return Value{on ? 1.0f : 0.0f};
         };
         b["get_display_confirm_seconds"] = [](std::vector<Value>&) { return Value{DisplaySettings::TrialSecondsLeft()}; };
+    }
+
+    void RegisterStoryBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto go = c.go;
+        auto sceneOf = c.sceneOf;
         // Localization (docs/engine/localization.md): loc("key", args...) is the key's text in
         // the player's language with {0}, {1}... filled from the arguments, or {name}
         // from a map (loc("greet", map_set(map(), "player", name))); set_language("fr") switches and
@@ -6544,6 +6693,11 @@ struct OkayScriptVM::Impl {
         };
         // Keep the current volumes as the player's settings (also saved on quit).
         b["save_audio_settings"] = [](std::vector<Value>&) { AudioMixer::SaveSettings(); return Value{}; };
+    }
+
+    void RegisterNavigationBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto sceneOf = c.sceneOf;
         // ---- Navigation: the Nav Mesh Agent on this object (or a named one) --------
         // nav_move_to(x, y, z) / nav_move_to("Name", x, y, z): walk there over the
         // navmesh; nav_stop(), nav_arrived() -> 1 once the point was reached,
@@ -6577,6 +6731,11 @@ struct OkayScriptVM::Impl {
             std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
             return Value{n ? n->RemainingDistance() : 0.0f};
         };
+    }
+
+    void RegisterGridPathBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto sceneOf = c.sceneOf;
         // ---- 2D grid paths: the Grid Path Agent on this object (or a named one) ----
         // grid_move_to(x, y) walks to the cell that contains that world point.
         // grid_move_cell(x, y) walks to that cell. A leading name picks another object.
@@ -6653,6 +6812,11 @@ struct OkayScriptVM::Impl {
             o->Clear();
             return Value{1.0f};
         };
+    }
+
+    void RegisterNavmeshQueryBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto sceneOf = c.sceneOf;
         // ---- Navmesh queries (no agent needed) ----------------------------------
         // nav_path_exists(x, y, z) -> 1 when a walkable route leads from this object to
         // the point (nav_path_exists(fx, fy, fz, tx, ty, tz) between two points);
@@ -6703,6 +6867,12 @@ struct OkayScriptVM::Impl {
             if (b2.size() < 4) b2.push_back(Value{50.0f});   // "nearest" looks further than "walkable"
             return Value{navSample(b2, p, out) ? out : q};
         };
+    }
+
+    void RegisterBehaviorTreeBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto go = c.go;
+        auto sceneOf = c.sceneOf;
         // ---- Behavior trees: the Behavior Tree Runner on this object (or a named one) ----
         // bt_set(key, value) / bt_set("Name", key, value) writes the blackboard,
         // bt_get(key) / bt_get("Name", key) reads it, bt_run("Assets/Guard.okaybt")
@@ -6747,6 +6917,11 @@ struct OkayScriptVM::Impl {
             if (r) r->Stop();
             return Value{r ? 1.0f : 0.0f};
         };
+    }
+
+    void RegisterSplineBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto sceneOf = c.sceneOf;
         // ---- Splines, lines and trails: this object's, or a named object's -----------
         // spline_point("Rail", t): the world point a fraction t (0..1) of the way along
         // the Spline (by length, so even steps of t are even steps on the curve);
@@ -6800,6 +6975,11 @@ struct OkayScriptVM::Impl {
             if (tr) tr->Clear();
             return Value{tr ? 1.0f : 0.0f};
         };
+    }
+
+    void RegisterMusicBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto go = c.go;
         // Music: the scene's MusicPlayer. music_play(index or "file"), music_next(),
         // music_previous(), music_stop([fade seconds]), music_pause(), music_resume().
         auto music = [go]() -> MusicPlayer* {
@@ -6832,6 +7012,10 @@ struct OkayScriptVM::Impl {
                 AudioMixer::groupMuted[(int)g] = a.size() < 2 || a[1].AsBool();
             return Value{};
         };
+    }
+
+    void RegisterRaycast2DBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // Physics queries: raycast_hit(ox, oy, dx, dy [, maxDist]) returns 1 if
         // the ray hits a collider, and overlap(x, y) returns 1 if a collider
         // contains that point. Great for shooting, ground checks, line-of-sight.
@@ -6917,6 +7101,10 @@ struct OkayScriptVM::Impl {
                     Vec2{a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f};
             return Value{};
         };
+    }
+
+    void RegisterSceneLoadBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // Load another scene at end of frame (level transitions, restart).
         b["load_scene"] = [this](std::vector<Value>& a) {
             if (!a.empty() && rt.host && rt.host->gameObject && rt.host->gameObject->scene() &&
@@ -6973,6 +7161,13 @@ struct OkayScriptVM::Impl {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
             return Value{s ? s->Name() : std::string{}};
         };
+    }
+
+    void RegisterCharacterAnimBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto selfObj = c.selfObj;
+        auto charSelf = c.charSelf;
+        auto modelSelf = c.modelSelf;
         // ---- Multiplayer (NetworkManager) -----------------------------
         // Start hosting / join from a script; both wire the host object as the
         // broadcast avatar and mirror remote peers as sprites.
@@ -6980,9 +7175,6 @@ struct OkayScriptVM::Impl {
         // The Character and the model's ModelAnimator are found the same way as in
         // visual scripts (AnimControl.hpp): this object, then its children (a
         // player whose model sits under it), then its parents (a script on a part).
-        auto selfObj = [this]() -> GameObject* { return rt.host ? rt.host->gameObject : nullptr; };
-        auto charSelf = [selfObj]() -> Character* { return FindAnimComponent<Character>(selfObj()); };
-        auto modelSelf = [selfObj]() -> ModelAnimator* { return FindAnimComponent<ModelAnimator>(selfObj()); };
         // play_clip holds the clip (locomotion and the humanoid retarget wait) until stop_clip.
         auto warnedNoAnimator = std::make_shared<bool>(false);
         b["play_clip"] = [selfObj, warnedNoAnimator](std::vector<Value>& a) {
@@ -7130,8 +7322,14 @@ struct OkayScriptVM::Impl {
             return Value{(c && c->PlayClip(a[0].AsString())) ? 1.0f : 0.0f};
         };
         // Pop the next fired animation event name ("" if none) — footsteps, hit windows.
+    }
+
+    void RegisterAnimStateMachineBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto go = c.go;
+        auto selfObj = c.selfObj;
+        auto smSelf = c.smSelf;
         // ---- Animation state machine (found like the animators above) ----
-        auto smSelf = [selfObj]() -> AnimStateMachine* { return FindAnimComponent<AnimStateMachine>(selfObj()); };
         b["anim_set_float"] = [smSelf](std::vector<Value>& a) {
             if (AnimStateMachine* m = smSelf(); m && a.size() >= 2) m->SetFloat(a[0].AsString(), a[1].AsFloat());
             return Value{};
@@ -7417,6 +7615,11 @@ struct OkayScriptVM::Impl {
             HumanoidActions::SetShimmy(selfObj(), a.empty() ? 0.0f : a[0].AsFloat());
             return Value{};
         };
+    }
+
+    void RegisterBlendShapeBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto smSelf = c.smSelf;
         // ---- Blend shapes (morph targets) on this object and everything under it ----
         //   blend_shape("Smile", 0.8)   set a shape's weight 0..1 on every mesh that has it
         //   blend_shape_get("Smile")    read it back (0 if no mesh has it)
@@ -7445,6 +7648,11 @@ struct OkayScriptVM::Impl {
         };
         // Previous state, seconds in the current state, and normalized clip time
         // (0..1 per loop; keeps counting past 1 on loops) — for gameplay timing.
+    }
+
+    void RegisterIkBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto selfObj = c.selfObj;
         // ---- IK control on this object (any of LimbIK / ChainIK / LookAtIK / AimIK) ----
         //   ik_enable(on)            switch IK on/off (eases over each component's fadeTime)
         //   ik_set_weight(w)         0..1 on every IK component on this object
@@ -7666,6 +7874,13 @@ struct OkayScriptVM::Impl {
             ProceduralObjectHolding* h = holder();
             return Value{h && h->Held() ? h->Held()->name : std::string()};
         };
+    }
+
+    void RegisterInventoryBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto charSelf = c.charSelf;
+        auto modelSelf = c.modelSelf;
+        auto smSelf = c.smSelf;
         // ---- Inventory ----
         // Every inv_* / grid_* call works on the host's Inventory (on it or its root), or
         // on the named object's when the optional last argument names one. Item names
@@ -7916,6 +8131,10 @@ struct OkayScriptVM::Impl {
             std::uint16_t port = (std::uint16_t)(a.size() < 2 ? 45000 : SafeInt(a[1].AsFloat()));
             return Value{(n && n->StartClient(host, port)) ? 1.0f : 0.0f};
         };
+    }
+
+    void RegisterNetworkBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // Relay (NAT traversal): host/join through a shared relay + session code,
         // so peers behind routers connect without port-forwarding.
         b["net_host_relay"] = [this](std::vector<Value>& a) {
@@ -8002,6 +8221,10 @@ struct OkayScriptVM::Impl {
             const auto r = n->Roster(); const int i = SafeInt(a[0].AsFloat());
             return Value{(i >= 0 && i < (int)r.size()) ? (float)r[i].id : -1.0f};
         };
+    }
+
+    void RegisterMatchmakingQueueBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // ---- Matchmaking queues (docs/sql/matchmaking.sql) ----
         // net_queue_join("duel", 2[, minPlayers[, "EU"]]) puts this player (and their
         // party, if they lead one) in the queue; when a match is found the game joins
@@ -8035,6 +8258,11 @@ struct OkayScriptVM::Impl {
             return Value{(n && Matchmaker::Shared().Connect(n)) ? 1.0f : 0.0f};
         };
 
+    }
+
+    void RegisterMatchResultBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto go = c.go;
         // ---- Matches: results -> stats + leaderboards (docs/sql/matches.sql) ----
         // Server: net_match_start() zeroes scores and starts the clock;
         // net_match_end([winner ids...]) reports everyone's score / place / win
@@ -8247,6 +8475,10 @@ struct OkayScriptVM::Impl {
         b["net_encrypted"] = [this](std::vector<Value>&) {
             NetworkManager* n = Net(); return Value{(n && n->Encrypted()) ? 1.0f : 0.0f};
         };
+    }
+
+    void RegisterServerBrowserBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // ---- Supabase matchmaking / server browser --------------------
         // A shared cache of the last browse, so scripts can list then join by index.
         auto mmList = std::make_shared<std::vector<GameSession>>();
@@ -8445,6 +8677,10 @@ struct OkayScriptVM::Impl {
             const std::string id = o ? o->Id() : rt.host->gameObject->name;
             return Value{n->GetVar(id.empty() ? name : id + "." + name)};
         };
+    }
+
+    void RegisterSteamBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // ---- Steam (shared process-wide service) ----------------------
         b["steam_name"]   = [](std::vector<Value>&) { return Value{Steam::Get().UserName()}; };
         b["steam_unlock"] = [](std::vector<Value>& a) {
@@ -8559,6 +8795,10 @@ struct OkayScriptVM::Impl {
         b["steam_get_presence"] = [](std::vector<Value>& a) {
             return Value{a.empty() ? std::string{} : Steam::Get().GetRichPresence(a[0].AsString())};
         };
+    }
+
+    void RegisterFriendsBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // ---- Friends -------------------------------------------------------
         // Big Steam ids exceed float precision, so friend/lobby ids are passed
         // as strings in and out of these builtins.
@@ -8573,6 +8813,10 @@ struct OkayScriptVM::Impl {
             std::uint64_t fid = (std::uint64_t)std::strtoull(a[0].AsString().c_str(), nullptr, 10);
             return Value{Steam::Get().InviteFriend(fid) ? 1.0f : 0.0f};
         };
+    }
+
+    void RegisterLobbyBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // ---- Lobbies (Steam matchmaking) -----------------------------------
         b["steam_lobby_create"] = [](std::vector<Value>& a) {
             int maxm = a.empty() ? 4 : SafeInt(a[0].AsFloat());
@@ -8613,6 +8857,10 @@ struct OkayScriptVM::Impl {
             }
             return v;
         };
+    }
+
+    void RegisterPlayFabBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // ---- PlayFab (cloud login / leaderboards / saves; blocking HTTP) ----
         // Mirrors the playfab_* visual-scripting instructions. Call pf_login once
         // (e.g. in start()), not per frame — each call is a real web request.
@@ -8667,6 +8915,10 @@ struct OkayScriptVM::Impl {
         b["pf_delete"] = [](std::vector<Value>& a) {
             return Value{(!a.empty() && PlayFab::Get().DeleteUserData(a[0].AsString())) ? 1.0f : 0.0f};
         };
+    }
+
+    void RegisterAccountBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // ---- Player accounts (shared process-wide service) ------------
         // account_login("user","pass") / account_register(...) return 1 on
         // success and 0 on failure; account_error() carries the reason.
@@ -8906,6 +9158,10 @@ struct OkayScriptVM::Impl {
             if (hi - lo == 0.0f) return Value{0.0f};
             return Value{Mathf::Clamp01((v - lo) / (hi - lo))};
         };
+    }
+
+    void RegisterEasingBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // ---- Easing curves: map a normalized time t (0..1) to an eased 0..1 ----
         // For tweening/animation. Pass the raw progress; multiply the result into a
         // range yourself, or use with lerp(a, b, ease_out(t)).
@@ -9179,6 +9435,10 @@ struct OkayScriptVM::Impl {
             float x = a.empty() ? 0.0f : a[0].AsFloat();
             return Value{x - Mathf::Floor(x)};
         };
+    }
+
+    void RegisterBitsJsonStringBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // ---- Bitwise / integer helpers (flags, masks, tile ids, packing) ------
         // Values are treated as 32-bit integers. Handy for bit flags and tilemaps.
         auto I = [](std::vector<Value>& a, std::size_t i) -> std::int32_t {
@@ -9529,6 +9789,13 @@ struct OkayScriptVM::Impl {
         b["pi"]    = [](std::vector<Value>&) { return Value{Mathf::PI}; };
         b["deg2rad"] = [](std::vector<Value>& a) { return Value{(a.empty() ? 0 : a[0].AsFloat()) * Mathf::Deg2Rad}; };
         b["rad2deg"] = [](std::vector<Value>& a) { return Value{(a.empty() ? 0 : a[0].AsFloat()) * Mathf::Rad2Deg}; };
+    }
+
+    void RegisterTransformHelperBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto tf = c.tf;
+        auto go = c.go;
+        auto sceneOf = c.sceneOf;
         // Transform helpers
         b["set_x"] = [tf](std::vector<Value>& a) { if (Transform* t = tf()) t->localPosition.x = a.empty() ? 0 : a[0].AsFloat(); return Value{}; };
         b["set_y"] = [tf](std::vector<Value>& a) { if (Transform* t = tf()) t->localPosition.y = a.empty() ? 0 : a[0].AsFloat(); return Value{}; };
@@ -9779,6 +10046,10 @@ struct OkayScriptVM::Impl {
         // fps(): frames per second as measured, not 1 / this frame's scaled delta (which read 0 in a pause and doubled
         // at timeScale 0.5): see RealFps above.
         b["fps"] = [](std::vector<Value>&) -> Value { return Value{RealFps()}; };
+    }
+
+    void RegisterPhysicsQueryBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // 3D physics: ground/line-of-sight check via a 3D ray, and gravity.
         b["raycast_hit3"] = [this](std::vector<Value>& a) -> Value {
             if (a.size() < 6 || !rt.host || !rt.host->gameObject) return Value{false};
@@ -10110,6 +10381,11 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
 
+    }
+
+    void RegisterMaterialEventBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto go = c.go;
         // --- Material control on a sibling MeshRenderer ---
         b["set_emissive"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go()) if (auto* mr = g->GetComponent<MeshRenderer>())
@@ -10344,6 +10620,10 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
 
+    }
+
+    void RegisterMathUtilityBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
         // ---- More everyday math / utility helpers ----------------------
         auto N = [](std::vector<Value>& a, std::size_t i, float d = 0.0f) {
             return i < a.size() ? a[i].AsFloat() : d;
@@ -10379,6 +10659,11 @@ struct OkayScriptVM::Impl {
             std::string out; for (int i = 0; i < n; ++i) out += s; return Value{out};
         };
 
+    }
+
+    void RegisterTweenBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto go = c.go;
         // ---- Tweening (DOTween-style) ----------------------------------
         // Every tween_* call starts a tween on this object and returns its id, so it
         // can be configured and controlled afterwards (tween_loops(id, -1, "yoyo"),
@@ -10752,12 +11037,13 @@ struct OkayScriptVM::Impl {
             if (auto f = fnFromArg(a, 2)) s.InsertCallback(a.size() > 1 ? a[1].AsFloat() : 0.0f, f);
         });
 
+    }
+
+    void RegisterFriendlyAliasBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto alias = c.alias;
         // ---- Friendly aliases: intuitive names for common builtins so games
         //      read naturally. Each points at an already-registered function. ----
-        auto alias = [&b](const char* from, const char* to) {
-            auto it = b.find(to);
-            if (it != b.end()) b[from] = it->second;
-        };
         alias("delta_time", "dt");
         alias("get_key", "key");
         alias("get_key_down", "key_down");
@@ -10790,6 +11076,11 @@ struct OkayScriptVM::Impl {
         alias("screen_height", "screen_h");
         alias("debug", "debug_log");
 
+    }
+
+    void RegisterCsApiBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto alias = c.alias;
         // ---- API: write scripts that look like C#. -----
         //      Dotted names are single tokens (see the lexer), so these read as
         //      Input.GetKeyDown("space"), Mathf.Sin(t), Debug.Log(x), etc.
@@ -10936,6 +11227,12 @@ struct OkayScriptVM::Impl {
         alias("String.Format", "format");
         // Quaternion.Euler(x, y, z) -> a Vec3 of euler angles (assignable to
         // transform.rotation, which uses the Z component for 2D).
+    }
+
+    void RegisterVehicleBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto sceneOf = c.sceneOf;
+        auto alias = c.alias;
         // ---- Vehicles (docs/gameplay/vehicles.md): Vehicle.* ----
         // The first argument is the vehicle (an object or its name); leave it as "" to mean the object this script is on.
         auto carOf = [sceneOf, this](std::vector<Value>& a) -> VehicleController* {
@@ -11091,6 +11388,11 @@ struct OkayScriptVM::Impl {
         alias("Application.Quit", "quit");
         alias("GameObject.Find", "exists");
 
+    }
+
+    void RegisterPlainAliasBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto alias = c.alias;
         // ---- Plain-English aliases: say what you mean. Every name below points
         //      at an existing builtin, so beginners can guess the right word. ----
         // Input
@@ -11205,6 +11507,12 @@ struct OkayScriptVM::Impl {
         alias("json_stringify", "to_json");
         alias("json_parse", "from_json");
 
+    }
+
+    void RegisterCsCompatBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto tf = c.tf;
+        auto alias = c.alias;
         // ---- C# compatibility -------------------------------------------
         // Collections created by `new List<T>()`, `new Dictionary<K,V>()`, `new T[n]`
         // (the parser lowers those to these calls). Lists/arrays share one type.
@@ -11314,6 +11622,11 @@ struct OkayScriptVM::Impl {
         alias("Vector3.Reflect", "vec_reflect");
         alias("Mathf.Clamp01", "clamp01");
 
+    }
+
+    void RegisterCoroutineBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto alias = c.alias;
         // ---- Coroutines: StartCoroutine(Routine()) + yield return new WaitForSeconds(t) ----
         b["WaitForSeconds"] = [](std::vector<Value>& a) {
             Value v = Value::MakeMap(); (*v.AsMap())["__wait"] = Value{a.empty() ? 0.0f : a[0].AsFloat()}; return v;
@@ -11351,6 +11664,15 @@ struct OkayScriptVM::Impl {
         };
         b["StopAllCoroutines"] = [this](std::vector<Value>&) { rt.StopCoroutines(""); return Value{}; };
 
+    }
+
+    void RegisterObjectLifecycleBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto tf = c.tf;
+        auto go = c.go;
+        auto sceneOf = c.sceneOf;
+        auto findNamed = c.findNamed;
+        auto alias = c.alias;
         // ---- Objects: Destroy(obj[, seconds]), Instantiate(prefab, pos, rot), CompareTag ----
         b["Destroy"] = [this, findNamed](std::vector<Value>& a) {
             Value target = a.empty() ? Value{std::string()} : a[0];
@@ -11433,6 +11755,13 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
 
+    }
+
+    void RegisterComponentAccessBuiltins(BuiltinCtx& c) {
+        auto& b = c.b;
+        auto go = c.go;
+        auto findNamed = c.findNamed;
+        auto alias = c.alias;
         // ---- Components: GetComponent<T>() returns a reference ("@T") whose
         // fields / methods map onto the engine component. ----
         auto compOf = [](GameObject* g, const std::string& t) -> bool {
@@ -11839,6 +12168,69 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["ForceMode2D.Impulse"] = [](std::vector<Value>&) { return Value{1.0f}; };
+    }
+
+    void RegisterBuiltins() {
+        InstallSharedApis();
+        BuiltinCtx c(rt);
+        RegisterDebugBuiltins(c);
+        RegisterScriptUiBuiltins(c);
+        RegisterMotionHelperBuiltins(c);
+        RegisterInputBuiltins(c);
+        RegisterScoreSpawnBuiltins(c);
+        RegisterObjectPoolBuiltins(c);
+        RegisterNamedObjectBuiltins(c);
+        RegisterNpcBuiltins(c);
+        RegisterSpawnerBuiltins(c);
+        RegisterBuildModeBuiltins(c);
+        RegisterMovementHelperBuiltins(c);
+        RegisterCameraControlBuiltins(c);
+        RegisterCameraRigBuiltins(c);
+        RegisterUiByNameBuiltins(c);
+        RegisterUiRuntimeBuiltins(c);
+        RegisterUiControlBuiltins(c);
+        RegisterBody2DBuiltins(c);
+        RegisterSpriteEffectBuiltins(c);
+        RegisterAudioSaveBuiltins(c);
+        RegisterDisplayBuiltins(c);
+        RegisterStoryBuiltins(c);
+        RegisterNavigationBuiltins(c);
+        RegisterGridPathBuiltins(c);
+        RegisterNavmeshQueryBuiltins(c);
+        RegisterBehaviorTreeBuiltins(c);
+        RegisterSplineBuiltins(c);
+        RegisterMusicBuiltins(c);
+        RegisterRaycast2DBuiltins(c);
+        RegisterSceneLoadBuiltins(c);
+        RegisterCharacterAnimBuiltins(c);
+        RegisterAnimStateMachineBuiltins(c);
+        RegisterBlendShapeBuiltins(c);
+        RegisterIkBuiltins(c);
+        RegisterInventoryBuiltins(c);
+        RegisterNetworkBuiltins(c);
+        RegisterMatchmakingQueueBuiltins(c);
+        RegisterMatchResultBuiltins(c);
+        RegisterServerBrowserBuiltins(c);
+        RegisterSteamBuiltins(c);
+        RegisterFriendsBuiltins(c);
+        RegisterLobbyBuiltins(c);
+        RegisterPlayFabBuiltins(c);
+        RegisterAccountBuiltins(c);
+        RegisterEasingBuiltins(c);
+        RegisterBitsJsonStringBuiltins(c);
+        RegisterTransformHelperBuiltins(c);
+        RegisterPhysicsQueryBuiltins(c);
+        RegisterMaterialEventBuiltins(c);
+        RegisterMathUtilityBuiltins(c);
+        RegisterTweenBuiltins(c);
+        RegisterFriendlyAliasBuiltins(c);
+        RegisterCsApiBuiltins(c);
+        RegisterVehicleBuiltins(c);
+        RegisterPlainAliasBuiltins(c);
+        RegisterCsCompatBuiltins(c);
+        RegisterCoroutineBuiltins(c);
+        RegisterObjectLifecycleBuiltins(c);
+        RegisterComponentAccessBuiltins(c);
         CheckSharedApis();
     }
 };

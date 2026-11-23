@@ -239,7 +239,7 @@ Back to the [code index](../code_index.md). 262 headers, 741 names.
 
 ## `engine/include/okay/Components/ControllerTuning.hpp`
 
-- `ControllerTuning` struct, line 28
+- `ControllerTuning` struct, line 32
 
 ## `engine/include/okay/Components/Crafting.hpp`
 

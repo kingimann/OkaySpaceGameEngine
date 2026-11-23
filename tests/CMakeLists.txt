@@ -1005,6 +1005,29 @@ add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --wa
 
 # Physics broad phase: the sort-and-sweep pair finder gives the brute force pair list in the same order, and whole 2D and 3D
 # physics scenes move bit-for-bit the same with either one (docs/engine/perf_log.md)
+# Our own physics core (okay::physcore, docs/physics/physics_core.md): links only that small library, not the engine.
+add_executable(test_physcore_tree test_physcore_tree.cpp)
+target_link_libraries(test_physcore_tree PRIVATE okay::physcore)
+add_test(NAME physcore_tree COMMAND test_physcore_tree)
+add_executable(test_physcore_collide test_physcore_collide.cpp)
+target_link_libraries(test_physcore_collide PRIVATE okay::physcore)
+add_test(NAME physcore_collide COMMAND test_physcore_collide)
+add_executable(test_physcore_world test_physcore_world.cpp)
+target_link_libraries(test_physcore_world PRIVATE okay::physcore)
+add_test(NAME physcore_world COMMAND test_physcore_world)
+add_executable(test_physics_engine_mode test_physics_engine_mode.cpp)
+target_link_libraries(test_physics_engine_mode PRIVATE okay::engine)
+add_test(NAME physics_engine_mode COMMAND test_physics_engine_mode)
+add_executable(test_physics_one_path test_physics_one_path.cpp)
+target_link_libraries(test_physics_one_path PRIVATE okay::engine)
+add_test(NAME physics_one_path COMMAND test_physics_one_path)
+add_executable(test_physics_core_regressions test_physics_core_regressions.cpp)
+target_link_libraries(test_physics_core_regressions PRIVATE okay::engine)
+add_test(NAME physics_core_regressions COMMAND test_physics_core_regressions)
+# Writes the physics example scenes (not a test; build by hand: ninja gen_physics_examples, run with the examples folder).
+add_executable(gen_physics_examples EXCLUDE_FROM_ALL gen_physics_examples.cpp)
+target_link_libraries(gen_physics_examples PRIVATE okay::engine)
+
 add_executable(test_broadphase test_broadphase.cpp)
 target_link_libraries(test_broadphase PRIVATE okay::engine)
 add_test(NAME broadphase COMMAND test_broadphase)
@@ -1534,12 +1557,6 @@ add_test(NAME physics_joints COMMAND test_physics_joints)
 
 # Physics audit (docs/physics/physics.md): box contact points, the iterated solver on its own, the bugs the audit found
 # (both physics qualities), the Improved quality, and how its settings are saved.
-add_executable(test_physics_deep_manifold test_physics_deep_manifold.cpp)
-target_link_libraries(test_physics_deep_manifold PRIVATE okay::engine)
-add_test(NAME physics_deep_manifold COMMAND test_physics_deep_manifold)
-add_executable(test_physics_deep_solver test_physics_deep_solver.cpp)
-target_link_libraries(test_physics_deep_solver PRIVATE okay::engine)
-add_test(NAME physics_deep_solver COMMAND test_physics_deep_solver)
 add_executable(test_physics_deep_bugs test_physics_deep_bugs.cpp)
 target_link_libraries(test_physics_deep_bugs PRIVATE okay::engine)
 add_test(NAME physics_deep_bugs COMMAND test_physics_deep_bugs)

@@ -87,7 +87,7 @@ struct PhysicsData {
     PhysicsSettingsModel model;
     PhysicsData() {
         model.gravity2D = g2; model.gravity3D = g3; model.stepsPerSecond = &hz; model.smooth = &smooth;
-        model.quality = 1; model.solverIterations = 10; model.autoContinuous = true;
+        model.solverIterations = 10;
     }
     PhysicsData(const PhysicsData&) = delete;
 };

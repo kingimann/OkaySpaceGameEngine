@@ -706,7 +706,7 @@ int main() {
     }
 
     // ================= Physics =================
-    {   // the section, golden; drags, the step-rate clamp, the quality list, the solver slider and the continuous box
+    {   // the section, golden; drags, the step-rate clamp and the solver slider (one physics path: no quality list, no continuous box)
         panelfix::PhysicsData d;
         S::PhysicsSettingsResult res;
         P::PhysicsSettingsIntent seen;
@@ -718,13 +718,11 @@ int main() {
             if (in.gravityChanged) seen.gravityChanged = true;
             if (in.rateChanged) seen.rateChanged = true;
             if (in.smoothChanged) seen.smoothChanged = true;
-            if (in.quality >= 0) seen.quality = in.quality;
             if (in.solverIterations >= 0) seen.solverIterations = in.solverIterations;
-            if (in.autoContinuous >= 0) seen.autoContinuous = in.autoContinuous;
             if (in.apply) seen.apply = true;
         });
         r.Frames(3);
-        CHECK(res.iterations.w > 0 && res.continuous.w > 0 && res.contentHeight > 300.0f);
+        CHECK(res.iterations.w > 0 && res.contentHeight > 250.0f);
         CHECK(std::abs(res.gravity2D.w - (P::DefaultItemWidth(528.0f) + 8.0f + labelW)) < 1.0f);   // Dear ImGui's 65%, then the label
         Check("editorpanels_physics", r.Draw());
         // the first gravity cell: drag 20 pixels right, 0.05 a pixel
@@ -732,16 +730,9 @@ int main() {
         r.sim.Move(gx, gy); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Move(gx + 20.0f, gy); r.Frame(); r.sim.Up(); r.Frame();
         CHECK(seen.gravityChanged && std::abs(d.g2[0] - 1.0f) < 1e-4f);
         r.Click(res.smooth);  CHECK(seen.smoothChanged && !d.smooth);
-        r.Click(res.continuous); CHECK(seen.autoContinuous == 0);
         r.sim.Move(res.iterations.x + 4.0f, CY(res.iterations)); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
         CHECK(seen.solverIterations == 4);
         r.Click(res.apply); CHECK(seen.apply);
-        // the quality list: open it, choose Classic; the solver rows go
-        r.Click(UI::Rect{res.quality.x, res.quality.y, 100.0f, res.quality.h});
-        r.Click(UI::Rect{res.quality.x, res.quality.y + res.quality.h, 100.0f, res.quality.h});
-        CHECK(seen.quality == 0);
-        d.model.quality = 0; r.Frames(2);
-        CHECK(res.iterations.w == 0 && res.continuous.w == 0);
         CHECK(P::ClampStepsPerSecond(0.0f) == 1.0f && P::ClampStepsPerSecond(900.0f) == 500.0f && P::ClampStepsPerSecond(std::nanf("")) == 50.0f);
     }
     {   // missing pointers: those rows are not drawn

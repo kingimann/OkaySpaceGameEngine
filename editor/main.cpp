@@ -16615,37 +16615,15 @@ void DrawProjectSettings(EditorState& ed) {
                 ImGui::SetTooltip("Draw each body part way between its last two physics steps,\n"
                                   "so motion stays smooth when the frame rate and the step rate differ.");
             ImGui::Separator();
-            ImGui::TextDisabled("Physics quality of the open scene (saved with the scene)");
+            ImGui::TextDisabled("Physics solver of the open scene (saved with the scene)");
             {
                 auto& p3 = ed.scene().physics3D();
-                int q = (int)p3.quality;
-                // Short names in the box (the long ones were cut off at "fas"); what each does is the line below.
-                const char* qn[] = {"Classic", "Improved"};
-                ImGui::SetNextItemWidth(ImGui::CalcTextSize("Improved").x + ImGui::GetStyle().FramePadding.x * 4.0f + ImGui::GetFrameHeight());
-                if (ImGui::Combo("Quality##psq", &q, qn, 2)) {
-                    p3.quality = q == 1 ? okay::PhysicsQuality::Improved : okay::PhysicsQuality::Classic;
-                    ed.scene().physics().quality = p3.quality;
-                    ed.dirty = true;
+                int it = p3.solverIterations;
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) {
+                    p3.solverIterations = it; ed.scene().physics().solverIterations = it; ed.dirty = true;
                 }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Classic plays old scenes exactly as they always played.\n"
-                                      "Improved solves contacts several times a step and remembers them, so crates stack and stay put,\n"
-                                      "resting bodies sleep together, fast bodies cannot pass through thin walls and balls roll to a stop.\n"
-                                      "New scenes start Improved. The setting is part of the scene file.");
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-                ImGui::TextWrapped("%s", p3.quality == okay::PhysicsQuality::Improved ? "Stacks stand, bodies sleep, fast bodies stop."
-                                                                                     : "The original step, for old scenes.");
-                ImGui::PopStyleColor();
-                if (p3.quality == okay::PhysicsQuality::Improved) {
-                    int it = p3.solverIterations;
-                    ImGui::SetNextItemWidth(160);
-                    if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) {
-                        p3.solverIterations = it; ed.scene().physics().solverIterations = it; ed.dirty = true;
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many times the contact solver repeats each step. 10 is enough for towers up to about 6 crates;\nraise it for taller stacks (costs time).");
-                    if (ImGui::Checkbox("Catch fast bodies automatically##psq", &p3.autoContinuous)) ed.dirty = true;
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A body that moves farther in one step than its own size is checked along its path against walls and floors,\nso a bullet cannot pass through a thin wall without ticking Continuous Collision.");
-                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many times the solver repeats each step: more holds tall stacks and long joint chains stiffer\n(costs time). 10 suits most scenes.");
             }
             if (ImGui::Button("Apply to current scene##phys")) {
                 ed.scene().physics().gravity = {g_project.gravity2D[0], g_project.gravity2D[1]};
@@ -30268,18 +30246,50 @@ static bool DrawVehicleWithOkayUI(EditorState& ed, VehicleController* v, okay::C
 
 static bool DrawJoint3DWithOkayUI(EditorState& ed, Joint3D* jt, okay::Component*& toRemove) {
     using namespace okaypanels;
-    static const char* const kModes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)", "Slider (prismatic)"};
+    static const char* const kModes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)", "Slider (prismatic)",
+                                         "Ball", "Cone Twist (ragdoll)"};
     InspFieldList L;
-    L.rows.reserve(28);
+    L.rows.reserve(40);
     L.Note("Constrains this body to an anchor or another body.", false, true);
-    L.Combo("Mode##jt", &jt->mode, kModes, 5);
+    L.Combo("Mode##jt", &jt->mode, kModes, 7);
     L.Text("Connected Body##jt", &jt->connectedBody);
     L.Tip("Name of another object with a Rigidbody3D. Leave blank to anchor to a fixed world point below.");
     float a[3] = {jt->anchor.x, jt->anchor.y, jt->anchor.z}, ax[3] = {jt->axis.x, jt->axis.y, jt->axis.z};
-    int kAnchor = -1, kAxis = -1;
-    if (jt->connectedBody.empty()) { kAnchor = L.Drag("Anchor##jt", a, 3, 0.1f); L.TipLookup(); }
+    float dt3[3] = {jt->driveTarget.x, jt->driveTarget.y, jt->driveTarget.z};
+    int kAnchor = -1, kAxis = -1, kDrive = -1;
+    const bool ball = jt->mode == (int)Joint3D::Mode::Ball, cone = jt->mode == (int)Joint3D::Mode::ConeTwist;
+    if (jt->connectedBody.empty() || ball || cone) {
+        kAnchor = L.Drag("Anchor##jt", a, 3, 0.1f);
+        if (ball || cone) L.Tip("The world point the joint turns about (taken when Play starts).");
+        else L.TipLookup();
+    }
     const bool hinge = jt->mode == (int)Joint3D::Mode::Hinge, slider = jt->mode == (int)Joint3D::Mode::Slider;
-    if (jt->mode != (int)Joint3D::Mode::Pin && !hinge && !slider) {
+    if (ball || cone) {
+        L.Note("Turns about the anchor; a powered joint for ragdolls with Use Drive. Needs Freeze Rotation OFF.", false, true);
+        if (cone) {
+            kAxis = L.Drag("Twist Axis##jtc", ax, 3, 0.05f); L.Tip("The bone's long axis (world space, taken when Play starts).");
+            L.Drag("Swing Limit 1 (deg)##jtc", &jt->swingLimit1, 1, 1.0f, 0.0f, 180.0f); L.TipLookup();
+            L.Drag("Swing Limit 2 (deg)##jtc", &jt->swingLimit2, 1, 1.0f, 0.0f, 180.0f); L.TipLookup();
+            L.Check("Limit Twist##jtc", &jt->useLimits);
+            if (jt->useLimits) {
+                L.Drag("Min Twist (deg)##jtc", &jt->minAngle, 1, 1.0f, -180.0f, 180.0f);
+                L.Drag("Max Twist (deg)##jtc", &jt->maxAngle, 1, 1.0f, -180.0f, 180.0f);
+            }
+        }
+        L.Check("Use Drive##jtc", &jt->useDrive); L.TipLookup();
+        if (jt->useDrive) {
+            kDrive = L.Drag("Drive Target (deg)##jtc", dt3, 3, 1.0f);
+            L.Tip("The turn to hold, from the start pose, in degrees (x = twist). Scripts change it every frame for an active ragdoll.");
+            L.Drag("Drive Frequency (Hz)##jtc", &jt->driveFrequency, 1, 0.1f, 0.0f, 60.0f); L.TipLookup();
+            L.Drag("Drive Damping Ratio##jtc", &jt->driveDampingRatio, 1, 0.05f, 0.0f, 10.0f); L.TipLookup();
+            if (jt->driveFrequency <= 0.0f) {
+                L.Drag("Drive Stiffness##jtc", &jt->driveStiffness, 1, 1.0f, 0.0f, 1e6f); L.TipLookup();
+                L.Drag("Drive Damping##jtc", &jt->driveDamping, 1, 0.1f, 0.0f, 1e5f); L.TipLookup();
+            }
+            L.Drag("Drive Max Torque##jtc", &jt->driveMaxTorque, 1, 1.0f, 0.0f, 1e6f); L.TipLookup();
+        }
+    }
+    if (jt->mode != (int)Joint3D::Mode::Pin && !hinge && !slider && !ball && !cone) {
         L.Check("Auto distance##jt", &jt->autoConfigure);
         if (!jt->autoConfigure) L.Drag("Distance##jt", &jt->distance, 1, 0.05f, 0.0f, 1000.0f);
     }
@@ -30322,6 +30332,7 @@ static bool DrawJoint3DWithOkayUI(EditorState& ed, Joint3D* jt, okay::Component*
     if (L.AnyChanged()) ed.dirty = true;
     if (kAnchor >= 0 && L[kAnchor].changed) jt->anchor = {a[0], a[1], a[2]};
     if (kAxis >= 0 && L[kAxis].changed) jt->axis = {ax[0], ax[1], ax[2]};
+    if (kDrive >= 0 && L[kDrive].changed) jt->driveTarget = {dt3[0], dt3[1], dt3[2]};
     if (L[kRemove].clicked) toRemove = jt;
     return true;
 }
@@ -44849,7 +44860,7 @@ void DrawInspector(EditorState& ed) {
           if (o) {
             if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Buoyancy>(), "Buoyancy (floats on Water)")) { ed.PushUndo(); go->AddComponent<Buoyancy>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); if (!go->GetComponent<Collider3D>()) { go->AddComponent<BoxCollider3D>(); FitColliders(go); } ed.dirty = true; }
-            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge/slider)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge/slider/ball/cone twist)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }
@@ -50087,7 +50098,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Moving a collider's centre by a world-space step: Classic keeps the offset in world units, Improved in the object's own.
     auto shiftColliderOffset = [&](Collider3D* col, const Vec3& worldMove) {
         Transform* tr = col->transform;
-        if (tr && ed.scene().physics3D().quality == PhysicsQuality::Improved) {
+        if (tr) {
             Vec3 loc = tr->Rotation().Inverse() * worldMove; Vec3 ls = tr->LossyScale();
             col->offset = col->offset + Vec3{loc.x / (Mathf::Abs(ls.x) > 1e-4f ? ls.x : 1.0f), loc.y / (Mathf::Abs(ls.y) > 1e-4f ? ls.y : 1.0f), loc.z / (Mathf::Abs(ls.z) > 1e-4f ? ls.z : 1.0f)};
         } else col->offset = col->offset + worldMove;

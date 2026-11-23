@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Finds collisions between the open branches and PRs before they become merge conflicts or duplicate work.
 
-For every claude/* and claude2/* branch (and every open PR) it takes the files changed against origin/main and reports:
+For every lane branch (claude/*, claude2/*, claude3/*: the prefixes in docs/lanes.json) and every open PR it takes the files changed against origin/main and reports:
   1. file overlaps between branches (cross-lane and shared-file ones are flagged)
   2. line-range overlaps in one file (the same lines or functions edited twice)
   3. branches with no claim and no PR; stale claims (no push for 24 hours); claims that break the claim rules
@@ -9,17 +9,21 @@ For every claude/* and claude2/* branch (and every open PR) it takes the files c
   5. generated files edited without their source (by hand)
   6. two branches adding a test of the same name, the same test file or the same CMake target (or one already on main)
   7. branches far behind main
+  8. copies between branches (scripts/dup_lint.py): a block of 80+ tokens that two open branches both add (exact copy,
+     even in different files), and new class/function names in two branches that are equal or nearly equal
 Output: Markdown (default) or JSON (--json). Standard library and git only.
 
   python3 scripts/collision_check.py                       use the local remote refs, fetch claims from issue #422
   python3 scripts/collision_check.py --branch claude2/x    only collisions that involve this branch (exit 1 on a cross-lane
-                                                           or claim overlap, used by branch-lint)
+                                                           or claim overlap, or an exact copy of another open
+                                                           branch's new code, used by branch-lint)
   python3 scripts/collision_check.py --offline             no GitHub calls (no claims, no PR list)
   python3 scripts/collision_check.py --claims-file f.json --prs-file p.json   inputs for tests
 """
 import argparse, json, os, re, subprocess, sys, itertools
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import collab_lib as L
+import dup_lint as D
 
 NEW_TEST_RE = re.compile(r"^\+\s*(?:add_test\s*\(\s*NAME\s+([A-Za-z0-9_.${}-]+)|add_executable\s*\(\s*([A-Za-z0-9_.${}-]+)|okay_add_test\s*\(\s*([A-Za-z0-9_.${}-]+))")
 TEST_FILE_RE = re.compile(r"^tests/(test_[A-Za-z0-9_]+\.cpp)$")
@@ -69,22 +73,29 @@ def ranges_overlap(ra, rb):
 
 
 def build_report(root, claims_comments=None, prs=None, base="origin/main", behind_limit=150, max_age_days=3,
-                 only_branch=None, now=None, use_disk_cache=True, extra_branches=None, merged_heads=()):
+                 only_branch=None, now=None, use_disk_cache=True, extra_branches=None, merged_heads=(), copies=True):
     now = now or L.now_utc()
     lanes = L.load_lanes(root)
     cache = L.DiffCache(root, base, use_disk_cache)
     all_files = set(L.git(root, "ls-tree", "-r", "--name-only", base).splitlines())
-    claims, events = L.parse_claims(claims_comments or [])
+    claims, events = L.parse_claims(claims_comments or [], lanes)
     pr_branches = {p["head"]["ref"]: p for p in (prs or []) if p.get("head")}
     brs = L.branches(root)
     if extra_branches:
         brs += extra_branches
-    info = {}
+    info, live = {}, {}
     dates = {b["name"]: b["date"] for b in brs}
     focus_files = None
     if only_branch:  # quick mode (branch-lint): full diff only for the pushing branch and for branches sharing a file with it
         fb = [b for b in brs if b["name"] == only_branch]
         focus_files = set(cache.light("origin/" + only_branch, fb[0]["sha"])["files"]) if fb else set()
+    for b in brs:  # live branches for the copy check: recent (or with a PR or claim), not merged
+        age = (now - b["date"]).days if b["date"] else None
+        if (age is not None and age > max_age_days and b["name"] not in pr_branches and b["name"] not in claims) or b["sha"] in merged_heads:
+            continue
+        lf = cache.light("origin/" + b["name"], b["sha"])
+        if lf["files"] and not (lf["merged_like"] and b["name"] not in pr_branches):
+            live[b["name"]] = b
     for b in brs:
         if focus_files is not None and b["name"] != only_branch:
             if (now - b["date"]).days > max_age_days if b["date"] else False:
@@ -103,11 +114,11 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
         f = cache.facts(ref, b["sha"])
         if not f["files"] or (f["merged_like"] and b["name"] not in pr_branches):
             continue
-        info[b["name"]] = dict(b, ref=ref, lane=L.lane_of_branch(b["name"]), age_days=age, **f)
+        info[b["name"]] = dict(b, ref=ref, lane=L.lane_of_branch(b["name"], lanes), age_days=age, **f)
     cache.save()
     rep = {"base": base, "generated": now.strftime("%Y-%m-%d %H:%M UTC"), "branches": len(info), "overlaps": [], "shared_files": [],
            "unclaimed": [], "claims": [], "out_of_lane": [], "generated_by_hand": [], "duplicate_tests": [],
-           "behind": [], "claim_overlaps": [], "claim_conflicts": []}
+           "behind": [], "claim_overlaps": [], "claim_conflicts": [], "cross_clones": [], "cross_names": [], "prefixes": list(L.lane_prefixes(lanes).values())}
 
     names = sorted(info)
     focus = only_branch
@@ -139,7 +150,8 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
     rep["overlaps"].sort(key=lambda o: (o["severity"] != "high", -len(o["line_overlaps"]), -len(o["files"])))
     for f, bs in sorted(shared_hits.items(), key=lambda kv: -len(kv[1])):
         if focus and focus not in bs: continue
-        rep["shared_files"].append({"file": f, "branches": sorted(bs), "generated": bool(L.generated_entry(f, lanes))})
+        rep["shared_files"].append({"file": f, "branches": sorted(bs), "generated": bool(L.generated_entry(f, lanes)),
+                                    "lanes": sorted({info[b]["lane"] for b in bs if info[b]["lane"]})})
 
     # 3. claims and branches without one
     active = {}
@@ -154,8 +166,9 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
         probs = L.check_claim_rules(c, lanes, others, all_files) if c["status"] == "active" else []
         if c.get("has_fields") is False and c["status"] == "active":
             pass
-        rep["claims"].append({"branch": br, "lane": L.lane_of_branch(br), "status": c["status"], "files": c.get("files", []), "url": c.get("url"),
-                              "created_at": c.get("created_at"), "agreed": c.get("agreed"), "problems": probs,
+        rep["claims"].append({"branch": br, "lane": c.get("lane") or L.lane_of_branch(br, lanes), "status": c["status"], "files": c.get("files", []), "url": c.get("url"),
+                              "created_at": c.get("created_at"), "agreed": bool(c.get("agreed") or c.get("agreed_by")),
+                              "agreed_by": c.get("agreed_by", []), "problems": probs,
                               "has_branch": br in info, "has_pr": br in pr_branches})
         for p in probs:
             if "overlaps" in p:
@@ -170,8 +183,9 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
             # files every branch edits (lanes.json owner "shared", or listed in "claim_exempt") never need an agreement
             hit = sorted({f for f in i["files"] for g in c["files"] if L.glob_match(f, g) and L.owner_of(f, lanes) != "shared" and not L.generated_entry(f, lanes) and f not in lanes.get("claim_exempt", [])})
             if hit:
-                cross = bool(i["lane"] and L.lane_of_branch(br) and i["lane"] != L.lane_of_branch(br))
-                if mine and mine.get("agreed"): cross = False
+                other_lane = c.get("lane") or L.lane_of_branch(br, lanes)
+                cross = bool(i["lane"] and other_lane and i["lane"] != other_lane)
+                if mine and L.agreed_by(mine, other_lane): cross = False
                 rep["claim_conflicts"].append({"branch": n, "claim": br, "files": hit[:8], "count": len(hit), "cross_lane": cross, "url": c.get("url")})
     for n in names:
         i = info[n]
@@ -184,7 +198,8 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
         if focus and n != focus: continue
         i = info[n]
         if i["lane"]:
-            bad = [f for f in i["files"] if not f.startswith("docs/") and L.owner_of(f, lanes) in ("claude2", "coordinator") and L.owner_of(f, lanes) != i["lane"]]
+            lane_names = set(L.lane_names(lanes))
+            bad = [f for f in i["files"] if not f.startswith("docs/") and L.owner_of(f, lanes) in lane_names and L.owner_of(f, lanes) != i["lane"]]
             if bad:
                 rep["out_of_lane"].append({"branch": n, "lane": i["lane"], "files": bad[:12], "count": len(bad)})
         for f in i["files"]:
@@ -210,16 +225,39 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
         for (kind, name), bs in d.items():
             if len(set(bs)) > 1 and (not focus or focus in bs):
                 rep["duplicate_tests"].append({"kind": kind, "name": name, "branches": sorted(set(bs))})
+
+    # 8. copies between open branches
+    if copies and len(live) > 1 and (not focus or focus in live):
+        refs = {n: "origin/" + n for n in live}
+        st = lambda a, b: is_stacked(root, live[a], live[b])
+        rep.update({"cross_" + k: v for k, v in D.cross_branch(root, base, refs, focus, jobs=min(4, os.cpu_count() or 1), stacked=st).items()})
     return rep
 
 
 def fails_for_branch(rep, branch):
-    """Reasons branch-lint fails a push: the branch changes files covered by an open claim of the OTHER lane."""
+    """Reasons branch-lint fails a push: the branch changes files covered by an open claim of ANOTHER lane."""
     out = []
     for c in rep["claim_conflicts"]:
         if c["branch"] == branch and c["cross_lane"]:
-            out.append(f"{branch} changes {', '.join(c['files'][:4])} ({c['count']} files) which the open claim of {c['claim']} (other lane) covers. "
+            out.append(f"{branch} changes {', '.join(c['files'][:4])} ({c['count']} files) which the open claim of {c['claim']} (another lane) covers. "
                        f"Ask on issue #422 for 'Agree: {branch}', or wait for 'Release: {c['claim']}'.")
+    for c in rep.get("cross_clones", []):
+        if branch in (c["a"], c["b"]):
+            me, other = ("a", "b") if c["a"] == branch else ("b", "a")
+            out.append(f"{c[me + '_file']}:{c[me + '_lines'][0]}-{c[me + '_lines'][1]} is the same code ({c['tokens']} tokens) as "
+                       f"{c[other + '_file']}:{c[other + '_lines'][0]}-{c[other + '_lines'][1]} on the open branch {c[other]}. "
+                       f"Agree on issue #422 which branch owns it; the other builds on it (docs/process/no_duplicates.md).")
+    return out
+
+
+def warnings_for_branch(rep, branch):
+    """Warnings for branch-lint: new names that are equal or nearly equal to a new name on another open branch."""
+    out = []
+    for n in rep.get("cross_names", []):
+        if branch in (n["a"], n["b"]):
+            me, other = ("a", "b") if n["a"] == branch else ("b", "a")
+            out.append(f"new name {n[me + '_name']} ({n[me + '_where']}) looks like {n[other + '_name']} ({n[other + '_where']}) on the open branch "
+                       f"{n[other]} ({n['why']}). Are you two building the same thing? Talk on issue #422.")
     return out
 
 
@@ -232,7 +270,7 @@ def to_markdown(rep, brief=False, title_level=2):
     out = []
     n_high = sum(1 for o in rep["overlaps"] if o["severity"] == "high")
     out += [f"{h} Collision report", "",
-            f"{rep['branches']} claude/* and claude2/* branches with changes against `{rep['base']}`. "
+            f"{rep['branches']} lane branches ({', '.join(f'`{p}*`' for p in rep.get('prefixes', []))}) with changes against `{rep['base']}`. "
             f"{len(rep['overlaps'])} branch pairs touch the same files ({n_high} serious). Generated by `scripts/collision_check.py`; "
             "plain rules in `docs/process/collaboration.md`.", ""]
     ov = rep["overlaps"][:12 if brief else 60]
@@ -247,17 +285,27 @@ def to_markdown(rep, brief=False, title_level=2):
     if rep["shared_files"]:
         out += [f"{h}# Shared and generated files touched by several branches (handshake needed)", "", "| File | Branches |", "|---|---|"]
         for s in rep["shared_files"][:10 if brief else 40]:
-            out.append(f"| `{s['file']}`{' (generated)' if s['generated'] else ''} | {len(s['branches'])}: " + ", ".join(f"`{b}`" for b in s["branches"][:5]) + (" ..." if len(s["branches"]) > 5 else "") + " |")
+            out.append(f"| `{s['file']}`{' (generated)' if s['generated'] else ''}{' (lanes: ' + ', '.join(s['lanes']) + ')' if len(s.get('lanes', [])) > 1 else ''} | {len(s['branches'])}: " + ", ".join(f"`{b}`" for b in s["branches"][:5]) + (" ..." if len(s["branches"]) > 5 else "") + " |")
         out.append("")
     if rep["duplicate_tests"]:
         out += [f"{h}# Same test name, test file or CMake target in more than one place", ""]
         for d in rep["duplicate_tests"][:15]:
             out.append(f"- {d['kind']} `{d['name']}`: " + ", ".join(f"`{b}`" for b in d["branches"]))
         out.append("")
+    if rep.get("cross_clones"):
+        out += [f"{h}# The same new code on two open branches (exact copies of 80+ tokens)", ""]
+        for c in rep["cross_clones"][:20]:
+            out.append(f"- `{c['a']}` `{c['a_file']}:{c['a_lines'][0]}-{c['a_lines'][1]}` = `{c['b']}` `{c['b_file']}:{c['b_lines'][0]}-{c['b_lines'][1]}` ({c['tokens']} tokens)")
+        out.append("")
+    if rep.get("cross_names"):
+        out += [f"{h}# Similar new names on two open branches", ""]
+        for n in rep["cross_names"][:20 if brief else 60]:
+            out.append(f"- `{n['a']}` {n['a_name']} (`{n['a_where']}`) ~ `{n['b']}` {n['b_name']} (`{n['b_where']}`): {n['why']}")
+        out.append("")
     if rep["claim_conflicts"]:
         out += [f"{h}# Branches changing files that another branch's open claim covers", ""]
         for c in rep["claim_conflicts"][:15]:
-            out.append(f"- `{c['branch']}` changes {', '.join('`' + short(f) + '`' for f in c['files'][:3])} covered by the claim of `{c['claim']}`" + (" (**other lane**)" if c["cross_lane"] else " (same lane)"))
+            out.append(f"- `{c['branch']}` changes {', '.join('`' + short(f) + '`' for f in c['files'][:3])} covered by the claim of `{c['claim']}`" + (" (**another lane**)" if c["cross_lane"] else " (same lane)"))
         out.append("")
     if rep["out_of_lane"]:
         out += [f"{h}# Branches touching files outside their lane", ""]
@@ -328,6 +376,7 @@ def main():
     if br:
         fails = fails_for_branch(rep, br)
         for f in fails: print(f"::error::collision: {f}", file=sys.stderr)
+        for w in warnings_for_branch(rep, br): print(f"::warning::similar name on another branch: {w}", file=sys.stderr)
         return 1 if fails else 0
     return 0
 

@@ -27,7 +27,9 @@ struct PlayerAnimStatus {
 
 PlayerAnimStatus InspectPlayerAnimation(Scene& scene, GameObject* player);
 
-/// Add Foot IK, Look-At and the default Animator only where they are missing,
+/// Add Foot IK, Look-At, the default Animator and (when a First / Third Person
+/// controller has Can Ledge Grab on and the rig has two arms) Ledge Hands IK,
+/// only where they are missing,
 /// and run the existing animation fix (empty slots, stale clip names, built-in
 /// fallback when the rig matches). A second call adds nothing and leaves
 /// weights, chains and a custom graph alone.

@@ -23,6 +23,7 @@ namespace okay { void RegisterPhysicsToyProperties(); }
 #include "okay/Components/Destructible.hpp"
 #include "okay/Components/Draggable.hpp"
 #include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/LedgeHandsIK.hpp"
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Components/GridPathAgent2D.hpp"
@@ -1423,6 +1424,18 @@ void RegisterRangedWeapon() {
     b.Commit();
 }
 
+// Ledge Hands IK (hands on the ledge while hanging). The two arm links are saved by the scene
+// file's own record and are not properties here: autoWire finds them on a humanoid.
+static void RegisterLedgeHandsIK() {
+    PropertyBuilder<LedgeHandsIK> b("LedgeHandsIK", "ledgehandsik", "Animation");
+    b.AddFloat("handSpread", &LedgeHandsIK::handSpread).Range(0, 2, 0.01).Tooltip("Each hand's distance from the centre, along the ledge (metres)")
+     .AddFloat("overEdge", &LedgeHandsIK::overEdge).Range(0, 1, 0.005).Tooltip("How far the fingers reach onto the top (metres)")
+     .AddFloat("fadeTime", &LedgeHandsIK::fadeTime).Range(0, 5, 0.01).Tooltip("Seconds to blend the arms in and out")
+     .AddFloat("setback", &LedgeHandsIK::setback).Range(0, 2, 0.01).Tooltip("Only for a hang with no stored edge: how far the body hangs out from the edge")
+     .AddBool("autoWire", &LedgeHandsIK::autoWire).Tooltip("Find or add the two arm Limb IKs from the humanoid bones when none are set");
+    b.Commit();
+}
+
 // ---- Saved through the generic record (ComponentSerializerRegistry::RegisterFromProperties) ----------------
 // These had no scene record at all before: the generic path writes every authored property below as
 // `  <record> key=value ...` (see docs/engine/scene_serializer.md, "The generic record").
@@ -1514,6 +1527,7 @@ void RegisterGameplayProperties() {
     RegisterPhysicsToyProperties();   // Physics Surface and the physics toys
     RegisterVolume();
     RegisterWind();
+    RegisterLedgeHandsIK();
     RegisterMusicPlayer();
     RegisterPlayerInput();
     RegisterCollectible();

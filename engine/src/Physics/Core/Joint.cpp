@@ -367,8 +367,19 @@ void JointsSolvePosition(World::Impl& w, std::vector<JointSolver>& js, std::vect
             if (!(k > 1e-12f)) return;
             const float e = std::min(std::max(err, -kMaxAngularCorrection), kMaxAngularCorrection);
             const float l = -e / k;
-            if (A.dynamic) A.q = Integrate(A.q, (A.invI * axis) * -l, 1.0f);
-            if (B.dynamic) B.q = Integrate(B.q, (B.invI * axis) * l, 1.0f);
+            // With an anchor point, each body turns about that point rather than its centre of mass, so the point stays
+            // joined (turning a hinged arm about its middle would push its pivot off and the point pass would turn it back)
+            const Frames g = j.point ? MakeFrames(A, B, d) : Frames{};
+            if (A.dynamic) {
+                const Q q0 = A.q;
+                A.q = Integrate(A.q, (A.invI * axis) * -l, 1.0f);
+                if (j.point) A.com += g.rA - Rotate(A.q, InvRotate(q0, g.rA));
+            }
+            if (B.dynamic) {
+                const Q q0 = B.q;
+                B.q = Integrate(B.q, (B.invI * axis) * l, 1.0f);
+                if (j.point) B.com += g.rB - Rotate(B.q, InvRotate(q0, g.rB));
+            }
         };
         auto pushAlong = [&](const V3& n, const V3& rA, const V3& rB, float err) {   // move B relative to A by -err along n
             JointRow r; r.lin = n; r.angA = Cross(rA, n); r.angB = Cross(rB, n);

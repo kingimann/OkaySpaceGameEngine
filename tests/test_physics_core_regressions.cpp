@@ -98,10 +98,12 @@ int main() {
         Run(s, 0.3f);
         a->GetComponent<Rigidbody3D>()->enabled = false;   // A's body (and with it A's joint) goes
         auto* jb = b->AddComponent<Joint3D>(); jb->mode = (int)Joint3D::Mode::Distance; jb->anchor = {5, 7, 0};   // a new joint
+        // (B has been falling for 0.3 s, so the joint takes the length it finds when it starts: measured here)
+        const float len0 = Vec3::Distance(b->transform->Position(), {5, 7, 0});
         Run(s, 3.0f);
         const float len = Vec3::Distance(b->transform->Position(), {5, 7, 0});
-        std::cout << "  the new joint holds B at " << len << " m from its anchor (2)\n";
-        CHECK(std::fabs(len - 2.0f) < 0.05f);
+        std::cout << "  the new joint holds B at " << len << " m from its anchor (" << len0 << " when it was added)\n";
+        CHECK(std::fabs(len - len0) < 0.05f);
     }
 
     RUN_SUITE("3  a fast ball hitting a sleeping crate shares its momentum");

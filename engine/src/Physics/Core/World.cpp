@@ -276,6 +276,9 @@ ColliderId World::AddCollider(BodyId body, const ColliderDef& def) {
     c.box = ColliderWorldBox(*m, c);
     c.proxy = m_tree.Create(c.box, id);
     m->MarkMoved(id);
+    // a sleeping body that gets a new shape looks for its contacts again (otherwise a collider rebuilt on a resting
+    // body, e.g. after a friction change, would lose its floor contact until something woke it)
+    Wake(body);
     return id;
 }
 

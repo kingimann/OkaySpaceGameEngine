@@ -94,6 +94,9 @@ add_library(okay_engine
     src/Render/TextureCacheFiles.cpp
     src/Render/ModelImportProblem.cpp
     src/Render/ConsoleRenderer.cpp
+    src/Render/SoftwareRendererShadows.cpp
+    src/Render/SoftwareRendererPost.cpp
+    src/Render/SoftwareRendererMeshes.cpp
     src/Render/GLRenderer.cpp
     src/Render/OkayShader.cpp
     src/Render/D3D11Renderer.cpp

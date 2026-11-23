@@ -14,6 +14,7 @@
 //   chord (modifiers..., then the input). Lines starting with # are comments.
 #include "okay/Input/ActionSet.hpp"
 #include <string>
+#include <vector>
 
 namespace okay {
 
@@ -32,5 +33,9 @@ ActionSet DefaultInputAsset();
 /// Build an asset from the existing InputActions table (every action with its bindings, response and context), so a project that
 /// already defines actions keeps working: contexts become maps, directions become vector2 actions, the response becomes processors.
 ActionSet MigrateInputActions();
+
+/// One InputActions binding as ActionSet binding parts: a four-key direction ("keys:w,s,a,d") is its four keys
+/// ("key:w", "key:s", "key:a", "key:d", a vector2 composite), anything else its one path.
+std::vector<std::string> BindingParts(const InputBinding& b);
 
 } // namespace okay

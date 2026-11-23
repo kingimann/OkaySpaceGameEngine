@@ -211,6 +211,13 @@ action Cancel button map=UI
 }
 ActionSet DefaultInputAsset() { ActionSet s; ParseInputAsset(DefaultInputAssetText(), s); return s; }
 
+std::vector<std::string> BindingParts(const InputBinding& b) {
+    if (b.kind != InputBinding::Kind::Keys4) return {b.ToString()};
+    std::vector<std::string> parts;
+    for (char c : b.keys) { InputBinding k; k.kind = InputBinding::Kind::Key; k.code = (unsigned char)c; parts.push_back(k.ToString()); }
+    return parts;
+}
+
 ActionSet MigrateInputActions() {
     ActionSet set;
     set.AddScheme({"Keyboard+Mouse", true, true, false, false});
@@ -228,9 +235,9 @@ ActionSet MigrateInputActions() {
         if (a.invertX || a.invertY) proc += std::string("invert(") + (a.invertX ? "x" : "") + (a.invertY ? "y" : "") + ")";
         for (const InputBinding& b : a.bindings) {
             const std::string group = b.IsGamepad() ? "Gamepad" : "Keyboard+Mouse";
-            auto keyPath = [](char c) { InputBinding k; k.kind = InputBinding::Kind::Key; k.code = (unsigned char)c; return k.ToString(); };
-            if (b.kind == InputBinding::Kind::Keys4) d.AddVector2(keyPath(b.keys[0]), keyPath(b.keys[1]), keyPath(b.keys[2]), keyPath(b.keys[3]), group);
-            else d.AddBinding(b.ToString(), group);
+            const std::vector<std::string> p = BindingParts(b);
+            if (b.kind == InputBinding::Kind::Keys4) d.AddVector2(p[0], p[1], p[2], p[3], group);
+            else d.AddBinding(p[0], group);
         }
         ParseProcessors(proc, d.processors);
     }

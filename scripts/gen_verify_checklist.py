@@ -65,7 +65,6 @@ GROUPS = [
      'Our own replacements for third-party code. Every one is off by default and switched on by an environment variable.'),
 ]
 
-STATUS_ORDER = ('Works', 'Partial', 'Basic', 'In flight', 'Planned')
 
 
 def load_map(root):
@@ -82,12 +81,8 @@ def one_line(text, limit):
     return fm.short(text.replace('`', "'"), limit) if text else ''
 
 
-def status_word(sub):
-    s = sub['f'].get('Status', '').split(' - ')[0].strip()
-    for w in STATUS_ORDER:
-        if s.startswith(w):
-            return w
-    return s or '?'
+def sub_status(sub):
+    return fm.status_word(sub['f'].get('Status', ''))
 
 
 def parse_steps(path, problems):
@@ -149,8 +144,8 @@ def map_ids(areas):
 def smoke_row(code, a):
     """One generated row for a whole area, from the map only."""
     subs = a['subs']
-    built = [s for s in subs if status_word(s) != 'Planned']
-    planned = [s for s in subs if status_word(s) == 'Planned']
+    built = [s for s in subs if sub_status(s) != 'Planned']
+    planned = [s for s in subs if sub_status(s) == 'Planned']
     lines = []
     lines.append(f"- [ ] **V-{code}-S{a['num']}** Area {a['num']}: {a['name']} (smoke test, steps unverified)")
     lines.append(f"  - **Map:** [{a['num']}](../feature_map/{a['page']}), {len(subs)} sub-areas, {len(built)} built.")
@@ -160,7 +155,7 @@ def smoke_row(code, a):
         for s in built:
             ed = s['f'].get('Editor', '-')
             where = '' if ed.lower().startswith('none') or ed.strip() in ('-', '') else ' Where: ' + one_line(ed, 110)
-            lines.append(f"    - {s['id']} {one_line(s['title'], 60)} [{status_word(s)}].{where}")
+            lines.append(f"    - {s['id']} {one_line(s['title'], 60)} [{sub_status(s)}].{where}")
     else:
         lines.append('  - **Steps:** nothing is built in this area yet, so there is nothing to try.')
     lines.append('  - **You should see:** each listed thing opens and does what its name says '

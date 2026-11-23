@@ -29,6 +29,7 @@ int PlayerInputManager::Join(JoinDevice device, int pad) {
     }
     s.SetPad(slot->pad);
     s.SetAutoSwitch(device == JoinDevice::Any);
+    slot->serial = ++m_joins;
     m_players[(size_t)idx] = std::move(slot);
     LoadOverrides(idx);
     return idx;

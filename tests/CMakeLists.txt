@@ -58,6 +58,8 @@ if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
     # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release/release_channels.md "Test builds").
     add_test(NAME dev_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/dev_index.py --self-test)
+    # The systems list (docs/SYSTEMS.md) made by scripts/gen_feature_map.py: temp folders only.
+    add_test(NAME gen_feature_map_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_gen_feature_map.py)
     # The collaboration scripts (docs/process/collaboration.md): throw-away git repos only, no GitHub, no feature map.
     find_program(OKAY_GIT NAMES git)
     if(OKAY_GIT)
@@ -4938,6 +4940,11 @@ add_test(NAME grok_145_146_153_155 COMMAND test_grok_145_146_153_155)
 add_executable(test_controller_actions test_controller_actions.cpp)
 target_link_libraries(test_controller_actions PRIVATE okay::engine)
 add_test(NAME controller_actions COMMAND test_controller_actions)
+
+# One rebinding store for InputActions and the typed ActionSet (duplicate audit #422, item 2).
+add_executable(test_input_one_store test_input_one_store.cpp)
+target_link_libraries(test_input_one_store PRIVATE okay::engine)
+add_test(NAME input_one_store COMMAND test_input_one_store)
 
 # Our own glTF 1.0 reader (docs/content/model_readers.md, section glTF 1.0): files built in memory with hand-computed values,
 # the binary form, external files and the folder rule, refusals and the import seam; the hostile test builds without the

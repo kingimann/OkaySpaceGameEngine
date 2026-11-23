@@ -14,13 +14,13 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Audio | 11 | 33 | [code_index/engine-Audio.md](code_index/engine-Audio.md) |
 | engine-Combat | 1 | 6 | [code_index/engine-Combat.md](code_index/engine-Combat.md) |
 | engine-Components | 260 | 735 | [code_index/engine-Components.md](code_index/engine-Components.md) |
-| engine-Core | 76 | 462 | [code_index/engine-Core.md](code_index/engine-Core.md) |
+| engine-Core | 77 | 476 | [code_index/engine-Core.md](code_index/engine-Core.md) |
 | engine-Crypto | 2 | 21 | [code_index/engine-Crypto.md](code_index/engine-Crypto.md) |
 | engine-Debug | 11 | 80 | [code_index/engine-Debug.md](code_index/engine-Debug.md) |
 | engine-ECS | 5 | 9 | [code_index/engine-ECS.md](code_index/engine-ECS.md) |
 | engine-Environment | 5 | 51 | [code_index/engine-Environment.md](code_index/engine-Environment.md) |
 | engine-Graphics | 5 | 36 | [code_index/engine-Graphics.md](code_index/engine-Graphics.md) |
-| engine-Input | 22 | 107 | [code_index/engine-Input.md](code_index/engine-Input.md) |
+| engine-Input | 22 | 108 | [code_index/engine-Input.md](code_index/engine-Input.md) |
 | engine-Inventory | 9 | 64 | [code_index/engine-Inventory.md](code_index/engine-Inventory.md) |
 | engine-Math | 23 | 91 | [code_index/engine-Math.md](code_index/engine-Math.md) |
 | engine-Modeling | 21 | 196 | [code_index/engine-Modeling.md](code_index/engine-Modeling.md) |
@@ -37,5 +37,5 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Texture | 8 | 75 | [code_index/engine-Texture.md](code_index/engine-Texture.md) |
 | engine-UI | 16 | 77 | [code_index/engine-UI.md](code_index/engine-UI.md) |
 | engine-VisualScript | 29 | 581 | [code_index/engine-VisualScript.md](code_index/engine-VisualScript.md) |
-| okayui | 11 | 632 | [code_index/okayui.md](code_index/okayui.md) |
-| shared | 66 | 960 | [code_index/shared.md](code_index/shared.md) |
+| okayui | 12 | 638 | [code_index/okayui.md](code_index/okayui.md) |
+| shared | 67 | 962 | [code_index/shared.md](code_index/shared.md) |

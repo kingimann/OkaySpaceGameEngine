@@ -285,7 +285,6 @@ std::string ReadFile(const std::string& path, bool* ok = nullptr) {
     return t;
 }
 
-std::string Lower(const std::string& s) { return okay::str::LowerAscii(s); }
 
 std::string JoinWords(const std::vector<std::string>& v, std::size_t from = 0) {
     std::string s;
@@ -324,7 +323,7 @@ int CmdNew(const std::vector<std::string>& args, const std::string&, const Io& i
     if (!ParseArgs(cl, args, "new", io)) return 2;
     if (cl.Has("help")) { io.Say(HelpText("new")); return 0; }
     const std::string tpl = cl.Get("template");
-    if (Lower(tpl) == "list") {
+    if (okay::str::LowerAscii(tpl) == "list") {
         std::string t = "Templates (use the name in quotes with --template):\n";
         for (const auto& info : okayproj::Templates()) t += "  \"" + std::string(info.title) + "\"  " + info.blurb + "\n";
         io.Say(t);
@@ -334,7 +333,7 @@ int CmdNew(const std::vector<std::string>& args, const std::string&, const Io& i
     if (name.empty()) { io.Warn("Say what the project is called: okay new MyGame"); return 2; }
     const okayproj::TemplateInfo* info = nullptr;
     if (!tpl.empty()) {
-        for (const auto& t : okayproj::Templates()) if (Lower(t.title) == Lower(tpl)) info = &t;
+        for (const auto& t : okayproj::Templates()) if (okay::str::LowerAscii(t.title) == okay::str::LowerAscii(tpl)) info = &t;
         if (!info) { io.Warn("There is no template called \"" + tpl + "\". See them with: okay new --template list"); return 2; }
     }
     const okayproj::Plan plan = okayproj::PlanProject(cl.Get("in", "."), name);
@@ -461,7 +460,7 @@ int CmdBuild(const std::vector<std::string>& args, const std::string& project, c
 #else
     const std::string here = "linux";
 #endif
-    const std::string target = Lower(cl.Get("target", here));
+    const std::string target = okay::str::LowerAscii(cl.Get("target", here));
     if (target != here) {
         io.Warn("This computer builds " + here + " games. A " + target + " build has to be made on " + target +
                 (target == "windows" ? " (or by the engine's release build)." : "."));

@@ -5,9 +5,9 @@
 //
 // It speaks the vocabulary the script editor already used (Coordinates with display columns, 1-based error markers and
 // breakpoints, GetText ending in a newline), so editor/main.cpp calls it as before.
+#include "imgui.h"                // first: OkayUI.hpp keeps Dear ImGui's texture id type when imgui.h came before it
 #include "ScriptEditorCodeEdit.hpp"
 #include "MainShared.hpp"
-#include "imgui.h"
 
 #include <algorithm>
 #include <map>

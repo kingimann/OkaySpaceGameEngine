@@ -2,6 +2,7 @@
 // downloads (success, HTTP errors, retries, truncated and over-long bodies, size caps, cancel, disk errors, redirect loops,
 // slow servers), HEAD size probes, link-preview prefix fetches, keep-alive across sequential calls, and a proxy that
 // refuses CONNECT. PATH is emptied, so a silent curl fallback would show up as a failure; the helpers never spawn anything.
+// TestSeam checks the seam calls (FetchToFile, HeadDump, FetchPrefix, Send) with the own client on, then with a stub curl.
 // Built only with -DOKAY_OWN_HTTP=ON on Linux. Standalone: g++ -std=c++17 -DOKAY_OWN_HTTP=1 -Iengine/include -Ilauncher tests/test_native_fetch.cpp -ldl -lpthread
 #include "okay/Platform/NativeFetch.hpp"
 #include "NetGuard.hpp"
@@ -252,6 +253,94 @@ static void TestProxyRefusal() {
     px.Stop(); origin.Stop();
 }
 
+// The seam itself (FetchToFile, HeadDump, FetchPrefix, Send): our own client first, then the curl fallback (a stub curl
+// that records its arguments), never curl for a POST that may have reached the server, and nothing at all with
+// OKAY_NO_CURL=1.
+static void TestSeam() {
+    Srv s;
+    const std::string payload(3000, 'q');
+    s.handler = [&](int, int, const std::string& h, int c) {
+        const std::string path = PathOf(h);
+        if (path == "/ok") { SendAll(c, h.rfind("HEAD", 0) == 0 ? "HTTP/1.1 200 OK\r\nContent-Length: 3000\r\n\r\n" : Ok(payload)); return true; }
+        if (path == "/page") { SendAll(c, "HTTP/1.1 206 Partial Content\r\nContent-Length: 10\r\nContent-Range: bytes 0-9/3000\r\n\r\n" + payload.substr(0, 10)); return true; }
+        if (path == "/echo") {   // the body is still in the server's buffer: answer with its announced length, then hang up
+            const size_t p = h.find("Content-Length: ");
+            const std::string n = p == std::string::npos ? "0" : std::to_string(std::atoi(h.c_str() + p + 16));
+            SendAll(c, "HTTP/1.1 201 Created\r\nContent-Length: " + std::to_string(n.size() + 4) + "\r\nConnection: close\r\n\r\ngot " + n); return false;
+        }
+        if (path == "/swallow") return false;   // reads the request, then hangs up without an answer
+        SendAll(c, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"); return true;
+    };
+    s.Start();
+    const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+    char tmpl[] = "/tmp/okay_seam_XXXXXX";
+    const std::string dir = ::mkdtemp(tmpl);
+    const std::string out = dir + "/file.bin", log = dir + "/curl.log";
+    fs::create_directories(dir + "/bin");
+    {
+        std::ofstream f(dir + "/bin/curl");
+        f << "#!/bin/sh\nlog='" << log << "'\necho \"run $*\" >> \"$log\"\no=; D=; K=; w=\n"
+             "while [ $# -gt 0 ]; do case \"$1\" in -o) o=\"$2\"; shift;; -D) D=\"$2\"; shift;; -K) K=\"$2\"; shift;; -w) w=\"$2\"; shift;; esac; shift; done\n"
+             "if [ -n \"$K\" ]; then while IFS= read -r l; do echo \"cfg $l\" >> \"$log\"; done < \"$K\"; fi\n"
+             "if [ -n \"$D\" ]; then printf 'HTTP/1.1 200 OK\\r\\nContent-Length: 77\\r\\n\\r\\n' > \"$D\"; fi\n"
+             "if [ -n \"$o\" ] && [ \"$o\" != /dev/null ]; then printf 'curlbody' > \"$o\"; fi\n"
+             "if [ -n \"$w\" ]; then printf '201'; fi\nexit 0\n";
+    }
+    fs::permissions(dir + "/bin/curl", fs::perms::owner_all);
+    const std::string savedPath = std::getenv("PATH") ? std::getenv("PATH") : "";
+    ::setenv("PATH", (dir + "/bin").c_str(), 1);
+    auto runs = [&] { std::ifstream f(log); int n = 0; std::string l; while (std::getline(f, l)) if (l.rfind("run ", 0) == 0) ++n; return n; };
+
+    // 1. Own client on: every answer is its own, curl never runs.
+    OwnDownloadSpec sp; sp.userAgent = "SeamTest";
+    OwnDownloadResult r = FetchToFile(base + "/ok", out, sp);
+    CHECK(r.outcome == OwnOutcome::Ok && !r.viaCurl && Slurp(out) == payload);
+    r = FetchToFile(base + "/missing", out, sp);
+    CHECK(r.outcome == OwnOutcome::HttpError && r.status == 404 && !fs::exists(out));
+    std::string dump, body;
+    CHECK(HeadDump(base + "/ok", "SeamTest", dump) && okay::netguard::ParseLastContentLength(dump) == 3000);
+    CHECK(FetchPrefix(base + "/page", "SeamTest", 1000, 9, 5000, body) == OwnOutcome::Ok && body == payload.substr(0, 10));
+    Result sr = Send("POST", base + "/echo", {"Content-Type: application/json"}, "{\"x\":1}");
+    CHECK(sr.reached && sr.status == 201 && sr.body == "got 7");
+    sr = Send("POST", base + "/swallow", {}, "once");   // may have arrived: not re-sent through curl
+    CHECK(!sr.reached && sr.maybeSent);
+    CHECK(runs() == 0);
+
+    // 2. Own client off: the curl fallback (the stub) answers, with the headers in a private config file, not argv.
+    ::unsetenv("OKAY_OWN_HTTP");
+    r = FetchToFile(base + "/ok", out, sp);
+    CHECK(r.outcome == OwnOutcome::Ok && r.viaCurl && Slurp(out) == "curlbody");
+    CHECK(HeadDump(base + "/ok", "SeamTest", dump) && okay::netguard::ParseLastContentLength(dump) == 77);
+    CHECK(FetchPrefix(base + "/page", "", 1000, 9, 5000, body) == OwnOutcome::Ok && body == "curlbody");
+    sr = Send("POST", base + "/echo", {"X-Authorization: secret-ticket"}, "{}");
+    CHECK(sr.reached && sr.status == 201 && sr.body == "curlbody");
+    {
+        const std::string l = Slurp(log);
+        CHECK(l.find("cfg header = \"X-Authorization: secret-ticket\"") != std::string::npos);
+        CHECK(l.find("run -s -X POST") != std::string::npos);
+        size_t runLine = l.rfind("run -s -X POST"); CHECK(l.substr(runLine, l.find('\n', runLine) - runLine).find("secret") == std::string::npos);
+    }
+    CHECK(runs() == 4);
+    {   // the temporary files the fallback used are gone
+        int left = 0; for (const auto& e : fs::directory_iterator(fs::temp_directory_path())) if (e.path().filename().string().rfind("okay_http_", 0) == 0) ++left;
+        CHECK(left == 0);
+    }
+
+    // 3. OKAY_NO_CURL=1: nothing is started, and the calls say so.
+    ::setenv("OKAY_NO_CURL", "1", 1);
+    fs::remove(out);
+    r = FetchToFile(base + "/ok", out, sp);
+    CHECK(r.outcome == OwnOutcome::NotHandled && !r.viaCurl && !fs::exists(out));
+    CHECK(!HeadDump(base + "/ok", "", dump));
+    CHECK(FetchPrefix(base + "/page", "", 1000, 9, 5000, body) == OwnOutcome::NotHandled);
+    CHECK(!Send("GET", base + "/ok", {}).reached);
+    CHECK(runs() == 4);
+    ::unsetenv("OKAY_NO_CURL");
+    ::setenv("OKAY_OWN_HTTP", "1", 1);
+    ::setenv("PATH", savedPath.c_str(), 1);
+    std::error_code ec; fs::remove_all(dir, ec);
+}
+
 int main() {
     std::signal(SIGPIPE, SIG_IGN);
     ::setenv("OKAY_OWN_HTTP", "1", 1); ::unsetenv("OKAY_HTTP_CURL");
@@ -260,6 +349,7 @@ int main() {
     TestDownload();
     TestHeadAndPrefix();
     TestProxyRefusal();
+    TestSeam();
     std::printf("native_fetch: %d checks, %d failed, %d skipped\n", g_checks, g_fail, g_skips);
     return g_fail ? 1 : 0;
 }

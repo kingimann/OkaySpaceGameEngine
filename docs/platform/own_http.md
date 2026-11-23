@@ -133,6 +133,13 @@ Status words: **Done** (code and a test that runs), **Partial** (works for the c
 
 ### 1. Where the programs use curl or HTTP
 
+**Update 2026-11-23 (`claude/third-party-1`):** rows 1 to 9 now all call the seam in `engine/include/okay/Platform/NativeFetch.hpp`
+(`FetchToFile`, `HeadDump`, `FetchPrefix`, `Send`) instead of their own curl lines. The seam uses WinHTTP on Windows (all rows,
+PlayFab and the editor update download included) and the own client on Linux when it is on, and starts curl only in
+`CurlFallback.hpp` as the last fallback. `tests/check_curl_seam_wiring.cmake` fails on a curl spawn anywhere else. WinHTTP itself had
+been compiled out of every Windows build from #1001 until this change (its `#if` tested a macro that nothing defined); the
+table below describes the call sites before the seam.
+
 | # | Place | What it does | Own client path today |
 |---|---|---|---|
 | 1 | `engine/include/okay/Platform/Account/AccountService.hpp` `HttpRequest` (all account, backend, ticket, upload calls; 12 call sites) | GET/POST/PATCH/DELETE with JSON or a raw file body, `apikey` and `Authorization` headers, any status is an answer (the body carries `{"error"}`), a per-call timeout for the join-time ticket | `okay::http::Request` first when `NativeAvailable()`, then the curl fallback. Since #850 the per-call timeout reaches the own client (it did not before); on Windows it is NOT applied (WinHTTP keeps its session timeouts). A POST that may have reached the server is never re-sent through curl (`ShouldFallBackToCurl`, tested end to end). Sequential GET and HEAD calls on one thread reuse the connection (keep-alive) |

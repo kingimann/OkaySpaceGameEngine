@@ -8,7 +8,8 @@
 // fill in on startup). Thread-safe: every worker can call Request concurrently.
 //
 // Elsewhere (and if WinHTTP can't reach the server, e.g. an odd proxy setup)
-// Request returns reached=false and callers fall back to the curl path.
+// Request returns reached=false and the HTTP seam (NativeFetch.hpp) falls back
+// to curl, which only CurlFallback.hpp may start.
 //
 // Linux and other POSIX systems can OPT IN to our own HTTP/1.1 client
 // (OwnHttp.hpp / OwnHttpNet.hpp, docs/platform/own_http.md): build with
@@ -20,6 +21,7 @@
 // ---------------------------------------------------------------------------
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <memory>
@@ -27,8 +29,11 @@
 #include <string>
 #include <vector>
 
-#if defined(OKAY_HTTP_WINHTTP) && !defined(OKAY_XBOX_UWP)
-#  define OKAY_HTTP_WINHTTP 1   // WinHTTP is the native client on the desktop; the UWP build has none yet (docs/platform/xbox_uwp.md)
+// WinHTTP is the native client on the Windows desktop; the UWP build has none yet (docs/platform/xbox_uwp.md).
+// (Until claude/third-party-1 this test read `defined(OKAY_HTTP_WINHTTP)`, a macro nothing defined, so from #1001 on the
+// Windows programs had no WinHTTP and spawned curl for every call. tests/test_winhttp_loopback.cpp now fails if it is off.)
+#if defined(_WIN32) && !defined(OKAY_XBOX_UWP) && !defined(OKAY_HTTP_WINHTTP)
+#  define OKAY_HTTP_WINHTTP 1
 #endif
 
 #if defined(OKAY_HTTP_WINHTTP)
@@ -248,8 +253,8 @@ inline bool ShouldFallBackToCurl(const std::string& method, const Result& native
     return method == "GET" || method == "HEAD";
 }
 
-/// Extra controls for downloads (own client only; on Windows and without OKAY_OWN_HTTP this returns reached=false
-/// with an error and callers use their existing path). All fields optional.
+/// Extra controls for downloads (the own client on Linux, WinHTTP on Windows; elsewhere RequestEx returns
+/// reached=false with an error and callers use the curl fallback). All fields optional.
 struct RequestOptions {
     /// Called as the body arrives: bytes so far (counting from the resume offset) and the complete size when
     /// known (0 when not). Return false to cancel.
@@ -286,6 +291,169 @@ struct ExResult : Result {
     int      reusedConnections = 0; ///< requests of this call that used a kept-alive connection
     std::string rawHead;            ///< the final answer's status line and headers as text (like `curl -D`), for callers that parse them
 };
+
+#if defined(OKAY_HTTP_WINHTTP)
+namespace detail {
+inline std::string Narrow(const wchar_t* w, size_t n) {
+    if (!w || n == 0) return std::string();
+    const int k = WideCharToMultiByte(CP_UTF8, 0, w, (int)n, nullptr, 0, nullptr, nullptr);
+    std::string s((size_t)(k > 0 ? k : 0), '\0');
+    if (k > 0) WideCharToMultiByte(CP_UTF8, 0, w, (int)n, &s[0], k, nullptr, nullptr);
+    return s;
+}
+/// One header of the final answer as text ("" when it is not there).
+inline std::string QueryText(HINTERNET req, DWORD what) {
+    DWORD len = 0;
+    WinHttpQueryHeaders(req, what, WINHTTP_HEADER_NAME_BY_INDEX, WINHTTP_NO_OUTPUT_BUFFER, &len, WINHTTP_NO_HEADER_INDEX);
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || len == 0) return std::string();
+    std::wstring w(len / sizeof(wchar_t) + 1, L'\0');
+    if (!WinHttpQueryHeaders(req, what, WINHTTP_HEADER_NAME_BY_INDEX, &w[0], &len, WINHTTP_NO_HEADER_INDEX)) return std::string();
+    return Narrow(w.data(), len / sizeof(wchar_t));
+}
+/// Decimal digits only (no sign, no spaces inside), at most 18 of them.
+inline bool ParseU64(const std::string& t, uint64_t& v) {
+    size_t a = 0, b = t.size();
+    while (a < b && (t[a] == ' ' || t[a] == '\t')) ++a;
+    while (b > a && (t[b - 1] == ' ' || t[b - 1] == '\t')) --b;
+    if (a == b || b - a > 18) return false;
+    v = 0;
+    for (size_t i = a; i < b; ++i) { if (t[i] < '0' || t[i] > '9') return false; v = v * 10 + (uint64_t)(t[i] - '0'); }
+    return true;
+}
+/// RequestEx on WinHTTP: the same contract as the own client's (RFC 9110 sections 14 and 15.3.7 for ranges), written
+/// from the WinHTTP documentation. Progress and cancel are checked between reads; a silent server is bounded by the
+/// receive timeout (ioMs), because the synchronous WinHTTP calls cannot be interrupted from the same thread. Cookies
+/// are WinHTTP's own per-session handling; acceptGzip is ignored (no Accept-Encoding is sent, so bodies come as is).
+inline ExResult WinRequestEx(const std::string& method, const std::string& url, const std::vector<std::string>& headers,
+                             const std::string& body, const std::string& bodyFile, const std::filesystem::path& outFile,
+                             const RequestOptions& ro) {
+    ExResult r;
+    if (!NativeAvailable()) { r.error = "winhttp unavailable"; return r; }
+    HINTERNET ses = Session();
+    std::wstring wurl = Widen(url);
+    URL_COMPONENTS uc; ZeroMemory(&uc, sizeof(uc)); uc.dwStructSize = sizeof(uc);
+    std::wstring host(256, L'\0'), path(4096, L'\0'), extra(8192, L'\0');
+    uc.lpszHostName = &host[0]; uc.dwHostNameLength = 255;
+    uc.lpszUrlPath = &path[0];  uc.dwUrlPathLength = 4095;
+    uc.lpszExtraInfo = &extra[0]; uc.dwExtraInfoLength = 8191;
+    if (!WinHttpCrackUrl(wurl.c_str(), (DWORD)wurl.size(), 0, &uc) ||
+        (uc.nScheme != INTERNET_SCHEME_HTTP && uc.nScheme != INTERNET_SCHEME_HTTPS)) { r.error = "bad-url"; return r; }
+    const bool secure = uc.nScheme == INTERNET_SCHEME_HTTPS;
+    std::wstring object = std::wstring(uc.lpszUrlPath, uc.dwUrlPathLength) + std::wstring(uc.lpszExtraInfo, uc.dwExtraInfoLength);
+    if (object.empty()) object = L"/";
+    host.resize(uc.dwHostNameLength);
+    std::string payload = body;
+    if (!bodyFile.empty()) {
+        std::ifstream f(bodyFile, std::ios::binary);
+        if (!f) { r.error = "cannot read the body file"; return r; }
+        std::stringstream ss; ss << f.rdbuf(); payload = ss.str();
+    }
+    HINTERNET con = WinHttpConnect(ses, host.c_str(), uc.nPort, 0);
+    if (!con) { r.error = "connect: winhttp error " + std::to_string((unsigned long)GetLastError()); return r; }
+    const std::wstring wmethod = Widen(method);
+    HINTERNET req = WinHttpOpenRequest(con, wmethod.c_str(), object.c_str(), nullptr, WINHTTP_NO_REFERER,
+                                       WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0);
+    if (!req) { WinHttpCloseHandle(con); r.error = "open: winhttp error " + std::to_string((unsigned long)GetLastError()); return r; }
+    const int connectMs = ro.connectMs > 0 ? ro.connectMs : 8000, ioMs = ro.ioMs > 0 ? ro.ioMs : 30000;
+    WinHttpSetTimeouts(req, connectMs, connectMs, ioMs, ioMs);
+    DWORD redirs = (DWORD)(ro.maxRedirects > 0 ? ro.maxRedirects : 10);
+    WinHttpSetOption(req, WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS, &redirs, sizeof(redirs));
+    // (WinHTTP's default redirect policy already refuses an https -> http redirect, like curl --proto-redir =https.)
+    std::wstring hdrs;
+    for (const std::string& h : headers) { hdrs += Widen(h); hdrs += L"\r\n"; }
+    const bool wantFile = !outFile.empty() && method != "HEAD";
+    if (ro.resumeFrom > 0 && wantFile) hdrs += L"Range: bytes=" + std::to_wstring(ro.resumeFrom) + L"-\r\n";
+    if (!ro.ifNoneMatch.empty()) hdrs += L"If-None-Match: " + Widen(ro.ifNoneMatch) + L"\r\n";
+    if (!ro.ifModifiedSince.empty()) hdrs += L"If-Modified-Since: " + Widen(ro.ifModifiedSince) + L"\r\n";
+    const DWORD t0 = GetTickCount();   // (not GetTickCount64: older _WIN32_WINNT headers lack it; these intervals are far below the 49-day wrap)
+    const DWORD totalMs = (DWORD)(ro.totalMs > 0 ? ro.totalMs : 15 * 60 * 1000);
+    auto done = [&](const std::string& why, bool maybeSent) {
+        r.reached = false; r.status = 0; r.body.clear(); r.error = why; r.maybeSent = maybeSent;
+        WinHttpCloseHandle(req); WinHttpCloseHandle(con);
+        return r;
+    };
+    if (ro.cancel && ro.cancel()) return done("cancelled", false);
+    BOOL ok = WinHttpSendRequest(req, hdrs.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : hdrs.c_str(), hdrs.empty() ? 0 : (DWORD)-1L,
+                                 payload.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)payload.data(),
+                                 (DWORD)payload.size(), (DWORD)payload.size(), 0);
+    if (!ok) {
+        const DWORD e = GetLastError();
+        return done((e == ERROR_WINHTTP_TIMEOUT ? "timeout: winhttp error " : "connect: winhttp error ") + std::to_string((unsigned long)e), false);
+    }
+    if (!WinHttpReceiveResponse(req, nullptr)) {
+        const DWORD e = GetLastError();
+        return done((e == ERROR_WINHTTP_REDIRECT_FAILED ? "too-many-redirects: winhttp error " :
+                     e == ERROR_WINHTTP_TIMEOUT ? "timeout: winhttp error " : "winhttp error ") + std::to_string((unsigned long)e), true);
+    }
+    DWORD code = 0, csz = sizeof(code);
+    if (!WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+                             &code, &csz, WINHTTP_NO_HEADER_INDEX))
+        return done("bad-response: no status", true);
+    r.status = (long)code;
+    r.rawHead = QueryText(req, WINHTTP_QUERY_RAW_HEADERS_CRLF);
+    r.etag = QueryText(req, WINHTTP_QUERY_ETAG);
+    r.lastModified = QueryText(req, WINHTTP_QUERY_LAST_MODIFIED);
+    r.notModified = code == 304;
+    uint64_t clen = 0;
+    const bool haveLen = method != "HEAD" && code != 304 && code != 204 && ParseU64(QueryText(req, WINHTTP_QUERY_CONTENT_LENGTH), clen);
+    uint64_t base = 0;
+    if (code == 206 && wantFile && ro.resumeFrom > 0) {
+        // Content-Range: bytes FIRST-LAST/TOTAL must start where the file stops, or the bytes would land in the wrong place.
+        const std::string cr = QueryText(req, WINHTTP_QUERY_CONTENT_RANGE);
+        const size_t sp = cr.find(' '), dash = cr.find('-'), slash = cr.find('/');
+        uint64_t first = 0, total = 0;
+        if (sp == std::string::npos || dash == std::string::npos || dash < sp ||
+            !ParseU64(cr.substr(sp + 1, dash - sp - 1), first) || first != ro.resumeFrom)
+            return done("bad-response: Content-Range does not match the resume point", true);
+        if (slash != std::string::npos && ParseU64(cr.substr(slash + 1), total)) r.totalSize = total;
+        base = ro.resumeFrom;
+        r.resumed = true;
+    } else if (haveLen) {
+        r.totalSize = clen;
+    }
+    const uint64_t cap = ro.maxBytes ? ro.maxBytes : (wantFile ? (8ull << 30) : (64ull << 20));
+    if (haveLen && clen > cap) return done("too-large: the answer announced " + std::to_string((unsigned long long)clen) + " bytes", true);
+    std::ofstream out;
+    bool toFile = false;
+    if (wantFile && code != 304 && (code == 200 || code == 206 || !ro.fileOnSuccessOnly)) {
+        out.open(outFile, std::ios::binary | (r.resumed ? std::ios::app : std::ios::trunc));
+        if (!out.is_open()) { r.writeFailed = true; return done("write-failed: cannot open the output file", true); }
+        toFile = true;
+    }
+    if (method != "HEAD") {
+        std::vector<char> buf(64 * 1024);
+        uint64_t got = 0;
+        for (;;) {
+            if (ro.cancel && ro.cancel()) return done("cancelled", true);
+            if ((DWORD)(GetTickCount() - t0) > totalMs) return done("timeout: the whole call took too long", true);
+            DWORD avail = 0;
+            if (!WinHttpQueryDataAvailable(req, &avail)) return done("io: winhttp error " + std::to_string((unsigned long)GetLastError()), true);
+            if (avail == 0) break;
+            if (avail > buf.size()) buf.resize(avail);
+            DWORD n = 0;
+            if (!WinHttpReadData(req, buf.data(), avail, &n)) return done("io: winhttp error " + std::to_string((unsigned long)GetLastError()), true);
+            if (n == 0) break;
+            got += n;
+            if (got > cap) return done("too-large: more than " + std::to_string((unsigned long long)cap) + " bytes", true);
+            if (toFile) {
+                out.write(buf.data(), n);
+                if (!out) { r.writeFailed = true; return done("write-failed: the output file could not be written", true); }
+            } else if (!wantFile) {
+                r.body.append(buf.data(), n);
+            }
+            if (ro.progress && !ro.progress(base + got, r.totalSize)) return done("cancelled", true);
+        }
+        // Fewer bytes than Content-Length announced is a failed call (never a 200 with a cut body).
+        if (haveLen && got < clen) return done("io: response body cut short", true);
+        if (toFile) { out.flush(); if (!out) { r.writeFailed = true; return done("write-failed: flush", true); } out.close(); }
+    }
+    r.reached = true;
+    WinHttpCloseHandle(req);
+    WinHttpCloseHandle(con);
+    return r;
+}
+} // namespace detail
+#endif
 
 inline ExResult RequestEx(const std::string& method, const std::string& url,
                           const std::vector<std::string>& headers, const std::string& body,
@@ -372,9 +540,11 @@ inline ExResult RequestEx(const std::string& method, const std::string& url,
         r.error = std::string(okay::ownhttp::ErrName(fr.err)) + ": " + fr.message;
         r.maybeSent = fr.requestSent;
     }
+#elif defined(OKAY_HTTP_WINHTTP)
+    r = detail::WinRequestEx(method, url, headers, body, bodyFile, std::filesystem::path(outFile), ro);
 #else
     (void)method; (void)url; (void)headers; (void)body; (void)bodyFile; (void)outFile; (void)ro;
-    r.error = "RequestEx needs the own HTTP client (OKAY_OWN_HTTP)";
+    r.error = "RequestEx needs a native client (WinHTTP on Windows, OKAY_OWN_HTTP elsewhere)";
 #endif
     return r;
 }

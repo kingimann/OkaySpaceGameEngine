@@ -8,14 +8,6 @@ namespace okay {
 namespace {
 
 std::string NoSpace(std::string s) { for (char& c : s) if (c == ' ' || c == '\t') c = '_'; return s; }
-const char* KindName(BindingSpec::Kind k) {
-    switch (k) { case BindingSpec::Kind::Vector2: return "vector2"; case BindingSpec::Kind::Vector3: return "vector3"; case BindingSpec::Kind::Axis1D: return "axis"; case BindingSpec::Kind::Chord: return "chord"; default: return "single"; }
-}
-bool ParseKind(const std::string& s, BindingSpec::Kind& k) {
-    if (s == "single") k = BindingSpec::Kind::Single; else if (s == "vector2") k = BindingSpec::Kind::Vector2; else if (s == "vector3") k = BindingSpec::Kind::Vector3;
-    else if (s == "axis") k = BindingSpec::Kind::Axis1D; else if (s == "chord") k = BindingSpec::Kind::Chord; else return false;
-    return true;
-}
 std::vector<std::string> Split(const std::string& line) {
     std::vector<std::string> t; std::size_t i = 0;
     while (i < line.size()) {
@@ -52,11 +44,12 @@ std::string SerializeInputAsset(const ActionSet& set) {
         s += "action " + NoSpace(a.name) + " " + ValueTypeName(a.type);
         if (!a.map.empty()) s += " map=" + NoSpace(a.map);
         if (a.pressPoint != 0.5f) s += " press=" + F(a.pressPoint);
+        if (a.sum) s += " sum=1";
         s += "\n";
         for (const BindingSpec& b : a.bindings) {
             // a rebound binding is saved as it was authored: overrides live in their own file
             const std::vector<std::string>& parts = b.original.empty() ? b.parts : b.original;
-            s += std::string("  bind ") + KindName(b.kind);
+            s += std::string("  bind ") + BindingKindName(b.kind);
             for (const std::string& p : parts) s += " " + p;
             if (!b.group.empty()) s += " group=" + NoSpace(b.group);
             if (!b.processors.empty()) { std::string p = ProcessorsToString(b.processors); for (char& c : p) if (c == ' ') c = ';'; s += " proc=" + p; }
@@ -100,18 +93,21 @@ bool ParseInputAsset(const std::string& text, ActionSet& out, std::string* error
             if (t.size() < 3) return fail("action needs a name and a type");
             ValueType vt;
             if (!ParseValueType(t[2], vt)) return fail("unknown value type " + t[2]);
-            std::string map; float press = 0.5f;
+            std::string map; float press = 0.5f; bool sum = false;
             for (std::size_t i = 3; i < t.size(); ++i) {
                 std::string v;
-                if (Opt(t[i], "map", v)) map = v; else if (Opt(t[i], "press", v)) press = (float)std::atof(v.c_str()); else return fail("unknown action option " + t[i]);
+                if (Opt(t[i], "map", v)) map = v; else if (Opt(t[i], "press", v)) press = (float)std::atof(v.c_str());
+                else if (Opt(t[i], "sum", v)) sum = v == "1";   // add the bindings up (keys and a stick at once) instead of the strongest
+                else return fail("unknown action option " + t[i]);
             }
             cur = &set.Add(t[1], vt, map);
             cur->pressPoint = press;
+            cur->sum = sum;
         } else if (t[0] == "bind") {
             if (!cur) return fail("bind before any action");
             if (t.size() < 3) return fail("bind needs a kind and a path");
             BindingSpec::Kind k;
-            if (!ParseKind(t[1], k)) return fail("unknown bind kind " + t[1]);
+            if (!ParseBindingKind(t[1], k)) return fail("unknown bind kind " + t[1]);
             std::vector<std::string> parts; std::string group, proc;
             for (std::size_t i = 2; i < t.size(); ++i) {
                 std::string v;
@@ -159,14 +155,14 @@ scheme Gamepad gamepad
 scheme Touch touch
 map Gameplay priority=0 consume=0 enabled=1
 map UI priority=10 consume=1 enabled=0
-action Move vector2 map=Gameplay
+action Move vector2 map=Gameplay sum=1
   bind vector2 key:w key:s key:a key:d group=Keyboard+Mouse
   bind vector2 key:up key:down key:left key:right group=Keyboard+Mouse
-  bind single stick:left group=Gamepad proc=deadzone(0.18,1)
+  bind single stick:left group=Gamepad
   bind single dpad group=Gamepad
-action Look vector2 map=Gameplay
+action Look vector2 map=Gameplay sum=1
   bind single mouse:delta group=Keyboard+Mouse
-  bind single stick:right group=Gamepad proc=deadzone(0.18,1);curve(2)
+  bind single stick:right group=Gamepad
 action Jump button map=Gameplay
   bind single key:space group=Keyboard+Mouse
   bind single pad:a group=Gamepad
@@ -228,6 +224,7 @@ ActionSet MigrateInputActions() {
         if (!map.empty()) { bool have = false; for (const ActionMap& m : set.Maps()) if (m.name == map) have = true; if (!have) set.AddMap(map, prio++ * 10, false, false); }
         ActionDef& d = set.Add(a.name, a.direction ? ValueType::Vector2 : ValueType::Button, map);
         d.pressPoint = a.threshold;
+        d.sum = a.direction;
         std::string proc;
         if (a.deadzone > 0) proc += "deadzone(" + F(a.deadzone) + ") ";
         if (a.curve != 1.0f) proc += "curve(" + F(a.curve) + ") ";

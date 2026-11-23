@@ -269,8 +269,10 @@ Details for every sub-area and numbered part: [docs/feature_map/07-audio.md](fea
 
 ## 8. Input
 
-Polled keyboard, mouse, gamepad and touch state, named input actions with rebinding, cursor lock, rumble and gameplay input
-blocking. Code is `engine/include/okay/Input/*` (5 headers) and `engine/src/Input/*` (about 700 lines); `player/main.cpp` and
+One input system (owner, 2026-11-23: "combine it so you have one"): polled keyboard, mouse, gamepad and touch state, ONE
+table of named actions with ONE rebinding store (the `.okayinput` asset plus the actions code defines; `InputActions`, the
+typed `ActionSet` calls, local players and both Controls screens all read and change it), cursor lock, rumble and gameplay
+input blocking. Code is `engine/include/okay/Input/*` (5 headers) and `engine/src/Input/*` (about 700 lines); `player/main.cpp` and
 `editor/main.cpp` feed SDL events in. Doc: `docs/engine/input.md`. Merged: #571 (F-keys, left/right modifiers, input contexts,
 dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Controls screen; in 2.850.0). Nothing is open here; the editor's Play mode still feeds only the old key set and one controller.
 
@@ -280,7 +282,7 @@ Details for every sub-area and numbered part: [docs/feature_map/08-input.md](fea
 |---|---|---|---|---|
 | [8.1](feature_map/08-input.md#81-keyboard-and-mouse) | Keyboard and mouse | Works | Polled key and mouse-button state (held, pressed this frame, released this frame), mouse position, delta and wheel, typed text, and a WASD and arrows... | keys by position for AZERTY exist (`Input::SetKeysByPosition`, off by default, no Settings toggle yet); the editor's Play mode... |
 | [8.2](feature_map/08-input.md#82-gamepad-sdl) | Gamepad (SDL) | Works | Game controllers (read through `okay::platform`: SDL2, or our own evdev backend) are read into Input: both sticks (radial dead zone 0.18), both... | the editor reads only one controller through `FeedPad`; the controller hot-plug events still come from each app's SDL event loop... |
-| [8.3](feature_map/08-input.md#83-input-actions-and-rebinding-ui) | Input actions and rebinding UI | Works | Named actions ("Jump", "Move", "Fire") that read keys, mouse and controller together, with text bindings, a direction type for sticks and WASD, and... | still on raw keys: vehicle driving, pause menu, free roam, builders, UI widgets; lean and prone have no action; the pause menu... |
+| [8.3](feature_map/08-input.md#83-input-actions-and-rebinding-ui) | Input actions and rebinding UI | Works | Named actions ("Jump", "Move", "Fire") that read keys, mouse and controller together, with text bindings, a direction type for sticks and WASD, and... | still on raw keys: builders and some UI widgets; no editor for the code-defined actions (they show in the Input panel and the... |
 | [8.4](feature_map/08-input.md#84-cursor-and-touch) | Cursor and touch | Works for the cursor and single or multi touch lists (headers and the player's finger and cursor code read; touch list and drag-scroll covered by `ui_nav_touch`) | Gameplay asks for the mouse cursor to be hidden and locked (shooters) and the host applies it; finger touches are fed from SDL finger events and... | none of the gesture or on-screen control gaps. Tap, double tap, long press, swipe, pinch and two-finger rotate are recognised... |
 | [8.5](feature_map/08-input.md#85-gameplay-input-blocking) | Gameplay input blocking | Works | One place that answers "should the world ignore this click or key right now?": pause menu, open bag, chest, crafting, a focused text field, modal... | no doc; the mask is a fixed list of known components, so a game's own menu must call `Input::SetUICaptured`; this is separate... |
 | [8.6](feature_map/08-input.md#86-rumble-and-haptics) | Rumble and haptics | Works in headless tests | Games request controller rumble with a heavy and a light motor strength and a duration; the host plays the latest request on the connected pad. | no rumble on touch devices; `Input::Rumble` takes a player index since #571 (the editor feeds only one pad); no vibration slider... |

@@ -1,5 +1,7 @@
 #pragma once
-// A typed, composable action layer on top of the raw readers and the existing binding text.
+// THE action layer of the engine (one input system: Input reads the devices, this turns them into actions, one store keeps
+// the player's rebinding). InputActions is the old name-based front of the same table (InputRuntime::Actions()), and the
+// .okayinput asset, local players and the typed script calls read it too.
 //
 //  * Value types: a button, a 1D axis, a 2D vector or a 3D vector (InputValue).
 //  * Bindings are a single input ("key:space", "stick:left", "pad:rt" ... the InputBinding text) or a
@@ -8,11 +10,13 @@
 //    binding and on the action, and run in the order written.
 //  * Control schemes (Keyboard+Mouse, Gamepad, Touch ...) group bindings by device; the active scheme can follow the
 //    device the player used last, and an ActionSet can be paired with one controller (a local player).
-// Pure logic over Input: no SDL, no window. Existing InputActions is untouched; this is the richer layer next to it
-// (interactions and phases come in ActionSet's second slice, the asset file and PlayerInput in the third).
+//  * Action maps are also the input contexts of InputActions: a map can consume the inputs its bindings use or block every
+//    map below it, a held chord ("chord:ctrl+z") keeps its keys from single-key bindings, an action can add up its bindings
+//    (`sum`), shape its value with a response (dead zone, curve, sensitivity, invert), be read per controller (`perPlayer`),
+//    take on-screen contributions (Contribute) and keeps press timing for buffering, double tap and hold to confirm.
+// Pure logic over Input: no SDL, no window. Update does not allocate once warmed up (test input_bench).
 #include "okay/Input/InputActions.hpp"
 #include <deque>
-#include <set>
 #include <functional>
 #include <string>
 #include <vector>
@@ -94,6 +98,14 @@ struct BindingSpec {
     mutable bool built = false;
 };
 
+/// "single", "vector2", "vector3", "axis", "chord" (the asset file and the "ovlist" override line).
+const char* BindingKindName(BindingSpec::Kind k);
+bool ParseBindingKind(const std::string& s, BindingSpec::Kind& k);
+/// "" and "Gameplay" (any case) are the base map: always on, what InputActions calls the base context.
+bool IsBaseMapName(const std::string& map);
+/// A 0..1 reading through a response (InputActions::ShapeValue: for drawing the curve).
+float ShapeResponse(float in, const InputActions::Response& r);
+
 struct ActionDef {
     std::string name;
     std::string map;                           ///< the action map it lives in ("" = the always-on default map)
@@ -101,6 +113,14 @@ struct ActionDef {
     std::vector<BindingSpec> bindings;
     std::vector<Processor> processors;         ///< applied after the winning binding
     float pressPoint = 0.5f;                   ///< magnitude at which a button action counts as pressed
+    bool sum = false;                          ///< add every binding's value (length kept to 1) instead of taking the strongest one
+    InputActions::Response response;           ///< the player's shaping (dead zone, curve, sensitivity, invert), after `processors`
+    bool perPlayer = false;                    ///< also read once per controller 0..3 (see `pads`)
+    /// The authored bindings when the player's rebinding changed the list's shape (a binding added, or a four-key
+    /// direction turned into a stick): `reshaped` is set. Otherwise the list is as authored (per-binding overrides live in
+    /// BindingSpec::original).
+    std::vector<BindingSpec> authored;
+    bool reshaped = false;
     BindingSpec& AddBinding(const std::string& path, const std::string& group = "", const std::string& processors = "");
     BindingSpec& AddVector2(const std::string& up, const std::string& down, const std::string& left, const std::string& right,
                             const std::string& group = "", const std::string& processors = "");
@@ -118,6 +138,17 @@ struct ActionDef {
     InputValue value;                          ///< processed, typed
     bool pressed = false, down = false, released = false;   ///< this frame / held / this frame
     int activeBinding = -1;                    ///< index of the binding that drove the value now, -1 none
+    bool live = false;                         ///< its map ran enabled and unblocked this frame
+    struct PadState { float value = 0, previous = 0; Vec2 vector; };
+    PadState pads[Input::kMaxGamepads];        ///< perPlayer: the same bindings read for controller 0..3 (keyboard and mouse: pad 0)
+    // ---- press timing (seconds of ActionSet::Time)
+    double pressedAt = -1.0e9, prevPressedAt = -1.0e9, heldSince = -1.0;
+    bool pressConsumed = false;
+    bool latchActive = false, latchHeld = false;   ///< accessibility hold-to-toggle
+    float contribValue = 0; Vec2 contribVector; bool contributed = false;   ///< Contribute, folded in by the next Update
+    /// Magnitude now / last frame: a button's value, a vector's length (what pressPoint is compared with).
+    float Magnitude() const;
+    float PrevMagnitude() const;
 };
 
 /// A group of actions that can be switched on and off together (Gameplay, UI, Vehicle). Enabled maps run from the highest
@@ -127,6 +158,7 @@ struct ActionMap {
     int priority = 0;
     bool consume = false;
     bool enabled = true;
+    bool block = false;    ///< while enabled, every map below it gets nothing (a modal menu: InputActions ContextMode::Block)
 };
 
 class ActionSet {
@@ -152,6 +184,32 @@ public:
     /// Save / load the overrides in Prefs under "inputov.<key>" (one key per local player).
     void SaveOverrides(const std::string& key) const;
     int LoadOverrides(const std::string& key);
+    /// Replace an action's whole binding list (a Controls screen that adds a binding or changes its shape). When every
+    /// binding keeps the authored kind and count this is per-binding rebinds; otherwise the authored list is kept in
+    /// `authored` and the override is exported as one "ovlist" line. False for an unknown action.
+    bool SetBindings(const std::string& action, const std::vector<BindingSpec>& list);
+    /// The authored list of an action (what Reset goes back to).
+    std::vector<BindingSpec> AuthoredBindings(const ActionDef& a) const;
+    /// Changes whenever an action, a binding or an override changes (readers that cache the bindings compare it).
+    unsigned Revision() const { return m_revision; }
+    void Touch() { ++m_revision; }
+    /// Case-insensitive lookup ("jump" finds "Jump"), as InputActions names have always been.
+    ActionDef* FindNoCase(const std::string& name);
+    const ActionDef* FindNoCase(const std::string& name) const;
+    // ---- input contexts (maps pushed on top of the others)
+    /// Enable `map` above every other map (adding it when missing): consume and/or block the maps below. Re-pushing moves it up.
+    void PushMap(const std::string& map, bool consume, bool block);
+    /// Undo PushMap: the map goes back to its authored priority, consume and enabled state.
+    void PopMap(const std::string& map);
+    /// True when an enabled map above the base maps ("" and Gameplay) swallows this input (InputActions::KeyConsumed).
+    bool Consumed(const InputBinding& leaf) const;
+    /// Every scheme's bindings count at once (the InputActions table: the keyboard and every pad together).
+    void SetAllSchemes(bool on) { m_allSchemes = on; }
+    // ---- on-screen controls: added to the action by the next Update, then cleared
+    void Contribute(const std::string& action, float value);
+    void ContributeVector(const std::string& action, const Vec2& v);
+    void ClearContributions();
+    float LastDt() const { return m_lastDt; }
     // ---- schemes
     void AddScheme(const ControlScheme& s);
     const std::vector<ControlScheme>& Schemes() const { return m_schemes; }
@@ -204,7 +262,8 @@ public:
     /// Does binding `b` of `a` apply under the active scheme?
     bool BindingActive(const BindingSpec& b) const;
 private:
-    InputValue Eval(const BindingSpec& b) const;
+    InputValue Eval(const BindingSpec& b, int pad = -1) const;
+    void EvalAction(ActionDef& a, bool enabled, float dt);
     void Emit(ActionDef& a, int idx, Phase ph, bool down = true, float held = 0);
     void RunInteractions(ActionDef& a, bool wasDown, float dt);
     std::deque<ActionDef> m_actions;
@@ -216,7 +275,18 @@ private:
     Input::Device m_lastDevice = Input::Device::Keyboard;
     int m_lastPadSeen = -1;
     std::vector<ActionMap> m_maps;
-    mutable std::set<std::string> m_blocked;   ///< inputs swallowed by a consuming map above the one being evaluated
+    std::vector<std::string> m_keep;           ///< override lines Import could not apply (an action of another asset): exported again as they were
+    struct Pushed { std::string name; int priority; bool consume, block, enabled, added; };
+    std::vector<Pushed> m_pushed;              ///< PushMap's stack (the authored state to restore)
+    std::vector<int> m_claims;                 ///< inputs swallowed by consuming maps above the one being evaluated
+    std::vector<int> m_chordClaims;            ///< keys of held chords
+    std::vector<const ActionMap*> m_order;     ///< maps by priority (reused every Update)
+    bool m_allSchemes = false;
+    unsigned m_revision = 1;
+    mutable unsigned m_indexRev = 0;
+    mutable std::size_t m_indexSize = 0;
+    mutable std::vector<std::pair<std::string, std::size_t>> m_index;   ///< lower-case name -> action, sorted
+    float m_lastDt = 0;
     std::vector<PhaseEvent> m_events;
     std::vector<std::pair<int, std::function<void(const PhaseEvent&)>>> m_subs;
     int m_nextSub = 1;

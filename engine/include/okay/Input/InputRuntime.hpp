@@ -1,7 +1,10 @@
 #pragma once
-// The process-wide input runtime scripts talk to: one PlayerInputManager, the asset it starts players from, and the per-frame
-// update (called from InputActions::Tick, so every host that already ticks input drives it). With no asset set the default asset
-// is used; with no player joined the first query joins a single "any device" player, so a script can just read actions.
+// The process-wide input runtime: THE action table (Actions(): the asset in use plus the actions code defines through
+// InputActions, every device at once, holding the player's one rebinding store), one PlayerInputManager whose players start
+// from it, and the per-frame update (called from InputActions::Tick, so every host that already ticks input drives it). With
+// no asset set the default asset is used; with no player joined the first typed query joins a single "any device" player, so
+// a script can just read actions. Player 0's bindings are the table's (a rebind of either is the same rebind); players 1+ keep
+// their own rebinding ("inputov.player<N>").
 #include "okay/Input/PlayerInput.hpp"
 #include <string>
 
@@ -10,6 +13,19 @@ namespace okay {
 class InputRuntime {
 public:
     static PlayerInputManager& Players();
+    /// The one action table InputActions, the built-in controllers and action_* scripts read (built on first use, again after
+    /// the asset changes). Its rebinding is player 0's.
+    static ActionSet& Actions();
+    /// The table when it is built and not being built, else nullptr (never builds).
+    static ActionSet* ActionsIfBuilt();
+    /// Build the table again on next use (InputActions::Restore); players and the asset stay.
+    static void RebuildActions();
+    /// Changes each time the table is rebuilt (readers that cache it compare it).
+    static unsigned ActionsSerial();
+    /// Apply `fn` to the table (when built) and to every joined player's set: contexts, a new code action, a response.
+    static void ForEachSet(void (*fn)(ActionSet&, const void*), const void* arg);
+    /// Copy the table's bindings into player 0 (done by Update and after every table rebind; call after changing the table).
+    static void SyncPlayer0();
     /// Use the asset in `path` for players that join from now on (and re-create the ones already in).
     static bool LoadAsset(const std::string& path, std::string* error = nullptr);
     static void UseDefault();
@@ -22,15 +38,13 @@ public:
     /// otherwise). A Player Input component with its own asset path still replaces it. True when the project's file was loaded.
     static bool UseProjectAsset(const std::string& projectDir);
     static void Update(float dt);
-    /// Rebind one part of one binding of `player` (ActionSet::Rebind). Player 0's set is the default ActionSet: its linked
-    /// actions are also what InputActions and the built-in controllers read, so they follow at once. Not saved: SaveOverrides.
+    /// Rebind one part of one binding of `player` (ActionSet::Rebind). Player 0's bindings are the table's, so InputActions and
+    /// the built-in controllers follow at once. Not saved: SaveOverrides.
     static bool Rebind(int player, const std::string& action, int binding, int part, const std::string& path);
     /// Put one binding back to the asset's (`binding` of `action`), or every binding of the player with action "".
     static bool ResetBinding(int player, const std::string& action = "", int binding = -1);
-    /// Save `player`'s overrides (Prefs "inputov.player<N>"); for player 0 InputActions is saved too, so both layouts agree.
+    /// Save `player`'s overrides (Prefs "inputov.player<N>"); player 0's are the table's (InputActions::Save).
     static void SaveOverrides(int player);
-    /// Player 0's ActionSet when one has joined (linked to InputActions on first sight of each join), else nullptr. Never joins.
-    static ActionSet* LinkedSet();
     static void Reset();                              ///< forget players and asset (tests)
     /// Join from a word: "keyboard", "pad0".."pad3", "any". Returns the player index or -1.
     static int JoinNamed(const std::string& device);

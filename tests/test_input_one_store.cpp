@@ -1,7 +1,9 @@
-// One rebinding store for the two input-action layers (duplicate audit #422, item 2).
-// The built-in controllers read InputActions (text bindings); the typed layer reads an ActionSet (InputRuntime player 0, the
-// default ActionSet, from the .okayinput asset). A player who rebinds Jump on either Controls screen must be seen by both
-// readers, and the saved rebinding must come back for both. Old saves (Prefs "input.<action>") keep loading.
+// One input system (duplicate audit #422, item 2; owner 2026-11-23 "combine it so you have one").
+// There is one action table (InputRuntime::Actions(), an ActionSet) and one rebinding store. InputActions (what the built-in
+// controllers read) is its name-based front; player 0's typed set (ia_*, the "ia:" Keybind field) has the same bindings. A
+// player who rebinds Jump on either Controls screen is seen by every reader at once, and the saved rebinding comes back for
+// all of them. Old saves (Prefs "input.<action>") keep loading. Blocks 5 to 12 were written for the earlier two-store link
+// (PR #1139); their expectations now follow the one store, each change noted where it is.
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Core/Prefs.hpp"
@@ -111,33 +113,36 @@ int main() {
         CHECK(!Prefs::Has("inputov.player0"));
         CHECK(InputRuntime::Set(0) && SetPart(0, "Jump", 0, 0) == "key:x" && SetPart(0, "Jump", 1, 0) == "pad:b");
         CHECK(SetPart(0, "Move", 0, 0) == "key:i" && SetPart(0, "Move", 0, 3) == "key:l");
-        CHECK(Prefs::Has("inputov.player0"));
-        // a typed-only rebind saved by an earlier version (inputov.player0) reaches InputActions when player 0 joins
+        CHECK(!Prefs::Has("inputov.player0"));                                        // one store: a join writes nothing either
+        // a typed rebind saved by an earlier version (inputov.player0) is in the one store at once, before any join
         Fresh();
         Prefs::SetString("inputov.player0", "ov Reload 0 key:g\n");
         InputActions::Load();
-        CHECK(InputActions::Find("Reload")->bindings[0].ToString() == "key:r");
+        CHECK(InputActions::Find("Reload")->bindings[0].ToString() == "key:g");
         CHECK(InputRuntime::Set(0) && InputActions::Find("Reload")->bindings[0].ToString() == "key:g");
-        // both saved and disagreeing (the bug this fixes): the typed layer's saved override wins in both readers
+        // both saved and disagreeing (only something outside writes them apart now): "input.<action>", the form every
+        // version writes, wins for that action, so a rebind made in an older build after this one still comes through
         Fresh();
         Prefs::SetString("input.reload", "key:t;pad:y");
         Prefs::SetString("inputov.player0", "ov Reload 0 key:g\n");
         InputActions::Load();
-        CHECK(InputRuntime::Set(0) && InputActions::Find("Reload")->bindings[0].ToString() == "key:g" && SetPart(0, "Reload", 0, 0) == "key:g");
+        CHECK(InputRuntime::Set(0) && InputActions::Find("Reload")->bindings[0].ToString() == "key:t" && SetPart(0, "Reload", 0, 0) == "key:t");
         CHECK(Prefs::GetString("input.reload") == "key:t;pad:y" && Prefs::GetString("inputov.player0") == "ov Reload 0 key:g\n");   // nothing rewritten
     }
 
-    // ---- 6. Actions the asset does not have (Vehicle, a game's own) stay InputActions-only, as before ----
+    // ---- 6. Actions the asset does not have (Vehicle, a game's own) are in the one table and the one store too ----
     {
         Fresh();
         CHECK(InputActions::Rebind("Horn", "key:j"));
-        CHECK(Prefs::GetString("input.horn") == "key:j" && !Prefs::Has("inputov.player0"));
-        // a project asset whose Jump differs from the built-in defaults is not linked: its bindings are its own
+        CHECK(Prefs::GetString("input.horn") == "key:j" && Prefs::GetString("inputov.player0").find("ov Horn 0 key:j") != std::string::npos);
+        // a project asset's Jump is THE Jump (the built-in default only fills in what an asset lacks): a rebind changes it
         ActionSet custom;
         CHECK(ParseInputAsset("okayinput 1\naction Jump button\n  bind single key:f\n", custom));
         InputRuntime::Players().SetAsset(custom);
+        CHECK(InputActions::Find("Jump")->bindings.size() == 1 && InputActions::Find("Jump")->bindings[0].ToString() == "key:f");
+        CHECK(InputActions::Find("Horn")->bindings[0].ToString() == "key:j");     // the saved rebinding came along
         CHECK(InputActions::Rebind("Jump", "key:u"));
-        CHECK(InputRuntime::Set(0) && SetPart(0, "Jump", 0, 0) == "key:f");
+        CHECK(InputRuntime::Set(0) && SetPart(0, "Jump", 0, 0) == "key:u");
     }
 
     // ---- 7. The script names keep their old results: ia_rebind true / false as before, nothing saved until ia_save,
@@ -171,12 +176,13 @@ int main() {
     }
 
     // ==== Review of PR #1139: each block failed on 2957a101d ====
-    // ---- 8. A Move part rebound to something InputActions cannot hold stays in the typed store (not undone, not erased) ----
+    // ---- 8. A Move part rebound to something the name-based front cannot show stays in the store (not undone, not erased) ----
     {
         Fresh();
         CHECK(InputRuntime::Rebind(0, "Move", 0, 0, "pad:y"));
-        CHECK(InputActions::Find("Move")->bindings[0].ToString() == "keys:w,s,a,d");   // InputActions keeps its four keys
+        CHECK(InputActions::Find("Move")->bindings[0].kind == InputBinding::Kind::None);   // one store: shown as "cannot show", still read
         InputRuntime::SaveOverrides(0);
+        CHECK(!Prefs::Has("input.move"));                                                // the per-action form cannot hold it
         CHECK(SetPart(0, "Move", 0, 0) == "pad:y");
         CHECK(Prefs::GetString("inputov.player0").find("ov Move 0 pad:y,key:s,key:a,key:d") != std::string::npos);
         // an old save with such a part survives the start-up Load and a join
@@ -186,40 +192,42 @@ int main() {
         CHECK(Prefs::GetString("inputov.player0") == "ov Move 0 mouse:middle,key:s,key:a,key:d\n");
         CHECK(InputRuntime::Set(0) && SetPart(0, "Move", 0, 0) == "mouse:middle");
         CHECK(Prefs::GetString("inputov.player0") == "ov Move 0 mouse:middle,key:s,key:a,key:d\n");
-        CHECK(InputActions::Find("Move")->bindings[0].ToString() == "keys:w,s,a,d");
+        CHECK(InputActions::Find("Move")->bindings[0].kind == InputBinding::Kind::None);
     }
 
     // ---- 9. A custom .okayinput: nothing is read or written against the built-in asset before the real one is in use ----
     {
-        // 9a. overrides made against a custom asset (Jump: pad first, key second) do not rewrite InputActions' keyboard Jump
+        // 9a. overrides made against a custom asset (Jump: pad first, key second): once that asset is in use the table is
+        //     built from it again and the saved line lands where it was made
         Fresh();
         Prefs::SetString("inputov.player0", "ov Jump 0 pad:x\n");
         InputActions::Load();
-        CHECK(InputActions::Find("Jump")->bindings[0].ToString() == "key:space");
         ActionSet custom;
         CHECK(ParseInputAsset("okayinput 1\naction Jump button\n  bind single pad:a\n  bind single key:space\naction Dash button\n  bind single key:q\n", custom));
         InputRuntime::Players().SetAsset(custom);
         CHECK(InputRuntime::Set(0) && SetPart(0, "Jump", 0, 0) == "pad:x");
-        CHECK(InputActions::Find("Jump")->bindings[0].ToString() == "key:space" && InputActions::Find("Jump")->bindings[1].ToString() == "pad:a");
+        CHECK(InputActions::Find("Jump")->bindings[0].ToString() == "pad:x" && InputActions::Find("Jump")->bindings[1].ToString() == "key:space");
         // 9b. first launch: a line for an action only the custom asset has is kept, also when an old input.<action> exists
         Fresh();
         Prefs::SetString("inputov.player0", "ov Dash 0 key:v\n");
         Prefs::SetString("input.jump", "key:x;pad:a");
         InputActions::Load();
         CHECK(Prefs::GetString("inputov.player0").find("ov Dash 0 key:v") != std::string::npos);
-        InputActions::Rebind("Fire", "key:f");                                       // no player yet: nothing written to the typed store
-        CHECK(Prefs::GetString("inputov.player0") == "ov Dash 0 key:v\n");
+        InputActions::Rebind("Fire", "key:f");                                       // one store: the save writes it, and keeps the Dash line
+        CHECK(Prefs::GetString("inputov.player0").find("ov Dash 0 key:v") != std::string::npos);
+        CHECK(Prefs::GetString("inputov.player0").find("ov Fire 0 key:f") != std::string::npos);
     }
 
-    // ---- 10. An unrelated InputActions rebind does not save player 0's pending (unsaved) typed rebinds ----
+    // ---- 10. One store, one save: a later save (any Controls screen) also keeps an earlier unsaved typed rebind ----
     {
         Fresh();
-        CHECK(InputRuntime::Rebind(0, "Crouch", 0, 0, "key:c"));                    // pending: no ia_save yet
+        CHECK(InputRuntime::Rebind(0, "Crouch", 0, 0, "key:c"));                    // not saved yet: no ia_save
+        CHECK(!Prefs::Has("inputov.player0"));
         CHECK(RemapBind("Fire", "key:f").ok);
         const std::string ov = Prefs::GetString("inputov.player0");
-        CHECK(ov.find("ov Crouch") == std::string::npos && ov.find("ov Fire 0 key:f") != std::string::npos);
-        CHECK(!Prefs::Has("input.crouch"));                                          // nor through the old layout
-        CHECK(SetPart(0, "Crouch", 0, 0) == "key:c");                                // still pending in memory
+        CHECK(ov.find("ov Crouch 0 key:c") != std::string::npos && ov.find("ov Fire 0 key:f") != std::string::npos);
+        CHECK(Prefs::GetString("input.crouch") == "key:c;pad:b");
+        CHECK(SetPart(0, "Crouch", 0, 0) == "key:c");
     }
 
     // ---- 11. Controls screen Unbind: the typed layer gets no conflict the player did not make ----
@@ -237,15 +245,77 @@ int main() {
         CHECK(SetPart(0, "Jump", 0, 0) == "key:e" && SetPart(0, "Interact", 0, 0) == "key:space");
     }
 
-    // ---- 12. A direction action is never synced to a lone key or button (mouse look keeps working) ----
+    // ---- 12. A typed rebind is THE rebind: what ia_rebind allows (a lone key on Look) every reader now gets. InputActions'
+    //         own Rebind still refuses a lone key for a direction action, as before. ----
     {
         Fresh();
         CHECK(InputRuntime::Rebind(0, "Look", 0, 0, "key:q"));
-        CHECK(InputActions::Find("Look")->bindings[0].ToString() == "mouse:delta");
+        CHECK(InputActions::Find("Look")->bindings[0].ToString() == "key:q");
         CHECK(InputRuntime::Rebind(0, "Move", 2, 0, "pad:y"));
-        CHECK(InputActions::Find("Move")->bindings[2].ToString() == "stick:left");
+        CHECK(InputActions::Find("Move")->bindings[2].ToString() == "pad:y");
         InputRuntime::SaveOverrides(0);
-        CHECK(SetPart(0, "Look", 0, 0) == "key:q" && InputActions::Find("Look")->bindings[0].ToString() == "mouse:delta");
+        CHECK(SetPart(0, "Look", 0, 0) == "key:q" && InputActions::Find("Look")->bindings[0].ToString() == "key:q");
+        CHECK(!InputActions::Rebind("Look", "key:z"));                                  // refused as before
+    }
+
+    // ==== One input system (owner 2026-11-23): old names of all three former systems read the one table ====
+    // ---- 13. One table: every action once; the asset's and the built-in defaults' actions side by side ----
+    {
+        Fresh();
+        const auto& all = InputActions::All();
+        for (std::size_t i = 0; i < all.size(); ++i)
+            for (std::size_t j = i + 1; j < all.size(); ++j) CHECK(all[i].name != all[j].name);
+        CHECK(all.size() == InputRuntime::Actions().Actions().size());
+        for (const char* n : {"Move", "Look", "Jump", "Navigate", "Submit", "Cancel", "Dig", "Prone", "Horn"}) CHECK(InputActions::Has(n));
+        CHECK(InputActions::Find("Navigate")->context == "UI" && InputActions::Find("Horn")->context == "Vehicle");
+    }
+
+    // ---- 14. Same key -> same action through every old name: InputActions (controllers), action_* and ia_* scripts,
+    //          the engine-API Input.GetButtonDown, the typed set; a rebind on the game's Controls screen moves all of them ----
+    {
+        Fresh();
+        Scene scene("names"); scene.physicsEnabled = false;
+        GameObject* g = scene.CreateGameObject("T");
+        g->AddComponent<TextRenderer>();
+        auto* sc = g->AddComponent<ScriptComponent>();
+        std::string err;
+        CHECK(sc->LoadSource(R"(function update(dt) {
+  set_text("" + action("Jump") + " " + ia_down("Jump") + " " + action_x("Move") + " " + ia_x("Move"));
+})", &err));
+        scene.Start();
+        auto step = [&](std::vector<char> keys) { Frame(keys); scene.Update(0.016f); };
+        TextRenderer* t = g->GetComponent<TextRenderer>();
+        step({' ', 'd'}); step({' ', 'd'});
+        CHECK(t && t->text == "true true 1 1");
+        CHECK(InputActions::Get("Jump") && InputActions::ControlKey("Jump", ' ') && InputRuntime::Set(0)->Held("Jump"));
+        // the player rebinds Jump to J and Move right to L in the game's Controls screen
+        CHECK(RemapBind("Jump", "key:j").ok);
+        CHECK(RemapBind("Move", "key:l", RemapResolve::Allow, 3).ok);
+        step({' ', 'd'}); step({' ', 'd'});
+        CHECK(t && t->text == "false false 0 0");                                     // the old keys stopped for every reader
+        CHECK(!InputActions::ControlKey("Jump", ' '));
+        step({'j', 'l'}); step({'j', 'l'});
+        CHECK(t && t->text == "true true 1 1");
+        CHECK(InputActions::ControlKey("Jump", ' ') && InputRuntime::Set(0)->Held("Jump"));
+        // and it comes back after a restart (a new table from the saved store)
+        InputRuntime::Reset(); InputActions::Restore();
+        step({'j', 'l'}); step({'j', 'l'});
+        CHECK(t && t->text == "true true 1 1");
+        CHECK(InputActions::Find("Jump")->bindings[0].ToString() == "key:j");
+    }
+
+    // ---- 15. Contexts are the table's maps: the pause menu's Block context stops the typed player 0 too ----
+    {
+        Fresh();
+        ActionSet* p0 = InputRuntime::Set(0);
+        Frame({' '}); Frame({' '});
+        CHECK(InputActions::Get("Jump") && p0 && p0->Held("Jump"));
+        InputActions::PushContext("Pause", InputActions::ContextMode::Block);
+        Frame({' '}); Frame({' '});
+        CHECK(!InputActions::Get("Jump") && !p0->Held("Jump"));
+        InputActions::PopContext("Pause");
+        Frame({' '}); Frame({' '});
+        CHECK(InputActions::Get("Jump") && p0->Held("Jump"));
     }
 
     Prefs::Clear(); InputRuntime::Reset(); InputActions::Restore(); Input::FeedKeys({});

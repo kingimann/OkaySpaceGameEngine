@@ -1,20 +1,23 @@
+// The name-based front of the engine's one action table (InputRuntime::Actions(), an ActionSet). It keeps no actions,
+// bindings or rebinding of its own: the built-in default actions and a game's Define calls are a list of definitions the
+// table (and every local player's set) is given, the readers read the table, and every rebind changes the table. Written
+// for this engine (duplicate audit #422 item 2: the old separate action table and its sync code are gone).
 #include "okay/Input/InputActions.hpp"
 #include "okay/Input/InputRuntime.hpp"
 #include "okay/Input/ActionSet.hpp"
 #include "okay/Input/InputAsset.hpp"
-#include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputRecorder.hpp"
 #include "okay/Input/InputDebug.hpp"
 #include "okay/Input/Haptics.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/StringUtil.hpp"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <unordered_map>
 
 namespace okay {
 
@@ -55,262 +58,6 @@ std::string Unescape(const std::string& s) {
     return out;
 }
 const char* const kMouseNames[3] = {"left", "right", "middle"};
-
-Vec2 ClampLength(Vec2 v) {
-    const float len = std::sqrt(v.x * v.x + v.y * v.y);
-    return len > 1.0f ? Vec2{v.x / len, v.y / len} : v;
-}
-
-std::vector<InputActions::Action>& Actions() {
-    static std::vector<InputActions::Action> a;
-    return a;
-}
-// Lower-case name -> index, rebuilt when the list changes size. Lookups used to scan the whole list
-// and lower-case two strings per action per call.
-std::unordered_map<std::string, std::size_t>& IndexMap() {
-    static std::unordered_map<std::string, std::size_t> m;
-    return m;
-}
-bool g_legacy = std::getenv("OKAY_OLD_INPUT") != nullptr && std::getenv("OKAY_OLD_INPUT")[0] != '0';
-double g_now = 0.0;
-double g_dt = 0.0;
-bool g_clockSeen = false;
-std::chrono::steady_clock::time_point g_lastClock;
-
-struct Contribution { float value = 0.0f; Vec2 vector; };
-std::unordered_map<std::string, Contribution>& Contributions() {
-    static std::unordered_map<std::string, Contribution> c;
-    return c;
-}
-
-void DefineDefaults() {
-    auto& a = Actions();
-    a.clear();
-    IndexMap().clear();
-    InputActions::Define("Move", {"keys:w,s,a,d", "keys:up,down,left,right", "stick:left", "dpad"}, true);
-    InputActions::Define("Look", {"mouse:delta", "stick:right"}, true);
-    InputActions::Define("Jump", {"key:space", "pad:a"});
-    InputActions::Define("Sprint", {"key:shift", "pad:ls"});
-    InputActions::Define("Crouch", {"key:ctrl", "pad:b"});
-    InputActions::Define("Fire", {"mouse:left", "pad:rt"});
-    InputActions::Define("Aim", {"mouse:right", "pad:lt"});
-    InputActions::Define("Interact", {"key:e", "pad:x"});
-    InputActions::Define("Reload", {"key:r", "pad:y"});
-    // Voxel sandbox (VoxelDigger): dig, place, pick the material under the aim, and step the hotbar. Rebindable like the rest.
-    // Dig and Place start with no bindings of their own: until a player rebinds them the digger uses Fire (left mouse, RT) and
-    // Aim (right mouse, LT), so no two actions share a default key (the remap screen reports shared keys as conflicts).
-    InputActions::Define("Dig", {});
-    InputActions::Define("Place", {});
-    InputActions::Define("PickBlock", {"key:t", "pad:rs"});
-    InputActions::Define("HotbarNext", {"pad:rb"});
-    InputActions::Define("HotbarPrev", {"pad:lb"});
-    InputActions::Define("Inventory", {"key:tab", "pad:back"});
-    InputActions::Define("Pause", {"key:escape", "pad:start"});
-    // Built-in controllers' extra keys (prone, lean, dash). They start with no binding of their own: their stock keys
-    // (Z, Q, E, Space) are shared with Interact and Jump, or are keys games often give their own actions, and the
-    // Controls screen would report those as clashes. The controllers keep their stock keys until the player binds
-    // these (ControlKey's stockKey).
-    InputActions::Define("Prone", {});
-    InputActions::Define("LeanLeft", {});
-    InputActions::Define("LeanRight", {});
-    InputActions::Define("Dash", {});
-    // Vehicle Controller driving keys, in the "Vehicle" context: a key may drive and walk (W is Throttle and Move), and
-    // the Controls screen reports a shared key only inside one context. While "Vehicle" is not pushed the controller
-    // reads them straight from their bindings. Keyboard only: the controller's own pad fields stay as they are.
-    InputActions::DefineIn("Vehicle", "Throttle", {"key:w", "key:up"});
-    InputActions::DefineIn("Vehicle", "Brake", {"key:s", "key:down"});
-    InputActions::DefineIn("Vehicle", "SteerLeft", {"key:a", "key:left"});
-    InputActions::DefineIn("Vehicle", "SteerRight", {"key:d", "key:right"});
-    InputActions::DefineIn("Vehicle", "Handbrake", {"key:space"});
-    InputActions::DefineIn("Vehicle", "Boost", {"key:shift"});
-    InputActions::DefineIn("Vehicle", "GearUp", {"key:x"});
-    InputActions::DefineIn("Vehicle", "GearDown", {"key:z"});
-    InputActions::DefineIn("Vehicle", "Horn", {"key:h"});
-    InputActions::DefineIn("Vehicle", "Headlights", {"key:l"});
-}
-
-void EnsureDefaults() {
-    static bool done = false;
-    if (!done) { done = true; DefineDefaults(); }
-}
-
-// ---- One store with the typed layer ----------------------------------------------------------------------------------
-// Binding i of an action here is binding i of the same-named action in the live default ActionSet (InputRuntime player 0)
-// when that action's authored bindings are exactly this action's defaults: a four-key direction is a vector2 composite of
-// the same four keys, anything else a single binding with the same input. Nothing is read from or written to the typed
-// store before a player 0 has joined (only then is the asset in use known). Written for this engine (duplicate audit #422).
-bool g_storeBusy = false;   // a push or pull is running: do not start another
-
-// Typed rebinds of player 0 pulled into this table but not saved yet (no ia_save): Save keeps writing the text that was
-// saved before for such an action, so nothing typed reaches "input.<action>" before the typed layer saves it.
-// lower-case action -> {text before the first unsaved pull, text after the last one}
-std::unordered_map<std::string, std::pair<std::string, std::string>>& PendingPulls() {
-    static std::unordered_map<std::string, std::pair<std::string, std::string>> m;
-    return m;
-}
-
-bool SameParts(const std::vector<std::string>& a, const std::vector<std::string>& b) {
-    if (a.size() != b.size()) return false;
-    for (std::size_t i = 0; i < a.size(); ++i)
-        if (InputBinding::Parse(a[i]).ToString() != InputBinding::Parse(b[i]).ToString()) return false;
-    return true;
-}
-const std::vector<std::string>& Authored(const BindingSpec& s) { return s.original.empty() ? s.parts : s.original; }
-bool ShapeFits(const InputBinding& b, const BindingSpec& s) {
-    return b.kind == InputBinding::Kind::Keys4 ? (s.kind == BindingSpec::Kind::Vector2 && s.parts.size() == 4)
-                                               : (s.kind == BindingSpec::Kind::Single && s.parts.size() == 1);
-}
-bool Linked(const InputActions::Action& a, const ActionDef& d) {
-    if (a.defaults.empty() || a.defaults.size() != d.bindings.size() || a.bindings.size() < d.bindings.size()) return false;
-    for (std::size_t i = 0; i < d.bindings.size(); ++i)
-        if (!ShapeFits(a.defaults[i], d.bindings[i]) || !SameParts(BindingParts(a.defaults[i]), Authored(d.bindings[i]))) return false;
-    return true;
-}
-// The typed binding's current parts as one binding this table would accept for `a` (InputActions::Rebind's rules: a
-// direction action takes only something that points); Kind::None when it cannot (a composite with a pad button in it,
-// Look on a lone key). Such a binding is left alone on both sides.
-InputBinding Representable(const InputActions::Action& a, const BindingSpec& s) {
-    InputBinding b;
-    if (s.kind == BindingSpec::Kind::Single && s.parts.size() == 1) b = InputBinding::Parse(s.parts[0]);
-    else if (s.kind == BindingSpec::Kind::Vector2 && s.parts.size() == 4) {
-        for (std::size_t j = 0; j < 4; ++j) {
-            const InputBinding k = InputBinding::Parse(s.parts[j]);
-            if (k.kind != InputBinding::Kind::Key || k.code <= 0 || k.code > 255) return InputBinding{};
-            b.keys[j] = (char)k.code;
-        }
-        b.kind = InputBinding::Kind::Keys4;
-    }
-    if (b.kind == InputBinding::Kind::None || !ShapeFits(b, s) || (a.direction && !b.IsDirection())) return InputBinding{};
-    return b;
-}
-// Does `parts` clash in `set` with an input of another binding that this table does not also give that action? (A clash
-// this table has too, the player made; one it does not have, mirroring would invent: Controls screen "Unbind".)
-bool InventsClash(const ActionSet& set, const std::string& action, int binding, const std::vector<std::string>& parts) {
-    for (std::size_t k = 0; k < parts.size(); ++k)
-        for (const std::string& c : set.Conflicts(action, binding, (int)k, parts[k])) {
-            const InputActions::Action* other = InputActions::Find(c.substr(0, c.find('.')));
-            if (!other) continue;   // an action of the asset only: not this table's business
-            const std::string want = InputBinding::Parse(parts[k]).ToString();
-            bool has = false;
-            for (const InputBinding& b : other->bindings)
-                for (const std::string& p : BindingParts(b)) if (p == want) has = true;
-            if (!has) return true;
-        }
-    return false;
-}
-// Change only this binding's line of the saved overrides ("ov <action> <binding> ..."); every other line, pending or
-// for an action this table does not know, stays exactly as it is.
-void SaveOverrideLine(const std::string& action, int binding, const BindingSpec& s) {
-    const std::string key = "inputov.player0", head = "ov " + action + " " + std::to_string(binding) + " ";
-    const std::string text = Prefs::Has(key) ? Prefs::GetString(key) : std::string();
-    std::string out, mine;
-    if (!SameParts(s.parts, Authored(s))) {
-        mine = head;
-        for (std::size_t i = 0; i < s.parts.size(); ++i) mine += (i ? "," : "") + s.parts[i];
-        mine += "\n";
-    }
-    std::size_t i = 0;
-    while (i < text.size()) {
-        std::size_t e = text.find('\n', i); e = e == std::string::npos ? text.size() : e + 1;
-        const std::string line = text.substr(i, e - i);
-        i = e;
-        if (line.rfind(head, 0) == 0) { out += mine; mine.clear(); } else out += line;
-    }
-    out += mine;
-    if (out.empty()) Prefs::Delete(key); else Prefs::SetString(key, out);
-}
-// Make the live set's linked bindings match this table, binding by binding, where the typed value and the new one are
-// both ones this table can hold and no clash is invented. Changes are mirrored into their own override lines only.
-// `pullSaved`: a binding the typed layer has rebound (a saved override, at join) comes here instead.
-void PushTo(ActionSet& set, bool pullSaved) {
-    if (g_storeBusy) return;
-    g_storeBusy = true;
-    // Pass 1 (repeated while it makes progress, so two actions trading inputs both get through): bring each binding in step.
-    for (int round = 0; round < 8; ++round) {
-        bool progress = false;
-        for (InputActions::Action& a : Actions()) {
-            const ActionDef* d = set.Find(a.name);
-            if (!d || !Linked(a, *d)) continue;
-            for (std::size_t i = 0; i < d->bindings.size(); ++i) {
-                const BindingSpec& s = d->bindings[i];
-                const InputBinding typed = Representable(a, s);
-                if (typed.kind == InputBinding::Kind::None || !ShapeFits(a.bindings[i], s)) continue;   // unlinked binding
-                const std::vector<std::string> want = BindingParts(a.bindings[i]);
-                if (SameParts(want, s.parts)) continue;
-                if (pullSaved && !SameParts(s.parts, Authored(s))) { a.bindings[i] = typed; continue; }
-                if (InventsClash(set, d->name, (int)i, want)) continue;
-                if (SameParts(want, Authored(s))) set.ResetOverride(d->name, (int)i);
-                else {
-                    const std::vector<std::string> now = s.parts;   // Rebind changes s
-                    for (std::size_t k = 0; k < want.size(); ++k)
-                        if (InputBinding::Parse(now[k]).ToString() != InputBinding::Parse(want[k]).ToString()) set.Rebind(d->name, (int)i, (int)k, want[k]);
-                }
-                SaveOverrideLine(d->name, (int)i, d->bindings[i]);
-                progress = true;
-            }
-        }
-        if (!progress) break;
-    }
-    // Pass 2: a rebound binding in step with this table but clashing where this table does not (an Unbind removed the
-    // other side here) goes back to the asset's input, as the typed layer had it before.
-    for (InputActions::Action& a : Actions()) {
-        const ActionDef* d = set.Find(a.name);
-        if (!d || !Linked(a, *d)) continue;
-        for (std::size_t i = 0; i < d->bindings.size(); ++i) {
-            const BindingSpec& s = d->bindings[i];
-            if (Representable(a, s).kind == InputBinding::Kind::None || SameParts(s.parts, Authored(s))) continue;
-            if (!SameParts(BindingParts(a.bindings[i]), s.parts)) continue;
-            if (InventsClash(set, d->name, (int)i, s.parts) && !InventsClash(set, d->name, (int)i, Authored(s))) {
-                set.ResetOverride(d->name, (int)i);
-                SaveOverrideLine(d->name, (int)i, d->bindings[i]);
-            }
-        }
-    }
-    g_storeBusy = false;
-}
-void PushToStore() {
-    if (ActionSet* set = InputRuntime::LinkedSet()) PushTo(*set, false);
-}
-
-// The player's saved bindings for `a`, if any, over its defaults.
-void ApplySaved(InputActions::Action& a) {
-    const std::string key = "input." + Lower(a.name);
-    if (!Prefs::Has(key)) return;
-    const std::string saved = Prefs::GetString(key);
-    std::vector<InputBinding> list;
-    std::size_t start = 0;
-    for (std::size_t i = 0; i <= saved.size(); ++i)
-        if (i == saved.size() || saved[i] == ';') {
-            InputBinding b = InputBinding::Parse(saved.substr(start, i - start));
-            if (b.kind != InputBinding::Kind::None) list.push_back(b);
-            start = i + 1;
-        }
-    if (!list.empty()) a.bindings = list;
-}
-
-// "dead;curve;sensitivity;invertX;invertY", kept only when it differs from neutral.
-void ApplySavedResponse(InputActions::Action& a) {
-    const std::string key = "inputresp." + Lower(a.name);
-    if (!Prefs::Has(key)) return;
-    float v[3] = {0.0f, 1.0f, 1.0f}; int inv[2] = {0, 0};
-    const std::string t = Prefs::GetString(key);
-    if (std::sscanf(t.c_str(), "%f;%f;%f;%d;%d", &v[0], &v[1], &v[2], &inv[0], &inv[1]) < 3) return;
-    a.deadzone = std::clamp(v[0], 0.0f, 0.95f); a.curve = std::clamp(v[1], 0.1f, 8.0f);
-    a.sensitivity = std::clamp(v[2], 0.05f, 20.0f); a.invertX = inv[0] != 0; a.invertY = inv[1] != 0;
-}
-void SaveResponse(const InputActions::Action& a) {
-    const std::string key = "inputresp." + Lower(a.name);
-    if (a.deadzone == 0.0f && a.curve == 1.0f && a.sensitivity == 1.0f && !a.invertX && !a.invertY) { Prefs::Delete(key); return; }
-    char buf[96];
-    std::snprintf(buf, sizeof buf, "%g;%g;%g;%d;%d", a.deadzone, a.curve, a.sensitivity, a.invertX ? 1 : 0, a.invertY ? 1 : 0);
-    Prefs::SetString(key, buf);
-}
-
-std::string Joined(const std::vector<InputBinding>& b) {
-    std::string out;
-    for (const auto& x : b) { if (!out.empty()) out += ';'; out += x.ToString(); }
-    return out;
-}
 
 } // namespace
 
@@ -475,182 +222,351 @@ Vec2 InputBinding::Vector() const {
 
 // ---- InputActions --------------------------------------------------------------
 
-void InputActions::Define(const std::string& name, const std::vector<std::string>& bindings, bool direction) {
-    EnsureDefaults();
+namespace {
+
+bool g_legacy = std::getenv("OKAY_OLD_INPUT") != nullptr && std::getenv("OKAY_OLD_INPUT")[0] != '0';
+bool g_clockSeen = false;
+std::chrono::steady_clock::time_point g_lastClock;
+
+bool IsBase(const std::string& c) { return IsBaseMapName(c); }
+
+// What code asked for: the built-in defaults and every Define / DefineIn / SetContext / SetThreshold / SetPerPlayer, kept so
+// a table built again (another asset, a new play session) and every player that joins gets them too.
+struct CodeDef {
+    std::string name;
+    std::vector<InputBinding> bindings;
+    bool direction = false;
+    bool builtin = false;          ///< one of the engine's defaults: an asset action of that name wins
+    std::string context;           ///< "" = the base context
+    bool hasContext = false;
+    float threshold = -1.0f;       ///< < 0 = not set by code
+    bool perPlayer = false;
+};
+std::vector<CodeDef>& Registry() { static std::vector<CodeDef> r; return r; }
+bool g_builtins = false;   // DefineDefaults is running
+bool g_defaultsDone = false;
+
+struct ContextEntry { std::string name; InputActions::ContextMode mode; };
+std::vector<ContextEntry>& Stack() { static std::vector<ContextEntry> s; return s; }
+
+CodeDef* CodeFind(const std::string& name) {
+    const std::string n = Lower(name);
+    for (CodeDef& d : Registry()) if (Lower(d.name) == n) return &d;
+    return nullptr;
+}
+
+void DefineDefaults();
+void EnsureDefaults() { if (!g_defaultsDone) { g_defaultsDone = true; DefineDefaults(); } }
+
+ActionSet& T() { EnsureDefaults(); return InputRuntime::Actions(); }
+
+// One InputActions binding as a typed binding (a four-key direction is a vector2 of its keys) and back.
+BindingSpec SpecOf(const InputBinding& b, const std::string& group) {
+    BindingSpec s;
+    s.kind = b.kind == InputBinding::Kind::Keys4 ? BindingSpec::Kind::Vector2 : BindingSpec::Kind::Single;
+    s.parts = BindingParts(b);
+    s.group = group;
+    return s;
+}
+// The typed binding as one binding this front can show; Kind::None when it cannot (a composite with a pad button in it,
+// a 1D axis or a 3D vector): such a binding is still read, just not shown or rebound here.
+InputBinding Representable(const BindingSpec& s) {
+    InputBinding b;
+    if (s.kind == BindingSpec::Kind::Single && s.parts.size() == 1) return InputBinding::Parse(s.parts[0]);
+    if (s.kind == BindingSpec::Kind::Vector2 && s.parts.size() == 4) {
+        for (std::size_t j = 0; j < 4; ++j) {
+            const InputBinding k = InputBinding::Parse(s.parts[j]);
+            if (k.kind != InputBinding::Kind::Key || k.code <= 0 || k.code > 255) return InputBinding{};
+            b.keys[j] = (char)k.code;
+        }
+        b.kind = InputBinding::Kind::Keys4;
+    }
+    return b;
+}
+// The scheme a new binding belongs to in a set with schemes: the one for its device, "" when there are none.
+std::string GroupFor(const ActionSet& set, const InputBinding& b) {
+    for (const ControlScheme& c : set.Schemes())
+        if (b.IsGamepad() ? c.gamepad : (c.keyboard || c.mouse)) return c.name;
+    return "";
+}
+
+// "dead;curve;sensitivity;invertX;invertY", kept only when it differs from neutral.
+bool LoadResponse(const std::string& action, InputActions::Response& r) {
+    const std::string key = "inputresp." + Lower(action);
+    if (!Prefs::Has(key)) return false;
+    float v[3] = {0.0f, 1.0f, 1.0f}; int inv[2] = {0, 0};
+    const std::string t = Prefs::GetString(key);
+    if (std::sscanf(t.c_str(), "%f;%f;%f;%d;%d", &v[0], &v[1], &v[2], &inv[0], &inv[1]) < 3) return false;
+    r.deadzone = std::clamp(v[0], 0.0f, 0.95f); r.curve = std::clamp(v[1], 0.1f, 8.0f);
+    r.sensitivity = std::clamp(v[2], 0.05f, 20.0f); r.invertX = inv[0] != 0; r.invertY = inv[1] != 0;
+    return true;
+}
+void SaveResponse(const std::string& action, const InputActions::Response& r) {
+    const std::string key = "inputresp." + Lower(action);
+    if (r.deadzone == 0.0f && r.curve == 1.0f && r.sensitivity == 1.0f && !r.invertX && !r.invertY) { Prefs::Delete(key); return; }
+    char buf[96];
+    std::snprintf(buf, sizeof buf, "%g;%g;%g;%d;%d", r.deadzone, r.curve, r.sensitivity, r.invertX ? 1 : 0, r.invertY ? 1 : 0);
+    Prefs::SetString(key, buf);
+}
+
+std::string Joined(const std::vector<InputBinding>& b) {
+    std::string out;
+    for (const auto& x : b) { if (!out.empty()) out += ';'; out += x.ToString(); }
+    return out;
+}
+std::vector<InputBinding> ParseList(const std::string& text) {
+    std::vector<InputBinding> list;
+    std::size_t start = 0;
+    for (std::size_t i = 0; i <= text.size(); ++i)
+        if (i == text.size() || text[i] == ';') {
+            InputBinding b = InputBinding::Parse(text.substr(start, i - start));
+            if (b.kind != InputBinding::Kind::None) list.push_back(b);
+            start = i + 1;
+        }
+    return list;
+}
+
+// Give `set` the action list `list` as its bindings for `d` (the shape-aware ActionSet::SetBindings), keeping each
+// binding's scheme where the device class stays the same.
+void ApplyList(ActionSet& set, ActionDef& d, const std::vector<InputBinding>& list) {
+    std::vector<BindingSpec> specs;
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        std::string group = GroupFor(set, list[i]);
+        if (i < d.bindings.size()) {
+            const InputBinding old = Representable(d.bindings[i]);
+            if (old.kind != InputBinding::Kind::None && old.IsGamepad() == list[i].IsGamepad()) group = d.bindings[i].group;
+        }
+        specs.push_back(SpecOf(list[i], group));
+    }
+    set.SetBindings(d.name, specs);
+}
+
+// One code definition into a set: a built-in default only adds what the set lacks; a game's Define replaces the bindings.
+void ApplyDef(ActionSet& set, const CodeDef& c) {
+    ActionDef* d = set.FindNoCase(c.name);
+    const bool keepAsset = d && c.builtin;
+    if (!keepAsset) {
+        std::string map = c.hasContext ? (IsBase(c.context) ? std::string() : c.context) : (d ? d->map : std::string());
+        if (!map.empty()) {
+            bool have = false;
+            for (const ActionMap& m : set.Maps()) if (Lower(m.name) == Lower(map)) { have = true; map = m.name; }
+            if (!have) set.AddMap(map, 0, false, false);   // a context starts off until it is pushed
+        }
+        const ValueType type = c.direction ? ValueType::Vector2 : ValueType::Button;
+        if (!d) d = &set.Add(c.name, type, map);
+        else { d->type = type; d->map = map; }
+        d->bindings.clear();
+        d->authored.clear(); d->reshaped = false;
+        for (const InputBinding& b : c.bindings) d->bindings.push_back(SpecOf(b, ""));
+        d->sum = c.direction;
+    } else if (c.hasContext) {
+        d->map = IsBase(c.context) ? (IsBase(d->map) ? d->map : std::string()) : c.context;
+        if (!d->map.empty() && !IsBase(d->map)) { bool have = false; for (const ActionMap& m : set.Maps()) if (m.name == d->map) have = true; if (!have) set.AddMap(d->map, 0, false, false); }
+    }
+    if (c.threshold >= 0.0f) d->pressPoint = c.threshold;
+    if (c.perPlayer) d->perPlayer = true;
+    LoadResponse(d->name, d->response);
+    set.Touch();
+}
+
+// The player's saved rebinding of one action (or of all, with ""). An action with an "input.<action>" pref (the form every
+// version writes for what this front can show) loads from it; the rest from the typed store "inputov.player0". Save writes
+// both from the one table, so they only differ when something outside wrote one of them.
+void LoadSaved(ActionSet& set, const std::string& only) {
+    std::vector<std::string> fromOld;   // lower-case names loaded from "input.<action>"
+    for (const ActionDef& d0 : set.Actions()) {
+        if (!only.empty() && Lower(d0.name) != Lower(only)) continue;
+        const std::string key = "input." + Lower(d0.name);
+        if (!Prefs::Has(key)) continue;
+        const std::vector<InputBinding> list = ParseList(Prefs::GetString(key));
+        if (list.empty()) continue;
+        ApplyList(set, *set.FindNoCase(d0.name), list);
+        fromOld.push_back(Lower(d0.name));
+    }
+    if (!Prefs::Has("inputov.player0")) return;
+    const std::string text = Prefs::GetString("inputov.player0");
+    std::string mine;   // the lines this load applies
+    std::size_t i = 0;
+    while (i < text.size()) {
+        std::size_t e = text.find('\n', i); e = e == std::string::npos ? text.size() : e + 1;
+        std::string line = text.substr(i, e - i);
+        i = e;
+        if (line.empty() || line.back() != '\n') line += '\n';
+        const std::size_t s1 = line.find(' ');
+        std::size_t s2 = s1 == std::string::npos ? s1 : line.find_first_of(" \n", s1 + 1);
+        if (s2 == std::string::npos) continue;
+        const std::string who = Lower(line.substr(s1 + 1, s2 - s1 - 1));
+        if (!only.empty() && who != Lower(only)) continue;
+        if (std::find(fromOld.begin(), fromOld.end(), who) != fromOld.end()) continue;
+        mine += line;
+    }
+    set.ImportOverrides(mine);
+}
+
+// ---- the read-only view All() / Find() hand out -----------------------------------------------------------------------
+struct View { unsigned serial = 0, rev = 0; std::vector<InputActions::Action> list; };
+View& V() { static View v; return v; }
+void FillRuntime(InputActions::Action& v, const ActionDef& d) {
+    v.value = d.Magnitude();
+    v.previous = d.PrevMagnitude();
+    v.vector = {d.value.x, d.value.y};
+    for (int p = 0; p < Input::kMaxGamepads; ++p) { v.players[p].value = d.pads[p].value; v.players[p].previous = d.pads[p].previous; v.players[p].vector = d.pads[p].vector; }
+}
+std::vector<InputActions::Action>& ViewList() {
+    ActionSet& t = T();
+    View& v = V();
+    if (v.serial == InputRuntime::ActionsSerial() && v.rev == t.Revision() && v.list.size() == t.Actions().size()) return v.list;
+    v.list.resize(t.Actions().size());   // in place: a pointer from Find stays good while the action count does not change
+    std::size_t i = 0;
+    for (const ActionDef& d : t.Actions()) {
+        InputActions::Action& a = v.list[i++];
+        a.name = d.name;
+        a.direction = d.type == ValueType::Vector2 || d.type == ValueType::Vector3;
+        a.bindings.clear();
+        for (const BindingSpec& b : d.bindings) a.bindings.push_back(Representable(b));
+        a.defaults.clear();
+        for (const BindingSpec& b : t.AuthoredBindings(d)) a.defaults.push_back(Representable(b));
+        a.context = IsBase(d.map) ? std::string() : d.map;
+        a.threshold = d.pressPoint;
+        a.deadzone = d.response.deadzone; a.curve = d.response.curve; a.sensitivity = d.response.sensitivity;
+        a.invertX = d.response.invertX; a.invertY = d.response.invertY;
+        a.perPlayer = d.perPlayer;
+        FillRuntime(a, d);
+    }
+    v.serial = InputRuntime::ActionsSerial(); v.rev = t.Revision();
+    return v.list;
+}
+void RefreshRuntime() {
+    std::vector<InputActions::Action>& list = ViewList();
+    std::size_t i = 0;
+    for (const ActionDef& d : T().Actions()) if (i < list.size()) FillRuntime(list[i++], d);
+}
+
+const ActionDef* Def(const std::string& name) { return T().FindNoCase(name); }
+
+void Register(const std::string& name, const std::vector<std::string>& bindings, bool direction, const std::string* context) {
     std::vector<InputBinding> parsed;
     for (const auto& t : bindings) {
         InputBinding b = InputBinding::Parse(t);
         if (b.kind != InputBinding::Kind::None) parsed.push_back(b);
     }
-    // A game defining its actions at start keeps the player's own rebinding.
-    if (Action* a = Find(name)) {
-        a->defaults = parsed; a->bindings = parsed; a->direction = direction;
-        ApplySaved(*a);
-        ApplySavedResponse(*a);
-        return;
-    }
-    Action a;
-    a.name = name; a.direction = direction; a.defaults = parsed; a.bindings = parsed;
-    a.key = Lower(name);
-    ApplySaved(a);
-    ApplySavedResponse(a);
-    Actions().push_back(std::move(a));
-    IndexMap()[Lower(name)] = Actions().size() - 1;
+    CodeDef* c = CodeFind(name);
+    if (!c) { Registry().emplace_back(); c = &Registry().back(); c->name = name; }
+    c->bindings = parsed; c->direction = direction; c->builtin = g_builtins;
+    if (context) { c->context = *context; c->hasContext = true; }
+    ActionSet* t = InputRuntime::ActionsIfBuilt();
+    if (!t) return;   // the table is built from the list (now or later)
+    const CodeDef def = *c;
+    InputRuntime::ForEachSet([](ActionSet& set, const void* p) { ApplyDef(set, *static_cast<const CodeDef*>(p)); }, &def);
+    if (!def.builtin) LoadSaved(*t, def.name);   // a game defining its actions at start keeps the player's own rebinding
+    InputRuntime::SyncPlayer0();
 }
 
-bool InputActions::Has(const std::string& name) { return Find(name) != nullptr; }
-const std::vector<InputActions::Action>& InputActions::All() { EnsureDefaults(); return Actions(); }
-
-InputActions::Action* InputActions::Find(const std::string& name) {
-    EnsureDefaults();
-    if (g_legacy) {   // the original lookup: lower-case the name and every action's name, scan the list
-        const std::string n = Lower(name);
-        for (Action& a : Actions()) if (Lower(a.name) == n) return &a;
-        return nullptr;
-    }
-    auto& map = IndexMap();
-    std::string n = name;
-    for (char& c : n) c = (char)std::tolower((unsigned char)c);
-    auto it = map.find(n);
-    if (it != map.end() && it->second < Actions().size()) return &Actions()[it->second];
-    return nullptr;
+void DefineDefaults() {
+    Registry().clear();
+    g_builtins = true;
+    InputActions::Define("Move", {"keys:w,s,a,d", "keys:up,down,left,right", "stick:left", "dpad"}, true);
+    InputActions::Define("Look", {"mouse:delta", "stick:right"}, true);
+    InputActions::Define("Jump", {"key:space", "pad:a"});
+    InputActions::Define("Sprint", {"key:shift", "pad:ls"});
+    InputActions::Define("Crouch", {"key:ctrl", "pad:b"});
+    InputActions::Define("Fire", {"mouse:left", "pad:rt"});
+    InputActions::Define("Aim", {"mouse:right", "pad:lt"});
+    InputActions::Define("Interact", {"key:e", "pad:x"});
+    InputActions::Define("Reload", {"key:r", "pad:y"});
+    // Voxel sandbox (VoxelDigger): dig, place, pick the material under the aim, and step the hotbar. Rebindable like the rest.
+    // Dig and Place start with no bindings of their own: until a player rebinds them the digger uses Fire (left mouse, RT) and
+    // Aim (right mouse, LT), so no two actions share a default key (the remap screen reports shared keys as conflicts).
+    InputActions::Define("Dig", {});
+    InputActions::Define("Place", {});
+    InputActions::Define("PickBlock", {"key:t", "pad:rs"});
+    InputActions::Define("HotbarNext", {"pad:rb"});
+    InputActions::Define("HotbarPrev", {"pad:lb"});
+    InputActions::Define("Inventory", {"key:tab", "pad:back"});
+    InputActions::Define("Pause", {"key:escape", "pad:start"});
+    // Built-in controllers' extra keys (prone, lean, dash). They start with no binding of their own: their stock keys
+    // (Z, Q, E, Space) are shared with Interact and Jump, or are keys games often give their own actions, and the
+    // Controls screen would report those as clashes. The controllers keep their stock keys until the player binds
+    // these (ControlKey's stockKey).
+    InputActions::Define("Prone", {});
+    InputActions::Define("LeanLeft", {});
+    InputActions::Define("LeanRight", {});
+    InputActions::Define("Dash", {});
+    // Vehicle Controller driving keys, in the "Vehicle" context: a key may drive and walk (W is Throttle and Move), and
+    // the Controls screen reports a shared key only inside one context. While "Vehicle" is not pushed the controller
+    // reads them straight from their bindings. Keyboard only: the controller's own pad fields stay as they are.
+    InputActions::DefineIn("Vehicle", "Throttle", {"key:w", "key:up"});
+    InputActions::DefineIn("Vehicle", "Brake", {"key:s", "key:down"});
+    InputActions::DefineIn("Vehicle", "SteerLeft", {"key:a", "key:left"});
+    InputActions::DefineIn("Vehicle", "SteerRight", {"key:d", "key:right"});
+    InputActions::DefineIn("Vehicle", "Handbrake", {"key:space"});
+    InputActions::DefineIn("Vehicle", "Boost", {"key:shift"});
+    InputActions::DefineIn("Vehicle", "GearUp", {"key:x"});
+    InputActions::DefineIn("Vehicle", "GearDown", {"key:z"});
+    InputActions::DefineIn("Vehicle", "Horn", {"key:h"});
+    InputActions::DefineIn("Vehicle", "Headlights", {"key:l"});
+    g_builtins = false;
 }
 
-namespace {
-
-struct ContextEntry { std::string name; InputActions::ContextMode mode; };
-std::vector<ContextEntry>& Stack() { static std::vector<ContextEntry> s; return s; }
-bool IsBase(const std::string& c) { return c.empty() || Lower(c) == "gameplay"; }
-bool SameContext(const InputActions::Action& a, const ContextEntry& c) { return !IsBase(a.context) && Lower(a.context) == Lower(c.name); }
-
-// Each physical input gets an id so a context can claim it from the ones below.
-int KeyId(char k) { return 1000 + (unsigned char)k; }
-int MouseId(int b) { return 2000 + b; }
-int PadId(int button, int player) { return 3000 + player * 100 + button; }
-int StickId(bool right, int player) { return (right ? 4100 : 4000) + player; }
-constexpr int kMouseDeltaId = 5000;
-int WheelId(int dir) { return dir >= 0 ? 5001 : 5002; }
-
-// Calls f(id) for every physical input a binding listens to (no allocation).
-template <class F>
-void ForClaims(const InputBinding& b, F f) {
-    using K = InputBinding::Kind;
-    switch (b.kind) {
-        case K::Key:        f(KeyId((char)b.code)); break;
-        case K::Mouse:      f(MouseId(b.code)); break;
-        case K::PadButton:  f(PadId(b.code, b.player)); break;
-        case K::Keys4:      for (char k : b.keys) f(KeyId(k)); break;
-        case K::Chord:      for (char k : b.keys) if (k) f(KeyId(k)); break;
-        case K::Wheel:      f(WheelId(b.code)); break;
-        case K::StickLeft:  f(StickId(false, b.player)); break;
-        case K::StickRight: f(StickId(true, b.player)); break;
-        case K::DPad:       for (int p : {Input::PadUp, Input::PadDown, Input::PadLeft, Input::PadRight}) f(PadId(p, b.player)); break;
-        case K::MouseDelta: f(kMouseDeltaId); break;
-        case K::None:       break;
-    }
-}
-void ClaimsOf(const InputBinding& b, std::vector<int>& out) { ForClaims(b, [&](int id) { out.push_back(id); }); }
-bool Claimed(const std::vector<int>& claimed, int id) {
-    return std::find(claimed.begin(), claimed.end(), id) != claimed.end();
-}
-
-// A binding read with some of its inputs swallowed by a higher context.
-Vec2 MaskedVector(const InputBinding& b, const std::vector<int>& claimed) {
-    using K = InputBinding::Kind;
-    auto key = [&](char k) { return !Claimed(claimed, KeyId(k)) && Input::GetKeyGame(k) ? 1.0f : 0.0f; };
-    auto pad = [&](int btn) { return !Claimed(claimed, PadId(btn, b.player)) && Input::GetGamepadButton(btn, b.player) ? 1.0f : 0.0f; };
-    switch (b.kind) {
-        case K::Keys4: return {key(b.keys[3]) - key(b.keys[2]), key(b.keys[0]) - key(b.keys[1])};
-        case K::DPad:  return {pad(Input::PadRight) - pad(Input::PadLeft), pad(Input::PadUp) - pad(Input::PadDown)};
-        default: {
-            bool hit = false;
-            ForClaims(b, [&](int id) { if (Claimed(claimed, id)) hit = true; });
-            return hit ? Vec2{0.0f, 0.0f} : b.Vector();
-        }
-    }
-}
-float MaskedValue(const InputBinding& b, const std::vector<int>& claimed) {
-    if (b.IsDirection()) {
-        const Vec2 v = MaskedVector(b, claimed);
-        return std::min(1.0f, std::sqrt(v.x * v.x + v.y * v.y));
-    }
-    bool hit = false;
-    ForClaims(b, [&](int id) { if (Claimed(claimed, id)) hit = true; });
-    return hit ? 0.0f : b.Value();
-}
-
-// Everything the stack above the base context swallows.
-std::vector<int> ConsumedByStack() {
-    std::vector<int> claimed;
-    for (const ContextEntry& c : Stack()) {
-        if (c.mode == InputActions::ContextMode::Passthrough) continue;
-        for (const InputActions::Action& a : Actions())
-            if (SameContext(a, c))
-                for (const InputBinding& b : a.bindings) ClaimsOf(b, claimed);
-    }
-    return claimed;
-}
-
-// A player's own copy of a binding: a controller binding written for the first controller follows the
-// player (Jump "pad:a" is A on whichever controller asks); the keyboard and mouse belong to player 0.
-bool ForPlayer(const InputBinding& b, int player, InputBinding& out) {
-    out = b;
-    if (b.IsGamepad()) { if (b.player == 0) out.player = player; return b.player == 0 || b.player == player; }
-    return player == 0;
-}
-
-// The response curve of one reading, 0..1 in, shaped out.
-float ShapeMagnitude(float in, const InputActions::Response& r) {
-    if (in <= 0.0f) return 0.0f;
-    float t = in;
-    if (r.deadzone > 0.0f) {
-        if (t <= r.deadzone) return 0.0f;
-        t = (t - r.deadzone) / (1.0f - r.deadzone);
-    }
-    if (t > 1.0f) t = 1.0f;
-    if (r.curve != 1.0f && r.curve > 0.0f) t = std::pow(t, r.curve);
-    return t * r.sensitivity;
-}
-bool IsNeutral(const InputActions::Action& a) {
-    return a.deadzone == 0.0f && a.curve == 1.0f && a.sensitivity == 1.0f && !a.invertX && !a.invertY;
-}
-InputActions::Response ResponseOf(const InputActions::Action& a) { return {a.deadzone, a.curve, a.sensitivity, a.invertX, a.invertY}; }
-
-void ApplyResponseTo(const InputActions::Action& a, float& value, Vec2& vec, bool direction) {
-    if (IsNeutral(a)) return;
-    const InputActions::Response r = ResponseOf(a);
-    if (direction) {
-        const float len = std::sqrt(vec.x * vec.x + vec.y * vec.y);
-        const float t = ShapeMagnitude(len, r);
-        vec = len > 0.0f ? Vec2{vec.x / len * t, vec.y / len * t} : Vec2{0.0f, 0.0f};
-        if (a.invertX) vec.x = -vec.x;
-        if (a.invertY) vec.y = -vec.y;
-        value = std::sqrt(vec.x * vec.x + vec.y * vec.y);
-    } else {
-        value = std::min(1.0f, ShapeMagnitude(value, r));
-    }
+void PushTo(ActionSet& set, const ContextEntry& c) {
+    set.PushMap(c.name, c.mode == InputActions::ContextMode::Consume, c.mode == InputActions::ContextMode::Block);
 }
 
 } // namespace
 
+void InputActions::PrepareSet(ActionSet& set) {
+    EnsureDefaults();
+    for (const CodeDef& c : Registry()) ApplyDef(set, c);
+    for (const ActionDef& d : set.Actions()) { InputActions::Response r; if (LoadResponse(d.name, r)) set.FindNoCase(d.name)->response = r; }
+    for (const ContextEntry& c : Stack()) PushTo(set, c);
+}
+void InputActions::PrepareTable(ActionSet& set) {
+    PrepareSet(set);
+    LoadSaved(set, "");
+}
+
+void InputActions::Define(const std::string& name, const std::vector<std::string>& bindings, bool direction) {
+    EnsureDefaults();
+    Register(name, bindings, direction, nullptr);
+}
+void InputActions::DefineIn(const std::string& context, const std::string& name,
+                            const std::vector<std::string>& bindings, bool direction) {
+    EnsureDefaults();
+    Register(name, bindings, direction, &context);
+}
+
+bool InputActions::Has(const std::string& name) { return Def(name) != nullptr; }
+const std::vector<InputActions::Action>& InputActions::All() { return ViewList(); }
+InputActions::Action* InputActions::Find(const std::string& name) {
+    std::vector<Action>& list = ViewList();
+    for (Action& a : list) if (str::EqualsNoCaseAscii(a.name, name)) return &a;
+    return nullptr;
+}
+
 void InputActions::SetLegacy(bool on) { g_legacy = on; }
 bool InputActions::Legacy() { return g_legacy; }
-double InputActions::Now() { return g_now; }
+double InputActions::Now() { return T().Time(); }
 
-float InputActions::ShapeValue(float in, const Response& r) { return ShapeMagnitude(in < 0.0f ? 0.0f : (in > 1.0f ? 1.0f : in), r); }
-bool InputActions::SetResponse(const std::string& action, const Response& r) {
-    Action* a = Find(action);
-    if (!a) return false;
-    a->deadzone = std::clamp(r.deadzone, 0.0f, 0.95f);
-    a->curve = std::clamp(r.curve, 0.1f, 8.0f);
-    a->sensitivity = std::clamp(r.sensitivity, 0.05f, 20.0f);
-    a->invertX = r.invertX; a->invertY = r.invertY;
-    SaveResponse(*a);
+float InputActions::ShapeValue(float in, const Response& r) { return ShapeResponse(in, r); }
+bool InputActions::SetResponse(const std::string& action, const Response& rIn) {
+    const ActionDef* d = Def(action);
+    if (!d) return false;
+    Response r;
+    r.deadzone = std::clamp(rIn.deadzone, 0.0f, 0.95f);
+    r.curve = std::clamp(rIn.curve, 0.1f, 8.0f);
+    r.sensitivity = std::clamp(rIn.sensitivity, 0.05f, 20.0f);
+    r.invertX = rIn.invertX; r.invertY = rIn.invertY;
+    SaveResponse(d->name, r);
+    struct Arg { std::string name; Response r; } arg{d->name, r};
+    InputRuntime::ForEachSet([](ActionSet& set, const void* p) {
+        const Arg& a = *static_cast<const Arg*>(p);
+        if (ActionDef* x = set.FindNoCase(a.name)) { x->response = a.r; set.Touch(); }
+    }, &arg);
     return true;
 }
 InputActions::Response InputActions::GetResponse(const std::string& action) {
-    const Action* a = Find(action);
-    return a ? ResponseOf(*a) : Response{};
+    const ActionDef* d = Def(action);
+    return d ? d->response : Response{};
 }
 
 void InputActions::Tick() {
@@ -663,271 +579,165 @@ void InputActions::Tick() {
 }
 
 void InputActions::Tick(float dt) {
-    EnsureDefaults();
-    g_dt = dt > 0.0f ? dt : 0.0f;
-    g_now += g_dt;
-    InputHaptics::Update(g_dt);
-    InputRecorder::BeginFrame(g_dt);   // playback puts the recorded frame over what the runtime fed
-    InputRuntime::Update(g_dt);        // typed actions (ActionSet) and local players read the same frame
-    auto& actions = Actions();
-    const bool legacy = g_legacy;
-    // Actions can be added behind our back (tests clear the list): keep the index and keys in step.
-    if (IndexMap().size() != actions.size()) {
-        IndexMap().clear();
-        for (std::size_t i = 0; i < actions.size(); ++i) { actions[i].key = Lower(actions[i].name); IndexMap()[actions[i].key] = i; }
-    }
-    for (Action& a : actions) { a.previous = a.value; a.value = 0.0f; a.vector = {0.0f, 0.0f}; }
-    const bool ctxEmpty = Stack().empty();
-    static std::vector<int> chordClaims;
-    chordClaims.clear();
-
-    // A chord that is held wins over the single keys inside it (Ctrl+Z does not also Crouch).
-    bool anyChord = false;
-    for (const Action& a : actions)
-        for (const InputBinding& b : a.bindings)
-            if (b.kind == InputBinding::Kind::Chord) { anyChord = true; if (b.Value() > 0.0f) ClaimsOf(b, chordClaims); }
-
-    auto sample = [&](Action& a, const std::vector<int>& claimed) {
-        Vec2 v{0.0f, 0.0f};
-        float best = 0.0f;
-        const bool fast = !legacy && claimed.empty() && chordClaims.empty();
-        for (const InputBinding& b : a.bindings) {
-            if (anyChord && b.kind != InputBinding::Kind::Chord && !chordClaims.empty()) {   // the chord's keys are spoken for
-                std::vector<int> merged = claimed; merged.insert(merged.end(), chordClaims.begin(), chordClaims.end());
-                if (a.direction) { const Vec2 d = MaskedVector(b, merged); v.x += d.x; v.y += d.y; }
-                else best = std::max(best, MaskedValue(b, merged));
-                continue;
-            }
-            if (fast) {
-                if (a.direction) { const Vec2 d = b.Vector(); v.x += d.x; v.y += d.y; }
-                else best = std::max(best, b.Value());
-            } else if (a.direction) { const Vec2 d = MaskedVector(b, claimed); v.x += d.x; v.y += d.y; }
-            else best = std::max(best, MaskedValue(b, claimed));
-        }
-        if (a.direction) {
-            a.vector = ClampLength(v);
-            best = std::sqrt(a.vector.x * a.vector.x + a.vector.y * a.vector.y);
-        }
-        a.value = best;
-        ApplyResponseTo(a, a.value, a.vector, a.direction);
-    };
-
-    // Top of the stack first; each layer sees what the layers above left over.
-    static std::vector<int> claimed;
-    claimed.clear();
-    bool blocked = false;
-    const auto& stack = Stack();
-    if (!ctxEmpty) {
-        for (std::size_t i = stack.size(); i-- > 0 && !blocked;) {
-            const ContextEntry& c = stack[i];
-            for (Action& a : actions)
-                if (SameContext(a, c)) sample(a, claimed);
-            if (c.mode == ContextMode::Block) blocked = true;
-            else if (c.mode == ContextMode::Consume)
-                for (const Action& a : actions)
-                    if (SameContext(a, c))
-                        for (const InputBinding& b : a.bindings) ClaimsOf(b, claimed);
-        }
-    }
-    if (!blocked)
-        for (Action& a : actions)
-            if (a.context.empty() || IsBase(a.context)) sample(a, claimed);
-
-    // Several local players: the same bindings read for each controller.
-    for (Action& a : actions) {
-        if (!a.perPlayer) continue;
-        for (int p = 0; p < Input::kMaxGamepads; ++p) {
-            Action::PlayerState& ps = a.players[p];
-            ps.previous = ps.value; ps.value = 0.0f; ps.vector = {0.0f, 0.0f};
-            if (blocked && IsBase(a.context)) continue;
-            Vec2 v{0.0f, 0.0f}; float best = 0.0f;
-            for (const InputBinding& orig : a.bindings) {
-                InputBinding b;
-                if (!ForPlayer(orig, p, b)) continue;
-                if (a.direction) { const Vec2 d = MaskedVector(b, claimed); v.x += d.x; v.y += d.y; }
-                else best = std::max(best, MaskedValue(b, claimed));
-            }
-            if (a.direction) { ps.vector = ClampLength(v); best = std::sqrt(ps.vector.x * ps.vector.x + ps.vector.y * ps.vector.y); }
-            ps.value = best;
-            ApplyResponseTo(a, ps.value, ps.vector, a.direction);
-        }
-    }
-
-    // On-screen controls, added after the devices so a key and a virtual stick
-    // share one action. A menu that blocks the base context does not also get them.
-    if (!Contributions().empty()) {
-        for (Action& a : actions) {
-            auto it = Contributions().find(legacy ? Lower(a.name) : a.key);
-            if (it == Contributions().end()) continue;
-            if (IsBase(a.context)) { if (blocked) continue; }
-            else if (!ContextActive(a.context)) continue;
-            const Contribution& c = it->second;
-            if (a.direction) {
-                a.vector = ClampLength(a.vector + c.vector);
-                a.value = std::sqrt(a.vector.x * a.vector.x + a.vector.y * a.vector.y);
-            } else {
-                float extra = c.value;
-                const float len = std::sqrt(c.vector.x * c.vector.x + c.vector.y * c.vector.y);
-                if (len > extra) extra = len > 1.0f ? 1.0f : len;
-                if (extra > a.value) a.value = extra;
-            }
-        }
-        Contributions().clear();
-    }
-    // Hold-to-toggle: a button action the player asked to toggle stays on after
-    // the key comes up, until the next press. Direction actions (Move, Look) are
-    // left as sampled. Off, the raw value is what Get/Down/Up already used.
-    static std::unordered_map<std::string, HoldToggle> latches;
-    for (Action& a : actions) {
-        if (a.direction) continue;
-        if (legacy) {
-            HoldToggle& latch = latches[Lower(a.name)];
-            if (!Accessibility::ToggleFor(a.name)) { latch.Reset(); continue; }
-            const bool down = a.value >= a.threshold;
-            a.value = latch.Update(down, true) ? 1.0f : 0.0f;
-            continue;
-        }
-        if (!Accessibility::AnyToggle() || !Accessibility::ToggleFor(a.name)) { a.latchActive = a.latchHeld = false; continue; }
-        const bool down = a.value >= a.threshold;
-        if (down && !a.latchHeld) a.latchActive = !a.latchActive;   // each press flips it (HoldToggle, inlined)
-        a.latchHeld = down;
-        a.value = a.latchActive ? 1.0f : 0.0f;
-    }
-
-    InputRecorder::EndFrame(g_dt);
+    ActionSet& t = T();
+    const float d = dt > 0.0f ? dt : 0.0f;
+    InputHaptics::Update(d);
+    InputRecorder::BeginFrame(d);   // playback puts the recorded frame over what the runtime fed
+    t.Update(d);                    // the one evaluation: every action, map (context), chord, response and on-screen control
+    InputRuntime::Update(d);        // local players read the same frame from their copies
+    RefreshRuntime();
+    InputRecorder::EndFrame(d);
     InputDebug::Record();
-
-    // Timing for buffering, double tap and hold to confirm.
-    for (Action& a : actions) {
-        const bool down = a.value >= a.threshold;
-        const bool was = a.previous >= a.threshold;
-        a.pressedNow = down && !was;
-        if (a.pressedNow) { a.prevPressedAt = a.pressedAt; a.pressedAt = g_now; a.pressConsumed = false; a.heldSince = g_now; }
-        if (!down) a.heldSince = -1.0;
-    }
 }
 
-void InputActions::Contribute(const std::string& action, float value) {
-    if (action.empty()) return;
-    Contribution& c = Contributions()[Lower(action)];
-    if (value > c.value) c.value = value;
-}
-void InputActions::ContributeVector(const std::string& action, const Vec2& vector) {
-    if (action.empty()) return;
-    Contribution& c = Contributions()[Lower(action)];
-    c.vector.x += vector.x;
-    c.vector.y += vector.y;
-}
-void InputActions::ClearContributions() { Contributions().clear(); }
+void InputActions::Contribute(const std::string& action, float value) { if (!action.empty()) T().Contribute(action, value); }
+void InputActions::ContributeVector(const std::string& action, const Vec2& vector) { if (!action.empty()) T().ContributeVector(action, vector); }
+void InputActions::ClearContributions() { T().ClearContributions(); }
 
-void InputActions::DefineIn(const std::string& context, const std::string& name,
-                            const std::vector<std::string>& bindings, bool direction) {
-    Define(name, bindings, direction);
-    SetContext(name, context);
-}
 bool InputActions::SetContext(const std::string& action, const std::string& context) {
-    Action* a = Find(action);
-    if (!a) return false;
-    a->context = IsBase(context) ? "" : context;
-    a->ctxKey = Lower(a->context);
+    const ActionDef* d = Def(action);
+    if (!d) return false;
+    CodeDef* c = CodeFind(d->name);
+    if (!c) {   // an asset action moved by code: remember it as a code definition that keeps the asset's bindings
+        Registry().emplace_back(); c = &Registry().back(); c->name = d->name; c->builtin = true;
+    }
+    c->context = context; c->hasContext = true;
+    const CodeDef def = *c;
+    InputRuntime::ForEachSet([](ActionSet& set, const void* p) { ApplyDef(set, *static_cast<const CodeDef*>(p)); }, &def);
     return true;
 }
 void InputActions::PushContext(const std::string& context, ContextMode mode) {
     if (IsBase(context)) return;
     PopContext(context);
     Stack().push_back({context, mode});
+    T();
+    InputRuntime::ForEachSet([](ActionSet& set, const void* p) { PushTo(set, *static_cast<const ContextEntry*>(p)); }, &Stack().back());
 }
 void InputActions::PopContext(const std::string& context) {
     auto& s = Stack();
+    const std::size_t before = s.size();
     s.erase(std::remove_if(s.begin(), s.end(), [&](const ContextEntry& c) { return Lower(c.name) == Lower(context); }), s.end());
+    if (s.size() != before) InputRuntime::ForEachSet([](ActionSet& set, const void* p) { set.PopMap(*static_cast<const std::string*>(p)); }, &context);
 }
-void InputActions::ClearContexts() { Stack().clear(); }
+void InputActions::ClearContexts() {
+    while (!Stack().empty()) PopContext(Stack().back().name);
+}
 bool InputActions::ContextActive(const std::string& context) {
     if (IsBase(context)) return true;
-    for (const ContextEntry& c : Stack()) if (Lower(c.name) == Lower(context)) return true;
+    for (const ActionMap& m : T().Maps()) if (Lower(m.name) == Lower(context)) return m.enabled;
     return false;
 }
 std::string InputActions::TopContext() { return Stack().empty() ? std::string() : Stack().back().name; }
-static bool StackBlocks() {
-    for (const ContextEntry& c : Stack()) if (c.mode == InputActions::ContextMode::Block) return true;
-    return false;
+bool InputActions::KeyConsumed(char key) { InputBinding b; b.kind = InputBinding::Kind::Key; b.code = (unsigned char)key; return T().Consumed(b); }
+bool InputActions::PadButtonConsumed(int button, int player) {
+    InputBinding b; b.kind = InputBinding::Kind::PadButton; b.code = button; b.player = player;
+    return T().Consumed(b);
 }
-bool InputActions::KeyConsumed(char key) { return StackBlocks() || Claimed(ConsumedByStack(), KeyId(key)); }
-bool InputActions::PadButtonConsumed(int button, int player) { return StackBlocks() || Claimed(ConsumedByStack(), PadId(button, player)); }
 void InputActions::SetThreshold(const std::string& action, float t) {
-    if (Action* a = Find(action)) a->threshold = t < 0.01f ? 0.01f : (t > 1.0f ? 1.0f : t);
+    const ActionDef* d = Def(action);
+    if (!d) return;
+    CodeDef* c = CodeFind(d->name);
+    if (!c) { Registry().emplace_back(); c = &Registry().back(); c->name = d->name; c->builtin = true; }
+    c->threshold = t < 0.01f ? 0.01f : (t > 1.0f ? 1.0f : t);
+    const CodeDef def = *c;
+    InputRuntime::ForEachSet([](ActionSet& set, const void* p) {
+        const CodeDef& c = *static_cast<const CodeDef*>(p);
+        if (ActionDef* x = set.FindNoCase(c.name)) { x->pressPoint = c.threshold; set.Touch(); }
+    }, &def);
 }
 
-bool InputActions::Get(const std::string& name) { const Action* a = Find(name); return a && a->value >= a->threshold; }
-bool InputActions::Down(const std::string& name) { const Action* a = Find(name); return a && a->value >= a->threshold && a->previous < a->threshold; }
-bool InputActions::Up(const std::string& name) { const Action* a = Find(name); return a && a->value < a->threshold && a->previous >= a->threshold; }
-float InputActions::Value(const std::string& name) { const Action* a = Find(name); return a ? a->value : 0.0f; }
-Vec2 InputActions::Vector(const std::string& name) { const Action* a = Find(name); return a ? a->vector : Vec2{0.0f, 0.0f}; }
+bool InputActions::Get(const std::string& name) { const ActionDef* d = Def(name); return d && d->down; }
+bool InputActions::Down(const std::string& name) { const ActionDef* d = Def(name); return d && d->pressed; }
+bool InputActions::Up(const std::string& name) { const ActionDef* d = Def(name); return d && d->released; }
+float InputActions::Value(const std::string& name) { const ActionDef* d = Def(name); return d ? d->Magnitude() : 0.0f; }
+Vec2 InputActions::Vector(const std::string& name) { const ActionDef* d = Def(name); return d ? Vec2{d->value.x, d->value.y} : Vec2{0.0f, 0.0f}; }
 
-void InputActions::SetPerPlayer(const std::string& action, bool on) { if (Action* a = Find(action)) a->perPlayer = on; }
-static const InputActions::Action::PlayerState* PlayerOf(const std::string& name, int player) {
-    const InputActions::Action* a = InputActions::Find(name);
-    if (!a || player < 0 || player >= Input::kMaxGamepads) return nullptr;
-    return &a->players[player];
+void InputActions::SetPerPlayer(const std::string& action, bool on) {
+    const ActionDef* d = Def(action);
+    if (!d) return;
+    CodeDef* c = CodeFind(d->name);
+    if (!c) { Registry().emplace_back(); c = &Registry().back(); c->name = d->name; c->builtin = true; }
+    c->perPlayer = on;
+    const CodeDef def = *c;
+    InputRuntime::ForEachSet([](ActionSet& set, const void* p) {
+        const CodeDef& c = *static_cast<const CodeDef*>(p);
+        if (ActionDef* x = set.FindNoCase(c.name)) x->perPlayer = c.perPlayer;
+    }, &def);
 }
-bool InputActions::Get(const std::string& name, int p) { const auto* s = PlayerOf(name, p); return s && s->value >= Find(name)->threshold; }
-bool InputActions::Down(const std::string& name, int p) { const auto* s = PlayerOf(name, p); const float t = s ? Find(name)->threshold : 0.5f; return s && s->value >= t && s->previous < t; }
-bool InputActions::Up(const std::string& name, int p) { const auto* s = PlayerOf(name, p); const float t = s ? Find(name)->threshold : 0.5f; return s && s->value < t && s->previous >= t; }
-float InputActions::Value(const std::string& name, int p) { const auto* s = PlayerOf(name, p); return s ? s->value : 0.0f; }
-Vec2 InputActions::Vector(const std::string& name, int p) { const auto* s = PlayerOf(name, p); return s ? s->vector : Vec2{0.0f, 0.0f}; }
+static const ActionDef::PadState* PadOf(const std::string& name, int player, float& threshold) {
+    const ActionDef* d = Def(name);
+    if (!d || player < 0 || player >= Input::kMaxGamepads) return nullptr;
+    threshold = d->pressPoint;
+    return &d->pads[player];
+}
+bool InputActions::Get(const std::string& name, int p) { float t = 0.5f; const auto* s = PadOf(name, p, t); return s && s->value >= t; }
+bool InputActions::Down(const std::string& name, int p) { float t = 0.5f; const auto* s = PadOf(name, p, t); return s && s->value >= t && s->previous < t; }
+bool InputActions::Up(const std::string& name, int p) { float t = 0.5f; const auto* s = PadOf(name, p, t); return s && s->value < t && s->previous >= t; }
+float InputActions::Value(const std::string& name, int p) { float t = 0.5f; const auto* s = PadOf(name, p, t); return s ? s->value : 0.0f; }
+Vec2 InputActions::Vector(const std::string& name, int p) { float t = 0.5f; const auto* s = PadOf(name, p, t); return s ? s->vector : Vec2{0.0f, 0.0f}; }
 
 bool InputActions::Buffered(const std::string& name, float window) {
-    const Action* a = Find(name);
-    return a && !a->pressConsumed && a->pressedAt > -1.0e8 && g_now - a->pressedAt <= (double)window;
+    const ActionDef* a = Def(name);
+    return a && !a->pressConsumed && a->pressedAt > -1.0e8 && T().Time() - a->pressedAt <= (double)window;
 }
 bool InputActions::Consume(const std::string& name) {
-    Action* a = Find(name);
+    ActionDef* a = T().FindNoCase(name);
     if (!a || a->pressConsumed || a->pressedAt < -1.0e8) return false;
     a->pressConsumed = true;
     return true;
 }
 bool InputActions::DoubleTap(const std::string& name, float window) {
-    const Action* a = Find(name);
-    return a && a->pressedNow && a->prevPressedAt > -1.0e8 && a->pressedAt - a->prevPressedAt <= (double)window;
+    const ActionDef* a = Def(name);
+    return a && a->pressed && a->prevPressedAt > -1.0e8 && a->pressedAt - a->prevPressedAt <= (double)window;
 }
 float InputActions::HeldFor(const std::string& name) {
-    const Action* a = Find(name);
-    return a && a->heldSince >= 0.0 ? (float)(g_now - a->heldSince) : 0.0f;
+    const ActionDef* a = Def(name);
+    return a && a->heldSince >= 0.0 ? (float)(T().Time() - a->heldSince) : 0.0f;
 }
 float InputActions::HoldProgress(const std::string& name, float seconds) {
     if (!(seconds > 0.0f)) return 0.0f;
     return std::min(1.0f, HeldFor(name) / seconds);
 }
 bool InputActions::HoldReached(const std::string& name, float seconds) {
-    const Action* a = Find(name);
+    const ActionDef* a = Def(name);
     if (!a || a->heldSince < 0.0 || !(seconds > 0.0f)) return false;
-    const double held = g_now - a->heldSince;
-    return held >= (double)seconds && held - g_dt < (double)seconds;   // crossed the line during this very frame
+    const double held = T().Time() - a->heldSince;
+    return held >= (double)seconds && held - T().LastDt() < (double)seconds;   // crossed the line during this very frame
 }
 
 const InputBinding* InputActions::Current(const std::string& name, bool gamepad) {
     const Action* a = Find(name);
     if (!a) return nullptr;
     for (const InputBinding& b : a->bindings)
-        if (b.IsGamepad() == gamepad && b.kind != InputBinding::Kind::MouseDelta) return &b;
+        if (b.kind != InputBinding::Kind::None && b.IsGamepad() == gamepad && b.kind != InputBinding::Kind::MouseDelta) return &b;
     return nullptr;
 }
 
+bool InputActions::SetBindings(const std::string& name, const std::vector<InputBinding>& list) {
+    ActionSet& t = T();
+    ActionDef* d = t.FindNoCase(name);
+    if (!d) return false;
+    ApplyList(t, *d, list);
+    InputRuntime::SyncPlayer0();
+    return true;
+}
+
 bool InputActions::Rebind(const std::string& name, const std::string& text, int part) {
-    Action* a = Find(name);
+    const Action* a = Find(name);
     if (!a) return false;
     InputBinding nb = InputBinding::Parse(text);
     if (nb.kind == InputBinding::Kind::None) return false;
     // A direction action (Move, Look) needs something that points: a lone key or button would
     // replace its four-key binding and leave it reading (0, 0) for ever.
     if (a->direction && part < 0 && !nb.IsDirection()) return false;
+    std::vector<InputBinding> list = a->bindings;
     const bool pad = nb.IsGamepad();
     InputBinding* slot = nullptr;
-    for (InputBinding& b : a->bindings)
-        if (b.IsGamepad() == pad && b.kind != InputBinding::Kind::MouseDelta && b.IsDirection() == nb.IsDirection()) { slot = &b; break; }
+    for (InputBinding& b : list)
+        if (b.kind != InputBinding::Kind::None && b.IsGamepad() == pad && b.kind != InputBinding::Kind::MouseDelta && b.IsDirection() == nb.IsDirection()) { slot = &b; break; }
     if (!slot)
-        for (InputBinding& b : a->bindings)
-            if (b.IsGamepad() == pad && b.kind != InputBinding::Kind::MouseDelta) { slot = &b; break; }
+        for (InputBinding& b : list)
+            if (b.kind != InputBinding::Kind::None && b.IsGamepad() == pad && b.kind != InputBinding::Kind::MouseDelta) { slot = &b; break; }
     if (part >= 0 && part < 4) {
         // One key of a four-key direction.
         if (!slot || slot->kind != InputBinding::Kind::Keys4 || nb.kind != InputBinding::Kind::Key) return false;
@@ -935,78 +745,56 @@ bool InputActions::Rebind(const std::string& name, const std::string& text, int 
     } else if (slot) {
         *slot = nb;
     } else {
-        a->bindings.push_back(nb);
+        list.push_back(nb);
     }
+    const std::string real = a->name;
+    SetBindings(real, list);
     Save();
     return true;
 }
 
 void InputActions::Reset(const std::string& name) {
-    EnsureDefaults();
-    for (Action& a : Actions())
-        if (name.empty() || Lower(a.name) == Lower(name)) {
-            a.bindings = a.defaults;
-            Prefs::Delete("input." + Lower(a.name));
+    ActionSet& t = T();
+    for (const ActionDef& d : t.Actions())
+        if (name.empty() || Lower(d.name) == Lower(name)) {
+            t.SetBindings(d.name, t.AuthoredBindings(d));
+            Prefs::Delete("input." + Lower(d.name));
         }
-    PushToStore();
+    InputRuntime::SyncPlayer0();
+    Save();
 }
 
 void InputActions::Load() {
-    EnsureDefaults();
-    for (Action& a : Actions()) { ApplySaved(a); ApplySavedResponse(a); }
+    ActionSet& t = T();
+    t.ResetOverrides();
+    LoadSaved(t, "");
+    for (const ActionDef& d : t.Actions()) { Response r; if (LoadResponse(d.name, r)) t.FindNoCase(d.name)->response = r; }
+    t.Touch();
+    InputRuntime::SyncPlayer0();
 }
-
-void InputActions::SyncFrom(const ActionSet& set) {
-    EnsureDefaults();
-    if (g_storeBusy) return;
-    for (Action& a : Actions()) {
-        const ActionDef* d = set.Find(a.name);
-        if (!d || !Linked(a, *d)) continue;
-        const std::string before = Joined(a.bindings);
-        for (std::size_t i = 0; i < d->bindings.size(); ++i) {
-            const BindingSpec& s = d->bindings[i];
-            if (!ShapeFits(a.bindings[i], s)) continue;   // changed here into a shape the ActionSet cannot hold: this side wins
-            const InputBinding nb = Representable(a, s);
-            if (nb.kind != InputBinding::Kind::None) a.bindings[i] = nb;   // else: a value this table would refuse stays typed-only
-        }
-        const std::string after = Joined(a.bindings);
-        if (after == before) continue;
-        auto& pending = PendingPulls();
-        auto it = pending.find(Lower(a.name));
-        if (it == pending.end()) it = pending.emplace(Lower(a.name), std::make_pair(before, after)).first;
-        it->second.second = after;
-        if (it->second.first == after) pending.erase(it);
-    }
-}
-
-void InputActions::LinkJoined(ActionSet& set) { EnsureDefaults(); PushTo(set, true); }
-
-void InputActions::SaveWithStore() { PendingPulls().clear(); Save(); }
 
 void InputActions::Save() {
-    EnsureDefaults();
-    for (const Action& a : Actions()) {
+    ActionSet& t = T();
+    t.SaveOverrides("player0");
+    // The same store in the per-action form every earlier version wrote and read: only what the player changed, and only
+    // for actions this front can show whole.
+    for (const Action& a : All()) {
         const std::string key = "input." + Lower(a.name);
-        std::string now = Joined(a.bindings);
-        auto pending = PendingPulls().find(Lower(a.name));
-        if (pending != PendingPulls().end()) {
-            if (pending->second.second == now) now = pending->second.first;   // a typed rebind nobody saved yet: keep the saved text
-            else PendingPulls().erase(pending);                                 // changed here since: this table's change is saved
-        }
-        if (now == Joined(a.defaults)) Prefs::Delete(key);   // only what the player changed
+        bool whole = true;
+        for (const InputBinding& b : a.bindings) if (b.kind == InputBinding::Kind::None) whole = false;
+        const std::string now = Joined(a.bindings);
+        if (!whole || now == Joined(a.defaults)) Prefs::Delete(key);
         else Prefs::SetString(key, now);
     }
-    PushToStore();
+    InputRuntime::SyncPlayer0();
 }
 
 std::string InputActions::ExportBindings() {
-    EnsureDefaults();
     std::string out = "okayinput 1\n";
-    for (const Action& a : Actions()) out += a.name + "=" + Joined(a.bindings) + "\n";
+    for (const Action& a : All()) out += a.name + "=" + Joined(a.bindings) + "\n";
     return out;
 }
 bool InputActions::ImportBindings(const std::string& text) {
-    EnsureDefaults();
     std::size_t pos = text.find('\n');
     if (text.rfind("okayinput ", 0) != 0 || pos == std::string::npos) return false;
     if (std::atoi(text.c_str() + 10) != 1) return false;   // a newer file than we understand
@@ -1017,18 +805,9 @@ bool InputActions::ImportBindings(const std::string& text) {
         pos = end;
         const std::size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
-        Action* a = Find(line.substr(0, eq));
-        if (!a) continue;
-        std::vector<InputBinding> list;
-        const std::string v(line, eq + 1);
-        std::size_t start = 0;
-        for (std::size_t i = 0; i <= v.size(); ++i)
-            if (i == v.size() || v[i] == ';') {
-                InputBinding b = InputBinding::Parse(v.substr(start, i - start));
-                if (b.kind != InputBinding::Kind::None) list.push_back(b);
-                start = i + 1;
-            }
-        if (!list.empty()) { a->bindings = list; any = true; }
+        if (!Def(line.substr(0, eq))) continue;
+        const std::vector<InputBinding> list = ParseList(line.substr(eq + 1));
+        if (!list.empty() && SetBindings(line.substr(0, eq), list)) any = true;
     }
     if (any) Save();
     return any;
@@ -1172,6 +951,13 @@ Vec2 InputActions::ControlMove() {
     return Rebound("Move") ? Vector("Move") : Input::AxisWASD();
 }
 
-void InputActions::Restore() { PendingPulls().clear(); Stack().clear(); g_now = 0.0; g_clockSeen = false; DefineDefaults(); }
+void InputActions::Restore() {
+    ClearContexts();
+    InputRuntime::RebuildActions();   // the table (and its clock) is built again from the asset and the defaults
+    Registry().clear();
+    g_defaultsDone = false;
+    g_clockSeen = false;
+    EnsureDefaults();
+}
 
 } // namespace okay

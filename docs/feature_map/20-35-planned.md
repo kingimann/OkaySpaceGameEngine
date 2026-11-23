@@ -1374,7 +1374,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add a colorblind filter to the renderers"; "preview my UI as a deuteranope in the editor"
 
 ### 32.4 Remapping
-- **System:** Input Actions
+- **System:** Input
 - **What:** Let players rebind every control, with conflict handling, on keyboard and gamepad.
 - **Parts:**
   - 32.4.1 Input actions and persistence - `Input/InputActions` - named actions with keys, mouse buttons, gamepad buttons and sticks; bindings saved to the player's prefs; defaults restorable

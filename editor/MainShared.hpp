@@ -3,8 +3,10 @@
 // This list shrinks as main.cpp is split further; each entry moves to the
 // header of the module that ends up owning it.
 #include "imgui.h"
+#include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace okay { class GameObject; namespace editor { class EditorState; } }
 #ifdef OKAY_HAVE_OKAYUI
@@ -79,5 +81,37 @@ extern float g_snapSize;
 extern bool  g_gizmoLocal;
 // An image file (or "proc:" texture) as a cached SDL texture, null when it can't load.
 SDL_Texture* GetThumb(const std::string& path);
+
+// Run a shell command without flashing a console window (main.cpp); returns the exit code like std::system.
+int SysNoWindow(const std::string& cmd);
+// The Scripting Reference window's visibility (Help > Scripting Reference, the Script Editor's Docs), the Script
+// Editor's monospace face, and the accent-ticked section heading every panel uses (main.cpp).
+extern bool g_showScriptDocs;
+extern ImFont* g_codeFont;
+void SectionHeader(const char* label);
+// Panel and window visibility the split-out windows read or set (main.cpp).
+extern bool g_showProject;
+extern bool g_showAssetManager;
+extern bool g_showPluginManager;
+// The Project panel scrolls to, selects and flashes this asset path next frame, then clears it (main.cpp).
+extern std::string g_pingAsset;
+// The folder the editor executable lives in (main.cpp).
+std::string OkayExeDir();
+// A model file extension the importer reads (lower case, with the dot) (main.cpp).
+bool IsModelExt(const std::string& extLower);
+// External-IDE helpers (main.cpp, namespace extide): write and read a text file, show a path in the file manager.
+namespace extide {
+bool WriteFile(const std::string& path, const std::string& text);
+std::string ReadFile(const std::string& path);
+void RevealInFiles(const std::string& path);
+} // namespace extide
+// The open project's settings (main.cpp; the struct is in ProjectState.hpp).
+struct ProjectSettings;
+extern ProjectSettings g_project;
+#if defined(OKAY_XBOX_UWP)
+// The last Xbox export's result (main.cpp), set by Build Game's Xbox export.
+extern bool g_xboxExportOk;
+extern std::vector<std::string> g_xboxExportWarnings;
+#endif
 
 } // namespace oked

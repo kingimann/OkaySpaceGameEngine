@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 66 headers, 960 names.
+Back to the [code index](../code_index.md). 67 headers, 965 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -421,39 +421,39 @@ Back to the [code index](../code_index.md). 66 headers, 960 names.
 - `LayerErrorText` function, line 334
 - `CopyToBuf` function, line 336: Copy 'src' into a fixed buffer, cut at a whole UTF-8 character.
 - `PhysicsSettingsModel` struct, line 348
-- `PhysicsSettingsIntent` struct, line 358
-- `ClampStepsPerSecond` function, line 377: The step rate the editor accepts: 1 to 500 a second (anything else, NaN included, is pulled into that range; NaN is 50).
-- `DefaultItemWidth` function, line 380: Dear ImGui's default item width: 65% of the window (a panel's body plus the editor's 16-pixel padding on each side).
-- `ProfilerSection` struct, line 386
-- `ProfilerModel` struct, line 393
-- `ProfilerIntent` struct, line 406
-- `ProfilerGraphTop` function, line 422: The top of the timeline graphs: 15% above the peak, or 33.4 ms (30 FPS) before there is one.
-- `ProfilerFrameCount` function, line 423
-- `ProfilerFixSelection` function, line 425: While running the scrub position is the latest frame (-1); once paused it starts at the newest frame and stays in range.
-- `ProfilerOtherMs` function, line 431
-- `ProfilerOverlay` function, line 435
-- `ProfilerBarText` function, line 440: "Scripts 1.20 ms (35%)" and the bar's fill (the share of this frame's CPU).
-- `ProfilerDiagnosis` function, line 447: The plain-language diagnosis under the bars.
-- `ProfilerRows` function, line 469: The table's rows: the sections by self time, heaviest first (ties keep the profiler's order).
-- `ProfilerHot` function, line 476: A hot section (red): more than 30% of a frame that took more than half a millisecond of CPU.
-- `ProfilerCells` function, line 478: The seven cells of a row: name, self, total, %, calls, avg, max.
-- `ProfilerCsv` function, line 487
-- `ProfilerEmptyText` function, line 496
-- `ImportKind` enum, line 504
-- `ImportFields` struct, line 507: The values the panel edits, copied from and back to the engine's okay::ImportSettings by the host (editor/ProjectPanelUI.cpp).
-- `ImportSettingsModel` struct, line 520
-- `ImportSettingsState` struct, line 528: What the panel keeps between frames: the message of a failed Apply. The host sets it (and showFail) when saving fails.
-- `ImportSettingsIntent` struct, line 533
-- `ImportSizeIndex` function, line 550: The "Largest side" list's row for a size (an unknown size shows as 2048, the default).
-- `ImportSame` function, line 555: The same settings as far as the panel shows them (the fields of the asset's kind).
-- `PostValues` struct, line 570: The open scene's post-processing values (scene render settings), copied in and back by the host.
-- `PostProcessModel` struct, line 586
-- `PostProcessIntent` struct, line 593
-- `PostChainText` function, line 614
-- `PlayerSettingsModel` struct, line 622
-- `PlayerSettingsIntent` struct, line 631
-- `RenderingSettingsModel` struct, line 633
-- `RenderingSettingsIntent` struct, line 638
+- `PhysicsSettingsIntent` struct, line 356
+- `ClampStepsPerSecond` function, line 370: The step rate the editor accepts: 1 to 500 a second (anything else, NaN included, is pulled into that range; NaN is 50).
+- `DefaultItemWidth` function, line 373: Dear ImGui's default item width: 65% of the window (a panel's body plus the editor's 16-pixel padding on each side).
+- `ProfilerSection` struct, line 379
+- `ProfilerModel` struct, line 386
+- `ProfilerIntent` struct, line 399
+- `ProfilerGraphTop` function, line 415: The top of the timeline graphs: 15% above the peak, or 33.4 ms (30 FPS) before there is one.
+- `ProfilerFrameCount` function, line 416
+- `ProfilerFixSelection` function, line 418: While running the scrub position is the latest frame (-1); once paused it starts at the newest frame and stays in range.
+- `ProfilerOtherMs` function, line 424
+- `ProfilerOverlay` function, line 428
+- `ProfilerBarText` function, line 433: "Scripts 1.20 ms (35%)" and the bar's fill (the share of this frame's CPU).
+- `ProfilerDiagnosis` function, line 440: The plain-language diagnosis under the bars.
+- `ProfilerRows` function, line 462: The table's rows: the sections by self time, heaviest first (ties keep the profiler's order).
+- `ProfilerHot` function, line 469: A hot section (red): more than 30% of a frame that took more than half a millisecond of CPU.
+- `ProfilerCells` function, line 471: The seven cells of a row: name, self, total, %, calls, avg, max.
+- `ProfilerCsv` function, line 480
+- `ProfilerEmptyText` function, line 489
+- `ImportKind` enum, line 497
+- `ImportFields` struct, line 500: The values the panel edits, copied from and back to the engine's okay::ImportSettings by the host (editor/ProjectPanelUI.cpp).
+- `ImportSettingsModel` struct, line 513
+- `ImportSettingsState` struct, line 521: What the panel keeps between frames: the message of a failed Apply. The host sets it (and showFail) when saving fails.
+- `ImportSettingsIntent` struct, line 526
+- `ImportSizeIndex` function, line 543: The "Largest side" list's row for a size (an unknown size shows as 2048, the default).
+- `ImportSame` function, line 548: The same settings as far as the panel shows them (the fields of the asset's kind).
+- `PostValues` struct, line 563: The open scene's post-processing values (scene render settings), copied in and back by the host.
+- `PostProcessModel` struct, line 579
+- `PostProcessIntent` struct, line 586
+- `PostChainText` function, line 607
+- `PlayerSettingsModel` struct, line 615
+- `PlayerSettingsIntent` struct, line 624
+- `RenderingSettingsModel` struct, line 626
+- `RenderingSettingsIntent` struct, line 631
 
 ## `shared/FileDialog.hpp`
 
@@ -637,7 +637,7 @@ Back to the [code index](../code_index.md). 66 headers, 960 names.
 ## `shared/LibraryScan.hpp`
 
 - `SceneKey` function, line 20: The same file always gives the same key, whichever folder it was reached through ("a/../b", symlinks).
-- `FindScenesUnder` function, line 29: Every *.okayscene under each folder of 'roots' (recursively), once each. 'skipDir' returns true for a folder
+- `FindScenesUnder` function, line 35: Every *.okayscene under each folder of 'roots' (recursively), once each. 'skipDir' returns true for a folder
 
 ## `shared/OfficialGame.hpp`
 
@@ -721,20 +721,20 @@ Back to the [code index](../code_index.md). 66 headers, 960 names.
 
 ## `shared/OkayUIBackend.hpp`
 
-- `Backend` enum, line 22
-- `CompiledIn` function, line 25: True when this binary can host OkayUI at all (the okay_ui library is linked in).
-- `BuildDefault` function, line 34: The build's default (the CMake option OKAY_UI_DEFAULT_BACKEND).
-- `Name` function, line 37: The short name stored in settings files and read from the environment: "imgui" or "okayui".
-- `Label` function, line 39: The words the settings screens show.
-- `Parse` function, line 43: Read a backend name: "imgui", "dear imgui", "okayui", "okay ui" (case and surrounding spaces ignored), or the numbers
-- `Normalize` function, line 54: What a settings file stores: the canonical name of 'text', or an empty string for anything unreadable (= "never chosen").
-- `FromSettingInt` function, line 59: The editor's settings file holds integers ("uibackend 1"): 1 is OkayUI, any other number Dear ImGui.
-- `ToSettingInt` function, line 61: The integer to save for a setting (never called for an empty one: nothing is saved then, so "never chosen" survives a save).
-- `DevMode` function, line 64: The developer flag: OKAY_DEV set to anything but empty or "0" (the same rule as the editor's launcher gate).
-- `SettingRowVisible` function, line 67: The settings rows that change the backend are shown only with the developer flag, and only where OkayUI is compiled in.
-- `Resolve` function, line 72: The backend to use: the environment value (null or unreadable = none) over the saved setting, and Dear ImGui when OkayUI is
-- `Source` function, line 81: Which source decided: 0 build default, 1 the saved setting, 2 the environment (for the settings row's note).
-- `InspectorOn` function, line 91: The Inspector drawn by OkayUI (a preview, off by default; docs/ui/own_ui_toolkit.md sections 14-22). It needs the OkayUI backend
+- `Backend` enum, line 26
+- `CompiledIn` function, line 29: True when this binary can host OkayUI at all (the okay_ui library is linked in).
+- `BuildDefault` function, line 38: The build's default (the CMake option OKAY_UI_DEFAULT_BACKEND).
+- `Name` function, line 41: The short name stored in settings files and read from the environment: "imgui" or "okayui".
+- `Label` function, line 43: The words the settings screens show.
+- `Parse` function, line 47: Read a backend name: "imgui", "dear imgui", "okayui", "okay ui" (case and surrounding spaces ignored), or the numbers
+- `Normalize` function, line 58: What a settings file stores: the canonical name of 'text', or an empty string for anything unreadable (= "never chosen").
+- `FromSettingInt` function, line 63: The editor's settings file holds integers ("uibackend 1"): 1 is OkayUI, any other number Dear ImGui.
+- `ToSettingInt` function, line 65: The integer to save for a setting (never called for an empty one: nothing is saved then, so "never chosen" survives a save).
+- `DevMode` function, line 68: The developer flag: OKAY_DEV set to anything but empty or "0" (the same rule as the editor's launcher gate).
+- `SettingRowVisible` function, line 71: The settings rows that change the backend are shown only with the developer flag, and only where OkayUI is compiled in.
+- `Resolve` function, line 76: The backend to use: the environment value (null or unreadable = none) over the saved setting, and Dear ImGui when OkayUI is
+- `Source` function, line 85: Which source decided: 0 build default, 1 the saved setting, 2 the environment (for the settings row's note).
+- `InspectorOn` function, line 95: The Inspector drawn by OkayUI (a preview; docs/ui/own_ui_toolkit.md sections 14-22; on by default through the Settings > Experimental items since 2026-11-23). I
 
 ## `shared/OkayUIFrame.hpp`
 
@@ -750,11 +750,11 @@ Back to the [code index](../code_index.md). 66 headers, 960 names.
 ## `shared/OkayUIHost.hpp`
 
 - `InputCollector` class, line 31: Collects what OkayUI needs from SDL events between two frames.
-- `Region` class, line 259: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
-- `WantsKeyboard` function, line 296: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
-- `KeyIdOf` function, line 320: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
-- `EventCollector` class, line 347: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
-- `Host` class, line 425: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
+- `Region` class, line 287: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
+- `WantsKeyboard` function, line 327: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
+- `KeyIdOf` function, line 351: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
+- `EventCollector` class, line 378: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
+- `Host` class, line 456: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
 
 ## `shared/OkayUIHostImGui.hpp`
 
@@ -763,6 +763,7 @@ Back to the [code index](../code_index.md). 66 headers, 960 names.
 - `CoveredInImGui` function, line 60: Popups and windows in front together: while this is true a host draws the Dear ImGui version, which ImGui layers correctly.
 - `ToMainWindowPixels` function, line 67: ImGui positions are desktop coordinates while multi-viewports are on (the editor turns them on): the main window's inside
 - `OutsideMainWindow` function, line 73: True when the ImGui window was dragged out into another OS window: OkayUI only draws into the main one.
+- `HiddenInImGui` function, line 81: True when Dear ImGui shows nothing of the window this frame: a docked panel whose tab is not the selected one (the Inspector while
 
 ## `shared/OkayUIHostMode.hpp`
 
@@ -786,6 +787,11 @@ Back to the [code index](../code_index.md). 66 headers, 960 names.
 - `LoadFile` function, line 118
 - `SaveFileAtomic` function, line 129: Write through a temporary file and rename it over the old one, so a crash leaves either the old state or the new one. False on any failure (the old
 - `StateSaver` class, line 150: Saves a state at most every 'intervalMs' while it keeps changing, and once more when asked to flush (the window is closing). The clock is passed in, so a
+
+## `shared/OkayUIImGuiEmbed.hpp`
+
+- `ImGuiEmbed` class, line 26
+- `SharedImGuiEmbed` function, line 130: The one embed the editor's hosted OkayUI widgets share (one set of textures).
 
 ## `shared/OkayUIImGuiMap.hpp`
 
@@ -827,37 +833,39 @@ Back to the [code index](../code_index.md). 66 headers, 960 names.
 
 ## `shared/OwnSwitches.hpp`
 
-- `Needs` enum, line 29: What an item needs from the build or the system. A screen passes what is true here; an unavailable item is hidden.
-- `Item` struct, line 31
-- `Items` function, line 41: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed).
-- `AlternativeExe` struct, line 56: A second program built from the same sources against our own UI (CMake options OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): the
-- `Alternative` function, line 60
-- `Context` struct, line 74: What is true on this machine: used to hide items that cannot work here.
-- `Available` function, line 89
-- `SplitIds` function, line 97
-- `JoinIds` function, line 106
-- `Has` function, line 111
-- `Find` function, line 115
-- `Parse` function, line 122: Read the file text: the 'on=' line. Unknown ids, repeats and damaged lines are dropped, so a hand-edited file cannot turn
-- `Serialize` function, line 133
-- `AllOff` function, line 140: "Back to normal": everything off.
-- `Set` function, line 141
-- `AppliedVar` function, line 150
-- `PutEnv` function, line 152
-- `DropEnv` function, line 159
-- `AppliedNow` function, line 166
-- `SetByUser` function, line 172: True when the person set the item's variable themselves (it is set and we did not set it).
-- `Apply` function, line 178: Set the variables of the chosen, available items (not over a variable the person set), remove the ones a parent program set that
-- `Status` enum, line 193
-- `StatusOf` function, line 196: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
-- `StatusText` function, line 203
-- `DefaultPath` function, line 214: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
-- `LoadFile` function, line 228
-- `SaveFile` function, line 235
-- `State` struct, line 246: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
-- `Global` function, line 251
-- `Startup` function, line 254: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
-- `SaveChosen` function, line 261: Save the screen's choice to the file Startup() read.
+- `Needs` enum, line 33: What an item needs from the build or the system. A screen passes what is true here; an unavailable item is hidden.
+- `Item` struct, line 35
+- `Items` function, line 46: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
+- `AlternativeExe` struct, line 61: A second program built from the same sources against our own UI (CMake options OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): the
+- `Alternative` function, line 65
+- `Context` struct, line 79: What is true on this machine: used to hide items that cannot work here.
+- `Available` function, line 94
+- `SplitIds` function, line 102
+- `JoinIds` function, line 111
+- `Has` function, line 116
+- `Find` function, line 120
+- `Select` function, line 126: The ids of 'items' for which 'pick(id)' is true, in table order.
+- `Parse` function, line 135: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
+- `Serialize` function, line 145: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
+- `AllOn` function, line 152: The default: everything on.
+- `AllOff` function, line 154: "Back to the third-party parts": everything off.
+- `Set` function, line 155
+- `AppliedVar` function, line 164
+- `PutEnv` function, line 166
+- `DropEnv` function, line 173
+- `AppliedNow` function, line 180
+- `SetByUser` function, line 186: True when the person set the item's variable themselves (it is set and we did not set it).
+- `Apply` function, line 192: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
+- `Status` enum, line 207
+- `StatusOf` function, line 210: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
+- `StatusText` function, line 217
+- `DefaultPath` function, line 228: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
+- `LoadFile` function, line 242
+- `SaveFile` function, line 249
+- `State` struct, line 260: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
+- `Global` function, line 265
+- `Startup` function, line 268: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
+- `SaveChosen` function, line 275: Save the screen's choice to the file Startup() read.
 
 ## `shared/PainterBridge.hpp`
 

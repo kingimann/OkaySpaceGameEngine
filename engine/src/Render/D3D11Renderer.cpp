@@ -9,7 +9,8 @@
 #include "okay/Render/Visibility.hpp"
 #include "okay/Components/LODGroup.hpp"
 #include "okay/Render/Lighting.hpp"
-#include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shared texture cache
+#include "okay/Render/SoftwareRenderer.hpp"   // the shared texture library (TextureAsset.hpp), TextureSamplingOf
+#include "okay/Debug/MemoryTracker.hpp"       // "Textures (GPU)"
 #include "okay/Render/GpuTexture.hpp"         // .dds / compressed import copies: BC blocks uploaded as they are
 #include "okay/Render/ShadowSetup.hpp"
 #include "okay/Render/D3D11Layout.hpp"
@@ -266,8 +267,12 @@ struct D3D11Renderer::Impl {
     bool stateSaved = false;                // host pipeline state is already backed up
     unsigned targetUse = 0;
     void ReleaseSet(TargetSet& t);
-    std::unordered_map<std::string, ID3D11ShaderResourceView*> texCache;
-    unsigned texGen = 0;                                      // TextureCacheGeneration() texCache was built for
+    std::unordered_map<std::string, ID3D11ShaderResourceView*> texCache;   // from the shared TextureAsset (TextureAsset.hpp)
+    struct TexUpload { std::uint64_t serial = 0; std::size_t gpuBytes = 0; };
+    std::unordered_map<std::string, TexUpload> texUpload;    // the asset serial each texture was made from, its bytes
+    unsigned texGen = 0;                                      // TextureCacheGeneration() texCache was checked against
+    unsigned texLibGen = 0;                                   // textures::Generation() likewise
+    void FreeTexture(const std::string& name);
     std::unordered_map<std::string, TextureSampling> texSampling;   // a picture's import Filter / Wrap
     std::unordered_map<int, ID3D11SamplerState*> sampCombo;   // sampler per (filter, wrap) combination
     ID3D11SamplerState* SamplerFor(const std::string& name, bool pixel);
@@ -1020,40 +1025,78 @@ static ID3D11ShaderResourceView* UploadDdsPlan(ID3D11Device* dev, const gputex::
     return srv;
 }
 
+static int D3D11GpuTextureCategory() { static const int id = MemoryTracker::Global().Category("Textures (GPU)"); return id; }
+
+void D3D11Renderer::Impl::FreeTexture(const std::string& name) {
+    auto it = texCache.find(name);
+    if (it != texCache.end()) { if (it->second) it->second->Release(); texCache.erase(it); }
+    auto u = texUpload.find(name);
+    if (u != texUpload.end()) {
+        if (u->second.gpuBytes) MemoryTracker::Global().Remove(D3D11GpuTextureCategory(), std::int64_t(u->second.gpuBytes), 1);
+        texUpload.erase(u);
+    }
+    texSampling.erase(name);
+}
+
+// The texture for a material texture name, made from the shared TextureAsset (one decode for every renderer) and made
+// again only when the asset's serial changes (hot reload, reimport, a painted terrain splat).
 ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& name) {
     if (name.empty()) return nullptr;
-    if (texGen != TextureCacheGeneration()) {   // a picture was reimported / its import settings changed
-        for (auto& kv : texCache) if (kv.second) kv.second->Release();
-        texCache.clear();
-        texSampling.clear();
+    if (texGen != TextureCacheGeneration() || texLibGen != textures::Generation()) {
+        std::vector<std::string> gone;   // names the texture library let go of
+        for (const auto& kv : texCache) if (!textures::IsHeld(kv.first)) gone.push_back(kv.first);
+        for (const std::string& n : gone) FreeTexture(n);
         texGen = TextureCacheGeneration();
+        texLibGen = textures::Generation();
     }
+    const TextureAsset* asset = textures::ForRender(name);
+    const std::uint64_t serial = asset ? asset->serial : 0;
     auto it = texCache.find(name);
-    if (it != texCache.end()) return it->second;
+    if (it != texCache.end()) {
+        auto u = texUpload.find(name);
+        if ((u != texUpload.end() ? u->second.serial : 0) == serial) return it->second;
+        FreeTexture(name);
+    }
     ID3D11ShaderResourceView* srv = nullptr;
-    // A .dds file, or the compressed import copy of a picture set to `compress`: its own levels, BC blocks kept
-    // compressed (a top level that is not a multiple of 4 is decoded on the CPU). Anything else: the RGBA8 picture.
-    {
+    TexUpload up;
+    up.serial = serial;
+    if (asset) {
+        texSampling[name] = TextureSamplingOf(*asset);
+        // A .dds file, or the compressed import copy of a picture set to `compress`: its own levels, BC blocks kept
+        // compressed (a top level that is not a multiple of 4 is decoded on the CPU). Anything else: the RGBA8 picture.
         tex::DdsImage dds;
         gputex::Plan plan;
         gputex::Caps caps; caps.s3tc = caps.rgtc = true;
-        if (gputex::Source(name, &dds, nullptr) && gputex::PlanUpload(std::move(dds), caps, &plan)) srv = UploadDdsPlan(dev, plan);
+        if (gputex::Source(name, &dds, nullptr) && gputex::PlanUpload(std::move(dds), caps, &plan)) {
+            srv = UploadDdsPlan(dev, plan);
+            if (srv) for (const auto& lv : plan.levels) up.gpuBytes += lv.bytes.size();
+        }
         if (srv) Log::Info("[d3d11] texture '", name, "': ", tex::DdsFormatName(plan.source), plan.compressed ? " kept compressed" : " uploaded as RGBA8", " (", plan.levels.size(), " levels)");
     }
-    Image* img = srv ? nullptr : GetCachedTexture(name);
-    if (img && img->Width() > 0) {
+    if (!srv && asset && asset->Valid()) {
+        // Our own mip chain (gamma-correct box or Kaiser, renormalised normal maps), the same levels every renderer uses.
+        std::vector<Image> built;
+        const std::vector<Image>* levels = &asset->UploadLevels(built);
         D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
-        td.Width = img->Width(); td.Height = img->Height(); td.MipLevels = 1; td.ArraySize = 1;
+        td.Width = asset->Width(); td.Height = asset->Height(); td.MipLevels = (UINT)levels->size(); td.ArraySize = 1;
         td.Format = DXGI_FORMAT_R8G8B8A8_UNORM; td.SampleDesc.Count = 1;
         td.Usage = D3D11_USAGE_IMMUTABLE; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-        D3D11_SUBRESOURCE_DATA sr; std::memset(&sr, 0, sizeof(sr));
-        sr.pSysMem = img->Data(); sr.SysMemPitch = (UINT)img->Width() * 4;
+        std::vector<D3D11_SUBRESOURCE_DATA> sr(levels->size());
+        for (std::size_t l = 0; l < levels->size(); ++l) {
+            std::memset(&sr[l], 0, sizeof(sr[l]));
+            sr[l].pSysMem = (*levels)[l].Data(); sr[l].SysMemPitch = (UINT)(*levels)[l].Width() * 4;
+            up.gpuBytes += (*levels)[l].Pixels().size();
+        }
         ID3D11Texture2D* tex = nullptr;
-        if (SUCCEEDED(dev->CreateTexture2D(&td, &sr, &tex)) && tex) {
+        if (SUCCEEDED(dev->CreateTexture2D(&td, sr.data(), &tex)) && tex) {
             dev->CreateShaderResourceView(tex, nullptr, &srv);
             tex->Release();
         }
+        if (!srv) up.gpuBytes = 0;
     }
+    if (!srv) up.gpuBytes = 0;
+    if (up.gpuBytes) MemoryTracker::Global().Add(D3D11GpuTextureCategory(), std::int64_t(up.gpuBytes), 1);
+    texUpload[name] = up;
     texCache[name] = srv;   // cache failures (nullptr) too
     return srv;
 }
@@ -1065,18 +1108,19 @@ ID3D11SamplerState* D3D11Renderer::Impl::SamplerFor(const std::string& name, boo
     if (ti == texSampling.end()) ti = texSampling.emplace(name, TextureImportSampling(name)).first;
     const TextureSampling ts = ti->second;
     const bool point = pixel || ts.filter == TextureSampling::Point;
+    const int aniso = (!point && ts.filter == TextureSampling::Trilinear) ? std::max(1, std::min(16, ts.anisotropy)) : 1;
     if (ts.wrap == TextureSampling::Repeat) {
         if (point && sampPoint) return sampPoint;
-        if (!point && ts.filter == TextureSampling::Trilinear) return samp;
+        if (!point && ts.filter == TextureSampling::Trilinear && aniso == 8) return samp;   // the long-standing default
     }
-    const int key = (point ? 3 : ts.filter) * 3 + ts.wrap;
+    const int key = ((point ? 3 : ts.filter) * 3 + ts.wrap) + aniso * 100;
     auto it = sampCombo.find(key);
     if (it != sampCombo.end()) return it->second ? it->second : samp;
     D3D11_SAMPLER_DESC sd; std::memset(&sd, 0, sizeof(sd));
     sd.Filter = point ? D3D11_FILTER_MIN_MAG_MIP_POINT
               : ts.filter == TextureSampling::Bilinear ? D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT
-                                                       : D3D11_FILTER_ANISOTROPIC;
-    sd.MaxAnisotropy = (!point && ts.filter == TextureSampling::Trilinear) ? 8 : 1;
+              : aniso > 1 ? D3D11_FILTER_ANISOTROPIC : D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sd.MaxAnisotropy = (UINT)aniso;
     const D3D11_TEXTURE_ADDRESS_MODE am = ts.wrap == TextureSampling::Clamp ? D3D11_TEXTURE_ADDRESS_CLAMP
                                         : ts.wrap == TextureSampling::Mirror ? D3D11_TEXTURE_ADDRESS_MIRROR
                                                                              : D3D11_TEXTURE_ADDRESS_WRAP;
@@ -2027,7 +2071,9 @@ void D3D11Renderer::Destroy() {
     for (auto& kv : p->pipes) for (auto* t : kv.second.st) if (t) t->Release();
     p->pipes.clear();
     for (auto& kv : p->texCache) if (kv.second) kv.second->Release();
+    for (auto& kv : p->texUpload) if (kv.second.gpuBytes) MemoryTracker::Global().Remove(D3D11GpuTextureCategory(), std::int64_t(kv.second.gpuBytes), 1);
     p->texCache.clear();
+    p->texUpload.clear();
     p->texSampling.clear();
     for (auto& kv : p->customPs) if (kv.second.ps) kv.second.ps->Release();
     p->customPs.clear();

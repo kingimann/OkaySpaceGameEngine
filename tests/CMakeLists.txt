@@ -8,6 +8,10 @@ foreach(_f FBX COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD
     endif()
 endforeach()
 
+# The tests folder as an absolute path, for tests that read source files next to them. __FILE__ is relative to the
+# build folder in some builds (the MinGW cross build gives "../tests/x.cpp"), so it cannot be used to find them.
+add_compile_definitions(OKAY_TESTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
 # The sandbox the file-writing tests run in (temp folder as working and save folder; guard against writes into the source tree)
 add_executable(test_sandbox test_sandbox.cpp)
 target_link_libraries(test_sandbox PRIVATE okay::engine)
@@ -39,6 +43,9 @@ if(OKAY_PYTHON)
     if(OKAY_GIT)
         add_test(NAME collab_scripts COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_collab.py)
         add_test(NAME dup_lint_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_dup_lint.py)
+        # Generated docs rebuilt on main only: scripts/precheck.sh --list/--regen/--restore-generated and the commit-back
+        # step of .github/workflows/regen-docs.yml, against a throw-away bare repository (no GitHub).
+        add_test(NAME precheck_generated COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_precheck_generated.py)
         # scripts/integration_merge.py: all open PRs merged together (docs/process/collaboration.md "Integration check").
         add_test(NAME integration_merge COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/integration_merge.py --self-test)
     endif()
@@ -403,6 +410,10 @@ add_test(NAME scene_load COMMAND test_scene_load)
 add_executable(test_script_physics test_script_physics.cpp)
 target_link_libraries(test_script_physics PRIVATE okay::engine)
 add_test(NAME script_physics COMMAND test_script_physics)
+
+add_executable(test_script_api_parity test_script_api_parity.cpp)
+target_link_libraries(test_script_api_parity PRIVATE okay::engine)
+add_test(NAME script_api_parity COMMAND test_script_api_parity)
 
 add_executable(test_script_events test_script_events.cpp)
 target_link_libraries(test_script_events PRIVATE okay::engine)
@@ -998,6 +1009,29 @@ add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --wa
 
 # Physics broad phase: the sort-and-sweep pair finder gives the brute force pair list in the same order, and whole 2D and 3D
 # physics scenes move bit-for-bit the same with either one (docs/engine/perf_log.md)
+# Our own physics core (okay::physcore, docs/physics/physics_core.md): links only that small library, not the engine.
+add_executable(test_physcore_tree test_physcore_tree.cpp)
+target_link_libraries(test_physcore_tree PRIVATE okay::physcore)
+add_test(NAME physcore_tree COMMAND test_physcore_tree)
+add_executable(test_physcore_collide test_physcore_collide.cpp)
+target_link_libraries(test_physcore_collide PRIVATE okay::physcore)
+add_test(NAME physcore_collide COMMAND test_physcore_collide)
+add_executable(test_physcore_world test_physcore_world.cpp)
+target_link_libraries(test_physcore_world PRIVATE okay::physcore)
+add_test(NAME physcore_world COMMAND test_physcore_world)
+add_executable(test_physics_engine_mode test_physics_engine_mode.cpp)
+target_link_libraries(test_physics_engine_mode PRIVATE okay::engine)
+add_test(NAME physics_engine_mode COMMAND test_physics_engine_mode)
+add_executable(test_physics_one_path test_physics_one_path.cpp)
+target_link_libraries(test_physics_one_path PRIVATE okay::engine)
+add_test(NAME physics_one_path COMMAND test_physics_one_path)
+add_executable(test_physics_core_regressions test_physics_core_regressions.cpp)
+target_link_libraries(test_physics_core_regressions PRIVATE okay::engine)
+add_test(NAME physics_core_regressions COMMAND test_physics_core_regressions)
+# Writes the physics example scenes (not a test; build by hand: ninja gen_physics_examples, run with the examples folder).
+add_executable(gen_physics_examples EXCLUDE_FROM_ALL gen_physics_examples.cpp)
+target_link_libraries(gen_physics_examples PRIVATE okay::engine)
+
 add_executable(test_broadphase test_broadphase.cpp)
 target_link_libraries(test_broadphase PRIVATE okay::engine)
 add_test(NAME broadphase COMMAND test_broadphase)
@@ -1539,12 +1573,6 @@ add_test(NAME physics_joints COMMAND test_physics_joints)
 
 # Physics audit (docs/physics/physics.md): box contact points, the iterated solver on its own, the bugs the audit found
 # (both physics qualities), the Improved quality, and how its settings are saved.
-add_executable(test_physics_deep_manifold test_physics_deep_manifold.cpp)
-target_link_libraries(test_physics_deep_manifold PRIVATE okay::engine)
-add_test(NAME physics_deep_manifold COMMAND test_physics_deep_manifold)
-add_executable(test_physics_deep_solver test_physics_deep_solver.cpp)
-target_link_libraries(test_physics_deep_solver PRIVATE okay::engine)
-add_test(NAME physics_deep_solver COMMAND test_physics_deep_solver)
 add_executable(test_physics_deep_bugs test_physics_deep_bugs.cpp)
 target_link_libraries(test_physics_deep_bugs PRIVATE okay::engine)
 add_test(NAME physics_deep_bugs COMMAND test_physics_deep_bugs)
@@ -1620,9 +1648,6 @@ add_executable(test_camera_after_ik test_camera_after_ik.cpp)
 target_link_libraries(test_camera_after_ik PRIVATE okay::engine)
 add_test(NAME camera_after_ik COMMAND test_camera_after_ik)
 
-add_executable(test_ecs test_ecs.cpp)
-target_link_libraries(test_ecs PRIVATE okay::engine)
-add_test(NAME ecs COMMAND test_ecs)
 
 add_executable(test_anim_playback test_anim_playback.cpp)
 target_link_libraries(test_anim_playback PRIVATE okay::engine)
@@ -2939,6 +2964,12 @@ add_executable(test_ragdoll test_ragdoll.cpp)
 target_link_libraries(test_ragdoll PRIVATE okay::engine)
 add_test(NAME ragdoll COMMAND test_ragdoll)
 
+# ActiveRagdoll core (DynamicCharacter): balance, stepping, falls, get-up, hostile input, determinism
+add_executable(test_active_ragdoll test_active_ragdoll.cpp)
+target_link_libraries(test_active_ragdoll PRIVATE okay::engine)
+target_compile_definitions(test_active_ragdoll PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME active_ragdoll COMMAND test_active_ragdoll)
+
 # Fixed-step physics: same result at any frame rate, catch-up limit, render interpolation
 add_executable(test_fixed_step test_fixed_step.cpp)
 target_link_libraries(test_fixed_step PRIVATE okay::engine)
@@ -3079,7 +3110,7 @@ target_link_libraries(test_asset_database PRIVATE okay::engine)
 target_compile_definitions(test_asset_database PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME asset_database COMMAND test_asset_database)
 
-# Core audit regressions: math edge cases, ECS/NetWorld hardening, Camera degenerate
+# Core audit regressions: math edge cases, Camera degenerate
 # viewports, Layers names, DataAsset load, input binding persistence.
 add_executable(test_core_audit test_core_audit.cpp)
 target_link_libraries(test_core_audit PRIVATE okay::engine)
@@ -3143,11 +3174,8 @@ add_executable(test_loc_prefs_time test_loc_prefs_time.cpp)
 target_link_libraries(test_loc_prefs_time PRIVATE okay::engine)
 add_test(NAME loc_prefs_time COMMAND test_loc_prefs_time)
 
-add_executable(test_ecs_commands test_ecs_commands.cpp)
-target_link_libraries(test_ecs_commands PRIVATE okay::engine)
-add_test(NAME ecs_commands COMMAND test_ecs_commands)
 
-# Core wave 6, 1.9: Subscription::Active, throwing handlers, SystemScheduler changes while running, entity id wrap, SceneBridge
+# Core wave 6, 1.9: Subscription::Active, throwing handlers (event bus)
 add_executable(test_core_events_ecs test_core_events_ecs.cpp)
 target_link_libraries(test_core_events_ecs PRIVATE okay::engine)
 add_test(NAME core_events_ecs COMMAND test_core_events_ecs)
@@ -4681,8 +4709,10 @@ add_test(NAME controller_mapping COMMAND test_controller_mapping)
 # a 2 s network cancel). CI runs ctest with -j4, and a test sharing the machine with three others could miss such a limit for
 # reasons that have nothing to do with the code. RUN_SERIAL makes ctest run each of these with nothing else running, so they
 # see the same quiet machine as before; the other tests still run four at a time. Nothing is skipped or loosened (docs/process/automated_testing.md "CI speed").
+# ui_render_bench (3 ms per UI frame) and project_panel_db (re-checking 5,000 assets) missed their limits on the Windows test run
+# while sharing the runner with other tests; scripts/run_windows_tests.py honours RUN_SERIAL the same way.
 foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_pacing platform own_http_net
-                     launcher_download_own launcher_versions native_fetch playfab_own)
+                     launcher_download_own launcher_versions native_fetch playfab_own ui_render_bench project_panel_db)
     if(TEST ${_serial_test})
         set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
     endif()
@@ -4870,6 +4900,16 @@ add_executable(test_gl_dds_upload test_gl_dds_upload.cpp)
 target_link_libraries(test_gl_dds_upload PRIVATE okay::engine ${CMAKE_DL_LIBS})
 add_test(NAME gl_dds_upload COMMAND test_gl_dds_upload WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(gl_dds_upload PROPERTIES TIMEOUT 240)
+# One shared texture asset for every renderer: handles through AssetManager, hot reload, settings, gamma-correct mips, memory count and budget.
+add_executable(test_texture_asset test_texture_asset.cpp)
+target_link_libraries(test_texture_asset PRIVATE okay::engine)
+add_test(NAME texture_asset COMMAND test_texture_asset)
+set_tests_properties(texture_asset PROPERTIES TIMEOUT 240)
+# The OpenGL renderer drawing from the shared texture asset: our own mip chain, hot reload re-upload, anisotropy, freeing (Mesa llvmpipe through EGL; SKIPPED without one).
+add_executable(test_gl_texture_asset test_gl_texture_asset.cpp)
+target_link_libraries(test_gl_texture_asset PRIVATE okay::engine ${CMAKE_DL_LIBS})
+add_test(NAME gl_texture_asset COMMAND test_gl_texture_asset WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(gl_texture_asset PROPERTIES TIMEOUT 240)
 
 # Colliders behave as the shapes they are (not boxes): Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield, 2D polygon / capsule / composite.
 add_executable(test_collider_shapes test_collider_shapes.cpp)
@@ -5023,3 +5063,18 @@ add_executable(test_own_q3bsp_samples test_own_q3bsp_samples.cpp)
 target_link_libraries(test_own_q3bsp_samples PRIVATE okay::engine)
 target_compile_definitions(test_own_q3bsp_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME own_q3bsp_samples COMMAND test_own_q3bsp_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# One hostile-input battery over all six late own readers (glTF 1.0, OpenGEX, MDL, Q3BSP, IQM, COB): every truncation, every 32-bit word set to lying
+# values, bit flips, overlapping blocks, garbage with and without magic, deep nesting; time and counted-memory limits (tests/test_own_readers_sweep.cpp).
+add_executable(test_own_readers_sweep test_own_readers_sweep.cpp)
+target_link_libraries(test_own_readers_sweep PRIVATE okay::engine)
+target_include_directories(test_own_readers_sweep PRIVATE ${PROJECT_SOURCE_DIR}/engine/src/Render ${PROJECT_SOURCE_DIR}/engine/src/Core)
+add_test(NAME own_readers_sweep COMMAND test_own_readers_sweep WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(own_readers_sweep PROPERTIES TIMEOUT 900)
+
+# Table-driven right-answer checks for Visual Script nodes that had only an "it does something" test.
+add_executable(test_vs_node_values test_vs_node_values.cpp)
+target_include_directories(test_vs_node_values PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_node_values PRIVATE okay::engine)
+target_compile_definitions(test_vs_node_values PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_node_values COMMAND test_vs_node_values)

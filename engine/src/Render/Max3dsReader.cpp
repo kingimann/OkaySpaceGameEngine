@@ -8,6 +8,7 @@
 // position / rotation / scale tracks) and the master scale. Everything it did not
 // read is listed in ImportedModel::notes. See docs/content/model_readers.md.
 #include "FileOpen.hpp"
+#include "okay/Core/Utf8.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
 #include <array>
@@ -405,6 +406,9 @@ struct Reader {
         if (t.empty()) return t;
         if (t.size() > 1 && (t[0] == '/' || t[1] == ':')) return t;
         const std::string direct = baseDir + t;
+        // A name that is not UTF-8 names no real file, and on Windows std::filesystem::path throws on such text (a
+        // hostile file crashed the import there), so the disk is not asked.
+        if (!utf8::IsValid(t) || !utf8::IsValid(baseDir)) return direct;
         namespace fs = std::filesystem;
         std::error_code ec;
         if (fs::exists(fs::path(direct), ec)) return direct;

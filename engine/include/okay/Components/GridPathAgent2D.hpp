@@ -1,5 +1,5 @@
 #pragma once
-#include "okay/AI/Pathfinding.hpp"
+#include "okay/AI/Navigation.hpp"
 #include "okay/Scene/Component.hpp"
 #include <string>
 #include <vector>
@@ -30,7 +30,7 @@ public:
     bool Arrived() const { return m_arrived; }
     bool HasPath() const { return !m_path.empty() && !m_arrived; }
     bool HasGoal() const { return m_hasGoal; }
-    const std::vector<Pathfinding::Cell>& Path() const { return m_path; }
+    const std::vector<GridCell>& Path() const { return m_path; }
     /// Length of the current path, in world units (0 when there is none).
     float PathLength() const;
 
@@ -44,7 +44,7 @@ private:
     bool m_arrived = false;
     int m_goalX = 0, m_goalY = 0;
     float m_goalWorldX = 0.0f, m_goalWorldY = 0.0f;
-    std::vector<Pathfinding::Cell> m_path;
+    std::vector<GridCell> m_path;
     int m_index = 0;
     float m_repathLeft = 0.0f;
 

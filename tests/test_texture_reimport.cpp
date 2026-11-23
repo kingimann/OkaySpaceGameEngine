@@ -71,7 +71,7 @@ int main() {
         CHECK(IsGreen(GetCachedTexture(rel)));
         CHECK(IsGreen(GetCachedTexture(dotRel)));
         CHECK(IsGreen(GetCachedTexture(abs)));
-        CHECK(TextureCacheMap().count("@keep") == 1);           // a picture registered by name has no file: kept
+        CHECK(textures::ForRender("@keep") != nullptr);         // a picture registered by name has no file: kept
         // another file is not touched, and asking for a file nobody loaded drops nothing and does not bump the generation
         const std::string other = d.at("Art/floor.png");
         WritePng(other, Color(1, 0, 0, 1));
@@ -80,7 +80,7 @@ int main() {
         CHECK(InvalidateTextureCacheForFile(d.at("Art/nothing.png")) == 0);
         CHECK(TextureCacheGeneration() == gen2);
         CHECK(InvalidateTextureCacheForFile(abs) == 3);
-        CHECK(TextureCacheMap().count(other) == 1);
+        CHECK(textures::IsHeld(other));
         CHECK(InvalidateTextureCacheForFile("") == 0);
         fs::current_path(oldCwd, ec);
     }

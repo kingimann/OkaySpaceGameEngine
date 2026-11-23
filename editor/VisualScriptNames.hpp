@@ -138,6 +138,8 @@ inline const VsName kVsNames[] = {
     {"OnTagExit",        VsNameKind::Event, "On Tag Exit",            "On Tag Exit",            "tag exit", nullptr, 0, nullptr, 0},
     {"OnDeath",          VsNameKind::Event, "On Death",               "On Death",               "death", nullptr, 0, nullptr, 0},
     {"OnHealthChanged",  VsNameKind::Event, "On Health Changed",      "On Health Changed",      "health", nullptr, 0, nullptr, 0},
+    {"OnDamaged",        VsNameKind::Event, "On Damaged",             "On Damaged",             "hit hurt damage taken", nullptr, 0, nullptr, 0},
+    {"OnButtonClicked",  VsNameKind::Event, "On Button Clicked",      "On Button Clicked",      "button click press menu", nullptr, 0, nullptr, 0},
     {"OnAction",         VsNameKind::Event, "On Action Pressed",      "On Action Pressed",      "action interact jump fire", nullptr, 0, nullptr, 0},
     {"OnActionUp",       VsNameKind::Event, "On Action Released",     "On Action Released",     "action", nullptr, 0, nullptr, 0},
     {"OnActionHeld",     VsNameKind::Event, "On Action Held",         "On Action Held",         "action", nullptr, 0, nullptr, 0},

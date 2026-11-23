@@ -18,6 +18,7 @@
 // alive pushes the struck side and springs back to the animated pose.
 #include "okay/Animation/HumanoidBones.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/RagdollShared.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Net/PlayerInput.hpp"
 #include "okay/Math/Quat.hpp"
@@ -90,7 +91,6 @@ private:
     void Rub(Particle& p) const;
     void PoseBones();
     void SetDriven(bool limp);
-    bool Owns(const GameObject* go) const;
     int  Nearest(const Vec3& point) const;
     void WatchHealth();
 
@@ -104,8 +104,7 @@ private:
     std::vector<Component*> m_switched;
     int   m_boneParticle[humanoid::BoneCount];
     bool  m_built = false, m_active = false, m_hadPrev = false;
-    bool  m_wasDead = false;
-    float m_lastHealth = -1.0f;
+    ragdoll::HealthWatch m_watch;     // death / revive / hits (shared with ActiveRagdoll)
     float m_react = 0.0f;
     float m_accum = 0.0f;
     float m_lastDt = 0.0f;

@@ -293,9 +293,9 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **System:** Replays
 - **What:** Replay from recorded object states (snapshots) instead of inputs, to show the last seconds of a match from any camera.
 - **Parts:**
-  - 46.2.1 Network snapshots and deltas - `Net/NetDelta`, `ECS/NetWorldSync` - the engine already produces compact state snapshots for networking
+  - 46.2.1 Network snapshots and deltas - `Net/NetDelta` - the engine already produces compact state snapshots for networking
   - 46.2.2 Rewind raycast - `Net/NetworkManager` - the host keeps about a second of object poses and `RewindRaycast` shoots against where things were at an earlier net tick (lag compensation)
-- **Code:** `Net/NetDelta`, `ECS/NetWorldSync`, `Net/NetworkManager`
+- **Code:** `Net/NetDelta`, `Net/NetworkManager`
 - **API:** `NetDelta`, `NetworkManager::RewindRaycast`
 - **Editor:** none
 - **Docs:** `docs/online/dedicated-server.md`
@@ -680,7 +680,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Step-by-step lessons inside the editor that highlight the thing to click and check that it was done.
 - **Parts:**
   - 51.2.1 Written guide - `docs/gameplay/making_a_game.md` - first game from an empty editor to a shipped one
-  - 51.2.2 Language tutorial - `editor/main.cpp` - the Scripting Reference window has a "Learn the basics" section teaching OkayScript from scratch
+  - 51.2.2 Language tutorial - `editor/ScriptAssist.cpp` - the Scripting Reference window has a "Learn the basics" section teaching OkayScript from scratch
   - 51.2.3 Interactive lessons - `-` - not built (no step highlighting or task checking found)
 - **Code:** `editor/main.cpp`
 - **API:** Help > Scripting Reference
@@ -1186,7 +1186,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **System:** Docs
 - **What:** Search and read documentation without leaving the editor.
 - **Parts:**
-  - 57.3.1 Scripting Reference window - `editor/main.cpp` - reference and tutorial for scripts
+  - 57.3.1 Scripting Reference window - `editor/ScriptAssist.cpp` - reference and tutorial for scripts
   - 57.3.2 Docs window for the rest - `-` - not built
 - **Code:** `editor/main.cpp`
 - **API:** Help > Scripting Reference

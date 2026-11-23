@@ -494,7 +494,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** Add windows, buttons and menu commands to the editor itself, written in OkayScript, working on the open scene.
 - **Parts:**
   - 24.2.1 Plugin files and live reload - `editor/main.cpp` - `<project>/EditorPlugins/*.okay` and `<editor>/plugins/*.okay`; header comments `@name`, `@description`, `@window`; saving a plugin reloads it
-  - 24.2.2 Plugins menu and Plugin Manager - `editor/main.cpp` - New Plugin template, enable and disable (remembered), errors marked, open folder
+  - 24.2.2 Plugins menu and Plugin Manager - `editor/PluginsWindow.*` - New Plugin template, enable and disable (remembered), errors marked, open folder
   - 24.2.3 Hooks - `editor/main.cpp` - `start()`, `on_gui()`, `on_menu()`, `on_selection()`, `on_tick()`
   - 24.2.4 `editor_*` API and panel widgets - `editor/main.cpp` - selection, create, delete, rename, transform, undo point, log, plus `ui_*` widgets and `editor_input`, `editor_heading`, `editor_hint`
   - 24.2.5 Example plugins - `examples/editor-plugins/AlignTools.okay`, `examples/editor-plugins/CleanupNames.okay` - two sample plugins to copy into a project
@@ -503,7 +503,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** Plugins menu, Plugin Manager window
 - **Docs:** `docs/editor/editor-plugins.md`
 - **Tests:** `editor_plugins`
-- **Status:** Works - script plugins load, reload, draw panels and act on the scene (read in `editor/main.cpp`; one ctest).
+- **Status:** Works - script plugins load, reload, draw panels and act on the scene (read in `editor/PluginsWindow.cpp`; one ctest).
 - **Exists today:** All of the Parts. Scene objects are addressed by name only, and a plugin cannot add an Inspector section, a toolbar button, a shortcut or a gizmo.
 - **Work packages:**
   1. S - `editor_api_version()` builtin so a plugin can check what it can call. Depends on: nothing.

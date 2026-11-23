@@ -3,7 +3,7 @@
 How OkaySpace is built, shipped to players and kept up to date: the cross-compiled Windows distribution and its installer,
 web and mobile export, game export from the editor, the dedicated-server export, the five CI jobs, the release workflow, the
 Supabase and GitHub update feed, and the Steam upload kit. Files: `scripts/`, `.github/workflows/` (read-only here), `steam/`,
-`cmake/`, and the export code in `editor/main.cpp` (namespace `builder`). The CMake and tool plumbing itself is mapped in 41.
+`cmake/`, and the export code in `editor/BuildGame.cpp` (namespace `builder`, moved out of `editor/main.cpp`, 15.10). The CMake and tool plumbing itself is mapped in 41.
 Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#588, draft, branch `release-2852`, touches only `CMakeLists.txt`, `ROADMAP.md` and `dist/CHANGELOG.txt`) is being cut and will hold #585, #586 and #587. The automated-testing runner of #572 (`okay-playtest`) is merged and runs as ctests.
 
 ## 18. Build, export & release
@@ -36,9 +36,9 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Parts:**
   - 18.2.1 Web build script - `scripts/build-web.sh` - `emcmake` builds the player without libsodium and Assimp (none for WebAssembly), outputs `build-web/web/okay-player.html`, `.js`, `.wasm`; an optional scene argument is preloaded as `game.okayscene`; serve over HTTP
   - 18.2.2 Emscripten player target - `player/CMakeLists.txt` - the `EMSCRIPTEN` branch uses `-sUSE_SDL=2`, memory growth and an `.html` output (see 42.6)
-  - 18.2.3 Editor export for Web and Android - `editor/main.cpp` (`builder::ExportForPlatform`, near L3890) - writes `game/` (Web) or `assets/` (Android) with the scene, config and referenced assets, plus `build-web.sh` or an Android README
+  - 18.2.3 Editor export for Web and Android - `editor/BuildGame.cpp` (`builder::ExportForPlatform`) - writes `game/` (Web) or `assets/` (Android) with the scene, config and referenced assets, plus `build-web.sh` or an Android README
   - 18.2.4 Mobile guides - `docs/platform/web_mobile.md` - Android from SDL2's project template, iOS from the Xcode template, touch arrives as mouse events
-- **Code:** `scripts/build-web.sh`, `editor/main.cpp`, `player/CMakeLists.txt`
+- **Code:** `scripts/build-web.sh`, `editor/BuildGame.cpp`, `player/CMakeLists.txt`
 - **API:** `scripts/build-web.sh [scene]`, Build Settings platform Web or Android
 - **Editor:** File > Build Settings > Platform: Web (WebGL / WASM), Android (project)
 - **Docs:** `docs/platform/web_mobile.md`
@@ -101,7 +101,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Parts:**
   - 18.5.1 Supabase publish script - `scripts/publish-supabase.sh` - uploads `v<ver>/OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe`, `CHANGELOG.txt`, then `NOTES.txt`, then `VERSION.txt` last; checks each file is a Windows program under 50 MB; keeps the newest 3 versions (`KEEP`); keys from the environment only; `DRY_RUN=1`
   - 18.5.2 GitHub fallback - `.github/workflows/release.yml` - the individual files as release assets at `releases/latest/download/<name>`
-  - 18.5.3 Client side - `launcher/main.cpp` (L810-1031), `editor/main.cpp` (updater near L1593) - launcher picks the newer of Supabase and GitHub; the editor's update dialog reads `CHANGELOG.txt`
+  - 18.5.3 Client side - `launcher/main.cpp` (L810-1031), `editor/Updater.cpp` (`namespace updater`) - launcher picks the newer of Supabase and GitHub; the editor's update dialog reads `CHANGELOG.txt`
   - 18.5.4 Notes - `scripts/publish-supabase.sh` - `NOTES.txt` is the launcher's "what's new" card (default: the last 6 non-merge commit subjects; `NOTES_FILE` to choose)
 - **Code:** `scripts/publish-supabase.sh`, `.github/workflows/release.yml`, `launcher/main.cpp`, `editor/main.cpp`, `docs/sql/official_game_admin.sql`
 - **API:** `SUPABASE_ACCESS_TOKEN` or `SUPABASE_SERVICE_KEY` (environment only), `DIST_DIR`, `NOTES_FILE`, `KEEP`, `DRY_RUN`, `SUPABASE_URL`, `OKAY_UPDATE_SERVER`
@@ -119,8 +119,8 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **System:** Game Export - Turns a project into a game folder you can ship (`<Game>.exe`), checks it, and lets shipped games download signed content updates.
 - **What:** Turning the open project into a shippable game folder (`<Game>.exe`, `SDL2.dll`, a `<Game>_Data/` folder with the scenes, config, `build.json`, only the assets the scenes use and the project's StreamingAssets; or the older compact `Data/` layout; or one zip), with a report of what went in and what was left out, a dry run, and the CI checks that export a small game and run it.
 - **Parts:**
-  - 18.6.1 Build - `editor/main.cpp` (`builder::Build`) - refuses dangerous folders (a drive root, home, the project), cleans only files it writes, scenes in build order, `game.okayconfig`, player copied as `<Game>.exe`, SDL2, the dependency walk's assets, StreamingAssets, icon, splash, localization, `build.json`, the report, the archive; `Data/manifest.json` only with anti-cheat
-  - 18.6.2 Player lookup and download - `editor/main.cpp` (`builder::FindPlayer`) - looks beside the editor and in a few sibling folders, downloads the runtime from the latest release if missing
+  - 18.6.1 Build - `editor/BuildGame.cpp` (`builder::Build`; types and declarations in `editor/BuildGame.hpp`) - refuses dangerous folders (a drive root, home, the project), cleans only files it writes, scenes in build order, `game.okayconfig`, player copied as `<Game>.exe`, SDL2, the dependency walk's assets, StreamingAssets, icon, splash, localization, `build.json`, the report, the archive; `Data/manifest.json` only with anti-cheat
+  - 18.6.2 Player lookup and download - `editor/BuildGame.cpp` (`builder::FindPlayer`, `builder::EnsurePlayer`) - looks beside the editor and in a few sibling folders, downloads the runtime from the latest release if missing
   - 18.6.3 Command line - `editor/main.cpp` (`RunBuildGameCli`) - `OkayEngine --build-game SCENE OUT_DIR [--name GAME] [--layout folder|compact|zip] [--dry-run] [--report FILE] [--no-strip] [--no-compress] [--zip] [--version V] [--build-number N] [--archive-name PATTERN] [--dev]`, starting from the project's saved Build Settings
   - 18.6.4 Optional data obfuscation - `Core/DataPack` - scenes and config packed so they can't be read in a text editor (39.10)
   - 18.6.5 Export check - `tests/export/verify.sh`, `tests/export/verify.ps1` - exports `vs_export.okayscene` with the editor's real Build, runs it headless and requires the output to equal `expected.txt`; assets `tests/export/*.okayvs`, `Tower.okaymesh`
@@ -129,13 +129,13 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
   - 18.6.8 Build report - `editor/main.cpp` (Build Result window), `.okay/build_report.txt` - by kind, by type, files with why, left out with reason, warnings, time, archive size
   - 18.6.9 Player build info - `player/main.cpp` - `--build-info`, the development overlay and log line, `Paths::StreamingAssetsDir`
   - 18.6.10 Build Settings window upgrade - `editor/BuildSettingsModel.hpp` (logic, no ImGui), `editor/BuildSettingsWindow.cpp` (drawing), `engine/include/okay/Core/BuildConfigExtra.hpp` (the extra `game.okayconfig` keys the player reads) - search box over every setting, changed-from-default dots, Reset page to defaults, Game page (game speed, physics steps, start volumes, starting language, log level and file, description, environment variables), Advanced page (pre and post build commands behind an Allow switch, `.gitignore`, build history), a "What will happen" summary, checks with Fix buttons, Debug and Release starts, duplicate profile, `.okaybuild` files; see `docs/editor/build_settings_upgrade.md`
-- **Code:** `editor/main.cpp`, `editor/ProjectState.hpp`, `editor/BuildSettingsModel.hpp`, `editor/BuildSettingsWindow.cpp`, `engine/include/okay/Core/BuildConfigExtra.hpp`, `tests/test_build_settings.cpp`, `engine/src/Core/BuildPipeline.cpp`, `player/main.cpp`, `Core/DataPack`, `tests/export/verify.sh`, `tests/export/verify.ps1`, `tests/export/verify_layout.sh`
+- **Code:** `editor/BuildGame.cpp`, `editor/BuildGame.hpp`, `editor/main.cpp`, `editor/ProjectState.hpp`, `editor/BuildSettingsModel.hpp`, `editor/BuildSettingsWindow.cpp`, `engine/include/okay/Core/BuildConfigExtra.hpp`, `tests/test_build_settings.cpp`, `engine/src/Core/BuildPipeline.cpp`, `player/main.cpp`, `Core/DataPack`, `tests/export/verify.sh`, `tests/export/verify.ps1`, `tests/export/verify_layout.sh`
 - **API:** `builder::Build`, `okay::buildpipe::*`, `Paths::StreamingAssetsDir`, `OkayEngine --build-game`, `<Game> --build-info`, `OKAY_AC_SIGNING_KEY_FILE`
 - **Editor:** File > Build Settings (Ctrl+B): scenes in build, window, platform, Output page (layout, build number, stripping, compression, archive name), Dry Run, anti-cheat, build profiles
 - **Docs:** `docs/release/build_pipeline.md`, `docs/gameplay/making_a_game.md`, `docs/editor/editor.md`, `docs/release/packaging.md`
 - **Tests:** `build_pipeline` (ctest; layout, data-folder lookup, dependency walk, manifest, report, zip, settings text); the layout check and the export check run in CI (18.3)
 - **Status:** Works - the layout check exports and runs real builds; no pack file, no `Plugins/`, no separate symbol files (docs/release/build_pipeline.md, known gaps)
-- **Open:** the build code lives inside the huge `editor/main.cpp` (split, see 15.10); the export check covers visual scripts and one mesh, not UI, audio or networking; anti-cheat forces the compact layout; Web, Android and server exports ignore the new Output settings
+- **Open:** the build code now lives in `editor/BuildGame.cpp` (move 1 of the split, 15.10, `docs/engine/modularization_plan.md`); the Build Result window and the build dialogs are still in `editor/main.cpp`; the export check covers visual scripts and one mesh, not UI, audio or networking; anti-cheat forces the compact layout; Web, Android and server exports ignore the new Output settings
 - **Related:** 15.7, 18.3, 39.4, 42.6
 - **Words:** Build Game, export, Build Settings, Data folder, _Data, Folder layout, Compact layout, Zip archive, build.json, build number, StreamingAssets, asset stripping, dependency walk, dry run, build report, game.okayconfig, player runtime, scenes in build, --build-game, --build-info, verify.sh, manifest
 - **Seen as:** the exported game is missing a texture or sound; the build refuses the folder; game starts but a scene doesn't load; the exe has the wrong name; a file you did not expect is (or is not) in the build
@@ -145,10 +145,10 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **System:** Dedicated Server
 - **What:** The editor's "Server" platform writes a ready-to-run server folder for Linux or Windows; the release workflow builds and attaches the Linux runtime it needs.
 - **Parts:**
-  - 18.7.1 Server export - `editor/main.cpp` (`builder::BuildServer`, near L4007) - game data, runtime, `server.cfg`, start scripts, `deploy.sh` and `deploy.bat` (copy over SSH and install), `install-server.sh` (systemd, firewall), `Dockerfile`, `docker-compose.yml`, README
+  - 18.7.1 Server export - `editor/BuildGame.cpp` (`builder::BuildServer`) - game data, runtime, `server.cfg`, start scripts, `deploy.sh` and `deploy.bat` (copy over SSH and install), `install-server.sh` (systemd, firewall), `Dockerfile`, `docker-compose.yml`, README
   - 18.7.2 Linux runtime asset - `.github/workflows/release.yml` (`linux-server`) - `okay-server-linux-x64`, built on Ubuntu 22.04 for glibc 2.35 or newer; the export downloads it
   - 18.7.3 Server settings page - `editor/main.cpp` (Build Settings, Server page, near L16170) - name, port, players, password, listing and the anti-cheat basics
-- **Code:** `editor/main.cpp`, `.github/workflows/release.yml`
+- **Code:** `editor/BuildGame.cpp`, `editor/main.cpp`, `.github/workflows/release.yml`
 - **API:** `server.cfg`, `deploy.sh user@host [ssh-port]`, `okay-server-linux-x64`
 - **Editor:** File > Build Settings > Platform: Server
 - **Docs:** `docs/online/dedicated-server.md`

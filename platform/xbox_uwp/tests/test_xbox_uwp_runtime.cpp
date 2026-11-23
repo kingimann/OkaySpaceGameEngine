@@ -11,6 +11,7 @@
 #include "XboxAudio.hpp"
 #include "XboxUwpBackend.hpp"
 #include "UwpPlatform.hpp"
+#include "tests/FakeCaptureHost.hpp"
 #include "XboxUwpAudit.hpp"
 #include "XboxGameConfig.hpp"
 #include "XboxOverlayMath.hpp"
@@ -525,6 +526,9 @@ static void AudioTests() {
 // UwpPlatform.cpp (linked into this test) provides the base-class defaults and the registry, as it does in the UWP engine target.
 namespace {
 struct FakeUwpHost : okay::xbox::UwpHost {
+    FakeCaptureHost mic; bool hasMic = false; std::string lang = "en-US";
+    okay::xbox::CaptureHost* Capture() override { return hasMic ? &mic : nullptr; }
+    std::string InputLanguage() override { return lang; }
     int pumps = 0; std::function<void()> onPump; FakePad pad; int pads = 1; FakeAudioHost audio; bool hasAudio = true; std::string title;
     void* CoreWindowHandle() override { return this; }
     void PumpEvents() override { ++pumps; if (onPump) onPump(); }
@@ -593,7 +597,47 @@ static void BackendTests() {
       g.reset(); g1.reset(); Drain(b); b.clockOverride = nullptr; }
     // audio: through the host, capture refused, no host audio refused
     { AudioSpec want; want.freq = 48000; want.channels = 2; AudioSpec got; auto a = b.OpenAudio(want, false, nullptr, &got); CHECK(a && host.audio.started && got.freq == 48000 && b.AudioDeviceCount(false) == 1); }
-    CHECK(b.OpenAudio(AudioSpec(), true, nullptr, nullptr) == nullptr && b.LastError().find("capture") != std::string::npos);
+    CHECK(b.OpenAudio(AudioSpec(), true, nullptr, nullptr) == nullptr && b.LastError().find("capture") != std::string::npos && b.AudioDeviceCount(true) == 0);   // host without a microphone
+    // microphone through the backend: permission, device list, open by name, close
+    { host.hasMic = true; FakeCaptureHost& m = host.mic;
+      CHECK(b.AudioDeviceCount(true) == 2 && b.AudioDeviceName(1, true) == "Room mic" && b.AudioDeviceName(2, true).empty() && b.AudioDeviceName(0, true) == "Headset");
+      AudioSpec w; w.freq = 48000; w.channels = 1; w.format = SampleFormat::S16; AudioSpec got;
+      m.declared = false; CHECK(b.OpenAudio(w, true, nullptr, &got) == nullptr && b.LastError().find("manifest") != std::string::npos && m.starts == 0);
+      m.declared = true; m.consent = MicConsent::Denied; CHECK(b.OpenAudio(w, true, nullptr, &got) == nullptr && b.LastError().find("privacy") != std::string::npos);
+      m.consent = MicConsent::Unknown; m.startOk = false; CHECK(b.OpenAudio(w, true, nullptr, &got) == nullptr && b.LastError() == "prompt refused");   // asking is the open; the user said no
+      m.startOk = true; CHECK(b.OpenAudio(w, true, "Nope", &got) == nullptr && b.LastError().find("Nope") != std::string::npos);
+      m.fmt.bits = 24; m.fmt.isFloat = false; CHECK(b.OpenAudio(w, true, nullptr, &got) == nullptr && b.LastError().find("format") != std::string::npos);
+      m.fmt = {48000, 1, true, 32}; m.consent = MicConsent::Allowed;
+      { auto d = b.OpenAudio(w, true, "Room mic", &got); CHECK(d && m.starts == 1 && m.lastIndex == 1 && got.freq == 48000 && m.dev);
+        d->Pause(false); const float in[] = {0.5f, 0.5f, 0.5f}; m.dev->Deliver(in, sizeof(in), false);
+        CHECK(d->QueuedBytes() == 4);                                      // 3 frames in, 2 out (one held back), 2 bytes each
+        std::int16_t out[2] = {0, 0}; CHECK(d->Dequeue(out, 4) == 4 && out[0] == 16384 && out[1] == 16384); }   // 0.5 * 32767 = 16383.5, rounds to 16384
+      CHECK(m.stops == 1);                                                // dropping the device stops the host
+      host.hasMic = false; }
+    // key layout: US by default and from an en-US host (identical to before), the host's language tag picks the layout at Init / Refresh
+    { CHECK(b.GetKeyLayout() == KeyLayout::US && b.KeyForChar('w') == Key::W && b.KeyForChar('a') == Key::A && b.KeyForChar('-') == Key::Unknown && b.KeyForChar('\n') == Key::Unknown && b.CharForKey(Key::W) == 'w' && b.CharForKey(Key::N0) == '0' && b.CharForKey(Key::Space) == ' ');
+      CHECK(b.KeyLabel(Key::A) == "A" && b.KeyLabel(Key::Space) == "Space" && b.KeyLabel(Key::N1) == "1");
+      // French (AZERTY): WASD is on the physical keys Z Q S D; A is where Q is on US; digits need Shift but are the same physical keys
+      host.lang = "fr-FR"; b.RefreshKeyLayout(); CHECK(b.GetKeyLayout() == KeyLayout::French);
+      CHECK(b.KeyForChar('z') == Key::W && b.KeyForChar('q') == Key::A && b.KeyForChar('s') == Key::S && b.KeyForChar('d') == Key::D && b.KeyForChar('a') == Key::Q && b.KeyForChar('w') == Key::Z && b.KeyForChar('m') == (Key)51 && b.KeyForChar('Z') == Key::W);
+      CHECK(b.KeyForChar('1') == Key::N1 && b.KeyForChar('0') == Key::N0 && b.CharForKey(Key::W) == 'z' && b.CharForKey(Key::A) == 'q' && b.CharForKey(Key::Q) == 'a');
+      CHECK(b.KeyLabel(Key::A) == "Q" && b.KeyLabel(Key::W) == "Z" && b.KeyLabel(Key::N2) == "\xC3\x89");   // the 2 key types e-acute (U+00E9) unshifted; its label is E-acute
+      // German (QWERTZ): Z and Y swap
+      host.lang = "de-DE"; b.RefreshKeyLayout(); CHECK(b.GetKeyLayout() == KeyLayout::German);
+      CHECK(b.KeyForChar('z') == Key::Y && b.KeyForChar('y') == Key::Z && b.KeyForChar('w') == Key::W && b.KeyForChar('a') == Key::A && b.CharForKey(Key::Z) == 'y');
+      host.lang = "de-CH"; b.RefreshKeyLayout(); CHECK(b.GetKeyLayout() == KeyLayout::US);   // Swiss German is not covered: US
+      // Swedish / Finnish: Latin letters stay where they are
+      host.lang = "sv-SE"; b.RefreshKeyLayout(); CHECK(b.GetKeyLayout() == KeyLayout::Nordic && b.KeyForChar('w') == Key::W && b.KeyForChar('z') == Key::Z && b.KeyForChar('7') == Key::N7 && b.KeyLabel(Key::W) == "W");
+      host.lang = "fi-FI"; b.RefreshKeyLayout(); CHECK(b.GetKeyLayout() == KeyLayout::Nordic);
+      // Russian: Latin letters are not typed by any key (Unknown, so a game's WASD must fall back to the arrows); digits are on the same keys; labels are Cyrillic
+      host.lang = "ru-RU"; b.RefreshKeyLayout(); CHECK(b.GetKeyLayout() == KeyLayout::Russian);
+      CHECK(b.KeyForChar('w') == Key::Unknown && b.KeyForChar('a') == Key::Unknown && b.KeyForChar('5') == Key::N5 && b.KeyForChar(' ') == Key::Space && b.CharForKey(Key::W) == 0 && b.CharForKey(Key::N5) == '5');
+      CHECK(b.KeyLabel(Key::W) == "\xD0\xA6" && b.KeyLabel(Key::Q) == "\xD0\x99");   // Tse (U+0426) is on the W key, short I (U+0419) on Q (the top row reads Y-Ts-U-K-E-N)
+      // a layout set by hand is kept until the next refresh; Init takes the host's language again
+      b.SetKeyLayout(KeyLayout::German); CHECK(b.GetKeyLayout() == KeyLayout::German && b.KeyForChar('z') == Key::Y);
+      host.lang = "en-GB"; b.Init(InitFlags()); CHECK(b.GetKeyLayout() == KeyLayout::US && b.KeyForChar('z') == Key::Z);
+      // the held-key helper the runtime uses (KeyForLetter) follows the backend: nothing else changes for US
+    }
     host.hasAudio = false; CHECK(b.OpenAudio(AudioSpec(), false, nullptr, nullptr) == nullptr && b.AudioDeviceCount(false) == 0); host.hasAudio = true;
     // lifecycle through events: suspend saves BEFORE the focus event is handled, resume comes back, B / back is a back press (no Quit),
     // closing the window gives exactly one Quit

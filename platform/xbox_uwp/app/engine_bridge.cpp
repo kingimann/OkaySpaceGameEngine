@@ -295,7 +295,7 @@ bool Run(Engine* e, std::string& err) {
         okay::Mat4 vp; okay::Vec3 eye;
         const xb::SizePx sz = e->presenter.Size();
         if (scene && e->runtime.View(sz.w, sz.h, vp, eye))
-            e->presenter.RenderAndPresent(e->renderer, *scene, vp, eye, 4, 0.10f, 0.10f, 0.12f, 1.0f);
+            { if (e->presenter.RenderAndPresent(e->renderer, *scene, vp, eye, 4, 0.10f, 0.10f, 0.12f, 1.0f)) e->runtime.OnFramePresented(); }   // splash model (UNVERIFIED)
     }
     e->backend->Log("Xbox app: the game ended normally.");
     e->runtime.OnExit();

@@ -496,10 +496,29 @@ struct DamageNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         GameObject* o = GpPin(this, 1, g, ctx, false, "a target");
+        // Type (pin 2): the damage kind by name (Fire, Poison, Fall...); empty is Generic.
+        DamageType type = DamageType::Generic;
+        const std::string tn = HasInput(2) ? In(2, g, ctx).AsString() : std::string();
+        if (!tn.empty() && !DamageTypeFromName(tn, type)) {
+            g.Error(this, ctx, "there is no damage type called '" + tn + "' (use Generic, Physical, Fire, Cold, Electric, Poison, Explosion, Fall...)");
+            return 0;
+        }
         if (HealthStat* h = GpHealth(this, o, g, ctx))
-            h->Damage(DamageEvent::Make(std::max(0.0f, In(0, g, ctx, VsValue{10.0f}).AsFloat()),
-                                        DamageType::Generic, ctx.gameObject));
+            h->Damage(DamageEvent::Make(std::max(0.0f, In(0, g, ctx, VsValue{10.0f}).AsFloat()), type, ctx.gameObject));
         return 0;
+    }
+};
+
+/// On Damaged: runs once for each hit this object took (any health holder, through the one damage path).
+/// Amount is the health really lost, Type the damage kind's name, Source who dealt it (none for a trap).
+struct DamagedEventNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext&) override { return 0; }
+    VsValue Eval(int pin, NodeGraph&, VsContext& ctx) override {
+        static const char* keys[] = {"damage_amount", "damage_type", "damage_source"};
+        if (pin < 0 || pin > 2) return {};
+        auto it = ctx.variables.find(keys[pin]);
+        return it != ctx.variables.end() ? it->second : VsValue{};
     }
 };
 
@@ -1068,8 +1087,9 @@ inline std::unique_ptr<VsNode> MakeGameplayNode(const std::string& type, const s
     auto argOr = [&](const char* d) { return a.empty() ? std::string(d) : a; };
     if (type == "OnInteract" || type == "OnTagEnter" || type == "OnTagStay" || type == "OnTagExit" ||
         type == "OnCollisionTag" || type == "OnDeath" || type == "OnHealthChanged" ||
-        type == "OnAction" || type == "OnActionUp" || type == "OnActionHeld")
+        type == "OnAction" || type == "OnActionUp" || type == "OnActionHeld" || type == "OnButtonClicked")
         return std::make_unique<EventNode>();
+    if (type == "OnDamaged") return std::make_unique<DamagedEventNode>();
     if (type == "RotateTowards") return std::make_unique<RotateTowardsNode>();
     if (type == "OrbitAround") return std::make_unique<OrbitAroundNode>();
     if (type == "FollowPath") return std::make_unique<FollowPathNode>(a);

@@ -102,7 +102,7 @@ int main() {
     RUN_SUITE("project_state");
 
     std::string header;
-    const fs::path hdrPath = fs::path(__FILE__).parent_path().parent_path() / "editor" / "ProjectState.hpp";
+    const fs::path hdrPath = fs::path(OKAY_TESTS_DIR).parent_path() / "editor" / "ProjectState.hpp";
     const bool haveHeader = okayproj::ReadText(hdrPath.string(), header);
     CHECK(haveHeader);
 

@@ -7,6 +7,7 @@
 > **Last checked:** 2026-11-20.
 
 - [Accessibility](accessibility.md): The engine side of accessibility. What a player can change today, and what really happens (each row is on the Settings screen, tested, and saved to Prefs when Done is pressed):
+- [Architecture](architecture.md): the layers, the nine subsystems (rendering, physics, audio, animation, scripting, networking, world streaming, UI, platform), which folder holds each and what may include what.
 - [Asset database](asset_database.md): `okay::AssetDatabase` (`okay/Core/AssetDatabase.hpp`) is the data layer an asset browser sits on: persistent GUIDs in a sidecar meta file per asset, move and rename tracking, a dependency graph, typed import settings, a thumbnail cache and...
 - [Asset manager](asset_manager.md): `okay::AssetManager` (`okay/Core/AssetManager.hpp`) is an opt-in central registry for files loaded from disk.
 - [Logging and profiling](core_logging_profiling.md): Two small core systems, both header-only: `okay/Core/Log.hpp` and `okay/Core/Profiler.hpp`.
@@ -16,11 +17,11 @@
 - [Data assets and data packs](data_assets.md): Data assets and data packs: typed data files a game reads (headers `okay/Core/DataAsset.hpp`, `okay/Core/DataPack.hpp`).
 - [Profiling and debugging tools (data layer)](debug_tools.md): The profiling and debugging tools data layer (headers in `engine/include/okay/Debug/`, sources in `engine/src/Debug/`).
 - [Display settings](display_settings.md): `okay::DisplaySettings` (`okay/Core/DisplaySettings.hpp`) holds what the Settings screen changes about the window and the picture: the **window mode**, the **resolution**, **vsync** and the **quality preset**.
-- [ECS: iteration, command buffer and delta snapshots](ecs.md): The ECS (entity component system): iteration, the command buffer and delta snapshots (headers `okay/ECS/World.hpp`, `Systems.hpp`, `NetWorld.hpp`, `SceneBridge.hpp`).
 - [Input](input.md): Where the input code is, what is missing, and the input audit.
 - [Localization](localization.md): The string table, the localization tools, and the formats / typed Prefs / fixed timestep record.
 - [Loop and time](loop_and_time.md): How a frame runs and how the engine keeps time.
 - [Math, geometry, noise and RNG](math_geometry.md): Header-only additions to the core math library.
+- [Modularization plan](modularization_plan.md): the audit of the largest files, include cycles, platform code and names, and the ranked plan for splitting files, fixing the layers and cleaning up names (includes the `editor/main.cpp` split and the `launcher/main.cpp` map).
 - [Optimization tools](optimization_tools.md): Engine-side algorithms for feature map area 27: LOD generation, occlusion culling, batching, streaming and a scene analysis report.
 - [Performance log](perf_log.md): Owner request (2026-11-15): "work on optimization for the engine, improve FPS." This page is the record: what was measured, what was changed, and the numbers before and after.
 - [Prefabs](prefabs.md): Prefabs, overrides, nested prefabs and variants, and Prefab mode in the editor.

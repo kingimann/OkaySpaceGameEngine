@@ -1,0 +1,54 @@
+# Batch T1 (docs/engine/modularization_plan.md), part 1: tools/okayms/src/compile.cpp split into one file per job.
+# Check it with (compile_internal.hpp last, so the definitions match before the declarations that copy their first lines):
+#   python3 scripts/check_pure_move.py --base 24f88fd61 --source tools/okayms/src/compile.cpp \
+#       --dest tools/okayms/src/preprocess.hpp --dest tools/okayms/src/preprocess.cpp --dest tools/okayms/src/lex.cpp \
+#       --dest tools/okayms/src/mangle.cpp --dest tools/okayms/src/const_fold.cpp --dest tools/okayms/src/parser.hpp \
+#       --dest tools/okayms/src/parse_stmt.cpp --dest tools/okayms/src/parse_call.cpp --dest tools/okayms/src/parse_expr.cpp \
+#       --dest tools/okayms/src/gen.hpp --dest tools/okayms/src/gen.cpp --dest tools/okayms/src/gen_expr.cpp \
+#       --dest tools/okayms/src/optimize.cpp --dest tools/okayms/src/emit.cpp --dest tools/okayms/src/compile_internal.hpp \
+#       --rules docs/engine/moves/T1_okayms_compile.rules
+
+# The whole file was one anonymous namespace. The parts now share types and call each other across files, so they
+# live in the named namespace okayms::compiler (namespace lines in every new file); compile_c uses it.
+drop: ^namespace \{$
+drop: ^\}  // namespace$
+add: ^using namespace compiler;$
+
+# peel_array is defined in the shared header now, so it is inline (one copy for every file that includes it).
+change: Type peel_array(const Type& type) { ==> inline Type peel_array(const Type& type) {
+
+# Two default arguments moved to the declarations in compile_internal.hpp (C++ allows them in one place only).
+change: std::string cxx_type(const Type& type, const std::vector<StructDef>* structs = nullptr) { ==> std::string cxx_type(const Type& type, const std::vector<StructDef>* structs) {
+change: const std::vector<StructDef>* structs = nullptr) { ==> const std::vector<StructDef>* structs) {
+
+# has_effects is used by parse_call.cpp, parse_expr.cpp and optimize.cpp, so it is no longer file-local.
+change: static bool has_effects(const Node& node) { ==> bool has_effects(const Node& node) {
+
+# compile_internal.hpp: declarations of the functions one part calls in another (the definitions moved unchanged).
+add: ^struct Gen;$
+add: ^std::string strip_comments\(const std::string& in\);$
+add: ^bool read_file\(const std::string& path, std::string\* text\);$
+add: ^std::vector<Token> lex\(const std::string& text, std::string\* error\);$
+add: ^bool is_assign_op\(Tok op\);$
+add: ^bool is_compound_op\(Tok op\);$
+add: ^std::string cxx_type\(const Type& type, const std::vector<StructDef>\* structs = nullptr\);$
+add: ^std::string cxx_method_symbol\(const std::vector<StructDef>& structs, const StructDef& owner, const Method& m\);$
+add: ^std::string sdd_symbol\(const StructDef& owner, const Method& m\);$
+add: ^std::string cxx_symbol\(const std::string& ns, const std::string& name, const Type& ret, const std::vector<Type>& params,$
+add: ^ +const std::vector<StructDef>\* structs = nullptr\);$
+add: ^uint64_t const_norm\(uint64_t v, const Type& t\);$
+add: ^Type const_common\(const Type& a, const Type& b\);$
+add: ^double lit_double\(const Node& n\);$
+add: ^bool const_convert\(const Node& lit, const Type& to, uint64_t\* bits\);$
+add: ^bool fold_fp_binary\(Tok op, const Node& l, const Node& r, Node\* out\);$
+add: ^bool fold_int_binary\(Tok op, const Node& l, const Node& r, Node\* out, std::string\* err\);$
+add: ^bool has_effects\(const Node& node\);$
+add: ^bool address_taken\(const Node& node, const std::string& name\);$
+add: ^bool modified_in_place\(const Node& node, const std::string& name\);$
+add: ^void prop_node\(Node\* node, std::map<std::string, uint64_t>\* known, const std::set<std::string>\* shadowed,$
+add: ^ +const std::map<std::string, Type>\* ltypes\);$
+add: ^void inline_node\(Node\* node, const std::vector<FuncDecl>& funcs\);$
+add: ^void walk_inline\(Node\* node, FuncDecl\* caller, const std::vector<FuncDecl>& funcs, Gen& gen, int\* seq\);$
+add: ^bool emit_functions\(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& structs,$
+add: ^ +const std::vector<Global>& globals, const std::vector<FuncType>& func_types, bool optimize,$
+add: ^ +int opt_level, const LineSource& line_source, std::string\* error, CompileOutput\* out\);$

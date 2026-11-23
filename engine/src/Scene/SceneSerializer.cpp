@@ -220,6 +220,8 @@
 #include <cctype>
 #include <functional>
 #include "okay/Core/DataPack.hpp"   // transparent unpack of obfuscated game data
+#include "okay/Core/Utf8.hpp"
+#include "okay/Core/FileCopy.hpp"
 #include <fstream>
 #include <chrono>
 #include <filesystem>
@@ -238,6 +240,17 @@ namespace okay {
 static thread_local std::string g_loadingSceneDir;
 // The folder of the scene file loaded last: restoring a scene from text (Stop after Play, Undo) finds mesh files next to it again.
 static thread_local std::string g_lastSceneDir;
+
+// A UTF-8 path as a file-system path for the streams below. On Windows a std::string handed to std::ifstream is read in
+// the ANSI code page, so a scene or prefab under a folder such as "My Game \xC3\xBC" could not be opened or saved; the
+// wide form names the right file and never throws (text that is not UTF-8 becomes U+FFFD, a name no file has).
+static std::filesystem::path FilePath(const std::string& utf8) {
+#ifdef _WIN32
+    return std::filesystem::path(utf8::ToWide(utf8));
+#else
+    return std::filesystem::path(utf8);
+#endif
+}
 
 namespace detail {
 std::uint64_t ComponentRulesGeneration();        // GameObject.cpp
@@ -1800,7 +1813,18 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (j->breakable ? 1 : 0) << " " << j->breakForce
             << " " << j->axis.x << " " << j->axis.y << " " << j->axis.z     // hinge (trailing)
             << " " << (j->useMotor ? 1 : 0) << " " << j->motorSpeed << " " << j->maxMotorTorque
-            << " " << (j->useLimits ? 1 : 0) << " " << j->minAngle << " " << j->maxAngle << "\n";
+            << " " << (j->useLimits ? 1 : 0) << " " << j->minAngle << " " << j->maxAngle;
+        {   // ball / cone twist fields (trailing), written only when one differs from the default: old scenes save as before
+            const Joint3D d;
+            if (j->swingLimit1 != d.swingLimit1 || j->swingLimit2 != d.swingLimit2 || j->useDrive != d.useDrive ||
+                !(j->driveTarget == d.driveTarget) || j->driveStiffness != d.driveStiffness || j->driveDamping != d.driveDamping ||
+                j->driveFrequency != d.driveFrequency || j->driveDampingRatio != d.driveDampingRatio || j->driveMaxTorque != d.driveMaxTorque)
+                out << " " << j->swingLimit1 << " " << j->swingLimit2 << " " << (j->useDrive ? 1 : 0)
+                    << " " << j->driveTarget.x << " " << j->driveTarget.y << " " << j->driveTarget.z
+                    << " " << j->driveStiffness << " " << j->driveDamping << " " << j->driveFrequency
+                    << " " << j->driveDampingRatio << " " << j->driveMaxTorque;
+        }
+        out << "\n";
     }
     for (auto* j : go->GetComponents<Joint2D>()) {   // every instance: a chain link holds two joints
         out << "  joint2d " << j->mode << " " << Quote(j->connectedBody)
@@ -4102,7 +4126,9 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     for (const modeling::RefImageRecord& r : scene.refImages)   // reference pictures (a record older builds skip as unknown)
         out << "refimage " << Quote(r.path) << " " << r.plane << " " << r.centre.x << " " << r.centre.y << " " << r.centre.z << " "
             << r.width << " " << r.opacity << " " << (r.flipX ? 1 : 0) << " " << (r.visible ? 1 : 0) << "\n";
-    if (scene.physics3D().quality != PhysicsQuality::Classic || scene.physics().quality != PhysicsQuality::Classic) {
+    // (written whenever it holds anything but the defaults; the quality value is kept as it was read: old files round-trip)
+    if (scene.physics3D().quality != PhysicsQuality::Classic || scene.physics().quality != PhysicsQuality::Classic ||
+        scene.physics3D().solverIterations != 10 || !scene.physics3D().autoContinuous || scene.physics().solverIterations != 10) {
         // Physics quality (Improved = the iterated contact solver). Written only when it is not Classic, so a Classic scene
         // saves the same file as before; a file without the record loads as Classic. Older builds skip it as unknown.
         out << "physicsquality " << (int)scene.physics3D().quality << " " << scene.physics3D().solverIterations
@@ -4289,7 +4315,7 @@ bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path, st
     // previous good copy (a copy, so a failed rename leaves the scene exactly where it was).
     auto fail = [&](const std::string& why) { if (error) *error = why; return false; };
     std::error_code ec;
-    const fs::path target(path);
+    const fs::path target = FilePath(path);
     if (fs::exists(target, ec)) {
         if (fs::is_directory(target, ec)) return fail("\"" + path + "\" is a folder, not a scene file.");
         const fs::perms perm = fs::status(target, ec).permissions();
@@ -4302,35 +4328,35 @@ bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path, st
     const std::string tmp = path + ".savetmp";
     {
         errno = 0;
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        std::ofstream f(FilePath(tmp), std::ios::binary | std::ios::trunc);
         if (!f) return fail("Couldn't write \"" + tmp + "\": " + (errno ? std::error_code(errno, std::generic_category()).message() : std::string("no permission")));
         f.write(text.data(), (std::streamsize)text.size());
         f.flush();
         if (!f) {
             const int e = errno;
             f.close();
-            fs::remove(tmp, ec);
+            fs::remove(FilePath(tmp), ec);
             return fail("Couldn't write \"" + path + "\": " + (e ? std::error_code(e, std::generic_category()).message() : std::string("the disk may be full")));
         }
     }
-    const std::uintmax_t written = fs::file_size(tmp, ec);
+    const std::uintmax_t written = fs::file_size(FilePath(tmp), ec);
     if (ec || written != text.size()) {
-        fs::remove(tmp, ec);
+        fs::remove(FilePath(tmp), ec);
         return fail("Couldn't write \"" + path + "\": the file came out the wrong size (is the disk full?).");
     }
     if (fs::exists(target, ec)) {   // best-effort previous-version backup; the target itself stays put
         std::error_code be;
-        fs::copy_file(target, path + ".bak", fs::copy_options::overwrite_existing, be);
+        CopyFileOver(target, FilePath(path + ".bak"), be);   // a plain copy_file never refreshed an existing .bak on Windows (MinGW)
     }
     ec.clear();
-    fs::rename(tmp, target, ec);      // atomic replace on the same filesystem
+    fs::rename(FilePath(tmp), target, ec);      // atomic replace on the same filesystem
     if (ec) {
         // Locked or a platform that won't rename over an existing file: overwrite by copy. The old file is
         // still in place until this succeeds, and the backup above holds its content if it half-fails.
         std::error_code ce;
-        fs::copy_file(tmp, target, fs::copy_options::overwrite_existing, ce);
+        fs::copy_file(FilePath(tmp), target, fs::copy_options::overwrite_existing, ce);
         std::error_code rc;
-        fs::remove(tmp, rc);
+        fs::remove(FilePath(tmp), rc);
         if (ce) return fail("Couldn't replace \"" + path + "\": " + ce.message());
     }
     return true;
@@ -4517,10 +4543,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             in >> q3 >> it3 >> ac;
             in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> q2 >> it2; else q2 = q3, it2 = it3;
             if (clear) {
-                scene.physics3D().quality = q3 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
+                // (kept as read, so the file saves back unchanged; there is one physics path and the value changes nothing)
+                scene.physics3D().quality = q3 == 2 ? PhysicsQuality::Engine : q3 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
                 scene.physics3D().solverIterations = it3 < 4 ? 4 : (it3 > 30 ? 30 : it3);
                 scene.physics3D().autoContinuous = (ac != 0);
-                scene.physics().quality = q2 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
+                scene.physics().quality = q2 == 2 ? PhysicsQuality::Engine : q2 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
                 scene.physics().solverIterations = it2 < 4 ? 4 : (it2 > 30 ? 30 : it2);
             }
         } else if (token == "rendersettings") {
@@ -5687,6 +5714,13 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             int ul = 0;
                             in >> ul >> j->minAngle >> j->maxAngle;
                             j->useLimits = (ul != 0);
+                            in >> std::ws;
+                            if (std::isdigit(static_cast<unsigned char>(in.peek())) || in.peek() == '-') {   // ball / cone twist (trailing)
+                                int ud = 0;
+                                in >> j->swingLimit1 >> j->swingLimit2 >> ud >> j->driveTarget.x >> j->driveTarget.y >> j->driveTarget.z
+                                   >> j->driveStiffness >> j->driveDamping >> j->driveFrequency >> j->driveDampingRatio >> j->driveMaxTorque;
+                                j->useDrive = (ud != 0);
+                            }
                         }
                     }
                 } else if (field == "joint2d") {
@@ -6052,7 +6086,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     auto graphs = go->GetComponents<VisualScriptComponent>();
                     if (auto* vsc = graphs.empty() ? nullptr : graphs.back()) {
                         vsc->SetPath(p);
-                        std::ifstream probe(p);
+                        std::ifstream probe(FilePath(p));
                         if (probe) vsc->Reload();
                     }
                 } else if (field == "actions") {
@@ -9708,7 +9742,7 @@ std::unique_ptr<SceneLoadJob> SceneLoadJob::OpenText(std::string text, bool addi
 
 std::unique_ptr<SceneLoadJob> SceneLoadJob::OpenFile(const std::string& path, bool additive,
                                                      const Vec3& offset, std::string* error) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(FilePath(path), std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return nullptr; }
     std::stringstream ss;
     ss << f.rdbuf();
@@ -9858,7 +9892,7 @@ GameObject* SceneSerializer::Instantiate(Scene& scene, const GameObject& prefab)
 
 bool SceneSerializer::SaveObjectToFile(const GameObject& root, const std::string& path) {
     ClearPrefabCacheOnExit clearPrefabCache;
-    std::ofstream f(path);
+    std::ofstream f(FilePath(path), std::ios::binary | std::ios::trunc);   // binary: LF on every platform (text mode wrote CRLF on Windows)
     if (!f) return false;
     f << SerializeObject(root);
     return static_cast<bool>(f);
@@ -9871,8 +9905,8 @@ GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string
     std::string text;
     {
         std::error_code ec1, ec2;
-        const auto mtime = std::filesystem::last_write_time(path, ec1);
-        const auto fsize = std::filesystem::file_size(path, ec2);
+        const auto mtime = std::filesystem::last_write_time(FilePath(path), ec1);
+        const auto fsize = std::filesystem::file_size(FilePath(path), ec2);
         bool hit = false;
         if (!ec1 && !ec2) {
             std::lock_guard<std::mutex> lock(cacheMutex);
@@ -9880,7 +9914,7 @@ GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string
             if (it != cache.end() && it->second.time == mtime && it->second.size == fsize) { text = it->second.text; hit = true; }
         }
         if (!hit) {
-            std::ifstream f(path, std::ios::binary);
+            std::ifstream f(FilePath(path), std::ios::binary);
             if (!f) { if (error) *error = "cannot open " + path; return nullptr; }
             std::stringstream ss; ss << f.rdbuf();
             text = DataPack::Unpack(ss.str());   // decode if obfuscated
@@ -9968,7 +10002,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
 
 bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::string* error,
                                    std::vector<std::string>* warnings) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(FilePath(path), std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::stringstream ss;
     ss << f.rdbuf();
@@ -10008,7 +10042,7 @@ bool SceneSerializer::MergeFromText(Scene& scene, const std::string& text, const
 bool SceneSerializer::MergeFromFile(Scene& scene, const std::string& path, const Vec3& offset,
                                     std::vector<GameObject*>* addedRoots, std::string* error,
                                     std::vector<std::string>* warnings) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(FilePath(path), std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::stringstream ss;
     ss << f.rdbuf();
@@ -10784,7 +10818,7 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(tbtn));
     // Last, so every record written before keeps its place. Saved from their PropertyRegistry entries, no code of their own (none of them was saved before).
-    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion"})
+    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion", "ActiveRagdoll"})
         ComponentSerializerRegistry::RegisterFromProperties(type);
 }
 } // namespace detail
@@ -10845,7 +10879,7 @@ std::string RecordKey(const std::string& line, std::unordered_map<std::string, i
 }
 
 bool ReadFileText(const std::string& path, std::string& text, std::string* error) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(FilePath(path), std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::stringstream ss; ss << f.rdbuf();
     const std::string raw = ss.str();
@@ -11106,7 +11140,7 @@ SceneValidationReport SceneSerializer::Validate(const std::string& text, const s
 }
 
 SceneValidationReport SceneSerializer::ValidateFile(const std::string& path, const std::string& assetRoot) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(FilePath(path), std::ios::binary);
     if (!f) {
         SceneValidationReport r;
         r.issues.push_back(SceneIssue{SceneIssue::Kind::LoadError, "", "cannot open " + path});

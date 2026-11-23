@@ -34,7 +34,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1549 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1555 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
@@ -221,6 +221,11 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `action_y` | `Fn.action_y` |
 | `actions_load` | `Fn.actions_load` |
 | `activate` | `Fn.activate` |
+| `active_ragdoll` | `Fn.active_ragdoll` |
+| `active_ragdoll_explode` | `Fn.active_ragdoll_explode` |
+| `active_ragdoll_push` | `Fn.active_ragdoll_push` |
+| `active_ragdoll_shoot` | `Fn.active_ragdoll_shoot` |
+| `active_ragdoll_state` | `Fn.active_ragdoll_state` |
 | `add_explosion_force` | `Fn.add_explosion_force` |
 | `add_force` | `Fn.add_force` |
 | `add_force3` | `Fn.add_force3` |
@@ -228,6 +233,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `add_impulse3` | `Fn.add_impulse3` |
 | `add_quest_progress` | `Fn.add_quest_progress` |
 | `add_score` | `Fn.add_score` |
+| `add_torque` | `Fn.add_torque` |
 | `add_xp` | `Fn.add_xp` |
 | `after` | `Fn.after` |
 | `aim` | `Fn.aim` |

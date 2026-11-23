@@ -1,6 +1,7 @@
 // Every gameplay node added in NodesGameplay.hpp is run in a real scene.
 // The gate at the bottom fails if a node is registered there and this file
 // never called Cover() for it.
+#include <filesystem>
 #include "test_framework.hpp"
 #include "test_sandbox.hpp"
 #include <Okay.hpp>
@@ -68,7 +69,7 @@ static HealthStat* Hp(GameObject* go, float maxHp = 100) {
 static std::string Prefab() {
     static std::string path;
     if (!path.empty()) return path;
-    path = "/tmp/vs_behav_bullet.okayprefab";
+    path = (std::filesystem::temp_directory_path() / "vs_behav_bullet.okayprefab").string();
     Scene s; s.physicsEnabled = false;
     GameObject* b = s.CreateGameObject("Bullet");
     b->transform->SetPosition({0, 0, 0});

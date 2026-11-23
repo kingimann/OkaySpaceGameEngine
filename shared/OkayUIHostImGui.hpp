@@ -72,4 +72,12 @@ inline ImVec2 ToMainWindowPixels(ImVec2 p) {
 /// True when the ImGui window was dragged out into another OS window: OkayUI only draws into the main one.
 inline bool OutsideMainWindow(const ImGuiWindow* w) { return w && w->Viewport && w->Viewport != ImGui::GetMainViewport(); }
 
+/// True when Dear ImGui shows nothing of the window this frame: a docked panel whose tab is not the selected one (the Inspector while
+/// the Hierarchy tab beside it is picked), a collapsed window, or a window on a frame Dear ImGui keeps hidden (its first frame, the
+/// frame before a tab comes to the front). ImGui draws none of its items then and, while it skips them, does not even move the cursor.
+/// OkayUI is flushed after ImGui and does not know about this, so a hosted body drawn there was painted on top of the panel that is
+/// shown: the OkayUI Inspector's object card, component bars and Add Component button all landed on one line over the Hierarchy
+/// (v2.903.1.3). Hosts ask this first and then draw nothing and offer no rectangle, so the hidden body takes no mouse either.
+inline bool HiddenInImGui(const ImGuiWindow* w) { return w && (w->SkipItems || w->Hidden); }
+
 } // namespace okayuihost

@@ -46,31 +46,57 @@ then this file gets updated. Keep this file short and true.
     (`tests/`, `okayui/tests/`, `assets/`, `examples/`). Keep `docs/README.md` (the index) in step when a guide is added.
 5. **Docs are for our own use only.** (Owner rule, 2026-11-17: "No more guides, tutorials or anything, documents are for
    our use only".) Do not write guides, tutorials, how-tos, quick starts or player/user-facing pages, and do not add new
-   ones. Keep only the internal records, short and in the same change as the code: the feature map
-   (`python3 scripts/gen_feature_map.py`, then `--check`), the roadmap, `docs/status/UNFINISHED.md` rows, and design or audit
-   notes when a decision needs one. Existing guides stay until the owner says to delete them; do not extend them.
+   ones. Keep only the internal records, short and in the same change as the code: the feature map (edit the hand-written
+   pages `docs/feature_map/NN-*.md`, check them with `python3 scripts/gen_feature_map.py --validate`), the roadmap,
+   `docs/status/UNFINISHED.md` rows, and design or audit notes when a decision needs one. Existing guides stay until the
+   owner says to delete them; do not extend them. **Generated docs are rebuilt on main, never committed in a PR**
+   (`docs/FEATURE_MAP.md`, `docs/SYSTEMS.md`, `docs/feature_map/_index_*.md`, `docs/engine/code_index*`, `docs/try_it.md`;
+   `.github/workflows/regen-docs.yml`): committing them made every other open PR conflict. If a branch changed one,
+   `bash scripts/precheck.sh --restore-generated` puts main's copy back.
 
 ## Pull requests and CI
 
-6. **Merge only a PR with no problems.** Every CI job must be finished and green, including the slow "Build & test
-   (Ubuntu)" job. Wait for it; do not merge while any job is running, red or cancelled, and do not merge a PR whose
-   own text lists a failing or unrun test that CI could have run. Squash-merge with the title `<PR title> (#N)` and
-   the exact head sha. (The owner said on 2026-11-15: "stop merging PRs with problems". Before that this rule let
-   PRs merge without the Ubuntu job, and PRs #842 to #856 merged with the `player` test red.) A docs-only change
-   whose only jobs are docs checks may merge once those are green.
+6. **Merge only a PR with no problems; the checks happen before the push** (owner, 2026-11-23: "instead of doing the
+   checks there we do it before hand", choosing "lint + Windows build only" on GitHub). Before pushing, the author runs
+   `bash scripts/precheck.sh --build <build folder> --tests` (rule 7a): the quick checks, a build of what changed, and
+   every test program that had to be rebuilt. The PR body has a `## Precheck` section with that run's summary lines.
+   On a PR, GitHub then runs only branch-lint, the PR-body check and the Windows cross-compile (we cannot build
+   Windows here); merge when those are finished and green and the precheck was clean. Do not merge a PR whose own text
+   lists a failing or unrun test. The full suite (Ubuntu build and tests, ASan, editor, player, readers, web, SQL...)
+   runs on every push to main and every night: a red full run on main is fixed before anything else (rule 7), and a
+   release is only made from a main commit whose full run is green. Squash-merge with the title `<PR title> (#N)` and
+   the exact head sha. (History: on 2026-11-15 the owner said "stop merging PRs with problems" after PRs #842 to #856
+   merged with the `player` test red; the precheck is what keeps that from happening now.)
    **Nothing is held** (owner, 2026-11-22: "I don't want anything to be held. I want to be able to test everything."): a PR
-   whose CI is fully green is merged at once and goes into the next release, so the owner can test it. Extra reviews run
+   whose checks are green is merged at once and goes into the next release, so the owner can test it. Extra reviews run
    while CI runs, not after it; a review finding is fixed in a follow-up PR unless it can lose player data or crash,
    in which case it is fixed in the PR before merging. Drafts are only for work that does not build yet.
 7. **Never merge a red PR, and never just retry it.** Read the failing job's log, find the cause and fix it in
    the code. A re-run is only for a job that was cancelled by a runner shutdown, and if the same job keeps
    dying, find out why (this is how the WebGL job got its cache and timeout).
+7a. **Run the checks before you push, so PRs are not red** (owner, 2026-11-23: "do what needs to be done to prevent
+    it"). Before every push, by every Claude and every agent: merge main in, then `bash scripts/precheck.sh` (about a
+    minute; the pre-push hook from `bash scripts/install_hooks.sh` runs it for you, once per clone). It catches conflict
+    markers, a branch that no longer merges, Windows thread includes, secrets, duplicate code, invalid feature map pages and
+    copies between open branches; `--build <dir> --tests` also builds what changed and runs every test it touches
+    (required before a push, rule 6). A new or changed CI check is first run against every open PR (the integration check,
+    or `scripts/precheck.sh --head origin/<branch>` per branch) and fixed until it turns nothing red that was green.
 8. **Fix PRs that have conflicts or errors**: merge main into the branch, resolve keeping both sides, build and
    run the relevant tests, push. This includes the `john/` branches (the owner allowed it).
 9. **Keep the open PR count low.** Merge or close. Close PRs that are superseded, with a comment saying by what.
    Do not open new PRs faster than CI can check them.
-10. Agents push only their own branch (plain push, never force) and do not open PRs unless told. Each Claude's main
-    session opens and merges its own lane's PRs (rule 6). Only the coordinator merges the release PR and runs `release.yml`.
+   **Fewer, bigger PRs** (owner, 2026-11-23: "can we do bigger PRs, that way it's fewer"): every PR runs the whole
+   1.5-2 hour CI, so batch related work into one PR per area (for example one physics PR, one duplicates PR) instead of
+   one per step, keep about 5 open per Claude at most, and push to an open PR only when its fix is complete. Stacked
+   steps go in as the top branch's single PR.
+10. **Two branches per Claude.** (Owner, 2026-11-23: "can we use only one or two branches so I can delete the rest".)
+    Each Claude has `<lane>/work`, where all its work is built, and `<lane>/ready`, the branch its PR comes from (moved
+    forward to `work` when a batch passes the precheck, so new work does not restart the PR's checks). Agents work in
+    local worktrees and local branches and do NOT push branches of their own: they report, and the main session merges
+    their work into `work`. Open PRs from before this rule finish on their own branches. Old branches are kept by one
+    archive branch per lane (`<lane>/archive`: commits whose parents are the old tips, with names and shas in the
+    messages) before anyone deletes them. Plain push, never force; agents do not open PRs. Each Claude's main session
+    opens and merges its own lane's PRs (rule 6). Only the coordinator merges the release PR and runs `release.yml`.
 26. **Three Claudes, one set of lanes.** The coordinator (`claude/*`), Claude 2 (`claude2/*`) and Claude 3 (`claude3/*`) follow
     `docs/process/collaboration.md` and its table `docs/lanes.json`: run `python3 scripts/find_existing.py <keywords>` before
     you start anything; claim it with one comment `Claim: <branch>` on issue #422 (`Existing:`, `Gap:`, `Files:`,
@@ -128,7 +154,9 @@ then this file gets updated. Keep this file short and true.
     the old code (rule 19c: no second copy kept "just in case"). New features ship on. The switches that are off today
     are being turned on one by one, each with its tests; one that cannot be turned on safely yet is finished first, not
     left off. Do not drop a format or feature just because it is hard: write the replacement. Cryptography is the one
-    exception (rule 18).
+    exception (rule 18). Why on (owner, 2026-11-23): "if it's not on, I can't find bugs". Our own parts are on in every
+    build the owner runs, so their bugs show up in normal use and get fixed; the Settings > Experimental switches start
+    ticked and the person can untick one to go back.
 18. **Cryptography cannot be replaced on our word.** It needs an outside review first. The owner has decided not to hire a reviewer (2026-11-14), so libsodium stays the default in every release and `okay::crypto` stays off by default. AI reviews (an internal agent, a second AI such as Grok through the `claude/crypto-review-grok` branch) are extra assurance and are reported as "not independently reviewed"; they do not unlock the switch. Releases refuse own-crypto builds.
 19. Do not switch to an own version until its tests show it is finished; finish it rather than leave it off. Say honestly how close each one is.
 

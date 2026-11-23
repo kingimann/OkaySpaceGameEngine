@@ -1,3 +1,4 @@
+#include <filesystem>
 #include "test_framework.hpp"
 #include <Okay.hpp>
 
@@ -74,7 +75,7 @@ int main() {
         barrel->transform->SetParent(p->transform);
         barrel->transform->localPosition = {0, 1, 0};
 
-        std::string path = "/tmp/okay_turret.okayprefab";
+        std::string path = (std::filesystem::temp_directory_path() / "okay_turret.okayprefab").string();
         CHECK(SceneSerializer::SaveObjectToFile(*p, path));
 
         Scene b("B");

@@ -334,6 +334,7 @@
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/TopDownShooterController.hpp"
 #include "okay/Components/Ragdoll.hpp"
+#include "okay/Components/ActiveRagdoll.hpp"
 #include "okay/Components/Platformer25DController.hpp"
 #include "okay/Components/Projectile3D.hpp"
 #include "okay/Components/TopDownController2D.hpp"
@@ -361,11 +362,6 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/NetTransport.hpp"
 #include "okay/Net/NetBackend.hpp"
-#include "okay/ECS/World.hpp"
-#include "okay/ECS/NetWorld.hpp"
-#include "okay/ECS/Systems.hpp"
-#include "okay/ECS/NetWorldSync.hpp"
-#include "okay/ECS/SceneBridge.hpp"
 
 // Visual scripting (node graphs)
 #include "okay/VisualScript/VsValue.hpp"

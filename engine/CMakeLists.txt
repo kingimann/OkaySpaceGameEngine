@@ -24,6 +24,21 @@ if(OKAY_OWN_CRYPTO)
 endif()
 add_library(okay::crypto ALIAS okay_crypto)
 
+# ---- okay::physcore: our own rigid-body physics core (docs/physics/physics_core.md) ----
+# Its own static library so its tests and benchmarks build and link in seconds without the whole engine.
+# Written only from papers and textbooks (each file says which). okay_engine links it PUBLIC.
+add_library(okay_physcore STATIC
+    src/Physics/Core/DynamicTree.cpp
+    src/Physics/Core/Shape.cpp
+    src/Physics/Core/Collide.cpp
+    src/Physics/Core/World.cpp
+    src/Physics/Core/Solver.cpp
+    src/Physics/Core/Joint.cpp
+)
+target_include_directories(okay_physcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(okay_physcore PUBLIC cxx_std_17)
+add_library(okay::physcore ALIAS okay_physcore)
+
 # OkaySpace engine library
 add_library(okay_engine
     src/Core/Application.cpp
@@ -104,6 +119,8 @@ add_library(okay_engine
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
     src/Components/Ragdoll.cpp
+    src/Components/ActiveRagdoll.cpp
+    src/Components/RagdollShared.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
     src/Net/NetBuildSync.cpp
@@ -132,6 +149,8 @@ add_library(okay_engine
     src/Components/UIAnimation.cpp
     src/Scripting/OkayScriptVM.cpp
     src/Scripting/ScriptVM.cpp
+    src/Scripting/ScriptApiRegistry.cpp
+    src/Scripting/ScriptApiCore.cpp
     src/Script/Lexer.cpp
     src/Script/Parser.cpp
     src/Script/Checker.cpp
@@ -192,6 +211,8 @@ add_library(okay_engine
     src/Animation/HumanoidLibrary.cpp
     src/Animation/PlayerSetup.cpp
     src/Animation/HumanoidActions.cpp
+    src/Animation/RagdollPhysics.cpp
+    src/Animation/DynamicCharacter.cpp
     src/Components/AnimClip.cpp
     src/Components/Sequence.cpp
     src/Components/SequencePlayer.cpp
@@ -225,7 +246,7 @@ add_library(okay_engine
     src/Audio/FlacDecoder.cpp
     src/Audio/WavDecoder.cpp
     src/Audio/WavPlayback.cpp
-    src/AI/Pathfinding.cpp
+    src/AI/NavigationGrid.cpp
     src/AI/GridPath2D.cpp
     src/AI/NavMesh.cpp
     src/AI/NavMeshBake.cpp
@@ -355,6 +376,7 @@ add_library(okay_engine
     src/Texture/Stream.cpp
     src/Texture/Export.cpp
     src/Render/GpuTexture.cpp
+    src/Render/TextureAsset.cpp
     src/Optimize/SceneOptimizationReport.cpp
     src/Testing/TestRegistry.cpp
     src/Testing/PlayTest.cpp
@@ -498,7 +520,7 @@ endif()
 # decides whether the network layer uses them instead of libsodium. UNREVIEWED by an
 # outside cryptographer: it must not become the default, and libsodium must not be
 # removed, before that review (docs/status/own_code_roadmap.md, docs/platform/crypto.md).
-target_link_libraries(okay_engine PUBLIC okay_crypto)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
+target_link_libraries(okay_engine PUBLIC okay_crypto okay_physcore)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
 set(OKAY_SODIUM_IN_BUILD OFF CACHE INTERNAL "libsodium was found and linked into okay_engine")   # reset on every configure; set ON below
 if(OKAY_REQUIRE_SODIUM)
     if(OKAY_OWN_CRYPTO OR OKAY_OWN_STACK_CRYPTO_TEST)

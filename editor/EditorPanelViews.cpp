@@ -342,20 +342,11 @@ PhysicsSettingsIntent DrawPhysicsSettingsBodyImGui(PhysicsSettingsModel& m, cons
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kSmoothTip);
     }
     ImGui::Separator();
-    ImGui::TextDisabled("%s", kPhysicsQualityHeading);
-    int q = m.quality == 1 ? 1 : 0;
-    ImGui::SetNextItemWidth(330);
-    if (ImGui::Combo("Quality##psq", &q, kPhysicsQualityNames, 2)) out.quality = q;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kQualityTip);
-    if (q == 1) {
-        int it = m.solverIterations;
-        ImGui::SetNextItemWidth(160);
-        if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) out.solverIterations = it;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kIterationsTip);
-        bool cont = m.autoContinuous;
-        if (ImGui::Checkbox("Catch fast bodies automatically##psq", &cont)) out.autoContinuous = cont ? 1 : 0;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kContinuousTip);
-    }
+    ImGui::TextDisabled("%s", kPhysicsSolverHeading);
+    int it = m.solverIterations;
+    ImGui::SetNextItemWidth(160);
+    if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) out.solverIterations = it;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kIterationsTip);
     if (ImGui::Button("Apply to current scene##phys")) out.apply = true;
     return out;
 }

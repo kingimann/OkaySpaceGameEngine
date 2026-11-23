@@ -58,6 +58,10 @@ then this file gets updated. Keep this file short and true.
    the exact head sha. (The owner said on 2026-11-15: "stop merging PRs with problems". Before that this rule let
    PRs merge without the Ubuntu job, and PRs #842 to #856 merged with the `player` test red.) A docs-only change
    whose only jobs are docs checks may merge once those are green.
+   **Nothing is held** (owner, 2026-11-22: "I don't want anything to be held. I want to be able to test everything."): a PR
+   whose CI is fully green is merged at once and goes into the next release, so the owner can test it. Extra reviews run
+   while CI runs, not after it; a review finding is fixed in a follow-up PR unless it can lose player data or crash,
+   in which case it is fixed in the PR before merging. Drafts are only for work that does not build yet.
 7. **Never merge a red PR, and never just retry it.** Read the failing job's log, find the cause and fix it in
    the code. A re-run is only for a job that was cancelled by a runner shutdown, and if the same job keeps
    dying, find out why (this is how the WebGL job got its cache and timeout).
@@ -117,12 +121,16 @@ then this file gets updated. Keep this file short and true.
 
 ## Third-party code and "build everything ourselves"
 
-17. **The goal is to write every part ourselves, even if it takes time.** Follow `docs/status/own_code_roadmap.md`: a
-    seam, then our own backend OFF by default, then the criteria, then flip the default only with the owner's
-    approval, then delete the old code one release later. Do not drop a format or feature just because it is
-    hard: write the replacement.
+17. **The goal is to write every part ourselves, even if it takes time, and nothing is off by default.** (Owner rule,
+    2026-11-22: "I don't want anything off by default anymore", and "you're improving the engine, not making copies".)
+    Follow `docs/status/own_code_roadmap.md`, but a replacement is not parked behind an off switch: build it, test it
+    against the old one until it gives the same or better results, then make it THE path in the same change and delete
+    the old code (rule 19c: no second copy kept "just in case"). New features ship on. The switches that are off today
+    are being turned on one by one, each with its tests; one that cannot be turned on safely yet is finished first, not
+    left off. Do not drop a format or feature just because it is hard: write the replacement. Cryptography is the one
+    exception (rule 18).
 18. **Cryptography cannot be replaced on our word.** It needs an outside review first. The owner has decided not to hire a reviewer (2026-11-14), so libsodium stays the default in every release and `okay::crypto` stays off by default. AI reviews (an internal agent, a second AI such as Grok through the `claude/crypto-review-grok` branch) are extra assurance and are reported as "not independently reviewed"; they do not unlock the switch. Releases refuse own-crypto builds.
-19. Do not switch to an own version until you are sure it is finished. Say honestly how close each one is.
+19. Do not switch to an own version until its tests show it is finished; finish it rather than leave it off. Say honestly how close each one is.
 
 19a. **Code: write everything yourself. Assets and data: only with permission.**
     - **Code.** Do not copy, port, translate or closely follow code, shader text, comments or tests from any other
@@ -161,6 +169,19 @@ then this file gets updated. Keep this file short and true.
     ("Existing:"). `python3 scripts/dup_lint.py check` runs in CI and must pass: a pasted block or a new copy of a known
     helper fails. A real need for a copy is marked `dup-allow: <reason>` on the line and explained in the PR. When a dedup
     lands, shrink the baseline with `--update-baseline` in the same PR; the baseline may only go down.
+
+19d. **Improve and add on; never make a second copy.** (Owner rule, 2026-11-22: "you're improving and adding on, not
+    making a second copy. Make that a rule.") When something already exists (a system, a component, a backend, a
+    tool, a helper), make it better and extend it in place. Do not build a new one beside it, behind a switch, under a
+    new name or as a "v2". If the old design truly cannot be improved, the new code replaces it in the same change and
+    the old code is deleted; the two never ship side by side. Every claim and PR names what it improves
+    ("Existing:" / "## Existing code"); a PR that adds a parallel system is not merged.
+    **Check before you make anything** (owner, 2026-11-22: "no duplicates, check before you make anything"): before
+    writing any new file, class, function, component, tool, script, doc or system, search for what already does that job:
+    `python3 scripts/find_existing.py <words>` (code, tests, examples, open branches), `docs/SYSTEMS.md` and the feature map,
+    `docs/engine/shared_code.md`, `docs/engine/code_index.md`, open PRs and claims on #422. Write what you found in the
+    claim ("Existing:") and the PR ("## Existing code"). If something exists, improve it; only if nothing does, make it.
+    This applies to agents, briefs and docs too, not only code.
 
 ## Machine and agents
 

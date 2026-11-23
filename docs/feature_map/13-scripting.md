@@ -7,6 +7,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 ## 13. Scripting
 
 ### 13.1 OkayScript VM
+- **System:** OkayScript - The default script language: small text files that make objects do things, with its own code editor, debugger and profiler.
 - **What:** The default scripting language. A script file is a component: fields are Inspector settings, `Start()` and `Update()` (or `start()`, `update(dt)`) run by name; C#-style and C-style syntax both parse; hundreds of built-in functions drive the scene.
 - **Parts:**
   - 13.1.1 Lexer, parser and runtime - `Scripting/OkayScriptVM` - the interpreter core inside one 10.5k-line file (lexer ~359, AST ~581, runtime ~593, parser ~2256)
@@ -29,6 +30,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Ask me like:** "work on 13.1.3, coroutine bugs"; "script says unknown function, which part is that"
 
 ### 13.2 C#-style language core
+- **System:** Typed OkayScript - The newer C#-style typed script language and the table of engine calls it can use - duplicate of OkayScript (two engine binding tables; a merge is planned on branch `claude2/lua-csharp-merge`, no PR yet)
 - **What:** The typed OkayScript (`okayscript-next`): a script is `class Name : Behaviour`, source goes through lexer, parser, checker (every name resolved, every type known) and only then the interpreter, so a script either runs or says why not, with line and column.
 - **Parts:**
   - 13.2.1 Lexer - `engine/src/Script/Lexer.cpp` - tokens with line and column, `$"..."` nesting, keywords
@@ -50,6 +52,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Ask me like:** "work on 13.2.2, add try/catch to the typed language"; "which branch has coroutines for the new OkayScript"
 
 ### 13.3 Removed Lua and C# (Mono) backends
+- **System:** OkayScript
 - **What:** The optional third-party Lua and Mono C# backends were removed (our own scripting languages replace them). An old scene or project whose script names language `lua`, `csharp` or `cs` still loads; the script just does not run, and loading it reports "script language 'lua' is no longer supported" (Console, scene validator, project diagnostics).
 - **Parts:**
   - 13.3.1 Removed-language message - `Scripting/ScriptVM` - `RemovedScriptLanguageMessage(lang)` gives the clear text for `lua`, `csharp`, `cs`; used by `ScriptComponent::LoadSource` and the scene validator
@@ -66,6 +69,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Ask me like:** "why does my old Lua script not run"
 
 ### 13.4 Script components and script UI
+- **System:** OkayScript
 - **What:** The glue that puts a script on an object: the language-neutral VM interface, the Script component with its source and public fields, starter scripts, and the bridge that lets scripts draw immediate-mode UI.
 - **Parts:**
   - 13.4.1 VM interface and factory - `Scripting/ScriptVM` - `IScriptVM`, `ScriptHost`, `ScriptDiagnostic`, `CreateScriptVM`, `AvailableScriptLanguages`
@@ -86,10 +90,11 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Ask me like:** "work on 13.4.3, show enum fields in the Inspector"; "new scripts should start with a class"
 
 ### 13.5 Script editor: autocomplete, errors, rename, format
+- **System:** OkayScript
 - **What:** The built-in code editor (View > Editors & Tools > Script Editor): tabs, syntax colours, inline errors and warnings, autocomplete with docs, outline, rename, find in files, formatting and an external-IDE bridge.
 - **Parts:**
   - 13.5.1 Editor window and tabs - `editor/main.cpp` (`DrawScriptEditor` ~12930-15670) - one tab per Script component, float or dock, File menu (New, Save, Reload, Switch Script); since #577 a larger code face and a collapsible script list (Alt+1)
-  - 13.5.2 Text widget and colours - `editor/vendor/TextEditor.*` (vendored), `editor/main.cpp` (`OkayScriptLangDef` ~12687-12930) - syntax highlighting, gutter, changed-line bars, minimap, zoom
+  - 13.5.2 Text widget and colours - `editor/vendor/TextEditor.*` (vendored), `editor/main.cpp` (`OkayScriptLangDef` ~12687-12930) - syntax highlighting, gutter, changed-line bars, minimap, zoom; our own replacement `OkayUI::CodeEdit` (`okayui/src/OkayUICodeEdit.cpp`, adapter `editor/ScriptEditorCodeEdit.*`, `editor/ScriptEditorWidget.hpp`) behind the developer variable `OKAY_UI_CODEEDIT=1` or the OkayUI backend (off by default, no Settings item yet; `docs/ui/own_ui_code_editor.md`)
   - 13.5.3 Problems and inline errors - `editor/main.cpp` (~76-230 `AnalyzeScriptWarnings`, Problems panel ~15460) - ValidateAll diagnostics, did-you-mean lint, click-to-fix gutter action
   - 13.5.4 Autocomplete and signature help - `editor/main.cpp` (C#-aware member completion ~12178, details with code examples ~12380, floating `##autocomplete`, `##sighelp`, `##sighint`) - fed by `BuiltinNames()` and the typed Engine API
   - 13.5.5 Navigation - `editor/ScriptText.hpp` - tokenizer, outline, Go to Symbol, Go to Definition, Find All References, bookmarks, Rename Symbol (pure text, covered by selftest)
@@ -102,7 +107,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **API:** menu File / Edit / View / Go / Insert / Help inside the Script Editor; shortcuts Ctrl+F, Ctrl+Shift+F, Ctrl+/, Ctrl+D, Alt+Up/Down
 - **Editor:** View > Editors & Tools > Script Editor; Help > Scripting Reference; Layout preset "Scripting"
 - **Docs:** `docs/editor/editor.md` (Script Editor), `docs/scripting/scripting.md`
-- **Tests:** `editor` (selftest covers ScriptText outline, identifier search and the lint), `starter_script`
+- **Tests:** `editor` (selftest covers ScriptText outline, identifier search and the lint), `starter_script`; the own code widget: `okayui_codeedit`, `okayui_codeedit_fuzz`, `okayui_script_adapter`, `okayui_host`, `okayui_capture`, `okayui_codeedit_imgui`
 - **Status:** Works - features are present as menu items and code per the editor source; no separate unit tests except the selftest
 - **Open:** earlier map: "meaningful syntax only; classes and templates for New Script" (open); no step debugger for text scripts (only the visual-script debugger, 14.5); the 2.7k-line window lives in `main.cpp` (15.10). Script compile errors and missing script files are also rows in the project Problems panel (15.11.8), separate from this window's own Problems list
 - **Related:** 13.1, 13.2, 13.4, 15.10, 15.8
@@ -111,6 +116,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Ask me like:** "work on 13.5.4, show signature help for typed scripts"; "autocomplete should offer GetComponent"
 
 ### 13.6 Engine API and generated docs
+- **System:** Typed OkayScript
 - **What:** One table of bindings (every type, property and method a typed script can use), backed by real engine calls. The checker resolves names against it, the editor autocompletes from it, the visual-script Engine API nodes are generated from it, and `docs/engine_api.md` is printed from it.
 - **Parts:**
   - 13.6.1 Binding table - `engine/src/Script/EngineApi.cpp` - GameObject, Transform, Rigidbody, Input, Time, Debug, Audio, SaveGame, Localization, Sequence, post-process, NavMeshAgent, Dialogue, Quest, BehaviorTree, Spline, UI components and more
@@ -129,6 +135,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Ask me like:** "work on 13.6.1, add Camera shake to the typed API"; "regenerate engine_api.md"
 
 ### 13.7 Built-in function library
+- **System:** OkayScript
 - **What:** The several hundred built-in functions of the old VM, grouped as in `docs/scripting/scripting.md`: movement one-liners, transforms, rigidbody, input, objects and scene, UI, tweens, saves, scene manager, networking, character animation, Steam, collections, JSON, timers, spawning and physics queries.
 - **Parts:**
   - 13.7.1 Movement, transform and rigidbody - `Scripting/OkayScriptVM` - dt-scaled one-liners (walk, spin, follow, patrol, orbit, platformer, smooth_follow)

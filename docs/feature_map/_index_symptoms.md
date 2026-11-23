@@ -8,7 +8,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | (test build)" after a version | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | 1 FPS with a large model | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | 1 item / 2 items" reads wrong | [1.8](01-core-scene.md#18-localization) Localization |
-| 2D enemies cut through walls or cannot find a route on a tilemap | [9.3](09-ai-navigation.md#93-grid-pathfinding-part-of-navigation) Grid pathfinding (part of Navigation) |
+| 2D enemies cut through walls or cannot find a route on a tilemap | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |
 | 3D looks different in the editor and the player | [2.1](02-rendering-world.md#21-renderers) Renderers |
 | a "Test build of ..." message in the launcher | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | a .dae/.3ds file will not import without Assimp | [3.6](03-modeling-import.md#36-model-import) Model import |
@@ -192,7 +192,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a pasted C# script is accepted but has no effect | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | a pasted join link does nothing | [16.4](16-networking.md#164-matchmaking-queues-server-browser-join-links) Matchmaking, queues, server browser, join links |
 | a path ignores the road | [9.6](09-ai-navigation.md#96-nav-areas-and-off-mesh-links) Nav areas and off-mesh links |
-| a path zig-zags | [9.3](09-ai-navigation.md#93-grid-pathfinding-part-of-navigation) Grid pathfinding (part of Navigation) |
+| a path zig-zags | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |
 | a pause menu and a cutscene un-pause each other | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | a pickup cannot be picked up | [11.2](11-gameplay-systems.md#112-items-and-loot) Items and loot |
 | a pickup trigger fires for the wrong object | [6.7](06-physics.md#67-collision-layers-and-trigger-filters) Collision layers and trigger filters |
@@ -737,7 +737,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | no MinGW" or "SDL2_MINGW_PREFIX not set" errors | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | no place to find or install mods | [47.3](43-proposals.md#473-mod-packaging-and-sharing) Mod packaging and sharing |
 | no preview pictures for models or scenes in the Project panel | [1.20](01-core-scene.md#120-asset-thumbnails) Asset thumbnails |
-| no route is found when one exists | [9.3](09-ai-navigation.md#93-grid-pathfinding-part-of-navigation) Grid pathfinding (part of Navigation) |
+| no route is found when one exists | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |
 | no search | [57.1](43-proposals.md#571-static-documentation-site) Static documentation site |
 | no sign the game saved | [35.2](20-35-planned.md#352-checkpoints) Checkpoints |
 | no smile when talking | [30.4](20-35-planned.md#304-morph-targets) Morph targets |

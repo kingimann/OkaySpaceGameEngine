@@ -74,7 +74,7 @@ All are off by default. These are estimates, not measurements, except where a co
 | SDL2 → okay::platform | Launcher and editor link with no SDL on Linux (0 SDL symbols); Windows side only syntax-checked |
 | Dear ImGui → okayui | Launcher runs on OkayUI (merged, off by default); editor compiles against it, never run |
 | MSVC → okay-ms | 82 of 348 engine files compile to objects (honest count) |
-| Assimp → own readers | OGRE skeletons added; glTF 1.0, Q3BSP, SIB, OpenGEX, MDL are on unmerged branches |
+| Assimp → own readers | OGRE skeletons added; glTF 1.0, OpenGEX, MDL (Quake 1 / Half-Life 1) and Q3BSP brought onto branch `claude2/own-readers-last` (2026-11-22, off by default); SIB not brought (no public specification); 3D GameStudio MDL3/4/5/7 not written |
 | OkayScript → Lua and C# | Lua 5.4 written (unbuilt in CI); hosted C# written (never run with a real .NET) |
 | Crypto | libsodium stays (owner decision); own crypto off |
 

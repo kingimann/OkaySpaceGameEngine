@@ -524,6 +524,8 @@ private:
             r.mods = ModsFromSdl(e.key.keysym.mod); r.repeat = e.key.repeat != 0; return true;
         case SDL_TEXTINPUT:
             r.type = EventType::TextInput; r.windowId = e.text.windowID; r.text = e.text.text; return true;
+        case SDL_TEXTEDITING:   // the input method's preedit: text being composed ("" = cleared), x = caret in code points
+            r.type = EventType::TextEditing; r.windowId = e.edit.windowID; r.text = e.edit.text; r.x = e.edit.start; return true;
         case SDL_MOUSEMOTION:
             r.type = EventType::MouseMove; r.windowId = e.motion.windowID;
             r.x = e.motion.x; r.y = e.motion.y; r.dx = e.motion.xrel; r.dy = e.motion.yrel; return true;
@@ -583,7 +585,7 @@ bool TranslateSdl2Event(const void* sdlEvent, Event& out) {
     if (!sdlEvent) return false;
     const SDL_Event& e = *(const SDL_Event*)sdlEvent;
     switch (e.type) {   // only the kinds a UI feed needs; no side effects (a drop's string is left alone)
-    case SDL_QUIT: case SDL_WINDOWEVENT: case SDL_KEYDOWN: case SDL_KEYUP: case SDL_TEXTINPUT:
+    case SDL_QUIT: case SDL_WINDOWEVENT: case SDL_KEYDOWN: case SDL_KEYUP: case SDL_TEXTINPUT: case SDL_TEXTEDITING:
     case SDL_MOUSEMOTION: case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: case SDL_MOUSEWHEEL: {
         Event r;
         if (!SdlBackend::TranslateEvent(e, r)) return false;

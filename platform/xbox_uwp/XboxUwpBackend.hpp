@@ -6,6 +6,7 @@
 // documentation of CoreWindow events (SizeChanged, VisibilityChanged, Activated, KeyDown/KeyUp, PointerMoved/Pressed/Released,
 // PointerWheelChanged, CharacterReceived, Closed). No <thread>, no <mutex>.
 #include "XboxAudio.hpp"
+#include "XboxClipboard.hpp"
 #include "XboxInput.hpp"
 #include "XboxLifecycle.hpp"
 #include "XboxPadHub.hpp"
@@ -188,8 +189,9 @@ public:
     /// Also receives every line (the app sets it to a FileLog, XboxLog.hpp, so the owner can read the log from the Device Portal).
     std::function<void(const std::string&)> logSink;
     const std::deque<std::string>& LogLines() const { return log_; }
-    bool SetClipboardText(const std::string& t) override { clip_ = t; return true; }   // in-app only (no Windows clipboard yet)
-    std::string GetClipboardText() override { return clip_; }
+    bool SetClipboardText(const std::string& t) override { return clip_.SetText(t); }   // in-app unless the shell installed a system clipboard (SetClipboardHost, XboxClipboard.hpp)
+    std::string GetClipboardText() override { return clip_.GetText(); }
+    void SetClipboardHost(ClipboardHost* h) { clip_.SetHost(h); }   // the C++/WinRT glue (never built); null = in-app only
 
     std::unique_ptr<platform::AudioDevice> OpenAudio(const platform::AudioSpec& want, bool capture, const char*, platform::AudioSpec* got) override {
         if (capture) { err_ = "Microphone capture is not supported in the Xbox UWP build yet."; return nullptr; }
@@ -307,7 +309,7 @@ private:
     friend class UwpWindow;
     UwpHost* host_; PathRoots roots_; std::chrono::steady_clock::time_point t0_;
     Lifecycle life_; std::deque<platform::Event> q_; std::set<int> keys_; std::vector<BackendPad*> pads_; int nextPadId_ = 1; std::unique_ptr<PadHub> hub_; std::vector<SlotProxy> proxies_;
-    std::deque<std::string> log_; std::string clip_, err_;
+    std::deque<std::string> log_; UwpClipboard clip_; std::string err_;
     int mx_ = 0, my_ = 0, relDx_ = 0, relDy_ = 0; std::uint32_t mouse_ = 0;
     TouchTracker touch_; std::vector<TouchEvent> gestures_; long long mouseFinger_ = -1; TextComposition comp_; int imeRect_[4] = {0, 0, 0, 0};
     bool inited_ = false, textInput_ = false, rel_ = false, cursor_ = true, quitSent_ = false;

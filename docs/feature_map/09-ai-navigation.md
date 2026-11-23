@@ -8,12 +8,13 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 ## 9. AI & navigation
 
 ### 9.1 Nav mesh bake and queries
+- **System:** Navigation - Works out where characters can walk and walks them to a goal around walls and each other.
 - **What:** Bakes the scene's static colliders and terrain into a mesh of walkable polygons (on a background thread), saves it to a `.okaynav` file, and answers path, nearest-point, raycast, random-point and height queries through one facade that falls back to a probe grid when no mesh was baked.
 - **Parts:**
   - 9.1.1 Bake - `AI/NavMeshBake` - copies colliders (a Mesh Collider as its world triangles) and heightmap terrains, rasterizes them into a heightfield, applies slope, step, head room and agent radius, merges cells into rectangles; runs on a worker thread with progress
   - 9.1.2 Mesh data and queries - `AI/NavMesh` - polygons and portals, A* over the polygon graph, funnel string pulling, `SamplePosition`, `Raycast`, `RandomPoint`, `HeightAt`, text save and load
   - 9.1.3 Surface component - `Components/NavMeshSurface`, `engine/src/AI/NavMeshSurface.cpp` - bake settings, `.okaynav` path next to the scene, `Bake`, `StartBake`, `PollBake`, bake before Play
-  - 9.1.4 Facade and grid fallback - `AI/Navigation`, `AI/NavGrid3D` - `Navigation::FindPath` uses the baked mesh, else lazily sampled grid A* over probe spheres (the same `gridastar::Search` as 9.3); NPCs, click-to-move and agents all go through it
+  - 9.1.4 Facade and grid fallback - `AI/Navigation`, `AI/NavGrid3D` - `Navigation::FindPath` uses the baked mesh, else lazily sampled grid A* over probe spheres; NPCs, click-to-move and agents all go through it
   - 9.1.5 Navigation window - `editor/NavigationWindow.*` - bake settings, Bake and Clear with progress and stats, Scene view overlay, send-agent-to-click, navigation component inspectors
 - **Code:** `AI/NavMesh`, `AI/NavMeshBake`, `AI/Navigation`, `AI/NavGrid3D`, `Components/NavMeshSurface`, `engine/src/AI/NavMeshSurface.cpp`, `editor/NavigationWindow.*`
 - **API:** `NavMeshSurface`, `NavMesh`, `NavMeshBuildSettings`, `Navigation::FindPath`, `Navigation::SamplePosition`, `Navigation::Raycast`, `Navigation::RandomPoint`, `NavGrid3D::FindPath`, script `nav_path_exists`, `nav_path_length`, `nav_point_walkable`, `nav_nearest_point`
@@ -28,6 +29,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Ask me like:** "bake a navmesh for my level"; "my guard will not walk through the narrow door"
 
 ### 9.2 Nav agents and obstacles
+- **System:** Navigation
 - **What:** A Nav Mesh Agent walks its object to a destination along the mesh path, steers around other agents and moving obstacles, replans when stuck and reports arrival; a Nav Mesh Obstacle is a box or capsule agents dodge, and with Carve on it cuts a hole in the mesh so paths go around it.
 - **Parts:**
   - 9.2.1 Agent movement - `Components/NavMeshAgent`, `engine/src/AI/NavMeshAgent.cpp` - `SetDestination`, `Stop`, `Resume`, `Warp`, speed, acceleration, turn rate, stopping distance, auto braking, drives a Rigidbody3D by velocity or the Transform
@@ -47,25 +49,27 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Seen as:** enemies bunch up in a doorway; an agent jitters when it arrives; two agents block each other; an agent slides instead of walking; an agent gives up on a path
 - **Ask me like:** "make the guard walk to the player and stop 2 m away"; "enemies keep stacking on each other"
 
-### 9.3 Grid pathfinding (part of Navigation)
-- **What:** Navigation's grid paths: A* over a rectangular grid of walkable flags or directly over a Tilemap, for 2D games and tower-defense routing. Optional per-cell costs, diagonal steps and line-of-sight smoothing; a Grid Obstacle blocks cells and replans only the agents it covers. All three stay off unless the agent or the call asks, so an old path is unchanged. The search is the one grid A* in the engine (`AI/GridAStar.hpp`), shared with the 3D grid fallback (9.1.4); the old `Pathfinding` calls forward to `Navigation` and give the same paths.
+### 9.3 Grid pathfinding (older)
+- **System:** Grid Pathfinding - Finds a path over a square grid or tilemap, for 2D and tower-defence games - duplicate of Navigation (kept: grid and tilemap games; no merge planned)
+- **What:** A* over a rectangular grid of walkable flags or directly over a Tilemap, for 2D games and tower-defense routing. Optional per-cell costs, diagonal steps and line-of-sight smoothing; a Grid Obstacle blocks cells and replans only the agents it covers. All three stay off unless the agent or the call asks, so an old path is unchanged.
 - **Parts:**
-  - 9.3.1 Grid A* - `AI/Navigation`, `AI/GridAStar` - `Navigation::GridPath` over a width by height walkable array, returns cells start to goal; diagonal moves never squeeze between two walls; an optional cost per cell (0 or less blocks); `smooth` string-pulls the line of sight. `gridastar::Search` is the one A* loop (dense or sparse cells, optional closed set and expansion budget)
-  - 9.3.2 Tilemap paths - `AI/Navigation` - `Navigation::TilemapPath` treats tile id 0 as walkable and any other tile as a wall, unless a tile-id cost table is passed
+  - 9.3.1 Grid A* - `AI/Pathfinding` - `AStar` over a width by height walkable array, returns cells start to goal; diagonal moves never squeeze between two walls; an optional cost per cell (0 or less blocks); `smooth` string-pulls the line of sight
+  - 9.3.2 Tilemap paths - `AI/Pathfinding` - `OnTilemap` treats tile id 0 as walkable and any other tile as a wall, unless a tile-id cost table is passed
   - 9.3.3 Agent, costs and obstacles - `Components/GridPathAgent2D`, `GridCostLayer`, `GridObstacle2D` - the agent walks the tilemap; the cost layer prices a road tile and a mud tile (and script-set tiles or cells); an obstacle blocks a rectangle of cells and replans agents whose current path used one
-- **Code:** `AI/Navigation`, `AI/GridAStar`, `engine/src/AI/NavigationGrid.cpp`, `AI/Pathfinding` (old names), `AI/GridPath2D.cpp`, `Components/GridPathAgent2D`, `Components/GridCostLayer`, `Components/GridObstacle2D`
-- **API:** `Navigation::GridPath`, `Navigation::TilemapPath`, `Navigation::GridLineClear`, `Navigation::SmoothGridPath`, `GridCell`, `gridastar::Search`, old names `Pathfinding::AStar`, `Pathfinding::OnTilemap`, `Pathfinding::LineClear`, `Pathfinding::Smooth`, `Pathfinding::Cell`, `GridPathAgent2D`, `GridCostLayer`, `GridObstacle2D`, script `grid_move_to`, `grid_move_cell`, `grid_stop`, `grid_arrived`, `grid_set_tile_cost`, `grid_set_cell_cost`, `grid_block`, `grid_clear`, visual-script Walk the Grid, Stop Grid Walk, Grid Arrived
-- **Editor:** Add Component > Gameplay > Grid Path Agent (2D), Grid Movement Costs, Grid Obstacle (2D) (listed with the Nav Mesh components). Inspector labels: Which tilemap, Walk speed, Stop this close, Allow diagonal steps, Smooth the path, Pay for mud and roads, Plan again every (seconds), Road tile number, Road cost, Mud tile number, Mud cost, How many cells across, How many cells down, Block the path
+- **Code:** `AI/Pathfinding`, `AI/GridPath2D.cpp`, `Components/GridPathAgent2D`, `Components/GridCostLayer`, `Components/GridObstacle2D`
+- **API:** `Pathfinding::AStar`, `Pathfinding::OnTilemap`, `Pathfinding::LineClear`, `Pathfinding::Smooth`, `Pathfinding::Cell`, `GridPathAgent2D`, `GridCostLayer`, `GridObstacle2D`, script `grid_move_to`, `grid_move_cell`, `grid_stop`, `grid_arrived`, `grid_set_tile_cost`, `grid_set_cell_cost`, `grid_block`, `grid_clear`, visual-script Walk the Grid, Stop Grid Walk, Grid Arrived
+- **Editor:** Add Component > Gameplay > Grid Path Agent (2D), Grid Movement Costs, Grid Obstacle (2D). Inspector labels: Which tilemap, Walk speed, Stop this close, Allow diagonal steps, Smooth the path, Pay for mud and roads, Plan again every (seconds), Road tile number, Road cost, Mud tile number, Mud cost, How many cells across, How many cells down, Block the path
 - **Docs:** `docs/gameplay/navigation.md`
 - **Tests:** `pathfinding`
-- **Status:** Works - covered by `pathfinding` (paths pinned to the old search on a test grid, the shared A* on a sparse grid with a budget, detours, no path, diagonals that do not cut a corner, tilemap, a cheap road preferred over mud, a smoothed path shorter than the staircase and clear of walls, an obstacle on the path replans that agent and leaves another agent's path alone)
-- **Open:** 2D grid only; a start or goal on a wall returns no path; a grid over `Navigation::kMaxGridCells` (4096 x 4096) returns no path; smoothing does not re-price the route (it only refuses walls); the 2D agent is still its own component (`GridPathAgent2D`, not a mode of `NavMeshAgent`): one agent for both needs a 2D movement mode in `NavMeshAgent` and a change to the script bindings
+- **Status:** Works - covered by `pathfinding` (detours, no path, diagonals that do not cut a corner, tilemap, a cheap road preferred over mud, a smoothed path shorter than the staircase and clear of walls, an obstacle on the path replans that agent and leaves another agent's path alone)
+- **Open:** 2D grid only; a start or goal on a wall returns no path; a grid over `Pathfinding::kMaxCells` (4096 x 4096) returns no path; smoothing does not re-price the route (it only refuses walls); not used by the 3D agents, which go through `Navigation` (9.1.4)
 - **Related:** 9.1, 4.3, 2.6
 - **Words:** A*, astar, grid pathfinding, tilemap path, walkable grid, tower defense, 2D pathfinding, Pathfinding
 - **Seen as:** 2D enemies cut through walls or cannot find a route on a tilemap; a path zig-zags; no route is found when one exists
 - **Ask me like:** "make 2D enemies path around tilemap walls"; "tower defense units follow a path to the base"
 
 ### 9.4 Behavior trees
+- **System:** Behavior Trees - NPC brains drawn as a tree of choices and tasks.
 - **What:** NPC brains you author as a tree (`.okaybt`) of composites, decorators, tasks and services with a typed blackboard; a Behavior Tree Runner plays it on an NPC and moves the body, and a node editor window edits it with a live view.
 - **Parts:**
   - 9.4.1 Tree asset and node catalogue - `AI/BehaviorTree`, `engine/src/AI/BehaviorTree.cpp` - node types, parameter definitions, `BtValue` and `Blackboard`, text file load and save, validation issues
@@ -87,6 +91,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Ask me like:** "make a guard that patrols and chases the player"; "add a node that plays a sound then waits"
 
 ### 9.5 NPCs and perception
+- **System:** NPCs - Ready-made NPCs (animals, enemies, guards, companions) that see, hear and react.
 - **What:** The NPC Controller is a ready-made brain for wildlife, enemies, guards and companions: base behaviours (idle, wander, patrol, guard, follow, flee, chase) with sight cone, line of sight, hearing, detection time, search and leash, plus combat numbers and health.
 - **Parts:**
   - 9.5.1 Base behaviours - `Components/NPCController` - Idle, Wander, Patrol, Guard, Follow, Flee, Chase with waypoints, speeds, acceleration and turning
@@ -108,6 +113,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Ask me like:** "make a wolf that wanders and attacks when it sees me"; "stealth guard who needs two seconds to notice the player"
 
 ### 9.6 Nav areas and off-mesh links
+- **System:** Navigation
 - **What:** Each baked polygon has one of 32 areas (walkable, not walkable, water, road, custom) set per object with a Nav Mesh Modifier; the path search charges distance times the area's cost and each Nav Mesh Agent has an area mask. Nav Mesh Links (jump, drop, ladder) are extra edges the search can use and the agent crosses over time, with start and end callbacks.
 - **Parts:**
   - 9.6.1 Area types - `Components/NavMeshModifier`, `AI/NavMeshBake`, `AI/NavMesh` - area per collider (own or ancestor's), tops win, not-walkable cuts a hole, cells merge per area, area saved in the `.okaynav` poly record

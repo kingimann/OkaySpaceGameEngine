@@ -63,8 +63,8 @@ public:
         (void)origin; (void)dir; (void)maxT; (void)t; (void)n; return false;
     }
 
-    /// World-space center of the collider. With the Improved physics quality the offset turns and scales with the object
-    /// (as a child at that local position would); Classic adds it to the position unturned and unscaled, as it always did.
+    /// World-space center of the collider: the offset turns and scales with the object (as a child at that local
+    /// position would).
     Vec3 WorldCenter() const;
     /// World-space axis-aligned bounds (broad phase).
     virtual void WorldAABB(Vec3& outMin, Vec3& outMax) const = 0;

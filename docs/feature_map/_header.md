@@ -21,8 +21,9 @@ subsystems, which folder holds each, and what may include what (plan and audit: 
 - `docs/feature_map/NN-*.md` are the detail pages, one per area. Each sub-area has a block with what it
   is, its numbered parts, code, API, editor window, docs, tests, status, what is open, related
   sub-areas, the words people use for it, what you see when it is wrong, and an example request.
-- To change the map: edit a page, then run `python3 scripts/gen_feature_map.py`. The format is in
-  `docs/feature_map/README.md`.
+- To change the map: edit a page and check it with `python3 scripts/gen_feature_map.py --validate`. This
+  overview is rebuilt on main after the merge (`.github/workflows/regen-docs.yml`); PRs do not commit it.
+  The format is in `docs/feature_map/README.md`.
 
 **Status words:** Works (implemented and exercised by tests or shipping features), Partial (works with
 known gaps), Basic (minimal version), In flight (a PR or branch exists, not on main), Planned (not built).

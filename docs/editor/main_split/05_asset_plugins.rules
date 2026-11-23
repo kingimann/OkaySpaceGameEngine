@@ -1,0 +1,51 @@
+# Move 5 of the editor/main.cpp split (docs/editor/main_split_plan.md): sections 18 Find in Files -> editor/FindInFiles.*,
+# 21 Asset Manager -> editor/AssetManagerWindow.*, 22 Editor plugins (the plugin code, the Plugins menu and the Plugin
+# Manager) -> editor/PluginsWindow.*. The "Map Humanoid Bones" window that sat between the Plugins menu and the Plugin
+# Manager is not about plugins and stays in main.cpp.
+# Check it with (the parent of the move 5 commit; the moves are one commit each on top of bc5629ee8):
+#   python3 scripts/check_pure_move.py --base <move 5 commit>~1 --head <move 5 commit> --source editor/main.cpp \
+#       --dest editor/FindInFiles.hpp --dest editor/FindInFiles.cpp --dest editor/AssetManagerWindow.hpp \
+#       --dest editor/AssetManagerWindow.cpp --dest editor/PluginsWindow.hpp --dest editor/PluginsWindow.cpp \
+#       --dest editor/MainShared.hpp --rules docs/editor/main_split/05_asset_plugins.rules
+
+# Names main.cpp calls: `static` dropped (external linkage), declared in the new headers.
+change: static bool g_showFindInFiles = false; ==> bool g_showFindInFiles = false;
+change: static bool g_fifFocus = false; ==> bool g_fifFocus = false;
+change: static void DrawFindInFiles(EditorState& ed) { ==> void DrawFindInFiles(EditorState& ed) {
+change: static void DrawAssetManager(EditorState& ed) { ==> void DrawAssetManager(EditorState& ed) {
+change: static void SavePluginPrefs() { ==> void SavePluginPrefs() {
+change: static void NewPluginFromTemplate(EditorState& ed) { ==> void NewPluginFromTemplate(EditorState& ed) {
+change: static void TickPlugins(EditorState& ed) { ==> void TickPlugins(EditorState& ed) {
+change: static void DrawPluginsMenu(EditorState& ed) { ==> void DrawPluginsMenu(EditorState& ed) {
+change: static void DrawPluginManager(EditorState& ed) { ==> void DrawPluginManager(EditorState& ed) {
+# main.cpp's two forward declarations of plugin functions become the declarations in PluginsWindow.hpp.
+change: static void DrawPluginsMenu(EditorState& ed); ==> void DrawPluginsMenu(okay::editor::EditorState& ed);
+change: static void NewPluginFromTemplate(EditorState& ed); ==> void NewPluginFromTemplate(okay::editor::EditorState& ed);
+
+# The new headers: declarations of those names.
+add: ^extern bool g_showFindInFiles;$
+add: ^extern bool g_fifFocus;$
+add: ^void DrawFindInFiles\(okay::editor::EditorState& ed\);$
+add: ^void DrawAssetManager\(okay::editor::EditorState& ed\);$
+add: ^void SavePluginPrefs\(\);$
+add: ^void TickPlugins\(okay::editor::EditorState& ed\);$
+add: ^void DrawPluginManager\(okay::editor::EditorState& ed\);$
+
+# What the moved code still uses from main.cpp: `static` dropped there, declared in MainShared.hpp (Lower: declared in
+# FindInFiles.cpp, because nine other files that include MainShared.hpp define their own Lower).
+drop: ^static std::string Lower\(std::string s\) \{$
+add: ^std::string Lower\(std::string s\) \{$
+add: ^std::string Lower\(std::string s\);$
+drop: ^static std::string OkayExeDir\(\) \{$
+add: ^std::string OkayExeDir\(\) \{$
+add: ^std::string OkayExeDir\(\);$
+drop: ^static bool IsModelExt\(const std::string& extLower\) \{$
+add: ^bool IsModelExt\(const std::string& extLower\) \{$
+add: ^bool IsModelExt\(const std::string& extLower\);$
+add: ^extern bool g_showProject;$
+add: ^extern bool g_showAssetManager;$
+add: ^extern bool g_showPluginManager;$
+add: ^extern std::string g_pingAsset;$
+add: ^bool WriteFile\(const std::string& path, const std::string& text\);$
+add: ^std::string ReadFile\(const std::string& path\);$
+add: ^void RevealInFiles\(const std::string& path\);$

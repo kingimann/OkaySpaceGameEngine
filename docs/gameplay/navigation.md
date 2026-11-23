@@ -9,7 +9,8 @@
 NPCs, click-to-move players and `NavMeshAgent`s path over a **navigation mesh**:
 convex polygons baked from the scene's static colliders, joined by portals. A
 scene that never baked one keeps working: the same calls fall back to the
-probe grid (`NavGrid3D`), which samples the colliders lazily around each query.
+probe grid (`NavGrid3D`), which samples the colliders lazily around each query
+(its search is the same grid A* as the 2D grid paths below).
 The mesh is faster, knows about ledges, slopes, head room and floors above
 floors, and gives smooth string-pulled paths.
 
@@ -331,7 +332,12 @@ has no grid, and every query on it finds nothing.
 
 ## 2D grid paths
 
-Tilemap games use a grid, not the baked mesh. Add **Grid Path Agent** to the
+Tilemap games use a grid, not the baked mesh. This is part of the same
+navigation system: code calls `Navigation::GridPath` or
+`Navigation::TilemapPath` (the older `Pathfinding::AStar` and
+`Pathfinding::OnTilemap` still work and give the same paths), and the search
+is the same grid A* (`AI/GridAStar.hpp`) the 3D grid fallback uses when a
+scene has no baked mesh. Add **Grid Path Agent** to the
 walker and, on the tilemap, **Grid Movement Costs** when a road should be
 cheap or mud slow. A **Grid Obstacle** blocks the cells under it.
 

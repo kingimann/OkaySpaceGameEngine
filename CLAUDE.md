@@ -46,9 +46,13 @@ then this file gets updated. Keep this file short and true.
     (`tests/`, `okayui/tests/`, `assets/`, `examples/`). Keep `docs/README.md` (the index) in step when a guide is added.
 5. **Docs are for our own use only.** (Owner rule, 2026-11-17: "No more guides, tutorials or anything, documents are for
    our use only".) Do not write guides, tutorials, how-tos, quick starts or player/user-facing pages, and do not add new
-   ones. Keep only the internal records, short and in the same change as the code: the feature map
-   (`python3 scripts/gen_feature_map.py`, then `--check`), the roadmap, `docs/status/UNFINISHED.md` rows, and design or audit
-   notes when a decision needs one. Existing guides stay until the owner says to delete them; do not extend them.
+   ones. Keep only the internal records, short and in the same change as the code: the feature map (edit the hand-written
+   pages `docs/feature_map/NN-*.md`, check them with `python3 scripts/gen_feature_map.py --validate`), the roadmap,
+   `docs/status/UNFINISHED.md` rows, and design or audit notes when a decision needs one. Existing guides stay until the
+   owner says to delete them; do not extend them. **Generated docs are rebuilt on main, never committed in a PR**
+   (`docs/FEATURE_MAP.md`, `docs/SYSTEMS.md`, `docs/feature_map/_index_*.md`, `docs/engine/code_index*`, `docs/try_it.md`;
+   `.github/workflows/regen-docs.yml`): committing them made every other open PR conflict. If a branch changed one,
+   `bash scripts/precheck.sh --restore-generated` puts main's copy back.
 
 ## Pull requests and CI
 
@@ -73,7 +77,7 @@ then this file gets updated. Keep this file short and true.
 7a. **Run the checks before you push, so PRs are not red** (owner, 2026-11-23: "do what needs to be done to prevent
     it"). Before every push, by every Claude and every agent: merge main in, then `bash scripts/precheck.sh` (about a
     minute; the pre-push hook from `bash scripts/install_hooks.sh` runs it for you, once per clone). It catches conflict
-    markers, a branch that no longer merges, Windows thread includes, secrets, duplicate code, a stale feature map and
+    markers, a branch that no longer merges, Windows thread includes, secrets, duplicate code, invalid feature map pages and
     copies between open branches; `--build <dir> --tests` also builds what changed and runs every test it touches
     (required before a push, rule 6). A new or changed CI check is first run against every open PR (the integration check,
     or `scripts/precheck.sh --head origin/<branch>` per branch) and fixed until it turns nothing red that was green.
@@ -150,7 +154,9 @@ then this file gets updated. Keep this file short and true.
     the old code (rule 19c: no second copy kept "just in case"). New features ship on. The switches that are off today
     are being turned on one by one, each with its tests; one that cannot be turned on safely yet is finished first, not
     left off. Do not drop a format or feature just because it is hard: write the replacement. Cryptography is the one
-    exception (rule 18).
+    exception (rule 18). Why on (owner, 2026-11-23): "if it's not on, I can't find bugs". Our own parts are on in every
+    build the owner runs, so their bugs show up in normal use and get fixed; the Settings > Experimental switches start
+    ticked and the person can untick one to go back.
 18. **Cryptography cannot be replaced on our word.** It needs an outside review first. The owner has decided not to hire a reviewer (2026-11-14), so libsodium stays the default in every release and `okay::crypto` stays off by default. AI reviews (an internal agent, a second AI such as Grok through the `claude/crypto-review-grok` branch) are extra assurance and are reported as "not independently reviewed"; they do not unlock the switch. Releases refuse own-crypto builds.
 19. Do not switch to an own version until its tests show it is finished; finish it rather than leave it off. Say honestly how close each one is.
 

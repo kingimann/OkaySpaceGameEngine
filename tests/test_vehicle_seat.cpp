@@ -100,7 +100,7 @@ int main() {
         const float exitZ = w.car->transform->Position().z;
         Vec3 pp = w.p->transform->Position();
         CHECK_NEAR(pp.x, -1.8f, 1e-3f);               // exit point is 1.8 m to the left
-        CHECK_NEAR(pp.y, 0.0f, 1e-3f);
+        CHECK_NEAR(pp.y, 0.0f, 4e-3f);               // (this test has no floor: the step after getting out falls g*dt^2 = 2.7 mm)
         CHECK_NEAR(pp.z, exitZ, 0.4f);
         // Empty car brakes at 36 m/s^2: stopped within 0.6 s even with W held.
         w.Run({'w'}, 60);

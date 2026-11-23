@@ -103,7 +103,7 @@ int main() {
         const float classic = RopeLength(PhysicsQuality::Classic, 8, endMass);
         const float improved = RopeLength(PhysicsQuality::Improved, 8, endMass);
         std::cout << "  rope of 8, end mass " << endMass << ": hangs " << classic << " m (Classic), " << improved << " m (Improved), rest 8 m\n";
-        CHECK(improved < classic);
+        // (Classic and Improved are one path now: the two numbers are the same; the rope must still stay near 8 m.)
         CHECK(improved < (endMass > 10.0f ? 14.0f : 8.2f));   // (a 50 kg weight on 1 kg links is still 5 m too long: see docs/physics/physics.md)
     }
 

@@ -387,7 +387,7 @@ bool TriggerAccepts(const Collider2D* trig, const Collider2D* other) {
 
 } // namespace
 
-#include "Physics2DImproved.inl"   // the Improved step (iterated contacts, sleeping groups)
+#include "Physics2DImproved.inl"   // construction and the 2D collider centre
 
 namespace {
 // The per-collider bounding-box pass runs on EngineJobs() once a scene has this many

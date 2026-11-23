@@ -477,7 +477,7 @@ Back to the [code index](../code_index.md). 262 headers, 741 names.
 
 ## `engine/include/okay/Components/Joint3D.hpp`
 
-- `Joint3D` class, line 24
+- `Joint3D` class, line 32
 
 ## `engine/include/okay/Components/LODGroup.hpp`
 

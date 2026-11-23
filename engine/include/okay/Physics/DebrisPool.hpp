@@ -9,8 +9,8 @@
 //     does not need to stay for ever), then shrinks away over `fadeTime` seconds,
 //   * chunks sit on their own collision layer and (by default) do not collide with each other, so a pile of 500 chunks costs
 //     500 contacts with the ground and not 125 000 pairs. Set `collideWithEachOther` for chunks that must stack.
-// Chunks are ordinary Rigidbody3D + BoxCollider3D + MeshRenderer objects: they fall, bounce, slide and sleep under whichever
-// physics quality the scene uses (Improved lets a settled chunk sleep at once, which is what keeps the cost low).
+// Chunks are ordinary Rigidbody3D + BoxCollider3D + MeshRenderer objects: they fall, bounce, slide and sleep (a settled
+// chunk sleeps at once, which is what keeps the cost low).
 //
 //   DebrisPool debris(scene);                      // once
 //   debris.Spawn(pos, {0.2f, 0.2f, 0.2f}, vel, Color::FromBytes(120, 90, 60));   // as often as you like

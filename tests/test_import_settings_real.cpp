@@ -107,9 +107,10 @@ int main() {
         CHECK(Is(Sample(pt, 0.5f, 0.25f), 0, 1, 0));                // Point: one whole texel
         CHECK(Is(Sample(old, 0.5f, 0.25f), 0, 1, 0));               // the older layout's "nearest" counts
         CHECK(Is(Sample(bil, 0.5f, 0.25f), 0.5f, 0.5f, 0));
-        // Trilinear blends two mip levels, Bilinear stays on the nearest one.
-        CHECK(Near(Sample(none, 0.5f, 0.25f, 0.5f).b, 0.25f));
-        CHECK(Near(Sample(bil, 0.5f, 0.25f, 0.5f).b, 0.5f));
+        // Trilinear blends two mip levels, Bilinear stays on the nearest one. Level 1's blue is half on in linear light
+        // (blue and white of four texels), which is sRGB 0.735 (gamma-correct mips; a plain byte average gave 0.5).
+        CHECK(Near(Sample(none, 0.5f, 0.25f, 0.5f).b, 0.3677f));
+        CHECK(Near(Sample(bil, 0.5f, 0.25f, 0.5f).b, 0.7354f));
     }
     RUN_SUITE("texture wrap");
     {
@@ -131,7 +132,9 @@ int main() {
         const MipChain* b = GetCachedMips(off);
         CHECK(a && a->size() == 2 && b && b->size() == 1);
         // Far away (a high level of detail): with mips the picture averages out, without them it keeps its texels.
-        CHECK(Is(Sample(on, 0.25f, 0.25f, 8.0f), 0.5f, 0.5f, 0.5f));
+        // The average is taken in linear light (colour picture, sRGB): each channel is half on, which is sRGB 0.735,
+        // not the 0.5 a plain average of the stored bytes gave (that made far-away textures too dark).
+        CHECK(Is(Sample(on, 0.25f, 0.25f, 8.0f), 0.735f, 0.735f, 0.735f));
         CHECK(Is(Sample(off, 0.25f, 0.25f, 8.0f), 1, 0, 0));
     }
     RUN_SUITE("changing a setting shows after the caches are dropped");

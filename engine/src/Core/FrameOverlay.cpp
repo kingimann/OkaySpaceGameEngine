@@ -1,6 +1,7 @@
 #include "okay/Render/Culling.hpp"
 #include <chrono>
 #include "okay/Core/FrameOverlay.hpp"
+#include "okay/Render/TextureAsset.hpp"   // textures::OverlayLine
 #include "okay/Core/Game.hpp"
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Core/Time.hpp"
@@ -89,6 +90,7 @@ double FrameOverlay::NowSeconds() {
 std::vector<std::string> FrameOverlay::Lines(const GameLoop& loop) {
     std::vector<std::string> out = Format(loop.Stats().Snapshot(), StateOf(loop));
     if (!RendererName().empty()) out.push_back("renderer: " + RendererName());
+    if (textures::GetStats().count > 0) out.push_back(textures::OverlayLine());   // the shared texture library: count, MB, budget
     // Where the time goes in a voxel scene: only while a voxel terrain is running (it reported within the last second).
     const VoxelOverlayStats& v = Voxel();
     if (NowSeconds() - v.seenAt < 1.0) {

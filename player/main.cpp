@@ -27,6 +27,7 @@
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Core/SystemCost.hpp"       // F3 second page: ms per system
 #include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
+#include "okay/Render/TextureAsset.hpp"   // textures::Pump once a frame
 #include "okay/Core/GameLoop.hpp"        // the per-frame driver (clamp, smoothing, Time, update, quit)
 #include "okay/Core/ConsoleHost.hpp"     // the ` console: typed line, --cvar, standard cvars (game.speed, r.vsync, debug.*)
 #include "okay/Core/Cvar.hpp"
@@ -2383,6 +2384,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        okay::textures::Pump();   // shared texture library: hot reload (OKAY_TEXTURE_HOT_RELOAD=1), memory budget, F3 numbers
         okay::Prof().Begin("Render.Submit");
         int w, h; renderer->OutputSize(&w, &h);
         Camera* cam = scene.mainCamera;

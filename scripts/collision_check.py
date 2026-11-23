@@ -322,7 +322,7 @@ def to_markdown(rep, brief=False, title_level=2):
     if rep["generated_by_hand"]:
         out += [f"{h}# Generated files changed without their source (edited by hand?)", ""]
         for g in rep["generated_by_hand"][:15]:
-            out.append(f"- `{g['branch']}` changed `{g['file']}` only; regenerate with `{g['regen']}`")
+            out.append(f"- `{g['branch']}` changed `{g['file']}` without its source: {g['regen']}")
         out.append("")
     if rep["unclaimed"]:
         out += [f"{h}# Branches with no claim and no PR (pushed in the last 7 days)", ""]

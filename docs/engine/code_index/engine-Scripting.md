@@ -2,7 +2,7 @@
 
 # Code index: engine-Scripting
 
-Back to the [code index](../code_index.md). 6 headers, 29 names.
+Back to the [code index](../code_index.md). 5 headers, 19 names.
 
 ## `engine/include/okay/Scripting/NextScriptVM.hpp`
 
@@ -11,19 +11,6 @@ Back to the [code index](../code_index.md). 6 headers, 29 names.
 ## `engine/include/okay/Scripting/OkayScriptVM.hpp`
 
 - `OkayScriptVM` class, line 18: The built-in, dependency-free scripting backend. It implements a small
-
-## `engine/include/okay/Scripting/ScriptApiRegistry.hpp`
-
-- `ScriptApiError` struct, line 33: What a shared function reports to the script that called it (wrong object, unknown name, ...).
-- `ScriptApiType` enum, line 35
-- `ScriptApiKind` enum, line 37
-- `ScriptApiParam` struct, line 43
-- `ScriptApiEntry` struct, line 50
-- `AddScriptApi` function, line 72: Add an OkayScript-only function (the form engine modules use).
-- `ScriptApis` function, line 76: Every shared function, in registration order (the engine's own come first).
-- `FindScriptApi` function, line 78: The entry with this OkayScript name or alias, or null.
-- `ScriptApiDuplicateCount` function, line 89: How many times a language tried to define a function the shared table already has (a second copy).
-- `NoteScriptApiDuplicate` function, line 90
 
 ## `engine/include/okay/Scripting/ScriptUI.hpp`
 

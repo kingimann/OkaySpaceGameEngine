@@ -10,10 +10,10 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | Folder | Files | Names | Page |
 |---|---|---|---|
 | engine-AI | 7 | 37 | [code_index/engine-AI.md](code_index/engine-AI.md) |
-| engine-Animation | 9 | 89 | [code_index/engine-Animation.md](code_index/engine-Animation.md) |
+| engine-Animation | 11 | 106 | [code_index/engine-Animation.md](code_index/engine-Animation.md) |
 | engine-Audio | 11 | 33 | [code_index/engine-Audio.md](code_index/engine-Audio.md) |
 | engine-Combat | 1 | 6 | [code_index/engine-Combat.md](code_index/engine-Combat.md) |
-| engine-Components | 260 | 735 | [code_index/engine-Components.md](code_index/engine-Components.md) |
+| engine-Components | 262 | 741 | [code_index/engine-Components.md](code_index/engine-Components.md) |
 | engine-Core | 77 | 476 | [code_index/engine-Core.md](code_index/engine-Core.md) |
 | engine-Crypto | 2 | 21 | [code_index/engine-Crypto.md](code_index/engine-Crypto.md) |
 | engine-Debug | 11 | 80 | [code_index/engine-Debug.md](code_index/engine-Debug.md) |
@@ -31,7 +31,7 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Render | 48 | 424 | [code_index/engine-Render.md](code_index/engine-Render.md) |
 | engine-Scene | 28 | 123 | [code_index/engine-Scene.md](code_index/engine-Scene.md) |
 | engine-Script | 1 | 12 | [code_index/engine-Script.md](code_index/engine-Script.md) |
-| engine-Scripting | 6 | 29 | [code_index/engine-Scripting.md](code_index/engine-Scripting.md) |
+| engine-Scripting | 5 | 19 | [code_index/engine-Scripting.md](code_index/engine-Scripting.md) |
 | engine-Testing | 5 | 43 | [code_index/engine-Testing.md](code_index/engine-Testing.md) |
 | engine-Texture | 8 | 75 | [code_index/engine-Texture.md](code_index/engine-Texture.md) |
 | engine-UI | 16 | 77 | [code_index/engine-UI.md](code_index/engine-UI.md) |

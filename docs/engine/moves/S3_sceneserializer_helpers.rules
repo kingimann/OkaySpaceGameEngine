@@ -1,0 +1,11 @@
+# S3 (docs/engine/modularization_plan.md, section 3.1): the shared record helpers at the top of SceneSerializer.cpp (Quote, the
+# key=value reader and writer KvIn / KvOut, the curve, gradient, list and stance helpers) move out of its anonymous namespace
+# to SceneSerializerInternal.hpp (classes and templates, unchanged) and SceneSerializerHelpers.cpp (functions, unchanged), in
+# namespace okay::sceneser. The old file keeps `using namespace sceneser;`, so no call changes.
+#   python3 scripts/check_pure_move.py --base <commit before> --head <this commit> \
+#       --source engine/src/Scene/SceneSerializer.cpp --dest engine/src/Scene/SceneSerializerInternal.hpp \
+#       --dest engine/src/Scene/SceneSerializerHelpers.cpp --rules docs/engine/moves/S3_sceneserializer_helpers.rules
+# Declarations that the header adds for the functions that moved to the .cpp:
+add: ^\s*(void|char|std::string|std::vector<[\w:*<>]+>) \w+\(.*\);$
+add: ^\s*struct (KvOut|KvIn);$
+add: ^\s*using namespace sceneser;

@@ -105,6 +105,7 @@ add_library(okay_engine
     src/Scene/GameObject.cpp
     src/Scene/Transform.cpp
     src/Scene/Scene.cpp
+    src/Scene/SceneTemplatesBuilders.cpp
     src/Scene/SceneManager.cpp
     src/Scene/ObjectPool.cpp
     src/Scene/SceneSerializer.cpp
@@ -233,6 +234,7 @@ add_library(okay_engine
     src/Components/Character.cpp
     src/Components/CharacterFirstPerson.cpp
     src/Components/ModelAnimatorPose.cpp
+    src/Components/ModelAnimatorUpdate.cpp
     src/Components/PlayerView.cpp
     src/Components/PlayerController.cpp
     src/Components/CharacterAnimBackend.cpp

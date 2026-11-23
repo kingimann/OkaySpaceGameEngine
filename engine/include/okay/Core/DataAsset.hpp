@@ -50,8 +50,11 @@ public:
     static void SetBaseDir(const std::string& dir);
     static const std::string& BaseDir();
     /// Load (and cache) the asset at `path`; repeated calls reuse the instance. A
-    /// file that can't be opened is not remembered as empty: you get an empty asset
-    /// to Set() into, and while it stays untouched each call tries the file again.
+    /// file that can't be opened is not remembered as loaded: you get an empty asset
+    /// to Set() into, and each later call tries the file again. Once the file exists
+    /// it is read, including when a script already Set() values into the empty asset
+    /// (those values were only a stand-in while the file was missing). A file that
+    /// was already loaded is not read again until Reload().
     static DataAsset& Cached(const std::string& path);
     /// Re-read `path` into the cache (an edited or newly created file). False, with
     /// the cached copy kept, if it can't be read.

@@ -5129,3 +5129,8 @@ add_executable(test_vs_facing test_vs_facing.cpp)
 target_link_libraries(test_vs_facing PRIVATE okay::engine)
 target_compile_definitions(test_vs_facing PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_facing COMMAND test_vs_facing)
+
+# grok/core-1: area 1 core gaps. Additive block so another branch can keep its own registration at the end.
+add_executable(test_dataasset_file_appears test_dataasset_file_appears.cpp)
+target_link_libraries(test_dataasset_file_appears PRIVATE okay::engine)
+add_test(NAME dataasset_file_appears COMMAND test_dataasset_file_appears)

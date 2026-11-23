@@ -137,9 +137,10 @@ const std::string& DataAsset::BaseDir() { return g_baseDir; }
 
 DataAsset& DataAsset::Cached(const std::string& path) {
     DataAsset& a = g_cache[path];
-    // An entry whose file wasn't there is only a place for scripts to Set() into: while
-    // it is still untouched, every call tries the file again, so creating it later works.
-    if (!a.m_loaded && a.m_fields.empty() && a.Load(path)) a.m_loaded = true;
+    // An entry whose file wasn't there is a place for scripts to Set() into. Every later
+    // call tries the file again until one succeeds, so a file created after those Set()s
+    // is what Cached() returns (the script values were only a stand-in while it was missing).
+    if (!a.m_loaded && a.Load(path)) a.m_loaded = true;
     return a;
 }
 

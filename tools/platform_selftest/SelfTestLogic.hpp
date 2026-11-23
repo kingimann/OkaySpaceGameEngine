@@ -165,4 +165,25 @@ private:
     std::vector<Step> m_steps;
 };
 
+// ---- CI mode -------------------------------------------------------------------------------
+/// A step that needs hardware a build machine may not have (an OpenGL driver, a sound card). On a person's PC a
+/// failure is a FAIL. With --ci (a cloud runner: no GPU driver, no audio device) it is NOT TESTED, so the run says
+/// honestly that the machine could not show it, and never a PASS. A success is a PASS either way.
+inline Status HardwareStatus(bool ok, bool ci) { return ok ? Status::Pass : (ci ? Status::Skip : Status::Fail); }
+/// The detail text for such a step: the reason, plus why it was not counted as a failure under --ci.
+inline std::string HardwareDetail(const std::string& why, bool ci) {
+    return ci ? why + " (counted as not tested: --ci, this machine may have none)" : why;
+}
+
+/// The event pump check: `pushedBack` = an event given to Backend::PushEvent came back through PollEvent;
+/// `sawResize` / `gotW` x `gotH` = the WindowResized event that arrived after Window::SetSize(wantW, wantH) (that
+/// one goes through the operating system's own message queue). Pass only when both happened with the right size.
+inline Status PumpVerdict(bool pushedBack, bool sawResize, int gotW, int gotH, int wantW, int wantH, std::string& detail) {
+    const std::string want = std::to_string(wantW) + "x" + std::to_string(wantH);
+    detail = pushedBack ? "a pushed event came back" : "the pushed event did not come back";
+    if (!sawResize) detail += "; asking for " + want + ": no resize event arrived";
+    else detail += "; asking for " + want + " gave a resize event of " + std::to_string(gotW) + "x" + std::to_string(gotH);
+    return pushedBack && sawResize && gotW == wantW && gotH == wantH ? Status::Pass : Status::Fail;
+}
+
 } // namespace okay::selftest

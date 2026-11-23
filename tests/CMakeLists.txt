@@ -5074,6 +5074,11 @@ target_link_libraries(test_own_q3bsp_samples PRIVATE okay::engine)
 target_compile_definitions(test_own_q3bsp_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME own_q3bsp_samples COMMAND test_own_q3bsp_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
+add_executable(test_vs_editor_bugs test_vs_editor_bugs.cpp)
+target_include_directories(test_vs_editor_bugs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_editor_bugs PRIVATE okay::engine)
+target_compile_definitions(test_vs_editor_bugs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_editor_bugs COMMAND test_vs_editor_bugs)
 # One hostile-input battery over all six late own readers (glTF 1.0, OpenGEX, MDL, Q3BSP, IQM, COB): every truncation, every 32-bit word set to lying
 # values, bit flips, overlapping blocks, garbage with and without magic, deep nesting; time and counted-memory limits (tests/test_own_readers_sweep.cpp).
 add_executable(test_own_readers_sweep test_own_readers_sweep.cpp)

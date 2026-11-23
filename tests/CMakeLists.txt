@@ -2471,7 +2471,7 @@ add_test(NAME ticket_client COMMAND test_ticket_client)
 # Editor/launcher self-update: wait for the old process, swap, relaunch once.
 add_executable(test_app_restart test_app_restart.cpp)
 target_compile_features(test_app_restart PRIVATE cxx_std_17)
-target_include_directories(test_app_restart PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(test_app_restart PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_CURRENT_SOURCE_DIR})
 find_package(Threads REQUIRED)
 target_link_libraries(test_app_restart PRIVATE Threads::Threads)
 if(WIN32)

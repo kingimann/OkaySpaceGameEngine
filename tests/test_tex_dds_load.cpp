@@ -5,6 +5,7 @@
 //               in BC2 and BC3 the colour half always uses the 4 colour palette, whatever the endpoint order.
 //   BC2 alpha:  16 explicit 4 bit values, low nibble first, scaled by 17.
 #include "test_framework.hpp"
+#include "okay/Core/FileCopy.hpp"
 #include "okay/Texture/Bc.hpp"
 #include "okay/Texture/Dds.hpp"
 #include "okay/Texture/Texture.hpp"
@@ -465,8 +466,8 @@ void TestImportCache() {
     {
         const std::string out = "tex_dds_load_assets/build/Assets/brick.png";
         fs::create_directories("tex_dds_load_assets/build/Assets");
-        fs::copy_file(png, out, fs::copy_options::overwrite_existing);
-        fs::copy_file(png + ".okaymeta", out + ".okaymeta", fs::copy_options::overwrite_existing);
+        okay::CopyFileOver(png, out);
+        okay::CopyFileOver(png + ".okaymeta", out + ".okaymeta");
         err.clear();
         CHECK(ShipCompressedCopy(png, out, &err) && err.empty());
         CHECK(fs::exists(CompressedCachePath(out)));
@@ -477,7 +478,7 @@ void TestImportCache() {
         // a picture without `compress` ships nothing extra, and that is not an error
         const std::string plain = "tex_dds_load_assets/build/Assets/plain.png";
         CHECK(im.SavePNG("tex_dds_load_assets/plain.png"));
-        fs::copy_file("tex_dds_load_assets/plain.png", plain, fs::copy_options::overwrite_existing);
+        okay::CopyFileOver("tex_dds_load_assets/plain.png", plain);
         err.clear();
         CHECK(!ShipCompressedCopy("tex_dds_load_assets/plain.png", plain, &err) && err.empty());
         CHECK(!fs::exists(CompressedCachePath(plain)));

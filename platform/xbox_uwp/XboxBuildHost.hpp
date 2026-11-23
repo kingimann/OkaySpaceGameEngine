@@ -4,6 +4,7 @@
 // Written from the C++ standard and this folder's XboxAppx.hpp. The Windows process glue it is wired to is UNVERIFIED.
 #include "XboxAppx.hpp"
 #include "XboxBuildPlan.hpp"
+#include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy over an existing file (MinGW copy_file overwrite_existing fails on Windows)
 #include <filesystem>
 #include <fstream>
 
@@ -42,10 +43,10 @@ public:
                 else if (n == "tri_vs.cso" || n == "tri_ps.cso") cso.push_back(it->path());
             }
             if (exe.empty()) { err = "The build finished but OkaySpaceXbox.exe was not found under " + root.u8string(); return false; }
-            fs::copy_file(exe, pkg / "OkaySpaceXbox.exe", fs::copy_options::overwrite_existing, ec);
+            okay::CopyFileOver(exe, pkg / "OkaySpaceXbox.exe", ec);
             if (ec) { err = "Could not copy the program into the package: " + ec.message(); return false; }
             log.push_back("Copied " + exe.filename().string());
-            for (const fs::path& p : cso) { fs::copy_file(p, pkg / p.filename(), fs::copy_options::overwrite_existing, ec); log.push_back("Copied " + p.filename().string()); }
+            for (const fs::path& p : cso) { okay::CopyFileOver(p, pkg / p.filename(), ec); log.push_back("Copied " + p.filename().string()); }
             return true;
         }
         if (s.id == "pack") {

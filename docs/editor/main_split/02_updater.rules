@@ -1,0 +1,25 @@
+# Move 2 of the editor/main.cpp split (docs/editor/main_split_plan.md): namespace updater -> editor/Updater.hpp/.cpp.
+# Check it with (bc5629ee8 = origin/main when the move was made):
+#   python3 scripts/check_pure_move.py --base bc5629ee8 --head <move 2 commit> --source editor/main.cpp \
+#       --dest editor/Updater.hpp --dest editor/Updater.cpp --rules docs/editor/main_split/02_updater.rules
+# struct UpdateInfo moved whole into Updater.hpp (main.cpp keeps `updater::UpdateInfo g_update`). The four updater
+# declarations that move 1 put in MainShared.hpp now live in Updater.hpp; MainShared.hpp is not a --dest because lines
+# leave it (the checker fails any removal from a destination).
+
+# The default argument moved to the declaration in Updater.hpp (C++ allows it in one place only).
+change: std::string InstallUpdate(const std::string& latest, const std::string& ref = "main") { ==> std::string InstallUpdate(const std::string& latest, const std::string& ref) {
+
+# Updater.hpp: declarations of what main.cpp and BuildGame.cpp call (the definitions moved unchanged).
+add: ^extern bool pendingQuit;$
+add: ^std::string SelfPath\(\);$
+add: ^bool Download\(const std::string& url, const std::filesystem::path& outPath\);$
+add: ^std::string RawUrl\(const std::string& ref, const std::string& name\);$
+add: ^UpdateInfo CheckLatest\(\);$
+add: ^void Relaunch\(const std::string& path\);$
+add: ^bool FetchVerified\(const std::string& version, const std::string& asset, const std::filesystem::path& dest, std::string& reason\);$
+add: ^std::string InstallUpdate\(const std::string& latest, const std::string& ref = "main"\);$
+
+# main.cpp: SysNoWindow was `inline`; Updater.cpp (Relaunch) and later the Asset Manager call it, so it gets external
+# linkage and a declaration in MainShared.hpp (the body is unchanged).
+drop: ^inline int SysNoWindow\(const std::string& cmd\) \{$
+add: ^int SysNoWindow\(const std::string& cmd\) \{$

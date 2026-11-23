@@ -3,7 +3,8 @@
 // only the includes, the namespace lines and two default arguments (now in the header) differ.
 #include "EditorCommon.hpp"
 #include "BuildGame.hpp"
-#include "MainShared.hpp"            // updater::SelfPath / Download / RawUrl / FetchVerified, g_project, g_xboxExport* (main.cpp)
+#include "MainShared.hpp"            // g_project, g_xboxExport* (main.cpp)
+#include "Updater.hpp"               // updater::SelfPath / Download / RawUrl / FetchVerified
 #include "AnimatorPreview.hpp"       // apreview::Stop: a build ships the edited scene, not the running one
 #include "AntiCheatIntegrity.hpp"    // Data/manifest.json (opt-in anti-cheat)
 #include "BuildSettingsModel.hpp"    // bsm::ExtraFrom, the pre / post build commands, the exclude list

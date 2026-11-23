@@ -2,7 +2,7 @@
 
 # Code index: okayui
 
-Back to the [code index](../code_index.md). 11 headers, 632 names.
+Back to the [code index](../code_index.md). 12 headers, 638 names.
 
 ## `okayui/include/okay/UI/OkayUI.hpp`
 
@@ -340,20 +340,29 @@ Back to the [code index](../code_index.md). 11 headers, 632 names.
 - `ColorConvertRGBtoHSV` function, line 1532
 - `ColorConvertHSVtoRGB` function, line 1533
 
+## `okayui/include/okay/UI/OkayUICapture.hpp`
+
+- `CapturedGeometry` struct, line 19: Shapes cut out of the frame: the same vertices, indices and commands GetDrawData gives (indices start at 0 in 'vertices').
+- `BeginCapture` function, line 29: Start taking the shapes drawn from here on out of the frame (main and overlay layer). Nested calls are counted: only the
+- `EndCapture` function, line 33: Stop, move the shapes made since BeginCapture into 'out' (replacing what it held) and remove them from the frame. Windows begun
+- `Capturing` function, line 35: True between BeginCapture and its EndCapture.
+- `TexturePixels` struct, line 39: The pixels behind a DrawCmd::texture: RGBA8, top row first, 'w' x 'h'. 'generation' changes when the pixels change (a font
+- `GetTexturePixels` function, line 40
+
 ## `okayui/include/okay/UI/OkayUICodeEdit.hpp`
 
 - `CodePos` struct, line 26: A position in the text: a line and a byte offset in it.
 - `CodeColor` enum, line 35: What a stretch of text is, for colouring. The palette maps each to a colour.
 - `CodeToken` struct, line 42: A coloured stretch [start, end) of one line (byte offsets). Stretches not covered by a token are drawn in the default colour.
 - `CodeLanguage` struct, line 50: The words and comment styles of a C-like language, for the built-in highlighter.
-- `CLikeLanguage` function, line 57: C and C++ words with "//" and block comments.
-- `OkayScriptLanguage` function, line 59: OkayScript: the keywords and built-in types the script editor knew, "//" and "#" line comments and block comments.
-- `MakeCLikeHighlighter` function, line 62: The built-in highlighter for a language: keywords, types, known words, function calls, members after '.', strings with
-- `CodePalette` struct, line 65: Colours for the editor. Packed 0xAABBGGRR like the rest of OkayUI (see RGBA).
-- `DefaultCodePalette` function, line 71: The Darcula-flavoured palette the script editor uses.
-- `CodeMarker` struct, line 75: An error (or warning) the caller wants shown: a mark in the gutter, a wash over the line and a wavy underline under the
-- `CodeMove` enum, line 82: Where the caret goes.
-- `CodeEdit` class, line 88
+- `CLikeLanguage` function, line 61: C and C++ words with "//" and block comments.
+- `OkayScriptLanguage` function, line 63: OkayScript: the keywords and built-in types the script editor knew, "//" and "#" line comments and block comments.
+- `MakeCLikeHighlighter` function, line 66: The built-in highlighter for a language: keywords, types, known words, function calls, members after '.', strings with
+- `CodePalette` struct, line 69: Colours for the editor. Packed 0xAABBGGRR like the rest of OkayUI (see RGBA).
+- `DefaultCodePalette` function, line 81: The Darcula-flavoured palette the script editor uses.
+- `CodeMarker` struct, line 85: An error (or warning) the caller wants shown: a mark in the gutter, a wash over the line and a wavy underline under the
+- `CodeMove` enum, line 93: Where the caret goes.
+- `CodeEdit` class, line 99
 
 ## `okayui/include/okay/UI/OkayUICompat.hpp`
 

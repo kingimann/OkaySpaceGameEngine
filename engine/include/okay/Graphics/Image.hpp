@@ -1,5 +1,5 @@
 #pragma once
-#include "okay/Render/Color.hpp"
+#include "okay/Math/Color.hpp"
 #include <cstdint>
 #include <string>
 #include <vector>

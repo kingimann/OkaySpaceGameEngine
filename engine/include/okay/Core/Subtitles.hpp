@@ -15,7 +15,7 @@
 //    text size, background and its opacity, where on screen. Saved through Prefs.
 //  * SubtitleTrack: lines with start times, read from or written to .srt files and played back
 //    against a clock.
-#include "okay/Render/Color.hpp"
+#include "okay/Math/Color.hpp"
 
 #include <functional>
 #include <map>

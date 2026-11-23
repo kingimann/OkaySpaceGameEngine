@@ -678,6 +678,25 @@ private:
             putAt(b, off + static_cast<int>(init->text.size()), 0, 1);
             return;
         }
+        if (isFp(*t)) {
+            // A float or double element: the IEEE 754 bits of the constant.
+            double fv = 0;
+            if (!fpConst(*init, fv)) {
+                err(init->line, init->col, "global initializer is not supported");
+                return;
+            }
+            if (t->kind == Type::Kind::Float) {
+                float f = static_cast<float>(fv);
+                std::uint32_t b32 = 0;
+                std::memcpy(&b32, &f, 4);
+                putAt(b, off, static_cast<std::int64_t>(b32), 4);
+            } else {
+                std::uint64_t b64 = 0;
+                std::memcpy(&b64, &fv, 8);
+                putAt(b, off, static_cast<std::int64_t>(b64), 8);
+            }
+            return;
+        }
         std::int64_t val = 0;
         if (init->kind == Expr::Kind::Int || init->kind == Expr::Kind::Char) val = static_cast<std::int64_t>(init->ival);
         else if (init->kind == Expr::Kind::Unary && init->text == "-" && !init->kids.empty() && init->kids[0] &&
@@ -722,6 +741,7 @@ private:
         Global g;
         g.name = s.gname;
         g.localSym = d.isStatic;
+        g.weakSym = d.isInline && !d.isStatic;
         bool brace = d.init && d.init->kind == Expr::Kind::Brace;
         bool strArr = d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array;
         double fv = 0;
@@ -1317,6 +1337,7 @@ private:
             v.step = a.step;
             v.inner = a.inner;
             v.fields = a.fields;
+            if (e.checked) v.fpw = fpWidthOf(e.checked.get());  // a float or double field
             return v;
         }
         case Expr::Kind::Brace:
@@ -1451,7 +1472,9 @@ private:
             a.op = p.op;
             a.width = p.step == 0 ? 8 : p.step;
             a.ok = true;
-            return loadAddr(a, p.inner, e.checked && e.checked->unsign);
+            Val v = loadAddr(a, p.inner, e.checked && e.checked->unsign);
+            if (e.checked) v.fpw = fpWidthOf(e.checked.get());  // *p of a float or double
+            return v;
         }
         if (e.text == "+") return lowerExpr(*e.kids[0]);
         Val a = lowerExpr(*e.kids[0]);
@@ -2012,6 +2035,22 @@ private:
             }
         }
         if (direct && (fname == "__va_start" || fname == "__va_arg" || fname == "__va_argp")) return lowerVa(e, fname);
+        if (direct && (fname == "__builtin_sqrt" || fname == "__builtin_sqrtf") && e.kids.size() == 2 && e.kids[1]) {
+            int w = fname == "__builtin_sqrtf" ? 4 : 8;
+            Val v = lowerExpr(*e.kids[1]);
+            if (v.fpw != w) v = cvtFp(v, v.fpw, w);
+            Inst in;
+            in.op = Inst::Op::Sqrt;
+            in.fp = true;
+            in.extra = w;
+            in.dst = fresh();
+            in.a = v.op;
+            emit(in);
+            Val out;
+            out.op = Operand::vreg(in.dst);
+            out.fpw = w;
+            return out;
+        }
         if (!direct) target = lowerExpr(*e.kids[0]).op;
         int reg = 0;
         bool retRec = e.checked &&
@@ -2083,6 +2122,25 @@ private:
                 else {
                     regs.push_back(val);
                     ++reg;
+                }
+                continue;
+            }
+            // A struct of up to 16 bytes that is a call's result arrives in registers (rax, or
+            // rax:rdx), not as an address: pass those eightbytes on as they are.
+            const bool inRegs = !memClass && sz <= 16 && e.kids[i]->kind == Expr::Kind::Call;
+            if (inRegs && (v.pair || nreg == 1)) {
+                Operand lo = v.op;
+                Operand hi = v.pair ? v.hi : Operand::number(0);
+                if (reg + nreg > 6) {
+                    stack.push_back(lo);
+                    if (nreg == 2) stack.push_back(hi);
+                } else {
+                    regs.push_back(lo);
+                    ++reg;
+                    if (nreg == 2) {
+                        regs.push_back(hi);
+                        ++reg;
+                    }
                 }
                 continue;
             }

@@ -24,7 +24,7 @@
 namespace okaycc {
 namespace compiler {
 struct Mod {
-    enum class Kind { Ptr, Arr, Func, Ref } kind = Kind::Ptr;
+    enum class Kind { Ptr, Arr, Func, Ref, RRef } kind = Kind::Ptr;
     std::unique_ptr<Expr> bound;
     bool unsized = false;
     bool variadic = false;
@@ -271,7 +271,7 @@ private:
             const Token& n2 = toks_[idx + 2];
             return isP(n2, "~") || (n2.kind == Tok::Ident && n2.text == t.text);
         }
-        return n.kind == Tok::Punct && (n.text == "*" || n.text == "&" || n.text == ")" || n.text == ">");
+        return n.kind == Tok::Punct && (n.text == "*" || n.text == "&" || n.text == "&&" || n.text == ")" || n.text == ">");
     }
     // A qualified type name at token idx: N::C or N::M::C naming a class, or N::T naming a typedef
     // declared while namespace N was open (typedef names are kept unqualified). end is set to the
@@ -1227,6 +1227,120 @@ private:
         return jt == it->second.end() ? nullptr : jt->second.get();
     }
 
+    // The implicit copy assignment operator ([class.copy.assign]): a class with no operator= of its
+    // own, whose base or a member has one, assigns the base and each member in turn (an array
+    // member element by element) and returns *this. Without such a part, assignment stays a copy
+    // of the bytes, which is the same thing.
+    static bool hasAssign(const Type* cls) {
+        if (!cls) return false;
+        for (const Param& q : cls->params)
+            if (q.name == "operator=" && !q.mangled.empty()) return true;
+        return false;
+    }
+    void implicitAssign(ClassCtx& c, Type& T, Type* B, const Pos& p) {
+        if (hasAssign(&T)) return;
+        bool parts = B && hasAssign(B);
+        for (auto& f : ownFields(T)) {
+            const Type* ft = f.second;
+            while (ft && ft->kind == Type::Kind::Array && ft->inner) ft = ft->inner.get();
+            if (ft && ft->kind == Type::Kind::Struct && !ft->tag.empty() && hasAssign(classOf(ft->tag))) parts = true;
+        }
+        if (!parts) return;
+        auto refT = [&]() {
+            auto r = ty(Type::Kind::Reference);
+            r->inner = ty(Type::Kind::Struct);
+            r->inner->tag = c.tag;
+            return r;
+        };
+        auto fn = ty(Type::Kind::Function);
+        fn->inner = refT();
+        Param op;
+        op.name = "__o";
+        op.type = refT();
+        fn->params.push_back(std::move(op));
+        Param m;
+        m.name = "operator=";
+        m.mangled = mangleFunc(c.tag + "::operator=", *fn);
+        m.type = cloneType(*fn);
+        T.params.push_back(std::move(m));
+        auto decl = newMethodDecl(c.tag, T.params.back().mangled, *fn, fn->params, p);
+        auto body = sBlock(p);
+        auto other = [&](const std::string& field) {
+            auto dot = std::make_unique<Expr>();
+            dot->kind = Expr::Kind::Member;
+            dot->text = ".";
+            dot->line = p.line;
+            dot->col = p.col;
+            dot->file = p.file;
+            dot->kids.push_back(eName("__o", p));
+            dot->kids.push_back(eName(field, p));
+            return dot;
+        };
+        if (B) {
+            // *(B *)this = *(B *)&__o: the base part, with the base's own operator= when it has one.
+            auto castTo = [&](std::unique_ptr<Expr> x) {
+                auto cst = std::make_unique<Expr>();
+                cst->kind = Expr::Kind::Cast;
+                cst->line = p.line;
+                cst->col = p.col;
+                cst->file = p.file;
+                cst->ty = ty(Type::Kind::Pointer);
+                cst->ty->inner = ty(Type::Kind::Struct);
+                cst->ty->inner->tag = T.base;
+                cst->kids.push_back(std::move(x));
+                auto d = std::make_unique<Expr>();
+                d->kind = Expr::Kind::Unary;
+                d->text = "*";
+                d->line = p.line;
+                d->col = p.col;
+                d->file = p.file;
+                d->kids.push_back(std::move(cst));
+                return d;
+            };
+            body->stmts.push_back(sExpr(eAssign(castTo(eName("this", p)), castTo(eAddr(eName("__o", p), p)), p), p));
+        }
+        for (auto& f : ownFields(T)) {
+            if (f.second && f.second->kind == Type::Kind::Array) {
+                std::uint64_t n = f.second->bound && f.second->bound->kind == Expr::Kind::Int ? f.second->bound->ival : 0;
+                for (std::uint64_t k = 0; k < n; ++k) {
+                    auto idx = [&](std::unique_ptr<Expr> base) {
+                        auto i = std::make_unique<Expr>();
+                        i->kind = Expr::Kind::Int;
+                        i->ival = k;
+                        auto el = std::make_unique<Expr>();
+                        el->kind = Expr::Kind::Index;
+                        el->line = p.line;
+                        el->col = p.col;
+                        el->file = p.file;
+                        el->kids.push_back(std::move(base));
+                        el->kids.push_back(std::move(i));
+                        return el;
+                    };
+                    body->stmts.push_back(
+                        sExpr(eAssign(idx(eArrow(eName("this", p), f.first, p)), idx(other(f.first)), p), p));
+                }
+                continue;
+            }
+            body->stmts.push_back(sExpr(eAssign(eArrow(eName("this", p), f.first, p), other(f.first), p), p));
+        }
+        auto ret = std::make_unique<Stmt>();
+        ret->kind = Stmt::Kind::Return;
+        ret->line = p.line;
+        ret->col = p.col;
+        ret->file = p.file;
+        auto self = std::make_unique<Expr>();
+        self->kind = Expr::Kind::Unary;
+        self->text = "*";
+        self->line = p.line;
+        self->col = p.col;
+        self->file = p.file;
+        self->kids.push_back(eName("this", p));
+        ret->expr = std::move(self);
+        body->stmts.push_back(std::move(ret));
+        decl->body = std::move(body);
+        extras_.push_back(std::move(decl));
+    }
+
     void finishClass(ClassCtx& c) {
         Type& T = *c.t;
         Type* B = T.base.empty() ? nullptr : classOf(T.base);
@@ -1333,6 +1447,7 @@ private:
                 c.ctors.push_back(std::move(d));
             }
         }
+        implicitAssign(c, T, B, p);
         bool baseVirt = B && special(B, "<dtor>") && special(B, "<dtor>")->vslot >= 0;
         if (!c.dtorDeclared && needDtor) {
             registerDtor(c, baseVirt, at);
@@ -1858,6 +1973,13 @@ private:
             }
             if (!pub) t->nonpod = true;
             if (memberInit(tag, d.name)) cx.cxx = true;
+            {
+                // A member of a class that constructs, destroys or assigns: this class must too.
+                const Type* ft = field.type.get();
+                while (ft && ft->kind == Type::Kind::Array && ft->inner) ft = ft->inner.get();
+                Type* mc = ft && ft->kind == Type::Kind::Struct && !ft->tag.empty() ? classOf(ft->tag) : nullptr;
+                if (mc && (mc->needCtor || mc->needDtor || hasAssign(mc))) cx.cxx = true;
+            }
             t->params.push_back(std::move(field));
             while (fieldBase && eatP(",")) {
                 // More declarators of the same type: int a, *b, c[4];
@@ -1926,6 +2048,10 @@ private:
             }
             if (eatP("&")) {
                 prefix.push_back(Mod::Kind::Ref);
+                continue;
+            }
+            if (eatP("&&")) {
+                prefix.push_back(Mod::Kind::RRef);  // T&&: an rvalue (or forwarding) reference
                 continue;
             }
             break;
@@ -2065,8 +2191,15 @@ private:
             if (m.kind == Mod::Kind::Ptr) {
                 t->kind = Type::Kind::Pointer;
                 t->inner = std::move(base);
-            } else if (m.kind == Mod::Kind::Ref) {
+            } else if (m.kind == Mod::Kind::Ref || m.kind == Mod::Kind::RRef) {
+                if (base && base->kind == Type::Kind::Reference) {
+                    // Reference collapsing ([dcl.ref] p6): T& && is T&, T&& && is T&&.
+                    if (m.kind == Mod::Kind::Ref) base->rref = false;
+                    t = std::move(base);
+                    continue;
+                }
                 t->kind = Type::Kind::Reference;
+                t->rref = m.kind == Mod::Kind::RRef;
                 t->inner = std::move(base);
             } else if (m.kind == Mod::Kind::Arr) {
                 t->kind = Type::Kind::Array;
@@ -2310,9 +2443,14 @@ private:
                 if (!partial) err("too few template arguments");
                 break;
             }
+            // A default may name the earlier parameters (class C = vector<T>, [temp.param] p10):
+            // they are bound while it is read.
             std::size_t saved = i_;
+            auto es = bindParams(td, out);
             i_ = td.params[idx].defStart;
-            out.push_back(parseOneArg(td.params[idx]));
+            TArg a = parseOneArg(td.params[idx]);
+            unbindParams(es);
+            out.push_back(std::move(a));
             i_ = saved;
         }
     }
@@ -2449,8 +2587,12 @@ private:
         }
         tscopes_.pop_back();
         i_ = td.end;
-        funcTemplateSigs()[name] = std::move(sig);
-        ftmpl_[name] = td;
+        // More than one function template may have this name ([temp.over]): the others are kept as
+        // name#1, name#2, ...; the checker deduces against each.
+        std::string key = name;
+        for (int k = 1; ftmpl_.count(key); ++k) key = name + "#" + std::to_string(k);
+        funcTemplateSigs()[key] = std::move(sig);
+        ftmpl_[key] = td;
     }
 
     std::unique_ptr<Type> instantiateClass(const std::string& name) {
@@ -2722,12 +2864,13 @@ private:
             flushExtras(tu);
             return;
         }
-        bool ext = false, st = anonNs_ > 0, td = false, inl = false;
+        bool ext = false, st = anonNs_ > 0, td = false, inl = false, inlVar = false, cexpr = false;
         for (;;) {
             if (eatKw("extern")) ext = true;
             else if (eatKw("static")) st = true;
             else if (eatKw("typedef")) td = true;
-            else if (eatKw("inline") || eatKw("constexpr")) inl = true;
+            else if (eatKw("inline")) inl = inlVar = true;
+            else if (eatKw("constexpr")) inl = cexpr = true;
             else break;
         }
         auto base = parseBase();
@@ -2759,7 +2902,10 @@ private:
                 }
                 auto decl = makeDecl(d, std::move(type), std::move(init));
                 if (ext && !decl->init) decl->isExtern = true;
-                decl->isStatic = st;
+                // A constexpr variable at namespace scope has internal linkage ([basic.link] p3); an
+                // inline variable has one copy in the program, kept by the linker ([dcl.inline]).
+                decl->isStatic = st || (cexpr && !inlVar && !decl->function);
+                decl->isInline = inlVar && !decl->isStatic;
                 tu.decls.push_back(std::move(decl));
             }
         };
@@ -2877,6 +3023,7 @@ private:
         }
         std::unique_ptr<Expr> init;
         if (eatP("=")) init = parseInitializer();
+        else if (isP("{") && type && type->kind != Type::Kind::Function) init = parseInitializer();  // T x{...};
         keep(d, std::move(type), std::move(init));
         while (eatP(",")) {
             Parsed d2 = parseDeclarator(true);
@@ -4188,8 +4335,10 @@ private:
                 n->col = e->col;
                 n->kids.push_back(std::move(e));
                 if (!eatP(")")) {
-                    n->kids.push_back(parseAssign());
-                    while (eatP(",")) n->kids.push_back(parseAssign());
+                    // An argument may be a braced list; the checker makes it an object of the
+                    // parameter's class.
+                    n->kids.push_back(isP("{") ? parseInitializer() : parseAssign());
+                    while (eatP(",")) n->kids.push_back(isP("{") ? parseInitializer() : parseAssign());
                     expectP(")", ")");
                 }
                 e = std::move(n);
@@ -4298,7 +4447,24 @@ private:
                     e->kids.push_back(std::move(inner));
                     return e;
                 }
-                i_ = start;  // N::T(args) of a class: handled below
+                if (tyName->kind == Type::Kind::Struct && !tyName->tag.empty() && eatP("(")) {
+                    // N::T(args): a temporary of the class, as for T(args) below.
+                    std::vector<std::unique_ptr<Expr>> args;
+                    if (!eatP(")")) {
+                        args.push_back(parseAssign());
+                        while (eatP(",")) args.push_back(parseAssign());
+                        expectP(")", ")");
+                    }
+                    std::string tmp = "__tmp" + std::to_string(newN_++);
+                    auto comma = ex(Expr::Kind::Comma, at);
+                    comma->ival = 7;
+                    comma->text = tmp;
+                    comma->ty = cloneType(*tyName);
+                    comma->kids.push_back(ctorCall(tyName->tag, eAddr(eName(tmp, pos), pos), std::move(args), pos));
+                    comma->kids.push_back(eName(tmp, pos));
+                    return comma;
+                }
+                i_ = start;
             }
         }
         if ((isKw("static_cast") || isKw("reinterpret_cast") || isKw("const_cast")) && nextIs("<")) {

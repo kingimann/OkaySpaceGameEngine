@@ -20,7 +20,23 @@ public:
         for (unsigned long i = 0; i < o.size_; ++i) data_[i] = o.data_[i];
         size_ = o.size_;
     }
+    vector(vector<T> &&o) : data_(o.data_), size_(o.size_), cap_(o.cap_) {
+        o.data_ = nullptr;
+        o.size_ = 0;
+        o.cap_ = 0;
+    }
     ~vector() { delete[] data_; }
+    vector<T> &operator=(vector<T> &&o) {
+        if (this == &o) return *this;
+        delete[] data_;
+        data_ = o.data_;
+        size_ = o.size_;
+        cap_ = o.cap_;
+        o.data_ = nullptr;
+        o.size_ = 0;
+        o.cap_ = 0;
+        return *this;
+    }
     vector<T> &operator=(const vector<T> &o) {
         if (this == &o) return *this;
         size_ = 0;
@@ -56,6 +72,16 @@ public:
             data_[size_] = keep;
         } else {
             data_[size_] = v;
+        }
+        ++size_;
+    }
+    void push_back(T &&v) {
+        if (size_ == cap_) {
+            T keep = std::move(v);
+            reserve(cap_ == 0 ? 4 : cap_ * 2);
+            data_[size_] = std::move(keep);
+        } else {
+            data_[size_] = std::move(v);
         }
         ++size_;
     }

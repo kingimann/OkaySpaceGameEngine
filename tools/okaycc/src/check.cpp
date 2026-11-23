@@ -10,6 +10,7 @@ struct ET {
     bool mod = false;
     bool nullc = false;
     bool bad = false;
+    bool xvalue = false;  // the result of a call returning T&& (std::move): an rvalue for overloads
     int line = 1;
     int col = 1;
 };
@@ -29,7 +30,7 @@ public:
         scopes_.emplace_back();
         // Declare every function first, so a call may come before the definition (class members).
         for (auto& d : tu.decls) {
-            if (d && d->function && d->type) add(d->name, cloneType(*d->type), true, d->line, d->col);
+            if (d && d->function && d->type) addFunction(*d);
             else if (d && !d->vt.empty() && d->type) add(d->name, cloneType(*d->type), false, d->line, d->col);
         }
         for (auto& d : tu.decls) {
@@ -263,6 +264,19 @@ private:
                     scope = scope.substr(0, cut);
                 }
             }
+            if (e.text == "__builtin_sqrt" || e.text == "__builtin_sqrtf") {
+                // The square root instruction (lowered to SQRTSD / SQRTSS).
+                ET b;
+                b.line = e.line;
+                b.col = e.col;
+                Type::Kind k = e.text == "__builtin_sqrtf" ? Type::Kind::Float : Type::Kind::Double;
+                b.type = prim(Type::Kind::Function);
+                b.type->inner = prim(k);
+                Param a;
+                a.type = prim(k);
+                b.type->params.push_back(std::move(a));
+                return b;
+            }
             if (e.text == "malloc" || e.text == "free") {
                 ET b;
                 b.line = e.line;
@@ -327,6 +341,7 @@ private:
                 }
                 r.type = cloneType(*inner.type->inner);
                 r.lvalue = true;
+                r.xvalue = e.ival == 5;
                 r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type) || r.type->kind == Type::Kind::Struct;
                 return r;
             }
@@ -614,6 +629,7 @@ private:
         r.mod = a.mod;
         r.nullc = a.nullc;
         r.bad = a.bad;
+        r.xvalue = a.xvalue;
         r.line = a.line;
         r.col = a.col;
         return r;
@@ -926,19 +942,36 @@ private:
                 return result(prim(Type::Kind::Int));
             }
         }
+        // The usual arithmetic conversions (ISO C 6.3.1.8): char, short and bool become int; a long
+        // operand makes the result long, unsigned when that long is unsigned; otherwise int,
+        // unsigned when an int operand is. A shift has the promoted type of its left operand.
+        auto arithType = [&](const Type& x, const Type& y) {
+            bool xl = x.kind == Type::Kind::Long, yl = y.kind == Type::Kind::Long;
+            bool xi = x.kind == Type::Kind::Int, yi = y.kind == Type::Kind::Int;
+            auto t = prim(xl || yl ? Type::Kind::Long : Type::Kind::Int);
+            if (xl || yl) t->unsign = (xl && x.unsign) || (yl && y.unsign);
+            else t->unsign = (xi && x.unsign) || (yi && y.unsign);
+            return t;
+        };
+        auto promoted = [&](const Type& x) {
+            auto t = prim(x.kind == Type::Kind::Long ? Type::Kind::Long : Type::Kind::Int);
+            t->unsign = (x.kind == Type::Kind::Long || x.kind == Type::Kind::Int) && x.unsign;
+            return t;
+        };
         if (op == "+" ) {
-            if (isIntish(*a.type) && isIntish(*b.type)) return result(prim(Type::Kind::Int));
+            if (isIntish(*a.type) && isIntish(*b.type)) return result(arithType(*a.type, *b.type));
             if (isPtr(*a.type) && isIntish(*b.type)) return result(cloneType(*a.type));
             if (isIntish(*a.type) && isPtr(*b.type)) return result(cloneType(*b.type));
         } else if (op == "-") {
-            if (isIntish(*a.type) && isIntish(*b.type)) return result(prim(Type::Kind::Int));
+            if (isIntish(*a.type) && isIntish(*b.type)) return result(arithType(*a.type, *b.type));
             if (isPtr(*a.type) && isIntish(*b.type)) return result(cloneType(*a.type));
             if (isPtr(*a.type) && isPtr(*b.type) && a.type->inner && b.type->inner &&
                 sameType(*a.type->inner, *b.type->inner))
-                return result(prim(Type::Kind::Int));
-        } else if (op == "*" || op == "/" || op == "%" || op == "&" || op == "|" || op == "^" || op == "<<" ||
-                   op == ">>") {
-            if (isIntish(*a.type) && isIntish(*b.type)) return result(prim(Type::Kind::Int));
+                return result(prim(Type::Kind::Long));  // ptrdiff_t
+        } else if (op == "<<" || op == ">>") {
+            if (isIntish(*a.type) && isIntish(*b.type)) return result(promoted(*a.type));
+        } else if (op == "*" || op == "/" || op == "%" || op == "&" || op == "|" || op == "^") {
+            if (isIntish(*a.type) && isIntish(*b.type)) return result(arithType(*a.type, *b.type));
         } else if (op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!=") {
             bool arith = isIntish(*a.type) && isIntish(*b.type);
             bool ptrs = isPtr(*a.type) && isPtr(*b.type) && a.type->inner && b.type->inner &&
@@ -973,6 +1006,27 @@ private:
             bool arith = (isFp(*lhs.type) && (isFp(*rhs.type) || isIntish(*rhs.type))) ||
                          (isIntish(*lhs.type) && isFp(*rhs.type)) ||
                          (isPtr(*lhs.type) && isIntish(*rhs.type) && (e.text == "+=" || e.text == "-="));
+            if (arith && hasSideEffects(*e.kids[0]) && e.text.size() >= 2) {
+                // The left side has effects (v[i] *= x with an operator[] call): take its address
+                // once, then *p = *p op x ([expr.ass] p7).
+                std::string tmp = newTemp(*ptrTo(cloneType(*lhs.type)), e, false);
+                auto setp = eAssignNode(mkName(tmp, e), eUnary("&", std::move(e.kids[0]), e), e);
+                auto bin = mkE(Expr::Kind::Bin, e);
+                bin->text = e.text.substr(0, e.text.size() - 1);
+                bin->kids.push_back(eUnary("*", mkName(tmp, e), e));
+                bin->kids.push_back(std::move(e.kids[1]));
+                auto as = mkE(Expr::Kind::Assign, e);
+                as->text = "=";
+                as->kids.push_back(eUnary("*", mkName(tmp, e), e));
+                as->kids.push_back(std::move(bin));
+                e.kind = Expr::Kind::Comma;
+                e.text.clear();
+                e.ival = 0;
+                e.kids.clear();
+                e.kids.push_back(std::move(setp));
+                e.kids.push_back(std::move(as));
+                return checkExprBody(e);
+            }
             if (!arith || hasSideEffects(*e.kids[0]) || e.text.size() < 2) {
                 err(e.line, e.col, "cannot assign this value");
                 return bad(e.line, e.col);
@@ -1009,8 +1063,19 @@ private:
     // Score how well an argument fits a parameter: 0 exact, 1 by conversion, -1 not at all.
     int fitScore(const Type& param, const ET& arg) {
         if (arg.bad || !arg.type) return 0;
+        if (param.kind == Type::Kind::Reference && param.inner && param.rref) {
+            // T&& prefers an rvalue or the result of std::move; an lvalue fits only as a last resort
+            // (a forwarding reference in a template instance takes it).
+            bool rv = !arg.lvalue || arg.xvalue;
+            if (sameType(*param.inner, *arg.type)) return rv ? 0 : 3;
+            return derivedFrom(*arg.type, *param.inner) ? (rv ? 1 : 3) : -1;
+        }
         if (param.kind == Type::Kind::Reference && param.inner) {
-            if (!arg.lvalue) return -1;
+            // A temporary binds to const T& ([dcl.init.ref]; const is not tracked, so any T&),
+            // worse than to T&&.
+            if (!arg.lvalue)
+                return sameType(*param.inner, *arg.type) || derivedFrom(*arg.type, *param.inner) ? 2 : -1;
+            if (arg.xvalue) return sameType(*param.inner, *arg.type) ? 2 : -1;  // T& for a moved value: worse than T&&
             if (sameType(*param.inner, *arg.type)) return 0;
             return derivedFrom(*arg.type, *param.inner) ? 1 : -1;
         }
@@ -1068,7 +1133,13 @@ private:
         if (same.empty()) return cands.empty() ? nullptr : cands[0];
         if (same.size() == 1) return same[0];
         std::vector<ET> ets;
-        for (std::size_t i = 0; i < nargs; ++i) ets.push_back(decay(checkExpr(*call.kids[firstArg + i])));
+        for (std::size_t i = 0; i < nargs; ++i) {
+            if (call.kids[firstArg + i] && call.kids[firstArg + i]->kind == Expr::Kind::Brace) {
+                ets.push_back(bad(call.line, call.col));  // {a, b}: fits any class parameter
+                continue;
+            }
+            ets.push_back(decay(checkExpr(*call.kids[firstArg + i])));
+        }
         const Param* best = nullptr;
         int bestScore = 1 << 30;
         for (const Param* c : same) {
@@ -1187,6 +1258,72 @@ private:
         return true;
     }
 
+    // A braced list where an object of class T is expected (an argument {a, b}, [dcl.init.list]):
+    // a temporary T. A constructor whose parameter count matches takes the values; otherwise the
+    // class is an aggregate: its implicit constructor (default member initializers) runs if it has
+    // one, then each value goes to the next field, and without one the other fields are zero.
+    void braceToTemp(Expr& b, const Type& want) {
+        const Type* T = canonOf(&want);
+        if (!T || T->tag.empty()) return;
+        std::string tag = T->tag;
+        std::vector<std::unique_ptr<Expr>> vals = std::move(b.kids);
+        b.kids.clear();
+        bool viaCtor = false;
+        for (const Param& p : T->params) {
+            if (p.name != "<ctor>" || !p.type || p.type->params.size() != vals.size()) continue;
+            if (vals.empty()) continue;
+            const Type* a0 = p.type->params[0].type.get();
+            bool copy = vals.size() == 1 && a0 && a0->kind == Type::Kind::Reference && a0->inner &&
+                        a0->inner->kind == Type::Kind::Struct && a0->inner->tag == tag;
+            if (!copy) viaCtor = true;
+        }
+        std::string tmp = "__bt" + std::to_string(tempN_++);
+        std::unique_ptr<Expr> seq;
+        auto addE = [&](std::unique_ptr<Expr> x) { seq = seq ? eCommaNode(std::move(seq), std::move(x), b) : std::move(x); };
+        auto self = [&]() { return eUnary("&", mkName(tmp, b), b); };
+        if (viaCtor) {
+            auto call = mkE(Expr::Kind::Call, b);
+            call->kids.push_back(mkName("\x01" "ctor:" + tag, b));
+            call->kids.push_back(self());
+            for (auto& v : vals) call->kids.push_back(std::move(v));
+            addE(std::move(call));
+        } else {
+            if (T->needCtor) {
+                auto call = mkE(Expr::Kind::Call, b);
+                call->kids.push_back(mkName("\x01" "ctor:" + tag, b));
+                call->kids.push_back(self());
+                addE(std::move(call));
+            }
+            std::size_t i = 0;
+            for (const Param& f : T->params) {
+                if (!f.mangled.empty() || !f.type || f.type->kind == Type::Kind::Function || f.name == "__vptr" ||
+                    f.name == "__basepad" || f.name.empty() || f.name[0] == '<')
+                    continue;
+                std::unique_ptr<Expr> v;
+                if (i < vals.size()) v = std::move(vals[i]);
+                else if (!T->needCtor && f.type->kind != Type::Kind::Struct && f.type->kind != Type::Kind::Union &&
+                         f.type->kind != Type::Kind::Array)
+                    v = mkE(Expr::Kind::Int, b);
+                ++i;
+                if (!v) continue;
+                if (v->kind == Expr::Kind::Brace && f.type->kind == Type::Kind::Struct) braceToTemp(*v, *f.type);
+                auto field = mkE(Expr::Kind::Member, b);
+                field->text = ".";
+                field->kids.push_back(mkName(tmp, b));
+                field->kids.push_back(mkName(f.name, b));
+                addE(eAssignNode(std::move(field), std::move(v), b));
+            }
+            if (i < vals.size()) err(b.line, b.col, "too many initializers");
+        }
+        if (!seq) seq = mkE(Expr::Kind::Int, b);
+        b.kind = Expr::Kind::Comma;
+        b.ival = 7;
+        b.text = tmp;
+        b.ty = cloneType(*T);
+        b.kids.push_back(std::move(seq));
+        b.kids.push_back(mkName(tmp, b));
+    }
+
     ET checkCall(Expr& e) {
         if (e.kids.empty() || !e.kids[0]) return bad(e.line, e.col);
         if (e.kids[0]->kind == Expr::Kind::Name && e.kids.size() == 2 && e.kids[1] &&
@@ -1231,27 +1368,50 @@ private:
         static const std::string kTmpl = "\x01" "tmpl:";
         if (c0.kind == Expr::Kind::Name && c0.text.compare(0, kTmpl.size(), kTmpl) == 0) {
             std::string name = c0.text.substr(kTmpl.size());
-            auto sit = funcTemplateSigs().find(name);
-            if (sit == funcTemplateSigs().end() || !sit->second.fn) {
-                err(e.line, e.col, "unknown function template '" + name + "'");
+            // The function templates of this name (name, name#1, ...): the first whose parameter
+            // count fits and whose arguments deduce ([temp.over], [temp.deduct.call]).
+            std::vector<std::string> keys;
+            for (int k = 0;; ++k) {
+                std::string key = k == 0 ? name : name + "#" + std::to_string(k);
+                auto it = funcTemplateSigs().find(key);
+                if (it == funcTemplateSigs().end()) break;
+                if (it->second.fn && it->second.fn->params.size() == e.kids.size() - 1) keys.push_back(key);
+            }
+            if (keys.empty()) {
+                if (!funcTemplateSigs().count(name)) err(e.line, e.col, "unknown function template '" + name + "'");
+                else err(e.line, e.col, "wrong number of arguments");
                 return bad(e.line, e.col);
             }
-            const TemplateSig& sig = sit->second;
-            if (sig.fn->params.size() != e.kids.size() - 1) {
-                err(e.line, e.col, "wrong number of arguments");
-                return bad(e.line, e.col);
-            }
-            std::vector<std::unique_ptr<Type>> bound(sig.names.size());
-            for (std::size_t i = 0; i < c0.kids.size() && i < bound.size(); ++i)
-                if (c0.kids[i] && c0.kids[i]->ty) bound[i] = cloneType(*c0.kids[i]->ty);
-            for (std::size_t i = 0; i < sig.fn->params.size(); ++i) {
-                ET a = checkExpr(*e.kids[i + 1]);
+            std::vector<ET> argTypes;
+            for (std::size_t i = 1; i < e.kids.size(); ++i) {
+                ET a = checkExpr(*e.kids[i]);
                 if (a.bad || !a.type) return bad(e.line, e.col);
-                if (sig.fn->params[i].type && !deduceType(*sig.fn->params[i].type, *a.type, sig, bound)) {
-                    err(e.line, e.col, "conflicting types for a template argument");
-                    return bad(e.line, e.col);
-                }
+                argTypes.push_back(std::move(a));
             }
+            const TemplateSig* chosen = nullptr;
+            std::vector<std::unique_ptr<Type>> bound;
+            for (const std::string& key : keys) {
+                const TemplateSig& cand = funcTemplateSigs()[key];
+                std::vector<std::unique_ptr<Type>> b(cand.names.size());
+                for (std::size_t i = 0; i < c0.kids.size() && i < b.size(); ++i)
+                    if (c0.kids[i] && c0.kids[i]->ty) b[i] = cloneType(*c0.kids[i]->ty);
+                bool ok = true;
+                for (std::size_t i = 0; i < cand.fn->params.size() && ok; ++i)
+                    if (cand.fn->params[i].type && !deduceType(*cand.fn->params[i].type, *argTypes[i].type, cand, b))
+                        ok = false;
+                for (std::size_t i = 0; i < b.size() && ok; ++i)
+                    if (!b[i]) ok = false;
+                if (!ok) continue;
+                chosen = &cand;
+                name = key;
+                bound = std::move(b);
+                break;
+            }
+            if (!chosen) {
+                err(e.line, e.col, "no function template '" + name + "' fits these arguments");
+                return bad(e.line, e.col);
+            }
+            const TemplateSig& sig = *chosen;
             std::vector<TArg> args;
             for (std::size_t i = 0; i < sig.names.size(); ++i) {
                 if (!bound[i]) {
@@ -1282,6 +1442,31 @@ private:
             if (it != canonStructs().end() && it->second)
                 for (const Param& p : it->second->params)
                     if (p.name == "<ctor>") cands.push_back(&p);
+            if (cands.empty() && e.kids.size() == 2 && it != canonStructs().end() && it->second) {
+                // T() for a class without constructors: value-initialized, every field zero
+                // ([dcl.init] p8). A class or array field is left as it is.
+                std::unique_ptr<Expr> seq;
+                for (const Param& f : it->second->params) {
+                    if (!f.mangled.empty() || !f.type || f.type->kind == Type::Kind::Function ||
+                        f.type->kind == Type::Kind::Struct || f.type->kind == Type::Kind::Union ||
+                        f.type->kind == Type::Kind::Array || f.name.empty() || f.name[0] == '<' || f.name == "__vptr")
+                        continue;
+                    auto field = mkE(Expr::Kind::Member, e);
+                    field->text = "->";
+                    field->kids.push_back(cloneExpr(*e.kids[1]));
+                    field->kids.push_back(mkName(f.name, e));
+                    auto as = eAssignNode(std::move(field), mkE(Expr::Kind::Int, e), e);
+                    seq = seq ? eCommaNode(std::move(seq), std::move(as), e) : std::move(as);
+                }
+                if (!seq) seq = mkE(Expr::Kind::Int, e);
+                e.kind = Expr::Kind::Comma;
+                e.text.clear();
+                e.ival = 0;
+                e.kids.clear();
+                e.kids.push_back(std::move(seq));
+                e.kids.push_back(mkE(Expr::Kind::Int, e));
+                return checkExprBody(e);
+            }
             if (cands.empty()) {
                 err(e.line, e.col, "'" + tag + "' has no constructor");
                 return bad(e.line, e.col);
@@ -1549,6 +1734,7 @@ private:
                 }
             }
         }
+        resolveOverload(e);
         ET callee = decay(checkExpr(*e.kids[0]));
         if (callee.bad || !callee.type) return bad(e.line, e.col);
         if (!isPtr(*callee.type) || !callee.type->inner || callee.type->inner->kind != Type::Kind::Function) {
@@ -1557,6 +1743,12 @@ private:
         }
         const Type& fn = *callee.type->inner;
         if (!fn.variadic && e.kids.size() - 1 < fn.params.size()) addDefaults(e, fn, 0);
+        for (std::size_t i = 0; i < fn.params.size() && i + 1 < e.kids.size(); ++i) {
+            Expr* a = e.kids[i + 1].get();
+            const Type* pt = fn.params[i].type.get();
+            if (pt && pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
+            if (a && a->kind == Expr::Kind::Brace && pt && pt->kind == Type::Kind::Struct) braceToTemp(*a, *pt);
+        }
         std::size_t nargs = e.kids.size() - 1;
         if (fn.variadic) {
             if (nargs < fn.params.size()) {
@@ -1675,7 +1867,8 @@ private:
             r.type = std::move(ptrTy);
         } else if (r.type && r.type->kind == Type::Kind::Reference && r.type->inner) {
             // A call that returns a reference is the pointer it returns, dereferenced: the call
-            // moves into a child and this node becomes "*call".
+            // moves into a child and this node becomes "*call" (ival 5 when it returns T&&).
+            const bool xv = r.type->rref;
             auto ptrTy = std::make_unique<Type>();
             ptrTy->kind = Type::Kind::Pointer;
             ptrTy->inner = cloneType(*r.type->inner);
@@ -1691,9 +1884,11 @@ private:
             e.kids.clear();
             e.kind = Expr::Kind::Unary;
             e.text = "*";
+            e.ival = xv ? 5 : 0;
             e.kids.push_back(std::move(inner));
             r.type = cloneType(*r.type->inner);
             r.lvalue = true;
+            r.xvalue = xv;
             r.mod = true;
         }
         return r;
@@ -1708,6 +1903,67 @@ private:
     }
 
     std::map<std::string, std::uint64_t> rangeBound_;
+
+    // ---- Overloaded functions ([over.load], [over.match]) ----
+    // The first function of a name keeps it. A later one with other parameter types is an overload:
+    // it gets the internal name name\x04k and the Itanium symbol, and a call picks among the set.
+    std::map<std::string, std::vector<Param>> overloads_;
+    void addFunction(Decl& d) {
+        auto& sc = scopes_.front();
+        auto it = sc.find(d.name);
+        bool cFile = d.file.size() >= 2 && d.file.compare(d.file.size() - 2, 2, ".c") == 0;
+        bool plain = it == sc.end() || !it->second.func || !it->second.type || !d.methodTag.empty() ||
+                     d.name.compare(0, 2, "_Z") == 0 || cFile;
+        if (!overloads_.count(d.name) && (plain || sameType(*it->second.type, *d.type))) {
+            add(d.name, cloneType(*d.type), true, d.line, d.col);  // C: a conflicting type stays an error
+            return;
+        }
+        std::string base = d.name;
+        auto& set = overloads_[base];
+        if (set.empty()) {
+            Param first;
+            first.name = base;
+            first.mangled = base;
+            first.type = cloneType(*it->second.type);
+            set.push_back(std::move(first));
+        }
+        for (const Param& p : set)
+            if (p.type && sameType(*p.type, *d.type)) {
+                d.name = p.mangled;  // another declaration (or the definition) of one overload
+                if (p.mangled != base) d.asmName = mangleFunc(base, *d.type);
+                add(d.name, cloneType(*d.type), true, d.line, d.col);
+                return;
+            }
+        Param o;
+        o.name = base;
+        o.mangled = base + "\x04" + std::to_string(set.size());
+        o.type = cloneType(*d.type);
+        set.push_back(std::move(o));
+        d.name = set.back().mangled;
+        d.asmName = mangleFunc(base, *d.type);
+        add(d.name, cloneType(*d.type), true, d.line, d.col);
+    }
+    // A call by name of an overloaded function: choose by the arguments.
+    void resolveOverload(Expr& e) {
+        if (overloads_.empty() || e.kids.empty() || !e.kids[0] || e.kids[0]->kind != Expr::Kind::Name) return;
+        std::string name = e.kids[0]->text;
+        auto it = overloads_.find(name);
+        if (it == overloads_.end() && name.find("::") == std::string::npos && scopeOf(name) <= 0) {
+            std::string scope = inNs_;
+            while (!scope.empty() && it == overloads_.end()) {
+                it = overloads_.find(scope + "::" + name);
+                std::size_t cut = scope.rfind("::");
+                if (cut == std::string::npos) break;
+                scope = scope.substr(0, cut);
+            }
+        }
+        if (it == overloads_.end()) return;
+        if (scopeOf(name) > 0) return;  // a local of that name hides the functions
+        std::vector<const Param*> cands;
+        for (const Param& p : it->second) cands.push_back(&p);
+        const Param* pick = pickOverload(cands, e, 1);
+        if (pick) e.kids[0]->text = pick->mangled;
+    }
 
     // ---- Lambdas (see LambdaInfo in ast.hpp; [expr.prim.lambda]) ----
     Tu* tu_ = nullptr;

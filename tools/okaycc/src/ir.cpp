@@ -43,6 +43,7 @@ const char* opName(Inst::Op op) {
     case Inst::Op::GLoad: return "gload";
     case Inst::Op::GStore: return "gstore";
     case Inst::Op::Cvt: return "cvt";
+    case Inst::Op::Sqrt: return "sqrt";
     }
     return "?";
 }
@@ -71,6 +72,7 @@ bool pure(Inst::Op op) {
     case Inst::Op::LeaFrame:
     case Inst::Op::Local:
     case Inst::Op::Cvt:
+    case Inst::Op::Sqrt:
         return true;
     default:
         return false;
@@ -254,7 +256,7 @@ std::string printModule(const Module& m) {
                         s += " ";
                         s += opnd(in.a);
                     }
-                } else if (in.op == Inst::Op::Neg || in.op == Inst::Op::Not) {
+                } else if (in.op == Inst::Op::Neg || in.op == Inst::Op::Not || in.op == Inst::Op::Sqrt) {
                     s += opName(in.op);
                     s += " v";
                     s += std::to_string(in.dst);
@@ -410,7 +412,15 @@ void propagateFunction(Function& f) {
             std::vector<Cell> joined;
             bool any = false;
             if (i == 0) {
+                // Every parameter has a value on entry that is not known here: the integer ones
+                // and those that arrive in xmm registers (a float parameter left "unknown" would
+                // join with one branch's copy and be replaced by it).
                 joined.assign(static_cast<std::size_t>(f.params), Cell{3, 0, -1});
+                for (int s : f.xmmSlot) {
+                    if (s < 0) continue;
+                    if (s >= static_cast<int>(joined.size())) joined.resize(static_cast<std::size_t>(s + 1));
+                    joined[static_cast<std::size_t>(s)] = Cell{3, 0, -1};
+                }
                 any = true;
             }
             for (int p : preds[static_cast<std::size_t>(i)]) {
@@ -575,14 +585,17 @@ RegHomes assignRegs(const Function& f) {
             for (const Operand& word : in.stack)
                 if (word.kind == Operand::Kind::Reg) note(word.reg);
             for (const Operand& x : in.xmm)
-                if (x.kind == Operand::Kind::Reg) note(x.reg);
+                if (x.kind == Operand::Kind::Reg) {
+                    note(x.reg);
+                    markMem(x.reg);  // an xmm argument is read from its stack slot (loadXmm)
+                }
             if (in.op == Inst::Op::Lea && in.a.kind == Operand::Kind::Reg) markMem(in.a.reg);
             if (in.fp) {
                 if (in.a.kind == Operand::Kind::Reg && in.extra != 0) markMem(in.a.reg);
                 if (in.b.kind == Operand::Kind::Reg) markMem(in.b.reg);
                 bool fpDst = in.op == Inst::Op::Add || in.op == Inst::Op::Sub || in.op == Inst::Op::Mul ||
                              in.op == Inst::Op::Div || in.op == Inst::Op::Mov || in.op == Inst::Op::Call ||
-                             in.op == Inst::Op::Xor;
+                             in.op == Inst::Op::Xor || in.op == Inst::Op::Sqrt;
                 if (in.op == Inst::Op::Cvt && in.b.kind == Operand::Kind::Imm && (in.b.imm == 4 || in.b.imm == 8))
                     fpDst = true;
                 if (fpDst) markMem(in.dst);

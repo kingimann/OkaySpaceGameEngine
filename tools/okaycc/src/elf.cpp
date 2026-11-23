@@ -484,6 +484,13 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
         }
         return;
     }
+    if (in.fp && in.op == Inst::Op::Sqrt) {
+        // SQRTSD xmm0, xmm1 (F2 0F 51 /r) or SQRTSS (F3 0F 51 /r), Intel SDM vol. 2.
+        loadXmm(im, in.a, 1, in.extra);
+        fpBin(im, in.extra, 0x51);
+        storeXmm(im, 0, in.dst, in.extra);
+        return;
+    }
     if (in.fp && (in.op == Inst::Op::Add || in.op == Inst::Op::Sub || in.op == Inst::Op::Mul || in.op == Inst::Op::Div)) {
         loadXmm(im, in.a, 0, in.extra);
         loadXmm(im, in.b, 1, in.extra);

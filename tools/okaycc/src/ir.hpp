@@ -37,7 +37,8 @@ struct Inst {
     enum class Op {
         Mov, Add, Sub, Mul, Div, Mod, And, Or, Xor, Shl, Shr, Neg, Not,
         Ceq, Cne, Clt, Cle, Cgt, Cge, Jmp, Br, Call, Ret,
-        Local, Lea, LeaSym, LeaFrame, Load, Store, GLoad, GStore, Cvt
+        Local, Lea, LeaSym, LeaFrame, Load, Store, GLoad, GStore, Cvt,
+        Sqrt  // fp: dst = the square root of a, rounded as IEEE 754 requires (SQRTSD / SQRTSS)
     } op = Op::Mov;
     int dst = -1;
     int extra = 8;  // byte width for a load, store, or narrowing move

@@ -47,7 +47,7 @@ bool& instDirty() {
 std::size_t mangledEnd(const std::string& s, std::size_t j) {
     if (j >= s.size()) return j;
     char c = s[j];
-    if (c == 'P' || c == 'R') {
+    if (c == 'P' || c == 'R' || c == 'O') {
         std::size_t k = mangledEnd(s, j + 1);
         return k == j + 1 ? j : k;
     }
@@ -74,10 +74,11 @@ std::unique_ptr<Type> typeFromMangle(const std::string& m) {
     };
     if (m.empty()) return nullptr;
     char c = m[0];
-    if (c == 'P' || c == 'R') {
+    if (c == 'P' || c == 'R' || c == 'O') {
         auto inner = typeFromMangle(m.substr(1));
         if (!inner) return nullptr;
         auto t = make(c == 'P' ? Type::Kind::Pointer : Type::Kind::Reference);
+        t->rref = c == 'O';
         t->inner = std::move(inner);
         return t;
     }
@@ -125,7 +126,9 @@ std::unique_ptr<Type> substType(const Type& pat, const TemplateSig& sig, const s
 }
 
 // Name of a function template instance: _Z <name> I <arguments> E <parameter types>.
-std::string instFuncName(const std::string& tmpl, const TemplateSig& sig, const std::vector<TArg>& args) {
+std::string instFuncName(const std::string& key, const TemplateSig& sig, const std::vector<TArg>& args) {
+    // An overload of a function template is kept as "name#k": the name is what is mangled.
+    std::string tmpl = key.substr(0, key.find('#'));
     std::string out = "_Z" + mangleNested(tmpl) + "I";
     for (const TArg& a : args) out += argMangle(a);
     out += "E";

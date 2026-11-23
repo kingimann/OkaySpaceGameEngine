@@ -73,6 +73,7 @@ struct Type {
     std::unique_ptr<Expr> bound;
     bool unsized = false;
     bool variadic = false;
+    bool rref = false;  // a Reference that is an rvalue reference T&& ([dcl.ref])
     std::vector<Param> params;
     // Class facts (Itanium C++ ABI layout of a single-inheritance class).
     std::string base;                // tag of the one base class, or empty

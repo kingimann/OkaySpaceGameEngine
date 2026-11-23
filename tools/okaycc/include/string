@@ -60,7 +60,26 @@ public:
         p_[n_] = 0;
         return *this;
     }
+    string operator+(const char *s) const {
+        string r = *this;
+        r += s;
+        return r;
+    }
+    string operator+(const string &o) const {
+        string r = *this;
+        r.append(o);
+        return r;
+    }
+    string &operator+=(const string &o) { return append(o); }
+    string &operator+=(char c) {
+        push_back(c);
+        return *this;
+    }
     bool operator==(const char *s) const { return strcmp(p_, s) == 0; }
+    bool operator==(const string &o) const { return strcmp(p_, o.p_) == 0; }
+    bool operator!=(const string &o) const { return strcmp(p_, o.p_) != 0; }
+    bool operator<(const string &o) const { return strcmp(p_, o.p_) < 0; }
+    const char *data() const { return p_; }
     int compare(const string &o) const { return strcmp(p_, o.p_); }
 
 private:

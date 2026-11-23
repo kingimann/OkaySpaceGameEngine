@@ -240,6 +240,12 @@ void emitInst(std::string& s, const Function& f, const Inst& in, const std::vect
         }
         return;
     }
+    if (in.fp && in.op == Inst::Op::Sqrt) {
+        loadXmm(s, in.a, 1, in.extra);
+        s += in.extra <= 4 ? "  sqrtss %xmm1, %xmm0\n" : "  sqrtsd %xmm1, %xmm0\n";
+        storeXmm(s, 0, in.dst, in.extra);
+        return;
+    }
     if (in.fp && (in.op == Inst::Op::Add || in.op == Inst::Op::Sub || in.op == Inst::Op::Mul || in.op == Inst::Op::Div)) {
         loadXmm(s, in.a, 0, in.extra);
         loadXmm(s, in.b, 1, in.extra);
@@ -466,6 +472,7 @@ void emitInst(std::string& s, const Function& f, const Inst& in, const std::vect
     case Inst::Op::GLoad:
     case Inst::Op::GStore:
     case Inst::Op::Cvt:
+    case Inst::Op::Sqrt:
         break;
     }
 }

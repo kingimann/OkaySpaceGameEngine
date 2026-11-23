@@ -17,7 +17,7 @@ std::string mangleType(const Type& t) {
     case Type::Kind::Float: return "f";
     case Type::Kind::Double: return "d";
     case Type::Kind::Pointer: return t.inner ? "P" + mangleType(*t.inner) : "Pv";
-    case Type::Kind::Reference: return t.inner ? "R" + mangleType(*t.inner) : "Rv";
+    case Type::Kind::Reference: return t.inner ? (t.rref ? "O" : "R") + mangleType(*t.inner) : "Rv";
     case Type::Kind::Struct:
     case Type::Kind::Union:
         if (t.tag.empty()) return "i";

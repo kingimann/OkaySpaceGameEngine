@@ -1,0 +1,69 @@
+# modifiers: move of the bodies of okay::Mesh members out of Mesh.hpp (docs/engine/modularization_plan.md M1).
+# Each moved definition line is qualified (Mesh::), loses `static` and its default arguments (they stay on the declaration).
+change: void SculptBrush(const Vec3& center, const Vec3& dir, float radius, float strength, int mode, bool symmetryX = false) { ==> void Mesh::SculptBrush(const Vec3& center, const Vec3& dir, float radius, float strength, int mode, bool symmetryX) {
+add: ^\s*void\ SculptBrush\(const\ Vec3\&\ center,\ const\ Vec3\&\ dir,\ float\ radius,\ float\ strength,\ int\ mode,\ bool\ symmetryX\ =\ false\);$
+change: int Decimate(float cellSize) { ==> int Mesh::Decimate(float cellSize) {
+add: ^\s*int\ Decimate\(float\ cellSize\);$
+change: bool PointInside(const Vec3& p) const { ==> bool Mesh::PointInside(const Vec3& p) const {
+add: ^\s*bool\ PointInside\(const\ Vec3\&\ p\)\ const;$
+change: static Mesh Boolean(const Mesh& a, const Mesh& b, BoolOp op, float voxel, int maxDim = 96) { ==> Mesh Mesh::Boolean(const Mesh& a, const Mesh& b, BoolOp op, float voxel, int maxDim) {
+add: ^\s*static\ Mesh\ Boolean\(const\ Mesh\&\ a,\ const\ Mesh\&\ b,\ BoolOp\ op,\ float\ voxel,\ int\ maxDim\ =\ 96\);$
+change: static Mesh ConvexHull(const std::vector<Vec3>& ptsIn) { ==> Mesh Mesh::ConvexHull(const std::vector<Vec3>& ptsIn) {
+add: ^\s*static\ Mesh\ ConvexHull\(const\ std::vector<Vec3>\&\ ptsIn\);$
+change: void Bisect(const Vec3& planeP, const Vec3& planeN, bool cap = true, bool keepPositive = true) { ==> void Mesh::Bisect(const Vec3& planeP, const Vec3& planeN, bool cap, bool keepPositive) {
+add: ^\s*void\ Bisect\(const\ Vec3\&\ planeP,\ const\ Vec3\&\ planeN,\ bool\ cap\ =\ true,\ bool\ keepPositive\ =\ true\);$
+change: void ShrinkFatten(float dist) { ==> void Mesh::ShrinkFatten(float dist) {
+add: ^\s*void\ ShrinkFatten\(float\ dist\);$
+change: void Wireframe(float thickness) { ==> void Mesh::Wireframe(float thickness) {
+add: ^\s*void\ Wireframe\(float\ thickness\);$
+change: void Displace(float amount, float frequency = 1.0f, int seed = 0) { ==> void Mesh::Displace(float amount, float frequency, int seed) {
+add: ^\s*void\ Displace\(float\ amount,\ float\ frequency\ =\ 1\.0f,\ int\ seed\ =\ 0\);$
+change: void CastToCylinder(float radius, int axis = 1, float amount = 1.0f) { ==> void Mesh::CastToCylinder(float radius, int axis, float amount) {
+add: ^\s*void\ CastToCylinder\(float\ radius,\ int\ axis\ =\ 1,\ float\ amount\ =\ 1\.0f\);$
+change: int FillHoles() { ==> int Mesh::FillHoles() {
+add: ^\s*int\ FillHoles\(\);$
+change: RepairReport Repair(float weldDist = 1e-5f, bool fillHoles = true) { ==> Mesh::RepairReport Mesh::Repair(float weldDist, bool fillHoles) {
+add: ^\s*RepairReport\ Repair\(float\ weldDist\ =\ 1e\-5f,\ bool\ fillHoles\ =\ true\);$
+change: bool BridgeLoops() { ==> bool Mesh::BridgeLoops() {
+add: ^\s*bool\ BridgeLoops\(\);$
+change: void CollapseEdges(const std::vector<std::pair<int, int>>& es) { ==> void Mesh::CollapseEdges(const std::vector<std::pair<int, int>>& es) {
+add: ^\s*void\ CollapseEdges\(const\ std::vector<std::pair<int,\ int>>\&\ es\);$
+change: void SplitEdges(const std::vector<std::pair<int, int>>& es) { ==> void Mesh::SplitEdges(const std::vector<std::pair<int, int>>& es) { // dup-allow: Mesh member named Split*, not a string helper
+add: ^\s*void\ SplitEdges\(const\ std::vector<std::pair<int,\ int>>\&\ es\);$
+change: std::vector<int> DuplicateFaces(const std::vector<int>& faces) { ==> std::vector<int> Mesh::DuplicateFaces(const std::vector<int>& faces) {
+add: ^\s*std::vector<int>\ DuplicateFaces\(const\ std::vector<int>\&\ faces\);$
+change: std::vector<int> CoincidentReps() const { ==> std::vector<int> Mesh::CoincidentReps() const {
+add: ^\s*std::vector<int>\ CoincidentReps\(\)\ const;$
+change: std::vector<int> GrownVertexSelection(const std::vector<int>& sel) const { ==> std::vector<int> Mesh::GrownVertexSelection(const std::vector<int>& sel) const {
+add: ^\s*std::vector<int>\ GrownVertexSelection\(const\ std::vector<int>\&\ sel\)\ const;$
+change: std::vector<int> ShrunkVertexSelection(const std::vector<int>& sel) const { ==> std::vector<int> Mesh::ShrunkVertexSelection(const std::vector<int>& sel) const {
+add: ^\s*std::vector<int>\ ShrunkVertexSelection\(const\ std::vector<int>\&\ sel\)\ const;$
+change: std::vector<int> LinkedVertices(int seed) const { ==> std::vector<int> Mesh::LinkedVertices(int seed) const {
+add: ^\s*std::vector<int>\ LinkedVertices\(int\ seed\)\ const;$
+change: std::vector<std::pair<int, int>> EdgeLoop(int va, int vb, float minDot = 0.5f) const { ==> std::vector<std::pair<int, int>> Mesh::EdgeLoop(int va, int vb, float minDot) const {
+add: ^\s*std::vector<std::pair<int,\ int>>\ EdgeLoop\(int\ va,\ int\ vb,\ float\ minDot\ =\ 0\.5f\)\ const;$
+change: void PaintFaces(const Vec3& center, float radius, const Color& c, float blend = 1.0f) { ==> void Mesh::PaintFaces(const Vec3& center, float radius, const Color& c, float blend) {
+add: ^\s*void\ PaintFaces\(const\ Vec3\&\ center,\ float\ radius,\ const\ Color\&\ c,\ float\ blend\ =\ 1\.0f\);$
+change: void MottleFaceColors(float amt, int seed = 0) { ==> void Mesh::MottleFaceColors(float amt, int seed) {
+add: ^\s*void\ MottleFaceColors\(float\ amt,\ int\ seed\ =\ 0\);$
+drop: ^\s*float\ dist\)\ \{$
+add: ^\s*std::vector<std::pair<int,\ int>>\ Mesh::ExtrudeEdges\(const\ std::vector<std::pair<int,\ int>>\&\ es,\ float\ dist\)\ \{$
+add: ^\s*float\ dist\);$
+change: void SnapToGrid(float step, const std::vector<int>& verts = {}) { ==> void Mesh::SnapToGrid(float step, const std::vector<int>& verts) {
+add: ^\s*void\ SnapToGrid\(float\ step,\ const\ std::vector<int>\&\ verts\ =\ \{\}\);$
+change: void SplitByPlane(int axis, float coord, float eps = 1e-5f) { ==> void Mesh::SplitByPlane(int axis, float coord, float eps) { // dup-allow: Mesh member named Split*, not a string helper
+add: ^\s*void\ SplitByPlane\(int\ axis,\ float\ coord,\ float\ eps\ =\ 1e\-5f\);$
+change: void BevelVertices(const std::vector<int>& sel, float amount) { ==> void Mesh::BevelVertices(const std::vector<int>& sel, float amount) {
+add: ^\s*void\ BevelVertices\(const\ std::vector<int>\&\ sel,\ float\ amount\);$
+change: void JitterVertices(const std::vector<int>& verts, float amount, int seed = 0) { ==> void Mesh::JitterVertices(const std::vector<int>& verts, float amount, int seed) {
+add: ^\s*void\ JitterVertices\(const\ std::vector<int>\&\ verts,\ float\ amount,\ int\ seed\ =\ 0\);$
+change: static float ValueNoise(const Vec3& p, int seed) { ==> float Mesh::ValueNoise(const Vec3& p, int seed) {
+add: ^\s*static\ float\ ValueNoise\(const\ Vec3\&\ p,\ int\ seed\);$
+change: void AddBeam(const Vec3& p0, const Vec3& p1, float r) { ==> void Mesh::AddBeam(const Vec3& p0, const Vec3& p1, float r) {
+add: ^\s*void\ AddBeam\(const\ Vec3\&\ p0,\ const\ Vec3\&\ p1,\ float\ r\);$
+drop: ^\s*int\&\ nx,\ int\&\ ny,\ int\&\ nz,\ float\&\ outV\)\ \{$
+add: ^\s*void\ Mesh::GridDims\(const\ Vec3\&\ lo,\ const\ Vec3\&\ hi,\ float\ voxel,\ int\ maxDim,\ int\&\ nx,\ int\&\ ny,\ int\&\ nz,\ float\&\ outV\)\ \{$
+add: ^\s*int\&\ nx,\ int\&\ ny,\ int\&\ nz,\ float\&\ outV\);$
+drop: ^\s*int\ nx,\ int\ ny,\ int\ nz,\ const\ Vec3\&\ origin,\ float\ v\)\ \{$
+add: ^\s*Mesh\ Mesh::EmitOccupancy\(const\ std::vector<unsigned\ char>\&\ occ,\ int\ nx,\ int\ ny,\ int\ nz,\ const\ Vec3\&\ origin,\ float\ v\)\ \{$
+add: ^\s*int\ nx,\ int\ ny,\ int\ nz,\ const\ Vec3\&\ origin,\ float\ v\);$

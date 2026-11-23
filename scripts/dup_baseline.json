@@ -12,19 +12,12 @@
    "engine/src/AI/BehaviorTreeRunner.cpp": 2,
    "engine/src/AI/NavMeshAgent.cpp": 1,
    "engine/src/Components/MeleeAttacker.cpp": 1,
-   "engine/src/Components/RangedWeapon.cpp": 1,
-   "engine/src/Scripting/OkayScriptVM.cpp": 1
+   "engine/src/Components/RangedWeapon.cpp": 1
   },
   "base64": {
    "engine/include/okay/Platform/Account/AccountService.hpp": 1,
-   "engine/include/okay/Render/Gltf.hpp": 1,
-   "engine/src/Components/VoxelEdit.cpp": 2,
-   "engine/src/Components/VoxelTerrain.cpp": 2,
-   "engine/src/Net/SessionTicket.cpp": 2,
-   "engine/src/Render/FbxScene.cpp": 1,
    "okayui/tests/OkayUITestKit.hpp": 1,
    "platform/xbox_uwp/XboxAppx.hpp": 1,
-   "shared/OkfDecode.hpp": 1,
    "tests/test_blend_shapes.cpp": 1,
    "tests/test_embedded_font.cpp": 1,
    "tests/test_fbx_exact.cpp": 2,
@@ -48,16 +41,12 @@
    "tests/test_image_hostile.cpp": 1,
    "tests/test_own_http_download.cpp": 1,
    "tests/test_png_hint.cpp": 1,
-   "tests/test_vorbis_decoder.cpp": 1,
-   "tools/guided_pictures.cpp": 1
+   "tests/test_vorbis_decoder.cpp": 1
   },
   "deflate-tables": {
    "engine/src/Core/ImageWrite.cpp": 1,
    "okayui/tests/OkayUITestKit.hpp": 1,
    "tests/inflate_reference_slow.hpp": 1
-  },
-  "easing-back": {
-   "engine/src/Scripting/OkayScriptVM.cpp": 1
   },
   "fnv1a": {
    "editor/ContentEditors.cpp": 1,
@@ -74,7 +63,6 @@
    "engine/include/okay/Core/SaveData.hpp": 1,
    "engine/include/okay/Inventory/ItemPresentation.hpp": 2,
    "engine/include/okay/Platform/Friends.hpp": 1,
-   "engine/include/okay/Render/Mesh.hpp": 1,
    "engine/include/okay/Render/MeshHash.hpp": 1,
    "engine/include/okay/Render/ShaderBundle.hpp": 2,
    "engine/include/okay/UI/UIIcons.hpp": 2,
@@ -88,13 +76,12 @@
    "engine/src/Modeling/Modifiers.cpp": 2,
    "engine/src/Optimize/MeshSimplify.cpp": 1,
    "engine/src/Physics/MeshCollider3D.cpp": 4,
-   "engine/src/Render/BlendReader.cpp": 1,
    "engine/src/Render/GpuTexture.cpp": 2,
    "engine/src/Render/Max3dsReader.cpp": 1,
    "engine/src/Render/ModelReaders.cpp": 2,
    "engine/src/Testing/Regression.cpp": 2,
    "engine/src/UI/UIRenderer.cpp": 3,
-   "launcher/main.cpp": 3,
+   "launcher/main.cpp": 2,
    "okayui/screens/OkayUIEditorPanels.cpp": 2,
    "okayui/src/OkayUI.cpp": 7,
    "okayui/src/OkayUIDock.cpp": 2,
@@ -193,7 +180,7 @@
    "editor/WeaponEditor.cpp": 1,
    "editor/main.cpp": 1,
    "engine/include/okay/Animation/AnimationClip.hpp": 1,
-   "engine/include/okay/Components/ModelAnimator.hpp": 2,
+   "engine/include/okay/Components/ModelAnimator.hpp": 1,
    "engine/include/okay/Components/UIAppParts.hpp": 3,
    "engine/include/okay/Components/UIBreadcrumbs.hpp": 1,
    "engine/include/okay/Components/UISearchBar.hpp": 1,
@@ -216,7 +203,6 @@
    "engine/include/okay/Platform/Profiles.hpp": 2,
    "engine/include/okay/Platform/Servers.hpp": 1,
    "engine/include/okay/Platform/Workshop.hpp": 1,
-   "engine/include/okay/Render/Mesh.hpp": 2,
    "engine/include/okay/UI/UILibData.hpp": 2,
    "engine/include/okay/VisualScript/NodesBuild.hpp": 1,
    "engine/include/okay/VisualScript/NodesLogic.hpp": 2,

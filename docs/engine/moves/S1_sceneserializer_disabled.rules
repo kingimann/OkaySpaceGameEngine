@@ -1,0 +1,9 @@
+# S1 (docs/engine/modularization_plan.md, section 3.1): WriteDisabledComponents moves unchanged from SceneSerializer.cpp to
+# SceneSerializerHelpers.cpp, because WriteComponentRecords (next move) needs it. The loose `}` rules are the diff matching a
+# closing brace of the moved function against its neighbours.
+#   python3 scripts/check_pure_move.py --base <commit before> --head <this commit> \
+#       --source engine/src/Scene/SceneSerializer.cpp --dest engine/src/Scene/SceneSerializerInternal.hpp \
+#       --dest engine/src/Scene/SceneSerializerHelpers.cpp --rules docs/engine/moves/S1_sceneserializer_disabled.rules
+add: ^\s*void WriteDisabledComponents\(.*\);$
+add: ^\s*\}$
+drop: ^\s*\}$

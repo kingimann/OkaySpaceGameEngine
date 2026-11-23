@@ -480,49 +480,49 @@ Back to the [code index](../code_index.md). 48 headers, 462 names.
 - `SoftwareShadowCap` function, line 1031: The software renderer never builds a cascade larger than this many texels a side, whatever ShadowMapResolution() says (the GPU
 - `ShadowDistance` function, line 1038: How far (world units) cascaded shadows reach in front of the camera. The near
 - `ShadowCascades` function, line 1041: Number of cascades (1..ShadowMap::kMaxCascades). More = sharper falloff across
-- `RenderShadowMap` function, line 1128: Render the scene depth from the directional light into the cascaded shadow
-- `SceneAmbientColors` function, line 1277: Up-facing ("sky") and down-facing ("ground") ambient colours for the scene's
-- `ShadowSoftness` function, line 1294: Shadow softness in shadow-map texels (the Poisson disk's radius). Larger =
-- `ShadowFactorClassic` function, line 1297: The shadow lookup as it was before the lighting upgrade (see ClassicLighting()).
-- `LocalShadowMapSW` struct, line 1427: ---- Spot / point / area light shadows -------------------------------------
-- `LocalShadowSet` struct, line 1432
-- `LocalShadows` function, line 1440
-- `LocalShadowResolution` function, line 1442: Texels per local shadow tile edge (software). 256 keeps 16 tiles near 4 MB.
-- `RenderLocalShadowMaps` function, line 1500: Build this frame's spot / point / area shadow maps. Called by RenderMeshes
-- `LocalShadowFactor` function, line 1579: 0 = fully shadowed, 1 = fully lit, for light 'li' at world point 'wpos' with
-- `SSAOEnabled` function, line 1625: ---- Screen-space ambient occlusion ----------------------------------------
-- `SSAORadius` function, line 1626
-- `SSAOStrength` function, line 1627
-- `SSAOPower` function, line 1628
-- `ApplySSAO` function, line 1633: Darken creases/contacts using the per-pixel world position + normal G-buffer:
-- `BloomEnabled` function, line 1727: ---- Bloom -----------------------------------------------------------------
-- `BloomThreshold` function, line 1728
-- `BloomIntensity` function, line 1729
-- `ApplyBloom` function, line 1738: Glow on bright/emissive areas: extract pixels above a brightness threshold,
-- `ToneMapEnabled` function, line 1820: ---- Tone mapping (filmic) -------------------------------------------------
-- `Exposure` function, line 1821
-- `ApplyToneMap` function, line 1830: Filmic tone mapping (ACES approximation, Narkowicz 2015). The renderer shades
-- `ColorGradeEnabled` function, line 1861: ---- Color grading (brightness / contrast / saturation / vignette / gamma) --
-- `Brightness` function, line 1862
-- `Contrast` function, line 1863
-- `Saturation` function, line 1864
-- `Vignette` function, line 1865
-- `Gamma` function, line 1866
-- `ApplyColorGrade` function, line 1868
-- `ScenePostPlan` struct, line 1919: ---- The scene's Post-processing section, on the CPU -------------------------
-- `PlanScenePost` function, line 1930: Fold the scene's settings and the process-wide switches into one plan. The process-wide tonemap
-- `ScenePostColor` function, line 1943: Apply a plan to one 0..1 colour (exposure, curve, grade). Exposed so tests can check single values.
-- `ScenePostVignette` function, line 1961: The vignette darkening (0..0.8) at a pixel, the same formula as the GPU uber pass.
-- `ApplyScenePost` function, line 1969
-- `DofPerspective` function, line 2012: True when 'vp' is a perspective projection (clip w depends on the position), so the
-- `DofPixelDistance` function, line 2017: World distance the depth of field uses for one W-buffer value (1 / view depth; 0 = nothing drawn).
-- `DofRays` struct, line 2025: The ray through a point of the screen (NDC x, y, y up) as an affine function of x and y, for
-- `DofRaysFor` function, line 2029
-- `DofRayScale` function, line 2040: Eye distance per unit of view depth along the ray at NDC (x, y): 1 / cos(angle off the view axis).
-- `ApplySceneDof` function, line 2047: Blur the frame where it is out of focus. 'focus' and 'range' are post.dofFocus / post.dofRange;
-- `FXAAEnabled` function, line 2153: ---- Anti-aliasing (FXAA-lite) ---------------------------------------------
-- `RenderCullingMask` function, line 2158: Active camera's layer culling mask (Camera.cullingMask). RenderMeshes draws a
-- `ApplyFXAA` function, line 2163: Cheap post-process anti-aliasing: where local contrast is high (a geometry
+- `RenderShadowMap` function, line 1059: Render the scene depth from the directional light into the cascaded shadow
+- `SceneAmbientColors` function, line 1081: Up-facing ("sky") and down-facing ("ground") ambient colours for the scene's
+- `ShadowSoftness` function, line 1098: Shadow softness in shadow-map texels (the Poisson disk's radius). Larger =
+- `ShadowFactorClassic` function, line 1101: The shadow lookup as it was before the lighting upgrade (see ClassicLighting()).
+- `LocalShadowMapSW` struct, line 1231: ---- Spot / point / area light shadows -------------------------------------
+- `LocalShadowSet` struct, line 1236
+- `LocalShadows` function, line 1244
+- `LocalShadowResolution` function, line 1246: Texels per local shadow tile edge (software). 256 keeps 16 tiles near 4 MB.
+- `RenderLocalShadowMaps` function, line 1259: Build this frame's spot / point / area shadow maps. Called by RenderMeshes
+- `LocalShadowFactor` function, line 1265: 0 = fully shadowed, 1 = fully lit, for light 'li' at world point 'wpos' with
+- `SSAOEnabled` function, line 1311: ---- Screen-space ambient occlusion ----------------------------------------
+- `SSAORadius` function, line 1312
+- `SSAOStrength` function, line 1313
+- `SSAOPower` function, line 1314
+- `ApplySSAO` function, line 1319: Darken creases/contacts using the per-pixel world position + normal G-buffer:
+- `BloomEnabled` function, line 1322: ---- Bloom -----------------------------------------------------------------
+- `BloomThreshold` function, line 1323
+- `BloomIntensity` function, line 1324
+- `ApplyBloom` function, line 1333: Glow on bright/emissive areas: extract pixels above a brightness threshold,
+- `ToneMapEnabled` function, line 1336: ---- Tone mapping (filmic) -------------------------------------------------
+- `Exposure` function, line 1337
+- `ApplyToneMap` function, line 1346: Filmic tone mapping (ACES approximation, Narkowicz 2015). The renderer shades
+- `ColorGradeEnabled` function, line 1352: ---- Color grading (brightness / contrast / saturation / vignette / gamma) --
+- `Brightness` function, line 1353
+- `Contrast` function, line 1354
+- `Saturation` function, line 1355
+- `Vignette` function, line 1356
+- `Gamma` function, line 1357
+- `ApplyColorGrade` function, line 1359
+- `ScenePostPlan` struct, line 1369: ---- The scene's Post-processing section, on the CPU -------------------------
+- `PlanScenePost` function, line 1380: Fold the scene's settings and the process-wide switches into one plan. The process-wide tonemap
+- `ScenePostColor` function, line 1393: Apply a plan to one 0..1 colour (exposure, curve, grade). Exposed so tests can check single values.
+- `ScenePostVignette` function, line 1411: The vignette darkening (0..0.8) at a pixel, the same formula as the GPU uber pass.
+- `ApplyScenePost` function, line 1419
+- `DofPerspective` function, line 1436: True when 'vp' is a perspective projection (clip w depends on the position), so the
+- `DofPixelDistance` function, line 1441: World distance the depth of field uses for one W-buffer value (1 / view depth; 0 = nothing drawn).
+- `DofRays` struct, line 1449: The ray through a point of the screen (NDC x, y, y up) as an affine function of x and y, for
+- `DofRaysFor` function, line 1453
+- `DofRayScale` function, line 1464: Eye distance per unit of view depth along the ray at NDC (x, y): 1 / cos(angle off the view axis).
+- `ApplySceneDof` function, line 1471: Blur the frame where it is out of focus. 'focus' and 'range' are post.dofFocus / post.dofRange;
+- `FXAAEnabled` function, line 1474: ---- Anti-aliasing (FXAA-lite) ---------------------------------------------
+- `RenderCullingMask` function, line 1479: Active camera's layer culling mask (Camera.cullingMask). RenderMeshes draws a
+- `ApplyFXAA` function, line 1484: Cheap post-process anti-aliasing: where local contrast is high (a geometry
 
 ## `engine/include/okay/Render/SsaoMath.hpp`
 

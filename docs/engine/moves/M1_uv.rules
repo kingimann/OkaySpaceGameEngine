@@ -1,0 +1,14 @@
+# uv: move of the bodies of okay::Mesh members out of Mesh.hpp (docs/engine/modularization_plan.md M1).
+# Each moved definition line is qualified (Mesh::), loses `static` and its default arguments (they stay on the declaration).
+change: void ProjectUVPlanar(int axis, float tile = 1.0f) { ==> void Mesh::ProjectUVPlanar(int axis, float tile) {
+add: ^\s*void\ ProjectUVPlanar\(int\ axis,\ float\ tile\ =\ 1\.0f\);$
+change: void ProjectUVBox(float tile = 1.0f) { ==> void Mesh::ProjectUVBox(float tile) {
+add: ^\s*void\ ProjectUVBox\(float\ tile\ =\ 1\.0f\);$
+change: void ProjectUVCylinder(float tile = 1.0f) { ==> void Mesh::ProjectUVCylinder(float tile) {
+add: ^\s*void\ ProjectUVCylinder\(float\ tile\ =\ 1\.0f\);$
+change: void ProjectUVSphere(float tile = 1.0f) { ==> void Mesh::ProjectUVSphere(float tile) {
+add: ^\s*void\ ProjectUVSphere\(float\ tile\ =\ 1\.0f\);$
+change: void SetCornerUVs(const std::vector<Vec2>& corner) { ==> void Mesh::SetCornerUVs(const std::vector<Vec2>& corner) {
+add: ^\s*void\ SetCornerUVs\(const\ std::vector<Vec2>\&\ corner\);$
+change: void UnwrapAroundU(std::vector<Vec2>& corner) const { ==> void Mesh::UnwrapAroundU(std::vector<Vec2>& corner) const {
+add: ^\s*void\ UnwrapAroundU\(std::vector<Vec2>\&\ corner\)\ const;$

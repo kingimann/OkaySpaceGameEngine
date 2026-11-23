@@ -637,7 +637,7 @@ Back to the [code index](../code_index.md). 67 headers, 965 names.
 ## `shared/LibraryScan.hpp`
 
 - `SceneKey` function, line 20: The same file always gives the same key, whichever folder it was reached through ("a/../b", symlinks).
-- `FindScenesUnder` function, line 29: Every *.okayscene under each folder of 'roots' (recursively), once each. 'skipDir' returns true for a folder
+- `FindScenesUnder` function, line 35: Every *.okayscene under each folder of 'roots' (recursively), once each. 'skipDir' returns true for a folder
 
 ## `shared/OfficialGame.hpp`
 

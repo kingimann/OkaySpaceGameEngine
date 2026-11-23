@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 77 headers, 476 names.
+Back to the [code index](../code_index.md). 78 headers, 477 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -202,6 +202,10 @@ Back to the [code index](../code_index.md). 77 headers, 476 names.
 
 - `Subscription` class, line 19: RAII handle for a subscription made with EventBus::Listen (or Subscribe with
 - `EventBus` class, line 81: A lightweight, type-safe publish/subscribe event bus. Any struct/class can
+
+## `engine/include/okay/Core/FileCopy.hpp`
+
+- `CopyFileOver` function, line 20
 
 ## `engine/include/okay/Core/FrameOverlay.hpp`
 

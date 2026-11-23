@@ -588,9 +588,9 @@ Back to the [code index](../code_index.md). 49 headers, 461 names.
 
 ## `engine/include/okay/Render/TexturePath.hpp`
 
-- `SetModelTextureRoots` function, line 184: Set the folders whose files a model may name by absolute path or by "..". Replaces the previous list. A folder is
-- `ModelTextureRoots` function, line 210: The allowed roots (canonical, UTF-8).
-- `ResolveModelTexturePath` function, line 219: The path to load for a file a model names ('written', as the file wrote it), or "" when it must not be loaded.
+- `SetModelTextureRoots` function, line 207: Set the folders whose files a model may name by absolute path or by "..". Replaces the previous list. A folder is
+- `ModelTextureRoots` function, line 233: The allowed roots (canonical, UTF-8).
+- `ResolveModelTexturePath` function, line 242: The path to load for a file a model names ('written', as the file wrote it), or "" when it must not be loaded.
 
 ## `engine/include/okay/Render/ThreeMfReader.hpp`
 

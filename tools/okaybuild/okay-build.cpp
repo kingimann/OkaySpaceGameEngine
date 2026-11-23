@@ -270,8 +270,10 @@ static Manifest parseManifest(const string& file) {
             }
             if (t[0] == "generate") {
                 if (t.size() != 2) throw err("expected: generate PATH");
-                for (auto& x : m.gens) if (x.path == t[1]) throw err("duplicate generate '" + t[1] + "'");
-                GenFile g; g.path = t[1]; g.line = ln; m.gens.push_back(g); mode = GENERATE; continue;
+                string gp = cmr::binNormal(t[1]); // one file has one spelling: {bin}/a/../b.cpp is {bin}/b.cpp
+                if (!cmr::inBin(gp)) throw err("generate path '" + t[1] + "' must be a file inside the build folder: {bin}/<path> with no '..' above {bin}");
+                for (auto& x : m.gens) if (x.path == gp) throw err("duplicate generate '" + t[1] + "' (the same file as '" + gp + "')");
+                GenFile g; g.path = gp; g.line = ln; m.gens.push_back(g); mode = GENERATE; continue;
             }
             if (t[0] == "ctest") {
                 if (t.size() != 2) throw err("expected: ctest NAME");
@@ -558,7 +560,7 @@ struct Action {
     int id = 0; string kind, desc, output, depfile, dir, rawCmd, pool; vector<string> argv, inputs, outputs, waitFor;
     vector<int> deps, rdeps; vector<std::pair<string, string>> partials; string salt; string target; size_t rspHead = 0, rspThreshold = 0; string cmdHash; bool restat = false; int memory = 0;
 };
-struct Graph { vector<Action> acts; vector<std::pair<string, int>> targetFinal; };
+struct Graph { vector<Action> acts; vector<std::pair<string, int>> targetFinal; vector<std::pair<string, const string*>> gens; /* generate files the planned steps need: full path, text */ };
 static string gBuildDir = ".";
 static string under(const string& rel) { return gBuildDir == "." ? rel : gBuildDir + "/" + rel; }
 static string resolve(const string& dir, const string& p) {
@@ -660,6 +662,35 @@ static vector<RawAction> expandImporters(const Manifest& m) {
     return out;
 }
 
+// Where each generate block's file goes: {bin} is <build dir>/<outdir>/ctest. The path must stay inside that folder after links are
+// followed (a folder in the build tree that links elsewhere is refused), so a manifest cannot write anywhere else.
+static string binTreeOf(const Manifest& m) { return fs::absolute(under(m.outdir + "/ctest")).lexically_normal().generic_string(); }
+static std::map<string, const GenFile*> genFilePaths(const Manifest& m) {
+    std::map<string, const GenFile*> r; if (m.gens.empty()) return r;
+    string tree = binTreeOf(m); std::error_code ec;
+    string realTree = fs::weakly_canonical(tree, ec).generic_string(); if (ec) realTree = tree;
+    for (auto& gf : m.gens) {
+        if (!cmr::inBin(gf.path)) throw Fail("generate '" + gf.path + "' (line " + std::to_string(gf.line) + ") is outside the build folder");
+        string p = (fs::path(tree) / gf.path.substr(6)).lexically_normal().generic_string();
+        string real = fs::weakly_canonical(p, ec).generic_string(); if (ec) real = p;
+        if (p.compare(0, tree.size() + 1, tree + "/") != 0 || real.compare(0, realTree.size() + 1, realTree + "/") != 0)
+            throw Fail("generate '" + gf.path + "' (line " + std::to_string(gf.line) + ") resolves to " + real + ", outside the build folder " + realTree);
+        r[p] = &gf;
+    }
+    return r;
+}
+// A real build writes the generate files its steps need before it runs them; unchanged text is left alone (its time stamp too).
+static void writeGenerated(const Graph& g) {
+    for (auto& [p, text] : g.gens) {
+        string old; bool same = false;
+        { std::ifstream f(p, std::ios::binary); if (f) { old.assign((std::istreambuf_iterator<char>(f)), {}); same = old == *text; } }
+        if (same) continue;
+        std::error_code ec; fs::create_directories(fs::path(p).parent_path(), ec);
+        string tmp = p + ".okaytmp"; { std::ofstream f(tmp, std::ios::binary | std::ios::trunc); if (!f) throw Fail("cannot write generated file " + p); f << *text; }
+        fs::rename(tmp, p, ec); if (ec) throw Fail("cannot write generated file " + p + ": " + ec.message());
+        forgetHash(p);
+    }
+}
 static Graph plan(const Manifest& m, const vector<string>& want) {
     vector<RawAction> raws = m.actions; { auto more = expandImporters(m); raws.insert(raws.end(), more.begin(), more.end()); }
     std::map<string, const Target*> byName;
@@ -712,25 +743,17 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     }
     auto add = [&](Action a) { a.id = (int)g.acts.size(); g.acts.push_back(a); return a.id; };
     // {bin} in a definition, flag or include folder means <build dir>/<outdir>/ctest (what CMake calls CMAKE_BINARY_DIR in the `cmake` command's manifests)
-    string binTree = fs::absolute(under(m.outdir + "/ctest")).lexically_normal().generic_string();
+    string binTree = binTreeOf(m);
     auto fixBin = [&](string w) { for (size_t at; (at = w.find("{bin}")) != string::npos;) w.replace(at, 5, binTree); return w; };
-    for (auto& gf : m.gens) { // write the carried files first, so sources and headers among them exist; unchanged text is left alone
-        string p = fixBin(gf.path), old; bool same = false;
-        { std::ifstream f(p, std::ios::binary); if (f) { old.assign((std::istreambuf_iterator<char>(f)), {}); same = old == gf.text; } }
-        if (same) continue;
-        std::error_code ec; fs::create_directories(fs::path(p).parent_path(), ec);
-        string tmp = p + ".okaytmp"; { std::ofstream f(tmp, std::ios::binary | std::ios::trunc); if (!f) throw Fail("cannot write generated file " + p); f << gf.text; }
-        fs::rename(tmp, p, ec); if (ec) throw Fail("cannot write generated file " + p + ": " + ec.message());
-        forgetHash(p);
-    }
+    std::map<string, const GenFile*> genAt = genFilePaths(m); // checked here (inside the build folder); written only by a real build
     for (auto& n : order) {
         const Target& t = *byName[n]; vector<string> libs = transitive(t);
         vector<string> objs; vector<int> objActs; vector<string> needKeys;
         for (auto& nd : t.needs) needKeys.push_back(resolve("", nd));
         for (auto& sRaw : t.sources) {
-            const string s = fixBin(sRaw); // a source in {bin} is a file the manifest carries (or one an action writes there)
+            const string s = sRaw.compare(0, 6, "{bin}/") == 0 ? fixBin(cmr::binNormal(sRaw)) : fixBin(sRaw); // a source in {bin} is a file the manifest carries (or one an action writes there)
             string srcKey = resolve("", s);
-            if (!produced.count(srcKey) && !fs::exists(s)) {
+            if (!produced.count(srcKey) && !genAt.count(s) && !fs::exists(s)) {
                 string hint; for (auto& f : m.fetches) if (s.compare(0, f.dir.size() + 1, f.dir + "/") == 0) hint = " (it comes from fetch '" + f.name + "': run okay-build fetch " + f.name + ")";
                 throw Fail("target '" + t.name + "': source '" + s + "' does not exist" + hint);
             }
@@ -866,6 +889,14 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         for (auto& a : h.acts) { a.id = remap[a.id]; for (int& d : a.deps) d = remap[d]; }
         for (auto& tf : g.targetFinal) if (keep[tf.second]) h.targetFinal.push_back({tf.first, remap[tf.second]});
         g = h;
+    }
+    { // the generate files the remaining steps need: the sources they compile, and headers (any planned compile may include one)
+        std::set<string> compiled; bool anyCompile = false;
+        for (auto& a : g.acts) if (a.kind == "CC") { anyCompile = true; for (auto& i : a.inputs) compiled.insert(i); }
+        static const std::set<string> headerExt = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp"};
+        for (auto& kv : genAt)
+            if (compiled.count(kv.first) || compiled.count(resolve("", kv.first)) || (anyCompile && headerExt.count(fs::path(kv.first).extension().string())))
+                g.gens.push_back({kv.first, &kv.second->text});
     }
     for (auto& a : g.acts) { a.rdeps.clear(); a.cmdHash = a.rawCmd.empty() ? hashArgv(a.argv) : hashStr(a.dir + "\n" + a.rawCmd + (a.salt.empty() ? "" : "\n" + a.salt)); }
     for (auto& a : g.acts) for (int d : a.deps) g.acts[d].rdeps.push_back(a.id);
@@ -2222,7 +2253,7 @@ static string commandLineFor(const Action& a, string& err) {
 }
 static int buildOnWindows(const Manifest& m, const vector<string>& want, const Opts& o) {
     gRspUtf16 = m.tc.rspUtf16;
-    long long tStart = nowNs(); Graph g = plan(m, want); applyMeasuredMemory(g); rejectOversized(g);
+    long long tStart = nowNs(); Graph g = plan(m, want); applyMeasuredMemory(g); rejectOversized(g); if (!o.dry) writeGenerated(g);
     long long tPlanOnly = nowNs() - tStart; tStart = nowNs(); loadState();
     long long tState = nowNs() - tStart; long long tPlan = tPlanOnly + tState; tStart = nowNs() - tPlan;
     int total = (int)g.acts.size(), ran = 0, upToDate = 0, finished = 0;
@@ -2374,7 +2405,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     return buildOnWindows(m, want, o);
 #else
     gRspUtf16 = m.tc.rspUtf16;
-    long long tStart = nowNs(); Graph g = plan(m, want); applyMeasuredMemory(g); rejectOversized(g);
+    long long tStart = nowNs(); Graph g = plan(m, want); applyMeasuredMemory(g); rejectOversized(g); if (!o.dry) writeGenerated(g);
     long long tPlanOnly = nowNs() - tStart; tStart = nowNs(); loadState();
     long long tState = nowNs() - tStart; long long tPlan = tPlanOnly + tState; tStart = nowNs() - tPlan;
     int total = (int)g.acts.size(), ran = 0, upToDate = 0, running = 0, finished = 0;
@@ -3836,6 +3867,7 @@ int main(int argc, char** argv) {
         if (cmd == "fetch") return cmdFetch(m, want);
         if (cmd == "clean") {
             Graph g = plan(m, {}); for (auto& a : g.acts) if (a.kind != "CC") for (auto& pth : a.outputs) fs::remove(pth);
+            for (auto& gp : genFilePaths(m)) fs::remove(gp.first); // the generate files a build wrote
             fs::remove_all(under(".okaybuild")); fs::remove("compile_commands.json"); printf("okay-build: cleaned\n"); return 0;
         }
         if (cmd == "compdb") { writeCompdb(m); return 0; }

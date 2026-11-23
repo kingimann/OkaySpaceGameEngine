@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <map>
 #include <regex>
 #include <set>
@@ -121,6 +122,21 @@ static vector<Cmd> parseFile(const string& text, const string& file) {
         out.push_back(std::move(c));
     }
     return out;
+}
+
+// ---- Paths in the build folder ------------------------------------------------------------------------------------------
+// The build folder is the word {bin}. binNormal() tidies "{bin}/a/../b" to "{bin}/b"; a path that climbs above {bin} keeps its
+// leading "..", and "{bin}x" is left as it is, so inBin() can refuse both. Used by the reader and by okay-build's manifest parser.
+static string binNormal(const string& p) {
+    if (p.compare(0, 5, "{bin}") != 0 || p.size() == 5 || p[5] != '/') return p;
+    string n = fs::path(p.substr(6)).lexically_normal().generic_string();
+    while (!n.empty() && n.back() == '/') n.pop_back();
+    return n.empty() || n == "." ? string("{bin}") : "{bin}/" + n;
+}
+static bool inBin(const string& p) { // a file strictly inside {bin}, already tidied by binNormal()
+    if (p.compare(0, 6, "{bin}/") != 0 || p.size() == 6) return false;
+    string rest = p.substr(6);
+    return !(rest == ".." || rest.compare(0, 3, "../") == 0) && rest[0] != '/';
 }
 
 // ---- 2. What the evaluator builds ------------------------------------------------------------------------------------------
@@ -366,7 +382,8 @@ struct Interp {
     // ---- paths ----
     string abs(const string& p, const string& base) {
         if (p.empty()) return base;
-        if (p.compare(0, 5, "{bin}") == 0) return p;
+        if (p.compare(0, 5, "{bin}") == 0) return binNormal(p);
+        if (p[0] != '/' && base.compare(0, 5, "{bin}") == 0) return binNormal(base + "/" + p);
         string r = (p[0] == '/' ? fs::path(p) : fs::path(base) / p).lexically_normal().generic_string();
         while (r.size() > 1 && r.back() == '/') r.pop_back();
         return r;
@@ -675,6 +692,8 @@ inline void Interp::doString(const vector<string>& a) {
 }
 
 // math(EXPR): 64-bit integers with ( ) unary - + ~, then * / %, + -, << >>, &, ^, | (lowest), as in C. Decimal and 0x numbers.
+// + - * and unary - wrap around (two's complement, done on unsigned numbers so it is defined); a shift outside 0..63, a division
+// by zero and the smallest number divided by -1 are errors.
 static bool mathExpr(const string& src, long long& out) {
     size_t p = 0; bool ok = true;
     auto ws = [&]() { while (p < src.size() && isspace((unsigned char)src[p])) ++p; };
@@ -682,7 +701,7 @@ static bool mathExpr(const string& src, long long& out) {
     std::function<long long()> unary = [&]() -> long long {
         ws(); if (p >= src.size()) { ok = false; return 0; }
         char ch = src[p];
-        if (ch == '-') { ++p; return -unary(); } if (ch == '+') { ++p; return unary(); } if (ch == '~') { ++p; return ~unary(); }
+        if (ch == '-') { ++p; return (long long)(0ull - (unsigned long long)unary()); } if (ch == '+') { ++p; return unary(); } if (ch == '~') { ++p; return ~unary(); }
         if (ch == '(') { ++p; long long v = bin(0); ws(); if (p < src.size() && src[p] == ')') ++p; else ok = false; return v; }
         if (!isdigit((unsigned char)ch)) { ok = false; return 0; }
         size_t used = 0; long long v = 0;
@@ -702,9 +721,13 @@ static bool mathExpr(const string& src, long long& out) {
             else if (level == 5 && (src[p] == '*' || src[p] == '/' || src[p] == '%')) op = src.substr(p, 1);
             if (op.empty()) return v;
             p += op.size(); long long r = bin(level + 1);
-            if ((op == "/" || op == "%") && r == 0) { ok = false; return 0; }
-            if (op == "|") v |= r; else if (op == "^") v ^= r; else if (op == "&") v &= r; else if (op == "<<") v <<= r; else if (op == ">>") v >>= r;
-            else if (op == "+") v += r; else if (op == "-") v -= r; else if (op == "*") v *= r; else if (op == "/") v /= r; else v %= r;
+            if ((op == "/" || op == "%") && (r == 0 || (r == -1 && v == std::numeric_limits<long long>::min()))) { ok = false; return 0; }
+            if ((op == "<<" || op == ">>") && (r < 0 || r > 63)) { ok = false; return 0; }
+            typedef unsigned long long U;
+            if (op == "|") v |= r; else if (op == "^") v ^= r; else if (op == "&") v &= r;
+            else if (op == "<<") v = (long long)((U)v << r); else if (op == ">>") v >>= r; // >> of a negative number keeps the sign (C++20 rule; g++ and clang do this)
+            else if (op == "+") v = (long long)((U)v + (U)r); else if (op == "-") v = (long long)((U)v - (U)r); else if (op == "*") v = (long long)((U)v * (U)r);
+            else if (op == "/") v /= r; else v %= r;
         }
     };
     out = bin(0); ws(); return ok && p == src.size();
@@ -714,11 +737,16 @@ static bool mathExpr(const string& src, long long& out) {
 inline int Interp::cmakeTool(const vector<string>& w) {
     if (w.size() < 3 || w[1] != "-E") { tally.unknown["execute_process(cmake)"]++; return 1; }
     const string& op = w[2];
-    if ((op == "copy_if_different" || op == "copy") && w.size() == 5) {
-        string from = abs(w[3], curSrc), to = abs(w[4], curSrc), text;
-        if (!readText(from, text)) return 1;
-        if (to.compare(0, 5, "{bin}") != 0) { tally.unknown["cmake -E " + op + " outside the build folder"]++; return 1; }
-        written[to] = text; return 0;
+    if ((op == "copy_if_different" || op == "copy") && w.size() >= 5) { // copy <file>... <destination>; a folder destination gets each file by its name
+        string dest = abs(w.back(), curSrc); bool many = w.size() > 5, isDir = many || (!w.back().empty() && w.back().back() == '/');
+        for (auto& kv : written) if (kv.first.compare(0, dest.size() + 1, dest + "/") == 0) { isDir = true; break; }
+        for (size_t k = 3; k + 1 < w.size(); ++k) {
+            string from = abs(w[k], curSrc), text; if (!readText(from, text)) return 1;
+            string to = isDir ? binNormal(dest + "/" + fs::path(from).filename().generic_string()) : dest;
+            if (!inBin(to)) { tally.unknown["write outside the build folder"]++; return 1; }
+            written[to] = text;
+        }
+        return 0;
     }
     if (op == "make_directory" || op == "remove" || op == "rm" || op == "touch" || op == "echo") return 0; // nothing to keep: folders are made when files are written
     tally.unknown["cmake -E " + op]++; return 1;
@@ -769,7 +797,7 @@ inline void Interp::doFile(const vector<string>& a) {
     if (op == "RELATIVE_PATH" && a.size() >= 4) { vars[a[1]] = fs::path(abs(a[3], curSrc)).lexically_relative(abs(a[2], curSrc)).generic_string(); return; }
     if ((op == "WRITE" || op == "APPEND") && a.size() >= 2) { // kept in memory; a file in the build folder goes into the manifest
         string p = abs(a[1], curSrc), text; for (size_t k = 2; k < a.size(); ++k) text += a[k];
-        if (p.compare(0, 5, "{bin}") != 0) { tally.unknown["file(" + op + ") outside the build folder"]++; return; }
+        if (!inBin(p)) { tally.unknown["write outside the build folder"]++; return; }
         if (op == "WRITE") written[p] = text; else { string old; readText(p, old); written[p] = old + text; }
         return;
     }

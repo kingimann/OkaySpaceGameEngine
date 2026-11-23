@@ -179,6 +179,7 @@ add_library(okay_engine
     src/Script/Parser.cpp
     src/Script/Checker.cpp
     src/Script/CheckerOperators.cpp
+    src/Script/CheckerCalls.cpp
     src/Script/Interpreter.cpp
     src/Script/EngineApi.cpp
     src/Script/NextScriptVM.cpp

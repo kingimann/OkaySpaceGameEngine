@@ -59,4 +59,7 @@ bool Download(const std::string& url, const fs::path& out);   // fetch a URL to 
 extern std::string g_pollCfgDir, g_pollUrl, g_pollKey;   // account config for worker threads (set once at startup)
 // Multiplayer (main.cpp).
 void MpLaunch(const okay::JoinLink& in);       // start the game to join a server
+// Updates and versions (main.cpp).
+void GetNews(std::string& ver, std::string& lines);   // the latest release notes fetched by the update check
+int CompareVersions(const std::string& a, const std::string& b);   // <0, 0, >0 like strcmp
 } // namespace okl

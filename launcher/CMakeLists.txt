@@ -49,6 +49,8 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     ChatText.cpp          # emoji, chat text formatting, link previews (moved out of main.cpp; docs/engine/modularization_plan.md Part C)
     AntiCheatPages.cpp    # Admin > Anti-cheat, my bans and appeals, session tickets (moved out of main.cpp)
     CoverArtAvatars.cpp   # game cover art, avatar textures (moved out of main.cpp)
+    NavIcons.cpp          # the sidebar's line icons, round icon buttons, stars (moved out of main.cpp)
+    NewsHistory.cpp       # What's New history, news.cfg (moved out of main.cpp)
     VersionsManager.cpp   # the Versions page: installed editors, install / remove / prune, Latest / LTS (no SDL or ImGui; tested by launcher_versions)
     VersionsNet.cpp       # the cancellable curl download behind it
     VersionsUI.cpp        # the page itself

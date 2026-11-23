@@ -5138,3 +5138,7 @@ add_test(NAME dataasset_file_appears COMMAND test_dataasset_file_appears)
 add_executable(test_asset_guid_stable test_asset_guid_stable.cpp)
 target_link_libraries(test_asset_guid_stable PRIVATE okay::engine)
 add_test(NAME asset_guid_stable COMMAND test_asset_guid_stable)
+
+add_executable(test_model_deps test_model_deps.cpp)
+target_link_libraries(test_model_deps PRIVATE okay::engine)
+add_test(NAME model_deps COMMAND test_model_deps)

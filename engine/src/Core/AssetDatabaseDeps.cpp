@@ -106,6 +106,123 @@ void ForEachLine(const std::string& text, F f) {
     }
 }
 
+// Extensions the dependency graph treats as a file reference. `.mtl` is a Wavefront material
+// library (not its own asset kind) and is the usual companion of an `.obj`.
+bool DepExtension(const std::string& ext) {
+    if (ext == "mtl") return true;
+    return !ext.empty() && AssetTypeFromExtension(ext) != AssetType::Other;
+}
+
+bool HostilePath(const std::string& path) {
+    if (path.empty() || path.size() > 260) return true;
+    if (path.find("://") != std::string::npos) return true;
+    for (unsigned char c : path)
+        if (c < 32 || c == '<' || c == '>' || c == '|' || c == '*' || c == '?' || c == '"') return true;
+    return false;
+}
+
+void ConsiderPath(const std::string& text, std::size_t begin, std::size_t end, std::vector<FoundRef>& out) {
+    while (begin < end && std::isspace(static_cast<unsigned char>(text[begin]))) ++begin;
+    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1]))) --end;
+    if (end <= begin || end - begin < 5 || end - begin > 260) return;
+    const std::string path = text.substr(begin, end - begin);
+    if (HostilePath(path) || !DepExtension(AssetExtension(path))) return;
+    FoundRef r;
+    r.path = path;
+    r.begin = begin;
+    r.end = end;
+    r.quoted = begin > 0 && text[begin - 1] == '"';
+    out.push_back(std::move(r));
+}
+
+bool IsPathChar(unsigned char c) {
+    return std::isalnum(c) || c == '/' || c == '\\' || c == '.' || c == '_' || c == '-' || c == '+' || c == '@' || c == ':';
+}
+
+void ScanPathRuns(const std::string& text, std::size_t lb, std::size_t le, std::vector<FoundRef>& out) {
+    std::size_t i = lb;
+    while (i < le) {
+        if (!IsPathChar(static_cast<unsigned char>(text[i]))) { ++i; continue; }
+        std::size_t j = i + 1;
+        while (j < le && IsPathChar(static_cast<unsigned char>(text[j]))) ++j;
+        ConsiderPath(text, i, j, out);
+        i = j;
+    }
+}
+
+bool IsNumberToken(const std::string& t) {
+    if (t.empty()) return false;
+    std::size_t i = (t[0] == '+' || t[0] == '-') ? 1 : 0;
+    if (i >= t.size()) return false;
+    bool dot = false, digit = false;
+    for (; i < t.size(); ++i) {
+        if (t[i] == '.') { if (dot) return false; dot = true; }
+        else if (std::isdigit(static_cast<unsigned char>(t[i]))) digit = true;
+        else return false;
+    }
+    return digit;
+}
+
+bool IsMapOrLibWord(const std::string& word) {
+    if (word == "mtllib") return true;
+    static const char* kWords[] = {
+        "map_ka", "map_kd", "map_ks", "map_ns", "map_d", "map_bump", "map_ke", "map_pr", "map_pm", "map_refl",
+        "bump", "disp", "decal", "refl", "norm"
+    };
+    for (const char* s : kWords) if (word == s) return true;
+    return false;
+}
+
+// A Wavefront `mtllib` or `map_*` line. The file name is whatever is left after the options
+// (`-s 1 1 1`, `-bm 0.5`, ...), and it may contain spaces. Several names that each end in a
+// known extension ("mtllib a.mtl b.mtl") are separate files. Returns true when this line is
+// one of those statements or a comment, so the caller does not scan it again.
+bool TakeModelLine(const std::string& text, std::size_t lb, std::size_t le, std::vector<FoundRef>& out) {
+    std::size_t i = lb;
+    while (i < le && std::isspace(static_cast<unsigned char>(text[i]))) ++i;
+    if (i >= le) return false;
+    if (le - lb < 4096 && (text[i] == '#' || text[i] == ';')) return true;
+    std::size_t w = i;
+    while (w < le && !std::isspace(static_cast<unsigned char>(text[w]))) ++w;
+    if (!IsMapOrLibWord(Lower(text.substr(i, w - i)))) return false;
+    std::size_t p = w;
+    auto skipSpace = [&]() { while (p < le && std::isspace(static_cast<unsigned char>(text[p]))) ++p; };
+    skipSpace();
+    while (p < le && text[p] == '-') {
+        while (p < le && !std::isspace(static_cast<unsigned char>(text[p]))) ++p;
+        skipSpace();
+        while (p < le && text[p] != '-') {
+            std::size_t q = p;
+            while (q < le && !std::isspace(static_cast<unsigned char>(text[q]))) ++q;
+            if (!IsNumberToken(text.substr(p, q - p))) break;
+            p = q;
+            skipSpace();
+        }
+    }
+    if (p >= le) return true;
+    std::size_t end = le;
+    while (end > p && std::isspace(static_cast<unsigned char>(text[end - 1]))) --end;
+    struct Span { std::size_t a, b; };
+    std::vector<Span> toks;
+    for (std::size_t a = p; a < end; ) {
+        while (a < end && std::isspace(static_cast<unsigned char>(text[a]))) ++a;
+        if (a >= end) break;
+        std::size_t b = a;
+        while (b < end && !std::isspace(static_cast<unsigned char>(text[b]))) ++b;
+        toks.push_back({a, b});
+        a = b;
+    }
+    bool each = toks.size() > 1;
+    for (const Span& s : toks)
+        if (!DepExtension(AssetExtension(text.substr(s.a, s.b - s.a)))) each = false;
+    if (each) {
+        for (const Span& s : toks) ConsiderPath(text, s.a, s.b, out);
+    } else {
+        ConsiderPath(text, p, end, out);
+    }
+    return true;
+}
+
 } // namespace
 
 std::vector<FoundRef> ExtractSceneRefs(const std::string& text) {
@@ -174,6 +291,16 @@ std::vector<FoundRef> ExtractTextRefs(const std::string& text) {
     return out;
 }
 
+std::vector<FoundRef> ExtractModelRefs(const std::string& text) {
+    std::vector<FoundRef> out;
+    ForEachLine(text, [&](std::size_t lb, std::size_t le) {
+        if (TakeModelLine(text, lb, le, out)) return;
+        ScanPathRuns(text, lb, le, out);
+    });
+    if (out.size() > 4096) out.resize(4096);
+    return out;
+}
+
 // --- Extractor registry -------------------------------------------------------------------------
 
 void AssetDatabase::RegisterDefaultExtractors() {
@@ -188,6 +315,7 @@ void AssetDatabase::RegisterDefaultExtractors() {
     RegisterExtractor("text", {"okayanim", "okayclip", "okaydialog", "okayquest", "okaybt", "okayvs", "okayseq",
                                "okayloot", "okayitems", "okayweapon", "okayrecipes", "okaydata", "okaynav", "gltf"},
                       wrap(&ExtractTextRefs));
+    RegisterExtractor("model", {"obj", "mtl", "fbx", "dae"}, wrap(&ExtractModelRefs));
 }
 
 void AssetDatabase::RegisterExtractor(const std::string& name, const std::vector<std::string>& extensions, RefExtractor extractor) {

@@ -85,8 +85,14 @@ then this file gets updated. Keep this file short and true.
    1.5-2 hour CI, so batch related work into one PR per area (for example one physics PR, one duplicates PR) instead of
    one per step, keep about 5 open per Claude at most, and push to an open PR only when its fix is complete. Stacked
    steps go in as the top branch's single PR.
-10. Agents push only their own branch (plain push, never force) and do not open PRs unless told. Each Claude's main
-    session opens and merges its own lane's PRs (rule 6). Only the coordinator merges the release PR and runs `release.yml`.
+10. **Two branches per Claude.** (Owner, 2026-11-23: "can we use only one or two branches so I can delete the rest".)
+    Each Claude has `<lane>/work`, where all its work is built, and `<lane>/ready`, the branch its PR comes from (moved
+    forward to `work` when a batch passes the precheck, so new work does not restart the PR's checks). Agents work in
+    local worktrees and local branches and do NOT push branches of their own: they report, and the main session merges
+    their work into `work`. Open PRs from before this rule finish on their own branches. Old branches are kept by one
+    archive branch per lane (`<lane>/archive`: commits whose parents are the old tips, with names and shas in the
+    messages) before anyone deletes them. Plain push, never force; agents do not open PRs. Each Claude's main session
+    opens and merges its own lane's PRs (rule 6). Only the coordinator merges the release PR and runs `release.yml`.
 26. **Three Claudes, one set of lanes.** The coordinator (`claude/*`), Claude 2 (`claude2/*`) and Claude 3 (`claude3/*`) follow
     `docs/process/collaboration.md` and its table `docs/lanes.json`: run `python3 scripts/find_existing.py <keywords>` before
     you start anything; claim it with one comment `Claim: <branch>` on issue #422 (`Existing:`, `Gap:`, `Files:`,

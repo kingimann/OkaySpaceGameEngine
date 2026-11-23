@@ -2,11 +2,15 @@
 
 # Code index: engine-Components
 
-Back to the [code index](../code_index.md). 260 headers, 735 names.
+Back to the [code index](../code_index.md). 262 headers, 741 names.
 
 ## `engine/include/okay/Components/ActionList.hpp`
 
 - `ActionList` class, line 20: A Game-Creator-style visual script: a **Trigger** fires the list, optional
+
+## `engine/include/okay/Components/ActiveRagdoll.hpp`
+
+- `ActiveRagdoll` class, line 30
 
 ## `engine/include/okay/Components/AimAssist.hpp`
 
@@ -63,7 +67,7 @@ Back to the [code index](../code_index.md). 260 headers, 735 names.
 
 ## `engine/include/okay/Components/AutoSave.hpp`
 
-- `AutoSave` class, line 12: Saves the whole game (SaveGame) to a slot every 'interval' seconds of play,
+- `AutoSave` class, line 13: Saves the whole game (SaveGame) to a slot every 'interval' seconds of play,
 
 ## `engine/include/okay/Components/BehaviorTreeRunner.hpp`
 
@@ -798,7 +802,15 @@ Back to the [code index](../code_index.md). 260 headers, 735 names.
 
 ## `engine/include/okay/Components/Ragdoll.hpp`
 
-- `Ragdoll` class, line 34
+- `Ragdoll` class, line 35
+
+## `engine/include/okay/Components/RagdollShared.hpp`
+
+- `DriverKinds` enum, line 23: Which kind of driver a component is (0 = none).
+- `DriverKind` function, line 24
+- `SwitchBackOn` function, line 32: Switch back on what SwitchOff switched off, and clear the list.
+- `FindBones` function, line 41: The 15 humanoid bones under 'go'. The blocky Character is split into its
+- `HealthWatch` struct, line 44: Death, revive and hit events from a body's HealthStat.
 
 ## `engine/include/okay/Components/RangedWeapon.hpp`
 

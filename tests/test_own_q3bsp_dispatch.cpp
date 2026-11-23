@@ -7,6 +7,7 @@
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
 #include "q3bsp_fixtures.hpp"
+#include "own_seam_checks.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include <cstdlib>
@@ -17,22 +18,9 @@
 using namespace okay;
 namespace fs = std::filesystem;
 
-static void SetEnv(const char* n, const char* v) {
-#ifdef _WIN32
-    _putenv_s(n, v);
-#else
-    ::setenv(n, v, 1);
-#endif
-}
-static void UnsetEnv(const char* n) {
-#ifdef _WIN32
-    _putenv_s(n, "");
-#else
-    ::unsetenv(n);
-#endif
-}
-static void Write(const fs::path& p, const std::string& s) { std::ofstream f(p, std::ios::binary); f.write(s.data(), (std::streamsize)s.size()); }
-static std::size_t Verts(const ImportedModel& m) { std::size_t n = 0; for (const ImportedPart& p : m.parts) n += p.mesh.vertices.size(); return n; }
+using seam::SetEnv;
+using seam::UnsetEnv;
+using seam::Write;
 
 #ifdef OKAY_EXPECT_OWN_Q3BSP
 static const bool kOnByDefault = true;
@@ -58,7 +46,7 @@ int main() {
         if (!kOnByDefault) {
             // nothing chosen, nothing set: not ours (when the build has no Assimp the file cannot be read at all and the message names the switch)
             CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
-            CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") == std::string::npos || AssimpAvailable());
+            CHECK(!seam::Listed(c.ext) || AssimpAvailable());
             if (!AssimpAvailable()) {
                 ImportedModel d; std::string e2;
                 CHECK(!ImportModelData(path, d, ImportBackend::Default, false, &e2) && e2.find("OKAY_OWN_Q3BSP") != std::string::npos);
@@ -68,15 +56,7 @@ int main() {
             ImportedModel d; std::string e2;
             CHECK(ImportModelData(path, d, ImportBackend::Default, false, &e2) && d.backend == "own");
         }
-        SetImportBackend(c.ext, ImportBackend::Own);
-        CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
-        ImportedModel a, b;
-        const bool ok = ImportModelData(path, a, ImportBackend::Default, false, &err);
-        if (!ok) std::fprintf(stderr, "  %s: %s\n", c.file, err.c_str());
-        CHECK(ok && a.backend == "own");
-        CHECK(ReadQ3bspFile(path, b, &err));
-        CHECK(a.parts.size() == b.parts.size() && Verts(a) == Verts(b) && a.nodes.size() == b.nodes.size() && a.materials.size() == b.materials.size());
-        CHECK(fx::TriCount(a) == 77 && fx::TriCount(b) == 77);
+        seam::CheckSeamMatchesDirect(path, c.file, c.ext, [](const std::string& p, ImportedModel& m, std::string* e) { return ReadQ3bspFile(p, m, e); }, 77, false);
         // flatten: one root node, the Z-up turn baked into the vertices: the quad at z = 0 and the mesh face at z = 10 are at y = 0 and y = 10 now
         ImportedModel f;
         CHECK(ImportModelData(path, f, ImportBackend::Own, true, &err) && f.nodes.size() == 1 && fx::TriCount(f) == 77);
@@ -84,16 +64,9 @@ int main() {
         for (const ImportedPart& p : f.parts) for (const Vec3& v : p.mesh.vertices) { maxY = std::max(maxY, v.y); minZ = std::min(minZ, v.z); }
         CHECK(maxY > 19.9f && maxY < 20.1f);   // the patch at z = 20 is the highest: y = 20 (the nodraw quad at 30 is left out)
         CHECK(minZ < -63.9f);                                 // y of the file became -z
-        CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") != std::string::npos);
+        CHECK(seam::Listed(c.ext));
         // the environment variable decides when nothing was chosen at run time
-        SetImportBackend(c.ext, ImportBackend::Default);
-        SetEnv("OKAY_OWN_Q3BSP", "1");
-        CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
-        ImportedModel e1;
-        CHECK(ImportModelData(path, e1, ImportBackend::Default, false, &err) && e1.backend == "own");
-        SetEnv("OKAY_OWN_Q3BSP", "0");
-        CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
-        UnsetEnv("OKAY_OWN_Q3BSP");
+        seam::CheckEnvSwitch(path, c.ext, "OKAY_OWN_Q3BSP");
     }
     {   // upper case extension; a file of another BSP family is refused with the reader's message
         SetImportBackend("*", ImportBackend::Own);

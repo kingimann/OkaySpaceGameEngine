@@ -113,7 +113,7 @@ static bool ReadHmpImpl(const std::string& bytes, ImportedModel& out, std::strin
     // smooth normals: the sum of the (area weighted) face normals of the triangles at each point
     me.normals.assign((std::size_t)numVerts, Vec3{0, 0, 0});
     for (std::size_t t = 0; t + 2 < me.triangles.size(); t += 3) {
-        const Vec3 &p0 = me.vertices[(std::size_t)me.triangles[t]], &p1 = me.vertices[(std::size_t)me.triangles[t + 1]], &p2 = me.vertices[(std::size_t)me.triangles[t + 2]];
+        const Vec3 &p0 = detail::rc::TriCorner(me, t, 0), &p1 = detail::rc::TriCorner(me, t, 1), &p2 = detail::rc::TriCorner(me, t, 2);
         const double ux = (double)p1.x - p0.x, uy = (double)p1.y - p0.y, uz = (double)p1.z - p0.z;
         const double vx = (double)p2.x - p0.x, vy = (double)p2.y - p0.y, vz = (double)p2.z - p0.z;
         const Vec3 fn{(float)(uy * vz - uz * vy), (float)(uz * vx - ux * vz), (float)(ux * vy - uy * vx)};

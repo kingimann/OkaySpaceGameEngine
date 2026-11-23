@@ -199,6 +199,18 @@ then this file gets updated. Keep this file short and true.
     claim ("Existing:") and the PR ("## Existing code"). If something exists, improve it; only if nothing does, make it.
     This applies to agents, briefs and docs too, not only code.
 
+19e. **One system, one name, one home.** (Owner, 2026-11-23: "organize the engine/systems better, name our customs
+    better, so you don't get confused", "organize it in a way so you don't do duplicates".) Every system has ONE
+    official name, ONE home folder, ONE entry file and ONE doc, listed in the registry `docs/SYSTEMS.md` (generated from
+    the `System:` lines of `docs/feature_map/`, with every old and other name under "Also called"). Use the official
+    name in code, docs, PRs and messages. **No "Own", "New", "Improved", "Classic", "V2"/"2", or "Next" for a newer version,** in a system,
+    file, folder, class or switch name: when ours replaces a third-party part, ours IS the system and gets the plain
+    name ("Physics", "Input", "UI toolkit (OkayUI)"); the third-party part is what gets a qualifier (`Sdl2`, `Assimp`)
+    while it lasts. Frozen names (script API, scene keys, component names, file formats, env vars, CMake options) stay
+    and are listed as aliases. A new system or a new top-level folder gets its registry entry in the same change.
+    `scripts/dup_lint.py check` refuses a new file or folder with a banned word and a new system folder with no registry
+    entry. The rule and the names that still break it: `docs/engine/architecture.md#naming`.
+
 ## Machine and agents
 
 20. **Disk is tight.** Run `df -h /` before big builds, stop at under 5 GB free, build with `ninja -j2` and only

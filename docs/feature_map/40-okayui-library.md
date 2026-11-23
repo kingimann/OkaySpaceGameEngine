@@ -9,6 +9,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 
 ### 40.1 Core widgets and auto-layout
 - **System:** OkayUI - Our own UI toolkit for the launcher, editor panels and script-drawn windows (replacing Dear ImGui) - duplicate of Game UI (kept on purpose: both have buttons, tabs, tooltips and a theme, but OkayUI is for tools and Game UI for designed game menus; see 40.5)
+  Home: `okayui/`, `shared/OkayUIHost.hpp`, `editor/OkayUIHostMode.cpp`. Entry: `okayui/include/okay/UI/OkayUI.hpp`. Also called: own UI, okayui host, OkayUIHost, UI toolkit, Dear ImGui replacement, ImGui, OKAY_UI_OWN_RENDER, OKAY_UI_DEFAULT_BACKEND, OKAY_CLASSIC_UI. Fix: Host code moves from shared/OkayUIHost* and editor/OkayUIHost* into okayui/ (modularization plan); the ImGui shims go with Dear ImGui.
 - **What:** The widget set: explicit-coordinate widgets (button, checkbox, switch, slider, progress, radio, tab, text field) and an ImGui-style auto-layout API (windows, scrolling children, same-line, tables, menus, popups, trees, plots, drag and drop, colour pickers).
 - **Parts:**
   - 40.1.1 Explicit-coordinate widgets - `okayui/include/okay/UI/OkayUI.hpp`, `okayui/src/OkayUI.cpp` - `Button(id, x, y, w, h, label)`, `Checkbox`, `ToggleSwitch`, `Slider`, `ProgressBar`, `RadioButton`, `Tab`, `TextField`, `Label`, `Panel`

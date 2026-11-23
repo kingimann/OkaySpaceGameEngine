@@ -88,6 +88,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 
 ### 15.4 Project panel and asset manager
 - **System:** Project Panel - The editor's file browser for the project's assets.
+  Home: `editor/ProjectPanelUI.cpp`, `editor/ProjectBrowser.cpp`. Entry: `editor/ProjectPanelUI.hpp`. Also called: Project window, asset browser, ProjectBrowser.
 - **What:** The file browser of the project's Assets folder (folders, thumbnails, smart filters, search, color labels, drag and drop into the scene) and a window that imports marketplace downloads into the project.
 - **Parts:**
   - 15.4.1 Project panel - `editor/main.cpp` (`DrawProject`), `editor/ProjectBrowser.*` - folder tree, list and grid, search (`t:model`, `ext:png`, `l:tag`, `is:unused`, `is:broken`, `uses:`, `deps:`), smart filters (All Models, Recently Changed, Unused Assets), multi-select; the listing, counts, folders and dependency lookups come from `AssetDatabase`
@@ -158,6 +159,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 
 ### 15.7 Build Settings
 - **System:** Build Settings - The editor's Build Settings and Scene Manager: which scenes go into a game and where it is exported to.
+  Home: `editor/SceneManagerPanel.cpp`, `editor/BuildSettingsWindow.cpp`. Entry: `editor/SceneManagerPanel.hpp`. Also called: Scene Manager, Build Settings window, scene list.
 - **What:** File > Build Settings (Ctrl+B): export the current scenes as a standalone game for Windows, Web, Android or a dedicated server, with named build profiles.
 - **Parts:**
   - 15.7.1 Build Settings dialog - `editor/main.cpp` (~15948-16650) - name, output folder, platform buttons, scenes list, Build and Build and Run, checks every visual script first and stops on errors
@@ -181,6 +183,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 
 ### 15.8 Plugin system and Plugins menu
 - **System:** Editor Plugins - Lets people add their own panels, menu commands and nodes to the editor.
+  Home: `editor/main.cpp`, `examples/editor-plugins/`. Entry: `editor/main.cpp`. Also called: plugins, editor extensions, custom panels.
 - **What:** Editor plugins written in OkayScript: a file in `<project>/EditorPlugins/` or the editor's `plugins/` folder can add a panel, a menu command, and react to selection, through an `editor_*` API.
 - **Parts:**
   - 15.8.1 Plugin host - `editor/main.cpp` (~7936-8288) - plugin list, loading, hot reload on save, `// @name` headers, enable and disable, plugin panel bridge
@@ -202,6 +205,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 
 ### 15.9 Layout, undo, autosave
 - **System:** Undo and Recovery - Undo and redo, autosave, crash recovery, backups and saved window layouts in the editor.
+  Home: `editor/EditorState.cpp`, `engine/include/okay/Core/Undo.hpp`. Entry: `engine/include/okay/Core/Undo.hpp`. Also called: undo, redo, editor autosave, crash recovery, Recovery, Backup.
 - **What:** The editor's state and shell behaviours: panel tabs and layouts, undo and redo, autosave with a recovery prompt, and the non-GUI editor model.
 - **Parts:**
   - 15.9.1 Editor model - `editor/EditorState.*` - scene, selection, create helpers, Play and Stop with snapshot restore, editor camera; free of ImGui so tests can use it
@@ -338,6 +342,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 
 ### 15.15 Editor shell, startup and lifecycle
 - **System:** Editor - The editor program: Hierarchy, Inspector, Scene and Game views, menus, content windows, settings and help.
+  Home: `editor/`. Entry: `editor/EditorCommon.hpp`. Also called: OkayEngine.exe, editor program, Inspector, Hierarchy, Scene view.
 - **What:** What runs around the panels: the main loop, menu and toolbar, dock space, the launcher handshake, single-instance guard, multi-window support, the self-updater and the headless selftest.
 - **Parts:**
   - 15.15.1 Menu and toolbar - `editor/MenuBarModel.hpp` (the menus as data), `editor/MenuEntriesUI.hpp` (the ImGui drawer), `editor/main.cpp` (`DrawMainMenus`, `RunMenuAction`, `DrawCreateSlot`; `DrawMenuAndToolbar`, `DrawDockSpace`) - File, Edit, GameObject, View, Plugins, Help menus (`docs/editor/editor_menus.md`); Play, Stop, Step (advance one frame) and Build buttons

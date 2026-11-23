@@ -27,6 +27,14 @@ Plain rules: docs/process/no_duplicates.md. The one-place list of shared code: d
 
 3. docs/engine/shared_code.md must only name files that exist (rows marked "planned" are skipped).
 
+4. System names (CLAUDE.md rule 19e, the system registry docs/SYSTEMS.md). A file the branch ADDS whose name has a
+   banned qualifier as a word (Own, New, Improved, Classic, V2: `OwnSolver.cpp`, `physics_v2.py`) is an error, and so is
+   a new folder with one in its name: the system we write IS the system, so it gets the plain name. A new top-level
+   folder, or a new folder directly under engine/include/okay/, engine/src/ or editor/ (a new system), is an error unless
+   a system's `Home:` in the feature map (docs/feature_map/*.md, read at --head) names it. A file named exactly in a
+   `Home:` or `Entry:`, or with `dup-allow: <reason>` in its first 15 lines, is allowed. A new class or function whose
+   name has a banned qualifier is a warning.
+
 Suppression: `dup-allow: <reason>` on the line (or the line above) of a fingerprint hit, or on any line of a pasted
 block; `dup-allow-begin: <reason>` ... `dup-allow-end` for a block. The reason must not be empty: a bare `dup-allow:`
 is itself an error.
@@ -872,6 +880,108 @@ def cross_branch(root, base, refs, focus=None, jobs=1, stacked=None):
     return {"clones": clones, "names": out_names}
 
 
+# ------------------------------------------------------------------------------------------ system names (rule 19e)
+
+BANNED_WORDS = ("own", "new", "improved", "classic")
+SYSTEM_DIRS = ("engine/include/okay/", "engine/src/", "editor/")  # a new folder directly under one is a new system
+NAME_SKIP = ("docs/", "tests/data/", "tests/assets/", "tests/golden/", "examples/")  # data and prose, not code names
+
+
+def banned_qualifier(name):
+    """The banned qualifier a file, folder or code name uses as a word (Own, New, Improved, Classic, V2), or None."""
+    words = name_words(os.path.splitext(name)[0] if "." in name[1:] else name)
+    for i, w in enumerate(words):
+        if w in BANNED_WORDS:
+            return w.capitalize()
+        if w == "v" and i + 1 < len(words) and words[i + 1] == "2" or w == "v2":
+            return "V2"
+    return None
+
+
+def registry_paths(root, head):
+    """(homes, named): the Home folders and files of every system, and the paths named exactly in a Home or Entry, from the
+    feature map pages at `head` (scripts/gen_feature_map.py reads them)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import gen_feature_map as G
+    names = [p for p in git(root, "ls-tree", "--name-only", head, "docs/feature_map/").split("\n") if p.endswith(".md")]
+    pages = {os.path.basename(p): read_blob(root, head, p) or "" for p in names}
+    homes, named = set(), set()
+    for e in G.registry(root, pages):
+        for p in e["home"]:
+            homes.add(p.rstrip("/"))
+            named.add(p.rstrip("/"))
+        if e["entry"]:
+            named.add(e["entry"].rstrip("/"))
+    return homes, named
+
+
+def check_system_names(root, base, head, out):
+    """New files and folders: no banned qualifier in the name; a new top-level or system folder needs a registry Home."""
+    added = [p for p in git(root, "diff", "--name-only", "--no-renames", "--diff-filter=A", f"{base}...{head}").split("\n") if p]
+    if not added:
+        return 0
+    base_paths = git(root, "ls-tree", "-r", "--name-only", base).split("\n")
+    base_dirs = {"/".join(p.split("/")[:i]) for p in base_paths if p for i in range(1, p.count("/") + 1)}
+    homes, named = registry_paths(root, head)
+    import fnmatch
+
+    def is_named(path):
+        return any(path == n or fnmatch.fnmatch(path, n) for n in named)
+
+    def covered(folder):  # a Home is this folder, or inside it, or holds it
+        return any(h == folder or h.startswith(folder + "/") or folder.startswith(h + "/") for h in homes)
+
+    def allowed(path):
+        txt = read_blob(root, head, path) or ""
+        return any(m.group(1).strip() for m in re.finditer(r"dup-allow:([^\n]*)", "\n".join(txt.split("\n")[:15])))
+
+    n, seen = 0, set()
+    for path in added:
+        if excluded(path) or path.startswith(NAME_SKIP):
+            continue
+        parts = path.split("/")
+        msg = None
+        for i in range(1, len(parts)):
+            folder = "/".join(parts[:i])
+            if folder in base_dirs or folder in seen:
+                continue
+            q = banned_qualifier(parts[i - 1])
+            if q:
+                msg = (f"new folder {folder}/ has '{q}' in its name. One plain name per system (CLAUDE.md rule 19e): ours IS the "
+                       f"system, so no Own/New/Improved/Classic/V2. Find the existing system: python3 scripts/find_existing.py <words>")
+            elif i == 1 or any(folder.startswith(d) and "/" not in folder[len(d):] for d in SYSTEM_DIRS):
+                if not covered(folder):
+                    kind = "top-level folder" if i == 1 else "system folder"
+                    msg = (f"new {kind} {folder}/ is not in the system registry. Check docs/SYSTEMS.md (python3 scripts/find_existing.py "
+                           f"<words>) and add on to the system that does the job; if it really is a new system, give it a "
+                           f"`- **System:**` line with `Home: `{folder}/`` in docs/feature_map/ (format: docs/feature_map/README.md)")
+            if msg:
+                seen.add(folder)
+                break
+        if msg is None and lang_of(path):
+            q = banned_qualifier(parts[-1])
+            if q and not is_named(path):
+                msg = (f"new file {parts[-1]} has '{q}' in its name. One plain name per system (CLAUDE.md rule 19e): name it for what "
+                       f"it does, and add on to the existing system (python3 scripts/find_existing.py <words>)")
+        if msg and not is_named(path) and not allowed(path):
+            out.emit("error", path, 1, "system name", msg + ". A real need: `dup-allow: <reason>` in the file's first 15 lines.")
+            n += 1
+    return n
+
+
+def banned_names_report(changed_names, added, out):
+    """Warn for an added class or function whose name has a banned qualifier."""
+    n = 0
+    for path, rows in sorted(changed_names.items()):
+        for name, line in rows:
+            q = banned_qualifier(name)
+            if q and line in added.get(path, ()):
+                n += 1
+                out.emit("warning", path, line, "system name",
+                         f"new name {name} has '{q}' in it. Name it for what it does, not for being ours, new or improved (CLAUDE.md rule 19e).")
+    return n
+
+
 # ------------------------------------------------------------------------------------------ reporting
 
 
@@ -1073,11 +1183,15 @@ def run_check(a, root):
                 for n_, l in rows:
                     ni.add(n_, p, l)
             nnames = new_names_report(ni, changed_names, added, out)
+            banned_names_report(changed_names, added, out)
 
     # 3. the shared code list names real files
     check_shared_doc(root, a.head, set(git(root, "ls-tree", "-r", "--name-only", a.head).split("\n")), out)
 
-    # 4. copy-paste in what the branch adds: only files that share a word with an added block can hold a copy of it
+    # 4. system names: no Own/New/Improved/Classic/V2 in new file and folder names; a new system folder needs a registry entry
+    nsys = check_system_names(root, a.base, a.head, out)
+
+    # 5. copy-paste in what the branch adds: only files that share a word with an added block can hold a copy of it
     t1 = time.time()
     found, ncand = [0, 0], 0
     if touched:
@@ -1129,7 +1243,7 @@ def run_check(a, root):
                          f"{op}:{l_old[0]}-{l_old[1]}. Move it into one shared function and call it from both places ({SHARED_DOC}). "
                          f"A real need for a copy: `dup-allow: <reason>` on one of the lines.")
     print(f"dup_lint check {a.base}...{a.head}: {len(touched)} changed code files, {ncand} other files share words with the added code; "
-          f"{found[0]} pasted and {found[1]} renamed copies; {nnames} similar names; {out.errors} error(s), {out.warnings} warning(s); "
+          f"{found[0]} pasted and {found[1]} renamed copies; {nnames} similar names; {nsys} system-name errors; {out.errors} error(s), {out.warnings} warning(s); "
           f"{time.time() - t0:.1f}s (clone search {time.time() - t1:.1f}s)", file=sys.stderr)
     if a.update_baseline:
         print("note: check only reads the changed files; use `scan --update-baseline` to rewrite the baseline", file=sys.stderr)

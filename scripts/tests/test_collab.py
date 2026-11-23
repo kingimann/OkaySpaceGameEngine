@@ -133,6 +133,27 @@ class Find(unittest.TestCase):
             r.close()
 
 
+    def test_registry_first_by_old_name(self):
+        r = Repo()
+        try:
+            r.write("docs/feature_map/04-characters-cameras.md",
+                    "# Page\n\n## 4. Characters\n\n### 4.5 Vehicles\n- **System:** Vehicles - Drivable cars.\n"
+                    "  Home: `engine/include/okay/Components/VehicleSeat.hpp`. Entry: `engine/include/okay/Components/VehicleSeat.hpp`. "
+                    "Also called: Classic Car, CarKit.\n- **What:** Arcade car with a seat.\n- **Code:** `Components/VehicleSeat`\n"
+                    "- **Status:** Works\n- **Words:** car\n")
+            hits = FE.registry_hits(r.d, FE.tokens_of(["classic car"]))
+            self.assertEqual([(h["name"], h["matched"]) for h in hits], [("Vehicles", "Classic Car")])
+            self.assertEqual(hits[0]["entry"], "engine/include/okay/Components/VehicleSeat.hpp")
+            self.assertEqual(FE.registry_hits(r.d, FE.tokens_of(["CarKit"]))[0]["name"], "Vehicles")
+            self.assertEqual(FE.registry_hits(r.d, FE.tokens_of(["zzzunknown"])), [])
+            text = FE.render(FE.build(r.d, ["classic", "car"], offline=True))
+            self.assertIn("## Systems (docs/SYSTEMS.md", text)
+            self.assertIn("**Vehicles** (also called Classic Car)", text)
+            self.assertIn("system Vehicles (engine/include/okay/Components/VehicleSeat.hpp)", text)
+        finally:
+            r.close()
+
+
 class Collisions(unittest.TestCase):
     def setUp(self):
         self.r = Repo()

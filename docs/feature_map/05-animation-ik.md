@@ -8,6 +8,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 
 ### 5.1 Animator and state machines
 - **System:** Animation - Plays and blends animation clips with a state machine, shares humanoid animations between models, and gives scripts control.
+  Home: `engine/include/okay/Animation/`, `engine/include/okay/Components/Animator.hpp`. Entry: `engine/include/okay/Components/Animator.hpp`. Also called: Animator, AnimStateMachine, ModelAnimator, animation clips, retargeting.
 - **What:** The Animator is a state machine: states name a clip or a blend tree, transitions fire on parameters, clip end or exit time, layers play on part of the skeleton. The same machine plays through an imported model's Model Animator or the blocky Character's own clips.
 - **Parts:**
   - 5.1.1 States, transitions, conditions - `Components/AnimStateMachine` - OnClipEnd, Float >/<, Bool, Trigger, Always, Int ==/!=; extra conditions all must pass; exit time, Any State, interruption modes, priority, mute, Start at, Keep phase
@@ -121,6 +122,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 
 ### 5.6 Foot, limb and chain IK
 - **System:** Inverse Kinematics - Bends bones so feet stand on the ground, hands reach and hold things, and heads look at targets.
+  Home: `engine/include/okay/Components/FootIK.hpp`, `engine/include/okay/Math/IKMath.hpp`. Entry: `engine/include/okay/Components/LimbIK.hpp`. Also called: IK, FootIK, LimbIK, ChainIK, LookAtIK, FullBodyIK, TwoBoneIK. Fix: The IK maths moves from Math/ to Animation/ (architecture.md).
 - **What:** Solvers that bend bones so a foot, hand or chain tip reaches a goal, run after all animation each frame: feet planted on slopes and steps, one arm or leg reaching a target, and long chains (tails, tentacles, spider legs).
 - **Parts:**
   - 5.6.1 Foot IK - `Components/FootIK` - raycast per foot, two-bone leg solve, Adjust Pelvis, Plant Down, Align To Slope, Toe & Heel rays, foot lock, smoothing; wires itself on the blocky Character
@@ -167,6 +169,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 
 ### 5.8 Ragdolls and hit reactions
 - **System:** Ragdolls - Makes a character go limp when it dies or flinch when it is hit.
+  Home: `engine/include/okay/Components/Ragdoll.hpp`. Entry: `engine/include/okay/Components/Ragdoll.hpp`. Also called: Ragdoll, ActiveRagdoll, hit reactions.
 - **What:** A humanoid goes limp on death or flinches on a hit that does not kill it. The ragdoll is a particle simulation over the 15 humanoid bones, not rigid bodies and joints.
 - **Parts:**
   - 5.8.1 Verlet ragdoll - `Components/Ragdoll` - particles per bone plus tips, distance constraints, torso brace, elbow and knee minimum reach, ray collisions against 3D colliders and terrain, 60 Hz after animation and IK (order 900)

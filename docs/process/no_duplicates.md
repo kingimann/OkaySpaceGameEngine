@@ -1,5 +1,21 @@
 # No duplicate code
 
+## Before you make anything: three steps
+
+Every file, class, component, tool, script, doc or system. Agents and briefs too.
+
+1. **Search the registry.** `python3 scripts/find_existing.py <words>` (add `--offline` to skip GitHub). Its first
+   section is the system registry, [docs/SYSTEMS.md](../SYSTEMS.md): every system's official name **and its old and
+   other names** ("own UI", "Classic physics", "NextScript", `OKAY_OWN_HTTP` ...), with its home folder, entry file,
+   doc and owner lane. Use an old name if that is the one you know; it lands on the system that has it now.
+2. **Read the system's doc and entry file** (the Doc and Entry columns), and its row in "Still duplicated" if it has one.
+3. **Add on to it**, in its home folder, under its official name. Only if no system does the job, make a new one, and
+   give it a `- **System:**` line with `Home:` and `Entry:` in `docs/feature_map/` in the same change
+   (format: [feature_map/README.md](../feature_map/README.md)). `scripts/dup_lint.py check` (CI and
+   `scripts/precheck.sh`) refuses a new top-level folder or a new folder under `engine/include/okay/`, `engine/src/`
+   or `editor/` that no system's Home names, and a new file or folder named with Own, New, Improved, Classic or V2
+   (CLAUDE.md rule 19e).
+
 The owner's rule (2026-11-22): "create a system so duplicates can't happen again", across the whole repository and
 in every language. Audits found about 30 kinds of copies: two save systems, two input systems, three JSON readers and
 about eleven JSON escapers, seven Base64 copies, about twenty inline FNV-1a hashes, four CRC-32 tables, dozens of
@@ -58,6 +74,9 @@ page is about the guard that stops new ones.
 | A block of 120 or more tokens that matches with the names changed (a renamed copy) | warning |
 | A new use of a name main marked `OKAY_DEPRECATED` | **error** |
 | A new class or free function name equal or nearly equal to an existing one | warning |
+| A new file or folder whose name has Own, New, Improved, Classic or V2 as a word (`OwnSolver.cpp`, `physics_v2.py`), unless a system's `Home:`/`Entry:` names the file or its first 15 lines say `dup-allow: <reason>` | **error** |
+| A new top-level folder, or a new folder directly under `engine/include/okay/`, `engine/src/` or `editor/`, that no system's `Home:` in `docs/feature_map/` names (a new system needs a registry entry) | **error** |
+| A new class or function whose name has one of those qualifiers | warning |
 
 It reads every code file in the repository: C and C++ (engine, editor, launcher, player, shared, okayui, tools,
 tests, platform, relay, steam, sandbox ...), C#, JS/TS, shaders (GLSL, HLSL, `.okayshader`), Python, shell,

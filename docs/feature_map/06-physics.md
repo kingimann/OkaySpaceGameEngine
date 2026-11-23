@@ -29,6 +29,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 
 ### 6.2 3D bodies and colliders, collider fit
 - **System:** Physics - Moves solid 2D and 3D objects under gravity, makes them collide, bounce and join, and answers "what is here?" (cloth, soft bodies and crowds are planned).
+  Home: `engine/include/okay/Physics/`, `engine/src/Physics/`. Entry: `engine/include/okay/Physics/Physics3D.hpp`. Also called: Classic physics, Improved physics, PhysicsQuality, own core, Physics Engine, Physics2D, Physics3D, physicsquality.
 - **What:** Rigidbody3D bodies and 3D colliders (oriented boxes, spheres, capsules, cylinders, exact triangle meshes) stepped by Physics3D, including heightmap terrain ground-following and voxel terrain collision.
 - **Parts:**
   - 6.2.1 3D solver - `Physics/Physics3D` - Step: integrate, oriented-box (SAT) contacts, friction, bounce, sleeping, terrain ground-follow, tunnelled-floor catch (finds the real lowest point of a compound, plane, heightfield or hull-less mesh body; it used to read them as boxes, so a compound body moved differently from run to run), triggers; the same scene gives bit-identical results wherever the heap puts it (`physics3d_determinism`)
@@ -114,6 +115,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 
 ### 6.6 Destructibles and projectiles
 - **System:** Destruction and Projectiles - Breaks blocks and objects into pieces, and flies bullets, rockets and arrows.
+  Home: `engine/include/okay/Components/Destructible.hpp`, `engine/include/okay/Components/Projectile3D.hpp`. Entry: `engine/include/okay/Components/Destructible.hpp`. Also called: Destructible, Projectile3D, bullets, fracture.
 - **What:** Voxel blocks shatter into physics debris and unsupported blocks collapse; bullets, rockets and arrows fly with a swept ray and damage health.
 - **Parts:**
   - 6.6.1 Block fracture - `Components/Destructible` - `BreakBlock` and `BreakAt` replace a cube with debris cubes that despawn after `debrisLifetime`

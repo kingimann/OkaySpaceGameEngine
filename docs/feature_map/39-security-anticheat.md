@@ -35,6 +35,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 
 ### 39.2 Transport security: encryption, replay protection, sealed join, host keys
 - **System:** Network Security - Encrypts game traffic, blocks replayed packets and gives players signed passes to join servers.
+  Home: `engine/include/okay/Net/SecureChannel.hpp`, `engine/include/okay/Net/SessionTicket.hpp`. Entry: `engine/include/okay/Net/SecureChannel.hpp`. Also called: SecureChannel, encryption, session tickets, sealed join.
 - **What:** Making the network trustworthy even on an open connection: every packet sealed and numbered, replays refused, the join (name, password, token) sealed behind a key exchange, and a server that can prove its identity to pinned clients.
 - **Parts:**
   - 39.2.1 Authenticated encryption - `Net/SecureChannel` - X25519 plus XChaCha20-Poly1305 (libsodium); a host with `encryption` on in a build without libsodium refuses to start
@@ -80,6 +81,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 
 ### 39.4 Client integrity: signed manifest and launch check
 - **System:** Game File Safety - Checks that a game's files were not changed, keeps signing keys out of the code, and stops scripts touching files outside the game.
+  Home: `shared/AntiCheatIntegrity.hpp`. Entry: `shared/AntiCheatIntegrity.hpp`. Also called: client integrity, signed manifest, PathSafety.
 - **What:** Builds carry `Data/manifest.json` listing every shipped file's size and SHA-256, signed with ed25519 when the owner has a key. The launcher and the player check the install against it before a game starts. Off by default; Report logs, Enforce refuses.
 - **Parts:**
   - 39.4.1 Manifest writer - `shared/AntiCheatIntegrity.hpp` - `WriteBuildManifest` (called by the editor's Build Game), `SignIntegrity`, `LoadSigningKey` from `OKAY_AC_SIGNING_KEY_FILE` or `OKAY_AC_SIGNING_KEY`

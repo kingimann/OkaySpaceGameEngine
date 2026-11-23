@@ -108,6 +108,12 @@ add_library(okay_engine
     src/Components/RagdollShared.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
+    # NetworkManager's other parts (batch N1, docs/engine/modularization_plan.md): sync and messages,
+    # server authority (lag compensation, anti-cheat checks, movement), the server tick and the client tick.
+    src/Net/NetworkManagerSync.cpp
+    src/Net/NetworkManagerAuthority.cpp
+    src/Net/NetworkManagerServer.cpp
+    src/Net/NetworkManagerClient.cpp
     src/Net/NetBuildSync.cpp
     src/Net/NetQuestSync.cpp
     src/Net/NetDelta.cpp
@@ -431,7 +437,8 @@ set_source_files_properties(src/Core/BuildInfo.cpp PROPERTIES COMPILE_DEFINITION
 # files anti-cheat kicks with #270's request builder (shared/AntiCheatBackend.hpp);
 # the relay makes its hello cookies with HmacSha256 (shared/AntiCheatChecks.hpp).
 set_source_files_properties(src/Net/NetworkManager.cpp src/Net/ClockCheck.cpp src/Net/DedicatedServer.cpp
-                            src/Net/RelayServer.cpp PROPERTIES
+                            src/Net/RelayServer.cpp src/Net/NetworkManagerSync.cpp src/Net/NetworkManagerAuthority.cpp
+                            src/Net/NetworkManagerServer.cpp src/Net/NetworkManagerClient.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 
 target_compile_features(okay_engine PUBLIC cxx_std_17)

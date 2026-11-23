@@ -28,7 +28,7 @@ using namespace okay::net;
 namespace {
 void Nap() { std::this_thread::sleep_for(std::chrono::milliseconds(2)); }
 
-// The engine's message numbers (NetworkManager.cpp), for packets a modified
+// The engine's message numbers (engine/src/Net/NetworkManagerInternal.hpp), for packets a modified
 // game could send.
 enum : std::uint8_t {
     kJoin = 1, kWelcome = 2, kSyncVar = 8, kReject = 12, kKicked = 13,

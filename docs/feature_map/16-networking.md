@@ -51,7 +51,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Docs:** `docs/online/multiplayer.md` (Fixed network tick, Server-authoritative movement, Lag compensation, Server authority), `docs/online/dedicated-server.md`
 - **Tests:** `net_authority`, `net_tick`, `net_auth_move`, `net_predict`, `net_interp`, `net_lagcomp`, `mp_controllers`
 - **Status:** Works - one test per stage (5a tick, 5b authoritative moves, 5c prediction, 5d interpolation, 5e lag compensation), each through a proxy that delays packets; shipped in releases 2.825 to 2.836 per ROADMAP
-- **Open:** no replay or demo recording exists (only packet "replay protection"); `NetInventory` has no test that names it; the old map's "Anti-cheat items 12-13" are merged (#376, #384), so that note is stale; `NetworkManager.cpp` is 3,522 lines (split candidate, see 19.4)
+- **Open:** no replay or demo recording exists (only packet "replay protection"); `NetInventory` has no test that names it; the old map's "Anti-cheat items 12-13" are merged (#376, #384), so that note is stale; `NetworkManager.cpp` is split into five files by job (batch N1, see 19.4)
 - **Related:** 16.3, 16.6, 4.1, 39.1
 - **Words:** authority, authoritative movement, server-authoritative, prediction, reconciliation, rubber-banding, interpolation, lag compensation, rewind, netTickRate, NetTick, OnNetTick, IPlayerSim, PlayerInput, ServerTeleport, maxMoveSpeed, minPressInterval, pawn
 - **Seen as:** rubber-banding or snapping back when I move online; other players stutter or teleport; shots miss although I aimed right (lag); my player moves a beat late; a player moves faster than allowed
@@ -71,7 +71,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Editor:** Inspector: Network Sync (authority, id, claimable), Add Component menu; Net panel shows bytes per object (16.13); `interestRadius` has no inspector field
 - **Docs:** `docs/online/multiplayer.md`
 - **Tests:** `net_sync`, `net_aoi`, `net_interp`, `net_anim_actions`, `ecs`, `ecs_commands`
-- **Status:** Works - transform replication, interest culling and the delta path are exercised by `net_sync`, `net_aoi`, `net_interp`; read `SendSnap` and `OnSnapDelta` in NetworkManager.cpp
+- **Status:** Works - transform replication, interest culling and the delta path are exercised by `net_sync`, `net_aoi`, `net_interp`; read `SendSnap` and `OnSnapDelta` in NetworkManagerSync.cpp
 - **Open:** the old map listed "Delta snapshots" as open, but they exist and are on by default; no test names `NetDelta` or `QPose` directly; PR #571 (merged after this map was started) gave `ECS/NetWorld.hpp` delta snapshots against the newest acknowledged tick, a command buffer and `docs/engine/ecs.md`; the header's top comment still says "full-state snapshots", and the `ecs_commands` test covers the new code
 - **Related:** 16.2, 16.8, 1.9, 16.13
 - **Words:** NetworkSync, netId, authority, snapshot, delta snapshot, quantized, baseline, ack, interest management, area of interest, culling, syncRate, NetWorld, WorldReplicator, replicate, SyncVar, claimable

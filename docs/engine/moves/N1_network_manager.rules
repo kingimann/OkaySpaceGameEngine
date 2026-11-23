@@ -1,0 +1,20 @@
+# Batch N1 of the engine modularization plan (docs/engine/modularization_plan.md, Part A section 3, batch 3):
+# engine/src/Net/NetworkManager.cpp split into five .cpp files by job, plus the private NetworkManagerInternal.hpp.
+# okay/Net/NetworkManager.hpp does not change. Check it with:
+#   python3 scripts/check_pure_move.py --base $(git merge-base HEAD origin/main) --source engine/src/Net/NetworkManager.cpp \
+#       --dest engine/src/Net/NetworkManagerInternal.hpp --dest engine/src/Net/NetworkManagerSync.cpp \
+#       --dest engine/src/Net/NetworkManagerAuthority.cpp --dest engine/src/Net/NetworkManagerServer.cpp \
+#       --dest engine/src/Net/NetworkManagerClient.cpp --rules docs/engine/moves/N1_network_manager.rules
+
+# NetworkManagerInternal.hpp: the five small helpers of the first anonymous namespace now live in a header that
+# every part includes. They gain `inline` so a part that does not call one gets no "defined but not used" warning;
+# they stay in the anonymous namespace (file-local, no state), so nothing else changes.
+change: void WriteU64(net::Packet& p, std::uint64_t v) { p.Write(static_cast<std::uint32_t>(v)); p.Write(static_cast<std::uint32_t>(v >> 32)); } ==> inline void WriteU64(net::Packet& p, std::uint64_t v) { p.Write(static_cast<std::uint32_t>(v)); p.Write(static_cast<std::uint32_t>(v >> 32)); }
+change: std::uint64_t ReadU64(net::Packet& p) { const std::uint64_t lo = p.ReadU32(); return lo | (static_cast<std::uint64_t>(p.ReadU32()) << 32); } ==> inline std::uint64_t ReadU64(net::Packet& p) { const std::uint64_t lo = p.ReadU32(); return lo | (static_cast<std::uint64_t>(p.ReadU32()) << 32); }
+change: std::string JoinKeyMessage(const std::string& serverPk, const std::string& clientPk) { ==> inline std::string JoinKeyMessage(const std::string& serverPk, const std::string& clientPk) {
+change: std::vector<std::uint8_t> BuildReliable(std::uint32_t seq, const std::string& channel, ==> inline std::vector<std::uint8_t> BuildReliable(std::uint32_t seq, const std::string& channel,
+change: net::Endpoint SlotEndpoint(std::uint32_t slot) { ==> inline net::Endpoint SlotEndpoint(std::uint32_t slot) {
+
+# NetworkManager.cpp keeps three doubled blank lines where code left on both sides of a kept block. Removing them
+# lets the line diff slide a moved block by one "}" line onto a kept one (the same text), and the check then fails;
+# blank lines change nothing, so they stay.

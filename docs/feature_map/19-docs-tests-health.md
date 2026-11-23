@@ -193,7 +193,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
   - 19.4.2 Launcher - `launcher/main.cpp` - Part C of the plan: 24 sections measured, order L1-L8 (17.1)
   - 19.4.3 OkayScript VM - `engine/src/Scripting/OkayScriptVM.cpp` - `RegisterBuiltins` is one 8,078-line function: refactor per topic, then move (batch S2, after PR #1159); see 13.1
   - 19.4.4 Scene serializer - `engine/src/Scene/SceneSerializer.cpp` - records into `ComponentSerializerRegistry` entries per subsystem (batch S1, after #1160 and #1138); see 1.5
-  - 19.4.5 Network manager - `engine/src/Net/NetworkManager.cpp` - one class over five `.cpp` files, header unchanged (batch N1)
+  - 19.4.5 Network manager - `engine/src/Net/NetworkManager*.cpp` - one class over five `.cpp` files (sessions, hits and life; sync and messages; server authority; server tick; client tick), header unchanged (batch N1, done 2026-11-23)
   - 19.4.6 Architecture - `docs/engine/architecture.md` - the layers, the nine subsystems and their folders, what may include what
   - 19.4.7 The plan and the audit - `docs/engine/modularization_plan.md` - largest files and functions, include graph and cycles, platform code in shared code, naming today, the frozen names (about 3,900 in 11 groups), open PRs, 23 ranked batches, the move procedure and checks, the naming rule, CI checks to add later, owner decisions
   - 19.4.8 Pure-move check - `scripts/check_pure_move.py` - used for every move batch (15.10.6)

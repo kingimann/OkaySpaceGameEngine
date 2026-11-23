@@ -14,7 +14,7 @@
 - [Physics toys: ready-made physics, no code](#physics-toys-ready-made-physics-no-code) (was `docs/physics_toys.md`)
 - [Ragdolls and hit reactions](#ragdolls-and-hit-reactions) (was `docs/ragdolls.md`)
 - [Physics audit and plan](#physics-audit-and-plan) (was `docs/physics_plan.md`)
-- [The Engine quality: our own physics engine](#the-engine-quality-our-own-physics-engine) (details in `physics_core.md`)
+- [One physics path: our own physics engine](#one-physics-path-our-own-physics-engine) (details in `physics_core.md`)
 
 ## Physics: quality, materials, joints, debris, hinges, mesh colliders, 2D casts, and step rate
 
@@ -24,6 +24,10 @@ Short recipes for the physics pieces people ask for first. The full map of what
 exists is in [feature map 6](../feature_map/06-physics.md).
 
 ### Physics quality: Classic and Improved
+
+> **Outdated (2026-11-23):** there is one physics path now. Every 3D scene runs on our own engine core and the quality
+> choice is gone from Project Settings; see [One physics path](#one-physics-path-our-own-physics-engine). The text below
+> is kept for history; the things it says Improved does, the core does too.
 
 A scene has a **Physics quality** (Project Settings > Physics > "Physics quality of the open scene"). It is saved in the scene file.
 
@@ -104,7 +108,7 @@ debris.Update(dt);                               // once per frame
 - A chunk lives `lifetime` seconds, or `settledLife` seconds after it first goes to sleep, then shrinks away over `fadeTime`.
 - Chunks use collision layer 30 and by default do not collide with each other (500 chunks cost 500 floor contacts, not 125 000 pairs);
   set `collideWithEachOther` for chunks that must stack. This changes the scene's layer rule for that layer.
-- Use it with the Improved quality: a settled chunk then sleeps almost for free.
+- A settled chunk sleeps almost for free.
 - Measured (test `physics_deep_more`, 120 chunks spawned into a cap of 50): 50 alive, 70 recycled, all 50 asleep 3 s after the last spawn,
   all expired 10 s later.
 
@@ -329,7 +333,7 @@ Load it with `PhysicsMaterials::LoadFile(path)` or a whole folder with `PhysicsM
 ### What the physics does with it
 
 * Sliding grip, bounciness and the combine modes go into the collider's existing fields (so the Classic step also feels them).
-* Improved quality also uses: **still grip** (below 0.12 m/s sliding the still grip applies, so a crate stays on a slope that it would slide down once moving), rolling friction,
+* The physics step also uses: **still grip** (below 0.12 m/s sliding the still grip applies, so a crate stays on a slope that it would slide down once moving), rolling friction,
   damping and slope grip.
 * **Mass from density**: tick it and the body's mass is density x the volume of its colliders (a 1 m cube of Metal is 7800 kg).
 * A contact tells scripts the two materials: `Collision3D::surface` (the other side) and `ownSurface`.
@@ -739,30 +743,45 @@ bounds-before-overlap reorder, which `perf-pass-1` also touches). `Physics2D.cpp
   or opened), and the exit-order fix against the old code.
 * `DebrisPool` is not used by the voxel terrain yet: the voxel agent decides how to call it (`DebrisPool pool(scene); pool.Spawn(...); pool.Update(dt);`).
 
-## The Engine quality: our own physics engine
+## One physics path: our own physics engine
 
-Project Settings > Physics > "Physics quality of the open scene" has a third choice, **Engine** (3D). It runs the scene
-on our own physics engine core instead of the Classic or Improved step. Classic and Improved are unchanged.
+Since 2026-11-23 every 3D scene runs on our own physics engine core. There is no quality choice any more: the Classic
+and Improved 3D steps and the separate Engine choice were deleted, and 2D Classic went too (2D keeps its Improved
+step). Project Settings > Physics shows **Solver iterations** under "Physics solver of the open scene".
 
-What you get in Engine:
+Old scene files still load and save back unchanged: a file that says Classic, Improved or Engine keeps that line, but
+the value does nothing.
+
+What a scene maker notices (changelog wording): *scenes that used Classic now run the new path; motion can differ
+slightly: stacking, joints, fast objects.* In more detail:
+
+- **Stacks** stand still and fall asleep sooner; boxes rest about 2 mm into each other (the old Classic step let them
+  sink or jitter).
+- **Fast objects** are stopped before a wall without ticking Continuous Collision, also on the first step after they
+  are spawned or teleported.
+- **Joints** are stiffer and keep their length better; a hinge pushed past its stop comes back over a few steps instead
+  of jumping back at once. A joint whose partner object is destroyed keeps hanging where it was instead of flying off.
+- **A collider's offset** always turns and scales with the object (it did only in Improved).
+- **Many bodies** cost much less: about 14 ms a frame for 1,000 mixed bodies where Classic took about 250 ms.
+- Callbacks, triggers (static ones too), layers, materials (friction, still grip, bounce, rolling, mud damping), drive
+  fields of Ball and Cone Twist joints, raycasts and shape casts work as before.
+
+What you get:
 
 - **Many bodies.** Touching pairs are found with a tree, so only bodies that moved are looked at; groups of touching
   bodies are solved on every CPU core with exactly the same result as on one core.
 - **Steady stacks.** The contact points of each resting face are solved together, so towers and pyramids stand still and
   fall asleep.
-- **Nothing tunnels.** A fast body is stopped before it reaches a wall, without ticking Continuous Collision.
+- **Fast bodies stop.** A fast body is stopped before it reaches a wall, without ticking Continuous Collision.
 - **Every shape:** box, sphere, capsule, cylinder, cone, convex hull, compound, plane, mesh collider (static), height
-  field and terrain.
-- **Joints:** Distance, Spring, Pin, Hinge and Slider as before, plus **Ball** and **Cone Twist** for ragdolls. Both turn
+  field, terrain and voxel terrain.
+- **Joints:** Distance, Spring, Pin, Hinge and Slider, plus **Ball** and **Cone Twist** for ragdolls. Both turn
   about **Anchor** (a world point). Cone Twist keeps the swing inside **Swing Limit 1 / 2** and the twist inside Min /
   Max Twist. **Use Drive** pulls the body toward **Drive Target** (degrees from its start pose) like a damped spring:
   **Drive Frequency** (Hz) and **Drive Damping Ratio** (1 = no overshoot), or **Drive Stiffness** and **Drive Damping**
   when the frequency is 0; **Drive Max Torque** caps it. Scripts set Drive Target every frame for an active ragdoll.
-  In Classic and Improved, Ball and Cone Twist are only a distance rod (the Console says so once).
 - Callbacks (OnCollisionEnter3D / Stay / Exit, OnTriggerEnter3D / Stay / Exit), layers, trigger filters, teleports and
-  set velocities work as in the other qualities. Raycasts and shape casts are the same code in every quality.
+  set velocities work as before.
 
-Not yet in Engine: the per-collider friction / bounce combine modes (friction combines as the square root of the two,
-bounce as the larger), voxel terrain. Examples: `examples/physics_engine/physics_engine.okayscene` and
-`physics_engine_5k.okayscene` (try it: pe1). How it works and what it was written from: [physics_core.md](physics_core.md).
-
+Examples: `examples/physics_engine/physics_engine.okayscene` and `physics_engine_5k.okayscene` (try it: pe1), and every
+other physics example. How it works, what it was written from and what was deleted: [physics_core.md](physics_core.md).

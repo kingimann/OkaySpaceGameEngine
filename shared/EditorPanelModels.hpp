@@ -6,7 +6,7 @@
 //   Stats           frame rate, its history and the scene census, plus the culling and batching switches (editor/main.cpp)
 //   History         the undo and redo stacks as a list of states (editor/main.cpp)
 //   Tags and Layers Project Settings: the tag list, Strict tags and the 32 layer names (editor/main.cpp)
-//   Physics         Project Settings: gravity, the step rate, smoothing and the open scene's physics quality (editor/main.cpp)
+//   Physics         Project Settings: gravity, the step rate, smoothing and the open scene's solver iterations (editor/main.cpp)
 //   Profiler        the frame timeline, CPU categories, the diagnosis and the per-section table (editor/main.cpp)
 //   Import settings the selected texture's, model's or sound's import settings, Apply and Revert (editor/ProjectPanelUI.cpp)
 //   Post-processing Lighting: the look preset, tonemapping, bloom, colour grading, vignette, FXAA, SSAO, depth of field (editor/main.cpp)
@@ -350,28 +350,21 @@ struct PhysicsSettingsModel {
     float* gravity3D = nullptr;         // float[3], edited in place
     float* stepsPerSecond = nullptr;    // edited in place (the host clamps it, ClampStepsPerSecond)
     bool* smooth = nullptr;             // edited in place
-    int quality = 1;                    // the open scene's: 0 Classic, 1 Improved
-    int solverIterations = 10;          // shown when Improved
-    bool autoContinuous = true;         // shown when Improved
+    int solverIterations = 10;          // the open scene's
 };
 
 struct PhysicsSettingsIntent {
     bool gravityChanged = false;        // a gravity cell changed (written through its pointer)
     bool rateChanged = false;           // steps per second changed (written; the host clamps, applies and saves)
     bool smoothChanged = false;         // the smoothing box (written; the host applies and saves)
-    int quality = -1;                   // 0 or 1: set the scene's physics quality
     int solverIterations = -1;          // 4..30: set the solver iterations
-    int autoContinuous = -1;            // 0 or 1
     bool apply = false;                 // "Apply to current scene"
 };
 
-inline const char* const kPhysicsQualityNames[2] = {"Classic (the original step: old scenes)", "Improved (stacks stand, bodies sleep, fast bodies stop)"};
 inline const char* kStepRateTip = "How many times a second physics runs. 50 is the usual rate.\nA drop lands in the same place at a low frame rate and a high one.\nSaved with the project.";
 inline const char* kSmoothTip = "Draw each body part way between its last two physics steps,\nso motion stays smooth when the frame rate and the step rate differ.";
-inline const char* kQualityTip = "Classic plays old scenes exactly as they always played.\nImproved solves contacts several times a step and remembers them, so crates stack and stay put,\nresting bodies sleep together, fast bodies cannot pass through thin walls and balls roll to a stop.\nNew scenes start Improved. The setting is part of the scene file.";
 inline const char* kIterationsTip = "How many times the contact solver repeats each step. 10 is enough for towers up to about 6 crates;\nraise it for taller stacks (costs time).";
-inline const char* kContinuousTip = "A body that moves farther in one step than its own size is checked along its path against walls and floors,\nso a bullet cannot pass through a thin wall without ticking Continuous Collision.";
-inline const char* kPhysicsQualityHeading = "Physics quality of the open scene (saved with the scene)";
+inline const char* kPhysicsSolverHeading = "Physics solver of the open scene (saved with the scene)";
 
 /// The step rate the editor accepts: 1 to 500 a second (anything else, NaN included, is pulled into that range; NaN is 50).
 inline float ClampStepsPerSecond(float hz) { return !(hz == hz) ? 50.0f : hz < 1.0f ? 1.0f : hz > 500.0f ? 500.0f : hz; }

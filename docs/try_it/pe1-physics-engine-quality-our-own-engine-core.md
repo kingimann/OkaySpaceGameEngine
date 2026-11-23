@@ -1,10 +1,10 @@
 ---
 id: pe1
-row: | pe1 | Physics: Engine quality (our own physics engine core), ball and cone-twist joints with drives | Open `examples\physics_engine\physics_engine.okayscene` in `Tools\OkayEngine.exe` and press Play | Tested headless on Linux; the editor menus and the feel on Windows are unverified |
+row: | pe1 | Physics: one physics path (our own physics engine core runs every 3D scene), ball and cone-twist joints with drives | Open `examples\physics_engine\physics_engine.okayscene` in `Tools\OkayEngine.exe` and press Play | Tested headless on Linux; the editor menus and the feel on Windows are unverified |
 ---
-## pe1. Physics: the Engine quality, our own physics engine
+## pe1. Physics: one physics path, our own physics engine
 
-**What it is.** A third physics quality, **Engine**, runs a 3D scene on our own physics engine core (written from papers,
+**What it is.** Every 3D scene now runs on our own physics engine core (written from papers,
 no other engine's code): a tree that finds touching pairs fast, exact contacts for every shape, a solver that keeps tall
 stacks still, fast bodies that never pass through thin walls, groups of bodies solved on every CPU core, and joints for
 ragdolls (**Ball** and **Cone Twist** with a drive that holds a pose). Plain explanation and numbers:
@@ -17,7 +17,9 @@ ragdolls (**Ball** and **Cone Twist** with a drive that holds a pose). Plain exp
 2. Press **Play** and wait about 10 seconds.
 3. For many bodies, open `examples\physics_engine\physics_engine_5k.okayscene` (5,000 crates and balls poured into a pit)
    and press Play.
-4. To use it in your own scene: **Project Settings > Physics**, "Physics quality of the open scene", choose **Engine**.
+4. Your own scenes use it already; there is nothing to switch on. **Project Settings > Physics** has no Quality list any
+   more, only **Solver iterations** under "Physics solver of the open scene". Open an old scene of yours and press Play:
+   it loads as before; motion can differ slightly (stacking, joints, fast objects).
 5. A ragdoll-style joint: select an object with a Rigidbody 3D (untick Freeze Rotation), **Add Component > Joint 3D**,
    set **Mode** to **Cone Twist** (or **Ball**), set **Anchor** to the point it turns about, tick **Use Drive**.
 
@@ -32,6 +34,6 @@ ragdolls (**Ball** and **Cone Twist** with a drive that holds a pose). Plain exp
 | 5 Shapes | A capsule, cylinder, cone, hull and compound body fall and settle on the floor. |
 | 5k scene | 5,000 bodies fall into the pit and settle; the frame rate stays usable on a 4-core PC (not measured on Windows). |
 
-**If it looks wrong.** The joints in Ball / Cone Twist mode only turn and hold a pose in the Engine quality; in Classic
-and Improved they are only a rod (the Console says so once). Unverified: the editor menus, the Inspector fields and the
-look on Windows; everything above was checked headless on Linux by `physics_engine_mode` and `physics_examples`.
+**If it looks wrong.** Save an old scene and look at the file: its `physicsquality` line is the same as before (the
+value is kept but does nothing). Unverified: the editor menus, the Inspector fields and the
+look on Windows; everything above was checked headless on Linux by `physics_engine_mode`, `physics_examples` and `physics_one_path`.

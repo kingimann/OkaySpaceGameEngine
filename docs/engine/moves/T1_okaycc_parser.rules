@@ -1,0 +1,44 @@
+# Batch T1 (docs/engine/modularization_plan.md), part 2: tools/okaycc/src/parser.cpp split into one file per job.
+# Check it with (ast.hpp last, so the moved code matches before the header's declarations):
+#   python3 scripts/check_pure_move.py --base 24f88fd61 --source tools/okaycc/src/parser.cpp \
+#       --dest tools/okaycc/src/ast.cpp --dest tools/okaycc/src/mangle.cpp --dest tools/okaycc/src/templates.cpp \
+#       --dest tools/okaycc/src/check.cpp --dest tools/okaycc/src/lower.cpp --dest tools/okaycc/src/ast.hpp \
+#       --rules docs/engine/moves/T1_okaycc_parser.rules
+
+# The internals were one anonymous namespace. The parts now share types and call each other across files, so they
+# live in the named namespace okaycc::compiler (namespace lines in every new file); the public functions after it
+# (astFromRaw, astOf, astOfFile, checkSource in parser.cpp; lowerSource, setForceExceptions in lower.cpp) use it.
+drop: ^namespace \{$
+drop: ^\}  // namespace$
+add: ^using namespace compiler;$
+
+# lower.cpp also has 7 new comment lines (`// dup-allow: ...`, allowed as comments): dup_lint.py's Trim/ToLower rule matches
+# the tree-lowering methods lowerStmt, lowerLocal, lowerIf, lowerWhile, lowerFor, lowerSwitch and lowerFunc.
+
+# ast.hpp: declarations of the functions one part calls in another (the definitions moved unchanged).
+add: ^std::string printTu\(const Tu& tu\);$
+add: ^bool isIntish\(const Type& t\);$
+add: ^bool isFp\(const Type& t\);$
+add: ^int fpWidthOf\(const Type\* t\);$
+add: ^const Type\* canonOf\(const Type\* st\);$
+add: ^bool isPtr\(const Type& t\);$
+add: ^bool isVoidPtr\(const Type& t\);$
+add: ^bool isSpecialName\(const std::string& n\);$
+add: ^const Param\* findSpecial\(const Type\* t, const char\* name\);$
+add: ^bool derivedFrom\(const Type& d, const Type& b\);$
+add: ^bool hasSideEffects\(const Expr& e\);$
+add: ^std::string mangleType\(const Type& t\);$
+add: ^std::string mangleFunc\(const std::string& qualified, const Type& fn\);$
+add: ^std::string mangleSpecial\(const std::string& cls, const char\* kind, const Type& fn\);$
+add: ^std::string mangleData\(const std::string& qualified\);$
+add: ^std::vector<TArg> cloneArgs\(const std::vector<TArg>& in\);$
+add: ^std::map<std::string, TemplateSig>& funcTemplateSigs\(\);$
+add: ^std::vector<InstReq>& instRequests\(\);$
+add: ^bool& ehActive\(\);$
+add: ^bool& forceExceptions\(\);$
+add: ^bool& instDirty\(\);$
+add: ^std::size_t mangledEnd\(const std::string& s, std::size_t j\);$
+add: ^std::unique_ptr<Type> typeFromMangle\(const std::string& m\);$
+add: ^std::string argMangle\(const TArg& a\);$
+add: ^std::string instFuncName\(const std::string& tmpl, const TemplateSig& sig, const std::vector<TArg>& args\);$
+add: ^Tu frontEnd\(const std::vector<Token>& toks, Diagnostics& diags\);$

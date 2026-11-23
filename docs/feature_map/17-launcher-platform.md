@@ -9,6 +9,9 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 ## 17. Launcher & platform
 
 ### 17.1 Launcher shell and updater
+- **System:**
+  - Launcher - The OkaySpace app players open first: projects, the games library with the official game, the multiplayer page and settings. Code: `launcher/main.cpp`, `launcher/CMakeLists.txt`, `launcher/okayspace.rc`, `shared/OkayTheme.hpp`, `shared/Splash.hpp`, `shared/AppIcon.hpp`
+  - Launcher Updater - Checks for new versions of the launcher, editor and player, downloads them and checks their checksums. Code: `launcher/UpdaterCore.hpp`, `launcher/VersionsManager.cpp`, `launcher/VersionsNet.cpp`, `shared/SelfUpdate.hpp`, `shared/StartupUpdate.hpp`, `shared/UpdateGuard.hpp`, `shared/UpdateSignature.hpp`
 - **What:** The launcher program players double-click (`OkaySpace.exe`): window and sidebar, the pages, settings, notifications, the loading screen, and the self-updater that keeps the launcher, editor and player current.
 - **Parts:**
   - 17.1.1 Window, sidebar and pages - `launcher/main.cpp` - SDL2 plus Dear ImGui; tabs Create, Play, Community, Account, Settings, Achievements, Friends, Market, Servers, Forums, Downloads, plus Multiplayer, What's New, Tips and Admin; `main()` starts near L16377, the tab pages from L17892; number keys switch pages
@@ -34,6 +37,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "add a Tips card for the new feature", "the launcher says up to date but a newer release exists"
 
 ### 17.2 Accounts and sign-in
+- **System:** Accounts - Sign-up, sign-in and the clients that talk to the online services.
 - **What:** One account service shared by the launcher, editor, player and game scripts: sign up and in, session tokens that refresh, cloud saves and leaderboards. It works offline with a local on-disk account, with a custom server, or with Supabase.
 - **Parts:**
   - 17.2.1 Account service - `Platform/Account/AccountService` - providers Local (salted PBKDF2-HMAC-SHA256 file, on `Crypto/Sha256.hpp`), Remote (your server, see 42.4) and Supabase (email sign-up, password reset (emails a link to the hosted page `supabase/auth-pages/reset-password`, see `docs/online/password-reset.md`), change email or username, token refresh); `Api()` adds the key and bearer token
@@ -57,6 +61,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "let players log in from my game's menu", "point the build at my own account server"
 
 ### 17.3 Friends, following, parties
+- **System:** Community - Friends, parties, chat and calls, forums, Discord-style community servers and the staff tools that moderate them.
 - **What:** Friend lists with online status and what they play, one-way follows, and parties of friends who follow their leader into a match.
 - **Parts:**
   - 17.3.1 Friends - `Platform/Friends` - add by username or short friend code, accept or decline, presence heartbeat ("playing X"), join a friend's relay session, a small activity feed; no-ops when signed out
@@ -76,6 +81,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "friends can't see what I'm playing", "raise the party size limit"
 
 ### 17.4 Chat: DMs, groups, voice notes, calls, polls, GIFs, emoji
+- **System:** Community
 - **What:** The Discord- and Messenger-style chat: direct messages, group chats, reactions, replies, pins, edit history, scheduled messages, custom status, polls, files, GIFs, emoji, stickers, voice notes and voice calls.
 - **Parts:**
   - 17.4.1 Direct messages - `Platform/Messages` - send, history, typing, read marks, reactions, reply, search across chats, forward; rows limited to the two parties by row-level security; typing and read marks need `docs/sql/chat_receipts.sql` (`typing_state`, `message_reads`) and Settings shows "Not set up on the server yet" instead of the two toggles when the server says the tables are missing
@@ -100,6 +106,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "add message threads", "GIF search needs a key, where is it set?"
 
 ### 17.5 Forums
+- **System:** Community
 - **What:** Reddit-style community forums: threads, posts, votes, and sections (o/name) with their own moderators and bans.
 - **Parts:**
   - 17.5.1 Threads, posts, votes - `Platform/Forums` - world-readable, writing needs sign-in; `docs/sql/social.sql` tables
@@ -118,6 +125,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "add a pinned announcements section"
 
 ### 17.6 Marketplace and Workshop
+- **System:** Marketplace and Workshop - Browse, share and download games, scenes and templates made by others.
 - **What:** Browse and publish shared games, scenes and templates; each item points to a hosted build and players press Get to download it through the launcher's download manager.
 - **Parts:**
   - 17.6.1 Workshop client - `Platform/Workshop` - items (title, author, kind, download count, URL), reviews, publish; gracefully empty when the table is missing
@@ -136,6 +144,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "publish my game to the Marketplace", "why is my item pending?"
 
 ### 17.7 Profiles, badges, achievements
+- **System:** Profiles and Achievements - Public profiles, badges and achievements.
 - **What:** Steam-style public profiles (me, friends, forum authors) with a showcase of achievements and games, playtime, social links and badges, plus achievements stored per user on this machine so games and the launcher read the same list.
 - **Parts:**
   - 17.7.1 Achievements store - `Platform/Achievements` - local-first list per user (id, label, when unlocked), shared by running games and the launcher, no server needed
@@ -156,6 +165,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "unlock an achievement from a script", "show playtime on the profile"
 
 ### 17.8 Servers page (Discord-style community servers)
+- **System:** Community
 - **What:** Community servers with channels and invite codes (not game servers: the game server browser is 16.4 and the Multiplayer page 17.15). Resizable Discord-like layout with messages, edits, likes and voice rooms.
 - **Parts:**
   - 17.8.1 Servers client - `Platform/Servers` - `create_server` and `join_server` are SECURITY DEFINER calls so a non-member can make or join one; channels, members, messages
@@ -175,6 +185,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "add a channel for announcements"
 
 ### 17.9 Admin
+- **System:** Community
 - **What:** Staff tools in the launcher: roles (admin above staff above moderator, stored as profile badges), site bans, the audit log and dashboard numbers, marketplace and forum moderation. The server enforces every permission; the page only hides what a rank can't do.
 - **Parts:**
   - 17.9.1 Admin client - `Platform/Admin` - users, bans, log, stats, `MyBanInfo` for the ban banner; all RLS-enforced
@@ -196,6 +207,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "make a player a moderator", "ban someone for a week"
 
 ### 17.10 Steam and PlayFab
+- **System:** Steam Integration - Steam achievements, stats, cloud files, workshop and uploading OkaySpace to Steam (simulated without the Steam SDK).
 - **What:** Steam features behind one interface (achievements, stats, leaderboards, cloud files, workshop, friends, lobbies, overlay) with a built-in simulation so everything runs without the SDK, plus a PlayFab REST client.
 - **Parts:**
   - 17.10.1 Steam interface and simulation - `Platform/Steam/SteamService`, `Platform/Steam/NullSteamService` - `ISteamService` and an in-memory backend (default)
@@ -216,6 +228,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "unlock a Steam achievement when the boss dies", "log in with PlayFab at game start"
 
 ### 17.11 Security plan SEC1
+- **System:** Network Security
 - **What:** A four-item security plan: relay isolation, script file-path safety, updater signing and a reactions privacy fix. All four are in the repository; the SQL is a file for the owner to run, and the update signature check stays OFF until the owner adds a key. Details and owner steps: `docs/online/security.md`. The cross-cutting security page is area 39.
 - **Parts:**
   - 17.11.1 Relay session isolation - `Net/RelayServer` - isolation from #254, plus (SEC1) a per-address and a per-session forwarding cap and a hello table that a forged-source flood can no longer lock (see 39.8)
@@ -235,6 +248,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "turn on update signing", "what is left of the security plan?"
 
 ### 17.12 Create page: projects, templates and Git
+- **System:** Launcher
 - **What:** The launcher's Create page: list the projects on disk, make a new one from a template, open it in the editor, delete or remove one safely, and put a project on GitHub.
 - **Parts:**
   - 17.12.1 Project list and New Project - `launcher/main.cpp` (tab 0, L17892) - every `<Location>/<Name>/Assets` folder holding a `.okayscene`, plus projects opened from elsewhere; the template choice is passed to the editor as `--template`
@@ -253,6 +267,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "why can't I delete this project from the launcher?"
 
 ### 17.13 Play page: library, web games, collections, playtime
+- **System:** Launcher
 - **What:** The Play page: the official game card, the games you built or downloaded, HTML games that open in the browser, Steam-style collections, cover art and playtime.
 - **Parts:**
   - 17.13.1 Library and Play - `launcher/main.cpp` (tab 1, L18720) - finds games in the launcher's games and community folders and extra Game libraries and runs them through `OkaySpacePlayer.exe` or their own exe
@@ -273,6 +288,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "show my exported game in the Play list"
 
 ### 17.14 Official game: install, update, publish
+- **System:** Launcher
 - **What:** The one official OkaySpace game shown first on the Play page: install, play, auto-update, uninstall. Admins publish new versions from the launcher with their own login; a script does the same with a service key. Every download is checked by size and SHA-256 and swapped in with a journal.
 - **Parts:**
   - 17.14.1 Manifest, diff and safe swap - `shared/OfficialGame.hpp` - parses `manifest.json` as untrusted input, compares versions, works out downloads and deletes, swaps a verified update in with a journal (`.okayofficial/staging`, `old`, `apply.txt`)
@@ -293,6 +309,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "publish version 2 of the official game", "roll back the official game"
 
 ### 17.15 Multiplayer page and game link
+- **System:** Launcher
 - **What:** The launcher's Steam-style multiplayer layer: what a running game reports (presence, invite requests), joining a friend or server by starting the game with `--join`, the server browser tabs, Quick Play, invites, recent players and leaderboards.
 - **Parts:**
   - 17.15.1 Game IPC files - `Platform/GameIpc` - small files in `<config>/OkaySpace/ipc` keyed by process id: presence, invite request, join request, `played-with.tsv`; no sockets, stale files ignored by age
@@ -314,6 +331,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "add a Join button to my game's friend list", "why is the Internet tab empty?"
 
 ### 17.16 Crash reports (launcher side)
+- **System:** Crash Reports and Telemetry - Keeps a report when a program crashes, asks before sending anything, and (planned) counts usage.
 - **What:** The launcher's Settings > Crash reports page: what the editor wrote when it closed unexpectedly (the latest report and a history), a switch (on by default, with a one-time notice before the first send that says the report becomes a public GitHub issue) that sends a cleaned copy to our server, a preview of exactly what would be sent, and a button that opens a prefilled GitHub issue. One parser, one scrubber and one uploader are shared with the tests.
 - **Parts:**
   - 17.16.1 Report parser and signature - `shared/CrashReports.hpp` - reads `okay_crash.txt` and `okay_crashlog.txt` (Windows SEH and Linux or macOS signal format, old and detailed): when, version, build, OS, last step, exception, module, the other header lines, backtrace, breadcrumbs, Console; a 16-hex crash signature (exception kind + the top three of the program's own frames) and a report id
@@ -336,12 +354,13 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "show me the latest editor crash"; "turn off sending crash reports"; "why did a crash not become an issue?"
 
 ### 17.17 Platform layer (`okay::platform`) and the own backend
+- **System:** Platform Layer - Our own layer between the engine and the operating system: windows, cursor, clipboard, file dialogs, folders and HTTP.
 - **What:** The seam between the engine and the windowing / OS library, with SDL2 as the default backend and our own backend beside it (Linux: X11/GLX, ALSA and evdev through `dlopen`; Windows: Win32, compiles but untested; macOS: not written). Not the online services in the same `Platform/` folder. Timers, audio devices and game controllers of the editor, launcher and player go through it, and the player's window, event loop, keyboard and mouse state, GL context, base and save paths, locales, error boxes and logging do too (stage 2; the sdl2 backend behaves as before). The player's 2D drawing goes through `okay::platform::Painter` (stage 3): the sdl2 painter is the default and unchanged, a CPU software painter on the own backend is built but **off and not ready** (only reachable with `OKAY_PLATFORM_BACKEND=own` in the environment). The editor's and launcher's windows, event loops and drawing still call SDL directly (`SDL_Renderer`, ImGui's SDL backends), so the own backend cannot run them yet.
 - **Parts:**
   - 17.17.1 Interface - `Platform/Platform` - `Backend`, `Window`, `Event` (incl. touch), `Key` (USB HID numbering = SDL scancodes), `AudioDevice`, `Gamepad`, free timer functions; `Get(kind)`, `Default()`; run-time override `OKAY_PLATFORM_BACKEND=sdl2|own`; also `RelativeMouseState`, `ModState`, `KeyForChar`, `BasePath`, `PrefPath`, `PreferredLocales`, `ShowErrorBox`, `Window::SetIcon` / `IsFullscreen` / `RefreshRateHz`
   - 17.17.2 SDL2 backend - `engine/src/Platform/SdlBackend.cpp` - thin wrapper, the default
   - 17.17.3 Own Linux backend - `engine/src/Platform/OwnLinuxX11.cpp`, `OwnLinuxAudio.cpp`, `OwnLinuxEvdev.cpp`, `OwnLinux.cpp` - X11 + GLX window, keys, text, mouse, clipboard; ALSA playback and capture; evdev controllers; all `dlopen`
-  - 17.17.4 Own Windows backend - `engine/src/Platform/OwnWin32.cpp` - Win32, WGL, XInput; compiles under MinGW, never run
+  - 17.17.4 Own Windows backend - `engine/src/Platform/OwnWin32.cpp` - Win32, WGL, XInput (hot-plug events and timed rumble: `Win32XInput.hpp`), Raw Input HID pads; compiles under MinGW, never run
   - 17.17.5 Build switch - `cmake/OkayPlatform.cmake` - `-DOKAY_PLATFORM_BACKEND=sdl2|own` picks `Default()`; both are built
   - 17.17.6 2D painter - `Platform/Painter`, `engine/src/Platform/Painter.cpp`, `SdlPainter.cpp`, `okayui/soft/OkayUI_SoftPainter.cpp` - one interface for a window's 2D drawing (rects, lines, clip, textures, triangles, present, vsync); sdl2 implementation over `SDL_Renderer` (default), software implementation (CPU, okayui rasteriser, `Window::PresentPixels` = X11 `XPutImage` / Win32 `StretchDIBits`; off, not ready)
 - **Code:** `Platform/Platform`, `Platform/Painter`, `engine/src/Platform/Painter.cpp`, `engine/src/Platform/SdlPainter.cpp`, `okayui/soft/OkayUI_SoftPainter.cpp`, `engine/src/Platform/Platform.cpp`, `engine/src/Platform/SdlBackend.cpp`, `engine/src/Platform/OwnLinux.cpp`, `engine/src/Platform/OwnLinuxX11.cpp`, `engine/src/Platform/OwnLinuxAudio.cpp`, `engine/src/Platform/OwnLinuxEvdev.cpp`, `engine/src/Platform/OwnWin32.cpp`

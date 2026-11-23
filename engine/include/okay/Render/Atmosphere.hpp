@@ -208,6 +208,7 @@ inline void ResetLook(Scene::RenderSettings& rs) {
     rs.vignette = d.vignette;
     rs.skyMode = d.skyMode; rs.skySunDisc = d.skySunDisc; rs.skySunHalo = d.skySunHalo; rs.skyHaze = d.skyHaze;
     rs.cloudCover = d.cloudCover; rs.cloudDensity = d.cloudDensity; rs.cloudSpeed = d.cloudSpeed; rs.cloudScale = d.cloudScale;
+    rs.skyStarDensity = d.skyStarDensity; rs.skyStarBright = d.skyStarBright;   // the Night preset sets these
     rs.fog = d.fog; rs.fogMode = d.fogMode; rs.fogDensity = d.fogDensity; rs.fogHeight = d.fogHeight;
     rs.fogFalloff = d.fogFalloff; rs.fogMatchSky = d.fogMatchSky;
     rs.weather = d.weather;

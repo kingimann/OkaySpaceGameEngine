@@ -69,18 +69,20 @@ add_library(okay_ui_soft STATIC soft/OkayUI_Soft.cpp soft/OkayUI_SoftPainter.cpp
 target_include_directories(okay_ui_soft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/soft)
 target_link_libraries(okay_ui_soft PUBLIC okay_ui okay_ui_screens)
 
-# ---- Render interface and backends (OkayUIRender.hpp): own code, off by default, wired into nothing ----------------------
+# ---- Render interface and backends (OkayUIRender.hpp): own code, off by default ----------------------------------------
 # One interface from OkayUI's draw data to a backend, a validator for it, and the backends: software (the reference),
 # okay::platform::Painter, OpenGL 3.3 core / ES 3.0 (entry points through a get-proc function, no link-time GL), Direct3D 11
-# (Windows). The editor and launcher still draw through Dear ImGui; nothing links this yet except its tests.
+# (Windows), and SdlHost (OkayUIRender_SDL.cpp): the OpenGL backend inside SDL's OpenGL renderers and the Direct3D 11 backend inside
+# SDL's direct3d11 renderer, which the editor and launcher link for their hosted OkayUI screens and use only with OKAY_UI_OWN_RENDER=1
+# (off by default).
 add_library(okay_ui_render STATIC render/OkayUIRender.cpp render/OkayUIRender_Soft.cpp render/OkayUIRender_Painter.cpp
-            render/OkayUIRender_GL.cpp render/OkayUIRender_D3D11.cpp)
+            render/OkayUIRender_GL.cpp render/OkayUIRender_D3D11.cpp render/OkayUIRender_SDL.cpp)
 target_link_libraries(okay_ui_render PUBLIC okay_ui_soft)
 
 if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
 
     # What the tests need: the shared test framework header and the committed golden images.
-    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_bench okayui_screens okayui_host okayui_compat okayui_scopes okayui_internals okayui_dockbuilder okayui_panels okayui_itemedit okayui_calls okayui_names okayui_host_platform okayui_docknodes okayui_channels okayui_host_shapes okayui_fonts okayui_frameloop okayui_dockaware okayui_imvector okayui_numfmt okayui_editor_panels okayui_hierarchy okayui_inspector okayui_imcompat)
+    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_sdlhost okayui_render_bench okayui_screens okayui_host okayui_compat okayui_scopes okayui_internals okayui_dockbuilder okayui_panels okayui_itemedit okayui_calls okayui_names okayui_host_platform okayui_docknodes okayui_channels okayui_host_shapes okayui_fonts okayui_frameloop okayui_dockaware okayui_imvector okayui_numfmt okayui_editor_panels okayui_hierarchy okayui_inspector okayui_imcompat okayui_capture)
         add_executable(test_${t} tests/test_${t}.cpp)
         target_link_libraries(test_${t} PRIVATE okay_ui_render)
         target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
@@ -144,7 +146,7 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     # The script editor's adapter over CodeEdit (editor/ScriptEditorCodeEdit.cpp: no ImGui, no SDL).
     add_executable(test_okayui_script_adapter tests/test_okayui_script_adapter.cpp ../editor/ScriptEditorCodeEdit.cpp)
     target_link_libraries(test_okayui_script_adapter PRIVATE okay_ui_soft)
-    target_include_directories(test_okayui_script_adapter PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/editor)
+    target_include_directories(test_okayui_script_adapter PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
     add_test(NAME okayui_script_adapter COMMAND test_okayui_script_adapter)
     set_tests_properties(okayui_script_adapter PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()

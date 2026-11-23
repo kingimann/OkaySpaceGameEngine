@@ -16,6 +16,7 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/Traversal.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
@@ -2004,7 +2005,10 @@ bool StartFromProbe(GameObject* go, const TraverseProbe& p) {
     BeginTraverse(go, p);
     if (p.kind == TraverseKind::Ledge) {
         auto it = TraverseJobs().find(go);
-        if (it != TraverseJobs().end()) { it->second.rememberLip = true; it->second.lip = p.lip; }
+        if (it != TraverseJobs().end()) {
+            it->second.rememberLip = true; it->second.lip = p.lip;
+            it->second.haveEdge = true; it->second.edge = p.edge; it->second.edgeNormal = p.edgeNormal;
+        }
     }
     return true;
 }
@@ -2061,6 +2065,7 @@ bool RequestClimbUp(GameObject* go) {
         p.lip = it->second;
         p.duration = 0.7f;
         HangPoints().erase(it);
+        HangEdges().erase(go);
         BeginTraverse(go, p);
     } else {
         RestoreHangGravity(go);
@@ -2075,6 +2080,7 @@ void RequestLetGo(GameObject* go) {
     SetHanging(go, false);
     if (PlayNamed(go, "LetGo", "LetGo")) NoteNetEvent(go, 7, 5.0f);
     HangPoints().erase(go);
+    HangEdges().erase(go);
     RestoreHangGravity(go);
 }
 
@@ -2190,16 +2196,9 @@ void Seat::Release() {
 
 void Seat::Update(float dt) {
     if (m_who && (m_who->IsDestroyed() || !m_who->transform || HumanoidActions::IsDead(m_who))) {
-        // Death frees the seat and restores gravity. It does not snap to exitPoint.
-        GameObject* who = m_who;
-        m_who = nullptr;
-        occupied = false;
-        if (who && !who->IsDestroyed()) {
-            if (auto* rb = who->GetComponent<Rigidbody3D>()) {
-                if (m_hadGravity) rb->gravityScale = m_savedGravity;
-            }
-        }
-        m_hadGravity = false;
+        // Death (or the body going away) frees the seat. A body that is still there is put at the exit
+        // point, the same place standing up uses, with its gravity back and no speed left over.
+        Release();
     }
     if (m_who && m_who->transform && transform) {
         m_blend = std::min(1.0f, m_blend + dt / 0.45f);
@@ -2232,8 +2231,8 @@ void Seat::Update(float dt) {
         if (d.Magnitude() < best) closer = true;
     }
     playerInRange = !closer;
-    // E is the use key. There is no shared interact binding; FPC lean-right is also E.
-    if (playerInRange && Input::GetKeyDown('e'))
+    // The shared Interact action (E / pad X by default, rebindable). Lean steps aside for it (LeanKeyTaken).
+    if (playerInRange && InteractPressed())
         HumanoidActions::RequestSit(who, gameObject, type);
 }
 

@@ -4,6 +4,7 @@
 //   * a triangle "soup" (corner positions, optional UVs / normals) turned into an ImportedPart: smooth normals
 //     with a crease angle, vertices welded per (position, normal cluster, uv), degenerate triangles dropped
 //   * 3x4 / 4x4 transform helpers in double precision, and the Z-up -> Y-up root of the model
+#include "BinReader.hpp"
 #include "FileOpen.hpp"
 #include "NumParse.hpp"
 #include "WeldMap.hpp"
@@ -304,6 +305,20 @@ inline std::string ReadAllBounded(std::FILE* fp, std::size_t cap, bool* tooLarge
     }
     return bytes;
 }
+
+// Quake's packed frame vertices (MD2 and Quake 1 MDL): per vertex three unsigned bytes, scaled and offset per axis, then a
+// byte that indexes Quake's table of normals (skipped: smooth normals are made instead). Fills every element of `pos`;
+// the caller checks `b.bad` afterwards.
+inline void ReadQuakeFrameVerts(bin::Br& b, const float scale[3], const float trans[3], std::vector<Vec3>& pos) {
+    for (Vec3& p : pos) {
+        const float x = (float)b.U8(), y = (float)b.U8(), z = (float)b.U8();
+        b.U8();
+        p = Vec3{x * scale[0] + trans[0], y * scale[1] + trans[1], z * scale[2] + trans[2]};
+    }
+}
+
+// Corner k (0, 1, 2) of the triangle that starts at index t of `me.triangles`.
+inline const Vec3& TriCorner(const Mesh& me, std::size_t t, int k) { return me.vertices[(std::size_t)me.triangles[t + (std::size_t)k]]; }
 
 } // namespace rc
 } // namespace detail

@@ -8,6 +8,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 20. Asset management (Critical)
 
 ### 20.1 Asset browser
+- **System:** Project Panel
 - **What:** The editor window where you find, preview, organise and use project files. Today that is the Project panel; its listing, search, filters, counts, folder tree, dependency lookups and pictures come from the asset database and the thumbnail cache.
 - **Parts:**
   - 20.1.1 Folder tree, grid and list views - `editor/main.cpp` - browse the Assets folder with breadcrumb, back/forward, favourite folders, tile size and sort saved in `okay_projectview.txt`
@@ -36,6 +37,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "list the assets that depend on this prefab"; "show a Fix button for stale references"
 
 ### 20.2 Dependencies and references
+- **System:** Asset Database
 - **What:** Knowing which assets use which other assets, so a build ships exactly what a game needs and a moved or deleted file shows up before it breaks a scene.
 - **Parts:**
   - 20.2.1 Dependency graph and extractors - `Core/AssetDatabaseDeps` - reads scenes, prefabs, materials, dialogue, quests, behavior trees, glTF for file paths; custom extractors can be registered
@@ -62,6 +64,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "make Build Game ship exactly the assets the scenes in the build use"; "list every asset nothing uses"
 
 ### 20.3 GUIDs
+- **System:** Asset Database
 - **What:** A permanent identity for every asset file, kept in a small `.okaymeta` file beside it, so references survive moves and renames.
 - **Parts:**
   - 20.3.1 Meta files and scan - `Core/AssetDatabase` - `foo.png.okaymeta` with guid, type, content hash, labels, import settings; incremental `Scan`
@@ -87,6 +90,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "make scenes reference textures by GUID"; "keep references when I move a file in the Project panel"
 
 ### 20.4 Import settings
+- **System:** Asset Database
 - **What:** Per-asset options that decide how a file is brought into the engine (texture filtering and size, model scale and normals, audio streaming), stored in the asset's meta file.
 - **Parts:**
   - 20.4.1 Typed settings and migration - `Core/ImportSettings` - texture, model, audio blocks with defaults, clamping, version upgrade of old layouts
@@ -97,8 +101,8 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `ImportSettings`, `TextureImportSettings`, `ModelImportSettings`, `AudioImportSettings`, `AssetDatabase::SetSettings`, `SetReimportCallback`, `TakeReimports`
 - **Editor:** Project panel details strip > Import Settings button (`oked::projectpanel::DrawImportSettings`): texture Largest side; model Scale, Normals with Smoothing angle, Import animations. Filter, Wrap and Mipmaps are hidden until the Direct3D renderers read them; sRGB, Compress and the audio options are not offered (`docs/editor/project_panel.md`)
 - **Docs:** `docs/engine/asset_database.md`
-- **Tests:** `asset_database`
-- **Status:** Partial - settings are stored and signalled, and some importers read them (`Core/ImportSidecar.hpp`): texture max size (software renderer's texture cache), texture filter, wrap and mipmaps (software and OpenGL renderers), model scale, normals, smoothing angle and import animations (applied when a model is added to a scene; parts already in a scene are not changed); audio load mode and force-mono are read by the audio loader. sRGB, compress and audio quality are stored but not applied. Whether this is verified in a real editor session was not checked here: the code and `docs/editor/project_panel.md` say so.
+- **Tests:** `asset_database`, `import_settings_real`
+- **Status:** Partial - settings are stored and signalled, and some importers read them (`Core/ImportSidecar.hpp`, which reads the meta through `ImportSettings::FromPairs` since 2026-11-22: values unescaped and old layouts migrated by the same steps as the editor, cached per file; Grok #422 item 7): texture max size (software renderer's texture cache), texture filter, wrap and mipmaps (software and OpenGL renderers), model scale, normals, smoothing angle and import animations (applied when a model is added to a scene; parts already in a scene are not changed); audio load mode and force-mono are read by the audio loader. sRGB, compress and audio quality are stored but not applied. Whether this is verified in a real editor session was not checked here: the code and `docs/editor/project_panel.md` say so.
 - **Exists today:** Settings round-trip through the meta with unknown keys kept; changing them raises a reimport event; the Project panel edits them and the importers listed in Status read them. The `MeshRenderer` still has its own texture filter and wrap fields (see Open).
 - **Work packages:**
   1. Done for textures and models - the Import Settings box in the Project panel writes through `SetSettings`; audio options are not offered in it.
@@ -113,6 +117,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add an import settings Inspector for textures"; "make the model importer use the scale from import settings"
 
 ### 20.5 Thumbnails
+- **System:** Asset Database
 - **What:** Small preview pictures for assets in the browser, cached so the grid stays fast.
 - **Parts:**
   - 20.5.1 Editor renderers - `editor/main.cpp` - prefabs, scenes, materials (a sphere), models and `.okaymesh` files are rendered into 128 px pictures by generators registered with the cache; primitives in the Modeling panel keep their own small cache
@@ -139,6 +144,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 21. Prefab system (Critical)
 
 ### 21.1 Reusable objects
+- **System:** Prefabs
 - **What:** Save an object and its children as a `.okayprefab` file and place copies of it in any scene or spawn it from a script.
 - **Parts:**
   - 21.1.1 Prefab files and instantiate - `Scene/SceneSerializer` - `SaveObjectToFile`, `InstantiateFromFile`, `Instantiate` (duplicate/paste); an instance root remembers its file in `prefabSource`
@@ -163,6 +169,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "make a prefab from this enemy"; "spawn this prefab at the player"
 
 ### 21.2 Nested prefabs
+- **System:** Prefabs
 - **What:** A prefab that contains other prefab instances, which keep their link to their own prefab so editing the inner one updates the outer one.
 - **Parts:**
   - 21.2.1 Nested prefab expansion (#578) - `Scene/PrefabTools` - a prefab file may hold objects marked `nestedprefab "<file>"` with `override`, `remove`, `unset` and objects added inside; instantiating the outer file builds every nested instance
@@ -189,6 +196,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "make a car prefab out of wheel and body prefabs"; "show nested prefab roots with an icon in the Hierarchy"
 
 ### 21.3 Variants
+- **System:** Prefabs
 - **What:** A prefab that is based on another prefab and only stores its differences (a red enemy variant of the base enemy).
 - **Parts:**
   - 21.3.1 Variant file format (#578) - `Scene/PrefabTools` - a prefab file with `variant "<base>"` plus `override`, `unset`, `remove` and added objects (`under <i>`); a variant of a variant works
@@ -211,6 +219,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "create a variant of the goblin prefab with more health"
 
 ### 21.4 Overrides
+- **System:** Prefabs
 - **What:** Remember how a placed instance differs from its prefab, and offer to apply, revert or re-apply those differences.
 - **Parts:**
   - 21.4.1 Override data layer - `Scene/SceneSerializer`, `Scene/GameObject` - `CapturePrefabOverrides`, `InstantiatePrefab(scene, path, overrides)`, `ReapplyPrefab`; overrides saved as `override <object> "<line>"` records (merged #570)
@@ -240,6 +249,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 22. Undo/redo & recovery (Critical)
 
 ### 22.1 Undo history
+- **System:** Undo and Recovery
 - **What:** Step back and forward through your edits with Ctrl+Z and Ctrl+Y, and jump to any earlier step from a history list.
 - **Parts:**
   - 22.1.1 Scene undo on `UndoStack` - `editor/EditorState.*`, `editor/SceneUndo.hpp`, `editor/EditUndo.hpp` - `PushUndo` opens a step, closed at the next boundary as a `SceneDeltaCommand` (scene-text delta, selection by GUID); 100 steps; named steps; drags and repeated edits of one widget merged; `Undo`, `Redo`, `UndoName`, `UndoDepth`; empty history on New / Open; off during Play
@@ -269,6 +279,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "make delete / reparent per-object undo commands"; "keep the scene history when an asset is moved"
 
 ### 22.2 Autosave
+- **System:** Undo and Recovery
 - **What:** The editor quietly saves a recovery copy of your work every few minutes so a crash costs little.
 - **Parts:**
   - 22.2.1 Scene autosave sidecar - `editor/main.cpp`, `editor/DocRecovery.hpp` - leftover `<scene>.autosave` files are still offered on open when newer than the scene; new sessions do not write one (test `doc_recovery`)
@@ -293,6 +304,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "autosave scripts and graphs too"; "keep three rotating autosaves"
 
 ### 22.3 Crash recovery
+- **System:** Undo and Recovery
 - **What:** After a crash or a killed editor, offer the last autosave, and keep a record of what crashed.
 - **Parts:**
   - 22.3.1 Recover Autosave prompt - `editor/main.cpp` - opening a scene that has a newer `.autosave` shows "Recover Autosave"
@@ -318,6 +330,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "list every recoverable autosave after a crash"; "add a crash handler to the player"
 
 ### 22.4 Backups
+- **System:** Undo and Recovery
 - **What:** Older versions of your files are kept so a bad save or a bad edit can be rolled back.
 - **Parts:**
   - 22.4.1 Rolling `.bak` of scene and game saves - `Scene/SceneSerializer`, `Core/SaveGame` - saving a scene keeps the previous good file as `<scene>.bak`; game save slots keep a `.bak` and load it if the slot is damaged
@@ -343,6 +356,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 23. Profiling & debugging (Critical)
 
 ### 23.1 CPU/GPU profiler
+- **System:** Profiler
 - **What:** See where each frame's time goes: which systems are slow, which frames spike, and whether the CPU or the GPU is the limit.
 - **Parts:**
   - 23.1.1 Frame profiler core - `Core/Profiler` - `Prof()`, `OKAY_PROFILE("Name")` scopes (about 60 in engine and editor), ring of the last 240 frames, per-section min/avg/max, Chrome trace, CSV, `DumpFrame`, `Summary`
@@ -370,6 +384,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add an Export Chrome Trace button to the Profiler"; "show real GPU time per render pass"
 
 ### 23.2 Memory tracking
+- **System:** Profiler
 - **What:** See how much memory each system uses, find leaks and see what the asset cache holds.
 - **Parts:**
   - 23.2.1 Asset cache report - `Core/AssetManager` - `AssetManager::Report()` lists every cached asset with bytes, type and reference count, and totals per type
@@ -394,6 +409,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add a memory window with leak suspects"; "count texture memory per scene"
 
 ### 23.3 Frame debugger
+- **System:** Profiler
 - **What:** Capture one frame and step through its draw calls to see what was drawn, with which material and state, and why something is missing.
 - **Parts:**
   - 23.3.1 Draw call recorder (#574) - `Debug/DrawCallRecorder` - capture one frame's draw list, step through, filter, export
@@ -418,6 +434,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "build a frame debugger window"; "show why this object was not drawn"
 
 ### 23.4 Error console
+- **System:** Logging
 - **What:** The panel that shows log messages, warnings and errors, with filters and links back to what caused them.
 - **Parts:**
   - 23.4.1 Console panel - `editor/ConsolePanel.*` - draws `ConsoleModel::Rows()`; error, warning, info toggles with counts, category dropdown, search, collapse of repeats, details pane, clear on play, pause on error, Open Script, Copy and Save to `console_log.txt`; tab badge shows error and warning counts
@@ -447,6 +464,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 24. Plugin & extension system (Critical)
 
 ### 24.1 C++ plugins
+- **System:** Editor Plugins
 - **What:** Let a developer build a native library (DLL or shared object) that adds components, tools or systems to the engine and editor without changing the engine source.
 - **Parts:**
   - 24.1.1 Engine as a static library - `engine/CMakeLists.txt` - games in C++ link `okay::engine` (see the `examples/` demos); no dynamic loading and no install rules
@@ -471,6 +489,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "design the C++ plugin ABI"; "load plugins from a Plugins folder"
 
 ### 24.2 Editor extensions
+- **System:** Editor Plugins
 - **What:** Add windows, buttons and menu commands to the editor itself, written in OkayScript, working on the open scene.
 - **Parts:**
   - 24.2.1 Plugin files and live reload - `editor/main.cpp` - `<project>/EditorPlugins/*.okay` and `<editor>/plugins/*.okay`; header comments `@name`, `@description`, `@window`; saving a plugin reloads it
@@ -498,6 +517,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "let plugins add an Inspector section"; "add toolbar buttons from a plugin"
 
 ### 24.3 Custom nodes
+- **System:** Editor Plugins
 - **What:** Add new node types to the visual scripting graph from outside the engine (from a script or a plugin) with their own pins and help text.
 - **Parts:**
   - 24.3.1 Built-in node factory - `VisualScript/Nodes`, `VisualScript/NodeGraph` - `MakeNode(type, args)` builds nodes from a fixed list; no registration from outside
@@ -523,6 +543,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add a node registry so plugins can add nodes"; "turn an OkayScript function into a node"
 
 ### 24.4 Plugin SDK
+- **System:** Editor Plugins
 - **What:** The package a third party downloads to build plugins: headers, libraries, documentation and a starter project, with version rules.
 - **Parts:**
   - 24.4.1 Script plugin starter - `docs/editor/editor-plugins.md`, `examples/editor-plugins/AlignTools.okay` - the guide, two examples and Plugins > New Plugin template
@@ -548,6 +569,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 25. Project management (High)
 
 ### 25.1 Templates
+- **System:** Project Templates and Upgrades - New-project templates, project settings and upgrading old projects to the current version.
 - **What:** Starting points for a new project: a blank scene, a genre starter or a complete small game.
 - **Parts:**
   - 25.1.1 Launcher Create page - `launcher/main.cpp` - 22 templates in four groups (All, Start simple, Game kits, Examples and systems) with search; `CreateProject` makes the folder and `Assets`, the editor fills in the template scene headless
@@ -572,6 +594,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "let users save their project as a template"; "add a Roguelike template to the Create page"
 
 ### 25.2 Project settings
+- **System:** Project Templates and Upgrades
 - **What:** One place for project-wide choices such as game name, window size, physics gravity and rendering defaults.
 - **Parts:**
   - 25.2.1 Project Settings window - `editor/main.cpp` - Edit > Project Settings: company, version, default window size, 2D and 3D gravity, ambient, skybox, editor loading screen; Save writes `project.okayproj`
@@ -597,31 +620,36 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add a Layers and Tags section to Project Settings"; "store quality presets in project settings"
 
 ### 25.3 Migration
+- **System:** Project Templates and Upgrades
 - **What:** Open a project made with an older engine version and have scenes, prefabs and settings brought up to date safely.
 - **Parts:**
   - 25.3.1 Scene format version - `Scene/SceneSerializer` - `kSceneFormatVersion` is 3; newer files still load with unknown records skipped and a warning; version 0 or a non-number is an error
   - 25.3.2 Save and import-settings migrations - `Core/SaveGame`, `Core/ImportSettings` - `SaveGame::SetMigration(fromVersion, fn)`; import settings upgrade old layouts on read
   - 25.3.3 Version helpers - `Core/BuildInfo` - `CompareVersions`, `IsCompatible`, `Version()` (merged in #571)
   - 25.3.4 Scene migration steps (#578) - `Scene/SceneMigration` - `MigrateToCurrent(text)` runs registered `N -> N+1` steps on the scene text and writes canonical text, `Register(step)`, `Describe()`, `MigrateThroughEngine` for upgrades that need component classes; a newer or damaged file comes back untouched
-- **Code:** `Scene/SceneSerializer`, `Core/SaveGame`, `Core/ImportSettings`, `Core/BuildInfo`, `Scene/SceneMigration`
-- **API:** `SceneSerializer::kSceneFormatVersion`, `SaveGame::SetMigration`, `BuildInfo::IsCompatible`, `SceneMigration::MigrateToCurrent`, `SceneMigration::Register`
-- **Editor:** none
+  - 25.3.5 Project upgrade - `editor/ProjectUpgrade`, `editor/ProjectUpgradeUI`, `shared/ProjectVersion` - `engine_version` stamp in `project.okayproj`, the question on open (older / unknown / newer), a verified full backup, all-or-nothing rewrite of scenes and prefabs, Restore (`docs/editor/project_upgrade.md`)
+  - 25.3.6 Upgrade report and loss check - `editor/ProjectUpgrade` - `CheckSceneFile` loads the old and the upgraded text and names anything the new file no longer holds (objects, records this version does not know beyond the loader's 256-per-object / 64 KB limits); `<backup>/.okay/upgrade_report.txt` lists versions, files rewritten, every step and every loss; the result window shows "Nothing was lost" or the losses, and a "What changed" list
+  - 25.3.7 Old-file corpus - `tests/test_project_upgrade.cpp`, `tests/data/upgrade_corpus` - every `.okayscene` / `.okayprefab` the repository ships (format 1 files written by older editors among them) plus hand-made version 2, newer-records and future files: each must upgrade, load, lose nothing and be stable on a second upgrade; the future file must be refused
+- **Code:** `Scene/SceneSerializer`, `Core/SaveGame`, `Core/ImportSettings`, `Core/BuildInfo`, `Scene/SceneMigration`, `editor/ProjectUpgrade`, `editor/ProjectUpgradeUI`, `shared/ProjectVersion`
+- **API:** `SceneSerializer::kSceneFormatVersion`, `SaveGame::SetMigration`, `BuildInfo::IsCompatible`, `SceneMigration::MigrateToCurrent`, `SceneMigration::Register`, `okayup::UpgradeJob`, `okayup::CheckSceneFile`, `okayup::UpgradeReportText`
+- **Editor:** the version question when a project is opened; File > Project Upgrade... (upgrade again, Restore a backup); example `examples/old_project`
 - **Docs:** `docs/engine/scene_serializer.md`, `docs/engine/core_tools.md`, `docs/engine/scene_diff_merge.md`
-- **Tests:** `scene_safe_load`, `structure_version`, `core_audit`, `scene_migration`
-- **Status:** Partial - forward compatibility plus a scene text migration library (#578) exist; the two built-in steps (1 to 2, 2 to 3) only raise the number when nothing needs the engine, and no editor dialog or version stamp uses it.
-- **Exists today:** Old scenes keep loading because the loader ignores what it does not know and defaults what is missing; nothing in the editor rewrites an old scene or tells the user it was made by an older build; `SceneMigration` can, but nothing calls it.
+- **Tests:** `scene_safe_load`, `structure_version`, `core_audit`, `scene_migration`, `project_upgrade`, `project_version`
+- **Status:** Partial - the project upgrade (stamp, question, backup, rewrite, report, restore) is built and tested headless; the windows were not run on Windows; `.okaymeta` import settings and other data files are upgraded on read only (not by the project upgrade, which rewrites scenes, prefabs and `project.okayproj`).
+- **Exists today:** An old project asks before it is touched, is backed up, upgraded file by file with a report of what changed and what could not be kept, and can be restored from File > Project Upgrade....
 - **Work packages:**
   1. S - Stamp scenes and `project.okayproj` with the engine version that wrote them. Depends on: nothing.
   2. S - Register a step (and a hand-written old-format fixture in `scene_migration`) whenever `kSceneFormatVersion` is bumped; the registry already exists. Depends on: #578 (on main).
   3. M - "Upgrade project" dialog: back up first (22.4), migrate scenes and prefabs, list what changed. Depends on: #578 (on main, `SceneMigration`), 22.4 package 1.
   4. S - Warn when a scene was saved by a newer build and would lose data on save. Depends on: package 1.
-- **Open:** no policy yet on how long old formats stay readable; `MigrateThroughEngine` drops records this build does not know and gives id-less objects new ids, so it is only for files from older builds.
+- **Open:** no policy yet on how long old formats stay readable; `MigrateThroughEngine` keeps records this build does not know only up to the loader's limits (256 per object, 64 KB each; a loss beyond that is now named in the report, not prevented) and gives id-less objects new ids, so it is only for files from older builds; the backup cannot be put in another folder; the result window was not run on a screen.
 - **Related:** 1.5, 20.4, 28.2, 35.4
 - **Words:** migration, upgrade project, scene version, format version, old project, forward compatible, SetMigration, IsCompatible
 - **Seen as:** old project opens with missing pieces; a newer scene loses data in an older editor
 - **Ask me like:** "add an Upgrade Project command"; "stamp the engine version into saved scenes"
 
 ### 25.4 Dependency management
+- **System:** Project Templates and Upgrades
 - **What:** Track which packages (asset packs, plugins, templates) a project uses and which versions, and install or update them.
 - **Parts:**
   - 25.4.1 Marketplace downloads into a project - `editor/main.cpp`, `Platform/Workshop` - the Asset Manager window imports downloaded items into Assets; no version is recorded
@@ -648,21 +676,22 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 26. Shader & material editor (High)
 
 ### 26.1 Visual shader graphs
+- **System:** Shaders
 - **What:** Build a surface look by connecting nodes (textures, colours, maths, time) instead of writing shader code.
 - **Parts:**
   - 26.1.1 Node graph editor (for gameplay logic, reusable canvas) - `editor/VisualScriptEditor.hpp`, `VisualScript/NodeGraph` - not a shader editor today
-  - 26.1.2 Shader graph - `-` - not built
+  - 26.1.2 Shader graph - `-` - not built; the target it will compile to exists: the `.okayshader` surface language (26.3), whose surface block is a list of definitions and output assignments, the shape a graph produces
 - **Code:** `editor/VisualScriptEditor.hpp`, `VisualScript/NodeGraph`
 - **API:** none yet
 - **Editor:** none yet
 - **Docs:** `docs/scripting/visual_scripting.md` (logic graphs)
-- **Tests:** none
+- **Tests:** none (the language it targets: `okayshader`)
 - **Status:** Planned - no shader graph data model exists.
-- **Exists today:** Only the logic graph editor, which could supply the canvas. All shading is hard-coded in each renderer.
+- **Exists today:** The logic graph editor, which could supply the canvas, and (since 2026-11-22) the text surface language of 26.3 with its GLSL, HLSL and CPU backends, which a graph can compile to. `.okayshader` is now the text language's file name; a graph needs its own file type.
 - **Work packages:**
-  1. M - Shader graph file format `.okayshader` (nodes, pins, outputs albedo, emissive, alpha, normal). Depends on: nothing.
-  2. L - CPU evaluator in the software renderer as the reference. Depends on: package 1.
-  3. L - Generate GLSL and HLSL snippets inserted into the standard shaders (GL, D3D11). Depends on: package 2.
+  1. M - Shader graph file format (nodes, pins, outputs albedo, emission, alpha, normal), saved as its own file type. Depends on: nothing.
+  2. S - Compile a graph to an `.okayshader` surface block (one local per node, then output assignments); the CPU evaluator and the GLSL / HLSL backends of 26.3 are reused. Depends on: package 1, 26.3.
+  3. - Done by 26.3: GLSL and HLSL inserted into the standard shaders (GL; D3D11 unverified).
   4. M - Editor window reusing the node canvas, with a live preview. Depends on: package 1, 26.2 package 2.
   5. M - A material can point at a shader graph asset. Depends on: package 1, 26.2.
 - **Open:** four renderers (software, GL, D3D11, D3D12) must stay consistent; D3D12 has normal, gloss and AO maps too (corrected 2026-11-20: older text here said it had none, which is **outdated**; `engine/src/Render/D3D12Renderer.cpp` binds `normalMap`, `specularMap` as gloss and `aoMap`, see docs/rendering/rendering.md).
@@ -672,6 +701,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "design a shader graph file format"; "add a fresnel node to a shader graph"
 
 ### 26.2 Material editor
+- **System:** Materials and Textures
 - **What:** A window to design a material (colours, textures, shininess) with a live preview and reuse it on many objects.
 - **Parts:**
   - 26.2.1 Material files - `Render/Material` - `.okaymat` text file: colour, emissive, specular, shininess, unlit, double-sided, texture, tiling, shader style, rim, outline, UV scroll, triplanar
@@ -698,30 +728,35 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "make the Material window show the shader and outline fields"; "render a real preview sphere in the Material window"
 
 ### 26.3 Custom shaders
+- **System:** Shaders
 - **What:** Use your own shader code or graph on a material, on every renderer.
 - **Parts:**
-  - 26.3.1 Built-in shader styles - `Components/MeshRenderer`, `Render/SoftwareRenderer`, `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer` - Standard, Unlit, Toon, Gradient, Fresnel, Iridescent, Hologram, Posterize, Velvet
+  - 26.3.1 Built-in shader styles - `Components/MeshRenderer`, `Render/SoftwareRenderer`, `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer` - Standard, Unlit, Toon, Gradient, Fresnel, Iridescent, Hologram, Posterize, Velvet (and Custom, below)
   - 26.3.2 Renderer shader sources - `Render/GLRenderer` (GLSL 120 strings), `Render/D3D11Renderer` and `Render/D3D12Renderer` (HLSL strings compiled at startup)
-  - 26.3.3 User shader files - `-` - not built
-- **Code:** `Components/MeshRenderer`, `Render/SoftwareRenderer`, `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer`
-- **API:** `MeshRenderer::shader` (enum `Shader`)
-- **Editor:** MeshRenderer inspector "Shader" selector
-- **Docs:** `docs/rendering/rendering.md`
-- **Tests:** `shaders`, `software_renderer`
-- **Status:** Planned - user-supplied shaders do not exist; the nine built-in styles are fixed per renderer (see 26.4 for the lighting model).
-- **Exists today:** A closed set of styles, each implemented once per renderer. Adding one means editing four renderers.
+  - 26.3.3 User shader files - `Render/OkayShader` - our own `.okayshader` surface language (lexer, parser, type checker with line:col errors, GLSL / HLSL / CPU backends); Shader = Custom on the Mesh Renderer and in `.okaymat`; properties and textures in the Inspector; magenta error material; hot reload every 250 ms; examples in `examples/shaders`
+- **Code:** `Components/MeshRenderer`, `Render/OkayShader`, `Render/SoftwareRenderer`, `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer`
+- **API:** `MeshRenderer::shader` (enum `Shader`), `MeshRenderer::customShader`, `MeshRenderer::shaderParams`, `oshader::Compile`, `oshader::LoadShaderFile`, `oshader::RunCpu`
+- **Editor:** MeshRenderer inspector "Shader" selector; Shader = Custom shows Shader File, the compile result and one control per property and texture
+- **Docs:** `docs/rendering/rendering.md`, `docs/rendering/shaders.md`
+- **Tests:** `shaders`, `software_renderer`, `okayshader`, `okayshader_render`, `okayshader_gl`
+- **Status:** Partial - custom surface shaders work on the software and OpenGL renderers (tested against each other on Mesa llvmpipe); Direct3D 11 is written but unverified on Windows; Direct3D 12 draws Custom as Standard.
+- **Exists today:** The nine built-in styles, plus Custom: an `.okayshader` file whose surface block feeds the renderer's own lighting. One source becomes GLSL, HLSL and a CPU register program; example scene `examples/shaders/shader_demo.okayscene`.
 - **Work packages:**
   1. M - Shader style table shared by all renderers so a new built-in style is one entry plus per-renderer code. Depends on: nothing.
-  2. L - Custom shader asset: fragment snippet in a small portable subset, compiled to GLSL and HLSL. Depends on: 26.1 package 3.
-  3. M - Software renderer fallback: run the snippet on the CPU or fall back to Standard with a warning. Depends on: package 2.
-  4. S - Shader compile errors shown in the Console with file and line (23.4). Depends on: package 2.
-- **Open:** D3D12 is "v1" and opt-in; shader hot reload would need 34.3.
+  2. - Done 2026-11-22: custom shader asset (`.okayshader`), compiled to GLSL and HLSL.
+  3. - Done 2026-11-22: the software renderer runs it on the CPU (same results as OpenGL within a tolerance).
+  4. - Done 2026-11-22: errors logged with file:line:col (Console) and shown in the Inspector.
+  5. M - Run the Direct3D 11 path on Windows (D3DCompile of the custom variant, a real GPU) and fix what it finds. Depends on: a Windows machine.
+  6. M - Direct3D 12 custom variant (root signature slot for b4 and t9-t12). Depends on: package 5.
+  7. S - Custom surfaces in the shadow-map pass (dissolve holes in shadows) and a vertex stage (wobble). Depends on: nothing.
+- **Open:** D3D11 custom shaders never compiled by D3DCompile or run on a GPU (written and syntax-checked against the MinGW headers only); D3D12 and Xbox (no run-time compiler) do not run them; shadows ignore discard.
 - **Related:** 2.1, 26.1, 34.3
-- **Words:** custom shader, shader file, GLSL, HLSL, shader style, Toon, Hologram, Iridescent, MeshRenderer.shader
+- **Words:** custom shader, shader file, okayshader, surface shader, shader language, GLSL, HLSL, shader style, Toon, Hologram, Iridescent, MeshRenderer.shader, magenta material, hot reload
 - **Seen as:** a style looks different between renderers; no way to add my own look
 - **Ask me like:** "add a Dissolve shader style to all four renderers"
 
 ### 26.4 PBR
+- **System:** Materials and Textures
 - **What:** A physically based lighting model (base colour, metallic, roughness, normal, ambient occlusion) so materials look right under any light.
 - **Parts:**
   - 26.4.1 Surface fields - `Components/MeshRenderer` - metallic, reflectivity (sky reflection, Fresnel weighted), specular and shininess (Blinn-Phong), normal map and strength, specular/gloss map, AO map and strength, emissive, matcap
@@ -751,6 +786,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 27. Optimization tools (High)
 
 ### 27.1 LOD generation
+- **System:** Culling and LOD
 - **What:** Make cheaper copies of a mesh for when it is far away and switch between them automatically, so big scenes stay fast.
 - **Parts:**
   - 27.1.1 Quadric mesh simplifier (#574) - `Optimize/MeshSimplify` - edge-collapse simplification that keeps topology, boundaries, UV seams, hard edges, colours and skin weights; `GenerateLodChain`
@@ -777,6 +813,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add an LOD Group component and use it in the renderers"; "generate three LOD levels for the selected mesh"
 
 ### 27.2 Occlusion culling
+- **System:** Culling and LOD
 - **What:** Do not draw things hidden behind walls or buildings, in addition to skipping what is outside the camera view.
 - **Parts:**
   - 27.2.1 Frustum culling - `Render/Culling` - world-space bounding spheres tested against the camera and shadow light frustum before any draw; switch `FrustumCullingEnabled`; counters `LastCullCounters`
@@ -803,6 +840,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "turn on occlusion culling in the renderers"; "add an Occluder component"
 
 ### 27.3 Batching
+- **System:** Culling and LOD
 - **What:** Draw many objects with few draw calls by combining static meshes and instancing repeats, and report where a scene wastes work.
 - **Parts:**
   - 27.3.1 UI batching - `UI/UIBatcher` - UI draw calls become triangles in one buffer, a few Geometry calls per atlas page and clip run
@@ -829,6 +867,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add an Optimization Report window"; "batch static meshes when the game starts"
 
 ### 27.4 Streaming
+- **System:** Culling and LOD
 - **What:** Keep only the parts of a big world near the player in memory, loading and unloading as they move.
 - **Parts:**
   - 27.4.1 World streamer component - `Components/WorldStreamer` - grid of cell prefabs named `<prefix>_<x>_<z>.okayprefab`; loads cells within a ring of the camera or a named target, unloads past a larger ring (hysteresis)
@@ -857,6 +896,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 28. Version control integration (High)
 
 ### 28.1 Git integration
+- **System:** Version Control - Git inside the launcher and editor: commit, compare and fix merge conflicts.
 - **What:** Use git from the tools: clone a project, see what changed, commit, push, pull and switch branches without a terminal.
 - **Parts:**
   - 28.1.1 Launcher git jobs - `launcher/main.cpp` - runs `git` on a background thread (needs git on the PATH) and reports a toast; works on any listed project
@@ -883,6 +923,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add a Git panel to the editor"; "generate a .gitignore for new projects"
 
 ### 28.2 Diffs
+- **System:** Version Control
 - **What:** See what changed between two versions of a scene or prefab in terms of objects and properties, not lines of text.
 - **Parts:**
   - 28.2.1 Diff-friendly scene text - `Scene/SceneSerializer` - human-readable one-record-per-line text; stable object ids (`guid` records, #570); floats written with the fewest digits so saving does not drift (#575)
@@ -907,6 +948,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "show a readable diff of two scene files"
 
 ### 28.3 Project history
+- **System:** Version Control
 - **What:** A timeline of how a project or an asset changed, with the ability to restore an older version.
 - **Parts:**
   - 28.3.1 Previous-version backups - `Scene/SceneSerializer` - one `.bak` per saved scene (see 22.4)
@@ -930,6 +972,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "show the history of this scene and let me restore a version"
 
 ### 28.4 Merge conflict tools
+- **System:** Version Control
 - **What:** Combine two people's edits to the same scene without losing work, and resolve conflicts object by object.
 - **Parts:**
   - 28.4.1 Additive scene merge - `editor/main.cpp`, `Scene/SceneSerializer` - File > Merge Scene into Current (adds another scene's objects with an offset; not a version-control merge)
@@ -955,6 +998,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 29. Terrain & world building tools (High)
 
 ### 29.1 Terrain sculpting
+- **System:** Terrain and Water
 - **What:** Shape a landscape by painting hills and valleys with brushes in the Scene view, or generate it and refine it.
 - **Parts:**
   - 29.1.1 Heightmap terrain - `Components/Terrain` - square grid of heights (resolution, size), rebuilt into a mesh; auto-colour by height and slope (water, sand, grass, rock, snow); texture with triplanar projection and normal map
@@ -984,6 +1028,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "paint grass and dirt on the terrain"; "make terrain strokes undoable one by one"
 
 ### 29.2 Vegetation painting
+- **System:** Terrain and Water
 - **What:** Fill terrain with trees, rocks, bushes and grass by painting with a brush or by rules, without placing each by hand.
 - **Parts:**
   - 29.2.1 Scatter button - `editor/LevelTools.*` - Terrain Inspector "Scatter props": choose prop (Tree, Pine, PalmTree, DeadTree, Bush, Rock, Mushroom, Cactus, Crystal), count (up to 5000), scale range, max slope and height band; the copies go into a Foliage layer under the terrain (one object per prop, not one per copy)
@@ -1012,6 +1057,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "paint trees on the terrain"; "scatter grass with wind"
 
 ### 29.4 Decals and cables
+- **System:** Terrain and Water
 - **What:** Small level-dressing pieces: a picture projected onto walls and floors, and a rope or wire that hangs between two points.
 - **Parts:**
   - 29.4.1 Decal projector - `Components/Decal` - projects a picture along the object's forward axis onto the surfaces inside its box, as a thin mesh cut from the triangles it touches (follows bumps and corners, draws in every renderer); built on Project, not every frame
@@ -1030,6 +1076,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add a decal projector"; "hang a cable between two poles"
 
 ### 29.3 Procedural generation
+- **System:** Terrain and Water
 - **What:** Generate terrain, props and layouts from rules and random seeds, repeatably.
 - **Parts:**
   - 29.3.1 Terrain generators - `Components/Terrain` - seeded fractal types with domain warping, erosion, terrace
@@ -1058,6 +1105,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 30. Character creator (Medium)
 
 ### 30.1 Customization
+- **System:** Character Creator
 - **What:** Change how a character looks (body size, colours, hair, clothes, accessories) in the editor or at run time.
 - **Parts:**
   - 30.1.1 Blocky character options - `Components/Character` - height, colours for skin, shirt, pants, shoes, hair, eyes and more; 8 hair styles, 4 beard styles, shirt and leg styles, jacket, belt, gloves, hats, glasses, mask, scarf, shoulder pads
@@ -1083,6 +1131,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add a character creator screen to the game"; "save the player's look in the save file"
 
 ### 30.2 Rig generation
+- **System:** Rigging
 - **What:** Turn any character model into something that can walk and be animated without rigging it by hand.
 - **Parts:**
   - 30.2.1 Auto-bind to the built-in skeleton - `Components/Character` - `BindCustomMesh` attaches each vertex to its nearest bone of the 15-bone humanoid so every built-in animation drives the model
@@ -1108,6 +1157,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add smooth skin weights to auto-rigging"
 
 ### 30.3 Clothing
+- **System:** Character Creator
 - **What:** Dress characters: change clothes and attach items, including on imported characters.
 - **Parts:**
   - 30.3.1 Blocky clothing options - `Components/Character` - shirt, legs, jacket, belt, gloves, hats, glasses, mask, scarf, pads
@@ -1132,6 +1182,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "let equipment swap clothing meshes on an imported character"
 
 ### 30.4 Morph targets
+- **System:** Character Creator
 - **What:** Reshape a face or body with sliders (smile, nose size, muscle) by blending stored shapes.
 - **Parts:**
   - 30.4.1 Blend shapes - `Components/BlendShapes` - named per-vertex offset shapes mixed by weight 0..1 before skinning; imported from glTF and FBX
@@ -1158,11 +1209,12 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 31. Localization tools (Medium)
 
 ### 31.1 Translation tables
+- **System:** Localization
 - **What:** The tool translators and developers use to manage every piece of text in every language: keys, translations, notes, progress and spreadsheet exchange.
 - **Parts:**
   - 31.1.1 String table file - `Core/Localization` - `strings.okayloc` with languages, keys, notes and per-language texts; plural forms and number, currency, percent and date formatting (merged #571)
   - 31.1.2 Localization window - `editor/LocalizationWindow.*` - grid of keys by languages with in-place editing, completion bars per language, search, filters (missing in a language, unused keys), Find in Scene, Add Dialogue and Quest Text, own undo
-  - 31.1.3 CSV exchange - `editor/LocalizationWindow.*` - Export CSV and Import CSV (header row names columns, comma/semicolon/tab, BOM)
+  - 31.1.3 CSV and JSON exchange - `editor/LocalizationWindow.*`, `editor/LocalizationTools` - Export CSV, Export JSON (whole table, or one language when the file is named after it) and Import... for both, with a confirm box that lists what would change first (CSV header row names columns, comma/semicolon/tab, BOM)
   - 31.1.4 Table tool layer (#574) - `Core/LocTable`, `Core/LocCheck`, `Core/LocScan` - cell states (translated, missing, same-as-source, placeholder mismatch, extra), CSV and JSON, placeholder and plural checker, scan for used, unused and undefined keys
   - 31.1.5 Scene text binding - `Scene/SceneLocalization` - localized text on scene objects follows the current language
 - **Code:** `Core/Localization`, `Scene/SceneLocalization`, `editor/LocalizationWindow.*`, `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`
@@ -1170,22 +1222,23 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** View > Editors & Tools > Localization; Inspector "Localized" checkbox on text fields
 - **Docs:** `docs/engine/localization.md`, `docs/engine/localization.md`; `docs/engine/localization.md`
 - **Tests:** `localization`, `loc_prefs_time`; `loc_tools`, `loc_window`
-- **Status:** Partial - the window uses `LocTable` for the grid and cell states, `LocCheck` and `LocMissingReport` for the report, and `LocScanProject` for unused and undefined keys. JSON in the window and a confirm step before CSV import are still out.
-- **Exists today:** The window and file format (`docs/engine/localization.md`). The grid, the missing-key and placeholder report, and the project scan go through `editor/LocalizationTools`. CSV import reports the `LocDiffTables` summary. JSON exchange and a confirm-before-import step are engine-only.
+- **Status:** Partial - the window uses `LocTable` for the grid and cell states, `LocCheck` and `LocMissingReport` for the report, and `LocScanProject` for unused and undefined keys. JSON import and export and the confirm step before an import are in the window (2026-11-22, test `loc_window`).
+- **Exists today:** The window and file format (`docs/engine/localization.md`). The grid, the missing-key and placeholder report, and the project scan go through `editor/LocalizationTools`. An import (CSV or JSON) is planned first (`PlanLocImport`) and an Import Translations box shows the `LocDiffTables` changes before they are applied.
 - **Work packages:**
   1. M - Done. Window uses `LocTable` for cell states (same-as-source, placeholder mismatch, extra) and a state filter.
   2. S - Done. Checker report panel (`LocCheck`): broken placeholders and plural forms, click to jump to the key.
-  3. S - Import preview: the status line reports the diff after a CSV import (`LocDiffTables`). A confirm step before applying it is still open. Depends on: package 1.
-  4. S - JSON import and export (one file per language) for web translators. Depends on: package 1.
+  3. S - Done. Import preview: an Import Translations box lists the `LocDiffTables` changes and applies them only on Import.
+  4. S - Done. JSON import and export (whole table, or one file per language named by its code) for web translators.
   5. M - Done. Key scan uses `LocScanProject` for "used in code, scenes, dialogue" and flags undefined keys.
   6. M - Translation memory and machine-translation suggestion hook (optional). Depends on: package 1.
-- **Open:** JSON import and export in the window, a confirm step before CSV import, and translation memory. The window uses `LocTable`, `LocCheck` and `LocScan`. Right-to-left scripts are drawn left to right (see 31.3).
+- **Open:** translation memory. The window uses `LocTable`, `LocCheck` and `LocScan`. Right-to-left scripts are drawn left to right (see 31.3).
 - **Related:** 1.8, 12.2, 31.2, 31.3, 10.2
 - **Words:** localization, translation, string table, strings.okayloc, CSV, missing keys, unused keys, plural, translators, languages, i18n
 - **Seen as:** missing translation shows the key; placeholder `{0}` lost in a translation; cannot hand translators a spreadsheet
 - **Ask me like:** "show placeholder mismatches in the Localization window"; "add JSON export per language"
 
 ### 31.2 Font fallback
+- **System:** Fonts and Images
 - **What:** Draw text in any language even when the chosen font lacks the characters, by switching to a font that has them.
 - **Parts:**
   - 31.2.1 Per-language font - `Core/Localization` - `font "<path>"` per language in the table, copied by Build Game
@@ -1211,6 +1264,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "check which characters my fonts cannot draw"; "add right-to-left text layout"
 
 ### 31.3 Language previews
+- **System:** Localization
 - **What:** See the game in another language right now, including how long or mirrored text will fit, without changing settings.
 - **Parts:**
   - 31.3.1 Preview language menu - `editor/LocalizationWindow.*` - toolbar menu switches the language of the Scene and Game views and Play
@@ -1237,6 +1291,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 32. Accessibility (High)
 
 ### 32.1 Controller navigation
+- **System:** Accessibility - Playing with a controller only, colour-blind options and other help for players with different needs.
 - **What:** Play and use every menu with a gamepad or keyboard only, with a visible focus that moves the way the screen looks.
 - **Parts:**
   - 32.1.1 UI navigation - `Components/UINavigation` - `NavigateUI` moves focus to the nearest widget in the pressed direction (arrows, WASD, D-pad), wraps at the ends, scrolls a focused widget into view, handles button, toggle, slider, dropdown, tabs and keybind fields, and keeps focus inside an open modal
@@ -1263,6 +1318,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "let me set the focus order of a menu"; "make menu navigation keys remappable"
 
 ### 32.2 Subtitles
+- **System:** Dialogue
 - **What:** Show spoken lines and important sounds as readable text, with options the player controls (size, background, speaker names).
 - **Parts:**
   - 32.2.1 Cutscene subtitle action - `Components/Sequence`, `Components/SequencePlayer` - a `subtitle` action with speaker and line; drawn as a card in the launcher look
@@ -1288,6 +1344,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add a subtitle widget that follows the accessibility settings"; "caption sounds for deaf players"
 
 ### 32.3 Colorblind options
+- **System:** Accessibility
 - **What:** Let players with colour vision differences read the game: filters, safe palettes and contrast, without changing the art by hand.
 - **Parts:**
   - 32.3.1 Colour vision maths (#574) - `Graphics/ColorVision` - simulate and correct for protanopia, deuteranopia, tritanopia, achromatopsia on colours and images; a colour-vision-safe palette; contrast checks
@@ -1313,6 +1370,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add a colorblind filter to the renderers"; "preview my UI as a deuteranope in the editor"
 
 ### 32.4 Remapping
+- **System:** Input Actions
 - **What:** Let players rebind every control, with conflict handling, on keyboard and gamepad.
 - **Parts:**
   - 32.4.1 Input actions and persistence - `Input/InputActions` - named actions with keys, mouse buttons, gamepad buttons and sticks; bindings saved to the player's prefs; defaults restorable
@@ -1341,6 +1399,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 33. Automated testing (Critical)
 
 ### 33.1 Play-mode tests
+- **System:** Tests and Code Health
 - **What:** Tests that load a scene, run it for a number of frames without a window and check what happened (a player moved, a door opened).
 - **Parts:**
   - 33.1.1 Play-test runner (#572) - `Testing/PlayTest` - fixed-step headless frames, fake keyboard, mouse and touch input, find objects by path, run until a condition, capture log lines (an undeclared error fails the test), event recorders
@@ -1367,6 +1426,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "write a play-test that checks the door opens"; "add a Test Runner window"
 
 ### 33.2 Scene validation
+- **System:** Scenes and Objects
 - **What:** Find broken scenes before players do: missing files, missing components, bad numbers, scripts that do not compile.
 - **Parts:**
   - 33.2.1 Visual-script validation at Play - `editor/EditorState.cpp`, `VisualScript/VsTypes` - `vs::ValidateSceneGraphs` runs when Play starts and prints errors and warnings to the Console
@@ -1393,6 +1453,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add a Validate Scene button"; "fail the build when a scene has missing assets"
 
 ### 33.3 Regression testing
+- **System:** Tests and Code Health
 - **What:** Catch changes that break something that worked: compare results with saved "golden" results, including pictures.
 - **Parts:**
   - 33.3.1 Golden files and scene digest (#572) - `Testing/Regression` - compare text or binary outputs with committed golden files; a scene fingerprint with a readable diff; refresh with `OKAY_UPDATE_GOLDEN=1`
@@ -1421,6 +1482,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 34. Live editing (High)
 
 ### 34.1 Properties during Play
+- **System:** Property Registry
 - **What:** Change values while the game runs, see the effect at once, and choose to keep or throw away the change.
 - **Parts:**
   - 34.1.1 Edit while playing - `editor/main.cpp` - the Inspector and Hierarchy work on the running scene; values (stats, script fields, variables) can be edited live
@@ -1448,6 +1510,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "ask me to keep changes made during Play when I press Stop"
 
 ### 34.2 Live object inspector
+- **System:** Property Registry
 - **What:** Look at any object in the running game, including ones created while playing, and see its real current values.
 - **Parts:**
   - 34.2.1 Live hierarchy and inspector - `editor/main.cpp` - the Hierarchy lists the live scene's objects (spawned ones too, per the object loop) and the Inspector reads their components
@@ -1474,6 +1537,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "click an object in the Game view to inspect it"; "add a watch window for properties during Play"
 
 ### 34.3 Hot reload
+- **System:** Asset Manager
 - **What:** Change a script, a texture or a plugin while the game runs and see the result without restarting.
 - **Parts:**
   - 34.3.1 Plugin reload on save - `editor/main.cpp` - editor plugins reload when their file is saved (24.2)
@@ -1502,9 +1566,10 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 35. Save game framework (High)
 
 ### 35.1 Save slots
+- **System:** Save Games
 - **What:** Let players save and load their progress in named slots, with a list for a Load screen.
 - **Parts:**
-  - 35.1.1 Whole-scene save slots - `Core/SaveGame` - `SaveGame::Save`, `Load`, `Exists`, `Delete`, `Label`, `List` in `saves/<slot>.okaygame`; atomic write, checksum, `.bak` fallback; script `save_game`, `load_game`, `has_save`, `save_label`, `delete_save`, `play_time`; visual-script SaveGame nodes
+  - 35.1.1 Whole-scene save slots - `Core/SaveGame` - `SaveGame::Save`, `Load`, `Exists`, `Delete`, `Label`, `List`: the framework's whole-scene mode, `saves/<slot>.okayslot` in the same store as 35.1.3 (older `saves/<slot>.okaygame` files still load, list and count for Continue); atomic write, checksum, `.bak` fallback; script `save_game`, `load_game`, `has_save`, `save_label`, `delete_save`, `play_time`; visual-script SaveGame nodes
   - 35.1.2 Key-value save data - `Core/SaveData` - `Save` keys and `SaveFile` (Easy-Save-style values), per-slot copy
   - 35.1.3 Framework slots (#572) - `Core/SaveFramework` - `SaveManager` slots `<slot>.okayslot` with headers (label, scene, time, play time, thumbnail, kind, game version), listing, copy, rename and delete
   - 35.1.4 Slot menu model (#572) - `Core/SaveFramework` - `SaveMenuModel` rows with ready-made text and flags (empty, corrupt, newer version, auto, quick, can load, can save)
@@ -1515,22 +1580,23 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `SaveGame::Save/Load/List`, `Save::SetInt`; `SaveManager`, `SaveRequest`, `SaveMenuModel`, `ISaveSync`; `GameSaves`
 - **Editor:** UI > Prebuilt Screens > Menus > Save Slots (Save / Load / Delete / Continue per slot); Add Component > Saveable and Save Settings
 - **Docs:** `docs/engine/save_games.md`; `docs/engine/save_games.md`
-- **Tests:** `save_game`, `durable_saves`, `savedata`; `save_framework`, `save_scene`, `save_nocode`, `ui_templates`
+- **Tests:** `save_game`, `durable_saves`, `savedata`; `save_framework`, `save_scene`, `save_nocode`, `save_merge`, `ui_templates`
 - **Status:** Works - `SaveGame` slots are in use and tested; the framework (`SaveManager`, tests `save_framework`, `save_scene`) is now reachable without code through `GameSaves`, script builtins, visual-script nodes, Action List actions and the Save Slots screen (test `save_nocode`).
 - **Exists today:** SaveGame slots with durable writes. The framework's slots are used by the no-code route (`game_*` calls and the Save Slots screen, which shows the slot label and saved time, not a thumbnail). The screen does not use `SaveMenuModel` and has three fixed slots; rename and thumbnails are not in it. Sync hooks are library code only.
 - **Work packages:**
   1. S - Save Slots screen: a list bound to `SaveMenuModel` with any number of slots, rename and a thumbnail (the shipped screen has three fixed slots). Depends on: #572 (on main), 12.4.
   2. S - Screenshot thumbnail captured on save (needs 50.1). Depends on: package 1.
-  3. M - Choose one system: either move SaveGame callers to the framework or keep both with clear names (two slot formats). Depends on: #572 (on main).
+  3. Done (2026-11-22, Grok #422 item 1) - SaveGame is the framework's whole-scene mode: `save_game`, the C# `SaveGame` API and the AutoSave component write `.okayslot` files in the framework's store; older `.okaygame` files load, list, continue and are retired by the next save (test `save_merge`).
   4. M - Cloud sync: `ISaveSync` backends for Steam Cloud and PlayFab user data. Depends on: package 3, 49.1.
   5. S - Editor window listing saves in the project's save folder with open-folder and delete. Depends on: package 3.
-- **Open:** possible duplicate: `SaveGame` (`.okaygame`) and the framework (`.okayslot`) are separate formats and separate lists; nothing converts between them (stated in `docs/engine/save_games.md`).
+- **Open:** the Save Slots screen has three fixed slots (package 1); an older `.okaygame` slot is not exported to sync (`ExportRaw`) until it is saved, copied or renamed once.
 - **Related:** 1.7, 12.8, 17.10, 35.2, 49.1
 - **Words:** save slot, save game, load game, Continue, SaveGame, SaveManager, slot list, load screen, cloud save, save folder
 - **Seen as:** Load screen is empty; save corrupted after a crash (handled by .bak); two kinds of saves in the folder
 - **Ask me like:** "make the Save Slots screen show a screenshot"; "sync saves to Steam Cloud"
 
 ### 35.2 Checkpoints
+- **System:** Save Games
 - **What:** Automatic save points (entering a level, reaching a checkpoint, timed autosave) and quick save and load.
 - **Parts:**
   - 35.2.1 Auto Save component - `Components/AutoSave` - saves the whole game to a slot every N seconds and optionally when the scene starts
@@ -1557,6 +1623,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "add a Checkpoint component"; "show a Saving icon when the game autosaves"
 
 ### 35.3 Serialization
+- **System:** Save Games
 - **What:** What gets saved and how objects find their saved state again.
 - **Parts:**
   - 35.3.1 Whole-scene save - `Core/SaveGame` - every object with its components, spawned and destroyed objects, rigidbody velocities, script variables, play time (per `docs/engine/save_games.md`)
@@ -1584,6 +1651,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Ask me like:** "make only marked objects save"; "save the state of unloaded cells"
 
 ### 35.4 Versioned save data
+- **System:** Save Games
 - **What:** Old saves keep working after the game changes, and saves from a newer version are refused instead of damaged.
 - **Parts:**
   - 35.4.1 Save file header - `Core/SaveGame` - `okaygame <version>`, end marker and checksum; damaged or cut-off files refused; version-1 files without a checksum still load

@@ -1878,8 +1878,10 @@ void mergeOverlay() {
     }
     g_onv = 0; g_oni = 0; g_novSpans = 0;
 }
+void captureFrameEnd();   // below (Capture): a capture left open ends with the frame
 // End-of-frame interaction bookkeeping, shared by every backend.
 void finalizeFrame() {
+    captureFrameEnd();
     ChannelsMergeAll();
     // A text field that had the keyboard and was not drawn this frame (its popup closed, its panel was not shown) gives it up, as Dear
     // ImGui drops an active item that was not submitted: the keys must not go on to a field nobody sees, and WantsTextInput() turns false.
@@ -2079,6 +2081,10 @@ void EndFrameData(int outputWidth, int outputHeight) {
 void EndFrame(SDL_Renderer* r) {
     if (r && g_ntoasts) { int ow = 0, oh = 0; SDL_GetRendererOutputSize(r, &ow, &oh); drawToasts((float)ow, (float)oh); }
     finalizeFrame();
+    DrawFinishedFrame(r);
+}
+
+void DrawFinishedFrame(SDL_Renderer* r) {
     if (!r || g_nv == 0 || g_ni == 0) return;
     SDL_Texture* const defTex = resolveTex(r, g_defTex);
     // Save/restore the renderer's blend mode so we never disturb ImGui or anything
@@ -7373,6 +7379,38 @@ bool ColorEdit4(const char* label, float rgba[4], int flags) { return noteEdit(C
 bool ColorEdit3(const char* label, float rgb[3], int flags) { return noteEdit(ColorEdit3_raw(label, rgb, flags)); }
 bool ListBox(const char* label, int* current, const char* const* items, int count, int visibleRows) { return noteEdit(ListBox_raw(label, current, items, count, visibleRows)); }
 
+// ---- Text field callbacks (history and completion) -----------------------------------------------------------------------------
+// Written by us from the behaviour Dear ImGui documents for these flags: while the field has the keyboard, Up / Down call the
+// callback with EventFlag = InputText_CallbackHistory and EventKey = the arrow, and Tab calls it with InputText_CallbackCompletion.
+// The callback may rewrite the text with DeleteChars / InsertChars; the caret then goes to the end of the new text. Other callback
+// flags (resize, always, char filter) still do nothing. No code from any other project.
+static void runTextCallbacks(const char* label, char* buf, int cap, unsigned flags, InputTextCallback cb, void* userData) {
+    if (!cb || !buf || cap <= 0 || !g_lay.active || (flags & InputText_ReadOnly)) return;
+    const int id = hashLabel(label);
+    if (g_focus != id) return;
+    int ev = 0, key = 0;
+    if ((flags & InputText_CallbackHistory) && (g_in.up || g_in.down)) { ev = InputText_CallbackHistory; key = g_in.up ? KeyId_Up : KeyId_Down; }
+    else if ((flags & InputText_CallbackCompletion) && IsKeyPressed(KeyId_Tab, false)) { ev = InputText_CallbackCompletion; key = KeyId_Tab; }
+    if (!ev) return;
+    TextSlot* ts = textSlot(id);
+    InputTextCallbackData d;
+    d.EventFlag = ev; d.Flags = (int)flags; d.EventKey = key; d.UserData = userData;
+    d.Buf = buf; d.BufTextLen = cstrlen(buf); d.BufSize = cap;
+    d.CursorPos = ts->caret;
+    d.SelectionStart = ts->anchor < ts->caret ? ts->anchor : ts->caret;
+    d.SelectionEnd = ts->anchor < ts->caret ? ts->caret : ts->anchor;
+    cb(&d);
+    if (d.BufTextLen < 0) d.BufTextLen = 0;
+    if (d.BufTextLen > cap - 1) d.BufTextLen = cap - 1;
+    if (d.BufDirty) { buf[d.BufTextLen] = '\0'; ts->caret = ts->anchor = d.BufTextLen; ts->first = 0; }
+}
+bool InputTextWithHint(const char* l, const char* h, char* b, int c, unsigned f, InputTextCallback cb, void* ud) {
+    const bool r = InputTextWithHint(l, h, b, c, f); runTextCallbacks(l, b, c, f, cb, ud); return r;
+}
+bool InputText(const char* l, char* b, int c, unsigned f, InputTextCallback cb, void* ud) {
+    const bool r = InputText(l, b, c, f); runTextCallbacks(l, b, c, f, cb, ud); return r;
+}
+
 // ---- Formatted value fields, framed sliders and the search field (docs/own_ui_toolkit.md section 10) ---------------------------
 // Written from what Dear ImGui's documentation and the editor's panels show: a drag field is a frame with its value in the middle,
 // formatted with a printf format; a slider with a format is a frame with a grab block and the value in the middle; the editor's
@@ -7628,5 +7666,144 @@ bool SearchField(const char* id, const char* hint, char* buf, int cap, float wid
     return changed;
 }
 
+
+} // namespace OkayUI
+
+// ---- Capture (OkayUICapture.hpp) ------------------------------------------------------------------------------------------------
+// The shapes made between BeginCapture and EndCapture are cut out of the frame's batch (main and overlay layer) and handed to the
+// caller, the same way a hidden measuring window drops its shapes again (see End): the batch is rewound to where it was. Window
+// records made in between are dropped too (they would point at indices that no longer hold their shapes); the windows stay in the
+// hit-test list, so the mouse treats them as before.
+#include "okay/UI/OkayUICapture.hpp"
+namespace OkayUI {
+namespace {
+struct CaptureMark {
+    int depth = 0;
+    long long frame = -1;                 // the frame it began in (a capture left open does not reach into the next frame)
+    int nv = 0, ni = 0, nspans = 0;       // the main batch
+    bool haveLast = false; DrawSpan last{};   // the span before, which pushSpan may overwrite in place
+    bool clipOn = false; SDL_Rect clip{0, 0, 0, 0}; SDL_Texture* tex = nullptr;
+    int nwrec = 0, wrecOpen = -1;
+    int onv = 0, oni = 0, novSpans = 0;   // the overlay batch
+    bool haveOvLast = false; OverlaySpan ovLast{};
+};
+CaptureMark g_cap;
+long long captureFrameNow() { return (long long)g_frame; }
+} // namespace
+
+void BeginCapture() {
+    if (g_cap.depth > 0 && g_cap.frame != captureFrameNow()) g_cap.depth = 0;   // left open last frame: forget it
+    if (g_cap.depth++ > 0) return;
+    g_cap.frame = captureFrameNow();
+    g_cap.nv = g_nv; g_cap.ni = g_ni; g_cap.nspans = g_nspans;
+    g_cap.haveLast = g_nspans > 0; if (g_cap.haveLast) g_cap.last = g_spans[g_nspans - 1];
+    g_cap.clipOn = g_curClipOn; g_cap.clip = g_curClipRect; g_cap.tex = g_curTex;
+    g_cap.nwrec = g_nwrec; g_cap.wrecOpen = g_wrecOpen;
+    g_cap.onv = g_onv; g_cap.oni = g_oni; g_cap.novSpans = g_novSpans;
+    g_cap.haveOvLast = g_novSpans > 0; if (g_cap.haveOvLast) g_cap.ovLast = g_ovSpans[g_novSpans - 1];
+}
+
+bool Capturing() { return g_cap.depth > 0 && g_cap.frame == captureFrameNow(); }
+namespace { void captureFrameEnd() { g_cap.depth = 0; } }
+
+void EndCapture(CapturedGeometry& out) {
+    out.Clear();
+    if (!Capturing()) { g_cap.depth = 0; return; }
+    if (--g_cap.depth > 0) return;
+    // ---- the main layer: vertices [nv, g_nv), indices [ni, g_ni), split by the spans in force
+    const int v0 = g_cap.nv, i0 = g_cap.ni;
+    for (int i = v0; i < g_nv; ++i) {
+        DrawVertex d; std::memcpy(&d, &g_verts[i], sizeof d);
+        out.vertices.push_back(d);
+    }
+    auto addCmd = [&](int from, int to, bool on, const SDL_Rect& r, SDL_Texture* t) {
+        if (to <= from) return;
+        DrawCmd c;
+        c.idxOffset = from; c.idxCount = to - from;
+        c.clipOn = on; c.clipX = r.x; c.clipY = r.y; c.clipW = r.w; c.clipH = r.h;
+        c.texture = (const void*)t;
+        out.cmds.push_back(c);
+    };
+    {
+        // the state at i0: the last span starting at or before it (before every span: no clip, the flat texture)
+        bool on = false; SDL_Rect r{0, 0, 0, 0}; SDL_Texture* t = g_defTex;
+        int k = 0;
+        for (; k < g_nspans && g_spans[k].startIdx <= i0; ++k) { on = g_spans[k].on; r = g_spans[k].rect; t = g_spans[k].tex; }
+        int from = i0;
+        auto flushTo = [&](int to) {
+            const int a = (int)out.indices.size();
+            for (int j = from; j + 3 <= to; j += 3) {
+                const int x = g_idx[j] - v0, y = g_idx[j + 1] - v0, z = g_idx[j + 2] - v0;
+                const int nvCap = g_nv - v0;
+                if (x < 0 || y < 0 || z < 0 || x >= nvCap || y >= nvCap || z >= nvCap) continue;
+                out.indices.push_back(x); out.indices.push_back(y); out.indices.push_back(z);
+            }
+            addCmd(a, (int)out.indices.size(), on, r, t);
+        };
+        for (; k < g_nspans; ++k) {
+            const int s = g_spans[k].startIdx;
+            if (s >= g_ni) break;
+            flushTo(s); from = s;
+            on = g_spans[k].on; r = g_spans[k].rect; t = g_spans[k].tex;
+        }
+        flushTo(g_ni);
+    }
+    // ---- the overlay layer: after the main shapes, never clipped (as mergeOverlay appends it)
+    {
+        const int ov0 = g_cap.onv, oi0 = g_cap.oni, base = (int)out.vertices.size();
+        for (int i = ov0; i < g_onv; ++i) {
+            DrawVertex d; std::memcpy(&d, &g_ovVerts[i], sizeof d);
+            out.vertices.push_back(d);
+        }
+        SDL_Texture* t = g_defTex;
+        int k = 0;
+        for (; k < g_novSpans && g_ovSpans[k].startIdx <= oi0; ++k) t = g_ovSpans[k].tex;
+        const SDL_Rect none{0, 0, 0, 0};
+        int from = oi0;
+        auto flushTo = [&](int to) {
+            const int a = (int)out.indices.size();
+            for (int j = from; j + 3 <= to; j += 3) {
+                const int x = g_ovIdx[j] - ov0, y = g_ovIdx[j + 1] - ov0, z = g_ovIdx[j + 2] - ov0;
+                const int n = g_onv - ov0;
+                if (x < 0 || y < 0 || z < 0 || x >= n || y >= n || z >= n) continue;
+                out.indices.push_back(base + x); out.indices.push_back(base + y); out.indices.push_back(base + z);
+            }
+            addCmd(a, (int)out.indices.size(), false, none, t);
+        };
+        for (; k < g_novSpans; ++k) {
+            const int s = g_ovSpans[k].startIdx;
+            if (s >= g_oni) break;
+            flushTo(s); from = s; t = g_ovSpans[k].tex;
+        }
+        flushTo(g_oni);
+    }
+    // ---- rewind the frame to where BeginCapture found it
+    g_nv = g_cap.nv; g_ni = g_cap.ni; g_nspans = g_cap.nspans;
+    if (g_cap.haveLast && g_nspans > 0) g_spans[g_nspans - 1] = g_cap.last;
+    g_curClipOn = g_cap.clipOn; g_curClipRect = g_cap.clip; g_curTex = g_cap.tex;
+    g_nwrec = g_cap.nwrec; g_wrecOpen = g_cap.wrecOpen;
+    g_onv = g_cap.onv; g_oni = g_cap.oni; g_novSpans = g_cap.novSpans;
+    if (g_cap.haveOvLast && g_novSpans > 0) g_ovSpans[g_novSpans - 1] = g_cap.ovLast;
+}
+
+bool GetTexturePixels(const void* texture, TexturePixels& out) {
+    out = TexturePixels();
+    if (!texture) return false;
+    if (texture == (const void*)kAtlasTex) {
+        if (!g_ttf || !g_ttf->ok || !g_ttf->rgba) return false;
+        out.rgba = g_ttf->rgba; out.w = g_ttf->w; out.h = g_ttf->h; out.generation = 1;   // baked once
+        return true;
+    }
+    for (int i = 0; i < g_nfb; ++i)
+        if (texture == (const void*)g_fbFonts[i]) {
+            const okay::TtfFont* f = g_fbFonts[i];
+            if (!f || !f->Valid()) return false;
+            const okay::Image& a = f->Atlas();
+            if (a.Width() <= 0 || a.Height() <= 0) return false;
+            out.rgba = a.Data(); out.w = a.Width(); out.h = a.Height(); out.generation = (unsigned)f->Generation() + 1u;
+            return true;
+        }
+    return false;
+}
 
 } // namespace OkayUI

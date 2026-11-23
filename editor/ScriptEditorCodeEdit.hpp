@@ -20,6 +20,20 @@
 
 namespace scripteditor {
 
+/// The words of a script language as the Dear ImGui editor's LanguageDefinition lists them (editor/ScriptEditorWidget.hpp fills it
+/// from TextEditor::LanguageDefinition): keywords, type names, known names (built-ins: the identifiers with a tooltip), line comment
+/// starts and the block comment pair.
+struct LanguageWords {
+    std::vector<std::string> keywords, types, known, lineComments;
+    std::string blockStart, blockEnd;
+};
+
+/// TextEditor::Palette's 24 colours in TextEditor::PaletteIndex order (Default, Keyword, Number, String, CharLiteral, Punctuation,
+/// Preprocessor, Identifier, KnownIdentifier, PreprocIdentifier, Comment, MultiLineComment, Background, Cursor, Selection,
+/// ErrorMarker, Breakpoint, LineNumber, CurrentLineFill, CurrentLineFillInactive, CurrentLineEdge, TypeName, Function, Member),
+/// each 0xAABBGGRR like OkayUI.
+constexpr int kImGuiPaletteSize = 24;
+
 struct Coord {
     int mLine = 0, mColumn = 0;
     Coord() = default;
@@ -69,6 +83,12 @@ public:
     // ---- configuration ----
     /// Colour with the OkayScript language (the script editor's keywords and types); `false` turns colouring off.
     void SetColorizerEnable(bool on);
+    /// Colour with these words instead (the script's language: OkayScript or C#, Lua on the Lua branch), in the Dear ImGui editor's
+    /// order (a call before a known name). Kept across SetColorizerEnable(false / true).
+    void SetLanguage(const LanguageWords& words);
+    /// The Dear ImGui editor's palette (kImGuiPaletteSize colours, see above): text colours, background (also the gutter: one
+    /// background inside the frame), caret, selection, the error wash, the breakpoint wash, line numbers and the caret's line box.
+    void SetPaletteFromImGui(const unsigned* colors, int count);
     void SetUserTypes(const std::unordered_set<std::string>& types);
     /// Error markers by 1-based line, as TextEditor::ErrorMarkers.
     void SetErrorMarkers(const std::map<int, std::string>& markers);
@@ -79,20 +99,35 @@ public:
     void SetTabSize(int n) { ed_.SetTabSize(n); }
     void SetLineSpacing(float s) { ed_.SetLineSpacing(s); }
 
-    // ---- geometry of the last Draw (screen pixels) ----
+    /// Draw the code in the embedded JetBrains Mono (shared/JetBrainsMonoFontOwn.h, OFL; the font the Dear ImGui script editor
+    /// uses) with a line of text `px` pixels tall. The font is decoded and made once for the whole program. False when it could
+    /// not be made (the editor then keeps the UI font).
+    bool UseCodeFont(float px);
+    /// The JetBrains Mono font, made on first use (null if that failed). Shared by every script editor.
+    static const OkayUI::Font* CodeFont();
+
+    // ---- geometry of the last Draw ----
+    /// Where OkayUI's pixels sit in the caller's coordinates. The script editor draws the widget in the editor window's own
+    /// pixels (OkayUI) but places popups and reads the mouse in Dear ImGui's screen coordinates, which with the multi-window
+    /// viewports are desktop positions: the offset is the window's position on the desktop. The geometry calls below are in
+    /// the caller's coordinates (the offset added), ScreenToCoords takes them (the offset taken off).
+    void SetScreenOffset(float x, float y) { offX_ = x; offY_ = y; }
     float RowHeight() const { return ed_.LineHeight(); }
     float CharWidth() const { return ed_.CharWidth(); }
     int   FirstVisibleLine() const { return ed_.FirstVisibleLine(); }
     /// Screen X where the text of a line starts (right of the gutter, scroll applied) and the top-left of line 0's text.
-    float TextStartX() const { return ed_.PosToScreen(OkayUI::CodePos{0, 0}).x; }
+    float TextStartX() const { return ed_.PosToScreen(OkayUI::CodePos{0, 0}).x + offX_; }
     OkayUI::Vec2 ContentOrigin() const;
-    OkayUI::Vec2 CaretScreenPosBelow() const { return ed_.CaretScreenPosBelow(); }
-    Coord ScreenToCoords(float x, float y) const { return ToCoord(ed_.ScreenToPos(x, y)); }
+    OkayUI::Vec2 CaretScreenPosBelow() const { const OkayUI::Vec2 v = ed_.CaretScreenPosBelow(); return OkayUI::Vec2{v.x + offX_, v.y + offY_}; }
+    Coord ScreenToCoords(float x, float y) const { return ToCoord(ed_.ScreenToPos(x - offX_, y - offY_)); }
 
 private:
     OkayUI::CodeEdit ed_;
     unsigned seenVersion_ = 0;
     bool colorize_ = true;
+    OkayUI::CodeLanguage language_;             // what SetColorizerEnable(true) turns back on
+    std::vector<std::string> userTypes_;
+    float offX_ = 0.0f, offY_ = 0.0f;
 };
 
 } // namespace scripteditor

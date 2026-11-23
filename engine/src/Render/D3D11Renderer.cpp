@@ -10,6 +10,7 @@
 #include "okay/Components/LODGroup.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shared texture cache
+#include "okay/Render/GpuTexture.hpp"         // .dds / compressed import copies: BC blocks uploaded as they are
 #include "okay/Render/ShadowSetup.hpp"
 #include "okay/Render/D3D11Layout.hpp"
 #include "okay/Render/PostQualityMath.hpp"   // shared bloom soft knee + AO power (UNVERIFIED on a GPU)
@@ -22,6 +23,8 @@
 #include "okay/Components/SkinnedMesh.hpp"    // skinned meshes: VB cache keyed on SkinnedMesh::version
 #include "okay/Components/Character.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Time.hpp"
+#include "okay/Render/OkayShader.hpp"   // Custom (.okayshader) surfaces
 
 #include <d3d11.h>
 #if !defined(OKAY_XBOX_UWP)
@@ -210,6 +213,7 @@ struct D3D11Renderer::Impl {
     // shaders and half-resolution targets, built on first use, so a failure here
     // only turns SSAO off. UNVERIFIED on a real GPU.
     ID3D11PixelShader *psAoDepth = nullptr, *psAo = nullptr, *psAoMul = nullptr, *psDof = nullptr;
+    ID3D11PixelShader *psDofCopy = nullptr, *psDofBlur = nullptr;   // depth of field: premultiplied blurred copy
     bool ssaoTried = false, ssaoReady = false;
     struct SsaoSet {
         int w = 0, h = 0; DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -298,9 +302,68 @@ struct D3D11Renderer::Impl {
     std::vector<std::array<int, 3>> slotRanges;   // filled by BuildExpandedVerts(.., true) // fill `verts` (14 floats/vertex)
 
     ID3D11ShaderResourceView* TextureFor(const std::string& name);
+    // Custom (.okayshader) surfaces: PSMain compiled again with the generated okaySurface() spliced in
+    // (OKAY_SURFACE), one pixel shader per shader file; properties + time in b4, pictures from t9.
+    // UNVERIFIED on Windows: written and syntax-checked with the MinGW headers only.
+    struct CustomPS { ID3D11PixelShader* ps = nullptr; std::uint64_t generation = 0; bool failed = false, unlit = false, writesAlpha = false; };
+    std::unordered_map<std::string, CustomPS> customPs;
+    ID3D11Buffer* customCB = nullptr;                      // float4 time + one float4 per property
+    ID3D11Texture2D* whiteTex = nullptr; ID3D11ShaderResourceView* whiteSrv = nullptr;   // an unbound custom picture
+    CustomPS* EnsureCustomPS(const std::string& path);
     bool EnsureTargets(int W, int H, int S);
     void DestroyTargets();
 };
+
+D3D11Renderer::Impl::CustomPS* D3D11Renderer::Impl::EnsureCustomPS(const std::string& path) {
+    const oshader::ShaderFile sf = oshader::LoadShaderFile(path);
+    CustomPS& cp = customPs[path];
+    if (cp.generation == sf.generation && (cp.ps || cp.failed)) return cp.failed ? nullptr : &cp;
+    if (cp.ps) { cp.ps->Release(); cp.ps = nullptr; }
+    cp = CustomPS{};
+    cp.generation = sf.generation;
+    const oshader::Compiled* c = sf.compiled.get();
+    if (!c || !c->ok) { cp.failed = true; return nullptr; }
+#if defined(OKAY_XBOX_UWP)
+    Log::Error("[d3d11] custom shaders need the run-time HLSL compiler, which a UWP app does not have; ", path, " draws magenta");
+    cp.failed = true;
+    return nullptr;
+#else
+    std::string src = kHLSL;
+    const std::size_t at = src.find("float4 PSMain(");
+    if (at == std::string::npos) { cp.failed = true; return nullptr; }
+    src.insert(at, "#define OKAY_SURFACE 1\n" + c->hlsl);
+    ID3DBlob* blob = nullptr; ID3DBlob* err = nullptr;
+    if (FAILED(D3DCompile(src.c_str(), (SIZE_T)src.size(), "okaycustom", nullptr, nullptr, "PSMain", "ps_4_0", 0, 0, &blob, &err))) {
+        Log::Error("[d3d11] custom shader ", path, " did not compile: ", err ? (const char*)err->GetBufferPointer() : "?");
+        if (err) err->Release();
+        if (blob) blob->Release();
+        cp.failed = true;
+        return nullptr;
+    }
+    if (err) err->Release();
+    dev->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &cp.ps);
+    blob->Release();
+    if (!customCB) {
+        D3D11_BUFFER_DESC bd; std::memset(&bd, 0, sizeof(bd));
+        bd.ByteWidth = (UINT)(16 * (1 + oshader::kMaxProperties)); bd.Usage = D3D11_USAGE_DYNAMIC;
+        bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER; bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(dev->CreateBuffer(&bd, nullptr, &customCB))) customCB = nullptr;
+    }
+    if (!whiteSrv) {
+        const unsigned char white[4] = {255, 255, 255, 255};
+        D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
+        td.Width = 1; td.Height = 1; td.MipLevels = 1; td.ArraySize = 1; td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        td.SampleDesc.Count = 1; td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA sd; std::memset(&sd, 0, sizeof(sd)); sd.pSysMem = white; sd.SysMemPitch = 4;
+        if (SUCCEEDED(dev->CreateTexture2D(&td, &sd, &whiteTex)) && whiteTex)
+            if (FAILED(dev->CreateShaderResourceView(whiteTex, nullptr, &whiteSrv))) whiteSrv = nullptr;
+    }
+    if (!cp.ps || !customCB) { if (cp.ps) cp.ps->Release(); cp.ps = nullptr; cp.failed = true; return nullptr; }
+    cp.unlit = c->unlit;
+    cp.writesAlpha = c->writesAlpha;
+    return &cp;
+#endif
+}
 
 bool D3D11Renderer::InitShared(void* device) {
     if (m_impl) return m_impl->shared;
@@ -557,7 +620,10 @@ bool D3D11Renderer::Impl::EnsureSsaoShaders() {
         return ok;
     };
     ssaoReady = ps("PSAoDepth", psAoDepth) && ps("PSAo", psAo) && ps("PSAoMul", psAoMul) && vsDepth && layoutDepth;
-    if (ssaoReady) ps("PSDof", psDof);   // separate: a depth of field compile failure must not cost ambient occlusion
+    if (ssaoReady && !(ps("PSDof", psDof) && ps("PSDofCopy", psDofCopy) && ps("PSDofBlur", psDofBlur))) {
+        // separate: a depth of field compile failure must not cost ambient occlusion
+        for (ID3D11PixelShader** s : {&psDof, &psDofCopy, &psDofBlur}) if (*s) { (*s)->Release(); *s = nullptr; }
+    }
     if (!ssaoReady) Log::Warning("[d3d11] ambient occlusion unavailable on this device");
     return ssaoReady;
 }
@@ -942,6 +1008,41 @@ D3D11Renderer::Impl::MeshVB* D3D11Renderer::Impl::EnsureMeshVB(const Mesh& mesh,
     return &e;
 }
 
+// A planned .dds texture (gputex::PlanUpload) as one Direct3D 11 texture with all its levels. BC1-BC5 are sampled by every
+// Direct3D 11 GPU (feature level 10 and up), so the blocks go up as they are; DXGI numbers from the DXGI_FORMAT list.
+static ID3D11ShaderResourceView* UploadDdsPlan(ID3D11Device* dev, const gputex::Plan& p) {
+    if (p.levels.empty()) return nullptr;
+    DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
+    UINT blockBytes = 0;
+    if (p.compressed) {
+        switch (p.source) {
+            case tex::DdsFormat::BC1: fmt = DXGI_FORMAT_BC1_UNORM; blockBytes = 8; break;
+            case tex::DdsFormat::BC2: fmt = DXGI_FORMAT_BC2_UNORM; blockBytes = 16; break;
+            case tex::DdsFormat::BC3: fmt = DXGI_FORMAT_BC3_UNORM; blockBytes = 16; break;
+            case tex::DdsFormat::BC4: fmt = DXGI_FORMAT_BC4_UNORM; blockBytes = 8; break;
+            case tex::DdsFormat::BC5: fmt = DXGI_FORMAT_BC5_UNORM; blockBytes = 16; break;
+            default: return nullptr;
+        }
+    }
+    D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
+    td.Width = (UINT)p.levels[0].width; td.Height = (UINT)p.levels[0].height; td.MipLevels = (UINT)p.levels.size(); td.ArraySize = 1;
+    td.Format = fmt; td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_IMMUTABLE; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    std::vector<D3D11_SUBRESOURCE_DATA> sr(p.levels.size());
+    for (std::size_t l = 0; l < p.levels.size(); ++l) {
+        std::memset(&sr[l], 0, sizeof(sr[l]));
+        sr[l].pSysMem = p.levels[l].bytes.data();
+        sr[l].SysMemPitch = p.compressed ? (UINT)((p.levels[l].width + 3) / 4) * blockBytes : (UINT)p.levels[l].width * 4;
+    }
+    ID3D11Texture2D* t = nullptr;
+    ID3D11ShaderResourceView* srv = nullptr;
+    if (SUCCEEDED(dev->CreateTexture2D(&td, sr.data(), &t)) && t) {
+        dev->CreateShaderResourceView(t, nullptr, &srv);
+        t->Release();
+    }
+    return srv;
+}
+
 ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& name) {
     if (name.empty()) return nullptr;
     if (texGen != TextureCacheGeneration()) {   // a picture was reimported / its import settings changed
@@ -953,7 +1054,16 @@ ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& nam
     auto it = texCache.find(name);
     if (it != texCache.end()) return it->second;
     ID3D11ShaderResourceView* srv = nullptr;
-    Image* img = GetCachedTexture(name);
+    // A .dds file, or the compressed import copy of a picture set to `compress`: its own levels, BC blocks kept
+    // compressed (a top level that is not a multiple of 4 is decoded on the CPU). Anything else: the RGBA8 picture.
+    {
+        tex::DdsImage dds;
+        gputex::Plan plan;
+        gputex::Caps caps; caps.s3tc = caps.rgtc = true;
+        if (gputex::Source(name, &dds, nullptr) && gputex::PlanUpload(std::move(dds), caps, &plan)) srv = UploadDdsPlan(dev, plan);
+        if (srv) Log::Info("[d3d11] texture '", name, "': ", tex::DdsFormatName(plan.source), plan.compressed ? " kept compressed" : " uploaded as RGBA8", " (", plan.levels.size(), " levels)");
+    }
+    Image* img = srv ? nullptr : GetCachedTexture(name);
     if (img && img->Width() > 0) {
         D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
         td.Width = img->Width(); td.Height = img->Height(); td.MipLevels = 1; td.ArraySize = 1;
@@ -1437,6 +1547,14 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         if (V.empty() || T.size() < 3) continue;
         ++drawnN;
         ID3D11ShaderResourceView* srv = p->TextureFor(mr->texture);
+        // Custom (.okayshader) surface: its own pixel shader, or the magenta error material.
+        Impl::CustomPS* cust = nullptr;
+        bool custBad = false;
+        if (mr->shader == MeshRenderer::Shader::Custom) {
+            cust = p->EnsureCustomPS(mr->customShader);
+            custBad = cust == nullptr;
+            if (custBad) srv = nullptr;
+        }
 
         // Geometry source: static meshes draw from the per-mesh cached GPU buffer
         // (expanded + uploaded once — see Impl::EnsureMeshVB); meshes deformed on
@@ -1484,7 +1602,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
 
         Mat4 model = it.model;
         Mat4 mvp = vp * model;
-        bool unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
+        bool unlit = cust ? cust->unlit : (custBad || mr->unlit || mr->shader == MeshRenderer::Shader::Unlit);
         CB cb; std::memset(&cb, 0, sizeof(cb));
         std::memcpy(cb.mvp, mvp.m, sizeof(cb.mvp));
         std::memcpy(cb.model, model.m, sizeof(cb.model));
@@ -1505,7 +1623,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         cb.normalStrength = mr->normalStrength;
         ID3D11ShaderResourceView* ssrv = mr->specularMap.empty() ? nullptr : p->TextureFor(mr->specularMap);
         ID3D11ShaderResourceView* aosrv = mr->aoMap.empty() ? nullptr : p->TextureFor(mr->aoMap);
-        bool d3unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
+        bool d3unlit = unlit;
         cb.pbr[0] = d3unlit ? 0.0f : mr->metallic;       // metallic
         cb.pbr[1] = d3unlit ? 0.0f : mr->reflectivity;   // reflectivity
         cb.pbr[2] = ssrv ? 1.0f : 0.0f;                  // hasSpecMap
@@ -1518,14 +1636,19 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
           cb.sky[4] = sky.horizon.x; cb.sky[5] = sky.horizon.y; cb.sky[6] = sky.horizon.z;
           cb.sky[8] = sky.bottom.x;  cb.sky[9] = sky.bottom.y;  cb.sky[10] = sky.bottom.z; }
         cb.tiling[0] = srv ? mr->tiling.x : 1.0f; cb.tiling[1] = srv ? mr->tiling.y : 1.0f;
-        cb.shaderMode = (float)(int)mr->shader;
+        cb.shaderMode = (cust || custBad) ? 0.0f : (float)(int)mr->shader;
+        if (cust) { cb.tiling[0] = mr->tiling.x; cb.tiling[1] = mr->tiling.y; }   // a custom surface's uv is tiled with or without a picture
+        if (custBad) {
+            cb.color[0] = oshader::kErrorColor[0]; cb.color[1] = oshader::kErrorColor[1]; cb.color[2] = oshader::kErrorColor[2];
+            cb.emissive[0] = cb.emissive[1] = cb.emissive[2] = 0.0f;
+        }
         cb.toonBands = (float)mr->toonBands;
         cb.rimStr = mr->rimStrength;
         cb.rimColor[0] = mr->rimColor.r; cb.rimColor[1] = mr->rimColor.g; cb.rimColor[2] = mr->rimColor.b;
         cb.gradTop[0] = mr->gradientTop.r; cb.gradTop[1] = mr->gradientTop.g; cb.gradTop[2] = mr->gradientTop.b;
         cb.gradBot[0] = mr->gradientBottom.r; cb.gradBot[1] = mr->gradientBottom.g; cb.gradBot[2] = mr->gradientBottom.b;
         cb.shadowAlpha = -1.0f;   // lit pass (>=0 would draw the flat shadow — must be off here)
-        cb.alpha = mr->color.a;   // material opacity (1 = opaque); < 1 alpha-blends (water/glass)
+        cb.alpha = custBad ? 1.0f : mr->color.a;   // material opacity (1 = opaque); < 1 alpha-blends (water/glass)
         cb.lightCount[0] = (float)frameLightCount;
         cb.lightCount[1] = mr->metallicRoughnessMap.empty() ? 0.0f : 1.0f;
         cb.lightCount[2] = mr->emissiveMap.empty() ? 0.0f : 1.0f;
@@ -1543,6 +1666,27 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         }
         if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
             std::memcpy(ms.pData, &cb, sizeof(cb)); c->Unmap(p->cb, 0);
+        }
+        if (cust) {   // the custom pixel shader, its properties + time (b4) and its pictures (t9..)
+            c->PSSetShader(cust->ps, nullptr, 0);
+            const oshader::ShaderFile sf = oshader::LoadShaderFile(mr->customShader);
+            float cdata[4 * (1 + oshader::kMaxProperties)];
+            std::memset(cdata, 0, sizeof(cdata));
+            cdata[0] = Time::ElapsedTime();
+            if (sf.compiled && sf.compiled->ok) {
+                const std::vector<float> v = oshader::ResolveProperties(*sf.compiled, mr->shaderParams);
+                std::memcpy(cdata + 4, v.data(), sizeof(float) * std::min<std::size_t>(v.size(), 4 * oshader::kMaxProperties));
+                for (int t = 0; t < (int)sf.compiled->textures.size() && t < oshader::kMaxTextures; ++t) {
+                    const std::string pic = oshader::ResolveTexture(*sf.compiled, t, mr->shaderParams);
+                    ID3D11ShaderResourceView* ts = pic.empty() ? nullptr : p->TextureFor(pic);
+                    if (!ts) ts = p->whiteSrv;
+                    c->PSSetShaderResources((UINT)(oshader::kFirstTextureUnit + t), 1, &ts);
+                }
+            }
+            if (SUCCEEDED(c->Map(p->customCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
+                std::memcpy(ms.pData, cdata, sizeof(cdata)); c->Unmap(p->customCB, 0);
+            }
+            c->PSSetConstantBuffers((UINT)oshader::kHlslPropRegister, 1, &p->customCB);
         }
         if (srv) c->PSSetShaderResources(0, 1, &srv);
         if (nsrv) c->PSSetShaderResources(1, 1, &nsrv);   // normal/bump map on t1
@@ -1572,7 +1716,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         // scene and doesn't write depth, so geometry behind shows through. Reuses the
         // ground-shadow blend + no-depth-write states. Draw transparent meshes after
         // opaque ones (objects draw in scene order).
-        bool transparent = mr->color.a < 0.999f && p->blend && p->depthNoWrite;
+        bool transparent = (cust ? (mr->color.a < 0.999f || cust->writesAlpha) : (!custBad && mr->color.a < 0.999f)) && p->blend && p->depthNoWrite;
         const float blendF[4] = {0, 0, 0, 0};
         if (transparent) {
             c->OMSetBlendState(p->blend, blendF, 0xffffffff);
@@ -1631,6 +1775,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             c->OMSetDepthStencilState(p->depth, 0);
         }
         if (svb) { c->IASetInputLayout(p->layout); c->VSSetShader(p->vs, nullptr, 0); }
+        if (cust) c->PSSetShader(p->ps, nullptr, 0);
     }
     LastCullCounters().drawn = drawnN;
 
@@ -1765,12 +1910,12 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         //    the distance from the focus plane, read from the AO depth image.
         if (dofOn) {
             pc.texel[0] = 1.0f / (float)w; pc.texel[1] = 1.0f / (float)h; pc.thresh = 0.0f; pc.radius = 1.0f;
-            pass(p->psDown, bA.rtv, bA.w, bA.h, cur, nullptr, nullptr);
+            pass(p->psDofCopy, bA.rtv, bA.w, bA.h, cur, nullptr, nullptr);   // premultiplied: the sky's alpha 0 survives
             for (int it = 0; it < 2; ++it) {
                 pc.dir[0] = 1.0f / (float)bA.w; pc.dir[1] = 0.0f;
-                pass(p->psBlur, bB.rtv, bB.w, bB.h, bA.srv, nullptr, nullptr);
+                pass(p->psDofBlur, bB.rtv, bB.w, bB.h, bA.srv, nullptr, nullptr);
                 pc.dir[0] = 0.0f; pc.dir[1] = 1.0f / (float)bA.h;
-                pass(p->psBlur, bA.rtv, bA.w, bA.h, bB.srv, nullptr, nullptr);
+                pass(p->psDofBlur, bA.rtv, bA.w, bA.h, bB.srv, nullptr, nullptr);
             }
             pc.texel[0] = 1.0f / (float)aoSet->depth.w; pc.texel[1] = 1.0f / (float)aoSet->depth.h;
             pc.p7[0] = ps.dofFocus; pc.p7[1] = ps.dofRange; pc.p7[2] = ssao::kFar;
@@ -1907,6 +2052,11 @@ void D3D11Renderer::Destroy() {
     for (auto& kv : p->texCache) if (kv.second) kv.second->Release();
     p->texCache.clear();
     p->texSampling.clear();
+    for (auto& kv : p->customPs) if (kv.second.ps) kv.second.ps->Release();
+    p->customPs.clear();
+    if (p->customCB) { p->customCB->Release(); p->customCB = nullptr; }
+    if (p->whiteSrv) { p->whiteSrv->Release(); p->whiteSrv = nullptr; }
+    if (p->whiteTex) { p->whiteTex->Release(); p->whiteTex = nullptr; }
     for (auto& kv : p->sampCombo) if (kv.second) kv.second->Release();
     p->sampCombo.clear();
     for (auto& kv : p->meshVB) if (kv.second.vbuf) kv.second.vbuf->Release();
@@ -1920,7 +2070,7 @@ void D3D11Renderer::Destroy() {
     if (p->cookieTex) p->cookieTex->Release();
     if (p->depthOff) p->depthOff->Release();
     if (p->vsQuad) p->vsQuad->Release();
-    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa, p->psAoDepth, p->psAo, p->psAoMul, p->psDof}) if (s) s->Release();
+    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa, p->psAoDepth, p->psAo, p->psAoMul, p->psDof, p->psDofCopy, p->psDofBlur}) if (s) s->Release();
     for (auto& t : p->ssaoSets) t.Release();
     p->ssaoSets.clear();
     if (p->depthPlanar) p->depthPlanar->Release();

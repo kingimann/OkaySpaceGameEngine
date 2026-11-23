@@ -9,6 +9,9 @@
 #include "okay/Render/LocalShadowMath.hpp"
 #include "okay/Render/ShadowMath.hpp"
 #include "okay/Render/Atmosphere.hpp"
+#include "okay/Render/DofMath.hpp"
+#include "okay/Render/SsaoMath.hpp"
+#include "okay/Render/PostQualityMath.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -19,6 +22,10 @@
 #include <unordered_set>
 #include "okay/Graphics/Image.hpp"
 #include "okay/Render/ProcTexture.hpp"
+#include "okay/Render/OkayShader.hpp"
+#include "okay/Texture/Dds.hpp"         // .dds pictures: read and decoded on the CPU (okay::tex)
+#include "okay/Core/Log.hpp"
+#include <cstring>
 #include "okay/Core/Profiler.hpp"
 #include "okay/Core/Time.hpp"
 #include <algorithm>
@@ -162,6 +169,25 @@ inline Vec3 SampleEnvSky(const Vec3& dir) {
 struct MipChain : std::vector<Image> {
     int filter = TextureSampling::Trilinear;
     int wrap = TextureSampling::Repeat;
+};
+
+/// A Custom (.okayshader) surface for TrianglePhong: the CPU program, the material's property values,
+/// its textures and the time. The program runs per pixel before lighting, like the GPU renderers' copy.
+struct CustomSurface {
+    const oshader::CpuProgram* prog = nullptr;
+    const float* props = nullptr;
+    const MipChain* tex[oshader::kMaxTextures] = {nullptr, nullptr, nullptr, nullptr};
+    float time = 0.0f;
+    bool unlit = false;
+    // Texture lookup for oshader::RunCpu (bilinear on the top level, wrapped; white when unbound).
+    static void Sample(const void* ctx, int slot, float u, float v, float rgba[4]) {
+        const CustomSurface* cs = static_cast<const CustomSurface*>(ctx);
+        const MipChain* m = (slot >= 0 && slot < oshader::kMaxTextures) ? cs->tex[slot] : nullptr;
+        if (!m || m->empty() || (*m)[0].Width() <= 0) { rgba[0] = rgba[1] = rgba[2] = rgba[3] = 1.0f; return; }
+        u -= std::floor(u); v -= std::floor(v);
+        const Color c = (*m)[0].Sample(u, v);
+        rgba[0] = c.r; rgba[1] = c.g; rgba[2] = c.b; rgba[3] = c.a;
+    }
 };
 
 class Raster {
@@ -501,7 +527,8 @@ public:
                        int shaderMode = 0, const float* gradTop = nullptr, const float* gradBot = nullptr,
                        const MipChain* aoMips = nullptr, float aoStrength = 1.0f,
                        bool receiveShadows = true, const LightSubset* lightSubset = nullptr,
-                       const float* vcol = nullptr) {   // vcol: r g b of each corner's vertex colour (9 floats), or null
+                       const float* vcol = nullptr,     // vcol: r g b of each corner's vertex colour (9 floats), or null
+                       const CustomSurface* custom = nullptr) {   // a Custom (.okayshader) surface, or null
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -589,6 +616,59 @@ public:
                 Vec3 wpos{a0 * WXa[0] + a1 * WXa[1] + a2 * WXa[2],
                           a0 * WYa[0] + a1 * WYa[1] + a2 * WYa[2],
                           a0 * WZa[0] + a1 * WZa[1] + a2 * WZa[2]};
+                // Custom (.okayshader) surface: run the CPU program on the same inputs the GPU
+                // shaders give it (uv, position, view, normal, vertex colour, time, material defaults).
+                oshader::SurfaceOut cso;
+                const bool haveCs = custom && custom->prog;
+                if (haveCs) {
+                    oshader::SurfaceIn si;
+                    const float iwc = w0 * IW[0] + w1 * IW[1] + w2 * IW[2];
+                    const float uc = iwc != 0.0f ? (float)((w0 * U[0] + w1 * U[1] + w2 * U[2]) / iwc) : 0.0f;
+                    const float vc = iwc != 0.0f ? (float)((w0 * V[0] + w1 * V[1] + w2 * V[2]) / iwc) : 0.0f;
+                    si.uv[0] = uc; si.uv[1] = vc;
+                    si.position[0] = wpos.x; si.position[1] = wpos.y; si.position[2] = wpos.z;
+                    const Vec3 ve = (eye - wpos).Normalized();
+                    si.view[0] = ve.x; si.view[1] = ve.y; si.view[2] = ve.z;
+                    si.normal[0] = n.x; si.normal[1] = n.y; si.normal[2] = n.z;
+                    float vr = 1.0f, vg = 1.0f, vb = 1.0f;
+                    if (vcol) { vr = a0 * vcol[0] + a1 * vcol[3] + a2 * vcol[6]; vg = a0 * vcol[1] + a1 * vcol[4] + a2 * vcol[7]; vb = a0 * vcol[2] + a1 * vcol[5] + a2 * vcol[8]; }
+                    si.vcolor[0] = vr; si.vcolor[1] = vg; si.vcolor[2] = vb;
+                    si.time = custom->time;
+                    float ar = base.r, ag = base.g, ab = base.b;
+                    if (textured && iwc != 0.0f) {
+                        const Color tc = SampleMips(*mips, uc, vc, PixelLod(uc * iwc, vc * iwc, iwc, lg2, tw, th));
+                        ar = tc.r * tint.r; ag = tc.g * tint.g; ab = tc.b * tint.b;
+                    }
+                    si.albedo[0] = ar * vr; si.albedo[1] = ag * vg; si.albedo[2] = ab * vb;
+                    si.emission[0] = er; si.emission[1] = eg; si.emission[2] = eb;
+                    si.alpha = base.a; si.metallic = metallic; si.specular = specularK; si.shininess = shininess;
+                    oshader::RunCpu(*custom->prog, si, custom->props, &CustomSurface::Sample, custom, cso);
+                    if (cso.discard) continue;
+                    const Vec3 cn{cso.normal[0], cso.normal[1], cso.normal[2]};
+                    const float cl = cn.Magnitude();
+                    if (cl > 1e-6f && std::isfinite(cl)) n = cn * (1.0f / cl);
+                    if (custom->unlit) {   // no lighting and no fog, like the GPU shaders' unlit path
+                        float cr = cso.albedo[0] + cso.emission[0], cg = cso.albedo[1] + cso.emission[1], cb = cso.albedo[2] + cso.emission[2];
+                        if (cso.alpha < 0.999f) {
+                            const std::uint32_t dst = color[i];
+                            const float a = cso.alpha < 0.0f ? 0.0f : cso.alpha, ia = 1.0f - a;
+                            cr = cr * a + (float)(dst & 0xFF) / 255.0f * ia;
+                            cg = cg * a + (float)((dst >> 8) & 0xFF) / 255.0f * ia;
+                            cb = cb * a + (float)((dst >> 16) & 0xFF) / 255.0f * ia;
+                            color[i] = PackRGB(cr, cg, cb);
+                        } else {
+                            depth[i] = d;
+                            color[i] = PackRGB(cr, cg, cb);
+                            if (!gvalid.empty()) { gpos[i] = wpos; gnrm[i] = n; gvalid[i] = 1; }
+                        }
+                        continue;
+                    }
+                }
+                const float pxSpecK = haveCs ? cso.specular : specularK;
+                const float pxShine = haveCs ? cso.shininess : shininess;
+                const float pxMetal = haveCs ? cso.metallic : metallic;
+                const float pxEr = haveCs ? cso.emission[0] : er, pxEg = haveCs ? cso.emission[1] : eg, pxEb = haveCs ? cso.emission[2] : eb;
+                const float pxAlpha = haveCs ? cso.alpha : base.a;
                 // Spot / point / area shadows: every light gets its own 0..1 factor
                 // (the sun's comes from its cascades), so a lamp's shadow does not
                 // darken the sun and the other way round. Off = the original path.
@@ -659,11 +739,11 @@ public:
                 // each tinted by its own color and attenuation; the sun's part is
                 // shadowed. Scaled by the material strength and the gloss map.
                 Vec3 spec{0, 0, 0};
-                if (specularK > 0.0f) {
+                if (pxSpecK > 0.0f) {
                     Vec3 toEye = (eye - wpos).Normalized();
-                    spec = lightSubset ? SpecularSubset(wpos, n, toEye, shininess, sh, perLightSh ? lightSh : nullptr, *lightSubset)
-                                       : SceneLights::SpecularN(wpos, n, toEye, shininess, sh, perLightSh ? lightSh : nullptr);
-                    float ks = specularK * gloss;
+                    spec = lightSubset ? SpecularSubset(wpos, n, toEye, pxShine, sh, perLightSh ? lightSh : nullptr, *lightSubset)
+                                       : SceneLights::SpecularN(wpos, n, toEye, pxShine, sh, perLightSh ? lightSh : nullptr);
+                    float ks = pxSpecK * gloss;
                     spec.x *= ks; spec.y *= ks; spec.z *= ks;
                     // Toon: collapse the highlight to a single hard glint (on/off).
                     if (toonBands > 0) {
@@ -733,7 +813,9 @@ public:
                 // both their specular highlight and their environment reflection by
                 // the albedo color (so gold reflects gold). Dielectrics keep a white
                 // highlight/reflection. f0* = lerp(white, albedo, metallic).
-                float metal = metallic < 0 ? 0 : (metallic > 1 ? 1 : metallic);
+                // A Custom surface's albedo replaces the base colour worked out above.
+                if (haveCs) { br = cso.albedo[0]; bg = cso.albedo[1]; bb2 = cso.albedo[2]; }
+                float metal = pxMetal < 0 ? 0 : (pxMetal > 1 ? 1 : pxMetal);
                 float diff  = 1.0f - 0.9f * metal;                 // metals kill diffuse
                 float f0r = 1.0f + (br  - 1.0f) * metal;
                 float f0g = 1.0f + (bg  - 1.0f) * metal;
@@ -766,9 +848,9 @@ public:
                     float m = fp * useRim;
                     mrimR = m * rimR; mrimG = m * rimG; mrimB = m * rimB;
                 }
-                float cr = br * lit.x * diff + spec.x * f0r + rim * lit.x + mrimR + er;
-                float cg = bg * lit.y * diff + spec.y * f0g + rim * lit.y + mrimG + eg;
-                float cb = bb2 * lit.z * diff + spec.z * f0b + rim * lit.z + mrimB + eb;
+                float cr = br * lit.x * diff + spec.x * f0r + rim * lit.x + mrimR + pxEr;
+                float cg = bg * lit.y * diff + spec.y * f0g + rim * lit.y + mrimG + pxEg;
+                float cb = bb2 * lit.z * diff + spec.z * f0b + rim * lit.z + mrimB + pxEb;
                 // Velvet shader: a soft fuzzy sheen that brightens grazing angles
                 // (backscatter), lit by the scene — cloth / peach-skin look.
                 if (shaderMode == 8) {
@@ -805,9 +887,9 @@ public:
                 // already in the buffer instead of overwriting it, and does NOT write
                 // depth — so geometry behind shows through. (Order transparent meshes
                 // after opaque ones — they draw in scene order.)
-                if (base.a < 0.999f) {
+                if (pxAlpha < 0.999f) {
                     std::uint32_t dst = color[i];
-                    float a = base.a, ia = 1.0f - a;
+                    float a = pxAlpha < 0.0f ? 0.0f : pxAlpha, ia = 1.0f - a;
                     cr = cr * a + (float)(dst & 0xFF)        / 255.0f * ia;
                     cg = cg * a + (float)((dst >> 8) & 0xFF) / 255.0f * ia;
                     cb = cb * a + (float)((dst >> 16) & 0xFF)/ 255.0f * ia;
@@ -839,6 +921,22 @@ inline void RegisterTexture(const std::string& name, Image img) {
     TextureCacheMap()[name] = std::move(img);
 }
 
+// A .dds picture as RGBA8: its top level, block formats decoded on the CPU (okay::tex::DecodeBc). The software renderer
+// and the Direct3D renderers draw .dds files this way; the OpenGL renderer uploads them compressed when it can.
+inline bool LoadDdsImage(const std::string& path, Image& img) {
+    tex::DdsImage d;
+    std::string why;
+    std::vector<std::uint8_t> rgba;
+    if (!tex::ReadDdsFile(path, &d, &why) || !tex::DdsLevelToRGBA8(d, 0, &rgba)) {
+        Log::Warning("[asset] cannot load image '", path, "': ", why.empty() ? std::string("decode failed") : why);
+        img = Image();
+        return false;
+    }
+    img = Image(d.width, d.height);
+    std::memcpy(img.Data(), rgba.data(), rgba.size());
+    return true;
+}
+
 inline Image* GetCachedTexture(const std::string& path) {
     auto& cache = TextureCacheMap();
     auto it = cache.find(path);
@@ -846,6 +944,8 @@ inline Image* GetCachedTexture(const std::string& path) {
         Image img;
         if (path.rfind("proc:", 0) == 0)
             img = GenerateProcTexture(path);   // built-in procedural (no file)
+        else if (tex::IsDdsPath(path))
+            LoadDdsImage(path, img);
         else
             img.Load(path);                    // leaves the image empty on failure
         ApplyTextureImportSettings(path, img);   // the asset's own "largest side", if it has one
@@ -1542,6 +1642,7 @@ inline void LocalShadowFactors(const Vec3& wpos, const Vec3& n, float* perLight)
 inline bool&  SSAOEnabled()  { static bool v = false; return v; }     // off by default (perf); opt-in
 inline float& SSAORadius()   { static float v = 0.45f; return v; }  // world units
 inline float& SSAOStrength() { static float v = 0.6f; return v; }
+inline float& SSAOPower()    { static float v = 1.0f; return v; }   // occlusion ^ power (PostQualityMath.hpp AoCurve); 1 = unchanged
 
 /// Darken creases/contacts using the per-pixel world position + normal G-buffer:
 /// sample a hemisphere around each pixel and count how many samples are occluded
@@ -1617,6 +1718,7 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
         });
     }
     // Bilinear-upsample the half-res AO and modulate the full-res color.
+    const float aoPower = SSAOPower();
     ParallelRows(0, H, [&](int ya, int yb) {
         for (int y = ya; y < yb; ++y) {
         float fy = y * 0.5f; int y0 = (int)fy; float ay = fy - y0; int y1 = y0 + 1;
@@ -1629,6 +1731,7 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
             float a00 = ao[(std::size_t)y0 * hw + x0], a10 = ao[(std::size_t)y0 * hw + x1];
             float a01 = ao[(std::size_t)y1 * hw + x0], a11 = ao[(std::size_t)y1 * hw + x1];
             float a = (a00 + (a10 - a00) * ax) + ((a01 + (a11 - a01) * ax) - (a00 + (a10 - a00) * ax)) * ay;
+            a = postq::AoCurve(a, aoPower);
             std::uint32_t v = r.color[i];
             std::uint32_t R = (std::uint32_t)((v & 0xFF) * a), G = (std::uint32_t)(((v >> 8) & 0xFF) * a), Bc = (std::uint32_t)(((v >> 16) & 0xFF) * a);
             r.color[i] = (0xFFu << 24) | (Bc << 16) | (G << 8) | R;
@@ -1828,8 +1931,8 @@ inline void ApplyColorGrade(Raster& r) {
 /// saturation, contrast, lift / gamma / gain, the vignette (with its smoothness), bloom and FXAA.
 /// Same maths as the OpenGL "uber" pass (kUberFrag), but on 8-bit colour: the software renderer shades
 /// in display space and has no HDR buffer, so the curves act on 0..1 values (the process-wide switches
-/// behave exactly as before). NOT supported on the CPU: SSAO from the scene, depth of field (see
-/// docs/rendering/rendering.md).
+/// behave exactly as before). The scene's ambient occlusion (ApplySSAO with the scene's radius and
+/// intensity) and depth of field (ApplySceneDof) are separate passes in RenderMeshes.
 struct ScenePostPlan {
     int   tonemap = 1;           // 0 none, 1 ACES, 2 Filmic
     float exposure = 1.0f;
@@ -1904,6 +2007,161 @@ inline void ApplyScenePost(Raster& r, const ScenePostPlan& p) {
             }
             auto cl = [](float f) { return (std::uint32_t)((f < 0 ? 0 : (f > 1 ? 1 : f)) * 255.0f + 0.5f); };
             r.color[i] = (a << 24) | (cl(c.z) << 16) | (cl(c.y) << 8) | cl(c.x);
+        }
+    });
+}
+
+// ---- Depth of field (the scene's Post-processing switch), on the CPU ---------
+// The software version of the GPU pass (DofMath.hpp holds the shared focus maths): a half-
+// resolution copy of the finished frame is blurred by two rounds of a 9-tap binomial filter
+// (weights 1 8 28 56 70 56 28 8 1, / 256: row 8 of Pascal's triangle, a close match to a
+// gaussian), then mixed back in by each pixel's circle of confusion. The distance is the one
+// the GPU depth image holds (straight-line distance from the eye, / ssao::kFar, so anything past
+// 150 units counts as sky). It comes from the W-buffer (depth = 1 / view depth) times the length
+// of the pixel's ray per unit of view depth (DofRayScale), which is why it needs a perspective
+// camera: with an orthographic one every pixel has the same W and the pass is skipped
+// (DofPerspective). The blur works on premultiplied colour (colour times coverage), so a
+// far object fades softly into the empty sky without a dark fringe, and a pixel nothing covered
+// (alpha 0, where the host paints its sky) stays transparent.
+
+/// True when `vp` is a perspective projection (clip w depends on the position), so the
+/// software W-buffer holds a real distance.
+inline bool DofPerspective(const Mat4& vp) {
+    return std::fabs(vp.at(0, 3)) + std::fabs(vp.at(1, 3)) + std::fabs(vp.at(2, 3)) > 1e-6f;
+}
+/// World distance the depth of field uses for one W-buffer value (1 / view depth; 0 = nothing drawn).
+/// `rayScale` is the eye distance per unit of view depth along the pixel's ray (1 at the centre).
+inline float DofPixelDistance(float invW, float rayScale = 1.0f) {
+    float dn = invW > 0.0f ? (rayScale / invW) / ssao::kFar : 1.0f;
+    if (dn > 1.0f) dn = 1.0f;
+    return dof::Distance(dn, ssao::kFar);
+}
+/// The ray through a point of the screen (NDC x, y, y up) as an affine function of x and y, for
+/// DofRayScale: points at one NDC depth lie on one view-depth plane, so the ray between two such
+/// planes is affine in x and y.
+struct DofRays {
+    Vec3 c, ax, ay;   // ray(x, y) = c + ax * x + ay * y
+    Vec3 wrow;        // clip w = dot(wrow, P) + const
+};
+inline DofRays DofRaysFor(const Mat4& vp) {
+    const Mat4 inv = vp.Inverse();
+    auto ray = [&](float x, float y) { return inv.MultiplyPoint({x, y, 0.5f}) - inv.MultiplyPoint({x, y, -0.5f}); };
+    DofRays d;
+    d.c = ray(0.0f, 0.0f);
+    d.ax = ray(1.0f, 0.0f) - d.c;
+    d.ay = ray(0.0f, 1.0f) - d.c;
+    d.wrow = {vp.at(0, 3), vp.at(1, 3), vp.at(2, 3)};
+    return d;
+}
+/// Eye distance per unit of view depth along the ray at NDC (x, y): 1 / cos(angle off the view axis).
+inline float DofRayScale(const DofRays& d, float x, float y) {
+    const Vec3 r = d.c + d.ax * x + d.ay * y;
+    const float len = r.Magnitude(), dw = std::fabs(Vec3::Dot(d.wrow, r));
+    return dw > 1e-9f ? len / dw : 1.0f;
+}
+/// Blur the frame where it is out of focus. `focus` and `range` are post.dofFocus / post.dofRange;
+/// `vp` is the view-projection the frame was drawn with (a perspective one, DofPerspective).
+inline void ApplySceneDof(Raster& r, float focus, float range, const Mat4& vp) {
+    const int W = r.width, H = r.height;
+    if (W < 4 || H < 4 || r.depth.size() != (std::size_t)W * H || !DofPerspective(vp)) return;
+    // Circle of confusion per pixel; nothing to do when the whole frame is in focus.
+    static std::vector<float> coc;
+    coc.assign((std::size_t)W * H, 0.0f);
+    const DofRays rays = DofRaysFor(vp);
+    bool any = false;
+    for (int y = 0; y < H; ++y) {
+        const float ny = 1.0f - (y + 0.5f) * 2.0f / H;
+        for (int x = 0; x < W; ++x) {
+            const std::size_t i = (std::size_t)y * W + x;
+            const float nx = (x + 0.5f) * 2.0f / W - 1.0f;
+            coc[i] = dof::Coc(DofPixelDistance(r.depth[i], DofRayScale(rays, nx, ny)), focus, range);
+            any = any || coc[i] > 0.0f;
+        }
+    }
+    if (!any) return;
+    // 1) Half-resolution premultiplied copy (2 x 2 box average; the last row / column repeats on odd sizes).
+    const int hw = (W + 1) / 2, hh = (H + 1) / 2;
+    static std::vector<float> half, tmp;
+    half.assign((std::size_t)hw * hh * 4, 0.0f); tmp.assign(half.size(), 0.0f);
+    ParallelRows(0, hh, [&](int ya, int yb) {
+        for (int y = ya; y < yb; ++y)
+        for (int x = 0; x < hw; ++x) {
+            float acc[4] = {0, 0, 0, 0};
+            for (int k = 0; k < 4; ++k) {
+                int sx = x * 2 + (k & 1), sy = y * 2 + (k >> 1);
+                if (sx >= W) sx = W - 1;
+                if (sy >= H) sy = H - 1;
+                const std::uint32_t v = r.color[(std::size_t)sy * W + sx];
+                const float a = (float)(v >> 24) / 255.0f;
+                acc[0] += (float)(v & 0xFF) / 255.0f * a;
+                acc[1] += (float)((v >> 8) & 0xFF) / 255.0f * a;
+                acc[2] += (float)((v >> 16) & 0xFF) / 255.0f * a;
+                acc[3] += a;
+            }
+            float* o = &half[((std::size_t)y * hw + x) * 4];
+            for (int c = 0; c < 4; ++c) o[c] = acc[c] * 0.25f;
+        }
+    });
+    // 2) Two rounds of the separable 9-tap binomial blur (edges clamp).
+    static const float kW[9] = {1 / 256.0f, 8 / 256.0f, 28 / 256.0f, 56 / 256.0f, 70 / 256.0f,
+                                56 / 256.0f, 28 / 256.0f, 8 / 256.0f, 1 / 256.0f};
+    for (int round = 0; round < 2; ++round) {
+        ParallelRows(0, hh, [&](int ya, int yb) {           // horizontal: half -> tmp
+            for (int y = ya; y < yb; ++y)
+            for (int x = 0; x < hw; ++x) {
+                float acc[4] = {0, 0, 0, 0};
+                for (int t = -4; t <= 4; ++t) {
+                    int xx = x + t; xx = xx < 0 ? 0 : (xx >= hw ? hw - 1 : xx);
+                    const float* s = &half[((std::size_t)y * hw + xx) * 4];
+                    for (int c = 0; c < 4; ++c) acc[c] += s[c] * kW[t + 4];
+                }
+                float* o = &tmp[((std::size_t)y * hw + x) * 4];
+                for (int c = 0; c < 4; ++c) o[c] = acc[c];
+            }
+        });
+        ParallelRows(0, hh, [&](int ya, int yb) {           // vertical: tmp -> half
+            for (int y = ya; y < yb; ++y)
+            for (int x = 0; x < hw; ++x) {
+                float acc[4] = {0, 0, 0, 0};
+                for (int t = -4; t <= 4; ++t) {
+                    int yy = y + t; yy = yy < 0 ? 0 : (yy >= hh ? hh - 1 : yy);
+                    const float* s = &tmp[((std::size_t)yy * hw + x) * 4];
+                    for (int c = 0; c < 4; ++c) acc[c] += s[c] * kW[t + 4];
+                }
+                float* o = &half[((std::size_t)y * hw + x) * 4];
+                for (int c = 0; c < 4; ++c) o[c] = acc[c];
+            }
+        });
+    }
+    // 3) Mix: bilinear sample of the blurred copy, blended in premultiplied space by the circle of confusion.
+    ParallelRows(0, H, [&](int ya, int yb) {
+        for (int y = ya; y < yb; ++y) {
+            float fy = (y + 0.5f) * 0.5f - 0.5f; int y0 = (int)std::floor(fy); const float ay = fy - y0;
+            int y1 = y0 + 1; y0 = y0 < 0 ? 0 : (y0 >= hh ? hh - 1 : y0); y1 = y1 < 0 ? 0 : (y1 >= hh ? hh - 1 : y1);
+            for (int x = 0; x < W; ++x) {
+                const std::size_t i = (std::size_t)y * W + x;
+                const float k = coc[i];
+                if (k <= 0.0f) continue;                    // in focus: the pixel is left exactly as it was
+                float fx = (x + 0.5f) * 0.5f - 0.5f; int x0 = (int)std::floor(fx); const float ax = fx - x0;
+                int x1 = x0 + 1; x0 = x0 < 0 ? 0 : (x0 >= hw ? hw - 1 : x0); x1 = x1 < 0 ? 0 : (x1 >= hw ? hw - 1 : x1);
+                const float* p00 = &half[((std::size_t)y0 * hw + x0) * 4];
+                const float* p10 = &half[((std::size_t)y0 * hw + x1) * 4];
+                const float* p01 = &half[((std::size_t)y1 * hw + x0) * 4];
+                const float* p11 = &half[((std::size_t)y1 * hw + x1) * 4];
+                const std::uint32_t v = r.color[i];
+                const float a = (float)(v >> 24) / 255.0f;
+                const float sharp[4] = {(float)(v & 0xFF) / 255.0f * a, (float)((v >> 8) & 0xFF) / 255.0f * a,
+                                        (float)((v >> 16) & 0xFF) / 255.0f * a, a};
+                float o[4];
+                for (int c = 0; c < 4; ++c) {
+                    const float top = p00[c] + (p10[c] - p00[c]) * ax, bot = p01[c] + (p11[c] - p01[c]) * ax;
+                    o[c] = dof::Mix(sharp[c], top + (bot - top) * ay, k);
+                }
+                const float oa = o[3] < 0.0f ? 0.0f : (o[3] > 1.0f ? 1.0f : o[3]);
+                const float inv = oa > 1e-4f ? 1.0f / oa : 0.0f;
+                auto cl = [](float f) { return (std::uint32_t)((f < 0 ? 0 : (f > 1 ? 1 : f)) * 255.0f + 0.5f); };
+                r.color[i] = (cl(oa) << 24) | (cl(o[2] * inv) << 16) | (cl(o[1] * inv) << 8) | cl(o[0] * inv);
+            }
         }
     });
 }
@@ -2072,6 +2330,15 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         }
     };
     int swDrawn = 0;
+    // Custom (.okayshader) surfaces, resolved here (the file cache and the texture caches are not
+    // touched from the band threads): the compiled shader, the material's values, its pictures.
+    struct CustomBind {
+        std::shared_ptr<const oshader::Compiled> compiled;   // keeps the program alive for the frame
+        std::vector<float> props;
+        CustomSurface cs;
+        bool ok = false;
+    };
+    std::vector<CustomBind> customBind(sceneObjs.size());
     {
     OKAY_PROFILE("Render.Prewarm");
     for (std::size_t oi = 0; oi < sceneObjs.size(); ++oi) {
@@ -2088,6 +2355,23 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         if (!mr->metallicRoughnessMap.empty()) GetCachedMips(mr->metallicRoughnessMap);
         if (!mr->emissiveMap.empty()) GetCachedMips(mr->emissiveMap);
         if (!mr->matcap.empty() && !mr->unlit && mr->shader != MeshRenderer::Shader::Unlit) GetCachedTexture(mr->matcap);
+        if (mr->shader == MeshRenderer::Shader::Custom) {
+            CustomBind& cb = customBind[oi];
+            const oshader::ShaderFile sf = oshader::LoadShaderFile(mr->customShader);
+            if (sf.compiled && sf.compiled->ok && sf.compiled->cpu) {
+                cb.compiled = sf.compiled;
+                cb.props = oshader::ResolveProperties(*sf.compiled, mr->shaderParams);
+                cb.cs.prog = sf.compiled->cpu.get();
+                cb.cs.props = cb.props.data();
+                cb.cs.time = Time::ElapsedTime();
+                cb.cs.unlit = sf.compiled->unlit;
+                for (int t = 0; t < (int)sf.compiled->textures.size() && t < oshader::kMaxTextures; ++t) {
+                    const std::string pic = oshader::ResolveTexture(*sf.compiled, t, mr->shaderParams);
+                    cb.cs.tex[t] = pic.empty() ? nullptr : GetCachedMips(pic);
+                }
+                cb.ok = true;
+            }
+        }
         if (bandSkipOn || lightCullOn) meshReach(go.get(), mr, objInfo[oi]);
     }
     }
@@ -2104,8 +2388,12 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer culling mask
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || !go->ActiveInHierarchy() || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines
-        // The Unlit shader is equivalent to the unlit flag for the renderer.
-        const bool unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
+        // The Unlit shader is equivalent to the unlit flag for the renderer. A Custom shader that
+        // does not compile draws flat magenta (the error material); one that does lights itself.
+        const CustomBind& cbind = customBind[objIndex];
+        const bool customOk = mr->shader == MeshRenderer::Shader::Custom && cbind.ok;
+        const bool customBad = mr->shader == MeshRenderer::Shader::Custom && !cbind.ok;
+        const bool unlit = !customOk && (mr->unlit || mr->shader == MeshRenderer::Shader::Unlit || customBad);
         // Scrolling-UV offset (animated textures): advance the texture coordinates by
         // the scroll speed * elapsed time. Added after tiling, like offset.
         const float scrollU = mr->uvScroll.x * Time::ElapsedTime();
@@ -2118,7 +2406,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const auto& t = drawMesh.triangles;
         const bool hasUV = drawMesh.uvs.size() == v.size();
         const bool faceCols = drawMesh.HasFaceColors();   // per-triangle colors?
-        const MipChain* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
+        const MipChain* tex = (mr->texture.empty() || customBad) ? nullptr : GetCachedMips(mr->texture);
         // Per-slot pictures: triangles whose material slot has a texture use it instead of the object's own.
         std::vector<const MipChain*> slotTex;
         if (drawMesh.HasSlots() && !mr->slotTextures.empty())
@@ -2128,7 +2416,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const MipChain* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
         const MipChain* specMips = mr->specularMap.empty() ? nullptr : GetCachedMips(mr->specularMap);
         const MipChain* aoMips = mr->aoMap.empty() ? nullptr : GetCachedMips(mr->aoMap);
-        Image* mcap = (mr->matcap.empty() || unlit) ? nullptr : GetCachedTexture(mr->matcap);
+        Image* mcap = (mr->matcap.empty() || unlit || customOk) ? nullptr : GetCachedTexture(mr->matcap);
         // Matcap shading needs per-vertex normals; fall back if the mesh has none.
         const bool useMatcap = mcap && drawMesh.HasNormals();
         // Smooth (Gouraud) shading when the mesh carries per-vertex normals and
@@ -2205,6 +2493,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         float lodR = 1, lodG = 1, lodB = 1;
         if (auto* lg = go->GetComponent<LODGroup>()) lg->DebugTint(lg->activeLevel, lodR, lodG, lodB);
         Color shaded = mr->color;
+        if (customBad) shaded = Color{oshader::kErrorColor[0], oshader::kErrorColor[1], oshader::kErrorColor[2], 1.0f};
         shaded.r *= lodR; shaded.g *= lodG; shaded.b *= lodB;
         // Per-pixel (Phong) shading for lit meshes that carry normals — smooth
         // surfaces + correct specular, textured or not. Matcap/unlit meshes
@@ -2223,6 +2512,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                || mr->shader == MeshRenderer::Shader::Hologram
                                || mr->shader == MeshRenderer::Shader::Posterize
                                || mr->shader == MeshRenderer::Shader::Velvet
+                               || customOk
                                || mr->rimStrength > 0.0f || mr->triplanar
                                || (ShadowsUsePerPixel() && mr->receiveShadows
                                    && (Shadows().enabled || LocalShadowsActive())))
@@ -2257,7 +2547,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             // that face away from the camera — typically ~half the triangles of a
             // closed mesh, for free. Double-sided meshes (planes, billboards) keep
             // both faces and flip the normal so the lit side always shows.
-            if (facing < 0.0f) {
+            // A Custom shader that discards shows the far inside of the mesh through its holes, as the GPU
+            // renderers do (they do not cull back faces): those faces keep their outward normal.
+            const bool seeInside = facing < 0.0f && !mr->doubleSided && customOk && cbind.compiled->usesDiscard;
+            if (facing < 0.0f && !seeInside) {
                 if (!mr->doubleSided) continue;
                 normal = normal * -1.0f;
             }
@@ -2335,7 +2628,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 Vec3 nk = drawMesh.HasNormals()
                               ? xformNormal(drawMesh.normals[idx[k]]).Normalized()
                               : normal;
-                if (facing < 0.0f) nk = nk * -1.0f;
+                if (facing < 0.0f && !seeInside) nk = nk * -1.0f;
 
                 // Per-vertex light color (Gouraud) from that normal; used by the
                 // matcap and Gouraud paths. Per-pixel (Phong) shading uses nk + the
@@ -2491,7 +2784,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     mr->triplanar, mr->tiling.x, mr->tiling.y,
                                     bandY0, bandY1, shaderMode, gradTopC, gradBotC,
                                     aoMips, mr->aoStrength, mr->receiveShadows, lightSubset,
-                                    drawMesh.HasVertexColors() ? vc9 : nullptr);
+                                    drawMesh.HasVertexColors() ? vc9 : nullptr,
+                                    customOk ? &cbind.cs : nullptr);
                 } else if (triTex) {
                     float lr[3] = {tri[0]->lr * tri[0]->vr, tri[1]->lr * tri[1]->vr, tri[2]->lr * tri[2]->vr};
                     float lg[3] = {tri[0]->lg * tri[0]->vg, tri[1]->lg * tri[1]->vg, tri[2]->lg * tri[2]->vg};
@@ -2517,13 +2811,14 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     { OKAY_PROFILE("Render.Raster"); ParallelRows(0, r.height, [&](int ya, int yb) { renderBand(ya, yb - 1); }); }
     OKAY_PROFILE("Render.Post");
     if ((SSAOEnabled() || rs.post.ssao) && !r.gvalid.empty()) {       // contact AO post-pass
-        const float radSaved = SSAORadius(), strSaved = SSAOStrength();
-        if (rs.post.ssao) {   // the scene's own switch carries its radius and intensity (Lighting window > Post-processing)
+        const float radSaved = SSAORadius(), strSaved = SSAOStrength(), powSaved = SSAOPower();
+        if (rs.post.ssao) {   // the scene's own switch carries its radius, intensity and power (Lighting window > Post-processing)
             SSAORadius() = rs.post.ssaoRadius;
             SSAOStrength() = std::fmin(1.0f, std::fmax(0.0f, rs.post.ssaoIntensity * 0.6f));
+            SSAOPower() = rs.post.ssaoPower;
         }
         ApplySSAO(r, vp, eye);
-        SSAORadius() = radSaved; SSAOStrength() = strSaved;
+        SSAORadius() = radSaved; SSAOStrength() = strSaved; SSAOPower() = powSaved;
     }
     if (rs.post.bloom && !BloomEnabled()) {                          // the scene's own Bloom switch
         BloomEnabled() = true;
@@ -2536,6 +2831,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     const ScenePostPlan postPlan = PlanScenePost(rs);
     ApplyScenePost(r, postPlan);                                     // scene exposure, tonemap, grade, vignette
     ApplyColorGrade(r);                                              // process-wide brightness/contrast/sat/vignette/gamma
+    if (rs.post.dof) ApplySceneDof(r, rs.post.dofFocus, rs.post.dofRange, vp);   // the scene's Depth of field (perspective cameras)
     if (rs.post.fxaa && !FXAAEnabled()) { FXAAEnabled() = true; ApplyFXAA(r); FXAAEnabled() = false; }
     else ApplyFXAA(r);                                               // edge anti-aliasing
     PostVignetteHandled() = postPlan.vignette > 0.0f;                // the host skips its own overlay

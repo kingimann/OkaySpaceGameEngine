@@ -11,8 +11,10 @@
 //   SaveMenuModel              rows a load/save menu can bind to (no rendering)
 //
 // Slots written here are files named <slot>.okayslot in the save folder
-// (Save::BaseDir()/saves by default), next to SaveGame's <slot>.okaygame files; the
-// two systems never touch each other's files. See docs/engine/save_games.md.
+// (Save::BaseDir()/saves by default). SaveGame (save_game, the C# SaveGame API, the AutoSave
+// component) is this framework's whole-scene mode (SaveCaptureOptions::wholeScene) and writes
+// to the same store; its older <slot>.okaygame files are read, listed and continued from here
+// too (SaveSlotInfo::legacyFile). See docs/engine/save_games.md.
 //
 // Not thread safe: use it from the game's main thread.
 
@@ -208,6 +210,9 @@ public:
     static constexpr std::size_t kDefaultMaxBytes = 256u * 1024u * 1024u;
     static constexpr std::size_t kMaxHeaderBytes = 64u * 1024u;
     static constexpr const char* kExtension = ".okayslot";
+    /// Older whole-game saves (SaveGame before it joined this store): read, listed, continued and deleted
+    /// here; never written. Saving to such a slot writes the .okayslot file and removes the old one.
+    static constexpr const char* kLegacyExtension = ".okaygame";
 
     /// A step that rewrites a payload saved in `fromVersion` into the layout of the
     /// next version (false + message = can't).
@@ -222,6 +227,8 @@ public:
     void SetDirectory(const std::string& directory) { m_dir = directory; }
     std::string Directory() const;
     std::string SlotPath(const std::string& slot) const;
+    /// Where an older .okaygame save of the slot would be.
+    std::string LegacySlotPath(const std::string& slot) const;
     /// Letters, digits, '-' and '_' (at most 64).
     static bool ValidSlot(const std::string& slot);
 
@@ -310,6 +317,18 @@ private:
     bool m_verifyAfterWrite = false;
 
     bool Install(const std::string& slot, const std::string& bytes, std::string* error);
+    /// Only an older .okaygame file holds this slot.
+    bool LegacyOnly(const std::string& slot) const;
+    /// After a new file was written: the older .okaygame of the slot goes (one from a newer build is kept as
+    /// <slot>.okaygame.newer.bak, like any newer file that is saved over).
+    void RetireLegacy(const std::string& slot);
+    /// Rewrite an older .okaygame slot as an .okayslot file (same header values), for Copy / Rename / UpdateInfo.
+    bool UpgradeLegacy(const std::string& slot, std::string* error);
+    /// A slot with both an .okayslot and an .okaygame file holds two saves: the one saved earlier moves to the
+    /// free name <slot>_old_save (_2, ...), label and time unchanged, and the move is logged. Never deletes.
+    void SeparateTwinSaves(const std::string& slot) const;
+    /// Before a new file replaces `slot`: separate a twin, and keep an older .okaygame save as <slot>.okayslot.bak.
+    void PrepareOverwrite(const std::string& slot);
     bool Migrate(SaveDocument& doc, int from, SaveLoadReport* report, std::string* error) const;
 };
 
@@ -380,6 +399,10 @@ struct SaveCaptureOptions {
     bool allObjects = false;      ///< save every non-transient object, Saveable or not
     std::string includeTag;       ///< also save objects with this tag
     bool components = true;       ///< run the built-in adapters (Rigidbody, Inventory, Stats)
+    /// Save the whole scene instead of the chosen objects: every object as the scene file stores it, plus
+    /// rigidbody velocities, script and visual-script variables and the game's Save keys (what SaveGame
+    /// saves). Loading replaces the scene with the saved one. The other options are then not used.
+    bool wholeScene = false;
 };
 
 struct SaveCaptureReport {
@@ -409,6 +432,16 @@ struct SaveApplyReport {
     int missing = 0;              ///< saved static objects the scene no longer has
     std::vector<std::string> warnings;
 };
+
+/// The whole-scene document layout (SaveCaptureOptions::wholeScene and older .okaygame files): one reserved
+/// block, "sys.wholescene", with `format`, `scene` (the scene file text), `state` (velocities, variables, the
+/// game's Save keys) and `playTime`.
+namespace wholescene {
+constexpr const char* kBlock = "sys.wholescene";
+void ToDocument(const State& state, SaveDocument& doc);
+/// False when `doc` is not a whole-scene save.
+bool FromDocument(const SaveDocument& doc, State& state);
+} // namespace wholescene
 
 /// A component adapter: how SaveSystem saves and restores a built-in component type.
 /// `save` writes under its own scope and returns false when the object doesn't have
@@ -488,6 +521,7 @@ struct SaveRequest {
     std::string thumbnail;                     ///< image path stored in the header
     std::string kind;                          ///< SlotKind::*; empty = manual
     std::map<std::string, std::string> fields; ///< custom header fields
+    std::string gameVersion;                   ///< empty = the store's SetGameVersion text
     float playTime = -1.0f;                    ///< < 0 = SaveSystem::PlayTime()
     SaveCaptureOptions capture;
     SaveDocument extra;                        ///< the game's own blocks, stored beside the scene

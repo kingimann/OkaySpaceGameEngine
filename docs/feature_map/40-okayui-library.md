@@ -8,6 +8,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 ## 40. OkayUI standalone library
 
 ### 40.1 Core widgets and auto-layout
+- **System:** OkayUI - Our own UI toolkit for the launcher, editor panels and script-drawn windows (replacing Dear ImGui) - duplicate of Game UI (kept on purpose: both have buttons, tabs, tooltips and a theme, but OkayUI is for tools and Game UI for designed game menus; see 40.5)
 - **What:** The widget set: explicit-coordinate widgets (button, checkbox, switch, slider, progress, radio, tab, text field) and an ImGui-style auto-layout API (windows, scrolling children, same-line, tables, menus, popups, trees, plots, drag and drop, colour pickers).
 - **Parts:**
   - 40.1.1 Explicit-coordinate widgets - `okayui/include/okay/UI/OkayUI.hpp`, `okayui/src/OkayUI.cpp` - `Button(id, x, y, w, h, label)`, `Checkbox`, `ToggleSwitch`, `Slider`, `ProgressBar`, `RadioButton`, `Tab`, `TextField`, `Label`, `Panel`
@@ -29,6 +30,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Ask me like:** "work on 40.1.4, add keyboard navigation to OkayUI"; "OkayUI InputText loses focus on click"
 
 ### 40.2 Launcher look, theme and fonts
+- **System:** OkayUI
 - **What:** The theme struct and the "launcher look": Roboto TrueType text baked at several sizes, the Slate colours, rounded controls, pill tabs and shadows, plus a classic 8x8 pixel look and launcher-style building blocks (heading, caption, card, badge, avatar, list item, key-value, spinner, toast).
 - **Parts:**
   - 40.2.1 Theme and Slate palette - `okayui/src/OkayUI.cpp` - `Theme`, `Style()`, `SlateTheme()`, `UseLauncherLook(bool)`, `PushStyleColor/PopStyleColor`, `PushTextScale`
@@ -48,6 +50,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Ask me like:** "work on 40.2.2, bake extra font sizes"; "the in-game windows should use the dark Slate theme only"
 
 ### 40.3 Backends and frame loop
+- **System:** OkayUI
 - **What:** How a host feeds input, builds the frame and gets pixels: the SDL_Renderer path (one batched `SDL_RenderGeometry` call on top of ImGui) and a Windows-only raw Direct3D 11 path with its own demo app.
 - **Parts:**
   - 40.3.1 Frame loop - `okayui/src/OkayUI.cpp` - `BeginFrame(input)`, widgets, `EndFrame(SDL_Renderer*)`; blend mode saved and restored; draws after ImGui so it sits on top
@@ -55,12 +58,13 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
   - 40.3.3 Direct3D 11 backend - `okayui/include/okay/UI/OkayUI_D3D11.hpp`, `okayui/src/OkayUI_D3D11.cpp` - `D3D11Backend::Init/Render/Shutdown`, compiled to nothing off Windows
   - 40.3.4 D3D11 demo - `okayui/d3d11_demo/main.cpp` - standalone Win32 + DX11 app, shipped in the Windows dist `Tools/` folder
   - 40.3.5 Build wiring - `okayui/CMakeLists.txt` - static lib `okay_ui` (alias `okay::ui`), built only when SDL2 is found, skipped on Emscripten/web; linked by editor, player and tests
-- **Code:** `okayui/include/okay/UI/OkayUI.hpp`, `okayui/include/okay/UI/OkayUI_D3D11.hpp`, `okayui/src/OkayUI.cpp`, `okayui/src/OkayUI_D3D11.cpp`, `okayui/d3d11_demo/main.cpp`, `okayui/CMakeLists.txt`, `scripts/build-windows-dist.sh`
-- **API:** `OkayUI::Input`, `BeginFrame`, `EndFrame`, `GetDrawData`, `DrawCmd`, `EndFrameData`, `OkayUI::D3D11Backend`, `OkayUI::soft::Render` (40.6)
+  - 40.3.6 Own renderer in the host path (OpenGL and Direct3D 11) - `okayui/include/okay/UI/OkayUIRenderSDL.hpp`, `okayui/render/OkayUIRender_SDL.cpp`, `shared/OkayUIFrame.hpp` - `SdlHost`: with `OKAY_UI_OWN_RENDER=1` (Settings > Experimental "OkayUI own renderer"; off by default) the launcher's and editor's OkayUI frame is drawn by OkayUI's own backend instead of `SDL_RenderGeometry`: OpenGL inside SDL's OpenGL renderers, Direct3D 11 inside SDL's `direct3d11` renderer (the Windows default; tested only under Wine, not on Windows). SDL texture images stay on the own renderer (GL: SDL's texture shared via `SDL_GL_BindTexture`; D3D11: copied by SDL into a kept render target each frame). Other SDL renderers, a render target, a logical size or an image that cannot be shared keep the old path
+- **Code:** `okayui/include/okay/UI/OkayUI.hpp`, `okayui/include/okay/UI/OkayUI_D3D11.hpp`, `okayui/src/OkayUI.cpp`, `okayui/src/OkayUI_D3D11.cpp`, `okayui/d3d11_demo/main.cpp`, `okayui/CMakeLists.txt`, `scripts/build-windows-dist.sh`, `okayui/include/okay/UI/OkayUIRenderSDL.hpp`, `okayui/render/OkayUIRender_SDL.cpp`, `shared/OkayUIFrame.hpp`
+- **API:** `OkayUI::Input`, `BeginFrame`, `EndFrame`, `DrawFinishedFrame`, `GetDrawData`, `DrawCmd`, `EndFrameData`, `OkayUI::D3D11Backend`, `OkayUI::soft::Render` (40.6), `OkayUI::render::SdlHost`, `HostBackendFor`, `Renderer::SetNativeImage`, `Backend::WrapNativeTexture`, env `OKAY_UI_OWN_RENDER`
 - **Editor:** none (the editor links `okay_ui` with `OKAY_HAVE_OKAYUI=1`)
 - **Docs:** -
-- **Tests:** `okayui` (SDL software renderer), `okayui_soft` (the draw list through the CPU backend)
-- **Status:** Partial - SDL path and the software backend are tested; the D3D11 backend and demo compile only on Windows, so nothing here could verify them (not run in this survey)
+- **Tests:** `okayui` (SDL software renderer), `okayui_soft` (the draw list through the CPU backend), `okayui_render_sdlhost` (the host path with the own OpenGL renderer on SDL's OpenGL and OpenGL ES renderers, offscreen EGL on Mesa llvmpipe, against the software reference)
+- **Status:** Partial - SDL path and the software backend are tested; the own OpenGL renderer in the host path is tested headless on llvmpipe only (never on a real GPU, on Windows, or in a running editor or launcher); the D3D11 backend and demo compile only on Windows, so nothing here could verify them (not run in this survey)
 - **Open:** no test of the D3D11 path found, and it still draws only vertices and indices (no clip rectangles, no atlas texture: it should use `DrawCmd` like the SDL path); skipped in the web build (per `CMakeLists.txt` and `scripts/build-web.sh` comments)
 - **Related:** 40.1, 18.1, 18.2, 2.1
 - **Words:** SDL_Renderer, SDL_RenderGeometry, Direct3D 11, D3D11, DX11, okay_ui, okay::ui, draw data, EndFrame, demo, okayui_d3d11_demo
@@ -68,6 +72,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Ask me like:** "work on 40.3.3, add scissor clipping to the D3D11 backend"; "does OkayUI work in the web build"
 
 ### 40.4 Hosts, script bridge and built-in windows
+- **System:** OkayUI
 - **What:** The places OkayUI is wired in: game scripts' `ui_*` builtins (through a bridge), the F1 Test UI panel, the player's server and matchmaking windows and performance overlay, and the editor's Game view overlays (dialogue box, quest tracker) and input routing.
 - **Parts:**
   - 40.4.1 Script bridge interface - `Scripting/ScriptUI` - the engine-side `ScriptUIBridge` the `ui_*` builtins call (SDL- and toolkit-free)
@@ -89,6 +94,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Ask me like:** "work on 40.4.2, add ui_combo to the script bridge"; "the Find a server window overlaps the HUD"
 
 ### 40.5 How OkayUI relates to scene UI
+- **System:** OkayUI
 - **What:** Two separate UI systems with different jobs. Pick OkayUI for tool-like or script-drawn UI (panels, debug, lobbies, plugins); pick the scene UI (area 12) for designed menus and HUDs that artists place, save in scenes and ship in the editor preview.
 - **Parts:**
   - 40.5.1 Immediate versus retained - `okayui/include/okay/UI/OkayUI.hpp` against `Components/Canvas` - OkayUI keeps no objects and is called per frame; scene UI is GameObject components saved in the scene and drawn by `UI/UIRenderer` through `UI/UIPainter`
@@ -108,6 +114,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Ask me like:** "do I use OkayUI or a Canvas for a lobby screen"; "make the Matchmaking window a scene UI prebuilt screen"
 
 ### 40.6 Headless software backend and test harness
+- **System:** OkayUI
 - **What:** OkayUI's draw list rasterised on the CPU into an RGBA bitmap, plus a synthetic-input test harness, so the toolkit is tested with no window, GPU or display: behaviour tests, golden images, a sanitizer fuzz test and a demo that writes a PNG. Folded in from the first `okay::imui` core (which is gone: OkayUI is the one toolkit).
 - **Parts:**
   - 40.6.1 Software rasteriser - `okayui/soft/OkayUI_Soft.hpp`, `okayui/soft/OkayUI_Soft.cpp` - `OkayUI::soft::Render(DrawData, Bitmap&)`: top-left fill rule, per-command scissor, source-over blend, flat colour and launcher atlas sampling, hostile draw data skipped
@@ -128,6 +135,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Ask me like:** "work on 40.6.3, add a test for the table widget"; "run the OkayUI fuzz test under the sanitizers"
 
 ### 40.7 Draw list, cursor, item state and disabled blocks
+- **System:** OkayUI
 - **What:** the first gap closed from the Dear ImGui usage audit: a public draw list for custom drawing (lines, shapes, curves, paths, text, clip), the cursor and measurement calls that put custom drawing inside the auto layout, `InvisibleButton` with item-state and mouse queries, and `BeginDisabled`/`EndDisabled`. Side by side with Dear ImGui; nothing in the editor or launcher calls it yet.
 - **Parts:**
   - 40.7.1 Draw list - `okayui/include/okay/UI/OkayUI.hpp`, `okayui/src/OkayUI.cpp` - `GetWindowDrawList()` and `GetForegroundDrawList()`: `AddLine`, `AddRect`, `AddRectFilled`, `AddRectFilledMultiColor`, `AddCircle`, `AddCircleFilled`, `AddTriangle`, `AddQuad`, `AddPolyline` (mitred joins), `AddConvexPolyFilled`, `AddBezierCubic`, `AddText`, `AddImage`, the path calls, `PushClipRect`; packed `Color32` with `RGBA`, `GetColorU32`, `ColorMulAlpha`
@@ -148,6 +156,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Ask me like:** "work on 40.7.1, add AddConcavePolyFilled"; "render the draw list lab page to a PNG"
 
 ### 40.8 Porting helpers: tooltip scope, style fields, mapping layer, list clipper
+- **System:** OkayUI
 - **What:** four things code ported from Dear ImGui needs: a tooltip that takes widgets (`BeginTooltip`/`EndTooltip`), `GetStyle()` with the style fields ported code reads, a mapping layer for vector and colour types and flag enums, and `ListClipper` for long lists that are not tables. Library only; nothing in the editor or launcher calls them yet.
 - **Parts:**
   - 40.8.1 Tooltip scope - `okayui/src/OkayUI.cpp` - widgets laid out in the overlay, box sized to them, flips at the display edge, input off, surrounding layout untouched
@@ -168,6 +177,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 
 
 ### 40.9 Ported-code calls: window, frame, context, style presets and child flags
+- **System:** OkayUI
 - **What:** the calls and names that editor and launcher code written for Dear ImGui still needed after 40.8: collapse, background alpha and position of windows, raising a window, a modal check, a keyboard-capture override, item flags, multi-item widths, context shims, the Dark / Light / Classic colour presets, the dock layout as text, regular polygons and textured quads and rounded images on the draw list, mouse button, direction, hover, focus and child flag names, and `BeginChild` with flags (a bordered or content-sized child). Library only; nothing in the editor or launcher calls them yet.
 - **Parts:**
   - 40.9.1 Window calls - `okayui/src/OkayUI.cpp` - `SetNextWindowCollapsed`, `SetNextWindowBgAlpha`, `SetWindowPos` (by title or current), `BringWindowToDisplayFront`, `FindWindowByID`, `GetTopMostPopupModal`, `SetNextFrameWantCaptureKeyboard`, `GetTreeNodeToLabelSpacing`
@@ -198,6 +208,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 
 
 ### 40.10 The Inspector on OkayUI (preview, off by default)
+- **System:** OkayUI
 - **What:** the editor's Inspector drawn by our own toolkit instead of Dear ImGui: the object header card, the component bars and about a hundred component bodies, described once as "field rows" and drawn by OkayUI, with a Dear ImGui drawing of the same rows for side-by-side tests. Off by default; Dear ImGui stays the default and every body without an up-to-date OkayUI version stays Dear ImGui's.
 - **Parts:**
   - 40.10.1 Field rows - `shared/InspectorFieldsModel.hpp`, `shared/InspectorPanelModel.hpp` - one row list per body (drag, slider, check box, combo, colour, asset slot, gradient, curve, mask, list, note, button), no toolkit or engine types

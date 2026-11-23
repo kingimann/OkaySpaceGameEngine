@@ -25,7 +25,7 @@ bool BuildDds(const std::uint8_t* rgba, int w, int h, const TextureBuildOptions&
     img.width = w; img.height = h;
     if (opt.compress) {
         BcFormat f = opt.autoFormat ? ChooseBcFormat(rgba, w, h, opt.mip.normalMap) : opt.format;
-        img.format = f == BcFormat::BC1 ? DdsFormat::BC1 : f == BcFormat::BC3 ? DdsFormat::BC3 : f == BcFormat::BC4 ? DdsFormat::BC4 : DdsFormat::BC5;
+        img.format = DdsFormatFromBc(f);
         for (std::size_t l = 0; l < levels.size(); ++l) {
             int lw, lh; MipSize(w, h, int(l), &lw, &lh);
             img.mips.push_back(EncodeBc(levels[l].data(), lw, lh, f, opt.encode));

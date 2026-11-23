@@ -126,6 +126,9 @@ struct DisplaySettings {
     // ---- VSync ----
     static bool VSync();
     static void SetVSync(bool on);
+    /// VSync for this run only (the r.vsync cvar, `--cvar r.vsync=0`): applied (Generation bumps) but not saved; Save keeps
+    /// writing the player's own choice until SetVSync or Load.
+    static void SetVSyncForThisRun(bool on);
 
     // ---- Quality ----
     static int  Quality();          ///< 0 low, 1 medium, 2 high

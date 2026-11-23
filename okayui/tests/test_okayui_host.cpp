@@ -3,6 +3,7 @@
 #include "test_framework.hpp"
 #include "OkayUIHost.hpp"
 #include "okay/UI/OkayUICodeEdit.hpp"
+#include <cstdio>
 #include "OkayUITestKit.hpp"
 
 #include <cstring>
@@ -17,6 +18,16 @@ static SDL_Event Key(SDL_Keycode k, Uint16 mod = 0, bool down = true, bool repea
     return e;
 }
 static SDL_Event Wheel(int y, Uint32 dir = SDL_MOUSEWHEEL_NORMAL) { SDL_Event e; std::memset(&e, 0, sizeof(e)); e.type = SDL_MOUSEWHEEL; e.wheel.y = y; e.wheel.direction = dir; return e; }
+
+// One frame of a 400x200 window holding only the CodeEdit `ed`, fed from the collector `c`. `keys` is whether OkayUI may
+// have the keyboard this frame (Build's last argument).
+static void CodeEditFrame(UI::CodeEdit& ed, InputCollector& c, bool keys = true) {
+    UI::BeginFrame(c.Build(0, 0, false, false, false, keys));
+    UI::BareNextWindow();
+    if (UI::Begin("ce", 0, 0, 400, 200)) ed.Draw("##ce", 400, 200);
+    UI::End();
+    UI::EndFrameData();
+}
 
 int main() {
     RUN_SUITE("okayui host");
@@ -137,6 +148,14 @@ int main() {
         CHECK(in.keyDown[UI::KeyId_PageDown] && in.keyDown[UI::KeyId_F5]);
         CHECK(InputCollector::KeyIdOf(SDLK_F13) == UI::KeyId_None && InputCollector::KeyIdOf(SDLK_a) == UI::KeyId_A &&
               InputCollector::KeyIdOf(SDLK_9) == UI::KeyId_9 && InputCollector::KeyIdOf(SDLK_RCTRL) == UI::KeyId_Ctrl);
+        // '/' and Alt are named keys too: the code editor's Ctrl+/ (comment) and Alt+Up / Alt+Down (move lines)
+        CHECK(InputCollector::KeyIdOf(SDLK_SLASH) == UI::KeyId_Slash && InputCollector::KeyIdOf(SDLK_LALT) == UI::KeyId_Alt);
+        c.Feed(Key(SDLK_SLASH, KMOD_CTRL));
+        in = c.Build(0, 0, false, false, false, true);
+        CHECK(in.keyDown[UI::KeyId_Slash] && in.ctrl);
+        using PK2 = okay::platform::Key;
+        CHECK(InputCollector::KeyIdOf(PK2::Slash, 0) == UI::KeyId_Slash && InputCollector::KeyIdOf(PK2::Slash, '/') == UI::KeyId_Slash);
+        CHECK(InputCollector::KeyIdOf(PK2::LAlt, 0) == UI::KeyId_Alt);
     }
     {   // end to end: a CodeEdit driven only by SDL events (arrows, Tab, Ctrl+Z/Y, Ctrl+C then Ctrl+V, Ctrl+Left word move)
         okayuitest::Reset();
@@ -144,13 +163,7 @@ int main() {
         UI::CodeEdit ed;
         ed.SetText("one two\nthree");
         InputCollector c;
-        auto frame = [&]() {
-            UI::BeginFrame(c.Build(0, 0, false, false, false, true));
-            UI::BareNextWindow();
-            if (UI::Begin("ce", 0, 0, 400, 200)) ed.Draw("##ce", 400, 200);
-            UI::End();
-            UI::EndFrameData();
-        };
+        auto frame = [&]() { CodeEditFrame(ed, c); };
         frame(); ed.Focus(); frame();
         // One key per frame, then its release (what a person's keyboard does): the keys of a frame are applied in a fixed order.
         auto tap = [&](SDL_Keycode k, Uint16 mod = 0) { c.Feed(Key(k, mod)); frame(); c.Feed(Key(k, 0, false)); frame(); };
@@ -176,6 +189,47 @@ int main() {
         CHECK(ed.Caret().line == 0 && ed.Caret().col == 0);
         tap(SDLK_TAB);
         CHECK(ed.Line(0) == "    one twotwo");
+    }
+    {   // input method (IME) composition through the collector: SDL_TEXTEDITING and the seam's TextEditing event give the preedit to a
+        // focused CodeEdit every frame until it is cleared; the finished text arrives as typed text (SDL_TEXTINPUT)
+        okayuitest::Reset();
+        okayuitest::Sim sim(400, 200);
+        UI::CodeEdit ed;
+        ed.SetText("ab");
+        InputCollector c;
+        auto frame = [&]() { CodeEditFrame(ed, c); };
+        frame(); ed.Focus(); frame();
+        ed.SetCaret(UI::CodePos{0, 1});
+        SDL_Event e{};
+        e.type = SDL_TEXTEDITING;
+        std::snprintf(e.edit.text, sizeof e.edit.text, "%s", "\xe3\x81\x8b");   // a kana being composed
+        e.edit.start = 1; e.edit.length = 0;
+        c.Feed(e);
+        frame();
+        CHECK(ed.Composing());
+        CHECK(ed.Line(0) == "ab");                         // the preedit is shown, not inserted
+        frame();
+        CHECK(ed.Composing());                             // a state: still composing on the next frame
+        CHECK(ed.ImeCompositionRect().w > 0.0f);           // where the host puts the candidate window
+        e.edit.text[0] = 0; c.Feed(e);                     // the input method clears the preedit...
+        SDL_Event t{}; t.type = SDL_TEXTINPUT;
+        std::snprintf(t.text.text, sizeof t.text.text, "%s", "\xe3\x81\x8b");
+        c.Feed(t);                                         // ...and sends the finished text
+        frame();
+        CHECK(!ed.Composing());
+        CHECK(ed.Line(0) == "a\xe3\x81\x8b" "b");
+        // the seam's event the same way (the editor feeds okay::platform events)
+        okay::platform::Event pe; pe.type = okay::platform::EventType::TextEditing; pe.text = "xy"; pe.x = 1;
+        c.Feed(pe);
+        frame();
+        CHECK(ed.Composing());
+        pe.text.clear(); c.Feed(pe);
+        frame();
+        CHECK(!ed.Composing() && ed.Line(0) == "a\xe3\x81\x8b" "b");   // cleared without a commit: cancelled, the text is untouched
+        // without the keyboard (deliverKeys false) no preedit reaches OkayUI
+        pe.text = "zz"; c.Feed(pe);
+        CodeEditFrame(ed, c, false);
+        CHECK(!ed.Composing());
     }
     {   // the hosted region: owns the mouse only inside the rectangle, only while ImGui said it is hovered, and only for one more frame
         Region r;

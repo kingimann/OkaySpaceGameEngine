@@ -535,6 +535,21 @@ void FindTests() {
     e.SetFind("a");
     CHECK(e.ReplaceAll("x\ny") == 2 && e.GetText() == "x\ny x\ny" && e.LineCount() == 3);
     e.Undo(); CHECK(e.GetText() == "a a");
+    // overlapping matches: "aa" in "aaaa" is replaced left to right without reusing characters; the whole thing is one undo step
+    e.SetText("aaaa");
+    e.SetFind("aa");
+    CHECK(e.ReplaceAll("b") == 2 && e.GetText() == "bb");
+    e.Undo(); CHECK(e.GetText() == "aaaa" && !e.CanUndo());
+    e.SetText("aaa");
+    CHECK(e.ReplaceAll("b") == 1 && e.GetText() == "ba");
+    // replacing with text that contains the needle must not loop
+    e.SetText("ab");
+    e.SetFind("a");
+    CHECK(e.ReplaceAll("aa") == 1 && e.GetText() == "aab");
+    // case-insensitive replace-all, then the caret/selection is on a valid position
+    e.SetText("Foo FOO foo");
+    e.SetFind("foo");
+    CHECK(e.ReplaceAll("x") == 3 && e.GetText() == "x x x" && e.Clamp(e.Caret()) == e.Caret());
     e.SetReadOnly(true);
     CHECK(e.ReplaceAll("z") == 0 && !e.ReplaceCurrent("z"));
 }
@@ -1039,6 +1054,165 @@ void DrawTests() {
     CHECK(!drew);
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// The Dear ImGui script editor's look, as options (the script editor turns them on through editor/ScriptEditorCodeEdit)
+// ---------------------------------------------------------------------------------------------
+void ScriptLookTests() {
+    // colouring order: a called built-in takes the call colour, a member the member colour, only a bare built-in the known colour
+    {
+        UI::CodeLanguage lang = UI::OkayScriptLanguage();
+        lang.known.insert("print");
+        CodeEdit e;
+        e.SetLanguage(lang);
+        e.SetText("print(1); x = print; a.print = 2;");
+        std::vector<UI::CodeToken> t;
+        auto colorAt = [&](int col) { for (const UI::CodeToken& k : t) if (col >= k.start && col < k.end) return (int)k.color; return (int)UI::CodeColor_Default; };
+        e.LineTokens(0, t);
+        CHECK(colorAt(0) == UI::CodeColor_Known);                       // the default order: known first
+        lang.callBeforeKnown = true;
+        e.SetLanguage(lang);
+        e.LineTokens(0, t);
+        CHECK(colorAt(0) == UI::CodeColor_Function);                    // print( is a call
+        CHECK(colorAt(14) == UI::CodeColor_Known);                      // = print; is the built-in
+        CHECK(colorAt(23) == UI::CodeColor_Member);                     // a.print is a member
+        CHECK(colorAt(10) == UI::CodeColor_Default);                    // x
+    }
+    const UI::Color32 kFill = UI::RGBA(0, 200, 0), kEdge = UI::RGBA(200, 0, 0), kIdle = UI::RGBA(0, 0, 200), kBp = UI::RGBA(0, 120, 250);
+    const UI::Color32 kWash = UI::RGBA(250, 250, 0);
+    auto look = [&](Rig& r) {
+        UI::CodePalette p = UI::DefaultCodePalette();
+        p.currentLine = kFill; p.currentLineEdge = kEdge; p.currentLineInactive = kIdle; p.breakpointLine = kBp;
+        r.ce.SetPalette(p);
+        r.ce.SetText("one\ntwo\nthree\nfour\nfive\n");
+    };
+    // the caret's line: filled across the gutter and the text, outlined; another fill while the editor does not have the keyboard
+    {
+        Rig r(560, 340);
+        r.w = 520; r.h = 300;
+        look(r);
+        r.Frames(2);
+        ClickPos(r, P(2, 2));
+        r.Frames(1);
+        CHECK(r.ce.Focused());
+        const Bitmap& b = r.sim.Draw(12, 14, 20);
+        const UI::Rect it = r.ce.ItemRect(), vr = r.ce.ViewRect();
+        const float y = r.ce.PosToScreen(P(2, 0)).y, lh = r.ce.LineHeight();
+        CHECK(PixelAt(b, (int)(vr.x + vr.w - 20), (int)(y + lh * 0.5f)) == C32(kFill));     // the text part
+        CHECK(PixelAt(b, (int)(it.x + 2), (int)(y + lh * 0.5f)) == C32(kFill));             // the gutter part
+        CHECK(PixelAt(b, (int)(vr.x + vr.w - 20), (int)y) == C32(kEdge));                   // the outline, top
+        CHECK(PixelAt(b, (int)(vr.x + vr.w - 20), (int)(y + lh - 1)) == C32(kEdge));        // and bottom
+        CHECK(PixelAt(b, (int)(vr.x + vr.w - 20), (int)(y - lh * 0.5f)) != C32(kFill));    // the line above: no box
+        ClickAt(r, 5, 330);                                                                 // outside: the editor loses the keyboard
+        CHECK(!r.ce.Focused());
+        const Bitmap& b2 = r.sim.Draw(12, 14, 20);
+        CHECK(PixelAt(b2, (int)(vr.x + vr.w - 20), (int)(y + lh * 0.5f)) == C32(kIdle));
+        CHECK(PixelAt(b2, (int)(vr.x + vr.w - 20), (int)y) == C32(kEdge));
+        // with a selection there is no box
+        r.ce.SetSelection(P(2, 0), P(2, 3));
+        r.Frames(1);
+        const Bitmap& b3 = r.sim.Draw(12, 14, 20);
+        CHECK(PixelAt(b3, (int)(vr.x + vr.w - 20), (int)(y + lh * 0.5f)) != C32(kIdle));
+        // no inactive colour: no box while unfocused (the default palette)
+        r.ce.SetPalette(UI::DefaultCodePalette());
+        r.ce.SetCaret(P(2, 0));
+        r.Frames(1);
+        const Bitmap& b4 = r.sim.Draw(12, 14, 20);
+        CHECK(PixelAt(b4, (int)(vr.x + vr.w - 20), (int)(y + lh * 0.5f)) == C32(UI::DefaultCodePalette().background));
+    }
+    // a breakpoint washes its whole line; a marker can bring its own wash; the widget draws no message text after the line
+    {
+        Rig r(560, 340);
+        r.w = 520; r.h = 300;
+        look(r);
+        r.ce.SetBreakpoints({1});
+        UI::CodeMarker m; m.line = 3; m.message = "a long message that must not be drawn after the code by the widget itself"; m.lineColor = kWash;
+        r.ce.SetMarkers({m});
+        r.Frames(2);
+        const Bitmap& b = r.sim.Draw(12, 14, 20);
+        const UI::Rect vr = r.ce.ViewRect();
+        const float lh = r.ce.LineHeight();
+        const float y1 = r.ce.PosToScreen(P(1, 0)).y, y3 = r.ce.PosToScreen(P(3, 0)).y;
+        CHECK(PixelAt(b, (int)(vr.x + vr.w - 20), (int)(y1 + lh * 0.5f)) == C32(kBp));
+        CHECK(PixelAt(b, (int)(vr.x + vr.w - 20), (int)(y3 + lh * 0.5f)) == C32(kWash));
+        const int endX = (int)r.ce.PosToScreen(P(3, r.ce.LineLength(3))).x + 8;
+        CHECK(CountNot(b, endX, (int)y3 + 1, (int)(vr.x + vr.w) - 1, (int)(y3 + lh * 0.6f), C32(kWash)) == 0);   // nothing written after "four"
+    }
+    // padding inside the editor: the first line starts below it, the gutter right of it, the last line can scroll fully into view
+    {
+        Rig r(560, 340);
+        r.w = 520; r.h = 200;
+        std::string many; for (int i = 0; i < 60; ++i) many += "line " + std::to_string(i) + "\n";
+        r.ce.SetText(many);
+        r.ce.SetContentPadding(14.0f, 10.0f);
+        r.Frames(2);
+        const UI::Rect it = r.ce.ItemRect();
+        const float lh = r.ce.LineHeight();
+        CHECK_NEAR(r.ce.PosToScreen(P(0, 0)).y, it.y + 10.0f, 0.01f);
+        CHECK(r.ce.ScreenToPos(r.ce.PosToScreen(P(3, 2)).x + 1.0f, r.ce.PosToScreen(P(3, 2)).y + lh * 0.5f) == P(3, 2));
+        r.ce.SetBreakpoints({});
+        ClickAt(r, it.x + 14.0f + lh * 0.5f, r.ce.PosToScreen(P(1, 0)).y + lh * 0.5f);   // the breakpoint column, right of the padding
+        CHECK(r.ce.HasBreakpoint(1));
+        ClickAt(r, it.x + 3.0f, r.ce.PosToScreen(P(2, 0)).y + lh * 0.5f);                 // inside the padding: nothing
+        CHECK(!r.ce.HasBreakpoint(2));
+        r.ce.SetCaret(P(60, 0)); r.ce.ScrollToCaret(); r.Frames(2);
+        const float lastBottom = r.ce.PosToScreen(P(60, 0)).y + lh;
+        const UI::Rect vr = r.ce.ViewRect();
+        CHECK(lastBottom <= vr.y + vr.h + 0.01f);
+        r.ce.SetScroll(0, 1e9f); r.Frames(1);
+        CHECK_NEAR(r.ce.PosToScreen(P(60, 0)).y + lh + 10.0f, vr.y + vr.h, 0.6f);         // scrolled to the end: the padding below the last line
+        CHECK(r.ce.FirstVisibleLine() > 40);
+    }
+    // the scroll bars: thickness, and a horizontal bar that is always there when asked for
+    {
+        Rig r(560, 340);
+        r.w = 520; r.h = 200;
+        r.ce.SetText("short\n");
+        r.Frames(2);
+        CHECK(!r.ce.HScrollbarShown());
+        r.ce.SetScrollbarStyle(14.0f, 7.0f);
+        r.ce.SetAlwaysShowHScrollbar(true);
+        r.Frames(2);
+        const UI::Rect it = r.ce.ItemRect(), hb = r.ce.HScrollbarRect(), vr = r.ce.ViewRect();
+        CHECK(r.ce.HScrollbarShown());
+        CHECK_NEAR(hb.h, 14.0f, 0.01f);
+        CHECK_NEAR(hb.y + hb.h, it.y + it.h, 0.01f);
+        CHECK_NEAR(vr.h, it.h - 14.0f, 0.01f);
+        CHECK(!r.ce.VScrollbarShown());
+        // dragging its thumb with nothing to scroll leaves the view where it is
+        r.sim.Move(hb.x + 20, hb.y + 7); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Move(hb.x + 200, hb.y + 7); r.Frame(); r.sim.Up(); r.Frame();
+        CHECK(r.ce.ScrollX() == 0.0f);
+    }
+}
+
+
+// A host clipboard (the script editor passes Dear ImGui's, the system clipboard): no 4 KB limit, and OkayUI's clipboard is not used.
+void HostClipboardTests() {
+    std::string host;
+    int sets = 0, gets = 0;
+    CodeEdit e;
+    e.SetClipboardFunctions([&](const std::string& t) { host = t; ++sets; }, [&]() { ++gets; return host; });
+    UI::SetClipboardText("okayui's");
+    std::string big;
+    for (int i = 0; i < 1000; ++i) big += "line number " + std::to_string(i) + "\n";   // about 16 KB
+    e.SetText(big);
+    e.SelectAll();
+    CHECK(e.Copy());
+    CHECK(host == e.GetText() && sets == 1);
+    CHECK(std::string(UI::GetClipboardText()) == "okayui's");              // OkayUI's clipboard untouched
+    CHECK(e.Cut());                                                          // more than kClipboardMax: still cut, nothing lost
+    CHECK(e.IsEmpty() && host.size() > (size_t)UI::kClipboardMax);
+    CHECK(e.Paste());
+    CHECK(gets == 1 && e.GetText() == host);
+    host = "a\r\nb";                                                         // line endings normalised on paste, as before
+    e.SetText("");
+    CHECK(e.Paste() && e.GetText() == "a\nb");
+    // back to OkayUI's clipboard
+    e.SetClipboardFunctions(nullptr, nullptr);
+    e.SelectAll();
+    CHECK(e.Copy() && std::string(UI::GetClipboardText()) == "a\nb" && host == "a\r\nb");
+}
+
 // ---------------------------------------------------------------------------------------------
 // 100k lines
 // ---------------------------------------------------------------------------------------------
@@ -1194,6 +1368,48 @@ void LineCommandTests() {
     }
 }
 
+// The line commands on the script editor's keys, through the widget: Ctrl+/ comment, Ctrl+D duplicate, Ctrl+Shift+K delete,
+// Alt+Up and Alt+Down move. Alt+Up must not also move the caret up; plain Up still moves.
+void LineCommandKeyTests() {
+    Rig r;
+    r.ce.SetLanguage(UI::OkayScriptLanguage());
+    r.ce.SetText("a\nb\nc");
+    r.Frames(2);
+    ClickPos(r, P(1, 1));
+    CHECK(r.ce.Focused() && At(r.ce, 1, 1));
+    r.sim.ctrl = true; r.Named(UI::KeyId_Slash); r.sim.ctrl = false;
+    CHECK(r.ce.GetText() == "a\n// b\nc");
+    r.sim.ctrl = true; r.Named(UI::KeyId_Slash); r.sim.ctrl = false;
+    CHECK(r.ce.GetText() == "a\nb\nc");
+    r.sim.ctrl = true; r.Named(UI::KeyId_D); r.sim.ctrl = false;
+    CHECK(r.ce.GetText() == "a\nb\nb\nc" && r.ce.Caret().line == 2);
+    r.sim.ctrl = true; r.sim.shift = true; r.Named(UI::KeyId_K); r.sim.ctrl = false; r.sim.shift = false;
+    CHECK(r.ce.GetText() == "a\nb\nc" && r.ce.Caret().line == 2);
+    r.sim.Hold(UI::KeyId_Alt, true);
+    r.Key(Key_Up);                                         // c moves above b; the caret goes with it, one line, not two
+    CHECK(r.ce.GetText() == "a\nc\nb" && r.ce.Caret().line == 1);
+    r.Key(Key_Down);
+    CHECK(r.ce.GetText() == "a\nb\nc" && r.ce.Caret().line == 2);
+    r.sim.Hold(UI::KeyId_Alt, false); r.Frame();
+    r.Key(Key_Up);                                         // without Alt: a plain caret move
+    CHECK(r.ce.GetText() == "a\nb\nc" && r.ce.Caret().line == 1);
+    // each command is one undo step (Ctrl+Z)
+    r.sim.ctrl = true; r.Named(UI::KeyId_D); r.Named(UI::KeyId_Z); r.sim.ctrl = false;
+    CHECK(r.ce.GetText() == "a\nb\nc");
+    // typing a '/' with Ctrl held is a command, not text; plain '/' is text
+    r.sim.ctrl = true; r.sim.Type("/"); r.Named(UI::KeyId_Slash); r.sim.ctrl = false;
+    CHECK(r.ce.GetText() == "a\n// b\nc");
+    // off: the keys do nothing
+    r.ce.SetLineCommandKeys(false);
+    r.sim.ctrl = true; r.Named(UI::KeyId_D); r.sim.ctrl = false;
+    CHECK(r.ce.GetText() == "a\n// b\nc");
+    r.ce.SetLineCommandKeys(true);
+    // read only: nothing
+    r.ce.SetReadOnly(true);
+    r.sim.ctrl = true; r.Named(UI::KeyId_D); r.sim.ctrl = false;
+    CHECK(r.ce.GetText() == "a\n// b\nc");
+}
+
 } // namespace
 
 int main() {
@@ -1214,7 +1430,10 @@ int main() {
     WidgetTests();
     ExtraTests();
     LineCommandTests();
+    LineCommandKeyTests();
     DrawTests();
+    ScriptLookTests();
+    HostClipboardTests();
     PerfTests();
     TEST_MAIN_RESULT();
 }

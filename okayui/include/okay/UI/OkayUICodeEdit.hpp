@@ -52,6 +52,10 @@ struct CodeLanguage {
     std::vector<std::string> lineComments{"//"};                   // each starts a comment that runs to the end of the line
     std::string blockStart = "/*", blockEnd = "*/";                // empty blockStart: no block comments
     bool dollarAtStrings = true;                                   // $"..." and @"..." are strings
+    /// The order a plain word is coloured in. false (the default): keyword, type, known word, then a call `name(` or a member
+    /// `.name`. true: keyword, type, call, member, then known word (the Dear ImGui script editor's order: a built-in that is
+    /// called shows in the call colour, `print(` like `Foo(`).
+    bool callBeforeKnown = false;
 };
 /// C and C++ words with "//" and block comments.
 CodeLanguage CLikeLanguage();
@@ -66,6 +70,12 @@ struct CodePalette {
     Color32 text[CodeColor_COUNT];
     Color32 background, gutter, lineNumber, lineNumberCurrent, caret, selection, selectionInactive, currentLine, currentLineEdge,
             findMatch, bracketMatch, errorLine, errorUnderline, breakpoint, scrollTrack, scrollThumb, scrollThumbHot;
+    /// The caret's line: `currentLine` fills it while the editor has the keyboard, `currentLineInactive` while it does not (0: no
+    /// box then), `currentLineEdge` outlines it (0: no outline). The box runs across the gutter and the text, as long as there is
+    /// no selection.
+    Color32 currentLineInactive = 0;
+    /// A wash over the whole width of a line with a breakpoint, on top of the gutter dot (0: none).
+    Color32 breakpointLine = 0;
 };
 /// The Darcula-flavoured palette the script editor uses.
 CodePalette DefaultCodePalette();
@@ -75,7 +85,8 @@ CodePalette DefaultCodePalette();
 struct CodeMarker {
     int line = 0, colStart = 0, colEnd = -1;
     std::string message;
-    Color32 color = 0;   // 0: the palette's errorUnderline
+    Color32 color = 0;       // 0: the palette's errorUnderline
+    Color32 lineColor = 0;   // the wash over the line; 0: the palette's errorLine (a warning uses its own, amber)
 };
 
 /// Where the caret goes.
@@ -135,6 +146,10 @@ public:
     bool DuplicateLines();
     bool DeleteLines();
     bool MoveLines(bool up);
+    /// Where Copy, Cut and Paste put and take the text. By default OkayUI's clipboard (OkayUI::SetClipboardText, which holds
+    /// kClipboardMax - 1 bytes: Copy of more is cut short and Cut of more does nothing). A host with a clipboard of its own (the
+    /// script editor: Dear ImGui's, the system clipboard with no size limit) passes both functions; empty functions go back to OkayUI's.
+    void SetClipboardFunctions(std::function<void(const std::string&)> set, std::function<std::string()> get) { clipSet_ = std::move(set); clipGet_ = std::move(get); }
     bool Cut();          // copies to the clipboard, then deletes
     bool Copy() const;   // the selection to OkayUI::SetClipboardText
     bool Paste();
@@ -175,7 +190,28 @@ public:
     void SetShowLineNumbers(bool b) { showLineNumbers_ = b; }
     void SetShowBreakpointGutter(bool b) { showBreakpoints_ = b; }
     void SetLineSpacing(float s) { lineSpacing_ = s < 1.0f ? 1.0f : (s > 3.0f ? 3.0f : s); }
+    /// Key bindings for the line commands while the editor has the keyboard (on by default; the script editor's keys):
+    /// Ctrl+/ ToggleLineComment, Ctrl+D DuplicateLines, Ctrl+Shift+K DeleteLines, Alt+Up and Alt+Down MoveLines.
+    void SetLineCommandKeys(bool on) { lineKeys_ = on; }
+    bool LineCommandKeys() const { return lineKeys_; }
+    /// Draw the code (text and line numbers) in this font instead of the current OkayUI font: a font made by AddFontTtf
+    /// (OkayUICompat.hpp) that should be monospaced. `px` is the height of a line of text in pixels (0: the font's own size).
+    /// The window's font and text scale are put back after Draw. Null: the current OkayUI font (the default).
+    void SetFont(const Font* font, float px = 0.0f) { font_ = font; fontPx_ = (px > 0.0f && px < 1000.0f) ? px : 0.0f; }
+    const Font* CodeFont() const { return font_; }
     void SetPalette(const CodePalette& p) { pal_ = p; }
+    /// Empty space inside the editor around the gutter and the lines (left and right, top and bottom), in pixels; the scroll bars stay
+    /// at the edges. Like the padding inside a framed Dear ImGui child window. 0, 0 by default.
+    void SetContentPadding(float x, float y) { padX_ = (x >= 0.0f && x < 1000.0f) ? x : 0.0f; padY_ = (y >= 0.0f && y < 1000.0f) ? y : 0.0f; }
+    /// Scroll bar thickness and thumb corner radius in pixels (10 and 3 by default), and whether the horizontal bar is always
+    /// shown (the Dear ImGui script editor always shows it) or only when a line is wider than the view (the default).
+    void SetScrollbarStyle(float size, float rounding) { sbSize_ = (size >= 2.0f && size <= 64.0f) ? size : 10.0f; sbRound_ = (rounding >= 0.0f && rounding <= 32.0f) ? rounding : 3.0f; }
+    void SetAlwaysShowHScrollbar(bool b) { alwaysH_ = b; }
+    float ScrollbarSize() const { return sbSize_; }
+    bool HScrollbarShown() const { return needH_; }
+    bool VScrollbarShown() const { return needV_; }
+    Rect HScrollbarRect() const { return hTrack_; }
+    Rect VScrollbarRect() const { return vTrack_; }
     const CodePalette& Palette() const { return pal_; }
     /// The syntax highlighter (empty: no colouring). Takes effect at once.
     void SetHighlighter(CodeHighlighter h);
@@ -288,9 +324,14 @@ private:
     std::vector<int> breakpoints_;
     std::function<void(int, bool)> onBreakpoint_; bool autoToggle_ = true;
 
-    bool readOnly_ = false, insertSpaces_ = true, autoIndent_ = true, showLineNumbers_ = true, showBreakpoints_ = true;
+    bool readOnly_ = false, insertSpaces_ = true, autoIndent_ = true, showLineNumbers_ = true, showBreakpoints_ = true, lineKeys_ = true;
+    const Font* font_ = nullptr; float fontPx_ = 0.0f;
+    std::function<void(const std::string&)> clipSet_; std::function<std::string()> clipGet_;
+    bool drawImpl(const char* id, float w, float h);
     int tabSize_ = 4;
     float lineSpacing_ = 1.2f;
+    float padX_ = 0.0f, padY_ = 0.0f, sbSize_ = 10.0f, sbRound_ = 3.0f;
+    bool alwaysH_ = false;
     CodePalette pal_;
 
     // view

@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Input/InputActions.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -155,16 +156,16 @@ public:
 
         // Look already applied. The orbit is LateUpdate. Move or jump stands up.
         if (HumanoidActions::IsSitting(gameObject)) {
-            Vec2 axis = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();
+            Vec2 axis = uiBlocked ? Vec2{0, 0} : InputActions::ControlMove();
             const bool wantMove = axis.x * axis.x + axis.y * axis.y > 1e-4f;
-            if (wantMove || (!uiBlocked && Input::GetKeyDown(' ')))
+            if (wantMove || (!uiBlocked && InputActions::ControlKeyDown("Jump", ' ')))
                 HumanoidActions::RequestStandUp(gameObject);
             return;
         }
 
         // ---- Aim blend (right mouse, or a toggled aim when the player asked for it) ----
         {
-            bool aimHeld = !uiBlocked && Input::GetMouseButton(aimButton);
+            bool aimHeld = !uiBlocked && InputActions::ControlMouse("Aim", aimButton);
             if (Accessibility::ToggleFor("Aim")) aimHeld = m_aimLatch.Update(aimHeld, true);
             else m_aimLatch.Reset();
             m_aiming = aimHeld;
@@ -174,14 +175,14 @@ public:
 
         // ---- Fire (left mouse) ----  (a click on an open bag shouldn't shoot)
         m_fireCooldown = Mathf::Max(0.0f, m_fireCooldown - dt);
-        bool wantFire = !uiBlocked && (autoFire ? Input::GetMouseButton(fireButton) : Input::GetMouseButtonDown(fireButton));
+        bool wantFire = !uiBlocked && (autoFire ? InputActions::ControlMouse("Fire", fireButton) : InputActions::ControlMouseDown("Fire", fireButton));
         if (wantFire && m_fireCooldown <= 0.0f) {
             m_fireCooldown = autoFire ? (1.0f / Mathf::Max(0.1f, fireRate)) : 0.0f;
             Fire();
         }
 
         // ---- Movement relative to the camera yaw (strafe shooter) ----
-        Vec2 axis = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
+        Vec2 axis = uiBlocked ? Vec2{0, 0} : InputActions::ControlMove();   // freeze while a bag is open
         Vec2 pad  = uiBlocked ? Vec2{0, 0} : Input::GamepadAxis();
         if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) axis = pad;
         Quat flat = Quat::Euler(0, yaw, 0);
@@ -193,7 +194,7 @@ public:
         if (!uiBlocked) stanceControl.ReadKeys();
         stanceControl.Step(gameObject, dt);
         const bool standing = stanceControl.Stance() == 0;
-        bool sprintHeld = sprintKey && Input::GetKey(sprintKey);
+        bool sprintHeld = InputActions::ControlKey("Sprint", sprintKey);
         if (Accessibility::ToggleFor("Sprint")) sprintHeld = m_sprintLatch.Update(sprintHeld, true);
         else m_sprintLatch.Reset();
         bool running = standing && sprintHeld && moving && !m_aiming;
@@ -214,7 +215,7 @@ public:
         if (m_groundContact > 0.0f || onTerrain) m_jumpsUsed = 0;
         m_coyote = grounded ? coyoteTime : Mathf::Max(0.0f, m_coyote - dt);
         if (!grounded && m_coyote <= 0.0f && m_jumpsUsed == 0) m_jumpsUsed = 1;
-        if (Input::GetKeyDown(' ')) m_jumpBuf = jumpBufferTime;
+        if (InputActions::ControlKeyDown("Jump", ' ')) m_jumpBuf = jumpBufferTime;
         else                        m_jumpBuf = Mathf::Max(0.0f, m_jumpBuf - dt);
         bool airborne = rb ? !grounded : false;
         bool jumped = false;
@@ -269,8 +270,8 @@ public:
         {
             float target = 0.0f;
             const Scene* ls = gameObject ? gameObject->scene() : nullptr;
-            if (leanLeftKey  && Input::GetKey(leanLeftKey)  && !LeanKeyTaken(ls, leanLeftKey))  target -= 1.0f;
-            if (leanRightKey && Input::GetKey(leanRightKey) && !LeanKeyTaken(ls, leanRightKey)) target += 1.0f;
+            if (InputActions::ControlKey("LeanLeft", leanLeftKey, 'q')   && !LeanKeyTaken(ls, leanLeftKey, gameObject))  target -= 1.0f;
+            if (InputActions::ControlKey("LeanRight", leanRightKey, 'e') && !LeanKeyTaken(ls, leanRightKey, gameObject)) target += 1.0f;
             float lt = leanSpeed > 0.0f ? (1.0f - std::exp(-leanSpeed * dt)) : 1.0f;
             m_lean += (target - m_lean) * lt;
         }
@@ -307,6 +308,7 @@ public:
 
     void LateUpdate(float dt) override {
         if (!transform || !gameObject) return;
+        if (!IsLocallyControlled(gameObject)) return;   // a remote copy never moves this machine's camera
         Scene* sc = gameObject->scene();
         if (!sc || !sc->mainCamera || !sc->mainCamera->transform) return;
         Transform* cam = sc->mainCamera->transform;

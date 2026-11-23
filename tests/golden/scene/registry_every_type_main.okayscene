@@ -1,0 +1,1182 @@
+okayscene 3
+name "every_type"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Camera"
+  guid "1bbfd3fc0eaead8acc78551d95c56338"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  camera 0 5.75 60.25 0.09607843 0.4009804 0.7627451 0.75 0 1 0.75 1.05 4000.25 1 0.75 0.25 0.5 0.5 0 1 50.75 24.25 1.5 0.75 0.25 0.5 1 32.25 0.8 2.75 18.25 2
+  camerax hitPulse=1
+end
+gameobject 1 "VirtualCamera"
+  guid "676a9514f53b3283c6c36c6c186512bd"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  vcam 11 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" 0.75 1.625 -8.75 2.75 6.25 60.5 0 1 0 0.25 0.125 -0.25 0 3 0 0 15 8 1 -20 70 1 1 0.2 0 "" 0 0 0.75 0 -1e+09 -1e+09 -1e+09 1e+09 1e+09 1e+09
+  vcamx damp=1 gpad=1.25 gfit=0 look=0.5 lookMax=3.75 lookSm=3 zones=1 dzw=0.9 dzh=0.4 szw=1 szh=1 zdamp=4.25 o2d=1 osize=0.25 cview=1 rooms=1 roomT=0.85 col=1 colR=1 colSkin=0.35 colRec=3.5 colIn=12 colSnap=0 colMask=4294967295 fade=1 fadeA=0.75 fadeSpd=8.75 blendIn=-0.75 blendInStyle=0 aimFollow=1 ng=0
+end
+gameobject 2 "CinemachineBrain"
+  guid "27dcdc1086625279f01e8473cd2fd7c8"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  cmbrain 1.25 1
+  cmbrainx style=3 c0=0.25 c1=0.1 c2=0.25 c3=1 cutscene=0
+end
+gameobject 3 "CameraZone"
+  guid "623fa6fa17c645750262e8898c7f4f31"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  camzone shape=0 sx=8.5 sy=2.125 sz=7.5 ox=0.75 oy=0.125 oz=-0.75 blend=0.6 prio=1 fov=0.25 fx=0.5 fy=0.125 fz=-0.5 damp=-0.25 shot="Test \"value\" 7 \\ x=y"
+end
+gameobject 4 "CameraRoom"
+  guid "de3e60b8a2238374bf042be20a39ebe1"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  camroom w=20.75 h=6.125
+end
+gameobject 5 "Light"
+  guid "cf7d37caa6cbf10f32e7c1ff67d11775"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  light 0.5 0.75 0.5 0.75 0.55 1.75 1 10.25 45.5 1 1 6500.75 0.5 0.75 0.5 1 0 0.5 1.75 0.75 8.25 1
+  lightx 0.75 0.5 0.75 4.5 1 "Test \"value\" 7 \\ x=y"
+end
+gameobject 6 "SpriteRenderer"
+  guid "55f074669ee6283c1667d5b5f4d897ec"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  sprite 36 0.5 0.75 0.5 0.75 1.5 0.625 "assets/test/file 7.dat" 0.75 0.125 1.25 0.625 1 1 1 1 1
+end
+gameobject 7 "MeshRenderer"
+  guid "0d44b091e97abb9b469768d339050e7e"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.5 0.75 0.5 0.75 1 "assets/test/file 7.dat" 1
+  material 0 0.25 1 0.5 16.75 1 "assets/test/file 7.dat" 1.25 0.625
+  texopts 1 0.5 0.125
+  normalmap "assets/test/file 7.dat" 1.5
+  reflect 0.5 0.25
+  specmap "assets/test/file 7.dat"
+  aomap "assets/test/file 7.dat" 0.5
+  shader 1 4 0.23529412 0.60294116 0.5 0.039215688 0.30882353 0.88235295
+  rim 0.5 3.75 0.5 0.75 0.5
+  outline 0.28 0 0.25 1
+  uvanim 0.75 0.125 1
+  groundshadow 0 0.5 1
+  meshshadows 0 0
+  meshglow 0.25
+  meshenabled 0
+end
+gameobject 8 "Rigidbody2D"
+  guid "9ca660b5849926583a9fc1436724f01e"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  rigidbody2d 1 1.75 1.5 0.25 0.75 0.65 0.55 0 0 1 0.53
+end
+gameobject 9 "Rigidbody3D"
+  guid "38273a43c49e35b3fbcc5c1d21cc128c"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  rigidbody3d 1 1.25 1.75 0.5 0.25 1 1 1 0.75 1 0.8 0 0 1 0.28 1
+end
+gameobject 10 "BoxCollider2D"
+  guid "7369aedbdb16650d132b30eddb0d9006"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  boxcollider2d 1.75 0.625 0.25 0.125 1 1 1
+  trigfilter2d "Test \"value\" 7 \\ x=y" 4294967294
+  physmat2d -0.25 -0.75 1 1 0
+  colskin2d 0.5 0
+end
+gameobject 11 "CircleCollider2D"
+  guid "cda97236b5ba66db4ccc1ebc012b1060"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  circlecollider2d 0.75 0.5 0.125 1 1 1
+  trigfilter2d "Test \"value\" 7 \\ x=y" 4294967294
+  physmat2d -0.75 -0.5 1 1 0
+  colskin2d 0.75 0
+end
+gameobject 12 "CapsuleCollider2D"
+  guid "e2863bb727f8f86316ef959a0e47a74e"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  capsulecollider2d 1.5 1.125 1 0.25 0.125 1 1 1
+  trigfilter2d "Test \"value\" 7 \\ x=y" 4294967294
+  physmat2d -0.25 -0.75 1 1 0
+  colskin2d 0.5 0
+end
+gameobject 13 "EdgeCollider2D"
+  guid "7c5418c4ef931d1002d7312422b81c66"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  edgecollider2d 0.5 0.125 1 1 1 0.25 0.625 2 -1 0 1 0
+  trigfilter2d "Test \"value\" 7 \\ x=y" 4294967294
+  physmat2d -0.25 -0.75 1 1 0
+  colskin2d 0.5 0
+end
+gameobject 14 "PolygonCollider2D"
+  guid "530d900b79e3c720e7d3fd1a2e906be5"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  polygoncollider2d 0.25 0.125 1 1 3 -0.5 -0.5 0.5 -0.5 0 0.5
+  trigfilter2d "Test \"value\" 7 \\ x=y" 4294967294
+  physmat2d -0.5 -0.25 1 1 0
+  colskin2d 0.25 0
+end
+gameobject 15 "CompositeCollider2D"
+  guid "0e968e883e3f50935aba4bbe488c1af6"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  compositecollider2d enabled="true" parts="Test \"value\" 7 \\ x=y" offset="0.75 0.125" isTrigger="true" layer="1" contactOffset="0.75" friction="-0.75" bounciness="-0.5" frictionCombine="1 Average" bounceCombine="1 Average" triggerTag="Test \"value\" 7 \\ x=y" triggerLayers="4294967294"
+end
+gameobject 16 "BoxCollider3D"
+  guid "ad22c6ca0895ff29b07317dcb6e5f196"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  boxcollider3d 1.75 0.625 0.25 0.25 0.125 -0.25 1 1 1
+  trigfilter3d "Test \"value\" 7 \\ x=y" 4294967294
+  physmat3d -0.25 -0.75 1 1 0
+  colskin3d 0.5 0
+end
+gameobject 17 "SphereCollider3D"
+  guid "9b4fe4dba84f32279c16f87b7e82c4de"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  spherecollider3d 0.75 0.5 0.125 -0.5 1 1 1
+  trigfilter3d "Test \"value\" 7 \\ x=y" 4294967294
+  physmat3d -0.75 -0.5 1 1 0
+  colskin3d 0.75 0
+end
+gameobject 18 "CapsuleCollider3D"
+  guid "cd59e5d7082e6002545af2b350962cd3"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  capsulecollider3d 1 2.75 2 0.5 0.125 -0.5 1 1 1
+  trigfilter3d "Test \"value\" 7 \\ x=y" 4294967294
+  physmat3d -0.75 -0.5 1 1 0
+  colskin3d 0.75 0
+end
+gameobject 19 "CylinderCollider3D"
+  guid "50e8934eeab4f5e4b2bae22f6e01df32"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  cylindercollider3d 1.25 2.25 2 0.75 0.125 -0.75 1 1 1
+  trigfilter3d "Test \"value\" 7 \\ x=y" 4294967294
+  physmat3d -0.5 -0.25 1 1 0
+  colskin3d 0.25 0
+end
+gameobject 20 "ConeCollider3D"
+  guid "af218c50b9de0da1bd6b76d8f3dd51a7"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  conecollider3d enabled="true" radius="0.75" height="1.5" axis="2 Z" offset="0.25 0.125 -0.25" isTrigger="true" layer="1" autoFit="true" contactOffset="0.5" friction="-0.25" bounciness="-0.75" frictionCombine="1 Average" bounceCombine="1 Average" triggerTag="Test \"value\" 7 \\ x=y" triggerLayers="4294967294"
+end
+gameobject 21 "ConvexHullCollider3D"
+  guid "106079beccf5432253e81629d9aec74b"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  convexhullcollider3d enabled="true" points="Test \"value\" 7 \\ x=y" offset="0.75 0.125 -0.75" isTrigger="true" layer="1" autoFit="true" contactOffset="0.25" friction="-0.5" bounciness="-0.25" frictionCombine="1 Average" bounceCombine="1 Average" triggerTag="Test \"value\" 7 \\ x=y" triggerLayers="4294967294"
+end
+gameobject 22 "PlaneCollider3D"
+  guid "f7eb51758b8cf31f964cc1983fa6cd65"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  planecollider3d enabled="true" offset="0.75 0.125 -0.75" isTrigger="true" layer="1" autoFit="true" contactOffset="0.25" friction="-0.5" bounciness="-0.25" frictionCombine="1 Average" bounceCombine="1 Average" triggerTag="Test \"value\" 7 \\ x=y" triggerLayers="4294967294"
+end
+gameobject 23 "CompoundCollider3D"
+  guid "2da95591b7aa7e835adfa35a721b2757"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  compoundcollider3d enabled="true" parts="Test \"value\" 7 \\ x=y" offset="0.5 0.125 -0.5" isTrigger="true" layer="1" autoFit="true" contactOffset="0.75" friction="-0.75" bounciness="-0.5" frictionCombine="1 Average" bounceCombine="1 Average" triggerTag="Test \"value\" 7 \\ x=y" triggerLayers="4294967294"
+end
+gameobject 24 "HeightfieldCollider3D"
+  guid "c27a9d2d54df1bb1946c27d2cff0b7e5"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  heightfieldcollider3d enabled="true" columns="3" rows="3" cellX="1.25" cellZ="1.5" heightScale="1.75" heights="Test \"value\" 7 \\ x=y" offset="0.5 0.125 -0.5" isTrigger="true" layer="1" autoFit="true" contactOffset="0.75" friction="-0.75" bounciness="-0.5" frictionCombine="1 Average" bounceCombine="1 Average" triggerTag="Test \"value\" 7 \\ x=y" triggerLayers="4294967294"
+end
+gameobject 25 "MeshCollider3D"
+  guid "552369a61094d39b0dbe2945c32b323a"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  meshcollider3d 1.75 0.625 0.25 0.25 0.125 -0.25 1 1 1
+  trigfilter3d "Test \"value\" 7 \\ x=y" 4294967294
+  physmat3d -0.25 -0.75 1 1 0
+  colskin3d 0.5 0
+end
+gameobject 26 "AudioSource"
+  guid "427f2fa4a981af0d9ab0c367d68d62e0"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  audio "assets/test/file 7.dat" 0.5 1 1 1 1.5 25.75 1.75 0.25 1 1 11000 1 1 1.75 1 0.75 800.75 1 2000.5
+end
+gameobject 27 "ParticleSystem"
+  guid "a8b535a0b0fac25c1eca4dd0ccba9df6"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  particles 20.75 301 0 2 0.5 0.5 0.75 0.5 0.75 0.25 1.625 2 0.5 -0.875 0 1234568 0.5 0.75 0.5 0.75 1 0.25 1 0.75 0.5 0.75 1 1.5 25.75 1.25 0.625 1.75 0.25 0.5 0 1 0.5 -0.25 -0.5 0.75 "assets/test/file 7.dat" 0.25 0.5 0.75 0.25 1 0.25 1 0.85 0.25 1 0.9
+  particlesfx 1 1 0.25 0.5 1.75 0.75 0.5 0.75 0.625 -0.75 0.25 0.5 1 0 0 0 0 0
+  particleswind 1.5
+end
+gameobject 28 "Mover"
+  guid "8cc0f6c1c01ac987db41373805ea1537"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  mover 0.75 0.125 -0.75 1
+end
+gameobject 29 "Spinner"
+  guid "c9979be7d89790ee3aa7971cd890a237"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  spinner 0.25 0.125 89.75 0
+end
+gameobject 30 "Lifetime"
+  guid "7c89844837817b65d17a97738a3e6207"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  lifetime 1.5
+end
+gameobject 31 "CameraFollow"
+  guid "f444698bc580daaee654c65b5c26d66d"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  camerafollow "Test \"value\" 7 \\ x=y" 0.25 0.125 -0.25 5.5
+end
+gameobject 32 "Canvas"
+  guid "b62865e3383cfdcdbd5b48303870cefa"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  canvas 0 1280.5 360.125 0.75 1.5 1 0 0.5 1 1280.25 360.125 100.5 0 1
+end
+gameobject 33 "UIPanel"
+  guid "6c7eb232c41359cd918b198f28c63523"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 0.5 0.125 200.75 60.125 0.05882353 0.31470588 0.9196078 0.75 1 10.25 0.75 0.5 0.75 0.5 0.75 1 0.019607844 0.2735294 0.9647059 0.75 1 0 0.25 1 0.75 6.5 3.125 2 0 0.75 1 0.5 0.23529412 0.60294116 0.5 0.75 1 0.5 0.75 0.5 0.75 14
+  uix pblock=1
+end
+gameobject 34 "PlayerController"
+  guid "f460d4a58502065358ffa29260461dce"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  playercontroller view=0
+  pcfirst 2 5.5 6 0.15 1 1 0 130 90 0.78 0.12 0.12 16 0 17 122 1 1 0.5 1.6 1.2 0.4 12 113 101 14 0.35 10 1 0
+  pcfirstfeel 0 8 8 1 40 0.55 0.12 1 10.5 0.75 0.9 1 1 1 0.035 9 0 0.8 8 0.12 14 0 0 7.5 0.35 0.55 18 0 0 0 0
+  pcfirststance prone=1 resize=1 crouchH=0.65 proneH=0.33 pad=1 hold=0.4 walkA=64 steer=260 dive=1 diveHop=0.25 diveSlide=0.45 capSens=0.15 capPx=220 slope=50 step=0.35 fallY=-100 swim=2.2 swimUp=2.4 swimDown=2.2 varJump=0 jumpCut=0.5 climb=2.5 hardLand=12 preset=0 stickRamp=0
+end
+gameobject 35 "PlayerView"
+  guid "ac1600e13055b8b531c92017e6fda7ec"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  playerview allow=1 view=0 key=119 pad=5 blend=0.8 ease=2 snap=1 ex=0.5 ey=0.125 ez=-0.5 dist=-0.25 shoulder=0.25 presetKeys=1
+end
+gameobject 36 "FirstPersonController"
+  guid "50508b90fd7e1cfcf688754abc9dd056"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  playercontroller view=0
+  pcfirst 2.5 6.25 6.25 0.9 0 0 1 130.75 90.25 1.53 0.37 0.62 17 1 18 123 0 1.25 1 2.35 1.45 0.9 12.75 114 102 14.75 0.6 10.5 2 1
+  pcfirstfeel 0.75 8.25 8.5 0 40.25 1.05 0.87 0 11 1.5 1.15 0 0 0 0.785 9.25 0.5 1.55 8.25 0.62 14.75 1 1 8.25 0.6 1.05 18.75 1 1 1 1
+  pcfirststance prone=0 resize=0 crouchH=1.15 proneH=1.08 pad=2 hold=0.9 walkA=64.5 steer=260.5 dive=0 diveHop=1 diveSlide=0.7 capSens=0.15 capPx=220 slope=50.25 step=0.85 fallY=-99.25 swim=2.2 swimUp=2.4 swimDown=2.2 varJump=1 jumpCut=1 climb=3.25 hardLand=12.25 preset=1 stickRamp=0.75
+end
+gameobject 37 "ThirdPersonController"
+  guid "614633ebdf7ced158164fb6e1c14511d"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  playercontroller view=1
+  pcthird 2.75 5.75 6.5 0.95 24.5 5.75 1.75 0 0 1 1 2.25 12.5 1.75 0.25 20.5 -19.5 70.75 1 130.25 90.5 1.03 0.62 0.87 0 0.55 17 1 18 123 0 1.5 1.25 0.65 1.6 12.75 114 102 12.75 0.75 10.5 2 1 20.5 10.75 0.85 0.55 0.7 4294967294 30.25 6.5
+  pcthirdstance prone=0 resize=0 crouchH=1.4 proneH=0.58000004 pad=2 hold=1.15 walkA=64.75 steer=260.75 dive=0 diveHop=0.5 diveSlide=0.95 capSens=0.2 capPx=220 slope=50.75 step=0.6 fallY=-99.5 swim=2.2 swimUp=2.4 swimDown=2.2 varJump=1 jumpCut=0.75 climb=3 hardLand=12.75 preset=1 stickRamp=0.5
+  pcthirdfeel 0.25 6.5 7.75 0 2.7 1.4 48.25 1.1 10.75 1 2 3.25 0.5 2 0 10.25 1.25 0 0 1 1 7.75 0.85 1.3 18.25 1 1 1 1 1
+end
+gameobject 38 "CharacterController2D"
+  guid "fef4836550cab9bf73b4ceb1ceaa0727"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  charctrl2d 1 5.5 9.25 8.75 #1 0.5 0.75 0 0 0 2 0 0.75 0.58 0.85 1.25 25.5 0.75 1 3 9.75 7.25
+end
+gameobject 39 "CharacterController3D"
+  guid "90baafe62bbaa7ad684d179248a62322"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  charctrl3d 5.5 6.5 0 8.75 1 60.25 55.5 1.25 0 1
+  cc3dstance crouchKey=17 proneKey=122 toggle=1 prone=1 resize=1 crouchSpeed=2.2 proneSpeed=1.1 crouchH=0.65 proneH=0.33 dive=1 diveHop=0.25 diveSlide=0.45
+end
+gameobject 40 "TopDownController"
+  guid "efcb4c27d5df3b9998f31789e1862593"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  tdctrl 5.75 8.25 #1 0 0 14.75 60.25 55.5 1 12.25 60.5 0.75 0.85 12.5 1
+  tdstance crouchKey=17 proneKey=122 toggle=1 prone=0 resize=1 crouchSpeed=2.2 proneSpeed=1.1 crouchH=0.65 proneH=0.33 dive=1 diveHop=0.25 diveSlide=0.45
+end
+gameobject 41 "TopDownController2D"
+  guid "be7afcf609f501d6ea0b1961465609cc"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  tdctrl2d 5.25 8.5 #1 0 0 0.75 0.25 #1 16.75 0.4 1.1 2 1 0.5 0 1 -99.5 -49.875 100.75 50.125 1 0.47 #1 0 12.5 5.75 "Test \"value\" 7 \\ x=y"
+end
+gameobject 42 "FreeRoamController"
+  guid "bd17ad6caa5237f9fa7401ca98c2a184"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  frctrl 8.5 3.75 17 33 100 0.4 1 1 0 -88.5 89.75 12.25 0.5 0.75
+end
+gameobject 43 "ClickToMoveController"
+  guid "545eb2b6103ed4f0528526d841944e4c"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  ctmctrl 4.75 7.25 #1 0.9 12.5 1 1 0 0 0.5 0 1.25 12.5 4.75 24.25 0.5 50.75 15.25 85.5 1.05 90.25 #1 #1 0.25 1.45 1 0 0 1.1
+  ctmstance crouchKey=0 proneKey=0 toggle=1 prone=1 resize=1 crouchSpeed=2.2 proneSpeed=1.1 crouchH=0.65 proneH=0.33 dive=1 diveHop=0.25 diveSlide=0.45
+end
+gameobject 44 "ThirdPersonShooterController"
+  guid "c93624136d1a70ccd23fea293d050187"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  tpsctrl 2.25 5.5 6.75 #17 0 0 28.5 130.25 90.5 1.03 0.87 0.37 0.93 1 -34.5 70.75 4.25 2.1 1.45 0 0.8 2 2.7 1.25 12.25 1 1 8.25 0 114 102 12.5 1.25 10.25 2 1 20.25 10.5 1.35 0.95 4294967294 30.5 6.75 0.85 64.75 260.75
+  tpsstance crouchKey=17 proneKey=122 toggle=1 prone=1 resize=1 crouchSpeed=1 proneSpeed=0.5 crouchH=0.65 proneH=0.33 dive=1 diveHop=0.25 diveSlide=0.45
+end
+gameobject 45 "TopDownShooterController"
+  guid "8fbec5724d14e597461c43b853eee263"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  tdsctrl walk=6.5 run=9.25 sprint=1 accel=70.5 decel=60.75 backpedal=1.05 camRel=1 anim=0 aimMode=0 turn=25.5 fireMode=1 fireBtn=1 fireKey=1 firePad=8 auto=0 rate=8.5 dmg=10.75 pspeed=24.25 plife=2 range=30.75 pellets=2 spread=3.5 force=4.75 bsize=0.37 bcolR=0.5 bcolG=0.6696079 bcolB=0.8235294 bcolA=0.75 muzH=1.5 muzF=1.35 mag=1 reloadKey=115 reload=1.95 autoReload=0 dashKey=33 dashPad=1 dashSpeed=16.25 dashTime=0.75 dashCd=1.35 dashInv=0 camDist=14.5 camPitch=62.75 camYaw=0.25 camDamp=10.5 lead=1.05 maxLead=4.25 zoom=0 minDist=7.75 maxDist=24.25 shake=0.56 proj="Test \"value\" 7 \\ x=y" weapon="Test \"value\" 7 \\ x=y"
+end
+gameobject 46 "Platformer25DController"
+  guid "9f2d71f6d86b6371ac71a6e6e1ed0f53"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  p25ctrl walk=5.75 run=7.75 sprint=17 accel=45.75 decel=50.25 air=1.15 anim=0 jump=0 jumpKey=33 jumpForce=9.25 jumps=2 cut=1 fallG=2.35 maxFall=22.25 coyote=0.62 buffer=0.87 layers=4 spacing=1.75 frontZ=0.5 layer=1 backKey=120 frontKey=116 switch=12.75 checkFree=0 radius=0.85 turn=14.75 faceCam=25.25 grab=0 grabKey=102 grabPad=8 reach=1.4 pull=1.4 hang=0 step=1.1 stickRun=1.15 jumpPad=1 climb=0 climbTime=1.1 camDist=10.25 camH=2.3 camPitch=8.75 lead=2.05 camDamp=6.5 vDamp=3.75 speedZoom=0.5 followLayer=1 crouchKey=18 proneKey=123 toggleStance=0 crouchSpeed=2.45 proneSpeed=1.6 allowProne=0 resize=0 crouchH=1.15 proneH=1.08 stancePad=2 proneHold=0.9
+end
+gameobject 47 "VehicleController"
+  guid "e9c199fbd528904430c068d81981ee14"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  vehicle 18.25 22.75 8.25 36.5 4.75 110.25 7.5 0.85 1.95 1 8.75 3.75 6.5 33
+  vehicletune openWorld=1 handling=1 maxSpeed=22.75 acceleration=18.25 grip=7.5 driftAmount=1 reverseSpeed=8.25 idleRpm=900.5 maxRpm=7000.75 torquePeak=0.85 gearCount=6 gearbox=1 shiftTime=0.5 engineBraking=4.5 drag=4.75 drivetrain=1 torqueSplit=0.9 diffLock=1 maxSteerAngle=32.25 steerSpeedSensitivity=1 steerResponse=7.75 autoCentre=10.25 counterSteerAssist=1 steerAssist=0 turnSpeed=110.25 brakeForce=36.5 brakeBias=0.9 abs=0 handbrakeStrength=1.5 reverseMode=1 frontGrip=1.25 rearGrip=1.5 slipLimit=22.75 handbrakeGrip=0.85 iceGrip=0.75 mudGrip=1.3 grassGrip=0.95 downforce=0.52 aeroDrag=0.1 leanAmount=1.25 antiRoll=1 tractionControl=0 stabilityControl=0.75 autoFlip=0 airControl=1 boostEnabled=0 boostPower=10.5 boostDuration=3.75 boostRecharge=0.65 steerSensitivity=1.5 inputSmoothing=10.75 deadZone=0.4 invertSteer=1 keyThrottle=120 keyBrake=116 keySteerLeft=98 keySteerRight=101 keyBoost=17 keyRecover=115 keyHorn=105 keyLights=109 keyCamera=100 keyLookBack=99 keyGearUp=121 keyGearDown=123 keyReverse=114 padHandbrake=1 padBoost=2 padRecover=5 padHorn=13 padLights=9 padCamera=14 padGearUp=8 padGearDown=7 camView=1 camFov=60.25 camSpeedFov=14.5 camSpeedDistance=3.25 camDriftSwing=0.85 camLookAhead=1 wheelBase=3.15 trackWidth=1.85 
+  vehiclesusp 1 1.2 60.75 9.25 1.1 3.15 1.85 1 16.75 9.25
+end
+gameobject 48 "VehicleSeat"
+  guid "c20477f968b0955c60b371719ec341d7"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  vehicleseat 0 0.75 0.425 -0.75 -1.55 0.125 -0.25 2.5 102 "Test \"value\" 7 \\ x=y"
+end
+gameobject 49 "VehicleController2D"
+  guid "6e9432603430c6823fe976ccb3a2b8c3"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  vehicle2d 16.75 14.25 6.5 30.75 4.25 160.5 8.75 0.95 1 33
+end
+gameobject 50 "Projectile3D"
+  guid "974c59e242c0a64dc521959a0ec88fae"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  proj3d vx=0.25 vy=0.125 vz=19.75 dmg=10.5 life=3.75 grav=0.25 force=4.5 pierce=1 bounce=1 bounces=3
+end
+gameobject 51 "MeleeAttacker"
+  guid "4549781c1f11ea4f31e07f180b514e49"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  melee 15.5 3.25 120.25 1 103 0 0.5 0.75 0.25 0.5 2 0.85 0.75 1 1.45 2.1 2.15 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 52 "RangedWeapon"
+  guid "d131a02f5285641cfe8c89b326b025f1"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  gun dmg=10.75 rate=4.25 range=30.5 mag=9 ammo=0 reload=1.7 kb=3.75 spread=0.25 hitscan=0 auto=0 fireKey=1 fireBtn=1 reloadKey=115 muz=0.5 speed=30.25 weapon="Test \"value\" 7 \\ x=y" file="Test \"value\" 7 \\ x=y" proj="Test \"value\" 7 \\ x=y"
+end
+gameobject 53 "Spawner"
+  guid "b618459b4f25491dd6572b2e72fe180f"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  spawner "Test \"value\" 7 \\ x=y" 3.75 6 1 6.75 1.25 0 2 1 0.5 0 "assets/test/file 7.dat" 1
+end
+gameobject 54 "DebrisEmitter"
+  guid "0a4d7836ecfc7811e14a8b42a1ccda87"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  debrisemitter count=13 interval=2.25 delay=0.75 smin=0.62 smax=1.05 speed=5.25 spread=1.1 cR=0.36 cG=0.525 cB=0.81 cA=0.75 max=151 life=12.5 settled=4.75 mutual=1
+end
+gameobject 55 "PhysicsSurface"
+  guid "2523295854d52e251320704fbe39db01"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  physicssurface enabled="true" material="Test \"value\" 7 \\ x=y" includeChildren="true" massFromDensity="true"
+end
+gameobject 56 "ConveyorBelt"
+  guid "3761ae29c8fdbec2b846405917b5fb8f"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  conveyorbelt enabled="true" direction="0.25 0.125 0.75" speed="2.5" grip="30.75" reach="0.6" layerMask="0"
+end
+gameobject 57 "ForceField"
+  guid "3efa0d98f2ecd9bfc73342f5d6af0c1c"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  forcefield enabled="true" mode="1 Repel" falloff="2 Inverse Square" radius="6.25" strength="25.5" coreRadius="1.35" active="false" layerMask="0"
+end
+gameobject 58 "GravityZone"
+  guid "51cf0f99891bd4e75c757cfc74e87dec"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  gravityzone enabled="true" size="6.75 3.125 5.25" gravity="0.25 -0.875 -0.25" layerMask="0"
+end
+gameobject 59 "Turntable"
+  guid "fa5fc55060a4dceaf0a6deccdb755086"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  turntable enabled="true" axis="0.25 0.625 -0.25" degreesPerSecond="90.5" rampTime="1.75"
+end
+gameobject 60 "MovingPlatform"
+  guid "8ba0f4f4a4b01925c0d6102fe824b441"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  movingplatform enabled="true" mode="1 Loop" pointCount="3" offset2="4.25 0.125 -0.25" offset3="4.5 0.125 3.5" offset4="0.75 0.125 3.25" speed="2.25" pause="1" easing="false"
+end
+gameobject 61 "Explosion"
+  guid "a0de45cfefa2efc0f07d12ac1bd00a4e"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  explosion enabled="true" force="25.75" radius="6.25" upwardBias="0.9" damage="0.75" onStart="true" delay="1.5" destroyAfter="true" layerMask="0"
+end
+gameobject 62 "Breakable"
+  guid "cd3fff646ecb9da973eba18f558d1d1a"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  breakable enabled="true" breakSpeed="6.25" pieces="3" pieceLife="6.75" burstSpeed="2.75"
+end
+gameobject 63 "Volume"
+  guid "bbc51bc0717a27d61bcf0650502640fd"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  volume kind=1 shape=1 sx=4.25 sy=1.625 sz=3.75 ox=0.5 oy=0.125 oz=-0.5 tag="Test \"value\" 7 \\ x=y" event="Test \"value\" 7 \\ x=y" kact=1 kdmg=0.75 fshape=1 fx=0.5 fy=0.625 fz=-0.5 flocal=0 fstr=12.25 fogR=0.29411766 fogG=0.5833334 fogB=0.62745094 fogA=0.75 fstart=2.75 fend=30.25 vig=0.75 blend=1 fade=1.75 rpre=1 ramt=0.5
+end
+gameobject 64 "WindZone"
+  guid "703a38e8ef169638f3a0b4f55fb1239f"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  windzone mode=2 shape=1 sx=10.5 sy=3.125 sz=9.5 ox=0.75 oy=0.125 oz=-0.75 edge=0.55 falloff=0.5 dx=0.75 dy=0.125 dz=0.25 str=5.25 gust=0.5 gfreq=0.95 gspeed=10.25 turb=0.5 tscale=0.9 seed=2 curve="Test \"value\" 7 \\ x=y" clen=20.75 prio=1 add=1
+end
+gameobject 65 "WindDrag"
+  guid "ad03d593495f1473d0d637802ac9e04b"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  winddrag area=1.25 cd=1.5 str=1.75 kids=1
+end
+gameobject 66 "WindSway"
+  guid "97344b3086cd1963997702833379616d"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  windsway weight=1 amount=1.15 height=0.25 stiff=2.5 flutter=1 fspeed=3.25 rate=20.5 dist=80.75 turn=0
+end
+gameobject 67 "WindAmbience"
+  guid "061a7dea75cdc7d90a8dbff1fb8ce91c"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  windambience vol=1 full=12.25 quiet=0.8 smooth=2.25
+end
+gameobject 68 "MusicPlayer"
+  guid "31e2ac391410784cc78fe98fb0e950da"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  music 0 1 0 2.25 0.5 0 0
+end
+gameobject 69 "LocalPlayerInput"
+  guid "376afeb8dd15a045c88f99eb84634f08"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  playerinput actions="Test \"value\" 7 \\ x=y" device=1 pad=1 scheme="Test \"value\" 7 \\ x=y" auto=0 maps="Test \"value\" 7 \\ x=y"
+end
+gameobject 70 "Collectible"
+  guid "b502f069a0f87a88d4346d0c4f9a90a0"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  collectible "Test \"value\" 7 \\ x=y" 1.5 0.75 1 5.5 "Test \"value\" 7 \\ x=y"
+end
+gameobject 71 "DamageOnTouch"
+  guid "fdaa78934187c283e547b10247ed459f"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  damagetouch 10.5 1.25 1 0.5 1 "Test \"value\" 7 \\ x=y"
+end
+gameobject 72 "Teleporter"
+  guid "5b2dd84e70b68deea742740db003a6df"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  teleporter "Test \"value\" 7 \\ x=y" 0.25 0.125 -0.25 1 "Test \"value\" 7 \\ x=y"
+end
+gameobject 73 "JumpPad"
+  guid "2e30d0a67c0671c697bff751bd162081"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  jumppad 12.25 0 0.75 0.45 "Test \"value\" 7 \\ x=y"
+end
+gameobject 74 "TriggerZone"
+  guid "f898cd483759d8b0ac338652b58f3bf4"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  triggerzone 1 "Test \"value\" 7 \\ x=y" 1.25 0 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 75 "FollowTarget2D"
+  guid "67874bb66d8f2dfb9bb8e0aecf417097"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  follow2d "Test \"value\" 7 \\ x=y" 3.75 0.25
+end
+gameobject 76 "GridPathAgent2D"
+  guid "b87219acce7ec13bb70908e8ec3bdf5b"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  gridpath2d map="Test \"value\" 7 \\ x=y" speed=3.25 stop=0.55 diag=1 smooth=1 costs=1 repath=1.25
+end
+gameobject 77 "GridCostLayer"
+  guid "f3c6b5f3a248a52f816970873aac9399"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  gridcost2d road=2 roadc=1 mud=3 mudc=4.25 extra="Test \"value\" 7 \\ x=y" cells="Test \"value\" 7 \\ x=y"
+end
+gameobject 78 "GridObstacle2D"
+  guid "7a4049752a31c92d32cb509b26ffe2ff"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  gridblock2d map="Test \"value\" 7 \\ x=y" wide=2 tall=2 block=0
+end
+gameobject 79 "Destructible"
+  guid "abdb51636f6130cdb09fd31e3ec51ee8"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  destructible "Test \"value\" 7 \\ x=y" 1.25 3 4.75 6.25 0.85 1.75 0.35 0 1.5 257 0 1.95 8.25
+end
+gameobject 80 "Draggable"
+  guid "84e7dec49c16af50cf0f63a235935765"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  draggable 1 1 1 1 0.5 1 0.25 0.5 1.75
+end
+gameobject 81 "DropZone"
+  guid "b2778d48103fb2c490b70b1a6276d5af"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  dropzone "Test \"value\" 7 \\ x=y"
+end
+gameobject 82 "Flashlight"
+  guid "4b8b60eca135225384308680b58f7ea2"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  flashlight 103 0 22.5 55.75 1.85 0.5 0.72843134 0.5803921
+end
+gameobject 83 "Joint2D"
+  guid "6bc77f8a6c951a7c1c685b301ab39ccf"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  joint2d 1 "Test \"value\" 7 \\ x=y" 0.75 0.125 1.25 0 30.75 2.25 1 50.75 1 0.5 1000.75 1 -44.5 45.75
+end
+gameobject 84 "Joint3D"
+  guid "d568edcc19d3d78077bfa857c9a2232e"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  joint3d 1 "Test \"value\" 7 \\ x=y" 0.25 0.125 -0.25 1.5 0 30.25 2.5 1 50.25 0.5 0.125 0.5 1 0.25 1000.5 1 -44.75 45.5
+end
+gameobject 85 "DayNightCycle"
+  guid "366a86a1776c7b998f1bab43e82171dd"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  daynight 120.75 8.25 1 0 0 0 1.95 0.4 0.85 0.83 0.5 0.7401961 0.5392157 0.23529412 0.5245098 0.60784316 0.23529412 0.59313726 0.5392157 0.47058824 0.5245098 0.8627451 0.015686275 0.2735294 0.9372549
+end
+gameobject 86 "Buoyancy"
+  guid "3616b5d0f8a57b8b581f7b5a50a541e0"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  buoyancy gridX=4 gridZ=4 volume=0.75 fullness=0.5 hullH=0.5 density=1.75 dfw=0.55 dfw2=0.55 dsd=1.75 dsd2=0.55 dup=6.5 dup2=1.25 angd=1.75 maxpush=120.5 tilt=0 splash=0 splashmin=1.7 points="Test \"value\" 7 \\ x=y"
+end
+gameobject 87 "BoatController"
+  guid "f8282e6d4cd928058f3cbb93568f8dd5"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  boat player=0 maxSpeed=12.75 revSpeed=4.25 power=6.5 brake=5.75 turn=55.25 steerResp=4 wake=0 bow=0 sound=0 cam=1 camDist=10.25 camH=4.5 camLerp=4.75
+end
+gameobject 88 "NavMeshAgent"
+  guid "de4870ec311fe51c671a18c59e4be355"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  navagent radius=1.15 height=2.05 speed=4 accel=8.75 angular=360.25 stop=0.7 repath=0 repathT=0.75 prio=51 avoid=3.75 brake=0 face=0 anim=0 base=0.25 mask=4294967294
+end
+gameobject 89 "NavMeshObstacle"
+  guid "a80157661f801ad32910a98927effbdb"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  navobstacle sx=1.5 sy=0.625 sz=0.5 cx=0.75 cy=0.125 cz=-0.75 shape=1 cr=0.75 ch=2.5 carve=1 still=0 tts=1 move=0.85
+end
+gameobject 90 "NavMeshModifier"
+  guid "eb59743a482ff5e0861cb00c892fc7f0"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  navmod area=1 kids=0
+end
+gameobject 91 "NavMeshLink"
+  guid "2a5d96ceb43232845444406c78f3e2db"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  navlink type=1 sx=-0.75 sy=0.125 sz=-0.25 ex=1.5 ey=0.125 ez=-0.5 both=0 cost=1.25 area=1 speed=0.75 arc=1.25
+end
+gameobject 92 "NavMeshSurface"
+  guid "40c1dcf8202fb2ec1ea3533744ccf39a"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  navsurface radius=0.9 height=2.55 slope=45.25 step=0.9 cell=1 cellh=0.45 path="assets/test/file 7.dat" autob=0 bcx=0.75 bcy=0.125 bcz=-0.75 bsx=50.25 bsy=10.125 bsz=49.75 dyn=1 layers=4294967294 bakeplay=1
+end
+gameobject 93 "NetworkObject"
+  guid "644b46b5c4493ec431af1992c29aab8e"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  netobject 1 0 "Test \"value\" 7 \\ x=y"
+end
+gameobject 94 "NetworkSync"
+  guid "e3c672f373b52ddbecbc4abf1b53b34e"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  netsync 1 0 0 "Test \"value\" 7 \\ x=y" 1
+end
+gameobject 95 "SyncVar"
+  guid "887bc2503bee1fe42f40ee3a131b5d6b"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  syncvar "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 96 "NetworkPlayerSpawner"
+  guid "c40cb985cda6ae0cdb3ce5b40edaec11"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  npspawner "Test \"value\" 7 \\ x=y" "assets/test/file 7.dat" 0.25 0.125 -0.25 2 0 65
+end
+gameobject 97 "NetworkTransform"
+  guid "2596028c8a53f8292b0465ea72cba833"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  nettransform
+end
+gameobject 98 "UIButton"
+  guid "b07ae0ea97170a72da2592561d733794"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "Test \"value\" 7 \\ x=y" 20.25 10.125 160.5 24.125 0.12941177 0.5441177 0.5098039 0.75 0.18039216 0.57549024 0.5058824 0.75 0.5 0.75 0.5 0.75 1 0.101960786 0.48921567 0.5803921 0.75 0.1 0.35980392 0.8607843 0.75 0 0 8.5 2.75 0.25 0.5 0.75 0.5 0.75 1.25 "assets/test/file 7.dat" 0.75 0.5 0.75 0.5 0.75 0.5 1 1 1.75 1 1 1.15 0.37 2 1 0 0.25 1 0.75 0.5 1.625 0.75 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" 0.75 "assets/test/file 7.dat" 1 0.25 1 0.18039216 0.57549024 0.5058824 0.75
+end
+gameobject 99 "VirtualJoystick"
+  guid "f0f18b1ab4dc82e0e8a8eeef34fe05cc"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  virtualjoystick x=40.5 y=-19.875 w=160.75 h=80.125 anchor=7 action="Test \"value\" 7 \\ x=y" floating=1 dead=0.4 touchOnly=0 fade=0 knob=0.66999996 baseR=0.09411765 baseG=0.3754902 baseB=0.8 baseA=0.75 capR=0.12941177 capG=0.5441177 capB=0.5098039 capA=0.75
+end
+gameobject 100 "TouchDPad"
+  guid "1417526bf989c28ccdd4bdaccf275f3e"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  touchdpad x=220.75 y=-19.875 w=150.25 h=75.125 anchor=7 action="Test \"value\" 7 \\ x=y" dead=0.53 diag=0 touchOnly=0 cR=0.039215688 cG=0.29705882 cB=0.92941177 cA=0.75 pR=0.12941177 pG=0.5441177 pB=0.5098039 pA=0.75
+end
+gameobject 101 "TouchButton"
+  guid "ff0300d4f53ddf0858036a4c6409ab02"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  touchbutton x=-39.75 y=-19.875 w=120.5 h=60.125 anchor=9 action="Test \"value\" 7 \\ x=y" label="Test \"value\" 7 \\ x=y" touchOnly=0 cR=0.12941177 cG=0.5441177 cB=0.5098039 cA=0.75 pR=0.078431375 pG=0.46568626 pB=0.58823526 pA=0.75 tR=0.5 tG=0.75 tB=0.5 tA=0.75
+end
+gameobject 102 "TextRenderer"
+  guid "777796e2eaf45bfbc931179483c1d02f"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Test \"value\" 7 \\ x=y" 0.5 0.75 0.5 0.75 0.85 1 12.5 6.125 1 1 0 0.25 1 0.75 1.5 0.625 1 1 0 0.25 1 0.75 1 220.75 24.125 0 1 0 0.25 1 0.75 0.75 0.25 1 1 1 1 0.23529412 0.5637255 0.5 0.75 0 0.75 1 "assets/test/file 7.dat" 1 0.52 4.75
+  uix rich=1
+end
+gameobject 103 "UIImage"
+  guid "8028fc6d034e41308b00184cad6bcaca"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiimage 20.75 10.125 128.25 64.125 0.5 0.75 0.5 0.75 "assets/test/file 7.dat" 1 1 16.75 1 1.5 0.75 1 1 1 1 0.5 0.5 0.75 0.5 0.75 14 1 0 0.25 1 0.75 6.25 3.125 0.5
+end
+gameobject 104 "UISlider"
+  guid "b653159ed8d86e7fc90dca4de48fc4f2"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uislider 20.25 10.125 200.5 12.125 1.25 0.25 1.5 0.08039216 0.34019607 0.8843137 0.75 0.12941177 0.5441177 0.5098039 0.75 0.48039216 0.7343137 0.5058824 0.75 1 3.5 1.35 1 0.5 0.75 0.5 0.75 1 0 1 2 0 0.75 1 0.23529412 0.66176474 0.5 0.75 0 "Test \"value\" 7 \\ x=y"
+end
+gameobject 105 "UIToggle"
+  guid "1fab6f5f80b520266841bc3ff18adc19"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uitoggle "Test \"value\" 7 \\ x=y" 20.5 10.125 28.75 14.125 1 0.08039216 0.34019607 0.8843137 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 1 3.25 1 0.46078432 0.7107843 0.5294118 0.75 0 12.75
+  uix rgroup="Test \"value\" 7 \\ x=y"
+end
+gameobject 106 "UIProgressBar"
+  guid "1d61da0d16211069e7c0bc1c92664a50"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiprogress 20.75 10.125 200.25 12.125 0.5 0.08039216 0.34019607 0.8843137 0.75 0.12941177 0.5441177 0.5098039 0.75 1 3.25 1 0.5 0.75 0.5 0.75 1 2 1 0.4117647 0.64215684 0.8235294 0.75 1 3.5 0.75 0.43137255 0.42647058 0.84313726 0.75 1 0.44313726 0.4107843 0.8392157 0.75 0.14117648 0.6343137 0.7490196 0.75 "Test \"value\" 7 \\ x=y"
+end
+gameobject 107 "UIInputField"
+  guid "afa27e7739e05ad1a0c1bd8efd28a746"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiinput 20.25 10.125 220.5 20.125 1 65 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" 0.08039216 0.34019607 0.8843137 0.75 1 2 6.25 0.5 0.12941177 0.5441177 0.5098039 0.75 1
+end
+gameobject 108 "UIStepper"
+  guid "aa238a4a1b41c83dd780e36d9451da6b"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uistepper 20.5 10.125 160.75 16.125 0.25 0.5 10.75 1.25 0 1 0.078431375 0.32843137 0.9019608 0.75 0.1764706 0.5245098 0.5686275 0.75 0.5 0.75 0.5 0.75 1 2 5.75 0
+end
+gameobject 109 "UIDropdown"
+  guid "ba26af25be35c7889abe21c042f52318"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uidropdown 20.75 10.125 180.25 16.125 1 1 0.08039216 0.34019607 0.8843137 0.75 0.10784314 0.37156862 0.84313726 0.75 0.05882353 0.31470588 0.9196078 0.75 0.5 0.75 0.5 0.75 0.5 0.75 0.5 0.75 3 "Option A" "Option B" "Option C" 0 "Test \"value\" 7 \\ x=y" 2 6.25 1 1 0
+end
+gameobject 110 "LoadingScreen"
+  guid "1283ced249eb22089fc826a37ea920ae"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  loadingscreen 0.023529412 0.27745098 0.9607843 0.75 0.5 0.75 0.5 0.75 0.078431375 0.32843137 0.9019608 0.75 0.1764706 0.64215684 0.78431374 0.75 0 0 3.25 0 1.1 "Test \"value\" 7 \\ x=y" "assets/test/file 7.dat" "assets/test/file 7.dat" 0 1 0.039215688 0.29705882 0.93333334 0.75 0.5 0.75 0.5 0.75 1.25 0.9 0.3529412 0.6147059 0.60784316 0.75 1.25 1.28 1.25 0.272 1.36 0.75 1 0.1764706 0.43823528 0.78431374 0.75 1 1 0.5 0.75 0.5 0.75 0.8 5.25 6.5 1.37 1 1 1 1 0 1 0.25 0.05490196 0.3127451 0.9137255 0.75 "Test \"value\" 7 \\ x=y" "assets/test/file 7.dat" 0 65
+end
+gameobject 111 "Crosshair"
+  guid "5fd635a8535b3d57963eca9f4c7ea6c9"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  crosshair 0.5 0.125 24.75 12.125 0.5 0.75 0.5 0.75 2.75 6.25 10.5 0 1 4.75 0.5 0.75 0.5 0.75 0 0 0.25 1 0.75 5 0 0 0 0 0.5 1 12.75 2.25 0.5 0.75 0.5 0.75 0.75 64.25
+end
+gameobject 112 "UIRadialProgress"
+  guid "ff0a15915a6ed6aa35de187748eda05c"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiradial 20.75 10.125 96.25 48.125 1 12.75 0.25 0 0.078431375 0.3362745 0.8901961 0.75 0.1764706 0.64215684 0.6862745 0.75 1 1 0.5 0.75 0.5 0.75 1 220.75
+end
+gameobject 113 "UIRating"
+  guid "d7070d627d39786f1633855d68a9a9de"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uirating 20.25 10.125 180.5 16.125 6 3.25 1 1 0.48039216 0.64215684 0.8627451 0.75 0.13725491 0.3872549 0.8352941 0.75 1
+end
+gameobject 114 "UIScrollView"
+  guid "3dd91fe04006a80340e47d9dd3cd7333"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiscroll 20.5 10.125 300.75 100.125 1 400.25 0.05882353 0.31470588 0.9196078 0.75 1 0.5 0 0.25 1 1
+end
+gameobject 115 "UILayoutGroup"
+  guid "0e70bce91e9f47b14507aeb95335c44c"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uilayout 1 1 20.5 10.125 8.75 0.25 4 8.75 400.25 150.125 1 1 1
+end
+gameobject 116 "UIFrame"
+  guid "3916d508b6c8b646d467cbe0d869ce38"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiframe 0.25 0.125 0.5 0.125 0.75 0.125 0.25 0.125 100.5 50.125 0.75 1.25 0.625
+end
+gameobject 117 "UIFlexItem"
+  guid "8268753f2e8836446aca1ce5e74328cd"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiflexitem 0.5 1.75 0.25 0.125 1
+end
+gameobject 118 "UIRawImage"
+  guid "72ea0beb9df7ab9805af41229f1f5290"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uirawimage 20.75 10.125 256.25 128.125 0.5 0.75 0.5 0.75 0.5 0.75 1.25 1.5 0.75 0.125 1 "assets/test/file 7.dat" 1
+end
+gameobject 119 "UIKeybindField"
+  guid "f67433376a0f1e79dc079bd937bf512e"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uikeybind 20.25 10.125 260.5 17.125 1 "Test \"value\" 7 \\ x=y" 33 33 "Test \"value\" 7 \\ x=y" 2.5 0.08039216 0.34019607 0.8843137 0.75 0.12941177 0.5441177 0.5098039 0.75 0.4509804 0.5637255 0.92156863 0.75 0.5 0.75 0.5 0.75 0 0 "Test \"value\" 7 \\ x=y" 1 0
+end
+gameobject 120 "UIDraggable"
+  guid "6f311715334e8c872b4ca98b647775de"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uidraggable 1 1 1 1 0.75 1
+  uix dragParent=1 keepOnScreen=1
+end
+gameobject 121 "UITheme"
+  guid "962645f5e08757ec43fcc00128f9235c"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uitheme name="Test \"value\" 7 \\ x=y" apply=1 preset=2 corner=16.25 mask=14 border=1.75 shadow=0 soft=18.25 ox=0.5 oy=5.125 pad=16.75 font=2.25 tpx=2.5 trans=12.75 hscale=1.29 glow=0.75 opa=0.5 grad=0 gdir=1 sheen=0 panelR=0.043137256 panelG=0.3009804 panelB=0.9254902 panelA=0.75 pbotR=0.019607844 pbotG=0.2735294 pbotB=0.9607843 pbotA=0.75 accentR=0.1764706 accentG=0.5833334 accentB=0.5 accentA=0.75 textR=0.47058824 textG=0.72843134 textB=0.5098039 textA=0.75 mutedR=0.29411766 mutedG=0.5676471 mutedB=0.6392157 mutedA=0.75 buttonR=0.1254902 buttonG=0.5088235 buttonB=0.5294118 buttonA=0.75 hoverR=0.21568628 hoverG=0.5833334 hoverB=0.5 hoverA=0.75 pressR=0.07058824 pressG=0.43823528 pressB=0.60784316 pressA=0.75 btextR=0.5 btextG=0.75 btextB=0.5 btextA=0.75 offR=0.09411765 offG=0.35588235 offB=0.8627451 offA=0.75 dangerR=0.44313726 dangerG=0.41470587 dangerB=0.8352941 dangerA=0.75 okR=0.1254902 okG=0.6343137 okB=0.7254902 okA=0.75 edgeR=0.5 edgeG=0.75 edgeB=0.5 edgeA=0.75 shR=0 shG=0.25 shB=1 shA=0.75 glowcR=0.1764706 glowcG=0.5833334 glowcB=0.5 glowcA=0.75 fcolR=0.47058824 fcolG=0.7137255 fcolB=1 fcolA=0.9019608 fthick=2 fpad=3 fpulse=0 fontPath="assets/test/file 7.dat" global=1
+end
+gameobject 122 "UIStyleVariant"
+  guid "2ca5eca60299b0f60a375b51a1b4ff97"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uivariant variant=1 vtheme="Test \"value\" 7 \\ x=y" vstyle="Test \"value\" 7 \\ x=y" vsize="Test \"value\" 7 \\ x=y" vdens="Test \"value\" 7 \\ x=y"
+end
+gameobject 123 "UIDamageNumbers"
+  guid "cb57d79b1b520a144e4a701c86387102"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uidamage dnLife=1.6 dnRise=70.75 dnGrav=0.25 dnSpread=36.5 dnSize=3.75 dnCrit=1.85 dnPop=1.85 dnMax=33 dnAtX=640.25 dnAtY=150.125 dnNormalR=0.5 dnNormalG=0.68 dnNormalB=0.85 dnNormalA=0.75 dnCritCR=0.5 dnCritCG=0.44 dnCritCB=0.9 dnCritCA=0.75 dnHealR=0.175 dnHealG=0.71000004 dnHealB=0.74 dnHealA=0.75 dnMissR=0.36 dnMissG=0.62 dnMissB=0.6 dnMissA=0.75 dnInfoR=0.275 dnInfoG=0.65 dnInfoB=0.5 dnInfoA=0.75
+end
+gameobject 124 "UIDialogueBox"
+  guid "e9556531ffae5ae1b0496fcce422e73f"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uidialoguebox dbCps=45.75 dbHide=0 dbClick=0 dbStartHidden=0
+end
+gameobject 125 "UIInventoryBind"
+  guid "c7483e5d47aa68f7c9e5ccb751c6ad7c"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiinvbind inv="Test \"value\" 7 \\ x=y" fit=0 fscale=1.75
+end
+gameobject 126 "UISearchBar"
+  guid "321d97b24ebcfe64773a3f61fedf889c"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uisearch 20.5 10.125 320.75 90.125 1 0 1 0 0 0 64 36 28 6 1 0.05490196 0.3127451 0.9137255 0.75 0.07058824 0.078431375 0.10980392 1 0.5 0.75 0.5 0.75 0.5882353 0.61960787 0.6901961 1 0.1764706 0.5441177 0.5490196 0.75 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" 3 "Apple" "Apricot" "Banana"
+end
+gameobject 127 "UIDateTimePicker"
+  guid "fc7cb3bc9f0f89ac0e9a7dd29dc7acdc"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uidate 20.75 10.125 460.25 32.125 1 2027 2 2 13 1 1901 2101 0 0 0 6 1 0.10980392 0.1254902 0.17254902 1 0.5 0.75 0.5 0.75 0.3529412 0.5882353 0.9019608 1 0.5882353 0.61960787 0.6901961 1
+end
+gameobject 128 "UIFilePicker"
+  guid "896c5683833cf7d923014fbd1b17e7ae"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uifile 20.25 10.125 320.5 110.125 1 0 1 0 0 28 26 6 1 0.10980392 0.1254902 0.17254902 1 0.5 0.75 0.5 0.75 0.3529412 0.5882353 0.9019608 1 0.5882353 0.61960787 0.6901961 1 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 129 "UIAccordion"
+  guid "53c1bef5f72fe386f1ffbc91c9a4254e"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiaccordion 20.5 10.125 320.75 110.125 1 1 1 0 0 32 40 6 1 0.10980392 0.1254902 0.17254902 1 0.18039216 0.21176471 0.28235295 1 0.5 0.75 0.5 0.75 0.6666667 0.69803923 0.7607843 1 0.3529412 0.5882353 0.9019608 1 2 "General" "Sound, picture and controls" 1 "Advanced" "Extra options" 0
+end
+gameobject 130 "UIBreadcrumbs"
+  guid "ccdfbc1fef5c780cbc4223a98a3f9112"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibreadcrumb 20.75 10.125 420.25 18.125 1 3 0 0 6 1 0.10980392 0.1254902 0.17254902 1 0.8235294 0.84705883 0.89411765 1 0.1764706 0.5441177 0.5490196 0.75 "Test \"value\" 7 \\ x=y"
+end
+gameobject 131 "UIPagination"
+  guid "d22e50d1f2e2236217bb9209cc9880e9"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipage 20.25 10.125 360.5 18.125 1 2 2 11 1 0 0 6 1 0.10980392 0.1254902 0.17254902 1 1 1 1 1 0.1764706 0.5441177 0.5490196 0.75 0.5882353 0.61960787 0.6901961 1
+end
+gameobject 132 "UISkeleton"
+  guid "984a12998fce93b700bb10456335db17"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiskeleton 20.5 10.125 320.75 48.125 1 0 4 0 0 0 0 6 1 0.10980392 0.1254902 0.17254902 1 0.11372549 0.3754902 0.84313726 0.75 0.1882353 0.45784312 0.7490196 0.75
+end
+gameobject 133 "UIBottomSheet"
+  guid "ace9230432dab295da741d975024bb02"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibsheet 20.75 200.125 360.25 110.125 8 1 0 0.5 0 0 18 480 0 0 12 1 0.0627451 0.32058823 0.90588236 0.75 1 1 1 1 0.3529412 0.5882353 0.9019608 1 0 0 0 0.54901963 "Test \"value\" 7 \\ x=y"
+end
+gameobject 134 "UIRangeSlider"
+  guid "b38a1926eee1321c5c07ea1068a8c358"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uirange 20.25 10.125 260.5 14.125 1 0.25 100.5 20.75 80.25 0.5 1 0.25 0 0 0 4 1 0.08039216 0.34019607 0.8843137 0.75 0.12941177 0.5441177 0.5098039 0.75 0.9607843 0.96862745 0.9882353 1 1 1 1 1 "Test \"value\" 7 \\ x=y"
+end
+gameobject 135 "UIAspectRatio"
+  guid "25bd7da9c7b642943b777a12a951be7c"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiaspect 2.2777777 1 0.75 1 0.75
+end
+gameobject 136 "UIInputValidator"
+  guid "de130d01d16fd9b11d6093ea898464bf"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uivalidate 1 0 1 1 1 0.5 100.75 0 0 1 0.45490196 0.41470587 0.8352941 0.75 0.34509805 0.78431374 0.50980395 1 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 137 "UIRadialMenu"
+  guid "bbbc31c367b8ce982d997a1e1c85f533"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiradialmenu 20.25 10.125 240.5 60.125 1 0.047058824 0.30490196 0.9254902 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 48.5 1 0 0 1 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 138 "UIKillFeed"
+  guid "49356b7c412d903897d0bbd48cf1dfde"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uikillfeed 20.5 10.125 240.75 60.125 1 0.047058824 0.30490196 0.9254902 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 6 6.75 0.75 26.5 0 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 139 "UIAmmoCounter"
+  guid "f261c3ad696cfae6ab0b87691f6504c9"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiammo 20.75 10.125 240.25 60.125 1 0.047058824 0.30490196 0.9254902 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 31 91 31 1 0.75 0 0 0.98039216 0.74509805 0.23529412 1 0.92156863 0.3137255 0.3137255 1 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 140 "UIInteractionPrompt"
+  guid "ebcb50ad9645f151dfe906332d046518"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiprompt 20.25 10.125 240.5 60.125 1 0.047058824 0.30490196 0.9254902 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 2.75 1 8.5 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 141 "UIObjectiveTracker"
+  guid "0ca7c74e91cd8f46bfdb17e2faee6acb"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uitracker 20.5 10.125 240.75 60.125 1 0.047058824 0.30490196 0.9254902 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 4 1 0.21568628 0.66176474 0.7254902 0.75 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 142 "UICompass"
+  guid "674777a7264d75e4757c6c4b3d0af060"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uicompass 20.75 10.125 240.25 60.125 1 0.047058824 0.30490196 0.9254902 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 0.25 120.5 0 0 0.49019608 0.64215684 0.84313726 0.75 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 143 "UIItemTooltipCard"
+  guid "af8382710d51662b172e3027123a6f42"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uicard 20.25 10.125 240.5 60.125 1 0.047058824 0.30490196 0.9254902 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 2 0 0.5 0.75 0.5 0.75 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 144 "UIAbilityIcon"
+  guid "6222fc0ba39bb3fe08ddc6aac4e6da3e"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiability 1 5.75 2 0.11764706 0.42647058 0.6862745 0.75 0.23529412 0.6813725 0.7058823 0.75 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 145 "UIBind"
+  guid "6fc6f22f4586b93ed6ee0cbd15465e3f"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uidatabind 1 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 146 "UIVisibleIf"
+  guid "2a01fe33ba0bb332b94d79e058e03b6a"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uivisible 1 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 147 "UIListBind"
+  guid "42dc2e6f34ddee2f04199e5504549419"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uilistbind "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 148 "UIHotReload"
+  guid "503b4fc409856eff271a78fde94119de"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uihotreload 1 0 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 149 "UIRichLinks"
+  guid "d5f9251cd296939682b44e128e7a8811"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uirichlinks 0 0
+end
+gameobject 150 "UIFocusHint"
+  guid "a46546280327cab0a12708336de31d9d"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uifocushint 1 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 151 "UIMenuBar"
+  guid "159f84079e4007294189d5dc3c5a0979"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uimenubar 0.75 0.125 640.25 16.125 1 0.047058824 0.30490196 0.9254902 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 2.5 0 28.75 170.25 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 152 "UIToolbar"
+  guid "ad6ed90dd482537e9573aaef62be8761"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uitoolbar 0.25 18.125 520.5 20.125 1 0.047058824 0.30490196 0.9254902 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 2 0 0 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 153 "UITreeView"
+  guid "8b83239cd0f8d9aa5087affd98fdbda0"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uitree 20.5 10.125 300.75 120.125 1 0.047058824 0.30490196 0.9254902 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 2.25 0 26.25 18.5 0 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 154 "UIDataTable"
+  guid "50ab04d7734e826d0026d78d7d9746e4"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uitable 20.75 10.125 520.25 110.125 1 0.047058824 0.30490196 0.9254902 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 2.5 0 26.25 30.5 0 0 0 0 0 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 155 "UIWizard"
+  guid "04d024009579d609d775528d45ed7798"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiwizard 20.25 10.125 640.5 180.125 1 0.047058824 0.30490196 0.9254902 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 2 0 1 0 1 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 156 "UIFormGroup"
+  guid "16737f12a349ca5904279f3b696a34cb"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiform 20.5 10.125 520.75 130.125 1 0.047058824 0.30490196 0.9254902 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 2.25 0 130.5 58.75 36.25 0 0.08039216 0.34019607 0.8843137 0.75 0.10980392 0.37156862 0.84705883 0.75 "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y" "Test \"value\" 7 \\ x=y"
+end
+gameobject 157 "UIColorSquare"
+  guid "4b453286423fb1ebc5ca60d01aff7eb0"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uicolorsquare 20.75 10.125 140.25 70.125 1 0.047058824 0.30490196 0.9254902 0.75 0.12941177 0.5441177 0.5098039 0.75 0.5 0.75 0.5 0.75 2.5 0 210.5 1 0.5
+end

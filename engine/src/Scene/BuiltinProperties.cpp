@@ -293,7 +293,9 @@ void RegisterMeshRenderer() {
      .AddBool("wireframe", &MeshRenderer::wireframe)
      .AddBool("doubleSided", &MeshRenderer::doubleSided)
      .Section("Shading")
-     .AddEnum("shader", &MeshRenderer::shader, {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet"})
+     .AddEnum("shader", &MeshRenderer::shader, {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet", "Custom"})
+     .AddAssetPath("customShader", &MeshRenderer::customShader, "shader").Tooltip("The .okayshader file the Custom shader draws with")
+     .AddString("shaderParams", &MeshRenderer::shaderParams).Tooltip("The Custom shader's property values (name=value;...)")
      .AddInt("toonBands", &MeshRenderer::toonBands).Range(1, 16).Tooltip("Cel bands for the Toon shader")
      .AddColor("gradientTop", &MeshRenderer::gradientTop).Range(0, 1, 0.01)
      .AddColor("gradientBottom", &MeshRenderer::gradientBottom).Range(0, 1, 0.01)
@@ -639,7 +641,8 @@ void RegisterParticleSystem() {
      .AddFloat("collisionY", &PS::collisionY).Range(-kBig, kBig, 0.1)
      .AddFloat("bounce", &PS::bounce).Range(0, 1, 0.01)
      .AddFloat("collisionFriction", &PS::collisionFriction).Range(0, 1, 0.01)
-     .AddFloat("collisionLifeLoss", &PS::collisionLifeLoss).Range(0, 1, 0.01);
+     .AddFloat("collisionLifeLoss", &PS::collisionLifeLoss).Range(0, 1, 0.01)
+     .AddBool("collideTerrain", &PS::collideTerrain).Tooltip("With collision on, also bounce off every Terrain in the scene (hills and slopes)");
     b.Commit();
 }
 

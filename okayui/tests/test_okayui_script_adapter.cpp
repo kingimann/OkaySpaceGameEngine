@@ -5,6 +5,8 @@
 #include "OkayUITestKit.hpp"
 #include "ScriptEditorCodeEdit.hpp"
 
+#include <cmath>
+
 using namespace scripteditor;
 namespace UI = OkayUI;
 
@@ -119,7 +121,7 @@ int main() {
         s.SetText("a\nb\nc");
         s.SetErrorMarkers({{1, "first"}, {3, "third"}, {0, "ignored"}, {-4, "ignored"}});
         const auto& m = s.Edit().Markers();
-        CHECK(m.size() == 2 && m[0].line == 0 && m[0].message == "first" && m[1].line == 2 && m[1].message == "third");
+        CHECK(m.size() == 2 && m[0].line == 0 && m[0].message == "Error at line 1: first" && m[1].line == 2 && m[1].message == "Error at line 3: third");
         s.SetBreakpoints({3, 1, 0, -2});
         CHECK((s.Edit().Breakpoints() == std::vector<int>{0, 2}));
         CHECK(s.Edit().HasBreakpoint(0) && s.Edit().HasBreakpoint(2) && !s.Edit().HasBreakpoint(1));
@@ -174,6 +176,123 @@ int main() {
         s.SetTabSize(8);
         s.SetText("\tb");
         CHECK(s.LineLength(0) == 9);
+    }
+    {   // the screen offset: the script editor draws in the window's pixels and asks in desktop coordinates (multi-window
+        // viewports). The geometry comes back with the offset added and a desktop point goes in with it taken off.
+        Rig r;
+        r.se.SetText("one\n\ttwo\nthree");
+        r.Frame(); r.Frame();
+        const UI::Vec2 o0 = r.se.ContentOrigin(), b0 = r.se.CaretScreenPosBelow();
+        const float t0 = r.se.TextStartX();
+        r.se.SetScreenOffset(160.0f, 50.0f);
+        CHECK(std::abs(r.se.ContentOrigin().x - (o0.x + 160.0f)) < 0.01f && std::abs(r.se.ContentOrigin().y - (o0.y + 50.0f)) < 0.01f);
+        CHECK(std::abs(r.se.TextStartX() - (t0 + 160.0f)) < 0.01f);
+        CHECK(std::abs(r.se.CaretScreenPosBelow().x - (b0.x + 160.0f)) < 0.01f && std::abs(r.se.CaretScreenPosBelow().y - (b0.y + 50.0f)) < 0.01f);
+        const float cx = r.se.TextStartX() + 3.0f * r.se.CharWidth() + 1.0f, cy = r.se.ContentOrigin().y + 2.5f * r.se.RowHeight();
+        CHECK(r.se.ScreenToCoords(cx, cy) == Coord(2, 3));
+        CHECK(r.se.ScreenToCoords(cx - 160.0f, cy - 50.0f) == Coord(0, 0));   // a point in window pixels is not where it looks
+    }
+    {   // the code font: JetBrains Mono, monospaced, at the size asked for; the window's own font and text scale are put back
+        Rig r;
+        UI::UseLauncherLook(true);                  // the editor's look: a proportional UI font (Roboto)
+        r.se.SetText("iiii\nWWWW\nint count = 42;");
+        r.Frame(); r.Frame();
+        const float uiCell = r.se.CharWidth();
+        const UI::Vec2 uiI = UI::CalcTextSize("iiii"), uiW = UI::CalcTextSize("WWWW");
+        CHECK(std::abs(uiI.x - uiW.x) > 4.0f);      // the UI font is not monospaced: a cell grid drifts with it
+        CHECK(ScriptEditorCodeEdit::CodeFont() != nullptr);
+        CHECK(r.se.UseCodeFont(20.0f));
+        CHECK(r.se.Edit().CodeFont() == ScriptEditorCodeEdit::CodeFont());
+        r.Frame(); r.Frame();
+        const float cell = r.se.CharWidth();
+        // JetBrains Mono: advance 600 units, ascent + descent 1320 units; a 20 px line (OkayUI and Dear ImGui size a font by that
+        // height) makes a cell 20 * 600 / 1320 = 9.09 px
+        CHECK(std::abs(cell - 20.0f * 600.0f / 1320.0f) < 0.05f && std::abs(cell - uiCell) > 0.5f);
+        CHECK(std::abs(r.se.RowHeight() - std::floor(20.0f * 1.55f + 0.5f)) < 1.01f);   // a line is 20 px times the line spacing
+        // the text of a run of i and of W are the same width in the code font: measure with the font set, as Draw does
+        {
+            const UI::Font* prev = UI::GetFont();
+            UI::SetFont(ScriptEditorCodeEdit::CodeFont());
+            UI::PushTextScale(20.0f / 16.0f);
+            const float wi = UI::CalcTextSize("iiii").x, ww = UI::CalcTextSize("WWWW").x, w0 = UI::CalcTextSize("0000").x;
+            UI::PopTextScale();
+            UI::SetFont(prev);
+            CHECK(std::abs(wi - ww) < 0.01f && std::abs(w0 - 4.0f * cell) < 0.05f);
+        }
+        // after the Draw the window's font and size are what they were
+        r.sim.Frame([&] {
+            if (UI::Begin("W", 10, 10, r.sim.W - 20, r.sim.H - 20, &r.open)) {
+                const UI::Font* f0 = UI::GetFont();
+                const float a = UI::CalcTextSize("Hello").x, h = UI::GetTextLineHeight();
+                r.se.Edit().Draw("ed", 500, 300);
+                CHECK(UI::GetFont() == f0 && std::abs(UI::CalcTextSize("Hello").x - a) < 0.01f && std::abs(UI::GetTextLineHeight() - h) < 0.01f);
+            }
+            UI::End();
+        });
+        // a click lands on the cell under the pointer in the code font: the 3rd character of line 2 ("t" of "int")
+        UI::Vec2 p = r.se.Edit().PosToScreen(UI::CodePos{2, 2});
+        r.sim.Move(p.x + cell * 0.2f, p.y + r.se.RowHeight() * 0.5f); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+        CHECK(r.se.GetCursorPosition() == Coord(2, 2));
+        UI::UseLauncherLook(false);
+    }
+    {   // the script's language from the Dear ImGui editor's words: a Lua-like one with "--" and "--[[ ]]" comments
+        ScriptEditorCodeEdit s;
+        LanguageWords w;
+        w.keywords = {"local", "function", "end"};
+        w.types = {"Vector3"};
+        w.known = {"print", "Vector3"};
+        w.lineComments = {"--"};
+        w.blockStart = "--[["; w.blockEnd = "]]";
+        s.SetLanguage(w);
+        s.SetText("local x = print(1) -- note\nprint\n--[[ block\nstill ]] local y = Vector3\na.print = 1\n");
+        std::vector<UI::CodeToken> t;
+        auto colorAt = [&](int line, int col) { s.Edit().LineTokens(line, t); for (const UI::CodeToken& k : t) if (col >= k.start && col < k.end) return (int)k.color; return (int)UI::CodeColor_Default; };
+        CHECK(colorAt(0, 0) == UI::CodeColor_Keyword);
+        CHECK(colorAt(0, 10) == UI::CodeColor_Function);                 // print( : the call colour, as the ImGui editor
+        CHECK(colorAt(0, 22) == UI::CodeColor_Comment);                  // -- note
+        CHECK(colorAt(1, 0) == UI::CodeColor_Known);                     // a bare built-in
+        CHECK(colorAt(2, 4) == UI::CodeColor_Comment && colorAt(3, 2) == UI::CodeColor_Comment);   // the block comment spans lines
+        CHECK(colorAt(3, 9) == UI::CodeColor_Keyword);                   // after its end: code again
+        CHECK(colorAt(3, 19) == UI::CodeColor_Type);                     // a type before a known name
+        CHECK(colorAt(4, 2) == UI::CodeColor_Member);
+        s.SetColorizerEnable(false);
+        CHECK(colorAt(0, 0) == UI::CodeColor_Default);
+        s.SetColorizerEnable(true);                                      // back on: the same language, not OkayScript
+        CHECK(colorAt(0, 22) == UI::CodeColor_Comment && colorAt(0, 0) == UI::CodeColor_Keyword);
+        s.SetUserTypes({"Enemy"});                                       // the script's own classes on top of its language
+        s.SetText("Enemy e; -- x");
+        CHECK(colorAt(0, 0) == UI::CodeColor_Type && colorAt(0, 10) == UI::CodeColor_Comment);
+    }
+    {   // the Dear ImGui editor's palette
+        ScriptEditorCodeEdit s;
+        unsigned pal[kImGuiPaletteSize];
+        for (int i = 0; i < kImGuiPaletteSize; ++i) pal[i] = 0xff000000u | (unsigned)(i + 1);
+        s.SetPaletteFromImGui(pal, kImGuiPaletteSize);
+        const UI::CodePalette& p = s.Edit().Palette();
+        CHECK(p.text[UI::CodeColor_Default] == pal[0] && p.text[UI::CodeColor_Keyword] == pal[1] && p.text[UI::CodeColor_Number] == pal[2]);
+        CHECK(p.text[UI::CodeColor_String] == pal[3] && p.text[UI::CodeColor_Char] == pal[4] && p.text[UI::CodeColor_Punct] == pal[5]);
+        CHECK(p.text[UI::CodeColor_Preproc] == pal[6] && p.text[UI::CodeColor_Known] == pal[8] && p.text[UI::CodeColor_Comment] == pal[10]);
+        CHECK(p.text[UI::CodeColor_Type] == pal[21] && p.text[UI::CodeColor_Function] == pal[22] && p.text[UI::CodeColor_Member] == pal[23]);
+        CHECK(p.background == pal[12] && p.gutter == pal[12] && p.caret == pal[13] && p.selection == pal[14] && p.errorLine == pal[15]);
+        CHECK(p.breakpointLine == pal[16] && p.lineNumber == pal[17] && p.currentLine == pal[18] && p.currentLineInactive == pal[19]);
+        CHECK(p.currentLineEdge == pal[20]);
+        const UI::CodePalette before = s.Edit().Palette();
+        s.SetPaletteFromImGui(pal, 5);                                   // too short: ignored
+        CHECK(s.Edit().Palette().background == before.background);
+        s.SetPaletteFromImGui(nullptr, kImGuiPaletteSize);
+        CHECK(s.Edit().Palette().background == before.background);
+    }
+    {   // markers: "warning: " messages are amber, the tooltip names the line like the ImGui editor's
+        ScriptEditorCodeEdit s;
+        s.SetText("a\nb\nc\n");
+        s.SetErrorMarkers({{2, "unknown name 'b'"}, {3, "warning: unused variable"}});
+        const auto& m = s.Edit().Markers();
+        CHECK(m.size() == 2);
+        if (m.size() == 2) {
+            CHECK(m[0].line == 1 && m[0].lineColor == 0 && m[0].message == "Error at line 2: unknown name 'b'");
+            CHECK(m[1].line == 2 && m[1].lineColor == UI::RGBA(200, 150, 40, 55) && m[1].color == UI::RGBA(230, 190, 70));
+            CHECK(m[1].message == "Warning at line 3: unused variable");
+        }
     }
     TEST_MAIN_RESULT();
 }

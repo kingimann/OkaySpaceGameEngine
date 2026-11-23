@@ -7,6 +7,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 ## 1. Core & scene
 
 ### 1.1 Loop and time
+- **System:** Game Loop and Time - Runs the game frame by frame and keeps the clock: frame time, time speed, pause and quit.
 - **What:** The game loop and the global clock: how a frame starts, how long it lasted, how fast time runs, whether the game is paused or asked to quit, plus the seedable random generator, UTF-8 helpers, timers you poll and the save snapshot of the clocks. Three passes are on main: #579 (one frame driver, `GameLoop`, named clocks, hit stop, pause and quit reasons, random extras), #581 (frame stepping, capture, recording, statistics) and #585 (the player on `GameLoop`, cooldowns, clock ramps, time snapshot, loop console).
 - **Parts:**
   - 1.1.1 Main loop - `Core/Application` - `Application::Run` is a thin loop on `GameLoop`; the terminal is closed by a destructor so a throwing component no longer leaves it raw; `Config::maxDelta`, `fixedStep`, `maxFixedSteps`, `catchExceptions`, `app.loop()`, `ExitCode()`; `Config::pacing` is `Pacing::Sleep` (default) or `Pacing::Limiter` (uses `FrameLimiter`, 1.18.7); options set on `loop()` before `Run` (capture, frame budget, statistics window) now stand; defaults to the console renderer (`sandbox/main.cpp`); the player and the editor's Play mode each run their own `GameLoop` (1.1.6)
@@ -38,6 +39,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Pause freezes the timers but my menu animation should keep running, which time do I use?"; "Add a seeded random so the loot rolls are the same on every run"; "Freeze the game for 80 ms when the player is hit"; "Give the weapon a 0.25 s cooldown"; "Switch the editor's Play mode to GameLoop"
 
 ### 1.2 Timers and tweens
+- **System:** Timers and Tweens - Does something after a delay or every few seconds, and slides a value smoothly from one number to another.
 - **What:** Do something after a delay, every N seconds, or animate a value over time with easing, from C++, scripts or the Inspector; timers can follow a named clock and die with the object they act on, eases can be written as text, any property can be tweened and springs follow a moving target.
 - **Parts:**
   - 1.2.1 Scene scheduler - `Core/Scheduler` - `Invoke`, `InvokeRepeating`, `Tween(duration, onUpdate, onComplete)`; options for unscaled time, tag, owner, clock and object; Cancel, CancelByTag/Owner/Object, SetPaused, SetPausedByTag/Owner, SetInterval, Remaining, CountByTag; safe to call from inside a callback; elapsed time kept in double; a backlog runs at most `kMaxCatchUp` (4096) times per update; a throwing callback drops only its own task (the first exception is rethrown after the update)
@@ -65,6 +67,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Make the door slide open over half a second with an ease-out"; "Cancel every timer tagged `wave` when the player dies"; "Tween this light's intensity by name"; "Make the menu slide ignore the pause"
 
 ### 1.3 Scene graph
+- **System:** Scenes and Objects - Holds every object in a level with its position, parent and parts, runs their start and update steps, and checks a level for mistakes.
 - **What:** The object model: a Scene owns GameObjects, each with a Transform and components; layers and tags classify them and a layer matrix decides which colliders interact. Deep hierarchies (a 100000-deep parent chain), the Transform and spawn API, and the project tag and layer lists were hardened and extended in #586.
 - **Parts:**
   - 1.3.1 Scene container - `Scene/Scene` - create, find, instantiate, destroy objects; sibling order; `FindObjectsOfType`; `Instantiate` overloads (position and rotation, parent, `worldPositionStays`), `Duplicate` (same parent and local pose, `UniqueName` "Cube (1)"), `DestroyImmediate`, `WorldBounds(go, includeChildren)`, `FindGameObjectsWithName/OnLayer`, `CountWithTag/OnLayer`, `UnlistedTags`, `ReplaceTag`; per-scene `renderSettings`, physics worlds, `fixedTimeStep`, `mainCamera`, scheduler and tween manager
@@ -88,6 +91,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Stop layer 3 colliding with layer 4"; "Why does `SetParent` change the child's local position?"; "Name layer 8 Enemy and save it with the project"; "Duplicate the selected child under the same parent"
 
 ### 1.4 Scene lifecycle
+- **System:** Scenes and Objects
 - **What:** What happens when objects are created, switched on and off, destroyed and when scenes are loaded, replaced, added next to each other or streamed in over several frames.
 - **Parts:**
   - 1.4.1 Start and enable events - `Scene/Scene`, `Scene/Component` - Start waits until a component is enabled on an active object; OnEnable/OnDisable alternate and are delivered at the start of the next frame
@@ -102,31 +106,32 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Editor:** View > Panels > Scene Manager (`editor/SceneManagerPanel.*`); Build Settings edits the same list (15.7)
 - **Docs:** `docs/engine/scene_management.md`, `docs/gameplay/making_a_game.md`
 - **Tests:** `scene_lifecycle`, `scenemanager`, `scene_load`, `scene_load_pool`
-- **Status:** Works - merged in #558 and #570; read `Scene.cpp` (Update order) and `SceneManager.hpp`; but no loading-screen component, editor or player code calls `LoadSceneAsync`, `ObjectPool` or `RequireComponent` yet (grep finds no caller)
-- **Open:** wire async load into the Loading Screen component (12.8); since #575 unload runs OnDisable/OnDestroy for every awakened component, `Scene::LastLoadError()` keeps the reason a load failed and `ActiveIndex` moves only after a successful load (1.17)
+- **Status:** Works - merged in #558 and #570; read `Scene.cpp` (Update order) and `SceneManager.hpp`; the Loading Screen component's `asyncLoad` calls `SceneManager::LoadSceneAsyncByName` (re-checked 2026-11-22, `Components/LoadingScreen.hpp`); the Spawner, `Lifetime`, `Projectile3D`, `DebrisPool` and the script `pool_*` calls use `ObjectPool` (1.13)
+- **Open:** no editor or engine caller of `RequireComponent` outside tests (grep); since #575 unload runs OnDisable/OnDestroy for every awakened component, `Scene::LastLoadError()` keeps the reason a load failed and `ActiveIndex` moves only after a successful load (1.17)
 - **Related:** 1.5, 1.13, 12.8, 15.7
 - **Words:** SceneManager, LoadScene, build list, scenes in build, async load, additive, unload, DontDestroyOnLoad, Awake, Start, OnEnable, OnDisable, RequireComponent, loading screen, scene manager, object pool, object pooling, Scene Manager panel
 - **Seen as:** loading a scene crashes or loses things; Start runs before the object is ready; the loading bar jumps from 0 to 100; an object survives (or does not survive) a scene change
 - **Ask me like:** "Load Level2 in the background and show progress, then switch"; "Keep the music player alive across scenes"
 
 ### 1.5 Scene serializer
+- **System:** Scene Files - Writes a level to a readable text file and reads it back, and copies or merges objects.
 - **What:** Reads and writes the human-readable `okayscene` text format (version 3), clones objects, merges scenes and records what a round trip keeps.
 - **Parts:**
   - 1.5.1 Save and load - `Scene/SceneSerializer` - `Serialize`, `SaveToFile`, `Deserialize`, `LoadFromFile`; `kSceneFormatVersion = 3`; packed (obfuscated) files are unpacked on read
   - 1.5.2 Safe loading - `Scene/SceneSerializer` - all-or-nothing: a bad or cut-short file leaves the live scene untouched; counts are bounded; records from a newer build are skipped with warnings
   - 1.5.3 Merge and chunks - `Scene/SceneSerializer` - `MergeFromText/File` adds a scene next to the host, roots offset, objects tagged with `sourceScene`
   - 1.5.4 Stable ids and flags - `Scene/SceneSerializer` - `guid`, `sibling` order, `active`, per-component `compoff` records (see docs/engine/scene_serializer.md)
-  - 1.5.5 Component serializer registry - `Scene/ComponentSerializer` - register a record name with a writer and reader instead of growing the long if/else chain; `trailrenderer` is the first user
+  - 1.5.5 Component serializer registry - `Scene/ComponentSerializer` - register a record name with a writer and reader instead of growing the long if/else chain; `trailrenderer` is the first user; `RegisterFromProperties(type)` saves a component from its `PropertyRegistry` entry as named `key=value` fields (reorder-safe, unknown keys skipped with a warning), so a new component needs no branch: `checkpointtrigger`, `timeddestroy`, `netavatarmotion` use it
   - 1.5.6 Asset path collection - `Scene/SceneSerializer` - `CollectAssetPaths` lists the textures, sounds and files a scene needs so Build Game can copy them
   - 1.5.7 Canonical text - `Scene/SceneText` - (#578) a tolerant parser of scene and prefab text that never builds a Scene; `SceneText::Canonicalize` gives equal scenes equal text (layout, number spelling, record order, object numbering) and leaves anything it does not understand alone; knows the `gravity3` record since #582; helper sources `engine/src/Scene/SceneTextDetail.*`
   - 1.5.8 Structural diff - `Scene/SceneDiff` - (#578) `SceneDiff::Compute/Apply`: added, removed, modified objects, renames, reparents, per-record and per-field changes, as text or JSON (see 28.2)
   - 1.5.9 Three-way merge - `Scene/SceneMerge` - (#578) `SceneMerge::Merge(base, ours, theirs)` with policies Mark, PreferOurs, PreferTheirs and a conflict report; the merged text always loads (see 28.4)
   - 1.5.10 Format migration - `Scene/SceneMigration` - (#578) `MigrateToCurrent`, a registry of `N -> N+1` steps, `MigrateThroughEngine` for upgrades that need component classes (see 25.3)
 - **Code:** `Scene/SceneSerializer`, `Scene/ComponentSerializer`, `Scene/SceneText`, `engine/src/Scene/SceneTextDetail.*`, `Scene/SceneDiff`, `Scene/SceneMerge`, `Scene/SceneMigration`
-- **API:** `SceneSerializer::Serialize`, `SceneSerializer::LoadFromFile`, `SceneSerializer::MergeFromFile`, `ComponentSerializerRegistry::Register`, `SceneLoadJob`, `SceneText::Canonicalize`, `SceneDiff::Compute`, `SceneMerge::Merge`, `SceneMigration::MigrateToCurrent`
+- **API:** `SceneSerializer::Serialize`, `SceneSerializer::LoadFromFile`, `SceneSerializer::MergeFromFile`, `ComponentSerializerRegistry::Register`, `ComponentSerializerRegistry::RegisterFromProperties`, `SceneLoadJob`, `SceneText::Canonicalize`, `SceneDiff::Compute`, `SceneMerge::Merge`, `SceneMigration::MigrateToCurrent`
 - **Editor:** File menu Save/Open (15.9); the same serializer feeds undo snapshots, copy/paste and prefab files; no window uses the text tools (1.5.7-1.5.10) yet
 - **Docs:** `docs/engine/scene_serializer.md`, `docs/engine/prefabs.md`, `docs/engine/scene_diff_merge.md`
-- **Tests:** `serialize`, `scene_safe_load`, `scene_records`, `scene_ids_prefabs`, `parent_cycles`, `assets`, `scene_canonical`, `scene_diff`, `scene_merge`, `scene_migration` (they share `tests/scene_text_testkit.hpp`, a seeded random scene generator)
+- **Tests:** `serialize`, `registry_serializer`, `scene_safe_load`, `scene_records`, `scene_ids_prefabs`, `parent_cycles`, `assets`, `scene_canonical`, `scene_diff`, `scene_merge`, `scene_migration` (they share `tests/scene_text_testkit.hpp`, a seeded random scene generator)
 - **Status:** Works - merged in #553 and #570; read `SceneSerializer.hpp` and `ComponentSerializer.*`; the long `SceneSerializer.cpp` still carries most components in one if/else chain; covered by the tests below; the text tools of #578 are library code with tests that include random-scene and fuzz cases (per docs and test names). Every component instance on an object is saved and loaded, in stored order (two colliders, two lights, two sprites, and the rest); a file with one of each is unchanged, and an older file still loads
 - **Open:** file splitting (19.4); #575 added `ValidateFile`, shortest-round-trip floats and `gravity3` (1.17); no editor or command-line use of the diff, merge, canonical and migration tools (28)
 - **Related:** 1.4, 1.6, 1.14, 15.9, 19.4, 28
@@ -135,6 +140,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Add my new component to the scene file without touching the big chain"; "Keep two colliders on one object through save and load"
 
 ### 1.6 Prefabs and templates
+- **System:** Prefabs - Saves an object as a reusable file you can place many times; changing the file changes every copy.
 - **What:** Reusable objects saved as `.okayprefab` files and the starter worlds, players and UI screens the editor creates from templates.
 - **Parts:**
   - 1.6.1 Prefab files - `Scene/SceneSerializer` - `SaveObjectToFile`, `InstantiateFromFile`, `Instantiate`; an instance remembers `prefabSource`
@@ -155,33 +161,37 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Docs:** `docs/engine/prefabs.md`, `docs/engine/prefabs.md`, `docs/engine/prefabs.md`, `docs/gameplay/making_a_game.md`, `docs/process/templates_check.md`
 - **Tests:** `instantiate`, `templates`, `templates_work`, `scene_cameras`, `scene_defaults`, `prefab_nested`, `prefab_variants`, `prefab_apply_revert`, `prefab_editor`, `prefab_mode`
 - **Status:** Partial - prefab files, override data, nested prefabs and variants work as library code and the editor shows and edits them (1.6.10; tests `prefab_editor`); prefab mode edits a prefab on its own and saves it to every instance (1.6.11; test `prefab_mode`)
-- **Open:** the old override unit is a whole record, `PrefabTools::Diff` goes per field but falls back to whole records for unknown ones; objects added under an instance are kept by `PrefabTools::Reapply` (which `ReapplyPrefab` uses for nested and variant prefab files and prefab mode uses), but the older wave 1 `ReapplyPrefab` path that plain prefab files still take drops them (`docs/engine/prefabs.md` Limits)
+- **Open:** the old override unit is a whole record, `PrefabTools::Diff` goes per field but falls back to whole records for unknown ones. Fixed 2026-11-22: `ReapplyPrefab` on a plain prefab file (no nested prefab, no variant) dropped the objects added under the instance; every file now goes through `PrefabTools::Reapply`, which keeps them (test `scene_ids_prefabs`, suite "re-apply keeps objects added under a plain prefab instance")
 - **Related:** 1.5, 12.7, 15.2, 21
 - **Words:** prefab, okayprefab, instantiate, override, template, starter, platformer template, player template, UI template, Slate, EnsureSceneCamera, nested prefab, prefab variant, PrefabTools, unpack, apply to prefab, revert override
 - **Seen as:** prefab changes don't apply to instances; a template scene has no camera or starts dark; an instance lost its colour change after re-apply
 - **Ask me like:** "Re-apply the prefab but keep this instance's colour"; "Add a Wave Shooter template next to Platformer"
 
 ### 1.7 Saves and prefs
+- **System:**
+  - Save Games - Saves a player's progress in named slots (with checkpoints, versions and checksums) and remembers settings between runs. Code: `Core/SaveFramework`, `Core/SaveFrameworkScene`, `Core/SaveFrameworkSync`, `Core/GameSaves`, `Core/SaveData`, `Core/Prefs`
+  - Whole-Scene Save - The older save slots that capture the whole scene into a `.okaygame` file - being merged into Save Games (PR #1132) Code: `Core/SaveGame`, `Components/AutoSave`
 - **What:** Player progress and settings on disk: whole-game save slots, an Easy-Save-style typed key/value store, and a simple preferences bag.
 - **Parts:**
-  - 1.7.1 Save slots - `Core/SaveGame` - `SaveGame::Save/Load/LoadNow/List/Info/Delete`, versioned and checksummed `<slot>.okaygame`, `.bak` fallback, migration hook, size caps
+  - 1.7.1 Save slots - `Core/SaveGame` - `SaveGame::Save/Load/LoadNow/List/Info/Delete`: the save framework's whole-scene mode, `<slot>.okayslot` in the framework's store (one store since 2026-11-22, Grok #422 item 1); older `<slot>.okaygame` files still load, list and count for Continue; `.bak` fallback, migration hook, size caps
   - 1.7.2 Typed save files - `Core/SaveData` - `SaveFile` and the `Save` facade: float, int, bool, string, Vec3 keys per file, `BaseDir`, safe relative paths, escaped on disk
   - 1.7.3 Prefs - `Core/Prefs` - global string-backed bag (`SetInt/GetInt`, floats, strings), typed `SetBool`, `SetVec3`, `SetColor` and change listeners (`AddListener`, #571), `Save(path)/Load(path)`; also holds audio, video and accessibility settings
-  - 1.7.4 Autosave component - `Components/AutoSave` - saves a slot every N seconds and/or when the scene starts
-  - 1.7.5 Save framework - `Core/SaveFramework`, `Core/SaveFrameworkScene`, `Core/SaveFrameworkSync` - (#572) saveable objects and `SaveSystem::CaptureScene/ApplyScene`, `<slot>.okayslot` slots with headers, quick save, autosave ring, checkpoints, migrations, sync hooks and a slot menu model; separate from `SaveGame` (see 35); `Countdown`/`Cooldown` and `TimeSnapshot` (1.1.14, 1.1.15) save through its `SaveWriter`/`SaveReader`
+  - 1.7.4 Autosave component - `Components/AutoSave` - saves a slot every N seconds and/or when the scene starts (a kind "auto" slot in the framework's store)
+  - 1.7.5 Save framework - `Core/SaveFramework`, `Core/SaveFrameworkScene`, `Core/SaveFrameworkSync` - (#572) saveable objects and `SaveSystem::CaptureScene/ApplyScene`, `<slot>.okayslot` slots with headers, quick save, autosave ring, checkpoints, migrations, sync hooks and a slot menu model; `SaveGame` is its whole-scene capture mode (`SaveCaptureOptions::wholeScene`, see 35); `Countdown`/`Cooldown` and `TimeSnapshot` (1.1.14, 1.1.15) save through its `SaveWriter`/`SaveReader`
 - **Code:** `Core/SaveGame`, `Core/SaveData`, `Core/Prefs`, `Components/AutoSave`, `Core/SaveFramework`, `Core/SaveFrameworkScene`, `Core/SaveFrameworkSync`
 - **API:** `SaveGame::Save`, `SaveGame::List`, `Save::SetInt`, `Save::GetString`, `Prefs::SetInt`, `AutoSave`, script `save()` and `save_game`
 - **Editor:** AutoSave component in the Inspector (editor/main.cpp); no save-slot UI components yet (12.8)
 - **Docs:** `docs/engine/save_games.md`, `docs/engine/save_games.md`, `docs/engine/localization.md`
-- **Tests:** `save_game`, `durable_saves`, `savedata`, `prefs`, `prefs_misc`, `save_framework`, `save_scene`, `loc_prefs_time`
+- **Tests:** `save_game`, `durable_saves`, `savedata`, `prefs`, `prefs_misc`, `save_framework`, `save_scene`, `save_merge`, `loc_prefs_time`
 - **Status:** Works - atomic writes, escaping and checksums merged in #552 (read `SaveGame.hpp`); `Prefs` is a thin string bag read by the player at start and saved at exit (`player/main.cpp`)
-- **Open:** the save framework (#572, area 35) has no scene-file record, component or editor window yet, so no game uses it, and it keeps its own slot format next to `SaveGame` (nothing converts between them); loading a slot replaces the default Save file's keys (documented); no cloud backend behind the sync hooks
+- **Open:** loading a whole-scene slot replaces the default Save file's keys (documented); no cloud backend behind the sync hooks; an older `.okaygame` slot is not exported by `SaveStore::ExportRaw` (sync) until it is saved, copied or renamed once
 - **Related:** 1.14, 12.8, 35, 7.4
 - **Words:** SaveGame, save slot, okaygame, SaveData, Save, Easy Save, Prefs, PlayerPrefs, autosave, checkpoint, load menu, backup, migration, save game, save file, SaveManager, checkpoint, quick save, Saveable, slot header, okayslot
 - **Seen as:** progress lost; corrupt save refuses to load; a save from a newer version is rejected; settings reset on restart
 - **Ask me like:** "Show a load menu listing every slot with its play time"; "Keep unlocks across slots"
 
 ### 1.8 Localization
+- **System:** Localization - Shows the game's text in the player's language, with tools to edit, import and preview translations.
 - **What:** Player-facing text in several languages: a string table, language choice, fallbacks, `{0}`/`{name}` and plural formatting, and scene text that follows the language.
 - **Parts:**
   - 1.8.1 String table - `Core/Localization` - `StringTable` keys by languages with translator notes, `.okayloc` and CSV formats, completion per language
@@ -203,6 +213,9 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Add Polish plural rules"; "Why does the Japanese menu show squares?"
 
 ### 1.9 Events and ECS
+- **System:**
+  - ECS World - A second, data-only object store for very many simple things, mirrored into the scene and the network - duplicate of Scenes and Objects (kept on purpose: opt-in, mirrors objects through `SceneBridge`; no merge planned) Code: `ECS/World`, `ECS/Systems`, `ECS/SceneBridge`, `ECS/NetWorld`, `ECS/NetWorldSync`
+  - Core Utilities Code: `Core/EventBus`
 - **What:** A typed publish/subscribe event bus and a small data-oriented ECS that lives beside the GameObject scene, with a bridge that draws ECS entities as GameObjects and a networked world.
 - **Parts:**
   - 1.9.1 Event bus - `Core/EventBus` - `Subscribe<E>`, `Publish`, scoped subscription handle; safe when handlers subscribe, unsubscribe or publish during a publish
@@ -218,13 +231,16 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Docs:** -
 - **Tests:** `eventbus`, `ecs`, `core_audit`, `ecs_commands`
 - **Status:** Works - read the headers; `eventbus` and `ecs` tests are thorough, but it is opt-in library code: nothing in the engine, editor or player uses `EventBus` or the ECS (grep finds no consumer)
-- **Open:** possible bug: `SceneBridge` keeps raw `GameObject*` and dereferences them on the next sync if something else destroyed the object (core_audit_notes); #571 added the command buffer, safe `World::each`, delta snapshots with ack and the `EventBus` extras (docs `docs/engine/ecs.md`, `docs/engine/core_tools.md`)
+- **Open:** the old note that `SceneBridge` keeps raw `GameObject*` is out of date: it keeps instance ids and re-creates a lost object (`respawnLost`, re-checked 2026-11-22 in `ECS/SceneBridge.hpp`); #571 added the command buffer, safe `World::each`, delta snapshots with ack and the `EventBus` extras (docs `docs/engine/ecs.md`, `docs/engine/core_tools.md`)
 - **Related:** 16.3, 1.3
 - **Words:** EventBus, event, publish, subscribe, ECS, entity, component pool, World, system, SceneBridge, NetWorld, snapshot, replication, event bus, command buffer, delta snapshot, ack, SubscribeOnce, event priority
 - **Seen as:** a handler still runs after it unsubscribed; an ECS unit does not show on screen; the client's ECS world differs from the server's
 - **Ask me like:** "Use the ECS for 5000 bullets and draw them through the bridge"; "Send only changed components to clients"
 
 ### 1.10 Logging and profiling
+- **System:**
+  - Logging - Writes messages for developers (info, warnings, errors) to log files and shows them in the editor Console and diagnostics panels. Code: `Core/Log`, `editor/ConsolePanel.*`, `Debug/ConsoleModel`, `Debug/DebugUtil`, `Debug/Debug`
+  - Profiler - Measures where each frame's time and memory go, on the CPU and the GPU, so slow parts can be found. Code: `Core/Profiler`, `Debug/FrameHistory`, `Debug/GpuTimer`, `Debug/RenderStats`, `Debug/MemoryTracker`, `Debug/MemoryHooks`, `Debug/DrawCallRecorder`, `Debug/DebugStatsOverlay`
 - **What:** Messages for developers (levels, categories, file output) and a frame profiler with a scrubbable history and trace export.
 - **Parts:**
   - 1.10.1 Log - `Core/Log` - Trace/Info/Warning/Error, per-category levels, `Log::Configure("info,net=trace")` and `$OKAY_LOG`, timestamps, thread-safe lines, `Log::sink` hook
@@ -246,6 +262,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Turn on trace logging for net only"; "Export the last 240 frames to chrome://tracing"
 
 ### 1.11 Asset manager
+- **System:** Asset Manager - Loads each file from disk once, shares it, loads in the background and reloads it when the file changes.
 - **What:** A central registry for files loaded from disk: typed handles with reference counts, one cache key per file, background loading and hot reload.
 - **Parts:**
   - 1.11.1 Handles and caching - `Core/AssetManager` - `AssetHandle<T>`, `Get<T>(path)`, weak cache freed with the last handle, failed loads never cached
@@ -267,27 +284,30 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Load the boss music in the background and tell me when it is ready"; "Reload textures when I save them"
 
 ### 1.12 Asset database
+- **System:** Asset Database - Gives every asset a permanent ID, remembers its import settings and what uses what, and makes its thumbnail.
 - **What:** The data layer an asset browser sits on: stable GUIDs in `.okaymeta` files (or in memory for an asset that has none yet), move tracking, a dependency graph, typed import settings, thumbnails and a search query. The Project panel is built on it.
 - **Parts:**
   - 1.12.1 GUIDs and meta files - `Core/AssetDatabase` - `Scan`, `Guid`, `.okaymeta` sidecars, `MoveAsset`, rename and duplicate handling, orphan reports, labels; `ScanOptions::indexUnmetaed` (index assets that have no meta in memory, write nothing), `EnsureMeta`, `Folders()` (every folder walked, empty ones too), `Revision()` (moves only when the index changed)
   - 1.12.2 Dependency graph - `Core/AssetDatabaseDeps` - extractors for scenes, prefabs, materials and text assets; `DependenciesOf`, `UsedBy`, `BuildClosure`, `FindUnused`, `FindMissing`, `FixStaleReferences`
   - 1.12.3 Import settings - `Core/ImportSettings` - typed texture, model and audio settings with versions and migration; reimport signal
+  - 1.12.4 Live picture reload - `Render/TextureCacheFiles`, `editor/ProjectBrowser` - `Browser::TakeChangedFiles` (files the scan saw change on disk, new import settings, every hand Reimport) and `InvalidateTextureCacheForFile` (every texture-cache key that names the file, relative or absolute): a picture repainted in another program or reimported is shown changed in the Scene view within one poll, with a Console line
   - 1.12.4 Thumbnails - see 1.20 (`Core/ThumbnailCache` is its own sub-area)
   - 1.12.5 Search and paging - `Core/AssetDatabaseSearch` - filter, sort and page query with per-type counts
   - 1.12.6 Shared helpers - `Core/AssetDatabaseInternal` - private utilities used by the three database sources
-- **Code:** `Core/AssetDatabase`, `Core/AssetDatabaseDeps`, `Core/AssetDatabaseSearch`, `Core/AssetDatabaseInternal`, `Core/ImportSettings`
+- **Code:** `Core/AssetDatabase`, `Core/AssetDatabaseDeps`, `Core/AssetDatabaseSearch`, `Core/AssetDatabaseInternal`, `Core/ImportSettings`, `Render/TextureCacheFiles`
 - **API:** `AssetDatabase::Scan`, `AssetDatabase::BuildClosurePaths`, `AssetDatabase::Search`, `Guid`, `ImportSettings`
 - **Editor:** Project panel (`editor/ProjectBrowser.*`: listing, search, filters, counts, folder tree, info strip, Find References, Show Dependencies, tags, broken-reference badge, Broken References list with Fix)
 - **Docs:** `docs/engine/asset_database.md`, `docs/editor/project_panel.md`
-- **Tests:** `asset_database`, `project_panel`, `project_panel_db`
+- **Tests:** `asset_database`, `project_panel`, `project_panel_db`, `texture_reimport`
 - **Status:** Partial - the Project panel reads the listing, search, dependency graph, labels and import settings from it; no importer reads `srgb`, `compress` or the audio settings, scenes still store paths, the build/export code does not call it
-- **Open:** importers reading the remaining settings; GUID references inside scene files (the panel rewrites paths on rename and move); build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no operating-system file watcher (the panel polls the incremental scan every 2 s or more); an asset has a `.okaymeta` only after it is given a tag or import settings, so its GUID is session-long until then
+- **Open:** importers reading the remaining settings; GUID references inside scene files (the panel rewrites paths on rename and move); build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no operating-system file watcher (the panel polls the incremental scan every 2 s or more, and a changed picture reloads on that poll); a changed model file is not reloaded into the open scene (only pictures are; audio was not checked); an asset has a `.okaymeta` only after it is given a tag or import settings, so its GUID is session-long until then
 - **Related:** 1.11, 1.20, 20, 15.4, 18.1
 - **Words:** AssetDatabase, GUID, meta file, okaymeta, dependency, import settings, unused assets, missing assets, asset browser, reference, closure
 - **Seen as:** moving a file in the project loses its texture in scenes; the build ships unused files or misses one; a Project panel row without a type or a wrong Used By count
 - **Ask me like:** "List every asset nothing references"; "Which scenes use `hero.png`?"
 
 ### 1.13 Object pooling
+- **System:** Core Utilities
 - **What:** Reuse spawned objects (bullets, sparks, pickups) instead of creating and destroying them each time.
 - **Parts:**
   - 1.13.1 Pool source - `Scene/ObjectPool` - `SetPrefabFile` or `SetTemplate` captured once; the template can be destroyed afterwards
@@ -295,17 +315,18 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.13.3 Pool statistics - `Scene/ObjectPool` - `IdleCount`, `ActiveCount`, `CreatedCount`, `ReuseCount` for tuning the pre-warm size
 - **Code:** `Scene/ObjectPool`
 - **API:** `ObjectPool`, `ObjectPool::Get`, `ObjectPool::Release`, `ObjectPool::Prewarm`
-- **Editor:** none
+- **Editor:** Inspector > Spawner > **Use Pool** (with made / reused / waiting counts during Play)
 - **Docs:** `docs/engine/scene_management.md`
-- **Tests:** `scene_load_pool`
-- **Status:** Partial - merged in #570 and tested; no component, script builtin or editor option uses it yet (grep)
-- **Open:** a script builtin and a no-code Spawner option; resetting Rigidbody velocities is each component's job
+- **Tests:** `scene_load_pool`, `object_pool_audit`
+- **Status:** Works - merged in #570; the Spawner's `usePool` (Inspector **Use Pool**, added 2026-11-22: the field was saved but had no Inspector box), `Lifetime`, `Projectile3D` and `DebrisPool` use it, and scripts have `pool_get`, `pool_release`, `pool_prewarm` and `pool_idle`. Fixed 2026-11-22: the script `pool_*` calls skipped the file gate `spawn` uses, so a script could load a prefab from outside the game folder (test `object_pool_audit`, suite "script pool calls refuse prefab files outside the game folder")
+- **Open:** resetting Rigidbody velocities is each component's job (`OnPoolReuse`); no visual-script nodes for the pool calls
 - **Related:** 1.4, 11.6
 - **Words:** ObjectPool, pool, pooling, Get, Release, Prewarm, bullet pool, reuse, object pool
 - **Seen as:** a frame hitch when many bullets spawn; a reused bullet keeps its old speed or state
 - **Ask me like:** "Pool 64 bullets and reset their velocity on reuse"
 
 ### 1.14 Data assets and data packs
+- **System:** Data Assets - Small data files for game content (stats, tables), packed and lightly scrambled in shipped games.
 - **What:** Small data files for game content (`.okaydata` fields) and light obfuscation of shipped data so players cannot casually read or edit it.
 - **Parts:**
   - 1.14.1 Data asset - `Core/DataAsset` - ordered key/value fields saved as `.okaydata`, cached load with `Reload/Invalidate`, read from OkayScript (`data_num`, `data_str`)
@@ -323,6 +344,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Store enemy stats in a data asset"; "Pack the scene so players can't edit it"
 
 ### 1.15 Display settings
+- **System:** Display Settings - The window mode, monitor, resolution, refresh rate, vsync and quality preset a player can choose.
 - **What:** The Settings screen's window mode, monitor, resolution, refresh rate, vsync and the Low/Medium/High quality preset.
 - **Parts:**
   - 1.15.1 Settings values - `Core/DisplaySettings` - window mode, resolution, refresh, monitor, VSync, Quality (0-2), `Generation()` bumps on every Set so hosts know to apply; stored in Prefs as `video.*`
@@ -341,10 +363,11 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Add a Ultra quality level with soft shadows"
 
 ### 1.16 Localization tools
+- **System:** Localization
 - **What:** The editor side of localization: the string-table grid, CSV import and export, language preview, pseudo-localization and finding where a key is used.
 - **Parts:**
   - 1.16.1 Localization window - `editor/LocalizationWindow.*` - grid of keys by languages, inline edit with undo, completion bars, search and missing/unused filters, Find in Scene
-  - 1.16.2 CSV and build copy - `editor/LocalizationWindow.*` - Import/Export CSV for translators; Build Game copies the table and the fonts the languages name
+  - 1.16.2 CSV, JSON and build copy - `editor/LocalizationWindow.*`, `editor/LocalizationTools` - **Import...** (CSV or JSON: the whole table or one language named by its file, `fr.json`) with an **Import Translations** confirm box listing what would be filled, changed, cleared and added before anything changes (`PlanLocImport`); **Export CSV...** and **Export JSON...**; Build Game copies the table and the fonts the languages name
   - 1.16.3 Preview language - `editor/LocalizationWindow.*` - toolbar language menu and pseudo-localize switch; the scene follows in Scene and Game views
   - 1.16.4 Inspector helpers - `editor/LocalizationWindow.*` - `LocalizedTextField`, `LocKeyInput`, `LocalizedSwitch` for Pause Menu, Hold Prompt and Loading Screen
   - 1.16.5 Table model, checker, scanner and previews - `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`, `Core/LocPreview`, `editor/LocalizationTools` - (#574) cell states, CSV and JSON, placeholder and plural checks, a scan for used, unused and undefined keys, pseudo-localization and mirrored-text previews; the Localization window calls them (31.1, 31.3)
@@ -354,14 +377,15 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Editor:** View > Editors & Tools > Localization; toolbar language menu next to Build
 - **Docs:** `docs/engine/localization.md`, `docs/engine/localization.md`
 - **Tests:** `localization`, `loc_tools`, `loc_window`
-- **Status:** Partial - the window draws the `LocTable` grid, the `LocCheck` / `LocMissingReport` list, the `LocScanProject` unused and undefined keys, and a `LocPreview` line (pseudo-locale and mirrored right-to-left text). JSON in the window, a confirm step before CSV import, and the font coverage report are still out.
-- **Open:** JSON import and export in the window, a confirm step before CSV import, the font coverage report, and right-to-left layout (the window shows a mirrored preview of the selected key; the Scene view does not mirror). Accessibility text scaling is area 32.
+- **Status:** Partial - the window draws the `LocTable` grid, the `LocCheck` / `LocMissingReport` list, the `LocScanProject` unused and undefined keys, and a `LocPreview` line (pseudo-locale and mirrored right-to-left text); since 2026-11-22 it imports and exports JSON and shows what an import would change before applying it (test `loc_window`). The font coverage report is still out.
+- **Open:** the font coverage report, and right-to-left layout (the window shows a mirrored preview of the selected key; the Scene view does not mirror). Accessibility text scaling is area 32.
 - **Related:** 1.8, 31, 32, 15.6
 - **Words:** Localization window, translation table, CSV import, pseudo-localize, language preview, Find in Scene, missing key, translators, LocTable, LocCheck, LocScan, LocPreview, placeholder check, caption manager
 - **Seen as:** a translated text is cut off; unused keys pile up; a language shows empty cells
 - **Ask me like:** "Export the table to CSV for the translator"; "Show me every key missing in French"
 
 ### 1.17 Scene hierarchy, search and validation
+- **System:** Scenes and Objects
 - **What:** Hierarchy-aware active state, finding objects by path or by component in children, a native fixed-step hook, load errors, and a validator that reports missing assets, unknown components and broken links. Merged in #575 (2.850.0). The scene diff, merge and migration libraries behind it are in 1.5.
 - **Parts:**
   - 1.17.1 Hierarchy-aware active - `Scene/GameObject`, `Scene/Scene` - `GameObject::ActiveInHierarchy()` is true only when the object and every parent are active; Update, LateUpdate, Render, collider auto-fit, 2D picking, all four renderers and both physics worlds skip a child of an inactive parent, and OnDisable/OnEnable follow
@@ -383,28 +407,30 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Validate this scene before the build"; "Find the object at Level/Arena/Enemy"
 
 ### 1.18 Core runtime utilities
+- **System:** Core Utilities - Small shared helpers used everywhere: command line, console variables, paths, jobs on several threads, events, object pools and IDs.
 - **What:** Small building blocks the rest of the engine and a game's own code lean on, with no scene or renderer needed: command-line parsing, console variables and commands, paths, build info, stopwatch, state machine, a job system, memory arenas and pools, generational handles, hashed string ids and frame pacing helpers. Merged in #571 (2.849.0) and #578 (2.850.0).
 - **Parts:**
-  - 1.18.1 CLI, console and cvars - `Core/CommandLine`, `Core/Console`, `Core/Cvar`, `Core/DebugOverlay` - (#571) `CommandLine` flag and value parser (the player uses it, `player/main.cpp`); typed console variables (`Cvars::Int/Bool`, range, persistence, `OnChange`) and a command registry (`Console::Register/Execute`, history, completion); `DebugOverlay` builds the FPS and object-count lines, switched by the `debug.overlay` cvar; no in-game console window calls them yet
+  - 1.18.1 CLI, console and cvars - `Core/CommandLine`, `Core/Console`, `Core/Cvar`, `Core/DebugOverlay` - (#571) `CommandLine` flag and value parser (the player uses it, `player/main.cpp`); typed console variables (`Cvars::Int/Bool`, range, persistence, `OnChange`) and a command registry (`Console::Register/Execute`, history, completion); `DebugOverlay` builds the FPS and object-count lines, switched by the `debug.overlay` cvar; `Core/ConsoleHost` (the typed line with history and Tab completion, `--cvar NAME=VALUE`, the standard cvars `game.speed`, `r.vsync`, `debug.show_fps`, `debug.profile` and the `prof.save` / `prof.sections` commands) is what the hosts call: the player's backquote console (development builds, `--console` or `OKAY_CONSOLE=1`; drawn over the frame, runs `LoopConsole` on the run's GameLoop; without it a shipped game ignores `--cvar` with one warning; `r.vsync` is for the run only, never saved) and the editor Console panel's command line (Dear ImGui panel only; the Play loop's `time.*` commands)
   - 1.18.2 Paths, build info, stopwatch, state machine - `Core/Paths`, `Core/BuildInfo`, `Core/Stopwatch`, `Core/StateMachine` - (#571) per-platform data, config, cache and log folders and an asset base folder with listeners; version, compiler and platform strings; a real-clock or game-clock stopwatch (`Stopwatch::OnClock(name)` follows a named `Clock`, 1.1.14); a small enter/update/exit state machine
   - 1.18.3 Job system - `Core/Jobs` - (#578) `JobSystem::Global()`, `Submit` with dependencies and priorities, `ParallelFor`/`ParallelReduce`, main-thread queue (`RunOnMainThread`, `PumpMainThread`), cancel and shutdown, counters; 0 workers runs everything inline (WebGL builds without threads); threads and locks sit behind `engine/src/Core/CoreThreads.hpp`
   - 1.18.4 Memory arenas and pools - `Core/Memory` - (#578) `FrameArena` (per-frame bump allocator with a limit, `Mark/Rewind`), `PoolAllocator<T>` with stable addresses, `AllocStats`; header only
   - 1.18.5 Handles and slot maps - `Core/SlotMap` - (#578) `Handle<T>` (index plus generation) and `SlotMap<T>` so a stale handle gives nullptr instead of a dangling pointer; header only
   - 1.18.6 String ids - `Core/StringId` - (#578) `StringId` 64-bit FNV-1a hashes, the `_sid` literal, `Intern` with collision reporting
   - 1.18.7 Frame pacing - `Core/FramePacing` - (#578) `ClampFrameDelta`, `FrameTimer`, `FrameLimiter` (sleeps out the rest of a frame, a steady grid); `Application::Config::pacing = Pacing::Limiter` uses `FrameLimiter` (#585; the default is still `Pacing::Sleep`); the player and the editor do not call it, and `GameLoop::maxDelta` (1.1) applies the same clamp rule
-- **Code:** `Core/CommandLine`, `Core/Console`, `Core/Cvar`, `Core/DebugOverlay`, `Core/Paths`, `Core/BuildInfo`, `Core/Stopwatch`, `Core/StateMachine`, `Core/Jobs`, `Core/Memory`, `Core/SlotMap`, `Core/StringId`, `Core/FramePacing`, `engine/src/Core/CoreThreads.hpp`
-- **API:** `CommandLine`, `Cvars::Int`, `Console::Register`, `Console::Execute`, `DebugOverlay::BuildLines`, `Paths::UserDataDir`, `BuildInfo::Version`, `Stopwatch`, `StateMachine<S>`, `JobSystem::Global`, `JobSystem::Submit`, `ParallelFor`, `FrameArena`, `PoolAllocator<T>`, `SlotMap<T>`, `Handle<T>`, `StringId`, `_sid`, `FrameLimiter`
+- **Code:** `Core/CommandLine`, `Core/Console`, `Core/Cvar`, `Core/ConsoleHost`, `Core/DebugOverlay`, `Core/Paths`, `Core/BuildInfo`, `Core/Stopwatch`, `Core/StateMachine`, `Core/Jobs`, `Core/Memory`, `Core/SlotMap`, `Core/StringId`, `Core/FramePacing`, `engine/src/Core/CoreThreads.hpp`
+- **API:** `CommandLine`, `Cvars::Int`, `Console::Register`, `Console::Execute`, `ConsoleInput`, `consolehost::ApplyCvarArgs`, `DebugOverlay::BuildLines`, `Paths::UserDataDir`, `BuildInfo::Version`, `Stopwatch`, `StateMachine<S>`, `JobSystem::Global`, `JobSystem::Submit`, `ParallelFor`, `FrameArena`, `PoolAllocator<T>`, `SlotMap<T>`, `Handle<T>`, `StringId`, `_sid`, `FrameLimiter`
 - **Editor:** none (the player parses its command line with `CommandLine`; `editor/main.cpp` has no console window on these)
 - **Docs:** `docs/engine/core_tools.md`, `docs/engine/core_runtime.md`
-- **Tests:** `core_cli`, `core_console`, `jobs`, `arena_handles`, `frame_pacing`, `core_audit`
-- **Status:** Works - merged and tested (`jobs` repeats its threaded suites; read `docs/engine/core_runtime.md` and `docs/engine/core_tools.md`, the .cpp files were not read in depth); but only `CommandLine` has a caller outside tests (`player/main.cpp`); `Console`, `Cvars`, the job system, arenas, handles and `StringId` are opt-in library code
-- **Open:** the runtime branch's own second console-variable registry was deliberately dropped: `Core/Cvar` is the only one (read-only, cheat and restart-required flags are a follow-up for `Cvar`); no hook of `JobSystem` stats into the Profiler window; no work stealing (one shared queue, per docs); `SlotMap` and `FrameArena` are not thread safe by design; `Application` does not use `FrameLimiter` yet
+- **Tests:** `core_cli`, `core_console`, `jobs`, `jobs_adoption`, `arena_handles`, `frame_pacing`, `core_audit`
+- **Status:** Works - merged and tested (`jobs` repeats its threaded suites; read `docs/engine/core_runtime.md` and `docs/engine/core_tools.md`, the .cpp files were not read in depth); the job system runs the engine's own work through `EngineJobs()` (Global unless `SetEngineJobs` picks another): the 2D and 3D physics bounding-box pass (scenes of 256 colliders or more), CPU skinning across `SkinnedMesh` instances (batches of 8192 vertices or more; about 3x faster with 4 workers at 200 x 2,000 vertices), `AssetManager` background decodes and `NavMeshSurface::StartBake`; `jobs_adoption` checks 0 and 4 workers give bit-identical poses and vertices (Linux only; not run on Windows). `CommandLine`, `Console`, `Cvars` and `LoopConsole` have callers outside tests (`player/main.cpp`, `editor/ConsolePanel.cpp`, test `console_host`; the player console and the editor command line were not run on Windows); arenas, handles and `StringId` are opt-in library code
+- **Open:** the runtime branch's own second console-variable registry was deliberately dropped: `Core/Cvar` is the only one (read-only, cheat and restart-required flags are a follow-up for `Cvar`); no hook of `JobSystem` stats into the Profiler window; physics pair testing and solving, culling, the software rasteriser and the other raw `std::thread` uses (networking, audio, OkayScript coroutines) do not use the job system yet; the parallel bounding-box pass is about 1% of a physics step, so 4 workers gave no measurable gain at 2,000 or 8,000 bodies (the serial path costs the same as before); 3D Classic is not bit-for-bit repeatable from run to run (about 2% of process runs, also on main, so `jobs_adoption` can fail that check now and then); no work stealing (one shared queue, per docs); `SlotMap` and `FrameArena` are not thread safe by design; `Application` does not use `FrameLimiter` yet
 - **Related:** 1.10, 1.1, 8, 18, 23
 - **Words:** CommandLine, console command, cvar, console variable, Paths, BuildInfo, Stopwatch, StateMachine, job system, JobSystem, ParallelFor, thread pool, arena, FrameArena, PoolAllocator, SlotMap, Handle, generational handle, StringId, string hash, FrameLimiter, frame limiter, FPS cap
 - **Seen as:** no way to pass options to the player; no in-game console; a stale handle crashes; a loop over thousands of items is slow on one thread; save folder differs per platform
 - **Ask me like:** "Add a `--windowed` flag to the player"; "Run the particle update on all cores with ParallelFor"; "Cap the frame rate with the FrameLimiter"
 
 ### 1.19 Property reflection
+- **System:** Property Registry - Lets tools read, change and watch any component setting by its name; undo, live editing and saving use it.
 - **What:** A property registry so tools, undo and live editing can read, write and watch a component's fields by name (`Light.intensity`) without knowing its C++ type. Merged in #578 (2.850.0).
 - **Parts:**
   - 1.19.1 Values and descriptors - `Scene/Properties` - `PropertyValue` (Bool, Int, Float, String, Vec2, Vec3, Vec4, Quat, Color, Enum, AssetPath, ObjectRef) with an exact text round trip; `PropertyDesc` with range, enum options, tooltip, group and flags (ReadOnly, RuntimeOnly, Derived, Structural); a refused value leaves the component untouched
@@ -417,15 +443,16 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **API:** `PropertyRegistry::GetProperty`, `SetProperty`, `SetPropertyFromText`, `AddChangeHook`, `ScopedHookSuppression`, `SnapshotProperties`, `DiffProperties`, `PropertyBuilder<T>`, `PropertyValue`, `PropertyDesc`, `RegisterBuiltinProperties`
 - **Editor:** none (nothing in the editor, the serializer, undo or prefab code calls it; the tween engine is the only caller)
 - **Docs:** `docs/engine/properties.md`
-- **Tests:** `property_registry`
+- **Tests:** `property_registry`, `registry_serializer` (coverage gate: every component class in the engine headers is registered or listed in `tests/registry_known_gaps.inc`, which only shrinks)
 - **Status:** Partial - the registry, builder and built-in registrations are on main (#578) with a cross-check against the scene serializer (per docs: all 325 stored properties pass); the tween engine (`DOTween::Property`) is the only consumer so far
-- **Open:** not registered yet: controllers, scripts, the other UI widgets, navigation, networking; animation and IK components are left to Grok's work; mesh geometry, particle curves and collider point lists are deliberately not properties; possible doc inconsistency: `docs/engine/properties.md` says the scene writer prints six significant digits but #575 writes the shortest exact float (`SceneSerializer.cpp` uses `std::to_chars`); subclass components need their own registration (matching is by exact type)
+- **Open:** 125 component classes are still not registered (the list is `tests/registry_known_gaps.inc`, checked by `registry_serializer`; scripts, inventory, survival, terrain, voxel, spline, tilemap, animation and IK among them); only three types save through the generic record so far, every other one keeps its hand-written record; mesh geometry, particle curves and collider point lists are deliberately not properties; possible doc inconsistency: `docs/engine/properties.md` says the scene writer prints six significant digits but #575 writes the shortest exact float (`SceneSerializer.cpp` uses `std::to_chars`); subclass components need their own registration (matching is by exact type)
 - **Related:** 15.2, 22, 34, 21.4, 1.5, 14
 - **Words:** reflection, property registry, PropertyRegistry, PropertyBuilder, PropertyValue, property path, change hook, serialize field, inspector fields, snapshot, diff
 - **Seen as:** each component needs hand-written Inspector and serializer code; a value edited in Play cannot be kept; undo cannot say what changed
 - **Ask me like:** "Register my component's fields once and get an Inspector for free"; "Set Light.intensity by name from a script"
 
 ### 1.20 Asset thumbnails
+- **System:** Asset Database
 - **What:** A cache that returns a small picture for any asset, so an asset browser can show a grid; edited files never show a stale picture.
 - **Parts:**
   - 1.20.1 Cache layers - `Core/ThumbnailCache` - least-recently-used memory layer (`maxEntries`, `maxBytes`) and an optional folder of PNGs keyed by GUID, content hash, size and a tag; `Invalidate`, `Clear`, `ClearDisk`, `GetStats`

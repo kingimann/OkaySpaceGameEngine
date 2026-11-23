@@ -1,5 +1,106 @@
 OkaySpace Game Engine — Changelog
 
+v2.903.2
+  Console and ledge grab
+  - In-game console: press the ` key (the key left of 1) in a development
+    build, or start the game with --console or OKAY_CONSOLE=1. Type
+    commands with history and Tab to complete them. Settings you can change
+    while playing: game.speed, r.vsync, debug.show_fps, debug.profile, and
+    prof.save to save a profile. A shipped game keeps the console off.
+  - The editor's Console panel has the same command line.
+  - Ledge grab: the character's hands now go onto the ledge.
+  - Saves: one save system instead of two. Whole-game saves and slot saves
+    share the same files and code, so a save made one way loads the other
+    way, and several save bugs (lost data, a stuck "restoring" state) are
+    fixed.
+  - Controls: rebinding a key in the game's settings now changes it
+    everywhere (actions and action sets share one set of bindings).
+  - Script editor: popups draw over it, line numbers in a frame, the
+    current line outlined, copy and paste with the system clipboard, and
+    typing in other languages (IME).
+  - Xbox: a pending save is written before the console suspends the game,
+    a splash screen, French, German, Swedish/Finnish and Russian keyboards.
+  - Model files: our own readers for glTF 1.0, OpenGEX, Quake/Half-Life
+    MDL and Quake III maps, and our own PNM image reader (off by default
+    in this version; the next version turns them on).
+  - Also in 2.903.1 (missing from its notes):
+    - Xbox: saves and settings are kept, the game saves properly before it
+      is suspended, rumble stops on suspend, pad battery level, the d-pad
+      reaches text fields, on-screen keyboard, and a message box with the
+      reason when the game fails to start.
+    - Try it (off by default): OKAY_PLATFORM_BACKEND=own runs the launcher
+      on our own window and drawing code instead of SDL.
+
+v2.903.1
+  Fixes, custom shaders and a working release
+  - 2.902.0 and 2.903.0 could not become the "latest" download because one
+    part of the release (the Linux game server) failed to build. Fixed, so
+    the updater offers this version.
+  - Custom shaders: write your own surface look in a small .okayshader
+    file and pick Shader > Custom on a material. Works in the software and
+    OpenGL renderers; Direct3D 11 is written but not yet tested on Windows.
+  - Controller: the B button no longer quits the game, unplugging a pad no
+    longer crashes, menus work with a pad only, and rumble stops properly.
+  - Cameras: the camera no longer sinks into basements, other players'
+    copies no longer move your camera, and dolly and fly-camera fixes.
+    Click-to-move can pick colliders and gives up when stuck; dolly carts
+    can move in metres per second, ping-pong and face along the path.
+  - Import: no crash on folders whose names look like model files, the
+    Scene view reloads pictures you change outside the editor, and a failed
+    import says why. Project upgrade writes a report of what changed.
+  - Health, survival stats, stats and NPCs now take damage the same way.
+  - Re-applying a prefab keeps objects you added to it. Localization can
+    import and export JSON with a preview. Spawner has a "Use Pool" box.
+  - Launcher: the Create page lists only your projects, not the backup
+    copies a project upgrade makes.
+
+v2.903.0
+  Interact key and dialogue cameras
+  - One Interact key (E, or X on a controller) for seats, item pickups,
+    "hold to use" prompts, buttons, dialogue and visual-script interact
+    events. Changing the Interact binding changes it for all of them.
+  - First-person lean right is now X instead of E, so E is free for
+    Interact. Old scenes keep the lean key they saved.
+  - Someone who dies while sitting now gets up from the seat.
+  - Dialogue lines can switch to camera shots, and the camera returns when
+    the talk ends.
+  - Fixed: a fast object made of several collider shapes could fall
+    through thin floors, and the same 3D scene could play out slightly
+    differently from one run to the next.
+  - .dds texture files and compressed imported textures now load on the
+    GPU (OpenGL and Direct3D 11), and BC3-compressed colours are correct.
+  - Changing a key in the Controls screen now changes it for the built-in
+    player, shooter, platformer and vehicle controllers and the pause menu
+    too. With the default keys nothing changes.
+  - Fixed: with depth of field on, the sky could turn black when the
+    camera clears to a colour or the sky is off.
+  - Depth of field and ambient occlusion strength now also work in the
+    software renderer.
+  - Particles can land on terrain: Particle System > Collision > "Collide
+    with Terrain".
+  - Fixed: particles with a huge or endless emission rate froze the game;
+    the edge of a raised terrain sloped down to zero; scattered plants
+    ignored "Align to Surface"; a damaged water setting crashed loading;
+    star settings were lost or not reset by the sky looks.
+  - Faster character animation: with several CPU cores, skinning many
+    characters is about 3 times faster. Results are exactly the same.
+  - Try it (off by default): Settings > Experimental > "OkayUI own
+    renderer" draws our own UI screens with our own renderer on OpenGL and
+    Direct3D 11.
+
+v2.902.0
+  Fixes and faster model import
+  - FBX models import faster and use less memory, and every UV set is read.
+  - OGRE models (.mesh.xml) now find their skeleton file and animate.
+  - Fixed: objects switched off under a parent stay off when the parent is
+    switched back on.
+  - Fixed: lights under a switched-off parent now go dark.
+  - Fixed: resizing a terrain no longer stops sculpting from working.
+  - Fixed: animation clips played backwards once now end properly, and
+    particles can be replayed.
+  - Fixed: the editor could crash when closing.
+  - The new collider shapes are sturdier.
+
 v2.901.0
   Cameras and smoother animation
   - Camera zones: areas where the camera smoothly changes its view angle,

@@ -36,10 +36,15 @@ if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
     # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release/release_channels.md "Test builds").
     add_test(NAME dev_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/dev_index.py --self-test)
+    # The systems list (docs/SYSTEMS.md) made by scripts/gen_feature_map.py: temp folders only.
+    add_test(NAME gen_feature_map_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_gen_feature_map.py)
     # The collaboration scripts (docs/process/collaboration.md): throw-away git repos only, no GitHub, no feature map.
     find_program(OKAY_GIT NAMES git)
     if(OKAY_GIT)
         add_test(NAME collab_scripts COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_collab.py)
+        add_test(NAME dup_lint_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_dup_lint.py)
+        # scripts/integration_merge.py: all open PRs merged together (docs/process/collaboration.md "Integration check").
+        add_test(NAME integration_merge COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/integration_merge.py --self-test)
     endif()
 endif()
 
@@ -150,6 +155,11 @@ add_test(NAME physics_nan COMMAND test_physics_nan)
 add_executable(test_physics3d test_physics3d.cpp)
 target_link_libraries(test_physics3d PRIVATE okay::engine)
 add_test(NAME physics3d COMMAND test_physics3d)
+
+# Classic and Improved 3D physics give bit-identical results for the same scene, wherever the heap puts the objects
+add_executable(test_physics3d_determinism test_physics3d_determinism.cpp)
+target_link_libraries(test_physics3d_determinism PRIVATE okay::engine)
+add_test(NAME physics3d_determinism COMMAND test_physics3d_determinism)
 
 # MeshCollider3D: real triangle-mesh collision (BVH): rays, overlaps, casts, bodies, edits, perf
 add_executable(test_meshcollider3d test_meshcollider3d.cpp)
@@ -418,6 +428,10 @@ add_executable(test_particles_fx test_particles_fx.cpp)
 target_link_libraries(test_particles_fx PRIVATE okay::engine)
 add_test(NAME particles_fx COMMAND test_particles_fx)
 
+add_executable(test_world_edges test_world_edges.cpp)
+target_link_libraries(test_world_edges PRIVATE okay::engine)
+add_test(NAME world_edges COMMAND test_world_edges)
+
 add_executable(test_profiler test_profiler.cpp)
 target_link_libraries(test_profiler PRIVATE okay::engine)
 add_test(NAME profiler COMMAND test_profiler)
@@ -626,6 +640,26 @@ add_test(NAME cinemachine COMMAND test_cinemachine)
 add_executable(test_shaders test_shaders.cpp)
 target_link_libraries(test_shaders PRIVATE okay::engine)
 add_test(NAME shaders COMMAND test_shaders)
+
+# OkayShader language (docs/rendering/shaders.md): parser / checker errors, hostile inputs and fuzz, GLSL / HLSL text,
+# the CPU program, material property text, file hot reload, the shipped example shaders.
+add_executable(test_okayshader test_okayshader.cpp)
+target_link_libraries(test_okayshader PRIVATE okay::engine)
+target_compile_definitions(test_okayshader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME okayshader COMMAND test_okayshader)
+# The Custom shader mode on the software renderer (fields, per-pixel surface, error material, discard, hot reload, example scene).
+add_executable(test_okayshader_render test_okayshader_render.cpp)
+target_link_libraries(test_okayshader_render PRIVATE okay::engine)
+target_compile_definitions(test_okayshader_render PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME okayshader_render COMMAND test_okayshader_render)
+# Software vs OpenGL (Mesa llvmpipe on a private Xvfb display) on the same .okayshader surfaces; skips (77) without Xvfb.
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_okayshader_gl test_okayshader_gl.cpp)
+    target_link_libraries(test_okayshader_gl PRIVATE okay::engine okay::platform)
+    target_compile_definitions(test_okayshader_gl PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME okayshader_gl COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_okayshader_gl>)
+    set_tests_properties(okayshader_gl PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+endif()
 
 add_executable(test_uishape test_uishape.cpp)
 target_link_libraries(test_uishape PRIVATE okay::engine)
@@ -1055,6 +1089,7 @@ add_test(NAME data_load_checks COMMAND test_data_load_checks)
 add_executable(test_project_upgrade test_project_upgrade.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
 target_include_directories(test_project_upgrade PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_project_upgrade PRIVATE okay::engine)
+target_compile_definitions(test_project_upgrade PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME project_upgrade COMMAND test_project_upgrade)
 
 # The Project panel's logic (editor/ProjectBrowser.*, ImGui-free): folder model, safe create / rename / move / copy / delete with undo, references rewritten, clipboard, failure injection at every file step.
@@ -1068,6 +1103,17 @@ add_executable(test_project_panel_db test_project_panel_db.cpp ${PROJECT_SOURCE_
 target_include_directories(test_project_panel_db PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_project_panel_db PRIVATE okay::engine)
 add_test(NAME project_panel_db COMMAND test_project_panel_db)
+
+# A picture changed on disk or reimported is shown changed in the Scene view: InvalidateTextureCacheForFile drops every cache key that names the file (relative, ./, absolute), and Browser::TakeChangedFiles hands out the files a scan found changed plus every hand reimport, once each.
+add_executable(test_texture_reimport test_texture_reimport.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
+target_include_directories(test_texture_reimport PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_texture_reimport PRIVATE okay::engine)
+add_test(NAME texture_reimport COMMAND test_texture_reimport)
+
+# Why a model did not import, in plain words (DescribeModelImportProblem): missing, folder, empty, unknown extension, a picture renamed to .glb, text in a .glb, glTF 1, cut-off files, broken JSON, not an FBX, the seam reader's own error.
+add_executable(test_model_import_problem test_model_import_problem.cpp)
+target_link_libraries(test_model_import_problem PRIVATE okay::engine)
+add_test(NAME model_import_problem COMMAND test_model_import_problem)
 
 # The Project panel's right-click menus (editor/ProjectContextModel.hpp, header-only, no ImGui, no engine): order, labels and plurals of the item, folder, tree, favourites and empty-space menus, what is greyed and why, no doubled separators, Copy Text, Assets-relative paths, the file types that run code (never offered to the system's open, and .js is not a text file), a folder that is gone, the path text helpers (Outermost, NearestFolder), the Move to... rule, Set as Start Scene, dates and the Properties rows.
 add_executable(test_project_context_model test_project_context_model.cpp)
@@ -1733,6 +1779,21 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     endif()
     target_include_directories(test_okayui_host_layering PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
     add_test(NAME okayui_host_layering COMMAND test_okayui_host_layering)
+    # The Script Editor's OkayUI code inside a Dear ImGui window, in ImGui's draw order (OkayUI::BeginCapture, shared/OkayUIImGuiEmbed.hpp):
+    # an ImGui popup over the code is drawn over it. Dear ImGui and OkayUI headless, one software rasteriser.
+    add_executable(test_okayui_codeedit_imgui test_okayui_codeedit_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptEditorCodeEdit.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_okayui_codeedit_imgui PRIVATE okay_imgui)
+    else()
+        target_sources(test_okayui_codeedit_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_okayui_codeedit_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_link_libraries(test_okayui_codeedit_imgui PRIVATE okay_ui_render)
+    target_include_directories(test_okayui_codeedit_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME okayui_codeedit_imgui COMMAND test_okayui_codeedit_imgui)
+    set_tests_properties(okayui_codeedit_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()
 
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
@@ -2656,6 +2717,10 @@ add_executable(test_poly_ops test_poly_ops.cpp)
 target_link_libraries(test_poly_ops PRIVATE okay::engine)
 add_test(NAME poly_ops COMMAND test_poly_ops)
 
+add_executable(test_sculpt_paint test_sculpt_paint.cpp)
+target_link_libraries(test_sculpt_paint PRIVATE okay::engine)
+add_test(NAME sculpt_paint COMMAND test_sculpt_paint)
+
 add_executable(test_locomotion test_locomotion.cpp)
 target_link_libraries(test_locomotion PRIVATE okay::engine)
 add_test(NAME locomotion COMMAND test_locomotion)
@@ -2859,6 +2924,12 @@ add_executable(test_ragdoll test_ragdoll.cpp)
 target_link_libraries(test_ragdoll PRIVATE okay::engine)
 add_test(NAME ragdoll COMMAND test_ragdoll)
 
+# ActiveRagdoll core (DynamicCharacter): balance, stepping, falls, get-up, hostile input, determinism
+add_executable(test_active_ragdoll test_active_ragdoll.cpp)
+target_link_libraries(test_active_ragdoll PRIVATE okay::engine)
+target_compile_definitions(test_active_ragdoll PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME active_ragdoll COMMAND test_active_ragdoll)
+
 # Fixed-step physics: same result at any frame rate, catch-up limit, render interpolation
 add_executable(test_fixed_step test_fixed_step.cpp)
 target_link_libraries(test_fixed_step PRIVATE okay::engine)
@@ -2900,6 +2971,11 @@ add_test(NAME navmesh_carving COMMAND test_navmesh_carving)
 add_executable(test_dialogue test_dialogue.cpp)
 target_link_libraries(test_dialogue PRIVATE okay::engine)
 add_test(NAME dialogue COMMAND test_dialogue)
+# Shared Interact action (seat, dialogue, pickups; lean-right off E), death on a seat goes to the exit point,
+# per-line dialogue camera shots (blend in on the line, back at the end, scene record)
+add_executable(test_interact_seat_dialogue test_interact_seat_dialogue.cpp)
+target_link_libraries(test_interact_seat_dialogue PRIVATE okay::engine)
+add_test(NAME interact_seat_dialogue COMMAND test_interact_seat_dialogue)
 
 # Quests: objectives from every source, prerequisites, rewards once, scene + save-game round trips
 add_executable(test_quests test_quests.cpp)
@@ -2961,6 +3037,11 @@ add_test(NAME save_hardening COMMAND test_save_hardening)
 add_executable(test_save_framework test_save_framework.cpp)
 target_link_libraries(test_save_framework PRIVATE okay::engine)
 add_test(NAME save_framework COMMAND test_save_framework)
+
+# One store for whole-game saves: SaveGame is the save framework's whole-scene mode; old .okaygame files still load (Grok #422 item 1).
+add_executable(test_save_merge test_save_merge.cpp)
+target_link_libraries(test_save_merge PRIVATE okay::engine)
+add_test(NAME save_merge COMMAND test_save_merge)
 
 # Save framework on a Scene: Saveable capture/apply, dynamic spawn, destroyed objects,
 # checkpoints, quick save, autosave ring, continue.
@@ -3040,6 +3121,10 @@ add_test(NAME core_cli COMMAND test_core_cli)
 add_executable(test_core_console test_core_console.cpp)
 target_link_libraries(test_core_console PRIVATE okay::engine)
 add_test(NAME core_console COMMAND test_core_console)
+# The console with a real host (okay/Core/ConsoleHost.hpp): GameLoop commands, the typed line, --cvar, standard cvars, player-style profiler sections
+add_executable(test_console_host test_console_host.cpp)
+target_link_libraries(test_console_host PRIVATE okay::engine)
+add_test(NAME console_host COMMAND test_console_host)
 # Core wave 6, 1.18: CommandLine defaults, Cvar extremes and flags (read-only, cheat, restart required), Console nesting, StateMachine exit
 add_executable(test_core_utils_audit test_core_utils_audit.cpp)
 target_link_libraries(test_core_utils_audit PRIVATE okay::engine)
@@ -3285,12 +3370,24 @@ add_test(NAME prefab_apply_revert COMMAND test_prefab_apply_revert)
 add_executable(test_property_registry test_property_registry.cpp)
 target_link_libraries(test_property_registry PRIVATE okay::engine)
 add_test(NAME property_registry COMMAND test_property_registry)
+# One registry drives serialization: coverage gate (every component class registered or a known gap that only
+# shrinks), the generic key=value record from a registry entry, and a scene main wrote re-saves byte for byte.
+add_executable(test_registry_serializer test_registry_serializer.cpp)
+target_link_libraries(test_registry_serializer PRIVATE okay::engine)
+target_compile_definitions(test_registry_serializer PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME registry_serializer COMMAND test_registry_serializer)
 # ---- Core runtime foundations (docs/engine/core_runtime.md) ----
 # Job system: pool, task graph, ParallelFor / ParallelReduce, cancellation, shutdown, main-thread queue.
 # Takes an optional repeat count: `test_jobs 20` runs the threaded suites 20 times to shake out races.
 add_executable(test_jobs test_jobs.cpp)
 target_link_libraries(test_jobs PRIVATE okay::engine)
 add_test(NAME jobs COMMAND test_jobs 3)
+
+# The engine's own work on the job system (physics bounds, skinning, asset loads, navmesh bakes):
+# 0 and 4 workers give bit-identical results. `test_jobs_adoption bench 2000` prints step times.
+add_executable(test_jobs_adoption test_jobs_adoption.cpp)
+target_link_libraries(test_jobs_adoption PRIVATE okay::engine)
+add_test(NAME jobs_adoption COMMAND test_jobs_adoption)
 
 # FrameArena, PoolAllocator, SlotMap / Handle, StringId.
 add_executable(test_arena_handles test_arena_handles.cpp)
@@ -3403,6 +3500,12 @@ target_compile_definitions(test_image_decoder PRIVATE OKAY_SOURCE_DIR="${PROJECT
 target_link_libraries(test_image_decoder PRIVATE okay::engine)
 add_test(NAME image_decoder COMMAND test_image_decoder)
 set_tests_properties(image_decoder PROPERTIES TIMEOUT 300)
+
+# Our own PNM decoder (P1 to P6; Core/ImageDecode): hand-computed fixtures, rejections, truncations, routing off by default (OKAY_OWN_PNM=1).
+add_executable(test_image_pnm test_image_pnm.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageWrite.cpp)
+target_include_directories(test_image_pnm PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+add_test(NAME image_pnm COMMAND test_image_pnm)
 
 # Hostile-input + mutation fuzz of the image decoders (lying header fields, PNG with valid CRCs, decompression bombs, memory and time budgets).
 # Standalone: only the decoder sources, so it also builds under -fsanitize=address,undefined.
@@ -3531,6 +3634,12 @@ if(NOT WIN32 AND NOT EMSCRIPTEN AND TARGET okay_ui_soft AND CMAKE_SYSTEM_NAME ST
     add_test(NAME platform_painter_window
              COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_painter_window>)
     set_tests_properties(platform_painter_window PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+    # The OpenGL painter (engine/src/Platform/GLPainter.cpp) on an own-backend GL window against the software painter. Own code, off by default.
+    add_executable(test_gl_painter test_gl_painter.cpp)
+    target_link_libraries(test_gl_painter PRIVATE okay_ui_soft)
+    add_test(NAME gl_painter COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_gl_painter>)
+    set_tests_properties(gl_painter PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 endif()
 
 # The controller -> Input bridge (Input/PlatformGamepad.hpp) with a fake okay::platform::Gamepad.
@@ -4379,6 +4488,14 @@ add_test(NAME own_dispatch COMMAND test_own_dispatch WORKING_DIRECTORY ${CMAKE_C
 add_executable(test_dof_math test_dof_math.cpp)
 target_link_libraries(test_dof_math PRIVATE okay::engine)
 add_test(NAME dof_math COMMAND test_dof_math)
+# OpenGL post chain keeps the frame's coverage (a transparent clear stays transparent through depth of field):
+# a real GL context on Xvfb (Mesa software GL); skips (77) without Xvfb or GL.
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_gl_post_alpha test_gl_post_alpha.cpp)
+    target_link_libraries(test_gl_post_alpha PRIVATE okay::engine)
+    add_test(NAME gl_post_alpha COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_gl_post_alpha>)
+    set_tests_properties(gl_post_alpha PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+endif()
 add_executable(test_post_quality_math test_post_quality_math.cpp)
 target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)
@@ -4695,6 +4812,12 @@ target_link_libraries(test_camera_rig PRIVATE okay::engine)
 target_compile_definitions(test_camera_rig PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME camera_rig COMMAND test_camera_rig)
 
+# Area 4 fixes (claude2/area4-chars-2): click-to-move camera below y = 0, remote copies leave the main camera alone,
+# the dolly cart's position, ends, facing and metre speed, click-to-move ground picking and giving up when stuck.
+add_executable(test_char_cam_fixes test_char_cam_fixes.cpp)
+target_link_libraries(test_char_cam_fixes PRIVATE okay::engine)
+add_test(NAME char_cam_fixes COMMAND test_char_cam_fixes)
+
 # Water visuals: shading maths, ring grid, depth colour, foam, ripples, splashes, underwater, presets, pictures (docs/rendering/terrain_water.md).
 add_executable(test_water_visuals test_water_visuals.cpp)
 target_link_libraries(test_water_visuals PRIVATE okay::engine)
@@ -4727,12 +4850,17 @@ add_executable(test_wind test_wind.cpp)
 target_link_libraries(test_wind PRIVATE okay::engine)
 add_test(NAME wind COMMAND test_wind)
 # okay::tex, our own texture library (docs/rendering/own_texture_library.md). Pure CPU, deterministic.
-foreach(_t IN ITEMS mip atlas convert bc dds_stream)
+foreach(_t IN ITEMS mip atlas convert bc dds_stream dds_load)
     add_executable(test_tex_${_t} test_tex_${_t}.cpp)
     target_link_libraries(test_tex_${_t} PRIVATE okay::engine)
     add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()
+# The OpenGL renderer uploading .dds files and compressed import copies, on Mesa llvmpipe through EGL (SKIPPED without one).
+add_executable(test_gl_dds_upload test_gl_dds_upload.cpp)
+target_link_libraries(test_gl_dds_upload PRIVATE okay::engine ${CMAKE_DL_LIBS})
+add_test(NAME gl_dds_upload COMMAND test_gl_dds_upload WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(gl_dds_upload PROPERTIES TIMEOUT 240)
 
 # Colliders behave as the shapes they are (not boxes): Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield, 2D polygon / capsule / composite.
 add_executable(test_collider_shapes test_collider_shapes.cpp)
@@ -4748,6 +4876,13 @@ add_executable(test_vs_pan_model test_vs_pan_model.cpp)
 target_include_directories(test_vs_pan_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME vs_pan_model COMMAND test_vs_pan_model)
 
+add_executable(test_ledge_hands_ik test_ledge_hands_ik.cpp)
+target_link_libraries(test_ledge_hands_ik PRIVATE okay::engine)
+add_test(NAME ledge_hands_ik COMMAND test_ledge_hands_ik)
+
+add_executable(test_damage test_damage.cpp)
+target_link_libraries(test_damage PRIVATE okay::engine)
+add_test(NAME damage COMMAND test_damage)
 # Collider shapes under bad input: NaN / huge numbers, flat or tiny hulls, empty or over-large compounds and grids, scale, order.
 add_executable(test_collider_hardening test_collider_hardening.cpp)
 target_link_libraries(test_collider_hardening PRIVATE okay::engine)
@@ -4785,3 +4920,97 @@ add_test(NAME controller_tuning COMMAND test_controller_tuning)
 add_executable(test_grok_145_146_153_155 test_grok_145_146_153_155.cpp)
 target_link_libraries(test_grok_145_146_153_155 PRIVATE okay::engine)
 add_test(NAME grok_145_146_153_155 COMMAND test_grok_145_146_153_155)
+# Foundation item 10: built-in controllers read named actions, so rebinding reaches them
+add_executable(test_controller_actions test_controller_actions.cpp)
+target_link_libraries(test_controller_actions PRIVATE okay::engine)
+add_test(NAME controller_actions COMMAND test_controller_actions)
+
+# One rebinding store for InputActions and the typed ActionSet (duplicate audit #422, item 2).
+add_executable(test_input_one_store test_input_one_store.cpp)
+target_link_libraries(test_input_one_store PRIVATE okay::engine)
+add_test(NAME input_one_store COMMAND test_input_one_store)
+
+# Our own glTF 1.0 reader (docs/content/model_readers.md, section glTF 1.0): files built in memory with hand-computed values,
+# the binary form, external files and the folder rule, refusals and the import seam; the hostile test builds without the
+# engine library (so it can be built by hand under -fsanitize=address,undefined); the default test fails if
+# -DOKAY_OWN_GLTF1=ON stops making the reader the default; the samples test imports examples/own_readers/box_v1.gltf / .glb.
+add_executable(test_gltf1_reader test_gltf1_reader.cpp)
+target_link_libraries(test_gltf1_reader PRIVATE okay::engine)
+add_test(NAME gltf1_reader COMMAND test_gltf1_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_gltf1_hostile test_gltf1_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/Gltf1Reader.cpp)
+target_include_directories(test_gltf1_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Render)
+target_compile_definitions(test_gltf1_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME gltf1_hostile COMMAND test_gltf1_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(gltf1_hostile PROPERTIES TIMEOUT 600)
+add_executable(test_own_gltf1_default test_own_gltf1_default.cpp)
+target_link_libraries(test_own_gltf1_default PRIVATE okay::engine)
+if(OKAY_OWN_GLTF1)
+    target_compile_definitions(test_own_gltf1_default PRIVATE OKAY_EXPECT_OWN_GLTF1)
+endif()
+add_test(NAME own_gltf1_default COMMAND test_own_gltf1_default WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_own_gltf1_samples test_own_gltf1_samples.cpp)
+target_link_libraries(test_own_gltf1_samples PRIVATE okay::engine)
+target_compile_definitions(test_own_gltf1_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME own_gltf1_samples COMMAND test_own_gltf1_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Our own OpenGEX and MDL (Quake 1 / Half-Life 1) readers (docs/content/model_readers.md, sections OpenGEX and MDL): one test per
+# reader on SYNTHETIC files built in memory (tests/e4_fixtures.hpp), one standalone hostile-input + budget + mutation-fuzz test for
+# both (reader sources only, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;
+# OKAY_READER_FUZZ_ITERS raises the sweep; with OKAY_MODEL_CORPUS set the real files are read and fuzzed too), the import seam
+# routing, the build-default check and the sample files in examples/own_readers.
+function(okay_e4_reader_test name src)
+    add_executable(test_${name} test_${name}.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${src})
+    target_include_directories(test_${name} PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Render ${PROJECT_SOURCE_DIR}/engine/src/Core)
+    target_compile_definitions(test_${name} PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ${name} COMMAND test_${name} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endfunction()
+okay_e4_reader_test(ogex_reader OgexReader.cpp)
+okay_e4_reader_test(mdl_reader MdlReader.cpp)
+add_executable(test_e4_hostile test_e4_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/OgexReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/MdlReader.cpp)
+target_include_directories(test_e4_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Render ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_e4_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME e4_hostile COMMAND test_e4_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(e4_hostile PROPERTIES TIMEOUT 600)
+add_executable(test_own_dispatch_e4 test_own_dispatch_e4.cpp)
+target_link_libraries(test_own_dispatch_e4 PRIVATE okay::engine)
+add_executable(test_own_e4_default test_own_e4_default.cpp)
+target_link_libraries(test_own_e4_default PRIVATE okay::engine)
+foreach(_t test_own_dispatch_e4 test_own_e4_default)
+    if(OKAY_OWN_OPENGEX)
+        target_compile_definitions(${_t} PRIVATE OKAY_EXPECT_OWN_OPENGEX)
+    endif()
+    if(OKAY_OWN_MDL)
+        target_compile_definitions(${_t} PRIVATE OKAY_EXPECT_OWN_MDL)
+    endif()
+endforeach()
+add_test(NAME own_dispatch_e4 COMMAND test_own_dispatch_e4 WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_test(NAME own_e4_default COMMAND test_own_e4_default WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+# `test_own_e4_samples --write <dir>` rewrites the two .mdl sample files from the fixtures.
+add_executable(test_own_e4_samples test_own_e4_samples.cpp)
+target_link_libraries(test_own_e4_samples PRIVATE okay::engine)
+target_compile_definitions(test_own_e4_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME own_e4_samples COMMAND test_own_e4_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Our own Quake III map reader (docs/content/model_readers.md, section Q3BSP): synthetic maps built in memory with hand-computed
+# values, the hostile-input and budget test (with OKAY_MODEL_CORPUS set it also reads and fuzzes the corpus map), the import seam
+# routing (slot 42) with the build-default check, and the sample maps in examples/own_readers (scripts/gen_q3bsp_samples.py).
+add_executable(test_q3bsp_reader test_q3bsp_reader.cpp)
+target_link_libraries(test_q3bsp_reader PRIVATE okay::engine)
+add_test(NAME q3bsp_reader COMMAND test_q3bsp_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_q3bsp_hostile test_q3bsp_hostile.cpp)
+target_link_libraries(test_q3bsp_hostile PRIVATE okay::engine)
+target_include_directories(test_q3bsp_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/src/Render ${PROJECT_SOURCE_DIR}/engine/src/Core)
+add_test(NAME q3bsp_hostile COMMAND test_q3bsp_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(q3bsp_hostile PROPERTIES TIMEOUT 900)
+add_executable(test_own_q3bsp_dispatch test_own_q3bsp_dispatch.cpp)
+target_link_libraries(test_own_q3bsp_dispatch PRIVATE okay::engine)
+if(OKAY_OWN_Q3BSP)
+    target_compile_definitions(test_own_q3bsp_dispatch PRIVATE OKAY_EXPECT_OWN_Q3BSP)
+endif()
+add_test(NAME own_q3bsp_dispatch COMMAND test_own_q3bsp_dispatch WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_own_q3bsp_samples test_own_q3bsp_samples.cpp)
+target_link_libraries(test_own_q3bsp_samples PRIVATE okay::engine)
+target_compile_definitions(test_own_q3bsp_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME own_q3bsp_samples COMMAND test_own_q3bsp_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

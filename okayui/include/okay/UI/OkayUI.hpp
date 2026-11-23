@@ -218,8 +218,11 @@ enum InputTextFlags {
     InputText_Password         = 8,   // shows one '*' per byte of text; copy and cut are off
     InputText_CharsNoBlank     = 16,  // typed spaces and tabs are dropped (paste is not filtered)
     InputText_CharsDecimal     = 32,  // only 0-9 . - + * / are typed (paste is not filtered)
-    // Accepted for ported code, no effect here: multi-line Enter handling, resize / always callbacks (there are no callbacks), Tab typing.
+    // Accepted for ported code, no effect here: multi-line Enter handling, resize / always callbacks, Tab typing.
     InputText_CtrlEnterForNewLine = 64, InputText_CallbackResize = 128, InputText_CallbackAlways = 256, InputText_AllowTabInput = 512,
+    // Real, with the callback overloads of InputText / InputTextWithHint (OkayUICompat.hpp): Up / Down call it while the field
+    // has the keyboard (EventKey = KeyId_Up / KeyId_Down), Tab calls it for completion (EventKey = KeyId_Tab).
+    InputText_CallbackHistory = 1024, InputText_CallbackCompletion = 2048,
 };
 bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, unsigned flags = 0);
 
@@ -227,6 +230,10 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
 /// OkayUI draws on top; the renderer's blend mode is saved and restored so nothing
 /// else is disturbed.
 void EndFrame(SDL_Renderer* renderer);
+/// The drawing half of EndFrame(SDL_Renderer*) alone: draws the frame that EndFrameData already finished through the SDL
+/// renderer (nothing is finished or built here, so the toasts must have been built by EndFrameData(w, h)). For a host that
+/// finishes the frame first and then decides which renderer draws it (OkayUI::render::SdlHost falls back to this one).
+void DrawFinishedFrame(SDL_Renderer* renderer);
 
 // ---- Custom backends (e.g. Direct3D 11, the software rasteriser) --------------
 // The frame's geometry as plain data, valid after the frame's widget calls (call

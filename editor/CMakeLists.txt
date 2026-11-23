@@ -55,6 +55,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     TimelineWindow.cpp                                                 # the Timeline window (cutscene sequences)
     NavigationWindow.cpp                                               # the Navigation window (navmesh bake + overlays)
     BuildSettingsWindow.cpp                                            # the Build Settings window: page list + search, Game and Advanced pages, summary, checks, history
+    BuildGame.cpp                                                      # Build Game: export the game, Web / Android / Xbox data, the dedicated server (builder::)
     DialogueWindow.cpp                                                 # the Dialogue window (dialogue graphs + quests)
     BehaviorTreeWindow.cpp                                             # the Behavior Tree window (NPC AI trees)
     LevelTools.cpp                                                     # foliage brush, terrain layers, decals, cables, measuring tool, orthographic views
@@ -132,6 +133,9 @@ if(TARGET okay_ui)
     target_link_libraries(okay-editor PRIVATE okay_ui okay_ui_screens)
     if(TARGET okay_ui_soft)   # the software painter: the editor's window on the own platform backend (OKAY_PLATFORM_BACKEND=own)
         target_link_libraries(okay-editor PRIVATE okay_ui_soft)
+    endif()
+    if(TARGET okay_ui_render)   # OkayUI's own OpenGL renderer for the hosted screens (OKAY_UI_OWN_RENDER=1, off by default; shared/OkayUIFrame.hpp)
+        target_link_libraries(okay-editor PRIVATE okay_ui_render)
     endif()
     target_compile_definitions(okay-editor PRIVATE OKAY_HAVE_OKAYUI=1)
 endif()

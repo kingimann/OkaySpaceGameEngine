@@ -7,6 +7,12 @@
 // Fields the scene file does not keep (runtime pointers, caches) are left out. See
 // docs/engine/properties.md.
 #include "BuiltinPropertiesShared.hpp"
+#include "okay/Components/ActiveRagdoll.hpp"
+#include "okay/Components/Buildable.hpp"
+#include "okay/Components/NetworkAvatarMotion.hpp"
+#include "okay/Components/TilemapCollider2D.hpp"
+#include "okay/Core/GameSaves.hpp"
+#include "okay/Core/SaveFramework.hpp"
 #include "okay/Components/LocalPlayerInput.hpp"
 
 #include "okay/Components/CharacterController2D.hpp"
@@ -18,6 +24,7 @@ namespace okay { void RegisterPhysicsToyProperties(); }
 #include "okay/Components/Destructible.hpp"
 #include "okay/Components/Draggable.hpp"
 #include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/LedgeHandsIK.hpp"
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Components/GridPathAgent2D.hpp"
@@ -452,6 +459,9 @@ void RegisterClickToMoveController() {
      .AddBool("usePlayerHeight", &ClickToMoveController::usePlayerHeight).Tooltip("Pick on the plane at the player's current Y")
      .AddBool("usePathfinding", &ClickToMoveController::usePathfinding).Tooltip("Route around obstacles with the scene navigation")
      .AddFloat("repathInterval", &ClickToMoveController::repathInterval).Range(0, 3600, 0.05).Tooltip("Seconds between path re-plans")
+     .AddBool("pickColliders", &ClickToMoveController::pickColliders).Tooltip("A click lands on the floor, stair or platform under the pointer (solid, facing up); else the flat plane")
+     .AddBool("giveUpWhenStuck", &ClickToMoveController::giveUpWhenStuck).Tooltip("Stop walking when pressed against a wall instead of running on the spot")
+     .AddFloat("stuckTime", &ClickToMoveController::stuckTime).Range(0.05, 60, 0.05).Tooltip("Seconds of barely moving before giving up")
      .Section("Follow camera")
      .AddBool("followCamera", &ClickToMoveController::followCamera).Tooltip("Position the main Camera each frame")
      .AddFloat("cameraHeight", &ClickToMoveController::cameraHeight).Range(0, kBig, 0.05).Tooltip("Look target height above the player origin")
@@ -1405,8 +1415,120 @@ void RegisterRangedWeapon() {
     b.Commit();
 }
 
+// Ledge Hands IK (hands on the ledge while hanging). The two arm links are saved by the scene
+// file's own record and are not properties here: autoWire finds them on a humanoid.
+static void RegisterLedgeHandsIK() {
+    PropertyBuilder<LedgeHandsIK> b("LedgeHandsIK", "ledgehandsik", "Animation");
+    b.AddFloat("handSpread", &LedgeHandsIK::handSpread).Range(0, 2, 0.01).Tooltip("Each hand's distance from the centre, along the ledge (metres)")
+     .AddFloat("overEdge", &LedgeHandsIK::overEdge).Range(0, 1, 0.005).Tooltip("How far the fingers reach onto the top (metres)")
+     .AddFloat("fadeTime", &LedgeHandsIK::fadeTime).Range(0, 5, 0.01).Tooltip("Seconds to blend the arms in and out")
+     .AddFloat("setback", &LedgeHandsIK::setback).Range(0, 2, 0.01).Tooltip("Only for a hang with no stored edge: how far the body hangs out from the edge")
+     .AddBool("autoWire", &LedgeHandsIK::autoWire).Tooltip("Find or add the two arm Limb IKs from the humanoid bones when none are set");
+    b.Commit();
+}
+
+// ---- Saved through the generic record (ComponentSerializerRegistry::RegisterFromProperties) ----------------
+// These had no scene record at all before: the generic path writes every authored property below as
+// `  <record> key=value ...` (see docs/engine/scene_serializer.md, "The generic record").
+
+// CheckpointTrigger (Core/SaveFramework.hpp)
+void RegisterCheckpointTrigger() {
+    PropertyBuilder<CheckpointTrigger> b("CheckpointTrigger", "checkpointtrigger", "Gameplay");
+    b.AddString("checkpoint", &CheckpointTrigger::checkpoint).Tooltip("The checkpoint name saved when it fires")
+     .AddString("targetTag", &CheckpointTrigger::targetTag).Tooltip("Objects with this tag set it off")
+     .AddFloat("radius", &CheckpointTrigger::radius).Range(0, kBig, 0.1).Tooltip("How close the target must come. 0 = trigger colliders only")
+     .AddBool("once", &CheckpointTrigger::once).Tooltip("Fire a single time per scene load")
+     .AddBool("deferred", &CheckpointTrigger::deferred).Tooltip("Save at the start of the next frame")
+     .AddFloat("checkInterval", &CheckpointTrigger::checkInterval).Range(0, 3600, 0.01).Tooltip("Seconds between distance checks")
+     .AddBool("triggered", &CheckpointTrigger::triggered).RuntimeOnly().Tooltip("It has fired (live state)");
+    b.Commit();
+}
+
+// TimedDestroy (Components/Destructible.hpp): removes its object after `life` seconds (debris pieces).
+void RegisterTimedDestroy() {
+    PropertyBuilder<TimedDestroy> b("TimedDestroy", "timeddestroy", "Effects");
+    b.AddFloat("life", &TimedDestroy::life).Range(0, kBig, 0.1).Tooltip("Seconds left before the object is removed");
+    b.Commit();
+}
+
+// NetworkAvatarMotion (Components/NetworkAvatarMotion.hpp): faces and animates a remote avatar from its movement.
+void RegisterNetworkAvatarMotion() {
+    PropertyBuilder<NetworkAvatarMotion> b("NetworkAvatarMotion", "netavatarmotion", "Networking");
+    b.AddFloat("turnSpeed", &NetworkAvatarMotion::turnSpeed).Range(0, kBig, 1).Tooltip("Degrees per second it turns to face where it goes. 0 = snap")
+     .AddFloat("moveEpsilon", &NetworkAvatarMotion::moveEpsilon).Range(0, 100, 0.01).Tooltip("Below this speed it counts as standing still")
+     .AddFloat("runSpeed", &NetworkAvatarMotion::runSpeed).Range(0, kBig, 0.1).Tooltip("At or above this speed the walk becomes a run");
+    b.Commit();
+}
+
+// ActiveRagdoll (Components/ActiveRagdoll.hpp): our own dynamic character (powered ragdoll, balance, get-up).
+void RegisterActiveRagdoll() {
+    PropertyBuilder<ActiveRagdoll> b("ActiveRagdoll", "activeragdoll", "Animation");
+    b.AddEnum("mode", &ActiveRagdoll::mode, {"Reactive", "Powered", "Limp"}).Tooltip("Reactive: animated until pushed or hit. Powered: always physical. Limp: a plain ragdoll")
+     .AddFloat("mass", &ActiveRagdoll::mass).Range(1, 1000, 1).Tooltip("Body mass in kg")
+     .AddFloat("strength", &ActiveRagdoll::strength).Range(0, 5, 0.05).Tooltip("How hard every muscle holds the animated pose (0 = limp)")
+     .AddFloat("armStrength", &ActiveRagdoll::armStrength).Range(0, 5, 0.05).Tooltip("Arms, times Strength")
+     .AddFloat("legStrength", &ActiveRagdoll::legStrength).Range(0, 5, 0.05).Tooltip("Legs, times Strength. Weak legs buckle")
+     .AddFloat("spineStrength", &ActiveRagdoll::spineStrength).Range(0, 5, 0.05).Tooltip("Back, times Strength")
+     .AddFloat("neckStrength", &ActiveRagdoll::neckStrength).Range(0, 5, 0.05).Tooltip("Neck, times Strength")
+     .AddFloat("balanceForce", &ActiveRagdoll::balanceForce).Range(0, 2, 0.01).Tooltip("How hard it pulls its weight back over its feet, as a share of its weight")
+     .AddFloat("maxStep", &ActiveRagdoll::maxStep).Range(0, 2, 0.01).Tooltip("Longest catching step in metres (for a 1.8 m body)")
+     .AddInt("maxSteps", &ActiveRagdoll::maxSteps).Range(0, 20, 1).Tooltip("Steps it may take to catch itself before it falls")
+     .AddFloat("fallAngle", &ActiveRagdoll::fallAngle).Range(5, 90, 1).Tooltip("Lean in degrees past which it gives up and falls")
+     .AddFloat("balanceHelp", &ActiveRagdoll::balanceHelp).Range(0, 1, 0.01).Tooltip("A helper push on the hips while a foot is down, as a share of its weight. 0 = only its own muscles (it falls more easily)")
+     .AddFloat("uprightHelp", &ActiveRagdoll::uprightHelp).Range(0, 200, 1).Tooltip("A helper that keeps the chest upright while it stumbles. 0 = none")
+     .AddBool("stumble", &ActiveRagdoll::stumble).Tooltip("Step to catch itself when pushed")
+     .AddBool("brace", &ActiveRagdoll::brace).Tooltip("Put the arms out toward the ground when falling")
+     .AddBool("protectHead", &ActiveRagdoll::protectHead).Tooltip("Hands to the head when falling backwards")
+     .AddBool("grab", &ActiveRagdoll::grab).Tooltip("Grab a nearby wall or table to stay up")
+     .AddBool("autoGetUp", &ActiveRagdoll::autoGetUp).Tooltip("Get up by itself after lying still")
+     .AddFloat("getUpDelay", &ActiveRagdoll::getUpDelay).Range(0, 60, 0.05).Tooltip("Seconds lying still before getting up")
+     .AddFloat("getUpTime", &ActiveRagdoll::getUpTime).Range(0.5, 10, 0.05).Tooltip("Seconds the get-up takes")
+     .AddFloat("blendTime", &ActiveRagdoll::blendTime).Range(0, 3, 0.01).Tooltip("Seconds to blend from the body back to the animation")
+     .AddFloat("helperForce", &ActiveRagdoll::helperForce).Range(0, 3, 0.05).Tooltip("Helper lift while getting up (0 = it cannot get up)")
+     .AddBool("reactToDamage", &ActiveRagdoll::reactToDamage).Tooltip("A HealthStat hit pushes the struck part")
+     .AddFloat("damageImpulse", &ActiveRagdoll::damageImpulse).Range(0, 100, 0.1).Tooltip("Push per point of damage, in N s")
+     .AddBool("limpOnDeath", &ActiveRagdoll::limpOnDeath).Tooltip("Go limp on death and get up on revive")
+     .AddBool("handOverControl", &ActiveRagdoll::handOverControl).Tooltip("Switch the movement controller off while the body is physical")
+     .AddBool("rootFollows", &ActiveRagdoll::rootFollows).Tooltip("Keep the object over the body while it is down");
+    b.Commit();
+}
+
+// ---- Saved by their own records in SceneSerializer.cpp -----------------------------------------------------
+
+// SaveConfig (`savesettings`): the scene's autosave settings. The record keeps 1..20 slots.
+void RegisterSaveConfig() {
+    PropertyBuilder<SaveConfig> b("SaveConfig", "savesettings", "Gameplay");
+    b.AddFloat("autosaveInterval", &SaveConfig::autosaveInterval).Range(0, kBig, 1).Tooltip("Seconds of play between autosaves. 0 = off")
+     .AddBool("autosaveOnSceneStart", &SaveConfig::autosaveOnSceneStart).Tooltip("Save when this scene starts")
+     .AddInt("autosaveSlots", &SaveConfig::autosaveSlots).Range(1, 20, 1).Tooltip("How many autosaves are kept");
+    b.Commit();
+}
+
+// Buildable (`buildable`): a piece players may edit in build mode.
+void RegisterBuildable() {
+    PropertyBuilder<Buildable> b("Buildable", "buildable", "Building");
+    b.AddInt("buildId", &Buildable::buildId).Range(0, 2147483647, 1).Tooltip("Stable id for links, undo and creations. 0 = not assigned yet")
+     .AddBool("editable", &Buildable::editable).Tooltip("Players may move, rotate, copy, delete and wire it")
+     .AddBool("placed", &Buildable::placed).Tooltip("A player placed it in build mode")
+     .AddAssetPath("prefab", &Buildable::prefab, "prefab").Tooltip("The palette prefab it was placed from (empty for level objects)");
+    b.Commit();
+}
+
+// TilemapCollider2D (`tilemapcollider`): builds colliders from the Tilemap on the same object. No fields of its own.
+void RegisterTilemapCollider2D() {
+    PropertyBuilder<TilemapCollider2D> b("TilemapCollider2D", "tilemapcollider", "Physics 2D");
+    b.Commit();
+}
+
 void RegisterGameplayProperties() {
     RegisterPlayerController();
+    RegisterActiveRagdoll();
+    RegisterCheckpointTrigger();
+    RegisterTimedDestroy();
+    RegisterNetworkAvatarMotion();
+    RegisterSaveConfig();
+    RegisterBuildable();
+    RegisterTilemapCollider2D();
     RegisterPlayerView();
     RegisterFirstPersonController();
     RegisterThirdPersonController();
@@ -1430,6 +1552,7 @@ void RegisterGameplayProperties() {
     RegisterPhysicsToyProperties();   // Physics Surface and the physics toys
     RegisterVolume();
     RegisterWind();
+    RegisterLedgeHandsIK();
     RegisterMusicPlayer();
     RegisterPlayerInput();
     RegisterCollectible();

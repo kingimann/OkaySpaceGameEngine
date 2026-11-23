@@ -1,6 +1,8 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/PrefabTools.hpp"
 #include "okay/Scene/SceneText.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"
+#include <iterator>
 #include "okay/Core/TolerantNumbers.hpp"
 #include <cerrno>
 #include <iostream>
@@ -185,6 +187,7 @@
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/HumanoidRetarget.hpp"
 #include "okay/Components/LimbIK.hpp"
+#include "okay/Components/LedgeHandsIK.hpp"
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/IKTarget.hpp"
@@ -1054,6 +1057,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << "  shader " << (int)mr->shader << " " << mr->toonBands
                 << " " << mr->gradientTop.r << " " << mr->gradientTop.g << " " << mr->gradientTop.b
                 << " " << mr->gradientBottom.r << " " << mr->gradientBottom.g << " " << mr->gradientBottom.b << "\n";
+        // Custom shader file + its property values (separate record so older scenes still load).
+        if (!mr->customShader.empty() || !mr->shaderParams.empty())
+            out << "  customshader " << Quote(mr->customShader) << " " << Quote(mr->shaderParams) << "\n";
         // Per-material rim (Fresnel) backlight (separate record).
         if (mr->rimStrength > 0.0f)
             out << "  rim " << mr->rimStrength << " " << mr->rimPower << " "
@@ -2407,7 +2413,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << c->invincibleTime << " " << c->overhealMax << " " << c->overhealDecay
             << " " << (c->destroyOnDeath ? 1 : 0) << " " << (c->respawn ? 1 : 0)
             << " " << c->respawnDelay << " " << c->lives
-            << " " << (c->playDeathAnim ? 1 : 0) << " " << (c->playHitAnim ? 1 : 0) << "\n";
+            << " " << (c->playDeathAnim ? 1 : 0) << " " << (c->playHitAnim ? 1 : 0)
+            << " " << (c->keepActiveOnDeath ? 1 : 0) << " " << kDamageTypeCount;   // then one resistance per damage kind
+        for (int i = 0; i < kDamageTypeCount; ++i) out << " " << c->typeResistance[i];
+        out << "\n";
     }
     for (auto* c : go->GetComponents<Seat>()) {
         out << "  seat " << c->seatHeight << " "
@@ -2877,7 +2886,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << cm->cameraDamping
             << " " << cm->arriveRadius                       // extended (back-compatible trailing field)
             << " " << (cm->footIK ? 1 : 0) << " " << (cm->showCursor ? 1 : 0)
-            << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval << "\n";
+            << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval;
+        // extended (back-compatible trailing fields): click on colliders, give up when stuck. Written only when one differs
+        // from its default, so a scene saved before they existed saves byte for byte the same (registry_serializer).
+        if (!cm->pickColliders || !cm->giveUpWhenStuck || cm->stuckTime != 1.0f)
+            out << " " << (cm->pickColliders ? 1 : 0) << " " << (cm->giveUpWhenStuck ? 1 : 0) << " " << cm->stuckTime;
+        out << "\n";
     }
     for (auto* ft : go->GetComponents<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
@@ -3062,7 +3076,11 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     for (auto* dc : go->GetComponents<DollyCart>()) {
         out << "  dollycart " << Quote(dc->path) << " " << dc->position << " "
-            << dc->speed << " " << (dc->autoMove ? 1 : 0) << "\n";
+            << dc->speed << " " << (dc->autoMove ? 1 : 0);
+        // extended (trailing): only when one is on, so older scenes save byte for byte the same (registry_serializer)
+        if (dc->speedInMetres || dc->pingPong || dc->orientToPath)
+            out << " " << (dc->speedInMetres ? 1 : 0) << " " << (dc->pingPong ? 1 : 0) << " " << (dc->orientToPath ? 1 : 0);
+        out << "\n";
     }
     for (auto* tr : go->GetComponents<TextRenderer>()) {
         out << "  text " << Quote(tr->text) << " "
@@ -3254,7 +3272,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             // extended (back-compatible trailing fields): shape + corner + focus ring
             << " " << (int)in->shape << " " << in->cornerRadius << " " << in->borderWidth << " "
             << in->borderColor.r << " " << in->borderColor.g << " " << in->borderColor.b << " " << in->borderColor.a
-            << " " << (in->multiline ? 1 : 0) << "\n";   // grok/ui-controls
+            << " " << (in->multiline ? 1 : 0);   // grok/ui-controls
+        // pad / keyboard menu navigation: written only when off, so default scenes stay byte for byte the same (absent = on)
+        if (!in->focusable) out << " 0";
+        out << "\n";
     }
     for (auto* tb : go->GetComponents<UITabs>()) {
         out << "  uitabs " << tb->position.x << " " << tb->position.y << " "
@@ -3720,6 +3741,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "\n";
         // How much the scene's wind carries the particles (own record; 1 = the default).
         if (ps->windInfluence != 1.0f) out << "  particleswind " << ps->windInfluence << "\n";
+        // Collide with Terrain (own record, written only when on; older files and readers do without it).
+        if (ps->collideTerrain) out << "  particlesterrain 1\n";
     }
     // Sequence player (cutscenes). key=value record; the playback state is not saved.
     for (auto* sp : go->GetComponents<SequencePlayer>()) {   // every instance
@@ -3895,6 +3918,14 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          .str("prompt", dr->promptText).str("pobj", dr->promptObject).b("pause", dr->pausePlayer)
          ("type", dr->typewriterSpeed)("auto", dr->autoAdvance).b("ui", dr->drawUI).b("cancel", dr->canCancel)
          ("start", dr->startNode).str("player", dr->playerName);
+        if (!dr->cameraShots.empty()) {   // per-line camera shots; not written when there are none (old records stay the same)
+            k("shots", (int)dr->cameraShots.size());
+            for (std::size_t i = 0; i < dr->cameraShots.size(); ++i) {
+                const std::string p = "sh" + std::to_string(i);
+                k((p + "n").c_str(), dr->cameraShots[i].node).str((p + "c").c_str(), dr->cameraShots[i].camera);
+            }
+        }
+        if (dr->shotBlend != -1.0f) k("shb", dr->shotBlend);
         out << "\n";
     }
     for (auto* ql : go->GetComponents<QuestLog>()) {
@@ -4097,9 +4128,11 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
             out << "sky " << rs.skyHorizonPos << " " << (rs.skySun ? 1 : 0) << " "
                 << rs.skySunX << " " << rs.skySunY << " " << rs.skySunSize << " "
                 << rs.skySunColor.r << " " << rs.skySunColor.g << " " << rs.skySunColor.b << "\n";
-        // Star field (separate append-only record so older engines still load the scene).
-        if (rs.skyStars)
-            out << "skystars 1 " << rs.skyStarDensity << " " << rs.skyStarBright << "\n";
+        // Star field (separate append-only record so older engines still load the scene). Also written with the
+        // overlay off when the density or brightness changed: the Procedural sky draws its night stars with them.
+        const Scene::RenderSettings starDefaults;
+        if (rs.skyStars || rs.skyStarDensity != starDefaults.skyStarDensity || rs.skyStarBright != starDefaults.skyStarBright)
+            out << "skystars " << (rs.skyStars ? 1 : 0) << " " << rs.skyStarDensity << " " << rs.skyStarBright << "\n";
         if (rs.ambientMode != Scene::RenderSettings::AmbientHemisphere || rs.ambientSkyTint != 0.7f)
             out << "ambientmode " << rs.ambientMode << " " << rs.ambientSkyTint << "\n";
         if (!rs.autoBrightness) out << "lightunits 0\n";
@@ -5413,6 +5446,23 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                                >> mr->gradientBottom.r >> mr->gradientBottom.g >> mr->gradientBottom.b;
                         }
                     }
+                } else if (field == "customshader") {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
+                        in >> std::ws;
+                        std::string p = in.peek() == '"' ? ReadQuoted(in) : std::string();
+                        // A path written next to the scene ("lava.okayshader") is found in the scene's folder.
+                        if (!p.empty()) {
+                            const std::filesystem::path pp(p);
+                            std::error_code ec;
+                            if (!pp.is_absolute() && !g_loadingSceneDir.empty() && !std::filesystem::exists(pp, ec)) {
+                                const std::filesystem::path alt = std::filesystem::path(g_loadingSceneDir) / pp;
+                                if (std::filesystem::exists(alt, ec)) p = alt.string();
+                            }
+                        }
+                        mr->customShader = p;
+                        in >> std::ws;
+                        if (in.peek() == '"') mr->shaderParams = ReadQuoted(in);
+                    }
                 } else if (field == "rim") {
                     if (auto* mr = LastOf(go->GetComponents<MeshRenderer>()))
                         in >> mr->rimStrength >> mr->rimPower
@@ -6067,6 +6117,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         in >> std::ws; if (std::isdigit(in.peek())) { int sc = 1; in >> sc; cm->showCursor = (sc != 0); }
                         in >> std::ws; if (std::isdigit(in.peek())) { int pf = 1; in >> pf; cm->usePathfinding = (pf != 0); }
                         if (LooksNumeric(in)) in >> cm->repathInterval;
+                        // click on colliders, give up when stuck (added later; older scenes keep the defaults)
+                        in >> std::ws; if (std::isdigit(in.peek())) { int pc = 1; in >> pc; cm->pickColliders = (pc != 0); }
+                        in >> std::ws; if (std::isdigit(in.peek())) { int gu = 1; in >> gu; cm->giveUpWhenStuck = (gu != 0); }
+                        if (LooksNumeric(in)) in >> cm->stuckTime;
                     }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
@@ -6548,6 +6602,22 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws;   // optional: light hit flinch (defaults off)
                     if (std::isdigit(in.peek())) {
                         int pha = 0; in >> pha; c->playHitAnim = (pha != 0);
+                    }
+                    in >> std::ws;   // optional: "Nothing" on death, then one resistance per damage kind
+                    if (std::isdigit(in.peek())) {
+                        // Read only the rest of this record's line, so a wrong or hostile count can neither
+                        // loop for long nor eat the next record. At most 64 kinds; stop at the first bad value.
+                        std::string rest; std::getline(in, rest);
+                        std::istringstream ls(rest);
+                        int ka = 0, n = 0;
+                        if (ls >> ka) c->keepActiveOnDeath = (ka != 0);
+                        if ((ls >> n) && n > 0 && n <= 64) {
+                            for (int i = 0; i < n; ++i) {
+                                float r = 0.0f;
+                                if (!(ls >> r)) break;
+                                if (i < kDamageTypeCount && std::isfinite(r)) c->typeResistance[i] = Mathf::Clamp(r, -1.0f, 1.0f);
+                            }
+                        }
                     }
                 } else if (field == "seat") {
                     auto* c = go->AddComponent<Seat>();
@@ -7444,6 +7514,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int am = 1;
                     in >> dc->position >> dc->speed >> am;
                     dc->autoMove = (am != 0);
+                    // metres per second, ping-pong, face along the path (added later; older scenes keep the defaults)
+                    in >> std::ws; if (std::isdigit(in.peek())) { int v = 0; in >> v; dc->speedInMetres = (v != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int v = 0; in >> v; dc->pingPong = (v != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek())) { int v = 0; in >> v; dc->orientToPath = (v != 0); }
                 } else if (field == "cmbrain") {
                     auto* cb = go->AddComponent<CinemachineBrain>();
                     in >> cb->blendTime;
@@ -8343,6 +8417,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                     in >> std::ws; // grok/ui-controls: optional multiline
                     if (std::isdigit(in.peek())) { int ml = 0; in >> ml; inp->multiline = (ml != 0); }
+                    in >> std::ws; // optional focusable (older scenes: stays on)
+                    if (std::isdigit(in.peek())) { int fo = 1; in >> fo; inp->focusable = (fo != 0); }
                 } else if (field == "uitabs") {
                     auto* tb = go->AddComponent<UITabs>();
                     int an = 0, sp = 0, it = 1; std::size_t count = 0;
@@ -9093,6 +9169,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             }
                         }
                     }
+                } else if (field == "particlesterrain") {
+                    auto* ps = LastOf(go->GetComponents<ParticleSystem>());   // the one the `particles` record above made
+                    if (!ps) ps = go->AddComponent<ParticleSystem>();
+                    int on = 0; in >> on;
+                    ps->collideTerrain = (on != 0);
                 } else if (field == "particleswind") {
                     auto* ps = LastOf(go->GetComponents<ParticleSystem>());   // the one the `particles` record above made
                     if (!ps) ps = go->AddComponent<ParticleSystem>();
@@ -9231,6 +9312,15 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.str("prompt", dr->promptText); k.str("pobj", dr->promptObject); k.b("pause", dr->pausePlayer);
                     k.f("type", dr->typewriterSpeed); k.f("auto", dr->autoAdvance); k.b("ui", dr->drawUI); k.b("cancel", dr->canCancel);
                     k.i("start", dr->startNode); k.str("player", dr->playerName);
+                    int shots = 0;
+                    k.i("shots", shots);   // missing in records written before dialogue camera shots: none
+                    for (int i = 0; i < shots && i < 100000; ++i) {
+                        const std::string p = "sh" + std::to_string(i);
+                        DialogueRunner::CameraShotEntry e;
+                        k.i((p + "n").c_str(), e.node); k.str((p + "c").c_str(), e.camera);
+                        if (!e.camera.empty()) dr->cameraShots.push_back(e);
+                    }
+                    k.f("shb", dr->shotBlend);
                 } else if (field == "questlog") {
                     auto* ql = go->AddComponent<QuestLog>();
                     KvIn k(in);
@@ -9402,7 +9492,13 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "override") {
                     GameObject::PrefabOverride ov; in >> ov.object; ov.line = ReadQuoted(in);
                     if (in && ov.object >= 0 && !ov.line.empty()) go->prefabOverrides.push_back(ov);
-                } else if (auto reg = ComponentSerializerRegistry::Find(field)) {
+                } else if (auto reg = ComponentSerializerRegistry::Find(field); reg && reg->readWithNotes) {
+                    // A component that registered itself and reports what it skipped (the generic record).
+                    std::istringstream ls(ReadRecordLine(in));
+                    std::vector<std::string> notes;
+                    reg->readWithNotes(*go, ls, notes);
+                    for (const auto& n : notes) warn(n + " on object " + std::to_string(idx));
+                } else if (reg) {
                     // A component that registered itself (no branch in this chain).
                     std::string rest; std::getline(in, rest);
                     std::istringstream ls(rest);
@@ -9923,6 +10019,77 @@ bool SceneSerializer::MergeFromFile(Scene& scene, const std::string& path, const
 }
 
 
+// ---- The generic path: a component saved from its PropertyRegistry entry ------------------------------------
+// ComponentSerializerRegistry::RegisterFromProperties (ComponentSerializer.cpp) builds a record from these two. The
+// format is the key=value form the newer records already use (see KvOut): `  <record> key=value key="text" ...`.
+// Written from docs/engine/properties.md (the value text forms) and the scene format notes in
+// docs/engine/scene_serializer.md; no code from elsewhere.
+namespace {
+// Saved: what a person sets (not read-only, runtime-only, derived or structural). `enabled` is kept by the
+// `compoff` record for every component, and an object reference is left out: the object it names may load later.
+bool GenericSaved(const PropertyDesc& d) {
+    if (d.IsReadOnly() || d.IsRuntimeOnly() || d.IsDerived() || (d.flags & PropertyFlag::Structural) != 0) return false;
+    if (d.name == "enabled" || d.type == PropertyType::ObjectRef) return false;
+    return d.name.find_first_of("=\"") == std::string::npos;   // the key must be one token
+}
+// Read: the saved ones, plus `enabled` when a hand-written record carries it.
+bool GenericRead(const PropertyDesc& d) {
+    return GenericSaved(d) || (d.name == "enabled" && !d.IsReadOnly());
+}
+} // namespace
+
+void ComponentSerializerRegistry::WritePropertyFields(const Component& c, const ComponentTypeInfo& info, std::ostream& out) {
+    for (const PropertyDesc& d : info.properties) {
+        if (!GenericSaved(d)) continue;
+        const PropertyValue v = d.Get(c);
+        if (!v.IsValid()) continue;
+        out << ' ' << d.name << '=';
+        // Numbers and switches as they are; everything that may hold a space (text, vectors, "1 Point") quoted.
+        if (v.Type() == PropertyType::Bool || v.Type() == PropertyType::Int || v.Type() == PropertyType::Float) out << v.ToString();
+        else out << Quote(v.ToString());
+    }
+}
+
+int ComponentSerializerRegistry::ReadPropertyFields(Component& c, const ComponentTypeInfo& info, std::istream& in,
+                                                     std::vector<std::string>* notes) {
+    auto note = [&](const std::string& n) { if (notes) notes->push_back(n); };
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::istringstream ls(text);
+    // key -> value text, by property; a key given twice keeps the last one
+    std::unordered_map<const PropertyDesc*, std::string> given;
+    while (true) {
+        ls >> std::ws;
+        if (!ls || ls.peek() == EOF) break;
+        std::string key;
+        char ch = 0;
+        while (ls.get(ch) && ch != '=' && !std::isspace((unsigned char)ch)) key += ch;
+        if (ch != '=') {
+            if (!key.empty()) note("skipped '" + key + "' (no '=')");
+            continue;
+        }
+        std::string value;
+        if (ls.peek() == '"') value = ReadQuoted(ls);
+        else ls >> value;
+        const PropertyDesc* d = info.Find(key);
+        if (!d || !GenericRead(*d)) { note("skipped unknown field '" + key + "'"); continue; }
+        given[d] = value;
+    }
+    // Apply in the entry's order, whatever order the file had, so a setter that looks at another field sees the
+    // same thing every time.
+    int set = 0;
+    for (const PropertyDesc& d : info.properties) {
+        auto it = given.find(&d);
+        if (it == given.end()) continue;
+        PropertyValue v;
+        if (!d.ParseText(it->second, v) || !d.Set(c, v)) {
+            note("kept the default of '" + d.name + "': could not use '" + it->second + "'");
+            continue;
+        }
+        ++set;
+    }
+    return set;
+}
+
 // ---- Components that use the registry ------------------------------------
 namespace detail {
 void RegisterBuiltinComponentSerializers() {
@@ -10285,6 +10452,33 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(wsw));
 
+    // Hands on the ledge while hanging (LedgeHandsIK). Each arm is the GUID of the object holding that LimbIK
+    // and which LimbIK on it; the component turns the link back into the arm at Start().
+    ComponentSerializerRegistry::Entry lhik;
+    lhik.name = "ledgehandsik";
+    lhik.write = [](const GameObject& go, std::ostream& out) {
+        for (const LedgeHandsIK* h : go.GetComponents<LedgeHandsIK>()) {
+            out << "  ledgehandsik";
+            KvOut k{out};
+            k("setback", h->setback)("spread", h->handSpread)("over", h->overEdge)("fade", h->fadeTime).b("auto", h->autoWire);
+            const LedgeHandsIK::ArmLink l = h->LinkFor(0), r = h->LinkFor(1);
+            if (!l.object.empty()) k.str("left", l.object)("lefti", l.index);
+            if (!r.object.empty()) k.str("right", r.object)("righti", r.index);
+            out << "\n";
+        }
+    };
+    lhik.read = [](GameObject& go, std::istream& in) {
+        auto* h = go.AddComponent<LedgeHandsIK>();
+        KvIn k(in);
+        k.f("setback", h->setback); k.f("spread", h->handSpread); k.f("over", h->overEdge); k.f("fade", h->fadeTime);
+        k.b("auto", h->autoWire);
+        auto fin = [](float& v, float d) { if (!std::isfinite(v) || v < 0.0f) v = d; };
+        fin(h->setback, 0.25f); fin(h->handSpread, 0.22f); fin(h->overEdge, 0.05f); fin(h->fadeTime, 0.2f);
+        k.str("left", h->leftArmLink.object); k.i("lefti", h->leftArmLink.index);
+        k.str("right", h->rightArmLink.object); k.i("righti", h->rightArmLink.index);
+    };
+    ComponentSerializerRegistry::Register(std::move(lhik));
+
     ComponentSerializerRegistry::Entry wam;
     wam.name = "windambience";
     wam.write = [](const GameObject& go, std::ostream& out) {
@@ -10589,6 +10783,9 @@ void RegisterBuiltinComponentSerializers() {
         k.col("c", b->color); k.col("p", b->pressedColor); k.col("t", b->textColor);
     };
     ComponentSerializerRegistry::Register(std::move(tbtn));
+    // Last, so every record written before keeps its place. Saved from their PropertyRegistry entries, no code of their own (none of them was saved before).
+    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion", "ActiveRagdoll"})
+        ComponentSerializerRegistry::RegisterFromProperties(type);
 }
 } // namespace detail
 
@@ -10695,15 +10892,6 @@ std::string SpliceOverrides(const std::string& prefabText, const std::vector<Gam
     return JoinObjects(preamble, objs);
 }
 
-void CollectSubtree(GameObject* go, std::vector<GameObject*>& out) {   // depth first, siblings in order; a stack so a deep hierarchy cannot overflow
-    std::vector<GameObject*> stack{go};
-    while (!stack.empty()) {
-        GameObject* g = stack.back(); stack.pop_back();
-        out.push_back(g);
-        const auto& kids = g->transform->Children();
-        for (std::size_t i = kids.size(); i-- > 0;) stack.push_back(kids[i]->gameObject);
-    }
-}
 } // namespace
 
 bool SceneSerializer::CapturePrefabOverrides(GameObject& instanceRoot, std::string* error) {
@@ -10766,28 +10954,10 @@ GameObject* SceneSerializer::InstantiatePrefab(Scene& scene, const std::string& 
 GameObject* SceneSerializer::ReapplyPrefab(Scene& scene, GameObject& instanceRoot, std::string* error,
                                            std::vector<std::string>* warnings) {
     if (instanceRoot.prefabSource.empty()) { if (error) *error = "object is not a prefab instance"; return nullptr; }
-    if (PrefabTools::FileUsesPrefabStructure(instanceRoot.prefabSource)) return PrefabTools::Reapply(scene, instanceRoot, error, warnings);
-    GameObject* fresh = InstantiatePrefab(scene, instanceRoot.prefabSource, instanceRoot.prefabOverrides, error, warnings);
-    if (!fresh) return nullptr;   // nothing was added, the instance is as it was
-    // The new instance takes the old one's place: same name, parent, sibling slot, and
-    // the same persistent ids object for object (so references by id stay valid).
-    fresh->name = instanceRoot.name;
-    std::vector<GameObject*> oldSub, newSub;
-    CollectSubtree(&instanceRoot, oldSub);
-    CollectSubtree(fresh, newSub);
-    for (std::size_t i = 0; i < oldSub.size() && i < newSub.size(); ++i)
-        if (oldSub[i]->name == newSub[i]->name || i == 0) newSub[i]->SetGuid(oldSub[i]->Guid());
-    Transform* par = instanceRoot.transform->Parent();
-    if (par) {
-        int slot = 0;
-        for (std::size_t i = 0; i < par->Children().size(); ++i) if (par->Children()[i] == instanceRoot.transform) slot = (int)i;
-        fresh->transform->SetParent(par, /*worldPositionStays=*/false);
-        // Slot `slot` of the list that still holds the old instance is the old one's place.
-        Transform* before = (std::size_t)slot < par->Children().size() ? par->Children()[(std::size_t)slot] : nullptr;
-        if (before && before != fresh->transform) par->ReorderChild(fresh->transform, before, /*after=*/false);
-    }
-    scene.Destroy(&instanceRoot);   // like any Destroy: removed at the end of the frame
-    return fresh;
+    // Every prefab file, plain, nested or variant, is rebuilt by PrefabTools::Reapply: it keeps the instance's
+    // name, place and ids, and moves objects added under the instance onto the rebuilt one. (The plain path
+    // used to build a fresh copy here and lost those added objects.)
+    return PrefabTools::Reapply(scene, instanceRoot, error, warnings);
 }
 
 // ---- Validation ---------------------------------------------------------

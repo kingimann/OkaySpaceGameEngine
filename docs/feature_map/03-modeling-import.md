@@ -7,12 +7,13 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 ## 3. 3D modeling & import
 
 ### 3.1 Edit mode
+- **System:** Modeling - Builds and edits 3D models inside the editor: shapes, cuts, bevels, modifiers, UVs, sculpting and painting.
 - **What:** Blender-style mesh edit mode (Tab, G/R/S, axis lock, snapping, mirror) on the selected object's Mesh Renderer: Tab to enter, Vertex/Edge/Face selection, G/R/S modal transforms with axis locks, typed values and snapping, soft select, X symmetry and a set of face, edge and vertex tools. The mesh is kept welded while editing.
 - **Parts:**
-  - 3.1.1 Edit mode, selection and polygon stats - `editor/main.cpp`, `Render/Mesh` - Tab or the Edit Mesh tick, Object/Edit header, keys 1/2/3, click, Shift, Alt-click loop, Ctrl+Alt ring, Grow/Shrink/Linked/Invert, stats line
-  - 3.1.2 G/R/S modal transforms - `Modeling/EditTransform` - EditTransformSession, AxisLock (X/Y/Z, Shift = plane), NumericInput, Move/Rotate/ScaleMatrix, Ctrl snap, Esc restores exactly
+  - 3.1.1 Edit mode, selection and polygon stats - `editor/main.cpp`, `Render/Mesh` - Tab or the Edit Mesh tick, Object/Edit header, keys 1/2/3, click, Shift, Alt-click loop, Ctrl+Alt ring, Ctrl+click shortest path (ShortestVertPath / ShortestFacePath), Grow/Shrink/Linked/Invert, Checker Deselect, Select Boundary Loop, Select Open / Non-Manifold Edges (PolyOps: CheckerVerts / CheckerFaces, RegionOutline, ProblemEdges), stats line
+  - 3.1.2 G/R/S modal transforms - `Modeling/EditTransform` - EditTransformSession, AxisLock (X/Y/Z, Shift = plane), NumericInput, Move/Rotate/ScaleMatrix, Ctrl snap, Esc restores exactly; pivot Median / Individual Origins / Active Vertex (EditPivot; Edit Mesh combo, `.` cycles); the move-handle drag uses the same session (soft select, symmetry X/Y/Z)
   - 3.1.3 Soft Select, Symmetry X and vertex snap - `Render/Mesh` - MoveVerticesSoft, SnapToGrid, hold V to snap to vertices
-  - 3.1.4 Face tools - `Render/Mesh` - ExtrudeFaces, InsetFaces, SubdivideFaces, PokeFaces, Extrude/Inset Individual, DeleteFaces, FlipNormals, OrientFacesOutward (Recalc Outside), DuplicateFaces, SeparateFaces
+  - 3.1.4 Face tools - `Render/Mesh` - ExtrudeFaces, InsetFaces, SubdivideFaces, PokeFaces, Extrude/Inset Individual, DeleteFaces, FlipNormals (keeps flat or smooth shading), FlipFaces (selected faces only), OrientFacesOutward (Recalc Outside), DuplicateFaces, SeparateFaces
   - 3.1.5 Edge and vertex tools - `Render/Mesh` - CollapseEdges, SplitEdges, ExtrudeEdges, BevelVertices, SmoothVertices (Relax Sel), FlattenVertices, ShrinkFatten, SphereizeVertices, WeldVertices (Merge by Distance)
   - 3.1.6 Polygon mesh core - `Modeling/PolyMesh` - quads and n-gons with per-corner UVs, face colour and material slot; FromMesh/ToMesh, Check report, Euler characteristic
   - 3.1.7 Edit-session undo - `editor/main.cpp` - Ctrl+Z steps through single mesh edits; leaving edit mode makes the whole session one scene undo step (per docs)
@@ -20,36 +21,38 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **API:** `EditTransformSession`, `AxisLock`, `NumericInput`, `PolyMesh::FromMesh/ToMesh`, `Mesh::ExtrudeFaces`, `InsetFaces`, `OrientFacesOutward`; keys Tab, G, R, S, X/Y/Z, Ctrl+Z
 - **Editor:** Modeling window (View > Editors & Tools > Modeling), the 3D view's Object/Edit header and status line, Edit Mesh section
 - **Docs:** `docs/editor/modeling.md`
-- **Tests:** `edit_transform`, `meshedit`, `polymesh`, `modeling`
+- **Tests:** `edit_transform`, `meshedit`, `polymesh`, `modeling`, `poly_ops`
 - **Status:** Works - four test suites cover the maths and mesh ops; I read the headers but not the editor key handling in main.cpp
-- **Open:** tools that rebuild triangles outside the polygon core (the classic Extrude) fall back to one UV per vertex where they touch (per docs); possible doc gap: docs/editor/modeling.md says seams and edge split are "not here yet" but UV seams exist (3.4)
+- **Open:** tools that rebuild triangles outside the polygon core (the classic Extrude) fall back to one UV per vertex where they touch (per docs); no per-edge Mark Sharp or Edge Split tool (UV seams exist, 3.4; Auto Smooth covers shading by angle); no local / normal transform orientation, 3D cursor pivot, rip, loop-to-region or vertex slide (audit: `docs/status/modeling_tab_audit.md`); Ctrl+click path, pivot modes and the handle-drag symmetry are tested headless but not tried in a running editor
 - **Related:** 3.2, 3.4, 3.8, 15.9
 - **Words:** edit mode (Tab, G/R/S, axis lock, snapping, mirror), Edit Mesh, Tab, G R S, grab, rotate, scale, extrude, inset, poke, soft select, proportional editing, symmetry X, recalc normals, merge by distance, separate, duplicate faces
 - **Seen as:** pressing Tab over the 3D view does nothing; a tool is greyed out; faces look dark or inside out after a weld or mirror; Esc does not put the vertices back; a typed distance goes the wrong way
 - **Ask me like:** "make G snap to the grid while Ctrl is held"; "Extrude Faces leaves the collider behind"
 
 ### 3.2 Edge and loop tools
+- **System:** Modeling
 - **What:** Edge-loop modeling on the polygon mesh: select loops and rings, cut new loops, slide, bevel, knife, dissolve, bridge, fill. Each tool keeps the numbering of existing vertices so a selection survives it.
 - **Parts:**
   - 3.2.1 Loop and ring selection - `Modeling/PolyOps` - EdgeLoop, EdgeRing, OrderChains, PolyTopology; Alt-click loop, Ctrl+Alt-click ring, Select Loop/Ring buttons
-  - 3.2.2 Loop cut and edge slide - `Modeling/PolyOps` - LoopCut (Ctrl+R preview, scroll for more cuts), EdgeSlide (G then G)
+  - 3.2.2 Loop cut and edge slide - `Modeling/PolyOps` - LoopCut (Ctrl+R preview, scroll for more cuts), EdgeSlide (G then G; per-corner UVs follow, seams stay split)
   - 3.2.3 Bevel - `Modeling/PolyOps` - BevelEdges (Ctrl+B), segments and profile; where three or more bevels meet the corner is closed with one face
   - 3.2.4 Knife, split edge, connect - `Modeling/PolyOps` - KnifeCut (K), SplitEdge, SplitFace (Connect Verts)
-  - 3.2.5 Dissolve, merge, bridge and fill - `Modeling/PolyOps` - DissolveEdges, DissolveVerts, MergeVerts, BridgeEdgeLoops, FillFaces, GridFill, CompactVerts
+  - 3.2.5 Dissolve, merge, bridge and fill - `Modeling/PolyOps` - DissolveEdges, DissolveVerts, MergeVerts, BridgeEdgeLoops, BridgeFaces (two face groups: delete, then bridge; Face mode in the editor), FillFaces, GridFill, CompactVerts
   - 3.2.6 Catmull-Clark subdivision - `Modeling/PolyOps` - CatmullClark(pm, levels) on real polygons (used by the Subdivision modifier)
 - **Code:** `Modeling/PolyOps`, `Modeling/PolyMesh`, `editor/main.cpp`
-- **API:** `EdgeLoop`, `EdgeRing`, `LoopCut`, `EdgeSlide`, `BevelEdges`, `KnifeCut`, `DissolveEdges`, `BridgeEdgeLoops`, `GridFill`, `CatmullClark`; keys Ctrl+R, Ctrl+B, K
+- **API:** `EdgeLoop`, `EdgeRing`, `LoopCut`, `EdgeSlide`, `BevelEdges`, `KnifeCut`, `DissolveEdges`, `BridgeEdgeLoops`, `BridgeFaces`, `GridFill`, `CatmullClark`; keys Ctrl+R, Ctrl+B, K
 - **Editor:** Modeling window > Edit Mesh > Edge loops group; Ctrl+R / Ctrl+B / K in the 3D view
 - **Docs:** `docs/editor/modeling.md`
 - **Tests:** `poly_ops`
 - **Status:** Works - poly_ops checks counts, closed shells and winding on real geometry; limits listed in Open
-- **Open:** Bevel needs edges with a face on both sides; Bridge works on open borders only and does not remove faces first; Edge slide does not adjust UVs so a textured surface stretches; Grid Fill needs an even number of rim edges (all per docs)
+- **Open:** Bevel needs edges with a face on both sides; Bridge face groups must each be one patch without holes, not touching, with outlines of the same edge count; Grid Fill needs an even number of rim edges (all per docs); edge slide UVs and Bridge in Face mode are tested in poly_ops but not tried in a running editor
 - **Related:** 3.1, 3.3, 3.4
 - **Words:** loop cut, edge loop, edge ring, edge slide, bevel, chamfer, knife, dissolve, bridge, fill, grid fill, merge at center, Catmull-Clark, subdivision surface
 - **Seen as:** a loop cut previews but does not apply; a bevel leaves a hole at a corner; a bridge says the loops need the same edge count; a slid loop stretches the texture
 - **Ask me like:** "add chamfer profile to the bevel"; "knife cut across two faces fails"
 
 ### 3.3 Modifiers
+- **System:** Modeling
 - **What:** Two kinds of modifiers: one-shot operations that change the mesh at once (array, remesh, decimate, boolean, hull, bisect...), and a non-destructive stack on a Mesh Modifiers component whose result is drawn, collided with and exported while the base mesh stays editable.
 - **Parts:**
   - 3.3.1 One-shot modifiers - `Render/Mesh` - Array, VoxelRemesh/Remesh, Decimate, Boolean (Union/Subtract/Intersect), ConvexHull, Bisect, Split in two, ShrinkFatten, Wireframe, Displace, CastToCylinder, Stretch
@@ -69,6 +72,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "add a Weld modifier to the stack"; "the Boolean cutter stays visible"
 
 ### 3.4 UV tools
+- **System:** Modeling
 - **What:** Texture coordinates for modeled geometry: quick projections, per-corner UVs that survive editing, seams, a real unwrap (LSCM) with island packing, and a UV Editor window.
 - **Parts:**
   - 3.4.1 Quick projections - `Render/Mesh` - ProjectUVBox, ProjectUVPlanar, ProjectUVCylinder, ProjectUVSphere with a tile count
@@ -89,6 +93,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "pack UV islands without shrinking them"; "the UV Editor should show a checker when there is no texture"
 
 ### 3.5 Mesh assets and primitives
+- **System:** Meshes - The 3D shape data that drawing and physics share, the built-in shapes, and the `.okaymesh` file.
 - **What:** The triangle Mesh type the renderer and physics use, its built-in primitives, the `.okaymesh` text format that keeps real polygons, and how edited meshes are saved (by name, by file path, or verbatim in the scene).
 - **Parts:**
   - 3.5.1 Triangle Mesh and primitives - `Render/Mesh` - Cube, Sphere, Cylinder, Cone, Pyramid, Wedge, Quad, Plane, Tube, Torus, TorusKnot, Capsule, Icosphere, Grid, Hemisphere, Stairs, Gear, Prism, Octahedron, Disc, Tetrahedron, Bipyramid, RoundedBox
@@ -122,6 +127,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "support per-face materials in .okaymesh"; "why is the Cone inside out"
 
 ### 3.6 Model import
+- **System:** Model Import - Reads 3D model files from other programs (FBX, glTF, OBJ and more) with their materials, bones and animations.
 - **What:** One entry point turns a model file into a merged mesh or a scene hierarchy with materials, skeleton, skins, clips and morph targets, then prints an import report. Built in: OBJ (+MTL), STL, PLY, glTF/GLB and FBX (vendored ufbx); Collada has a reader of ours that is off by default; other formats only when the build has Assimp. Every Assimp read goes through one seam that returns our own `ImportedModel` type (see `docs/content/model_import.md`).
 - **Parts:**
   - 3.6.1 glTF 2.0 and GLB - `Render/Gltf`, `Render/ModelImport` - own JSON and base64 reader, accessors including sparse and quantized, up to 8 influences (4 kept), matrix nodes decomposed, STEP/LINEAR/CUBICSPLINE keys, multi-material skins
@@ -158,11 +164,12 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
   - 3.6.39 Texture paths named in model files - `Render/TexturePath`, `Render/ModelReaders`, `Render/Mesh` - `ResolveModelTexturePath` / `SetModelTextureRoots`: network, device and drive-relative paths, and names that are not valid UTF-8, refused on the text before any disk access, each with one log warning naming the file and the reason; a texture or `mtllib` inside the model's folder is kept (links followed); absolute and `../` paths only inside an allowed root (the editor's open project, validated), links followed; used by both OBJ/MTL readers and, for the screen and folder check, by scene files (#753)
   - 3.6.41 Own PMX reader (side by side, off by default, unverified on real files) - `Render/PmxReader`, `Render/ModelImport` - `ReadPmxFile` / `ReadPmxBuffer`: MikuMikuDance models, PMX 2.0 / 2.1 (UTF-16LE or UTF-8, index sizes 1 / 2 / 4, BDEF1 / BDEF2 / BDEF4 / SDEF / QDEF weights, one skinned part per material, bones as nodes with inverse binds, texture paths kept inside the model's folder); morphs are checked, not imported; selected with `SetImportBackend(".pmx", Own)`, env `OKAY_OWN_PMX=1` or `-DOKAY_OWN_PMX=ON` (`docs/content/model_readers.md`)
   - 3.6.42 Own LWS / MOT reader (side by side, off by default, unverified on real files) - `Render/LwsReader`, `Render/ModelImport` - `ReadLwsFile` / `ReadLwsBuffer`: LightWave scenes (items as nodes, `ParentItem`, position / heading / pitch / bank / scale envelopes as one clip, the object files a scene names read through the import table and only from inside the scene's folder) and `.mot` motions; selected with `SetImportBackend(".lws", Own)`, env `OKAY_OWN_LWS=1` or `-DOKAY_OWN_LWS=ON` (`docs/content/model_readers.md`)
-- **Code:** `Render/ModelImport`, `Render/ModelData`, `Render/ModelReaders`, `Render/ColladaReader`, `Render/Max3dsReader`, `Render/BvhReader`, `Render/ThreeMfReader`, `Render/Md2Reader`, `Render/Md3Reader`, `Render/IrrMeshReader`, `Render/B3dReader`, `Render/XFileReader`, `Render/Ac3dReader`, `Render/OgreXmlReader`, `Render/XglReader`, `Render/IrrSceneReader`, `Render/NffReader`, `Render/TerragenReader`, `Render/PmxReader`, `Render/LwsReader`, `Render/ModelImportAssimp`, `Render/FbxReader`, `Render/FbxScene`, `Render/Gltf`, `Render/Mesh`, `Components/BlendShapes`, `editor/MainShared.hpp`, `editor/main.cpp`, `scripts/gen_fbx_fixtures.py`, `scripts/gen_3ds_fixtures.py`, `scripts/gen_bvh_fixtures.py`
+  - 3.6.43 Why an import failed - `Render/ModelImportProblem`, `editor/main.cpp` - `DescribeModelImportProblem(path)`: missing file, folder, empty file, unknown extension (with the list this build reads), a picture or text file renamed to .glb, glTF 1 binary, cut-off .glb, .glb / .gltf swapped, not JSON, not an FBX, very large, else the seam reader's own error; every "Model import failed" Console line in the editor (drop, double-click, Hierarchy drag, Import Model, character model) now ends with that reason; a folder named like a model (`x.obj`, `x.glb`, `x.fbx`) or a font (`x.ttf`) is refused instead of ending the editor with std::length_error / bad_alloc / ios_base::failure (`ImportModel` / `ImportModelScene` refuse anything that is not an ordinary file; `Mesh::LoadOBJ`, the own FBX `LoadFile` and `TtfFont::LoadFromFile` refuse it too)
+- **Code:** `Render/ModelImport`, `Render/ModelImportProblem`, `Render/ModelData`, `Render/ModelReaders`, `Render/ColladaReader`, `Render/Max3dsReader`, `Render/BvhReader`, `Render/ThreeMfReader`, `Render/Md2Reader`, `Render/Md3Reader`, `Render/IrrMeshReader`, `Render/B3dReader`, `Render/XFileReader`, `Render/Ac3dReader`, `Render/OgreXmlReader`, `Render/XglReader`, `Render/IrrSceneReader`, `Render/NffReader`, `Render/TerragenReader`, `Render/PmxReader`, `Render/LwsReader`, `Render/ModelImportAssimp`, `Render/FbxReader`, `Render/FbxScene`, `Render/Gltf`, `Render/Mesh`, `Components/BlendShapes`, `editor/MainShared.hpp`, `editor/main.cpp`, `scripts/gen_fbx_fixtures.py`, `scripts/gen_3ds_fixtures.py`, `scripts/gen_bvh_fixtures.py`
 - **API:** `ImportModel`, `ImportModelScene`, `AnalyzeModel`, `ImportableExtensions`, `AssimpAvailable`, `okay::fbx::LoadFile`, `okay::fbx::OwnReaderEnabled`, `OKAY_OWN_FBX`, `ImportModelData`, `ImportedModel`, `SetImportBackend`, `ReadObjFile`, `ReadStlFile`, `ReadPlyFile`, `ReadColladaFile`, `OKAY_OWN_COLLADA`, `Read3dsFile`, `ReadBvhFile`, `OKAY_OWN_3DS`, `OKAY_OWN_BVH`, `Read3mfFile`, `OKAY_OWN_3MF`, `ReadMd2File`, `ReadMd3File`, `ReadIrrMeshFile`, `ReadB3dFile`, `ReadXFile`, `ReadAc3dFile`, `ReadOgreXmlFile`, `ReadXglFile`, `ReadIrrSceneFile`, `ReadNffFile`, `ReadMdcFile`, `ReadHmpFile`, `ReadCsmFile`, `ReadTerragenFile`, `OKAY_OWN_TER`, `ReadPmxFile`, `ReadLwsFile`, `OKAY_OWN_PMX`, `OKAY_OWN_LWS`, `IrrMeshLoader`, `OKAY_OWN_AC3D`, `OKAY_OWN_OGRE`, `OKAY_OWN_XGL`, `OKAY_OWN_IRR`, `OKAY_OWN_NFF`, `OKAY_OWN_MDC`, `OKAY_OWN_HMP`, `OKAY_OWN_CSM`, `OKAY_OWN_MD2`, `OKAY_OWN_MD3`, `OKAY_OWN_IRRMESH`, `OKAY_OWN_B3D`, `OKAY_OWN_X`, `LoadGLTF`, `AddAnimationsFromFile`, `BlendShapes`; script `blend_shape("Smile", 0.8)`, `blend_shape_get`
 - **Editor:** File > Import Model..., Project panel (double-click, drag into viewport), Console import report, Blend Shapes inspector
 - **Docs:** `docs/content/model_import.md`, `docs/editor/modeling.md`, `docs/gameplay/animation.md` (imported characters, blend shapes, Tips), `docs/content/model_readers.md`, `docs/content/own_readers_speed.md` (speed and memory of our readers against Assimp, `tests/bench_model_readers.cpp`), `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/own_readers_remaining.md`, `docs/content/model_corpus.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`, `docs/content/model_readers.md`
-- **Tests:** `gltf_import`, `gltf_cubicspline`, `model_import_rig`, `blend_shapes`, `obj_import`, `loaders_robust`, `model_readers`, `obj_texture_roots`, `model_readers_fuzz`, `collada_reader`, `3ds_reader`, `bvh_reader`, `3ds_bvh_hostile`, `3mf_reader`, `batchb_hostile`, `md2_reader`, `md3_reader`, `irrmesh_reader`, `b3d_reader`, `x_reader`, `batchc_hostile`, `own_dispatch_c`, `ac3d_reader`, `ogre_reader`, `xgl_reader`, `irr_reader`, `nff_reader`, `batchd_hostile`, `terragen_reader`, `terragen_hostile`, `own_dispatch_d`, `model_corpus`, `fbx_reader`, `fbx_hostile`, `mdc_reader`, `hmp_reader`, `csm_reader`, `batche_hostile`, `own_dispatch_e`, `own_reader_wiring`
+- **Tests:** `model_import_problem`, `gltf_import`, `gltf_cubicspline`, `model_import_rig`, `blend_shapes`, `obj_import`, `loaders_robust`, `model_readers`, `obj_texture_roots`, `model_readers_fuzz`, `collada_reader`, `3ds_reader`, `bvh_reader`, `3ds_bvh_hostile`, `3mf_reader`, `batchb_hostile`, `md2_reader`, `md3_reader`, `irrmesh_reader`, `b3d_reader`, `x_reader`, `batchc_hostile`, `own_dispatch_c`, `ac3d_reader`, `ogre_reader`, `xgl_reader`, `irr_reader`, `nff_reader`, `batchd_hostile`, `terragen_reader`, `terragen_hostile`, `own_dispatch_d`, `model_corpus`, `fbx_reader`, `fbx_hostile`, `mdc_reader`, `hmp_reader`, `csm_reader`, `batche_hostile`, `own_dispatch_e`, `own_reader_wiring`
 - **Status:** Partial - glTF, OBJ, STL and PLY are well tested (the last two with fixtures, malformed input and a fuzz sweep); FBX is exercised by `fbx_reader` and `fbx_hostile` on small generated fixtures (both the ufbx path and our own reader, compared) and, when `OKAY_MODEL_CORPUS` is set, on 43 real files, with no real-world file stored in the repository; the Assimp formats are only exercised by `model_readers` in a build with OKAY_USE_ASSIMP, where it compares Assimp with our readers (so the default suite does not cover them)
 - **Open:** our Collada, 3DS and BVH readers are off by default and were checked on one outside corpus only (`docs/content/model_corpus.md`; Collada has no morphs and flattens curve interpolation to linear, see `docs/content/model_import.md`); still Assimp-only (no reader of ours yet): the formats listed in `docs/content/own_readers_remaining.md` (6 switched on in our build: OpenGEX, MDL, Q3BSP, SIB, Nendo, glTF 1.0) and OGRE's binary `.skeleton` by default (our reader reads it only with `OKAY_OWN_OGRE_SKELBIN=1`); the 39 importers that have a reader of ours (counted 2026-11-15) are all off by default except the always-on glTF 2.0, OBJ, STL and PLY (`docs/status/own_flip_proposal.md` has the order of flips and the readiness of each); OBJ keeps v as written while PLY/FBX/Assimp flip it (`docs/content/model_import.md`); packed metallic-roughness and emissive textures not imported; BVH is named in the Add-animations dialog; it reads through our own reader only when switched on (`OKAY_OWN_BVH`), otherwise only with an Assimp build; sample Mixamo menu items download from GitHub with curl on first use; our own FBX reader is non-default and checked on one outside corpus of 43 files only, see the NOT handled list in docs/content/model_readers.md
 - **Related:** 3.7, 5.5, 5.2, 20.4, 2.2
@@ -171,6 +178,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "import FBX takes as separate clips"; "support the metallic-roughness texture from glTF"
 
 ### 3.7 Rigging and playable setup
+- **System:** Rigging - Adds a skeleton to a model and sets it up so it can be animated and played as a character.
 - **What:** Turn a model into something that plays: auto-rig a model with no skeleton to the engine humanoid, attach any imported model as a player's body (size, grounding, facing, collider, locomotion clips), or build a whole playable third-person character from a model file in one click.
 - **Parts:**
   - 3.7.1 Rig Model (Humanoid) auto-rig - `Components/Character` - BindCustomMesh binds each vertex to its nearest bone segment so the built-in animations drive the model; Unrig restores the blocky body
@@ -193,23 +201,25 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "make a Mixamo character playable in one click"; "the model walks backwards after Set Character Model"
 
 ### 3.8 Sculpt and paint brushes
+- **System:** Modeling
 - **What:** Viewport brushes on an edited mesh: sculpt (Grab, Inflate, Smooth, Flatten, Pinch) and per-face colour painting that multiplies with the material colour.
 - **Parts:**
-  - 3.8.1 Sculpt brush - `Render/Mesh` - SculptBrush with radius, strength, Symmetry X; subdivide first for detail
-  - 3.8.2 Paint brush and fill - `Render/Mesh` - EnsureFaceColors, PaintFaces, FillFacesColor, MottleFaceColors, Clear Paint; saved with the scene
+  - 3.8.1 Sculpt brush - `Render/Mesh` - SculptBrush (Grab, Inflate, Smooth = Laplacian over edge neighbours, Flatten, Pinch) with radius, strength, BrushFalloff (smoothstep), symmetryX in one pass; seam and pole copies move together; subdivide first for detail
+  - 3.8.2 Paint brush and fill - `Render/Mesh` - EnsureFaceColors, PaintFaces (a quad or n-gon paints as one face), FillFacesColor, MottleFaceColors, Clear Paint; saved with the scene
 - **Code:** `Render/Mesh`, `editor/main.cpp`
-- **API:** `Mesh::SculptBrush`, `Mesh::PaintFaces`, `FillFacesColor`
+- **API:** `Mesh::SculptBrush`, `Mesh::BrushFalloff`, `Mesh::PaintFaces`, `FillFacesColor`
 - **Editor:** Modeling > Edit Mesh > Sculpt Brush and Paint Brush ticks
 - **Docs:** `docs/editor/modeling.md`
-- **Tests:** `meshedit`, `mesh3d`
-- **Status:** Basic - brush maths are in the Mesh header and docs describe them; I found no test that names sculpt or paint specifically
-- **Open:** no per-vertex weight or texture painting; paint colours are per face only
+- **Tests:** `sculpt_paint`, `meshedit`, `mesh3d`
+- **Status:** Works - `sculpt_paint` checks every brush, the falloff, X symmetry and face paint against hand-worked numbers; the editor strokes themselves are not tried in a running editor
+- **Open:** no per-vertex weight or texture painting (vertex colours are separate, see docs); no Draw/Clay/Crease brush
 - **Related:** 3.1, 2.2
 - **Words:** sculpt, brush, inflate, grab, pinch, flatten, paint, vertex colour, face colour
 - **Seen as:** brush does nothing on a coarse mesh; paint colour is muddy because it multiplies with the material
 - **Ask me like:** "add a Crease brush"; "make paint strokes undoable one by one"
 
 ### 3.9 Generate and whole-mesh operations
+- **System:** Modeling
 - **What:** Profile-driven shapes (lathe, screw, extrude outline, pipe along a path) and the one-click whole-mesh operations in the Modeling window's Edit tab.
 - **Parts:**
   - 3.9.1 Lathe and Screw - `Render/Mesh` - Mesh::Lathe, Mesh::Screw from a (radius, height) point list; Vase, Goblet, Column presets
@@ -228,6 +238,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "add a Loft between two profiles"; "pipe along a custom spline"
 
 ### 3.10 Add library and procedural props
+- **System:** Modeling
 - **What:** The Modeling window's Add library and GameObject > 3D Object menu: 23 primitives plus pre-coloured nature, prop and structure meshes, with procedural variants (one number per object regenerates the exact shape) and Shape tab collision modes.
 - **Parts:**
   - 3.10.1 Nature props - `Render/Mesh` - Tree, Pine, PalmTree, DeadTree, Bush, Rock, Mushroom, Cactus, Crystal with Variant stepper and Randomize; terrain Scatter gives every instance its own variant
@@ -247,6 +258,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "add a Boulder variant to Rock"; "refit the collider after an edit"
 
 ### 3.11 Guided creation (templates, parts, safe regeneration)
+- **System:** Modeling
 - **What:** A Guided page in the Modeling window: pick a category and a starting design, get an ordinary editable mesh generated from a small recipe, change its settings, swap designs per kind of part or per part, keep editing by hand. Rebuilding never overwrites hand edits silently (keep / discard / convert). The fence and the architecture templates (wall, stairs, door, window, roof, building) exist; other categories show an honest empty state. Click-to-draw path and a collider option are on the page.
 - **Parts:**
   - 3.11.1 Recipe, registry and generation - `Modeling/Guided` - Recipe (text `okayguided 1`), Template and Registry, deterministic Generate, parts with stable ids
@@ -270,6 +282,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "add a wall template"; "let me draw the fence path in the 3D view"; "add a collider to a guided model"
 
 ### 3.12 Simple view of the Modeling window (beginner mode)
+- **System:** Modeling
 - **What:** The Modeling window opens in a simple view by default: Undo / Redo / Do again always on top, the model's size, a "What do I click next?" line that follows the selection, "Pick parts" (corners, edges, faces; one click turns edit mode on), up to six quick actions for what is selected, the last four tools used, and five tabs named by what you want to do (Shape with seven one-click starter models, Reshape, Details, Colour, Finish). Every tool has a plain name, a one-sentence tip, an example and its shortcut; tools that cannot run are greyed out with the reason. There is no Advanced switch any more (removed 2026-11-18): the Modeling window is one window with a page list on the left, and the simple view is its first page, "Easy", which is the page it opens on. Every other tool is a page in the same list, so no tool was lost; the old `modelingadvanced` line in okay_settings.txt is read and ignored. Tools run the existing operations (no second copy). The page list shows pages under job headings (Start here, Make something, Change it, Fix parts, Extras, Files) with plain titles (Easy, Add shapes, Step by step, Make shapes, Change the shape, Bend and cut, Fix the surface, Effects, Bring in a model; the old titles Add, Guided, Generate, Shape, Edit, Edit Mesh, Modifiers and Import are still found by the search box; fold it with the arrow or Ctrl+\) (Create, Shape and size, Edit parts, Effects, Files), has a tool search box (type bevel or round: matching buttons are outlined on their page and the page is named) and a hint line with a plain sentence for the button under the mouse; the Edit and Edit Mesh pages got real section headings (the mirror and deform tools used to sit under UV Unwrap). The simple view also has: Pick whole part and Pick similar, a mirror-my-changes switch (on by default), the last four tools remembered between sessions, and a live preview while the How much slider moves (applied once when let go). Click counts for eight beginner jobs, old window to new (walked through the code, not timed with a person): box with a roof 9 to 1, round a corner 6 to 3, window hole 7 to 3, symmetric face 4 to 1, stretch 3 to 1, table legs 10 to 1, smooth a rock 5 to 2, paint two colours 9 to 4.
 - **Code:** `editor/ModelingEasy.hpp` (catalogue, jargon check, hints, quick actions, recent tools, job counts), `editor/ModelingEasyOps.hpp` (tool to mesh operation), `editor/ModelingStarters.hpp`, `editor/ModelingEasyUi.cpp`, `editor/ModelingToolIndex.hpp` (every tool, pages by job, search), `editor/ModelingHighlight.hpp`, `editor/main.cpp` (DrawModelingSimple, DrawModeling)
 - **API:** `oked::easymodel::Tools`, `NextHint`, `QuickActions`, `WhyNot`, `RunMeshTool`, `BuildStarter`

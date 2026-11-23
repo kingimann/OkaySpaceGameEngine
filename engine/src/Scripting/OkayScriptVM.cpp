@@ -6,6 +6,7 @@
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/Ragdoll.hpp"
+#include "okay/Components/ActiveRagdoll.hpp"
 #include "okay/Components/TweenAnimation.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -4214,8 +4215,8 @@ struct OkayScriptVM::Impl {
         b["ia_scheme"] = [iaPlayer](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 0)); return Value{s ? s->Scheme() : std::string()}; };
         b["ia_set_scheme"] = [iaName, iaPlayer](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 1)); return Value{s && s->SetScheme(iaName(a))}; };
         b["ia_rebind"] = [iaPlayer](std::vector<Value>& a) {
-            ActionSet* s = InputRuntime::Set(iaPlayer(a, 4));
-            return Value{s && a.size() > 3 && s->Rebind(a[0].AsString(), SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()), a[3].AsString())};
+            InputRuntime::Set(iaPlayer(a, 4));   // as before: the first read joins a player even when the call is short of arguments
+            return Value{a.size() > 3 && InputRuntime::Rebind(iaPlayer(a, 4), a[0].AsString(), SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()), a[3].AsString())};
         };
         b["ia_conflicts"] = [iaPlayer](std::vector<Value>& a) {
             ActionSet* s = InputRuntime::Set(iaPlayer(a, 4));
@@ -4223,8 +4224,8 @@ struct OkayScriptVM::Impl {
             if (s && a.size() > 3) for (const std::string& c : s->Conflicts(a[0].AsString(), SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()), a[3].AsString())) { if (!out.empty()) out += ", "; out += c; }
             return Value{out};
         };
-        b["ia_reset_bindings"] = [iaPlayer](std::vector<Value>& a) { if (ActionSet* s = InputRuntime::Set(iaPlayer(a, 0))) s->ResetOverrides(); return Value{}; };
-        b["ia_save"] = [iaPlayer](std::vector<Value>& a) { InputRuntime::Set(iaPlayer(a, 0)); InputRuntime::Players().SaveOverrides(iaPlayer(a, 0)); return Value{}; };
+        b["ia_reset_bindings"] = [iaPlayer](std::vector<Value>& a) { InputRuntime::ResetBinding(iaPlayer(a, 0)); return Value{}; };
+        b["ia_save"] = [iaPlayer](std::vector<Value>& a) { InputRuntime::SaveOverrides(iaPlayer(a, 0)); return Value{}; };
         b["ia_label"] = [iaName, iaPlayer](std::vector<Value>& a) {   // the first active binding of the action as the player reads it ("Cross", "Space", "W A S D")
             ActionSet* s = InputRuntime::Set(iaPlayer(a, 1));
             const ActionDef* d = s ? s->Find(iaName(a)) : nullptr;
@@ -4393,6 +4394,7 @@ struct OkayScriptVM::Impl {
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{false};
             Scene* sc = rt.host->gameObject->scene();
             if (!sc) return Value{false};
+            if (!ScriptAssetPathOk(a[0].AsString(), "pool_get")) return Value{false};
             ObjectPool* pool = ObjectPool::ForPrefab(*sc, a[0].AsString());
             GameObject* go = pool ? pool->Get() : nullptr;
             if (!go) return Value{false};
@@ -4409,7 +4411,8 @@ struct OkayScriptVM::Impl {
         };
         b["pool_prewarm"] = [this](std::vector<Value>& a) {
             Scene* sc = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            ObjectPool* pool = (sc && !a.empty()) ? ObjectPool::ForPrefab(*sc, a[0].AsString()) : nullptr;
+            ObjectPool* pool = (sc && !a.empty() && ScriptAssetPathOk(a[0].AsString(), "pool_prewarm"))
+                                   ? ObjectPool::ForPrefab(*sc, a[0].AsString()) : nullptr;
             if (!pool) return Value{0.0f};
             const float n = a.size() > 1 ? a[1].AsFloat() : 1.0f;
             pool->Prewarm(n > 0.0f && n < 100000.0f ? static_cast<int>(n) : 0);
@@ -4417,7 +4420,8 @@ struct OkayScriptVM::Impl {
         };
         b["pool_idle"] = [this](std::vector<Value>& a) {
             Scene* sc = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            ObjectPool* pool = (sc && !a.empty()) ? ObjectPool::ForPrefab(*sc, a[0].AsString()) : nullptr;
+            ObjectPool* pool = (sc && !a.empty() && ScriptAssetPathOk(a[0].AsString(), "pool_idle"))
+                                   ? ObjectPool::ForPrefab(*sc, a[0].AsString()) : nullptr;
             return Value{pool ? static_cast<float>(pool->IdleCount()) : 0.0f};
         };
         // Destroy this script's own GameObject (deferred to end of frame).
@@ -4533,12 +4537,19 @@ struct OkayScriptVM::Impl {
             return Value{std::string{}};
         };
         // RPG / survival stats on a named object: hurt("Orc", 12) (defense-mitigated,
-        // fires on_death), heal, add_xp (fires on_level_up), get_hp/get_max_hp. Work on a
-        // Stats or a SurvivalStats component, whichever the object has.
+        // fires on_death), heal, add_xp (fires on_level_up), get_hp/get_max_hp.
+        // The order is the one scripts always had: a Stats component first, then SurvivalStats;
+        // only an object with neither goes on to a Health Stat or an NPC (the one damage path).
         b["hurt"] = [sceneOf](std::vector<Value>& a) -> Value {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
-                if (auto* st = g->GetComponent<Stats>()) { st->TakeDamage(a[1].AsFloat()); return Value{true}; }
-                if (auto* sv = g->GetComponent<SurvivalStats>()) { sv->Damage(a[1].AsFloat()); return Value{true}; }
+                // hurt("Orc", 12) or hurt("Orc", 12, "Fire"): the optional third word is the damage kind.
+                DamageType ty = DamageType::Generic;
+                if (a.size() >= 3 && a[2].IsString()) DamageTypeFromName(a[2].AsString(), ty);
+                const DamageEvent ev = DamageEvent::Make(a[1].AsFloat(), ty);
+                if (auto* st = g->GetComponent<Stats>()) { st->TakeDamage(ev); return Value{true}; }
+                if (auto* sv = g->GetComponent<SurvivalStats>()) { sv->Damage(ev); return Value{true}; }
+                float hh = 0.0f, mm = 0.0f;
+                if (HealthOf(g, hh, mm)) { DealDamage(g, ev); return Value{true}; }
             }
             return Value{false};
         };
@@ -4546,6 +4557,8 @@ struct OkayScriptVM::Impl {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
                 if (auto* st = g->GetComponent<Stats>()) { st->Heal(a[1].AsFloat()); return Value{true}; }
                 if (auto* sv = g->GetComponent<SurvivalStats>()) { sv->Heal(a[1].AsFloat()); return Value{true}; }
+                float hh = 0.0f, mm = 0.0f;
+                if (HealthOf(g, hh, mm)) { HealObject(g, a[1].AsFloat()); return Value{true}; }
             }
             return Value{false};
         };
@@ -4558,6 +4571,8 @@ struct OkayScriptVM::Impl {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
                 if (auto* st = g->GetComponent<Stats>()) return Value{st->health};
                 if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->health};
+                float hh = 0.0f, mm = 0.0f;
+                if (HealthOf(g, hh, mm)) return Value{hh};
             }
             return Value{0.0f};
         };
@@ -4565,6 +4580,8 @@ struct OkayScriptVM::Impl {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
                 if (auto* st = g->GetComponent<Stats>()) return Value{st->maxHealth};
                 if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->maxHealth};
+                float hh = 0.0f, mm = 0.0f;
+                if (HealthOf(g, hh, mm)) return Value{mm};
             }
             return Value{0.0f};
         };
@@ -7229,6 +7246,7 @@ struct OkayScriptVM::Impl {
                 if (GameObject* g = me && me->scene() ? ResolveObject(me->scene(), a[0]) : nullptr) {
                     if (auto* st = g->GetComponent<Stats>()) return Value{st->IsDead() ? 1.0f : 0.0f};
                     if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->dead ? 1.0f : 0.0f};
+                    return Value{IsObjectDead(g) ? 1.0f : 0.0f};
                 }
                 return Value{0.0f};
             }
@@ -7254,6 +7272,40 @@ struct OkayScriptVM::Impl {
         b["is_ragdoll"] = [selfObj](std::vector<Value>&) {
             auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
             return Value{rd && rd->IsActive() ? 1.0f : 0.0f};
+        };
+        // ActiveRagdoll (our own dynamic character): active_ragdoll("knockdown" | "getup" | "die" | "revive" |
+        // "limp" | "powered" | "reactive" | "stumble"), active_ragdoll_push(ix, iy, iz[, px, py, pz]) in N s,
+        // active_ragdoll_shoot(ox, oy, oz, dx, dy, dz[, power]) -> 1 on a hit, active_ragdoll_explode(cx, cy, cz,
+        // force, radius), active_ragdoll_state() -> "Animated", "Balancing", "Falling", "Down", "GettingUp", ...
+        b["active_ragdoll"] = [selfObj](std::vector<Value>& a) {
+            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            if (!ar || a.empty()) return Value{0.0f};
+            return Value{ar->Trigger(a[0].AsString()) ? 1.0f : 0.0f};
+        };
+        b["active_ragdoll_push"] = [selfObj](std::vector<Value>& a) {
+            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            if (!ar || !ar->Ready() || a.size() < 3) return Value{0.0f};
+            const Vec3 j{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            if (a.size() >= 6) ar->PushAt(Vec3{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()}, j);
+            else ar->Push(j);
+            return Value{1.0f};
+        };
+        b["active_ragdoll_shoot"] = [selfObj](std::vector<Value>& a) {
+            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            if (!ar || a.size() < 6) return Value{0.0f};
+            const float power = a.size() >= 7 ? a[6].AsFloat() : 25.0f;
+            return Value{ar->Shoot(Vec3{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()},
+                                   Vec3{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()}, power) ? 1.0f : 0.0f};
+        };
+        b["active_ragdoll_explode"] = [selfObj](std::vector<Value>& a) {
+            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            if (!ar || a.size() < 5) return Value{0.0f};
+            ar->Explode(Vec3{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()}, a[3].AsFloat(), a[4].AsFloat());
+            return Value{1.0f};
+        };
+        b["active_ragdoll_state"] = [selfObj](std::vector<Value>&) {
+            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            return Value{std::string(ar && ar->Ready() ? ar->StateName() : "")};
         };
         b["dive"] = [selfObj](std::vector<Value>&) {
             HumanoidActions::RequestDive(selfObj());

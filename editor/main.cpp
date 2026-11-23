@@ -11,6 +11,8 @@
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
+#include "okay/Render/TextureCacheFiles.hpp"   // InvalidateTextureCacheForFile: a changed picture is shown changed
+#include "okay/Render/ModelImportProblem.hpp"   // DescribeModelImportProblem: why a model did not import
 #include "OwnSwitches.hpp"   // the table of own replacements that can be switched on (View > Rendering & Performance)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/online/crash_reports.md)
@@ -23,6 +25,7 @@
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "BuildSettingsWindow.hpp"     // the Build Settings window: pages, search, summary, checks, history (own files)
+#include "BuildGame.hpp"               // Build Game: the game, Web / Android / Xbox data and dedicated server exports (builder::)
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Input/PlatformKeys.hpp"      // F-keys, Tab, navigation block, left / right modifiers
 #include "FpHandsWindow.hpp"
@@ -61,6 +64,7 @@
 #include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
 #include "okay/Render/LightingPresets.hpp"
 #include "okay/Render/LightProbeBake.hpp"
+#include "okay/Render/GpuTexture.hpp"   // ShipCompressedCopy: a build ships the BC copy of `compress` pictures
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
@@ -90,6 +94,7 @@
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
 #include "okay/Render/RendererFeatures.hpp"  // which lighting / post / fog / sky switches each renderer draws
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
+#include "okay/Render/OkayShader.hpp"   // Custom shader fields (our own .okayshader language)
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
@@ -2267,6 +2272,15 @@ std::string g_uiBackendSetting;
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
 void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
+bool UseOkayUICodeEdit() {   // read once, like the other switches (Settings > Experimental sets the variable before main() reads anything)
+#ifdef OKAY_HAVE_OKAYUI
+    static const bool item = okayuibackend::DevMode(std::getenv("OKAY_UI_CODEEDIT"));
+    return UseOkayUIBackend() || item;
+#else
+    return false;
+#endif
+}
+bool OkayUIInputOn() { return UseOkayUIBackend() || UseOkayUICodeEdit(); }
 bool UseOkayUIInspector() {   // okayuibackend::InspectorOn; the variables are read once (Settings > Experimental sets them before main() reads anything)
     static const bool dev = okayuibackend::DevMode(std::getenv("OKAY_DEV")), item = okayuibackend::DevMode(std::getenv("OKAY_UI_INSPECTOR"));
     return okayuibackend::InspectorOn(g_uiBackend, dev ? "1" : nullptr, item ? "1" : nullptr);
@@ -3363,12 +3377,15 @@ float g_insetAmt    = 0.2f;
 int   g_meEditAxis  = -1;             // axis being dragged: 0=X 1=Y 2=Z, -1 = none
 bool  g_meEditGrab  = false;          // an edit-mode move handle is held
 Vec3  g_meEditRaw{0, 0, 0};           // accumulated drag in LOCAL space (pre-apply)
+okay::modeling::EditTransformSession g_meHandle;   // the move-handle drag: the same session G uses (soft select, symmetry X / Y / Z)
+Vec3  g_meHandleOff{0, 0, 0};         // ...and how far the handle has been dragged (world space)
 bool  g_meshSculpt  = false;          // sculpt brush active (instead of select/move)
 int   g_sculptMode  = 0;              // 0 Grab, 1 Inflate, 2 Smooth
 float g_sculptRadius = 0.5f, g_sculptStrength = 0.08f;
 bool  g_meshSymX    = false;          // X symmetry: mirror every edit across local X=0
 bool  g_meshSymY    = false;          // ... across local Y=0 (G / R / S)
 bool  g_meshSymZ    = false;          // ... across local Z=0 (G / R / S)
+int   g_mePivot     = 0;              // what R / S turn around: okay::modeling::EditPivot (0 Median, 1 Individual Origins, 2 Active Vertex); '.' cycles it
 bool  g_paintVertex = false;          // the paint brush paints smooth per-vertex colours instead of whole faces
 float g_paintHardness = 0.3f;         // vertex paint: 0 = soft falloff all the way, near 1 = solid centre
 bool  g_meshXray    = false;          // box / circle / lasso select picks through the mesh
@@ -3393,6 +3410,8 @@ int   g_loopCuts = 1;                          // loop cut: number of cuts (mous
 okay::modeling::EdgeList g_slideLoop;          // edge slide: the loop being slid...
 std::vector<Vec3> g_slideFrom;                 // ...from these positions
 okay::modeling::PolyMesh g_slidePoly;          // its topology
+std::vector<int> g_slideTriFace;               // ...the polygon each triangle of the mesh belongs to
+std::vector<Vec2> g_slideUVFrom, g_slideCornerUVFrom;   // ...and the UVs before the slide (per vertex, per corner)
 bool  g_slideAfterCut = false;                 // the slide finishing a loop cut (one undo step for both)
 ImVec2 g_ptoolMouse0;                          // the mouse when the tool started
 Mesh  g_bevelStart;                            // bevel: the mesh before it, re-beveled live
@@ -3690,11 +3709,15 @@ static void EndPolyTool(bool keep) {
         mr->mesh = g_bevelStart;
         g_meshSelVerts = g_bevelSelVerts; g_meshSelFaces = g_bevelSelFaces; g_meshSelEdges = g_bevelSelEdges;
     }
-    if (g_ptool == PolyTool::Slide && mr && !keep && g_slideFrom.size() == mr->mesh.vertices.size()) mr->mesh.vertices = g_slideFrom;
+    if (g_ptool == PolyTool::Slide && mr && !keep && g_slideFrom.size() == mr->mesh.vertices.size()) {
+        mr->mesh.vertices = g_slideFrom;
+        mr->mesh.uvs = g_slideUVFrom;
+        mr->mesh.cornerUVs = g_slideCornerUVFrom;
+    }
     g_ptool = PolyTool::None;
     g_ptoolTyped.Clear();
     g_knifePts.clear(); g_knifePos.clear();
-    g_slideLoop.clear(); g_slideFrom.clear();
+    g_slideLoop.clear(); g_slideFrom.clear(); g_slideTriFace.clear(); g_slideUVFrom.clear(); g_slideCornerUVFrom.clear();
     g_slideAfterCut = false;
 }
 
@@ -3747,6 +3770,61 @@ static void WorldRange(const GameObject* go, int axis, float& lo, float& hi, boo
         if (!ok) { lo = hi = c; ok = true; } else { lo = std::min(lo, c); hi = std::max(hi, c); }
     }
 }
+// ---- Selection tools on the polygons (okay/Modeling/PolyOps.hpp, tested in poly_ops) ----
+// The polygons the selected triangles belong to, in the order first picked.
+static std::vector<int> SelectedPolys(Mesh& m) {
+    EditPoly(m);
+    std::vector<int> out;
+    if ((int)m.polyFace.size() != m.TriangleCount()) return out;
+    std::set<int> seen;
+    for (int t : g_meshSelFaces) if (t >= 0 && t < m.TriangleCount() && seen.insert(m.polyFace[t]).second) out.push_back(m.polyFace[t]);
+    return out;
+}
+static std::vector<int> TrisOfPolys(const Mesh& m, const std::vector<int>& polys) {
+    std::vector<int> out;
+    if ((int)m.polyFace.size() != m.TriangleCount()) return out;
+    std::map<int, int> rank;
+    for (int i = 0; i < (int)polys.size(); ++i) rank.emplace(polys[i], i);
+    std::vector<std::pair<int, int>> tagged;
+    for (int t = 0; t < m.TriangleCount(); ++t) { auto it = rank.find(m.polyFace[t]); if (it != rank.end()) tagged.push_back({it->second, t}); }
+    std::stable_sort(tagged.begin(), tagged.end(), [](const std::pair<int, int>& a, const std::pair<int, int>& b) { return a.first < b.first; });
+    for (const auto& x : tagged) out.push_back(x.second);
+    return out;
+}
+// Checker Deselect: keep every other vertex or face of the selection, walking out from the first one picked.
+static bool CheckerDeselectNow(Mesh& m) {
+    if (g_meshSelMode == 0 && !g_meshSelVerts.empty()) { g_meshSelVerts = okay::modeling::CheckerVerts(EditPoly(m), g_meshSelVerts); return true; }
+    if (g_meshSelMode == 1 && !g_meshSelFaces.empty()) {
+        const std::vector<int> polys = SelectedPolys(m);
+        if (polys.empty()) return false;
+        g_meshSelFaces = TrisOfPolys(m, okay::modeling::CheckerFaces(EditPoly(m), polys));
+        return true;
+    }
+    return false;
+}
+// Select Boundary Loop: the outline of the selected faces becomes an edge selection (Edge mode).
+static int SelectBoundaryLoopNow(Mesh& m) {
+    const std::vector<int> polys = SelectedPolys(m);
+    if (polys.empty()) return 0;
+    const okay::modeling::EdgeList ol = okay::modeling::RegionOutline(EditPoly(m), polys);
+    if (ol.empty()) return 0;
+    g_meshSelEdges = ol; g_meshSelVerts.clear(); g_meshSelFaces.clear();
+    g_meshSelMode = 2;
+    return (int)ol.size();
+}
+// Select the open (border) and / or non-manifold edges of the whole mesh (Edge mode).
+static int SelectProblemEdgesNow(Mesh& m, bool borders, bool nonManifold) {
+    const okay::modeling::EdgeList es = okay::modeling::ProblemEdges(EditPoly(m), borders, nonManifold);
+    g_meshSelEdges = es; g_meshSelVerts.clear(); g_meshSelFaces.clear();
+    g_meshSelMode = 2;
+    return (int)es.size();
+}
+// Flip Normals: the selected faces in Face mode, else the whole mesh.
+static void FlipNormalsNow(Mesh& m) {
+    if (g_meshSelMode == 1 && !g_meshSelFaces.empty()) m.FlipFaces(g_meshSelFaces);
+    else m.FlipNormals();
+}
+
 static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
     namespace pmo = okay::modeling;
     std::vector<ModelCmd> v;
@@ -3770,6 +3848,26 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         else for (int i = 0; i < mr->mesh.TriangleCount(); ++i) g_meshSelFaces.push_back(i);
     });
     add("Select None", "", "Select", "Clear the selection.", true, "", clearSel);
+    add("Select Shortest Path", "Ctrl+click", "Select", "Ctrl+click a vertex, edge or face in the 3D view: the shortest path from the last one you picked is added.", true, "", [] {
+        ConsoleLog("Select Shortest Path: Ctrl+click a vertex, edge or face in the 3D view; the path from the last one picked is added");
+    });
+    add("Checker Deselect", "", "Select", "Keep every other vertex or face of the selection (a checkerboard on a grid of faces).",
+        (g_meshSelMode == 0 && anyVerts) || (g_meshSelMode == 1 && anyFaces), "Select vertices (key 1) or faces (key 3) first.", [mr] { CheckerDeselectNow(mr->mesh); });
+    add("Select Boundary Loop", "", "Select", "Select the outline of the selected faces as edges (Edge mode).", anyFaces, needFaces, [mr] {
+        const int n = SelectBoundaryLoopNow(mr->mesh);
+        ConsoleLog("Select Boundary Loop: " + std::to_string(n) + " edges");
+    });
+    add("Select Open Edges", "", "Select", "Select every edge with a face on one side only: the rims of holes (Edge mode).", true, "", [mr] {
+        const int n = SelectProblemEdgesNow(mr->mesh, true, false);
+        ConsoleLog(n ? "Selected " + std::to_string(n) + " open edges" : std::string("No open edges: the mesh is closed"));
+    });
+    add("Select Non-Manifold Edges", "", "Select", "Select edges shared by three or more faces (they break bevel, bridge, booleans and export).", true, "", [mr] {
+        const int n = SelectProblemEdgesNow(mr->mesh, false, true);
+        ConsoleLog(n ? "Selected " + std::to_string(n) + " non-manifold edges" : std::string("No non-manifold edges"));
+    });
+    add("Pivot: Median Point", ".", "Select", "R and S turn around the centre of the whole selection.", true, "", [] { g_mePivot = 0; });
+    add("Pivot: Individual Origins", ".", "Select", "R and S turn each separate part of the selection around its own centre (grow several faces in place).", true, "", [] { g_mePivot = 1; });
+    add("Pivot: Active Vertex", ".", "Select", "R and S turn around the last vertex you picked.", true, "", [] { g_mePivot = 2; });
     add("Grow Selection", "", "Select", "Add everything touching the selection (faces or vertices).", g_meshSelMode == 1 ? anyFaces : (g_meshSelMode == 0 && anyVerts), "Select some faces (key 3) or vertices (key 1) first.", [mr] {
         if (g_meshSelMode == 1) g_meshSelFaces = pmo::GrowFaces(mr->mesh, g_meshSelFaces);
         else g_meshSelVerts = mr->mesh.GrownVertexSelection(g_meshSelVerts);
@@ -3844,7 +3942,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
     add("Poke Faces", "", "Edit", "Fan each selected face from a centre point.", anyFaces, needFaces, edit([](Mesh& m) { m.PokeFaces(g_meshSelFaces, 0.15f); g_meshSelFaces.clear(); }));
     add("Delete Faces", "", "Edit", "Remove the selected faces (leaves a hole).", anyFaces, needFaces, edit([](Mesh& m) { m.DeleteFaces(g_meshSelFaces); g_meshSelFaces.clear(); }));
     add("Duplicate Faces", "", "Edit", "Copy the selected faces in place; the copies stay selected.", anyFaces, needFaces, edit([](Mesh& m) { g_meshSelFaces = m.DuplicateFaces(g_meshSelFaces); g_meshSelVerts.clear(); g_meshSelEdges.clear(); }));
-    add("Flip Normals", "", "Edit", "Turn every face the other way round.", true, "", edit([](Mesh& m) { m.FlipNormals(); }));
+    add("Flip Normals", "", "Edit", "Turn the selected faces the other way round (Face mode), or every face when none are selected.", true, "", edit([](Mesh& m) { FlipNormalsNow(m); }));
     add("Recalculate Normals Outside", "", "Edit", "Make every face point outward (fixes dark or inside-out faces).", true, "", edit([](Mesh& m) { m.OrientFacesOutward(); }));
     add("Merge by Distance", "", "Edit", "Join vertices that sit on top of each other.", true, "", edit([clearSel](Mesh& m) { m.WeldVertices(); g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear(); }));
     add("Repair Mesh", "", "Edit", "Merge doubles, drop collapsed triangles, cap holes, point faces outward.", true, "", [&ed, mr] {
@@ -4377,1145 +4475,6 @@ inline std::string StarterScriptNamed(const std::string& lang, const std::string
 }
 
 } // namespace extide
-
-// ---- Build Game: export the current scene as a standalone runnable game ----
-// A shipped game is just <Game>.exe (a copy of the player runtime) + a
-// game.okayscene sitting beside it. Double-clicking the exe runs the scene.
-namespace builder {
-namespace fs = std::filesystem;
-
-#if defined(_WIN32)
-const char* kPlayerExe = "OkaySpacePlayer.exe";
-#else
-const char* kPlayerExe = "okay-player";
-#endif
-
-// Locate the player runtime. Searches next to the editor, then a few sibling
-// locations (a launcher layout, a build tree), so it works whether the editor
-// was launched from the dist folder or via the launcher.
-std::string FindPlayer() {
-    fs::path self = updater::SelfPath();
-    if (self.empty()) return {};
-    fs::path dir = self.parent_path();
-#if defined(_WIN32)
-    const char* names[] = {"OkaySpacePlayer.exe", "okay-player.exe"};
-#else
-    const char* names[] = {"okay-player", "OkaySpacePlayer"};
-#endif
-    std::vector<fs::path> roots = {dir, dir / "bin", dir.parent_path(),
-                                   dir / "runtime"};
-    for (const fs::path& root : roots)
-        for (const char* n : names) {
-            std::error_code ec;
-            if (fs::exists(root / n, ec)) return (root / n).string();
-        }
-    return {};
-}
-
-// Ensure the player runtime is available, downloading it next to the editor
-// from the releases bucket if it isn't found locally. Returns its path, or "" on failure.
-// This is what lets a freshly-downloaded editor build a runnable game with no
-// manual setup ("when building, generate everything it needs").
-std::string EnsurePlayer(std::string* note) {
-    std::string p = FindPlayer();
-    if (!p.empty()) return p;
-    fs::path self = updater::SelfPath();
-    if (self.empty()) return {};
-    fs::path dest = self.parent_path() / kPlayerExe;
-    if (note) *note = "Fetching the player runtime (checked against the published checksum)...";
-    std::string reason;
-    if (!updater::FetchVerified(OKAY_ENGINE_VERSION, "OkaySpacePlayer.exe", dest, reason)) {
-        if (note) *note = "Couldn't get the player runtime: " + reason;
-        return {};
-    }
-    std::error_code ec;
-    {   // FetchVerified staged and checked <dest>.new; only now does it become the player
-        fs::path staged = dest; staged += ".new";
-        fs::remove(dest, ec);
-        fs::rename(staged, dest, ec);
-    }
-    if (ec || !fs::exists(dest, ec) || fs::file_size(dest, ec) < 100000) {
-        fs::remove(dest, ec);
-        if (note) *note = "Couldn't install the player runtime next to the editor.";
-        return {};
-    }
-#if !defined(_WIN32)
-    fs::permissions(dest, fs::perms::owner_exec | fs::perms::group_exec |
-                    fs::perms::others_exec, fs::perm_options::add, ec);
-#endif
-    if (note) *note = "Downloaded the player runtime to " + dest.string() + ".";
-    return dest.string();
-}
-
-// Options forwarded from the Build Settings dialog into the build.
-struct Options {
-    std::string company = "OkaySpace";
-    std::string version = "1.0.0";
-    int  width = 1280, height = 720;
-    bool fullscreen = false, borderless = false, resizable = true, vsync = true;
-    bool smoothDt = true;
-    bool hideCursor = false;
-    int  fpsCap = 0;
-    bool quitOnEscape = true;
-    float masterVolume = 1.0f;
-    bool showFps = false;
-    bool includeAllProjectScenes = false, developmentBuild = false;
-    bool lockCursor = false, perPixelLighting = false, shadows = true,
-         bloom = false, ssao = false, fxaa = true;
-    int cursorLockMode = 0;
-    float shadowDistance = 80.0f, shadowSoftness = 2.5f;
-    int  shadowCascades = 3, shadowResolution = 2048;
-    int  antialias = 1;
-    bool gpuRenderer = true;
-    bool preferD3D12 = false;
-    bool cleanOutput = true;   // wipe stale build files first (no leftovers from old builds)
-    bool dataFolder  = true;   // tuck scenes/config/assets into a "Data/" subfolder (clean root)
-    bool encryptData = false;  // obfuscate scenes + config so players can't read/edit them
-    int  antiCheat = 0;        // 0 off, 1 report, 2 enforce: the player checks Data/manifest.json + runtime checks
-    bool fullscreenToggle = true;           // Alt+Enter / F11 in the shipped game
-    int  layout = 0;                        // buildpipe::Layout: 0 Folder, 1 Compact, 2 Zip
-    bool stripAssets = true;                // ship only what the built scenes use
-    bool compress = true;                   // zip: deflate
-    bool zipAlso = false;                   // also write <archive>.zip next to the output folder
-    bool dryRun = false;                    // build in a scratch folder, keep only the report
-    int  buildNumber = 1;
-    std::string archiveName = "{name}-{version}-{platform}";
-    std::vector<std::string> sceneList;     // Scenes In Build, in order (empty = the open scene)
-    okay::buildpipe::ExtraConfig extra;     // Build Settings > Game: speed, start volumes, language, logging, environment (game.okayconfig)
-    std::string excludeList;                // Build Settings > Output > Files left out of the build ("Assets/a.png;Assets/Old/")
-    bool allowCommands = false;             // Build Settings > Advanced: run the two commands below (off = never)
-    std::string preCommand, postCommand;    // run before the build (a failure stops it) / after a good build
-    // ---- Player presentation ----
-    std::string iconPath;      // window icon PNG (copied into the build)
-    std::string bundleId = "com.okayspace.game";
-    bool runInBackground = true;
-    bool muteOnFocusLoss = false;
-    bool startMaximized  = false;
-    int  minWidth = 0, minHeight = 0;
-    bool saveToUserDir = true;   // saves -> per-user app folder (persistentDataPath)
-    std::string splashImage;     // startup logo PNG
-    float splashTime = 2.0f;
-    float splashBg[3] = {0.05f, 0.05f, 0.06f};
-    // ---- Boot splash (branded loading frame; the project's custom loading
-    // screen carried into the shipped game so it matches the editor/launcher) ----
-    std::string bootLogo;        // optional PNG (copied into the build)
-    float bootBgTop[3] = {0.094f, 0.094f, 0.106f};
-    float bootBgBot[3] = {0.051f, 0.051f, 0.059f};
-    bool  bootAccentOverride = false;
-    float bootAccent[3] = {0.235f, 0.475f, 0.800f};
-    bool  bootBar = true;
-};
-
-// Obfuscate a just-written text file in place (scene/config) so it can't be read
-// or edited in a text editor; the player decodes it transparently at load.
-inline void PackFileInPlace(const fs::path& p) {
-    std::error_code ec;
-    if (!fs::exists(p, ec)) return;
-    std::ifstream in(p.string(), std::ios::binary);
-    std::stringstream ss; ss << in.rdbuf(); in.close();
-    std::string raw = ss.str();
-    if (okay::DataPack::IsPacked(raw)) return;        // already packed
-    std::ofstream out(p.string(), std::ios::binary | std::ios::trunc);
-    out << okay::DataPack::Pack(raw);
-}
-
-// Sanitize an asset's relative path so the build can't write outside its Data
-// folder: drop any leading drive/root and reject "." / ".." components (path
-// traversal). Returns a clean relative path; empty if nothing usable remains.
-inline fs::path SafeRelative(const fs::path& rel) {
-    fs::path out;
-    for (const auto& part : rel) {
-        std::string s = part.string();
-        if (s.empty() || s == "." || s == ".." || s == "/" || s == "\\") continue;
-        if (part.has_root_name() || part.has_root_directory()) continue;   // drive letters, leading slash
-        out /= part;
-    }
-    return out;
-}
-
-// A per-file size breakdown of the finished build, for the result popup.
-enum BuildCat { CAT_EXE = 0, CAT_LIB = 1, CAT_DATA = 2, CAT_ASSET = 3 };
-struct ReportEntry { std::string name; std::uintmax_t bytes = 0; int cat = CAT_ASSET; };
-struct BuildReport {
-    std::vector<ReportEntry> files;
-    std::uintmax_t total = 0;
-    std::uintmax_t catBytes[4] = {0, 0, 0, 0};
-    int missing = 0;
-    bool valid = false;
-    bool ok = false;                       // the build (or dry run) finished
-    okay::buildpipe::Report r;             // the full report: by kind and type, what was left out, warnings, time
-};
-
-inline std::string HumanBytes(std::uintmax_t b) {
-    char s[32]; double v = (double)b; const char* u = "B";
-    if (v >= 1024.0 * 1024 * 1024) { v /= 1024.0 * 1024 * 1024; u = "GB"; }
-    else if (v >= 1024.0 * 1024)   { v /= 1024.0 * 1024;        u = "MB"; }
-    else if (v >= 1024.0)          { v /= 1024.0;               u = "KB"; }
-    std::snprintf(s, sizeof(s), "%.1f %s", v, u); return std::string(s);
-}
-
-// Build the game into outDir (docs/release/build_pipeline.md). Returns a human-readable status string; if `report`
-// is non-null it is filled with the full build report (files by size and type, what was left out and why,
-// warnings, time). With opt.dryRun nothing is written to outDir: the build runs in a scratch folder that is
-// deleted again, so the report is exact without leaving files behind.
-std::string Build(EditorState& ed, const std::string& outDir,
-                  const std::string& gameName, const Options& opt = {}, BuildReport* report = nullptr) {
-    namespace bp = okay::buildpipe;
-    const auto t0 = std::chrono::steady_clock::now();
-    BuildReport localRep;
-    BuildReport& R = report ? *report : localRep;
-    R = BuildReport{};
-    // A build ships the scene you edited. While Play runs, the scene in memory is the running game (moved,
-    // spawned, scripted), so stop Play first: Stop restores the edited scene.
-    if (ed.isPlaying()) { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }
-    std::error_code ec;
-    fs::path dir = fs::weakly_canonical(fs::path(outDir), ec);
-    if (dir.empty()) dir = fs::path(outDir);
-
-    // Safety: refuse to scatter a build across a dangerous folder (a filesystem
-    // root, the user's home, or the project folder itself), where Clean could
-    // delete the wrong things and the output would mix with source files.
-    {
-        fs::path home;
-        if (const char* h = std::getenv("HOME")) home = h;
-        else if (const char* up = std::getenv("USERPROFILE")) home = up;
-        fs::path proj = ed.projectDir().empty() ? fs::path() : fs::weakly_canonical(fs::path(ed.projectDir()), ec);
-        if (dir == dir.root_path()) return "Refusing to build into a filesystem root. Pick a dedicated build folder.";
-        if (!home.empty() && fs::weakly_canonical(home, ec) == dir)
-            return "Refusing to build into your home folder. Pick a dedicated build folder.";
-        if (!proj.empty() && (dir == proj || dir == proj / "Assets"))
-            return "Refusing to build into the project/Assets folder. Pick a separate build folder so game files stay clean.";
-    }
-
-    // Build Settings > Advanced: the command to run BEFORE the build. Only when "Allow build commands" is on, never in a
-    // dry run. A command that fails (a non-zero exit code) stops the build before anything is written.
-    oked::bsm::CommandVars cmdVars;
-    cmdVars.output = dir.string(); cmdVars.name = gameName; cmdVars.version = opt.version; cmdVars.build = std::to_string(opt.buildNumber); cmdVars.project = ed.projectDir();
-    {
-        const std::string pre = oked::bsm::CommandToRun(opt.preCommand, opt.allowCommands, opt.dryRun, cmdVars);
-        if (!pre.empty()) {
-            const int rc = oked::bsm::RunCommandLine(pre, ed.projectDir());
-            if (rc != 0) return "The command before the build failed (exit code " + std::to_string(rc) + "): " + pre + ". Nothing was built.";
-        }
-    }
-
-    // The layout: <Name>.exe + <Name>_Data/ (Folder), exe + Data/ (Compact), or the Folder layout in one zip.
-#if defined(_WIN32)
-    const bool windowsHost = true;
-#else
-    const bool windowsHost = false;
-#endif
-    const std::string utcNow = bp::UtcNowIso();
-    bp::LayoutInput li;
-    li.gameName = gameName;
-    li.layout = (bp::Layout)std::max(0, std::min(2, opt.layout));
-    li.compactDataFolder = opt.dataFolder;
-    li.windows = windowsHost;
-    li.antiCheat = opt.antiCheat != 0;
-    li.archivePattern = opt.archiveName;
-    li.tokens = {bp::FileSafeName(gameName, "Game"), opt.version, windowsHost ? "windows" : "linux", utcNow.substr(0, 10), opt.buildNumber};
-    const bp::LayoutPlan plan = bp::PlanLayout(li);
-    const bool zipOnly = plan.makeZip && !plan.keepFolder;
-    const bool wantZip = plan.makeZip || opt.zipAlso;
-
-    // Where the files go: the output folder; a scratch folder for a dry run; a staging folder inside the
-    // output folder when only the zip is kept.
-    fs::path root = dir, scratch;
-    if (opt.dryRun) {
-        scratch = fs::temp_directory_path(ec) / ("okay-dryrun-" + bp::HashHex(bp::HashText(dir.string() + utcNow + std::to_string(t0.time_since_epoch().count()))));
-        root = scratch;
-    } else if (zipOnly) {
-        root = dir / (".stage-" + plan.safeName);
-    }
-    struct Cleanup { fs::path p; ~Cleanup() { if (!p.empty()) { std::error_code e; fs::remove_all(p, e); } } } cleanup{scratch};
-    fs::create_directories(opt.dryRun ? root : dir, ec);
-    if (ec) return "Couldn't create folder: " + ec.message();
-    if (zipOnly && !opt.dryRun) { fs::remove_all(root, ec); fs::create_directories(root, ec); }
-
-    // Clean stale build artifacts so old builds never leave junk behind. We only
-    // remove files THIS builder writes (the managed data folders + the runtime/
-    // config at the root), never the user's unrelated files.
-    if (opt.cleanOutput && !opt.dryRun) {
-        std::error_code ce;
-        fs::remove_all(dir / "Data", ce);
-        fs::remove_all(dir / (plan.safeName + "_Data"), ce);
-        for (const char* f : {"game.okayscene", "game.okayconfig", "game.okayprefs"})
-            fs::remove(dir / f, ce);
-        // Drop any *.okayscene left at the root by an older flat-layout build.
-        for (auto& e : fs::directory_iterator(dir, ce))
-            if (e.is_regular_file() && e.path().extension() == ".okayscene")
-                fs::remove(e.path(), ce);
-        if (plan.makeZip) fs::remove(dir / plan.zipName, ce);
-    }
-
-    const fs::path data = plan.dataDir.empty() ? root : root / plan.dataDir;
-    fs::create_directories(data, ec);
-    if (ec) return "Couldn't create folder: " + ec.message();
-
-    std::map<std::string, std::string> why;                 // path in the build (relative to root) -> why it is there
-    auto relRoot = [&](const fs::path& p) { std::error_code e; return fs::relative(p, root, e).generic_string(); };
-    std::vector<std::pair<std::string, std::uintmax_t>> virtualFiles;   // dry run: files that are counted but not copied
-
-    // 1) Scenes In Build, in order: the first is the startup scene (written as game.okayscene); the open
-    // scene is written from memory so unsaved edits ship. With no list, the open scene alone is the game
-    // (plus, optionally, every project scene). Every scene is also read for the assets it uses.
-    struct SceneEntry { fs::path src; std::string fn; bool isOpen = false; std::unique_ptr<Scene> loaded; };
-    std::vector<SceneEntry> built;
-    std::vector<std::string> sceneFiles;                    // filenames placed in the data folder
-    auto uniqueName = [&](const fs::path& src, bool first) {
-        std::string fn = first ? std::string("game.okayscene") : src.filename().string();
-        for (int n = 2; std::find(sceneFiles.begin(), sceneFiles.end(), fn) != sceneFiles.end(); ++n)
-            fn = src.stem().string() + "_" + std::to_string(n) + ".okayscene";   // two scenes, same name
-        return fn;
-    };
-    std::error_code pe;
-    if (!opt.sceneList.empty()) {
-        for (std::size_t i = 0; i < opt.sceneList.size(); ++i) {
-            SceneEntry se;
-            se.src = fs::path(opt.sceneList[i]);
-            se.fn = uniqueName(se.src, i == 0);
-            se.isOpen = !ed.path().empty() && fs::exists(se.src, pe) && fs::equivalent(se.src, fs::path(ed.path()), pe);
-            sceneFiles.push_back(se.fn);
-            built.push_back(std::move(se));
-        }
-    } else {
-        SceneEntry se;
-        se.src = fs::path(ed.path());
-        se.fn = "game.okayscene"; se.isOpen = true;
-        sceneFiles.push_back(se.fn);
-        built.push_back(std::move(se));
-        if (opt.includeAllProjectScenes && !ed.projectDir().empty()) {
-            fs::path assets = fs::path(ed.projectDir()) / "Assets";
-            if (fs::exists(assets, ec))
-                for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
-                    if (!e.is_regular_file() || e.path().extension() != ".okayscene") continue;
-                    if (e.path().filename() == "game.okayscene") continue;
-                    SceneEntry xe;
-                    xe.src = e.path(); xe.fn = e.path().filename().string();
-                    sceneFiles.push_back(xe.fn);
-                    built.push_back(std::move(xe));
-                }
-        }
-    }
-    int sceneCount = 0;
-    std::vector<bp::AssetRef> roots;
-    std::vector<std::string> sceneSources;   // the scene files, and files embedded in them (accounted for, not shipped on their own)
-    for (SceneEntry& se : built) {
-        const std::string label = se.src.empty() ? std::string("the open scene") : "scene " + se.src.stem().string();
-        if (se.isOpen) {
-            if (!SceneSerializer::SaveToFile(ed.scene(), (data / se.fn).string())) return "Failed to write " + se.fn + ".";
-            for (const std::string& a : SceneSerializer::CollectAssetPaths(ed.scene())) roots.push_back({a, se.src.string()});
-            // Its visual-script graphs are embedded in the scene file just written: they need not ship.
-            for (const std::string& g : bp::ScriptRefsInSceneText(SceneSerializer::Serialize(ed.scene()))) {
-                bp::WalkSettings gs; gs.projectDir = ed.projectDir();
-                const std::string gsrc = bp::ResolveAssetFile(g, se.src.parent_path().string(), gs);
-                if (!gsrc.empty()) sceneSources.push_back(gsrc);
-            }
-        } else {
-            fs::copy_file(se.src, data / se.fn, fs::copy_options::overwrite_existing, pe);
-            if (pe) return "Couldn't copy the scene " + se.src.string() + " (" + pe.message() + ").";
-            { std::ifstream sf(se.src, std::ios::binary); std::ostringstream sb; sb << sf.rdbuf();   // a scene copied as a file still reads its graphs from their files
-              for (const std::string& g : bp::ScriptRefsInSceneText(okay::DataPack::Unpack(sb.str()))) roots.push_back({g, se.src.string()}); }
-            se.loaded = std::make_unique<Scene>("build");
-            std::string lerr;
-            if (SceneSerializer::LoadFromFile(*se.loaded, se.src.string(), &lerr))
-                for (const std::string& a : SceneSerializer::CollectAssetPaths(*se.loaded)) roots.push_back({a, se.src.string()});
-            else R.r.Warn("Couldn't read " + se.src.string() + " to list its assets (" + lerr + "): its assets are not shipped.");
-        }
-        if (!se.src.empty()) sceneSources.push_back(se.src.string());
-        why[relRoot(data / se.fn)] = label + (sceneCount == 0 ? " (starts the game)" : "");
-        ++sceneCount;
-    }
-
-    // 2) The dependency walk: the assets those scenes use, and what those assets use in turn.
-    bp::WalkSettings ws;
-    ws.projectDir = ed.projectDir();
-    for (const SceneEntry& se : built) if (!se.src.empty()) ws.searchDirs.push_back(se.src.parent_path().string());
-    bp::WalkResult walk = bp::WalkAssets(roots, ws);
-    std::vector<std::string> shippedSources;
-    std::uintmax_t unusedShipped = 0; int unusedShippedCount = 0;
-    if (!opt.stripAssets && !ed.projectDir().empty()) {
-        std::set<std::string> have;
-        for (const bp::ShippedAsset& a : walk.assets) { std::error_code e; have.insert(fs::weakly_canonical(fs::path(a.src), e).generic_string()); }
-        std::set<std::string> sceneKeys;
-        for (const std::string& s : sceneSources) { std::error_code e; sceneKeys.insert(fs::weakly_canonical(fs::path(s), e).generic_string()); }
-        for (const bp::ProjectAsset& pa : bp::ListProjectAssets(ed.projectDir())) {
-            std::error_code e;
-            const std::string key = fs::weakly_canonical(fs::path(pa.src), e).generic_string();
-            if (pa.editorOnly || pa.scene || have.count(key) || sceneKeys.count(key)) continue;
-            bp::ShippedAsset a;
-            a.ref = "Assets/" + pa.rel; a.dest = a.ref; a.src = pa.src; a.bytes = pa.bytes; a.reason = "asset stripping is off: every project asset ships";
-            walk.assets.push_back(a);
-            unusedShipped += pa.bytes; ++unusedShippedCount;
-        }
-    }
-    if (!opt.excludeList.empty()) {   // Build Settings > Output: files the owner left out. A file a scene uses is warned about, not silently dropped.
-        std::vector<bp::ShippedAsset> keep;
-        for (const bp::ShippedAsset& a : walk.assets) {
-            if (!oked::bsm::IsExcluded(a.dest, opt.excludeList) && !oked::bsm::IsExcluded(a.ref, opt.excludeList)) { keep.push_back(a); continue; }
-            if (a.reason.rfind("asset stripping is off", 0) != 0) R.r.Warn("'" + a.dest + "' is left out of the build but a scene uses it: the game will not find it.");
-        }
-        walk.assets.swap(keep);
-    }
-    int copied = 0;
-    std::uintmax_t assetBytes = 0;
-    for (const bp::ShippedAsset& a : walk.assets) {
-        const fs::path dst = data / fs::u8path(a.dest);
-        std::error_code aec;
-        if (dst.has_parent_path()) fs::create_directories(dst.parent_path(), aec);
-        fs::copy_file(fs::path(a.src), dst, fs::copy_options::overwrite_existing, aec);
-        if (aec) { R.r.Warn("Couldn't copy " + a.src + " (" + aec.message() + ")."); continue; }
-        ++copied; assetBytes += a.bytes;
-        shippedSources.push_back(a.src);
-        why[relRoot(dst)] = a.reason;
-        fs::path ms = fs::path(a.src); ms += ".okaymeta";   // its import settings (texture filter / wrap / mipmaps / largest side, model normals ...) travel with it
-        std::error_code me;
-        if (fs::is_regular_file(ms, me)) {
-            fs::path md = dst; md += ".okaymeta";
-            fs::copy_file(ms, md, fs::copy_options::overwrite_existing, me);
-            if (!me) why[relRoot(md)] = "import settings of " + a.dest;
-        }
-    }
-    for (const bp::MissingAsset& m : walk.missing) {
-        ++R.r.missingAssets;
-        R.r.Warn("Missing asset '" + m.ref + "' (used by " + (m.referrer.empty() ? std::string("a scene") : fs::path(m.referrer).filename().string()) + "): not found, so it is not shipped.");
-    }
-    for (const std::string& a : walk.absolute)
-        R.r.Warn("'" + a + "' is an absolute path: it is copied by file name, but the game still looks for the original path. Use a project-relative path.");
-    for (const std::string& n : plan.notes) R.r.Warn(n);
-    if (unusedShippedCount)
-        R.r.Warn("Asset stripping is off: " + std::to_string(unusedShippedCount) + " project file(s) the scenes do not use (" + bp::HumanBytes(unusedShipped) + ") are shipped.");
-
-    // 1b) Write game.okayconfig (window + scene list) read by the player.
-    std::string settingsText;
-    {
-        std::ostringstream cf;
-        cf << "title=" << gameName << "\n";
-        cf << "company=" << opt.company << "\n";
-        cf << "version=" << opt.version << "\n";
-        cf << "build_number=" << opt.buildNumber << "\n";
-        cf << "width=" << opt.width << "\n";
-        cf << "height=" << opt.height << "\n";
-        cf << "fullscreen=" << (opt.fullscreen ? 1 : 0) << "\n";
-        cf << "borderless=" << (opt.borderless ? 1 : 0) << "\n";
-        cf << "resizable=" << (opt.resizable ? 1 : 0) << "\n";
-        cf << "vsync=" << (opt.vsync ? 1 : 0) << "\n";
-        cf << "smooth_dt=" << (opt.smoothDt ? 1 : 0) << "\n";
-        cf << "cursor=" << (opt.hideCursor ? 0 : 1) << "\n";
-        cf << "fps_cap=" << opt.fpsCap << "\n";
-        cf << "quit_on_escape=" << (opt.quitOnEscape ? 1 : 0) << "\n";
-        cf << "volume=" << opt.masterVolume << "\n";
-        cf << "show_fps=" << (opt.showFps ? 1 : 0) << "\n";
-        cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
-        cf << "physics_hz=" << g_project.physicsHz << "\n";
-        cf << "physics_smooth=" << (g_project.smoothPhysics ? 1 : 0) << "\n";
-        cf << "lock_cursor=" << (opt.lockCursor ? 1 : 0) << "\n";
-        cf << "cursor_lock=" << (opt.cursorLockMode == 2 ? "confined" : opt.cursorLockMode == 1 ? "locked" : "none") << "\n";
-        cf << "perpixel=" << (opt.perPixelLighting ? 1 : 0) << "\n";
-        cf << "shadows=" << (opt.shadows ? 1 : 0) << "\n";
-        cf << "shadow_distance=" << opt.shadowDistance << "\n";
-        cf << "shadow_softness=" << opt.shadowSoftness << "\n";
-        cf << "shadow_cascades=" << opt.shadowCascades << "\n";
-        cf << "shadow_resolution=" << opt.shadowResolution << "\n";
-        cf << "bloom=" << (opt.bloom ? 1 : 0) << "\n";
-        cf << "ssao=" << (opt.ssao ? 1 : 0) << "\n";
-        cf << "fxaa=" << (opt.fxaa ? 1 : 0) << "\n";
-        cf << "antialias=" << opt.antialias << "\n";
-        cf << "gpu=" << (opt.gpuRenderer ? 1 : 0) << "\n";
-        cf << "d3d12=" << (opt.preferD3D12 ? 1 : 0) << "\n";
-        // Player presentation.
-        if (!opt.iconPath.empty()) cf << "icon=" << fs::path(opt.iconPath).filename().string() << "\n";
-        cf << "bundle_id=" << opt.bundleId << "\n";
-        cf << "run_background=" << (opt.runInBackground ? 1 : 0) << "\n";
-        cf << "mute_unfocused=" << (opt.muteOnFocusLoss ? 1 : 0) << "\n";
-        cf << "start_maximized=" << (opt.startMaximized ? 1 : 0) << "\n";
-        cf << "min_width=" << opt.minWidth << "\n";
-        cf << "min_height=" << opt.minHeight << "\n";
-        cf << "save_userdir=" << (opt.saveToUserDir ? 1 : 0) << "\n";
-        cf << "fullscreen_toggle=" << (opt.fullscreenToggle ? 1 : 0) << "\n";
-        if (!opt.splashImage.empty()) {
-            cf << "splash=" << fs::path(opt.splashImage).filename().string() << "\n";
-            cf << "splash_time=" << opt.splashTime << "\n";
-            cf << "splash_bg=" << (int)(opt.splashBg[0] * 255) << "," << (int)(opt.splashBg[1] * 255)
-               << "," << (int)(opt.splashBg[2] * 255) << "\n";
-        }
-        // Boot splash (branded loading frame shown immediately on launch, before
-        // the scene/renderer are up) — the project's custom loading screen.
-        if (!opt.bootLogo.empty())
-            cf << "boot_logo=" << fs::path(opt.bootLogo).filename().string() << "\n";
-        cf << "boot_bg_top=" << opt.bootBgTop[0] << " " << opt.bootBgTop[1] << " " << opt.bootBgTop[2] << "\n";
-        cf << "boot_bg_bot=" << opt.bootBgBot[0] << " " << opt.bootBgBot[1] << " " << opt.bootBgBot[2] << "\n";
-        if (opt.bootAccentOverride)
-            cf << "boot_accent=" << opt.bootAccent[0] << " " << opt.bootAccent[1] << " " << opt.bootAccent[2] << "\n";
-        cf << "boot_bar=" << (opt.bootBar ? 1 : 0) << "\n";
-        cf << "startup=game.okayscene\n";
-        cf << okay::buildpipe::WriteExtraConfig(opt.extra);   // nothing at the defaults, so old projects build the same config
-        for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
-        if (opt.antiCheat) cf << "anticheat=" << okayac::ModeName((okayac::Mode)opt.antiCheat) << "\n";
-        settingsText = cf.str();
-        std::ofstream out((data / "game.okayconfig").string());
-        out << settingsText;
-        why[relRoot(data / "game.okayconfig")] = "window, graphics and scene list settings";
-    }
-
-    // Optional: obfuscate the shipped scenes + config so they can't be read or
-    // edited in a text editor (the player decodes them transparently). Deters
-    // casual tampering; not strong DRM (the key ships in the binary).
-    if (opt.encryptData) {
-        PackFileInPlace(data / "game.okayconfig");
-        for (const std::string& s : sceneFiles) PackFileInPlace(data / s);
-    }
-
-    // 3) Copy the player runtime, renamed to <Game>.exe. If it isn't beside the
-    // editor, fetch it from the releases bucket so the build is self-contained.
-    std::string fetchNote;
-    std::string player = EnsurePlayer(&fetchNote);
-    const std::string exeName = plan.exeName;
-    if (player.empty()) {
-        return "Wrote the scenes to " + dir.string() +
-               ", but couldn't find or download the player runtime. Check your "
-               "internet connection, or place OkaySpacePlayer next to the editor.";
-    }
-    // Copy that overwrites even a locked/existing target: remove first, then copy.
-    // copy_file(overwrite_existing) can still report "file exists" on some setups
-    // (and copying a file onto itself is an error), so guard both.
-    auto copyOver = [](const fs::path& src, const fs::path& dst, std::error_code& e) -> bool {
-        e.clear();
-        std::error_code e0;
-        if (fs::exists(dst, e0) && fs::equivalent(src, dst, e0)) return true;  // same file → nothing to do
-        std::error_code e1; fs::remove(dst, e1);                              // best-effort unlock/replace
-        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, e);
-        return !e;
-    };
-    auto putRuntime = [&](const fs::path& src, const std::string& name, const std::string& reason, std::error_code& e) -> bool {
-        if (opt.dryRun) {
-            std::error_code se; virtualFiles.emplace_back(name, fs::file_size(src, se)); why[name] = reason; e.clear(); return true;
-        }
-        why[name] = reason;
-        return copyOver(src, root / name, e);
-    };
-    if (!putRuntime(player, exeName, "the player runtime", ec))
-        return "Wrote the scenes but couldn't copy the player: " + ec.message();
-#if !defined(_WIN32)
-    if (!opt.dryRun) fs::permissions(root / exeName, fs::perms::owner_exec | fs::perms::group_exec |
-                    fs::perms::others_exec, fs::perm_options::add, ec);
-#endif
-
-    // Bundle the runtime libraries the game needs beside it — most importantly
-    // SDL2.dll on Windows, without which the game won't launch. Look next to the
-    // player, then next to the editor (and common subfolders). Nothing else is copied: no editor files,
-    // no tools, no symbols.
-    {
-        fs::path pdir = fs::path(player).parent_path();
-        fs::path edir = updater::SelfPath().empty() ? fs::path() : fs::path(updater::SelfPath()).parent_path();
-        std::vector<fs::path> roots2 = {pdir, edir, edir / "bin", edir.parent_path(), pdir.parent_path()};
-#if defined(_WIN32)
-        const char* libs[] = {"SDL2.dll", "libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll"};
-#else
-        const char* libs[] = {"libSDL2-2.0.so.0"};
-#endif
-        for (const char* lib : libs) {
-            for (const fs::path& r2 : roots2) {
-                if (r2.empty()) continue;
-                std::error_code fe;
-                fs::path src = r2 / lib;
-                if (fs::exists(src, fe)) { std::error_code ce; putRuntime(src, lib, "runtime library the player needs", ce); break; }
-            }
-        }
-    }
-
-    // Window icon, startup splash and boot logo: beside the config in the data folder.
-    auto putPresentation = [&](const std::string& path, const char* what) {
-        if (path.empty()) return;
-        std::error_code ie; fs::path isrc(path);
-        if (fs::exists(isrc, ie) && fs::is_regular_file(isrc, ie)) {
-            fs::copy_file(isrc, data / isrc.filename(), fs::copy_options::overwrite_existing, ie);
-            if (!ie) { why[relRoot(data / isrc.filename())] = what; shippedSources.push_back(path); }
-        } else R.r.Warn(std::string("The ") + what + " file " + path + " was not found.");
-    };
-    putPresentation(opt.iconPath, "window icon");
-    putPresentation(opt.splashImage, "startup splash");
-    putPresentation(opt.bootLogo, "boot logo");
-    CopyLocalizationFiles(ed, data.u8string());   // strings.okayloc and its languages' fonts
-
-    // StreamingAssets/: the project's StreamingAssets folder, copied as it is (no stripping, no renaming), for
-    // files the game opens by name at run time (Paths::StreamingAssetsDir).
-    int streaming = 0;
-    for (const auto& sf : bp::ListStreamingAssets(ed.projectDir())) {
-        const fs::path dst = data / "StreamingAssets" / fs::u8path(sf.first);
-        std::error_code se;
-        fs::create_directories(dst.parent_path(), se);
-        fs::copy_file(fs::path(sf.second), dst, fs::copy_options::overwrite_existing, se);
-        if (se) { R.r.Warn("Couldn't copy StreamingAssets/" + sf.first + " (" + se.message() + ")."); continue; }
-        why[relRoot(dst)] = "StreamingAssets (copied as it is)"; ++streaming;
-    }
-
-    // Data/manifest.json: every shipped file's SHA-256, signed when a key is set up
-    // (shared/AntiCheatIntegrity.hpp). Only written (and only needed) when anti-cheat is on.
-    okayac::BuildManifestResult integrity;
-    if (opt.antiCheat) {
-        integrity = okayac::WriteBuildManifest(root, gameName, opt.version, okayac::LoadSigningKey(), (okayac::Mode)opt.antiCheat);   // the mode is signed too
-        if (!integrity.message.empty()) R.r.Warn(integrity.message);
-        why["Data/manifest.json"] = "anti-cheat file hashes";
-    }
-
-    // <data>/build.json: what this build is. The player reads it (--build-info, the log, the development overlay).
-    {
-        std::uintmax_t soFar = 0;
-        { std::error_code te;
-          for (auto& e : fs::recursive_directory_iterator(root, te)) if (e.is_regular_file(te)) { std::error_code se; soFar += fs::file_size(e.path(), se); }
-          for (const auto& v : virtualFiles) soFar += v.second; }
-        bp::BuildManifest bm;
-        bm.game = gameName; bm.company = opt.company; bm.bundleId = opt.bundleId; bm.version = opt.version; bm.buildNumber = opt.buildNumber;
-        bm.engineVersion = okay::BuildInfo::Version(); bm.dateUtc = utcNow; bm.platform = windowsHost ? "windows" : "linux";
-        bm.layout = bp::LayoutName(plan.effective); bm.development = opt.developmentBuild; bm.stripped = opt.stripAssets;
-        bm.compressed = wantZip && opt.compress;
-        bm.scenes = sceneFiles;
-        bm.assetCount = copied;
-        bm.totalBytes = soFar;
-        bm.settingsHash = bp::HashHex(bp::HashText(settingsText + "|" + bp::LayoutName(plan.effective) + (opt.stripAssets ? "|strip" : "|all") + (opt.encryptData ? "|enc" : "")));
-        std::ofstream bf((data / "build.json").string(), std::ios::binary);
-        bf << bp::ManifestToJson(bm);
-        why[relRoot(data / "build.json")] = "build info";
-    }
-
-    // The report: every file in the build, then what was left out and why.
-    bp::Report& rp = R.r;
-    rp.dryRun = opt.dryRun;
-    rp.layout = bp::LayoutName(plan.effective);
-    rp.outputDir = dir.string();
-    {
-        std::error_code te;
-        for (auto& e : fs::recursive_directory_iterator(root, te)) {
-            if (!e.is_regular_file(te)) continue;
-            std::error_code se;
-            const std::string rel = relRoot(e.path());
-            auto w = why.find(rel);
-            rp.AddFile(rel, fs::file_size(e.path(), se), w == why.end() ? std::string() : w->second);
-        }
-        for (const auto& v : virtualFiles) rp.AddFile(v.first, v.second, why[v.first]);
-    }
-    if (opt.stripAssets && !ed.projectDir().empty()) {
-        std::set<std::pair<std::string, std::uintmax_t>> present;
-        for (const bp::ReportFile& f : rp.files) present.insert({fs::path(f.path).filename().string(), f.bytes});
-        for (const bp::ExcludedFile& x : bp::FindUnshipped(ed.projectDir(), shippedSources, sceneSources)) {
-            const std::string fn = fs::path(x.path).filename().string();
-            if (present.count({fn, x.bytes}) || fn == "strings.okayloc") continue;   // shipped another way (icon, fonts, string table)
-            rp.AddExcluded(x.path, x.bytes, x.reason);
-            if (x.bytes >= (1u << 20) && x.reason.rfind("not used", 0) == 0)
-                rp.Warn(x.path + " (" + bp::HumanBytes(x.bytes) + ") is not used by any scene in the build, so it was left out. Reference it from a scene, or turn off asset stripping, if the game needs it.");
-        }
-    }
-    rp.Finish();
-    rp.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-
-    // 4) The archive: a zip of the finished build (Zip layout keeps only the zip; "also zip" keeps both).
-    std::string zipNote;
-    if (wantZip && !opt.dryRun) {
-        fs::path zipPath = plan.makeZip ? dir / plan.zipName
-                                         : dir.parent_path() / (bp::ExpandPattern(opt.archiveName, li.tokens) + ".zip");
-        bp::ZipStats zs; std::string zerr;
-        const auto z0 = std::chrono::steady_clock::now();
-        if (!bp::WriteZip(zipPath.string(), root.string(), opt.compress, &zs, &zerr)) {
-            rp.Warn("Couldn't create the archive: " + zerr);
-        } else {
-            std::error_code se;
-            rp.archivePath = zipPath.string();
-            rp.archiveBytes = fs::file_size(zipPath, se);
-            rp.archiveCompressed = opt.compress;
-            zipNote = "  Archive " + zipPath.filename().string() + " " + bp::HumanBytes(rp.archiveBytes) + (opt.compress ? " (compressed from " : " (stored, ") + bp::HumanBytes(zs.stored) + (opt.compress ? ")" : ")");
-        }
-        rp.seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - z0).count();
-    }
-    if (zipOnly && !opt.dryRun) { std::error_code se; fs::remove_all(root, se); }
-
-    // The same report as a file beside the project's other editor state (never inside the game).
-    if (!ed.projectDir().empty()) {
-        std::error_code we;
-        fs::create_directories(fs::path(ed.projectDir()) / ".okay", we);
-        std::ofstream rf((fs::path(ed.projectDir()) / ".okay" / "build_report.txt").string(), std::ios::binary);
-        rf << rp.ToText();
-    }
-
-    // The older size table (and the server export) read these.
-    R.total = rp.total; R.missing = rp.missingAssets; R.valid = true; R.ok = true;
-    for (const bp::ReportFile& f : rp.files) {
-        int cat = f.kind == bp::FileKind::Executable ? CAT_EXE : f.kind == bp::FileKind::Library ? CAT_LIB
-                : (f.kind == bp::FileKind::Scene || f.kind == bp::FileKind::Config) ? CAT_DATA : CAT_ASSET;
-        R.files.push_back({f.path, f.bytes, cat});
-        R.catBytes[cat] += f.bytes;
-    }
-
-    auto human = [](std::uintmax_t b) { return bp::HumanBytes(b); };
-    std::string msg;
-    if (opt.dryRun) {
-        msg = "Dry run for '" + gameName + "' (" + std::string(bp::LayoutName(plan.effective)) + " layout): " + std::to_string(rp.files.size()) + " files, " + human(rp.total) +
-              ", " + std::to_string(rp.excluded.size()) + " left out. Nothing was written to " + dir.string() + ".";
-    } else {
-        const std::string where = plan.makeZip && !plan.keepFolder ? (dir / plan.zipName).string() : dir.string();
-        msg = "Built '" + gameName + "' to " + where;
-        if (!(plan.makeZip && !plan.keepFolder)) msg += " — run " + exeName + " to play";
-        msg += ".  [" + human(rp.total) + " total";
-        if (!plan.dataDir.empty() && !(plan.makeZip && !plan.keepFolder)) msg += ", game data in " + plan.dataDir + "/";
-        msg += "]";
-        if (!fetchNote.empty() && fetchNote.rfind("Downloaded", 0) == 0) msg += "  (runtime fetched from the download server)";
-        if (sceneCount > 1) msg += "  (" + std::to_string(sceneCount) + " scenes)";
-        if (copied) msg += "  (" + std::to_string(copied) + " asset(s), " + human(assetBytes) + ")";
-        if (streaming) msg += "  (" + std::to_string(streaming) + " StreamingAssets file(s))";
-        msg += zipNote;
-    }
-    if (!rp.excluded.empty()) msg += "  " + std::to_string(rp.excluded.size()) + " unused project file(s) left out (" + human(rp.excludedBytes) + ").";
-    if (R.missing) msg += "  WARNING: " + std::to_string(R.missing) + " referenced asset(s) not found and not copied.";
-    if (!integrity.message.empty()) msg += "  (" + integrity.message + ")";
-    {   // Build Settings > Advanced: the command to run AFTER a good build (it cannot undo the build, so a failure is only reported)
-        const std::string post = oked::bsm::CommandToRun(opt.postCommand, opt.allowCommands, opt.dryRun, cmdVars);
-        if (!post.empty()) {
-            const int rc = oked::bsm::RunCommandLine(post, ed.projectDir());
-            msg += rc == 0 ? "  (ran your command after the build)" : "  WARNING: your command after the build failed (exit code " + std::to_string(rc) + ").";
-        }
-    }
-    return msg;
-}
-
-// The Build Settings as the builder's options (the Build Settings window and `--build-game` both use this).
-Options OptionsFromSettings(const BuildSettings& g, const ProjectSettings& pr) {
-    Options o;
-    o.company = g.company; o.version = g.version;
-    o.width = g.width; o.height = g.height;
-    o.fullscreen = g.fullscreen; o.borderless = g.borderless;
-    o.resizable = g.resizable; o.vsync = g.vsync; o.smoothDt = g.smoothDt;
-    o.hideCursor = g.hideCursor; o.fpsCap = g.fpsCap;
-    o.quitOnEscape = g.quitOnEscape; o.masterVolume = g.masterVolume; o.showFps = g.showFps;
-    o.includeAllProjectScenes = g.includeAllProjectScenes;
-    o.developmentBuild = g.developmentBuild;
-    o.lockCursor = g.lockCursor; o.cursorLockMode = g.cursorLockMode; o.perPixelLighting = g.perPixelLighting;
-    o.shadows = g.shadows; o.bloom = g.bloom; o.ssao = g.ssao;
-    o.shadowDistance = g.shadowDistance; o.shadowSoftness = g.shadowSoftness;
-    o.shadowCascades = g.shadowCascades; o.shadowResolution = g.shadowResolution;
-    o.fxaa = g.fxaa; o.antialias = g.antialias;
-    o.gpuRenderer = g.gpuRenderer;
-    o.preferD3D12 = g.preferD3D12;
-    o.cleanOutput = g.cleanOutput; o.dataFolder = g.dataFolder;
-    o.encryptData = g.encryptData;
-    o.antiCheat = g.antiCheat;
-    o.iconPath = g.icon; o.bundleId = g.bundleId;
-    o.runInBackground = g.runInBackground; o.muteOnFocusLoss = g.muteOnFocusLoss;
-    o.startMaximized = g.startMaximized;
-    o.minWidth = g.minWidth; o.minHeight = g.minHeight;
-    o.saveToUserDir = g.saveToUserDir;
-    o.fullscreenToggle = g.fullscreenToggle;
-    for (const BuildScene& sc : g.scenes) if (sc.on) o.sceneList.push_back(sc.path);
-    o.splashImage = g.splash; o.splashTime = g.splashTime;
-    o.splashBg[0] = g.splashBg[0]; o.splashBg[1] = g.splashBg[1]; o.splashBg[2] = g.splashBg[2];
-    // Carry the project's custom loading screen into the shipped game.
-    o.bootLogo = pr.splashLogo;
-    for (int i = 0; i < 3; ++i) { o.bootBgTop[i] = pr.splashBgTop[i]; o.bootBgBot[i] = pr.splashBgBot[i]; o.bootAccent[i] = pr.splashAccent[i]; }
-    o.bootAccentOverride = pr.splashAccentOverride; o.bootBar = pr.splashShowBar;
-    o.layout = g.layout; o.stripAssets = g.stripAssets; o.compress = g.compress; o.zipAlso = g.zipAfter && g.layout != 2;
-    o.buildNumber = g.buildNumber; o.archiveName = g.archiveName;
-    o.extra = oked::bsm::ExtraFrom(g); o.excludeList = g.excludeList;
-    o.allowCommands = g.allowBuildCommands; o.preCommand = g.preBuildCommand; o.postCommand = g.postBuildCommand;
-    return o;
-}
-
-// Export the platform-independent game DATA (scene + config + assets) plus a
-// ready-to-build project for a non-desktop target. The editor can't run Emscripten
-// (web) or the Android NDK itself, so it lays down everything those toolchains need
-// and a build script / README with the exact commands. `target`: 1 = Web (WASM +
-// WebGL via Emscripten), 2 = Android (SDL2 + NDK).
-std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
-                              const std::string& gameName, const Options& opt, int target) {
-    if (ed.isPlaying()) { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }   // export the edited scene, not the running copy
-    std::error_code ec;
-    fs::path dir = fs::path(outDir);
-    if (dir.empty()) return "Pick an output folder.";
-    fs::create_directories(dir, ec);
-    if (ec) return "Couldn't create folder: " + ec.message();
-
-    // Web preloads a 'game/' folder; Android expects app/src/main/assets — either
-    // way it's just our scene + config + assets.
-    fs::path data = dir / (target == 2 ? "assets" : target == 4 ? fs::path("package") / "Data" : fs::path("game"));
-    fs::create_directories(data, ec);
-    if (!SceneSerializer::SaveToFile(ed.scene(), (data / "game.okayscene").string()))
-        return "Failed to write game.okayscene.";
-    { std::ofstream cf((data / "game.okayconfig").string());
-      cf << "title=" << gameName << "\ncompany=" << opt.company << "\nversion=" << opt.version
-         << "\nwidth=" << opt.width << "\nheight=" << opt.height << "\nstartup=game.okayscene\n"; }
-
-    int copied = 0, missing = 0;
-    std::set<std::string> seen;
-    for (const std::string& asset : SceneSerializer::CollectAssetPaths(ed.scene())) {
-        if (asset.empty() || !seen.insert(asset).second) continue;
-        fs::path src(asset); std::error_code aec;
-        if (!fs::exists(src, aec) || !fs::is_regular_file(src, aec)) { ++missing; continue; }
-        fs::path rel = src.is_absolute() ? fs::path(src.filename()) : SafeRelative(src);
-        if (rel.empty()) rel = src.filename();
-        fs::path dst = data / rel;
-        if (dst.has_parent_path()) fs::create_directories(dst.parent_path(), aec);
-        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, aec);
-        if (!aec) ++copied;
-        { std::error_code me; fs::path ms = src; ms += ".okaymeta";
-          if (!aec && fs::is_regular_file(ms, me)) { fs::path md = dst; md += ".okaymeta"; fs::copy_file(ms, md, fs::copy_options::overwrite_existing, me); } }
-    }
-    CopyLocalizationFiles(ed, data.u8string());   // strings.okayloc and its languages' fonts
-
-#if defined(OKAY_XBOX_UWP)
-    if (target == 4) {   // ---- Xbox One Developer Mode (UWP), EXPERIMENTAL and UNVERIFIED: manifest, assets, notes beside package/Data ----
-        okay::xbox::ExportInputs xi;
-        xi.gameName = gameName; xi.company = opt.company; xi.version = opt.version; xi.bundleId = opt.bundleId; xi.iconPath = opt.iconPath;
-        const okay::xbox::ExportResult xr = okay::xbox::WritePackage(dir.string(), xi);
-        g_xboxExportOk = xr.ok; g_xboxExportWarnings = xr.warnings;
-        std::string msg = xr.message;
-        for (const std::string& w : xr.warnings) msg += " Warning: " + w;
-        return msg;
-    }
-#endif
-    if (target == 1) {   // ---- Web (Emscripten / WebGL) ----
-        std::ofstream sh((dir / "build-web.sh").string());
-        sh << "#!/usr/bin/env bash\n"
-              "# Build this game for the web (WebAssembly + WebGL) with Emscripten.\n"
-              "# Prereqs: install emsdk (https://emscripten.org), 'source emsdk_env.sh',\n"
-              "# and set OKAY_SRC to your OkaySpace engine source checkout.\n"
-              "set -euo pipefail\n"
-              "cd \"$(dirname \"$0\")\"\n"
-              ": \"${OKAY_SRC:?Set OKAY_SRC to the OkaySpace engine source folder}\"\n"
-              "command -v emcmake >/dev/null || { echo 'Emscripten not found: source emsdk_env.sh'; exit 1; }\n"
-              "emcmake cmake -S \"$OKAY_SRC\" -B build-web -DCMAKE_BUILD_TYPE=Release \\\n"
-              "  -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \\\n"
-              "  -DCMAKE_EXE_LINKER_FLAGS=\"--preload-file game@/\"\n"
-              "cmake --build build-web -j\n"
-              "echo 'Built build-web/web/okay-player.html — serve it: python3 -m http.server -d build-web/web'\n";
-        std::ofstream rd((dir / "README.txt").string());
-        rd << "OkaySpace - Web (WebGL / WebAssembly) export of '" << gameName << "'\n"
-              "======================================================\n\n"
-              "game/         your scene + assets (game.okayscene, game.okayconfig, ...)\n"
-              "build-web.sh  builds a browser build with Emscripten.\n\n"
-              "Steps:\n"
-              "  1. Install the Emscripten SDK, then: source /path/to/emsdk/emsdk_env.sh\n"
-              "  2. export OKAY_SRC=/path/to/OkaySpace   (the engine source checkout)\n"
-              "  3. ./build-web.sh\n"
-              "  4. Serve build-web/web/ over HTTP and open okay-player.html\n\n"
-              "The engine ships this path as scripts/build-web.sh; this export bundles\n"
-              "your game's data and a matching build command.\n";
-        return "Exported Web (WebGL) project to " + dir.string() + " (" + std::to_string(copied) +
-               " asset(s)). Run build-web.sh with Emscripten to produce the .wasm build.";
-    }
-
-    // target == 2: ---- Android (SDL2 + NDK) ----
-    std::ofstream rd((dir / "README.txt").string());
-    rd << "OkaySpace - Android export of '" << gameName << "'\n"
-          "==============================================\n\n"
-          "assets/   your scene + assets, ready to drop into an Android app's\n"
-          "          app/src/main/assets/ folder.\n\n"
-          "Building an APK needs Android Studio + the NDK and SDL2's Android project\n"
-          "(the OkaySpace player is C++ on SDL2, which has an official Android port):\n"
-          "  1. Start from SDL2's androidproject template (SDL/build-scripts).\n"
-          "  2. Add the OkaySpace engine + player sources as the app's native code;\n"
-          "     they build against SDL2's Android port.\n"
-          "  3. Copy this 'assets/' folder into app/src/main/assets/.\n"
-          "  4. Build/run from Android Studio (Gradle + NDK).\n\n"
-          "Config: identifier " << opt.bundleId << ", version " << opt.version << ".\n";
-    return "Exported Android data + guide to " + dir.string() + " (" + std::to_string(copied) +
-           " asset(s)). See README.txt - an APK needs Android Studio + the NDK.";
-}
-// ---- Dedicated server export ---------------------------------------------------
-// A ready-to-run server folder: the game's data + the player runtime for the
-// target OS (it runs headless with --server), a server.cfg with the chosen
-// settings, start scripts, and for Linux everything to put it online — an
-// install script (service + firewall), deploy.sh/.bat (copy over SSH and
-// install in one command), a Dockerfile/compose file and a README.
-struct ServerOptions {
-    int  target = 0;              // 0 = Linux, 1 = Windows
-    std::string name, password, publicAddr, region;
-    int  port = 45000, maxPlayers = 16, tick = 30, rateLimit = 0, kickAfter = 0;
-    bool auth = false, advertise = false;
-    float maxSpeed = 0.0f;
-};
-
-// "Star Arena!" -> "star-arena" (file names, service names, Docker images).
-inline std::string ServerSlug(const std::string& s) {
-    std::string o;
-    for (unsigned char c : s) {
-        if (std::isalnum(c)) o += (char)std::tolower(c);
-        else if (!o.empty() && o.back() != '-') o += '-';
-    }
-    while (!o.empty() && o.back() == '-') o.pop_back();
-    return o.empty() ? std::string("game") : o;
-}
-// Scripts must keep Unix line endings even when written on Windows.
-inline bool WriteFileExact(const fs::path& p, const std::string& body) {
-    std::ofstream f(p.string(), std::ios::binary | std::ios::trunc);
-    f << body;
-    return (bool)f;
-}
-inline std::string CfgQuote(const std::string& v) {
-    std::string o = "\"";
-    for (char c : v) if (c != '"' && c != '\n' && c != '\r') o += c;
-    return o + "\"";
-}
-
-std::string BuildServer(EditorState& ed, const std::string& outDir, const std::string& gameName,
-                        Options opt, const ServerOptions& so, BuildReport* report = nullptr) {
-    // A server draws nothing: skip the presentation extras.
-    opt.gpuRenderer = false; opt.iconPath.clear(); opt.splashImage.clear(); opt.bootLogo.clear();
-    opt.layout = 1; opt.zipAlso = false; opt.dryRun = false;   // the start scripts and Dockerfile expect the exe with a Data/ folder
-    BuildReport local;
-    BuildReport* rep = report ? report : &local;
-    const std::string built = Build(ed, outDir, gameName, opt, rep);
-    if (!rep->valid) return built;   // Build() said what went wrong
-
-    std::error_code ec;
-    fs::path dir = fs::weakly_canonical(fs::path(outDir), ec);
-    if (dir.empty()) dir = fs::path(outDir);
-    const bool linuxTarget = so.target == 0;
-#if defined(_WIN32)
-    const bool hostLinux = false;
-    const fs::path hostExe = dir / (okay::buildpipe::FileSafeName(gameName, "Game") + ".exe");
-#else
-    const bool hostLinux = true;
-    const fs::path hostExe = dir / okay::buildpipe::FileSafeName(gameName, "Game");
-#endif
-    const std::string slug = ServerSlug(gameName);
-    const std::string binName = linuxTarget ? slug + "-server" : gameName + "-Server.exe";
-    const fs::path bin = dir / binName;
-    const std::string serverName = so.name.empty() ? gameName + " Server" : so.name;
-
-    // 1) The runtime for the target OS.
-    std::string fetched;
-    if (linuxTarget == hostLinux) {
-        fs::remove(bin, ec);
-        fs::rename(hostExe, bin, ec);
-        if (ec) return "Built the game data, but couldn't rename the runtime to " + binName + " (" + ec.message() + ").";
-    } else {
-        fs::remove(hostExe, ec);
-        for (const char* lib : {"SDL2.dll", "libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libSDL2-2.0.so.0"})
-            fs::remove(dir / lib, ec);
-        auto fetch = [&](const char* asset, const fs::path& dest, std::size_t minBytes) {
-            const std::string url = updater::RawUrl("latest", asset);   // the newest release in the releases bucket (never GitHub)
-            if (url.empty() || !updater::Download(url, dest.string())) return false;
-            std::error_code fe;
-            if (!fs::exists(dest, fe) || fs::file_size(dest, fe) < minBytes) { fs::remove(dest, fe); return false; }
-            return true;
-        };
-        if (linuxTarget) {
-            if (!fetch("okay-server-linux-x64", bin, 100000))
-                return "Built the game data to " + dir.string() + ", but couldn't download the Linux server runtime "
-                       "(okay-server-linux-x64 from the latest release). Check your connection, or export a Windows server.";
-            fetched = "the Linux server runtime";
-        } else {
-            if (!fetch("OkaySpacePlayer.exe", bin, 100000) || !fetch("SDL2.dll", dir / "SDL2.dll", 10000))
-                return "Built the game data to " + dir.string() + ", but couldn't download the Windows runtime.";
-            fetched = "the Windows runtime";
-        }
-    }
-#if !defined(_WIN32)
-    fs::permissions(bin, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
-#endif
-
-    // 2) server.cfg: what the server reads at start (flags/env still override).
-    {
-        std::string c;
-        c += "# " + gameName + " dedicated server settings.\n";
-        c += "# Edit and restart the server to apply. Command-line flags override these.\n\n";
-        c += "name = " + CfgQuote(serverName) + "\n";
-        c += "port = " + std::to_string(so.port) + "\n";
-        c += "max_players = " + std::to_string(so.maxPlayers) + "\n";
-        c += "tick = " + std::to_string(so.tick) + "\n";
-        c += "password = " + CfgQuote(so.password) + "\n";
-        c += "# Only players signed in to OkaySpace may join.\n";
-        c += std::string("auth = ") + (so.auth ? "1" : "0") + "\n";
-        c += "encryption = 1\n";
-        c += "status = 60\n\n";
-        c += "# List this server in the launcher and in-game server browsers.\n";
-        c += "# Needs the machine signed in once:  ./" + binName + " --login YOUR_NAME\n";
-        c += std::string("advertise = ") + (so.advertise ? "1" : "0") + "\n";
-        c += "public_addr = " + CfgQuote(so.publicAddr) + "\n";
-        c += "region = " + CfgQuote(so.region) + "\n\n";
-        c += "# Anti-cheat basics (0 = off).\n";
-        char sp[32]; std::snprintf(sp, sizeof(sp), "%g", so.maxSpeed);
-        c += std::string("max_speed = ") + sp + "\n";
-        c += "rate_limit = " + std::to_string(so.rateLimit) + "\n";
-        c += "kick_after = " + std::to_string(so.kickAfter) + "\n";
-        if (!WriteFileExact(dir / "server.cfg", c)) return "Couldn't write server.cfg in " + dir.string() + ".";
-    }
-
-    // 3) Start scripts.
-    const std::string portS = std::to_string(so.port);
-    WriteFileExact(dir / "start-server.bat",
-        "@echo off\r\nrem Start the " + gameName + " server (settings in server.cfg).\r\n"
-        "cd /d \"%~dp0\"\r\n" + (linuxTarget ? "echo This server is built for Linux: copy the folder to a Linux machine, or use deploy.bat.\r\npause\r\n"
-                                             : "\"" + binName + "\" --server %*\r\npause\r\n"));
-    if (linuxTarget) {
-        WriteFileExact(dir / "start-server.sh",
-            "#!/bin/sh\n# Start the " + gameName + " server in this terminal (settings in server.cfg).\n"
-            "cd \"$(dirname \"$0\")\" && exec ./" + binName + " --server \"$@\"\n");
-
-        // install-server.sh: run ON the server (deploy.* does it for you).
-        WriteFileExact(dir / "install-server.sh",
-            "#!/usr/bin/env bash\n"
-            "# Install this folder as a service that starts on boot and restarts if it stops.\n"
-            "#   sudo bash install-server.sh        (from inside the folder, on the server)\n"
-            "set -euo pipefail\n"
-            "APP=" + slug + "-server\n"
-            "DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
-            "PORT=$(sed -n 's/^port *= *\\([0-9]*\\).*/\\1/p' \"$DIR/server.cfg\" | head -n1)\n"
-            "PORT=${PORT:-" + portS + "}\n"
-            "SUDO=; [ \"$(id -u)\" -ne 0 ] && SUDO=sudo\n"
-            "if command -v apt-get >/dev/null; then\n"
-            "  $SUDO apt-get update -qq && $SUDO apt-get install -y -qq libsdl2-2.0-0 libsodium23 >/dev/null || true\n"
-            "elif command -v dnf >/dev/null; then\n"
-            "  $SUDO dnf install -y -q SDL2 libsodium >/dev/null || true\n"
-            "fi\n"
-            "id okayspace >/dev/null 2>&1 || $SUDO useradd --system --home-dir \"$DIR\" --shell /usr/sbin/nologin okayspace\n"
-            "chmod +x \"$DIR/" + binName + "\" \"$DIR\"/*.sh\n"
-            "$SUDO chown -R okayspace \"$DIR\"\n"
-            "$SUDO tee /etc/systemd/system/$APP.service >/dev/null <<EOF\n"
-            "[Unit]\nDescription=" + gameName + " dedicated server\nAfter=network-online.target\nWants=network-online.target\n\n"
-            "[Service]\nUser=okayspace\nWorkingDirectory=$DIR\nEnvironment=HOME=$DIR\n"
-            "ExecStart=$DIR/" + binName + " --server\nRestart=always\nRestartSec=3\n\n"
-            "[Install]\nWantedBy=multi-user.target\nEOF\n"
-            "$SUDO systemctl daemon-reload\n"
-            "$SUDO systemctl enable $APP >/dev/null\n"
-            "$SUDO systemctl restart $APP\n"
-            "if command -v ufw >/dev/null && $SUDO ufw status | grep -q active; then $SUDO ufw allow \"$PORT\"/udp >/dev/null; fi\n"
-            "if command -v firewall-cmd >/dev/null && $SUDO firewall-cmd --state >/dev/null 2>&1; then\n"
-            "  $SUDO firewall-cmd --permanent --add-port=\"$PORT\"/udp >/dev/null && $SUDO firewall-cmd --reload >/dev/null; fi\n"
-            "sleep 1\n"
-            "$SUDO systemctl --no-pager --lines=8 status $APP || true\n"
-            "echo\n"
-            "echo \"Running as the service '$APP' on UDP port $PORT.\"\n"
-            "echo \"  logs:    journalctl -u $APP -f\"\n"
-            "echo \"  restart: sudo systemctl restart $APP   (after editing server.cfg)\"\n"
-            "echo \"  list it: sudo -u okayspace env HOME=$DIR $DIR/" + binName + " --login YOUR_NAME   (then set advertise = 1)\"\n");
-
-        // deploy.sh / deploy.bat: run on YOUR machine — copy over SSH, then install.
-        const std::string dest = "/opt/" + slug + "-server";
-        WriteFileExact(dir / "deploy.sh",
-            "#!/usr/bin/env bash\n"
-            "# Put this server online on a Linux machine you can SSH into (a VPS):\n"
-            "#   ./deploy.sh user@your-server [ssh-port]\n"
-            "# Copies this folder to " + dest + " and installs it as a service.\n"
-            "set -euo pipefail\n"
-            "HOST=\"${1:?usage: ./deploy.sh user@host [ssh-port]}\"\nSSHPORT=\"${2:-22}\"\n"
-            "cd \"$(dirname \"$0\")\"\n"
-            "echo \"Copying to $HOST:" + dest + " ...\"\n"
-            "ssh -t -p \"$SSHPORT\" \"$HOST\" 'sudo mkdir -p " + dest + " && sudo chown \"$(id -un)\" " + dest + "'\n"
-            "tar czf - --exclude=deploy.sh --exclude=deploy.bat . | ssh -p \"$SSHPORT\" \"$HOST\" 'tar xzf - -C " + dest + "'\n"
-            "ssh -t -p \"$SSHPORT\" \"$HOST\" 'sudo bash " + dest + "/install-server.sh'\n");
-        WriteFileExact(dir / "deploy.bat",
-            "@echo off\r\n"
-            "rem Put this server online on a Linux machine you can SSH into (a VPS):\r\n"
-            "rem   deploy.bat user@your-server [ssh-port]\r\n"
-            "rem Uses the ssh and tar built into Windows 10/11.\r\n"
-            "setlocal\r\n"
-            "if \"%~1\"==\"\" (echo Usage: deploy.bat user@host [ssh-port] & exit /b 1)\r\n"
-            "set HOST=%~1\r\nset SSHPORT=%~2\r\nif \"%SSHPORT%\"==\"\" set SSHPORT=22\r\n"
-            "cd /d \"%~dp0\"\r\n"
-            "echo Copying to %HOST%:" + dest + " ...\r\n"
-            "ssh -t -p %SSHPORT% %HOST% \"sudo mkdir -p " + dest + " && sudo chown $(id -un) " + dest + "\" || exit /b 1\r\n"
-            "tar czf - --exclude=deploy.sh --exclude=deploy.bat . | ssh -p %SSHPORT% %HOST% \"tar xzf - -C " + dest + "\" || exit /b 1\r\n"
-            "ssh -t -p %SSHPORT% %HOST% \"sudo bash " + dest + "/install-server.sh\"\r\n"
-            "pause\r\n");
-
-        // Docker: for hosts that run containers (and Fly.io / Railway / etc.).
-        WriteFileExact(dir / "Dockerfile",
-            "# " + gameName + " dedicated server.\n"
-            "#   docker build -t " + slug + "-server .\n"
-            "#   docker run -d -p " + portS + ":" + portS + "/udp --restart unless-stopped " + slug + "-server\n"
-            "FROM ubuntu:22.04\n"
-            "RUN apt-get update && apt-get install -y --no-install-recommends libsdl2-2.0-0 libsodium23 ca-certificates \\\n"
-            "    && rm -rf /var/lib/apt/lists/* && useradd --system --create-home okayspace\n"
-            "WORKDIR /srv/game\n"
-            "COPY . .\n"
-            "RUN chmod +x " + binName + " && chown -R okayspace /srv/game\n"
-            "USER okayspace\n"
-            "EXPOSE " + portS + "/udp\n"
-            "CMD [\"./" + binName + "\", \"--server\"]\n");
-        WriteFileExact(dir / "docker-compose.yml",
-            "# docker compose up -d   (settings in server.cfg, or OKAY_SERVER_* variables below)\n"
-            "services:\n"
-            "  server:\n"
-            "    build: .\n"
-            "    restart: unless-stopped\n"
-            "    ports:\n"
-            "      - \"" + portS + ":" + portS + "/udp\"\n"
-            "    # environment:\n"
-            "    #   OKAY_SERVER_NAME: \"" + serverName + "\"\n"
-            "    #   OKAY_SERVER_MAX_PLAYERS: \"" + std::to_string(so.maxPlayers) + "\"\n");
-        WriteFileExact(dir / ".dockerignore", "deploy.sh\ndeploy.bat\n*.zip\n");
-    }
-
-    // 4) README.
-    {
-        std::string r;
-        r += gameName + " - dedicated server\n";
-        r += std::string(gameName.size() + 19, '=') + "\n\n";
-        r += "This folder is a complete game server: no window, no graphics. Players connect to it\n";
-        r += "over UDP port " + portS + ". Settings live in server.cfg (restart after editing).\n\n";
-        if (linuxTarget) {
-            r += "PUT IT ONLINE (a Linux VPS: Hetzner, DigitalOcean, OVH, ...)\n";
-            r += "  From this PC, in this folder:\n";
-            r += "    Windows:  deploy.bat user@your-server\n";
-            r += "    Mac/Linux: ./deploy.sh user@your-server\n";
-            r += "  It copies the folder to /opt/" + slug + "-server, installs what it needs, opens the\n";
-            r += "  firewall port and runs it as a service that restarts on its own and starts on boot.\n\n";
-            r += "  By hand instead: copy the folder to the server and run  sudo bash install-server.sh\n";
-            r += "  Just to try it:  ./start-server.sh\n\n";
-            r += "DOCKER\n  docker compose up -d   (or see the Dockerfile)\n\n";
-            r += "MANAGE IT (on the server)\n";
-            r += "  logs:     journalctl -u " + slug + "-server -f\n";
-            r += "  restart:  sudo systemctl restart " + slug + "-server\n";
-            r += "  stop:     sudo systemctl stop " + slug + "-server\n\n";
-        } else {
-            r += "RUN IT\n  Double-click start-server.bat (or run: " + binName + " --server).\n";
-            r += "  Allow " + binName + " through Windows Firewall (UDP " + portS + ") when asked.\n\n";
-        }
-        r += "LIST IT IN THE SERVER BROWSERS\n";
-        r += "  1. Sign this machine in to OkaySpace once:\n";
-        r += linuxTarget ? "       sudo -u okayspace env HOME=/opt/" + slug + "-server /opt/" + slug + "-server/" + binName + " --login YOUR_NAME\n"
-                         : "       " + binName + " --login YOUR_NAME\n";
-        r += "  2. In server.cfg set  advertise = 1  and  public_addr = your server's IP or hostname.\n";
-        r += "  3. Restart the server. It shows up in the launcher's Multiplayer page and the game's\n";
-        r += "     \"Find a server\" window within a minute.\n\n";
-        r += "PLAYERS CAN ALSO JOIN BY ADDRESS\n";
-        r += "  Connect to server... (launcher) or Address (in game):  your-server:" + portS + "\n\n";
-        WriteFileExact(dir / "README.txt", r);
-    }
-
-#if !defined(_WIN32)
-    for (const char* sh : {"start-server.sh", "install-server.sh", "deploy.sh"})
-        fs::permissions(dir / sh, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
-#endif
-
-    // 5) Re-tally the folder for the result popup.
-    *rep = BuildReport{};
-    for (auto& e : fs::recursive_directory_iterator(dir, ec)) {
-        if (!e.is_regular_file(ec)) continue;
-        std::error_code se; const std::uintmax_t sz = fs::file_size(e.path(), se);
-        std::string ext = e.path().extension().string();
-        for (char& ch : ext) ch = (char)std::tolower((unsigned char)ch);
-        const std::string fn = e.path().filename().string();
-        int cat = CAT_ASSET;
-        if (fn == binName) cat = CAT_EXE;
-        else if (ext == ".dll" || ext == ".so" || fn.rfind("libSDL2", 0) == 0) cat = CAT_LIB;
-        else if (ext == ".okayscene" || ext == ".okayconfig" || fn == "server.cfg") cat = CAT_DATA;
-        rep->files.push_back({fs::relative(e.path(), dir, se).generic_string(), sz, cat});
-        rep->catBytes[cat] += sz; rep->total += sz;
-    }
-    std::sort(rep->files.begin(), rep->files.end(), [](const ReportEntry& a, const ReportEntry& b) { return a.bytes > b.bytes; });
-    rep->valid = true;
-
-    std::string msg = "Built the " + std::string(linuxTarget ? "Linux" : "Windows") + " dedicated server for '" + gameName +
-                      "' to " + dir.string() + "  [" + HumanBytes(rep->total) + "]. ";
-    msg += linuxTarget ? "Put it online with deploy.bat user@your-server (or ./deploy.sh), or docker compose up. "
-                       : "Run start-server.bat. ";
-    msg += "Settings are in server.cfg; README.txt has the steps.";
-    if (!fetched.empty()) msg += "  (" + fetched + " was downloaded from the latest release)";
-    if (so.advertise && so.publicAddr.empty()) msg += "  NOTE: set public_addr in server.cfg so the listing points players at the right address.";
-    return msg;
-}
-
-} // namespace builder
 
 builder::BuildReport g_buildReport;   // per-file size breakdown of the last build
 
@@ -9102,6 +8061,11 @@ static void QueueCharacterModel(GameObject* go, const std::string& path) {
     sPendingCharacterModels.push_back({go, path});
 }
 
+// The Console line for a model that did not import: what was tried and why it failed, in plain words.
+static std::string ModelImportFailLine(const std::string& what, const std::string& path) {
+    return what + " failed: " + std::filesystem::u8path(path).filename().u8string() + ": " + okay::DescribeModelImportProblem(path) + " (" + path + ")";
+}
+
 // Editor wrapper over okay::AttachCharacterModel: undo, selection, console log.
 static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, const std::string& path) {
     if (!target) return;
@@ -9109,8 +8073,7 @@ static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, cons
     std::string log;
     GameObject* root = okay::AttachCharacterModel(ed.scene(), target, path, &log);
     if (!root) {
-        ConsoleLog("Character model import failed: " + path +
-                   (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
+        ConsoleLog(ModelImportFailLine("Character model import", path), 2);
         return;
     }
     ed.Select(target); ed.dirty = true;
@@ -10905,6 +9868,12 @@ void DrawProject(EditorState& ed) {
     g_projectSelected = selected;
     if (!pb.Indexed() && !ed.projectDir().empty() && fs::is_directory(root, ec)) pb.Sync();   // first look at the project: index the assets once
     pb.Poll(okay::platform::TicksMs32());   // keep the database fresh without a thread: an incremental scan when due (waits at least 2 s and 30x as long as the last scan took)
+    // A picture changed in another program, given new import settings, or reimported by hand: the Scene view shows the new
+    // one now (before, only the panel's thumbnail was made again and the renderer kept the old pixels until a restart).
+    for (const std::string& f : pb.TakeChangedFiles()) {
+        if (okay::AssetTypeFromPath(f) != okay::AssetType::Texture) continue;
+        if (okay::InvalidateTextureCacheForFile(f) > 0) ConsoleLog("Reloaded the picture " + fs::u8path(f).filename().u8string() + " in the Scene view");
+    }
     // Let OS file-drops land in the folder we're browsing (falls back to Assets root).
     g_assetImportDir = fs::is_directory(dir, ec) ? dir.string() : root.string();
 
@@ -11838,7 +10807,7 @@ void DrawProject(EditorState& ed) {
                 ed.Select(r); ed.dirty = true;
                 ConsoleLog("Imported " + full);
                 LogModelReport(ed, r);
-            } else ConsoleLog("Model import failed: " + full, 2);
+            } else ConsoleLog(ModelImportFailLine("Model import", full), 2);
         }
     };
 
@@ -16490,7 +15459,7 @@ void DrawScriptEditor(EditorState& ed) {
         //   Ctrl+G       go to line              Ctrl+Alt+L  reformat the file
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl) {
             ImGuiIO& kio = ImGui::GetIO();
-            if (ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;
+            if (!UseOkayUICodeEdit() && ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;   // (the OkayUI code widget does Ctrl+/ itself)
             if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_E, false))
                 ImGui::OpenPopup("##tabswitcher");
             if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false))
@@ -18334,10 +17303,14 @@ void DrawScriptEditor(EditorState& ed) {
                 for (int i = l0; i <= l1 && i < (int)ls.size(); ++i) out.push_back(ls[i]);
                 return out;
             };
+            // The OkayUI code widget does Ctrl+/, Ctrl+D, Ctrl+Shift+K and Alt+Up/Down itself (OkayUI::CodeEdit line commands,
+            // one undo step each); here they are only for the Dear ImGui editor, or they would run twice.
+            const bool widgetLineKeys = te.UsingOkayUI();
             // Ctrl+/ — toggle "// " on the selected lines (also the toolbar button).
             bool wantComment = caret.toggleComment;
             caret.toggleComment = false;
-            if ((chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
+            if (widgetLineKeys && wantComment) { te.okay().Edit().ToggleLineComment(); syncFromWidget(); wantComment = false; }
+            if ((!widgetLineKeys && chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
                  ImGui::IsKeyPressed(ImGuiKey_Slash, false)) || wantComment) {
                 std::vector<std::string> ls = linesText(selL0, selL1);
                 bool allCommented = true;
@@ -18358,7 +17331,7 @@ void DrawScriptEditor(EditorState& ed) {
                 if (!ls.empty()) replaceLines(selL0, selL1, repl, caret.line - 1, 0);
             }
             // Ctrl+D — duplicate the selected line(s) below themselves.
-            if (chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
+            if (!widgetLineKeys && chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
                 ImGui::IsKeyPressed(ImGuiKey_D, false)) {
                 std::vector<std::string> ls = linesText(selL0, selL1);
                 if (!ls.empty()) {
@@ -18367,7 +17340,7 @@ void DrawScriptEditor(EditorState& ed) {
                 }
             }
             // Ctrl+Shift+K — delete the selected line(s).
-            if (chordOK && cio.KeyCtrl && cio.KeyShift && !cio.KeyAlt &&
+            if (!widgetLineKeys && chordOK && cio.KeyCtrl && cio.KeyShift && !cio.KeyAlt &&
                 ImGui::IsKeyPressed(ImGuiKey_K, false)) {
                 int total = te.GetTotalLines();
                 te.SetSelection(ScriptEditorWidget::Coordinates(selL0, 0),
@@ -18390,8 +17363,8 @@ void DrawScriptEditor(EditorState& ed) {
                 }
             }
             // Alt+Up / Alt+Down — move the selected line(s) up/down one row.
-            bool mvUp = chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
-            bool mvDn = chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+            bool mvUp = !widgetLineKeys && chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
+            bool mvDn = !widgetLineKeys && chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
             if (mvUp || mvDn) {
                 int total = te.GetTotalLines();
                 if ((mvUp && selL0 > 0) || (mvDn && selL1 + 1 < total)) {
@@ -18973,7 +17946,7 @@ void DrawFileDialogs(EditorState& ed) {
                         ed.camTarget = (lo + hi) * 0.5f;
                         ed.camDist = std::fmax(1.0f, ext * 1.8f);
                     }
-                } else ConsoleLog("Import failed: couldn't read " + src, 2);
+                } else ConsoleLog(ModelImportFailLine("Import", src), 2);
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
@@ -21122,8 +20095,7 @@ static GameObject* HierInstantiateAsset(EditorState& ed, const std::string& path
         if (ok && placed) ApplyModelImportScale(placed, path);
         if (!ok || !placed) {
             placed = nullptr;
-            ConsoleLog("Model import failed: " + path +
-                       (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
+            ConsoleLog(ModelImportFailLine("Model import", path), 2);
         }
     } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
         placed = ed.CreateSprite(std::filesystem::path(path).stem().string());   // takes its own undo step
@@ -27840,6 +26812,61 @@ static bool IKJointLimitUI(const char* label, IKJointLimit& l) {
     return ch;
 }
 
+static bool AcceptAssetPathField(std::string& field);
+
+// The Mesh Renderer's Custom shader fields: the .okayshader file, whether it compiled (the first
+// error with its line and column when not), and one control per declared property and texture.
+// The values live in MeshRenderer::shaderParams as text, so a property the file no longer has is
+// kept (and ignored) instead of lost. The renderers reload the file by themselves when it changes.
+static bool DrawCustomShaderFields(MeshRenderer& mr) {
+    bool ch = false;
+    char path[260];
+    std::strncpy(path, mr.customShader.c_str(), sizeof(path) - 1);
+    path[sizeof(path) - 1] = '\0';
+    if (ImGui::InputText("Shader File##mesh", path, sizeof(path))) { mr.customShader = path; ch = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("An .okayshader file: a surface block that sets albedo, emission, alpha,\nnormal, metallic, specular and shininess. Edits reload by themselves.\nExamples: examples/shaders/lava.okayshader, dissolve.okayshader, rim_glow.okayshader");
+    if (AcceptAssetPathField(mr.customShader)) ch = true;
+    if (mr.customShader.empty()) { ImGui::TextDisabled("Pick an .okayshader file (drawn magenta until then)."); return ch; }
+    const oshader::ShaderFile sf = oshader::LoadShaderFile(mr.customShader);
+    const oshader::Compiled* c = sf.compiled.get();
+    if (!c || !c->ok) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.7f, 1.0f));
+        ImGui::TextWrapped("%s", c ? c->FirstError(mr.customShader).c_str() : "cannot read the shader file");
+        ImGui::PopStyleColor();
+        ImGui::TextDisabled("Drawn magenta until the file compiles; save it and it reloads.");
+        return ch;
+    }
+    ImGui::TextDisabled("%s%s", c->name.empty() ? "Compiled" : c->name.c_str(), c->unlit ? "  (unlit)" : "");
+    const std::vector<float> vals = oshader::ResolveProperties(*c, mr.shaderParams);
+    for (std::size_t i = 0; i < c->props.size(); ++i) {
+        const oshader::Property& p = c->props[i];
+        float v[4] = {vals[i * 4], vals[i * 4 + 1], vals[i * 4 + 2], vals[i * 4 + 3]};
+        const std::string label = p.name + "##okp";
+        const int w = oshader::Width(p.type);
+        bool edited = false;
+        if (p.isColor) edited = ImGui::ColorEdit3(label.c_str(), v, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+        else if (w == 1 && p.hasRange) edited = ImGui::SliderFloat(label.c_str(), v, p.minV, p.maxV);
+        else if (w == 1) edited = ImGui::DragFloat(label.c_str(), v, 0.01f);
+        else if (w == 2) edited = ImGui::DragFloat2(label.c_str(), v, 0.01f);
+        else if (w == 3) edited = ImGui::DragFloat3(label.c_str(), v, 0.01f);
+        else edited = ImGui::DragFloat4(label.c_str(), v, 0.01f);
+        if (edited) { mr.shaderParams = oshader::SetParam(mr.shaderParams, p.name, v, w); ch = true; }
+    }
+    for (std::size_t t = 0; t < c->textures.size(); ++t) {
+        const std::string key = "tex:" + c->textures[t].name;
+        std::string pic = oshader::GetTextParam(mr.shaderParams, key);
+        char buf[260];
+        std::strncpy(buf, pic.c_str(), sizeof(buf) - 1);
+        buf[sizeof(buf) - 1] = '\0';
+        const std::string label = c->textures[t].name + "##okt";
+        if (ImGui::InputText(label.c_str(), buf, sizeof(buf))) { pic = buf; mr.shaderParams = oshader::SetTextParam(mr.shaderParams, key, pic); ch = true; }
+        if (ImGui::IsItemHovered() && !c->textures[t].defaultPath.empty()) ImGui::SetTooltip("Empty: %s", c->textures[t].defaultPath.c_str());
+        if (AcceptAssetPathField(pic)) { mr.shaderParams = oshader::SetTextParam(mr.shaderParams, key, pic); ch = true; }
+    }
+    if (!mr.shaderParams.empty() && ImGui::SmallButton("Reset Properties##okp")) { mr.shaderParams.clear(); ch = true; }
+    return ch;
+}
+
 // If an asset is dropped on the previous widget, set `field` to its path.
 static bool AcceptAssetPathField(std::string& field) {
     bool changed = oked::AssetPathPicker(field);   // "..." handle + right-click: choose from project, clear
@@ -30000,6 +29027,27 @@ void DrawModeling(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select everything that ISN'T selected (works in all three modes).");
             if (g_meshSelMode == 2)
                 ImGui::TextDisabled("Alt+Click an edge to select its whole loop.");
+            ImGui::TextDisabled("Ctrl+Click adds the shortest path from the last one picked.");
+            if (ToolButton("Checker##me", (g_meshSelMode == 0 && !g_meshSelVerts.empty()) || (g_meshSelMode == 1 && !g_meshSelFaces.empty()),
+                           "Select vertices (key 1) or faces (key 3) first.", true))
+                CheckerDeselectNow(mr->mesh);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Checker Deselect: keep every other vertex or face of the selection.");
+            ImGui::SameLine();
+            if (ToolButton("Boundary Loop##me", !g_meshSelFaces.empty(), kNeedFaces, true))
+                ConsoleLog("Select Boundary Loop: " + std::to_string(SelectBoundaryLoopNow(mr->mesh)) + " edges");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select the outline of the selected faces as edges (Edge mode).");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Open Edges##me")) {
+                const int n = SelectProblemEdgesNow(mr->mesh, true, false);
+                ConsoleLog(n ? "Selected " + std::to_string(n) + " open edges" : std::string("No open edges: the mesh is closed"));
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select every edge with a face on one side only (the rims of holes).");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Non-Manifold##me")) {
+                const int n = SelectProblemEdgesNow(mr->mesh, false, true);
+                ConsoleLog(n ? "Selected " + std::to_string(n) + " non-manifold edges" : std::string("No non-manifold edges"));
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select edges shared by three or more faces (they break bevel, bridge, booleans and export).");
 
             ImGui::Checkbox("Symmetry X##me", &g_meshSymX);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror every move and sculpt stroke across the local X = 0 plane (edit half, get both).");
@@ -30020,6 +29068,13 @@ void DrawModeling(EditorState& ed) {
             if (g_meshSoftSel) {
                 ImGui::SameLine(); ImGui::SetNextItemWidth(90);
                 ImGui::DragFloat("##softr", &g_meshSoftRadius, 0.01f, 0.02f, 20.0f, "r %.2f");
+            }
+            {
+                static const char* kPivots[] = {"Median Point", "Individual Origins", "Active Vertex"};
+                ImGui::SetNextItemWidth(150);
+                g_mePivot = std::clamp(g_mePivot, 0, 2);
+                ImGui::Combo("Pivot (.)##mepivot", &g_mePivot, kPivots, 3);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("What R (rotate) and S (scale) turn around: the centre of the selection, each separate part's own centre\n(several faces grow or spin in place), or the last vertex you picked. Press . in the 3D view to cycle.");
             }
 
             SectionHeader("Faces");
@@ -30067,7 +29122,8 @@ void DrawModeling(EditorState& ed) {
                 EditUndoPoint(ed, mr); mr->mesh.DeleteFaces(g_meshSelFaces); g_meshSelFaces.clear(); ed.dirty = true;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Flip Normals##me")) { EditUndoPoint(ed, mr); mr->mesh.FlipNormals(); ed.dirty = true; }
+            if (ImGui::Button("Flip Normals##me")) { EditUndoPoint(ed, mr); FlipNormalsNow(mr->mesh); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the selected faces the other way round (Face mode), or every face when none are selected.");
             ImGui::SameLine();
             if (ImGui::Button("Recalc Outside##me")) {
                 EditUndoPoint(ed, mr); int n = mr->mesh.OrientFacesOutward();
@@ -30377,15 +29433,26 @@ void DrawModeling(EditorState& ed) {
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Split the face the two selected vertices share with a new edge between them.");
                 ImGui::SameLine();
-                if (ToolButton("Bridge Edge Loops##me", haveEdges, "Select two open edge loops (the rims of two holes or tube ends).")) {
-                    const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+                if (ToolButton("Bridge Edge Loops##me", haveEdges, "Select two open edge loops (the rims of two holes or tube ends), or two groups of faces (Face mode).")) {
                     std::string err;
                     int n = 0;
-                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n = pmo::BridgeEdgeLoops(p, edges, &err); return n > 0; }))
-                        ConsoleLog("Bridged with " + std::to_string(n) + " face(s)");
-                    else ConsoleLog("Bridge: " + err, 1);
+                    if (g_meshSelMode == 1 && !g_meshSelFaces.empty()) {
+                        // Face mode: the selected triangles name polygons; delete the two groups and bridge the holes.
+                        std::vector<int> triFace;
+                        pmo::PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}, &triFace);   // the same polygons ApplyPoly builds
+                        std::vector<int> faces;
+                        for (int t : g_meshSelFaces) if (t >= 0 && t < (int)triFace.size()) faces.push_back(triFace[(std::size_t)t]);
+                        if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n = pmo::BridgeFaces(p, faces, &err); return n > 0; }))
+                            ConsoleLog("Bridged the two face groups with " + std::to_string(n) + " face(s)");
+                        else ConsoleLog("Bridge: " + err, 1);
+                    } else {
+                        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+                        if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n = pmo::BridgeEdgeLoops(p, edges, &err); return n > 0; }))
+                            ConsoleLog("Bridged with " + std::to_string(n) + " face(s)");
+                        else ConsoleLog("Bridge: " + err, 1);
+                    }
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Join two open edge loops (the same number of edges each) with a band of faces.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Join two open edge loops (the same number of edges each) with a band of faces.\nIn Face mode: select two groups of faces (for example two facing faces); they are removed and the holes are joined.");
 
                 // ---- Spin and Extrude Along Path -----------------------------------------------------
                 {
@@ -35535,6 +34602,8 @@ static bool DrawRagdollWithOkayUI(EditorState& ed, Ragdoll* rd, okay::Component*
     InspFieldList L;
     L.rows.reserve(19);
     L.Note("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).", false, true);
+    if (rd->gameObject && rd->gameObject->GetComponent<ActiveRagdoll>())
+        L.Note("This object also has an Active Ragdoll: it takes over at Play and switches this Ragdoll off.", false, true);
     L.Section("Triggers");
     L.Check("Ragdoll On Death##rd", &rd->ragdollOnDeath);
     L.TipLookup();
@@ -36011,7 +35080,7 @@ static bool DrawTeleporterWithOkayUI(EditorState& ed, Teleporter* tp, okay::Comp
 static bool DrawDollyCartWithOkayUI(EditorState& ed, DollyCart* dc, okay::Component*& toRemove) {
     using namespace okaypanels;
     InspFieldList L;
-    L.rows.reserve(9);
+    L.rows.reserve(12);
     L.Text("Path##dc", &dc->path);
     L.TipLookup();
     L.Slider("Position##dc", &dc->position, 0.0f, 1.0f);
@@ -36020,6 +35089,12 @@ static bool DrawDollyCartWithOkayUI(EditorState& ed, DollyCart* dc, okay::Compon
     L.TipLookup();
     L.Check("Auto Move##dc", &dc->autoMove);
     L.TipLookup();
+    L.Check("Speed In Metres##dc", &dc->speedInMetres);
+    L.Tip("Speed is metres per second along the rail (else path fractions per second)");
+    L.Check("Ping Pong##dc", &dc->pingPong);
+    L.Tip("On an open path, turn round at each end instead of stopping");
+    L.Check("Face Along Path##dc", &dc->orientToPath);
+    L.Tip("Turn the object to face the way it travels along the rail");
     const int kRemove = L.SmallButton("Remove##dc");
     if (!DrawRowsOkayUI(dc, "##okayui_dollycart", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -37344,6 +36419,8 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Friction##ps");
                 if (ImGui::SliderFloat("Life Loss##ps", &ps->collisionLifeLoss, 0.0f, 1.0f)) ed.dirty = true;
                 oked::FieldTip("Life Loss##ps");
+                if (ImGui::Checkbox("Collide with Terrain##ps", &ps->collideTerrain)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also land on every Terrain in the scene: particles stop or bounce on hills and slide down slopes.");
             }
 
             // ---- Bursts & duration ----
@@ -37387,8 +36464,8 @@ void DrawInspector(EditorState& ed) {
             // Unlit flag into the selector; the renderer treats Unlit-shader == unlit.
             int sh = (int)mr->shader;
             if (mr->unlit && mr->shader == MeshRenderer::Shader::Standard) sh = 1;  // legacy unlit flag
-            const char* shaders[] = {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet"};
-            if (ImGui::Combo("Shader##mesh", &sh, shaders, 9)) {
+            const char* shaders[] = {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet", "Custom"};
+            if (ImGui::Combo("Shader##mesh", &sh, shaders, 10)) {
                 mr->shader = (MeshRenderer::Shader)sh;
                 mr->unlit = (mr->shader == MeshRenderer::Shader::Unlit);  // keep legacy flag in sync
                 ed.dirty = true;
@@ -37409,6 +36486,8 @@ void DrawInspector(EditorState& ed) {
             // Fresnel (rim-glow shell): the rim controls below tune the edge glow.
             if (mr->shader == MeshRenderer::Shader::Fresnel)
                 ImGui::TextDisabled("Edge glow uses the Rim settings below.");
+            // Custom: an .okayshader file (our own shader language) and its properties.
+            if (mr->shader == MeshRenderer::Shader::Custom && DrawCustomShaderFields(*mr)) ed.dirty = true;
             // Rim (Fresnel) backlight — a per-material glow, great with Toon.
             if (ImGui::SliderFloat("Rim##mesh", &mr->rimStrength, 0.0f, 2.0f)) ed.dirty = true;
             oked::FieldTip("Rim##mesh");
@@ -43770,6 +42849,11 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Start Delay##spwn");
             if (ImGui::Checkbox("Hide Template##spwn", &c->deactivateTemplate)) ed.dirty = true;
             oked::FieldTip("Hide Template##spwn");
+            if (ImGui::Checkbox("Use Pool##spwn", &c->usePool)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Reuse finished copies instead of making new ones. A copy that ends with a Lifetime,\n"
+                                  "a Projectile 3D or pool_release() goes back to this spawner's pool and the next spawn\n"
+                                  "takes it again, reset to a fresh copy of the template. Good for bullets, sparks and pickups.");
             ImGui::SeparatorText("Waves");
             if (ImGui::DragInt("Count Per Wave##spwn", &c->count, 0.1f, 1, 200)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawns per wave. 1 = classic steady drip (no waves).");
@@ -43783,6 +42867,9 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("%s — wave %d done, %d alive, %d spawned",
                                     c->Running() ? "Running" : "Stopped",
                                     c->WavesDone(), c->AliveCount(), c->Spawned());
+            if (ed.isPlaying() && c->Pool())
+                ImGui::TextDisabled("Pool: %d made, %d reused, %d waiting",
+                                    c->Pool()->CreatedCount(), c->Pool()->ReuseCount(), c->Pool()->IdleCount());
             if (ImGui::SmallButton("Remove##spwn")) toRemove = c;
         }
     }
@@ -44025,7 +43112,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Can Mantle##fp", &fp->canMantle)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a low or high ledge and climb it. Off by default.");
             if (ImGui::Checkbox("Can Ledge Grab##fp", &fp->canLedgeGrab)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands-on-ledge IK is not wired.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands go onto the ledge (two arm LimbIKs) through the Ledge Hands IK component: Add Component > Animation, or Wire missing animation and IK on the controller.");
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##fp", &fp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -44327,7 +43414,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Can Mantle##tp", &tp->canMantle)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a low or high ledge and climb it. Off by default.");
             if (ImGui::Checkbox("Can Ledge Grab##tp", &tp->canLedgeGrab)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands-on-ledge IK is not wired.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands go onto the ledge (two arm LimbIKs) through the Ledge Hands IK component: Add Component > Animation, or Wire missing animation and IK on the controller.");
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##tp", &tp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -44562,6 +43649,8 @@ void DrawInspector(EditorState& ed) {
     if (auto* rd = dynamic_cast<Ragdoll*>(curComp)) {
         if (CompHeader("Ragdoll", rd, &toRemove) && !(UseOkayUIInspector() && DrawRagdollWithOkayUI(ed, rd, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).");
+            if (rd->gameObject && rd->gameObject->GetComponent<ActiveRagdoll>())
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "This object also has an Active Ragdoll: it takes over at Play and switches this Ragdoll off.");
             SectionHeader("Triggers");
             if (ImGui::Checkbox("Ragdoll On Death##rd", &rd->ragdollOnDeath)) ed.dirty = true;
             oked::FieldTip("Ragdoll On Death##rd");
@@ -45121,6 +44210,14 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Foot IK##ctm");
             if (ImGui::Checkbox("Pathfinding##ctm", &cm->usePathfinding)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clicks behind walls walk AROUND them (grid A*), Diablo-style.");
+            if (ImGui::Checkbox("Pick Colliders##ctm", &cm->pickColliders)) ed.dirty = true;
+            oked::FieldTip("Pick Colliders##ctm");
+            if (ImGui::Checkbox("Give Up When Stuck##ctm", &cm->giveUpWhenStuck)) ed.dirty = true;
+            oked::FieldTip("Give Up When Stuck##ctm");
+            if (cm->giveUpWhenStuck) {
+                if (ImGui::DragFloat("Stuck Time##ctm", &cm->stuckTime, 0.05f, 0.1f, 10.0f)) ed.dirty = true;
+                oked::FieldTip("Stuck Time##ctm");
+            }
             if (ImGui::Checkbox("Use Player Height##ctm", &cm->usePlayerHeight)) ed.dirty = true;
             oked::FieldTip("Use Player Height##ctm");
             if (!cm->usePlayerHeight) {
@@ -46013,6 +45110,12 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Speed##dc");
             if (ImGui::Checkbox("Auto Move##dc", &dc->autoMove)) ed.dirty = true;
             oked::FieldTip("Auto Move##dc");
+            if (ImGui::Checkbox("Speed In Metres##dc", &dc->speedInMetres)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed is metres per second along the rail (else path fractions per second)");
+            if (ImGui::Checkbox("Ping Pong##dc", &dc->pingPong)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On an open path, turn round at each end instead of stopping");
+            if (ImGui::Checkbox("Face Along Path##dc", &dc->orientToPath)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the object to face the way it travels along the rail");
             if (ImGui::SmallButton("Remove##dc")) toRemove = dc;
         }
     }
@@ -48788,6 +47891,13 @@ void DrawInspector(EditorState& ed) {
             }
             if (item(!go->GetComponent<LimbIK>(), "Limb IK (arm/leg reach + grab)")) { go->AddComponent<LimbIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<ChainIK>(), "Chain IK (FABRIK/CCD long chain)")) { go->AddComponent<ChainIK>(); ed.dirty = true; }
+            if (item(!go->GetComponent<LedgeHandsIK>(), "Ledge Hands IK (hands on the ledge while hanging)")) {
+                auto* lh = go->AddComponent<LedgeHandsIK>();
+                const bool armed = lh->Wire();   // reuses a Limb IK already on each hand, else adds one (off)
+                ConsoleLog(armed ? "Ledge Hands IK: linked both arm Limb IKs." :
+                           "Ledge Hands IK: no humanoid arms found under this object; add it to the character (the object with the controller).", armed ? 0 : 1);
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<FullBodyIK>(), "Full Body IK (hands, feet, head, body pull)")) {
                 auto* fb = go->AddComponent<FullBodyIK>();
                 int n = fb->MapBones(true);
@@ -48969,6 +48079,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<Ragdoll>(), "Ragdoll (death + hit reactions)")) { ed.PushUndo(); go->AddComponent<Ragdoll>(); ed.dirty = true; }
+            if (item(!go->GetComponent<ActiveRagdoll>(), "Active Ragdoll (balance, stumble, fall, get up)")) { ed.PushUndo(); go->AddComponent<ActiveRagdoll>(); ed.dirty = true; }
             if (item(!go->GetComponent<Seat>(), "Seat")) { go->AddComponent<Seat>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleSeat>(), "Vehicle Seat (get in and drive)")) { go->AddComponent<VehicleSeat>(); ed.dirty = true; }
             if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }
@@ -52931,6 +52042,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (ImGui::IsKeyPressed(ImGuiKey_1, false)) g_meshSelMode = 0;
             if (ImGui::IsKeyPressed(ImGuiKey_2, false)) g_meshSelMode = 2;
             if (ImGui::IsKeyPressed(ImGuiKey_3, false)) g_meshSelMode = 1;
+            if (ImGui::IsKeyPressed(ImGuiKey_Period, false)) {   // '.' cycles what R / S turn around
+                g_mePivot = (std::clamp(g_mePivot, 0, 2) + 1) % 3;
+                ConsoleLog(std::string("Pivot: ") + okay::modeling::EditPivotName((okay::modeling::EditPivot)g_mePivot));
+            }
         }
         struct Pill { const char* label; bool on; int id; };
         std::vector<Pill> pills = {{"Object", !(g_meshEdit && g_meshEditObj == mo), 0}, {"Edit", g_meshEdit && g_meshEditObj == mo, 1}};
@@ -53060,11 +52175,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     Vec3 dirW = (eye - vWorld(bv)).Normalized();    // toward camera
                     Vec3 dirL = Minv.MultiplyVector(dirW);
                     Vec3 c = mesh.vertices[bv];                     // before the brush moves it
-                    mesh.SculptBrush(c, dirL, g_sculptRadius, g_sculptStrength, g_sculptMode);
-                    // Live X symmetry: repeat the stroke mirrored across the YZ plane.
-                    if (g_meshSymX)
-                        mesh.SculptBrush(Vec3{-c.x, c.y, c.z}, Vec3{-dirL.x, dirL.y, dirL.z},
-                                         g_sculptRadius, g_sculptStrength, g_sculptMode);
+                    // Live X symmetry: the stroke is mirrored across the YZ plane in the same pass.
+                    mesh.SculptBrush(c, dirL, g_sculptRadius, g_sculptStrength, g_sculptMode, g_meshSymX);
                     ed.dirty = true;
                 }
                 g_uiHandled = true;     // consume so the object isn't orbited/moved
@@ -53115,6 +52227,13 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 mdl::EditTransformOptions o;
                 o.softRadius = g_meshSoftSel ? g_meshSoftRadius : 0.0f;
                 o.mirrorX = g_meshSymX; o.mirrorY = g_meshSymY; o.mirrorZ = g_meshSymZ;
+                o.pivot = (mdl::EditPivot)std::clamp(g_mePivot, 0, 2);
+                if (g_meshSelMode == 1) o.faces = &g_meshSelFaces;        // Individual Origins: parts joined only through the picked faces
+                else if (g_meshSelMode == 2) o.edges = &g_meshSelEdges;   // ... or the picked edges
+                // The active vertex: the last vertex picked (or the end of the last edge, or a corner of the last face).
+                o.activeVertex = g_meshSelMode == 0 ? (g_meshSelVerts.empty() ? -1 : g_meshSelVerts.back())
+                               : g_meshSelMode == 2 ? (g_meshSelEdges.empty() ? -1 : g_meshSelEdges.back().second)
+                               : (!g_meshSelFaces.empty() && g_meshSelFaces.back() >= 0 && g_meshSelFaces.back() < mesh.TriangleCount() ? mesh.triangles[(std::size_t)g_meshSelFaces.back() * 3] : -1);
                 g_meModal.Begin(mesh, kind, affected, M, o);
                 if (!g_meModal.Active()) return;
                 g_meModalObj = meo; g_meModalObjGuid = meo ? meo->Guid() : std::string();
@@ -53126,7 +52245,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             auto statusLine = [&](const std::string& line, const char* help) {
                 ImVec2 ts = ImGui::CalcTextSize(line.c_str()), hs = ImGui::CalcTextSize(help);
                 float w = std::max(ts.x, hs.x) + 20.0f, lh = ImGui::GetTextLineHeight();
-                ImVec2 p0(canvasPos.x + (canvasSize.x - w) * 0.5f, canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);
+                ImVec2 p0(std::max(canvasPos.x + 4.0f, canvasPos.x + (canvasSize.x - w) * 0.5f), canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);   // a narrow view: keep the start (tool, value) in sight, the help runs off the right
                 dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + lh * 2.0f + 14.0f), IM_COL32(20, 22, 28, 215), 5.0f);
                 dl->AddText(ImVec2(p0.x + 10, p0.y + 5), IM_COL32(255, 200, 90, 255), line.c_str());
                 dl->AddText(ImVec2(p0.x + 10, p0.y + 8 + lh), IM_COL32(190, 195, 205, 255), help);
@@ -53161,7 +52280,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (loop.empty()) { ConsoleLog("Edge slide: select an edge loop first", 1); return; }
                 g_slideLoop = loop;
                 g_slideFrom = mesh.vertices;
-                g_slidePoly = okay::modeling::PolyMesh::FromMesh(mesh, {false, true, 1.0f});
+                g_slidePoly = okay::modeling::PolyMesh::FromMesh(mesh, {false, true, 1.0f}, &g_slideTriFace);
+                g_slideUVFrom = mesh.uvs;
+                g_slideCornerUVFrom = mesh.cornerUVs;
                 g_slideAfterCut = afterCut;
                 g_ptoolMouse0 = io.MousePos;
                 g_ptoolTyped.Clear();
@@ -53276,6 +52397,25 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 pm.verts = g_slideFrom;
                 okay::modeling::EdgeSlide(pm, g_slideLoop, amount, &g_slideFrom);
                 for (std::size_t i = 0; i < pm.verts.size() && i < mesh.vertices.size(); ++i) mesh.vertices[i] = pm.verts[i];
+                // The UVs slide with the vertices (each face keeps its own mapping, seams stay split).
+                if ((int)g_slideTriFace.size() == mesh.TriangleCount()) {
+                    const bool perCorner = g_slideCornerUVFrom.size() == mesh.triangles.size() && !g_slideCornerUVFrom.empty();
+                    const bool perVertex = g_slideUVFrom.size() == mesh.vertices.size() && !g_slideUVFrom.empty();
+                    for (int t = 0; t < mesh.TriangleCount() && (perCorner || perVertex); ++t) {
+                        const int f = g_slideTriFace[(std::size_t)t];
+                        if (f < 0 || f >= (int)pm.faces.size() || pm.faces[(std::size_t)f].uvs.size() != pm.faces[(std::size_t)f].verts.size()) continue;
+                        const okay::modeling::PolyFace& F = pm.faces[(std::size_t)f];
+                        for (int k = 0; k < 3; ++k) {
+                            const int v = mesh.triangles[(std::size_t)t * 3 + k];
+                            for (int c = 0; c < F.Size(); ++c)
+                                if (F.verts[(std::size_t)c] == v) {
+                                    if (perCorner) mesh.cornerUVs[(std::size_t)t * 3 + k] = F.uvs[(std::size_t)c];
+                                    else if (v >= 0 && v < (int)mesh.uvs.size()) mesh.uvs[(std::size_t)v] = F.uvs[(std::size_t)c];
+                                    break;
+                                }
+                        }
+                    }
+                }
                 mesh.normals.clear();
                 ed.dirty = true;
                 char buf[160];
@@ -53285,9 +52425,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 else if (confirmKey || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
                     if (!g_slideAfterCut) {   // its own undo step (after a loop cut, the cut's step covers both)
                         const std::vector<Vec3> result = mesh.vertices;
+                        const std::vector<Vec2> resultUV = mesh.uvs, resultCornerUV = mesh.cornerUVs;
                         mesh.vertices = g_slideFrom;
+                        mesh.uvs = g_slideUVFrom;
+                        mesh.cornerUVs = g_slideCornerUVFrom;
                         EditUndoPoint(ed, emr);
                         mesh.vertices = result;
+                        mesh.uvs = resultUV;
+                        mesh.cornerUVs = resultCornerUV;
                     }
                     EndPolyTool(true);
                 }
@@ -53784,12 +52929,13 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 {
                     std::string line = std::string(mdl::EditXformName(g_meModal.Kind()));
                     if (!lock.Free()) line += "  along " + lock.Label();
+                    if (g_mePivot != 0 && g_meModal.Kind() != mdl::EditXform::Move) line += std::string("  about ") + mdl::EditPivotName((mdl::EditPivot)std::clamp(g_mePivot, 0, 2));
                     line += "   " + (typed ? std::string("typed ") + g_meModal.typed.Text() : readout);
                     if (snap) line += g_snapTarget > 0 && g_meModal.Kind() == mdl::EditXform::Move ? std::string("   (snapping to ") + mdl::SnapTargetName((mdl::SnapTarget)g_snapTarget) + ")" : std::string("   (snapping)");
                     const char* help = "X / Y / Z lock an axis, Shift+X/Y/Z a plane  -  type a value  -  Ctrl snaps  -  Enter or click to confirm, Esc or right-click to cancel";
                     ImVec2 ts = ImGui::CalcTextSize(line.c_str()), hs = ImGui::CalcTextSize(help);
                     float w = std::max(ts.x, hs.x) + 20.0f, lh = ImGui::GetTextLineHeight();
-                    ImVec2 p0(canvasPos.x + (canvasSize.x - w) * 0.5f, canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);
+                    ImVec2 p0(std::max(canvasPos.x + 4.0f, canvasPos.x + (canvasSize.x - w) * 0.5f), canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);   // a narrow view: keep the start (tool, value) in sight, the help runs off the right
                     dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + lh * 2.0f + 14.0f), IM_COL32(20, 22, 28, 215), 5.0f);
                     dl->AddText(ImVec2(p0.x + 10, p0.y + 5), IM_COL32(255, 200, 90, 255), line.c_str());
                     dl->AddText(ImVec2(p0.x + 10, p0.y + 8 + lh), IM_COL32(190, 195, 205, 255), help);
@@ -53835,9 +52981,16 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (oOk && hovered && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 float best = 10.0f; int pick = -1;
                 for (int i = 0; i < 3; ++i) if (tipOk[i]) { float d = SegDistPx(io.MousePos, so, tip[i]); if (d < best) { best = d; pick = i; } }
-                if (pick >= 0) { EditUndoPoint(ed, meo->GetComponent<MeshRenderer>()); g_meEditGrab = true; g_meEditAxis = pick; grabbedHandle = true; g_uiHandled = true; }
+                if (pick >= 0) {
+                    EditUndoPoint(ed, meo->GetComponent<MeshRenderer>()); g_meEditGrab = true; g_meEditAxis = pick; grabbedHandle = true; g_uiHandled = true;
+                    okay::modeling::EditTransformOptions ho;
+                    ho.softRadius = g_meshSoftSel ? g_meshSoftRadius : 0.0f;
+                    ho.mirrorX = g_meshSymX; ho.mirrorY = g_meshSymY; ho.mirrorZ = g_meshSymZ;
+                    g_meHandle.Begin(mesh, okay::modeling::EditXform::Move, affected, M, ho);
+                    g_meHandleOff = Vec3{0, 0, 0};
+                }
             }
-            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_meEditGrab = false; g_meEditAxis = -1; }
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_meEditGrab = false; g_meEditAxis = -1; g_meHandle.Confirm(); }
             // Drag the grabbed axis: project mouse motion onto it, move the selection.
             if (g_meEditGrab && g_meEditAxis >= 0 && oOk && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
                 int i = g_meEditAxis;
@@ -53846,29 +52999,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (slen > 1e-3f) {
                     float along = (io.MouseDelta.x * sdir.x + io.MouseDelta.y * sdir.y) / slen;
                     float amt = along * (L / slen);             // screen px -> world units
-                    Vec3 localDelta = Minv.MultiplyVector(axisW[i] * amt);
-                    // Live X symmetry: find the -X counterparts BEFORE moving (matched
-                    // against the pre-move positions), then give them the mirrored delta.
-                    std::vector<int> mirror;
-                    if (g_meshSymX) {
-                        for (int v : affected) {
-                            if (v < 0 || v >= (int)mesh.vertices.size()) continue;
-                            Vec3 want{-mesh.vertices[v].x, mesh.vertices[v].y, mesh.vertices[v].z};
-                            for (int w = 0; w < (int)mesh.vertices.size(); ++w) {
-                                Vec3 d = mesh.vertices[w] - want;
-                                if (d.x*d.x + d.y*d.y + d.z*d.z < 1e-6f && w != v &&
-                                    std::find(affected.begin(), affected.end(), w) == affected.end())
-                                    mirror.push_back(w);
-                            }
-                        }
-                    }
-                    if (g_meshSoftSel) mesh.MoveVerticesSoft(affected, localDelta, g_meshSoftRadius);
-                    else               mesh.MoveVertices(affected, localDelta);
-                    if (!mirror.empty()) {
-                        Vec3 md{-localDelta.x, localDelta.y, localDelta.z};
-                        if (g_meshSoftSel) mesh.MoveVerticesSoft(mirror, md, g_meshSoftRadius);
-                        else               mesh.MoveVertices(mirror, md);
-                    }
+                    // The drag goes through the same session as G, so Soft Select and Symmetry X / Y / Z
+                    // all apply. (It used to mirror across X only, and searched every vertex for each moved
+                    // vertex's partner on every frame, which froze big meshes.)
+                    g_meHandleOff += axisW[i] * amt;
+                    if (g_meHandle.Active()) g_meHandle.Apply(mesh, Mat4::Translate(g_meHandleOff));
                     mesh.normals.clear();        // keep flat (faceted) shading while editing
                     ed.dirty = true;
                 }
@@ -53884,11 +53019,21 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         float dx = sp.x - io.MousePos.x, dy = sp.y - io.MousePos.y, d = dx*dx + dy*dy;
                         if (d < best) { best = d; pv = i; }
                     }
+                    if (io.KeyCtrl && !io.KeyAlt && pv >= 0 && !g_meshSelVerts.empty()) {
+                        // Ctrl+click: add the shortest path along the edges from the last vertex picked.
+                        const std::vector<int> path = okay::modeling::ShortestVertPath(EditPoly(mesh), g_meshSelVerts.back(), pv);
+                        for (int v : path)
+                            if (std::find(g_meshSelVerts.begin(), g_meshSelVerts.end(), v) == g_meshSelVerts.end()) g_meshSelVerts.push_back(v);
+                        g_meshSelVerts.erase(std::remove(g_meshSelVerts.begin(), g_meshSelVerts.end(), pv), g_meshSelVerts.end());
+                        g_meshSelVerts.push_back(pv);   // the clicked one is the active vertex now
+                        if (path.empty()) ConsoleLog("No path along the edges joins those two vertices (separate parts)", 1);
+                    } else {
                     if (!add) g_meshSelVerts.clear();
                     if (pv >= 0) {
                         auto it = std::find(g_meshSelVerts.begin(), g_meshSelVerts.end(), pv);
                         if (it != g_meshSelVerts.end()) { if (add) g_meshSelVerts.erase(it); }
                         else g_meshSelVerts.push_back(pv);
+                    }
                     }
                 } else if (g_meshSelMode == 2) {
                     // Pick the nearest polygon edge by screen distance to its segment.
@@ -53899,8 +53044,27 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         float d = SegDistPx(io.MousePos, a, b);
                         if (d < best) { best = d; pe = e; }
                     }
-                    if (!add) g_meshSelEdges.clear();
-                    if (pe.first >= 0) {
+                    const bool pathClick = io.KeyCtrl && !io.KeyAlt && pe.first >= 0 && !g_meshSelEdges.empty();
+                    if (!add && !pathClick) g_meshSelEdges.clear();
+                    if (pathClick) {
+                        // Ctrl+click: join the last edge picked to this one by the shortest path along the edges.
+                        const okay::modeling::PolyMesh& pm = EditPoly(mesh);
+                        const std::pair<int, int> last = g_meshSelEdges.back();
+                        std::vector<int> best;
+                        for (int a : {last.first, last.second}) for (int b : {pe.first, pe.second}) {
+                            std::vector<int> p = okay::modeling::ShortestVertPath(pm, a, b);
+                            if (!p.empty() && (best.empty() || p.size() < best.size())) best = std::move(p);
+                        }
+                        auto addEdge = [&](int a, int b) {
+                            for (const auto& s : g_meshSelEdges) if ((s.first == a && s.second == b) || (s.first == b && s.second == a)) return;
+                            g_meshSelEdges.push_back({a, b});
+                        };
+                        for (std::size_t i = 1; i < best.size(); ++i) addEdge(best[i - 1], best[i]);
+                        g_meshSelEdges.erase(std::remove_if(g_meshSelEdges.begin(), g_meshSelEdges.end(), [&](const std::pair<int, int>& s) {
+                            return (s.first == pe.first && s.second == pe.second) || (s.first == pe.second && s.second == pe.first); }), g_meshSelEdges.end());
+                        g_meshSelEdges.push_back(pe);   // the clicked edge is the last one picked
+                        if (best.empty()) ConsoleLog("No path along the edges joins those two edges (separate parts)", 1);
+                    } else if (pe.first >= 0) {
                         if (io.KeyAlt || ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {   // double-click does the same as Alt+click
                             // Alt+Click: the edge loop through this edge (across 4-way
                             // vertices); Ctrl+Alt+Click: the ring of edges across the
@@ -53967,7 +53131,26 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         }
                         return -1;
                     };
-                    if (!add) g_meshSelFaces.clear();
+                    EditPoly(mesh);
+                    const bool polysKnown = (int)mesh.polyFace.size() == mesh.TriangleCount();
+                    const int lastTri = g_meshSelFaces.empty() ? -1 : g_meshSelFaces.back();
+                    if (io.KeyCtrl && !io.KeyAlt && pf >= 0 && polysKnown && lastTri >= 0 && lastTri < mesh.TriangleCount()) {
+                        // Ctrl+click: the shortest path of faces from the last face picked to this one.
+                        const std::vector<int> path = okay::modeling::ShortestFacePath(EditPoly(mesh), mesh.polyFace[lastTri], mesh.polyFace[pf]);
+                        std::set<int> want(path.begin(), path.end());
+                        std::set<int> have(g_meshSelFaces.begin(), g_meshSelFaces.end());
+                        std::vector<int> clickedTris;
+                        for (int t = 0; t < mesh.TriangleCount(); ++t) {
+                            if (mesh.polyFace[t] == mesh.polyFace[pf]) { clickedTris.push_back(t); continue; }
+                            if (want.count(mesh.polyFace[t]) && !have.count(t)) g_meshSelFaces.push_back(t);
+                        }
+                        for (int t : clickedTris) {   // the clicked face goes last: it is the one the next Ctrl+click starts from
+                            g_meshSelFaces.erase(std::remove(g_meshSelFaces.begin(), g_meshSelFaces.end(), t), g_meshSelFaces.end());
+                            g_meshSelFaces.push_back(t);
+                        }
+                        if (path.empty()) ConsoleLog("No path of faces joins those two faces (separate parts)", 1);
+                        pf = -1;   // handled
+                    } else if (!add) g_meshSelFaces.clear();
                     if (pf >= 0) {
                         auto toggleFace = [&](int fc) {
                             if (fc < 0 || fc >= mesh.TriangleCount()) return;
@@ -55200,8 +54383,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 placed = okay::ImportModelScene(ed.scene(), path, &ok);
                 if (ok && placed) ApplyModelImportScale(placed, path);
                 if (!ok || !placed)
-                    ConsoleLog("Model import failed: " + path +
-                               (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
+                    ConsoleLog(ModelImportFailLine("Model import", path), 2);
             }
             if (placed) {
                 placed->transform->SetPosition(drop);
@@ -57488,7 +56670,7 @@ int main(int argc, char** argv) {
     else SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
 #endif
 #ifdef OKAY_HAVE_OKAYUI
-    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w) { return OkayUI::soft::CreateWindowPainter(w); });   // the software painter, for own-backend windows
+    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w, const okay::platform::PainterDesc& d) { return OkayUI::soft::CreateWindowPainter(w, d); });   // the software painter, for own-backend windows
 #endif
     // An accelerated renderer (the driver the hint chose), else one with the default driver, else any (software). The painter owns it.
     SDL_Renderer* renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true);
@@ -57835,6 +57017,8 @@ int main(int argc, char** argv) {
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
     g_previewEd = &ed;
+    // The Console panel's command line: standard cvars, the Play loop's time.* commands, `--cvar NAME=VALUE`.
+    const std::unique_ptr<okay::LoopConsole> consoleCmds = oked::ConsoleAttachHost(ed.playLoop(), argc, argv);
     // The project's own files follow the project: leaving one saves its settings and build settings,
     // entering one reads that project's (or the defaults), so nothing leaks from one project into the next.
     EditorState::onProjectChanged = [&ed](const std::string& oldDir, const std::string& newDir) {
@@ -58079,7 +57263,7 @@ int main(int argc, char** argv) {
             // over the next frames, so at a low frame rate a letter typed into an OkayUI search field reached the editor's shortcuts
             // after a click had moved the keyboard away ("S Health" typed, the row clicked: the "h" hid the object; stage 9).
             // Modifier keys still go (Ctrl, Shift and Alt stay right in Dear ImGui), and Ctrl+P, which plays from any field.
-            if (UseOkayUIBackend() && OkayUI::WantsTextInput() && (e.type == EvT::TextInput || e.type == EvT::KeyDown)) {
+            if (OkayUIInputOn() && OkayUI::WantsTextInput() && (e.type == EvT::TextInput || e.type == EvT::KeyDown)) {
                 const PKey k = e.type == EvT::KeyDown ? e.key : PKey::Unknown;
                 const bool modifier = k == PKey::LCtrl || k == PKey::RCtrl || k == PKey::LShift || k == PKey::RShift || k == PKey::LAlt ||
                                       k == PKey::RAlt || k == PKey::LGui || k == PKey::RGui;
@@ -58485,14 +57669,14 @@ int main(int argc, char** argv) {
                 // takes the full set of keys (the legacy path above only carries text and Backspace, for game ui_inputtext).
                 g_okayRegion.NextFrame();
                 const bool left = uin.mouseDown;
-                const bool owns = UseOkayUIBackend() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
+                const bool owns = OkayUIInputOn() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
                 const bool blocked = io.WantCaptureMouse && !owns;
-                const bool keys = UseOkayUIBackend() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
+                const bool keys = OkayUIInputOn() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
                 // No field (ImGui's or OkayUI's) is typing: the held keys still go to OkayUI, so a hosted panel sees Ctrl/Shift on a
                 // click and its own keys (the Hierarchy's arrows, F2, Ctrl+A act only while its window has the focus).
-                const bool held = UseOkayUIBackend() && !keys && !io.WantTextInput;
+                const bool held = OkayUIInputOn() && !keys && !io.WantTextInput;
                 const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys || held);
-                if (UseOkayUIBackend()) {
+                if (OkayUIInputOn()) {
                     uin.blocked = blocked; uin.mouseDown = h.mouseDown; uin.rightDown = h.rightDown; uin.wheel = h.wheel;   // (mouseDown also counts a click that came and went within one frame)
                     if (keys) uin = h;
                     else if (held) {
@@ -58694,13 +57878,14 @@ int main(int argc, char** argv) {
         // stopped/paused so editor keyboard nav still works.
         // Same in mesh edit mode: Enter confirms a G / R / S transform there, and
         // must not also press whichever button last had focus.
-        // And while a hosted OkayUI field has the keyboard: Space would press the ImGui item that last had nav focus, which holds
-        // ImGui's active item for a frame and keeps the next typed letter from the field.
+        // And while the OkayUI script editor has the keyboard (developer OkayUI backend), or a hosted OkayUI field has it:
+        // Space and Enter are typing there, and Space would otherwise press the ImGui item that last had nav focus.
+        const bool codeKeys = g_scriptCodeOwnsKeys; g_scriptCodeOwnsKeys = false;   // set again by this frame's Render
         bool okayTyping = false;
 #ifdef OKAY_HAVE_OKAYUI
-        okayTyping = UseOkayUIBackend() && OkayUI::WantsTextInput();
+        okayTyping = OkayUIInputOn() && OkayUI::WantsTextInput();
 #endif
-        if ((ed.isPlaying() && !g_paused) || (g_meshEdit && g_meshEditObj) || okayTyping)
+        if ((ed.isPlaying() && !g_paused) || (g_meshEdit && g_meshEditObj) || codeKeys || okayTyping)
             ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
         else
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -58866,7 +58051,7 @@ int main(int argc, char** argv) {
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
-            LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY
+            LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY / OKAY_UI_LOCIMPORT
             ContentEditorsDevHooks(ed); // OKAY_UI_CONTENT / OKAY_UI_CONTENT_TAB / OKAY_UI_CONTENT_DIR
             WeaponEditorDevHooks(ed);   // OKAY_UI_WEAPONS / OKAY_UI_WEAPONS_FILE
             SplineDevHooks(ed);       // OKAY_UI_SPLINE / SPLINESEL / SPLINECAM
@@ -59463,8 +58648,18 @@ int main(int argc, char** argv) {
 
         okay::filedialog::DrawBuiltin();   // the built-in file browser, when no system dialog is available
 #ifdef OKAY_HAVE_OKAYUI
-        if (UseOkayUIBackend() && OkayUI::WantsTextInput()) {   // a hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out
+        if (OkayUIInputOn() && OkayUI::WantsTextInput()) {   // a hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out
             GImGui->PlatformImeData.WantTextInput = true;
+            // The input method's candidate window goes where the OkayUI field or code editor says its caret is (OkayUI draws in the
+            // main window's own pixels; ImGui's positions are desktop positions with the multi-window viewports).
+            const OkayUI::ImeRect ime = OkayUI::GetImeRect();
+            if (ime.valid) {
+                const ImGuiViewport* mvp = ImGui::GetMainViewport();
+                GImGui->PlatformImeData.InputPos = ImVec2(mvp->Pos.x + ime.caret.x, mvp->Pos.y + ime.caret.y);
+                GImGui->PlatformImeData.InputLineHeight = ime.caret.h;
+                GImGui->PlatformImeData.ViewportId = mvp->ID;
+                GImGui->PlatformImeData.WantVisible = true;
+            }
             ImGui::SetNextFrameWantCaptureKeyboard(true);
             if (okay::platform::Backend* pb = okay::platform::Default()) pb->StartTextInput();
         }

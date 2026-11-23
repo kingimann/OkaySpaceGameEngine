@@ -1,11 +1,16 @@
 #include "ScriptEditorCodeEdit.hpp"
+#include "okay/UI/OkayUICompat.hpp"   // AddFontTtf
+#include "OkfDecode.hpp"
+#include "JetBrainsMonoFontOwn.h"
 
 #include <algorithm>
+#include <cstdint>
 
 namespace scripteditor {
 
 ScriptEditorCodeEdit::ScriptEditorCodeEdit() {
-    ed_.SetLanguage(OkayUI::OkayScriptLanguage());
+    language_ = OkayUI::OkayScriptLanguage();
+    ed_.SetLanguage(language_);
     ed_.SetTabSize(4);
     ed_.SetLineSpacing(1.55f);          // what the script editor sets on the ImGui editor
     seenVersion_ = ed_.Version();
@@ -66,13 +71,15 @@ void ScriptEditorCodeEdit::SetSelection(Coord start, Coord end) {
 void ScriptEditorCodeEdit::SetColorizerEnable(bool on) {
     if (on == colorize_) return;
     colorize_ = on;
-    if (on) ed_.SetLanguage(OkayUI::OkayScriptLanguage());
+    if (on) { ed_.SetLanguage(language_); if (!userTypes_.empty()) ed_.SetUserTypes(userTypes_); }
     else ed_.SetHighlighter(nullptr);
 }
 
 void ScriptEditorCodeEdit::SetUserTypes(const std::unordered_set<std::string>& types) {
+    userTypes_.assign(types.begin(), types.end());
+    std::sort(userTypes_.begin(), userTypes_.end());
     if (!colorize_) return;
-    ed_.SetUserTypes(std::vector<std::string>(types.begin(), types.end()));
+    ed_.SetUserTypes(userTypes_);
 }
 
 void ScriptEditorCodeEdit::SetErrorMarkers(const std::map<int, std::string>& markers) {
@@ -82,7 +89,12 @@ void ScriptEditorCodeEdit::SetErrorMarkers(const std::map<int, std::string>& mar
         OkayUI::CodeMarker cm;
         cm.line = m.first - 1;
         cm.colStart = 0; cm.colEnd = -1;                // the whole line's text, like the library's red line
-        cm.message = m.second;
+        // As the Dear ImGui editor: a message that starts with "warning: " is a warning (an amber wash), and the tooltip names the line.
+        static const char kWarn[] = "warning: ";
+        const bool warn = m.second.compare(0, sizeof(kWarn) - 1, kWarn) == 0;
+        const std::string msg = warn ? m.second.substr(sizeof(kWarn) - 1) : m.second;
+        cm.message = (warn ? "Warning at line " : "Error at line ") + std::to_string(m.first) + ": " + msg;
+        if (warn) { cm.lineColor = OkayUI::RGBA(200, 150, 40, 55); cm.color = OkayUI::RGBA(230, 190, 70); }
         out.push_back(std::move(cm));
     }
     ed_.SetMarkers(out);
@@ -97,7 +109,58 @@ void ScriptEditorCodeEdit::SetBreakpoints(const std::unordered_set<int>& lines) 
 
 OkayUI::Vec2 ScriptEditorCodeEdit::ContentOrigin() const {
     const OkayUI::Vec2 p = ed_.PosToScreen(OkayUI::CodePos{0, 0});
-    return OkayUI::Vec2{p.x - ed_.GutterWidth(), p.y};
+    return OkayUI::Vec2{p.x - ed_.GutterWidth() + offX_, p.y + offY_};
+}
+
+void ScriptEditorCodeEdit::SetLanguage(const LanguageWords& w) {
+    OkayUI::CodeLanguage l;
+    for (const std::string& k : w.keywords) l.keywords.insert(k);
+    for (const std::string& t : w.types) l.types.insert(t);
+    for (const std::string& k : w.known) l.known.insert(k);
+    l.lineComments.clear();
+    for (const std::string& c : w.lineComments) if (!c.empty()) l.lineComments.push_back(c);
+    l.blockStart = w.blockEnd.empty() ? std::string() : w.blockStart;
+    l.blockEnd = w.blockEnd;
+    l.callBeforeKnown = true;            // the Dear ImGui editor's order: print( is a call
+    language_ = l;
+    if (colorize_) { ed_.SetLanguage(language_); if (!userTypes_.empty()) ed_.SetUserTypes(userTypes_); }
+}
+
+void ScriptEditorCodeEdit::SetPaletteFromImGui(const unsigned* c, int count) {
+    if (!c || count < kImGuiPaletteSize) return;
+    OkayUI::CodePalette p = ed_.Palette();
+    // TextEditor::PaletteIndex order (see the header)
+    p.text[OkayUI::CodeColor_Default] = c[0];  p.text[OkayUI::CodeColor_Keyword] = c[1];  p.text[OkayUI::CodeColor_Number] = c[2];
+    p.text[OkayUI::CodeColor_String] = c[3];   p.text[OkayUI::CodeColor_Char] = c[4];     p.text[OkayUI::CodeColor_Punct] = c[5];
+    p.text[OkayUI::CodeColor_Preproc] = c[6];  p.text[OkayUI::CodeColor_Known] = c[8];    p.text[OkayUI::CodeColor_Comment] = c[10];
+    p.text[OkayUI::CodeColor_Type] = c[21];    p.text[OkayUI::CodeColor_Function] = c[22]; p.text[OkayUI::CodeColor_Member] = c[23];
+    p.background = c[12]; p.gutter = c[12];   // one background inside the frame, line numbers included
+    p.caret = c[13]; p.selection = c[14]; p.selectionInactive = c[14];
+    p.errorLine = c[15]; p.breakpointLine = c[16];
+    p.lineNumber = c[17]; p.lineNumberCurrent = c[17];
+    p.currentLine = c[18]; p.currentLineInactive = c[19]; p.currentLineEdge = c[20];
+    ed_.SetPalette(p);
+}
+
+const OkayUI::Font* ScriptEditorCodeEdit::CodeFont() {
+    // Decoded once: the bytes must outlive the font (AddFontTtf keys its glyph cache on them). 16 px is the size the Dear ImGui
+    // script editor shows at 100%; UseCodeFont scales it to the size asked for.
+    static std::vector<std::uint8_t> bytes;
+    static const OkayUI::Font* font = nullptr;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        if (okf::DecodeLines(okf_data::kJetBrainsMonoOkf, okf_data::kJetBrainsMonoOkfLines, bytes) && bytes.size() == okf_data::kJetBrainsMonoOkfRawBytes)
+            font = OkayUI::AddFontTtf(bytes.data(), bytes.size(), 16.0f, "JetBrains Mono");
+    }
+    return font;
+}
+
+bool ScriptEditorCodeEdit::UseCodeFont(float px) {
+    const OkayUI::Font* f = CodeFont();
+    if (!f) return false;
+    ed_.SetFont(f, px);
+    return true;
 }
 
 } // namespace scripteditor

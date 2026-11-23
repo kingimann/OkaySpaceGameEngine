@@ -92,7 +92,7 @@ if(OKAY_BUILD_TESTS)
     # ModelImport.cpp and FbxScene.cpp are compiled again into this test (its objects win over the same ones in the engine library). Linux, no Windows needed.
     include(${CMAKE_CURRENT_SOURCE_DIR}/engine/uwp_own_readers.cmake)
     okay_uwp_own_readers("${CMAKE_SOURCE_DIR}/CMakeLists.txt" _xbox_mi_defs _xbox_own_on)
-    add_executable(test_xbox_uwp_models tests/test_xbox_uwp_models.cpp ${CMAKE_SOURCE_DIR}/engine/src/Render/ModelImport.cpp ${CMAKE_SOURCE_DIR}/engine/src/Render/FbxScene.cpp)
+    add_executable(test_xbox_uwp_models tests/test_xbox_uwp_models.cpp ${CMAKE_SOURCE_DIR}/engine/src/Render/ModelImport.cpp ${CMAKE_SOURCE_DIR}/engine/src/Render/FbxScene.cpp ${CMAKE_SOURCE_DIR}/engine/src/Render/FbxSceneClips.cpp)
     target_link_libraries(test_xbox_uwp_models PRIVATE okay::engine)
     target_include_directories(test_xbox_uwp_models PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/engine/src)
     target_compile_definitions(test_xbox_uwp_models PRIVATE OKAY_XBOX_UWP=1 OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}" OKAY_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")

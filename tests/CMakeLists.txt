@@ -3998,7 +3998,8 @@ add_test(NAME fbx_import_limits COMMAND test_fbx_import_limits)
 #   cmake -DOKAY_SANITIZE=address,undefined ...   (CI's sanitizer job), OKAY_FBX_FUZZ_ITERS=20000 for a longer fuzz.
 add_executable(test_fbx_hostile test_fbx_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxReader.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxScene.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxScene.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxSceneClips.cpp)
 target_include_directories(test_fbx_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_fbx_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
@@ -4007,13 +4008,14 @@ add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
 # docs/content/model_readers.md (FBX part), "Animation keys".
 add_executable(test_fbx_file_keys test_fbx_file_keys.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxReader.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxScene.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxScene.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxSceneClips.cpp)
 target_include_directories(test_fbx_file_keys PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_fbx_file_keys PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME fbx_file_keys COMMAND test_fbx_file_keys)
 # The output-preserving fast paths of our FBX reader against the plain code they replaced, bit for bit, on random
 # inputs (white-box: compiles FbxScene.cpp and FbxReader.cpp itself, no engine library). docs/content/model_readers.md (FBX part).
-add_executable(test_fbx_exact test_fbx_exact.cpp test_fbx_exact_numbers.cpp)
+add_executable(test_fbx_exact test_fbx_exact.cpp test_fbx_exact_numbers.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxSceneClips.cpp)
 target_include_directories(test_fbx_exact PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Render)
 add_test(NAME fbx_exact COMMAND test_fbx_exact)
 # The exact decimal-to-double conversion used for ASCII numbers (engine/src/Render/DecimalToDouble.hpp) against strtod,
@@ -4188,6 +4190,7 @@ target_compile_definitions(test_blend_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_
 add_test(NAME blend_reader COMMAND test_blend_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_executable(test_blend_hostile test_blend_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReaderBuild.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendModifiers.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
@@ -4201,6 +4204,7 @@ set_tests_properties(blend_hostile PROPERTIES TIMEOUT 600)
 add_executable(test_blend_modifiers test_blend_modifiers.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendModifiers.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReaderBuild.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 target_include_directories(test_blend_modifiers PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core ${PROJECT_SOURCE_DIR}/engine/src/Render)

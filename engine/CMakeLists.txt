@@ -313,6 +313,7 @@ add_library(okay_engine
     src/Render/Ms3dReader.cpp
     src/Render/AseReader.cpp
     src/Render/BlendReader.cpp
+    src/Render/BlendReaderBuild.cpp
     src/Render/BlendModifiers.cpp
     src/Render/ThreeMfReader.cpp
     src/Render/AmfReader.cpp
@@ -395,6 +396,7 @@ add_library(okay_engine
     src/Testing/GoldenImage.cpp
     src/Render/FbxReader.cpp
     src/Render/FbxScene.cpp
+    src/Render/FbxSceneClips.cpp
     third_party/ufbx/ufbx.c
 )
 

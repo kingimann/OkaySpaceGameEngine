@@ -116,7 +116,7 @@ int main() {
         CHECK(ok && m.backend == "own" && fx::Sane(m));
         // nodes: the root, then the bones parent first
         CHECK(m.nodes.size() == 3 && m.nodes[1].name == "root" && m.nodes[2].name == "child" && m.nodes[1].parent == 0 && m.nodes[2].parent == 1);
-        CHECK(Near(m.nodes[1].position.x, 1) && Near(m.nodes[1].position.y, 2) && Near(m.nodes[1].position.z, 3));
+        CHECK(fx::NearXyz(m.nodes[1].position, 1, 2, 3, 1e-5f));
         CHECK(Near(m.nodes[2].position.y, 1) && Near(m.nodes[2].rotation.z, 0.70710678f, 1e-5f) && Near(m.nodes[2].rotation.w, 0.70710678f, 1e-5f));
         CHECK(Near(m.nodes[0].rotation.x, -0.70710678f));   // Z-up
         CHECK(m.materials.size() == 1 && m.materials[0].name == "tex.bmp" && m.materials[0].texture.empty() && HasNote(m, "embedded 8-bit palette"));

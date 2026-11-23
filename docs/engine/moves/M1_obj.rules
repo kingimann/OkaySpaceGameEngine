@@ -1,0 +1,7 @@
+# obj: move of the bodies of okay::Mesh members out of Mesh.hpp (docs/engine/modularization_plan.md M1).
+# Each moved definition line is qualified (Mesh::), loses `static` and its default arguments (they stay on the declaration).
+change: static Mesh LoadOBJ(const std::string& path, bool* ok = nullptr, std::string* outTexture = nullptr) { ==> Mesh Mesh::LoadOBJ(const std::string& path, bool* ok, std::string* outTexture) {
+add: ^\s*static\ Mesh\ LoadOBJ\(const\ std::string\&\ path,\ bool\*\ ok\ =\ nullptr,\ std::string\*\ outTexture\ =\ nullptr\);$
+change: bool SaveOBJ(const std::string& path) const { ==> bool Mesh::SaveOBJ(const std::string& path) const {
+add: ^\s*bool\ SaveOBJ\(const\ std::string\&\ path\)\ const;$
+change: auto mix = [&](long v) { h ^= (std::size_t)(v + 1); h *= 1099511628211ull; }; ==> auto mix = [&](long v) { h ^= (std::size_t)(v + 1); h *= 1099511628211ull; }; // dup-allow: moved unchanged from Mesh.hpp (vertex-key mix, not a string hash)

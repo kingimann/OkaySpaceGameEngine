@@ -10,7 +10,7 @@ How **File > Build Settings** (and the headless `OkayEngine --build-game`) turns
 what a build contains, every option and what it does, the build report, and what is not built yet.
 
 The pure logic (layout planner, dependency walk, manifest, report, zip) is `engine/include/okay/Core/BuildPipeline.hpp`;
-the editor's `builder::Build` (in `editor/main.cpp`) uses it; the player finds its files with the same
+the editor's `builder::Build` (in `editor/BuildGame.cpp`) uses it; the player finds its files with the same
 `FindDataDir`. Tests: `tests/test_build_pipeline.cpp` (unit) and `tests/export/verify_layout.sh` (a real export that is
 run).
 
